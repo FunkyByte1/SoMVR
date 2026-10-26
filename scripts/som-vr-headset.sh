@@ -42,7 +42,7 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-BUILD=build-vr15                        # the build the user tests (logs/BUILD); changed only between sessions
+BUILD=build-vr15b                       # the build the user tests (logs/BUILD); changed only between sessions
 ENVF=$SOM/logs/$BUILD/headset.env       # its feature switches (the header); missing = the built-in build-5 set
 CMDS5=$SCR/cmds/somvr-vr5.cmd   # the start sequences: build 5's (the pre-game window), build 6's
 CMDS6=$SCR/cmds/somvr-vr6.cmd

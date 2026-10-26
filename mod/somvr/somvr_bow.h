@@ -44,6 +44,7 @@ enum {                                /* why an aim ended (somvr_bow_out.end_why
     SOMVR_BOW_END_INPUT,              /* the controller input is not live */
     SOMVR_BOW_END_LOST,               /* the bow hand without tracking for lost_s */
     SOMVR_BOW_END_OUTSIDE,            /* somvr_bow_stop: no step for frames, the player changed ... */
+    SOMVR_BOW_END_SLOT,               /* somvr_bow_stop (build 15b, SOMVR_BOW_DRAW=slot): put back at its slot */
     SOMVR_BOW_NEND
 };
 enum {                                /* somvr_bow_out.events: what happened this frame */
@@ -83,6 +84,8 @@ typedef struct {
     int idle_ray;            /* SOMVR_BOW_IDLE_* (BOW) */
     int release_now;         /* build 11 (SOMVR_BOW_RELEASE=now): the shot goes at the release whenever the bow is ready
                                 (bow_ready), the game's aim on or not; else (0) it waits for the game's aim as before */
+    int idle_nock;           /* the string grip at the nock enters from idle (1, the default); build 15b's
+                                SOMVR_BOW_DRAW=slot: 0, the bow comes only from its slot (the button) */
 } somvr_bow_cfg;
 void somvr_bow_cfg_default(somvr_bow_cfg *c);
 

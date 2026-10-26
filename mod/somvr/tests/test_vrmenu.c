@@ -1374,6 +1374,16 @@ static void test_controls(void) {
     CHECK(n >= 14 && fit && walk && sword && menu && held && !orc && quit && rep && mm && drop && bow && shoot && !off && !k &&
               !w,
           "the controls: %d lines (held %d, drop %d, bow %d, shoot %d)", n, held, drop, bow, shoot);
+    /* build 15b: SOMVR_BOW_DRAW=slot names the left shoulder, not the trigger */
+    {
+        int nb = somvr_vm_controls_av(SOMVR_VMA_BOWSLOT, 0, &k, &w), slot = 0, trig = 0;
+        for (int i = 0; i < nb; i++) {
+            somvr_vm_controls_av(SOMVR_VMA_BOWSLOT, i, &k, &w);
+            slot |= !strcmp(k, "Bow") && !strcmp(w, "L grip at L shoulder") && strlen(w) <= 20;
+            trig |= !strcmp(k, "Bow") && strstr(w, "trigger") != NULL;
+        }
+        CHECK(slot && !trig && nb == n, "the controls with the bow's slot: slot %d trigger %d lines %d/%d", slot, trig, nb, n);
+    }
     int dy = somvr_vm_ctl_dy();
     CHECK(SOMVR_VM_CTL_Y0 + dy * (n + SOMVR_VM_CTL_NOTES + 1) + 4 <= SOMVR_VM_TEX_H - 12 &&
               dy >= SOMVR_FONT_H * SOMVR_VM_SCALE && dy <= SOMVR_VM_CTL_DY && somvr_vm_controls_note(0) &&

@@ -39,7 +39,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_step.c" "$D/somvr_finish.c" "$D/somvr_headview.c" "$D/somvr_headparts.c" "$D/somvr_practice.c"
       "$D/somvr_session.c" "$D/somvr_body.c" "$D/somvr_fingers.c" "$D/somvr_size.c" "$D/somvr_vrhands.c"
       "$D/somvr_strike.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
-      "$D/somvr_objective.c")
+      "$D/somvr_objective.c" "$D/somvr_smooth.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -68,6 +68,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_ctl" "$D/tests/test_ctl.c" "$D/somvr_ctl.
 gcc "${CF[@]}" -o "$D/build/tests/test_hands" "$D/tests/test_hands.c" "$D/somvr_hands.c" "$D/somvr_pose.c" "$D/somvr_eyes.c" \
     -lpthread -lm
 "$D/build/tests/test_hands"
+gcc "${CF[@]}" -o "$D/build/tests/test_smooth" "$D/tests/test_smooth.c" "$D/somvr_smooth.c" -lm
+"$D/build/tests/test_smooth"
 gcc "${CF[@]}" -o "$D/build/tests/test_arms" "$D/tests/test_arms.c" "$D/somvr_arms.c" "$D/somvr_combat.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_arms"
 gcc "${CF[@]}" -o "$D/build/tests/test_pointer" "$D/tests/test_pointer.c" "$D/somvr_pointer.c" -lm

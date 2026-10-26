@@ -90,6 +90,7 @@ typedef struct {
     int ledge;           /* Talion's capsule at the wall: the root (body + (0, 100, 50)) stays 35 cm off the face (z 65)
                           * while the capsule's foot (100 cm under the root) is more than 40 cm under the top */
     float ceil_y;        /* > 0: an overhang: the head (body + head_track_y) never goes over it */
+    float ceil_reach;    /* > 0: ... only while the root's z (body z + 50) is over this (a lip: out from it, free) */
     float side_x;        /* > 0: a side wall: the body's x never goes over it */
     int edge_stop;       /* descent: the game keeps a standing Talion (body y on the top) 45 cm off its edge (root z) */
     int top_rest;        /* descent: the capsule (35 cm about the root) rests on the top while it overlaps it (root z
@@ -137,7 +138,8 @@ static void rig_frame(rig_t *r) {
             else if (r->body.z + 50 + p.z > WALL_Z - 35)
                 p.z = WALL_Z - 35 - 50 - r->body.z; /* under it: against the face */
         }
-        if (r->ceil_y > 0 && r->body.y + p.y + r->head_track_y > r->ceil_y)
+        if (r->ceil_y > 0 && r->body.y + p.y + r->head_track_y > r->ceil_y &&
+            !(r->ceil_reach > 0 && r->body.z + p.z + 50 <= r->ceil_reach))
             p.y = fmaxf(0.0f, r->ceil_y - r->head_track_y - r->body.y); /* the overhang stops the head */
         r->body.x += p.x, r->body.y += p.y, r->body.z += p.z;
         r->moved.x += p.x, r->moved.y += p.y, r->moved.z += p.z;
@@ -1966,6 +1968,75 @@ static void test_edge(void) {
     g_top_far = 0, g_wall_top = WALL_TOP, g_ground_on = 0;
 }
 
+/* build 15b's overhang: a pull under a lip (the head stopped 5 cm up while the root is within 10 cm of the wall's 50)
+ * goes out round it with SOMVR_CLIMB_OVERHANG, stays blocked without; a hold far over a reached top forgets it */
+static void test_overhang(void) {
+    for (int on = 0; on < 2; on++) {
+        rig_t r;
+        rig_init(&r);
+        r.c.overhang = on ? 1.0f : 0.0f;
+        r.ceil_y = 175, r.ceil_reach = 40;          /* the lip over the head, out to the root's z 40 */
+        r.in.hand[1].p = (sv_vec3){ 20, 200, 85 }; /* the hold 30 cm over the eyes */
+        grip(&r, 1, 1);
+        frames(&r, 2);
+        CHECK(r.s.active && r.s.h[1].holding, "overhang %d: the hold", on);
+        for (int i = 0; i < 20; i++) hand_move(&r, 1, 0, -2, 0), rig_frame(&r); /* the pull: 40 cm down in 20 frames */
+        frames(&r, 3);
+        if (!on)
+            CHECK(r.moved.y <= 5.001f && NEAR(r.moved.z, 0, 1e-4) && r.s.oh_steps == 0,
+                  "overhang off: blocked (up %g, out %g)", r.moved.y, -r.moved.z);
+        else
+            CHECK(r.moved.y > 25 && r.moved.z <= -10 && r.moved.z >= -20.001f && r.s.oh_lips == 1 &&
+                      r.s.oh_cm >= 10 && r.s.oh_cm <= 20.001f,
+                  "overhang on: out %g (steps %llu) and up %g", -r.moved.z, (unsigned long long)r.s.oh_steps, r.moved.y);
+        printf("overhang %s: the pull 40 cm: up %.1f, out %.1f (%llu steps)\n", on ? "on" : "off", r.moved.y, -r.moved.z,
+               (unsigned long long)r.s.oh_steps);
+        /* no pull, nothing: the hand still */
+        sv_vec3 m0 = r.moved;
+        frames(&r, 30);
+        CHECK(NEAR3(r.moved, m0.x, m0.y, m0.z, 1e-4), "overhang %d: still without a pull", on);
+        /* a hold 50+ cm over a top already reached forgets it (on only) */
+        r.s.topped = 1, r.s.top_y = r.s.h[1].hit.y - 60;
+        r.in.hand[0].p = (sv_vec3){ -20, 190, 85 };
+        grip(&r, 0, 1);
+        frames(&r, 2);
+        CHECK(r.s.h[0].holding && r.s.topped == !on && r.s.retops == (uint64_t)on, "overhang %d: retop %d (topped %d)", on,
+              (int)r.s.retops, r.s.topped);
+    }
+    /* the mantle: held under the top (the ceiling at the head everywhere: the game's edge keeps him in), the pull
+     * blocked 0.4 s = the blink onto the top, 40 cm in from the edge; without the blink (can_blink 0) nothing */
+    for (int cb = 0; cb < 2; cb++) {
+        rig_t q;
+        rig_init(&q);
+        q.c.overhang = 1, q.c.overhang_cm = 0.001f; /* (no out step: the edge keeps him) */
+        q.in.can_blink = cb;
+        q.body.y = 60, q.ceil_y = 235;              /* the head at 230, the top (300) 70 cm over it */
+        q.in.hand[1].p = (sv_vec3){ 20, 235, 85 }; /* the hold 5 cm under the top */
+        grip(&q, 1, 1);
+        frames(&q, 2);
+        CHECK(q.s.active && q.s.h[1].holding && q.s.h[1].edge && q.s.h[1].top_found, "mantle %d: the edge hold", cb);
+        int f = 0, blink = 0;
+        for (; f < 60 && !blink; f++) hand_move(&q, 1, 0, -2, 0), rig_frame(&q), blink = q.o.blink;
+        if (cb)
+            CHECK(blink && q.s.mantles == 1 && q.s.phase == SOMVR_CLIMB_PH_BLINK && (q.o.events2 & SOMVR_CLIMB_E_MANTLE) &&
+                      NEAR(q.o.blink_to.y, 300 + 102 + 5, 1e-3) && NEAR(q.o.blink_to.z, 140, 1.0) && f >= 36 && f <= 42,
+                  "mantle: after %d frames, to %g %g %g", f, q.o.blink_to.x, q.o.blink_to.y, q.o.blink_to.z);
+        else
+            CHECK(!blink && q.s.mantles == 0 && q.s.phase == SOMVR_CLIMB_PH_HOLD, "no blink: no mantle (%d)", blink);
+        if (cb) printf("mantle: the blink after %d frames of the pull (0.4 s at 90 Hz)\n", f);
+    }
+    /* a hold under the eyes: a blocked up move is no lip (the capsule's top against something else) */
+    rig_t r;
+    rig_init(&r);
+    r.c.overhang = 1;
+    r.ceil_y = 175, r.ceil_reach = 40;
+    r.in.hand[1].p = (sv_vec3){ 20, 150, 85 };
+    grip(&r, 1, 1);
+    frames(&r, 2);
+    for (int i = 0; i < 20; i++) hand_move(&r, 1, 0, -2, 0), rig_frame(&r);
+    CHECK(NEAR(r.moved.z, 0, 1e-4) && r.s.oh_steps == 0, "a hold under the eyes: no overhang step (out %g)", -r.moved.z);
+}
+
 int main(void) {
     test_pieces();
     test_size();
@@ -1981,6 +2052,7 @@ int main(void) {
     test_fling();
     test_descent();
     test_edge();
+    test_overhang();
     g_desc_all = 1, g_deep = 1; /* the climbs up with descent on: the same answers (the ground 50 m down for A) */
     test_push();
     test_sequence();

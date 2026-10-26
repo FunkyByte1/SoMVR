@@ -65,5 +65,8 @@ void somvr_crouch_hold_init(somvr_crouch_hold *h);
 /* One input tick: edge = the duck's (somvr_crouch_step, 0 none), button = the right stick's pulse this tick (1),
  * ducked = the duck's state. Returns 1 = the stealth command held this tick. */
 int somvr_crouch_hold_step(somvr_crouch_hold *h, int edge, int button, int ducked);
+/* Build 15b (SOMVR_SLOTS_STEALTH): stand up as the button would while held (the duck holds nothing until its next
+ * start), not counted as a toggle: the player's sword draw ends the stealth crouch. Returns 1 = it was held. */
+int somvr_crouch_hold_release(somvr_crouch_hold *h, int ducked);
 
 #endif

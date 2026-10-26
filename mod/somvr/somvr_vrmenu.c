@@ -315,7 +315,8 @@ static const vm_ctl_line g_ctl[] = {
     {"Climb", "grip, pull; fling up", SOMVR_VMA_FLING, 0, 0}, /* build 13: let go mid-pull = the fling */
     {"Drop", "A (on a wall)", 0, SOMVR_VMA_DESCENT, 0},
     {"Drop", "A (wall, edge)", SOMVR_VMA_DESCENT, 0, 0}, /* build 13: A at an edge over a 4 m drop = the blink down */
-    {"Bow", "hold left trigger", 0, 0, 0},               /* build 11 (SOMVR_BOW): Swing/Crouch made room */
+    {"Bow", "hold left trigger", 0, SOMVR_VMA_BOWSLOT, 0}, /* build 11 (SOMVR_BOW): Swing/Crouch made room */
+    {"Bow", "L grip at L shoulder", SOMVR_VMA_BOWSLOT, 0, 0}, /* build 15b: SOMVR_BOW_DRAW=slot */
     {"Shoot", "R grip, pull, let go", 0, 0, 0},
     {"Grab", "L grip at orc's head", SOMVR_VMA_VERBS, 0, 0}, /* build 13: the notes say what a held orc does */
     {"Execute", "R trigger + hard hit", SOMVR_VMA_VERBS, 0, 0}, /* build 12's note; a line with the verbs' notes */

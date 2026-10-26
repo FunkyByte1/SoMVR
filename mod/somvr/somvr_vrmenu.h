@@ -84,6 +84,8 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
     /* build 14 candidate (the story drill's round 2): SOMVR_USE=1: "Use: B (pick, missions)"; Menu and Pause one line,
      * so Sprint stays with the crouch (the timed objectives want the left stick's click) */
     SOMVR_VMA_USE = 1048576u,
+    /* build 15b: SOMVR_BOW_DRAW=slot: "Bow: L grip at L shoulder" (the left trigger is a grab) */
+    SOMVR_VMA_BOWSLOT = 2097152u,
 };
 /* the practice page's requests (somvr_vrmenu_shared.practice; = somvr_practice.h's SOMVR_PRA_*) */
 enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_SPAWN = 3, SOMVR_VMPR_REMOVE = 4 };

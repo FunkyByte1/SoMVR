@@ -83,3 +83,9 @@ int somvr_crouch_hold_step(somvr_crouch_hold *h, int edge, int button, int ducke
     }
     return h->latched || (ducked && !h->duck_off);
 }
+
+int somvr_crouch_hold_release(somvr_crouch_hold *h, int ducked) {
+    int held = h->latched || (ducked && !h->duck_off);
+    if (held) h->latched = 0, h->duck_off = ducked;
+    return held;
+}

@@ -33,11 +33,23 @@
  *   press toggles. 243 is no longer sent for Y. The flag is read as the step module reads it (st_vision); unreadable: the
  *   taps go on press and release regardless. 122 is on the deny list: our tap passes as the phase's does (allow_cmd).
  *
+ * SOMVR_LOAD_VOICES=game|off (default game = nothing; build 15b, re-xr-pipeline.md 47) - the voices of a loading screen
+ *   (session 2026-10-26 mark 11: "The voices I hear in the loading screen are kind of weird ... You might just want to
+ *   turn them off"; the game's LoadingNarration database records, played by its narrator emitter). off: through a load
+ *   on flat frames (the session's SOMVR_SSM_LOAD state - interface state 3, no menu, paused - with no stereo frame for
+ *   LV_STILL_S: the pause menu and the map share the state but render stereo) the game's dialogue volume, the global
+ *   RTPC "options_dialog" (the Sound options' Dialogue slider, GameOptions +0x194, FUN_00cbe980 at 0xcbea06), is sent
+ *   as 0 through GO_RTPC's original (and a set of the game's during it is held at 0); at the load's end (the state
+ *   left or stereo frames again) the game's own last value goes back. Music, sound effects and master are untouched;
+ *   the game's options, profile and save are never written. Its value is known from the game's own set (its start's
+ *   FUN_00cbe980 passes our wrapper): not seen yet = no mute (logged).
+ *
  * Trigger words: "gameopts" (a state line), "hints game|log|off" (live). Fail soft: a site mismatch = that part off,
  * nothing patched. */
 
-/* GAMEOPTS_SITES_BEGIN (check_sites.py counts this block on its own. Patched with SOMVR_MUSIC: GO_RTPC = CSoundMgr's
- * slot 22 (the context slots 21 and 22 only: SOMVR_AUDIO=head has already written slot 23 when go_start checks it,
+/* GAMEOPTS_SITES_BEGIN (check_sites.py counts this block on its own. Patched with SOMVR_MUSIC or
+ * SOMVR_LOAD_VOICES=off: GO_RTPC = CSoundMgr's slot 22 (the context slots 21 and 22 only: SOMVR_AUDIO=head has
+ * already written slot 23 when go_start checks it,
  * headless run 175859; AUDIO's own context covers slot 22, so AUDIO installs first, in install_all, before go_start);
  * with SOMVR_HINTS=log|off: GO_HINT / GO_TUTORIAL /
  * GO_PROMPT = slot 2 of the three CUIHUDTextManager delegates' vtables (the context: slots 0..3). Read only: GO_OPTIONS
@@ -62,7 +74,9 @@ static const struct site_spec *g_go_sites = g_go_sites_game; /* selftest: stand-
 static struct { uintptr_t snd_pp; uintptr_t opt_music; } g_gog = { 0x466afa8, 0x190 };
 #define GO_SND_GET 0x68     /* the holder's vf: the sound manager */
 #define GO_MUSIC "options_music"
+#define GO_DIALOG "options_dialog" /* SOMVR_LOAD_VOICES: FUN_00cbe980's `movss xmm0, [rbx+0x194]; mov esi, 0x3535999` */
 #define GO_SLOT_RTPC 0xb0   /* the sound manager's SetRTPC (slot 22) */
+#define LV_STILL_S 0.25     /* SOMVR_LOAD_VOICES: no stereo frame for this long in the load's state = a load */
 
 enum { GO_HINTS_GAME, GO_HINTS_LOG, GO_HINTS_OFF };
 static const char *const g_go_hint_w[] = { "game", "log", "off" };
@@ -89,6 +103,16 @@ static struct {
 	float mu_applied;            /* the value we last sent (logs) */
 	_Atomic uint64_t n_rtpc, n_music, n_ours, n_other_opts;
 	_Atomic uint32_t mu_lines, other_lines;
+	int rtpc_on;                 /* GO_RTPC installed (SOMVR_MUSIC or SOMVR_LOAD_VOICES=off; mu_orig is its original) */
+	int lv_want, lv_on;          /* SOMVR_LOAD_VOICES=off asked; and GO_RTPC installed */
+	_Atomic int lv_muted;        /* a load's mute is on: the game's options_dialog sets are held at 0 */
+	_Atomic uint32_t lv_game;    /* the game's last options_dialog (float bits), valid with lv_have */
+	_Atomic int lv_have;
+	_Atomic uintptr_t lv_snd;    /* the sound manager the game called it on */
+	_Atomic uint64_t n_lv_held;  /* the game's own sets held at 0 during a mute */
+	uint64_t lv_ns, n_lv_loads, n_lv_unknown; /* the stereo frame count at the last tick; mutes; loads not muted */
+	double lv_ns_t, lv_t0, lv_s; /* when the count last moved; the mute's start; seconds muted in all */
+	int lv_unknown;              /* this load was logged as not muted (the game's value unknown) */
 	_Atomic int hint_mode;       /* GO_HINTS_* (the word changes it live) */
 	int hint_want;               /* SOMVR_HINTS asked hooks (log|off) */
 	int hi_ok[GO_EV_N];          /* that delegate's slot installed */
@@ -134,7 +158,18 @@ __attribute__((used)) uint64_t somvr_w_gortpc(void *snd, const char *name, float
 	atomic_fetch_add_explicit(&g_go.n_rtpc, 1, memory_order_relaxed);
 	/* the name read as the original reads it (a literal of the caller's): no syscall on this busy path */
 	int opt = name && name[0] == 'o' && !strncmp(name, "options_", 8), music = opt && !strcmp(name + 8, GO_MUSIC + 8);
-	if (!music) {
+	if (opt && g_go.lv_on && !strcmp(name + 8, GO_DIALOG + 8)) { /* SOMVR_LOAD_VOICES: its value kept, held during a load */
+		go_setf(&g_go.lv_game, v);
+		atomic_store_explicit(&g_go.lv_snd, (uintptr_t)snd, memory_order_relaxed);
+		atomic_store_explicit(&g_go.lv_have, 1, memory_order_release);
+		if (atomic_load_explicit(&g_go.lv_muted, memory_order_relaxed)) {
+			atomic_fetch_add_explicit(&g_go.n_lv_held, 1, memory_order_relaxed);
+			if (atomic_fetch_add_explicit(&g_go.other_lines, 1, memory_order_relaxed) < 12)
+				logf_("LOADVOICES the game sets options_dialog %.3f during a load: 0 sent (its value back after the load)", v);
+			return ((go_rtpc_fn)g_go.mu_orig)(snd, name, 0.0f);
+		}
+	}
+	if (!music || !g_go.mu_on) {
 		if (opt) {
 			atomic_fetch_add_explicit(&g_go.n_other_opts, 1, memory_order_relaxed);
 			if (atomic_fetch_add_explicit(&g_go.other_lines, 1, memory_order_relaxed) < 12) {
@@ -218,9 +253,50 @@ static int go_music_target(float *game, void **snd, const char **from)
 	return 1;
 }
 
+/* SOMVR_LOAD_VOICES=off (the input tick, game thread): a load on flat frames = options_dialog 0, its end = the game's
+ * own value back (see the top) */
+static void lv_tick(double t)
+{
+	if (!g_go.lv_on)
+		return;
+	uint64_t ns = atomic_load_explicit(&g_sh.n_stereo, memory_order_relaxed);
+	if (ns != g_go.lv_ns || !(g_go.lv_ns_t > 0))
+		g_go.lv_ns = ns, g_go.lv_ns_t = t;
+	int state = g_inp.on && g_inp.ifs == 3 && g_inp.menus == 0 && g_inp.paused == 1;
+	int load = state && t - g_go.lv_ns_t >= LV_STILL_S, muted = atomic_load_explicit(&g_go.lv_muted, memory_order_relaxed);
+	if (!load)
+		g_go.lv_unknown = 0;
+	if (load == muted)
+		return;
+	if (!atomic_load_explicit(&g_go.lv_have, memory_order_acquire)) { /* (only a load gets here: muted needs it) */
+		if (!g_go.lv_unknown)
+			g_go.lv_unknown = 1, g_go.n_lv_unknown++,
+			logf_("LOADVOICES t=%.3f a load, but the game's options_dialog was not seen yet: its voices stay", t);
+		return;
+	}
+	void *snd = (void *)atomic_load_explicit(&g_go.lv_snd, memory_order_relaxed);
+	if (load) {
+		atomic_store_explicit(&g_go.lv_muted, 1, memory_order_relaxed);
+		float game = go_f(&g_go.lv_game);
+		uint64_t r = ((go_rtpc_fn)g_go.mu_orig)(snd, GO_DIALOG, 0.0f);
+		g_go.lv_t0 = t, g_go.n_lv_loads++;
+		logf_("LOADVOICES t=%.3f a load (interface state 3, no menu, paused, no stereo frame for %.2f s): options_dialog 0 "
+		      "sent (the game's %.3f; result %llu): the loading screen's voices off; music and sound effects untouched",
+		      t, t - g_go.lv_ns_t, game, (unsigned long long)r);
+		return;
+	}
+	atomic_store_explicit(&g_go.lv_muted, 0, memory_order_relaxed);
+	float game = go_f(&g_go.lv_game);
+	uint64_t r = ((go_rtpc_fn)g_go.mu_orig)(snd, GO_DIALOG, game);
+	g_go.lv_s += t - g_go.lv_t0;
+	logf_("LOADVOICES t=%.3f the load ended after %.1f s (%s): options_dialog %.3f sent back (the game's own; result %llu)",
+	      t, t - g_go.lv_t0, !state ? "its state left" : "stereo frames again", game, (unsigned long long)r);
+}
+
 /* the input tick (game thread): a menu change or the start's share applied once the game's value is known */
 static void go_tick(double t)
 {
+	lv_tick(t); /* SOMVR_LOAD_VOICES */
 	if (!g_go.mu_on || !g_go.mu_dirty || t < g_go.next_tick)
 		return;
 	g_go.next_tick = t + 0.25;
@@ -328,7 +404,8 @@ static const char *go_word(const char *w)
 	}
 	logf_("GAMEOPTS t=%.3f music: %s, share %.0f%%, the game's options_music %.3f (%s), sets %llu (ours %llu), RTPC calls "
 	      "%llu; hints: %s, combat hints %llu (shown %llu, dropped %llu), tutorials %llu (%llu, %llu), prompts %llu (%llu); "
-	      "the wraith vision %s", mono(), g_go.mu_on ? "on" : "off", go_f(&g_go.mu_share) * 100, go_f(&g_go.mu_game),
+	      "the wraith vision %s; load voices %s (loads muted %llu, not known %llu, muted now %d, the game's sets held %llu)",
+	      mono(), g_go.mu_on ? "on" : "off", go_f(&g_go.mu_share) * 100, go_f(&g_go.mu_game),
 	      atomic_load(&g_go.mu_have) ? "seen" : "not seen yet", (unsigned long long)atomic_load(&g_go.n_music),
 	      (unsigned long long)atomic_load(&g_go.n_ours), (unsigned long long)atomic_load(&g_go.n_rtpc),
 	      g_go_hint_w[atomic_load(&g_go.hint_mode)], (unsigned long long)atomic_load(&g_go.n_ev[GO_EV_HINT]),
@@ -337,7 +414,9 @@ static const char *go_word(const char *w)
 	      (unsigned long long)atomic_load(&g_go.n_show[GO_EV_TUTORIAL]),
 	      (unsigned long long)atomic_load(&g_go.n_drop[GO_EV_TUTORIAL]), (unsigned long long)atomic_load(&g_go.n_ev[GO_EV_PROMPT]),
 	      (unsigned long long)atomic_load(&g_go.n_show[GO_EV_PROMPT]),
-	      st_vision() == 1 ? "on" : st_vision() == 0 ? "off" : "unread (the step module's sites)");
+	      st_vision() == 1 ? "on" : st_vision() == 0 ? "off" : "unread (the step module's sites)",
+	      g_go.lv_on ? "off" : "game", (unsigned long long)g_go.n_lv_loads, (unsigned long long)g_go.n_lv_unknown,
+	      atomic_load(&g_go.lv_muted), (unsigned long long)atomic_load(&g_go.n_lv_held));
 	return "gameopts";
 }
 
@@ -369,7 +448,9 @@ static void go_start(const struct site_spec *sites, int *bad)
 		logf_("CONFIG vision=%s (SOMVR_VISION: Y %s the wraith vision with taps of CombatSecondary01 122, PC_WraithPing's "
 		      "toggle; VisionModeToggle 243 no longer sent for Y)", vis_w[g_go.vis_mode],
 		      g_go.vis_mode == 1 ? "held shows" : "pressed toggles");
-	if (!g_go.mu_want && g_go.hint_want == GO_HINTS_GAME)
+	static const char *const lv_w[] = { "game", "off" };
+	g_go.lv_want = env_word("SOMVR_LOAD_VOICES", lv_w, 2, 0) == 1;
+	if (!g_go.mu_want && !g_go.lv_want && g_go.hint_want == GO_HINTS_GAME)
 		return;
 	int ok[GOS_N];
 	char why[512];
@@ -380,9 +461,16 @@ static void go_start(const struct site_spec *sites, int *bad)
 			      (unsigned long)sites[i].target, why);
 	}
 	g_go.ok_apply = ok[GOS_APPLY], g_go.ok_opts = ok[GOS_OPTIONS], g_go.ok_name = ok[GOS_RECNAME];
+	if ((g_go.mu_want || g_go.lv_want) && ok[GOS_RTPC])
+		g_go.rtpc_on = go_slot(&sites[GOS_RTPC], (void *)somvr_w_gortpc, &g_go.mu_orig);
+	if (g_go.lv_want) {
+		g_go.lv_on = g_go.rtpc_on;
+		logf_("CONFIG load_voices=off (SOMVR_LOAD_VOICES: through a load on flat frames the game's options_dialog RTPC "
+		      "is sent as 0, its own value back after the load; music, sound effects, master untouched; nothing of the "
+		      "game's options or save written): %s", g_go.lv_on ? "on" : "off: GO_RTPC did not match or not written");
+	}
 	if (g_go.mu_want) {
-		if (ok[GOS_RTPC])
-			g_go.mu_on = go_slot(&sites[GOS_RTPC], (void *)somvr_w_gortpc, &g_go.mu_orig);
+		g_go.mu_on = g_go.rtpc_on;
 		g_go.mu_dirty = g_go.mu_on && g_go.mu_env != 1.0f; /* the start's share, once the game's value is known */
 		logf_("CONFIG music=%.2f (SOMVR_MUSIC: the game's options_music RTPC x %.2f at every set; the VR menu's Music "
 		      "row changes it live; sound effects, dialogue, master untouched; nothing of the game's options or save "
@@ -411,6 +499,11 @@ static void go_end_log(void)
 	if (g_go.vis_mode)
 		logf_("VISION END Y presses %llu, taps %llu, refused %llu", (unsigned long long)g_go.n_vis_press,
 		      (unsigned long long)g_go.n_vis_tap, (unsigned long long)g_go.n_vis_refused);
+	if (g_go.lv_on)
+		logf_("LOADVOICES END loads muted %llu (%.1f s in all), not known %llu, the game's sets held %llu; %s",
+		      (unsigned long long)g_go.n_lv_loads, g_go.lv_s, (unsigned long long)g_go.n_lv_unknown,
+		      (unsigned long long)atomic_load(&g_go.n_lv_held),
+		      atomic_load(&g_go.lv_muted) ? "MUTED at the end (the game's own value not sent back)" : "not muted at the end");
 	if (!g_go.mu_on && !g_go.hi_ok[0] && !g_go.hi_ok[1] && !g_go.hi_ok[2])
 		return;
 	logf_("GAMEOPTS END music %s: share %.0f%%, options_music set by the game %llu times (last %.3f), by the menu %llu "

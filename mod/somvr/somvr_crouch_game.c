@@ -46,6 +46,8 @@ static struct {
 	double try_until, watch_until, watch_next;
 	uint64_t frames, ticks, held_ticks, buttons, game_downs, game_ups, cues, seated_frames, caps;
 	uint32_t lines;
+	double held_t;            /* build 15b: the last tick with the stealth command held (cr_sword_draw) */
+	uint64_t sword_ups;       /* ... the stealth crouch stood up for the sword's draw */
 } g_cr;
 static _Atomic uint32_t g_cr_status_seq, g_cr_press_seq, g_cr_press_ticks, g_cr_hold_seq, g_cr_hold_ms, g_cr_stand_seq,
 	g_cr_try_seq, g_cr_try_cmd, g_cr_try_ms;
@@ -199,7 +201,32 @@ static void cr_tick(sc_tick_out *o, double t)
 		g_cr.press_ticks--;
 	g_cr.held = (want && may) || (word && world);
 	if (g_cr.held)
-		cr_add(o, CR_CMD), g_cr.held_ticks++;
+		cr_add(o, CR_CMD), g_cr.held_ticks++, g_cr.held_t = t;
+}
+
+/* SOMVR_SLOTS_STEALTH=on (build 15b; the slots' sword draw, game thread): our stealth crouch is PC_Stealth, which makes
+ * Acharn (slot 1) the active item and sheathes the sword (PC_SheathMeleeToStealth): build 15's headset session drew
+ * nothing after the bow ("another weapon is active", DENIED) while the right stick's crouch was latched, and Acharn
+ * hung in Talion's hidden hand. 1 = the dagger's slot is our crouch's (held now, let go within CR_SWORD_S, or Talion
+ * still down by the read-back); release: the hold let go as the button would (a duck holds nothing until its next
+ * start; the test words' hold ends too), logged */
+#define CR_SWORD_S 1.5
+static int cr_sword_draw(double t, int release)
+{
+	if (g_cr.mode == CR_OFF && !g_cr.held)
+		return 0;
+	int want = g_cr.mode != CR_OFF && (g_cr.h.latched || (g_cr.ducked && !g_cr.h.duck_off));
+	int ours = g_cr.held || want || (g_cr.held_t > 0 && t - g_cr.held_t < CR_SWORD_S) || (g_cr.game > 0 && g_cr.held_t > 0);
+	if (ours && release && (want || g_cr.held)) {
+		somvr_crouch_hold_release(&g_cr.h, g_cr.ducked);
+		g_cr.press_ticks = 0, g_cr.hold_until = 0;
+		g_cr.sword_ups++;
+		if (g_cr.lines++ < 200)
+			logf_("CROUCH sword t=%.3f: the stealth crouch let go for the sword's draw (PC_Stealth holds Acharn's slot; "
+			      "the duck %s; %llu so far)", t, g_cr.ducked ? "on: it holds nothing until its next start" : "off",
+			      (unsigned long long)g_cr.sword_ups);
+	}
+	return ours;
 }
 
 /* lo_pm (the LOCO tick): the crouched walk at most SOMVR_CROUCH_CMS (the stick's walk band) */
@@ -294,10 +321,10 @@ static void cr_end_log(void)
 {
 	logf_("CROUCH END mode=%s frames %llu (seated %llu) ticks %llu; the standing height %.1f (measured %llu, rose %llu); "
 	      "ducks on %llu off %llu, tracking jumps %llu; held ticks %llu, the button %llu; Talion down %llu up %llu; cues "
-	      "%llu; speed caps %llu", g_cr_mode_w[g_cr.mode], (unsigned long long)g_cr.frames,
+	      "%llu; speed caps %llu; stood up for the sword %llu", g_cr_mode_w[g_cr.mode], (unsigned long long)g_cr.frames,
 	      (unsigned long long)g_cr.seated_frames, (unsigned long long)g_cr.ticks, g_cr.s.stand,
 	      (unsigned long long)g_cr.s.stands, (unsigned long long)g_cr.s.rises, (unsigned long long)g_cr.s.ons,
 	      (unsigned long long)g_cr.s.offs, (unsigned long long)g_cr.s.jumps, (unsigned long long)g_cr.held_ticks,
 	      (unsigned long long)g_cr.buttons, (unsigned long long)g_cr.game_downs, (unsigned long long)g_cr.game_ups,
-	      (unsigned long long)g_cr.cues, (unsigned long long)g_cr.caps);
+	      (unsigned long long)g_cr.cues, (unsigned long long)g_cr.caps, (unsigned long long)g_cr.sword_ups);
 }

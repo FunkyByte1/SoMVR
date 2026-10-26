@@ -181,6 +181,15 @@ static void test_hold(void) {
               somvr_crouch_hold_step(&h, 1, 0, 1),
           "up by the button, the stand, the next duck: held");
     CHECK(h.toggles == 6, "the button's toggles counted (%llu)", (unsigned long long)h.toggles);
+    /* build 15b: the sword's draw stands him up (as the button while held; not a toggle) */
+    somvr_crouch_hold_init(&h);
+    somvr_crouch_hold_step(&h, 0, 1, 0);
+    CHECK(somvr_crouch_hold_release(&h, 0) && !somvr_crouch_hold_step(&h, 0, 0, 0) && h.toggles == 1,
+          "the release: a latched crouch up, no toggle");
+    CHECK(!somvr_crouch_hold_release(&h, 0), "the release while up: nothing");
+    CHECK(somvr_crouch_hold_step(&h, 1, 0, 1) && somvr_crouch_hold_release(&h, 1) && !somvr_crouch_hold_step(&h, 0, 0, 1),
+          "the release while ducked: up, stays up while ducked");
+    CHECK(!somvr_crouch_hold_step(&h, -1, 0, 0) && somvr_crouch_hold_step(&h, 1, 0, 1), "the next duck holds again");
 }
 
 int main(void) {

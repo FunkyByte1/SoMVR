@@ -712,10 +712,10 @@ static uintptr_t hp_weapon_model(uintptr_t go, double t)
 }
 
 /* the put-away weapons' nodes into the set (their main renderable and any part slots); how many went in */
-static int hp_add_weapons(somvr_hp_set *s, double t)
+static int hp_add_weapons(somvr_hp_set *s, double t, int body_hidden)
 {
 	uintptr_t wo[6];
-	int nwo = sl_away_objs(wo, 6), nw = 0;
+	int nwo = sl_away_objs(wo, 6, body_hidden), nw = 0;
 	for (int i = 0; i < nwo; i++) {
 		uintptr_t wm = hp_weapon_model(wo[i], t), rend[SOMVR_HP_SLOTS], mr = wm ? peek_ptr(wm + SM_MAIN) : 0;
 		int got = 0;
@@ -982,7 +982,7 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 	}
 	double t = mono();
 	if (g_hp.slots >> SOMVR_HP_MAIN & 1) {
-		int nw = hp_add_weapons(&s, t);
+		int nw = hp_add_weapons(&s, t, main_node && g_hp_main_hid == frame);
 		if (nw != g_hp.n_weap) {
 			logf_("HEADPARTS t=%.3f frame=%llu put-away weapons not drawn in the eyes: %d node(s) (was %d)", t,
 			      (unsigned long long)frame, nw, g_hp.n_weap);

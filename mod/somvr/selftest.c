@@ -5698,11 +5698,17 @@ static void climb_tests(void)
 	g_clw.honor_cb = 1;
 	cl_frames(3);
 	EXPECT(!strcmp(cl_word("probe"), "climb probe") &&
-		       !strcmp(cl_word("prob"), "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw game|ours: "
-						"ignored)") &&
+		       !strcmp(cl_word("prob"), "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw game|ours, "
+						"overhang on|off: ignored)") &&
 		       !strcmp(cl_word("probe down"), "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw "
-						      "game|ours: ignored)"),
+						      "game|ours, overhang on|off: ignored)"),
 	       "climb: the probe word");
+	float oh0 = g_cl.cfg.overhang; /* build 15b's test aid: SOMVR_CLIMB_OVERHANG live */
+	EXPECT(!strcmp(cl_word("overhang on"), "climb overhang on") && g_cl.cfg.overhang == 1.0f &&
+		       !strcmp(cl_word("overhang off"), "climb overhang off") && g_cl.cfg.overhang == 0.0f &&
+		       log_has("overhang on (the trigger word, a test aid)"),
+	       "climb: the overhang word");
+	g_cl.cfg.overhang = oh0;
 	uint64_t pc0 = g_cl.casts;
 	iframe();
 	EXPECT(log_has("CLIMB probe t=") && log_has("at head +0 cm: bearing (deg, + = right) = the distance (cm): +0=50C +30=58C "
@@ -9794,6 +9800,32 @@ static void slots_tests(void)
 		       log_has("the draw call refused: another weapon is active") && log_has("sword: DENIED"),
 	       "slots: the dagger active: sheathed %d denied %llu", sl_sheathed(), (unsigned long long)g_sl.s.denied[0]);
 	sl_grip(SOMVR_HAND_R, 0), sl_set_slot(0), sl_away(SOMVR_HAND_R), bframes(2, 0);
+	/* ... build 15b (SOMVR_SLOTS_STEALTH=on): Acharn's slot from our stealth crouch (the stick's latch, PC_Stealth):
+	 * the crouch stands up, melee activated, the sword drawn; put back after */
+	g_sl.stealth = 1;
+	int crm0 = g_cr.mode, crh0 = g_cr.held;
+	somvr_crouch_hold crhold0 = g_cr.h;
+	double crt0 = g_cr.held_t;
+	g_cr.mode = CR_BUTTON, g_cr.h.latched = 1, g_cr.held = 1;
+	sl_set_slot(SL_SLOT_DAGGER), sl_at_sword(), bframe(0);
+	act0 = g_slt.activates;
+	sl_grip(SOMVR_HAND_R, 1), bframe(0);
+	memcpy(&slot, g_bwinv + BO_INV_SLOT, 4);
+	EXPECT(g_slt.activates == act0 + 1 && slot == 0 && !sl_sheathed() && !g_cr.h.latched && g_sl.stealth_draws == 1 &&
+		       log_has("CROUCH sword t=") && log_has("the stealth crouch let go for the sword's draw"),
+	       "slots stealth: the draw from the crouch's Acharn: activations %d slot %u sheathed %d latched %d",
+	       g_slt.activates - act0, slot, sl_sheathed(), g_cr.h.latched);
+	sl_grip(SOMVR_HAND_R, 0), bframe(0), sl_grip(SOMVR_HAND_R, 1), bframe(0), sl_grip(SOMVR_HAND_R, 0), bframe(0);
+	EXPECT(sl_sheathed(), "slots stealth: not put back after the draw");
+	/* ... Acharn's slot without our crouch (a kill): still refused */
+	g_cr.held = 0, g_cr.held_t = 0, g_cr.game = 0;
+	sl_set_slot(SL_SLOT_DAGGER);
+	act0 = g_slt.activates;
+	sl_grip(SOMVR_HAND_R, 1), bframes(50, 0);
+	EXPECT(sl_sheathed() && g_slt.activates == act0, "slots stealth: a kill's Acharn activated melee (%d)",
+	       g_slt.activates - act0);
+	sl_grip(SOMVR_HAND_R, 0), sl_set_slot(0), sl_away(SOMVR_HAND_R), bframes(2, 0);
+	g_cr.mode = crm0, g_cr.held = crh0, g_cr.h = crhold0, g_cr.held_t = crt0, g_sl.stealth = 0;
 	/* 10. Acharn: the left hand at the hip, a squeeze: its entries' InactiveNode -> L_Weapon and the re-attach; again:
 	 * the saved hashes back and the re-attach */
 	int ra0 = g_slt.reattaches;
@@ -12300,7 +12332,9 @@ static void bd_tests(void)
 	g_bd.test = 1;
 	EXPECT(!strcmp(bd_word("test R 20 -30 40 0 0 0"), "hands test") && !strcmp(bd_word("squeeze L 0.8"), "hands squeeze") &&
 		       !strcmp(bd_word("cal R 0 0 0 0 0 0"), "hands cal") &&
-		       !strcmp(bd_word("test Q 1 2 3"), "hands (not test|swing|squeeze|draw|cal|hide|angle: ignored)"),
+		       !strcmp(bd_word("test Q 1 2 3"), "hands (not test|swing|noise|squeeze|draw|cal|hide|angle: ignored)") &&
+		       !strcmp(bd_word("noise 0.1 0.5"), "hands noise") && !strcmp(bd_word("noise 9 1"),
+		       "hands noise (not DEG 0..5 MM 0..20: ignored)") && !strcmp(bd_word("noise 0 0"), "hands noise"),
 	       "the test words");
 	float yaw = 0.6f; /* the head turned 34 deg left (OpenXR: about +Y) */
 	for (int e = 0; e < 2; e++) {
@@ -13415,6 +13449,59 @@ static void go_tests(void)
 	       "SOMVR_VISION: hold/tap taps %d %d %d %d %d %d, 243 %d", n122[0], n122[1], n122[2], n122[3], n122[4], n122[5], n243);
 	g_step.ok_vis = ok_vis, g_inp.allow_cmd = inp_allow;
 	unsetenv("SOMVR_VISION");
+	/* SOMVR_LOAD_VOICES=off (build 15b): options_dialog 0 through a load on flat frames (the state 3/0/paused with no
+	 * stereo frame for LV_STILL_S), the game's own value back after; the pause menu (stereo frames) is no load; the
+	 * game's set during a load held at 0; music passes unchanged without SOMVR_MUSIC */
+	go_stand_ins();
+	unsetenv("SOMVR_MUSIC"), unsetenv("SOMVR_HINTS");
+	setenv("SOMVR_LOAD_VOICES", "off", 1);
+	go_start(g_gos, &bad);
+	EXPECT(!bad && g_go.lv_on && !g_go.mu_on && g_go_vt_snd[22] == (void *)somvr_w_gortpc && go_vm_avail() == 0 &&
+		       log_has("CONFIG load_voices=off") && log_has(": on"),
+	       "load voices on: %d (music %d)", g_go.lv_on, g_go.mu_on);
+	int lv_in = g_inp.on, lv_ifs = g_inp.ifs, lv_menus = g_inp.menus, lv_paused = g_inp.paused;
+	uint64_t lv_ns = atomic_load(&g_sh.n_stereo);
+	g_inp.on = 1, g_inp.ifs = 3, g_inp.menus = 0, g_inp.paused = 1;
+	int lv_n0 = g_go_rtpc_n;
+	go_tick(300.0), go_tick(300.5); /* a load before the game's value was seen: nothing sent */
+	EXPECT(g_go_rtpc_n == lv_n0 && !atomic_load(&g_go.lv_muted) && log_has("options_dialog was not seen yet"),
+	       "a load, the value unknown: %d sent", g_go_rtpc_n - lv_n0);
+	g_inp.paused = 0, go_tick(301.0);
+	((st_go_rtpc_fn)g_go_vt_snd[22])(&g_go_snd, "options_dialog", 0.9f); /* the game's start */
+	EXPECT(!strcmp(g_go_last, "options_dialog") && NEAR(g_go_last_v, 0.9, 1e-6), "the game's dialogue: %g", g_go_last_v);
+	((st_go_rtpc_fn)g_go_vt_snd[22])(&g_go_snd, "options_music", 0.6f);
+	EXPECT(!strcmp(g_go_last, "options_music") && NEAR(g_go_last_v, 0.6, 1e-6), "music unchanged: %g", g_go_last_v);
+	g_inp.paused = 1, lv_n0 = g_go_rtpc_n;
+	for (int k = 0; k < 10; k++) /* the pause menu: its state, stereo frames going on */
+		atomic_fetch_add(&g_sh.n_stereo, 1), go_tick(302.0 + 0.1 * k);
+	go_tick(303.0), go_tick(303.1);
+	EXPECT(g_go_rtpc_n == lv_n0 && !atomic_load(&g_go.lv_muted), "the pause menu or under 0.25 s muted: %d",
+	       g_go_rtpc_n - lv_n0);
+	go_tick(303.2);
+	EXPECT(g_go_rtpc_n == lv_n0 + 1 && atomic_load(&g_go.lv_muted) && !strcmp(g_go_last, "options_dialog") &&
+		       NEAR(g_go_last_v, 0, 1e-6) && log_has("LOADVOICES t=303.200 a load") && log_has("(the game's 0.900"),
+	       "the load's mute: %s %g", g_go_last, g_go_last_v);
+	go_tick(304.0);
+	EXPECT(g_go_rtpc_n == lv_n0 + 1, "the mute sent again");
+	((st_go_rtpc_fn)g_go_vt_snd[22])(&g_go_snd, "options_dialog", 0.8f); /* the game's apply during the load */
+	EXPECT(NEAR(g_go_last_v, 0, 1e-6) && atomic_load(&g_go.n_lv_held) == 1 && log_has("during a load: 0 sent"),
+	       "the game's set held: %g", g_go_last_v);
+	g_inp.paused = 0, go_tick(305.0); /* the world's state: the end */
+	EXPECT(!atomic_load(&g_go.lv_muted) && !strcmp(g_go_last, "options_dialog") && NEAR(g_go_last_v, 0.8, 1e-6) &&
+		       log_has("(its state left): options_dialog 0.800 sent back"),
+	       "back after the load: %s %g", g_go_last, g_go_last_v);
+	g_inp.paused = 1, go_tick(306.0); /* a second load, ended by stereo frames in the same state */
+	EXPECT(atomic_load(&g_go.lv_muted) && NEAR(g_go_last_v, 0, 1e-6), "the second load: %g", g_go_last_v);
+	atomic_fetch_add(&g_sh.n_stereo, 1), go_tick(306.4);
+	EXPECT(!atomic_load(&g_go.lv_muted) && NEAR(g_go_last_v, 0.8, 1e-6) && log_has("(stereo frames again)"),
+	       "the second load's end: %g", g_go_last_v);
+	EXPECT(!strcmp(go_word("gameopts"), "gameopts") && log_has("load voices off (loads muted 2, not known 1, muted now 0"),
+	       "the state line");
+	go_end_log();
+	EXPECT(log_has("LOADVOICES END loads muted 2") && log_has("not muted at the end"), "the END line");
+	g_inp.on = lv_in, g_inp.ifs = lv_ifs, g_inp.menus = lv_menus, g_inp.paused = lv_paused;
+	atomic_store(&g_sh.n_stereo, lv_ns);
+	unsetenv("SOMVR_LOAD_VOICES");
 	/* back to nothing for the rest (the stand-in slots restored first) */
 	go_stand_ins();
 	unsetenv("SOMVR_MUSIC"), unsetenv("SOMVR_HINTS");

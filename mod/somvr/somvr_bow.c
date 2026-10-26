@@ -4,7 +4,7 @@
 #include <math.h>
 #include <string.h>
 
-static const char *const g_end_names[SOMVR_BOW_NEND] = { "none", "apart", "game", "input", "lost", "outside" };
+static const char *const g_end_names[SOMVR_BOW_NEND] = { "none", "apart", "game", "input", "lost", "outside", "slot" };
 static const char *const g_phase_names[4] = { "idle", "aim", "draw", "follow" };
 
 const char *somvr_bow_end_name(int why) { return why >= 0 && why < SOMVR_BOW_NEND ? g_end_names[why] : "?"; }
@@ -24,6 +24,7 @@ void somvr_bow_cfg_default(somvr_bow_cfg *c) {
     c->aim_min_s = 0.25f, c->fire_s = 0.1f, c->wait_s = 0.6f, c->follow_s = 0.4f;
     c->fire_mode = SOMVR_BOW_FIRE_TAP;
     c->idle_ray = SOMVR_BOW_IDLE_BOW;
+    c->idle_nock = 1;
 }
 
 void somvr_bow_init(somvr_bow *s) {
@@ -250,7 +251,7 @@ void somvr_bow_step(somvr_bow *s, const somvr_bow_cfg *c, const somvr_bow_in *in
     switch (s->phase) {
     case SOMVR_BOW_PH_IDLE:
         if (!in->live || !in->allow) break;
-        if (nock_ok) {
+        if (nock_ok && c->idle_nock) {
             enter(s, t, 0, o);
             begin_draw(s, c, t, dist, o);
         } else if (btn_press && vb) {

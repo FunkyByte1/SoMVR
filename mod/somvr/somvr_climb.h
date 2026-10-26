@@ -74,6 +74,22 @@
  *            stops Talion ~64 cm ahead of his root and the floor goes on past it, run 010412). (6) the cue: the walk
  *            stopped (in.walk_blocked) at an edge A would blink down from = E_EDGE_CUE once (somvr.c: a double pulse
  *            on the right hand, A's), again after the walk has gone on for 2 s.
+ *   overhang (overhang > 0; build 15b, re-xr-pipeline.md 47.2: session 165456 mark 8, stuck under a slab sticking out
+ *            ~21 cm over the face, every pull on its top went nowhere) climbing up (not descending), the last request's
+ *            upward part not applied (under half) while the driving hold is over the eyes = the capsule under a lip:
+ *            the blocked part x overhang goes out from the wall (the hold's toward, level, reversed; at most step_cm a
+ *            frame, overhang_cm under one lip until the root has risen OH_RESET_CM past where it began): a pull on the
+ *            lip takes him out round its edge and up, as a climber's body swings out under a roof (the player's own
+ *            pull, redirected; nothing without it). And a new hold more than OH_RETOP_CM over a top already reached (a
+ *            ledge on the way up) forgets that top (E_RETOP): the next one is reached as any (the head over the hold's
+ *            top: push, the edge step under it, over) - the old top's edge-step ceiling and its "over" point would
+ *            else hold him under the new one (the session: the top 2561.6 found in a fling, the slab's at 2811.6).
+ *            Where the game holds him under it all the same (run 174931: the meadow bank's ledge keeps the capsule
+ *            from going out over its edge, as descent's `lip blocked`, so the slab's underside stops every pull): the
+ *            pulls blocked OH_MANTLE_S in all while a hold with a found top 0..OH_MANTLE_UP_CM over the eyes drives =
+ *            the mantle: a floor on that top 40 cm in from its edge (a ray down) with room to stand (a ray up) = the
+ *            descent's blink there (in.can_blink: the practice trip's fade and teleport; phase blink, E_MANTLE): the
+ *            player's own pull finished by a fade, never a move he did not ask for.
  *   end      both hands open with letgo = fall (released), the drop button while holding or hanging (drop), the game not
  *            allowing it any more (somvr.c: FSM not Supported, mounted, third person ...; "stand down"), the input lost
  *            (letgo = fall), the timeout max_s (letgo = fall), a lift that stalls or runs out of time. Every end gives
@@ -149,6 +165,9 @@ enum {                                /* somvr_climb_out.events: what happened t
 enum { /* somvr_climb_out.events2 */
     SOMVR_CLIMB_E_LIP_BLOCKED = 1u << 0, /* descent: the lip step's outward move not applied 3 frames: the game's edge wall */
     SOMVR_CLIMB_E_EDGE_CUE = 1u << 1, /* descent (cue): the walk stopped at an edge A would blink down from */
+    SOMVR_CLIMB_E_RETOP = 1u << 2,    /* overhang: a hold far over the top reached: that top forgotten (a new one ahead) */
+    SOMVR_CLIMB_E_OVERHANG = 1u << 3, /* overhang: the first overhang step under this lip (an up move blocked) */
+    SOMVR_CLIMB_E_MANTLE = 1u << 4,   /* overhang: the pull held under a top it cannot rise past: the blink onto it */
 };
 
 typedef struct {
@@ -213,6 +232,9 @@ typedef struct {
     float blink_out_cm;      /* ... from this far out from the wall (40) */
     float blink_wait_s;      /* the blink's teleport not come this long = the hang (3) */
     float edge_look_cm;      /* A on foot: an edge looked for this far ahead along the view (400; 0: never) */
+    float overhang;          /* the overhang step: an up move blocked under a hold over the head x this goes out from
+                              * the wall (0 off: build 15's; 1 on); with it a hold far over a reached top forgets it */
+    float overhang_cm;       /* ... at most this far out under one lip (40: a slab 21 cm out, the capsule ~40 round) */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -367,6 +389,14 @@ typedef struct {
     float cue_h;        /* the last cue's drop (cm) */
     uint64_t edge_cues;
     uint64_t lips, descents, lip_steps, blinks, bl_short, bl_noground, bl_wet, bl_cannot, bl_waits, edge_blinks, bl_noedge;
+    /* overhang */
+    float oh_cm;        /* the overhang step under this lip so far (0: none; past it by OH_RESET_CM: 0 again) */
+    float oh_y0;        /* the root's height at this lip's first step */
+    double oh_all_cm;   /* the overhang step, in total */
+    uint64_t oh_steps, oh_lips, retops, mantles, mantle_nofloor;
+    float oh_block_s;   /* the pulls' time blocked under a known top (the mantle at OH_MANTLE_S) */
+    sv_vec3 mt_top;     /* the last mantle's top point (the hold's) and its landing floor */
+    sv_vec3 mt_floor;
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
@@ -392,6 +422,7 @@ typedef struct {
     int miss_near[2];       /* with SOMVR_CLIMB_E_MISS: the press was made while climbing or near a surface (the cue) */
     int driver;             /* the driving hand (-1 none) */
     float lip;              /* descent: the lip step's move out in this frame's request (cm) */
+    float overhang;         /* the overhang step's move out from the wall in this frame's request (cm) */
     int blink;              /* descent: start the blink to blink_to (Talion's root at the landing) now */
     sv_vec3 blink_to;
 } somvr_climb_out;

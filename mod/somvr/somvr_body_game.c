@@ -292,6 +292,7 @@ static void bd_test_hands(somvr_hand h[2], int64_t time, int log)
 		d->time = time; /* the locate's time (headless: no controller, so the locate left 0): the blade's clock */
 		d->pose.p[0] = hp[0] + o.x, d->pose.p[1] = hp[1] + o.y, d->pose.p[2] = hp[2] + o.z;
 		sv_quat_to(sv_qnormalize(q), d->pose.q);
+		hsm_test_noise(s, d); /* `hands noise DEG MM`: tracking noise on the test hands (SOMVR_HANDS_SMOOTH's proof) */
 	}
 }
 
@@ -515,9 +516,11 @@ static const char *bd_word(const char *w)
 	if (!g_bd.test)
 		return "hands (SOMVR_HANDS_TEST is off: ignored)";
 	pthread_mutex_lock(&g_bd_mu);
-	const char *what = "hands (not test|swing|squeeze|draw|cal|hide|angle: ignored)";
+	const char *what = "hands (not test|swing|noise|squeeze|draw|cal|hide|angle: ignored)";
 	if (!strcmp(a, "swing")) {
 		what = bd_swing_word(w + 5);
+	} else if (!strcmp(a, "noise")) {
+		what = hsm_noise_word(w + 5);
 	} else if (!strcmp(a, "draw")) {
 		g_bd_req.draw = 1, g_bd_req.seq++, what = "hands draw";
 	} else if (!strcmp(a, "test") && strstr(w, "off")) {
@@ -611,7 +614,8 @@ static void bd_twohand(sa_xf g[2], const int valid[2], const int bowed[2], float
 	in.allow = !bowed[0] && !bowed[1] && !bo_out() && !cl_holds(SA_L) && !sl_dagger_drawn(&g_sl.g) && !fb_third();
 	in.valid[0] = valid[0], in.valid[1] = valid[1];
 	in.g[0] = g[0], in.g[1] = g[1];
-	in.squeeze_l = bd_squeeze(SA_L, (g_inp.st.hand[SA_L].active & SOMVR_HACT_INPUT) ? g_inp.st.hand[SA_L].squeeze : 0);
+	in.squeeze_l = bd_squeeze(SA_L, bo_grab(SA_L, (g_inp.st.hand[SA_L].active & SOMVR_HACT_INPUT) ?
+						 g_inp.st.hand[SA_L].squeeze : 0)); /* SOMVR_BOW_DRAW=slot: or the trigger */
 	in.angle_rad = g_bd.angle_deg * BD_DEG;
 	in.dt = dt;
 	sb_tw_step(&g_bd.tws, &g_bd.tw, &in, &g_bd.two);

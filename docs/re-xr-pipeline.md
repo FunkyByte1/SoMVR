@@ -9715,3 +9715,255 @@ words `practice status ground X Y Z` and `practice status look`, the classes in 
   (look up); A closes the tutorial; the right stick turns the (unseen) object until "Press (X) to play Memory"; X; B,
   B, the menu button. Whether the game's own hint (dropped by SOMVR_HINTS=off) told the player to use the wraith vision.
 - A glyph: whether looking at one in the wraith vision with a real head height collects it.
+
+## 46. The weapons after build 15's headset session: the sword after the bow, the bow off the left trigger (build 15b, 2026-10-26)
+
+Build 15's session (logs/boot-check-20261026-165456, marks #1-#9) ended on "the sword bug wouldn't go away".
+handoff/HANDOFF-weapons15b.md has the marks and the runs; scripts/weapons15b-drive.sh drives them headless.
+
+### 46.1 Why the sword stayed away (#3, #9): the stealth crouch's Acharn
+- The right stick's down press latches the stealth crouch (SOMVR_CROUCH, 41: command 125 held = `PC_Stealth`). The user
+  pressed it while aiming (t=791893, again at 792081). `PC_Stealth` makes **Acharn (slot 1) the active item** and
+  sheathes the sword (`PC_SheathMeleeToStealth`, re-bow.md P9), so the active slot stayed 1 after the bow. Every sword
+  draw was then refused by sl_call ("another weapon is active (not the sword, not the idle bow)", 5 tries, DENIED). That
+  refusal was meant for a kill's Acharn; sl_call activated melee only from the bow's slot 2.
+- **The "sword floating in the middle of me" was Acharn** (mark #9's picture: the broken blade). The active item hangs
+  on R_Weapon in Talion's hidden hand. sl_away_objs only hid a put-away Acharn, never the active one.
+- Reproduced headless before the fix (boot 171947, round 3: refused x5, DENIED).
+
+### 46.2 `SOMVR_SLOTS_STEALTH=off|on` (default off = build 15)
+- A sword draw (the player's, or the slots' restore after the bow) with Acharn's slot active and not in the left hand,
+  while our crouch holds the stealth (held now, let go within 1.5 s, or Talion still down by the read-back:
+  cr_sword_draw): the crouch stands up as the button would (somvr_crouch_hold_release: the latch off; a duck holds
+  nothing until its next start), melee is activated (FUN_02315ca0, as for the bow's slot), then the draw. Lines
+  `CROUCH sword t=...: the stealth crouch let go for the sword's draw`, the SLOTS draw "(active slot 1, melee activated
+  first ...)"; SLOTS END counts "from the stealth crouch's Acharn", CROUCH END "stood up for the sword". If Acharn's
+  slot is not from our crouch (a kill), the draw is still refused as before (selftest).
+- The active Acharn not in our hand is not drawn in the eyes while the body is hidden (hp_add_weapons passes
+  body_hidden; HEADPARTS "put-away weapons ... 2 node(s)" stays 2 through the crouch).
+- Boot 172931 (the trigger bow, build 16's env): 4 bow rounds (plain; a nock and let-down; the stick's crouch while
+  aiming; a shot and the crouch), the exit by apart, then the user's #9 (sheathed, crouched, a draw at the shoulder):
+  the sword in the hand within 50 ms every time; DENIED 0, refused draws 0; 0 WARN, the install unchanged, the real
+  save UNCHANGED. The crouched picture (frame 2367) shows no floating blade.
+
+### 46.3 `SOMVR_BOW_DRAW=trigger|slot` (default trigger = build 15)
+- slot: the bow hangs behind the bow hand's shoulder (`SOMVR_BOW_SLOT_CM` -12,-10,-15 from the head for the left hand:
+  the sword's slot mirrored; on the slots' torso yaw; `SOMVR_BOW_SLOT_R_CM` 20; a tick when the hand comes in). The
+  left grip pressed there = the bow's button (enter by the button) while it stays closed; let go there = put back
+  (`SOMVR_BOW_END_SLOT`, "exit: slot"); let go elsewhere = the button released (the hands apart end it, 0.8 s, as with
+  the trigger); pressed again anywhere while the bow is out = held again. The string grip at the nock no longer brings
+  the bow from idle (cfg.idle_nock 0). The left trigger is a grab (bo_grab: max(grip, trigger) for the climb's holds
+  and the two hands' hilt; not while the verbs hold an orc). The Controls page: "Bow: L grip at L shoulder"
+  (SOMVR_VMA_BOWSLOT). Lines: `CONFIG bow draw=slot ...`, `BOW t=... slot: ...`, `BOW END slot: ...`.
+- Boot 173520 (build 16's env with slot): 7 bows out from the shoulder, 2 put back there, the rest by apart; the left
+  trigger alone brings no bow; the stealth rounds give the sword back as in 46.2; the left trigger on the hilt grabs
+  with both hands (TWOHAND grab, frame 4434); 0 WARN, the install unchanged, the save UNCHANGED.
+
+### 46.4 Open (marks #1, #2, #4/#5)
+- #1 the bow's orientation: SOMVR_BOW_HOLD=auto lays the bow's +Z on the grip's +Z (the fist's axis) and +Y on +Y
+  (`BOW hold` lines: 0.8 / 1.1 deg off). Mark #1's picture shows the limbs along the view, so the user's grip pointed
+  ahead. Whether the bow's +Z is its limbs' axis and how a Quest 2 grip is held as a bow needs the left controller's
+  orientation at the mark (not in state.txt) and a bow picture from the headset.
+- #2 the translucent sword during the bow (mark #2, in the bow's dark aim view): a ghost-drawn sword lying across the
+  view. Boot 173520's bow picture (frame 3346) also shows the wraith's glowing hand beside ours. Likely the wraith
+  overlay of the put-away sword or of Celebrimbor's arm (SOMVR_BOW_GHOST=nomat covers the body edit only). Not fixed.
+- #4/#5 the hands on the sword: in the pictures our hand closes at the crossguard and the leather grip runs out behind
+  the hand. The grip's place in the hand (the sword's offset along its axis, SOMVR_VRHANDS' fist) is not changed yet.
+
+## 47. Build 15b from the user's build 15 session: the loading screen's voices, the lip (2026-10-26)
+
+Session logs/boot-check-20261026-165456 (16:55-17:03, build 15). handoff/HANDOFF-loadvoices.md, handoff/HANDOFF-climb.md
+("build 15b").
+
+### 47.1 The loading screen's voices off: `SOMVR_LOAD_VOICES=off` (default game)
+- Mark #11 170137 (t=792163.1): "The voices I hear in the loading screen are kind of weird ... You might just want to
+  turn them off"; the user then: "Turn them off for now". Its load: the main menu's Continue (ifs 1 menus 15 from
+  792129.7; `theatre 2: a loading screen` 792150.7 .. 792163.5, then the game's cover 1.9 s).
+- What talks there: the game's loading narration - the database category `LoadingNarration/Definition`
+  (FUN_02177040, GameDBCategories::vf_04), `NarrationList` / `NarrationEvents`, the emitter `CSoundEmitterNarrator`
+  ("Narrator"). Nothing of the world runs on that screen.
+- The switch (somvr_gameopts_game.c): the Sound options' Dialogue slider is the global RTPC `options_dialog`
+  (FUN_00cbe980 at 0xcbea06: `movss xmm0,[rbx+0x194]; mov esi,0x3535999; ...; call [rdx+0xb0]`, GameOptions +0x194),
+  set through CSoundMgr slot 22 = GO_RTPC, build 10's SOMVR_MUSIC slot (34), now installed for either switch. The
+  wrapper keeps the game's value (its start's apply passes it); the input tick: interface state 3, no menu, paused
+  (the session's SOMVR_SSM_LOAD) with no stereo frame for 0.25 s (`LV_STILL_S`: the pause menu and the map share the
+  state but render stereo) = `options_dialog` 0 through the slot's original, a set of the game's held at 0 meanwhile;
+  the state left or stereo frames again = the game's own value back. Music, sound effects and master untouched; the
+  game's options, profile and save never written; no new site (GO_RTPC's proof stands).
+- Run boot-check-20261026-172554 (cover-drive.sh travel; 0 WARN, the install unchanged, the save UNCHANGED): the
+  Continue load muted from its first tick (793662.245; the layer's loading screen 793662.286) to the world's first
+  (793706.374, 44.1 s), result 1 (AK_Success) both ways, the value back 1.000; music stayed at the menu's 0.300; the
+  tower's own fast travel was an in-world load (the game's cover over stereo frames, ctx world): no mute.
+- Open (the headset): by ear - silence on the loading screen, the world's voices back after. If narration still plays,
+  its bus is not the Dialogue slider's (then the narrator emitter itself). An in-world cover load is not muted.
+
+### 47.2 The lip: `SOMVR_CLIMB_OVERHANG=on` (default off)
+- Mark #8 170007 (t=792073.5): "I'm stuck when trying to climb over this lip here". The place: the meadow's stone
+  banks by the practice area (Talion's root 33660.6 2690.9 -27345.8, yaw 135.9). The CLIMB lines and the grabs'
+  points: a narrow ledge (top 2561.6, `practice status ground`: 2562 under the root, nothing 25 cm further out), the
+  face behind it 44 cm from the root, and at ~2812 a slab sticking out ~21 cm over that face (its front 23 cm from
+  the root). The user was 27 cm over the ledge with gravity off, holds on the slab (2811.6 found on its top, 2815.6 on
+  its front); every pull asked 30-185 cm a second and the root moved 3-10 cm: the capsule's top (~root + 85) under
+  the slab's underside. Also `(topped: push)` all along: a top found in a fling at 2561.6 (the ledge) stayed the top -
+  the edge step's ceiling (top + 185 = 2746.6 for the head: it stopped at 2746.7) and its "over" point.
+- The fix (somvr_climb.c, the header's `overhang`): (1) **the overhang step**: climbing up (not descending), the last
+  request's upward part not applied (under half) while the driving hold is over the eyes = the capsule under a lip:
+  the blocked part goes out from the wall (the hold's toward reversed, level; at most step_cm a frame, 40 cm under
+  one lip, `SOMVR_CLIMB_OVERHANG_CM`) - the player's own pull redirected round the lip's edge, nothing without a pull;
+  (2) **the retop**: a new hold more than 50 cm over a top already reached forgets it (the next top is reached as
+  any); (3) **the mantle**: where the game holds him under the top all the same (run 174931: the out step was undone,
+  the ledge keeps the capsule from going out over its edge, as descent's `lip blocked`), pulls blocked 0.4 s in all
+  while a hold with a found top 0..120 cm over the eyes drives = a floor on that top 40 cm in from its edge (a ray
+  down, within 30 cm of the top) with room to stand (a ray up 180 cm) = descent's blink there (the practice trip's
+  fade and Teleport; needs SOMVR_CLIMB_DESCENT's blink). Logs: `overhang: the pull up blocked under the hold N cm over
+  the eyes ...`, `retop: ...`, `mantle: ... the blink onto it ...`, the second's `overhang step N`, `CLIMB END
+  overhang: lips, steps (cm), retops, mantles (no floor)`. Test aid: the word `climb overhang on|off`.
+- Runs (scripts/lipledge15b-drive.sh: `practice go 33660 2575 -27345` onto the ledge at the user's spot, face the
+  wall, a hand on the slab 75 cm over the head, pulled to the waist in 1.5 s, the other hand, three pulls, then the
+  push (down and toward the body); `climb overhang off`, A, then `on`; 0 WARN, the install unchanged, the save
+  UNCHANGED each):
+  - 174931 off: the user's state exactly - root 2674-2692, head <= 2766, `asked=98.0 ... the root 0.0 cm`; on (the
+    out step only, no mantle yet): the first pull rose 34 cm with 38 cm of out step asked, the root back within 5 cm
+    of the wall line (pushed back in), then stuck at 2692 again.
+  - 180340 off: three pulls stuck (asked 88, 110, 110 cm; root <= 2693.4, head <= 2765.8); the push then slid him out
+    24 cm and up to 2744-2760 (the game's own slide along the slab's underside: why the user got past such places
+    sometimes); on: the first pull `overhang: ... 81.5 cm over the eyes` - 17.4 cm out step, the root 24 cm out and up
+    from 2664.5 to 2744.0 (head 2816.8, over the slab's front) in 2 s, the next holds up the wall above to root 2987
+    (`top: ... push`), then A: the blink down.
+  - 181455 (SOMVR_CLIMB_OVERHANG_CM=10: the out step too short to clear the slab): off and on alike stuck at root
+    2691.6 (asked 49-79 cm a second, the root 0-5); the mantle tried 5 times under the slab's found top (2861.3, 97 cm
+    over the eyes) and found **no floor** each time (`no floor on the top 5`): 40 cm in from the slab's front is the
+    wall rising behind it (the slab is a narrow step). So the mantle never fired here; at this place only the out step
+    helps (180340 yes, 174931 no). The push (down and toward the body) slid him out and up in both boots.
+- For the headset: the place itself (the practice area's meadow banks, the user's mark 8): pull on the slab's top;
+  out round it and up, or the fade onto its top after ~half a second of pulling. Whether the out step (up to 40 cm
+  away from the wall, only while a pull is blocked) feels like the body swinging out, not like being pushed.
+
+### 47.3 Noted, not built: the smoke
+Mark #10 170109: "I like this sort of loading area ... could make it even cooler with like the smoke around and stuff,
+but that's not a high [priority]" - the user means the game's own menu background (its smoky backdrop) around the
+loading space; very low priority. An idea: the backdrop's smoke layer as a large, slow, dim cylinder or a few
+billboards around the loading space's floor (the layer's own quads; their texture from one capture of the main menu's
+backdrop), faded with the lights.
+
+## 48. Smoother hands and a weighted sword: `SOMVR_HANDS_SMOOTH`, `SOMVR_SWORD_WEIGHT` (build 15b candidates, 2026-10-26)
+
+The user after build 15 (logs/boot-check-20261026-165456): "Add some smoothing to my hands. Maybe it's just the Quest's
+tracking, but it can look a bit jittery. I think it's mainly when holding the sword, since it amplifies how noticeable
+shaking is" and "Add some 'weight' to the sword". Handoff: handoff/HANDOFF-feel.md. Both default off.
+
+### 48.1 Where the jitter comes from (the session's logs, the code)
+- **Not the timing.** The grips are located on the game thread at the frame's own views time (6.4: `HAND t=` = the
+  H4 `time`), the eyes too, and the lead was right: 23 of the 27 sampled `stereo frame` lines show `display-time error`
+  0 ms (the others: the first three frames of the stereo stretch, one -11 ms when the lead's median switched 22 -> 11
+  ms). The game ran 90 fps (views time steps 11.1 ms). In the first ~4 s after the stereo start (the per-frame H4
+  lines) 15 of 299 frames repeated the views' time and 5 % were `+extrapolated`; none of the 102 later samples were.
+- **Not the arm solver or the game's animation.** `ARMS lw` every second, the whole session: the animated weapon node
+  off the held one 0.0 cm 0 deg, the right hand off the controller-rigid target 0.0 cm, held frames 90 of 90; the
+  sword is set on R_Weapon after the solve (`SOMVR_ARMS_LW=held`), our drawn hand on the same grip (33.4).
+- **Not two poses for one frame (checked by the new HANDJIT line).** Each frame locates the grips twice at one time:
+  phase 2 (the arms: the drawn hands, the drawn sword, the hits' blade R_Weapon) and H4 (the climb, the bow, the slots,
+  the verbs, the finishers). What is drawn is what hits (R_Weapon); HANDJIT logs how far the two locates of one time
+  differ (the runtime refining its prediction between them) and whether the arms' time ever differs from the eyes'.
+- **So: the controller pose itself.** The Quest 2's controller tracking as WiVRn predicts it (the stream's latency plus
+  our two-frame lead: ~22 ms at 90 fps on top), and the hand's own tremor, both made visible by the 1 m blade: 0.1 deg
+  of grip rotation is 0.2 mm at the knuckles (10 cm) but 1.8 mm at the tip (100.7 cm). The session's HAND lines are one
+  a second after the first 30 frames, so they cannot show frame-to-frame rotation noise; frames 1806-1835 (consecutive,
+  the hand nearly still) put the grip's position steps within the log's 1 mm resolution, and the runtime's linear
+  velocity at 0.01-0.03 m/s. The logged heading of a grip pointing down is ill-conditioned (its 2nd difference 1-5 deg),
+  so no rotation number comes from it. **HANDJIT** (below) now logs the real numbers each 10 s of a headset session:
+  the next one says how big the noise is at the hand and at the tip, raw and smoothed.
+
+### 48.2 The smoothing: `SOMVR_HANDS_SMOOTH=on` (somvr_smooth.c, pure; somvr_smooth_game.c)
+- A One Euro filter per grip, rotation and position apart, in XR space (it commutes with the game's mirror): each frame
+  the filtered pose moves toward the located one by alpha = x / (1 + x), x = 2 pi fc dt, the rotation as a slerp.
+  fc = MIN + BETA x speed, the speed = the runtime's angular (linear) velocity: the gyro sees a swing's first frame, so
+  the cutoff rises at once (without runtime velocities: a finite difference low-passed at 10 Hz).
+- Defaults: rotation 1.5 Hz + 12 Hz per rad/s, position 4 Hz + 40 Hz per m/s. A still hand: rotation ~2 Hz (tau 80 ms).
+  A swing: the delay of a first-order low-pass on a ramp is tau = 1 / (2 pi fc): 4.2 ms at 3 rad/s (172 deg/s), 2.2 ms
+  at 6, 1.3 ms at 10; the angle behind saturates at 1 / (2 pi 12) rad = 0.76 deg (13 mm at the tip) however fast. The
+  position: 3.6 ms at 1 m/s.
+- Both game-thread locates are filtered (two states, one per locate): the drawn hands, the drawn sword, the hits'
+  blade (R_Weapon) and everything that reads H4's grips see the filtered pose; the eyes' views and time are untouched.
+- Resets (the raw pose at once, no catch-up glide): a step over 0.1 s, the raw pose 15 cm or 26 deg off the filtered
+  one beyond the step's own motion (the runtime's speed x dt: a recentre, tracking regained), an invalid hand. The
+  same time again (a repeated views time) = the same pose.
+
+### 48.3 The weight: `SOMVR_SWORD_WEIGHT=light|heavy|on|off` (Blade & Sorcery's feel, not its physics)
+- The blade follows the right grip through a critically damped spring-damper on the relative motion: rotation about
+  the grip point (a rotation vector) and a little position, each capped. It is driven by the hand's change of speed,
+  and only by the part above a gate (smoothstep 1.5..3.5 rad/s, 0.6..1.5 m/s): a still, trembling or slowly moving hand
+  gets exactly nothing (no wobble, no lag); a fast swing's start leaves the blade a few degrees behind, its stop lets
+  it run on and settle back, never ringing (critically damped, the cap holds the rate outward).
+- light (`on`): omega 40/s, at most 3 deg and 0.5 cm; heavy: 26/s, 6 deg, 1 cm. Both hands on the hilt (SOMVR_TWOHAND):
+  1.6 x stiffer, the caps / 1.6. test_smooth: an 8 rad/s swing reached in 67 ms trails 3.0 deg (light; 5.7 heavy),
+  runs on 3.0 deg at the stop, settles in 133 ms (heavy 256 ms).
+- Where: on the right weapon node after `SOMVR_ARMS_LW=held` put it back on the solved hand and before the hits' blade
+  is read from R_Weapon, as the node would be if the grip had the blade's pose (`gm2 (x) gm^-1 (x) W`): **the drawn
+  sword is the hits' blade**; the drawn hand stays on the controller (1:1). None while SOMVR_HANDS_SURFACE holds the hand
+  (its ghost shows), with the bow, without a sword.
+- Haptics: a soft pulse (0.22, 50 ms; 0.15 with two hands) when a swing passes 3.5 rad/s, re-armed under 1.5; the
+  controller blade's hits at full strength and 1.5 x as long. The defence's and the execution's thresholds unchanged.
+
+### 48.4 Switches, words, lines
+| Switch | Default | What |
+|---|---|---|
+| `SOMVR_HANDS_SMOOTH=off\|on` | off | 48.2 |
+| `SOMVR_HANDS_SMOOTH_ROT=MIN,BETA` | 1.5,12 | the rotation's cutoff (Hz, Hz per rad/s) |
+| `SOMVR_HANDS_SMOOTH_POS=MIN,BETA` | 4,40 | the position's (Hz, Hz per m/s) |
+| `SOMVR_SWORD_WEIGHT=off\|light\|heavy\|on` | off | 48.3 (on = light; needs SOMVR_ARMS=1) |
+
+- Trigger word (SOMVR_HANDS_TEST): `hands noise DEG MM` white noise per axis on the test hands (seeded by the time and
+  the hand: phase 2 and H4 get the same), `hands noise 0 0` none.
+- `CONFIG smooth ...`; `HANDJIT t=... last 10 s (smoothing on|off (measured only)): ... L still N: hand A -> B mm C -> D
+  deg, the 1 m tip E -> F mm (max G -> H); R ...; the arms' time = the eyes' N, other M (up to X ms); the two locates of
+  one time differ by up to Y mm Z deg; resets ..., a repeated time ...` - the jitter is the RMS of the second
+  difference (the residual of a constant-velocity step; white noise of sd s gives sqrt(6) s) over still frames (the
+  runtime's speeds under 0.35 rad/s and 5 cm/s), raw and filtered, measured whatever the switch; `SWORDWT t=... last
+  10 s: frames, applied, held by a surface, no sword/arm; the blade off the hand up to D deg, the hilt C cm (capped N);
+  swing pulses, hits`; `HANDJIT END ...`.
+
+### 48.5 Offline tests (tests/test_smooth.c, 96 checks; synthetic poses at 90 Hz)
+- Still, tracking noise 0.1 deg + 0.5 mm per axis: the 1 m tip 2.61 -> 0.68 mm RMS off the true pose (x3.8); the
+  frame-to-frame jitter (2nd difference) at the tip 6.45 -> 0.54 mm (x12); HANDJIT's raw number = the injected noise
+  within 15 %. With a 9 Hz tremor of 0.15 deg on top: 3.13 -> 0.91 mm (x3.4). Without runtime velocities: x2.3.
+- Swings at 3 / 6 / 10 rad/s: the delay 4.24 / 2.16 / 1.31 ms (= tau within 0.3 ms; under 5 ms), from rest the worst
+  angle behind in the first frames 0.73-0.75 deg (under 5 ms of the swing); without runtime velocities 2.16 ms at 6
+  rad/s once going. A 1 m/s move: 3.61 ms.
+- Resets: a 30 cm jump, a 40 deg turn in a frame, a 0.2 s gap: the raw pose at once; the same time: the same pose;
+  off: the pose untouched, still measured. The parser.
+- The weight (light and heavy): a still hand with a 0.3 deg tremor and a 1 rad/s turn move it by exactly 0; an 8
+  rad/s swing trails within the cap and more than 1 deg, runs on at the stop, settles (light 133 ms, heavy 256 ms), at
+  most one sign change after the stop, the hilt within its cap; two hands trail less and settle sooner; heavy > light;
+  a 40 deg jump resets; the same time keeps the offsets.
+- selftest: the `hands noise` words.
+
+### 48.6 The headless proof (run 20261026-175802: scripts/headset-build16.env, build 15's 108, + SOMVR_HANDS_SMOOTH=on SOMVR_SWORD_WEIGHT=light, the test hands, scripts/feel15b-drive.sh; Monado 20 Hz; 0 WARN, the install unchanged, the real save UNCHANGED, remotecache.vdf unchanged)
+- `CONFIG smooth hands=on rot 1.50 Hz + 12.0/(rad/s) (the delay 4.2 ms at 3 rad/s) pos 4.00 Hz + 40.0/(m/s) (3.6 ms at
+  1 m/s); sword weight=light (omega 40/s, at most 3.0 deg and 0.50 cm ...)`.
+- The sword drawn and held out, no noise: the arms' time = the eyes' in 198 of 198 frames (and in every later window);
+  the raw jitter 0.44 mm / 0.010 deg (the test hands ride the simulated head's slow drift), smoothed 0.28 mm. The two
+  locates of one time differ by up to 15 mm there: a test-hand artefact (phase 2 places them on the previous frame's
+  head; real grips are both located by the runtime at T).
+- `hands noise 0.15 0.5` (deg, mm per axis): the frame-to-frame jitter at the 1 m tip 10.0 -> 2.3 mm RMS (left), 9.3
+  -> 2.2 mm (right), max 23 -> 5.5 mm; the grip's rotation 0.67 -> 0.14 deg, the hand 2.2 -> 0.95 mm: x4.3 at 20 Hz
+  (x12 at 90 Hz in test_smooth: the filter's step per frame shrinks with the frame rate).
+- Lunges at a practice infantry with the noise on: 3 hits (`COMBAT hit tier=heavy ... speed=18.5`), the hit haptic
+  each; `SWORDWT`: applied in 96 of 201 frames, the blade off the hand up to 3.00 deg and the hilt 0.50 cm (capped:
+  a 20 Hz swing reaches the cap at once), 12 swing pulses, never held by a surface.
+- The noise off again: 0.24 mm (the head's drift).
+- Found there and fixed (115e5d9): at 20 Hz a swing moves ~56 deg a frame, which the filter counted as a jump (30
+  resets) and the spring too (15): the thresholds now allow the runtime's speed x dt (the spring: a jump only above
+  40 rad/s). At 90 Hz a 20 rad/s swing moves 13 deg a frame: no reset either way. Re-run with the fix (run
+  20261026-180924, the same drive; 0 WARN, the install unchanged, the save UNCHANGED): the filter's resets in the
+  swing phase 9 for 4 lunges (each lunge = 2 teleports of the test hand: its start pose and back to the hold; none in
+  the swings), the spring's 6 (was 15); the noise 9.0 -> 2.1 mm at the tip, 3 heavy hits, the weight at its cap again.
+
+### 48.7 What only the headset shows
+- HANDJIT's raw numbers in a real session: the Quest's shake at the hand and at the tip (grep `^HANDJIT`), and the
+  two real locates of one time.
+- Whether ~2 Hz at rest reads as steady or as a floating hand (a slow 0.2 rad/s wrist turn is 41 ms behind):
+  `SOMVR_HANDS_SMOOTH_ROT=3,12` halves it.
+- Whether light's 3 deg trail and settle reads as weight (heavy if not felt, off if it reads as lag), and the swing
+  pulse.
+- Not done: the VR menu row (Off / Light / Heavy): the settings ABI, the layer and the layout tests; a later build.

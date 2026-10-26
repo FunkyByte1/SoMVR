@@ -548,6 +548,31 @@ static void test_button(void) {
     CHECK(g_o.ray && NEAR3(g_o.dir, 0, 0, 1, 1e-5), "idle head, drawn: no ray");
 }
 
+/* build 15b (SOMVR_BOW_DRAW=slot): idle_nock 0 - the string grip at the nock brings no bow, the button does; then the
+ * nock draws as before; somvr_bow_stop(SLOT) ends it */
+static void test_slot(void) {
+    reset();
+    g_c.idle_nock = 0;
+    nock_and_grip();
+    steps(10);
+    CHECK(g_s.phase == SOMVR_BOW_PH_IDLE && g_s.aims == 0, "slot: the nock from idle entered (phase %d)", g_s.phase);
+    g_in.string = 0;
+    step();
+    g_in.button = 1;
+    step();
+    CHECK(g_s.phase == SOMVR_BOW_PH_AIM && g_s.by_button, "slot: the button (the slot's grip): phase %d", g_s.phase);
+    nock_and_grip();
+    CHECK(g_s.phase == SOMVR_BOW_PH_DRAW, "slot: a draw in the slot's aim: phase %d", g_s.phase);
+    g_in.string = 0;
+    step();
+    somvr_bow_out o;
+    somvr_bow_stop(&g_s, SOMVR_BOW_END_SLOT, g_in.t, &o);
+    CHECK(g_s.phase == SOMVR_BOW_PH_IDLE && g_s.last_end == SOMVR_BOW_END_SLOT && (o.events & SOMVR_BOW_E_EXIT) &&
+              !strcmp(somvr_bow_end_name(SOMVR_BOW_END_SLOT), "slot"),
+          "slot: put back: phase %d end %d", g_s.phase, g_s.last_end);
+    g_c.idle_nock = 1;
+}
+
 static void test_standdowns(void) {
     /* the bow hand lost 0.1 s: nothing; 0.3 s: the aim ends */
     reset();
@@ -786,6 +811,7 @@ int main(void) {
     test_draw_and_shoot();
     test_timing();
     test_button();
+    test_slot();
     test_standdowns();
     test_hold_mode();
     test_hands();

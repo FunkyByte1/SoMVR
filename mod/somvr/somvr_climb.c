@@ -44,6 +44,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->fling_win_s = 0.1f, c->fling_s = 1.5f;
     c->descent = 0, c->lip_drop_cm = 150, c->lip_find_cm = 60, c->foot_cm = 102, c->lip_ramp = 2;
     c->blink_cm = 400, c->blink_max_cm = 8000, c->blink_out_cm = 40, c->blink_wait_s = 3, c->edge_look_cm = 400;
+    c->overhang = 0, c->overhang_cm = 40;
 }
 
 void somvr_climb_init(somvr_climb *s) {
@@ -738,6 +739,62 @@ static void lip_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb
     s->lip_cm += lp, s->lip_steps++, o->lip = lp;
 }
 
+/* overhang (see the header): an upward part of the last request the game did not apply (under half) while the driving
+ * hold k is over the eyes: the blocked part x overhang goes out from the wall (k's toward, level, reversed), at most
+ * step_cm a frame and overhang_cm under one lip (oh_cm; 0 again once the root is OH_RESET_CM over oh_y0) */
+#define OH_RESET_CM 60.0f
+#define OH_RETOP_CM 50.0f
+#define OH_MANTLE_S 0.4f
+#define OH_MANTLE_UP_CM 120.0f
+/* overhang: the mantle (see the header): 1 = the blink onto k's top (s->bl_to), 0 = not (yet) */
+static int mantle(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, const somvr_climb_hold *k,
+                  somvr_climb_ray_fn ray, void *ctx, somvr_climb_out *o, float dt) {
+    float rq = s->last_req.y, ap = in->root.y - s->last_root.y;
+    int top = k->edge && k->top_found && k->top_y - in->head_y > -10.0f && k->top_y - in->head_y < OH_MANTLE_UP_CM;
+    if (!top || (rq > 0.3f && ap >= 0.5f * rq)) { /* no top over him, or the pull went through */
+        s->oh_block_s = 0;
+        return 0;
+    }
+    if (!(rq > 0.3f)) return 0; /* no pull now: the time waits */
+    s->oh_block_s += dt > 0 && dt < 0.2f ? (float)dt : 0.0f;
+    if (s->oh_block_s < OH_MANTLE_S || !in->can_blink) return 0;
+    float n = sqrtf(k->toward.x * k->toward.x + k->toward.z * k->toward.z);
+    sv_vec3 tw = n > 0.3f ? (sv_vec3){ k->toward.x / n, 0, k->toward.z / n } : (sv_vec3){ 0, 0, 0 };
+    sv_vec3 from = { k->hit.x + tw.x * 40.0f, k->top_y + 60.0f, k->hit.z + tw.z * 40.0f };
+    somvr_climb_hit f, u;
+    s->oh_block_s = 0;
+    if (!cast(s, o, ray, ctx, 0, from, (sv_vec3){ 0, -1, 0 }, 120.0f, &f) || !f.hit || f.wet ||
+        fabsf(f.point.y - k->top_y) > 30.0f) {
+        s->mantle_nofloor++;
+        return 0;
+    }
+    sv_vec3 up0 = { f.point.x, f.point.y + 10.0f, f.point.z };
+    if (!cast(s, o, ray, ctx, 0, up0, (sv_vec3){ 0, 1, 0 }, 180.0f, &u) || u.hit) {
+        s->mantle_nofloor++;
+        return 0;
+    }
+    s->mt_top = k->hit, s->mt_floor = f.point;
+    s->bl_to = (sv_vec3){ f.point.x, f.point.y + c->foot_cm + 5.0f, f.point.z };
+    return 1;
+}
+
+static void overhang_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, const somvr_climb_hold *k,
+                          somvr_climb_out *o, sv_vec3 *m) {
+    if (!(c->overhang > 0) || s->descending || !in->root_ok || !s->have_root || !in->head_ok) return;
+    if (s->oh_cm > 0 && in->root.y > s->oh_y0 + OH_RESET_CM) s->oh_cm = 0; /* past that lip: another may come */
+    if (k->hit.y < in->head_y) return; /* the hold under the eyes: no lip over him to pull round */
+    float n = sqrtf(k->toward.x * k->toward.x + k->toward.z * k->toward.z);
+    if (n < 0.3f) return; /* no wall direction (a straight down ray's own: a hold on a top) */
+    sv_vec3 out = { -k->toward.x / n, 0, -k->toward.z / n };
+    float rq = s->last_req.y, ap = in->root.y - s->last_root.y;
+    if (!(rq > 0.3f) || ap >= 0.5f * rq) return; /* no up asked, or it went through */
+    float d = fminf(fminf(c->overhang * (rq - fmaxf(ap, 0.0f)), c->step_cm), c->overhang_cm - s->oh_cm);
+    if (!(d > 0)) return;
+    if (!(s->oh_cm > 0)) s->oh_y0 = in->root.y, s->oh_lips++, o->events2 |= SOMVR_CLIMB_E_OVERHANG;
+    *m = add3(*m, mul3(out, d));
+    s->oh_cm += d, s->oh_all_cm += d, s->oh_steps++, o->overhang = d;
+}
+
 /* descent: the drop button: the ground under him (from blink_out_cm out from the wall; still on a lip's top: from
  * beyond its edge). 1 = the blink (s->bl_to), 0 = the drop (a short one, no blink now, or no answer from the ray),
  * -1 = no drop at all (no ground within blink_max_cm, water); s->bl_why, bl_h */
@@ -1019,6 +1076,10 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             o->events |= SOMVR_CLIMB_E_GRAB_L << h;
             if (c->descent) s->wall_tw = k->toward; /* the wall ray's direction from now on */
             if (k->lip) s->lips++, o->events |= SOMVR_CLIMB_E_LIP_L << h;
+            if (c->overhang > 0 && s->active && s->topped && !s->descending && k->hit.y > s->top_y + OH_RETOP_CM) {
+                s->topped = 0, s->retops++; /* a ledge passed on the way up: the next top is this hold's wall's */
+                o->events2 |= SOMVR_CLIMB_E_RETOP;
+            }
             if (lipstart) { /* the way down from the top he stands on */
                 s->descending = 1, s->lip_top_y = k->lip_top_y, s->lip_edge = k->lip_edge, s->lip_out = k->lip_out;
                 s->lip_blocked = 0, s->lip_block_n = 0;
@@ -1032,7 +1093,7 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
     int any = s->h[0].holding || s->h[1].holding;
     if (!s->active && any) {
         s->active = 1, s->phase = SOMVR_CLIMB_PH_HOLD, s->t0 = in->t, s->carry = (sv_vec3){ 0, 0, 0 };
-        s->driver = -1;
+        s->driver = -1, s->oh_cm = 0;
         s->climbs++;
         o->started = 1;
     }
@@ -1099,6 +1160,17 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
         }
         m.y += edge_step(s, c, in, o, c->step_cm); /* push: a forward push the edge blocks lifts him */
         lip_step(s, c, in, o, &m); /* descent: a push down while on the top goes out over the edge */
+        if (c->overhang > 0 && !s->descending && in->root_ok && s->have_root && in->head_ok &&
+            mantle(s, c, in, k, ray, ctx, o, (float)dt)) { /* the game holds him under the top: the blink onto it */
+            for (int h = 0; h < 2; h++) let_go(&s->h[h]), s->h[h].armed = 0;
+            s->phase = SOMVR_CLIMB_PH_BLINK, s->phase_t = in->t, s->carry = (sv_vec3){ 0, 0, 0 }, s->driver = -1;
+            s->mantles++, s->blinks++;
+            o->events2 |= SOMVR_CLIMB_E_MANTLE;
+            o->blink = 1, o->blink_to = s->bl_to;
+            o->active = 1, o->driver = -1;
+            return;
+        }
+        overhang_step(s, c, in, k, o, &m); /* overhang: a pull blocked under a lip goes out round its edge */
         request(s, o, m);
         for (int h = 0; h < 2; h++) /* every holding hand's last position, for its turn as the driver */
             if (s->h[h].holding && in->hand[h].valid) s->h[h].last_p = in->hand[h].p, s->h[h].have_last = 1;
