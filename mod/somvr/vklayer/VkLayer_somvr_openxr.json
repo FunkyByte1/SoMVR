@@ -1,0 +1,14 @@
+{
+    "file_format_version": "1.1.2",
+    "layer": {
+        "name": "VK_LAYER_SOMVR_openxr",
+        "type": "GLOBAL",
+        "library_path": "./build/libVkLayer_somvr_openxr.so",
+        "api_version": "1.4.341",
+        "implementation_version": "1",
+        "description": "Shadow of Mordor VR: OpenXR bridge (XR_KHR_vulkan_enable), phase 1 presented-image copy",
+        "functions": {
+            "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
+        }
+    }
+}

@@ -1,0 +1,800 @@
+/* test_combat.c - unit tests of somvr_combat.c: closest points of segments (hand cases and a brute-force comparison),
+ * the swept blade against a capsule (through, above, tunnelling between frames, the contact point), the "heading at"
+ * test, the windowed swing speed (crossing, travel, the end with hysteresis, stabs), the tiers at their boundaries,
+ * the re-hit cooldown and the hit charges, the fake blade (geometry, speeds, velocity = the derivative of the tip) and,
+ * end to end, the fake's two swings through an orc capsule: one heavy and one light hit per cycle. */
+#include "../somvr_combat.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+static int fails, checks;
+#define CHECK(c, ...)                                                                                                  \
+    do {                                                                                                               \
+        checks++;                                                                                                      \
+        if (!(c)) {                                                                                                    \
+            fails++;                                                                                                   \
+            printf("FAIL line %d: ", __LINE__);                                                                        \
+            printf(__VA_ARGS__);                                                                                       \
+            printf("\n");                                                                                              \
+        }                                                                                                              \
+    } while (0)
+#define NEAR(a, b, eps) (fabs((double)(a) - (double)(b)) <= (eps))
+#define DEG(x) ((float)(x) * 3.14159265358979f / 180.0f)
+#define HZ 90.0
+
+static float len3(const float a[3]) { return sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]); }
+static float dist3(const float a[3], const float b[3]) {
+    float d[3] = {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+    return len3(d);
+}
+static somvr_blade blade(float bx, float by, float bz, float tx, float ty, float tz, double t) {
+    somvr_blade b = {1, {bx, by, bz}, {tx, ty, tz}, {0, 0, 0}, t};
+    return b;
+}
+
+/* ---- closest points of two segments ---------------------------------------------------------------------------- */
+static void test_seg(void) {
+    float s, t, d;
+    float a0[3] = {-1, 0, 0}, a1[3] = {1, 0, 0}, b0[3] = {0, 5, -1}, b1[3] = {0, 5, 1};
+    d = sc_seg_dist(a0, a1, b0, b1, &s, &t);
+    CHECK(NEAR(d, 5, 1e-6) && NEAR(s, 0.5, 1e-6) && NEAR(t, 0.5, 1e-6), "crossing: d %g s %g t %g", d, s, t);
+    float p0[3] = {0, 0, 0}, p1[3] = {10, 0, 0}, q0[3] = {2, 3, 0}, q1[3] = {5, 3, 0};
+    d = sc_seg_dist(p0, p1, q0, q1, &s, &t);
+    CHECK(NEAR(d, 3, 1e-6), "parallel overlapping: d %g", d);
+    float e0[3] = {0, 0, 0}, e1[3] = {1, 0, 0}, f0[3] = {3, 0, 0}, f1[3] = {4, 0, 0};
+    d = sc_seg_dist(e0, e1, f0, f1, &s, &t);
+    CHECK(NEAR(d, 2, 1e-6) && NEAR(s, 1, 1e-6) && NEAR(t, 0, 1e-6), "collinear apart: d %g s %g t %g", d, s, t);
+    float g0[3] = {1, 2, 3};
+    d = sc_seg_dist(g0, g0, f0, f0, &s, &t);
+    CHECK(NEAR(d, sqrtf(4 + 4 + 9), 1e-5) && s == 0 && t == 0, "two points: d %g", d);
+    float h0[3] = {-1, 2, 0}, h1[3] = {1, 2, 0};
+    d = sc_seg_dist(e0, e0, h0, h1, &s, &t);
+    CHECK(NEAR(d, 2, 1e-6) && NEAR(t, 0.5, 1e-6), "point vs segment: d %g t %g", d, t);
+    d = sc_seg_dist(h0, h1, e0, e0, &s, &t);
+    CHECK(NEAR(d, 2, 1e-6) && NEAR(s, 0.5, 1e-6), "segment vs point: d %g s %g", d, s);
+    /* against a brute-force grid: never above it, never more than the grid's resolution below it */
+    unsigned rs = 777;
+    int worse = 0, below = 0;
+    for (int k = 0; k < 300; k++) {
+        float v[12];
+        for (int i = 0; i < 12; i++) v[i] = (float)((rs = rs * 1103515245u + 12345u) >> 8 & 0xffff) / 655.36f - 50.0f;
+        if (k % 10 == 0) memcpy(v + 9, v + 6, 3 * sizeof(float)); /* some degenerate second segments */
+        if (k % 15 == 0) /* some parallel ones */
+            for (int i = 0; i < 3; i++) v[9 + i] = v[6 + i] + (v[3 + i] - v[i]) * 0.7f;
+        d = sc_seg_dist(v, v + 3, v + 6, v + 9, &s, &t);
+        float best = 1e30f, step = 1.0f / 200;
+        for (int i = 0; i <= 200; i++)
+            for (int j = 0; j <= 200; j++) {
+                float pa[3], pb[3];
+                for (int c = 0; c < 3; c++) {
+                    pa[c] = v[c] + (v[3 + c] - v[c]) * (float)i * step;
+                    pb[c] = v[6 + c] + (v[9 + c] - v[6 + c]) * (float)j * step;
+                }
+                float x = dist3(pa, pb);
+                best = x < best ? x : best;
+            }
+        float pa[3], pb[3];
+        for (int c = 0; c < 3; c++) pa[c] = v[c] + (v[3 + c] - v[c]) * s, pb[c] = v[6 + c] + (v[9 + c] - v[6 + c]) * t;
+        worse += d > best + 1e-3f;
+        below += d < best - 0.6f || !NEAR(dist3(pa, pb), d, 1e-3); /* the grid step is <= 0.5 cm per coordinate */
+    }
+    CHECK(!worse && !below, "brute force: %d above the grid, %d far below it or s/t inconsistent", worse, below);
+    printf("segments: crossing, parallel, collinear, points; 300 random pairs agree with a 201x201 grid\n");
+}
+
+/* ---- the swept blade against a capsule ------------------------------------------------------------------------- */
+static void test_sweep(void) {
+    float c0[3] = {0, 0, 110}, c1[3] = {0, 180, 110}; /* an upright orc capsule 110 cm ahead, r 35 */
+    sc_contact ct;
+    /* the blade level at 120 cm height, rotating from 30 deg right to 30 deg left about a pivot at the origin (both
+     * ends 55 cm from the axis: outside) */
+    somvr_blade b0 = blade(45 * sinf(DEG(30)), 120, 45 * cosf(DEG(30)), 135 * sinf(DEG(30)), 120, 135 * cosf(DEG(30)), 0);
+    somvr_blade b1 = blade(-45 * sinf(DEG(30)), 120, 45 * cosf(DEG(30)), -135 * sinf(DEG(30)), 120, 135 * cosf(DEG(30)), 0.011);
+    int hit = sc_sweep_capsule(&b0, &b1, 3, c0, c1, 35, 4, &ct);
+    CHECK(hit && ct.u > 0 && ct.u < 1, "through: hit %d at u %g", hit, ct.u);
+    float q[3] = {0, ct.point[1], 110};
+    CHECK(hit && NEAR(dist3(ct.point, q), 35, 1e-3) && NEAR(ct.point[1], 120, 1e-3), "contact point %g %g %g not on the surface",
+          ct.point[0], ct.point[1], ct.point[2]);
+    CHECK(hit && ct.dist <= 38 && ct.along > 0.3f && ct.along < 1, "along %g dist %g", ct.along, ct.dist);
+    /* the same sweep 2 m higher misses */
+    somvr_blade h0 = b0, h1 = b1;
+    h0.base[1] = h0.tip[1] = h1.base[1] = h1.tip[1] = 420;
+    CHECK(!sc_sweep_capsule(&h0, &h1, 3, c0, c1, 35, 4, &ct), "a blade 2 m above the head hit");
+    /* without a previous pose only this frame's pose counts: both ends outside = no contact */
+    CHECK(!sc_sweep_capsule(NULL, &b1, 3, c0, c1, 35, 4, &ct), "cur alone (outside) hit");
+    somvr_blade in = blade(0, 120, 40, 0, 120, 130, 1);
+    CHECK(sc_sweep_capsule(NULL, &in, 3, c0, c1, 35, 4, &ct) && ct.u == 1, "cur alone (inside) missed");
+    somvr_blade inv = b0;
+    inv.valid = 0;
+    CHECK(sc_sweep_capsule(&inv, &in, 3, c0, c1, 35, 4, &ct) && ct.u == 1, "an invalid prev is not 'cur alone'");
+    CHECK(!sc_sweep_capsule(&b0, &inv, 3, c0, c1, 35, 4, &ct), "an invalid cur hit");
+    /* tunnelling: a thin pole (r 2) the blade jumps across in one big frame (2 m sideways): one sub-step misses, 16 catch it */
+    float p0[3] = {0, 0, 100}, p1[3] = {0, 200, 100};
+    somvr_blade f0 = blade(-100, 100, 30, -100, 100, 150, 0), f1 = blade(100, 100, 30, 100, 100, 150, 0.011);
+    int one = sc_sweep_capsule(&f0, &f1, 0, p0, p1, 2, 1, &ct), many = sc_sweep_capsule(&f0, &f1, 0, p0, p1, 2, 16, &ct);
+    CHECK(!one && many, "tunnelling: 1 step %d, 16 steps %d (the sub-steps must matter)", one, many);
+    /* the first touching sub-step is reported (not the deepest) */
+    somvr_blade s0 = blade(200, 120, 0, 200, 120, 200, 0), s1 = blade(-200, 120, 0, -200, 120, 200, 0.011);
+    CHECK(sc_sweep_capsule(&s0, &s1, 3, c0, c1, 35, 8, &ct) && NEAR(ct.u, 0.5, 1e-6), "first sub-step %g", ct.u);
+    /* NaN never hits */
+    somvr_blade nb = in;
+    nb.tip[0] = NAN, nb.base[0] = NAN;
+    CHECK(!sc_sweep_capsule(NULL, &nb, 3, c0, c1, 35, 4, &ct), "NaN hit");
+    printf("sweep: through (point on the surface), above, cur alone, invalid, tunnelling 1 vs 16 steps, first sub-step\n");
+}
+
+static void test_heading(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    float c0[3] = {0, 0, 110}, c1[3] = {0, 180, 110}, d, cs;
+    somvr_blade b = blade(43.5f, 120, 11.6f, 130.4f, 120, 34.9f, 0); /* the fake's start, 75 deg right */
+    b.vel_tip[0] = -0.259f * 900, b.vel_tip[2] = 0.966f * 900;     /* swinging left */
+    CHECK(sc_heading_at(&c, &b, c0, c1, 35, &d, &cs) && NEAR(d, 115.5, 0.5) && NEAR(cs, 0.706, 0.01), "toward: d %g cos %g",
+          d, cs);
+    b.vel_tip[0] = -b.vel_tip[0], b.vel_tip[2] = -b.vel_tip[2];
+    CHECK(!sc_heading_at(&c, &b, c0, c1, 35, &d, &cs) && cs < 0, "away counted (cos %g)", cs);
+    b.vel_tip[0] = b.vel_tip[2] = 0, b.vel_tip[1] = -900; /* straight down: no horizontal heading */
+    CHECK(!sc_heading_at(&c, &b, c0, c1, 35, &d, &cs) && cs == 0, "vertical counted");
+    somvr_blade far = blade(0, 120, -300, 0, 120, -200, 0);
+    far.vel_tip[2] = 900;
+    CHECK(!sc_heading_at(&c, &far, c0, c1, 35, &d, &cs) && NEAR(d, 275, 1e-3) && NEAR(cs, 1, 1e-6), "far: d %g", d);
+    printf("heading: toward (115 cm, cos 0.71), away, vertical, too far\n");
+}
+
+/* ---- swing speed and tiers ------------------------------------------------------------------------------------- */
+static somvr_blade moving(double t, float v_cmps, int along_axis) {
+    somvr_blade b = blade(0, 100, 0, 0, 100, 90, t); /* the blade along +Z */
+    if (along_axis)
+        b.vel_tip[2] = v_cmps;
+    else
+        b.vel_tip[0] = v_cmps;
+    return b;
+}
+
+static int push(sc_speed *s, const sc_cfg *c, somvr_blade b) { return sc_speed_push(s, c, &b); }
+
+static void test_speed(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    sc_speed s;
+    sc_speed_reset(&s);
+    double t = 0;
+    int edge = 0, i, start = -1, light_at = -1, end_at = -1;
+    for (i = 0; i < 10; i++, t += 1 / HZ) CHECK(push(&s, &c, moving(t, 0, 0)) == 0, "still: edge");
+    CHECK(s.mean_mps == 0 && !s.above && sc_tier(&c, &s) == SC_TIER_NONE, "still: tier");
+    for (i = 0; i < 40; i++, t += 1 / HZ) {
+        somvr_blade b = moving(t, 450, 0);
+        edge = sc_speed_push(&s, &c, &b);
+        if (edge == 1 && start < 0) start = i;
+        if (sc_tier(&c, &s) == SC_TIER_LIGHT && light_at < 0) light_at = i;
+        CHECK(sc_tier(&c, &s) != SC_TIER_HEAVY && edge != -1, "4.5 m/s: heavy or an end at %d", i);
+    }
+    /* the 80 ms mean crosses 3 m/s once 2/3 of the window is fast (~53 ms = the 5th fast sample), light after 15 cm */
+    CHECK(start >= 3 && start <= 5, "4.5 m/s: the crossing at sample %d", start);
+    CHECK(light_at > start && (light_at - start) >= 3 && (light_at - start) <= 4, "light %d samples after the crossing",
+          light_at - start);
+    CHECK(NEAR(s.mean_mps, 4.5, 1e-4) && NEAR(s.travel, 450.0 * (40 - 1 - start) / HZ, 0.5), "mean %g travel %g",
+          s.mean_mps, s.travel);
+    /* 2.5 m/s: inside the hysteresis (end below 2.25): the swing goes on, no slash tier below 3 m/s */
+    for (i = 0; i < 12; i++, t += 1 / HZ) CHECK(push(&s, &c, moving(t, 250, 0)) == 0, "2.5: edge");
+    CHECK(s.above && sc_tier(&c, &s) == SC_TIER_NONE, "2.5 m/s: above %d tier %d", s.above, sc_tier(&c, &s));
+    for (i = 0; i < 12; i++, t += 1 / HZ)
+        if (push(&s, &c, moving(t, 0, 0)) == -1 && end_at < 0) end_at = i;
+    CHECK(end_at >= 0 && end_at <= 2 && !s.above, "the end at %d", end_at);
+    /* 9 m/s: light from 15 cm, heavy from 40 cm */
+    int heavy_at = -1;
+    start = light_at = -1;
+    for (i = 0; i < 30; i++, t += 1 / HZ) {
+        edge = push(&s, &c, moving(t, 900, 0));
+        if (edge == 1) start = i;
+        int tr = sc_tier(&c, &s);
+        if (tr == SC_TIER_LIGHT && light_at < 0) light_at = i;
+        if (tr == SC_TIER_HEAVY && heavy_at < 0) heavy_at = i;
+    }
+    CHECK(start >= 1 && light_at > start && heavy_at > light_at, "9 m/s: crossing %d light %d heavy %d", start, light_at,
+          heavy_at);
+    CHECK(NEAR((heavy_at - start) * 900 / HZ, 40, 10.1), "heavy after %g cm", (heavy_at - start) * 900 / HZ);
+    /* times that do not increase are ignored */
+    float m0 = s.mean_mps;
+    CHECK(push(&s, &c, moving(t - 1, 0, 0)) == 0 && s.mean_mps == m0, "an older sample counted");
+    /* stabs: along the blade at 2.5 m/s (cos 1) vs 45 deg off (cos 0.71) */
+    sc_speed_reset(&s);
+    t = 100;
+    for (i = 0; i < 10; i++, t += 1 / HZ) push(&s, &c, moving(t, 250, 1));
+    CHECK(sc_tier(&c, &s) == SC_TIER_STAB && NEAR(s.axis_mps, 2.5, 1e-4) && NEAR(s.cos_axis, 1, 1e-6), "stab: tier %d",
+          sc_tier(&c, &s));
+    sc_speed_reset(&s);
+    for (i = 0; i < 10; i++, t += 1 / HZ) {
+        somvr_blade b = moving(t, 0, 0);
+        b.vel_tip[0] = b.vel_tip[2] = 250;
+        sc_speed_push(&s, &c, &b);
+    }
+    CHECK(sc_tier(&c, &s) != SC_TIER_STAB && NEAR(s.cos_axis, 0.7071, 1e-3), "45 deg off is a stab (cos %g)", s.cos_axis);
+    /* the window: one fast sample among slow ones only counts for its own time */
+    sc_speed_reset(&s);
+    t = 200;
+    for (i = 0; i < 20; i++, t += 1 / HZ) push(&s, &c, moving(t, i == 15 ? 1800 : 0, 0));
+    CHECK(NEAR(s.mean_mps, 18.0 / HZ / 0.08, 1e-3) && !s.above, "a single 18 m/s sample 4 samples ago: mean %g, want 2.5",
+          s.mean_mps);
+    printf("speed: crossing at the 5th fast sample, light 15 cm later, hysteresis, end, heavy at 40 cm, stab, spike\n");
+}
+
+static void test_tiers(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    struct { float mean, travel, axis, cosv; int above, want; } T[] = {
+        {5.99f, 100, 0, 0, 1, SC_TIER_LIGHT}, {6.0f, 39.9f, 0, 0, 1, SC_TIER_LIGHT}, {6.0f, 40, 0, 0, 1, SC_TIER_HEAVY},
+        {3.0f, 15, 0, 0, 1, SC_TIER_LIGHT},   {3.0f, 14.9f, 0, 0, 1, SC_TIER_NONE}, {2.99f, 100, 0, 0, 1, SC_TIER_NONE},
+        {9.0f, 100, 0, 0, 0, SC_TIER_NONE},   {0, 0, 1.8f, 0.8f, 0, SC_TIER_STAB},  {0, 0, 1.79f, 1, 0, SC_TIER_NONE},
+        {9.0f, 100, 2.0f, 0.79f, 1, SC_TIER_HEAVY}, {9.0f, 100, 2.0f, 0.81f, 1, SC_TIER_STAB},
+    };
+    for (size_t i = 0; i < sizeof T / sizeof T[0]; i++) {
+        sc_speed s;
+        sc_speed_reset(&s);
+        s.mean_mps = T[i].mean, s.travel = T[i].travel, s.axis_mps = T[i].axis, s.cos_axis = T[i].cosv, s.above = T[i].above;
+        CHECK(sc_tier(&c, &s) == T[i].want, "case %zu: tier %s, want %s", i, sc_tier_name(sc_tier(&c, &s)),
+              sc_tier_name(T[i].want));
+    }
+    CHECK(!strcmp(sc_tier_name(SC_TIER_HEAVY), "heavy") && !strcmp(sc_tier_name(9), "?"), "tier names");
+    printf("tiers: %zu boundary cases (3/6 m/s, 15/40 cm, stab 1.8 m/s cos 0.8 first)\n", sizeof T / sizeof T[0]);
+}
+
+static void test_cool_charges(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    sc_cool k;
+    sc_cool_reset(&k);
+    sc_cool_mark(&k, 0xA, 10.0);
+    CHECK(!sc_cool_ready(&k, 0xA, 10.1, c.cool_s) && !sc_cool_ready(&k, 0xA, 10.249, c.cool_s), "re-hit inside 0.25 s");
+    CHECK(sc_cool_ready(&k, 0xA, 10.25, c.cool_s) && sc_cool_ready(&k, 0xB, 10.0, c.cool_s), "after 0.25 s / another orc");
+    sc_cool_mark(&k, 0xA, 11.0);
+    CHECK(!sc_cool_ready(&k, 0xA, 11.1, c.cool_s), "a new mark on the same key");
+    for (uintptr_t i = 1; i <= SC_COOL_N; i++) sc_cool_mark(&k, 0x100 + i, 20.0 + (double)i * 0.001);
+    CHECK(sc_cool_ready(&k, 0xA, 11.1, c.cool_s), "full table: the oldest mark (0xA) was not the one evicted");
+    CHECK(!sc_cool_ready(&k, 0x100 + SC_COOL_N, 20.1, c.cool_s) && !sc_cool_ready(&k, 0x102, 20.1, c.cool_s),
+          "full table: a recent mark got lost");
+    CHECK(sc_cool_ready(&k, 0, 0, c.cool_s), "key 0 is never cooling");
+    sc_charges ch;
+    sc_charges_init(&ch, &c, 0);
+    int took = 0;
+    for (int i = 0; i < 4; i++) took += sc_charges_take(&ch, &c, 0.01 * i);
+    CHECK(took == 3, "3 charges, took %d", took);
+    CHECK(!sc_charges_take(&ch, &c, 0.2), "a charge at 0.2 s");
+    CHECK(sc_charges_take(&ch, &c, 0.30) && !sc_charges_take(&ch, &c, 0.35), "one back after 0.25 s");
+    CHECK(NEAR(sc_charges_now(&ch, &c, 100), 3, 1e-6), "capped at 3 (%g)", sc_charges_now(&ch, &c, 100));
+    CHECK(NEAR(sc_charges_now(&ch, &c, 0.1), ch.n, 1e-6), "time going back regrows");
+    printf("cooldown: 0.25 s per orc, other orcs free, eviction of the oldest; charges: 3, one back per 0.25 s, cap\n");
+}
+
+/* ---- the fake blade -------------------------------------------------------------------------------------------- */
+static void test_fake(void) {
+    float head[3] = {1000, 250, -500}, rate;
+    somvr_blade b;
+    somvr_blade_fake(50.1, 50.0, head, 0, &b);
+    float pv[3] = {1000, 220, -500};
+    CHECK(b.valid && NEAR(b.tip[1], 220, 1e-3) && NEAR(b.base[1], 220, 1e-3) && NEAR(dist3(b.tip, pv), 135, 1e-3) &&
+              NEAR(dist3(b.base, pv), 45, 1e-3) && len3(b.vel_tip) == 0 && b.t == 50.1,
+          "held: tip %g %g %g", b.tip[0], b.tip[1], b.tip[2]);
+    CHECK(NEAR(b.tip[0] - 1000, 135 * sinf(DEG(75)), 1e-3) && NEAR(b.tip[2] + 500, 135 * cosf(DEG(75)), 1e-3),
+          "held 75 deg right");
+    CHECK(NEAR(somvr_blade_fake_angle(1.0, &rate), DEG(-75), 1e-5) && rate == 0, "after the heavy swing");
+    CHECK(NEAR(somvr_blade_fake_angle(2.3, &rate), DEG(75), 1e-5) && rate == 0, "after the light swing");
+    float a1 = somvr_blade_fake_angle(0.5, &rate), r1 = rate, a2 = somvr_blade_fake_angle(0.5 + 3 * SC_FAKE_PERIOD, &rate);
+    CHECK(NEAR(a1, a2, 1e-4) && NEAR(r1, rate, 1e-4), "periodic");
+    /* plateaus: the tip at 9 and 4.5 m/s, the velocity = the derivative of the tip (central difference) */
+    double ts[2] = {0.5, 1.8};
+    float want[2] = {900, 450};
+    for (int k = 0; k < 2; k++) {
+        somvr_blade m, p;
+        float yaw = DEG(30);
+        somvr_blade_fake(ts[k], 0, head, yaw, &b);
+        somvr_blade_fake(ts[k] - 1e-4, 0, head, yaw, &m);
+        somvr_blade_fake(ts[k] + 1e-4, 0, head, yaw, &p);
+        float fd[3];
+        for (int i = 0; i < 3; i++) fd[i] = (p.tip[i] - m.tip[i]) / 2e-4f;
+        CHECK(NEAR(len3(b.vel_tip), want[k], 0.5) && NEAR(dist3(fd, b.vel_tip), 0, 2.0), "swing %d: |v| %g, fd %g %g %g vs %g %g %g", k,
+              len3(b.vel_tip), fd[0], fd[1], fd[2], b.vel_tip[0], b.vel_tip[1], b.vel_tip[2]);
+        CHECK(NEAR(b.vel_tip[1], 0, 1e-4), "swing %d: not level", k);
+    }
+    /* heading 90 deg (facing +X): mid-swing the blade points +X */
+    float best = 10;
+    double tmid = 0;
+    for (double tt = 0.3; tt < 0.8; tt += 1e-4) {
+        float a = fabsf(somvr_blade_fake_angle(tt, &rate));
+        if (a < best) best = a, tmid = tt;
+    }
+    somvr_blade_fake(tmid, 0, head, DEG(90), &b);
+    CHECK(NEAR(b.tip[0] - 1000, 135, 0.05) && NEAR(b.tip[2] + 500, 0, 0.5) && b.vel_tip[2] > 800, "yaw 90 mid-swing: tip %g %g v %g",
+          b.tip[0], b.tip[2], b.vel_tip[2]);
+    printf("fake: held 75 deg, plateaus 9.0/4.5 m/s = d(tip)/dt, level, periodic, yaw\n");
+}
+
+/* ---- the controller blade ------------------------------------------------------------------------------------------ */
+static sc_grip grip_at(float x, float y, float z, float yaw, double xr_t) { /* a grip turned yaw about +Y */
+    sc_grip g = {1, {x, y, z}, {0, sinf(0.5f * yaw), 0, cosf(0.5f * yaw)}, 0, {0, 0, 0}, {0, 0, 0}, xr_t};
+    return g;
+}
+static void test_controller(void) {
+    sc_blade_cfg c;
+    sc_blade_cfg_default(&c);
+    CHECK(c.back_cm == 8 && c.len_cm == 100 && c.pitch_rad == 0 && !c.vel_runtime, "defaults (the tip at the model's)");
+    c.len_cm = 90; /* the geometry below with a 90 cm tip */
+    sc_rigxf id = {{0, 0, 0}, {0, 0, 0}, 0, 0};
+    sc_blade_hist h = {0};
+    somvr_blade b;
+    /* identity grip at the origin: the blade along +Z, base 8 behind, tip 90 ahead; no velocity on the first sample */
+    sc_grip g = grip_at(0, 0, 0, 0, 10.0);
+    CHECK(somvr_blade_controller(&c, &g, &id, 5.0, &h, &b) && NEAR(b.base[2], -8, 1e-5) && NEAR(b.tip[2], 90, 1e-5) &&
+              NEAR(b.tip[0], 0, 1e-5) && NEAR(b.tip[1], 0, 1e-5) && len3(b.vel_tip) == 0 && b.t == 5.0,
+          "identity: base %g tip %g %g %g v %g", b.base[2], b.tip[0], b.tip[1], b.tip[2], len3(b.vel_tip));
+    /* pitch +30 deg: the tip up; an offset in the grip's frame; a grip turned 90 deg right */
+    sc_blade_cfg cp = c;
+    cp.pitch_rad = DEG(30);
+    h.have = 0;
+    somvr_blade_controller(&cp, &g, &id, 5.0, &h, &b);
+    CHECK(NEAR(b.tip[1], 90 * sinf(DEG(30)), 1e-4) && NEAR(b.tip[2], 90 * cosf(DEG(30)), 1e-4) &&
+              NEAR(b.base[1], -8 * sinf(DEG(30)), 1e-4),
+          "pitch 30: tip %g %g", b.tip[1], b.tip[2]);
+    cp = c;
+    cp.ofs_cm[0] = 2, cp.ofs_cm[2] = 5;
+    g = grip_at(10, 100, -20, DEG(90), 10.0);
+    h.have = 0;
+    somvr_blade_controller(&cp, &g, &id, 5.0, &h, &b);
+    CHECK(NEAR(b.tip[0], 10 + 5 + 90, 1e-3) && NEAR(b.tip[2], -20 - 2, 1e-3) && NEAR(b.tip[1], 100, 1e-4) &&
+              NEAR(b.base[0], 10 + 5 - 8, 1e-3),
+          "turned 90 + offset: tip %g %g %g base %g", b.tip[0], b.tip[1], b.tip[2], b.base[0]);
+    /* the rig: tracking (p - p0) turned by yaw, then the base */
+    sc_rigxf rig = {{500, 100, -50}, {0, 0, -30}, DEG(90), 0};
+    g = grip_at(0, 0, 0, 0, 10.0);
+    h.have = 0;
+    somvr_blade_controller(&c, &g, &rig, 5.0, &h, &b);
+    CHECK(NEAR(b.tip[0], 500 + 120, 1e-3) && NEAR(b.tip[2], -50, 1e-3) && NEAR(b.tip[1], 100, 1e-4) &&
+              NEAR(b.base[0], 500 + 22, 1e-3),
+          "rig: tip %g %g %g base %g", b.tip[0], b.tip[1], b.tip[2], b.base[0]);
+    /* tracking-space deltas: 1 cm per 1/90 s along +X -> 90 cm/s, turned by the rig (+X -> -Z) */
+    g = grip_at(1, 0, 0, 0, 10.0 + 1 / HZ);
+    somvr_blade_controller(&c, &g, &rig, 5.0 + 1 / HZ, &h, &b);
+    CHECK(NEAR(b.vel_tip[0], 0, 1e-2) && NEAR(b.vel_tip[2], -90, 0.05) && NEAR(b.vel_tip[1], 0, 1e-3),
+          "delta: v %g %g %g", b.vel_tip[0], b.vel_tip[1], b.vel_tip[2]);
+    /* the same locate time again (reused views): the last velocity; a gap > 0.1 s: none */
+    somvr_blade_controller(&c, &g, &rig, 5.0 + 2 / HZ, &h, &b);
+    CHECK(NEAR(b.vel_tip[2], -90, 0.05), "same time: v %g", b.vel_tip[2]);
+    g.xr_t += 0.2;
+    somvr_blade_controller(&c, &g, &rig, 5.3, &h, &b);
+    CHECK(len3(b.vel_tip) == 0, "gap: v %g", len3(b.vel_tip));
+    /* a still grip while the rig turns (snap), moves (walking) and recentres: the world tip moves, the velocity is 0 */
+    float worst = 0;
+    h.have = 0;
+    for (int f = 0; f < 30; f++) {
+        sc_rigxf r2 = {{500 + 5.0f * f, 100, -50}, {0, 0, f < 15 ? -30.0f : 12.0f}, DEG(90) + (f >= 10 ? DEG(45) : 0), 0};
+        g = grip_at(0, 0, 0, 0, 20.0 + f / HZ);
+        somvr_blade_controller(&c, &g, &r2, 6.0 + f / HZ, &h, &b);
+        worst = fmaxf(worst, len3(b.vel_tip));
+    }
+    CHECK(worst == 0, "a still sword under a turning/walking/recentred rig: |v| up to %g", worst);
+    /* runtime velocities: v + w x r (w = 2 pi rad/s about +Y, the blade along +Z: the tip at 2 pi 0.9 m/s along +X) */
+    sc_blade_cfg cr = c;
+    cr.vel_runtime = 1;
+    g = grip_at(0, 0, 0, 0, 30.0);
+    g.vel_valid = 1, g.vel[1] = 10, g.avel[1] = 6.2831853f;
+    somvr_blade_controller(&cr, &g, &id, 7.0, &h, &b);
+    CHECK(NEAR(b.vel_tip[0], 6.2831853 * 90, 0.05) && NEAR(b.vel_tip[1], 10, 1e-4) && NEAR(b.vel_tip[2], 0, 1e-3),
+          "runtime: v %g %g %g", b.vel_tip[0], b.vel_tip[1], b.vel_tip[2]);
+    g.vel_valid = 0; /* not valid: back to deltas (still: 0) */
+    g.xr_t += 1 / HZ;
+    somvr_blade_controller(&cr, &g, &id, 7.0 + 1 / HZ, &h, &b);
+    CHECK(len3(b.vel_tip) == 0, "runtime invalid -> delta: v %g", len3(b.vel_tip));
+    /* invalid grips: none, and the history is dropped (the next one starts without a velocity) */
+    g.valid = 0;
+    CHECK(!somvr_blade_controller(&c, &g, &id, 8.0, &h, &b) && !b.valid && !h.have, "an invalid grip gave a blade");
+    g = grip_at(NAN, 0, 0, 0, 40.0);
+    CHECK(!somvr_blade_controller(&c, &g, &id, 8.0, &h, &b), "a NaN grip gave a blade");
+    g = grip_at(0, 0, 0, 0, 40.0), g.quat[3] = 0;
+    CHECK(!somvr_blade_controller(&c, &g, &id, 8.0, &h, &b), "a zero quaternion gave a blade");
+    CHECK(!somvr_blade_controller(&c, NULL, &id, 8.0, &h, &b), "no grip gave a blade");
+    printf("controller: +Z blade 8 back / 90 ahead, pitch, offset, rig; delta 90 cm/s rotated, reuse, gap; still sword under "
+           "turn/walk/recentre = 0; v + w x r; invalid/NaN/zero quaternion: none\n");
+}
+
+/* end to end: a tracked sword swung through an orc capsule (the grip turning about the shoulder) at 90 Hz, then the
+ * same pose held while the rig turns 45 deg (snap) and the player walks: a heavy hit per fast swing, none otherwise */
+static void test_controller_fight(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    sc_blade_cfg bc;
+    sc_blade_cfg_default(&bc);
+    bc.len_cm = 90; /* this swing's step start: with the 100 cm tip the first contact (20 deg in) has 35 cm of travel, a
+                     * light hit; the 90 cm one meets the orc a frame later, past the heavy rule's 40 cm */
+    sc_speed s;
+    sc_cool k;
+    sc_charges ch;
+    sc_speed_reset(&s), sc_cool_reset(&k), sc_charges_init(&ch, &c, 0);
+    sc_blade_hist h = {0};
+    float c0[3] = {0, 50, 110}, c1[3] = {0, 230, 110};
+    somvr_blade prev = {0}, b;
+    int hits[SC_TIER_N] = {0}, starts = 0;
+    for (int f = 0; f < 3 * 90; f++) {
+        double t = f / HZ;
+        float ph = (float)fmod(t, 1.5), a; /* 0.5 s held right, a 120 deg swing in 0.2 s (~9 m/s at the tip), held left */
+        a = ph < 0.5f ? DEG(60) : ph < 0.7f ? DEG(60) - DEG(120) * (ph - 0.5f) / 0.2f : DEG(-60);
+        sc_rigxf rig = {{0, 140, 0}, {0, 0, 0}, 0, 0};
+        if (t >= 1.5) /* the second half: the sword held where the swing ended, the rig snapping and walking */
+            a = DEG(-60), rig.yaw = t >= 2.0 ? DEG(-45) : 0, rig.base[2] = (float)(t - 1.5) * 300.0f;
+        sc_grip g = grip_at(0, 0, 0, a, 100.0 + t);
+        somvr_blade_controller(&bc, &g, &rig, t, &h, &b);
+        starts += sc_speed_push(&s, &c, &b) == 1;
+        sc_contact ct;
+        if (sc_sweep_capsule(&prev, &b, c.blade_r, c0, c1, 35, c.steps, &ct) && sc_cool_ready(&k, 0x1, t, c.cool_s)) {
+            sc_cool_mark(&k, 0x1, t);
+            int tr = sc_tier(&c, &s);
+            if (tr != SC_TIER_NONE && sc_charges_take(&ch, &c, t)) hits[tr]++;
+        }
+        prev = b;
+    }
+    CHECK(hits[SC_TIER_HEAVY] == 1 && hits[SC_TIER_LIGHT] == 0 && starts == 1,
+          "controller fight: heavy %d light %d swings %d (one swing, one heavy hit)", hits[SC_TIER_HEAVY],
+          hits[SC_TIER_LIGHT], starts);
+    printf("controller fight: one 120 deg swing -> one heavy hit; held under a snap turn and a walk: no swing\n");
+}
+
+/* end to end: the fake at 90 Hz in front of an orc 110 cm ahead, the speed, the sweep, the cooldown and the charges as
+ * somvr.c's combat_frame uses them: per cycle exactly one heavy hit (the right -> left swing) and one light (back) */
+static void test_fake_fight(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    sc_speed s;
+    sc_cool k;
+    sc_charges ch;
+    sc_speed_reset(&s);
+    sc_cool_reset(&k);
+    sc_charges_init(&ch, &c, 0);
+    float head[3] = {0, 170, 0}, c0[3] = {0, 50, 110}, c1[3] = {0, 230, 110};
+    somvr_blade prev = {0}, b;
+    int hits[SC_TIER_N] = {0}, contacts = 0, starts = 0, ends = 0, heading = 0, order[8], no = 0;
+    for (int f = 0; f < (int)(2 * SC_FAKE_PERIOD * HZ); f++) {
+        double t = f / HZ;
+        somvr_blade_fake(t, 0, head, 0, &b);
+        int e = sc_speed_push(&s, &c, &b);
+        float d, cs;
+        if (e == 1) {
+            starts++;
+            heading += sc_heading_at(&c, &b, c0, c1, 35, &d, &cs);
+        }
+        ends += e == -1;
+        sc_contact ct;
+        if (sc_sweep_capsule(&prev, &b, c.blade_r, c0, c1, 35, c.steps, &ct)) {
+            contacts++;
+            if (sc_cool_ready(&k, 0x1, t, c.cool_s)) {
+                sc_cool_mark(&k, 0x1, t);
+                int tr = sc_tier(&c, &s);
+                if (tr != SC_TIER_NONE && sc_charges_take(&ch, &c, t)) {
+                    hits[tr]++;
+                    if (no < 8) order[no++] = tr;
+                }
+            }
+        }
+        prev = b;
+    }
+    CHECK(hits[SC_TIER_HEAVY] == 2 && hits[SC_TIER_LIGHT] == 2 && hits[SC_TIER_STAB] == 0, "hits heavy %d light %d stab %d",
+          hits[SC_TIER_HEAVY], hits[SC_TIER_LIGHT], hits[SC_TIER_STAB]);
+    CHECK(no == 4 && order[0] == SC_TIER_HEAVY && order[1] == SC_TIER_LIGHT && order[2] == SC_TIER_HEAVY &&
+              order[3] == SC_TIER_LIGHT,
+          "order of the hits");
+    CHECK(starts == 4 && ends == 4 && heading == 4, "swings: %d starts, %d ends, %d heading at the orc", starts, ends, heading);
+    CHECK(contacts > 4, "contacts %d (several frames per pass, the cooldown keeps one hit)", contacts);
+    printf("fake fight: 2 cycles, %d contact frames -> heavy, light, heavy, light; 4 swings toward the orc\n", contacts);
+}
+
+/* ---- orc reactions (SOMVR_COMBAT_REACT): the block-table chance, the game's comparison, one roll per swing per orc */
+static void test_react(void) {
+    const uintptr_t X = 0x1000, L = 0x2000, H = 0x3000;
+    int ent = 7;
+    sc_block_entry e2[2] = {{X, 0.9f}, {L, 0.3f}}, e3[3] = {{X, 0.9f}, {0, 0.7f}, {L, 0.3f}}, e1n[1] = {{0, 0.6f}};
+    uintptr_t cl[1] = {L}, clx[2] = {L, X}, ch[1] = {H};
+    float c = sc_block_chance(e2, 0, 1, cl, 1, &ent);
+    CHECK(c < 0 && ent == -1, "no entries: %g (entry %d), want no roll", c, ent);
+    CHECK(sc_block_chance(NULL, 2, 1, cl, 1, &ent) < 0 && ent == -1, "no table rolled");
+    c = sc_block_chance(e2, 2, 0, cl, 1, &ent);
+    CHECK(c == SC_BLOCK_DEFAULT && ent == -1, "entries that are not records: %g (entry %d), want 0.5", c, ent);
+    c = sc_block_chance(e2, 2, 1, cl, 1, &ent);
+    CHECK(c == 0.3f && ent == 1, "the light category: %g (entry %d)", c, ent);
+    c = sc_block_chance(e3, 3, 1, cl, 1, &ent);
+    CHECK(c == 0.7f && ent == 1, "an entry without a category before the match: %g (entry %d)", c, ent);
+    c = sc_block_chance(e2, 2, 1, clx, 2, &ent);
+    CHECK(c == 0.9f && ent == 0, "two categories: the first entry that matches (%g, entry %d)", c, ent);
+    c = sc_block_chance(e2, 2, 1, ch, 1, &ent);
+    CHECK(c < 0 && ent == -1, "no entry matches: %g (entry %d)", c, ent);
+    c = sc_block_chance(e2, 2, 1, NULL, 0, &ent);
+    CHECK(c < 0 && ent == -1, "an attack without categories against categorised entries: %g", c);
+    c = sc_block_chance(e1n, 1, 1, NULL, 0, &ent);
+    CHECK(c == 0.6f && ent == 0, "an attack without categories, an entry without one: %g (entry %d)", c, ent);
+    /* the game's comparison: notify only when chance > roll */
+    CHECK(sc_block_won(0.5f, 0.49f) && !sc_block_won(0.5f, 0.5f) && !sc_block_won(0.5f, 0.51f), "0.5 against 0.49/0.5/0.51");
+    CHECK(!sc_block_won(-1.0f, 0.0f) && !sc_block_won(0.0f, 0.0f) && sc_block_won(1.0f, 0.999f), "no roll / 0 / 1");
+    CHECK(!sc_block_won(0.5f, NAN) && !sc_block_won(NAN, 0.1f), "NaN won");
+    /* one roll per swing per orc, in the swing's first SC_REACT_WINDOW_S */
+    sc_react r;
+    sc_react_reset(&r);
+    CHECK(!sc_react_take(&r, 0xa, 10) && !sc_react_open(&r, 10), "a roll without a swing");
+    sc_react_start(&r, 10);
+    CHECK(sc_react_take(&r, 0xa, 10), "the first orc at the swing's start");
+    CHECK(!sc_react_take(&r, 0xa, 10.05) && !sc_react_take(&r, 0xa, 10.2), "the same orc twice in one swing");
+    CHECK(sc_react_take(&r, 0xb, 10.2), "a second orc later in the window");
+    CHECK(!sc_react_take(&r, 0, 10.1), "key 0 rolled");
+    CHECK(sc_react_open(&r, 10 + SC_REACT_WINDOW_S) && !sc_react_open(&r, 10 + SC_REACT_WINDOW_S + 1e-4) &&
+              !sc_react_open(&r, 9.99),
+          "the window's edges");
+    CHECK(!sc_react_take(&r, 0xc, 10 + SC_REACT_WINDOW_S + 0.01), "a roll after the window");
+    sc_react_end(&r);
+    CHECK(!sc_react_take(&r, 0xd, 10.1) && !sc_react_open(&r, 10.1), "a roll after the swing's end");
+    sc_react_start(&r, 11);
+    CHECK(sc_react_take(&r, 0xa, 11) && sc_react_take(&r, 0xb, 11), "the next swing: the same orcs roll again");
+    sc_react_start(&r, 12);
+    int k = 0;
+    for (uintptr_t key = 1; key <= SC_REACT_N + 1; key++)
+        k += sc_react_take(&r, key, 12);
+    CHECK(k == SC_REACT_N && r.n == SC_REACT_N, "capacity: %d of %d orcs rolled", k, SC_REACT_N + 1);
+    printf("react: chance (none, not records = 0.5, first match, an entry without a category, no match), the game's "
+           "chance > roll, one roll per swing per orc, the %.0f ms window, the end, the next swing, %d orcs\n",
+           SC_REACT_WINDOW_S * 1e3, SC_REACT_N);
+}
+
+/* the no-table path (P9: AI_Defender and AI_Berserker have no AIBlockTable): the archetype, the counter goal's gate, the
+ * chance per archetype, the game's comparison */
+static void test_react_direct(void) {
+    sc_react_cfg c;
+    sc_react_cfg_default(&c);
+    CHECK(c.chance[SC_ARCH_DEFENDER] == 0.6f && c.chance[SC_ARCH_BERSERKER] == 0.4f && c.chance[SC_ARCH_OTHER] == 0.5f,
+          "defaults %g %g %g", c.chance[0], c.chance[1], c.chance[2]);
+    CHECK(sc_archetype("AI_Defender") == SC_ARCH_DEFENDER && sc_archetype("AI_Berserker") == SC_ARCH_BERSERKER &&
+              sc_archetype("AI_Defender_Elite") == SC_ARCH_DEFENDER && sc_archetype("AI_Berserker_X") == SC_ARCH_BERSERKER,
+          "the two archetypes");
+    CHECK(sc_archetype("AI_Infantry") == SC_ARCH_OTHER && sc_archetype("AI_Defenders") == SC_ARCH_OTHER &&
+              sc_archetype("Orc_Defender") == SC_ARCH_OTHER && sc_archetype("ai_defender") == SC_ARCH_OTHER &&
+              sc_archetype("") == SC_ARCH_OTHER && sc_archetype(NULL) == SC_ARCH_OTHER,
+          "other names");
+    CHECK(!strcmp(sc_archetype_name(SC_ARCH_DEFENDER), "defender") && !strcmp(sc_archetype_name(SC_ARCH_OTHER), "other") &&
+              !strcmp(sc_archetype_name(7), "?") && !strcmp(sc_archetype_name(-1), "?"),
+          "archetype names");
+    /* the gate: an attack with both cancel bytes 0 = in its own attack; no attack, or a cancel window open = out of it
+     * (P9: 'AI_Defender_Cone' cancel=0/0 -> no goal; '' -> block_go) */
+    CHECK(sc_in_own_attack(0x1234, 0, 0) && !sc_in_own_attack(0, 0, 0) && !sc_in_own_attack(0x1234, 1, 0) &&
+              !sc_in_own_attack(0x1234, 0, 1) && !sc_in_own_attack(0, 1, 1),
+          "the counter goal's gate");
+    CHECK(sc_react_direct_chance(&c, SC_ARCH_DEFENDER, 0) == 0.6f && sc_react_direct_chance(&c, SC_ARCH_BERSERKER, 0) == 0.4f &&
+              sc_react_direct_chance(&c, SC_ARCH_OTHER, 0) == 0.5f,
+          "out of its attack: the archetype's chance");
+    CHECK(sc_react_direct_chance(&c, SC_ARCH_DEFENDER, 1) < 0 && sc_react_direct_chance(&c, SC_ARCH_BERSERKER, 1) < 0,
+          "in its own attack: no call");
+    CHECK(sc_react_direct_chance(&c, SC_ARCH_N, 0) < 0 && sc_react_direct_chance(&c, -1, 0) < 0, "an unknown archetype");
+    sc_react_cfg z = c;
+    z.chance[SC_ARCH_DEFENDER] = 0, z.chance[SC_ARCH_BERSERKER] = NAN, z.chance[SC_ARCH_OTHER] = 1.5f;
+    CHECK(sc_react_direct_chance(&z, SC_ARCH_DEFENDER, 0) < 0 && sc_react_direct_chance(&z, SC_ARCH_BERSERKER, 0) < 0 &&
+              sc_react_direct_chance(&z, SC_ARCH_OTHER, 0) == 1.0f,
+          "0 = never, NaN = never, above 1 = 1");
+    /* with the game's comparison: the defender's 0.6 wins at 0.3 and 0.59, loses at 0.6 and 0.8; force (roll 0) wins */
+    float d = sc_react_direct_chance(&c, SC_ARCH_DEFENDER, 0), bz = sc_react_direct_chance(&c, SC_ARCH_BERSERKER, 0);
+    CHECK(sc_block_won(d, 0.3f) && sc_block_won(d, 0.59f) && !sc_block_won(d, 0.6f) && !sc_block_won(d, 0.8f) &&
+              sc_block_won(d, 0.0f),
+          "defender rolls");
+    CHECK(sc_block_won(bz, 0.3f) && !sc_block_won(bz, 0.5f) && !sc_block_won(sc_react_direct_chance(&c, SC_ARCH_BERSERKER, 1), 0.0f),
+          "berserker rolls; in its attack even force does not call");
+    printf("react direct: archetypes by record (AI_Defender, AI_Berserker, other), the counter goal's gate (attack + cancel "
+           "0/0), chances %.1f/%.1f/%.1f, 0/NaN = never, in its own attack = no call\n",
+           c.chance[0], c.chance[1], c.chance[2]);
+}
+
+/* end to end with the fake blade: per swing one roll for the orc ahead (at the swing's start; many frames head at it),
+ * one for an orc 40 deg left, none for an orc behind; the edges drive the window */
+static void test_react_fight(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    sc_speed s;
+    sc_react r;
+    sc_speed_reset(&s);
+    sc_react_reset(&r);
+    float head[3] = {0, 170, 0};
+    /* A 110 cm ahead, L 120 cm at 40 deg left, B 3 m behind */
+    float cap[3][2][3] = {{{0, 50, 110}, {0, 230, 110}},
+                          {{-120 * 0.6428f, 50, 120 * 0.7660f}, {-120 * 0.6428f, 230, 120 * 0.7660f}},
+                          {{0, 50, -300}, {0, 230, -300}}};
+    int rolls[3] = {0}, heading[3] = {0}, starts = 0, first_at_start = 0;
+    somvr_blade b;
+    for (int f = 0; f < (int)(2 * SC_FAKE_PERIOD * HZ); f++) {
+        double t = f / HZ;
+        somvr_blade_fake(t, 0, head, 0, &b);
+        int e = sc_speed_push(&s, &c, &b);
+        if (e == 1)
+            sc_react_start(&r, t), starts++;
+        else if (e == -1)
+            sc_react_end(&r);
+        for (int o = 0; o < 3 && sc_react_open(&r, t); o++) {
+            float d, cs;
+            if (!sc_heading_at(&c, &b, cap[o][0], cap[o][1], 35, &d, &cs))
+                continue;
+            heading[o]++;
+            if (sc_react_take(&r, (uintptr_t)(o + 1), t)) {
+                rolls[o]++;
+                first_at_start += o == 0 && t == r.t0;
+            }
+        }
+    }
+    CHECK(starts == 4 && rolls[0] == 4 && first_at_start == 4, "ahead: %d swings, %d rolls (%d at the start)", starts,
+          rolls[0], first_at_start);
+    CHECK(heading[0] > rolls[0], "ahead: %d frames heading at it, %d rolls (the limit must matter)", heading[0], rolls[0]);
+    CHECK(rolls[1] == 4 && heading[1] > 4, "left: %d rolls (%d frames heading at it)", rolls[1], heading[1]);
+    CHECK(rolls[2] == 0 && heading[2] == 0, "behind: %d rolls", rolls[2]);
+    printf("react fight: 2 cycles, 4 swings: the orc ahead rolls 4 times (%d frames heading at it), the one at 40 deg "
+           "left %d, the one behind 0\n", heading[0], rolls[1]);
+}
+
+/* ---- SOMVR_HANDS_TEST's scripted swing (sc_swing_*) ------------------------------------------------------------- */
+static void test_swing(void) {
+    /* the timing: minimum jerk */
+    CHECK(sc_swing_ease(0) == 0 && sc_swing_ease(1) == 1 && NEAR(sc_swing_ease(0.5f), 0.5, 1e-6) &&
+              sc_swing_ease(-1) == 0 && sc_swing_ease(2) == 1 && sc_swing_ease(NAN) == 0,
+          "ease ends, middle, clamps, NaN");
+    float last = 0, peak = 0;
+    int mono = 1;
+    for (int i = 1; i <= 1000; i++) {
+        float k = sc_swing_ease(i / 1000.0f), d = (k - last) * 1000;
+        mono &= k >= last - 1e-6f, peak = d > peak ? d : peak, last = k;
+    }
+    CHECK(mono && NEAR(peak, 1.875, 0.01) && sc_swing_ease(0.01f) < 1e-4f && 1 - sc_swing_ease(0.99f) < 1e-4f,
+          "ease monotonic, peak rate %.3f (1.875), still at both ends", peak);
+    /* the euler order: X, then Y, then Z (q = qx qy qz) */
+    float q[4], e[3] = {90, 0, 0};
+    sc_euler_quat(e, q);
+    CHECK(NEAR(q[0], sinf(DEG(45)), 1e-6) && q[1] == 0 && q[2] == 0 && NEAR(q[3], cosf(DEG(45)), 1e-6), "90 about X");
+    float e2[3] = {30, 40, 50}, sx = sinf(DEG(15)), cx = cosf(DEG(15)), sy = sinf(DEG(20)), cy = cosf(DEG(20)),
+          sz = sinf(DEG(25)), cz = cosf(DEG(25));
+    sc_euler_quat(e2, q);
+    /* qx qy = (sx cy, cx sy, sx sy, cx cy); then x qz */
+    float a0 = sx * cy, a1 = cx * sy, a2 = sx * sy, a3 = cx * cy;
+    float w0 = a3 * 0 + a0 * cz + a1 * sz - a2 * 0, w1 = a3 * 0 - a0 * sz + a1 * cz + a2 * 0,
+          w2 = a3 * sz + a0 * 0 - a1 * 0 + a2 * cz, w3 = a3 * cz - a0 * 0 - a1 * 0 - a2 * sz;
+    CHECK(NEAR(q[0], w0, 1e-6) && NEAR(q[1], w1, 1e-6) && NEAR(q[2], w2, 1e-6) && NEAR(q[3], w3, 1e-6),
+          "30 40 50: %.4f %.4f %.4f %.4f vs %.4f %.4f %.4f %.4f", q[0], q[1], q[2], q[3], w0, w1, w2, w3);
+    /* the arc about the pivot: 40 cm right of it -> 60 cm ahead of it */
+    float pv[3] = {18, -25, -8}, pa[3] = {58, -25, -8}, pb[3] = {18, -25, 52}, id[4] = {0, 0, 0, 1}, p[3];
+    float qy90[4] = {0, sinf(DEG(45)), 0, cosf(DEG(45))};
+    CHECK(sc_swing_pose(pa, id, pb, qy90, pv, 0, p, q) && NEAR(p[0], 58, 1e-4) && NEAR(p[2], -8, 1e-4) && NEAR(q[3], 1, 1e-6),
+          "u 0: the start");
+    CHECK(sc_swing_pose(pa, id, pb, qy90, pv, 1, p, q) && NEAR(p[0], 18, 1e-3) && NEAR(p[2], 52, 1e-3) &&
+              NEAR(q[1], qy90[1], 1e-6) && NEAR(q[3], qy90[3], 1e-6),
+          "u 1: the end");
+    sc_swing_pose(pa, id, pb, qy90, pv, 0.5f, p, q);
+    float r[3] = {p[0] - pv[0], p[1] - pv[1], p[2] - pv[2]};
+    CHECK(NEAR(len3(r), 50, 1e-3) && NEAR(atan2f(r[2], r[0]), DEG(45), 1e-4) && NEAR(p[1], -25, 1e-4) &&
+              NEAR(q[1], sinf(DEG(22.5f)), 1e-5) && NEAR(q[3], cosf(DEG(22.5f)), 1e-5),
+          "u 0.5: on the arc (50 cm, 45 deg), half the turn: %.2f cm %.1f deg", len3(r), atan2f(r[2], r[0]) * 57.3f);
+    float qn[4] = {-qy90[0], -qy90[1], -qy90[2], -qy90[3]};
+    sc_swing_pose(pa, id, pb, qn, pv, 0.5f, p, q);
+    CHECK(NEAR(fabsf(q[1]), sinf(DEG(22.5f)), 1e-5) && NEAR(fabsf(q[3]), cosf(DEG(22.5f)), 1e-5), "the shorter way");
+    float po[3] = {-22, -25, -8}; /* opposite the start: a line */
+    sc_swing_pose(pa, id, po, id, pv, 0.5f, p, q);
+    CHECK(NEAR(p[0], 18, 1e-3) && NEAR(p[2], -8, 1e-3), "opposite: the line's middle %.2f,%.2f", p[0], p[2]);
+    sc_swing_pose(pv, id, pb, id, pv, 0.5f, p, q);
+    CHECK(NEAR(p[2], 22, 1e-3), "from the pivot itself: the line");
+    float zq[4] = {0, 0, 0, 0}, bad[3] = {NAN, 0, 0};
+    CHECK(!sc_swing_pose(pa, zq, pb, id, pv, 0.5f, p, q) && !sc_swing_pose(bad, id, pb, id, pv, 0.5f, p, q) &&
+              !sc_swing_pose(pa, id, pb, id, bad, 0.5f, p, q),
+          "a zero quaternion, NaN: refused");
+}
+
+/* the scripted swing end to end (`hands swing R` in a headless boot): the right grip from the fist axis pointing right
+ * to pointing left in front of the head (160 cm up, facing +z), through an orc 110 cm ahead, at Monado's 20 Hz and at
+ * 90 Hz, through somvr_blade_controller's tracking-space velocity, the speed, the sweep and the tiers as combat_frame */
+static int swing_fight(double hz, float ms, int *starts, int *tier) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    sc_blade_cfg bc;
+    sc_blade_cfg_default(&bc);
+    sc_speed s;
+    sc_cool k;
+    sc_charges ch;
+    sc_speed_reset(&s), sc_cool_reset(&k), sc_charges_init(&ch, &c, 0);
+    sc_blade_hist h = {0};
+    float c0[3] = {0, 50, 110}, c1[3] = {0, 230, 110}, pv[3] = {18, -25, -8};
+    float pa[3] = {35, -20, 30}, ea[3] = {0, -90, 0}, pb[3] = {-25, -25, 45}, eb[3] = {0, 90, 0}, qa[4], qb[4];
+    sc_euler_quat(ea, qa), sc_euler_quat(eb, qb);
+    somvr_blade prev = {0}, b;
+    int hits = 0;
+    *starts = 0, *tier = SC_TIER_NONE;
+    sc_rigxf rig = {{0, 0, 0}, {0, 0, 0}, 0, 0};
+    for (int f = 0; f < (int)(1.5 * hz); f++) {
+        double t = f / hz, u = (t - 0.5) / (ms * 1e-3); /* held 0.5 s, then the swing */
+        float p[3], q[4];
+        sc_swing_pose(pa, qa, pb, qb, pv, (float)u, p, q);
+        sc_grip g = {1, {p[0], 160 + p[1], p[2]}, {-q[0], -q[1], q[2], q[3]}, 0, {0, 0, 0}, {0, 0, 0}, 100 + t};
+        somvr_blade_controller(&bc, &g, &rig, t, &h, &b);
+        *starts += sc_speed_push(&s, &c, &b) == 1;
+        sc_contact ct;
+        if (sc_sweep_capsule(&prev, &b, c.blade_r, c0, c1, 35, c.steps, &ct) && sc_cool_ready(&k, 0x1, t, c.cool_s)) {
+            sc_cool_mark(&k, 0x1, t);
+            int tr = sc_tier(&c, &s);
+            if (tr != SC_TIER_NONE && sc_charges_take(&ch, &c, t)) hits++, *tier = tr;
+        }
+        prev = b;
+    }
+    return hits;
+}
+static void test_swing_fight(void) {
+    static const struct { double hz; float ms; int tier; } run[] = {
+        {20, 300, SC_TIER_HEAVY}, {90, 300, SC_TIER_HEAVY}, {20, 1400, SC_TIER_LIGHT}, {90, 1400, SC_TIER_LIGHT}};
+    for (int i = 0; i < 4; i++) {
+        int starts, tier, hits = swing_fight(run[i].hz, run[i].ms, &starts, &tier);
+        CHECK(hits == 1 && starts == 1 && tier == run[i].tier, "%.0f Hz, %.0f ms: %d hits (tier %s), %d swings", run[i].hz,
+              run[i].ms, hits, sc_tier_name(tier), starts);
+    }
+    printf("swing fight: `hands swing` right -> left through an orc 110 cm ahead: one hit at 20 and 90 Hz (300 ms heavy, "
+           "1400 ms light)\n");
+}
+
+/* the blade resting in an orc for 2 s at 20 and 90 Hz: one glancing tick at the start, rubs only while the tip moves
+ * (at most one per SC_TOUCH_RUB_S), a new tick after a gap; two orcs apart; key 0; a full table */
+static void test_touch(void) {
+    static const double hz[2] = {20, 90};
+    for (int k = 0; k < 2; k++) {
+        sc_touch tc;
+        sc_touch_reset(&tc);
+        int starts = 0, rubs = 0, rubs_still = 0;
+        for (int f = 0; f <= (int)(2 * hz[k]); f++) {
+            double t = 5.0 + f / hz[k];
+            float mps = t < 6.0 ? 0.0f : 1.2f; /* held still for 1 s, then scraped along */
+            int r = sc_touch_step(&tc, 0xA, t, mps, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS);
+            starts += r == SC_TOUCH_START, rubs += r == SC_TOUCH_RUB, rubs_still += r == SC_TOUCH_RUB && t < 6.0;
+        }
+        int want = (int)(1.0 / SC_TOUCH_RUB_S); /* about 8 in the scraped second */
+        CHECK(starts == 1 && rubs_still == 0 && rubs >= want - 1 && rubs <= want + 1,
+              "%.0f Hz: a 2 s touch = 1 start (%d), no rub while still (%d), %d rubs scraping (want ~%d)", hz[k], starts,
+              rubs_still, rubs, want);
+        CHECK(NEAR(sc_touch_age(&tc, 0xA, 7.0, SC_TOUCH_GAP_S), 2.0, 1e-6) && sc_touch_age(&tc, 0xB, 7.0, SC_TOUCH_GAP_S) == 0,
+              "%.0f Hz: the age of the touch 2 s, none for another orc", hz[k]);
+        int r1 = sc_touch_step(&tc, 0xA, 7.0 + SC_TOUCH_GAP_S * 0.9, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS);
+        int r2 = sc_touch_step(&tc, 0xA, 7.3, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS);
+        CHECK(r1 == SC_TOUCH_ON && r2 == SC_TOUCH_START && sc_touch_age(&tc, 0xA, 7.3, SC_TOUCH_GAP_S) == 0,
+              "%.0f Hz: within the gap the touch goes on (%d), after 0.2 s apart a new one (%d)", hz[k], r1, r2);
+        CHECK(sc_touch_step(&tc, 0xB, 7.3, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS) == SC_TOUCH_START &&
+                  sc_touch_step(&tc, 0xA, 7.32, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS) == SC_TOUCH_ON,
+              "%.0f Hz: a second orc's touch starts on its own, the first one's goes on", hz[k]);
+    }
+    sc_touch tc;
+    sc_touch_reset(&tc);
+    CHECK(sc_touch_step(&tc, 0, 1.0, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS) == SC_TOUCH_START &&
+              sc_touch_step(&tc, 0, 1.01, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS) == SC_TOUCH_START,
+          "key 0: always a start, nothing kept");
+    CHECK(sc_touch_step(&tc, 0xC, 1.0, 9, SC_TOUCH_GAP_S, 0, SC_TOUCH_RUB_MPS) == SC_TOUCH_START &&
+              sc_touch_step(&tc, 0xC, 1.05, 9, SC_TOUCH_GAP_S, 0, SC_TOUCH_RUB_MPS) == SC_TOUCH_ON,
+          "rub_s 0: no rubs at all");
+    for (uintptr_t i = 1; i <= SC_TOUCH_N; i++)
+        sc_touch_step(&tc, 0x100 + i, 2.0 + (double)i * 0.001, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS);
+    CHECK(sc_touch_step(&tc, 0x101, 2.05, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS) == SC_TOUCH_ON &&
+              sc_touch_step(&tc, 0xC, 2.06, 0, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS) == SC_TOUCH_START,
+          "a full table: the oldest touch (0xC) was forgotten, the newer ones kept");
+    printf("touch: a resting blade = one glancing tick, rubs only while it scrapes (at most %.0f a second)\n",
+           1.0 / SC_TOUCH_RUB_S);
+}
+
+int main(void) {
+    test_touch();
+    test_seg();
+    test_sweep();
+    test_heading();
+    test_speed();
+    test_tiers();
+    test_cool_charges();
+    test_fake();
+    test_fake_fight();
+    test_controller();
+    test_controller_fight();
+    test_react();
+    test_react_direct();
+    test_react_fight();
+    test_swing();
+    test_swing_fight();
+    printf("test_combat: %d checks, %d failures\n", checks, fails);
+    return fails != 0;
+}
