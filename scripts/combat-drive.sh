@@ -9,7 +9,7 @@
 # in RUN/marks.log. COMBAT_PLAN=a|b|c|d|e picks the steps (a: infantry, guard, shield; b: berserker, more guard; c: a
 # parry's aftermath; d: with SOMVR_DEFENCE_PARRY=recoil, marks on the telegraph, blocks and hits, the three orc types; e: d facing the orc, with stereo dumps for scripts/xr_compose.py).
 # Stops at once (quit) when the user goes into VR (somvr-headset active or status.json "user": true).
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${COMBAT_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 PLAN=${COMBAT_PLAN:-a}
 T0=$(date +%s)
@@ -25,7 +25,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

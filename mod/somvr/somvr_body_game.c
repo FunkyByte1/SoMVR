@@ -299,7 +299,10 @@ static void bd_test_hands(somvr_hand h[2], int64_t time, int log)
  * From where the test grip is now to the pose given (the `hands test` frame) in MS ms of the views' time, so frame by
  * frame at the game's rate (Monado's null compositor: 20 Hz): the minimum-jerk timing, an arc about that side's
  * shoulder, the orientation slerped (sc_swing_pose); the grip's velocity from the pose 5 ms before. The hand stays at
- * the end pose. A `hands test` of that hand (or `hands test off`) cancels a swing. */
+ * the end pose. A `hands test` of that hand (or `hands test off`) cancels a swing. An optional 9th number OPEN (0..1):
+ * the hand's test squeeze opens (0) in the frame the swing passes u = OPEN (SOMVR_CLIMB_FLING: a release mid-pull, at
+ * the frame's own time, which the 250 ms trigger words cannot place; 0 = none); a 10th CATCH (0..1]: the other hand's
+ * test squeeze closes (1) in the frame the swing passes u = CATCH (a grip during the flight) */
 #define BD_SW_SHOULDER_X 18.0f  /* the pivot: the shoulder, cm right (left: -), up, ahead of the head's yaw frame */
 #define BD_SW_SHOULDER_Y -25.0f
 #define BD_SW_SHOULDER_Z -8.0f
@@ -309,8 +312,10 @@ static struct {
 	float pa[2][3], qa[2][4], pb[2][3], qb[2][4];
 	int64_t t0[2], dur[2], logged[2];
 	float peak[2]; /* the grip's peak speed (m/s) in the logged frames */
+	float open_u[2]; /* > 0: the test squeeze opens at this u (once) */
+	float catch_u[2]; /* > 0: the other hand's test squeeze closes at this u (once) */
 } g_bd_sw;
-static struct { int n[2]; float to[2][6], ms[2]; } g_bd_swreq; /* the writer thread's words (g_bd_mu) */
+static struct { int n[2]; float to[2][6], ms[2], open[2], catch_[2]; } g_bd_swreq; /* the writer thread's words (g_bd_mu) */
 
 /* the pose (cm, the yaw frame's quaternion) of test hand s at time (a running swing's, else its test pose) */
 static void bd_swing_at(int s, int64_t time, float p[3], float q[4])
@@ -360,6 +365,23 @@ static int bd_swing_hand(int s, int64_t time, int log, sv_quat qy, sv_vec3 *o, s
 		logf_("BODY test swing %s frame %d u=%.2f: the grip at %.1f,%.1f,%.1f cm (the head's yaw frame), %.2f m/s, %.0f deg/s",
 		      g_arm_side[s], g_bd_sw.frames[s], u, p[0][0], p[0][1], p[0][2], sp,
 		      sqrtf(ang[0] * ang[0] + ang[1] * ang[1] + ang[2] * ang[2]) * 57.29578f);
+	if (g_bd_sw.open_u[s] > 0 && u >= g_bd_sw.open_u[s]) { /* the release mid-swing: the test squeeze 0 from now */
+		g_bd_sw.open_u[s] = 0;
+		pthread_mutex_lock(&g_bd_mu);
+		g_bd_req.sq[s] = 0;
+		pthread_mutex_unlock(&g_bd_mu);
+		g_bd.t_sq[s] = 0;
+		logf_("BODY test swing %s frame %d u=%.2f: the squeeze opened (%.2f m/s)", g_arm_side[s], g_bd_sw.frames[s], u, sp);
+	}
+	if (g_bd_sw.catch_u[s] > 0 && u >= g_bd_sw.catch_u[s]) { /* the other hand grips now */
+		g_bd_sw.catch_u[s] = 0;
+		pthread_mutex_lock(&g_bd_mu);
+		g_bd_req.sq[1 - s] = 1;
+		pthread_mutex_unlock(&g_bd_mu);
+		g_bd.t_sq[1 - s] = 1;
+		logf_("BODY test swing %s frame %d u=%.2f: the %s squeeze closed", g_arm_side[s], g_bd_sw.frames[s], u,
+		      g_arm_side[1 - s]);
+	}
 	if (u >= 1) {
 		g_bd_sw.on[s] = 0; /* at its end pose: the test pose (the word set it) */
 		logf_("BODY test swing %s end: %d frames, the grip's peak %.2f m/s", g_arm_side[s], g_bd_sw.frames[s],
@@ -368,14 +390,19 @@ static int bd_swing_hand(int s, int64_t time, int log, sv_quat qy, sv_vec3 *o, s
 	return 1;
 }
 
-/* bd_word (g_bd_mu held): "swing L|R x y z rx ry rz MS" */
+/* bd_word (g_bd_mu held): "swing L|R x y z rx ry rz MS [OPEN [CATCH]]" */
 static const char *bd_swing_word(const char *w)
 {
 	char side = 0;
-	float v[7];
-	if (sscanf(w, " %c %f %f %f %f %f %f %f", &side, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]) != 8 ||
-	    (side != 'L' && side != 'R'))
-		return "hands swing (not L|R x y z rx ry rz MS: ignored)";
+	float v[9] = { 0 };
+	int k = sscanf(w, " %c %f %f %f %f %f %f %f %f %f", &side, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7],
+		       &v[8]);
+	if (k < 8 || k > 10 || (side != 'L' && side != 'R'))
+		return "hands swing (not L|R x y z rx ry rz MS [OPEN [CATCH]]: ignored)";
+	if (k >= 9 && !(v[7] >= 0 && v[7] < 1))
+		return "hands swing (OPEN not 0 or between 0 and 1: ignored)";
+	if (k == 10 && !(v[8] > 0 && v[8] <= 1))
+		return "hands swing (CATCH not in (0, 1]: ignored)";
 	int s = side == 'R';
 	for (int i = 0; i < 6; i++)
 		if (!(fabsf(v[i]) <= 400))
@@ -385,6 +412,7 @@ static const char *bd_swing_word(const char *w)
 	if (!g_bd_req.on[s])
 		return "hands swing (that hand has no test pose: `hands test` first; ignored)";
 	memcpy(g_bd_swreq.to[s], v, sizeof g_bd_swreq.to[s]), g_bd_swreq.ms[s] = v[6], g_bd_swreq.n[s]++;
+	g_bd_swreq.open[s] = k >= 9 ? v[7] : 0, g_bd_swreq.catch_[s] = k == 10 ? v[8] : 0;
 	memcpy(g_bd_req.v[s], v, sizeof g_bd_req.v[s]), g_bd_req.seq++; /* its end pose = the hand's test pose */
 	return "hands swing";
 }
@@ -406,6 +434,8 @@ static void bd_swing_take(void)
 				   g_bd_sw.qb[s]);
 			g_bd_sw.t0[s] = now, g_bd_sw.dur[s] = (int64_t)(g_bd_swreq.ms[s] * 1e6f), g_bd_sw.on[s] = now > 0;
 			g_bd_sw.frames[s] = 0, g_bd_sw.peak[s] = 0, g_bd_sw.logged[s] = now;
+			g_bd_sw.open_u[s] = g_bd_sw.on[s] ? g_bd_swreq.open[s] : 0;
+			g_bd_sw.catch_u[s] = g_bd_sw.on[s] ? g_bd_swreq.catch_[s] : 0;
 			const float *b = g_bd_swreq.to[s];
 			logf_("BODY test swing %s: from %.1f,%.1f,%.1f to %g,%g,%g cm %g,%g,%g deg in %g ms (the head's yaw frame; an "
 			      "arc about the shoulder, the views' time%s)", g_arm_side[s], p[0], p[1], p[2], b[0], b[1], b[2], b[3],
@@ -716,6 +746,7 @@ static void bd_config(int *bad)
 	sb_tw_cfg_default(&g_bd.tw);
 	bf_config(bad); /* SOMVR_FINGERS */
 	vh_config(bad); /* SOMVR_VRHANDS */
+	sf_config(bad); /* SOMVR_HANDS_SURFACE */
 	wp_config(bad); /* SOMVR_WISPS (after SOMVR_VRHANDS) */
 }
 
@@ -775,12 +806,14 @@ static void bd_start(void)
 	      g_bd.tw.blend_s * 1e3, g_bd.test);
 	bf_start(); /* SOMVR_FINGERS */
 	vh_start(); /* SOMVR_VRHANDS */
+	sf_start(); /* SOMVR_HANDS_SURFACE */
 }
 
 static void bd_end_log(void)
 {
 	bf_end_log(); /* SOMVR_FINGERS */
 	vh_end_log(); /* SOMVR_VRHANDS */
+	sf_end_log(); /* SOMVR_HANDS_SURFACE */
 	if (!g_bd.on && !g_bd.twohand)
 		return;
 	const struct bd_cnt *c = &g_bd.n;

@@ -7814,3 +7814,1042 @@ hit (`FIGHT hurt` t 654296.451) ended the hang 50 ms later (`end: drop: a hit on
 the grass (LOCO `between ticks 44.8 cm` that second, the fall) and stood 36 cm from where he hung; the next four hits
 moved him 0 cm (all 30 DEFENCE hit lines: `the game moved Talion 0 cm`), the climb never restarted. Not seen: a hit
 high on a wall (the fall is then the game's real fall: the fall vignette and the comfort line's speed as after A).
+
+### 32.14 Build 13 candidate: the fling up the wall (`SOMVR_CLIMB_FLING=on`, default off)
+The user (2026-10-25 21:20): "Idea for climbing: Gorilla tag inspired. But don't push me in the opposite direction.
+Just let me sling myself up if that makes sense". The reading the user was given: grab and pull as now; letting go
+while the hand still moves fast keeps the body's upward speed, so Talion flies on up the wall, to a higher hold or
+over the top; only up (and a little sideways along the wall), never away from the wall, backwards or down; a slow
+let-go still hangs where he is (build 10's rule, 32.8); a fling that catches nothing hangs at its apex (no fall); A
+still drops. It is the player's own motion (fast is fine when 1:1 and asked for), so it must be smooth and the same
+every time.
+
+**Why not design-locomotion.md 3.5's launch** (momentum mode, `pm+0xe0..` written, gravity on, the graph's fall):
+the user's rule forbids the fall after a fling that catches nothing, and LR5 showed the game's support eats a written
+`vy` (2.7's runtime result). So the flight is **our own arc on the climb's ticks**: the climb stays on (the proxy's
+gravity flag 0, kept by the PM hook as while holding), each stereo frame asks the PM hook's one-shot extra move for
+the arc's step, so the game's collision clips every step as it clips a pull (never through geometry).
+
+The rule (`somvr_climb.h`, the phase `fling`; pure, unit-tested):
+- **The release velocity.** While a hand drives the climb, its tracking-space positions of the last frames are kept
+  with the time they were located for (the views' display time: a stalled frame, e.g. a dump, does not stretch the
+  window; a ring, reset when it starts to drive and at a tracking jump). When the last holding hand's grip opens (not
+  a lost tracking: no fling then) the body's velocity is minus that hand's mean velocity over the last
+  `SOMVR_CLIMB_FLING_WIN_MS` (100 ms: the samples within 125 ms; at least 40 ms of them), turned into the world like
+  the pull (the rig's yaw, the player size) and times `SOMVR_CLIMB_FLING_GAIN` (1.0). Tracking space: the player's head
+  motion and the body's own motion are not in it.
+- **Only up.** Split against the hold's `toward` (its horizontal direction into the wall): the upward part is kept;
+  the sideways part along the wall times `SOMVR_CLIMB_FLING_SIDE` (0.5), at most half the upward part; the part
+  toward the wall is kept (at most the upward part: it carries him over a top, the face blocks it below); the part
+  **away from the wall is dropped** (logged `out-dropped`), and so is any downward speed. The upward part under
+  `SOMVR_CLIMB_FLING_MIN` (150 cm/s: an 11 cm rise) = no fling: today's hang, exactly. The whole is capped at
+  `SOMVR_CLIMB_FLING_MAX` (500 cm/s: at most 1.27 m up in 0.5 s).
+- **No fling** from the ground (the ground within `SOMVR_CLIMB_GROUND_CM` under the root: released as today), with
+  `SOMVR_CLIMB_LETGO=fall` (the switch needs the hang), while a hand still holds, or with lift/cmd tops.
+- **The flight**: the velocity integrates `SOMVR_CLIMB_FLING_G` (981 cm/s^2, the real world's: the body knows it)
+  each frame, the frame's step = the exact parabola's piece, at most `MAX` x 0.1 s. The last frame's step against
+  what the root really did: the upward part blocked by more than half = a ceiling or an overhang: the flight stops
+  there (`apex hang`, blocked); the sideways part blocked = it stops (a side wall); the part toward the wall is kept
+  (the face blocks it each frame until the body clears the top).
+- **The ends of the flight**: (1) a grip that finds a hold during it (the existing grab test, its window, the cue's
+  tick on the way in) = `catch`: the flight stops at once, the hold drives (the hold phase); (2) the arc's top (the
+  vertical speed reaches 0) or 1.5 s = `apex hang`: the hang of 32.8 where he is, against the wall, no fall; (3) A =
+  the drop (the fall, as from a hang); (4) a hit = `SOMVR_CLIMB_HIT` (drop); (5) the input lost = the hang; the menu
+  freezes the flight (the clocks stop) and it goes on after; (6) over a top, below.
+- **A top in flight**: the top known from the release hold (an edge hold: its found top), from the push's top
+  (topped before the release), or found in flight: at the launch a ray from the head along `toward` measures the
+  wall (up to 60 cm); each flight frame the same ray, and when it no longer meets the wall within 15 cm past that
+  distance the eyes cleared a top: a ray down there gives its height (`fling top`). With the head `SOMVR_CLIMB_TOP_CM`
+  over it the climb is topped (push): while the flight still rises, the edge step (32.3) lifts by the part of the
+  step toward the wall that the edge blocked (the same 1:1 rule as a push), and the head `SOMVR_CLIMB_OVER_CM` past
+  the top toward the wall = `end: over` (gravity back, he stands on it), as after a push. Eyes over the wall already
+  at the launch (the head's ray meets nothing): the ray down past the hold's face at once. Topped at the arc's top
+  with speed toward the wall left: **the glide**, that speed alone, level (gravity still off), at most 0.5 s, to
+  `over`; the edge blocking it (our extra move does not step up: the capsule's foot under the top) lifts by the
+  blocked part as the edge step, at most 50 cm in the glide, then the hang. A fling that only reaches the edge hangs
+  at its apex; a hand on the top and a push go on as today.
+- **Feel**: the view moves only by the arc the player threw, its speed continuous with the pull's at the release,
+  slowing to the apex; the comfort line and the vignette see it as any climb motion (the rig's artificial motion,
+  somvr_comfort.h); a light pulse on the releasing hand at the launch (0.3, 20 ms), the grab's pulse at a catch.
+- **Logs**: `CLIMB ... fling launch R: v=X cm/s (up U, side S, toward F; out-dropped O cm/s; the hand H cm/s over W
+  ms, N samples[; capped]) ...`, `fling none ...` (every last let-go that is no fling, with why: the speeds, no
+  release velocity, not the driving hand), `fling top ...`, `fling glide ...`, `fling catch ...`, `fling apex hang
+  (the arc's top | blocked above | blocked at the edge | out of time) ...`, `end: over: a fling onto the top (the top
+  under his root)` / `a fling over the top`; CLIMB END `flings N (none N, pulses N) catches N apexes N (blocked N)
+  tops N glides N fling-overs N`; the per-second line's phase `fling`. The test hands: `hands swing ... MS OPEN
+  [CATCH]` (the squeeze opens at u = OPEN, the other hand's closes at u = CATCH: a release and a grip at the frame's
+  own time; the trigger words are polled every 250 ms).
+
+Runs (headless, Monado 20 Hz; build 12's env (scripts/headset-build12.env) + `SOMVR_CLIMB_FLING=on`,
+`SOMVR_HANDS_TEST=1`, `SOMVR_XR_TEST`, `SOMVR_EYE_SIZE=2015x2217`; scripts/climb13-drive.sh; the release mid-pull by
+the test swing's OPEN, a grip in flight by its CATCH; every run 0 WARN, the install unchanged, the real save
+UNCHANGED; logs/boot-check-20261025-):
+| Run | What it showed |
+|---|---|
+| 220559 | the pillar (33368,2018,-27867; a 9 m stone face): **the slow let-go** = `hang` and 0.0 cm a second, no fling line (build 10 exactly); **a fling** 351 cm/s up (the hand 351 cm/s over 101 ms) -> `fling apex hang (the arc's top) after 0.35 s, 8 frames: rose 62.9 cm` (v^2/2g 62.8), then 0.0 cm a second; **up and into the wall** (the hand pushed up 40 and in 15 fast): `fling none L: up -224 cm/s ..., out 87`: the hang, 0.0 cm (the hold itself moved him 16 cm down/out 1:1 before the release, as any pull); **A**: `end: drop`. The catch's grip came 0.7 s late (a trigger word): the swing's CATCH since |
+| 222926 | the pillar again: **the catch**: launch 364 cm/s -> `fling catch: a hold after 0.10 s of flight (rose 31.5 cm)`, the right hand on the face; **the apex**: launch 422 cm/s -> `apex hang (the arc's top) after 0.49 s: rose 86.4 cm` (+ the last 4.4 cm piece = v^2/2g 90.8), 15 s still; none (up -227, out 88); A. The meadow bank's top: no fling (`hang ... (topped: push)`): see 224851 |
+| 224851 | the bank's top: `fling none L: no release velocity`: a stereo dump stalled the release frame, the wall clock jumped past the window: **the ring keeps the hands' located time since** |
+| 230340 | the bank's top: launch 486 cm/s (up 418, toward 247), the arc + the edge step rose 125 cm, `fling glide` at 247 cm/s, blocked after two frames with the root 84 cm over the top (our extra move does not step up; the capsule's foot ~18 cm under the top): the hang. **The glide's edge step since** (at most 50 cm) |
+| 232326 | the bank's top: launch 450 (up 448, toward 41: the test swing's arc about the shoulder moves the hand outward above the shoulder, and a dump stalled the release frame), topped by the hold's top, the glide at 41 cm/s timed out (0.5 s) 20 cm short of over: the apex hang at the root 59 cm over the top |
+| 233842 | the bank's top (a slow push to the chest first): the swing straight back in the head's frame, not along the head-to-hold line (a top hold's `toward`): launch 308 (up 284, side 119, toward 0), rose 40.6 cm, the hang at the arc's top |
+| 235159 | the bank's top, the swing back along that line: launch 365 (up 293, toward 216), the glide at 216 cm/s, its edge step lifted the capsule onto the top (the root 102.6 cm over the top: the standing height) but the head never got 30 cm past the top hold (whose hit lies past the edge) in the glide's 0.5 s: the hang; A put him down standing on the bank, the stick walked 4.3 m on it (96 %). **The glide lands since** when a ray down from the root meets the top within `SOMVR_CLIMB_GROUND_CM` |
+| 235907 | **the top**: launch 368 cm/s (up 295, toward 219) from the hold on the bank's top (2147.6), `fling glide ... (rose 79.3 cm)`, `end: over: a fling onto the top (the top under his root)` 0.87 s after the launch; the root 31597.9,2254.0,-24839.4 (106 cm over the top: standing), the stick walked 4.4 m on the bank (97 %, 96 %); CLIMB END `flings 1 ... glides 1 fling-overs 1` |
+| 20261026-000905 | the final code at the pillar (regression): slow let-go `fling none L: up -6 cm/s` = the hang; flings 362 / 417 cm/s -> apex hangs (rose 64.5 / 84.9 cm), still; up-and-into-the-wall none (up -226, out 89); A. The in-flight grip found no face on the pillar's right side this time (a miss with the miss buzz at the apex frame); the catch is 222926's (unchanged since) |
+
+Looked at as a player (both eyes; xr_compose.py frames, marks' eyes.jpg): during a flight up the pillar (222926 frames
+2765, 2770) the stone face fills the left half, the meadow to the right, the vignette closes from the corners to a
+tunnel at 4 m/s; at the apex (220559 frame 1378) the face beside the eyes, the meadow 2 m below, level; after the catch,
+the apex, the no-fling and the drop (222926 marks 223306_8 .. 223337_11) the face close, then the grass at its foot;
+over the bank's top (235907 frames 1361 in flight, 1366 in the glide: a narrow tunnel, the bank's grass and the
+meadow's tower ahead; mark 000144_3 after `over`: standing on the bank, the full view, the horizon level). Nothing
+moved the view but the throw: no turn, no drift after the hang (0.0 cm a second).
+
+Open: the feel at 90 Hz with real arms (the minimum 150 cm/s, the gain 1.0, the cap 500 cm/s, real gravity; whether a
+normal climbing release crosses 150 cm/s without the player meaning it); the vignette's tunnel during a 4 m/s flight
+(the comfort setting's strength; the menu's Vignette row turns it down); a glide that the edge blocks more than 50 cm
+(hangs at the top's lip: a hand on the top and a push go on); a fling from a pillar's narrow top or under an overhang
+at 90 Hz (the ceiling stop is unit-tested only); an orc's hit in flight (`SOMVR_CLIMB_HIT=drop` ends the climb as for
+a hang: not run); no VR menu row yet (the settings page's 18 rows and the ABI: for the menu helper).
+
+**The integration's fix (2026-10-26, handoff/HANDOFF-build13.md): the glide over a top no longer hangs on a slow frame.**
+The descent helper's runs 030713 / 031623 and the integration's 034000 (the full build 13 env) ended the bank top's
+fling in an apex hang at the edge (`out of time`), where 235907 went `over`. Not the game's edge wall and not the
+descent's code (031623 had the descent off): the edge step (the blocked part of a move lifts the capsule, 32.3) was
+capped at step_cm (8 cm) **a frame**, and the glide had 0.5 s of wall time and 50 cm of lift. A stereo dump stalls the
+headless frames to 9-12 fps; 235907's rise had 6 frames (the edge step lifted the foot to 14 cm under the top), 034000's
+rise 2-3 (the foot 54 cm under it): the glide lifted its 50 cm in 5 frames and ran out of time with the foot 0.1 cm
+under the top 2148.9. Now, in the fling only (somvr_climb.c fl_step): the edge step's cap is step_cm per 50 ms of the
+frame (at least step_cm: 90 Hz unchanged, a 10 fps frame lifts what two 20 Hz frames would), the glide's lift cap is the
+capsule's foot's gap under the top + 10 cm (`foot_cm` under the root; 50..80 cm), and the glide's 0.5 s counts only the
+frames the edge did not block (at most 1.5 s in all). The glide line logs the cap. test_climb: the glide over the edge at
+20 and 10 fps from three heights (10 fps failed before: `out of time`), the blocked glide lifts its cap and hangs.
+Run 035049 (the full build 13 env): `fling glide ... rose 66.9 cm; the edge may lift 50 cm` -> `end: over: a fling onto
+the top (the top under his root)` 0.52 s later; the stick walked 2.2 m/s on the bank's top (96 %).
+## 36. Never a void: the present gaps, the keep-alive, the loading space, the theatre (build 13 candidates, 2026-10-25)
+
+HG-9 (design-hla.md 2.13, 3.1; the user on HL:A: "Even the loading screen is a 3D environment so you don't get pulled
+out of the immersion"). Section 14 put a sky behind mono frames. This section measures what the game does at its loads
+(it had never been measured), keeps frames going when the game stops presenting, makes the sky a place (a floor, our
+hands, a progress light), keeps a stall from costing two mode sets, and puts videos and cinematic windows on a big
+screen. Everything is behind switches, off by default, except the gap log (log only). Handoff: handoff/HANDOFF-void.md.
+
+### 36.1 Measured: the present gaps at the loads (boot 221150: build 12's switches, nothing of this section on)
+
+Headless (Monado's null compositor paces at 20 Hz: a frame every 50 ms, so a 100 ms gap = two missed frames). Times
+are seconds into the XR session. A gap = the time between two game presents; the XR gap = between two xrEndFrame calls.
+
+| Moment | Game presents | Gaps >= 100 ms |
+|---|---|---|
+| boot to the main menu (+0 .. +39.7 s) | continuous | none |
+| the first story load (the launcher's Continue, +47.8 .. +93.8 s, 46 s) | mono frames at the compositor's pace all through (the loading screen animates) | one, 194 ms at its end (the mode set into the eye size, 171 ms) |
+| the pause menu (twice, 10 s and 178 s) | continuous (stereo: the world renders behind it) | none |
+| the pause menu's QUIT to the main menu (0.7 s) | continuous | none (the mode set to the game's size: 154 ms) |
+| the layer's test stall in the world (`stall 3000`) | none for 3050 ms | 3050 ms, **no XR frame at all** (XR gap 3050 ms); the head located in 30 of 30 samples (the runtime tracks it; nothing is submitted) |
+| ... the 2.5 s after it | the eye size's hold (2 s, wall time) ran out at the first tick after the stall: **two mode sets** (to 1920x1080 in 566 ms, back to the eye size in 1038 ms) | 461, 359, 376, 301, 266 ms (flat frames: the layer showed the environment for 1.5 s, switches 2 and 3), then 191 .. 109 ms (stereo, catching up) |
+
+So **SoM's loads do not stall the present loop**: the loading screen is a live mono frame on the board in the sky
+(section 14). What stalls are the mode sets (154-1038 ms) and anything that stops the render thread; and a stall of
+more than 2 s in the world costs two mode sets after it (1.6 s of flat, slow frames, the environment flashing in).
+Fast travel and a death were not measured here (the survey drill's runs; the gap log is on in every build from now on).
+
+### 36.2 Who does what
+
+| Part | Where | What |
+|---|---|---|
+| the gap log | `vklayer/somvr_void_layer.c` (`vd_*`), L_QueuePresentKHR | every game present on the session's device that comes `SOMVR_XR_GAPS` ms (100) or more after the one before: one line when it is done (the kinds before and after: S stereo, M mono, R reuse, H a hold frame; what was shown; the keep-alive's frames meanwhile; the longest XR gap; the head sampled every 100 ms meanwhile); the session's buckets and longest three every 10th gap, at a gap of 1 s or more and at the session's end |
+| the watcher | one thread per session (started with it, joined at the teardown) | every 20 ms (4 ms with the keep-alive) a look at the game's last present; it never blocks on X.mx (trylock), and leaves it to a present that has started (`VD.presenting`) |
+| the keep-alive | `ka_frame` (`SOMVR_XR_KEEPALIVE=on`) | the game away `SOMVR_XR_KEEPALIVE_MS` (100): frames of ours at the runtime's pace (its xrWaitFrame; a wait that returns in under half a period gets the rest slept, outside X.mx): the shown side's last layers again - the world: its last projection (its own eye poses: the runtime reprojects it, world-locked) over the sky, its HUD quad, comfort's layers, the fade at the live head; the environment: the sky, the last board if the swapchain still holds it. No Vulkan work in them (only what is uploaded), no copy, no acquire. Session events are polled (xrPollEvent), input synced (the presses during a stall reach the game after it) |
+| the queue lock | `ka_qlock`, `L_QueueSubmit`(2, 2KHR), `L_QueueBindSparse`, `L_QueueWaitIdle`, `L_DeviceWaitIdle`, the present call | Monado's xrEndFrame submits on the game's queue (VkQueue is externally synchronised): with the keep-alive on, the layer hooks those calls and takes one recursive lock around them and around the watcher's xrEndFrame (the order X.mx -> the lock everywhere); off: the hooks are not even returned (dev_hook) |
+| the loading space | `vd_space_add` (`SOMVR_XR_LOADSPACE=on`, needs `SOMVR_XR_ENV`) | after the sky's layers on every mono, hold and keep-alive frame: a stone floor disc (6 m, solid to 1.8 m, a soft pool of light) flat at the real floor (STAGE, or `SOMVR_XR_FLOOR`'s measurement, else 1.6 m below LOCAL's origin) under the head; while the game is away, the progress lights (`somvr_void.c`: HoF2's ember arc - 12 embers on a 1.6 x 0.3 m quad 2.2 m ahead and 0.3 m above the floor, its normal toward the eyes, a slow wave running along them, 2.4 s; up over 0.3 s, down over 1.5 s once the game presents). One static image (1024 x 1952: the floor's cell and 120 lights frames, 20 phases x 6 levels), filled once on the present thread (41 ms) and picked by sub-image rect. A frame without a board makes the space's top layer its own. Placed once per stretch away from the world |
+| the loading screen's panel | `vd_theatre` with `SOMVR_XR_LOADSPACE`; the preload's somvr_session word `SOMVR_SSM_LOAD` | the preload says "a load" each input tick while interface state 3 has no menu and the game is paused (the pause menu and the map share that state but render stereo, so on a mono frame it is a load: 36.1's loads, `SESSION ui ifs=3 menus=0 paused=1 ctx=menu` for 45 s): the loading screen goes on a calm panel 2.4 m wide 2.4 m ahead at eye height (53 deg, world-locked where the head faced at the load's start) instead of SOMVR_XR_MENU's 0.6 m touch board, and **the ember lights stay on through the whole load** (not only in a stall); a menu after it gets the board back and the lights fade |
+| a world stall to the space | `ka_side` | the game away `SOMVR_XR_LOADSPACE_MS` (1000) in the world: the transition of 14.3 (the world held darkening, the switch at black, the space fading in), so a load is never a frozen world; the game's next frame fades back as any switch (env_decide can hold the space without a board) |
+| our hands in the space | `vd_hands`, `vh_frame_e` | `SOMVR_XR_LOADSPACE` with `SOMVR_VRHANDS=1`: every mono, hold and keep-alive frame draws our hands from the layer's own input (the game publishes none outside first person): the controllers' grips, index = trigger, the other three = grip, the thumb down on a touch, at the eyes located for the frame, a fixed light (0.7); over the board (XL_HANDS) |
+| a stall is not a menu | the preload's `es_tick` (`SOMVR_EYE_SIZE_STALL_MS`) | a gap of that many ms between two input ticks is a stall: the time does not count toward the eye size's hold (`SOMVR_EYE_SIZE_HOLD_MS`), so a world stall costs no mode set |
+| the theatre | `vd_theatre` (`SOMVR_XR_THEATRE=on`); the preload's somvr_session word at 60 (`mono`, SOMVR_SSM_*) | the preload says each input tick what flat frames show: a video (the UI's video state) or SOMVR_BODYMOMENTS' window (in-engine cinematics, captain presentations). Then the mono quad is a 5 m screen 5 m ahead (a video) or 3 m at 3 m (the window), at eye height, world-locked where the head faced when it began (a new start places it again), in the loading space; menus and loading screens keep the board. Needs the session object (SOMVR_MARK or SOMVR_QUIT). A flat quad: the cylinder extension is unknown on WiVRn |
+| the test stall | `SOMVR_XR_TEST` `stall MS` | the present thread sleeps MS after its next present (no lock held): a load that stops presenting, for headless tests |
+
+### 36.3 Switches, logs
+
+| Switch | Default | What |
+|---|---|---|
+| `SOMVR_XR_GAPS=off\|MS` | 100 | the gap log's threshold (20..60000); off: no lines, no watcher (unless the keep-alive) |
+| `SOMVR_XR_KEEPALIVE=on\|off` | off | the keep-alive frames and the queue lock |
+| `SOMVR_XR_KEEPALIVE_MS=50..1000` | 100 | the game away this long = our frames |
+| `SOMVR_XR_LOADSPACE=on\|off` | off | the floor, the lights (stalls and loads), the loading screen's panel, our hands in mono frames, a world stall to the space (needs `SOMVR_XR_ENV`) |
+| `SOMVR_XR_LOADSPACE_MS=0..10000` | 1000 | a stall in the world this long goes to the space (0: at once) |
+| `SOMVR_XR_THEATRE=on\|off` | off | the theatre |
+| `SOMVR_EYE_SIZE_STALL_MS=0..10000` (preload) | 0 (off) | a stall of this many ms between input ticks does not count toward the eye size's hold |
+| `SOMVR_XR_COVER=on\|off` (round 2, 36.7) | off | the game's in-world loading cover read from the HUD image: the HUD hidden, held `SOMVR_XR_COVER_MS` (300, 0..5000) a load in the loading space |
+| `SOMVR_XR_MENU_BACK=on\|off` (round 2, 36.8) | off | a dark panel behind an in-world menu's board, the world dimmed `SOMVR_XR_MENU_BACK_DIM` (0.4, 0..0.9) |
+
+Logs: `xr: gaps: game presents 100 ms or more apart are logged ...`, `xr: keep-alive: on|off ...; loadspace: on|off ...`;
+`xr: gap N: M ms without a game present (from +T s into the session; K -> K; the world|the environment|a mono frame
+shown): N keep-alive frame(s) meanwhile, the longest time between two xrEndFrame calls M ms; the head: N sample(s), N
+located, yaw a..b deg, pitch a..b deg, moved C cm`; `xr: gaps (so far|the session's end): N game presents in T s; gaps
+100..250 ms a, 250..500 b, 500..1000 c, 1..2 s d, >= 2 s e; the longest: ...; the longest time between two xrEndFrame
+calls M ms; keep-alive frames N`; `xr: keep-alive: the game away M ms: our own frames (the world held over the sky |
+the board in the environment | the loading space; frame N of ours)`, `xr: keep-alive: the game presented again after M
+ms away: N frame(s) of ours[, the loading space shown] (stall K)`, `xr: env: world -> the loading space after N hold
+frame(s) (switch K, the keep-alive: the game away M ms)`; `xr: loadspace: image 1024x1952 format F (a static swapchain,
+N image(s)) filled once ...`, `xr: loadspace: placed: the floor at Y m (STAGE's | the real floor, SOMVR_XR_FLOOR | 1.6 m
+below LOCAL's origin) under X,Z, the lights at X,Y,Z facing yaw D deg`, `xr: loadspace frame N: the eyes at ... yaw ...
+pitch ...; the lights level L wave W[ (the game away)]; the board at X,Y,Z q ... size W x H` (what tests/void_view.c needs
+for a picture); `xr: hands in the loading space: LR hand(s) from the layer's own input (N drawn so far)`; `xr: theatre:
+on: ...`, `xr: theatre N: a video | the cinematic window | a loading screen on a M m screen at X,Y,Z`; failures `xr: loadspace: off for this
+session: <why> (the sky alone)`; bad values `xr: keep-alive: SOMVR_XR_KEEPALIVE=.. is not on or off: off` (and the same
+for each switch). Preload: `ESIZE t=.. a stall of M ms (no input tick): not counted toward the hold
+(SOMVR_EYE_SIZE_STALL_MS)`, `WARN SOMVR_EYE_SIZE_STALL_MS=.. is not 0..10000: off`. Test: `xr: test: stall M ms after
+the next present`, `xr: test: the present thread sleeps M ms`.
+
+### 36.4 Offline tests (2026-10-25)
+
+`mod/somvr/build.sh --check` green at every commit: `test_void` **188** (the switches; the image: premultiplied floor,
+BGRA = RGBA swapped, the solid centre and transparent corners, the floor's colour and darkness, the rim's monotonic
+fade, a joint darker than its stone, sRGB and linear alpha equal, every lights frame's transparent guard, the levels
+brighter in order, the crest running left to right; the wave, the level's rise 0.3 s / fall 1.5 s / a hitch, the level
+index; the floor's and the lights' poses for 7 yaws: under the head, ahead along the yaw, facing the eyes, the row level;
+the yaw of a turned head), `test_layer` **145/145** (9 new), selftest 0 failures (the stall cases in `es_tests`: a 3 s
+world stall with `SOMVR_EYE_SIZE_STALL_MS=250` keeps stereo with no mode set, a real menu after it still switches after
+the hold, and without the switch the same stall switches at once - build 12's).
+
+| Scenario | What it shows |
+|---|---|
+| `void-gaps` | the default: a 350 ms stall on a menu logged as gap 1 (M -> M, the environment shown, 0 frames of ours, the XR gap 350 ms, the head located), no frame ended during it, the session's buckets; the game's vkQueueSubmit not hooked |
+| `void-gaps-off` | `SOMVR_XR_GAPS=off`: no gap lines, no keep-alive summary |
+| `void-keep-world` | the keep-alive in the world (the equirect): 45 frames of ours in a 600 ms stall (20..60 allowed), each the sky then the last stereo frame's projection with its own views; nothing acquired or submitted by them; the game's vkQueueSubmit hooked and reaching the driver; the world's frames after it as before (no transition) |
+| `void-keep-menu` | the keep-alive on a menu (the box): 12..45 frames in 400 ms, the six faces and the last board, no copy |
+| `void-space` | `SOMVR_XR_LOADSPACE=on`, `_MS=200`: every menu frame the sky, the floor (our static image, acquired once, its rect and size, flat at -1.6 m), the board; a 1 s world stall: the world held, then the loading space - the sky, the floor, the lights at full level as the frame's own layer, at the lift above the floor - and back to the world through the fade (60 frames); the log lines |
+| `void-hands` | `SOMVR_XR_LOADSPACE` with the hands object and the mock's controllers: menu frames get our hands' projection layer (its own swapchain, source alpha) over the floor and the board, drawn every frame |
+| `void-theatre` | the session object's word: the board for a menu; a video = a 5 x 2.81 m screen 5 m ahead at eye height that stays while the head turns; the window = 3 m wide; the menu again = the board |
+| `void-loadpanel` | `SOMVR_XR_LOADSPACE` with the session's word = a load: the loading screen on a 2.4 m panel over the floor, the lights at full level after 0.44 s with no stall; a menu after it: the board, the lights fading (a lower level at 0.33 s), gone by 1.8 s |
+| `void-badcfg` | every switch's bad value logged, off (the gaps' 100 ms) |
+
+The pictures (tests/void_view.c renders the loading space from the layer's own pure code, both eyes; not part of the
+check): `logs/boot-check-20261025-223430/void-pictures/` - `stall-a.png` (the space during the world stall: the dusk
+sky, the floor at the real floor, the ember arc), `stall-b.png` (the head turned 50 deg: the space stays), `load-a.png`
+(the end of a story load: the game's black loading screen on the 0.6 m board in the space, from the run's mono dump).
+
+### 36.5 The headless proof (boot 223430: build 12's switches + `SOMVR_XR_KEEPALIVE=on SOMVR_XR_LOADSPACE=on SOMVR_EYE_SIZE_STALL_MS=250`)
+
+| Moment | Gaps, XR gaps, what was shown |
+|---|---|
+| the first story load (+55.9 .. +101.1 s) | none during it; 175 ms at its end (the mode set, 228 ms): 2 frames of ours, the XR gap 88 ms |
+| the test stall in the world (+122.5 s) | 3050 ms: **59 frames of ours, the longest XR gap 103 ms** (before: 3050); the world held over the sky for 1.16 s, then 3 hold frames darkening, the loading space (switch 2); back to the world through the fade when the game presented (switch 3); the head 26/26; `ESIZE ... a stall of 3051 ms: not counted toward the hold` - **no mode set after it** (before: two, 1.6 s of flat frames) |
+| the pause, QUIT, the main menu (+133 .. +159.5 s) | none |
+| the test stall on the main menu (+192.8 s) | 3050 ms: 59 frames of ours (the board in the space, the lights rising), the longest XR gap 102 ms |
+| the second story load (+209.3 .. +250.0 s) | none during it; five gaps of 100-126 ms at its end (the mode set, 179 ms), each with one frame of ours (XR gaps 40-66 ms); the lights rose 0.33 -> 0.73, then fell |
+| the quit (+261 s) | the game stopped presenting while it quit: after 1.16 s the loading space (switch 6) until the process ended - not a frozen frame |
+| the whole run | 3 mode sets in all (into the world 228 ms, the main menu 154 ms, the world again 179 ms); our hands drawn in the menus (`hands in the loading space: LR`); 0 WARN, the install unchanged, the real save unchanged |
+
+The run's one long XR gap, 568 ms, was the loading space's image filled on the present thread at the session's first
+menu frame (506 ms); now 41 ms (each light's glow once per texel, an sRGB table).
+
+**The final build** (boot 230743: build 13's env as committed - the four switches, `SOMVR_XR_THEATRE=on` among them):
+both story loads went onto the 2.4 m panel (`xr: theatre 1|2: a loading screen on a 2.4 m screen at +0.10,-0.07,-2.39`)
+with the lights at full level through them; the world stall 59 frames of ours (XR gap 101 ms), the space after 1.16 s;
+the menu stall 59 (100 ms); the loads' ends 169 ms (2 frames of ours) and 117 ms; **the session's longest time between
+two xrEndFrame calls 110 ms** (boot 223430: 568; boot 221150: 3050); 3 mode sets (232, 154, 178 ms), the two stalls not
+counted; no video and no window came up, and the theatre never placed anything else; 0 WARN, the install unchanged, the
+real save unchanged. Pictures: `logs/boot-check-20261025-230743/void-pictures/load-panel-a.png` (mid-load, the mono
+dump `xr-layer.log.mono1400.ppm`: the loading screen - Talion and the tip line - on the panel at 2.4 m, the ember arc on
+the floor below it), `load-panel-b.png` (looking down 22 deg: the floor underfoot, the panel above the lights), and the
+stall's `stall-a.png` / `stall-b.png`.
+
+### 36.6 What only the headset shows
+
+- **WiVRn's own stall behaviour** (without the keep-alive): the last frame frozen to the head, reprojected world-locked,
+  or black - and whether WiVRn streams our frames during a stall smoothly (they come at the runtime's pace).
+- Whether a held projection is cut at its fov into the sky when the head turns (the same open question as 14.6 item 4).
+- The space's look on the Quest's lenses: the floor's height and brightness, the embers' size, the dusk around the
+  board; the comfort of the world-to-space fade after 1 s of a stall (and whether 1 s is right).
+- The hands in menus: their alignment with the controllers (the layer's own grips, no arm IK; `SOMVR_XR_HANDS_CAL`).
+- The queue lock in a real session: no stutter from the game's submits going through it.
+- The theatre: a story cutscene (a mission's) or a captain presentation was never seen here; the screen's size and
+  distance want a look, and a curved screen needs the cylinder extension.
+### 36.7 Round 2: the game's in-world loading cover, `SOMVR_XR_COVER` (build 13 candidate, 2026-10-26; default off)
+
+The drill (37, handoff/HANDOFF-drill.md finding 2): after every fast travel the game covers its UI surface with opaque
+black and a small spinner for 4-6 s while the session says `ctx=world paused=0` and the 3D world goes on rendering; 40-60
+s after a far `Teleport` in the respawn. Build 12 showed it as what it is to the layer - the HUD: a black slab 1.2 x
+0.675 m at 1.5 m (68 % of the HUD image opaque, the rest the band's and the watch's cut-outs: the holes), black tiles in
+the prompt band, the world around it. Nothing in the session state marks it (no pause, no interface state, no menu).
+
+**Detection: the HUD image itself** (no game RE needed, nothing patched; whatever the game covers its UI with, the layer
+sees what the player would): every stereo frame with a world HUD entry (not `SOMVR_HUDF_MENU`, not a video), eyes_submit
+copies a 16 x 9 grid of the HUD image's texels (the cells' centres; 144 1-texel regions, `vkCmdCopyImageToBuffer` from
+the HUD image while it is TRANSFER_SRC for its own copy) into one of 16 entries of a host-coherent buffer, with a
+TRANSFER -> HOST barrier. The reading is taken when that submit is done: polled with `vkGetFenceStatus` on the game
+slot's fence at every present (never waited for), or when the slot comes round (slot_begin waited its fence anyway); an
+older reading than the newest taken is dropped. A texel is black when every colour byte is <= 40; the shares: opaque
+black (alpha >= 200) and dark (alpha >= 40). somvr_void.c's machine (`somvr_cover_step`, test_void):
+
+| State | On | Off |
+|---|---|---|
+| hide: the HUD quad, the band, the wrist minimap not shown | the first reading with dark >= 0.5 or opaque >= 0.75 | dark < 0.2 and opaque < 0.5 |
+| a load: the loading space | opaque >= 0.75 held `SOMVR_XR_COVER_MS` (300) | opaque < 0.5 (the game lifting its cover) |
+| all off at once | a video's HUD entry; a game menu's whose grid is not 95 % pure black; no reading for 1 s | |
+
+A game menu's HUD (`SOMVR_HUDF_MENU`) is read too and is the cover only when at least 95 % of the grid is pure black
+(alpha >= 250, every colour <= 8; `somvr_cover_pure`): boot 011448 frame 986 - X on the map puts the cover with its
+spinner on the map's board for the 1.5 s before the pause ends (a black board 0.6 m ahead). A menu's own dark
+background is never pure black over the grid (the drill's Upgrades and Sauron's Army HUD dumps read under 0.3 black at
+all); a video's HUD is never the cover.
+
+Measured at runtime (boots 003816, 011448): a normal world HUD reads 0.00 / 0.00 (reading 2 and every 600th); the cover reads
+1.00 / 1.00 from its first frame (the spinner is in none of the 144 points); its end is a fade - opaque falls to 0.00 one
+reading while dark stays 1.00 for 1.1-1.6 s (the cover fading out, semi-transparent).
+
+**The load** goes through SOMVR_XR_ENV's transition as a mono stretch does: env_decide wants the environment for a
+stereo or reuse present while the cover's load holds - the world held darkening (0.2 s, the last stereo frame without
+its HUD), then the loading space: the sky, the stone floor, **the progress lights at full level all through it** (the
+spinner's meaning), our hands from the layer's own input - while the game's stereo frames go on being copied under it
+(the readings go on: the copy is the reading's source) but not shown. The space is placed once a load (at its first
+frame: the floor under the head, the lights ahead along its yaw) and kept while the head turns: vd_space_place's
+once-a-stretch rule keys on the stereo count, which goes on under a cover - boot 003816 re-placed it at every frame (the
+lights followed the head); fixed in 8c45c4b, test_layer `cover` checks it. When the game lifts the cover, the space
+darkens (the hold, `KA.space_up`) and the world fades in (0.3 s) with the HUD still hidden until the cover's own fade is
+gone. A reuse present during the load is the space too. A short black (under 300 ms: a cut) only hides the HUD.
+
+**After a mono stretch** (a load's screen, the Nemesis window, a video) the game's first stereo frames stay in the
+environment - drawn as the space, copied and read - until a reading says no cover (then the usual hold to the world),
+or the cover's load takes over, at most 1.5 s (0.3 s without any reading: a HUD switched off). Boot 003816 showed why:
+the story load's end and the respawn after the window both came out into the game's cover, and without the wait the
+world flashed for 0.35 s between the load panel and the cover's space.
+
+Lines: `xr: cover: on: the HUD image's 16 x 9 grid read each stereo frame; ...`, `xr: cover N: the HUD hidden (the grid D
+dark, B opaque black; stereo frame F)`, `xr: cover N: the game's cover held T s (B opaque black): a load - the loading
+space with the progress lights`, `xr: cover N: the loading space placed for the load: the head at X,Y,Z yaw D deg, the
+floor at Y m, the lights at X,Y,Z` (tests/void_view.c's `placed=`; the 20th and 100th space frame of a load log `xr:
+loadspace frame N`), `xr: cover N: lifted (B opaque black, D dark) after T s: back to the world through the fade`, `xr:
+cover N: the HUD shown again (D dark) after T s hidden`, `xr: cover: the game's first stereo frames after a mono stretch:
+no cover | the game's cover: its load | no reading | a game menu after T s in the space`, `xr: cover: reading N: B opaque
+black, D dark (hide H, load L; N late)` (the first two, every 600th), `xr: cover: dump frame N is the loading space's
+(its eye images are the world under it)` (xr_compose.py would draw the world: use tests/void_view.c), `xr: cover (the
+session's end): N reading(s) ..., the HUD hidden N time(s) (T s, N frames), N load(s) in the space (T s, N frames)`;
+failures `xr: cover: no readback this session: <why> (the HUD as before)`; bad values `xr: cover: SOMVR_XR_COVER=.. is not
+on or off: off`, `... SOMVR_XR_COVER_MS=.. is not 0..5000: 300`.
+
+### 36.8 Round 2: the in-world menus' backdrop, `SOMVR_XR_MENU_BACK` (build 13 candidate, 2026-10-26; default off)
+
+The drill's finding 4: the pause menu, Options and Game Settings are stereo frames - `SOMVR_XR_MENU=front`'s board 0.6 m
+ahead over the live world, which the game darkens only a little; over a forge tower top's white marble the text was
+unreadable (run 223947 frames 618, 798). Now, while the board shows a game menu over the world (the HUD entry's
+`SOMVR_HUDF_MENU`, MN.hud_menu): a **dark panel just behind the board** - the board's size and 6 cm more on each side
+(0.84 x 0.525 m for the 0.72 m board), 1 cm behind it along its normal, rounded corners (7.5 cm), its rim soft over 5 cm
+(the board's edges and corners on the solid part), alpha 0.9, a cool dark slate (linear 0.010 0.011 0.014) - and
+under it **the world dimmed** (the fade's black ramp at the frame's eyes, head-locked like the fade, 40 %:
+`SOMVR_XR_MENU_BACK_DIM=0..0.9`). Both rise over 0.12 s when a menu opens and fall over 0.15 s after it closes (the
+panel where the board was). The panel is one static image (somvr_back_image: 8 cells of 192 x 120 side by side, cell k
+at k/8 of the alpha, filled once for the board's size; vd_static_image, the loading space's fill made a helper); two new
+slots over the world and its cues, under the board: XL_MBD (the dim), XL_MBK (the panel) - the pointer's ray and dot,
+touch, the wrist panel, the practice page, our hands and the fade stay over them; a reuse frame and the world's hold
+frames repeat the last stereo frame's; xl_cap drops them (after our hands, before the band) if a frame would carry more
+than 16 layers; a rejected frame ends again without them (`XG_MB`, off for the session). Mono boards (the main menu,
+the loading panel, the Nemesis screens in the calm space) are unchanged. scripts/xr_compose.py draws both ("menu dim"
+as the fade, "menu backdrop" rebuilt from the same formula).
+
+Lines: `xr: menu backdrop: on: a dark panel 6 cm beyond the menu board on each side (its rim soft over 5 cm, alpha
+0.90), the world dimmed 40 % behind it, while a game menu shows on the board over the world[ - NEVER SHOWN: needs
+SOMVR_XR_MENU=front]`, `xr: menu backdrop: image 1536x120 format F (a static swapchain, N image(s)) filled once: 8 levels
+of a W x H m panel`, `xr: menu backdrop N: a game menu on the board: the panel W x H m at X,Y,Z, the world dimmed 40 %`,
+`xr: menu backdrop frame N: level L (cell K of 8), the panel ...; the world dimmed: the fade's ramp | no (the fade off)`,
+`xr: menu backdrop (the session's end): N menu open(s), N frame(s) with it`; `xr: menu backdrop: SOMVR_XR_MENU_BACK=.. is
+not on or off: off`, `... SOMVR_XR_MENU_BACK_DIM=.. is not 0..0.9: 0.40`; a rejection `xr: menu backdrop: xrEndFrame
+rejected the frame with the backdrop's layers (ended again without them): <result>; off for this session`.
+
+### 36.9 Round 2: tests and runs (handoff/HANDOFF-void.md "Round 2")
+
+`build.sh --check` green at every commit: test_void **237** (the grid's points, the shares - transparent, the cover with
+its spinner, a fading cover dark but not opaque, an opaque colour, pure black vs a menu's dark; the machine - hide at
+the first black reading, the load at 300 ms, lifting, the HUD back, a short black, a broken run, a menu, 0 ms, the age;
+the panel's alpha - solid at the board's edges and corners, transparent at its rim and rounded corners, a monotonic soft
+rim; its image - the guard, k/8 levels, dark and premultiplied, BGRA; the level's cell, rise and fall; its place behind
+the board; the dim's parse), test_layer **149/149** (4 new): `cover` (the grid read every stereo frame; hidden at the
+next frame's poll; the load 300 ms later through the world's hold frames; 40 space frames with the game's frames
+still copied and read, the lights at full level, the floor and the lights kept while the head turns; a reuse in the
+space; lifted back to the world and its HUD; a menu's dark and a video's black no cover; a short black no load; a
+load's end into the cover: never the world between the mono stretch and the space, the stretch's floor kept; the cover
+on the map's board, then its load; no buffer or memory left), `cover-off` (no readback, the black HUD as before),
+`menu-back` (the open: the dim from the fade's swapchain, the panel from its own static image at a low cell, the board;
+the full level's cell, the 40 % ramp, the panel 12 cm larger, 1 cm behind the board along its normal, turned like it; a
+reuse repeats them; the close falls, then the HUD alone), `menu-back-nomenu` (never shown without SOMVR_XR_MENU=front;
+the bad values). The mock gained `vkGetFenceStatus` (the GPU done at once, its writes to the host as a wait).
+
+Runs: boot 003816 (4f5e184: the backdrop's pages; the arrival's, two fast travels' and the respawn's covers - found the
+space re-placed at every frame under a cover and the world flashing between a mono stretch and the cover's space),
+005633 (8c45c4b: the wait after the load panel), 011448 (875a179: the space placed once a load, the respawn through the
+cover; found the map's board showing the cover between X and the pause's end), 013322 (893acbc, the final: X ->
+the board hidden 0.2 s later in the map's pause, the load 0.35 s later, 7.4 / 7.3 s in the space, the HUD back 1.2 s
+after the lift), 014115 and 020314 (893acbc + `SOMVR_PRACTICE_WAIT=0`: a practice trip queued at the Nemesis board;
+`practice go` to the meadow there = the drill's far teleport in the respawn: the game's cover for **43.7 s, all in the
+loading space** with the lights at full level after the window's space, then the world). All: 0 WARN, the install
+unchanged, the real save UNCHANGED.
+
+## 37. The real game with build 12's switches: what the runtime showed (the drill, 2026-10-25 night)
+Headless runs logs/boot-check-20261025-213217 .. -235602 (handoff/HANDOFF-drill.md: the runs, the pictures, the ranked
+findings). Facts learned (runtime; nothing patched to learn them):
+
+- **In-world menus**: the pause menu (the game's Menu, command 14: the left menu button's short press; held 0.6 s it
+  toggles our wrist menu instead, the game never sees it) and the map (PDA, command 95: the right stick's click) both
+  run as `SESSION ui ifs=3 menus=0 paused=1 ctx=menu` - the menu state field stays 0 in the world's menus. Both are
+  stereo frames: the live world (darkened by the game) behind the board (`hud (a menu board)`, 0.6 m, 72 x 40.5 cm). The
+  pause menu is a list (SAURON'S ARMY, WEAPONS & RUNES, UPGRADES, APPENDICES, OPTIONS, QUIT); inside, LT/RT page
+  (Sword/Dagger/Bow legends, the Appendices' lists), RB nothing. The map: the left stick pans under a fixed cross, A a
+  waypoint, RB the legend, RT Sauron's Army; the cross over an icon names it, over a forge tower `(X) Fast Travel,
+  (Y) Advance Time`. No subtitle row in Options > Sound or Game Settings. Our wrist menu opens in the pause menu.
+- **Fast travel**: X there -> the map's pause ends about 1.5 s later straight into `ctx=world paused=0` (no load
+  screen state), then 4-6 s of the game's **in-world loading cover**: the UI surface opaque black (68 % of the
+  1920 x 1080 HUD image at alpha 255, the rest our cut-outs) with a small spinner ring, the flat window black; the 3D
+  world keeps rendering. The same cover for 40-60 s after a far `Teleport` during the respawn's presentation.
+- **A death**: BODYMOMENT `death` (`PC_OrcInf_PreDeath_2`, `Player_PreDeath`, a struggle first in C) -> `pres,death`
+  (`Player_Death`, `PC_DeathLoop`: grey, the window) -> `paused=1 ctx=menu` for all three Nemesis screens (the killer's
+  introduction with his line as text, the Duel screen, the board "(X) Mark Target, (B) Return to Game"; mono frames:
+  the window in the calm space); B is taken only by the board -> `pres` (`PC_DeathRecover`, about 1 s, unpaused,
+  released by a cut of 160-180 cm) -> first person at the nearest forge tower top (from the P8 camp: 35382 5402 -22205,
+  the save's tower), night. The killer becomes a captain (B: Dharg, C: Dushrat).
+- **A forge tower top's edge** with `SOMVR_CLIMB_LEDGES=off` and `SOMVR_GAMEMOVES=off`: the walk stops at it (`LOCO
+  ... asked 230 cm, the body 0 cm`), no prompt (`PROMPTS END ... shows 0`), no edge action, no fall. Both hands
+  reached over it (to 35 cm below the floor, 8.6 m from the tower's middle) find no climb hold (`CLIMB ... press L:
+  nothing climbable within reach`, 12 of 12).
+- **The practice trip's fade** is the topmost layer (`fade`, slot after the board): its black covers the in-world board
+  too; in the trip's OUT phase it holds full black while the game is paused (the teleport waits for the pause). The fade
+  quad's level is its sub-image's x: `(x - 1) / 4` of 63 (vklayer/somvr_fade.h; scripts/xr_compose.py draws it now).
+  `SOMVR_PRACTICE_WAIT=1` (the drill's fix, default off) makes Go/Back wait for the game instead.
+- **The map's scale** (the default zoom, the flat window's 1040-px content): about 44 cm a pixel, the map's up about the
+  world's +z turned ~9 deg (from the camp's and the tower's icons). The yellow mission icon east of the save's tower read
+  as about 38700 -22950: nothing there in ten walks (G).
+- **`Teleport` snaps down** to the ground below the given point (G: 4300 -> 3896); the trip's arrival check then calls
+  a landing more than its fall margin below the target a fall and retries: give `practice go` a height near the ground.
+
+## 38. Hands that stop at surfaces: `SOMVR_HANDS_SURFACE` (build 13 candidate, 2026-10-25; section 37 is the drill's)
+
+HG-6 (design-hla.md 2.1 a-c, 2.6, 3.1; the user on HL:A: "the way your hands interact with the environment"). Until
+now our hands and the sword went through stone, wood and the ground (2.1 "Gap"). With the switch on, the hand you see
+and the sword in it stop at the world's surfaces; a faint ghost of the real hand shows where the controller is once
+the two part; a tick in the hand at a contact, a clank when the blade meets stone. Off by default; build 13's env
+(scripts/headset-build12.env) turns it on. Handoff: handoff/HANDOFF-surfaces.md.
+
+### 38.1 The design as built
+
+- **What is clamped:** the grips the arms are solved to (arm_eval, after the bow's grips, before SOMVR_TWOHAND and the
+  VR hands). One change there moves everything that hangs on the hand: our drawn VR hand (vh_arm), the game's IK
+  target (so Talion's arm and the drawn sword on R_Weapon follow), the combat's bone blade (arm_blade_grip: what you see
+  is what hits) and SOMVR_TWOHAND's left hand on the hilt. The rotation is never changed: only a translation.
+- **How (the pure part, somvr_surface.c):** a hand is four spheres where the controller puts them: the palm (the
+  midpoint of the wrist and the middle knuckle, r 3.5 cm) and the index, middle and thumb tips (r 1 cm) of our hand
+  model posed with this frame's finger curls (somvr_vh_joint_g; the left mirrored). A surface is a plane: a point the
+  game's ray hit and the hit's normal. The spheres move together (the hand is rigid) out of every plane by the least
+  translation (rounds of the deepest push). Then the sword: its tip and base (the combat's blade lay-out from the grip,
+  SOMVR_BLADE_* and the sword angle) out of the blade's planes, the whole hand with it, at most 25 cm; deeper than that
+  the blade goes in (the void: a hand 25 cm off the controller is worse than a blade in a rock). Then the hand again.
+- **The rays (the game side, somvr_surface_game.c):** in in_frame after the climb (the game thread after the render,
+  where the climb has always cast), per hand: CL_RAYCAST (the climb's read-only site, the combat collider's query)
+  from a body-safe point to the palm where the controller puts it (+ its radius + 2 cm), from the palm as shown (the
+  last offset) to each finger tip, and for the sword hand from the shown grip along the blade to its tip. The
+  body-safe point is HL:A's invisible arm: the head in its yaw frame, 18 cm out, 25 down, 8 back (x the player size),
+  so a hand can never be where the body could not reach in a straight line. Talion's own object is passed (the cast's
+  filter, as the climb's, and on 6 cm past a hit on him), and so is every surface that does not stop a hand
+  (somvr_sf_solid: Flesh*, Armor*, foliage, water, liquids, puddles, sky, air, invisible ones, player blockers, cloth).
+  A palm deeper than 60 cm behind the plane found is not that surface (a ray past an edge). The next phase 2 uses the
+  planes of the last stereo frame (at most 2 frames old); a plane holds for the hand's motion in between.
+- **The normal:** flag 0x20 in the query's flags (ours 0xf8 = the climb's 0xd8 + 0x20): Physics_RayCast `0x8de79b test
+  $0x20,%dl` -> `0x8deaf0` writes the hit's normal and the plane's d at r+0x0c..0x18 (both its branches: `0x8dea56`);
+  the projectile's ProjHit layout (re-combat-items.md 1.2) names +0x0c the normal. somvr_sf_plane_of turns it toward
+  the ray's start; a bad one is replaced by the ray's direction back.
+- **The ghost:** the real grips go to the layer with each entry (somvr_vrhands v3: `ghost[2]`, `ghost_a[2]`); from 4 cm
+  apart the ghost fades in (0.1 s; full at 12 cm, opacity 0.35), out in 0.15 s. The layer skins our hand mesh once
+  more at the real grip with the same curls and draws it wraith blue (0.30, 0.58, 1.0) with a strong rim, after the
+  hands with the plain pipeline: never hidden by the world's depth (it is in the wall), only by our own hands and the
+  occluders. The reach ghost (design-hla.md 2.1 d) is not needed: our hands are drawn at the grip, not at the IK's reach.
+- **The spring:** never slower than the controller. While the controller comes out of a surface the offset shrinks
+  with it, 1:1; only a jump back of more than 2 cm in one frame (a surface lost, an exception starting, the void)
+  eases (80 ms time constant), and even then the shown hand stays out of this frame's planes.
+- **Haptics:** a tick at a hand's contact, 0.15 + 0.55 x (its speed into the surface / 150 cm/s), 20 ms, at most one
+  per 0.15 s; the blade's contact at 60 cm/s or faster is a clank: a crack (0.9 x k, 40 ms) and a ring (0.45 x k down
+  over 0.15 s), k = speed / 300 cm/s (0.25 .. 1); from 150 cm/s the defence's sparks on the sword (df_clank_fx, with
+  SOMVR_DEFENCE_CLANK=fx); slower: a 0.2 tick. No sound of its own (the clank's event name is RT; the sparks' .fxp may
+  carry one).
+
+### 38.2 Decisions
+
+- **Orcs' bodies never stop a hand or the blade.** (1) The combat judges hits with its own sweep of the bone blade
+  against each orc's capsule (combat_frame): a blade stopped at an orc's surface would change its path, its speed and so
+  every hit, and the task's rule is that the hit detection does not change unless proven better; (2) an orc's physics
+  capsule is bigger than its body (the hand would stop in the air); (3) the Nemesis verbs latch a left hand on a grabbed
+  orc and the finishers stab with the dagger; (4) the sword on an orc's weapon already clanks (SOMVR_DEFENCE_CLANK). So
+  the only change to the combat is through what the player sees: a blade stopped at stone cannot hit an orc behind the
+  stone (the void beyond 25 cm still can, as before).
+- **The exceptions** (the hand is free, the offset eases back): a climb's holding hand (cl_holds: the climb moves the
+  body so the hand stays where it grabbed; its grab rays use the raw controller, untouched, so a hand still reaches into
+  a wall to grab: INSIDE_CM works as before), both hands while the bow is out (the bow's aim and the draw are the raw
+  grips), the wrist panel open (touch), a pause, a finisher's moment (fi_holds). The Nemesis verbs' latched hand needs
+  none (an orc does not clamp).
+- **Rays, not a sphere cast:** the game's shape cast is not reverse-engineered; four rays per hand and the plane push
+  give the spheres' result for walls, rocks and the ground. A hand pushed round a convex edge may meet a plane that
+  extends past the face (the headset judges whether it shows).
+
+### 38.3 Who does what
+
+| Part | Where | What |
+|---|---|---|
+| the push, the spring, the ghost's fade, the contact and clank events, the surfaces that stop | `somvr_surface.c` (pure) | tests/test_surface.c (65 checks) |
+| the rays (in_frame after the climb), the samples on our hand model, the blade's lay-out, the exceptions, haptics, sparks, lines | `somvr_surface_game.c` (included after somvr_vrhands_game.c) | sf_frame, sf_arm (arm_eval before SOMVR_TWOHAND), sf_ghost (vh_arm), sf_config/start/end (bd_*) |
+| the real grips per entry | `somvr_vrhands.h` v3 | `ghost[2]`, `ghost_a[2]` (the entry 184 bytes) |
+| the ghost's draw | `vklayer/somvr_handdraw.c`, `somvr_vrhands_layer.c` | two more meshes per slot (after the occluders), drawn with the plain pipeline after the hands; `xr: hands: frame N: ghost L on|off R on|off` |
+
+No new patch site and no new read site: CL_RAYCAST, CL_SURF_FROM_RAY and CL_SURF_BYID are the climb's (CLIMB_SITES,
+check_sites.py's byte proofs), checked again at sf_start; the flag 0x20 is a query bit (the proof above), not a site.
+
+### 38.4 Switches, logs
+
+- `SOMVR_HANDS_SURFACE=off|on` (default off; needs SOMVR_ARMS=1 and SOMVR_INPUT=1, else `CONFIG surface=off: ...
+  needs ...`). `SOMVR_HANDS_SURFACE_GHOST=A` (0..1, 0.35; 0 = no ghost), `SOMVR_HANDS_SURFACE_BLADE_MAX_CM=N` (0..100,
+  25; 0 = the blade never stops). The samples follow `SOMVR_XR_HANDS_CAL` like the layer's model.
+- Lines: `CONFIG surface=on (...)`; `SURF t= hit obj= surf='..' (id N): stops a hand | passed (not solid) | Talion`
+  (each distinct object and surface once); `SURF t= clamp hand=L depth=.. cm surf=.. obj=.. n=.. speed=.. tick=..`;
+  `SURF t= hold hand=L depth=.. shown-real=.. ghost=..` (every 0.5 s while on); `SURF t= release hand=L after .. s,
+  deepest ..`; `SURF t= blade clank|touch depth=.. surf=.. speed=.. clank=.. fx=..`, `blade release`, `blade void: the
+  tip .. cm in`; `SURF t= ghost hand=R on (shown .. cm from the real hand) | off`; `SURF t= except hand=R: a climb
+  hold | the bow is out | the wrist panel is open | a pause | a finisher holds an orc | none (free again)`; a summary
+  every 10 s (`last 10 s: frames, casts (hits: passed Talion, soft; far), clamped frames, contacts, blade (clanks,
+  touches, voids, fx), ticks, eases, ghosts, excepted; the casts .. us a frame (max ..)`), `SURF END ...`. The layer:
+  `xr: hands: frame N: ghost L .. R .. (opacity ..)`, and its frame line counts `with a ghost N`.
+
+### 38.5 Offline tests (2026-10-26)
+
+- tests/test_surface.c 65/65: the push (one wall, a corner, a finger tip moving the rigid hand), the plane from a hit
+  (the normal turned toward the start, a bad one replaced), a contact (its tick by the speed, the tip held at -r frame
+  by frame, the ghost's fade in and its value at 7 cm), the release 1:1 and the ghost's fade out, the tick gap, the
+  spring (a lost surface eases back in 17 frames, monotonic, never in a jump; an exception the same), the blade (a
+  thrust: the clank, the sparks; held at 20 cm; the void at 30 cm; a slow touch ticks; the sword pointing into the
+  ground lifts the hand by the tip's depth; `_BLADE_MAX_CM=0`), the switches, the surfaces (no record = passed).
+- selftest sf_tests on the climb's stand-ins (st_raycast now writes the normal for 0x20): the switch and its needs, the
+  ray (Talion passed by the filter, the normal, the stone's name, a bush passed), a grip 10 cm into the wall stopped
+  with the deepest sample's edge at the face (0.02 cm), the tick posted, the ghost at the real grip in the v3 entry, the
+  release and the ease back onto the controller, the bow's exception, the END line.
+- test_vrhands: the v3 round trip and layout (ghost at 120, ghost_a at 176). test_layer 146/146: `vrhands-ghost` (6
+  draws for two hands and a ghost, the on/off lines). hands_lvp 111 checks: case 22 `ghost` (vklayer/build/hands/
+  hands-22-ghost.ppm: the held hands, the right one's ghost 9 cm ahead, faint wraith blue, partly behind the drawn hand).
+
+### 38.6 The headless proof (build 13's env + `SOMVR_HANDS_SURFACE=on`, the test hands, scripts/surface13-drive.sh)
+
+- **Boot 001811** (at the arrival point's bank, under ivy): the left hand stopped at the bank's stone (`clamp hand=L
+  depth=28.8 cm surf=stone n=0.97,0.04,0.22 speed=882 cm/s tick=0.70`, held to 48.6 cm, the ghost on, the release), the
+  ground (gravel, n up), the blade's clanks (597 cm/s: clank 1.00 with the sparks), touches and voids, a sword hit on
+  the practice infantry (`COMBAT hit tier=heavy`), the bow nocked, drew to 57 cm and let down (`except: the bow is
+  out`). **Found:** the practice orc's physics object (its HOBJECT, the one COMBAT hit names) has no surface record: the
+  left hand clamped on it 9 times (up to 156 cm). Fixed: no record = passed (somvr_sf_solid). The pictures were in the
+  ivy (the view inside the bank's foliage).
+- **Boot 002822** (the fix; at the bare stone pillar 33350 2000 -27900): the wall (z 22/67/87: `clamp hand=L depth=28.3
+  cm surf=stone n=0.50,0.00,0.87`, up to 49.7 cm, the ghost, 5 contacts and releases), the ground (Grass,
+  n=0.05,0.99,0.13, 18.8 cm), the blade (55 contacts: 2 clanks, 29 touches, 4 voids, a spark; the deepest held 18.6
+  cm), the orc: `hit obj=<the orc's HOBJECT> surf='' (id 0): passed`, **0 clamps on it**, a sword hit landed; the bow:
+  nock, armed, full draw 57 cm, let down, both hands excepted. 26305 casts in 3219 frames (8.2 a frame). 0 WARN, the
+  install unchanged (0 newer), the save unchanged (9d97bf3f...).
+- Pictures (`python3 scripts/xr_compose.py RUN -f N`; RUN/surf-steps.txt names the frames): **frame 1048** (the left
+  hand 20 cm into the pillar: the drawn hand on the stone, the faint blue ghost beyond it, both eyes agree), **frame
+  1856** (the thrust: the blade's tip stopped at the pillar's face). The ground and the sword-down steps are out of the
+  fixed headless view (the hands at the feet).
+- **Boot 004528** (the climb's regression: scripts/climb11-drive.sh, 4 pulls, the hang; build 13's env with the switch):
+  `CLIMB END climbs=2 grabs=9 lets=9 hangs=3 resumes=1 drops=2` - the grabs still reach into the stone (6.3 and 18.2
+  cm along the fingers' and palm's rays), each holding hand excepted (`except hand=L: a climb hold` ... `none (free
+  again)`), the free hands stopped at the pillar (contacts 8 / 24, deepest 12.3 / 14.2 cm). The casts cost 26 us a
+  frame (max 72). 0 WARN, the install unchanged, the save UNCHANGED (byte-identical).
+
+### 38.7 What only the headset shows
+
+- The feel: whether a hand that stops reads as "the wall is solid" or as lag; the ghost's strength (0.35) and colour;
+  the 2 cm / 80 ms spring; the tick's and the clank's strength.
+- The sword pushed back by stone up to 25 cm (then the void): whether the hand leaving the controller with the blade
+  feels right, or whether the blade should rather bend at the wrist (not built: a rotation of the grip).
+- The sword pointing down at the ground lifts the hand (the tip's depth): proven in the logs only (out of the headless
+  view). Whether that bothers a player standing with the sword lowered.
+- The body-safe point (the head's shoulder point) for a player who leans: the arms are invisible, so a hand reaching
+  round a corner stops at the corner's face.
+- Planes past a face's edge (a hand round a convex corner may stop a little early). And at 90 Hz the rays cost about
+  0.2 ms a second of game thread (26 us a frame headless).
+## 39. The Nemesis verbs in VR: `SOMVR_VERBS` (build 13 candidate, 2026-10-25; default off)
+
+The game's core verbs - the grab, then drain / brand / interrogate / kill, the stun, the stealth kill - had no VR control
+(build 12: `SOMVR_GAMEMOVES=off`, the deny list keeps pad X/Y/B and the `CombatSecondary`/`Tertiary` slots out of the
+input). `SOMVR_VERBS=on` gives them to the hands the HL:A way and lets the game decide every outcome: our controls press
+the game's own command for the verb, the game's nodes, predicates, skills and targeting do the rest. Files:
+`somvr_verbs.h/.c` (pure: the left hand's machine, the record kinds; `tests/test_verbs.c` 93), `somvr_verbs_game.c`
+(included last; no new patch site: combat's orc reads, the input's press path, SOMVR_FINISH's read-only selection
+sites, NS_NODEXF for the orcs' heads, the prompts' hooks), hook-ins in somvr.c (`vb_frame` in `combat_frame`,
+`vb_hands` in `in_frame` before the climb, `vb_contact` in combat's contact loop, the press in `in_apply`, the bow's
+`bo_button` veto, the climb's `in.nograb`), `scripts/verbs13-drive.sh`. Not SOMVR_FINISH (24): that one starts
+attacks itself (`FUN_00a8c700`) and was never booted; this one presses the game's buttons.
+
+### 39.1 What the game does (runtime; runs 20261025-214207, -214955, -222256, -231228)
+
+**No prompt events.** None of these verbs raises a `PromptShow` (the PP hooks in log mode saw 0 shows in four fights;
+the counter, stun and drain cues are the over-the-orc markers, re-hud.md 4.4). So there is nothing for
+`SOMVR_PAD_PROMPTS=vr` to bring back: the VR side's cues are ours (39.3).
+
+**The buttons are data** (the test word `verbs tree`: the player's 105 root nodes - `Player_Character`'s field 1
+`Nodes` - each with its type, its Predicate (node field 2, schema `0x4ba8ea0`: 0 Input, 1 Chord, 2 DoubleTap), the
+Input record (schema `0x4bb4860`: 0 ActionId, 1 InputType 0 press / 1 release / 2 held, ..., 8 MaxHeldDuration,
+9 MinHeldDuration; the ActionId a hash in the command table `0x4c3a3c0`) or the Chord's two commands (schema
+`0x4bb4560`: Command1, Command2), and what `SharedCombat_SelectAttackFromPool` picks from it for the nearest orc):
+
+| Verb | Node (input) | Command |
+|---|---|---|
+| grab | `PC_Grab_Attempt`, `_Stealth` (`Grab_Attempt`), `PC_Grab_Attempt_Held` (`Grab_Held`) | CombatSecondary02 (123) pressed / held |
+| let go | `PC_Grab_Release_Root` (`Grab_OnRelease`) | 123 released |
+| drain from the grab | `PC_Grab_HOG_Into` (`Grab_HOG_Into`) | CombatPrimary03 (B, 120) held |
+| interrogate | `PC_Interrogation_Into` (`Grab_Subdue`) | CombatPrimary04 (A, 121) pressed |
+| the grab's flurry | `PC_GrabFlurry_Into` (`Light`) | CombatPrimary01 (X, 118) pressed |
+| stun | `PC_Stun_Root`, `_Lowest`, `PC_HoG_Standing_NoTrgt_Start` (`Stun_Release_NoCancel`: released within 0.2 s) | B tapped |
+| the wraith hand's hold | `PC_HoG_Standing_Start` (`Stun_Press_NoCancel`), `_Start_Held` (`Stun_Held`) | B pressed / held |
+| stealth kill | `PC_InstaKill_Sneak_Silent` (`Light`), `_Loud` (`Heavy`); from above `PC_InstaKill_FromAbove_F/B`, `PC_LoudKill_FromAbove_*`; a ledge `PC_InstaKill_LedgeHang` | X / CombatPrimary02 (Y) |
+| stealth brand, torment | `PC_StealthBrand`, `PC_StealthTorment`, `PC_Brand_FromAbove_*`, `PC_Torment_FromAbove_*` (`StealthBrand`) | B pressed |
+| the chords | `PC_InstaKill` (`TokenKill_Chord`: X+Y, the execution), `PC_InstaHOG` (`InstaBrand_Chord`: Y+B), `PC_WraithAoE` (X+A), `PC_GroundKill_AoE` (X+Y) | - |
+| commanding branded orcs | `PC_Branded_Kill` (`Branded_Kill`), `PC_Branded_Infight` | CombatTertiary04 / 03 |
+
+**What B does at an aware orc** (runs 214207, 214955, `verbs press 120 MS`): `PC_HoG_Standing_Start_F` at once (the
+wraith hand on its head); let go within 0.2 s it becomes the stun (`PL_St_L1_D1_F_LL_LL_St_1_HC_Lowest` /
+`PL_St_L1_D2_...`: the orc `AI_Bip_Recoil_F_ToYStun_STR`, state `Quick_Stunned` ~1.2 s, thrown back ~2.7 m, then
+`AI_Bip_StunLoop`, `AI_Bip_StunRecover`); held, `PC_HoG_Standing_Hold_Normal` holds the orc (`AI_Bip_Recoil_Hog_Into`,
+`AI_Bip_Wraith_HoG_Loop_Normal_F`, state `Wraith_HoG_Level1`) for ~3.0 s to `PC_HoG_Standing_Complete` (the orc
+`AI_Bip_Wraith_HoG_Recover_F`; the next hold on it is `PC_HoG_Standing_Hold_Normal_LowHealth`: the drain took its
+health), let go before = `PC_HoG_Standing_Out_Normal`; no orc in reach = `PC_HoG_Standing_NoTrgt_Start_F`. The hold's
+links (`PC_HoG_Standing_Loop`): `_Loop_Complete` (`Stun_Held_Out`), `_OutOfLoop` (`Stun_Release`), `_Cancel`: no kill
+or brand branch on this save. No sync record (`Combat+0x188` empty): Talion's root stays put (0.0 cm through the hold,
+run 214955's ANCHOR lines), only his body turns to the orc; the view is the player's. Y = `PC_CounterAttempt_Fail`, X a
+light strike. **What this save has unlocked**: the brand nodes are there, but the brand is locked (the interrogation's
+own `_NoBrand` variant below; no brand record in any run); the interrogation works on a grabbed practice infantry (its
+GAIN INTEL menu offers an Unknown Captain).
+
+**The grab** (run 233249, -234655: the left squeeze reached out at an aware, attacking infantry's head):
+`PC_Grab_Attempt_F` -> the sync `PC_Grab_Into_F` (Talion behind the orc, the orc turned 173 deg, its back to him); its
+three prompts come as `PromptShow` events (keys `Grab_ButtonX/B/A`): `UI_Combat_GrabFlurry` on X (118),
+`Combat_Grab_Drain` on B (120), `Domination_Subdue` on A (121). B held from the grab = `PC_Grab_HOG_Into` (4.1 s) ->
+`PC_Grab_HOG_Into_Kill` (the orc's health 92 -> 42) -> `PC_Grab_HOG_Out`. A = `PC_Bip_Sync_Intrgtn_Into_NoBrand` (the
+orc `AI_Bip_PC_Sync_Intrgtn_Into_NoBrand`, state `Bip_PreDeath`) -> 3 s later `PC_Bip_Sync_Intrgtn_Idle_NoBrand` with
+two choices (key 0): `UI_Prompt_Interrogate_Eliminate` on CombatStruggle03 (163) and `Domination_Interrogate` on
+CombatStruggle04 (164); unanswered, the game let the orc go 65 s later (its health back to 95). **`NoBrand`**: the brand
+is locked on this save (the interrogation's own variant says so; no brand record came in any run). The grab rides on
+the game's mount and attach states (`Player+FB_P_MOUNT` set, the fallback's MOUNT and ATTACH), and the interrogation is
+a camera presentation (PRES): build 12's body moments sent all three to the window (flat frames in the menu quad) -
+with SOMVR_VERBS that is a hold (39.3).
+
+**From behind an unaware orc** (a patrol infantry spawned 12 m off - `verbs ahead 1200`, `verbs template
+Orc_Infantry_Patrol` - and Talion teleported 1.3 m behind it, `verbs behind 130`: run 234655's second round, the orc
+unaware): the game offers `PC_Grab_Attempt_Stealth` -> `PC_Grab_Attempt_B_Stealth` (the stealth grab), the hold
+`PC_HoG_Standing_Start_B`, the stun, `PC_Conversation` -> `PC_Bip_Sync_Talk_Intel`; **not** `PC_InstaKill_Sneak_Silent`,
+`_Loud`, `PC_StealthBrand`, `PC_StealthTorment`, `PC_Attract` (`Attract_Sneak`): their pools want more than unaware and
+behind (the sneak stance, 39.5).
+
+### 39.2 The VR controls (the design; `somvr_verbs.h`)
+
+The left hand is the wraith hand, the right the sword - the game's own split. Every verb is the hand doing it:
+
+| The player does | The game gets | What the game does (this save) |
+|---|---|---|
+| reaches the empty left hand to an orc's head or collar (the palm within 45 cm of its head, or the arm reached out at it: the eyes -> palm line within 25 deg of the eyes -> head, the palm >= 35 cm out, the head <= 170 cm off - an orc in melee stands ~1 m away, out of an arm's reach) and squeezes (a new squeeze: a fist moved onto it holds nothing) | 123 held while the grip stays closed | the grab (`PC_Grab_Attempt_*`, from behind `_Stealth`); refused = its fail move |
+| opens the hand | 123 let go | the release |
+| holding, squeezes the left trigger | B held while the trigger is | the drain from the grab (`PC_Grab_HOG_Into` to `_Kill`), the brand where unlocked |
+| holding, pulls the orc to the face (the palm within 35 cm of the eyes for 0.25 s, after it was 45 cm or more away) | A tapped (150 ms), once per grab | the interrogation (`PC_Bip_Sync_Intrgtn_*`) |
+| ... then squeezes the trigger / stabs or slashes the held orc with the sword | the choice's command tapped: Interrogate (164) / Eliminate (163) | the interrogation's outcome |
+| holding, stabs or slashes the held orc with the sword (a contact that would deal a hit) | X tapped instead of our hit | the grab's move (`PC_GrabFlurry_Into`) |
+| presses the left trigger with the open hand on an orc's head (or reached out at it) | B held while the trigger is | a tap: the stun; held: the hold (`PC_HoG_Standing_*`, the combat drain, ~3 s) |
+| stabs or slashes an orc the game offers its silent stealth kill for (`PC_InstaKill_Sneak_Silent` asked by the game's own selection at the contact) | X tapped instead of our hit | the stealth kill (its sync; unproven, 39.6) |
+| holding, presses the Touch's X (the left lower button) / A (the right lower) - the prompts' own letters | X / A tapped | the grab's move ('Shank') / the interrogation |
+| the interrogation asks: presses the Touch's B (the right upper) | Eliminate (163) tapped | the interrogation's kill ('Kill') |
+
+- The trigger is the bow's everywhere else (`bo_button` yields only while the hand holds an orc or its wraith press
+  runs); the climb takes no wall grab from the verbs' squeeze (`in.nograb`); a hold of B ends at the game's end of the
+  hold (`*Complete*`, `*_Out*`, `*_Kill*` - the trigger may stay pressed; a new press starts again) or after 6 s.
+- Feedback: a tick (0.35, 40 ms) on the grab, a soft pulse every 0.2 s through the game's hold growing 0.15 -> 0.45
+  over its 3 s, a strong one (0.8, 120 ms) at its completion, one (0.5, 60 ms) at the interrogation's pull and its
+  choice, the sword hand's (0.7, 80 ms) at a kill press; the game's own wraith FX on the left hand (`SOMVR_WISPS=hand`
+  keeps them on our hand).
+- Nothing moves Talion or the view by our doing: the game's moves (the grab's alignment, the drain, the interrogation)
+  happen under the body moments' hold (39.3).
+
+### 39.3 First person through the grab and the interrogation; the prompts
+
+- **The body moments** (`somvr_bodymoments.c`, `somvr_bm_in.our_grab`, test_bodymoments): while the left hand holds an
+  orc - or the interrogation it led to runs (until its choices are gone) - the fallback's MOUNT, ATTACH and PRES
+  conditions are not the window but a hold (the anchor frozen, the yaw the player's). Run 233249 without it: the grab
+  sent the frames flat into the menu quad for 60 s, and no stereo frame read the hand again (the verbs now let
+  everything go when no stereo frame read the hand for 0.5 s).
+- **The view eased back** (`SOMVR_VERBS_VIEW_BACK_CM`, 35; `vb_view` in `bm_base`): the grab's sync puts the orc's head
+  where Talion's is (mark 234916_3 in run 234655: the view inside its head, the near plane's hole); while the grab holds
+  and the base is held, the view eases 35 cm away from the held orc's head (horizontal, a critically damped ease of
+  0.08 s, peak ~1.6 m/s) and back after: the orc held at arm's length (mark 002501_3 in run 002254). The player's own
+  grab starts it; nothing else moves the view.
+- **The stun's tap** (`SOMVR_VERBS_TAP_S`, 0.35): the stun is B released within the Input record's MaxHeldDuration
+  (0.2 s in `Stun_Release_NoCancel`); a trigger's quick press is often longer (0.25 s measured), so at the first frame
+  with the player's root record that float is raised to 0.35 s in the game's database (memory only).
+- **The prompts**: `SOMVR_PAD_PROMPTS=vr` keeps the grab's three (`vb_keep`: keys `Grab_Button*`) and, while the hand
+  holds, the struggle commands' (161..170: the interrogation's choices); B is shown with the left trigger's glyph (the
+  PP map gets 120:124 and 164:124). **Our own words do not work**: a StringId the game does not have shows as
+  `[ERROR: Invalid StringID]` (the words test, `verbs words test`: the band's dump 721 in run 005010), so the prompts
+  keep the game's text and their letters are the Touch's that do the same: holding, X (the left lower button) taps
+  118 and A (the right lower) taps 121; the choice's B (the right upper) taps Eliminate.
+
+### 39.4 Switches, words, lines
+
+| Switch | Default | What |
+|---|---|---|
+| `SOMVR_VERBS` | `off` | `on` the controls above; `log` the lines only (the game's records by name on each change, the prompts) |
+| `SOMVR_VERBS_REACH_CM` | 45 | the palm's sphere about an orc's head point (its Head node by NS_NODEXF, else 75 cm over its root) |
+| `SOMVR_VERBS_CONE_DEG` | 25 | the reach-out cone (the palm >= 35 cm out, the head <= 170 cm off) |
+| `SOMVR_VERBS_ASK_CM` | 35 | the interrogation's pull: the palm this close to the eyes for 0.25 s |
+| `SOMVR_VERBS_HOLD_MAX_S` | 6 | B let go after this |
+| `SOMVR_VERBS_HAPTIC` | 1 | the pulses' scale (0 = none) |
+| `SOMVR_VERBS_VIEW_BACK_CM` | 35 | the held view eased back from a grabbed orc's head (0 = off) |
+| `SOMVR_VERBS_TAP_S` | 0.35 | the stun's tap window in the game's Input record (<= 0.2 = the game's) |
+| `SOMVR_VERBS_STEALTH`, `_STEALTH_NODE` | 1, `PC_InstaKill_Sneak_Silent` | the stealth kill by the sword's contact, the root node asked |
+
+Needs SOMVR_COMBAT (its orc reads; else a WARN, off) and SOMVR_INPUT (else log); the stealth kill needs SOMVR_FINISH's
+ten read-only selection sites (checked at start, `VERBS site ... MISMATCH` + a WARN, the rest works). No new patch site;
+the one database write is the tap window's float. Test words (SOMVR_HANDS_TEST=1 only; never in a player's env): `verbs
+press CMD[+CMD] MS` (any command through the press path), `verbs status`, `verbs tree` (the root nodes, their inputs,
+the game's pick against the nearest orc), `verbs behind CM` (Talion teleported behind the nearest orc, the ground
+checked), `verbs ahead CM` (the practice's spawn distance), `verbs template NAME|off` (the practice's AI template),
+`verbs aim head|face|off` (the left palm put at the nearest orc's collar / 25 cm from the eyes toward it), `verbs words
+test`. Lines: `CONFIG verbs ...`, `VERBS t=... grab|wraith|release|done|lost|wraith end|ask|choice|button|kill|stealth
+...`, `VERBS t=... the game: Talion's '...' (kind)`, `VERBS t=... view: easing back|back at the base`, `VERBS t=... tap:
+...`, `VERBS t=... prompt up|down ...`, `VERBS t=... orc ... attack ... state ... health ...` (each change of the near
+orcs), `VERBS END: ...`.
+
+### 39.5 What ran (headless, Monado 20 Hz, the practice meadow; scripts/verbs13-drive.sh; every run 0 WARN, the install unchanged, the real save UNCHANGED)
+
+| Run (logs/boot-check-) | What it proves |
+|---|---|
+| 20261025-214207 | `discover` (SOMVR_VERBS=log, `verbs press`): B tapped = the stun (`PL_St_*`, `Quick_Stunned`, the orc thrown back), B held = `PC_HoG_Standing_*`; Y a failed counter; no prompt event in a fight |
+| 20261025-214955 | B held 7 s: `_Hold_Normal` 3 s to `_Complete`, then a second hold `_LowHealth` (the drain); Talion's root 0.0 cm through it; the first stealth staging (the orc aware) |
+| 20261025-222256, -231228 | `verbs tree`: the 105 root nodes, their Input / Chord records decoded (39.1's table); the teleport behind an orc on a ridge was a 6 m drop (Talion died in the save copy): `verbs behind` checks the ground now |
+| 20261025-233249 | the first VR grab (`PC_Grab_Attempt_F` -> the sync `PC_Grab_Into_F`), the grab's three prompts; the body moments' window took the frames (fixed: 39.3) |
+| 20261025-234655 | the grab held first person, the trigger's drain from it (`PC_Grab_HOG_Into` -> `_Kill`, health 92 -> 42), the pull -> the interrogation (`..._NoBrand`) and its choices; mark 234916_3: the view inside the held orc's head (fixed: the view eased back) |
+| 20261026-000241, -001308 | the combat drain by the open hand's trigger (`_Complete`, health 92 -> 42); the tap window written (0.20 -> 0.35 s); grabs missed by the test's choreography (the test aim since) |
+| 20261026-002254, -003341, -005010 | `verbs aim`: the grab, the view eased back (mark 002501_3: the orc held at arm's length), the drain (94 -> 44), the pull, the choices; **the trigger = Interrogate -> the game's GAIN INTEL menu** (mark 003610_7's flat picture); our own words in the band = `[ERROR: Invalid StringID]` (dump 721) |
+| 20261026-010816, -012800, -014624 | **the full scripts/headset-build12.env with SOMVR_VERBS=on**: the same chain; the intel menu left by the Touch's B (the pad's Back in the menu context); the band with the game's words and the Touch's letters (dumps 722, 1132 of 014624: 'Shank' X, 'Interrogate' A, 'Drain' LT, the choice's 'Kill' B) |
+| 20261026-015811, -021350 | the stun by a VR trigger tap not reached headless (the test trigger's words land >= 0.5 s apart; the game wants <= 0.35 s); the Touch's X while holding taps 118 (the grab broken by the orc's hit first: a strike) |
+| 20261026-022511, -023308 | the held orc leaves the targeting bands (the pull's test aim fixed); **a plain grab -> the pull -> A -> the interrogation -> the Touch's B = Eliminate -> `PC_Bip_Sync_Intrgtn_Kill_NoHeadExp`** |
+| 20261026-024158 | stopped early (the snapshot had the build before the held orc's sweep); 0 WARN, the save UNCHANGED |
+| 20261026-025004, -030251 | the grab -> the pull -> the Touch's B = Eliminate again (`PC_Bip_Sync_Intrgtn_Kill_NoHdExp`); **the Touch's X while holding = `PC_GrabFlurry_Into`** ('Shank': health 95 -> 85), opened = `PC_Grab_Release_Root_F`; the test sword never gave combat a blade (`noblade` every frame; the driver's rest pose by the back slot is the likely cause), so the sword's Eliminate / kill paths did not run |
+
+Pictures worth a look: run 002254 marks 002501_3 (the orc held at arm's length, its back to us, the wraith hand's glow),
+002511_5 (the interrogation: the wraith world, the orc on its knees); run 234655 mark 234916_3 (before the fix: the view
+inside the held orc's head); run 003341 mark 003610_7 `flat.jpg` (the game's GAIN INTEL menu); run 014624's composed
+band (`scripts/xr_compose.py RUN -f 722 1132 --ppd 20`): the grab's prompts and the choice's.
+
+### 39.6 Open
+
+- **The stealth kill**: built (the sword's contact asks the game's own selection for `PC_InstaKill_Sneak_Silent`, X
+  tapped when offered) but never offered in the staged rounds: the practice orc is aware at once, a patrol template 12 m
+  off with Talion teleported behind it was unaware twice, and the silent kill's pools still refused it (as did
+  `PC_StealthBrand`, `PC_Attract`: the sneak stance is the likely predicate; the crouch command was pressed, its state
+  not read). The headset's test: crouch behind an unaware orc in the open world and stab.
+- **The stun by a VR tap**: the game's stun is B released within 0.2 s (proven by `verbs press 120 150`); the VR path
+  (the trigger's press = B) is the combat drain's, proven held; the test trigger's words land >= 0.5 s apart, so the
+  tap itself was not reached headless. The window is 0.35 s (`SOMVR_VERBS_TAP_S`); a headset check.
+- **The sword on the held orc** (the grab's move, the choice's Eliminate): `vb_blade` sweeps the blade against the held
+  orc (it leaves the targeting bands); not run (the test sword had no blade); the Touch's X and B do the same and are
+  proven.
+- **The brand** is locked on this save; with it unlocked the game's own B held (the grab's drain) should brand - not
+  seen. Drop kills from above and ledge kills (`PC_InstaKill_FromAbove_*`, `_LedgeHang`: X) have no VR gesture yet.
+- The interrogation's pull needs the hand at least 45 cm from the eyes at some point of the grab (a hand held right at
+  the face does not ask); the pull brought the game's wraith flare to 25 cm from the eyes (mark 002516_6): fixed by
+  `SOMVR_VERBS_GLOW=hide` (39.7).
+- The drain's prompt (B shown as LT) sits in the diamond's top slot, drawn small; the intel menu is the game's (the VR
+  menu's touch and pointer are its controls; the Touch's B = Back proven).
+- Comfort: the 35 cm ease back at a grab is a view move started by the player's own grab (smooth, ~0.4 s); the headset
+  decides whether it stays.
+### 39.7 The interrogation's flare out of the eyes: `SOMVR_VERBS_GLOW` (build 13, 2026-10-26; default `game`)
+
+With `SOMVR_VERBS=on` the pull to the face (the palm 25 cm from the eyes) started the game's interrogation and a white-blue
+burst with rays filled the middle of both eyes (run 20261026-041848 frame 1110; logs/snap-t3-86f6f1fc-b13a/pictures/
+verbs-041848.jpg, the middle pair). The flat camera sees it small from behind Talion.
+
+**What it is** (runtime, nothing found statically: FX names are data). Every ClientFX goes through CClientFXMgr's create
+`FUN_00d8bae0`, reached only by the tail jumps of its two thunks (calls.tsv: 2 callers): `FUN_00d8c7f0` (70 callers;
+`movzbl %cl,%ecx; movzbl %r8b,%r8d; jmp`) and `FUN_00d8c810` (start 1, b 1, c 0; its rsi/rdx swapped). Both jumps hooked
+in log mode (run 20261026-061644, the CLIENTFX_CREATESTRUCT read: +0 the file name, +0x104 flags, +0x108 the parent
+HOBJECT compared with Talion's and the held orc's, +0x118 the node, +0x11c the offset): the moments' FX on Talion and the
+held orc, in order -
+- the grab's drain (`PC_Grab_HOG_Into`): `wraithability\hand_of_god\hog_mtshld_handloop.fxp` (Talion, loop),
+  `hog_mtshld_impact.fxp` (the orc, loop), `_earlyrelease(_orc).fxp`, `presentations\instakill\meatshield_hog_shake_*`;
+- **the interrogation** (the pull's A): `wraithability\domination\domination_brand_in.fxp` (the orc, flags 2) and
+  **`domination_in.fxp` (Talion, flags 2)**, the wraith world's `ui\wraith_ranged\records\pres_wraith_player_in` /
+  `pres_wraith_camera_in` / `vm_interactiveobjects_in` (then their loops); at its Idle (3 s later)
+  `domination_brand_loop.fxp` (the orc, loop) and **`domination_loop.fxp` (Talion, loop)**;
+- the open hand's hold (`PC_HoG_Standing_*`): `hog_l1_handloop.fxp` (Talion, offset -6,0,0), `elf\wraithlightbeam2.fxp`
+  (Talion, loop), `hog_l1_impact.fxp` (the orc), `hog_l1_complete.fxp`.
+The node field is -1 for all (the FX's own records place them). The same boot's second round with only Talion's two
+`domination_*` FX not made (the word `vbglow fx domination_in,domination_loop`) had no burst at the Idle: they are the
+flare, on Talion's left hand (L_Hand, which `SOMVR_WISPS=hand` puts on our drawn hand: the 041848 burst sits at it).
+The drains' and the hold's glow stayed small and blue in the same pictures (marks g1-drain, g1-hold, g1-held).
+
+**The switch** (`somvr_vbglow_game.c`, included after the HUD FX file; game side; no layer, ABI or verbs change):
+
+| Switch | What |
+|---|---|
+| `SOMVR_VERBS_GLOW=game` (default) | nothing patched (build 13 candidate's look) |
+| `SOMVR_VERBS_GLOW=log` | `VG_FXC` (0xd8c807) and `VG_FXC1` (0xd8c834), the thunks' tail jumps, are ours (K_JMP through one stub page): each FX made on Talion or the held orc in the verbs' moment (the hand holds, the game's wraith hold, the interrogation; 1.5 s after) and each new name logged; nothing changed |
+| `SOMVR_VERBS_GLOW=hide` (scripts/headset-build13.env) | as log, and an FX whose file name has a word of `SOMVR_VERBS_GLOW_FX` (default `domination_in.fxp,domination_loop.fxp`) is not made while the game renders our eyes (a stereo H4 frame within 0.5 s): 0, the thunks' own answer with ClientFX off (the gate byte 0x46b72d1), the handle left as the caller set it. Everything else of the moment is made: the orc's `domination_brand_*` (the wraith's mark on its head), the wraith world, the drains' `hog_*`, the wisps |
+
+Test word (SOMVR_HANDS_TEST not needed): `vbglow game|log|hide|fx WORDS` (from the next FX on). Lines: `HOOK VG_FXC ok
+jmp ...`, `CONFIG verbs_glow=...`, `VBGLOW t=... fx '...' on Talion|the held orc|an object|nothing ... node N off ...
+flags F start S (caller C)[ in the verbs' moment]: made | not made (our eyes: hide) | the game's own 0` (up to 300),
+`VBGLOW END fx asked N: made, not made in our eyes (the last '...'), in the verbs' moment; names; now MODE`.
+check_sites.py's VBGLOW block (2 K_JMP, byte proofs: the thunks' 28 / 41 bytes, the create's first 24); selftest
+`vg_tests` (two stand-in thunks: made before the first stereo frame, not made in our eyes by name, the other thunk's
+argument order passed through, made after `log` and in a flat frame, a new word by `fx`).
+
+**Runtime** (headless, the full scripts/headset-build13.env + SOMVR_HANDS_TEST, scripts/verbs13-drive.sh step `g1`: the
+grab, its drain by the trigger, the pull, the Idle, Eliminate by the Touch's B, then the open hand's hold at a new orc;
+every run 0 WARN, the install unchanged, the real save UNCHANGED):
+
+| Run | What it shows |
+|---|---|
+| 20261026-061644 | `log` + `g1 gwait g1`: the names above; round 1 the burst at the Idle (mark 061904_5); round 2 with the two words hidden (`not made` 2) no burst (062159_14), the chain unchanged (the pull's A, `..._Intrgtn_Into_NoBrand` -> `_Idle_` -> `_Kill_NoHeadExp`) |
+| 20261026-062502 | `log` (the game's look), `g1`: the burst at the Idle (mark 062724_5: the left eye 2.95 % near-white, the middle half's mean 62/255; dump 1108 composed: the flare over the orc's face) |
+| 20261026-062957 | `hide` (the env as shipped), the same `g1`: `domination_in.fxp` and `domination_loop.fxp` not made (2 of 1097), all else made; at the Idle (063223_5) no burst: 0 % near-white, mean 11; the orc on its knees, the blue wraith crackle small at the hand, the prompts (`Gain Intel` LT, `B Kill`; dump 1106); the drain (the orc's health to 45), the interrogation's Into/Idle/Kill as in 062502; the open hand's hold to `hog_l1_complete` (062502's hold missed its orc; 061644 ran it) |
+| 20261026-064116 | the committed build (5362eb6, somvr.so sha256 29f6745f...), the same env and `g1`: the two not made (2 of 1112), no burst at the ask or the Idle (marks 064336_4, 064342_5: the orc kneeling, the small blue crackle at the hand); the drain (health to 44), Into/Idle/Kill, the open hand's hold to `hog_l1_complete` (064427_8) |
+
+Pictures: run 062957's `glow-ab-marks.jpg` (rows: the ask, the Idle, the drain; left pair 062502, right 062957) and
+`glow-ab-compose.jpg` (`scripts/xr_compose.py RUN -f 1108` / `-f 1106`).
+
+Open: whether `domination_in` / `_loop` also carry a sound (a ClientFX can; headless is silent): if the interrogation
+lost its wraith whoosh, the headset hears it. With the brand unlocked the brand's Talion-side FX are likely the same
+two (not seen: `NoBrand` on this save). At the grab the game's over-the-orc combat marker (`combaticon_white.fxp` on the
+held orc, loop) showed as a large white arc at the top of the view in one run (061644 mark 061839_1), not in 062502 /
+062957: a headset look.
+
+## 40. The way down from a tower top and any ledge: `SOMVR_CLIMB_DESCENT` (build 13 candidate, 2026-10-26)
+The drill's finding 1 (37, handoff/HANDOFF-drill.md): at a forge tower top the walk stops at the edge, no prompt, A
+does nothing (`SOMVR_GAMEMOVES=off`: the game's leap off a tower is A; `SOMVR_CLIMB_LEDGES=off`: no edge action) and
+both hands reaching over the edge found nothing to grab - while every respawn and every fast travel lands on a tower
+top. Code: somvr_climb.c/.h (the pure rules, test_climb's test_descent and test_edge), somvr.c's climb region (the rays,
+the logs, `climb probe edge`, `climb blink CM`), somvr_practice_game.c (the trip kind `down`). Driver:
+scripts/descent13-drive.sh. Default off; `SOMVR_CLIMB_DESCENT=on` in scripts/headset-build12.env.
+
+### 40.1 Why the hands found nothing (runs 20261025-235602 = the drill's H, 20261026-010412)
+- **No ray looked where a lip is.** A press casts along the palm and the fingers, and straight down only while a climb is
+  on (32.3's down assist). A hand held out over an edge with the fingers ahead (the drill's `hands test L -20 Y 55 0 0
+  0`) points every ray into the air; the lip is under and behind it. The inside ray (head to hand) passes over the lip
+  for a hand past it. H's hands were also never lower than 67 cm over the floor (5367 vs the floor at 5300: the eyes
+  are ~185 cm over it).
+- **A hold at the feet starts no climb**: `SOMVR_CLIMB_LOW_CM` (50; 32.3) refuses a hold more than 50 cm under the
+  root, and a floor's lip is ~102 cm under it.
+- **The forge tower top's own edge is not reachable at all**: `climb probe edge` (run 010412, the save's tower, heading
+  87 deg from 35400 5403 -22400): an **invisible wall of the surface record 'Air'** 64 cm ahead of Talion's root at every
+  height from -80 to +80 cm (`a wall at the edge: ... -80=64n#895 ... +80=64n#895`, 'Air' not held: SOMVR_CLIMB_SURF
+  =walls leaves air, invisible ones and player blockers out) - that is what stops the walk (`LOCO ... the body 0 cm`),
+  not the locomotion; past it the floor goes on at least 150 cm at the same height (`+0..+150 = 103 cm under the root`),
+  and the floor has **no surface record** (`#0 ''`, which cl_surface answered "not climbable"). So a hand can neither
+  reach through the wall nor reach the real edge, and Talion's capsule cannot pass the wall.
+- The meadow's stone bank (the same run, 31587 2252 -24919 heading 90): no wall our rays see (also none on every
+  collision layer, filter 0xffffffff, run 020837); the top ('Grass') ends 40-50 cm ahead of the root, the 'stone'
+  face 46-54 cm ahead under it, the gravel 431-437 cm under the top. The walk stops there too (the root ~45-49 cm
+  before the edge), and so does our own extra move: runs 015257 and 020837 asked the body out over the edge (gravity
+  off, the lip held) and the root did not go out - it rose instead (33 cm in 8 s of pushing). **The game keeps Talion
+  on every edge**: at a tower with the 'Air' wall, elsewhere with something our rays do not see (a one-way or
+  state-bound player collision: the fling went over the same bank's edge from outside, 32.14).
+
+### 40.2 The design (HL:A's spirit: the player's own hands and one button; no motion the player did not make)
+1. **Over an edge by hand** (any ledge a hand can reach): with descent on, a press by a hand under Talion's root (not
+   climbing: reaching down at an edge) also casts straight down and level from the hand toward the head (the face under
+   an edge the hand reached over); while climbing, the down ray as before and one **along the wall** (the last hold's
+   `toward`). A raised hand starts a climb exactly as without descent (run 024500: a hand over a low wall's top took the
+   top instead of the face and changed the fling's way over). A hold is a **lip** when it is on the top Talion stands
+   on (his feet within 40 cm of it; run 022824: a low wall's top reached from its foot was taken for one) with its edge
+   within 60 cm along the reach (down rays every 10 cm), or on a face, and the ground beyond it (a ray down from 30-35
+   cm out) is at least `SOMVR_CLIMB_LIP_DROP_CM` (150) under it. The face's own outward direction comes from two level rays 15 cm to
+   each side (not the diagonal reach). A lip starts a climb even under `LOW_CM` when Talion stands on its top: the
+   **descent**. Its `toward` points into the top (so climbing back up is the normal top/push/over).
+2. **Going over**: the hold drives as any hold (the body moves by minus the hand). Pulling the held hand in moves the body
+   out over the edge; pushing it up lowers him. While the capsule still rests on the top, the part of a downward move the
+   top blocks goes out over the edge instead (**the lip step**, `x 2` the blocked part, at most 8 cm a frame: the mirror
+   of 32.3's edge step), until the capsule clears the edge (the root 40 cm past it) and goes down the face. While
+   descending (until the head is under the lip's top) no top / push / over: standing on the top with a hand on its lip
+   is not "the top reached". **The game's edge walls** (40.1): the outward move not applied 3 frames in a row = `lip
+   blocked`: no more lip step (pushing on only lifted him), a double buzz in the holding hand; A from the lip is the way
+   down there. So far every edge tried blocked (the bank, the tower): the hand-over-hand way over an edge works only
+   where the game lets the capsule go (unit-tested; none found at runtime yet).
+3. **Down the face** hand over hand: a hold pushed up lowers him exactly as a hold pulled down raises him; the wall ray
+   finds the face whatever the hands' angle (a player who went over facing out has the face behind him). Letting go
+   hangs (build 10), A drops.
+4. **The fast way down: A** - with the climb on (holding or hanging; or holding the lip still on the top) the ground
+   under him is found by a ray down from 40 cm out from the wall (from beyond the edge while still on the top): more than
+   `SOMVR_CLIMB_BLINK_CM` (400) under the feet = **the blink**: the climb holds still (phase `blink`, gravity off), the
+   practice trip's machinery (somvr_practice_game.c, kind `down`: its fade out 0.25 s, the console's `Teleport` to the
+   landing at full black, the settle 0.5 s, a 0.2 s hold, the fade in 0.35 s; no light, no area, no orc) puts him on the
+   landing; the climb ends at the teleport (gravity back, he stands). Lower = the drop as before (the real fall).
+   **No ground within `SOMVR_CLIMB_BLINK_MAX_CM` (80 m)** or **water** (a record named water*,
+   liquid*, *puddle*) = no drop at all: a double buzz, he stays (never off the map, never into water unchecked).
+5. **A on foot at an edge** (no climb; the flat game's leap off a tower is A too): along the view's heading down rays
+   every 20 cm up to 4 m find where the floor ends (more than 30 cm down; a wall over 50 cm stops the look); the ground
+   under it (40 cm further) more than 400 cm under the feet = the same blink. This is the forge tower's way down: the
+   'Air' wall keeps hands and body from the real edge. A shorter drop does nothing on foot (walk off it, or climb down).
+6. The climb's rays step past invisible blockers ('Air', Invisible*, PlayerBlocker*: a hand reaches through them), and a
+   surface without a record (id 0: the tower's floor and faces) holds as `walls` - both only with descent on.
+7. **Fall damage**: none in this game (the player record's `FallDamageMin/Max` are 0, LR2: design-locomotion.md 2), so a
+   real fall from a hang only matters for comfort; the blink takes every drop over 4 m.
+8. **The cues**: walking into an edge A would blink down from (LOCO's last half second: 40 cm or more asked, under a
+   fifth done; the same edge test as A's) = **a double pulse in the right hand** (A's), once a stop, again after 2 s of
+   not being stopped. The grab cue's light tick (32.9) also fires for an open hand lowered to a lip it could start down
+   from (not for a floor: the lip test runs for low hands). A that does nothing (no ground, water) and a blocked lip
+   give the miss buzz. No VR prompt text: the Controls page's "Drop: A (on a wall)" line is the menu helper's (the
+   suggestion: "Drop: A (wall, edge)").
+
+### 40.3 Runs (headless, Monado 20 Hz, scripts/headset-build12.env with `SOMVR_CLIMB_DESCENT=on` + the test hands; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-20261026-) | What it showed |
+|---|---|
+| 010412 | `climb probe edge` at the tower top: the 'Air' wall 64 cm ahead at every height, the id-0 floor going on; the bank's edge 40-50 cm ahead (40.1) |
+| 012245 | **A on foot at the tower** (heading 96): `the feet 1340 cm over the ground` -> the trip `down`, arrived at the tower's foot (35924 4064 -22482) after 1 teleport, faded in ~1.4 s after A; the stick walked on at 101-103 %. A on foot at the bank: 441 / 439 cm -> the blink. The bank's lip held (`a lip: ... the ground 436 cm under it: DESCENT`) but the test swing went sideways (an arc about the shoulder) |
+| 013759 | (the driver's own bug: no step ran) |
+| 015257 | the bank's lip pushed straight up: the lip step asked 30-40 cm/s out, the root did not go out and rose 33 cm (the game's edge, 40.1); A from the hang there `beyond the lip`: 431 cm -> the blink; the tower: the hand over the 'Air' wall finds the floor, no lip (`84 cm under Talion's root ... no climb from the ground ''`), A on foot 1339 cm -> the blink; the bank on foot 423 cm -> the blink |
+| 020837 | `lip blocked` 3 frames after the push began (the root 49 cm before the edge); A while holding the lip: 434 cm -> the blink; the walls on every collision layer: the tower's 'Air' at 48 cm, nothing at the bank; a short drop from a hang 61 cm up = the real fall (`A: no blink: a short drop`) |
+| 022038 | **the edge cue** at the tower (`the walk stopped at an edge 1340 cm over the ground ... a double pulse on the right hand`), A -> the blink, and again at the next edge it walked into below (411 cm) |
+| 022824 | climb13-drive.sh with descent: the pillar as 32.14 (slow let-go hangs; fling 353 -> catch; 422 -> apex hang, rose 90 cm; into the wall: no fling; A drops); the top step regressed (a low wall's top grabbed from its foot was a lip facing back: `end: over` at once) - fixed (a top is a lip only under Talion's feet) |
+| 023707 | the bank's face from the gravel: three holds up, the hang 211 cm up, `climb blink 100`, A -> the blink to the gravel; one hold up, A: 62 cm, the real fall; the bank's lip blocked, A from it -> the blink (433 cm) |
+| 024500 | climb13-drive.sh again: the pillar the same; the top step's climb started on the top (a raised hand's down ray) and the fling's glide hung at the edge - fixed (no down / wall ray from a raised hand without a climb) |
+| 025837 | **the face up and down**: three holds up (the root 1847 -> 2005), one hold down (L via the wall ray: the root 2005 -> 1954, a hold pushed up lowers him), the hang still (0.0 cm a second), `climb blink 100`, A -> `the blink down: the feet 129 cm` -> `end: blink` at the teleport -> arrived, faded in; one hold up, the hang 62 cm up, A -> the real fall |
+| 030713 | climb13-drive.sh with both fixes: the pillar as 32.14 (slow let-go = the hang, flings 363 / 412 to their apex hangs, into the wall: no fling, A); the bank's top: the fling glided and hung at the edge (`out of time`, the feet 3 cm over the top), not 235907's `over` |
+| 031623 | the same top step with `SOMVR_CLIMB_DESCENT=off`: the same apex hang at the edge - not the descent's doing (the spot climb13-drive.sh's walk reaches, or the game's edge wall stopping a glide too) |
+
+Pictures (both eyes, `python3 scripts/xr_compose.py RUN -f N`): 020837 2636 (the tower top at its 'Air' wall, the floor
+going on to the edge), 2809 (the blink's full black), 2823 (fading in at the foot), 2862 (standing there); 012245 2837
+(the tower's foot: grass and ruins); 020837 1042 / 1056 (the bank: black, fading in at its foot); 025837 1195 (hanging
+on the bank's face, the ivy beside the hand), 1235 (the blink's black from that hang).
+
+### 40.4 Open
+- **The hand-over-hand way over an edge never went through at runtime**: the game keeps Talion on every edge tried (the
+  tower's 'Air' wall, the bank's unseen one). The lip, the lip step and the descent are unit-tested and the lip /
+  `DESCENT` / `lip blocked` / A-from-the-lip path is proven; a ledge the game lets him leave was not found. Climbing
+  down a face from a hang is proven (025837). If the user wants to climb over edges by hand: find the game's edge
+  logic (the bank's wall is on no collision layer our casts see: perhaps PlayerMovement's own ledge test, which the
+  stock edge actions pass) - RE work, not done.
+- The blink is ~1.4 s of fade (0.25 out, the teleport, the settle 0.5, a 0.2 hold, 0.35 in); a headset decides whether
+  that is too long or the fade too abrupt for 13 m. The landing is 40 cm out from where the floor ends (a tower whose
+  base flares lands on the flare: a second A).
+- The edge test looks only along the view's heading (a player looking down at their feet beside the edge, or along
+  it, gets no cue and no blink); the 4 m look and the 400 cm threshold are guesses for the headset.
+- Water: only a record named water*/liquid*/*puddle under the landing counts (rays may pass through water to its bed);
+  not met at runtime. No ground within 80 m: unit-tested only.
+- No VR text prompt (the Controls page's line is the menu helper's: "Drop: A (wall, edge)").
+- Not tried: A at an edge while an orc fights Talion (the trip's fade over a fight), A at a tower during a mission
+  (the scripted-moment gate is the practice's: the trip refuses while a scripted moment runs? `pr_down_ok` checks only
+  the pause and a trip on), the bow out (A is the bow's then: no blink).
+
+## 41. Crouch by ducking: `SOMVR_CROUCH` (build 13 candidate, 2026-10-26)
+
+HG-11 (design-hla.md 2.14, 3.1; design-vr.md "Crouch, stealth, seated play"). The player ducks for real and Talion goes
+into the game's stealth crouch; standing up stands him up. Seated play keeps a button. Off by default
+(`SOMVR_CROUCH=off`: build 12's behaviour); build 13's env (scripts/headset-build12.env) has `SOMVR_CROUCH=duck`.
+Handoff: handoff/HANDOFF-crouch.md.
+
+### 41.1 What the game's crouch is (runtime, boots 025439 and 031239)
+
+- **The stock `Crouch` (15) does nothing.** The right stick down has sent it since build 4 (one tick, somvr_ctl.c): the
+  binding layer pressed it (`VIN press cmd=15 Crouch input=2009 (RB) ... ctx=world`), the game never polled the record
+  (`polled=0`, also through a 3 s hold) and Talion's Head node stayed 72-73.5 cm over his root (the idle sway). A byte
+  diff of the Player, PlayerMovement, PlayerBody, the animation manager, PlayerCombat, the server Combat and the
+  object (14 KB, four snapshots: standing, standing, after the pulse, after a second) found 0 runs that flipped.
+- **`crouch try CMD MS`** (boot 031239; each command tapped 150 ms twice and held 2.5 s; the deny list passed; CROUCH
+  watch lines 5 a second):
+
+  | Command | Tap | Hold 2.5 s |
+  |---|---|---|
+  | 15 Crouch (pad RB) | nothing | nothing |
+  | 123 CombatSecondary02 (RB / LCtrl; on our deny list) | a 1.5 s combat move: FSM 7, the Head node 54-58 | the same 1.5 s, then up while still held |
+  | **125 CombatSecondary04 (RT / LShift)** | a dip to 48-53, up at once | **the Head node 10-26 cm over the root for the whole hold, FSM 6; up within 0.3 s of the release** |
+  | 34 Activate | nothing | nothing |
+
+  125 is `PC_Stealth`'s command (re-bow.md P9; logs/boot-check-20261020-094644/probe-out/wmodes-6.tsv: `IsToggle=0`,
+  `HeldDuration=0`, Data `NativePredicate="Stealth"`, `WeaponSlot=0x1` (the dagger), `PromptOverrides='StealthMode'`,
+  `IntoAttack='PC_SheathMeleeToStealth'`). **The stealth crouch is a hold, not a toggle**: Talion is low with the dagger
+  for as long as 125 is held.
+- **The view:** Talion's root stayed where it was through every hold (y 1878.3; 102.9-104.0 cm above the ground under
+  him in the SIZE lines) and the eyes' clamp (`SOMVR_EYE_MIN_CM`) pushed 0 cm. The game's crouch never reaches the
+  root anchor's eyes; nothing to compensate.
+- **What else it changes:** the game draws the dagger into Talion's right hand (seen at our right hand, boot 032944;
+  the stock stealth look) and puts its melee away - SOMVR_SLOTS keeps our drawn sword in the hand (`the game put it
+  away: kept in the hand ... the re-attach; no draw, no animation`) and logged the sheathed one as the game's (`kept
+  on the back no more (the game sheathed it)`). A blow from an orc stands him up for its recoil (FSM 7) while 125 is
+  still held, and he goes down again after it (boots 032244, 032944: 5 such cycles in 10 s by the practice infantry).
+  The detection and the stealth-kill prompts were not seen headless (the practice orc sees Talion at once).
+
+### 41.2 The design as built
+
+- **The duck (somvr_crouch.c, pure):** the tracked head's height (the tracking space, cm; the same frame the rig uses)
+  against the standing height: below standing - 28 cm (`SOMVR_CROUCH_DEPTH_CM`) for 0.15 s (`_ON_MS`) = the duck
+  starts; above standing - 18 cm (`_UP_CM`) for 0.2 s (`_OFF_MS`) and at least 0.5 s (`_HOLD_MS`) after the start = it
+  ends. The 10 cm between the two lines is the hysteresis: a bob at either line never flickers. A head step of over 40
+  cm between two samples is a tracking jump (the timers restart); an untracked head holds the state.
+- **The standing height:** the head's at every recentre of the rig (the first stereo frame, the headset's recentre,
+  the trigger word `recenter`, the menu's Recentre) and `crouch stand`; it rises with a taller stance (the head over
+  it by 5 cm for 1 s: the lowest head of that second), so a recentre made bent or sitting corrects itself when the
+  player stands up. It never sinks (a player who sits down without the Seated row is crouched, as in HL:A).
+- **The hold (somvr_crouch_hold_step, pure):** 125 held while ducked. The right stick down (`SC_E_CROUCH`: somvr_ctl's
+  pulse, its stock 15 dropped) is the button: it toggles. One rule set: a duck's start takes over (a button crouch
+  before it becomes the duck's), a duck's end stands up (a button crouch too), the button while held stands up and
+  the duck holds nothing until its next start; the button while up latches.
+- **The game side (somvr_crouch_game.c):** cr_frame in in_frame (the stereo frame, after the rig): the duck, the read
+  back (the Head node over the root: below 40 = down, above 55 = up); cr_tick in the input tick after the strike: the
+  button, the hold, 125 added to the tick's commands. Let go in a menu, a struggle and while a hand holds in a climb
+  (held again after, if still ducked). Seated play (`SOMVR_SEATED`, the menu's Seated row) never ducks (a duck
+  ending by it stands up); the button stays.
+- **The cue:** a 40 ms pulse of 0.3 (`SOMVR_CROUCH_HAPTIC`) on both hands once when the hold has Talion down, half of
+  it once when he is up after the release (not at a knockdown, not at each recoil while held).
+- **The crouched walk:** with SOMVR_LOCO the stick's speed is capped at 150 cm/s (`SOMVR_CROUCH_CMS`, the walk band)
+  while the hold is on (the cap of the bow's aim, `in.cap_cms`).
+- **The menu:** the VR menu's Crouch row (Duck / Button; `CROUCH=duck|button` in SOMVR_SETTINGS; the settings' old
+  pad3 at 76, `SOMVR_VMA_CROUCH`), shown when SOMVR_CROUCH is button or duck, dimmed in seated play. The Controls page
+  is unchanged ("R stick, down=crouch" is now true).
+- **Off** (`SOMVR_CROUCH` unset or off): nothing changes against build 12 (the stick's 15 goes to the game, the menu
+  has no row); the read-back and the words still run.
+- **The test head (the layer, headless only):** `SOMVR_XR_TEST` `head X Y Z [s SEC]` moves the tracked head X, Y, Z cm
+  (the tracking space, Y up) eased over SEC (smoothstep): the layer's xrLocateViews (the game's through somvr_shared
+  and its own) goes through a wrapper (vklayer/somvr_testhead_layer.c) only when SOMVR_XR_TEST is set. Monado's
+  simulated head wobbles 0-10 cm by itself, so a `head 0 -35 0` reads 35-45 cm below.
+- Words: `crouch status`, `crouch press [TICKS]`, `crouch hold MS`, `crouch stand`, `crouch try CMD MS`. Lines:
+  `CONFIG crouch`, `CROUCH stand|duck on|duck off|game down|game up|button|watch|status|END`.
+
+### 41.3 Runs (headless, Monado 20 Hz, the meadow's practice arrival; build 13's env + `SOMVR_CROUCH=duck`, `SOMVR_HANDS_TEST=1 SOMVR_XR_TEST`; scripts/crouch13-drive.sh)
+
+- **025439** (CROUCH_PLAN=probe): the stick's 15, two 3-tick taps and a 3 s hold of 15: nothing (41.1).
+- **031239** (try): the command table of 41.1.
+- **032244** (duck): bobs of 10 and 18 cm: no duck. A duck of 35 cm: `CROUCH duck on ... 44.3 cm below` 0.36 s after
+  the head line, `CROUCH game down` 0.25 s later (the Head node 73.0 -> 37.7 -> 13.0). 24 cm down (inside the band):
+  still down. The crouched walk: 150, 157, 150 cm/s asked and done (standing after: 161, 230). Up: `duck off`,
+  `game up` 0.25 s later. The button standing: down, again: up. A button crouch, then a duck and a stand: up. A
+  recentre while ducked: the standing height -34.5, `duck off` (he stands), standing up raised it back to -4.5 in
+  three rises. **The view** (the SIZE lines, the view above the ground): standing 180.0 with the tracked head +0.5;
+  ducked 136.0 with the head -44.6 (180.6 - 44.6) while the Head node went 176.7 -> 120.3; the button's crouch with
+  the head -9.7: the view 169.9 (179.6 - 9.7), the Head node 127.3. The view is the root's eyes + the tracked head
+  and nothing else, both eyes (marks 032456_1 standing, 032513_2 ducked: the meadow from 40 cm lower, no body, no
+  motion). 0 WARN, the install unchanged, the save UNCHANGED.
+- **032944** (hands): the test hands at a player's places; a duck: the dagger in the right hand (the game's stealth,
+  mark 033148_2); the sword drawn at the shoulder, a duck: kept in the hand (SLOTS' re-attach, mark 033208_4), up:
+  still in the hand (033216_5). The practice orc's blows: 5 recoils up and down while held, the cues 2 (one down, one
+  up; 8 for the run's 4 ducks). 0 WARN, the install unchanged, the save UNCHANGED.
+- **033425** (seated, `SOMVR_SEATED=1`): a 35 cm duck crouches nothing (`ducks on 0`, `seated: the button's play, no
+  duck`); the right stick down: `CROUCH button ... held`, down 0.3 s later; again: let go, up. 0 WARN, the install
+  unchanged, the save UNCHANGED.
+
+- **034525** (stealth; the full scripts/headset-build12.env after the merge - SOMVR_VERBS and SOMVR_CLIMB_DESCENT on,
+  `SOMVR_CROUCH=duck` from the file, no extra switch): verbs13-drive.sh's e2 staging (a patrol orc 12 m off, `verbs
+  behind 300`, the sneak in, the thrust at its back) three times, ducked for real the whole way (held 1461 ticks).
+  The game offered no stealth kill (`stealth: ... not offered (no attack of its pools passes against this orc)`): the
+  patrol orc was fighting Talion by then (`the current node 'PC_Recoil'`; the recoils' up and down while held, 6
+  cues for 3 ducks). e2's own crouch was `verbs press 15 150` - the stock Crouch, which does nothing (41.1). A lead
+  for the verbs: the tree has an input `X_Plus_RTHeld` (CombatPrimary01 with CombatSecondary04 = 125 held), so X
+  while ducked is that chord. 0 WARN, the install unchanged, the save UNCHANGED.
+
+### 41.4 What only the headset shows
+
+- The lines for a real player: 28 cm down for 0.15 s may be too shallow (a deep look at the floor, picking up a herb)
+  or too deep for a short player; the hysteresis of 10 cm; the 0.5 s minimum.
+- The cue's strength (0.3, 40 ms) and whether the dagger appearing in the right hand is a welcome sign of stealth or
+  in the way (with the sword drawn the sword stays: SLOTS).
+- Stealth itself: detection, the stealth-kill prompts (the band shows the game's prompts; `PromptOverrides
+  'StealthMode'`), the Nemesis verbs' stealth kill from behind while ducked. Not seen headless.
+- Not tried: sprinting while ducked, the bow drawn while ducked (`PC_WraithRanged_FromStealth` exists), a duck on a
+  wall top or a ledge, a long crouch (HL:A's complaint: the button latch is the way out).

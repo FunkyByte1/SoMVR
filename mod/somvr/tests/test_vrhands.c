@@ -253,14 +253,16 @@ static void test_abi(void) {
     memset(&e, 0, sizeof e);
     e.flags = SOMVR_VHF_L | SOMVR_VHF_HIDE, e.time = 1234, e.grip[0].p[1] = -0.3f, e.curl[1][4] = 0.75f;
     e.depth_k = 0.06f; /* v2 */
+    e.ghost[1].p[2] = -0.45f, e.ghost[1].q[3] = 1, e.ghost_a[1] = 0.3f; /* v3 */
     CHECK(!somvr_vrhands_ok(&sh), "inactive");
     sh.magic = SOMVR_VRHANDS_MAGIC, sh.version = SOMVR_VRHANDS_VERSION, sh.size = sizeof sh;
     atomic_store(&sh.active, 1);
     CHECK(somvr_vrhands_ok(&sh), "active");
     somvr_vrhands_put(&sh, 77, &e);
     CHECK(somvr_vrhands_get(&sh, 77, &o) && o.flags == e.flags && o.time == 1234 && o.grip[0].p[1] == -0.3f &&
-              o.curl[1][4] == 0.75f && o.depth_k == 0.06f && atomic_load(&o.seq) == 77,
-          "round trip (v2: depth_k)");
+              o.curl[1][4] == 0.75f && o.depth_k == 0.06f && atomic_load(&o.seq) == 77 && o.ghost[1].p[2] == -0.45f &&
+              o.ghost[1].q[3] == 1 && o.ghost_a[1] == 0.3f && o.ghost_a[0] == 0,
+          "round trip (v2: depth_k, v3: the ghost)");
     CHECK(!somvr_vrhands_get(&sh, 77 + SOMVR_NREC, &o) && !somvr_vrhands_get(&sh, 0, &o), "another frame's slot");
     somvr_vrhands_put(&sh, 77 + SOMVR_NREC, &e);
     CHECK(!somvr_vrhands_get(&sh, 77, &o), "overwritten");
@@ -276,7 +278,9 @@ static void test_abi(void) {
     somvr_vrhands_depth_publish(&sh, &in);
     CHECK(somvr_vrhands_depth_read(&sh, &out) && !memcmp(&in, &out, sizeof in) && (atomic_load(&sh.dseq) & 1) == 0,
           "the depth info round trip");
-    CHECK(sh.version == 2 && offsetof(somvr_vrhands_shared, dinfo) == offsetof(somvr_vrhands_shared, dseq) + 8, "v2 layout");
+    CHECK(sh.version == 3 && offsetof(somvr_vrhands_shared, dinfo) == offsetof(somvr_vrhands_shared, dseq) + 8 &&
+              offsetof(somvr_vrhands_frame, ghost) == 120 && offsetof(somvr_vrhands_frame, ghost_a) == 176,
+          "v3 layout (v2 + the ghost)");
 }
 
 /* build 11: the depth switch's words and the world's fade (the shader's rule) */

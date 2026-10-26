@@ -25,7 +25,7 @@
 # and a new orc circles before it closes in: run 131633).
 # XD_GUARD=1: the test guard (`fight guard`, somvr_fight_game.c: a player's block at the orc's telegraph) - round 1
 # learns the orc's strikes (`learn`: no blocks), rounds 2 on block them (`path`).
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${XD_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 ROUNDS=${XD_ROUNDS:-2}; LMS=${XD_LIGHT_MS:-600}
 T0=$(date +%s)
@@ -42,7 +42,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

@@ -570,12 +570,12 @@ next VR build.
 | **HG-3** | **Defence and readable telegraphs:** G4 attack starts; block bars, ground arrows, block/parry/dodge judged at impact (G6/G7); the parry recoil and open window; the haptics of design 3 | XL | G4-G7 sites (static), `SampleNode` (P7), `FUN_02810af0`, layer world quads, P9 (shield orcs, the roll) |
 | **HG-4** | **The VR settings panel in the headset**, turning first (snap angle, snap/smooth/off, speed, blink), then the vignette, seated/height, move direction, haptics, dominant hand; live; saved to `som-vr.conf` | L | the pointer (built, headset check pending), a label atlas, a settings ABI block, live re-reads in somvr.so |
 | **HG-5** | **Front-first enemies:** attackers picked in view (G2 or the head into the `Camera` term); behind-the-player attacks only after at least 1 s of positional sound + edge glow + haptic; VR tuning; damage x0.5 | L | G9/G10 (static), G2 (not built) or RE of the score weight, G4 (HG-3), Wwise 3D posts |
-| **HG-6** | **Hands that stop at surfaces:** arm wall clamp, blade clamp + clank + void, the ghost hand, the reach ghost, the IK spring | M | `CL_RAYCAST` + filter (built), G11 (built), layer sprite, the clank event name (RT) |
+| **HG-6** | **Hands that stop at surfaces:** arm wall clamp, blade clamp + clank + void, the ghost hand, the reach ghost, the IK spring. **Built for build 13 (2026-10-26, `SOMVR_HANDS_SURFACE=on`, re-xr-pipeline.md 38):** the grips stop at the world (the IK arm, the drawn sword, the bone blade and our VR hands follow), the blade's push up to 25 cm then the void, the clank (haptics + the defence's sparks; no sound), the ghost (our hand mesh, wraith blue, at the real grip), the spring; orcs never clamp; the reach ghost not needed. Headless-proven (boots 002822, 004528); the feel is the headset's | M | `CL_RAYCAST` + filter (built), G11 (built), layer sprite, the clank event name (RT) |
 | **HG-7** | **Body slots:** draw and sheathe Urfael over the right shoulder, Acharn at the hip, quick draw, slot ticks; the sword never sheathed under a swinging hand | M | `FUN_023116f0` SHEATH/UNSHEATH, `FUN_0231e2e0` (P7); RT the draw animation and auto-sheathe |
 | **HG-8** | **Nothing floats:** health/focus/arrows on the left wrist, arrows on the bow, the streak on the runes and right wrist, markers and the counter icon in stereo at the orcs, the quad only for in-world menus and re-placed in front | L | H11 (built), tile rects (RT P4), G19 + hide path (static/med), G17 |
 | **HG-9** | **Never a void:** a captured 360 degree backdrop behind every mono frame (menus, loads, videos, cinematic window), the progress light, layer keep-alive frames during load stalls | M | RT present gaps at loads, RT WiVRn layer extensions, one capture run |
 | **HG-10** | **Hands that conform:** finger curl from the Touch sensors; per-object poses (sword, bow, dagger, wall palm, neck claw); the grab latch on orcs | M | G11 finger nodes (re-arms-ik.md 2), `SampleNode` source poses |
-| **HG-11** | **Crouch by ducking, seated parity:** physical crouch, the seated reach assist, height re-measure in the panel | S | HG-4 for the panel part; RT `Crouch` toggle/hold |
+| **HG-11** | **Crouch by ducking, seated parity:** physical crouch, the seated reach assist, height re-measure in the panel. **Physical crouch built for build 13 (2026-10-26, `SOMVR_CROUCH=duck`, re-xr-pipeline.md 41):** RT: the stock `Crouch` (15) does nothing; the stealth crouch is `CombatSecondary04` (125) held (`PC_Stealth`); the duck holds it, the right stick down toggles it (seated: the button only), the standing height at each recentre; the menu's Crouch row. Headless-proven (boots 032244, 032944, 033425); the seated reach assist not built | S | HG-4 for the panel part |
 
 **Status HG-3 / HG-5 (2026-10-20, offline; nothing launched): the warnings are built** as `SOMVR_THREAT=1` (off by
 default, needs `SOMVR_COMBAT`; re-xr-pipeline.md 18). Every orc attack at Talion is tracked from the key times the game
@@ -587,6 +587,17 @@ behind gets a faint edge before it strikes; an inbound arrow gets the edge (or a
 stand-ins, layer mock scenarios: green. **Not built:** HG-3's defence (block bars, ground arrows, judging at the impact,
 the parry recoil), HG-5's tuning and the 1 s grant veto (G9/G10, RE) and damage x0.5. Infantry strikes come 0.8 s
 after their start, so their announcement is under the 1 s HG-5 asks for (`LATE` in the log) until the veto exists.
+
+**Status HG-9 (2026-10-25, build 13 candidates, headless-proven; re-xr-pipeline.md 36, handoff/HANDOFF-void.md):**
+measured first - SoM's loads keep presenting (the loading screen is live on the board in the sky); the stalls are the
+eye-size mode sets (154-1038 ms) and anything that stops the render thread, which sent no XR frame at all. Built: the
+gap log (always), the keep-alive frames (`SOMVR_XR_KEEPALIVE=on`: a 3 s stall's longest XR gap 3050 -> 103 ms, the view
+world-locked with live tracking), the loading space (`SOMVR_XR_LOADSPACE=on`: a floor, our hands in menus and loads,
+the loading screen on a calm 2.4 m panel at 2.4 m, HoF2's ember progress lights through every load and stall, a world
+stall of 1 s fades to the space), no mode set from a stall
+(`SOMVR_EYE_SIZE_STALL_MS=250`), the theatre for videos and the cinematic window (`SOMVR_XR_THEATRE=on`, SH-4's
+placement; mock-proven only). Not built: the captured backdrop (SH-10), a curved screen, a separate tip panel (SoM's
+loading screen is the panel). The headset still has to show WiVRn's own stall behaviour and the space's look.
 
 ### 3.2 Should-have
 

@@ -10,7 +10,7 @@
 # HUD_PLAN=a (default): discovery (every HUD element in play); b: the build-8 look (the watch and the prompts composed).
 # Stops at once (quit) when the user goes into VR (somvr-headset active or status.json "user": true).
 HERE=$(cd "$(dirname "$0")" && pwd)
-LOGS=/home/bara/Projects/flat2vr/ShadowOfMordor/logs
+LOGS=$HOME/Projects/flat2vr/ShadowOfMordor/logs
 WT=${WT:-$(basename "$(cd "$HERE/../.." && pwd -P)")}
 PLAN=${HUD_PLAN:-a}
 T0=$(date +%s)
@@ -26,7 +26,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

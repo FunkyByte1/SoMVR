@@ -36,6 +36,14 @@ enum {                     /* somvr_session_shared.avail */
     SOMVR_SSA_QUIT = 2u,   /* SOMVR_QUIT with a harness: the menu's Quit game works */
 };
 
+enum {                     /* somvr_session_shared.mono */
+    SOMVR_SSM_MENU = 0,    /* menus, loading screens, anything else */
+    SOMVR_SSM_VIDEO = 1,   /* a video state (the UI composite shows a pre-rendered video: the story cutscenes) */
+    SOMVR_SSM_WINDOW = 2,  /* SOMVR_BODYMOMENTS' window (in-engine cinematics, captain presentations: flat frames) */
+    SOMVR_SSM_LOAD = 3,    /* interface state 3, no menu, paused: a load on flat frames (the pause menu and the map share
+                            * the state but render stereo: the layer reads it on mono frames only) */
+};
+
 typedef struct somvr_session_shared {
     uint64_t magic;               /*   0 */
     uint32_t version, size;       /*   8, 12 */
@@ -50,7 +58,8 @@ typedef struct somvr_session_shared {
     _Atomic uint32_t dump_fail;   /*  48: layer: dumps it could not make (no frame copy, a write error) */
     _Atomic uint32_t marks;       /*  52: preload: marks made */
     _Atomic uint32_t quitting;    /*  56: preload: 1 = the harness was asked to stop the game */
-    uint32_t pad1;                /*  60 */
+    _Atomic uint32_t mono;        /*  60: preload: what flat (mono) frames show now, SOMVR_SSM_* (every input tick; the
+                                   *      layer's theatre, never a void; 0 from an older preload: menus as before) */
     char dump_dir[SOMVR_SS_DIR_MAX]; /* 64: the mark's folder (eyes.ppm goes there), written before dump_req moves */
 } somvr_session_shared;           /* 512 */
 

@@ -215,7 +215,7 @@ int hd_create(hd_ctx *c, VkDevice dev, const hd_vk *f, const VkPhysicalDeviceMem
     if ((r = pipeline(c, somvr_hands_frag_spv, sizeof somvr_hands_frag_spv, c->pl, NULL, &c->pipe)) != VK_SUCCESS)
         return fail(c, "the pipeline", r);
     /* the buffers: the vertices (HD_NSLOT slots), the indices (right, left, the occluders' quads) */
-    c->slot_bytes = (VkDeviceSize)(2 * nv + 4 * HD_MAX_OCC) * sizeof(hd_vert);
+    c->slot_bytes = (VkDeviceSize)(4 * nv + 4 * HD_MAX_OCC) * sizeof(hd_vert); /* build 13: + the two ghosts */
     c->slot_bytes = (c->slot_bytes + 255) & ~(VkDeviceSize)255;
     void *map = NULL;
     if (buffer(c, c->slot_bytes * HD_NSLOT, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &c->vb, &c->vb_mem, &map)) return -1;
@@ -333,6 +333,8 @@ int hd_world(hd_ctx *c, const hd_vkw *wf, float soft_m, float bias_m, float texe
 }
 
 hd_vert *hd_slot_verts(hd_ctx *c, uint32_t s) { return (hd_vert *)(void *)(c->vb_map + c->slot_bytes * (s % HD_NSLOT)); }
+#define HD_GHOST_V(c, h) (2 * (c)->nv + 4 * HD_MAX_OCC + (uint32_t)(h) * (c)->nv) /* a ghost's first vertex in a slot */
+hd_vert *hd_slot_ghost(hd_ctx *c, uint32_t s, int h) { return hd_slot_verts(c, s) + HD_GHOST_V(c, h); }
 
 void hd_quad(hd_vert v[4], const float o[3], const float hx[3], const float hy[3]) {
     static const float sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
@@ -448,10 +450,10 @@ void hd_record(hd_ctx *c, VkCommandBuffer cmd, uint32_t slot, hd_frame *fr, VkIm
         int32_t *b = fr->box[e];
         int got = 0;
         b[0] = b[1] = b[2] = b[3] = 0;
-        for (int h = 0; h < 2 && got < 2; h++) { /* the union of the drawn hands' boxes */
+        for (int h = 0; h < 4 && got < 2; h++) { /* the union of the drawn hands' boxes (2, 3: the ghosts) */
             int32_t hb[4];
-            if (!fr->hand[h]) continue;
-            int r = hd_box(fr->vp[e], verts + (size_t)h * c->nv, c->nv, c->w, c->h, 4, hb);
+            if (h < 2 ? !fr->hand[h] : !(fr->ghost_a[h - 2] > 0)) continue;
+            int r = hd_box(fr->vp[e], verts + (h < 2 ? (size_t)h * c->nv : HD_GHOST_V(c, h - 2)), c->nv, c->w, c->h, 4, hb);
             if (!r) continue;
             if (r == 2 || !got) memcpy(b, hb, sizeof hb);
             else b[0] = b[0] < hb[0] ? b[0] : hb[0], b[1] = b[1] < hb[1] ? b[1] : hb[1],
@@ -510,6 +512,18 @@ void hd_record(hd_ctx *c, VkCommandBuffer cmd, uint32_t slot, hd_frame *fr, VkIm
             }
             if (h == 0) f->CmdDrawIndexed(cmd, c->ni, 1, c->ni, 0, 0);        /* the left: mirrored triangles */
             else f->CmdDrawIndexed(cmd, c->ni, 1, 0, (int32_t)c->nv, 0);      /* the right */
+        }
+        /* build 13: the ghosts, faint, with the plain pipeline (the world's depth would hide them: they are in it) */
+        if (fr->ghost_a[0] > 0 || fr->ghost_a[1] > 0) {
+            if (c->pipe_w) f->CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, c->pipe);
+            pc.base[0] = fr->ghost_base[0], pc.base[1] = fr->ghost_base[1], pc.base[2] = fr->ghost_base[2], pc.base[3] = 1;
+            pc.params[0] = 0.35f * fr->key, pc.params[1] = 1.2f * fr->ambient, pc.params[2] = 1.4f, pc.params[3] = 0;
+            for (int h = 0; h < 2; h++) {
+                if (!(fr->ghost_a[h] > 0)) continue;
+                pc.light[3] = fr->ghost_a[h] > 1 ? 1 : fr->ghost_a[h];
+                f->CmdPushConstants(cmd, c->pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
+                f->CmdDrawIndexed(cmd, c->ni, 1, h == 0 ? c->ni : 0, (int32_t)HD_GHOST_V(c, h), 0);
+            }
         }
         f->CmdEndRenderPass(cmd);
         VkImageSubresourceLayers sub = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};

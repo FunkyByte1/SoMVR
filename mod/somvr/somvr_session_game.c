@@ -402,6 +402,10 @@ static const char *ss_word(const char *w)
  * buzz */
 static void ss_tick(double t)
 {
+	/* never a void: what flat frames show now (the layer's theatre, SOMVR_XR_THEATRE) */
+	atomic_store_explicit(&g_ssn.mono, g_inp.on && g_inp.video == 1 ? SOMVR_SSM_VIDEO : g_bm.last_win ? SOMVR_SSM_WINDOW
+					   : g_inp.on && g_inp.ifs == 3 && g_inp.menus == 0 && g_inp.paused == 1 ? SOMVR_SSM_LOAD
+					   : SOMVR_SSM_MENU, memory_order_relaxed);
 	if (g_inp.on && (!g_ss.ui_have || g_inp.ifs != g_ss.ui_ifs || g_inp.menus != g_ss.ui_menus ||
 			 g_inp.paused != g_ss.ui_paused || g_inp.video != g_ss.ui_video || g_inp.ctx != g_ss.ui_ctx)) {
 		g_ss.ui_have = 1, g_ss.ui_ifs = g_inp.ifs, g_ss.ui_menus = g_inp.menus, g_ss.ui_paused = g_inp.paused;

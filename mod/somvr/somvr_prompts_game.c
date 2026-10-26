@@ -150,9 +150,11 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 	memcpy(&key, p, 8), memcpy(&act, p + 8, 4), memcpy(&str, p + 0x10, 8), memcpy(&icon, p + 0x18, 8), memcpy(&cat, p + 0x20, 4);
 	uint64_t n = atomic_fetch_add_explicit(&g_pp.n_show, 1, memory_order_relaxed) + 1;
 	int bow_out = pp_bow_out(), drop = mode == PP_VR && act >= 0 && act <= PP_NONE &&
-							    !pp_vr_keep(act, g_inp.cfg.game_moves, g_bow.on, bow_out);
+							    !pp_vr_keep(act, g_inp.cfg.game_moves, g_bow.on, bow_out) &&
+							    !vb_keep(act, key); /* SOMVR_VERBS: the grab's own prompts */
 	int to = drop ? act : pp_mapped(act);
 	sk_prompt(act, 1); /* SOMVR_BOW_STRIKE: the Shadow Strike's prompt is up (kept or dropped) */
+	vb_prompt(key, act, (const char *)str, 1); /* SOMVR_VERBS: the verbs the game offers now */
 	if (!drop && act == 121 && bow_out && sk_x() && pp_xkey(key, 1))
 		to = PP_X_CMD;
 	if (drop) {
@@ -177,8 +179,11 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 	}
 	if (drop)
 		return;
-	if (to != act) {
+	const char *vt = vb_text(act, (const char *)str); /* SOMVR_VERBS: the verb's VR words (NULL = the game's) */
+	if (to != act || vt) {
 		memcpy(p + 8, &to, 4);
+		if (vt)
+			memcpy(p + 0x10, &vt, sizeof vt);
 		((pp_dlg_fn)g_pp.orig[PPS_SHOW])(dlg, sender, p);
 		return;
 	}
@@ -199,6 +204,7 @@ __attribute__((used)) void somvr_w_pphide(void *dlg, void *sender, void *params)
 	memcpy(&key, p, 8), memcpy(&act, p + 8, 4);
 	to = pp_mapped(act);
 	sk_prompt(act, 0);
+	vb_prompt(key, act, NULL, 0); /* SOMVR_VERBS */
 	if (act == 121 && pp_xkey(key, -1)) /* shown with X's glyph: hidden as that */
 		to = PP_X_CMD;
 	uint64_t n = atomic_fetch_add_explicit(&g_pp.n_hide, 1, memory_order_relaxed) + 1;
@@ -227,6 +233,7 @@ __attribute__((used)) void somvr_w_pphold(void *dlg, void *sender, void *params)
 	memcpy(&act, p + 8, 4), memcpy(&fill, p + 0xc, 4);
 	to = pp_mapped(act);
 	atomic_fetch_add_explicit(&g_pp.n_hold, 1, memory_order_relaxed);
+	vb_prompt_hold(act, fill); /* SOMVR_VERBS */
 	if (atomic_fetch_add_explicit(&g_pp.hold_lines, 1, memory_order_relaxed) < 20)
 		logf_("PROMPTS hold t=%.3f: action %d '%s' fill %.2f: passed on%s", mono(), act, in_cmd_name(act), fill,
 		      to != act ? " as the shown command" : "");

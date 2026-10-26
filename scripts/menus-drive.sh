@@ -8,8 +8,8 @@
 # changed file's lines once; ../mod/somvr/somvr_menus.h 4), appends keys to RUN/cmd and ends with `quit`.
 # Afterwards: scripts/xr_compose.py RUN (both eyes with the quads, per dump).
 HERE=$(cd "$(dirname "$0")" && pwd)
-LOGS=$(cd "$HERE/../logs" 2>/dev/null && pwd || echo /home/bara/Projects/flat2vr/ShadowOfMordor/logs)
-[ -d "$LOGS" ] || LOGS=/home/bara/Projects/flat2vr/ShadowOfMordor/logs
+LOGS=$(cd "$HERE/../logs" 2>/dev/null && pwd || echo $HOME/Projects/flat2vr/ShadowOfMordor/logs)
+[ -d "$LOGS" ] || LOGS=$HOME/Projects/flat2vr/ShadowOfMordor/logs
 WT=${WT:-$(basename "$(cd "$HERE/../.." && pwd)")}
 T0=$(date +%s)
 R=""

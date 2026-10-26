@@ -7,7 +7,7 @@
 # along and off the ledge (SOMVR_CLIMB_LEDGES game, then off by `climb ledges off`); marks. LEDGE_AT="X Y Z" (default:
 # a point of the rail the user walked, root 33656.5 2665.6 -28081.7, 10 cm over it; then the rail's corner). Stops at
 # once (quit) when the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${CLIMB_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 AT=${LEDGE_AT:-33656 2675 -28082}
 T0=$(date +%s)
@@ -23,7 +23,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

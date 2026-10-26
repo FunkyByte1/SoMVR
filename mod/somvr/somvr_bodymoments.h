@@ -91,6 +91,9 @@ typedef struct {
     uint32_t names;       /* SOMVR_BMN_* of this frame's names; SOMVR_BMN_FIRST only from the sync record */
     int dead;             /* Talion's server Combat+0x288 (set first thing by the death FUN_026f61f0) */
     int our_climb;        /* SOMVR_CLIMB holds: climb and attach are the player's own */
+    int our_grab;         /* SOMVR_VERBS: the player's left hand holds an orc (the game's grab rides on the mount and
+                           * attach states, its interrogation is a presentation): not the window, a hold (the anchor
+                           * frozen) for as long as the grab */
 } somvr_bm_in;
 uint32_t somvr_bm_conds(const somvr_bm_in *in);
 

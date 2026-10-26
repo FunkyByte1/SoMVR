@@ -6,7 +6,7 @@
 # Grips: `hands test L|R x y z rx ry rz` = cm right/up/ahead of the head's yaw frame, deg about the OpenXR grip's X Y Z
 # (0 -90 0 = the right fist axis pointing right, 90 0 0 = up, 45 0 0 = ahead and up 45).
 # Run 1 (logs/boot-check-20261023-161800) compared the hide modes; this is the line mode's run.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${HANDS_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 T0=$(date +%s)
 R=""

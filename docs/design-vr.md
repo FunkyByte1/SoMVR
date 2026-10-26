@@ -967,6 +967,10 @@ game's parkour carry Talion in first person. design-locomotion.md 3.5-3.6 is the
 - **The fling** (LO-7): releasing a hold while the hand moves (the body's velocity `-v_hand` over the last 60 ms > 1.0
   m/s) launches Talion with 1.3 x that velocity (cap 8 m/s) through G24: Climbey's and Gorilla Tag's rule, the release
   speed is the flight speed (the mean over the last 4-6 frames). The graph's fall (FSM 8) and landing follow.
+  **Built differently** (2026-10-25, build 13 candidate `SOMVR_CLIMB_FLING=on`, re-xr-pipeline.md 32.14), by the user's
+  rule ("Gorilla tag inspired. But don't push me in the opposite direction. Just let me sling myself up"): only up
+  (away from the wall and down dropped, a little sideways), x 1.0, cap 5 m/s, our own arc on the climb's ticks with
+  gravity still off (no game launch, no fall): a grip catches, the arc's top hangs (build 10's hang), A drops.
 - **The air catch**: a grab within 1.5 s of a fling or during any fall stops the fall at the hold (the climb's start in
   FSM 8: momentum zeroed, root-motion mode back, gravity off; RT T10 whether the graph keeps playing a fall).
 - **Fling gravity** (an option, off): `pc+0x58` scaled to -12 for our own launches until the landing (the game's -20

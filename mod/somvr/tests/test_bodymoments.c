@@ -166,6 +166,13 @@ static void test_conds(void) {
     CHECK(somvr_bm_conds(&in) == FB(MOUNT), "our climb: climb and attach exempt");
     in.our_climb = 0;
     CHECK(somvr_bm_conds(&in) == (FB(CLIMB) | FB(ATTACH) | FB(MOUNT)), "without our climb");
+    in.fb = FB(SYNC) | FB(ATTACH) | FB(MOUNT) | FB(PRES), in.our_grab = 1; /* SOMVR_VERBS' grab: a hold, not the window */
+    CHECK(somvr_bm_conds(&in) == (FB(SYNC) | CB(SOMVR_BMC_HOLD)), "our grab: mount, attach, pres exempt, a hold");
+    in.fb = FB(CINE) | FB(MOUNT);
+    CHECK(somvr_bm_conds(&in) == (FB(CINE) | CB(SOMVR_BMC_HOLD)), "our grab: a cinematic stays the window's");
+    in.fb = 0;
+    CHECK(somvr_bm_conds(&in) == CB(SOMVR_BMC_HOLD), "our grab alone: a hold");
+    in.our_grab = 0;
 }
 
 /* a test rig: the step and the base at 90 Hz with a live base that the test moves */

@@ -91,6 +91,9 @@ static struct {
     VkDeviceSize dsize;
     int have_e;
     uint64_t n_frames, n_drawn, n_noentry, n_shown_game, n_occ;
+    uint64_t n_ghost;       /* build 13: frames drawn with a ghost (SOMVR_HANDS_SURFACE) */
+    int ghost_was;          /* the last frame's ghosts (bit per hand: the on/off lines) */
+    uint64_t n_space, n_space_drawn; /* never a void: the loading space's own entries, drawn */
     uint32_t lines, was_hide;
     /* build 11: the world's depth (SOMVR_XR_HANDS_DEPTH=world) */
     hd_vkw wf;
@@ -263,6 +266,7 @@ static void vh_setup(void) {
     vh_destroy();
     vh_config();
     VH.n_frames = VH.n_drawn = VH.n_noentry = VH.n_shown_game = VH.n_occ = 0, VH.lines = 0, VH.have_e = 0;
+    VH.n_ghost = 0, VH.ghost_was = 0;
     VH.n_dused = VH.n_dnone = VH.n_dnext = 0, VH.dlines = 0;
     memset(&VH.fs, 0, sizeof VH.fs);
     if (VH.bad) lg("xr: hands: SOMVR_XR_HANDS=%s is not on or off: on", getenv("SOMVR_XR_HANDS"));
@@ -812,29 +816,38 @@ static void vh_zdump_write(uint64_t n) {
 
 /* the stereo frame's hands (after vm_frame and the HUD's quads are in c, before the comfort and the fade): the entry
  * of rec's frame, drawn and submitted, the layer into c->l[XL_HANDS] */
-static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2], xr_comp *c,
-                     const eyes_st *ey) {
+/* own: never a void's loading space (./somvr_void_layer.c, vd_hands): an entry the layer made from its own input (a
+ * mono or keep-alive frame: the game publishes none there), drawn at the swapchain's present size, a fixed light */
+#define VH_SPACE_LIGHT 0.7f
+static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2],
+                       xr_comp *c, const eyes_st *ey, const somvr_vrhands_frame *own) {
     VH.last = 0;
     if (!VH.on) return;
-    if (!VH.ready || ds != VH.ds || VH.src_w != X.sc_w / 2 || VH.src_h != X.sc_h)
+    if (own) {
+        if ((!VH.ready || ds != VH.ds) && vh_make(ds, VH.src_w ? VH.src_w : X.rec_w, VH.src_h ? VH.src_h : X.rec_h)) return;
+    } else if (!VH.ready || ds != VH.ds || VH.src_w != X.sc_w / 2 || VH.src_h != X.sc_h)
         if (vh_make(ds, X.sc_w / 2, X.sc_h)) return;
-    VH.n_frames++;
     somvr_vrhands_frame e;
-    int have = somvr_vrhands_get(VH.obj, rec->frame, &e);
-    if (!have) {
-        VH.n_noentry++;
-        if (!VH.have_e) return;
-        e = VH.e; /* the last entry's hands (a frame the game published none for) */
+    if (own) {
+        e = *own, VH.n_space++;
+    } else {
+        VH.n_frames++;
+        int have = somvr_vrhands_get(VH.obj, rec->frame, &e);
+        if (!have) {
+            VH.n_noentry++;
+            if (!VH.have_e) return;
+            e = VH.e; /* the last entry's hands (a frame the game published none for) */
+        }
+        if (VH.was_hide != (e.flags & SOMVR_VHF_HIDE) && VH.lines++ < 40)
+            lg("xr: hands: frame %llu: %s", (unsigned long long)rec->frame,
+               (e.flags & SOMVR_VHF_HIDE) ? "ours (the game hid its hands)" : "the game's own (not first person, or not yet)");
+        VH.was_hide = e.flags & SOMVR_VHF_HIDE;
+        if (!(e.flags & SOMVR_VHF_HIDE)) {
+            VH.n_shown_game++;
+            return;
+        }
+        VH.e = e, VH.have_e = 1;
     }
-    if (VH.was_hide != (e.flags & SOMVR_VHF_HIDE) && VH.lines++ < 40)
-        lg("xr: hands: frame %llu: %s", (unsigned long long)rec->frame,
-           (e.flags & SOMVR_VHF_HIDE) ? "ours (the game hid its hands)" : "the game's own (not first person, or not yet)");
-    VH.was_hide = e.flags & SOMVR_VHF_HIDE;
-    if (!(e.flags & SOMVR_VHF_HIDE)) {
-        VH.n_shown_game++;
-        return;
-    }
-    VH.e = e, VH.have_e = 1;
     uint32_t s = VH.slot++ % HD_NSLOT;
     dev_st *d = ds;
     if (VH.pending[s]) {
@@ -846,15 +859,26 @@ static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompos
     vh_time_read(d, s);
     /* the vertices: the hands, then the occluders */
     hd_vert *v = hd_slot_verts(&VH.hc, s);
-    int nv = somvr_vh_nverts(), hands[2] = {0, 0};
+    int nv = somvr_vh_nverts(), hands[2] = {0, 0}, ghosts = 0;
+    float ghost_a[2] = {0, 0};
     for (int h = 0; h < 2; h++) {
         if (!(e.flags & (h ? SOMVR_VHF_R : SOMVR_VHF_L))) continue;
         float skin[SOMVR_VH_NJ][12];
         somvr_vh_pose(&VH.m, &VH.vc, e.curl[h], skin);
         somvr_vh_skin(&VH.m, (const float(*)[12])skin, h, &e.grip[h], (somvr_vh_vert *)(void *)(v + h * nv));
         hands[h] = 1;
+        if (!own && e.ghost_a[h] > 0.004f) { /* build 13: the real hand where a surface stopped ours */
+            somvr_vh_skin(&VH.m, (const float(*)[12])skin, h, &e.ghost[h],
+                          (somvr_vh_vert *)(void *)hd_slot_ghost(&VH.hc, s, h));
+            ghost_a[h] = e.ghost_a[h], ghosts |= 1 << h;
+        }
     }
     if (!hands[0] && !hands[1]) return;
+    if (ghosts != VH.ghost_was && VH.lines++ < 200)
+        lg("xr: hands: frame %llu: ghost L %s R %s (opacity %.2f %.2f; SOMVR_HANDS_SURFACE)", (unsigned long long)rec->frame,
+           ghosts & 1 ? "on" : "off", ghosts & 2 ? "on" : "off", (double)ghost_a[0], (double)ghost_a[1]);
+    VH.ghost_was = ghosts;
+    VH.n_ghost += ghosts != 0;
     uint32_t nocc = 0;
     static const int occ_slots[] = {XL_VM0, XL_MMAP};
     for (size_t k = 0; k < sizeof occ_slots / sizeof occ_slots[0] && nocc < HD_MAX_OCC; k++)
@@ -868,15 +892,17 @@ static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompos
         memcpy(fr.eye[i], rec->eye[i].pose.p, sizeof fr.eye[i]);
     }
     fr.hand[0] = hands[0], fr.hand[1] = hands[1], fr.nocc = nocc;
-    int world = vh_depth_frame(d, rec, &e, &fr); /* build 11: both eyes' depth of this frame (else build 10's look) */
+    int world = own ? 0 : vh_depth_frame(d, rec, &e, &fr); /* build 11: both eyes' depth (else build 10's look) */
     fr.held[0] = e.flags & SOMVR_VHF_HOLD_L ? VH.dheld : 1, fr.held[1] = e.flags & SOMVR_VHF_HOLD_R ? VH.dheld : 1;
     fr.light[0] = 0.27f, fr.light[1] = 0.86f, fr.light[2] = 0.43f; /* from above, a little behind the start's forward */
     fr.opacity = 1;
+    fr.ghost_a[0] = ghost_a[0], fr.ghost_a[1] = ghost_a[1];
+    fr.ghost_base[0] = 0.30f, fr.ghost_base[1] = 0.58f, fr.ghost_base[2] = 1.0f; /* the wraith's blue */
     if (VH.look == VH_LOOK_SKIN)
         fr.base[0] = 0.50f, fr.base[1] = 0.33f, fr.base[2] = 0.24f, fr.spec = 0.05f;
     else
         fr.base[0] = 0.13f, fr.base[1] = 0.085f, fr.base[2] = 0.06f, fr.spec = 0.10f;
-    float light = VH.auto_light && VH.lum_have ? VH.lum_light : VH.light;
+    float light = own ? VH_SPACE_LIGHT : VH.auto_light && VH.lum_have ? VH.lum_light : VH.light;
     fr.key = 0.9f * light, fr.ambient = 0.45f * light, fr.rim = 0.25f;
     /* the image: acquire, draw, submit, release */
     XrSwapchainImageAcquireInfo ai = {.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
@@ -887,7 +913,7 @@ static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompos
     if ((r = X.xrWaitSwapchainImage(VH.sc, &wi)) != XR_SUCCESS) return vh_off("xrWaitSwapchainImage (hands): %s", xr_str(r));
     VkCommandBuffer cmd = VH.cmd[s];
     uint64_t dump_n = mn_dump_frame; /* SOMVR_XR_DUMP: this frame's eyes were dumped (its quads are logged at the end) */
-    int dump = dump_n && D.base[0] && vh_dump_buffer(d, (VkDeviceSize)2 * VH.ew * VH.eh * 4) == 0;
+    int dump = !own && dump_n && D.base[0] && vh_dump_buffer(d, (VkDeviceSize)2 * VH.ew * VH.eh * 4) == 0;
     VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     VkResult vr = d->ResetFences(d->dev, 1, &VH.fence[s]);
@@ -974,13 +1000,19 @@ static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompos
                                              .space = X.space, .viewCount = 2, .views = VH.pv};
     c->l[XL_HANDS] = (const XrCompositionLayerBaseHeader *)&VH.proj;
     VH.last = 1;
+    if (own) { /* the loading space's: not the game's frames */
+        if (VH.n_space_drawn++ < 2 || VH.n_space_drawn % 1800 == 0)
+            lg("xr: hands in the loading space: %s%s hand(s) from the layer's own input (%llu drawn so far)",
+               hands[0] ? "L" : "", hands[1] ? "R" : "", (unsigned long long)VH.n_space_drawn);
+        return;
+    }
     VH.n_drawn++;
     atomic_fetch_add_explicit(&VH.obj->n_drawn, 1, memory_order_relaxed);
     atomic_store_explicit(&VH.obj->last_drawn, rec->frame, memory_order_relaxed);
     if (VH.n_drawn % 1800 == 0) vh_time_log("every 1800 frames");
     if (VH.n_drawn <= 3 || VH.n_drawn % 1800 == 0)
         lg("xr: hands frame %llu: %s%s hand(s), %u occluder(s), the world %s (%llu of %llu; %llu eyes the next frame's), boxes %dx%d / %dx%d of %ux%u, light x%.2f (scene %.4f), curls L %.2f %.2f %.2f %.2f %.2f R %.2f %.2f %.2f %.2f "
-           "%.2f, flags 0x%x (drawn %llu of %llu stereo frames; no entry %llu, the game's hands %llu)",
+           "%.2f, flags 0x%x (drawn %llu of %llu stereo frames; no entry %llu, the game's hands %llu; with a ghost %llu)",
            (unsigned long long)rec->frame, hands[0] ? "L" : "", hands[1] ? "R" : "", nocc,
            !VH.world ? "off" : world ? "hides them" : "not this frame", (unsigned long long)VH.n_dused,
            (unsigned long long)(VH.n_dused + VH.n_dnone), (unsigned long long)VH.n_dnext, fr.box[0][2] - fr.box[0][0],
@@ -989,7 +1021,12 @@ static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompos
            e.curl[0][0], e.curl[0][1],
            e.curl[0][2], e.curl[0][3], e.curl[0][4], e.curl[1][0], e.curl[1][1], e.curl[1][2], e.curl[1][3],
            e.curl[1][4], e.flags, (unsigned long long)VH.n_drawn, (unsigned long long)VH.n_frames,
-           (unsigned long long)VH.n_noentry, (unsigned long long)VH.n_shown_game);
+           (unsigned long long)VH.n_noentry, (unsigned long long)VH.n_shown_game, (unsigned long long)VH.n_ghost);
+}
+
+static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2], xr_comp *c,
+                     const eyes_st *ey) {
+    vh_frame_e(ds, q, rec, pv, c, ey, NULL);
 }
 
 /* a reuse frame repeats the last stereo frame's hands (the swapchain's last released image is theirs) */

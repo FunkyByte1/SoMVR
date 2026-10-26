@@ -11,7 +11,7 @@
 # CLIMB_PLAN=f (at the wall: back off, the free-run latch, run at it: the stock climb, with SOMVR_GAMEMOVES=on) | o (p,
 # then the practice infantry while hanging: the stand-down) | p (find, climb, fall, walk) | t (p, and where a hand finds no wall above: the palm down over the top,
 # pushed down then toward the body; SOMVR_CLIMB_TOP decides) | s (p with slow pulls: 1.6 s each). CLIMB_PULLS = the most pull pairs (default 4). Stops at once (quit) when the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${CLIMB_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 PLAN=${CLIMB_PLAN:-p}
 PULLS=${CLIMB_PULLS:-4}
@@ -30,7 +30,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

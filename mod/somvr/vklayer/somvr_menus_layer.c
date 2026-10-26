@@ -421,6 +421,8 @@ static void xl_cap(xr_comp *c) {
     for (int i = 0; c->l[XL_OWN] && i < XL_N; i++) n += c->l[i] != NULL;
     if (n > max + (c->l[XL_BAND] != NULL) && c->l[XL_HANDS]) /* build 10: then our hands (the game's are hidden) */
         c->l[XL_HANDS] = NULL, n--;
+    for (int i = XL_MBD; i <= XL_MBK && n > max + (c->l[XL_BAND] != NULL); i++) /* then the menus' backdrop */
+        if (c->l[i]) c->l[i] = NULL, n--;
     if (n <= max || !c->l[XL_BAND]) return;
     c->l[XL_BAND] = NULL;
     if (MN.n_capped++ < 3 || MN.n_capped % 600 == 0)
@@ -678,6 +680,7 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
                            : i == XL_BLINK ? (CF.sc_w && ((const XrCompositionLayerQuad *)l)->subImage.swapchain == CF.sc_w
                                                   ? "comfort blink wraith" : "comfort blink")
                            : i == XL_FADE ? "fade"
+                           : i == XL_MBD ? "menu dim" : i == XL_MBK ? "menu backdrop" /* SOMVR_XR_MENU_BACK */
                            : i == XL_THE0 || i == XL_THE1 ? "threat edge" /* build 10: the bands (a VIEW space) */
                                                           : "threat cue";
         mn_log_quad(what, i, (const XrCompositionLayerQuad *)l);
@@ -738,6 +741,7 @@ static int xt_quad(int what, somvr_posef *pose, float size[2]) {
     return 0;
 }
 static void xt_run(const char *line) {
+    if (vd_xt(line) || th_xt(line)) return; /* `stall MS` (./somvr_void_layer.c), `head X Y Z` (./somvr_testhead_layer.c) */
     somvr_xt_cmd c;
     int r = somvr_xt_parse(line, &c);
     if (r == 0) return;

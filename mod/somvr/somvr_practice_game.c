@@ -95,6 +95,7 @@ static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-
 #define PR_PAUSE_WAIT_S 3.6     /* SOMVR_PRACTICE_LOADHOLD: our ChangeWeather's pause comes this soon (runs 154417 .. 163004:
 				 * 3.05 s after it, ~1.1 s long, every trip there; none after the trip back's) */
 #define PR_MH_CHECK_S 1.0       /* the min health checked (set again if the game changed it) this often */
+#define PR_WAIT_CLEAR_S 1.0     /* SOMVR_PRACTICE_WAIT: a waiting trip starts once the game has been back this long */
 typedef uintptr_t (*pr_byname_fn)(const char *name);
 typedef uintptr_t (*pr_spawn_fn)(uintptr_t ctx, const char *name, const float *xf, uintptr_t tmpl, int a5, int a6,
 				 uintptr_t a7, uintptr_t fm, uintptr_t a9);
@@ -113,7 +114,7 @@ static struct {
 	uintptr_t objsys_pp, phys_pp, gsvc_pp, class_npc, spawn_level, vt_playerobj, spawnmgr_pp;
 } g_prg = { 0x466afa0, 0x466c758, 0x46b7310, 0x4c52780, 0x4c471cc, 0x39959a0, 0x4c4f7c0 };
 
-enum { PR_TRIP_GO = 0, PR_TRIP_BACK = 1 };
+enum { PR_TRIP_GO = 0, PR_TRIP_BACK = 1, PR_TRIP_DOWN = 2 }; /* DOWN: SOMVR_CLIMB_DESCENT's blink (pr_down_start) */
 enum { PR_DAY_OFF = 0, PR_DAY_WEATHER = 1, PR_DAY_FULL = 2 }; /* SOMVR_PRACTICE_DAY=0|weather|day */
 struct pr_me {
 	uintptr_t pl, obj, pcomb, pc, ch, mount;
@@ -131,6 +132,14 @@ static struct {
 	int quiet_was;       /* its flag before (given back only if it was on) */
 	uintptr_t quiet_mgr; /* the manager we turned off (a load may make another) */
 	uint64_t quiet_on, quiet_off, quiet_again, quiet_removed;
+	/* SOMVR_PRACTICE_WAIT (the drill, handoff/HANDOFF-drill.md): a trip asked for while the game is paused, Talion is
+	 * dead or a scripted moment runs waits for the game to be back (else its black hides the pause menu or the Nemesis
+	 * board, and its teleport lands in the respawn's presentation) */
+	int wait_mode;
+	int pend_act, pend_orc; /* the waiting request (SOMVR_PRA_GO/BACK; 0 = none) */
+	const char *pend_who;
+	double pend_t, pend_clear_t;
+	uint64_t waits, wait_starts, wait_dropped;
 	/* SOMVR_PRACTICE_LOADHOLD: the game's pause ~3 s after our ChangeWeather (a trip there) comes under the black */
 	int load_mode;
 	double pw_t;         /* our ChangeWeather of this trip there (0 = no pause expected) */
@@ -142,6 +151,8 @@ static struct {
 	char weather[64];    /* SOMVR_PRACTICE_WEATHER */
 	int light_tp;        /* the weather went with this trip's teleport (pr_light_teleport) */
 	somvr_pr_tcfg tcfg;
+	somvr_pr_tcfg tcfg_down; /* the climb's blink down: tcfg, a short hold (no light to change) */
+	int down_tp;         /* the blink down's teleport sent (pr_down_teleported takes it) */
 	int tid;
 	uintptr_t pl;        /* the Player* last seen (another one: a load) */
 	somvr_pr_trip trip;
@@ -173,7 +184,7 @@ static struct {
 	double next_clear;
 	uint32_t gate_last;
 	/* counts */
-	uint64_t frames, other, trips[2], arrived, failed, teleports, spawns, spawn_fail, removes, killed, cleared, passes,
+	uint64_t frames, other, trips[3], arrived, failed, teleports, spawns, spawn_fail, removes, killed, cleared, passes,
 		held, mh_sets, mh_restores, mh_reasserts, advances, weathers, restores, req_trig, req_menu, refused, autos,
 		walked_out;
 	/* logs */
@@ -462,6 +473,8 @@ static void pr_quiet_off(double t, const char *why)
 		      now ? "on again" : "NOT on again (!)");
 }
 
+static char g_pr_tmpl_test[64]; /* a test (SOMVR_VERBS' "verbs template NAME"): the next spawns' AI/Templates name */
+
 /* one orc of type `type` ahead of Talion, facing him (re-combat-spawn.md 1.2 steps 1-4 as P9's `spawn`); the previous
  * one removed first */
 static void pr_spawn(const struct pr_me *m, int type, double t, const char *who)
@@ -481,7 +494,7 @@ static void pr_spawn(const struct pr_me *m, int type, double t, const char *who)
 		return;
 	}
 	pr_remove_orc("a new spawn", t);
-	const char *name = somvr_pr_orc_template(type);
+	const char *name = g_pr_tmpl_test[0] ? g_pr_tmpl_test : somvr_pr_orc_template(type); /* (a test: SOMVR_VERBS) */
 	uintptr_t tmpl = PR_FN(PRS_BYNAME, pr_byname_fn)(name);
 	if (tmpl)
 		fb_rec_name(tmpl, tn, sizeof tn);
@@ -740,15 +753,54 @@ static void pr_light_tick(double t)
 }
 
 /* ---- the trips ------------------------------------------------------------------------------------------------- */
+/* the trip's timing: the climb's blink down holds the black shorter (nothing to change under it) */
+static const somvr_pr_tcfg *pr_tc(void) { return g_pr.trip_kind == PR_TRIP_DOWN ? &g_pr.tcfg_down : &g_pr.tcfg; }
+static const char *pr_kind_word(int kind, int there)
+{
+	return kind == PR_TRIP_DOWN ? "down" : kind == PR_TRIP_GO ? (there ? "there" : "go to the practice area")
+				      : (there ? "back" : "back to where Talion was");
+}
+
 static void pr_trip_begin(int kind, const float target[3], double t, const char *who)
 {
 	g_pr.trips[kind]++;
 	g_pr.trip_kind = kind, g_pr.trip_first_tp = 1;
-	somvr_pr_trip_start(&g_pr.trip, &g_pr.tcfg, target, t);
+	somvr_pr_trip_start(&g_pr.trip, pr_tc(), target, t);
 	if (pr_log_ok(t))
-		logf_("PRACTICE t=%.3f %s (%s): the blink to (%.0f %.0f %.0f) starts", t,
-		      kind == PR_TRIP_GO ? "go to the practice area" : "back to where Talion was", who, target[0], target[1],
-		      target[2]);
+		logf_("PRACTICE t=%.3f %s (%s): the blink to (%.0f %.0f %.0f) starts", t, pr_kind_word(kind, 0), who, target[0],
+		      target[1], target[2]);
+}
+
+/* SOMVR_CLIMB_DESCENT (somvr.c's climb, the game thread): A over a high drop = the trip's blink to the ground under
+ * him (no area, no light, no orc: only the fade, the Teleport, the settle). pr_down_ok: one can start now (the console,
+ * no trip on or waiting, not paused); pr_down_start: 1 = started; pr_down_teleported: 1 once after its teleport */
+static int pr_down_ok(void)
+{
+	return g_pr.on && g_pr.trip.phase == SOMVR_PRT_IDLE && !g_pr.pend_act && !game_paused();
+}
+
+static int pr_down_start(sv_vec3 to, double t)
+{
+	if (!pr_down_ok()) {
+		g_pr.refused++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f down (the climb's A) refused: %s", t, !g_pr.on ? "the practice is off"
+			      : g_pr.trip.phase != SOMVR_PRT_IDLE ? "a trip is on" : g_pr.pend_act ? "a trip waits" : "paused");
+		return 0;
+	}
+	float p[3] = { to.x, to.y, to.z };
+	g_pr.down_tp = 0;
+	pr_trip_begin(PR_TRIP_DOWN, p, pr_now(), "the climb's A");
+	(void)t;
+	return 1;
+}
+
+static int pr_down_teleported(void)
+{
+	if (!g_pr.down_tp)
+		return 0;
+	g_pr.down_tp = 0;
+	return 1;
 }
 
 static void pr_go(const struct pr_me *m, int have, double t, const char *who)
@@ -799,6 +851,8 @@ static void pr_teleport(double t)
 	if (g_pr.trip_kind == PR_TRIP_GO && g_pr.trip_first_tp)
 		o += (size_t)snprintf(cmd + o, sizeof cmd - o, "%s", pr_light_teleport(t));
 	g_pr.trip_first_tp = 0;
+	if (g_pr.trip_kind == PR_TRIP_DOWN)
+		g_pr.down_tp = 1; /* the climb ends now: gravity back, he stands where the Teleport puts him */
 	const float *p = g_pr.trip.target; /* whole centimetres: no locale's decimal point (P5: Teleport x y z) */
 	snprintf(cmd + o, sizeof cmd - o, "Teleport %ld %ld %ld", lroundf(p[0]), lroundf(p[1]), lroundf(p[2]));
 	g_pr.teleports++;
@@ -809,12 +863,12 @@ static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 {
 	int held = g_pr.trip.held_busy, ph = g_pr.trip.phase;
 	double hold_t0 = g_pr.trip.t0;
-	int x = somvr_pr_trip_step_busy(&g_pr.trip, &g_pr.tcfg, t, m->pos, have, game_paused(), busy);
+	int x = somvr_pr_trip_step_busy(&g_pr.trip, pr_tc(), t, m->pos, have, game_paused(), busy);
 	if (g_pr.trip.held_busy && !held && pr_log_ok(t))
 		logf_("PRACTICE t=%.3f the black held past its %.2f s for the game's pause after our ChangeWeather (at most %.1f s "
-		      "after the arrival)", t, (double)g_pr.tcfg.hold_s, (double)g_pr.tcfg.hold_max_s);
+		      "after the arrival)", t, (double)pr_tc()->hold_s, (double)pr_tc()->hold_max_s);
 	if (held && ph == SOMVR_PRT_HOLD && g_pr.trip.phase == SOMVR_PRT_IN && pr_log_ok(t))
-		logf_("PRACTICE t=%.3f the black held %.2f s longer (%s): fading in", t, t - hold_t0 - (double)g_pr.tcfg.hold_s,
+		logf_("PRACTICE t=%.3f the black held %.2f s longer (%s): fading in", t, t - hold_t0 - (double)pr_tc()->hold_s,
 		      busy ? "the cap: the game still paused" : "the game's pause over");
 	if (x == SOMVR_PRX_TELEPORT) {
 		pr_teleport(t);
@@ -822,7 +876,8 @@ static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 		g_pr.arrived++;
 		if (pr_log_ok(t))
 			logf_("PRACTICE t=%.3f arrived at (%.1f %.1f %.1f) after %d teleport(s); %s", t, m->pos[0], m->pos[1], m->pos[2],
-			      g_pr.trip.tries, g_pr.trip_kind == PR_TRIP_GO ? "in the practice area" : "back where Talion was");
+			      g_pr.trip.tries, g_pr.trip_kind == PR_TRIP_GO ? "in the practice area" : g_pr.trip_kind == PR_TRIP_DOWN
+			      ? "down from the climb (SOMVR_CLIMB_DESCENT)" : "back where Talion was");
 		if (g_pr.trip_kind == PR_TRIP_GO) {
 			g_pr.went = 1, g_pr.here = 1;
 			pr_light_arrived(t);
@@ -832,11 +887,11 @@ static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 		g_pr.failed++;
 		if (pr_log_ok(t))
 			logf_("WARN PRACTICE t=%.3f the trip %s did not arrive after %d teleports (Talion at %.1f %.1f %.1f, the target "
-			      "%.0f %.0f %.0f): fading in where he is", t, g_pr.trip_kind == PR_TRIP_GO ? "there" : "back",
+			      "%.0f %.0f %.0f): fading in where he is", t, pr_kind_word(g_pr.trip_kind, 1),
 			      g_pr.trip.tries, m->pos[0], m->pos[1], m->pos[2], g_pr.trip.target[0], g_pr.trip.target[1],
 			      g_pr.trip.target[2]);
 	} else if (x == SOMVR_PRX_DONE && pr_log_ok(t)) {
-		logf_("PRACTICE t=%.3f the blink %s ended (faded in)", t, g_pr.trip_kind == PR_TRIP_GO ? "there" : "back");
+		logf_("PRACTICE t=%.3f the blink %s ended (faded in)", t, pr_kind_word(g_pr.trip_kind, 1));
 	}
 	if (x == SOMVR_PRX_DONE && g_pr.trip_kind == PR_TRIP_BACK)
 		g_pr.have_back = 0; /* back home: nothing to go back to */
@@ -887,6 +942,61 @@ static void pr_new_player(uintptr_t pl, double t)
 	g_pr.mh_on = 0, g_pr.mh_ch = 0;
 	g_pr.advanced = g_pr.weather_set = 0, g_pr.light_step = 0;
 	g_pr.world_t = 0;
+	if (g_pr.pend_act) { /* SOMVR_PRACTICE_WAIT: the place it would go to belongs to the old world too */
+		g_pr.wait_dropped++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f the waiting %s (%s) dropped: a new player (a load)", t,
+			      somvr_pr_action_name(g_pr.pend_act), g_pr.pend_who);
+		g_pr.pend_act = 0;
+	}
+}
+
+/* SOMVR_PRACTICE_WAIT: the game is not back for a trip (paused, Talion not alive in the world, a scripted moment) */
+static int pr_held(const struct pr_me *m, int have, uint32_t gate)
+{
+	return !have || (m->life >= 0 && m->life != 2) ||
+	       (gate & (uint32_t)(SOMVR_PRG_PRES | SOMVR_PRG_CINE | SOMVR_PRG_SCRIPTED | SOMVR_PRG_SYNC | SOMVR_PRG_PAUSED));
+}
+
+/* a request from the trigger word or the menu: with SOMVR_PRACTICE_WAIT a trip (go, back) asked for while held waits
+ * (the newest request wins), everything else at once */
+static void pr_take(const struct pr_me *m, int have, uint32_t gate, int action, int orc, double t, const char *who)
+{
+	if (g_pr.wait_mode && (action == SOMVR_PRA_GO || action == SOMVR_PRA_BACK) &&
+	    (g_pr.pend_act || pr_held(m, have, gate))) {
+		char w[96];
+		somvr_pr_gate_text(gate & ~(uint32_t)SOMVR_PRG_UNKNOWN, w, sizeof w);
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f %s (%s) waits for the game to be back (%s%s%s)%s", t, somvr_pr_action_name(action), who,
+			      w, !have ? ", no player" : m->life >= 0 && m->life != 2 ? ", Talion not up" : "",
+			      pr_held(m, have, gate) ? "" : ", a request waits already",
+			      g_pr.pend_act ? ": it replaces the waiting one" : "");
+		g_pr.pend_act = action, g_pr.pend_orc = orc, g_pr.pend_who = who, g_pr.pend_t = t, g_pr.pend_clear_t = 0;
+		g_pr.waits++;
+		return;
+	}
+	pr_request(m, have, action, orc, t, who);
+}
+
+/* ... and once a frame: the waiting trip starts PR_WAIT_CLEAR_S after the game is back */
+static void pr_wait_tick(const struct pr_me *m, int have, uint32_t gate, double t)
+{
+	if (!g_pr.pend_act)
+		return;
+	if (pr_held(m, have, gate)) {
+		g_pr.pend_clear_t = 0;
+		return;
+	}
+	if (!g_pr.pend_clear_t)
+		g_pr.pend_clear_t = t;
+	if (t - g_pr.pend_clear_t < PR_WAIT_CLEAR_S)
+		return;
+	int a = g_pr.pend_act;
+	g_pr.pend_act = 0, g_pr.wait_starts++;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f the waiting %s (%s): the game is back (waited %.1f s): now", t, somvr_pr_action_name(a),
+		      g_pr.pend_who, t - g_pr.pend_t);
+	pr_request(m, have, a, g_pr.pend_orc, t, g_pr.pend_who);
 }
 
 /* H4 (game thread), every call after the frame's body */
@@ -923,15 +1033,16 @@ static void pr_frame(uintptr_t pl)
 			memcpy(g_pr.spot, at, sizeof at);
 			g_pr.here = g_pr.went = 0; /* a trip from the old spot to the new: the way back stays the first place */
 		}
-		pr_request(&m, have, somvr_vm_pr_action(tw), somvr_vm_pr_orc(tw) - 1, t, "the trigger word");
+		pr_take(&m, have, gate, somvr_vm_pr_action(tw), somvr_vm_pr_orc(tw) - 1, t, "the trigger word");
 	}
 	if (g_vm.on) {
 		uint32_t mw = atomic_load_explicit(&g_vmo.practice, memory_order_acquire);
 		if (somvr_vm_pr_seq(mw) != g_pr.menu_seen) {
 			g_pr.menu_seen = somvr_vm_pr_seq(mw), g_pr.req_menu++;
-			pr_request(&m, have, somvr_vm_pr_action(mw), somvr_vm_pr_orc(mw), t, "the menu");
+			pr_take(&m, have, gate, somvr_vm_pr_action(mw), somvr_vm_pr_orc(mw), t, "the menu");
 		}
 	}
+	pr_wait_tick(&m, have, gate, t);
 	int pbusy = pr_pause_busy(t, game_paused()); /* SOMVR_PRACTICE_LOADHOLD (logged with it off too) */
 	if (g_pr.trip.phase != SOMVR_PRT_IDLE)
 		pr_trip_tick(&m, have, t, pbusy);
@@ -972,7 +1083,7 @@ static void pr_frame(uintptr_t pl)
 		atomic_store_explicit(&g_vmo.pstate,
 				      (g_pr.here ? SOMVR_VMA_PR_HERE : 0u) | (g_pr.have_back ? SOMVR_VMA_PR_BACK : 0u) |
 					      (g_pr.orc_h ? SOMVR_VMA_PR_ORC : 0u) |
-					      (g_pr.trip.phase != SOMVR_PRT_IDLE ? SOMVR_VMA_PR_BUSY : 0u),
+					      (g_pr.trip.phase != SOMVR_PRT_IDLE || g_pr.pend_act ? SOMVR_VMA_PR_BUSY : 0u),
 				      memory_order_release);
 }
 
@@ -981,7 +1092,7 @@ static void pr_fade(void)
 {
 	if (!g_pr.on || !g_fr.rec || g_pr.trip.phase == SOMVR_PRT_IDLE)
 		return;
-	float b = somvr_pr_trip_fade(&g_pr.trip, &g_pr.tcfg, pr_now());
+	float b = somvr_pr_trip_fade(&g_pr.trip, pr_tc(), pr_now());
 	uint32_t lv = (uint32_t)(b * 255 + 0.5f), was = somvr_rec_fade(g_fr.rec->flags);
 	if (b > 0 && lv > was)
 		g_fr.rec->flags = (g_fr.rec->flags & ~SOMVR_REC_FADE_MASK) | lv << SOMVR_REC_FADE_SHIFT;
@@ -1053,8 +1164,10 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	g_pr.cur_orc = g_pr.def_orc;
 	static const char *const onoff_w[] = { "0", "1" };
 	g_pr.quiet_mode = env_word("SOMVR_PRACTICE_QUIET", onoff_w, 2, 1);
+	g_pr.wait_mode = env_word("SOMVR_PRACTICE_WAIT", onoff_w, 2, 0);
 	g_pr.load_mode = env_word("SOMVR_PRACTICE_LOADHOLD", onoff_w, 2, 1);
 	somvr_pr_tcfg_default(&g_pr.tcfg);
+	g_pr.tcfg_down = g_pr.tcfg, g_pr.tcfg_down.hold_s = 0.2f;
 	/* the sites: ours, the console's, the fallback's reads of the gate */
 	char why[512];
 	uint32_t ok = 0;
@@ -1112,7 +1225,7 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	logf_("CONFIG practice: %s; the spot (%.0f %.0f %.0f) cm (RT: re-combat-spawn.md 3's slave-group ground, P9's teleport), "
 	      "the area %.0f m; a blink there and back (fade %.2f/%.2f s, settle %.2f s, hold %.2f s, %d teleports at most); "
 	      "min health %g%s; clear %s within %.0f m every 1 s%s (never in a presentation, a cinematic or scripted camera, a "
-	      "sync, the pause); quiet %s; light %s (%s; a dry day kept; a wet day's weather with the teleport)%s; load hold %s; "
+	      "sync, the pause); quiet %s; wait %s; light %s (%s; a dry day kept; a wet day's weather with the teleport)%s; load hold %s; "
 	      "orcs %.0f cm ahead, the type %s (%s), spawn %s; auto after %.1f s; "
 	      "the menu's practice page and the trigger words \"practice go|back|spawn [TYPE]|remove|status\"",
 	      somvr_pr_mode_name(g_pr.mode), g_pr.spot[0], g_pr.spot[1], g_pr.spot[2], (double)(g_pr.radius_cm / 100),
@@ -1120,7 +1233,10 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	      g_pr.tcfg.tries, (double)g_pr.minhealth, g_pr.ok_mh ? "" : " (OFF: its site)", clear_w[g_pr.clear],
 	      (double)(g_pr.clear_cm / 100), g_pr.ok_clear ? "" : " (OFF: its sites)",
 	      !g_pr.quiet_mode ? "off (SOMVR_PRACTICE_QUIET=0)" : g_pr.ok_quiet ? "on (the ambient AI spawn manager off and its "
-	      "AI removed while Talion is in the area; given back when he leaves)" : "OFF (its sites)", day_w[g_pr.day], g_pr.weather,
+	      "AI removed while Talion is in the area; given back when he leaves)" : "OFF (its sites)",
+	      g_pr.wait_mode ? "on (SOMVR_PRACTICE_WAIT: go and back asked for in the pause, a death or a scripted moment wait "
+	      "until the game is back 1 s)" : "off (a trip starts at once, its black even over the pause menu)",
+	      day_w[g_pr.day], g_pr.weather,
 	      g_pr.ok_light ? "" : " (OFF: its sites)",
 	      g_pr.load_mode ? "on (the black holds for the game's pause after our ChangeWeather: up to 3.6 s for it to come, "
 	      "until it ends, at most 5.5 s after the arrival)" : "off (SOMVR_PRACTICE_LOADHOLD=0: logged only)",
@@ -1133,16 +1249,18 @@ static void pr_end_log(void)
 {
 	if (!g_pr.want)
 		return;
-	logf_("PRACTICE END %s: frames %llu (other thread %llu); trips there %llu back %llu, arrived %llu, failed %llu, teleports "
-	      "%llu, auto %llu; requests trigger %llu menu %llu refused %llu; orcs spawned %llu (failed %llu) removed %llu down "
+	logf_("PRACTICE END %s: frames %llu (other thread %llu); trips there %llu back %llu down %llu, arrived %llu, failed %llu, teleports "
+	      "%llu, auto %llu; requests trigger %llu menu %llu refused %llu waited %llu (started %llu, dropped %llu%s); orcs spawned %llu (failed %llu) removed %llu down "
 	      "%llu; clear passes %llu held %llu removed %llu; quiet on %llu again %llu off %llu (ambient AI removed %llu%s); "
 	      "walked out %llu; min health set %llu again %llu back %llu; light day %llu weather %llu restored %llu dry kept %llu; "
 	      "its pause awaited %llu came %llu (in view %llu, at most %.2f s after, %.2f s long) none %llu; %llu lines "
 	      "suppressed", g_pr.on ? "on" : "off (see the WARN)",
 	      (unsigned long long)g_pr.frames, (unsigned long long)g_pr.other, (unsigned long long)g_pr.trips[PR_TRIP_GO],
-	      (unsigned long long)g_pr.trips[PR_TRIP_BACK], (unsigned long long)g_pr.arrived, (unsigned long long)g_pr.failed,
+	      (unsigned long long)g_pr.trips[PR_TRIP_BACK], (unsigned long long)g_pr.trips[PR_TRIP_DOWN], (unsigned long long)g_pr.arrived, (unsigned long long)g_pr.failed,
 	      (unsigned long long)g_pr.teleports, (unsigned long long)g_pr.autos, (unsigned long long)g_pr.req_trig,
-	      (unsigned long long)g_pr.req_menu, (unsigned long long)g_pr.refused, (unsigned long long)g_pr.spawns,
+	      (unsigned long long)g_pr.req_menu, (unsigned long long)g_pr.refused, (unsigned long long)g_pr.waits,
+	      (unsigned long long)g_pr.wait_starts, (unsigned long long)g_pr.wait_dropped,
+	      g_pr.pend_act ? ", one still waiting" : "", (unsigned long long)g_pr.spawns,
 	      (unsigned long long)g_pr.spawn_fail, (unsigned long long)g_pr.removes, (unsigned long long)g_pr.killed,
 	      (unsigned long long)g_pr.passes, (unsigned long long)g_pr.held, (unsigned long long)g_pr.cleared,
 	      (unsigned long long)g_pr.quiet_on, (unsigned long long)g_pr.quiet_again, (unsigned long long)g_pr.quiet_off,

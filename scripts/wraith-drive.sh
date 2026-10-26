@@ -11,7 +11,7 @@
 #   bow      the bow out (the left trigger): `wisps game` / `wisps hand` pictures, the hand drawn too
 #   strike   an orc 10 m ahead, the bow aimed at it, X while the game's Shadow Strike prompt is up: `bow strike dash`
 #            (WR_STRIKE_MODES, default "stock dash blink": the game's own presentation first), the STRIKE trace lines
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${BOW_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${WR_STEPS:-wisps bow strike}
 T0=$(date +%s)
@@ -27,7 +27,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

@@ -40,9 +40,9 @@ set -u
 unset LD_PRELOAD LD_LIBRARY_PATH
 export PATH=/usr/local/bin:/usr/bin:/bin
 
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-BUILD=build-vr12                        # the build the user tests (logs/BUILD); changed only between sessions
+BUILD=build-vr13                        # the build the user tests (logs/BUILD); changed only between sessions
 ENVF=$SOM/logs/$BUILD/headset.env       # its feature switches (the header); missing = the built-in build-5 set
 CMDS5=$SCR/cmds/somvr-vr5.cmd   # the start sequences: build 5's (the pre-game window), build 6's
 CMDS6=$SCR/cmds/somvr-vr6.cmd
@@ -192,7 +192,7 @@ mkdir -p "$PRIV" && cp -f "$SCR/boot_check.sh" "$PRIV/boot_check.sh" && cp -f "$
 WIN=0; cp -f "$SCR/somvr_window.py" "$PRIV/somvr_window.py" 2>/dev/null && WIN=1   # (no window: still a session)
 GE=(--game-env VK_LAYER_PATH="$BLD/mod/somvr/vklayer" --game-env VK_INSTANCE_LAYERS=VK_LAYER_SOMVR_openxr
   --game-env XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_wivrn.json --game-env SOMVR_XR_LOG=@RUN@/xr-layer.log
-  --game-env SOMVR_SETTINGS=/home/bara/.local/share/somvr/settings.conf --game-env SOMVR_TUNE=@RUN@/tune.txt)
+  --game-env "SOMVR_SETTINGS=$HOME/.local/share/somvr/settings.conf" --game-env SOMVR_TUNE=@RUN@/tune.txt)
 for kv in "${SW[@]}"; do GE+=(--game-env "$kv"); done
 ARGS=(--headset --steam --save-copy --seed-prefs "$SEED" "${LAUNCH[@]}"
   --preload "$BLD/mod/somvr/build/somvr.so" "${GE[@]}"

@@ -13,7 +13,7 @@
 # runs nice 19 on 4 CPUs. Refuses while the project's analysis job is still running (exit 3).
 # Ghidra's console output goes to logs/ghidra-query-NAME.log; the results go to OUTFILE (absolute path).
 set -u
-. /home/bara/Projects/flat2vr/ShadowOfMordor/scripts/ghidra_env.sh
+. "$HOME/Projects/flat2vr/ShadowOfMordor/scripts/ghidra_env.sh"
 NAME=${1:?NAME}; OUT=${2:?OUTFILE}; shift 2
 [ $# -gt 0 ] || { echo "missing COMMAND" >&2; exit 2; }
 case "$OUT" in /*) ;; *) OUT=$PWD/$OUT ;; esac

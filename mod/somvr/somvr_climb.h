@@ -35,6 +35,45 @@
  *            ground_cm under the root (a ray down; not once topped) both hands open end the climb as released
  *            instead (he stands: a hold taken at the foot of a wall never keeps him off the ground). letgo = fall:
  *            the old end.
+ *   fling    (fling = 1, letgo = hang; build 13, the user's "Gorilla tag inspired ... just let me sling myself up";
+ *            re-xr-pipeline.md 32.14) the last hold let go (its grip opened) while that hand still moved fast: the body
+ *            keeps the hand's speed: minus the driving hand's mean tracking-space velocity over fling_win_s, into the
+ *            world as a pull, x fling_gain; only up: the part away from the wall (the hold's toward) and any downward
+ *            speed are dropped, the sideways part along the wall x fling_side (at most half the upward part), the part
+ *            toward the wall kept (at most the upward part: it carries him over a top); under fling_min upward = the
+ *            plain hang; capped at fling_max. The phase fling: our own arc (fling_g), the climb still on (gravity off),
+ *            each frame's piece of the parabola asked as a move (the game's collision clips it); the upward part
+ *            blocked twice = a ceiling, the sideways part blocked = it stops. Ends: a grip that holds (catch: the hold
+ *            drives), the arc's top or fling_s (the apex: the hang where he is), the drop button, a top: the release
+ *            hold's found top, push's, or the head's ray along toward losing the wall (a ray down gives the top), the
+ *            head top_cm over it = topped: the edge step while rising, over_cm past it = the end "over"; topped at the
+ *            arc's top with speed toward the wall left: the glide (that speed alone, level, at most 0.5 s) to over (or
+ *            the top under the root within ground_cm: he stands on it); the edge blocking it lifts by the blocked part
+ *            (the edge step, at most 50 cm in the glide), then the hang. No fling from the ground (ground_cm), from
+ *            lost tracking or while a hand still holds.
+ *   descent  (descent = 1; build 13, re-xr-pipeline.md 40: a forge tower top's edge had no way down) the way over an edge
+ *            and down: (1) a press also casts straight down when not climbing (a hand on a top from above) and along
+ *            the wall (while climbing the last hold's `toward`; else from the hand toward the head, level: the face
+ *            under an edge the hand reached over); (2) the lip: a hold on a top whose edge is within lip_find_cm along
+ *            the reach (down rays every 10 cm), or a hold on a face, with the ground beyond it (a ray down from 30 cm
+ *            out) at least lip_drop_cm under the hold = a lip: a climb may start from it under low_cm (Talion stands
+ *            on the top: the descent), its toward into the top; (3) descending (the climb started from a lip with the
+ *            feet on its top) until the head is under the lip's top: no top / push / over, and the lip step: a move
+ *            down the top blocks (the capsule still on it) goes out over the edge by the blocked part (lip_ramp x, at most
+ *            step_cm a frame; the outward move not applied 3 frames in a row = the game's invisible edge wall: lip_blocked,
+ *            no more lip step); then the face, hand over hand down (a hold pushed up lowers him, as any climb); (4) the
+ *            drop button: the ground under him (a ray down from blink_out_cm out from the wall, or from beyond the
+ *            lip while still on the top) more than blink_cm under his feet = the blink (in.can_blink: the phase blink,
+ *            nothing moves, out.blink asks somvr.c for the practice trip's fade and teleport to out.blink_to; the
+ *            caller's somvr_climb_stop(END_BLINK) after the teleport, else the hang after blink_wait_s); a lower drop
+ *            (or no blink here) = the drop as before (the real fall); no ground within blink_max_cm or water under
+ *            him = no drop at all (E_BLINK_NONE: he stays where he is). (5) A on foot (no climb; the flat game's leap off a
+ *            tower is A): along the view's heading, down rays every 20 cm up to edge_look_cm find where the floor
+ *            ends (more than 30 cm down; a wall ahead stops the look); the ground under it (blink_out_cm further)
+ *            more than blink_cm under the feet = the blink there (E_EDGE; a forge tower top: an invisible 'Air' wall
+ *            stops Talion ~64 cm ahead of his root and the floor goes on past it, run 010412). (6) the cue: the walk
+ *            stopped (in.walk_blocked) at an edge A would blink down from = E_EDGE_CUE once (somvr.c: a double pulse
+ *            on the right hand, A's), again after the walk has gone on for 2 s.
  *   end      both hands open with letgo = fall (released), the drop button while holding or hanging (drop), the game not
  *            allowing it any more (somvr.c: FSM not Supported, mounted, third person ...; "stand down"), the input lost
  *            (letgo = fall), the timeout max_s (letgo = fall), a lift that stalls or runs out of time. Every end gives
@@ -52,10 +91,16 @@ enum { SOMVR_CLIMB_TOP_RELEASE = 0, SOMVR_CLIMB_TOP_LIFT = 1, SOMVR_CLIMB_TOP_CM
 /* SOMVR_CLIMB_TOP= */
 enum { SOMVR_CLIMB_RAY_PALM = 1, SOMVR_CLIMB_RAY_FWD = 2 };                              /* cfg.rays */
 enum { SOMVR_CLIMB_PH_NONE = 0, SOMVR_CLIMB_PH_HOLD = 1, SOMVR_CLIMB_PH_LIFT = 2, SOMVR_CLIMB_PH_CMD = 3,
-       SOMVR_CLIMB_PH_HANG = 4 /* letgo = hang: no hand holds, Talion stays (gravity off) until a grip or the drop */ };
+       SOMVR_CLIMB_PH_HANG = 4 /* letgo = hang: no hand holds, Talion stays (gravity off) until a grip or the drop */,
+       SOMVR_CLIMB_PH_FLING = 5 /* fling: no hand holds, our own arc up from a fast release (gravity off) */,
+       SOMVR_CLIMB_PH_BLINK = 6 /* descent: A over a high drop: still (gravity off) until the blink's teleport */ };
+enum { SOMVR_CLIMB_FL_NONE = 0, SOMVR_CLIMB_FL_APEX = 1, SOMVR_CLIMB_FL_BLOCKED = 2, SOMVR_CLIMB_FL_TIME = 3,
+       SOMVR_CLIMB_FL_CATCH = 4, SOMVR_CLIMB_FL_OVER = 5, SOMVR_CLIMB_FL_EDGE = 6 }; /* how a flight ended (fl_why) */
 enum { SOMVR_CLIMB_LETGO_FALL = 0, SOMVR_CLIMB_LETGO_HANG = 1 }; /* SOMVR_CLIMB_LETGO= */
 enum { SOMVR_CLIMB_VIA_NONE = 0, SOMVR_CLIMB_VIA_PALM = 1, SOMVR_CLIMB_VIA_FWD = 2, SOMVR_CLIMB_VIA_DOWN = 3,
-       SOMVR_CLIMB_VIA_INSIDE = 4 }; /* which ray found a surface (somvr_climb_via_name) */
+       SOMVR_CLIMB_VIA_INSIDE = 4, SOMVR_CLIMB_VIA_WALL = 5 }; /* which ray found a surface (somvr_climb_via_name) */
+enum { SOMVR_CLIMB_BL_NONE = 0, SOMVR_CLIMB_BL_SHORT = 1, SOMVR_CLIMB_BL_NOGROUND = 2, SOMVR_CLIMB_BL_WET = 3,
+       SOMVR_CLIMB_BL_CANNOT = 4, SOMVR_CLIMB_BL_NOEDGE = 5 }; /* descent: why A was no blink (bl_why) */
 enum {                                /* why a climb ended (somvr_climb_out.end_why, somvr_climb.last_end) */
     SOMVR_CLIMB_END_NONE = 0,
     SOMVR_CLIMB_END_RELEASED,         /* both grips opened (or lost their tracking) */
@@ -69,6 +114,7 @@ enum {                                /* why a climb ended (somvr_climb_out.end_
     SOMVR_CLIMB_END_OUTSIDE,          /* somvr_climb_stop: flat frames, the player changed, the hook stale */
     SOMVR_CLIMB_END_OVER,             /* push: the head over the top (past the edge by over_cm): standing on it */
     SOMVR_CLIMB_END_DROP,             /* the drop button (somvr.c: A) while holding or hanging: let go of the wall */
+    SOMVR_CLIMB_END_BLINK,            /* descent: the blink's teleport put him on the ground (somvr_climb_stop) */
     SOMVR_CLIMB_NEND
 };
 enum {                                /* somvr_climb_out.events: what happened this frame (bit << 1 per hand where _L/_R) */
@@ -88,6 +134,21 @@ enum {                                /* somvr_climb_out.events: what happened t
     SOMVR_CLIMB_E_DROP = 1u << 17,    /* the drop button: the climb ended (end_why DROP) */
     SOMVR_CLIMB_E_NEAR_L = 1u << 18, SOMVR_CLIMB_E_NEAR_R = 1u << 19,       /* cue: an open hand came within reach of a
                                                                              * surface it could hold */
+    SOMVR_CLIMB_E_FLING = 1u << 20,   /* fling: a launch (somvr_climb.fl_* has its numbers) */
+    SOMVR_CLIMB_E_FLING_NONE = 1u << 21, /* fling: the last hold let go, no fling (fl_none says why): the hang */
+    SOMVR_CLIMB_E_CATCH = 1u << 22,   /* fling: a hold during the flight (with E_GRAB) */
+    SOMVR_CLIMB_E_APEX = 1u << 23,    /* fling: the flight's end without a hold: hanging (with E_HANG; fl_why) */
+    SOMVR_CLIMB_E_FLING_TOP = 1u << 24, /* fling: the eyes cleared a top in flight (topped: push) */
+    SOMVR_CLIMB_E_GLIDE = 1u << 25,   /* fling: topped at the arc's top: level on toward the top (fl_glide) */
+    SOMVR_CLIMB_E_LIP_L = 1u << 26, SOMVR_CLIMB_E_LIP_R = 1u << 27,         /* descent: a hold on a lip (with E_GRAB) */
+    SOMVR_CLIMB_E_BLINK = 1u << 28,   /* descent: A over a high drop: the blink asked (out.blink_to) */
+    SOMVR_CLIMB_E_BLINK_NONE = 1u << 29, /* descent: A, no blink (bl_why): the drop, or nothing (no ground, water) */
+    SOMVR_CLIMB_E_DESCENT = 1u << 30, /* descent: the climb started from a lip on its top (descending) */
+    SOMVR_CLIMB_E_EDGE = 1u << 31,    /* descent: A on foot (no climb): the edge ahead (with E_BLINK or E_BLINK_NONE) */
+};
+enum { /* somvr_climb_out.events2 */
+    SOMVR_CLIMB_E_LIP_BLOCKED = 1u << 0, /* descent: the lip step's outward move not applied 3 frames: the game's edge wall */
+    SOMVR_CLIMB_E_EDGE_CUE = 1u << 1, /* descent (cue): the walk stopped at an edge A would blink down from */
 };
 
 typedef struct {
@@ -133,6 +194,25 @@ typedef struct {
     float cue_s;             /* each hand is probed this often (1/30 s) */
     float cue_off_s;         /* out of reach this long before the next E_NEAR (0.3) */
     float cue_raise_cm;      /* not climbing: only a hand at least this far over the root (the pelvis) is probed (10) */
+    int fling;               /* the fling (needs letgo = hang): the last hold let go while the hand moves fast (0 off) */
+    float fling_min;         /* the least upward speed of a fling, cm/s; under it the hang (150: an 11 cm rise) */
+    float fling_gain;        /* the release velocity x this (1) */
+    float fling_max;         /* the flight's speed cap, cm/s (500: 1.27 m up at fling_g 981) */
+    float fling_side;        /* the sideways part along the wall x this (0.5; at most half the upward part) */
+    float fling_g;           /* the flight's gravity, cm/s^2 (981) */
+    float fling_win_s;       /* the release velocity: the mean over this long (0.1; at least 0.04 s of samples) */
+    float fling_s;           /* the longest flight (1.5) */
+    int descent;             /* the way over an edge and down: the lip, the lip step, the blink (0 off) */
+    float lip_drop_cm;       /* a lip: the ground beyond it at least this far under the hold (150) */
+    float lip_find_cm;       /* a hold on a top: its edge searched this far along the reach (60) */
+    float foot_cm;           /* Talion's root over his feet (102, run 060734) */
+    float lip_ramp;          /* the lip step: the blocked downward part x this goes out over the edge (2: the capsule
+                              * clears an edge it stands ~40 cm from in ~40 cm of the hand's push) */
+    float blink_cm;          /* the drop button: the feet more than this over the ground = the blink (400; 0: never) */
+    float blink_max_cm;      /* ... the ground searched this far under the feet (8000); none = no drop */
+    float blink_out_cm;      /* ... from this far out from the wall (40) */
+    float blink_wait_s;      /* the blink's teleport not come this long = the hang (3) */
+    float edge_look_cm;      /* A on foot: an edge looked for this far ahead along the view (400; 0: never) */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -142,6 +222,7 @@ typedef struct {
     int climbable;  /* its surface record says CanWallClimb */
     float dist;     /* cm from the ray's start */
     sv_vec3 point;  /* the hit, world cm */
+    int wet;        /* descent: a water / liquid surface (somvr_climb_surface_wet) */
 } somvr_climb_hit;
 /* the ray callback: from (world cm), dir (unit), len (cm) -> *out; returns 1 if the cast ran (0: no answer, as no hit) */
 typedef int (*somvr_climb_ray_fn)(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, somvr_climb_hit *out);
@@ -157,6 +238,8 @@ typedef struct {
 
 typedef struct {
     double t;           /* s */
+    double pose_t;      /* s: the time the hands were located for (somvr.c: the views' display time; > 0), the fling's
+                         * release velocity's clock (a stalled frame, e.g. a dump, does not stretch it); 0 = t */
     int live;           /* the controller input is live */
     int frozen;         /* live, but a menu or the pause: nothing changes, the clocks stop */
     int allow;          /* the game allows a climb now (somvr.c: FSM Supported, not mounted, first person, the objects) */
@@ -171,9 +254,13 @@ typedef struct {
     sv_vec3 root;       /* world cm */
     int drop;           /* the drop button is held (somvr.c: A on the right controller); its press while a climb is on
                          * (holding or hanging) ends it: the fall */
+    int can_blink;      /* descent: the blink can start now (somvr.c: the practice's trip is free) */
+    sv_vec3 head_fwd;   /* descent: the view's heading (horizontal unit; 0 = none): A on foot looks for an edge along it */
+    int walk_blocked;   /* descent (cue): the stick asks a walk the game does not apply (somvr.c: LOCO's last 0.5 s) */
     somvr_climb_hand hand[2];
 } somvr_climb_in;
 
+#define SOMVR_CLIMB_VH_N 16 /* fling: the ring's samples (0.18 s at 90 Hz) */
 typedef struct {
     int down;           /* the squeeze's logical state (hysteresis) */
     int armed;          /* seen open since the last forced end: a press may grab */
@@ -199,6 +286,13 @@ typedef struct {
     int near_via;       /* ... its ray */
     int cue_in;         /* cue: within reach at the last probe */
     double cue_t, cue_out_t; /* the next probe; when it last went out of reach */
+    sv_vec3 vh_p[SOMVR_CLIMB_VH_N]; /* fling: the hand's tracking-space positions while it drives (a ring) ... */
+    double vh_t[SOMVR_CLIMB_VH_N];  /* ... and their times */
+    int vh_n, vh_i;     /* samples kept, the next slot */
+    int lip;            /* descent: the hold is a lip (lip_*: its top, a point on its edge, out = away from the wall,
+                         * the ground beyond it this far under the hold) */
+    float lip_top_y, lip_drop;
+    sv_vec3 lip_edge, lip_out;
 } somvr_climb_hold;
 
 typedef struct {
@@ -222,14 +316,61 @@ typedef struct {
     sv_vec3 top_hit, top_toward;
     float top_y;        /* the top hold's top (the edge step's ceiling: top_y + lift_cm for the head) */
     sv_vec3 last_req;   /* the last frame's request (0: none) and the root then (the edge step) */
+    float last_ramp;    /* ... the edge step's lift in it (fling: the arc's own part is the rest) */
     sv_vec3 last_root;
     int have_root;
     double ramp_cm;     /* the edge step's lift, in total */
     int drop_down;      /* the drop button's state at the last frame (a press = its rising edge) */
     double hang_t;      /* when the hang began */
+    /* fling: the launch's numbers (logs) and the flight */
+    int fl_hand;        /* the hand that launched */
+    sv_vec3 fl_hand_v;  /* its mean velocity, tracking space cm/s */
+    float fl_span;      /* ... over this long (s), fl_n samples */
+    int fl_n;
+    sv_vec3 fl_v0;      /* the body's velocity at the release (world cm/s, x gain) */
+    float fl_up, fl_side, fl_into, fl_out; /* its parts: up, sideways along the wall, toward the wall, away (dropped) */
+    int fl_capped;      /* fling_max cut it */
+    sv_vec3 fl_v;       /* the flight's velocity now (world cm/s) */
+    double fl_t0;       /* the launch */
+    int fl_frames, fl_blocked;
+    int fl_glide;       /* topped at the arc's top, still going toward the wall: level on (since fl_glide_t) */
+    double fl_glide_t;
+    float fl_glide_lift; /* the glide's edge step so far (cm) */
+    float fl_glide_cap;  /* ... at most this (FL_GLIDE_LIFT_CM, or the capsule's foot's gap under the top + 10 cm) */
+    double fl_glide_run; /* the glide's time not blocked by the edge (s; FL_GLIDE_S of it = out of time) */
+    int fl_landed;      /* the last fling's over: the top under the root in the glide (else the head past the hold) */
+    sv_vec3 fl_root0;   /* the root at the launch (root_ok then: fl_root_ok) */
+    int fl_root_ok;
+    sv_vec3 fl_toward;  /* the release hold's toward (unit horizontal into the wall, or 0) */
+    int fl_edge;        /* the release hold's found top: fl_top_y, its surface point fl_hit */
+    float fl_top_y;
+    sv_vec3 fl_hit;
+    float fl_wall_d;    /* the head's ray along toward: the wall this far at the launch (< 0: no ray, not looking) */
+    int fl_top_by;      /* E_FLING_TOP: 1 the release hold's top, 2 the head's ray */
+    int fl_why;         /* SOMVR_CLIMB_FL_* of the last flight */
+    int fl_none;        /* E_FLING_NONE: 0 too slow up (fl_up ...), -1 no velocity (fl_n samples, under 40 ms), -2 not the
+                         * driving hand's release */
+    /* descent */
+    int descending;     /* the climb started from a lip with the feet on its top: until the head is under lip_top_y */
+    float lip_top_y;    /* that lip's top, a point on its edge, away from the wall */
+    sv_vec3 lip_edge, lip_out;
+    sv_vec3 wall_tw;    /* the wall the climb is on: the last face or lip hold's toward (0: none) */
+    int bl_why;         /* SOMVR_CLIMB_BL_* of the last A with descent */
+    float bl_h;         /* ... the feet over the ground (cm; < 0: none found) */
+    sv_vec3 bl_from, bl_ground, bl_to; /* ... the ray down's start, the ground it found, the blink's target (the root) */
+    double lip_cm;      /* the lip step, in total */
+    int lip_blocked, lip_block_n; /* the game keeps him from going over this lip (its edge wall): no lip step */
+    uint64_t lip_blocks;
+    int edge_cued;      /* the edge cue given for this stop (again after the walk went on edge_rearm_s) */
+    double walk_free_t; /* since when the walk is not stopped (< 0: stopped now) */
+    double edge_cue_t;  /* the last cue's probe */
+    float cue_h;        /* the last cue's drop (cm) */
+    uint64_t edge_cues;
+    uint64_t lips, descents, lip_steps, blinks, bl_short, bl_noground, bl_wet, bl_cannot, bl_waits, edge_blinks, bl_noedge;
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
-        frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays;
+        frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
+        fl_blocks, fl_overs, fl_tops, fl_glides;
     double req_cm;      /* the length of every move asked for */
 } somvr_climb;
 
@@ -240,6 +381,7 @@ typedef struct {
     int move;               /* move_w is a request for the next player update */
     sv_vec3 move_w;         /* world cm */
     uint32_t events;        /* SOMVR_CLIMB_E_* */
+    uint32_t events2;       /* SOMVR_CLIMB_E_LIP_BLOCKED (the second word) */
     int top_cmd;            /* cmd mode: pulse the stock LedgePullUp now */
     int top_by;             /* with SOMVR_CLIMB_E_TOP: 1 the head over the top, 2 the other hand reaching over it */
     float ramp;             /* the edge step's lift in this frame's request (cm) */
@@ -249,6 +391,9 @@ typedef struct {
     int grab_cast[2];       /* the frame's cast (1 = its first ray) that gave grab_hit[h] (0: none): the caller's ray log */
     int miss_near[2];       /* with SOMVR_CLIMB_E_MISS: the press was made while climbing or near a surface (the cue) */
     int driver;             /* the driving hand (-1 none) */
+    float lip;              /* descent: the lip step's move out in this frame's request (cm) */
+    int blink;              /* descent: start the blink to blink_to (Talion's root at the landing) now */
+    sv_vec3 blink_to;
 } somvr_climb_out;
 
 void somvr_climb_init(somvr_climb *s);
@@ -260,11 +405,17 @@ void somvr_climb_stop(somvr_climb *s, int why, somvr_climb_out *out);
 const char *somvr_climb_end_name(int why);
 const char *somvr_climb_via_name(int via);
 const char *somvr_climb_phase_name(int phase);
+const char *somvr_climb_fl_name(int why); /* SOMVR_CLIMB_FL_* */
+const char *somvr_climb_bl_name(int why); /* SOMVR_CLIMB_BL_* */
 
 /* the pieces (tested on their own) */
 int somvr_climb_grip(int *down, float squeeze, float on, float off); /* the hysteresis; returns the new state */
 sv_vec3 somvr_climb_to_world(sv_vec3 d_track, float rig_yaw);       /* R(Y(rig_yaw)) d, as somvr_rig_vec */
 sv_vec3 somvr_climb_clamp(sv_vec3 v, float max_len);                /* v shortened to max_len (NaN: 0) */
+/* the fling's velocity rule: the body's release velocity vw (world cm/s, x gain already) against toward (unit
+ * horizontal into the wall, or 0): only up (see fling above); 1 = a fling (*v0, the parts in s->fl_up/side/into/out,
+ * fl_capped), 0 = under fling_min (the parts filled all the same) */
+int somvr_climb_fling_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw, sv_vec3 toward, sv_vec3 *v0);
 
 /* which surfaces hold a hand (SOMVR_CLIMB_SURF=walls|game|any; somvr.c's ray callback answers hit.climbable with it).
  * walls (default): every solid surface record, the game's CanWallClimb ignored: not a character's (Flesh*, Armor*),
@@ -274,5 +425,10 @@ sv_vec3 somvr_climb_clamp(sv_vec3 v, float max_len);                /* v shorten
  * name: the record's name ("" = unnamed: walls holds it); can: the game's CanWallClimb */
 enum { SOMVR_CLIMB_SURF_WALLS = 0, SOMVR_CLIMB_SURF_GAME = 1, SOMVR_CLIMB_SURF_ANY = 2 };
 int somvr_climb_surface_ok(int mode, const char *name, int can);
+/* descent: a landing that is water (water*, liquid*, puddle; case-insensitive) */
+int somvr_climb_surface_wet(const char *name);
+/* descent: an invisible blocker the hands and the rays reach through ('Air', Invisible*, PlayerBlocker*): somvr.c's ray
+ * steps past it (a forge tower top's edge wall, run 010412) */
+int somvr_climb_surface_clear(const char *name);
 
 #endif

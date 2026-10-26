@@ -18,7 +18,7 @@
 #   strike  the bow aimed at an orc, X (the left lower button): the Shadow Strike (only with SOMVR_BOW_STRIKE)
 #   empty   shots until the arrows run out: the "denied" pulse, no shot
 #   fx      the wraith's FX A/B (needs SOMVR_BOW_FX at boot): `bow fx game|nofx|nofxalt|none`, an aim and a draw each
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${BOW_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${BOW_STEPS:-summon orc snap}
 T0=$(date +%s)
@@ -34,7 +34,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

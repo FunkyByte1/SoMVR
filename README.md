@@ -26,15 +26,15 @@ of the game works. `docs/design-*.md` are the design notes.
 
 You need your own copy of the game on Steam (the Linux version), gcc and python3.
 
-1. Put the headers in `third_party/` (not included yet):
-   - `third_party/OpenXR-SDK-1.1.61/include` from the [OpenXR SDK](https://github.com/KhronosGroup/OpenXR-SDK) 1.1.61;
-   - `third_party/Vulkan-Headers-1.4.341/include` from [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers)
-     v1.4.341.
+1. Run `scripts/fetch_third_party.sh`. It downloads the headers into `third_party/` and checks them against pinned
+   hashes: the [OpenXR SDK](https://github.com/KhronosGroup/OpenXR-SDK) 1.1.61 and
+   [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) v1.4.341 (headers and licences only).
 2. Run `mod/somvr/build.sh`. It builds `mod/somvr/build/somvr.so` and the Vulkan layer. `build.sh --check` also runs
    the unit tests; it reads the game binary from `SOM_BIN`.
 3. Run `scripts/som-vr.sh --make-release` to copy a build into `release/`. Then set `/path/to/scripts/som-vr.sh
    %command%` as the game's Steam launch option. With a headset connected the game starts in VR; without one it
-   starts as the normal flat game. The other scripts are the author's test tools and still use the author's paths.
+   starts as the normal flat game. The other scripts are the author's test tools; they expect this folder at
+   `~/Projects/flat2vr/ShadowOfMordor` and the game in Steam's default library.
 
 ## Third-party files
 

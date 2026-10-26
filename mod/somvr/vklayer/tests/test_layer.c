@@ -31,6 +31,7 @@
 #include <openxr/openxr.h>
 
 #include <dlfcn.h>
+#include <errno.h>
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
@@ -49,9 +50,11 @@
 #include "../../somvr_threat.h" /* the threat ABI; its functions are linked: the expected quads and texture */
 #include "../../somvr_views.h"
 #include "../somvr_env.h"   /* SoM loading env: linked here (the expected image, geometry and transitions) */
+#include "../somvr_void.h"  /* never a void: linked here (the expected floor and lights) */
 #include "../../somvr_vrmenu.h" /* the VR menu's ABI; its functions (and the font's) are linked: the expected pictures */
 #include "../../somvr_menus.h" /* build 8: linked here (the expected tiles, split and watch pose) */
 #include "../../somvr_vrhands.h" /* build 10: our VR hands' ABI (its functions are not linked here) */
+#include "../../somvr_session.h" /* never a void: the theatre's word (the session object: tests/session_obj.c) */
 #include "../somvr_logic.h" /* SOMVR_GUARD_COLS (the layer's own constants; its functions are not linked here) */
 #include "mock_common.h"
 
@@ -503,6 +506,18 @@ static VKAPI_ATTR VkResult VKAPI_CALL d_WaitForFences(VkDevice d, uint32_t n, co
     }
     return VK_SUCCESS;
 }
+/* SOMVR_XR_COVER polls its readings' fences: the mock's GPU is done at once (as a wait) */
+static VKAPI_ATTR VkResult VKAPI_CALL d_GetFenceStatus(VkDevice d, VkFence f) {
+    (void)d;
+    if (V.fence[HID(f)] == 0) return VK_NOT_READY; /* never submitted, or reset */
+    V.fence[HID(f)] = 2;
+    for (int k = 0; k < MAXMEM; k++)
+        if (g_mem[k].m && g_mem[k].dirty_cmd >= 0 && V.cmd_fence[g_mem[k].dirty_cmd] == HID(f)) {
+            memcpy(g_mem[k].p, g_mem[k].gpu, g_mem[k].size);
+            g_mem[k].dirty_cmd = -1;
+        }
+    return VK_SUCCESS;
+}
 static VKAPI_ATTR VkResult VKAPI_CALL d_ResetFences(VkDevice d, uint32_t n, const VkFence *f) {
     (void)d;
     for (uint32_t i = 0; i < n; i++) {
@@ -878,7 +893,8 @@ static const struct {
                      D(QueuePresentKHR) D(QueueSubmit) D(CreateCommandPool) D(DestroyCommandPool)
                          D(AllocateCommandBuffers) D(FreeCommandBuffers) D(ResetCommandBuffer) D(BeginCommandBuffer)
                              D(EndCommandBuffer) D(CmdPipelineBarrier) D(CmdCopyImage) D(CmdBlitImage) D(CreateFence)
-                                 D(DestroyFence) D(WaitForFences) D(ResetFences) D(CreateSemaphore) D(DestroySemaphore)
+                                 D(DestroyFence) D(WaitForFences) D(ResetFences) D(GetFenceStatus) D(CreateSemaphore)
+                                     D(DestroySemaphore)
                                      D(CreateImage) D(DestroyImage) D(CreateBuffer) D(DestroyBuffer)
                                          D(GetBufferMemoryRequirements) D(AllocateMemory) D(FreeMemory)
                                              D(BindBufferMemory) D(MapMemory) D(UnmapMemory) D(CmdCopyImageToBuffer)
@@ -4901,6 +4917,567 @@ static int sc_env_badcfg(void) { /* SOMVR_XR_ENV=sideways SOMVR_XR_ENV_DIM=2: of
                     "xr: env: SOMVR_XR_ENV_DIM=2 is not 0..1: 0.40");
 }
 
+/* ---- never a void (HG-9, docs/re-xr-pipeline.md 36): the gaps' log, the keep-alive frames, the loading space ------ */
+_Static_assert(SOMVR_VOID_IMG_W == 1024 && SOMVR_VOID_IMG_H == 1952, "the loading space's image (its log line below)");
+static void void_sleep_ms(int ms) {
+    struct timespec sl = {ms / 1000, (long)(ms % 1000) * 1000000L};
+    while (nanosleep(&sl, &sl) && errno == EINTR) {}
+}
+static void void_stereo(envrig *g) { /* one stereo frame from a record (layout A) */
+    somvr_views v;
+    CHECK(locate(&v), "void: locate");
+    write_record(g->f, SOMVR_LAYOUT_A, &v, 3);
+    tagged_present(g->a, g->f, 0, TAG_SYNC);
+    g->last = v, g->have_last = 1;
+    g->f++;
+}
+/* the default: the gaps logged (a 350 ms stall: its line, the head sampled), no frames of ours meanwhile, the game's
+ * vkQueueSubmit not hooked (the keep-alive is off) */
+static int sc_void_gaps(void) {
+    preload_on(SOMVR_LAYOUT_A, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    CHECK(L_gdpa(a.dev, "vkQueueSubmit") == (PFN_vkVoidFunction)d_QueueSubmit, "vkQueueSubmit hooked with the keep-alive off");
+    envrig g = {.a = &a, .layout = SOMVR_LAYOUT_A, .kind = SOMVR_ENV_KIND_CUBE, .mode = SOMVR_ENV_ON,
+                .dim = SOMVR_ENV_DIM_DEFAULT, .f = 1};
+    env_frames(&g, SOMVR_ENV_SHOW_ENV, 10, "menus");
+    int ends = MOCK(mockxr_calls)("xrEndFrame");
+    void_sleep_ms(350);
+    CHECK(MOCK(mockxr_calls)("xrEndFrame") == ends, "%d frames ended while the game was away (the keep-alive is off)",
+          MOCK(mockxr_calls)("xrEndFrame") - ends);
+    env_frames(&g, SOMVR_ENV_SHOW_ENV, 3, "menus again");
+    app_teardown(&a);
+    CHECK(log_has("xr: gaps: game presents 100 ms or more apart are logged (the head sampled every 100 ms meanwhile)") &&
+              log_has("xr: keep-alive: off (SOMVR_XR_KEEPALIVE unset or off: a stall sends nothing); loadspace: off") &&
+              log_count("xr: gap 1: 3") == 1 && !log_has("xr: gap 2:") &&
+              log_has("; M -> M; the environment shown): 0 keep-alive frame(s) meanwhile, the longest time between two "
+                      "xrEndFrame calls 3") && log_has("located, yaw") &&
+              log_has("xr: gaps (the session's end): 12 game presents in") &&
+              log_has("gaps 100..250 ms 0, 250..500 1, 500..1000 0, 1..2 s 0, >= 2 s 0; the longest: 3"),
+          "log lacks the gap lines");
+    CHECK(MOCK(mockxr_live)() == 0, "XR objects alive after vkDestroyDevice");
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_GAPS=off: no lines, no thread work */
+static int sc_void_gaps_off(void) {
+    preload_on(SOMVR_LAYOUT_A, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    for (int i = 0; i < 5; i++) app_present(&a);
+    void_sleep_ms(250);
+    app_present(&a);
+    app_teardown(&a);
+    CHECK(log_has("xr: gaps: off (SOMVR_XR_GAPS=off)") && !log_has("xr: gap 1:") && !log_has("xr: gaps (") &&
+              !log_has("keep-alive (the session's end)"), "log: the gaps not off");
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_KEEPALIVE=on in the world (layout A, the equirect): a 600 ms stall = frames of ours at the runtime's pace,
+ * each the sky, then the last stereo frame's projection (its own views); none acquires or submits anything; the game's
+ * queue calls are hooked; the next stereo frames go on as before (no transition: the world was shown) */
+static int sc_void_keep_world(void) {
+    preload_on(SOMVR_LAYOUT_A, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    PFN_vkQueueSubmit qs = (PFN_vkQueueSubmit)L_gdpa(a.dev, "vkQueueSubmit");
+    CHECK(qs && qs != d_QueueSubmit, "the game's vkQueueSubmit not hooked with the keep-alive on");
+    envrig g = {.a = &a, .layout = SOMVR_LAYOUT_A, .kind = SOMVR_ENV_KIND_EQ, .mode = SOMVR_ENV_ON,
+                .dim = SOMVR_ENV_DIM_DEFAULT, .f = 1};
+    env_frames(&g, SOMVR_ENV_SHOW_ENV, 30, "menus");
+    env_frames(&g, SOMVR_ENV_SHOW_WORLD, 50, "to the world");
+    int sub = V.submits, before = V.submits;
+    VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    CHECK(qs(a.q, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS && V.submits == sub + 1, "the hooked vkQueueSubmit does not reach "
+          "the driver");
+    sub = V.submits;
+    int ends = MOCK(mockxr_calls)("xrEndFrame"), acq = MOCK(mockxr_calls)("xrAcquireSwapchainImage");
+    void_sleep_ms(600);
+    int ka = MOCK(mockxr_calls)("xrEndFrame") - ends;
+    CHECK(ka >= 20 && ka <= 60, "%d frames of ours in 600 ms (want about 45: from 100 ms on, every 11 ms)", ka);
+    CHECK(MOCK(mockxr_calls)("xrAcquireSwapchainImage") == acq && V.submits == sub, "the keep-alive acquired (%d) or "
+          "submitted (%d)", MOCK(mockxr_calls)("xrAcquireSwapchainImage") - acq, V.submits - sub);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    check_env_sky(SOMVR_ENV_KIND_EQ, "a keep-alive frame");
+    CHECK(e->layer_count == 2 && e->pj_index == 1 && e->pj_sc[0] == 0 && e->pj_sc[1] == 0,
+          "a keep-alive frame: %u layers, the projection at %d (sc %d/%d)", e->layer_count, e->pj_index, e->pj_sc[0],
+          e->pj_sc[1]);
+    for (int v = 0; v < 2; v++) {
+        float pose[7];
+        pose7(&g.last.pose[v], pose);
+        CHECK(!memcmp(e->pj_pose[v], pose, sizeof pose), "a keep-alive frame: view %d is not the last stereo frame's", v);
+    }
+    env_frames(&g, SOMVR_ENV_SHOW_WORLD, 5, "the world again");
+    CHECK(g.holds == 17 && g.tr.switches == 1, "after the stall: %d holds, %llu switches", g.holds,
+          (unsigned long long)g.tr.switches);
+    (void)before;
+    app_teardown(&a);
+    CHECK(log_has("xr: keep-alive: on: our own frames when the game is away 100 ms (the game's queue calls under the "
+                  "keep-alive's lock); loadspace: off") &&
+              log_has("our own frames (the world held over the sky; frame 1 of ours)") &&
+              log_count("xr: keep-alive: the game presented again after ") == 1 &&
+              log_has("; S -> S; the world shown): ") && log_has("xr: keep-alive (the session's end): 1 stall(s) filled"),
+          "log lacks the keep-alive lines");
+    CHECK(MOCK(mockxr_live)() == 0, "XR objects alive after vkDestroyDevice");
+    check_mock_clean();
+    return 0;
+}
+/* the keep-alive on a menu (mono): the sky and the last board again */
+static int sc_void_keep_menu(void) {
+    preload_on(SOMVR_LAYOUT_A, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    envrig g = {.a = &a, .layout = SOMVR_LAYOUT_A, .kind = SOMVR_ENV_KIND_CUBE, .mode = SOMVR_ENV_ON,
+                .dim = SOMVR_ENV_DIM_DEFAULT, .f = 1};
+    env_frames(&g, SOMVR_ENV_SHOW_ENV, 30, "menus");
+    int ends = MOCK(mockxr_calls)("xrEndFrame"), cps = V.copies;
+    void_sleep_ms(400);
+    int ka = MOCK(mockxr_calls)("xrEndFrame") - ends;
+    CHECK(ka >= 12 && ka <= 45, "%d frames of ours in 400 ms", ka);
+    CHECK(V.copies == cps, "the keep-alive copied the menu");
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    check_env_sky(SOMVR_ENV_KIND_CUBE, "a keep-alive frame");
+    CHECK(e->layer_count == 7, "a keep-alive frame on a menu: %u layers (want the 6 faces and the board)", e->layer_count);
+    check_env_menu(6, env_mono_sc(&g), "a keep-alive frame");
+    env_frames(&g, SOMVR_ENV_SHOW_ENV, 3, "menus again");
+    app_teardown(&a);
+    CHECK(log_has("our own frames (the board in the environment; frame 1 of ours)"), "log lacks the menu keep-alive");
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_LOADSPACE=on (the equirect): every menu frame = the sky, the floor (our image, uploaded once byte for byte),
+ * the board; a 1 s stall in the world: after 200 ms (SOMVR_XR_LOADSPACE_MS) the world is held darkening, then the
+ * loading space fades in - the sky, the floor, the progress lights - and its own layer is the top one (no board); the
+ * game's stereo frames then hold the space darkening and switch back to the world */
+static int sc_void_space(void) {
+    preload_on(SOMVR_LAYOUT_A, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    envrig g = {.a = &a, .layout = SOMVR_LAYOUT_A, .kind = SOMVR_ENV_KIND_EQ, .mode = SOMVR_ENV_ON,
+                .dim = SOMVR_ENV_DIM_DEFAULT, .f = 1};
+    for (int i = 0; i < 40; i++) app_present(&a);
+    int ks = MOCK(mockxr_sc_find)(SOMVR_VOID_IMG_W, SOMVR_VOID_IMG_H);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    int32_t fr[4];
+    somvr_void_floor_rect(fr);
+    CHECK(ks >= 0 && e->layer_count == 3 && e->q[1].type == XR_TYPE_COMPOSITION_LAYER_QUAD && e->q[1].sc == ks &&
+              rect_is(e->q[1].rect, fr[0], fr[1], fr[2], fr[3]) && e->q[1].size[0] == SOMVR_VOID_FLOOR_M &&
+              e->q[1].flags == XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT && fabsf(e->q[1].pose[5] + 1.6f) < 1e-5f &&
+              fabsf(e->q[1].pose[0] + 0.70710678f) < 1e-5f,
+          "a menu frame: %u layers; the floor (layer 1): sc %d/%d rect %d,%d %dx%d size %g y %g", e->layer_count,
+          e->q[1].sc, ks, e->q[1].rect[0], e->q[1].rect[1], e->q[1].rect[2], e->q[1].rect[3], e->q[1].size[0],
+          e->q[1].pose[5]);
+    check_env_menu(2, env_mono_sc(&g), "a menu frame");
+    const mockxr_swapchain *sw = MOCK(mockxr_swapchain_k)(ks);
+    CHECK(ks >= 0 && (sw->create_flags & XR_SWAPCHAIN_CREATE_STATIC_IMAGE_BIT) && sw->acquires == 1 &&
+              sw->format == VK_FORMAT_R8G8B8A8_SRGB, "the space's image: acquired %d times (the image: test_void)",
+          ks >= 0 ? sw->acquires : -1);
+    CHECK(V.buffers_live == 0 && V.mems_live == 0, "the upload's buffer/memory left (%d/%d)", V.buffers_live, V.mems_live);
+    for (int i = 0; i < 50; i++) void_stereo(&g);
+    e = MOCK(mockxr_last_end)();
+    CHECK(e->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION && e->layer_count == 1, "the world: %u layers, type %d",
+          e->layer_count, e->type);
+    int ends = MOCK(mockxr_calls)("xrEndFrame"), up = V.buf2img;
+    void_sleep_ms(1000);
+    CHECK(MOCK(mockxr_calls)("xrEndFrame") - ends >= 40 && V.buf2img == up, "%d frames of ours in 1 s, %d uploads",
+          MOCK(mockxr_calls)("xrEndFrame") - ends, V.buf2img - up);
+    e = MOCK(mockxr_last_end)();
+    int32_t lr[4];
+    check_env_sky(SOMVR_ENV_KIND_EQ, "the loading space");
+    CHECK(e->layer_count == 3 && e->q[1].sc == ks && rect_is(e->q[1].rect, fr[0], fr[1], fr[2], fr[3]) &&
+              e->q[2].sc == ks && e->q[2].rect[1] >= SOMVR_VOID_FLOOR_PX && e->q[2].size[0] == SOMVR_VOID_LIGHTS_W_M &&
+              e->q[2].flags == XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT && e->pj_index == 0,
+          "the loading space: %u layers (want the sky, the floor, the lights); layer 2 sc %d rect y %d size %g",
+          e->layer_count, e->q[2].sc, e->q[2].rect[1], e->q[2].size[0]);
+    somvr_void_lights_rect(0, SOMVR_VOID_LEVELS, lr);
+    CHECK(e->q[2].rect[2] == lr[2] && e->q[2].rect[3] == lr[3] && e->q[2].rect[1] >= lr[1],
+          "the lights at full level after 0.8 s away (rect %d,%d)", e->q[2].rect[0], e->q[2].rect[1]);
+    float lp = e->q[2].pose[5];
+    CHECK(fabsf(lp - (-1.6f + SOMVR_VOID_LIGHTS_LIFT_M)) < 1e-4f, "the lights %g m up (want %g)", lp,
+          -1.6f + SOMVR_VOID_LIGHTS_LIFT_M);
+    ends = MOCK(mockxr_calls)("xrEndFrame");
+    for (int i = 0; i < 60; i++) void_stereo(&g);
+    e = MOCK(mockxr_last_end)();
+    CHECK(e->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION && e->layer_count == 1 &&
+              MOCK(mockxr_calls)("xrEndFrame") - ends == 60, "back in the world: %u layers, type %d", e->layer_count,
+          e->type);
+    app_teardown(&a);
+    CHECK(log_has("loadspace: on: a floor under the sky, the progress lights while the game is away, a stall in the "
+                  "world goes to the space") &&
+              log_has("xr: loadspace: a stall in the world goes to the space after 200 ms (SOMVR_XR_LOADSPACE_MS)") &&
+              log_has("xr: loadspace: image 1024x1952 format 43 (a static swapchain, 1 image(s)) filled once") &&
+              log_has("xr: env: world -> the loading space after ") && log_has("(switch 2, the keep-alive: the game away") &&
+              log_has("xr: env: environment -> world after ") &&
+              log_has(", the loading space shown (stall 1)") && log_has("xr: loadspace: placed: the floor at -1.60 m (1.6 m "
+                                                                         "below LOCAL's origin)"),
+          "log lacks the loading space's lines");
+    CHECK(MOCK(mockxr_live)() == 0, "XR objects alive after vkDestroyDevice");
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_THEATRE=on with the preload's somvr_session: menus on the board (2 m wide 2 m ahead: SOMVR_XR_MENU unset);
+ * the session's mono word = a video: the flat frames on a 5 m screen 5 m ahead at eye height, world-locked where the head
+ * faced; the cinematic window: 3 m at 3 m, placed again; back to the menu: the board */
+static somvr_session_shared *void_session(void) { /* session_obj.so next to the mock, active (the preload's) */
+    char p[4200];
+    const char *slash = strrchr(g_mock, '/');
+    snprintf(p, sizeof p, "%.*s/session_obj.so", slash ? (int)(slash - g_mock) : 1, slash ? g_mock : ".");
+    void *hso = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+    somvr_session_shared *ss = hso ? (somvr_session_shared *)dlsym(hso, SOMVR_SESSION_SYMBOL) : NULL;
+    if (!ss) return fprintf(stderr, "    session_obj.so: %s\n", dlerror()), NULL;
+    ss->magic = SOMVR_SESSION_MAGIC, ss->version = SOMVR_SESSION_VERSION, ss->size = (uint32_t)sizeof *ss;
+    ss->pid = (int32_t)getpid();
+    atomic_store(&ss->active, 1);
+    return ss;
+}
+static int sc_void_theatre(void) {
+    somvr_session_shared *ss = void_session();
+    if (!ss || load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    for (int i = 0; i < 5; i++) app_present(&a);
+    check_env_menu(1, 0, "a menu");
+    atomic_store(&ss->mono, SOMVR_SSM_VIDEO);
+    somvr_views hv;
+    for (int i = 0; i < 5; i++) app_present(&a);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    mock_head(e->time, &hv);
+    int k = 1;
+    float dx = e->q[k].pose[4] - 0.5f * (hv.pose[0].p[0] + hv.pose[1].p[0]),
+          dz = e->q[k].pose[6] - 0.5f * (hv.pose[0].p[2] + hv.pose[1].p[2]);
+    float d = sqrtf(dx * dx + dz * dz);
+    CHECK(e->q[k].type == XR_TYPE_COMPOSITION_LAYER_QUAD && fabsf(e->q[k].size[0] - SOMVR_VOID_THEATRE_M) < 1e-4f &&
+              fabsf(e->q[k].size[1] - SOMVR_VOID_THEATRE_M * 1080.0f / 1920.0f) < 1e-3f && fabsf(d - 5.0f) < 0.05f &&
+              fabsf(e->q[k].pose[5] - 0.5f * (hv.pose[0].p[1] + hv.pose[1].p[1])) < 0.05f,
+          "a video: the screen %g x %g m, %.2f m ahead at y %.2f", e->q[k].size[0], e->q[k].size[1], d, e->q[k].pose[5]);
+    float vpos[3] = {e->q[k].pose[4], e->q[k].pose[5], e->q[k].pose[6]};
+    for (int i = 0; i < 20; i++) app_present(&a); /* the head turns (the mock's): the screen stays */
+    e = MOCK(mockxr_last_end)();
+    CHECK(e->q[k].pose[4] == vpos[0] && e->q[k].pose[5] == vpos[1] && e->q[k].pose[6] == vpos[2],
+          "a video: the screen moved with the head");
+    atomic_store(&ss->mono, SOMVR_SSM_WINDOW);
+    app_present(&a);
+    e = MOCK(mockxr_last_end)();
+    CHECK(fabsf(e->q[k].size[0] - SOMVR_VOID_WINDOW_M) < 1e-4f, "the cinematic window: %g m wide", e->q[k].size[0]);
+    atomic_store(&ss->mono, SOMVR_SSM_MENU);
+    app_present(&a);
+    check_env_menu(1, 0, "the menu again");
+    app_teardown(&a);
+    CHECK(log_has("xr: theatre: on: a video's flat frames on a 5 m screen 5 m ahead") && log_has("(the preload's "
+              "somvr_session: found)") && log_has("xr: theatre 1: a video on a 5.0 m screen at ") &&
+              log_has("xr: theatre 2: the cinematic window on a 3.0 m screen"),
+          "log lacks the theatre lines");
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_LOADSPACE with the session's word = a load (on mono frames): the loading screen on a 2.4 m panel 2.4 m ahead
+ * over the floor, the progress lights rising through the load (no stall); a menu after it: the board, the lights
+ * fading; the theatre switch is not needed for it */
+static int sc_void_loadpanel(void) {
+    somvr_session_shared *ss = void_session();
+    if (!ss || load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    for (int i = 0; i < 5; i++) app_present(&a);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    CHECK(e->layer_count == 3, "a menu: %u layers (the sky, the floor, the board)", e->layer_count);
+    check_env_menu(2, 0, "a menu");
+    atomic_store(&ss->mono, SOMVR_SSM_LOAD);
+    for (int i = 0; i < 40; i++) app_present(&a); /* 0.44 s of a load */
+    e = MOCK(mockxr_last_end)();
+    int ks = MOCK(mockxr_sc_find)(SOMVR_VOID_IMG_W, SOMVR_VOID_IMG_H);
+    int32_t lr[4];
+    somvr_void_lights_rect(0, SOMVR_VOID_LEVELS, lr);
+    CHECK(e->layer_count == 4 && e->q[2].sc == ks && e->q[2].size[0] == SOMVR_VOID_LIGHTS_W_M && e->q[2].rect[1] >= lr[1] &&
+              e->q[3].type == XR_TYPE_COMPOSITION_LAYER_QUAD && e->q[3].sc == 0 &&
+              fabsf(e->q[3].size[0] - SOMVR_VOID_LOAD_M) < 1e-4f,
+          "a load: %u layers; the lights (layer 2) sc %d/%d at full level (rect y %d); the screen %g m wide", e->layer_count,
+          e->q[2].sc, ks, e->q[2].rect[1], e->q[3].size[0]);
+    atomic_store(&ss->mono, SOMVR_SSM_MENU);
+    for (int i = 0; i < 30; i++) app_present(&a); /* 0.33 s: the level 0.78 */
+    e = MOCK(mockxr_last_end)();
+    CHECK(e->layer_count == 4 && e->q[2].rect[1] < lr[1], "a menu after it: the lights fading (%u layers, rect y %d)",
+          e->layer_count, e->q[2].rect[1]);
+    check_env_menu(3, 0, "a menu after the load");
+    for (int i = 0; i < 130; i++) app_present(&a); /* 1.8 s in all: the lights gone */
+    CHECK(MOCK(mockxr_last_end)()->layer_count == 3, "the lights gone: %u layers", MOCK(mockxr_last_end)()->layer_count);
+    app_teardown(&a);
+    CHECK(log_has("xr: theatre 1: a loading screen on a 2.4 m screen at "), "log lacks the load panel line");
+    check_mock_clean();
+    return 0;
+}
+/* bad values: logged, off (the gaps' 100 ms) */
+static int sc_void_badcfg(void) {
+    preload_on(SOMVR_LAYOUT_A, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    CHECK(L_gdpa(a.dev, "vkQueueSubmit") == (PFN_vkVoidFunction)d_QueueSubmit, "hooked with a bad SOMVR_XR_KEEPALIVE");
+    for (int i = 0; i < 3; i++) app_present(&a);
+    app_teardown(&a);
+    CHECK(log_has("xr: gaps: SOMVR_XR_GAPS=3 is not off or 20..60000 (ms): 100") &&
+              log_has("xr: keep-alive: SOMVR_XR_KEEPALIVE=maybe is not on or off: off") &&
+              log_has("xr: keep-alive: SOMVR_XR_KEEPALIVE_MS=5 is not 50..1000: 100") &&
+              log_has("xr: loadspace: SOMVR_XR_LOADSPACE=x is not on or off: off") &&
+              log_has("xr: loadspace: SOMVR_XR_LOADSPACE_MS=-1 is not 0..10000: 1000") &&
+              log_has("xr: gaps: game presents 100 ms or more apart are logged"),
+          "log lacks the bad values");
+    check_mock_clean();
+    return 0;
+}
+
+/* ---- round 2 (docs/re-xr-pipeline.md 36.7, 36.8): the game's in-world loading cover, the in-world menus' backdrop ---- */
+/* stereo frames from the eye images with the HUD entry (kind) until ok() holds for the frame's end (max frames);
+ * 1 = it did */
+static int cover_until(hudrig *r, uint64_t *f, uint32_t kind, int (*ok)(void), int max) {
+    somvr_views v;
+    for (int i = 0; i < max; i++) {
+        hud_stereo(r, ++*f, 2, kind, &v);
+        if (ok()) return 1;
+    }
+    return 0;
+}
+static int is_world_hud(void) { /* the projection and the HUD quad */
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    return e->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION && e->layer_count == 2 && e->type2 == XR_TYPE_COMPOSITION_LAYER_QUAD;
+}
+static int is_world_bare(void) { /* the projection alone */
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    return e->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION && e->layer_count == 1;
+}
+static int is_space(void) { /* the sky (equirect), the floor, the lights: no projection */
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    return e->type == XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR && e->layer_count == 3 && e->pj_index == 0;
+}
+static const uint8_t COVER_CLEAR[4] = {0, 0, 0, 0}, COVER_BLACK[4] = {0, 0, 0, 255};
+static void qrot_t(const float q[4], const float v[3], float o[3]) { /* v rotated by q (x y z w) */
+    float x = q[0], y = q[1], z = q[2], w = q[3];
+    float c1[3] = {y * v[2] - z * v[1], z * v[0] - x * v[2], x * v[1] - y * v[0]};
+    float c2[3] = {y * c1[2] - z * c1[1], z * c1[0] - x * c1[2], x * c1[1] - y * c1[0]};
+    for (int i = 0; i < 3; i++) o[i] = v[i] + 2.0f * (w * c1[i] + c2[i]);
+}
+
+/* SOMVR_XR_COVER=on (SOMVR_XR_ENV, SOMVR_XR_LOADSPACE): the HUD image's grid read back every stereo frame; the cover
+ * hides the HUD at once, held 300 ms it is a load (the loading space over the game's frames, the readings going on),
+ * lifted it is the world again; a menu's black is never a cover */
+static int sc_cover(void) {
+    hudrig r;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    int ix = img_ix(r.H);
+    memcpy(g_img[ix].fill, COVER_CLEAR, 4);
+    uint64_t f = 0;
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_world_hud, 60), "the world with its HUD (frame %llu)",
+          (unsigned long long)f);
+    int i2b = V.img2buf;
+    somvr_views v;
+    for (int i = 0; i < 5; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    CHECK(V.img2buf - i2b == 5 && is_world_hud() && !log_has("xr: cover 1:"), "a clear HUD: 5 readings (%d), the HUD shown",
+          V.img2buf - i2b);
+    /* the cover: hidden at the next frame's poll; a load 300 ms (wall time) later; the space through the fade */
+    memcpy(g_img[ix].fill, COVER_BLACK, 4);
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    CHECK(is_world_bare() && log_has("xr: cover 1: the HUD hidden (the grid 1.00 dark, 1.00 opaque black"),
+          "the cover's first reading: the world without the HUD (%u layers)", MOCK(mockxr_last_end)()->layer_count);
+    void_sleep_ms(350);
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    int ends = MOCK(mockxr_calls)("xrEndFrame");
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_space, 60) && log_has("xr: cover 1: the game's cover held 0.3") &&
+              log_has("s (1.00 opaque black): a load - the loading space with the progress lights") &&
+              log_has("xr: env: world -> environment after "),
+          "the cover's load: the loading space");
+    int ks = MOCK(mockxr_sc_find)(SOMVR_VOID_IMG_W, SOMVR_VOID_IMG_H);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    CHECK(ks >= 0 && e->q[1].sc == ks && e->q[2].sc == ks && e->q[2].size[0] == SOMVR_VOID_LIGHTS_W_M &&
+              MOCK(mockxr_calls)("xrEndFrame") - ends >= 10,
+          "the space: the floor and the lights (sc %d %d / %d) after the world's hold frames", e->q[1].sc, e->q[2].sc, ks);
+    i2b = V.img2buf;
+    int cp = V.copies;
+    float fl0[7], li0[7], yaw0 = 2 * atan2f(v.pose[0].q[1], v.pose[0].q[3]);
+    memcpy(fl0, e->q[1].pose, sizeof fl0), memcpy(li0, e->q[2].pose, sizeof li0);
+    for (int i = 0; i < 40; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    int32_t lr[4];
+    somvr_void_lights_rect(0, SOMVR_VOID_LEVELS, lr);
+    e = MOCK(mockxr_last_end)();
+    CHECK(is_space() && V.img2buf - i2b == 40 && V.copies > cp && e->q[2].rect[2] == lr[2] && e->q[2].rect[1] >= lr[1],
+          "40 frames in the space: the game's frames still copied and read (%d readings), the lights at full level (rect y %d)",
+          V.img2buf - i2b, e->q[2].rect[1]);
+    CHECK(log_has("xr: cover: frame 1 of the loading space over the game's stereo frames") &&
+              log_has("xr: cover 1: the loading space placed for the load: the head at "), "the space's lines");
+    float yaw1 = 2 * atan2f(v.pose[0].q[1], v.pose[0].q[3]);
+    CHECK(pose_near(e->q[1].pose, fl0) && pose_near(e->q[2].pose, li0) && fabsf(yaw1 - yaw0) > 1e-3f,
+          "the space placed once for the load: the floor and the lights where they were while the head turned %.3f rad "
+          "(the game's frames go on under it)", yaw1 - yaw0);
+    /* a reuse present (its record missing) in the space: the space, not the world */
+    hud_present(&r.a, 999, 2, SOMVR_HUDK_WORLD);
+    CHECK(is_space(), "a reuse in the space: the space (%u layers, type %d)", MOCK(mockxr_last_end)()->layer_count,
+          MOCK(mockxr_last_end)()->type);
+    /* lifted: back to the world through the fade, the HUD again */
+    memcpy(g_img[ix].fill, COVER_CLEAR, 4);
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_world_hud, 80) && log_has("xr: cover 1: lifted (0.00 opaque black") &&
+              log_has("xr: env: environment -> world after ") && log_has("xr: cover 1: the HUD shown again (0.00 dark)"),
+          "lifted: the world and its HUD");
+    /* a menu's dark (not pure black) background is never a cover; nor a video's black */
+    static const uint8_t MENU_DARK[4] = {20, 20, 20, 255};
+    memcpy(g_img[ix].fill, MENU_DARK, 4);
+    for (int i = 0; i < 30; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD | SOMVR_HUDF_MENU, &v);
+    memcpy(g_img[ix].fill, COVER_BLACK, 4);
+    for (int i = 0; i < 30; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_VIDEO, &v);
+    CHECK(log_count("the HUD hidden") == 1 && is_world_hud(), "a menu's dark and a video's black: no cover (%d)",
+          log_count("the HUD hidden"));
+    /* a short black (less than 300 ms): the HUD hidden, no load */
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    memcpy(g_img[ix].fill, COVER_CLEAR, 4);
+    for (int i = 0; i < 5; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    CHECK(log_count("the HUD hidden") == 2 && log_count("a load - ") == 1 && is_world_hud(),
+          "a short black: hidden once more, no second load");
+    /* a load's end into the cover (a mono stretch, then the game's black): the space all through, never the world */
+    for (int i = 0; i < 40; i++) tagged_present(&r.a, 0, 0, TAG_SYNC); /* (the world darkens, the environment) */
+    CHECK(MOCK(mockxr_last_end)()->type == XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR, "the mono stretch: the environment");
+    memcpy(g_img[ix].fill, COVER_BLACK, 4);
+    int world = 0, spaced = 0;
+    float flm[7];
+    memcpy(flm, MOCK(mockxr_last_end)()->q[1].pose, sizeof flm); /* the mono stretch's floor */
+    for (int i = 0; i < 12; i++) {
+        hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+        world += MOCK(mockxr_last_end)()->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION, spaced += is_space();
+    }
+    void_sleep_ms(350);
+    for (int i = 0; i < 12; i++) {
+        hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+        world += MOCK(mockxr_last_end)()->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION, spaced += is_space();
+    }
+    CHECK(pose_near(MOCK(mockxr_last_end)()->q[1].pose, flm), "the stretch's floor kept through the wait and the load");
+    CHECK(!world && spaced >= 20 && log_count("a load - ") == 2 &&
+              log_has("xr: cover: the game's first stereo frames after a mono stretch: the game's cover: its load after "),
+          "a load's end into the cover: %d world frames (want 0), %d in the space", world, spaced);
+    memcpy(g_img[ix].fill, COVER_CLEAR, 4);
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_world_hud, 80), "... lifted: the world and its HUD");
+    /* the map's board at a fast travel: the game's pure black on a menu frame is the cover too (hidden, then a load) */
+    memcpy(g_img[ix].fill, COVER_BLACK, 4);
+    for (int i = 0; i < 3; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD | SOMVR_HUDF_MENU, &v);
+    CHECK(is_world_bare() && log_count("the HUD hidden") == 4, "the cover on the map's board: the board hidden (%u layers)",
+          MOCK(mockxr_last_end)()->layer_count);
+    void_sleep_ms(350);
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD | SOMVR_HUDF_MENU, &v);
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_space, 60) && log_count("a load - ") == 3, "... then its load");
+    memcpy(g_img[ix].fill, COVER_CLEAR, 4);
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_world_hud, 80), "... lifted");
+    app_teardown(&r.a);
+    CHECK(log_has("xr: cover: on: the HUD image's 16 x 9 grid read each stereo frame; the HUD, the band and the wrist "
+                  "minimap hidden while most of it is dark; the game's black cover held 300 ms is a load: the loading "
+                  "space with the progress lights") &&
+              log_has("xr: cover (the session's end): ") && log_has("the HUD hidden 4 time(s)") &&
+              log_has("3 load(s) in the space"),
+          "the cover's lines");
+    CHECK(MOCK(mockxr_live)() == 0 && V.buffers_live == 0 && V.mems_live == 0, "XR objects %d, buffers %d, memory %d left",
+          MOCK(mockxr_live)(), V.buffers_live, V.mems_live);
+    check_mock_clean();
+    return 0;
+}
+
+/* SOMVR_XR_COVER unset: no readback, the black HUD shown as before (build 12) */
+static int sc_cover_off(void) {
+    hudrig r;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    int ix = img_ix(r.H);
+    memcpy(g_img[ix].fill, COVER_BLACK, 4);
+    uint64_t f = 0;
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_world_hud, 60), "the world with its HUD");
+    void_sleep_ms(350);
+    for (int i = 0; i < 20; i++) {
+        somvr_views v;
+        hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    }
+    CHECK(is_world_hud() && V.img2buf == 0 && !log_has("xr: cover"), "the black HUD as before, %d readbacks", V.img2buf);
+    app_teardown(&r.a);
+    check_mock_clean();
+    return 0;
+}
+
+static int is_board_back(void) { /* the projection, the dim, the panel, the board */
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    return e->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION && e->layer_count == 4;
+}
+/* SOMVR_XR_MENU=front SOMVR_XR_MENU_BACK=on: a game menu's board over the world gets the dim and the dark panel under
+ * it, rising at the open and falling after the close; the world's HUD none */
+static int sc_menu_back(void) {
+    hudrig r;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    uint64_t f = 0;
+    somvr_views v;
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_world_hud, 60), "the world with its HUD");
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD | SOMVR_HUDF_MENU, &v); /* the pause menu opens */
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    int kb = MOCK(mockxr_sc_find)(SOMVR_BACK_IMG_W, SOMVR_BACK_IMG_H), kf = MOCK(mockxr_sc_find)(SOMVR_FADE_W, SOMVR_FADE_H);
+    int32_t rc[4];
+    CHECK(is_board_back() && kb >= 0 && kf >= 0 && e->q[1].sc == kf && e->q[2].sc == kb && e->q[3].sc == 1 &&
+              e->q[2].rect[0] < SOMVR_BACK_CELL_W * (SOMVR_BACK_LEVELS - 1),
+          "the open: %u layers; the dim sc %d/%d, the panel sc %d/%d at cell x %d (a low level), the board sc %d",
+          e->layer_count, e->q[1].sc, kf, e->q[2].sc, kb, e->q[2].rect[0], e->q[3].sc);
+    for (int i = 0; i < 20; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD | SOMVR_HUDF_MENU, &v);
+    e = MOCK(mockxr_last_end)();
+    somvr_back_rect(SOMVR_BACK_LEVELS, rc);
+    int32_t fr[4];
+    somvr_fade_rect(somvr_fade_index((uint32_t)lrintf(255.0f * SOMVR_BACK_DIM)), fr);
+    float bw = e->q[3].size[0], bh = e->q[3].size[1];
+    float n[3], z[3] = {0, 0, 1};
+    qrot_t(e->q[3].pose, z, n);
+    CHECK(is_board_back() && rect_is(e->q[2].rect, rc[0], rc[1], rc[2], rc[3]) && rect_is(e->q[1].rect, fr[0], fr[1], fr[2], fr[3]) &&
+              fabsf(e->q[2].size[0] - (bw + 2 * SOMVR_BACK_MARGIN_M)) < 1e-5f &&
+              fabsf(e->q[2].size[1] - (bh + 2 * SOMVR_BACK_MARGIN_M)) < 1e-5f && e->q[1].size[0] == SOMVR_FADE_SIZE_M &&
+              e->q[2].flags == XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT &&
+              fabsf(e->q[2].pose[4] - (e->q[3].pose[4] - SOMVR_BACK_BEHIND_M * n[0])) < 1e-5f &&
+              fabsf(e->q[2].pose[6] - (e->q[3].pose[6] - SOMVR_BACK_BEHIND_M * n[2])) < 1e-5f &&
+              !memcmp(e->q[2].pose, e->q[3].pose, 4 * sizeof(float)),
+          "the full level: the panel's cell %d,%d (want %d), %.3f x %.3f m behind the %.3f x %.3f board, the dim's ramp %d "
+          "(want %d)", e->q[2].rect[0], e->q[2].rect[1], rc[0], e->q[2].size[0], e->q[2].size[1], bw, bh, e->q[1].rect[0], fr[0]);
+    /* a reuse present: that frame's backdrop again */
+    hud_present(&r.a, 999, 2, SOMVR_HUDK_WORLD | SOMVR_HUDF_MENU);
+    CHECK(is_board_back(), "a reuse during the menu: %u layers", MOCK(mockxr_last_end)()->layer_count);
+    /* the close: the panel falls over 0.15 s at its place, then the world's HUD alone */
+    hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    e = MOCK(mockxr_last_end)();
+    CHECK(e->layer_count == 4 && e->q[2].sc == kb && e->q[2].rect[0] < rc[0], "the close: falling (cell x %d)", e->q[2].rect[0]);
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD, is_world_hud, 30) && f < 70, "gone after the fall (frame %llu)",
+          (unsigned long long)f);
+    app_teardown(&r.a);
+    CHECK(log_has("xr: menu backdrop: on: a dark panel 6 cm beyond the menu board on each side (its rim soft over 5 cm, "
+                  "alpha 0.90), the world dimmed 40 % behind it") && !log_has("NEVER SHOWN") &&
+              log_has("xr: menu backdrop: image 1536x120 format 43 (a static swapchain, 1 image(s)) filled once") &&
+              log_has("xr: menu backdrop 1: a game menu on the board") &&
+              log_has("xr: menu backdrop (the session's end): 1 menu open(s)"),
+          "the backdrop's lines");
+    CHECK(MOCK(mockxr_live)() == 0, "XR objects alive after vkDestroyDevice");
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_MENU_BACK=on without SOMVR_XR_MENU=front, bad values: never shown, logged */
+static int sc_menu_back_nomenu(void) {
+    hudrig r;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    uint64_t f = 0;
+    CHECK(cover_until(&r, &f, SOMVR_HUDK_WORLD | SOMVR_HUDF_MENU, is_world_hud, 60), "a menu's HUD without the board: 2 layers");
+    app_teardown(&r.a);
+    CHECK(log_has("NEVER SHOWN: needs SOMVR_XR_MENU=front") &&
+              log_has("xr: menu backdrop: SOMVR_XR_MENU_BACK_DIM=2 is not 0..0.9: 0.40") &&
+              log_has("xr: cover: SOMVR_XR_COVER=yes is not on or off: off") &&
+              log_has("xr: cover: SOMVR_XR_COVER_MS=x is not 0..5000: 300"),
+          "the lines");
+    check_mock_clean();
+    return 0;
+}
+
 /* ---- the VR settings menu (docs/re-xr-pipeline.md 15, ../../somvr_vrmenu.h): the wrist panel ------------------- */
 _Static_assert(SOMVR_ENV_EQ_W * (SOMVR_ENV_EQ_H + SOMVR_ENV_STRIP) >= SOMVR_VM_TEX_W * SOMVR_VM_TEX_H,
                "the fake driver keeps a whole menu picture");
@@ -5843,6 +6420,7 @@ static int vrhands_obj(int active) {
     return 0;
 }
 static float g_vh_k; /* build 11: the entries' depth_k (0: none) */
+static float g_vh_ghost; /* build 13: the right hand's ghost opacity in the entries (0: none) */
 /* one layout-B stereo frame whose H4 published our hands' entry (flags; put 0: no entry for it) */
 static void vh_stereo(hudrig *r, uint64_t f, uint32_t flags, int put, somvr_views *v) {
     CHECK(locate(v), "frame %llu: locate", (unsigned long long)f);
@@ -5855,6 +6433,9 @@ static void vh_stereo(hudrig *r, uint64_t f, uint32_t flags, int put, somvr_view
         e.grip[h].p[0] = v->pose[0].p[0] + (h ? 0.15f : -0.15f), e.grip[h].p[1] = v->pose[0].p[1] - 0.3f;
         e.grip[h].p[2] = v->pose[0].p[2] - 0.35f;
         for (int k = 0; k < 5; k++) e.curl[h][k] = 0.5f;
+    }
+    if (g_vh_ghost > 0) { /* build 13: the real right hand 12 cm past the drawn one (into a wall) */
+        e.ghost[1] = e.grip[1], e.ghost[1].p[2] -= 0.12f, e.ghost_a[1] = g_vh_ghost;
     }
     if (put) somvr_vrhands_put(g_vho, f, &e);
     V.ncp = V.ntr = 0, V.draws = V.rp_begins = V.resolves = 0, V.draw_idx = 0, V.blits = 0;
@@ -5931,6 +6512,60 @@ static int sc_vrhands(void) {
     CHECK(MOCK(mockxr_live)() == 0 && V.gfx_live == 0 && atomic_load(&g_vho->layer_state) == SOMVR_VHL_OFF,
           "after vkDestroyDevice: XR objects %d, drawing objects %d, state %u", MOCK(mockxr_live)(), V.gfx_live,
           atomic_load(&g_vho->layer_state));
+    check_mock_clean();
+    return 0;
+}
+/* build 13 (SOMVR_HANDS_SURFACE, re-xr-pipeline.md 38): an entry with the right hand's ghost (somvr_vrhands v3): the
+ * ghost skinned at the real grip and drawn once more per eye after the hands; its on/off lines; without it as before */
+static int sc_vrhands_ghost(void) {
+    hudrig r;
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (input_obj(INW_ALL, 1, SOMVR_INPUT_V2_SIZE) || vrhands_obj(1)) return 1;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    somvr_views v;
+    vh_stereo(&r, 1, SOMVR_VHF_L | SOMVR_VHF_R, 1, &v);
+    g_vh_ghost = 0.3f;
+    vh_stereo(&r, 2, SOMVR_VHF_L | SOMVR_VHF_R | SOMVR_VHF_HIDE, 1, &v);
+    CHECK(V.rp_begins == 2 && V.draws == 6 && V.resolves == 2 &&
+              log_has("xr: hands: frame 2: ghost L off R on (opacity 0.00 0.30; SOMVR_HANDS_SURFACE)"),
+          "the ghost: %d render passes, %d draws", V.rp_begins, V.draws);
+    g_vh_ghost = 0;
+    vh_stereo(&r, 3, SOMVR_VHF_L | SOMVR_VHF_R | SOMVR_VHF_HIDE, 1, &v);
+    vh_check(&v, 2, "no ghost again");
+    CHECK(log_has("xr: hands: frame 3: ghost L off R off"), "the ghost's off line");
+    app_teardown(&r.a);
+    check_mock_clean();
+    return 0;
+}
+/* never a void: SOMVR_XR_LOADSPACE with SOMVR_VRHANDS - every menu frame gets our hands from the layer's own input
+ * (the game publishes no hands outside first person): a projection layer from the hands' swapchain over the board,
+ * drawn each frame at the located eyes */
+static int sc_void_hands(void) {
+    hudrig r;
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (input_obj(INW_ALL, 1, SOMVR_INPUT_V2_SIZE) || vrhands_obj(1)) return 1;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    somvr_views v;
+    vh_stereo(&r, 1, SOMVR_VHF_L | SOMVR_VHF_R | SOMVR_VHF_HIDE, 1, &v); /* the drawing made */
+    mockxr_hand right = HAND_R, left = HAND_R; /* in front of the mock's eyes (1.6 m up, 0.1 m back) */
+    right.grip[4] = 0.2f, right.grip[5] = 1.3f, right.grip[6] = -0.5f;
+    left.grip[4] = -0.2f, left.grip[5] = 1.3f, left.grip[6] = -0.5f, left.buttons = 0, left.trigger = 0, left.squeeze = 1;
+    hand_set(0, &left);
+    hand_set(1, &right);
+    int draws = V.draws;
+    for (int i = 0; i < 40; i++) app_present(&r.a);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    int ks = MOCK(mockxr_sc_find)(SOMVR_VOID_IMG_W, SOMVR_VOID_IMG_H);
+    CHECK(ks >= 0 && e->q[1].sc == ks && e->pj_index >= 3 && e->pj_sc[0] >= 2 && e->pj_sc[0] == e->pj_sc[1] &&
+              e->pj_flags == XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT && V.draws > draws + 20,
+          "a menu frame: the floor in %d (want %d), our hands' projection at %d (sc %d/%d, flags 0x%llx), %d draws",
+          e->q[1].sc, ks, e->pj_index, e->pj_sc[0], e->pj_sc[1], (unsigned long long)e->pj_flags, V.draws - draws);
+    app_teardown(&r.a);
+    CHECK(log_has("xr: hands in the loading space: LR hand(s) from the layer's own input"), "log lacks the hands line");
+    CHECK(MOCK(mockxr_live)() == 0 && V.gfx_live == 0, "after vkDestroyDevice: XR objects %d, drawing objects %d",
+          MOCK(mockxr_live)(), V.gfx_live);
     check_mock_clean();
     return 0;
 }
@@ -6251,6 +6886,25 @@ static const struct {
     {"env-reject-ptr", sc_env_reject_ptr, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on MOCKXR_REJECT_SC=64x32", 1},
     {"env-badcfg", sc_env_badcfg,
      "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=sideways SOMVR_XR_ENV_DIM=2 MOCKXR_EXTS=" EQ_EXT, 1},
+    /* never a void */
+    {"void-gaps", sc_void_gaps, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on", 1},
+    {"void-gaps-off", sc_void_gaps_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_GAPS=off", 1},
+    {"void-keep-world", sc_void_keep_world, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"void-keep-menu", sc_void_keep_menu, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on", 1},
+    {"void-space", sc_void_space,
+     "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on SOMVR_XR_LOADSPACE=on SOMVR_XR_LOADSPACE_MS=200 "
+     "MOCKXR_EXTS=" EQ_EXT, 1},
+    {"void-hands", sc_void_hands, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"void-theatre", sc_void_theatre, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_THEATRE=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"void-loadpanel", sc_void_loadpanel, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"void-badcfg", sc_void_badcfg,
+     "SOMVR_XR_LOADER=@MOCK SOMVR_XR_GAPS=3 SOMVR_XR_KEEPALIVE=maybe SOMVR_XR_KEEPALIVE_MS=5 SOMVR_XR_LOADSPACE=x "
+     "SOMVR_XR_LOADSPACE_MS=-1", 1},
+    {"cover", sc_cover, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on SOMVR_XR_COVER=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"cover-off", sc_cover_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"menu-back", sc_menu_back, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MENU=front SOMVR_XR_MENU_BACK=on", 1},
+    {"menu-back-nomenu", sc_menu_back_nomenu,
+     "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MENU_BACK=on SOMVR_XR_MENU_BACK_DIM=2 SOMVR_XR_COVER=yes SOMVR_XR_COVER_MS=x", 1},
     /* the VR menu */
     {"vrmenu", sc_vrmenu, "SOMVR_XR_LOADER=@MOCK", 1},
     {"vrmenu-stereo", sc_vrmenu_stereo, "SOMVR_XR_LOADER=@MOCK", 1},
@@ -6261,6 +6915,7 @@ static const struct {
     {"vrhands-nofuncs", sc_vrhands_nofuncs, "SOMVR_XR_LOADER=@MOCK", 1},
     {"vrhands-inactive", sc_vrhands_inactive, "SOMVR_XR_LOADER=@MOCK", 1},
     {"vrhands-depth", sc_vrhands_depth, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS_DEPTH=world", 1},
+    {"vrhands-ghost", sc_vrhands_ghost, "SOMVR_XR_LOADER=@MOCK", 1},
     {"vrhands-depth-nofuncs", sc_vrhands_depth_nofuncs, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS_DEPTH=world", 1},
     {"wrist-hud", sc_wrist_hud, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MINIMAP=wrist SOMVR_XR_WRIST_HUD=on", 1},
     {"prompts", sc_prompts, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PROMPTS=on MOCKXR_RECENTER_AT=10", 1},

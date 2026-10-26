@@ -3,7 +3,8 @@
 (and, build 10, our VR hands' projection layer from <log>.handsN.ppm + .alpha.pgm, in its slot's place)
 drawn over them as the compositor would (the HUD or the menu board and the wrist minimap from <log>.hudN.ppm, the VR
 menu's panel or card from <log>.vrmenuN.ppm, SOMVR_THREAT's attack glows from its texture rebuilt here, the pointer's
-markers as dots), from the layer's
+markers as dots, the fade - a blink's or a practice trip's black - at its level over the whole view; round 2 of
+the void: SOMVR_XR_MENU_BACK's dim over the world and its dark panel behind a menu board, rebuilt here), from the layer's
 `xr: dump layers frame N:` lines (eye poses and fovs, every quad's pose, size, sub-image rect, flags; build 6).
 
   xr_compose.py RUN_DIR_OR_XR_LAYER_LOG [-f N ...] [-o OUT_DIR] [--ppd P]
@@ -111,9 +112,31 @@ def threat_tex():
     return _TH
 
 
+def back_tex(qd):
+    """SOMVR_XR_MENU_BACK's panel (vklayer/somvr_void.c somvr_back_*): the cell its rect shows, premultiplied, the stored
+    sRGB bytes / 255"""
+    CW, CH, LEVELS, ALPHA, SOFT, RAD = 192, 120, 8, 0.9, 0.05, 0.075
+    x, _, rw, rh = qd["rect"]
+    k = (x - 1) // CW + 1
+    W, H = qd["size"]
+    u = (np.arange(1, 1 + rw) - 0.5) / (CW - 2)
+    v = (np.arange(1, 1 + rh) - 0.5) / (CH - 2)
+    X, Y = np.meshgrid((u - 0.5) * W, (v - 0.5) * H)
+    r = min(RAD, W / 2, H / 2)
+    qx, qy = np.abs(X) - (W / 2 - r), np.abs(Y) - (H / 2 - r)
+    d = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0) - r
+    t = np.clip(-d / SOFT, 0, 1)
+    a = (ALPHA * t * t * (3 - 2 * t) * k / LEVELS).astype(np.float32)
+    lin = np.array([0.010, 0.011, 0.014], np.float32) * a[..., None]
+    enc = np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * np.power(np.maximum(lin, 1e-9), 1 / 2.4) - 0.055)
+    return np.concatenate([np.round(np.clip(enc, 0, 1) * 255) / 255, a[..., None]], axis=2).astype(np.float32)
+
+
 def texture(base, n, qd):
     """RGBA float (premultiplied) of the quad's sub-image, or None (then a dot or skipped)"""
     w = qd["what"]
+    if w == "menu backdrop":
+        return back_tex(qd)
     if w in ("threat cue", "threat edge"):  # an attack's glow; the edge bands (a VIEW space: main() maps them to the head)
         rgb, a = threat_tex()
     elif w.startswith("hud") or w == "minimap":
@@ -312,7 +335,11 @@ def main():
                     wa = qd["rect"][0] // 4 / 127 if "rect" in qd else 1.0
                     img[:] = img * (1 - wa) + np.array([0.82, 0.91, 1.0]) * wa
                     continue
-                if qd["other_space"] or qd["what"] in ("comfort blink", "fade"):
+                if qd["what"] in ("fade", "menu dim") and "rect" in qd:  # a blink/trip black, a menu's dim: the whole view
+                    fa = max(0, min(63, (qd["rect"][0] - 1) // 4)) / 63  # vklayer/somvr_fade.h's 64 levels x 4 texels
+                    img[:] = img * (1 - fa)
+                    continue
+                if qd["other_space"] or qd["what"] in ("comfort blink", "fade", "menu dim"):
                     continue
                 m = draw(img, e, dirs, qd, texture(log, n, qd))
                 if ei == 0 and m.any():

@@ -348,7 +348,9 @@ static void test_layout(void) {
     CHECK(inside && back && contained, "rects inside the texture %d, centres hit back %d, boxes in their rows %d", inside,
           back, contained);
     int r0[4], r1[4], rb[4];
-    const uint32_t ALLR = SOMVR_VMA_MOVES | SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE; /* every row shown (v5 + the size: 18, closer) */
+    /* every row shown (v5 + the size + build 13's crouch, fling and hands at walls: 21, closer) */
+    const uint32_t ALLR = SOMVR_VMA_MOVES | SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE | SOMVR_VMA_CROUCH | SOMVR_VMA_FLING |
+                          SOMVR_VMA_SURFACE;
     somvr_vm_rect_av(ALLR, 0, SOMVR_VMP_ROW, r0);
     somvr_vm_rect_av(ALLR, SOMVR_VMI_ROWS - 1, SOMVR_VMP_ROW, r1);
     somvr_vm_rect_av(ALLR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rb);
@@ -358,8 +360,12 @@ static void test_layout(void) {
         somvr_vm_rect_av(ALLR, i, SOMVR_VMP_ROW, a), somvr_vm_rect_av(ALLR, i + 1, SOMVR_VMP_ROW, b);
         overlap |= a[1] + a[3] > b[1];
     }
-    /* all 18 rows (only with SOMVR_VMA_MOVES, not build 10's): 33 px, still over the font's 32-pixel cell */
-    CHECK(!overlap && r1[1] + r1[3] <= rb[1] && rb[3] >= 48 && r0[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE, "rows apart, the button below them, sizes");
+    /* all 21 rows (only with SOMVR_VMA_MOVES, which no build since 6 has): 28 px, apart, the boxes 26 */
+    CHECK(!overlap && r1[1] + r1[3] <= rb[1] && rb[3] >= 48 && r0[3] >= 28, "rows apart, the button below them, sizes (%d px)",
+          r0[3]);
+    /* build 13's set (no MOVES: 18 rows): over the font's 32-pixel cell */
+    somvr_vm_rect_av(ALLR & ~(uint32_t)SOMVR_VMA_MOVES, 0, SOMVR_VMP_ROW, r0);
+    CHECK(r0[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE, "build 13's 18 rows: %d px", r0[3]);
     somvr_vm_rect(0, SOMVR_VMP_ROW, r0);
     CHECK(r0[3] == 38, "the rows every build shows: 38 px");
     /* a box is at least 2 degrees wide seen from 40 cm (the pointer's target) */
@@ -813,10 +819,14 @@ static void test_sword(void) {
               (s.sword_deg = 12.5f, somvr_vm_apply(&s, A, 0, SOMVR_VMI_SWORD, SOMVR_VMP_LESS) == SOMVR_VMR_CHANGED) &&
               s.sword_deg == 10,
           "from 12.5: up 15, down 10");
-    /* every row shown (v5 + the player size: 18): the sword row below the phase row, the bottom buttons below them and inside the texture */
-    const uint32_t ALLR = SOMVR_VMA_MOVES | SOMVR_VMA_SWORD | SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE;
+    /* every row shown (v5 + the player size + build 13's crouch, fling and hands at walls: 21): the sword row below the
+     * phase row, the bottom buttons below them and inside the texture */
+    const uint32_t ALLR = SOMVR_VMA_MOVES | SOMVR_VMA_SWORD | SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE | SOMVR_VMA_CROUCH |
+                          SOMVR_VMA_FLING | SOMVR_VMA_SURFACE;
     int rp[4], rs[4], rr[4], rq[4], lb[4], mb[4];
-    CHECK(SOMVR_VMI_ROWS == 18 && SOMVR_VMI_SWORD == SOMVR_VMI_ROWS - 3 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
+    memset(rp, 0, sizeof rp), memset(rs, 0, sizeof rs), memset(rr, 0, sizeof rr), memset(rq, 0, sizeof rq);
+    memset(lb, 0, sizeof lb), memset(mb, 0, sizeof mb);
+    CHECK(SOMVR_VMI_ROWS == 21 && SOMVR_VMI_SWORD == SOMVR_VMI_ROWS - 6 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_ROW, rs) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_QUIT, SOMVR_VMP_BUTTON, rq) && somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_LESS, lb) &&
@@ -838,7 +848,7 @@ static void test_size(void) {
     CHECK(s.size == 1.0f && offsetof(somvr_settings, size) == 68 && sizeof(somvr_settings) == 80 &&
               !strcmp(somvr_set_key(SOMVR_SK_PLAYER_SIZE), "PLAYER_SIZE") &&
               !strcmp(somvr_set_env(SOMVR_SK_PLAYER_SIZE), "SOMVR_PLAYER_SIZE") &&
-              somvr_set_find("SOMVR_PLAYER_SIZE") == SOMVR_SK_PLAYER_SIZE && SOMVR_SK_PLAYER_SIZE == SOMVR_SK_N - 1,
+              somvr_set_find("SOMVR_PLAYER_SIZE") == SOMVR_SK_PLAYER_SIZE && SOMVR_SK_PLAYER_SIZE == SOMVR_SK_N - 4,
           "the default 100 %%, the old pad's place, the key and its switch");
     CHECK(somvr_set_put(&s, SOMVR_SK_PLAYER_SIZE, " 115 ") && NEAR(s.size, 1.15, 1e-6) &&
               somvr_set_put(&s, SOMVR_SK_PLAYER_SIZE, "300") && NEAR(s.size, 1.4, 1e-6) &&
@@ -861,7 +871,7 @@ static void test_size(void) {
      * wraps */
     const uint32_t A = SOMVR_VMA_SIZE;
     somvr_set_default(&s);
-    CHECK(SOMVR_VMI_SIZE == SOMVR_VMI_ROWS - 1 && !strcmp(somvr_vm_label(SOMVR_VMI_SIZE), "Player size") &&
+    CHECK(SOMVR_VMI_SIZE == SOMVR_VMI_ROWS - 4 && !strcmp(somvr_vm_label(SOMVR_VMI_SIZE), "Player size") &&
               !somvr_vm_enabled(&s, SOMVR_VMA_SWORD, SOMVR_VMI_SIZE) && somvr_vm_enabled(&s, A, SOMVR_VMI_SIZE) &&
               somvr_vm_apply(&s, 0, 0, SOMVR_VMI_SIZE, SOMVR_VMP_MORE) == SOMVR_VMR_NONE && s.size == 1.0f,
           "the row, its switch");
@@ -891,6 +901,119 @@ static void test_size(void) {
     somvr_vm_hit h = somvr_vm_hit_test_av(AV, SOMVR_VMPG_SETTINGS, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
                                           (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_SIZE && h.part == SOMVR_VMP_MORE, "its > box hits back (%d %d)", h.item, h.part);
+}
+
+/* ---- build 13: the Climb fling and Hands at walls rows: keys = the switches (off|on), the last two rows, shown with
+ * SOMVR_VMA_FLING / SOMVR_VMA_SURFACE; the bytes after the crouch's ---------------------------------------------- */
+static void test_feel(void) {
+    somvr_settings s, b;
+    char v[32], f[32], file[512], note[64];
+    int bad = 0;
+    somvr_set_default(&s);
+    CHECK(s.fling == 0 && s.surface == 0 && offsetof(somvr_settings, fling) == 77 &&
+              offsetof(somvr_settings, surface) == 78 && sizeof(somvr_settings) == 80 &&
+              !strcmp(somvr_set_key(SOMVR_SK_CLIMB_FLING), "CLIMB_FLING") &&
+              !strcmp(somvr_set_env(SOMVR_SK_CLIMB_FLING), "SOMVR_CLIMB_FLING") &&
+              !strcmp(somvr_set_key(SOMVR_SK_HANDS_SURFACE), "HANDS_SURFACE") &&
+              somvr_set_find("SOMVR_HANDS_SURFACE") == SOMVR_SK_HANDS_SURFACE && SOMVR_SK_HANDS_SURFACE == SOMVR_SK_N - 1 &&
+              SOMVR_SK_CLIMB_FLING == SOMVR_SK_N - 2,
+          "the defaults off, the bytes 77 and 78, the keys and their switches");
+    CHECK(somvr_set_put(&s, SOMVR_SK_CLIMB_FLING, " on ") && s.fling == 1 && somvr_set_put(&s, SOMVR_SK_HANDS_SURFACE, "1") &&
+              s.surface == 1 && somvr_set_put(&s, SOMVR_SK_HANDS_SURFACE, "off") && s.surface == 0 &&
+              !somvr_set_put(&s, SOMVR_SK_CLIMB_FLING, "fast") && s.fling == 1,
+          "put: the switches' words");
+    s.surface = 1;
+    somvr_set_get(&s, SOMVR_SK_CLIMB_FLING, v, sizeof v), somvr_set_get(&s, SOMVR_SK_HANDS_SURFACE, f, sizeof f);
+    somvr_set_format(&s, (1u << SOMVR_SK_CLIMB_FLING) | (1u << SOMVR_SK_HANDS_SURFACE), file, sizeof file);
+    somvr_set_default(&b);
+    uint32_t m = somvr_set_parse(&b, file, &bad, note, sizeof note);
+    CHECK(!strcmp(v, "on") && !strcmp(f, "on") && strstr(file, "CLIMB_FLING=on\n") && strstr(file, "HANDS_SURFACE=on\n") &&
+              m == ((1u << SOMVR_SK_CLIMB_FLING) | (1u << SOMVR_SK_HANDS_SURFACE)) && !bad && b.fling == 1 && b.surface == 1 &&
+              somvr_set_diff(&s, &b) == 0 && b.crouch == 0,
+          "the file round trip");
+    somvr_set_default(&s);
+    CHECK(SOMVR_VMI_FLING == SOMVR_VMI_ROWS - 2 && SOMVR_VMI_SURFACE == SOMVR_VMI_ROWS - 1 &&
+              !strcmp(somvr_vm_label(SOMVR_VMI_FLING), "Climb fling") &&
+              !strcmp(somvr_vm_label(SOMVR_VMI_SURFACE), "Hands at walls") && !somvr_vm_shown(0, SOMVR_VMI_FLING) &&
+              !somvr_vm_shown(SOMVR_VMA_SURFACE, SOMVR_VMI_FLING) && somvr_vm_shown(SOMVR_VMA_FLING, SOMVR_VMI_FLING) &&
+              !somvr_vm_shown(SOMVR_VMA_FLING, SOMVR_VMI_SURFACE) && somvr_vm_shown(SOMVR_VMA_SURFACE, SOMVR_VMI_SURFACE) &&
+              somvr_vm_enabled(&s, SOMVR_VMA_FLING, SOMVR_VMI_FLING) && !somvr_vm_enabled(&s, 0, SOMVR_VMI_SURFACE),
+          "the last two rows, shown and enabled with their bits only");
+    s.fling = 1;
+    somvr_vm_value(&s, SOMVR_VMI_FLING, v, sizeof v), somvr_vm_value(&s, SOMVR_VMI_SURFACE, f, sizeof f);
+    CHECK(!strcmp(v, "On") && !strcmp(f, "Off") &&
+              somvr_vm_apply(&s, SOMVR_VMA_FLING, 0, SOMVR_VMI_FLING, SOMVR_VMP_LESS) == SOMVR_VMR_CHANGED && s.fling == 0 &&
+              somvr_vm_apply(&s, 0, 0, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW) == SOMVR_VMR_NONE && s.surface == 0 &&
+              somvr_vm_apply(&s, SOMVR_VMA_SURFACE, 0, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW) == SOMVR_VMR_CHANGED &&
+              s.surface == 1,
+          "the values, a press toggles (not without the bit)");
+    /* build 13's rows on the page: the crouch, the fling, the hands at walls the last three, apart, above Recentre */
+    const uint32_t B13 = SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE | SOMVR_VMA_SWORD | SOMVR_VMA_CROUCH | SOMVR_VMA_FLING |
+                         SOMVR_VMA_SURFACE | SOMVR_VMA_COMFORT | SOMVR_VMA_HUD | SOMVR_VMA_VIEW;
+    int rc[4], rf[4], rh[4], rr[4];
+    memset(rc, 0, sizeof rc), memset(rf, 0, sizeof rf), memset(rh, 0, sizeof rh), memset(rr, 0, sizeof rr);
+    CHECK(somvr_vm_rect_av(B13, SOMVR_VMI_CROUCH, SOMVR_VMP_ROW, rc) && somvr_vm_rect_av(B13, SOMVR_VMI_FLING, SOMVR_VMP_ROW, rf) &&
+              somvr_vm_rect_av(B13, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW, rh) &&
+              somvr_vm_rect_av(B13, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rc[1] + rc[3] <= rf[1] &&
+              rf[1] + rf[3] <= rh[1] && rh[1] + rh[3] <= rr[1] && rh[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE,
+          "build 13's page: crouch %d, fling %d, hands %d (%d px), Recentre %d", rc[1], rf[1], rh[1], rh[3], rr[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_av(B13, SOMVR_VMPG_SETTINGS, (rh[0] + 20.0f) / SOMVR_VM_TEX_W,
+                                          (rh[1] + 0.5f * rh[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == SOMVR_VMI_SURFACE && h.part == SOMVR_VMP_ROW, "the hands row hits back (%d %d)", h.item, h.part);
+}
+
+/* ---- build 13: the Crouch row (re-xr-pipeline.md 41): the key, button|duck, the last row, shown with SOMVR_CROUCH --- */
+static void test_crouch(void) {
+    somvr_settings s, b;
+    char v[32], file[512];
+    somvr_set_default(&s);
+    CHECK(s.crouch == 0 && offsetof(somvr_settings, crouch) == 76 && sizeof(somvr_settings) == 80 &&
+              !strcmp(somvr_set_key(SOMVR_SK_CROUCH), "CROUCH") && !strcmp(somvr_set_env(SOMVR_SK_CROUCH), "SOMVR_CROUCH") &&
+              somvr_set_find("CROUCH") == SOMVR_SK_CROUCH && SOMVR_SK_CROUCH == SOMVR_SK_N - 3,
+          "the default button, the old pad's place, the key and its switch");
+    CHECK(somvr_set_put(&s, SOMVR_SK_CROUCH, " duck ") && s.crouch == 1 && somvr_set_put(&s, SOMVR_SK_CROUCH, "button") &&
+              s.crouch == 0 && !somvr_set_put(&s, SOMVR_SK_CROUCH, "1") && !somvr_set_put(&s, SOMVR_SK_CROUCH, "on"),
+          "put: button|duck only");
+    s.crouch = 1;
+    somvr_set_get(&s, SOMVR_SK_CROUCH, v, sizeof v);
+    somvr_set_format(&s, 1u << SOMVR_SK_CROUCH, file, sizeof file);
+    somvr_set_default(&b);
+    int bad = 0;
+    char note[64];
+    uint32_t m = somvr_set_parse(&b, file, &bad, note, sizeof note);
+    CHECK(!strcmp(v, "duck") && strstr(file, "CROUCH=duck\n") && m == 1u << SOMVR_SK_CROUCH && !bad && b.crouch == 1 &&
+              somvr_set_diff(&s, &b) == 0,
+          "the file round trip: '%s'", v);
+    somvr_set_default(&b);
+    CHECK(somvr_set_diff(&s, &b) == 1u << SOMVR_SK_CROUCH, "the diff sees it");
+    const uint32_t A = SOMVR_VMA_CROUCH;
+    somvr_set_default(&s);
+    CHECK(SOMVR_VMI_CROUCH == SOMVR_VMI_ROWS - 3 && !strcmp(somvr_vm_label(SOMVR_VMI_CROUCH), "Crouch") &&
+              !somvr_vm_shown(0, SOMVR_VMI_CROUCH) && somvr_vm_shown(A, SOMVR_VMI_CROUCH) &&
+              !somvr_vm_enabled(&s, SOMVR_VMA_SIZE, SOMVR_VMI_CROUCH) && somvr_vm_enabled(&s, A, SOMVR_VMI_CROUCH),
+          "the row after the size, shown and enabled with SOMVR_VMA_CROUCH only");
+    somvr_vm_value(&s, SOMVR_VMI_CROUCH, v, sizeof v);
+    CHECK(!strcmp(v, "Button") && somvr_vm_apply(&s, A, 0, SOMVR_VMI_CROUCH, SOMVR_VMP_ROW) == SOMVR_VMR_CHANGED &&
+              s.crouch == 1,
+          "'Button' shown, the row: Duck");
+    somvr_vm_value(&s, SOMVR_VMI_CROUCH, v, sizeof v);
+    CHECK(!strcmp(v, "Duck") && somvr_vm_apply(&s, A, 0, SOMVR_VMI_CROUCH, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED &&
+              s.crouch == 0,
+          "'Duck' shown, > back to Button");
+    s.seated = 1;
+    CHECK(!somvr_vm_enabled(&s, A, SOMVR_VMI_CROUCH), "seated play: dimmed (the button's)");
+    /* the layout with every row this build shows (no moves): the crouch row under the size, above the buttons */
+    const uint32_t AV = SOMVR_VMA_COMFORT | SOMVR_VMA_HUD | SOMVR_VMA_VIEW | SOMVR_VMA_SWORD | SOMVR_VMA_MUSIC |
+                        SOMVR_VMA_SIZE | SOMVR_VMA_CROUCH;
+    int rz[4], rc[4], rr[4], mb[4];
+    CHECK(somvr_vm_rect_av(AV, SOMVR_VMI_SIZE, SOMVR_VMP_ROW, rz) && somvr_vm_rect_av(AV, SOMVR_VMI_CROUCH, SOMVR_VMP_ROW, rc) &&
+              somvr_vm_rect_av(AV, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) &&
+              somvr_vm_rect_av(AV, SOMVR_VMI_CROUCH, SOMVR_VMP_MORE, mb) && rz[1] + rz[3] <= rc[1] &&
+              rc[1] + rc[3] <= rr[1] && rc[3] >= 36,
+          "the layout: size %d..%d, crouch %d..%d, the buttons from %d", rz[1], rz[1] + rz[3], rc[1], rc[1] + rc[3], rr[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_av(AV, SOMVR_VMPG_SETTINGS, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
+                                          (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == SOMVR_VMI_CROUCH && h.part == SOMVR_VMP_MORE, "its > box hits back (%d %d)", h.item, h.part);
 }
 
 /* ---- v3: the practice page (re-xr-pipeline.md 27): the tab, its buttons and the orc type, the request word -------- */
@@ -1237,8 +1360,7 @@ static void test_controls(void) {
     for (int i = 0; i < n; i++) {
         somvr_vm_controls(i, &k, &w);
         fit &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
-        held |= !strcmp(w, "or hold menu button") && i > 0 && !strcmp((somvr_vm_controls(i - 1, &k, &w), k), "Menu");
-        somvr_vm_controls(i, &k, &w);
+        held |= !strcmp(k, "Menu") && strstr(w, "palm") && strstr(w, "hold"); /* build 13: one line */
         walk |= !strcmp(k, "Walk"), sword |= !strcmp(k, "Sword"), menu |= !strcmp(k, "Menu"), orc |= !strcmp(k, "Orc");
         quit |= !strcmp(k, "Quit") && strstr(w, "Settings") != NULL; /* the bottom row of the Settings page */
         mm |= !strcmp(k, "Minimap") && strstr(w, "wrist") != NULL;
@@ -1257,12 +1379,42 @@ static void test_controls(void) {
               dy >= SOMVR_FONT_H * SOMVR_VM_SCALE && dy <= SOMVR_VM_CTL_DY && somvr_vm_controls_note(0) &&
               !somvr_vm_controls_note(SOMVR_VM_CTL_NOTES),
           "the lines, the notes and the card's hint fit the panel (%d px apart)", dy);
-    /* the notes name what this build lacks */
-    CHECK(!strstr(somvr_vm_controls_note(0), "bow") && !strstr(somvr_vm_controls_note(1), "bow") &&
-              strstr(somvr_vm_controls_note(0), "dash") && strstr(somvr_vm_controls_note(0), "phase") &&
-              strstr(somvr_vm_controls_note(1), "finishers") && strstr(somvr_vm_controls_note(1), "Strike") &&
+    /* the notes: the execution (build 13; no stale "Not yet"; the second empty without the verbs) */
+    CHECK(!strstr(somvr_vm_controls_note(0), "Not yet") && !strstr(somvr_vm_controls_note(1), "Not yet") &&
+              strstr(somvr_vm_controls_note(0), "Execute") && !*somvr_vm_controls_note(1) &&
               strlen(somvr_vm_controls_note(0)) <= 29 && strlen(somvr_vm_controls_note(1)) <= 29,
           "the notes: '%s' '%s'", somvr_vm_controls_note(0), somvr_vm_controls_note(1));
+    /* build 13's switches (the fling, the verbs, the descent; the Report and Quit buttons): 18 lines, the climb's fling,
+     * the drop at an edge, the grab and the execution as lines, the held orc's drain and interrogation in the notes;
+     * Quit and Sheathe dropped for room (the Settings page's own Quit button; the same gesture), Sprint kept */
+    {
+        uint32_t a13 = SOMVR_VMA_FLING | SOMVR_VMA_VERBS | SOMVR_VMA_DESCENT | SOMVR_VMA_MARK | SOMVR_VMA_QUIT;
+        int n13 = somvr_vm_controls_av(a13, 0, &k, &w), climb = 0, edge = 0, grab = 0, exe = 0, q13 = 0, sh = 0, spr = 0,
+            fit13 = 1, old_drop = 0;
+        for (int i = 0; i < n13; i++) {
+            somvr_vm_controls_av(a13, i, &k, &w);
+            fit13 &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
+            climb |= !strcmp(k, "Climb") && strstr(w, "fling") != NULL;
+            edge |= !strcmp(k, "Drop") && !strcmp(w, "A (wall, edge)");
+            old_drop |= !strcmp(w, "A (on a wall)");
+            grab |= !strcmp(k, "Grab") && strstr(w, "L grip") == w;
+            exe |= !strcmp(k, "Execute"), q13 |= !strcmp(k, "Quit"), sh |= !strcmp(k, "Sheathe");
+            spr |= !strcmp(k, "Sprint");
+        }
+        int dy13 = somvr_vm_ctl_dy_av(a13);
+        const char *n0 = somvr_vm_controls_note_av(a13, 0), *n1 = somvr_vm_controls_note_av(a13, 1);
+        CHECK(n13 == SOMVR_VM_CTL_FIT && n13 == 18 && fit13 && climb && edge && !old_drop && grab && exe && !q13 && !sh &&
+                  spr && dy13 >= SOMVR_FONT_H * SOMVR_VM_SCALE &&
+                  SOMVR_VM_CTL_Y0 + dy13 * (n13 + SOMVR_VM_CTL_NOTES + 1) + 4 <= SOMVR_VM_TEX_H - 12 && strstr(n0, "drain") &&
+                  strstr(n1, "interrogate") && strlen(n0) <= 29 && strlen(n1) <= 29,
+              "build 13's controls: %d lines at %d px (climb %d edge %d grab %d execute %d quit %d sheathe %d), notes '%s' '%s'",
+              n13, dy13, climb, edge, grab, exe, q13, sh, n0, n1);
+        /* one switch alone: its own line, the rest as build 12 (the drop at an edge only with the descent) */
+        somvr_vm_controls_av(SOMVR_VMA_DESCENT, 7, &k, &w);
+        CHECK(!strcmp(k, "Drop") && !strcmp(w, "A (wall, edge)") &&
+                  somvr_vm_controls_av(SOMVR_VMA_DESCENT, 0, &k, &w) == n,
+              "the descent alone: line 8 '%s: %s', %d lines", k, w, somvr_vm_controls_av(SOMVR_VMA_DESCENT, 0, &k, &w));
+    }
     /* the pictures: the Controls page, the card (no tabs: a title; the close hint) */
     somvr_vm_view vw;
     memset(&vw, 0, sizeof vw);
@@ -1393,6 +1545,8 @@ int main(void) {
     test_practice();
     test_sword();
     test_size();
+    test_feel();
+    test_crouch();
     test_session_buttons();
     test_controls();
     test_music_rows();

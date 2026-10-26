@@ -23,7 +23,8 @@
  *
  * 2. The settings (somvr_settings) and their file (SOMVR_SETTINGS=FILE): one KEY=VALUE per line, '#' comments; the
  *    keys are the switches' names without SOMVR_ (TURN=snap|smooth, SNAP_DEG, TURN_DPS, VIGNETTE, SNAP_BLINK_MS,
- *    SEATED, HEIGHT_CM, HAPTICS, STEP, DASH, PHASE, SWORD_ANGLE, MUSIC, PLAYER_SIZE: the environment variables of the
+ *    SEATED, HEIGHT_CM, HAPTICS, STEP, DASH, PHASE, SWORD_ANGLE, MUSIC, PLAYER_SIZE, CROUCH, CLIMB_FLING,
+ *    HANDS_SURFACE: the environment variables of the
  *    same name; HUD=on|off,
  *    HUD_DIST_M, HAND=right|left, VIEW=first|third: the menu's own). Parse and format are pure and locale-free.
  *
@@ -74,6 +75,12 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
     SOMVR_VMA_SWORD = 4096u,   /* v4: SOMVR_ARMS: the sword in the hand, its angle (SOMVR_SWORD_ANGLE) live */
     SOMVR_VMA_MUSIC = 8192u,   /* v5: SOMVR_MUSIC: the game's music volume (its options_music RTPC) follows the menu */
     SOMVR_VMA_SIZE = 16384u,   /* the player size (SOMVR_PLAYER_SIZE, re-xr-pipeline.md 35): first person on the head */
+    SOMVR_VMA_CROUCH = 32768u, /* build 13: SOMVR_CROUCH set (re-xr-pipeline.md 41): the Crouch row (duck / button) */
+    /* build 13: the preload's switches that change the Controls page's lines (somvr_vm_controls_av) and two rows */
+    SOMVR_VMA_VERBS = 65536u,    /* SOMVR_VERBS=on: the grab's line and notes */
+    SOMVR_VMA_DESCENT = 131072u, /* SOMVR_CLIMB_DESCENT=on: "Drop: A (wall, edge)" */
+    SOMVR_VMA_SURFACE = 262144u, /* SOMVR_HANDS_SURFACE=on running: the Hands at walls row */
+    SOMVR_VMA_FLING = 524288u,   /* SOMVR_CLIMB_FLING=on with the hang: "Climb: grip, pull; fling up", the Climb fling row */
 };
 /* the practice page's requests (somvr_vrmenu_shared.practice; = somvr_practice.h's SOMVR_PRA_*) */
 enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_SPAWN = 3, SOMVR_VMPR_REMOVE = 4 };
@@ -107,7 +114,12 @@ typedef struct {
                                 * was pad2 (0): a preload that sets no SOMVR_VMA_SIZE ignores it */
     float music;               /* 72: v5: the game's music at this share of its own volume setting, 0..1 (SOMVR_MUSIC;
                                 * 1 = as the game sets it) */
-    uint32_t pad3;             /* 76 */
+    uint8_t crouch;            /* 76: build 13: 0 button, 1 duck (SOMVR_CROUCH; re-xr-pipeline.md 41); was pad3 (0): a
+                                * preload that sets no SOMVR_VMA_CROUCH ignores it */
+    uint8_t fling;             /* 77: build 13: the climb's fling 0 off, 1 on (SOMVR_CLIMB_FLING; needs SOMVR_VMA_FLING) */
+    uint8_t surface;           /* 78: build 13: the hands stop at surfaces 0 off, 1 on (SOMVR_HANDS_SURFACE; needs
+                                * SOMVR_VMA_SURFACE) */
+    uint8_t pad3;              /* 79 */
 } somvr_settings;              /* 80 */
 
 typedef struct somvr_vrmenu_shared {
@@ -162,7 +174,7 @@ static inline int somvr_vrmenu_read(somvr_vrmenu_shared *m, somvr_settings *out)
 enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, SOMVR_SK_SNAP_BLINK_MS, SOMVR_SK_SEATED,
        SOMVR_SK_HEIGHT_CM, SOMVR_SK_HUD, SOMVR_SK_HUD_DIST_M, SOMVR_SK_HAND, SOMVR_SK_VIEW, SOMVR_SK_HAPTICS,
        SOMVR_SK_STEP, SOMVR_SK_DASH, SOMVR_SK_PHASE, SOMVR_SK_SWORD_ANGLE /* v4 */, SOMVR_SK_MUSIC /* v5 */,
-       SOMVR_SK_PLAYER_SIZE, SOMVR_SK_N };
+       SOMVR_SK_PLAYER_SIZE, SOMVR_SK_CROUCH /* build 13 */, SOMVR_SK_CLIMB_FLING, SOMVR_SK_HANDS_SURFACE, SOMVR_SK_N };
 #define SOMVR_SK_ALL ((1u << SOMVR_SK_N) - 1u)
 #define SOMVR_SET_BLINK_MS 140u /* "Snap blink: On" without a SOMVR_SNAP_BLINK_MS: HoF2's quick blink (50 + 90 ms) */
 
@@ -190,11 +202,14 @@ int somvr_set_num(const char *v, double *out);
 enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMVR_VMI_BLINK, SOMVR_VMI_SEATED,
        SOMVR_VMI_HEIGHT, SOMVR_VMI_HUD, SOMVR_VMI_HUD_DIST, SOMVR_VMI_HAND, SOMVR_VMI_VIEW, SOMVR_VMI_HAPTICS,
        SOMVR_VMI_STEP, SOMVR_VMI_DASH, SOMVR_VMI_PHASE, SOMVR_VMI_SWORD /* v4 */, SOMVR_VMI_MUSIC /* v5 */,
-       SOMVR_VMI_SIZE, SOMVR_VMI_RECENTER, SOMVR_VMI_CLOSE, SOMVR_VMI_N };
+       SOMVR_VMI_SIZE, SOMVR_VMI_CROUCH /* build 13 */, SOMVR_VMI_FLING, SOMVR_VMI_SURFACE, SOMVR_VMI_RECENTER,
+       SOMVR_VMI_CLOSE, SOMVR_VMI_N };
 #define SOMVR_VMI_ROWS SOMVR_VMI_RECENTER /* the value rows; then the Recentre button and the close box */
 /* Build 10: a value row whose feature this build does not have at all is not shown (the rows below close up): the
  * assisted step, the dash and the wraith phase without SOMVR_VMA_MOVES (SOMVR_GAMEMOVES=off: they never start, the
- * user's "I turn on wraith phase, nothing happens"), Music without SOMVR_VMA_MUSIC. A row that only does not apply now
+ * user's "I turn on wraith phase, nothing happens"), Music without SOMVR_VMA_MUSIC; build 13: Climb fling without
+ * SOMVR_VMA_FLING, Hands at walls without SOMVR_VMA_SURFACE (build 13's set: 17 rows of 35 px; all 20 only with MOVES,
+ * which no build since 6 has: 30 px, the boxes 28). A row that only does not apply now
  * (the snap angle with smooth turns ...) stays, dimmed. 1 = shown. */
 int somvr_vm_shown(uint32_t avail, int item);
 /* since v3: the page tab (the title bar: "Practice" on the settings page, "Settings" on the practice page) and the
@@ -211,15 +226,22 @@ enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2
 int somvr_vm_tab_page(int item);
 /* The Controls page's lines (build 6): line i's key ("Walk") and what does it ("left stick"); returns the number of
  * lines (i out of range: NULL, NULL). Only what works in this build; the bug-mark chord is SOMVR_VM_CTL_REPORT. */
-int somvr_vm_controls(int i, const char **key, const char **what);
+int somvr_vm_controls(int i, const char **key, const char **what); /* = _av(0, ...) */
+/* build 13: the lines for the preload's avail (SOMVR_VMA_FLING, _VERBS, _DESCENT pick their lines); when more lines
+ * than SOMVR_VM_CTL_FIT are wanted the optional ones go (Quit first: the Settings page's own button, then Sheathe) */
+int somvr_vm_controls_av(uint32_t avail, int i, const char **key, const char **what);
 /* ... drawn from y SOMVR_VM_CTL_Y0, one every somvr_vm_ctl_dy() pixels (SOMVR_VM_CTL_DY, closer when the lines, the
  * notes and the card's hint would not fit the panel; never under the font's 32-pixel cell); then SOMVR_VM_CTL_NOTES
  * dim lines (what is not in this build) and on the card its close hint */
 #define SOMVR_VM_CTL_Y0 68
 #define SOMVR_VM_CTL_DY 34
-int somvr_vm_ctl_dy(void);
+int somvr_vm_ctl_dy(void);                 /* = _av(0) */
+int somvr_vm_ctl_dy_av(uint32_t avail);
 #define SOMVR_VM_CTL_NOTES 2
-const char *somvr_vm_controls_note(int i); /* the dim lines (i out of range: NULL) */
+/* the lines that fit with the notes and the card's hint at the font's 32-pixel cell (18 on the 768-pixel panel) */
+#define SOMVR_VM_CTL_FIT ((SOMVR_VM_TEX_H - 16 - 4 - SOMVR_VM_CTL_Y0) / 32 - SOMVR_VM_CTL_NOTES - 1)
+const char *somvr_vm_controls_note(int i); /* the dim lines (i out of range: NULL); = _av(0, i) */
+const char *somvr_vm_controls_note_av(uint32_t avail, int i); /* with SOMVR_VMA_VERBS: what a held orc does */
 enum { SOMVR_VMP_NONE, SOMVR_VMP_ROW, SOMVR_VMP_LESS, SOMVR_VMP_MORE, SOMVR_VMP_BUTTON };
 typedef struct { int item, part; } somvr_vm_hit; /* item -1 = none */
 

@@ -18,7 +18,7 @@
 #   bers    the berserker: the guard, its blows, lunges
 # Grips: `hands test R x y z rx ry rz` = cm right/up/ahead of the head's yaw frame, deg about the OpenXR grip's X Y Z;
 # `hands swing R <the same 6> MS`. The sword slot: 10 right, -10 up, -15 ahead of the head (SOMVR_SLOTS defaults).
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${C10_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${C10_STEPS:-draws auto guard swings timed bers}
 T0=$(date +%s)
@@ -34,7 +34,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

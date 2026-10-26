@@ -4,7 +4,7 @@
 # arrival's texture wait under the black (SOMVR_PRACTICE_LOADHOLD), the practice orc with SOMVR_PRACTICE_QUIET on, a
 # stick walk with both-eye marks, the trip back and a second trip there; then quits via RUN/cmd.
 # T0 = the start time (date +%s); the newest logs/boot-check-* folder made after it is the run. Log: $TMPDIR/cl.log
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 T0=${1:?T0}
 LOG=${TMPDIR:-/tmp}/cl.log
 echo "watcher start $(date +%T) t0=$T0" > "$LOG"

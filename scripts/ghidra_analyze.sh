@@ -22,7 +22,7 @@
 # No wall-clock deadline: analyzeHeadless gets no -analysisTimeoutPerFile, so gate pauses can't kill a job.
 # SIGSTOP/SIGCONT/systemd need the real PID namespace: run start/status OUTSIDE the Claude Bash sandbox.
 set -u
-. /home/bara/Projects/flat2vr/ShadowOfMordor/scripts/ghidra_env.sh
+. "$HOME/Projects/flat2vr/ShadowOfMordor/scripts/ghidra_env.sh"
 SELF=$SOM/scripts/ghidra_analyze.sh
 UNIT=${SOM_GHIDRA_UNIT:-som-ghidra}
 MAXMEM=${SOM_GHIDRA_MAXMEM:-24G}

@@ -13,7 +13,7 @@
 # layout with the headless avail (14 rows: no MOVES, with MUSIC; somvr_vm_rect_av): Vignette < 0.547 0.2565, > 0.922
 # 0.2565; Music < 0.547 0.7513, > 0.922 0.7513; the Controls tab 0.723 0.042, the Settings tab 0.160 0.042. Prints
 # PASS/FAIL lines from the logs; ends with a quit. Stops at once (quit) when the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${C10_WT:-t3-7a4617f8}
 T0=$(date +%s)
 R=""
@@ -28,7 +28,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

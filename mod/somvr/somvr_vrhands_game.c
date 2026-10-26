@@ -249,6 +249,7 @@ static void vh_arm(const sa_xf g[2], const int valid[2], int64_t T, float dt)
 	}
 	if (g_bd.two.w > 0)
 		e->flags |= SOMVR_VHF_TWO;
+	sf_ghost(e); /* SOMVR_HANDS_SURFACE: the real hands where a surface stopped these (v3) */
 	g_vh.have = 1;
 }
 

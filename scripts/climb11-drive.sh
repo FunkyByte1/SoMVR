@@ -20,7 +20,7 @@
 # CLIMB_INTO (1: at the top no mantle: the hands reach up and in onto the pillar over the narrow ledge, as the user did,
 # and pull the body up and in over it; then both open (hang) and A: Talion lands on the ledge), CLIMB_WT. Stops at once
 # (quit) when the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${CLIMB_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 AT=${CLIMB_AT-33350 2000 -27900}
 PULLS=${CLIMB_PULLS:-9}
@@ -47,7 +47,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

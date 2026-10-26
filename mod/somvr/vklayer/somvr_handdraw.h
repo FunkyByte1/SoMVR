@@ -92,8 +92,11 @@ void hd_destroy(hd_ctx *c);
  * the depth image's pixels per pixel of ours; debug: the hands show (their distance - the world's) instead (red 0.5 =
  * at the surface, +-10 cm; green: the sky; blue: the fade). 0 = ready, -1 = not (c->why; the plain pipeline draws) */
 int hd_world(hd_ctx *c, const hd_vkw *wf, float soft_m, float bias_m, float texel, int debug);
-/* slot s's vertices: [the left hand: nv][the right hand: nv][the occluders: 4 per quad] (host-coherent) */
+/* slot s's vertices: [the left hand: nv][the right hand: nv][the occluders: 4 per quad, HD_MAX_OCC][build 13: the
+ * ghosts of the left and the right hand: nv each] (host-coherent) */
 hd_vert *hd_slot_verts(hd_ctx *c, uint32_t s);
+/* build 13 (SOMVR_HANDS_SURFACE): slot s's ghost of hand h (nv vertices) */
+hd_vert *hd_slot_ghost(hd_ctx *c, uint32_t s, int h);
 /* an occluder quad (centre, its two half-axes) into v[0..3] */
 void hd_quad(hd_vert v[4], const float centre[3], const float half_x[3], const float half_y[3]);
 
@@ -113,6 +116,11 @@ typedef struct {
     VkImageView world[2];
     float held[2];          /* per hand holding a weapon: the world's depth read as Talion's held items' (their depth
                              * as if the near plane were this times the eyes'; 1 = as the world's) */
+    /* build 13 (SOMVR_HANDS_SURFACE): the real hands' ghosts where a surface stopped the drawn ones: ghost_a[h] > 0
+     * draws hd_slot_ghost(h) that opaque in ghost_base with a strong rim, after the hands and never against the world's
+     * depth (it is in the wall); our own depth (the hands, the occluders) still hides it */
+    float ghost_a[2];
+    float ghost_base[3];
 } hd_frame;
 /* the screen box (pixels of a w x h eye, padded by pad) of n vertices under the clip matrix vp; 0 = none on the screen,
  * 1 = box, 2 = a vertex behind the eye (the whole eye) */

@@ -289,6 +289,7 @@ static const char *xr_str(XrResult r) {
 
 static void xr_global_init(void);
 static void mn_config(void); /* build 6 (./somvr_menus_layer.c, included before vm_frame) */
+static void vd_config(void); /* never a void: SOMVR_XR_GAPS (./somvr_void_layer.c) */
 static void once_init(void) {
     const char *p = getenv("SOMVR_XR_LOG"), *logp = p;
     if (p && *p) g_log = fopen(p, "ae");
@@ -342,6 +343,7 @@ static void once_init(void) {
         }
     }
     mn_config(); /* build 6: SOMVR_XR_MENU, _MINIMAP, _CARD, _TOUCH (./somvr_menus_layer.c) */
+    vd_config(); /* never a void: SOMVR_XR_GAPS (./somvr_void_layer.c) */
 }
 static void init(void) { pthread_once(&g_once, once_init); }
 
@@ -367,10 +369,12 @@ typedef struct inst_st {
     X(AllocateCommandBuffers) X(FreeCommandBuffers) X(ResetCommandBuffer) X(BeginCommandBuffer) X(EndCommandBuffer)   \
     X(CmdPipelineBarrier) X(CmdCopyImage) X(CmdBlitImage) X(CreateFence) X(DestroyFence) X(WaitForFences)            \
     X(ResetFences) X(CreateSemaphore) X(DestroySemaphore) X(CreateImage) X(DestroyImage)                             \
+    X(GetFenceStatus) /* SOMVR_XR_COVER: a reading's submit done (polled, never waited for) */                     \
     X(CreateBuffer) X(DestroyBuffer) X(GetBufferMemoryRequirements) X(AllocateMemory) X(FreeMemory)                  \
     X(BindBufferMemory) X(MapMemory) X(UnmapMemory) X(CmdCopyImageToBuffer) /* these two lines: SOMVR_XR_DUMP */ \
     X(CmdCopyBufferToImage) /* the pointer image's one upload */                                                    \
-    X(CmdClearColorImage) /* build 6: the HUD image's minimap column */
+    X(CmdClearColorImage) /* build 6: the HUD image's minimap column */                                             \
+    X(QueueSubmit2) X(QueueSubmit2KHR) X(QueueBindSparse) X(QueueWaitIdle) X(DeviceWaitIdle) /* the keep-alive's lock */
 
 typedef struct dev_st {
     struct dev_st *next;
@@ -404,6 +408,7 @@ typedef struct {
     VkSemaphore sem;
     int pending; /* fence submitted, not yet waited */
 } slot_st;
+static void cv_slot_done(const slot_st *sl, int idle); /* SOMVR_XR_COVER (./somvr_void_layer.c): its readings */
 
 typedef struct sc_st {
     struct sc_st *next;
@@ -535,6 +540,8 @@ static void mn_dump_write(void);
 static void mn_xt_config(void);      /* SOMVR_XR_TEST: the test hands (headless boots) */
 static uint32_t mn_xt_buttons(int h);
 static void mn_xt_apply(void);
+static void th_wrap(void);           /* SOMVR_XR_TEST `head X Y Z`: the test head (somvr_testhead_layer.c) */
+static int th_xt(const char *line);
 
 /* ---- OpenXR state (one XR instance per process; all fields under X.mx) ------------------------------------------ */
 #define XR_FUNCS(X)                                                                                                    \
@@ -662,17 +669,19 @@ static struct {
  * the ring, the HUD and the blink. A part the runtime rejects goes off alone (xr_end_comp). Build 8's prompt band
  * (XL_BAND) makes 17 slots from the projection on: a frame that would carry more than 16 goes without it (xl_cap). */
 #define XL_ENV_N 9
-enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING, XL_THE0, XL_THE1, XL_HUD,
+enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING, XL_THE0, XL_THE1,
+       XL_MBD, XL_MBK, /* SOMVR_XR_MENU_BACK: the world's dim and the dark panel behind a game menu's board */
+       XL_HUD,
        XL_BAND, /* build 8: the prompt band (a part of the HUD: off with it; the first to go beyond 16 layers) */
        XL_MMAP, /* build 6: the wrist minimap (a part of the HUD: off with it) */
        XL_PTR0, XL_PTR1, XL_VM0, XL_VM1, XL_VM2,
        XL_HANDS, /* build 10: our own VR hands (a projection layer over the wrist panel and the watch) */
        XL_BLINK, XL_FADE, XL_N };
 enum { XG_FADE = 1u << 0, XG_CF = 1u << 1, XG_PTR = 1u << 2, XG_HUD = 1u << 3, XG_ENV = 1u << 4, XG_VM = 1u << 5,
-       XG_TH = 1u << 6, XG_VH = 1u << 7 };
+       XG_TH = 1u << 6, XG_VH = 1u << 7, XG_MB = 1u << 8 };
 _Static_assert(XL_ENV_N + 1 + 2 + 3 + 1 <= 16, "a mono frame's worst case: env, quad, pointer, VR menu, fade");
-_Static_assert(XL_N - XL_OWN <= 18, "a stereo frame's worst case: every slot from the projection on, less the band and "
-                                    "the hands (xl_cap)");
+_Static_assert(XL_N - XL_OWN <= 20, "a stereo frame's worst case: every slot from the projection on, less the band, "
+                                    "the hands and the menu backdrop's two (xl_cap)");
 #define XL_MAX 16 /* XR_MIN_COMPOSITION_LAYERS_SUPPORTED: a frame with more loses the band (xl_cap) */
 _Static_assert(XL_THG2 - XL_THG0 + 1 == SOMVR_TH_GLOWS && XL_THE1 - XL_THE0 == 1, "the threat slots");
 typedef struct {
@@ -682,6 +691,7 @@ static uint32_t xl_group(int i) {
     if (i < XL_OWN) return XG_ENV;
     if (i >= XL_VM0 && i <= XL_VM2) return XG_VM;
     if (i == XL_HANDS) return XG_VH;
+    if (i == XL_MBD || i == XL_MBK) return XG_MB;
     if ((i >= XL_THG0 && i <= XL_THG2) || i == XL_THE0 || i == XL_THE1) return XG_TH;
     return i == XL_FADE ? XG_FADE : i == XL_RING || i == XL_BLINK ? XG_CF : i == XL_PTR0 || i == XL_PTR1 ? XG_PTR
                                                                         : i == XL_HUD || i == XL_BAND || i == XL_MMAP ? XG_HUD : 0u;
@@ -790,6 +800,7 @@ static int xr_init_work(void) {
     }
     XR_FUNCS(LOAD_XFN)
 #undef LOAD_XFN
+    th_wrap(); /* SOMVR_XR_TEST: the views through the test head (headless tests only) */
     XrSystemGetInfo sgi = {.type = XR_TYPE_SYSTEM_GET_INFO, .formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
     if (XR_FAILED(r = X.xrGetSystem(X.inst, &sgi, &X.sys))) {
         lg("xr: xrGetSystem(HMD): %s (headset not connected?)", xr_str(r));
@@ -905,6 +916,7 @@ static void sc_free_slots(sc_st *s, int keep_sems) {
     for (uint32_t i = 0; i < s->nimg; i++) {
         slot_st *sl = &s->slot[i];
         int idle = slot_wait(ds, sl) == 0;
+        cv_slot_done(sl, idle); /* SOMVR_XR_COVER: its readings (dropped when it is not idle) */
         if (sl->cmd && idle) ds->FreeCommandBuffers(ds->dev, ds->pool, 1, &sl->cmd);
         if (sl->fence && idle) ds->DestroyFence(ds->dev, sl->fence, NULL);
         if (sl->sem) {
@@ -1451,6 +1463,31 @@ static void cf_destroy(void);
 static void th_setup(void);   /* the threat cues (their region follows comfort's) */
 static void th_destroy(void);
 static void env_setup(void);  /* SoM loading env: the sky behind mono frames (its region follows comfort's) */
+static void vd_start(void);   /* never a void (./somvr_void_layer.c): the present gaps, the watcher */
+static void vd_stop(void);
+static void vd_waited(void);
+static void vd_ended(void);
+static void vd_space_add(dev_st *ds, xr_comp *c, uint32_t n, int stalled, int may_fill); /* the loading space */
+static int vd_board_ok(void);
+static int vd_env_holdable(void);
+static void vd_world_shown(void);
+static void vd_floor(float oy);
+static int vd_xt(const char *line);
+static void vd_hands(dev_st *ds, xr_comp *c, int watcher);
+static void vd_theatre(XrCompositionLayerQuad *q, uint32_t w, uint32_t h);
+static void cv_cmds(dev_st *ds, VkCommandBuffer cmd, const slot_st *sl, const hud_st *hd); /* SOMVR_XR_COVER */
+static void cv_submitted(int ok);
+static void cv_poll(dev_st *ds, int mono);
+static void cv_destroy(void);
+static int cv_hud_hidden(void);
+static int cv_space_want(void);
+static int cv_space_shown(void);
+static void cv_space_up(void);
+static void cv_kind(uint32_t kind);
+static void cv_space_comp(dev_st *ds, xr_comp *c);
+static void mb_frame(dev_st *ds, int menu, const somvr_posef eye[2]); /* SOMVR_XR_MENU_BACK: the menus' backdrop */
+static void mb_layers(xr_comp *c);
+static void mb_off(const char *why, const char *res);
 static void env_destroy(void);
 
 /* ---- XR session ------------------------------------------------------------------------------------------------- */
@@ -1465,9 +1502,11 @@ static int xr_unpublish(uint32_t state) {
 
 /* X.mx held. Wait for our copies, then destroy the XR swapchain, space and session. */
 static void xr_teardown_session(void) {
+    vd_stop(); /* never a void: the gaps' summary, the watcher joined (before anything goes) */
     int quiet = xr_unpublish(SOMVR_XRS_DEAD);
     in_destroy(quiet); /* somvr_input ready = 0, the 4 action spaces, the action set: before the session */
     if (X.ds) sc_wait_all(X.ds);
+    cv_destroy(); /* SOMVR_XR_COVER: the readback buffer (its copies waited) */
     hud_destroy(0); /* the HUD swapchain and VIEW space (ours alone): before the session */
     X.hud_on = X.hud_latched = 0;
     ptr_sc_destroy(); /* the pointer image's swapchain (ours alone): before the session */
@@ -1665,6 +1704,7 @@ static int xr_session_setup(dev_st *ds, q_st *qi) {
     lg("xr: session created on queue family %u index %u (flags 0x%x), blend mode %d, space %s", qi->family, qi->index,
        qi->family < ds->nqf ? ds->qf[qi->family].queueFlags : 0, X.blend,
        X.space_type == XR_REFERENCE_SPACE_TYPE_STAGE ? "STAGE" : "LOCAL");
+    vd_start(); /* never a void: the present gaps, the watcher thread */
     xr_set_phase(P_SESSION);
     return 0;
 }
@@ -1848,6 +1888,7 @@ static VkCommandBuffer slot_begin(dev_st *ds, sc_st *s, uint32_t idx) {
         }
     }
     if (slot_wait(ds, sl)) return VK_NULL_HANDLE;
+    cv_slot_done(sl, 1); /* SOMVR_XR_COVER: the readings its last submit carried */
     VkResult r = ds->ResetFences(ds->dev, 1, &sl->fence);
     if (r == VK_SUCCESS) r = ds->ResetCommandBuffer(sl->cmd, 0);
     VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -2026,6 +2067,7 @@ static int eyes_submit(dev_st *ds, VkQueue q, sc_st *s, uint32_t idx, VkImage ds
         ds->CmdCopyImage(cmd, hd->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hud_dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                          nc ? (uint32_t)nc : 1u, c);
         hud_old = mn_hud_dump_cmds(ds, cmd, hud_dst); /* SOMVR_XR_DUMP: the HUD image too (before the host barrier) */
+        cv_cmds(ds, cmd, &s->slot[idx], hd); /* SOMVR_XR_COVER: the HUD image's grid -> the readback buffer */
     }
     VkImageLayout xr_old = dump_cmds(ds, cmd, dst); /* the XR image as it is released -> D.buf (SOMVR_XR_DUMP) */
     for (int e = 0; e < 2; e++)
@@ -2043,7 +2085,9 @@ static int eyes_submit(dev_st *ds, VkQueue q, sc_st *s, uint32_t idx, VkImage ds
     }
     ds->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0,
                            NULL, nb, b);
-    return slot_submit(ds, q, s, idx, pi);
+    int ok = slot_submit(ds, q, s, idx, pi);
+    cv_submitted(ok);
+    return ok;
 }
 
 /* The eye images a layout-B tag names: both bits set, the info of the same generation, both images created by this
@@ -4112,6 +4156,7 @@ static uint32_t env_level(uint32_t rec_level) { return EV.on && EV.level > rec_l
 static uint32_t env_mono_layers(dev_st *ds, const XrCompositionLayerQuad *quad, xr_comp *c) {
     EV.last_quad = *quad, EV.quad_ok = 1, EV.quad_nsc = X.n_sc;
     uint32_t n = env_scene(ds, c);
+    vd_space_add(ds, c, n, 0, 1); /* never a void: the loading space's floor, the lights fading (SOMVR_XR_LOADSPACE) */
     env_fade(ds);
     EV.n_frames++;
     if (n && (EV.n_frames <= 2 || EV.n_frames % 600 == 0))
@@ -4128,16 +4173,18 @@ static void env_hold_world(dev_st *ds) { /* as a reuse frame: the last stereo fr
     XrCompositionLayerProjection proj;
     xr_comp c = {.l = {[XL_OWN] = proj_layer(&proj, X.last_pv)}};
     if (X.last_hud && X.hud_sc) c.l[XL_HUD] = (const XrCompositionLayerBaseHeader *)&X.last_quad;
+    mb_layers(&c); /* SOMVR_XR_MENU_BACK: a menu board's backdrop */
     uint32_t level = env_level(X.last_fade);
     if (level && X.fade_on) fade_frame(ds, level, env_head() ? EV.head : X.last_fade_eye, fade_red(level));
     cf_reuse_layers(&c);
     fade_comp(&c);
     xr_end_comp(&c);
 }
-static void env_hold_env(dev_st *ds) { /* the environment and the last menu quad */
+static void env_hold_env(dev_st *ds) { /* the environment and the last menu quad (or the loading space without one) */
     if (xr_begin()) return;
-    xr_comp c = {.l = {[XL_OWN] = (const XrCompositionLayerBaseHeader *)&EV.last_quad}};
-    env_scene(ds, &c);
+    xr_comp c = {.l = {[XL_OWN] = vd_board_ok() ? (const XrCompositionLayerBaseHeader *)&EV.last_quad : NULL}};
+    vd_space_add(ds, &c, env_scene(ds, &c), 0, 1); /* never a void: the floor, the lights fading; no board: the top layer */
+    vd_hands(ds, &c, 0);                           /* never a void: our hands from the layer's input */
     env_fade(ds);
     fade_comp(&c);
     xr_end_comp(&c);
@@ -4148,10 +4195,11 @@ static void env_hold_env(dev_st *ds) { /* the environment and the last menu quad
  * the last stereo frame (world mode); a switch to the world frees it. */
 static int env_decide(dev_st *ds, somvr_submit_kind kind) {
     if (!X.waited && xr_wait_publish()) return 1; /* xr_fail: pass-through from here */
-    int want = kind == SOMVR_SUBMIT_MONO ? SOMVR_ENV_SHOW_ENV : SOMVR_ENV_SHOW_WORLD;
+    int cover = kind != SOMVR_SUBMIT_MONO && cv_space_want(); /* SOMVR_XR_COVER: the game's in-world cover = a load */
+    int want = kind == SOMVR_SUBMIT_MONO || cover ? SOMVR_ENV_SHOW_ENV : SOMVR_ENV_SHOW_WORLD;
     int shown = EV.tr.started ? EV.tr.shown : want;
     int can_hold = shown == SOMVR_ENV_SHOW_WORLD ? X.last_stereo
-                                                 : EV.quad_ok && !X.last_stereo && X.sc && EV.quad_nsc == X.n_sc;
+                                                 : vd_env_holdable(); /* the board, or the keep-alive's loading space */
     int sw = 0, act = somvr_env_step(&EV.tr, want, can_hold, X.fs.predictedDisplayTime, &sw);
     EV.level = somvr_env_level(&EV.tr);
     if (sw && EV.tr.switches) { /* not the session's first frame */
@@ -4161,8 +4209,9 @@ static int env_decide(dev_st *ds, somvr_submit_kind kind) {
                EV.tr.shown == SOMVR_ENV_SHOW_ENV ? "environment" : "world", EV.tr.holds,
                can_hold ? "" : " (nothing to show again: at once, from black)", (unsigned long long)EV.tr.switches);
         EV.lines++;
-        if (EV.tr.shown == SOMVR_ENV_SHOW_ENV) env_world_freeze(ds);
-        else env_world_free();
+        if (EV.tr.shown == SOMVR_ENV_SHOW_ENV && cover) cv_space_up(); /* the loading space, no board */
+        else if (EV.tr.shown == SOMVR_ENV_SHOW_ENV) env_world_freeze(ds);
+        else env_world_free(), vd_world_shown();
     }
     if (act != SOMVR_ENVT_HOLD) return 0;
     EV.n_hold++;
@@ -4606,6 +4655,8 @@ static void vm_click(const somvr_vm_hit *hit, uint32_t avail) {
 
 #include "somvr_menus_layer.c" /* build 6: the menu boards, the wrist minimap, the arrival card, touch */
 #include "somvr_vrhands_layer.c" /* build 10: our own VR hands, the watch on the wrist, the panel off the palm */
+#include "somvr_void_layer.c" /* never a void (HG-9): the present gaps, the keep-alive frames, the loading space */
+#include "somvr_testhead_layer.c" /* SOMVR_XR_TEST `head X Y Z [s SEC]`: a duck for headless tests */
 
 /* One frame (stereo, reuse or mono), before the game's pointer (it has no target while the panel is open) and before
  * the frame's layers are put together: the gesture, the pointer on the panel, the clicks, the picture; VM.q[0 .. nq)
@@ -4803,6 +4854,7 @@ static void fl_probe(void) {
     lg("xr: the floor (STAGE): LOCAL's origin %.3f m above it; %s %.3f m in LOCAL = %.3f m above the floor: the player's "
        "real eye height (Talion's eyes, where the rig puts them: 1.806 m above his feet x SOMVR_PLAYER_SIZE)", oy,
        X.last_stereo ? "the last stereo frame's eyes" : "no stereo frame yet: the origin", ey, oy + ey);
+    vd_floor(oy); /* never a void: the loading space's floor at the real floor */
 }
 
 static int xr_wait_publish(void) {
@@ -4811,6 +4863,7 @@ static int xr_wait_publish(void) {
     XrResult r = X.xrWaitFrame(X.session, &wi, &X.fs);
     if (XR_FAILED(r)) return xr_fail("xrWaitFrame", r), -1;
     X.waited = 1;
+    vd_waited(); /* never a void: when this wait returned (the watcher's head times) */
     if (X.sh) /* the time the game thread's next views are for: this wait's + the pipeline lead (7.1) */
         somvr_time_publish(X.sh, somvr_lead_publish(&X.lead, cfg.predict, cfg.predict_ns, X.fs.predictedDisplayTime),
                            X.fs.predictedDisplayPeriod);
@@ -4889,7 +4942,7 @@ static int xr_end_comp(const xr_comp *c0) {
     for (int i = XL_THG0; i < XL_N; i++) nt += c->l[i] && xl_group(i) == XG_TH;
     XrResult r0 = xr_end_try(c, 0, &n), r = r0;
     if (have && layer_rejected(r)) {
-        static const uint32_t order[] = {XG_ENV, XG_VH, XG_TH, XG_FADE, XG_CF, XG_VM, XG_PTR, XG_HUD};
+        static const uint32_t order[] = {XG_ENV, XG_VH, XG_MB, XG_TH, XG_FADE, XG_CF, XG_VM, XG_PTR, XG_HUD};
         for (size_t k = 0; k < sizeof order / sizeof order[0] && !off; k++)
             if ((have & order[k]) && !layer_rejected(r = xr_end_try(c, order[k], &n))) off = order[k];
         if (!off && layer_rejected(r)) r = xr_end_try(c, off = have, &n); /* more than one of them: all off */
@@ -4911,9 +4964,11 @@ static int xr_end_comp(const xr_comp *c0) {
                 xr_str(r0));
     if (off & XG_HUD) hud_off("xrEndFrame rejected the frame with the HUD quad: %s; ended again without it", xr_str(r0));
     if (off & XG_VH) vh_off("xrEndFrame rejected the frame with our hands' layer: %s; ended again without it", xr_str(r0));
+    if (off & XG_MB) mb_off("xrEndFrame rejected the frame with the backdrop's layers (ended again without them)", xr_str(r0));
     X.fade_n = 0, CF.has = 0, X.ptr_nq = 0, VM.nq = 0, TH.has = 0; /* this frame's parts went (or not) with it */
     if (XR_FAILED(r)) return xr_fail("xrEndFrame", r), -1;
     X.frames++;
+    vd_ended(); /* never a void: the time between xrEndFrame calls */
     X.nolayer += n == 0;
     if (c->l[XL_FADE] && !(off & XG_FADE)) { /* the fade went out with the frame */
         X.n_fade++;
@@ -5003,6 +5058,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
     if (X.frame_open && !(kind == SOMVR_SUBMIT_STEREO && tag.frame == X.open_frame && !(X.open_mask >> tag.slot & 1)))
         if (xr_abort_open(kind == SOMVR_SUBMIT_STEREO ? "another frame's slot" : "a present without its next slot"))
             return 0;
+    cv_poll(ds, kind == SOMVR_SUBMIT_MONO); /* SOMVR_XR_COVER: the HUD readings whose submits are done */
     if (EV.on && env_decide(ds, kind)) return 0; /* SoM loading env: a hold frame (the shown side's layers, darker) */
     /* the XR swapchain must fit this frame's source: the eye images, or the presented image (mono, layout A) */
     if (kind == SOMVR_SUBMIT_STEREO && have_eyes) {
@@ -5031,6 +5087,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                (unsigned long long)tag.seq, why, (unsigned long long)X.n_nohud);
             snprintf(X.nohud_why, sizeof X.nohud_why, "%s", why);
         }
+        if (have_hud) cv_kind(hd.kind); /* SOMVR_XR_COVER: a video is never the cover (a game menu: its reading) */
     }
 
     int replaced = 0;
@@ -5043,10 +5100,22 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         if (X.n_reuse <= 3 || X.n_reuse % 600 == 0)
             lg("xr: present tag %llu frame %llu has no complete record: the last stereo frame again (reuse %llu)",
                (unsigned long long)tag.seq, (unsigned long long)tag.frame, (unsigned long long)X.n_reuse);
+        if (cv_space_shown()) { /* SOMVR_XR_COVER's load: the loading space, not the world */
+            xr_comp cc;
+            memset(&cc, 0, sizeof cc);
+            VH.last = 0;
+            vm_frame(ds);
+            cv_space_comp(ds, &cc);
+            vm_comp(&cc);
+            fade_comp(&cc);
+            xr_end_comp(&cc);
+            return 0;
+        }
         xr_comp rc = {.l = {[XL_OWN] = proj_layer(&proj, X.last_pv)}};
         if (X.last_hud && X.hud_sc) /* the HUD swapchain's last released image is that frame's */
             rc.l[XL_HUD] = (const XrCompositionLayerBaseHeader *)&X.last_quad, rc.l[XL_MMAP] = mn_mm_reuse(),
             rc.l[XL_BAND] = mn_band_reuse();
+        mb_layers(&rc); /* SOMVR_XR_MENU_BACK: that frame's backdrop again */
         vm_frame(ds); /* the VR menu: its own frame (the hand moves on) */
         fade_frame(ds, env_level(X.last_fade), X.last_fade_eye, fade_red(env_level(X.last_fade))); /* that frame's again */
         vm_comp(&rc);                                 /* the VR menu's panel, ray, dot */
@@ -5104,7 +5173,11 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
             env_stereo_frame(have_eyes ? &ey : NULL, pv); /* SoM loading env: world mode keeps its description */
             X.last_stereo = 1;
             if (hud_copied) mn_set_kind(hd.kind), hud_quad(&X.last_quad, &X.open_rec);
-            X.last_hud = hud_copied;
+            int hud_shown = hud_copied && !cv_hud_hidden(); /* SOMVR_XR_COVER: not the game's black cover */
+            int space = cv_space_shown();                    /* ... its load: the loading space over this frame */
+            X.last_hud = hud_shown;
+            somvr_posef mb_eye[2] = {X.open_rec.eye[0].pose, X.open_rec.eye[1].pose};
+            mb_frame(ds, hud_shown && mn_hud_menu(), mb_eye); /* SOMVR_XR_MENU_BACK: a menu board's backdrop */
             X.n_stereo++;
             if (X.sh) atomic_fetch_add_explicit(&X.sh->n_stereo, 1, memory_order_relaxed);
             /* the pipeline lead (7.1): how much later this frame displays than the wait its views' time came from */
@@ -5143,13 +5216,15 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                    (double)X.fs.predictedDisplayPeriod / 1e6);
             vm_frame(ds); /* the VR menu first: while its panel is open the game's pointer has no target */
             if (X.ptr_on) { /* the pointer: on the world-locked HUD quad (want PTR_HUD), else no target this frame */
-                int on_hud = ((X.ptr_hud && cfg.hud == SOMVR_HUD_WORLD) || mn_hud_menu()) && hud_copied && !vm_has_hand();
+                int on_hud = ((X.ptr_hud && cfg.hud == SOMVR_HUD_WORLD) || mn_hud_menu()) && hud_shown && !vm_has_hand();
                 float eye[3], qs[2] = {X.last_quad.size.width, X.last_quad.size.height};
                 for (int i = 0; i < 3; i++) eye[i] = 0.5f * (X.open_rec.eye[0].pose.p[i] + X.open_rec.eye[1].pose.p[i]);
                 ptr_frame(ds, on_hud ? SOMVR_PTRQ_HUD : SOMVR_PTRQ_NONE, &X.last_quad.pose, qs, X.hud_w, X.hud_h, eye);
             }
-            xr_comp sc = {.l = {[XL_OWN] = proj_layer(&proj, pv)}};
-            if (hud_copied) { /* the pointer's layers come only with the HUD quad */
+            xr_comp sc = {.l = {[XL_OWN] = space ? NULL : proj_layer(&proj, pv)}};
+            if (space) VH.last = 0; /* no game hands over the loading space (ours: cv_space_comp) */
+            else mb_layers(&sc);
+            if (hud_shown && !space) { /* the pointer's layers come only with the HUD quad */
                 sc.l[XL_HUD] = (const XrCompositionLayerBaseHeader *)&X.last_quad;
                 sc.l[XL_MMAP] = mn_mm_layer(&X.open_rec); /* build 6: the wrist minimap */
                 sc.l[XL_BAND] = mn_band_layer();          /* build 8: the prompt band */
@@ -5165,16 +5240,19 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                    (unsigned long long)X.n_eyes + 1, dump_next());
             }
             X.last_fade_eye[0] = X.open_rec.eye[0].pose, X.last_fade_eye[1] = X.open_rec.eye[1].pose;
-            fade_frame(ds, env_level(X.last_fade), X.last_fade_eye, fade_red(env_level(X.last_fade))); /* (env: if darker) */
+            if (space) cv_space_comp(ds, &sc); /* SOMVR_XR_COVER's load: the sky, the floor, the lights, our hands */
+            else fade_frame(ds, env_level(X.last_fade), X.last_fade_eye, fade_red(env_level(X.last_fade))); /* (env) */
             vm_comp(&sc);                    /* the VR menu's panel, ray, dot */
-            vh_frame(ds, qi->q, &X.open_rec, pv, &sc, have_eyes ? &ey : NULL); /* build 10: our hands over the panel and
-                                                                                 * the watch (occluders) */
-            cf_layers(ds, &X.open_rec, &sc); /* comfort: the ring under the HUD, the blink over it */
-            th_layers(ds, &X.open_rec, &sc); /* the threat cues: the glows under the ring, the edge bands over it */
+            if (!space) {
+                vh_frame(ds, qi->q, &X.open_rec, pv, &sc, have_eyes ? &ey : NULL); /* build 10: our hands over the panel
+                                                                                     * and the watch (occluders) */
+                cf_layers(ds, &X.open_rec, &sc); /* comfort: the ring under the HUD, the blink over it */
+                th_layers(ds, &X.open_rec, &sc); /* the threat cues: the glows under the ring, the edge bands over it */
+            }
             fade_comp(&sc);
             mn_dump_layers(pv, &sc); /* build 6: a dumped frame's quads (SOMVR_XR_DUMP), before the end clears them */
             xr_end_comp(&sc);
-            if (hud_copied && X.hud_on) { /* the frame ended with it (a rejected quad turned the HUD off) */
+            if (hud_shown && !space && X.hud_on) { /* the frame ended with it (a rejected quad turned the HUD off) */
                 X.n_hud++;
                 atomic_fetch_add_explicit(&X.hud->n_quads, 1, memory_order_relaxed);
                 if (X.n_hud <= 3 || X.n_hud % 600 == 0)
@@ -5225,6 +5303,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                                         .pose = {{0, 0, 0, 1}, {0, 0, -QUAD_DIST_M}},
                                         .size = {sz[0], sz[1]}};
         mn_mono_quad(&quad, (uint32_t)rc[2], (uint32_t)rc[3]); /* build 6: on the board in front of the head */
+        vd_theatre(&quad, (uint32_t)rc[2], (uint32_t)rc[3]);  /* never a void: a video, the cinematic window */
         layer = (const XrCompositionLayerBaseHeader *)&quad;
     } else if (replaced) {
         XrViewLocateInfo li = {.type = XR_TYPE_VIEW_LOCATE_INFO,
@@ -5264,6 +5343,8 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
     for (uint32_t i = 0; layer && i < X.ptr_nq && i < 2; i++)
         mc.l[XL_PTR0 + i] = (const XrCompositionLayerBaseHeader *)&X.ptr_q[i];
     if (layer) vm_comp(&mc); /* the VR menu's panel, ray, dot (over the pointer's) */
+    if (EV.on && layer && layer == (const XrCompositionLayerBaseHeader *)&quad)
+        vd_hands(ds, &mc, 0); /* never a void (SOMVR_XR_LOADSPACE): our hands in the loading space */
     fade_comp(&mc);
     xr_end_comp(&mc);
     return replaced;
@@ -5282,11 +5363,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_QueuePresentKHR(VkQueue q, const VkPrese
     VkSemaphore sem = VK_NULL_HANDLE;
     int replaced = 0;
     if (qi && pi && pi->swapchainCount) {
+        int64_t t0 = vd_now(); /* never a void: the gap before this present */
+        atomic_store(&VD.presenting, 1); /* the watcher leaves X.mx to it */
         pthread_mutex_lock(&X.mx);
-        if (X.ds == ds && (X.phase == P_DEV || X.phase == P_SESSION)) replaced = xr_frame(ds, qi, pi, &sem);
+        if (X.ds == ds && (X.phase == P_DEV || X.phase == P_SESSION)) {
+            int sess = X.phase == P_SESSION;
+            vd_before();
+            replaced = xr_frame(ds, qi, pi, &sem);
+            if (sess && X.phase == P_SESSION) vd_after(t0);
+        }
         pthread_mutex_unlock(&X.mx);
     }
     VkResult r;
+    int ql = ka_qlock(q); /* SOMVR_XR_KEEPALIVE: not while the watcher ends a frame */
     if (!replaced) {
         r = ds->QueuePresentKHR(q, pi);
     } else {
@@ -5295,10 +5384,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_QueuePresentKHR(VkQueue q, const VkPrese
         m.pWaitSemaphores = &sem;
         r = ds->QueuePresentKHR(q, &m);
     }
+    ka_qunlock(ql);
     if (qi && pi && pi->swapchainCount) {
         pthread_mutex_lock(&X.mx);
         if (X.ds == ds) xr_after_present();
         pthread_mutex_unlock(&X.mx);
+        atomic_store(&VD.presenting, 0);
+        vd_test_stall(); /* SOMVR_XR_TEST `stall MS`: a load that stops presenting */
     }
     return r;
 }
@@ -5676,6 +5768,8 @@ static VKAPI_ATTR void VKAPI_CALL L_DestroyImage(VkDevice dev, VkImage img, cons
 }
 
 static PFN_vkVoidFunction dev_hook(const char *n) {
+    PFN_vkVoidFunction kf = ka_dev_hook(n); /* SOMVR_XR_KEEPALIVE: the game's queue calls under the keep-alive's lock */
+    if (kf) return kf;
     static const struct {
         const char *n;
         PFN_vkVoidFunction f;

@@ -1,6 +1,6 @@
 #!/bin/bash
 # watcher for the comfort helper's headless run: trigger words at stereo frame counts (somvr.log RATE stereo=)
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 T0=$1
 LOG=/tmp/claude-1000/w1.log
 echo "watcher start $(date +%T) t0=$T0" > $LOG

@@ -127,13 +127,16 @@
 set -uo pipefail
 chrt -o -p 0 $$ 2>/dev/null || true   # never inherit keyd's SCHED_FIFO (memory: keyd real-time inheritance)
 
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
-GAME=/home/bara/.local/share/Steam/steamapps/common/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor   # the main checkout (logs, backups); not from $0: the launcher runs a private copy
+GAME=$HOME/.local/share/Steam/steamapps/common/ShadowOfMordor
 BIN=$GAME/bin/ShadowOfMordor
 BUILDID=87ec5d6fd94afd47a24d5da7c9b0c2b74b30c6e9
-STEAMDIR=/home/bara/.local/share/Steam
-SAVEAPP=$STEAMDIR/userdata/STEAM_ACCOUNT_ID/241930
-REALPREFS=/home/bara/.local/share/feral-interactive
+STEAMDIR=$HOME/.local/share/Steam
+SAVES=("$STEAMDIR"/userdata/*/241930)   # the save folder of the one Steam account that has played the game
+[ ${#SAVES[@]} = 1 ] && [ -d "${SAVES[0]}/remote" ] ||
+  { echo "boot_check: STOP: need exactly one save folder $STEAMDIR/userdata/*/241930 (with remote/); found: ${SAVES[*]}" >&2; exit 2; }
+SAVEAPP=${SAVES[0]}
+REALPREFS=$HOME/.local/share/feral-interactive
 RT=/run/user/$(id -u)
 VRS=$RT/vr-session
 RES=$VRS/reserved-envsom
@@ -315,7 +318,7 @@ if [ $STEAM = 1 ]; then   # the real session bus for the game (SDL 2.0.8's SDL_D
     org.freedesktop.DBus.Peer.Ping > /dev/null 2>&1 || die "--steam: session D-Bus $SDBUS does not answer"
   log "session D-Bus for the game: $SDBUS (answers); system bus socket: $([ -S /run/dbus/system_bus_socket ] && echo present || echo MISSING)"
 fi
-LACTCTL=/home/bara/Projects/flat2vr/shared/tools/vr-session/lactctl.py
+LACTCTL=$SOM/../shared/tools/vr-session/lactctl.py
 power_state() {   # $1 = label; read-only: CPU governors, gamemoded running?, LACT's active profile (list_profiles only)
   local gov gm lact
   gov=$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c | awk '{printf "%s%s x%s", (NR > 1 ? ", " : ""), $2, $1}')
@@ -329,7 +332,7 @@ power_state() {   # $1 = label; read-only: CPU governors, gamemoded running?, LA
   log "power $1: governor ${gov:-?}; gamemoded $gm; LACT ${lact:-unreadable}"
 }
 feral_real() {   # feral* entries in the REAL home's data/config/cache folders
-  find /home/bara/.local/share /home/bara/.config /home/bara/.cache -maxdepth 1 -iname 'feral*' 2>/dev/null | sort
+  find "$HOME/.local/share" "$HOME/.config" "$HOME/.cache" -maxdepth 1 -iname 'feral*' 2>/dev/null | sort
 }
 
 # ---- the isolated home: pre-seeded Feral prefs (registry XML; candidate setup keys, the real one shows after the run)
@@ -392,14 +395,14 @@ build_game_argv() {   # needs GDISP, GWD (and GWSI) set; fills GARGV with the is
     local sr=$STEAMDIR/ubuntu12_32/steam-runtime rtp
     rtp=$(env -u LD_LIBRARY_PATH -u LD_PRELOAD "$sr/run.sh" --print-steam-runtime-library-paths 2>/dev/null)
     for e in "${!se[@]}"; do case ${se[$e]} in LD_LIBRARY_PATH=*) se[$e]="LD_LIBRARY_PATH=$GAME/lib/x86_64${rtp:+:$rtp}" ;; esac; done
-    se+=(HOME=/home/bara PATH="$RUN/stubbin:/usr/local/bin:/usr/bin:/bin" STEAM_RUNTIME="$sr")
+    se+=(HOME="$HOME" PATH="$RUN/stubbin:/usr/local/bin:/usr/bin:/bin" STEAM_RUNTIME="$sr")
     GARGV=(python3 -I "$SOM/scripts/ptrace_parent.py" "$RUN/ptrace.log" -- /usr/bin/env -i -C "$GAME/bin" "${se[@]}"
       "${GPRE[@]}" "${GEXTRA[@]}" "$BIN" "${GARGS[@]}")
     return 0
   fi
   GARGV=(bwrap --dev-bind / / --unshare-net --die-with-parent
     --ro-bind "$SAVEAPP" "$SAVEAPP"
-    --tmpfs /home/bara/.steam
+    --tmpfs "$HOME/.steam"
     --ro-bind /dev/null "$STEAMDIR/linux64/steamclient.so"
     --ro-bind "$RUN/steam-stub" "$(readlink -f /usr/bin/steam)"
     --ro-bind "$RUN/steam-stub" "$(readlink -f /usr/bin/xdg-open)"
@@ -489,9 +492,9 @@ if [ $DRY = 1 ]; then
   GPRE=(); GEXTRA=(); GARGS=(); build_game_argv   # the test shell gets no --preload / --game-env / --game-arg
   GARGV=("${GARGV[@]:0:${#GARGV[@]}-1}")   # drop "$BIN"
   "${GARGV[@]}" /bin/sh -c 'touch "$1/remote/.w" 2>/dev/null && { rm -f "$1/remote/.w"; echo "save dir WRITABLE"; } || echo "save dir read-only";
-    [ -s /home/bara/.local/share/Steam/linux64/steamclient.so ] && echo "steamclient.so visible" || echo "steamclient.so hidden";
-    ls -A /home/bara/.steam | wc -l | sed "s/^/~\/.steam entries: /"; echo "HOME=$HOME pwd=$(pwd)";
-    timeout 5 bash -c "exec 3<>/dev/tcp/1.1.1.1/443" 2>/dev/null && echo "network UP (tcp 1.1.1.1:443)" || echo "network none (tcp 1.1.1.1:443 fails)"; steam x; xdg-open y; true' sh "$SAVEAPP" 2>&1 | sed 's/^/  ns: /' | tee -a "$LOG" >&2
+    [ -s "$2/.local/share/Steam/linux64/steamclient.so" ] && echo "steamclient.so visible" || echo "steamclient.so hidden";
+    ls -A "$2/.steam" | wc -l | sed "s/^/~\/.steam entries: /"; echo "HOME=$HOME pwd=$(pwd)";
+    timeout 5 bash -c "exec 3<>/dev/tcp/1.1.1.1/443" 2>/dev/null && echo "network UP (tcp 1.1.1.1:443)" || echo "network none (tcp 1.1.1.1:443 fails)"; steam x; xdg-open y; true' sh "$SAVEAPP" "$HOME" 2>&1 | sed 's/^/  ns: /' | tee -a "$LOG" >&2
   log "dry run: blocked.log: $(cat "$RUN/blocked.log" 2>/dev/null | tr '\n' ';')"
   log "dry run: seeded prefs $RUN/preferences.seeded ($(grep -c '<value' "$RUN/preferences.seeded") values); nothing started"
   install_check dry

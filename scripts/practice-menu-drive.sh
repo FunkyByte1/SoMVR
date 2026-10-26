@@ -9,7 +9,7 @@
 # 0.5 0.560. Steps: the wrist menu (the left palm toward the eyes; retried, then the menu button's long press), the Practice tab, Spawn (infantry), the menu shut,
 # a mark; again: the type's > (shield), Spawn (it replaces the first), a mark; Remove. Prints PASS/FAIL per step from
 # somvr.log and ends with a quit. Stops at once (quit) when the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${PMENU_WT:-build-vr9}
 T0=$(date +%s)
 R=""
@@ -24,7 +24,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

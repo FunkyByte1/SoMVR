@@ -21,10 +21,10 @@
 #                           ("OpenXR SDK 1.1.61 (2026-07-02)", commit 5267613edf3d937e3d77556a106a65c2f82b25c6)
 set -euo pipefail
 D=$(cd "$(dirname "$0")" && pwd)
-TP=$(cd "$D/../../../third_party" 2>/dev/null && pwd) || { echo "no ShadowOfMordor/third_party (see the header)"; exit 2; }
+TP=$(cd "$D/../../../third_party" 2>/dev/null && pwd) || { echo "no ShadowOfMordor/third_party (run scripts/fetch_third_party.sh)"; exit 2; }
 VKH=$TP/Vulkan-Headers-1.4.341/include
 XRH=$TP/OpenXR-SDK-1.1.61/include
-[ -f "$VKH/vulkan/vk_layer.h" ] && [ -f "$XRH/openxr/openxr_platform.h" ] || { echo "headers missing in $TP"; exit 2; }
+[ -f "$VKH/vulkan/vk_layer.h" ] && [ -f "$XRH/openxr/openxr_platform.h" ] || { echo "headers missing in $TP (run scripts/fetch_third_party.sh)"; exit 2; }
 CF=(-std=gnu11 -O2 -g -Wall -Wextra -Wshadow -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -Werror
     -I"$VKH" -I"$XRH")
 B=$D/build
@@ -33,7 +33,7 @@ mkdir -p "$B/tests"
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -Wl,-Bsymbolic -Wl,-soname,libVkLayer_somvr_openxr.so \
     -o "$LIB" "$D/somvr_vklayer.c" "$D/somvr_logic.c" "$D/../somvr_pointer.c" "$D/../somvr_comfort.c" "$D/../somvr_menus.c" \
     "$D/somvr_env.c" "$D/../somvr_vrmenu.c" "$D/../somvr_font.c" "$D/../somvr_threat.c" "$D/somvr_handdraw.c" \
-    "$D/../somvr_vrhands.c" -lpthread -ldl -lm
+    "$D/../somvr_vrhands.c" "$D/somvr_void.c" -lpthread -ldl -lm
 echo "built $LIB ($(sha256sum "$LIB" | cut -c1-16))"
 CHECK=0 VI=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; --vulkaninfo) CHECK=1 VI=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -60,6 +60,8 @@ gcc "${CF[@]}" -o "$B/tests/test_logic" "$D/tests/test_logic.c" "$D/somvr_logic.
 "$B/tests/test_logic"
 gcc "${CF[@]}" -o "$B/tests/test_env" "$D/tests/test_env.c" "$D/somvr_env.c" -lm # SoM loading env: the sky, the box
 "$B/tests/test_env"
+gcc "${CF[@]}" -o "$B/tests/test_void" "$D/tests/test_void.c" "$D/somvr_void.c" -lm # never a void: the floor, the lights
+"$B/tests/test_void"
 # build 10: the VR hands' shaders are the committed SPIR-V; the hands drawn for real on lavapipe (Mesa's CPU Vulkan)
 "$D/shaders/build_spv.sh" --check
 gcc "${CF[@]}" -o "$B/tests/hands_lvp" "$D/tests/hands_lvp.c" "$D/somvr_handdraw.c" "$D/../somvr_vrhands.c" -ldl -lm
@@ -78,9 +80,10 @@ gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/comfor
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/vrmenu_obj.so" "$D/tests/vrmenu_obj.c"
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/threat_obj.so" "$D/tests/threat_obj.c"
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/vrhands_obj.so" "$D/tests/vrhands_obj.c"
+gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/session_obj.so" "$D/tests/session_obj.c"
 gcc "${CF[@]}" -rdynamic -o "$B/tests/test_layer" "$D/tests/test_layer.c" "$D/../somvr_views.c" "$D/../somvr_pose.c" \
     "$D/somvr_env.c" "$D/../somvr_vrmenu.c" "$D/../somvr_font.c" "$D/../somvr_threat.c" "$D/../somvr_menus.c" \
-    -ldl -lpthread -lm # the expected env and menu pictures, the threat cues' quads and texture, the HUD's tiles
+    "$D/somvr_void.c" -ldl -lpthread -lm # the expected env and menu pictures, the threat cues' quads and texture, the HUD's tiles
 T=$(mktemp -d)
 mkdir -p "$T/empty"
 rc=0

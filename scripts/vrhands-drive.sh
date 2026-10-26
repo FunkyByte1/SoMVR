@@ -11,7 +11,7 @@
 # a drawn sword keeps the right hand a fist). The test file's turns (run 181440): L 0 90 0 = the back of the left hand
 # toward the eyes (the watch), L 0 -90 0 = its palm (the wrist panel's gesture); R mirrored.
 # Prints the dump frame of each step (RUN/vrh-steps.txt) and quits. Stops at once (quit) when the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${VRH_WT:-t3-89de93b7}
 STEPS=${VRH_STEPS:-hold palms fist point turn menu watch spin sword two}
 T0=$(date +%s)
@@ -27,7 +27,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

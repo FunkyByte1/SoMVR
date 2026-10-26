@@ -15,7 +15,7 @@
 #            while it is still at range (no `bow orchp`); the BOW hit lines (SOMVR_BOW_HITLOG=1)
 #   orc      an infantry spawned ahead, the bow aimed at its head: shots until it is down (at most 8), no `bow orchp`
 #   snap     a quick draw and release, then a let-down (the arrow count before and after: kept)
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${BOW_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${BOW_STEPS:-prompts buttons strike range snap}
 T0=$(date +%s)
@@ -31,7 +31,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

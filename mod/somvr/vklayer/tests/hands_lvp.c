@@ -52,6 +52,7 @@ typedef struct {
     int occ;                      /* 1: a 20 x 30 cm occluder 7 cm out of the left palm (the wrist panel) */
     float fov;                    /* half angle (rad); 0 = 0.45 */
     int hilt;                     /* draw a 3.2 cm hilt's outline round the grip's axis (dots) */
+    float ghost;                  /* build 13 (SOMVR_HANDS_SURFACE): the right hand's ghost, this opaque, 9 cm ahead */
     int away;                     /* the hand behind the eyes: nothing drawn, the image clear */
 } lcase;
 
@@ -275,6 +276,11 @@ int main(int argc, char **argv) {
     H->grip[0].p[0] = -0.18f, H->grip[0].p[1] = -0.32f, H->grip[0].p[2] = -0.42f;
     H->grip[1].p[0] = 0.18f, H->grip[1].p[1] = -0.32f, H->grip[1].p[2] = -0.42f;
     SETC(H->curl[0], c_half), SETC(H->curl[1], c_fist);
+    { /* build 13: the held hands with the right one stopped at a wall, its ghost 9 cm in (the real controller) */
+        lcase *G = &cs[nc++];
+        *G = *H;
+        G->name = "ghost", G->ghost = 0.35f;
+    }
 
 
     uint8_t *grid = calloc((size_t)EW * EH * 3, 1);
@@ -301,6 +307,14 @@ int main(int argc, char **argv) {
             float skin[SOMVR_VH_NJ][12];
             somvr_vh_pose(&g_m, &g_c, L->curl[h], skin);
             somvr_vh_skin(&g_m, (const float(*)[12])skin, h, &L->grip[h], (somvr_vh_vert *)(v + h * nv));
+        }
+        if (L->ghost > 0) { /* the real hand where the wall stopped the drawn one: wraith blue (as the layer's) */
+            somvr_posef gp = L->grip[1];
+            gp.p[2] -= 0.09f, gp.p[1] -= 0.02f;
+            float skin[SOMVR_VH_NJ][12];
+            somvr_vh_pose(&g_m, &g_c, L->curl[1], skin);
+            somvr_vh_skin(&g_m, (const float(*)[12])skin, 1, &gp, (somvr_vh_vert *)hd_slot_ghost(&hc, (uint32_t)ci_, 1));
+            fr.ghost_a[1] = L->ghost, fr.ghost_base[0] = 0.30f, fr.ghost_base[1] = 0.58f, fr.ghost_base[2] = 1.0f;
         }
         if (L->occ) { /* a 12 x 30 cm quad 12 cm from the hand toward the eye, facing it, over the hand's lower half */
             float o[3] = {0.12f, -0.12f, 0}, hx[3] = {0, 0, 0.06f}, hy[3] = {0, 0.15f, 0};
@@ -342,6 +356,12 @@ int main(int argc, char **argv) {
             for (int y = EH / 2 + 30; y < EH - 10; y++)
                 for (int x = EW / 2 - 40; x < EW / 2 + 40; x++) under += px[(y * 2 * EW + x) * 4 + 3] > 0;
             CHECK(under == 0, "occluded: %ld hand pixels behind the occluder", under);
+        }
+        if (L->ghost > 0) { /* the ghost: faint blue pixels (premultiplied: blue over red, alpha well under 1) */
+            long blue = 0;
+            for (long i = 0; i < 2L * EW * EH; i++)
+                blue += px[4 * i + 3] > 10 && px[4 * i + 3] < 200 && px[4 * i + 2] > px[4 * i] + 15;
+            CHECK(blue > 300, "ghost: %ld faint blue pixels", blue);
         }
         CHECK(px[3] == 0 && px[(2 * EW * EH - 1) * 4 + 3] == 0, "%s: the corners are clear", L->name);
         CHECK(diff > 0, "%s: the eyes differ", L->name);

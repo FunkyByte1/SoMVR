@@ -16,7 +16,7 @@
 #   go into RUN/somvr.trigger directly. Monado's log: logs/headless-<ts>/monado.log; the run: the newest
 #   logs/boot-check-<ts>/. Note: the null compositor paces at 20 Hz, so frame rates here say nothing about 90 fps.
 # (From the coordinator's run13/run14 scripts, 2026-10-22.)
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor; RT=/run/user/1000; MSVC=""
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor; RT=/run/user/$(id -u); MSVC=""
 HERE=$(cd "$(dirname "$0")" && pwd); BC=$HERE/boot_check.sh   # (a worktree's copy runs its own boot_check)
 MOD=${1:?usage: headless_vr.sh /ABS/PATH/TO/mod/somvr}; MOD=$(cd "$MOD" 2>/dev/null && pwd -P) || { echo "STOP: no folder $1"; exit 1; }
 [ -f "$MOD/build/somvr.so" ] && [ -f "$MOD/vklayer/build/libVkLayer_somvr_openxr.so" ] || { echo "STOP: $MOD is not built"; exit 1; }

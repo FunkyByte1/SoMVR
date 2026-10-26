@@ -47,7 +47,9 @@ SOMVR_BOW_HITLOG block of somvr_bowhit_game.c (BOWHIT_SITES_BEGIN ... BOWHIT_SIT
 the SOMVR_EXECUTE block of somvr_execute_game.c (EXECUTE_SITES_BEGIN ... EXECUTE_SITES_END: 5 read-only K_ENTRY proofs of
 the hit counter's charge, its stock spend and its clear, the game's sever and the counter timer's expiry,
 re-xr-pipeline.md 30.23) and the SOMVR_HUD_FX block of somvr_hudfx_game.c (HUDFX_SITES_BEGIN ... HUDFX_SITES_END: the
-patched tail jump UF_CREATE of CBaseUI::CreateUIFXGroup, re-xr-pipeline.md 31.5). Files
+patched tail jump UF_CREATE of CBaseUI::CreateUIFXGroup, re-xr-pipeline.md 31.5) and the SOMVR_VERBS_GLOW block of
+somvr_vbglow_game.c (VBGLOW_SITES_BEGIN ... VBGLOW_SITES_END: the patched tail jumps VG_FXC / VG_FXC1 of ClientFX's two
+create thunks, re-xr-pipeline.md 39.7). Files
 named by an #include "somvr_*_game.c" line in SOURCE.c (somvr_step_game.c, somvr_finish_game.c, somvr_headparts_game.c,
 somvr_practice_game.c, somvr_body_game.c, somvr_minimap_game.c, somvr_session_game.c, somvr_gameopts_game.c,
 somvr_prompts_game.c, somvr_bowhit_game.c) are read with it.
@@ -306,6 +308,15 @@ def main():
             sys.exit("expected 1 SITE line in somvr_hudfx_game.c's HUDFX_SITES block (the patched UF_CREATE K_JMP), "
                      "found %d" % len(uf))
         sites = sites + uf
+    # SOMVR_VERBS_GLOW (build 13): its block lives in somvr_vbglow_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_vbglow_game\.c"', text, re.M):
+        vg = [m for b in text.split("VBGLOW_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("VBGLOW_SITES_END", 1)[0])]
+        if len(vg) != 2 or [m[1] for m in vg] != ["K_JMP"] * 2:
+            sys.exit("expected 2 SITE lines in somvr_vbglow_game.c's VBGLOW_SITES block (the patched VG_FXC, VG_FXC1 "
+                     "K_JMPs), found %d" % len(vg))
+        sites = sites + vg
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

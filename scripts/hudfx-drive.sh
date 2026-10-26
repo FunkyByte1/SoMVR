@@ -10,7 +10,7 @@
 # prompt in the band); HD_WATCH=1: the watch raised at hit 3 (its `x N`; the pause ends the streak: no charge then);
 # HD_EXEC=1 (with HD_ROUNDS=2): at the charge the execution (the right trigger held, heavy chops, as execute-drive.sh),
 # five dumps after the kill (the XP gain in the band, the XP bar's line), then a second orc: 3 hits, the watch raised.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${HD_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 LMS=${HD_LIGHT_MS:-600}
 T0=$(date +%s)
@@ -27,7 +27,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

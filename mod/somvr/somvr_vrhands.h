@@ -18,6 +18,9 @@
  *      after the eye image) and publishes their VkImages (dinfo) and the frame each holds (dframe); each entry carries
  *      depth_k: an eye's view distance in XR metres = depth_k / the depth value (reversed Z with an infinite far plane:
  *      depth = near / z; depth_k = near cm / (100 cm x the player size)).
+ *      v3 (build 13, SOMVR_HANDS_SURFACE=on, docs/re-xr-pipeline.md 38): the grips may be stopped at the world's
+ *      surfaces; each entry then also carries where the controllers really are (ghost) and how strongly the layer
+ *      shows a faint wraith-blue hand there (ghost_a, 0 = none), drawn over the world (never hidden by its depth).
  *
  * 2. The pure part (somvr_vrhands.c): the hand model from the mesh (its joints' hierarchy, the fist's tube measured
  *    and put on the OpenXR grip's -Z axis through the grip's origin: the sword's hilt), the fingers posed from five
@@ -37,7 +40,7 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_VRHANDS_SYMBOL "somvr_vrhands"
 #define SOMVR_VRHANDS_MAGIC 0x3153444e41485256ull /* "VRHANDS1" */
-#define SOMVR_VRHANDS_VERSION 2u
+#define SOMVR_VRHANDS_VERSION 3u
 
 enum {
     SOMVR_VHF_L = 1u,       /* the left grip is valid this frame */
@@ -56,6 +59,10 @@ typedef struct {
     int64_t time;          /* the XrTime the grips were located for (the frame's views' time) */
     somvr_posef grip[2];   /* XR space, metres: left, right */
     float curl[2][5];      /* 0 open .. 1 closed: thumb, index, middle, ring, pinky (somvr_fingers.h, eased) */
+    /* v3 (SOMVR_HANDS_SURFACE=on, docs/re-xr-pipeline.md 38): where the controllers are when the grips above were
+     * stopped at a surface; ghost_a[h] > 0: the layer draws a faint hand there (the real one), that opaque */
+    somvr_posef ghost[2];  /* XR space, metres */
+    float ghost_a[2];      /* 0 = none */
 } somvr_vrhands_frame;
 
 typedef struct somvr_vrhands_shared {
@@ -81,12 +88,12 @@ typedef struct somvr_vrhands_shared {
     _Atomic uint64_t n_dused;     /* layer: frames whose hands were tested against the world */
 } somvr_vrhands_shared;
 
-_Static_assert(sizeof(somvr_vrhands_frame) == 120, "somvr_vrhands_frame size");
+_Static_assert(sizeof(somvr_vrhands_frame) == 184, "somvr_vrhands_frame size");
 _Static_assert(offsetof(somvr_vrhands_shared, last) == 24 && offsetof(somvr_vrhands_shared, f) == 32 &&
-                   offsetof(somvr_vrhands_shared, layer_state) == 32 + 120 * SOMVR_NREC &&
-                   offsetof(somvr_vrhands_shared, dseq) == 32 + 120 * SOMVR_NREC + 40,
+                   offsetof(somvr_vrhands_shared, layer_state) == 32 + 184 * SOMVR_NREC &&
+                   offsetof(somvr_vrhands_shared, dseq) == 32 + 184 * SOMVR_NREC + 40,
                "somvr_vrhands_shared offsets");
-_Static_assert(sizeof(somvr_vrhands_shared) == 32 + 120 * SOMVR_NREC + 40 + 72, "somvr_vrhands_shared size");
+_Static_assert(sizeof(somvr_vrhands_shared) == 32 + 184 * SOMVR_NREC + 40 + 72, "somvr_vrhands_shared size");
 
 static inline int somvr_vrhands_ok(const somvr_vrhands_shared *v) {
     return v && v->magic == SOMVR_VRHANDS_MAGIC && v->version == SOMVR_VRHANDS_VERSION &&
@@ -104,6 +111,7 @@ static inline void somvr_vrhands_put(somvr_vrhands_shared *v, uint64_t frame, co
     e->grip[0] = in->grip[0], e->grip[1] = in->grip[1];
     for (int h = 0; h < 2; h++)
         for (int k = 0; k < 5; k++) e->curl[h][k] = in->curl[h][k];
+    e->ghost[0] = in->ghost[0], e->ghost[1] = in->ghost[1], e->ghost_a[0] = in->ghost_a[0], e->ghost_a[1] = in->ghost_a[1];
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&v->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&v->n_frames, 1, memory_order_relaxed);
@@ -119,6 +127,8 @@ static inline int somvr_vrhands_get(somvr_vrhands_shared *v, uint64_t frame, som
     out->grip[0] = e->grip[0], out->grip[1] = e->grip[1];
     for (int h = 0; h < 2; h++)
         for (int k = 0; k < 5; k++) out->curl[h][k] = e->curl[h][k];
+    out->ghost[0] = e->ghost[0], out->ghost[1] = e->ghost[1];
+    out->ghost_a[0] = e->ghost_a[0], out->ghost_a[1] = e->ghost_a[1];
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);

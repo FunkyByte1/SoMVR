@@ -3945,7 +3945,7 @@ static void es_tick_at(double t) /* the game thread's input tick (CWBInput::vf_0
 static void es_reset(void)
 {
 	g_es.failed = g_es.pending = g_es.tries = g_es.held_out = 0, g_es.tid = 0;
-	g_es.last_want = g_es.held_since = g_es.next_try = 0;
+	g_es.last_want = g_es.held_since = g_es.next_try = 0, g_es.last_tick = 0;
 	g_es.held = g_es.switches[0] = g_es.switches[1] = g_es.fails = 0;
 	atomic_store(&g_es.target, 0);
 }
@@ -4037,6 +4037,27 @@ static void es_tests(void)
 	for (int i = 0; i < 10; i++)
 		es_tick_at(t += 0.1);
 	EXPECT(es_world(t += 0.1) == 2 && g_rs_calls == 3, "after a short menu: calls %d", g_rs_calls);
+	/* SOMVR_EYE_SIZE_STALL_MS=250 (never a void): a 3 s stall in the world (no tick, no frame) is not a menu: stereo at
+	 * once after it, no mode set; then a real menu still switches after the hold */
+	g_es.stall_s = 0.25;
+	EXPECT(es_world(t += 3.0) == 2 && g_rs_calls == 3 && atomic_load(&g_es.cur) == 1 &&
+		       log_has("a stall of 3000 ms (no input tick): not counted toward the hold"),
+	       "a stall in the world: calls %d cur %d", g_rs_calls, atomic_load(&g_es.cur));
+	for (int i = 0; i < 5; i++)
+		EXPECT(es_world(t += 0.1) == 2, "after the stall frame %d: not stereo", i);
+	double t_m = t;
+	while (t < t_m + 2.2)
+		es_tick_at(t += 0.1);
+	EXPECT(g_rs_calls == 4 && atomic_load(&g_es.cur) == 0, "a menu after the stall: calls %d cur %d", g_rs_calls,
+	       atomic_load(&g_es.cur));
+	EXPECT(es_world(t += 0.1) == 1 && es_world(t += 0.1) == 2 && g_rs_calls == 5, "back in the world: calls %d",
+	       g_rs_calls);
+	g_es.stall_s = 0;
+	/* without it (build 12's): the same stall switches to the game's size at its first tick */
+	EXPECT(es_world(t += 3.0) == 1 && g_rs_calls == 6 && atomic_load(&g_es.cur) == 0, "a stall, the switch off: calls %d "
+	       "cur %d", g_rs_calls, atomic_load(&g_es.cur));
+	EXPECT(es_world(t += 0.1) == 2 && g_rs_calls == 7, "back: calls %d", g_rs_calls);
+	g_rs_calls = 3; /* (the counts below are build 12's) */
 	/* flat play in the world (the trigger off): H4 wants no eyes; the game's size after the hold */
 	snprintf(g_trig_path, sizeof g_trig_path, "%s", "/nonexistent/somvr.trigger");
 	atomic_store(&g_trig, 0);
@@ -5104,7 +5125,9 @@ __attribute__((noipa)) uint64_t st_raycast(uintptr_t phys, void *qv, void *rv)
 	memcpy(f, q, 12), memcpy(t, q + 12, 12), memcpy(&fl, q + 0x18, 4), memcpy(&flt, q + 0x1c, 4);
 	memcpy(&cb, q + 0x20, 8), memcpy(&z28, q + 0x28, 8), memcpy(&ud, q + 0x30, 8), memcpy(&pre, r + 0x28, 2);
 	g_clw.calls++;
-	if (phys != (uintptr_t)&g_phys || fl != 0xd8 || flt != 0xfffffffdu || !cb || z28 || !ud || pre != 0xffff || r[0x2a])
+	/* 0xd8: the climb's cast; 0xf8: SOMVR_HANDS_SURFACE's (+ 0x20: the hit's normal at r+0x0c) */
+	if (phys != (uintptr_t)&g_phys || (fl != 0xd8 && fl != 0xf8) || flt != (g_cl.probe_flt ? g_cl.probe_flt : 0xfffffffdu) || !cb ||
+	    z28 || !ud || pre != 0xffff || r[0x2a])
 		g_clw.bad++;
 	float d[3] = { t[0] - f[0], t[1] - f[1], t[2] - f[2] }, len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
 	if (!(len > 0))
@@ -5150,6 +5173,17 @@ __attribute__((noipa)) uint64_t st_raycast(uintptr_t phys, void *qv, void *rv)
 		float p[3] = { f[0] + d[0] * c[i].s, f[1] + d[1] * c[i].s, f[2] + d[2] * c[i].s };
 		memcpy(r, p, 12);
 		memcpy(r + 0x20, &c[i].obj, 8);
+		if (fl & 0x20) { /* Physics_RayCast 0x8de79b: the normal (and the plane's d) with the flag 0x20 */
+			float nv[4] = { 0, 0, -1, 0 };
+			if (c[i].obj == (uintptr_t)g_topobj)
+				nv[1] = 1, nv[2] = 0;
+			else if (c[i].obj == (uintptr_t)&g_pobj) {
+				float rx = p[0] - g_pobj.pos[0], rz = p[2] - g_pobj.pos[2], l = sqrtf(rx * rx + rz * rz);
+				nv[0] = l > 0 ? rx / l : 1, nv[2] = l > 0 ? rz / l : 0;
+			}
+			nv[3] = nv[0] * p[0] + nv[1] * p[1] + nv[2] * p[2];
+			memcpy(r + 0x0c, nv, 16);
+		}
 		if (c[i].tri && (fl & 0x80)) /* Physics_RayCast: the material id only with the flag 0x80 */
 			memcpy(r + 0x28, &c[i].tri, 2), r[0x2a] = 1;
 		return 1;
@@ -5664,9 +5698,9 @@ static void climb_tests(void)
 	g_clw.honor_cb = 1;
 	cl_frames(3);
 	EXPECT(!strcmp(cl_word("probe"), "climb probe") &&
-		       !strcmp(cl_word("prob"), "climb (not probe [up|table], state, watch [off], ledges off|game, loyaw game|ours: "
+		       !strcmp(cl_word("prob"), "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw game|ours: "
 						"ignored)") &&
-		       !strcmp(cl_word("probe down"), "climb (not probe [up|table], state, watch [off], ledges off|game, loyaw "
+		       !strcmp(cl_word("probe down"), "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw "
 						      "game|ours: ignored)"),
 	       "climb: the probe word");
 	uint64_t pc0 = g_cl.casts;
@@ -5683,12 +5717,21 @@ static void climb_tests(void)
 	EXPECT(log_has("up: bearing 0, head +cm = the distance (cm): -100=50C") && log_has(" +225=50C +250=- +275=-") &&
 		       g_cl.probes == 2,
 	       "climb: the probe up (probes %llu)", (unsigned long long)g_cl.probes);
+	/* 18c'. `climb probe edge` (SOMVR_CLIMB_DESCENT's geometry, a tower top's edge): from the root (500, 100, -50) along the
+	 * heading (+z): the profile down, the face back from 120 cm ahead, a wall at the edge: the stone 50 cm ahead */
+	EXPECT(!strcmp(cl_word("probe edge"), "climb probe edge"), "climb: the edge probe word");
+	iframe();
+	EXPECT(log_has("CLIMB probe edge t=") && log_has("root 500.0,100.0,-50.0 heading 0.0 deg; the profile: cm ahead = the "
+							 "landing, cm under the root (60 m down): +0=") &&
+		       log_has("a wall at the edge: root +cm = the distance ahead (2 m): -80=50C#7 -40=50C#7 +0=50C#7") &&
+		       log_has("CLIMB probe edge surfaces: #7 'ST_Climbable_Stone' CanWallClimb, held") && g_cl.probes == 3,
+	       "climb: the edge probe (probes %llu)", (unsigned long long)g_cl.probes);
 	/* 18d. `climb probe table`: the stand-in table (ids 7, 8, 9 and an empty entry) with the game's CanWallClimb */
 	EXPECT(!strcmp(cl_word("probe table"), "climb probe table"), "climb: the table word");
 	iframe();
 	EXPECT(log_has("CLIMB table CanWallClimb: 7 'ST_Climbable_Stone', 9 'ST_Top'") &&
 		       log_has("CLIMB table not climbable: 8 'ST_Rock'") && log_has("CLIMB table: 4 records (holders") &&
-		       log_has("2 CanWallClimb, 1 not") && g_cl.probes == 3,
+		       log_has("2 CanWallClimb, 1 not") && g_cl.probes == 4,
 	       "climb: the table (probes %llu)", (unsigned long long)g_cl.probes);
 	/* 18f. low_cm: a hold at y 40 (60 cm under the root at 100) starts no climb */
 	g_pobj.pos[1] = 100, g_pobj.pos[2] = -50;
@@ -5815,6 +5858,63 @@ static void climb_tests(void)
 	iframe();
 	EXPECT(log_has("CLIMB state t=") && log_has("(asked): fsm 6 life") && log_has("ledges game (context finds passed"),
 	       "climb: the state line");
+	/* 18j. build 13's fling (SOMVR_CLIMB_FLING=on, re-xr-pipeline.md 32.14): the right hand pulled 4 cm a frame and let
+	 * go while still moving: our own arc through the PM hook (the flag kept 0, the stand-in's gravity never pulls),
+	 * 360 cm/s up = 66 cm, slowing, then the apex hang (no fall); A drops. A slow let-go (1 cm a frame): the hang */
+	g_cl.cfg.fling = 1, g_cl.cfg.letgo = SOMVR_CLIMB_LETGO_HANG, g_cl.cfg.cue = 0, g_cl.cfg.inside_cm = 0;
+	g_grav_flag = &g_ppc.grav, g_ground_y = 100;
+	g_pobj.pos[1] = 100, g_pobj.pos[2] = -50;
+	cl_frames(3);
+	cl_hand(SOMVR_HAND_R, 0.2f, -0.2f, -0.45f);
+	cl_grip(SOMVR_HAND_R, 1);
+	iframe();
+	for (int i = 0; i < 10; i++) {
+		g_lpose[1].position.y -= 0.04f;
+		iframe();
+	}
+	uint64_t fhp0 = atomic_load(&g_in.n_hap_posts);
+	g_lpose[1].position.y -= 0.04f;
+	cl_grip(SOMVR_HAND_R, 0);
+	iframe();
+	float yf0 = g_pobj.pos[1];
+	EXPECT(g_cl.s.active && g_cl.s.phase == SOMVR_CLIMB_PH_FLING && g_cl.s.flings == 1 && NEAR(g_cl.s.fl_v0.y, 360, 6) &&
+		       log_has("fling launch R: v=3") && log_has("(up 3") && atomic_load(&g_in.n_hap_posts) > fhp0,
+	       "climb: fling: launch phase %d v0 %g", g_cl.s.phase, g_cl.s.fl_v0.y);
+	cl_frames(60);
+	float yfa = g_pobj.pos[1];
+	EXPECT(g_cl.s.active && g_cl.s.phase == SOMVR_CLIMB_PH_HANG && g_cl.s.fl_why == SOMVR_CLIMB_FL_APEX && g_ppc.grav == 0 &&
+		       yfa - yf0 > 55 && yfa - yf0 < 75 && log_has("fling apex hang (the arc's top) after 0.3"),
+	       "climb: fling: the apex hang: phase %d why %d flag %d rose %g", g_cl.s.phase, g_cl.s.fl_why, g_ppc.grav, yfa - yf0);
+	cl_frames(30);
+	EXPECT(NEAR(g_pobj.pos[1], yfa, 1e-3), "climb: fling: at the apex %g -> %g (a fall)", yfa, g_pobj.pos[1]);
+	g_lst.hand[1].buttons |= SOMVR_BTN_LOWER;
+	iframe();
+	EXPECT(!g_cl.s.active && g_cl.s.last_end == SOMVR_CLIMB_END_DROP && g_ppc.grav == 1, "climb: fling: A drops");
+	g_lst.hand[1].buttons &= ~SOMVR_BTN_LOWER;
+	cl_frames(40);
+	g_pobj.pos[1] = 100, g_pobj.pos[2] = -50;
+	cl_frames(3);
+	cl_hand(SOMVR_HAND_R, 0.2f, -0.2f, -0.45f);
+	cl_grip(SOMVR_HAND_R, 1);
+	iframe();
+	for (int i = 0; i < 20; i++) {
+		g_lpose[1].position.y -= 0.01f;
+		iframe();
+	}
+	g_lpose[1].position.y -= 0.01f;
+	cl_grip(SOMVR_HAND_R, 0);
+	iframe();
+	iframe();
+	yf0 = g_pobj.pos[1];
+	cl_frames(30);
+	EXPECT(g_cl.s.active && g_cl.s.phase == SOMVR_CLIMB_PH_HANG && g_cl.s.flings == 1 && NEAR(g_pobj.pos[1], yf0, 1e-3) &&
+		       log_has("fling none R: up 9"),
+	       "climb: fling: a slow let-go hangs (phase %d, flings %llu)", g_cl.s.phase, (unsigned long long)g_cl.s.flings);
+	g_lst.hand[1].buttons |= SOMVR_BTN_LOWER;
+	iframe();
+	g_lst.hand[1].buttons &= ~SOMVR_BTN_LOWER;
+	cl_frames(40);
+	g_cl.cfg.fling = 0;
 	/* 19. off: nothing */
 	g_cl.on = 0;
 	cl_hand(SOMVR_HAND_R, 0.2f, -0.2f, -0.45f);
@@ -5825,7 +5925,9 @@ static void climb_tests(void)
 	cl_grip(SOMVR_HAND_R, 0);
 	g_cl.on = 1;
 	cl_end_log();
-	EXPECT(log_has("CLIMB END climbs=") && log_has("gravity off ") && log_has("Talion skipped "), "climb: no END line");
+	EXPECT(log_has("CLIMB END climbs=") && log_has("gravity off ") && log_has("Talion skipped ") &&
+		       log_has("flings 1 (none 1, pulses 1) catches 0 apexes 1 (blocked 0)"),
+	       "climb: no END line");
 	EXPECT(g_clw.bad == 0, "climb: %d casts with a bad query", g_clw.bad);
 	printf("climb  hand over hand on stand-ins: a hold on the stone (gravity flag 1 -> 0, a pulse), 60 cm pulled with the "
 	       "hand on its hold, the flag kept 0, the wall clips, the left takes over, no follow, released (flag 1, he falls), "
@@ -10795,6 +10897,184 @@ static void fi_hand_frame(const somvr_blade *dprev, const somvr_blade *dag, floa
 	combat_frame((uintptr_t)&g_player, 0);
 }
 
+/* SOMVR_VERBS (build 13): the left hand's squeeze on an orc's head -> B (120) held through the input's press path while
+ * the grip stays closed; the climb told; the game's hold's end lets B go; the test words; the prompts' words */
+static st_dbrec_t g_vb_hold = { .flags = 2, .name = "PC_HoG_Standing_Hold_Normal" },
+		  g_vb_done = { .flags = 2, .name = "PC_HoG_Standing_Complete" };
+static void vb_hand_at2(float x, float y, float z, float sq, float tr)
+{
+	sv_vec3 pw[2] = { { x, y, z }, { 0, 0, 0 } }, eye = { 500, 176, -50 };
+	g_inp.hands[SOMVR_HAND_L].valid = 1;
+	g_inp.st.hand[SOMVR_HAND_L].squeeze = sq, g_inp.st.hand[SOMVR_HAND_L].trigger = tr;
+	g_inp.st.hand[SOMVR_HAND_L].active |= SOMVR_HACT_INPUT;
+	g_fr.frame++;
+	vb_hands(pw, eye);
+}
+static void vb_hand_at(float x, float y, float z, float sq) { vb_hand_at2(x, y, z, sq, 0); }
+static int vb_has(const int *out, int n, int cmd)
+{
+	for (int k = 0; k < n; k++)
+		if (out[k] == cmd)
+			return 1;
+	return 0;
+}
+static void vb_tests(void)
+{
+	int bad = 0, out[4];
+	unsetenv("SOMVR_VERBS");
+	vb_start(&bad);
+	EXPECT(g_vb.mode == VB_OFF && vb_press_cmds(out) == 0 && !strcmp(vb_word(" status"), "verbs (SOMVR_VERBS is off: ignored)") &&
+		       !vb_trigger_taken(),
+	       "verbs: off by default");
+	cb_world();
+	g_cb_test_t = 12000;
+	int inp = g_inp.on, ctx = g_inp.ctx;
+	g_inp.on = 1, g_inp.ctx = SC_CTX_WORLD;
+	setenv("SOMVR_VERBS", "on", 1);
+	g_cb.mode = CB_OFF;
+	vb_start(&bad);
+	EXPECT(g_vb.mode == VB_OFF && log_has("WARN SOMVR_VERBS=on needs SOMVR_COMBAT"), "verbs: on without combat: off");
+	g_cb.mode = CB_FULL;
+	vb_start(&bad);
+	EXPECT(g_vb.mode == VB_ON && log_has("CONFIG verbs mode=on test=0: the left hand's squeeze on an orc's head"),
+	       "verbs: on (%d)", g_vb.mode);
+	g_pcs.attack = 0;
+	cb_frame(); /* the heads: orc A 110 cm ahead (its root 500,100,60) */
+	EXPECT(g_vb.nheads >= 1 && g_vb.head_c[0] == (uintptr_t)&g_oc[0] && g_vb.heads[0][1] > g_oobj[0].pos[1] + 50 &&
+		       g_vb.heads[0][1] < g_oobj[0].pos[1] + 90 && g_vb.heads_frame == g_fr.frame,
+	       "verbs: the near orcs' heads (%d, %.1f)", g_vb.nheads, g_vb.nheads ? g_vb.heads[0][1] : 0);
+	float hy = g_vb.heads[0][1];
+	g_vb.heads_frame = g_fr.frame + 1; /* (vb_hand_at steps the frame) */
+	vb_hand_at(500, 120, 0, 1); /* a squeeze at the hip: nothing */
+	EXPECT(!g_vb.press_grab && vb_press_cmds(out) == 0 && !vb_nograb(), "verbs: a squeeze at the hip: nothing");
+	vb_hand_at(500, 120, 0, 0);
+	g_cb_test_t += 0.5;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at(502, hy - 5, 52, 1); /* on A's head: the grab (123), through the deny list's press path */
+	int n = vb_press_cmds(out);
+	EXPECT(g_vb.press_grab && !g_vb.press_b && n == 1 && out[0] == VB_CMD_GRAB && vb_nograb() && vb_trigger_taken() &&
+		       g_vb.held_c == (uintptr_t)&g_oc[0] && log_has("grab: the left hand on orc"),
+	       "verbs: the squeeze on A's head: the grab held (%d %d)", n, n ? out[0] : 0);
+	vb_hand_at2(530, 140, 20, 0.6f, 1); /* the trigger while holding: B too */
+	n = vb_press_cmds(out);
+	EXPECT(n == 2 && vb_has(out, n, VB_CMD_GRAB) && vb_has(out, n, VB_CMD_B) && log_has("wraith: the left hand holding orc"),
+	       "verbs: the trigger while holding: 123 + B (%d)", n);
+	g_pcs.attack = (uintptr_t)&g_vb_hold; /* the game's hold runs */
+	cb_frame();
+	g_cb_test_t += 0.3;
+	vb_hand_at2(530, 140, 20, 0.6f, 1);
+	EXPECT(g_vb.press_b && g_vb.saw_hog && g_vb.hog_starts == 1 && log_has("the game: Talion's 'PC_HoG_Standing_Hold_Normal'"),
+	       "verbs: B held through the game's hold (%d %d)", g_vb.press_b, g_vb.saw_hog);
+	g_pcs.attack = (uintptr_t)&g_vb_done; /* the game's hold completes: B let go, the grab still held */
+	cb_frame();
+	vb_hand_at2(530, 140, 20, 1, 1);
+	n = vb_press_cmds(out);
+	EXPECT(!g_vb.press_b && g_vb.press_grab && n == 1 && out[0] == VB_CMD_GRAB && g_vb.hog_completes == 1 &&
+		       g_vb.ev[SOMVR_VBE_DONE] == 1 && log_has("done after"),
+	       "verbs: the game's end: B let go, the grab held (%d %d)", g_vb.press_b, n);
+	/* the interrogation: the held orc pulled to the face (the eyes 500,176,-50) */
+	g_cb_test_t += 0.1;
+	vb_hand_at2(500, 172, -25, 1, 0); /* 25 cm from the eyes */
+	g_cb_test_t += 0.3;
+	vb_hand_at2(500, 172, -25, 1, 0);
+	n = vb_press_cmds(out);
+	EXPECT(vb_has(out, n, VB_CMD_A) && vb_has(out, n, VB_CMD_GRAB) && g_vb.a_taps == 1 && log_has("ask: orc"),
+	       "verbs: pulled to the face: A tapped (%d)", n);
+	g_cb_test_t += 0.3;
+	n = vb_press_cmds(out);
+	EXPECT(!vb_has(out, n, VB_CMD_A), "verbs: A's tap over");
+	vb_hand_at2(530, 140, 20, 0, 0); /* the grip opened: let go */
+	EXPECT(!g_vb.press_grab && vb_press_cmds(out) == 0 && !vb_trigger_taken() && log_has("release after"),
+	       "verbs: the grip opened: the grab let go");
+	g_pcs.attack = 0;
+	cb_frame();
+	/* the wraith hand with the open hand on a head: B (a tap = the game's stun) */
+	g_cb_test_t += 1.0;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	n = vb_press_cmds(out);
+	EXPECT(n == 1 && out[0] == VB_CMD_B && vb_trigger_taken() && g_vb.ev[SOMVR_VBE_WRAITH] == 2, "verbs: the open hand's trigger "
+	       "on A's head: B (%d)", n);
+	g_cb_test_t += 0.1;
+	vb_hand_at2(502, hy - 5, 52, 0, 0);
+	EXPECT(vb_press_cmds(out) == 0 && g_vb.ev[SOMVR_VBE_WRAITH_END] == 1 && !vb_trigger_taken(), "verbs: let go: B let go");
+	/* the trigger elsewhere: the bow's */
+	g_cb_test_t += 1.0;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(450, 100, -50, 0, 1);
+	EXPECT(vb_press_cmds(out) == 0 && !vb_trigger_taken(), "verbs: the trigger away from the orcs: nothing (the bow's)");
+	vb_hand_at2(450, 100, -50, 0, 0);
+	/* a fist moved onto the head: nothing */
+	g_cb_test_t += 1.0;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at(500, 120, 0, 1);
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at(502, hy - 5, 52, 1);
+	EXPECT(!g_vb.press_grab && g_vb.ev[SOMVR_VBE_GRAB] == 1, "verbs: a fist moved onto the head: nothing");
+	vb_hand_at(502, hy - 5, 52, 0);
+	/* reached out at A ~1 m off: the eyes 500,176,-50, the palm 55 cm out toward A's head */
+	g_cb_test_t += 1.0;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at(500, 176 + (hy - 176) * 0.5f, 5, 1);
+	EXPECT(g_vb.press_grab && g_vb.ev[SOMVR_VBE_GRAB] == 2 && log_has("grab: the left hand reached out at orc"),
+	       "verbs: reached out at A: a grab");
+	/* the sword on the held orc: X instead of the hit */
+	struct cb_orc oa = { (uintptr_t)&g_oc[0], (uintptr_t)&g_oobj[0], { 500, 100, 60 }, 110 };
+	EXPECT(vb_contact((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, &oa, SC_TIER_LIGHT, g_cb_test_t) == 1 &&
+		       vb_press_cmds(out) >= 2 && vb_has(out, 2, VB_CMD_X) && g_vb.flurries == 1 && log_has("kill: the blade on the held orc"),
+	       "verbs: the sword on the held orc: X");
+	EXPECT(vb_contact((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, &oa, SC_TIER_NONE, g_cb_test_t) == 0, "verbs: a glance: not ours");
+	{ /* the held orc's own sweep: in the bands = combat's loop has it (nothing here); no blade history = no contact */
+		somvr_blade bb;
+		memset(&bb, 0, sizeof bb);
+		double bt0 = g_vb.blade_t;
+		vb_blade((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, &oa, 1, &bb, g_cb_test_t + 1);
+		g_cb.prev.valid = 0;
+		vb_blade((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, NULL, 0, &bb, g_cb_test_t + 1);
+		EXPECT(g_vb.blade_t == bt0, "verbs: the held orc's sweep: in the bands / no swept blade: no contact");
+	}
+	g_inp.ctx = SC_CTX_MENU; /* a menu while held: lost */
+	vb_hand_at(500, 176, 5, 1);
+	EXPECT(!g_vb.press_grab && g_vb.ev[SOMVR_VBE_LOST] == 1, "verbs: a menu while held: let go");
+	g_inp.ctx = SC_CTX_WORLD;
+	vb_hand_at(500, 176, 5, 0);
+	/* stale heads (no combat frame for 3 frames): nothing to grab */
+	g_cb_test_t += 1.0;
+	g_vb.heads_frame = g_fr.frame - 3;
+	vb_hand_at(502, hy - 5, 52, 1);
+	EXPECT(!g_vb.press_grab, "verbs: stale heads: nothing");
+	vb_hand_at(502, hy - 5, 52, 0);
+	/* the words: the test ones need SOMVR_HANDS_TEST; the prompts' words off by default */
+	EXPECT(!strcmp(vb_word(" press 120 300"), "verbs press (SOMVR_HANDS_TEST is off: ignored)") &&
+		       !strcmp(vb_word(" words test"), "verbs words (off|on|test; test needs SOMVR_HANDS_TEST: ignored)") &&
+		       !strcmp(vb_word(" tree"), "verbs tree (SOMVR_HANDS_TEST is off: ignored)") &&
+		       !strcmp(vb_word(" status"), "verbs status") && vb_text(121, "UI_Wraith_Dash") == NULL,
+	       "verbs: the words");
+	g_vb.test = 1;
+	g_cb_test_t += 1.0;
+	EXPECT(!strcmp(vb_word(" press 160+120 250"), "verbs press") && !strcmp(vb_word(" press 0 250"),
+	       "verbs press (CMD[+CMD] MS: ignored)") && !strcmp(vb_word(" words test"), "verbs words test (every prompt's text = "
+	       "VR + its StringId; prompts already up keep theirs)"), "verbs: the test words");
+	cb_frame();
+	n = vb_press_cmds(out);
+	const char *vt = vb_text(121, "UI_Wraith_Dash");
+	EXPECT(n == 2 && out[0] == 160 && out[1] == 120 && log_has("test press 160 'SpecialAttackModifier' + CombatPrimary03") &&
+		       vt && !strcmp(vt, "VR UI_Wraith_Dash") && vb_text(121, "UI_Wraith_Dash") == vt,
+	       "verbs: the test press and words (%d; '%s')", n, vt ? vt : "-");
+	vb_word(" words off");
+	g_cb_test_t += 1.0;
+	cb_frame();
+	EXPECT(vb_press_cmds(out) == 0 && vb_text(121, "UI_Wraith_Dash") == NULL, "verbs: the press over, the words off");
+	vb_end_log();
+	EXPECT(log_has("VERBS END: ") && log_has("grabs 2, near misses 2, releases 1, done 1, lost 1") &&
+		       log_has("A taps 1, kills pressed 1"), "verbs: the END line");
+	unsetenv("SOMVR_VERBS");
+	vb_start(&bad);
+	atomic_store(&g_vb_words_mode, 0);
+	g_inp.on = inp, g_inp.ctx = ctx;
+	g_inp.hands[SOMVR_HAND_L].valid = 0, g_inp.st.hand[SOMVR_HAND_L].squeeze = 0, g_inp.st.hand[SOMVR_HAND_L].trigger = 0;
+}
+
 static void finish_tests(void)
 {
 	fi_stand_ins();
@@ -12089,8 +12369,10 @@ static void bd_swing_tests(void)
 	g_bd_req.on[0] = 0;
 	pthread_mutex_unlock(&g_bd_mu);
 	EXPECT(!strcmp(bd_word("swing L -20 -20 40 0 0 0 300"), "hands swing (that hand has no test pose: `hands test` first; ignored)") &&
-		       !strcmp(bd_word("swing R 1 2 3"), "hands swing (not L|R x y z rx ry rz MS: ignored)") &&
-		       !strcmp(bd_word("swing X 1 2 3 0 0 0 100"), "hands swing (not L|R x y z rx ry rz MS: ignored)") &&
+		       !strcmp(bd_word("swing R 1 2 3"), "hands swing (not L|R x y z rx ry rz MS [OPEN [CATCH]]: ignored)") &&
+		       !strcmp(bd_word("swing X 1 2 3 0 0 0 100"), "hands swing (not L|R x y z rx ry rz MS [OPEN [CATCH]]: ignored)") &&
+		       !strcmp(bd_word("swing R 0 0 0 0 0 0 100 1.5"), "hands swing (OPEN not 0 or between 0 and 1: ignored)") &&
+		       !strcmp(bd_word("swing R 0 0 0 0 0 0 100 0.5 0"), "hands swing (CATCH not in (0, 1]: ignored)") &&
 		       !strcmp(bd_word("swing R 0 0 0 0 0 0 5"), "hands swing (MS not 10..5000: ignored)") &&
 		       !strcmp(bd_word("swing R 0 0 999 0 0 0 100"), "hands swing (a number out of -400..400: ignored)"),
 	       "the swing's refusals");
@@ -12150,6 +12432,27 @@ static void bd_swing_tests(void)
 	EXPECT(!g_bd_sw.on[1] && log_has("BODY test swing R cancelled after 1 frames (a test word)") &&
 		       NEAR(hh[1].pose.p[0], 0, 1e-5) && NEAR(hh[1].pose.p[2], -0.40f, 1e-5),
 	       "cancelled: the test pose");
+	/* OPEN (SOMVR_CLIMB_FLING's tests): the squeezed hand's test squeeze opens in the frame the swing passes u 0.5 */
+	EXPECT(!strcmp(bd_word("test L -20 0 40 0 0 0"), "hands test") && !strcmp(bd_word("squeeze L 0"), "hands squeeze") &&
+		       !strcmp(bd_word("squeeze R 1"), "hands squeeze") &&
+		       !strcmp(bd_word("swing R 0 -60 40 0 0 0 200 0.5 0.75"), "hands swing"),
+	       "a squeeze and a swing with OPEN and CATCH");
+	int64_t T2 = T0 + 2000000000LL;
+	g_fr.views.time = T2;
+	bd_frame(1);
+	int open_at = -1;
+	for (int i = 1; i <= 5; i++) {
+		bd_test_hands(hh, T2 + i * 50000000LL, 1);
+		if (open_at < 0 && bd_squeeze(1, 0.7f) == 0) open_at = i;
+		if (open_at < 0 && !(bd_squeeze(1, 0.7f) == 1)) open_at = -2;
+	}
+	bd_frame(1);
+	EXPECT(open_at == 2 && bd_squeeze(1, 0.7f) == 0 && log_has("u=0.50: the squeeze opened") && g_bd_req.sq[1] == 0,
+	       "OPEN: the squeeze 1 until u 0.5 (frame %d), then 0", open_at);
+	EXPECT(bd_squeeze(0, 0.2f) == 1 && log_has("u=0.75: the L squeeze closed") && g_bd_req.sq[0] == 1,
+	       "CATCH: the left squeeze closed at u 0.75");
+	EXPECT(!strcmp(bd_word("squeeze R -1"), "hands squeeze") && !strcmp(bd_word("squeeze L -1"), "hands squeeze"),
+	       "the squeezes back");
 	/* the state back */
 	pthread_mutex_lock(&g_bd_mu);
 	g_bd_req.on[0] = g_bd_req.on[1] = 0, g_bd_req.seq++;
@@ -12401,6 +12704,122 @@ static void vh_tests(void)
 	g_vh.on = g_vh.want = 0;
 	atomic_store(&g_vho.active, 0);
 	g_arm.on = arm_on0, g_bd.on = bd_on0, g_bd.drawn = drawn0, g_fr.frame = frame0, g_hp_main_hid = hid0;
+}
+
+/* SOMVR_HANDS_SURFACE=on (somvr_surface_game.c) on the climb's stand-ins (cl_stand_in_sites: the wall's face at z = 0,
+ * its stone, Talion's cylinder): the switch and its needs, the ray (Talion passed by the filter, the normal, the
+ * surface's name; a soft surface passed), a grip pushed 10 cm into the wall stopped off it with the ghost at the real
+ * grip (the entry's v3 fields), the contact's tick and lines, the release, an exception; the blade's push is the pure
+ * part's (tests/test_surface.c) */
+static void sf_tests(void)
+{
+	int arm_on0 = g_arm.on, inp_on0 = g_inp.on, bad = 0;
+	float pos0[3];
+	memcpy(pos0, g_pobj.pos, sizeof pos0);
+	sc_rigxf rig0 = g_arm.rig;
+	double cbt0 = g_cb_test_t;
+	unsetenv("SOMVR_HANDS_SURFACE");
+	sf_config(&bad);
+	sf_start();
+	EXPECT(!g_sf.on && !bad && log_has("CONFIG surface=off (the hands and the sword pass through the world"),
+	       "surface: off by default");
+	setenv("SOMVR_HANDS_SURFACE", "on", 1);
+	g_arm.on = 0, g_inp.on = 1;
+	sf_config(&bad);
+	sf_start();
+	EXPECT(!g_sf.on && log_has("CONFIG surface=off: SOMVR_HANDS_SURFACE=on needs SOMVR_ARMS=1"), "surface: needs the arms");
+	g_arm.on = 1;
+	setenv("SOMVR_HANDS_SURFACE_GHOST", "2", 1);
+	sf_config(&bad);
+	EXPECT(bad && log_has("WARN SOMVR_HANDS_SURFACE_GHOST=2 is not 0..1"), "surface: a bad ghost opacity");
+	unsetenv("SOMVR_HANDS_SURFACE_GHOST");
+	bad = 0;
+	sf_config(&bad);
+	sf_start();
+	EXPECT(g_sf.on && !bad && g_sf.model_ok && log_has("CONFIG surface=on (the hands and the sword stop at the world's surfaces") &&
+		       log_has("on our drawn hand (its curls)"),
+	       "surface: on (%d, model %d)", g_sf.on, g_sf.model_ok);
+	/* the ray: from inside Talion (his cylinder: the filter passes him) to 5 cm past the wall's face */
+	g_pobj.pos[0] = 500, g_pobj.pos[1] = 100, g_pobj.pos[2] = -50;
+	g_sf.self = g_sf.ud.self = (uintptr_t)&g_pobj;
+	g_clw = (typeof(g_clw)){ 0, 0, 1, 0, 0 };
+	uintptr_t phys = peek_ptr(g_clg.phys_pp);
+	somvr_sf_plane pl;
+	char nm[32];
+	uintptr_t ob = 0;
+	int hit = sf_ray(phys, (sv_vec3){ 500, 150, -50 }, (sv_vec3){ 520, 150, 5 }, 5, &pl, nm, &ob, 1.0);
+	EXPECT(hit && NEAR(pl.p.z, 0, 1e-3) && NEAR(pl.n.z, -1, 1e-5) && !strcmp(nm, "ST_Climbable_Stone") &&
+		       ob == (uintptr_t)g_wallobj && g_clw.bad == 0 && g_clw.cb_calls > 0,
+	       "surface: the ray: hit %d at z %g n %g '%s' (bad %d, the filter asked %d)", hit, pl.p.z, pl.n.z, nm, g_clw.bad,
+	       g_clw.cb_calls);
+	EXPECT(!sf_ray(phys, (sv_vec3){ 500, 150, -50 }, (sv_vec3){ 520, 150, -20 }, 5, &pl, nm, &ob, 1.0),
+	       "surface: a ray short of the wall");
+	const char *stone = g_srec_names[0], *bush = "Foliage_Bush";
+	memcpy(g_srec[0] + 0x20, &bush, 8);
+	uint64_t soft0 = g_sf.n.passed_soft;
+	EXPECT(!sf_ray(phys, (sv_vec3){ 500, 150, -50 }, (sv_vec3){ 520, 150, 5 }, 5, &pl, nm, &ob, 1.0) &&
+		       g_sf.n.passed_soft == soft0 + 1,
+	       "surface: a bush is passed");
+	memcpy(g_srec[0] + 0x20, &stone, 8);
+	hit = sf_ray(phys, (sv_vec3){ 500, 150, -50 }, (sv_vec3){ 520, 150, 5 }, 5, &pl, nm, &ob, 1.0);
+	/* the grips: the rig the identity about (500, 100, -50); the right grip 10 cm into the wall */
+	g_arm.rig = (sc_rigxf){ { 500, 100, -50 }, { 0, 0, 0 }, 0, 1 };
+	struct sf_found *f = &g_sf.f[1];
+	memset(f, 0, sizeof *f);
+	f->frame = g_fr.frame, f->npl = 1, f->pl[0] = pl, f->obj[0] = ob;
+	snprintf(f->name[0], sizeof f->name[0], "%s", nm);
+	sa_xf gg[2], real = { { 20, 50, 60 }, { 0, 0, 0, 1 } };
+	int gv[2] = { 0, 1 }, bowed[2] = { 0, 0 };
+	uint64_t hp0 = atomic_load(&g_in.n_hap_posts);
+	g_cb_test_t = 20000;
+	g_sf.t_last = 0, g_sf.tid = my_tid(); /* (sf_frame's, the game thread) */
+	for (int k = 0; k < 12; k++) {
+		f->frame = g_fr.frame;
+		gg[1] = real;
+		sf_arm(gg, gv, bowed, (sv_vec3){ 0, 0, 0 });
+		g_cb_test_t += 0.011;
+	}
+	float zmax = -1e9f;
+	for (int i = 0; i < SOMVR_SF_NS; i++)
+		zmax = fmaxf(zmax, gg[1].p.z - 50 + g_sf.pg[1][i][2] + g_sf.rad[i]);
+	EXPECT(gg[1].p.z < 50 && NEAR(zmax, 0, 0.02) && gg[1].p.x == 20 && gg[1].p.y == 50 &&
+		       log_has("SURF t=20000.000 clamp hand=R depth=") && log_has("surf=ST_Climbable_Stone") &&
+		       atomic_load(&g_in.n_hap_posts) > hp0,
+	       "surface: the grip stopped: z %g (the deepest sample's edge %g), haptics %llu", gg[1].p.z, zmax,
+	       (unsigned long long)(atomic_load(&g_in.n_hap_posts) - hp0));
+	somvr_vrhands_frame e;
+	memset(&e, 0, sizeof e);
+	sf_ghost(&e);
+	somvr_posef rx;
+	vh_to_xr(&real, &rx);
+	EXPECT(g_sf.ghost_a[1] > 0.3f && e.ghost_a[1] == g_sf.ghost_a[1] && e.ghost_a[0] == 0 &&
+		       !memcmp(&e.ghost[1], &rx, sizeof rx) && log_has("SURF t=") && log_has("ghost hand=R on"),
+	       "surface: the ghost at the real grip: %g", g_sf.ghost_a[1]);
+	/* out of the wall (the plane kept): the release; then an exception (the bow): nothing clamps */
+	gg[1] = (sa_xf){ { 20, 50, 20 }, { 0, 0, 0, 1 } };
+	sf_arm(gg, gv, bowed, (sv_vec3){ 0, 0, 0 });
+	EXPECT(log_has("release hand=R after "), "surface: the release");
+	for (int k = 0; k < 30; k++) { /* the ease back */
+		g_cb_test_t += 0.011;
+		gg[1] = (sa_xf){ { 20, 50, 20 }, { 0, 0, 0, 1 } };
+		sf_arm(gg, gv, bowed, (sv_vec3){ 0, 0, 0 });
+	}
+	EXPECT(gg[1].p.z == 20 && g_sf.ghost_a[1] == 0, "surface: back on the controller: %g", gg[1].p.z);
+	bowed[0] = 1;
+	gg[1] = real;
+	g_cb_test_t += 0.011;
+	sf_arm(gg, gv, bowed, (sv_vec3){ 0, 0, 0 });
+	EXPECT(gg[1].p.z == 60 && log_has("except hand=R: the bow is out"), "surface: the bow: no clamp (%g)", gg[1].p.z);
+	sf_end_log();
+	EXPECT(log_has("SURF END frames ") && log_has("contacts 0 / 1"), "surface: the end line");
+	printf("surface  the switch (off by default, needs the arms, a bad opacity), the ray on the stand-ins (Talion passed "
+	       "by the filter, the normal, stone; a bush passed), a grip 10 cm into the wall stopped off it, the tick, the "
+	       "ghost at the real grip into the entry, the release and the ease back, the bow's exception\n");
+	/* restore */
+	unsetenv("SOMVR_HANDS_SURFACE");
+	g_sf.on = g_sf.want = 0;
+	g_arm.on = arm_on0, g_inp.on = inp_on0, g_arm.rig = rig0, g_cb_test_t = cbt0;
+	memcpy(g_pobj.pos, pos0, sizeof pos0);
 }
 
 static void pr_tests(const char *trig)
@@ -12693,6 +13112,49 @@ static void pr_tests(const char *trig)
 	       (unsigned long long)g_pr.weathers);
 	pr_word("back"), pr_step(90 * 3);
 	g_prw.rec = g_prwrec[0], g_prw.tod = 1;
+	/* 11c. SOMVR_PRACTICE_WAIT (the drill): "go" asked for in the pause waits (no black over the pause menu, the menu's
+	 * buttons busy); a presentation after the pause restarts the 1 s; then the trip; "back" when the game is up: at once;
+	 * "go" while Talion is dead, then "back" (the newest wins), then a load: dropped */
+	g_pr.wait_mode = 1;
+	g_pz[0x34] = 1; /* paused */
+	pr_word("go"), pr_step(1);
+	EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && g_pr.pend_act == SOMVR_PRA_GO && g_pr.waits == 1 &&
+		       (atomic_load(&g_vmo.pstate) & SOMVR_VMA_PR_BUSY) &&
+		       log_has("go (the trigger word) waits for the game to be back (the game paused)"),
+	       "wait: go in the pause: phase %d pending %d pstate %#x", g_pr.trip.phase, g_pr.pend_act, atomic_load(&g_vmo.pstate));
+	pr_step(90 * 3);
+	EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && g_pr.pend_act == SOMVR_PRA_GO, "wait: still paused: phase %d",
+	       g_pr.trip.phase);
+	g_pz[0x34] = 0;
+	pr_step(45);
+	EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && g_pr.pend_act, "wait: 0.5 s after the pause: phase %d", g_pr.trip.phase);
+	*(uintptr_t *)(g_fbpres + FB_PRES_CUR) = 1; /* a presentation (the respawn's) */
+	pr_step(90);
+	EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && g_pr.pend_act, "wait: in a presentation: phase %d", g_pr.trip.phase);
+	*(uintptr_t *)(g_fbpres + FB_PRES_CUR) = 0;
+	pr_step(80);
+	EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && g_pr.pend_act, "wait: 0.9 s after it: phase %d", g_pr.trip.phase);
+	pr_step(12);
+	EXPECT(g_pr.trip.phase != SOMVR_PRT_IDLE && !g_pr.pend_act && g_pr.wait_starts == 1 && g_pr.trip_kind == PR_TRIP_GO &&
+		       log_has("the waiting go (the trigger word): the game is back (waited"),
+	       "wait: the trip after 1 s back: phase %d starts %llu", g_pr.trip.phase, (unsigned long long)g_pr.wait_starts);
+	pr_step(90 * 8); /* (the night made day: the load hold waits up to 3.6 s for a pause after our ChangeWeather) */
+	EXPECT(g_pr.went && g_pr.trip.phase == SOMVR_PRT_IDLE, "wait: arrived (phase %d)", g_pr.trip.phase);
+	pr_word("back"), pr_step(1);
+	EXPECT(g_pr.trip.phase != SOMVR_PRT_IDLE && g_pr.trip_kind == PR_TRIP_BACK && g_pr.waits == 1,
+	       "wait: back with the game up: at once (phase %d)", g_pr.trip.phase);
+	pr_step(90 * 8);
+	g_fbP[FB_P_LIFE] = 3; /* dead */
+	pr_word("go"), pr_step(1);
+	pr_word("back"), pr_step(1);
+	EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && g_pr.pend_act == SOMVR_PRA_BACK && g_pr.waits == 3 &&
+		       log_has(", Talion not up)") && log_has("it replaces the waiting one"),
+	       "wait: dead, go then back: pending %d waits %llu", g_pr.pend_act, (unsigned long long)g_pr.waits);
+	g_fbP[FB_P_LIFE] = 2;
+	pr_new_player((uintptr_t)g_fbP, g_pr_test_t); /* a load meanwhile (the same stand-in Player) */
+	EXPECT(!g_pr.pend_act && g_pr.wait_dropped == 1 && log_has("the waiting back (the trigger word) dropped: a new player"),
+	       "wait: a load drops the waiting back (%llu)", (unsigned long long)g_pr.wait_dropped);
+	g_pr.wait_mode = 0;
 	/* 12. auto: once, 5 s after the player is in the world and not paused */
 	g_pr.mode = SOMVR_PR_AUTO, g_pr.auto_done = 0, g_pr.world_t = 0, g_pr.have_back = 0;
 	g_pz[0x34] = 1; /* paused */
@@ -12765,7 +13227,8 @@ static void pr_tests(const char *trig)
 	printf("practice: the blink there (one teleport at black, the settle, the night made day and DayNoRain under the black, the black held for the game's pause after it, "
 	       "fade in), min health 20 and back, the keep-clear pass (armed within 60 m; never ours, slaves, the dead, the "
 	       "mount; held in a presentation), one orc at a time (shield, again, berserker by the menu; down, removed; three "
-	       "failures), walking out and in, back with the light, a teleport that never lands, auto once, a load, the sites; "
+	       "failures), walking out and in, back with the light, a teleport that never lands, SOMVR_PRACTICE_WAIT (a trip "
+	       "asked for in the pause, a presentation or a death waits), auto once, a load, the sites; "
 	       "quiet: the spawn manager off and its AI removed in the area (again after a script, held in a presentation), on "
 	       "again walking out, going back; a load's new manager left alone; its sites, SOMVR_PRACTICE_QUIET=0\n");
 	/* back as the earlier tests left it */
@@ -13200,6 +13663,94 @@ static void uf_tests(void)
 	unsetenv("SOMVR_HUD_FX");
 	memset(&g_uf, 0, sizeof g_uf); /* (the stand-in stays patched; nothing calls it again) */
 	g_uf_sites = g_uf_sites_game;
+}
+
+/* SOMVR_VERBS_GLOW: ClientFX's two create thunks (FUN_00d8c7f0: movzbl %cl,%ecx; movzbl %r8b,%r8d; jmp FUN_00d8bae0 -
+ * FUN_00d8c810: the same with start 1, b 1, c 0 and its out/cs swapped) */
+uint64_t c_vgthunk0(uintptr_t mgr, uintptr_t out, uintptr_t cs, uint64_t start, uint64_t b, uint64_t c);
+uint64_t c_vgthunk1(uintptr_t mgr, uintptr_t cs, uintptr_t out);
+__attribute__((noipa, used)) uint64_t st_vgcreate(uintptr_t mgr, uintptr_t out, uintptr_t cs, uint64_t start, uint64_t b,
+						  uint64_t c);
+__asm__(".text\n.p2align 4\n.globl c_vgthunk0\n.type c_vgthunk0,@function\nc_vgthunk0:\n  movzbl %cl, %ecx\n"
+	"  movzbl %r8b, %r8d\n  .byte 0xe9\n  .long st_vgcreate - . - 4\n.size c_vgthunk0, .-c_vgthunk0\n"
+	".p2align 4\n.globl c_vgthunk1\n.type c_vgthunk1,@function\nc_vgthunk1:\n  mov %rdx, %rax\n  mov %rsi, %rdx\n"
+	"  xor %r9d, %r9d\n  mov $1, %ecx\n  mov %rax, %rsi\n  mov $1, %r8d\n  .byte 0xe9\n  .long st_vgcreate - . - 4\n"
+	".size c_vgthunk1, .-c_vgthunk1\n");
+static struct { int n; uintptr_t mgr, out, cs; uint64_t start, b, c; } g_vgt;
+__attribute__((noipa, used)) uint64_t st_vgcreate(uintptr_t mgr, uintptr_t out, uintptr_t cs, uint64_t start, uint64_t b,
+						  uint64_t c)
+{
+	g_vgt.n++, g_vgt.mgr = mgr, g_vgt.out = out, g_vgt.cs = cs, g_vgt.start = start, g_vgt.b = b, g_vgt.c = c;
+	return 0x55; /* an FX made */
+}
+static int vg_standin(const void *fn, const char *name, struct site_spec *s, char *hx)
+{
+	const unsigned char *p = (const unsigned char *)fn;
+	int k = 0;
+	for (; k < 40; k++) {
+		int32_t rel;
+		memcpy(&rel, p + k + 1, 4);
+		if (p[k] == 0xe9 && (uintptr_t)(p + k + 5 + rel) == (uintptr_t)st_vgcreate)
+			break;
+	}
+	if (k >= 40)
+		return 0;
+	hex_of(p + k, 5, hx, 128), hex_of((const void *)st_vgcreate, 4, hx + 128, 128);
+	*s = (struct site_spec){ name, K_JMP, (uintptr_t)(p + k), (uintptr_t)(p + k), hx, (uintptr_t)st_vgcreate, hx + 128 };
+	return 1;
+}
+static void vg_tests(void)
+{
+	static struct site_spec s[2];
+	static char hx[2][256];
+	int ok0 = vg_standin((const void *)c_vgthunk0, "VG_FXC", &s[0], hx[0]);
+	int ok1 = vg_standin((const void *)c_vgthunk1, "VG_FXC1", &s[1], hx[1]);
+	EXPECT(ok0 && ok1, "vbglow: the stand-ins' jmps");
+	if (!ok0 || !ok1)
+		return;
+	int bad = 0;
+	setenv("SOMVR_VERBS_GLOW", "hide", 1);
+	setenv("SOMVR_VERBS_GLOW_FX", "Flare, orb", 1);
+	vg_start(s, &bad);
+	static _Alignas(16) unsigned char flare[0x1c8], other[0x1c8];
+	strcpy((char *)flare, "FX\\Characters\\Player\\Wraith\\Wraith_FLARE_01.fxp");
+	strcpy((char *)other, "fx\\common\\blood\\blood_level01_weapontrail.fxp");
+	int32_t node = 90;
+	uintptr_t parent = 0x1234;
+	memcpy(flare + VG_CS_NODE, &node, sizeof node), memcpy(flare + VG_CS_PARENT, &parent, sizeof parent);
+	uintptr_t handle = 0;
+	uint64_t r0 = c_vgthunk0(0x111, (uintptr_t)&handle, (uintptr_t)flare, 0x101, 0x200, 7); /* no frame of ours: made */
+	int n0 = g_vgt.n;
+	uint64_t a0 = g_vgt.start, b0 = g_vgt.b, cc0 = g_vgt.c;
+	vg_frame(1);
+	uint64_t r1 = c_vgthunk0(0x111, (uintptr_t)&handle, (uintptr_t)flare, 1, 0, 0); /* our eyes, named: not made */
+	uint64_t r2 = c_vgthunk1(0x222, (uintptr_t)other, (uintptr_t)&handle);            /* another FX: made */
+	int args1 = g_vgt.mgr == 0x222 && g_vgt.out == (uintptr_t)&handle && g_vgt.cs == (uintptr_t)other &&
+		    g_vgt.start == 1 && g_vgt.b == 1 && g_vgt.c == 0;
+	const char *w1 = vg_word("log");
+	uint64_t r3 = c_vgthunk1(0x222, (uintptr_t)flare, (uintptr_t)&handle); /* log: made */
+	const char *w2 = vg_word("hide");
+	vg_frame(0);
+	uint64_t r4 = c_vgthunk0(0x111, 0, (uintptr_t)flare, 1, 0, 0); /* a flat frame: made */
+	const char *w3 = vg_word("fx blood");
+	vg_frame(1);
+	uint64_t r5 = c_vgthunk1(0x222, (uintptr_t)other, (uintptr_t)&handle); /* the new word: not made */
+	EXPECT(!bad && g_vg.installed && r0 == 0x55 && n0 == 1 && a0 == 1 && b0 == 0 && cc0 == 7 && r1 == 0 && r2 == 0x55 &&
+		       args1 && r3 == 0x55 && r4 == 0x55 && r5 == 0 && g_vgt.n == 4 && g_vg.hidden == 2 && g_vg.made == 4 &&
+		       !strncmp(w1, "vbglow log", 10) && !strncmp(w2, "vbglow hide", 11) && !strncmp(w3, "vbglow fx: 1 words", 18) &&
+		       log_has("HOOK VG_FXC ok jmp") && log_has("HOOK VG_FXC1 ok jmp") &&
+		       log_has("CONFIG verbs_glow=hide (SOMVR_VERBS_GLOW: ClientFX's create watched") && log_has("'flare', 'orb'") &&
+		       log_has("Wraith_FLARE_01.fxp' on an object 0x1234 node 90") && log_has("not made (our eyes: hide)"),
+	       "vbglow: %d calls of the game's, r %#llx %#llx %#llx %#llx %#llx %#llx, hidden %llu, made %llu, bad %d", g_vgt.n,
+	       (unsigned long long)r0, (unsigned long long)r1, (unsigned long long)r2, (unsigned long long)r3,
+	       (unsigned long long)r4, (unsigned long long)r5, (unsigned long long)g_vg.hidden, (unsigned long long)g_vg.made, bad);
+	vg_end_log();
+	EXPECT(log_has("VBGLOW END fx asked 6: made 4, not made in our eyes 2 (the last 'fx\\common\\blood\\blood_level01_weapontrail.fxp')"),
+	       "vbglow END");
+	unsetenv("SOMVR_VERBS_GLOW");
+	unsetenv("SOMVR_VERBS_GLOW_FX");
+	memset(&g_vg, 0, sizeof g_vg); /* (the stand-ins stay patched; nothing calls them again) */
+	g_vg_sites = g_vg_sites_game;
 }
 
 int main(int argc, char **argv)
@@ -13726,6 +14277,7 @@ int main(int argc, char **argv)
 	bm_tests();
 	slots_tests();
 	finish_tests();
+	vb_tests();     /* SOMVR_VERBS: the left hand's grab (build 13; combat's fake world) */
 	df_fx_tests();
 	hp_tests(trig); /* SOMVR_HIDE_HEAD=parts (its hooks stay in, passing through) */
 	pr_tests(trig); /* SOMVR_PRACTICE: last (the fallback's Player world, its own stand-ins) */
@@ -13733,10 +14285,12 @@ int main(int argc, char **argv)
 	bd_swing_tests(); /* SOMVR_HANDS_TEST: `hands swing` */
 	bf_tests();     /* SOMVR_FINGERS: the fingers into the solved arms' pose, the menu's sword angle */
 	vh_tests();     /* SOMVR_VRHANDS: the layer's own hands (build 10) */
+	sf_tests();     /* SOMVR_HANDS_SURFACE: on the climb's stand-ins (build 13) */
 	go_tests();     /* SOMVR_MUSIC / SOMVR_HINTS: their own stand-ins (build 10) */
 	pp_tests();     /* SOMVR_PAD_PROMPTS, SOMVR_BOW_STRIKE: their own stand-ins (the bow's round 2) */
 	bh_tests();     /* SOMVR_BOW_HITLOG: a stand-in call (the bow's round 2) */
 	uf_tests();     /* SOMVR_HUD_FX: a stand-in thunk (the build 12 HUD round) */
+	vg_tests();     /* SOMVR_VERBS_GLOW: two stand-in thunks (build 13) */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",
 	       (unsigned long long)atomic_load(&g_st_stereo), (unsigned long long)atomic_load(&g_st_mono),

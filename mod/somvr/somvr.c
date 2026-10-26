@@ -204,7 +204,12 @@
  *                           SOMVR_CLIMB_OVER_CM (30) past the hold = over); ends on the FSM leaving Supported (FSM 7 holds
  *                           with SOMVR_CLIMB_FIGHT=hold), a mount, third person, input loss, SOMVR_CLIMB_MAX_S (120);
  *                           SOMVR_CLIMB_RAYS=both|palm|fingers, SOMVR_CLIMB_STICK=0|1 (the move stick while holding); the
- *                           trigger word "climb probe [up|table]" (headless drives: the walls round the head)
+ *                           trigger word "climb probe [up|table]" (headless drives: the walls round the head).
+ *                           SOMVR_CLIMB_FLING=off|on (build 13, re-xr-pipeline.md 32.14; needs SOMVR_CLIMB_LETGO=hang):
+ *                           the last hold let go while its hand moves up fast (SOMVR_CLIMB_FLING_MIN 150 cm/s; the mean
+ *                           over SOMVR_CLIMB_FLING_WIN_MS 100, x SOMVR_CLIMB_FLING_GAIN 1, at most SOMVR_CLIMB_FLING_MAX
+ *                           500, sideways x SOMVR_CLIMB_FLING_SIDE 0.5, away and down dropped) flies on up our own arc
+ *                           (SOMVR_CLIMB_FLING_G 981 cm/s^2, gravity off): a grip catches, the arc's top hangs, A drops
  *   SOMVR_BOW=0|1           the VR bow (somvr_bow.h, re-xr-pipeline.md 13; needs SOMVR_INPUT=1, SOMVR_ARMS optional; hook
  *                           BOW_FA_CAMXF, read only BOW_AMMO*): the string hand's grip closing within SOMVR_BOW_NOCK_R_CM
  *                           (15) of the bow hand (left; SOMVR_BOW_HAND=right) draws, the aim button (SOMVR_BOW_BUTTON=
@@ -445,6 +450,7 @@
 #include "somvr_body.h" /* SOMVR_BODY=hands, SOMVR_SWORD_ANGLE, SOMVR_TWOHAND (somvr_body_game.c, included last) */
 #include "somvr_fingers.h" /* SOMVR_FINGERS (somvr_fingers_game.c, included last) */
 #include "somvr_vrhands.h" /* SOMVR_VRHANDS (somvr_vrhands_game.c, included after the fingers' file) */
+#include "somvr_surface.h" /* SOMVR_HANDS_SURFACE (somvr_surface_game.c, included after the VR hands' file) */
 #include "somvr_headparts.h" /* SOMVR_HIDE_HEAD=parts (somvr_headparts_game.c, included before the head view's region) */
 #include "somvr_headview.h" /* SOMVR_EYE_FWD_CM, SOMVR_TUNE (its region follows the anchor's) */
 #include "somvr_hud.h"
@@ -455,6 +461,7 @@
 #include "somvr_session.h"  /* SOMVR_MARK / SOMVR_QUIT (somvr_session_game.c, included after the practice area's) */
 #include "somvr_shared.h"
 #include "somvr_size.h"   /* SOMVR_PLAYER_SIZE, the VR menu's Player size (somvr_size_game.c, included last) */
+#include "somvr_crouch.h" /* SOMVR_CROUCH=duck: crouch by ducking (somvr_crouch_game.c, included last) */
 #include "somvr_slots.h" /* SOMVR_SLOTS (its region follows the threat's) */
 #include "somvr_step.h"   /* SOMVR_STEP / SOMVR_DASH / SOMVR_PHASE (somvr_step_game.c, included after the LOCO region) */
 #include "somvr_threat.h" /* SOMVR_THREAT (its region precedes the gate) */
@@ -956,6 +963,12 @@ static void uf_start(const struct site_spec *sites, int *bad);
 static void uf_frame(int play);
 static const char *uf_word(const char *w);
 static void uf_end_log(void);
+/* SOMVR_VERBS_GLOW (somvr_vbglow_game.c, included after the HUD FX file; build 13, re-xr-pipeline.md 39.7) */
+static const struct site_spec *g_vg_sites; /* its VBGLOW_SITES (defined there; selftest: stand-ins) */
+static void vg_start(const struct site_spec *sites, int *bad);
+static void vg_frame(int play);
+static const char *vg_word(const char *w);
+static void vg_end_log(void);
 /* SOMVR_BOW_STRIKE=dash|blink (somvr_strike_game.c, included last) */
 static void sk_config(int *bad);
 static const char *sk_word(const char *v);
@@ -978,6 +991,13 @@ static void vh_start(void);
 static void vh_end_log(void);
 static void vh_eye_near(int e, float near_cm);                /* build 11 (H1): the eye's near plane -> depth_k */
 static void vh_depth_eye(int e, uint64_t frame, uintptr_t rt); /* build 11 (H8): the eye's depth copied */
+/* SOMVR_HANDS_SURFACE=on (somvr_surface_game.c, after somvr_vrhands_game.c): the hands and the sword stop at surfaces */
+static void sf_frame(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp, sv_quat hq);
+static void sf_arm(sa_xf gg[2], const int gv[2], const int bowed[2], sv_vec3 shift);
+static void sf_ghost(somvr_vrhands_frame *e);
+static void sf_config(int *bad);
+static void sf_start(void);
+static void sf_end_log(void);
 /* build 10's fight (somvr_fight_game.c, included last): SOMVR_ARMS_LW (the weapon node held in the hand) */
 static sa_xf aw_lw(int h, sa_xf tw);
 static void aw_after(const int done[2], sa_xf X);
@@ -1027,6 +1047,10 @@ static void cl_tick(sc_tick_out *o);
 static int cl_holds(int hand);
 static const char *cl_word(const char *w); /* the trigger word "climb probe [up|table]" (headless drives) */
 static void cl_state(uintptr_t pl, const char *why, int tags_only); /* `climb state|watch` (after the LOCO region) */
+static int pr_down_ok(void);                    /* SOMVR_CLIMB_DESCENT's blink: the practice's trip (its game file) */
+static int pr_down_start(sv_vec3 to, double t);
+static int pr_down_teleported(void);
+static int lo_walk_blocked(double t);           /* SOMVR_CLIMB_DESCENT's edge cue: LOCO's walk stopped (its region) */
 static int game_paused(void); /* the game timer's pause (the input region) */
 /* SOMVR_BOW=1 (its region follows the climb's) */
 static void bo_frame(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 pw[2], const sv_quat qw[2]);
@@ -1117,6 +1141,26 @@ static void xc_frame(uintptr_t pl, const float root[3], int blade, double t);
 static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier, const somvr_blade *b, double t);
 static void xc_eye(const somvr_eye_out *e);
 static const char *xc_word(const char *w);
+/* SOMVR_VERBS (somvr_verbs_game.c, included last) */
+static void vb_start(int *bad);
+static uint32_t vb_vm_avail(void); /* the VR menu's SOMVR_VMA_VERBS (the Controls page's grab lines) */
+static uint32_t sf_vm_avail(void); /* the VR menu's SOMVR_VMA_SURFACE (the Hands at walls row) */
+static const char *sf_vm_set(const somvr_settings *s);
+static void vb_end_log(void);
+static void vb_frame(uintptr_t pl, const float root[3], double t);
+static int vb_press_cmds(int out[4]);
+static int vb_trigger_taken(void); /* SOMVR_BOW: the left trigger is the verbs' now */
+static int vb_grab_held(void);     /* SOMVR_BODYMOMENTS: the left hand holds an orc (a hold, not the window) */
+static void vb_view(float pos[3], int frozen, double t); /* ... the held view eased back from its head */
+static void vb_prompt(uintptr_t key, int act, const char *str, int up);
+static void vb_prompt_hold(int act, float fill);
+static const char *vb_text(int act, const char *str); /* the prompt's VR words, NULL = the game's */
+static int vb_keep(int act, uintptr_t key); /* SOMVR_PAD_PROMPTS=vr: a verb's prompt (the grab's) is kept */
+static const char *vb_word(const char *w);
+static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye); /* in_frame, before the climb: the left hand's grab */
+static int vb_nograb(void);                /* the climb: the left squeeze was the verbs' */
+static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t); /* the stealth kill */
+static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, double t);
 /* SOMVR_PRACTICE (somvr_practice_game.c, included after the finishers') */
 static const struct site_spec *g_pr_sites; /* its PRACTICE_SITES (defined there; selftest: stand-ins) */
 static void pr_start(const struct site_spec *sites, int *bad);
@@ -1141,6 +1185,16 @@ static const char *sz_word(const char *w);
 static const char *sz_vm_set(int k, const somvr_settings *s);
 static void sz_vm_settings(somvr_settings *s);
 static uint32_t sz_vm_avail(void);
+/* SOMVR_CROUCH=duck (somvr_crouch_game.c, included last; docs/re-xr-pipeline.md 41): crouch by ducking */
+static void cr_config(int *bad);
+static void cr_frame(void);
+static void cr_tick(sc_tick_out *o, double t);
+static void cr_cap(float *cap);
+static void cr_end_log(void);
+static const char *cr_word(const char *w);
+static const char *cr_vm_set(int k, const somvr_settings *s);
+static void cr_vm_settings(somvr_settings *s);
+static uint32_t cr_vm_avail(void);
 static float sz_scale(void); /* this frame's player size (1 = 1:1) */
 static float sz_body_scale(void); /* SOMVR_SIZE_BODY: Talion's model scale the next phase 2/7 sees (1 = his own) */
 static void sz_unscale_head(uintptr_t obj, float head[3]);
@@ -1585,6 +1639,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 		pr_frame((uintptr_t)pl);    /* SOMVR_PRACTICE: the requests, the trip, the area, the orc */
 		sz_flat((uintptr_t)pl);     /* SOMVR_PLAYER_SIZE: the orc and Talion scale words */
 		uf_frame(bm_flat && stereo_wanted()); /* SOMVR_HUD_FX: a body moment's window is play (its groups would outlive it) */
+		vg_frame(0);                /* SOMVR_VERBS_GLOW: not our eyes */
 		return;
 	}
 	memset(&g_fr, 0, sizeof g_fr);
@@ -1605,6 +1660,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 		pr_frame((uintptr_t)pl);    /* SOMVR_PRACTICE: the requests, the trip, the area, the orc */
 		sz_flat((uintptr_t)pl);     /* SOMVR_PLAYER_SIZE: the orc and Talion scale words */
 		uf_frame(0);                /* SOMVR_HUD_FX: a flat frame (the HUD's flourishes made) */
+		vg_frame(0);                /* SOMVR_VERBS_GLOW: a flat frame */
 		if (should_log(h, n))
 			logf_("H4 n=%llu frame=%llu mono (xr state %u, views: calls %llu ok %llu fail %llu)", (unsigned long long)n,
 			      (unsigned long long)g_fr.frame, atomic_load(&g_sh.xr.state), (unsigned long long)g_vst.calls,
@@ -1625,6 +1681,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	g_fr.on = 1;
 	g_fr.pl = (uintptr_t)pl;
 	uf_frame(1); /* SOMVR_HUD_FX: our eyes (the HUD's flourishes not made) */
+	vg_frame(1); /* SOMVR_VERBS_GLOW: our eyes, the verbs' moment */
 	body_frame();
 	fb_frame(); /* SOMVR_FALLBACK: third person now? (then head_ok = 0: the camera base); the record's fade level */
 	st_frame(); /* SOMVR_DASH / SOMVR_PHASE=blink: the move's black in the fade level (the larger one) */
@@ -3536,6 +3593,7 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		sc_speed_reset(&g_cb.sp);
 		cb_stim_end(t, "no blade");
 		xc_frame(pl, body ? root : NULL, 0, t); /* SOMVR_EXECUTE: the counter, the ready signal (no glow without a blade) */
+		vb_frame(pl, body ? root : NULL, t); /* SOMVR_VERBS: the verbs' prompts, the grab, the change lines */
 		cb_summary(t);
 		return;
 	}
@@ -3556,10 +3614,13 @@ static void combat_frame(uintptr_t pl, int head_ok)
 	st_combat(o, n, &b, edge, root, t); /* SOMVR_STEP: this frame's orcs; a swing's start -> the assisted step */
 	fi_sword(pcomb, pc, o, n, &b, edge, t); /* SOMVR_FINISH: the swing's start, the glow, ground executions */
 	xc_frame(pl, body ? root : NULL, 1, t); /* SOMVR_EXECUTE: the counter, the ready signal and glow, the trigger */
+	vb_frame(pl, body ? root : NULL, t); /* SOMVR_VERBS: the verbs' prompts, the grab, the change lines */
 	cb_tip_check(pl, &b, t); /* the sword model's tip against our blade (every 2 s while drawn; logs) */
 	int sweep = g_cb.prev.valid && b.t > g_cb.prev.t && b.t - g_cb.prev.t <= 0.1 && dist3(b.tip, g_cb.prev.tip) <= CB_JUMP_CM;
 	if (g_cb.prev.valid && !sweep)
 		CB_COUNT(jumps);
+	if (sweep) /* SOMVR_VERBS: the held (or interrogated) orc leaves the targeting bands: its own sweep */
+		vb_blade(pcomb, pc, o, n, &b, t);
 	for (int i = 0; sweep && i < n; i++) {
 		float c0[3], c1[3];
 		sc_contact ct;
@@ -3580,6 +3641,8 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		if (fi_contact(pcomb, pc, &o[i], &ct, &b, t))
 			continue; /* SOMVR_FINISH: this contact started a finisher, or the finisher holds the orc */
 		int tier = sc_tier(&g_cb.cfg, &g_cb.sp);
+		if (vb_contact(pcomb, pc, &o[i], tier, t))
+			continue; /* SOMVR_VERBS: the game offers its stealth kill on this orc: its button instead of our hit */
 		if (tier != SC_TIER_NONE && sc_charges_take(&g_cb.ch, &g_cb.cfg, t)) {
 			sc_cool_mark(&g_cb.cool, o[i].c, t); /* the re-hit cooldown: hits only (a glance deals nothing) */
 			if (!xc_contact(pc, &o[i], &ct, tier, &b, t)) /* SOMVR_EXECUTE: a heavy hit, the trigger held, ready */
@@ -4118,6 +4181,10 @@ static void in_apply(const sc_tick_out *o)
 	int dfc = g_inp.ctx == SC_CTX_WORLD ? df_press_cmd() : 0; /* SOMVR_DEFENCE: a parry's stock counter (the deny list's */
 	if (dfc > 0 && dfc < SC_NCMD)                              /* one exception: our press, never the pad's button) */
 		in_want_add(w, &nw, dfc, g_inp.first[dfc], 1.0f, 1, 1, 0);
+	int vbc[4], nvb = g_inp.ctx != SC_CTX_MENU ? vb_press_cmds(vbc) : 0; /* SOMVR_VERBS: the verbs' stock commands */
+	for (int k = 0; k < nvb; k++)                                          /* (our press, never the pad's button) */
+		if (vbc[k] > 0 && vbc[k] < SC_NCMD)
+			in_want_add(w, &nw, vbc[k], g_inp.first[vbc[k]], 1.0f, 1, 1, 0);
 	if (g_inp.ctx != SC_CTX_MENU) /* the deny list's records read 0/off in the world (re-xr-input.md 3.6) */
 		for (int c = 0; c < SC_NCMD; c++)
 			if (g_inp.rec[c] && sc_denied(c, g_inp.ctx) && c != g_inp.allow_cmd)
@@ -4386,6 +4453,7 @@ static void in_tick(void)
 	st_tick(&o);           /* SOMVR_DASH / SOMVR_PHASE: A's press -> the evade's pick; the phase's vision taps */
 	go_vision_tick(&o, t); /* SOMVR_VISION: Y -> the wraith vision's toggle taps (122) */
 	sk_tick(&o, t);        /* SOMVR_BOW_STRIKE=dash|blink: X with the bow out -> the Shadow Strike (121) */
+	cr_tick(&o, t);        /* SOMVR_CROUCH=duck: the duck's edges -> the game's Crouch (15) */
 	bo_guard(&o);          /* SOMVR_BOW_STRIKE=block: no Shadow Strike (pad A, 121) while the bow is out */
 	if (live && g_inp.pi && g_inp.inject)
 		in_apply(&o);
@@ -4455,6 +4523,7 @@ static void in_frame(void)
 	somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
 	g_inp.hv = sv_heading(hq), g_inp.hc = sv_heading(sv_qnormalize(sv_quat_of(g_fr.game.quat)));
 	g_inp.head_ok = 1, g_inp.head_frame = g_fr.frame;
+	cr_frame(); /* SOMVR_CROUCH=duck: the duck from the tracked head (the probe's snapshots too) */
 	if (g_views_fake)
 		return; /* no XR: no hands */
 	somvr_input_state sn;
@@ -4493,7 +4562,9 @@ static void in_frame(void)
 	bo_frame(p, q, pw, qw); /* SOMVR_BOW: the draw gesture and the bow ray (no blade while the bow is out) */
 	sl_frame(p, pw);        /* SOMVR_SLOTS: draw and put back at the body (after the bow, before the climb; no blade
 				 * from an empty hand) */
+	vb_hands(pw, hp);       /* SOMVR_VERBS: the left hand's squeeze on an orc's head (before the climb takes it) */
 	cl_frame(p, pw, qw);    /* SOMVR_CLIMB: the grips, the holds, the body's move for the next tick */
+	sf_frame(pw, qw, hp, hq); /* SOMVR_HANDS_SURFACE: the rays for the next phase 2 (after the climb's) */
 	fi_hands(p, q, v, w);   /* SOMVR_FINISH: the left grip as the dagger, the left hand's controls */
 	double t = cb_now();
 	if (g_inp.hand_lines >= 30 && t < g_inp.hand_next)
@@ -4895,6 +4966,7 @@ static void arm_eval(uintptr_t trk)
 		somvr_hand_game(&g_arm.hands[h], &gg[h].p, &gg[h].q, NULL, NULL);
 		bowed[h] = bo_arm_grip(h, g_arm.hands, &gg[h], &gcal[h]); /* SOMVR_BOW: the bow hand's node while the bow is out */
 	}
+	sf_arm(gg, gv, bowed, shift);  /* SOMVR_HANDS_SURFACE: the grips stopped at the world's surfaces */
 	bd_twohand(gg, gv, bowed, dt); /* SOMVR_TWOHAND: the sword in both hands */
 	vh_arm(gg, gv, T, dt);         /* SOMVR_VRHANDS: these grips and the fingers for the layer's own hands */
 	for (int h = 0; h < 2; h++) {
@@ -5247,7 +5319,11 @@ static int eye_size_now(uint32_t *w, uint32_t *h, const char **why, double *k)
  * the console site, the tick or RES_3D_DESC: always, with a WARN. Fail soft: a mode set that does not happen (no
  * RES_3D_DESC call within 1 s) is retried after 1 s; after 3 failures no more switching: stereo at whatever size the
  * 3D surface has (WARN). Eyes held for more than 2 s (no tick, no mode set yet) render at the game's size until a
- * switch works (WARN), so the headset never stays on the menu quad because of the switch. */
+ * switch works (WARN), so the headset never stays on the menu quad because of the switch.
+ * SOMVR_EYE_SIZE_STALL_MS (never a void, build 13 candidate; 0 = off, build 12's): a gap of that many ms between two
+ * input ticks is a stall (the game away: a hitch, a load that stops presenting), not a menu: it does not count toward
+ * the hold. Without it a world stall of more than the hold costs two mode sets after it (the game's size, then the eye
+ * size again: 566 + 1038 ms of flat, slow frames in boot 221150, the layer showing the environment for them). */
 #define ES_FRESH_S 0.5   /* an H4 that wanted eyes this recently asks for the eye size */
 #define ES_HELD_MAX_S 2.0
 #define ES_RETRY_S 1.0
@@ -5256,6 +5332,9 @@ static struct {
 	int sw;                      /* 1 = switch at runtime; 0 = the eye size at every mode set (always, or off) */
 	int failed;                  /* switching given up: stereo at whatever size the surface has */
 	double hold_s;               /* SOMVR_EYE_SIZE_HOLD_MS / 1000 */
+	double stall_s;              /* SOMVR_EYE_SIZE_STALL_MS / 1000 (0 = off): a tick gap this long is not counted */
+	double last_tick;            /* the last input tick (game thread) */
+	uint64_t stalls;
 	uintptr_t eng_pp;            /* IWBEngine* holder (re-m1m2.md 2.2; selftest: a stand-in) */
 	_Atomic int target;          /* RES_3D_DESC at the next mode set: 1 = the eye size, 0 = the game's */
 	_Atomic int cur;             /* the last mode set: 1 = the eye size, 0 = the game's, -1 = none seen yet */
@@ -5371,6 +5450,13 @@ static void es_tick(void)
 	if (!g_es.sw || g_es.failed || !g_es.tid || my_tid() != g_es.tid)
 		return;
 	double t = cb_now();
+	if (g_es.stall_s > 0 && g_es.last_tick > 0 && t - g_es.last_tick >= g_es.stall_s && g_es.last_want > 0) {
+		g_es.last_want += t - g_es.last_tick; /* SOMVR_EYE_SIZE_STALL_MS: the stall is not a menu */
+		if (g_es.stalls++ < 50)
+			logf_("ESIZE t=%.6f a stall of %.0f ms (no input tick): not counted toward the hold (SOMVR_EYE_SIZE_STALL_MS)",
+			      t, (t - g_es.last_tick) * 1e3);
+	}
+	g_es.last_tick = t;
 	if (g_es.pending) { /* the mode set did not run inside the call: wait for RES_3D_DESC */
 		if (atomic_load_explicit(&g_es.sets, memory_order_acquire) != g_es.pend_sets)
 			es_done(t, (t - g_es.pend_t0) * 1e3, "its mode set after the call");
@@ -7501,7 +7587,12 @@ static struct {
 		self_cb, self_steps, casts, ray_fail, stick_ticks, pulses;
 	double app_cm;
 	uint64_t w_moves, w_resets;
-	double w_req_cm, w_app_cm, w_ramp_cm;
+	double w_req_cm, w_app_cm, w_ramp_cm, w_lip_cm;
+	uint64_t blink_refused;     /* SOMVR_CLIMB_DESCENT: a blink the practice's trip did not take */
+	uint64_t clear_steps;       /* ... the rays stepped past an invisible blocker ('Air') */
+	uint64_t edge_pulses;       /* SOMVR_CLIMB_DESCENT's edge cue given */
+	uint32_t probe_flt;         /* `climb probe edge`'s last part: the cast's filter word (0 = the climb's 0xfffffffd) */
+	int probe_noclear;          /* ... its walls ahead: no stepping past invisible blockers */
 	int lines, lsec_n;
 	double lsec, next_log;
 	uint64_t suppressed;
@@ -7509,6 +7600,8 @@ static struct {
 	uint64_t probes, probe_casts;
 	int ledges;                 /* SOMVR_CLIMB_LEDGES: 1 = game (the stock context actions), 0 = off (none for Talion) */
 	uint64_t cue_ticks, miss_buzzes; /* SOMVR_CLIMB_CUE's haptics */
+	uint64_t fling_pulses;      /* SOMVR_CLIMB_FLING: the launch's pulse on the releasing hand */
+	int fling_menu;             /* build 13: the VR menu's Climb fling row (SOMVR_CLIMB_FLING=on with the hang) */
 	int ledge_hook;             /* CL_CTXACT patched */
 	uintptr_t ledge_orig;
 	_Atomic uint64_t ctx_pass, ctx_block;
@@ -7558,7 +7651,7 @@ static uint64_t cl_ray_filter(uintptr_t obj, uintptr_t ud)
 static int cl_cast1(uintptr_t phys, const float from[3], const float to[3], unsigned char *r)
 {
 	unsigned char q[0x40] __attribute__((aligned(16)));
-	uint32_t fl = CL_CAST_FLAGS | CL_CAST_MATERIAL, flt = 0xfffffffdu;
+	uint32_t fl = CL_CAST_FLAGS | CL_CAST_MATERIAL, flt = g_cl.probe_flt ? g_cl.probe_flt : 0xfffffffdu;
 	uint16_t none = 0xffff;
 	uintptr_t cb = (uintptr_t)cl_ray_filter, ud = (uintptr_t)&g_cl.ud;
 	memset(q, 0, sizeof q);
@@ -7602,8 +7695,8 @@ static int cl_surface(const unsigned char *r, uintptr_t obj, struct cl_rayinfo *
 		id = tid;
 	ri->rec = rec, ri->id = id;
 	cl_rec_name(rec, ri->name, sizeof ri->name);
-	if (!id)
-		return 0;
+	if (!id) /* no surface record: SOMVR_CLIMB_DESCENT holds it as walls (a forge tower's top and faces, run 010412) */
+		return g_cl.cfg.descent && g_cl.surf == SOMVR_CLIMB_SURF_WALLS;
 	key.id = id;
 	ri->can = (int)(CL_FN(CLS_CANCLIMB, cl_canclimb_fn)(&key) & 0xff) != 0;
 	return somvr_climb_surface_ok(g_cl.surf, ri->name, ri->can);
@@ -7644,6 +7737,13 @@ static int cl_ray(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, som
 		out->hit = 1, out->dist = d, out->point = (sv_vec3){ hp[0], hp[1], hp[2] };
 		ri->obj = obj;
 		out->climbable = cl_surface(r, obj, ri);
+		out->wet = somvr_climb_surface_wet(ri->name);
+		if (g_cl.cfg.descent && !g_cl.probe_noclear && somvr_climb_surface_clear(ri->name)) { /* 'Air': on past it */
+			g_cl.clear_steps++, ri->steps++;
+			memset(out, 0, sizeof *out);
+			s = d + CL_STEP_PAST_CM;
+			continue;
+		}
 		return 1;
 	}
 	return 1;
@@ -7668,6 +7768,14 @@ static const char *cl_word(const char *w)
 		      g_cl.loyaw ? "leaves" : "writes");
 		return g_cl.loyaw ? "climb loyaw game" : "climb loyaw ours";
 	}
+	if (k == 2 && !strcmp(a, "blink")) { /* SOMVR_CLIMB_BLINK_CM now (a test aid: the blink from a low hang) */
+		float v = strtof(b, NULL);
+		if (!(v >= 0 && v <= 5000))
+			return "climb blink (not 0..5000 cm: ignored)";
+		g_cl.cfg.blink_cm = v;
+		logf_("CLIMB t=%.3f blink %.0f (the trigger word): A over more than %.0f cm = the blink", cb_now(), v, v);
+		return "climb blink";
+	}
 	if (k >= 1 && (!strcmp(a, "state") || !strcmp(a, "watch"))) { /* the game's state at Talion (the wall-top bug) */
 		if (!g_cl.on)
 			return "climb state (SOMVR_CLIMB is off: nothing)";
@@ -7675,13 +7783,13 @@ static const char *cl_word(const char *w)
 		atomic_fetch_add_explicit(&g_cl_probe.seq, 1, memory_order_release);
 		return a[0] == 's' ? "climb state" : k == 2 && !strcmp(b, "off") ? "climb watch off" : "climb watch";
 	}
-	if (k < 1 || strcmp(a, "probe") || (k == 2 && strcmp(b, "up") && strcmp(b, "table")))
-		return "climb (not probe [up|table], state, watch [off], ledges off|game, loyaw game|ours: ignored)";
+	if (k < 1 || strcmp(a, "probe") || (k == 2 && strcmp(b, "up") && strcmp(b, "table") && strcmp(b, "edge")))
+		return "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw game|ours: ignored)";
 	if (!g_cl.on)
 		return "climb probe (SOMVR_CLIMB is off: nothing)";
-	atomic_store(&g_cl_probe.up, k == 2 ? (b[0] == 'u' ? 1u : 2u) : 0u);
+	atomic_store(&g_cl_probe.up, k == 2 ? (b[0] == 'u' ? 1u : b[0] == 'e' ? 6u : 2u) : 0u);
 	atomic_fetch_add_explicit(&g_cl_probe.seq, 1, memory_order_release);
-	return k < 2 ? "climb probe" : b[0] == 'u' ? "climb probe up" : "climb probe table";
+	return k < 2 ? "climb probe" : b[0] == 'u' ? "climb probe up" : b[0] == 'e' ? "climb probe edge" : "climb probe table";
 }
 
 /* `climb probe` (in the climb step, the player's objects read: Talion skipped as by the grab rays): from the view's
@@ -7732,6 +7840,82 @@ static void cl_table(void)
 	}
 }
 
+/* `climb probe edge` (a tower top's edge, the descent's geometry): along the view's heading from Talion's root, (1) the
+ * profile: every 20 cm from 0 to 400 cm ahead a ray down from the root + 60 cm, 60 m long: where it lands (cm under the
+ * root; the letter as probe's); (2) the face: from 120 cm ahead at the root -120 .. -1000 cm a ray back (toward Talion)
+ * 150 cm long: the face's distance ahead of the root; (3) a wall at the edge: from the root at -80 .. +80 cm a ray ahead
+ * 200 cm long (an invisible blocker shows here); the surfaces seen with their names */
+static void cl_probe_edge(void)
+{
+	sv_vec3 hp;
+	sv_quat hq;
+	somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+	float yaw = sv_heading(hq), rt[3] = { 0, 0, 0 };
+	if (!g_cl.obj || !peek(g_cl.obj + OBJ_POS, rt, sizeof rt) || !vec_ok(rt, 1e7f)) {
+		logf_("CLIMB probe edge: no root");
+		return;
+	}
+	sv_vec3 f = { sinf(yaw), 0, cosf(yaw) }, r0 = { rt[0], rt[1], rt[2] };
+	struct { uint16_t id; char c; char name[48]; } seen[10];
+	int nseen = 0;
+	uint64_t c0 = g_cl.casts;
+	double t = cb_now();
+	for (int part = 0; part < 4; part++) {
+		char line[1024];
+		int n = 0;
+		static const float face_dy[] = { -120, -150, -200, -300, -500, -1000 }, wall_dy[] = { -80, -40, 0, 40, 80 };
+		int np = part == 0 ? 21 : part == 1 ? 6 : 5;
+		g_cl.probe_flt = part == 3 ? 0xffffffffu : 0; /* every collision layer (the game's edge walls for Talion?) */
+		g_cl.probe_noclear = part >= 2; /* the walls ahead: see 'Air' (the grab rays step past it) */
+		for (int i = 0; i < np; i++) {
+			sv_vec3 from, dir;
+			float len, key;
+			if (part == 0)
+				key = 20.0f * (float)i, from = (sv_vec3){ r0.x + f.x * key, r0.y + 60, r0.z + f.z * key },
+				dir = (sv_vec3){ 0, -1, 0 }, len = 6000;
+			else if (part == 1)
+				key = face_dy[i], from = (sv_vec3){ r0.x + f.x * 120, r0.y + key, r0.z + f.z * 120 },
+				dir = (sv_vec3){ -f.x, 0, -f.z }, len = 150;
+			else
+				key = wall_dy[i], from = (sv_vec3){ r0.x, r0.y + key, r0.z }, dir = f, len = 200;
+			somvr_climb_hit hit;
+			memset(&hit, 0, sizeof hit);
+			int ok = cl_ray(NULL, -1, from, dir, len, &hit);
+			const struct cl_rayinfo *ri = &g_cl.ri[(g_cl.nri - 1) & 15];
+			char c = !ok || !hit.hit ? '-' : hit.climbable ? (ri->can ? 'C' : 'h') : 'n';
+			if (c != '-') {
+				int fd = 0;
+				for (int k = 0; k < nseen; k++)
+					fd |= seen[k].id == ri->id && seen[k].c == c;
+				if (!fd && nseen < 10) {
+					seen[nseen].id = ri->id, seen[nseen].c = c;
+					snprintf(seen[nseen].name, sizeof seen[nseen].name, "%s", ri->name);
+					nseen++;
+				}
+			}
+			float v = part == 0 ? r0.y - hit.point.y : part == 1 ? 120 - hit.dist : hit.dist;
+			if (n < (int)sizeof line - 48)
+				n += c == '-' ? snprintf(line + n, sizeof line - n, " %+.0f=-", key)
+					      : snprintf(line + n, sizeof line - n, " %+.0f=%.0f%c#%u", key, v, c, ri->id);
+		}
+		logf_("CLIMB probe edge t=%.3f frame=%llu root %.1f,%.1f,%.1f heading %.1f deg; %s:%s", t,
+		      (unsigned long long)g_fr.frame, r0.x, r0.y, r0.z, yaw * 57.29578f,
+		      part == 0 ? "the profile: cm ahead = the landing, cm under the root (60 m down)" :
+		      part == 1 ? "the face: root +cm = the face's distance ahead (a ray back from 120 cm ahead)" :
+		      part == 2 ? "a wall at the edge: root +cm = the distance ahead (2 m)" :
+				  "a wall at the edge, every collision layer (filter 0xffffffff): root +cm = the distance ahead", line);
+	}
+	g_cl.probe_flt = 0, g_cl.probe_noclear = 0;
+	char sl[640];
+	int n = 0;
+	sl[0] = 0;
+	for (int k = 0; k < nseen && n < (int)sizeof sl - 64; k++)
+		n += snprintf(sl + n, sizeof sl - n, "%s #%u '%s' %s", k ? "," : "", seen[k].id, seen[k].name,
+			      seen[k].c == 'C' ? "CanWallClimb, held" : seen[k].c == 'h' ? "held" : "not held");
+	g_cl.probe_casts += g_cl.casts - c0;
+	logf_("CLIMB probe edge surfaces:%s (%llu casts)", nseen ? sl : " none", (unsigned long long)(g_cl.casts - c0));
+}
+
 static void cl_probe(void)
 {
 	uint32_t seq = atomic_load_explicit(&g_cl_probe.seq, memory_order_acquire);
@@ -7741,6 +7925,10 @@ static void cl_probe(void)
 	int up = (int)atomic_load(&g_cl_probe.up);
 	if (up == 2) {
 		cl_table();
+		return;
+	}
+	if (up == 6) {
+		cl_probe_edge();
 		return;
 	}
 	if (up >= 3) { /* climb state / watch [off] */
@@ -7897,6 +8085,52 @@ static void cl_flat(uintptr_t pl)
 
 static const char *cl_hand_name(int h) { return h ? "R" : "L"; }
 
+/* SOMVR_CLIMB_FLING (build 13, re-xr-pipeline.md 32.14): the step's fling events as lines, the launch's pulse */
+static void cl_fling_log(const somvr_climb_out *o, const somvr_climb_in *in, double t)
+{
+	const somvr_climb *s = &g_cl.s;
+	unsigned long long fr = (unsigned long long)g_fr.frame;
+	float rose = in->root_ok && s->fl_root_ok ? in->root.y - s->fl_root0.y : 0;
+	if (o->events & SOMVR_CLIMB_E_FLING) {
+		float v = sqrtf(s->fl_v0.x * s->fl_v0.x + s->fl_v0.y * s->fl_v0.y + s->fl_v0.z * s->fl_v0.z);
+		float hv = sqrtf(s->fl_hand_v.x * s->fl_hand_v.x + s->fl_hand_v.y * s->fl_hand_v.y + s->fl_hand_v.z * s->fl_hand_v.z);
+		float g = g_cl.cfg.fling_g > 0 ? g_cl.cfg.fling_g : 981.0f;
+		float tw = s->fl_v0.x * s->fl_toward.x + s->fl_v0.z * s->fl_toward.z;
+		in_haptic_event(s->fl_hand, 0.3f, 0.02f, SOMVR_HAP_UI), g_cl.fling_pulses++;
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu fling launch %s: v=%.0f cm/s (up %.0f, side %.0f, toward %.0f; out-dropped %.0f "
+			      "cm/s; the hand %.0f cm/s over %.0f ms, %d samples%s): the arc's top in %.2f s, %.0f cm up; root "
+			      "%.1f,%.1f,%.1f, head %.1f; the top %s", t, fr, cl_hand_name(s->fl_hand), v, s->fl_v0.y, s->fl_side, tw,
+			      s->fl_out, hv, s->fl_span * 1e3, s->fl_n, s->fl_capped ? "; capped" : "", s->fl_v0.y / g,
+			      s->fl_v0.y * s->fl_v0.y / (2 * g), in->root.x, in->root.y, in->root.z, in->head_y,
+			      s->topped ? "reached already (push)" : s->fl_edge ? "known from the hold" : s->fl_wall_d >= 0 ? "looked for by the head's ray" : "unknown");
+	}
+	if ((o->events & SOMVR_CLIMB_E_FLING_NONE) && cl_log_ok(t)) {
+		if (s->fl_none == 0)
+			logf_("CLIMB t=%.3f frame=%llu fling none %s: up %.0f cm/s (SOMVR_CLIMB_FLING_MIN %.0f), out %.0f, side %.0f (the "
+			      "hand %.0f ms, %d samples): the hang", t, fr, cl_hand_name(s->fl_hand), s->fl_up, g_cl.cfg.fling_min,
+			      s->fl_out, s->fl_side, s->fl_span * 1e3, s->fl_n);
+		else
+			logf_("CLIMB t=%.3f frame=%llu fling none %s: %s (%d samples): the hang", t, fr, cl_hand_name(s->fl_hand),
+			      s->fl_none == -1 ? "no release velocity (under 40 ms of the hand's samples)" : "not the driving hand's let-go",
+			      s->fl_n);
+	}
+	if ((o->events & SOMVR_CLIMB_E_FLING_TOP) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu fling top: the eyes over a top at %.1f (%s; head %.1f, rose %.1f cm) -> push", t, fr,
+		      s->top_y, s->fl_top_by == 1 ? "the release hold's" : "found by the head's ray", in->head_y, rose);
+	if ((o->events & SOMVR_CLIMB_E_GLIDE) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu fling glide: the arc's top over the top, on toward it at %.0f cm/s (rose %.1f cm; "
+		      "the edge may lift %.0f cm)", t, fr, sqrtf(s->fl_v.x * s->fl_v.x + s->fl_v.z * s->fl_v.z), rose, s->fl_glide_cap);
+	if ((o->events & SOMVR_CLIMB_E_CATCH) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu fling catch: a hold after %.2f s of flight (rose %.1f cm; root %.1f,%.1f,%.1f)", t, fr,
+		      t - s->fl_t0, rose, in->root.x, in->root.y, in->root.z);
+	if ((o->events & SOMVR_CLIMB_E_APEX) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu fling apex hang (%s) after %.2f s, %d frames: rose %.1f cm (root %.1f,%.1f,%.1f, head "
+		      "%.1f); Talion stays (gravity off; a grip on the wall climbs on, A drops)%s", t, fr, somvr_climb_fl_name(s->fl_why),
+		      t - s->fl_t0, s->fl_frames, rose, in->root.x, in->root.y, in->root.z, in->head_y,
+		      s->topped ? " (topped: push)" : "");
+}
+
 /* in_frame (a stereo frame, the grips located for the eyes' time and in the world): one climb step */
 static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2])
 {
@@ -7926,16 +8160,30 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	somvr_climb_in in;
 	memset(&in, 0, sizeof in);
 	in.t = t;
+	in.pose_t = g_fr.views.time > 0 ? (double)g_fr.views.time * 1e-9 : 0; /* the grips' located time (the fling's clock) */
 	in.live = g_inp.live;
 	in.frozen = g_inp.ctx == SC_CTX_MENU;
 	in.allow = !g_cl.why_not;
-	in.nograb = bo_out() || sl_nograb(); /* SOMVR_BOW: the hands are on the bow; SOMVR_SLOTS: a slot took the press */
+	in.nograb = bo_out() || sl_nograb() || vb_nograb(); /* SOMVR_BOW: the hands are on the bow; SOMVR_SLOTS: a slot took
+							       * the press; SOMVR_VERBS: an orc's head did */
 	{ /* the drop button: A (the right controller's lower button; with SOMVR_GAMEMOVES=off it does nothing on foot) */
 		const somvr_hand_in *ra = &g_inp.st.hand[SOMVR_HAND_R];
 		in.drop = (ra->active & SOMVR_HACT_INPUT) && (ra->buttons & SOMVR_BTN_LOWER);
 	}
 	in.rig_yaw = g_fr.base.yaw - g_rig.yaw0;
 	in.rig_scale = somvr_rig_scale(&g_rig); /* SOMVR_PLAYER_SIZE: a hold carries s x the hand's tracked move */
+	in.can_blink = g_cl.cfg.descent && pr_down_ok(); /* the practice's trip free (somvr_practice_game.c) */
+	in.walk_blocked = g_cl.cfg.descent && lo_walk_blocked(t);
+	if (g_cl.cfg.descent) { /* A on foot looks for an edge along the view's heading */
+		sv_vec3 hp;
+		sv_quat hq;
+		somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+		float a = sv_heading(hq);
+		in.head_fwd = isfinite(a) ? (sv_vec3){ sinf(a), 0, cosf(a) } : (sv_vec3){ 0, 0, 0 };
+	}
+	if (pr_down_teleported() && g_cl.s.phase == SOMVR_CLIMB_PH_BLINK && g_cl.s.active) { /* the blink put him down */
+		cl_end(SOMVR_CLIMB_END_BLINK, "the blink's teleport (SOMVR_CLIMB_DESCENT)", g_cl.pm, 1);
+	}
 	in.head_ok = g_fr.head_ok;
 	in.head_y = g_fr.head[1], in.head_x = g_fr.head[0], in.head_z = g_fr.head[2];
 	float rt0[3]; /* the root before the step: push's edge step compares it with the last frame's move */
@@ -7964,7 +8212,7 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 			g_cl.watch_next = t + 1.0, cl_state(g_fr.pl, "1 s", 0);
 	}
 	g_cl.nri = 0;
-	int was = g_cl.s.active;
+	int was = g_cl.s.active, ph0 = g_cl.s.phase;
 	somvr_climb_out o;
 	somvr_climb_step(&g_cl.s, &g_cl.cfg, &in, cl_ray, NULL, &o);
 	/* the root's motion while a climb is on (the moves the game applied, and anything else) */
@@ -7982,9 +8230,15 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 		const struct cl_rayinfo *gi = o.grab_cast[h] > 0 && o.grab_cast[h] <= g_cl.nri && o.grab_cast[h] <= 16
 						      ? &g_cl.ri[o.grab_cast[h] - 1] : &none;
 		uint32_t miss = SOMVR_CLIMB_E_MISS_L << h, nocl = SOMVR_CLIMB_E_NOCLIMB_L << h;
-		char top[64] = "";
+		char top[160] = "";
 		if (k->edge)
 			snprintf(top, sizeof top, ", top %.1f (%s)", k->top_y, k->top_found ? "found" : "bound");
+		if (k->lip && (o.events & (SOMVR_CLIMB_E_GRAB_L << h))) {
+			size_t tl = strlen(top);
+			snprintf(top + tl, sizeof top - tl, "; a lip: its top %.1f, the edge %.1f,%.1f, out (%.2f %.2f), the ground %.0f cm "
+				 "under it%s", k->lip_top_y, k->lip_edge.x, k->lip_edge.z, k->lip_out.x, k->lip_out.z, k->lip_drop,
+				 o.events & SOMVR_CLIMB_E_DESCENT ? ": DESCENT (Talion on its top)" : "");
+		}
 		char via[64];
 		if (k->via == SOMVR_CLIMB_VIA_INSIDE)
 			snprintf(via, sizeof via, "inside: the hand %.1f cm in the wall", (double)k->inside_by);
@@ -8033,10 +8287,35 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 			      (unsigned long long)g_fr.frame, v < 0 ? "NOT written" : v == 0 ? "0 already" : "1 -> 0",
 			      (unsigned long)g_cl.pc, (unsigned long)g_cl.pm, g_cl.fsm, in.head_y);
 	}
+	if ((o.events & SOMVR_CLIMB_E_BLINK) && (o.events & SOMVR_CLIMB_E_EDGE) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu A at the edge (on foot, heading %.0f deg): the blink down: the feet %.0f cm over the "
+		      "ground at %.1f,%.1f,%.1f (the ray down from %.1f,%.1f,%.1f) -> Talion's root to %.1f,%.1f,%.1f under the practice "
+		      "trip's fade", t, (unsigned long long)g_fr.frame, atan2f(in.head_fwd.x, in.head_fwd.z) * 57.29578f, g_cl.s.bl_h,
+		      g_cl.s.bl_ground.x, g_cl.s.bl_ground.y, g_cl.s.bl_ground.z, g_cl.s.bl_from.x, g_cl.s.bl_from.y,
+		      g_cl.s.bl_from.z, o.blink_to.x, o.blink_to.y, o.blink_to.z);
+	else if ((o.events & SOMVR_CLIMB_E_BLINK) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu A: the blink down: the feet %.0f cm over the ground at %.1f,%.1f,%.1f (the ray down from "
+		      "%.1f,%.1f,%.1f%s) -> Talion's root to %.1f,%.1f,%.1f under the practice trip's fade", t,
+		      (unsigned long long)g_fr.frame, g_cl.s.bl_h, g_cl.s.bl_ground.x, g_cl.s.bl_ground.y, g_cl.s.bl_ground.z,
+		      g_cl.s.bl_from.x, g_cl.s.bl_from.y, g_cl.s.bl_from.z, g_cl.s.descending ? ", beyond the lip" : "",
+		      o.blink_to.x, o.blink_to.y, o.blink_to.z);
+	if (o.blink && !pr_down_start(o.blink_to, t)) /* the trip refused it: the climb's blink_wait_s hangs him */
+		g_cl.blink_refused++;
+	if (o.events & SOMVR_CLIMB_E_BLINK_NONE) {
+		int stay = g_cl.s.bl_why == SOMVR_CLIMB_BL_NOGROUND || g_cl.s.bl_why == SOMVR_CLIMB_BL_WET;
+		if (stay && g_cl.cfg.cue) /* A did nothing: the miss buzz on the right hand */
+			in_haptic_double(SOMVR_HAND_R, 0.3f, 0.025f, 0.05f, SOMVR_HAP_UI), g_cl.miss_buzzes++;
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu A%s: no blink: %s (the feet %.0f cm over the ground at %.1f; the ray down from "
+			      "%.1f,%.1f,%.1f)", t, (unsigned long long)g_fr.frame, o.events & SOMVR_CLIMB_E_EDGE ? " on foot" : "",
+			      somvr_climb_bl_name(g_cl.s.bl_why), g_cl.s.bl_h,
+			      g_cl.s.bl_ground.y, g_cl.s.bl_from.x, g_cl.s.bl_from.y, g_cl.s.bl_from.z);
+	}
 	if ((o.events & SOMVR_CLIMB_E_TOP) && cl_log_ok(t))
 		logf_("CLIMB t=%.3f frame=%llu top: %s over the hold's top (head %.1f) -> %s", t, (unsigned long long)g_fr.frame,
 		      o.top_by == 2 ? "the other hand" : "the head", in.head_y, g_cl_top_w[g_cl.cfg.top_mode]);
-	if ((o.events & SOMVR_CLIMB_E_HANG) && cl_log_ok(t))
+	cl_fling_log(&o, &in, t);
+	if ((o.events & SOMVR_CLIMB_E_HANG) && !(o.events & SOMVR_CLIMB_E_APEX) && cl_log_ok(t))
 		logf_("CLIMB t=%.3f frame=%llu hang: %s: Talion stays where he is (root %.1f,%.1f,%.1f; gravity off; a grip on the "
 		      "wall climbs on, A drops)%s", t, (unsigned long long)g_fr.frame,
 		      in.live ? "no hand holds" : "the input lost (the grips must open first)", in.root.x, in.root.y, in.root.z,
@@ -8048,28 +8327,46 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 		g_cl.pulse = 3;
 	if (o.ended)
 		cl_end(o.end_why, o.end_why == SOMVR_CLIMB_END_GAME ? g_cl.why_not : o.end_why == SOMVR_CLIMB_END_DROP ? "A pressed"
+		       : o.end_why == SOMVR_CLIMB_END_OVER && ph0 == SOMVR_CLIMB_PH_FLING
+			 ? (g_cl.s.fl_landed ? "a fling onto the top (the top under his root; SOMVR_CLIMB_FLING)"
+					     : "a fling over the top (SOMVR_CLIMB_FLING)")
 		       : NULL, g_cl.pm, 0);
 	g_cl.req = o.move && g_cl.s.active;
 	g_cl.req_frame = g_fr.frame, g_cl.req_w = o.move_w;
 	if (g_cl.req)
 		g_cl.w_moves++, g_cl.w_req_cm += sqrtf(o.move_w.x * o.move_w.x + o.move_w.y * o.move_w.y + o.move_w.z * o.move_w.z);
 	g_cl.w_ramp_cm += o.ramp;
+	g_cl.w_lip_cm += o.lip;
+	if ((o.events2 & SOMVR_CLIMB_E_LIP_BLOCKED) && o.driver >= 0 && g_cl.cfg.cue) /* it cannot go over here: a buzz */
+		in_haptic_double(o.driver, 0.3f, 0.025f, 0.05f, SOMVR_HAP_UI), g_cl.miss_buzzes++;
+	if ((o.events2 & SOMVR_CLIMB_E_EDGE_CUE) && g_cl.cfg.cue) { /* A here = the way down: a double pulse in A's hand */
+		in_haptic_double(SOMVR_HAND_R, 0.4f, 0.03f, 0.08f, SOMVR_HAP_UI), g_cl.edge_pulses++;
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu edge cue: the walk stopped at an edge %.0f cm over the ground (heading %.0f deg): A "
+			      "here = the blink down; a double pulse on the right hand", t, (unsigned long long)g_fr.frame, g_cl.s.cue_h,
+			      atan2f(in.head_fwd.x, in.head_fwd.z) * 57.29578f);
+	}
+	if ((o.events2 & SOMVR_CLIMB_E_LIP_BLOCKED) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu lip blocked: the move out over the edge did not go through 3 frames (the root %.1f,%.1f,"
+		      "%.1f, the edge %.1f,%.1f): the game's edge wall; no more lip step (A: the blink; a double buzz)", t,
+		      (unsigned long long)g_fr.frame, in.root.x, in.root.y, in.root.z, g_cl.s.lip_edge.x, g_cl.s.lip_edge.z);
 	if (!g_cl.s.active)
 		return;
 	g_cl.frames++;
 	if (t < g_cl.next_log)
 		return;
 	g_cl.next_log = t + 1.0;
-	logf_("CLIMB t=%.3f frame=%llu last 1 s: %s%s, driver %s, moves=%llu asked=%.1f (edge step %.1f) the root %.1f cm, flag "
-	      "resets=%llu; totals "
+	logf_("CLIMB t=%.3f frame=%llu last 1 s: %s%s%s, driver %s, moves=%llu asked=%.1f (edge step %.1f, lip step %.1f) "
+	      "the root %.1f cm (now %.1f,%.1f,%.1f), flag resets=%llu; totals "
 	      "busy=%llu stale=%llu notcons=%llu casts=%llu Talion skipped %llu+%llu; fsm %d head %.1f", t,
 	      (unsigned long long)g_fr.frame, somvr_climb_phase_name(g_cl.s.phase), g_cl.s.topped ? " (topped: push)" : "",
-	      o.driver < 0 ? "-" : cl_hand_name(o.driver), (unsigned long long)g_cl.w_moves, g_cl.w_req_cm, g_cl.w_ramp_cm,
-	      g_cl.w_app_cm, (unsigned long long)g_cl.w_resets,
+	      g_cl.s.descending ? " (descending)" : "", o.driver < 0 ? "-" : cl_hand_name(o.driver),
+	      (unsigned long long)g_cl.w_moves, g_cl.w_req_cm, g_cl.w_ramp_cm, g_cl.w_lip_cm, g_cl.w_app_cm,
+	      in.root.x, in.root.y, in.root.z, (unsigned long long)g_cl.w_resets,
 	      (unsigned long long)g_cl.pm_busy, (unsigned long long)g_cl.pm_stale, (unsigned long long)g_cl.pm_notcons,
 	      (unsigned long long)g_cl.casts, (unsigned long long)g_cl.self_cb, (unsigned long long)g_cl.self_steps, g_cl.fsm,
 	      in.head_y);
-	g_cl.w_moves = g_cl.w_resets = 0, g_cl.w_req_cm = g_cl.w_app_cm = g_cl.w_ramp_cm = 0;
+	g_cl.w_moves = g_cl.w_resets = 0, g_cl.w_req_cm = g_cl.w_app_cm = g_cl.w_ramp_cm = g_cl.w_lip_cm = 0;
 }
 
 /* PM (somvr_pm_c), while a climb is on, the player's PlayerMovement on the game thread: the proxy's flag kept 0 (an
@@ -8209,6 +8506,38 @@ static int cl_config(int *bad)
 	c->near_cm = env_float("SOMVR_CLIMB_NEAR_CM", c->near_cm, 0, 100, bad);
 	c->cue = env_word("SOMVR_CLIMB_CUE", onoff_w, 2, 1);
 	c->ground_cm = env_float("SOMVR_CLIMB_GROUND_CM", c->ground_cm, 0, 300, bad);
+	static const char *const fling_w[] = { "off", "on" };
+	c->fling = env_word("SOMVR_CLIMB_FLING", fling_w, 2, 0);
+	c->fling_min = env_float("SOMVR_CLIMB_FLING_MIN", c->fling_min, 20, 1000, bad);
+	c->fling_gain = env_float("SOMVR_CLIMB_FLING_GAIN", c->fling_gain, 0.5f, 1.5f, bad);
+	c->fling_max = env_float("SOMVR_CLIMB_FLING_MAX", c->fling_max, 100, 800, bad);
+	c->fling_side = env_float("SOMVR_CLIMB_FLING_SIDE", c->fling_side, 0, 1, bad);
+	c->fling_g = env_float("SOMVR_CLIMB_FLING_G", c->fling_g, 300, 2000, bad);
+	c->fling_win_s = env_float("SOMVR_CLIMB_FLING_WIN_MS", c->fling_win_s * 1e3f, 40, 300, bad) * 1e-3f;
+	if (c->fling && c->letgo != SOMVR_CLIMB_LETGO_HANG)
+		logf_("CONFIG climb fling: on needs SOMVR_CLIMB_LETGO=hang (a fling ends in the hang): off"), c->fling = 0;
+	logf_("CONFIG climb fling=%s%s", fling_w[c->fling], c->fling ? "" : " (the last hold let go = the hang, as build 10)");
+	if (c->fling)
+		logf_("CONFIG climb fling: the last hold let go while its hand moves: minus the hand's mean velocity over %.0f ms x "
+		      "%.2f, only up (away from the wall and down dropped, sideways x %.2f, at most half the up; toward the wall kept "
+		      "up to the up), from %.0f cm/s up (under it the hang), at most %.0f cm/s (%.0f cm up); our own arc (%.0f cm/s^2, "
+		      "gravity off): a grip catches, the arc's top hangs, A drops, a top -> push, over",
+		      c->fling_win_s * 1e3f, c->fling_gain, c->fling_side, c->fling_min, c->fling_max,
+		      c->fling_max * c->fling_max / (2 * c->fling_g), c->fling_g);
+	/* build 13's descent (re-xr-pipeline.md 40): over an edge and down, A over a high drop = the blink */
+	c->descent = env_word("SOMVR_CLIMB_DESCENT", fling_w, 2, 0);
+	c->lip_drop_cm = env_float("SOMVR_CLIMB_LIP_DROP_CM", c->lip_drop_cm, 50, 1000, bad);
+	c->blink_cm = env_float("SOMVR_CLIMB_BLINK_CM", c->blink_cm, 0, 5000, bad);
+	c->blink_max_cm = env_float("SOMVR_CLIMB_BLINK_MAX_CM", c->blink_max_cm, 500, 30000, bad);
+	logf_("CONFIG climb descent=%s%s", fling_w[c->descent], c->descent ? "" : " (an edge is never a hold from above; A drops)");
+	if (c->descent)
+		logf_("CONFIG climb descent: a press also casts down and along the wall; a hold on a top's edge (within %.0f cm "
+		      "along the reach) or on a face, %.0f cm or more over the ground beyond it, is a lip: a climb starts from "
+		      "it on the top (under SOMVR_CLIMB_LOW_CM), a push down while on the top goes out over the edge (x %.2f; the "
+		      "game's edge wall stopping it: no more); A "
+		      "with the feet more than %.0f cm over the ground (within %.0f cm; from %.0f cm out from the wall) = the "
+		      "practice trip's blink to it, lower = the drop (the real fall), none or water = no drop",
+		      c->lip_find_cm, c->lip_drop_cm, c->lip_ramp, c->blink_cm, c->blink_max_cm, c->blink_out_cm);
 	somvr_climb_init(&g_cl.s);
 	return 1;
 }
@@ -8274,6 +8603,15 @@ static void cl_start(const struct site_spec *sites)
 						  : "every solid surface (SOMVR_CLIMB_SURF=walls)");
 }
 
+/* the VR menu's Controls page: the fling's and the descent's lines (SOMVR_VMA_FLING, _DESCENT) */
+static uint32_t cl_vm_avail(void)
+{
+	if (!g_cl.on)
+		return 0;
+	return (g_cl.cfg.fling && g_cl.cfg.letgo == SOMVR_CLIMB_LETGO_HANG ? SOMVR_VMA_FLING : 0u) |
+	       (g_cl.cfg.descent ? SOMVR_VMA_DESCENT : 0u);
+}
+
 static void cl_end_log(void)
 {
 	if (!g_cl.on)
@@ -8285,7 +8623,8 @@ static void cl_end_log(void)
 	      "busy=%llu stale=%llu notcons=%llu; edge step %.1f cm; gravity off %llu on %llu not written %llu, flag resets %llu; "
 	      "casts=%llu (rays "
 	      "%llu, failed %llu; probes %llu with %llu casts) Talion skipped %llu by the filter, %llu by stepping; stick ticks "
-	      "%llu; other_thread=%llu suppressed=%llu; context finds passed %llu blocked %llu; hit drops %llu%s", (unsigned long long)s->climbs, (unsigned long long)s->grabs, (unsigned long long)s->lets,
+	      "%llu; other_thread=%llu suppressed=%llu; context finds passed %llu blocked %llu; hit drops %llu; flings %llu (none %llu, "
+	      "pulses %llu) catches %llu apexes %llu (blocked %llu) tops %llu glides %llu fling-overs %llu%s", (unsigned long long)s->climbs, (unsigned long long)s->grabs, (unsigned long long)s->lets,
 	      (unsigned long long)s->lost, (unsigned long long)s->misses, (unsigned long long)s->noclimb, (unsigned long long)s->lows,
 	      (unsigned long long)s->tops, (unsigned long long)s->overs, (unsigned long long)s->hangs,
 	      (unsigned long long)s->resumes, (unsigned long long)s->drops, (unsigned long long)s->insides,
@@ -8300,8 +8639,20 @@ static void cl_end_log(void)
 	      (unsigned long long)g_cl.probes, (unsigned long long)g_cl.probe_casts, (unsigned long long)g_cl.self_cb, (unsigned long long)g_cl.self_steps, (unsigned long long)g_cl.stick_ticks,
 	      (unsigned long long)g_cl.other, (unsigned long long)g_cl.suppressed,
 	      (unsigned long long)atomic_load(&g_cl.ctx_pass), (unsigned long long)atomic_load(&g_cl.ctx_block),
-	      (unsigned long long)g_cl.hit_drops,
-	      s->active ? " ONE STILL ON (exit: gravity not restored)" : "");
+	      (unsigned long long)g_cl.hit_drops, (unsigned long long)s->flings, (unsigned long long)s->fl_nones,
+	      (unsigned long long)g_cl.fling_pulses, (unsigned long long)s->catches, (unsigned long long)s->apexes,
+	      (unsigned long long)s->fl_blocks, (unsigned long long)s->fl_tops, (unsigned long long)s->fl_glides,
+	      (unsigned long long)s->fl_overs, s->active ? " ONE STILL ON (exit: gravity not restored)" : "");
+	if (g_cl.cfg.descent)
+		logf_("CLIMB END descent: lips %llu, descents %llu, lip steps %llu (%.1f cm; blocked %llu), edge cues %llu, blinks %llu (refused by the trip %llu, "
+		      "the teleport not come %llu; on foot at an edge %llu), A without a blink: no edge ahead %llu, short %llu, no ground "
+		      "%llu, water %llu, no blink now %llu; rays past an invisible blocker %llu",
+		      (unsigned long long)s->lips, (unsigned long long)s->descents, (unsigned long long)s->lip_steps, s->lip_cm,
+		      (unsigned long long)s->lip_blocks, (unsigned long long)g_cl.edge_pulses,
+		      (unsigned long long)s->blinks, (unsigned long long)g_cl.blink_refused, (unsigned long long)s->bl_waits,
+		      (unsigned long long)s->edge_blinks, (unsigned long long)s->bl_noedge,
+		      (unsigned long long)s->bl_short, (unsigned long long)s->bl_noground, (unsigned long long)s->bl_wet,
+		      (unsigned long long)s->bl_cannot, (unsigned long long)g_cl.clear_steps);
 }
 
 /* ------------------------------------------------------------------------------------------------------------ */
@@ -8479,6 +8830,7 @@ static int bm_pre(uintptr_t pl)
 	bi.fb = fbraw;
 	bi.names = bm_names(pl, &in, &atk, &st, &bi.dead);
 	bi.our_climb = g_cl.on && g_cl.s.active;
+	bi.our_grab = vb_grab_held(); /* SOMVR_VERBS: the left hand holds an orc (the game's grab is a mount and attach) */
 	uint32_t conds = somvr_bm_conds(&bi);
 	int hc, w, wc, act = somvr_bm_actions(&g_bm.pol, conds, &hc, &w, &wc);
 	if (g_fb.forced == 2)
@@ -8562,6 +8914,7 @@ static void bm_base(somvr_base *b)
 	if (g_bm.s.frozen && sk_bm_follow()) /* SOMVR_BOW_STRIKE=dash|blink: the strike's hold where the dash goes */
 		memcpy(g_bm.s.F, live, sizeof g_bm.s.F);
 	somvr_bm_base(&g_bm.s, &g_bm.cfg, live, b->yaw, g_rig.snap_steps, g_rigcfg.snap_rad, g_bm.yaw_mode, t, pos, &yaw, &cut);
+	vb_view(pos, g_bm.s.frozen, t); /* SOMVR_VERBS: the held view eased back from a grabbed orc's head */
 	b->pos = (sv_vec3){ pos[0], pos[1], pos[2] }, b->yaw = yaw;
 	if (cut) /* a jump of the rig (rig_jump_frame): no follow measurement, not motion */
 		g_fr.relatched = 1;
@@ -8936,8 +9289,8 @@ static int bo_arrows(uintptr_t pl)
 static int bo_button(int h)
 {
 	const somvr_hand_in *hi = &g_inp.st.hand[h];
-	if (!g_bow.button || !(hi->active & SOMVR_HACT_INPUT)) {
-		g_bow.btn_down = 0;
+	if (!g_bow.button || !(hi->active & SOMVR_HACT_INPUT) || (h == SOMVR_HAND_L && vb_trigger_taken())) {
+		g_bow.btn_down = 0; /* (SOMVR_VERBS: the left hand holds an orc, or its wraith press runs: not the bow's) */
 		return 0;
 	}
 	if (g_bow.button == 2)
@@ -10601,6 +10954,22 @@ static struct {
 	uint64_t suppressed;
 } g_lo;
 
+/* SOMVR_CLIMB_DESCENT's edge cue (cl_frame): the stick asked LOCO's walk and the game did not apply it: over the last
+ * half second (a snapshot every 0.5 s of LOCO's totals) 40 cm or more asked, under a fifth of it done */
+static int lo_walk_blocked(double t)
+{
+	static double t0 = -1, a0, p0;
+	static int blocked;
+	if (!g_lo.on)
+		return 0;
+	if (t0 < 0 || t - t0 >= 0.5 || t < t0) {
+		double da = g_lo.n.asked - a0, dp = g_lo.n.applied - p0;
+		blocked = t0 >= 0 && t - t0 < 1.5 && da >= 40.0 && dp < 0.2 * da;
+		t0 = t, a0 = g_lo.n.asked, p0 = g_lo.n.applied;
+	}
+	return blocked;
+}
+
 /* LOCO event lines: the first 200, then at most 10 per second */
 static int lo_log_ok(double t)
 {
@@ -10707,6 +11076,7 @@ static void lo_pm_pre(uintptr_t pm, const float *xf)
 	in.stick_ok = g_lo.stick_ok, in.stick_v = g_lo.stick_v;
 	/* the bow's aim walks; a fight runs at most the run band (design-locomotion.md 3.7: no sprint at an engaged orc) */
 	in.cap_cms = own.aiming ? g_lo.cfg.aim_cms : own.fsm == 7 ? g_lo.cfg.run_cms * g_lo.cfg.speed : 0;
+	cr_cap(&in.cap_cms); /* SOMVR_CROUCH: the crouched walk */
 	float root[3];
 	in.have_root = peek(obj + OBJ_POS, root, sizeof root) && vec_ok(root, 1e7f);
 	if (in.have_root)
@@ -11507,12 +11877,18 @@ static void *writer_main(void *arg)
 					what = wp_word(w + 6);
 				} else if (seen && !strncmp(w, "hudfx ", 6)) { /* SOMVR_HUD_FX: "hudfx game|hide" */
 					what = uf_word(w + 6);
+				} else if (seen && !strncmp(w, "vbglow ", 7)) { /* SOMVR_VERBS_GLOW: "vbglow game|log|hide|fx WORDS" */
+					what = vg_word(w + 7);
 				} else if (seen && !strncmp(w, "execute ", 8)) { /* SOMVR_EXECUTE: "execute status|glow ..." */
 					what = xc_word(w + 8);
+				} else if (seen && !strncmp(w, "verbs ", 6)) { /* SOMVR_VERBS: "verbs status|press ..." */
+					what = vb_word(w + 6);
 				} else if (seen && !strncmp(w, "bow ", 4)) { /* SOMVR_BOW: "bow fire N|NAME|ours" (headless A/B) */
 					what = bo_word(w + 4);
 				} else if (seen && !strncmp(w, "size ", 5)) { /* SOMVR_PLAYER_SIZE: "size PCT|probe|status" */
 					what = sz_word(w + 5);
+				} else if (seen && !strncmp(w, "crouch ", 7)) { /* SOMVR_CROUCH: "crouch status|press|hold|snap|diff" */
+					what = cr_word(w + 7);
 				} else if (seen && (!strncmp(w, "gameopts", 8) || !strncmp(w, "hints ", 6))) {
 					what = go_word(w); /* SOMVR_MUSIC / SOMVR_HINTS: a state line, "hints game|log|off" */
 				} else if (seen && !strncmp(w, "padprompts", 10)) { /* SOMVR_PAD_PROMPTS: "padprompts [game|log|vr|map ..]" */
@@ -11988,6 +12364,15 @@ static uint32_t es_config(void)
 			g_es.hold_s = (double)v * 1e-3;
 		else
 			logf_("WARN SOMVR_EYE_SIZE_HOLD_MS=%s is not 0..600000 or always: %.0f ms", ho, g_es.hold_s * 1e3);
+	}
+	const char *st = getenv("SOMVR_EYE_SIZE_STALL_MS"); /* never a void: a stall is not a menu (0 = off) */
+	if (st && st[0]) {
+		unsigned long v = 0;
+		const char *e = parse_dec(st, &v);
+		if (e && !*e && v <= 10000)
+			g_es.stall_s = (double)v * 1e-3;
+		else
+			logf_("WARN SOMVR_EYE_SIZE_STALL_MS=%s is not 0..10000: off", st);
 	}
 	return g_es.sw ? 1u << HK_IN_TICK : 0;
 }
@@ -12540,6 +12925,18 @@ static int vm_apply_key(int k, const somvr_settings *s, const char *who)
 	case SOMVR_SK_PLAYER_SIZE:
 		note = sz_vm_set(k, s); /* SOMVR_PLAYER_SIZE (somvr_size_game.c) */
 		break;
+	case SOMVR_SK_CROUCH:
+		note = cr_vm_set(k, s); /* SOMVR_CROUCH (somvr_crouch_game.c) */
+		break;
+	case SOMVR_SK_CLIMB_FLING: /* build 13: the next let-go flings or hangs (a flight on now ends as it would) */
+		if (g_cl.fling_menu)
+			g_cl.cfg.fling = s->fling != 0;
+		note = g_cl.fling_menu ? (s->fling ? " (a fast let-go flings)" : " (every let-go hangs)")
+				       : " (no SOMVR_CLIMB_FLING=on with the climb's hang: not used)";
+		break;
+	case SOMVR_SK_HANDS_SURFACE:
+		note = sf_vm_set(s); /* SOMVR_HANDS_SURFACE (somvr_surface_game.c) */
+		break;
 	default:
 		return 0;
 	}
@@ -12605,7 +13002,10 @@ static void vm_start(void)
 	st_settings(&s); /* SOMVR_STEP, SOMVR_DASH, SOMVR_PHASE */
 	bd_vm_settings(&s); /* SOMVR_SWORD_ANGLE */
 	sz_vm_settings(&s); /* SOMVR_PLAYER_SIZE */
+	cr_vm_settings(&s); /* SOMVR_CROUCH */
 	go_vm_settings(&s); /* SOMVR_MUSIC */
+	s.fling = (cl_vm_avail() & SOMVR_VMA_FLING) != 0; /* build 13: SOMVR_CLIMB_FLING */
+	s.surface = sf_vm_avail() != 0;                    /* build 13: SOMVR_HANDS_SURFACE */
 	g_vm.env = s;
 	char note[160] = "", fs[96] = "unset: nothing read or saved";
 	int nbad = 0;
@@ -12623,7 +13023,9 @@ static void vm_start(void)
 	}
 	uint32_t avail = (g_fb.on ? SOMVR_VMA_VIEW : 0u) | (somvr_hud_ok(&g_hud) ? SOMVR_VMA_HUD : 0u) |
 			 (g_cf.on && somvr_comfort_ok(&g_cft) ? SOMVR_VMA_COMFORT : 0u) | st_avail() | pr_avail() |
-			 bd_vm_avail() | sz_vm_avail() | go_vm_avail();
+			 bd_vm_avail() | sz_vm_avail() | go_vm_avail() | cl_vm_avail() | vb_vm_avail() | sf_vm_avail() |
+			 cr_vm_avail();
+	g_cl.fling_menu = (avail & SOMVR_VMA_FLING) != 0; /* the menu's row may turn the fling off and on again */
 	uint32_t blink_on = s.blink_ms ? s.blink_ms : g_vm.env.blink_ms ? g_vm.env.blink_ms : SOMVR_SET_BLINK_MS;
 	g_vm.applied = g_vm.env;
 	uint32_t d = somvr_set_diff(&g_vm.env, &s);
@@ -12960,6 +13362,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	int lo_hk = lo_config(&bad);       /* SOMVR_LOCO=1: the PM hook too (SOMVR_ANCHOR=root: none) */
 	st_config(&bad);                   /* SOMVR_STEP / SOMVR_DASH / SOMVR_PHASE: no hook of their own (LOCO's) */
 	sz_config(&bad);                   /* SOMVR_PLAYER_SIZE: no hook (after the anchor's eye height) */
+	cr_config(&bad);                   /* SOMVR_CROUCH: no hook (the input tick's command) */
 	install_all(sites, ~HK_OPTIONAL | (g_audio ? 1u << HK_AUD : 0) | (g_follow.on || cl_hk || lo_hk ? 1u << HK_PM : 0) | in_hk |
 				   arm_hk | hb_hk | es_hk);
 	if (g_audio && !g_h[HK_AUD].installed) {
@@ -13005,6 +13408,8 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	mm_start(g_mm_sites, &bad);     /* SOMVR_MINIMAP=head: its sites, MM_CAMQ (build 6) */
 	go_start(g_go_sites, &bad);     /* SOMVR_MUSIC / SOMVR_HINTS: the sound manager's and the HUD text's slots (build 10) */
 	pp_start(g_pp_sites, &bad);     /* SOMVR_PAD_PROMPTS: the HUD prompt delegates' slots (after go_start: go_slot, go_str) */
+	vb_start(&bad);                 /* SOMVR_VERBS: the Nemesis verbs (after combat, input and the prompts) */
+	vg_start(g_vg_sites, &bad);     /* SOMVR_VERBS_GLOW: ClientFX's create jumps (after the verbs) */
 	ex_start(); /* SOMVR_EYE_SIZE, SOMVR_HIDE_HEAD (a piece list), SOMVR_HUD */
 	vm_start(); /* SOMVR_VRMENU: the settings (the switches, SOMVR_SETTINGS over them), somvr_vrmenu active */
 	ss_start(); /* SOMVR_MARK / SOMVR_QUIT: the folders, somvr_session active (after the menu: its Report/Quit) */
@@ -13160,8 +13565,11 @@ static void somvr_end_logs(const char *why)
 	sl_end_log();  /* SOMVR_SLOTS */
 	fi_end_log();  /* SOMVR_FINISH */
 	xc_end_log();  /* SOMVR_EXECUTE */
+	vb_end_log();  /* SOMVR_VERBS */
+	vg_end_log();  /* SOMVR_VERBS_GLOW */
 	pr_end_log();  /* SOMVR_PRACTICE */
 	sz_end_log();  /* SOMVR_PLAYER_SIZE */
+	cr_end_log();  /* SOMVR_CROUCH */
 	ss_end_log();  /* SOMVR_MARK / SOMVR_QUIT */
 	mm_end_log();  /* SOMVR_MINIMAP */
 	go_end_log();  /* SOMVR_MUSIC / SOMVR_HINTS */
@@ -16066,8 +16474,10 @@ static void df_clank_fx(double t)
 #include "somvr_body_game.c" /* SOMVR_BODY=hands, SOMVR_SWORD_ANGLE, SOMVR_TWOHAND, SOMVR_HANDS_TEST (re-xr-pipeline.md 28) */
 #include "somvr_fingers_game.c" /* SOMVR_FINGERS=1: the fingers on the controllers (re-xr-pipeline.md 29) */
 #include "somvr_vrhands_game.c" /* SOMVR_VRHANDS=1: the layer's own hands (re-xr-pipeline.md 33) */
+#include "somvr_surface_game.c" /* SOMVR_HANDS_SURFACE=on: hands and sword stop at surfaces (re-xr-pipeline.md 38) */
 #include "somvr_minimap_game.c" /* SOMVR_MINIMAP=head: the minimap turns with the head (docs/re-xr-pipeline.md 28.2) */
 #include "somvr_size_game.c" /* SOMVR_PLAYER_SIZE: the player size, the rig about Talion's feet (re-xr-pipeline.md 35) */
+#include "somvr_crouch_game.c" /* SOMVR_CROUCH=duck: crouch by ducking (docs/re-xr-pipeline.md 41) */
 #include "somvr_fight_game.c" /* build 10's fight: SOMVR_ARMS_LW, ... (docs/re-xr-pipeline.md 30.12 and up) */
 #include "somvr_gameopts_game.c" /* SOMVR_MUSIC / SOMVR_HINTS: the music's volume, the flat game's hints (re-xr-pipeline.md 34) */
 #include "somvr_prompts_game.c" /* SOMVR_PAD_PROMPTS: the flat pad's button prompts in VR (re-bow.md 13) */
@@ -16075,7 +16485,9 @@ static void df_clank_fx(double t)
 #include "somvr_strike_game.c" /* SOMVR_BOW_STRIKE=dash|blink: the Shadow Strike on X, the wraith dash (re-bow.md 14) */
 #include "somvr_wisps_game.c"  /* SOMVR_WISPS=hand: the left-hand wraith wisps on our VR hand (re-xr-pipeline.md 33.9) */
 #include "somvr_execute_game.c" /* SOMVR_EXECUTE=1: the execution in VR (docs/re-xr-pipeline.md 30.23) */
+#include "somvr_verbs_game.c" /* SOMVR_VERBS: the Nemesis verbs in VR (docs/re-xr-pipeline.md 36) */
 #include "somvr_hudfx_game.c" /* SOMVR_HUD_FX=hide: the HUD's 3D flourishes out of the eyes (re-xr-pipeline.md 31.5) */
+#include "somvr_vbglow_game.c" /* SOMVR_VERBS_GLOW: the verbs' wraith flare out of the eyes (re-xr-pipeline.md 39.7) */
 
 #ifndef SOMVR_SELFTEST
 /* ------------------------------------------------------------------------------------------------------------ */

@@ -12,7 +12,7 @@
 # "ghost off;ghost on") each followed by a dump named after it. Then it holds GH_HOLD seconds (default 120: words and
 # dumps by hand: `echo dump > RUN/xrtest.txt`; touch RUN/ghost.done ends the hold) and quits. Stops at once (quit) when
 # the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${GH_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${GH_STEPS:-meadow walk bush handsdown wordtest}
 AT=${GH_AT:-31784,-25314}
@@ -29,7 +29,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }

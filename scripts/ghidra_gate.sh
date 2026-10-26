@@ -22,8 +22,8 @@
 # SIGCONT after SIGTERM when its unit is stopped, so `systemctl --user stop <unit>` works while paused.
 set -u
 
-STATUS=${GATE_STATUS:-/run/user/1000/vr-session/status.json}
-QUIET=${GATE_QUIET:-/run/user/1000/vr-session/quiet}
+STATUS=${GATE_STATUS:-/run/user/$(id -u)/vr-session/status.json}
+QUIET=${GATE_QUIET:-/run/user/$(id -u)/vr-session/quiet}
 INTERVAL=${GATE_INTERVAL:-15}
 LOG=/dev/null
 

@@ -1,6 +1,6 @@
 # ghidra_env.sh - sourced by ghidra_analyze.sh / ghidra_query.sh: one place for paths and Ghidra settings.
 # Everything Ghidra writes (settings, OSGi script cache, temp files, logs, projects) stays in the workspace.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 GHIDRA_DIR=/usr/lib64/ghidra
 HEADLESS=$GHIDRA_DIR/support/analyzeHeadless
 GATE=$SOM/scripts/ghidra_gate.sh

@@ -27,9 +27,9 @@
 # Headers: ShadowOfMordor/third_party (git-ignored), see vklayer/build.sh. Nothing here launches the game or a runtime.
 set -euo pipefail
 D=$(cd "$(dirname "$0")" && pwd)
-TP=$(cd "$D/../../third_party" 2>/dev/null && pwd) || { echo "no ShadowOfMordor/third_party"; exit 2; }
+TP=$(cd "$D/../../third_party" 2>/dev/null && pwd) || { echo "no ShadowOfMordor/third_party (run scripts/fetch_third_party.sh)"; exit 2; }
 XRH=$TP/OpenXR-SDK-1.1.61/include
-[ -f "$XRH/openxr/openxr.h" ] || { echo "OpenXR headers missing in $TP"; exit 2; }
+[ -f "$XRH/openxr/openxr.h" ] || { echo "OpenXR headers missing in $TP (run scripts/fetch_third_party.sh)"; exit 2; }
 CF=(-std=gnu11 -O2 -g -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Werror -I"$XRH")
 CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c" "$D/somvr_ctl.c" "$D/somvr_hands.c"
       "$D/somvr_arms.c" "$D/somvr_pointer.c" "$D/somvr_headbone.c" "$D/somvr_fallback.c" "$D/somvr_comfort.c"
@@ -37,7 +37,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_loco.c" "$D/somvr_threat.c" "$D/somvr_bodymoments.c" "$D/somvr_slots.c" "$D/somvr_defence.c"
       "$D/somvr_step.c" "$D/somvr_finish.c" "$D/somvr_headview.c" "$D/somvr_headparts.c" "$D/somvr_practice.c"
       "$D/somvr_session.c" "$D/somvr_body.c" "$D/somvr_fingers.c" "$D/somvr_size.c" "$D/somvr_vrhands.c"
-      "$D/somvr_strike.c" "$D/somvr_execute.c")
+      "$D/somvr_strike.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -126,6 +126,12 @@ gcc "${CF[@]}" -o "$D/build/tests/test_strike" "$D/tests/test_strike.c" "$D/somv
 "$D/build/tests/test_strike"
 gcc "${CF[@]}" -o "$D/build/tests/test_execute" "$D/tests/test_execute.c" "$D/somvr_execute.c" -lm # build 13: the execution
 "$D/build/tests/test_execute"
+gcc "${CF[@]}" -o "$D/build/tests/test_surface" "$D/tests/test_surface.c" "$D/somvr_surface.c" "$D/somvr_pose.c" -lm # build 13: hands at surfaces
+"$D/build/tests/test_surface"
+gcc "${CF[@]}" -o "$D/build/tests/test_verbs" "$D/tests/test_verbs.c" "$D/somvr_verbs.c" -lm # build 13: the Nemesis verbs
+"$D/build/tests/test_verbs"
+gcc "${CF[@]}" -o "$D/build/tests/test_crouch" "$D/tests/test_crouch.c" "$D/somvr_crouch.c" -lm # build 13: crouch by ducking
+"$D/build/tests/test_crouch"
 [ -f "$D/somvr.c" ] || exit 0
 
 echo "== patch sites (read-only, the game binary on disk)"

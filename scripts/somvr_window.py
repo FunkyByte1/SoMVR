@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 
-SOM = "/home/bara/Projects/flat2vr/ShadowOfMordor"
+SOM = os.path.expanduser("~/Projects/flat2vr/ShadowOfMordor")
 RT = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
 
 

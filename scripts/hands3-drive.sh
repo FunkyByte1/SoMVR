@@ -8,7 +8,7 @@
 # (0 -90 0 = the right fist axis pointing right, 90 0 0 = up, 45 0 0 = ahead and up 45, 0 0 90 = turned about the fist
 # axis; 0 90 0 = the right palm toward the eyes, 0 -90 0 the left's). Fingers: `hands squeeze L|R V` (middle/ring/pinky; also the slots and two hands), `hands trigger L|R V` (the
 # index), `hands thumb L|R 0|1` (the thumb's touch); -1 = the controller's again. `hands fingers` = a dump in somvr.log.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${HANDS_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${HANDS3_STEPS:-empty mirror palms sword two}
 T0=$(date +%s)

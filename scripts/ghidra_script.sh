@@ -14,7 +14,7 @@
 # Env: SOM_SCRIPT_MAXMEM (JVM -Xmx, default 16G rw / 8G ro, capped at 24G), SOM_LOCK_WAIT (cap on the lock wait, s).
 # rw: back the project up first (cp -a reference/ghidra/NAME ...); a saved headless run can't be undone.
 set -u
-. /home/bara/Projects/flat2vr/ShadowOfMordor/scripts/ghidra_env.sh
+. "$HOME/Projects/flat2vr/ShadowOfMordor/scripts/ghidra_env.sh"
 SELF=$SOM/scripts/ghidra_script.sh
 usage() { sed -n '7,11p' "$SELF" >&2; exit 2; }
 checkname() { case "$1" in ''|*[!A-Za-z0-9_.-]*) echo "bad NAME '$1' (use [A-Za-z0-9_.-])" >&2; exit 2 ;; esac; }

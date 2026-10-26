@@ -11,7 +11,7 @@
 # wallwalk aimorc sword menu; wallwalk walks Talion up to the stone wall left of the meadow). The aim steps dump the scene, then put a hand where scripts/handsdepth_aim.py finds the world's surface
 # (the ground ahead and below, the wall on the left, the nearest thing in the middle: the orc) and push it through it
 # in steps (cm along the eye's ray). Stops at once (quit) when the user goes into VR.
-SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${HD_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${HD_STEPS:-hold aimground wallwalk aimorc sword menu}
 AIM=${HD_AIM:-$(cd "$(dirname "$0")" && pwd)/handsdepth_aim.py}
@@ -28,7 +28,7 @@ done
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
-  grep -q '"user": true' /run/user/1000/vr-session/status.json 2>/dev/null && return 0
+  grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0
   return 1
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }
