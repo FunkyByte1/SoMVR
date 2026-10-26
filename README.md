@@ -2,6 +2,11 @@
 
 A VR mod for the native Linux version of **Middle-earth: Shadow of Mordor** (Feral Interactive's port).
 
+> [!WARNING]
+> **Vibe-coded.** This mod was written almost entirely by an AI (Claude, by Anthropic). The author describes what
+> they want and playtests it in the headset, but does not review the code line by line. Expect bugs and rough
+> edges, read the scripts before you run them, and back up your saves first. Use at your own risk.
+
 - A stereo first-person view with head tracking.
 - Tracked hands, with a motion-controlled sword and bow.
 - Menus you point at in VR, and comfort options.
@@ -43,6 +48,4 @@ You need your own copy of the game on Steam (the Linux version), gcc and python3
 
 - Not affiliated with or endorsed by Warner Bros. Games, Monolith Productions or Feral Interactive. No game files are
   included: you need your own copy.
-- Most of the code was written by Claude (Anthropic's AI model) under the author's direction; the commit messages say
-  so.
 - Licence: MIT, see [LICENSE](LICENSE). Third-party files keep their own licences.
