@@ -96,7 +96,8 @@ static void test_direction(void) {
     d = dir_of(h, id, 100, 370, -50);
     CHECK(NEAR(d.pitch_deg, 90, 1e-3) && NEAR(d.off_deg, 90, 1e-3) && !somvr_th_in_view(&c, d), "above: pitch %g off %g",
           d.pitch_deg, d.off_deg);
-    /* the 110 deg cone: 54 deg in, 56 out, in any direction */
+    /* the 110 deg cone, the full angle (SOMVR_THREAT_VIEW=full): 54 deg in, 56 out, in any direction */
+    c.view_full = 1;
     for (int k = 0; k < 8; k++) {
         float a = (float)k * 45 * DEG;
         for (int s = 0; s < 2; s++) {
@@ -105,6 +106,39 @@ static void test_direction(void) {
             CHECK(somvr_th_in_view(&c, e) == !s, "cone at %d deg around, %s: off %g", k * 45, s ? "56" : "54", e.off_deg);
         }
     }
+    /* the bearing (the default): |yaw| 54 in, 56 out at any pitch up to 85 deg; the pitch alone never puts it out of
+     * view; more than 85 deg above/below: the full angle (no yaw there) */
+    c.view_full = 0;
+    for (int k = 0; k < 7; k++) {
+        float pitch = (float)(k * 28 - 84) * DEG; /* -84 .. +84 */
+        for (int s = 0; s < 4; s++) {
+            float yaw = (s == 0 ? 54 : s == 1 ? -54 : s == 2 ? 56 : -56) * DEG;
+            float l[3] = {cosf(pitch) * sinf(yaw), sinf(pitch), cosf(pitch) * cosf(yaw)};
+            somvr_th_dir e = somvr_th_direction(l);
+            CHECK(somvr_th_in_view(&c, e) == (s < 2) && NEAR(somvr_th_view_off(&c, e), fabsf(e.yaw_deg), 1e-4),
+                  "bearing: yaw %g pitch %g: in %d", e.yaw_deg, e.pitch_deg, somvr_th_in_view(&c, e));
+        }
+    }
+    float up[3] = {0.02f, 1, 0.01f}; /* 88.7 deg up, yaw 63: off 89 = out (the full angle) */
+    d = somvr_th_direction(up);
+    CHECK(!somvr_th_in_view(&c, d) && NEAR(somvr_th_view_off(&c, d), d.off_deg, 1e-4), "bearing, straight up: off %g",
+          somvr_th_view_off(&c, d));
+    float up2[3] = {0.0f, 1, 0.02f}; /* yaw 0, 88.9 up: out all the same */
+    d = somvr_th_direction(up2);
+    CHECK(!somvr_th_in_view(&c, d), "bearing, straight up ahead: off %g", somvr_th_view_off(&c, d));
+    /* an orc at Talion's feet straight ahead (its root 40 cm ahead, the eyes 170 cm above it: 77 deg down; its hand
+     * 100 cm up: 60 deg down): in view by the bearing, out by the full angle (round 1's LATE edge warnings); behind
+     * him: out by both */
+    const float eye[3] = {0, 170, 0};
+    somvr_th_dir feet = dir_of(eye, id, 5, 0, 40), hand = dir_of(eye, id, 5, 100, 40), back = dir_of(eye, id, 5, 100, -60);
+    CHECK(somvr_th_in_view(&c, feet) && somvr_th_in_view(&c, hand) && !somvr_th_in_view(&c, back) && feet.pitch_deg < -75 &&
+              hand.pitch_deg < -55,
+          "bearing: the feet %g/%g, the hand %g/%g in view, behind %g out", feet.yaw_deg, feet.pitch_deg, hand.yaw_deg,
+          hand.pitch_deg, back.yaw_deg);
+    c.view_full = 1;
+    CHECK(!somvr_th_in_view(&c, feet) && !somvr_th_in_view(&c, hand) && !somvr_th_in_view(&c, back),
+          "full: the feet, the hand and behind out of view");
+    c.view_full = 0;
     /* the head turned 90 deg right (game: sv_qyaw(+a) turns +Z toward +X): the point at +X is ahead */
     float q[4] = {0, sinf(45 * DEG), 0, cosf(45 * DEG)};
     d = dir_of(h, q, 300, 170, -50);
@@ -262,6 +296,32 @@ static void test_select(void) {
     memset(&s, 0, sizeof s);
     p = somvr_th_select(&c, behind, &k, 0.1f, &s);
     CHECK(p.level == 0 && p.haptic == SOMVR_THH_ANNOUNCE, "edge strength 0: level %g haptic %d", p.level, p.haptic);
+    /* a keyless attack (all ten keys none: the orcs' moves between blows, run 092140): no cue, no pulse, no sound - in
+     * view or behind; SOMVR_THREAT_KEYLESS=1: round 1's (the base glow; behind the edge, the pulse, the sound) */
+    c.edge = 0.8f;
+    k = somvr_th_keys_of(KT_NONE);
+    somvr_th_keys kb = somvr_th_keys_of(KT_INF), ka = somvr_th_keys_of(KT_ARCH);
+    uint16_t bc[10];
+    memset(bc, 0xff, sizeof bc);
+    bc[SOMVR_TH_KT_BCOL] = 300;
+    somvr_th_keys kc = somvr_th_keys_of(bc);
+    CHECK(somvr_th_keyless(&k) && !somvr_th_keyless(&kb) && !somvr_th_keyless(&ka) && !somvr_th_keyless(&kc),
+          "keyless: none %d, infantry %d, archer %d, BCOL only %d", somvr_th_keyless(&k), somvr_th_keyless(&kb),
+          somvr_th_keyless(&ka), somvr_th_keyless(&kc));
+    int quiet = 1;
+    memset(&s, 0, sizeof s);
+    for (int i = 0; i < 30; i++) {
+        float t = i * 0.05f;
+        somvr_th_pick pb = somvr_th_select(&c, behind, &k, t, &s), pa = somvr_th_select(&c, ahead, &k, t, &s);
+        quiet &= pb.cue == SOMVR_THC_NONE && !pb.haptic && !pb.sound && pa.cue == SOMVR_THC_NONE && pa.level == 0;
+    }
+    CHECK(quiet && !s.announced, "keyless: no cue behind or ahead, no pulse, no sound");
+    c.keyless = 1;
+    memset(&s, 0, sizeof s);
+    p = somvr_th_select(&c, behind, &k, 0.1f, &s);
+    CHECK(p.cue == SOMVR_THC_EDGE && p.haptic == SOMVR_THH_ANNOUNCE && p.sound, "keyless=1: behind announced (%d %d)",
+          p.cue, p.haptic);
+    c.keyless = 0;
     CHECK(!strcmp(somvr_th_cue_name(SOMVR_THC_PROJ_EDGE), "proj-edge") && !strcmp(somvr_th_haptic_name(SOMVR_THH_URGENT), "urgent"),
           "names");
 }
@@ -278,9 +338,9 @@ static void test_near_parry(void) {
     CHECK(p.cue == SOMVR_THC_NEAR && NEAR(p.level, 0.5 * c.edge * c.near_level, 1e-4), "near at 1.75 m: %g", p.level);
     d.dist_cm = 260;
     CHECK(somvr_th_near(&c, d).cue == SOMVR_THC_NONE, "near beyond 2.5 m");
-    d.dist_cm = 100, d.off_deg = 30;
+    d.dist_cm = 100, d.yaw_deg = -30, d.off_deg = 30;
     CHECK(somvr_th_near(&c, d).cue == SOMVR_THC_NONE, "near in view");
-    c.near_m = 0, d.off_deg = 120;
+    c.near_m = 0, d.yaw_deg = -120, d.off_deg = 120;
     CHECK(somvr_th_near(&c, d).cue == SOMVR_THC_NONE, "near off");
     /* the parry tick: once, when the window opens */
     somvr_th_keys k = somvr_th_keys_of(KT_ARCH);

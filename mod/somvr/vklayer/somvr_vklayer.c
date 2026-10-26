@@ -1475,6 +1475,7 @@ static void vd_floor(float oy);
 static int vd_xt(const char *line);
 static void vd_hands(dev_st *ds, xr_comp *c, int watcher);
 static void vd_theatre(XrCompositionLayerQuad *q, uint32_t w, uint32_t h);
+static int vd_video_mono(int have_tag, int have_rec); /* SOMVR_XR_THEATRE_VIDEO: a video's eyeless presents = mono */
 static void cv_cmds(dev_st *ds, VkCommandBuffer cmd, const slot_st *sl, const hud_st *hd); /* SOMVR_XR_COVER */
 static void cv_submitted(int ok);
 static void cv_poll(dev_st *ds, int mono);
@@ -4656,7 +4657,7 @@ static void vm_click(const somvr_vm_hit *hit, uint32_t avail) {
 #include "somvr_menus_layer.c" /* build 6: the menu boards, the wrist minimap, the arrival card, touch */
 #include "somvr_vrhands_layer.c" /* build 10: our own VR hands, the watch on the wrist, the panel off the palm */
 #include "somvr_void_layer.c" /* never a void (HG-9): the present gaps, the keep-alive frames, the loading space */
-#include "somvr_testhead_layer.c" /* SOMVR_XR_TEST `head X Y Z [s SEC]`: a duck for headless tests */
+#include "somvr_testhead_layer.c" /* SOMVR_XR_TEST `head X Y Z [yaw DEG] [s SEC]`: a duck, a look behind (headless tests) */
 
 /* One frame (stereo, reuse or mono), before the game's pointer (it has no target while the panel is open) and before
  * the frame's layers are put together: the gesture, the pointer on the panel, the clicks, the picture; VM.q[0 .. nq)
@@ -5055,6 +5056,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         }
     }
     somvr_submit_kind kind = somvr_submit_decide(have_tag, have_tag ? tag.frame : 0, have_rec, X.last_stereo);
+    if (kind == SOMVR_SUBMIT_REUSE && vd_video_mono(have_tag, have_rec)) kind = SOMVR_SUBMIT_MONO; /* build 14 */
     if (X.frame_open && !(kind == SOMVR_SUBMIT_STEREO && tag.frame == X.open_frame && !(X.open_mask >> tag.slot & 1)))
         if (xr_abort_open(kind == SOMVR_SUBMIT_STEREO ? "another frame's slot" : "a present without its next slot"))
             return 0;

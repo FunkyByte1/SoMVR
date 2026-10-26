@@ -293,7 +293,9 @@ int somvr_vm_tab_page(int item) {
 /* build 13: a line wants (need) or excludes (unless) avail bits; opt > 0 = optional, dropped in that order (1 first)
  * while more than SOMVR_VM_CTL_FIT lines are wanted. Build 13's all (the fling, the verbs, the descent): 18 lines with
  * Sheathe and Quit dropped ("grip there again" = the same gesture; Quit = the Settings page's bottom button); with
- * the crouch (its own line) Sprint goes too (the left stick's click, as every VR game) */
+ * the crouch (its own line) Sprint goes too (the left stick's click, as every VR game). Build 14 candidate
+ * (SOMVR_VMA_USE, the story drill's round 2): Use names the picks and the missions' start, Menu and Pause share a line,
+ * so Sprint stays with the crouch: the story's first objective is timed (1:30) and its hint names the sprint */
 typedef struct {
     const char *key, *what;
     uint32_t need, unless;
@@ -308,7 +310,8 @@ static const vm_ctl_line g_ctl[] = {
     {"Sword", "grip at R shoulder", 0, 0, 0},
     {"Sheathe", "grip there again", 0, 0, 2},
     {"Parry", "move sword into blow", 0, 0, 0},
-    {"Use", "B (interact)", 0, 0, 0},
+    {"Use", "B (interact)", 0, SOMVR_VMA_USE, 0},
+    {"Use", "B (pick, missions)", SOMVR_VMA_USE, 0, 0}, /* build 14: SOMVR_USE's picks and "Start Mission" */
     {"Climb", "grip, pull; fling up", SOMVR_VMA_FLING, 0, 0}, /* build 13: let go mid-pull = the fling */
     {"Drop", "A (on a wall)", 0, SOMVR_VMA_DESCENT, 0},
     {"Drop", "A (wall, edge)", SOMVR_VMA_DESCENT, 0, 0}, /* build 13: A at an edge over a 4 m drop = the blink down */
@@ -319,8 +322,9 @@ static const vm_ctl_line g_ctl[] = {
     {"Wraith", "hold Y (vision)", 0, 0, 0},
     {"Map", "click right stick", 0, 0, 0},
     {"Minimap", "back of left wrist", 0, 0, 0},
-    {"Menu", "L palm / hold button", 0, 0, 0}, /* build 13: one line (was "left palm to face", "or hold menu button") */
-    {"Pause", "tap menu button", 0, 0, 0},
+    {"Menu", "L palm / hold button", 0, SOMVR_VMA_USE, 0}, /* build 13: one line (was "left palm to face", "or hold menu button") */
+    {"Pause", "tap menu button", 0, SOMVR_VMA_USE, 0},
+    {"Menu", "palm/hold; tap=pause", SOMVR_VMA_USE, 0, 0}, /* build 14: the two lines in one (Sprint's room) */
     {"Quit", "Settings > Quit x2", 0, 0, 1},
     {"Report", SOMVR_VM_CTL_REPORT, 0, 0, 0},
     {"", SOMVR_VM_CTL_REPORT2, 0, 0, 0},

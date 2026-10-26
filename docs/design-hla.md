@@ -453,7 +453,8 @@ This is where SoM differs most from HL:A, and where the most honest compromises 
   - G4 `FUN_026eb380`, key times `Combat+0xcc/+0xd4/+0xd6` (P7/P8: within a frame), `SampleNode`, G5/G6/G7 (static,
     re-combat-vr.md 3, re-combat.md 2-3), the parry recoil `FUN_02810af0`;
   - G9/G10 `FUN_028cd7a0`, `FUN_028cd4b0`, `FUN_028ccc90`, `FUN_02114ec0` (static);
-  - **needs RE:** the `Camera` term's weight in the score, or a post-adjust of the total;
+  - the `Camera` term and the veto point: re-xr-pipeline.md 42.3 (the score's only call `0x28d7d31`; a negative
+    score after it = never granted); the AI's camera copy `CPlayerObj+0xb94` (42.4);
   - G2 `cam+0x338` (design 0, not built);
   - Wwise posts (re-combat-items.md 5); P9 for shield orcs and captains.
 
@@ -588,6 +589,19 @@ stand-ins, layer mock scenarios: green. **Not built:** HG-3's defence (block bar
 the parry recoil), HG-5's tuning and the 1 s grant veto (G9/G10, RE) and damage x0.5. Infantry strikes come 0.8 s
 after their start, so their announcement is under the 1 s HG-5 asks for (`LATE` in the log) until the veto exists.
 
+**Status HG-5 / SH-9 RE (2026-10-26, static only; re-xr-pipeline.md 42):** the attacker choice is mapped. One
+call scores each candidate (`AICombatMgr_ScoreAttacker`, `0x28d7d31`): Total = Distance + Priority + Camera +
+LastAttacker + State + Buff, at least 0.01. A negative score is never granted, so the veto is a negative score written
+after that call. The Camera term is -w off screen and w x cos on screen (weights from DB data, defaults 1). It reads
+the AI's camera copy `CPlayerObj+0xb94..+0xbd3`: Talion's position and the game camera's rotation, so in VR the rig's
+heading, not the head. The same copy places spawns off screen and picks the on/off-screen attacks. The timeline: the
+grant -> the AI's attack start (RT latency) -> the impact 0.815 s later; the slot re-arms 0.25 s x `AttackDelayScalar`
+after a streak (writable statics `0x4c4e1b0` / `0x4c4e1b4`). Arrivals come from `AISpawnerAmbientBase::vf_32`
+(off-screen point test `FUN_028f54b0`). Damage at Talion: the call at `0x2811007` (`ds+0x50`). Built: the pure
+`somvr_front.c` (the veto with a 1 s warning, only when nobody in view was accepted; the damage scale; the camera copy
+from the head), tests/test_front.c 92 checks, not hooked. Build 14's design, 9 byte-checked sites and its headless
+proof: section 42.9.
+
 **Status HG-9 (2026-10-25, build 13 candidates, headless-proven; re-xr-pipeline.md 36, handoff/HANDOFF-void.md):**
 measured first - SoM's loads keep presenting (the loading screen is live on the board in the sky); the stalls are the
 eye-size mode sets (154-1038 ms) and anything that stops the render thread, which sent no XR frame at all. Built: the
@@ -611,7 +625,7 @@ loading screen is the panel). The headset still has to show WiVRn's own stall be
 | SH-6 | The hand-held quick wheel (hold X) for the d-pad actions | S-M | G3, layer quads, RT the d-pad commands |
 | SH-7 | Left-handed mirror; subtitles as a lazy tile with sizes; per-trigger vignette levels | M | HG-4, H11 tile cuts |
 | SH-8 | Stealth kills by your own stab (G8, no sync); drains, brands, interrogations in first person with a latched hand | M | G8 (built), HG-2's frozen anchor, RT the generic death's look |
-| SH-9 | Arrivals behind the player get a positional cue and marker | M + RE | G19, Wwise posts, RE `AISpawnMgr` |
+| SH-9 | Arrivals behind the player get a positional cue and marker | M | G19, Wwise posts; the spawner is `AISpawnerAmbientBase::vf_32` (off-screen placement via the AI camera copy) and the cue needs no spawner hook (re-xr-pipeline.md 42.6) |
 | SH-10 | The 360 degree backdrop of the place you just left | L | HG-9, six extra views through H4 (design 6) |
 
 ### 3.3 Nice-to-have

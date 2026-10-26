@@ -121,7 +121,11 @@ static inline int somvr_threat_get(somvr_threat_shared *t, uint64_t frame, somvr
 /* ==== 2. the pure part (somvr_threat.c) ============================================================================ */
 
 typedef struct {
-    float view_deg;   /* the full cone around the head's view direction counted as "in view" (HG-5: 110 deg) */
+    float view_deg;   /* the cone around the head's view direction counted as "in view" (HG-5: 110 deg) */
+    int view_full;    /* SOMVR_THREAT_VIEW=full: the cone = the full angle off the view direction (round 1's); 0 =
+                       * bearing (the default): |yaw| in the head's frame, the pitch ignored. The orc's points are its
+                       * root (+0xd2c) and its weapon hand, 50-77 deg below the eyes when it stands at Talion's feet in
+                       * plain view (re-xr-pipeline.md 42.10/42.11); SOMVR_FRONT judges with the same test */
     float glow;       /* SOMVR_THREAT_GLOW: the in-view glow's strength 0..1 */
     float edge;       /* SOMVR_THREAT_EDGE: the edge glow's strength 0..1 */
     float fade_in_s;  /* the glow fades in over this at the attack's start */
@@ -137,6 +141,10 @@ typedef struct {
     float glow_deg;   /* the glow's angular size (its side at the distance) */
     float glow_min_m, glow_max_m; /* ... clamped */
     float sound_min_s;/* the warning sound only with at least this much lead */
+    int keyless;      /* SOMVR_THREAT_KEYLESS=1: an attack with no key at all (no impact, window, BCOL or SHOOT) gets
+                       * cues too (round 1's: the base glow, or out of view the edge, a pulse and the sound); 0 (the
+                       * default) = none: those are the orcs' moves between blows (run 092140: 200 of 254 starts in a
+                       * five-orc fight, none of them a blow; 114 of 148 out-of-view announcements) */
 } somvr_th_cfg;
 void somvr_th_cfg_default(somvr_th_cfg *c);
 
@@ -150,7 +158,12 @@ typedef struct {
     float dist_cm;
 } somvr_th_dir;
 somvr_th_dir somvr_th_direction(const float local[3]);
-int somvr_th_in_view(const somvr_th_cfg *c, somvr_th_dir d); /* off_deg <= view_deg / 2 (NaN: not in view) */
+/* the angle the in-view test compares with view_deg / 2: |yaw| (bearing, the default; off_deg when the point is more
+ * than SOMVR_TH_BEARING_PITCH above or below: its yaw means nothing there) or off_deg (view_full); NaN = unknown. The
+ * one in-view test of THREAT's cues and SOMVR_FRONT's veto. */
+#define SOMVR_TH_BEARING_PITCH 85.0f
+float somvr_th_view_off(const somvr_th_cfg *c, somvr_th_dir d);
+int somvr_th_in_view(const somvr_th_cfg *c, somvr_th_dir d); /* view_off <= view_deg / 2 (NaN: not in view) */
 enum { SOMVR_TH_LEFT = 1, SOMVR_TH_RIGHT = 2, SOMVR_TH_BOTH = 3 };
 #define SOMVR_TH_BEHIND_DEG 8.0f /* within this of straight behind: both sides */
 int somvr_th_side(somvr_th_dir d);
@@ -169,6 +182,7 @@ typedef struct {
 } somvr_th_keys;
 somvr_th_keys somvr_th_keys_of(const uint16_t ws[SOMVR_TH_KT_N]);
 float somvr_th_lead(const somvr_th_keys *k, float t); /* the time to the impact at t s after the start (NaN: none) */
+int somvr_th_keyless(const somvr_th_keys *k);          /* no impact, no window, no BCOL, no SHOOT: not a blow */
 int somvr_th_window(const somvr_th_keys *k, float t);  /* 1 inside [bpw, epw] */
 /* the glow over the attack, 0..1 before the strength: fades in from 0 at the start over fade_in_s at `base`, rises to 1
  * through the parry window (1 at EPW), holds to the impact, fades out over fade_out_s; without a window it rises from
@@ -200,9 +214,10 @@ typedef struct {
     int late;        /* the announcement came less than 1 s before the impact (the attack's own timing) */
     float lead;      /* s to the impact (NaN: none) */
 } somvr_th_pick;
-/* an attack at Talion, t s after its start, at direction d: in view = the glow; out of view = the edge, its
- * announcement (one pulse on that side, the sound with at least sound_min_s of lead) the first frame out of view
- * before the impact, the urgent pulse once inside urgent_s; after the impact the cue fades without pulses. */
+/* an attack at Talion, t s after its start, at direction d (the orc's body: in view by somvr_th_in_view): in view =
+ * the glow; out of view = the edge, its announcement (one pulse on that side, the sound with at least sound_min_s of
+ * lead) the first frame out of view before the impact, the urgent pulse once inside urgent_s; after the impact the cue
+ * fades without pulses. A keyless attack (somvr_th_keyless): no cue unless cfg keyless. */
 somvr_th_pick somvr_th_select(const somvr_th_cfg *c, somvr_th_dir d, const somvr_th_keys *k, float t, somvr_th_state *s);
 /* an engaged orc (its target is Talion) without an attack: the edge's low level out of view within near_m */
 somvr_th_pick somvr_th_near(const somvr_th_cfg *c, somvr_th_dir d);

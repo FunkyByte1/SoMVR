@@ -65,6 +65,26 @@ SITE("PRQ_FLAG_ON", K_ENTRY, 0x2919d70, 0x2919d70, "c6 87 64 01 00 00 01 c3 0f 1
 enum { PRQ_ENABLE, PRQ_DISABLE, PRQ_REMOVEALL, PRQ_FLAG_ON, PRQ_N };
 _Static_assert(sizeof g_prq_sites_game / sizeof g_prq_sites_game[0] == PRQ_N, "practice quiet sites");
 static const struct site_spec *g_prq_sites = g_prq_sites_game; /* selftest: stand-ins */
+
+/* PRNAV_SITES_BEGIN (the story drill's round 2: the test word "practice status nav" logs the game's nav markers - the
+ * story's and the missions' places - with their world positions, as the probe's navdump (P7, docs/runtime-probes.md);
+ * read only, never patched; checked at the first such word; counted on its own by check_sites.py). PRN_NAV_POS
+ * FUN_00ebc700: a marker's world position (the probe's F_NAV_POS). The CNavMarkerInstance list: its sentinel at
+ * 0x46b9200 (first = +8, next = node+8, the marker = node - 0x80), the NavMarkerData record at +0x298 (its name at +0x20
+ * when the record's byte +1 has bit 2), active / enabled bytes +0x2e0 / +0x2e1, an object at +0x260/+0x268/+0x270/+0xb0
+ * (the probe's rule for asking the position). Order = PRN_* */
+static const struct site_spec g_prn_sites_game[] = {
+SITE("PRN_NAV_POS", K_ENTRY, 0xebc700, 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7 48", 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7"),
+};
+/* PRNAV_SITES_END */
+enum { PRN_NAV_POS, PRN_N };
+_Static_assert(sizeof g_prn_sites_game / sizeof g_prn_sites_game[0] == PRN_N, "practice nav sites");
+static const struct site_spec *g_prn_sites = g_prn_sites_game; /* selftest: stand-ins */
+#define PRN_LIST 0x46b9200
+#define PRN_NODE 0x80
+#define PRN_REC 0x298
+#define PRN_ACTIVE 0x2e0 /* +0x2e1 enabled */
+typedef void (*prn_pos_fn)(uintptr_t marker, float *out);
 #define PRQ_MGR_FLAG 0x164   /* the spawn manager: byte, its spawn queues run (FUN_02919d70/d80's store) */
 #define PRQ_MGR_LIST 0x48    /* ... its ambient AI: begin, end (+8), 0x50 bytes each (FUN_02919d90) */
 #define PRQ_ENTRY 0x50
@@ -348,8 +368,29 @@ static int pr_remove_obj(uintptr_t h, uintptr_t npc)
 	return 1;
 }
 
+/* a test (SOMVR_FRONT's word "front keep 1", headless): a new spawn keeps the previous orc (several at once: the fight
+ * circle's turns, re-xr-pipeline.md 42.10); kept orcs are ours for the keep-clear pass; removed with the next removal
+ * after "front keep 0" */
+static struct { int on, n; uintptr_t h[8], npc[8]; } g_pr_keep;
+static int pr_kept(uintptr_t h)
+{
+	for (int i = 0; i < g_pr_keep.n; i++)
+		if (g_pr_keep.h[i] == h)
+			return 1;
+	return 0;
+}
+
 static void pr_remove_orc(const char *why, double t)
 {
+	for (int i = 0; !g_pr_keep.on && i < g_pr_keep.n; i++) { /* the kept ones go with the next removal */
+		int done = pr_remove_obj(g_pr_keep.h[i], g_pr_keep.npc[i]);
+		g_pr.removes += done;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f remove kept orc %d (%s) hobj=%#lx: %s", t, i, why, (unsigned long)g_pr_keep.h[i],
+			      done ? "removal queued" : "NOT removed (gone?)");
+	}
+	if (!g_pr_keep.on)
+		g_pr_keep.n = 0;
 	if (!g_pr.orc_h)
 		return;
 	int alive = pr_orc_alive(), done = alive && pr_remove_obj(g_pr.orc_h, g_pr.orc_npc);
@@ -493,7 +534,12 @@ static void pr_spawn(const struct pr_me *m, int type, double t, const char *who)
 			logf_("PRACTICE t=%.3f spawn %s (%s) refused: %s", t, somvr_pr_orc_label(type), who, fail);
 		return;
 	}
-	pr_remove_orc("a new spawn", t);
+	if (g_pr_keep.on && g_pr.orc_h && pr_orc_alive() && g_pr_keep.n < 8) { /* a test: the previous orc stays */
+		g_pr_keep.h[g_pr_keep.n] = g_pr.orc_h, g_pr_keep.npc[g_pr_keep.n++] = g_pr.orc_npc;
+		g_pr.orc_h = g_pr.orc_npc = g_pr.orc_c = 0;
+	} else {
+		pr_remove_orc("a new spawn", t);
+	}
 	const char *name = g_pr_tmpl_test[0] ? g_pr_tmpl_test : somvr_pr_orc_template(type); /* (a test: SOMVR_VERBS) */
 	uintptr_t tmpl = PR_FN(PRS_BYNAME, pr_byname_fn)(name);
 	if (tmpl)
@@ -629,7 +675,7 @@ static void pr_clear(const struct pr_me *m, uint32_t gate, double t)
 				continue; /* not an NPC, or its removal queued already (ours or the game's) */
 			char rn[96];
 			fb_rec_name(peek_ptr(c + PR_C_CHARREC), rn, sizeof rn);
-			cd.dist_cm = dist3(p, m->pos), cd.ours = h == g_pr.orc_h, cd.mount = h == m->mount;
+			cd.dist_cm = dist3(p, m->pos), cd.ours = h == g_pr.orc_h || pr_kept(h), cd.mount = h == m->mount;
 			cd.dead = cb_dead(c), cd.harmless = somvr_pr_harmless(rn);
 			if (!somvr_pr_clear_pick(&cd, g_pr.clear, g_pr.clear_cm))
 				continue;
@@ -912,6 +958,52 @@ static void pr_status(const struct pr_me *m, int have, double t)
 	      g_pr.advanced, g_pr.weather_set, g_pr.orig_weather, g_pr.orig_tod);
 }
 
+/* "practice status nav": the nav markers with a place (active, enabled, an object), their record's name, the world
+ * position and the distance from Talion; the ammo, explosives, fire pits and bait (dozens) only counted */
+static void pr_navdump(const struct pr_me *m, int have, double t)
+{
+	static int ok = -1;
+	if (ok < 0) {
+		char why[160];
+		ok = check_site(&g_prn_sites[PRN_NAV_POS], why, sizeof why) == 0;
+		logf_("PRACTICE site %s %s %#lx: %s", g_prn_sites[PRN_NAV_POS].name, ok ? "ok" : "MISMATCH (no places)",
+		      (unsigned long)g_prn_sites[PRN_NAV_POS].addr, why);
+	}
+	uintptr_t node = 0;
+	peek(PRN_LIST + 8, &node, sizeof node);
+	int n = 0, placed = 0, logged = 0, skipped = 0;
+	while (node && node != PRN_LIST && n < 1024) {
+		uintptr_t mk = node - PRN_NODE, rec = 0, nx = 0, o[4] = { 0, 0, 0, 0 }, np = 0;
+		uint8_t ae[2] = { 0, 0 }, rf = 0;
+		char name[64] = "";
+		peek(mk + PRN_REC, &rec, sizeof rec), peek(mk + PRN_ACTIVE, ae, sizeof ae);
+		peek(mk + 0x260, &o[0], 8), peek(mk + 0x268, &o[1], 8), peek(mk + 0x270, &o[2], 8), peek(mk + 0xb0, &o[3], 8);
+		if (rec && peek(rec + 1, &rf, 1) && (rf & 2) && peek(rec + 0x20, &np, sizeof np) && np)
+			for (int i = 0; i + 1 < (int)sizeof name; i++) {
+				char c = 0;
+				if (!peek(np + (uintptr_t)i, &c, 1) || !c)
+					break;
+				name[i] = c, name[i + 1] = 0;
+			}
+		float pos[3] = { 0, 0, 0 };
+		if (ok && ae[0] && ae[1] && rec && (o[0] || o[1] || o[2] || o[3])) {
+			((prn_pos_fn)g_prn_sites[PRN_NAV_POS].target)(mk, pos);
+			placed++;
+			if (!strcmp(name, "Ammo") || !strcmp(name, "Explosive") || !strcmp(name, "Firepit") ||
+			    !strcmp(name, "HangingBait"))
+				skipped++;
+			else if (logged++ < 60)
+				logf_("PRACTICE nav %d '%s' at (%.0f %.0f %.0f), %.1f m from Talion", n, name, pos[0], pos[1], pos[2],
+				      (double)(have ? dist3(pos, m->pos) / 100.0f : -1.0f));
+		}
+		n++;
+		peek(node + 8, &nx, sizeof nx);
+		node = nx;
+	}
+	logf_("PRACTICE t=%.3f nav: %d markers, %d with a place (%d logged, %d ammo/explosive/fire pit/bait)", t, n, placed,
+	      logged < 60 ? logged : 60, skipped);
+}
+
 static void pr_request(const struct pr_me *m, int have, int action, int orc, double t, const char *who)
 {
 	switch (action) {
@@ -923,7 +1015,11 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 			logf_("PRACTICE t=%.3f remove (%s): no orc out", t, who);
 		pr_remove_orc(who, t);
 		break;
-	case SOMVR_PRA_STATUS: pr_status(m, have, t); break;
+	case SOMVR_PRA_STATUS:
+		pr_status(m, have, t);
+		if (orc == 1)
+			pr_navdump(m, have, t);
+		break;
 	default: break;
 	}
 }
@@ -937,6 +1033,7 @@ static void pr_new_player(uintptr_t pl, double t)
 	g_pr.pl = pl;
 	pr_quiet_off(t, "a new player (a load)");
 	g_pr.orc_h = g_pr.orc_npc = g_pr.orc_c = 0;
+	g_pr_keep.n = 0;
 	memset(&g_pr.trip, 0, sizeof g_pr.trip);
 	g_pr.went = g_pr.here = g_pr.have_back = 0;
 	g_pr.mh_on = 0, g_pr.mh_ch = 0;

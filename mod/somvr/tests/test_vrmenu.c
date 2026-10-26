@@ -1409,6 +1409,23 @@ static void test_controls(void) {
                   strstr(n1, "interrogate") && strlen(n0) <= 29 && strlen(n1) <= 29,
               "build 13's controls: %d lines at %d px (climb %d edge %d grab %d execute %d quit %d sheathe %d), notes '%s' '%s'",
               n13, dy13, climb, edge, grab, exe, q13, sh, n0, n1);
+        /* build 14 candidate: the crouch's line and SOMVR_USE: Use names the picks and missions, Menu and Pause in one
+         * line, so Sprint stays (build 13 with the crouch dropped it); without SOMVR_USE as build 13 */
+        uint32_t a14 = a13 | SOMVR_VMA_CROUCH | SOMVR_VMA_USE;
+        int n14 = somvr_vm_controls_av(a14, 0, &k, &w), spr14 = 0, use14 = 0, menu14 = 0, pause14 = 0, fit14 = 1;
+        for (int i = 0; i < n14; i++) {
+            somvr_vm_controls_av(a14, i, &k, &w);
+            fit14 &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
+            spr14 |= !strcmp(k, "Sprint") && !strcmp(w, "click left stick");
+            use14 |= !strcmp(k, "Use") && !strcmp(w, "B (pick, missions)");
+            menu14 |= !strcmp(k, "Menu") && strstr(w, "pause") != NULL, pause14 |= !strcmp(k, "Pause");
+        }
+        int n13c = somvr_vm_controls_av(a13 | SOMVR_VMA_CROUCH, 0, &k, &w), spr13c = 0;
+        for (int i = 0; i < n13c; i++)
+            somvr_vm_controls_av(a13 | SOMVR_VMA_CROUCH, i, &k, &w), spr13c |= !strcmp(k, "Sprint");
+        CHECK(n14 == 18 && fit14 && spr14 && use14 && menu14 && !pause14 && n13c == 18 && !spr13c,
+              "build 14's controls (the crouch, SOMVR_USE): %d lines, sprint %d use %d menu %d pause %d; build 13 with the "
+              "crouch: %d lines, sprint %d", n14, spr14, use14, menu14, pause14, n13c, spr13c);
         /* one switch alone: its own line, the rest as build 12 (the drop at an edge only with the descent) */
         somvr_vm_controls_av(SOMVR_VMA_DESCENT, 7, &k, &w);
         CHECK(!strcmp(k, "Drop") && !strcmp(w, "A (wall, edge)") &&

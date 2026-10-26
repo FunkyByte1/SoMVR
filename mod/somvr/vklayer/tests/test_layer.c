@@ -5175,6 +5175,107 @@ static int sc_void_theatre(void) {
     check_mock_clean();
     return 0;
 }
+/* SOMVR_XR_THEATRE_VIDEO=on (build 14; the story drill's run 083012): a story video's layout-B presents whose tag names
+ * no eye images, while the session says a video, are mono frames on the theatre's 5 m screen - not the last stereo frame
+ * again (build 13: `reuse 600`, a frozen world for the whole video); without the video word they stay the reuse */
+static int sc_theatre_video(void) {
+    somvr_session_shared *ss = void_session();
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (!ss || load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    app_present(&a);
+    atomic_store(&g_sh.eyes.expect_w, 1832);
+    atomic_store(&g_sh.eyes.expect_h, 1920);
+    VkImage L = app_image(&a, 1832, 1920, FERAL_USAGE), R = app_image(&a, 1832, 1920, FERAL_USAGE);
+    somvr_views v;
+    uint64_t f = 1;
+    for (int i = 0; i < 4; i++, f++) { /* stereo (the eyes), then one eyeless: the reuse */
+        CHECK(locate(&v), "locate");
+        eyes_info(2, 1832, 1920, L, R);
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        tagged_present_eyes(&a, f, 1, TAG_SYNC, i < 3 ? 3 : 0, 2);
+    }
+    CHECK(log_has("the tag says eyes 0x0") && log_has("the last stereo frame again (reuse 1)") &&
+              !log_has("a video's present without eye images"),
+          "eyeless without a video: not the reuse");
+    atomic_store(&ss->mono, SOMVR_SSM_VIDEO);
+    const mockxr_end *e = NULL;
+    for (int i = 0; i < 4; i++, f++) {
+        CHECK(locate(&v), "locate");
+        eyes_info(2, 1832, 1920, L, R);
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        tagged_present_eyes(&a, f, 1, TAG_SYNC, 0, 2);
+    }
+    e = MOCK(mockxr_last_end)();
+    int k = 1, big = 0;
+    for (; k < MOCK_NQ; k++)
+        if (e->q[k].type == XR_TYPE_COMPOSITION_LAYER_QUAD && fabsf(e->q[k].size[0] - SOMVR_VOID_THEATRE_M) < 1e-4f) {
+            big = 1;
+            break;
+        }
+    CHECK(big && log_has("a video's present without eye images: a mono frame") && log_has("xr: theatre 1: a video on a 5.0 m"),
+          "a video's eyeless presents: no 5 m screen (layer %d)", k);
+    CHECK(!log_has("(reuse 2)"), "a video's eyeless present reused the last stereo frame");
+    /* SOMVR_XR_THEATRE_RESEAT=on: stereo frames, then a video again = a new start, placed again */
+    atomic_store(&ss->mono, SOMVR_SSM_MENU);
+    for (int i = 0; i < 6; i++, f++) {
+        CHECK(locate(&v), "locate");
+        eyes_info(2, 1832, 1920, L, R);
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        if (i == 3) atomic_store(&ss->mono, SOMVR_SSM_VIDEO);
+        tagged_present_eyes(&a, f, 1, TAG_SYNC, i < 3 ? 3 : 0, 2);
+    }
+    CHECK(log_has("xr: theatre 2: a video on a 5.0 m screen") && log_has("(reseat: placed again after stereo frames)") &&
+              log_has("xr: theatre: reseat on"),
+          "a second video after stereo frames: not placed again");
+    atomic_store(&ss->mono, SOMVR_SSM_MENU);
+    app_teardown(&a);
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_THEATRE_SIZE=133 (build 14 candidate; the story drill's round 2): the theatre's screens 1.33 x their
+ * distance wide (a video 6.65 m at 5 m: 67 deg; the window 4 m at 3 m): a captain's line 0.8 deg, not 0.6 */
+static int sc_theatre_size(void) {
+    somvr_session_shared *ss = void_session();
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (!ss || load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    app_present(&a);
+    atomic_store(&g_sh.eyes.expect_w, 1832);
+    atomic_store(&g_sh.eyes.expect_h, 1920);
+    VkImage L = app_image(&a, 1832, 1920, FERAL_USAGE), R = app_image(&a, 1832, 1920, FERAL_USAGE);
+    somvr_views v;
+    uint64_t f = 1;
+    for (int i = 0; i < 3; i++, f++) {
+        CHECK(locate(&v), "locate");
+        eyes_info(2, 1832, 1920, L, R);
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        tagged_present_eyes(&a, f, 1, TAG_SYNC, 3, 2);
+    }
+    atomic_store(&ss->mono, SOMVR_SSM_VIDEO);
+    for (int i = 0; i < 4; i++, f++) {
+        CHECK(locate(&v), "locate");
+        eyes_info(2, 1832, 1920, L, R);
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        tagged_present_eyes(&a, f, 1, TAG_SYNC, 0, 2);
+    }
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    int k = 1, big = 0;
+    for (; k < MOCK_NQ; k++)
+        if (e->q[k].type == XR_TYPE_COMPOSITION_LAYER_QUAD && fabsf(e->q[k].size[0] - 6.65f) < 1e-3f) {
+            big = 1;
+            break;
+        }
+    CHECK(big && log_has("xr: theatre: size 133 %") && log_has("xr: theatre 1: a video on a 6.7 m screen") &&
+              log_has("(5.0 m ahead at eye height)"),
+          "SOMVR_XR_THEATRE_SIZE=133: no 6.65 m screen 5 m ahead (layer %d)", k);
+    atomic_store(&ss->mono, SOMVR_SSM_MENU);
+    app_teardown(&a);
+    check_mock_clean();
+    return 0;
+}
 /* SOMVR_XR_LOADSPACE with the session's word = a load (on mono frames): the loading screen on a 2.4 m panel 2.4 m ahead
  * over the floor, the progress lights rising through the load (no stall); a menu after it: the board, the lights
  * fading; the theatre switch is not needed for it */
@@ -6896,6 +6997,11 @@ static const struct {
      "MOCKXR_EXTS=" EQ_EXT, 1},
     {"void-hands", sc_void_hands, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
     {"void-theatre", sc_void_theatre, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_THEATRE=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"theatre-video", sc_theatre_video, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_THEATRE=on SOMVR_XR_THEATRE_VIDEO=on "
+                                         "SOMVR_XR_THEATRE_RESEAT=on "
+                                         "MOCKXR_EXTS=" EQ_EXT, 1},
+    {"theatre-size", sc_theatre_size, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_THEATRE=on SOMVR_XR_THEATRE_VIDEO=on "
+                                       "SOMVR_XR_THEATRE_SIZE=133 MOCKXR_EXTS=" EQ_EXT, 1},
     {"void-loadpanel", sc_void_loadpanel, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
     {"void-badcfg", sc_void_badcfg,
      "SOMVR_XR_LOADER=@MOCK SOMVR_XR_GAPS=3 SOMVR_XR_KEEPALIVE=maybe SOMVR_XR_KEEPALIVE_MS=5 SOMVR_XR_LOADSPACE=x "

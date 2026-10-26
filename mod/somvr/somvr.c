@@ -274,7 +274,8 @@
  *   SOMVR_THREAT=0|1        HL:A-style attack telegraphs and threat warnings (somvr_threat.h, re-xr-pipeline.md 18;
  *                           needs SOMVR_COMBAT and a stereo layout; THREAT_SITES): the orcs' attacks at Talion from the
  *                           key times the game stores at each start (Combat+0xc8..: the impact, the parry window); in view
- *                           (SOMVR_THREAT_VIEW_DEG 110) a world-locked warm glow at the attacker's weapon hand peaking in
+ *                           (SOMVR_THREAT_VIEW_DEG 110; SOMVR_THREAT_VIEW=bearing|full: |yaw| off the head, the
+ *                           default, or round 1's full angle) a world-locked warm glow at the attacker's weapon hand peaking in
  *                           the parry window (SOMVR_THREAT_GLOW 0.7), out of view an edge glow on that side
  *                           (SOMVR_THREAT_EDGE 0.8) announced by a pulse on that side's controller (SOMVR_THREAT_HAPTIC 1)
  *                           and the warning sound at the attacker (SOMVR_THREAT_SOUND=NAME|off, fol_cmn_unsheathe), an
@@ -462,6 +463,7 @@
 #include "somvr_shared.h"
 #include "somvr_size.h"   /* SOMVR_PLAYER_SIZE, the VR menu's Player size (somvr_size_game.c, included last) */
 #include "somvr_crouch.h" /* SOMVR_CROUCH=duck: crouch by ducking (somvr_crouch_game.c, included last) */
+#include "somvr_front.h" /* SOMVR_FRONT: front-first enemies (somvr_front_game.c, included last) */
 #include "somvr_slots.h" /* SOMVR_SLOTS (its region follows the threat's) */
 #include "somvr_step.h"   /* SOMVR_STEP / SOMVR_DASH / SOMVR_PHASE (somvr_step_game.c, included after the LOCO region) */
 #include "somvr_threat.h" /* SOMVR_THREAT (its region precedes the gate) */
@@ -1156,6 +1158,16 @@ static void vb_prompt(uintptr_t key, int act, const char *str, int up);
 static void vb_prompt_hold(int act, float fill);
 static const char *vb_text(int act, const char *str); /* the prompt's VR words, NULL = the game's */
 static int vb_keep(int act, uintptr_t key); /* SOMVR_PAD_PROMPTS=vr: a verb's prompt (the grab's) is kept */
+/* SOMVR_USE (somvr_use_game.c): the pick prompts on B, the quest cards' pad buttons */
+#define US_GLYPH 120 /* a pick prompt shown as CombatPrimary03: the pad's B, our B (as SOMVR_PAD_PROMPTS_MAP's 34:120) */
+static int us_keep(int act, const char *str);
+static void us_prompt(uintptr_t key, int act, const char *str, int up);
+static int us_hide_to(uintptr_t key, int act);
+static int us_press_cmds(const sc_tick_out *o, int out[12]);
+static const char *us_word(const char *w);
+static void us_config(int *bad);
+static void us_end_log(void);
+static uint32_t us_vm_avail(void); /* the VR menu's SOMVR_VMA_USE (the Controls page's Use, Sprint, Menu lines) */
 static const char *vb_word(const char *w);
 static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye); /* in_frame, before the climb: the left hand's grab */
 static int vb_nograb(void);                /* the climb: the left squeeze was the verbs' */
@@ -1185,6 +1197,13 @@ static const char *sz_word(const char *w);
 static const char *sz_vm_set(int k, const somvr_settings *s);
 static void sz_vm_settings(somvr_settings *s);
 static uint32_t sz_vm_avail(void);
+/* SOMVR_FRONT (somvr_front_game.c, included last; docs/re-xr-pipeline.md 42): front-first enemies */
+static void ff_cues(const float head[3], const float hq[4], double t, somvr_threat_frame *e, int haps[2], uintptr_t pcomb,
+		    uintptr_t pc);
+static void ff_start(int *bad);
+static void ff_prewarned(uintptr_t c, uintptr_t hobj, double t0, double t, somvr_th_pick *k);
+static void ff_end_log(void);
+static const char *ff_word(const char *w);
 /* SOMVR_CROUCH=duck (somvr_crouch_game.c, included last; docs/re-xr-pipeline.md 41): crouch by ducking */
 static void cr_config(int *bad);
 static void cr_frame(void);
@@ -4185,6 +4204,10 @@ static void in_apply(const sc_tick_out *o)
 	for (int k = 0; k < nvb; k++)                                          /* (our press, never the pad's button) */
 		if (vbc[k] > 0 && vbc[k] < SC_NCMD)
 			in_want_add(w, &nw, vbc[k], g_inp.first[vbc[k]], 1.0f, 1, 1, 0);
+	int usc[12], nus = us_press_cmds(o, usc); /* SOMVR_USE: a pick prompt's 123, the quests' (our press, never the pad's) */
+	for (int k = 0; k < nus; k++)
+		if (usc[k] > 0 && usc[k] < SC_NCMD)
+			in_want_add(w, &nw, usc[k], g_inp.first[usc[k]], 1.0f, 1, 1, 0);
 	if (g_inp.ctx != SC_CTX_MENU) /* the deny list's records read 0/off in the world (re-xr-input.md 3.6) */
 		for (int c = 0; c < SC_NCMD; c++)
 			if (g_inp.rec[c] && sc_denied(c, g_inp.ctx) && c != g_inp.allow_cmd)
@@ -11883,12 +11906,16 @@ static void *writer_main(void *arg)
 					what = xc_word(w + 8);
 				} else if (seen && !strncmp(w, "verbs ", 6)) { /* SOMVR_VERBS: "verbs status|press ..." */
 					what = vb_word(w + 6);
+				} else if (seen && !strncmp(w, "use ", 4)) { /* SOMVR_USE: "use on|off|status" */
+					what = us_word(w + 4);
 				} else if (seen && !strncmp(w, "bow ", 4)) { /* SOMVR_BOW: "bow fire N|NAME|ours" (headless A/B) */
 					what = bo_word(w + 4);
 				} else if (seen && !strncmp(w, "size ", 5)) { /* SOMVR_PLAYER_SIZE: "size PCT|probe|status" */
 					what = sz_word(w + 5);
 				} else if (seen && !strncmp(w, "crouch ", 7)) { /* SOMVR_CROUCH: "crouch status|press|hold|snap|diff" */
 					what = cr_word(w + 7);
+				} else if (seen && !strncmp(w, "front ", 6)) { /* SOMVR_FRONT: "front status|keep 0|1" */
+					what = ff_word(w + 6);
 				} else if (seen && (!strncmp(w, "gameopts", 8) || !strncmp(w, "hints ", 6))) {
 					what = go_word(w); /* SOMVR_MUSIC / SOMVR_HINTS: a state line, "hints game|log|off" */
 				} else if (seen && !strncmp(w, "padprompts", 10)) { /* SOMVR_PAD_PROMPTS: "padprompts [game|log|vr|map ..]" */
@@ -13024,7 +13051,7 @@ static void vm_start(void)
 	uint32_t avail = (g_fb.on ? SOMVR_VMA_VIEW : 0u) | (somvr_hud_ok(&g_hud) ? SOMVR_VMA_HUD : 0u) |
 			 (g_cf.on && somvr_comfort_ok(&g_cft) ? SOMVR_VMA_COMFORT : 0u) | st_avail() | pr_avail() |
 			 bd_vm_avail() | sz_vm_avail() | go_vm_avail() | cl_vm_avail() | vb_vm_avail() | sf_vm_avail() |
-			 cr_vm_avail();
+			 cr_vm_avail() | us_vm_avail();
 	g_cl.fling_menu = (avail & SOMVR_VMA_FLING) != 0; /* the menu's row may turn the fling off and on again */
 	uint32_t blink_on = s.blink_ms ? s.blink_ms : g_vm.env.blink_ms ? g_vm.env.blink_ms : SOMVR_SET_BLINK_MS;
 	g_vm.applied = g_vm.env;
@@ -13398,6 +13425,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	st_start(g_step_sites, g_vm.want); /* SOMVR_STEP / _DASH / _PHASE: their read-only sites (after the core, the menu's want) */
 	th_start(g_th_sites, &bad);     /* SOMVR_THREAT=1: its sites, the projectile slot, somvr_threat (after combat, input) */
 	df_start(g_df_sites, &bad);     /* SOMVR_DEFENCE=1: its sites, DF_IMPACT (after the threat: its tracks, its slot) */
+	ff_start(&bad);                 /* SOMVR_FRONT: the fight circle's veto, the camera copy, the damage (after the threat) */
 	fight_start(&bad);              /* build 10's fight: SOMVR_HURT, ... (somvr_fight_game.c; after the threat) */
 	sl_start(g_sl_sites, &bad);     /* SOMVR_SLOTS=1: its sites, the model keys' tail jump, the config line (after input) */
 	fi_start(g_fi_sites, &bad);     /* SOMVR_FINISH=1: its read-only sites and the config line (after combat) */
@@ -13408,6 +13436,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	mm_start(g_mm_sites, &bad);     /* SOMVR_MINIMAP=head: its sites, MM_CAMQ (build 6) */
 	go_start(g_go_sites, &bad);     /* SOMVR_MUSIC / SOMVR_HINTS: the sound manager's and the HUD text's slots (build 10) */
 	pp_start(g_pp_sites, &bad);     /* SOMVR_PAD_PROMPTS: the HUD prompt delegates' slots (after go_start: go_slot, go_str) */
+	us_config(&bad);                /* SOMVR_USE: no hook (the input tick's commands, the PP hooks; after pp_start) */
 	vb_start(&bad);                 /* SOMVR_VERBS: the Nemesis verbs (after combat, input and the prompts) */
 	vg_start(g_vg_sites, &bad);     /* SOMVR_VERBS_GLOW: ClientFX's create jumps (after the verbs) */
 	ex_start(); /* SOMVR_EYE_SIZE, SOMVR_HIDE_HEAD (a piece list), SOMVR_HUD */
@@ -13561,6 +13590,7 @@ static void somvr_end_logs(const char *why)
 	lo_end_log();  /* SOMVR_LOCO, SOMVR_ANCHOR */
 	st_end_log();  /* SOMVR_STEP, SOMVR_DASH, SOMVR_PHASE */
 	th_end_log();  /* SOMVR_THREAT */
+	ff_end_log();  /* SOMVR_FRONT */
 	df_end_log();  /* SOMVR_DEFENCE */
 	sl_end_log();  /* SOMVR_SLOTS */
 	fi_end_log();  /* SOMVR_FINISH */
@@ -13570,6 +13600,7 @@ static void somvr_end_logs(const char *why)
 	pr_end_log();  /* SOMVR_PRACTICE */
 	sz_end_log();  /* SOMVR_PLAYER_SIZE */
 	cr_end_log();  /* SOMVR_CROUCH */
+	us_end_log();  /* SOMVR_USE */
 	ss_end_log();  /* SOMVR_MARK / SOMVR_QUIT */
 	mm_end_log();  /* SOMVR_MINIMAP */
 	go_end_log();  /* SOMVR_MUSIC / SOMVR_HINTS */
@@ -13593,7 +13624,8 @@ static void somvr_end_logs(const char *why)
  *     TH_WS + TH_KEYTABLE: the impact APPLYDAMAGE, the parry window BPW..EPW, the first BCOL, SHOOT); P7/P8: the
  *     trackers play at rate 0, so the time is counted from the start on our clock (held while the game is paused);
  *   - per track, where its weapon hand is (R_Hand by GetNode TH_GETNODE + GetNodeTransform G12_NODEXF, else the root +
- *     TH_HAND_UP_CM) relative to the HMD head's view direction: in view (the SOMVR_THREAT_VIEW_DEG cone, 110) a
+ *     TH_HAND_UP_CM) relative to the HMD head's view direction: in view (its bearing within the SOMVR_THREAT_VIEW_DEG
+ *     cone, 110; somvr_th_in_view, SOMVR_FRONT's test too: a close orc's hand is far below the eyes and seen) a
  *     world-locked warm glow there (fades in at the start, peaks in the parry window, out after the impact); out of view
  *     the edge glow on that side, announced once with a pulse on that side's controller and the warning sound
  *     (SOMVR_THREAT_SOUND, our own Wwise object at the attacker: TH_SND_*), and an urgent pulse 0.35 s before the
@@ -13652,6 +13684,7 @@ static struct { uintptr_t snd_wrap; } g_thg = { 0x466df00 }; /* the Wwise wrappe
 #define TH_PJ_END 0x230
 #define TH_RANGE_CM 4000.0f   /* candidates within 40 m (P8: archers shot from 29-39 m) */
 #define TH_HAND_UP_CM 140.0f  /* no R_Hand: the glow this far above the orc's root */
+#define TH_BODY_UP_CM 100.0f  /* the orc's middle above its root: where THREAT judges in view (somvr_th_in_view) */
 #define TH_CHEST_UP_CM 130.0f /* Talion's chest above his root (the projectile test) */
 #define TH_SND_OBJ 0x50a70002u /* our own Wwise object id (the probe's blade: 0x50a70001) */
 #define TH_TRACKS 12
@@ -13677,6 +13710,7 @@ struct th_track {
 	uint32_t node;             /* R_Hand's node id */
 	int node_st;               /* 0 not looked up, 1 found, -1 none (the root + TH_HAND_UP_CM) */
 	int live, cues, changes;
+	int pulses, sounds;        /* the pulses / warning sounds it gave (SOMVR_FRONT_ONECUE: none for a warned attack) */
 	int dormant;               /* kept through flat or third-person frames (not seen since; the scan takes it back) */
 	float dist0;
 	uint64_t serial;           /* this start's number (a restart of the same record is another; SOMVR_DEFENCE) */
@@ -13684,7 +13718,7 @@ struct th_track {
 struct th_pj { uintptr_t p; double t; uint64_t frame; float pos[3], dir[3], speed; int at_player, announced, cue; };
 struct th_cnt {
 	uint64_t frames, flat, other, paused, starts, ends, cancels, glow, edge, near, proj, pulses, urgent, sounds, sound_fail,
-		ticks, late, nonode, pj_calls, pj_in, full, orc_clock, resumed, restarted;
+		ticks, late, nonode, pj_calls, pj_in, full, orc_clock, resumed, restarted, keyless;
 };
 static struct {
 	int on, parry, proj, tid, ok_keys, ok_node, ok_snd, snd_reg, snd_warned;
@@ -13781,13 +13815,15 @@ static uint64_t th_pj_vf13(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint6
 	return r;
 }
 
-/* the weapon hand of a track's orc: R_Hand (looked up once), else the root + TH_HAND_UP_CM; 1 = the node */
-static int th_point(struct th_track *tr, float out[3])
+/* the weapon hand of a track's orc: R_Hand (looked up once), else the root + TH_HAND_UP_CM; 1 = the node. body = the
+ * orc's middle (the root + TH_BODY_UP_CM): the in-view test's point (the hand swings 60 deg out at 1.2 m, run 092140) */
+static int th_point(struct th_track *tr, float out[3], float body[3])
 {
 	float root[3];
 	if (!peek(tr->hobj + OBJ_POS, root, sizeof root) || !vec_ok(root, 1e7f))
-		return memcpy(out, g_th.root, 12), 0;
+		return memcpy(out, g_th.root, 12), memcpy(body, g_th.root, 12), 0;
 	out[0] = root[0], out[1] = root[1] + TH_HAND_UP_CM, out[2] = root[2];
+	body[0] = root[0], body[1] = root[1] + TH_BODY_UP_CM, body[2] = root[2];
 	uintptr_t m = peek_ptr(g_som.model_pp), mi = peek_ptr(tr->hobj + OBJ_MODEL), mv = vptr_of((void *)mi);
 	if (!g_th.ok_node || !m)
 		return 0;
@@ -13856,8 +13892,9 @@ static void th_end(struct th_track *tr, const char *why, double t)
 	g_th.n.ends++;
 	g_th.n.cancels += why[0] == 'c';
 	if (th_log_ok(t))
-		logf_("THREAT end orc=%#lx after %.3f s (%s; impact %.3f s): cue changes %d, announced %d urgent %d ticked %d",
-		      (unsigned long)tr->c, t - tr->t0, why, tr->k.impact, tr->changes, tr->s.announced, tr->s.urgent, tr->s.ticked);
+		logf_("THREAT end orc=%#lx after %.3f s (%s; impact %.3f s): cue changes %d, announced %d urgent %d ticked %d; "
+		      "pulses %d sounds %d", (unsigned long)tr->c, t - tr->t0, why, tr->k.impact, tr->changes, tr->s.announced,
+		      tr->s.urgent, tr->s.ticked, tr->pulses, tr->sounds);
 	memset(tr, 0, sizeof *tr);
 }
 
@@ -13932,11 +13969,14 @@ static int th_scan(uintptr_t pcomb, uintptr_t pc, double t, struct cb_orc *nears
 				memset(tr->ws, 0xff, sizeof tr->ws);
 			tr->k = somvr_th_keys_of(tr->ws);
 			tr->serial = ++g_th.n.starts;
+			int kl = somvr_th_keyless(&tr->k);
+			g_th.n.keyless += kl;
 			if (th_log_ok(t))
 				logf_("THREAT start orc=%#lx attack=%#lx dist=%.1f m kind=%s impact=%.3f s window=%.3f..%.3f s bcol=%.3f s "
-				      "(table EAL %u BCOL %u APPLYDAMAGE %u BPW %u EPW %u SHOOT %u)", (unsigned long)c,
+				      "(table EAL %u BCOL %u APPLYDAMAGE %u BPW %u EPW %u SHOOT %u)%s", (unsigned long)c,
 				      (unsigned long)ta[2], o.dist * 0.01f, tr->k.ranged ? "ranged" : "melee", tr->k.impact, tr->k.bpw,
-				      tr->k.epw, tr->k.bcol, tr->ws[0], tr->ws[1], tr->ws[2], tr->ws[6], tr->ws[7], tr->ws[8]);
+				      tr->k.epw, tr->k.bcol, tr->ws[0], tr->ws[1], tr->ws[2], tr->ws[6], tr->ws[7], tr->ws[8],
+				      kl ? (g_th.cfg.keyless ? " keyless" : " keyless: no cue") : "");
 		}
 	}
 	for (int i = 0; i < TH_TRACKS; i++)
@@ -14039,13 +14079,18 @@ static void th_frame(uintptr_t pl, int stereo)
 			continue;
 		th_clock(tr, dt, t);
 		e.threats++;
-		float p[3], l[3], ts = (float)(t - tr->t0);
-		th_point(tr, p);
+		float p[3], pb[3], l[3], ts = (float)(t - tr->t0);
+		th_point(tr, p, pb);
+		somvr_th_local(head, hqv, pb, l);
+		somvr_th_dir d = somvr_th_direction(l); /* the orc's body: in view, the side */
 		somvr_th_local(head, hqv, p, l);
-		somvr_th_dir d = somvr_th_direction(l);
+		float dh = somvr_th_direction(l).dist_cm; /* its hand: the glow's place and size */
 		somvr_th_pick k = somvr_th_select(&g_th.cfg, d, &tr->k, ts, &tr->s);
+		if (k.late || k.haptic || k.sound) /* SOMVR_FRONT warned about this attack before its grant: not late, and */
+			ff_prewarned(tr->c, tr->hobj, tr->t0, t, &k); /* with FRONT_ONECUE no second pulse or sound for it */
+		tr->pulses += k.haptic != 0, tr->sounds += k.sound;
 		if (k.cue == SOMVR_THC_GLOW)
-			th_glow_add(gl, &ng, p, k.level, d.dist_cm, tr->k.ranged ? SOMVR_THK_RANGED : SOMVR_THK_MELEE);
+			th_glow_add(gl, &ng, p, k.level, dh, tr->k.ranged ? SOMVR_THK_RANGED : SOMVR_THK_MELEE);
 		else if (k.cue == SOMVR_THC_EDGE)
 			for (int s = 0; s < 2; s++)
 				if (k.side & (1 << s))
@@ -14139,6 +14184,7 @@ static void th_frame(uintptr_t pl, int stereo)
 				g_th.pj[s].announced = ann, g_th.pj[s].cue = k.cue;
 		pthread_mutex_unlock(&g_th_mu);
 	}
+	ff_cues(head, hqv, t, &e, haps, pcomb, pc); /* SOMVR_FRONT: the head for its judge, the pass's end, the cues */
 	for (int s = 0; s < 2; s++)
 		if (haps[s])
 			th_pulse(1 << s, haps[s], t);
@@ -14177,7 +14223,7 @@ static int th_incoming(double t)
 /* somvr_start, after the combat, the input and the bow: the switches, the sites, the projectile slot, the object */
 static void th_start(const struct site_spec *sites, int *bad)
 {
-	static const char *const onoff_w[] = { "0", "1" };
+	static const char *const onoff_w[] = { "0", "1" }, *const view_w[] = { "bearing", "full" };
 	atomic_store(&g_th_pj_on, 0);
 	pthread_mutex_lock(&g_th_mu);
 	memset(&g_th, 0, sizeof g_th);
@@ -14193,6 +14239,8 @@ static void th_start(const struct site_spec *sites, int *bad)
 	somvr_th_cfg *c = &g_th.cfg;
 	somvr_th_cfg_default(c);
 	c->view_deg = env_float("SOMVR_THREAT_VIEW_DEG", c->view_deg, 40, 180, bad);
+	c->view_full = env_word("SOMVR_THREAT_VIEW", view_w, 2, 0);
+	c->keyless = env_word("SOMVR_THREAT_KEYLESS", onoff_w, 2, 0);
 	c->glow = env_float("SOMVR_THREAT_GLOW", c->glow, 0, 1, bad);
 	c->edge = env_float("SOMVR_THREAT_EDGE", c->edge, 0, 1, bad);
 	c->near_m = env_float("SOMVR_THREAT_NEAR_M", c->near_m, 0, 6, bad);
@@ -14244,8 +14292,9 @@ static void th_start(const struct site_spec *sites, int *bad)
 	g_tht.glow = c->glow, g_tht.edge = c->edge;
 	atomic_store_explicit(&g_tht.active, 1, memory_order_release);
 	g_th.on = 1;
-	logf_("CONFIG threat on=1 view_deg=%.0f glow=%.2f edge=%.2f near_m=%.1f haptic=%.2f parry=%d sound='%s'%s proj=%s; "
-	      "sites: %s, %s, %s, %s, %s (R_Hand %s), %s %s %s; somvr_threat %p v%u %zu bytes active", c->view_deg, c->glow,
+	logf_("CONFIG threat on=1 view_deg=%.0f view=%s keyless=%d glow=%.2f edge=%.2f near_m=%.1f haptic=%.2f parry=%d "
+	      "sound='%s'%s proj=%s; sites: %s, %s, %s, %s, %s (R_Hand %s), %s %s %s; somvr_threat %p v%u %zu bytes active",
+	      c->view_deg, view_w[c->view_full != 0], c->keyless, c->glow,
 	      c->edge, c->near_m, g_th.hap, g_th.parry, g_th.sound, g_th.sound[0] && !g_th.ok_snd ? " (no sound: a TH_SND site "
 	      "did not match)" : "", pj, ln[THS_ATK_START], ln[THS_WS], ln[THS_KEYTABLE], ln[THS_CURATK], ln[THS_GETNODE],
 	      g_th.ok_node ? "read" : "not read: the root + 1.4 m", ln[THS_SND_REG], ln[THS_SND_POS], ln[THS_SND_POST],
@@ -14259,14 +14308,15 @@ static void th_end_log(void)
 	const struct th_cnt *n = &g_th.n;
 	logf_("THREAT END frames=%llu flat=%llu paused=%llu other_thread=%llu: attacks %llu (ended %llu, cancelled %llu, no "
 	      "track slot %llu, no R_Hand %llu; kept through flat frames %llu, restarted after one %llu; clocked by the orc's "
-	      "timer %llu track frames), glow frames %llu, edge frames %llu, near frames %llu, projectile frames %llu "
+	      "timer %llu track frames; keyless %llu: no cue), glow frames %llu, edge frames %llu, near frames %llu, projectile "
+	      "frames %llu "
 	      "(hook calls %llu, inbound %llu); pulses %llu (urgent %llu, parry ticks %llu), LATE announcements %llu, sounds "
 	      "%llu (no id %llu); lines suppressed %llu; layer: glow frames %llu edge frames %llu",
 	      (unsigned long long)n->frames, (unsigned long long)n->flat, (unsigned long long)n->paused,
 	      (unsigned long long)n->other, (unsigned long long)n->starts, (unsigned long long)n->ends,
 	      (unsigned long long)n->cancels, (unsigned long long)n->full, (unsigned long long)n->nonode,
 	      (unsigned long long)n->resumed, (unsigned long long)n->restarted, (unsigned long long)n->orc_clock,
-	      (unsigned long long)n->glow, (unsigned long long)n->edge, (unsigned long long)n->near,
+	      (unsigned long long)n->keyless, (unsigned long long)n->glow, (unsigned long long)n->edge, (unsigned long long)n->near,
 	      (unsigned long long)n->proj, (unsigned long long)n->pj_calls, (unsigned long long)n->pj_in,
 	      (unsigned long long)n->pulses, (unsigned long long)n->urgent, (unsigned long long)n->ticks,
 	      (unsigned long long)n->late, (unsigned long long)n->sounds, (unsigned long long)n->sound_fail,
@@ -16195,7 +16245,8 @@ static void df_frame(uintptr_t pl, int stereo)
 		if (g_inp.grip.valid) /* the sword hand in the tracking space (SOMVR_DEFENCE_CONTACT_MOVE_CM) */
 			memcpy(in.grip, g_inp.grip.pos, sizeof in.grip), in.have_grip = 1;
 		pthread_mutex_unlock(&g_df_mu); /* th_point calls the game (GetNodeTransform) */
-		th_point(tr, in.hand);
+		float body[3];
+		th_point(tr, in.hand, body);
 		if (!peek(tr->hobj + OBJ_POS, in.orc, sizeof in.orc) || !vec_ok(in.orc, 1e7f))
 			memcpy(in.orc, in.hand, sizeof in.orc);
 		memcpy(in.head, head, sizeof head);
@@ -16486,8 +16537,10 @@ static void df_clank_fx(double t)
 #include "somvr_wisps_game.c"  /* SOMVR_WISPS=hand: the left-hand wraith wisps on our VR hand (re-xr-pipeline.md 33.9) */
 #include "somvr_execute_game.c" /* SOMVR_EXECUTE=1: the execution in VR (docs/re-xr-pipeline.md 30.23) */
 #include "somvr_verbs_game.c" /* SOMVR_VERBS: the Nemesis verbs in VR (docs/re-xr-pipeline.md 36) */
+#include "somvr_use_game.c" /* SOMVR_USE: the pick prompts on B, the quest cards' buttons (docs/re-xr-pipeline.md 43) */
 #include "somvr_hudfx_game.c" /* SOMVR_HUD_FX=hide: the HUD's 3D flourishes out of the eyes (re-xr-pipeline.md 31.5) */
 #include "somvr_vbglow_game.c" /* SOMVR_VERBS_GLOW: the verbs' wraith flare out of the eyes (re-xr-pipeline.md 39.7) */
+#include "somvr_front_game.c" /* SOMVR_FRONT: front-first enemies, the AI's camera copy, the damage (re-xr-pipeline.md 42) */
 
 #ifndef SOMVR_SELFTEST
 /* ------------------------------------------------------------------------------------------------------------ */

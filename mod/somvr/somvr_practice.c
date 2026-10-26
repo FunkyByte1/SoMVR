@@ -140,8 +140,10 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         return 1;
     }
     if (na) {
-        if (a != SOMVR_PRA_SPAWN || (orc = orc_tok(arg, na)) < 0)
-            return 0; /* only spawn takes a word, and it must be a type */
+        if (a == SOMVR_PRA_STATUS && ci_eq(arg, na, "nav"))
+            orc = 1; /* "status nav": the game's nav markers too (a test word, the story drill's round 2) */
+        else if (a != SOMVR_PRA_SPAWN || (orc = orc_tok(arg, na)) < 0)
+            return 0; /* only spawn takes a type, status "nav" */
     }
     if (token(&s, &rest))
         return 0;

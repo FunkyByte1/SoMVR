@@ -161,6 +161,9 @@ void sc_tick(sc_ctl *s, const sc_ctl_cfg *c, const somvr_input_state *st, int li
     float ls[2], rs[2];
     stick_of(L, ls), stick_of(R, rs);
     o->move_raw[0] = ls[0], o->move_raw[1] = ls[1];
+    o->raw = ((dn[1] & SOMVR_BTN_LOWER) ? 1u << SC_PAD_A : 0) | ((dn[1] & SOMVR_BTN_UPPER) ? 1u << SC_PAD_B : 0) |
+             ((dn[0] & SOMVR_BTN_LOWER) ? 1u << SC_PAD_X : 0) | ((dn[0] & SOMVR_BTN_UPPER) ? 1u << SC_PAD_Y : 0) |
+             (analog(L, L->squeeze) >= c->grip_on ? 1u << SC_PAD_LB : 0) | (analog(R, R->squeeze) >= c->grip_on ? 1u << SC_PAD_RB : 0);
 
     if (ctx == SC_CTX_MENU) { /* the controllers are an Xbox pad (passthrough to the bound, active commands) */
         s->sprint = 0, s->snap_armed = 0, s->crouch_armed = 0, s->ease_t = 0;

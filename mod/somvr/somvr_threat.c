@@ -8,6 +8,8 @@
 
 void somvr_th_cfg_default(somvr_th_cfg *c) {
     c->view_deg = 110.0f;
+    c->view_full = 0; /* bearing */
+    c->keyless = 0;   /* no cue for an attack without keys */
     c->glow = 0.7f;
     c->edge = 0.8f;
     c->fade_in_s = 0.15f;
@@ -62,7 +64,11 @@ somvr_th_dir somvr_th_direction(const float l[3]) {
     return d;
 }
 
-int somvr_th_in_view(const somvr_th_cfg *c, somvr_th_dir d) { return d.off_deg <= 0.5f * c->view_deg; }
+float somvr_th_view_off(const somvr_th_cfg *c, somvr_th_dir d) {
+    if (c->view_full || fabsf(d.pitch_deg) > SOMVR_TH_BEARING_PITCH) return d.off_deg; /* straight above/below: no yaw */
+    return fabsf(d.yaw_deg);
+}
+int somvr_th_in_view(const somvr_th_cfg *c, somvr_th_dir d) { return somvr_th_view_off(c, d) <= 0.5f * c->view_deg; }
 
 int somvr_th_side(somvr_th_dir d) {
     if (d.yaw_deg != d.yaw_deg) return 0;
@@ -86,6 +92,10 @@ somvr_th_keys somvr_th_keys_of(const uint16_t ws[SOMVR_TH_KT_N]) {
 }
 
 float somvr_th_lead(const somvr_th_keys *k, float t) { return k->impact >= 0 ? k->impact - t : NAN; }
+
+int somvr_th_keyless(const somvr_th_keys *k) {
+    return !(k->impact >= 0) && !(k->bpw >= 0) && !(k->epw >= 0) && !(k->bcol >= 0) && !k->ranged;
+}
 
 int somvr_th_window(const somvr_th_keys *k, float t) { return k->bpw >= 0 && t >= k->bpw && t <= k->epw; }
 
@@ -140,7 +150,7 @@ somvr_th_pick somvr_th_select(const somvr_th_cfg *c, somvr_th_dir d, const somvr
     somvr_th_pick p;
     memset(&p, 0, sizeof p);
     p.lead = somvr_th_lead(k, t);
-    if (!(t >= 0) || somvr_th_expired(c, k, t)) return p;
+    if (!(t >= 0) || somvr_th_expired(c, k, t) || (!c->keyless && somvr_th_keyless(k))) return p;
     if (somvr_th_in_view(c, d)) {
         p.cue = SOMVR_THC_GLOW;
         p.level = clamp01(c->glow) * somvr_th_glow_level(c, k, t);

@@ -44,6 +44,12 @@ static struct {
     int ka, ka_bad, ka_ms, ka_ms_bad;           /* SOMVR_XR_KEEPALIVE, _MS */
     int space, space_bad, space_ms, space_ms_bad; /* SOMVR_XR_LOADSPACE, _MS */
     int theatre, theatre_bad;                   /* SOMVR_XR_THEATRE */
+    int size_pct, size_bad;                     /* SOMVR_XR_THEATRE_SIZE: the screens' width, % of their distance (build 14) */
+    int reseat, reseat_bad;                     /* SOMVR_XR_THEATRE_RESEAT: each new start placed again (build 14) */
+    uint64_t th_eyes;                           /* X.n_eyes at the theatre's last mono frame */
+    uint64_t th_reseats;
+    int video, video_bad;                       /* SOMVR_XR_THEATRE_VIDEO: a video's eyeless layout-B presents = mono */
+    uint64_t video_n;
     uint32_t th_kind;                           /* the screen now: SOMVR_SSM_VIDEO / _WINDOW / _LOAD, 0 = the board */
     int loading;                                /* the last mono frame was a load's (the lights on through it) */
     somvr_posef th_pose;
@@ -241,7 +247,26 @@ static void vd_start(void) {
            "m, world-locked at eye height where the head faced when it began (the preload's somvr_session: %s)",
            (double)SOMVR_VOID_THEATRE_M, (double)SOMVR_VOID_THEATRE_M, (double)SOMVR_VOID_WINDOW_M,
            (double)SOMVR_VOID_WINDOW_M, SSN.obj ? "found" : "NOT FOUND (SOMVR_MARK or SOMVR_QUIT makes it): menus as before");
-    KA.th_kind = 0, KA.th_n = KA.th_frames = 0;
+    if (KA.size_bad)
+        lg("xr: theatre: SOMVR_XR_THEATRE_SIZE=%s is not 50..200 (%% of the distance): 100", getenv("SOMVR_XR_THEATRE_SIZE"));
+    if (KA.theatre)
+        lg("xr: theatre: size %d %% (SOMVR_XR_THEATRE_SIZE): a video's screen %.2f m wide %.0f m ahead (%.0f deg), the "
+           "window's %.2f m at %.0f m (%.0f deg)%s", KA.size_pct, (double)(SOMVR_VOID_THEATRE_M * (float)KA.size_pct / 100.0f),
+           (double)SOMVR_VOID_THEATRE_M, 2.0 * atan(0.5 * KA.size_pct / 100.0) * 57.29578,
+           (double)(SOMVR_VOID_WINDOW_M * (float)KA.size_pct / 100.0f), (double)SOMVR_VOID_WINDOW_M,
+           2.0 * atan(0.5 * KA.size_pct / 100.0) * 57.29578, KA.size_pct == 100 ? " (build 13)" : "");
+    if (KA.reseat_bad)
+        lg("xr: theatre: SOMVR_XR_THEATRE_RESEAT=%s is not on or off: off", getenv("SOMVR_XR_THEATRE_RESEAT"));
+    if (KA.theatre)
+        lg("xr: theatre: reseat %s", KA.reseat ? "on: a screen of the same kind after stereo frames (a new presentation, "
+                                                 "video or load) is placed again where the head faces now"
+                                               : "off: a screen of the same kind keeps its first place (build 13)");
+    if (KA.video_bad)
+        lg("xr: theatre: SOMVR_XR_THEATRE_VIDEO=%s is not on or off: off", getenv("SOMVR_XR_THEATRE_VIDEO"));
+    lg("xr: theatre: video %s", KA.video ? "on: a present without eye images while the session says a video is a mono "
+                                           "frame (the video's image), not the last stereo frame again"
+                                         : "off: a video's eyeless layout-B presents reuse the last stereo frame (build 13)");
+    KA.th_kind = 0, KA.th_n = KA.th_frames = 0, KA.th_eyes = 0, KA.th_reseats = 0, KA.video_n = 0;
     KA.stall_ns = 0, KA.space_up = 0, KA.placed_stereo = 0, KA.level = 0, KA.level_t = 0;
     KA.n_stalls = KA.n_space = KA.n_lights = 0, KA.lines = 0;
     atomic_store(&KA.q, KA.ka ? X.q : VK_NULL_HANDLE); /* the queue lock's queue */
@@ -378,6 +403,10 @@ static void ka_config(void) { /* vd_config */
     KA.space = somvr_void_parse_onoff(getenv("SOMVR_XR_LOADSPACE"), &KA.space_bad);
     KA.space_ms = somvr_void_parse_ms(getenv("SOMVR_XR_LOADSPACE_MS"), SOMVR_VOID_SPACE_MS, 0, 10000, &KA.space_ms_bad);
     KA.theatre = somvr_void_parse_onoff(getenv("SOMVR_XR_THEATRE"), &KA.theatre_bad);
+    KA.reseat = somvr_void_parse_onoff(getenv("SOMVR_XR_THEATRE_RESEAT"), &KA.reseat_bad);
+    KA.video = somvr_void_parse_onoff(getenv("SOMVR_XR_THEATRE_VIDEO"), &KA.video_bad);
+    KA.size_bad = 0;
+    KA.size_pct = somvr_void_parse_ms(getenv("SOMVR_XR_THEATRE_SIZE"), 100, 50, 200, &KA.size_bad);
 }
 
 /* ---- the queue lock: the game's queue calls vs the watcher's xrEndFrame ---- */
@@ -911,7 +940,14 @@ static void vd_theatre(XrCompositionLayerQuad *q, uint32_t w, uint32_t h) {
         return;
     }
     KA.loading = k == SOMVR_SSM_LOAD; /* SOMVR_XR_LOADSPACE: the lights through the load, its panel */
+    if (KA.reseat && KA.th_kind && X.n_eyes != KA.th_eyes) { /* stereo frames since its last mono frame: a new start */
+        KA.th_kind = 0, KA.th_reseats++;                         /* (build 13 kept the first place: run 081246) */
+    }
+    KA.th_eyes = X.n_eyes;
     float m = k == SOMVR_SSM_VIDEO ? SOMVR_VOID_THEATRE_M : k == SOMVR_SSM_WINDOW ? SOMVR_VOID_WINDOW_M : SOMVR_VOID_LOAD_M;
+    /* SOMVR_XR_THEATRE_SIZE (build 14 candidate, the story drill's round 2): a video's and the window's screen wider
+     * than its distance (a captain's line was 0.6 deg on 3 m at 3 m); the load panel stays */
+    float wm = k == SOMVR_SSM_LOAD ? m : m * (float)(KA.size_pct > 0 ? KA.size_pct : 100) / 100.0f;
     if (k != KA.th_kind) {
         somvr_posef eye[2];
         if (!env_head()) return;
@@ -919,16 +955,32 @@ static void vd_theatre(XrCompositionLayerQuad *q, uint32_t w, uint32_t h) {
         somvr_mn_board_pose(eye, m, 0.0f, &KA.th_pose);
         KA.th_kind = k, KA.th_n++;
         if (KA.th_n <= 50)
-            lg("xr: theatre %llu: %s on a %.1f m screen at %+.2f,%+.2f,%+.2f (%.1f m ahead at eye height)",
+            lg("xr: theatre %llu: %s on a %.1f m screen at %+.2f,%+.2f,%+.2f (%.1f m ahead at eye height)%s",
                (unsigned long long)KA.th_n, k == SOMVR_SSM_VIDEO ? "a video" : k == SOMVR_SSM_WINDOW ? "the cinematic window"
-                                                                                                     : "a loading screen", (double)m,
-               KA.th_pose.p[0], KA.th_pose.p[1], KA.th_pose.p[2], (double)m);
+                                                                                                     : "a loading screen", (double)wm,
+               KA.th_pose.p[0], KA.th_pose.p[1], KA.th_pose.p[2], (double)m,
+               KA.th_reseats ? " (reseat: placed again after stereo frames)" : "");
+        KA.th_reseats = 0;
     }
     float sz[2];
-    somvr_quad_size(w, h, m, sz);
+    somvr_quad_size(w, h, wm, sz);
     memcpy(&q->pose, &KA.th_pose, sizeof q->pose);
     q->size.width = sz[0], q->size.height = sz[1];
     KA.th_frames++;
+}
+
+/* SOMVR_XR_THEATRE_VIDEO=on (build 14; the story drill, run 20261026-083012): the story mission's video (56 s,
+ * `video=1 ctx=menu`) came as layout-B presents whose tag names no eye images, so somvr_submit_decide made them reuse
+ * frames - the last stereo frame again for the whole video (`reuse 600`): a frozen world, the video only heard. With
+ * it such a present, while the preload's session says a video, is a mono frame: the presented image (the video) on the
+ * theatre's 5 m screen (SOMVR_XR_THEATRE) or the menu board. xr_frame's decision, after somvr_submit_decide. */
+static int vd_video_mono(int have_tag, int have_rec) {
+    if (!KA.video || !have_tag || have_rec || !SSN.obj) return 0;
+    if (atomic_load_explicit(&SSN.obj->mono, memory_order_relaxed) != SOMVR_SSM_VIDEO) return 0;
+    if (KA.video_n++ % 600 == 0)
+        lg("xr: theatre: a video's present without eye images: a mono frame, the video's image (%llu so far)",
+           (unsigned long long)KA.video_n);
+    return 1;
 }
 
 /* ==== The game's in-world loading cover (SOMVR_XR_COVER=on; docs/re-xr-pipeline.md 36.7, handoff/HANDOFF-void.md

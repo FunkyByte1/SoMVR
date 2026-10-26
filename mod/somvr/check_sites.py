@@ -49,7 +49,9 @@ the hit counter's charge, its stock spend and its clear, the game's sever and th
 re-xr-pipeline.md 30.23) and the SOMVR_HUD_FX block of somvr_hudfx_game.c (HUDFX_SITES_BEGIN ... HUDFX_SITES_END: the
 patched tail jump UF_CREATE of CBaseUI::CreateUIFXGroup, re-xr-pipeline.md 31.5) and the SOMVR_VERBS_GLOW block of
 somvr_vbglow_game.c (VBGLOW_SITES_BEGIN ... VBGLOW_SITES_END: the patched tail jumps VG_FXC / VG_FXC1 of ClientFX's two
-create thunks, re-xr-pipeline.md 39.7). Files
+create thunks, re-xr-pipeline.md 39.7) and the SOMVR_FRONT block of somvr_front_game.c (FRONT_SITES_BEGIN ...
+FRONT_SITES_END: the patched calls FR_SCORE, FR_GRANT, FR_CAMCOPY_A/B, FR_DMG_ATK and the read-only FR_CAMTERM, FR_VF59,
+FR_REARM, FR_DMG_ALL, re-xr-pipeline.md 42.8). Files
 named by an #include "somvr_*_game.c" line in SOURCE.c (somvr_step_game.c, somvr_finish_game.c, somvr_headparts_game.c,
 somvr_practice_game.c, somvr_body_game.c, somvr_minimap_game.c, somvr_session_game.c, somvr_gameopts_game.c,
 somvr_prompts_game.c, somvr_bowhit_game.c) are read with it.
@@ -234,7 +236,14 @@ def main():
         if len(prq) != 4 or [m[1] for m in prq] != ["K_ENTRY"] * 4:
             sys.exit("expected 4 K_ENTRY SITE lines in somvr_practice_game.c's PRQUIET_SITES block (the read-only "
                      "PRQ_ENABLE, PRQ_DISABLE, PRQ_REMOVEALL, PRQ_FLAG_ON), found %d" % len(prq))
-        pr = pr + prq
+        # the story drill's round 2: "practice status nav" (the nav markers' places): the probe's F_NAV_POS
+        prn = [m for b in text.split("PRNAV_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("PRNAV_SITES_END", 1)[0])]
+        if len(prn) != 1 or [m[1] for m in prn] != ["K_ENTRY"]:
+            sys.exit("expected 1 K_ENTRY SITE line in somvr_practice_game.c's PRNAV_SITES block (the read-only "
+                     "PRN_NAV_POS), found %d" % len(prn))
+        pr = pr + prq + prn
     bd = []
     if re.search(r'^#include "somvr_body_game\.c"', text, re.M):
         bd = [m for b in text.split("HANDS_SITES_BEGIN")[1:] for m in re.findall(
@@ -317,6 +326,16 @@ def main():
             sys.exit("expected 2 SITE lines in somvr_vbglow_game.c's VBGLOW_SITES block (the patched VG_FXC, VG_FXC1 "
                      "K_JMPs), found %d" % len(vg))
         sites = sites + vg
+    # SOMVR_FRONT (build 14): its block lives in somvr_front_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_front_game\.c"', text, re.M):
+        ff = [m for b in text.split("FRONT_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("FRONT_SITES_END", 1)[0])]
+        want = ["K_CALL", "K_CALL", "K_CALL", "K_CALL", "K_CALL", "K_VSLOT", "K_ENTRY", "K_JMP", "K_CALL"]
+        if [m[1] for m in ff] != want:
+            sys.exit("expected 9 SITE lines in somvr_front_game.c's FRONT_SITES block (the patched FR_SCORE, FR_GRANT, "
+                     "FR_CAMCOPY_A/B, FR_DMG_ATK; the read-only FR_CAMTERM, FR_VF59, FR_REARM, FR_DMG_ALL), found %d" % len(ff))
+        sites = sites + ff
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

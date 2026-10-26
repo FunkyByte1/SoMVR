@@ -81,6 +81,9 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
     SOMVR_VMA_DESCENT = 131072u, /* SOMVR_CLIMB_DESCENT=on: "Drop: A (wall, edge)" */
     SOMVR_VMA_SURFACE = 262144u, /* SOMVR_HANDS_SURFACE=on running: the Hands at walls row */
     SOMVR_VMA_FLING = 524288u,   /* SOMVR_CLIMB_FLING=on with the hang: "Climb: grip, pull; fling up", the Climb fling row */
+    /* build 14 candidate (the story drill's round 2): SOMVR_USE=1: "Use: B (pick, missions)"; Menu and Pause one line,
+     * so Sprint stays with the crouch (the timed objectives want the left stick's click) */
+    SOMVR_VMA_USE = 1048576u,
 };
 /* the practice page's requests (somvr_vrmenu_shared.practice; = somvr_practice.h's SOMVR_PRA_*) */
 enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_SPAWN = 3, SOMVR_VMPR_REMOVE = 4 };

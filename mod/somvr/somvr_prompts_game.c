@@ -151,8 +151,10 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 	uint64_t n = atomic_fetch_add_explicit(&g_pp.n_show, 1, memory_order_relaxed) + 1;
 	int bow_out = pp_bow_out(), drop = mode == PP_VR && act >= 0 && act <= PP_NONE &&
 							    !pp_vr_keep(act, g_inp.cfg.game_moves, g_bow.on, bow_out) &&
-							    !vb_keep(act, key); /* SOMVR_VERBS: the grab's own prompts */
-	int to = drop ? act : pp_mapped(act);
+							    !vb_keep(act, key) && /* SOMVR_VERBS: the grab's own prompts */
+							    !us_keep(act, (const char *)str); /* SOMVR_USE: the pick prompts (B) */
+	int to = drop ? act : us_keep(act, (const char *)str) ? US_GLYPH : pp_mapped(act);
+	us_prompt(key, act, (const char *)str, 1); /* SOMVR_USE: the pick prompts up */
 	sk_prompt(act, 1); /* SOMVR_BOW_STRIKE: the Shadow Strike's prompt is up (kept or dropped) */
 	vb_prompt(key, act, (const char *)str, 1); /* SOMVR_VERBS: the verbs the game offers now */
 	if (!drop && act == 121 && bow_out && sk_x() && pp_xkey(key, 1))
@@ -202,7 +204,8 @@ __attribute__((used)) void somvr_w_pphide(void *dlg, void *sender, void *params)
 	int32_t act, to;
 	uintptr_t key;
 	memcpy(&key, p, 8), memcpy(&act, p + 8, 4);
-	to = pp_mapped(act);
+	to = us_hide_to(key, act) != act ? US_GLYPH : pp_mapped(act); /* SOMVR_USE: shown as B */
+	us_prompt(key, act, NULL, 0);
 	sk_prompt(act, 0);
 	vb_prompt(key, act, NULL, 0); /* SOMVR_VERBS */
 	if (act == 121 && pp_xkey(key, -1)) /* shown with X's glyph: hidden as that */

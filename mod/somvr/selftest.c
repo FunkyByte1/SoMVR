@@ -8787,7 +8787,7 @@ static void th_proj_tick(void)            /* the game's update: vf_13 through it
 
 static void threat_tests(void)
 {
-	EXPECT(log_has("CONFIG threat on=1 view_deg=110 glow=0.70 edge=0.80 near_m=2.5 haptic=1.00 parry=1 "
+	EXPECT(log_has("CONFIG threat on=1 view_deg=110 view=bearing keyless=0 glow=0.70 edge=0.80 near_m=2.5 haptic=1.00 parry=1 "
 		       "sound='fol_cmn_unsheathe' proj=on") &&
 		       log_has("TH_ATK_START ok, TH_WS ok, TH_KEYTABLE ok, TH_CURATK ok, TH_GETNODE ok (R_Hand read)") &&
 		       log_has("TH_SND_REGOBJ ok TH_SND_SETPOS ok TH_SND_POST ok") && log_has("HOOK TH_PJ_UPDATE ok slot"),
@@ -8912,7 +8912,7 @@ static void threat_tests(void)
 	float lamp = q.amplitude;
 	int rt = hap_take(SOMVR_HAND_R, &q) && NEAR(q.amplitude, 0.15, 1e-3);
 	EXPECT(e.nglow == 0 && e.edge[1] == 0 && e.threats == 1 && lp && NEAR(lamp, 0.45, 1e-3) && rt &&
-		       log_has("cue=edge side=L yaw=-153 pitch=+17 off=149 deg dist=2.3 m lead=0.800 s level=0.00") &&
+		       log_has("cue=edge side=L yaw=-153 pitch=") && log_has("lead=0.800 s level=0.00") && /* the body's direction */
 		       log_has("haptic=announce sound LATE") &&
 		       g_thsnd.reg == reg0 + 1 && g_thsnd.post == post0 + 1 && g_thsnd.wrap == (uintptr_t)g_snd_wrap &&
 		       g_thsnd.obj == TH_SND_OBJ && !strcmp(g_thsnd.name, "fol_cmn_unsheathe") && NEAR(g_thsnd.at[0], 0, 1e-3) &&
@@ -13523,6 +13523,61 @@ static void pp_tests(void)
 	       "the state line");
 	pp_end_log();
 	EXPECT(log_has("PROMPTS END vr: shows"), "the END line");
+	/* SOMVR_USE (the story drill): a pick prompt (123 'Combat_Activate_*') kept and shown as B (120), not '_Full'; B
+	 * pressed while one is up holds 123 until B is let go; its hide carries 120; off = build 13 (dropped) */
+	sp.act = 123, sp.str = "Combat_Activate_Flower", sp.key = 0x5150;
+	((dlg_fn)g_pp_vt[PPS_SHOW][2])((void *)1, (void *)2, &sp);
+	EXPECT(g_pp_n[PPS_SHOW] == 6 && log_has("'Combat_Activate_Flower' icon '{ui_icon}' category 2 key 0x5150: dropped"),
+	       "use off: the pick prompt dropped (build 13): %d", g_pp_n[PPS_SHOW]);
+	((dlg_fn)g_pp_vt[PPS_HIDE][2])((void *)1, (void *)2, &sp);
+	setenv("SOMVR_USE", "1", 1);
+	us_config(&bad);
+	EXPECT(!bad && g_us.on && log_has("CONFIG use=1 (SOMVR_USE): B at a pick prompt"), "use on: %d", g_us.on);
+	for (int k = 0; k < 3; k++) /* the HUD's three prompt objects: the same key three times */
+		((dlg_fn)g_pp_vt[PPS_SHOW][2])((void *)1, (void *)2, &sp);
+	sp.str = "Combat_Activate_Ammo_Full", sp.key = 0x5160;
+	((dlg_fn)g_pp_vt[PPS_SHOW][2])((void *)1, (void *)2, &sp);
+	EXPECT(g_pp_n[PPS_SHOW] == 9 && g_pp_act[PPS_SHOW] == 120 && g_us.nup == 1 && g_us.up[0].n == 3 && g_us.refused_full == 1 &&
+		       log_has("USE t=") && log_has("pick prompt up: 'Combat_Activate_Flower'") &&
+		       log_has("'Combat_Activate_Ammo_Full' icon '{ui_icon}' category 2 key 0x5160: dropped"),
+	       "use: the flower kept as 120, the full ammo dropped: %d %d %d", g_pp_n[PPS_SHOW], g_pp_act[PPS_SHOW], g_us.nup);
+	sc_tick_out uo;
+	memset(&uo, 0, sizeof uo);
+	uo.live = 1, uo.ctx = SC_CTX_WORLD, uo.cmd[uo.ncmd++] = 34;
+	int uc[12], mok = g_inp.map_ok, un;
+	g_inp.map_ok = 0; /* no binding table: the pick only */
+	un = us_press_cmds(&uo, uc);
+	EXPECT(un == 1 && uc[0] == 123 && g_us.picks == 1 && log_has("B at 'Combat_Activate_Flower': 123 'CombatSecondary02' held"),
+	       "B at the flower: %d %d", un, un ? uc[0] : 0);
+	sp.str = "Combat_Activate_Flower", sp.key = 0x5150;
+	for (int k = 0; k < 3; k++)
+		((dlg_fn)g_pp_vt[PPS_HIDE][2])((void *)1, (void *)2, &sp);
+	un = us_press_cmds(&uo, uc); /* the prompt went down mid-press (the pick): 123 held while B is */
+	EXPECT(un == 1 && g_pp_act[PPS_HIDE] == 120 && g_us.nup == 0 && log_has("pick prompt down: 'Combat_Activate_Flower'"),
+	       "held through the hide, the hide as 120: %d %d %d", un, g_pp_act[PPS_HIDE], g_us.nup);
+	uo.ncmd = 0;
+	un = us_press_cmds(&uo, uc);
+	uo.cmd[uo.ncmd++] = 34;
+	int un2 = us_press_cmds(&uo, uc); /* B again with no prompt up: Activate only */
+	EXPECT(un == 0 && un2 == 0 && g_us.pick_ticks == 2, "let go, then B without a prompt: %d %d", un, un2);
+	uo.ctx = SC_CTX_MENU;
+	EXPECT(us_press_cmds(&uo, uc) == 0, "nothing in a menu");
+	/* the window's buttons: one held when the window opens (or closes) counts only after it is let go */
+	const uint32_t pb = 1u << SC_PAD_B, pa = 1u << SC_PAD_A;
+	g_us.fresh = 0, g_us.win_prev = 0, g_us.held = 0;
+	EXPECT(us_btns(0, pb) == pb && us_btns(1, pb) == 0 && us_btns(1, pb) == 0 && us_btns(1, pb | pa) == pa &&
+		       us_btns(1, 0) == 0 && us_btns(1, pb) == pb && us_btns(0, pb) == 0 && us_btns(0, 0) == 0 && us_btns(0, pb) == pb,
+	       "the held buttons across the window's edges");
+	g_us.fresh = 1;
+	EXPECT(us_btns(0, pb) == 0 && us_btns(0, 0) == 0 && us_btns(0, pb) == pb, "back from a menu: B held counts after a release");
+	EXPECT(!strcmp(us_word("off"), "use off") && !g_us.on && !strcmp(us_word("status"), "use status") &&
+		       !strcmp(us_word("x"), "use (not on|off|status: ignored)"),
+	       "use words");
+	us_end_log();
+	EXPECT(log_has("USE END on=0 pick prompts kept 1 (refused '_Full' 1), picks 1 (123 held 2 ticks)"), "the USE END line");
+	g_inp.map_ok = mok;
+	unsetenv("SOMVR_USE");
+	us_config(&bad);
 	/* a mismatched hide slot: the show is put back too (a show without its hide would leave prompts up) */
 	pp_stand_ins();
 	g_pphex[PPS_HIDE][0] ^= 1;
@@ -13605,6 +13660,170 @@ static void bh_tests(void)
 	g_bow.on = bon, g_bow.fire_sc = fsc, g_bow.atk = fatk;
 	g_bh_sites = g_bh_sites_game;
 	memset(&g_bh, 0, sizeof g_bh);
+}
+
+/* SOMVR_FRONT (build 14): the score's veto, the warning, the ready grant, the damage scale and the camera copy on
+ * stand-ins (the wrappers called directly; the hooks' patching is bo_patch_call's, tested by the bow's) */
+static float g_fft_score = 3.5f;
+static int g_fft_scores, g_fft_grants, g_fft_dmg, g_fft_cam;
+__attribute__((noipa)) static void t_ffscore(uintptr_t e, uintptr_t tgt, uintptr_t slot, uint64_t n, uint64_t ring)
+{
+	(void)tgt, (void)slot, (void)n, (void)ring;
+	memcpy((void *)(e + FF_E_SCORE), &g_fft_score, 4);
+	g_fft_scores++;
+}
+__attribute__((noipa)) static uint64_t t_ffgrant(uintptr_t e, uintptr_t now)
+{
+	uint32_t g = (uint32_t)now;
+	memcpy((void *)(e + FF_E_GRANT), &g, 4);
+	g_fft_grants++;
+	return 5;
+}
+__attribute__((noipa)) static uint64_t t_ffdmg(uintptr_t ds, uintptr_t hobj)
+{
+	(void)ds, (void)hobj;
+	return (uint64_t)++g_fft_dmg;
+}
+__attribute__((noipa)) static uint64_t t_ffcam(uintptr_t pl, uintptr_t cp)
+{
+	(void)cp;
+	float game[16] = { 1, 2, 3, 0, 0, 0, 1, 1, 2, 3, 0, 0, 0, 1, 1.9f, 1.1f };
+	memcpy((void *)(pl + FF_PL_COPY), game, sizeof game);
+	return (uint64_t)++g_fft_cam;
+}
+static void ff_tests(void)
+{
+	static struct site_spec ss[FFS_N];
+	ss[FFS_SCORE].target = (uintptr_t)t_ffscore, ss[FFS_GRANT].target = (uintptr_t)t_ffgrant;
+	ss[FFS_CAM_A].target = ss[FFS_CAM_B].target = (uintptr_t)t_ffcam, ss[FFS_DMG_ATK].target = (uintptr_t)t_ffdmg;
+	static _Alignas(16) unsigned char ent[0x240], tgt[0x80], ch[0xd40], ds[0x60], pl[0xd20];
+	static uintptr_t clk_p, clk_q[4];
+	static uint32_t clk[8];
+	clk_q[1] = (uintptr_t)clk - 0x14; /* *(*clock_pp + 8) + 0x14 = &clk[0]: now */
+	clk_p = (uintptr_t)clk_q;
+	struct site_spec const *s0 = g_ff_sites;
+	uintptr_t cpp = g_ffg.clock_pp, ph0 = g_th.ph[0], ph1 = g_th.ph[1];
+	double tt = g_cb_test_t;
+	float edge0 = g_th.cfg.edge, view0 = g_th.cfg.view_deg;
+	g_th.cfg.edge = 0.8f, g_th.cfg.view_deg = 110;
+	g_ff_sites = ss, g_ffg.clock_pp = (uintptr_t)&clk_p;
+	memset(&g_ff, 0, sizeof g_ff);
+	g_ff.mode = FF_ON, g_ff.damage = 0.5f, g_ff.keep = 1000, g_ff.camcopy = 1, g_ff.fov_h = 110, g_ff.fov_v = 90;
+	g_ff.once = 1, g_ff.onecue = 1;
+	somvr_front_cfg_default(&g_ff.cfg);
+	somvr_front_init(&g_ff.f);
+	g_th.ph[0] = 0x7700, g_th.ph[1] = 0x7701;
+	uintptr_t chp = (uintptr_t)ch, id = 0x5500;
+	memcpy(ent + FF_E_ORC, &chp, 8), memcpy(ch + FF_O_HOBJ, &id, 8), memcpy(tgt + FF_T_HOBJ, &g_th.ph[0], 8);
+	memcpy(ent + FF_E_TGT, &g_th.ph[0], 8);
+	float head[3] = { 0, 170, 0 }, hq[4] = { 0, 0, 0, 1 }, front[3] = { 0, 100, 300 }, back[3] = { 0, 100, -300 };
+	somvr_threat_frame e;
+	int haps[2] = { 0, 0 };
+	memset(&e, 0, sizeof e);
+	g_cb_test_t = 500, clk[0] = 10000;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0); /* the head */
+	/* in front: unchanged, in view */
+	memcpy(ch + FF_O_POS, front, 12);
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x900, 1, 1);
+	float sc = 0;
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	EXPECT(g_fft_scores == 1 && sc == 3.5f && g_ff.n.verdict[SOMVR_FR_IN_VIEW] == 1, "front: in view unchanged (%.2f)", sc);
+	/* behind: vetoed; the frame's pass end starts its warning, the cue on both sides (straight behind) */
+	memcpy(ch + FF_O_POS, back, 12);
+	g_cb_test_t += 0.02, clk[0] += 20;
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x900, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	EXPECT(sc == -50.f && g_ff.n.verdict[SOMVR_FR_VETO] == 1 && log_has("FRONT veto t=") && log_has("score=3.50 -> -50"),
+	       "front: behind vetoed (%.2f)", sc);
+	g_cb_test_t += 0.01, clk[0] += 10;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	EXPECT(g_ff.f.warnings == 1 && log_has("FRONT warn t=") && log_has("THREAT pre orc=0x5500 (FRONT warning) cue=edge") &&
+		       haps[0] == SOMVR_THH_ANNOUNCE && haps[1] == SOMVR_THH_ANNOUNCE && e.edge[0] > 0 && e.edge[1] > 0,
+	       "front: the warning and its cue (haps %d %d, edge %.2f %.2f)", haps[0], haps[1], e.edge[0], e.edge[1]);
+	/* ONECUE: THREAT's announce (pulse, sound, LATE) for the warned orc while its warning runs: skipped, not late */
+	int snd = g_th.sound[0] != 0;
+	somvr_th_pick pk = { .cue = SOMVR_THC_EDGE, .side = SOMVR_TH_BOTH, .haptic = SOMVR_THH_ANNOUNCE, .sound = 1, .late = 1,
+			     .lead = 0.8f };
+	ff_prewarned(0, id, g_cb_test_t, g_cb_test_t, &pk);
+	EXPECT(!pk.haptic && pk.sound == !snd && !pk.late && log_has("THREAT quiet orc=0 haptic=announce") &&
+		       g_ff.n.quiet_pulses == 1 && g_ff.n.prewarned == 1,
+	       "front onecue: during the warning (haptic %d sound %d late %d)", pk.haptic, pk.sound, pk.late);
+	/* still warning: vetoed; 1 s on: ready, the score stays; the grant: verdict ready, the warning used */
+	g_cb_test_t += 0.5, clk[0] += 500;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	g_fft_score = 2.5f;
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x900, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	EXPECT(sc == -50.f && g_ff.n.verdict[SOMVR_FR_WAIT] == 1, "front: the warning runs: vetoed (%.2f)", sc);
+	g_cb_test_t += 0.6, clk[0] += 600;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x901, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	uint64_t r = somvr_w_ffgrant((uintptr_t)ent, clk[0]);
+	EXPECT(sc == 2.5f && log_has("FRONT ready t=") && r == 5 && g_fft_grants == 1 &&
+		       log_has("verdict=ready attacks=") && g_ff.f.used == 1 && g_ff.n.grant_verdict[SOMVR_FR_READY] == 1,
+	       "front: ready, granted (%.2f, used %llu)", sc, (unsigned long long)g_ff.f.used);
+	/* ONECUE after the warned grant: its edge held (0.8 x the edge, both sides: straight behind) until its attack; the
+	 * attack starting 0.3 s after the grant: THREAT's urgent pulse skipped; one starting 3 s after: not the warned one */
+	double tg = g_cb_test_t;
+	g_cb_test_t += 0.01;
+	memset(&e, 0, sizeof e), haps[0] = haps[1] = 0;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	EXPECT(NEAR(e.edge[0], 0.64, 1e-4) && NEAR(e.edge[1], 0.64, 1e-4) && !haps[0] && !haps[1] && g_ff.n.hold_frames == 1,
+	       "front onecue: the edge held after the grant (%.2f %.2f)", e.edge[0], e.edge[1]);
+	pk = (somvr_th_pick){ .cue = SOMVR_THC_EDGE, .side = SOMVR_TH_BOTH, .haptic = SOMVR_THH_URGENT, .lead = 0.35f };
+	ff_prewarned(0, id, tg + 0.3, g_cb_test_t, &pk);
+	EXPECT(!pk.haptic && g_ff.n.quiet_pulses == 2 && log_has("THREAT quiet orc=0 haptic=urgent"),
+	       "front onecue: the warned attack's urgent pulse (%d)", pk.haptic);
+	pk = (somvr_th_pick){ .cue = SOMVR_THC_EDGE, .side = SOMVR_TH_BOTH, .haptic = SOMVR_THH_ANNOUNCE, .late = 1 };
+	ff_prewarned(0, id, tg + 3.0, g_cb_test_t, &pk);
+	EXPECT(pk.haptic == SOMVR_THH_ANNOUNCE && pk.late && g_ff.n.quiet_pulses == 2,
+	       "front onecue: a later attack is not the warned one (haptic %d late %d)", pk.haptic, pk.late);
+	/* a stale head (no frame for 0.2 s): the game's own score */
+	g_cb_test_t += 0.2, clk[0] += 200, g_fft_score = 1.5f;
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x902, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	EXPECT(sc == 1.5f && g_ff.n.stale == 1, "front: a stale head: the game's (%.2f)", sc);
+	/* another target: untouched */
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	uintptr_t other = 0x9999;
+	memcpy(tgt + FF_T_HOBJ, &other, 8);
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x903, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	EXPECT(sc == 1.5f && g_ff.n.other_tgt == 1, "front: another target: the game's (%.2f)", sc);
+	/* the damage: 20 at Talion -> 10; 2000 (a scripted kill) stays; at another object untouched */
+	float a = 20.f;
+	memcpy(ds + FF_DS_AMOUNT, &a, 4);
+	uint64_t d1 = somvr_w_ffdmg((uintptr_t)ds, 0x7701);
+	memcpy(&a, ds + FF_DS_AMOUNT, 4);
+	float b = 2000.f;
+	memcpy(ds + FF_DS_AMOUNT, &b, 4);
+	somvr_w_ffdmg((uintptr_t)ds, 0x7700);
+	memcpy(&b, ds + FF_DS_AMOUNT, 4);
+	float c = 20.f;
+	memcpy(ds + FF_DS_AMOUNT, &c, 4);
+	somvr_w_ffdmg((uintptr_t)ds, 0x1234);
+	memcpy(&c, ds + FF_DS_AMOUNT, 4);
+	EXPECT(d1 == 1 && g_fft_dmg == 3 && a == 10.f && b == 2000.f && c == 20.f && g_ff.n.dmg_scaled == 1 &&
+		       log_has("FRONT damage at Talion t=") && log_has("20.00 -> 10.00"),
+	       "front: damage %.1f %.1f %.1f", a, b, c);
+	/* the camera copy: the head's over the game's (fresh head), the game's kept with a stale one */
+	uint64_t c1 = somvr_w_ffcam_b((uintptr_t)pl, 0x10);
+	somvr_front_camcopy cc;
+	memcpy(&cc, pl + FF_PL_COPY, sizeof cc);
+	EXPECT(c1 == 1 && cc.pos[1] == 170.f && cc.pos2[1] == 170.f && cc.quat[3] == 1.f && fabsf(cc.fov[0] - 1.9199f) < 1e-3f &&
+		       g_ff.n.cam_writes == 1 && log_has("FRONT camcopy t=") && log_has("ours written"),
+	       "front: camcopy %.1f %.3f", cc.pos[1], cc.fov[0]);
+	g_cb_test_t += 0.3;
+	somvr_w_ffcam_a((uintptr_t)pl, 0x10);
+	memcpy(&cc, pl + FF_PL_COPY, sizeof cc);
+	EXPECT(cc.pos[1] == 2.f && g_ff.n.cam_skips == 1 && g_ff.n.cam[0] == 1 && g_ff.n.cam[1] == 1,
+	       "front: camcopy, a stale head: the game's (%.1f)", cc.pos[1]);
+	ff_end_log();
+	EXPECT(log_has("FRONT END judged") && log_has("grants at Talion 1 (in-view 0, ready 1"), "front: END");
+	memset(&g_ff, 0, sizeof g_ff);
+	g_ff_sites = s0, g_ffg.clock_pp = cpp, g_th.ph[0] = ph0, g_th.ph[1] = ph1, g_cb_test_t = tt;
+	g_th.cfg.edge = edge0, g_th.cfg.view_deg = view0;
 }
 
 /* SOMVR_HUD_FX: CBaseUI::CreateUIFXGroup's thunk (mov 0x8(%rdi),%rdi; add $0x68,%rdi; jmp FUN_00cbbe60) */
@@ -14291,6 +14510,7 @@ int main(int argc, char **argv)
 	bh_tests();     /* SOMVR_BOW_HITLOG: a stand-in call (the bow's round 2) */
 	uf_tests();     /* SOMVR_HUD_FX: a stand-in thunk (the build 12 HUD round) */
 	vg_tests();     /* SOMVR_VERBS_GLOW: two stand-in thunks (build 13) */
+	ff_tests();     /* SOMVR_FRONT: the wrappers on stand-ins (build 14) */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",
 	       (unsigned long long)atomic_load(&g_st_stereo), (unsigned long long)atomic_load(&g_st_mono),

@@ -386,7 +386,8 @@ Object at A, name `A+8`, help `A+0x10`, **value at `A+0x38`**. Writing the value
 - Delaying/telegraphing attacks: difficulty's `AttackDelayScalar` and `DoubleAttackChance` (`FUN_02114ec0`, data
   `AttackDelayScalar`, `DifficultyDoubleAttackChance`), the lockout timer, and the one-attacker lock. For VR:
   raise the delay (relative difficulty or `DBDiff`), or veto in `FUN_028cd7a0`/`FUN_028cd4b0` until the player
-  has seen the warning **[med]**.
+  has seen the warning **[med]**. (2026-10-26: mapped in re-xr-pipeline.md 42: the score's terms and only call, the
+  grant, the slot's re-arm, the AI's camera copy, the spawner, the damage call.)
 - Nemesis: `FactionMgr`, `SharedFactionMember` (death bookkeeping `PlayerKills`, `LastDeathType`,
   `LastDeathPlayerKiller` in `FUN_022e13b0`/`FUN_022cdd90`, accessors `FUN_022dbb70`/`FUN_022dbbc0`), sim events
   (`KilledByPlayerEvent`, `KilledByAIEvents`, `FactionMemberSevered`, `KilledByUnknownSource` in `FUN_024c9e60`),

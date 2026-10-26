@@ -62,6 +62,9 @@ static void test_words(void)
     CHECK(somvr_pr_word("remove", &r) && r.action == SOMVR_PRA_REMOVE && somvr_pr_word("status", &r) &&
               r.action == SOMVR_PRA_STATUS,
           "remove, status");
+    CHECK(somvr_pr_word("status nav", &r) && r.action == SOMVR_PRA_STATUS && r.orc == 1 && somvr_pr_word("status", &r) &&
+              r.orc == -1 && !somvr_pr_word("status now", &r) && !somvr_pr_word("go nav", &r),
+          "status nav (the nav markers too)");
     r.action = 77;
     CHECK(!somvr_pr_word("spawn troll", &r) && !somvr_pr_word("go now", &r) && !somvr_pr_word("", &r) &&
               !somvr_pr_word("fly", &r) && !somvr_pr_word("spawn shield 3", &r) && !somvr_pr_word(NULL, &r) &&

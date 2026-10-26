@@ -3839,6 +3839,8 @@ before its release; its arrow then gets its own cue (28 m/s, no homing: 0.7 s fr
 |---|---|---|
 | `SOMVR_THREAT=0\|1` | 0 | the warnings (needs `SOMVR_COMBAT` and `SOMVR_STEREO=A\|B`) |
 | `SOMVR_THREAT_VIEW_DEG` | 110 | 40..180: the cone counted as in view |
+| `SOMVR_THREAT_VIEW=bearing\|full` | bearing | (18.8, 2026-10-26) the cone on the bearing (\|yaw\| off the head) or the full angle (round 1's) |
+| `SOMVR_THREAT_KEYLESS=0\|1` | 0 | (18.8) cues for attacks with no key at all (1 = round 1's: a pulse and the sound each out of view) |
 | `SOMVR_THREAT_GLOW` / `_EDGE` | 0.7 / 0.8 | 0..1: the glow's / the edge's strength (0 = none; the pulses stay) |
 | `SOMVR_THREAT_HAPTIC` | 1 | 0..1: the pulses' amplitude scale (0 = none) |
 | `SOMVR_THREAT_NEAR_M` | 2.5 | 0..6: the engaged orc's near cue (0 = off) |
@@ -3965,6 +3967,21 @@ SOMVR_THREAT_PARRY=1` with the probe's `aggro 3` / `minhealth 20` (P8's fight; t
 - The glow is at `R_Hand` now; a weapon socket or the attack's own `SampleNode(R_Hand, impact)` (re-combat-vr.md 3.4)
   would show where the blow lands; G2 (the gameplay camera = the head) does not change these cues (they use the HMD's
   head already).
+
+### 18.8 Round 2 of the front-first work (2026-10-26; the details and runs: 42.11)
+
+- **In view = the bearing** (`somvr_th_view_off`): |yaw| of the orc in the head's frame within `view_deg / 2`, the
+  pitch ignored (beyond 85 deg up or down: the full angle). The full angle put a close orc in plain view out of view:
+  its root or weapon hand is 50-77 deg below the eyes at Talion's feet (`LATE` edge warnings for an orc the player looked
+  at, run 081743). `SOMVR_THREAT_VIEW=full` = the old test. SOMVR_FRONT uses the same function.
+- **The point judged is the orc's body** (root + 100 cm), not its weapon hand (it swings ~60 deg out at 1.2 m); the
+  glow stays on the hand.
+- **Keyless attacks** (all ten key times 0xffff) get no cue (`SOMVR_THREAT_KEYLESS=0`): they are 80 % of the "attacks"
+  at Talion in a crowd and never a blow; out of view each gave a pulse and the sound.
+- With `SOMVR_FRONT=1` and `SOMVR_FRONT_ONECUE=1` an attack FRONT warned about gets no second pulse or sound from
+  THREAT (its edge only): one warning per blow.
+- Known limit of the bearing: looking up (or down) steeply, an orc ahead counts as seen though it is above or below
+  the view (a pitch beyond the headset's ~50 deg half-height); a fight rarely has the head there.
 
 ## 19. VR build 3 together (2026-10-20, offline; nothing launched)
 
@@ -8853,3 +8870,616 @@ Handoff: handoff/HANDOFF-crouch.md.
   'StealthMode'`), the Nemesis verbs' stealth kill from behind while ducked. Not seen headless.
 - Not tried: sprinting while ducked, the bow drawn while ducked (`PC_WraithRanged_FromStealth` exists), a duck on a
   wall top or a ledge, a long crouch (HL:A's complaint: the button latch is the way out).
+
+## 42. Front-first enemies: the fight circle's attacker choice, its timeline, the spawner, the damage path (static RE for build 14, 2026-10-26)
+
+HG-5 and SH-9 (design-hla.md 2.10, 3.1, 3.2; design-vr.md "Turn-taking, difficulty, feedback"). The user holds the port
+to HL:A and named "the places enemies spawn in relation to you, the warnings you get from enemies". The flat game picks
+attackers from all around Talion because its orbit camera shows all of them; in VR the player sees about 100 deg.
+`SOMVR_THREAT` (section 18) only warns about attacks the game has already started (0.8 s before an infantry impact:
+`LATE`). This section is static RE in the som-linux Ghidra project; **no game boot**. It covers who may attack and
+how the flat camera enters that choice, how long the commit -> impact takes, where arrivals are placed, and the damage
+path at Talion. Built from it: the pure module `somvr_front.c` (tests/test_front.c, 92 checks; **not hooked into the
+game**). 42.9 is build 14's design.
+
+### 42.1 The call graph (the fight circle = `AICombatMgr`, instance `*0x463e290`)
+
+```
+CGameServerShell::vf_10 -> FUN_02997c80 -> FUN_028d97a0 (the manager's tick: FUN_028d5980, FUN_028d9030, FUN_028d0090,
+                                                         FUN_028d7030 debug drawing, FUN_028d6a40, ...)
+  -> FUN_028d7b50(target entry)            one call per target (Talion, and anyone else the AI fights)
+       per slot (target+0x40 .. +0x48, 0xb8 bytes each):
+         collect up to 32 candidates (target+0x28 list; entry = node - 0x10)
+         only if no candidate holds a grant, the slot is armed (+0xb0) and its time has come (+0xa8 < now):
+         for each: AICombatMgr_ScoreAttacker(entry, target, slot, n, best ring)   <- 0x28d7d31, its only call
+         N = random(min, max) of the slot record (x2 on DoubleAttackChance: FUN_021189a0)
+         sort by entry+0x20c (FUN_028d9e60 / FUN_028d9b20, comparator FUN_028ca050)
+         grant the first N: FUN_028cd4b0(entry, now)                              <- 0x28d8295, its only call
+           stop at the first negative score
+FUN_028cd4b0 -> FUN_029ac220(orc): orc+0xc78 (its AI) +0x690 = 1 (may attack), +0x401 = 1 (re-plan)
+  -> the AI: (anonymous)::DetermineFightCircleAttackerSubject::vf_02 (0x2a6ebe0) reads +0x690; the approach and the
+     attack action -> Combat_StartAttack -> AICombatMgr_OnStartAttack (FUN_028d0ef0)
+       attacks left (entry+0x22c) - 1; 0 -> FUN_028ccbc0 release (entry+0x214 = 0, ai+0x690 = 0: FUN_029ac260);
+       else entry+0x214 = now (the grant renewed for the next attack of the streak)
+  -> APPLYDAMAGE (the impact) -> Combat_DealHit -> ServerCombat_ApplyAttackDamage -> FUN_02810e80 -> DoDamage (42.7)
+  -> the slot re-armed: FUN_028d6ef0 (42.5)
+```
+
+`AICombatMgr_ShouldCancelAttack` (`FUN_028d50c0`, 13 reasons) and `FUN_028d0990` (it adds an attacker that started an
+attack without a grant: OnStartAttack's "OnStartAttack %s hit %s") are the other entries into the grant state.
+
+### 42.2 The structures (offsets from the code above; **[high]** for the reads and writes, the names are ours)
+
+- **The clock:** `*(uint32*)(*(*(0x463e290) + 0x8) + 0x14)` = the fight circle's time in ms (the grant's log prints it
+  x 0.001 = `0x33becb0`; the lockouts add seconds x 1000 = `0x3347360`).
+- **Target entry** (FUN_028d7b50's argument; the score's 2nd): `+0x28/+0x30` the attacker list; `+0x40/+0x48` the
+  slots; `+0x70` the target's HOBJECT (the score's camera term tests its class list `+0x48` for `0x4c47040` and then
+  takes `+0x38` = the `CPlayerObj`: the same test tells "this target is Talion"); `+0xa8` the state attacker lock
+  ("State Attacker lock is set, and it's not us"); `+0xd0` the target's combat state record (`AICombatMgr_OnPreDeath`
+  `FUN_028ccc90` sets it); `+0xe0` a timer; `+0xfc`, `+0xfd` flags.
+- **Slot** (0xb8 bytes): `+0x80` a list; `+0x90` the last attacker's HOBJECT (the LastAttacker term); `+0x98` its
+  record (the grant count's attributes `0x4ba0440+0xf8` min / `+0x128` max, the double-attack flag `+0x188`); `+0xa8`
+  the next grant's time (ms); `+0xac` the lockout (s); `+0xb0` armed; `+0xb1` the lockout is scaled by
+  `AttackDelayScalar`; `+0xb2` a pair granted.
+- **Attacker entry** (the score's 1st argument): `+0x180` the orc (a server character: `+0x8` its HOBJECT, `+0xd2c`
+  its world position in cm, `+0xc78` its AI); `+0x1a0` its target's HOBJECT; `+0x1f8` its AI combat record (rings,
+  priority, attack counts `0x4b9f620+0x308/+0x338`); `+0x200` the slot record (0 = "Not using fight circle"); `+0x208`
+  the distance (cm); **`+0x20c` the score**; **`+0x214` the grant's time (ms, 0 = none)**; `+0x220` BuffScore;
+  `+0x224` a timer; `+0x22c` attacks left in the grant; `+0x22e` its ring (1 Inner, 2 Middle, 3 Outer, 4 Special);
+  `+0x231` has a path, `+0x232` sees the target, `+0x233` LOS (`+0x234` LOS needed); `+0x236`, `+0x23a` "Can Be
+  Attacker"; `+0x237` the pairing flag.
+
+### 42.3 The score (`AICombatMgr_ScoreAttacker`, `0x28cd7a0`)
+
+- **Rejections** write a negative code and return: not an AI -7, Can Be Attacker = FALSE -100, the target's class
+  not a fighter -2, not using the fight circle -3, too far -4 (max 2000 cm + the record's extra), a ring not allowed
+  -5 / -6 (Special) / -7 (None), Only Attacker / State Attacker lock -100, target not visible -16, no path -8, no LOS
+  -9, no combat object -10, in a combat state -11, an attack that prevents selection -11.5, an aligned sync attack -12,
+  attack + node -13, cannot engage -14, AlarmLevelChanger -15 (the veto's -50 is none of them).
+- **Accepted** (`0x28ce56d..0x28ce5ae`): `Total = Distance + Priority + Camera + LastAttacker + StateScore + BuffScore`,
+  at least 0.01 (`0x33f8d40`). Distance = weight x (max - distance) / max; Priority from the orc's record
+  (`0x4b9f620+0x3c8`); LastAttacker when the slot's last attacker is this orc; StateScore when it is the target's
+  locked attacker; BuffScore `entry+0x220`. The weights are attributes of the fight circle's record (`entry+0x200` ->
+  `0x4ba0440+200` -> a record; attributes `0x4b9fde0+0x8` distance, `+0x38` on screen, `+0x68` off screen, `+0x98`
+  last attacker); every default is 1.0 (`0x3344770`). **The values are DB data: runtime-unknown.**
+- **The camera term** (`0x28ce488..0x28cebdd`): only when the target is the player (the class test above).
+  `FUN_029a8130(orc+0xd2c, CPlayerObj)` = the frustum test `FUN_0229e170(point, {fov h, fov v}, pose)` with the copy's
+  second pose `+0xbb0` and its FOVs `+0xbcc/+0xbd0` (full angles in radians: `tanf(0.5 x fov)`, the point projected to
+  [0,1]^2 and in front). Off screen: **Camera = -w_off**. On screen: `CPlayerObj::vf_59` (vtbl+0x1d8) returns
+  {pos, quat}, and Camera = w_on x cos(the angle between R(q)(0,0,1) and the direction pos -> orc) when that is > 0,
+  else 0 (also 0 within 0.32 cm, the `0x3360530` guard). So at weight 1 an orc on screen in the middle scores up to 2
+  more than one off screen: about two orcs' worth of distance term.
+- **The pick:** the comparator (`FUN_028ca050(a, b)`, "a first") puts an entry with `+0x23a` set **and** its timer
+  `+0x224` run out (`FUN_02390cb0`: `*(uint32*)timer < now`) before every other entry, whatever the scores. After
+  that it sorts by Total, then by address. A negative score is never granted and the loop stops at the first one, so
+  **a veto = a negative `entry+0x20c` written after the score call**. Nothing else in the pass reads the parts.
+  **The trap:** a vetoed prio entry (`+0x23a`, timer run out) sorts first and ends the loop before an accepted orc in
+  view is reached. While it stays vetoed, nobody gets the slot. So `somvr_front` warns a prio orc at once (an orc in
+  view, `max_warn` and its quiet time do not hold it back), and the slot waits at most `warn_s` for it. The grant
+  re-sets that timer (`FUN_02390c50(entry+0x224, s)`, s = the orc record's attribute `0x4b9f620+0x158`). The timer API is `FUN_02390c50` set
+  (now + s x 1000), `FUN_02390cb0` run out, `FUN_02390ca0` clear, `FUN_02390cd0` set and run out.
+- The game's own log of all this: the console variables `Combat.Debug.AttackerSelection` (the score's bool
+  `0x4c44458`: "Rejected - ..." / "Accepted - Total = ..; Distance = .., Priority = .., Camera = .., ...") and
+  `Combat.Debug.AIMgr` (`0x4c444d8`: "Can Attack: TRUE, score = .., %d attacks, at time ..", "received
+  OnStartAttack"), with `Combat.Value.LogFileName` (re-gameplay.md 4 and 8 (a)).
+
+### 42.4 The AI's camera copy (`CPlayerObj+0xb94..+0xbd3`) and who reads it
+
+`FUN_027aa490(CPlayerObj*, P)` copies from the client player P (`P+0x2d0` = the camera object): `+0xb94` pos = the
+camera's `+0x44c` (what `Player.GetPos` prints: Talion's position, not the orbit camera's), `+0xba0` quat (x y z w) =
+`cam+0x458 (x) cam+0x484` (the effective camera rotation, the minimap's), `+0xbb0` / `+0xbbc` the same pose again,
+`+0xbcc` / `+0xbd0` the FOVs (`cam+0x3fc` / `+0x400`, clamped). Called at `0x27add66` (in `FUN_027adc60`, which has no
+static caller: a callback) and `0x27b6dd6` (in `CPlayerObj::vf_100`). The second call is reached every time `vf_100`
+runs with the client player present (`FUN_02693910`) and `CPlayerObj+0xd12` clear. Slot 100 is overridden by
+`CCharacter`, `NPC` and `CPlayerObj`, and the player's calls `CCharacter::vf_100`: probably the per-frame update
+**[med]**. Readers:
+
+| Reader | Via | What it decides |
+|---|---|---|
+| `AICombatMgr_ScoreAttacker` | `vf_59` (slot `0x3995b78`), `FUN_029a8130` | the Camera term (42.3) |
+| `FUN_02258550` (attack-pool predicate) | `FUN_029a80d0` | an attack that wants its attacker on screen or off it (the pools' `AttackerOnScreen` / `MustBeOffScreen`) |
+| `FUN_028f54b0` (the ambient spawner's point test) | `FUN_029a8130` | "Offscreen Predicate failure": spawns go off screen |
+| `CAIGoalDespawnOffscreen::vf_09`, `FUN_028ba6a0` | `FUN_029a8180` | AI despawned off screen |
+| `FUN_027982d0` (from `FUN_02798ae0`, `FUN_02799c30`, `FUN_02799e90`) | `FUN_029a8130` | not traced |
+
+**In VR the copy is wrong.** The rotation is the game camera's, and with `SOMVR_YAW=camera` that is the rig's heading
+(somvr_eyes.h), not where the player looks. So the Camera term, the on/off-screen attacks, the off-screen spawns and
+the despawns all rate the play space's forward. Writing the head's pose and the headset's FOV into the copy after
+`FUN_027aa490` (G2 for the AI only; the renderer's camera untouched) makes every reader above use the head. That is
+the right meaning for all of them: "on screen" = in the headset.
+
+### 42.5 The timeline (commit -> impact)
+
+1. **A pass** runs in every manager tick while no candidate of the slot holds a grant, the slot is armed and
+   `slot+0xa8 < now`. While every candidate is vetoed, nothing is granted. A pass without a grant writes only
+   `slot+0xb2` (the pair flag), never its gate (`+0xa8`, `+0xb0`), so the pass runs again on the next tick **[high:
+   the writes on that path]**.
+2. **The grant** (`FUN_028cd4b0(entry, now)`): `+0x214 = now`, `+0x22c` = random(min, max) attacks, the AI flag.
+3. **The attack start:** the AI's plan sees `ai+0x690`, approaches and starts an attack. The grant -> start latency is
+   the AI's: **runtime-unknown**.
+4. **The impact:** infantry 815 ms after the start, archers' release 2.6 s (P8, section 18.3).
+5. **The re-arm** (`FUN_028d6ef0(slot)`: `+0xac` = 0.25 s (`0x4c4e1b0`) x `AttackDelayScalar` when `+0xb1`, `+0xa8 =
+   now + 1000 x that`, `+0xb0 = 1`). The disarm (`FUN_028d6de0`, and `FUN_028cd340` from `FUN_026e7070`): `+0xac` =
+   0.75 s (`0x4c4e1b4`) x `AttackDelayScalar`, `+0xb0 = 0`. Both have no static caller (callbacks: when they run is
+   runtime-unknown). `AttackDelayScalar` is the difficulty manager's `+0x60` (`FUN_02118990`: `mulss 0x60(%rdi)`;
+   `Difficulty_Recompute` `FUN_02114ec0` writes it); `DoubleAttackChance` is `+0x64` (`FUN_021189a0`). **The two base
+   times are writable statics** set by `_INIT_1466` (`0x634d74`, `0x634d7e`), not console variables: build 14 can
+   scale them once at start.
+
+So with a veto before the grant, an attack from behind lands at the earliest **warn_s + the grant -> start latency +
+0.815 s** after its warning starts (at least 1.8 s with warn_s 1.0). THREAT's own warning at the start stays on top.
+A grant made while the orc was in view, after which the player turned away, is not vetoed. THREAT warns about it
+(0.8 s); `ShouldCancelAttack` is the place to cancel it later, if needed.
+
+### 42.6 Arrivals (SH-9): the spawner
+
+`AISpawnMgr` is only the save chunk and the console (`SetLimit` empty, `DumpStats`). The spawning is the
+`AISpawnerAmbient*` family:
+- `AISpawnerAmbientBase::vf_32` (`0x28f98d0`, slot 32 of 8 spawner classes; the Gang, GangSimEvent, Nemesis, Normal
+  and SimEvent spawners' own vf_32 call it) spawns.
+- `FUN_028f54b0` tests each spawn point ("%s rejected - Offscreen Predicate failure (%s[%d])", "LOS Predicate
+  failure"; `FUN_029a8130` with the camera copy).
+- `FUN_028fb690` (called by `FUN_028fd460`) sets the new AI up and logs "[AI|SPAWNAMBIENT|CREATE]: %s Spawned an AI
+  (%s); Template = %s; IsNamed = %s".
+
+The game places arrivals off screen, which in the flat game means behind the orbit camera. With the copy from the
+head, they are placed outside the headset's view. That is HL:A's rule: nothing pops in where you look.
+
+**The cue needs no spawner hook:** every orc that joins the fight against Talion becomes a candidate in his target
+entry, and the score wrapper sees it. The first time an orc is seen (a new HOBJECT) out of view within 15 m gets an
+arrival cue (the positional sound and a marker, SH-9). THREAT's 40 m scan is the second source. A hook on the
+spawner would also see spawns that never join a fight (for later, when the arrival marker needs the spawn moment
+itself). `FUN_028fb690` is a devirtualised clone of `vf_32`: `FUN_028fd460` tests the spawner's slot 32 against
+`0x28f98d0` and calls the clone directly (`0x28fd879`; RCX = the new AI, kept in R14 by its prologue). Otherwise it
+calls the slot (`0x28fdf88`). The five derived spawners' own vf_32 call `0x28f98d0` (R8 = the new AI, also kept in R14).
+So a complete spawn hook is this call plus those five calls (not taken):
+
+```
+SITE("FR_SPAWN", K_CALL, 0x28fd879, 0x28fd862, "48 8b 8d d0 fe ff ff 4d 89 e0 4c 89 fa 4c 89 ef 48 8b b5 f0 fe ff ff e8 12 de ff ff", 0x28fb690, "41 57 49 89 f7 41 56 49 89 ce 41 55 49 89 fd 41"),
+```
+
+### 42.7 The damage path at Talion (D10)
+
+`Combat_DealHit` (`0x26d4ff0`), `Combat_ApplyDamageKey`, the collider hits, `FUN_02714410/0720`, ... ->
+`ServerCombat_ApplyAttackDamage` (`0x281a200`, 8 callers) -> `FUN_02810e80(attacker, targetChar, .., ds)`. Its amount
+is `ds+0x50`: < 0 is a heal (`FUN_02763910`); > 0 goes to **`DamageStruct_DoDamage(ds, targetChar[1] = the target's
+HOBJECT)` at `0x2811007`**. `DoDamage` (`0x2763050`) checks the class and **tail-jumps at `0x2763094`** to
+`FUN_00c77890(obj, damager, ds)` -> the object's damage handler (vtbl+0xc0). DoDamage has 18 callers (FragSelf,
+props, sync actions, explosions, ...). So:
+- `FR_DMG_ATK` (the call at `0x2811007`) = all attack damage (the orcs' blows; arrows if their hits carry an attack:
+  **RT**);
+- `FR_DMG_ALL` (the tail jump) = everything, scripted kills included.
+
+The scale is applied when RSI (the target's HOBJECT) is Talion's and the amount is > 0, keeping amounts from
+`keep_above` up (a scripted kill stays a kill: `somvr_front_damage`). SOMVR_HURT reads the health drop as before.
+
+### 42.8 The sites (build 14's `FRONT_SITES` block; byte-checked 2026-10-26: scripts/check_doc_sites.py on this file 8/8 ok, it skips K_JMP; all 9 with check_sites.py's own reader)
+
+```
+SITE("FR_SCORE", K_CALL, 0x28d7d31, 0x28d7d1b, "8b 4c 24 10 45 89 e0 4c 89 fa 48 89 ee 44 88 54 24 08 41 83 c6 01 e8 6a 5a ff ff 44 39 b4 24 50", 0x28cd7a0, "41 57 41 56 41 55 41 54 55 53 48 89 fb 48 81 ec"),
+SITE("FR_GRANT", K_CALL, 0x28d8295, 0x28d8281, "4c 89 c7 44 89 f6 88 44 24 2f 44 88 54 24 2e 4c 89 44 24 20 e8 16 52 ff ff 4c 8b 44 24 20", 0x28cd4b0, "48 83 bf 00 02 00 00 00 0f 84 9a 01 00 00 41 56"),
+SITE("FR_CAMCOPY_A", K_CALL, 0x27add66, 0x27add60, "48 89 ee 48 89 df e8 25 c7 ff ff e9 24 ff ff ff", 0x27aa490, "48 8b 86 d0 02 00 00 f3 0f 10 80 90 04 00 00"),
+SITE("FR_CAMCOPY_B", K_CALL, 0x27b6dd6, 0x27b6dd0, "48 89 ee 48 89 df e8 b5 36 ff ff e9 d4 fc ff ff", 0x27aa490, "48 8b 86 d0 02 00 00 f3 0f 10 80 90 04 00 00"),
+SITE("FR_CAMTERM", K_CALL, 0x28ce4e4, 0x28ce4bd, "48 3d 40 70 c4 04 75 eb 4c 8b 6a 38 4d 85 ed 0f 84 97 00 00 00 4c 8b a3 80 01 00 00 4c 89 ee 49 8d bc 24 2c 0d 00 00 e8 47 9c 0d 00 84 c0 0f 84 b7 06 00 00 49 8b 45 00 48 8d b4 24 80 00 00 00 4c 89 ef ff 90 d8 01 00 00", 0x29a8130, "48 83 ec 38 48 8b 86 cc 0b 00 00 f3 0f 10 86 c8"),
+SITE("FR_VF59", K_VSLOT, 0x3995b78, 0x3995b70, "f0 e3 68 02 00 00 00 00 b0 77 7b 02 00 00 00 00 f0 df 6a 02 00 00 00 00", 0x27b77b0, "0f 10 8f 94 0b 00 00 0f 11 0e f3 0f 10 87 a4 0b 00 00 f3 0f 11 46 10"),
+SITE("FR_REARM", K_ENTRY, 0x28d6ef0, 0x28d6ef0, "53 80 bf b1 00 00 00 00 48 89 fb 74 63 48 8b 3d 0c 04 de 01 48 8b 07 ff 90 90 00 00 00 f3 0f 10 05 9b 72 37 02", 0x28d6ef0, "53 80 bf b1 00 00 00 00 48 89 fb 74 63 48 8b 3d"),
+SITE("FR_DMG_ALL", K_JMP, 0x2763094, 0x2763081, "48 8b 46 38 48 85 c0 74 16 48 8b 77 20 48 89 fa 48 89 c7 e9 f7 47 51 fe", 0xc77890, "48 81 ec b8 00 00 00 48 8d 4c 24 48 48 8d 44 24"),
+SITE("FR_DMG_ATK", K_CALL, 0x2811007, 0x2811000, "48 8b 73 08 48 89 ef e8 44 20 f5 ff", 0x2763050, "48 85 f6 74 4b 48 8b 46 48 48 85 c0 74 42 48 8b"),
+```
+
+- Patched in build 14:
+  - `FR_SCORE`: the veto. The original's arguments are RDI entry, RSI target, RDX slot, ECX the candidates, R8D the
+    best ring; it returns void; R14/R10 are saved by the caller.
+  - `FR_GRANT`: the warning used up, plus the grant log. ESI is the clock (`now`).
+  - `FR_CAMCOPY_A/B`: the head into the copy, after the original.
+  - `FR_DMG_ATK`: the damage scale.
+- Read-only proofs:
+  - `FR_CAMTERM`: the class test `0x4c47040`, `+0x38`, the orc's `+0x180 -> +0xd2c`, the vf_59 call;
+  - `FR_VF59`: the copy's layout `+0xb94` / `+0xba4`;
+  - `FR_REARM`: the clock `0x463e290` and the 0.25 s static at `0x4c4e1b0` (`f3 0f 10 05 9b 72 37 02` =
+    `movss 0x237729b(%rip)`).
+- `FR_DMG_ALL` is the alternative to `FR_DMG_ATK`. None of the nine is used by somvr or the probe today: no
+  `EXCLUSIVE` entry needed.
+
+### 42.9 Build 14: the design (not built; the pure part is `somvr_front.c`)
+
+| Switch | Default | What |
+|---|---|---|
+| `SOMVR_FRONT=0\|1` | 0 | the veto (`FR_SCORE`, `FR_GRANT`); needs `SOMVR_THREAT` (the head pose, the warning cue) |
+| `SOMVR_FRONT_VIEW_DEG` | `SOMVR_THREAT_VIEW_DEG` (110) | the in-view cone |
+| `SOMVR_FRONT_WARN_S` | 1.0 | the warning before a grant from out of view (HG-5) |
+| `SOMVR_FRONT_READY_S` / `_QUIET_S` | 2.0 / 2.0 | how long a finished warning lets the orc be granted / no new warning after an unused one |
+| `SOMVR_FRONT_FAR_M` | 0 | out-of-view orcs farther than this are not vetoed (0 = all) |
+| `SOMVR_FRONT_MAX_WARN` | 1 | warnings at a time |
+| `SOMVR_FRONT_CAMCOPY=off\|head` | off | the AI's camera copy from the head (`FR_CAMCOPY_A/B`); `_FOV_H` / `_FOV_V` 110 / 90 deg |
+| `SOMVR_FRONT_LOCKOUT` | 1.0 | x the slot's 0.25 s and 0.75 s (the two statics, written once at start; HG-5's tuning: 1.5) |
+| `SOMVR_FRONT_DAMAGE` | 1.0 | x the damage at Talion (`FR_DMG_ATK`, patched only when < 1; D10: 0.5); `_KEEP` 1000 |
+
+**The game side (`somvr_front_game.c`, a `FRONT_SITES` block, check_sites.py counting it):**
+1. **`fr_score(e, tgt, slot, n, ring)`** calls the original first. Then, when on: the target is Talion (the class test
+   on `tgt+0x70`, or its `+0x38` == his `CPlayerObj`), the head pose is fresh (THREAT's frame, at most 100 ms old;
+   else fail open), the orc `o = *(e+0x180)`, id `*(o+8)`, its position `o+0xd2c`, then `somvr_th_local` /
+   `somvr_th_direction` from the head, prio = `e+0x23a && *(uint32*)(e+0x224) < now`, `somvr_front_judge(pass =
+   slot, now = the clock, ...)`, and the score written back to `e+0x20c`.
+2. **A warning that starts** (`*started` / the frame's `somvr_front_end_pass`) becomes a THREAT track of a new kind
+   `pre` for that orc before any attack: the warning sound at the orc (`SOMVR_THREAT_SOUND`), the edge on its side
+   rising with `somvr_front_warn_level`, one announce pulse on that side's hand. The orc's weapon hand is read as for
+   an attack. Its attack start then continues as the normal track, and is no longer `LATE`.
+3. **`fr_grant(e, now)`** calls the original, then (`e+0x214 != 0`) `somvr_front_granted` and the log.
+4. Once a frame (`th_frame`): `somvr_front_end_pass(the clock)`.
+5. **`fr_camcopy(pl, P)`**: the original, then `somvr_front_camcopy_fill(the head, the head's quat, the FOVs)` written
+   over `pl+0xb94..+0xbd3`. Paused, flat or third-person frames leave the game's copy.
+6. **`fr_dmg(ds, hobj)`**: when hobj is Talion's, `ds+0x50 = somvr_front_damage(...)`, then the original.
+
+A site mismatch turns that part off. With no `CPlayerObj`, no head or no record free, the game's own choice stands.
+
+**Logs:**
+- `CONFIG front on=1 view_deg=110 warn_s=1.0 ready_s=2.0 quiet_s=2.0 far_m=0 max_warn=1 camcopy=head fov=110x90
+  lockout=1.50 damage=0.50; sites: FR_SCORE ok ...`;
+- `FRONT veto orc=.. score=.. -> -50 off=.. deg dist=.. m` (the first 50, then at most 2 a second);
+- `FRONT warn orc=.. side=L|R|LR yaw=.. dist=.. m (best of ..)`, `FRONT ready orc=.. after .. s`;
+- `FRONT grant orc=.. verdict=in-view|ready|far|full|game attacks=.. warned .. s ago`;
+- `FRONT expired orc=..`;
+- `FRONT camcopy pos=.. fwd=.. (the game's fwd ..)` once a second;
+- `FRONT damage at Talion ..->..`;
+- the end counters (`somvr_front`'s).
+
+**Headless proof** (headless_vr.sh, no headset; the same drivers as section 30's fights): the practice area
+(`SOMVR_PRACTICE`, its one orc) plus a second orc (`fight spawn`, if the combat drivers allow two; else the practice's
+"again"). The probe's console sets `Combat.Debug.AttackerSelection 1`, `Combat.Debug.AIMgr 1` and
+`Combat.Value.LogFileName` to the run folder, so the game's own score lines sit next to ours.
+- (a) The orc in front (the mock HMD looking at it): grants with verdict `in-view`, no `FRONT veto`, and the game's
+  `Camera = +..` terms.
+- (b) The scripted head turned 180 deg (the driver's head-yaw word) with the orc engaged: `FRONT veto`, one `FRONT
+  warn`, `FRONT ready` >= 1.0 s later, then `FRONT grant ... ready`. THREAT's start for that orc follows, with the
+  warning's start -> the impact >= 1.8 s and no `LATE`. The grant -> start latency is measured here (`FRONT grant` vs
+  `THREAT start`).
+- (c) `SOMVR_FRONT_CAMCOPY=head`: the game's `Camera = ..` follows the head (it flips sign with the 180 deg turn while
+  the rig's heading stays). Spawns stay off view: the ambient spawner's "Offscreen Predicate" lines, if any.
+- (d) `SOMVR_FRONT_DAMAGE=0.5`: `FIGHT hurt` / the health drop per blow halves.
+- (e) 0 `WARN`, the install unchanged, the save unchanged.
+
+**Runtime-unknown (what the boots must show):**
+- the score weights (DB values) and typical totals;
+- the grant -> start latency;
+- how often `FUN_027aa490` runs (every `vf_100` with `+0xd12` clear: per frame?), which of its two calls is live,
+  and what `+0xd12` is (a freeze in cinematics?);
+- what the head copy changes for the other readers (spawns, despawns, the on/off-screen attack pools);
+- whether arrows pass `FR_DMG_ATK`;
+- when the re-arm and disarm run (they are callbacks);
+- whether archers share the melee slots (a veto on an archer is probably wanted: arrows from behind get the warning
+  too);
+- that the AI tick runs on the game thread, where the head pose is cached.
+
+### 42.10 Build 14 at runtime: `SOMVR_FRONT` hooked (2026-10-26, headless; handoff/HANDOFF-front.md)
+
+**Built** (`somvr_front_game.c`, its `FRONT_SITES` block = 42.8's nine lines, check_sites.py counts it: 9 ok):
+- `SOMVR_FRONT=0|log|1` (default 0: nothing patched). `log` = every hook in, every judgement, grant, copy and damage
+  logged, nothing changed (the baseline). Needs `SOMVR_THREAT=1`. The other switches as 42.9 (`_VIEW_DEG`, `_WARN_S`,
+  `_READY_S`, `_QUIET_S`, `_FAR_M`, `_MAX_WARN`, `_CAMCOPY=off|head` + `_FOV_H/_V`, `_LOCKOUT`, `_DAMAGE` + `_KEEP`), plus
+  `SOMVR_FRONT_GAMELOG=1` (a test: the game's two debug bytes and its log file; they print nothing, below).
+- **In view = the orc's bearing off the head (|yaw| in the head's frame), not the full angle.** `+0xd2c` is the orc's
+  root: an orc 1.4 m ahead at yaw -40 was 55-60 deg off by its pitch alone (run 080611) and would have been vetoed
+  while the player looked at it.
+- The warning = a THREAT "pre" track (`THREAT pre orc=.. (FRONT warning)`): `SOMVR_THREAT_SOUND` at the orc, the edge
+  glow on its side (THREAT's edge x 0.3..0.8 over the warning), one announce pulse on that side's hand; no cue while
+  the player looks at it. THREAT's own `LATE` is cleared for an orc FRONT warned (`FRONT prewarned`).
+- The damage hook (`FR_DMG_ATK`) only with `_DAMAGE` < 1 or `log`; the camera copy hooks with any mode (they count the
+  calls), written only with `_CAMCOPY=head` and a head fresher than 100 ms. `FR_DMG_ALL` and the spawner stay unpatched.
+- An arrival watch (SH-9's evidence): every 0.5 s the PlayerCombat bands; an orc new within 60 m = `FRONT arrival`,
+  one gone (not dead) = `FRONT departure`, each with its bearing off the head and off the game's own copy.
+- Test words: `front status`, `front keep 0|1` (the practice's spawns keep the previous orc: several at once). The
+  layer's test head takes a yaw: `head X Y Z [yaw DEG] [s SEC]` (SOMVR_XR_TEST only; the rig's heading stays).
+  scripts/front14-drive.sh (plans fight, short, spawn).
+
+**The runtime answers** (runs 080611 log, 081743 the veto, 082352 copy + damage + lockout; the practice meadow, the
+build 14 env file):
+- **The AI tick runs on the game thread** (H4's, where THREAT caches the head): `other thread 0` of 1600+ score calls.
+- **The clock** `*(*(*0x463e290 + 8) + 0x14)` = FUN_028cd4b0's ESI (`now`) at every grant.
+- **The pass rate:** 20 a second (the clock steps 50 ms between passes); FUN_027aa490 runs 20-21 times a second, all
+  from `FR_CAMCOPY_B` (`CPlayerObj::vf_100`); `FR_CAMCOPY_A` was never called; `+0xd12` stayed 0 (no cinematics in
+  these fights: what it gates is still open).
+- **The score** (totals read back after the call): an orc on the copy's screen 17.9-20 at 1-6 m; the slot's last
+  attacker +10 (29-30); off the copy's screen 0.01 (the floor). So every weight is about **10**, not 1.0: Distance
+  10 x (2000 - d) / 2000, Camera +10 x cos on screen / -10 off it, LastAttacker +10. Rejections seen: -16 (target not
+  visible), -9 (no LOS), -5 (ring not allowed).
+- **The game's copy** is the flat game's orbit camera, not Talion: its position 1.6-5 m from the head, a **36.7 x 40.0
+  deg** FOV, and a rotation that matched the head's forward (within 0.03, the same quaternion convention) only while
+  the camera stood still. In the meadow with ambient orcs about (runs 084439, 085304) it swung on its own (forward
+  -0.86,+0.50 -> -0.83,-0.49 -> +0.27,-0.93 within a minute, the head unmoved): the camera framing the orcs. So in VR
+  the game's "on screen" is a narrow cone the player never sees, pointing wherever the hidden orbit camera points.
+- **Grant -> attack start:** 0.95 s when the orc has to come in after its recoil, **0.05 s when it already stands in
+  range** (a vetoed orc waits there); start -> impact 0.80 s; one attack per grant (`attacks=1`). A lone orc in view is
+  granted every 1.85 s, at the impact of its last blow.
+- **Archers have their own slot** of the same target entry (slot + 0xb8: `..4c8` beside the melee `..410`), so they
+  never take a melee orc's turn. Grant -> the shot's start 0.05 s, the arrow's impact 2.63 s later (`SHOOT`).
+- **Arrows pass `FR_DMG_ATK`** (0x2811007): 21 per arrow, `ds+0x20` = the archer's HOBJECT (for blows the orc's).
+  `ds+0x50` = the amount, a float; 21 per infantry blow at this level.
+- **The game's debug logs print nothing:** `Combat.Debug.AttackerSelection` / `.AIMgr` set to 1 (their bytes were 0)
+  and `Combat.Value.LogFileName` set through the console: no file, no line anywhere in RUN (as `Combat.Debug.Prompt`,
+  P7/P8). Our `FRONT score` lines stand in.
+- **The re-arm statics** (`SOMVR_FRONT_LOCKOUT`): 0.25 / 0.75 read back at the first stereo frame, x1.5 written; no
+  change in the cadence (1.85 s alone, 67 grants in both fights): the attack's own length, not the lockout, paces a
+  lone orc. Its effect on bigger fights is unmeasured.
+- **The "sorted first" trap never came up:** 0 prio candidates (`+0x23a` with its timer run out) in all three fights;
+  the code warns such an orc at once (the pure tests), runtime-unproven.
+
+**What the veto does** (run 081743, `SOMVR_FRONT=1`):
+- The orc in view: 9 grants in 14 s, all `in-view`, the same 1.85 s cadence as the baseline; no veto.
+- The head turned 180 deg (the orc behind): `FRONT veto` (score 19.9 -> -50), `FRONT warn` + `THREAT pre` (side L/R,
+  the sound, the pulse), `FRONT ready` 0.95-1.00 s later, `FRONT grant ... verdict=ready`, the attack 0.05 s after, the
+  impact 0.80 s after that: **the warning starts at least 1.80 s before the blow lands** (the 20 `ready` grants with
+  their attack seen: 1.80-4.46 s). A lone orc behind attacks every ~2.0 s instead of 1.85 s: the warning runs while
+  it recovers from its last blow.
+- Three orcs (kept), forward / behind / to the side: the fight flowed (grants every 2-2.7 s; orcs in view first, the
+  ones behind after their warning, one at a time). Totals: grants at Talion 67 = `in-view` 45 + `ready` 22, **0 to a
+  vetoed orc**; 27 warnings, 26 used, 1 ran out unused; every grant led to an attack (`none within 6 s 0`).
+- THREAT's `LATE` cleared 29 times (`FRONT prewarned`). The `LATE` lines left are THREAT's own full-angle rule: an orc
+  at 0.4-1 m in front holds its weapon hand 50-75 deg below the eyes, so THREAT calls it out of view (mark 081948_1:
+  the orc right at Talion's feet, its armour at the bottom of both eyes). THREAT would need the bearing rule too.
+
+**The camera copy from the head** (run 082352, `_CAMCOPY=head`): written 3978 of 3978 calls. The game's own score
+follows the head: an orc behind the head totals **0.01** (`out of view` mean 0.41, max 9.6) instead of 19.9 (run
+081743: mean 15.1). So with the copy the game itself prefers the orcs in the headset (the copy's 110 x 90 deg); the
+veto stays for the lone orc behind. 67 grants (in-view 50, ready 17), the fight as with the game's copy.
+
+**The damage** (run 082352, `_DAMAGE=0.5`): `FRONT damage at Talion 21.00 -> 10.50` (71 of 71 at Talion), the health
+drop -10.5 per blow (`FIGHT hurt 120.0 -> 109.5 -> 99.0 -> 88.5`; the baseline -21).
+
+**Arrivals and despawns with the copy** (SH-9; the FRONT arrival watch; the head turned 180 deg for 160 s, then forward
+for 60 s; the meadow with `SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0`: the ambient spawner on, nothing removed):
+- 084439 `_CAMCOPY=off`: after the trip had settled, 2 orcs came within 60 m and 4 went (not dead): **3 of the 6 in
+  the player's view** - one arrived 2 deg off the head (82 deg off the copy) at 49.5 m, two vanished 25 and 30 deg off
+  the head (95 deg off the copy) at 49-53 m. The flat copy lets the game pop orcs in and out where the player looks.
+- 085304 `_CAMCOPY=head`: none came or went within 60 m in the same window (the only in-view arrival was the meadow
+  streaming in 4.5 s after the trip, the same orc and spot as in 084439, the copy and the head then aligned). The
+  ambient orcs fought Talion in both (22 and 40 grants at Talion; with the head copy 19 after a warning).
+- 083723 (`SOMVR_PRACTICE=0`, the save's own place, `_CAMCOPY=head`): 2 arrivals at 50-54 m out of view, 1 departure
+  at 47 m 170 deg off the head (21 deg off the game's own copy: the flat game would not have despawned it there); the
+  fight circle ran for other targets meanwhile (96 grants, none at Talion), untouched by the veto.
+- The samples are small (spawns are rare here), but the direction is clear: with the head copy the game's off-screen
+  rule is the headset's 110 x 90 deg, wider than the flat copy's 37 x 40, so nothing it spawns or despawns lands in
+  view; with the flat copy it can. Not settled: fewer spawns overall (085304 had no near arrival at all; one window).
+
+**Runs** (logs/boot-check-20261026-*; every one 0 WARN, the install unchanged, the save UNCHANGED): 080611 (`log`,
+GAMELOG), 081743 (the veto), 082352 (+ `_CAMCOPY=head _DAMAGE=0.5 _LOCKOUT=1.5`), 083723 (no practice, head copy),
+084439 / 085304 (the spawner on, copy off / head). scripts/front14-drive.sh plans fight (the first three), spawn (the
+rest; `FRONT_WAIT=practice` for the meadow).
+
+**Not proven:** the prio ("sorted first") path; `_MAX_WARN` > 1, `_FAR_M`; the lockout in big fights; `+0xd12` (no
+cinematic in these runs); the on/off-screen attack pools with the head copy; the headset (the warning's feel at 90 Hz,
+real head turns). THREAT's own in-view test still uses the full angle: a close orc in front (0.4-1 m, its weapon hand
+50-75 deg below the eyes) is out of view for THREAT and gets `LATE` edge warnings (mark 081948_1); the bearing rule
+would fix that.
+
+
+### 42.11 Round 2: THREAT's view by bearing, one warning per attack, bigger fights (2026-10-26, headless; handoff/HANDOFF-front.md "Round 2")
+
+**Built** (branch of the threat14 helper; every switch below is in scripts/headset-build14.env's round 2 block):
+- **One in-view test** (`somvr_th_view_off` / `somvr_th_in_view`, somvr_threat.c): THREAT's cues (attacks, the near
+  cue, projectiles), FRONT's veto, its cue's "looked at" and its arrival watch all compare the same angle with
+  `view_deg / 2`: the bearing, |yaw| in the head's frame, the pitch ignored (a point more than 85 deg above or below:
+  the full angle, its yaw means nothing there). `SOMVR_THREAT_VIEW=bearing|full` (default bearing; full = round 1's
+  THREAT, and FRONT follows it: one test). `CONFIG threat ... view=bearing keyless=0`.
+- **THREAT judges an attack's view at the orc's body** (its root + 100 cm, `TH_BODY_UP_CM`), not at its weapon hand:
+  with the bearing on the hand (run 092140) an orc fighting at Talion's feet in plain view still gave 4 `LATE` edge
+  warnings in 21 s - at 1.2 m its hand swings 57-65 deg out to the side half a second before the blow. The glow stays
+  on the hand; the edge's side is the body's.
+- **Keyless attacks get no cue** (`SOMVR_THREAT_KEYLESS=0`, the default; 1 = round 1's): an attack record whose ten key
+  times are all 0xffff (no impact, no parry window, no BCOL, no SHOOT). Run 092140, five orcs: **200 of 254 attack
+  starts at Talion were keyless**, none of them a blow (220 ended replaced by the orc's next record after 1.44 s on
+  average, 29 with the orc gone); THREAT announced each out of view with a pulse and the sound: **114 of its 148
+  announcements**. They are the orcs' moves between blows (the walk-in after a grant, the circling); the real blows
+  have their table (impact 0.80 s). The start line says `keyless: no cue`, `THREAT END ... keyless N: no cue`. FRONT's
+  "the grant's attack" is now the first keyed track after the grant (round 1 could take a keyless move).
+- **`SOMVR_FRONT_ONECUE=1` (default): one warning per attack from out of view.** For an attack FRONT warned about (its
+  warning runs or is ready, or it is the first keyed attack the warned grant started within 2.5 s), THREAT's own pulse
+  and sound are skipped when FRONT's warning gave them (`THREAT quiet orc=.. haptic=announce sound skipped: FRONT warned
+  it .. s ago`); `LATE` is cleared as in round 1; the edge glow is held at the warning's end level (0.8 x the edge)
+  from the grant to that attack's impact (on the track's own clock, which follows the orc's animation timer), and
+  THREAT's edge rises over it in the last 0.8 s. So the player gets, per blow from behind: the sound at the orc and one
+  pulse on its side 1.8 s before the impact, an edge glow on that side rising and staying until the blow, nothing
+  else. 0 = round 1's. Per warned attack a `FRONT cues` line (pulses and sounds, the warning's and THREAT's, THREAT's
+  skipped, the edge's span); `FRONT END ... warned attacks N (pulses x, max m, sounds y per attack; THREAT's skipped
+  ...; edge held .. frames)`; `THREAT end ... pulses N sounds N`.
+- FRONT's event lines (warn, ready, grant, attack, expired, prewarned) have their own log budget (400, then 20 a
+  second): in round 1 the score lines used up the shared one and grants went unlogged in fights.
+
+**Round 1's pulse count** (run 081743's log; one orc behind, `SOMVR_FRONT=1`): per blow the FRONT warning (pulse +
+sound) 1 s before the grant, THREAT's announcement (pulse + sound, `LATE` cleared) at the attack's start, its urgent
+pulse 0.35 s before the impact: **3 pulses and 2 sounds within 1.8 s for one blow**, plus a pulse and the sound for
+every keyless move out of view. Run 092140 (five orcs, 3.5 min of fighting, keyless still cued): **305 pulses, 179
+sounds**. Not HL:A's one readable cue.
+
+**Runs** (logs/boot-check-20261026-*; scripts/threat14-drive.sh: `feet` = one orc spawned 2 m ahead, fighting at
+Talion's feet with the head forward, then turned 180 deg; `crowd` = five orcs kept, the head forward, a sweep of 3 s
+turns, behind, to the side; every run 0 WARN, the install unchanged, the save UNCHANGED):
+- **092140** (build 14's env + `view=bearing`, `ONECUE=1`; the hand point, keyless cued): feet-front 4 `LATE` edges
+  (the hand 57-65 deg out); the crowd 29-62 THREAT announcements per phase; totals 305 pulses, 179 sounds.
+- **093343** (+ the body point, keyless no cue): **feet-front: 0 THREAT warnings, 0 edge cues, 11 glows, 11 in-view
+  grants** (the orc at Talion's feet straight ahead: 0.6 m, yaw +3); **behind: 12 FRONT warnings, 11 ready grants,
+  every warned attack `pulses 1 (the warning's 1 + THREAT's 0), sounds 1 (1 + 0), THREAT's skipped 3`**, its warning
+  1.00-1.05 s before the start and 1.80-1.85 s before the impact. Totals **40 pulses (305 in 092140), 28 sounds (179)**
+  for about the same fight (419 vs 437 attack starts, 81 vs 82 grants), keyless 343 of 419. The THREAT warnings left (7
+  `LATE`) are orcs granted in view whose blow started out of view (they had circled to 55-65 deg): real blows without a
+  warning, announced as before. The edge hold ran 1 frame there (it matched the track by its start time, which follows
+  the orc's timer): fixed by the start's serial (cf69572).
+- **095005** (`all` + `_MAX_WARN=2`; the hold fixed): the edge held to the impact (`the edge 0.00..1.80 s after the
+  warning's start`, 16-17 held frames); 33 warned attacks, 1.03 pulses and 1.00 sounds each (the one with 2: its
+  warning was looked at before its cue, so THREAT's own pulses ran); feet-front had 4 FRONT warnings because that orc
+  fought at Talion's right shoulder (yaw 65-80 deg at 0.3-0.5 m: out of the headset's view, rightly warned). Totals 68
+  pulses, 46 sounds (more warnings: 44).
+- **095712** (`crowd`, the env as is: `_MAX_WARN=1`, `_LOCKOUT=1.0`, all events logged): 21 pulses, 13 sounds, keyless
+  340 of 390 starts.
+- **100322** (`crowd` + `_LOCKOUT=1.5`: the statics 0.375 / 1.125 s written): 33 pulses, 23 sounds; 11 warned attacks,
+  1 pulse and 1 sound each.
+
+**Bigger fights** (five orcs, infantry and shields, kept with `front keep 1`; the head forward, swept in 3 s turns,
+behind, to the side; the crowd window of each run, from scripts/threat14-drive.sh's PHASE lines and the grant lines):
+
+| run | switches | grants at Talion | per s | max gap | orcs granted | warnings (2 at once) | ready grants |
+|---|---|---|---|---|---|---|---|
+| 095712 | `_MAX_WARN=1`, `_LOCKOUT=1.0` | 48 in 116 s | 0.41 | 4.1 s | 5 (18/14/12/3/1) | 6 (0) | 1 |
+| 095005 | `_MAX_WARN=2` | 45 in 117 s | 0.38 | 4.0 s | 3 (27/10/8) | 20 (10) | 6 |
+| 100322 | `_LOCKOUT=1.5` | 44 in 115 s | 0.38 | 4.4 s | 3 (20/13/11) | 17 (0) | 10 |
+
+- **The fight flows**: a grant at Talion every 2.4-2.6 s, no gap over 4.4 s, every grant an attack, no stuck slot. The
+  game keeps 2-3 orcs in its inner ring and rejects the middle ring's (-5, "ring not allowed": `verdict=game ring=2`
+  in `front status`): its own pacing, the veto does not hold the fight up.
+- **The "sorted first" trap** (entry+0x23a with its +0x224 timer run out): 0 prio candidates in all six runs.
+- **`_MAX_WARN=2`**: two orcs behind warned at once (10 times), more of them attack after a warning (6 ready grants vs
+  1), the same pace (0.38/s vs 0.41/s); the player then gets two edges and two pulses at once. Kept at 1 (front first:
+  the orcs in view take the turns, one warning at a time).
+- **`_LOCKOUT=1.5`**: no clear change (0.38/s vs 0.41/s, max gap 4.4 vs 4.1 s): the attack's own length paces the slot,
+  as with one orc in round 1. Kept at 1.0.
+- The samples are small (one run each): which orcs stand in the inner ring and where the head points decide more than
+  the switches (095712's crowd-behind had no warning at all: the orcs had circled into the turned view; 100322's had 10).
+
+**Do keyless records ever hurt?** Run **102136** (`all` + `SOMVR_FRONT_DAMAGE=0.99`: the damage hook in, 21 -> 20.79,
+every hit at Talion logged with the attacker's THREAT track at that moment, `FRONT damage ... its track: keyed at ..
+s (impact .. s) | KEYLESS at .. s | none`): **106 hits, all from a keyed track, 0 keyless, 0 none** (362 of 440 starts
+keyless). The hits land at the track's impact (74 within -0.1..+0.05 s), 26 at +0.2..+0.5 s, 3 at +2.5..+4.9 s (the same
+keyed track still on). Round 1's logs suggested otherwise (9 of 70 hits in 082352 had a keyless last start for the
+attacker), but those lines had no time and the track map was the grant's: the live track at the hit says keyed. The
+feet plan there: 2 THREAT warnings for the orc in front, at yaw -55..-57 (the cone's edge at 1.2 m, judged in view by
+FRONT a moment before); behind, 20 warned attacks, 1 pulse and 1 sound each; the crowd 0.40 grants/s, max gap 3.9 s.
+
+**Not proven:** the headset (one pulse + one sound + a held edge per blow from behind: readable? 1.8 s at 90 Hz?);
+the bearing's blind spot (the head pitched steeply: an orc ahead counts as seen; the test head only turns); THREAT's own
+unwarned attacks keep their two pulses (announce, urgent); hits up to 0.5 s after THREAT's impact estimate (26 of 106 in
+102136) make its urgent pulse early for those; an orc at the cone's edge (55-67 deg at ~1 m) flickers between seen and
+warned (no hysteresis).
+## 43. The story at runtime: mission starts, quest cards, the story video, picks (the story drill, 2026-10-26)
+Headless runs logs/boot-check-20261026-075509 .. -091332 (handoff/HANDOFF-story.md: the runs, the pictures, the
+ranked findings; scripts/story14-drive.sh). Build 13's switches, then the build 14 candidates `SOMVR_USE`,
+`SOMVR_XR_THEATRE_VIDEO`, `SOMVR_XR_THEATRE_RESEAT` (all default off). Facts learned (runtime; nothing patched to
+learn them except our own input):
+
+### 43.1 Where the story is on the save (the probe's navdump, P7)
+`navdump` (logs/boot-check-20261020-001117/probe-out/nav-4.tsv) lists every nav marker's record and world position:
+the drill's places. `goldenM` 42632 3889 -22529 = the story mission "Queen of the Shore" (Marwen; the golden M 74 m
+east of the save's forge tower); `goldenT` -40540 1900 -22160 (another story start, not visited); `powerStruggle`
+-30877 2874 11629 = the Nemesis mission "Beast Hunt" (the captain Ratlûg the Gluttonous); `resistance_QuestGiver` 27107
+3363 -19520 (no prompt at it); `Collectible_Artifact` (3), `Collectible_Glyph` (3, one 3.8 m up a wall: 34345 3900
+-19589, the ground 3523), `Collectible_Flower_*` (17: herbs; `_I` at 38599 3566 -25606, the ground 3670). `Teleport`
+lands on the ground under or over the point (the drill gives `practice go` the ground's height).
+
+### 43.2 The pad's bindings at story moments (`USE bindings`, the game's binding table per pad button)
+| Where | A | B | RB |
+|---|---|---|---|
+| the world | - | - | Activate 34, CombatSecondary02 123, QuestConfirm 282 |
+| a mission card (a presentation, `ctx=world`) | QuestConfirmStart 283 | QuestConfirmCancel 284 | - |
+| a failed mission (a presentation, `ctx=world`) | QuestFailedRetry 285 | QuestFailedAbandon 286 | - |
+| the Leave Mission dialog (`paused=1 ctx=menu`) | MessageBoxConfirm 67 | MessageBoxDeny 68 | - |
+| a story video (`video=1 ctx=menu`) | MenuEnter 54 | MenuEscape 55 | - |
+QuestConfirm 282 is active in the world everywhere (the stock RB presses it with every Activate); at a marker it opens
+the card. 283 pressed at a Nemesis marker without the card started the mission at once (run 081246). Nothing skip-like
+(CinematicSkip 260/261, SkipPresentations 265) is bound during a captain's introduction.
+
+### 43.3 The flow
+- A marker: "<mission> — [RB] Start Mission" on the HUD (top right in the flat game; not a PromptShow diamond, so
+  SOMVR_PAD_PROMPTS never sees it). 282 -> the card: BODYMOMENT `cond - -> pres`, `window 0 -> 1 by pres (flat frames:
+  the menu quad)` while `SESSION ui` stays `ctx=world paused=0` - the controllers are not the pad there (3.5). The
+  card shows the mission's picture and line and "(A) Accept (B) Cancel".
+- 283 -> 0.3 s of the game's black cover (SOMVR_XR_COVER: the loading space 1.8 s) -> a load -> for the story mission
+  a video: `SESSION ui ... video=1 ctx=menu` for 102 s (the game re-creates its 1920 x 1080 swapchain at the video's
+  start and end); two presses about 1 s apart skip it (MenuEnter, then MenuEscape: run 083012 at 56 s), 10 s apart do
+  not -> the cover -> the world with a timed objective ("01:30 Make haste to the Sea Fort while avoiding detection").
+  For the Nemesis mission: the card, 283, the cover, then the captain's introduction: `pres` 4-5 s in the window
+  (Ratlûg's name and line).
+- **The story video's presents are layout-B frames without eye images** (`the tag says eyes 0x0`): build 13's layer
+  showed the last stereo frame again for all of them (`reuse 600`: a frozen world). `SOMVR_XR_THEATRE_VIDEO=on` makes
+  them mono frames while the session says a video: the video on the theatre's 5 m screen (`theatre 3: a video on a
+  5.0 m screen at +0.09,+0.00,-4.98`, run 091332).
+- Failing: leaving the area ("Too far from Mission!") or the timer ("Out of Time! Hint: Use the Elven Swiftness
+  ability") -> a presentation in the window, the game's third-person shot of Talion, "(A) Retry (B) Abandon"; 286 ->
+  "Leave Mission — Are you sure ...? (A) Yes (B) No" as a real pause (`paused=1 ctx=menu`: the menu passthrough).
+- The theatre at runtime: a load on 2.4 m at 2.4 m, the window on 3 m at 3 m, a video on 5 m at 5 m (with the fix).
+  Build 13 placed a kind once (`KA.th_kind` was reset on mono frames only): the next window of that kind reused the
+  first one's place; `SOMVR_XR_THEATRE_RESEAT=on` places each new one where the head faces (`(reseat: placed again
+  after stereo frames)`, 4 placements in run 091332).
+
+### 43.4 Picks
+An herb's prompt is a PromptShow on CombatSecondary02 123 (StringId 'Combat_Activate_Flower', key 'Sword_ButtonRB',
+"Restore Health"), as are arrows ('Combat_Activate_Ammo_Full' when full). SOMVR_PAD_PROMPTS=vr dropped them (no VR
+control sent 123: the deny list, 3.6). 123 at the herb's prompt = the pick (`attack 'Activate_HealthCollectable'`, no
+body moment: the view stays the player's); 123 at 'Combat_Activate_Ammo_Full' = the grab's swing
+(`PC_Grab_Attempt_F_Fail`). `SOMVR_USE=1`: a 'Combat_Activate_*' prompt (not '_Full') kept and shown as B (120), B
+holds 123 with Activate while one is up (run 083012: the prompt down at once, the herb taken).
+
+### 43.5 SOMVR_USE's input rule
+B in the world = the pad's RB for 282/283 (through the binding table, each only while active); while BODYMOMENTS'
+window is up, A/B/X/Y and the grips = the pad's A/B/X/Y/LB/RB for 260, 261, 265, 282-286 only; a button held at a
+window's edge counts after its release (run 090034: B held 0.4 s into the card pressed its Cancel 0.15 s after 282).
+`sc_tick_out.raw` carries the held buttons in every context. Not reached at runtime: an artifact's, an Ithildin's or a
+giver's prompt, a door or lever's Activate prompt.
+
+### 43.6 The timed first objective walked (round 2: runs 20261026-094108, -100942, -102938)
+"Queen of the Shore"'s first objective (01:30, "Make haste to the Sea Fort while avoiding detection") walked by
+scripts/story2_route.py (the left stick held forward, the test head turned toward the next route point, Talion's
+place from `practice status` every second, the edge cue answered with A; story14-drive.sh `route`, `routemap`,
+`route2`). Facts:
+- **Where**: the video leaves Talion at about 42320 3763 -22496 (the golden M). `practice status nav` (43.9) a few
+  seconds into the objective lists two new markers: **'Objective' at 23434 1758 -8684** and 'Objective_Squiller' at
+  25887 1821 -8313 (the first dump right at the world's return had neither). The straight line to 'Objective' is 234 m,
+  20 m lower. The way runs west to a cliff edge (about 35100 -21450), north through a rocky stretch (34600 -18200 ..
+  32800 -15750), west to a second edge (about 31200 -15900), then north-west over the valley floor.
+- **The run band cannot make it**: 230 cm/s x 90 s = 207 m < 234 m straight (run 094108 attempt 1: 90 m walked).
+- **The sprint latch (the left stick's click) runs 6.2-6.4 m/s** (`LOCO` v max 640, the stock FreeRun's speed; P10),
+  smooth and 1:1 with the stick: run 102938 attempt 3 walked 445 m in its 92 s.
+- **Both edges stop the walk** (the game keeps Talion on every edge, 40.1); `SOMVR_CLIMB_DESCENT`'s edge cue fires
+  ("the walk stopped at an edge 484-977 cm over the ground: A here = the blink down", the right hand's double pulse)
+  and A blinks him down (4.5 m and 14-16 m: run 102938 at 35 s and 50 s). Without A (run 094108's attempts) the walk
+  stays on top and the timer runs out.
+- **Best walk** (run 102938 attempt 3, the route of the earlier walks as points): the first edge 35 s, the second 50 s,
+  within 9 m of 'Objective' at 73 s, circling within 4 m of it 76-82 s - **no completion**: Out of Time at 90 s. 15-20 s
+  of every walk went to rocks and slopes the walk cannot climb (the bot's detours; a player sees them). The objective's
+  own trigger is not that marker's 4 m: the HUD's coin there still read 266-297 ft, on the ruins with a fire 80-90 m
+  on. **So whether a VR player makes the Sea Fort in 1:30 is unproven**; the running time is about 330-420 m / 6.3 m/s
+  = 52-67 s plus two blinks (2 x 1.3 s): it fits only for a player who knows the way.
+- **The HUD's coin is placed by the game's own camera** (its 43 x 25 deg view: `FRONT camcopy ... fov 43.1 x 25.0`):
+  in the VR view it sat at the screen's edge with an arrow ("v" under the view, ">" at its side) in nearly every shot,
+  its distance the game camera's. The wrist minimap (heading-up from the head, SOMVR_MINIMAP=head) showed the
+  objective ahead in the same frames.
+- **A fail**: "Mission Failed! Reason: Out of Time! Hint: Use the Elven Swiftness ability to hasten your arrival.
+  (A) Retry (B) Abandon" (the window, the theatre's screen). A (285 by SOMVR_USE) = 0.3 s of pause, then Talion stands
+  at the objective's start (within 6 m of the first) with a fresh 01:30 - no card, no video again (runs 094108,
+  100942, 102938: 7 retries). B (286) = the Leave Mission dialog, A = Yes: the mission ends where he stands (102938).
+- The world map (the right stick's click, `ctx=menu paused=1`) opens on the whole region zoomed out ("Harad Basin":
+  no route to read); after closing it a menu-button tap did not pause (run 100942).
+
+### 43.7 "[RB] Start Mission": where its glyph comes from (static, som-linux)
+The marker's line is CUIHUDQuestConfirm (`SQuestConfirmData`, CUIHUDEventManager::OnQuestShowConfirmation):
+FUN_00f56820 goes to the movie's "Confirm" frame and sets the StringId `UI_QuestConfirm_Confirm` ("Start Mission";
+`UI_TravelPoint_Confirm` for a fast-travel tower, `UI_QuestConfirm_InCombat` in a fight). It asks no binding: the
+binding lookup FUN_00aaaf50 (which the prompt diamonds' glyphs come from, 43.4) is called by the prompt diamonds,
+CStrugglePressCount / CStruggleAim's widgets (FUN_00ecbe40 / FUN_00ecfe00: an icon by command) and a few others, none
+in the quest HUD. So the RB is the movie's own picture: SOMVR_PAD_PROMPTS' relabel cannot reach it, and changing it
+means the movie (not done). The Controls page names B for it instead (43.10).
+
+### 43.8 The theatre's screen size: `SOMVR_XR_THEATRE_SIZE` (build 14 candidate; layer)
+The screens were as wide as they are far (53 deg): a captain's line 0.6 deg (12 Quest 2 pixels). Rebuilt with
+vklayer/tests/void_view.c from run 081246's Ratlûg frame at 20.7 px/deg (a Quest 2's centre): on 4 m at 3 m the line
+and the name are clearly crisper, and the whole screen (67 deg) still sits well inside the view in both eyes
+(logs/story2-pictures/theatre-size-text.png, -full.jpg). `SOMVR_XR_THEATRE_SIZE=50..200` (% of the distance, default
+100 = build 13): the video's and the window's screens that much wider at the same place; the load panel stays. Lines
+`xr: theatre: size 133 % ...: a video's screen 6.65 m wide 5 m ahead (67 deg), the window's 3.99 m at 3 m`, `xr:
+theatre N: the cinematic window on a 4.0 m screen`. Run 102938: the card, the video (6.7 m), 4 failed screens on it.
+Layer scenario theatre-size.
+
+### 43.9 `practice status nav` (a test word) and the collectibles
+`practice status nav` = the status line, then the nav markers with a place (active, enabled, an object; the probe's
+rule and its F_NAV_POS FUN_00ebc700, checked at the first such word: `PRACTICE site PRN_NAV_POS ok`): `PRACTICE nav N
+'NAME' at (X Y Z), D m from Talion`, then `PRACTICE t=.. nav: 296 markers, 30 with a place`. The resistance giver's
+marker moves (29806 3492 -14641 in run 102938; 27107 3363 -19520 in the probe's 10-20 dump): it is a walking NPC's.
+Collect step (run 102938): the artifact at 61240 981 -15547 is in a cave with ghuls ("No Target Selected", the view
+red): no prompt in rings up to 3.5 m around it; the glyph at 34269 3233 -28618: the trip landed 12 m under the marker
+(the drill's `WARN PRACTICE ... did not arrive after 3 teleports`) and Talion died there (the death screen). **Not
+reached in round 2 either**: an artifact's prompt and its examine view, an Ithildin glyph, a giver's prompt, a door or
+gate (24 'LockedGate' markers, none enabled).
+
+### 43.10 The Controls page with SOMVR_USE
+Build 14's switches (the crouch's own line) had pushed "Sprint: click left stick" off the page (build 13 too): the
+timed objective's one answer was on no card. With SOMVR_USE (`SOMVR_VMA_USE`, avail bit 0x100000): "Use: B (pick,
+missions)", Menu and Pause in one line ("palm/hold; tap=pause"), so Sprint stays; 18 lines, the same font and rows
+(logs/story2-pictures/controls-page-13-vs-14.png; test_vrmenu's build 14 check). Run 102938's menu avail 0x1ff027.
