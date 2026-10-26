@@ -198,6 +198,7 @@
 #include "../somvr_pointer.h"
 #include "../somvr_comfort.h"
 #include "../somvr_threat.h"
+#include "../somvr_objective.h" /* build 15: the objective marker (./somvr_objective_layer.c) */
 #include "../somvr_vrmenu.h"
 #include "../somvr_session.h" /* SOMVR_MARK: a mark's eyes; SOMVR_MARK / SOMVR_QUIT: the menu's Report and Quit game */
 #include "../somvr_menus.h" /* build 6: the menu boards, the wrist minimap, touch (./somvr_menus_layer.c) */
@@ -670,6 +671,7 @@ static struct {
  * (XL_BAND) makes 17 slots from the projection on: a frame that would carry more than 16 goes without it (xl_cap). */
 #define XL_ENV_N 9
 enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING, XL_THE0, XL_THE1,
+       XL_OBJ, /* build 15: SOMVR_OBJECTIVE's marker or its edge arrow (over the ring, under the HUD) */
        XL_MBD, XL_MBK, /* SOMVR_XR_MENU_BACK: the world's dim and the dark panel behind a game menu's board */
        XL_HUD,
        XL_BAND, /* build 8: the prompt band (a part of the HUD: off with it; the first to go beyond 16 layers) */
@@ -678,10 +680,10 @@ enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING,
        XL_HANDS, /* build 10: our own VR hands (a projection layer over the wrist panel and the watch) */
        XL_BLINK, XL_FADE, XL_N };
 enum { XG_FADE = 1u << 0, XG_CF = 1u << 1, XG_PTR = 1u << 2, XG_HUD = 1u << 3, XG_ENV = 1u << 4, XG_VM = 1u << 5,
-       XG_TH = 1u << 6, XG_VH = 1u << 7, XG_MB = 1u << 8 };
+       XG_TH = 1u << 6, XG_VH = 1u << 7, XG_MB = 1u << 8, XG_OB = 1u << 9 };
 _Static_assert(XL_ENV_N + 1 + 2 + 3 + 1 <= 16, "a mono frame's worst case: env, quad, pointer, VR menu, fade");
-_Static_assert(XL_N - XL_OWN <= 20, "a stereo frame's worst case: every slot from the projection on, less the band, "
-                                    "the hands and the menu backdrop's two (xl_cap)");
+_Static_assert(XL_N - XL_OWN <= 21, "a stereo frame's worst case: every slot from the projection on, less the band, "
+                                    "the hands, the menu backdrop's two and the objective's marker (xl_cap)");
 #define XL_MAX 16 /* XR_MIN_COMPOSITION_LAYERS_SUPPORTED: a frame with more loses the band (xl_cap) */
 _Static_assert(XL_THG2 - XL_THG0 + 1 == SOMVR_TH_GLOWS && XL_THE1 - XL_THE0 == 1, "the threat slots");
 typedef struct {
@@ -692,6 +694,7 @@ static uint32_t xl_group(int i) {
     if (i >= XL_VM0 && i <= XL_VM2) return XG_VM;
     if (i == XL_HANDS) return XG_VH;
     if (i == XL_MBD || i == XL_MBK) return XG_MB;
+    if (i == XL_OBJ) return XG_OB;
     if ((i >= XL_THG0 && i <= XL_THG2) || i == XL_THE0 || i == XL_THE1) return XG_TH;
     return i == XL_FADE ? XG_FADE : i == XL_RING || i == XL_BLINK ? XG_CF : i == XL_PTR0 || i == XL_PTR1 ? XG_PTR
                                                                         : i == XL_HUD || i == XL_BAND || i == XL_MMAP ? XG_HUD : 0u;
@@ -1462,6 +1465,10 @@ static void cf_setup(void);   /* comfort: the vignette and the snap blink (its r
 static void cf_destroy(void);
 static void th_setup(void);   /* the threat cues (their region follows comfort's) */
 static void th_destroy(void);
+static void ob_setup(void);   /* build 15: the objective marker (./somvr_objective_layer.c) */
+static void ob_destroy(void);
+__attribute__((format(printf, 1, 2))) static void ob_off(const char *fmt, ...);
+static void ob_dump(uint64_t frame); /* ... a dumped frame's marker picture (mn_dump_layers) */
 static void env_setup(void);  /* SoM loading env: the sky behind mono frames (its region follows comfort's) */
 static void vd_start(void);   /* never a void (./somvr_void_layer.c): the present gaps, the watcher */
 static void vd_stop(void);
@@ -1516,6 +1523,7 @@ static void xr_teardown_session(void) {
     X.fade_on = 0, X.fade_n = 0;
     cf_destroy(); /* comfort: the alpha texture's swapchain and its VIEW space (ours alone): before the session */
     th_destroy(); /* the threat cues: their texture's swapchain and VIEW space (ours alone): before the session */
+    ob_destroy(); /* build 15: the objective marker's swapchain, staging buffer and VIEW space: before the session */
     env_destroy(); /* SoM loading env: the sky's and the kept frame's swapchains (ours alone): before the session */
     vm_destroy(); /* the VR menu: the panel's swapchain, staging buffer, command buffer, fence: before the session */
     vh_destroy(); /* build 10: our hands' swapchain, drawing, command buffers, fences: before the session */
@@ -1658,6 +1666,7 @@ static int xr_session_setup(dev_st *ds, q_st *qi) {
     vm_setup();   /* the VR menu: the preload's somvr_vrmenu (SOMVR_VRMENU=1; before comfort, which follows it) */
     cf_setup();   /* comfort: the preload's somvr_comfort (SOMVR_VIGNETTE, SOMVR_SNAP_BLINK_MS) */
     th_setup();   /* the threat cues: the preload's somvr_threat (SOMVR_THREAT=1) */
+    ob_setup();   /* build 15: the objective marker: the preload's somvr_objective (SOMVR_OBJECTIVE=on|both) */
     env_setup();  /* SoM loading env: SOMVR_XR_ENV */
     mn_setup();   /* build 6: the menu boards, the wrist minimap, the card, touch */
     XrSessionCreateInfo sci = {.type = XR_TYPE_SESSION_CREATE_INFO, .next = &b, .systemId = X.sys};
@@ -4657,6 +4666,7 @@ static void vm_click(const somvr_vm_hit *hit, uint32_t avail) {
 #include "somvr_menus_layer.c" /* build 6: the menu boards, the wrist minimap, the arrival card, touch */
 #include "somvr_vrhands_layer.c" /* build 10: our own VR hands, the watch on the wrist, the panel off the palm */
 #include "somvr_void_layer.c" /* never a void (HG-9): the present gaps, the keep-alive frames, the loading space */
+#include "somvr_objective_layer.c" /* build 15: SOMVR_OBJECTIVE's marker in the world, its edge arrow */
 #include "somvr_testhead_layer.c" /* SOMVR_XR_TEST `head X Y Z [yaw DEG] [s SEC]`: a duck, a look behind (headless tests) */
 
 /* One frame (stereo, reuse or mono), before the game's pointer (it has no target while the panel is open) and before
@@ -4943,7 +4953,7 @@ static int xr_end_comp(const xr_comp *c0) {
     for (int i = XL_THG0; i < XL_N; i++) nt += c->l[i] && xl_group(i) == XG_TH;
     XrResult r0 = xr_end_try(c, 0, &n), r = r0;
     if (have && layer_rejected(r)) {
-        static const uint32_t order[] = {XG_ENV, XG_VH, XG_MB, XG_TH, XG_FADE, XG_CF, XG_VM, XG_PTR, XG_HUD};
+        static const uint32_t order[] = {XG_ENV, XG_VH, XG_MB, XG_OB, XG_TH, XG_FADE, XG_CF, XG_VM, XG_PTR, XG_HUD};
         for (size_t k = 0; k < sizeof order / sizeof order[0] && !off; k++)
             if ((have & order[k]) && !layer_rejected(r = xr_end_try(c, order[k], &n))) off = order[k];
         if (!off && layer_rejected(r)) r = xr_end_try(c, off = have, &n); /* more than one of them: all off */
@@ -4966,7 +4976,8 @@ static int xr_end_comp(const xr_comp *c0) {
     if (off & XG_HUD) hud_off("xrEndFrame rejected the frame with the HUD quad: %s; ended again without it", xr_str(r0));
     if (off & XG_VH) vh_off("xrEndFrame rejected the frame with our hands' layer: %s; ended again without it", xr_str(r0));
     if (off & XG_MB) mb_off("xrEndFrame rejected the frame with the backdrop's layers (ended again without them)", xr_str(r0));
-    X.fade_n = 0, CF.has = 0, X.ptr_nq = 0, VM.nq = 0, TH.has = 0; /* this frame's parts went (or not) with it */
+    if (off & XG_OB) ob_off("xrEndFrame rejected the frame with the objective's marker: %s; ended again without it", xr_str(r0));
+    X.fade_n = 0, CF.has = 0, X.ptr_nq = 0, VM.nq = 0, TH.has = 0, OB.has = 0; /* this frame's parts went (or not) with it */
     if (XR_FAILED(r)) return xr_fail("xrEndFrame", r), -1;
     X.frames++;
     vd_ended(); /* never a void: the time between xrEndFrame calls */
@@ -5124,6 +5135,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         vh_reuse(&rc);                                /* build 10: that frame's hands again */
         cf_reuse_layers(&rc);                         /* comfort: that frame's vignette and blink again */
         th_reuse_layers(&rc);                         /* the threat cues: that frame's again */
+        ob_reuse_layers(&rc);                         /* build 15: the objective marker: that frame's again */
         fade_comp(&rc);
         xr_end_comp(&rc);
         return 0;
@@ -5250,6 +5262,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                                                                                      * and the watch (occluders) */
                 cf_layers(ds, &X.open_rec, &sc); /* comfort: the ring under the HUD, the blink over it */
                 th_layers(ds, &X.open_rec, &sc); /* the threat cues: the glows under the ring, the edge bands over it */
+                ob_layers(ds, &X.open_rec, &sc); /* build 15: the objective marker (over the ring, under the HUD) */
             }
             fade_comp(&sc);
             mn_dump_layers(pv, &sc); /* build 6: a dumped frame's quads (SOMVR_XR_DUMP), before the end clears them */

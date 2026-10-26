@@ -9483,3 +9483,235 @@ Build 14's switches (the crouch's own line) had pushed "Sprint: click left stick
 timed objective's one answer was on no card. With SOMVR_USE (`SOMVR_VMA_USE`, avail bit 0x100000): "Use: B (pick,
 missions)", Menu and Pause in one line ("palm/hold; tap=pause"), so Sprint stays; 18 lines, the same font and rows
 (logs/story2-pictures/controls-page-13-vs-14.png; test_vrmenu's build 14 check). Run 102938's menu avail 0x1ff027.
+
+## 44. The story's way-finding: the objective marker in the world, the Sea Fort's 1:30 (build 15 candidate, 2026-10-26)
+handoff/HANDOFF-objective.md (the runs, the pictures); scripts/objective15-drive.sh. Build 14's switches
+(scripts/headset-build15.env) plus `SOMVR_OBJECTIVE` (default off). Section 43 is the story drill's, 45 the
+collectibles' helper's.
+
+### 44.1 Where the game places its objective marker (static, som-linux; re-hud.md 3, re-ui-effects.md 2)
+The HUD's objective "coin" is a nav marker (`CNavMarkerInstance`, the list `0x46b9200`) like every other world icon.
+`FUN_00ec4f10(player)` walks the list once per view and calls **`FUN_00ec4a50(marker, player)` at `0xec4f83`**:
+the marker's world position `FUN_00ebc700(m, &pos)` (-> bool), the distance from the player `FUN_00ad1610(P)` / 100,
+the record's range `FUN_00ebced0(m)` (-> {min, max} m packed in xmm0; default {0, 100}: hidden outside it), then the
+projection **`FUN_00a60920(*(P+0x2d0) = the player camera, &pos, &onScreen, &behind)` at `0xec4d7f`** (the camera
+object's transform and `cam+0x404` = tan of its half FOVs: the flat 43.1 x 25.0 deg camera, not the eyes), the UI
+rect, then `FUN_00ec2660` (on screen) or `FUN_00ec3900` (the edge arrow, `RenderOffScreen`); not placed = the hide:
+`m+0x45 = 0`, `m+0x6d = 0`, `clip = *(m+0xb0)`, `clip->vtbl[0x208/8](clip, 0)`. The caller ignores the return value.
+In VR the HUD is one quad 1.5 m ahead, so the coin (placed by the camera, not the head) sat at the quad's edge with an
+arrow whatever the head did (43.6).
+
+### 44.2 The design: our own marker, the game's place (`SOMVR_OBJECTIVE=on`)
+Re-projecting the coin into the HUD quad through the head was rejected: the quad is world-locked and 44 x 25 deg, so
+an objective beside or behind the player has no place on it, and the coin would sit at panel depth. Instead (G19's
+"capture and re-draw"):
+- **OB_EACH** (K_CALL `0xec4f83`, a stub page, `bo_patch_call`): the original, then for a marker whose record name
+  matches `SOMVR_OBJECTIVE_RECS` (default `Objective*`) its world position (OB_POS, every call: it may move with its
+  target) and the game's own tests before the projection (active `+0x2e0`, enabled `+0x2e1`, a position, within
+  OB_RANGE of Talion's root: "eligible"). In our stereo frames (`g_fr.on`) the game's icon is hidden by the game's own
+  hide (above). Every marker the game shows is logged at first sight (`OBJECTIVE t=.. marker N m=.. 'NAME' ...`).
+  Record names and matches are cached by record pointer (open addressing); the hook costs a few loads per marker.
+- After the frame's body (H4, `ob_frame`): the nearest eligible objective seen this frame goes into the ninth
+  exported object **`somvr_objective`** ("SOMROBJ1" v1, 392 bytes, `somvr_objective.h`): per stereo frame (keyed by
+  the record's frame id, as `somvr_threat`) its place in the layer's reference space (the frame's own rig:
+  `somvr_th_to_xr`) and its distance from Talion (the text). Paused, no player: n = 0.
+- **The layer** (`vklayer/somvr_objective_layer.c`, slot `XL_OBJ` over the ring and under the HUD; the first to go
+  after the menu backdrop when a frame would carry more layers than the runtime takes): `somvr_ob_locate` (pure,
+  somvr_objective.c) against the frame's head (the eyes' middle, the left eye's orientation) and the views' union fov:
+  - **in view** (its tangents within 0.80 of the view's edges; it stays in until 0.90): a 4 deg square world-locked
+    on the head -> objective line at the objective's distance up to 12 m (never under 2 m; none nearer than 3 m:
+    Talion is there), billboarded to the head, shifted so the diamond (0.31 of the cell from its top), not the cell's
+    centre, sits on the direction; within 5 deg of the view's centre the faint copy (40 %) so it never covers what is
+    looked at;
+  - **out of view**: a 5 deg arrow in a VIEW space 1 m ahead on the ellipse at 0.72 of the view's tangents, parallel
+    to the view's plane (undistorted), rolled to the objective's way in the view (behind: the nearer side).
+  - The picture (390 x 130: the diamond with the distance, its faint copy, the arrow; premultiplied) is drawn by
+    `somvr_ob_image` (the menu's VGA font at 2x, a dark rim) when the distance's text changes ("236 m", "1.2 km") and
+    uploaded into the next image of an ordinary swapchain (one staging buffer, its fence waited before the next write).
+    A reuse frame repeats the last quad. A dumped frame writes `<log>.objectiveN.ppm` (+ `.alpha.pgm`): xr_compose.py
+    draws it (the arrow mapped from its VIEW space).
+- Nothing moves, nothing is pressed; the game's own data decides what is shown and where.
+
+### 44.3 Switches, words, lines
+- `SOMVR_OBJECTIVE=off|log|on|both` (default off): log = the hook logs, nothing hidden or published; on = our marker,
+  the game's icon hidden in our stereo frames; both = our marker and the game's icon. `SOMVR_OBJECTIVE_RECS` (default
+  `Objective*`; `,` between patterns, a trailing `*`), `SOMVR_OBJECTIVE_SIZE_DEG` (4), `_DIST_M` (12), `_FAINT_DEG` (5),
+  `_EDGE_DEG` (5). Layer: `SOMVR_XR_OBJECTIVE=on|off` (default on: draws only with an active `somvr_objective`).
+- Words: `objective status` (the counts and every marker seen in the last 5 s: place, eligible, hidden),
+  `objective on|game|both` (live), `objective recs PATTERNS`.
+- Lines: `OBJECTIVE site ...`, `HOOK OB_EACH ok ...`, `CONFIG objective=...`, `OBJECTIVE t=.. marker N ...` (first
+  sight), `OBJECTIVE t=.. frame=..: the marker in the eyes: 'NAME'` / `no objective in the eyes`, every 5 s `OBJECTIVE
+  t=.. 'NAME' marker N at (...), D m from Talion ...; xr (...) m; the game's icon placed (hidden by us); layer: marker
+  frames, edge frames`, `OBJECTIVE END ...`; layer `xr: objective: somvr_objective found ...`, `xr: objective frame N:
+  ... -> the marker world-locked | the faint marker world-locked | the edge arrow head-locked at ... (frames ...)` on
+  each change, `xr: objective: the arrow points D deg`, `xr: objective: picture N ('236 m') uploaded`, `xr: dump
+  objective frame N`.
+- Sites (the OBJECTIVE_SITES block of somvr_objective_game.c; check_sites.py 3/3 ok, byte proofs against the binary):
+```c
+SITE("OB_EACH", K_CALL, 0xec4f83, 0xec4f70, "48 89 dd 4c 8b 63 08 48 83 c5 80 74 2a 4c 89 ee 48 89 ef e8 c8 fa ff ff", 0xec4a50, "41 57 41 56 41 55 41 54 49 89 fc 55 53 48 89"),
+SITE("OB_POS", K_ENTRY, 0xebc700, 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7 48", 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7"),
+SITE("OB_RANGE", K_ENTRY, 0xebced0, 0xebced0, "55 53 48 83 ec 28 48 8b 1d 43 a0 ca 03 48 8b af", 0xebced0, "55 53 48 83 ec 28 48 8b 1d 43 a0 ca 03 48 8b"),
+```
+- Tests: tests/test_objective.c (39: the patterns, the text, ahead / near / too near, the hysteresis, the edges right,
+  left, up, behind on either side, the arrow's axis, a NaN head, the ABI's entry, the picture's cells, guards, faint copy
+  and arrow); test_layer `objective` (none, ahead with its picture byte for byte, the same text not uploaded again, a new
+  text, the edge arrow in a VIEW space, a reuse frame, gone, counters, teardown), `objective-absent`, `-inactive`, `-off`.
+
+### 44.4 Runs (headless, Monado 20 Hz, scripts/headset-build15.env + `SOMVR_OBJECTIVE=on`, the story drill's practice overrides, the test hands; scripts/objective15-drive.sh; each 0 WARN, the install unchanged, the real save UNCHANGED, remotecache.vdf unchanged)
+- **20261026-124757**: the golden M, the card, the video skipped; **the 'Objective' marker appears ~5 s after the world
+  returns** (shown by the game at 23434 1758 -8684, eligible; the objective's 1:30 starts with it: the failed screen
+  91 s later); the layer: `the marker world-locked at +1.64,-1.28,-11.80 m, 0.84 m square` ('236 m', 13 deg off the
+  view's centre), the head turned (`look`): `the edge arrow head-locked at -0.72,-0.12,-1.00 m` pointing -171 deg (the
+  objective 45 deg to the left), +46 deg right -> the right edge pointing -10 deg, turned round -> the left edge
+  (behind-left); back in view -> the marker again. The flat picture has no coin (hidden: `hides 6768`), the HUD's
+  objective line and timer stay. Retry, then teleports: onto wp1 -> a **new 'Objective' at 23100 2865 450** (the timer
+  running on: 01:25), onto that -> the objective done: the Sea Fort's video, then "Ability Unlocked: Brand" (the save
+  copy only). `OBJECTIVE END calls 4896483 (shown 7528, objectives 80833), hides 6768, published 3383; layer: marker
+  frames 1361, edge frames 2019`. 'Objective_Squiller' (3, moving) and 'ObjectiveGold' (3, after the fort) markers:
+  never eligible, never drawn. (This boot's dumps predate the picture dump: its pictures were rebuilt from the run's
+  logged quads with the same picture, logs/objective15-pictures/b1-*.)
+- **20261026-131947** (the timed walks: story2_route.py, the sprint latched from the start, A at every edge cue,
+  waypoints = round 2's route + wp1 + wp2; after a Retry each): attempt 1 reached round 2's last point (28444 -14841)
+  at **43.5 s** (three blinks) and ran on to **32 m short of wp1 at 52.6 s**, where the bot ran into a tree trunk (the
+  body 0 cm of 640: `LOCO ... the body 0.0 cm`; logs/objective15-pictures/b2-flat-walk6-tree.png) and its detours
+  lost the way: Out of Time at 91 s. Attempts 2-4 lost 20-60 s at rocks 8 m east of the first edge (the bot's line south
+  of attempt 1's). Attempt 5: a Retry, a teleport onto wp1 (the marker moved to wp2 at once), then **wp1 -> the Sea
+  Fort: 92 m in 18.1 s** to the completion (the video). The marker in both eyes over the fort while sprinting, inside the
+  vignette (frame 10153), '24 m' at the approach (frame 10268, the faint copy 4 deg off the gaze).
+  `OBJECTIVE END calls 8447266 (shown 23633, objectives 82568), hides 18880, published 9407; layer: marker frames 6204,
+  edge frames 3203`. **The marker switched to wp2 at 42 s in attempt 1** (Talion at 28286 -14237, just after the third
+  blink down, 80 m before wp1's marker) and at 70.6 s in attempt 2 (at 28455 -14407): wp1 is a region at the valley
+  floor below the second edge, not the marker's point.
+- **20261026-134333**: one more full walk after a Retry (round 2's route held north of the rocks at the first edge):
+  the bot lost 60 s at the same rocks (its steering: in 1 of 5 walks it takes the good line there). Then a Retry, a
+  teleport to **26202 -11431 (the point attempt 1 of 131947 reached at 51.6 s)** and one continuous walk from there:
+  the tree sidestepped, past wp1's marker point, **to the Sea Fort in 31.2 s** (162 m, the video at its end; the
+  teleport itself completed wp1: the region again). `OBJECTIVE END calls 4183162 ..., hides 8636, published 4296; layer:
+  marker frames 2816, edge frames 1480`.
+
+### 44.5 The Sea Fort's 1:30 (task 2's answer)
+- "Make haste to the Sea Fort" is **two waypoints of the same 'Objective' record**: wp1, its marker at 23434 1758 -8684
+  (234 m from the golden M, 20 m lower) but **completed in a region at the valley floor below the second edge** (the
+  marker switched with Talion at 28286 -14237 and 28455 -14407, 75-80 m before that point), then **wp2 = the Sea
+  Fort, its marker at 23100 2865 450** (the trigger there: the video). The HUD's coin and our marker follow the game's
+  marker from one to the next. Round 2's "within 4 m of 'Objective' at 76-82 s with no completion, the coin 80-90 m on"
+  was wp1 long done and the fort still ahead. The 1:30 starts with the marker (~5 s after the video) or at a Retry.
+- Measured on the bot's own line (the sprint latch, A at the three edge cues): **start -> 26202 -11431 in 51.6 s**
+  (131947 attempt 1) **+ 26202 -11431 -> the fort in 31.2 s** (134333, one continuous walk) = **82.8 s**, plus ~1 s
+  from the Retry to the walk's start: **~84 s of the 90**. The bot's line is not the best one: after the valley drop
+  (wp1 done at ~42 s) it ran on to wp1's marker point; the fort is 160 m straight from there (25 s at 6.4 m/s): a
+  player who follows our marker to the fort is faster if the way is open (not walked). So a VR player with the sprint
+  latch and A at the edges makes it with some 6 s to spare at worst; at the run band (207 m in 90 s) or stopping at the
+  edges, not. **No timer change proposed** (not clearly needed; what was missing was the way, which the marker now
+  shows). Not one continuous run from the golden M to the fort: the bot's steering hit rocks at the first edge in 4 of
+  5 walks and a tree in the fifth. If the headset says otherwise, the candidate is the objective's own timer value
+  behind a switch (not RE'd: the quest's data, not code seen here).
+
+### 44.6 What only the headset shows
+- The marker's size (4 deg, its text 0.6 deg of ink at 2x: readable in the composed 20 px/deg pictures) and its 12 m
+  stereo distance against near geometry (a quad over the projection: it never hides behind a rock).
+- The edge arrow's place (0.72 of the view's tangents, 1 m) and size (5 deg) at the Quest 2's real fov and lenses.
+- Whether the faint copy within 5 deg is right, or the marker should go entirely when looked straight at.
+
+## 45. The open world's interactions: artifacts and their inspect view, Ithildin glyphs, givers, gates (the collect drill, 2026-10-26)
+Headless runs logs/boot-check-20261026-122643 .. -141551 (handoff/HANDOFF-collect.md: the runs, the pictures;
+scripts/collect15-drive.sh with collect15_land.py and collect15_walk.py), build 15's switches (headset-build15.env).
+No new switch: SOMVR_USE=1 (43.4, on since build 14) already serves the artifact's prompt. Test-only additions: the
+words `practice status ground X Y Z` and `practice status look`, the classes in `practice status nav`, the test head's
+`pitch`.
+
+### 45.1 Getting there safely: the floor probe and the walk
+- `practice status ground X Y Z` (a test word, read only): a ray straight down (PR_RAYCAST's cast, flags 0x50 filter
+  0xc) from 30 m over Y to 60 m under it, every surface (6 at most, each ray from 5 cm under the last hit): `PRACTICE
+  t=.. ground at (X Y Z): N surface(s) from 30 m over to 60 m under: H (+D m, object O), ...; Talion D m away`. It
+  answers from 370 m away (run 122643: the glyph by the sea at 57272 1919 -10603: 2329 and 1709, i.e. a roof 4 m over
+  the marker): the world's collision is there far from Talion.
+- collect15_land.py: the place's floor (the highest surface at or under the marker + 1 m), then the nearest spot 2.5-6 m
+  around (8 bearings, 3 rings) whose top surface (open sky) is within -2.5..+1.5 m of that floor: the trip's target =
+  that surface + 40 cm (Teleport snaps down; the arrival wants him within 3 m under the target, 27.7). Every trip of
+  the drill arrived after 1 teleport, 0 WARN in all 8 runs. Talion stands 0.5-1 m over the ray's surface on grass and
+  rubble (the ray misses some of what he stands on).
+- collect15_walk.py: the stick forward, the test head turned to the place (the yaw-to-heading base learnt from a first
+  step), slower in the last 3 m, stopping at the first place prompt (not the fight's or the wraith's) or the stop
+  distance; `--look Y` pitches the head at the place's height (`head X Y Z [yaw DEG] [pitch DEG] [s SEC]`, the layer's
+  test head, somvr_testhead_layer.c: the turn, then the pitch about the turned right axis) and turns it 20/40 deg each
+  way.
+
+### 45.2 Artifacts: the prompt needs the wraith vision; B picks; the inspect view's object is not seen
+- The three `Collectible_Artifact` markers (34776 2448 -27463 under an arch, 28596 5553 -33884 on a crag top, 61239 980
+  -15547 in a ghul cave) are the objects' places: the minimap's white icon sits on Talion there. Walked to 0.5-0.9 m,
+  looking at them (pitch -56..-75 deg), B tapped and held, the game's CombatSecondary02 123 and Activate 34 by `crouch
+  try`: **no prompt and no pick** in runs 122643, 123525, 125841 (123 there = the grab's swing `PC_Grab_Attempt_F_Fail`).
+- **With the wraith vision (Y) pressed at the artifact the prompt comes** (run 135310: ~3 s after Y; run 140239: 2 s):
+  a PromptShow on 123, StringId **'Combat_Activate_Collectable'**, key 'Sword_ButtonRB', "Pick Up". SOMVR_USE keeps it
+  and shows B's glyph: the flat HUD "(B) Pick Up" (logs/collect15-pictures/artifact-prompt-flat.png, the artifact's
+  glow at the bottom). Letting Y go hides it (run 135310: down 4 s after it came, with Y's release). The second artifact
+  of run 140239 (the crag top) showed its prompt on approach at 1.4 m without Y (Y let go 18 s before): after the first
+  pick (or its tutorial) the wraith vision was not needed there. The flat game shows a "combat hint" when Y is pressed
+  near an artifact (`HINTS combat hint #5 ... show ''`): SOMVR_HINTS=off drops it (its text unread).
+- **B = the pick** (SOMVR_USE: 123 held with Activate): `attack 'Activate_ArtifactCollectable'` 4.1 s, no body moment
+  (the view stays the player's), then a real pause (`SESSION ui ... paused=1 ctx=menu`): the artifact's menu, on the
+  game menu's board (`xr: menus: a game menu's board (the HUD quad) placed ... 0.720 x 0.405 m`, the world dimmed 40 %;
+  48 x 28 deg at 0.8 m). It is placed level at the head's yaw: with the head looking down at the artifact the board
+  came 70 deg above the gaze (a look up).
+- **The menu** (run 140239, "Ritual Cup", "Frolum's Ring"): the artifact's name and its lore on the right; the first time
+  a tutorial box "These Artifacts hold memories of Mordor. Use (L) and (R) to look for the memory, then press (A) to
+  reveal it. Press (A) to Continue": A closes it (the menu passthrough's A); then "Pan / Zoom (L)  Rotate (R)  Back (B)
+  Exit Menu (Start)". The right stick turned 1.5 s found the memory point ("Press (X) to play Memory", "(X) Play Memory"
+  joins the bar: the passthrough's left X; not pressed). B = Back to the Appendices, B again = the pause menu, the menu
+  button = out to the world. The Appendices list it ("Artifacts 2/42", "View Details" opens the same view).
+- **The artifact itself is not shown**: in both eyes the stereo frames show the world at Talion's head (night, the
+  rocks; turned 0/90/180/270 deg: never the object), and the flat picture behind the text shows the same world
+  (logs/collect15-pictures/inspect-details-left-eye-4-yaws.png, inspect-*-flat-strip.png). The menu's 3D object is
+  rendered for the game's own menu camera (the strings `ArtifactFreeCamLocations`, `ArtifactListCamLocations`,
+  `ArtifactDetailActiveState`, CUIPauseMenuArtifactsLayer, CUIArtifactMenuDetailPane), which our eyes (at the head in
+  the world) do not use in menus. So the minigame's point - turning the object to find the memory - is blind in VR
+  (the memory can still be found by turning the stick and played with X). Not fixed: the fix needs the artifact
+  view's state at runtime (the layer's detail state or the menu camera's activation) and then either the eyes from the
+  game's camera for that menu (as BODYMOMENTS' camera-base) or the flat frames on the board (the window's way, 3.5).
+
+### 45.3 Ithildin glyphs: seen in the wraith vision, never collected
+- The glyph on the arch (34345 3900 -19589, 4.8 m over the floor) glows white-blue in the wraith vision, in both eyes
+  (logs/collect15-pictures/glyph-wraith-6m-both-eyes.jpg; run 123525 from 8 m, 125841 from 2.4 m pitched +44, 135310
+  from 4.1 m +31 and 1.5 m +57, 140239 from 0.8 m +71 with Y pressed there 10 s). Never a prompt, a hint or a
+  collection; B and 123 there do nothing ('Ithildin 0/32' in the Appendices).
+- Static (som-linux): **LookAtTrigger** (vtable 0x398ef30, `LookAtTrigger.OnLookAt` / `.OnLookAway`; its tick vf_13
+  0x279bbd0: states 0..3 in +0xc8) walks the player list [0x4c47020, 0x4c47028) (FUN_0279b7a0): a player whose
+  +0x178 bit 0 is set is skipped; FUN_02799e90: the player's object within `ActivationRadius` and beyond
+  `InactivationRadius` of the trigger (squared), the eye point by the trigger's mode +0xcc (0 = the camera copy's
+  position CPlayerObj+0xbb0, 1 = the player object's, 2 = FUN_027b1200); FUN_027982d0: FUN_029a8130 = the view test on
+  the camera copy (+0xbb0 pos, +0xbbc quat, +0xbcc FOVs), the copy finite, a line-of-sight ray (FUN_0224b780) unless
+  the radius +0xb0 is at most DAT_03348688; FUN_0279b150: `RequireVisionMode` wants the vision byte *(player+0x10)+0x118,
+  `LookAtThreshold` = the seconds looked (+0xb8 += dt). `VisionModeLookAtArgs`, `CCharacter.OnVisionModeLookAt`,
+  `StartVisionModeLookAt` name the wraith vision's own look-at event. That a glyph is a LookAtTrigger is a guess.
+- Runtime (`practice status look`, run 135310): one player (CPlayerObj 0x3b973440), +0x178 = 0x2 (not skipped), the
+  vision byte 1 while Y is held, 0 without; the camera copy = our head (SOMVR_FRONT_CAMCOPY=head: its position 0.7-0.8 m
+  over the root in the headless rig, forward pitched with the test head, FOVs 110 x 90). So what we feed such a
+  trigger is sane; which condition stops the glyph is open (the radii, the ray from a head under the wall, the
+  threshold, or another mechanism). Next: find the glyph's trigger object (its WBObject, 45.5) and log its state.
+
+### 45.4 Givers, slaves, gates, towers
+- The resistance giver's marker has a place only at times: at (29666 3459 -14508) in the arrival's dumps (runs
+  122643, 141551; round 2 saw it walking), gone from the dumps taken elsewhere. Run 141551 walked to 0.9 m of it: an orc
+  fight there (the counter's "(Y)" over an orc, the hits' red edges, Talion hit every 2-3 s), no giver prompt in 20 s,
+  B = QuestConfirm only. The 11 'NPC' markers never had a place; the 24 'LockedGate' markers (lock.tex) got places only
+  after the artifact menu in run 140239 (12606 2110 5517 the nearest, 330-520 m away): not visited. No slave to free and
+  no gate or door prompt met. The save's forge tower (FT_BG, 3.7 m from the
+  arrival) is synced; no other tower marker. Herbs as before (43.4): the prompt at 0.7 m on approach, B picked
+  (`Activate_HealthCollectable`).
+
+### 45.5 `practice status nav`'s classes and `practice status look` (test words)
+- nav: for a marker within 20 m the classes behind it by RTTI (pr_rtti: *(vptr-8) = the typeinfo, +8 its mangled name;
+  read only): +0x260/+0x270 are the icon's CTextures; the target (the probe's NM_TGT +0x230, else +0x210) is a
+  WBObject with its position at +8 (an artifact's, a glyph's, an herb's alike: run 133718); its first 0x400 bytes'
+  pointers' classes (InventoryItemUI, CEngineTimer, CObjectSet, CRayCastBroadPhaseHandle, Combat, ScriptObject /
+  TeleportPoint) are neighbours, not its parts.
+- look: `PRACTICE t=.. look: the player list B..E: N player(s)`, then per player `PRACTICE look I: player P flags+0x178
+  F (bit 0 = the triggers skip him) vision byte V; its object O at (..); the camera copy at (..) fwd .. fov H x V deg`.
+  Data reads only (0x4c47020: a std::vector of CPlayerObj*), no site.
+
+### 45.6 For the headset
+- An artifact: walk up, hold Y (the wraith vision) and look at it: "(B) Pick Up"; B; the board comes up level ahead
+  (look up); A closes the tutorial; the right stick turns the (unseen) object until "Press (X) to play Memory"; X; B,
+  B, the menu button. Whether the game's own hint (dropped by SOMVR_HINTS=off) told the player to use the wraith vision.
+- A glyph: whether looking at one in the wraith vision with a real head height collects it.

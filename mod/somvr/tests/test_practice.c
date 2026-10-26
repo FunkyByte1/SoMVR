@@ -65,6 +65,13 @@ static void test_words(void)
     CHECK(somvr_pr_word("status nav", &r) && r.action == SOMVR_PRA_STATUS && r.orc == 1 && somvr_pr_word("status", &r) &&
               r.orc == -1 && !somvr_pr_word("status now", &r) && !somvr_pr_word("go nav", &r),
           "status nav (the nav markers too)");
+    CHECK(somvr_pr_word("status ground 57272 2500 -10603", &r) && r.action == SOMVR_PRA_STATUS && r.orc == 2 && r.have_at &&
+              r.at[0] == 57272 && r.at[1] == 2500 && r.at[2] == -10603 && !somvr_pr_word("status ground", &r) &&
+              !somvr_pr_word("status ground 1 2", &r) && !somvr_pr_word("status ground 1 2 3 4", &r) &&
+              !somvr_pr_word("go ground 1 2 3", &r) && somvr_pr_word("status", &r) && !r.have_at,
+          "status ground X Y Z (the floor probe)");
+    CHECK(somvr_pr_word("status look", &r) && r.action == SOMVR_PRA_STATUS && r.orc == 3 && !r.have_at &&
+              !somvr_pr_word("status look 1", &r), "status look");
     r.action = 77;
     CHECK(!somvr_pr_word("spawn troll", &r) && !somvr_pr_word("go now", &r) && !somvr_pr_word("", &r) &&
               !somvr_pr_word("fly", &r) && !somvr_pr_word("spawn shield 3", &r) && !somvr_pr_word(NULL, &r) &&

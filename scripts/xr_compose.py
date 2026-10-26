@@ -141,6 +141,8 @@ def texture(base, n, qd):
         rgb, a = threat_tex()
     elif w.startswith("hud") or w == "minimap":
         rgb, a = read_pnm(f"{base}.hud{n}.ppm"), read_pnm(f"{base}.hud{n}.alpha.pgm")
+    elif w == "objective":  # build 15: SOMVR_OBJECTIVE's marker or edge arrow (its picture dumped with the frame)
+        rgb, a = read_pnm(f"{base}.objective{n}.ppm"), read_pnm(f"{base}.objective{n}.alpha.pgm")
     elif w in ("vrmenu panel", "vrmenu card"):
         rgb, a = read_pnm(f"{base}.vrmenu{n}.ppm"), read_pnm(f"{base}.vrmenu{n}.alpha.pgm")
     else:
@@ -318,7 +320,7 @@ def main():
                     al = Image.fromarray(ha[:, ei * hw:(ei + 1) * hw]).resize(size, Image.BILINEAR)
                     hl = (np.asarray(rgb).astype(np.float32) / 255, np.asarray(al).astype(np.float32)[..., None] / 255)
             for i, qd in enumerate(fr["quads"]):
-                if qd["other_space"] and qd["what"] == "threat edge":
+                if qd["other_space"] and qd["what"] in ("threat edge", "objective"):
                     fr["quads"][i] = view_to_ref(fr, qd)
             order = sorted(fr["quads"], key=lambda qd: qd["slot"])
             if hl is not None:

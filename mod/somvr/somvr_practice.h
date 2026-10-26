@@ -44,11 +44,12 @@ const char *somvr_pr_action_name(int a);  /* "go", "back", "spawn", "remove", "s
 typedef struct {
     int action;  /* SOMVR_PRA_* */
     int orc;     /* SOMVR_PRO_* for spawn; -1 = the current type */
-    int have_at; /* go X Y Z: the spot (cm, the world) for this and later trips (a test run's way to try places) */
+    int have_at; /* go X Y Z: the spot (cm, the world) for this and later trips (a test run's way to try places);
+                  * status ground X Y Z (orc 2): the place whose floor is probed (a test word, nothing moves) */
     float at[3];
 } somvr_pr_req;
-/* the text after "practice ": "go [X Y Z]", "back", "spawn [TYPE]", "remove", "status" (blanks around them ignored); a
- * type that is not one, or not three finite numbers = not taken. 1 = taken (*out set) */
+/* the text after "practice ": "go [X Y Z]", "back", "spawn [TYPE]", "remove", "status [nav | look | ground X Y Z]" (blanks around
+ * them ignored); a type that is not one, or not three finite numbers = not taken. 1 = taken (*out set) */
 int somvr_pr_word(const char *w, somvr_pr_req *out);
 
 /* ---- the trip: the blink there or back ---- */

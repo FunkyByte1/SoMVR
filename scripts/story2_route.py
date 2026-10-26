@@ -4,7 +4,7 @@ the left stick held forward, the sprint latched by its click (our locomotion's 6
 toward the next point of a route (or the game's objective marker on the flat picture), Talion's position from
 `practice status` every cycle, a flat shot every few seconds. For a running headless boot (RUN = its
 logs/boot-check-<ts>/, SOMVR_XR_TEST=RUN/xrtest.txt and SOMVR_PRACTICE on):
-  story2_route.py RUN [--secs 150] [--tag rt] [--nosprint] [--waypoints X,Z;X,Z;...] [--yaw0 DEG]
+  story2_route.py RUN [--secs 150] [--tag rt] [--nosprint] [--waypoints X,Z;X,Z;...] [--yaw0 DEG] [--dumps S]
 --waypoints: world points (cm) walked through in turn (each counts as reached within 5 m; the last is the goal, walked
 on toward until the run ends); A when SOMVR_CLIMB_DESCENT's edge cue comes (--noedge: never); the head's yaw for a world
 heading is learnt from the walk itself (the test head's yaw + = atan2(dx, dz) +, run 20261026-094108); without
@@ -18,6 +18,7 @@ args = sys.argv[2:]
 def opt(name, dflt):
     return args[args.index(name) + 1] if name in args else dflt
 SECS = float(opt('--secs', 150)); TAG = opt('--tag', 'rt'); SPRINT = '--nosprint' not in args
+DUMPS = float(opt('--dumps', 0))  # every this many seconds the eyes too (a dump: xr_compose.py; 0 = none)
 WPS = [tuple(float(v) for v in p.split(',')) for p in opt('--waypoints', '').split(';') if p]
 LOG = os.path.join(R, 'somvr.log')
 seq = [0]
@@ -130,7 +131,7 @@ if SPRINT:
     xt('btn L stick 1'); time.sleep(0.35); xt('btn L stick 0')
 print('%s route start (sprint %s, yaw %.1f, waypoints %d)' % (time.strftime('%T'), 'latched' if SPRINT else 'off', yaw,
       len(WPS)), flush=True)
-prev = None; path = []; stuck = 0; side = 1; cyc = 0; wi = 0; miss = 0; base = None; lastshot = -9
+prev = None; path = []; stuck = 0; side = 1; cyc = 0; wi = 0; miss = 0; base = None; lastshot = -9; lastdump = 0
 yaw_prev = yaw; end = 'time'; reached = []; detour_until = 0; detour_yaw = 0; yaw_goal = 0; spot = None; nstuck = 0
 while time.time() - t0 < SECS:
     if user_in():
@@ -190,6 +191,8 @@ while time.time() - t0 < SECS:
                 turn = 60; how += ': a look to the right'; miss = 0
     elif t - lastshot >= 3:
         shot('%s-%d' % (TAG, cyc), wait=False); lastshot = t
+    if DUMPS and t - lastdump >= DUMPS:
+        xt('dump'); lastdump = t
     if sp is not None and sp < 1.0 and t > 4:
         stuck += 1
     else:

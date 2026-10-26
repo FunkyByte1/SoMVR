@@ -38,7 +38,8 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_loco.c" "$D/somvr_threat.c" "$D/somvr_bodymoments.c" "$D/somvr_slots.c" "$D/somvr_defence.c"
       "$D/somvr_step.c" "$D/somvr_finish.c" "$D/somvr_headview.c" "$D/somvr_headparts.c" "$D/somvr_practice.c"
       "$D/somvr_session.c" "$D/somvr_body.c" "$D/somvr_fingers.c" "$D/somvr_size.c" "$D/somvr_vrhands.c"
-      "$D/somvr_strike.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c")
+      "$D/somvr_strike.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
+      "$D/somvr_objective.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -135,6 +136,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_crouch" "$D/tests/test_crouch.c" "$D/somv
 "$D/build/tests/test_crouch"
 gcc "${CF[@]}" -o "$D/build/tests/test_front" "$D/tests/test_front.c" "$D/somvr_front.c" -lm # build 14: front-first enemies (SOMVR_FRONT)
 "$D/build/tests/test_front"
+gcc "${CF[@]}" -o "$D/build/tests/test_objective" "$D/tests/test_objective.c" "$D/somvr_objective.c" "$D/somvr_font.c" -lm # build 15: the objective marker
+"$D/build/tests/test_objective"
 [ -f "$D/somvr.c" ] || exit 0
 
 echo "== patch sites (read-only, the game binary on disk)"
@@ -147,8 +150,8 @@ SOMVR_LOG=$T/somvr.log SOMVR_STEREO=A LD_PRELOAD=$D/build/somvr.so python3 -I -c
 if [ -e "$T/somvr.log" ]; then echo "FAIL: the library wrote a log outside the game"; rm -rf -- "$T"; exit 1; fi
 rm -rf -- "$T"
 exp=$(nm -D --defined-only "$D/build/somvr.so" | awk '$2 ~ /[TtBbDd]/ { print $3 }' | sort | tr '\n' ' ')
-[ "$exp" = "somvr_comfort somvr_hud somvr_input somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu " ] ||
-    { echo "FAIL: somvr.so exports: $exp (want somvr_comfort somvr_hud somvr_input somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu)"; exit 1; }
+[ "$exp" = "somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu " ] ||
+    { echo "FAIL: somvr.so exports: $exp (want somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu)"; exit 1; }
 echo "inert: /bin/true and python3 ran with the library preloaded and no log was written; exports: $exp"
 
 echo "== selftest (the hooks against stand-in functions)"

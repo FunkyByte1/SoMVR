@@ -467,6 +467,7 @@
 #include "somvr_slots.h" /* SOMVR_SLOTS (its region follows the threat's) */
 #include "somvr_step.h"   /* SOMVR_STEP / SOMVR_DASH / SOMVR_PHASE (somvr_step_game.c, included after the LOCO region) */
 #include "somvr_threat.h" /* SOMVR_THREAT (its region precedes the gate) */
+#include "somvr_objective.h" /* SOMVR_OBJECTIVE: the objective marker in the world (somvr_objective_game.c, included last) */
 #include "somvr_views.h"
 #include "somvr_vrmenu.h"
 
@@ -1204,6 +1205,11 @@ static void ff_start(int *bad);
 static void ff_prewarned(uintptr_t c, uintptr_t hobj, double t0, double t, somvr_th_pick *k);
 static void ff_end_log(void);
 static const char *ff_word(const char *w);
+/* SOMVR_OBJECTIVE (somvr_objective_game.c, included last; docs/re-xr-pipeline.md 44): the objective marker in VR */
+static void ob_start(int *bad);
+static void ob_frame(uintptr_t pl, int stereo);
+static void ob_end_log(void);
+static const char *ob_word(const char *w);
 /* SOMVR_CROUCH=duck (somvr_crouch_game.c, included last; docs/re-xr-pipeline.md 41): crouch by ducking */
 static void cr_config(int *bad);
 static void cr_frame(void);
@@ -1750,6 +1756,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	arm_frame(); /* SOMVR_ARMS: the player's tracker and this frame's rig for the next phase 2 */
 	combat_frame(fb_after_body((uintptr_t)pl), g_fr.head_ok); /* SOMVR_FALLBACK: no arm IK, no blade in third person */
 	th_frame(fb_after_body((uintptr_t)pl), complete); /* SOMVR_THREAT: the frame's threats, cues and entry */
+	ob_frame((uintptr_t)pl, complete); /* SOMVR_OBJECTIVE: the frame's objective for the layer */
 	df_frame(fb_after_body((uintptr_t)pl), complete); /* SOMVR_DEFENCE: the guard, parries, the impacts' verdicts */
 	fight_frame(fb_after_body((uintptr_t)pl), complete); /* build 10's fight: reactions, the orcs' weapons, Talion hit */
 	pr_frame((uintptr_t)pl); /* SOMVR_PRACTICE: the requests, the trip, the area, the orc, the keep-clear pass */
@@ -11908,6 +11915,8 @@ static void *writer_main(void *arg)
 					what = vb_word(w + 6);
 				} else if (seen && !strncmp(w, "use ", 4)) { /* SOMVR_USE: "use on|off|status" */
 					what = us_word(w + 4);
+				} else if (seen && !strncmp(w, "objective ", 10)) { /* SOMVR_OBJECTIVE: "objective status|on|game|both|recs P" */
+					what = ob_word(w + 10);
 				} else if (seen && !strncmp(w, "bow ", 4)) { /* SOMVR_BOW: "bow fire N|NAME|ours" (headless A/B) */
 					what = bo_word(w + 4);
 				} else if (seen && !strncmp(w, "size ", 5)) { /* SOMVR_PLAYER_SIZE: "size PCT|probe|status" */
@@ -13426,6 +13435,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	th_start(g_th_sites, &bad);     /* SOMVR_THREAT=1: its sites, the projectile slot, somvr_threat (after combat, input) */
 	df_start(g_df_sites, &bad);     /* SOMVR_DEFENCE=1: its sites, DF_IMPACT (after the threat: its tracks, its slot) */
 	ff_start(&bad);                 /* SOMVR_FRONT: the fight circle's veto, the camera copy, the damage (after the threat) */
+	ob_start(&bad);                 /* SOMVR_OBJECTIVE: the nav markers' call OB_EACH, somvr_objective (build 15) */
 	fight_start(&bad);              /* build 10's fight: SOMVR_HURT, ... (somvr_fight_game.c; after the threat) */
 	sl_start(g_sl_sites, &bad);     /* SOMVR_SLOTS=1: its sites, the model keys' tail jump, the config line (after input) */
 	fi_start(g_fi_sites, &bad);     /* SOMVR_FINISH=1: its read-only sites and the config line (after combat) */
@@ -13601,6 +13611,7 @@ static void somvr_end_logs(const char *why)
 	sz_end_log();  /* SOMVR_PLAYER_SIZE */
 	cr_end_log();  /* SOMVR_CROUCH */
 	us_end_log();  /* SOMVR_USE */
+	ob_end_log();  /* SOMVR_OBJECTIVE */
 	ss_end_log();  /* SOMVR_MARK / SOMVR_QUIT */
 	mm_end_log();  /* SOMVR_MINIMAP */
 	go_end_log();  /* SOMVR_MUSIC / SOMVR_HINTS */
@@ -16541,6 +16552,7 @@ static void df_clank_fx(double t)
 #include "somvr_hudfx_game.c" /* SOMVR_HUD_FX=hide: the HUD's 3D flourishes out of the eyes (re-xr-pipeline.md 31.5) */
 #include "somvr_vbglow_game.c" /* SOMVR_VERBS_GLOW: the verbs' wraith flare out of the eyes (re-xr-pipeline.md 39.7) */
 #include "somvr_front_game.c" /* SOMVR_FRONT: front-first enemies, the AI's camera copy, the damage (re-xr-pipeline.md 42) */
+#include "somvr_objective_game.c" /* SOMVR_OBJECTIVE: the objective marker in the world (re-xr-pipeline.md 44) */
 
 #ifndef SOMVR_SELFTEST
 /* ------------------------------------------------------------------------------------------------------------ */

@@ -958,8 +958,51 @@ static void pr_status(const struct pr_me *m, int have, double t)
 	      g_pr.advanced, g_pr.weather_set, g_pr.orig_weather, g_pr.orig_tod);
 }
 
+/* an object's class by its vtable's typeinfo (the Itanium ABI: *(vptr - 8) = the typeinfo, its +8 = the mangled name,
+ * e.g. "13LookAtTrigger"): into b (n bytes), "" when it does not read as one; read only */
+static void pr_rtti(uintptr_t obj, char *b, size_t n)
+{
+	uintptr_t vp = 0, ti = 0, np = 0;
+	b[0] = 0;
+	if (!obj || !peek(obj, &vp, sizeof vp) || !vp || !peek(vp - 8, &ti, sizeof ti) || !ti || !peek(ti + 8, &np, sizeof np) || !np)
+		return;
+	for (size_t i = 0; i + 1 < n; i++) {
+		char c = 0;
+		if (!peek(np + i, &c, 1) || !c || c < 32 || c > 126)
+			break;
+		b[i] = c, b[i + 1] = 0;
+	}
+}
+
+/* the classes an object points at in its first 0x400 bytes (its parts: a plugin, a trigger, a prompt): " +OFF 'name'"
+ * for each new name, 8 at most; read only */
+static void pr_rtti_parts(uintptr_t obj, char *b, size_t n)
+{
+	char seen[8][40];
+	int ns = 0;
+	size_t l = 0;
+	b[0] = 0;
+	for (uintptr_t off = 0; off < 0x400 && ns < 8 && l < n - 60; off += 8) {
+		uintptr_t p = 0;
+		char c[40];
+		if (!peek(obj + off, &p, sizeof p) || p < 0x10000 || (p & 7))
+			continue;
+		pr_rtti(p, c, sizeof c);
+		if (!c[0])
+			continue;
+		int dup = 0;
+		for (int i = 0; i < ns && !dup; i++)
+			dup = !strcmp(seen[i], c);
+		if (dup)
+			continue;
+		memcpy(seen[ns++], c, sizeof c);
+		l += (size_t)snprintf(b + l, n - l, " +%#lx '%s'", (unsigned long)off, c);
+	}
+}
+
 /* "practice status nav": the nav markers with a place (active, enabled, an object), their record's name, the world
- * position and the distance from Talion; the ammo, explosives, fire pits and bait (dozens) only counted */
+ * position and the distance from Talion (and, for the collect drill, the classes of a marker's objects within 20 m);
+ * the ammo, explosives, fire pits and bait (dozens) only counted */
 static void pr_navdump(const struct pr_me *m, int have, double t)
 {
 	static int ok = -1;
@@ -992,9 +1035,34 @@ static void pr_navdump(const struct pr_me *m, int have, double t)
 			if (!strcmp(name, "Ammo") || !strcmp(name, "Explosive") || !strcmp(name, "Firepit") ||
 			    !strcmp(name, "HangingBait"))
 				skipped++;
-			else if (logged++ < 60)
-				logf_("PRACTICE nav %d '%s' at (%.0f %.0f %.0f), %.1f m from Talion", n, name, pos[0], pos[1], pos[2],
-				      (double)(have ? dist3(pos, m->pos) / 100.0f : -1.0f));
+			else if (logged++ < 60) {
+				char cls[200] = "";
+				float dm = have ? dist3(pos, m->pos) / 100.0f : -1.0f;
+				if (dm >= 0 && dm < 20) /* the objects behind a near marker: their classes (+0x260 +0x268 +0x270 +0xb0:
+							 * run 20261026-131340: the icon's CTextures) */
+					for (int k = 0; k < 4; k++) {
+						char c[40];
+						size_t l = strlen(cls);
+						pr_rtti(o[k], c, sizeof c);
+						if (o[k] && l < sizeof cls - 60)
+							snprintf(cls + l, sizeof cls - l, " o%d %#lx '%s'", k, (unsigned long)o[k], c);
+					}
+				logf_("PRACTICE nav %d '%s' at (%.0f %.0f %.0f), %.1f m from Talion%s", n, name, pos[0], pos[1], pos[2],
+				      (double)dm, cls);
+				uintptr_t tg = 0; /* the marker's target (the probe's NM_TGT +0x230, else NM_TGT2 +0x210), its parts */
+				char tc[40] = "", parts[520];
+				if (dm >= 0 && dm < 20 && ((peek(mk + 0x230, &tg, sizeof tg) && tg) || (peek(mk + 0x210, &tg, sizeof tg) && tg))) {
+					pr_rtti(tg, tc, sizeof tc);
+					pr_rtti_parts(tg, parts, sizeof parts);
+					logf_("PRACTICE nav %d   target %#lx '%s' parts:%s", n, (unsigned long)tg, tc, parts[0] ? parts : " none");
+					uintptr_t t2 = 0; /* (an object handle's object: +8, as the probe's) */
+					if (peek(tg + 8, &t2, sizeof t2) && t2) {
+						pr_rtti(t2, tc, sizeof tc);
+						pr_rtti_parts(t2, parts, sizeof parts);
+						logf_("PRACTICE nav %d   target+8 %#lx '%s' parts:%s", n, (unsigned long)t2, tc, parts[0] ? parts : " none");
+					}
+				}
+			}
 		}
 		n++;
 		peek(node + 8, &nx, sizeof nx);
@@ -1002,6 +1070,68 @@ static void pr_navdump(const struct pr_me *m, int have, double t)
 	}
 	logf_("PRACTICE t=%.3f nav: %d markers, %d with a place (%d logged, %d ammo/explosive/fire pit/bait)", t, n, placed,
 	      logged < 60 ? logged : 60, skipped);
+}
+
+/* "practice status ground X Y Z" (a test word, the collect drill): the floors under a place before a trip there - a ray
+ * straight down from 30 m over Y to 60 m under it and every surface it meets (6 at most, each ray from 5 cm under the
+ * last hit; Talion skipped); read only, nothing moves. Far from Talion the world there may not be loaded: no hit */
+static void pr_floor(const struct pr_me *m, int have, double t)
+{
+	float at[3], hit[3];
+	for (int i = 0; i < 3; i++) {
+		uint32_t b = atomic_load_explicit(&g_pr_at_req[i], memory_order_relaxed);
+		memcpy(&at[i], &b, 4);
+	}
+	uintptr_t self = have ? m->obj : 0, obj = 0; /* (Talion: as the eye line's ray) */
+	float from[3] = { at[0], at[1] + 3000.0f, at[2] }, end = at[1] - 6000.0f;
+	char b[480];
+	size_t o = 0;
+	int n = 0;
+	b[0] = 0;
+	while (pr_ray_ok() && n < 6 && from[1] > end && pr_ray_down(from, from[1] - end, self, hit, &obj) && o < sizeof b - 64) {
+		o += (size_t)snprintf(b + o, sizeof b - o, "%s%.0f (%+.1f m, object %#lx)", n ? ", " : " ", hit[1],
+				      (double)(hit[1] - at[1]) / 100.0, (unsigned long)obj);
+		n++, from[1] = hit[1] - 5.0f;
+	}
+	float dx = have ? m->pos[0] - at[0] : 0, dz = have ? m->pos[2] - at[2] : 0;
+	logf_("PRACTICE t=%.3f ground at (%.0f %.0f %.0f): %d surface(s) from 30 m over to 60 m under%s%s; Talion %.1f m away "
+	      "(across)", t, at[0], at[1], at[2], n, n ? ":" : "", !pr_ray_ok() ? " (no ray: the site)" : b,
+	      (double)(have ? sqrtf(dx * dx + dz * dz) / 100.0f : -1.0f));
+}
+
+/* "practice status look" (a test word, the collect drill; read only): what the game's look-at triggers (LookAtTrigger,
+ * static: FUN_0279b7a0 walks the player list [0x4c47020, 0x4c47028), FUN_02799e90 drops a player whose +0x178 bit 0 is
+ * set, FUN_0279b150 wants the vision mode's byte *(+0x10)+0x118 when the trigger's RequireVisionMode is set,
+ * FUN_027982d0 / FUN_029a8130 test the point against the camera copy +0xbb0 pos, +0xbbc quat, +0xbcc FOVs) read of
+ * each player now */
+#define PRL_PLAYERS 0x4c47020
+static void pr_look(const struct pr_me *m, int have, double t)
+{
+	uintptr_t b = 0, e = 0;
+	peek(PRL_PLAYERS, &b, sizeof b), peek(PRL_PLAYERS + 8, &e, sizeof e);
+	int n = b && e >= b && e - b <= 64 ? (int)((e - b) / 8) : -1;
+	logf_("PRACTICE t=%.3f look: the player list %#lx..%#lx: %d player(s); Talion's Player %#lx (the practice's)", t, (unsigned long)b,
+	      (unsigned long)e, n, (unsigned long)(have ? m->pl : 0));
+	for (int i = 0; i < n && i < 8; i++) {
+		uintptr_t p = 0, o = 0, v = 0;
+		uint8_t f178 = 0, vis = 0;
+		float cp[3] = { 0, 0, 0 }, cq[4] = { 0, 0, 0, 0 }, fov[2] = { 0, 0 }, op[3] = { 0, 0, 0 };
+		peek(b + 8 * (uintptr_t)i, &p, sizeof p);
+		if (!p)
+			continue;
+		peek(p + 0x178, &f178, 1), peek(p + 8, &o, sizeof o), peek(p + 0x10, &v, sizeof v);
+		if (v)
+			peek(v + 0x118, &vis, 1);
+		if (o)
+			peek(o + 8, op, sizeof op);
+		peek(p + 0xbb0, cp, sizeof cp), peek(p + 0xbbc, cq, sizeof cq), peek(p + 0xbcc, fov, sizeof fov);
+		float fx = 2.f * (cq[0] * cq[2] + cq[1] * cq[3]), fy = 2.f * (cq[1] * cq[2] - cq[0] * cq[3]),
+		      fz = 1.f - 2.f * (cq[0] * cq[0] + cq[1] * cq[1]); /* R(q)(0,0,1): somvr_front_cam_dot's forward */
+		logf_("PRACTICE look %d: player %#lx flags+0x178 %#x (bit 0 = the triggers skip him) vision byte %u; its object "
+		      "%#lx at (%.0f %.0f %.0f); the camera copy at (%.0f %.0f %.0f) fwd %+.2f,%+.2f,%+.2f fov %.1f x %.1f deg", i,
+		      (unsigned long)p, f178, vis, (unsigned long)o, op[0], op[1], op[2], cp[0], cp[1], cp[2], fx, fy, fz,
+		      fov[0] * 57.29578f, fov[1] * 57.29578f);
+	}
 }
 
 static void pr_request(const struct pr_me *m, int have, int action, int orc, double t, const char *who)
@@ -1019,6 +1149,10 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 		pr_status(m, have, t);
 		if (orc == 1)
 			pr_navdump(m, have, t);
+		else if (orc == 2)
+			pr_floor(m, have, t);
+		else if (orc == 3)
+			pr_look(m, have, t);
 		break;
 	default: break;
 	}

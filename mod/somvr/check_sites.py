@@ -51,7 +51,9 @@ patched tail jump UF_CREATE of CBaseUI::CreateUIFXGroup, re-xr-pipeline.md 31.5)
 somvr_vbglow_game.c (VBGLOW_SITES_BEGIN ... VBGLOW_SITES_END: the patched tail jumps VG_FXC / VG_FXC1 of ClientFX's two
 create thunks, re-xr-pipeline.md 39.7) and the SOMVR_FRONT block of somvr_front_game.c (FRONT_SITES_BEGIN ...
 FRONT_SITES_END: the patched calls FR_SCORE, FR_GRANT, FR_CAMCOPY_A/B, FR_DMG_ATK and the read-only FR_CAMTERM, FR_VF59,
-FR_REARM, FR_DMG_ALL, re-xr-pipeline.md 42.8). Files
+FR_REARM, FR_DMG_ALL, re-xr-pipeline.md 42.8) and the SOMVR_OBJECTIVE block of somvr_objective_game.c
+(OBJECTIVE_SITES_BEGIN ... OBJECTIVE_SITES_END: the patched call OB_EACH of the nav markers' placement, the called
+OB_POS and OB_RANGE, re-xr-pipeline.md 44). Files
 named by an #include "somvr_*_game.c" line in SOURCE.c (somvr_step_game.c, somvr_finish_game.c, somvr_headparts_game.c,
 somvr_practice_game.c, somvr_body_game.c, somvr_minimap_game.c, somvr_session_game.c, somvr_gameopts_game.c,
 somvr_prompts_game.c, somvr_bowhit_game.c) are read with it.
@@ -336,6 +338,15 @@ def main():
             sys.exit("expected 9 SITE lines in somvr_front_game.c's FRONT_SITES block (the patched FR_SCORE, FR_GRANT, "
                      "FR_CAMCOPY_A/B, FR_DMG_ATK; the read-only FR_CAMTERM, FR_VF59, FR_REARM, FR_DMG_ALL), found %d" % len(ff))
         sites = sites + ff
+    # SOMVR_OBJECTIVE (build 15): its block lives in somvr_objective_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_objective_game\.c"', text, re.M):
+        ob = [m for b in text.split("OBJECTIVE_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("OBJECTIVE_SITES_END", 1)[0])]
+        if [m[1] for m in ob] != ["K_CALL", "K_ENTRY", "K_ENTRY"]:
+            sys.exit("expected 3 SITE lines in somvr_objective_game.c's OBJECTIVE_SITES block (the patched OB_EACH K_CALL, "
+                     "the called OB_POS, OB_RANGE K_ENTRY), found %d" % len(ob))
+        sites = sites + ob
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

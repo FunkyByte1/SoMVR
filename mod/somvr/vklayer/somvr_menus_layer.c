@@ -423,6 +423,8 @@ static void xl_cap(xr_comp *c) {
         c->l[XL_HANDS] = NULL, n--;
     for (int i = XL_MBD; i <= XL_MBK && n > max + (c->l[XL_BAND] != NULL); i++) /* then the menus' backdrop */
         if (c->l[i]) c->l[i] = NULL, n--;
+    if (n > max + (c->l[XL_BAND] != NULL) && c->l[XL_OBJ]) /* build 15: then the objective's marker */
+        c->l[XL_OBJ] = NULL, n--;
     if (n <= max || !c->l[XL_BAND]) return;
     c->l[XL_BAND] = NULL;
     if (MN.n_capped++ < 3 || MN.n_capped % 600 == 0)
@@ -682,10 +684,12 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
                            : i == XL_FADE ? "fade"
                            : i == XL_MBD ? "menu dim" : i == XL_MBK ? "menu backdrop" /* SOMVR_XR_MENU_BACK */
                            : i == XL_THE0 || i == XL_THE1 ? "threat edge" /* build 10: the bands (a VIEW space) */
-                                                          : "threat cue";
+                           : i == XL_OBJ ? "objective" /* build 15: the marker (the edge arrow: a VIEW space) */
+                                         : "threat cue";
         mn_log_quad(what, i, (const XrCompositionLayerQuad *)l);
     }
     if (c->l[XL_VM0]) mn_dump_vrmenu();
+    if (c->l[XL_OBJ]) ob_dump(mn_dump_frame); /* build 15: the objective marker's picture */
     mn_dump_frame = 0;
 }
 

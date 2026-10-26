@@ -48,6 +48,7 @@
 #include "../../somvr_pointer.h" /* SOMVR_PTR_* constants (its functions are not linked here) */
 #include "../../somvr_shared.h"
 #include "../../somvr_threat.h" /* the threat ABI; its functions are linked: the expected quads and texture */
+#include "../../somvr_objective.h" /* build 15: the objective ABI; its functions are linked: the expected quads, the picture */
 #include "../../somvr_views.h"
 #include "../somvr_env.h"   /* SoM loading env: linked here (the expected image, geometry and transitions) */
 #include "../somvr_void.h"  /* never a void: linked here (the expected floor and lights) */
@@ -4135,6 +4136,143 @@ static int sc_threat(void) { /* nothing, a glow, three glows and both edges, a r
     return 0;
 }
 
+/* ---- build 15: the objective marker (docs/re-xr-pipeline.md 44): the preload's somvr_objective ------------------- */
+static somvr_objective_shared *g_obo;
+static int objective_obj(int active) {
+    char p[4200];
+    const char *slash = strrchr(g_mock, '/');
+    snprintf(p, sizeof p, "%.*s/objective_obj.so", slash ? (int)(slash - g_mock) : 1, slash ? g_mock : ".");
+    void *h = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+    if (!h || !(g_obo = (somvr_objective_shared *)dlsym(h, SOMVR_OBJECTIVE_SYMBOL)))
+        return fprintf(stderr, "    objective_obj.so: %s\n", dlerror()), -1;
+    g_obo->magic = SOMVR_OBJECTIVE_MAGIC, g_obo->version = SOMVR_OBJECTIVE_VERSION, g_obo->size = (uint32_t)sizeof *g_obo;
+    g_obo->pid = (int32_t)getpid();
+    g_obo->size_deg = 4, g_obo->dist_m = 12, g_obo->faint_deg = 5, g_obo->edge_deg = 5;
+    if (active) atomic_store(&g_obo->active, 1);
+    return 0;
+}
+/* one layout-B stereo frame with the objective entry (n = 0: none) at the frame head's offset off[3] (metres) */
+static void ob_stereo(hudrig *r, uint64_t f, int n, const float off[3], float dist, somvr_views *v) {
+    CHECK(locate(v), "frame %llu: locate", (unsigned long long)f);
+    write_record(f, SOMVR_LAYOUT_B, v, 3);
+    somvr_objective_frame e;
+    memset(&e, 0, sizeof e);
+    e.n = (uint32_t)n, e.dist_m = dist, e.id = 1, e.flags = SOMVR_OBF_HIDDEN;
+    for (int k = 0; k < 3; k++) e.pos[k] = 0.5f * (v->pose[0].p[k] + v->pose[1].p[k]) + off[k];
+    if (g_obo) somvr_objective_put(g_obo, f, &e);
+    V.ncp = V.ntr = 0;
+    hud_present(&r->a, f, 0, SOMVR_HUDK_NONE);
+}
+/* the last frame's layer i = the marker as somvr_ob_locate places it (kind, cell, pose, size; world: space 1, edge: a
+ * VIEW space) */
+static void ob_check(int i, const somvr_views *v, const float off[3], int *inv, int kind, const char *what) {
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    int k = MOCK(mockxr_sc_find)(SOMVR_OB_IMG_W, SOMVR_OB_IMG_H);
+    somvr_ob_cfg c;
+    somvr_ob_cfg_default(&c);
+    float head[3], pos[3], fov[4];
+    for (int j = 0; j < 3; j++) head[j] = 0.5f * (v->pose[0].p[j] + v->pose[1].p[j]), pos[j] = head[j] + off[j];
+    fov[0] = fminf(v->fov[0].l, v->fov[1].l), fov[1] = fmaxf(v->fov[0].r, v->fov[1].r);
+    fov[2] = fmaxf(v->fov[0].u, v->fov[1].u), fov[3] = fminf(v->fov[0].d, v->fov[1].d);
+    somvr_ob_place p = somvr_ob_locate(&c, head, v->pose[0].q, fov, pos, inv);
+    int32_t rc[4];
+    somvr_ob_rect(p.cell, rc);
+    CHECK(p.kind == kind && i < (int)e->layer_count && k >= 1 && e->q[i].type == XR_TYPE_COMPOSITION_LAYER_QUAD &&
+              e->q[i].sc == k && (kind == SOMVR_OBK_WORLD ? e->q[i].space == 1 : e->q[i].space != 1) &&
+              e->q[i].flags == XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT && e->q[i].eyes == XR_EYE_VISIBILITY_BOTH &&
+              !memcmp(e->q[i].rect, rc, sizeof rc) && fabsf(e->q[i].size[0] - p.size[0]) < 1e-5f &&
+              pose_near(e->q[i].pose, p.pose),
+          "%s: layer %d kind %d (want %d) sc %d (want %d) space %d rect %d,%d (want %d,%d) size %g (want %g) pose %g,%g,%g,%g "
+          "%g,%g,%g", what, i, p.kind, kind, e->q[i].sc, k, e->q[i].space, e->q[i].rect[0], e->q[i].rect[1], rc[0], rc[1],
+          e->q[i].size[0], p.size[0], e->q[i].pose[0], e->q[i].pose[1], e->q[i].pose[2], e->q[i].pose[3], e->q[i].pose[4],
+          e->q[i].pose[5], e->q[i].pose[6]);
+}
+static int sc_objective(void) { /* none, ahead (one upload), the same text (none), a new text, out of view, reuse, gone */
+    hudrig r;
+    if (objective_obj(1) || hud_setup(&r, 0)) return 1;
+    somvr_views v;
+    uint64_t f = 1;
+    const float ahead[3] = {3, 0, -40}, right[3] = {60, 0, -5}, near[3] = {0, 0, -2};
+    for (; f <= 3; f++) { /* 1. no objective (and one 2 m away: Talion is there): the projection alone, nothing made */
+        ob_stereo(&r, f, f == 3, near, 2, &v);
+        check_no_quad(&v, "no objective");
+    }
+    CHECK(MOCK(mockxr_sc_find)(SOMVR_OB_IMG_W, SOMVR_OB_IMG_H) < 0 && V.buf2img == 0 && !MOCK(mockxr_view_live)() &&
+              log_has("xr: objective: somvr_objective found"),
+          "no objective: a swapchain, an upload, a VIEW space, or no setup line");
+    /* 2. ahead: the marker world-locked right over the projection; its picture uploaded once, byte for byte */
+    int inv = 0;
+    ob_stereo(&r, f++, 1, ahead, 40.2f, &v);
+    check_proj_n(&v, 3, RECT_B, "the objective ahead", 2);
+    ob_check(1, &v, ahead, &inv, SOMVR_OBK_WORLD, "ahead");
+    int k = MOCK(mockxr_sc_find)(SOMVR_OB_IMG_W, SOMVR_OB_IMG_H);
+    static uint8_t want[SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4];
+    static somvr_font font;
+    somvr_font_init(&font);
+    somvr_ob_image(want, &font, "40 m", 0);
+    CHECK(k >= 1 && MOCK(mockxr_swapchain_k)(k)->create_flags == 0 && MOCK(mockxr_swapchain_k)(k)->acquires == 1 &&
+              V.buf2img == 1 && V.up_w == SOMVR_OB_IMG_W && V.up_h == SOMVR_OB_IMG_H && !memcmp(V.up_px, want, sizeof want),
+          "the picture: slot %d acquires %d uploads %d %ux%u bytes %d", k, k >= 1 ? MOCK(mockxr_swapchain_k)(k)->acquires : -1,
+          V.buf2img, V.up_w, V.up_h, !memcmp(V.up_px, want, sizeof want));
+    /* 3. the same text: no upload; 39.4 m -> "39 m": one more */
+    ob_stereo(&r, f++, 1, ahead, 39.6f, &v);
+    ob_check(1, &v, ahead, &inv, SOMVR_OBK_WORLD, "the same text");
+    CHECK(V.buf2img == 1, "the same text uploaded again: %d", V.buf2img);
+    ob_stereo(&r, f++, 1, ahead, 39.4f, &v);
+    somvr_ob_image(want, &font, "39 m", 0);
+    CHECK(V.buf2img == 2 && MOCK(mockxr_swapchain_k)(k)->acquires == 2 && !memcmp(V.up_px, want, sizeof want),
+          "a new text: uploads %d", V.buf2img);
+    /* 4. out of view to the right: the arrow head-locked in a VIEW space at the right edge */
+    ob_stereo(&r, f++, 1, right, 60.2f, &v);
+    check_proj_n(&v, 3, RECT_B, "the objective to the right", 2);
+    ob_check(1, &v, right, &inv, SOMVR_OBK_EDGE, "to the right");
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    CHECK(MOCK(mockxr_view_live)() >= 1 && e->q[1].pose[4] > 0.3f && V.buf2img == 3, "the edge: VIEW %d x %g uploads %d",
+          MOCK(mockxr_view_live)(), e->q[1].pose[4], V.buf2img);
+    /* 5. a reuse frame: the last one's arrow again, no copy, no upload */
+    V.ncp = 0;
+    tagged_present_eyes(&r.a, f++, 1, TAG_SYNC, 3, 2);
+    e = MOCK(mockxr_last_end)();
+    CHECK(e->layer_count == 2 && V.ncp == 0 && e->q[1].sc == k && e->q[1].space != 1 && V.buf2img == 3,
+          "reuse: %u layers, %d copies", e->layer_count, V.ncp);
+    /* 6. the objective gone (n = 0), an entry for another frame: nothing */
+    ob_stereo(&r, f++, 0, ahead, 0, &v);
+    check_no_quad(&v, "the objective gone");
+    CHECK(locate(&v), "locate");
+    write_record(f, SOMVR_LAYOUT_B, &v, 3);
+    V.ncp = V.ntr = 0;
+    hud_present(&r.a, f++, 0, SOMVR_HUDK_NONE);
+    check_no_quad(&v, "no entry");
+    CHECK(atomic_load(&g_obo->n_marker) == 3 && atomic_load(&g_obo->n_edge) == 1, "counters: marker %llu edge %llu",
+          (unsigned long long)atomic_load(&g_obo->n_marker), (unsigned long long)atomic_load(&g_obo->n_edge));
+    app_teardown(&r.a);
+    CHECK(MOCK(mockxr_live)() == 0 && !MOCK(mockxr_view_live)(), "objective objects outlived the session");
+    CHECK(log_has("xr: objective: swapchain 390x130") && log_has("the marker world-locked") &&
+              log_has("the edge arrow head-locked") && log_has("xr: objective: the arrow points") && !log_has("objective: off"),
+          "objective log lines");
+    check_mock_clean();
+    return 0;
+}
+static int ob_none(int obj, int active, const char *logline) {
+    hudrig r;
+    if ((obj && objective_obj(active)) || hud_setup(&r, 0)) return 1;
+    somvr_views v;
+    const float ahead[3] = {3, 0, -40};
+    for (uint64_t f = 1; f <= 5; f++) {
+        ob_stereo(&r, f, 1, ahead, 40, &v);
+        check_no_quad(&v, "no objective marker");
+    }
+    CHECK(MOCK(mockxr_sc_find)(SOMVR_OB_IMG_W, SOMVR_OB_IMG_H) < 0 && V.buf2img == 0 &&
+              (!logline || log_has(logline)) && !log_has("xr: objective: somvr_objective found"),
+          "objective without its marker: log \"%s\"", logline ? logline : "-");
+    app_teardown(&r.a);
+    check_mock_clean();
+    return 0;
+}
+static int sc_objective_absent(void) { return ob_none(0, 0, NULL); }
+static int sc_objective_inactive(void) { return ob_none(1, 0, "xr: objective: no marker (somvr_objective inactive"); }
+static int sc_objective_off(void) { return ob_none(1, 1, "xr: objective: no marker (SOMVR_XR_OBJECTIVE=off)"); }
+
 /* with comfort's ring: the glows under it, the edge bands over it (docs/re-xr-pipeline.md 16, 17) */
 static int sc_threat_vignette(void) {
     hudrig r;
@@ -6967,6 +7105,10 @@ static const struct {
     {"vignette-reject", sc_vignette_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_CF=1", 1},
     {"vignette-nostatic", sc_vignette_nostatic, "SOMVR_XR_LOADER=@MOCK MOCKXR_FAIL=xrCreateSwapchain:3", 1},
     {"threat", sc_threat, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"objective", sc_objective, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"objective-absent", sc_objective_absent, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"objective-inactive", sc_objective_inactive, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"objective-off", sc_objective_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_OBJECTIVE=off", 1},
     {"threat-vignette", sc_threat_vignette, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-absent", sc_threat_absent, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-inactive", sc_threat_inactive, "SOMVR_XR_LOADER=@MOCK", 1},

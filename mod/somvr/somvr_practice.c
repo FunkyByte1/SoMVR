@@ -119,8 +119,12 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
     size_t na = token(&s, &arg);
     int orc = -1;
     out->have_at = 0;
-    if (na && a == SOMVR_PRA_GO) { /* go X Y Z */
+    /* go X Y Z; status ground X Y Z (a test word, the collect drill: the floor under a place before a trip there) */
+    int ground = na && a == SOMVR_PRA_STATUS && ci_eq(arg, na, "ground");
+    if (na && (a == SOMVR_PRA_GO || ground)) {
         float v[3];
+        if (ground && !(na = token(&s, &arg)))
+            return 0;
         for (int i = 0; i < 3; i++) {
             char buf[32], *e;
             if (i && !(na = token(&s, &arg)))
@@ -135,13 +139,15 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         }
         if (token(&s, &rest))
             return 0;
-        out->action = a, out->orc = -1, out->have_at = 1;
+        out->action = a, out->orc = ground ? 2 : -1, out->have_at = 1;
         memcpy(out->at, v, sizeof v);
         return 1;
     }
     if (na) {
         if (a == SOMVR_PRA_STATUS && ci_eq(arg, na, "nav"))
             orc = 1; /* "status nav": the game's nav markers too (a test word, the story drill's round 2) */
+        else if (a == SOMVR_PRA_STATUS && ci_eq(arg, na, "look"))
+            orc = 3; /* "status look": what the game's look-at triggers read of the players (the collect drill) */
         else if (a != SOMVR_PRA_SPAWN || (orc = orc_tok(arg, na)) < 0)
             return 0; /* only spawn takes a type, status "nav" */
     }
