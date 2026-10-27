@@ -1,12 +1,13 @@
 /* somvr_objective_layer.c - SOMVR_OBJECTIVE's marker (docs/re-xr-pipeline.md 44, ../somvr_objective.h; X.mx held, the
  * present thread; included by somvr_vklayer.c after the void's file). Every stereo frame from a record reads that
  * frame's entry of the preload's `somvr_objective` (or the newest within 4 frames) and adds one quad (XL_OBJ: over
- * the ring, under the HUD; the first to go after the backdrop when a frame would carry more than the runtime takes):
+ * the ring, under the HUD; the first to go after the backdrop when a frame would carry more than the runtime takes;
+ * build 17: the climb's landing with SOMVR_OBF_LINE also the drop's line, XL_OBJL, a quad along it facing the head):
  * in view the diamond with the distance, world-locked over the objective's direction in the reference space
  * (billboarded to the frame's head, at the objective's distance up to SOMVR_OBJECTIVE_DIST_M, its diamond on the
  * direction), faint within SOMVR_OBJECTIVE_FAINT_DEG of the view's centre; out of view the arrow at the view's edge in
- * a VIEW space 1 m ahead, parallel to the view's plane, rolled to point the way (somvr_ob_locate). The picture (390 x
- * 130: the marker, its faint copy, the arrow) is drawn by somvr_ob_image when the distance's text changes and uploaded
+ * a VIEW space 1 m ahead, parallel to the view's plane, rolled to point the way (somvr_ob_locate). The picture (650 x
+ * 130: the marker, its faint copy, the arrow, the landing ring, the drop's line) is drawn by somvr_ob_image when the distance's text changes and uploaded
  * into the next image of an ordinary swapchain (one staging buffer, its fence waited before the next write). A reuse
  * frame repeats the last quad. No object or SOMVR_XR_OBJECTIVE=off: nothing. Any failure: no marker for the session
  * (logged once); the frames go on. */
@@ -32,8 +33,10 @@ static struct {
     int in_view;                 /* somvr_ob_locate's hysteresis */
     XrCompositionLayerQuad q, last_q;
     int has, last_has, kind_was;
+    XrCompositionLayerQuad ql, last_ql; /* build 17: the drop's line (XL_OBJL) with the landing's ring */
+    int has_l, last_has_l, line_was;
     uint32_t id_was;
-    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land;
+    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land, n_line, n_strike;
     uint32_t lines;
 } OB;
 
@@ -58,6 +61,7 @@ static void ob_destroy(void) { /* the swapchain, the staging buffer, the VIEW sp
     if (OB.view) X.xrDestroySpace(OB.view);
     OB.view = XR_NULL_HANDLE;
     OB.has = OB.last_has = 0;
+    OB.has_l = OB.last_has_l = 0;
 }
 
 /* no marker for the rest of this session (logged once); the stereo frames go on without it */
@@ -260,7 +264,7 @@ static int ob_upload(dev_st *ds, const char *text) {
 
 /* A stereo frame from record `rec`, right before its xrEndFrame: the marker into the frame's composition (XL_OBJ) */
 static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
-    OB.has = 0;
+    OB.has = 0, OB.has_l = 0;
     if (!OB.on) return;
     somvr_objective_frame e;
     int have = somvr_objective_get(OB.obj, rec->frame, &e);
@@ -270,11 +274,26 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
         OB.n_missing++;
     }
     OB.n_frames++;
-    somvr_ob_place p;
+    somvr_ob_place p, pl;
     memset(&p, 0, sizeof p);
+    memset(&pl, 0, sizeof pl);
     int land = have && e.n == 1 && (e.flags & SOMVR_OBF_LAND);
+    int strike = have && e.n == 1 && !land && (e.flags & SOMVR_OBF_STRIKE);
     if (land) { /* build 16: the climb's landing (SOMVR_CLIMB_PULLOVER): a ring flat on the floor where he will stand */
         p = somvr_ob_floor(e.pos, e.dist_m);
+        OB.in_view = 0;
+        if (e.flags & SOMVR_OBF_LINE) { /* build 17 (SOMVR_CLIMB_DESCENT_MARK): the line from the edge down to it */
+            float head[3], bot[3] = {e.pos[0], e.pos[1] + 0.02f, e.pos[2]};
+            for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
+            pl = somvr_ob_line(e.top, bot, head, e.dist_m * (5.0f / 35.0f)); /* 5 cm at Talion's size (the ring 35) */
+        }
+    } else if (strike) { /* build 17: the Shadow Strike's mark (SOMVR_STRIKE_GAZE): the ring round the orc, the label */
+        float head[3];
+        for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
+        p = somvr_ob_strike(head, e.pos, e.dist_m,
+                            e.flags & SOMVR_OBF_STRIKE_GO ? SOMVR_OB_CELL_STRIKE_GO
+                            : e.flags & SOMVR_OBF_STRIKE_NO ? SOMVR_OB_CELL_STRIKE_NO
+                                                            : SOMVR_OB_CELL_STRIKE);
         OB.in_view = 0;
     } else if (have && e.n == 1 && isfinite(e.pos[0] + e.pos[1] + e.pos[2])) {
         float head[3], fov[4];
@@ -290,7 +309,7 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     }
     if (p.kind != SOMVR_OBK_NONE) {
         char text[16];
-        if (land) snprintf(text, sizeof text, "%s", OB.text); /* the picture as it is: the ring is in every upload */
+        if (land || strike) snprintf(text, sizeof text, "%s", OB.text); /* the picture as it is: the rings are in every upload */
         else somvr_ob_text(e.dist_m, text);
         if ((!OB.released || strcmp(text, OB.text)) && ob_upload(ds, text)) return; /* off now (logged) */
         if (p.kind == SOMVR_OBK_EDGE && !OB.view) return;
@@ -304,25 +323,57 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
                                         .pose = {{p.pose[0], p.pose[1], p.pose[2], p.pose[3]}, {p.pose[4], p.pose[5], p.pose[6]}},
                                         .size = {p.size[0], p.size[1]}};
         OB.has = 1;
-        OB.n_land += land;
-        OB.n_marker += p.kind == SOMVR_OBK_WORLD && !land, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
+        OB.n_land += land, OB.n_strike += strike;
+        if (pl.kind == SOMVR_OBK_WORLD) {
+            int32_t rl[4];
+            somvr_ob_rect(pl.cell, rl);
+            OB.ql = OB.q;
+            OB.ql.subImage.imageRect = (XrRect2Di){{rl[0], rl[1]}, {rl[2], rl[3]}};
+            OB.ql.pose = (XrPosef){{pl.pose[0], pl.pose[1], pl.pose[2], pl.pose[3]}, {pl.pose[4], pl.pose[5], pl.pose[6]}};
+            OB.ql.size = (XrExtent2Df){pl.size[0], pl.size[1]};
+            OB.has_l = 1, OB.n_line++;
+        }
+        OB.n_marker += p.kind == SOMVR_OBK_WORLD && !land && !strike, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
         OB.n_faint += p.cell == SOMVR_OB_CELL_FAINT;
-        if (!land)
+        if (!land && !strike)
             atomic_fetch_add_explicit(p.kind == SOMVR_OBK_WORLD ? &OB.obj->n_marker : &OB.obj->n_edge, 1, memory_order_relaxed);
     } else {
         OB.n_none++;
     }
     OB.last_has = OB.has, OB.last_q = OB.q;
+    OB.last_has_l = OB.has_l, OB.last_ql = OB.ql;
+    if (OB.has_l) c->l[XL_OBJL] = (const XrCompositionLayerBaseHeader *)&OB.ql;
     int kind = p.kind * 4 + (p.kind ? p.cell : 0);
-    if (land && kind != OB.kind_was && OB.lines < 400) {
+    if (strike && (kind != OB.kind_was || e.id != OB.id_was) && OB.lines < 400) {
+        OB.lines++;
+        lg("xr: objective frame %llu: the Shadow Strike's mark (%s) on orc %u: the ring %.2f m across round "
+           "%+.2f,%+.2f,%+.2f m, the quad %.2f x %.2f m (frames with it %llu)", (unsigned long long)rec->frame,
+           p.cell == SOMVR_OB_CELL_STRIKE_GO ? "pressed" : p.cell == SOMVR_OB_CELL_STRIKE_NO ? "no arrows" : "ready", e.id,
+           (double)e.dist_m, (double)e.pos[0], (double)e.pos[1], (double)e.pos[2], (double)p.size[0], (double)p.size[1],
+           (unsigned long long)OB.n_strike);
+        OB.kind_was = kind, OB.id_was = e.id, OB.line_was = 0;
+        if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
+        return;
+    }
+    if (strike) {
+        OB.kind_was = kind, OB.id_was = e.id, OB.line_was = 0;
+        if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
+        return;
+    }
+    if (land && (kind != OB.kind_was || OB.has_l != OB.line_was) && OB.lines < 400) {
         OB.lines++;
         lg("xr: objective frame %llu: the climb's landing: a ring flat on the floor at %+.2f,%+.2f,%+.2f m, %.2f m across "
            "(frames with it %llu)", (unsigned long long)rec->frame, (double)p.pose[4], (double)p.pose[5], (double)p.pose[6],
            (double)p.size[0], (unsigned long long)OB.n_land);
-        OB.kind_was = kind, OB.id_was = 0;
+        if (OB.has_l)
+            lg("xr: objective frame %llu: and the drop's line from %+.2f,%+.2f,%+.2f m down %.2f m to it, %.3f m wide, facing "
+               "the head (frames with it %llu)", (unsigned long long)rec->frame, (double)e.top[0], (double)e.top[1],
+               (double)e.top[2], (double)pl.size[1], (double)pl.size[0], (unsigned long long)OB.n_line);
+        OB.kind_was = kind, OB.id_was = 0, OB.line_was = OB.has_l;
         if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
         return;
     }
+    OB.line_was = OB.has_l;
     if (((kind != OB.kind_was || (have && e.n && e.id != OB.id_was)) && OB.lines < 400) || OB.n_frames <= 2 ||
         OB.n_frames % 600 == 0) {
         OB.lines += kind != OB.kind_was;
@@ -373,4 +424,6 @@ static void ob_reuse_layers(xr_comp *c) {
     OB.has = OB.on && OB.sc ? OB.last_has : 0;
     OB.q = OB.last_q;
     if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
+    OB.has_l = OB.has && OB.last_has_l, OB.ql = OB.last_ql;
+    if (OB.has_l) c->l[XL_OBJL] = (const XrCompositionLayerBaseHeader *)&OB.ql;
 }

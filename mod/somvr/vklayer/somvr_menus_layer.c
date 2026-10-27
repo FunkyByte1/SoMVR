@@ -31,6 +31,8 @@ static struct {
     /* the switches */
     int menu, menu_bad;
     float mq[3];            /* SOMVR_XR_MENU_QUAD: distance, width, drop */
+    float pitch_max;        /* SOMVR_XR_MENU_PITCH: a game menu's board down the gaze, at most this many deg (0 = level) */
+    int pitch_bad;
     int mm, mm_bad;
     int mm_rect[4];         /* SOMVR_XR_MINIMAP_RECT (1920x1080 pixels) */
     somvr_mm_cfg mmc;
@@ -93,6 +95,13 @@ static void mn_config(void) {
     int b = 0;
     somvr_mn_parse_quad(getenv("SOMVR_XR_MENU_QUAD"), MN.mq, &b);
     MN.menu_bad |= b << 1;
+    { /* SOMVR_XR_MENU_PITCH=DEG (0..60, default 0 = build 16's level board) */
+        const char *pv = getenv("SOMVR_XR_MENU_PITCH");
+        char *e = NULL;
+        float d = pv && *pv ? strtof(pv, &e) : 0;
+        MN.pitch_bad = pv && *pv && (!e || *e || !(d >= 0 && d <= 60));
+        MN.pitch_max = MN.pitch_bad ? 0 : d;
+    }
     MN.mm = somvr_mm_parse(getenv("SOMVR_XR_MINIMAP"), &MN.mm_bad);
     b = 0;
     somvr_mm_parse_rect(getenv("SOMVR_XR_MINIMAP_RECT"), MN.mm_rect, &b);
@@ -143,6 +152,10 @@ static void mn_setup(void) {
     somvr_tc_reset(&MN.tg), somvr_tc_reset(&MN.tv);
     if (MN.menu_bad & 1) lg("xr: menus: SOMVR_XR_MENU=%s is not front or off: off", getenv("SOMVR_XR_MENU"));
     if (MN.menu_bad & 2) lg("xr: menus: SOMVR_XR_MENU_QUAD=%s is not DIST,WIDTH,DROP: the defaults", getenv("SOMVR_XR_MENU_QUAD"));
+    if (MN.pitch_bad) lg("xr: menus: SOMVR_XR_MENU_PITCH=%s is not 0..60 (deg): 0 (the level board)", getenv("SOMVR_XR_MENU_PITCH"));
+    if (MN.pitch_max > 0)
+        lg("xr: menus: SOMVR_XR_MENU_PITCH=%.0f: a game menu opened with the head looking down gets its board down the gaze "
+           "(at most %.0f deg below the level)", MN.pitch_max, MN.pitch_max);
     if (MN.mm_bad & 1) lg("xr: minimap: SOMVR_XR_MINIMAP=%s is not wrist or off: off", getenv("SOMVR_XR_MINIMAP"));
     if (MN.mm_bad & 2) lg("xr: minimap: SOMVR_XR_MINIMAP_RECT=%s is not X,Y,W,H in 1920x1080: the default",
                           getenv("SOMVR_XR_MINIMAP_RECT"));
@@ -206,9 +219,13 @@ static int mn_eyes(somvr_posef eye[2]) {
     return 1;
 }
 
+static void mn_qrot(const float q[4], const float v[3], float out[3]); /* (below) */
 static void mn_log_pose(const char *what, const somvr_posef *p, float w, float h) {
-    lg("xr: menus: %s placed at %+.3f,%+.3f,%+.3f facing yaw %+.1f deg, %.3f x %.3f m", what, p->p[0], p->p[1], p->p[2],
-       2.0 * atan2(p->q[1], p->q[3]) * 57.29578, w, h);
+    static const float ez[3] = {0, 0, 1};
+    float n[3];
+    mn_qrot(p->q, ez, n); /* its normal's pitch: the tilt toward the eyes (a board down the gaze tilts up) */
+    lg("xr: menus: %s placed at %+.3f,%+.3f,%+.3f facing yaw %+.1f deg, %.3f x %.3f m (tilt %+.1f deg)", what, p->p[0],
+       p->p[1], p->p[2], 2.0 * atan2(p->q[1], p->q[3]) * 57.29578, w, h, asinf(fmaxf(-1.f, fminf(1.f, n[1]))) * 57.29578);
 }
 
 /* the mono frame's menu quad (the whole game image): on the board instead of 2 m ahead of the space's origin */
@@ -217,7 +234,7 @@ static void mn_mono_quad(XrCompositionLayerQuad *q, uint32_t w, uint32_t h) {
     if (!MN.mono_latched || MN.mono_stereo != X.n_stereo) { /* the first mono frame after the world: an open */
         somvr_posef eye[2];
         if (mn_eyes(eye)) {
-            somvr_mn_board_pose(eye, MN.mq[0], MN.mq[2], &MN.mono_pose);
+            somvr_mn_board_pose_gaze(eye, MN.mq[0], MN.mq[2], MN.pitch_max, &MN.mono_pose);
             MN.mono_latched = 1, MN.n_mono_boards++;
             if (MN.lines++ < 100) mn_log_pose("the menu quad's board", &MN.mono_pose, MN.mq[1], MN.mq[1] * h / w);
         }
@@ -243,7 +260,7 @@ static void mn_hud_quad(XrCompositionLayerQuad *q, const somvr_rec *rec) {
     }
     if (!MN.hud_latched || !MN.was_menu) {
         somvr_posef eye[2] = {rec->eye[0].pose, rec->eye[1].pose};
-        somvr_mn_board_pose(eye, MN.mq[0], MN.mq[2], &MN.hud_pose);
+        somvr_mn_board_pose_gaze(eye, MN.mq[0], MN.mq[2], MN.pitch_max, &MN.hud_pose);
         MN.hud_latched = 1, MN.n_hud_boards++;
         if (MN.lines++ < 100) mn_log_pose("a game menu's board (the HUD quad)", &MN.hud_pose, MN.mq[1],
                                           MN.mq[1] * (float)X.hud_h / (float)X.hud_w);
@@ -423,6 +440,8 @@ static void xl_cap(xr_comp *c) {
         c->l[XL_HANDS] = NULL, n--;
     for (int i = XL_MBD; i <= XL_MBK && n > max + (c->l[XL_BAND] != NULL); i++) /* then the menus' backdrop */
         if (c->l[i]) c->l[i] = NULL, n--;
+    if (n > max + (c->l[XL_BAND] != NULL) && c->l[XL_OBJL]) /* build 17: then the drop's line (its ring stays) */
+        c->l[XL_OBJL] = NULL, n--;
     if (n > max + (c->l[XL_BAND] != NULL) && c->l[XL_OBJ]) /* build 15: then the objective's marker */
         c->l[XL_OBJ] = NULL, n--;
     if (n <= max || !c->l[XL_BAND]) return;
@@ -684,12 +703,13 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
                            : i == XL_FADE ? "fade"
                            : i == XL_MBD ? "menu dim" : i == XL_MBK ? "menu backdrop" /* SOMVR_XR_MENU_BACK */
                            : i == XL_THE0 || i == XL_THE1 ? "threat edge" /* build 10: the bands (a VIEW space) */
-                           : i == XL_OBJ ? "objective" /* build 15: the marker (the edge arrow: a VIEW space) */
+                           : i == XL_OBJ || i == XL_OBJL ? "objective" /* build 15: the marker (the edge arrow: a VIEW
+                                                                         * space); build 17: the drop's line */
                                          : "threat cue";
         mn_log_quad(what, i, (const XrCompositionLayerQuad *)l);
     }
     if (c->l[XL_VM0]) mn_dump_vrmenu();
-    if (c->l[XL_OBJ]) ob_dump(mn_dump_frame); /* build 15: the objective marker's picture */
+    if (c->l[XL_OBJ] || c->l[XL_OBJL]) ob_dump(mn_dump_frame); /* build 15: the objective marker's picture */
     mn_dump_frame = 0;
 }
 
@@ -764,6 +784,8 @@ static void xt_run(const char *line) {
     case SOMVR_XT_DUMP:
         res = dump_next();
         break;
+    case SOMVR_XT_SIZE: res = vh_resize(c.v[0]); break;
+    case SOMVR_XT_LUMLOG: res = vh_lumlog((int)c.v[0]); break;
     case SOMVR_XT_OFF: XT.h[h].on = 0, XT.h[h].input = 0, XT.h[h].btn = 0; break;
     case SOMVR_XT_HEAD:
         if (!vm_head(&head)) {

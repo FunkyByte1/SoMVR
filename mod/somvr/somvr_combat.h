@@ -102,7 +102,21 @@ int sc_space_hold(const float root[3], const float was[3], float xf[3], float sp
  * = the nearer of its two distances asked and given */
 int sc_space_hold2(const float root[3], const float *head, const float was[3], float xf[3], float space, float *d_want,
                    float *d_got);
+/* SOMVR_COMBAT_STAGGER_CM (build 17): an orc's step during its reel (its reaction to our hit or parry) from was to xf
+ * (cm), kept within cap of anchor (where the hit found it), horizontally: the step's part away from the anchor passes
+ * 1:1 up to half the cap, then eased by (cap - d) / (cap / 2) (a reel that slows to a stop just under the cap, never
+ * dead), the sideways part as it is, never past max(cap, the distance it had); a step that takes it nearer to talion
+ * (Talion's root; NULL = none) passes as it is (FIGHT_SPACE's rule holds it). 1 = changed, *cut = cm taken off */
+int sc_reel_cap(const float anchor[3], const float *talion, const float was[3], float xf[3], float cap, float *cut);
 const char *sc_tier_name(int tier);
+/* build 17 (docs/re-xr-pipeline.md 59): what a landed hit was, for its feedback (the bite, the sound, the sparks): a cut
+ * (the heavy tier: SOMVR_COMBAT_CLASS=cut's committed cut, =speed's fast long one), a stab, a flat slap (light with the
+ * flat leading: edge_deg over edge_max_deg) or a tap (any other light hit: a short one, the edge's angle unknown) */
+enum { SC_KIND_NONE = 0, SC_KIND_CUT = 1, SC_KIND_SLAP = 2, SC_KIND_TAP = 3, SC_KIND_STAB = 4, SC_KIND_N = 5 };
+int sc_hit_kind(int tier, float edge_deg, float edge_max_deg);
+const char *sc_kind_name(int kind); /* "cut", "slap", "tap", "stab", "none" */
+/* the bite: a cut that landed - not one dealt as a glance off a raised shield, not one the orc blocked */
+int sc_kind_bites(int kind, int glance, int blocked);
 
 /* ---- re-hit cooldown and hit charges ----------------------------------------------------------------------------- */
 

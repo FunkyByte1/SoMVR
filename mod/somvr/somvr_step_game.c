@@ -85,6 +85,32 @@ static struct {
 	uint64_t suppressed;
 } g_step;
 
+/* build 17, SOMVR_DODGE=on (the user, build-16 session: unblockable blows need "a way to dodge them"): A (the right
+ * controller's lower button; free on foot with SOMVR_GAMEMOVES=off) in a fight = the dash (this runner's, LOCO's delta)
+ * of a fixed SOMVR_DODGE_CM in SOMVR_DODGE_MS along the left stick, else straight away from the attacker, else back
+ * from the gaze; the wraith tunnel for its motion (SOMVR_DODGE_TUNNEL); never into a wall or off a ledge (rays at the
+ * knees and the chest along the path, the ground under the landing and the middle within DG_STEP_CM of the ground under
+ * Talion), else refused with a double buzz in the right hand; SOMVR_DODGE_COOL_MS after a dodge's end. Not in a fight
+ * (Talion's FSM not Combat, no attack at him tracked by THREAT in the last DG_FIGHT_S): A does nothing, as before */
+#define DG_FIGHT_S 3.0     /* an attack at Talion tracked this recently = a fight */
+#define DG_BODY_CM 35.0f   /* the wall rays reach this far past the landing (Talion's half width) */
+#define DG_STEP_CM 45.0f   /* the ground under the landing at most this far above or below the ground under Talion */
+#define DG_RAY_UP_CM 60.0f /* the ground rays start this far above the root */
+enum { DGR_NOFIGHT = 0, DGR_COOL, DGR_BUSY, DGR_CLIMB, DGR_BOW, DGR_FINISH, DGR_NOROOT, DGR_NORAY, DGR_WALL, DGR_LEDGE,
+       DGR_STEP, DGR_YIELD, DGR_N };
+static const char *const g_dg_why[DGR_N] = { "no fight", "the cooldown", "a move runs", "a climb holds", "the bow is out",
+					      "a finisher's moment", "no root", "no ray (the climb's cast is not ready)",
+					      "something in the way", "no ground at the landing (a ledge)", "the landing is a step too high",
+					      "the press is another's (ab_tick: the strike's mark, the climb's hang)" };
+static _Atomic int g_dg_probe_req; /* the test word "fight dodge probe" (SOMVR_HANDS_TEST): the rays at the next tick */
+static struct {
+	int on, a_last, ours, src;
+	float cm, s, cool_s, tunnel;
+	double next_ok, t0;
+	sv_vec3 dir, start;
+	uint64_t n_press, n_go, n_end, n_why[DGR_N];
+} g_dg;
+
 static int st_log_ok(double t)
 {
 	if (g_step.lines < 200)
@@ -128,6 +154,170 @@ static void st_log_start(double t, const char *what, int target, float D, float 
 		      "Talion at %.1f,%.1f,%.1f fsm %d%s", t, (unsigned long long)rend_frame(), what, D, T * 1e3,
 		      T > 0 ? 2 * D / T : 0, dir.x, dir.z, atan2f(dir.x, dir.z) * 57.29578f, target, dist, g_step.root.x, g_step.root.y,
 		      g_step.root.z, g_step.fsm, extra);
+}
+
+/* SOMVR_DODGE: the path from the root along dir for D (the climb's rays, past Talion): 0 = clear, else DGR_* with the
+ * wall's distance or the landing ground's height against the ground under Talion in *at */
+static int dg_probe(sv_vec3 root, sv_vec3 dir, float D, float *at)
+{
+	somvr_climb_hit h;
+	*at = 0;
+	for (int k = 0; k < 2; k++) { /* the knees and the chest (the root is about 100 cm over the ground) */
+		sv_vec3 f = { root.x, root.y + (k ? 40.0f : -40.0f), root.z };
+		memset(&h, 0, sizeof h);
+		if (!cl_ray(NULL, 0, f, dir, D + DG_BODY_CM, &h))
+			return DGR_NORAY;
+		if (h.hit)
+			return *at = h.dist, DGR_WALL;
+	}
+	float g0 = 0;
+	for (int k = 0; k < 3; k++) { /* the ground under Talion, under the path's middle, under the landing */
+		float s = k == 0 ? 0 : k == 1 ? 0.5f * D : D;
+		sv_vec3 f = { root.x + dir.x * s, root.y + DG_RAY_UP_CM, root.z + dir.z * s };
+		memset(&h, 0, sizeof h);
+		if (!cl_ray(NULL, 0, f, (sv_vec3){ 0, -1, 0 }, DG_RAY_UP_CM + 250.0f, &h))
+			return DGR_NORAY;
+		if (!h.hit)
+			return k ? (*at = -250, DGR_LEDGE) : DGR_NORAY;
+		if (k == 0)
+			g0 = h.point.y;
+		else if (h.point.y < g0 - DG_STEP_CM)
+			return *at = h.point.y - g0, DGR_LEDGE;
+		else if (h.point.y > g0 + DG_STEP_CM)
+			return *at = h.point.y - g0, DGR_STEP;
+	}
+	return 0;
+}
+
+/* build 17: A's one owner per press (somvr_step_a_owner: the strike > the dodge > the climb), decided at the press in
+ * the input tick before any of them reads A (in_tick: before cl_tick, the dodge's dg_tick and the strike's sg_tick; the
+ * climb's frame reads A after it, from the same snapshot), kept until A is let go */
+static struct {
+	int a_was, owner, want; /* want: the owners that wanted the press (1 << SOMVR_AO_*; logs) */
+	uint64_t n[SOMVR_AO_N], contested;
+	int lines;
+} g_ab;
+
+static void ab_tick(const sc_tick_out *o)
+{
+	int a = (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_LOWER) != 0;
+	if (a && !g_ab.a_was) {
+		double t = cb_now();
+		float ap[3];
+		somvr_step_a_in in = { .world = o->live && o->ctx == SC_CTX_WORLD, .strike = sg_wants_a(),
+				       .dodge = g_step.on && g_dg.on && !g_inp.cfg.game_moves,
+				       .climbing = g_cl.on && g_cl.s.active, .drop = g_cl.on };
+		in.fight = in.dodge && (th_attacker(t, DG_FIGHT_S, ap) || g_step.fsm == 7);
+		g_ab.owner = somvr_step_a_owner(&in);
+		g_ab.want = in.world ? (in.strike ? 1 << SOMVR_AO_STRIKE : 0) |
+					       (in.dodge && in.fight && !in.climbing ? 1 << SOMVR_AO_DODGE : 0) |
+					       (in.drop ? 1 << SOMVR_AO_DROP : 0)
+				     : 0;
+		g_ab.n[g_ab.owner]++;
+		int contested = (g_ab.want & (g_ab.want - 1)) != 0;
+		g_ab.contested += contested;
+		if ((contested || (in.world && in.dodge && in.fight && in.climbing)) && g_ab.lines++ < 100)
+			logf_("A t=%.3f press: %s's (wanted by%s%s%s; the vision's mark %d, a fight %d, a climb holds %d)", t,
+			      somvr_step_a_owner_name(g_ab.owner), g_ab.want & (1 << SOMVR_AO_STRIKE) ? " the strike" : "",
+			      g_ab.want & (1 << SOMVR_AO_DODGE) ? " the dodge" : "", g_ab.want & (1 << SOMVR_AO_DROP) ? " the climb" : "",
+			      in.strike, in.fight, in.climbing);
+	} else if (!a) {
+		g_ab.owner = SOMVR_AO_NONE;
+	}
+	g_ab.a_was = a;
+}
+
+static int ab_owner(void) { return g_ab.owner; }
+static int ab_not_climbs(void) { return g_ab.owner == SOMVR_AO_STRIKE || g_ab.owner == SOMVR_AO_DODGE; }
+
+/* SOMVR_DODGE, the input tick: A's press in a fight -> the dodge, or refused (a double buzz) */
+static void dg_tick(const sc_tick_out *o)
+{
+	if (!g_dg.on || g_inp.cfg.game_moves) /* (the stock A runs the game's own evade then) */
+		return;
+	double t = cb_now();
+	if (g_dg.ours && g_step.run.kind != SOMVR_ST_DASH) { /* the dodge's motion ended: the cooldown from now */
+		g_dg.ours = 0, g_dg.next_ok = t + g_dg.cool_s, g_dg.n_end++;
+		if (st_log_ok(t))
+			logf_("DODGE t=%.3f frame=%llu over after %.0f ms: Talion %.1f cm from the start (asked %.0f); the next from %.0f ms",
+			      t, (unsigned long long)rend_frame(), (t - g_dg.t0) * 1e3, hypotf(g_step.root.x - g_dg.start.x,
+			      g_step.root.z - g_dg.start.z), g_dg.cm, g_dg.cool_s * 1e3);
+	}
+	if (atomic_exchange(&g_dg_probe_req, 0) && g_step.have_root) /* the test word: the 8 directions, the dodge's and 5 m */
+		for (int k = 0; k < 8; k++) {
+			float ya = g_inp.hv + (float)k * 0.78539816f;
+			for (int L = 0; L < 2; L++) {
+				float D = L ? 500.0f : g_dg.cm, at = 0;
+				int r = dg_probe(g_step.root, (sv_vec3){ sinf(ya), 0, cosf(ya) }, D, &at);
+				logf_("DODGE probe t=%.3f %+.0f deg from the gaze, %.0f cm: %s (%.1f cm)", t, k * 45.0, D,
+				      r ? g_dg_why[r] : "clear", at);
+			}
+		}
+	int a = o->live && o->ctx == SC_CTX_WORLD && (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_LOWER);
+	int edge = a && !g_dg.a_last;
+	g_dg.a_last = a;
+	if (!edge)
+		return;
+	g_dg.n_press++;
+	float ap[3] = { 0, 0, 0 }, at = 0;
+	int att = th_attacker(t, DG_FIGHT_S, ap), why = -1;
+	if (ab_owner() == SOMVR_AO_STRIKE)
+		why = DGR_YIELD; /* build 17: the strike's mark took the press */
+	else if (!att && g_step.fsm != 7)
+		why = DGR_NOFIGHT;
+	else if (ab_owner() != SOMVR_AO_DODGE)
+		why = DGR_YIELD; /* a climb holds: A is the climb's (the hang's drop) */
+	else if (t < g_dg.next_ok)
+		why = DGR_COOL;
+	else if (g_step.run.kind != SOMVR_ST_NONE)
+		why = DGR_BUSY;
+	else if (g_cl.on && g_cl.s.active)
+		why = DGR_CLIMB;
+	else if (bo_out())
+		why = DGR_BOW;
+	else if (fi_holds())
+		why = DGR_FINISH;
+	else if (!g_step.have_root)
+		why = DGR_NOROOT;
+	sv_vec3 dir = { 0, 0, 0 };
+	int src = 0;
+	if (why < 0) {
+		float sl = hypotf(g_lo.stick_v.x, g_lo.stick_v.z), m = hypotf(o->move[0], o->move[1]);
+		sv_vec3 sd = g_lo.stick_ok && sl > 1e-3f ? (sv_vec3){ g_lo.stick_v.x / sl, 0, g_lo.stick_v.z / sl } : (sv_vec3){ 0, 0, 0 };
+		src = somvr_step_dodge_dir(&g_step.cfg, g_step.root, g_inp.hv, sd, m > 1 ? 1 : m, att == 1,
+					   (sv_vec3){ ap[0], ap[1], ap[2] }, &dir);
+		why = !src ? DGR_NOROOT : dg_probe(g_step.root, dir, g_dg.cm, &at);
+		if (!why)
+			why = -1;
+	}
+	if (why >= 0) {
+		g_dg.n_why[why]++;
+		if (why != DGR_NOFIGHT && why != DGR_YIELD) /* in a fight: told (not in a fight A just does nothing, as before;
+							     * another's press is that one's) */
+			in_haptic_double(SOMVR_HAND_R, 0.5f, 0.05f, 0.07f, SOMVR_HAP_COMBAT);
+		if (st_log_ok(t))
+			logf_("DODGE t=%.3f frame=%llu A: refused: %s%s (%.1f cm; %s, the attacker %s; fsm %d)", t,
+			      (unsigned long long)rend_frame(), g_dg_why[why], why == DGR_NOFIGHT ? " (A does nothing)" : ", a double buzz", at,
+			      somvr_step_dodge_src_name(src), att == 1 ? "attacking" : att == 2 ? "lately" : "none", g_step.fsm);
+		return;
+	}
+	somvr_step_start(&g_step.run, &g_step.cfg, SOMVR_ST_DASH, -1, 0, g_dg.cm, g_dg.s, dir, g_step.root, 0);
+	g_dg.ours = 1, g_dg.src = src, g_dg.t0 = t, g_dg.dir = dir, g_dg.start = g_step.root, g_dg.n_go++;
+	char ex[160];
+	snprintf(ex, sizeof ex, "; the dodge (%s; the path clear, the ground level); the tunnel %.2f", somvr_step_dodge_src_name(src),
+		 g_dg.tunnel);
+	st_log_start(t, "DODGE dash", -1, g_dg.cm, g_dg.s, dir, att == 1 ? hypotf(ap[0] - g_step.root.x, ap[2] - g_step.root.z) : 0, ex);
+	for (int h = 0; h < 2; h++)
+		in_haptic_event(h, 0.3f, 0.06f, SOMVR_HAP_COMBAT);
+}
+
+/* cf_frame: the wraith tunnel while the dodge's motion runs (SOMVR_DODGE_TUNNEL; 0 = none) */
+static uint32_t dg_comfort(float *blink)
+{
+	(void)blink;
+	if (!g_dg.on || !g_dg.ours || g_step.run.kind != SOMVR_ST_DASH || !(g_dg.tunnel > 0) || g_step.run.t >= g_step.run.T)
+		return 0;
+	return SOMVR_CFF_WRAITH | somvr_cff_tunnel_bits(g_dg.tunnel);
 }
 
 /* H4's combat frame (game thread), with this frame's orcs; edge > 0 = a swing of the tracked blade just started */
@@ -205,6 +395,7 @@ static void st_tick(sc_tick_out *o)
 	g_inp.allow_cmd = 0;
 	if (!g_step.on)
 		return;
+	dg_tick(o); /* build 17: SOMVR_DODGE */
 	double t = cb_now();
 	int world = o->live && o->ctx == SC_CTX_WORLD;
 	int a = world && o->pad[SC_PAD_A] > 0.5f, edge = a && !g_step.a_last;
@@ -482,7 +673,14 @@ static void st_config(int *bad)
 	}
 	g_step.own_bits &= ~(SOMVR_LOCO_W_OFF | SOMVR_LOCO_W_INPUT | SOMVR_LOCO_W_PLAYER | SOMVR_LOCO_W_READ | SOMVR_LOCO_W_DEAD |
 			   SOMVR_LOCO_W_MENU | SOMVR_LOCO_W_STRUGGLE); /* never: those keep LOCO out whatever a move wants */
-	g_step.want = c->step > 0 || c->dash || c->phase;
+	/* build 17: SOMVR_DODGE (A in a fight = a fixed dash; off by default) */
+	memset(&g_dg, 0, sizeof g_dg);
+	g_dg.on = env_word("SOMVR_DODGE", (const char *const[]){ "off", "on" }, 2, 0);
+	g_dg.cm = env_float("SOMVR_DODGE_CM", 150, 50, 300, bad);
+	g_dg.s = env_float("SOMVR_DODGE_MS", 250, 120, 600, bad) / 1000;
+	g_dg.cool_s = env_float("SOMVR_DODGE_COOL_MS", 500, 0, 3000, bad) / 1000;
+	g_dg.tunnel = env_float("SOMVR_DODGE_TUNNEL", 0.4f, 0, 1, bad);
+	g_step.want = c->step > 0 || c->dash || c->phase || g_dg.on;
 }
 
 /* somvr_start, after lo_start (the core's hook) and vm_config (the menu can turn the moves on later): the sites, on */
@@ -525,6 +723,13 @@ static void st_start(const struct site_spec *sites, int menu)
 	      c->phase_range_cm, !g_step.look ? "none" : g_step.ok_vis ? "the wraith vision (122)" : "none (no proofs)",
 	      !g_step.nocollide ? "off" : g_step.ok_col ? "on (Combat+0x56c)" : "off (no proofs)", g_step.own_txt, c->hold_s * 1e3,
 	      g_cb.mode != CB_OFF ? "on" : "OFF (no step, no phase: the dash only)", g_step.menu ? "may change them live" : "off");
+	if (g_dg.on)
+		logf_("CONFIG dodge=on (A in a fight, SOMVR_GAMEMOVES=%s): %.0f cm in %.0f ms along the stick (from %.2f), else away "
+		      "from the attacker, else back from the gaze; the tunnel %.2f; the cooldown %.0f ms; refused with a double buzz "
+		      "when the path meets something (rays at the knees and the chest to %.0f cm past the landing) or the ground at "
+		      "the landing or the middle is over %.0f cm below / above the ground under Talion%s", g_inp.cfg.game_moves ? "on: "
+		      "the dodge stays off, the stock A evades" : "off", g_dg.cm, g_dg.s * 1e3, c->dash_stick, g_dg.tunnel,
+		      g_dg.cool_s * 1e3, DG_BODY_CM, DG_STEP_CM, g_cl.on ? "" : " (no climb: no rays, every dodge refused)");
 	if (g_cb.mode == CB_OFF && (c->step > 0 || c->phase))
 		logf_("WARN SOMVR_STEP/SOMVR_PHASE need SOMVR_COMBAT (its orcs): without it only the dash runs");
 }
@@ -554,4 +759,20 @@ static void st_end_log(void)
 	      (unsigned long long)g_step.n_peak, (unsigned long long)g_step.n_reface, (unsigned long long)g_step.n_vis_on,
 	      (unsigned long long)g_step.n_vis_off, (unsigned long long)g_step.n_vis_refused, (unsigned long long)g_step.n_col,
 	      (unsigned long long)g_step.n_col_restored, (unsigned long long)g_step.n_blink, (unsigned long long)g_step.suppressed);
+	if (g_dg.on) { /* build 17 */
+		char rf[512];
+		size_t k = 0;
+		rf[0] = 0;
+		for (int i = 0; i < DGR_N && k + 64 < sizeof rf; i++)
+			if (g_dg.n_why[i])
+				k += (size_t)snprintf(rf + k, sizeof rf - k, "%s%s %llu", k ? ", " : "", g_dg_why[i],
+						      (unsigned long long)g_dg.n_why[i]);
+		logf_("DODGE END presses %llu, dodges %llu (ended %llu); refused: %s", (unsigned long long)g_dg.n_press,
+		      (unsigned long long)g_dg.n_go, (unsigned long long)g_dg.n_end, k ? rf : "none");
+	}
+	if (g_ab.n[SOMVR_AO_STRIKE] + g_ab.n[SOMVR_AO_DODGE] + g_ab.n[SOMVR_AO_DROP] + g_ab.n[SOMVR_AO_NONE]) /* build 17 */
+		logf_("A END presses: the strike's %llu, the dodge's %llu, the climb's %llu, nobody's %llu; wanted by two or more %llu",
+		      (unsigned long long)g_ab.n[SOMVR_AO_STRIKE], (unsigned long long)g_ab.n[SOMVR_AO_DODGE],
+		      (unsigned long long)g_ab.n[SOMVR_AO_DROP], (unsigned long long)g_ab.n[SOMVR_AO_NONE],
+		      (unsigned long long)g_ab.contested);
 }

@@ -158,6 +158,17 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 	uintptr_t me = atomic_load_explicit(&g_vg.me, memory_order_relaxed);
 	uintptr_t held = atomic_load_explicit(&g_vg.held, memory_order_relaxed);
 	int ours = parent && (parent == me || parent == held); /* (the moment's dust and grass: their first sighting only) */
+	double hs = 0;
+	int hk = 0;
+	if (hf_log_window(&hs, &hk)) { /* build 17: SOMVR_COMBAT_HITLOG - every FX made after our hit */
+		static _Atomic int hit_lines;
+		if (atomic_fetch_add(&hit_lines, 1) < 400)
+			logf_("HITFX t=%.3f fx '%s' on %s %#lx node %d off %.1f,%.1f,%.1f flags %#x (caller %#lx; %.0f ms after our %s "
+			      "hit): %s", t, name, !parent ? "nothing" : parent == me ? "Talion" : "an object", (unsigned long)parent,
+			      node, (double)off[0], (double)off[1], (double)off[2], flags,
+			      (unsigned long)(uintptr_t)__builtin_return_address(0), hs * 1e3,
+			      g_hf_kind_w[hk >= 0 && hk < SC_KIND_N ? hk : 0], hit ? "not made (our eyes: hide)" : r ? "made" : "the game's 0");
+	}
 	if ((hit || (moment && ours) || !seen) && g_vg.lines < VG_LINES) {
 		g_vg.lines++;
 		logf_("VBGLOW t=%.3f fx '%s' on %s %#lx node %d off %.1f,%.1f,%.1f flags %#x start %d (caller %#lx)%s: %s", t,

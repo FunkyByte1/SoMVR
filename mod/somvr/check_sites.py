@@ -33,7 +33,8 @@ SOMVR_HIDE_HEAD=parts block of somvr_headparts_game.c (HEADPARTS_SITES_BEGIN ...
 eight patched FUN_007ccec0 calls HP_CUST_* and its ten read-only proofs) and the
 SOMVR_PRACTICE block of somvr_practice_game.c (PRACTICE_SITES_BEGIN ... PRACTICE_SITES_END, re-xr-pipeline.md 27: 6
 read-only K_ENTRY functions and 4 read-only K_VSLOT slots; and its PRQUIET_SITES_BEGIN ... PRQUIET_SITES_END block, the 4
-read-only K_ENTRY proofs of SOMVR_PRACTICE_QUIET's spawn manager calls) and the SOMVR_BODY=hands block of somvr_body_game.c
+read-only K_ENTRY proofs of SOMVR_PRACTICE_QUIET's spawn manager calls; its PRNAV block; build 17's PRFILL_SITES_BEGIN ...
+PRFILL_SITES_END, the 3 K_ENTRY calls of the practice page's refills) and the SOMVR_BODY=hands block of somvr_body_game.c
 (HANDS_SITES_BEGIN ... HANDS_SITES_END, re-xr-pipeline.md 28: the patched K_VSLOT BD_REND_COPY and 3 read-only K_ENTRY
 proofs) and the SOMVR_MINIMAP=head block of somvr_minimap_game.c (MINIMAP_SITES_BEGIN ... MINIMAP_SITES_END,
 re-xr-pipeline.md 28.2: the patched call MM_CAMQ, the read-only option proof MM_OPT and the called MM_OPTIONS) and the
@@ -53,7 +54,10 @@ create thunks, re-xr-pipeline.md 39.7) and the SOMVR_FRONT block of somvr_front_
 FRONT_SITES_END: the patched calls FR_SCORE, FR_GRANT, FR_CAMCOPY_A/B, FR_DMG_ATK and the read-only FR_CAMTERM, FR_VF59,
 FR_REARM, FR_DMG_ALL, re-xr-pipeline.md 42.8) and the SOMVR_OBJECTIVE block of somvr_objective_game.c
 (OBJECTIVE_SITES_BEGIN ... OBJECTIVE_SITES_END: the patched call OB_EACH of the nav markers' placement, the called
-OB_POS and OB_RANGE, re-xr-pipeline.md 44). Files
+OB_POS and OB_RANGE, re-xr-pipeline.md 44) and the SOMVR_GLYPH block of somvr_collect_game.c (COLLECT_SITES_BEGIN ...
+COLLECT_SITES_END: LookAtTrigger's patched tick slot CO_LAT_TICK, the patched call CO_VLOOK of the vision-mode
+look-at, the called CO_LAT_SEE and CO_LAT_VIEW, the read-only proof CO_OBJ_PROPS, re-xr-pipeline.md 45.9; and
+SOMVR_TEXT_BUTTONS' patched call CO_TXT_ICON of the UI text's button icons, 45.10). Files
 named by an #include "somvr_*_game.c" line in SOURCE.c (somvr_step_game.c, somvr_finish_game.c, somvr_headparts_game.c,
 somvr_practice_game.c, somvr_body_game.c, somvr_minimap_game.c, somvr_session_game.c, somvr_gameopts_game.c,
 somvr_prompts_game.c, somvr_bowhit_game.c) are read with it.
@@ -245,7 +249,14 @@ def main():
         if len(prn) != 1 or [m[1] for m in prn] != ["K_ENTRY"]:
             sys.exit("expected 1 K_ENTRY SITE line in somvr_practice_game.c's PRNAV_SITES block (the read-only "
                      "PRN_NAV_POS), found %d" % len(prn))
-        pr = pr + prq + prn
+        # build 17: the practice page's refills (the arrows' tokens add, the energy's fill, the heal)
+        prf = [m for b in text.split("PRFILL_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("PRFILL_SITES_END", 1)[0])]
+        if len(prf) != 3 or [m[1] for m in prf] != ["K_ENTRY"] * 3:
+            sys.exit("expected 3 K_ENTRY SITE lines in somvr_practice_game.c's PRFILL_SITES block (the read-only "
+                     "PRF_TOKENS_ADD, PRF_ENERGY_FULL, PRF_HEAL), found %d" % len(prf))
+        pr = pr + prq + prn + prf
     bd = []
     if re.search(r'^#include "somvr_body_game\.c"', text, re.M):
         bd = [m for b in text.split("HANDS_SITES_BEGIN")[1:] for m in re.findall(
@@ -365,6 +376,25 @@ def main():
             sys.exit("expected 1 SITE line in somvr_fight_game.c's SPACE_SITES block (the patched FS_AIMOVE K_VSLOT), "
                      "found %d" % len(sp))
         sites = sites + sp
+    # SOMVR_INSPECT / SOMVR_GLYPH (build 17): its block lives in somvr_collect_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_collect_game\.c"', text, re.M):
+        co = [m for b in text.split("COLLECT_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("COLLECT_SITES_END", 1)[0])]
+        if [m[1] for m in co] != ["K_VSLOT", "K_CALL", "K_ENTRY", "K_ENTRY", "K_VSLOT", "K_CALL"]:
+            sys.exit("expected 6 SITE lines in somvr_collect_game.c's COLLECT_SITES block (the patched CO_LAT_TICK K_VSLOT "
+                     "and CO_VLOOK K_CALL, the called CO_LAT_SEE, CO_LAT_VIEW K_ENTRY, the read-only CO_OBJ_PROPS K_VSLOT, "
+                     "SOMVR_TEXT_BUTTONS' patched CO_TXT_ICON K_CALL), found %d" % len(co))
+        sites = sites + co
+    # SOMVR_BOW_RETICLE (build 17): its block lives in somvr_reticle_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_reticle_game\.c"', text, re.M):
+        xh = [m for b in text.split("RETICLE_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("RETICLE_SITES_END", 1)[0])]
+        if [m[1] for m in xh] != ["K_VSLOT"]:
+            sys.exit("expected 1 SITE line in somvr_reticle_game.c's RETICLE_SITES block (the patched XH_SET K_VSLOT), "
+                     "found %d" % len(xh))
+        sites = sites + xh
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

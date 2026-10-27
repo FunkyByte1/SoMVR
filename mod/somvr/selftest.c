@@ -6020,12 +6020,27 @@ static void climb_tests(void)
 		g_ppc.proxy = (uintptr_t)&g_pxy;
 		g_pxy.sets = 0, g_pxy.pos[0] = 500, g_pxy.pos[1] = 30, g_pxy.pos[2] = -50;
 		uint64_t s0 = g_cl.thr_sets;
-		cl_thr_set((uintptr_t)&g_ppm, 2.5f);
+		cl_thr_set((uintptr_t)&g_ppm, 2.5f, 0, 0);
 		EXPECT(g_pxy.sets == 1 && g_pxy.pos[0] == 500 && fabsf(g_pxy.pos[1] - 32.5f) < 1e-4f && g_pxy.pos[2] == -50 &&
 			       g_cl.thr_sets == s0 + 1,
 		       "climb: through: the proxy up 2.5 (sets %d, y %g)", g_pxy.sets, g_pxy.pos[1]);
-		cl_thr_set((uintptr_t)&g_ppm, 0);
+		cl_thr_set((uintptr_t)&g_ppm, 0, 0, 0);
 		EXPECT(g_pxy.sets == 1, "climb: through: none = nothing (sets %d)", g_pxy.sets);
+		/* SOMVR_CLIMB_TOPOUT (build 17): the level part too */
+		cl_thr_set((uintptr_t)&g_ppm, 1.0f, 3.0f, -2.0f);
+		EXPECT(g_pxy.sets == 2 && fabsf(g_pxy.pos[0] - 503) < 1e-4f && fabsf(g_pxy.pos[1] - 33.5f) < 1e-4f &&
+			       fabsf(g_pxy.pos[2] + 52) < 1e-4f, "climb: topout: the proxy by 3, 1, -2 (%g %g %g)", g_pxy.pos[0],
+		       g_pxy.pos[1], g_pxy.pos[2]);
+		int hug0 = g_cl.cfg.hug, sd0 = g_cl.cfg.stand, to0 = g_cl.cfg.topout, hr0 = g_hr.mode;
+		EXPECT(!strcmp(cl_word("hug on"), "climb hug on") && g_cl.cfg.hug == 1 &&
+			       !strcmp(cl_word("hug off"), "climb hug off") && g_cl.cfg.hug == 0 &&
+			       !strcmp(cl_word("stand on"), "climb stand on") && g_cl.cfg.stand == 1 &&
+			       !strcmp(cl_word("topout on"), "climb topout on") && g_cl.cfg.topout == 1 &&
+			       !strcmp(cl_word("headrock fade"), "climb headrock fade") && g_hr.mode == 1 &&
+			       !strcmp(cl_word("headrock on"), "climb headrock on") && g_hr.mode == 2 &&
+			       !strcmp(cl_word("headrock off"), "climb headrock off") && g_hr.mode == 0,
+		       "climb: build 17's words (hug, stand, topout, headrock)");
+		g_cl.cfg.hug = hug0, g_cl.cfg.stand = sd0, g_cl.cfg.topout = to0, g_hr.mode = hr0;
 		int th0 = g_cl.cfg.through;
 		EXPECT(!strcmp(cl_word("through on"), "climb through on") && g_cl.cfg.through == 1 &&
 			       !strcmp(cl_word("through off"), "climb through off") && g_cl.cfg.through == 0 &&
@@ -6037,7 +6052,8 @@ static void climb_tests(void)
 		atomic_store(&g_ct.until, 0.0);
 		g_cl.cfg.through = th0, g_ppc.proxy = 0;
 		printf("climb through     the request's vertical part through the rock: the proxy set up by it (2.5 cm); none: "
-		       "nothing; the words through on|off, trace S\n");
+		       "nothing; the words through on|off, trace S; build 17: the top-out's level part too, the words hug, stand, "
+		       "topout, headrock\n");
 	}
 	g_cl.on = 0;
 	g_wall = 0, g_wall_top = INFINITY, g_grav_flag = NULL;
@@ -6478,7 +6494,20 @@ static void bow_tests(void)
 	g_lst.hand[SOMVR_HAND_L].trigger = 1;
 	bframe(0);
 	EXPECT(g_bow.s.phase == SOMVR_BOW_PH_AIM && g_bow.s.by_button && log_has("enter (by the button)"), "bow: the button");
+	/* build 17: the VR menu's Arrows row (bo_vm_set, SOMVR_BOW_QUIVER live) while the bow is out: held for the bow's
+	 * putting away (below), the Controls page's bits */
+	int qv0 = g_bow.cfg.quiver;
+	somvr_settings qs;
+	memset(&qs, 0, sizeof qs);
+	qs.quiver = (uint8_t)!qv0;
+	const char *qnote = bo_vm_set(&qs);
+	uint32_t qa = bo_vm_avail();
+	EXPECT(strstr(qnote, "once the bow is put away") && atomic_load(&g_bo_req_quiver) == !qv0 && (qa & SOMVR_VMA_ARROWS) &&
+		       !(qa & SOMVR_VMA_BOWTRIG) == !g_bow.string_trigger &&
+		       !(qa & (SOMVR_VMA_BOWRT | SOMVR_VMA_QVGRIP)) == !qv0,
+	       "bow: the Arrows row with the bow out: '%s', avail %#x", qnote, qa);
 	bframes(80, 0);
+	EXPECT(g_bow.cfg.quiver == qv0 && !log_has("(the VR menu's Arrows"), "bow: the Arrows row: not mid-aim");
 	got = bw_fwd(g_bwg.xf);
 	EXPECT(g_bow.s.phase == SOMVR_BOW_PH_AIM && g_bwg.mode && NEAR3(got, bf.x, bf.y, bf.z, 1e-4) && fabsf(bf.x) > 0.4f,
 	       "bow: button held: phase %d dir %g %g %g (want %g %g %g)", g_bow.s.phase, got.x, got.y, got.z, bf.x, bf.y, bf.z);
@@ -6486,6 +6515,17 @@ static void bow_tests(void)
 	n = bw_until(SOMVR_BOW_PH_IDLE, 120, 0);
 	EXPECT(g_bow.s.phase == SOMVR_BOW_PH_IDLE && g_bow.s.last_end == SOMVR_BOW_END_APART && n > 60,
 	       "bow: the button let go: phase %d after %d", g_bow.s.phase, n);
+	bframe(0); /* the bow away: the Arrows row's change taken now, then back (the next frame) */
+	int qv1 = g_bow.cfg.quiver;
+	qs.quiver = (uint8_t)qv0;
+	qnote = bo_vm_set(&qs);
+	bframe(0);
+	EXPECT(qv1 == !qv0 && g_bow.cfg.quiver == qv0 && atomic_load(&g_bo_req_quiver) == -1 &&
+		       log_has(qv0 ? "quiver on -> off (the VR menu's Arrows: an arrow on the string by itself" :
+				     "quiver off -> on (the VR menu's Arrows: an arrow from behind the string hand's shoulder") &&
+		       log_has(qv0 ? "quiver off -> on (the VR menu's Arrows" : "quiver on -> off (the VR menu's Arrows") &&
+		       strstr(qnote, qv0 ? "behind the right shoulder" : "on the string at the nock"),
+	       "bow: the Arrows row with the bow away: %d then %d ('%s')", qv1, g_bow.cfg.quiver, qnote);
 	g_lpose[SOMVR_HAND_L].orientation = (XrQuaternionf){ 0, 0, 0, 1 };
 	bframes(3, 0);
 	/* 11. a wrong aim command (the game's mode never comes on): the shot waits 0.6 s and is dropped, no shot of ours */
@@ -7644,7 +7684,7 @@ static void vm_tests(const char *base)
 	vm_put_file(path, "# my settings\nSNAP_DEG=45\nTURN_DPS = 90 \r\nVIGNETTE=0,4\nBOGUS=1\nHAPTICS=\"50\"\nVIEW=third\n");
 	vm_restart();
 	somvr_settings s = vm_cur();
-	EXPECT(g_vm.on && somvr_vrmenu_ok(&g_vmo) && g_vmo.size == 184 && g_vmo.version == SOMVR_VRMENU_VERSION &&
+	EXPECT(g_vm.on && somvr_vrmenu_ok(&g_vmo) && g_vmo.size == 192 && g_vmo.version == SOMVR_VRMENU_VERSION &&
 		       g_vmo.pid == (int32_t)getpid() && g_vmo.avail == (SOMVR_VMA_VIEW | SOMVR_VMA_HUD | SOMVR_VMA_COMFORT | sz_vm_avail()) &&
 		       g_vmo.blink_on_ms == 90 && atomic_load(&g_vmo.gen) == 1,
 	       "vrmenu header: ok %d size %u avail %#x blink %u gen %u", somvr_vrmenu_ok(&g_vmo), g_vmo.size, g_vmo.avail,
@@ -8416,6 +8456,77 @@ static void loco_tests(void)
 	lo_frames(3);
 	EXPECT(NEAR(lo_root().z - r0.z, 6, 1e-3) && g_lo.n.hook_pass == pass0 + 3, "loco off: the game's: %g (passes %llu)",
 	       lo_root().z - r0.z, (unsigned long long)(g_lo.n.hook_pass - pass0));
+	/* SOMVR_COMBAT_HOLD_TALION (build 17): an enemy's sync on Talion (his Combat +0x190 set, +0x188's record empty),
+	 * combat owning his movement and moving him between the ticks (the berserker's headbutt: 108 cm between the ticks in
+	 * the user's build 16 session): the ticks ours, the move pulled back, the view on the held point; the hold ends with
+	 * his half; his own sync (+0x188's record) and the switch off leave the move to the game */
+	{
+		static unsigned char tsc[0x500], tact[2][0x40], trec[0x40], tatk[0x40];
+		st_combat_t *sc0 = g_pcomb.server;
+		st_player_t *tlp = (st_player_t *)g_loP;
+		__typeof__(tlp->pcomb) tpc0 = tlp->pcomb;
+		tlp->pcomb = &g_pcomb;
+		int tlon0 = g_lo.on;
+		float trm0 = g_lot.rm[2];
+		g_lo.on = 1, g_lot.rm[2] = 0; /* (after the off step: LOCO on again, no root motion of its own) */
+		float stk[2] = { g_lst.hand[0].stick[0], g_lst.hand[0].stick[1] };
+		g_lst.hand[0].stick[0] = g_lst.hand[0].stick[1] = 0;
+		uintptr_t vt = (uintptr_t)st_vt_combat, a0 = (uintptr_t)tact[0], a1 = (uintptr_t)tact[1], rec = (uintptr_t)trec,
+			  atk = (uintptr_t)tatk;
+		memcpy(tsc, &vt, 8), memcpy(tsc + C_SYNC + 8, &a1, 8), memcpy(tsc + VB_C_ATTACK, &atk, 8);
+		memcpy(tact[0] + FB_SYNC_REC, &rec, 8), memcpy(tact[1] + FB_SYNC_REC, &rec, 8);
+		g_pcomb.server = (st_combat_t *)tsc;
+		g_tk.on = 1, g_lot.combat_owns = 1;
+		lo_frame();
+		sv_vec3 h0 = lo_root(), e0 = eye_mid();
+		float t_rw = 0, t_ew = 0;
+		for (int i = 0; i < 40; i++) {
+			g_loobj.o.pos[2] += 1.5f; /* the game's move between the ticks */
+			g_loobj.o.pos[1] += i == 20 ? 5.0f : i == 22 ? -5.0f : 0; /* lifted 5 cm for two ticks (run 121811: 12.7) */
+			lo_frame();
+			sv_vec3 rr = lo_root(), ee = eye_mid();
+			t_rw = fmaxf(t_rw, hypotf(rr.x - h0.x, rr.z - h0.z));
+			t_ew = fmaxf(t_ew, sqrtf((ee.x - e0.x) * (ee.x - e0.x) + (ee.y - e0.y) * (ee.y - e0.y) + (ee.z - e0.z) * (ee.z - e0.z)));
+		}
+		EXPECT(g_tk.active && g_lo.o.owned && t_rw < 0.01f && t_ew < 0.01f && g_tk.pulls >= 39 &&
+			       NEAR(g_tk.dev_max, 1.5, 0.01) && log_has("HOLD talion start"),
+		       "hold talion: owned %d active %d, the root off %g cm, the eyes %g, pulls %llu, dev %g", g_lo.o.owned,
+		       g_tk.active, t_rw, t_ew, (unsigned long long)g_tk.pulls, g_tk.dev_max);
+		/* the sync and his half over with a last move of 70 cm: the body back under the view (60 cm a tick at most)
+		 * before the view takes the root again */
+		memset(tsc + C_SYNC, 0, 16), memset(tsc + VB_C_ATTACK, 0, 8);
+		g_loobj.o.pos[2] += 70;
+		lo_frame();
+		sv_vec3 e1 = eye_mid();
+		int ret_active = g_tk.active;
+		lo_frames(2);
+		sv_vec3 e2 = eye_mid();
+		EXPECT(ret_active && !g_tk.active && log_has("HOLD talion end") && log_has("(the sync and his half ended)") &&
+			       log_has("42 pulls back (130.0 cm)") && log_has("back under the view in 2 ticks") &&
+			       hypotf(e1.x - e0.x, e1.z - e0.z) < 0.01f && hypotf(e2.x - e0.x, e2.z - e0.z) < 0.01f &&
+			       hypotf(lo_root().x - h0.x, lo_root().z - h0.z) < 0.01f,
+		       "hold talion: the end (active %d -> %d), the eyes %g / %g cm off, the root %g", ret_active, g_tk.active,
+		       hypotf(e1.x - e0.x, e1.z - e0.z), hypotf(e2.x - e0.x, e2.z - e0.z), hypotf(lo_root().x - h0.x, lo_root().z - h0.z));
+		memcpy(tsc + C_SYNC, &a0, 8), memcpy(tsc + C_SYNC + 8, &a1, 8), memcpy(tsc + VB_C_ATTACK, &atk, 8);
+		sv_vec3 r1 = lo_root();
+		g_loobj.o.pos[2] += 1.5f;
+		lo_frames(2);
+		EXPECT(!g_tk.active && !g_lo.o.owned && NEAR(lo_root().z - r1.z, 1.5, 1e-3), "hold talion: his own sync held "
+		       "(active %d owned %d moved %g)", g_tk.active, g_lo.o.owned, lo_root().z - r1.z);
+		memset(tsc + C_SYNC, 0, 8), g_tk.on = 0;
+		r1 = lo_root();
+		g_loobj.o.pos[2] += 1.5f;
+		lo_frames(2);
+		EXPECT(!g_tk.active && !g_lo.o.owned && NEAR(lo_root().z - r1.z, 1.5, 1e-3), "hold talion: off held (active %d "
+		       "owned %d moved %g)", g_tk.active, g_lo.o.owned, lo_root().z - r1.z);
+		g_pcomb.server = sc0, g_lot.combat_owns = 0, tlp->pcomb = tpc0;
+		g_lo.on = tlon0, g_lot.rm[2] = trm0;
+		g_lst.hand[0].stick[0] = stk[0], g_lst.hand[0].stick[1] = stk[1];
+		lo_frames(2);
+		printf("hold   SOMVR_COMBAT_HOLD_TALION: an enemy's sync moving Talion 1.5 cm between each of 40 ticks (and 5 cm up for two): the "
+		       "root and the eyes kept (off by %g / %g cm), the hold's end with his half, a last 70 cm move back under the still view "
+		       "in 2 ticks; his own sync and the switch off: the game's\n", t_rw, t_ew);
+	}
 	g_lo.anchor = 0;
 	lo_frames(2);
 	e = eye_mid(), r = lo_root();
@@ -8888,6 +8999,73 @@ static void th_proj_tick(void)            /* the game's update: vf_13 through it
 	sv_vec3 d = sv_qrot(sv_quat_of(q), (sv_vec3){ 0, 0, 1 });
 	p[0] += d.x * sp / 90, p[1] += d.y * sp / 90, p[2] += d.z * sp / 90;
 	memcpy(g_proj + TH_PJ_POS, p, 12);
+}
+
+/* build 17: A's one owner per press (ab_tick: the strike > the dodge > the climb) through the glue: the dodge's own tick
+ * yields or acts, the climb's drop sees A up whenever the press is another's, the owner kept until A is let go */
+static void ab_tests(void)
+{
+	__typeof__(g_ab) ao0 = g_ab;
+	__typeof__(g_dg) dg0 = g_dg;
+	int sg_on0 = g_sg.on, st_on0 = g_step.on, fsm0 = g_step.fsm, cl_on0 = g_cl.on, cl_act0 = g_cl.s.active, th_on0 = g_th.on;
+	int gm0 = g_inp.cfg.game_moves;
+	uint32_t down0 = g_inp.ctl.down[SOMVR_HAND_R];
+	uint64_t mark0 = g_sg.g.mark;
+	int phase0 = g_sg.g.phase;
+	double t0 = g_cb_test_t;
+	memset(&g_ab, 0, sizeof g_ab);
+	g_dg.on = 1, g_dg.a_last = 0, g_dg.ours = 0, g_dg.next_ok = 1e12; /* a dodge asked for = refused by the cooldown (no rays) */
+	g_sg.on = 1, g_sg.g.mark = 0, g_sg.g.phase = 0;
+	g_step.on = 1, g_cl.on = 1, g_cl.s.active = 0, g_th.on = 0, g_inp.cfg.game_moves = 0;
+	g_cb_test_t = 40000;
+	sc_tick_out o;
+	memset(&o, 0, sizeof o);
+	o.live = 1, o.ctx = SC_CTX_WORLD;
+	struct { const char *what; int fsm, mark, climbing, menu, owner, not_climbs, why; } cs[] = {
+		{ "a fight at an edge", 7, 0, 0, 0, SOMVR_AO_DODGE, 1, DGR_COOL },
+		{ "the vision held in a fight, an orc marked", 7, 5, 0, 0, SOMVR_AO_STRIKE, 1, DGR_YIELD },
+		{ "the vision held in a fight, no mark", 7, 0, 0, 0, SOMVR_AO_DODGE, 1, DGR_COOL },
+		{ "a hang in a fight", 7, 0, 1, 0, SOMVR_AO_DROP, 0, DGR_YIELD },
+		{ "no fight, no mark (an edge)", 0, 0, 0, 0, SOMVR_AO_DROP, 0, DGR_NOFIGHT },
+		{ "a mark, no fight (an edge)", 0, 5, 0, 0, SOMVR_AO_STRIKE, 1, DGR_YIELD },
+		{ "a menu's A", 7, 5, 0, 1, SOMVR_AO_NONE, 0, -1 },
+	};
+	for (size_t i = 0; i < sizeof cs / sizeof cs[0]; i++) {
+		g_step.fsm = cs[i].fsm, g_sg.g.mark = (uint64_t)cs[i].mark, g_cl.s.active = cs[i].climbing;
+		o.ctx = cs[i].menu ? SC_CTX_MENU : SC_CTX_WORLD;
+		uint64_t why0[DGR_N], go0 = g_dg.n_go;
+		memcpy(why0, g_dg.n_why, sizeof why0);
+		g_inp.ctl.down[SOMVR_HAND_R] |= SOMVR_BTN_LOWER;
+		ab_tick(&o);
+		dg_tick(&o);
+		int owner = ab_owner(), nc = ab_not_climbs(), why = -1, nwhy = 0;
+		for (int k = 0; k < DGR_N; k++)
+			if (g_dg.n_why[k] != why0[k])
+				why = k, nwhy++;
+		/* held on: the mark goes, the fight ends - the press stays its owner's (no second act mid-hold) */
+		g_sg.g.mark = 0, g_step.fsm = 0, g_cl.s.active = 0;
+		g_cb_test_t += 0.1;
+		ab_tick(&o);
+		dg_tick(&o);
+		int kept = ab_owner() == owner && ab_not_climbs() == nc;
+		g_inp.ctl.down[SOMVR_HAND_R] &= ~SOMVR_BTN_LOWER;
+		ab_tick(&o);
+		dg_tick(&o);
+		int released = ab_owner() == SOMVR_AO_NONE && !ab_not_climbs();
+		g_cb_test_t += 0.1;
+		EXPECT(owner == cs[i].owner && nc == cs[i].not_climbs && why == cs[i].why && nwhy == (cs[i].why >= 0) &&
+			       g_dg.n_go == go0 && kept && released,
+		       "A's owner, %s: owner %d (want %d), the climb sees A %s (want %s), the dodge's %d (want %d, %d reasons), "
+		       "kept %d, released %d", cs[i].what, owner, cs[i].owner, nc ? "up" : "down", cs[i].not_climbs ? "up" : "down",
+		       why, cs[i].why, nwhy, kept, released);
+	}
+	EXPECT(log_has("A t=") && log_has("press: the strike's (wanted by the strike the dodge the climb") &&
+		       log_has("press: the dodge's (wanted by the dodge the climb"),
+	       "A's owner: the contested presses logged");
+	g_ab = ao0, g_dg = dg0;
+	g_sg.on = sg_on0, g_step.on = st_on0, g_step.fsm = fsm0, g_cl.on = cl_on0, g_cl.s.active = cl_act0, g_th.on = th_on0;
+	g_inp.cfg.game_moves = gm0, g_inp.ctl.down[SOMVR_HAND_R] = down0, g_sg.g.mark = mark0, g_sg.g.phase = phase0;
+	g_cb_test_t = t0;
 }
 
 static void threat_tests(void)
@@ -12188,8 +12366,49 @@ static void prq_entry(void *fn, const char *name, int i)
 	hex_of(fn, 4, g_prqhex[i] + 128, 128);
 	g_prqs[i] = (struct site_spec){ name, K_ENTRY, (uintptr_t)fn, (uintptr_t)fn, g_prqhex[i], (uintptr_t)fn, g_prqhex[i] + 128 };
 }
+/* build 17: the practice page's refills - stand-ins of FUN_02720a90 (the tokens add, clamped to the max), FUN_0271e2e0
+ * (the energy and +0x54 = the max, the unlimited flag stored) and FUN_02763910 (the heal up to the max) on a stand-in
+ * resource object and the stand-in CPlayerObj's health component */
+static struct site_spec g_prfs[PRF_N];
+static char g_prfhex[PRF_N][256];
+static char g_prf_res[0x80];
+static int g_prf_calls[PRF_N];
+__attribute__((noipa)) void st_prf_tokens(uintptr_t res, int d)
+{
+	int32_t n, mx;
+	memcpy(&n, (char *)res + BO_RES_COUNT, 4), memcpy(&mx, (char *)res + PRF_RES_MAX, 4);
+	n = n + d > mx ? mx : n + d < 0 ? 0 : n + d;
+	memcpy((char *)res + BO_RES_COUNT, &n, 4), g_prf_calls[PRF_TOKENS_ADD]++;
+}
+__attribute__((noipa)) void st_prf_energy(uintptr_t res, int unl)
+{
+	float m;
+	memcpy(&m, (char *)res + PRF_RES_EMAX, 4);
+	((char *)res)[PRF_RES_EUNLIM] = (char)unl;
+	memcpy((char *)res + 0x54, &m, 4), memcpy((char *)res + PRF_RES_ENERGY, &m, 4), g_prf_calls[PRF_ENERGY_FULL]++;
+}
+__attribute__((noipa)) int st_prf_heal(uintptr_t h, float a)
+{
+	float hp, mx;
+	memcpy(&mx, (char *)h + 0x30, 4), memcpy(&hp, (char *)h + 0x34, 4);
+	if (hp >= mx)
+		return 0;
+	hp = hp + a > mx ? mx : hp + a;
+	memcpy((char *)h + 0x34, &hp, 4), g_prf_calls[PRF_HEAL]++;
+	return 1;
+}
+static void prf_entry(void *fn, const char *name, int i)
+{
+	hex_of(fn, 8, g_prfhex[i], 128);
+	hex_of(fn, 4, g_prfhex[i] + 128, 128);
+	g_prfs[i] = (struct site_spec){ name, K_ENTRY, (uintptr_t)fn, (uintptr_t)fn, g_prfhex[i], (uintptr_t)fn, g_prfhex[i] + 128 };
+}
 static void pr_stand_in_sites(void)
 {
+	prf_entry((void *)st_prf_tokens, "PRF_TOKENS_ADD", PRF_TOKENS_ADD);
+	prf_entry((void *)st_prf_energy, "PRF_ENERGY_FULL", PRF_ENERGY_FULL);
+	prf_entry((void *)st_prf_heal, "PRF_HEAL", PRF_HEAL);
+	g_prf_sites = g_prfs;
 	prq_entry((void *)st_prq_enable, "PRQ_ENABLE", PRQ_ENABLE);
 	prq_entry((void *)st_prq_disable, "PRQ_DISABLE", PRQ_DISABLE);
 	prq_entry((void *)st_prq_removeall, "PRQ_REMOVEALL", PRQ_REMOVEALL);
@@ -12833,6 +13052,43 @@ static void bf_tests(void)
 	unsetenv("SOMVR_SWORD_WEIGHT_HAND");
 	hsm_config(&wbad);
 	EXPECT(!g_hsm.hand_follow && log_has("the drawn hands fixed on the controllers"), "follow: fixed by default");
+	/* build 17: the VR menu's Sword hand row (SOMVR_SWORD_WEIGHT_HAND live): its bit with the layer's hands, the
+	 * settings from the switch, the row's request taken at the arms' next frame (swg_arm, before the weight's own
+	 * work), dimmed with the weight off (the note), nothing without the layer's hands */
+	{
+		int vw0 = g_vh.want, wl0 = g_hsm.weight;
+		const int z2[2] = { 0, 0 };
+		const sa_xf zg[2] = { { { 0, 0, 0 }, { 0, 0, 0, 1 } }, { { 0, 0, 0 }, { 0, 0, 0, 1 } } };
+		const sa_xf zx = { { 0, 0, 0 }, { 0, 0, 0, 1 } };
+		g_vh.want = 1;
+		vs.sword_hand = 1;
+		swg_vm_settings(&vs);
+		uint32_t ha = swg_vm_avail();
+		EXPECT(vs.sword_hand == 0 && ha == (SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND), "the Sword hand: fixed, avail %#x", ha);
+		swg_level(SWG_HEAVY);
+		vs.sword_hand = 1;
+		vm_apply_key(SOMVR_SK_SWORD_WEIGHT_HAND, &vs, "the selftest");
+		int hq = atomic_load(&g_hsm.hand_req);
+		swg_level(SWG_OFF); /* swg_arm returns after the request with no weight (no arms frame needed) */
+		swg_arm(z2, zg, z2, z2, zx, (sv_vec3){ 0, 0, 0 }, 0.011f);
+		EXPECT(hq == 4 && g_hsm.hand_follow && !atomic_load(&g_hsm.hand_req) &&
+			       log_has("VRMENU apply SWORD_WEIGHT_HAND=follow from the selftest (the drawn hands turn with the "
+				       "weighted blade)") &&
+			       log_has("the drawn hands follow the blade (the VR menu's Sword hand)"),
+		       "the Sword hand row: follow live (req %d, follow %d)", hq, g_hsm.hand_follow);
+		vs.sword_hand = 0;
+		const char *hn = swg_vm_hand_set(&vs);
+		swg_arm(z2, zg, z2, z2, zx, (sv_vec3){ 0, 0, 0 }, 0.011f);
+		EXPECT(!g_hsm.hand_follow && strstr(hn, "used with the Sword weight on") &&
+			       log_has("the drawn hands fixed (the VR menu's Sword hand)"),
+		       "the Sword hand row: fixed again ('%s')", hn);
+		g_vh.want = 0;
+		EXPECT(swg_vm_avail() == SOMVR_VMA_WEIGHT && strstr(swg_vm_hand_set(&vs), "no drawn hands") &&
+			       !atomic_load(&g_hsm.hand_req),
+		       "the Sword hand row: none without the layer's hands");
+		g_vh.want = vw0;
+		swg_level(wl0);
+	}
 	{
 		sa_xf fg[2] = { { { 30, -20, 40 }, sv_qnormalize((sv_quat){ 0.1f, 0.2f, 0.05f, 0.97f }) },
 				{ { 20, -22, 30 }, sv_qnormalize((sv_quat){ -0.1f, 0.3f, 0.0f, 0.95f }) } };
@@ -12855,6 +13111,66 @@ static void bf_tests(void)
 		swg_vh_follow(&fe, fg, frot, 1);
 		EXPECT(!memcmp(fe.grip[0].p, f0.grip[0].p, 12) && memcmp(fe.grip[0].q, f0.grip[0].q, 16),
 		       "follow: with both hands the left turns too, its position kept");
+	}
+	/* 10c. build 17: the bite (SOMVR_COMBAT_BITE, somvr_hitfeel_game.c): the switch, its row live, which hits bite (a
+	 * landed cut only: no tap, slap or stab, no glance, no blocked one, none without a call or a fresh drawn blade), the
+	 * test words, a hit's start and a second hit refused, the switch off ending it */
+	{
+		int hbad = 0, mode0 = g_cb.mode;
+		g_cb.mode = CB_FULL;
+		setenv("SOMVR_COMBAT_BITE", "on", 1);
+		hf_config(&hbad);
+		somvr_settings bs;
+		memset(&bs, 0, sizeof bs);
+		hf_vm_settings(&bs);
+		EXPECT(!hbad && g_hf.bite && bs.bite == 1 && hf_vm_avail() == SOMVR_VMA_BITE && NEAR(g_hf.cfg.hold_s, 0.06, 1e-6) &&
+			       NEAR(g_hf.cfg.ease_s, 0.1, 1e-6) && log_has("CONFIG hitfeel bite=on (SOMVR_COMBAT_BITE: a landed cut holds "),
+		       "bite: on from the switch (%d)", g_hf.bite);
+		g_hf.d_have = 1, g_hf.d_t = cb_now(), g_hf.d_p = (sv_vec3){ 20, -20, 30 }, g_hf.d_q = (sv_quat){ 0, 0, 0, 1 };
+		g_hf.d_shift = (sv_vec3){ 0, 0, 0 };
+		EXPECT(hf_will_bite(SC_KIND_CUT, 0, 0, 1) && !hf_will_bite(SC_KIND_TAP, 0, 0, 1) &&
+			       !hf_will_bite(SC_KIND_SLAP, 0, 0, 1) && !hf_will_bite(SC_KIND_STAB, 0, 0, 1) &&
+			       !hf_will_bite(SC_KIND_CUT, 1, 0, 1) && !hf_will_bite(SC_KIND_CUT, 0, 1, 1) &&
+			       !hf_will_bite(SC_KIND_CUT, 0, 0, 0),
+		       "bite: a landed cut only");
+		struct cb_orc bo = { 0x1234, 0, { 0, 0, 100 }, 100 };
+		sc_contact bc;
+		memset(&bc, 0, sizeof bc);
+		bc.u = 0.5f, bc.along = 0.9f;
+		somvr_blade bb;
+		memset(&bb, 0, sizeof bb);
+		bb.valid = 1, bb.base[0] = 20, bb.base[1] = -20, bb.base[2] = 30, bb.tip[0] = 20, bb.tip[1] = -20, bb.tip[2] = 130;
+		hf_hit(&bo, &bc, SC_KIND_CUT, 1, 0, 0, 1, 1, &bb, cb_now());
+		EXPECT(g_hf.st.phase == SWB_HOLD && g_hf.orc == 0x1234 && hf_biting() && log_has("BITE t=") &&
+			       log_has(" start orc=0x1234: a cut at 90 % along the blade") && !hf_will_bite(SC_KIND_CUT, 0, 0, 1),
+		       "bite: a hit starts one; no other meanwhile");
+		uint64_t ref0 = g_hf.st.refused;
+		hf_hit(&bo, &bc, SC_KIND_CUT, 1, 0, 0, 1, 1, &bb, cb_now());
+		EXPECT(g_hf.st.refused == ref0 + 1 && log_has(" refused orc=0x1234"), "bite: a second start refused");
+		bs.bite = 0;
+		const char *bn = hf_vm_set(&bs);
+		EXPECT(!g_hf.bite && g_hf.st.phase == SWB_IDLE && !hf_biting() && strstr(bn, "stops in the body") &&
+			       log_has("BITE t=") && log_has(" on -> off (the VR menu)"),
+		       "bite: the row off ends it (%s)", bn);
+		bs.bite = 1;
+		vm_apply_key(SOMVR_SK_COMBAT_BITE, &bs, "the selftest");
+		EXPECT(g_hf.bite && log_has("VRMENU apply COMBAT_BITE=on from the selftest (a full cut stops"), "bite: vm_apply_key");
+		int test1 = g_bd.test;
+		g_bd.test = 1;
+		int seq0 = atomic_load(&g_hf.req_seq);
+		EXPECT(!strcmp(hf_word("bite off"), "fight bite") && atomic_exchange(&g_hf.req, 0) == 1 &&
+			       !strcmp(hf_word("bite hold 800 300 60"), "fight bite hold") && atomic_load(&g_hf.req_seq) == seq0 + 1 &&
+			       atomic_load(&g_hf.req_hold_b) == 800 && atomic_load(&g_hf.req_ease_b) == 300 &&
+			       atomic_load(&g_hf.req_deg_b) == 60 && strstr(hf_word("bite hard"), "ignored") &&
+			       !strcmp(hf_word("hitfx off"), "fight hitfx") && atomic_exchange(&g_hf.req_fx, 0) == 1 &&
+			       atomic_load(&g_hf.req) == 0 && !strcmp(hf_word("bite dumps 3"), "fight bite dumps") &&
+			       atomic_exchange(&g_hf.req_dumps, 0) == 4,
+		       "bite: the test words");
+		g_bd.test = test1;
+		unsetenv("SOMVR_COMBAT_BITE");
+		hf_config(&hbad);
+		EXPECT(!g_hf.bite && !hf_will_bite(SC_KIND_CUT, 0, 0, 1), "bite: off by default");
+		g_cb.mode = mode0;
 	}
 	unsetenv("SOMVR_SWORD_WEIGHT");
 	swg_level(wt0);
@@ -13221,7 +13537,8 @@ static void pr_tests(const char *trig)
 	       "spawn shield: spawns %d yaw %g from (%g %g %g) zone %d level %d/%u", g_pr_spawns, yaw, g_pr_ray_from[0],
 	       g_pr_ray_from[1], g_pr_ray_from[2], g_pr_zone_calls, g_pr_level_calls, g_pr_level_seen);
 	set_trigger(trig, "practice spawn troll");
-	EXPECT(log_has("TRIGGER cmd=practice (not go|back|spawn [infantry|shield|berserker]|remove|status: ignored)"),
+	EXPECT(log_has("TRIGGER cmd=practice (not go|back|spawn [infantry|shield|berserker]|remove|status|arrows|health|hurt "
+		       "HP|focus F: ignored)"),
 	       "a bad type word");
 	set_trigger(trig, NULL);
 	snprintf(g_trig_path, sizeof g_trig_path, "%s", tp0);
@@ -13291,10 +13608,53 @@ static void pr_tests(const char *trig)
 	pr_step(1);
 	EXPECT(log_has("go (the trigger word) refused: already there") && log_has("status: in the practice area; trip idle"),
 	       "status / go refused");
+	/* 9b. build 17: the page's refills in the area (the user's ask): the test aids lower Talion's health and the Focus;
+	 * the menu's Refill arrows + focus (the tokens to their max, the energy full) and Refill health (healed to the
+	 * max); again when full: nothing called */
+	{
+		int32_t an = 2, amx = 8;
+		float e = 10, emx = 100, hmx = 300;
+		memset(g_prf_res, 0, sizeof g_prf_res), memset(g_prf_calls, 0, sizeof g_prf_calls);
+		memcpy(g_prf_res + BO_RES_COUNT, &an, 4), memcpy(g_prf_res + PRF_RES_MAX, &amx, 4);
+		memcpy(g_prf_res + PRF_RES_ENERGY, &e, 4), memcpy(g_prf_res + PRF_RES_EMAX, &emx, 4);
+		uintptr_t rp = (uintptr_t)g_prf_res, rp0;
+		memcpy(&rp0, (char *)&g_pcs + BO_SC_RES, 8), memcpy((char *)&g_pcs + BO_SC_RES, &rp, 8);
+		memcpy((char *)&g_prpc + PR_CH_HEALTH_MAX, &hmx, 4);
+		g_prpc.health = 300;
+		EXPECT(!strcmp(pr_word("hurt 120"), "practice hurt"), "the word: hurt");
+		pr_step(1);
+		EXPECT(!strcmp(pr_word("focus 5"), "practice focus"), "the word: focus");
+		pr_step(1);
+		memcpy(&e, g_prf_res + PRF_RES_ENERGY, 4);
+		EXPECT(g_prpc.health == 120 && e == 5 && log_has("Talion's health 300.0 -> 120.0 of 300.0 (a test aid") &&
+			       log_has("the Focus 10.0 -> 5.0 of 100.0 (a test aid"),
+		       "the test aids: health %g focus %g", (double)g_prpc.health, (double)e);
+		atomic_store(&g_vmo.practice, somvr_vm_pr_pack(3, SOMVR_VMPR_ARROWS, 0));
+		pr_step(1);
+		memcpy(&an, g_prf_res + BO_RES_COUNT, 4), memcpy(&e, g_prf_res + PRF_RES_ENERGY, 4);
+		EXPECT(an == 8 && e == 100 && g_prf_calls[PRF_TOKENS_ADD] == 1 && g_prf_calls[PRF_ENERGY_FULL] == 1 &&
+			       log_has("refill arrows (the menu): the arrows 2 -> 8 of 8 (FUN_02720a90 +6), the Focus 5.0 -> 100.0 of "
+				       "100.0 (FUN_0271e2e0); no save"),
+		       "Refill arrows + focus: arrows %d focus %g", an, (double)e);
+		atomic_store(&g_vmo.practice, somvr_vm_pr_pack(4, SOMVR_VMPR_HEALTH, 0));
+		pr_step(1);
+		EXPECT(g_prpc.health == 300 && g_prf_calls[PRF_HEAL] == 1 &&
+			       log_has("refill health (the menu): Talion's health 120.0 -> 300.0 of 300.0 (FUN_02763910 healed); no "
+				       "save"),
+		       "Refill health: %g", (double)g_prpc.health);
+		pr_word("refill arrows"), pr_step(1);
+		pr_word("refill health"), pr_step(1);
+		EXPECT(g_prf_calls[PRF_TOKENS_ADD] == 1 && g_prf_calls[PRF_ENERGY_FULL] == 1 && g_prf_calls[PRF_HEAL] == 1 &&
+			       log_has("the arrows 8 -> 8 of 8 (full) (FUN_02720a90 +0), the Focus 100.0 -> 100.0 of 100.0 (full)") &&
+			       log_has("Talion's health 300.0 -> 300.0 of 300.0 (full)") && g_pr.fill_arrows == 2 &&
+			       g_pr.fill_health == 2,
+		       "full: nothing called (%d %d %d)", g_prf_calls[0], g_prf_calls[1], g_prf_calls[2]);
+		memcpy((char *)&g_pcs + BO_SC_RES, &rp0, 8);
+	}
 	/* 10. back (the menu): our orc removed, the light given back with the teleport, the min health restored at the end */
 	pr_word("spawn"), pr_step(1);
 	int nc = g_pr_ncmd;
-	atomic_store(&g_vmo.practice, somvr_vm_pr_pack(3, SOMVR_VMPR_BACK, 0));
+	atomic_store(&g_vmo.practice, somvr_vm_pr_pack(5, SOMVR_VMPR_BACK, 0));
 	pr_step(1);
 	EXPECT(!g_pr.orc_h && !g_pr.here && !g_pr.went && g_pr.trip_kind == 1 && log_has("remove the Berserker orc (going back)"),
 	       "back starts: orc %#lx here %d", (unsigned long)g_pr.orc_h, g_pr.here);
@@ -13313,6 +13673,10 @@ static void pr_tests(const char *trig)
 	       atomic_load(&g_vmo.pstate));
 	pr_word("back"), pr_step(1);
 	EXPECT(log_has("back (the trigger word) refused: no place to go back to"), "back again: refused");
+	pr_word("health"), pr_step(1); /* build 17: the refills only in the area */
+	EXPECT(log_has("refill health (the trigger word): not in the practice area: nothing") && g_pr.fill_refused == 1 &&
+		       g_pr.fill_health == 2,
+	       "a refill outside the area: refused");
 	/* 11. a teleport that never lands: three of them, then the fade-in where he is (a WARN); the place kept */
 	g_pr_tp_block = 1;
 	int tp0n = (int)g_pr.teleports;
@@ -14812,6 +15176,7 @@ int main(int argc, char **argv)
 	vm_tests(argv[1]);
 	loco_tests();
 	step_tests();
+	ab_tests(); /* build 17: A's one owner (the strike, the dodge, the climb) */
 	guard_tests(argv[1]);
 	df_tests(); /* before threat_tests: the threat's state from start (it restores it) */
 	threat_tests();

@@ -168,6 +168,7 @@ slantatt() { local FO=$1 p n0 got= REACH=45
   climbing && { x "btn R a 1"; x "btn R a 0"; sleep 3; }
   w "climb face on"; }
 slantplan() { slantatt off; slantatt on; slantatt off; slantatt on; }
+[ -n "${CLIMB2_LIB:-}" ] && return 0 # sourced by top17-drive.sh for these functions
 case " $PLAN " in *" trace "*|*" wallrun "*|*" cliff "*|*" cliff2 "*|*" top "*|*" tops "*|*" hang "*|*" unpin "*|*" noway "*|*" slant "*) ;;
   *) echo "no climb2 plan in PLAN=$PLAN"; exit 1 ;; esac
 card

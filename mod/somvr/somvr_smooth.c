@@ -352,3 +352,94 @@ void swg_follow(const float rot[3], const float q[4], float out[4]) {
     qmul(e, qn, out);
     qnorm(out);
 }
+
+/* ---- the bite ------------------------------------------------------------------------------------------------------- */
+void swb_defaults(swb_cfg *c) {
+    c->hold_s = 0.06f, c->ease_s = 0.1f, c->max_rad = 30.0f * 0.01745329f;
+}
+
+void swb_reset(swb_state *s) { memset(s, 0, sizeof *s); }
+
+void swb_cancel(swb_state *s) {
+    s->phase = SWB_IDLE;
+    memset(s->b, 0, sizeof s->b);
+}
+
+int swb_start(swb_state *s, double t, const float p[3], const float q[4], const float P[3]) {
+    if (s->phase != SWB_IDLE || !finite3(p) || !finite4(q) || !finite3(P) || !isfinite(t)) {
+        s->refused++;
+        return 0;
+    }
+    float qn[4], ci[4], d[3] = {P[0] - p[0], P[1] - p[1], P[2] - p[2]};
+    memcpy(qn, q, 16);
+    qnorm(qn);
+    if (!(vlen3(d) > 1e-6f)) { /* the point at the grip: nothing to pivot on */
+        s->refused++;
+        return 0;
+    }
+    qconj(qn, ci);
+    qrot(ci, d, s->l);
+    s->phase = SWB_HOLD, s->t0 = s->last_t = t, s->t1 = 0;
+    memset(s->b, 0, sizeof s->b), memset(s->b_rel, 0, sizeof s->b_rel);
+    s->peak = 0, s->capped = 0, s->held_s = 0;
+    s->bites++;
+    return 1;
+}
+
+/* smoothstep 1 -> 0 over f in 0..1 */
+static float swb_fade(float f) { return f <= 0 ? 1.0f : f >= 1 ? 0.0f : 1.0f - f * f * (3 - 2 * f); }
+
+int swb_step(swb_state *s, const swb_cfg *c, double t, const float p[3], const float qw[4], const float P[3], float b[3]) {
+    memset(b, 0, 12);
+    if (s->phase == SWB_IDLE)
+        return SWB_IDLE;
+    if (!isfinite(t) || t - s->last_t > SWB_GAP_S || !finite3(p) || !finite4(qw) || !finite3(P)) {
+        s->gaps++;
+        swb_cancel(s);
+        return SWB_IDLE;
+    }
+    if (t < s->last_t) /* (the same clock: never backwards; held as it was) */
+        t = s->last_t;
+    s->last_t = t, s->steps++;
+    if (s->phase == SWB_HOLD) {
+        float qn[4], v[3], d[3] = {P[0] - p[0], P[1] - p[1], P[2] - p[2]}, r[3];
+        memcpy(qn, qw, 16);
+        qnorm(qn);
+        qrot(qn, s->l, v); /* where the held point would be drawn now */
+        float lv = vlen3(v), ld = vlen3(d);
+        if (lv > 1e-6f && ld > 1e-6f) {
+            for (int i = 0; i < 3; i++) v[i] /= lv, d[i] /= ld;
+            minrot(v, d, r);
+        } else {
+            memcpy(r, s->b, 12); /* the grip on the point: keep the last turn */
+        }
+        float a = vlen3(r);
+        int over = a > c->max_rad, end = over || !(t - s->t0 < c->hold_s);
+        if (over) { /* torn free: from the largest turn the hold allows */
+            for (int i = 0; i < 3; i++) r[i] *= c->max_rad / a;
+            a = c->max_rad, s->capped = 1, s->caps++;
+        }
+        memcpy(s->b, r, 12);
+        if (a > s->peak) s->peak = a;
+        if (!end) {
+            memcpy(b, r, 12);
+            return SWB_HOLD;
+        }
+        s->held_s = (float)(t - s->t0);
+        memcpy(s->b_rel, r, 12);
+        s->phase = SWB_EASE, s->t1 = t;
+        if (!(c->ease_s > 0)) {
+            swb_cancel(s);
+            return SWB_IDLE;
+        }
+        memcpy(b, r, 12); /* the ease's first frame: where the hold left it */
+        return SWB_EASE;
+    }
+    float f = (float)((t - s->t1) / c->ease_s), k = swb_fade(f);
+    if (!(k > 0)) {
+        swb_cancel(s);
+        return SWB_IDLE;
+    }
+    for (int i = 0; i < 3; i++) s->b[i] = b[i] = s->b_rel[i] * k;
+    return SWB_EASE;
+}

@@ -253,11 +253,22 @@ static float fx_level(const sc_hap_fx *f, double t) {
     return f->ramp ? f->amp * (float)(1.0 - (t - f->t0) / f->dur) : f->amp;
 }
 
-void sc_hap_add(sc_hap *h, double t, float amp, float dur, int ramp, uint32_t source) {
+/* a slot's claim at `now`: its level, or its amplitude while it is still to come (build 17: a pulse scheduled after
+ * another - in_haptic_double's second - was picked as the quietest slot at its own start, when the first had ended in
+ * pulse time but not yet played, and replaced it: the double played once) */
+static float fx_claim(const sc_hap_fx *f, double now) {
+    return f->dur > 0 && f->t0 > now ? f->amp : fx_level(f, now);
+}
+
+void sc_hap_add_at(sc_hap *h, double now, double t0, float amp, float dur, int ramp, uint32_t source) {
     int pick = 0;
     for (int i = 1; i < SC_HAP_FX; i++)
-        if (fx_level(&h->fx[i], t) < fx_level(&h->fx[pick], t)) pick = i;
-    h->fx[pick] = (sc_hap_fx){t, dur, amp < 0 ? 0 : amp, ramp, source};
+        if (fx_claim(&h->fx[i], now) < fx_claim(&h->fx[pick], now)) pick = i;
+    h->fx[pick] = (sc_hap_fx){t0, dur, amp < 0 ? 0 : amp, ramp, source};
+}
+
+void sc_hap_add(sc_hap *h, double t, float amp, float dur, int ramp, uint32_t source) {
+    sc_hap_add_at(h, t, t, amp, dur, ramp, source);
 }
 
 float sc_hap_level(const sc_hap *h, double t, float scale, uint32_t *src, float *remaining, int *continuous) {

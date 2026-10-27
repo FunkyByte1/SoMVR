@@ -4011,7 +4011,7 @@ static void th_check_glow(int i, const somvr_views *v, const somvr_th_glow *g, c
     for (int j = 0; j < 3; j++) head[j] = 0.5f * (v->pose[0].p[j] + v->pose[1].p[j]);
     somvr_th_face(g->pos, head, pose);
     memcpy(pose + 4, g->pos, 12);
-    somvr_th_rect(SOMVR_TH_ROW_GLOW, somvr_th_cell(g->level), rc);
+    somvr_th_rect(somvr_th_glow_row(g->kind), somvr_th_cell(g->level), rc); /* build 17: a red kind from the red row */
     CHECK(i < (int)e->layer_count && k >= 1 && e->q[i].type == XR_TYPE_COMPOSITION_LAYER_QUAD && e->q[i].sc == k &&
               e->q[i].space == 1 && e->q[i].flags == XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT &&
               e->q[i].eyes == XR_EYE_VISIBILITY_BOTH && !memcmp(e->q[i].rect, rc, sizeof rc) &&
@@ -4125,9 +4125,16 @@ static int sc_threat(void) { /* nothing, a glow, three glows and both edges, a r
     th_stereo(&r, f++, &hw, &v);
     check_proj_n(&v, 3, RECT_B, "a fading flash under a band", 2);
     th_check_edge(1, &v, SOMVR_TH_LEFT, 0.9f, "a fading flash under a band");
+    /* 8. build 17: an unblockable blow: its glow from the red row; a red side's edge band from the hurt red row */
+    somvr_threat_frame rd = th_frame_of(1, 0.9f, 0.7f, 0);
+    rd.g[0].kind = SOMVR_THK_MELEE | SOMVR_THK_RED, rd.flags = SOMVR_THF_RED_L;
+    th_stereo(&r, f++, &rd, &v);
+    check_proj_n(&v, 3, RECT_B, "a red blow", 3);
+    th_check_glow(1, &v, &rd.g[0], "a red blow");
+    th_check_edge_row(2, &v, SOMVR_TH_LEFT, 0.7f, SOMVR_TH_ROW_HURT, "a red blow");
     app_teardown(&r.a);
     CHECK(MOCK(mockxr_live)() == 0 && !MOCK(mockxr_view_live)(), "threat objects outlived the session");
-    CHECK(log_has("xr: threat: image 544x102 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
+    CHECK(log_has("xr: threat: image 544x136 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
                   "cells") &&
               log_has("xr: threat frame") && log_has("(newest entry)") && log_has("L hurt red, R hurt red") &&
               !log_has("threat: off"),
@@ -4256,7 +4263,62 @@ static int sc_objective(void) { /* none, ahead (one upload), the same text (none
                   log_has("the climb's landing: a ring flat on the floor"),
               "landing: %u layers, sc %d space %d rect %d size %g uploads %d", e->layer_count, e->q[1].sc, e->q[1].space,
               e->q[1].rect[0], e->q[1].size[0], V.buf2img);
+        /* 5c. build 17 (SOMVR_CLIMB_DESCENT_MARK): with SOMVR_OBF_LINE also the drop's line (XL_OBJL, under the ring):
+         * the line's cell on a quad from its top down to the ring, facing the head, 5 cm wide at the ring's 35 */
+        CHECK(locate(&v), "line: locate");
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        le.flags = SOMVR_OBF_LAND | SOMVR_OBF_LINE;
+        for (int q = 0; q < 3; q++) le.top[q] = le.pos[q] + (q == 1 ? 3.0f : q == 2 ? 0.4f : 0);
+        somvr_objective_put(g_obo, f, &le);
+        V.ncp = V.ntr = 0;
+        hud_present(&r.a, f++, 0, SOMVR_HUDK_NONE);
+        e = MOCK(mockxr_last_end)();
+        float hd[3], bt[3] = {le.pos[0], le.pos[1] + 0.02f, le.pos[2]};
+        for (int q = 0; q < 3; q++) hd[q] = 0.5f * (v.pose[0].p[q] + v.pose[1].p[q]);
+        somvr_ob_place lq = somvr_ob_line(le.top, bt, hd, 0.05f);
+        int32_t rl[4];
+        somvr_ob_rect(SOMVR_OB_CELL_LINE, rl);
+        CHECK(e->layer_count == 3 && e->q[1].sc == k && e->q[1].space == 1 && !memcmp(e->q[1].rect, rl, sizeof rl) &&
+                  fabsf(e->q[1].size[0] - 0.05f) < 1e-5f && fabsf(e->q[1].size[1] - lq.size[1]) < 1e-4f &&
+                  pose_near(e->q[1].pose, lq.pose) && e->q[2].sc == k && !memcmp(e->q[2].rect, rc, sizeof rc) &&
+                  pose_near(e->q[2].pose, lp.pose) && V.buf2img == 3 && log_has("and the drop's line from"),
+              "line: %u layers, the line's rect %d size %g x %g, the ring's after it", e->layer_count, e->q[1].rect[0],
+              e->q[1].size[0], e->q[1].size[1]);
+        /* a reuse frame: both again */
+        tagged_present_eyes(&r.a, f++, 1, TAG_SYNC, 3, 2);
+        e = MOCK(mockxr_last_end)();
+        CHECK(e->layer_count == 3 && !memcmp(e->q[1].rect, rl, sizeof rl) && !memcmp(e->q[2].rect, rc, sizeof rc),
+              "line: reuse: %u layers", e->layer_count);
     }
+    /* 5c. build 17: the Shadow Strike's mark (SOMVR_OBF_STRIKE): ready, no arrows, pressed - the wide cell's rect on a
+     * quad facing the head with the ring's centre on the orc's chest, no upload (the cells are in every picture) */
+    for (int st = 0; st < 3; st++) {
+        CHECK(locate(&v), "strike: locate");
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        somvr_objective_frame se;
+        memset(&se, 0, sizeof se);
+        se.n = 1, se.id = 4, se.dist_m = 1.2f;
+        se.flags = SOMVR_OBF_STRIKE | (st == 1 ? SOMVR_OBF_STRIKE_NO : st == 2 ? SOMVR_OBF_STRIKE_GO : 0u);
+        float hd[3];
+        for (int q = 0; q < 3; q++) hd[q] = 0.5f * (v.pose[0].p[q] + v.pose[1].p[q]), se.pos[q] = hd[q] + (q == 1 ? -0.3f : q == 2 ? -8.0f : 1.0f);
+        somvr_objective_put(g_obo, f, &se);
+        V.ncp = V.ntr = 0;
+        hud_present(&r.a, f++, 0, SOMVR_HUDK_NONE);
+        e = MOCK(mockxr_last_end)();
+        int cell = st == 1 ? SOMVR_OB_CELL_STRIKE_NO : st == 2 ? SOMVR_OB_CELL_STRIKE_GO : SOMVR_OB_CELL_STRIKE;
+        somvr_ob_place sp = somvr_ob_strike(hd, se.pos, 1.2f, cell);
+        int32_t rc[4];
+        somvr_ob_rect(cell, rc);
+        CHECK(sp.kind == SOMVR_OBK_WORLD && e->layer_count == 2 && e->q[1].sc == k && e->q[1].space == 1 &&
+                  !memcmp(e->q[1].rect, rc, sizeof rc) && fabsf(e->q[1].size[0] - sp.size[0]) < 1e-5f &&
+                  fabsf(e->q[1].size[1] - sp.size[1]) < 1e-5f && pose_near(e->q[1].pose, sp.pose) && V.buf2img == 3 &&
+                  log_has("the Shadow Strike's mark"),
+              "strike %d: %u layers, sc %d space %d rect %d size %g x %g uploads %d", st, e->layer_count, e->q[1].sc,
+              e->q[1].space, e->q[1].rect[0], e->q[1].size[0], e->q[1].size[1], V.buf2img);
+    }
+    CHECK(log_has("the Shadow Strike's mark (ready)") && log_has("the Shadow Strike's mark (no arrows)") &&
+              log_has("the Shadow Strike's mark (pressed)"),
+          "strike: the three marks logged");
     /* 6. the objective gone (n = 0), an entry for another frame: nothing */
     ob_stereo(&r, f++, 0, ahead, 0, &v);
     check_no_quad(&v, "the objective gone");
@@ -4269,7 +4331,9 @@ static int sc_objective(void) { /* none, ahead (one upload), the same text (none
           (unsigned long long)atomic_load(&g_obo->n_marker), (unsigned long long)atomic_load(&g_obo->n_edge));
     app_teardown(&r.a);
     CHECK(MOCK(mockxr_live)() == 0 && !MOCK(mockxr_view_live)(), "objective objects outlived the session");
-    CHECK(log_has("xr: objective: swapchain 520x130") && log_has("the marker world-locked") &&
+    char swl[64];
+    snprintf(swl, sizeof swl, "xr: objective: swapchain %dx%d", SOMVR_OB_IMG_W, SOMVR_OB_IMG_H);
+    CHECK(log_has(swl) && log_has("the marker world-locked") &&
               log_has("the edge arrow head-locked") && log_has("xr: objective: the arrow points") && !log_has("objective: off"),
           "objective log lines");
     check_mock_clean();
@@ -4334,7 +4398,7 @@ static int sc_threat_absent(void) { return th_none(0, 0, "xr: threat: no threat 
 static int sc_threat_inactive(void) { return th_none(1, 0, "xr: threat: no threat cues (somvr_threat inactive"); }
 static int sc_threat_off(void) { return th_none(1, 1, "xr: threat: no threat cues (SOMVR_XR_THREAT=off)"); }
 
-/* MOCKXR_REJECT_SC=544x102: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
+/* MOCKXR_REJECT_SC=544x136: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
  * once), that frame is ended again without them, the frames go on with the projection (and comfort's ring) */
 static int sc_threat_reject(void) {
     hudrig r;
@@ -7224,7 +7288,7 @@ static const struct {
     {"threat-absent", sc_threat_absent, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-inactive", sc_threat_inactive, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-off", sc_threat_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_THREAT=off", 1},
-    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x102", 1},
+    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x136", 1},
     {"allon", sc_allon, "SOMVR_XR_LOADER=@MOCK MOCKXR_RECENTER_AT=80", 1},
     {"reject-hud-only", sc_reject_hud_only, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=1920x1080", 1},
     /* SoM loading env */

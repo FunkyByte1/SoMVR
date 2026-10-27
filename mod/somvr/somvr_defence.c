@@ -17,12 +17,45 @@ void somvr_df_cfg_default(somvr_df_cfg *c)
 	c->arrow_cm = 12, c->arrow_step_s = 0.025f, c->arrow_near_cm = 150;
 	c->parry_on = 1, c->block_on = 1, c->red_block = 0;
 	c->contact = 0, c->contact_cm = 10, c->contact_pre_s = 0.25f, c->contact_post_s = 0.08f, c->contact_cross_deg = 15;
+	c->red_types = 1u << SOMVR_DF_TYPE_NOPARRY | 1u << SOMVR_DF_TYPE_NOBLOCK;
 }
 
 int somvr_df_can_parry(int type) { return type == SOMVR_DF_TYPE_NORMAL || type == SOMVR_DF_TYPE_NOBLOCK; }
 int somvr_df_can_block(const somvr_df_cfg *c, int type)
 {
-	return type == SOMVR_DF_TYPE_NORMAL || type == SOMVR_DF_TYPE_NOCOUNTER || (type == SOMVR_DF_TYPE_NOPARRY && c->red_block);
+	if (type < SOMVR_DF_TYPE_NORMAL || type > SOMVR_DF_TYPE_NOCOUNTER)
+		return 0; /* cannot block, ranged, unknown: never */
+	if (type == SOMVR_DF_TYPE_NOPARRY && c->red_block)
+		return 1;
+	return !(c->red_types >> type & 1u);
+}
+int somvr_df_is_red(const somvr_df_cfg *c, int type) { return somvr_df_can_dodge(type) && !somvr_df_can_block(c, type); }
+
+int somvr_df_red_parse(const char *v, unsigned *bits)
+{
+	static const char *const w[] = { "normal", "parry", "counter", "block" };
+	*bits = 0;
+	if (!v)
+		return 1;
+	const char *p = v;
+	for (;;) {
+		while (*p == ' ' || *p == ',' || *p == '\t')
+			p++;
+		if (!*p)
+			return 1;
+		size_t n = 0;
+		while (p[n] && p[n] != ',' && p[n] != ' ' && p[n] != '\t')
+			n++;
+		int k = n == 4 && !strncmp(p, "none", 4) ? 4 : -1;
+		for (int i = 0; i < 4 && k < 0; i++)
+			if (strlen(w[i]) == n && !strncmp(p, w[i], n))
+				k = i;
+		if (k < 0)
+			return *bits = 0, 0;
+		if (k < 4)
+			*bits |= 1u << k;
+		p += n;
+	}
 }
 int somvr_df_can_dodge(int type) { return type >= SOMVR_DF_TYPE_NORMAL && type <= SOMVR_DF_TYPE_NOBLOCK; }
 
@@ -99,7 +132,7 @@ void somvr_df_track_init(somvr_df_track *tr)
 	memset(tr, 0, sizeof *tr);
 	tr->way_t = tr->dodge_t = tr->parry_t = -1;
 	tr->g.align_deg = -1;
-	tr->contact_t = -1, tr->best_cm = INFINITY, tr->best_ts = -1;
+	tr->contact_t = -1, tr->best_cm = INFINITY, tr->best_ts = -1, tr->drawn_best_cm = INFINITY;
 }
 
 int somvr_df_contact_window(const somvr_df_cfg *c, float impact, float ts)
@@ -205,11 +238,31 @@ int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const som
 					 (m[2] - tr->m0[2]) * (m[2] - tr->m0[2]));
 			if (dm > tr->blade_cm)
 				tr->blade_cm = dm;
+			if (c->move_blade && in->have_tip_xr && fin3(in->tip_xr)) { /* build 17: the tip's move counts too */
+				if (!tr->have_t0)
+					memcpy(tr->tip0, in->tip_xr, sizeof tr->tip0), tr->have_t0 = 1;
+				float dx = in->tip_xr[0] - tr->tip0[0], dy = in->tip_xr[1] - tr->tip0[1], dz = in->tip_xr[2] - tr->tip0[2];
+				float dtip = sqrtf(dx * dx + dy * dy + dz * dz);
+				if (dtip > tr->blade_cm)
+					tr->blade_cm = dtip;
+			}
 		}
+		int hand = c->contact_hand && in->have_hand_blade && fin3(in->hb) && fin3(in->ht);
+		int hprev = hand && tr->have_hprev && tr->prev_norc == in->norc;
 		for (int k = 0; win && in->blade && k < in->norc && k < 2 && tr->contact_t < 0; k++) {
 			float cross = 0, pt[3] = { 0, 0, 0 };
 			float d = somvr_df_sweep(tr->pb, tr->pt, in->base, in->tip, tr->pob[k], tr->pot[k], in->ob[k], in->ot[k], prev,
 						 SOMVR_DF_SWEEP_STEPS, &cross, pt);
+			int by = 1;
+			if (d < tr->drawn_best_cm)
+				tr->drawn_best_cm = d;
+			if (hand) { /* build 17: the blade where the hand holds it: the nearer of the two (the drawn one first) */
+				float hc = 0, hp[3] = { 0, 0, 0 };
+				float hd = somvr_df_sweep(tr->phb, tr->pht, in->hb, in->ht, tr->pob[k], tr->pot[k], in->ob[k], in->ot[k],
+							  hprev && prev, SOMVR_DF_SWEEP_STEPS, &hc, hp);
+				if (hd < d && !(d <= c->contact_cm && cross >= c->contact_cross_deg))
+					d = hd, cross = hc, memcpy(pt, hp, sizeof pt), by = 2;
+			}
 			if (d < tr->best_cm)
 				tr->best_cm = d, tr->best_ts = in->ts, tr->best_cross = cross;
 			int met = d <= c->contact_cm && cross >= c->contact_cross_deg && somvr_df_can_block(c, in->type) && c->block_on;
@@ -219,12 +272,16 @@ int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const som
 				met = 0;
 			}
 			if (met) {
+				tr->met_by = by;
 				tr->contact_t = t, tr->contact_cm = d, tr->contact_cross = cross, tr->contact_ts = in->ts;
 				memcpy(tr->contact_pt, pt, sizeof pt);
 				fire = 2;
 			}
 		}
 		tr->windowed += win;
+		tr->have_hprev = hand && in->norc > 0;
+		if (tr->have_hprev)
+			memcpy(tr->phb, in->hb, sizeof tr->phb), memcpy(tr->pht, in->ht, sizeof tr->pht);
 		tr->have_prev = in->blade && in->norc > 0;
 		if (tr->have_prev) {
 			memcpy(tr->pb, in->base, sizeof tr->pb), memcpy(tr->pt, in->tip, sizeof tr->pt);

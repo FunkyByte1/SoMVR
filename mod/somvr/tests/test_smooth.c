@@ -528,6 +528,129 @@ static void test_follow(void) {
           "follow: no offset, the controller's orientation");
 }
 
+/* the bite (build 17; docs/re-xr-pipeline.md 59): a cut through a body point at 90 Hz - the grip 30 cm off the shoulder
+ * pivot moving on an arc, the blade 100 cm; at the hit the point 90 cm along it is held: during the hold the drawn
+ * blade still passes through it (within 0.5 cm) while the hand moves on; the hold lasts 60 ms (one frame more at most), then the
+ * extra turn eases out over 100 ms without a jump and the blade is the hand's again; a fast cut is torn free at 30 deg
+ * sooner; a second hit during a bite starts none; a gap ends it; on top of the heavy weight's follower too; 20 Hz. */
+static void bite_hand(float w, float t, float q[4], float p[3]) {
+    float a = w * t, r[3] = {0, a, 0};
+    swg_qexp(r, q);                           /* the hand turns about +y (the blade along -z swings sideways) */
+    p[0] = 30.0f * sinf(a), p[1] = 0, p[2] = -30.0f * cosf(a) + 30.0f; /* the grip on a 30 cm arc */
+}
+static const float BL[3] = {0, 0, -1};
+typedef struct {
+    float held_ms, peak_deg, hold_err_cm, max_step_deg, end_deg;
+    int capped, idle_after, refused_mid;
+} bres;
+static bres bite_run(float w, int fps, int weight, int gap_at) {
+    swb_cfg c;
+    swb_defaults(&c);
+    swb_state s;
+    swb_reset(&s);
+    swg_cfg wc;
+    swg_defaults(&wc, SWG_HEAVY);
+    swg_state ws;
+    swg_reset(&ws);
+    bres r;
+    memset(&r, 0, sizeof r);
+    float dt = 1.0f / (float)fps, P[3] = {0, 0, 0}, prev_b[3] = {0, 0, 0};
+    int hit_f = (int)(0.3f * fps), nf = (int)(0.8f * fps), started = 0;
+    for (int f = 0; f <= nf; f++) {
+        float t = (float)f * dt, q[4], p[3], qw[4], rot[3] = {0, 0, 0}, e[4];
+        bite_hand(w, t, q, p);
+        if (weight && !swg_step(&ws, &wc, q, BL, f ? dt : 0.0111f, 0, rot)) memset(rot, 0, 12);
+        swg_qexp(rot, e);
+        qmul(e, q, qw);
+        if (gap_at && f == gap_at) t += 0.2f; /* a stall: the steps 0.2 s apart */
+        float b[3];
+        int ph = started ? swb_step(&s, &c, t, p, qw, P, b) : (memset(b, 0, 12), SWB_IDLE);
+        float qd[4], eb[4];
+        swg_qexp(b, eb);
+        qmul(eb, qw, qd);
+        if (f == hit_f) { /* the hit's frame: the point 90 cm along the drawn blade */
+            float d[3], l[3] = {0, 0, -90.0f};
+            qrot(qd, l, d);
+            for (int i = 0; i < 3; i++) P[i] = p[i] + d[i];
+            started = swb_start(&s, t, p, qd, P);
+            CHECK(started, "the bite starts at the hit (w %.0f)", (double)w);
+        }
+        if (started && f > hit_f && ph == SWB_HOLD) { /* the drawn point stays in the body */
+            float d[3], v[3] = {P[0] - p[0], P[1] - p[1], P[2] - p[2]};
+            qrot(qd, BL, d); /* the blade's line through the grip: P stays on it (the point slides along the blade as
+                              * the grip's distance to it changes: the blade is rigid) */
+            float a = v[0] * d[0] + v[1] * d[1] + v[2] * d[2], pt[3] = {p[0] + a * d[0], p[1] + a * d[1], p[2] + a * d[2]};
+            float err = pdist(pt, P);
+            if (err > r.hold_err_cm) r.hold_err_cm = err;
+            if (f == hit_f + 2) r.refused_mid = !swb_start(&s, t, p, qd, P);
+        }
+        float db[3] = {b[0] - prev_b[0], b[1] - prev_b[1], b[2] - prev_b[2]};
+        float step = sqrtf(db[0] * db[0] + db[1] * db[1] + db[2] * db[2]) / DEG;
+        if (started && f > hit_f + 1 && step > r.max_step_deg && ph != SWB_HOLD) r.max_step_deg = step; /* the ease */
+        memcpy(prev_b, b, 12);
+        if (f == nf) r.end_deg = sqrtf(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]) / DEG, r.idle_after = s.phase == SWB_IDLE;
+    }
+    r.held_ms = s.held_s * 1000.0f, r.peak_deg = s.peak / DEG, r.capped = s.capped;
+    return r;
+}
+static void test_bite(void) {
+    /* a slow cut, 2 rad/s: held the full 60 ms, 7 deg, not capped */
+    bres a = bite_run(2.0f, 90, 0, 0);
+    printf("bite: slow cut 2 rad/s: held %.0f ms, peak %.1f deg, the point off %.2f cm in the hold, the ease's largest "
+           "step %.2f deg, capped %d\n", (double)a.held_ms, (double)a.peak_deg, (double)a.hold_err_cm,
+           (double)a.max_step_deg, a.capped);
+    CHECK(a.held_ms >= 59.0f && a.held_ms <= 60.0f + 11.2f && !a.capped, "slow: the full hold (%.1f ms)", (double)a.held_ms);
+    CHECK(a.hold_err_cm < 0.5f, "slow: the held point stays (%.2f cm)", (double)a.hold_err_cm);
+    CHECK(a.peak_deg > 4.0f && a.peak_deg < 12.0f, "slow: the blade behind the hand by the hold's turn (%.1f)", (double)a.peak_deg);
+    CHECK(a.max_step_deg < a.peak_deg * 0.25f, "slow: the ease has no jump (%.2f of %.1f)", (double)a.max_step_deg,
+          (double)a.peak_deg);
+    CHECK(a.idle_after && a.end_deg == 0.0f && a.refused_mid, "slow: done after; a hit mid-bite starts none");
+    /* a cut at 8 rad/s (a committed one): 60 ms is 27 deg: held, just under the cap */
+    bres m = bite_run(8.0f, 90, 0, 0);
+    printf("bite: cut 8 rad/s: held %.0f ms, peak %.1f deg, off %.2f cm, ease step %.2f deg, capped %d\n",
+           (double)m.held_ms, (double)m.peak_deg, (double)m.hold_err_cm, (double)m.max_step_deg, m.capped);
+    CHECK(m.hold_err_cm < 0.5f && m.peak_deg <= 30.01f && m.idle_after, "8 rad/s: held in place, within 30 deg");
+    /* a fast cut, 15 rad/s: torn free at 30 deg before 60 ms */
+    bres f = bite_run(15.0f, 90, 0, 0);
+    printf("bite: fast cut 15 rad/s: held %.0f ms, peak %.1f deg, capped %d, ease step %.2f deg\n", (double)f.held_ms,
+           (double)f.peak_deg, f.capped, (double)f.max_step_deg);
+    CHECK(f.capped && f.held_ms < 50.0f && f.peak_deg <= 30.01f && f.idle_after, "fast: torn free early (%.0f ms, %.1f deg)",
+          (double)f.held_ms, (double)f.peak_deg);
+    CHECK(f.max_step_deg < 9.0f, "fast: the ease from 30 deg has no jump (%.2f deg a frame)", (double)f.max_step_deg);
+    /* on the heavy weight's follower */
+    bres h = bite_run(8.0f, 90, 1, 0);
+    printf("bite: cut 8 rad/s with the heavy weight: held %.0f ms, peak %.1f deg, off %.2f cm, capped %d\n",
+           (double)h.held_ms, (double)h.peak_deg, (double)h.hold_err_cm, h.capped);
+    CHECK(h.hold_err_cm < 0.5f && h.idle_after && h.end_deg == 0.0f, "heavy: held in place, back on the follower");
+    /* 20 Hz (the headless runtime) */
+    bres z = bite_run(4.0f, 20, 0, 0);
+    printf("bite: 20 Hz, 4 rad/s: held %.0f ms, peak %.1f deg, off %.2f cm\n", (double)z.held_ms, (double)z.peak_deg,
+           (double)z.hold_err_cm);
+    CHECK(z.held_ms >= 50.0f && z.held_ms <= 100.0f && z.hold_err_cm < 0.5f && z.idle_after, "20 Hz: one or two frames held");
+    /* a stall mid-hold: ended at once */
+    swb_state s;
+    swb_cfg c;
+    swb_defaults(&c);
+    swb_reset(&s);
+    float p[3] = {0, 0, 0}, q[4] = {0, 0, 0, 1}, P[3] = {0, 0, -90}, b[3];
+    CHECK(swb_start(&s, 1.0, p, q, P) && swb_step(&s, &c, 1.011, p, q, P, b) == SWB_HOLD, "held");
+    CHECK(swb_step(&s, &c, 1.2, p, q, P, b) == SWB_IDLE && s.gaps == 1 && b[0] == 0 && b[1] == 0 && b[2] == 0,
+          "a 0.19 s gap: ended, no turn");
+    CHECK(swb_start(&s, 1.3, p, q, P) == 1 && s.bites == 2, "the next hit bites again");
+    swb_cancel(&s);
+    CHECK(s.phase == SWB_IDLE && swb_step(&s, &c, 1.31, p, q, P, b) == SWB_IDLE, "cancel: idle");
+    float bad[3] = {NAN, 0, 0};
+    CHECK(!swb_start(&s, 1.4, p, q, bad) && !swb_start(&s, 1.4, p, q, p) && s.refused == 2, "a NaN or the grip itself: none");
+    /* a still hand: the blade does not move in the hold; the ease starts and ends on the hand */
+    swb_reset(&s);
+    swb_start(&s, 2.0, p, q, P);
+    int ph = SWB_HOLD;
+    double t = 2.0;
+    for (int i = 0; i < 40 && ph != SWB_IDLE; i++) t += 1.0 / 90, ph = swb_step(&s, &c, t, p, q, P, b);
+    CHECK(ph == SWB_IDLE && s.peak < 1e-4f && t < 2.0 + 0.06 + 0.1 + 3.0 / 90, "still: no turn, over in hold + ease (%.3f s)",
+          t - 2.0);
+}
+
 /* SWG_REPLAY=FILE (SOMVR_SWORD_REC's <log>.swordrec): every level on that recorded motion - the blade's angle off the hand
  * (p50 / p95 / max), while the hand swings (3+ rad/s), at the rope; the recorded level's offsets against the replay's */
 static int cmpf(const void *a, const void *b) {
@@ -604,6 +727,7 @@ int main(void) {
     test_resets();
     test_weight();
     test_follow();
+    test_bite();
     const char *rp = getenv("SWG_REPLAY");
     if (rp && rp[0]) replay(rp);
     printf("test_smooth: %d checks, %d failures\n", checks, fails);

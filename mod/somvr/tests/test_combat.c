@@ -863,8 +863,68 @@ static void test_space(void) {
     printf("space2: the nearer of the head and the root keeps the space\n");
 }
 
+/* SOMVR_COMBAT_STAGGER_CM (build 17): the reel kept under the cap, eased (never a dead stop), free toward Talion */
+static float reel_nat(float u) { return 145.0f * (1.0f - (1.0f - u) * (1.0f - u)); } /* 145 cm, slowing (an L100) */
+static void test_reel(void) {
+    float an[3] = {0, 0, -120}, tal[3] = {0, 0, 0}, was[3] = {0, 0, -120}, cut = 0, prev = 0, at20 = -1;
+    int monot = 1, steps = 0;
+    for (int f = 1; f <= 102; f++) { /* 1.7 s at 60 Hz, straight back (away from Talion) */
+        float nat0 = reel_nat((f - 1) / 102.0f), nat1 = reel_nat(f / 102.0f), xf[3] = {was[0], 0, was[2] - (nat1 - nat0)};
+        steps += sc_reel_cap(an, tal, was, xf, 55, &cut);
+        float d = hypotf(xf[0] - an[0], xf[2] - an[2]);
+        monot &= d >= prev - 1e-3f;
+        if (at20 < 0 && nat1 >= 20) at20 = d - nat1;
+        prev = d, memcpy(was, xf, sizeof was);
+    }
+    CHECK(prev <= 55.01f && prev >= 50, "a 145 cm reel capped at 55: ends %g cm from the anchor", prev);
+    CHECK(monot && steps > 0, "the reel only goes back (monotonic), %d steps eased", steps);
+    CHECK(NEAR(at20, 0, 0.5), "its first 20 cm 1:1 (off by %g)", at20);
+    /* a short reaction (24 cm, under the knee): untouched */
+    float w2[3] = {0, 0, -120}, x2[3] = {0, 0, -144};
+    CHECK(!sc_reel_cap(an, tal, w2, x2, 55, &cut) && x2[2] == -144, "a 24 cm reaction passes");
+    /* a step toward Talion (the walk back, or past the anchor): free */
+    float w3[3] = {0, 0, -170}, x3[3] = {0, 0, -100};
+    CHECK(!sc_reel_cap(an, tal, w3, x3, 55, &cut) && x3[2] == -100, "a step nearer Talion passes");
+    /* beyond the cap already (switched on mid-reel): not pulled in, not further out */
+    float w4[3] = {0, 0, -220}, x4[3] = {0, 0, -230};
+    CHECK(sc_reel_cap(an, tal, w4, x4, 55, &cut) && NEAR(x4[2], -220, 0.01), "beyond the cap: it stays (%g)", x4[2]);
+    /* sideways at the cap: slides along it, never past it */
+    float w5[3] = {0, 0, -175}, x5[3] = {30, 0, -175};
+    sc_reel_cap(an, tal, w5, x5, 55, &cut);
+    CHECK(hypotf(x5[0] - an[0], x5[2] - an[2]) <= 55.01f, "sideways at the cap: %g %g", x5[0], x5[2]);
+    /* a warp-like absolute path (xf = the anchor + the reel's offset each frame, whatever was): still under the cap */
+    float w6[3] = {0, 0, -120};
+    for (int f = 1; f <= 102; f++) {
+        float x6[3] = {0, 0, -120 - reel_nat(f / 102.0f)};
+        sc_reel_cap(an, tal, w6, x6, 55, &cut);
+        memcpy(w6, x6, sizeof w6);
+    }
+    CHECK(hypotf(w6[0] - an[0], w6[2] - an[2]) <= 55.01f, "an absolute path: %g", w6[2]);
+    float x7[3] = {0, 0, -300}, w7[3] = {0, 0, -120};
+    CHECK(!sc_reel_cap(an, tal, w7, x7, 0, &cut) && x7[2] == -300, "cap 0: off");
+    printf("reel: a 145 cm stagger ends at %.1f cm (the cap 55), 1:1 for its first 20 cm\n", prev);
+}
+
+/* build 17: the hit's kind for its feedback, and which bite (a cut that landed only; no bite on light) */
+static void test_hit_kind(void) {
+    CHECK(sc_hit_kind(SC_TIER_HEAVY, 10, 60) == SC_KIND_CUT && sc_hit_kind(SC_TIER_HEAVY, NAN, 60) == SC_KIND_CUT,
+          "heavy = a cut");
+    CHECK(sc_hit_kind(SC_TIER_STAB, 87, 60) == SC_KIND_STAB, "stab");
+    CHECK(sc_hit_kind(SC_TIER_LIGHT, 85, 60) == SC_KIND_SLAP && sc_hit_kind(SC_TIER_LIGHT, 20, 60) == SC_KIND_TAP &&
+              sc_hit_kind(SC_TIER_LIGHT, NAN, 60) == SC_KIND_TAP && sc_hit_kind(SC_TIER_LIGHT, 60, 60) == SC_KIND_TAP,
+          "light: flat leading = a slap, else a tap");
+    CHECK(sc_hit_kind(SC_TIER_NONE, 10, 60) == SC_KIND_NONE && !strcmp(sc_kind_name(SC_KIND_SLAP), "slap") &&
+              !strcmp(sc_kind_name(99), "none"),
+          "none; names");
+    CHECK(sc_kind_bites(SC_KIND_CUT, 0, 0) && !sc_kind_bites(SC_KIND_CUT, 1, 0) && !sc_kind_bites(SC_KIND_CUT, 0, 1),
+          "a landed cut bites; a glance or a blocked cut does not");
+    CHECK(!sc_kind_bites(SC_KIND_TAP, 0, 0) && !sc_kind_bites(SC_KIND_SLAP, 0, 0) && !sc_kind_bites(SC_KIND_STAB, 0, 0),
+          "no bite on a tap, a slap or a stab");
+}
+
 int main(void) {
     test_space();
+    test_reel();
     test_cut();
     test_touch();
     test_seg();
@@ -882,6 +942,7 @@ int main(void) {
     test_react_fight();
     test_swing();
     test_swing_fight();
+    test_hit_kind();
     printf("test_combat: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

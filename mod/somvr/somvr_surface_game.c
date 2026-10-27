@@ -530,6 +530,7 @@ static void sf_start(void)
 	const char *cal = getenv("SOMVR_XR_HANDS_CAL");
 	if (cal && *cal)
 		somvr_vh_parse_cal(cal, &g_sf.vc);
+	somvr_vh_parse_size(getenv("SOMVR_XR_HANDS_SIZE"), &g_sf.vc); /* build 17: the layer's drawn size, the same here */
 	g_sf.model_ok = somvr_vh_init(&g_sf_m, &g_sf.vc) == 0;
 	if (g_sf.model_ok) {
 		sf_samples(0, NULL), sf_samples(1, NULL);

@@ -809,6 +809,132 @@ static void test_quiver(void) {
     CHECK(g_s.arrow == SOMVR_BOW_ARROW_NONE, "no quiver: a let-down keeps no arrow");
 }
 
+/* build 17: the nock's zone (SOMVR_BOW_NOCK_ZONE=string): anywhere near the string's middle and the riser, the draw only
+ * the pull back behind the nock; and SOMVR_BOW_NOARROW_CUE=take. The bow hand at (0,140,40), identity: the shot +Z,
+ * the upper limb +Y, the nock the grip */
+static void carry_arrow(void) { /* an arrow from the quiver, the trigger held */
+    g_in.string = 0, string_at(25, 175, 20), quiver_at(1);
+    step();
+    g_in.string = 1;
+    step();
+    quiver_at(0);
+}
+static void test_zone(void) {
+    float zd;
+    somvr_bow_cfg c;
+    somvr_bow_cfg_default(&c);
+    sv_vec3 bp = { 0, 140, 40 };
+    sv_quat bq = { 0, 0, 0, 1 };
+    /* the geometry: point (build 16) vs the zone */
+    CHECK(!somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 18, 140, 40 }, &zd) && NEAR(zd, 18, 1e-3), "point: 18 cm beside is out (%.1f)", zd);
+    c.nock_zone = 1;
+    CHECK(somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 18, 140, 40 }, &zd) && NEAR(zd, 18, 1e-3), "zone: 18 cm beside is in (%.1f)", zd);
+    CHECK(somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 0, 140, 16 }, &zd) && NEAR(zd, 24, 1e-3), "zone: 24 cm behind is in");
+    CHECK(!somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 26, 140, 40 }, &zd), "zone: 26 cm beside is out (%.1f)", zd);
+    CHECK(somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 15, 160, 40 }, &zd) && NEAR(zd, 17, 1e-3),
+          "zone: 20 cm up the limb, 15 beside: 17 cm from the segment's end (%.1f)", zd);
+    CHECK(somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 0, 175, 40 }, &zd) && NEAR(zd, 23, 1e-3), "zone: 35 cm up: 23 from its end");
+    CHECK(!somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 0, 175 + 3, 40 }, &zd) && NEAR(zd, 26, 1e-3), "zone: 38 cm up: out");
+    CHECK(somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 0, 140, 44 }, &zd), "zone: 4 cm in front: in");
+    CHECK(!somvr_bow_at_nock(&c, bp, bq, (sv_vec3){ 0, 140, 50 }, &zd) && zd == 999, "zone: 10 cm in front: out (%.0f)", zd);
+    CHECK(NEAR(somvr_bow_pull(&c, bq, bp, (sv_vec3){ 18, 140, 40 }), 0, 1e-4) &&
+              NEAR(somvr_bow_pull(&c, bq, bp, (sv_vec3){ 18, 140, 10 }), 30, 1e-3) &&
+              NEAR(somvr_bow_pull(&c, bq, bp, (sv_vec3){ 0, 140, 45 }), 0, 1e-4),
+          "pull: beside 0, 30 back 30, in front 0");
+    /* the fist hold (build 16): the limbs on the grip's +Z, the shot on -Y */
+    somvr_bow_cfg f = c;
+    f.shot_ax[0] = 0, f.shot_ax[1] = -1, f.shot_ax[2] = 0, f.limb_ax[0] = 0, f.limb_ax[1] = 0, f.limb_ax[2] = 1;
+    CHECK(somvr_bow_at_nock(&f, bp, bq, (sv_vec3){ 0, 160, 50 }, &zd) && NEAR(zd, 20, 1e-3) &&
+              !somvr_bow_at_nock(&f, bp, bq, (sv_vec3){ 0, 130, 40 }, &zd) &&
+              NEAR(somvr_bow_pull(&f, bq, bp, (sv_vec3){ 0, 170, 40 }), 30, 1e-3),
+          "fist: 20 behind along the arm in, 10 in front out, the pull along +Y");
+
+    /* the user's near miss (session 090356: the hand 18-22 cm from the grip, no nock): build 16 ignores it */
+    reset();
+    g_c.quiver = 1, g_c.idle_nock = 0;
+    g_in.arrows = 5, g_in.game_aim = 1, g_in.button = 1;
+    steps(2);
+    carry_arrow();
+    g_ev = 0;
+    string_at(14, 140, 28); /* 18.4 cm from the nock, 12 behind */
+    steps(5);
+    CHECK(!(g_ev & SOMVR_BOW_E_NOCK) && g_s.arrow == SOMVR_BOW_ARROW_HAND, "point: 18 cm, no nock (events %#x)", g_ev);
+    /* the zone: nocked there, the draw starts at the pull (12), not the 18 cm */
+    g_c.nock_zone = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_NOCK) && g_s.phase == SOMVR_BOW_PH_DRAW && NEAR(g_s.draw_cm, 12, 1e-3) && !g_s.armed,
+          "zone: nocked at 18 cm, the draw 12 (%.1f), not armed", g_s.draw_cm);
+    /* pulled straight back 30 cm more: drawn 42, armed; the ray along the draw */
+    draw_to(42, 20);
+    CHECK(NEAR(g_s.draw_cm, 42, 1e-3) && g_s.armed, "zone: drawn 42 (%.1f)", g_s.draw_cm);
+    g_ev = 0;
+    g_in.string = 0;
+    steps(30);
+    CHECK((g_ev & SOMVR_BOW_E_RELEASE) && g_s.fired == 1 && NEAR(g_s.last_draw, 42, 1e-3), "zone: the shot (events %#x)", g_ev);
+    steps(40); /* (FOLLOW's 0.4 s) */
+    /* nocked from the side and let go at once: no pull, no shot - the arrow rests on the string */
+    carry_arrow();
+    g_ev = 0;
+    string_at(20, 140, 40);
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_NOCK) && NEAR(g_s.draw_cm, 0, 1e-4), "zone: nocked 20 cm beside, no draw (%.1f)", g_s.draw_cm);
+    g_ev = 0;
+    g_in.string = 0;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_LETDOWN) && !(g_ev & SOMVR_BOW_E_RELEASE) && g_s.arrow == SOMVR_BOW_ARROW_REST && g_s.fired == 1,
+          "zone: let go beside the bow: resting, no shot (events %#x)", g_ev);
+    /* the resting arrow drawn again by a press anywhere in the zone */
+    string_at(0, 150, 20);
+    step();
+    g_ev = 0;
+    g_in.string = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_NOCK) && g_s.arrow == SOMVR_BOW_ARROW_STRING && NEAR(g_s.draw_cm, 20, 1e-3),
+          "zone: the resting arrow drawn again 22 cm off (draw %.1f)", g_s.draw_cm);
+    g_in.string = 0;
+    steps(40);
+    CHECK(g_s.fired == 2, "zone: pulled 20 behind and let go: a shot (fired %llu)", (unsigned long long)g_s.fired);
+    /* past the front: no nock with the arrow carried there */
+    carry_arrow();
+    g_ev = 0;
+    string_at(0, 140, 52);
+    steps(5);
+    CHECK(!(g_ev & SOMVR_BOW_E_NOCK) && g_s.arrow == SOMVR_BOW_ARROW_HAND, "zone: 12 cm in front, no nock (events %#x)", g_ev);
+    g_in.string = 0;
+    steps(3);
+    /* an empty hand pressed in the zone: NOARROW (the weak/buzz cue) */
+    string_at(15, 140, 30);
+    step();
+    g_ev = 0;
+    g_in.string = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_NOARROW) && g_s.phase == SOMVR_BOW_PH_AIM, "zone: an empty press 18 cm off: NOARROW (events %#x)", g_ev);
+    g_in.string = 0;
+    step();
+    /* SOMVR_BOW_NOARROW_CUE=take: the same press takes one and nocks it at once */
+    g_c.noarrow_take = 1;
+    uint64_t takes = g_s.takes, fired = g_s.fired;
+    g_ev = 0;
+    g_in.string = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_TAKE) && (g_ev & SOMVR_BOW_E_NOCK) && !(g_ev & SOMVR_BOW_E_NOARROW) && g_s.takes == takes + 1 &&
+              g_s.phase == SOMVR_BOW_PH_DRAW && g_s.arrow == SOMVR_BOW_ARROW_STRING,
+          "take: taken and nocked at the string (events %#x phase %d)", g_ev, g_s.phase);
+    draw_to(40, 20);
+    g_in.string = 0;
+    steps(30);
+    CHECK(g_s.fired == fired + 1, "take: shot (fired %llu)", (unsigned long long)g_s.fired);
+    steps(40);
+    g_in.arrows = 0;
+    g_ev = 0;
+    string_at(15, 140, 30);
+    step();
+    g_in.string = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_EMPTY) && !(g_ev & (SOMVR_BOW_E_TAKE | SOMVR_BOW_E_NOCK)) && g_s.arrow == SOMVR_BOW_ARROW_NONE,
+          "take with none left: EMPTY (events %#x)", g_ev);
+}
+
 static void test_standdowns(void) {
     /* the bow hand lost 0.1 s: nothing; 0.3 s: the aim ends */
     reset();
@@ -1050,6 +1176,7 @@ int main(void) {
     test_slot();
     test_hold_anatomy();
     test_quiver();
+    test_zone();
     test_standdowns();
     test_hold_mode();
     test_hands();

@@ -188,6 +188,20 @@ static void test_levels(void) {
     somvr_th_cfg c;
     somvr_th_cfg_default(&c);
     somvr_th_keys k = somvr_th_keys_of(KT_INF);
+    /* build 17: the red level: 0 before the start, full by 0.12 s (no wait for the window), a pulse 0.7..1 at 4 Hz to the
+     * impact, out after it */
+    {
+        float lo = 2, hi = -1;
+        for (int i = 15; i < 70; i++) {
+            float l = somvr_th_red_level(&c, &k, 0.01f * (float)i, 4.0f);
+            lo = l < lo ? l : lo, hi = l > hi ? l : hi;
+        }
+        CHECK(somvr_th_red_level(&c, &k, -0.1f, 4) == 0 && somvr_th_red_level(&c, &k, 0, 4) == 0 &&
+                  somvr_th_red_level(&c, &k, 0.125f, 0) > 0.999f && lo > 0.69f && lo < 0.75f && hi > 0.95f &&
+                  somvr_th_red_level(&c, &k, k.impact + c.fade_out_s + 0.01f, 4) == 0 &&
+                  somvr_th_red_level(&c, &k, NAN, 4) == 0,
+              "the red level: pulse %.2f..%.2f (0.7..1), out after the impact", lo, hi);
+    }
     /* the infantry: 0 at the start, rising, the peak (1) inside the window, held to the impact, out 0.25 s after */
     float prev = -1, tpeak = -1;
     int mono = 1;
@@ -503,6 +517,14 @@ static void test_image(void) {
     CHECK(rc[1] == 2 * SOMVR_TH_STRIDE + 1 && h[0] > 240 && h[1] < 16 && h[2] < 10 && h[3] > 180 && hb[2] == h[0] &&
               PX(px, rc[0] + 31, rc[1] + 16)[3] == 0 && PX(px, rc[0] + 8, rc[1] + 16)[0] < h[0],
           "the hurt cell: red outer column %u %u %u a %u", h[0], h[1], h[2], h[3]);
+    /* build 17: the red row: the radial glow's shape in an alarm red, alpha 0.7; the kinds' rows */
+    somvr_th_rect(SOMVR_TH_ROW_RED, SOMVR_TH_LEVELS, rc);
+    const uint8_t *rd = PX(px, rc[0] + 16, rc[1] + 16), *rg = PX(px, rc[0], rc[1]);
+    CHECK(rc[1] == 3 * SOMVR_TH_STRIDE + 1 && rd[0] > 230 && rd[1] < 20 && rd[2] < 12 && rd[3] > 150 && rg[3] == 0 &&
+              rd[3] > PX(px, rc[0] + 16, rc[1] + 16 - 3 * SOMVR_TH_STRIDE)[3], /* stronger than the warm glow's */
+          "the red cell: centre %u %u %u a %u, corner a %u", rd[0], rd[1], rd[2], rd[3], rg[3]);
+    CHECK(somvr_th_glow_row(SOMVR_THK_MELEE) == SOMVR_TH_ROW_GLOW && somvr_th_glow_row(SOMVR_THK_MELEE | SOMVR_THK_RED) ==
+              SOMVR_TH_ROW_RED && somvr_th_glow_row(SOMVR_THK_PROJ) == SOMVR_TH_ROW_GLOW, "the glow rows by kind");
     int hb_hc = 0;
     CHECK(somvr_th_hurt_side(0, 0.5f, &hb_hc) == 0 && hb_hc == 8, "no hurt: the band");
     CHECK(somvr_th_hurt_side(255, 0.5f, &hb_hc) == 1 && hb_hc == 16, "a full hurt over a band: red");
@@ -514,7 +536,7 @@ static void test_image(void) {
               somvr_th_cell(0.04f) == 1 && somvr_th_cell(0.5f) == 8 && somvr_th_cell(1) == 16 && somvr_th_cell(3) == 16,
           "cell picks");
     int inside = 1, apart = 1;
-    for (int row = 0; row < 3; row++)
+    for (int row = 0; row < 4; row++)
         for (int k = 1; k <= SOMVR_TH_LEVELS; k++) {
             somvr_th_rect(row, k, rc);
             inside &= rc[0] >= 1 && rc[1] >= 1 && rc[0] + rc[2] <= SOMVR_TH_IMG_W - 1 && rc[1] + rc[3] <= SOMVR_TH_IMG_H - 1 &&

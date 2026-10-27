@@ -333,3 +333,44 @@ uint32_t somvr_step_own_bits(const char *s, int *bad)
     }
     return bits;
 }
+
+int somvr_step_dodge_dir(const somvr_step_cfg *c, sv_vec3 root, float head_yaw, sv_vec3 stick_dir, float stick_mag,
+                         int have_att, sv_vec3 att, sv_vec3 *dir)
+{
+    float sl = hypotf(stick_dir.x, stick_dir.z);
+    if (stick_mag >= c->dash_stick && sl > 0.5f) {
+        *dir = (sv_vec3){ stick_dir.x / sl, 0, stick_dir.z / sl };
+        return SOMVR_STD_STICK;
+    }
+    float ax = root.x - att.x, az = root.z - att.z, al = hypotf(ax, az);
+    if (have_att && al >= 1.0f) {
+        *dir = (sv_vec3){ ax / al, 0, az / al };
+        return SOMVR_STD_AWAY;
+    }
+    if (!isfinite(head_yaw)) {
+        *dir = (sv_vec3){ 0, 0, 0 };
+        return SOMVR_STD_NONE;
+    }
+    *dir = (sv_vec3){ -sinf(head_yaw), 0, -cosf(head_yaw) }; /* the gaze's forward is (sin h, 0, cos h) */
+    return SOMVR_STD_BACK;
+}
+
+const char *somvr_step_dodge_src_name(int src)
+{
+    static const char *const n[] = { "-", "the stick", "away from the attacker", "back from the gaze" };
+    return src >= 0 && src <= SOMVR_STD_BACK ? n[src] : "?";
+}
+
+int somvr_step_a_owner(const somvr_step_a_in *in)
+{
+    if (!in->world) return SOMVR_AO_NONE;
+    if (in->strike) return SOMVR_AO_STRIKE;
+    if (in->dodge && in->fight && !in->climbing) return SOMVR_AO_DODGE;
+    return in->drop ? SOMVR_AO_DROP : SOMVR_AO_NONE;
+}
+
+const char *somvr_step_a_owner_name(int o)
+{
+    static const char *const n[] = { "nobody", "the strike", "the dodge", "the climb" };
+    return o >= 0 && o < SOMVR_AO_N ? n[o] : "?";
+}

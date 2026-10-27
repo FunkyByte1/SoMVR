@@ -21,7 +21,8 @@
  *   SOMVR_SWORD_WEIGHT_HAND=fixed|follow  (default fixed) follow: the layer's drawn hands (SOMVR_VRHANDS) turn with the
  *                     weighted blade about their grip points, so the fist stays closed on the handle (the right hand;
  *                     the left too with both hands on the hilt); their positions and the twist stay the controllers'.
- *                     fixed: the hands stay on the controllers and the handle turns in the fist.
+ *                     fixed: the hands stay on the controllers and the handle turns in the fist. Build 17: the VR
+ *                     menu's Sword hand row (Fixed / Follow; settings.conf SWORD_WEIGHT_HAND) sets it live.
  *   SOMVR_SWORD_REC=off|on  (default off) the right grip as the weight's step gets it, each arms frame it applies, into
  *                     <SOMVR_LOG>.swordrec (text, one line a frame, at most 48 MB) for replays (tests/test_smooth.c with
  *                     SWG_REPLAY=FILE: every level on the user's own motion).
@@ -31,12 +32,14 @@
  *   S` (build 16): that test hand turns +-DEG about its own up axis at HZ for S s (the weight's proof); `hands
  *   weighthand fixed|follow`: SOMVR_SWORD_WEIGHT_HAND live.
  * Lines: `CONFIG smooth ...`, `HANDJIT t=... last 10 s: ...`, `SWORDWT t=... last 10 s: ...`, `SWORDWT t=... weight A ->
- * B (the VR menu)`, `HANDJIT END ...`. */
+ * B (the VR menu)`, `SWORDWT t=... the drawn hands fixed|follow the blade (the VR menu's Sword hand|trigger word)`,
+ * `HANDJIT END ...`. */
 
 static struct {
 	int on, weight;     /* SOMVR_HANDS_SMOOTH; SOMVR_SWORD_WEIGHT's SWG_* */
 	int hand_follow;    /* SOMVR_SWORD_WEIGHT_HAND=follow */
-	_Atomic int hand_req; /* `hands weighthand fixed|follow` (the writer thread): 1 + the mode, 0 = none */
+	_Atomic int hand_req; /* `hands weighthand fixed|follow` (the writer thread): 1 + the mode; build 17, the VR menu's
+				 Sword hand row (swg_vm_hand_set): 3 + the mode; 0 = none */
 	hsm_cfg cfg;
 	hsm_state arm[2], inp[2];
 	/* the arms' (phase 2) locate against H4's */
@@ -60,6 +63,9 @@ static struct {
 	char rec_path[512];
 	uint64_t rec_n, rec_bytes;
 	float w_prev_rot[3];           /* the last offset (the blade's own speed) */
+	float w_rot_now[3];            /* this arms frame's offset on the weapon node (w_now: applied this frame); build 17's
+					* bite turns the drawn blade on top of it (somvr_hitfeel_game.c) */
+	int w_now;
 	double next_log;
 	/* the test noise: degrees and millimetres as float bits (the writer thread's word) */
 	_Atomic uint32_t noise_deg_b, noise_mm_b;
@@ -283,9 +289,12 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 {
 	int hr = atomic_exchange(&g_hsm.hand_req, 0);
 	if (hr) {
-		g_hsm.hand_follow = hr - 1;
-		logf_("SWORDWT t=%.3f the drawn hands %s (trigger word)", cb_now(), g_hsm.hand_follow ? "follow the blade" : "fixed");
+		int was = g_hsm.hand_follow;
+		g_hsm.hand_follow = (hr - 1) & 1;
+		logf_("SWORDWT t=%.3f the drawn hands %s%s (%s)", cb_now(), g_hsm.hand_follow ? "follow the blade" : "fixed",
+		      was == g_hsm.hand_follow ? " (already)" : "", hr >= 3 ? "the VR menu's Sword hand" : "trigger word");
 	}
+	g_hsm.w_now = 0;
 	if (!g_hsm.weight)
 		return;
 	g_hsm.w_frames++;
@@ -374,6 +383,7 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 	sa_xf W = sa_node_xf(&g_arm.pose[c->wpn]);
 	sa_node_set(&g_arm.pose[c->wpn], sa_xf_mul(sa_xf_mul(gm2, sa_xf_inv(gm)), W));
 	g_hsm.w_applied++;
+	memcpy(g_hsm.w_rot_now, rot, 12), g_hsm.w_now = 1;
 }
 
 /* the controller blade's hit haptic with the weight: full strength, longer (heavy 2 x, light 1.5 x); both hands on the
@@ -401,8 +411,25 @@ static const char *swg_vm_set(const somvr_settings *s)
 	}
 	return " (the drawn sword = the hits' blade)";
 }
-static void swg_vm_settings(somvr_settings *s) { s->sword_weight = (uint8_t)g_hsm.weight; }
-static uint32_t swg_vm_avail(void) { return g_arm.on ? SOMVR_VMA_WEIGHT : 0u; }
+static void swg_vm_settings(somvr_settings *s)
+{
+	s->sword_weight = (uint8_t)g_hsm.weight, s->sword_hand = (uint8_t)g_hsm.hand_follow;
+}
+/* build 17: the VR menu's Sword hand row (SOMVR_SWORD_WEIGHT_HAND live): swg_arm takes it at the arms' next frame */
+static const char *swg_vm_hand_set(const somvr_settings *s)
+{
+	if (!g_arm.on || !g_vh.want)
+		return " (no drawn hands to turn: SOMVR_ARMS and SOMVR_VRHANDS)";
+	atomic_store(&g_hsm.hand_req, 3 + (s->sword_hand != 0));
+	if (!g_hsm.weight)
+		return " (used with the Sword weight on)";
+	return s->sword_hand ? " (the drawn hands turn with the weighted blade)" : " (the drawn hands stay on the controllers)";
+}
+/* the Sword weight row with the arms; the Sword hand row with the layer's hands too */
+static uint32_t swg_vm_avail(void)
+{
+	return g_arm.on ? SOMVR_VMA_WEIGHT | (g_vh.want ? SOMVR_VMA_SWHAND : 0u) : 0u;
+}
 
 static void hsm_summary(double t)
 {

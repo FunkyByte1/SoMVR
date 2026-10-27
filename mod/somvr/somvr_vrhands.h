@@ -189,16 +189,21 @@ typedef struct {
     float fade_from_m;           /* the wrist's fade: opaque up to this far from the wrist joint toward the fingers */
     float fade_to_m;             /* ... clear this far past it toward the elbow */
     float cal[6];                /* SOMVR_XR_HANDS_CAL: cm x y z, deg rx ry rz in the right grip's frame (mirrored) */
+    float size;                  /* build 17, SOMVR_XR_HANDS_SIZE: the hand's size about the fist's tube (1 = the generic
+                                    hand: 17.8 cm wrist to middle tip, the fist's tube 3.1 cm across) */
 } somvr_vh_cfg;
 void somvr_vh_cfg_default(somvr_vh_cfg *c);
 /* "x,y,z,rx,ry,rz" (cm, deg; |cm| <= 10, |deg| <= 90) into c->cal; 0 = not understood (c unchanged) */
 int somvr_vh_parse_cal(const char *v, somvr_vh_cfg *c);
+/* "S" (0.8 .. 1.5) into c->size; 0 = not understood (c unchanged). NULL / "" = 1 (kept) */
+int somvr_vh_parse_size(const char *v, somvr_vh_cfg *c);
 
 typedef struct {
     int ok;
     float local[SOMVR_VH_NJ][7];  /* each joint's rest transform in its parent's (q x y z w, t): the hierarchy */
     float ibind[SOMVR_VH_NJ][12]; /* the inverse rest transforms, 3x4 row-major (model -> joint) */
     float gq[4], gp[3];           /* the right hand's model space -> its grip frame (the fist's tube on -Z) + cal */
+    float gk;                     /* ... scaled by this about the tube's centre (cfg size; p_g = gk gq p + gp) */
     float tube_r_m;               /* the fist's tube: the finger joints' radius round its axis (m) */
     float tube_tilt_deg;          /* its axis against the knuckles' line (logs) */
     float wrist_g[3];             /* the wrist joint at rest in the right grip's frame */

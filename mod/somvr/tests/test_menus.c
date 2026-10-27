@@ -133,6 +133,33 @@ static void test_board(void) {
     CHECK(NEAR(b.p[2], -0.6, 1e-4) && b.q[3] == b.q[3], "a NaN head: straight ahead (%.3f)", b.p[2]);
 }
 
+/* SOMVR_XR_MENU_PITCH: the board down the gaze's pitch (at most the limit), still facing the eyes; up = level; 0 = level */
+static void test_board_gaze(void) {
+    somvr_posef eye[2] = {{{0, 0, 0, 1}, {-0.032f, 1.6f, 0}}, {{0, 0, 0, 1}, {0.032f, 1.6f, 0}}};
+    float yaw[4], pitch[4], q[4], n[3], up[3], x[3], to[3];
+    struct { float look, lim, want; const char *what; } c[] = {
+        {-20, 35, -20, "looking down 20, limit 35: down the gaze"}, {-60, 35, -35, "looking down 60: the limit's 35"},
+        {+30, 35, 0, "looking up: level"}, {-60, 0, 0, "the limit 0: build 16's level board"}};
+    for (unsigned k = 0; k < sizeof c / sizeof c[0]; k++) {
+        axis_q(0, 1, 0, 40, yaw), axis_q(1, 0, 0, c[k].look, pitch);
+        qmul(yaw, pitch, q);
+        memcpy(eye[0].q, q, sizeof q), memcpy(eye[1].q, q, sizeof q);
+        somvr_posef b;
+        somvr_mn_board_pose_gaze(eye, 0.6f, 0.1f, c[k].lim, &b);
+        float w = c[k].want * 3.14159265f / 180, ya = 40 * 3.14159265f / 180;
+        float ex = -sinf(ya) * 0.6f * cosf(w), ey = 1.6f + 0.6f * sinf(w) - 0.1f, ez = -cosf(ya) * 0.6f * cosf(w);
+        qrot(b.q, EZ, n), qrot(b.q, EY, up), qrot(b.q, EX, x);
+        float mid[3] = {0, 1.6f, 0};
+        for (int i = 0; i < 3; i++) to[i] = mid[i] - b.p[i];
+        float tl = sqrtf(dot3(to, to));
+        for (int i = 0; i < 3; i++) to[i] /= tl;
+        CHECK(NEAR(b.p[0], ex, 1e-4) && NEAR(b.p[1], ey, 1e-4) && NEAR(b.p[2], ez, 1e-4), "%s: the centre %.3f,%.3f,%.3f "
+              "(want %.3f,%.3f,%.3f)", c[k].what, b.p[0], b.p[1], b.p[2], ex, ey, ez);
+        CHECK(dot3(n, to) > 0.9999f && fabsf(x[1]) < 1e-4f && up[1] > 0.5f, "%s: faces the eyes (%.4f), level x %.4f",
+              c[k].what, dot3(n, to), x[1]);
+    }
+}
+
 /* somvr_hud_split's regions for layout l: every pixel of the w x h image outside the tiles copied in place exactly once,
  * every tile's pixel to its place exactly once, nothing else written (the extra area's gaps stay clear), no region
  * empty or outside; returns the count (-1 = wrong) */
@@ -380,6 +407,11 @@ static void test_touch(void) {
 /* SOMVR_XR_TEST's lines and poses (the headless test hands) */
 static void test_xt(void) {
     somvr_xt_cmd c;
+    CHECK(somvr_xt_parse("handsize 1.15", &c) == 1 && c.op == SOMVR_XT_SIZE && fabsf(c.v[0] - 1.15f) < 1e-6f &&
+              somvr_xt_parse("handsize 2", &c) == -1 && somvr_xt_parse("handsize", &c) == -1 &&
+              somvr_xt_parse("handsize 1.2 x", &c) == -1 && somvr_xt_parse("lumlog 60", &c) == 1 && c.op == SOMVR_XT_LUMLOG &&
+              c.v[0] == 60 && somvr_xt_parse("lumlog 0", &c) == -1,
+          "xt: handsize (build 17)");
     CHECK(somvr_xt_parse("dump", &c) == 1 && c.op == SOMVR_XT_DUMP && somvr_xt_parse("# step 2", &c) == 0 &&
               somvr_xt_parse("", &c) == 0 && somvr_xt_parse("  \n", &c) == 0,
           "dump, comments, blanks");
@@ -569,6 +601,7 @@ static void test_tiles(void) {
 int main(void) {
     test_switches();
     test_board();
+    test_board_gaze();
     test_minimap();
     test_tiles();
     test_touch();

@@ -147,11 +147,12 @@ static void test_abi(void) {
     o.magic = SOMVR_OBJECTIVE_MAGIC, o.version = SOMVR_OBJECTIVE_VERSION, o.size = sizeof o;
     atomic_store(&o.active, 1);
     CHECK(somvr_objective_ok(&o) && !memcmp(&o.magic, "SOMROBJ1", 8), "ok, the magic spells SOMROBJ1");
-    somvr_objective_frame e = {.n = 1, .flags = SOMVR_OBF_HIDDEN, .pos = {1, 2, 3}, .dist_m = 42, .id = 7}, g;
+    somvr_objective_frame e = {.n = 1, .flags = SOMVR_OBF_HIDDEN, .pos = {1, 2, 3}, .dist_m = 42, .id = 7, .top = {4, 5, 6}}, g;
     somvr_objective_put(&o, 123, &e);
     CHECK(somvr_objective_get(&o, 123, &g) && g.n == 1 && g.pos[2] == 3 && g.dist_m == 42 && g.id == 7 &&
-              g.flags == SOMVR_OBF_HIDDEN && atomic_load(&g.seq) == 123 && atomic_load(&o.last) == 123,
-          "the entry round trip");
+              g.flags == SOMVR_OBF_HIDDEN && atomic_load(&g.seq) == 123 && atomic_load(&o.last) == 123 && g.top[0] == 4 &&
+              g.top[2] == 6,
+          "the entry round trip (build 17: the line's top too)");
     CHECK(!somvr_objective_get(&o, 123 + SOMVR_NREC, &g) && !somvr_objective_get(&o, 0, &g), "another frame: none");
 }
 
@@ -167,8 +168,13 @@ static void test_image(void) {
     for (int y = 0; y < SOMVR_OB_IMG_H; y++)
         for (int x = 0; x < SOMVR_OB_IMG_W; x++) {
             const uint8_t *p = px + 4 * (y * SOMVR_OB_IMG_W + x);
-            int gx = x % SOMVR_OB_STRIDE;
-            if ((gx == 0 || gx == SOMVR_OB_STRIDE - 1 || y == 0 || y == SOMVR_OB_IMG_H - 1) && p[3]) guard++;
+            int gx = x % SOMVR_OB_STRIDE, inside = 0;
+            for (int c = 0; c < SOMVR_OB_CELLS && !inside; c++) { /* build 17: the strike's cells are wide */
+                int32_t cr[4];
+                somvr_ob_rect(c, cr);
+                inside = x >= cr[0] && x < cr[0] + cr[2] && y >= cr[1] && y < cr[1] + cr[3];
+            }
+            if (!inside && p[3]) guard++;
             for (int k = 0; k < 3; k++) prem &= p[k] <= p[3];
             if (x < SOMVR_OB_STRIDE) {
                 full += p[3] > 0;
@@ -194,7 +200,16 @@ static void test_image(void) {
     CHECK(band[3] > 200 && band[0] > 200 && fill[3] > 20 && fill[3] < 60 && dot[3] > 200 && corner[3] == 0,
           "the ring's cell: band %d, fill %d, dot %d, corner %d", band[3], fill[3], dot[3], corner[3]);
     somvr_ob_rect(SOMVR_OB_CELL_RING, r);
-    CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 4 * SOMVR_OB_STRIDE, "the ring's rect");
+    CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 14 * SOMVR_OB_STRIDE, "the ring's rect");
+    /* build 17: cell 4, the drop's line: a gold middle, dark edges, nothing at the cell's sides; faded in at its top */
+    int lx = 1 + 4 * SOMVR_OB_STRIDE;
+    const uint8_t *mid = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + lx + 64), *rim = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + lx + 64 + 45),
+                  *side = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + lx + 64 + 60), *top = px + 4 * ((1 + 0) * SOMVR_OB_IMG_W + lx + 64);
+    CHECK(mid[3] > 155 && mid[3] < 180 && mid[0] > 155 && rim[3] > 75 && rim[3] < 100 && rim[0] < 20 && side[3] == 0 &&
+              top[3] < 10,
+          "the line's cell: middle %d, rim %d, side %d, top %d", mid[3], rim[3], side[3], top[3]);
+    somvr_ob_rect(SOMVR_OB_CELL_LINE, r);
+    CHECK(r[0] == lx && r[2] == SOMVR_OB_CELL, "the line's rect");
     float at[3] = {1.0f, -1.6f, -0.5f};
     somvr_ob_place p = somvr_ob_floor(at, 0.35f);
     float q[4] = {p.pose[0], p.pose[1], p.pose[2], p.pose[3]};
@@ -210,8 +225,119 @@ static void test_image(void) {
     CHECK(dc[2] == 255 && dc[0] < 100, "bgra swaps B and R");
 }
 
+/* v rotated by the quaternion q (x y z w) */
+static void qrot(const float q[4], const float v[3], float o[3]) {
+    float t[3] = {2 * (q[1] * v[2] - q[2] * v[1]), 2 * (q[2] * v[0] - q[0] * v[2]), 2 * (q[0] * v[1] - q[1] * v[0])};
+    o[0] = v[0] + q[3] * t[0] + (q[1] * t[2] - q[2] * t[1]);
+    o[1] = v[1] + q[3] * t[1] + (q[2] * t[0] - q[0] * t[2]);
+    o[2] = v[2] + q[3] * t[2] + (q[0] * t[1] - q[1] * t[0]);
+}
+static int near3f(const float a[3], float x, float y, float z, float e) {
+    return fabsf(a[0] - x) < e && fabsf(a[1] - y) < e && fabsf(a[2] - z) < e;
+}
+
+/* build 17: the drop's line: along top - bot, its face toward the head (square to the line), w wide */
+static void test_line(void) {
+    const float ex[3] = {1, 0, 0}, ey[3] = {0, 1, 0}, ez[3] = {0, 0, 1};
+    float top[3] = {0, 0, -1}, bot[3] = {0, -5, -1}, head[3] = {0, 1.6f, 0}, a[3], b[3], c[3];
+    somvr_ob_place p = somvr_ob_line(top, bot, head, 0.04f);
+    qrot(p.pose, ex, a), qrot(p.pose, ey, b), qrot(p.pose, ez, c);
+    CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == SOMVR_OB_CELL_LINE && near3f(p.pose + 4, 0, -2.5f, -1, 1e-5f) &&
+              fabsf(p.size[0] - 0.04f) < 1e-6f && fabsf(p.size[1] - 5) < 1e-5f && near3f(b, 0, 1, 0, 1e-5f) &&
+              near3f(c, 0, 0, 1, 1e-5f) && near3f(a, 1, 0, 0, 1e-5f),
+          "the line ahead: up along it, facing the head (+z %g %g %g)", c[0], c[1], c[2]);
+    head[0] = 2, head[1] = 0, head[2] = -1; /* the head to its side */
+    p = somvr_ob_line(top, bot, head, 0.04f);
+    qrot(p.pose, ey, b), qrot(p.pose, ez, c);
+    CHECK(near3f(b, 0, 1, 0, 1e-5f) && near3f(c, 1, 0, 0, 1e-5f), "the head at its side: facing it (+z %g %g %g)", c[0], c[1],
+          c[2]);
+    float top2[3] = {1, 0, 0}, bot2[3] = {0, -2, 0}; /* a slanted line, seen from above (looking down on it from the edge) */
+    head[0] = 0, head[1] = 1.7f, head[2] = 0;
+    p = somvr_ob_line(top2, bot2, head, 0.04f);
+    qrot(p.pose, ey, b), qrot(p.pose, ez, c);
+    float l = sqrtf(5.0f), d = c[0] * b[0] + c[1] * b[1] + c[2] * b[2];
+    float hm[3] = {head[0] - p.pose[4], head[1] - p.pose[5], head[2] - p.pose[6]}, toward = c[0] * hm[0] + c[1] * hm[1] + c[2] * hm[2];
+    CHECK(near3f(b, 1 / l, 2 / l, 0, 1e-5f) && fabsf(d) < 1e-5f && toward > 0 && fabsf(p.size[1] - l) < 1e-5f,
+          "slanted: along it (%g %g %g), +z square to it and toward the head", b[0], b[1], b[2]);
+    head[0] = 0, head[1] = 3, head[2] = -1; /* the head on its axis (straight over it) */
+    p = somvr_ob_line(top, bot, head, 0.04f);
+    qrot(p.pose, ey, b), qrot(p.pose, ez, c);
+    CHECK(p.kind == SOMVR_OBK_WORLD && near3f(b, 0, 1, 0, 1e-5f) && fabsf(c[1]) < 1e-5f &&
+              fabsf(c[0] * c[0] + c[2] * c[2] - 1) < 1e-4f,
+          "on its axis: any square face (+z %g %g %g)", c[0], c[1], c[2]);
+    CHECK(somvr_ob_line(top, top, head, 0.04f).kind == SOMVR_OBK_NONE, "no length: none");
+    top[1] = NAN;
+    CHECK(somvr_ob_line(top, bot, head, 0.04f).kind == SOMVR_OBK_NONE, "NaN: none");
+}
+
+/* build 17: the Shadow Strike's mark (SOMVR_OBF_STRIKE): the three wide cells, their pictures, the placement */
+static void test_strike_mark(void) {
+    static uint8_t px[SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4];
+    somvr_font f;
+    somvr_font_init(&f);
+    somvr_ob_image(px, &f, "12 m", 0);
+    int32_t r[3][4], sq[4];
+    somvr_ob_rect(SOMVR_OB_CELL_LINE, sq); /* the last square cell (the drop's line, build 17) */
+    for (int i = 0; i < 3; i++) somvr_ob_rect(SOMVR_OB_CELL_STRIKE + i, r[i]);
+    CHECK(r[0][0] == 5 * SOMVR_OB_STRIDE + 1 && r[0][2] == 3 * SOMVR_OB_STRIDE - 2 && r[0][3] == SOMVR_OB_CELL &&
+              r[1][0] == r[0][0] + 3 * SOMVR_OB_STRIDE && r[2][0] == r[1][0] + 3 * SOMVR_OB_STRIDE &&
+              r[2][0] + r[2][2] == SOMVR_OB_IMG_W - 1 && sq[0] + sq[2] < r[0][0],
+          "the strike's cells: 388 px wide, side by side after the line's, inside the image (%d %d %d)", r[0][0], r[1][0], r[2][0]);
+#define PX(c, x, y) (px + 4 * ((size_t)(r[c][1] + (y)) * SOMVR_OB_IMG_W + (size_t)(r[c][0] + (x))))
+    /* the ring's band (5 px inside its outer edge, at its right), its centre, the A button, the text */
+    const uint8_t *band0 = PX(0, 64 + 49, 64), *mid0 = PX(0, 64, 64), *band1 = PX(1, 64 + 49, 64), *mid2 = PX(2, 64, 64),
+                  *btn = PX(0, 134 + 22, 50), *btn1 = PX(1, 134 + 22, 50), *corner = PX(0, 2, 2);
+    CHECK(band0[3] == 255 && band0[2] == 255 && band0[0] > 140 && band0[0] < 170, "ready: the band wraith-blue (%d %d %d %d)",
+          band0[0], band0[1], band0[2], band0[3]);
+    CHECK(mid0[3] == 0 && corner[3] == 0, "ready: the ring's inside and the corner clear (the orc seen through it)");
+    CHECK(band1[3] > 170 && band1[3] < 200 && abs((int)band1[0] - (int)band1[2]) < 15, "no arrows: the band grey (%d %d %d %d)",
+          band1[0], band1[1], band1[2], band1[3]);
+    CHECK(mid2[3] > 30 && mid2[3] < 60, "pressed: the ring filled faintly (%d)", mid2[3]);
+    int blue1 = 0;
+    for (int y = 0; y < SOMVR_OB_CELL; y++)
+        for (int x = 128; x < r[1][2]; x++) blue1 += PX(1, x, y)[2] == 255 && PX(1, x, y)[0] == 158;
+    CHECK(btn[3] == 255 && btn[2] == 255 && btn[0] == 158 && blue1 == 0 && btn1 != NULL, "the A button in ready (%d %d %d %d), none in no arrows (%d)",
+          btn[0], btn[1], btn[2], btn[3], blue1);
+    int white = 0, red = 0, dark_a = 0;
+    for (int y = 0; y < SOMVR_OB_CELL; y++)
+        for (int x = 128; x < r[0][2]; x++) {
+            const uint8_t *a = PX(0, x, y), *b = PX(1, x, y);
+            white += a[0] == 255 && a[1] == 255 && a[2] == 255 && a[3] == 255;
+            red += b[0] == 255 && b[1] == 130 && b[2] == 110;
+        }
+    for (int y = 40; y < 90; y++)
+        for (int x = 140; x < 170; x++) dark_a += PX(0, x, y)[2] < 60 && PX(0, x, y)[3] == 255;
+    CHECK(white > 400 && red > 300 && dark_a > 40, "the label: white text %d, red text %d, the letter on the button %d", white,
+          red, dark_a);
+#undef PX
+    /* the placement: the ring's centre on the orc's chest, the quad facing the head, its size from the ring */
+    float head[3] = {0, 1.7f, 0}, pos[3] = {3.0f, 1.4f, -8.0f};
+    float ring = somvr_ob_strike_ring(8.5f, 1.0f, 7.0f);
+    CHECK(fabsf(ring - 2 * 8.5f * tanf(3.5f * 0.0174533f)) < 1e-4f && somvr_ob_strike_ring(3.0f, 1.0f, 7.0f) == 1.0f,
+          "the ring: 7 deg of the view (%.3f m at 8.5 m), at least 1 m", ring);
+    somvr_ob_place p = somvr_ob_strike(head, pos, ring, SOMVR_OB_CELL_STRIKE);
+    const float *q = p.pose;
+    float xx = 1 - 2 * (q[1] * q[1] + q[2] * q[2]), xy = 2 * (q[0] * q[1] + q[3] * q[2]), xz = 2 * (q[0] * q[2] - q[3] * q[1]);
+    float zx = 2 * (q[0] * q[2] + q[3] * q[1]), zy = 2 * (q[1] * q[2] - q[3] * q[0]), zz = 1 - 2 * (q[0] * q[0] + q[1] * q[1]);
+    float h = ring * 128 / 108.0f, w = h * 388 / 128.0f, sh = 0.5f * w - 0.5f * h;
+    float cx = p.pose[4] - xx * sh, cy = p.pose[5] - xy * sh, cz = p.pose[6] - xz * sh;
+    float to[3] = {head[0] - pos[0], head[1] - pos[1], head[2] - pos[2]}, tl = sqrtf(to[0] * to[0] + to[1] * to[1] + to[2] * to[2]);
+    CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == SOMVR_OB_CELL_STRIKE && fabsf(cx - pos[0]) < 1e-4f &&
+              fabsf(cy - pos[1]) < 1e-4f && fabsf(cz - pos[2]) < 1e-4f,
+          "the ring's centre on the chest (%.3f %.3f %.3f)", cx, cy, cz);
+    CHECK(fabsf(zx - to[0] / tl) < 1e-3f && fabsf(zy - to[1] / tl) < 1e-3f && fabsf(zz - to[2] / tl) < 1e-3f && fabsf(xy) < 1e-5f,
+          "facing the head, level (+z %.3f %.3f %.3f, +x up %.5f)", zx, zy, zz, xy);
+    CHECK(fabsf(p.size[1] - h) < 1e-5f && fabsf(p.size[0] - w) < 1e-4f, "the size: %.3f x %.3f m", p.size[0], p.size[1]);
+    CHECK(somvr_ob_strike(head, pos, ring, SOMVR_OB_CELL_RING).kind == SOMVR_OBK_NONE &&
+              somvr_ob_strike(head, head, ring, SOMVR_OB_CELL_STRIKE).kind == SOMVR_OBK_NONE &&
+              somvr_ob_strike(head, pos, NAN, SOMVR_OB_CELL_STRIKE).kind == SOMVR_OBK_NONE,
+          "no mark: another cell, at the head, NaN");
+}
+
 int main(void) {
+    test_strike_mark();
     test_match_text();
+    test_line();
     test_ahead();
     test_edges();
     test_abi();

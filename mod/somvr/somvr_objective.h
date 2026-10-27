@@ -26,12 +26,19 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_OBJECTIVE_SYMBOL "somvr_objective"
 #define SOMVR_OBJECTIVE_MAGIC 0x314a424f524d4f53ull /* "SOMROBJ1" */
-#define SOMVR_OBJECTIVE_VERSION 1u
+#define SOMVR_OBJECTIVE_VERSION 2u /* 2: build 17, the frame's top[] (the drop's line) */
 
 enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIVE=on) */
        SOMVR_OBF_SHOWN = 2u,  /* the game placed it this frame (on screen or as its edge arrow) */
-       SOMVR_OBF_LAND = 4u }; /* build 16 (SOMVR_CLIMB_PULLOVER): not the objective but the climb's landing: pos = the
+       SOMVR_OBF_LAND = 4u,   /* build 16 (SOMVR_CLIMB_PULLOVER): not the objective but the climb's landing: pos = the
                                * floor point, dist_m = the ring's radius (metres, reference space): a ring flat on it */
+       SOMVR_OBF_LINE = 8u,   /* build 17 (SOMVR_CLIMB_DESCENT_MARK, with LAND): and a faint line from top (reference
+                               * space) straight down to the ring: the way down from an edge to where he will stand */
+       SOMVR_OBF_STRIKE = 16u, /* build 17 (SOMVR_STRIKE_GAZE): not the objective but the Shadow Strike's mark on the
+                                * orc looked at: pos = its chest, dist_m = the ring's diameter (metres, reference space):
+                                * the ring round it, the button and "Shadow Strike" beside it, facing the head */
+       SOMVR_OBF_STRIKE_NO = 32u, /* ... under 2 arrows: the ring grey, "No arrows", no button */
+       SOMVR_OBF_STRIKE_GO = 64u }; /* ... A pressed: the ring filled (the strike on its way) */
 
 typedef struct {
     _Atomic uint64_t seq; /* the frame id this entry is for; 0 while written; stored last (release) */
@@ -40,7 +47,7 @@ typedef struct {
     float pos[3];         /* its place in the layer's reference space (metres), this frame's rig */
     float dist_m;         /* Talion -> it in the game's world (metres; the text) */
     uint32_t id;          /* the marker's number this session (another marker = another id; logs) */
-    uint32_t pad;
+    float top[3];         /* SOMVR_OBF_LINE: the line's top (reference space, metres; its bottom is pos) */
 } somvr_objective_frame;
 
 typedef struct somvr_objective_shared {
@@ -59,11 +66,11 @@ typedef struct somvr_objective_shared {
     _Atomic uint64_t n_edge;   /* layer: frames submitted with the edge arrow */
 } somvr_objective_shared;
 
-_Static_assert(sizeof(somvr_objective_frame) == 40, "somvr_objective_frame size");
+_Static_assert(sizeof(somvr_objective_frame) == 48, "somvr_objective_frame size");
 _Static_assert(offsetof(somvr_objective_shared, size_deg) == 24 && offsetof(somvr_objective_shared, last) == 40 &&
-                   offsetof(somvr_objective_shared, f) == 48 && offsetof(somvr_objective_shared, n_frames) == 368,
+                   offsetof(somvr_objective_shared, f) == 48 && offsetof(somvr_objective_shared, n_frames) == 432,
                "somvr_objective_shared offsets");
-_Static_assert(sizeof(somvr_objective_shared) == 392, "somvr_objective_shared size");
+_Static_assert(sizeof(somvr_objective_shared) == 456, "somvr_objective_shared size");
 
 static inline int somvr_objective_ok(const somvr_objective_shared *o) {
     return o && o->magic == SOMVR_OBJECTIVE_MAGIC && o->version == SOMVR_OBJECTIVE_VERSION &&
@@ -78,7 +85,8 @@ static inline void somvr_objective_put(somvr_objective_shared *o, uint64_t frame
     atomic_thread_fence(memory_order_release);
     e->n = in->n, e->flags = in->flags;
     memcpy(e->pos, in->pos, sizeof e->pos);
-    e->dist_m = in->dist_m, e->id = in->id, e->pad = 0;
+    e->dist_m = in->dist_m, e->id = in->id;
+    memcpy(e->top, in->top, sizeof e->top);
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&o->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&o->n_frames, 1, memory_order_relaxed);
@@ -90,7 +98,8 @@ static inline int somvr_objective_get(somvr_objective_shared *o, uint64_t frame,
     if (atomic_load_explicit(&e->seq, memory_order_acquire) != frame) return 0;
     out->n = e->n, out->flags = e->flags;
     memcpy(out->pos, e->pos, sizeof out->pos);
-    out->dist_m = e->dist_m, out->id = e->id, out->pad = 0;
+    out->dist_m = e->dist_m, out->id = e->id;
+    memcpy(out->top, e->top, sizeof out->top);
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);
@@ -120,7 +129,10 @@ typedef struct {
 void somvr_ob_cfg_default(somvr_ob_cfg *c);
 
 enum { SOMVR_OBK_NONE = 0, SOMVR_OBK_WORLD = 1, SOMVR_OBK_EDGE = 2 };
-enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2, SOMVR_OB_CELL_RING = 3, SOMVR_OB_CELLS = 4 };
+enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2, SOMVR_OB_CELL_RING = 3, SOMVR_OB_CELL_LINE = 4,
+       SOMVR_OB_CELL_STRIKE = 5, SOMVR_OB_CELL_STRIKE_NO = 6, SOMVR_OB_CELL_STRIKE_GO = 7, SOMVR_OB_CELLS = 8 };
+#define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each */
+#define SOMVR_OB_WIDE 3
 typedef struct {
     int kind;        /* SOMVR_OBK_*: WORLD = pose in the reference space, EDGE = pose in a VIEW space */
     int cell;        /* SOMVR_OB_CELL_* */
@@ -139,16 +151,28 @@ somvr_ob_place somvr_ob_locate(const somvr_ob_cfg *c, const float head[3], const
 /* the climb's landing (SOMVR_OBF_LAND): a ring of radius r_m flat on the floor point pos (reference space, +y up), 2 cm
  * over it, the ring's cell */
 somvr_ob_place somvr_ob_floor(const float pos[3], float r_m);
+/* build 17 (SOMVR_OBF_LINE): the line from top down to bot (reference space), w_m wide, turned about its own axis to
+ * face head (the eyes' middle); the line's cell (its top row at top). Under 5 cm long or not finite: none */
+somvr_ob_place somvr_ob_line(const float top[3], const float bot[3], const float head[3], float w_m);
+/* build 17, the Shadow Strike's mark (SOMVR_OBF_STRIKE): a quad facing the head at pos (the orc's chest, reference
+ * space) with the ring's centre on pos, the ring ring_m across (its outer edge), cell one of the strike cells */
+somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ring_m, int cell);
+/* the ring's diameter for an orc dist_m away: at least min_m, at least deg of the view (the label stays readable) */
+float somvr_ob_strike_ring(float dist_m, float min_m, float deg);
 
 /* The texture: SOMVR_OB_CELLS cells of SOMVR_OB_CELL px square inside a 1 px guard (a cell's rect is its interior):
  * cell 0 the diamond (gold, a dark rim) with the distance under it (white, a dark rim), cell 1 the same faint (alpha
  * SOMVR_OB_FAINT), cell 2 the edge arrow (pointing +x = right), cell 3 the landing ring (gold, a dark rim, a faint
- * disc inside, a dot). Premultiplied RGBA8 (bgra: B and R swapped). The
+ * disc inside, a dot), cell 4 the drop's line (build 17: a faint gold band down the cell's middle with dark edges,
+ * fading in over its top 15 %); build 17: cells 5..7 the Shadow Strike's mark, each SOMVR_OB_WIDE strides wide (the
+ * ring in its left square, the label right of it): 5 ready (the wraith-blue ring, the A button, "SHADOW STRIKE"), 6 no
+ * arrows (the ring grey, "NO ARROWS"), 7 pressed (the ring filled). Premultiplied RGBA8 (bgra: B and R swapped). The
  * diamond's centre is SOMVR_OB_DIAMOND_V of the cell from its top (the quad is shifted so that it, not the cell's
  * centre, sits on the objective's direction). */
 #define SOMVR_OB_CELL 128
 #define SOMVR_OB_STRIDE (SOMVR_OB_CELL + 2)
-#define SOMVR_OB_IMG_W (SOMVR_OB_CELLS * SOMVR_OB_STRIDE)
+#define SOMVR_OB_IMG_W ((SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELLS - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE) * SOMVR_OB_STRIDE)
+#define SOMVR_OB_STRIKE_RING_PX 108 /* the strike ring's outer diameter in its cell (px; the cell is SOMVR_OB_CELL high) */
 #define SOMVR_OB_IMG_H SOMVR_OB_STRIDE
 #define SOMVR_OB_DIAMOND_V 0.3125f
 #define SOMVR_OB_FAINT 0.40f

@@ -97,7 +97,7 @@ int somvr_pr_orc_parse(const char *w)
 
 const char *somvr_pr_action_name(int a)
 {
-    static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status" };
+    static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status", "arrows", "health" };
     return a >= 0 && a < SOMVR_PRA_N ? n[a] : "?";
 }
 
@@ -106,15 +106,18 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
     static const struct { const char *w; int a; } t[] = {
         { "go", SOMVR_PRA_GO },         { "there", SOMVR_PRA_GO },       { "back", SOMVR_PRA_BACK },
         { "return", SOMVR_PRA_BACK },   { "spawn", SOMVR_PRA_SPAWN },    { "remove", SOMVR_PRA_REMOVE },
-        { "despawn", SOMVR_PRA_REMOVE }, { "status", SOMVR_PRA_STATUS },
+        { "despawn", SOMVR_PRA_REMOVE }, { "status", SOMVR_PRA_STATUS }, { "arrows", SOMVR_PRA_ARROWS },
+        { "health", SOMVR_PRA_HEALTH },
     };
     const char *tok, *s = w ? w : "", *arg, *rest;
     size_t n = token(&s, &tok);
-    int a = SOMVR_PRA_NONE;
+    int a = SOMVR_PRA_NONE, refill = n && ci_eq(tok, n, "refill");
+    if (refill) /* build 17: "refill arrows|health" = the page's buttons' words */
+        n = token(&s, &tok);
     for (size_t i = 0; i < sizeof t / sizeof t[0] && n; i++)
         if (ci_eq(tok, n, t[i].w))
             a = t[i].a;
-    if (a == SOMVR_PRA_NONE)
+    if (a == SOMVR_PRA_NONE || (refill && a != SOMVR_PRA_ARROWS && a != SOMVR_PRA_HEALTH))
         return 0;
     size_t na = token(&s, &arg);
     int orc = -1;

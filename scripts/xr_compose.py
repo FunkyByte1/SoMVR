@@ -88,10 +88,11 @@ _TH = None
 def threat_tex():
     """SOMVR_THREAT's static texture as the layer fills it (somvr_threat.c somvr_th_image): 16 cells per row of 32 px in
     1 px guards, row 0 the radial glow (1 - r^2)^2, row 1 the edge band; premultiplied warm colour, alpha 0.35 x it;
-    row 2 (build 10) the edge band in the hurt red, alpha 0.75 x it"""
+    row 2 (build 10) the edge band in the hurt red, alpha 0.75 x it; row 3 (build 17) the radial glow in an alarm red,
+    alpha 0.90 x it (an unblockable blow)"""
     global _TH
     if _TH is None:
-        rgb, a = np.zeros((102, 544, 3), np.uint8), np.zeros((102, 544), np.uint8)
+        rgb, a = np.zeros((136, 544, 3), np.uint8), np.zeros((136, 544), np.uint8)
         c = (np.arange(32) + 0.5) / 32
         U, V = np.meshgrid(c, c)
 
@@ -100,9 +101,10 @@ def threat_tex():
             return t * t * (3 - 2 * t)
         r = np.hypot(2 * U - 1, 2 * V - 1)
         edge = (1 - smooth(0, 1, U)) ** 2 * smooth(0, 0.2, V) * smooth(0, 0.2, 1 - V)
-        prof = [np.where(r < 1, (1 - r * r) ** 2, 0), edge, edge]
-        col = [(1.0, 0.55, 0.15, 0.35), (1.0, 0.55, 0.15, 0.35), (1.0, 0.04, 0.02, 0.75)]
-        for row in (0, 1, 2):
+        glow = np.where(r < 1, (1 - r * r) ** 2, 0)
+        prof = [glow, edge, edge, glow]
+        col = [(1.0, 0.55, 0.15, 0.35), (1.0, 0.55, 0.15, 0.35), (1.0, 0.04, 0.02, 0.75), (1.0, 0.06, 0.03, 0.90)]
+        for row in (0, 1, 2, 3):
             for k in range(1, 17):
                 w = prof[row] * k / 16
                 x, y = (k - 1) * 34 + 1, row * 34 + 1

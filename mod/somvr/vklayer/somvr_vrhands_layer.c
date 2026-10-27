@@ -39,6 +39,7 @@ static struct {
     /* the switches */
     int want, bad;          /* SOMVR_XR_HANDS: 1 on (default), 0 off */
     int msaa, look, cal_bad, misc_bad;
+    int lumlog_n;           /* build 17: the test file's "lumlog N" frames left */
     float scale, light;
     int auto_light;         /* SOMVR_XR_HANDS_LIGHT=auto (default) */
     float lum, lum_light;   /* the scene's mean linear luminance (eased), the light it gives */
@@ -152,6 +153,8 @@ static void vh_config(void) {
     somvr_vh_cfg_default(&VH.vc);
     p = getenv("SOMVR_XR_HANDS_CAL");
     VH.cal_bad = p && *p && !somvr_vh_parse_cal(p, &VH.vc);
+    p = getenv("SOMVR_XR_HANDS_SIZE"); /* build 17 (re-xr-pipeline.md 61.5): the hand's size about the fist's tube */
+    if (!somvr_vh_parse_size(p, &VH.vc)) VH.misc_bad |= 0x40;
     p = getenv("SOMVR_XR_WATCH");
     VH.watch = p && !strcmp(p, "wrist");
     VH.watch_bad = p && *p && !VH.watch && strcmp(p, "old");
@@ -274,7 +277,7 @@ static void vh_setup(void) {
     if (VH.bad) lg("xr: hands: SOMVR_XR_HANDS=%s is not on or off: on", getenv("SOMVR_XR_HANDS"));
     if (VH.cal_bad) lg("xr: hands: SOMVR_XR_HANDS_CAL=%s is not x,y,z,rx,ry,rz: 0", getenv("SOMVR_XR_HANDS_CAL"));
     if (VH.misc_bad) lg("xr: hands: a switch not understood (bits 0x%x: MSAA 1/2/4/8, SCALE 0.5..1, LOOK glove|skin, "
-                        "LIGHT 0.2..3): its default", VH.misc_bad);
+                        "LIGHT 0.2..3, 0x40 SIZE 0.8..1.5): its default", VH.misc_bad);
     if (VH.watch_bad || VH.panel_bad)
         lg("xr: hands: SOMVR_XR_WATCH(_AT) / SOMVR_XR_PANEL(_AT) not understood (%d / %d): %s, %s", VH.watch_bad,
            VH.panel_bad, VH.watch ? "wrist" : "old", VH.panel ? "palm" : "old");
@@ -333,6 +336,28 @@ static int vh_watch_facing(const somvr_posef *face, const float eye[3]) {
 }
 static void vh_watch_reset(void) { memset(&VH.fs, 0, sizeof VH.fs); }
 static int vh_watch_on(void) { return VH.watch; }
+/* the test file's "lumlog N" (build 17): eye 0's means logged for N frames (needs the auto light: the probe) */
+static const char *vh_lumlog(int n) {
+    if (!VH.auto_light) return "the light is fixed (SOMVR_XR_HANDS_LIGHT): no probe";
+    VH.lumlog_n = n;
+    return "ok";
+}
+/* the test file's "handsize S" (build 17): the model rebuilt at that size (the frames' skinning reads VH.m; X.mx held) */
+static const char *vh_resize(float size) {
+    if (!VH.model_ok) return "no hand model";
+    somvr_vh_cfg c = VH.vc;
+    c.size = size;
+    somvr_vh_model *m = malloc(sizeof *m);
+    if (!m) return "no memory";
+    if (somvr_vh_init(m, &c) != 0) {
+        free(m);
+        return "the model failed at that size";
+    }
+    VH.vc = c, VH.m = *m;
+    free(m);
+    lg("xr: hands: the hand model at size %.2f (the test file): %s", size, VH.m.why);
+    return "ok";
+}
 
 /* touch with our hands drawn: the fingertip is the drawn pointing index's tip on the grip (not the aim + 5 cm) */
 static int vh_touch_tip(int h, float out[3]) {
@@ -402,6 +427,14 @@ static void vh_lum_read(uint32_t s, double t) {
         sum += 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
     }
     float y = (float)(sum / (VH_LUM * VH_LUM));
+    if (VH.lumlog_n > 0) { /* build 17, the test file's "lumlog N": the raw means (sRGB bytes) and y per frame */
+        double rgb[3] = {0, 0, 0};
+        for (int i = 0; i < VH_LUM * VH_LUM; i++)
+            for (int k = 0; k < 3; k++) rgb[k] += p[4 * i + k];
+        VH.lumlog_n--;
+        lg("xr: hands: lum t=%.3f slot %u: rgb %.1f %.1f %.1f (0..255) y %.4f%s", t, s, rgb[0] / (VH_LUM * VH_LUM),
+           rgb[1] / (VH_LUM * VH_LUM), rgb[2] / (VH_LUM * VH_LUM), y, VH.lumlog_n ? "" : " (the last)");
+    }
     if (!VH.lum_have) VH.lum = y, VH.lum_have = 1;
     else {
         float dt = t > VH.lum_t ? (float)(t - VH.lum_t) : 0, k = 1 - expf(-dt / 0.5f);

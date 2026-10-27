@@ -53,6 +53,14 @@ static void test_words(void)
               !somvr_pr_word("go 1 2 3e9", &r) && !somvr_pr_word("go nan 2 3", &r) && !somvr_pr_word("back 1 2 3", &r),
           "go X Y Z: bad ones taken");
     CHECK(somvr_pr_word(" back\n", &r) && r.action == SOMVR_PRA_BACK, "back with blanks");
+    /* build 17: the refills (the practice page's two buttons) */
+    CHECK(somvr_pr_word("arrows", &r) && r.action == SOMVR_PRA_ARROWS && r.orc == -1 && !r.have_at &&
+              somvr_pr_word(" refill Health ", &r) && r.action == SOMVR_PRA_HEALTH && somvr_pr_word("health", &r) &&
+              r.action == SOMVR_PRA_HEALTH && somvr_pr_word("REFILL arrows", &r) && r.action == SOMVR_PRA_ARROWS &&
+              !somvr_pr_word("refill", &r) && !somvr_pr_word("arrows 8", &r) && !somvr_pr_word("health full", &r) &&
+              !somvr_pr_word("refill go", &r) && !strcmp(somvr_pr_action_name(SOMVR_PRA_ARROWS), "arrows") &&
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_HEALTH), "health") && SOMVR_PRA_N == 8,
+          "the refills' words");
     CHECK(somvr_pr_word("spawn", &r) && r.action == SOMVR_PRA_SPAWN && r.orc == -1, "spawn: the current type");
     CHECK(somvr_pr_word("spawn berserker", &r) && r.action == SOMVR_PRA_SPAWN && r.orc == SOMVR_PRO_BERSERKER,
           "spawn berserker");

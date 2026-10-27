@@ -536,8 +536,68 @@ static void test_phase_through_loco(void)
           "the view: the peak %g cm/s (2D/T %g), the largest change a frame %g", vmax, 2 * 310 / 0.4, dvmax);
 }
 
+/* build 17: the dodge's direction: the stick, else away from the attacker, else back from the gaze */
+static void test_dodge_dir(void)
+{
+    somvr_step_cfg c;
+    somvr_step_cfg_default(&c);
+    sv_vec3 root = { 100, 0, 100 }, d, att = { 100, 0, 250 }, none = { 0, 0, 0 };
+    int s = somvr_step_dodge_dir(&c, root, 0, (sv_vec3){ 1, 0, 0 }, 0.8f, 1, att, &d);
+    CHECK(s == SOMVR_STD_STICK && NEAR(d.x, 1, 1e-6) && NEAR(d.z, 0, 1e-6), "the stick (0.8): along it");
+    s = somvr_step_dodge_dir(&c, root, 0, (sv_vec3){ 1, 0, 0 }, 0.3f, 1, att, &d);
+    CHECK(s == SOMVR_STD_AWAY && NEAR(d.x, 0, 1e-6) && NEAR(d.z, -1, 1e-6), "a light stick: away from the attacker");
+    s = somvr_step_dodge_dir(&c, root, 1.5707963f, none, 0, 0, att, &d);
+    CHECK(s == SOMVR_STD_BACK && NEAR(d.x, -1, 1e-5) && NEAR(d.z, 0, 1e-5) && NEAR(d.y, 0, 1e-9),
+          "no stick, no attacker: back from the gaze (yaw 90 -> -x)");
+    s = somvr_step_dodge_dir(&c, root, NAN, none, 0, 1, root, &d);
+    CHECK(s == SOMVR_STD_NONE, "the attacker on Talion's axis and no gaze: none");
+    CHECK(!strcmp(somvr_step_dodge_src_name(SOMVR_STD_AWAY), "away from the attacker") && !strcmp(somvr_step_dodge_src_name(9), "?"),
+          "names");
+}
+
+/* build 17: A's one owner per press (the strike > the dodge > the climb) - the overlaps the three moves meet */
+static void test_a_owner(void)
+{
+    /* the build 17 env: all three on; on foot in the world */
+    somvr_step_a_in in = { .world = 1, .strike = 0, .dodge = 1, .fight = 0, .climbing = 0, .drop = 1 };
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_DROP, "no fight, no mark: the climb's (A at an edge = the drop's choice)");
+    in.fight = 1; /* a fight at an edge: the dodge, never the drop (a refused dodge is its double buzz, not a blink down) */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_DODGE, "a fight at an edge: the dodge's");
+    in.strike = 1; /* the vision held in a fight with an orc marked: the strike */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_STRIKE, "the vision held in a fight, an orc marked: the strike's");
+    in.strike = 0; /* the vision held in a fight, nothing marked (looked away, or under the cone): the dodge */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_DODGE, "the vision held in a fight, no mark: the dodge's");
+    in.fight = 0, in.strike = 1; /* the vision held at an edge with a mark, no fight: the strike, not the drop */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_STRIKE, "a mark at an edge: the strike's");
+    in.strike = 0; /* ... no mark: the drop */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_DROP, "the vision held at an edge, no mark: the climb's");
+    in.fight = 1, in.climbing = 1; /* in a hang in a fight: the dodge never runs there: the climb's drop */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_DROP, "a fight while a climb holds: the climb's");
+    in.strike = 1; /* a mark while hanging (the strike's own gate decides; the press is not the drop's) */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_STRIKE, "a mark while a climb holds: the strike's");
+    in = (somvr_step_a_in){ .world = 1, .dodge = 0, .fight = 1, .drop = 1 }; /* SOMVR_DODGE off: a fight's A is the climb's */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_DROP, "the dodge off in a fight: the climb's");
+    in.drop = 0;
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_NONE, "nothing on: nobody's");
+    in = (somvr_step_a_in){ .world = 0, .strike = 1, .dodge = 1, .fight = 1, .drop = 1 }; /* a menu's A */
+    CHECK(somvr_step_a_owner(&in) == SOMVR_AO_NONE, "a menu's press: nobody's (the climb's own menu guard sees it)");
+    /* exactly one owner for every input (one press never does two things) and the priority holds everywhere */
+    for (int m = 0; m < 64; m++) {
+        somvr_step_a_in k = { m & 1, (m >> 1) & 1, (m >> 2) & 1, (m >> 3) & 1, (m >> 4) & 1, (m >> 5) & 1 };
+        int o = somvr_step_a_owner(&k);
+        int want = !k.world ? SOMVR_AO_NONE
+                   : k.strike ? SOMVR_AO_STRIKE
+                   : k.dodge && k.fight && !k.climbing ? SOMVR_AO_DODGE
+                   : k.drop ? SOMVR_AO_DROP : SOMVR_AO_NONE;
+        CHECK(o == want, "case %d: owner %d, want %d", m, o, want);
+    }
+    CHECK(!strcmp(somvr_step_a_owner_name(SOMVR_AO_DODGE), "the dodge") && !strcmp(somvr_step_a_owner_name(7), "?"), "names");
+}
+
 int main(void)
 {
+    test_a_owner();
+    test_dodge_dir();
     test_profile();
     test_swing_pick();
     test_evade_pick();

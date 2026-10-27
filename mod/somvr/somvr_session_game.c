@@ -403,7 +403,10 @@ static const char *ss_word(const char *w)
 static void ss_tick(double t)
 {
 	/* never a void: what flat frames show now (the layer's theatre, SOMVR_XR_THEATRE) */
+	/* (SOMVR_INSPECT: a paused menu's own view, e.g. an artifact's, is a menu frame - the board - not a load: the pause
+	 * menu's states are a load's, ifs=3 menus=0 paused=1, run 20261026-160543's 2.4 m load panel) */
 	atomic_store_explicit(&g_ssn.mono, g_inp.on && g_inp.video == 1 ? SOMVR_SSM_VIDEO : g_bm.last_win ? SOMVR_SSM_WINDOW
+					   : co_flat_now() ? SOMVR_SSM_MENU
 					   : g_inp.on && g_inp.ifs == 3 && g_inp.menus == 0 && g_inp.paused == 1 ? SOMVR_SSM_LOAD
 					   : SOMVR_SSM_MENU, memory_order_relaxed);
 	if (g_inp.on && (!g_ss.ui_have || g_inp.ifs != g_ss.ui_ifs || g_inp.menus != g_ss.ui_menus ||

@@ -78,6 +78,35 @@ SITE("PRN_NAV_POS", K_ENTRY, 0xebc700, 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 
 };
 /* PRNAV_SITES_END */
 enum { PRN_NAV_POS, PRN_N };
+
+/* PRFILL_SITES_BEGIN (build 17, the practice page's Refill arrows + focus and Refill health - the user's ask;
+ * re-xr-pipeline.md 56; read only, never patched, called on the game thread; checked at start with SOMVR_PRACTICE;
+ * counted on its own by check_sites.py). PRF_TOKENS_ADD FUN_02720a90(res, delta): the resource's tokens (the arrows,
+ * +0x50; +0x4c their max) raised by delta up to the max, the HUD and the anim parameter Game_NumTokens refreshed (re-bow.md
+ * 2.2; the bow's BOW_TOKENS_ADD, also what our own shot calls with -1); PRF_ENERGY_FULL FUN_0271e2e0(res, unlimited):
+ * stores the unlimited flag (+0x60), the energy (the bow's Focus, +0x44) and +0x54 = the max (+0x48), then the energy's
+ * notify FUN_0271d600 (the HUD meter) - its bytes prove the three offsets; PRF_HEAL FUN_02763910(health, amount): the heal
+ * the damage path calls for a negative amount (re-combat.md 1.3, FUN_02810e80), CCharacter+0x130's component: +0x34 the
+ * health (CCharacter+0x164) raised by amount up to +0x30, the max (CCharacter+0x160) - its bytes prove both. Order = PRF_* */
+static const struct site_spec g_prf_sites_game[] = {
+SITE("PRF_TOKENS_ADD", K_ENTRY, 0x2720a90, 0x2720a90, "8b 47 50 01 c6 39 f0 0f 84 c3 00 00 00 55 31 c0", 0x2720a90, "8b 47 50 01 c6 39 f0 0f 84 c3 00 00 00 55 31"),
+SITE("PRF_ENERGY_FULL", K_ENTRY, 0x271e2e0, 0x271e2e0, "f3 0f 10 47 48 40 88 77 60 f3 0f 11 47 54 f3 0f", 0x271e2e0, "f3 0f 10 47 48 40 88 77 60 f3 0f 11 47 54 f3"),
+SITE("PRF_HEAL", K_ENTRY, 0x2763910, 0x2763910, "f3 0f 10 57 34 f3 0f 10 4f 30 31 c0 0f 2f d1 73", 0x2763910, "f3 0f 10 57 34 f3 0f 10 4f 30 31 c0 0f 2f d1"),
+};
+/* PRFILL_SITES_END */
+enum { PRF_TOKENS_ADD, PRF_ENERGY_FULL, PRF_HEAL, PRF_N };
+_Static_assert(sizeof g_prf_sites_game / sizeof g_prf_sites_game[0] == PRF_N, "practice refill sites");
+static const struct site_spec *g_prf_sites = g_prf_sites_game; /* selftest: stand-ins */
+#define PRF_RES_MAX 0x4c        /* the resource object (Combat+0x1c0, BO_SC_RES): int, the arrows' max (BO_RES_COUNT +0x50) */
+#define PRF_RES_ENERGY 0x44     /* ... float, the energy = the Focus (FUN_0271e300 reads it; +0x48 when unlimited) */
+#define PRF_RES_EMAX 0x48       /* ... float, its max */
+#define PRF_RES_EUNLIM 0x60     /* ... byte, the energy unlimited (BO_RES_UNLIM +0x61: the arrows') */
+#define PR_CH_HEALTHC 0x130     /* CCharacter: the health component (+0x30 the max, +0x34 the health: PRF_HEAL) */
+#define PR_CH_HEALTH_MAX 0x160  /* CCharacter: float, the max health */
+typedef void (*prf_tokens_fn)(uintptr_t res, int delta);
+typedef void (*prf_energy_fn)(uintptr_t res, int unlimited);
+typedef int (*prf_heal_fn)(uintptr_t health, float amount);
+#define PRF_FN(i, T) ((T)g_prf_sites[i].target)
 _Static_assert(sizeof g_prn_sites_game / sizeof g_prn_sites_game[0] == PRN_N, "practice nav sites");
 static const struct site_spec *g_prn_sites = g_prn_sites_game; /* selftest: stand-ins */
 #define PRN_LIST 0x46b9200
@@ -92,7 +121,8 @@ typedef void (*prq_fn)(void);
 _Static_assert(sizeof g_pr_sites_game / sizeof g_pr_sites_game[0] == PRS_N, "practice sites");
 _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK == (int)SOMVR_VMPR_BACK &&
 		       (int)SOMVR_PRA_SPAWN == (int)SOMVR_VMPR_SPAWN &&
-		       (int)SOMVR_PRA_REMOVE == (int)SOMVR_VMPR_REMOVE && SOMVR_PRO_N == 3,
+		       (int)SOMVR_PRA_REMOVE == (int)SOMVR_VMPR_REMOVE && (int)SOMVR_PRA_ARROWS == (int)SOMVR_VMPR_ARROWS &&
+		       (int)SOMVR_PRA_HEALTH == (int)SOMVR_VMPR_HEALTH && SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 3,
 	       "the menu's practice requests = the practice module's");
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
 #define PR_FN(i, T) ((T)g_pr_sites[i].target)
@@ -146,6 +176,9 @@ static struct {
 	int on;              /* ... and the console: the practice runs */
 	int mode, clear, day, def_orc;
 	int ok_mh, ok_spawn, ok_remove, ok_light, ok_gate, ok_mount, ok_life, ok_clear, ok_ray;
+	/* build 17: the refills (PRF_* sites) and their counts; the test aids `practice hurt HP` / `practice focus F` */
+	int ok_tokens, ok_energy, ok_heal;
+	uint64_t fill_arrows, fill_health, fill_refused, aid_hurt, aid_focus;
 	/* SOMVR_PRACTICE_QUIET: the ambient AI spawn manager off while in the area */
 	int quiet_mode, ok_quiet;
 	int quiet;           /* we hold it off now */
@@ -282,8 +315,11 @@ static uint32_t pr_gate(const struct pr_me *m)
 		g |= SOMVR_PRG_PRES;
 	if (cam && peek(cam + FB_CAM_SCRIPTED, &b, 1) && b)
 		g |= SOMVR_PRG_SCRIPTED;
-	uintptr_t sy = m->pc ? peek_ptr(m->pc + FB_C_SYNC) : 0;
-	if (sy && peek_ptr(sy + FB_SYNC_REC))
+	uintptr_t sy = m->pc ? peek_ptr(m->pc + FB_C_SYNC) : 0, rec = sy ? peek_ptr(sy + FB_SYNC_REC) : 0;
+	/* build 17 (the strike17 helper): a record the fallback found stale (Talion's part over, the game still holding it:
+	 * re-xr-pipeline.md 30.2) is no sync - after a Shadow Strike it stayed set a minute and more (runs 101013, 102126,
+	 * 111356), and every trip waited */
+	if (rec && !(g_fb_sa.stale && g_fb_sa.rec == rec))
 		g |= SOMVR_PRG_SYNC;
 	return g;
 }
@@ -832,7 +868,7 @@ static int pr_down_ok(void)
 
 static int pr_down_start(sv_vec3 to, double t, int quick)
 {
-	const char *who = quick ? "the climb's pullover, quick" : "the climb's A";
+	const char *who = quick == 2 ? "the climb's drop mark, quick" : quick ? "the climb's pullover, quick" : "the climb's A";
 	if (!pr_down_ok()) {
 		g_pr.refused++;
 		if (pr_log_ok(t))
@@ -1140,9 +1176,116 @@ static void pr_look(const struct pr_me *m, int have, double t)
 	}
 }
 
+/* build 17: the practice page's refills (the user's ask): in the practice area only, the game's own calls (PRF_*), no
+ * save (nothing here asks the game to save; its own checkpoints are as before). The bow's arrows to their max
+ * (PRF_TOKENS_ADD: the HUD's pips and its collect sound) and its Focus - the energy the bow's slow motion and the
+ * wraith's Radiance need, PC_SlowMo / PC_Radiance's MinEnergyToEnter (re-bow.md 2.2, 9) - to its max
+ * (PRF_ENERGY_FULL); the wraith's abilities that cost arrows (Shadow Strike) take them from the same tokens */
+static uintptr_t pr_res(const struct pr_me *m)
+{
+	uintptr_t res = m->pc ? peek_ptr(m->pc + BO_SC_RES) : 0;
+	int32_t n = 0;
+	return res && peek(res + BO_RES_COUNT, &n, sizeof n) ? res : 0;
+}
+static int pr_refill_ok(const struct pr_me *m, int have, const char *what, double t, const char *who)
+{
+	const char *no = !have ? "no player" : !g_pr.here ? "not in the practice area"
+		       : g_pr.trip.phase != SOMVR_PRT_IDLE ? "a trip is on"
+		       : m->life >= 0 && m->life != 2 ? "Talion is not up (dead or not in the world)" : NULL;
+	if (!no)
+		return 1;
+	g_pr.fill_refused++;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f refill %s (%s): %s: nothing", t, what, who, no);
+	return 0;
+}
+static void pr_refill_arrows(const struct pr_me *m, int have, double t, const char *who)
+{
+	if (!pr_refill_ok(m, have, "arrows", t, who))
+		return;
+	uintptr_t res = pr_res(m);
+	int32_t n0 = -1, mx = -1, n1 = -1;
+	uint8_t unl = 0, eunl = 0;
+	float e0 = NAN, emax = NAN, e1 = NAN;
+	if (!res || !peek(res + PRF_RES_MAX, &mx, sizeof mx) || !peek(res + BO_RES_COUNT, &n0, sizeof n0) ||
+	    !peek(res + BO_RES_UNLIM, &unl, 1) || !peek(res + PRF_RES_ENERGY, &e0, sizeof e0) ||
+	    !peek(res + PRF_RES_EMAX, &emax, sizeof emax) || !peek(res + PRF_RES_EUNLIM, &eunl, 1)) {
+		g_pr.fill_refused++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f refill arrows (%s): no resource object (Combat+0x1c0): nothing", t, who);
+		return;
+	}
+	int add = g_pr.ok_tokens && !unl && mx > 0 && mx < 1000 && n0 >= 0 && n0 < mx ? mx - n0 : 0;
+	if (add)
+		PRF_FN(PRF_TOKENS_ADD, prf_tokens_fn)(res, add);
+	int ef = g_pr.ok_energy && isfinite(e0) && isfinite(emax) && emax > 0 && emax < 1e6f && e0 < emax;
+	if (ef)
+		PRF_FN(PRF_ENERGY_FULL, prf_energy_fn)(res, eunl);
+	peek(res + BO_RES_COUNT, &n1, sizeof n1), peek(res + PRF_RES_ENERGY, &e1, sizeof e1);
+	g_pr.fill_arrows++;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f refill arrows (%s): the arrows %d -> %d of %d%s (FUN_02720a90 %+d), the Focus %.1f -> %.1f "
+		      "of %.1f%s (FUN_0271e2e0); no save", t, who, n0, n1, mx, unl ? " (unlimited)" : !g_pr.ok_tokens ?
+		      " (PRF_TOKENS_ADD did not match)" : add ? "" : " (full)", add, (double)e0, (double)e1, (double)emax,
+		      eunl ? " (unlimited)" : !g_pr.ok_energy ? " (PRF_ENERGY_FULL did not match)" : ef ? "" : " (full)");
+}
+static void pr_refill_health(const struct pr_me *m, int have, double t, const char *who)
+{
+	if (!pr_refill_ok(m, have, "health", t, who))
+		return;
+	float hp0 = NAN, mx = NAN, hp1 = NAN;
+	if (!m->ch || !peek(m->ch + PR_CH_HEALTH, &hp0, sizeof hp0) || !peek(m->ch + PR_CH_HEALTH_MAX, &mx, sizeof mx) ||
+	    !isfinite(hp0) || !isfinite(mx) || !(mx > 0 && mx < 1e6f)) {
+		g_pr.fill_refused++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f refill health (%s): no CPlayerObj or no health (%g of %g): nothing", t, who,
+			      (double)hp0, (double)mx);
+		return;
+	}
+	int healed = 0;
+	if (g_pr.ok_heal && hp0 > 0 && hp0 < mx) /* (0: dead - never brought back by us) */
+		healed = PRF_FN(PRF_HEAL, prf_heal_fn)(m->ch + PR_CH_HEALTHC, mx - hp0) & 0xff;
+	peek(m->ch + PR_CH_HEALTH, &hp1, sizeof hp1);
+	g_pr.fill_health++;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f refill health (%s): Talion's health %.1f -> %.1f of %.1f%s (FUN_02763910 %s); no save", t,
+		      who, (double)hp0, (double)hp1, (double)mx, !g_pr.ok_heal ? " (PRF_HEAL did not match)"
+		      : !(hp0 > 0) ? " (dead: left alone)" : hp0 >= mx ? " (full)" : "", healed ? "healed" : "not called or full");
+}
+
+/* the test aids (headless proofs of the refills; the writer thread's word, the game thread's write): Talion's health
+ * set to HP (1 .. the max) and the Focus to F (0 .. the max) - in the practice area only, as the refills */
+static _Atomic uint32_t g_pr_aid_seq, g_pr_aid_kind, g_pr_aid_val; /* kind 1 hurt, 2 focus; val = the float's bits */
+static uint32_t g_pr_aid_seen;
+static void pr_aid_tick(const struct pr_me *m, int have, double t)
+{
+	uint32_t q = atomic_load_explicit(&g_pr_aid_seq, memory_order_acquire);
+	if (q == g_pr_aid_seen)
+		return;
+	g_pr_aid_seen = q;
+	uint32_t kind = atomic_load(&g_pr_aid_kind), vb = atomic_load(&g_pr_aid_val);
+	float v, was = NAN, mx = NAN, now = NAN;
+	memcpy(&v, &vb, sizeof v);
+	if (!pr_refill_ok(m, have, kind == 1 ? "(the test aid hurt)" : "(the test aid focus)", t, "the trigger word"))
+		return;
+	uintptr_t res = kind == 2 ? pr_res(m) : 0, at = kind == 1 ? m->ch + PR_CH_HEALTH : res + PRF_RES_ENERGY;
+	if ((kind == 1 && (!m->ch || !peek(m->ch + PR_CH_HEALTH_MAX, &mx, sizeof mx))) ||
+	    (kind == 2 && (!res || !peek(res + PRF_RES_EMAX, &mx, sizeof mx))) || !peek(at, &was, sizeof was) ||
+	    !(mx > 0 && mx < 1e6f))
+		return;
+	v = v < (kind == 1 ? 1.0f : 0.0f) ? (kind == 1 ? 1.0f : 0.0f) : v > mx ? mx : v;
+	memcpy((void *)at, &v, sizeof v);
+	peek(at, &now, sizeof now);
+	kind == 1 ? g_pr.aid_hurt++ : g_pr.aid_focus++;
+	logf_("PRACTICE t=%.3f %s %.1f -> %.1f of %.1f (a test aid: the trigger word)", t,
+	      kind == 1 ? "Talion's health" : "the Focus", (double)was, (double)now, (double)mx);
+}
+
 static void pr_request(const struct pr_me *m, int have, int action, int orc, double t, const char *who)
 {
 	switch (action) {
+	case SOMVR_PRA_ARROWS: pr_refill_arrows(m, have, t, who); break; /* build 17 */
+	case SOMVR_PRA_HEALTH: pr_refill_health(m, have, t, who); break;
 	case SOMVR_PRA_GO: pr_go(m, have, t, who); break;
 	case SOMVR_PRA_BACK: pr_back(t, who); break;
 	case SOMVR_PRA_SPAWN: pr_spawn(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who); break;
@@ -1280,6 +1423,7 @@ static void pr_frame(uintptr_t pl)
 		}
 	}
 	pr_wait_tick(&m, have, gate, t);
+	pr_aid_tick(&m, have, t); /* build 17: `practice hurt HP` / `practice focus F` */
 	int pbusy = pr_pause_busy(t, game_paused()); /* SOMVR_PRACTICE_LOADHOLD (logged with it off too) */
 	if (g_pr.trip.phase != SOMVR_PRT_IDLE)
 		pr_trip_tick(&m, have, t, pbusy);
@@ -1341,8 +1485,18 @@ static const char *pr_word(const char *w)
 	somvr_pr_req r;
 	if (!g_pr.on)
 		return "practice (SOMVR_PRACTICE is off: ignored)";
+	float av;
+	char ak[8], tail;
+	if (sscanf(w, " %7s %f %c", ak, &av, &tail) == 2 && (!strcmp(ak, "hurt") || !strcmp(ak, "focus")) && isfinite(av)) {
+		uint32_t b; /* build 17's test aids: health / Focus set (pr_aid_tick) */
+		memcpy(&b, &av, sizeof b);
+		atomic_store(&g_pr_aid_kind, ak[0] == 'h' ? 1u : 2u), atomic_store(&g_pr_aid_val, b);
+		atomic_fetch_add_explicit(&g_pr_aid_seq, 1, memory_order_release);
+		return ak[0] == 'h' ? "practice hurt" : "practice focus";
+	}
 	if (!somvr_pr_word(w, &r))
-		return "practice (not go|back|spawn [infantry|shield|berserker]|remove|status: ignored)";
+		return "practice (not go|back|spawn [infantry|shield|berserker]|remove|status|arrows|health|hurt HP|focus F: "
+		       "ignored)";
 	if (r.have_at) /* the spot first: the trig's release publishes it */
 		for (int i = 0; i < 3; i++) {
 			uint32_t b;
@@ -1353,7 +1507,7 @@ static const char *pr_word(const char *w)
 	uint32_t o = atomic_load(&g_pr_trig);
 	atomic_store_explicit(&g_pr_trig, somvr_vm_pr_pack(somvr_vm_pr_seq(o) + 1, r.action, r.orc + 1), memory_order_release);
 	static const char *const n[SOMVR_PRA_N] = { "practice", "practice go", "practice back", "practice spawn",
-						    "practice remove", "practice status" };
+						    "practice remove", "practice status", "practice arrows", "practice health" };
 	return n[r.action];
 }
 
@@ -1424,6 +1578,18 @@ static void pr_start(const struct site_spec *sites, int *bad)
 		      (unsigned long)g_prq_sites[i].addr, (unsigned long)g_prq_sites[i].target, why);
 	}
 	g_pr.ok_quiet = okq == (1u << PRQ_N) - 1;
+	uint32_t okf = 0; /* build 17: the refills' calls */
+	for (int i = 0; i < PRF_N; i++) {
+		int k = check_site(&g_prf_sites[i], why, sizeof why) == 0;
+		okf |= (uint32_t)k << i;
+		logf_("PRACTICE site %s %s %#lx -> %#lx: %s", g_prf_sites[i].name, k ? "ok" : "MISMATCH",
+		      (unsigned long)g_prf_sites[i].addr, (unsigned long)g_prf_sites[i].target, why);
+	}
+	g_pr.ok_tokens = okf >> PRF_TOKENS_ADD & 1, g_pr.ok_energy = okf >> PRF_ENERGY_FULL & 1;
+	g_pr.ok_heal = okf >> PRF_HEAL & 1;
+	if (okf != (1u << PRF_N) - 1)
+		logf_("WARN SOMVR_PRACTICE: a refill site did not match (tokens %d, energy %d, heal %d): that refill does nothing",
+		      g_pr.ok_tokens, g_pr.ok_energy, g_pr.ok_heal), *bad = 1;
 	int con = check_site(&g_es_sites[ES_RUNSTRING], why, sizeof why) == 0;
 	logf_("PRACTICE site %s %s (the console: Teleport, AdvanceTimeOfDay, ChangeWeather): %s", g_es_sites[ES_RUNSTRING].name,
 	      con ? "ok" : "MISMATCH", why);
@@ -1509,4 +1675,7 @@ static void pr_end_log(void)
 	      (unsigned long long)g_pr.restores, (unsigned long long)g_pr.pw_dry, (unsigned long long)g_pr.pw_waits,
 	      (unsigned long long)g_pr.pw_pauses, (unsigned long long)g_pr.pw_open, g_pr.pw_after_max, g_pr.pw_len_max,
 	      (unsigned long long)g_pr.pw_none, (unsigned long long)g_pr.suppressed);
+	logf_("PRACTICE END refills: arrows + focus %llu, health %llu, refused %llu (not in the area, no player, a trip); test "
+	      "aids hurt %llu focus %llu", (unsigned long long)g_pr.fill_arrows, (unsigned long long)g_pr.fill_health,
+	      (unsigned long long)g_pr.fill_refused, (unsigned long long)g_pr.aid_hurt, (unsigned long long)g_pr.aid_focus);
 }

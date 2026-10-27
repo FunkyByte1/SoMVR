@@ -65,13 +65,27 @@ typedef struct {
      * this far (against the head) since the attack began: a guard moved into the blow; a sword just held still in its
      * path lets it through (headless boot-check-20261025-003131: a still guard across the chest met 11 of 13 strikes) */
     float contact_move_cm;
+    /* build 17 (the user's build-16 session: "I can't figure out how to actually block these attacks"):
+     * red_types: the AttackTypes the VR judge never blocks (bit = type): dodge them (a step, a lean, the dodge button);
+     * default bits 1 and 3 (cannot parry, cannot block) = builds 10-16; SOMVR_DEFENCE_RED_TYPES adds 2 (cannot counter: the
+     * flat game's red prompt, the defender's spear sweeps). Type 3 and 4 are never blocked whatever the bits.
+     * contact_hand: the contact also tests the blade where the hand holds it (the controller's, before the sword's weight
+     * trails it: SOMVR_SWORD_WEIGHT=heavy trails up to 16 deg, ~25 cm at the tip); either blade meeting counts.
+     * move_blade: contact_move_cm is measured on the blade too: the larger of the grip's and the drawn blade's tip's move
+     * in the tracking space (a wrist turn that brings the blade across is a guard move) */
+    unsigned red_types;
+    int contact_hand, move_blade;
 } somvr_df_cfg;
 void somvr_df_cfg_default(somvr_df_cfg *c);
 #define SOMVR_DF_SWEEP_STEPS 6
 
 /* the game's rules by the attack's type (Combat+0x55b) */
 int somvr_df_can_parry(int type);                        /* the stock counter's predicates: 0 and 3 */
-int somvr_df_can_block(const somvr_df_cfg *c, int type); /* 0 and 2 (1 with red_block); never 3 or 4 */
+int somvr_df_can_block(const somvr_df_cfg *c, int type); /* 0..2 unless in red_types (1 without red_block); never 3, 4 */
+/* build 17: a melee blow the VR judge never blocks (0..3, not blockable): THREAT's red warning, dodge it */
+int somvr_df_is_red(const somvr_df_cfg *c, int type);
+/* "parry,counter,block" (the types' short names; "none") -> bits; 0 = a bad word */
+int somvr_df_red_parse(const char *v, unsigned *bits);
 int somvr_df_can_dodge(int type);                        /* melee: 0..3 */
 const char *somvr_df_type_name(int type);
 const char *somvr_df_outcome_name(int o);
@@ -115,6 +129,12 @@ typedef struct {
      * move it); have_grip 0 = the blade's middle against the head (cm) instead */
     float grip[3];
     int have_grip;
+    /* build 17 (contact_hand): our blade where the hand holds it (no weight's trail); have_hand_blade 0 = none.
+     * (move_blade): the drawn blade's tip in the tracking space (cm) */
+    float hb[3], ht[3];
+    int have_hand_blade;
+    float tip_xr[3];
+    int have_tip_xr;
 } somvr_df_in;
 
 /* one attack, followed from its first step */
@@ -145,6 +165,10 @@ typedef struct {
      * since; a contact refused for a still guard (1) and its distance */
     int have_m0, still;
     float m0[3], blade_cm, still_cm;
+    /* build 17: the hand's blade last frame (contact_hand), the tip's start (move_blade), which blade met (1 drawn, 2
+     * the hand's) and the drawn blade's own closest approach (logs: what the hand's blade added) */
+    int have_hprev, have_t0, met_by;
+    float phb[3], pht[3], tip0[3], drawn_best_cm;
 } somvr_df_track;
 void somvr_df_track_init(somvr_df_track *tr);
 /* one frame at time t: the guard, the hand's velocity, the dodge state; 1 = the parry fires now, 2 (contact) = the

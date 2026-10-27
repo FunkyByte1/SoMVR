@@ -1185,13 +1185,22 @@ static int fr_range_set(const char *name, float lo, float hi, const char *why)
 }
 
 /* the trigger word "fight guard off|learn|path|miss", "fight death game|TYPE", "fight death dir S", "fight death pin CM",
- * "fight rec TIER NAMES" */
+ * "fight rec TIER NAMES", "fight stagger CM" */
+static int rl_word(float cm); /* "fight stagger CM" (SOMVR_COMBAT_STAGGER_CM, below) */
 static const char *fight_word(const char *w)
 {
 	char a[16] = "", b[48] = "";
 	float v = 0;
 	if (sscanf(w, "%15s %47s", a, b) < 2)
 		return "fight (not guard|death ...: ignored)";
+	if (!strcmp(a, "dodge") && !strcmp(b, "probe")) { /* build 17: SOMVR_DODGE's rays in 8 directions (DODGE probe lines) */
+		if (!g_bd.test)
+			return "fight dodge probe: test only (SOMVR_HANDS_TEST)";
+		atomic_store(&g_dg_probe_req, 1);
+		return "fight dodge probe: the 8 directions at the next input tick (SOMVR_DODGE on)";
+	}
+	if (!strcmp(a, "bite") || !strcmp(a, "hitfx")) /* build 17: "fight bite on|off|hold ...|dumps N", "fight hitfx on|off" */
+		return hf_word(w);
 	if (!strcmp(a, "guard")) {
 		if (!g_bd.test)
 			return "fight guard (SOMVR_HANDS_TEST is off: ignored)";
@@ -1225,6 +1234,11 @@ static const char *fight_word(const char *w)
 			return "fight death (dir 0..1, pin 0..1000: ignored)";
 		logf_("CONFIG death=%s dir=%.2f pin=%.0f cm (the word)", g_kd.mode ? g_kd.type : "game", g_kd.dir, g_kd.pin_cm);
 		return "fight death";
+	}
+	if (!strcmp(a, "stagger")) { /* build 17's tests: "fight stagger CM" (SOMVR_COMBAT_STAGGER_CM's cap; 0 = measured only) */
+		v = (float)atof(b);
+		return v >= 0 && v <= 300 && rl_word(v) ? "fight stagger"
+			: "fight stagger (not CM in 0..300, or the hook is not in: SOMVR_COMBAT_STAGGER_CM unset: ignored)";
 	}
 	if (!strcmp(a, "range")) { /* build 16's tests: "fight range ATTACK MIN MAX" (its StrikeRange; headless) */
 		float lo = 0, hi = 0;
@@ -1341,6 +1355,7 @@ SITE("FS_AIMOVE", K_VSLOT, 0x3ad3ef0, 0x3ad3ee0, "80 5e a7 02 00 00 00 00 80 8c 
 #define FS_MV_CHAR 0x218 /* CAIMovement -> its CCharacter (vf_11's Character_GetCombat argument) */
 #define FS_MV_POS 0x8c   /* CAIMovement: the current transform's position (vf_11's copy before the step) */
 #define FS_ORCS 16
+#define RL_N 8
 typedef void (*fs_move_fn)(void *mv, float *xf);
 static struct {
 	int on, ok;
@@ -1348,9 +1363,14 @@ static struct {
 	uintptr_t orig;
 	_Atomic uint32_t seq; /* the game thread's snapshot (a seqlock): Talion's root, the orcs at him */
 	float root[3], head[3]; /* head: the player's eyes (the rig's head), from_head: SOMVR_FIGHT_SPACE_FROM=head */
-	int have_head, from_head;
+	int have_head, from_head, have_root;
 	uintptr_t hobj[FS_ORCS];
 	int n;
+	/* SOMVR_COMBAT_STAGGER_CM (build 17): the orcs in a reel (rl_*): their HOBJECT, anchor, g_rl.e index and gen */
+	int rn, ri[RL_N];
+	uintptr_t rh[RL_N];
+	float ra[RL_N][3], rcap;
+	uint32_t rgen[RL_N];
 	double t;
 	_Atomic uint64_t calls, near, held, other;
 	_Atomic uintptr_t last_hobj;
@@ -1398,6 +1418,69 @@ static void fs_hold(uintptr_t mv, const float was[3], float *xf)
 	atomic_store(&g_fs.last_was, (uint32_t)d0), atomic_store(&g_fs.last_want, (uint32_t)d), atomic_store(&g_fs.last_got, (uint32_t)lim);
 }
 
+/* ---- SOMVR_COMBAT_STAGGER_CM (build 17): the orc stays in reach after our hit or parry -------------------------------
+ * =stagger's reaction to our hit or a parry ('AI_Bip_L100_*') carried the orc 1.36-1.63 m back before it walked back in
+ * (the user's session 233334; 30.16's 1.36-1.50 m): every hit broke reach. rl_note at each hit or clank on a living orc
+ * starts a reel: the anchor = its root then; while its reaction lasts (until its attack ends or changes again, at most
+ * RL_MAX_S) the NPC movement's steps for it (FS_AIMOVE's post-hook) are eased under the cap (sc_reel_cap: 1:1 to half
+ * of it, then slowing to a stop just under it; a step nearer Talion free, FIGHT_SPACE after it). The watch goes on to
+ * its next strike (RL_WATCH_S): `COMBAT reel` per reel, with the movement's share of the root's path (the runtime
+ * answer: does the reaction's root motion pass vf_11?), the cut, the trace every 0.25 s, the next strike's time. */
+#define RL_MAX_S 3.0
+#define RL_WATCH_S 6.0
+#define RL_TRACE 24
+struct rl_e {
+	uintptr_t c, hobj;
+	_Atomic uint32_t gen;
+	double t0, t_end, t_next;  /* the hit; the reel's end (0 = still on); its next strike (0 = none yet) */
+	float p0[3], prev[3], d0;  /* the anchor; the root last frame; the anchor's distance from Talion's root */
+	float max_cm, end_cm, path_cm, dmin, hmin, end_t, end_h, cap;
+	float tr[RL_TRACE], trh[RL_TRACE]; /* every 0.25 s: from the hit, from the player's head (NAN = no stereo frame) */
+	int ntr, natk;
+	uintptr_t atk[3];
+	char what[48], next[64];
+	_Atomic uint32_t calls, seen_mm, cut_mm, capped; /* FS_AIMOVE's steps for it during the reel (the hook's thread) */
+};
+static struct {
+	float cap;                 /* cm, 0 = measure only */
+	int set;                   /* SOMVR_COMBAT_STAGGER_CM given: the hook goes in even at 0 (the word may raise it) */
+	struct rl_e e[RL_N];
+	uint32_t gen;
+	uint64_t reels, capped, vf_seen, longest_n;
+	float longest, longest_cap;
+} g_rl;
+
+/* the hook's thread: an orc in a reel - its step eased under the cap (and the share of its path counted) */
+static void rl_hold(uintptr_t mv, const float was[3], float *xf)
+{
+	uint32_t s0 = atomic_load(&g_fs.seq);
+	int rn = g_fs.rn;
+	if ((s0 & 1) || rn <= 0 || rn > RL_N)
+		return;
+	uintptr_t ch = *(uintptr_t *)(mv + FS_MV_CHAR), h = ch ? *(uintptr_t *)(ch + 8) : 0;
+	int k = 0;
+	while (h && k < rn && g_fs.rh[k] != h)
+		k++;
+	if (!h || k == rn)
+		return;
+	float a[3], root[3];
+	memcpy(a, g_fs.ra[k], sizeof a), memcpy(root, g_fs.root, sizeof root);
+	int hr = g_fs.have_root, i = g_fs.ri[k];
+	uint32_t gen = g_fs.rgen[k];
+	float cap = g_fs.rcap;
+	if (atomic_load(&g_fs.seq) != s0 || i < 0 || i >= RL_N)
+		return;
+	struct rl_e *e = &g_rl.e[i];
+	if (atomic_load(&e->gen) != gen)
+		return;
+	float step = hypotf(xf[0] - was[0], xf[2] - was[2]), cut = 0;
+	atomic_fetch_add(&e->calls, 1);
+	if (isfinite(step) && step < 1000)
+		atomic_fetch_add(&e->seen_mm, (uint32_t)(step * 10.0f));
+	if (cap > 0 && sc_reel_cap(a, hr ? root : NULL, was, xf, cap, &cut))
+		atomic_fetch_add(&e->capped, 1), atomic_fetch_add(&e->cut_mm, (uint32_t)(cut * 10.0f));
+}
+
 __attribute__((used)) void somvr_w_aimove(void *mv, float *xf)
 {
 	float was[3];
@@ -1405,36 +1488,49 @@ __attribute__((used)) void somvr_w_aimove(void *mv, float *xf)
 	if (have)
 		memcpy(was, (char *)mv + FS_MV_POS, sizeof was);
 	((fs_move_fn)g_fs.orig)(mv, xf);
-	if (have)
-		fs_hold((uintptr_t)mv, was, xf);
+	if (have) {
+		rl_hold((uintptr_t)mv, was, xf); /* the reel's cap first, the space after it (it has the last word) */
+		if (g_fs.space > 0)
+			fs_hold((uintptr_t)mv, was, xf);
+	}
 }
 
 static void fs_start(int *bad)
 {
 	memset(&g_fs, 0, sizeof g_fs);
+	memset(&g_rl, 0, sizeof g_rl);
 	g_fs.space = env_float("SOMVR_FIGHT_SPACE_CM", 0, 0, 200, bad);
-	if (!(g_fs.space > 0))
+	g_rl.set = getenv("SOMVR_COMBAT_STAGGER_CM") != NULL;
+	g_rl.cap = env_float("SOMVR_COMBAT_STAGGER_CM", 0, 0, 300, bad);
+	if (g_rl.set)
+		logf_("CONFIG combat stagger %.0f cm (SOMVR_COMBAT_STAGGER_CM%s): an orc's reaction to our hit or a parry keeps it "
+		      "within this of where the hit found it (1:1 to half of it, then slowing; a step nearer Talion free; the NPC "
+		      "movement's slot FS_AIMOVE), `COMBAT reel` lines", g_rl.cap, g_rl.cap > 0 ? "" : ": 0 = measured only");
+	if (!(g_fs.space > 0) && !g_rl.set)
 		return;
 	static const char *const from_w[] = { "root", "head" };
 	g_fs.from_head = env_word("SOMVR_FIGHT_SPACE_FROM", from_w, 2, 1);
 	char why[512], err[200] = "";
 	if (check_site(&g_fs_sites[0], why, sizeof why) != 0) {
-		logf_("WARN SOMVR_FIGHT_SPACE_CM: the site FS_AIMOVE %#lx did not match (%s): off", (unsigned long)g_fs_sites[0].addr, why);
+		logf_("WARN SOMVR_FIGHT_SPACE_CM / _COMBAT_STAGGER_CM: the site FS_AIMOVE %#lx did not match (%s): off",
+		      (unsigned long)g_fs_sites[0].addr, why);
 		(*bad)++;
 		return;
 	}
 	void *fn = (void *)somvr_w_aimove;
 	g_fs.orig = g_fs_sites[0].target;
 	if (write_code(g_fs_sites[0].addr, &fn, 8, err, sizeof err) != 0) {
-		logf_("WARN SOMVR_FIGHT_SPACE_CM: the slot %#lx not written (%s): off", (unsigned long)g_fs_sites[0].addr, err);
+		logf_("WARN SOMVR_FIGHT_SPACE_CM / _COMBAT_STAGGER_CM: the slot %#lx not written (%s): off",
+		      (unsigned long)g_fs_sites[0].addr, err);
 		(*bad)++;
 		return;
 	}
 	g_fs.ok = 1;
-	logf_("CONFIG fight space %.0f cm (SOMVR_FIGHT_SPACE_CM): an orc whose attack targets Talion moves no nearer than this to "
-	      "%s (SOMVR_FIGHT_SPACE_FROM; the NPC movement's slot FS_AIMOVE %#lx: orig %#lx, now %p)", g_fs.space,
-	      g_fs.from_head ? "his root or the player's head, whichever is nearer" : "his root", (unsigned long)g_fs_sites[0].addr,
-	      (unsigned long)g_fs.orig, fn);
+	if (g_fs.space > 0)
+		logf_("CONFIG fight space %.0f cm (SOMVR_FIGHT_SPACE_CM): an orc whose attack targets Talion moves no nearer than "
+		      "this to %s (SOMVR_FIGHT_SPACE_FROM; the NPC movement's slot FS_AIMOVE %#lx: orig %#lx, now %p)", g_fs.space,
+		      g_fs.from_head ? "his root or the player's head, whichever is nearer" : "his root",
+		      (unsigned long)g_fs_sites[0].addr, (unsigned long)g_fs.orig, fn);
 }
 
 /* the game thread, every frame: the snapshot (Talion's root, the orcs whose attack target is Talion) and the lines */
@@ -1446,7 +1542,8 @@ static void fs_frame(uintptr_t pl, int stereo, double t)
 	float root[3];
 	uintptr_t hs[FS_ORCS];
 	int n = 0;
-	if (pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, root, sizeof root) && vec_ok(root, 1e7f)) {
+	int hr = pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, root, sizeof root) && vec_ok(root, 1e7f);
+	if (hr && g_fs.space > 0) {
 		uintptr_t pcomb = peek_ptr(pl + P_COMBAT), pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0, ph = 0;
 		if (pc && vptr_of((void *)pc) != g_cbg.vt_combat)
 			pc = 0;
@@ -1468,10 +1565,21 @@ static void fs_frame(uintptr_t pl, int stereo, double t)
 		head[0] = hp.x, head[1] = hp.y, head[2] = hp.z;
 		hh = vec_ok(head, 1e7f);
 	}
+	int rn = 0, ri[RL_N];
+	for (int i = 0; i < RL_N; i++) /* the reels on now (rl_frame's) */
+		if (g_rl.e[i].c && !g_rl.e[i].t_end)
+			ri[rn++] = i;
 	atomic_fetch_add(&g_fs.seq, 1);
 	if (n)
-		memcpy(g_fs.root, root, sizeof root), memcpy(g_fs.hobj, hs, sizeof hs), memcpy(g_fs.head, head, sizeof head);
-	g_fs.n = n, g_fs.t = t, g_fs.have_head = hh;
+		memcpy(g_fs.hobj, hs, sizeof hs), memcpy(g_fs.head, head, sizeof head);
+	if (hr)
+		memcpy(g_fs.root, root, sizeof root);
+	for (int k = 0; k < rn; k++) {
+		const struct rl_e *e = &g_rl.e[ri[k]];
+		g_fs.ri[k] = ri[k], g_fs.rh[k] = e->hobj, g_fs.rgen[k] = atomic_load(&e->gen);
+		memcpy(g_fs.ra[k], e->p0, sizeof e->p0);
+	}
+	g_fs.n = n, g_fs.t = t, g_fs.have_head = hh, g_fs.have_root = hr, g_fs.rn = rn, g_fs.rcap = g_rl.cap;
 	atomic_fetch_add(&g_fs.seq, 1);
 	uint64_t held = atomic_load(&g_fs.held);
 	if (held != g_fs.logged && t >= g_fs.next_log) {
@@ -1481,6 +1589,138 @@ static void fs_frame(uintptr_t pl, int stereo, double t)
 		      (unsigned long)atomic_load(&g_fs.last_hobj), atomic_load(&g_fs.last_was), atomic_load(&g_fs.last_want),
 		      atomic_load(&g_fs.last_got), n, n == 1 ? "" : "s");
 		g_fs.logged = held;
+	}
+}
+
+/* the reel's line (its end: the next strike, RL_WATCH_S, another hit on it, the orc gone) */
+static void rl_flush(struct rl_e *e, double t, const char *why)
+{
+	char tr[RL_TRACE * 10 + 8] = "", an[3][64];
+	size_t o = 0;
+	for (int k = 0; k < e->ntr && o < sizeof tr - 11; k++)
+		o += (size_t)snprintf(tr + o, sizeof tr - o, "%s%.0f/%.0f", k ? " " : "", e->tr[k], e->trh[k]);
+	for (int k = 0; k < 3; k++)
+		an[k][0] = 0;
+	for (int k = 0; k < e->natk && k < 3; k++)
+		if (!rx_rec_name(e->atk[k], an[k], sizeof an[k])[0])
+			snprintf(an[k], sizeof an[k], "%s", e->atk[k] ? "?" : "none");
+	uint32_t calls = atomic_load(&e->calls), seen = atomic_load(&e->seen_mm), cut = atomic_load(&e->cut_mm),
+		 capped = atomic_load(&e->capped);
+	double rs = (e->t_end ? e->t_end : t) - e->t0;
+	g_rl.reels++, g_rl.capped += capped > 0, g_rl.vf_seen += calls > 0;
+	if (e->max_cm > g_rl.longest)
+		g_rl.longest = e->max_cm, g_rl.longest_cap = e->cap;
+	logf_("COMBAT reel orc=%#lx after %s: its attacks '%s'%s%s%s%s%s%s; the reel %.0f cm at most from where the hit found it "
+	      "(%.0f cm from Talion's root then) in %.2f s, %.0f cm at its end (%.0f cm from Talion's root, %.0f from the head); "
+	      "the root's path %.0f cm, the NPC movement's steps for it %u (%.0f cm), the cap %.0f cm: %u steps eased (%.0f cm "
+	      "off); every 0.25 s (cm from the hit/from the head): %s; nearest Talion's root %.0f cm, the head %.0f; %s",
+	      (unsigned long)e->c, e->what, an[0], e->natk > 1 ? " -> '" : "", an[1], e->natk > 1 ? "'" : "",
+	      e->natk > 2 ? " -> '" : "", an[2], e->natk > 2 ? "'" : "", e->max_cm, e->d0, rs, e->end_cm, e->end_t, e->end_h,
+	      e->path_cm, calls, seen * 0.1f, e->cap, capped, cut * 0.1f, tr, e->dmin, e->hmin, why);
+	atomic_fetch_add(&e->gen, 1);
+	e->c = 0;
+}
+
+static int rl_word(float cm)
+{
+	if (cm > 0 && !g_fs.ok)
+		return 0;
+	g_rl.cap = cm;
+	logf_("CONFIG combat stagger %.0f cm (the word)", cm);
+	return 1;
+}
+
+/* a hit or a clank on a living orc (cb_hit, df_clank): its reel starts here */
+static void rl_note(uintptr_t c, uintptr_t hobj, const char *what, double t)
+{
+	struct rl_e *e = NULL;
+	for (int i = 0; i < RL_N && !e; i++)
+		if (g_rl.e[i].c == c)
+			rl_flush(e = &g_rl.e[i], t, "hit again");
+	for (int i = 0; i < RL_N && !e; i++)
+		if (!g_rl.e[i].c)
+			e = &g_rl.e[i];
+	float p[3];
+	if (!e || !hobj || cb_dead(c) || !peek(hobj + OBJ_POS, p, sizeof p) || !vec_ok(p, 1e7f))
+		return;
+	uint32_t gen = atomic_load(&e->gen) + 1;
+	memset(e, 0, sizeof *e); /* (the hook skips it until the snapshot names the new gen) */
+	atomic_store(&e->gen, gen);
+	e->c = c, e->hobj = hobj, e->t0 = t, e->cap = g_rl.cap, e->dmin = e->d0 = e->hmin = e->end_t = e->end_h = NAN;
+	memcpy(e->p0, p, sizeof p), memcpy(e->prev, p, sizeof p);
+	e->atk[0] = peek_ptr(c + RX_C_ATTACK), e->natk = 1;
+	snprintf(e->what, sizeof e->what, "%s", what);
+}
+
+/* the game thread, every frame: each reel's trace, its end (the reaction over, or a sync action after the hit: never
+ * eased - a berserker's strikes are flagged sync themselves), the next strike (THREAT's track with an impact) */
+static void rl_frame(uintptr_t pl, int stereo, double t)
+{
+	uintptr_t pm = 0, obj = 0;
+	float root[3], head[3] = { NAN, NAN, NAN };
+	int hr = pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, root, sizeof root) && vec_ok(root, 1e7f), any = 0;
+	for (int i = 0; i < RL_N; i++)
+		any |= g_rl.e[i].c != 0;
+	if (any && stereo) { /* the eyes the player sees from */
+		sv_vec3 hp;
+		sv_quat hq;
+		somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+		head[0] = hp.x, head[1] = hp.y, head[2] = hp.z;
+	}
+	for (int i = 0; i < RL_N; i++) {
+		struct rl_e *e = &g_rl.e[i];
+		float p[3];
+		if (!e->c)
+			continue;
+		if (!peek_ptr(e->c + C_OWNER) || !peek(e->hobj + OBJ_POS, p, sizeof p) || !vec_ok(p, 1e7f)) {
+			rl_flush(e, t, "the orc gone");
+			continue;
+		}
+		float d = hypotf(p[0] - e->p0[0], p[2] - e->p0[2]), dt = hr ? hypotf(p[0] - root[0], p[2] - root[2]) : NAN;
+		float dh = hypotf(p[0] - head[0], p[2] - head[2]);
+		if (hr && !isfinite(e->d0))
+			e->d0 = hypotf(e->p0[0] - root[0], e->p0[2] - root[2]);
+		if (isfinite(dt) && !(e->dmin <= dt))
+			e->dmin = dt;
+		if (isfinite(dh) && !(e->hmin <= dh))
+			e->hmin = dh;
+		while (e->ntr < RL_TRACE && t - e->t0 >= 0.25 * (e->ntr + 1))
+			e->trh[e->ntr] = dh, e->tr[e->ntr++] = d;
+		uintptr_t a = peek_ptr(e->c + RX_C_ATTACK);
+		if (!e->t_end) {
+			e->path_cm += hypotf(p[0] - e->prev[0], p[2] - e->prev[2]);
+			e->max_cm = fmaxf(e->max_cm, d);
+			if (a != e->atk[e->natk - 1] && e->natk < 3)
+				e->atk[e->natk++] = a;
+			int dead = cb_dead(e->c);
+			if (dead || (cb_sync(e->c) && a != e->atk[0]) || t - e->t0 >= RL_MAX_S || e->natk >= 3 ||
+			    (!a && t - e->t0 >= 0.2))
+				e->t_end = t, e->end_cm = d, e->end_t = dt, e->end_h = dh; /* the reaction is over */
+			if (dead) {
+				rl_flush(e, t, "it died");
+				continue;
+			}
+		} else { /* its next strike: a THREAT track of this orc with an impact, started after the hit */
+			const struct th_track *st = NULL;
+			for (int k = 0; k < TH_TRACKS && !st && g_th.on; k++)
+				if (g_th.tr[k].c == e->c && g_th.tr[k].k.impact > 0 && g_th.tr[k].t0 > e->t0 + 0.1)
+					st = &g_th.tr[k];
+			char nm[64];
+			if (st || (a && a != e->atk[e->natk - 1] && strstr(rx_rec_name(a, nm, sizeof nm), "_Melee_"))) {
+				char why[128];
+				if (st)
+					rx_rec_name(st->attack, nm, sizeof nm);
+				snprintf(why, sizeof why, "its next strike '%s' %.2f s after the hit, %.0f cm from Talion's root", nm,
+					 (st ? st->t0 : t) - e->t0, dt);
+				rl_flush(e, t, why);
+				continue;
+			}
+			if (a && a != e->atk[e->natk - 1] && e->natk < 3)
+				e->atk[e->natk++] = a;
+		}
+		memcpy(e->prev, p, sizeof p);
+		if (t - e->t0 >= RL_WATCH_S)
+			rl_flush(e, t, "no strike in 6 s");
 	}
 }
 
@@ -1532,6 +1772,7 @@ static void fight_frame(uintptr_t pl, int stereo)
 	double t = cb_now();
 	g_ft_pl = pl;
 	frr_frame();
+	rl_frame(pl, stereo, t);
 	fs_frame(pl, stereo, t);
 	kx_step();
 	kb_frame(t);
@@ -1578,6 +1819,10 @@ static void fight_end_log(void)
 		logf_("FIGHT END space %.0f cm: NPC moves %llu, near Talion %llu (an orc at him) + %llu (another), held %llu",
 		      g_fs.space, (unsigned long long)atomic_load(&g_fs.calls), (unsigned long long)atomic_load(&g_fs.near),
 		      (unsigned long long)atomic_load(&g_fs.other), (unsigned long long)atomic_load(&g_fs.held));
+	if (g_rl.reels || g_rl.set)
+		logf_("FIGHT END stagger %.0f cm: reels %llu (eased %llu, the NPC movement saw %llu), the farthest %.0f cm (the cap "
+		      "then %.0f)", g_rl.cap, (unsigned long long)g_rl.reels, (unsigned long long)g_rl.capped,
+		      (unsigned long long)g_rl.vf_seen, g_rl.longest, g_rl.longest_cap);
 	if (g_kx.sliver > 0)
 		logf_("FIGHT END sliver %.0f: hits made kills %llu", g_kx.sliver, (unsigned long long)g_kx.slivers);
 	logf_("FIGHT END hurt=%d knockback=%s: hits on Talion %llu (flashes %llu); reactions watched %llu (the largest move %.2f m "

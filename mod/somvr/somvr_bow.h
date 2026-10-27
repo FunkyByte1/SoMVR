@@ -33,6 +33,14 @@
  *            min_draw_cm leaves the arrow resting on the string (LETDOWN, arrow REST): a press at the nock draws it
  *            again. A press at the nock with no arrow anywhere: NOARROW. An exit puts any arrow back. The hands apart
  *            end nothing while an arrow is held or the hand is in the quiver.
+ *   zone     build 17 (cfg.nock_zone, SOMVR_BOW_NOCK_ZONE=string): "at the nock" is anywhere within zone_r_cm of the
+ *            string's middle (the segment zone_half_cm either way of the nock along the bow's limbs, cfg.limb_ax: the
+ *            riser and the string's middle third), not more than zone_front_cm past it toward the target; the arrow
+ *            snaps onto the string there and the draw counts only the pull back behind the nock along the shot
+ *            ((nock - string) . fwd, 0 in front): a hand that nocks 20 cm beside the bow has drawn nothing (the user's
+ *            build 16 session: nocks only at 13.7-14.9 cm of the 15, the hand 18 and 22 cm from the grip without one).
+ *            cfg.noarrow_take (SOMVR_BOW_NOARROW_CUE=take): a press in the zone with no arrow anywhere and arrows left
+ *            takes one and nocks it at once (TAKE | NOCK, the quiver skipped); none left: EMPTY.
  *
  * The bow's frame in the bow hand's grip (build 16, somvr_bow_hold_q): the grip's frame in the game convention
  * (somvr_hand_game) has +Z along the fist's tube from the little finger to the thumb (OpenXR's -Z), +X = OpenXR's +X
@@ -115,6 +123,13 @@ typedef struct {
     float shot_ax[3];        /* build 16: the bow's shot axis in the bow hand's grip frame (unit; (0, 0, 1) = builds
                                 11-15b; HOLD_FIST: (0, -1, 0), somvr_bow_hold_q's +Z) */
     int quiver;              /* build 16: arrows come from the quiver (see "quiver" above); 0 = any press at the nock */
+    int nock_zone;           /* build 17: 0 = within nock_r_cm of the nock point (build 16), 1 = the string's zone ("zone") */
+    float zone_r_cm;         /* the zone: this far from the string's middle segment (25) ... */
+    float zone_half_cm;      /* ... which runs this far either way of the nock along the limbs (12) ... */
+    float zone_front_cm;     /* ... and at most this far past the nock toward the target (5) */
+    float limb_ax[3];        /* the bow's upper limb in the bow hand's grip frame (unit; (0, 1, 0) = builds 11-15b;
+                                HOLD_FIST: (0, 0, 1), somvr_bow_hold_q's +Y) */
+    int noarrow_take;        /* build 17: a press in the zone with no arrow takes one and nocks it (see "zone") */
 } somvr_bow_cfg;
 void somvr_bow_cfg_default(somvr_bow_cfg *c);
 
@@ -173,6 +188,8 @@ typedef struct {
     sv_vec3 origin, dir;     /* world cm, unit */
     float draw_cm, tension;  /* now (0 when not drawing) */
     float nock_dist;         /* the string hand to the nock (cm; -1 = a hand unknown) */
+    float zone_dist;         /* the string hand to the nock's zone's core (nock_zone: the string's middle segment; else
+                                = nock_dist; -1 = a hand unknown; past zone_front_cm in front: 999) */
     uint32_t events;         /* SOMVR_BOW_E_* */
     int end_why;             /* with SOMVR_BOW_E_EXIT */
     double wait_s;           /* with SOMVR_BOW_E_FIRE: how long the shot waited for the game */
@@ -227,6 +244,12 @@ void somvr_bow_fire_xf(sv_vec3 origin, sv_vec3 dir, float yaw_hint, float xf[7])
 /* ---- the geometry (tested on their own) ------------------------------------------------------------------------- */
 /* the nock point: p + R(q) nock_ofs */
 sv_vec3 somvr_bow_nock(const somvr_bow_cfg *c, sv_vec3 p, sv_quat q);
+/* build 17: is the string hand at the nock? point (nock_zone 0): within nock_r_cm of the nock; zone: within zone_r_cm of
+ * the segment nock -/+ zone_half_cm along R(q) limb_ax and not more than zone_front_cm in front of the nock along the
+ * shot. *zd (may be NULL) = the distance tested against the radius (999 in front of the zone) */
+int somvr_bow_at_nock(const somvr_bow_cfg *c, sv_vec3 bow_p, sv_quat bow_q, sv_vec3 string, float *zd);
+/* build 17: the draw with the zone: the pull back behind the nock along the bow's shot, (nock - string) . fwd, at least 0 */
+float somvr_bow_pull(const somvr_bow_cfg *c, sv_quat bow_q, sv_vec3 nock, sv_vec3 string);
 /* the bow's forward (the shot) for the bow hand's grip q: R(q) shot_ax (unit; a zero shot_ax reads (0, 0, 1)) */
 sv_vec3 somvr_bow_fwd(const somvr_bow_cfg *c, sv_quat q);
 /* the bow model's rotation in the bow hand's grip frame (its +Z the shot, +Y the upper limb, -Z toward the string).

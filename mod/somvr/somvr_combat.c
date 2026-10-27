@@ -161,6 +161,20 @@ float sc_edge_deg(const somvr_blade *b) {
     return asinf(c > 1 ? 1 : c) * 57.29578f;
 }
 
+int sc_hit_kind(int tier, float edge_deg, float edge_max_deg) {
+    if (tier == SC_TIER_HEAVY) return SC_KIND_CUT;
+    if (tier == SC_TIER_STAB) return SC_KIND_STAB;
+    if (tier != SC_TIER_LIGHT) return SC_KIND_NONE;
+    return edge_deg > edge_max_deg ? SC_KIND_SLAP : SC_KIND_TAP;
+}
+
+const char *sc_kind_name(int kind) {
+    static const char *const n[SC_KIND_N] = {"none", "cut", "slap", "tap", "stab"};
+    return kind > 0 && kind < SC_KIND_N ? n[kind] : n[0];
+}
+
+int sc_kind_bites(int kind, int glance, int blocked) { return kind == SC_KIND_CUT && !glance && !blocked; }
+
 int sc_tier_cut(const sc_cfg *c, const sc_speed *s, float edge_deg) {
     if (s->axis_mps >= c->stab_mps && s->cos_axis >= c->stab_cos) return SC_TIER_STAB;
     if (!s->above || !(s->mean_mps >= c->slash_mps)) return SC_TIER_NONE;
@@ -211,6 +225,30 @@ int sc_space_hold2(const float root[3], const float *head, const float was[3], f
     }
     xf[0] = best[0], xf[2] = best[2];
     *d_got = n == 2 ? fminf(hdist(xf, c[0]), hdist(xf, c[1])) : hdist(xf, c[0]);
+    return 1;
+}
+
+int sc_reel_cap(const float anchor[3], const float *talion, const float was[3], float xf[3], float cap, float *cut) {
+    *cut = 0;
+    if (!(cap > 0) || !isfinite(xf[0]) || !isfinite(xf[2]) || !isfinite(was[0]) || !isfinite(was[2]) ||
+        !isfinite(anchor[0]) || !isfinite(anchor[2]))
+        return 0;
+    if (talion && isfinite(talion[0]) && isfinite(talion[2]) && hdist(xf, talion) < hdist(was, talion)) return 0;
+    float sx = xf[0] - was[0], sz = xf[2] - was[2], rx = was[0] - anchor[0], rz = was[2] - anchor[2];
+    float d = hypotf(rx, rz), knee = 0.5f * cap;
+    if (d > 1e-3f) {
+        float ux = rx / d, uz = rz / d, r = sx * ux + sz * uz; /* the part away from the anchor */
+        if (r > 0 && d > knee) {
+            float k = d < cap ? (cap - d) / (cap - knee) : 0.0f;
+            sx -= (1 - k) * r * ux, sz -= (1 - k) * r * uz;
+        }
+    }
+    float nx = was[0] + sx, nz = was[2] + sz, e = hypotf(nx - anchor[0], nz - anchor[2]), lim = fmaxf(cap, d);
+    if (e > lim)
+        nx = anchor[0] + (nx - anchor[0]) * (lim / e), nz = anchor[2] + (nz - anchor[2]) * (lim / e);
+    float c = hypotf(xf[0] - nx, xf[2] - nz);
+    if (!(c > 0.01f)) return 0;
+    *cut = c, xf[0] = nx, xf[2] = nz;
     return 1;
 }
 

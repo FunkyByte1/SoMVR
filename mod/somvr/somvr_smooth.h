@@ -118,4 +118,47 @@ void swg_qexp(const float r[3], float q[4]);
  * position is not touched): out = exp(rot) x q, rot = swg_step's (no part along the blade: the twist stays the hand's) */
 void swg_follow(const float rot[3], const float q[4], float out[4]);
 
+/* ---- the bite (build 17: Blade & Sorcery's catch; docs/re-xr-pipeline.md 59) ------------------------------------------
+ * A full cut that lands stops the drawn blade in the body for a moment: from the next frame the blade turns about the
+ * grip so that the point of it that was in the body at the hit stays there (the hand moves on 1:1: the handle turns in
+ * the fist, the blade pivots on the contact) for at most hold_s, then the extra turn eases out over ease_s (smoothstep)
+ * onto the blade as it would be drawn (the hand's, with the weight's offset). The hold ends early once the extra turn
+ * would pass max_rad (a fast cut tears the blade free sooner). Only the blade's pose: the caller applies exp(b) before
+ * the drawn orientation; the hits read that drawn blade, so nothing is detected where nothing is drawn. One bite at a
+ * time (a hit during a bite does not start another); a gap over SWB_GAP_S between steps ends it at once. Units: any
+ * (the point and the grip in the same space); t in seconds. */
+enum { SWB_IDLE = 0, SWB_HOLD = 1, SWB_EASE = 2 };
+#define SWB_GAP_S 0.1
+
+typedef struct {
+    float hold_s;  /* the blade held at the contact at most this long (SOMVR_COMBAT_BITE_MS, 60 ms) */
+    float ease_s;  /* then eased back over this (SOMVR_COMBAT_BITE_EASE_MS, 100 ms) */
+    float max_rad; /* the hold ends once the blade would be this far off its drawn direction (SOMVR_COMBAT_BITE_DEG, 30) */
+} swb_cfg;
+
+typedef struct {
+    int phase;       /* SWB_* */
+    double t0, t1;   /* the bite's start, its ease's start */
+    double last_t;   /* the last step */
+    float l[3];      /* the held point in the drawn blade's own frame at the hit: q^-1 (P - p) */
+    float b[3];      /* the extra turn after the last step (a rotation vector; 0 = none) */
+    float b_rel[3];  /* at the ease's start */
+    float peak;      /* rad: this bite's largest extra turn */
+    int capped;      /* this bite's hold ended at max_rad */
+    float held_s;    /* how long this bite held */
+    uint64_t bites, refused, caps, gaps, steps;
+} swb_state;
+
+void swb_defaults(swb_cfg *c); /* 60 ms, 100 ms, 30 deg */
+void swb_reset(swb_state *s);  /* idle, the counters cleared */
+/* A bite at t: the grip's position p and the drawn blade's orientation q (unit) at the hit's frame, the held point P (on
+ * that drawn blade, in the body). 1 = started; 0 = refused (one is on, or not finite). */
+int swb_start(swb_state *s, double t, const float p[3], const float q[4], const float P[3]);
+/* One frame at t (after the start): the grip p, the blade's orientation as it would be drawn without the bite qw, the
+ * held point P now (the same space; the world's point mapped through this frame's rig). Out: b, the extra turn about the
+ * grip (the drawn blade = exp(b) x qw; 0 when idle). Returns the phase after the step. */
+int swb_step(swb_state *s, const swb_cfg *c, double t, const float p[3], const float qw[4], const float P[3], float b[3]);
+/* ends a bite at once (the sword gone, a surface holds the hand, the switch off): idle, b 0 */
+void swb_cancel(swb_state *s);
+
 #endif

@@ -129,6 +129,35 @@ typedef struct {
  * SOMVR_DASH). Else none: the stock A as it is (the game's evade, jump or free-run). */
 int somvr_step_evade_pick(const somvr_step_cfg *c, const somvr_step_evade_in *in, somvr_step_evade *o);
 
+/* ---- build 17: the dodge (SOMVR_DODGE: A in a fight with GAMEMOVES off; the user: "a way to dodge them") ----------
+ * a fixed distance, always the same: along the stick (deflected at least dash_stick), else straight away from the
+ * attacker (have_att: its root), else straight back from the gaze. The direction (unit, y 0) into *dir; *src 1 the
+ * stick, 2 away from the attacker, 3 back from the gaze; 0 = none (NaN inputs) */
+enum { SOMVR_STD_NONE = 0, SOMVR_STD_STICK = 1, SOMVR_STD_AWAY = 2, SOMVR_STD_BACK = 3 };
+int somvr_step_dodge_dir(const somvr_step_cfg *c, sv_vec3 root, float head_yaw, sv_vec3 stick_dir, float stick_mag,
+                         int have_att, sv_vec3 att, sv_vec3 *dir);
+const char *somvr_step_dodge_src_name(int src); /* "-", "the stick", "away from the attacker", "back from the gaze" */
+
+/* ---- build 17: whose A's press it is - one owner per press, so one press never does two things -------------------
+ * Three build 17 moves share A (the right controller's lower button): the Shadow Strike (SOMVR_STRIKE_GAZE: an orc
+ * marked in the wraith vision), the dodge (SOMVR_DODGE: in a fight) and the climb's drop (SOMVR_CLIMB: A in a hang,
+ * SOMVR_CLIMB_DESCENT[_MARK]: A held at an edge). Decided at the press, kept until A is let go: the strike first (its
+ * mark is the player's explicit choice), then the dodge (in a fight on foot: the dodge's refusals - the cooldown, a
+ * ledge, the bow - are its own double buzz, never a drop), then the climb (it decides itself whether anything goes).
+ * A climb that holds is the climb's even in a fight (the dodge never runs from a hang). Not in the world (a menu's
+ * A): none (the climb keeps its own guard for a press held out of a menu). */
+enum { SOMVR_AO_NONE = 0, SOMVR_AO_STRIKE = 1, SOMVR_AO_DODGE = 2, SOMVR_AO_DROP = 3, SOMVR_AO_N = 4 };
+typedef struct {
+    int world;    /* the press is in the world (the input live, no menu) */
+    int strike;   /* SOMVR_STRIKE_GAZE: an orc marked (or its strike under way) */
+    int dodge;    /* SOMVR_DODGE on (with GAMEMOVES off) */
+    int fight;    /* the dodge's fight: an attack at Talion tracked lately, or his FSM in Combat */
+    int climbing; /* a climb holds (the hang) */
+    int drop;     /* SOMVR_CLIMB on (A drops from a hang; with the descent, A at an edge) */
+} somvr_step_a_in;
+int somvr_step_a_owner(const somvr_step_a_in *in);
+const char *somvr_step_a_owner_name(int o); /* "nobody", "the strike", "the dodge", "the climb" */
+
 /* ---- the runner: one move at a time, once per LOCO tick ------------------------------------------------------------ */
 enum { SOMVR_STE_NONE = 0, SOMVR_STE_DONE, SOMVR_STE_HELD, SOMVR_STE_HOLD_OVER, SOMVR_STE_LOST, SOMVR_STE_BLOCKED,
        SOMVR_STE_CLOSE, SOMVR_STE_NEW, SOMVR_STE_OFF, SOMVR_STE_FINISH, SOMVR_STE_N };

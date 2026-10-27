@@ -118,7 +118,7 @@
  *     stereo frame from a record reads that frame's entry and adds up to 3 world-locked warm glows (the attackers'
  *     weapon hands in view, an inbound projectile in view; billboarded to the frame's head) right over the projection,
  *     and up to 2 head-locked edge bands (an attack or a projectile out of view, an engaged orc close behind; 1 m ahead
- *     at the view's left / right edge) over the vignette ring, from one static 544x102 texture filled once (16 intensity
+ *     at the view's left / right edge) over the vignette ring, from one static 544x136 texture filled once (16 intensity
  *     cells per kind, premultiplied, mostly additive). A reuse frame repeats them. Any failure = no threat cues for the
  *     session, the frames go on.
  *   Composition (xr_comp, docs/re-xr-pipeline.md 16), bottom to top: the environment's layers (mono and hold
@@ -512,6 +512,8 @@ static void vh_setup(void);
 static void vh_destroy(void);
 static void vh_panel_cfg(somvr_vm_gcfg *g);
 static int vh_watch_on(void);
+static const char *vh_resize(float size); /* build 17: the test file's "handsize S" */
+static const char *vh_lumlog(int n);      /* build 17: the test file's "lumlog N" */
 static int vh_watch_pose(int h, const somvr_posef *grip, somvr_posef *face);
 static int vh_watch_facing(const somvr_posef *face, const float eye[3]);
 static void vh_watch_reset(void);
@@ -665,12 +667,13 @@ static struct {
  * HUD and the pointer: the HUD stays readable while moving), the threat edge bands (over the ring: a warning is never
  * vignetted away), the HUD quad, the pointer's ray and dot, the VR menu's panel, its ray and dot (the near wrist panel
  * over the far HUD; the game's pointer has no target while it is open), comfort's snap blink and the fallback's fade
- * (the blacks over everything, the fade last). XL_N = 24 slots; at most 16 at once, the 16 every runtime takes
+ * (the blacks over everything, the fade last). XL_N = 25 slots; at most 16 at once, the 16 every runtime takes
  * (XR_MIN_COMPOSITION_LAYERS_SUPPORTED): the environment's come only in mono and hold frames, without the threat cues,
  * the ring, the HUD and the blink. A part the runtime rejects goes off alone (xr_end_comp). Build 8's prompt band
  * (XL_BAND) makes 17 slots from the projection on: a frame that would carry more than 16 goes without it (xl_cap). */
 #define XL_ENV_N 9
 enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING, XL_THE0, XL_THE1,
+       XL_OBJL, /* build 17: the drop's line down to the climb's landing ring (SOMVR_CLIMB_DESCENT_MARK; under its ring) */
        XL_OBJ, /* build 15: SOMVR_OBJECTIVE's marker or its edge arrow (over the ring, under the HUD) */
        XL_MBD, XL_MBK, /* SOMVR_XR_MENU_BACK: the world's dim and the dark panel behind a game menu's board */
        XL_HUD,
@@ -682,8 +685,8 @@ enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING,
 enum { XG_FADE = 1u << 0, XG_CF = 1u << 1, XG_PTR = 1u << 2, XG_HUD = 1u << 3, XG_ENV = 1u << 4, XG_VM = 1u << 5,
        XG_TH = 1u << 6, XG_VH = 1u << 7, XG_MB = 1u << 8, XG_OB = 1u << 9 };
 _Static_assert(XL_ENV_N + 1 + 2 + 3 + 1 <= 16, "a mono frame's worst case: env, quad, pointer, VR menu, fade");
-_Static_assert(XL_N - XL_OWN <= 21, "a stereo frame's worst case: every slot from the projection on, less the band, "
-                                    "the hands, the menu backdrop's two and the objective's marker (xl_cap)");
+_Static_assert(XL_N - XL_OWN <= 22, "a stereo frame's worst case: every slot from the projection on, less the band, "
+                                    "the hands, the menu backdrop's two, the objective's marker and its line (xl_cap)");
 #define XL_MAX 16 /* XR_MIN_COMPOSITION_LAYERS_SUPPORTED: a frame with more loses the band (xl_cap) */
 _Static_assert(XL_THG2 - XL_THG0 + 1 == SOMVR_TH_GLOWS && XL_THE1 - XL_THE0 == 1, "the threat slots");
 typedef struct {
@@ -694,7 +697,7 @@ static uint32_t xl_group(int i) {
     if (i >= XL_VM0 && i <= XL_VM2) return XG_VM;
     if (i == XL_HANDS) return XG_VH;
     if (i == XL_MBD || i == XL_MBK) return XG_MB;
-    if (i == XL_OBJ) return XG_OB;
+    if (i == XL_OBJ || i == XL_OBJL) return XG_OB;
     if ((i >= XL_THG0 && i <= XL_THG2) || i == XL_THE0 || i == XL_THE1) return XG_TH;
     return i == XL_FADE ? XG_FADE : i == XL_RING || i == XL_BLINK ? XG_CF : i == XL_PTR0 || i == XL_PTR1 ? XG_PTR
                                                                         : i == XL_HUD || i == XL_BAND || i == XL_MMAP ? XG_HUD : 0u;
@@ -3301,8 +3304,8 @@ static void cf_reuse_layers(xr_comp *c) {
 
 /* ---- threat cues (SOMVR_THREAT, docs/re-xr-pipeline.md 18, ../somvr_threat.h; X.mx held, the present thread): every
  * stereo frame from a record reads that frame's entry of the preload's `somvr_threat` (or the newest within 4 frames)
- * and adds up to five quads from one static 544x102 texture filled once (three rows of 16 intensity cells, warm,
- * premultiplied, mostly additive; the third row the hurt red, build 10): the in-view glows - world-locked in the reference space at the entry's points (the
+ * and adds up to five quads from one static 544x136 texture filled once (four rows of 16 intensity cells, warm,
+ * premultiplied, mostly additive; the third row the hurt red, build 10; the fourth the red glow of an unblockable blow, build 17): the in-view glows - world-locked in the reference space at the entry's points (the
  * frame's own rig mapped them), billboarded to the frame's head (its record's eye poses), right over the projection
  * and under comfort's ring - and the edge bands - head-locked in a VIEW space 1 m ahead at the view's left / right
  * edge (the record's fovs), over the ring and under the HUD quad. A reuse frame repeats the last ones. No object or
@@ -3575,7 +3578,7 @@ static void th_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
         float pose[7];
         somvr_th_face(e.g[i].pos, head, pose);
         memcpy(pose + 4, e.g[i].pos, sizeof e.g[i].pos);
-        TH.q[i] = th_quad(X.space, SOMVR_TH_ROW_GLOW, gcell[i], pose, e.g[i].size_m, e.g[i].size_m);
+        TH.q[i] = th_quad(X.space, somvr_th_glow_row(e.g[i].kind), gcell[i], pose, e.g[i].size_m, e.g[i].size_m);
     }
     float fov[2][4];
     for (int k = 0; k < 2; k++) {
@@ -3586,7 +3589,8 @@ static void th_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
         if (!(has & 1u << (SOMVR_TH_GLOWS + s))) continue;
         float pose[7], size[2];
         somvr_th_edge_quad(fov, s ? SOMVR_TH_RIGHT : SOMVR_TH_LEFT, TH_EDGE_DIST_M, pose, size);
-        TH.q[SOMVR_TH_GLOWS + s] = th_quad(TH.view, hurt[s] ? SOMVR_TH_ROW_HURT : SOMVR_TH_ROW_EDGE, ecell[s], pose, size[0],
+        int red = hurt[s] || (e.flags & (s ? SOMVR_THF_RED_R : SOMVR_THF_RED_L)); /* build 17: an unblockable blow */
+        TH.q[SOMVR_TH_GLOWS + s] = th_quad(TH.view, red ? SOMVR_TH_ROW_HURT : SOMVR_TH_ROW_EDGE, ecell[s], pose, size[0],
                                            size[1]);
     }
     int hurt_now = (hurt[0] && (has & 1u << SOMVR_TH_GLOWS)) || (hurt[1] && (has & 1u << (SOMVR_TH_GLOWS + 1)));
@@ -4977,7 +4981,7 @@ static int xr_end_comp(const xr_comp *c0) {
     if (off & XG_VH) vh_off("xrEndFrame rejected the frame with our hands' layer: %s; ended again without it", xr_str(r0));
     if (off & XG_MB) mb_off("xrEndFrame rejected the frame with the backdrop's layers (ended again without them)", xr_str(r0));
     if (off & XG_OB) ob_off("xrEndFrame rejected the frame with the objective's marker: %s; ended again without it", xr_str(r0));
-    X.fade_n = 0, CF.has = 0, X.ptr_nq = 0, VM.nq = 0, TH.has = 0, OB.has = 0; /* this frame's parts went (or not) with it */
+    X.fade_n = 0, CF.has = 0, X.ptr_nq = 0, VM.nq = 0, TH.has = 0, OB.has = 0, OB.has_l = 0; /* this frame's parts went (or not) with it */
     if (XR_FAILED(r)) return xr_fail("xrEndFrame", r), -1;
     X.frames++;
     vd_ended(); /* never a void: the time between xrEndFrame calls */

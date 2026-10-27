@@ -348,6 +348,56 @@ static void test_depth(void) {
           "depth_k / depth = the view distance in XR metres (%.4f, %.4f)", k1 / d, k115 / d);
 }
 
+/* build 17, SOMVR_XR_HANDS_SIZE: the whole hand scaled about the fist's tube (the grip's origin + the calibration's move):
+ * every skinned vertex, the tube, the tip, the wrist and the palm's reach by the size; the grip itself stays */
+static void test_size(void) {
+    static const float half[5] = {0.3f, 0.5f, 0.5f, 0.6f, 0.7f};
+    static somvr_vh_model mk;
+    static somvr_vh_vert vk[1400];
+    somvr_vh_cfg ck;
+    for (int pass = 0; pass < 2; pass++) {
+        somvr_vh_cfg_default(&ck);
+        if (pass) ck.cal[0] = 1.0f, ck.cal[2] = -0.5f, ck.cal[4] = 10; /* a calibrated hand: about its moved tube */
+        somvr_vh_cfg c1 = ck;
+        static somvr_vh_model mp;
+        somvr_vh_model *m1 = &mp;
+        CHECK(somvr_vh_init(&mp, &c1) == 0, "size %d: the model at 1", pass);
+        CHECK(somvr_vh_parse_size("1.15", &ck) && fabsf(ck.size - 1.15f) < 1e-6f, "size: parse 1.15");
+        CHECK(somvr_vh_init(&mk, &ck) == 0 && fabsf(mk.gk - 1.15f) < 1e-6f, "size: init at 1.15 (%s)", mk.why);
+        float skin1[SOMVR_VH_NJ][12], skink[SOMVR_VH_NJ][12];
+        somvr_vh_pose(m1, &c1, half, skin1);
+        somvr_vh_pose(&mk, &ck, half, skink);
+        somvr_posef g = {{0, 0, 0, 1}, {0, 0, 0}};
+        somvr_vh_skin(m1, (const float(*)[12])skin1, SOMVR_HAND_R, &g, va);
+        somvr_vh_skin(&mk, (const float(*)[12])skink, SOMVR_HAND_R, &g, vk);
+        float ct[3] = {0.01f * ck.cal[0], 0.01f * ck.cal[1], 0.01f * ck.cal[2]}, worst = 0, nbad = 0;
+        for (int v = 0; v < somvr_vh_nverts(); v++)
+            for (int i = 0; i < 3; i++) {
+                float want = ct[i] + 1.15f * (va[v].p[i] - ct[i]);
+                worst = fmaxf(worst, fabsf(vk[v].p[i] - want));
+                nbad += fabsf(len3(vk[v].n) - 1) > 1e-3f;
+            }
+        CHECK(worst < 2e-5f && !nbad, "size %d: every vertex 1.15x as far from the tube's centre (worst %.6f m, %d bad normals)",
+              pass, worst, (int)nbad);
+        CHECK(fabsf(mk.tube_r_m - 1.15f * m1->tube_r_m) < 1e-5f && /* (the reach is from the grip's origin: with a cal move
+                                                                          it grows by more) */
+                  (pass ? mk.palm_reach_m > 1.15f * m1->palm_reach_m : fabsf(mk.palm_reach_m - 1.15f * m1->palm_reach_m) < 2e-4f) &&
+                  fabsf(mk.wrist_r_m - 1.15f * m1->wrist_r_m) < 1e-5f,
+              "size %d: the tube %.4f -> %.4f, the palm's reach %.4f -> %.4f, the wrist %.4f -> %.4f", pass, m1->tube_r_m,
+              mk.tube_r_m, m1->palm_reach_m, mk.palm_reach_m, m1->wrist_r_m, mk.wrist_r_m);
+        float d1 = 0, dk = 0;
+        for (int i = 0; i < 3; i++) {
+            d1 += (m1->tip_g[i] - ct[i]) * (m1->tip_g[i] - ct[i]), dk += (mk.tip_g[i] - ct[i]) * (mk.tip_g[i] - ct[i]);
+            CHECK(fabsf(mk.wrist_g[i] - ct[i] - 1.15f * (m1->wrist_g[i] - ct[i])) < 1e-5f, "size: the wrist %d", i);
+        }
+        CHECK(fabsf(sqrtf(dk) - 1.15f * sqrtf(d1)) < 1e-5f, "size %d: the pointing tip %.4f -> %.4f m", pass, sqrtf(d1), sqrtf(dk));
+    }
+    somvr_vh_cfg_default(&ck);
+    CHECK(somvr_vh_parse_size(NULL, &ck) && somvr_vh_parse_size("", &ck) && ck.size == 1 && !somvr_vh_parse_size("2", &ck) &&
+              !somvr_vh_parse_size("0.5", &ck) && !somvr_vh_parse_size("1.2x", &ck) && ck.size == 1,
+          "size: parse unset/empty = 1, 2 / 0.5 / 1.2x refused");
+}
+
 int main(void) {
     test_model();
     test_fist();
@@ -359,6 +409,7 @@ int main(void) {
     test_abi();
     test_arrow();
     test_depth();
+    test_size();
     printf("test_vrhands: %d checks, %d failures\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

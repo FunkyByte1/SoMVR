@@ -136,7 +136,100 @@ static struct {
 	int raw_n, raw_tap, raw_gap; /* the word "vision taps N MS": taps left, ticks of this one left, ticks to the next */
 	double raw_next, raw_ms;
 	uint32_t vis_lines;
+	/* build 17 (re-xr-pipeline.md 61.6): the vision record's ramps (SOMVR_VISION_RAMP_MS) */
+	float ramp_ms[2];            /* in, out (< 0: the game's) */
+	uintptr_t ramp_rec[4];       /* the records seen (logged once each), patched when ramp_ms is set */
+	int ramp_nrec;
+	double ramp_next;
 } g_go;
+
+/* build 17: the wraith vision's look ramps in and out over its record's RampInDuration / RampOutDuration
+ * (re-xr-pipeline.md 21's "wraith-world look": FUN_00ad3330 -> FUN_009e62d0 -> FUN_0266a8d0 reads them at each switch
+ * from the record at PlayerVisionMode+0x28, by the schema *0x4c25d20's field hashes at +0xf8 / +0x128). A record
+ * (byte *r): r[0] its fields, r[1] & 1 the layout, *(r+8) the 16-byte entries (sorted by the hash at +4, the real entry
+ * at entries[+9]; or by the hash at +0 with layout 1), *(r+0x10) the 8-byte values: the real entry's u16 +0xc nonzero
+ * = set, its u16 +0xe the value's slot (a float for a duration). The value's address, or 0 (not set / unreadable) */
+#define GO_VSCHEMA 0x4c25d20 /* DAT_04c25d20: the vision record's schema (FUN_02608950 fills it) */
+#define GO_VM_REC 0x28       /* PlayerVisionMode: the vision record */
+static uintptr_t go_rec_field(uintptr_t rec, uint32_t hash)
+{
+	uint8_t hd[2];
+	uintptr_t ents = 0, vals = 0;
+	if (!rec || !peek(rec, hd, 2) || !peek(rec + 8, &ents, 8) || !peek(rec + 0x10, &vals, 8) || !ents || !vals)
+		return 0;
+	for (int i = 0; i < hd[0]; i++) {
+		uint8_t e[16];
+		if (!peek(ents + 16u * (uintptr_t)i, e, 16))
+			return 0;
+		uint32_t h;
+		memcpy(&h, e + ((hd[1] & 1) ? 0 : 4), 4);
+		if (h != hash)
+			continue;
+		if (!(hd[1] & 1) && !peek(ents + 16u * (uintptr_t)e[9], e, 16))
+			return 0;
+		uint16_t set, slot;
+		memcpy(&set, e + 0xc, 2), memcpy(&slot, e + 0xe, 2);
+		return set ? vals + 8u * slot : 0;
+	}
+	return 0;
+}
+/* the vision record now (PlayerVisionMode+0x28; 0 = none) */
+static uintptr_t go_vis_rec(void)
+{
+	if (!g_step.ok_vis || !g_step.pl)
+		return 0;
+	uintptr_t vm = peek_ptr(g_step.pl + ST_P_VISION);
+	if (!vm || vptr_of((void *)vm) != g_stepg.vt_vm || peek_ptr(vm + ST_VM_OWNER) != g_step.pl)
+		return 0;
+	return peek_ptr(vm + GO_VM_REC);
+}
+/* a record's ramps (s; < 0 = not set / unreadable) and, with ramp_ms set, ours written (only over a plausible 0..10 s) */
+static void go_ramp_apply(uintptr_t rec, float out_s[2], int write, int *wrote)
+{
+	uintptr_t sch = peek_ptr(GO_VSCHEMA);
+	*wrote = 0;
+	for (int k = 0; k < 2; k++) {
+		uint32_t h = 0;
+		out_s[k] = -1;
+		uintptr_t a = sch && peek(sch + (k ? 0x128 : 0xf8), &h, 4) ? go_rec_field(rec, h) : 0;
+		float v;
+		if (!a || !peek(a, &v, 4) || !(v >= 0 && v <= 10))
+			continue;
+		out_s[k] = v;
+		if (write && g_go.ramp_ms[k] >= 0 && fabsf(v - g_go.ramp_ms[k] * 1e-3f) > 1e-4f) {
+			float nv = g_go.ramp_ms[k] * 1e-3f;
+			char err[160] = "";
+			if (write_code(a, &nv, 4, err, sizeof err) == 0)
+				(*wrote)++;
+		}
+	}
+}
+/* each tick at most twice a second: the record at PlayerVisionMode+0x28 - a new one logged, ours written (the game reads
+ * the ramps at the next switch) */
+static void go_ramp_tick(double t, int force)
+{
+	if (!force && t < g_go.ramp_next)
+		return;
+	g_go.ramp_next = t + 0.5;
+	uintptr_t rec = go_vis_rec();
+	if (!rec)
+		return;
+	int known = 0;
+	for (int i = 0; i < g_go.ramp_nrec; i++)
+		known |= g_go.ramp_rec[i] == rec;
+	int want = g_go.ramp_ms[0] >= 0 || g_go.ramp_ms[1] >= 0;
+	if (known && !want && !force)
+		return;
+	float v[2];
+	int wrote;
+	go_ramp_apply(rec, v, want, &wrote);
+	if (!known && g_go.ramp_nrec < 4)
+		g_go.ramp_rec[g_go.ramp_nrec++] = rec;
+	if (!known || wrote || force)
+		logf_("VISION t=%.3f the vision record %#lx: RampInDuration %.3f s, RampOutDuration %.3f s (the game's at the "
+		      "next switch)%s", t, (unsigned long)rec, (double)v[0], (double)v[1],
+		      wrote ? "; SOMVR_VISION_RAMP_MS written" : want ? "; as wished already" : "");
+}
 
 static float go_f(_Atomic uint32_t *a) { uint32_t b = atomic_load_explicit(a, memory_order_relaxed); float f; memcpy(&f, &b, 4); return f; }
 static void go_setf(_Atomic uint32_t *a, float f) { uint32_t b; memcpy(&b, &f, 4); atomic_store_explicit(a, b, memory_order_relaxed); }
@@ -223,15 +316,21 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 	}
 	int mode = atomic_load_explicit(&g_go.hint_mode, memory_order_relaxed);
 	int drop = ok && show && mode == GO_HINTS_OFF && ev != GO_EV_PROMPT;
+	/* somvr_collect_game.c: SOMVR_HINTS_KEEP's hints pass (the collectibles' wraith-vision tutorial) */
+	int kept = drop && ev == GO_EV_HINT && co_hint_keep(rec);
+	drop = drop && !kept;
 	uint64_t n = atomic_fetch_add_explicit(&g_go.n_ev[ev], 1, memory_order_relaxed) + 1;
 	atomic_fetch_add_explicit(&g_go.n_show[ev], (uint64_t)show, memory_order_relaxed);
 	atomic_fetch_add_explicit(&g_go.n_drop[ev], (uint64_t)drop, memory_order_relaxed);
 	if (mode != GO_HINTS_GAME && atomic_fetch_add_explicit(&g_go.hint_lines, 1, memory_order_relaxed) < 300) {
 		char nm[64];
 		go_rec_name(rec, nm, sizeof nm);
+		if (!nm[0] && ok && ev == GO_EV_HINT) /* (the hint records have no name: their text key, somvr_collect_game.c) */
+			snprintf(nm, sizeof nm, "%s", co_hint_key(rec));
 		logf_("HINTS %s #%llu t=%.3f: %s '%s' (record %#lx)%s", g_go_ev_name[ev], (unsigned long long)n, mono(),
 		      !ok ? "unreadable" : show ? "show" : "hide", nm, (unsigned long)rec,
-		      drop ? ": dropped (SOMVR_HINTS=off: what the game's Display Combat Hints off does)" : ": passed on");
+		      drop ? ": dropped (SOMVR_HINTS=off: what the game's Display Combat Hints off does)"
+		      : kept ? ": kept (SOMVR_HINTS_KEEP)" : ": passed on");
 	}
 	if (!drop)
 		((go_dlg_fn)g_go.hi_orig[ev])(dlg, sender, params);
@@ -269,9 +368,11 @@ static void lv_tick(double t)
 	if (!g_go.lv_on)
 		return;
 	uint64_t ns = atomic_load_explicit(&g_sh.n_stereo, memory_order_relaxed);
-	if (ns != g_go.lv_ns || !(g_go.lv_ns_t > 0))
+	/* (SOMVR_INSPECT's flat menu - an artifact's view, its memory's voice - shares the state with no stereo frame: not a
+	 * load, nor the eye size's switch back after it; somvr_collect_game.c) */
+	if (ns != g_go.lv_ns || !(g_go.lv_ns_t > 0) || co_flat_now())
 		g_go.lv_ns = ns, g_go.lv_ns_t = t;
-	int state = g_inp.on && g_inp.ifs == 3 && g_inp.menus == 0 && g_inp.paused == 1;
+	int state = g_inp.on && g_inp.ifs == 3 && g_inp.menus == 0 && g_inp.paused == 1 && !co_flat_now();
 	int load = state && t - g_go.lv_ns_t >= LV_STILL_S, muted = atomic_load_explicit(&g_go.lv_muted, memory_order_relaxed);
 	if (!load)
 		g_go.lv_unknown = 0;
@@ -339,6 +440,8 @@ static struct {
 } g_go_ty;
 /* "vision taps N MS" (writer thread -> the input tick) */
 static _Atomic uint32_t g_go_rt_seq, g_go_rt_n, g_go_rt_ms;
+static _Atomic uint32_t g_go_ramp_seq, g_go_ramp_seen; /* "vision ramp [IN OUT]" (build 17; writer -> the input tick) */
+static _Atomic int g_go_ramp_req[2];
 static uint32_t g_go_rt_seen;
 
 /* in_tick, right after the snapshot's read (and the test stick): the word's Y press over the layer's (the left hand's
@@ -381,6 +484,13 @@ static void go_vision_tick(sc_tick_out *o, double t)
 			held = 1;
 	o->ncmd = n;
 	int world = o->live && o->ctx == SC_CTX_WORLD, vis = st_vision();
+	uint32_t rq = atomic_load(&g_go_ramp_seq);
+	int rforce = rq != atomic_load(&g_go_ramp_seen);
+	if (rforce) {
+		atomic_store(&g_go_ramp_seen, rq);
+		g_go.ramp_ms[0] = (float)atomic_load(&g_go_ramp_req[0]), g_go.ramp_ms[1] = (float)atomic_load(&g_go_ramp_req[1]);
+	}
+	go_ramp_tick(t, rforce || (vis != g_go.vis_flag && vis >= 0 && g_go.vis_flag >= 0));
 	somvr_vis_out vo;
 	somvr_vis_tick(&g_go.vis, &g_go.vis_cfg, world, held, vis, t, &vo);
 	int lines = g_go.vis_lines < GO_VIS_LINES;
@@ -452,6 +562,19 @@ static const char *go_vision_word(const char *w)
 		return "vision (SOMVR_VISION is off: ignored)";
 	int nn;
 	float ms;
+	float ri, ro;
+	if (sscanf(w, "vision ramp %f %f", &ri, &ro) == 2) { /* build 17: the ramps from now (ms; -1 = leave the record's) */
+		if (!(ri >= -1 && ri <= 5000 && ro >= -1 && ro <= 5000))
+			return "vision ramp (bad: -1..5000 ms: ignored)";
+		atomic_store(&g_go_ramp_req[0], (int)ri), atomic_store(&g_go_ramp_req[1], (int)ro);
+		atomic_fetch_add(&g_go_ramp_seq, 1);
+		return "vision ramp (written at the next tick)";
+	}
+	if (!strncmp(w, "vision ramp", 11)) {
+		atomic_fetch_add(&g_go_ramp_seq, 1); /* a state line (the same values) */
+		atomic_store(&g_go_ramp_req[0], (int)g_go.ramp_ms[0]), atomic_store(&g_go_ramp_req[1], (int)g_go.ramp_ms[1]);
+		return "vision ramp (the record's line at the next tick)";
+	}
 	if (sscanf(w, "vision y %f", &ms) == 1) {
 		if (!(ms >= 1 && ms <= 60000))
 			return "vision y (bad: 1..60000 ms: ignored)";
@@ -561,6 +684,19 @@ static void go_start(const struct site_spec *sites, int *bad)
 		      g_go.vis_mode == 1 ? "a press with the vision on turns it off, Y not held while it is ours turns it off"
 					 : "a press = the other state", g_go.vis_cfg.wait_s * 1e3, g_go.vis_cfg.settle_s * 1e3,
 		      g_go.vis_cfg.tries);
+	/* build 17 (re-xr-pipeline.md 61.6): SOMVR_VISION_RAMP_MS=IN,OUT - the vision record's look ramps (the game's
+	 * RampInDuration / RampOutDuration, written into the record at PlayerVisionMode+0x28 as soon as it is seen; the
+	 * game reads them at its next switch); unset = the game's */
+	g_go.ramp_ms[0] = g_go.ramp_ms[1] = -1;
+	if (getenv("SOMVR_VISION_RAMP_MS") && getenv("SOMVR_VISION_RAMP_MS")[0]) {
+		float rv[2] = { -1, -1 };
+		env_vec("SOMVR_VISION_RAMP_MS", rv, 2, 0, 5000, bad);
+		g_go.ramp_ms[0] = rv[0], g_go.ramp_ms[1] = rv[1];
+	}
+	if (g_go.vis_mode)
+		logf_("CONFIG vision ramp=%s (SOMVR_VISION_RAMP_MS: the wraith look's ramp in %.0f ms, out %.0f ms; -1 = the "
+		      "game's record)", g_go.ramp_ms[0] >= 0 || g_go.ramp_ms[1] >= 0 ? "ours" : "game", (double)g_go.ramp_ms[0],
+		      (double)g_go.ramp_ms[1]);
 	static const char *const lv_w[] = { "game", "off" };
 	g_go.lv_want = env_word("SOMVR_LOAD_VOICES", lv_w, 2, 0) == 1;
 	if (!g_go.mu_want && !g_go.lv_want && g_go.hint_want == GO_HINTS_GAME)

@@ -83,6 +83,8 @@ static struct {
 	int range_ok, pos_ok;
 	int land, land_was;  /* build 16: the climb's landing ring published (SOMVR_CLIMB_PULLOVER), shown last frame */
 	uint64_t land_frames;
+	int strike;          /* build 17: the Shadow Strike's mark published (SOMVR_STRIKE_GAZE) */
+	uint64_t strike_frames;
 } g_ob;
 
 static long ob_tid(void) { return (long)syscall(SYS_gettid); }
@@ -191,33 +193,47 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 }
 
 /* after the frame's body (H4, the game thread): the objective of this frame to the layer; build 16: while the climb's
- * pullover is armed, its landing instead (SOMVR_OBF_LAND: a ring on the floor where he will stand) */
+ * pullover is armed, its landing instead (SOMVR_OBF_LAND: a ring on the floor where he will stand); build 17: while A
+ * chooses a drop (SOMVR_CLIMB_DESCENT_MARK), its landing and the line from the edge down to it (SOMVR_OBF_LINE) */
 static void ob_frame(uintptr_t pl, int stereo)
 {
 	int pub = g_ob.mode >= 2 && g_ob.on;
-	if ((!pub && !g_ob.land) || !stereo)
+	if ((!pub && !g_ob.land && !g_ob.strike) || !stereo)
 		return;
 	if (g_ob.tid && g_ob.tid != ob_tid())
 		return;
 	somvr_objective_frame e;
 	memset(&e, 0, sizeof e);
-	if (g_ob.land && g_cl.on && g_cl.po_show && g_cl.tid == my_tid() && !game_paused()) {
+	int dm = g_cl.dm_show; /* the drop's choice over the pullover's ring (A is the newer act) */
+	if (g_ob.land && g_cl.on && (g_cl.po_show || dm) && g_cl.tid == my_tid() && !game_paused()) {
 		somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
 				    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
-		float w[3] = { g_cl.po_land.x, g_cl.po_land.y, g_cl.po_land.z }, w2[3] = { w[0] + 35.0f, w[1], w[2] }, x2[3];
+		sv_vec3 l = dm ? g_cl.dm_land : g_cl.po_land;
+		float w[3] = { l.x, l.y, l.z }, w2[3] = { w[0] + 35.0f, w[1], w[2] }, x2[3];
 		somvr_th_to_xr(&mp, w, e.pos), somvr_th_to_xr(&mp, w2, x2);
 		e.n = 1, e.flags = SOMVR_OBF_LAND, e.id = 0;
 		e.dist_m = sqrtf((x2[0] - e.pos[0]) * (x2[0] - e.pos[0]) + (x2[1] - e.pos[1]) * (x2[1] - e.pos[1]) +
 				 (x2[2] - e.pos[2]) * (x2[2] - e.pos[2])); /* the ring's radius: Talion's capsule's (35 cm) */
+		if (dm) { /* the line from the edge's (or the feet's) height straight down to the ring */
+			float wt[3] = { g_cl.dm_top.x, g_cl.dm_top.y, g_cl.dm_top.z };
+			somvr_th_to_xr(&mp, wt, e.top);
+			e.flags |= SOMVR_OBF_LINE;
+		}
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
-		if (!g_ob.land_was && g_ob.lines++ < 400)
+		if (g_ob.land_was != 1 + dm && g_ob.lines++ < 400)
 			logf_("OBJECTIVE t=%.3f frame=%llu: the climb's landing in the eyes: a ring at (%.0f %.0f %.0f), xr (%+.2f %+.2f "
-			      "%+.2f) m, radius %.2f m (SOMVR_CLIMB_PULLOVER)", mono(), (unsigned long long)g_fr.frame, w[0], w[1],
-			      w[2], e.pos[0], e.pos[1], e.pos[2], (double)e.dist_m);
-		g_ob.land_was = 1, g_ob.land_frames++, g_ob.cur = 0;
+			      "%+.2f) m, radius %.2f m%s (%s)", mono(), (unsigned long long)g_fr.frame, w[0], w[1], w[2], e.pos[0],
+			      e.pos[1], e.pos[2], (double)e.dist_m, dm ? ", the line from its top 2 cm over it down to it" : "",
+			      dm ? "SOMVR_CLIMB_DESCENT_MARK" : "SOMVR_CLIMB_PULLOVER");
+		g_ob.land_was = 1 + dm, g_ob.land_frames++, g_ob.cur = 0;
 		return;
 	}
 	g_ob.land_was = 0;
+	if (g_ob.strike && sg_entry(&e)) { /* build 17: the Shadow Strike's mark on the orc looked at (SOMVR_STRIKE_GAZE) */
+		somvr_objective_put(&g_obj, g_fr.frame, &e);
+		g_ob.strike_frames++, g_ob.cur = 0;
+		return;
+	}
 	if (!pub) {
 		somvr_objective_put(&g_obj, g_fr.frame, &e); /* nothing */
 		return;
@@ -325,10 +341,12 @@ static void ob_start(int *bad)
 	static const char *const w[] = { "off", "log", "on", "both" };
 	memset(&g_ob, 0, sizeof g_ob);
 	g_ob.mode = env_word("SOMVR_OBJECTIVE", w, 4, 0);
-	g_ob.land = g_cl.on && g_cl.cfg.pullover; /* build 16: the climb's landing ring (SOMVR_CLIMB_PULLOVER) */
+	g_ob.land = g_cl.on && (g_cl.cfg.pullover || g_cl.cfg.drop_mark); /* build 16: the climb's landing ring
+									   * (SOMVR_CLIMB_PULLOVER; build 17: _DESCENT_MARK) */
+	g_ob.strike = g_sg.on; /* build 17: the Shadow Strike's mark (SOMVR_STRIKE_GAZE) */
 	if (!g_ob.mode) {
-		if (g_ob.land)
-			ob_publish(&c0, "the climb's landing only (SOMVR_OBJECTIVE off)");
+		if (g_ob.land || g_ob.strike)
+			ob_publish(&c0, "the climb's landing and the strike's mark only (SOMVR_OBJECTIVE off)");
 		return;
 	}
 	const char *p = getenv("SOMVR_OBJECTIVE_RECS");
@@ -353,14 +371,14 @@ static void ob_start(int *bad)
 	if (!ok || !(g_ob.on = bo_patch_call(&g_ob_sites[OBS_EACH], (void *)somvr_w_obeach))) {
 		logf_("WARN SOMVR_OBJECTIVE=%s: %s: the game's markers as they are", w[g_ob.mode],
 		      ok ? "OB_EACH not hooked" : "OB_POS differs");
-		if (g_ob.land)
-			ob_publish(&c0, "the climb's landing only (OB_EACH not hooked)");
+		if (g_ob.land || g_ob.strike)
+			ob_publish(&c0, "the climb's landing and the strike's mark only (OB_EACH not hooked)");
 		return;
 	}
 	g_ob.live = g_ob.mode == 1 ? 0 : g_ob.mode;
-	if (g_ob.mode >= 2 || g_ob.land) {
+	if (g_ob.mode >= 2 || g_ob.land || g_ob.strike) {
 		c.size_deg = size, c.dist_m = dist, c.faint_deg = faint, c.edge_deg = edge;
-		ob_publish(&c, g_ob.mode >= 2 ? NULL : "the climb's landing only (SOMVR_OBJECTIVE=log)");
+		ob_publish(&c, g_ob.mode >= 2 ? NULL : "the climb's landing and the strike's mark only (SOMVR_OBJECTIVE=log)");
 	}
 	logf_("CONFIG objective=%s (SOMVR_OBJECTIVE: %s), records '%s'; the marker %.1f deg, at most %.0f m away, faint within "
 	      "%.0f deg of the view's centre, the edge arrow %.1f deg; range test %s", w[g_ob.mode],
@@ -373,7 +391,8 @@ static void ob_start(int *bad)
 static void ob_end_log(void)
 {
 	if (g_ob.land)
-		logf_("OBJECTIVE END the climb's landing ring: frames %llu (SOMVR_CLIMB_PULLOVER)", (unsigned long long)g_ob.land_frames);
+		logf_("OBJECTIVE END the climb's landing ring: frames %llu (SOMVR_CLIMB_PULLOVER, _DESCENT_MARK: %llu with the "
+		      "drop's line)", (unsigned long long)g_ob.land_frames, (unsigned long long)g_cl.dm_frames);
 	if (!g_ob.on)
 		return;
 	logf_("OBJECTIVE END calls %llu (shown %llu, objectives %llu), hides %llu, frames %llu, published %llu, other threads "

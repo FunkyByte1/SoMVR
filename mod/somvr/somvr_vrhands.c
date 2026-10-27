@@ -128,6 +128,16 @@ void somvr_vh_cfg_default(somvr_vh_cfg *c) {
     memcpy(c->fist, fist, sizeof fist);
     c->thumb_opp_deg = 45; /* the thumb across the index and middle (a hammer grip) */
     c->fade_from_m = 0.015f, c->fade_to_m = 0.008f; /* clear before the wrist's cap (tilted: 0.9..2.2 cm past the joint) */
+    c->size = 1;
+}
+
+int somvr_vh_parse_size(const char *v, somvr_vh_cfg *c) {
+    if (!v || !*v) return 1;
+    char *e;
+    float f = strtof(v, &e);
+    if (e == v || *e || !isfinite(f) || f < 0.8f || f > 1.5f) return 0;
+    c->size = f;
+    return 1;
 }
 
 int somvr_vh_parse_cal(const char *v, somvr_vh_cfg *c) {
@@ -189,11 +199,11 @@ void somvr_vh_pose(const somvr_vh_model *m, const somvr_vh_cfg *c, const float c
     }
 }
 
-/* the right grip's frame from model space: p_g = gq p + gp */
+/* the right grip's frame from model space: p_g = gk gq p + gp */
 static void to_grip(const somvr_vh_model *m, const float p[3], float o[3]) {
     float t[3];
     qrot(m->gq, p, t);
-    for (int i = 0; i < 3; i++) o[i] = t[i] + m->gp[i];
+    for (int i = 0; i < 3; i++) o[i] = m->gk * t[i] + m->gp[i];
 }
 
 void somvr_vh_joint_g(const somvr_vh_model *m, const float skin[SOMVR_VH_NJ][12], int j, float out[3]) {
@@ -281,7 +291,7 @@ int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c) {
         snprintf(m->why, sizeof m->why, "no fist axis");
         return -1;
     }
-    m->tube_r_m = 0.25f * (rad[0] + rad[1] + rad[2] + rad[3]);
+    m->tube_r_m = 0.25f * (rad[0] + rad[1] + rad[2] + rad[3]) * (c->size >= 0.8f && c->size <= 1.5f ? c->size : 1.0f);
     m->tube_tilt_deg = acosf(fminf(1, fmaxf(-1, dot3(d, kn)))) / DEG;
     /* the grip's frame in model space: Z = -d, X = the back of the hand (+X: "into the palm" for a right hand) */
     float X[3] = {1, 0, 0}, Y[3], Z[3] = {-d[0], -d[1], -d[2]};
@@ -309,6 +319,9 @@ int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c) {
     xf_mul(cal, tube, g);
     memcpy(m->gq, g, sizeof m->gq);
     memcpy(m->gp, g + 4, sizeof m->gp);
+    /* build 17: the size about the tube's centre, before the calibration's move: cal (k tube): gp = k (gp - cal_t) + cal_t */
+    m->gk = c->size >= 0.8f && c->size <= 1.5f ? c->size : 1.0f;
+    for (int i = 0; i < 3; i++) m->gp[i] = m->gk * (m->gp[i] - cal[4 + i]) + cal[4 + i];
     /* the wrist at rest: its place, the forearm (+Y in model space: the wrist joint's +Z) and the back (+X) */
     static const float ey[3] = {0, 1, 0}, ex[3] = {1, 0, 0};
     float wr[3];
@@ -324,6 +337,7 @@ int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c) {
         if (fabsf(s) < 0.015f && b > m->wrist_r_m) m->wrist_r_m = b;
         m->fade[v] = 1 - smooth01(-c->fade_from_m, c->fade_to_m, s);
     }
+    m->wrist_r_m *= m->gk; /* (measured in model space) */
     /* how far out of the palm any pose reaches (the right palm's outward normal = the grip's -X), from the origin: the
      * thumb, the index, the middle with the ring and the pinky each at 0, 1/2, 1 (81 poses); then the pointing tip */
     static const float point[SOMVR_VH_NF] = {1, 0, 1, 1, 1}, lv[3] = {0, 0.5f, 1};
@@ -356,9 +370,9 @@ int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c) {
         m->idx_mirror[3 * t + 2] = somvr_hm_idx[3 * t + 1];
     }
     snprintf(m->why, sizeof m->why,
-             "%d vertices, %d triangles; the fist's tube %.1f cm across (joint radius %.1f cm, %.0f deg off the knuckles), "
-             "the wrist %.1f cm behind the grip, the palm's reach %.1f cm, the pointing tip at %.1f,%.1f,%.1f cm",
-             SOMVR_HM_NV, SOMVR_HM_NI / 3, 200 * (m->tube_r_m - 0.0085f), 100 * m->tube_r_m, m->tube_tilt_deg,
+             "%d vertices, %d triangles; the fist's tube %.1f cm across (joint radius %.1f cm, %.0f deg off the knuckles; "
+             "size %.2f), the wrist %.1f cm behind the grip, the palm's reach %.1f cm, the pointing tip at %.1f,%.1f,%.1f cm",
+             SOMVR_HM_NV, SOMVR_HM_NI / 3, 200 * (m->tube_r_m - 0.0085f * m->gk), 100 * m->tube_r_m, m->tube_tilt_deg, m->gk,
              100 * sqrtf(dot3(m->wrist_g, m->wrist_g)), 100 * m->palm_reach_m, 100 * m->tip_g[0], 100 * m->tip_g[1],
              100 * m->tip_g[2]);
     m->ok = 1;
@@ -411,6 +425,8 @@ void somvr_vh_skin(const somvr_vh_model *m, const float skin[SOMVR_VH_NJ][12], i
     memcpy(gm, m->gq, sizeof m->gq);
     memcpy(gm + 4, m->gp, sizeof m->gp);
     xf_mat(gm, g);
+    for (int r = 0; r < 3; r++) /* build 17: the size (the linear part; the normals are renormalised below) */
+        for (int k = 0; k < 3; k++) g[4 * r + k] *= m->gk;
     if (side == SOMVR_HAND_L)
         for (int j = 0; j < 4; j++) g[j] = -g[j];
     float gp[7];

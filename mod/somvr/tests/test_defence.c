@@ -776,6 +776,80 @@ static void test_contact(void)
           "contact off: build 9's parry in the wind-up at %.3f s", tr.parry_t - 50);
 }
 
+/* build 17: the drawn blade k_drawn, the hand's k_hand (-1 = none), the grip still, the drawn tip in the tracking space
+ * moving tip_cm over the attack (a wrist turn) */
+static struct crun contact_attack17(const somvr_df_cfg *c, somvr_df_track *tr, int k_drawn, int k_hand, int type, float tip_cm)
+{
+    struct crun r = { 0, 0, 0, -1 };
+    somvr_df_track_init(tr);
+    for (int f = 0;; f++) {
+        float ts = (float)f / 90;
+        if (ts > 0.72f)
+            break;
+        somvr_df_in in;
+        memset(&in, 0, sizeof in);
+        in.ts = ts, in.bpw = 0, in.epw = 0.66f, in.window = 1, in.type = type, in.impact = 0.70f;
+        in.blade = our_blade(k_drawn, ts, in.base, in.tip);
+        in.have_hand_blade = k_hand >= 0 && our_blade(k_hand, ts, in.hb, in.ht);
+        orc_weapon(ts, in.ob[0], in.ot[0]);
+        in.norc = 1;
+        memcpy(in.hand, in.ob[0], sizeof in.hand), memcpy(in.orc, ORC, sizeof in.orc), memcpy(in.head, HEAD, sizeof in.head);
+        in.grip[0] = 10, in.grip[1] = 120, in.grip[2] = 30, in.have_grip = 1;
+        in.tip_xr[0] = 10, in.tip_xr[1] = 120 + tip_cm * ts / 0.72f, in.tip_xr[2] = 120, in.have_tip_xr = 1;
+        double t = 50 + ts;
+        if (somvr_df_step(c, tr, t, &in) == 2 && r.fires++ == 0)
+            r.fire_ts = ts;
+        r.t_end = t;
+    }
+    return r;
+}
+static void test_build17(void)
+{
+    somvr_df_cfg c;
+    somvr_df_cfg_default(&c);
+    c.contact = 1;
+    unsigned b = 0;
+    CHECK(c.red_types == 0xa && !c.contact_hand && !c.move_blade, "build 17 defaults: red parry,block; the drawn blade; grip");
+    CHECK(somvr_df_red_parse("parry,counter,block", &b) && b == 0xe && somvr_df_red_parse(" none ", &b) && b == 0 &&
+              somvr_df_red_parse("counter", &b) && b == 4 && !somvr_df_red_parse("parry,sword", &b) && b == 0 &&
+              somvr_df_red_parse(NULL, &b) && b == 0,
+          "the red types' words");
+    CHECK(!somvr_df_is_red(&c, 0) && somvr_df_is_red(&c, 1) && !somvr_df_is_red(&c, 2) && somvr_df_is_red(&c, 3) &&
+              !somvr_df_is_red(&c, 4) && !somvr_df_is_red(&c, -1),
+          "red by type (defaults): 1 and 3; never ranged");
+    c.red_types = 0xe;
+    CHECK(somvr_df_is_red(&c, 2) && !somvr_df_can_block(&c, 2) && somvr_df_can_block(&c, 0), "red counter: type 2 dodged");
+    c.red_types = 0;
+    CHECK(somvr_df_can_block(&c, 1) && !somvr_df_can_block(&c, 3) && somvr_df_is_red(&c, 3),
+          "no red bits: 1 blockable, 3 never");
+    c.red_types = 0xe;
+    somvr_df_track tr;
+    struct crun r = contact_attack17(&c, &tr, 0, -1, 2, 0);
+    CHECK(r.fires == 0 && somvr_df_verdict(&c, &tr, r.t_end, 2) == SOMVR_DFO_HIT, "red counter: the held guard does not block");
+    c.red_types = 0xa;
+    /* the drawn blade trails 50 cm over the swing (k 1), the hand's is in the path (k 0) */
+    r = contact_attack17(&c, &tr, 1, 0, 0, 0);
+    CHECK(r.fires == 0 && tr.best_cm > 25, "drawn only: the trailing blade misses (%.1f cm)", tr.best_cm);
+    c.contact_hand = 1;
+    r = contact_attack17(&c, &tr, 1, 0, 0, 0);
+    CHECK(r.fires == 1 && tr.met_by == 2 && tr.drawn_best_cm > 25 && somvr_df_verdict(&c, &tr, r.t_end, 0) == SOMVR_DFO_BLOCK,
+          "both: the hand's blade meets (by %d; the drawn %.1f cm): a block", tr.met_by, tr.drawn_best_cm);
+    r = contact_attack17(&c, &tr, 0, 1, 0, 0);
+    CHECK(r.fires == 1 && tr.met_by == 1, "both: the drawn blade in the path meets first (by %d)", tr.met_by);
+    r = contact_attack17(&c, &tr, 1, -1, 0, 0);
+    CHECK(r.fires == 0, "both, no hand blade read: the drawn blade alone");
+    /* the move rule on the blade: the grip still, the tip turned 30 cm into the path */
+    c.contact_move_cm = 15, c.contact_hand = 0;
+    r = contact_attack17(&c, &tr, 0, -1, 0, 30);
+    CHECK(r.fires == 0 && tr.still && tr.blade_cm < 1, "move from the grip: the wrist turn is a still guard (%.1f cm)", tr.blade_cm);
+    c.move_blade = 1;
+    r = contact_attack17(&c, &tr, 0, -1, 0, 30);
+    CHECK(r.fires == 1 && tr.blade_cm > 15 && somvr_df_verdict(&c, &tr, r.t_end, 0) == SOMVR_DFO_BLOCK,
+          "move from the blade: the tip moved %.1f cm: a block", tr.blade_cm);
+    r = contact_attack17(&c, &tr, 0, -1, 0, 5);
+    CHECK(r.fires == 0 && tr.still, "move from the blade: a still tip (5 cm) is still");
+}
+
 int main(void)
 {
     test_types();
@@ -788,6 +862,7 @@ int main(void)
     test_haptic();
     test_clank();
     test_contact();
+    test_build17();
     printf("test_defence: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

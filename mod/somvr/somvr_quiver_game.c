@@ -175,14 +175,23 @@ static uint32_t bs_post(const char *name, uint64_t obj, uint32_t flags, void *cb
 	uint32_t id = ((bs_post_fn)g_bs_orig)(name, obj, flags, cb, cookie, n_ext, ext, playing);
 	atomic_fetch_add_explicit(&g_bs_posts, 1, memory_order_relaxed);
 	int64_t now = (int64_t)(mono() * 1e3);
-	if (now >= atomic_load_explicit(&g_bs_until_ms, memory_order_relaxed) ||
-	    atomic_load_explicit(&g_bs_logged, memory_order_relaxed) >= 400)
-		return id;
+	double since = 0;
+	int hk = 0, hit = hf_log_window(&since, &hk); /* build 17: SOMVR_COMBAT_HITLOG's window after our hit */
+	if (!hit && ((g_hf.log != 2 && now >= atomic_load_explicit(&g_bs_until_ms, memory_order_relaxed)) ||
+		     atomic_load_explicit(&g_bs_logged, memory_order_relaxed) >= 400))
+		return id; /* (SOMVR_COMBAT_HITLOG=2: every new name, all the time) */
 	char n[48];
 	size_t k = 0;
 	for (; name && k + 1 < sizeof n && peek((uintptr_t)name + k, &n[k], 1) && n[k]; k++)
 		;
 	n[k] = 0;
+	if (hit) {
+		static _Atomic int hit_lines;
+		if (atomic_fetch_add(&hit_lines, 1) < 400)
+			logf_("HITSND t=%.3f '%s' obj %#lx flags %#x -> playing %u (%.0f ms after our %s hit)", now * 1e-3, n,
+			      (unsigned long)obj, flags, id, since * 1e3, g_hf_kind_w[hk >= 0 && hk < SC_KIND_N ? hk : 0]);
+		return id;
+	}
 	int shot = now < atomic_load_explicit(&g_bs_shot_ms, memory_order_relaxed), fresh = 1;
 	while (atomic_flag_test_and_set_explicit(&g_bs_mu, memory_order_acquire))
 		;
@@ -199,6 +208,18 @@ static uint32_t bs_post(const char *name, uint64_t obj, uint32_t flags, void *cb
 	return id;
 }
 
+/* SOMVR_BOW_SNDLOG's patch (also build 17's SOMVR_COMBAT_HITLOG), once: how many of the two calls are ours */
+static int bs_install_log(void)
+{
+	static int done = -1;
+	if (done >= 0)
+		return done;
+	g_bs_orig = g_bs_sites_game[0].target, done = 0;
+	for (int i = 0; i < 2; i++)
+		done += bo_patch_call(&g_bs_sites_game[i], (void *)bs_post);
+	return done;
+}
+
 /* bo_start: SOMVR_BOW_SNDLOG, SOMVR_BOW_SOUND */
 static void bs_config(int *bad)
 {
@@ -210,10 +231,7 @@ static void bs_config(int *bad)
 	snprintf(g_bs.draw, sizeof g_bs.draw, "%s", v && v[0] && strcmp(v, "off") ? v : "");
 	snprintf(g_bs.draw_stp, sizeof g_bs.draw_stp, "%s_stp", g_bs.draw);
 	if (g_bs.log) {
-		int in = 0;
-		g_bs_orig = g_bs_sites_game[0].target;
-		for (int i = 0; i < 2; i++)
-			in += bo_patch_call(&g_bs_sites_game[i], (void *)bs_post);
+		int in = bs_install_log();
 		logf_("CONFIG bow sndlog=1 (SOMVR_BOW_SNDLOG, test only): %d of 2 PostEvent-by-name calls patched; the game's sound "
 		      "events logged while the bow is out and 2 s after (BOWSND lines, 400 at most)", in);
 	}

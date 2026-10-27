@@ -139,6 +139,8 @@ typedef struct {
 } sc_hap;
 void sc_hap_reset(sc_hap *h);
 void sc_hap_add(sc_hap *h, double t, float amp, float dur, int ramp, uint32_t source); /* replaces the weakest */
+/* the same for a pulse starting at t0 >= now (one still to come keeps its slot against later adds) */
+void sc_hap_add_at(sc_hap *h, double now, double t0, float amp, float dur, int ramp, uint32_t source);
 /* the level now: max(the effects, the rumble) x scale, clamped to 1; *src its source (SOMVR_HAP_*) */
 float sc_hap_level(const sc_hap *h, double t, float scale, uint32_t *src, float *remaining, int *continuous);
 /* one tick: 1 = post *out (somvr_haptic_post): a level that moved by more than 0.02 (a flat effect: its whole

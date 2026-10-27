@@ -53,6 +53,8 @@ static struct {
 #define SK_HC_S 4.5 /* the knockdown sync (PC_WraithDash_KD_Bip_Standing_F) runs ~3.6 s */
 
 static int sk_log_ok(void) { return g_sk.lines++ < 400; }
+static void sg_config(int *bad);       /* build 17: SOMVR_STRIKE_GAZE (the end of this file) */
+static const char *sg_word(const char *v);
 
 static void sk_hc_take(double t)
 {
@@ -121,6 +123,7 @@ static void sk_config(int *bad)
 	if (g_sk.on && !g_lo.anchor)
 		logf_("WARN SOMVR_BOW_STRIKE=%s without SOMVR_ANCHOR=root: X sends the strike, the view does what the base does",
 		      somvr_sk_mode_name(g_sk.cfg.mode));
+	sg_config(bad); /* build 17: SOMVR_STRIKE_GAZE (below) */
 }
 
 /* the test word "bow strike free|cost" (headless only: run 065308 struck once, then the game showed no Shadow Strike
@@ -150,6 +153,8 @@ static const char *sk_word(const char *v)
 		      "arrival, 32 the sync, 64 after)", atomic_load(&g_sk.mark_mask));
 		return "bow strike marks";
 	}
+	if (!strncmp(v, "gaze", 4)) /* build 17: "bow strike gaze [on|off]" */
+		return sg_word(v + 4);
 	if (!strncmp(v, "free", 4) || !strncmp(v, "cost", 4))
 		return sk_cost_word(v[0] == 'f', strstr(v, "energy") ? 1 : strstr(v, "charge") ? 2 : 3);
 	int m = somvr_sk_mode_parse(v), stock = !strncmp(v, "stock", 5);
@@ -166,10 +171,14 @@ static const char *sk_word(const char *v)
 }
 
 /* somvr_prompts_game.c: the game shows (1) or hides (0) a prompt for command act */
+static _Atomic uint64_t g_sk_shows; /* build 17 (SOMVR_STRIKE_GAZE): the Shadow Strike prompt's shows (a show after A) */
 static void sk_prompt(int act, int up)
 {
-	if (act == BO_CMD_STRIKE)
+	if (act == BO_CMD_STRIKE) {
 		atomic_store_explicit(&g_sk.prompt, up, memory_order_relaxed);
+		if (up)
+			atomic_fetch_add_explicit(&g_sk_shows, 1, memory_order_relaxed);
+	}
 }
 
 static int sk_prompt_up(void) { return atomic_load_explicit(&g_sk.prompt, memory_order_relaxed); }
@@ -183,6 +192,21 @@ static int sk_x(void) { return g_sk.on; }
 /* LOCO: the game's attack moves carry Talion from the press until the dash ends */
 static int sk_lift(double t) { return g_sk.on && t < g_sk.lift_until; }
 
+/* a press that sends 121 (X with the bow out, or the gaze's once the game's prompt is up): the dash armed, 121 for
+ * press_s, LOCO's hold lifted, the trace and the orcs' health taken */
+static void sk_arm(double t)
+{
+	somvr_sk_press(&g_sk.s, t);
+	sk_hc_take(t);
+	g_sk.mark_press = 1, g_sk.mark_sync = g_sk.mark_after = 0, g_sk.end_t = 0;
+	g_sk.send_until = t + g_sk.cfg.press_s;
+	g_sk.lift_until = t + g_sk.cfg.window_s + g_sk.cfg.dash_s;
+	g_sk.trace_until = t + g_sk.cfg.window_s + g_sk.cfg.dash_s + 1.0;
+	g_sk.max_eye_step = g_sk.max_off_path = g_sk.max_dev = g_sk.max_dyaw = 0, g_sk.have_yaw0 = 0;
+}
+
+static void sg_tick(sc_tick_out *o, double t);
+
 /* the input tick, after the bow's (bo_tick): X's edge with the bow out; 121 held for press_s */
 static void sk_tick(sc_tick_out *o, double t)
 {
@@ -191,6 +215,7 @@ static void sk_tick(sc_tick_out *o, double t)
 	int x = o->live && o->ctx == SC_CTX_WORLD && (g_inp.ctl.down[SOMVR_HAND_L] & SOMVR_BTN_LOWER);
 	int edge = x && !g_sk.x_was;
 	g_sk.x_was = x;
+	sg_tick(o, t); /* build 17, SOMVR_STRIKE_GAZE: A at the orc looked at in the wraith vision (arms the dash below) */
 	if (edge) {
 		int out = g_bow.s.phase != SOMVR_BOW_PH_IDLE;
 		if (!out) {
@@ -205,13 +230,7 @@ static void sk_tick(sc_tick_out *o, double t)
 			g_sk.denied_at_press = !g_sk.prompt_at_press || (g_sk.arrows_at_press >= 0 && g_sk.arrows_at_press < 2);
 			if (g_sk.denied_at_press)
 				in_haptic_event(SOMVR_HAND_L, 0.25f, 0.08f, SOMVR_HAP_COMBAT);
-			somvr_sk_press(&g_sk.s, t);
-			sk_hc_take(t);
-			g_sk.mark_press = 1, g_sk.mark_sync = g_sk.mark_after = 0, g_sk.end_t = 0;
-			g_sk.send_until = t + g_sk.cfg.press_s;
-			g_sk.lift_until = t + g_sk.cfg.window_s + g_sk.cfg.dash_s;
-			g_sk.trace_until = t + g_sk.cfg.window_s + g_sk.cfg.dash_s + 1.0;
-			g_sk.max_eye_step = g_sk.max_off_path = g_sk.max_dev = g_sk.max_dyaw = 0, g_sk.have_yaw0 = 0;
+			sk_arm(t);
 			if (sk_log_ok())
 				logf_("STRIKE t=%.3f press %llu: X with the bow out (%s): CombatPrimary04 121 for %.0f ms; the game's "
 				      "Shadow Strike prompt %s; Talion at %.1f,%.1f,%.1f; arrows %d", t, (unsigned long long)g_sk.presses,
@@ -378,9 +397,13 @@ static uint32_t sk_comfort(float *blink)
 	return SOMVR_CFF_WRAITH | somvr_cff_tunnel_bits(g_sk.tunnel);
 }
 
+static void sg_end_log(void);
 static void sk_end_log(void)
 {
-	if (!g_bow.on || (!g_sk.on && !g_sk.presses))
+	if (!g_bow.on)
+		return;
+	sg_end_log();
+	if (!g_sk.on && !g_sk.presses)
 		return;
 	logf_("STRIKE END mode %s: presses %llu (X without the bow %llu), 121 ticks sent %llu; moves %llu, dashes ended %llu, no "
 	      "move %llu; frames moving %llu (held %llu); the body moments' hold took our point %llu frames; trace lines %llu",
@@ -389,4 +412,377 @@ static void sk_end_log(void)
 	      (unsigned long long)g_sk.starts, (unsigned long long)g_sk.ends, (unsigned long long)g_sk.timeouts,
 	      (unsigned long long)g_sk.frames_moving, (unsigned long long)g_sk.s.carried_frames,
 	      (unsigned long long)g_sk.bm_follows, (unsigned long long)g_sk.trace_lines);
+}
+
+/* ==== build 17: SOMVR_STRIKE_GAZE=on (somvr_gaze.h; docs/re-xr-pipeline.md 63, handoff/HANDOFF-wraith.md "build 17") ====
+ * The Shadow Strike by gaze. Y held with the wraith vision on, on foot, the bow away, no menu: the orc the head looks
+ * at (within SOMVR_STRIKE_GAZE_DEG of the head's ray, in range and in sight; somvr_gz_pick's hysteresis) is marked in
+ * the world (somvr_objective's entry, SOMVR_OBF_STRIKE: a wraith-blue ring round its chest, the A button and "Shadow
+ * Strike" beside it; under 2 arrows grey and "No arrows"). A (the right lower button: X sits under the thumb that holds
+ * Y) with a mark and 2+ arrows commits: the mark locked and filled, the game's aim command (124) held with its free-aim
+ * ray from the head to that orc's chest (bo_camxf) until the game's own Shadow Strike prompt comes up (its range, its
+ * sight, its target: the game's verdict), then 121 as X sends it (sk_arm: build 12's dash carries the view). No prompt
+ * within 0.8 s: the denied buzz, nothing moves. Looking away (0.25 s) or letting go of Y before A: no mark, A does
+ * nothing (and the descent's A at an edge is its own again). Needs SOMVR_BOW_STRIKE=dash|blink (the presentation),
+ * SOMVR_BOW=1 (the aim command, the ray hook), SOMVR_VISION (Y), the objective layer (SOMVR_XR_OBJECTIVE, default on). */
+static struct {
+	int on;                   /* the switch (and SOMVR_BOW_STRIKE=dash|blink) */
+	_Atomic int req;          /* the word "bow strike gaze on|off": -1 none */
+	_Atomic int req_orcs;     /* the word "bow strike gaze orcs": the orcs' bearings from the head next frame (tests) */
+	_Atomic int req_probe;    /* the word "bow strike gaze probe S": the aim held S s, its ray on the nearest orc (tests:
+				   * the game's prompt against the distance and the time) */
+	double probe_until, probe_t0, probe_first;
+	int probe_prompt, probe_have;
+	float probe_aim[3], probe_dist;
+	somvr_gz_cfg cfg;
+	somvr_gz g;
+	somvr_gz_out o;           /* this frame's pick */
+	float ring_min_m, ring_deg;
+	_Atomic int hold_sync;    /* SOMVR_STRIKE_GAZE_AIM_HOLD=sync: the aim held until the strike's sync is over (as the bow
+				   * path holds it: the bow stays out); move (default): until the strike's move begins */
+	uint64_t ends_at_send;    /* g_sk.ends at 121 */
+	int moved;                /* this press's strike has moved the view (its hold or dash): no mark from then on */
+	int world, a_was, arrows, climbing;
+	int have_head;
+	float head[3], fwd[3];    /* the last frame's head (world cm) and its forward */
+	uint64_t shows_at_press, head_frame;
+	uint32_t ids[16];         /* the marks' small numbers (logs, the layer's id) */
+	uint64_t idk[16];
+	uint32_t next_id;
+	uint64_t frames_on, frames_marked, aim_ticks, cam_over, casts, blocked, published, other_tid;
+	uint32_t lines;
+	double sum_t;
+} g_sg;
+
+static int sg_log_ok(void) { return g_sg.lines++ < 300; }
+
+static uint32_t sg_id(uint64_t k)
+{
+	for (int i = 0; i < 16; i++)
+		if (g_sg.idk[i] == k)
+			return g_sg.ids[i];
+	int j = (int)(g_sg.next_id % 16);
+	g_sg.idk[j] = k, g_sg.ids[j] = ++g_sg.next_id;
+	return g_sg.next_id;
+}
+
+static void sg_config(int *bad)
+{
+	somvr_gz_cfg_default(&g_sg.cfg);
+	static const char *const w[] = { "off", "on" };
+	int on = env_word("SOMVR_STRIKE_GAZE", w, 2, 0);
+	g_sg.cfg.cone_deg = env_float("SOMVR_STRIKE_GAZE_DEG", g_sg.cfg.cone_deg, 1, 20, bad);
+	g_sg.cfg.keep_deg = env_float("SOMVR_STRIKE_GAZE_KEEP_DEG", g_sg.cfg.keep_deg, g_sg.cfg.cone_deg, 40, bad);
+	g_sg.cfg.range_cm = 100 * env_float("SOMVR_STRIKE_GAZE_RANGE_M", g_sg.cfg.range_cm / 100, 3, 60, bad);
+	g_sg.cfg.aim_max_s = 0.001f * env_float("SOMVR_STRIKE_GAZE_AIM_MS", 1000 * g_sg.cfg.aim_max_s, 100, 3000, bad);
+	g_sg.ring_min_m = 1.0f, g_sg.ring_deg = 7.0f;
+	atomic_store(&g_sg.hold_sync, env_word("SOMVR_STRIKE_GAZE_AIM_HOLD", (const char *const[]){ "move", "sync" }, 2, 0));
+	atomic_store(&g_sg.req, -1);
+	g_sg.on = on && g_sk.on;
+	if (on || g_bow.on)
+		logf_("CONFIG strike gaze=%s (SOMVR_STRIKE_GAZE%s): %s; the mark within %.1f deg of the head's ray (kept to %.1f, "
+		      "another orc %.1f deg nearer), after %.0f ms, lost after %.0f ms; range %.1f..%.0f m; the game's prompt within "
+		      "%.0f ms of A; 121 %.0f ms, the aim held %.0f ms after; the ring %.1f m or %.0f deg", on ? "on" : "off",
+		      on ? "" : ", the default",
+		      !on ? "nothing marked, A does nothing new"
+		      : g_sk.on ? "Y held in the wraith vision marks the orc looked at; A = the game's Shadow Strike at it"
+				: "NOT on: it needs SOMVR_BOW_STRIKE=dash|blink and SOMVR_BOW=1",
+		      g_sg.cfg.cone_deg, g_sg.cfg.keep_deg, g_sg.cfg.switch_deg, g_sg.cfg.dwell_s * 1e3, g_sg.cfg.lose_s * 1e3,
+		      g_sg.cfg.near_cm / 100, g_sg.cfg.range_cm / 100, g_sg.cfg.aim_max_s * 1e3, g_sg.cfg.press_s * 1e3,
+		      g_sg.cfg.hold_s * 1e3, g_sg.ring_min_m, g_sg.ring_deg);
+}
+
+/* "bow strike gaze [on|off]" (the writer thread): the switch from the next frame; a status line */
+static const char *sg_word(const char *v)
+{
+	while (*v == ' ')
+		v++;
+	if (!strncmp(v, "on", 2) || !strncmp(v, "off", 3)) {
+		atomic_store(&g_sg.req, v[1] == 'n');
+		return v[1] == 'n' ? "bow strike gaze on" : "bow strike gaze off";
+	}
+	if (!strncmp(v, "hold", 4)) { /* "bow strike gaze hold move|sync" (tests: the A/B) */
+		atomic_store(&g_sg.hold_sync, strstr(v, "sync") != NULL);
+		logf_("STRIKE gaze: the aim held until %s (the word)", atomic_load(&g_sg.hold_sync) ? "the strike's sync is over" : "the strike's move begins");
+		return "bow strike gaze hold";
+	}
+	if (!strncmp(v, "probe", 5)) {
+		atomic_store(&g_sg.req_probe, atoi(v + 5) > 0 ? atoi(v + 5) : 10);
+		return "bow strike gaze probe (the aim held, its ray on the nearest orc: the prompt's lines)";
+	}
+	if (!strncmp(v, "orcs", 4)) {
+		atomic_store(&g_sg.req_orcs, 1);
+		return "bow strike gaze orcs (their bearings from the head: the next frame's STRIKE gaze orc lines)";
+	}
+	uintptr_t pcb = g_fr.pl ? peek_ptr(g_fr.pl + P_COMBAT) : 0, pcs = pcb ? peek_ptr(pcb + PC_SERVER) : 0;
+	uintptr_t sya = pcs ? peek_ptr(pcs + FB_C_SYNC) : 0, syr = sya ? peek_ptr(sya + FB_SYNC_REC) : 0;
+	logf_("STRIKE gaze status: Talion's sync record %s; the aim held until %s", syr ? "SET (in a sync)" : "none",
+	      atomic_load(&g_sg.hold_sync) ? "the sync is over" : "the move begins");
+	logf_("STRIKE gaze status: %s; mark %llu (%.1f deg, %.1f m), phase %d; marks %llu switches %llu unmarks %llu; presses "
+	      "%llu (no mark %llu, no arrows %llu), sent %llu, refused %llu", g_sg.on ? "on" : "off",
+	      (unsigned long long)g_sg.g.mark, g_sg.g.deg, g_sg.g.dist_cm / 100, g_sg.g.phase, (unsigned long long)g_sg.g.marks,
+	      (unsigned long long)g_sg.g.switches, (unsigned long long)g_sg.g.unmarks, (unsigned long long)g_sg.g.presses,
+	      (unsigned long long)g_sg.g.nomarks, (unsigned long long)g_sg.g.noarrows, (unsigned long long)g_sg.g.sends,
+	      (unsigned long long)g_sg.g.refused);
+	return "bow strike gaze (a status line)";
+}
+
+/* the head's ray to the orc's chest clear? 1 yes, 0 a wall or rock first, -1 unknown (no cast: the climb's off) */
+static int sg_los(const float from[3], const float to[3], uintptr_t hobj)
+{
+	uintptr_t phys = g_cl.on ? peek_ptr(g_clg.phys_pp) : 0;
+	if (!phys || vptr_of((void *)phys) != g_cl.vt_phys ||
+	    peek_ptr(g_cl.vt_phys + 8u * CL_SLOT_RAYCAST) != g_cl_sites[CLS_RAYCAST].target)
+		return -1;
+	unsigned char r[0x80] __attribute__((aligned(16)));
+	g_sg.casts++;
+	if (!cl_cast1(phys, from, to, r))
+		return 1;
+	float hp[3];
+	uintptr_t obj;
+	memcpy(hp, r, sizeof hp), memcpy(&obj, r + 0x20, sizeof obj);
+	if (!vec_ok(hp, 1e7f) || obj == hobj || dist3(hp, to) < 70.0f) /* its own capsule, its weapon */
+		return 1;
+	g_sg.blocked++;
+	return 0;
+}
+
+/* H4 (the game thread, a complete stereo frame, before ob_frame): this frame's pick and its lines */
+static void sg_frame(uintptr_t pl, int stereo)
+{
+	int rq = atomic_exchange(&g_sg.req, -1);
+	if (rq >= 0) {
+		g_sg.on = rq && g_sk.on;
+		logf_("STRIKE gaze now %s (the word)%s", g_sg.on ? "on" : "off", rq && !g_sk.on ? ": NOT on (SOMVR_BOW_STRIKE is not dash|blink)" : "");
+		if (!g_sg.on)
+			somvr_gz_reset(&g_sg.g);
+	}
+	if (!g_sg.on || !stereo || !pl)
+		return;
+	if (my_tid() != g_inp.tid) {
+		g_sg.other_tid++;
+		return;
+	}
+	double t = cb_now();
+	sv_vec3 hp;
+	sv_quat hq;
+	somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+	sv_vec3 f = sv_qrot(sv_qnormalize(hq), (sv_vec3){ 0, 0, 1 });
+	g_sg.head[0] = hp.x, g_sg.head[1] = hp.y, g_sg.head[2] = hp.z, g_sg.fwd[0] = f.x, g_sg.fwd[1] = f.y, g_sg.fwd[2] = f.z;
+	g_sg.have_head = vec_ok(g_sg.head, 1e7f) && isfinite(f.x + f.y + f.z), g_sg.head_frame = g_fr.frame;
+	g_sg.climbing = g_cl.on && g_cl.s.phase != SOMVR_CLIMB_PH_NONE;
+	int y = g_sg.world && (g_inp.ctl.down[SOMVR_HAND_L] & SOMVR_BTN_UPPER), vis = st_vision();
+	int on = g_sg.have_head && y && vis == 1 && !g_sg.climbing && g_bow.s.phase == SOMVR_BOW_PH_IDLE && !sk_away() &&
+		 !game_paused();
+	g_sg.arrows = bo_arrows(pl);
+	struct bo_act a;
+	bo_active(pl, &a);
+	struct cb_orc near[12];
+	somvr_gz_orc orcs[12];
+	int n = 0;
+	int pr = atomic_exchange(&g_sg.req_probe, 0);
+	if (pr > 0) {
+		g_sg.probe_t0 = t, g_sg.probe_until = t + pr, g_sg.probe_first = 0, g_sg.probe_prompt = -1;
+		logf_("STRIKE t=%.3f gaze probe: the aim held %d s, its ray on the nearest orc's chest", t, pr);
+	}
+	int probe = t < g_sg.probe_until;
+	float tp[3] = { 0, 0, 0 }; /* Talion (the orcs' list is about him) */
+	uintptr_t pm = 0, tobj = 0;
+	int body = player_objs(pl, &pm, &tobj) && peek(tobj + OBJ_POS, tp, sizeof tp) && vec_ok(tp, 1e7f);
+	if ((on || g_sg.g.phase || probe) && a.pc && body)
+		n = cb_orcs_r(a.pc, a.sc, tp, g_sg.cfg.range_cm + g_sg.cfg.range_keep_cm + 300.0f, near, 12);
+	int seen = 0;
+	for (int i = 0; i < n; i++) {
+		orcs[i].id = near[i].hobj, memcpy(orcs[i].root, near[i].pos, sizeof orcs[i].root), orcs[i].los = -1;
+		float d, deg = somvr_gz_angle(&g_sg.cfg, g_sg.head, g_sg.fwd, near[i].pos, &d);
+		if (on && deg <= g_sg.cfg.keep_deg + 3) { /* only the ones near the ray are cast for */
+			float to[3] = { near[i].pos[0], near[i].pos[1] + g_sg.cfg.chest_cm, near[i].pos[2] };
+			orcs[i].los = sg_los(g_sg.head, to, near[i].hobj);
+			seen += orcs[i].los == 1;
+		}
+	}
+	if (atomic_exchange(&g_sg.req_orcs, 0)) { /* tests: where each orc is from the head (the driver turns the head) */
+		if (!n && a.pc && body)
+			n = cb_orcs_r(a.pc, a.sc, tp, 4000.0f, near, 12);
+		float yaw = atan2f(g_sg.fwd[0], g_sg.fwd[2]), pit = asinf(fmaxf(-1, fminf(1, g_sg.fwd[1])));
+		for (int i = 0; i < n; i++) {
+			float to[3] = { near[i].pos[0] - g_sg.head[0], near[i].pos[1] + g_sg.cfg.chest_cm - g_sg.head[1],
+					near[i].pos[2] - g_sg.head[2] }, d;
+			float h = sqrtf(to[0] * to[0] + to[2] * to[2]), by = remainderf(atan2f(to[0], to[2]) - yaw, 6.2831853f);
+			float deg = somvr_gz_angle(&g_sg.cfg, g_sg.head, g_sg.fwd, near[i].pos, &d);
+			logf_("STRIKE gaze orc %d: hobj %#lx at %.1f m: its chest %+.1f deg right %+.1f deg up of the head's ray (%.1f "
+			      "deg off its body); Y %d vision %d on %d", i, (unsigned long)near[i].hobj, d / 100, by * 57.29578f,
+			      (atan2f(to[1], h) - pit) * 57.29578f, deg, y, vis, on);
+		}
+		if (!n)
+			logf_("STRIKE gaze orc: none within 40 m (Y %d vision %d on %d)", y, vis, on);
+	}
+	g_sg.probe_have = probe && n > 0;
+	if (g_sg.probe_have) {
+		g_sg.probe_aim[0] = near[0].pos[0], g_sg.probe_aim[1] = near[0].pos[1] + g_sg.cfg.chest_cm, g_sg.probe_aim[2] = near[0].pos[2];
+		g_sg.probe_dist = dist3(g_sg.probe_aim, g_sg.head);
+		int up = sk_prompt_up();
+		if (up && !g_sg.probe_first)
+			g_sg.probe_first = t;
+		if (up != g_sg.probe_prompt && sg_log_ok())
+			logf_("STRIKE t=%.3f gaze probe: the prompt %s at %.2f m (%.0f ms into the probe; Talion at %.0f,%.0f,%.0f)", t,
+			      up ? "UP" : "down", g_sg.probe_dist / 100, (t - g_sg.probe_t0) * 1e3, tp[0], tp[1], tp[2]);
+		g_sg.probe_prompt = up;
+	} else if (g_sg.probe_until > 0 && !probe) {
+		logf_("STRIKE t=%.3f gaze probe over: the first prompt %.0f ms in", t, g_sg.probe_first ? (g_sg.probe_first - g_sg.probe_t0) * 1e3 : -1.0);
+		g_sg.probe_until = 0;
+	}
+	uint64_t was = g_sg.g.mark;
+	somvr_gz_pick(&g_sg.g, &g_sg.cfg, t, on, g_sg.head, g_sg.fwd, orcs, n, &g_sg.o);
+	g_sg.frames_on += on, g_sg.frames_marked += g_sg.o.mark != 0;
+	if (g_sg.o.ev && sg_log_ok()) {
+		uint32_t ev = g_sg.o.ev;
+		logf_("STRIKE t=%.3f frame=%llu gaze: %s orc %u (hobj %#llx) at %.1f m, %.1f deg off the head's ray%s%s; arrows %d; "
+		      "Y %d vision %d", t, (unsigned long long)g_fr.frame,
+		      ev & SOMVR_GZE_SWITCH ? "the mark moved to" : ev & SOMVR_GZE_MARK ? "marked" : "unmarked",
+		      sg_id(ev & SOMVR_GZE_UNMARK && !(ev & (SOMVR_GZE_MARK | SOMVR_GZE_SWITCH)) ? was : g_sg.o.mark),
+		      (unsigned long long)(ev & SOMVR_GZE_UNMARK && !(ev & (SOMVR_GZE_MARK | SOMVR_GZE_SWITCH)) ? was : g_sg.o.mark),
+		      g_sg.o.dist_cm / 100, g_sg.o.deg, ev & SOMVR_GZE_UNMARK ? ": " : "",
+		      ev & SOMVR_GZE_UNMARK ? somvr_gz_why_name(g_sg.o.why) : "", g_sg.arrows, y, vis);
+	}
+	if (t >= g_sg.sum_t && (on || g_sg.o.mark)) {
+		g_sg.sum_t = t + 2.0;
+		logf_("STRIKE t=%.3f gaze: %s; head %.0f,%.0f,%.0f ray (%.3f %.3f %.3f); orcs %d (cast for and in sight %d); mark %u "
+		      "%.1f m %.1f deg (frames on %llu, marked %llu; casts %llu, blocked %llu)", t, on ? "on" : "off (a press runs)",
+		      g_sg.head[0], g_sg.head[1], g_sg.head[2], g_sg.fwd[0], g_sg.fwd[1], g_sg.fwd[2], n, seen, g_sg.o.mark ? sg_id(g_sg.o.mark) : 0,
+		      g_sg.o.dist_cm / 100, g_sg.o.deg, (unsigned long long)g_sg.frames_on, (unsigned long long)g_sg.frames_marked,
+		      (unsigned long long)g_sg.casts, (unsigned long long)g_sg.blocked);
+	}
+}
+
+/* ob_frame: the mark into this frame's objective entry (1 = published); while the dash holds or moves the view: none */
+static int sg_entry(somvr_objective_frame *e)
+{
+	if (g_sg.g.phase && (g_sk.s.phase == SOMVR_BSK_HOLD || g_sk.s.phase == SOMVR_BSK_MOVE))
+		g_sg.moved = 1; /* the arrival and the sync after it show no mark (run 102126: it hung over the orc on the ground) */
+	if (!g_sg.on || !g_sg.o.mark || g_sg.head_frame != g_fr.frame || g_sk.s.phase == SOMVR_BSK_HOLD ||
+	    g_sk.s.phase == SOMVR_BSK_MOVE || (g_sg.g.phase && g_sg.moved))
+		return 0;
+	somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
+			    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
+	float hx[3];
+	somvr_th_to_xr(&mp, g_sg.o.aim, e->pos), somvr_th_to_xr(&mp, g_sg.head, hx);
+	float d = sqrtf((e->pos[0] - hx[0]) * (e->pos[0] - hx[0]) + (e->pos[1] - hx[1]) * (e->pos[1] - hx[1]) +
+			(e->pos[2] - hx[2]) * (e->pos[2] - hx[2]));
+	e->n = 1, e->id = sg_id(g_sg.o.mark);
+	e->flags = SOMVR_OBF_STRIKE | (g_sg.g.phase ? SOMVR_OBF_STRIKE_GO
+				       : g_sg.arrows >= 0 && g_sg.arrows < g_sg.cfg.arrows_min ? SOMVR_OBF_STRIKE_NO : 0u);
+	e->dist_m = somvr_ob_strike_ring(d, g_sg.ring_min_m, g_sg.ring_deg);
+	g_sg.published++;
+	return 1;
+}
+
+/* the input tick (sk_tick, before X's own): A's edge with a mark; the press's aim command and its strike */
+static void sg_tick(sc_tick_out *o, double t)
+{
+	g_sg.world = o->live && o->ctx == SC_CTX_WORLD;
+	if (!g_sg.on)
+		return;
+	int a = g_sg.world && (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_LOWER), edge = a && !g_sg.a_was;
+	g_sg.a_was = a;
+	if (edge && ab_owner() == SOMVR_AO_STRIKE) { /* a mark at the press (ab_tick: the dodge and the climb yield) */
+		uint32_t r = somvr_gz_press(&g_sg.g, &g_sg.cfg, t, g_sg.arrows);
+		if (r == SOMVR_GZE_PRESS) {
+			g_sg.shows_at_press = atomic_load_explicit(&g_sk_shows, memory_order_relaxed), g_sg.moved = 0;
+			in_haptic_event(SOMVR_HAND_R, 0.35f, 0.03f, SOMVR_HAP_COMBAT); /* a click: committed */
+		} else if (r == SOMVR_GZE_NOARROWS) {
+			in_haptic_event(SOMVR_HAND_R, 0.25f, 0.08f, SOMVR_HAP_COMBAT); /* the denied buzz */
+		}
+		if (r && sg_log_ok())
+			logf_("STRIKE t=%.3f gaze: A at orc %u (%.1f m, %.1f deg off the head's ray): %s; arrows %d", t,
+			      sg_id(g_sg.g.target ? g_sg.g.target : g_sg.g.mark), g_sg.g.dist_cm / 100, g_sg.g.deg,
+			      r == SOMVR_GZE_PRESS ? "committed: the game's aim with its ray at the orc's chest, 121 when its "
+						     "Shadow Strike prompt comes"
+			      : r == SOMVR_GZE_NOARROWS ? "refused: under 2 arrows (the denied buzz; nothing moves)"
+							: "nothing",
+			      g_sg.arrows);
+	} else if (edge) {
+		g_sg.g.nomarks++;
+		if (g_sg.g.nomarks <= 20 && sg_log_ok())
+			logf_("STRIKE t=%.3f gaze: A without a mark: nothing (Y %d, the vision %d)", t,
+			      (g_inp.ctl.down[SOMVR_HAND_L] & SOMVR_BTN_UPPER) != 0, st_vision());
+	}
+	int prompt = sk_prompt_up() && atomic_load_explicit(&g_sk_shows, memory_order_relaxed) > g_sg.shows_at_press;
+	int hs = atomic_load_explicit(&g_sg.hold_sync, memory_order_relaxed);
+	/* move: the aim's end once the strike moves him; sync: once its dash has ended and the body moments' hold is over
+	 * (the knockdown's sync), at most 6 s */
+	int struck = hs ? g_sg.g.phase == SOMVR_GZP_SENT && g_sk.s.phase == SOMVR_BSK_IDLE && g_sk.ends > g_sg.ends_at_send &&
+				  !(g_bm.on && g_bm.o.frozen)
+			: g_sk.s.phase == SOMVR_BSK_HOLD || g_sk.s.phase == SOMVR_BSK_MOVE;
+	float hold0 = g_sg.cfg.hold_s;
+	if (hs)
+		g_sg.cfg.hold_s = 6.0f;
+	somvr_gz_out to;
+	memset(&to, 0, sizeof to);
+	int ph = g_sg.g.phase;
+	somvr_gz_tick(&g_sg.g, &g_sg.cfg, t, prompt, struck, &to);
+	g_sg.cfg.hold_s = hold0;
+	if (to.ev & SOMVR_GZE_SEND) {
+		g_sk.presses++;
+		g_sk.prompt_at_press = 1, g_sk.denied_at_press = 0, g_sk.arrows_at_press = g_sg.arrows;
+		g_sg.ends_at_send = g_sk.ends;
+		sk_arm(t);
+		if (sk_log_ok())
+			logf_("STRIKE t=%.3f press %llu: A by gaze at orc %u (the game's Shadow Strike prompt up %.0f ms after A): "
+			      "CombatPrimary04 121 for %.0f ms; Talion at %.1f,%.1f,%.1f; arrows %d", t,
+			      (unsigned long long)g_sk.presses, sg_id(g_sg.g.target), (t - g_sg.g.press_t) * 1e3,
+			      g_sk.cfg.press_s * 1e3, g_bow.obj_pos[0], g_bow.obj_pos[1], g_bow.obj_pos[2], g_sg.arrows);
+	}
+	if (to.ev & SOMVR_GZE_REFUSED) {
+		in_haptic_event(SOMVR_HAND_R, 0.25f, 0.08f, SOMVR_HAP_COMBAT);
+		if (sg_log_ok())
+			logf_("STRIKE t=%.3f gaze: no Shadow Strike prompt within %.0f ms of A: the game refuses (the denied buzz; "
+			      "nothing moves); the aim let go", t, g_sg.cfg.aim_max_s * 1e3);
+	}
+	if ((to.ev & SOMVR_GZE_DONE) && ph == SOMVR_GZP_SENT && sg_log_ok())
+		logf_("STRIKE t=%.3f gaze: the aim let go %.0f ms after 121 (%s)", t, (t - g_sg.g.send_t) * 1e3,
+		      struck ? (hs ? "the strike's sync is over" : "the strike moves him") : hs ? "the sync not over: 6 s" : "no move seen yet");
+	if (g_sg.probe_have && t < g_sg.probe_until) /* the test word's probe: the aim held */
+		to.aim_cmd = 1;
+	if (to.aim_cmd && o->live && o->ctx == SC_CTX_WORLD && o->ncmd < SC_OUT_CMDS)
+		o->cmd[o->ncmd++] = g_bow.aim_cmd, g_sg.aim_ticks++;
+}
+
+/* bo_camxf: while a gaze press runs, the game's free-aim ray from the head to the target's chest; 1 = written */
+static int sg_camxf(float *xf)
+{
+	int probe = g_sg.probe_have && cb_now() < g_sg.probe_until;
+	if (!g_sg.on || (g_sg.g.phase == SOMVR_GZP_OFF && !probe) || !g_sg.have_head)
+		return 0;
+	const float *at = g_sg.g.phase ? g_sg.g.target_aim : g_sg.probe_aim;
+	sv_vec3 d = { at[0] - g_sg.head[0], at[1] - g_sg.head[1], at[2] - g_sg.head[2] };
+	float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+	if (!(l > 10.0f) || !isfinite(l))
+		return 0;
+	d.x /= l, d.y /= l, d.z /= l;
+	sv_quat q = somvr_bow_look(d, sv_heading(sv_qnormalize(sv_quat_of(xf + 3))));
+	xf[0] = g_sg.head[0], xf[1] = g_sg.head[1], xf[2] = g_sg.head[2];
+	sv_quat_to(q, xf + 3);
+	if (++g_sg.cam_over <= 3 && sg_log_ok())
+		logf_("STRIKE gaze: the game's free-aim ray from the head %.0f,%.0f,%.0f along (%.3f %.3f %.3f) to orc %u's chest "
+		      "(%.1f m)", xf[0], xf[1], xf[2], d.x, d.y, d.z, sg_id(g_sg.g.target), l / 100);
+	return 1;
+}
+
+/* SOMVR_CLIMB_DESCENT's A on foot: not while A belongs to the gaze's mark */
+static int sg_wants_a(void) { return g_sg.on && (g_sg.g.mark || g_sg.g.phase); }
+static int sg_on(void) { return g_sg.on; }
+
+static void sg_end_log(void)
+{
+	if (!g_sg.on && !g_sg.g.presses)
+		return;
+	logf_("STRIKE END gaze: frames on %llu, marked %llu (published %llu); marks %llu, switches %llu, unmarks %llu; A: "
+	      "committed %llu, without a mark %llu, under 2 arrows %llu; 121 sent %llu, refused %llu; aim ticks %llu, ray "
+	      "writes %llu; sight casts %llu (blocked %llu)%s", (unsigned long long)g_sg.frames_on,
+	      (unsigned long long)g_sg.frames_marked, (unsigned long long)g_sg.published, (unsigned long long)g_sg.g.marks,
+	      (unsigned long long)g_sg.g.switches, (unsigned long long)g_sg.g.unmarks, (unsigned long long)g_sg.g.presses,
+	      (unsigned long long)g_sg.g.nomarks, (unsigned long long)g_sg.g.noarrows, (unsigned long long)g_sg.g.sends,
+	      (unsigned long long)g_sg.g.refused, (unsigned long long)g_sg.aim_ticks, (unsigned long long)g_sg.cam_over,
+	      (unsigned long long)g_sg.casts, (unsigned long long)g_sg.blocked, g_sg.other_tid ? " (frames on another thread skipped)" : "");
 }

@@ -38,6 +38,11 @@ void somvr_mn_parse_quad(const char *v, float out[3], int *bad);
  * down: the head's up vector decides, as somvr_hud_world_pose), `drop` below it, upright about the world's up, then
  * tilted back about its own X so that its +Z points at the eyes' midpoint. NaN poses: straight ahead along -Z. */
 void somvr_mn_board_pose(const somvr_posef eye[2], float dist, float drop, somvr_posef *out);
+/* The same with SOMVR_XR_MENU_PITCH=DEG (build 17 candidate, the collect drill's round 3, re-xr-pipeline.md 45.11): a
+ * head looking down (below the level) gets the board's centre down its gaze's pitch, at most down_max_deg (0 = the
+ * level board above); a head looking up keeps the level one. The board still faces the eyes' midpoint, upright about
+ * the world's up. */
+void somvr_mn_board_pose_gaze(const somvr_posef eye[2], float dist, float drop, float down_max_deg, somvr_posef *out);
 
 /* ==== 2. the wrist minimap ======================================================================================= */
 /* SOMVR_XR_MINIMAP: unset/"off"/"0" = OFF (the minimap stays in the HUD quad), "wrist"/"on"/"1" = WRIST; anything else
@@ -216,6 +221,10 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
 
 /* ==== 4. test hands for headless boots (SOMVR_XR_TEST=PATH, the layer; never in a player's build) ================= */
 /* One line of the test file (scripts/menus-drive.sh writes it; the layer runs each new file's lines once, in order):
+ *   handsize S                             build 17: our hands' model rebuilt at the size S (0.8..1.5; SOMVR_XR_HANDS_SIZE
+ *                                          live, the layer's hands only: headless pictures)
+ *   lumlog N                               build 17: eye 0's mean colour logged for the next N frames (1..400; the hands'
+ *                                          light probe: a look's ramp timed, e.g. the wraith vision's)
  *   dump                                   a stereo dump at the next frame (SOMVR_XR_DUMP must be on): the eyes, the
  *                                          HUD swapchain image, the VR menu's picture and the frame's quads
  *   hand L|R off                           that hand untracked again
@@ -228,14 +237,15 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
  *   btn L|R menu|a|b|stick|trigger|squeeze V      held (V 1 / 0; trigger and squeeze 0..1)
  *   stick L|R X Y                          held (-1..1)
  * '#' and blank lines are skipped. */
-enum { SOMVR_XT_NONE = 0, SOMVR_XT_DUMP, SOMVR_XT_OFF, SOMVR_XT_HEAD, SOMVR_XT_TOUCH, SOMVR_XT_BTN, SOMVR_XT_STICK };
+enum { SOMVR_XT_NONE = 0, SOMVR_XT_DUMP, SOMVR_XT_OFF, SOMVR_XT_HEAD, SOMVR_XT_TOUCH, SOMVR_XT_BTN, SOMVR_XT_STICK,
+       SOMVR_XT_SIZE, SOMVR_XT_LUMLOG };
 enum { SOMVR_XTS_BOARD = 0, SOMVR_XTS_PANEL = 1, SOMVR_XTS_WATCH = 2 };
 enum { SOMVR_XTB_MENU = 0, SOMVR_XTB_A, SOMVR_XTB_B, SOMVR_XTB_STICK, SOMVR_XTB_TRIGGER, SOMVR_XTB_SQUEEZE };
 typedef struct {
     int op;        /* SOMVR_XT_* */
     int hand;      /* SOMVR_HAND_L / _R */
     int what;      /* touch: SOMVR_XTS_*; btn: SOMVR_XTB_* */
-    float v[6];    /* head: X Y Z RX RY RZ; touch: U V D; btn: V; stick: X Y */
+    float v[6];    /* head: X Y Z RX RY RZ; touch: U V D; btn: V; stick: X Y; handsize: S; lumlog: N */
     float sec;     /* the move's time */
 } somvr_xt_cmd;
 /* 1 = a command in *c, 0 = nothing (blank, comment), -1 = not understood */

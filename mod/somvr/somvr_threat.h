@@ -34,10 +34,15 @@
 #define SOMVR_TH_GLOWS 3 /* world glows per frame (the most urgent ones) */
 
 enum { SOMVR_THK_NONE = 0, SOMVR_THK_MELEE = 1, SOMVR_THK_RANGED = 2, SOMVR_THK_PROJ = 3 }; /* what a glow is on */
+/* build 17 (SOMVR_THREAT_RED): the glow is an unblockable blow's (the VR judge never blocks it: dodge it): ORed into the
+ * kind, the layer draws it from the red row (an older layer: the warm one) */
+#define SOMVR_THK_RED 0x10u
 enum { SOMVR_THF_WINDOW = 1u, /* the nearest attacker's parry window is open this frame */
        SOMVR_THF_PROJ = 2u,   /* a projectile is inbound this frame */
        SOMVR_THF_NEAR = 4u,   /* an engaged orc is close behind (the edge's low level) */
-       SOMVR_THF_HURT = 8u }; /* build 10: Talion was hit: the hurt flash (hurt[]) */
+       SOMVR_THF_HURT = 8u,   /* build 10: Talion was hit: the hurt flash (hurt[]) */
+       SOMVR_THF_RED_L = 16u, /* build 17: the left / right edge band is an unblockable blow's: the red row */
+       SOMVR_THF_RED_R = 32u };
 
 typedef struct {
     float pos[3];  /* its centre in the layer's reference space (metres), this frame's rig */
@@ -263,7 +268,7 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_CELL 32
 #define SOMVR_TH_STRIDE (SOMVR_TH_CELL + 2)
 #define SOMVR_TH_IMG_W (SOMVR_TH_LEVELS * SOMVR_TH_STRIDE)
-#define SOMVR_TH_IMG_H (3 * SOMVR_TH_STRIDE)
+#define SOMVR_TH_IMG_H (4 * SOMVR_TH_STRIDE)
 #define SOMVR_TH_ALPHA 0.35f
 #define SOMVR_TH_R 1.00f /* the warm colour (linear weights; the swapchain is sRGB when the runtime has one) */
 #define SOMVR_TH_G 0.55f
@@ -272,7 +277,17 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_HURT_G 0.04f
 #define SOMVR_TH_HURT_B 0.02f
 #define SOMVR_TH_HURT_ALPHA 0.75f
-enum { SOMVR_TH_ROW_GLOW = 0, SOMVR_TH_ROW_EDGE = 1, SOMVR_TH_ROW_HURT = 2 };
+/* build 17: row 3 the radial glow in an alarm red, stronger (an unblockable blow: SOMVR_THK_RED) */
+#define SOMVR_TH_RED_R 1.00f
+#define SOMVR_TH_RED_G 0.06f
+#define SOMVR_TH_RED_B 0.03f
+#define SOMVR_TH_RED_ALPHA 0.90f
+enum { SOMVR_TH_ROW_GLOW = 0, SOMVR_TH_ROW_EDGE = 1, SOMVR_TH_ROW_HURT = 2, SOMVR_TH_ROW_RED = 3 };
+int somvr_th_glow_row(uint32_t kind); /* SOMVR_TH_ROW_RED for a red kind, else SOMVR_TH_ROW_GLOW */
+/* build 17: an unblockable blow's glow level at t s from its start: in over 0.12 s from the wind-up (no wait for the
+ * window), then a pulse between 0.7 and 1 at hz (the warm glow is steady: told apart at a glance) up to the impact, out
+ * over fade_out_s after it; 0 before the start */
+float somvr_th_red_level(const somvr_th_cfg *c, const somvr_th_keys *k, float t, float hz);
 /* the layer, per side: the hurt flash (0..255) against the edge band's level (0..1): 1 = draw the red row with *cell,
  * 0 = the band (its own cell), as before */
 int somvr_th_hurt_side(uint8_t hurt, float edge, int *cell);

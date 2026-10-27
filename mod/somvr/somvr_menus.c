@@ -86,7 +86,7 @@ void somvr_mn_parse_quad(const char *v, float out[3], int *bad) {
     }
 }
 
-void somvr_mn_board_pose(const somvr_posef eye[2], float dist, float drop, somvr_posef *out) {
+void somvr_mn_board_pose_gaze(const somvr_posef eye[2], float dist, float drop, float down_max_deg, somvr_posef *out) {
     static const float fwd0[3] = {0, 0, -1}, up0[3] = {0, 1, 0};
     float f[3], u[3], mid[3];
     qrot(eye[0].q, fwd0, f);
@@ -100,7 +100,16 @@ void somvr_mn_board_pose(const somvr_posef eye[2], float dist, float drop, somvr
     hx /= n, hz /= n;
     for (int i = 0; i < 3; i++) mid[i] = 0.5f * (eye[0].p[i] + eye[1].p[i]);
     if (!(dot3(mid, mid) >= 0)) mid[0] = mid[1] = mid[2] = 0; /* NaN */
-    out->p[0] = mid[0] + dist * hx, out->p[1] = mid[1] - drop, out->p[2] = mid[2] + dist * hz;
+    /* SOMVR_XR_MENU_PITCH: a head looking down (an artifact at the feet) gets the board down its gaze, at most
+     * down_max_deg below the level (0 = level: build 16's) */
+    float pb = 0;
+    if (down_max_deg > 0 && f[1] < 0 && f[1] == f[1]) {
+        pb = asinf(fmaxf(-1.f, f[1]));
+        float lim = -down_max_deg * 3.14159265f / 180.f;
+        if (pb < lim) pb = lim;
+    }
+    float ch = cosf(pb), sh = sinf(pb);
+    out->p[0] = mid[0] + dist * ch * hx, out->p[1] = mid[1] + dist * sh - drop, out->p[2] = mid[2] + dist * ch * hz;
     float z[3] = {mid[0] - out->p[0], mid[1] - out->p[1], mid[2] - out->p[2]}, y[3], x[3];
     if (!norm3(z)) z[0] = -hx, z[1] = 0, z[2] = -hz;
     float k = dot3(up0, z);
@@ -108,6 +117,10 @@ void somvr_mn_board_pose(const somvr_posef eye[2], float dist, float drop, somvr
     if (!norm3(y)) y[0] = 0, y[1] = 0, y[2] = -1; /* (looking straight along the up axis: not reachable here) */
     cross3(y, z, x);
     quat_of_basis(x, y, z, out->q);
+}
+
+void somvr_mn_board_pose(const somvr_posef eye[2], float dist, float drop, somvr_posef *out) {
+    somvr_mn_board_pose_gaze(eye, dist, drop, 0.0f, out);
 }
 
 /* ==== 2. the wrist minimap ======================================================================================= */
@@ -529,6 +542,20 @@ int somvr_xt_parse(const char *line, somvr_xt_cmd *c) {
     while (*p == ' ' || *p == '\t') p++;
     if (!*p || *p == '#' || *p == '\n' || *p == '\r' || !xt_word(&p, w0)) return 0;
     if (!strcmp(w0, "dump")) return c->op = SOMVR_XT_DUMP, 1;
+    if (!strcmp(w0, "handsize")) { /* build 17 */
+        int k = 0;
+        if (sscanf(p, "%f%n", &c->v[0], &k) != 1 || !(c->v[0] >= 0.8f && c->v[0] <= 1.5f)) return -1;
+        p += k;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        return *p ? -1 : (c->op = SOMVR_XT_SIZE, 1);
+    }
+    if (!strcmp(w0, "lumlog")) { /* build 17 */
+        int k = 0;
+        if (sscanf(p, "%f%n", &c->v[0], &k) != 1 || !(c->v[0] >= 1 && c->v[0] <= 400)) return -1;
+        p += k;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        return *p ? -1 : (c->op = SOMVR_XT_LUMLOG, 1);
+    }
     if (!xt_word(&p, w1) || (strcmp(w1, "L") && strcmp(w1, "R"))) return -1;
     c->hand = w1[0] == 'L' ? SOMVR_HAND_L : SOMVR_HAND_R;
     int n = 0;

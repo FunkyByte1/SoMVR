@@ -491,6 +491,15 @@ static void test_haptics(void) {
     sc_hap_reset(&h);
     for (int i = 0; i < 5; i++) sc_hap_add(&h, t, 0.2f + 0.1f * (float)i, 1.0f, 0, SOMVR_HAP_TEST);
     CHECK(NEAR(sc_hap_level(&h, t, 1, NULL, NULL, NULL), 0.6, 1e-6), "slots: level %g", sc_hap_level(&h, t, 1, NULL, NULL, NULL));
+    /* build 17: a double (and a triple) pulse scheduled at once plays every pulse (the second used to take the first's
+     * slot: it had ended at the second's start, in pulse time, before it played) */
+    sc_hap_reset(&h);
+    for (int k = 0; k < 3; k++) sc_hap_add_at(&h, t, t + k * 0.1, 0.7f, 0.045f, 0, SOMVR_HAP_COMBAT);
+    CHECK(NEAR(sc_hap_level(&h, t + 0.02, 1, NULL, NULL, NULL), 0.7, 1e-6) &&
+              NEAR(sc_hap_level(&h, t + 0.07, 1, NULL, NULL, NULL), 0, 1e-6) &&
+              NEAR(sc_hap_level(&h, t + 0.12, 1, NULL, NULL, NULL), 0.7, 1e-6) &&
+              NEAR(sc_hap_level(&h, t + 0.22, 1, NULL, NULL, NULL), 0.7, 1e-6),
+          "three pulses scheduled at once: all three play");
     printf("haptics: a flat hit = 1 post (amp 1, 200 ms), the rumble a 6-period pulse every 4th tick, 0.02 threshold, "
            "hit over rumble, stop, scale clamp, scale 0, ramp refreshed\n");
 }

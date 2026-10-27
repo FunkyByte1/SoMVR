@@ -10,7 +10,8 @@
 # panel U V D`, `btn ...`); the weight uses the preload's test hands (`hands test`, `hands swing`, `hands wiggle`) with
 # the layer's buttons. Dumps: RUN/s16-steps.txt names each (compose with scripts/xr_compose.py RUN). S16_STEPS = any of
 # menu grip wiggle cuts orc (default all, in that order). PASS/FAIL lines; quits at the end, at once if the user goes
-# into VR. The Sword weight row with build 16's avail (19 rows of 32 px): < 0.547 0.6458, > 0.922 0.6458.
+# into VR. The Sword weight row with build 17's avail (22 rows of 27 px, slot 13): < 0.547 0.558, > 0.922 0.558 (build 16's
+# 19 rows of 32 px: 0.6458).
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${S16_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${S16_STEPS:-menu grip wiggle cuts orc}
@@ -89,11 +90,11 @@ if has menu; then
     echo "NOT OPEN"; }
   A0=$(cnt 'VRMENU apply SWORD_WEIGHT=light from the menu'); A1=$(cnt 'VRMENU apply SWORD_WEIGHT=heavy from the menu')
   menu_open; d menu-heavy
-  press 0.547 0.6458; sleep 1
+  press 0.547 0.558; sleep 1
   check "Sword weight: Light by its <" 'VRMENU apply SWORD_WEIGHT=light from the menu' "$A0"
   check "the level live" 'SWORDWT t=.* weight heavy -> light \(the VR menu\)' 0
   d menu-light
-  press 0.922 0.6458; sleep 1
+  press 0.922 0.558; sleep 1
   check "Sword weight: Heavy again by its >" 'VRMENU apply SWORD_WEIGHT=heavy from the menu' "$A1"
   t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "$REST_L" "$REST_R"; sleep 1.5
 fi

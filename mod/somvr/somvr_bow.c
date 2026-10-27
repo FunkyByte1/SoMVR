@@ -28,6 +28,8 @@ void somvr_bow_cfg_default(somvr_bow_cfg *c) {
     c->idle_ray = SOMVR_BOW_IDLE_BOW;
     c->idle_nock = 1;
     c->shot_ax[2] = 1;
+    c->zone_r_cm = 25, c->zone_half_cm = 12, c->zone_front_cm = 5;
+    c->limb_ax[1] = 1;
 }
 
 void somvr_bow_init(somvr_bow *s) {
@@ -94,6 +96,31 @@ sv_vec3 somvr_bow_draw_dir(sv_vec3 nock, sv_vec3 string, float *len) {
 float somvr_bow_dir_weight(const somvr_bow_cfg *c, float draw_cm) {
     float x = c->dir_blend_cm > 0 ? clamp01((draw_cm - c->dir_min_cm) / c->dir_blend_cm) : draw_cm >= c->dir_min_cm;
     return x * x * (3 - 2 * x);
+}
+
+int somvr_bow_at_nock(const somvr_bow_cfg *c, sv_vec3 bow_p, sv_quat bow_q, sv_vec3 string, float *zd) {
+    sv_vec3 nock = somvr_bow_nock(c, bow_p, bow_q), d = sub3(string, nock);
+    float r = len3(d);
+    if (!c->nock_zone) {
+        if (zd) *zd = isfinite(r) ? r : 999;
+        return isfinite(r) && r <= c->nock_r_cm;
+    }
+    /* the zone: the distance from the string's middle segment, nothing past zone_front_cm toward the target */
+    sv_vec3 L = unit3(sv_qrot(bow_q, (sv_vec3){ c->limb_ax[0], c->limb_ax[1], c->limb_ax[2] }), (sv_vec3){ 0, 1, 0 });
+    float front = dot3(d, somvr_bow_fwd(c, bow_q)), k = dot3(d, L);
+    if (!isfinite(front) || !isfinite(k) || front > c->zone_front_cm) {
+        if (zd) *zd = 999;
+        return 0;
+    }
+    k = k > c->zone_half_cm ? c->zone_half_cm : k < -c->zone_half_cm ? -c->zone_half_cm : k;
+    float z = len3(sub3(d, mul3(L, k)));
+    if (zd) *zd = z;
+    return z <= c->zone_r_cm;
+}
+
+float somvr_bow_pull(const somvr_bow_cfg *c, sv_quat bow_q, sv_vec3 nock, sv_vec3 string) {
+    float b = dot3(sub3(nock, string), somvr_bow_fwd(c, bow_q));
+    return isfinite(b) && b > 0 ? b : 0;
 }
 
 float somvr_bow_back(const somvr_bow_cfg *c, sv_quat bow_q, sv_vec3 nock, sv_vec3 string) {
@@ -274,16 +301,23 @@ void somvr_bow_step(somvr_bow *s, const somvr_bow_cfg *c, const somvr_bow_in *in
     if (c->quiver && s->arrow == SOMVR_BOW_ARROW_HAND && (open || lost_s)) /* let go before the nock: gone */
         s->arrow = SOMVR_BOW_ARROW_NONE, s->drops++, o->events |= SOMVR_BOW_E_DROP;
     sv_vec3 nock = s->have[B] ? somvr_bow_nock(c, s->p[B], s->q[B]) : (sv_vec3){ 0, 0, 0 };
-    float dist = -1;
-    if (s->have[B] && s->have[S]) dist = len3(sub3(nock, s->p[S]));
-    o->nock_dist = dist;
-    int near = vb && vs && dist >= 0 && dist <= c->nock_r_cm;
+    float dist = -1, zd = -1;
+    int at = 0;
+    if (s->have[B] && s->have[S]) dist = len3(sub3(nock, s->p[S])), at = somvr_bow_at_nock(c, s->p[B], s->q[B], s->p[S], &zd);
+    o->nock_dist = dist, o->zone_dist = zd;
+    int near = vb && vs && dist >= 0 && at;
     /* the quiver: the held arrow nocks by touching the nock; one resting on the string by a new press there */
     int nock_ok = !c->quiver ? s->looking && near
                              : near && ((s->arrow == SOMVR_BOW_ARROW_HAND && s->down) ||
                                         (s->arrow == SOMVR_BOW_ARROW_REST && s->looking));
-    if (c->quiver && s->looking && near && s->arrow == SOMVR_BOW_ARROW_NONE && s->phase == SOMVR_BOW_PH_AIM)
-        s->looking = 0, s->noarrows++, o->events |= SOMVR_BOW_E_NOARROW;
+    if (c->quiver && s->looking && near && s->arrow == SOMVR_BOW_ARROW_NONE && s->phase == SOMVR_BOW_PH_AIM) {
+        if (c->noarrow_take && in->arrows != 0) /* build 17's take: one from the quiver, nocked here at once */
+            s->arrow = SOMVR_BOW_ARROW_HAND, s->takes++, o->events |= SOMVR_BOW_E_TAKE, nock_ok = 1;
+        else if (c->noarrow_take)
+            s->looking = 0, s->empties++, o->events |= SOMVR_BOW_E_EMPTY;
+        else
+            s->looking = 0, s->noarrows++, o->events |= SOMVR_BOW_E_NOARROW;
+    }
     if (s->looking && !nock_ok && t - s->press_t > c->window_s) { /* the window ran out away from the nock */
         s->looking = 0;
         if (s->phase == SOMVR_BOW_PH_AIM) s->misses++, o->events |= SOMVR_BOW_E_MISS;
@@ -304,14 +338,14 @@ void somvr_bow_step(somvr_bow *s, const somvr_bow_cfg *c, const somvr_bow_in *in
         if (!in->live || !in->allow) break;
         if (nock_ok && c->idle_nock && !c->quiver) {
             enter(s, t, 0, o);
-            begin_draw(s, c, t, dist, o);
+            begin_draw(s, c, t, c->nock_zone ? somvr_bow_pull(c, s->q[B], nock, s->p[S]) : dist, o);
         } else if (btn_press && vb) {
             enter(s, t, 1, o);
         }
         break;
     case SOMVR_BOW_PH_AIM:
         if (nock_ok) {
-            begin_draw(s, c, t, dist, o);
+            begin_draw(s, c, t, c->nock_zone ? somvr_bow_pull(c, s->q[B], nock, s->p[S]) : dist, o);
             break;
         }
         if (!btn && !(c->quiver && (s->arrow != SOMVR_BOW_ARROW_NONE || in->quiver)) &&
@@ -355,6 +389,7 @@ void somvr_bow_step(somvr_bow *s, const somvr_bow_cfg *c, const somvr_bow_in *in
             break;
         }
         if (vs && vb && dist >= 0) {
+            if (c->nock_zone) dist = somvr_bow_pull(c, s->q[B], nock, s->p[S]); /* the zone: the pull back alone */
             s->draw_cm = dist;
             s->draw_max = dist > s->draw_max ? dist : s->draw_max;
             s->tension = c->full_draw_cm > 0 ? clamp01(dist / c->full_draw_cm) : 1;

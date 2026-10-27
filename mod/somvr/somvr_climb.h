@@ -74,6 +74,19 @@
  *            stops Talion ~64 cm ahead of his root and the floor goes on past it, run 010412). (6) the cue: the walk
  *            stopped (in.walk_blocked) at an edge A would blink down from = E_EDGE_CUE once (somvr.c: a double pulse
  *            on the right hand, A's), again after the walk has gone on for 2 s.
+ *   mark     (drop_mark = 1, with descent; build 17, re-xr-pipeline.md 55: A blinked Talion down 4-16 m at once, no
+ *            shown where, no cancel) every A of (4) and (5) chooses first: A's press finds the landing (dm_find: from
+ *            blink_out_cm out from the wall / beyond the lip / past the edge, then every 20 cm to dm_out_cm, the first
+ *            spot with room for Talion - nothing 180 cm over it, nothing within 33 cm round him at his knees and chest -
+ *            and no enemy within dm_enemy_cm: in.enemy_near) and shows it while A is held (out.dm_show: a ring where he
+ *            will stand and a line from the edge's or the feet's height down to it); A let go after dm_min_s = go (the
+ *            blink, or from a hang over a short drop the fall, as before); let go sooner = a tap: nothing, the ring
+ *            stays to dm_show_s from the press; the move stick past dm_stick while held = cancel (on foot it walks again
+ *            from there; in a hang it must come back under 0.3 before the hang's stick acts); a new hold, the climb's
+ *            end or start, the root moved dm_move_cm on foot, the game, a menu, the bow, the input = cancel. Climbing,
+ *            the landing is found again when the root moves 10 cm (at most every 0.1 s). No safe landing (no ground,
+ *            water, an enemy there, no room, a high drop with no blink now) = no ring, E_DM_NO (somvr.c: a soft buzz);
+ *            on foot with no edge or a short drop: nothing (as before). The pullover waits while A is held.
  *   overhang (overhang > 0; build 15b, re-xr-pipeline.md 47.2: session 165456 mark 8, stuck under a slab sticking out
  *            ~21 cm over the face, every pull on its top went nowhere) climbing up (not descending), the last request's
  *            upward part not applied (under half) while the driving hold is over the eyes = the capsule under a lip:
@@ -110,6 +123,31 @@
  *            nothing: held as if in some ledge state) in the hang the move stick tilted past half with the
  *            ground (a ray down) at most hang_stick_cm under the feet = released (gravity back: he stands; the stick
  *            walks from the next tick). Higher up the hang stays (A drops, a grip climbs on).
+ *   hug      (hug = 1; build 17: the user's build 16 session, "I keep accidentally pushing myself away from the wall")
+ *            while a hold drives, the move's part away from the wall (the hold's toward, level, reversed) is cut once
+ *            Talion's root is hug_cm or more from the hold's face (the plane through the hold along toward): a hand
+ *            pushed toward the wall never shoves him off it; pulls up, down and along it stay 1:1. Beyond hug_cm (a
+ *            hold taken at arm's length, a face that leans back) a part of the pull (hug_in x its length, not past
+ *            hug_cm) goes toward the face: the player's own pull redirected, never a move without one; not at a top
+ *            (the push over it is the player's) nor descending.
+ *   stand    (stand = 1; build 17: the session's marks 3 and 5, topped and let go = left hanging at the top) a floor
+ *            under Talion's capsule - a ray down at his root and stand_in_cm toward the top, the floor from
+ *            stand_down_cm under his feet to stand_up_cm over them (not water) - while topped: the last hold let go
+ *            = released (he stands: gravity back, the stick walks; E_STAND), a push that brings the feet onto it
+ *            while holding = over (E_STAND with s->stand_over); in a topped hang with no floor under him but one
+ *            within stand_reach_cm toward the top (his capsule's rim on it), the move stick walks him (in.stick_w,
+ *            at most stand_walk_cms, its part away from the top dropped; the edge step lifts as a push's) until the
+ *            floor is under him: released (E_STAND_WALK on the way). Elsewhere the hang stays as ever.
+ *   topout   (topout = 1; build 17: mark 3, the cliff's top-out held - run 052042's trace: the capsule's side at the top's
+ *            corner, the whole move stopped with the feet 66 cm under the top, then only the ring) topped with the head
+ *            over the top, the push (its up part or its part into the top) not applied (under a fifth of its length)
+ *            for thr_block_s = a top-out through (E_TOP_THR_ON): each frame's move goes through the rock 1:1 (out.
+ *            through_up and through_lx/lz: somvr.c sets the proxy by it, as through's vertical part), its part away from
+ *            the top dropped, none deeper than over_cm + 40 past the top's hold; only while the head's way along the
+ *            move is clear (rays from the head and thr_side_cm round it, thr_clear_cm past it: else that frame is
+ *            blocked as ever, E_TOP_THR_REFUSED once, and the pullover's ring stays the fallback). Over (E_TOP_THR_OFF):
+ *            stand's floor under him (the climb's end: over), out of the rock 2 frames after 10 cm (once in it), no move 0.5 s,
+ *            thr_max_cm, the top left, the climb's end.
  *   end      both hands open with letgo = fall (released), the drop button while holding or hanging (drop), the game not
  *            allowing it any more (somvr.c: FSM not Supported, mounted, third person ...; "stand down"), the input lost
  *            (letgo = fall), the timeout max_s (letgo = fall), a lift that stalls or runs out of time. Every end gives
@@ -136,7 +174,11 @@ enum { SOMVR_CLIMB_LETGO_FALL = 0, SOMVR_CLIMB_LETGO_HANG = 1 }; /* SOMVR_CLIMB_
 enum { SOMVR_CLIMB_VIA_NONE = 0, SOMVR_CLIMB_VIA_PALM = 1, SOMVR_CLIMB_VIA_FWD = 2, SOMVR_CLIMB_VIA_DOWN = 3,
        SOMVR_CLIMB_VIA_INSIDE = 4, SOMVR_CLIMB_VIA_WALL = 5 }; /* which ray found a surface (somvr_climb_via_name) */
 enum { SOMVR_CLIMB_BL_NONE = 0, SOMVR_CLIMB_BL_SHORT = 1, SOMVR_CLIMB_BL_NOGROUND = 2, SOMVR_CLIMB_BL_WET = 3,
-       SOMVR_CLIMB_BL_CANNOT = 4, SOMVR_CLIMB_BL_NOEDGE = 5 }; /* descent: why A was no blink (bl_why) */
+       SOMVR_CLIMB_BL_CANNOT = 4, SOMVR_CLIMB_BL_NOEDGE = 5,
+       SOMVR_CLIMB_BL_ENEMY = 6, SOMVR_CLIMB_BL_NOROOM = 7 }; /* descent: why A was no blink (bl_why); 6, 7: drop_mark's */
+enum { SOMVR_CLIMB_DM_NONE = 0, SOMVR_CLIMB_DM_BLINK = 1, SOMVR_CLIMB_DM_FALL = 2 }; /* drop_mark: what the let-go does */
+enum { SOMVR_CLIMB_DMC_NONE = 0, SOMVR_CLIMB_DMC_STICK = 1, SOMVR_CLIMB_DMC_GRAB = 2, SOMVR_CLIMB_DMC_END = 3,
+       SOMVR_CLIMB_DMC_MOVED = 4, SOMVR_CLIMB_DMC_GAME = 5 }; /* drop_mark: why a choice was cancelled (dm_cancel_why) */
 enum {                                /* why a climb ended (somvr_climb_out.end_why, somvr_climb.last_end) */
     SOMVR_CLIMB_END_NONE = 0,
     SOMVR_CLIMB_END_RELEASED,         /* both grips opened (or lost their tracking) */
@@ -197,6 +239,17 @@ enum { /* somvr_climb_out.events2 */
     SOMVR_CLIMB_E_THR_ON = 1u << 11,  /* through: a pull blocked under a hold over the eyes: its up part goes through */
     SOMVR_CLIMB_E_THR_OFF = 1u << 12, /* through: over (s->thr_why: SOMVR_CLIMB_THR_*) */
     SOMVR_CLIMB_E_THR_REFUSED = 1u << 13, /* through: the head's way up not clear (once a climb through): blocked as ever */
+    SOMVR_CLIMB_E_STAND = 1u << 20,   /* stand: a floor under him at a top: released (let go) or over (holding) */
+    SOMVR_CLIMB_E_STAND_WALK = 1u << 21, /* stand: the stick in a topped hang walks him onto the top (the first frame) */
+    SOMVR_CLIMB_E_TOP_THR_ON = 1u << 22, /* topout: the push at a top held: it goes through 1:1 */
+    SOMVR_CLIMB_E_TOP_THR_OFF = 1u << 23, /* topout: over (s->to_why: SOMVR_CLIMB_THR_*) */
+    SOMVR_CLIMB_E_TOP_THR_REFUSED = 1u << 24, /* topout: the head's way along the move not clear (once a top-out) */
+    SOMVR_CLIMB_E_DM_SHOW = 1u << 14, /* drop_mark: A's press: the landing shown (s->dm_kind: the blink or the fall) */
+    SOMVR_CLIMB_E_DM_GO = 1u << 15,   /* drop_mark: A let go: the blink (out.blink) or the fall (E_DROP, the end DROP) */
+    SOMVR_CLIMB_E_DM_CANCEL = 1u << 16, /* drop_mark: the choice cancelled (s->dm_cancel_why) */
+    SOMVR_CLIMB_E_DM_TAP = 1u << 17,  /* drop_mark: A let go under dm_min_s: nothing (the ring stays to dm_show_s) */
+    SOMVR_CLIMB_E_DM_NO = 1u << 18,   /* drop_mark: no safe landing (s->bl_why): no ring, nothing moves (a soft buzz) */
+    SOMVR_CLIMB_E_DM_MOVE = 1u << 19, /* drop_mark: climbing, the landing found again (moved, gone or back) */
 };
 /* through's ends (s->thr_why) */
 enum { SOMVR_CLIMB_THR_NONE = 0, SOMVR_CLIMB_THR_CLEAR = 1, SOMVR_CLIMB_THR_IDLE = 2, SOMVR_CLIMB_THR_MAX = 3,
@@ -292,9 +345,28 @@ typedef struct {
     float thr_side_cm;       /* ... and so round the head (the eyes, the near plane: 10) */
     float thr_max_cm;        /* ... at most this far in one (300: the capsule's height and a slab) */
     float thr_look_cm;       /* ... and none starts with rock this close over the head (60) */
+    int drop_mark;           /* build 17 (SOMVR_CLIMB_DESCENT_MARK, with descent; 0 off): A held = the landing shown, A
+                              * let go = go, the stick = cancel (see "mark" above) */
+    float dm_min_s;          /* ... A held at least this long before a let-go goes (0.3) */
+    float dm_show_s;         /* ... a tap's ring shown this long from its press (0.6) */
+    float dm_stick;          /* ... the move stick past this while A is held = cancel (0.5) */
+    float dm_move_cm;        /* ... on foot: the root moved this far from the press = cancel (30) */
+    float dm_out_cm;         /* ... the landing looked for out to this from the wall or the edge (100) */
+    float dm_enemy_cm;       /* ... an enemy within this of Talion's root at the landing = no landing (120) */
     int thr_top;             /* ... also at a top with the head over it: the edge step's lift (the push into the top)
                               * blocked = through, so the top-out goes 1:1 where the capsule's foot is caught under
                               * the edge (the user's cliff top, run 043737: the feet 46 cm under it; 1) */
+    int hug;                 /* build 17 (SOMVR_CLIMB_HUG, 0 off): no move away from the wall past hug_cm (see hug) */
+    float hug_cm;            /* ... the root's axis this far from the hold's face at most (50: the capsule's 35 + 15) */
+    float hug_in;            /* ... beyond it this part of a pull's length goes toward the face (0.35; 0 = the cut only) */
+    int stand;               /* build 17 (SOMVR_CLIMB_STAND, 0 off): a floor under him at a top = he stands (see stand) */
+    float stand_in_cm;       /* ... the second ray down this far toward the top from the root (15: the capsule's foot on
+                              * an edge 15 cm in tilts 25 deg: he stands, further out he would slide off) */
+    float stand_up_cm;       /* ... the floor at most this over the feet (15) */
+    float stand_down_cm;     /* ... and at most this under them (40) */
+    float stand_reach_cm;    /* ... the stick walks him when a floor is within this toward the top (35: the capsule) */
+    float stand_walk_cms;    /* ... at most this fast (150 cm/s, the stick at full tilt) */
+    int topout;              /* build 17 (SOMVR_CLIMB_TOPOUT=through, 0 off): a push held at a top goes through 1:1 */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -342,6 +414,10 @@ typedef struct {
     sv_vec3 head_fwd;   /* descent: the view's heading (horizontal unit; 0 = none): A on foot looks for an edge along it */
     int walk_blocked;   /* descent (cue): the stick asks a walk the game does not apply (somvr.c: LOCO's last 0.5 s) */
     float stick;        /* the move stick's tilt 0..1 as the player holds it (somvr.c, before the climb holds it off) */
+    sv_vec3 stick_w;    /* stand: the move stick in the world (level, x its tilt 0..1, the view's heading; 0 = none) */
+    /* drop_mark: an enemy within r_cm of p (Talion's root at a landing, world cm): 1 = one there (NULL: never) */
+    int (*enemy_near)(void *ctx, sv_vec3 p, float r_cm);
+    void *enemy_ctx;
     somvr_climb_hand hand[2];
 } somvr_climb_in;
 
@@ -492,6 +568,41 @@ typedef struct {
     uint64_t thr_ons, thr_frames, thr_refused;
     float stick_h;      /* hang_stick_cm: the feet over the ground at the last stick drop (cm) */
     uint64_t stick_drops;
+    /* hug */
+    int hug_ok;         /* hug_d is this frame's (a driving hold with a wall direction) */
+    float hug_d;        /* the root's axis to the driving hold's face (cm, along its toward) */
+    float hug_max_d;    /* ... the largest while a hold drove (this climb; logs) */
+    double hug_cut_cm, hug_in_cm; /* the moves away from the wall cut, the pulls redirected toward it (totals, cm) */
+    uint64_t hug_cuts, hug_ins;  /* ... frames */
+    /* stand */
+    float stand_h;      /* the last E_STAND: the feet over the floor (cm; < 0: under it) */
+    int stand_at;       /* ... the ray that found it: 0 at the root, 1 stand_in_cm toward the top */
+    int stand_over;     /* ... 1 = over (holding), 0 = released (let go, or the stick's walk) */
+    int stand_walking;  /* the stick walks him in a topped hang (since the first E_STAND_WALK of this hang) */
+    double stand_walk_cm;
+    uint64_t stands, stand_overs, stand_walks;
+    /* topout */
+    int to_on;          /* a top-out through: this frame's move goes through the rock */
+    float to_block, to_idle, to_cm; /* ... the push held so far (s), no move so far (s), this one's way (cm) */
+    int to_clear, to_refused_once, to_why, to_in; /* ... to_in: the capsule was in the rock during this one */
+    float to_top_y;     /* ... the top it is at (the push's, or the driving hold's own) */
+    double to_all_cm;
+    uint64_t to_ons, to_frames, to_refused;
+    /* drop mark (build 17) */
+    int dm;             /* 0 none, 1 A held (choosing), 2 a tap's ring until dm_t0 + dm_show_s */
+    int dm_climb;       /* the choice began while climbing (else on foot) */
+    int dm_kind;        /* SOMVR_CLIMB_DM_*: what the let-go does now (NONE: nothing) */
+    int dm_cancel_why;  /* the last cancel's SOMVR_CLIMB_DMC_* */
+    int dm_stick_wait;  /* a stick cancel: the stick must come back under 0.3 before the hang's stick acts */
+    double dm_t0;       /* the press */
+    double dm_test_t;   /* climbing: the landing's last test */
+    sv_vec3 dm_land;    /* the ring: the floor point where he will stand (or land: the fall) */
+    sv_vec3 dm_top;     /* the line's top: over the ring at the edge's (or the feet's) height */
+    sv_vec3 dm_to;      /* the blink's target (Talion's root) */
+    sv_vec3 dm_root;    /* the root at the press (on foot) or at the last test (climbing) */
+    float dm_out;       /* the landing's distance past the first spot looked at (cm: 0, 20, ...) */
+    uint32_t dm_seq;    /* the newest hold's seq at the press (a newer one = cancel) */
+    uint64_t dm_presses, dm_shows, dm_goes, dm_falls, dm_cancels, dm_taps, dm_nos, dm_tests, dm_enemies, dm_norooms;
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
@@ -525,6 +636,13 @@ typedef struct {
     float po_pull;          /* ... the pull so far, 0..1 of po_pull_cm */
     int po_hand;            /* ... the armed hand */
     float through_up;       /* through: this request's vertical part (cm) goes through the rock (0: none) */
+    float hug_cut;          /* hug: this frame's move away from the wall cut (cm) */
+    float hug_in;           /* hug: this frame's pull redirected toward the face (cm) */
+    float stand_walk;       /* stand: this frame's walk onto the top (cm) */
+    float through_lx, through_lz; /* topout: this request's level part through the rock (cm; with through_up) */
+    int dm_show;            /* drop_mark: show the ring at dm_land and the line from dm_top down to it (world cm) */
+    sv_vec3 dm_land, dm_top;
+    float dm_held;          /* ... A held so far, 0..1 of dm_min_s (1: a let-go goes; 0 for a tap's ring) */
 } somvr_climb_out;
 
 void somvr_climb_init(somvr_climb *s);
@@ -619,5 +737,40 @@ void somvr_unpin_init(somvr_unpin *s);
  * passes on the second call); a tick without a block resets the block */
 void somvr_unpin_step(somvr_unpin *s, const somvr_unpin_cfg *c, const somvr_unpin_in *in, somvr_unpin_out *o);
 const char *somvr_unpin_why_name(int why);
+
+/* ==== SOMVR_HEAD_ROCK (build 17, docs/re-xr-pipeline.md 60.3) =================================================
+ * The user's build 16 session, mark 4: the view inside a rock face. Real steps move only the view (never Talion), so
+ * over a session the tracked head drifted up to ~1 m from his body (the room's offset); his capsule stood 55 cm out
+ * from the face, the view 24 cm inside it. Per stereo frame somvr.c casts from Talion's eyes (the rig's base, where
+ * his capsule keeps them out of the rock) to the tracked head and on past it, and from the head along the view (the
+ * near plane): gap = the head's clearance (cm; < 0 = past a surface). The view fades to black as the gap closes from
+ * near_cm to full_cm (out_s to black, in_s back); black for back_s with the head still in = back: somvr.c re-latches
+ * the rig's origin so the view is at Talion's eyes again (under the black), then it fades in. */
+typedef struct {
+    float near_cm;  /* the fade starts with the head this close to a surface (8: the near plane is 6) */
+    float full_cm;  /* ... black with it this far past it (-2) */
+    float out_s;    /* to black in this long (0.12) */
+    float in_s;     /* back in this long (0.25) */
+    float back_s;   /* black this long = back to Talion's eyes (0.5; 0 = never) */
+} somvr_headrock_cfg;
+void somvr_headrock_cfg_default(somvr_headrock_cfg *c);
+typedef struct {
+    float level;    /* the fade now, 0..1 */
+    double black_t; /* black since (< 0: not black) */
+    int backed;     /* back given in this black (again only after the level fell under 0.5) */
+    int in;         /* the gap under near_cm (an episode; first = its first frame) */
+    uint64_t frames, faded, black, episodes, backs;
+    float min_gap;  /* the smallest gap of this episode (logs) */
+} somvr_headrock;
+void somvr_headrock_init(somvr_headrock *s);
+typedef struct {
+    float level;    /* the fade for this frame, 0..1 */
+    int back;       /* re-latch now (the view back to Talion's eyes) */
+    int first;      /* an episode's first frame (the gap under near_cm) */
+    int ended;      /* an episode ended (the level back to 0) */
+} somvr_headrock_out;
+/* one frame: t (s), ok = the rays answered (0: no change of the target, the level eases out), gap (cm) */
+void somvr_headrock_step(somvr_headrock *s, const somvr_headrock_cfg *c, double t, float dt, int ok, float gap,
+                         somvr_headrock_out *o);
 
 #endif
