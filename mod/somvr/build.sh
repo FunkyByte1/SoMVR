@@ -39,7 +39,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_step.c" "$D/somvr_finish.c" "$D/somvr_headview.c" "$D/somvr_headparts.c" "$D/somvr_practice.c"
       "$D/somvr_session.c" "$D/somvr_body.c" "$D/somvr_fingers.c" "$D/somvr_size.c" "$D/somvr_vrhands.c"
       "$D/somvr_strike.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
-      "$D/somvr_objective.c" "$D/somvr_smooth.c")
+      "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -136,6 +136,9 @@ gcc "${CF[@]}" -o "$D/build/tests/test_verbs" "$D/tests/test_verbs.c" "$D/somvr_
 "$D/build/tests/test_verbs"
 gcc "${CF[@]}" -o "$D/build/tests/test_crouch" "$D/tests/test_crouch.c" "$D/somvr_crouch.c" -lm # build 13: crouch by ducking
 "$D/build/tests/test_crouch"
+gcc "${CF[@]}" -o "$D/build/tests/test_vision" "$D/tests/test_vision.c" "$D/somvr_vision.c" "$D/somvr_session.c" \
+    "$D/somvr_ctl.c" "$D/somvr_pose.c" -lm # build 16: SOMVR_VISION's wish and taps
+"$D/build/tests/test_vision"
 gcc "${CF[@]}" -o "$D/build/tests/test_front" "$D/tests/test_front.c" "$D/somvr_front.c" -lm # build 14: front-first enemies (SOMVR_FRONT)
 "$D/build/tests/test_front"
 gcc "${CF[@]}" -o "$D/build/tests/test_objective" "$D/tests/test_objective.c" "$D/somvr_objective.c" "$D/somvr_font.c" -lm # build 15: the objective marker

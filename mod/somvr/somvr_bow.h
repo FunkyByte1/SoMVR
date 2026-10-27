@@ -26,6 +26,21 @@
  *   exit     not drawing and the button not held: the hands farther apart than exit_cm for exit_s ends the aim; any
  *            phase: the input not live, the game not allowing it (a menu, third person, a climb ...), the bow hand lost
  *            for lost_s. A pending shot is dropped by an exit.
+ *   quiver   build 16 (cfg.quiver, SOMVR_BOW_QUIVER=on; the string = the right trigger, SOMVR_BOW_STRING=trigger): while
+ *            the bow is out, a string press inside the quiver's slot (in.quiver) takes an arrow into the string hand
+ *            (TAKE; with in.arrows 0: nothing, EMPTY). Held, the arrow touched to the nock (within nock_r_cm) is nocked
+ *            at once (NOCK, no new press); let go before that it is gone (DROP, nothing spent). A release below
+ *            min_draw_cm leaves the arrow resting on the string (LETDOWN, arrow REST): a press at the nock draws it
+ *            again. A press at the nock with no arrow anywhere: NOARROW. An exit puts any arrow back. The hands apart
+ *            end nothing while an arrow is held or the hand is in the quiver.
+ *
+ * The bow's frame in the bow hand's grip (build 16, somvr_bow_hold_q): the grip's frame in the game convention
+ * (somvr_hand_game) has +Z along the fist's tube from the little finger to the thumb (OpenXR's -Z), +X = OpenXR's +X
+ * (the left palm's normal, the right hand's back: to the right for both hands held out), +Y = OpenXR's +Y = Z x X: with
+ * the arm out and the fist upright, +Z points up and +Y back toward the player. A real bow lies with its limbs along the
+ * tube and shoots along -Y (the knuckles' way, along the arm), its string toward the face: HOLD_FIST. Builds 11-15b
+ * (HOLD_AUTO) laid the bow's shot on +Z and its limbs on +Y - right for the headless hands' sword pose (the tube level and
+ * ahead), flat along the arm for a real bow hold (the user's 10-26 mark 1). cfg.shot_ax carries the shot axis.
  */
 #ifndef SOMVR_BOW_H
 #define SOMVR_BOW_H
@@ -60,6 +75,17 @@ enum {                                /* somvr_bow_out.events: what happened thi
     SOMVR_BOW_E_DROPPED = 1u << 9,    /* a shot waited wait_s without the game's aim, or an exit came first */
     SOMVR_BOW_E_EXIT = 1u << 10,      /* the aim ended (end_why) */
     SOMVR_BOW_E_MISS = 1u << 11,      /* while aiming: a string press whose window ran out away from the nock */
+    SOMVR_BOW_E_TAKE = 1u << 12,      /* quiver: an arrow taken into the string hand */
+    SOMVR_BOW_E_EMPTY = 1u << 13,     /* quiver: a press in it with no arrows (the game's count 0): nothing taken */
+    SOMVR_BOW_E_DROP = 1u << 14,      /* quiver: the string let go with the arrow not nocked: the arrow is gone */
+    SOMVR_BOW_E_NOARROW = 1u << 15,   /* quiver: a string press at the nock with no arrow in the hand or on the string */
+};
+enum { SOMVR_BOW_HOLD_CAL = 0, SOMVR_BOW_HOLD_AUTO = 1, SOMVR_BOW_HOLD_FIST = 2 }; /* SOMVR_BOW_HOLD= */
+enum {                                /* somvr_bow.arrow / somvr_bow_out.arrow: where the arrow is */
+    SOMVR_BOW_ARROW_NONE = 0,
+    SOMVR_BOW_ARROW_HAND = 1,         /* in the string hand (quiver: taken, not nocked) */
+    SOMVR_BOW_ARROW_STRING = 2,       /* nocked, the string hand on it (drawing) */
+    SOMVR_BOW_ARROW_REST = 3          /* quiver: on the string, the hand let go below min_draw_cm */
 };
 
 typedef struct {
@@ -86,6 +112,9 @@ typedef struct {
                                 (bow_ready), the game's aim on or not; else (0) it waits for the game's aim as before */
     int idle_nock;           /* the string grip at the nock enters from idle (1, the default); build 15b's
                                 SOMVR_BOW_DRAW=slot: 0, the bow comes only from its slot (the button) */
+    float shot_ax[3];        /* build 16: the bow's shot axis in the bow hand's grip frame (unit; (0, 0, 1) = builds
+                                11-15b; HOLD_FIST: (0, -1, 0), somvr_bow_hold_q's +Z) */
+    int quiver;              /* build 16: arrows come from the quiver (see "quiver" above); 0 = any press at the nock */
 } somvr_bow_cfg;
 void somvr_bow_cfg_default(somvr_bow_cfg *c);
 
@@ -100,6 +129,8 @@ typedef struct {
     float string;            /* the string hand's squeeze (or trigger) 0..1 */
     int button;              /* the aim button is held (0 without one) */
     int bow_ready;           /* the bow is the game's active item (with release_now: our shot needs no aim mode) */
+    int quiver;              /* cfg.quiver: the string hand is inside the quiver's slot */
+    int arrows;              /* cfg.quiver: the game's arrows (-1 = unknown: an arrow is given, the shot's gate decides) */
 } somvr_bow_in;
 
 typedef struct {
@@ -130,6 +161,8 @@ typedef struct {
     uint64_t aims, by_btn, draws, shots, fired, dropped, letdowns, misses, exits[SOMVR_BOW_NEND], frames, ray_frames;
     float last_draw;         /* the draw of the last release */
     double last_wait;        /* how long the last fired shot waited for the game */
+    int arrow;               /* SOMVR_BOW_ARROW_* */
+    uint64_t takes, empties, drops, noarrows;
 } somvr_bow;
 
 typedef struct {
@@ -143,6 +176,7 @@ typedef struct {
     uint32_t events;         /* SOMVR_BOW_E_* */
     int end_why;             /* with SOMVR_BOW_E_EXIT */
     double wait_s;           /* with SOMVR_BOW_E_FIRE: how long the shot waited for the game */
+    int arrow;               /* SOMVR_BOW_ARROW_* after the step */
 } somvr_bow_out;
 
 void somvr_bow_init(somvr_bow *s);
@@ -193,16 +227,32 @@ void somvr_bow_fire_xf(sv_vec3 origin, sv_vec3 dir, float yaw_hint, float xf[7])
 /* ---- the geometry (tested on their own) ------------------------------------------------------------------------- */
 /* the nock point: p + R(q) nock_ofs */
 sv_vec3 somvr_bow_nock(const somvr_bow_cfg *c, sv_vec3 p, sv_quat q);
+/* the bow's forward (the shot) for the bow hand's grip q: R(q) shot_ax (unit; a zero shot_ax reads (0, 0, 1)) */
+sv_vec3 somvr_bow_fwd(const somvr_bow_cfg *c, sv_quat q);
+/* the bow model's rotation in the bow hand's grip frame (its +Z the shot, +Y the upper limb, -Z toward the string).
+ * CAL, AUTO: identity (builds 11-15b: the shot on the grip's +Z, the limbs on +Y). FIST: the limbs along the tube (+Z),
+ * the shot along -Y; then tilt_deg about the grip's +X (+ = the upper limb toward the target) and cant_deg about the
+ * shot (+ = the upper limb toward the string hand's side: right for a left-hand bow) */
+sv_quat somvr_bow_hold_q(int hold, int bow_hand, float tilt_deg, float cant_deg);
 /* the shot's direction from the string hand to the nock (unit; *len = the draw, cm); a zero draw: +Z, len 0 */
 sv_vec3 somvr_bow_draw_dir(sv_vec3 nock, sv_vec3 string, float *len);
 /* the string direction's weight 0..1 at this draw (smoothstep over dir_min_cm .. + dir_blend_cm) */
 float somvr_bow_dir_weight(const somvr_bow_cfg *c, float draw_cm);
-/* the ray's direction: the bow's forward R(q)(0,0,1) turned toward the draw direction by the weight (unit) */
+/* build 16: the draw along the bow's shot axis, |(nock - string) . fwd| (cm; 0: the hand beside the nock). The string
+ * direction's weight counts this, not |nock - string|: a hand that nocks 10 cm beside the nock has drawn nothing (boot
+ * 003313: the bow turned flat at the nock by the alignment). Either way along the axis (a bow held backwards: the
+ * string's direction still wins, as before) */
+float somvr_bow_back(const somvr_bow_cfg *c, sv_quat bow_q, sv_vec3 nock, sv_vec3 string);
+/* the ray's direction: the bow's forward R(q) shot_ax turned toward the draw direction by the weight of the draw back
+ * along it (somvr_bow_back; unit) */
 sv_vec3 somvr_bow_ray_dir(const somvr_bow_cfg *c, sv_quat bow_q, sv_vec3 nock, sv_vec3 string, float *draw);
 /* a rotation with R (0,0,1) = dir and R (0,1,0) in the vertical plane through dir (yaw then pitch, no roll); a
  * vertical dir keeps the heading `yaw_hint` (rad). The free-aim transform's quaternion */
 sv_quat somvr_bow_look(sv_vec3 dir, float yaw_hint);
 /* q turned by the shortest arc that takes R(q)(0,0,1) onto dir, by the share w (0 = q, 1 = the whole arc) */
 sv_quat somvr_bow_align(sv_quat q, sv_vec3 dir, float w);
+/* the same for the axis ax of q's frame (build 16: the bow's shot axis, cfg.shot_ax) */
+sv_quat somvr_bow_align_ax(sv_quat q, sv_vec3 ax, sv_vec3 dir, float w);
+const char *somvr_bow_arrow_name(int arrow);
 
 #endif

@@ -5063,8 +5063,13 @@ static void *g_phys_ptr = &g_phys;
 static void *volatile g_vtphys[70];
 static _Alignas(16) char g_wallobj[0x80], g_topobj[0x80], g_srec[3][0x40], g_clP[0x800];
 static const char *const g_srec_names[3] = { "ST_Climbable_Stone", "ST_Rock", "ST_Top" };
-typedef struct { uintptr_t vt; char pad[0x58]; volatile unsigned char grav; } st_pc_t;
-_Static_assert(offsetof(st_pc_t, grav) == CL_PC_GRAV, "stand-in proxy");
+typedef struct { uintptr_t vt; char pad[0x38]; uintptr_t proxy; char pad2[0x18]; volatile unsigned char grav; } st_pc_t;
+_Static_assert(offsetof(st_pc_t, grav) == CL_PC_GRAV && offsetof(st_pc_t, proxy) == UN_PROXY, "stand-in proxy");
+/* SOMVR_CLIMB_UNPIN's stand-in hkpCharacterProxy: the manifold at +0x20 (data, size, capacity), its position (cm) */
+typedef struct { char pad[0x20]; uintptr_t data; int32_t n, cap; float pos[3]; int sets; } st_pxy_t;
+_Static_assert(offsetof(st_pxy_t, data) == UN_MANIFOLD, "stand-in hkpCharacterProxy");
+static st_pxy_t g_pxy;
+static _Alignas(16) float g_pxy_man[4][16];
 static st_pc_t g_ppc, g_ppc2;
 static void *volatile g_vtpc[16];
 static char g_clhex[CLS_N][256];
@@ -5081,6 +5086,18 @@ __attribute__((noipa)) uint64_t st_ctxact(uintptr_t self, uintptr_t a2, uintptr_
 }
 typedef uint64_t (*st_filter_fn)(uintptr_t obj, uintptr_t ud);
 __attribute__((noipa)) void st_pc_setgrav(void *pc, int on) { ((st_pc_t *)pc)->grav = (unsigned char)on; }
+__attribute__((noipa)) void st_pc_setpos(uintptr_t pc, float *p)
+{
+	st_pxy_t *x = (st_pxy_t *)((st_pc_t *)pc)->proxy;
+	if (x)
+		memcpy(x->pos, p, sizeof x->pos), x->sets++;
+}
+__attribute__((noipa)) void st_pc_getpos(uintptr_t pc, float *p)
+{
+	st_pxy_t *x = (st_pxy_t *)((st_pc_t *)pc)->proxy;
+	if (x)
+		memcpy(p, x->pos, sizeof x->pos);
+}
 __attribute__((noipa)) uint64_t st_pc_getgrav(void *pc) { return ((st_pc_t *)pc)->grav != 0; }
 __attribute__((noipa)) uint64_t st_cl_code(uint64_t a) { return a * 5 + 3; } /* the proof sites' stand-in code */
 static uintptr_t st_rec_of(uint16_t id) { return id >= 7 && id <= 9 ? (uintptr_t)g_srec[id - 7] : 0; }
@@ -5218,6 +5235,8 @@ static void cl_stand_in_sites(void)
 	cl_vslot(&g_vtpc[CL_SLOT_PC_GRAV], (void *)st_pc_setgrav, CLS_PC_GRAV);
 	cl_entry((void *)st_cl_code, CLS_FSM);
 	cl_entry((void *)st_cl_code, CLS_MOUNT);
+	cl_vslot(&g_vtpc[CL_SLOT_PC_SETPOS], (void *)st_pc_setpos, CLS_PC_SETPOS);
+	cl_vslot(&g_vtpc[CL_SLOT_PC_GETPOS], (void *)st_pc_getpos, CLS_PC_GETPOS);
 	g_vtctx[2] = (void *)st_ctxact;
 	hex_of((const unsigned char *)&g_vtctx[2], 8, g_clctx_hex, 128);
 	hex_of((const void *)st_ctxact, 4, g_clctx_hex + 128, 128);
@@ -5698,17 +5717,27 @@ static void climb_tests(void)
 	g_clw.honor_cb = 1;
 	cl_frames(3);
 	EXPECT(!strcmp(cl_word("probe"), "climb probe") &&
-		       !strcmp(cl_word("prob"), "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw game|ours, "
-						"overhang on|off: ignored)") &&
-		       !strcmp(cl_word("probe down"), "climb (not probe [up|table|edge], state, watch [off], ledges off|game, loyaw "
-						      "game|ours, overhang on|off: ignored)"),
+		       !strcmp(cl_word("prob"), "climb (not probe [up|table|edge], state, watch [off], writes [S], contacts, trace S, "
+						"ledges off|game, loyaw game|ours, overhang on|off, unpin on|off, pullover on|off, through "
+						"on|off, face on|off, ramp X: ignored)") &&
+		       !strcmp(cl_word("probe down"), "climb (not probe [up|table|edge], state, watch [off], writes [S], contacts, "
+						      "trace S, ledges off|game, loyaw game|ours, overhang on|off, unpin on|off, pullover on|off, "
+						      "through on|off, face on|off, ramp X: ignored)"),
 	       "climb: the probe word");
 	float oh0 = g_cl.cfg.overhang; /* build 15b's test aid: SOMVR_CLIMB_OVERHANG live */
 	EXPECT(!strcmp(cl_word("overhang on"), "climb overhang on") && g_cl.cfg.overhang == 1.0f &&
 		       !strcmp(cl_word("overhang off"), "climb overhang off") && g_cl.cfg.overhang == 0.0f &&
 		       log_has("overhang on (the trigger word, a test aid)"),
 	       "climb: the overhang word");
-	g_cl.cfg.overhang = oh0;
+	int ohm0 = g_cl.cfg.oh_mantle;
+	EXPECT(!strcmp(cl_word("overhang step"), "climb overhang step") && g_cl.cfg.overhang == 1.0f && !g_cl.cfg.oh_mantle &&
+		       !strcmp(cl_word("overhang on"), "climb overhang on") && g_cl.cfg.oh_mantle,
+	       "climb: the overhang word's step (build 16: no mantle)");
+	g_cl.cfg.overhang = oh0, g_cl.cfg.oh_mantle = ohm0;
+	EXPECT(!strcmp(cl_word("writes 2"), "climb writes") && atomic_load(&g_cw.req) == 2u &&
+		       !strcmp(cl_word("writes 99"), "climb writes (SOMVR_CLIMB off or not 1..20 s: nothing)"),
+	       "climb: the writes word (a test aid)");
+	atomic_store(&g_cw.req, 0u);
 	uint64_t pc0 = g_cl.casts;
 	iframe();
 	EXPECT(log_has("CLIMB probe t=") && log_has("at head +0 cm: bearing (deg, + = right) = the distance (cm): +0=50C +30=58C "
@@ -5940,6 +5969,76 @@ static void climb_tests(void)
 	       "the stick off while holding; Talion skipped by the filter and by stepping; rock, out of reach; stand-downs "
 	       "(FSM 8, mount, input, flat, stale, the proxy changed: the old one untouched); the top: lift and cmd "
 	       "(LedgePullUp); %llu casts\n", (unsigned long long)g_cl.casts);
+	/* 18m. SOMVR_CLIMB_UNPIN (build 16, re-xr-pipeline.md 50.1): the PM hook's ends with a stand-in manifold: a wall
+	 * 6 cm into the capsule at -x (its normal +x) and the floor; a tick asked +10 cm x and not done = the proxy +8 cm
+	 * (the step's most); -x (into that wall): refused; no contact inside: nothing; off: nothing */
+	{
+		int on0 = g_un.on, ok0 = g_un.ok;
+		somvr_unpin_cfg uc0 = g_un.cfg;
+		uintptr_t pm0 = g_cl.pm, obj0 = g_cl.obj;
+		int tid0 = g_cl.tid, fsm0 = g_cl.fsm, mnt0 = g_cl.mounted;
+		g_cl.fsm = CL_FSM_SUPPORTED, g_cl.mounted = 0;
+		g_cl.on = 1, g_un.on = 1, g_un.ok = 1, g_un.cfg.hold_s = 0, g_un.have = 0, g_un.lines = 0;
+		somvr_unpin_init(&g_un.s);
+		g_cl.pm = (uintptr_t)&g_ppm, g_cl.obj = (uintptr_t)&g_pobj, g_cl.tid = my_tid();
+		g_ppc.proxy = (uintptr_t)&g_pxy;
+		memset(g_pxy_man, 0, sizeof g_pxy_man);
+		float wall[8] = { 4.65f, 1.0f, -0.5f, 0, 1, 0, 0, -0.06f }, floor_[8] = { 5.0f, 0.0f, -0.5f, 0, 0, 1, 0, 0.004f };
+		memcpy(g_pxy_man[0], wall, sizeof wall), memcpy(g_pxy_man[1], floor_, sizeof floor_);
+		g_pxy.data = (uintptr_t)g_pxy_man, g_pxy.n = 2, g_pxy.cap = 4, g_pxy.sets = 0;
+		g_pxy.pos[0] = 500, g_pxy.pos[1] = 30, g_pxy.pos[2] = -50;
+		float r0[3] = { 500, 100, -50 }, xf[7] = { 510, 100, -50, 0, 0, 0, 1 };
+		memcpy(g_pobj.pos, r0, sizeof r0);
+		int wall0 = g_wall;
+		g_wall = 0;
+		un_pre((uintptr_t)&g_ppm), un_post((uintptr_t)&g_ppm, xf); /* the first tick: only its start */
+		un_pre((uintptr_t)&g_ppm);                                  /* the root stayed: blocked, in the wall */
+		EXPECT(g_pxy.sets == 1 && fabsf(g_pxy.pos[0] - 508) < 0.01f && g_pxy.pos[1] == 30 && g_pxy.pos[2] == -50 &&
+			       g_un.s.steps == 1 && log_has("UNPIN t=") && log_has("pinned: the asked move given to the proxy"),
+		       "climb: unpin: the step (sets %d, x %g, steps %llu)", g_pxy.sets, g_pxy.pos[0],
+		       (unsigned long long)g_un.s.steps);
+		g_pobj.pos[0] = 508; /* the game writes the proxy's position to the root */
+		xf[0] = 498, un_post((uintptr_t)&g_ppm, xf), un_pre((uintptr_t)&g_ppm); /* -x: into the wall it is in */
+		EXPECT(g_pxy.sets == 1 && g_un.s.into == 1 && log_has("into a surface"), "climb: unpin: into the wall (sets %d)",
+		       g_pxy.sets);
+		g_pxy_man[0][7] = 0.003f; /* touching, not inside: the game's own block (a wall, an edge) */
+		xf[0] = 518, un_post((uintptr_t)&g_ppm, xf), un_pre((uintptr_t)&g_ppm);
+		EXPECT(g_pxy.sets == 1 && g_un.s.notin >= 1, "climb: unpin: not inside (sets %d)", g_pxy.sets);
+		g_pxy_man[0][7] = -0.06f;
+		EXPECT(!strcmp(cl_word("unpin off"), "climb unpin off") && !g_un.on, "climb: unpin: the word");
+		un_post((uintptr_t)&g_ppm, xf), un_pre((uintptr_t)&g_ppm), un_post((uintptr_t)&g_ppm, xf), un_pre((uintptr_t)&g_ppm);
+		EXPECT(g_pxy.sets == 1, "climb: unpin off: nothing (sets %d)", g_pxy.sets);
+		EXPECT(!strcmp(cl_word("contacts"), "climb contacts"), "climb: the contacts word");
+		g_wall = wall0, g_ppc.proxy = 0, g_un.on = on0, g_un.ok = ok0, g_un.cfg = uc0, g_un.have = 0;
+		g_cl.pm = pm0, g_cl.obj = obj0, g_cl.tid = tid0, g_cl.fsm = fsm0, g_cl.mounted = mnt0;
+		printf("climb unpin       the PM hook's ends: a capsule 6 cm in a wall, the asked move not done = the proxy "
+		       "moved by it (8 cm, the most); into that wall: refused; not inside: nothing; off: nothing\n");
+	}
+	/* 18n. SOMVR_CLIMB_THROUGH (build 16 round 2, re-xr-pipeline.md 50.8): the request's vertical part through the rock
+	 * = the proxy set up by it after vf_11 took the move (cl_thr_set); none = nothing; the words */
+	{
+		g_ppc.proxy = (uintptr_t)&g_pxy;
+		g_pxy.sets = 0, g_pxy.pos[0] = 500, g_pxy.pos[1] = 30, g_pxy.pos[2] = -50;
+		uint64_t s0 = g_cl.thr_sets;
+		cl_thr_set((uintptr_t)&g_ppm, 2.5f);
+		EXPECT(g_pxy.sets == 1 && g_pxy.pos[0] == 500 && fabsf(g_pxy.pos[1] - 32.5f) < 1e-4f && g_pxy.pos[2] == -50 &&
+			       g_cl.thr_sets == s0 + 1,
+		       "climb: through: the proxy up 2.5 (sets %d, y %g)", g_pxy.sets, g_pxy.pos[1]);
+		cl_thr_set((uintptr_t)&g_ppm, 0);
+		EXPECT(g_pxy.sets == 1, "climb: through: none = nothing (sets %d)", g_pxy.sets);
+		int th0 = g_cl.cfg.through;
+		EXPECT(!strcmp(cl_word("through on"), "climb through on") && g_cl.cfg.through == 1 &&
+			       !strcmp(cl_word("through off"), "climb through off") && g_cl.cfg.through == 0 &&
+			       !strcmp(cl_word("face off"), "climb face off") && g_cl.cfg.face_toward == 0 &&
+			       !strcmp(cl_word("face on"), "climb face on") && g_cl.cfg.face_toward == 1 &&
+			       !strcmp(cl_word("trace 2"), "climb trace") && atomic_load(&g_ct.until) > 0 &&
+			       !strcmp(cl_word("trace 99"), "climb trace (SOMVR_CLIMB off or not 0..30 s: nothing)"),
+		       "climb: through: the words");
+		atomic_store(&g_ct.until, 0.0);
+		g_cl.cfg.through = th0, g_ppc.proxy = 0;
+		printf("climb through     the request's vertical part through the rock: the proxy set up by it (2.5 cm); none: "
+		       "nothing; the words through on|off, trace S\n");
+	}
 	g_cl.on = 0;
 	g_wall = 0, g_wall_top = INFINITY, g_grav_flag = NULL;
 	g_pl = &g_player, g_ppm.owner = &g_player;
@@ -12227,6 +12326,22 @@ static void bd_tests(void)
 	sv_vec3 bdir = sv_qrot(g_arm.cal[SA_R].q, (sv_vec3){ 0, 1, 0 });
 	EXPECT(NEAR(bdir.x, 0, 1e-5) && NEAR(bdir.y, sinf(20 * BD_DEG), 1e-5) && NEAR(bdir.z, cosf(20 * BD_DEG), 1e-5),
 	       "the angle: R_Weapon's +Y -> %.4f,%.4f,%.4f", bdir.x, bdir.y, bdir.z);
+	/* build 15b's follow-up: SOMVR_SWORD_GRIP_CM=8 slides the right weapon node 8 cm along the (tilted) blade and the
+	 * combat blade's tip 8 cm farther; back to 0 = as before */
+	{
+		sv_vec3 p0 = g_arm.cal[SA_R].p;
+		float len0 = g_cb.bcfg.len_cm;
+		g_bd.grip_cm = 8;
+		bd_grip_blade(), bd_apply_cal();
+		sv_vec3 dp = { g_arm.cal[SA_R].p.x - p0.x, g_arm.cal[SA_R].p.y - p0.y, g_arm.cal[SA_R].p.z - p0.z };
+		EXPECT(NEAR(dp.x, 0, 1e-4) && NEAR(dp.y, 8 * sinf(20 * BD_DEG), 1e-4) && NEAR(dp.z, 8 * cosf(20 * BD_DEG), 1e-4) &&
+			       NEAR(g_cb.bcfg.len_cm, len0 + 8, 1e-4) && log_has("grip 0.0 cm (SOMVR_SWORD_GRIP_CM"),
+		       "the grip: R_Weapon moved %.3f,%.3f,%.3f, the blade %g (was %g)", dp.x, dp.y, dp.z, g_cb.bcfg.len_cm, len0);
+		g_bd.grip_cm = 0;
+		bd_grip_blade(), bd_apply_cal();
+		EXPECT(NEAR(g_arm.cal[SA_R].p.z, p0.z, 1e-4) && NEAR(g_cb.bcfg.len_cm, len0, 1e-4),
+		       "the grip back to 0: z %g blade %g", g_arm.cal[SA_R].p.z, g_cb.bcfg.len_cm);
+	}
 	/* 3. the copies: a flat frame (no H4 word) = the game's skin */
 	static _Alignas(16) sa_node skin[RUN3_N], mpose[RUN3_N];
 	for (int i = 0; i < RUN3_N; i++) {
@@ -12332,10 +12447,37 @@ static void bd_tests(void)
 	g_bd.test = 1;
 	EXPECT(!strcmp(bd_word("test R 20 -30 40 0 0 0"), "hands test") && !strcmp(bd_word("squeeze L 0.8"), "hands squeeze") &&
 		       !strcmp(bd_word("cal R 0 0 0 0 0 0"), "hands cal") &&
-		       !strcmp(bd_word("test Q 1 2 3"), "hands (not test|swing|noise|squeeze|draw|cal|hide|angle: ignored)") &&
+		       !strcmp(bd_word("test Q 1 2 3"), "hands (not test|swing|noise|wiggle|weighthand|squeeze|draw|cal|hide|angle: ignored)") &&
+		       !strcmp(bd_word("weighthand follow"), "hands weighthand") &&
+		       atomic_exchange(&g_hsm.hand_req, 0) == 2 &&
+		       !strcmp(bd_word("weighthand loose"), "hands weighthand (not fixed|follow: ignored)") &&
 		       !strcmp(bd_word("noise 0.1 0.5"), "hands noise") && !strcmp(bd_word("noise 9 1"),
-		       "hands noise (not DEG 0..5 MM 0..20: ignored)") && !strcmp(bd_word("noise 0 0"), "hands noise"),
+		       "hands noise (not DEG 0..5 MM 0..20: ignored)") && !strcmp(bd_word("noise 0 0"), "hands noise") &&
+		       !strcmp(bd_word("wiggle R 50 4 2"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20: ignored)") &&
+		       !strcmp(bd_word("wiggle X 10 4 2"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20: ignored)"),
 	       "the test words");
+	/* build 16: `hands wiggle`: a sine about the grip's own up axis from the test pose, its angular speed added */
+	{
+		int seq0 = atomic_load(&g_hsm.wig_seq);
+		EXPECT(!strcmp(bd_word("wiggle R 10 5 1"), "hands wiggle") && atomic_load(&g_hsm.wig_seq) == seq0 + 1,
+		       "the wiggle word");
+		somvr_hand wh;
+		memset(&wh, 0, sizeof wh);
+		wh.pose.q[3] = 1, wh.time = 1000000000LL;
+		hsm_test_wiggle(SOMVR_HAND_R, &wh); /* its start: sin 0 */
+		somvr_hand w2 = wh;
+		memset(w2.ang, 0, sizeof w2.ang);
+		w2.time += 50000000LL; /* 50 ms = a quarter period at 5 Hz: +10 deg about +Y, no speed */
+		hsm_test_wiggle(SOMVR_HAND_R, &w2);
+		float ang = 2 * atan2f(w2.pose.q[1], w2.pose.q[3]) / 0.01745329f;
+		EXPECT(log_has("BODY test wiggle R: +-10.0 deg at 5.0 Hz for 1.0 s") && NEAR(ang, 10, 0.01) &&
+			       fabsf(w2.ang[1]) < 1e-3f && NEAR(wh.ang[1], 10 * 0.01745329 * 6.2831853 * 5, 1e-3),
+		       "the wiggle: %.3f deg at a quarter, the start's speed %.3f rad/s", ang, wh.ang[1]);
+		somvr_hand w3 = wh;
+		w3.time += 1100000000LL;
+		hsm_test_wiggle(SOMVR_HAND_R, &w3);
+		EXPECT(!g_hsm.wig_on && w3.pose.q[3] == 1 && log_has("BODY test wiggle R end: "), "the wiggle ends");
+	}
 	float yaw = 0.6f; /* the head turned 34 deg left (OpenXR: about +Y) */
 	for (int e = 0; e < 2; e++) {
 		g_fr.views.pose[e].q[0] = 0, g_fr.views.pose[e].q[1] = sinf(0.5f * yaw), g_fr.views.pose[e].q[2] = 0;
@@ -12652,6 +12794,70 @@ static void bf_tests(void)
 	somvr_settings vs2;
 	bd_vm_settings(&vs2);
 	EXPECT(vs2.sword_deg == 15, "the settings carry it: %g", vs2.sword_deg);
+	/* 10b. build 16: the sword's weight (SOMVR_SWORD_WEIGHT, somvr_smooth_game.c) and the VR menu's Sword weight row:
+	 * the switch's level, the row's bit with the arms, the level live from the row (its constants, the spring reset),
+	 * the settings from it, the hits' haptic, off */
+	int wbad = 0, wt0 = g_hsm.weight;
+	setenv("SOMVR_SWORD_WEIGHT", "heavy", 1);
+	hsm_config(&wbad);
+	vs.sword_weight = 0;
+	swg_vm_settings(&vs);
+	EXPECT(!wbad && g_hsm.weight == SWG_HEAVY && NEAR(g_hsm.wcfg.a_up, 24, 1e-6) && vs.sword_weight == 2 &&
+		       swg_vm_avail() == SOMVR_VMA_WEIGHT && log_has("sword weight=heavy (the blade's swing speed grows at 24, "),
+	       "the weight: heavy from the switch (%d, %u)", g_hsm.weight, vs.sword_weight);
+	g_hsm.ws.have = 1;
+	vs.sword_weight = 1;
+	note = swg_vm_set(&vs);
+	EXPECT(g_hsm.weight == SWG_LIGHT && NEAR(g_hsm.wcfg.a_up, 60, 1e-6) && !g_hsm.ws.have &&
+		       strstr(note, "the hits' blade") && log_has("weight heavy -> light (the VR menu)"),
+	       "the row: light live (%d, %s)", g_hsm.weight, note);
+	vs.sword_weight = 2;
+	vm_apply_key(SOMVR_SK_SWORD_WEIGHT, &vs, "the selftest");
+	float wamp = 0.8f, wdur = 0.2f;
+	swg_hit_haptic(&wamp, &wdur);
+	EXPECT(g_hsm.weight == SWG_HEAVY && log_has("VRMENU apply SWORD_WEIGHT=heavy from the selftest (the drawn sword") &&
+		       NEAR(wamp, 1.0, 1e-6) && NEAR(wdur, 0.4, 1e-6),
+	       "vm_apply_key: heavy; the hit haptic %g x %g s", wamp, wdur);
+	vs.sword_weight = 0;
+	swg_vm_set(&vs);
+	wamp = 0.8f, wdur = 0.2f;
+	swg_hit_haptic(&wamp, &wdur);
+	EXPECT(g_hsm.weight == SWG_OFF && log_has("weight heavy -> off (the VR menu)") && NEAR(wamp, 0.8, 1e-6) &&
+		       NEAR(wdur, 0.2, 1e-6),
+	       "the row: off (no haptic change)");
+	/* SOMVR_SWORD_WEIGHT_HAND=follow (swg_vh_follow): the layer's hands turned with the blade about their grips, the
+	 * positions kept; the left only with both hands on the hilt */
+	setenv("SOMVR_SWORD_WEIGHT_HAND", "follow", 1);
+	hsm_config(&wbad);
+	EXPECT(g_hsm.hand_follow && log_has("the drawn hands follow the blade (SOMVR_SWORD_WEIGHT_HAND)"), "follow: the switch");
+	unsetenv("SOMVR_SWORD_WEIGHT_HAND");
+	hsm_config(&wbad);
+	EXPECT(!g_hsm.hand_follow && log_has("the drawn hands fixed on the controllers"), "follow: fixed by default");
+	{
+		sa_xf fg[2] = { { { 30, -20, 40 }, sv_qnormalize((sv_quat){ 0.1f, 0.2f, 0.05f, 0.97f }) },
+				{ { 20, -22, 30 }, sv_qnormalize((sv_quat){ -0.1f, 0.3f, 0.0f, 0.95f }) } };
+		somvr_vrhands_frame fe, f0;
+		memset(&fe, 0, sizeof fe);
+		fe.flags = SOMVR_VHF_R | SOMVR_VHF_L;
+		vh_to_xr(&fg[0], &fe.grip[0]), vh_to_xr(&fg[1], &fe.grip[1]);
+		f0 = fe;
+		float frot[3] = { 0, 0.2f, 0.05f }, fq[4], oq[4];
+		swg_vh_follow(&fe, fg, frot, 0);
+		sv_quat_to(fg[1].q, fq);
+		swg_follow(frot, fq, oq);
+		sa_xf want = { fg[1].p, sv_quat_of(oq) };
+		somvr_posef wx;
+		vh_to_xr(&want, &wx);
+		EXPECT(!memcmp(fe.grip[1].p, f0.grip[1].p, 12) && NEAR(fe.grip[1].q[0], wx.q[0], 1e-6) &&
+			       NEAR(fe.grip[1].q[1], wx.q[1], 1e-6) && NEAR(fe.grip[1].q[2], wx.q[2], 1e-6) &&
+			       NEAR(fe.grip[1].q[3], wx.q[3], 1e-6) && !memcmp(&fe.grip[0], &f0.grip[0], sizeof fe.grip[0]),
+		       "follow: the right hand turned about its grip (the position kept), the left untouched with one hand");
+		swg_vh_follow(&fe, fg, frot, 1);
+		EXPECT(!memcmp(fe.grip[0].p, f0.grip[0].p, 12) && memcmp(fe.grip[0].q, f0.grip[0].q, 16),
+		       "follow: with both hands the left turns too, its position kept");
+	}
+	unsetenv("SOMVR_SWORD_WEIGHT");
+	swg_level(wt0);
 	/* 11. the end line */
 	bf_end_log();
 	EXPECT(log_has("FINGERS END on=1: evals "), "the end line");
@@ -13445,8 +13651,37 @@ static void go_tests(void)
 		nv += !pass ? (n122[0] && n122[1] && !n122[2] && !n122[3] && n122[4] && n122[5] && !n122[6] && !n243)
 			    : (n122[0] && n122[1] && !n122[2] && !n122[4] && !n122[5] && !n243);
 	}
-	EXPECT(nv == 2 && log_has("CONFIG vision=hold") && log_has("CONFIG vision=tap") && log_has("Y let go: a tap of 122"),
+	EXPECT(nv == 2 && log_has("CONFIG vision=hold") && log_has("CONFIG vision=tap") &&
+		       log_has("Y not held and the vision ours: off wished; a tap of 122 for 2 ticks (off, try 1) blind"),
 	       "SOMVR_VISION: hold/tap taps %d %d %d %d %d %d, 243 %d", n122[0], n122[1], n122[2], n122[3], n122[4], n122[5], n243);
+	/* build 16's test words: "vision y MS" = Y over the snapshot (its presses counter rising over the layer's, a kept
+	 * snapshot not counted twice), "vision taps N MS" = raw taps; a state line */
+	somvr_input_state ty_keep = g_inp.st;
+	memset(&g_inp.st, 0, sizeof g_inp.st);
+	g_inp.st.hand[SOMVR_HAND_L].presses[1] = 7;
+	EXPECT(!strcmp(go_vision_word("vision y 50"), "vision y") && !strcmp(go_vision_word("vision y 0"), "vision y (bad: "
+			"1..60000 ms: ignored)"), "vision y words");
+	go_test_y(210.0);
+	int ty1 = (g_inp.st.hand[SOMVR_HAND_L].buttons & SOMVR_BTN_UPPER) && g_inp.st.hand[SOMVR_HAND_L].presses[1] == 8;
+	go_test_y(210.02); /* the read failed: the same (edited) snapshot kept */
+	int ty2 = (g_inp.st.hand[SOMVR_HAND_L].buttons & SOMVR_BTN_UPPER) && g_inp.st.hand[SOMVR_HAND_L].presses[1] == 8;
+	g_inp.st.hand[SOMVR_HAND_L].presses[1] = 7, g_inp.st.hand[SOMVR_HAND_L].buttons = 0; /* a fresh one from the layer */
+	go_test_y(210.1);
+	int ty3 = !(g_inp.st.hand[SOMVR_HAND_L].buttons & SOMVR_BTN_UPPER) && g_inp.st.hand[SOMVR_HAND_L].presses[1] == 8;
+	EXPECT(ty1 && ty2 && ty3 && log_has("test: Y pressed for 50 ms"), "vision y: held %d kept %d after %d", ty1, ty2, ty3);
+	g_inp.st = ty_keep;
+	EXPECT(!strcmp(go_vision_word("vision taps 2 100"), "vision taps") && !strcmp(go_vision_word("vision"), "vision") &&
+		       log_has("VISION t=") && log_has("state: tap"), "vision taps / state words");
+	int rt = 0;
+	for (int k = 0; k < 20; k++) {
+		sc_tick_out o;
+		memset(&o, 0, sizeof o);
+		o.live = 1, o.ctx = SC_CTX_WORLD;
+		go_vision_tick(&o, 211.0 + 0.011 * k);
+		for (int i = 0; i < o.ncmd; i++)
+			rt += o.cmd[i] == GO_CMD_VISION;
+	}
+	EXPECT(rt == 4 && log_has("test: a raw tap of 122"), "vision taps 2 100: %d ticks of 122 (4)", rt);
 	g_step.ok_vis = ok_vis, g_inp.allow_cmd = inp_allow;
 	unsetenv("SOMVR_VISION");
 	/* SOMVR_LOAD_VOICES=off (build 15b): options_dialog 0 through a load on flat frames (the state 3/0/paused with no

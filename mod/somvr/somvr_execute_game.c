@@ -303,6 +303,11 @@ static double xc_lapse(uintptr_t pc, const somvr_ex_hc *h, double t)
 	return delay;
 }
 
+static int xc_streak_now(void)
+{
+	return g_xc.mode && g_xc.ok_hc ? g_xc.hc.streak : 0;
+}
+
 static void xc_frame(uintptr_t pl, const float root[3], int blade, double t)
 {
 	if (!g_xc.mode)

@@ -180,6 +180,39 @@ int somvr_hp_add_mesh(somvr_hp_set *s, uintptr_t mesh)
     return 1;
 }
 
+int somvr_hp_add_weapon(somvr_hp_set *s, uintptr_t node, uintptr_t mesh)
+{
+    if (!node || !mesh || s->nweap >= SOMVR_HP_WEAPONS)
+        return 0;
+    for (uint32_t i = 0; i < s->nweap; i++)
+        if (s->wnode[i] == node)
+            return 0;
+    s->wnode[s->nweap] = node, s->wmesh[s->nweap] = mesh, s->nweap++;
+    return 1;
+}
+
+int somvr_hp_copy_of(const somvr_hp_set *s, uintptr_t node, uintptr_t node_mesh)
+{
+    if (!s || !node || !node_mesh)
+        return -1;
+    int w = -1;
+    for (uint32_t i = 0; i < s->nweap && i < SOMVR_HP_WEAPONS; i++) {
+        if (s->wnode[i] == node)
+            return -1; /* a weapon's own */
+        if (s->wmesh[i] == node_mesh && (w < 0 || (somvr_hp_match(s, s->wnode[i]) >= 0 && somvr_hp_match(s, s->wnode[w]) < 0)))
+            w = (int)i; /* the first, or a hidden one before a shown one */
+    }
+    return w;
+}
+
+int somvr_hp_skip_copy(int eye, int pass, const somvr_hp_set *s, uint64_t rt_frame, uintptr_t node, uintptr_t node_mesh)
+{
+    if (eye < 0 || pass < 0 || pass >= SOMVR_HP_PASSES || !s || !rt_frame || s->frame != rt_frame || !s->copies)
+        return 0;
+    int w = somvr_hp_copy_of(s, node, node_mesh);
+    return w >= 0 && somvr_hp_match(s, s->wnode[w]) >= 0; /* a copy of a weapon this frame hides */
+}
+
 void somvr_hp_ring_init(somvr_hp_ring *r)
 {
     for (int i = 0; i < SOMVR_HP_RING; i++) {
@@ -196,6 +229,12 @@ void somvr_hp_ring_init(somvr_hp_ring *r)
         atomic_store_explicit(&r->e[i].nmesh, 0, memory_order_relaxed);
         for (int k = 0; k < SOMVR_HP_MESHES; k++)
             atomic_store_explicit(&r->e[i].mesh[k], 0, memory_order_relaxed);
+        atomic_store_explicit(&r->e[i].copies, 0, memory_order_relaxed);
+        atomic_store_explicit(&r->e[i].nweap, 0, memory_order_relaxed);
+        for (int k = 0; k < SOMVR_HP_WEAPONS; k++) {
+            atomic_store_explicit(&r->e[i].wnode[k], 0, memory_order_relaxed);
+            atomic_store_explicit(&r->e[i].wmesh[k], 0, memory_order_relaxed);
+        }
     }
     atomic_thread_fence(memory_order_release);
 }
@@ -226,6 +265,13 @@ void somvr_hp_publish(somvr_hp_ring *r, const somvr_hp_set *s)
     atomic_store_explicit(&e->nmesh, nm, memory_order_relaxed);
     for (uint32_t k = 0; k < SOMVR_HP_MESHES; k++)
         atomic_store_explicit(&e->mesh[k], k < nm ? s->mesh[k] : 0, memory_order_relaxed);
+    uint32_t nw = s->nweap < SOMVR_HP_WEAPONS ? s->nweap : SOMVR_HP_WEAPONS;
+    atomic_store_explicit(&e->copies, s->copies, memory_order_relaxed);
+    atomic_store_explicit(&e->nweap, nw, memory_order_relaxed);
+    for (uint32_t k = 0; k < SOMVR_HP_WEAPONS; k++) {
+        atomic_store_explicit(&e->wnode[k], k < nw ? s->wnode[k] : 0, memory_order_relaxed);
+        atomic_store_explicit(&e->wmesh[k], k < nw ? s->wmesh[k] : 0, memory_order_relaxed);
+    }
     atomic_store_explicit(&e->frame, s->frame, memory_order_release);
 }
 
@@ -254,6 +300,13 @@ int somvr_hp_lookup(somvr_hp_ring *r, uint64_t frame, somvr_hp_set *out)
     s.nmesh = nm < SOMVR_HP_MESHES ? nm : SOMVR_HP_MESHES;
     for (uint32_t k = 0; k < s.nmesh; k++)
         s.mesh[k] = atomic_load_explicit(&e->mesh[k], memory_order_relaxed);
+    s.copies = atomic_load_explicit(&e->copies, memory_order_relaxed);
+    uint32_t nw = atomic_load_explicit(&e->nweap, memory_order_relaxed);
+    s.nweap = nw < SOMVR_HP_WEAPONS ? nw : SOMVR_HP_WEAPONS;
+    for (uint32_t k = 0; k < s.nweap; k++) {
+        s.wnode[k] = atomic_load_explicit(&e->wnode[k], memory_order_relaxed);
+        s.wmesh[k] = atomic_load_explicit(&e->wmesh[k], memory_order_relaxed);
+    }
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->frame, memory_order_relaxed) != frame)
         return 0;

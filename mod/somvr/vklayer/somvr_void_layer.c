@@ -8,6 +8,7 @@
  *   The watcher: one thread per session (started with it, joined at its teardown). It never blocks on X.mx (trylock),
  *     so the teardown joins it with X.mx held; a game present raises VD.presenting first, and the watcher leaves X.mx
  *     to it.
+ *   The process's exit (build 16, SOMVR_XR_EXIT=on|off, default on; docs/re-xr-pipeline.md 53): the code at the end.
  */
 
 enum { VD_NB = 5, VD_TOP = 3 };
@@ -18,6 +19,7 @@ static struct {
     pthread_t th;
     int th_up;
     _Atomic int stop;
+    _Atomic int th_done;        /* the watcher has left its loop (xr_exit's wait when it cannot join) */
     _Atomic int64_t present_ns; /* the game's last present on the session's device (its entry), 0 = none yet */
     _Atomic int presenting;     /* a game present is between its entry and its return */
     int64_t wait_ns;            /* the last xrWaitFrame's return */
@@ -132,6 +134,8 @@ static int64_t ka_frame(int64_t now);
 static void ka_resumed(int64_t t0);
 static void vd_space_destroy(void);
 static int ka_on(void);
+static void xe_config(void); /* the process's exit (the code at the file's end) */
+static void xe_session(void);
 
 static int64_t vd_now(void) {
     struct timespec ts;
@@ -152,6 +156,7 @@ static void vd_config(void) { /* once_init */
     ka_config();
     cv_config(); /* the game's in-world loading cover (SOMVR_XR_COVER) */
     mb_config(); /* the in-world menus' backdrop (SOMVR_XR_MENU_BACK) */
+    xe_config(); /* build 16: the process's exit (SOMVR_XR_EXIT) */
 }
 
 /* the head now (the eyes' middle, its yaw and pitch in degrees): 1 = located */
@@ -222,6 +227,7 @@ static void *vd_thread(void *arg) {
         if (took >= 0) /* the next frame at once (the wait paced it), or the period's rest */
             sleep_ns = period > 0 && took < period / 2 ? (long)(period - took) : 500000;
     }
+    atomic_store(&VD.th_done, 1);
     return NULL;
 }
 
@@ -272,8 +278,10 @@ static void vd_start(void) {
     atomic_store(&KA.q, KA.ka ? X.q : VK_NULL_HANDLE); /* the queue lock's queue */
     if (VD.gaps_ms || KA.ka) {
         atomic_store(&VD.stop, 0);
+        if (!VD.th_up) atomic_store(&VD.th_done, 0);
         if (!VD.th_up && pthread_create(&VD.th, NULL, vd_thread, NULL) == 0) VD.th_up = 1;
     }
+    xe_session(); /* the process's exit: our exit handler, the runtime's code pinned (once) */
     if (VD.gaps_ms)
         lg("xr: gaps: game presents %d ms or more apart are logged (the head sampled every 100 ms meanwhile%s)",
            VD.gaps_ms, VD.th_up ? "" : ": no watcher thread, no samples");
@@ -1357,4 +1365,100 @@ static void mb_layers(xr_comp *c) {
     if (!MB.on) return;
     if (MB.has & 2) c->l[XL_MBD] = (const XrCompositionLayerBaseHeader *)&MB.dq;
     if (MB.has & 1) c->l[XL_MBK] = (const XrCompositionLayerBaseHeader *)&MB.q;
+}
+
+/* ---- the process's exit (build 16, SOMVR_XR_EXIT=on|off, default on) ------------------------------------------------
+ *   The game quits with exit() - its menus' Quit game, and its SIGTERM handler (boot_check's stop, the VR menu's Quit) -
+ *   without vkDestroyDevice: the process's exit handlers run while the watcher still ends frames, and the OpenXR
+ *   loader's static destructor unloads the runtime's library. Build 15b: the watcher's next xrWaitFrame jumped into
+ *   unmapped code (SIGSEGV in xr_wait_publish), Feral's crash reporter and its message box kept the game alive until the
+ *   harness killed it (the user's Stop, or SIGKILL 30 s after a SIGTERM).
+ *   xr_exit, an exit handler registered at the first session's start - after the loader's and the runtime's own, so it
+ *   runs before them - takes X.mx (2 s at most), stops and joins the watcher, stops the preload's xrLocateViews
+ *   (xr.state DEAD, its calls in flight waited for) and leaves every hook pass-through (X.ds NULL, phase dead). Nothing is
+ *   destroyed (the game did not destroy its device; the runtime's objects end with the process, as build 9's clean
+ *   exit). The runtime's library is pinned too (one more dlopen reference from its xrWaitFrame's address): a late call
+ *   cannot jump into unmapped code. It logs "xr: exit: " (boot_check: the game is exiting). */
+static struct {
+    int on, bad, registered, pinned;
+    char pin[320];
+    _Atomic int exiting;
+} XE;
+
+static void xe_config(void) { /* vd_config */
+    const char *p = getenv("SOMVR_XR_EXIT");
+    XE.on = 1, XE.bad = 0;
+    if (p && *p) {
+        if (!strcmp(p, "off") || !strcmp(p, "0")) XE.on = 0;
+        else if (strcmp(p, "on") && strcmp(p, "1")) XE.bad = 1;
+    }
+}
+
+/* the runtime's library: one more reference (never released), unless its functions are the loader's own */
+static void xe_pin(void) {
+    Dl_info rt, ld;
+    void *a = NULL, *g = NULL;
+    memcpy(&a, &X.xrWaitFrame, sizeof a);
+    memcpy(&g, &X.gipa, sizeof g);
+    if (!a || !dladdr(a, &rt) || !rt.dli_fname) {
+        snprintf(XE.pin, sizeof XE.pin, "not pinned (xrWaitFrame's library not found)");
+    } else if (g && dladdr(g, &ld) && ld.dli_fbase == rt.dli_fbase) {
+        snprintf(XE.pin, sizeof XE.pin, "xrWaitFrame is the loader's own code (%s; never unloaded)", rt.dli_fname);
+    } else {
+        void *h = dlopen(rt.dli_fname, RTLD_NOW | RTLD_NOLOAD);
+        if (h) snprintf(XE.pin, sizeof XE.pin, "%s pinned (never unmapped while the process lives)", rt.dli_fname);
+        else snprintf(XE.pin, sizeof XE.pin, "%s NOT pinned: %s", rt.dli_fname, dlerror());
+    }
+}
+
+static void xr_exit(void) {
+    if (atomic_exchange(&XE.exiting, 1)) return;
+    int64_t t0 = vd_now();
+    struct timespec dl;
+    clock_gettime(CLOCK_REALTIME, &dl);
+    dl.tv_sec += 2;
+    int locked = pthread_mutex_timedlock(&X.mx, &dl) == 0; /* a frame in flight ends first */
+    atomic_store(&VD.stop, 1);
+    const char *w = "none running";
+    if (VD.th_up && pthread_equal(pthread_self(), VD.th)) {
+        w = "this thread (left as it is)";
+    } else if (VD.th_up && locked) { /* it never waits for X.mx: at most its sleep */
+        clock_gettime(CLOCK_REALTIME, &dl);
+        dl.tv_sec += 1;
+        if (pthread_timedjoin_np(VD.th, NULL, &dl) == 0) VD.th_up = 0, w = "stopped and joined";
+        else w = "STILL RUNNING after 1 s (not joined)";
+    } else if (VD.th_up) {
+        for (int i = 0; i < 100 && !atomic_load(&VD.th_done); i++) {
+            struct timespec sl = {0, 10000000};
+            nanosleep(&sl, NULL);
+        }
+        w = atomic_load(&VD.th_done) ? "stopped (not joined: X.mx busy)" : "STILL RUNNING (X.mx busy)";
+    }
+    atomic_store(&KA.q, VK_NULL_HANDLE); /* the game's queue calls without the keep-alive's lock */
+    int quiet = !X.sh || somvr_xr_stop(X.sh, SOMVR_XRS_DEAD, 1000);
+    int was = X.phase;
+    if (locked) {
+        X.ds = NULL; /* every hook passes through: no frame, no new session, no teardown */
+        X.phase = P_DEAD;
+    }
+    lg("xr: exit: the game is exiting (an exit handler, before the runtime is unloaded): the watcher %s; the preload's "
+       "xrLocateViews %s; %s (phase %s, frames %llu); nothing destroyed (the process ends); the runtime: %s; %.0f ms",
+       w, !X.sh ? "(no preload)" : quiet ? "stopped" : "STILL IN A CALL after 1 s",
+       locked ? "the hooks pass through from now on" : "X.MX BUSY 2 s: the hooks left as they were", phase_name[was],
+       (unsigned long long)X.frames, XE.pinned ? XE.pin : "not pinned", (double)(vd_now() - t0) / 1e6);
+    if (locked) pthread_mutex_unlock(&X.mx);
+}
+
+/* vd_start (X.mx held): the first session's start registers xr_exit (after the loader and the runtime registered theirs:
+ * it runs first) and pins the runtime */
+static void xe_session(void) {
+    if (XE.bad) lg("xr: exit: SOMVR_XR_EXIT=%s is not on or off: on", getenv("SOMVR_XR_EXIT"));
+    if (!XE.on) {
+        lg("xr: exit: off (SOMVR_XR_EXIT=off: build 15b - the watcher may call the runtime after it is unloaded)");
+        return;
+    }
+    if (!XE.pinned) xe_pin(), XE.pinned = 1;
+    if (!XE.registered) XE.registered = atexit(xr_exit) == 0 ? 1 : -1;
+    lg("xr: exit: on: %s; the runtime: %s", XE.registered > 0 ? "at the game's exit our threads stop before the runtime "
+       "is unloaded, the hooks pass through" : "atexit FAILED (no exit handler)", XE.pin);
 }

@@ -254,6 +254,7 @@ static void test_abi(void) {
     e.flags = SOMVR_VHF_L | SOMVR_VHF_HIDE, e.time = 1234, e.grip[0].p[1] = -0.3f, e.curl[1][4] = 0.75f;
     e.depth_k = 0.06f; /* v2 */
     e.ghost[1].p[2] = -0.45f, e.ghost[1].q[3] = 1, e.ghost_a[1] = 0.3f; /* v3 */
+    e.arrow.p[0] = 0.12f, e.arrow.q[3] = 1, e.arrow_len = 0.72f, e.arrow_glow = 0.6f; /* v4 */
     CHECK(!somvr_vrhands_ok(&sh), "inactive");
     sh.magic = SOMVR_VRHANDS_MAGIC, sh.version = SOMVR_VRHANDS_VERSION, sh.size = sizeof sh;
     atomic_store(&sh.active, 1);
@@ -261,8 +262,9 @@ static void test_abi(void) {
     somvr_vrhands_put(&sh, 77, &e);
     CHECK(somvr_vrhands_get(&sh, 77, &o) && o.flags == e.flags && o.time == 1234 && o.grip[0].p[1] == -0.3f &&
               o.curl[1][4] == 0.75f && o.depth_k == 0.06f && atomic_load(&o.seq) == 77 && o.ghost[1].p[2] == -0.45f &&
-              o.ghost[1].q[3] == 1 && o.ghost_a[1] == 0.3f && o.ghost_a[0] == 0,
-          "round trip (v2: depth_k, v3: the ghost)");
+              o.ghost[1].q[3] == 1 && o.ghost_a[1] == 0.3f && o.ghost_a[0] == 0 && o.arrow.p[0] == 0.12f &&
+              o.arrow.q[3] == 1 && o.arrow_len == 0.72f && o.arrow_glow == 0.6f,
+          "round trip (v2: depth_k, v3: the ghost, v4: the arrow)");
     CHECK(!somvr_vrhands_get(&sh, 77 + SOMVR_NREC, &o) && !somvr_vrhands_get(&sh, 0, &o), "another frame's slot");
     somvr_vrhands_put(&sh, 77 + SOMVR_NREC, &e);
     CHECK(!somvr_vrhands_get(&sh, 77, &o), "overwritten");
@@ -278,9 +280,45 @@ static void test_abi(void) {
     somvr_vrhands_depth_publish(&sh, &in);
     CHECK(somvr_vrhands_depth_read(&sh, &out) && !memcmp(&in, &out, sizeof in) && (atomic_load(&sh.dseq) & 1) == 0,
           "the depth info round trip");
-    CHECK(sh.version == 3 && offsetof(somvr_vrhands_shared, dinfo) == offsetof(somvr_vrhands_shared, dseq) + 8 &&
-              offsetof(somvr_vrhands_frame, ghost) == 120 && offsetof(somvr_vrhands_frame, ghost_a) == 176,
-          "v3 layout (v2 + the ghost)");
+    CHECK(sh.version == 4 && offsetof(somvr_vrhands_shared, dinfo) == offsetof(somvr_vrhands_shared, dseq) + 8 &&
+              offsetof(somvr_vrhands_frame, ghost) == 120 && offsetof(somvr_vrhands_frame, ghost_a) == 176 &&
+              offsetof(somvr_vrhands_frame, arrow) == 184 && offsetof(somvr_vrhands_frame, arrow_glow) == 216,
+          "v4 layout (v3 + the arrow)");
+}
+
+/* build 16: the arrow's mesh (vrhands v4): along the pose's -Z from its nock end, its length, both windings */
+static void test_arrow(void) {
+    static somvr_vh_vert v[SOMVR_VH_ARROW_NV];
+    const uint16_t *ix = somvr_vh_arrow_indices();
+    int bad = 0;
+    for (int i = 0; i < SOMVR_VH_ARROW_NI; i++) bad += ix[i] >= SOMVR_VH_ARROW_NV;
+    int half = SOMVR_VH_ARROW_NI / 2, rev = 1;
+    for (int i = 0; i < half; i += 3) rev &= ix[half + i] == ix[i] && ix[half + i + 1] == ix[i + 2] && ix[half + i + 2] == ix[i + 1];
+    CHECK(!bad && rev, "arrow indices: in range (%d bad), the second half reversed (%d)", bad, rev);
+    /* turned 90 deg about +Y: its -Z along -X; at (1, 1.5, -2) */
+    somvr_posef p = {{0, 0.70710678f, 0, 0.70710678f}, {1, 1.5f, -2}};
+    somvr_vh_arrow(&p, 0.72f, v);
+    float mn[3] = {1e9f, 1e9f, 1e9f}, mx[3] = {-1e9f, -1e9f, -1e9f};
+    int unit = 1;
+    for (int i = 0; i < SOMVR_VH_ARROW_NV; i++) {
+        for (int k = 0; k < 3; k++) mn[k] = fminf(mn[k], v[i].p[k]), mx[k] = fmaxf(mx[k], v[i].p[k]);
+        float l = sqrtf(v[i].n[0] * v[i].n[0] + v[i].n[1] * v[i].n[1] + v[i].n[2] * v[i].n[2]);
+        unit &= fabsf(l - 1) < 1e-4f && v[i].a == 1;
+    }
+    CHECK(fabsf(mx[0] - 1.002f) < 1e-3f && fabsf(mn[0] - (1 - 0.72f)) < 1e-4f && mx[1] - mn[1] < 0.05f &&
+              mx[2] - mn[2] < 0.05f && unit,
+          "arrow: from the nock along -X 0.72 m (x %.3f..%.3f), thin (y %.3f z %.3f), unit normals %d", mn[0], mx[0],
+          mx[1] - mn[1], mx[2] - mn[2], unit);
+    somvr_vh_arrow(&p, NAN, v);
+    float m0 = 1e9f;
+    for (int i = 0; i < SOMVR_VH_ARROW_NV; i++) m0 = fminf(m0, v[i].p[0]);
+    CHECK(fabsf(m0 - 0.8f) < 1e-4f, "arrow: a NaN length reads 0.2 m (%.3f)", m0);
+    /* the fade near the eyes: the eyes 5 cm behind the nock end (0.72 m along -X from x 1): the nock clear, the head opaque */
+    somvr_vh_arrow(&p, 0.72f, v);
+    float e0[3] = {1.05f, 1.5f, -2.03f}, e1[3] = {1.05f, 1.5f, -1.97f};
+    somvr_vh_arrow_fade(v, SOMVR_VH_ARROW_NV, e0, e1, 0.06f, 0.16f);
+    float a_nock = v[24].a, a_head = v[33].a; /* the cap's centre, the head's tip */
+    CHECK(a_nock == 0 && a_head == 1, "arrow fade: nock %.2f head %.2f", a_nock, a_head);
 }
 
 /* build 11: the depth switch's words and the world's fade (the shader's rule) */
@@ -319,6 +357,7 @@ int main(void) {
     test_watch_read();
     test_touch();
     test_abi();
+    test_arrow();
     test_depth();
     printf("test_vrhands: %d checks, %d failures\n", g_n, g_fail);
     return g_fail ? 1 : 0;

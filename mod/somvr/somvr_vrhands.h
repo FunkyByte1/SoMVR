@@ -40,7 +40,7 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_VRHANDS_SYMBOL "somvr_vrhands"
 #define SOMVR_VRHANDS_MAGIC 0x3153444e41485256ull /* "VRHANDS1" */
-#define SOMVR_VRHANDS_VERSION 3u
+#define SOMVR_VRHANDS_VERSION 4u
 
 enum {
     SOMVR_VHF_L = 1u,       /* the left grip is valid this frame */
@@ -63,6 +63,10 @@ typedef struct {
      * stopped at a surface; ghost_a[h] > 0: the layer draws a faint hand there (the real one), that opaque */
     somvr_posef ghost[2];  /* XR space, metres */
     float ghost_a[2];      /* 0 = none */
+    /* v4 (build 16, SOMVR_BOW_QUIVER, docs/re-xr-pipeline.md 51): an arrow the layer draws (arrow_len > 0): the pose's
+     * origin at its nock end, its -Z along the shaft to the head (XR space, metres); arrow_glow 0..1 its wraith light */
+    somvr_posef arrow;
+    float arrow_len, arrow_glow;
 } somvr_vrhands_frame;
 
 typedef struct somvr_vrhands_shared {
@@ -88,12 +92,12 @@ typedef struct somvr_vrhands_shared {
     _Atomic uint64_t n_dused;     /* layer: frames whose hands were tested against the world */
 } somvr_vrhands_shared;
 
-_Static_assert(sizeof(somvr_vrhands_frame) == 184, "somvr_vrhands_frame size");
+_Static_assert(sizeof(somvr_vrhands_frame) == 224, "somvr_vrhands_frame size");
 _Static_assert(offsetof(somvr_vrhands_shared, last) == 24 && offsetof(somvr_vrhands_shared, f) == 32 &&
-                   offsetof(somvr_vrhands_shared, layer_state) == 32 + 184 * SOMVR_NREC &&
-                   offsetof(somvr_vrhands_shared, dseq) == 32 + 184 * SOMVR_NREC + 40,
+                   offsetof(somvr_vrhands_shared, layer_state) == 32 + 224 * SOMVR_NREC &&
+                   offsetof(somvr_vrhands_shared, dseq) == 32 + 224 * SOMVR_NREC + 40,
                "somvr_vrhands_shared offsets");
-_Static_assert(sizeof(somvr_vrhands_shared) == 32 + 184 * SOMVR_NREC + 40 + 72, "somvr_vrhands_shared size");
+_Static_assert(sizeof(somvr_vrhands_shared) == 32 + 224 * SOMVR_NREC + 40 + 72, "somvr_vrhands_shared size");
 
 static inline int somvr_vrhands_ok(const somvr_vrhands_shared *v) {
     return v && v->magic == SOMVR_VRHANDS_MAGIC && v->version == SOMVR_VRHANDS_VERSION &&
@@ -112,6 +116,7 @@ static inline void somvr_vrhands_put(somvr_vrhands_shared *v, uint64_t frame, co
     for (int h = 0; h < 2; h++)
         for (int k = 0; k < 5; k++) e->curl[h][k] = in->curl[h][k];
     e->ghost[0] = in->ghost[0], e->ghost[1] = in->ghost[1], e->ghost_a[0] = in->ghost_a[0], e->ghost_a[1] = in->ghost_a[1];
+    e->arrow = in->arrow, e->arrow_len = in->arrow_len, e->arrow_glow = in->arrow_glow;
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&v->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&v->n_frames, 1, memory_order_relaxed);
@@ -129,6 +134,7 @@ static inline int somvr_vrhands_get(somvr_vrhands_shared *v, uint64_t frame, som
         for (int k = 0; k < 5; k++) out->curl[h][k] = e->curl[h][k];
     out->ghost[0] = e->ghost[0], out->ghost[1] = e->ghost[1];
     out->ghost_a[0] = e->ghost_a[0], out->ghost_a[1] = e->ghost_a[1];
+    out->arrow = e->arrow, out->arrow_len = e->arrow_len, out->arrow_glow = e->arrow_glow;
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);
@@ -223,6 +229,18 @@ const uint16_t *somvr_vh_indices(const somvr_vh_model *m, int mirror);
 /* hand `side` (SOMVR_HAND_L 0 / _R 1) skinned with skin and placed on its grip (XR space): somvr_vh_nverts() vertices */
 void somvr_vh_skin(const somvr_vh_model *m, const float skin[SOMVR_VH_NJ][12], int side, const somvr_posef *grip,
                    somvr_vh_vert *out);
+/* build 16 (vrhands v4, docs/re-xr-pipeline.md 51): the arrow the layer draws in the string hand or on the string - a
+ * hexagonal shaft 9 mm thick with its nock end capped, a four-sided head 5 cm long, three vanes 10 cm long near the nock.
+ * Its triangles come in both windings (the layer culls back faces; the shader lights the side it sees) */
+#define SOMVR_VH_ARROW_NV 59
+#define SOMVR_VH_ARROW_NI 180
+const uint16_t *somvr_vh_arrow_indices(void);
+/* the arrow's vertices in XR space: `pose` at its nock end, its -Z along the shaft to the head; len_m long (clamped to
+ * 0.2 .. 1.5 m) */
+void somvr_vh_arrow(const somvr_posef *pose, float len_m, somvr_vh_vert *out);
+/* the arrow's parts near the eyes fade (drawn at full draw the nock and the vanes are at the cheek, a few cm from the
+ * eye): each vertex's alpha = smoothstep over near_m .. far_m of its distance to the nearer eye */
+void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const float eye1[3], float near_m, float far_m);
 /* a point given in the right grip's frame, on hand `side`'s grip (the left mirrored: x negated) -> XR space */
 void somvr_vh_grip_point(const somvr_posef *grip, int side, const float pg[3], float out[3]);
 /* touch: the drawn pointing hand's index tip on hand `side`'s grip (XR space) */

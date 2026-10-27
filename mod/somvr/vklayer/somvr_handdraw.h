@@ -97,6 +97,8 @@ int hd_world(hd_ctx *c, const hd_vkw *wf, float soft_m, float bias_m, float texe
 hd_vert *hd_slot_verts(hd_ctx *c, uint32_t s);
 /* build 13 (SOMVR_HANDS_SURFACE): slot s's ghost of hand h (nv vertices) */
 hd_vert *hd_slot_ghost(hd_ctx *c, uint32_t s, int h);
+/* build 16 (vrhands v4): slot s's arrow (SOMVR_VH_ARROW_NV vertices, after the ghosts; its indices after the occluders') */
+hd_vert *hd_slot_arrow(hd_ctx *c, uint32_t s);
 /* an occluder quad (centre, its two half-axes) into v[0..3] */
 void hd_quad(hd_vert v[4], const float centre[3], const float half_x[3], const float half_y[3]);
 
@@ -121,6 +123,10 @@ typedef struct {
      * depth (it is in the wall); our own depth (the hands, the occluders) still hides it */
     float ghost_a[2];
     float ghost_base[3];
+    /* build 16 (vrhands v4): arrow_a > 0 draws hd_slot_arrow opaque in arrow_base, lit like a wraith's light (a soft
+     * key, a strong ambient and rim), with the plain pipeline after the hands (our depth: the hand holding it hides it) */
+    float arrow_a;
+    float arrow_base[3];
 } hd_frame;
 /* the screen box (pixels of a w x h eye, padded by pad) of n vertices under the clip matrix vp; 0 = none on the screen,
  * 1 = box, 2 = a vertex behind the eye (the whole eye) */

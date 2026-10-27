@@ -18,6 +18,8 @@ typedef struct somvr_blade {
     float vel_tip[3];      /* cm/s: the provider's velocity (controllers: v + w x r from the runtime, never a world
                             * finite difference, so walking or turning with a still sword is no slash: re-xr-input 4.1) */
     double t;              /* s */
+    float flat_n[3];       /* the blade's flat facing (unit, world; 0 0 0 = unknown): the grip's +x (the knuckles' side
+                            * of the hand; the sword's guard and edges run along the grip's +y, build 15b's pictures) */
 } somvr_blade;
 
 enum { SC_TIER_NONE = 0, SC_TIER_LIGHT = 1, SC_TIER_HEAVY = 2, SC_TIER_STAB = 3, SC_TIER_N = 4 };
@@ -34,6 +36,10 @@ typedef struct {
     float charge_s;
     float stim_cm, stim_cos;   /* the AI stimulus: the swing starts within 150 cm of the orc, heading at it */
     int steps;                 /* sub-steps of the frame's sweep (4) */
+    float cut_cm;              /* SOMVR_COMBAT_CLASS=cut: a committed cut = a slash (slash_mps) of >= cut_cm since the
+                                * swing began (50), the edge leading (below) */
+    float edge_max_deg;        /* ... the tip's motion across the blade at most this far off the edge's plane (60; 90 or
+                                * no flat known = any) */
 } sc_cfg;
 
 void sc_cfg_default(sc_cfg *c);
@@ -80,6 +86,22 @@ void sc_speed_reset(sc_speed *s);
 int sc_speed_push(sc_speed *s, const sc_cfg *c, const somvr_blade *b);
 /* the tier of a contact now: stab (along the blade), heavy, light, or none (a glancing touch) */
 int sc_tier(const sc_cfg *c, const sc_speed *s);
+/* the cut's angle off the edge: the tip's velocity across the blade (its part along the blade removed) against the
+ * blade's flat: 0 = the edge leads, 90 = the flat slaps; NAN = no flat known or the tip still across the blade */
+float sc_edge_deg(const somvr_blade *b);
+/* SOMVR_COMBAT_CLASS=cut (build 16): the tier by the cut, not the speed: a stab as sc_tier; a slash that has travelled
+ * cut_cm with the edge leading (edge_deg <= edge_max_deg, or NAN) = heavy ("a committed cut"); any other slash = light */
+int sc_tier_cut(const sc_cfg *c, const sc_speed *s, float edge_deg);
+/* SOMVR_FIGHT_SPACE_CM (build 16): an orc's next position xf (cm) kept at least min(space, the distance it had at
+ * was) from Talion's root, horizontally (y untouched; never pushed away, only stopped from coming nearer); 1 = changed,
+ * *d_want / *d_got its distance asked and given */
+int sc_space_hold(const float root[3], const float was[3], float xf[3], float space, float *d_want, float *d_got);
+/* the same about two places at once (build 16 round 2: Talion's root and the player's head; head NULL = the root alone):
+ * the new position keeps at least min(space, the distance it had) from each, horizontally; when it would not, the
+ * nearest of the two radial stops that keeps both is taken, else it stays where it was. 1 = changed; *d_want / *d_got
+ * = the nearer of its two distances asked and given */
+int sc_space_hold2(const float root[3], const float *head, const float was[3], float xf[3], float space, float *d_want,
+                   float *d_got);
 const char *sc_tier_name(int tier);
 
 /* ---- re-hit cooldown and hit charges ----------------------------------------------------------------------------- */

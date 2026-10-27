@@ -28,6 +28,7 @@
 #define SOMVR_HP_SLOTS 20 /* CSimpleModel::vf_20 takes slots 0..19 (cmp esi, 0x13) */
 #define SOMVR_HP_MAX 16   /* nodes per frame at most ("main": the body, the put-away weapons' models and parts, the cloth) */
 #define SOMVR_HP_MESHES 4 /* SOMVR_HP_AWAY: Talion's own meshes (the body's, the wraith's) a held-away frame skips by mesh */
+#define SOMVR_HP_WEAPONS 12 /* SOMVR_HP_COPIES: the weapons' own nodes (and their meshes) per frame at most */
 #define SOMVR_HP_HEAD 1
 #define SOMVR_HP_HELM 3
 #define SOMVR_HP_HAIR 4
@@ -84,6 +85,12 @@ typedef struct {
                                     strike's wraith copy has transforms of its own: run 072205) */
     uint32_t nmesh;
     uintptr_t mesh[SOMVR_HP_MESHES]; /* ... those meshes (the body's, the ones the pose rule skipped) */
+    uint32_t copies;             /* SOMVR_HP_COPIES=on: a node drawing the mesh of a weapon this set hides (put away, not
+                                    in our hands) that is none of the weapons' own nodes is skipped: the wraith's glowing
+                                    copy of the sheathed sword (build 15b's session, re-xr-pipeline.md 49) */
+    uint32_t nweap;
+    uintptr_t wnode[SOMVR_HP_WEAPONS]; /* the weapons' own nodes (held, put away, the bow: main renderable and parts) */
+    uintptr_t wmesh[SOMVR_HP_WEAPONS]; /* ... and each one's mesh (+0xc8) */
 } somvr_hp_set;
 void somvr_hp_set_init(somvr_hp_set *s, uint64_t frame);
 /* add a slot's node (0 = nothing; a duplicate is not added again); 1 = added, 0 = not (0, a duplicate, full) */
@@ -103,6 +110,14 @@ int somvr_hp_skip_pose(int eye, int pass, const somvr_hp_set *s, uint64_t rt_fra
 int somvr_hp_skip_mesh(int eye, int pass, const somvr_hp_set *s, uint64_t rt_frame, uintptr_t node_mesh);
 /* add a mesh to the set's list (0 = nothing; a duplicate is not added again); 1 = added */
 int somvr_hp_add_mesh(somvr_hp_set *s, uintptr_t mesh);
+/* SOMVR_HP_COPIES: a weapon's own node and its mesh (0 either = nothing; a node already in = not again); 1 = added */
+int somvr_hp_add_weapon(somvr_hp_set *s, uintptr_t node, uintptr_t mesh);
+/* the weapon entry whose mesh node_mesh is (a hidden one first), when node is none of the weapons' own nodes (a copy);
+ * -1 = no copy */
+int somvr_hp_copy_of(const somvr_hp_set *s, uintptr_t node, uintptr_t node_mesh);
+/* SOMVR_HP_COPIES' rule: the same windows, passes and frame; 1 = the set skips copies and the node is a copy of a weapon
+ * the set hides (a held weapon's copies are its glowing self in the wraith vision: kept) */
+int somvr_hp_skip_copy(int eye, int pass, const somvr_hp_set *s, uint64_t rt_frame, uintptr_t node, uintptr_t node_mesh);
 
 /* game thread -> render thread, per renderer frame (one writer, any readers; an entry is overwritten 4 frames later) */
 #define SOMVR_HP_RING 4
@@ -116,6 +131,8 @@ typedef struct {
         _Atomic uintptr_t pose;
         _Atomic uint32_t away, nmesh;
         _Atomic uintptr_t mesh[SOMVR_HP_MESHES];
+        _Atomic uint32_t copies, nweap;
+        _Atomic uintptr_t wnode[SOMVR_HP_WEAPONS], wmesh[SOMVR_HP_WEAPONS];
     } e[SOMVR_HP_RING];
 } somvr_hp_ring;
 void somvr_hp_ring_init(somvr_hp_ring *r);

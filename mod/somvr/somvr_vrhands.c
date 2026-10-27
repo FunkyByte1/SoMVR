@@ -488,3 +488,95 @@ int somvr_vh_face_step(somvr_vh_face *s, const somvr_vh_face_cfg *c, const somvr
     }
     return s->shown;
 }
+
+/* ==== build 16: the arrow (vrhands v4) ============================================================================ */
+#define AR_R 0.0045f    /* the shaft's radius (m) */
+#define AR_HEAD 0.05f   /* the head's length */
+#define AR_HEAD_W 0.011f /* its half width */
+static const uint16_t g_arrow_one[SOMVR_VH_ARROW_NI / 2] = {
+    /* the shaft: 6 quads (4 vertices each from 0) */
+    0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 12, 14, 15, 16, 17, 18, 16, 18, 19, 20, 21, 22,
+    20, 22, 23,
+    /* the nock's cap: the centre 24, the rim 25..30 */
+    24, 25, 26, 24, 26, 27, 24, 27, 28, 24, 28, 29, 24, 29, 30, 24, 30, 25,
+    /* the head: 4 faces (31..42), its back (43..46) */
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 43, 45, 46,
+    /* the vanes: 3 quads (47..58) */
+    47, 48, 49, 47, 49, 50, 51, 52, 53, 51, 53, 54, 55, 56, 57, 55, 57, 58};
+static uint16_t g_arrow_idx[SOMVR_VH_ARROW_NI];
+const uint16_t *somvr_vh_arrow_indices(void) {
+    if (g_arrow_idx[1] == 0) { /* once: each triangle, then the same reversed */
+        int n = SOMVR_VH_ARROW_NI / 2;
+        for (int i = 0; i < n; i += 3) {
+            g_arrow_idx[i] = g_arrow_one[i], g_arrow_idx[i + 1] = g_arrow_one[i + 1], g_arrow_idx[i + 2] = g_arrow_one[i + 2];
+            g_arrow_idx[n + i] = g_arrow_one[i], g_arrow_idx[n + i + 1] = g_arrow_one[i + 2], g_arrow_idx[n + i + 2] = g_arrow_one[i + 1];
+        }
+    }
+    return g_arrow_idx;
+}
+
+static void ar_put(somvr_vh_vert *v, const float q[4], const float o[3], float x, float y, float z, float nx, float ny,
+                   float nz) {
+    float lp[3] = {x, y, z}, ln[3] = {nx, ny, nz}, w[3];
+    qrot(q, lp, w);
+    for (int i = 0; i < 3; i++) v->p[i] = o[i] + w[i];
+    qrot(q, ln, v->n);
+    v->a = 1;
+}
+
+void somvr_vh_arrow(const somvr_posef *pose, float len_m, somvr_vh_vert *out) {
+    float q[4] = {pose->q[0], pose->q[1], pose->q[2], pose->q[3]}, o[3] = {pose->p[0], pose->p[1], pose->p[2]};
+    qnorm(q);
+    if (!(len_m >= 0.2f)) len_m = 0.2f; /* (NaN too) */
+    if (len_m > 1.5f) len_m = 1.5f;
+    float ls = len_m - AR_HEAD; /* the shaft's end: the head's back */
+    somvr_vh_vert *v = out;
+    for (int k = 0; k < 6; k++) { /* the shaft's sides, flat */
+        float a0 = (float)k * 1.0471976f, a1 = (float)(k + 1) * 1.0471976f, am = 0.5f * (a0 + a1);
+        float c0 = cosf(a0) * AR_R, s0 = sinf(a0) * AR_R, c1 = cosf(a1) * AR_R, s1 = sinf(a1) * AR_R;
+        ar_put(v++, q, o, c0, s0, 0, cosf(am), sinf(am), 0);
+        ar_put(v++, q, o, c0, s0, -ls, cosf(am), sinf(am), 0);
+        ar_put(v++, q, o, c1, s1, -ls, cosf(am), sinf(am), 0);
+        ar_put(v++, q, o, c1, s1, 0, cosf(am), sinf(am), 0);
+    }
+    ar_put(v++, q, o, 0, 0, 0.002f, 0, 0, 1); /* the nock's cap, a little proud */
+    for (int k = 0; k < 6; k++) {
+        float a = (float)k * 1.0471976f;
+        ar_put(v++, q, o, cosf(a) * AR_R, sinf(a) * AR_R, 0, 0, 0, 1);
+    }
+    float b[4][3]; /* the head's back: a diamond */
+    for (int k = 0; k < 4; k++) {
+        float a = 0.7853982f + (float)k * 1.5707963f;
+        b[k][0] = cosf(a) * AR_HEAD_W, b[k][1] = sinf(a) * AR_HEAD_W, b[k][2] = -ls;
+    }
+    float tip[3] = {0, 0, -len_m};
+    for (int k = 0; k < 4; k++) {
+        const float *p0 = b[k], *p1 = b[(k + 1) & 3];
+        float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]}, e2[3] = {tip[0] - p0[0], tip[1] - p0[1], tip[2] - p0[2]};
+        float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        float l = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (n[0] * (p0[0] + p1[0]) + n[1] * (p0[1] + p1[1]) < 0) l = -l; /* outward */
+        ar_put(v++, q, o, p0[0], p0[1], p0[2], n[0] / l, n[1] / l, n[2] / l);
+        ar_put(v++, q, o, p1[0], p1[1], p1[2], n[0] / l, n[1] / l, n[2] / l);
+        ar_put(v++, q, o, tip[0], tip[1], tip[2], n[0] / l, n[1] / l, n[2] / l);
+    }
+    for (int k = 0; k < 4; k++) ar_put(v++, q, o, b[k][0], b[k][1], b[k][2], 0, 0, 1);
+    for (int k = 0; k < 3; k++) { /* the vanes, 120 deg apart, the cock vane along +Y */
+        float a = 1.5707963f + (float)k * 2.0943951f, c = cosf(a), s = sinf(a);
+        ar_put(v++, q, o, c * AR_R, s * AR_R, -0.025f, -s, c, 0);
+        ar_put(v++, q, o, c * (AR_R + 0.015f), s * (AR_R + 0.015f), -0.035f, -s, c, 0);
+        ar_put(v++, q, o, c * (AR_R + 0.010f), s * (AR_R + 0.010f), -0.11f, -s, c, 0);
+        ar_put(v++, q, o, c * AR_R, s * AR_R, -0.125f, -s, c, 0);
+    }
+}
+
+void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const float eye1[3], float near_m, float far_m) {
+    for (int i = 0; i < n; i++) {
+        float d0 = 0, d1 = 0;
+        for (int k = 0; k < 3; k++)
+            d0 += (v[i].p[k] - eye0[k]) * (v[i].p[k] - eye0[k]), d1 += (v[i].p[k] - eye1[k]) * (v[i].p[k] - eye1[k]);
+        float d = sqrtf(d0 < d1 ? d0 : d1), x = far_m > near_m ? (d - near_m) / (far_m - near_m) : (float)(d >= near_m);
+        x = x < 0 ? 0 : x > 1 ? 1 : x; /* (NaN: 0) */
+        v[i].a = x * x * (3 - 2 * x);
+    }
+}

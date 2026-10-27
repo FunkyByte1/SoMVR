@@ -4235,6 +4235,28 @@ static int sc_objective(void) { /* none, ahead (one upload), the same text (none
     e = MOCK(mockxr_last_end)();
     CHECK(e->layer_count == 2 && V.ncp == 0 && e->q[1].sc == k && e->q[1].space != 1 && V.buf2img == 3,
           "reuse: %u layers, %d copies", e->layer_count, V.ncp);
+    /* 5b. build 16: the climb's landing (SOMVR_OBF_LAND): the ring's cell on a quad flat on the floor point, the
+     * reference space, no upload (the ring is in every picture), the counters untouched */
+    {
+        CHECK(locate(&v), "landing: locate");
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        somvr_objective_frame le;
+        memset(&le, 0, sizeof le);
+        le.n = 1, le.flags = SOMVR_OBF_LAND, le.dist_m = 0.35f;
+        for (int q = 0; q < 3; q++) le.pos[q] = 0.5f * (v.pose[0].p[q] + v.pose[1].p[q]) + (q == 1 ? -1.0f : q == 2 ? -0.6f : 0);
+        somvr_objective_put(g_obo, f, &le);
+        V.ncp = V.ntr = 0;
+        hud_present(&r.a, f++, 0, SOMVR_HUDK_NONE);
+        e = MOCK(mockxr_last_end)();
+        somvr_ob_place lp = somvr_ob_floor(le.pos, 0.35f);
+        int32_t rc[4];
+        somvr_ob_rect(SOMVR_OB_CELL_RING, rc);
+        CHECK(e->layer_count == 2 && e->q[1].sc == k && e->q[1].space == 1 && !memcmp(e->q[1].rect, rc, sizeof rc) &&
+                  fabsf(e->q[1].size[0] - lp.size[0]) < 1e-5f && pose_near(e->q[1].pose, lp.pose) && V.buf2img == 3 &&
+                  log_has("the climb's landing: a ring flat on the floor"),
+              "landing: %u layers, sc %d space %d rect %d size %g uploads %d", e->layer_count, e->q[1].sc, e->q[1].space,
+              e->q[1].rect[0], e->q[1].size[0], V.buf2img);
+    }
     /* 6. the objective gone (n = 0), an entry for another frame: nothing */
     ob_stereo(&r, f++, 0, ahead, 0, &v);
     check_no_quad(&v, "the objective gone");
@@ -4247,7 +4269,7 @@ static int sc_objective(void) { /* none, ahead (one upload), the same text (none
           (unsigned long long)atomic_load(&g_obo->n_marker), (unsigned long long)atomic_load(&g_obo->n_edge));
     app_teardown(&r.a);
     CHECK(MOCK(mockxr_live)() == 0 && !MOCK(mockxr_view_live)(), "objective objects outlived the session");
-    CHECK(log_has("xr: objective: swapchain 390x130") && log_has("the marker world-locked") &&
+    CHECK(log_has("xr: objective: swapchain 520x130") && log_has("the marker world-locked") &&
               log_has("the edge arrow head-locked") && log_has("xr: objective: the arrow points") && !log_has("objective: off"),
           "objective log lines");
     check_mock_clean();
@@ -5464,10 +5486,99 @@ static int sc_void_badcfg(void) {
               log_has("xr: keep-alive: SOMVR_XR_KEEPALIVE_MS=5 is not 50..1000: 100") &&
               log_has("xr: loadspace: SOMVR_XR_LOADSPACE=x is not on or off: off") &&
               log_has("xr: loadspace: SOMVR_XR_LOADSPACE_MS=-1 is not 0..10000: 1000") &&
-              log_has("xr: gaps: game presents 100 ms or more apart are logged"),
+              log_has("xr: gaps: game presents 100 ms or more apart are logged") &&
+              log_has("xr: exit: SOMVR_XR_EXIT=maybe is not on or off: on") && log_has("xr: exit: on: "),
           "log lacks the bad values");
     check_mock_clean();
     return 0;
+}
+
+/* build 16 (docs/re-xr-pipeline.md 53): the game's exit() while the keep-alive ends frames. The mock "unloads the
+ * runtime" in an exit handler of its own (MOCKXR_UNLOAD_AT_EXIT, registered at xrCreateInstance, as the OpenXR loader's
+ * static destructor dlcloses it): the layer's (SOMVR_XR_EXIT, registered at the session's start: it runs first) stops the
+ * watcher and the preload's xrLocateViews and leaves the hooks pass-through - no XR call after the unload, a present
+ * after it reaches the driver alone. exit_check, registered before everything, runs last and ends the child. */
+static app_t g_xa;
+static int g_xa_ka, g_xa_off, g_xp; /* g_xp: the game's render thread presents through the exit (exit-present) */
+static _Atomic int g_xp_run, g_xp_n;
+static pthread_t g_xp_th;
+static void *xp_thread(void *arg) {
+    (void)arg;
+    while (atomic_load(&g_xp_run)) {
+        app_present(&g_xa);
+        atomic_fetch_add(&g_xp_n, 1);
+        void_sleep_ms(5);
+    }
+    return NULL;
+}
+static void exit_check(void) {
+    int un = MOCK(mockxr_unloaded)();
+    if (g_xa_off) { /* build 15b: the watcher goes on calling the unloaded runtime (its code unmapped: SIGSEGV) */
+        void_sleep_ms(150);
+        CHECK(un && MOCK(mockxr_after_unload)() > 0, "SOMVR_XR_EXIT=off: %d XR call(s) after the unload (want some: the "
+              "build-15b crash)", MOCK(mockxr_after_unload)());
+        CHECK(log_has("xr: exit: off (SOMVR_XR_EXIT=off") && !log_has("xr: exit: the game is exiting"),
+              "log: the exit handler not off");
+    } else {
+        CHECK(un, "the mock's unload did not run");
+        int ends = MOCK(mockxr_calls)("xrEndFrame"), loc = MOCK(mockxr_calls)("xrLocateViews"), pr = V.presents;
+        if (g_xp) { /* its presents go on after the handlers, then it stops */
+            int n = atomic_load(&g_xp_n);
+            void_sleep_ms(150);
+            atomic_store(&g_xp_run, 0);
+            pthread_join(g_xp_th, NULL);
+            CHECK(atomic_load(&g_xp_n) - n >= 5 && V.presents - pr >= 5, "the render thread's presents after the exit "
+                  "handlers: %d (driver %d)", atomic_load(&g_xp_n) - n, V.presents - pr);
+        } else {
+            app_present(&g_xa); /* the game's render thread after the exit handlers */
+            void_sleep_ms(150);
+            CHECK(V.presents == pr + 1, "a present after the exit handlers did not reach the driver");
+        }
+        CHECK(MOCK(mockxr_calls)("xrEndFrame") == ends && MOCK(mockxr_calls)("xrLocateViews") == loc &&
+                  MOCK(mockxr_after_unload)() == 0, "XR calls after the exit: ends %d, locates %d, after the unload %d",
+              MOCK(mockxr_calls)("xrEndFrame") - ends, MOCK(mockxr_calls)("xrLocateViews") - loc,
+              MOCK(mockxr_after_unload)());
+        CHECK(atomic_load(&g_sh.xr.state) == SOMVR_XRS_DEAD, "xr.state %u after the exit (want DEAD)",
+              atomic_load(&g_sh.xr.state));
+        CHECK(log_has("xr: exit: on: at the game's exit our threads stop before the runtime is unloaded, the hooks pass "
+                      "through; the runtime: xrWaitFrame is the loader's own code") &&
+                  log_has("xr: exit: the game is exiting (an exit handler, before the runtime is unloaded): the watcher "
+                          "stopped and joined; the preload's xrLocateViews stopped; the hooks pass through from now on "
+                          "(phase session, frames ") && (g_xp || g_xa_ka >= 5),
+              "log lacks the exit lines");
+        check_mock_clean();
+    }
+    fflush(stdout);
+    fflush(stderr);
+    _exit(g_fail ? 1 : 0);
+}
+static int sc_exit_keep(void) {
+    atexit(exit_check);
+    preload_on(SOMVR_LAYOUT_A, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    CHECK(app_setup(&g_xa, "Feral3D") == 0, "setup");
+    envrig g = {.a = &g_xa, .layout = SOMVR_LAYOUT_A, .kind = SOMVR_ENV_KIND_CUBE, .mode = SOMVR_ENV_ON,
+                .dim = SOMVR_ENV_DIM_DEFAULT, .f = 1};
+    env_frames(&g, SOMVR_ENV_SHOW_ENV, 30, "menus");
+    if (g_xp) { /* exit-present: the game presents on through its exit (a SIGTERM handler's exit, its renderer alive) */
+        atomic_store(&g_xp_run, 1);
+        CHECK(pthread_create(&g_xp_th, NULL, xp_thread, NULL) == 0, "the render thread");
+        void_sleep_ms(100);
+        exit(0);
+    }
+    int ends = MOCK(mockxr_calls)("xrEndFrame");
+    void_sleep_ms(300); /* the game away (its quit): the keep-alive's frames */
+    g_xa_ka = MOCK(mockxr_calls)("xrEndFrame") - ends;
+    CHECK(g_xa_ka >= 5, "%d keep-alive frames before the exit", g_xa_ka);
+    exit(0); /* the game's Quit game: the exit handlers while the keep-alive runs */
+}
+static int sc_exit_keep_off(void) {
+    g_xa_off = 1;
+    return sc_exit_keep();
+}
+static int sc_exit_present(void) {
+    g_xp = 1;
+    return sc_exit_keep();
 }
 
 /* ---- round 2 (docs/re-xr-pipeline.md 36.7, 36.8): the game's in-world loading cover, the in-world menus' backdrop ---- */
@@ -7147,7 +7258,11 @@ static const struct {
     {"void-loadpanel", sc_void_loadpanel, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
     {"void-badcfg", sc_void_badcfg,
      "SOMVR_XR_LOADER=@MOCK SOMVR_XR_GAPS=3 SOMVR_XR_KEEPALIVE=maybe SOMVR_XR_KEEPALIVE_MS=5 SOMVR_XR_LOADSPACE=x "
-     "SOMVR_XR_LOADSPACE_MS=-1", 1},
+     "SOMVR_XR_LOADSPACE_MS=-1 SOMVR_XR_EXIT=maybe", 1},
+    {"exit-keep", sc_exit_keep, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on MOCKXR_UNLOAD_AT_EXIT=1", 1},
+    {"exit-present", sc_exit_present, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on MOCKXR_UNLOAD_AT_EXIT=1", 1},
+    {"exit-keep-off", sc_exit_keep_off,
+     "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on SOMVR_XR_EXIT=off MOCKXR_UNLOAD_AT_EXIT=1", 1},
     {"cover", sc_cover, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on SOMVR_XR_COVER=on MOCKXR_EXTS=" EQ_EXT, 1},
     {"cover-off", sc_cover_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
     {"menu-back", sc_menu_back, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MENU=front SOMVR_XR_MENU_BACK=on", 1},
@@ -7245,6 +7360,7 @@ int main(int argc, char **argv) {
             unsetenv("SOMVR_XR_HANDS_DEPTH_BIAS");
             unsetenv("SOMVR_XR_HANDS_DEPTH_HELD");
             unsetenv("SOMVR_XR_HANDS_DEPTH_DEBUG");
+            unsetenv("SOMVR_XR_EXIT"); /* build 16 */
             setenv("SOMVR_XR_LOG", g_log, 1);
             set_env(g_scen[i].env);
             alarm(30);

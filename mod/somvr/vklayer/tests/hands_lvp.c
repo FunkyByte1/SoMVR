@@ -54,6 +54,7 @@ typedef struct {
     int hilt;                     /* draw a 3.2 cm hilt's outline round the grip's axis (dots) */
     float ghost;                  /* build 13 (SOMVR_HANDS_SURFACE): the right hand's ghost, this opaque, 9 cm ahead */
     int away;                     /* the hand behind the eyes: nothing drawn, the image clear */
+    int arrow;                    /* build 16 (vrhands v4): the bow's arrow from the right grip through the left's */
 } lcase;
 
 static void look_at(const float eye[3], const float at[3], const float up[3], float q[4]) {
@@ -216,7 +217,7 @@ int main(int argc, char **argv) {
     euler_q(-40, 0, 0, hold_l);
     static const float c_open[5] = {0, 0, 0, 0, 0}, c_fist[5] = {1, 1, 1, 1, 1}, c_point[5] = {1, 0, 1, 1, 1},
                        c_half[5] = {0.6f, 0.2f, 0.5f, 0.5f, 0.5f}, c_thumb[5] = {0, 1, 1, 1, 1};
-    lcase cs[24];
+    lcase cs[28];
     int nc = 0;
 #define SETC(dst, src) memcpy(dst, src, sizeof(float) * 5)
     /* 1-5: the right hand at the origin, grip frame = XR (its -Z forward), seen from five sides */
@@ -281,6 +282,18 @@ int main(int argc, char **argv) {
         *G = *H;
         G->name = "ghost", G->ghost = 0.35f;
     }
+    { /* build 16: a bow held out ahead with the fist upright (the grips' -Z up: 90 deg about +X), the right hand drawn
+       * back under the eye, the arrow from it through the bow hand's nock (4 cm up its tube, 1.2 cm to the left) */
+        lcase *W = &cs[nc++];
+        memset(W, 0, sizeof *W);
+        W->name = "arrow", W->fov = 0.8f, W->arrow = 1;
+        W->look[2] = -1.0f, W->look[1] = -0.15f, W->up[1] = 1;
+        W->hand[0] = W->hand[1] = 1;
+        euler_q(90, 0, 0, W->grip[0].q), euler_q(90, 0, 0, W->grip[1].q);
+        W->grip[0].p[0] = -0.06f, W->grip[0].p[1] = -0.16f, W->grip[0].p[2] = -0.62f;
+        W->grip[1].p[0] = 0.03f, W->grip[1].p[1] = -0.13f, W->grip[1].p[2] = -0.08f;
+        SETC(W->curl[0], c_fist), SETC(W->curl[1], c_fist);
+    }
 
 
     uint8_t *grid = calloc((size_t)EW * EH * 3, 1);
@@ -315,6 +328,25 @@ int main(int argc, char **argv) {
             somvr_vh_pose(&g_m, &g_c, L->curl[1], skin);
             somvr_vh_skin(&g_m, (const float(*)[12])skin, 1, &gp, (somvr_vh_vert *)hd_slot_ghost(&hc, (uint32_t)ci_, 1));
             fr.ghost_a[1] = L->ghost, fr.ghost_base[0] = 0.30f, fr.ghost_base[1] = 0.58f, fr.ghost_base[2] = 1.0f;
+        }
+        if (L->arrow) { /* the drawn arrow: its nock on the right grip, its -Z through the left's nock point */
+            float up[3] = {0, 0.04f, 0}, nk[3], d[3], q[4];
+            for (int i = 0; i < 3; i++) nk[i] = L->grip[0].p[i] + up[i] + (i == 0 ? -0.012f : 0), d[i] = nk[i] - L->grip[1].p[i];
+            float dl = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]), z[3] = {-d[0] / dl, -d[1] / dl, -d[2] / dl}, wu[3] = {0, 1, 0};
+            float x[3] = {wu[1] * z[2] - wu[2] * z[1], wu[2] * z[0] - wu[0] * z[2], wu[0] * z[1] - wu[1] * z[0]};
+            float xl = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+            for (int i = 0; i < 3; i++) x[i] /= xl;
+            float y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]};
+            float m00 = x[0], m11 = y[1], m22 = z[2], tr = m00 + m11 + m22; /* the basis (x y z) -> q */
+            if (tr > 0) {
+                float k = 0.5f / sqrtf(tr + 1);
+                q[0] = (y[2] - z[1]) * k, q[1] = (z[0] - x[2]) * k, q[2] = (x[1] - y[0]) * k, q[3] = 0.25f / k;
+            } else {
+                q[0] = 0, q[1] = 0, q[2] = 0, q[3] = 1;
+            }
+            somvr_posef ap = {{q[0], q[1], q[2], q[3]}, {L->grip[1].p[0], L->grip[1].p[1], L->grip[1].p[2]}};
+            somvr_vh_arrow(&ap, 0.72f, (somvr_vh_vert *)hd_slot_arrow(&hc, (uint32_t)ci_));
+            fr.arrow_a = 1, fr.arrow_base[0] = 0.62f, fr.arrow_base[1] = 0.82f, fr.arrow_base[2] = 1.0f;
         }
         if (L->occ) { /* a 12 x 30 cm quad 12 cm from the hand toward the eye, facing it, over the hand's lower half */
             float o[3] = {0.12f, -0.12f, 0}, hx[3] = {0, 0, 0.06f}, hy[3] = {0, 0.15f, 0};
@@ -356,6 +388,12 @@ int main(int argc, char **argv) {
             for (int y = EH / 2 + 30; y < EH - 10; y++)
                 for (int x = EW / 2 - 40; x < EW / 2 + 40; x++) under += px[(y * 2 * EW + x) * 4 + 3] > 0;
             CHECK(under == 0, "occluded: %ld hand pixels behind the occluder", under);
+        }
+        if (L->arrow) { /* the arrow: pale blue, opaque pixels well past the hands */
+            long pale = 0;
+            for (long i = 0; i < 2L * EW * EH; i++)
+                pale += px[4 * i + 3] > 200 && px[4 * i + 2] > 150 && px[4 * i + 2] > px[4 * i] + 20;
+            CHECK(pale > 200, "arrow: %ld pale blue pixels", pale);
         }
         if (L->ghost > 0) { /* the ghost: faint blue pixels (premultiplied: blue over red, alpha well under 1) */
             long blue = 0;

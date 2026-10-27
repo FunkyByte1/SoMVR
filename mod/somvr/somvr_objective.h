@@ -29,7 +29,9 @@
 #define SOMVR_OBJECTIVE_VERSION 1u
 
 enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIVE=on) */
-       SOMVR_OBF_SHOWN = 2u }; /* the game placed it this frame (on screen or as its edge arrow) */
+       SOMVR_OBF_SHOWN = 2u,  /* the game placed it this frame (on screen or as its edge arrow) */
+       SOMVR_OBF_LAND = 4u }; /* build 16 (SOMVR_CLIMB_PULLOVER): not the objective but the climb's landing: pos = the
+                               * floor point, dist_m = the ring's radius (metres, reference space): a ring flat on it */
 
 typedef struct {
     _Atomic uint64_t seq; /* the frame id this entry is for; 0 while written; stored last (release) */
@@ -118,7 +120,7 @@ typedef struct {
 void somvr_ob_cfg_default(somvr_ob_cfg *c);
 
 enum { SOMVR_OBK_NONE = 0, SOMVR_OBK_WORLD = 1, SOMVR_OBK_EDGE = 2 };
-enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2, SOMVR_OB_CELLS = 3 };
+enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2, SOMVR_OB_CELL_RING = 3, SOMVR_OB_CELLS = 4 };
 typedef struct {
     int kind;        /* SOMVR_OBK_*: WORLD = pose in the reference space, EDGE = pose in a VIEW space */
     int cell;        /* SOMVR_OB_CELL_* */
@@ -134,9 +136,14 @@ typedef struct {
 somvr_ob_place somvr_ob_locate(const somvr_ob_cfg *c, const float head[3], const float hq[4], const float fov[4],
                                const float pos[3], int *in_view);
 
+/* the climb's landing (SOMVR_OBF_LAND): a ring of radius r_m flat on the floor point pos (reference space, +y up), 2 cm
+ * over it, the ring's cell */
+somvr_ob_place somvr_ob_floor(const float pos[3], float r_m);
+
 /* The texture: SOMVR_OB_CELLS cells of SOMVR_OB_CELL px square inside a 1 px guard (a cell's rect is its interior):
  * cell 0 the diamond (gold, a dark rim) with the distance under it (white, a dark rim), cell 1 the same faint (alpha
- * SOMVR_OB_FAINT), cell 2 the edge arrow (pointing +x = right). Premultiplied RGBA8 (bgra: B and R swapped). The
+ * SOMVR_OB_FAINT), cell 2 the edge arrow (pointing +x = right), cell 3 the landing ring (gold, a dark rim, a faint
+ * disc inside, a dot). Premultiplied RGBA8 (bgra: B and R swapped). The
  * diamond's centre is SOMVR_OB_DIAMOND_V of the cell from its top (the quad is shifted so that it, not the cell's
  * centre, sits on the objective's direction). */
 #define SOMVR_OB_CELL 128

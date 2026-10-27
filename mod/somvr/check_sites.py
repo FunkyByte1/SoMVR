@@ -9,7 +9,7 @@ counted on its own (7 sites: LP_GUARD_HOVER/_CLICK and the five functions it cal
 the SOMVR_FALLBACK block (FALLBACK_SITES_BEGIN ... FALLBACK_SITES_END: 17 read-only sites, re-xr-pipeline.md 6.8),
 the SOMVR_COMBAT_REACT block (REACT_SITES_BEGIN ... REACT_SITES_END: the 4 K_ENTRY functions it calls and the
 read-only K_CALL RX_ATK_GATE, 6.3.1) and
-the SOMVR_CLIMB block (CLIMB_SITES_BEGIN ... CLIMB_SITES_END: 8 read-only sites, re-xr-pipeline.md 12; and its
+the SOMVR_CLIMB block (CLIMB_SITES_BEGIN ... CLIMB_SITES_END: 10 read-only sites, re-xr-pipeline.md 12 and 50.1; and its
 CLEDGE_SITES_BEGIN ... CLEDGE_SITES_END block, SOMVR_CLIMB_LEDGES' patched K_VSLOT CL_CTXACT, 32.7) and the
 SOMVR_BOW block (BOW_SITES_BEGIN ... BOW_SITES_END: the free-aim call site BOW_FA_CAMXF, 2 read-only K_ENTRY
 sites of the arrow counter and, since P9, the 6 read-only sites of our own shot, re-xr-pipeline.md 13; build 11's
@@ -139,8 +139,8 @@ def main():
     cl = [m for b in text.split("CLIMB_SITES_BEGIN")[1:] for m in re.findall(
         r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
         r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("CLIMB_SITES_END", 1)[0])]
-    if len(cl) != 8:
-        sys.exit("expected 8 SITE lines in the CLIMB_SITES block (SOMVR_CLIMB's read-only CL_RAYCAST .. CL_MOUNT), "
+    if len(cl) != 10:
+        sys.exit("expected 10 SITE lines in the CLIMB_SITES block (SOMVR_CLIMB's read-only CL_RAYCAST .. CL_PC_GETPOS), "
                  "found %d" % len(cl))
     cle = [m for b in text.split("CLEDGE_SITES_BEGIN")[1:] for m in re.findall(
         r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
@@ -319,6 +319,15 @@ def main():
             sys.exit("expected 1 SITE line in somvr_hudfx_game.c's HUDFX_SITES block (the patched UF_CREATE K_JMP), "
                      "found %d" % len(uf))
         sites = sites + uf
+    # SOMVR_BOW_SNDLOG (build 16): its block lives in somvr_quiver_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_quiver_game\.c"', text, re.M):
+        bs = [m for b in text.split("BOWSND_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("BOWSND_SITES_END", 1)[0])]
+        if len(bs) != 2 or [m[1] for m in bs] != ["K_CALL"] * 2:
+            sys.exit("expected 2 SITE lines in somvr_quiver_game.c's BOWSND_SITES block (the patched BS_POST_A, BS_POST_B "
+                     "K_CALLs), found %d" % len(bs))
+        sites = sites + bs
     # SOMVR_VERBS_GLOW (build 13): its block lives in somvr_vbglow_game.c (read with SOURCE.c above)
     if re.search(r'^#include "somvr_vbglow_game\.c"', text, re.M):
         vg = [m for b in text.split("VBGLOW_SITES_BEGIN")[1:] for m in re.findall(
@@ -347,6 +356,15 @@ def main():
             sys.exit("expected 3 SITE lines in somvr_objective_game.c's OBJECTIVE_SITES block (the patched OB_EACH K_CALL, "
                      "the called OB_POS, OB_RANGE K_ENTRY), found %d" % len(ob))
         sites = sites + ob
+    # SOMVR_FIGHT_SPACE_CM (build 16): its block lives in somvr_fight_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_fight_game\.c"', text, re.M):
+        sp = [m for b in text.split("SPACE_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("SPACE_SITES_END", 1)[0])]
+        if [m[1] for m in sp] != ["K_VSLOT"]:
+            sys.exit("expected 1 SITE line in somvr_fight_game.c's SPACE_SITES block (the patched FS_AIMOVE K_VSLOT), "
+                     "found %d" % len(sp))
+        sites = sites + sp
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

@@ -175,7 +175,7 @@ static void test_image(void) {
                 if (y > 75 && p[0] == 255 && p[1] == 255 && p[2] == 255) text++;
                 const uint8_t *fp = p + 4 * SOMVR_OB_STRIDE;
                 if (gx && abs((int)fp[3] - (int)(p[3] * SOMVR_OB_FAINT + 0.5f)) > 1) faint_ok = 0;
-            } else if (x >= 2 * SOMVR_OB_STRIDE && p[3] && y == 65) {
+            } else if (x >= 2 * SOMVR_OB_STRIDE && x < 3 * SOMVR_OB_STRIDE && p[3] && y == 65) {
                 arrow_r = x > arrow_r ? x : arrow_r, arrow_l = x < arrow_l ? x : arrow_l;
             }
         }
@@ -187,6 +187,25 @@ static void test_image(void) {
     const uint8_t *dc = px + 4 * ((1 + 40) * SOMVR_OB_IMG_W + 1 + 64); /* the diamond's dot: gold, opaque */
     CHECK(dc[3] == 255 && dc[0] == 255 && dc[1] > 190 && dc[2] < 100, "the diamond's centre gold (%d %d %d %d)", dc[0], dc[1],
           dc[2], dc[3]);
+    /* build 16: cell 3, the landing ring: its band gold (0.85), its inside faint, its centre gold, its corner empty */
+    int rx = 1 + 3 * SOMVR_OB_STRIDE;
+    const uint8_t *band = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + rx + 64 + 53), *fill = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + rx + 64 + 25),
+                  *dot = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + rx + 64), *corner = px + 4 * ((1 + 4) * SOMVR_OB_IMG_W + rx + 4);
+    CHECK(band[3] > 200 && band[0] > 200 && fill[3] > 20 && fill[3] < 60 && dot[3] > 200 && corner[3] == 0,
+          "the ring's cell: band %d, fill %d, dot %d, corner %d", band[3], fill[3], dot[3], corner[3]);
+    somvr_ob_rect(SOMVR_OB_CELL_RING, r);
+    CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 4 * SOMVR_OB_STRIDE, "the ring's rect");
+    float at[3] = {1.0f, -1.6f, -0.5f};
+    somvr_ob_place p = somvr_ob_floor(at, 0.35f);
+    float q[4] = {p.pose[0], p.pose[1], p.pose[2], p.pose[3]};
+    /* the quad's +z rotated by q: up (the face toward the sky) */
+    float zx = 2 * (q[0] * q[2] + q[3] * q[1]), zy = 2 * (q[1] * q[2] - q[3] * q[0]), zz = 1 - 2 * (q[0] * q[0] + q[1] * q[1]);
+    CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == SOMVR_OB_CELL_RING && fabsf(zx) < 1e-5f && fabsf(zy - 1) < 1e-5f &&
+              fabsf(zz) < 1e-5f && fabsf(p.pose[5] - (-1.58f)) < 1e-5f && p.pose[4] == 1.0f && p.pose[6] == -0.5f &&
+              fabsf(p.size[0] - 0.7f * 128 / 124) < 1e-4f,
+          "the landing ring flat on the floor (+z -> %g %g %g, y %g, size %g)", zx, zy, zz, p.pose[5], p.size[0]);
+    at[1] = NAN;
+    CHECK(somvr_ob_floor(at, 0.35f).kind == SOMVR_OBK_NONE, "no ring at NaN");
     somvr_ob_image(px, &f, "234 m", 1);
     CHECK(dc[2] == 255 && dc[0] < 100, "bgra swaps B and R");
 }

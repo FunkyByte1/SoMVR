@@ -14,6 +14,10 @@
  *   SOMVR_SWORD_ANGLE=D  the sword's angle in the fist (deg, + = the blade up toward the knuckles' side, i.e. the grip's +y):
  *                        the drawn sword (the right weapon node's calibration) and the combat blade together. Trigger word
  *                        `hands angle D`.
+ *   SOMVR_SWORD_GRIP_CM=D  build 15b's follow-up (headset marks #4/#5: the fist closed at the crossguard, the leather grip
+ *                        out behind it): the drawn sword slid D cm ahead along its blade in the right fist (the weapon
+ *                        node's calibration, before the angle), the combat blade's tip D cm farther with it; 0 = build 15
+ *                        (the default). 8: the fist right under the guard (run 182336's pictures, `hands cal R 0 0 Z 90 0 0`).
  *   SOMVR_TWOHAND=1      the left hand squeezed on the hilt holds the sword with both hands (somvr_body.h 3; needs
  *                        SOMVR_ARMS=1 and SOMVR_SLOTS=1 for the sword's state).
  *   SOMVR_HANDS_TEST=1   headless tests: `hands test L|R x y z [rx ry rz]` puts that grip at x right, y up, z ahead (cm) of
@@ -78,6 +82,8 @@ static struct {
 	sa_node model[SA_MAXN] __attribute__((aligned(16)));
 	/* the sword angle */
 	float angle_deg, pitch0;
+	float grip_cm, len0;    /* SOMVR_SWORD_GRIP_CM; the combat blade's length before it (taken once) */
+	int len_set;
 	float cal_v[2][6];
 	/* two hands (phase 2) */
 	sb_tw_cfg tw;
@@ -234,10 +240,18 @@ static void bd_apply_cal(void)
 {
 	for (int h = 0; h < 2; h++) {
 		sa_xf c = sa_xf_euler(g_bd.cal_v[h]);
-		g_arm.cal[h] = h == SA_R ? sb_cal_angle(c, g_bd.angle_deg * BD_DEG) : c;
+		g_arm.cal[h] = h == SA_R ? sb_cal_angle(sb_cal_grip(c, g_bd.grip_cm), g_bd.angle_deg * BD_DEG) : c;
 		memcpy(g_arm.cal_v[h], g_bd.cal_v[h], sizeof g_bd.cal_v[h]);
 	}
 	g_cb.bcfg.pitch_rad = g_bd.pitch0 + g_bd.angle_deg * BD_DEG;
+}
+
+/* SOMVR_SWORD_GRIP_CM: the drawn sword slid ahead in the fist, the combat blade's tip with it (its length taken once) */
+static void bd_grip_blade(void)
+{
+	if (!g_bd.len_set)
+		g_bd.len0 = g_cb.bcfg.len_cm, g_bd.len_set = 1;
+	g_cb.bcfg.len_cm = g_bd.len0 + g_bd.grip_cm;
 }
 
 /* the VR menu's Sword angle row (vm_apply_key, vm_start): the settings' sword_deg is SOMVR_SWORD_ANGLE, live */
@@ -516,11 +530,15 @@ static const char *bd_word(const char *w)
 	if (!g_bd.test)
 		return "hands (SOMVR_HANDS_TEST is off: ignored)";
 	pthread_mutex_lock(&g_bd_mu);
-	const char *what = "hands (not test|swing|noise|squeeze|draw|cal|hide|angle: ignored)";
+	const char *what = "hands (not test|swing|noise|wiggle|weighthand|squeeze|draw|cal|hide|angle: ignored)";
 	if (!strcmp(a, "swing")) {
 		what = bd_swing_word(w + 5);
 	} else if (!strcmp(a, "noise")) {
 		what = hsm_noise_word(w + 5);
+	} else if (!strcmp(a, "wiggle")) {
+		what = hsm_wiggle_word(w + 6); /* SOMVR_SWORD_WEIGHT's proof (somvr_smooth_game.c) */
+	} else if (!strcmp(a, "weighthand")) {
+		what = hsm_hand_word(w + 10); /* SOMVR_SWORD_WEIGHT_HAND live (somvr_smooth_game.c) */
 	} else if (!strcmp(a, "draw")) {
 		g_bd_req.draw = 1, g_bd_req.seq++, what = "hands draw";
 	} else if (!strcmp(a, "test") && strstr(w, "off")) {
@@ -746,6 +764,7 @@ static void bd_config(int *bad)
 	}
 	g_bd.edit = env_word("SOMVR_BODY_EDIT", g_bd_edit_w, BD_EDIT_N, BD_EDIT_AUTO);
 	g_bd.angle_deg = env_float("SOMVR_SWORD_ANGLE", 0, -90, 90, bad);
+	g_bd.grip_cm = env_float("SOMVR_SWORD_GRIP_CM", 0, -10, 25, bad);
 	g_bd.t_sq[0] = g_bd.t_sq[1] = -1, g_bd_req.sq[0] = g_bd_req.sq[1] = -1;
 	sb_tw_cfg_default(&g_bd.tw);
 	bf_config(bad); /* SOMVR_FINGERS */
@@ -761,7 +780,8 @@ static void bd_start(void)
 	if (g_arm.on) {
 		memcpy(g_bd.cal_v, g_arm.cal_v, sizeof g_bd.cal_v);
 		g_bd.pitch0 = g_cb.bcfg.pitch_rad;
-		if (g_bd.angle_deg != 0)
+		bd_grip_blade();
+		if (g_bd.angle_deg != 0 || g_bd.grip_cm != 0)
 			bd_apply_cal();
 	}
 	if (g_bd.twohand && (!g_arm.on || !g_sl.on)) {
@@ -802,10 +822,12 @@ static void bd_start(void)
 	}
 	g_bd.next_log = mono() + 10.0;
 	logf_("CONFIG body=%s hide=%s edit=%s sword angle %.1f deg (the blade line (0, sin a, cos a) in the grip's frame: the right weapon "
-	      "node's calibration and the combat blade's pitch %.1f deg) twohand=%d (grab within %.0f cm of the hilt %.0f..%.0f cm "
+	      "node's calibration and the combat blade's pitch %.1f deg), grip %.1f cm (SOMVR_SWORD_GRIP_CM: the sword slid along "
+	      "the blade in the fist, the combat blade's tip %.1f cm) twohand=%d (grab within %.0f cm of the hilt %.0f..%.0f cm "
 	      "behind the right grip, the left hand held %.0f..%.0f cm behind it, apart past %.0f cm = one hand, ease %.0f ms) "
 	      "test=%d", g_bd.on ? "hands (the body's bones collapsed in the player's skin palette, the hands kept)" : "full",
-	      sb_hide_name(g_bd.mode), bd_edit_name(g_bd.edit), g_bd.angle_deg, g_cb.bcfg.pitch_rad / BD_DEG, g_bd.twohand, g_bd.tw.grab_r_cm,
+	      sb_hide_name(g_bd.mode), bd_edit_name(g_bd.edit), g_bd.angle_deg, g_cb.bcfg.pitch_rad / BD_DEG, g_bd.grip_cm,
+	      g_cb.bcfg.len_cm, g_bd.twohand, g_bd.tw.grab_r_cm,
 	      g_bd.tw.hilt_lo_cm, g_bd.tw.hilt_hi_cm, g_bd.tw.hold_lo_cm, g_bd.tw.hold_hi_cm, g_bd.tw.break_cm,
 	      g_bd.tw.blend_s * 1e3, g_bd.test);
 	bf_start(); /* SOMVR_FINGERS */

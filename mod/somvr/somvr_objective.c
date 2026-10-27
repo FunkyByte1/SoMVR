@@ -125,6 +125,17 @@ somvr_ob_place somvr_ob_locate(const somvr_ob_cfg *c, const float head[3], const
     return p;
 }
 
+somvr_ob_place somvr_ob_floor(const float pos[3], float r_m) {
+    somvr_ob_place p;
+    memset(&p, 0, sizeof p);
+    if (!isfinite(pos[0] + pos[1] + pos[2]) || !(r_m > 0.01f) || !(r_m < 5.0f)) return p;
+    p.kind = SOMVR_OBK_WORLD, p.cell = SOMVR_OB_CELL_RING;
+    p.pose[0] = -0.70710678f, p.pose[3] = 0.70710678f; /* -90 deg about x: the quad's +z (its face) up */
+    p.pose[4] = pos[0], p.pose[5] = pos[1] + 0.02f, p.pose[6] = pos[2];
+    p.size[0] = p.size[1] = 2 * r_m * (float)SOMVR_OB_CELL / 124.0f; /* the ring's outer edge 62 px from the centre */
+    return p;
+}
+
 void somvr_ob_rect(int cell, int32_t r[4]) {
     if (cell < 0) cell = 0;
     if (cell >= SOMVR_OB_CELLS) cell = SOMVR_OB_CELLS - 1;
@@ -186,5 +197,16 @@ void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra
             int X = 1 + 2 * SOMVR_OB_STRIDE + x, Y = 1 + y;
             if (ob_in_tri(in, fx, fy)) ob_px(px, X, Y, gold, 1.0f, bgra);
             else if (ob_in_tri(big, fx, fy)) ob_px(px, X, Y, dark, 0.75f, bgra);
+        }
+    /* cell 3: the landing ring (a dark rim, the gold band, a faint gold disc, the dot), seen from above */
+    for (int y = 0; y < SOMVR_OB_CELL; y++)
+        for (int x = 0; x < SOMVR_OB_CELL; x++) {
+            float dx = x + 0.5f - SOMVR_OB_CELL / 2.0f, dy = y + 0.5f - SOMVR_OB_CELL / 2.0f, d = sqrtf(dx * dx + dy * dy);
+            int X = 1 + 3 * SOMVR_OB_STRIDE + x, Y = 1 + y;
+            if (d <= 62 && d > 59) ob_px(px, X, Y, dark, 0.6f, bgra);
+            else if (d <= 59 && d > 52) ob_px(px, X, Y, gold, 0.85f, bgra);
+            else if (d <= 52 && d > 50) ob_px(px, X, Y, dark, 0.5f, bgra);
+            else if (d <= 50 && d > 6) ob_px(px, X, Y, gold, 0.12f, bgra);
+            else if (d <= 6) ob_px(px, X, Y, gold, 0.85f, bgra);
         }
 }

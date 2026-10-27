@@ -33,7 +33,7 @@ static struct {
     XrCompositionLayerQuad q, last_q;
     int has, last_has, kind_was;
     uint32_t id_was;
-    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none;
+    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land;
     uint32_t lines;
 } OB;
 
@@ -272,7 +272,11 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     OB.n_frames++;
     somvr_ob_place p;
     memset(&p, 0, sizeof p);
-    if (have && e.n == 1 && isfinite(e.pos[0] + e.pos[1] + e.pos[2])) {
+    int land = have && e.n == 1 && (e.flags & SOMVR_OBF_LAND);
+    if (land) { /* build 16: the climb's landing (SOMVR_CLIMB_PULLOVER): a ring flat on the floor where he will stand */
+        p = somvr_ob_floor(e.pos, e.dist_m);
+        OB.in_view = 0;
+    } else if (have && e.n == 1 && isfinite(e.pos[0] + e.pos[1] + e.pos[2])) {
         float head[3], fov[4];
         for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
         for (int k = 0; k < 2; k++) {
@@ -286,7 +290,8 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     }
     if (p.kind != SOMVR_OBK_NONE) {
         char text[16];
-        somvr_ob_text(e.dist_m, text);
+        if (land) snprintf(text, sizeof text, "%s", OB.text); /* the picture as it is: the ring is in every upload */
+        else somvr_ob_text(e.dist_m, text);
         if ((!OB.released || strcmp(text, OB.text)) && ob_upload(ds, text)) return; /* off now (logged) */
         if (p.kind == SOMVR_OBK_EDGE && !OB.view) return;
         int32_t rc[4];
@@ -299,14 +304,25 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
                                         .pose = {{p.pose[0], p.pose[1], p.pose[2], p.pose[3]}, {p.pose[4], p.pose[5], p.pose[6]}},
                                         .size = {p.size[0], p.size[1]}};
         OB.has = 1;
-        OB.n_marker += p.kind == SOMVR_OBK_WORLD, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
+        OB.n_land += land;
+        OB.n_marker += p.kind == SOMVR_OBK_WORLD && !land, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
         OB.n_faint += p.cell == SOMVR_OB_CELL_FAINT;
-        atomic_fetch_add_explicit(p.kind == SOMVR_OBK_WORLD ? &OB.obj->n_marker : &OB.obj->n_edge, 1, memory_order_relaxed);
+        if (!land)
+            atomic_fetch_add_explicit(p.kind == SOMVR_OBK_WORLD ? &OB.obj->n_marker : &OB.obj->n_edge, 1, memory_order_relaxed);
     } else {
         OB.n_none++;
     }
     OB.last_has = OB.has, OB.last_q = OB.q;
     int kind = p.kind * 4 + (p.kind ? p.cell : 0);
+    if (land && kind != OB.kind_was && OB.lines < 400) {
+        OB.lines++;
+        lg("xr: objective frame %llu: the climb's landing: a ring flat on the floor at %+.2f,%+.2f,%+.2f m, %.2f m across "
+           "(frames with it %llu)", (unsigned long long)rec->frame, (double)p.pose[4], (double)p.pose[5], (double)p.pose[6],
+           (double)p.size[0], (unsigned long long)OB.n_land);
+        OB.kind_was = kind, OB.id_was = 0;
+        if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
+        return;
+    }
     if (((kind != OB.kind_was || (have && e.n && e.id != OB.id_was)) && OB.lines < 400) || OB.n_frames <= 2 ||
         OB.n_frames % 600 == 0) {
         OB.lines += kind != OB.kind_was;

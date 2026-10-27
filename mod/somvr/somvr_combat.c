@@ -16,6 +16,7 @@ void sc_cfg_default(sc_cfg *c) {
     c->charges = 3, c->charge_s = 0.25f;
     c->stim_cm = 150.0f, c->stim_cos = 0.5f;
     c->steps = 4;
+    c->cut_cm = 50.0f, c->edge_max_deg = 60.0f;
 }
 
 static float dot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
@@ -144,6 +145,73 @@ int sc_tier(const sc_cfg *c, const sc_speed *s) {
     if (s->mean_mps >= c->heavy_mps && s->travel >= c->heavy_cm) return SC_TIER_HEAVY;
     if (s->mean_mps >= c->slash_mps && s->travel >= c->slash_cm) return SC_TIER_LIGHT;
     return SC_TIER_NONE;
+}
+
+float sc_edge_deg(const somvr_blade *b) {
+    float ax[3] = {b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2]}, l = sqrtf(dot3(ax, ax));
+    float nn = sqrtf(dot3(b->flat_n, b->flat_n));
+    if (!(l > 1e-3f) || !(nn > 0.5f))
+        return NAN;
+    float a = dot3(b->vel_tip, ax) / (l * l), v[3];
+    for (int i = 0; i < 3; i++) v[i] = b->vel_tip[i] - a * ax[i];
+    float vl = sqrtf(dot3(v, v));
+    if (!(vl > 1.0f)) /* under 1 cm/s across the blade */
+        return NAN;
+    float c = fabsf(dot3(v, b->flat_n)) / (vl * nn);
+    return asinf(c > 1 ? 1 : c) * 57.29578f;
+}
+
+int sc_tier_cut(const sc_cfg *c, const sc_speed *s, float edge_deg) {
+    if (s->axis_mps >= c->stab_mps && s->cos_axis >= c->stab_cos) return SC_TIER_STAB;
+    if (!s->above || !(s->mean_mps >= c->slash_mps)) return SC_TIER_NONE;
+    if (s->travel >= c->cut_cm && !(edge_deg > c->edge_max_deg)) return SC_TIER_HEAVY;
+    if (s->travel >= c->slash_cm) return SC_TIER_LIGHT;
+    return SC_TIER_NONE;
+}
+
+int sc_space_hold(const float root[3], const float was[3], float xf[3], float space, float *d_want, float *d_got) {
+    float dx = xf[0] - root[0], dz = xf[2] - root[2];
+    *d_want = *d_got = NAN;
+    if (!(space > 0) || !isfinite(dx) || !isfinite(dz) || fabsf(dx) >= space || fabsf(dz) >= space) return 0;
+    float d = sqrtf(dx * dx + dz * dz), d0 = hypotf(was[0] - root[0], was[2] - root[2]), lim = fminf(space, d0);
+    *d_want = d;
+    if (!(d < lim) || !isfinite(d0)) return 0;
+    if (d > 1.0f)
+        xf[0] = root[0] + dx * (lim / d), xf[2] = root[2] + dz * (lim / d);
+    else
+        xf[0] = was[0], xf[2] = was[2];
+    *d_got = lim;
+    return 1;
+}
+
+static float hdist(const float a[3], const float b[3]) { return hypotf(a[0] - b[0], a[2] - b[2]); }
+int sc_space_hold2(const float root[3], const float *head, const float was[3], float xf[3], float space, float *d_want,
+                   float *d_got) {
+    const float *c[2] = {root, head};
+    int n = head ? 2 : 1;
+    float lim[2], d[2];
+    *d_want = *d_got = NAN;
+    if (!(space > 0) || !isfinite(xf[0]) || !isfinite(xf[2])) return 0;
+    int bad = 0;
+    for (int i = 0; i < n; i++) {
+        if (!isfinite(c[i][0]) || !isfinite(c[i][2])) return 0;
+        d[i] = hdist(xf, c[i]), lim[i] = fminf(space, hdist(was, c[i]));
+        bad |= d[i] < lim[i];
+    }
+    *d_want = n == 2 ? fminf(d[0], d[1]) : d[0];
+    if (!bad) return 0;
+    float best[3] = {was[0], xf[1], was[2]}, bd = hdist(xf, was);
+    for (int i = 0; i < n; i++) {
+        if (!(d[i] < lim[i]) || !(d[i] > 1.0f)) continue;
+        float p[3] = {c[i][0] + (xf[0] - c[i][0]) * (lim[i] / d[i]), xf[1], c[i][2] + (xf[2] - c[i][2]) * (lim[i] / d[i])};
+        int ok = 1;
+        for (int j = 0; j < n; j++) ok &= !(hdist(p, c[j]) < lim[j] - 0.01f);
+        float pd = hdist(xf, p);
+        if (ok && pd < bd) memcpy(best, p, sizeof best), bd = pd;
+    }
+    xf[0] = best[0], xf[2] = best[2];
+    *d_got = n == 2 ? fminf(hdist(xf, c[0]), hdist(xf, c[1])) : hdist(xf, c[0]);
+    return 1;
 }
 
 const char *sc_tier_name(int tier) {
@@ -332,6 +400,9 @@ int somvr_blade_controller(const sc_blade_cfg *c, const sc_grip *g, const sc_rig
                                   dtp[3] = {ks * (tip[0] - rig->p0[0]), ks * (tip[1] - rig->p0[1]), ks * (tip[2] - rig->p0[2])},
                                   vs[3] = {ks * v[0], ks * v[1], ks * v[2]};
     yawrot3(rig->yaw, db, bw), yawrot3(rig->yaw, dtp, tw), yawrot3(rig->yaw, vs, vw);
+    float xl[3] = {1, 0, 0}, xg[3];
+    qrot3(q, xl, xg);
+    yawrot3(rig->yaw, xg, out->flat_n);
     for (int i = 0; i < 3; i++) {
         out->base[i] = rig->base[i] + bw[i];
         out->tip[i] = rig->base[i] + tw[i];

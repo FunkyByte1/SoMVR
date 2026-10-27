@@ -93,6 +93,8 @@ static struct {
     uint64_t n_frames, n_drawn, n_noentry, n_shown_game, n_occ;
     uint64_t n_ghost;       /* build 13: frames drawn with a ghost (SOMVR_HANDS_SURFACE) */
     int ghost_was;          /* the last frame's ghosts (bit per hand: the on/off lines) */
+    uint64_t n_arrow;       /* build 16: frames drawn with the bow's arrow (vrhands v4) */
+    int arrow_was;
     uint64_t n_space, n_space_drawn; /* never a void: the loading space's own entries, drawn */
     uint32_t lines, was_hide;
     /* build 11: the world's depth (SOMVR_XR_HANDS_DEPTH=world) */
@@ -266,7 +268,7 @@ static void vh_setup(void) {
     vh_destroy();
     vh_config();
     VH.n_frames = VH.n_drawn = VH.n_noentry = VH.n_shown_game = VH.n_occ = 0, VH.lines = 0, VH.have_e = 0;
-    VH.n_ghost = 0, VH.ghost_was = 0;
+    VH.n_ghost = 0, VH.ghost_was = 0, VH.n_arrow = 0, VH.arrow_was = 0;
     VH.n_dused = VH.n_dnone = VH.n_dnext = 0, VH.dlines = 0;
     memset(&VH.fs, 0, sizeof VH.fs);
     if (VH.bad) lg("xr: hands: SOMVR_XR_HANDS=%s is not on or off: on", getenv("SOMVR_XR_HANDS"));
@@ -879,6 +881,16 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
            ghosts & 1 ? "on" : "off", ghosts & 2 ? "on" : "off", (double)ghost_a[0], (double)ghost_a[1]);
     VH.ghost_was = ghosts;
     VH.n_ghost += ghosts != 0;
+    int arrow = !own && e.arrow_len > 0.05f; /* build 16 (v4): the bow's arrow in the string hand or on the string */
+    if (arrow) { /* (its nock and vanes at the cheek when drawn: faded within 6..16 cm of the eyes) */
+        somvr_vh_vert *av = (somvr_vh_vert *)(void *)hd_slot_arrow(&VH.hc, s);
+        somvr_vh_arrow(&e.arrow, e.arrow_len, av);
+        somvr_vh_arrow_fade(av, SOMVR_VH_ARROW_NV, rec->eye[0].pose.p, rec->eye[1].pose.p, 0.06f, 0.16f);
+    }
+    if (!own && arrow != VH.arrow_was && VH.lines++ < 200) /* (the loading space's own frames have none: not counted) */
+        lg("xr: hands: frame %llu: the arrow %s", (unsigned long long)rec->frame, arrow ? "drawn" : "gone");
+    if (!own) VH.arrow_was = arrow;
+    VH.n_arrow += arrow;
     uint32_t nocc = 0;
     static const int occ_slots[] = {XL_VM0, XL_MMAP};
     for (size_t k = 0; k < sizeof occ_slots / sizeof occ_slots[0] && nocc < HD_MAX_OCC; k++)
@@ -898,6 +910,10 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     fr.opacity = 1;
     fr.ghost_a[0] = ghost_a[0], fr.ghost_a[1] = ghost_a[1];
     fr.ghost_base[0] = 0.30f, fr.ghost_base[1] = 0.58f, fr.ghost_base[2] = 1.0f; /* the wraith's blue */
+    if (arrow) { /* the wraith bow's arrow: a pale blue light, brighter on the string */
+        float g = e.arrow_glow > 1 ? 1 : e.arrow_glow < 0 ? 0 : e.arrow_glow, k = 0.7f + 0.3f * g;
+        fr.arrow_a = 1, fr.arrow_base[0] = 0.62f * k, fr.arrow_base[1] = 0.82f * k, fr.arrow_base[2] = 1.0f * k;
+    }
     if (VH.look == VH_LOOK_SKIN)
         fr.base[0] = 0.50f, fr.base[1] = 0.33f, fr.base[2] = 0.24f, fr.spec = 0.05f;
     else
@@ -1012,7 +1028,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     if (VH.n_drawn % 1800 == 0) vh_time_log("every 1800 frames");
     if (VH.n_drawn <= 3 || VH.n_drawn % 1800 == 0)
         lg("xr: hands frame %llu: %s%s hand(s), %u occluder(s), the world %s (%llu of %llu; %llu eyes the next frame's), boxes %dx%d / %dx%d of %ux%u, light x%.2f (scene %.4f), curls L %.2f %.2f %.2f %.2f %.2f R %.2f %.2f %.2f %.2f "
-           "%.2f, flags 0x%x (drawn %llu of %llu stereo frames; no entry %llu, the game's hands %llu; with a ghost %llu)",
+           "%.2f, flags 0x%x (drawn %llu of %llu stereo frames; no entry %llu, the game's hands %llu; with a ghost %llu, an arrow %llu)",
            (unsigned long long)rec->frame, hands[0] ? "L" : "", hands[1] ? "R" : "", nocc,
            !VH.world ? "off" : world ? "hides them" : "not this frame", (unsigned long long)VH.n_dused,
            (unsigned long long)(VH.n_dused + VH.n_dnone), (unsigned long long)VH.n_dnext, fr.box[0][2] - fr.box[0][0],
@@ -1021,7 +1037,8 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
            e.curl[0][0], e.curl[0][1],
            e.curl[0][2], e.curl[0][3], e.curl[0][4], e.curl[1][0], e.curl[1][1], e.curl[1][2], e.curl[1][3],
            e.curl[1][4], e.flags, (unsigned long long)VH.n_drawn, (unsigned long long)VH.n_frames,
-           (unsigned long long)VH.n_noentry, (unsigned long long)VH.n_shown_game, (unsigned long long)VH.n_ghost);
+           (unsigned long long)VH.n_noentry, (unsigned long long)VH.n_shown_game, (unsigned long long)VH.n_ghost,
+           (unsigned long long)VH.n_arrow);
 }
 
 static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2], xr_comp *c,

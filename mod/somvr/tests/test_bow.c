@@ -94,6 +94,12 @@ static void test_geometry(void) {
     CHECK(NEAR(len3(d), 1, 1e-5) && d.x > 0 && d.x < bf.x && d.z > bf.z, "ray dir blended %g %g %g", d.x, d.y, d.z);
     d = somvr_bow_ray_dir(&c, sv_qyaw(3.14159265f), nk, (sv_vec3){ 0, 150, -10 }, NULL); /* the bow backwards: string wins */
     CHECK(NEAR(len3(d), 1, 1e-5) && NEAR3(d, 0, 0, 1, 1e-3), "ray dir opposite %g %g %g", d.x, d.y, d.z);
+    /* build 16: a hand that nocks beside the nock (10 cm to the side, not back) has drawn nothing: the bow's forward */
+    d = somvr_bow_ray_dir(&c, bq, nk, (sv_vec3){ 10 * cosf(0.5f), 150, -10 * sinf(0.5f) }, &dr);
+    CHECK(NEAR3(d, bf.x, bf.y, bf.z, 1e-5) && NEAR(dr, 10, 1e-4) &&
+              NEAR(somvr_bow_back(&c, bq, nk, (sv_vec3){ 10 * cosf(0.5f), 150, -10 * sinf(0.5f) }), 0, 1e-4),
+          "ray dir beside the nock = the bow's forward %g %g %g", d.x, d.y, d.z);
+    CHECK(NEAR(somvr_bow_back(&c, bq, nk, (sv_vec3){ -30 * bf.x, 150 - 30 * bf.y, -30 * bf.z }), 30, 1e-4), "back draw 30");
     /* the look quaternion: R (0,0,1) = dir, R (0,1,0) up in dir's vertical plane, many directions */
     int bad = 0;
     for (int yi = -6; yi <= 6; yi++)
@@ -142,6 +148,108 @@ static void test_geometry(void) {
     CHECK(a.w == 1 && a.x == 0, "align NaN quaternion");
     a = somvr_bow_align(g, (sv_vec3){ NAN, 0, 0 }, 1);
     CHECK(NEAR(a.w, sv_qnormalize(g).w, 1e-6), "align NaN direction");
+}
+
+/* ---- build 16: the bow's frame for a real bow hold (re-xr-pipeline.md 51) ------------------------------------------ */
+/* An OpenXR grip from its axes (XR space: x right, y up, -z ahead): the spec's grip has -Z through the fist's tube from
+ * the little finger to the thumb, +X the left palm's normal / the right hand's back (to the right for either hand held
+ * out), +Y = Z x X. A bow held out with the fist upright: -Z up, +X right, +Y back toward the player. */
+static sv_quat quat_of_cols(sv_vec3 X, sv_vec3 Y, sv_vec3 Z) {
+    float m00 = X.x, m01 = Y.x, m02 = Z.x, m10 = X.y, m11 = Y.y, m12 = Z.y, m20 = X.z, m21 = Y.z, m22 = Z.z, tr = m00 + m11 + m22;
+    sv_quat q;
+    if (tr > 0) {
+        float k = 0.5f / sqrtf(tr + 1);
+        q = (sv_quat){ (m21 - m12) * k, (m02 - m20) * k, (m10 - m01) * k, 0.25f / k };
+    } else if (m00 > m11 && m00 > m22) {
+        float k = 2 * sqrtf(1 + m00 - m11 - m22);
+        q = (sv_quat){ 0.25f * k, (m01 + m10) / k, (m02 + m20) / k, (m21 - m12) / k };
+    } else if (m11 > m22) {
+        float k = 2 * sqrtf(1 + m11 - m00 - m22);
+        q = (sv_quat){ (m01 + m10) / k, 0.25f * k, (m12 + m21) / k, (m02 - m20) / k };
+    } else {
+        float k = 2 * sqrtf(1 + m22 - m00 - m11);
+        q = (sv_quat){ (m02 + m20) / k, (m12 + m21) / k, 0.25f * k, (m10 - m01) / k };
+    }
+    return sv_qnormalize(q);
+}
+/* the bow's limbs (+Y) and shot (+Z) in tracking space (game convention: x right, y up, z ahead) for an OpenXR grip
+ * q_xr and a hold (the bow's rotation in the grip, as SOMVR_BOW_HOLD converges to) */
+static void bow_axes(sv_quat q_xr, sv_quat hold, sv_vec3 *limb, sv_vec3 *shot) {
+    float a[4] = { q_xr.x, q_xr.y, q_xr.z, q_xr.w };
+    sv_quat b = sv_qmul(sv_xr_to_game_quat(a), hold);
+    *limb = sv_qrot(b, (sv_vec3){ 0, 1, 0 }), *shot = sv_qrot(b, (sv_vec3){ 0, 0, 1 });
+}
+/* the layer's test hands (somvr_xt_head_pose at yaw 0): R = X(rx) Y(ry) Z(rz) in XR space */
+static sv_quat xt_hand(float rx, float ry, float rz) {
+    return sv_qnormalize(sv_qmul(sv_qmul(qaxis(1, 0, 0, rx), qaxis(0, 1, 0, ry)), qaxis(0, 0, 1, rz)));
+}
+static void test_hold_anatomy(void) {
+    /* the fist upright, the arm straight out ahead: from the spec's axes, and as the drivers' `hand L head ... 90 0 0` */
+    sv_quat up = quat_of_cols((sv_vec3){ 1, 0, 0 }, (sv_vec3){ 0, 0, 1 }, (sv_vec3){ 0, -1, 0 }), xt = xt_hand(90, 0, 0);
+    CHECK(fabsf(up.x * xt.x + up.y * xt.y + up.z * xt.z + up.w * xt.w) > 0.99999f,
+          "the test hand RX 90 is the upright fist: %g %g %g %g vs %g %g %g %g", up.x, up.y, up.z, up.w, xt.x, xt.y, xt.z, xt.w);
+    sv_vec3 limb, shot;
+    for (int h = 0; h < 2; h++) {
+        bow_axes(up, somvr_bow_hold_q(SOMVR_BOW_HOLD_FIST, h, 0, 0), &limb, &shot);
+        CHECK(NEAR3(limb, 0, 1, 0, 1e-5) && NEAR3(shot, 0, 0, 1, 1e-5),
+              "fist, %s hand upright: the limbs up, the shot ahead, the string toward the face: limb %g %g %g shot %g %g %g",
+              h ? "right" : "left", limb.x, limb.y, limb.z, shot.x, shot.y, shot.z);
+    }
+    /* builds 11-15b (HOLD_AUTO, the identity): the same real hold lays the bow flat along the arm and shoots it at the
+     * sky (the user's 10-26 mark 1: "holding my hand straight out, and yet the bow is horizontal"; that session's idle
+     * ray (-0.087 0.981 0.176)) */
+    bow_axes(up, somvr_bow_hold_q(SOMVR_BOW_HOLD_AUTO, 0, 0, 0), &limb, &shot);
+    CHECK(fabsf(limb.y) < 1e-5f && fabsf(fabsf(limb.z) - 1) < 1e-5f && shot.y > 0.9999f,
+          "auto on a real hold: the limbs flat along the arm (limb %g %g %g), the shot up (%g %g %g)", limb.x, limb.y, limb.z,
+          shot.x, shot.y, shot.z);
+    /* ... and right only for the headless sword pose (the tube level and ahead): what builds 11-15b were tested with */
+    bow_axes(xt_hand(0, 0, 0), somvr_bow_hold_q(SOMVR_BOW_HOLD_AUTO, 0, 0, 0), &limb, &shot);
+    CHECK(NEAR3(limb, 0, 1, 0, 1e-5) && NEAR3(shot, 0, 0, 1, 1e-5), "auto in the sword pose: upright");
+    /* canted: the fist rolled 20 deg outward about the arm (ry: the grip's +Y is the arm): the limbs lean, the shot stays
+     * ahead, the limbs stay square to it */
+    for (int k = 0; k < 6; k++) {
+        static const float pose[6][3] = { { 90, 20, 0 }, { 90, -20, 0 }, { 60, 0, 0 }, { 120, 0, 0 }, { 90, 0, 25 }, { 70, 15, -10 } };
+        sv_quat g = xt_hand(pose[k][0], pose[k][1], pose[k][2]);
+        bow_axes(g, somvr_bow_hold_q(SOMVR_BOW_HOLD_FIST, 0, 0, 0), &limb, &shot);
+        /* the grip's own axes in tracking space: the tube (OpenXR -Z) and the arm (OpenXR -Y) */
+        float a[4] = { g.x, g.y, g.z, g.w };
+        sv_quat gg = sv_xr_to_game_quat(a);
+        sv_vec3 tube = sv_qrot(gg, (sv_vec3){ 0, 0, 1 }), arm = sv_qrot(gg, (sv_vec3){ 0, -1, 0 });
+        CHECK(NEAR(dot3(limb, tube), 1, 1e-5) && NEAR(dot3(shot, arm), 1, 1e-5) && NEAR(dot3(limb, shot), 0, 1e-5),
+              "pose %d (rx %g ry %g rz %g): the limbs along the tube, the shot along the arm: limb.tube %g shot.arm %g", k,
+              pose[k][0], pose[k][1], pose[k][2], dot3(limb, tube), dot3(shot, arm));
+        if (k == 2 || k == 3) /* low (60: the arm 30 deg down), high (120: 30 deg up): the shot follows, limbs upright-ish */
+            CHECK(NEAR(shot.y, k == 2 ? -0.5 : 0.5, 1e-4) && shot.z > 0.86f && limb.y > 0.86f, "pose %d: shot %g %g %g limb "
+                  "%g %g %g", k, shot.x, shot.y, shot.z, limb.x, limb.y, limb.z);
+    }
+    /* the cant and the tilt switches: + cant leans the upper limb to the string hand's side, + tilt toward the target */
+    bow_axes(up, somvr_bow_hold_q(SOMVR_BOW_HOLD_FIST, 0, 0, 15), &limb, &shot);
+    CHECK(limb.x > 0.25f && NEAR3(shot, 0, 0, 1, 1e-5), "cant 15, left hand: the upper limb to the right %g %g %g", limb.x,
+          limb.y, limb.z);
+    bow_axes(up, somvr_bow_hold_q(SOMVR_BOW_HOLD_FIST, 1, 0, 15), &limb, &shot);
+    CHECK(limb.x < -0.25f && NEAR3(shot, 0, 0, 1, 1e-5), "cant 15, right hand: to the left %g", limb.x);
+    bow_axes(up, somvr_bow_hold_q(SOMVR_BOW_HOLD_FIST, 0, 10, 0), &limb, &shot);
+    CHECK(limb.z > 0.17f && shot.y < -0.17f, "tilt 10: the upper limb toward the target %g, the shot dips %g", limb.z, shot.y);
+    sv_quat i = somvr_bow_hold_q(SOMVR_BOW_HOLD_CAL, 0, 30, 30);
+    CHECK(i.w == 1 && i.x == 0, "cal: identity");
+    /* the shot axis drives the ray: with HOLD_FIST's (0, -1, 0) an upright fist aims ahead */
+    somvr_bow_cfg c;
+    somvr_bow_cfg_default(&c);
+    CHECK(NEAR(c.shot_ax[2], 1, 0) && c.quiver == 0, "defaults: the shot on +Z, no quiver");
+    sv_quat hq = somvr_bow_hold_q(SOMVR_BOW_HOLD_FIST, 0, 0, 0);
+    sv_vec3 ax = sv_qrot(hq, (sv_vec3){ 0, 0, 1 });
+    c.shot_ax[0] = ax.x, c.shot_ax[1] = ax.y, c.shot_ax[2] = ax.z;
+    CHECK(NEAR3(ax, 0, -1, 0, 1e-6), "fist's shot axis %g %g %g", ax.x, ax.y, ax.z);
+    float a[4] = { up.x, up.y, up.z, up.w };
+    sv_vec3 f = somvr_bow_fwd(&c, sv_xr_to_game_quat(a));
+    CHECK(NEAR3(f, 0, 0, 1, 1e-5), "fwd of the upright fist %g %g %g", f.x, f.y, f.z);
+    c.shot_ax[0] = c.shot_ax[1] = c.shot_ax[2] = 0;
+    f = somvr_bow_fwd(&c, (sv_quat){ 0, 0, 0, 1 });
+    CHECK(NEAR3(f, 0, 0, 1, 1e-6), "a zero shot axis reads +Z");
+    /* the align about the shot axis: the bow hand turned so its shot axis meets a draw line 30 deg up */
+    sv_quat g = sv_xr_to_game_quat(a), al = somvr_bow_align_ax(g, ax, (sv_vec3){ 0, 0.5f, 0.8660254f }, 1);
+    sv_vec3 sa = sv_qrot(al, ax);
+    CHECK(NEAR3(sa, 0, 0.5, 0.8660254, 1e-5), "align_ax: %g %g %g", sa.x, sa.y, sa.z);
 }
 
 /* ---- the state machine at 90 Hz ------------------------------------------------------------------------------------ */
@@ -573,6 +681,134 @@ static void test_slot(void) {
     g_c.idle_nock = 1;
 }
 
+/* build 16: the quiver (the string = the right trigger; the bow from its slot = the button) */
+static void quiver_at(int in) { g_in.quiver = in; }
+static void test_quiver(void) {
+    reset();
+    g_c.quiver = 1, g_c.idle_nock = 0;
+    g_in.arrows = 5, g_in.game_aim = 1;
+    g_in.button = 1;
+    steps(2);
+    CHECK(g_s.phase == SOMVR_BOW_PH_AIM && g_s.arrow == SOMVR_BOW_ARROW_NONE, "quiver: the bow out, no arrow");
+    /* a press at the nock with no arrow: NOARROW, no draw */
+    g_ev = 0;
+    nock_and_grip();
+    steps(5);
+    CHECK((g_ev & SOMVR_BOW_E_NOARROW) && g_s.phase == SOMVR_BOW_PH_AIM && g_s.noarrows == 1,
+          "no arrow: no nock (events %#x phase %d)", g_ev, g_s.phase);
+    g_in.string = 0;
+    step();
+    /* the trigger in the quiver: an arrow in the hand; held to the nock: nocked without a new press */
+    string_at(25, 175, 20);
+    quiver_at(1);
+    step();
+    g_ev = 0;
+    g_in.string = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_TAKE) && g_s.arrow == SOMVR_BOW_ARROW_HAND && g_o.arrow == SOMVR_BOW_ARROW_HAND && g_s.takes == 1,
+          "take: events %#x arrow %d", g_ev, g_s.arrow);
+    quiver_at(0);
+    string_at(20, 150, 20); /* on the way: far from the nock */
+    steps(30);
+    CHECK(g_s.phase == SOMVR_BOW_PH_AIM && g_s.arrow == SOMVR_BOW_ARROW_HAND, "carried: still in the hand");
+    g_in.button = 0; /* the hands apart while an arrow is held end nothing */
+    string_at(40, 160, -10);
+    steps(120);
+    CHECK(g_s.phase == SOMVR_BOW_PH_AIM, "apart with an arrow: no exit (phase %d)", g_s.phase);
+    g_in.button = 1;
+    g_ev = 0;
+    string_at(0, 140, 30);
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_NOCK) && g_s.phase == SOMVR_BOW_PH_DRAW && g_s.arrow == SOMVR_BOW_ARROW_STRING,
+          "touched to the nock: nocked (events %#x phase %d arrow %d)", g_ev, g_s.phase, g_s.arrow);
+    draw_to(45, 40);
+    g_ev = 0;
+    g_in.string = 0; /* let go of the trigger: the shot */
+    steps(30);
+    CHECK((g_ev & SOMVR_BOW_E_RELEASE) && (g_ev & SOMVR_BOW_E_FIRE) && g_s.fired == 1 && g_s.arrow == SOMVR_BOW_ARROW_NONE,
+          "released: shot (events %#x fired %llu arrow %d)", g_ev, (unsigned long long)g_s.fired, g_s.arrow);
+    steps(40);
+    /* an arrow taken and let go before the nock: gone, no shot */
+    string_at(25, 175, 20), quiver_at(1);
+    step();
+    g_in.string = 1;
+    step();
+    quiver_at(0), string_at(15, 150, 15);
+    steps(10);
+    g_ev = 0;
+    g_in.string = 0;
+    steps(10);
+    CHECK((g_ev & SOMVR_BOW_E_DROP) && !(g_ev & (SOMVR_BOW_E_RELEASE | SOMVR_BOW_E_FIRE)) && g_s.arrow == SOMVR_BOW_ARROW_NONE &&
+              g_s.drops == 1 && g_s.fired == 1, "let go before the nock: dropped (events %#x)", g_ev);
+    /* nocked, drawn 10 cm and let go: no shot, the arrow rests on the string; a press there draws it again */
+    string_at(25, 175, 20), quiver_at(1);
+    step();
+    g_in.string = 1;
+    step();
+    quiver_at(0), string_at(0, 140, 32);
+    step();
+    CHECK(g_s.phase == SOMVR_BOW_PH_DRAW, "nocked again");
+    draw_to(12, 10);
+    g_ev = 0;
+    g_in.string = 0;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_LETDOWN) && g_s.arrow == SOMVR_BOW_ARROW_REST && g_s.phase == SOMVR_BOW_PH_AIM && g_s.fired == 1,
+          "let down: resting on the string (events %#x arrow %d)", g_ev, g_s.arrow);
+    string_at(25, 175, 20), quiver_at(1);
+    step();
+    g_ev = 0;
+    g_in.string = 1; /* the quiver gives nothing while one rests on the string */
+    step();
+    CHECK(!(g_ev & SOMVR_BOW_E_TAKE) && g_s.arrow == SOMVR_BOW_ARROW_REST, "rest: no second arrow (events %#x)", g_ev);
+    g_in.string = 0, quiver_at(0);
+    string_at(0, 140, 34);
+    step();
+    g_ev = 0;
+    g_in.string = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_NOCK) && g_s.arrow == SOMVR_BOW_ARROW_STRING, "the resting arrow drawn again (events %#x)", g_ev);
+    draw_to(40, 30);
+    g_in.string = 0;
+    steps(30);
+    CHECK(g_s.fired == 2 && g_s.arrow == SOMVR_BOW_ARROW_NONE, "the second shot (fired %llu)", (unsigned long long)g_s.fired);
+    /* the quiver empty: nothing in the hand, EMPTY (the buzz) */
+    g_in.arrows = 0;
+    string_at(25, 175, 20), quiver_at(1);
+    step();
+    g_ev = 0;
+    g_in.string = 1;
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_EMPTY) && g_s.arrow == SOMVR_BOW_ARROW_NONE && g_s.empties == 1, "empty quiver (events %#x)", g_ev);
+    g_in.string = 0;
+    step();
+    /* unknown count: an arrow (the shot's gate decides) */
+    g_in.arrows = -1;
+    g_in.string = 1;
+    step();
+    CHECK(g_s.arrow == SOMVR_BOW_ARROW_HAND, "unknown count: an arrow");
+    /* the bow put back with the arrow in the hand: the arrow goes back too */
+    somvr_bow_out o;
+    somvr_bow_stop(&g_s, SOMVR_BOW_END_SLOT, g_in.t, &o);
+    CHECK(g_s.arrow == SOMVR_BOW_ARROW_NONE && g_s.phase == SOMVR_BOW_PH_IDLE, "put back: no arrow");
+    /* the bow away: the quiver gives nothing (the right shoulder is the sword's then) */
+    g_in.button = 0, g_in.string = 0;
+    step();
+    g_ev = 0;
+    g_in.string = 1;
+    step();
+    CHECK(!(g_ev & (SOMVR_BOW_E_TAKE | SOMVR_BOW_E_EMPTY | SOMVR_BOW_E_ENTER)) && g_s.arrow == SOMVR_BOW_ARROW_NONE,
+          "the bow away: nothing from the quiver (events %#x)", g_ev);
+    CHECK(!strcmp(somvr_bow_arrow_name(SOMVR_BOW_ARROW_REST), "rest") && !strcmp(somvr_bow_arrow_name(9), "?"), "arrow names");
+    /* without the quiver: any press at the nock draws (an implicit arrow, STRING while drawn, none after) */
+    reset();
+    nock_and_grip();
+    CHECK(g_s.phase == SOMVR_BOW_PH_DRAW && g_s.arrow == SOMVR_BOW_ARROW_STRING, "no quiver: drawn");
+    draw_to(10, 10);
+    g_in.string = 0;
+    step();
+    CHECK(g_s.arrow == SOMVR_BOW_ARROW_NONE, "no quiver: a let-down keeps no arrow");
+}
+
 static void test_standdowns(void) {
     /* the bow hand lost 0.1 s: nothing; 0.3 s: the aim ends */
     reset();
@@ -812,6 +1048,8 @@ int main(void) {
     test_timing();
     test_button();
     test_slot();
+    test_hold_anatomy();
+    test_quiver();
     test_standdowns();
     test_hold_mode();
     test_hands();

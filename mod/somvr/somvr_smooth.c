@@ -191,97 +191,164 @@ int hsm_step(hsm_state *s, const hsm_cfg *c, int on, float tip_m, somvr_hand *h)
     return on;
 }
 
-/* ---- the weight ---------------------------------------------------------------------------------------------------- */
-void swg_defaults(swg_cfg *c, int level, float pos_unit) {
+/* ---- the weight (build 16) ------------------------------------------------------------------------------------- */
+void swg_defaults(swg_cfg *c, int level) {
     const float deg = 0.01745329f;
-    c->two_k = 1.6f;
-    c->gate_lo = 1.5f, c->gate_hi = 3.5f;                       /* rad/s: 86..200 deg/s */
-    c->gate_lo_v = 0.6f * pos_unit, c->gate_hi_v = 1.5f * pos_unit; /* m/s */
+    c->a_dn = 400.0f, c->zeta = 2.7f, c->w_max = 20.0f, c->two_k = 4.6f;
+    c->rope_close = 1.5f;                     /* 86 deg/s */
     c->reset_rad = 0.6f, c->reset_rate = 40.0f; /* 34 deg in one step and faster than 40 rad/s: a jump */
+    c->sub_s = 0.004f;
     if (level == SWG_HEAVY)
-        c->omega = 26.0f, c->cap_rad = 6.0f * deg, c->cap_pos = 0.010f * pos_unit;
+        c->a_up = 24.0f, c->omega = 25.0f, c->rope0 = 9.0f * deg, c->rope = 16.0f * deg;
     else
-        c->omega = 40.0f, c->cap_rad = 3.0f * deg, c->cap_pos = 0.005f * pos_unit;
+        c->a_up = 60.0f, c->omega = 30.0f, c->rope0 = 5.0f * deg, c->rope = 9.0f * deg;
 }
 
 void swg_reset(swg_state *s) { memset(s, 0, sizeof *s); }
 
-static float smooth01(float lo, float hi, float x) {
-    if (x <= lo) return 0;
-    if (x >= hi) return 1;
-    float t = (x - lo) / (hi - lo);
-    return t * t * (3 - 2 * t);
+static float vdot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+static void vcross3(const float a[3], const float b[3], float o[3]) {
+    float r[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    memcpy(o, r, sizeof r);
 }
-
-/* the critically damped decay of (x, v) toward 0 over dt, exact */
-static void cd_step(float *x, float *v, float om, float dt) {
-    float ex = expf(-om * dt), b = *v + om * *x;
-    float nx = (*x + b * dt) * ex, nv = (*v - om * b * dt) * ex;
-    *x = nx, *v = nv;
+static void vunit3(float v[3]) {
+    float n = vlen3(v);
+    if (n > 1e-12f) v[0] /= n, v[1] /= n, v[2] /= n;
 }
-
-/* |x| <= cap; when it is held at the cap, no rate outward */
-static int cap3(float x[3], float v[3], float cap) {
-    float n = vlen3(x);
-    if (n <= cap || n <= 0) return 0;
-    float u[3] = {x[0] / n, x[1] / n, x[2] / n}, dv = v[0] * u[0] + v[1] * u[1] + v[2] * u[2];
-    for (int i = 0; i < 3; i++) {
-        x[i] = u[i] * cap;
-        if (dv > 0) v[i] -= dv * u[i];
+/* the shortest rotation taking the unit a onto the unit b, as a rotation vector (perpendicular to both) */
+static void minrot(const float a[3], const float b[3], float r[3]) {
+    float c[3];
+    vcross3(a, b, c);
+    float sn = vlen3(c), ang = atan2f(sn, vdot3(a, b));
+    if (sn < 1e-9f) {
+        r[0] = r[1] = r[2] = 0;
+        return;
     }
-    return 1;
+    for (int i = 0; i < 3; i++) r[i] = c[i] / sn * ang;
+}
+/* v turned by the rotation vector r */
+static void vturn(const float r[3], const float v[3], float o[3]) {
+    float q[4];
+    swg_qexp(r, q);
+    qrot(q, v, o);
 }
 
-int swg_step(swg_state *s, const swg_cfg *c, const float q[4], const float p[3], float dt, int two, float rot[3],
-             float pos[3]) {
-    memset(rot, 0, 12), memset(pos, 0, 12);
-    if (!finite4(q) || !finite3(p)) {
+int swg_step(swg_state *s, const swg_cfg *c, const float q[4], const float axis[3], float dt, int two, float rot[3]) {
+    memset(rot, 0, 12);
+    float an[3] = {axis[0], axis[1], axis[2]};
+    if (!finite4(q) || !finite3(an) || vlen3(an) < 1e-6f) {
         s->have = 0;
         return 0;
     }
-    float qn[4];
+    vunit3(an);
+    float qn[4], ah[3];
     memcpy(qn, q, 16);
     qnorm(qn);
-    if (s->have && dt <= 0) { /* the same instant: the same offsets */
-        memcpy(rot, s->e, 12), memcpy(pos, s->d, 12);
+    if (s->have && dt <= 0) { /* the same instant: the same offset */
+        qrot(qn, an, ah);
+        minrot(ah, s->d, rot);
         return 1;
     }
-    float cq[4], d[4], r[3] = {0, 0, 0};
+    float cq[4], dq[4], r[3] = {0, 0, 0};
     if (s->have) {
         qconj(s->q, cq);
-        qmul(qn, cq, d);
-        qnorm(d);
-        qlog(d, r);
+        qmul(qn, cq, dq);
+        qnorm(dq);
+        qlog(dq, r);
     }
-    if (!s->have || dt > 0.1f || (vlen3(r) > c->reset_rad && vlen3(r) > c->reset_rate * dt)) {
-        float keep = s->peak_rad, keepp = s->peak_pos;
-        uint64_t st = s->steps, cp = s->capped, rs = s->resets + (s->have ? 1 : 0);
+    float k = two ? c->two_k : 1.0f, rope = c->rope / k;
+    if (!s->have || !(dt > 0) || dt > 0.1f || (vlen3(r) > c->reset_rad && vlen3(r) > c->reset_rate * dt)) {
+        float keep = s->peak_rad;
+        uint64_t st = s->steps, rp = s->roped, rs = s->resets + (s->have ? 1 : 0);
         swg_reset(s);
-        s->peak_rad = keep, s->peak_pos = keepp, s->steps = st, s->capped = cp, s->resets = rs;
-        memcpy(s->q, qn, 16), memcpy(s->p, p, 12);
-        s->have = 1;
+        s->peak_rad = keep, s->steps = st, s->roped = rp, s->resets = rs;
+        memcpy(s->q, qn, 16);
+        qrot(qn, an, s->d);
+        s->rope = rope, s->have = 1;
         return 0;
     }
-    float w[3] = {r[0] / dt, r[1] / dt, r[2] / dt}, v[3] = {(p[0] - s->p[0]) / dt, (p[1] - s->p[1]) / dt,
-                                                         (p[2] - s->p[2]) / dt};
-    float gw = smooth01(c->gate_lo, c->gate_hi, vlen3(w)), gv = smooth01(c->gate_lo_v, c->gate_hi_v, vlen3(v));
-    float k = two ? c->two_k : 1.0f, om = c->omega * k, capr = c->cap_rad / k, capp = c->cap_pos / k;
-    for (int i = 0; i < 3; i++) {
-        float u = w[i] * gw, uv = v[i] * gv;
-        s->ve[i] -= u - s->u[i]; /* the hand's change of speed; the blade's own inertia keeps its speed */
-        s->vd[i] -= uv - s->uv[i];
-        s->u[i] = u, s->uv[i] = uv;
-        cd_step(&s->e[i], &s->ve[i], om, dt);
-        cd_step(&s->d[i], &s->vd[i], om, dt);
+    float a_up = c->a_up * k * k, a_dn = c->a_dn * k * k, om = c->omega * k, w_max = c->w_max * (two ? 1.5f : 1.0f);
+    float rope0 = c->rope0 / k, kap = 2 * c->zeta * om, kp = om / (2 * c->zeta);
+    /* one hand -> two: the rope closes at rope_close; two -> one: open at once */
+    s->rope = s->rope - c->rope_close * dt > rope ? s->rope - c->rope_close * dt : rope;
+    float wh[3] = {r[0] / dt, r[1] / dt, r[2] / dt};
+    int n = (int)ceilf(dt / c->sub_s);
+    n = n < 1 ? 1 : n > 64 ? 64 : n;
+    float h = dt / (float)n, g = 1.0f - expf(-kap * h);
+    for (int i = 1; i <= n; i++) {
+        /* the hand at this sub-step (the frame's turn spread evenly) */
+        float ri[3] = {r[0] * i / n, r[1] * i / n, r[2] * i / n}, ei[4], qi[4];
+        swg_qexp(ri, ei);
+        qmul(ei, s->q, qi);
+        qrot(qi, an, ah);
+        float e[3];
+        minrot(s->d, ah, e);
+        float ang = vlen3(e);
+        /* the speed target: the hand's swing (not its twist about the blade) and the pull toward its direction */
+        float wt = vdot3(wh, s->d), want[3], dv[3];
+        for (int j = 0; j < 3; j++) want[j] = wh[j] - wt * s->d[j] + kp * e[j], dv[j] = (want[j] - s->wb[j]) * g;
+        /* the limits: the part of the change that slows the blade at a_dn (down to a stop), the rest (speeding up, a
+         * new direction, a reversal's far side) at a_up, harder from rope0 off the hand */
+        float wn = vlen3(s->wb), u[3] = {0, 0, 0}, slow = 0;
+        if (wn > 1e-6f) {
+            for (int j = 0; j < 3; j++) u[j] = s->wb[j] / wn;
+            float par = vdot3(dv, u);
+            if (par < 0) {
+                float to_stop = -par < wn ? -par : wn;
+                slow = to_stop < a_dn * h ? to_stop : a_dn * h;
+                /* left for a_up: the sideways part, and past a stop the reversal's far side */
+                float far = slow == wn && -par > wn ? par + wn : 0;
+                for (int j = 0; j < 3; j++) dv[j] += (far - par) * u[j];
+            }
+        }
+        float lim = a_up;
+        if (ang > rope0) {
+            float f = (ang - rope0) / (rope > rope0 + 1e-6f ? rope - rope0 : 1e-6f);
+            f = f > 1 ? 1 : f;
+            lim = a_up + f * f * (4 * a_dn - a_up);
+        }
+        float dn = vlen3(dv);
+        if (dn > lim * h)
+            for (int j = 0; j < 3; j++) dv[j] *= lim * h / dn;
+        for (int j = 0; j < 3; j++) s->wb[j] += dv[j] - slow * u[j];
+        float wd = vdot3(s->wb, s->d);
+        for (int j = 0; j < 3; j++) s->wb[j] -= wd * s->d[j];
+        wn = vlen3(s->wb);
+        if (wn > w_max)
+            for (int j = 0; j < 3; j++) s->wb[j] *= w_max / wn;
+        float step[3] = {s->wb[0] * h, s->wb[1] * h, s->wb[2] * h}, nd[3];
+        vturn(step, s->d, nd);
+        vunit3(nd);
+        memcpy(s->d, nd, 12);
+        /* the rope: never farther off the hand than it; no speed away from the hand there */
+        minrot(s->d, ah, e);
+        ang = vlen3(e);
+        if (ang > s->rope) {
+            float eu[3] = {e[0] / ang, e[1] / ang, e[2] / ang}, back[3];
+            for (int j = 0; j < 3; j++) back[j] = eu[j] * (ang - s->rope);
+            vturn(back, s->d, nd);
+            vunit3(nd);
+            memcpy(s->d, nd, 12);
+            float grow = vdot3(wh, eu) - vdot3(s->wb, eu); /* the angle off grows at this rate */
+            if (grow > 0)
+                for (int j = 0; j < 3; j++) s->wb[j] += grow * eu[j];
+            s->roped++;
+        }
     }
-    int capped = cap3(s->e, s->ve, capr);
-    capped |= cap3(s->d, s->vd, capp);
-    s->capped += (uint64_t)capped;
-    memcpy(s->q, qn, 16), memcpy(s->p, p, 12);
+    memcpy(s->q, qn, 16), memcpy(s->wh, wh, 12);
+    qrot(qn, an, ah);
+    minrot(ah, s->d, rot);
+    s->off = vlen3(rot);
+    if (s->off > s->peak_rad) s->peak_rad = s->off;
     s->steps++;
-    float ne = vlen3(s->e), nd = vlen3(s->d);
-    if (ne > s->peak_rad) s->peak_rad = ne;
-    if (nd > s->peak_pos) s->peak_pos = nd;
-    memcpy(rot, s->e, 12), memcpy(pos, s->d, 12);
     return 1;
+}
+
+void swg_follow(const float rot[3], const float q[4], float out[4]) {
+    float e[4], qn[4];
+    memcpy(qn, q, 16);
+    qnorm(qn);
+    swg_qexp(rot, e);
+    qmul(e, qn, out);
+    qnorm(out);
 }

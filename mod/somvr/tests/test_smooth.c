@@ -2,8 +2,8 @@
  * hand with tracking noise and a tremor (synthetic, at 90 Hz: the user's session logs one HAND line a second, too
  * sparse to replay), the noise cut at the hand and at a 1 m blade's tip; swings at 3, 6, 10 rad/s and a 1 m/s move:
  * the delay; the onset from rest; without the runtime's velocities; resets (a jump, a gap, untracked), the same time
- * again, measuring without filtering; the weight: nothing still or slow, a trail in a fast swing within its cap and a
- * settle after, stiffer with two hands, Heavy > Light, a jump resets. */
+ * again, measuring without filtering; the weight (build 16): recorded-style cuts and wiggles - the lag, the settle,
+ * the wiggle's share, the speed cap, the twist kept, two hands near 1:1, 20 Hz, the left hand taking the hilt, resets. */
 #include "../somvr_smooth.h"
 
 #include <math.h>
@@ -281,102 +281,315 @@ static void test_resets(void) {
           "parse rejects");
 }
 
-/* ---- the weight ---------------------------------------------------------------------------------------------------- */
-/* a swing: rest 20 frames, accelerate to w_max over acc frames, hold, decelerate, rest; the hand's pose in metres */
+/* ---- the weight (build 16) ----------------------------------------------------------------------------------------
+ * Recorded-style hand motion at 90 Hz (the sessions log no per-frame hands): the grip turned about an axis across the
+ * blade by a profile - a minimum-jerk cut (the shape of a human reach or cut), a sinusoidal wiggle - plus a 9 Hz
+ * tremor of 0.1 deg and 0.05 deg of tracking noise per axis. The blade's angle along the swing = the hand's + the
+ * offset's component on the swing axis; the lag = the offset's size. */
+static const float BLADE[3] = {0, 0.34202f, 0.93969f}; /* the blade in the grip: SOMVR_SWORD_ANGLE 20 deg */
+static float g_bw[3];                                   /* the swing axis (world, across the blade) */
+static float g_q0[4];
+
+enum { P_CUT, P_WIGGLE, P_ROLL };
 typedef struct {
-    float peak_trail, peak_lead; /* deg: the offset against / along the swing's rotation */
-    float peak_pos;              /* m */
-    float settle_ms;             /* after the stop, until the offset stays under 0.05 deg */
-    float still_max;             /* deg: the offset while resting before the swing */
-    int sign_changes;            /* after the stop (along the axis) */
-} wrun;
-static wrun weight_run(int level, int two, float w_max, int acc, float tremor_deg) {
+    int kind;
+    float amp_deg, T_s; /* a cut: amp_deg over T_s; a wiggle: +-amp_deg at 1 / T_s Hz for 1 s; a roll: amp_deg over T_s */
+    float t0;           /* the start (s) */
+} prof;
+static float prof_at(const prof *P, float t) {
+    float x = t - P->t0;
+    if (x < 0) return 0;
+    if (P->kind == P_WIGGLE) return x > 1.0f ? 0 : P->amp_deg * DEG * sinf(6.2831853f * x / P->T_s);
+    float u = x / P->T_s;
+    u = u > 1 ? 1 : u;
+    return P->amp_deg * DEG * (10 * u * u * u - 15 * u * u * u * u + 6 * u * u * u * u * u);
+}
+
+typedef struct {
+    float lag;       /* deg: the largest angle off the hand */
+    float run_on;    /* deg: the most the blade went past the hand after the cut's end (along the swing) */
+    float settle_ms; /* after the cut's end until it stays within 1 deg */
+    float amp_pct;   /* a wiggle: the blade's swing amplitude / the hand's (the middle 0.6 s) */
+    float w_blade, w_hand; /* rad/s: the peak angular speeds along the swing */
+    float twist;     /* deg: the largest offset part along the blade (none: the twist is the hand's) */
+    float still;     /* deg: the largest offset before the motion (the tremor alone) */
+    float step_max;  /* deg: the largest change of the offset in one frame */
+} wres;
+
+static void hand_q(float ang, float roll, float q[4]) {
+    float r[3] = {g_bw[0] * ang, g_bw[1] * ang, g_bw[2] * ang}, e[4], qr[4], t[4], bl[3];
+    qrot(g_q0, BLADE, bl);
+    float rr[3] = {bl[0] * roll, bl[1] * roll, bl[2] * roll};
+    swg_qexp(rr, qr);
+    qmul(qr, g_q0, t);
+    swg_qexp(r, e);
+    qmul(e, t, q);
+}
+
+static wres wrun(int level, int two, const prof *P, int fps, int noise, int two_from_f) {
     swg_cfg c;
-    swg_defaults(&c, level, 1.0f);
+    swg_defaults(&c, level);
     swg_state s;
     swg_reset(&s);
-    wrun r = {0, 0, 0, 0, 0, 0};
-    float ang = 0, wv = 0, prev_along = 0;
-    int stop_f = 20 + acc + 15 + acc, last_big = stop_f;
-    for (int f = 0; f < 140; f++) {
-        if (f >= 20 && f < 20 + acc) wv = w_max * (float)(f - 20 + 1) / (float)acc;
-        else if (f >= 20 + acc && f < 20 + acc + 15) wv = w_max;
-        else if (f >= 20 + acc + 15 && f < stop_f) wv = w_max * (float)(stop_f - f - 1) / (float)acc;
-        else wv = 0;
-        ang += wv * (float)(DT_NS * 1e-9);
-        float tr = tremor_deg * DEG * sinf(6.283185f * 9.0f * (float)(f * DT_NS * 1e-9));
-        float q[4], p[3], rot[3], pos[3];
-        truth_at(&T0, ang + tr, 0.25f * ang, q, p); /* the hand also moves ~0.25 m per rad (a swing's arc) */
-        swg_step(&s, &c, q, p, (float)(DT_NS * 1e-9), two, rot, pos);
-        float along = rot[0] * T0.ax[0] + rot[1] * T0.ax[1] + rot[2] * T0.ax[2];
-        float mag = sqrtf(rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2]) / DEG;
-        float pm = sqrtf(pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]);
-        if (f < 20 && mag > r.still_max) r.still_max = mag;
-        if (-along / DEG > r.peak_trail) r.peak_trail = -along / DEG;
-        if (along / DEG > r.peak_lead) r.peak_lead = along / DEG;
-        if (pm > r.peak_pos) r.peak_pos = pm;
-        if (f >= stop_f) {
-            if (mag >= 0.05f) last_big = f;
-            if ((along > 1e-5f && prev_along < -1e-5f) || (along < -1e-5f && prev_along > 1e-5f)) r.sign_changes++;
-            if (fabsf(along) > 1e-5f) prev_along = along;
+    wres r;
+    memset(&r, 0, sizeof r);
+    float dt = 1.0f / (float)fps, end = P->t0 + (P->kind == P_WIGGLE ? 1.0f : P->T_s), last_big = end;
+    float bmin = 1e9f, bmax = -1e9f, hmin = 1e9f, hmax = -1e9f, pb = 0, ph = 0, prot[3] = {0, 0, 0};
+    int nf = (int)(1.8f * (float)fps);
+    for (int f = 0; f <= nf; f++) {
+        float t = (float)f * dt, th = P->kind == P_ROLL ? 0 : prof_at(P, t), roll = P->kind == P_ROLL ? prof_at(P, t) : 0;
+        float tr = noise ? 0.1f * DEG * sinf(6.2831853f * 9.0f * t) : 0, q[4], rot[3];
+        hand_q(th + tr, roll, q);
+        if (noise) {
+            float nz[3] = {(float)gauss() * 0.05f * DEG, (float)gauss() * 0.05f * DEG, (float)gauss() * 0.05f * DEG}, e[4],
+                  t2[4];
+            swg_qexp(nz, e);
+            qmul(e, q, t2);
+            memcpy(q, t2, 16);
+        }
+        int tw = two || (two_from_f > 0 && f >= two_from_f);
+        if (!swg_step(&s, &c, q, BLADE, f ? dt : 0.0111f, tw, rot)) memset(rot, 0, 12);
+        float off = sqrtf(rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2]) / DEG;
+        float along = (rot[0] * g_bw[0] + rot[1] * g_bw[1] + rot[2] * g_bw[2]) / DEG, bl[3], hb[3];
+        qrot(q, BLADE, hb);
+        float tw_deg = fabsf(rot[0] * hb[0] + rot[1] * hb[1] + rot[2] * hb[2]) / DEG;
+        if (tw_deg > r.twist) r.twist = tw_deg;
+        (void)bl;
+        float bang = th / DEG + along, hang = th / DEG;
+        if (t < P->t0 && off > r.still) r.still = off;
+        if (off > r.lag) r.lag = off;
+        float d[3] = {rot[0] - prot[0], rot[1] - prot[1], rot[2] - prot[2]}, dd = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / DEG;
+        if (f && dd > r.step_max) r.step_max = dd;
+        memcpy(prot, rot, 12);
+        if (f) {
+            float wb = fabsf(bang - pb) * DEG / dt, wh = fabsf(hang - ph) * DEG / dt;
+            if (wb > r.w_blade) r.w_blade = wb;
+            if (wh > r.w_hand) r.w_hand = wh;
+        }
+        pb = bang, ph = hang;
+        if (P->kind == P_CUT && t >= end) {
+            float past = (P->amp_deg > 0 ? along : -along);
+            if (past > r.run_on) r.run_on = past;
+            if (off > 1.0f) last_big = t;
+        }
+        if (P->kind == P_WIGGLE && t >= P->t0 + 0.3f && t <= P->t0 + 0.9f) {
+            bmin = fminf(bmin, bang), bmax = fmaxf(bmax, bang), hmin = fminf(hmin, hang), hmax = fmaxf(hmax, hang);
         }
     }
-    r.settle_ms = (float)((last_big + 1 - stop_f) * DT_NS * 1e-6);
+    r.settle_ms = (last_big - end) * 1000.0f + (last_big > end ? 1000.0f * dt : 0);
+    if (P->kind == P_WIGGLE) r.amp_pct = 100.0f * (bmax - bmin) / (hmax - hmin);
     return r;
 }
 
 static void test_weight(void) {
     const char *nm[] = {"", "Light", "Heavy"};
-    for (int lv = SWG_LIGHT; lv <= SWG_HEAVY; lv++) {
-        swg_cfg c;
-        swg_defaults(&c, lv, 1.0f);
-        float cap = c.cap_rad / DEG;
-        /* a still hand with a tremor and a slow turn: nothing */
-        wrun a = weight_run(lv, 0, 1.0f, 10, 0.3f);
-        CHECK(a.still_max == 0 && a.peak_trail == 0 && a.peak_lead == 0 && a.peak_pos == 0,
-              "%s: a tremor and a 1 rad/s turn move nothing (%.4f/%.4f deg)", nm[lv], a.peak_trail, a.peak_lead);
-        /* a fast swing: 8 rad/s reached in 6 frames (67 ms) */
-        wrun b = weight_run(lv, 0, 8.0f, 6, 0.3f);
-        printf("weight %s (omega %.0f/s, cap %.1f deg, %.1f cm): an 8 rad/s swing trails %.2f deg, leads %.2f deg at the "
-               "stop, settles in %.0f ms, the hilt off by at most %.2f cm; still %.3f deg\n",
-               nm[lv], c.omega, cap, c.cap_pos * 100, b.peak_trail, b.peak_lead, b.settle_ms, b.peak_pos * 100,
-               b.still_max);
-        CHECK(b.still_max == 0, "%s: still before the swing", nm[lv]);
-        CHECK(b.peak_trail > 1.0f && b.peak_trail <= cap + 1e-3f, "%s: trail %.2f deg in (1, %.1f]", nm[lv],
-              b.peak_trail, cap);
-        CHECK(b.peak_lead > 0.5f && b.peak_lead <= cap + 1e-3f, "%s: the settle's lead %.2f deg", nm[lv], b.peak_lead);
-        CHECK(b.settle_ms <= (lv == SWG_HEAVY ? 300.0f : 200.0f), "%s: settled in %.0f ms", nm[lv], b.settle_ms);
-        CHECK(b.sign_changes <= 1, "%s: no ringing after the stop (%d sign changes)", nm[lv], b.sign_changes);
-        CHECK(b.peak_pos <= c.cap_pos + 1e-6f, "%s: the hilt within %.2f cm (%.3f)", nm[lv], c.cap_pos * 100,
-              b.peak_pos * 100);
-        /* both hands on the hilt: stiffer */
-        wrun t = weight_run(lv, 1, 8.0f, 6, 0.3f);
-        CHECK(t.peak_trail < b.peak_trail && t.peak_trail <= cap / c.two_k + 1e-3f,
-              "%s two hands: trail %.2f < %.2f and within %.2f", nm[lv], t.peak_trail, b.peak_trail, cap / c.two_k);
-        CHECK(t.settle_ms <= b.settle_ms, "%s two hands settle %.0f <= %.0f ms", nm[lv], t.settle_ms, b.settle_ms);
+    /* the swing axis: across the blade's start direction */
+    float r0[3] = {0.4f, -0.3f, 0.2f}, bl[3], up[3] = {0, 1, 0};
+    swg_qexp(r0, g_q0);
+    qrot(g_q0, BLADE, bl);
+    g_bw[0] = bl[1] * up[2] - bl[2] * up[1], g_bw[1] = bl[2] * up[0] - bl[0] * up[2], g_bw[2] = bl[0] * up[1] - bl[1] * up[0];
+    float n = sqrtf(g_bw[0] * g_bw[0] + g_bw[1] * g_bw[1] + g_bw[2] * g_bw[2]);
+    for (int i = 0; i < 3; i++) g_bw[i] /= n;
+    const prof slow = {P_CUT, 60, 0.8f, 0.1f}, med = {P_CUT, 90, 0.35f, 0.1f}, fast = {P_CUT, 120, 0.25f, 0.1f},
+               flick = {P_CUT, -90, 0.15f, 0.1f}, w5 = {P_WIGGLE, 10, 0.2f, 0.1f}, w4 = {P_WIGGLE, 15, 0.25f, 0.1f},
+               w3 = {P_WIGGLE, 20, 0.3333f, 0.1f}, w2 = {P_WIGGLE, 25, 0.5f, 0.1f}, roll = {P_ROLL, 90, 0.2f, 0.1f};
+    wres R[3][2][9];
+    const prof *ps[9] = {&slow, &med, &fast, &flick, &w5, &w4, &w3, &w2, &roll};
+    const char *pn[9] = {"slow cut 60 deg/0.8 s", "cut 90 deg/0.35 s", "fast cut 120 deg/0.25 s", "flick 90 deg/0.15 s",
+                         "wiggle +-10 deg 5 Hz", "wiggle +-15 deg 4 Hz", "wiggle +-20 deg 3 Hz", "wiggle +-25 deg 2 Hz",
+                         "roll 90 deg/0.2 s"};
+    for (int lv = SWG_LIGHT; lv <= SWG_HEAVY; lv++)
+        for (int two = 0; two < 2; two++) {
+            printf("weight %s, %s:\n", nm[lv], two ? "two hands" : "one hand");
+            for (int i = 0; i < 9; i++) {
+                wres w = R[lv][two][i] = wrun(lv, two, ps[i], 90, 1, 0);
+                if (ps[i]->kind == P_WIGGLE)
+                    printf("  %-24s the blade %3.0f %% of the hand's swing, off by up to %4.1f deg\n", pn[i], w.amp_pct, w.lag);
+                else
+                    printf("  %-24s lag %4.1f deg, run-on %4.1f, settled (1 deg) %3.0f ms after the stop, speed %4.1f "
+                           "(hand %4.1f) rad/s, twist off %.3f deg\n", pn[i], w.lag, w.run_on, w.settle_ms, w.w_blade,
+                           w.w_hand, w.twist);
+            }
+        }
+    swg_cfg H, L;
+    swg_defaults(&H, SWG_HEAVY), swg_defaults(&L, SWG_LIGHT);
+    wres *h = R[SWG_HEAVY][0], *l = R[SWG_LIGHT][0], *h2 = R[SWG_HEAVY][1], *l2 = R[SWG_LIGHT][1];
+    /* heavy, one hand: slow 1:1, a clear lag in fast cuts that settles, quick wiggles absorbed */
+    CHECK(h[0].lag < 1.5f && h[0].settle_ms <= 50, "heavy: a slow cut 1:1 (%.2f deg, %.0f ms)", h[0].lag, h[0].settle_ms);
+    CHECK(h[2].lag >= 10 && h[2].lag <= 20 && h[3].lag >= 10 && h[3].lag <= H.rope / DEG + 0.01f,
+          "heavy: fast cuts lag 10..20 deg (%.1f, %.1f)", h[2].lag, h[3].lag);
+    CHECK(h[1].lag > 5 && h[1].lag < h[2].lag + 0.5f, "heavy: a medium cut lags less (%.1f < %.1f)", h[1].lag, h[2].lag);
+    CHECK(h[2].settle_ms <= 250 && h[3].settle_ms <= 300, "heavy: settled %.0f / %.0f ms after the stop", h[2].settle_ms,
+          h[3].settle_ms);
+    CHECK(h[4].amp_pct <= 45 && h[5].amp_pct <= 60 && h[6].amp_pct <= 80, "heavy: wiggles absorbed (%.0f %%, %.0f %%, %.0f %%)",
+          h[4].amp_pct, h[5].amp_pct, h[6].amp_pct);
+    for (int i = 0; i < 9; i++) {
+        CHECK(h[i].lag <= H.rope / DEG + 0.01f && l[i].lag <= L.rope / DEG + 0.01f, "%s: within the ropes (%.2f, %.2f)",
+              pn[i], h[i].lag, l[i].lag);
+        CHECK(R[SWG_HEAVY][0][i].w_blade <= H.w_max * 1.02f + 0.3f, "%s: the blade's speed cap (%.1f)", pn[i], h[i].w_blade);
+        CHECK(h[i].still < 0.25f && l[i].still < 0.25f && h2[i].still < 0.25f,
+              "%s: the tremor and noise before it: nothing added (%.3f deg)", pn[i], h[i].still);
+        CHECK(h[i].twist < 0.01f && l[i].twist < 0.01f && h2[i].twist < 0.01f, "%s: no twist off (%.4f deg)", pn[i],
+              h[i].twist);
+        CHECK(h[i].run_on <= 2.0f && l[i].run_on <= 2.0f, "%s: no run-on past the hand (%.2f, %.2f deg)", pn[i], h[i].run_on,
+              l[i].run_on);
+        CHECK(h[i].step_max <= 8.0f, "%s: the offset changes at most 8 deg a frame (%.2f)", pn[i], h[i].step_max);
     }
-    wrun l = weight_run(SWG_LIGHT, 0, 5.0f, 8, 0), h = weight_run(SWG_HEAVY, 0, 5.0f, 8, 0);
-    CHECK(h.peak_trail > l.peak_trail, "Heavy %.2f > Light %.2f deg", h.peak_trail, l.peak_trail);
-    /* a jump of the hand (40 deg in a frame): reset, no kick */
-    swg_cfg c;
-    swg_defaults(&c, SWG_LIGHT, 1.0f);
+    wres hr = wrun(SWG_HEAVY, 0, &roll, 90, 0, 0), lr = wrun(SWG_LIGHT, 0, &roll, 90, 0, 0);
+    CHECK(hr.lag < 0.01f && lr.lag < 0.01f, "a 90 deg roll in 0.2 s (no noise): the blade's direction the hand's (%.4f, "
+          "%.4f deg)", hr.lag, lr.lag);
+    /* light: less than heavy, still felt in fast cuts */
+    CHECK(l[0].lag < 1.5f && l[2].lag >= 4 && l[2].lag < h[2].lag && l[5].amp_pct > h[5].amp_pct && l[5].amp_pct <= 90,
+          "light: slow %.1f, fast %.1f < %.1f deg, the 4 Hz wiggle %.0f %% (heavy %.0f %%)", l[0].lag, l[2].lag, h[2].lag,
+          l[5].amp_pct, h[5].amp_pct);
+    /* two hands: near 1:1 */
+    for (int i = 0; i < 4; i++)
+        CHECK(h2[i].lag <= 4.0f && l2[i].lag <= 2.5f, "two hands, %s: lag %.1f / %.1f deg", pn[i], h2[i].lag, l2[i].lag);
+    for (int i = 4; i < 8; i++)
+        CHECK(h2[i].amp_pct >= 90 && h2[i].amp_pct <= 112, "two hands, %s: %.0f %% of the hand's", pn[i], h2[i].amp_pct);
+    /* 20 Hz (the headless runtime): the sub-steps give the same follow */
+    wres f20 = wrun(SWG_HEAVY, 0, &fast, 20, 0, 0), f90 = wrun(SWG_HEAVY, 0, &fast, 90, 0, 0);
+    printf("weight Heavy at 20 Hz: the fast cut lags %.1f deg (90 Hz %.1f), settled %.0f ms\n", f20.lag, f90.lag, f20.settle_ms);
+    CHECK(fabsf(f20.lag - f90.lag) <= 3.0f, "20 Hz: %.1f vs %.1f deg", f20.lag, f90.lag);
+    /* the left hand takes the hilt mid-cut: the lag closes smoothly (the rope closes at rope_close) */
+    wres tk = wrun(SWG_HEAVY, 0, &fast, 90, 0, 9 + 13);
+    printf("weight Heavy, the left hand on the hilt mid-cut: lag %.1f deg, the most in one frame %.2f deg (one hand "
+           "%.2f), settled %.0f ms after the stop\n", tk.lag, tk.step_max, f90.step_max, tk.settle_ms);
+    CHECK(tk.step_max <= f90.step_max + 0.5f && tk.settle_ms < f90.settle_ms,
+          "two hands mid-cut: no jump (%.2f deg a frame, one hand %.2f), settled sooner (%.0f < %.0f ms)", tk.step_max,
+          f90.step_max, tk.settle_ms, f90.settle_ms);
+    /* a jump of the hand (40 deg in a frame): reset, no kick; a 20 Hz frame of 40 deg: no reset; the same time: kept */
     swg_state s;
     swg_reset(&s);
-    float q[4], p[3], rot[3], pos[3];
-    truth_at(&T0, 0, 0, q, p);
-    swg_step(&s, &c, q, p, 0.0111f, 0, rot, pos);
-    truth_at(&T0, 40 * DEG, 0, q, p);
-    int r = swg_step(&s, &c, q, p, 0.0111f, 0, rot, pos);
-    CHECK(r == 0 && rot[0] == 0 && rot[1] == 0 && rot[2] == 0 && s.resets == 1, "a jump resets");
-    /* a 20 Hz frame of a fast swing (40 deg in 50 ms = 14 rad/s): no reset */
+    float q[4], rot[3];
+    hand_q(0, 0, q);
+    swg_step(&s, &H, q, BLADE, 0.0111f, 0, rot);
+    swg_step(&s, &H, q, BLADE, 0.0111f, 0, rot);
+    hand_q(40 * DEG, 0, q);
+    int rr = swg_step(&s, &H, q, BLADE, 0.0111f, 0, rot);
+    CHECK(rr == 0 && rot[0] == 0 && rot[1] == 0 && rot[2] == 0 && s.resets == 1, "a jump resets");
     swg_reset(&s);
-    truth_at(&T0, 0, 0, q, p);
-    swg_step(&s, &c, q, p, 0.05f, 0, rot, pos);
-    truth_at(&T0, 40 * DEG, 0, q, p);
-    CHECK(swg_step(&s, &c, q, p, 0.05f, 0, rot, pos) == 1 && s.resets == 0, "20 Hz, 40 deg a frame: no reset");
-    /* the same time: the same offsets */
-    swg_step(&s, &c, q, p, 0.0111f, 0, rot, pos);
-    CHECK(swg_step(&s, &c, q, p, 0, 0, rot, pos) == 1, "dt 0: kept");
+    hand_q(0, 0, q);
+    swg_step(&s, &H, q, BLADE, 0.05f, 0, rot);
+    hand_q(40 * DEG, 0, q);
+    CHECK(swg_step(&s, &H, q, BLADE, 0.05f, 0, rot) == 1 && s.resets == 0, "20 Hz, 40 deg a frame: no reset");
+    float keep[3];
+    memcpy(keep, rot, 12);
+    CHECK(swg_step(&s, &H, q, BLADE, 0, 0, rot) == 1 && !memcmp(keep, rot, 12), "dt 0: the same offset");
+    float bad[4] = {NAN, 0, 0, 1};
+    CHECK(swg_step(&s, &H, bad, BLADE, 0.0111f, 0, rot) == 0 && !s.have, "a NaN hand: none, reset");
+}
+
+/* SOMVR_SWORD_WEIGHT_HAND=follow: the drawn hand turned with the blade (swg_follow) - through a heavy fast cut, a flick
+ * and a wiggle, one hand and two: the hand's turn off the controller = the blade's offset, the hand's blade axis = the
+ * blade's direction, no twist about the blade (all within 0.1 deg; the position is not an input) */
+static void test_follow(void) {
+    const prof cuts[3] = {{P_CUT, 120, 0.25f, 0.1f}, {P_CUT, -90, 0.15f, 0.1f}, {P_WIGGLE, 15, 0.25f, 0.1f}};
+    swg_cfg c;
+    swg_defaults(&c, SWG_HEAVY);
+    float worst_lag = 0, worst_axis = 0, worst_twist = 0, peak = 0;
+    for (int two = 0; two < 2; two++)
+        for (int k = 0; k < 3; k++) {
+            swg_state s;
+            swg_reset(&s);
+            for (int f = 0; f <= 160; f++) {
+                float t = (float)f / 90.0f, q[4], rot[3], oq[4];
+                hand_q(prof_at(&cuts[k], t), 0, q);
+                if (!swg_step(&s, &c, q, BLADE, f ? 1.0f / 90.0f : 0.0111f, two, rot)) memset(rot, 0, 12);
+                swg_follow(rot, q, oq);
+                float off = sqrtf(rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2]);
+                /* the hand's turn off the controller */
+                float cq0[4] = {-q[0], -q[1], -q[2], q[3]}, rq[4];
+                qmul(oq, cq0, rq); /* atan2, not acos: well conditioned near 0 */
+                float turn = 2.0f * atan2f(sqrtf(rq[0] * rq[0] + rq[1] * rq[1] + rq[2] * rq[2]), fabsf(rq[3]));
+                worst_lag = fmaxf(worst_lag, fabsf(turn - off) / DEG), peak = fmaxf(peak, off / DEG);
+                /* its blade axis against the blade's direction (s.d) */
+                float ha[3];
+                qrot(oq, BLADE, ha);
+                float cx[3] = {ha[1] * s.d[2] - ha[2] * s.d[1], ha[2] * s.d[0] - ha[0] * s.d[2], ha[0] * s.d[1] - ha[1] * s.d[0]};
+                worst_axis = fmaxf(worst_axis, atan2f(sqrtf(cx[0] * cx[0] + cx[1] * cx[1] + cx[2] * cx[2]),
+                                                      ha[0] * s.d[0] + ha[1] * s.d[1] + ha[2] * s.d[2]) / DEG);
+                /* no twist: oq q^-1's axis lies across the controller's blade axis */
+                float cq[4] = {-q[0], -q[1], -q[2], q[3]}, r[4], ca[3];
+                qmul(oq, cq, r);
+                qrot(q, BLADE, ca);
+                float tw = 2.0f * fabsf(r[0] * ca[0] + r[1] * ca[1] + r[2] * ca[2]);
+                worst_twist = fmaxf(worst_twist, tw / DEG);
+            }
+        }
+    printf("follow: the hand's turn = the blade's offset within %.4f deg (offsets up to %.1f deg), its blade axis on the "
+           "blade within %.4f deg, twist %.4f deg\n", worst_lag, peak, worst_axis, worst_twist);
+    CHECK(peak > 10 && worst_lag < 0.1f && worst_axis < 0.1f && worst_twist < 0.1f,
+          "follow: the hand turns with the blade (%.4f / %.4f / %.4f deg)", worst_lag, worst_axis, worst_twist);
+    float q[4], z[3] = {0, 0, 0}, oq[4];
+    hand_q(0.3f, 0.2f, q);
+    swg_follow(z, q, oq);
+    CHECK(fabsf(oq[0] - q[0]) + fabsf(oq[1] - q[1]) + fabsf(oq[2] - q[2]) + fabsf(oq[3] - q[3]) < 1e-6f,
+          "follow: no offset, the controller's orientation");
+}
+
+/* SWG_REPLAY=FILE (SOMVR_SWORD_REC's <log>.swordrec): every level on that recorded motion - the blade's angle off the hand
+ * (p50 / p95 / max), while the hand swings (3+ rad/s), at the rope; the recorded level's offsets against the replay's */
+static int cmpf(const void *a, const void *b) {
+    float x = *(const float *)a, y = *(const float *)b;
+    return x < y ? -1 : x > y;
+}
+static void replay(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        printf("replay: %s not opened\n", path);
+        return;
+    }
+    int cap = 1 << 16, n = 0;
+    double *t = malloc(sizeof(double) * (size_t)cap);
+    float(*q)[4] = malloc(sizeof(float[4]) * (size_t)cap), *ang = malloc(sizeof(float) * (size_t)cap),
+          *off = malloc(sizeof(float) * (size_t)cap);
+    int *two = malloc(sizeof(int) * (size_t)cap), *lvl = malloc(sizeof(int) * (size_t)cap);
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#') continue;
+        if (n == cap) {
+            cap *= 2;
+            t = realloc(t, sizeof(double) * (size_t)cap), q = realloc(q, sizeof(float[4]) * (size_t)cap);
+            ang = realloc(ang, sizeof(float) * (size_t)cap), off = realloc(off, sizeof(float) * (size_t)cap);
+            two = realloc(two, sizeof(int) * (size_t)cap), lvl = realloc(lvl, sizeof(int) * (size_t)cap);
+        }
+        if (sscanf(line, "%lf %f %f %f %f %d %d %f %f", &t[n], &q[n][0], &q[n][1], &q[n][2], &q[n][3], &two[n], &lvl[n],
+                   &ang[n], &off[n]) == 9)
+            n++;
+    }
+    fclose(f);
+    printf("replay %s: %d frames over %.1f s\n", path, n, n ? t[n - 1] - t[0] : 0.0);
+    float *o = malloc(sizeof(float) * (size_t)(n ? n : 1)), *os = malloc(sizeof(float) * (size_t)(n ? n : 1));
+    for (int lv = SWG_LIGHT; lv <= SWG_HEAVY; lv++) {
+        swg_cfg c;
+        swg_defaults(&c, lv);
+        swg_state s;
+        swg_reset(&s);
+        int k = 0, ks = 0, same = 0;
+        float diff = 0, hmax = 0;
+        uint64_t roped = 0;
+        for (int i = 0; i < n; i++) {
+            float a = ang[i] * DEG, axis[3] = {0, sinf(a), cosf(a)}, rot[3];
+            float dt = i ? (float)(t[i] - t[i - 1]) : 0.0111f;
+            uint64_t r0 = s.roped;
+            int ok = swg_step(&s, &c, q[i], axis, dt, two[i], rot);
+            roped += s.roped - r0;
+            float od = ok ? s.off / DEG : 0, wh = sqrtf(s.wh[0] * s.wh[0] + s.wh[1] * s.wh[1] + s.wh[2] * s.wh[2]);
+            o[k++] = od;
+            if (ok && wh >= 3.0f) os[ks++] = od;
+            if (ok && wh > hmax) hmax = wh;
+            if (lvl[i] == lv) same++, diff = fmaxf(diff, fabsf(od - off[i]));
+        }
+        qsort(o, (size_t)k, sizeof *o, cmpf), qsort(os, (size_t)ks, sizeof *os, cmpf);
+        printf("  %s: the blade off the hand p50 %.2f p95 %.2f max %.2f deg; while the hand swings (3+ rad/s, %d frames, "
+               "the hand up to %.1f rad/s) p50 %.2f p95 %.2f; at the rope %llu sub-steps",
+               lv == SWG_HEAVY ? "heavy" : "light", k ? o[k / 2] : 0, k ? o[k * 95 / 100] : 0, k ? o[k - 1] : 0, ks, hmax,
+               ks ? os[ks / 2] : 0, ks ? os[ks * 95 / 100] : 0, (unsigned long long)roped);
+        if (same) printf("; the recorded %s frames (%d) off the replay by up to %.3f deg", lv == SWG_HEAVY ? "heavy" : "light", same, diff);
+        printf("\n");
+    }
+    free(t), free(q), free(ang), free(off), free(two), free(lvl), free(o), free(os);
 }
 
 int main(void) {
@@ -390,6 +603,9 @@ int main(void) {
     test_swing();
     test_resets();
     test_weight();
+    test_follow();
+    const char *rp = getenv("SWG_REPLAY");
+    if (rp && rp[0]) replay(rp);
     printf("test_smooth: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

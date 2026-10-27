@@ -4,12 +4,15 @@ couldn't figure out how to close the game. I had to top and kill the process. I 
 that I can see when the game is running").
 
     somvr_window.py [--unit somvr-headset] [--since EPOCH] [--run DIR] [--build NAME] [--every SECS] [--close-after SECS]
+                    [--next-start FILE]
 
 It shows: the session's state (starting / loading / in the game / ending / ended) and how long it has run; a live
 picture of the game (gamescope's own screenshot of the session's headless screen, every 2 s (--every), made small);
 a Stop button (`systemctl --user stop UNIT`: boot_check's cleanup stops the game and checks the save; without a unit:
 RUN/quit.request, the harness's clean stop); the bug marks taken (RUN/marks.log; a double click opens the mark's
-folder). It closes by itself CLOSE_AFTER seconds (default 30) after the session ended, showing the save check.
+folder). It closes by itself CLOSE_AFTER seconds (default 10; build 15b: 30) after the session ended, showing the save
+check. --next-start FILE (scripts/som-vr-headset.sh): a start made while this session ends writes it; the window then
+says the next session starts by itself in a moment.
 
 The run folder: --run, else the newest logs/boot-check-<ts> made after --since (scripts/som-vr-headset.sh passes its
 start time). The game never sees this window: it runs in its own headless gamescope (no desktop window, xdotool goes to
@@ -127,8 +130,9 @@ class Session:
         elif ended:
             self.state = "ended"
             self.detail = self.save_text(runlog)
-        elif us == "deactivating" or "stopping the game" in runlog or "quit requested" in runlog:
-            self.state, self.detail = "ending", "stopping the game, then checking your save (about a minute)"
+        elif (us == "deactivating" or "stopping the game" in runlog or "quit requested" in runlog or
+              "the game exited by itself" in runlog or "the game is exiting" in runlog):
+            self.state, self.detail = "ending", "the game is closing, then the save check (a few seconds)"
         elif self.in_world:
             self.state = "in the game"
             self.detail = "playing" if last.get("ctx") == "world" else "in a menu, or loading"
@@ -286,7 +290,8 @@ def main():
     ap.add_argument("--run", default="", help="the run folder (default: the newest after --since)")
     ap.add_argument("--build", default="", help="the build's name, for the title")
     ap.add_argument("--every", type=float, default=2.0, help="seconds between pictures (default 2)")
-    ap.add_argument("--close-after", type=float, default=30.0, help="close this long after the session ended")
+    ap.add_argument("--close-after", type=float, default=10.0, help="close this long after the session ended")
+    ap.add_argument("--next-start", default="", help="a next start's note (the launcher writes it while this one ends)")
     ap.add_argument("--check", action="store_true", help="only check the modules (tkinter, PIL); no window")
     a = ap.parse_args()
     try:
@@ -334,7 +339,7 @@ def main():
             return True
         if ask and not messagebox.askyesno("Stop Shadow of Mordor VR?",
                                            "Stop the game now?\n\nYour real save is not touched (this session plays on a "
-                                           "copy). The game stops, then the save check runs (about a minute).",
+                                           "copy). The game stops, then the save check runs (a few seconds).",
                                            parent=root):
             return False
         if sess.unit:
@@ -343,7 +348,7 @@ def main():
             with open(os.path.join(sess.run, "quit.request"), "w") as f:
                 f.write("the PC window's Stop at %d\n" % time.time())
         state.config(text="ending")
-        detail.config(text="stopping the game, then checking your save (about a minute)")
+        detail.config(text="the game is closing, then the save check (a few seconds)")
         return True
 
     def open_folder(path):
@@ -393,7 +398,13 @@ def main():
         st = sess.update()
         state.config(text={"in the game": "In the game", "loading": "Loading", "starting": "Starting",
                            "ending": "Ending", "ended": "Ended", "did not start": "Did not start"}.get(st, st))
-        detail.config(text=sess.detail)
+        nxt = ""
+        try:
+            if a.next_start and os.path.getmtime(a.next_start) >= t_start:
+                nxt = "\nThe last session is closing - the next one starts by itself in a moment."
+        except OSError:
+            pass
+        detail.config(text=sess.detail + nxt)
         now = sess.t_stop or time.time()  # (frozen once the session ends)
         clock.config(text=("%s in the game" % fmt(now - sess.t_game)) if sess.t_game else fmt(now - t_start))
         if sess.run and shooter is None:
@@ -411,7 +422,7 @@ def main():
             if ended_at["t"] is None:
                 ended_at["t"] = time.time()
             left = a.close_after - (time.time() - ended_at["t"])
-            detail.config(text="%s (this window closes in %d s)" % (sess.detail, max(0, left)))
+            detail.config(text="%s (this window closes in %d s)%s" % (sess.detail, max(0, left), nxt))
             if left <= 0:
                 if shooter:
                     shooter.stop = True

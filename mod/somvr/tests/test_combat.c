@@ -30,7 +30,7 @@ static float dist3(const float a[3], const float b[3]) {
     return len3(d);
 }
 static somvr_blade blade(float bx, float by, float bz, float tx, float ty, float tz, double t) {
-    somvr_blade b = {1, {bx, by, bz}, {tx, ty, tz}, {0, 0, 0}, t};
+    somvr_blade b = {1, {bx, by, bz}, {tx, ty, tz}, {0, 0, 0}, t, {0, 0, 0}};
     return b;
 }
 
@@ -778,7 +778,94 @@ static void test_touch(void) {
            1.0 / SC_TOUCH_RUB_S);
 }
 
+/* ---- SOMVR_COMBAT_CLASS=cut: the edge's angle and the committed cut (build 16) ------------------------------------ */
+static void test_cut(void) {
+    somvr_blade b = blade(0, 0, 0, 0, 0, 100, 0);
+    b.flat_n[0] = 1; /* the blade along +z, its flat facing +x: the edges along y */
+    float v[][3] = {{0, 500, 0}, {500, 0, 0}, {500, 500, 0}, {0, 300, 400}, {0, 0, 500}, {0, 0.5f, 0}};
+    float want[] = {0, 90, 45, 0, NAN, NAN};
+    for (int i = 0; i < 6; i++) {
+        memcpy(b.vel_tip, v[i], sizeof v[i]);
+        float e = sc_edge_deg(&b);
+        CHECK(isnan(want[i]) ? isnan(e) : NEAR(e, want[i], 0.01), "edge case %d: %g, want %g", i, e, want[i]);
+    }
+    memset(b.flat_n, 0, sizeof b.flat_n);
+    b.vel_tip[1] = 500;
+    CHECK(isnan(sc_edge_deg(&b)), "no flat known: NAN");
+    sc_cfg c;
+    sc_cfg_default(&c);
+    CHECK(c.cut_cm == 50 && c.edge_max_deg == 60, "the defaults: %g cm, %g deg", c.cut_cm, c.edge_max_deg);
+    sc_speed s;
+    memset(&s, 0, sizeof s);
+    s.above = 1, s.mean_mps = 3.2f, s.travel = 55;
+    CHECK(sc_tier_cut(&c, &s, 10) == SC_TIER_HEAVY, "a slow committed cut, the edge leading: heavy");
+    CHECK(sc_tier(&c, &s) == SC_TIER_LIGHT, "... the speed rule called it light");
+    CHECK(sc_tier_cut(&c, &s, NAN) == SC_TIER_HEAVY, "no flat known: the cut alone");
+    CHECK(sc_tier_cut(&c, &s, 75) == SC_TIER_LIGHT, "the flat leading: light");
+    s.travel = 30;
+    CHECK(sc_tier_cut(&c, &s, 0) == SC_TIER_LIGHT, "30 cm: a tap, light");
+    s.mean_mps = 25, s.travel = 30;
+    CHECK(sc_tier_cut(&c, &s, 0) == SC_TIER_LIGHT && sc_tier(&c, &s) == SC_TIER_LIGHT, "fast and short: light both ways");
+    s.mean_mps = 2.5f, s.travel = 80;
+    CHECK(sc_tier_cut(&c, &s, 0) == SC_TIER_NONE, "under the slash floor: nothing");
+    s.above = 0, s.mean_mps = 25, s.travel = 300;
+    CHECK(sc_tier_cut(&c, &s, 0) == SC_TIER_NONE, "no swing: nothing");
+    s.axis_mps = 2.5f, s.cos_axis = 0.95f;
+    CHECK(sc_tier_cut(&c, &s, 0) == SC_TIER_STAB, "a stab stays a stab");
+    printf("cut: the edge's angle (0 edge .. 90 flat), a committed cut = %.0f cm with the edge within %.0f deg\n", c.cut_cm,
+           c.edge_max_deg);
+}
+
+/* ---- SOMVR_FIGHT_SPACE_CM's hold (build 16) ------------------------------------------------------------------- */
+static void test_space(void) {
+    float root[3] = {100, 50, -200}, w, g;
+    struct { float was[3], to[3], want[3]; int changed; } T[] = {
+        {{100, 50, -50}, {100, 50, -80}, {100, 50, -80}, 0},     /* far: 120 cm, no hold */
+        {{100, 50, -100}, {100, 52, -120}, {100, 52, -110}, 1},  /* 100 -> 80: held at 90, y as moved */
+        {{100, 50, -130}, {100, 50, -140}, {100, 50, -130}, 1},  /* inside at 70 -> 60: stays at 70, not pushed out */
+        {{100, 50, -130}, {100, 50, -125}, {100, 50, -125}, 0},  /* inside, moving away: untouched */
+        {{160, 50, -200}, {100.5f, 50, -200}, {160, 50, -200}, 1}, /* onto his root: back where it was (at 60 cm) */
+        {{190, 50, -200}, {170, 50, -200}, {190, 50, -200}, 1},  /* 90 -> 70 on x: held at 90 */
+    };
+    for (size_t i = 0; i < sizeof T / sizeof T[0]; i++) {
+        float xf[3] = {T[i].to[0], T[i].to[1], T[i].to[2]};
+        int ch = sc_space_hold(root, T[i].was, xf, 90, &w, &g);
+        CHECK(ch == T[i].changed && NEAR(xf[0], T[i].want[0], 0.01) && NEAR(xf[1], T[i].want[1], 0.01) &&
+                  NEAR(xf[2], T[i].want[2], 0.01),
+              "space case %zu: changed %d -> %g %g %g, want %d -> %g %g %g", i, ch, xf[0], xf[1], xf[2], T[i].changed,
+              T[i].want[0], T[i].want[1], T[i].want[2]);
+    }
+    float xf[3] = {100, 50, -120}, was[3] = {100, 50, -100};
+    CHECK(!sc_space_hold(root, was, xf, 0, &w, &g) && xf[2] == -120, "space 0: off");
+    printf("space: an orc never moves nearer than the space (or where it was) to Talion's root\n");
+    /* two places: the head 40 cm ahead of the root (toward the orc on -z) */
+    float r2[3] = {0, 0, 0}, h2[3] = {0, 160, -40};
+    struct { float was[3], to[3], want[3]; int changed; } U[] = {
+        {{0, 0, -200}, {0, 0, -150}, {0, 0, -150}, 0},   /* 110 from the head: free */
+        {{0, 0, -200}, {0, 0, -120}, {0, 0, -130}, 1},   /* 80 from the head: held at 90 from the head (130 from the root) */
+        {{0, 0, 200}, {0, 0, 70}, {0, 0, 90}, 1},        /* behind: the root is the nearer, held at 90 from it */
+        {{100, 0, -40}, {80, 0, -40}, {90, 0, -40}, 1},  /* beside the head: 90 from it */
+        {{0, 0, -100}, {0, 0, -90}, {0, 0, -100}, 1},    /* already inside (60 from the head): stays at 60, not pushed */
+    };
+    for (size_t i = 0; i < sizeof U / sizeof U[0]; i++) {
+        float xf2[3] = {U[i].to[0], U[i].to[1], U[i].to[2]};
+        int ch = sc_space_hold2(r2, h2, U[i].was, xf2, 90, &w, &g);
+        CHECK(ch == U[i].changed && NEAR(xf2[0], U[i].want[0], 0.05) && NEAR(xf2[2], U[i].want[2], 0.05),
+              "space2 case %zu: changed %d -> %g %g, want %d -> %g %g", i, ch, xf2[0], xf2[2], U[i].changed, U[i].want[0],
+              U[i].want[2]);
+    }
+    float a[3] = {0, 0, -80}, wa[3] = {0, 0, -200};
+    CHECK(sc_space_hold2(r2, NULL, wa, a, 90, &w, &g) && NEAR(a[2], -90, 0.05), "no head: the root alone");
+    /* the two circles overlap: a move into their middle from the side keeps both (the stop is outside both) */
+    float m[3] = {45, 0, -20}, wm[3] = {150, 0, -20};
+    sc_space_hold2(r2, h2, wm, m, 90, &w, &g);
+    CHECK(hypotf(m[0], m[2]) >= 89.9f && hypotf(m[0], m[2] + 40) >= 89.9f, "both kept: %g %g", m[0], m[2]);
+    printf("space2: the nearer of the head and the root keeps the space\n");
+}
+
 int main(void) {
+    test_space();
+    test_cut();
     test_touch();
     test_seg();
     test_sweep();

@@ -109,7 +109,7 @@ static const struct site_spec *g_hp_sites = g_hp_sites_game; /* selftest: stand-
 #define HP_SKT_VT 0x33606d8    /* CSkeletalTransforms' vtable (classes.tsv; non-PIE: fixed) */
 #define HP_POSE_LINES 8        /* SOMVR_HP_POSE: distinct nodes logged at their first skip */
 enum { HPC_SLOT_CLOTH = 3, HPC_SLOT_VIS = 1, HPC_SLOT_CHANDLE = 1, HPC_SLOT_CNODE = 1, HPC_SLOT_CREATE = 5 };
-#define HP_NEAR_LINES 64       /* SOMVR_HP_NEARLOG: distinct nodes logged at most */
+#define HP_NEAR_LINES 128      /* SOMVR_HP_NEARLOG: distinct nodes logged at most */
 #define HP_NEAR_BIG_CM 500.0f  /* ... a box wider than this on any axis is the world's (terrain, sky, water): not logged */
 #define HP_XSKIP 4             /* the trigger word "hpskip ADDR": extra nodes not drawn in the eye passes (a test) */
 
@@ -222,6 +222,24 @@ static struct {
 	uint32_t n, nmesh;
 } g_hpa;
 static int hp_away_mode(void) { return atomic_load_explicit(&g_hp_away, memory_order_relaxed); }
+/* SOMVR_HP_COPIES=off|log|on (default off = build 15b; the word "hpcopies off|log|on"; re-xr-pipeline.md 49): every
+ * weapon has two more CModels of its own mesh with transforms of their own (runs 002021-011940), drawn in the forward
+ * pass; in the wraith vision one of them is the weapon's glowing self (the drawn weapon itself goes dark). Build 15b's
+ * session sheathed the sword (816027.814) and pressed Y: the sheathed sword's glowing copies floated in view while the
+ * sword itself is hidden in the eyes with Talion (marks 9-11: glowing swords round the body); the bow's aim is
+ * wraith-world too. In every first-person frame (the bow's too: its body edit draws the body) the weapons' own nodes
+ * (the held ones, the bow, the put-away ones: each model's main renderable and parts) and their meshes go with the
+ * frame's set; a skeletal node an eye pass draws with one of those meshes that is none of their own nodes is a copy:
+ * log = logged (8 nodes at most) and drawn; on = a copy of a weapon the set hides (put away, not in our hands) is not
+ * drawn in the eyes either - the held weapon's copies stay (its glow in the vision). The shadow maps keep them. */
+enum { HP_COPIES_OFF, HP_COPIES_LOG, HP_COPIES_ON };
+static const char *const g_hp_copies_w[] = { "off", "log", "on" };
+static _Atomic int g_hp_copies = HP_COPIES_OFF;
+static _Atomic uint64_t g_hp_copy_skips[SOMVR_HP_PASSES], g_hp_copy_drawn;
+static uintptr_t g_hp_copy_seen[HP_POSE_LINES];
+static _Atomic int g_hp_copy_n;
+static uint64_t g_hp_copy_frames; /* frames whose set carried the weapons (game thread) */
+static uint32_t g_hp_copy_nweap;  /* their count last frame (a change logged) */
 /* the cloth (game thread, except `on`) */
 static struct {
 	_Atomic int on;      /* the cloth proofs matched and the eight calls are in */
@@ -498,6 +516,67 @@ static const char *hp_away_word(const char *w)
 	return m == HP_AWAY_OFF ? "hpaway off" : m == HP_AWAY_HIDE ? "hpaway hide" : "hpaway hands";
 }
 
+/* SOMVR_HP_COPIES (render thread): a copy's first sight logged (HP_POSE_LINES distinct nodes at most): its mesh = whose,
+ * its transforms and position against the weapon's own node's, its material overrides */
+static void hp_copy_first(int pass, uintptr_t node, const somvr_hp_set *s, int w, uint64_t fr, int eye, int skip)
+{
+	int n = atomic_load_explicit(&g_hp_copy_n, memory_order_relaxed);
+	for (int i = 0; i < n && i < HP_POSE_LINES; i++)
+		if (g_hp_copy_seen[i] == node)
+			return;
+	if (n >= HP_POSE_LINES)
+		return;
+	g_hp_copy_seen[n] = node;
+	atomic_store_explicit(&g_hp_copy_n, n + 1, memory_order_relaxed);
+	const uint8_t *f = (const uint8_t *)node;
+	uintptr_t own = s->wnode[w];
+	float c[3], oc[3];
+	memcpy(c, (const void *)(node + SK_POS), sizeof c);
+	memcpy(oc, (const void *)(own + SK_POS), sizeof oc);
+	float d = sqrtf((c[0] - oc[0]) * (c[0] - oc[0]) + (c[1] - oc[1]) * (c[1] - oc[1]) + (c[2] - oc[2]) * (c[2] - oc[2]));
+	logf_("HEADPARTS copy: node %#lx (vtable %#lx, kind %u, category %u) draws mesh %#lx of the weapon node %#lx (entry %d of "
+	      "%u, %s) in the %s pass: its transforms %#lx (the weapon's %#lx, the body's pose %#lx), at %.1f %.1f %.1f, %.1f cm "
+	      "from the weapon's, material overrides %d (the weapon's %d): %s (frame %llu eye %d)", (unsigned long)node,
+	      (unsigned long)*(const uintptr_t *)node, f[NODE_KIND], f[NODE_CAT], (unsigned long)s->wmesh[w], (unsigned long)own,
+	      w, s->nweap, somvr_hp_match(s, own) >= 0 ? "hidden in the eyes this frame" : "shown (held)", somvr_hp_pass_name(pass),
+	      (unsigned long)*(const uintptr_t *)(node + SK_POSE),
+	      (unsigned long)*(const uintptr_t *)(own + SK_POSE), (unsigned long)s->pose, c[0], c[1], c[2], d,
+	      *(const int *)(node + SK_OVR_N), *(const int *)(own + SK_OVR_N), skip ? "not drawn in the eyes" : "drawn (log)",
+	      (unsigned long long)fr, eye);
+}
+
+/* "hpnear CM" (writer thread; a test, build 16): the near-log at CM (0 = off) from now on, its list emptied (the nodes
+ * near the head logged again from here: what a moment adds) */
+static const char *hp_near_word(const char *w)
+{
+	char *e;
+	double v = strtod(w, &e);
+	if (e == w || !(v >= 0 && v <= 1000))
+		return "hpnear (not 0..1000 cm: ignored)";
+	g_hp_near_cm = 0;
+	atomic_store(&g_hp_near_n, 0);
+	g_hp_near_cm = (float)v;
+	logf_("HEADPARTS hpnear %.0f (the word): the near-log %s, its list emptied", v, v > 0 ? "on" : "off");
+	return "hpnear";
+}
+
+/* "hpcopies off|log|on" (writer thread); the word's note */
+static const char *hp_copies_word(const char *w)
+{
+	while (*w == ' ')
+		w++;
+	int m = -1;
+	for (int i = 0; i < 3 && m < 0; i++)
+		if (!strncmp(w, g_hp_copies_w[i], strlen(g_hp_copies_w[i])))
+			m = i;
+	if (m < 0)
+		return "hpcopies (not off|log|on: ignored)";
+	atomic_store(&g_hp_copies, m);
+	logf_("HEADPARTS hpcopies %s (the word): the weapons' copies %s from the next frame", g_hp_copies_w[m],
+	      m == HP_COPIES_OFF ? "are not looked for" : m == HP_COPIES_LOG ? "are logged and drawn" : "are not drawn in the eyes");
+	return m == HP_COPIES_OFF ? "hpcopies off" : m == HP_COPIES_LOG ? "hpcopies log" : "hpcopies on";
+}
+
 typedef uint64_t (*hp_sub_fn)(uint64_t ctx, uint64_t node, uint64_t a, uint64_t b, uint64_t list, uint64_t pos);
 
 /* the five calls (render thread): FUN_0081ff80(ctx = rdi, node = rsi, dl, cl, r8, r9), no stack arguments and no
@@ -527,6 +606,19 @@ static void hp_draw(struct regs *r, int pass)
 			hp_mesh_first(pass, (uintptr_t)r->rsi, fr, eye);
 			r->rax = 0;
 			return;
+		}
+		if (set && set->nweap && somvr_hp_match(set, (uintptr_t)r->rsi) < 0) { /* SOMVR_HP_COPIES: a weapon's copy */
+			int w = somvr_hp_copy_of(set, (uintptr_t)r->rsi, *(const uintptr_t *)(r->rsi + SK_MESH));
+			if (w >= 0) {
+				int skip = somvr_hp_skip_copy(eye, pass, set, fr, (uintptr_t)r->rsi, set->wmesh[w]);
+				hp_copy_first(pass, (uintptr_t)r->rsi, set, w, fr, eye, skip);
+				if (skip) {
+					atomic_fetch_add_explicit(&g_hp_copy_skips[pass], 1, memory_order_relaxed);
+					r->rax = 0;
+					return;
+				}
+				atomic_fetch_add_explicit(&g_hp_copy_drawn, 1, memory_order_relaxed);
+			}
 		}
 		if (somvr_hp_skip(eye, pass, set, fr, (uintptr_t)r->rsi)) {
 			atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
@@ -657,6 +749,16 @@ static void hpc_counts(char *out, size_t cap)
 				      (unsigned long long)atomic_load(&g_hp_pose_skips[2]),
 				      (unsigned long long)atomic_load(&g_hp_pose_skips[3]),
 				      (unsigned long long)atomic_load(&g_hp_pose_skips[4]), atomic_load(&g_hp_pose_n));
+	if (atomic_load(&g_hp_copies) != HP_COPIES_OFF && o < cap)
+		o += (size_t)snprintf(out + o, cap - o, "; copies %s skipped deep=%llu forward=%llu late=%llu gbuffer=%llu "
+				      "velocity=%llu, drawn (log) %llu (%d nodes; frames with the weapons %llu, %u nodes last)",
+				      g_hp_copies_w[atomic_load(&g_hp_copies)], (unsigned long long)atomic_load(&g_hp_copy_skips[0]),
+				      (unsigned long long)atomic_load(&g_hp_copy_skips[1]),
+				      (unsigned long long)atomic_load(&g_hp_copy_skips[2]),
+				      (unsigned long long)atomic_load(&g_hp_copy_skips[3]),
+				      (unsigned long long)atomic_load(&g_hp_copy_skips[4]),
+				      (unsigned long long)atomic_load(&g_hp_copy_drawn), atomic_load(&g_hp_copy_n),
+				      (unsigned long long)g_hp_copy_frames, g_hp_copy_nweap);
 	if (g_hp_near_cm > 0 && o < cap)
 		snprintf(out + o, cap - o, "; near-log hits %llu (%d nodes; world boxes %llu)",
 			 (unsigned long long)atomic_load(&g_hp_near_hits), atomic_load(&g_hp_near_n),
@@ -873,6 +975,31 @@ static void hp_add_held(somvr_hp_set *s, double t, int *hid, int *kept)
 	}
 }
 
+/* SOMVR_HP_COPIES: the weapons' own nodes and meshes into the set (the held ones of both hands, the bow, the put-away
+ * ones); how many */
+static int hp_add_weapon_nodes(somvr_hp_set *s, double t, int body_hidden)
+{
+	uintptr_t wo[16];
+	int n = 0;
+	for (int h = 0; h < 2; h++)
+		n += sl_held_objs(h, wo + n, 4);
+	if (g_bow.on && g_bow.bow_obj)
+		wo[n++] = g_bow.bow_obj;
+	n += sl_away_objs(wo + n, 6, body_hidden);
+	for (int i = 0; i < n; i++) {
+		uintptr_t wm = hp_weapon_model(wo[i], t), rend[SOMVR_HP_SLOTS], mr = wm ? peek_ptr(wm + SM_MAIN) : 0, nd;
+		if (!wm)
+			continue;
+		if ((nd = hp_node_of(mr)))
+			somvr_hp_add_weapon(s, nd, peek_ptr(nd + SK_MESH));
+		if (peek(wm + SM_SLOTS, rend, sizeof rend))
+			for (int k = 0; k < SOMVR_HP_SLOTS; k++)
+				if (rend[k] && (nd = hp_node_of(rend[k])))
+					somvr_hp_add_weapon(s, nd, peek_ptr(nd + SK_MESH));
+	}
+	return (int)s->nweap;
+}
+
 /* SOMVR_HP_AWAY's lines: a held-away stretch's start and end (its frames, what was hidden and kept), the last set */
 static void hp_away_note(const somvr_hp_set *s, uint64_t frame, double t, int away, int main_hid, int hid, int kept)
 {
@@ -991,6 +1118,23 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 	}
 	if ((g_hp.slots >> SOMVR_HP_CLOTH & 1) && hpc_live())
 		hp_add_cloth(&s, model, frame, t);
+	int cm = atomic_load_explicit(&g_hp_copies, memory_order_relaxed);
+	if (cm != HP_COPIES_OFF) { /* SOMVR_HP_COPIES: every first-person frame (the bow's too: its body edit draws the body,
+				    * but the put-away weapons are hidden, run 033535) */
+		uint32_t nw = (uint32_t)hp_add_weapon_nodes(&s, t, main_node && g_hp_main_hid == frame);
+		s.copies = cm == HP_COPIES_ON;
+		g_hp_copy_frames += nw > 0;
+		if (nw != g_hp_copy_nweap) {
+			char wl[400];
+			size_t o = 0;
+			wl[0] = 0;
+			for (uint32_t i = 0; i < s.nweap && o + 40 < sizeof wl; i++)
+				o += (size_t)snprintf(wl + o, sizeof wl - o, " %#lx/%#lx", (unsigned long)s.wnode[i], (unsigned long)s.wmesh[i]);
+			logf_("HEADPARTS t=%.3f frame=%llu copies %s: the weapons' own nodes/meshes %u (was %u):%s", t,
+			      (unsigned long long)frame, g_hp_copies_w[cm], nw, g_hp_copy_nweap, nw ? wl : " none");
+			g_hp_copy_nweap = nw;
+		}
+	}
 	int hid = 0, kept = 0;
 	if (away) { /* SOMVR_HP_AWAY: Talion's own meshes, the weapons not in our hands */
 		s.away = 1;
@@ -1246,6 +1390,13 @@ static int hp_config(const char *hh)
 	logf_("CONFIG head parts pose: %s (while the body node is hidden in the eyes, every skeletal node its skeletal transforms "
 	      "animate is too: the wraith over Talion, its white glove in cover and around the bow hand; SOMVR_HP_POSE=on|off, "
 	      "the word hppose on|off)", atomic_load(&g_hp_pose_on) ? "on" : "off");
+	atomic_store(&g_hp_copies, env_word("SOMVR_HP_COPIES", g_hp_copies_w, 3, HP_COPIES_OFF));
+	logf_("CONFIG head parts copies: %s (SOMVR_HP_COPIES=off|log|on, the word hpcopies: while the body is hidden in the eyes, "
+	      "a weapon's own CModel copies - its glow in the wraith vision - %s)", g_hp_copies_w[atomic_load(&g_hp_copies)],
+	      atomic_load(&g_hp_copies) == HP_COPIES_OFF ? "are not looked for (build 15b)"
+	      : atomic_load(&g_hp_copies) == HP_COPIES_LOG ? "are logged and drawn"
+							   : "are not drawn in the eyes for a weapon hidden there (put away, not in our "
+							     "hands); the held weapon's stay; the shadows keep them");
 	atomic_store(&g_hp_away, env_word("SOMVR_HP_AWAY", g_hp_away_w, 3, HP_AWAY_OFF));
 	logf_("CONFIG head parts away: %s (SOMVR_HP_AWAY=off|hide|hands, the word hpaway: a frame whose view is held away from "
 	      "Talion - the Shadow Strike, a body moment's hold - %s)", g_hp_away_w[hp_away_mode()],

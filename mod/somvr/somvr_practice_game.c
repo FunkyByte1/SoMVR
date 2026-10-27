@@ -173,6 +173,8 @@ static struct {
 	somvr_pr_tcfg tcfg;
 	somvr_pr_tcfg tcfg_down; /* the climb's blink down: tcfg, a short hold (no light to change) */
 	int down_tp;         /* the blink down's teleport sent (pr_down_teleported takes it) */
+	int down_quick;      /* this blink down is the pullover's quick one (tcfg_quick) */
+	somvr_pr_tcfg tcfg_quick; /* build 16, SOMVR_CLIMB_PULLOVER: a mantle's blink (0.12 s out, 0.1 s settle, no hold, 0.2 s in) */
 	int tid;
 	uintptr_t pl;        /* the Player* last seen (another one: a load) */
 	somvr_pr_trip trip;
@@ -800,7 +802,10 @@ static void pr_light_tick(double t)
 
 /* ---- the trips ------------------------------------------------------------------------------------------------- */
 /* the trip's timing: the climb's blink down holds the black shorter (nothing to change under it) */
-static const somvr_pr_tcfg *pr_tc(void) { return g_pr.trip_kind == PR_TRIP_DOWN ? &g_pr.tcfg_down : &g_pr.tcfg; }
+static const somvr_pr_tcfg *pr_tc(void)
+{
+	return g_pr.trip_kind == PR_TRIP_DOWN ? (g_pr.down_quick ? &g_pr.tcfg_quick : &g_pr.tcfg_down) : &g_pr.tcfg;
+}
 static const char *pr_kind_word(int kind, int there)
 {
 	return kind == PR_TRIP_DOWN ? "down" : kind == PR_TRIP_GO ? (there ? "there" : "go to the practice area")
@@ -825,18 +830,19 @@ static int pr_down_ok(void)
 	return g_pr.on && g_pr.trip.phase == SOMVR_PRT_IDLE && !g_pr.pend_act && !game_paused();
 }
 
-static int pr_down_start(sv_vec3 to, double t)
+static int pr_down_start(sv_vec3 to, double t, int quick)
 {
+	const char *who = quick ? "the climb's pullover, quick" : "the climb's A";
 	if (!pr_down_ok()) {
 		g_pr.refused++;
 		if (pr_log_ok(t))
-			logf_("PRACTICE t=%.3f down (the climb's A) refused: %s", t, !g_pr.on ? "the practice is off"
+			logf_("PRACTICE t=%.3f down (%s) refused: %s", t, who, !g_pr.on ? "the practice is off"
 			      : g_pr.trip.phase != SOMVR_PRT_IDLE ? "a trip is on" : g_pr.pend_act ? "a trip waits" : "paused");
 		return 0;
 	}
 	float p[3] = { to.x, to.y, to.z };
-	g_pr.down_tp = 0;
-	pr_trip_begin(PR_TRIP_DOWN, p, pr_now(), "the climb's A");
+	g_pr.down_tp = 0, g_pr.down_quick = quick != 0;
+	pr_trip_begin(PR_TRIP_DOWN, p, pr_now(), who);
 	(void)t;
 	return 1;
 }
@@ -1399,6 +1405,8 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	g_pr.load_mode = env_word("SOMVR_PRACTICE_LOADHOLD", onoff_w, 2, 1);
 	somvr_pr_tcfg_default(&g_pr.tcfg);
 	g_pr.tcfg_down = g_pr.tcfg, g_pr.tcfg_down.hold_s = 0.2f;
+	g_pr.tcfg_quick = g_pr.tcfg_down, g_pr.tcfg_quick.fade_out_s = 0.12f, g_pr.tcfg_quick.settle_s = 0.1f;
+	g_pr.tcfg_quick.hold_s = 0.0f, g_pr.tcfg_quick.fade_in_s = 0.2f;
 	/* the sites: ours, the console's, the fallback's reads of the gate */
 	char why[512];
 	uint32_t ok = 0;

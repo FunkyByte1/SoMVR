@@ -197,6 +197,49 @@ static void test_skip(void)
           "the meshes full at %d", SOMVR_HP_MESHES);
 }
 
+/* SOMVR_HP_COPIES (build 16): a node drawing a weapon's mesh that is none of the weapons' own nodes = a copy (the
+ * wraith's see-through sword); the weapons' own nodes, other meshes, the set's off state, the windows */
+static void test_copies(void)
+{
+    somvr_hp_set a;
+    somvr_hp_set_init(&a, 200);
+    CHECK(somvr_hp_add_weapon(&a, 0x7000, 0x18e0) && somvr_hp_add_weapon(&a, 0x7100, 0x18f0) &&
+              somvr_hp_add_weapon(&a, 0x7200, 0x18e0) && !somvr_hp_add_weapon(&a, 0x7000, 0x18e0) &&
+              !somvr_hp_add_weapon(&a, 0, 0x18e0) && !somvr_hp_add_weapon(&a, 0x7300, 0) && a.nweap == 3,
+          "weapons added: %u", a.nweap);
+    CHECK(somvr_hp_copy_of(&a, 0x9000, 0x18e0) == 0 && somvr_hp_copy_of(&a, 0x9000, 0x18f0) == 1,
+          "a copy: another node with a weapon's mesh");
+    CHECK(somvr_hp_copy_of(&a, 0x7000, 0x18e0) < 0 && somvr_hp_copy_of(&a, 0x7200, 0x18e0) < 0 &&
+              somvr_hp_copy_of(&a, 0x7100, 0x18f0) < 0, "the weapons' own nodes are no copies");
+    CHECK(somvr_hp_copy_of(&a, 0x9000, 0x1900) < 0 && somvr_hp_copy_of(&a, 0x9000, 0) < 0 && somvr_hp_copy_of(&a, 0, 0x18e0) < 0 &&
+              somvr_hp_copy_of(NULL, 0x9000, 0x18e0) < 0, "other meshes, none, no set");
+    CHECK(!somvr_hp_skip_copy(0, SOMVR_HP_FWD, &a, 200, 0x9000, 0x18e0), "log: found, not skipped");
+    a.copies = 1;
+    CHECK(!somvr_hp_skip_copy(0, SOMVR_HP_FWD, &a, 200, 0x9000, 0x18e0) && !somvr_hp_skip_copy(0, SOMVR_HP_FWD, &a, 200, 0x9100, 0x18f0),
+          "on: the copies of weapons the set shows (held) are kept");
+    somvr_hp_set_add(&a, 0x7000, SOMVR_HP_WEAPON); /* the first weapon put away (hidden), the second held */
+    CHECK(somvr_hp_copy_of(&a, 0x9000, 0x18e0) == 0, "the hidden weapon's entry first (%d)", somvr_hp_copy_of(&a, 0x9000, 0x18e0));
+    for (int p = 0; p < SOMVR_HP_PASSES; p++) {
+        CHECK(somvr_hp_skip_copy(0, p, &a, 200, 0x9000, 0x18e0) && !somvr_hp_skip_copy(1, p, &a, 200, 0x9100, 0x18f0),
+              "on: the hidden weapon's copy skipped, the held one's kept in pass %d", p);
+        CHECK(!somvr_hp_skip_copy(0, p, &a, 200, 0x7000, 0x18e0) && !somvr_hp_skip_copy(0, p, &a, 200, 0x9000, 0x1900),
+              "on: the weapon itself (the head-parts rule hides it) and other meshes not by this rule in pass %d", p);
+        CHECK(!somvr_hp_skip_copy(-1, p, &a, 200, 0x9000, 0x18e0) && !somvr_hp_skip_copy(0, p, &a, 201, 0x9000, 0x18e0) &&
+                  !somvr_hp_skip_copy(0, p, NULL, 200, 0x9000, 0x18e0) && !somvr_hp_skip_copy(0, p, &a, 0, 0x9000, 0x18e0),
+              "outside an eye, another frame, no set: drawn (pass %d)", p);
+    }
+    /* a mesh both a hidden and a shown weapon draw (one model in two entries): the hidden entry rules */
+    somvr_hp_add_weapon(&a, 0x7400, 0x18f0);
+    somvr_hp_set_add(&a, 0x7400, SOMVR_HP_WEAPON);
+    CHECK(somvr_hp_copy_of(&a, 0x9100, 0x18f0) == 3 && somvr_hp_skip_copy(0, SOMVR_HP_FWD, &a, 200, 0x9100, 0x18f0),
+          "a shared mesh: the hidden entry (%d)", somvr_hp_copy_of(&a, 0x9100, 0x18f0));
+    CHECK(!somvr_hp_skip_copy(0, SOMVR_HP_SHADOW, &a, 200, 0x9000, 0x18e0) &&
+              !somvr_hp_skip_copy(0, SOMVR_HP_OTHER, &a, 200, 0x9000, 0x18e0), "the shadows and other passes keep it");
+    for (int k = 0; k < 2 * SOMVR_HP_WEAPONS; k++)
+        somvr_hp_add_weapon(&a, 0xa000 + 8 * (uintptr_t)k, 0x2000);
+    CHECK(a.nweap == SOMVR_HP_WEAPONS, "the weapons full at %d (%u)", SOMVR_HP_WEAPONS, a.nweap);
+}
+
 static void test_ring(void)
 {
     static somvr_hp_ring r;
@@ -212,6 +255,9 @@ static void test_ring(void)
         s.away = f % 3 == 0;
         for (uint64_t k = 0; k < f % 3; k++)
             somvr_hp_add_mesh(&s, 0x1500 + 8 * f + k);
+        s.copies = f % 2 == 0;
+        for (uint64_t k = 0; k < f % 5; k++)
+            somvr_hp_add_weapon(&s, 0x6000 + 0x100 * f + 8 * k, 0x1800 + f);
         somvr_hp_publish(&r, &s);
     }
     for (uint64_t f = 7; f <= 10; f++) { /* the last four */
@@ -224,6 +270,11 @@ static void test_ring(void)
               o.at[2], o.away, o.nmesh);
         for (uint32_t k = 0; ok && k < o.n; k++)
             CHECK(o.node[k] == 0x1000 * f + k * 8 && o.slot[k] == k, "frame %llu entry %u", (unsigned long long)f, k);
+        CHECK(ok && o.copies == (f % 2 == 0) && o.nweap == f % 5, "frame %llu: copies %u weapons %u", (unsigned long long)f,
+              o.copies, o.nweap);
+        for (uint32_t k = 0; ok && k < o.nweap; k++)
+            CHECK(o.wnode[k] == 0x6000 + 0x100 * f + 8 * k && o.wmesh[k] == 0x1800 + f, "frame %llu weapon %u",
+                  (unsigned long long)f, k);
     }
     for (uint64_t f = 1; f <= 6; f++)
         CHECK(!somvr_hp_lookup(&r, f, &o), "frame %llu: overwritten but found", (unsigned long long)f);
@@ -283,6 +334,7 @@ int main(void)
     test_set();
     test_vec_box();
     test_skip();
+    test_copies();
     test_ring();
     test_threads();
     printf("test_headparts: %d checks, %d failures\n", checks, fails);

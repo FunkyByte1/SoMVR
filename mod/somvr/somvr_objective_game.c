@@ -81,6 +81,8 @@ static struct {
 	uint64_t calls, shown_calls, match_calls, hides, frames, published, other_tid;
 	uint32_t lines;
 	int range_ok, pos_ok;
+	int land, land_was;  /* build 16: the climb's landing ring published (SOMVR_CLIMB_PULLOVER), shown last frame */
+	uint64_t land_frames;
 } g_ob;
 
 static long ob_tid(void) { return (long)syscall(SYS_gettid); }
@@ -188,17 +190,40 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 	}
 }
 
-/* after the frame's body (H4, the game thread): the objective of this frame to the layer */
+/* after the frame's body (H4, the game thread): the objective of this frame to the layer; build 16: while the climb's
+ * pullover is armed, its landing instead (SOMVR_OBF_LAND: a ring on the floor where he will stand) */
 static void ob_frame(uintptr_t pl, int stereo)
 {
-	if (g_ob.mode < 2 || !g_ob.on || !stereo)
+	int pub = g_ob.mode >= 2 && g_ob.on;
+	if ((!pub && !g_ob.land) || !stereo)
 		return;
 	if (g_ob.tid && g_ob.tid != ob_tid())
 		return;
-	double t = mono();
-	g_ob.frames++;
 	somvr_objective_frame e;
 	memset(&e, 0, sizeof e);
+	if (g_ob.land && g_cl.on && g_cl.po_show && g_cl.tid == my_tid() && !game_paused()) {
+		somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
+				    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
+		float w[3] = { g_cl.po_land.x, g_cl.po_land.y, g_cl.po_land.z }, w2[3] = { w[0] + 35.0f, w[1], w[2] }, x2[3];
+		somvr_th_to_xr(&mp, w, e.pos), somvr_th_to_xr(&mp, w2, x2);
+		e.n = 1, e.flags = SOMVR_OBF_LAND, e.id = 0;
+		e.dist_m = sqrtf((x2[0] - e.pos[0]) * (x2[0] - e.pos[0]) + (x2[1] - e.pos[1]) * (x2[1] - e.pos[1]) +
+				 (x2[2] - e.pos[2]) * (x2[2] - e.pos[2])); /* the ring's radius: Talion's capsule's (35 cm) */
+		somvr_objective_put(&g_obj, g_fr.frame, &e);
+		if (!g_ob.land_was && g_ob.lines++ < 400)
+			logf_("OBJECTIVE t=%.3f frame=%llu: the climb's landing in the eyes: a ring at (%.0f %.0f %.0f), xr (%+.2f %+.2f "
+			      "%+.2f) m, radius %.2f m (SOMVR_CLIMB_PULLOVER)", mono(), (unsigned long long)g_fr.frame, w[0], w[1],
+			      w[2], e.pos[0], e.pos[1], e.pos[2], (double)e.dist_m);
+		g_ob.land_was = 1, g_ob.land_frames++, g_ob.cur = 0;
+		return;
+	}
+	g_ob.land_was = 0;
+	if (!pub) {
+		somvr_objective_put(&g_obj, g_fr.frame, &e); /* nothing */
+		return;
+	}
+	double t = mono();
+	g_ob.frames++;
 	float tp[3] = { 0, 0, 0 };
 	uintptr_t pm = 0, obj = 0;
 	int body = pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, tp, sizeof tp) && vec_ok(tp, 1e7f);
@@ -282,13 +307,30 @@ static const char *ob_word(const char *w)
 	return "objective: status logged";
 }
 
+/* the layer's object on (the objective's settings c); why: a log line (the landing ring alone) */
+static void ob_publish(const somvr_ob_cfg *c, const char *why)
+{
+	g_obj.magic = SOMVR_OBJECTIVE_MAGIC, g_obj.version = SOMVR_OBJECTIVE_VERSION;
+	g_obj.size = (uint32_t)sizeof g_obj, g_obj.pid = (int32_t)getpid();
+	g_obj.size_deg = c->size_deg, g_obj.dist_m = c->dist_m, g_obj.faint_deg = c->faint_deg, g_obj.edge_deg = c->edge_deg;
+	atomic_store_explicit(&g_obj.active, 1, memory_order_release);
+	if (why)
+		logf_("CONFIG objective: the layer's object on for %s", why);
+}
+
 static void ob_start(int *bad)
 {
+	somvr_ob_cfg c0;
+	somvr_ob_cfg_default(&c0);
 	static const char *const w[] = { "off", "log", "on", "both" };
 	memset(&g_ob, 0, sizeof g_ob);
 	g_ob.mode = env_word("SOMVR_OBJECTIVE", w, 4, 0);
-	if (!g_ob.mode)
+	g_ob.land = g_cl.on && g_cl.cfg.pullover; /* build 16: the climb's landing ring (SOMVR_CLIMB_PULLOVER) */
+	if (!g_ob.mode) {
+		if (g_ob.land)
+			ob_publish(&c0, "the climb's landing only (SOMVR_OBJECTIVE off)");
 		return;
+	}
 	const char *p = getenv("SOMVR_OBJECTIVE_RECS");
 	snprintf(g_ob.pats, sizeof g_ob.pats, "%s", p && *p ? p : "Objective*");
 	somvr_ob_cfg c;
@@ -311,14 +353,14 @@ static void ob_start(int *bad)
 	if (!ok || !(g_ob.on = bo_patch_call(&g_ob_sites[OBS_EACH], (void *)somvr_w_obeach))) {
 		logf_("WARN SOMVR_OBJECTIVE=%s: %s: the game's markers as they are", w[g_ob.mode],
 		      ok ? "OB_EACH not hooked" : "OB_POS differs");
+		if (g_ob.land)
+			ob_publish(&c0, "the climb's landing only (OB_EACH not hooked)");
 		return;
 	}
 	g_ob.live = g_ob.mode == 1 ? 0 : g_ob.mode;
-	if (g_ob.mode >= 2) {
-		g_obj.magic = SOMVR_OBJECTIVE_MAGIC, g_obj.version = SOMVR_OBJECTIVE_VERSION;
-		g_obj.size = (uint32_t)sizeof g_obj, g_obj.pid = (int32_t)getpid();
-		g_obj.size_deg = size, g_obj.dist_m = dist, g_obj.faint_deg = faint, g_obj.edge_deg = edge;
-		atomic_store_explicit(&g_obj.active, 1, memory_order_release);
+	if (g_ob.mode >= 2 || g_ob.land) {
+		c.size_deg = size, c.dist_m = dist, c.faint_deg = faint, c.edge_deg = edge;
+		ob_publish(&c, g_ob.mode >= 2 ? NULL : "the climb's landing only (SOMVR_OBJECTIVE=log)");
 	}
 	logf_("CONFIG objective=%s (SOMVR_OBJECTIVE: %s), records '%s'; the marker %.1f deg, at most %.0f m away, faint within "
 	      "%.0f deg of the view's centre, the edge arrow %.1f deg; range test %s", w[g_ob.mode],
@@ -330,6 +372,8 @@ static void ob_start(int *bad)
 
 static void ob_end_log(void)
 {
+	if (g_ob.land)
+		logf_("OBJECTIVE END the climb's landing ring: frames %llu (SOMVR_CLIMB_PULLOVER)", (unsigned long long)g_ob.land_frames);
 	if (!g_ob.on)
 		return;
 	logf_("OBJECTIVE END calls %llu (shown %llu, objectives %llu), hides %llu, frames %llu, published %llu, other threads "

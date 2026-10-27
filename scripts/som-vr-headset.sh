@@ -17,7 +17,11 @@
 # The PC window (scripts/somvr_window.py, the user: "it should open a window on the pc that I can see when the game is
 # running"): started with the session on the desktop (DISPLAY, else the systemd user environment's); the session's
 # state and time, a small live picture every 2 s, Stop the game (= systemctl --user stop somvr-headset), the bug marks;
-# it closes by itself 30 s after the session ended.
+# it closes by itself 10 s after the session ended (build 15b: 30 s), the save check's result shown.
+# A start while the last session is ending (build 16: boot_check's cleanup - its --ending-file $PRIV/ending - or the
+# unit stopping) waits for its end and then starts by itself (a notification, and the old PC window says "the last
+# session is closing - the next one starts in a moment"); a start while a session is playing or starting still refuses.
+# Two starts at once: the second one refuses (a lock around the unit's start).
 # The unit (somvr-headset):
 #   - Steam's environment (its overlay LD_PRELOAD, its runtime LD_LIBRARY_PATH) never reaches the session
 #   - Steam's Stop (SIGTERM here) becomes `systemctl --user stop`: boot_check gets SIGTERM (KillMode=mixed) and its
@@ -42,7 +46,7 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-BUILD=build-vr15b                       # the build the user tests (logs/BUILD); changed only between sessions
+BUILD=build-vr16                         # the build the user tests (logs/BUILD); changed only between sessions
 ENVF=$SOM/logs/$BUILD/headset.env       # its feature switches (the header); missing = the built-in build-5 set
 CMDS5=$SCR/cmds/somvr-vr5.cmd   # the start sequences: build 5's (the pre-game window), build 6's
 CMDS6=$SCR/cmds/somvr-vr6.cmd
@@ -72,7 +76,7 @@ load_switches() {   # $1 = headset.env -> SW (KEY=VALUE words); 1 + ENV_BAD = re
   [ -r "$1" ] || { ENV_BAD="cannot read it"; return 1; }
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1)); line=${line%$'\r'}
-    [ $n -le 400 ] || { ENV_BAD="more than 400 lines"; return 1; }
+    [ $n -le 1000 ] || { ENV_BAD="more than 1000 lines"; return 1; }   # build 16's file: 425 lines (its comments)
     [[ $line =~ $re_skip ]] && continue
     [[ $line =~ $re_kv ]] || { ENV_BAD="line $n is not KEY=VALUE: $(printf '%s' "$line" | cut -c1-60)"; return 1; }
     k=${BASH_REMATCH[1]}; v=${BASH_REMATCH[2]}
@@ -136,7 +140,22 @@ fi
 [ -f "$CMDS" ] && [ -f "$SEED" ] || fail "A start file is missing ($CMDS or the prefs). Tell Claude."
 [ $B6 = 0 ] || [ -f "$SCR/prefs_set.py" ] || fail "A start file is missing (prefs_set.py). Tell Claude."
 
-if unit_running; then tell "Shadow of Mordor VR is already running" "It is starting or running in the headset."; exit 0; fi
+session_ending() {   # 0 = the running session is in its end: the unit stopping, or boot_check's cleanup (its --ending-file,
+                     # removed before each start)
+  [ "$(unit_state)" = deactivating ] || [ -s "$PRIV/ending" ]
+}
+start_gate() {   # a session running: refuse (playing or starting) or wait for its end (ending); returns = go on
+  local i
+  unit_running || return 0
+  if ! session_ending; then tell "Shadow of Mordor VR is already running" "It is starting or running in the headset."; exit 0; fi
+  if [ "$DRY" = 1 ]; then note "dry run: the last session is closing: a real start would wait for it, then start"; exit 0; fi
+  tell "Shadow of Mordor VR: starting in a moment" "The last session is closing - the new one starts by itself in a moment."
+  mkdir -p "$PRIV" && date +%s > "$PRIV/next-start" 2>/dev/null   # (the old PC window shows it)
+  for i in $(seq 1 "${WAIT_END:-300}"); do unit_running || break; sleep 1; done   # (the unit's TimeoutStopSec is 240)
+  unit_running && fail "The last session did not close within 5 minutes. Tell Claude."
+  note "the last session closed after $i s: starting"
+}
+start_gate
 while read -r pid kind; do
   [ -n "${pid:-}" ] || continue
   if [ "$kind" = headset ]; then
@@ -185,7 +204,13 @@ if ! pgrep -x steam > /dev/null; then
   note "Steam started"
 fi
 
-# the session's own copies of the scripts it reads while it runs
+# one start at a time from here (two starts waiting for the same end: the second one finds the unit running)
+if [ "$DRY" != 1 ]; then
+  exec 9> "$RT/somvr-headset.lock"
+  flock -w 30 9 || fail "Another start of the session did not finish within 30 s. Tell Claude."
+  if unit_running; then tell "Shadow of Mordor VR is already running" "It is starting or running in the headset."; exit 0; fi
+fi
+# the session's own copies of the scripts it reads while it runs (never while a session runs: checked above)
 mkdir -p "$PRIV" && cp -f "$SCR/boot_check.sh" "$PRIV/boot_check.sh" && cp -f "$CMDS" "$PRIV/start.cmd" &&
   { [ $B6 = 0 ] || cp -f "$SCR/prefs_set.py" "$PRIV/prefs_set.py"; } ||
   fail "Could not copy the session scripts to $PRIV."
@@ -196,7 +221,7 @@ GE=(--game-env VK_LAYER_PATH="$BLD/mod/somvr/vklayer" --game-env VK_INSTANCE_LAY
 for kv in "${SW[@]}"; do GE+=(--game-env "$kv"); done
 ARGS=(--headset --steam --save-copy --seed-prefs "$SEED" "${LAUNCH[@]}"
   --preload "$BLD/mod/somvr/build/somvr.so" "${GE[@]}"
-  --cmds "$PRIV/start.cmd" --hold $((HARD - 200)) --hard "$HARD" --refresh 90)
+  --cmds "$PRIV/start.cmd" --hold $((HARD - 200)) --hard "$HARD" --refresh 90 --ending-file "$PRIV/ending")
 start_window() {   # the PC window on the desktop (Steam's and WiVRn's starts both reach here; DISPLAY from either)
   [ $WIN = 1 ] || { note "the PC window: no copy of somvr_window.py (not started)"; return 0; }
   local d=${DISPLAY:-} x=${XAUTHORITY:-} e
@@ -208,17 +233,17 @@ start_window() {   # the PC window on the desktop (Steam's and WiVRn's starts bo
   [ -n "$d" ] || { note "the PC window: no DISPLAY (not started)"; return 0; }
   # its own session (Steam's Stop of this script leaves it to show the end); env and setsid exec: $! is python's pid
   env DISPLAY="$d" ${x:+XAUTHORITY="$x"} setsid python3 -I "$PRIV/somvr_window.py" --unit "$UNIT" --since "$T" \
-    --build "$BUILD" > "$PRIV/window.out" 2>&1 < /dev/null &
+    --build "$BUILD" --close-after "$WIN_CLOSE" --next-start "$PRIV/next-start" > "$PRIV/window.out" 2>&1 < /dev/null &
   WPID=$!
   note "the PC window started (pid $WPID, DISPLAY $d; its output $PRIV/window.out)"
 }
-WPID=""
-window_end() {   # after the session: the window closes itself 30 s after the end; gone at 45 s in any case
+WPID=""; WIN_CLOSE=10   # (build 15b: 30 s)
+window_end() {   # after the session: the window closes itself WIN_CLOSE s after the end; gone at WIN_CLOSE + 15 s in any case
   [ -n "$WPID" ] || return 0
   local i
-  for i in $(seq 1 45); do kill -0 "$WPID" 2>/dev/null || { note "the PC window closed"; return 0; }; sleep 1; done
+  for i in $(seq 1 $((WIN_CLOSE + 15))); do kill -0 "$WPID" 2>/dev/null || { note "the PC window closed"; return 0; }; sleep 1; done
   tr '\0' ' ' < "/proc/$WPID/cmdline" 2>/dev/null | grep -q somvr_window.py && kill "$WPID" 2>/dev/null &&
-    note "the PC window still open 45 s after the end: closed"
+    note "the PC window still open $((WIN_CLOSE + 15)) s after the end: closed"
   return 0
 }
 
@@ -235,11 +260,13 @@ stop_unit() { note "stop asked (signal): stopping the session"; systemctl --user
 STOPPING=0
 trap stop_unit TERM INT HUP
 systemctl --user reset-failed "$UNIT" 2>/dev/null
+rm -f "$PRIV/ending" "$PRIV/next-start"
 systemd-run --user --quiet --collect --unit="$UNIT" --description="Shadow of Mordor VR headset session ($BUILD)" \
   -p KillMode=mixed -p TimeoutStopSec=240 --working-directory="$SOM" \
   --setenv=PATH=/usr/local/bin:/usr/bin:/bin bash "$PRIV/boot_check.sh" "${ARGS[@]}" >> "$LOGF" 2>&1 ||
   fail "systemd-run could not start the session. Tell Claude."
 note "session unit $UNIT started"
+exec 9>&-   # (the start lock)
 start_window
 if [ $B6 = 1 ]; then
   tell "Shadow of Mordor VR is starting" "About 2 minutes: the game starts by itself, then fades in at the practice meadow. The PC window's Stop button ends it."
@@ -247,10 +274,13 @@ else
   tell "Shadow of Mordor VR is starting" "About 3 minutes: the game clicks itself through its menus, then fades in at the practice meadow."
 fi
 
-away=0
-while unit_running; do
-  sleep 5 & wait $!   # (a signal ends the wait at once)
+away=0; n=0; RUN=""
+while unit_running; do   # the unit every second (its end seen at once), the headset every 5 s
+  # this session's run folder, while it runs (a next start's folder may be newer by the time this one is reported)
+  [ -n "$RUN" ] || RUN=$(find "$SOM/logs" -maxdepth 1 -name 'boot-check-2*' -newermt "@$((T - 5))" 2>/dev/null | sort | head -1)
+  sleep 1 & wait $!   # (a signal ends the wait at once)
   [ $STOPPING = 1 ] && continue
+  n=$((n + 1)); [ $((n % 5)) = 0 ] || continue
   headset; h=$?
   if [ $h = 1 ]; then away=$((away + 5)); else away=0; fi
   if [ $away -ge $GONE ]; then
@@ -260,7 +290,7 @@ while unit_running; do
 done
 trap - TERM INT HUP
 
-RUN=$(find "$SOM/logs" -maxdepth 1 -name 'boot-check-2*' -newermt "@$((T - 5))" 2>/dev/null | sort | tail -1)
+[ -n "$RUN" ] || RUN=$(find "$SOM/logs" -maxdepth 1 -name 'boot-check-2*' -newermt "@$((T - 5))" 2>/dev/null | sort | head -1)
 note "session over after $(( $(date +%s) - T )) s; run ${RUN:-(no run folder found)}"
 if [ -z "$RUN" ]; then
   tell "Shadow of Mordor VR ended" "It ended before it started a run. Tell Claude."

@@ -86,6 +86,11 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
     SOMVR_VMA_USE = 1048576u,
     /* build 15b: SOMVR_BOW_DRAW=slot: "Bow: L grip at L shoulder" (the left trigger is a grab) */
     SOMVR_VMA_BOWSLOT = 2097152u,
+    /* build 16: SOMVR_ARMS (the sword in the hand): the Sword weight row (SOMVR_SWORD_WEIGHT live) */
+    SOMVR_VMA_WEIGHT = 4194304u,
+    /* build 16: SOMVR_BOW_QUIVER=on with the string on the right trigger: "Arrow: RT at R shoulder", "Shoot: nock, pull,
+     * let go" (Parry's line goes first for the room: moving the sword into a blow needs no words) */
+    SOMVR_VMA_BOWRT = 8388608u,
 };
 /* the practice page's requests (somvr_vrmenu_shared.practice; = somvr_practice.h's SOMVR_PRA_*) */
 enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_SPAWN = 3, SOMVR_VMPR_REMOVE = 4 };
@@ -124,7 +129,8 @@ typedef struct {
     uint8_t fling;             /* 77: build 13: the climb's fling 0 off, 1 on (SOMVR_CLIMB_FLING; needs SOMVR_VMA_FLING) */
     uint8_t surface;           /* 78: build 13: the hands stop at surfaces 0 off, 1 on (SOMVR_HANDS_SURFACE; needs
                                 * SOMVR_VMA_SURFACE) */
-    uint8_t pad3;              /* 79 */
+    uint8_t sword_weight;      /* 79: build 16: the sword's weight 0 off, 1 light, 2 heavy (SOMVR_SWORD_WEIGHT; needs
+                                * SOMVR_VMA_WEIGHT); was pad3 (0): a preload that sets no SOMVR_VMA_WEIGHT ignores it */
 } somvr_settings;              /* 80 */
 
 typedef struct somvr_vrmenu_shared {
@@ -179,7 +185,8 @@ static inline int somvr_vrmenu_read(somvr_vrmenu_shared *m, somvr_settings *out)
 enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, SOMVR_SK_SNAP_BLINK_MS, SOMVR_SK_SEATED,
        SOMVR_SK_HEIGHT_CM, SOMVR_SK_HUD, SOMVR_SK_HUD_DIST_M, SOMVR_SK_HAND, SOMVR_SK_VIEW, SOMVR_SK_HAPTICS,
        SOMVR_SK_STEP, SOMVR_SK_DASH, SOMVR_SK_PHASE, SOMVR_SK_SWORD_ANGLE /* v4 */, SOMVR_SK_MUSIC /* v5 */,
-       SOMVR_SK_PLAYER_SIZE, SOMVR_SK_CROUCH /* build 13 */, SOMVR_SK_CLIMB_FLING, SOMVR_SK_HANDS_SURFACE, SOMVR_SK_N };
+       SOMVR_SK_PLAYER_SIZE, SOMVR_SK_CROUCH /* build 13 */, SOMVR_SK_CLIMB_FLING, SOMVR_SK_HANDS_SURFACE,
+       SOMVR_SK_SWORD_WEIGHT /* build 16 */, SOMVR_SK_N };
 #define SOMVR_SK_ALL ((1u << SOMVR_SK_N) - 1u)
 #define SOMVR_SET_BLINK_MS 140u /* "Snap blink: On" without a SOMVR_SNAP_BLINK_MS: HoF2's quick blink (50 + 90 ms) */
 
@@ -206,14 +213,16 @@ int somvr_set_num(const char *v, double *out);
 /* ==== 3. the menu ================================================================================================ */
 enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMVR_VMI_BLINK, SOMVR_VMI_SEATED,
        SOMVR_VMI_HEIGHT, SOMVR_VMI_HUD, SOMVR_VMI_HUD_DIST, SOMVR_VMI_HAND, SOMVR_VMI_VIEW, SOMVR_VMI_HAPTICS,
-       SOMVR_VMI_STEP, SOMVR_VMI_DASH, SOMVR_VMI_PHASE, SOMVR_VMI_SWORD /* v4 */, SOMVR_VMI_MUSIC /* v5 */,
+       SOMVR_VMI_STEP, SOMVR_VMI_DASH, SOMVR_VMI_PHASE, SOMVR_VMI_SWORD /* v4 */, SOMVR_VMI_WEIGHT /* build 16 */,
+       SOMVR_VMI_MUSIC /* v5 */,
        SOMVR_VMI_SIZE, SOMVR_VMI_CROUCH /* build 13 */, SOMVR_VMI_FLING, SOMVR_VMI_SURFACE, SOMVR_VMI_RECENTER,
        SOMVR_VMI_CLOSE, SOMVR_VMI_N };
 #define SOMVR_VMI_ROWS SOMVR_VMI_RECENTER /* the value rows; then the Recentre button and the close box */
 /* Build 10: a value row whose feature this build does not have at all is not shown (the rows below close up): the
  * assisted step, the dash and the wraith phase without SOMVR_VMA_MOVES (SOMVR_GAMEMOVES=off: they never start, the
  * user's "I turn on wraith phase, nothing happens"), Music without SOMVR_VMA_MUSIC; build 13: Climb fling without
- * SOMVR_VMA_FLING, Hands at walls without SOMVR_VMA_SURFACE (build 13's set: 17 rows of 35 px; all 20 only with MOVES,
+ * SOMVR_VMA_FLING, Hands at walls without SOMVR_VMA_SURFACE; build 16: Sword weight without SOMVR_VMA_WEIGHT (build 13's
+ * set: 17 rows of 35 px; all 20 only with MOVES,
  * which no build since 6 has: 30 px, the boxes 28). A row that only does not apply now
  * (the snap angle with smooth turns ...) stays, dimmed. 1 = shown. */
 int somvr_vm_shown(uint32_t avail, int item);

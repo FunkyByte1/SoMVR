@@ -28,10 +28,17 @@
  *   181931: Y held 6 s sent 243 every tick (`VIN press cmd=243 VisionModeToggle ... event=1`) and the vision never came
  *   on (PlayerVisionMode +0x48 stayed 0, the world unchanged in the dumps): 243 is unbound in the world set
  *   (runtime-probes.md run 3); the game's wraith vision is PC_WraithPing = `CombatSecondary01` 122 (pad LB / V), **a
- *   toggle** (P9), held 0.85 s it is PC_Radiance. hold: Y's press taps 122 (2 input ticks, the step module's tap) when
- *   the vision is off, Y's release taps it again when it is still on and was ours - the vision while Y is held; tap: each
- *   press toggles. 243 is no longer sent for Y. The flag is read as the step module reads it (st_vision); unreadable: the
- *   taps go on press and release regardless. 122 is on the deny list: our tap passes as the phase's does (allow_cmd).
+ *   toggle** (P9), held 0.85 s it is PC_Radiance. hold: the vision while Y is held; tap: each press toggles. 243 is no
+ *   longer sent for Y. 122 is on the deny list: our tap passes as the phase's does (allow_cmd). Build 16
+ *   (re-xr-pipeline.md 49; build 15b's session left the player in it): Y gives a wish and taps of 122 bring the flag
+ *   (read as the step module reads it, st_vision) to it - somvr_vision.c: a press with the vision on (ours, the game's,
+ *   a phase's) turns it off; Y not held while it is ours = off (the level: a release the game side never saw - the bug
+ *   mark's chord gives a press shorter than 0.12 s as one tick - cannot leave it on); the off of a quick tap waits until
+ *   the on has landed and the game's ~1 s dwell has passed (run 002021: an off tap within it is dropped, an on tap held
+ *   back); a tap not answered within 0.3 s is tapped again (6 at most, then logged). Every
+ *   change of the flag is logged (ours with its delay, or the game's own). Unreadable: the edges tap blind, as build 15b.
+ *   Test words: "vision" (a state line), "vision y MS" (Y held MS ms at the snapshot, before the chord: 1 = the
+ *   shortest press), "vision taps N MS" (N raw taps of 122, MS apart: the game's own answer, no wish of ours).
  *
  * SOMVR_LOAD_VOICES=game|off (default game = nothing; build 15b, re-xr-pipeline.md 47) - the voices of a loading screen
  *   (session 2026-10-26 mark 11: "The voices I hear in the loading screen are kind of weird ... You might just want to
@@ -123,9 +130,11 @@ static struct {
 	double next_tick;
 	uint32_t tick_lines;
 	int vis_mode;                /* SOMVR_VISION: 0 off (build 9's 243), 1 hold, 2 tap */
-	int vis_y, vis_tap, vis_ours, vis_asked; /* Y held last tick; tap ticks left; the vision is ours; 1/-1 asked */
-	double vis_t;
-	uint64_t n_vis_press, n_vis_tap, n_vis_refused;
+	somvr_vis vis;               /* Y's wish and its taps (somvr_vision.c) */
+	somvr_vis_cfg vis_cfg;
+	int vis_flag;                /* the flag last tick (the lines) */
+	int raw_n, raw_tap, raw_gap; /* the word "vision taps N MS": taps left, ticks of this one left, ticks to the next */
+	double raw_next, raw_ms;
 	uint32_t vis_lines;
 } g_go;
 
@@ -319,6 +328,46 @@ static void go_tick(double t)
 /* SOMVR_VISION (the input tick, after st_tick): Y -> taps of 122 instead of 243 */
 #define GO_CMD_VISION 122   /* CombatSecondary01 = PC_WraithPing's toggle (= the step module's ST_CMD_VISION) */
 #define GO_CMD_VMT 243      /* VisionModeToggle: what somvr_ctl sends for Y (unbound in the world) */
+#define GO_VIS_LINES 200
+/* the word "vision y MS" (writer thread -> the input tick): Y held MS ms in the snapshot, before the chord */
+static _Atomic uint32_t g_go_ty_seq, g_go_ty_ms;
+static struct {
+	uint32_t seen;
+	double until;
+	uint8_t extra, raw_p, wrote_p; /* the test's presses; the layer's count under ours; what we wrote */
+	int have;
+} g_go_ty;
+/* "vision taps N MS" (writer thread -> the input tick) */
+static _Atomic uint32_t g_go_rt_seq, g_go_rt_n, g_go_rt_ms;
+static uint32_t g_go_rt_seen;
+
+/* in_tick, right after the snapshot's read (and the test stick): the word's Y press over the layer's (the left hand's
+ * upper button; its presses counter kept rising over the layer's own, a failed read's kept snapshot not counted twice) */
+static void go_test_y(double t)
+{
+	uint32_t sq = atomic_load_explicit(&g_go_ty_seq, memory_order_acquire);
+	somvr_hand_in *hi = &g_inp.st.hand[SOMVR_HAND_L];
+	if (sq == g_go_ty.seen && !g_go_ty.have)
+		return;
+	uint8_t cur = hi->presses[1];
+	if (!g_go_ty.have || cur != g_go_ty.wrote_p)
+		g_go_ty.raw_p = cur; /* a fresh snapshot from the layer */
+	g_go_ty.have = 1;
+	if (sq != g_go_ty.seen) {
+		g_go_ty.seen = sq;
+		double ms = atomic_load_explicit(&g_go_ty_ms, memory_order_relaxed);
+		g_go_ty.until = t + ms * 1e-3, g_go_ty.extra++;
+		logf_("VISION t=%.3f test: Y pressed for %.0f ms (the word; at the snapshot, before the bug mark's chord)", t, ms);
+	}
+	hi->presses[1] = g_go_ty.wrote_p = (uint8_t)(g_go_ty.raw_p + g_go_ty.extra);
+	hi->active |= SOMVR_HACT_INPUT; /* the hand's input on from the word on (headless: no test line for it may have come) */
+	if (t < g_go_ty.until)
+		hi->buttons |= SOMVR_BTN_UPPER;
+	g_inp.have_st = 1;
+}
+
+static const char *go_vis_name(int f) { return f == 1 ? "on" : f == 0 ? "off" : "unread"; }
+
 static void go_vision_tick(sc_tick_out *o, double t)
 {
 	if (!g_go.vis_mode)
@@ -331,45 +380,102 @@ static void go_vision_tick(sc_tick_out *o, double t)
 		else
 			held = 1;
 	o->ncmd = n;
-	int world = o->live && o->ctx == SC_CTX_WORLD, y = world && held, vis = st_vision();
-	int press = y && !g_go.vis_y, release = !y && g_go.vis_y;
-	g_go.vis_y = y;
-	if (g_go.vis_asked && t - g_go.vis_t > ST_VIS_WAIT_S) {
-		if (vis >= 0 && vis != (g_go.vis_asked > 0)) {
-			g_go.n_vis_refused++;
-			if (g_go.vis_lines++ < 20)
-				logf_("VISION t=%.3f the wraith vision did not turn %s within %.0f ms of our tap (flag %d): refused", t,
-				      g_go.vis_asked > 0 ? "on" : "off", ST_VIS_WAIT_S * 1e3, vis);
-			if (g_go.vis_asked > 0)
-				g_go.vis_ours = 0;
-		} else if (g_go.vis_lines++ < 40) {
-			logf_("VISION t=%.3f the wraith vision %s (flag %d)", t, g_go.vis_asked > 0 ? "on" : "off", vis);
+	int world = o->live && o->ctx == SC_CTX_WORLD, vis = st_vision();
+	somvr_vis_out vo;
+	somvr_vis_tick(&g_go.vis, &g_go.vis_cfg, world, held, vis, t, &vo);
+	int lines = g_go.vis_lines < GO_VIS_LINES;
+	if (vis != g_go.vis_flag && vis >= 0 && g_go.vis_flag >= 0 && lines) {
+		g_go.vis_lines++;
+		if (vo.ev & SOMVR_VIE_LANDED)
+			logf_("VISION t=%.3f the flag %d -> %d: our tap's, %.0f ms after it", t, g_go.vis_flag, vis, (double)vo.ms);
+		else
+			logf_("VISION t=%.3f the flag %d -> %d: no tap of ours waiting (the game's own, a phase's, a test tap)", t,
+			      g_go.vis_flag, vis);
+	}
+	g_go.vis_flag = vis;
+	if ((vo.ev & ~(uint32_t)(SOMVR_VIE_LANDED | SOMVR_VIE_GAME)) && g_go.vis_lines < GO_VIS_LINES) {
+		char w[200];
+		size_t k = 0;
+		w[0] = 0;
+#define GO_VW(...) (k += (size_t)snprintf(w + k, k < sizeof w ? sizeof w - k : 0, __VA_ARGS__), k = k < sizeof w ? k : sizeof w)
+		if (vo.ev & SOMVR_VIE_PRESS_ON)
+			GO_VW("; Y pressed: on wished%s", g_go.vis_mode == SOMVR_VIS_HOLD ? " (ours while held)" : "");
+		if (vo.ev & SOMVR_VIE_PRESS_OFF)
+			GO_VW("; Y pressed with the vision on: off wished");
+		if (vo.ev & SOMVR_VIE_RELEASE)
+			GO_VW("; Y not held and the vision ours: off wished");
+		if (vo.ev & SOMVR_VIE_LATE)
+			GO_VW("; our tap not answered within %.0f ms", g_go.vis_cfg.wait_s * 1e3);
+		if (vo.ev & SOMVR_VIE_TAP)
+			GO_VW("; a tap of %d for %d ticks (%s, try %d)%s", GO_CMD_VISION, g_go.vis_cfg.tap_ticks, vo.to ? "on" : "off",
+			      vo.tries, (vo.ev & SOMVR_VIE_BLIND) ? " blind: the flag unread" : "");
+		if (vo.ev & SOMVR_VIE_DONE)
+			GO_VW("; the vision %s as wished (%.0f ms, %d tap(s))", go_vis_name(vis), (double)vo.done_ms, vo.tries);
+		if (vo.ev & SOMVR_VIE_GIVEUP)
+			GO_VW("; NOT reached after %d taps: given up (the vision %s; the next press tries again)", vo.tries,
+			      go_vis_name(vis));
+#undef GO_VW
+		if (w[0]) {
+			g_go.vis_lines++;
+			logf_("VISION t=%.3f the flag %s%s", t, go_vis_name(vis), w);
 		}
-		g_go.vis_asked = 0;
 	}
-	int tap = 0, ask = 0;
-	if (press) {
-		g_go.n_vis_press++;
-		if (g_go.vis_mode == 2 || vis != 1) /* tap: a toggle; hold: on unless it is on already (the player's own) */
-			tap = 1, ask = vis == 1 ? -1 : 1, g_go.vis_ours = g_go.vis_mode == 1;
-	} else if (release && g_go.vis_mode == 1 && g_go.vis_ours) {
-		g_go.vis_ours = 0;
-		if (vis != 0)
-			tap = 1, ask = -1;
+	int tap = vo.tap;
+	/* the word "vision taps N MS": raw taps, no wish of ours (the game's answer measured by the flag's lines) */
+	uint32_t rs = atomic_load_explicit(&g_go_rt_seq, memory_order_acquire);
+	if (rs != g_go_rt_seen) {
+		g_go_rt_seen = rs;
+		g_go.raw_n = (int)atomic_load_explicit(&g_go_rt_n, memory_order_relaxed);
+		g_go.raw_ms = atomic_load_explicit(&g_go_rt_ms, memory_order_relaxed);
+		g_go.raw_next = t, g_go.raw_tap = 0;
+		logf_("VISION t=%.3f test: %d raw tap(s) of %d, %.0f ms apart (the word; the flag %s)", t, g_go.raw_n,
+		      GO_CMD_VISION, g_go.raw_ms, go_vis_name(vis));
 	}
-	if (tap && !g_go.vis_tap) {
-		g_go.vis_tap = ST_TAP_TICKS, g_go.vis_asked = ask, g_go.vis_t = t, g_go.n_vis_tap++;
-		if (g_go.vis_lines++ < 40)
-			logf_("VISION t=%.3f Y %s: a tap of %d for %d ticks (the vision %s -> %s)", t, press ? "pressed" : "let go",
-			      GO_CMD_VISION, ST_TAP_TICKS, vis == 1 ? "on" : vis == 0 ? "off" : "unread", ask > 0 ? "on" : "off");
+	if (g_go.raw_tap > 0) {
+		g_go.raw_tap--;
+		tap = 1;
+	} else if (g_go.raw_n > 0 && t >= g_go.raw_next && !vo.tap) {
+		g_go.raw_n--, g_go.raw_tap = g_go.vis_cfg.tap_ticks - 1, g_go.raw_next = t + g_go.raw_ms * 1e-3;
+		tap = 1;
+		logf_("VISION t=%.3f test: a raw tap of %d (the flag %s; %d more)", t, GO_CMD_VISION, go_vis_name(vis), g_go.raw_n);
 	}
-	if (g_go.vis_tap > 0) {
-		g_go.vis_tap--;
-		if (world && o->ncmd < SC_OUT_CMDS) {
-			o->cmd[o->ncmd++] = GO_CMD_VISION;
-			g_inp.allow_cmd = GO_CMD_VISION; /* on the deny list (re-xr-input.md 3.6): our tap passes this tick */
-		}
+	if (tap && world && o->ncmd < SC_OUT_CMDS) {
+		o->cmd[o->ncmd++] = GO_CMD_VISION;
+		g_inp.allow_cmd = GO_CMD_VISION; /* on the deny list (re-xr-input.md 3.6): our tap passes this tick */
 	}
+}
+
+/* the word "vision [y MS|taps N MS]" (writer thread) */
+static const char *go_vision_word(const char *w)
+{
+	if (!g_go.vis_mode)
+		return "vision (SOMVR_VISION is off: ignored)";
+	int nn;
+	float ms;
+	if (sscanf(w, "vision y %f", &ms) == 1) {
+		if (!(ms >= 1 && ms <= 60000))
+			return "vision y (bad: 1..60000 ms: ignored)";
+		atomic_store_explicit(&g_go_ty_ms, (uint32_t)ms, memory_order_relaxed);
+		atomic_fetch_add_explicit(&g_go_ty_seq, 1, memory_order_release);
+		return "vision y";
+	}
+	if (sscanf(w, "vision taps %d %f", &nn, &ms) == 2) {
+		if (nn < 1 || nn > 8 || !(ms >= 30 && ms <= 5000))
+			return "vision taps (bad: 1..8 taps, 30..5000 ms: ignored)";
+		atomic_store_explicit(&g_go_rt_n, (uint32_t)nn, memory_order_relaxed);
+		atomic_store_explicit(&g_go_rt_ms, (uint32_t)ms, memory_order_relaxed);
+		atomic_fetch_add_explicit(&g_go_rt_seq, 1, memory_order_release);
+		return "vision taps";
+	}
+	const somvr_vis *v = &g_go.vis;
+	logf_("VISION t=%.3f state: %s, the flag %s, Y %s, wish %s, ours %d, tap %d pending %d tries %d; presses %llu taps %llu "
+	      "(again %llu) landed %llu late %llu the game's own %llu given up %llu blind %llu", mono(),
+	      somvr_vis_mode_name(g_go.vis_mode), go_vis_name(st_vision()), v->y ? "held" : "up",
+	      v->want < 0 ? "none" : v->want ? "on" : "off", v->ours, v->tap, v->pending, v->tries,
+	      (unsigned long long)v->n_press, (unsigned long long)v->n_taps, (unsigned long long)v->n_retry,
+	      (unsigned long long)v->n_landed, (unsigned long long)v->n_late, (unsigned long long)v->n_game,
+	      (unsigned long long)v->n_giveup, (unsigned long long)v->n_blind);
+	return "vision";
 }
 
 /* the VR menu (game thread, vm_apply_key): the Music row; the VRMENU apply line's note */
@@ -444,10 +550,17 @@ static void go_start(const struct site_spec *sites, int *bad)
 	g_go.hint_want = env_word("SOMVR_HINTS", g_go_hint_w, 3, GO_HINTS_GAME);
 	static const char *const vis_w[] = { "off", "hold", "tap" };
 	g_go.vis_mode = env_word("SOMVR_VISION", vis_w, 3, 0);
+	somvr_vis_cfg_default(&g_go.vis_cfg);
+	somvr_vis_init(&g_go.vis, g_go.vis_mode);
+	g_go.vis_flag = -1;
 	if (g_go.vis_mode)
 		logf_("CONFIG vision=%s (SOMVR_VISION: Y %s the wraith vision with taps of CombatSecondary01 122, PC_WraithPing's "
-		      "toggle; VisionModeToggle 243 no longer sent for Y)", vis_w[g_go.vis_mode],
-		      g_go.vis_mode == 1 ? "held shows" : "pressed toggles");
+		      "toggle; VisionModeToggle 243 no longer sent for Y; build 16: %s, a tap answered within %.0f ms or tapped "
+		      "again, %.0f ms after the flag's last change at the earliest, %d taps at most)", vis_w[g_go.vis_mode],
+		      g_go.vis_mode == 1 ? "held shows" : "pressed toggles",
+		      g_go.vis_mode == 1 ? "a press with the vision on turns it off, Y not held while it is ours turns it off"
+					 : "a press = the other state", g_go.vis_cfg.wait_s * 1e3, g_go.vis_cfg.settle_s * 1e3,
+		      g_go.vis_cfg.tries);
 	static const char *const lv_w[] = { "game", "off" };
 	g_go.lv_want = env_word("SOMVR_LOAD_VOICES", lv_w, 2, 0) == 1;
 	if (!g_go.mu_want && !g_go.lv_want && g_go.hint_want == GO_HINTS_GAME)
@@ -497,8 +610,12 @@ static void go_start(const struct site_spec *sites, int *bad)
 static void go_end_log(void)
 {
 	if (g_go.vis_mode)
-		logf_("VISION END Y presses %llu, taps %llu, refused %llu", (unsigned long long)g_go.n_vis_press,
-		      (unsigned long long)g_go.n_vis_tap, (unsigned long long)g_go.n_vis_refused);
+		logf_("VISION END Y presses %llu, taps %llu (again %llu), landed %llu, not answered %llu, given up %llu, blind %llu; "
+		      "the game's own changes %llu; the vision %s at the end", (unsigned long long)g_go.vis.n_press,
+		      (unsigned long long)g_go.vis.n_taps, (unsigned long long)g_go.vis.n_retry,
+		      (unsigned long long)g_go.vis.n_landed, (unsigned long long)g_go.vis.n_late,
+		      (unsigned long long)g_go.vis.n_giveup, (unsigned long long)g_go.vis.n_blind,
+		      (unsigned long long)g_go.vis.n_game, go_vis_name(g_go.vis_flag));
 	if (g_go.lv_on)
 		logf_("LOADVOICES END loads muted %llu (%.1f s in all), not known %llu, the game's sets held %llu; %s",
 		      (unsigned long long)g_go.n_lv_loads, g_go.lv_s, (unsigned long long)g_go.n_lv_unknown,

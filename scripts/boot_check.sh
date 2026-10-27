@@ -4,15 +4,17 @@
 #
 #   boot_check.sh [--steam] [--dry-run] [--auto SECS] [--hold SECS] [--hard SECS] [--size WxH] [--backup DIR]
 #                 [--vram-min-gb N] [--seed-prefs F] [--prefs-set NAME=INT]... [--preload /ABS/LIB.so]...
-#                 [--game-env K=V]... [--game-arg ARG]... [--cmds FILE]
+#                 [--game-env K=V]... [--game-arg ARG]... [--cmds FILE] [--ending-file FILE]
 #
 #   --steam         the user's decision 2026-10-17 ~23:40: the game reaches the running Steam client normally (real
 #                   HOME, network, writable save folder, Steam Cloud on); still started directly in the headless
 #                   gamescope, never through the Steam client (`steam`/`xdg-open` are PATH stubs: its relaunch-
 #                   through-Steam fallback `system("steam steam://run/%u")` is blocked). Prefs still go to RUN/home
 #                   (XDG_DATA_HOME). Right before the launch: a new backup backups/save-<ts>-prelaunch, checked against
-#                   --backup. After the quit: 30 s for Steam's sync, compare; if GameData.sav changed it is restored
-#                   (only it) from the pre-launch backup and the changed copy kept in RUN/changed/.
+#                   --backup. After the quit: until Steam is done with the game (build 16, at most 30 s: it dropped
+#                   the game's process, its exit sync ended, remote/ + remotecache.vdf unchanged for 3 s; build 15b
+#                   waited 30 s always), compare; if GameData.sav changed it is restored (only it) from the pre-launch
+#                   backup and the changed copy kept in RUN/changed/.
 #                   Launch: scout LD_LIBRARY_PATH runtime + scripts/ptrace_parent.py as the game's parent.
 #                   D-Bus: the real session bus (inherited DBUS_SESSION_BUS_ADDRESS, else $XDG_RUNTIME_DIR/bus) - the
 #                   bundled SDL 2.0.8 crashes in SDL_DBus_Init without a reachable bus (attempt 2, 2026-10-18 00:03).
@@ -101,7 +103,17 @@
 # batch runs).
 # The stop (every end: the commands' `quit`, the player's Quit, a signal, the limits): with --preload and the trigger
 # file standing, the word `endlogs` first (somvr.so writes every feature's END lines and the VR menu's unsaved change;
-# up to 3 s), then SIGTERM (which skips the library's destructor).
+# up to 3 s), then SIGTERM (the game's handler exits: the library's destructor runs then, if the game gets there), 30 s,
+# SIGKILL. A fast stop (build 16: the game crashed - game.log's minidump line - or the end watch below fired): no
+# endlogs, 3 s. A crash during the 30 s (build 15b's exit crash) = SIGKILL at once.
+# The game's end, watched (build 16, every 0.5 s with the player's requests): the harness ends the game itself (a fast
+# stop) when it is still alive 10 s after the layer's exit handler ran (xr-layer.log "xr: exit: the game is exiting"),
+# 2 s after a crash (or Feral's crash reporter / its message box running 3 s after the frames stopped), or after 60 s
+# without a frame once it showed some (somvr.log RATE H9=0). The player never needs Stop. The end's timing: run.log
+# "the end: N s (the game gone at +a s, the save checked at +b s)".
+# --ending-file FILE (the launcher's): written ("ending EPOCH RUN") when the cleanup starts (left; the launcher removes it
+#                   before its next start): a new start meanwhile waits for this session's end instead of refusing
+#                   (scripts/som-vr-headset.sh).
 # Game install (2026-10-18: the pre-game window's CEF wrote bin/debug.log and bin/blob_storage/ into it): before the
 # launch RUN/install.stamp + install-before.txt (type, size, mtime, path); after the run (aborts and traps too)
 # install-newer.txt (find -newer the stamp), new bin/debug.log and bin/blob_storage (only if absent before) moved into
@@ -145,7 +157,7 @@ HARD=1800
 MAIN=$$
 T0=$(date +%s)
 
-SEED=""; STEAM=0; DRY=0; HEADSET=0; AUTO=0; HOLD=1200; SIZE=1920x1080; REFRESH=60; BACKUP=""; VRAM_MIN_GB=4; PRELOADS=(); GEXTRA=(); CMDS=""; SAVECOPY=0
+SEED=""; STEAM=0; DRY=0; HEADSET=0; ENDING=""; AUTO=0; HOLD=1200; SIZE=1920x1080; REFRESH=60; BACKUP=""; VRAM_MIN_GB=4; PRELOADS=(); GEXTRA=(); CMDS=""; SAVECOPY=0
 GARGS=(); PSETS=()
 BCDIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 while [ $# -gt 0 ]; do
@@ -167,6 +179,7 @@ while [ $# -gt 0 ]; do
     --game-arg) GARGS+=("${2:?}"); shift 2 ;;
     --prefs-set) PSETS+=("${2:?}"); shift 2 ;;
     --cmds) CMDS=${2:?}; shift 2 ;;
+    --ending-file) ENDING=${2:?}; shift 2 ;;
     -h|--help) awk 'NR > 1 && /^set -uo/ { exit } NR > 1' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -505,11 +518,24 @@ fi
 GS_PID=""; GS_CHILD=""; BW_PID=""; GAME_PID=""; KEEPER=""; VRMON=""; WDOG=""; CLEANED=0; GAME_T0=""; GAME_END=""
 tree() { local p=$1 c; echo "$p"; for c in $(pgrep -P "$p" 2>/dev/null); do tree "$c"; done; }
 alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
-stop_game() {   # $1 = grace seconds for SIGTERM
-  local g=${1:-30} pids i
+FAST_STOP=0   # (build 16) the game crashed or hangs in its exit: no endlogs, SIGTERM's grace 3 s, then SIGKILL
+crash_sign() {   # prints this run's crash sign from game.log (Feral's handler: the minidump, "Game crashed with signal"), or nothing
+  LC_ALL=C grep -a -m1 -E '^(ShadowOfMordor: dumped to "|Game crashed with signal)' "$RUN/game.log" 2>/dev/null | cut -c1-120
+}
+crash_procs() {   # prints Feral's crash reporter / its message box among the game's processes, or nothing
+  local p c
+  for p in $(tree "$BW_PID" 2>/dev/null); do
+    c=$(cat /proc/$p/comm 2>/dev/null)
+    case $c in feral_linux_cra*|FeralLinuxMessa*) printf '%s (pid %s)' "$c" "$p"; return 0 ;; esac
+  done
+}
+stop_game() {   # $1 = grace seconds for SIGTERM (FAST_STOP: 3, no endlogs)
+  local g=${1:-30} pids i c
   alive "$BW_PID" || alive "$GAME_PID" || return 0
+  if [ $FAST_STOP = 0 ] && c=$(crash_sign) && [ -n "$c" ]; then log "the game crashed ($c): a fast stop"; FAST_STOP=1; fi
+  [ $FAST_STOP = 1 ] && g=3
   pids=$( { tree "$BW_PID"; [ -n "$GAME_PID" ] && tree "$GAME_PID"; } 2>/dev/null | sort -u | tr '\n' ' ')
-  if alive "$GAME_PID" && [ -n "$PRELOAD" ] && [ -e "$RUN/somvr.trigger" ] &&
+  if [ $FAST_STOP = 0 ] && alive "$GAME_PID" && [ -n "$PRELOAD" ] && [ -e "$RUN/somvr.trigger" ] &&
      ! LC_ALL=C grep -a -q '^END t=' "$RUN/somvr.log" 2>/dev/null; then
     # the SIGTERM skips somvr.so's destructor: its word `endlogs` writes every feature's END lines (and the VR menu's
     # unsaved change) first; the writer thread reads the trigger file every 0.25 s
@@ -521,7 +547,13 @@ stop_game() {   # $1 = grace seconds for SIGTERM
   if alive "$GAME_PID"; then
     log "stopping the game: SIGTERM $GAME_PID (grace $g s)"
     kill -TERM "$GAME_PID" 2>/dev/null
-    for i in $(seq 1 $((g * 2))); do alive "$GAME_PID" || break; sleep 0.5; done
+    for i in $(seq 1 $((g * 2))); do
+      alive "$GAME_PID" || break
+      if [ $FAST_STOP = 0 ] && c=$(crash_sign) && [ -n "$c" ]; then   # (build 15b: its exit crashed, Feral's reporter waits)
+        log "!!! the game crashed while stopping ($c): SIGKILL now, not after $g s"; FAST_STOP=1; break
+      fi
+      sleep 0.5
+    done
   fi
   pids="$pids $( { tree "$BW_PID"; } 2>/dev/null | tr '\n' ' ')"
   if alive "$GAME_PID"; then log "game still alive after $g s: SIGKILL"; fi
@@ -595,10 +627,51 @@ summary() {
   log "summary: $S"
 }
 fileinfo() { [ -e "$1" ] && echo "$(sha256sum < "$1" | cut -c1-64) $(stat -c '%s B, mtime %y' "$1")" || echo missing; }
+steam_logs_new() {   # $1 = gameprocess|cloud: Steam's log from the launch on (its size then; from 0 if it was rotated)
+  local f=$STEAMDIR/logs/${1}_log.txt off sz
+  [ "$1" = cloud ] && off=${CL_OFF:-0} || off=${GP_OFF:-0}
+  sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+  [ "$sz" -ge "$off" ] || off=0
+  tail -c +$((off + 1)) "$f" 2>/dev/null
+}
+steam_wait() {   # (build 16) until Steam is done with the game, at most 30 s (build 15b: always 30 s): it dropped the
+                 # game's process (gameprocess_log.txt "no longer tracking PID <game>"; or it never tracked it / is not
+                 # running: no exit sync then), its exit sync ended (cloud_log.txt: "Starting sync (up,AC Exit" ->
+                 # "YldWriteCacheDirectoryToFile"; none started within 5 s of the drop = none) and remote/ + remotecache.vdf (names, sizes, mtimes) stayed
+                 # unchanged 3 s
+  local i sig last="" steady=0 dropped="" synced="" t_drop=0 el
+  for i in $(seq 0 60); do
+    el=$(awk -v i="$i" 'BEGIN { printf "%.1f", i / 2 }')
+    if [ -z "$dropped" ]; then
+      if [ -n "$GAME_PID" ] && steam_logs_new gameprocess | LC_ALL=C grep -a -q "AppID 241930 no longer tracking PID $GAME_PID,"; then
+        dropped="it dropped the game's process"
+      elif ! pgrep -x steam > /dev/null; then dropped="Steam is not running"; synced="no exit sync"
+      elif [ "$i" -ge 6 ] && ! steam_logs_new gameprocess | LC_ALL=C grep -a -q "AppID 241930 adding PID ${GAME_PID:-x} "; then
+        dropped="it never tracked the game's process"; synced="no exit sync"
+      fi
+      [ -n "$dropped" ] && { t_drop=$i; log "  steam: $dropped (after $el s)"; }
+    fi
+    if [ -n "$dropped" ] && [ -z "$synced" ]; then
+      if steam_logs_new cloud | awk '/\[AppID 241930\] Starting sync \(up,AC Exit/ { s = 1 } s && /\[AppID 241930\] YldWriteCacheDirectoryToFile/ { d = 1 } END { exit !d }'; then
+        synced="its exit sync ended"
+      elif [ $((i - t_drop)) -ge 10 ] && ! steam_logs_new cloud | LC_ALL=C grep -a -q '\[AppID 241930\] Starting sync (up,AC Exit'; then
+        synced="no exit sync within 5 s"
+      fi
+      [ -n "$synced" ] && log "  steam: $synced (after $el s)"
+    fi
+    sig=$(stat -c '%n %s %y' "$SAVEAPP/remotecache.vdf" "$SAVEAPP/remote" "$SAVEAPP"/remote/* 2>/dev/null | md5sum)
+    if [ "$sig" = "$last" ]; then steady=$((steady + 1)); else steady=0; last=$sig; fi
+    if [ -n "$dropped" ] && [ -n "$synced" ] && [ $steady -ge 6 ]; then
+      log "  steam: done after $el s (the save files unchanged for 3 s)"; return 0
+    fi
+    [ "$i" -lt 60 ] && sleep 0.5
+  done
+  log "  steam: !!! not done after 30 s (${dropped:-the game process not dropped}; ${synced:-the exit sync not ended}; the save files steady $((steady / 2)) s): checking now"
+}
 steam_after() {   # --steam: wait for Steam's sync, compare with the pre-launch backup, restore GameData.sav only if it changed
   local i f
-  log "steam mode: waiting 30 s for Steam to finish any sync"
-  for i in $(seq 1 30); do sleep 1; done
+  log "steam mode: waiting until Steam is done with the game (at most 30 s)"
+  steam_wait
   for f in remote/GameData.sav remotecache.vdf; do
     log "  save after ($f): now    $(fileinfo "$SAVEAPP/$f")"
     log "  save after ($f): before $(fileinfo "$PRE/$f")"
@@ -651,7 +724,10 @@ cleanup() {
   [ $CLEANED = 1 ] && return
   CLEANED=1
   trap '' INT TERM
-  local g=30
+  local g=30 te ts
+  te=$(date +%s)
+  # (build 16) the launcher's --ending-file: a start now waits for this session's end instead of refusing
+  [ -n "$ENDING" ] && printf 'ending %s %s\n' "$te" "$RUN" > "$ENDING" 2>/dev/null
   [ -f "$RUN/ABORT" ] && g=2
   [ -n "$VRMON" ] && kill "$VRMON" 2>/dev/null
   [ -n "$WDOG" ] && kill "$WDOG" 2>/dev/null
@@ -663,9 +739,12 @@ cleanup() {
   if [ $STEAM = 1 ] && [ -n "${PRE:-}" ]; then
     steam_after
   elif save_check after; then log "SAVE OK: byte-identical to $BACKUP"; else log "SAVE CHANGED OR UNREADABLE - see $RUN/save-stat-after.txt"; fi
+  ts=$(date +%s)
   [ -n "$KEEPER" ] && kill "$KEEPER" 2>/dev/null
   rm -f "$RES"
   summary
+  local tg=${GAME_END:-$te}; [ "$tg" -ge "$te" ] || tg=$te
+  log "the end: $(( $(date +%s) - te )) s (the game gone at +$((tg - te)) s, the save checked at +$((ts - te)) s)"
 }
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
@@ -751,6 +830,8 @@ if [ -n "$CMDS" ]; then   # (a missing final newline is added: `read` would drop
   { cat "$CMDS"; [ -n "$(tail -c 1 "$CMDS")" ] && echo; } >> "$CMD"
   log "commands from $CMDS ($(grep -c . "$CMDS") lines) appended to $CMD"
 fi
+GP_OFF=$(stat -c %s "$STEAMDIR/logs/gameprocess_log.txt" 2>/dev/null || echo 0)   # (build 16) Steam's logs from here on: the Steam wait
+CL_OFF=$(stat -c %s "$STEAMDIR/logs/cloud_log.txt" 2>/dev/null || echo 0)
 setsid "${GARGV[@]}" > "$RUN/game.log" 2>&1 < /dev/null &
 BW_PID=$!   # setsid execs (not a group leader here): this is bwrap, a direct child (--die-with-parent = this script)
 for i in $(seq 1 40); do
@@ -808,8 +889,47 @@ mark_serve() {   # $1 = RUN/marks/<dir> with a new `want`: the flat picture and 
     [ -s "$d/convert.err" ] || rm -f "$d/convert.err"
   ) > /dev/null 2>&1 < /dev/null &
 }
-svc() {   # every 0.5 s (the main loop, `wait`, `waitlog`): the player's Quit, new bug marks
+# ---- the game's end, watched (build 16; from svc, once a second) ---------------------------------------------------
+# The game is ended by the harness (a fast stop: no endlogs, SIGTERM, 3 s, SIGKILL; the player never needs Stop) when it
+# is still alive QW_EXIT_S (10) s after the layer's exit handler ran (xr-layer.log "xr: exit: the game is exiting": it is
+# in exit()), QW_CRASH_S (2) s after it crashed (game.log: the minidump / "Game crashed with signal"; or Feral's crash
+# reporter or its message box running 3 s after its frames stopped), or QW_FRAMES_S (60) s without a frame once it has
+# shown some (somvr.log's RATE lines: H9=0, or none for 5 s). Build 15b: the crash at the exit kept the game alive in
+# Feral's reporter (the message box nobody sees in the headless gamescope) until the player's Stop.
+QW_EXIT_S=10; QW_CRASH_S=2; QW_FRAMES_S=60
+QW_NEXT=0; QW_EXIT=""; QW_CRASH=""; QW_SEEN=0; QW_NOFR=""; QW_WHY=""
+quit_watch() {
+  local now l h9 age
+  now=$(date +%s)
+  [ "$now" -ge "$QW_NEXT" ] || return 0
+  QW_NEXT=$((now + 1))
+  [ $QUIT = 0 ] && [ -n "$GAME_PID" ] && alive "$GAME_PID" || return 0
+  if [ -z "$QW_EXIT" ] && [ -n "$PRELOAD" ] &&
+     l=$(LC_ALL=C grep -a -m1 -F 'xr: exit: the game is exiting' "$XRLOG" 2>/dev/null) && [ -n "$l" ]; then
+    QW_EXIT=$now; log "the game is exiting: $(printf '%s' "${l#*xr: exit: the game is exiting }" | cut -c1-150)"
+  fi
+  if [ -n "$PRELOAD" ] && [ -e "$RUN/somvr.log" ]; then
+    h9=$(tail -c 65536 "$RUN/somvr.log" 2>/dev/null | LC_ALL=C grep -a '^RATE ' | tail -1 | sed -n 's/.* H9=\([0-9]*\) .*/\1/p')
+    age=$(( now - $(stat -c %Y "$RUN/somvr.log" 2>/dev/null || echo "$now") ))
+    if [ -n "$h9" ] && [ "$h9" -gt 0 ] && [ "$age" -lt 5 ]; then QW_SEEN=1; QW_NOFR=""
+    elif [ $QW_SEEN = 1 ] && [ -z "$QW_NOFR" ]; then QW_NOFR=$now; log "the game shows no frames (somvr.log: H9=${h9:-?}, written $age s ago)"
+    fi
+  fi
+  if [ -z "$QW_CRASH" ]; then
+    l=$(crash_sign)
+    [ -z "$l" ] && [ -n "$QW_NOFR" ] && [ $((now - QW_NOFR)) -ge 3 ] && l=$(crash_procs) && [ -n "$l" ] && l="running: $l"
+    [ -n "$l" ] && { QW_CRASH=$now; log "!!! the game crashed ($l)"; }
+  fi
+  if [ -n "$QW_CRASH" ] && [ $((now - QW_CRASH)) -ge $QW_CRASH_S ]; then QW_WHY="crashed"
+  elif [ -n "$QW_EXIT" ] && [ $((now - QW_EXIT)) -ge $QW_EXIT_S ]; then QW_WHY="is still alive $QW_EXIT_S s after its exit began"
+  elif [ -n "$QW_NOFR" ] && [ $((now - QW_NOFR)) -ge $QW_FRAMES_S ]; then QW_WHY="has shown no frame for $QW_FRAMES_S s"
+  else return 0; fi
+  log "the game $QW_WHY: the harness ends it (a fast stop)"
+  FAST_STOP=1; QUIT=1
+}
+svc() {   # every 0.5 s (the main loop, `wait`, `waitlog`): the player's Quit, new bug marks, the game's end (quit_watch)
   local w
+  quit_watch
   if [ $PLAYER_QUIT = 0 ] && [ -e "$RUN/quit.request" ]; then
     log "QUIT: the player asked to quit ($(head -c 200 "$RUN/quit.request" 2>/dev/null | tr '\n' ' ')): stopping the game"
     QUIT=1; PLAYER_QUIT=1
@@ -930,7 +1050,7 @@ while :; do
     rm -f "$CMD.work"
   fi
   svc
-  [ $QUIT = 1 ] && { log "quit requested$([ $PLAYER_QUIT = 1 ] && echo ' (by the player)')"; break; }
+  [ $QUIT = 1 ] && { log "quit requested$([ $PLAYER_QUIT = 1 ] && echo ' (by the player)')${QW_WHY:+ (the game $QW_WHY)}"; break; }
   sleep 0.5
 done
 exit 0   # the EXIT trap stops the game and gamescope, checks the save, removes the reservation, writes the summary

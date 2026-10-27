@@ -32,6 +32,9 @@
  *                           cube atlas (SOMVR_ENV_CUBE_W x the image height)
  *   MOCKXR_MAX_LAYERS=n     build 8: xrGetSystemProperties reports maxLayerCount n (default 16); more in a frame is a
  *                           violation (LAYER_LIMIT_EXCEEDED)
+ *   MOCKXR_UNLOAD_AT_EXIT=1 build 16: the first xrCreateInstance registers an exit handler that "unloads the runtime"
+ *                           (as the OpenXR loader's static destructor dlcloses it at exit): every XR call after it is
+ *                           counted (mockxr_after_unload) and a violation - the real runtime's code would be unmapped
  * Up to MOCK_NSC (8) swapchains live at once (the eye/game one, the HUD's (H11), the pointer's, comfort's, the fade's,
  * the VR menu's, the environment's sky and kept frame): each has its own acquire/wait/release state; the first free
  * slot is taken (0x4444 + k, images 0x5000 + 0x100 k + j; a static one has one image and is acquired once). Two VIEW
@@ -53,6 +56,7 @@
 #include <openxr/openxr_platform.h>
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,6 +75,8 @@ static struct {
     char first[512];
     const char *fail_name;
     int fail_at, hang_ms, exit_at;
+    int unload_exit, unload_reg; /* MOCKXR_UNLOAD_AT_EXIT */
+    _Atomic int unloaded, after_unload;
     int64_t formats[8];
     uint32_t nformats;
     const char *tramp_name;
@@ -160,6 +166,7 @@ __attribute__((constructor)) static void mock_env(void) {
     }
     M.hang_ms = getenv("MOCKXR_HANG_MS") ? atoi(getenv("MOCKXR_HANG_MS")) : 0;
     M.exit_at = getenv("MOCKXR_EXIT_AT") ? atoi(getenv("MOCKXR_EXIT_AT")) : 0;
+    M.unload_exit = getenv("MOCKXR_UNLOAD_AT_EXIT") != NULL;
     M.no_stage = getenv("MOCKXR_NO_STAGE") != NULL;
     M.floor_cm = getenv("MOCKXR_FLOOR_CM") ? atoi(getenv("MOCKXR_FLOOR_CM")) : 152;
     M.recenter_at = getenv("MOCKXR_RECENTER_AT") ? atoi(getenv("MOCKXR_RECENTER_AT")) : 0;
@@ -205,9 +212,22 @@ static void viol(const char *msg) {
     if (!M.viol++) snprintf(M.first, sizeof M.first, "%s", msg);
 }
 
+/* MOCKXR_UNLOAD_AT_EXIT: the loader's static destructor at exit (the runtime's code gone from here on) */
+static void mock_unload(void) { atomic_store(&M.unloaded, 1); }
+/* a call after it (any thread): counted; the first one named */
+static void after_unload(const char *n) {
+    if (!atomic_load(&M.unloaded)) return;
+    if (!atomic_fetch_add(&M.after_unload, 1)) {
+        char b[128];
+        snprintf(b, sizeof b, "%s after the runtime's unload at exit", n);
+        viol(b);
+    }
+}
+
 /* count a call; 1 if this call must fail */
 static int hit(const char *fn) {
     const char *n = fn + 2; /* "m_xrFoo" -> "xrFoo" */
+    after_unload(n);
     int i;
     for (i = 0; i < M.nnames && strcmp(M.names[i], n); i++) {}
     if (i == M.nnames && M.nnames < 64) M.names[M.nnames++] = n;
@@ -255,6 +275,7 @@ static XrResult m_xrCreateInstance(const XrInstanceCreateInfo *ci, XrInstance *o
     if (!vk) viol("xrCreateInstance without XR_KHR_vulkan_enable");
     if (M.inst_live) viol("second live XrInstance");
     __atomic_store_n(&M.inst_live, 1, __ATOMIC_SEQ_CST); /* read by the test thread after the init thread wrote it */
+    if (M.unload_exit && !M.unload_reg) M.unload_reg = 1, atexit(mock_unload);
     *out = XR_INST;
     return XR_SUCCESS;
 }
@@ -794,6 +815,7 @@ static XrResult m_xrEndFrame(XrSession s, const XrFrameEndInfo *ei) {
 static XrResult m_xrLocateViews(XrSession s, const XrViewLocateInfo *li, XrViewState *vs, uint32_t cap, uint32_t *n,
                                 XrView *v) {
     __atomic_add_fetch(&M.locates, 1, __ATOMIC_SEQ_CST);
+    after_unload("xrLocateViews");
     if (!__atomic_load_n(&M.sess_live, __ATOMIC_SEQ_CST) || s != XR_SESS || li->space != XR_SPACE ||
         li->displayTime <= 0 || li->viewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)
         __atomic_add_fetch(&M.locate_bad, 1, __ATOMIC_SEQ_CST);
@@ -1096,6 +1118,7 @@ static XrResult m_xrGetCurrentInteractionProfile(XrSession s, XrPath user, XrInt
 /* any thread (the game thread's hand locate): no HIT(), atomics only */
 static XrResult m_xrLocateSpace(XrSpace sp, XrSpace base, XrTime t, XrSpaceLocation *loc) {
     __atomic_add_fetch(&M.locates_space, 1, __ATOMIC_SEQ_CST);
+    after_unload("xrLocateSpace");
     if (base == XR_FLOOR_SPACE) { /* the floor probe: LOCAL in STAGE (the present thread) */
         if (sp != XR_SPACE || !M.floor_live || !M.space_live || t <= 0 || loc->type != XR_TYPE_SPACE_LOCATION)
             return viol("xrLocateSpace in the STAGE space: not LOCAL, dead or no time"), XR_ERROR_HANDLE_INVALID;
@@ -1228,6 +1251,10 @@ EXPORT int mockxr_calls(const char *name) {
         if (!strcmp(M.names[i], name)) return M.calls[i];
     return 0;
 }
+EXPORT int mockxr_after_unload(void);
+EXPORT int mockxr_after_unload(void) { return atomic_load(&M.after_unload); }
+EXPORT int mockxr_unloaded(void);
+EXPORT int mockxr_unloaded(void) { return atomic_load(&M.unloaded); }
 EXPORT int mockxr_total(void);
 EXPORT int mockxr_total(void) {
     int t = 0;

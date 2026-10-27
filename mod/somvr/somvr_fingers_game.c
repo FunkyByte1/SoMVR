@@ -74,6 +74,9 @@ static int bf_hold(int h)
 {
 	if (h == g_bow.cfg.bow_hand && bo_out())
 		return FG_HOLD_GAME;
+	if (h == 1 - g_bow.cfg.bow_hand && bo_out() && (g_bow.s.arrow == SOMVR_BOW_ARROW_HAND ||
+							   g_bow.s.arrow == SOMVR_BOW_ARROW_STRING))
+		return FG_HOLD_FIST; /* build 16: the arrow (or the string) in the string hand */
 	if (h == SA_R && bd_sword_in_hand())
 		return FG_HOLD_FIST;
 	if (h == SA_L && (g_bd.two.w > 0 || (g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g))))

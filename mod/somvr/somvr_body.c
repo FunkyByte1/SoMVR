@@ -183,6 +183,11 @@ int sb_hide_parse(const char *s) {
 
 sv_vec3 sb_blade_dir(sv_quat q, float a) { return sv_qrot(q, v3(0, sinf(a), cosf(a))); }
 
+sa_xf sb_cal_grip(sa_xf cal, float d) {
+    cal.p.z += d;
+    return cal;
+}
+
 sa_xf sb_cal_angle(sa_xf cal, float a) {
     sa_xf r = {v3(0, 0, 0), (sv_quat){sinf(-0.5f * a), 0, 0, cosf(-0.5f * a)}};
     return sa_xf_mul(r, cal);

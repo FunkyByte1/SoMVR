@@ -9,6 +9,7 @@
 #   miss    `fight guard miss`: the same guard mirrored to the other side (C11_MISS_N strikes): it should not block
 #   hold    the sword just held out, still (`fight guard learn`): across the chest, pointing at the orc, vertical ahead
 #           (C11_HOLD_N strikes each): the DEFENCE contact / hit lines per pose
+#   C11_FRAME: the test guard's frame, head (default) or orc (`fight guard frame`)
 #   C11_ORC: the practice orc (infantry, berserker, shield; default infantry); C11_HOLD1: one hold pose instead of three
 #   kills   SOMVR_COMBAT_DEATH's variants, a kill each (lunges at a fresh infantry): C11_DEATHS (words after
 #           `fight death`: kills separated by ',', the words of one by ';'; default "game,Light_UpToDown,Light_Straight")
@@ -59,7 +60,7 @@ LUNGE_A="hands test R 40 -8 35 0 -90 0";  LUNGE="hands swing R -20 -18 62 0 90 0
 LUNGE_B="hands swing R 40 -8 35 0 -90 0 300"
 lunge() { w "$LUNGE_A" 0.5; w "$LUNGE" 1.0; w "$LUNGE_B" 1.0; }
 # the sword in the player's hand: the last SLOTS line that tells (a draw done, the attach keep, the kept-on-the-back move)
-drawn() { local l; l=$(tail -800 "$R/somvr.log" | grep -E '^SLOTS .*sword: .*(now in the hand|now sheathed|now on the back|kept in the hand|kept on the back|our keep undone)' | tail -1)
+drawn() { local l; l=$(grep -E '^SLOTS .*sword: .*(now in the hand|now sheathed|now on the back|kept in the hand|kept on the back|our keep undone)' "$R/somvr.log" | tail -1) # (the whole log: 800 lines no longer cover a step)
   case $l in *"kept on the back no more (kept in the hand now)"*) return 0 ;; *"kept on the back"*|*"now sheathed"*|*"now on the back"*) return 1 ;;
     *"our keep undone (kept away now)"*) return 1 ;; *"now in the hand"*|*"kept in the hand"*|*"our keep undone"*) return 0 ;; esac; return 1; }
 # draw at the shoulder: the grip into the slot, a squeeze, out with it held, the grip opened
@@ -88,6 +89,9 @@ drawn || draw_slot
 w "$BEHIND" 1.5
 m e00-start 0.3
 w "practice spawn $ORC" 1
+# the guard's frame (build 16): head = the blows learnt from the head toward the orc, as a player sees them come; orc =
+# the orc's pose at the reaction time (build 11-15b; with SOMVR_FIGHT_SPACE_CM the orc's own move after it varies)
+w "fight guard frame ${C11_FRAME:-head}" 0.5
 if has learn; then
   w "fight guard learn" 0.5; mark0
   strikes "$LEARN_N"; phase learn

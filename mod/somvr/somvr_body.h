@@ -78,6 +78,9 @@ sv_vec3 sb_blade_dir(sv_quat q, float angle_rad);
 /* the weapon node in the grip's frame tilted with the blade: Rx(-a) (x) cal (a > 0 = the blade up toward the grip's +y,
  * as somvr_blade_controller's pitch) */
 sa_xf sb_cal_angle(sa_xf cal, float angle_rad);
+/* build 15b's follow-up (SOMVR_SWORD_GRIP_CM): the weapon node slid d_cm along the grip's blade line (+z) before the angle,
+ * so that the fist closes on the leather grip below the crossguard (d > 0: the sword ahead, the hand toward the pommel) */
+sa_xf sb_cal_grip(sa_xf cal, float d_cm);
 
 /* ---- 3. two hands --------------------------------------------------------------------------------------------------- */
 

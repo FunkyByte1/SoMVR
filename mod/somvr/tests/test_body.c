@@ -354,6 +354,15 @@ static void test_angle(void) {
     }
     sa_xf c0 = sb_cal_angle(c, 0);
     CHECK(qang(c0.q, c.q) < 1e-5 && vlen3(vsub3(c0.p, c.p)) < 1e-5, "angle 0 = the calibration");
+    /* SOMVR_SWORD_GRIP_CM: the node slid d along the blade at any angle (the combat blade's tip moves the same d) */
+    for (float a = -45; a <= 45; a += 45) {
+        sa_xf g = sb_cal_angle(sb_cal_grip(c, 8), a * DEG), n = sb_cal_angle(c, a * DEG);
+        sv_vec3 dv = vsub3(g.p, n.p), want = sb_blade_dir((sv_quat){0, 0, 0, 1}, a * DEG);
+        CHECK(vlen3(vsub3(dv, (sv_vec3){8 * want.x, 8 * want.y, 8 * want.z})) < 1e-4 && qang(g.q, n.q) < 1e-5,
+              "grip 8 cm at angle %g: moved %.3f,%.3f,%.3f", a, dv.x, dv.y, dv.z);
+    }
+    sa_xf g0 = sb_cal_grip(c, 0);
+    CHECK(vlen3(vsub3(g0.p, c.p)) < 1e-6 && qang(g0.q, c.q) < 1e-6, "grip 0 = the calibration (build 15)");
 }
 
 /* ---- two hands ---- */

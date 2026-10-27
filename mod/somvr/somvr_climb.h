@@ -90,6 +90,26 @@
  *            the mantle: a floor on that top 40 cm in from its edge (a ray down) with room to stand (a ray up) = the
  *            descent's blink there (in.can_blink: the practice trip's fade and teleport; phase blink, E_MANTLE): the
  *            player's own pull finished by a fade, never a move he did not ask for.
+ *   pullover (pullover = 1; build 16, re-xr-pipeline.md 50.2: session 233334 mark 2, still stuck at the lip with the
+ *            overhang's automatic blink off) a hand holding a top's edge - the hold's top found by rays down just
+ *            over it and into the wall, at most po_up_cm over the eyes and po_down_cm under them (the feet still
+ *            under it) - with a landing on
+ *            that top (a floor within 30 cm of the top 20..80 cm in from the hold, nearest 40 cm in, room for Talion:
+ *            nothing within 33 cm round him at his knees and chest, 180 cm up), and the climb's own 1:1 blocked there
+ *            (follow-up: the fade is the fallback, not the norm): the pull's up part (or, with the head at the top,
+ *            its part into the top) not applied (under a fifth: not rising, not going in) for po_block_s of pulling
+ *            = armed: out.po_show and the
+ *            landing (somvr.c shows a ring there: the where, before anything happens); where the 1:1 goes through,
+ *            nothing shows and the push over the top goes on as ever. Blocked the same on a top without a landing =
+ *            E_PO_NOWAY once a hold (somvr.c: a soft double buzz: no way up here). The when: that hand pulled po_pull_cm
+ *            (down, or back toward the body, in tracking space: the player's own arm) while it holds = the blink onto
+ *            the ring (in.can_blink: the practice trip's fade; phase blink, E_PO_GO). The cancel: that hand opens
+ *            before (E_PO_CANCEL; the climb goes on: hang, fling as ever), or A (the drop as ever). The climb's own
+ *            1:1 moves go on while armed (where the game lets him rise, he rises).
+ *   stick    (hang_stick_cm > 0; build 16: session 233334, hanging with the feet 28 cm over a ledge the stick did
+ *            nothing: held as if in some ledge state) in the hang the move stick tilted past half with the
+ *            ground (a ray down) at most hang_stick_cm under the feet = released (gravity back: he stands; the stick
+ *            walks from the next tick). Higher up the hang stays (A drops, a grip climbs on).
  *   end      both hands open with letgo = fall (released), the drop button while holding or hanging (drop), the game not
  *            allowing it any more (somvr.c: FSM not Supported, mounted, third person ...; "stand down"), the input lost
  *            (letgo = fall), the timeout max_s (letgo = fall), a lift that stalls or runs out of time. Every end gives
@@ -168,7 +188,21 @@ enum { /* somvr_climb_out.events2 */
     SOMVR_CLIMB_E_RETOP = 1u << 2,    /* overhang: a hold far over the top reached: that top forgotten (a new one ahead) */
     SOMVR_CLIMB_E_OVERHANG = 1u << 3, /* overhang: the first overhang step under this lip (an up move blocked) */
     SOMVR_CLIMB_E_MANTLE = 1u << 4,   /* overhang: the pull held under a top it cannot rise past: the blink onto it */
+    SOMVR_CLIMB_E_PO_ARM = 1u << 5,   /* pullover: a hand on a top's edge with a landing: armed (the ring shown) */
+    SOMVR_CLIMB_E_PO_GO = 1u << 6,    /* pullover: the pull done: the blink onto the landing asked (out.blink_to) */
+    SOMVR_CLIMB_E_PO_CANCEL = 1u << 7, /* pullover: the armed hand let go (or the top out of range) before the pull */
+    SOMVR_CLIMB_E_PO_NONE = 1u << 8,  /* pullover: a new hold on a top's edge without a landing (s->po_why) */
+    SOMVR_CLIMB_E_STICK_DROP = 1u << 9, /* hang_stick_cm: the stick in a low hang: released (s->stick_h: the feet's height) */
+    SOMVR_CLIMB_E_PO_NOWAY = 1u << 10, /* pullover: pulls blocked on a top with no landing (once a hold): no way up here */
+    SOMVR_CLIMB_E_THR_ON = 1u << 11,  /* through: a pull blocked under a hold over the eyes: its up part goes through */
+    SOMVR_CLIMB_E_THR_OFF = 1u << 12, /* through: over (s->thr_why: SOMVR_CLIMB_THR_*) */
+    SOMVR_CLIMB_E_THR_REFUSED = 1u << 13, /* through: the head's way up not clear (once a climb through): blocked as ever */
 };
+/* through's ends (s->thr_why) */
+enum { SOMVR_CLIMB_THR_NONE = 0, SOMVR_CLIMB_THR_CLEAR = 1, SOMVR_CLIMB_THR_IDLE = 2, SOMVR_CLIMB_THR_MAX = 3,
+       SOMVR_CLIMB_THR_END = 4, SOMVR_CLIMB_THR_NOREAD = 5 };
+const char *somvr_climb_thr_name(int why);
+enum { SOMVR_CLIMB_PO_OK = 0, SOMVR_CLIMB_PO_NOTOP = 1, SOMVR_CLIMB_PO_NOFLOOR = 2, SOMVR_CLIMB_PO_NOROOM = 3 }; /* po_why */
 
 typedef struct {
     float grip_on, grip_off; /* the squeeze's hysteresis (0.6 / 0.4, as the menus' LB/RB) */
@@ -235,6 +269,32 @@ typedef struct {
     float overhang;          /* the overhang step: an up move blocked under a hold over the head x this goes out from
                               * the wall (0 off: build 15's; 1 on); with it a hold far over a reached top forgets it */
     float overhang_cm;       /* ... at most this far out under one lip (40: a slab 21 cm out, the capsule ~40 round) */
+    int oh_mantle;           /* ... and the mantle (the automatic blink onto a top after 0.4 s of blocked pulls; 1 =
+                              * SOMVR_CLIMB_OVERHANG=on, build 15b's); 0 = =step (build 16: the out step and the retop
+                              * only; the way onto a top is the player's pullover) */
+    int pullover;            /* build 16: a hand on a top's edge shows the landing, a pull takes him there (0 off) */
+    float po_pull_cm;        /* ... the pull (25) */
+    float po_up_cm;          /* ... the top at most this over the eyes (120) */
+    float po_down_cm;        /* ... and at most this under them (150: the feet still under the top) */
+    float po_block_s;        /* ... and the 1:1 blocked this long while pulling (0.3) */
+    float hang_stick_cm;     /* build 16: hanging with the feet at most this over the ground (a ray down), the move
+                              * stick tilted past half = the climb ends (released: he stands, the stick walks); 0 off */
+    int face_toward;         /* build 16 round 2: a hold found by a ray at a slant to its face (over 35 deg off the
+                              * face's level normal: the palm or the fingers along the wall) takes the face's normal as
+                              * its toward, and its edge test runs along it (1; 0 = the ray's own, as before) */
+    int through;             /* build 16 round 2 (SOMVR_CLIMB_THROUGH, 0 off): a pull's up part blocked thr_block_s
+                              * under the driving hold over the eyes (the capsule under a lip it cannot pass: the user's
+                              * slab) goes up through the rock as the stock wall run's does (somvr.c: the proxy set up by
+                              * it, no collision), 1:1 with the hand, while the capsule is in the rock; never with the
+                              * head's way up not clear (rays from the head and round it, thr_clear_cm past the move) */
+    float thr_block_s;       /* ... the pull blocked this long first (0.15) */
+    float thr_clear_cm;      /* ... the head's way clear this far past its new place (15) */
+    float thr_side_cm;       /* ... and so round the head (the eyes, the near plane: 10) */
+    float thr_max_cm;        /* ... at most this far in one (300: the capsule's height and a slab) */
+    float thr_look_cm;       /* ... and none starts with rock this close over the head (60) */
+    int thr_top;             /* ... also at a top with the head over it: the edge step's lift (the push into the top)
+                              * blocked = through, so the top-out goes 1:1 where the capsule's foot is caught under
+                              * the edge (the user's cliff top, run 043737: the feet 46 cm under it; 1) */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -274,11 +334,14 @@ typedef struct {
     float head_x, head_z; /* ... its world x and z (push: over the top) */
     int root_ok;        /* root is Talion's root this frame (push's edge step: what the last move did) */
     sv_vec3 root;       /* world cm */
+    int rock_ok;        /* through: rock_cm is the proxy's deepest contact now (somvr.c: its manifold) */
+    float rock_cm;      /* ... cm (< 0: inside a surface; under -1: in the rock) */
     int drop;           /* the drop button is held (somvr.c: A on the right controller); its press while a climb is on
                          * (holding or hanging) ends it: the fall */
     int can_blink;      /* descent: the blink can start now (somvr.c: the practice's trip is free) */
     sv_vec3 head_fwd;   /* descent: the view's heading (horizontal unit; 0 = none): A on foot looks for an edge along it */
     int walk_blocked;   /* descent (cue): the stick asks a walk the game does not apply (somvr.c: LOCO's last 0.5 s) */
+    float stick;        /* the move stick's tilt 0..1 as the player holds it (somvr.c, before the climb holds it off) */
     somvr_climb_hand hand[2];
 } somvr_climb_in;
 
@@ -302,6 +365,8 @@ typedef struct {
     int top_found;      /* top_y from the down ray (else the bound hit.y + edge_cm) */
     sv_vec3 toward;     /* horizontal unit toward the wall: the ray's (a ray down onto a top: the head's to the hold,
                          * else the fingers'): where "over the top" is (push, lift) */
+    int face;           /* face_toward: toward is the face's normal (the hold's ray was at a slant to the face) */
+    sv_vec3 ray_tw;     /* ... the ray's own toward then (logs) */
     int via;            /* SOMVR_CLIMB_VIA_*: the ray of the hold */
     float inside_by;    /* via inside: how far the hand was past the surface (cm) */
     float near_past;    /* this press's nearest surface past the reach (cm; < 0 none) */
@@ -315,6 +380,12 @@ typedef struct {
                          * the ground beyond it this far under the hold) */
     float lip_top_y, lip_drop;
     sv_vec3 lip_edge, lip_out;
+    uint32_t po_seq;    /* pullover: the hold (seq) its landing was looked for */
+    int po_ok, po_why;  /* ... found (SOMVR_CLIMB_PO_*) */
+    int po_has_top;     /* ... a top found (po_top_y), with or without a landing */
+    int po_noway;       /* ... E_PO_NOWAY given for this hold */
+    float po_top_y;     /* ... its top, the landing on it (the floor point), into the top (level unit) */
+    sv_vec3 po_land, po_in;
 } somvr_climb_hold;
 
 typedef struct {
@@ -397,10 +468,34 @@ typedef struct {
     float oh_block_s;   /* the pulls' time blocked under a known top (the mantle at OH_MANTLE_S) */
     sv_vec3 mt_top;     /* the last mantle's top point (the hold's) and its landing floor */
     sv_vec3 mt_floor;
+    /* pullover */
+    int po_hand;        /* the armed hand (-1: none) */
+    uint32_t po_aseq;   /* ... its hold */
+    sv_vec3 po_grab_p;  /* ... the hand at the arm (tracking space) */
+    float po_pull;      /* ... the pull so far (cm) */
+    int po_why;         /* the last E_PO_NONE's SOMVR_CLIMB_PO_* */
+    float po_block_s;   /* the 1:1 blocked so far under the candidate hold (po_bseq) while pulling */
+    uint32_t po_bseq;
+    uint64_t po_arms, po_goes, po_cancels, po_nones, po_noways;
+    float po_dbg[8];    /* pullover: the last landing search (logs): the top, floors seen, the highest floor, blocked
+                         * over them, room rays hit in / out / to the sides */
+    /* through */
+    int thr_on;         /* a climb through: this frame's vertical part goes through the rock */
+    float thr_block;    /* the pull blocked under a hold over the eyes so far (s) */
+    float thr_idle;     /* ... no vertical move so far (s) */
+    float thr_cm;       /* ... this one's way through (cm) */
+    float thr_y0;       /* ... the root's height at its start */
+    int thr_clear;      /* ... frames out of the rock in a row */
+    int thr_refused_once; /* ... E_THR_REFUSED given */
+    int thr_why;        /* the last one's end (SOMVR_CLIMB_THR_*) */
+    double thr_all_cm;
+    uint64_t thr_ons, thr_frames, thr_refused;
+    float stick_h;      /* hang_stick_cm: the feet over the ground at the last stick drop (cm) */
+    uint64_t stick_drops;
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
-        fl_blocks, fl_overs, fl_tops, fl_glides;
+        fl_blocks, fl_overs, fl_tops, fl_glides, faces;
     double req_cm;      /* the length of every move asked for */
 } somvr_climb;
 
@@ -425,6 +520,11 @@ typedef struct {
     float overhang;         /* the overhang step's move out from the wall in this frame's request (cm) */
     int blink;              /* descent: start the blink to blink_to (Talion's root at the landing) now */
     sv_vec3 blink_to;
+    int po_show;            /* pullover: armed: show the landing (po_land: the floor point, world cm) */
+    sv_vec3 po_land;
+    float po_pull;          /* ... the pull so far, 0..1 of po_pull_cm */
+    int po_hand;            /* ... the armed hand */
+    float through_up;       /* through: this request's vertical part (cm) goes through the rock (0: none) */
 } somvr_climb_out;
 
 void somvr_climb_init(somvr_climb *s);
@@ -461,5 +561,63 @@ int somvr_climb_surface_wet(const char *name);
 /* descent: an invisible blocker the hands and the rays reach through ('Air', Invisible*, PlayerBlocker*): somvr.c's ray
  * steps past it (a forge tower top's edge wall, run 010412) */
 int somvr_climb_surface_clear(const char *name);
+
+/* ==== SOMVR_CLIMB_UNPIN (build 16, docs/re-xr-pipeline.md 50.1) ================================================
+ * Build 15b's session (233334 marks 2/3): Talion's capsule in the meadow bank's rock at a corner of its ledge (the
+ * proxy's contacts inside the stone); the game's character proxy then applies no horizontal move at all - every walk
+ * and every pull undone, only the height free. The unpin, per player tick (somvr.c's PM hook; on foot and climbing):
+ * the last tick's move asked (the transform vf_11 left - the root before it) against the move the body made, level;
+ * blocked = at least min_cm asked and under a fifth done. Blocked for hold_s in a row while a proxy contact is at least
+ * pen_cm inside a wall or a ceiling (not a floor: its normal under 0.7 up) (the game's own contacts: a wall ahead, an invisible edge wall or an edge keeper never are)
+ * = pinned: the asked move (at most step_cm a tick, the player's own speed: the stick's or the pull's) is given to the
+ * proxy directly, its part into any touching wall (a contact within touch_cm whose normal it opposes) taken out (he
+ * slides along it; nothing left = none) plus a drift out of the rock he is in (its deepest wall's normal, at most
+ * drift_cms: a few cm a second, never felt as a push), none where the caller's rays along it find a wall within
+ * radius_cm + the move. Nothing without a move asked. */
+typedef struct {
+    float hold_s;    /* blocked this long in a row (0.15) */
+    float min_cm;    /* a tick asked at least this far, level (0.2) */
+    float frac;      /* ... and the body did under this part of it (0.2) */
+    float pen_cm;    /* a contact at least this deep in a surface = in the rock (1) */
+    float touch_cm;  /* a contact nearer than this guards the move's direction (2) */
+    float step_cm;   /* the most a tick (8) */
+    float radius_cm; /* the capsule's radius: the caller's rays must find no wall this far + the move (35) */
+    float drift_cms; /* the drift out of the rock while a move is asked, at most this a second (4 cm/s) */
+} somvr_unpin_cfg;
+void somvr_unpin_cfg_default(somvr_unpin_cfg *c);
+#define SOMVR_UNPIN_MAXC 16
+typedef struct {
+    sv_vec3 n; /* the surface's normal toward Talion (unit) */
+    float d;   /* the distance (cm; < 0 inside the surface) */
+} somvr_unpin_contact;
+typedef struct {
+    double t;
+    float dt;                /* the tick's time (s; the drift's cap) */
+    sv_vec3 asked, applied;  /* the last tick: asked (cm, vf_11's transform - the root before it) and done (cm) */
+    int nc;                  /* the proxy's contacts (at most SOMVR_UNPIN_MAXC) */
+    somvr_unpin_contact c[SOMVR_UNPIN_MAXC];
+    float clear_cm;          /* the caller's rays along the move: the nearest wall (cm; large = none; < 0 = not cast) */
+} somvr_unpin_in;
+enum { SOMVR_UNPIN_FREE = 0, SOMVR_UNPIN_WAIT = 1, SOMVR_UNPIN_STEP = 2, SOMVR_UNPIN_NOTIN = 3, SOMVR_UNPIN_INTO = 4,
+       SOMVR_UNPIN_WALL = 5, SOMVR_UNPIN_RAYS = 6 }; /* somvr_unpin_out.why */
+typedef struct {
+    double t0;     /* blocked since (< 0: not blocked) */
+    int pinned;    /* steps given since the block began */
+    uint64_t blocked_ticks, steps, notin, into, walls, episodes;
+    double step_cm, drift_cm; /* the steps' length, their drift out of the rock (totals) */
+} somvr_unpin;
+typedef struct {
+    int why;       /* SOMVR_UNPIN_*: STEP = move the proxy by d; RAYS = cast the rays along dir, then call again */
+    sv_vec3 d;     /* STEP: the move (level, cm) */
+    sv_vec3 dir;   /* the asked move's direction (level unit) */
+    float deepest; /* the deepest contact (cm, < 0 inside) */
+    int first;     /* STEP: the first of this block (a log line) */
+    float drift;   /* STEP: its drift out of the rock (cm), in d */
+} somvr_unpin_out;
+void somvr_unpin_init(somvr_unpin *s);
+/* one tick; in->clear_cm < 0 and everything else allowing a step = RAYS (cast, set clear_cm, call again: no time
+ * passes on the second call); a tick without a block resets the block */
+void somvr_unpin_step(somvr_unpin *s, const somvr_unpin_cfg *c, const somvr_unpin_in *in, somvr_unpin_out *o);
+const char *somvr_unpin_why_name(int why);
 
 #endif

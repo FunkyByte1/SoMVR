@@ -356,6 +356,10 @@ static struct {
 	struct { uintptr_t rec; char name[40]; } e[KX_N];
 	uint64_t overrides, missing, clank_lighter, restaggers, restagger_took, staggers, stagger_undone;
 	float light_dmg;           /* =stagger: a light hit's damage (learnt; 10 on the practice orcs) */
+	float sliver;              /* SOMVR_COMBAT_SLIVER (build 16): a hit that would leave an orc this much health or less
+				    * kills it (0 = only a hit whose damage kills; build 15b's session: a shield orc left at 5 of
+				    * 125 never attacked again and the game ended the fight with it alive) */
+	uint64_t slivers;
 } g_kx = { .light_dmg = 10 };
 
 static void kx_step(void)
@@ -510,13 +514,27 @@ static int kx_restagger(uintptr_t c, uintptr_t hobj, const float vel[3], const f
 static uintptr_t kx_stagger_rec(uintptr_t c, int tier, int blk, float hp0, float sh0, float *extra)
 {
 	*extra = 0;
-	if (g_kx.mode != KX_STAGGER || tier == SC_TIER_LIGHT || blk || !isfinite(hp0) || (isfinite(sh0) && sh0 > 0))
+	if (g_kx.mode != KX_STAGGER || !isfinite(hp0) || (isfinite(sh0) && sh0 > 0))
 		return 0;
+	uintptr_t own = peek_ptr(c + C_OWNER);
+	if (tier == SC_TIER_LIGHT || blk) { /* SOMVR_COMBAT_SLIVER: a light hit, or one through the orc's block (its record's
+					     * own damage: 40 for a High one, boot 035244), that would leave a sliver kills */
+		float td = g_kx.light_dmg * (tier == SC_TIER_HEAVY ? 4.0f : tier == SC_TIER_STAB ? 2.0f : 1.0f), nl = 0.5f * g_kx.light_dmg;
+		if (!(g_kx.sliver > 0) || !(hp0 - td > 0.5f) || hp0 - td > g_kx.sliver || !(hp0 > nl) || !own ||
+		    !arm_poke(own + CH_HEALTH, &nl, sizeof nl))
+			return 0;
+		*extra = hp0 - nl, g_kx.slivers++;
+		snprintf(g_kb.over, sizeof g_kb.over, "a %s hit%s leaving %.0f health (SOMVR_COMBAT_SLIVER %.0f): %.0f health off, "
+			 "the kill", sc_tier_name(tier), blk ? " through its block" : "", hp0 - td, g_kx.sliver, *extra);
+		return 0;
+	}
 	const char *ln = "(none)";
-	uintptr_t light = cb_record(SC_TIER_LIGHT, 0, &ln), own = peek_ptr(c + C_OWNER);
+	uintptr_t light = cb_record(SC_TIER_LIGHT, 0, &ln);
 	float e = g_kx.light_dmg * (tier == SC_TIER_HEAVY ? 3.0f : 1.0f), nh = hp0 - e;
 	int kill = !(nh > g_kx.light_dmg + 0.5f); /* the tier's hit kills: the light hit kills too (a light death: boot 6's
 						   * heavy record's 'AI_Bip_STR_Death_Hvy_F' threw the body 4.8 m) */
+	if (!kill && g_kx.sliver > 0 && !(nh - g_kx.light_dmg > g_kx.sliver)) /* SOMVR_COMBAT_SLIVER: no sliver left */
+		kill = 1, g_kx.slivers++;
 	if (kill)
 		nh = fminf(hp0, 0.5f * g_kx.light_dmg);
 	if (!light || !own || !(nh > 0) || !arm_poke(own + CH_HEALTH, &nh, sizeof nh))
@@ -784,6 +802,7 @@ static const float g_tg_at[3] = { -0.15f, -0.10f, -0.05f };
 struct tg_learn { uintptr_t atk; int n; float b[3][3], p[3][3]; };
 static struct {
 	int mode;
+	int head_frame;            /* "fight guard frame head": learnt and predicted from the head, turned toward the orc */
 	struct tg_learn l[TG_N];
 	int nl;
 	int have_blade, still;     /* the blade in the right grip (OpenXR grip axes, cm), measured; still frames */
@@ -1011,6 +1030,14 @@ static void tg_track(struct df_track *d, const somvr_df_in *in, sv_quat hq, doub
 		if (!peek(d->hobj + OBJ_ROT, oq, sizeof oq) || !vec_ok(oq, 2.0f))
 			return;
 		memcpy(g_tg.o_pos, in->orc, sizeof g_tg.o_pos), g_tg.o_yaw = sv_heading(sv_qnormalize(sv_quat_of(oq)));
+		if (g_tg.head_frame) { /* the head, its heading toward the orc: the blow's path as the player sees it come */
+			sv_vec3 fhp;
+			sv_quat fhq;
+			somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &fhp, &fhq);
+			float hd[3] = { fhp.x, fhp.y, fhp.z };
+			if (vec_ok(hd, 1e7f) && hypotf(in->orc[0] - hd[0], in->orc[2] - hd[2]) > 1.0f)
+				g_tg.o_yaw = atan2f(in->orc[0] - hd[0], in->orc[2] - hd[2]), memcpy(g_tg.o_pos, hd, sizeof hd);
+		}
 		g_tg.frozen = 1;
 		struct tg_learn *l = tg_find(d->attack);
 		if (g_tg.mode >= TG_PATH && l && g_tg.have_blade && g_bd.t_on[1]) {
@@ -1125,7 +1152,40 @@ static void tg_frame(double t)
 	if (g_tg.c && t - g_tg.seen_t > 0.15)
 		tg_finish(t, "its attack ended");
 }
-/* the trigger word "fight guard off|learn|path|miss", "fight death game|TYPE", "fight death dir S", "fight death pin CM" */
+/* an attack's StrikeRange (AttackData field 9: a range, the slot points at {min, max}) pointed at our own pair (the
+ * game's pair may be shared by other records); 1 = written */
+static float g_fr_rng[16][2];
+static uintptr_t g_ft_pl; /* fight_frame's player (the test words) */
+static int g_fr_rng_n;
+static int fr_range_set(const char *name, float lo, float hi, const char *why)
+{
+	uintptr_t rec = g_cb.ok_hit && g_cb.ok_ad ? cb_rec_valid(CB_FN(CS_ATK_BYNAME, cb_byname_fn)(name)) : 0;
+	uintptr_t ad = rec ? CB_FN(CS_ATTACKDATA, cb_attackdata_fn)(rec) : 0, vals = ad ? peek_ptr(ad + 0x10) : 0;
+	unsigned char e[16];
+	uint16_t cnt = 0, vi = 0;
+	float old[2] = { NAN, NAN };
+	uintptr_t slot = 0, p0 = 0;
+	if (ad && vals && g_rxg.sch_ad && !rx_db_entry(ad, rx_sch_hash(g_rxg.sch_ad, RX_AD_STRIKERANGE), e)) {
+		memcpy(&cnt, e + 0xc, 2), memcpy(&vi, e + 0xe, 2);
+		slot = (e[0xa] & 0x3f) == 7 && cnt == 1 ? vals + (uintptr_t)vi * 8 : 0;
+		p0 = slot ? peek_ptr(slot) : 0;
+	}
+	if (!p0 || !peek(p0, old, sizeof old) || g_fr_rng_n >= 16) {
+		logf_("FIGHT range '%s' %.0f..%.0f (%s): not set (%s)", name, lo, hi, why, !rec ? "no such attack record"
+		      : !ad ? "no AttackData" : !slot ? "no StrikeRange range in it" : g_fr_rng_n >= 16 ? "16 set already" : "unreadable");
+		return 0;
+	}
+	float *pr = g_fr_rng[g_fr_rng_n++];
+	pr[0] = lo, pr[1] = hi;
+	uintptr_t np = (uintptr_t)pr;
+	int ok = arm_poke(slot, &np, sizeof np);
+	logf_("FIGHT range '%s' StrikeRange %.0f..%.0f -> %.0f..%.0f cm (%s): %s", name, old[0], old[1], lo, hi, why,
+	      ok ? "its slot points at ours" : "the slot write failed");
+	return ok;
+}
+
+/* the trigger word "fight guard off|learn|path|miss", "fight death game|TYPE", "fight death dir S", "fight death pin CM",
+ * "fight rec TIER NAMES" */
 static const char *fight_word(const char *w)
 {
 	char a[16] = "", b[48] = "";
@@ -1143,7 +1203,16 @@ static const char *fight_word(const char *w)
 				logf_("TGUARD mode %s (learnt %d attack records)", b, g_tg.nl);
 				return "fight guard";
 			}
-		return "fight guard (not off|learn|path|miss: ignored)";
+		if (!strcmp(b, "frame")) { /* "fight guard frame orc|head" (build 16 round 3) */
+			char f[16] = "";
+			if (sscanf(w, "%*s %*s %15s", f) != 1 || (strcmp(f, "orc") && strcmp(f, "head")))
+				return "fight guard frame (not orc|head: ignored)";
+			g_tg.head_frame = !strcmp(f, "head"), g_tg.nl = 0;
+			logf_("TGUARD frame %s: the blows learnt in the frame of %s at the reaction time (the learnt ones forgotten)", f,
+			      g_tg.head_frame ? "the head, facing the orc (where the blow comes at the player from)" : "the orc's pose");
+			return "fight guard frame";
+		}
+		return "fight guard (not off|learn|path|miss|frame orc|head: ignored)";
 	}
 	if (!strcmp(a, "death")) {
 		if (!strcmp(b, "dir") && sscanf(w, "%*s %*s %f", &v) == 1 && v >= 0 && v <= 1)
@@ -1157,7 +1226,53 @@ static const char *fight_word(const char *w)
 		logf_("CONFIG death=%s dir=%.2f pin=%.0f cm (the word)", g_kd.mode ? g_kd.type : "game", g_kd.dir, g_kd.pin_cm);
 		return "fight death";
 	}
-	return "fight (not guard|death ...: ignored)";
+	if (!strcmp(a, "range")) { /* build 16's tests: "fight range ATTACK MIN MAX" (its StrikeRange; headless) */
+		float lo = 0, hi = 0;
+		if (!g_bd.test || sscanf(w, "%*s %*s %f %f", &lo, &hi) != 2 || !(lo >= 0 && hi >= lo && hi <= 1000))
+			return "fight range (SOMVR_HANDS_TEST off, or not ATTACK MIN MAX in 0..1000 cm: ignored)";
+		return fr_range_set(b, lo, hi, "the word") ? "fight range" : "fight range (not set: see the FIGHT range line)";
+	}
+	if (!strcmp(a, "health")) { /* build 16's tests: "fight health N": the nearest orc at Talion (within 8 m) gets N health */
+		float hv = (float)atof(b);
+		uintptr_t pm = 0, obj = 0, pl = g_ft_pl;
+		float root[3];
+		struct cb_orc o[CB_ORCS];
+		int m = 0;
+		if (g_bd.test && hv > 0 && hv < 10000 && pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, root, sizeof root)) {
+			uintptr_t pcomb = peek_ptr(pl + P_COMBAT), pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0;
+			if (pc && vptr_of((void *)pc) != g_cbg.vt_combat)
+				pc = 0;
+			m = pcomb ? cb_orcs_r(pcomb, pc, root, 800.0f, o, CB_ORCS) : 0;
+		}
+		uintptr_t own = m ? peek_ptr(o[0].c + C_OWNER) : 0;
+		float h0 = m ? cb_health(o[0].c) : NAN;
+		if (!own || !isfinite(h0) || cb_dead(o[0].c) || !arm_poke(own + CH_HEALTH, &hv, sizeof hv))
+			return "fight health (SOMVR_HANDS_TEST off, no live orc within 8 m, or not N in 0..10000: ignored)";
+		logf_("FIGHT health orc=%#lx %.1f -> %.1f (the word; %.0f cm from Talion)", (unsigned long)o[0].c, h0, hv, o[0].dist);
+		return "fight health";
+	}
+	if (!strcmp(a, "shield") || !strcmp(a, "class")) { /* build 16's tests: "fight shield game|glance", "fight class speed|cut" */
+		int sh = !strcmp(a, "shield"), on = !strcmp(b, sh ? "glance" : "cut") ? 1 : !strcmp(b, sh ? "game" : "speed") ? 0
+			: sh && !strcmp(b, "physical") ? 2 : -1;
+		if (!g_bd.test || on < 0)
+			return "fight shield|class (SOMVR_HANDS_TEST off, or not game|glance|physical / speed|cut: ignored)";
+		*(sh ? &g_cb.shield : &g_cb.klass) = on;
+		logf_("CONFIG combat %s=%s (the word)", sh ? "shield" : "class", b);
+		return sh ? "fight shield" : "fight class";
+	}
+	if (!strcmp(a, "rec")) { /* build 16's tests: "fight rec light|heavy|stab|medium NAME[,NAME...]|default" (headless) */
+		int k = !strcmp(b, "light") ? SC_TIER_LIGHT : !strcmp(b, "heavy") ? SC_TIER_HEAVY : !strcmp(b, "stab") ? SC_TIER_STAB
+			: !strcmp(b, "medium") ? CB_MED : 0;
+		const char *l = k ? strstr(w, b) + strlen(b) : NULL;
+		while (l && *l == ' ')
+			l++;
+		if (!g_bd.test || !k || !l || !*l)
+			return "fight rec (SOMVR_HANDS_TEST off, or not light|heavy|stab|medium NAMES|default: ignored)";
+		cb_names_from(k, !strcmp(l, "default") ? g_cb_rec_dflt[k] : l);
+		logf_("CONFIG combat %s records (the word): %d, the first '%s'", b, g_cb.nrec[k], g_cb.nrec[k] ? g_cb.rec[k][0].name : "");
+		return "fight rec";
+	}
+	return "fight (not guard|death|rec ...: ignored)";
 }
 
 static uint64_t hu_hurts(void)
@@ -1166,9 +1281,258 @@ static uint64_t hu_hurts(void)
 }
 
 /* H4, after df_frame (every frame: flat ones too) */
+/* ---- the shield's place (build 16 round 2): the shield item's model object, against a cut ---------------------- */
+static int cb_shield_where(uintptr_t c, float pos[3], float rot[4])
+{
+	uintptr_t sh = 0, item = cb_shield_item(c, &sh);
+	uintptr_t b = item ? peek_ptr(item + SL_IT_ENTRIES) : 0, e = item ? peek_ptr(item + SL_IT_ENTRIES + 8) : 0;
+	if (!b || !(e > b) || (e - b) % SL_IT_ESIZE)
+		return 0;
+	uintptr_t obj = peek_ptr(b + SL_IE_OBJ);
+	return obj && peek(obj + OBJ_POS, pos, 12) && peek(obj + OBJ_ROT, rot, 16) && vec_ok(pos, 1e7f) && vec_ok(rot, 2.0f);
+}
+/* v (world, cm) in the orc's frame: right, up, ahead */
+static void cb_orc_frame(const struct cb_orc *o, const float v[3], float out[3])
+{
+	float orot[4] = { 0, 0, 0, 1 };
+	peek(o->hobj + OBJ_ROT, orot, sizeof orot);
+	float yaw = sv_heading(sv_qnormalize(sv_quat_of(orot))), c = cosf(yaw), s = sinf(yaw);
+	out[0] = c * v[0] - s * v[2], out[1] = v[1], out[2] = s * v[0] + c * v[2];
+}
+/* "; the shield at R,U,A cm from its root (right, up, ahead), its axes ...; the contact R,U,A from the shield; the
+ * blade D cm from the shield's centre" (the COMBAT hit line's tail) */
+static void cb_shield_log(const struct cb_orc *o, const sc_contact *ct, const somvr_blade *b, double t, char *out, size_t cap)
+{
+	float sp[3], sq[4], d[3], f[3], g[3], cp[3];
+	(void)t;
+	out[0] = 0;
+	if (!cb_shield_where(o->c, sp, sq))
+		return;
+	for (int i = 0; i < 3; i++)
+		d[i] = sp[i] - o->pos[i], cp[i] = ct->point[i] - sp[i];
+	cb_orc_frame(o, d, f), cb_orc_frame(o, cp, g);
+	sv_quat q = sv_qnormalize(sv_quat_of(sq));
+	sv_vec3 ax[3] = { sv_qrot(q, (sv_vec3){ 1, 0, 0 }), sv_qrot(q, (sv_vec3){ 0, 1, 0 }), sv_qrot(q, (sv_vec3){ 0, 0, 1 }) };
+	float axo[3][3];
+	for (int k = 0; k < 3; k++) {
+		float w[3] = { ax[k].x, ax[k].y, ax[k].z };
+		cb_orc_frame(o, w, axo[k]);
+	}
+	float s0, t0, bd = sc_seg_dist(b->base, b->tip, sp, sp, &s0, &t0);
+	snprintf(out, cap, "; the shield at %+.0f,%+.0f,%+.0f cm from its root (right, up, ahead; +X %+.1f,%+.1f,%+.1f +Y "
+		 "%+.1f,%+.1f,%+.1f +Z %+.1f,%+.1f,%+.1f), the contact %+.0f,%+.0f,%+.0f from it, the blade %.0f cm from it now",
+		 f[0], f[1], f[2], axo[0][0], axo[0][1], axo[0][2], axo[1][0], axo[1][1], axo[1][2], axo[2][0], axo[2][1],
+		 axo[2][2], g[0], g[1], g[2], bd);
+}
+
+/* ---- SOMVR_FIGHT_SPACE_CM (build 16): no orc walks into Talion ------------------------------------------------- *
+ * The infantry's overhead chop 'AI_Infantry_Melee_Front_3_LL' walks the orc on after its blow to ~50 cm of Talion's
+ * root (5 of 5, boot 001351; the flat game's heavy recoil would have pushed Talion away, ours keeps him still), and its
+ * next strike 'AI_Infantry_Melee_Right' starts 43 cm off and passes through him (2 cm). The NPC movement's root motion
+ * (CAIMovement::vf_11, the slot every character's movement shares; its combat's own warp writes the same transform)
+ * is held: an orc whose attack targets Talion never moves nearer than the space to his root (horizontal); one already
+ * nearer is not pushed, only stopped from coming nearer. The strikes' blows (136-154 cm at their impact) are not in it. */
+/* SPACE_SITES_BEGIN (check_sites.py counts this block on its own: the patched K_VSLOT FS_AIMOVE, docs/re-xr-pipeline.md
+ * 54; the slot: design-locomotion.md 2.8's LOCO_MOUNT_AIMOVE) */
+static const struct site_spec g_fs_sites[] = {
+SITE("FS_AIMOVE", K_VSLOT, 0x3ad3ef0, 0x3ad3ee0, "80 5e a7 02 00 00 00 00 80 8c a7 02 00 00 00 00 e0 81 a7 02 00 00 00 00", 0x2a781e0, "41 54 49 89 f4 55 53 48 89 fb 48 83 ec 20 c6"),
+};
+/* SPACE_SITES_END */
+#define FS_MV_CHAR 0x218 /* CAIMovement -> its CCharacter (vf_11's Character_GetCombat argument) */
+#define FS_MV_POS 0x8c   /* CAIMovement: the current transform's position (vf_11's copy before the step) */
+#define FS_ORCS 16
+typedef void (*fs_move_fn)(void *mv, float *xf);
+static struct {
+	int on, ok;
+	float space;          /* cm */
+	uintptr_t orig;
+	_Atomic uint32_t seq; /* the game thread's snapshot (a seqlock): Talion's root, the orcs at him */
+	float root[3], head[3]; /* head: the player's eyes (the rig's head), from_head: SOMVR_FIGHT_SPACE_FROM=head */
+	int have_head, from_head;
+	uintptr_t hobj[FS_ORCS];
+	int n;
+	double t;
+	_Atomic uint64_t calls, near, held, other;
+	_Atomic uintptr_t last_hobj;
+	_Atomic uint32_t last_was, last_want, last_got; /* cm (the last hold, for the log) */
+	uint64_t logged;
+	double next_log;
+} g_fs;
+
+/* the hold: xf's new position (cm) kept at least min(space, the distance it had) from Talion's root */
+static void fs_hold(uintptr_t mv, const float was[3], float *xf)
+{
+	atomic_fetch_add(&g_fs.calls, 1);
+	uint32_t s0 = atomic_load(&g_fs.seq);
+	if (s0 & 1)
+		return;
+	float root[3], head[3];
+	uintptr_t hs[FS_ORCS];
+	memcpy(root, g_fs.root, sizeof root), memcpy(head, g_fs.head, sizeof head);
+	int n = g_fs.n, hh = g_fs.have_head;
+	if (n > FS_ORCS || n < 0)
+		return;
+	memcpy(hs, g_fs.hobj, sizeof hs);
+	if (atomic_load(&g_fs.seq) != s0 || !n)
+		return;
+	float sp = g_fs.space, dx = xf[0] - root[0], dz = xf[2] - root[2], ex = xf[0] - head[0], ez = xf[2] - head[2];
+	if (!isfinite(dx) || !isfinite(dz) || ((fabsf(dx) >= sp || fabsf(dz) >= sp || dx * dx + dz * dz >= sp * sp) &&
+	    (!hh || fabsf(ex) >= sp || fabsf(ez) >= sp || ex * ex + ez * ez >= sp * sp)))
+		return; /* far from both */
+	uintptr_t ch = *(uintptr_t *)(mv + FS_MV_CHAR), h = ch ? *(uintptr_t *)(ch + 8) : 0;
+	int k = 0;
+	while (k < n && hs[k] != h)
+		k++;
+	if (!h || k == n) {
+		atomic_fetch_add(&g_fs.other, 1);
+		return;
+	}
+	atomic_fetch_add(&g_fs.near, 1);
+	float d0 = hypotf(was[0] - root[0], was[2] - root[2]), d = NAN, lim = NAN;
+	if (hh)
+		d0 = fminf(d0, hypotf(was[0] - head[0], was[2] - head[2]));
+	if (!sc_space_hold2(root, hh && g_fs.from_head ? head : NULL, was, xf, sp, &d, &lim))
+		return;
+	atomic_fetch_add(&g_fs.held, 1);
+	atomic_store(&g_fs.last_hobj, h);
+	atomic_store(&g_fs.last_was, (uint32_t)d0), atomic_store(&g_fs.last_want, (uint32_t)d), atomic_store(&g_fs.last_got, (uint32_t)lim);
+}
+
+__attribute__((used)) void somvr_w_aimove(void *mv, float *xf)
+{
+	float was[3];
+	int have = g_fs.ok && mv && xf;
+	if (have)
+		memcpy(was, (char *)mv + FS_MV_POS, sizeof was);
+	((fs_move_fn)g_fs.orig)(mv, xf);
+	if (have)
+		fs_hold((uintptr_t)mv, was, xf);
+}
+
+static void fs_start(int *bad)
+{
+	memset(&g_fs, 0, sizeof g_fs);
+	g_fs.space = env_float("SOMVR_FIGHT_SPACE_CM", 0, 0, 200, bad);
+	if (!(g_fs.space > 0))
+		return;
+	static const char *const from_w[] = { "root", "head" };
+	g_fs.from_head = env_word("SOMVR_FIGHT_SPACE_FROM", from_w, 2, 1);
+	char why[512], err[200] = "";
+	if (check_site(&g_fs_sites[0], why, sizeof why) != 0) {
+		logf_("WARN SOMVR_FIGHT_SPACE_CM: the site FS_AIMOVE %#lx did not match (%s): off", (unsigned long)g_fs_sites[0].addr, why);
+		(*bad)++;
+		return;
+	}
+	void *fn = (void *)somvr_w_aimove;
+	g_fs.orig = g_fs_sites[0].target;
+	if (write_code(g_fs_sites[0].addr, &fn, 8, err, sizeof err) != 0) {
+		logf_("WARN SOMVR_FIGHT_SPACE_CM: the slot %#lx not written (%s): off", (unsigned long)g_fs_sites[0].addr, err);
+		(*bad)++;
+		return;
+	}
+	g_fs.ok = 1;
+	logf_("CONFIG fight space %.0f cm (SOMVR_FIGHT_SPACE_CM): an orc whose attack targets Talion moves no nearer than this to "
+	      "%s (SOMVR_FIGHT_SPACE_FROM; the NPC movement's slot FS_AIMOVE %#lx: orig %#lx, now %p)", g_fs.space,
+	      g_fs.from_head ? "his root or the player's head, whichever is nearer" : "his root", (unsigned long)g_fs_sites[0].addr,
+	      (unsigned long)g_fs.orig, fn);
+}
+
+/* the game thread, every frame: the snapshot (Talion's root, the orcs whose attack target is Talion) and the lines */
+static void fs_frame(uintptr_t pl, int stereo, double t)
+{
+	if (!g_fs.ok)
+		return;
+	uintptr_t pm = 0, obj = 0;
+	float root[3];
+	uintptr_t hs[FS_ORCS];
+	int n = 0;
+	if (pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, root, sizeof root) && vec_ok(root, 1e7f)) {
+		uintptr_t pcomb = peek_ptr(pl + P_COMBAT), pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0, ph = 0;
+		if (pc && vptr_of((void *)pc) != g_cbg.vt_combat)
+			pc = 0;
+		ph = pc ? peek_ptr(pc + C_HOBJ) : 0;
+		struct cb_orc o[CB_ORCS];
+		int m = pcomb ? cb_orcs_r(pcomb, pc, root, 2.0f * g_fs.space + 100.0f, o, CB_ORCS) : 0;
+		for (int i = 0; i < m && n < FS_ORCS; i++) {
+			uintptr_t ta = 0;
+			if (peek(o[i].c + TH_C_TARGET, &ta, sizeof ta) && ta && (ta == obj || ta == ph) && !cb_dead(o[i].c))
+				hs[n++] = o[i].hobj;
+		}
+	}
+	float head[3] = { NAN, NAN, NAN };
+	int hh = 0;
+	if (n && g_fs.from_head && stereo) { /* the eyes the player sees from (a stereo frame's views) */
+		sv_vec3 hp;
+		sv_quat hq;
+		somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+		head[0] = hp.x, head[1] = hp.y, head[2] = hp.z;
+		hh = vec_ok(head, 1e7f);
+	}
+	atomic_fetch_add(&g_fs.seq, 1);
+	if (n)
+		memcpy(g_fs.root, root, sizeof root), memcpy(g_fs.hobj, hs, sizeof hs), memcpy(g_fs.head, head, sizeof head);
+	g_fs.n = n, g_fs.t = t, g_fs.have_head = hh;
+	atomic_fetch_add(&g_fs.seq, 1);
+	uint64_t held = atomic_load(&g_fs.held);
+	if (held != g_fs.logged && t >= g_fs.next_log) {
+		g_fs.next_log = t + 0.5;
+		logf_("FIGHT space t=%.3f held %llu move%s so far (the last: hobj %#lx, from %u cm of the nearer of Talion's root and "
+		      "the head its move wanted %u, kept at %u); %d orc%s at him", t, (unsigned long long)held, held == 1 ? "" : "s",
+		      (unsigned long)atomic_load(&g_fs.last_hobj), atomic_load(&g_fs.last_was), atomic_load(&g_fs.last_want),
+		      atomic_load(&g_fs.last_got), n, n == 1 ? "" : "s");
+		g_fs.logged = held;
+	}
+}
+
+/* SOMVR_FIGHT_REACH="ATTACK:MIN..MAX,..." (build 16): those attacks' StrikeRange set once the database is loaded (the
+ * infantry's overhead chop 'AI_Infantry_Melee_Front_3_LL' 50..70 lands ~25 cm nearer than its other strikes and its
+ * follow-through walks it into Talion: its sibling Front_1's 65..85) */
+static struct { char name[8][64]; float lo[8], hi[8]; int n, done, tries; } g_frr;
+static void frr_config(int *bad)
+{
+	const char *v = getenv("SOMVR_FIGHT_REACH"), *p = v;
+	memset(&g_frr, 0, sizeof g_frr);
+	while (p && *p && g_frr.n < 8) {
+		size_t n = strcspn(p, ",");
+		char item[96];
+		float lo = 0, hi = 0;
+		snprintf(item, sizeof item, "%.*s", (int)(n < sizeof item - 1 ? n : sizeof item - 1), p);
+		char *c = strchr(item, ':'), *dd = c ? strstr(c + 1, "..") : NULL, *e1 = NULL, *e2 = NULL;
+		if (dd) /* (sscanf's "%f..%f" takes "65." as the first number) */
+			*dd = 0, lo = strtof(c + 1, &e1), hi = strtof(dd + 2, &e2);
+		if (dd && e1 && !*e1 && e2 && !*e2 && e1 > c + 1 && e2 > dd + 2 && lo >= 0 && hi >= lo && hi <= 1000 && c - item < 64) {
+			*c = 0;
+			memcpy(g_frr.name[g_frr.n], item, (size_t)(c - item) + 1);
+			g_frr.lo[g_frr.n] = lo, g_frr.hi[g_frr.n] = hi, g_frr.n++;
+		} else if (n) {
+			logf_("WARN SOMVR_FIGHT_REACH: '%.*s' is not ATTACK:MIN..MAX (cm): skipped", (int)n, p);
+			(*bad)++;
+		}
+		p += n + (p[n] == ',');
+	}
+	if (g_frr.n)
+		logf_("CONFIG fight reach: %d %s StrikeRange set once the database is loaded (SOMVR_FIGHT_REACH), the first "
+		      "'%s' %.0f..%.0f cm", g_frr.n, g_frr.n == 1 ? "attack's" : "attacks'", g_frr.name[0], g_frr.lo[0], g_frr.hi[0]);
+}
+static void frr_frame(void)
+{
+	if (!g_frr.n || g_frr.done || !g_cb.ok_hit || g_cb.mode != CB_FULL)
+		return;
+	uintptr_t cat = peek_ptr(g_cbg.atkcat_pp);
+	uint32_t cnt = 0;
+	if (!cat || !peek(cat + CAT_COUNT, &cnt, sizeof cnt) || !cnt)
+		return; /* the database is not loaded yet */
+	g_frr.done = 1;
+	for (int i = 0; i < g_frr.n; i++)
+		fr_range_set(g_frr.name[i], g_frr.lo[i], g_frr.hi[i], "SOMVR_FIGHT_REACH");
+}
+
 static void fight_frame(uintptr_t pl, int stereo)
 {
 	double t = cb_now();
+	g_ft_pl = pl;
+	frr_frame();
+	fs_frame(pl, stereo, t);
 	kx_step();
 	kb_frame(t);
 	tg_frame(t);
@@ -1184,10 +1548,16 @@ static void fight_frame(uintptr_t pl, int stereo)
 /* build 10's switches besides SOMVR_ARMS_LW (the start, after df_start) */
 static void fight_start(int *bad)
 {
+	frr_config(bad);
+	fs_start(bad);
 	g_hu.on = env_word("SOMVR_HURT", (const char *const[]){ "0", "1" }, 2, 0);
 	g_hu.ms = env_float("SOMVR_HURT_MS", g_hu.ms, 50, 2000, bad);
 	g_hu.flash = env_float("SOMVR_HURT_FLASH", g_hu.flash, 0, 1, bad);
 	g_kx.mode = env_word("SOMVR_COMBAT_KNOCKBACK", g_kx_mode_w, 4, KX_OFF);
+	g_kx.sliver = env_float("SOMVR_COMBAT_SLIVER", 0, 0, 1000, bad);
+	if (g_kx.sliver > 0)
+		logf_("CONFIG combat sliver %.0f (SOMVR_COMBAT_SLIVER%s): a hit that would leave an orc this much health or less "
+		      "kills it", g_kx.sliver, g_kx.mode == KX_STAGGER ? "" : "; needs SOMVR_COMBAT_KNOCKBACK=stagger: inactive");
 	kd_config(bad);
 	logf_("CONFIG knockback=%s: %s%s", g_kx_mode_w[g_kx.mode],
 	      !g_kx.mode ? "the records' own recoil types (build 9)"
@@ -1204,6 +1574,12 @@ static void fight_start(int *bad)
 
 static void fight_end_log(void)
 {
+	if (g_fs.ok)
+		logf_("FIGHT END space %.0f cm: NPC moves %llu, near Talion %llu (an orc at him) + %llu (another), held %llu",
+		      g_fs.space, (unsigned long long)atomic_load(&g_fs.calls), (unsigned long long)atomic_load(&g_fs.near),
+		      (unsigned long long)atomic_load(&g_fs.other), (unsigned long long)atomic_load(&g_fs.held));
+	if (g_kx.sliver > 0)
+		logf_("FIGHT END sliver %.0f: hits made kills %llu", g_kx.sliver, (unsigned long long)g_kx.slivers);
 	logf_("FIGHT END hurt=%d knockback=%s: hits on Talion %llu (flashes %llu); reactions watched %llu (the largest move %.2f m "
 	      "during a reaction, %.2f m in its 2.5 s); hits given a lighter recoil %llu (not found %llu), restaggered %llu (took "
 	      "%llu), dealt as light hits %llu (undone %llu, a light hit's damage %.1f), clank recoils lighter %llu; recoil types "

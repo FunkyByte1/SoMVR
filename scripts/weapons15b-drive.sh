@@ -12,6 +12,9 @@
 #            right stick's stealth crouch latched while aiming (build 15's session), round 4 a shot and the crouch; the
 #            exit by apart; the sword back in the hand (the restore), a picture, a swing. Then the user's #9: the sword
 #            put back, the stick's crouch, a draw at the shoulder. PASS/FAIL lines: no DENIED, no refused draw.
+#   grip     the sword's place in the fist: `hands cal R 0 0 Z 90 0 0` for Z in W15_GRIP_Z (0 6 9 12; `env` = as
+#            booted, SOMVR_SWORD_GRIP_CM), one hand and the two hands' grab (the left trigger 10 cm behind the right
+#            grip) each, a dump and a mark each
 #   slot     (SOMVR_BOW_DRAW=slot) the bow from behind the left shoulder: the left grip there, held = the bow out; the
 #            grip let go there puts it back; the left trigger alone brings no bow; a climb-like left trigger press
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
@@ -146,6 +149,20 @@ if has slot; then
   [ "$(cnt '^TWOHAND t=.* grab')" -gt "$n" ] && echo "$(date +%T) PASS the left trigger on the hilt: the two hands' grab" ||
     echo "$(date +%T) INFO no TWOHAND grab by the trigger: $(grep -E '^TWOHAND' "$L" | tail -1 | cut -c1-160)"
   d t1-twohand; m t1-twohand 0.2; t "btn L trigger 0"; rest; sleep 0.5
+fi
+if has grip; then
+  echo "== the sword's place in the fist (SOMVR_ARMS_CAL_R's z: the sword along its length; W15_GRIP_Z, default 0 6 9 12)"
+  held || draw_sword
+  for z in ${W15_GRIP_Z:-0 6 9 12}; do
+    [ "$z" = env ] || w "hands cal R 0 0 $z 90 0 0" 0.6   # env: SOMVR_SWORD_GRIP_CM as booted, no word
+    t "btn L trigger 0" "$OUT_R" "$REST_L"; sleep 1; d "g$z-one"; m "g$z-one" 0.2
+    n=$(cnt '^TWOHAND t=.* grab'); t "$OUT_R" "hand L head 30 -27 30 0 0 0"; sleep 0.5; t "btn L trigger 1"; sleep 1
+    [ "$(cnt '^TWOHAND t=.* grab')" -gt "$n" ] && echo "$(date +%T) z=$z: two hands $(grep -E '^TWOHAND t=.* grab' "$L" | tail -1 | grep -oE 'the left on the hilt [0-9.]+ cm behind')" ||
+      echo "$(date +%T) z=$z: no TWOHAND grab"
+    d "g$z-two"; m "g$z-two" 0.2; t "btn L trigger 0" "$REST_L"; sleep 0.8
+  done
+  case " ${W15_GRIP_Z:-0} " in *" env "*) grep -E '^(CONFIG body|COMBAT blade controller)' "$L" | head -2 | cut -c1-260 ;;
+    *) w "hands cal R 0 0 0 90 0 0" 0.6 ;; esac
 fi
 echo "steps done $(date +%T)"
 grep -E '^(SLOTS END|CROUCH END|BOW END)' "$L" | cut -c1-200
