@@ -98,3 +98,27 @@ int somvr_stl_standoff(const float p[3], const float c[3], float r, float dt, fl
     out[0] = cut * nx, out[2] = cut * nz;
     return 1;
 }
+
+int somvr_stl_standoff_brake(const float p[3], const float c[3], float r, float dt, float decel, const float d[3],
+                             float out[3])
+{
+    out[0] = out[1] = out[2] = 0;
+    float nx = p[0] - c[0], nz = p[2] - c[2], dist = sqrtf(nx * nx + nz * nz);
+    if (!(r > 0) || !(dist > 1e-3f) || !isfinite(d[0] + d[2]) || !(decel > 0))
+        return 0;
+    nx /= dist, nz /= dist;
+    float in = -(d[0] * nx + d[2] * nz); /* cm toward the orc this tick */
+    if (!(in > 0))
+        return 0;
+    float room = dist - r, allow = 0;
+    if (room > 0) {
+        allow = dt > 0 ? sqrtf(2.0f * decel * room) * dt : room;
+        if (allow > room)
+            allow = room;
+    }
+    if (in <= allow)
+        return 0;
+    float cut = in - allow;
+    out[0] = cut * nx, out[2] = cut * nz;
+    return 1;
+}

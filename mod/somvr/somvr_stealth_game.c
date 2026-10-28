@@ -98,6 +98,15 @@ static struct {
 	float frame_root[3];
 	double silent_log_t;
 	double so_cut_cm;
+	/* build 19b: the stand-off per kind of orc (its character combat record: sc_archetype), the brake, the tick at rest;
+	 * a stealth target's back for SOMVR_VERBS' grab */
+	float so_decel, grab_cm;
+	struct { uintptr_t c; int arch; float head_up; char name[48]; } kc[16];
+	int nkc;
+	uintptr_t rest_orc;          /* the orc the stand-off has Talion at rest at (0 = none) */
+	double brake_t;              /* the brake's start (the first cut of this approach) */
+	float brake_cm, brake_v;     /* ... its room and Talion's speed toward the orc then */
+	uint64_t so_rests, back_offers;
 	int watch_hz;
 	_Atomic int req_chase;
 	uint8_t htab[256];
@@ -398,6 +407,60 @@ static int stl_who(const struct cb_orc *o, uintptr_t pc, const float root[3], so
 	return 1;
 }
 
+/* build 19b: an orc's kind - its character combat record's name (REACT's read: FUN_026ff330 on the NPC's record holder;
+ * sc_archetype) and its head node's height over its root - logged once per orc near Talion (the combat frame). Run
+ * 20261028-054549: the infantry, the shield orc, the berserker and the E3 demo's berserker leader (a bigger model) all
+ * notice a crouched Talion at the same distance (113-114 cm by this code's measure, calm at 119): one stand-off fits all */
+static int stl_kind(const struct cb_orc *o)
+{
+	int i = 0;
+	while (i < g_stl.nkc && g_stl.kc[i].c != o->c)
+		i++;
+	if (i < g_stl.nkc)
+		return i;
+	if (g_stl.nkc == 16)
+		memmove(g_stl.kc, g_stl.kc + 1, 15 * sizeof g_stl.kc[0]), g_stl.nkc--;
+	i = g_stl.nkc++;
+	memset(&g_stl.kc[i], 0, sizeof g_stl.kc[i]);
+	g_stl.kc[i].c = o->c, g_stl.kc[i].arch = SC_ARCH_OTHER;
+	struct rx_tbl b;
+	const char *why = NULL;
+	uintptr_t npc = peek_ptr(o->c + C_OWNER);
+	if (g_rx.ok && npc && rx_table(npc, &b, &why) >= 0 && b.ccr) {
+		rx_rec_name(b.ccr, g_stl.kc[i].name, sizeof g_stl.kc[i].name);
+		g_stl.kc[i].arch = sc_archetype(g_stl.kc[i].name);
+	} else {
+		snprintf(g_stl.kc[i].name, sizeof g_stl.kc[i].name, "?");
+	}
+	float h[3];
+	vb_head_of(o, h);
+	g_stl.kc[i].head_up = h[1] - o->pos[1];
+	if (stl_line())
+		logf_("STEALTH orc %#lx: its combat record '%s' (%s), its head %.0f cm over its root", (unsigned long)o->c,
+		      g_stl.kc[i].name, sc_archetype_name(g_stl.kc[i].arch), (double)g_stl.kc[i].head_up);
+	return i;
+}
+
+/* build 19b, SOMVR_STEALTH_KILL_GRAB_CM (default 45; 0 = the head only, build 19): SOMVR_VERBS' left hand takes a stealth
+ * kill's target (somvr_stl_possible: unaware, Talion within its back arc, crouched or slow) by its back too - the column
+ * from its root (the pelvis) up to its head point, the palm within this of it or the arm reached out at it. From the
+ * stand-off (Talion's root 118 cm from its) its head is ~145 cm ahead and high: out of a crouched arm's reach, and the
+ * reach-out cone at its head misses a hand that goes for its back. The grab keeps Talion outside the game's notice range
+ * (the game's own stealth grab is offered from ~3 m). vb_heads (the combat frame) asks per orc; base = its root. */
+static float stl_grab_back(const struct cb_orc *o, uintptr_t pc, const float *root, float base[3])
+{
+	if (g_stl.mode != STL_ON || !(g_stl.grab_cm > 0) || !root || !pc)
+		return 0;
+	somvr_stl_who w;
+	struct stl_aw a;
+	stl_who(o, pc, root, &w, &a);
+	if (somvr_stl_possible(&g_stl.cfg, &w) != SOMVR_STL_KILL)
+		return 0;
+	memcpy(base, o->pos, sizeof o->pos);
+	g_stl.back_offers++;
+	return g_stl.grab_cm;
+}
+
 /* SOMVR_STEALTH_KILL_SILENT (default 1): a swing that heads at an orc which is a stealth kill's target now (the game's
  * unaware, Talion within the back arc, crouched or slow: somvr_stl_possible) registers no attack stimulus
  * (cb_stim_start's FUN_026c7180, the call Combat_StartAttack makes) and rolls no block (SOMVR_COMBAT_REACT): the stock
@@ -435,21 +498,34 @@ static int stl_silent(uintptr_t pc, const struct cb_orc *o, double t, const char
 static void stl_so_apply(somvr_loco *s, somvr_loco_out *o, double t, int follow)
 {
 	for (int i = 0; i < g_stl.so_n; i++) {
-		float d[3] = { o->delta.x, 0, o->delta.z }, corr[3];
-		if (!somvr_stl_standoff(g_stl.so_root, g_stl.so_c[i], g_stl.so_cm, g_stl.so_dt, STL_SO_EASE_HZ, d, corr))
+		float d[3] = { o->delta.x, 0, o->delta.z }, corr[3], r = g_stl.so_cm;
+		float dx = g_stl.so_root[0] - g_stl.so_c[i][0], dz = g_stl.so_root[2] - g_stl.so_c[i][2], dist = sqrtf(dx * dx + dz * dz);
+		if (!(g_stl.so_decel > 0 ? somvr_stl_standoff_brake(g_stl.so_root, g_stl.so_c[i], r, g_stl.so_dt, g_stl.so_decel, d, corr)
+					 : somvr_stl_standoff(g_stl.so_root, g_stl.so_c[i], r, g_stl.so_dt, STL_SO_EASE_HZ, d, corr)))
 			continue;
 		somvr_loco_take_assist(s, o, (sv_vec3){ corr[0], 0, corr[2] }, g_stl.so_dt);
 		g_stl.so_cut_cm += sqrtf(corr[0] * corr[0] + corr[2] * corr[2]);
 		g_stl.so_ticks++;
 		if (follow)
 			continue;
-		float dx = g_stl.so_root[0] - g_stl.so_c[i][0], dz = g_stl.so_root[2] - g_stl.so_c[i][2];
 		if (g_stl.so_orc[i] != g_stl.so_last_orc || t - g_stl.so_last_t > STL_CUE_REARM_S) {
-			g_stl.so_stops++, g_stl.so_cue_req = 1;
+			g_stl.so_stops++, g_stl.rest_orc = 0;
+			g_stl.brake_t = t, g_stl.brake_cm = dist - r;
+			g_stl.brake_v = g_stl.so_dt > 0 ? -(d[0] * dx + d[2] * dz) / (dist > 1e-3f ? dist : 1) / g_stl.so_dt : 0;
+			if (!(g_stl.so_decel > 0))
+				g_stl.so_cue_req = 1; /* build 19: the tick as the ease starts */
 			if (stl_line())
 				logf_("STEALTH t=%.3f stand-off: orc %#lx (unaware, Talion in its back half) at %.0f cm: the walk stops "
-				      "at %.0f cm (the game notices inside ~108 cm)", t, (unsigned long)g_stl.so_orc[i],
-				      sqrtf(dx * dx + dz * dz), (double)g_stl.so_cm);
+				      "at %.0f cm (the game notices inside ~108 cm; %s)", t, (unsigned long)g_stl.so_orc[i], dist, (double)r,
+				      g_stl.so_decel > 0 ? "braking" : "eased");
+		}
+		/* build 19b (the brake): at rest on the circle (within 1 cm, still asked in) = in reach: the tick in both hands */
+		if (g_stl.so_decel > 0 && g_stl.rest_orc != g_stl.so_orc[i] && dist - r <= 1.0f) {
+			g_stl.rest_orc = g_stl.so_orc[i], g_stl.so_rests++, g_stl.so_cue_req = 2;
+			if (stl_line())
+				logf_("STEALTH t=%.3f stand-off: at rest %.1f cm from orc %#lx (the brake from %.0f cm out at %.0f cm/s took "
+				      "%.2f s): in reach - the tick in both hands", t, dist, (unsigned long)g_stl.so_orc[i],
+				      (double)g_stl.brake_cm, (double)g_stl.brake_v, t - g_stl.brake_t);
 		}
 		g_stl.so_last_orc = g_stl.so_orc[i], g_stl.so_last_t = t;
 	}
@@ -519,6 +595,8 @@ static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		somvr_stl_who w;
 		struct stl_aw a;
 		stl_who(&o[i], pc, root, &w, &a);
+		if (g_stl.so_cm > 0 && o[i].dist <= 400.0f)
+			stl_kind(&o[i]); /* build 19b: its kind's line, once */
 		int k, fr = -1;
 		for (k = 0; k < STL_ORCS && g_stl.orc[k].c != o[i].c; k++)
 			if (fr < 0 && (!g_stl.orc[k].c || t - g_stl.orc[k].seen_t > 30.0))
@@ -558,10 +636,13 @@ static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 			      (unsigned long)best, best_d, stl_crouched() ? "crouched" : "standing", (double)g_stl.speed_cms,
 			      (double)g_stl.cue_amp);
 	}
-	if (g_stl.so_cue_req) { /* the stand-off held him at arm's reach: one soft tick (the cue's) */
+	if (g_stl.so_cue_req) { /* the stand-off held him at arm's reach: one soft tick (the cue's; at rest: both hands) */
+		int both = g_stl.so_cue_req == 2;
 		g_stl.so_cue_req = 0;
 		if (g_stl.cue_amp > 0)
 			in_haptic_event(SOMVR_HAND_R, g_stl.cue_amp, 0.03f, SOMVR_HAP_COMBAT);
+		if (g_stl.cue_amp > 0 && both)
+			in_haptic_event(SOMVR_HAND_L, g_stl.cue_amp, 0.03f, SOMVR_HAP_COMBAT);
 	}
 	/* after a kill: did the others notice? (+1 s, +3 s: every live orc within 40 m) */
 	for (int pass = 0; pass < 2; pass++) {
@@ -898,7 +979,19 @@ static const char *stl_word(const char *w)
 			g_stl.req_mode = m + 1;
 			return "stealth mode (a test)";
 		}
-	return "stealth status|on|off|log";
+	if (!strncmp(w, "grab ", 5) || !strncmp(w, "decel ", 6)) { /* build 19b, tests: the old rule against the new in one boot */
+		if (!getenv("SOMVR_HANDS_TEST") || strcmp(getenv("SOMVR_HANDS_TEST"), "1"))
+			return "stealth grab|decel (SOMVR_HANDS_TEST is off: ignored)";
+		float v = strtof(w + (w[0] == 'g' ? 5 : 6), NULL);
+		if (w[0] == 'g')
+			g_stl.grab_cm = v >= 0 && v <= 80 ? v : g_stl.grab_cm;
+		else
+			g_stl.so_decel = v >= 0 && v <= 20 ? 100.0f * v : g_stl.so_decel;
+		logf_("STEALTH the word '%s': SOMVR_STEALTH_KILL_GRAB_CM now %.0f, SOMVR_STEALTH_KILL_STANDOFF_DECEL %.1f (a test)", w,
+		      (double)g_stl.grab_cm, g_stl.so_decel / 100.0);
+		return w[0] == 'g' ? "stealth grab CM (a test: 0 = the head only)" : "stealth decel M/S2 (a test: 0 = build 19's ease)";
+	}
+	return "stealth status|on|off|log|grab CM|decel M/S2";
 }
 
 /* build 19 (re-xr-pipeline.md 73): the VR menu's Stealth kill row: shown with SOMVR_STEALTH_KILL on (with combat); off =
@@ -940,6 +1033,9 @@ static void stl_start(int *bad)
 	g_stl.cfg.stab_mps = env_float("SOMVR_STEALTH_KILL_STAB_MPS", g_stl.cfg.stab_mps, 0.1f, 10, bad);
 	g_stl.cue_amp = env_float("SOMVR_STEALTH_KILL_CUE", 0.25f, 0, 1, bad);
 	g_stl.so_cm = env_float("SOMVR_STEALTH_KILL_STANDOFF_CM", 118.0f, 0, 300, bad);
+	/* build 19b: the brake, the back for the grab */
+	g_stl.so_decel = 100.0f * env_float("SOMVR_STEALTH_KILL_STANDOFF_DECEL", 2.5f, 0, 20, bad);
+	g_stl.grab_cm = env_float("SOMVR_STEALTH_KILL_GRAB_CM", 45.0f, 0, 80, bad);
 	g_stl.silent = env_word("SOMVR_STEALTH_KILL_SILENT", (const char *const[]){ "0", "1" }, 2, 1);
 	g_stl.marks = (int)env_float("SOMVR_STEALTH_KILL_MARKS", 0, 0, 20, bad);
 	g_stl.dagger = env_word("SOMVR_STEALTH_KILL_DAGGER", (const char *const[]){ "0", "1" }, 2, 1);
@@ -965,6 +1061,14 @@ static void stl_start(int *bad)
 		      "not noticed Talion, within 3 m, his walk stops this far from it (root to root; the game notices inside ~108 cm, "
 		      "crouched or not: docs 72), eased over the last ~20 cm, sideways and back free, never a push; one soft tick "
 		      "when it holds him", (double)g_stl.so_cm);
+	if (g_stl.so_cm > 0)
+		logf_("CONFIG stealth stand-off's stop (build 19b): %s", g_stl.so_decel > 0 ?
+		      "the stop: a steady brake to rest on the circle (SOMVR_STEALTH_KILL_STANDOFF_DECEL, m/s^2) and the soft tick in "
+		      "both hands at rest (in reach)" : "the stop: build 19's ease (SOMVR_STEALTH_KILL_STANDOFF_DECEL=0), the tick in "
+		      "the sword hand as it starts");
+	logf_("CONFIG stealth grab=%.0f cm (SOMVR_STEALTH_KILL_GRAB_CM, build 19b): %s", (double)g_stl.grab_cm, g_stl.grab_cm > 0
+	      ? "SOMVR_VERBS' left hand takes a stealth kill's target by its back too (the column from its root up to its head: "
+		"the palm within this of it, or the arm reached out at it)" : "the left hand's grab on its head only (build 19)");
 	g_stl.start_mode = g_stl.mode; /* build 19 */
 }
 
@@ -981,13 +1085,13 @@ static void stl_end_log(void)
 				      (unsigned long long)g_stl.verdicts[v]);
 	logf_("STEALTH END frames %llu contacts %llu (%s; the dagger in hand %llu frames, %llu contacts; the sword without "
 	      "combat's blade %llu frames, %llu contacts); kills %llu, not killed %llu, log-only kills %llu; cues %llu, awareness "
-	      "changes %llu; the stand-off held him %llu times (%llu ticks, %.0f cm cut); silent swings: %llu stimuli, %llu block "
-	      "rolls left out", (unsigned long long)g_stl.frames,
+	      "changes %llu; the stand-off held him %llu times (%llu ticks, %.0f cm cut; at rest %llu); silent swings: %llu stimuli, %llu block "
+	      "rolls left out; the back offered to the grab %llu frames", (unsigned long long)g_stl.frames,
 	      (unsigned long long)g_stl.contacts, l ? vb : "none",
 	      (unsigned long long)g_stl.dagger_frames, (unsigned long long)g_stl.dagger_contacts,
 	      (unsigned long long)g_stl.sword_frames, (unsigned long long)g_stl.sword_contacts,
 	      (unsigned long long)g_stl.kills, (unsigned long long)g_stl.not_killed, (unsigned long long)g_stl.log_kills,
 	      (unsigned long long)g_stl.cues, (unsigned long long)g_stl.changes, (unsigned long long)g_stl.so_stops,
-	      (unsigned long long)g_stl.so_ticks, g_stl.so_cut_cm, (unsigned long long)g_stl.silent_stims,
-	      (unsigned long long)g_stl.silent_rolls);
+	      (unsigned long long)g_stl.so_ticks, g_stl.so_cut_cm, (unsigned long long)g_stl.so_rests,
+	      (unsigned long long)g_stl.silent_stims, (unsigned long long)g_stl.silent_rolls, (unsigned long long)g_stl.back_offers);
 }

@@ -53,6 +53,11 @@ typedef struct {
     float eye[3];      /* the eyes (the reach-out cone, the interrogation's pull), world cm */
     int norc;
     float head[SOMVR_VB_ORCS][3]; /* the near orcs' head points, world cm */
+    /* build 19b (SOMVR_STEALTH_KILL_GRAB_CM): body_cm[i] > 0 = orc i is a stealth kill's target now (unaware, Talion
+     * behind it): its back takes the grab too - the column from body[i] (its root, the pelvis) up to its head point:
+     * the palm within body_cm[i] of it, or the arm reached out at it (cone_deg, out_cm, far_cm as for the head) */
+    float body[SOMVR_VB_ORCS][3];
+    float body_cm[SOMVR_VB_ORCS];
     int game_done;     /* the game's hold ended on its own (completed or out: Talion's record) */
 } somvr_vb_hand_in;
 
@@ -94,6 +99,9 @@ typedef struct {
     float dist_cm;     /* GRAB / MISS / WRAITH: the palm's distance to its head */
     float cone_deg;    /* GRAB / WRAITH: the reach line's angle off the head (-1 = no eyes or not out) */
     int by_cone;       /* GRAB / WRAITH: by the reach-out cone (not on the head) */
+    int by_body;       /* GRAB / WRAITH: by a stealth target's back (body_cm; dist_cm, cone_deg then the back's) */
+    float back_cm;     /* a new squeeze (edge) with a stealth target: the palm's distance to the nearest one's back (else -1) */
+    float back_deg;    /* ... the reach line's angle off that back (-1 = no eyes, not out, or too far) */
     int edge;          /* a new squeeze this step while idle (whatever came of it; dist_cm then the nearest head's) */
     float held_s;      /* RELEASE / LOST / WRAITH_END / DONE: how long it was held */
 } somvr_vb_hand_out;

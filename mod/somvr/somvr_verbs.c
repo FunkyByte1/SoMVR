@@ -35,9 +35,50 @@ static float d3(const float a[3], const float b[3])
 
 static int fin3(const float v[3]) { return isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]); }
 
-/* the head the palm is on (or reached out at): its index, -1 = none; *nearest the nearest head (any distance) */
+/* the point of the segment a..b nearest to p */
+static void seg_near(const float p[3], const float a[3], const float b[3], float q[3])
+{
+    float ab[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, ll = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2], k = 0;
+    if (ll > 1e-6f)
+        k = ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / ll;
+    k = k < 0 ? 0 : k > 1 ? 1 : k;
+    for (int i = 0; i < 3; i++)
+        q[i] = a[i] + k * ab[i];
+}
+
+/* the angle (deg) between the reach line rd (length rl, from the eyes) and the eyes -> p; -1 = p beyond far_cm */
+static float cone_to(const somvr_vb_cfg *c, const float eye[3], const float rd[3], float rl, const float p[3])
+{
+    float hd[3] = { p[0] - eye[0], p[1] - eye[1], p[2] - eye[2] };
+    float hl = sqrtf(hd[0] * hd[0] + hd[1] * hd[1] + hd[2] * hd[2]);
+    if (!(hl > 1 && hl <= c->far_cm))
+        return -1;
+    float cs = (rd[0] * hd[0] + rd[1] * hd[1] + rd[2] * hd[2]) / (rl * hl);
+    return acosf(cs > 1 ? 1 : cs < -1 ? -1 : cs) * 57.29578f;
+}
+
+/* a stealth target's back (the column body..head): the palm's distance to it and the reach line's smallest angle off
+ * it (9 points along it; -1 = none) */
+static void back_of(const somvr_vb_cfg *c, const somvr_vb_hand_in *in, int i, int eye, const float rd[3], float rl,
+                    float *d, float *a)
+{
+    float q[3];
+    seg_near(in->palm, in->body[i], in->head[i], q);
+    *d = d3(in->palm, q), *a = -1;
+    for (int k = 0; eye && k <= 8; k++) {
+        float p[3], f = k / 8.0f;
+        for (int j = 0; j < 3; j++)
+            p[j] = in->body[i][j] + f * (in->head[i][j] - in->body[i][j]);
+        float x = cone_to(c, in->eye, rd, rl, p);
+        if (x >= 0 && (*a < 0 || x < *a))
+            *a = x;
+    }
+}
+
+/* the head the palm is on (or reached out at), or a stealth target's back: its index, -1 = none; *nearest the nearest
+ * head (any distance); *back_cm / *back_deg the nearest stealth target's back (-1 = none) */
 static int pick_head(const somvr_vb_cfg *c, const somvr_vb_hand_in *in, float *dist, float *cone, int *by_cone,
-                     int *nearest, float *nd)
+                     int *by_body, int *nearest, float *nd, float *back_cm, float *back_deg)
 {
     float rd[3] = { 0, 0, 0 }, rl = 0;
     int eye = in->have_eye && fin3(in->eye);
@@ -49,27 +90,28 @@ static int pick_head(const somvr_vb_cfg *c, const somvr_vb_hand_in *in, float *d
     }
     int best = -1;
     float score = INFINITY;
-    *nearest = -1, *nd = INFINITY, *dist = INFINITY, *cone = -1, *by_cone = 0;
+    *nearest = -1, *nd = INFINITY, *dist = INFINITY, *cone = -1, *by_cone = 0, *by_body = 0, *back_cm = -1, *back_deg = -1;
     for (int i = 0; i < in->norc && i < SOMVR_VB_ORCS; i++) {
         if (!fin3(in->head[i]))
             continue;
-        float d = d3(in->palm, in->head[i]), a = -1, sc = INFINITY;
+        float d = d3(in->palm, in->head[i]), a = eye ? cone_to(c, in->eye, rd, rl, in->head[i]) : -1, sc = INFINITY;
         if (d < *nd)
             *nd = d, *nearest = i;
-        if (eye) {
-            float hd[3] = { in->head[i][0] - in->eye[0], in->head[i][1] - in->eye[1], in->head[i][2] - in->eye[2] };
-            float hl = sqrtf(hd[0] * hd[0] + hd[1] * hd[1] + hd[2] * hd[2]);
-            if (hl > 1 && hl <= c->far_cm) {
-                float cs = (rd[0] * hd[0] + rd[1] * hd[1] + rd[2] * hd[2]) / (rl * hl);
-                a = acosf(cs > 1 ? 1 : cs < -1 ? -1 : cs) * 57.29578f;
-            }
-        }
         if (d <= c->reach_cm)
             sc = d;
         else if (a >= 0 && a <= c->cone_deg)
             sc = c->reach_cm + a;
         if (sc < score)
-            score = sc, best = i, *dist = d, *cone = a, *by_cone = !(d <= c->reach_cm);
+            score = sc, best = i, *dist = d, *cone = a, *by_cone = !(d <= c->reach_cm), *by_body = 0;
+        if (!(in->body_cm[i] > 0) || !fin3(in->body[i]))
+            continue;
+        float bd, ba;
+        back_of(c, in, i, eye, rd, rl, &bd, &ba);
+        if (*back_cm < 0 || bd < *back_cm)
+            *back_cm = bd, *back_deg = ba;
+        float sb = bd <= in->body_cm[i] ? bd : ba >= 0 && ba <= c->cone_deg ? c->reach_cm + ba : INFINITY;
+        if (sb < score && !(d <= c->reach_cm)) /* (on its head: the head's grab) */
+            score = sb, best = i, *dist = bd, *cone = ba, *by_cone = !(bd <= in->body_cm[i]), *by_body = 1;
     }
     return best;
 }
@@ -92,7 +134,7 @@ static void to_idle(somvr_vb_hand *s, double t)
 void somvr_vb_hand_step(somvr_vb_hand *s, const somvr_vb_cfg *c, const somvr_vb_hand_in *in, somvr_vb_hand_out *o)
 {
     memset(o, 0, sizeof *o);
-    o->orc = -1, o->dist_cm = INFINITY, o->cone_deg = -1;
+    o->orc = -1, o->dist_cm = INFINITY, o->cone_deg = -1, o->back_cm = -1, o->back_deg = -1;
     float sq = isfinite(in->squeeze) ? in->squeeze : 0, tr = isfinite(in->trigger) ? in->trigger : 0;
     int was = s->closed, twas = s->trig;
     s->closed = was ? sq > c->grip_off : sq >= c->grip_on;
@@ -144,12 +186,12 @@ void somvr_vb_hand_step(somvr_vb_hand *s, const somvr_vb_cfg *c, const somvr_vb_
     /* idle: a new squeeze = the grab; a new trigger press with the open hand = the wraith hand */
     if ((!edge && !tedge) || !in->live || !in->have_palm || !fin3(in->palm))
         return;
-    int nearest, by_cone;
+    int nearest, by_cone, by_body;
     float nd, dist, cone;
-    int best = pick_head(c, in, &dist, &cone, &by_cone, &nearest, &nd);
+    int best = pick_head(c, in, &dist, &cone, &by_cone, &by_body, &nearest, &nd, &o->back_cm, &o->back_deg);
     o->edge = edge;
     o->orc = best >= 0 ? best : nearest, o->dist_cm = best >= 0 ? dist : nd, o->cone_deg = best >= 0 ? cone : -1;
-    o->by_cone = best >= 0 && by_cone;
+    o->by_cone = best >= 0 && by_cone, o->by_body = best >= 0 && by_body;
     if (in->t - s->t_end < c->cool_s)
         return;
     if (edge && best >= 0) {

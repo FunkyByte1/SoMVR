@@ -11562,9 +11562,9 @@ static void vb_tests(void)
 		somvr_blade bb;
 		memset(&bb, 0, sizeof bb);
 		double bt0 = g_vb.blade_t;
-		vb_blade((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, &oa, 1, &bb, g_cb_test_t + 1);
+		vb_blade((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, &oa, 1, &bb, 1, NULL, g_cb_test_t + 1);
 		g_cb.prev.valid = 0;
-		vb_blade((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, NULL, 0, &bb, g_cb_test_t + 1);
+		vb_blade((uintptr_t)&g_pcomb, (uintptr_t)&g_pcs, NULL, 0, &bb, 1, NULL, g_cb_test_t + 1);
 		EXPECT(g_vb.blade_t == bt0, "verbs: the held orc's sweep: in the bands / no swept blade: no contact");
 	}
 	g_inp.ctx = SC_CTX_MENU; /* a menu while held: lost */

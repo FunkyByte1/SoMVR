@@ -1322,9 +1322,11 @@ static const char *vb_word(const char *w);
 static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye); /* in_frame, before the climb: the left hand's grab */
 static int vb_nograb(void);                /* the climb: the left squeeze was the verbs' */
 static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t); /* the stealth kill */
-static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, double t);
+static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, int sweep,
+		     const float *root, double t);
 /* SOMVR_STEALTH_KILL (somvr_stealth_game.c, included last): the stealth kill by the blade from behind an unaware orc */
 static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
+static float stl_grab_back(const struct cb_orc *o, uintptr_t pc, const float *root, float base[3]); /* build 19b: a stealth target's back for SOMVR_VERBS' grab */
 static int stl_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier,
 		       const somvr_blade *b, const float *root, double t);
 static const char *stl_word(const char *w);
@@ -4030,8 +4032,9 @@ static void combat_frame(uintptr_t pl, int head_ok)
 	int sweep = g_cb.prev.valid && b.t > g_cb.prev.t && b.t - g_cb.prev.t <= 0.1 && dist3(b.tip, g_cb.prev.tip) <= CB_JUMP_CM;
 	if (g_cb.prev.valid && !sweep)
 		CB_COUNT(jumps);
-	if (sweep) /* SOMVR_VERBS: the held (or interrogated) orc leaves the targeting bands: its own sweep */
-		vb_blade(pcomb, pc, o, n, &b, t);
+	/* SOMVR_VERBS: the held (or interrogated) orc leaves the targeting bands: its own sweep (build 19b: its lines on
+	 * frames without a sweep too) */
+	vb_blade(pcomb, pc, o, n, &b, sweep, body ? root : NULL, t);
 	for (int i = 0; sweep && i < n; i++) {
 		float c0[3], c1[3];
 		sc_contact ct;

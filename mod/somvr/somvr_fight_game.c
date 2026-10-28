@@ -1185,8 +1185,9 @@ static int fr_range_set(const char *name, float lo, float hi, const char *why)
 }
 
 /* the trigger word "fight guard off|learn|path|miss", "fight death game|TYPE", "fight death dir S", "fight death pin CM",
- * "fight rec TIER NAMES", "fight stagger CM" */
+ * "fight rec TIER NAMES", "fight stagger CM", "fight body ..." */
 static int rl_word(float cm); /* "fight stagger CM" (SOMVR_COMBAT_STAGGER_CM, below) */
+static const char *nb_word(const char *w); /* "fight body ..." (SOMVR_FIGHT_BODY_CM, below) */
 static const char *fight_word(const char *w)
 {
 	char a[16] = "", b[48] = "";
@@ -1244,6 +1245,8 @@ static const char *fight_word(const char *w)
 		logf_("CONFIG death=%s dir=%.2f pin=%.0f cm (the word)", g_kd.mode ? g_kd.type : "game", g_kd.dir, g_kd.pin_cm);
 		return "fight death";
 	}
+	if (!strcmp(a, "body")) /* build 19b: "fight body CM|marks N CM|status" (SOMVR_FIGHT_BODY_CM) */
+		return nb_word(w);
 	if (!strcmp(a, "stagger")) { /* build 17's tests: "fight stagger CM" (SOMVR_COMBAT_STAGGER_CM's cap; 0 = measured only) */
 		v = (float)atof(b);
 		return v >= 0 && v <= 300 && rl_word(v) ? "fight stagger"
@@ -1380,6 +1383,11 @@ static struct {
 	uintptr_t rh[RL_N];
 	float ra[RL_N][3], rcap, rcapk[RL_N]; /* rcapk: a reel's own cap (build 19: SOMVR_PARRY_REEL_CM for a parry) */
 	uint32_t rgen[RL_N];
+	/* SOMVR_FIGHT_BODY_CM (build 19b): per orc at him the root's distance from the eyes its body needs (0 = none), the
+	 * eyes; the hook's counters per slot (the game thread takes them each frame) */
+	float need[FS_ORCS], need_a[FS_ORCS], eye[3]; /* need_a: the move's learnt lean, ahead of it (eased slower) */
+	int have_eye;
+	_Atomic uint32_t kcalls[FS_ORCS], ksteps[FS_ORCS], kpush_mm[FS_ORCS];
 	double t;
 	_Atomic uint64_t calls, near, held, other;
 	_Atomic uintptr_t last_hobj;
@@ -1425,6 +1433,533 @@ static void fs_hold(uintptr_t mv, const float was[3], float *xf)
 	atomic_fetch_add(&g_fs.held, 1);
 	atomic_store(&g_fs.last_hobj, h);
 	atomic_store(&g_fs.last_was, (uint32_t)d0), atomic_store(&g_fs.last_want, (uint32_t)d), atomic_store(&g_fs.last_got, (uint32_t)lim);
+}
+
+/* ---- SOMVR_FIGHT_BODY_CM (build 19b, docs/re-xr-pipeline.md 74): the orcs' bodies out of the player's face -------- *
+ * FIGHT_SPACE keeps an attacker's root 87-89 cm from Talion, but a move leans the body far past the root (run 022755
+ * frame 4806: a shoulder and head ~0.3 m from the eyes, half the view). Each stereo frame (the game thread, fs_frame)
+ * the near orcs' bones are read (GetNodeTransform: Head, Neck, Spine4_joint and the two shoulders = the body; the hands
+ * and the weapons measured only) and their nearest distance from the eyes kept per move (the attack record; none =
+ * between blows): `FIGHT body near` per move under NB_LOG_CM, `FIGHT END body` (per move: how many, how many under 50
+ * cm, the nearest). With the cm > 0, an orc at Talion whose body is nearer than that to the eyes has its root held
+ * back (FS_AIMOVE's post-hook, after the reel and the space: sc_body_need here, sc_body_push in the hook - eased out at
+ * most NB_PUSH_CMS, never nearer than its own step put it). Not the hands or the weapons: the blows still reach
+ * Talion's body and the guard. Talion and the view never move. */
+#define NB_TRK 8
+#define NB_MOVES 96
+#define NB_LOG_CM 70.0f   /* a move whose body came nearer than this gets its line */
+#define NB_CLOSE_CM 50.0f /* "too close" in the END table */
+#define NB_PUSH_CMS 600.0f /* the hook's ease out: 6 m/s (a step = this x the frame's time: 6.7 cm at 90 Hz, 30 at the
+			    * null compositor's 20 Hz; run 061738: a berserker's Front_3 leans 38 cm in 2-3 frames) */
+#define NB_ANTIC_CMS 150.0f /* ... toward a move's learnt lean, ahead of it: 1.5 m/s (a step back, not a slide) */
+#define NB_ANTIC_S 0.45     /* ... from this long before the time into the move its lean began (the earliest seen) */
+#define NB_MAX_CM 60.0f   /* the most a root is held back past where it stands */
+#define NB_LEAD_CM 25.0f  /* the lead: the body's nearing in the last frame asked as a margin (at most this): the need
+			   * is read from the last frame's pose, the lean grows meanwhile (run 055508 at 20 Hz: 42-49 cm
+			   * under a 55 cm hold, a frame's lean) */
+#define NB_LINES 300
+enum { NB_HEAD, NB_NECK, NB_CHEST, NB_LSH, NB_RSH, NB_LH, NB_RH, NB_NODES };
+#define NB_BODY 5 /* the first five nodes are the body (held); the hands and the weapons are measured only */
+#define NB_H_NULL 0x88baa7e7u /* somhash("Null"): the skeleton's root node (nodes-2.tsv node 0) - the pose's own root */
+static const uint32_t g_nb_hash[NB_NODES] = { 0x72598328u, 0x87ec5687u, 0x7af43530u, 0x338cf5b2u, 0x67d021bcu,
+					       0x9b878e09u, 0xc7485ad3u }; /* somhash: docs/re-animation.md 2.3 */
+static const char *const g_nb_node_w[NB_NODES + 1] = { "head", "neck", "chest", "left shoulder", "right shoulder",
+							"left hand", "right hand", "weapon" };
+enum { NBP_HEAD, NBP_CHEST, NBP_SHOULDERS, NBP_HANDS, NBP_WEAPON, NBP_N }; /* the line's parts (neck + chest as one) */
+static const int g_nb_part_of[NB_NODES + 1] = { NBP_HEAD, NBP_CHEST, NBP_CHEST, NBP_SHOULDERS, NBP_SHOULDERS, NBP_HANDS,
+						 NBP_HANDS, NBP_WEAPON };
+struct nb_trk {
+	uintptr_t c, hobj, atk;      /* the move = its attack record (0 = between blows) */
+	int st;                      /* its model interface reaches code: 0 not checked, 1 yes, -1 no (not measured) */
+	int wst, nw, wtip[2];        /* its weapons (as df_weapons) */
+	uintptr_t wobj[2];
+	uint32_t wnode[2];
+	double t0, tmin, seen;
+	uint64_t fmin;               /* the frame of the move's nearest */
+	float dmin, root_eye, root_tal, part[NBP_N], need_max, pushed;
+	int bmin, sync, marked, mk_b;
+	int mvi;                     /* its move's row in the table (-1 none: between blows) */
+	float lean_seen, t_lean;     /* this move: its need past the cm at the most, the time into it the need began (-1) */
+	uint32_t antic;              /* frames held ahead by the learnt lean */
+	float mk_d;                  /* "fight body marks": under the mark's cm and still nearing (0 = not yet) */
+	float prev_bd;               /* the body's nearest last frame (the lead), kept across its moves */
+	double prev_bt;
+	float r0;                    /* the root's distance from the eyes when this hold began (0 = none): the hold never
+				      * takes it past this + NB_MAX_CM (run 063903: the pose a frame behind the root - each
+				      * step out read as more lean - carried a defender 3.7 m away in a second, again and
+				      * again); kept across its moves */
+	double need_t;               /* the last frame it needed a hold */
+	float prev_pos[3];           /* its root last frame (the pose's lag is at most the root's last step) */
+	float push_ep;               /* the root's way out in this hold at the most (cm) */
+	uint32_t frames, needs, calls, steps;
+	char kind[24];
+};
+struct nb_move {
+	uintptr_t rec;
+	char name[64], kind[24];
+	uint32_t n, close, held, n_lean;
+	float min, sum, pushed;
+	float lean, t_lean; /* learnt (the hold on): the root's need past the cm (cm), the time into it the need began */
+};
+static struct {
+	int set, on;                 /* SOMVR_FIGHT_BODY_CM given (0 = measured only); on: the hold (cm > 0, FS_AIMOVE in) */
+	float cm;
+	int sync_hold;               /* SOMVR_FIGHT_BODY_SYNC=hold: an enemy's sync on Talion (its headbutt) held too; free:
+				      * no sync held. Talion's own (a grab, an execution, the strike's lift) never */
+	int tsync;                   /* this frame (fs_frame): 0 no sync on Talion, 1 an enemy's on him, 2 his own */
+	uintptr_t last_hs[FS_ORCS];  /* the last stereo frame's needs (a frame without the eyes keeps them 0.15 s) */
+	float last_need[FS_ORCS], last_eye[3];
+	float last_need_a[FS_ORCS];
+	int last_n;
+	double last_t, prev_t;
+	float step_cm, step_a;       /* the hook's ease out per step: NB_PUSH_CMS / NB_ANTIC_CMS x the last frame's time */
+	int marks;                   /* the test word "fight body marks N CM": a bug mark when a body comes nearer than */
+	float mark_cm;               /* ... this (each move once) */
+	struct nb_trk tr[NB_TRK];
+	struct nb_move mv[NB_MOVES];
+	int nmv;
+	uintptr_t pk[FS_ORCS];       /* the snapshot's slots last frame (whose the hook's counters are) */
+	int npk;
+	uint64_t frames, orc_frames, at_frames, nonode, moves, lines, suppressed, mv_full, need_frames, calls, steps,
+		sync_free, kept, antic, null_ok, null_no, capped;
+	float lag_max, push_ep_max;
+	float pushed;
+} g_nb;
+
+/* the hook's thread: an orc at Talion whose body needs its root farther from the eyes (the snapshot's need) */
+static void nb_hold(uintptr_t mv, const float was[3], float *xf)
+{
+	uint32_t s0 = atomic_load(&g_fs.seq);
+	int n = g_fs.n;
+	if ((s0 & 1) || n <= 0 || n > FS_ORCS)
+		return;
+	uintptr_t ch = *(uintptr_t *)(mv + FS_MV_CHAR), h = ch ? *(uintptr_t *)(ch + 8) : 0;
+	int k = 0;
+	while (h && k < n && g_fs.hobj[k] != h)
+		k++;
+	if (!h || k == n)
+		return;
+	float need = g_fs.need[k], need_a = g_fs.need_a[k], eye[3], pushed = 0, p2 = 0;
+	int he = g_fs.have_eye;
+	memcpy(eye, g_fs.eye, sizeof eye);
+	if (atomic_load(&g_fs.seq) != s0)
+		return;
+	atomic_fetch_add(&g_fs.kcalls[k], 1);
+	if (!g_nb.on || !he)
+		return;
+	int a = need_a > 0 && sc_body_push(eye, was, xf, need_a, g_nb.step_a, &pushed); /* ahead of its lean, slower */
+	int b = need > 0 && sc_body_push(eye, was, xf, need, g_nb.step_cm, &p2);      /* the body now */
+	if (a || b)
+		atomic_fetch_add(&g_fs.ksteps[k], 1), atomic_fetch_add(&g_fs.kpush_mm[k], (uint32_t)((pushed + p2) * 10.0f));
+}
+
+static int nb_log_ok(void)
+{
+	if (g_nb.lines < NB_LINES)
+		return ++g_nb.lines;
+	g_nb.suppressed++;
+	return 0;
+}
+
+/* the move's row (its attack record; between blows per kind): -1 = the table full */
+static int nb_mv_row(uintptr_t rec, const char *kind)
+{
+	for (int i = 0; i < g_nb.nmv; i++)
+		if (g_nb.mv[i].rec == rec && (rec || !strcmp(g_nb.mv[i].kind, kind)))
+			return i;
+	if (g_nb.nmv >= NB_MOVES)
+		return -1;
+	struct nb_move *m = &g_nb.mv[g_nb.nmv];
+	memset(m, 0, sizeof *m);
+	m->rec = rec, m->min = INFINITY, m->t_lean = -1;
+	if (!rec || !rx_rec_name(rec, m->name, sizeof m->name)[0])
+		snprintf(m->name, sizeof m->name, "%s", rec ? "?" : "(between blows)");
+	snprintf(m->kind, sizeof m->kind, "%s", kind);
+	return g_nb.nmv++;
+}
+
+/* a move over (its attack changed, the orc gone or out of range): its row in the table (and what the hold learnt of
+ * its lean), its line */
+static void nb_flush(struct nb_trk *e, const char *why)
+{
+	if (!e->c || !e->frames || !isfinite(e->dmin))
+		return;
+	int r = e->mvi >= 0 && e->mvi < g_nb.nmv && g_nb.mv[e->mvi].rec == e->atk ? e->mvi : nb_mv_row(e->atk, e->kind);
+	struct nb_move *m = r >= 0 ? &g_nb.mv[r] : NULL;
+	const char *nm = m ? m->name : "?";
+	if (!m)
+		g_nb.mv_full++;
+	else {
+		m->n++, m->close += e->dmin < NB_CLOSE_CM, m->held += e->steps > 0, m->sum += e->dmin, m->pushed += e->pushed;
+		m->min = fminf(m->min, e->dmin);
+		if (e->atk && e->t_lean >= 0) { /* learnt: the next of its kind is held back ahead of the lean */
+			m->lean = fmaxf(m->lean, e->lean_seen);
+			m->t_lean = m->n_lean ? fminf(m->t_lean, e->t_lean) : e->t_lean;
+			m->n_lean++;
+		}
+	}
+	g_nb.moves++;
+	if (e->dmin < NB_LOG_CM && nb_log_ok()) {
+		char pt[NBP_N][12];
+		for (int k = 0; k < NBP_N; k++)
+			snprintf(pt[k], sizeof pt[k], isfinite(e->part[k]) ? "%.0f" : "-", e->part[k]);
+		logf_("FIGHT body near t=%.3f frame=%llu orc=%#lx '%s' move '%s'%s: its %s %.0f cm from the eyes %.2f s into it "
+		      "(%.2f s long); its root then %.0f cm from the eyes, %.0f from Talion's root; nearest head %s neck/chest %s "
+		      "shoulders %s hands %s weapon %s cm; %s (%u frames, %u needing a hold, the hook's calls %u, %u steps held "
+		      "%.0f cm; the most it needed %.0f cm from the eyes; held ahead of its lean %u frames; its way out %.0f cm at the most); "
+		      "%s",
+		      e->tmin, (unsigned long long)e->fmin, (unsigned long)e->c, e->kind, nm, e->sync ? " (a sync)" : "",
+		      g_nb_node_w[e->bmin >= 0 && e->bmin <= NB_NODES ? e->bmin : 0], e->dmin, e->tmin - e->t0,
+		      e->seen - e->t0, e->root_eye, e->root_tal, pt[NBP_HEAD], pt[NBP_CHEST], pt[NBP_SHOULDERS], pt[NBP_HANDS],
+		      pt[NBP_WEAPON], g_nb.on ? "held" : "measured only", e->frames, e->needs, e->calls, e->steps, e->pushed,
+		      e->need_max, e->antic, e->push_ep, why);
+	}
+}
+
+/* its weapons this frame: base = the model object, tip = its tip node (df_weapons' reads, without its counters) */
+static int nb_weapons(struct nb_trk *e, uintptr_t m, float ob[2][3], float ot[2][3])
+{
+	if (!g_th.ok_node)
+		return 0;
+	if (!e->wst) {
+		e->wst = 1, e->nw = 0;
+		uintptr_t owner = peek_ptr(e->c + C_OWNER), inv = owner ? peek_ptr(owner + 0x910) : 0;
+		uint32_t slot = 8;
+		uintptr_t item = inv && peek(inv + 0x280, &slot, 4) && slot <= 7 ? peek_ptr(inv + 0x30 + (uintptr_t)slot * 0x38) : 0;
+		uintptr_t b = item ? peek_ptr(item + SL_IT_ENTRIES) : 0, en = item ? peek_ptr(item + SL_IT_ENTRIES + 8) : 0;
+		int ne = b && en > b && (en - b) % SL_IT_ESIZE == 0 ? (int)((en - b) / SL_IT_ESIZE) : 0;
+		static const char *const tips[] = { "weapon_tip", "axe_tip", "sword_tip" };
+		for (int k = 0; k < ne && k < SL_MAX_ENTRIES && e->nw < 2; k++) {
+			uintptr_t obj = peek_ptr(b + (uintptr_t)k * SL_IT_ESIZE + SL_IE_OBJ);
+			uintptr_t mi = obj ? peek_ptr(obj + OBJ_MODEL) : 0, mv = vptr_of((void *)mi), f = mv ? peek_ptr(mv + 0x20) : 0;
+			int pr = f ? page_prot(f) : -1;
+			if (!obj || pr < 0 || !(pr & PROT_EXEC))
+				continue;
+			int w = e->nw++;
+			e->wobj[w] = obj, e->wtip[w] = 0;
+			for (size_t j = 0; j < sizeof tips / sizeof tips[0] && !e->wtip[w]; j++)
+				e->wtip[w] = !(TH_FN(THS_GETNODE, th_getnode_fn)(m, obj, tips[j], &e->wnode[w]) & 0xff);
+		}
+	}
+	int n = 0;
+	for (int w = 0; w < e->nw; w++) {
+		float op[3], oq[4], xf[16] = { 0 };
+		if (!peek(e->wobj[w] + OBJ_POS, op, sizeof op) || !peek(e->wobj[w] + OBJ_ROT, oq, sizeof oq) || !vec_ok(op, 1e7f))
+			continue;
+		if (e->wtip[w] && !(((nodexf_fn)g_node_sites[NS_NODEXF].target)((void *)m, e->wobj[w], e->wnode[w], xf, 1) & 0xff) &&
+		    vec_ok(xf, 1e7f) && dist3(xf, op) < 250) {
+			memcpy(ot[n], xf, 12);
+		} else {
+			sv_vec3 y = sv_qrot(sv_qnormalize(sv_quat_of(oq)), (sv_vec3){ 0, 1, 0 });
+			ot[n][0] = op[0] + y.x * 80, ot[n][1] = op[1] + y.y * 80, ot[n][2] = op[2] + y.z * 80;
+		}
+		memcpy(ob[n], op, 12);
+		n++;
+	}
+	return n;
+}
+
+/* the game thread (fs_frame, before its snapshot): the near orcs o[m] measured from the eyes; need[k] for each orc at
+ * Talion hs[k] (0 = none) */
+static void nb_frame(const struct cb_orc *o, int m, const uintptr_t *hs, int n, const float root[3], int stereo,
+		     double t, float *need, float *need_a, float eye_out[3], int *have_eye)
+{
+	for (int k = 0; k < n; k++)
+		need[k] = need_a[k] = 0;
+	*have_eye = 0;
+	if (!g_nb.set)
+		return;
+	/* the hook's counters of the last snapshot's slots */
+	for (int k = 0; k < g_nb.npk; k++) {
+		uint32_t ca = atomic_exchange(&g_fs.kcalls[k], 0), st = atomic_exchange(&g_fs.ksteps[k], 0);
+		uint32_t mm = atomic_exchange(&g_fs.kpush_mm[k], 0);
+		g_nb.calls += ca, g_nb.steps += st, g_nb.pushed += mm * 0.1f;
+		for (int i = 0; i < NB_TRK; i++)
+			if (g_nb.tr[i].c && g_nb.tr[i].hobj == g_nb.pk[k])
+				g_nb.tr[i].calls += ca, g_nb.tr[i].steps += st, g_nb.tr[i].pushed += mm * 0.1f;
+	}
+	g_nb.npk = n;
+	memcpy(g_nb.pk, hs, sizeof(uintptr_t) * (size_t)n);
+	double dt = g_nb.prev_t > 0 ? t - g_nb.prev_t : 1.0 / 90;
+	dt = dt < 0.005 ? 0.005 : dt > 0.06 ? 0.06 : dt;
+	g_nb.prev_t = t, g_nb.step_cm = NB_PUSH_CMS * (float)dt, g_nb.step_a = NB_ANTIC_CMS * (float)dt;
+	g_nb.at_frames += (uint64_t)n;
+	uintptr_t mp = peek_ptr(g_som.model_pp);
+	if (!stereo && g_nb.on && t - g_nb.last_t < 0.15) { /* no eyes this frame: the last ones' needs */
+		for (int k = 0; k < n; k++)
+			for (int j = 0; j < g_nb.last_n; j++)
+				if (g_nb.last_hs[j] == hs[k])
+					need[k] = g_nb.last_need[j], need_a[k] = g_nb.last_need_a[j];
+		memcpy(eye_out, g_nb.last_eye, sizeof g_nb.last_eye), *have_eye = 1;
+		g_nb.kept++;
+	}
+	if (!stereo || !g_node_ok || !mp)
+		return;
+	sv_vec3 hp;
+	sv_quat hq;
+	somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+	float eye[3] = { hp.x, hp.y, hp.z };
+	if (!vec_ok(eye, 1e7f))
+		return;
+	memcpy(eye_out, eye, sizeof eye), *have_eye = 1;
+	g_nb.frames++;
+	for (int i = 0; i < m; i++) {
+		struct nb_trk *e = NULL, *fr = NULL;
+		for (int j = 0; j < NB_TRK && !e; j++)
+			if (g_nb.tr[j].c == o[i].c)
+				e = &g_nb.tr[j];
+			else if (!g_nb.tr[j].c && !fr)
+				fr = &g_nb.tr[j];
+		if (!e && !(e = fr))
+			continue;
+		if (!e->c) {
+			memset(e, 0, sizeof *e);
+			e->c = o[i].c, e->hobj = o[i].hobj, e->atk = peek_ptr(o[i].c + RX_C_ATTACK), e->t0 = t, e->dmin = INFINITY;
+			for (int k = 0; k < NBP_N; k++)
+				e->part[k] = INFINITY;
+			e->bmin = -1, e->t_lean = -1;
+			if (vptr_of((void *)o[i].c) == g_cbg.vt_combat)
+				fb_rec_name(peek_ptr(o[i].c + PR_C_CHARREC), e->kind, sizeof e->kind);
+			if (!e->kind[0])
+				snprintf(e->kind, sizeof e->kind, "?");
+			e->mvi = e->atk ? nb_mv_row(e->atk, e->kind) : -1;
+		}
+		e->seen = t;
+		uintptr_t a = peek_ptr(o[i].c + RX_C_ATTACK);
+		if (a != e->atk) { /* a new move */
+			nb_flush(e, "its next move");
+			uintptr_t c = e->c, h = e->hobj;
+			int st = e->st, wst = e->wst, nw = e->nw, wt[2] = { e->wtip[0], e->wtip[1] };
+			uintptr_t wo[2] = { e->wobj[0], e->wobj[1] };
+			uint32_t wn[2] = { e->wnode[0], e->wnode[1] };
+			char kd[24];
+			float pbd = e->prev_bd, pr0 = e->r0, ppos[3] = { e->prev_pos[0], e->prev_pos[1], e->prev_pos[2] };
+			double pbt = e->prev_bt, pnt = e->need_t;
+			memcpy(kd, e->kind, sizeof kd);
+			memset(e, 0, sizeof *e);
+			e->prev_bd = pbd, e->prev_bt = pbt, e->r0 = pr0, e->need_t = pnt;
+			memcpy(e->prev_pos, ppos, sizeof ppos);
+			e->c = c, e->hobj = h, e->st = st, e->wst = wst, e->nw = nw, e->atk = a, e->t0 = e->seen = t, e->dmin = INFINITY;
+			memcpy(e->wtip, wt, sizeof wt), memcpy(e->wobj, wo, sizeof wo), memcpy(e->wnode, wn, sizeof wn);
+			memcpy(e->kind, kd, sizeof kd);
+			for (int k = 0; k < NBP_N; k++)
+				e->part[k] = INFINITY;
+			e->bmin = -1, e->t_lean = -1;
+			e->mvi = a ? nb_mv_row(a, e->kind) : -1;
+		}
+		if (!e->st) { /* once per orc: its model interface must reach code (GetNodeTransform's FUN_008f3c20) */
+			uintptr_t mi = peek_ptr(o[i].hobj + OBJ_MODEL), mv = vptr_of((void *)mi), f = mv ? peek_ptr(mv + 0x20) : 0;
+			int pr = f ? page_prot(f) : -1;
+			e->st = pr >= 0 && (pr & PROT_EXEC) ? 1 : -1;
+		}
+		if (e->st < 0) {
+			g_nb.nonode++;
+			continue;
+		}
+		float p[NB_NODES][3], body[NB_BODY][3], d[NB_NODES + 1], nx[16] = { 0 }, dl[2] = { 0, 0 };
+		int nb = 0, got = 0;
+		/* the pose's own root: the bones are read as the pose has them, the root (o.pos) where it is now; the body's
+		 * points for the hold are moved by the difference - only when it is no more than the root's last step (a
+		 * pose behind by a frame), never a standing offset */
+		float st = e->prev_bt > 0 && t - e->prev_bt < 0.1 ? hypotf(o[i].pos[0] - e->prev_pos[0], o[i].pos[2] - e->prev_pos[2])
+			: 0.0f;
+		memcpy(e->prev_pos, o[i].pos, sizeof e->prev_pos);
+		if (!(((nodexf_fn)g_node_sites[NS_NODEXF].target)((void *)mp, o[i].hobj, NB_H_NULL, nx, 1) & 0xff) &&
+		    vec_ok(nx, 1e7f) && hypotf(o[i].pos[0] - nx[0], o[i].pos[2] - nx[2]) <= st + 2.0f)
+			dl[0] = o[i].pos[0] - nx[0], dl[1] = o[i].pos[2] - nx[2], g_nb.null_ok++;
+		else
+			g_nb.null_no++;
+		g_nb.lag_max = fmaxf(g_nb.lag_max, hypotf(dl[0], dl[1]));
+		for (int k = 0; k < NB_NODES; k++) {
+			float xf[16] = { 0 };
+			d[k] = INFINITY;
+			if ((((nodexf_fn)g_node_sites[NS_NODEXF].target)((void *)mp, o[i].hobj, g_nb_hash[k], xf, 1) & 0xff) ||
+			    !vec_ok(xf, 1e7f) || dist3(xf, o[i].pos) > 300.0f)
+				continue;
+			memcpy(p[k], xf, 12), d[k] = dist3(p[k], eye), got++;
+			if (k < NB_BODY)
+				body[nb][0] = p[k][0] + dl[0], body[nb][1] = p[k][1], body[nb][2] = p[k][2] + dl[1], nb++;
+		}
+		float ob[2][3], ot[2][3], s0, t0;
+		int nw = nb_weapons(e, mp, ob, ot);
+		d[NB_NODES] = INFINITY;
+		for (int w = 0; w < nw; w++)
+			d[NB_NODES] = fminf(d[NB_NODES], sc_seg_dist(ob[w], ot[w], eye, eye, &s0, &t0));
+		if (!got) {
+			g_nb.nonode++;
+			continue;
+		}
+		g_nb.orc_frames++, e->frames++;
+		e->sync |= cb_sync(o[i].c);
+		float bd = INFINITY;
+		int bk = -1;
+		for (int k = 0; k <= NB_NODES; k++) {
+			int pk = g_nb_part_of[k];
+			e->part[pk] = fminf(e->part[pk], d[k]);
+			if (k < NB_BODY && d[k] < bd)
+				bd = d[k], bk = k;
+		}
+		if (bd < e->dmin) {
+			e->dmin = bd, e->bmin = bk, e->tmin = t, e->fmin = g_fr.frame;
+			e->root_eye = hypotf(o[i].pos[0] - eye[0], o[i].pos[2] - eye[2]);
+			e->root_tal = hypotf(o[i].pos[0] - root[0], o[i].pos[2] - root[2]);
+		}
+		/* headless pictures (the test word): under the mark's cm, at the move's nearest (the first frame it recedes) */
+		if (g_nb.marks > 0 && !e->marked && bd < g_nb.mark_cm && (!(e->mk_d > 0) || bd <= e->mk_d))
+			e->mk_d = bd, e->mk_b = bk;
+		else if (g_nb.marks > 0 && !e->marked && e->mk_d > 0 && bd > e->mk_d + 1.0f) {
+			char note[96], nm[64] = "";
+			if (!e->atk || !rx_rec_name(e->atk, nm, sizeof nm)[0])
+				snprintf(nm, sizeof nm, "%s", e->atk ? "?" : "(between blows)");
+			snprintf(note, sizeof note, "%s %s %.0f cm (now %.0f)", nm, g_nb_node_w[e->mk_b], e->mk_d, bd);
+			e->marked = 1, g_nb.marks--;
+			ss_mark("an orc's body near the eyes (fight body marks)", note, t);
+		}
+		int insync = cb_sync(o[i].c);
+		float lead = e->prev_bt > 0 && t - e->prev_bt < 0.1 && isfinite(e->prev_bd) && isfinite(bd)
+			? fminf(fmaxf(e->prev_bd - bd, 0.0f), NB_LEAD_CM) : 0.0f;
+		e->prev_bd = bd, e->prev_bt = t;
+		for (int k = 0; k < n; k++)
+			if (hs[k] == o[i].hobj && g_nb.on) {
+				int w = -1;
+				float nd = sc_body_need(eye, o[i].pos, (const float (*)[3])body, nb, g_nb.cm + lead, NB_MAX_CM, &w);
+				float n0 = lead > 0 ? sc_body_need(eye, o[i].pos, (const float (*)[3])body, nb, g_nb.cm, NB_MAX_CM, &w) : nd;
+				float rr = hypotf(o[i].pos[0] - eye[0], o[i].pos[2] - eye[2]), na = 0, ti = (float)(t - e->t0);
+				const struct nb_move *mr = e->mvi >= 0 && e->mvi < g_nb.nmv ? &g_nb.mv[e->mvi] : NULL;
+				if (mr && mr->n_lean && mr->lean > 0 && ti >= mr->t_lean - NB_ANTIC_S) /* ahead of its learnt lean */
+					na = fminf(g_nb.cm + mr->lean, rr + NB_MAX_CM);
+				/* a sync not held: Talion's own (a grab, an execution, the strike's lift), an enemy's on him with
+				 * SOMVR_FIGHT_BODY_SYNC=free (the orc's own flag alone says nothing: a berserker's every strike
+				 * has it, run 053004) */
+				if ((nd > 0 || na > rr) && (g_nb.tsync == 2 || (g_nb.tsync == 1 && insync && !g_nb.sync_hold))) {
+					g_nb.sync_free++;
+					continue;
+				}
+				if (n0 > 0) { /* learning: how far past the cm its root had to be, from when into the move */
+					e->lean_seen = fmaxf(e->lean_seen, n0 - g_nb.cm);
+					if (e->t_lean < 0)
+						e->t_lean = ti;
+				}
+				if (nd > 0 || na > rr) { /* a hold: never past where it began + NB_MAX_CM */
+					if (!(e->r0 > 0) || t - e->need_t > 0.5)
+						e->r0 = rr;
+					e->need_t = t;
+					float cap = e->r0 + NB_MAX_CM;
+					if (nd > cap || na > cap)
+						g_nb.capped++;
+					nd = fminf(nd, cap), na = fminf(na, cap);
+					e->push_ep = fmaxf(e->push_ep, rr - e->r0);
+					g_nb.push_ep_max = fmaxf(g_nb.push_ep_max, rr - e->r0);
+				}
+				need[k] = nd;
+				if (na > rr)
+					need_a[k] = na, e->antic++, g_nb.antic++;
+				if (need[k] > 0 || need_a[k] > 0)
+					e->needs++, g_nb.need_frames++, e->need_max = fmaxf(e->need_max, fmaxf(need[k], need_a[k]));
+			}
+	}
+	g_nb.last_n = n, g_nb.last_t = t;
+	memcpy(g_nb.last_hs, hs, sizeof(uintptr_t) * (size_t)n), memcpy(g_nb.last_need, need, sizeof(float) * (size_t)n);
+	memcpy(g_nb.last_need_a, need_a, sizeof(float) * (size_t)n);
+	memcpy(g_nb.last_eye, eye, sizeof eye);
+	for (int j = 0; j < NB_TRK; j++) /* gone: not among the near orcs for 0.5 s */
+		if (g_nb.tr[j].c && t - g_nb.tr[j].seen > 0.5) {
+			nb_flush(&g_nb.tr[j], "out of range or gone");
+			g_nb.tr[j].c = 0;
+		}
+}
+
+/* "fight body CM" (0 = measured only), "fight body marks N CM", "fight body status" */
+static const char *nb_word(const char *w)
+{
+	char b[16] = "";
+	float v = 0, c = 0;
+	int k = 0;
+	if (sscanf(w, "%*s %15s", b) != 1)
+		return "fight body (CM | marks N CM | status: ignored)";
+	if (!strcmp(b, "marks")) {
+		if (!g_bd.test || sscanf(w, "%*s %*s %d %f", &k, &c) != 2 || k < 0 || k > 20 || !(c > 0 && c <= 200))
+			return "fight body marks (SOMVR_HANDS_TEST off, or not N 0..20 CM 1..200: ignored)";
+		g_nb.marks = k, g_nb.mark_cm = c;
+		for (int j = 0; j < NB_TRK; j++)
+			g_nb.tr[j].marked = 0;
+		logf_("FIGHT body marks %d under %.0f cm (the word)", k, c);
+		return "fight body marks";
+	}
+	if (!strcmp(b, "sync")) { /* "fight body sync hold|free" */
+		char c2[8] = "";
+		if (sscanf(w, "%*s %*s %7s", c2) != 1 || (strcmp(c2, "hold") && strcmp(c2, "free")))
+			return "fight body sync (not hold|free: ignored)";
+		g_nb.sync_hold = !strcmp(c2, "hold");
+		logf_("CONFIG fight body sync=%s (the word)", c2);
+		return "fight body sync";
+	}
+	if (!strcmp(b, "status")) {
+		logf_("FIGHT body status: %s %.0f cm; frames %llu, orc frames %llu (at Talion %llu), moves %llu, needing a hold "
+		      "%llu frames, the hook's calls %llu (steps held %llu, %.0f cm); syncs not held %llu frames; sync=%s",
+		      g_nb.on ? "held at" : "measured only,", g_nb.cm, (unsigned long long)g_nb.frames, (unsigned long long)g_nb.orc_frames,
+		      (unsigned long long)g_nb.at_frames, (unsigned long long)g_nb.moves, (unsigned long long)g_nb.need_frames,
+		      (unsigned long long)g_nb.calls, (unsigned long long)g_nb.steps, g_nb.pushed,
+		      (unsigned long long)g_nb.sync_free, g_nb.sync_hold ? "hold" : "free");
+		return "fight body status";
+	}
+	v = (float)atof(b);
+	if (!g_nb.set || !(v >= 0 && v <= 150) || (v > 0 && !(g_fs.ok && g_fs.space > 0)))
+		return "fight body (SOMVR_FIGHT_BODY_CM unset, not CM 0..150, or the FS_AIMOVE hook not in: ignored)";
+	g_nb.cm = v, g_nb.on = v > 0;
+	logf_("CONFIG fight body %.0f cm (the word)%s", v, v > 0 ? "" : ": measured only");
+	return "fight body";
+}
+
+static void nb_end_log(void)
+{
+	if (!g_nb.set)
+		return;
+	for (int j = 0; j < NB_TRK; j++)
+		if (g_nb.tr[j].c)
+			nb_flush(&g_nb.tr[j], "the end"), g_nb.tr[j].c = 0;
+	logf_("FIGHT END body %s %.0f cm: stereo frames %llu, orc frames measured %llu (no nodes %llu), at Talion %llu (the "
+	      "hook's calls %llu = %.2f a frame each; frames needing a hold %llu, steps held %llu, %.0f cm; syncs not held %llu "
+	      "frames; frames without the eyes on the last needs %llu; held ahead of a learnt lean %llu; capped %llu, a hold's way out "
+	      "%.0f cm at the most; the pose's root read %llu, not %llu, behind the root by %.0f cm at the most), moves %llu (the table full %llu), lines suppressed %llu", g_nb.on ? "held at" : "measured only,", g_nb.cm,
+	      (unsigned long long)g_nb.frames, (unsigned long long)g_nb.orc_frames, (unsigned long long)g_nb.nonode,
+	      (unsigned long long)g_nb.at_frames, (unsigned long long)g_nb.calls,
+	      g_nb.at_frames ? (double)g_nb.calls / (double)g_nb.at_frames : 0.0, (unsigned long long)g_nb.need_frames,
+	      (unsigned long long)g_nb.steps, g_nb.pushed, (unsigned long long)g_nb.sync_free, (unsigned long long)g_nb.kept,
+	      (unsigned long long)g_nb.antic, (unsigned long long)g_nb.capped, g_nb.push_ep_max,
+	      (unsigned long long)g_nb.null_ok, (unsigned long long)g_nb.null_no, g_nb.lag_max, (unsigned long long)g_nb.moves, (unsigned long long)g_nb.mv_full,
+	      (unsigned long long)g_nb.suppressed);
+	int ord[NB_MOVES];
+	for (int i = 0; i < g_nb.nmv; i++)
+		ord[i] = i;
+	for (int i = 1; i < g_nb.nmv; i++) /* nearest first */
+		for (int j = i; j > 0 && g_nb.mv[ord[j]].min < g_nb.mv[ord[j - 1]].min; j--) {
+			int x = ord[j];
+			ord[j] = ord[j - 1], ord[j - 1] = x;
+		}
+	for (int i = 0; i < g_nb.nmv && i < 40; i++) {
+		const struct nb_move *m = &g_nb.mv[ord[i]];
+		logf_("FIGHT END body move '%s' (%s): %u, under %.0f cm %u, nearest %.0f cm, mean nearest %.0f; held %u (%.0f cm); "
+		      "its lean learnt %.0f cm from %.2f s into it (%u)", m->name, m->kind, m->n, NB_CLOSE_CM, m->close, m->min,
+		      m->n ? m->sum / (float)m->n : 0.0f, m->held, m->pushed, m->lean, m->t_lean, m->n_lean);
+	}
+}
+
+static void nb_start(int *bad)
+{
+	memset(&g_nb, 0, sizeof g_nb);
+	g_nb.set = getenv("SOMVR_FIGHT_BODY_CM") != NULL;
+	g_nb.cm = env_float("SOMVR_FIGHT_BODY_CM", 0, 0, 150, bad);
+	if (!g_nb.set)
+		return;
+	g_nb.on = g_nb.cm > 0 && g_fs.ok && g_fs.space > 0;
+	g_nb.sync_hold = env_word("SOMVR_FIGHT_BODY_SYNC", (const char *const[]){ "free", "hold" }, 2, 1);
+	logf_("CONFIG fight body %.0f cm (SOMVR_FIGHT_BODY_CM): %s; `FIGHT body near` per move whose body came within %.0f cm "
+	      "of the eyes; sync=%s (SOMVR_FIGHT_BODY_SYNC: an enemy's sync on Talion %s; his own never)", g_nb.cm, g_nb.on ? "an orc at Talion whose head, neck, chest or shoulders come nearer than this to "
+	      "the eyes has its root held back (eased out, the hands and weapons free; the NPC movement's slot FS_AIMOVE; "
+	      "SOMVR_FIGHT_BODY_SYNC: an enemy's sync on him too)"
+	      : g_nb.cm > 0 ? "the hold needs SOMVR_FIGHT_SPACE_CM (its hook and the orcs at Talion): measured only"
+	      : "measured only", NB_LOG_CM, g_nb.sync_hold ? "hold" : "free", g_nb.sync_hold ? "held too" : "not held");
 }
 
 /* ---- SOMVR_COMBAT_STAGGER_CM (build 17): the orc stays in reach after our hit or parry -------------------------------
@@ -1501,6 +2036,8 @@ __attribute__((used)) void somvr_w_aimove(void *mv, float *xf)
 		rl_hold((uintptr_t)mv, was, xf); /* the reel's cap first, the space after it (it has the last word) */
 		if (g_fs.space > 0)
 			fs_hold((uintptr_t)mv, was, xf);
+		if (g_nb.set) /* the body's hold (build 19b) after both: its root farther, never nearer */
+			nb_hold((uintptr_t)mv, was, xf);
 	}
 }
 
@@ -1551,20 +2088,30 @@ static void fs_frame(uintptr_t pl, int stereo, double t)
 	float root[3];
 	uintptr_t hs[FS_ORCS];
 	int n = 0;
-	int hr = pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, root, sizeof root) && vec_ok(root, 1e7f);
-	if (hr && g_fs.space > 0) {
+	int hr = pl && player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, root, sizeof root) && vec_ok(root, 1e7f), m = 0;
+	struct cb_orc o[CB_ORCS];
+	if (hr && (g_fs.space > 0 || g_nb.set)) {
 		uintptr_t pcomb = peek_ptr(pl + P_COMBAT), pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0, ph = 0;
 		if (pc && vptr_of((void *)pc) != g_cbg.vt_combat)
 			pc = 0;
 		ph = pc ? peek_ptr(pc + C_HOBJ) : 0;
-		struct cb_orc o[CB_ORCS];
-		int m = pcomb ? cb_orcs_r(pcomb, pc, root, 2.0f * g_fs.space + 100.0f, o, CB_ORCS) : 0;
-		for (int i = 0; i < m && n < FS_ORCS; i++) {
+		uintptr_t sy[2] = { 0, 0 }; /* SOMVR_FIGHT_BODY_SYNC: an enemy's sync on him (as SOMVR_COMBAT_HOLD_TALION's) */
+		if (pc && peek(pc + C_SYNC, sy, sizeof sy)) {
+			int own = (sy[0] && peek_ptr(sy[0] + FB_SYNC_REC)) || sk_lift(t) || fi_holds();
+			g_nb.tsync = own ? 2 : sy[1] ? 1 : 0;
+		} else
+			g_nb.tsync = 0;
+		m = pcomb ? cb_orcs_r(pcomb, pc, root, fmaxf(2.0f * g_fs.space + 100.0f, 280.0f), o, CB_ORCS) : 0;
+		for (int i = 0; i < m && n < FS_ORCS && g_fs.space > 0; i++) {
 			uintptr_t ta = 0;
 			if (peek(o[i].c + TH_C_TARGET, &ta, sizeof ta) && ta && (ta == obj || ta == ph) && !cb_dead(o[i].c))
 				hs[n++] = o[i].hobj;
 		}
 	}
+	float need[FS_ORCS], need_a[FS_ORCS], eye[3] = { NAN, NAN, NAN }; /* SOMVR_FIGHT_BODY_CM (build 19b) */
+	int he = 0;
+	if (hr)
+		nb_frame(o, m, hs, n, root, stereo, t, need, need_a, eye, &he);
 	float head[3] = { NAN, NAN, NAN };
 	int hh = 0;
 	if (n && g_fs.from_head && stereo) { /* the eyes the player sees from (a stereo frame's views) */
@@ -1581,6 +2128,10 @@ static void fs_frame(uintptr_t pl, int stereo, double t)
 	atomic_fetch_add(&g_fs.seq, 1);
 	if (n)
 		memcpy(g_fs.hobj, hs, sizeof hs), memcpy(g_fs.head, head, sizeof head);
+	if (n && hr)
+		memcpy(g_fs.need, need, sizeof(float) * (size_t)n), memcpy(g_fs.need_a, need_a, sizeof(float) * (size_t)n),
+			memcpy(g_fs.eye, eye, sizeof eye);
+	g_fs.have_eye = n && hr && he;
 	if (hr)
 		memcpy(g_fs.root, root, sizeof root);
 	for (int k = 0; k < rn; k++) {
@@ -1800,6 +2351,7 @@ static void fight_start(int *bad)
 {
 	frr_config(bad);
 	fs_start(bad);
+	nb_start(bad); /* after fs_start: the hook in or not */
 	g_hu.on = env_word("SOMVR_HURT", (const char *const[]){ "0", "1" }, 2, 0);
 	g_hu.ms = env_float("SOMVR_HURT_MS", g_hu.ms, 50, 2000, bad);
 	g_hu.flash = env_float("SOMVR_HURT_FLASH", g_hu.flash, 0, 1, bad);
@@ -1828,6 +2380,7 @@ static void fight_end_log(void)
 		logf_("FIGHT END space %.0f cm: NPC moves %llu, near Talion %llu (an orc at him) + %llu (another), held %llu",
 		      g_fs.space, (unsigned long long)atomic_load(&g_fs.calls), (unsigned long long)atomic_load(&g_fs.near),
 		      (unsigned long long)atomic_load(&g_fs.other), (unsigned long long)atomic_load(&g_fs.held));
+	nb_end_log();
 	if (g_rl.reels || g_rl.set)
 		logf_("FIGHT END stagger %.0f cm: reels %llu (eased %llu, the NPC movement saw %llu), the farthest %.0f cm (the cap "
 		      "then %.0f)", g_rl.cap, (unsigned long long)g_rl.reels, (unsigned long long)g_rl.capped,

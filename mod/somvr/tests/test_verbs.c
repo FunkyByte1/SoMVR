@@ -322,6 +322,85 @@ static void test_kinds(void)
           "names");
 }
 
+/* build 19b: a stealth target's back (SOMVR_STEALTH_KILL_GRAB_CM). The stand-off's geometry (run 20261028-015924:
+ * Talion's root at 0, the orc's root - its pelvis - 118 cm ahead, its head node ~80 cm over it and ~27 cm further on:
+ * the palm 105 cm from it while 54 cm from the orc's axis); the eyes ducked (26 cm over the root) or the stick's crouch
+ * (77), leaned in 30 cm (the head tether's start is 50) or not; the left hand where a real arm puts it (at most ~70 cm
+ * from the left shoulder: 18 cm left of and 22 cm under the eyes) */
+static void back_at(somvr_vb_hand_in *in, float eye_up, float lean, float x, float y, float z, float body_cm)
+{
+    memset(in, 0, sizeof *in);
+    in->t = 1.0, in->live = 1, in->squeeze = 0.9f, in->have_palm = 1;
+    in->palm[0] = x, in->palm[1] = y, in->palm[2] = z;
+    in->have_eye = 1, in->eye[0] = 0, in->eye[1] = eye_up, in->eye[2] = lean;
+    in->norc = 1;
+    in->head[0][0] = 0, in->head[0][1] = 80, in->head[0][2] = 145;
+    in->body[0][0] = 0, in->body[0][1] = 0, in->body[0][2] = 118;
+    in->body_cm[0] = body_cm;
+}
+static float arm_cm(const somvr_vb_hand_in *in)
+{
+    float dx = in->palm[0] - (in->eye[0] - 18), dy = in->palm[1] - (in->eye[1] - 22), dz = in->palm[2] - in->eye[2];
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+static void test_back(void)
+{
+    somvr_vb_hand s;
+    somvr_vb_hand_in in;
+    somvr_vb_hand_out o;
+    static const struct { const char *what; float eye_up, lean, x, y, z; int old_takes; } P[] = {
+        /* ducked, leaned 30: the palm on its lower back (the back's skin ~96 cm ahead) */
+        { "ducked, leaned: the hand on its lower back", 26, 30, -10, 20, 92, 0 },
+        /* the stick's crouch (the eyes standing), leaned 30: on its mid back */
+        { "standing eyes, leaned: the hand on its mid back", 77, 30, -10, 40, 94, 0 },
+        /* ducked, not leaned: the arm out at its mid back (short of it) */
+        { "ducked: the arm out at its back, not touching", 26, 0, -14, 22, 62, 0 },
+        /* ducked, leaned: the arm up at its shoulder blade (short of it: the head's cone takes it already) */
+        { "ducked, leaned: the arm up at its shoulder blade", 26, 30, -12, 45, 85, 1 },
+    };
+    for (unsigned k = 0; k < sizeof P / sizeof P[0]; k++) {
+        back_at(&in, P[k].eye_up, P[k].lean, P[k].x, P[k].y, P[k].z, 0);
+        CHECK(arm_cm(&in) <= 72, "%s: a real arm reaches it (%.0f cm from the shoulder)", P[k].what, arm_cm(&in));
+        somvr_vb_hand_reset(&s);
+        step(&s, &in, &o);
+        CHECK((o.event == SOMVR_VBE_GRAB) == P[k].old_takes && !o.by_body && o.back_cm < 0,
+              "%s: the head only (build 19) %s (%d, %.1f cm from the head, %.1f deg)", P[k].what,
+              P[k].old_takes ? "takes it" : "takes nothing", o.event, o.dist_cm, o.cone_deg);
+        back_at(&in, P[k].eye_up, P[k].lean, P[k].x, P[k].y, P[k].z, 45);
+        somvr_vb_hand_reset(&s);
+        step(&s, &in, &o);
+        CHECK(o.event == SOMVR_VBE_GRAB && o.grab && o.orc == 0 && o.back_cm >= 0,
+              "%s: with its back offered: taken (%d, by the back %d, %.1f cm / %.1f deg off it)", P[k].what, o.event,
+              o.by_body, o.back_cm, o.back_deg);
+    }
+    /* the hand at the hip (the dagger's slot) or held low by the side: never its back */
+    back_at(&in, 26, 0, -25, -30, 10, 45);
+    somvr_vb_hand_reset(&s);
+    step(&s, &in, &o);
+    CHECK(o.event != SOMVR_VBE_GRAB, "the hand at the hip: nothing (%d, %.1f cm, %.1f deg)", o.event, o.back_cm, o.back_deg);
+    back_at(&in, 26, 0, -45, 0, 30, 45);
+    somvr_vb_hand_reset(&s);
+    step(&s, &in, &o);
+    CHECK(o.event != SOMVR_VBE_GRAB, "the hand out to the side: nothing (%d, %.1f deg)", o.event, o.back_deg);
+    /* on its head: still the head's grab (the nearer score) */
+    back_at(&in, 26, 30, 0, 72, 140, 45);
+    somvr_vb_hand_reset(&s);
+    step(&s, &in, &o);
+    CHECK(o.event == SOMVR_VBE_GRAB && !o.by_body && !o.by_cone, "on its head: the head's grab (%d %d)", o.by_body, o.by_cone);
+    /* not a stealth target (body_cm 0): the back takes nothing, the line's numbers unset */
+    back_at(&in, 26, 30, -10, 20, 92, 0);
+    in.body_cm[0] = -1;
+    somvr_vb_hand_reset(&s);
+    step(&s, &in, &o);
+    CHECK(o.event != SOMVR_VBE_GRAB && o.back_cm < 0, "not a target: nothing (%d)", o.event);
+    /* the trigger with the open hand on its back: the wraith hand (the game's B behind it) */
+    back_at(&in, 26, 30, -10, 20, 92, 45);
+    in.squeeze = 0, in.trigger = 0.9f;
+    somvr_vb_hand_reset(&s);
+    step(&s, &in, &o);
+    CHECK(o.event == SOMVR_VBE_WRAITH && o.by_body, "the open hand's trigger on its back: B (%d %d)", o.event, o.by_body);
+}
+
 int main(void)
 {
     somvr_vb_cfg_default(&C);
@@ -331,6 +410,7 @@ int main(void)
     test_cone();
     test_ask();
     test_kinds();
+    test_back();
     printf("test_verbs: %d checks, %d failures\n", g_n, g_fail);
     return g_fail != 0;
 }

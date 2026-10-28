@@ -252,6 +252,41 @@ int sc_reel_cap(const float anchor[3], const float *talion, const float was[3], 
     return 1;
 }
 
+float sc_body_need(const float eye[3], const float root[3], const float (*bone)[3], int n, float body, float max_cm,
+                   int *worst) {
+    *worst = -1;
+    float ux = root[0] - eye[0], uz = root[2] - eye[2], r = hypotf(ux, uz), best = 0;
+    if (!(body > 0) || !(r > 1.0f) || !isfinite(r)) return 0;
+    ux /= r, uz /= r;
+    for (int i = 0; i < n; i++) {
+        float bx = bone[i][0] - eye[0], by = bone[i][1] - eye[1], bz = bone[i][2] - eye[2];
+        if (!isfinite(bx) || !isfinite(by) || !isfinite(bz)) continue;
+        float req2 = body * body - by * by, h2 = bx * bx + bz * bz; /* the distance across it needs at its height */
+        if (!(req2 > h2)) continue;                                /* out already */
+        float bu = bx * ux + bz * uz, d = -bu + sqrtf(bu * bu - h2 + req2); /* |b + d u| = sqrt(req2), d > 0 */
+        if (d > best) best = d, *worst = i;
+    }
+    return best > 0 ? r + fminf(best, max_cm) : 0;
+}
+
+int sc_body_push(const float eye[3], const float was[3], float xf[3], float need, float push, float *pushed) {
+    *pushed = 0;
+    if (!(need > 0) || !isfinite(xf[0]) || !isfinite(xf[2]) || !isfinite(was[0]) || !isfinite(was[2]) ||
+        !isfinite(eye[0]) || !isfinite(eye[2]))
+        return 0;
+    float dx = xf[0] - eye[0], dz = xf[2] - eye[2], rx = hypotf(dx, dz), rw = hdist(was, eye);
+    if (!(rx < need)) return 0;
+    if (!(rx >= 1.0f)) { /* onto the eyes: out the way it came */
+        if (!(rw >= 1.0f)) return 0;
+        dx = was[0] - eye[0], dz = was[2] - eye[2];
+    }
+    float l = hypotf(dx, dz), to = fmaxf(rx, fminf(need, rw + (push > 0 ? push : 0)));
+    if (!(to - rx > 0.01f)) return 0;
+    xf[0] = eye[0] + dx / l * to, xf[2] = eye[2] + dz / l * to;
+    *pushed = to - rx;
+    return 1;
+}
+
 const char *sc_tier_name(int tier) {
     static const char *const n[SC_TIER_N] = {"none", "light", "heavy", "stab"};
     return tier >= 0 && tier < SC_TIER_N ? n[tier] : "?";

@@ -863,6 +863,56 @@ static void test_space(void) {
     printf("space2: the nearer of the head and the root keeps the space\n");
 }
 
+/* SOMVR_FIGHT_BODY_CM (build 19b): the root's distance a leaning body needs; the hook's eased hold */
+static void test_body(void) {
+    float eye[3] = {0, 170, 0}, root[3] = {0, 0, -88}, w;
+    int k = -2;
+    /* a bash: the head 30 cm ahead of the eyes at their height, the chest 40 cm ahead and 25 down, a shoulder aside */
+    float b[3][3] = {{0, 170, -30}, {0, 145, -40}, {20, 150, -45}};
+    float need = sc_body_need(eye, root, (const float (*)[3])b, 3, 55, 60, &k);
+    CHECK(k == 0 && NEAR(need, 88 + 25, 0.05), "body need: the head 30 -> 55 cm: the root at %g (want 113), worst %d", need,
+          k);
+    float out[2][3] = {{0, 170, -80}, {0, 100, -30}}; /* 80 cm ahead; 30 ahead but 70 below: both out */
+    CHECK(sc_body_need(eye, root, (const float (*)[3])out, 2, 55, 60, &k) == 0 && k == -1, "body need: all out: none");
+    float far[1][3] = {{0, 170, -1}};
+    CHECK(NEAR(sc_body_need(eye, root, (const float (*)[3])far, 1, 55, 20, &k), 108, 0.05), "body need: capped at +max");
+    /* a point aside: the root moved straight back, the point's distance across grows as |b + d u| */
+    float side[1][3] = {{30, 170, -20}};
+    float ns = sc_body_need(eye, root, (const float (*)[3])side, 1, 55, 60, &k), d = ns - 88;
+    CHECK(d > 0 && NEAR(hypotf(30, -20 - d), 55, 0.05), "body need: aside: %g cm back puts it at %g", d,
+          hypotf(30, -20 - d));
+    CHECK(sc_body_need(eye, root, (const float (*)[3])b, 3, 0, 60, &k) == 0, "body need: 0 cm = none");
+    /* the hook: an orc standing at 88 (its own step none) eased out 5 cm a step to 113, then held there */
+    float was[3] = {0, 0, -88}, steps = 0, p = 0;
+    int moved = 0, n = 0;
+    for (; n < 10; n++) {
+        float xf[3] = {was[0], 2, was[2]};
+        moved += sc_body_push(eye, was, xf, need, 5, &p);
+        CHECK(xf[1] == 2 && hypotf(xf[0], xf[2]) <= 113.01f && hypotf(xf[0], xf[2]) >= hypotf(was[0], was[2]) - 1e-3f,
+              "body push step %d: %g", n, hypotf(xf[0], xf[2]));
+        steps += p, memcpy(was, xf, sizeof was);
+    }
+    CHECK(moved == 5 && NEAR(was[2], -113, 0.01) && NEAR(steps, 25, 0.01), "body push: 5 steps of 5 cm to 113 (%d, %g, %g)",
+          moved, was[2], steps);
+    float in[3] = {0, 0, -100};
+    CHECK(sc_body_push(eye, was, in, need, 5, &p) && NEAR(in[2], -113, 0.01), "body push: its step in from 113: held at 113");
+    float own[3] = {0, 0, -90}, w0[3] = {0, 0, -88};
+    CHECK(sc_body_push(eye, w0, own, need, 5, &p) && NEAR(own[2], -93, 0.01) && NEAR(p, 3, 0.01),
+          "body push: its own step out 2 cm: eased to 5 (%g, %g)", own[2], p);
+    float o2[3] = {0, 0, -96};
+    CHECK(!sc_body_push(eye, w0, o2, need, 5, &p) && NEAR(o2[2], -96, 0.01) && p == 0,
+          "body push: its own step farther than the ease: as it is (%g, %g)", o2[2], p);
+    float x2[3] = {0, 0, -120};
+    CHECK(!sc_body_push(eye, w0, x2, need, 5, &p) && x2[2] == -120, "body push: out already: untouched");
+    float z2[3] = {0.5f, 0, 0}, wz[3] = {0, 0, -60};
+    CHECK(sc_body_push(eye, wz, z2, need, 5, &p) && NEAR(z2[2], -65, 0.01) && NEAR(z2[0], 0, 0.01),
+          "body push: onto the eyes: out the way it came (%g %g)", z2[0], z2[2]);
+    float q[3] = {0, 0, -80};
+    CHECK(!sc_body_push(eye, w0, q, 0, 5, &p) && q[2] == -80, "body push: no need: untouched");
+    (void)w;
+    printf("body: a leaning body's points kept %.0f cm from the eyes by its root, eased out %.0f cm a step\n", 55.0, 5.0);
+}
+
 /* SOMVR_COMBAT_STAGGER_CM (build 17): the reel kept under the cap, eased (never a dead stop), free toward Talion */
 static float reel_nat(float u) { return 145.0f * (1.0f - (1.0f - u) * (1.0f - u)); } /* 145 cm, slowing (an L100) */
 static void test_reel(void) {
@@ -924,6 +974,7 @@ static void test_hit_kind(void) {
 
 int main(void) {
     test_space();
+    test_body();
     test_reel();
     test_cut();
     test_touch();

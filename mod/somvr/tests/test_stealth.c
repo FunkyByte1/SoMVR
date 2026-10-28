@@ -149,8 +149,60 @@ static void test_standoff(void) {
     CHECK(!somvr_stl_standoff(z, orc, r, dt, hz, d, out) && !somvr_stl_standoff(p, orc, 0, dt, hz, d, out), "degenerate");
 }
 
+/* build 19b: the brake (SOMVR_STEALTH_KILL_STANDOFF_DECEL): a steady deceleration to rest on the edge */
+static void test_brake(void) {
+    const float orc[3] = { 0, 0, 0 }, r = 118.0f, a = 250.0f;
+    float out[3];
+    for (int pass = 0; pass < 3; pass++) {
+        const float hzs[3] = { 20, 72, 90 }, v0s[3] = { 150, 150, 40 };
+        float dt = 1.0f / hzs[pass], v0 = v0s[pass], p[3] = { 0, 0, -300 }, start = -1, last = 1e9f, prev_v = v0;
+        float dv_max = 0, t = 0, t0 = -1, t1 = -1;
+        int mono = 1, inside = 0;
+        for (int i = 0; i < 2000; i++, t += dt) {
+            float step[3] = { 0, 0, v0 * dt };
+            if (somvr_stl_standoff_brake(p, orc, r, dt, a, step, out)) {
+                if (start < 0)
+                    start = -p[2] - r, t0 = t;
+                step[0] += out[0], step[2] += out[2];
+            }
+            p[2] += step[2];
+            inside |= -p[2] < r - 1e-3f;
+            mono &= step[2] <= last + 1e-4f;
+            last = step[2];
+            float v = step[2] / dt;
+            if (start >= 0 && prev_v > 10.0f && prev_v - v > dv_max) /* (under 10 cm/s: the last tick to rest) */
+                dv_max = prev_v - v;
+            if (start >= 0 && t1 < 0 && v < 1.0f)
+                t1 = t;
+            prev_v = v;
+        }
+        float want = v0 * v0 / (2 * a), decel = dv_max / dt;
+        CHECK(!inside && -p[2] < r + 0.05f, "%.0f Hz %.0f cm/s: at rest on the edge (%.3f)", hzs[pass], v0, -p[2]);
+        CHECK(mono, "%.0f Hz: the steps only shrink", hzs[pass]);
+        CHECK(start > want - v0 * dt - 1 && start < want + 1, "%.0f Hz %.0f cm/s: the brake starts %.1f cm out (v^2/2a %.1f)",
+              hzs[pass], v0, start, want);
+        /* the deceleration never above ~1.5 x the asked (the discrete steps), the time ~v0/a */
+        CHECK(decel < (hzs[pass] < 50 ? 2.0f : 1.3f) * a, "%.0f Hz: the largest deceleration over 10 cm/s %.0f cm/s^2 (asked "
+              "%.0f)", hzs[pass], decel, a);
+        CHECK(t1 - t0 > 0.6f * v0 / a && t1 - t0 < 1.4f * v0 / a + 0.1f, "%.0f Hz: to rest in %.2f s (v0/a %.2f)",
+              hzs[pass], t1 - t0, v0 / a);
+    }
+    /* the old ease's onset for the record: 12 m/s^2 at once (8 x 150) against the brake's 2.5 */
+    float q[3] = { 0, 0, -r }, side[3] = { 7.0f, 0, 0 }, back[3] = { 0, 0, -7.0f };
+    CHECK(!somvr_stl_standoff_brake(q, orc, r, 0.05f, a, side, out), "sideways along the edge: free");
+    CHECK(!somvr_stl_standoff_brake(q, orc, r, 0.05f, a, back, out), "back: free");
+    float in[3] = { 0, 0, -90 }, fw[3] = { 0, 0, 5.0f };
+    CHECK(somvr_stl_standoff_brake(in, orc, r, 0.05f, a, fw, out) && fabsf(out[2] + 5.0f) < 1e-4f, "inside: no step in");
+    CHECK(!somvr_stl_standoff_brake(in, orc, r, 0.05f, a, back, out) && out[2] == 0, "inside: back out free, no push");
+    float diag[3] = { 5.0f, 0, 5.0f };
+    CHECK(somvr_stl_standoff_brake(q, orc, r, 0.05f, a, diag, out) && fabsf(diag[0] + out[0] - 5.0f) < 1e-4f &&
+          fabsf(diag[2] + out[2]) < 1e-4f, "diagonal at the edge: the inward half cut, the sideways half kept");
+    CHECK(!somvr_stl_standoff_brake(q, orc, r, 0.05f, 0, fw, out), "decel 0: nothing (the old ease's)");
+}
+
 int main(void) {
     test_standoff();
+    test_brake();
     test_angles();
     test_possible();
     test_judge();

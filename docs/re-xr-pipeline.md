@@ -13311,6 +13311,107 @@ forward, the test's left hand up for the grab) and 2215 (the sword hand at its u
    a standing player walking in is noticed at ~108 cm (the game's rule), as asked.
 5. SILENT keeps the orc from reacting to the wind-up; a swing that *misses* a stealth target also registers nothing
    (a whoosh behind an orc in the flat game would not alert it either - the flat game has no such swing).
+### 72.6 Build 19b: what was open (the som-b19b-stealth-2 helper, 2026-10-28 03:30-)
+72.5's items 1-3: the grab-then-stab could not reach from the stand-off; only the infantry's range was measured; the
+stop's feel. Handoff: handoff/HANDOFF-stealth.md ("build 19b"). Driver: scripts/stealth19b-drive.sh (the real duck - the
+test head 50 cm down - instead of `crouch hold`; the left hand's poses within a real arm's reach, the palm forward and
+the fingers up: `hands test L x y z 180 -90 0`, OpenXR's grip with -Z from the pinky to the thumb).
+
+**Why the build 19 grab missed (run 015924's numbers, then measured):** from the stand-off the orc's head point (its
+Head node) is ~125 cm ahead of the eyes and 60-70 cm over its root, ~20-30 cm beyond its root (the hunch) - the verbs'
+45 cm touch needs the palm on it, which a crouched arm (~70 cm from the shoulder) cannot reach without stepping in.
+The reach-out cone (25 deg round the eyes -> head line) takes a hand that goes for its shoulders, not one that goes for
+its back: the run's lines (`squeeze by a stealth target`) put a hand on its lower or mid back 35-45 deg off the head's
+line. Run 015924's test hand was also pointed above the orc's head (28 cm over a standing eye).
+
+### 72.7 The grab by its back: `SOMVR_STEALTH_KILL_GRAB_CM` (default 45; 0 = build 19: the head only)
+| The player | The game |
+|---|---|
+| crouched (or slow) behind an orc that has not noticed him (a stealth kill's target: `somvr_stl_possible`), the left hand squeezed on its back - within 45 cm of the column from its root (the pelvis) up to its head point - or the arm reached out at it (the palm >= 35 cm from the eyes, the eyes -> palm line within 25 deg of a point of that column within 170 cm) | the verbs' grab (123 held), as on its head: `VERBS .. grab: the left hand on orc ..'s back (a stealth target ..)` and a `squeeze by a stealth target` line with the palm, the eyes, Talion's root and the orc's root and head in cm ahead / up / side of the eyes (the headset logs the real reaches) |
+| the hand on its head | the head's grab, as before |
+| the hands together (the left within 30 cm of the right grip: SOMVR_TWOHAND's two-handed thrust) | its back takes no grab (`VB_BACK_APART_CM`) |
+| an orc that is no stealth target (aware, in front, Talion standing and fast) | the head only, as before |
+
+Why not "the stand-off gives way while the left hand reaches": Talion's root would go inside the ~113 cm (72.8) and
+the orc notices at once (state 1 the same tick, it turns within ~2.5 s) - a race the grab must win, and the player
+would have to push the stick while reaching. The back's grab keeps Talion's root outside the game's notice range (the
+game's own stealth prompts are up from ~3 m: its own stealth grab starts from there too); the real head and arm lean in
+freely (the head tether's 50 cm). Pure: somvr_verbs.c `pick_head` (`back_of`, the column; tests/test_verbs.c
+`test_back`: four real poses from the stand-off's geometry - build 19's rule takes three of them nothing, the new one
+takes all four; the hip, the hand out to the side, the head, a non-target, the open hand's trigger). The game side:
+somvr_verbs_game.c `vb_heads` asks somvr_stealth_game.c `stl_grab_back` per orc (the combat frame); `vb_back_line`.
+Test word (SOMVR_HANDS_TEST): `stealth grab CM` (0 = build 19's rule, for the A/B in one boot).
+
+**The stab while it is held.** The game's grab from 118 cm is its own stealth grab - `PC_Grab_Attempt_F_Stealth`, the
+orc's `ReactToSusp_FromBase_Unsheathe_B2` at the attempt, then the paired `PC_Grab_Into_F|_B` / `AI_Bip_Grabbed_Into_F`
+(the orc pulled to Talion, 77-83 cm root to root; the view held and eased back 35 cm from its head: BODYMOMENT, the
+verbs' view) - with the game's prompts `Shank` (X, the grab's flurry), `Drain`, `Interrogate`. The held orc leaves
+combat's bands (`orcs=0`), so its contacts come from the verbs' own sweep (`vb_blade`), which went only to X and - run
+060828 - reached nothing: its contacts (8.8 m/s, 7 cm from its axis) had no checked server Combat while the grab held.
+Now `vb_blade` asks the stealth judge first (a stealth hold = held from behind while unaware within 3 s: the stab is the
+stealth kill, wherever it goes in) with the last checked server Combat, and logs each fast swing's frames
+(`the held orc .. the blade N cm from its axis ..`).
+
+### 72.8 Bigger orcs: one range for every kind
+The same placement as 72.1 (`verbs behind CM`, crouched, 3.5 s still at each of 170 .. 94 cm; run 054549):
+| The orc (its combat record; its Head node over its root) | Calm at | Noticed at (state 0 -> 1) | The awareness line's distance |
+|---|---|---|---|
+| infantry `AI_Infantry` (66-71 cm; 72.1, runs 005848, 003218) | 112 | 106 | 113 cm |
+| berserker `AI_Berserker` (70 cm) | 112 | 106 | 113 cm |
+| shield orc `AI_Defender` (84 cm) | 112 | 106 | 113 cm |
+| the E3 demo's berserker leader (`verbs template E3_Demo_BerserkerLeader`: a captain-like bigger model, `AI_Berserker`, 81 cm) | 112 | 106 | 114 cm |
+
+One range, whatever the size: it is Talion's (his visible stimulus's Radius 100 the likely one, 72.1), not the orc's.
+The stand-off (118 cm by the same measure as the awareness line: root to root, the targeting band's positions) stays
+one number and stops 4-5 cm outside it for every kind; at rest at 118.0-119.0 cm the orcs stayed calm (runs 054549,
+060828; build 19's 11-12 s). A Nemesis captain proper needs the faction's member (re-combat-spawn.md 1.4: not done -
+it would touch the Nemesis state); the leader template is the nearest the practice area spawns. The kind's line stays
+(`STEALTH orc ..: its combat record '..' (..), its head N cm over its root`, once per orc) so a headset session shows
+any other kind's distance next to its notice line.
+
+### 72.9 The stop's feel: `SOMVR_STEALTH_KILL_STANDOFF_DECEL` (m/s^2, default 2.5; 0 = build 19's ease)
+Build 19's ease cut the step toward the circle to room x (1 - e^(-8 dt)): from a 150 cm/s crouched walk it starts ~19 cm
+out with an instant 12 m/s^2 brake (8 x 150 cm/s) that decays - a short hard stop, felt as a wall; its tick came as the
+ease started, ~20 cm before the stop. Now a steady brake: the step toward the edge at most sqrt(2 a room) dt and never
+past it (somvr_stealth.c `somvr_stl_standoff_brake`): from 150 cm/s it starts 45 cm out and comes to rest on the circle
+0.6 s later at 2.5 m/s^2 (a quarter g, a person slowing to a halt); a slow walk only brakes at the very end. At rest
+(within 1 cm of the circle, still asked in) one soft tick (the cue's 0.25, 30 ms) in **both** hands - the left that grabs,
+the right that stabs: "in reach"; `STEALTH .. stand-off: at rest X cm from orc .. (the brake from N cm out at V cm/s took
+T s): in reach`. The game's red outline is up long before (from ~3 m, with its prompts; the composed pictures show it
+on the orc at rest: 72.10). Tests: tests/test_stealth.c `test_brake` (20, 72, 90 Hz; 150 and 40 cm/s: at rest on the
+edge, never inside, the steps only shrink, the onset at v^2/2a, the largest deceleration over 10 cm/s within 1.3 x the
+asked at 72-90 Hz, the time ~v/a; sideways, back, inside, the diagonal). Test word: `stealth decel M/S2`.
+
+### 72.10 Runs (headless, scripts/stealth19b-drive.sh, headset-build19.env with this block + `SOMVR_HANDS_TEST=1`; every run 0 WARN, the install unchanged, the real save UNCHANGED; logs/boot-check-20261028-)
+| Run | What it shows |
+|---|---|
+| 054549 | **the ranges** (72.8: berserker, shield orc, the leader template: calm at 112, noticed at 106 placed, 113-114 by the line); the old rule round (not valid: `execute where` read the bearing before `execute face`'s snap, so the poses went 30 deg aside - fixed in the driver); **the new grab**: G1 (ducked, leaned, the hand at its lower back) taken by the reach at its back (50 cm, 19 deg; build 19's rule: 99 cm from the head, 44 deg off its line - nothing), G4 (the stick's crouch, the eyes standing, leaned, the hand on its mid back) taken **on** its back (42 cm; build 19: 71 cm, 35 deg - nothing); the game's stealth grab ran both times (`PC_Grab_Attempt_F_Stealth` -> `PC_Grab_Into_F`); the stab never touched the held orc (no lines: the cause in 060828/063243); the brake twice (from 40/43 cm out at 147/148 cm/s, at rest at 118.0/118.5 cm 0.50 s later, the tick in both hands) |
+| 060828 | **build 19's rule, aimed right** (`stealth grab 0`, the ease): G1 nothing (101 cm from the head), G2 a near miss, G4 nothing (112 cm), G3 (the arm up at its shoulder blade) taken by the head's cone (88 cm, 6 deg) - the reach at its shoulders worked before, the reach at its back did not; the new rule: G4 taken by its back (43 cm, 13 deg); the held orc's own sweep: contacts at 7 and 28 cm from its axis (8.8 m/s, tier heavy) that reached nothing (STEALTH contacts 0, no X); rounds 3-5 void (the far spawn 19-23 m off, the walk stuck at 10.8 m) |
+| 063243 | the cause: while the game's grab holds, combat_frame has no root, no PlayerCombat, no server Combat (`the root 0, PlayerCombat 0`: Talion's mover is the grab's, player_objs refuses it); rounds 2-3 void (`verbs behind` reaches 20 m: the spawn was farther) |
+| **065221** | **the proof** (`SOMVR_PRACTICE_FAR_CM=800`, each sneak from 220 cm behind): the brake on the infantry three times and on a **berserker** (at rest 118.1-118.8 cm, from 38-43 cm out at 144-150 cm/s, 0.45-0.50 s; the berserker calm); **G2** (ducked, not leaned, the arm out at its back: 60 cm, 6 deg) and **G4** (standing eyes, leaned, the hand at its back: 52 cm, 16 deg) - the game's stealth grab, then the sword's stab into the held orc (its own sweep, Talion's object read: `read here 7`): **`STEALTH kill .. held from behind (the left hand)`** - dead, 95 -> 0 (`_Silent_B`, `_Silent_B_2`; the contacts 6 and 17 cm from its axis, heavy 8.8 / stab 8.0 m/s); +1/+3 s no other orc; G1 grabbed (55 cm, 23 deg: the bearing +20 left the orc aside) but the fixed stab line passed 93+ cm from it (the test's aim, not the rule). VERBS END: squeezes by a stealth target 3, taken by its back 3; STEALTH END: kills 2 |
+Pictures (`scripts/xr_compose.py RUN -f FRAME`, frames in RUN/sd-steps.txt): 054549 6919 (at rest, ducked: the orc's back at
+arm's reach, the red outline on it), 6998 (G1's hand beside its hip, short of its back), 7042 (held: the orc pulled
+back against Talion); 065221 1936 (the berserker at rest, its axe on its back, the outline), 2750 (at rest), 2888 and
+4039 (held - the game's grab turns the orc round, half facing Talion), 2917 and 4068 (the stab; the game's `Shank` /
+`Interrogate` prompts still up at that frame). The test swing (`hands swing`, an arc about the shoulder) sweeps the right
+fist across the view; a real thrust would not.
+
+### 72.11 Open (the headset's)
+1. Whether a real player reaches for its back or its shoulders (both now grab), and whether the grab from 118 cm reads
+   as "my hand took it": the game's stealth grab spins the orc round into Talion's hold (its paired `PC_Grab_Into_F|B`;
+   the view stays, eased back 35 cm from its head as for every grab) - the hand reached a back 90 cm off and the orc is
+   suddenly in the arms. The `squeeze by a stealth target` lines will show where real hands go.
+2. The game's `ReactToSusp_FromBase_Unsheathe` at the grab attempt (the orc starts to turn as the grab starts; the grab
+   takes it anyway): the stab is the stealth kill through the hold (held unaware within 3 s); whether the game's XP says
+   "Stealth Kill" for a kill in the hold was not seen (the pictures were taken at the stab).
+3. The brake's feel at 72-90 Hz (0.6 s, a quarter g, from 45 cm out at full crouched pace) and the tick in both hands at
+   rest; a slower or faster brake is one number (`SOMVR_STEALTH_KILL_STANDOFF_DECEL`).
+4. A Nemesis captain proper (not spawnable here without touching the Nemesis state): its notice distance shows next to
+   its kind's line in a headset log.
+5. Not touched: the held orc's sword contact outside a stealth hold still goes to X (the game's `Shank`) with combat_frame's
+   PlayerCombat - which the grab's mover hides, so a sword on a held orc in a plain fight does nothing (as in build 19);
+   the stealth hold reads Talion's object and PlayerCombat itself.
+
 ## 71. Build 19: the bow's loop - the string at rest on the limb tips, the grab that missed, A with the bow out (2026-10-28)
 
 From the build 17b headset session (logs/boot-check-20261027-174757; build 16's 090356 for comparison): the bow's loop
@@ -13529,3 +13630,117 @@ Driver: scripts/bow19-drive.sh (`B19_STEPS`); pictures `RUN/b19-steps.txt`, `pyt
   87-89 cm away, the animation leans past that.
 - The answer's pick beyond "its blow hit Talion and he recoils from the front" is not known (the attack pools' target
   predicates, `*0x4ba8f80`, not traced).
+
+## 74. The orcs' bodies out of the player's face: `SOMVR_FIGHT_BODY_CM` (build 19b, 2026-10-28, som-b19b-bash-1)
+The 17b session asked why the first orc of a fight came so close. Build 16's `SOMVR_FIGHT_SPACE_CM=90` (54) keeps an
+attacker's **root** 87-89 cm from Talion's root and the head; the combat helper of build 19 found a body leaning far
+past it (70.7, run 022755 frame 4806: a shoulder and head ~0.3 m from the eyes, half the view). The rule measures the
+root, not the body.
+
+### 74.1 The measure (`FIGHT body near`, `FIGHT END body`; `SOMVR_FIGHT_BODY_CM=0` = measured only)
+- Each stereo frame (fs_frame, the game thread) every live orc within 2.8 m of Talion's root: GetNodeTransform
+  (`NS_NODEXF`, by the somhash of the name, re-animation.md 2.3) of **Head, Neck, Spine4_joint, L_Shoulder,
+  R_Shoulder** (= the body), L_Hand, R_Hand, and its weapons (df_weapons' reads: the model object to its tip node; a
+  segment); the distance of each from the eyes (`somvr_rig_head`, 3D). Kept per **move** = the orc's attack record
+  (`Combat+0x4d0`; none = "between blows"): the nearest body part, when into the move, the root's distance then.
+  Joints, not the skin: a head's surface is ~10-15 cm nearer than its joint.
+- `FIGHT body near` per move whose body came within 70 cm (the parts' minima, the hold's work), `FIGHT END body` (the
+  totals, the hook's calls per orc frame) and one `FIGHT END body move` row per move (how many, under 50 cm, the
+  nearest, the mean nearest, held, its learnt lean). `scripts/body19-table.py RUN` splits them by hold mode.
+- **The NPC movement's hook (FS_AIMOVE) runs once a frame for every orc at Talion** (1.00 per orc frame, every run):
+  a hold can act on every frame of every move, standing or walking.
+- **What comes near** (headless, the practice meadow, the test head still; the hold off; runs 053004, 055508, 061738,
+  063903, 065957 together; moves whose body came within 70 cm, of them under 50 cm, the nearest):
+
+| Move (orc) | within 70 | under 50 | nearest | part |
+|---|---|---|---|---|
+| `AI_Berserker_Melee_Front_2` | 72 | 57 | **26** | head |
+| `AI_Berserker_Melee_Front_3` | 67 | 60 | **31** | head |
+| `AI_Berserker_Melee_Front_1` | 57 | 12 | 42 | head |
+| `AI_Defender_Heavy` (the overhead slam) | 12 | 6 | **33** | head |
+| `AI_Infantry_Melee_Front_1_LL` / `_3_LL` / `_2_LL` | 22 / 30 / 21 | 3 / 7 / 3 | 38 / 41 / 45 | head |
+| `AI_Defender_Radial` | 18 | 1 | 46 | head |
+| `AI_Berserker_PC_Sync_Headbutt_F` (the paired headbutt on Talion) | 7 | 2 | 37 | head |
+| `AI_Bip_KnockedBackByAI_F` (a reaction) | 5 | 1 | 47 | head |
+| `AI_Berserker_Bash` | 8 | 0 | 60 | left shoulder |
+| `AI_Defender_Cone` | 13 | 0 | 62 | head |
+| between blows (any orc) | 3 | 0 | 62 | head |
+
+  So: the berserker's three ordinary strikes are the problem (four in five of its Front_2/Front_3 that come near
+  come under 50 cm; its head leans ~60 cm past its root, the root held at ~90 by FIGHT_SPACE), then the defender's
+  Heavy and, in some runs, the infantry's strikes. Never between blows; the bash leads with the shoulder at >= 60 cm
+  here (022755's 0.3 m picture was a defender's Cone right after a bash). The weapons and hands come to 6-50 cm (they
+  have to: the blows and the guard) and are not counted.
+
+### 74.2 The hold (`SOMVR_FIGHT_BODY_CM=60`; somvr_combat.c `sc_body_need` / `sc_body_push`, somvr_fight_game.c `nb_*`)
+- **Measured against the body, applied to the root, never to Talion**: for an orc at Talion (FIGHT_SPACE's list),
+  `sc_body_need` = the root's horizontal distance from the eyes at which each body point would be >= the cm (3D) when
+  the root moves straight away from the eyes (the body carried with it; a point aside or above/below needs less). The
+  hook (FS_AIMOVE's post-hook, after the reel and the space - it has the last word, only ever farther) eases the root
+  out to it (`sc_body_push`: never nearer than the orc's own step put it; at most a step's ease beyond the larger of
+  where it was and its own step).
+- **Ahead of the lean** (the third round): each move learns its lean (the root's need past the cm, from when into the
+  move it began; per attack record, the run's own table); the next of its kind is eased back at **1.5 m/s from 0.45 s
+  before** that time (a step back, not a slide). The body itself (an unlearnt move, a bigger lean) at **6 m/s**, with a
+  **lead** (the body's nearing in the last frame asked as a margin, at most 25 cm: the need is read from the last
+  frame's pose). The rates are per second (a step = rate x the frame's time: the null compositor's 20 Hz takes 4.5x
+  the headset's 90 Hz step).
+- **Bounds**: a hold never takes a root past where it began + 60 cm (none reached it: "a hold's way out 29 cm at the
+  most" in 065957); the body's points follow the pose's own root (`Null`, at the root in every frame read: 0 cm off).
+- **Syncs**: never in Talion's own (a grab, an execution, the Shadow Strike's lift: his Combat +0x188 with a record);
+  an enemy's sync on him (the berserker's headbutt) by `SOMVR_FIGHT_BODY_SYNC=hold` (default; `free` = not held). The
+  orc's own sync flag says nothing: a berserker's every strike has it (round 1 held none of them, 053004).
+- The hands and the weapons are not held: the blows still reach Talion's body and the guard.
+
+| Switch | Default (code) | Build 19b's env | What |
+|---|---|---|---|
+| `SOMVR_FIGHT_BODY_CM` | unset (off) | 60 | an orc at Talion whose head, neck, chest or shoulders come nearer than this (cm, the joints, 3D) to the eyes has its root held back; 0 = the measure only; needs `SOMVR_FIGHT_SPACE_CM` (its hook and its list) |
+| `SOMVR_FIGHT_BODY_SYNC` | `hold` | (default) | an enemy's sync on Talion held too (`free`: not) |
+
+Test words (`SOMVR_HANDS_TEST` for the marks): `fight body CM` (0 = measured only), `fight body sync hold|free`,
+`fight body marks N CM` (a bug mark with both eyes at the nearest of each of the next N moves whose body comes under
+CM), `fight body status`.
+
+### 74.3 Runs (headless, build 19's env + this block, `SOMVR_HANDS_TEST=1`; scripts/body19-drive.sh: per orc the hold
+off then on, the blade behind the hip (every blow lands) then the test guard on the learnt paths, the berserker also
+edge cuts (its headbutt), then the group of 4; every run 0 WARN, the install unchanged, the real save UNCHANGED)
+
+| Run | Code | Hold | Moves within 70 cm / under 50 | Nearest | Notes |
+|---|---|---|---|---|---|
+| 053004 | 483947f+ | off / 55 | 57 / 31 - 64 / 18 | 26 - 28 | the berserker never held (its sync flag); the crowd 12 -> 1 under 50 |
+| 055508 | 3e7faf3+ | off / 55 | 93 / 43 - 93 / 26 | 27 - 42 | held, a frame late at 20 Hz: 42-49 cm |
+| 061738 | + the lead | off / 55 / 65 | 56 / 26 - 62 / 13 - 55 / 1 | 32 - 42 - 49 | Front_3 leans 38 cm in 2-3 frames |
+| 063903 | + ahead of the lean | off / **60** | 74 / 29 - 62 / **0** | 29 - **51** | a defender alternated 1.3 / 5 m away (not the hold's: a 4 m jump in one frame) |
+| 065957 | + the bounds | off / **60** | 69 / 23 - 74 / **1** | 26 - **41** (the next 51) | a hold's way out 29 cm at the most, never capped |
+
+**Blows still land and are still blocked** (the same boots, off vs on; strikes = THREAT's melee starts with an
+impact, hits = `DEFENCE hit`, blocks = the test guard's `the blades met: blocked` / not):
+(runs 061738, 063903, 065957; on = 55, 60 and 65; a hit can fall in the next phase's window, so hits ~ strikes)
+- berserker, the blade behind the hip: off 36 hits of 38 strikes, on 46 of 46; the guard on its paths: off 18
+  blocked, 10 not (64 %), on 28 blocked, 14 not (67 %); provoked (edge cuts): off 31 hits of 51, on 43 of 61, the
+  paired headbutt on Talion 6 times off, 6 on.
+- infantry: the blade behind: off 36 hits / 35 strikes, on 45 / 48; the guard: off 24 blocked of 24, on 27 of 28.
+- shield: its blows are red (unblockable) - the test guard blocks none either way; off 21 hits / 19 strikes, on 23 /
+  22 (blade behind).
+- the group of 4: off 86 hits / 73 strikes, on 111 / 91 (one phase per mode); the weapons' nearest pass per move
+  unchanged (055508: the means within 3 cm off/on).
+
+**Pictures** (both eyes, the marks at a move's nearest; 065957): off - a berserker's Front_2 puts the top of its skull
+34 cm from the eyes, filling the lower half of both eyes; a defender's Heavy its skull and shoulder 42 cm (the right
+half). With the hold at 60 - the berserker's Front_3 at 58 cm: its shoulder pad and arm in the lower middle, the
+horizon and the fight around it in view; the defender's Heavy at 61 cm: the bent orc in the lower third. 061738 at 55:
+the berserker's face and chest fill the left two thirds (57 cm) - B&S-close; at 65 the head at the lower right.
+
+### 74.4 Open (the headset)
+- How the eased root reads at 90 Hz: the root slides back up to ~30 cm while the body leans in (the feet may skate;
+  ahead of a learnt lean it steps back at 1.5 m/s first). Whether 60 cm (joints; the skin ~45-50) is the right space
+  - 55 looks B&S-close, 65 calmer - is the player's call; `fight body CM` sets it live.
+- The first of each move kind in a session is held only by the body itself (no learnt lean yet): at 90 Hz the lead
+  and the 6 m/s ease should keep it within a few cm of the space (headless 20 Hz: 41 cm once in 74).
+- The paired headbutt (the enemy's sync on Talion) is held too (its head 52-58 cm, from 37); whether its blow still
+  reads as a headbutt from there.
+- Not covered: captains, the wrecker/mangler/throat-grab syncs, a crowd of berserkers, the player stepping into an orc
+  (the hold eases the orc back from the eyes then too: a player can't push his face into an orc's). The verbs' grab
+  is not in the way (its cone reaches a head up to 170 cm off; a held orc is Talion's own sync: never held).
+- Pictures: logs/boot-check-20261028-065957/marks/070207_2 (off, the berserker), 070333_3 (60), 070536_4 (off, the
+  defender), 070620_5 (60); 061738/marks 062059_3 (55), 062223_5 (65).

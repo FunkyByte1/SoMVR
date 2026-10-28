@@ -108,6 +108,17 @@ int sc_space_hold2(const float root[3], const float *head, const float was[3], f
  * dead), the sideways part as it is, never past max(cap, the distance it had); a step that takes it nearer to talion
  * (Talion's root; NULL = none) passes as it is (FIGHT_SPACE's rule holds it). 1 = changed, *cut = cm taken off */
 int sc_reel_cap(const float anchor[3], const float *talion, const float was[3], float xf[3], float cap, float *cut);
+/* SOMVR_FIGHT_BODY_CM (build 19b, docs/re-xr-pipeline.md 74): how far (horizontally, cm) an orc's root has to stand
+ * from the eyes for each of its n body points (bone[i], world cm, read with the root at root) to be at least body cm
+ * from the eyes (3D), the body carried rigidly with the root straight away from the eyes. 0 = none needed (every point
+ * out already); else the root's distance now + the largest point's need (at most max_cm more); *worst = that point's
+ * index (-1 none) */
+float sc_body_need(const float eye[3], const float root[3], const float (*bone)[3], int n, float body, float max_cm,
+                   int *worst);
+/* the hook's step for it: the orc's next position xf (cm) kept at least need from the eyes, horizontally (y untouched),
+ * eased out - at most push cm farther than the larger of where it was and where its own step put it, never nearer than
+ * its own step. 1 = changed, *pushed = cm added to its own step's distance */
+int sc_body_push(const float eye[3], const float was[3], float xf[3], float need, float push, float *pushed);
 const char *sc_tier_name(int tier);
 /* build 17 (docs/re-xr-pipeline.md 59): what a landed hit was, for its feedback (the bite, the sound, the sparks): a cut
  * (the heavy tier: SOMVR_COMBAT_CLASS=cut's committed cut, =speed's fast long one), a stab, a flat slap (light with the

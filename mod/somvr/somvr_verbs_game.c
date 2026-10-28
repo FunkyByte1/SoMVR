@@ -19,6 +19,7 @@ enum { VB_OFF, VB_LOG, VB_ON };
 #define VB_CMD_X 118     /* CombatPrimary01: pad X, while grabbing the grab's move (UI_Combat_GrabFlurry), the stealth kill */
 #define VB_PRESS_N 4     /* commands at once (vb_press_cmds) */
 #define VB_HEAD_UP_CM 75 /* an orc's head above its root without its Head node (combat's capsule: 90 up) */
+#define VB_BACK_APART_CM 30 /* build 19b: the hands closer than this (the left on the hilt): a stealth target's back takes no grab */
 #define VB_GRAB_CM 300   /* orcs this close to Talion's root are offered to the left hand */
 #define VB_PROMPTS 16   /* prompts up at once (each is shown on the HUD's three diamonds: one entry per key and action) */
 #define VB_ORCS 6       /* near orcs followed (their state, attack and sync logged on each change) */
@@ -63,6 +64,11 @@ static struct {
 	int nheads;                 /* the near orcs' heads (vb_frame, for the next in_frame) */
 	uintptr_t head_c[SOMVR_VB_ORCS];
 	float heads[SOMVR_VB_ORCS][3];
+	float body[SOMVR_VB_ORCS][3], body_cm[SOMVR_VB_ORCS]; /* build 19b: a stealth target's back (SOMVR_STEALTH_KILL_GRAB_CM) */
+	uint64_t back_grabs, back_squeezes;
+	float root[3];              /* Talion's root at the last vb_frame (the squeeze's geometry line) */
+	uint32_t blade_lines;       /* build 19b: the held orc's sweep lines */
+	int have_root;
 	struct vb_head hst[16];
 	int nhst;
 	uint64_t heads_frame;
@@ -401,8 +407,9 @@ static void vb_head_of(const struct cb_orc *o, float out[3])
 	g_vb.head_node++;
 }
 
-/* vb_frame: the near orcs' heads for the next in_frame's hand (within VB_GRAB_CM of Talion's root) */
-static void vb_heads(const struct cb_orc *o, int n)
+/* vb_frame: the near orcs' heads for the next in_frame's hand (within VB_GRAB_CM of Talion's root); a stealth target's
+ * back too (build 19b, SOMVR_STEALTH_KILL_GRAB_CM: somvr_stealth_game.c says which orcs and how near) */
+static void vb_heads(const struct cb_orc *o, int n, uintptr_t pc, const float *root)
 {
 	int k = 0;
 	for (int i = 0; i < n && k < SOMVR_VB_ORCS; i++) {
@@ -410,6 +417,7 @@ static void vb_heads(const struct cb_orc *o, int n)
 			continue;
 		g_vb.head_c[k] = o[i].c;
 		vb_head_of(&o[i], g_vb.heads[k]);
+		g_vb.body_cm[k] = stl_grab_back(&o[i], pc, root, g_vb.body[k]);
 		k++;
 	}
 	g_vb.nheads = k, g_vb.heads_frame = g_fr.frame;
@@ -440,6 +448,38 @@ static void vb_kind(uintptr_t pc, double t)
 	if (vb_log_ok())
 		logf_("VERBS t=%.3f the game: Talion's '%s' (%s)%s", t, an[0] ? an : "-", somvr_vb_kind_name(k),
 		      holding ? " - the left hand holds" : "");
+}
+
+/* build 19b: a squeeze with a stealth target near (its back offered: SOMVR_STEALTH_KILL_GRAB_CM): where the hand was -
+ * the palm, the eyes, Talion's root and the orc's root and head in cm ahead / up / right of the eyes along the eyes ->
+ * its root (the real reaches the headset logs; the tests' poses) */
+static void vb_back_line(const somvr_vb_hand_in *in, const somvr_vb_hand_out *o, double t)
+{
+	g_vb.back_squeezes++;
+	int i = -1;
+	float bd = INFINITY;
+	for (int k = 0; k < in->norc && k < SOMVR_VB_ORCS; k++)
+		if (in->body_cm[k] > 0 && dist3(in->palm, in->body[k]) < bd)
+			bd = dist3(in->palm, in->body[k]), i = k;
+	if (i < 0 || !vb_log_ok())
+		return;
+	float fx = in->body[i][0] - in->eye[0], fz = in->body[i][2] - in->eye[2], fl = sqrtf(fx * fx + fz * fz);
+	if (!(fl > 1))
+		fx = 0, fz = 1, fl = 1;
+	fx /= fl, fz /= fl;
+	float r[5][3];
+	const float *pt[5] = { in->palm, in->eye, g_vb.have_root ? g_vb.root : in->eye, in->body[i], in->head[i] };
+	for (int k = 0; k < 5; k++) {
+		float dx = pt[k][0] - in->eye[0], dz = pt[k][2] - in->eye[2];
+		r[k][0] = dx * fx + dz * fz, r[k][1] = pt[k][1] - in->eye[1], r[k][2] = dx * fz - dz * fx; /* (the sign of right: the game's) */
+	}
+	logf_("VERBS t=%.3f squeeze by a stealth target (orc %#lx, its back offered within %.0f cm): the palm %.1f cm from its "
+	      "back (the reach %.1f deg off it), %.1f cm from its head; %s; cm ahead/up/side of the eyes toward it: the palm "
+	      "%+.0f %+.0f %+.0f, Talion's root %+.0f %+.0f %+.0f, its root %+.0f %+.0f %+.0f, its head %+.0f %+.0f %+.0f", t,
+	      (unsigned long)g_vb.head_c[i], (double)in->body_cm[i], (double)o->back_cm, (double)o->back_deg,
+	      dist3(in->palm, in->head[i]), o->event == SOMVR_VBE_GRAB ? (o->by_body ? "taken by its back" : "taken by a head")
+	      : "nothing taken", r[0][0], r[0][1], r[0][2], r[2][0], r[2][1], r[2][2], r[3][0], r[3][1], r[3][2], r[4][0],
+	      r[4][1], r[4][2]);
 }
 
 /* in_frame (a stereo frame, the game thread), after the slots and before the climb: the left hand's grab. p, pw: the
@@ -490,6 +530,11 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	}
 	in.norc = fresh ? g_vb.nheads : 0;
 	memcpy(in.head, g_vb.heads, sizeof in.head);
+	memcpy(in.body, g_vb.body, sizeof in.body), memcpy(in.body_cm, g_vb.body_cm, sizeof in.body_cm);
+	/* the hands together (the left on the sword's hilt, SOMVR_TWOHAND's two-handed thrust at its back): not its back */
+	if (g_inp.hands[SOMVR_HAND_R].valid && sqrtf((pw[0].x - pw[1].x) * (pw[0].x - pw[1].x) + (pw[0].y - pw[1].y) *
+	    (pw[0].y - pw[1].y) + (pw[0].z - pw[1].z) * (pw[0].z - pw[1].z)) < VB_BACK_APART_CM)
+		memset(in.body_cm, 0, sizeof in.body_cm);
 	in.game_done = g_vb.game_done;
 	int was = g_vb.hand.phase, b_was = g_vb.hand.b;
 	somvr_vb_hand_out o;
@@ -547,11 +592,14 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 			if (g_vb.haptic > 0)
 				in_haptic_event(SOMVR_HAND_L, 0.35f * g_vb.haptic, 0.04f, SOMVR_HAP_COMBAT);
 		}
+		if (was == SOMVR_VBH_IDLE && o.by_body)
+			g_vb.back_grabs++;
 		if (vb_log_ok())
 			logf_("VERBS t=%.3f %s: the left hand %s orc %#lx%s (%.1f cm, the reach %.1f deg off; health %.1f, attack '%s' "
 			      "state '%s'): %s", t, somvr_vb_event_name(o.event), was != SOMVR_VBH_IDLE ? "holding" : o.by_cone ?
 			      "reached out at" : "on", (unsigned long)(was != SOMVR_VBH_IDLE ? g_vb.held_c : oc),
-			      was != SOMVR_VBH_IDLE ? "" : "'s head", o.dist_cm, o.cone_deg, vb_health(g_vb.held_c),
+			      was != SOMVR_VBH_IDLE ? "" : o.by_body ? "'s back (a stealth target: SOMVR_STEALTH_KILL_GRAB_CM)" : "'s head",
+			      o.dist_cm, o.cone_deg, vb_health(g_vb.held_c),
 			      vb_name(peek_ptr(g_vb.held_c + VB_C_ATTACK), an, sizeof an),
 			      vb_name(peek_ptr(g_vb.held_c + VB_C_STATE), sn, sizeof sn), o.event == SOMVR_VBE_GRAB
 			      ? "the grab (123) held while the grip stays closed" : "B (120) held while the trigger is");
@@ -588,6 +636,8 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 			g_vb.held_c = 0;
 		break;
 	}
+	if (o.edge && o.back_cm >= 0)
+		vb_back_line(&in, &o, t);
 	if (was != SOMVR_VBH_IDLE || g_vb.hand.phase != SOMVR_VBH_IDLE)
 		g_vb.took_frame = g_fr.frame;
 	if (g_vb.test && g_vb.hand.phase == SOMVR_VBH_GRAB && t >= g_vb.dbg_t) { /* a test: the pull's numbers, once a second */
@@ -964,7 +1014,30 @@ static void vb_tap_window(uintptr_t pcomb, double t)
 /* combat_frame's sweep (the game thread): the orc the hand holds (or the interrogation's) is not in PlayerCombat's
  * targeting bands while held (run 022511), so combat's contact loop never sees it: the blade swept against its capsule
  * here, a contact at a hit's speed = vb_contact (the grab's X, the choice's Eliminate); at most one a 0.5 s */
-static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, double t)
+/* build 19b: the nearest the blade (5 points along it) came to the capsule's axis this frame, cm */
+static float vb_blade_gap(const somvr_blade *b, const float c0[3], const float c1[3])
+{
+	float best = INFINITY, ab[3] = { c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2] };
+	float ll = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+	for (int k = 0; k <= 4; k++) {
+		float p[3], f = k / 4.0f, u = 0;
+		for (int j = 0; j < 3; j++)
+			p[j] = b->base[j] + f * (b->tip[j] - b->base[j]);
+		if (ll > 1e-6f)
+			u = ((p[0] - c0[0]) * ab[0] + (p[1] - c0[1]) * ab[1] + (p[2] - c0[2]) * ab[2]) / ll;
+		u = u < 0 ? 0 : u > 1 ? 1 : u;
+		float q[3] = { c0[0] + u * ab[0], c0[1] + u * ab[1], c0[2] + u * ab[2] }, d = dist3(p, q);
+		if (d < best)
+			best = d;
+	}
+	return best;
+}
+
+/* the held orc out of combat's bands: its own sweep. Build 19b: a stealth hold (grabbed while unaware) asks the stealth
+ * kill's judge first (the stab kills it: somvr_stealth_game.c; with Talion's object and PlayerCombat read here when the
+ * grab's mover hides them from combat_frame); a fast swing's frames log how near the blade came */
+static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, int sweep,
+		     const float *root, double t)
 {
 	uintptr_t c = g_vb.mode == VB_ON ? (g_vb.hand.phase == SOMVR_VBH_GRAB ? g_vb.held_c : g_vb.ask_c) : 0;
 	if (!c || t - g_vb.blade_t < 0.5)
@@ -978,13 +1051,42 @@ static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	float c0[3], c1[3];
 	sc_contact ct;
 	cb_capsule(&oc, c0, c1);
-	if (!sc_sweep_capsule(&g_cb.prev, b, g_cb.cfg.blade_r, c0, c1, g_cb.orc_r, g_cb.cfg.steps, &ct))
-		return;
+	int hit = sweep && sc_sweep_capsule(&g_cb.prev, b, g_cb.cfg.blade_r, c0, c1, g_cb.orc_r, g_cb.cfg.steps, &ct);
 	int tier = sc_tier(&g_cb.cfg, &g_cb.sp);
+	/* build 19b: while the game's grab holds the orc, Talion's mover is the grab's (player_objs refuses it): combat_frame
+	 * has no root, no PlayerCombat, no server Combat (run 063243) and the held orc's contacts reached neither the
+	 * stealth judge nor X (runs 054549, 060828). His object and PlayerCombat as they are: */
+	float rb[3];
+	int own = 0;
+	uintptr_t pcomb0 = pcomb, pc0 = pc; /* (X keeps combat_frame's: its old rule, untouched) */
+	if (!root || !pcomb) {
+		uintptr_t pl = g_fr.pl, pm = 0, obj = 0;
+		player_objs(pl, &pm, &obj);
+		if (!root && obj && peek(obj + OBJ_POS, rb, sizeof rb) && vec_ok(rb, 1e7f))
+			root = rb, own |= 1;
+		if (!pcomb && pl && (pcomb = peek_ptr(pl + P_COMBAT)))
+			own |= 2;
+		uintptr_t p2 = !pc && pcomb ? peek_ptr(pcomb + PC_SERVER) : 0;
+		if (p2 && vptr_of((void *)p2) == g_cbg.vt_combat && peek_ptr(p2 + C_PLAYER))
+			pc = p2, own |= 4;
+	}
+	if (g_cb.sp.mean_mps > 1.5f && g_vb.blade_lines < 60) {
+		g_vb.blade_lines++;
+		logf_("VERBS t=%.3f the held orc %#lx (out of the bands): the blade %.1f cm from its axis (its radius %.0f), %s, tier "
+		      "%s, %.1f m/s (the root %d, PlayerCombat %d, its server Combat %d; read here: %d)", t, (unsigned long)c,
+		      vb_blade_gap(b, c0, c1), (double)g_cb.orc_r, !sweep ? "no sweep this frame" : hit ? "a contact" : "no contact",
+		      sc_tier_name(tier), (double)g_cb.sp.mean_mps, root != NULL, pcomb != 0, pc != 0, own);
+	}
+	if (!hit)
+		return;
+	if (stl_contact(pcomb, pc, &oc, &ct, tier, b, root, t)) { /* build 19b: the stealth hold's stab */
+		g_vb.blade_t = t;
+		return;
+	}
 	if (tier == SC_TIER_NONE)
 		return;
 	g_vb.blade_t = t;
-	vb_contact(pcomb, pc, &oc, tier, t);
+	vb_contact(pcomb0, pc0, &oc, tier, t);
 }
 
 /* combat_frame (the game thread, every H4 in the world): the test press's request, the change lines */
@@ -1034,8 +1136,10 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	}
 	struct cb_orc o[VB_ORCS];
 	int n = pc && root ? cb_orcs_r(pcomb, pc, root, VB_NEAR_CM, o, VB_ORCS) : 0;
+	if ((g_vb.have_root = root != NULL))
+		memcpy(g_vb.root, root, sizeof g_vb.root);
 	if (g_vb.mode == VB_ON)
-		vb_heads(o, n);
+		vb_heads(o, n, pc, root);
 	struct vb_orc nw[VB_ORCS];
 	for (int i = 0; i < n; i++) {
 		uintptr_t c = o[i].c;
@@ -1221,7 +1325,7 @@ static void vb_end_log(void)
 		return;
 	logf_("VERBS END: %llu frames; the left hand: grabs %llu, near misses %llu, releases %llu, done %llu, lost %llu; B held %llu "
 	      "ticks; the game: holds %llu (completed %llu, out %llu), stuns %llu; pulses %llu; heads by node %llu, estimated %llu; "
-	      "squeezes that took nothing %llu; stealth: asked %llu, kills pressed %llu; the grab: 123 held %llu ticks, A taps %llu, "
+	      "squeezes that took nothing %llu; stealth: asked %llu, kills pressed %llu, squeezes by a stealth target %llu, taken by its back %llu; the grab: 123 held %llu ticks, A taps %llu, "
 	      "kills pressed %llu, the interrogation's choices %llu, Touch button taps %llu, let go without stereo frames %llu; the view eased back %llu "
 	      "frames (its largest step %.2f cm); "
 	      "prompts shown %llu, hidden %llu, holds %llu (%d up at the end); test presses %llu (%llu ticks held); %llu lines "
@@ -1231,7 +1335,8 @@ static void vb_end_log(void)
 	      (unsigned long long)g_vb.b_ticks, (unsigned long long)g_vb.hog_starts, (unsigned long long)g_vb.hog_completes,
 	      (unsigned long long)g_vb.hog_outs, (unsigned long long)g_vb.stuns, (unsigned long long)g_vb.buzzes,
 	      (unsigned long long)g_vb.head_node, (unsigned long long)g_vb.head_est, (unsigned long long)g_vb.ev[SOMVR_VBE_NONE],
-	      (unsigned long long)g_vb.stealth_asks, (unsigned long long)g_vb.stealth_kills, (unsigned long long)g_vb.grab_ticks,
+	      (unsigned long long)g_vb.stealth_asks, (unsigned long long)g_vb.stealth_kills,
+	      (unsigned long long)g_vb.back_squeezes, (unsigned long long)g_vb.back_grabs, (unsigned long long)g_vb.grab_ticks,
 	      (unsigned long long)g_vb.a_taps, (unsigned long long)g_vb.flurries, (unsigned long long)g_vb.choices,
 	      (unsigned long long)g_vb.btn_taps,
 	      (unsigned long long)g_vb.stale_lets, (unsigned long long)g_vb.view_frames, (double)g_vb.vmax_step,

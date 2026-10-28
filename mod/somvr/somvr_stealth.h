@@ -84,4 +84,10 @@ int somvr_stl_cue_step(somvr_stl_cue *q, uintptr_t orc, int possible, double t, 
  * returns 1 when it cut something */
 int somvr_stl_standoff(const float p[3], const float c[3], float r, float dt, float ease_hz, const float d[3],
                        float out[3]);
+/* build 19b (SOMVR_STEALTH_KILL_STANDOFF_DECEL; docs 72.6): the same circle with a brake instead of the ease: the step
+ * toward the edge at most sqrt(2 x decel x room) x dt (decel cm/s^2) and never past the edge - a steady deceleration
+ * that ends at rest on the edge (a 150 cm/s walk starts braking 45 cm out at 250 cm/s^2 and stops 0.6 s later; a slow
+ * walk only at the very end). Sideways, back, inside: as somvr_stl_standoff. Returns 1 when it cut something */
+int somvr_stl_standoff_brake(const float p[3], const float c[3], float r, float dt, float decel, const float d[3],
+                             float out[3]);
 #endif
