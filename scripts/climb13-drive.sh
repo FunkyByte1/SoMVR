@@ -23,8 +23,9 @@ PLAN=${CLIMB_PLAN:-both}
 AT=${CLIMB_AT-33350 2000 -27900}
 CATCH=${CLIMB_CATCH:-20 50}   # the catching hand's x and z (cm right, ahead of the head) in step 2
 T0=$(date +%s)
-R=""
+R=${CLIMB_RUN:-} # CLIMB_RUN=RUN: drive a running boot (build 19: tether19-drive.sh chains drivers)
 for i in $(seq 1 120); do
+  [ -n "$R" ] && break
   for d in $(ls -dt $SOM/logs/boot-check-2026* 2>/dev/null | head -3); do
     [ -f "$d/launch-cmd.txt" ] && grep -q "$WT" "$d/launch-cmd.txt" && [ "$(stat -c %Y "$d")" -ge "$T0" ] && R=$d && break
   done
@@ -219,5 +220,5 @@ fi
 grep -E '^CLIMB t=.*(start|end|hang|resume|fling [a-z]+):' "$L" | cut -c1-200 | tail -40
 echo "steps done $(date +%T)"
 sleep 2
-echo quit >> "$R/cmd"
+[ -n "${CLIMB_NOQUIT:-}" ] || echo quit >> "$R/cmd" # CLIMB_NOQUIT=1: leave it running
 echo "quit $(date +%T)"

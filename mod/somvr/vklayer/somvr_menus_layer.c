@@ -33,6 +33,8 @@ static struct {
     float mq[3];            /* SOMVR_XR_MENU_QUAD: distance, width, drop */
     float pitch_max;        /* SOMVR_XR_MENU_PITCH: a game menu's board down the gaze, at most this many deg (0 = level) */
     int pitch_bad;
+    float pitch_up;         /* build 19, SOMVR_XR_MENU_PITCH_UP: ... up a raised gaze, at most this many deg (0 = level) */
+    int pitch_up_bad;
     int mm, mm_bad;
     int mm_rect[4];         /* SOMVR_XR_MINIMAP_RECT (1920x1080 pixels) */
     somvr_mm_cfg mmc;
@@ -102,6 +104,13 @@ static void mn_config(void) {
         MN.pitch_bad = pv && *pv && (!e || *e || !(d >= 0 && d <= 60));
         MN.pitch_max = MN.pitch_bad ? 0 : d;
     }
+    { /* build 19: SOMVR_XR_MENU_PITCH_UP=DEG (0..60, default 0 = build 18's level board for a raised gaze) */
+        const char *pv = getenv("SOMVR_XR_MENU_PITCH_UP");
+        char *e = NULL;
+        float d = pv && *pv ? strtof(pv, &e) : 0;
+        MN.pitch_up_bad = pv && *pv && (!e || *e || !(d >= 0 && d <= 60));
+        MN.pitch_up = MN.pitch_up_bad ? 0 : d;
+    }
     MN.mm = somvr_mm_parse(getenv("SOMVR_XR_MINIMAP"), &MN.mm_bad);
     b = 0;
     somvr_mm_parse_rect(getenv("SOMVR_XR_MINIMAP_RECT"), MN.mm_rect, &b);
@@ -156,6 +165,11 @@ static void mn_setup(void) {
     if (MN.pitch_max > 0)
         lg("xr: menus: SOMVR_XR_MENU_PITCH=%.0f: a game menu opened with the head looking down gets its board down the gaze "
            "(at most %.0f deg below the level)", MN.pitch_max, MN.pitch_max);
+    if (MN.pitch_up_bad)
+        lg("xr: menus: SOMVR_XR_MENU_PITCH_UP=%s is not 0..60 (deg): 0 (the level board)", getenv("SOMVR_XR_MENU_PITCH_UP"));
+    if (MN.pitch_up > 0)
+        lg("xr: menus: SOMVR_XR_MENU_PITCH_UP=%.0f: a game menu opened with the head looking up (a glyph's Ithildin page) "
+           "gets its board up the gaze (at most %.0f deg above the level)", MN.pitch_up, MN.pitch_up);
     if (MN.mm_bad & 1) lg("xr: minimap: SOMVR_XR_MINIMAP=%s is not wrist or off: off", getenv("SOMVR_XR_MINIMAP"));
     if (MN.mm_bad & 2) lg("xr: minimap: SOMVR_XR_MINIMAP_RECT=%s is not X,Y,W,H in 1920x1080: the default",
                           getenv("SOMVR_XR_MINIMAP_RECT"));
@@ -234,7 +248,7 @@ static void mn_mono_quad(XrCompositionLayerQuad *q, uint32_t w, uint32_t h) {
     if (!MN.mono_latched || MN.mono_stereo != X.n_stereo) { /* the first mono frame after the world: an open */
         somvr_posef eye[2];
         if (mn_eyes(eye)) {
-            somvr_mn_board_pose_gaze(eye, MN.mq[0], MN.mq[2], MN.pitch_max, &MN.mono_pose);
+            somvr_mn_board_pose_gaze2(eye, MN.mq[0], MN.mq[2], MN.pitch_max, MN.pitch_up, &MN.mono_pose);
             MN.mono_latched = 1, MN.n_mono_boards++;
             if (MN.lines++ < 100) mn_log_pose("the menu quad's board", &MN.mono_pose, MN.mq[1], MN.mq[1] * h / w);
         }
@@ -260,7 +274,7 @@ static void mn_hud_quad(XrCompositionLayerQuad *q, const somvr_rec *rec) {
     }
     if (!MN.hud_latched || !MN.was_menu) {
         somvr_posef eye[2] = {rec->eye[0].pose, rec->eye[1].pose};
-        somvr_mn_board_pose_gaze(eye, MN.mq[0], MN.mq[2], MN.pitch_max, &MN.hud_pose);
+        somvr_mn_board_pose_gaze2(eye, MN.mq[0], MN.mq[2], MN.pitch_max, MN.pitch_up, &MN.hud_pose);
         MN.hud_latched = 1, MN.n_hud_boards++;
         if (MN.lines++ < 100) mn_log_pose("a game menu's board (the HUD quad)", &MN.hud_pose, MN.mq[1],
                                           MN.mq[1] * (float)X.hud_h / (float)X.hud_w);

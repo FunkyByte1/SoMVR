@@ -4379,10 +4379,11 @@ static void vm_setup(void) {
     VM.hover = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
     if (!X.ptr_on) X.ptr_draw = 1; /* the menu draws its dot and ray from the pointer's image (ptr_fill) */
     const somvr_vm_gcfg *g = &VM.gc;
-    lg("xr: vrmenu: somvr_vrmenu found at %p (v%u, preload pid %d, avail 0x%x, blink on %u ms): the wrist panel on (%.0f x "
+    lg("xr: vrmenu: somvr_vrmenu found at %p (v%u, preload pid %d, avail 0x%llx, blink on %u ms): the wrist panel on (%.0f x "
        "%.0f cm on the %s wrist, the %s hand points; opened and closed by the palm toward the eyes within %.0f deg held "
        "%.1f s, or the menu button's long press; closed by looking away %.1f s, the hand lost %.1f s or its X); "
-       "settings %s", (void *)m, m->version, m->pid, m->avail, m->blink_on_ms, SOMVR_VM_W_M * 100, SOMVR_VM_H_M * 100,
+       "settings %s", (void *)m, m->version, m->pid, (unsigned long long)m->avail, m->blink_on_ms, SOMVR_VM_W_M * 100,
+       SOMVR_VM_H_M * 100,
        VM.main_hand == SOMVR_HAND_R ? "left" : "right", VM.main_hand == SOMVR_HAND_R ? "right" : "left",
        acosf(g->face_on) * 57.29578f, g->hold_s, g->away_s, g->lost_s, line);
 }
@@ -4401,11 +4402,11 @@ static float vm_vignette(float obj) {
     return s > 0 ? (s < 1 ? s : 1) : 0;
 }
 /* what the menu can change in this session: the preload's, the HUD only with its quad, the seat height with a floor */
-static uint32_t vm_avail(void) {
-    uint32_t a = VM.obj->avail & ~(uint32_t)(SOMVR_VMA_FLOOR | SOMVR_VMA_PR_LIVE);
+static uint64_t vm_avail(void) { /* v7: 64 bits (a ~ of a 32-bit mask would clear bits 32..63: ~(uint64_t)) */
+    uint64_t a = VM.obj->avail & ~(uint64_t)(SOMVR_VMA_FLOOR | SOMVR_VMA_PR_LIVE);
     if (a & SOMVR_VMA_PRACTICE) /* the practice area's live state (the preload, every input tick) */
         a |= atomic_load_explicit(&VM.obj->pstate, memory_order_acquire) & SOMVR_VMA_PR_LIVE;
-    if (!X.hud || !X.hud_on) a &= ~(uint32_t)SOMVR_VMA_HUD;
+    if (!X.hud || !X.hud_on) a &= ~(uint64_t)SOMVR_VMA_HUD;
     if (X.space_type == XR_REFERENCE_SPACE_TYPE_STAGE) a |= SOMVR_VMA_FLOOR;
     if (SSN.obj) /* the preload's somvr_session: the Report and Quit game buttons */
         a |= ((SSN.obj->avail & SOMVR_SSA_MARK) ? (uint32_t)SOMVR_VMA_MARK : 0u) |
@@ -4611,7 +4612,7 @@ static XrCompositionLayerQuad vm_quad(const somvr_posef *p) {
 
 /* a click on the hovered part (the pointing hand's trigger press): the value changes (published: gen + 1), the
  * Recentre button (the game side recentres), the close box */
-static void vm_click(const somvr_vm_hit *hit, uint32_t avail) {
+static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
     somvr_settings before = VM.set;
     int r = somvr_vm_apply(&VM.set, avail, VM.obj->blink_on_ms, hit->item, hit->part);
     const char *what = "nothing";
@@ -4630,8 +4631,9 @@ static void vm_click(const somvr_vm_hit *hit, uint32_t avail) {
     } else if (r == SOMVR_VMR_PAGE) { /* a tab: its page (build 6: Settings, Practice, Controls) */
         VM.page = somvr_vm_tab_page(hit->item);
         VM.hover = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
-        what = VM.page == SOMVR_VMPG_PRACTICE ? "the practice page"
+        what = VM.page == SOMVR_VMPG_PRACTICE   ? "the practice page"
                : VM.page == SOMVR_VMPG_CONTROLS ? "the controls page"
+               : VM.page == SOMVR_VMPG_FIGHT    ? "the fight page" /* build 19: the Settings tab's second page */
                                                 : "the settings page";
         vm_haptic(VM.main_hand, 0.3f, 0.012f);
     } else if (r == SOMVR_VMR_PRACTICE) { /* a practice button: the request for the preload's game thread */
@@ -4731,7 +4733,8 @@ static void vm_frame(dev_st *ds) {
            (unsigned long long)VM.gs.closes, (unsigned long long)VM.n_frames);
     }
     int card = mn_card(ev, &gi, &panel, &have); /* build 6: the arrival card (the Controls page) in front instead */
-    uint32_t consume = 0, avail = vm_avail(), nq = 0;
+    uint32_t consume = 0, nq = 0;
+    uint64_t avail = vm_avail();
     somvr_ptr_out o;
     memset(&o, 0, sizeof o);
     float psz[2];

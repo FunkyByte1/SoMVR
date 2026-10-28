@@ -5,7 +5,7 @@
 
 /* a hand's distance from its shoulder slot: the head + R(the slots' torso yaw) ofs, x mirrored toward that hand's side
  * (the bow's slot, the quiver; p = the grip in tracking space, as the slots') */
-static float bo_shoulder_dist(int h, const float ofs[3], const sv_vec3 *p)
+static float bo_shoulder_dist(int h, const float ofs[3], const sv_vec3 *p, float off[3])
 {
 	sv_vec3 hp;
 	sv_quat hq;
@@ -15,20 +15,53 @@ static float bo_shoulder_dist(int h, const float ofs[3], const sv_vec3 *p)
 		yaw = somvr_slots_heading(hq);
 	sv_vec3 o = { (h == SOMVR_HAND_L ? -1.0f : 1.0f) * ofs[0], ofs[1], ofs[2] };
 	sv_vec3 r = sv_qrot(sv_qyaw(yaw), o), d = { p->x - hp.x - r.x, p->y - hp.y - r.y, p->z - hp.z - r.z };
+	if (off) { /* build 19: d on the torso's yaw (right toward that hand's side, up, ahead) for the take / miss lines */
+		sv_vec3 l = sv_qrot(sv_qconj(sv_qyaw(yaw)), d);
+		off[0] = (h == SOMVR_HAND_L ? -1.0f : 1.0f) * l.x, off[1] = l.y, off[2] = l.z;
+	}
 	return sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
 }
 
 /* SOMVR_BOW_QUIVER=on: the string hand inside the quiver (radius SOMVR_BOW_QUIVER_R_CM, 4 cm more to leave); a tick when
  * it comes in while the bow is out and no arrow is anywhere (the arrow is there to take) */
+/* build 19 (SOMVR_BOW_QUIVER_TO_CM, re-xr-pipeline.md 71): the quiver a capsule from qv_ofs down to qv_to - the reach over
+ * the shoulder and down the back: the user's 17b session closed the hand 18-49 cm behind the head (HAND lines next to the
+ * misses and the takes: +17 right -19 up -41 ahead, +28 +5 -49), outside build 16's sphere; unset: that sphere */
+static float bo_quiver_dist(int h, const sv_vec3 *p, float off[3])
+{
+	if (!g_bow.qv_cap)
+		return bo_shoulder_dist(h, g_bow.qv_ofs, p, off);
+	static const float zero[3] = { 0, 0, 0 };
+	float r[3], ab[3], ab2 = 0, k = 0;
+	bo_shoulder_dist(h, zero, p, r); /* the hand from the head (right toward its side, up, ahead) */
+	for (int i = 0; i < 3; i++)
+		ab[i] = g_bow.qv_to[i] - g_bow.qv_ofs[i], ab2 += ab[i] * ab[i], k += (r[i] - g_bow.qv_ofs[i]) * ab[i];
+	k = ab2 > 1 ? fminf(1.0f, fmaxf(0.0f, k / ab2)) : 0;
+	float d2 = 0;
+	for (int i = 0; i < 3; i++) {
+		float e = r[i] - g_bow.qv_ofs[i] - k * ab[i];
+		d2 += e * e, off[i] = r[i] - g_bow.qv_ofs[i];
+	}
+	return sqrtf(d2);
+}
+
 static int bo_quiver_in(int h, const sv_vec3 *p)
 {
-	float d = bo_shoulder_dist(h, g_bow.qv_ofs, p);
+	float d = bo_quiver_dist(h, p, g_bow.qv_off);
 	int was = g_bow.quiver_in;
 	g_bow.qv_dist = d;
 	g_bow.quiver_in = g_inp.hands[h].valid && d < (was ? g_bow.qv_r + 4 : g_bow.qv_r);
 	if (g_bow.quiver_in && !was && g_bow.s.phase != SOMVR_BOW_PH_IDLE && g_bow.s.arrow == SOMVR_BOW_ARROW_NONE)
 		in_haptic_event(h, 0.18f, 0.012f, SOMVR_HAP_UI), g_bow.qv_ticks++;
 	return g_bow.quiver_in;
+}
+
+/* build 19 (SOMVR_BOW_STRING_LOW_CM=ALONG,BACK): the lower limb's end on its own (the bow is not symmetric: its tip nodes
+ * 35.2 and 23.8 cm off the riser); unset = SOMVR_BOW_STRING_TIPS_CM / _BACK_CM. k 0: along, 1: back */
+static float bo_tips_lo(int k)
+{
+	float v = g_bow.string_lo[k];
+	return isfinite(v) ? v : k ? g_bow.string_back_cm : g_bow.string_tips_cm;
 }
 
 /* SOMVR_BOW_HOLD=fist (bo_skel, phase 2, the bow aimed and not drawn, after bo_hold's turn): the nock = the point of the
@@ -44,14 +77,16 @@ static void bo_nock_skel(const sa_node *nd, uint32_t cnt)
 		const float *l0 = nd[BO_TIP_LO].pos, *h0 = nd[BO_TIP_HI].pos, *l1 = nd[3].pos, *h1 = nd[4].pos;
 		float dl[3] = { l0[0] - l1[0], l0[1] - l1[1], l0[2] - l1[2] }, dh[3] = { h0[0] - h1[0], h0[1] - h1[1], h0[2] - h1[2] };
 		float nl = sqrtf(dl[0] * dl[0] + dl[1] * dl[1] + dl[2] * dl[2]), nh = sqrtf(dh[0] * dh[0] + dh[1] * dh[1] + dh[2] * dh[2]);
-		float kl = nl > 1 ? g_bow.string_tips_cm / nl : 0, kh = nh > 1 ? g_bow.string_tips_cm / nh : 0;
+		float kl = nl > 1 ? bo_tips_lo(0) / nl : 0, kh = nh > 1 ? g_bow.string_tips_cm / nh : 0;
 		float bk = g_bow.string_back_cm; /* (the limbs sweep back: the tips toward the string's side, the model's -Z) */
 		sv_vec3 ta = sv_qrot(g_bow.hold_q, (sv_vec3){ l0[0] + kl * dl[0], l0[1] + kl * dl[1] - BO_GRIP_NODE_Y,
-							      l0[2] + kl * dl[2] - bk }),
+							      l0[2] + kl * dl[2] - bo_tips_lo(1) }),
 			tb = sv_qrot(g_bow.hold_q, (sv_vec3){ h0[0] + kh * dh[0], h0[1] + kh * dh[1] - BO_GRIP_NODE_Y,
 							      h0[2] + kh * dh[2] - bk });
 		float va[3] = { ta.x, ta.y, ta.z }, vb[3] = { tb.x, tb.y, tb.z };
-		if (vec_ok(va, 60.0f) && vec_ok(vb, 60.0f) && fabsf(tb.z - ta.z) > 20.0f)
+		/* (build 19: within 100 cm - build 18's 60 dropped every end past 60 cm along the tube, so SOMVR_BOW_STRING_TIPS_CM
+		 * 40 and up kept the last shorter ends: the string never drawn with them from the start) */
+		if (vec_ok(va, 100.0f) && vec_ok(vb, 100.0f) && fabsf(tb.z - ta.z) > 20.0f)
 			g_bow.tip_g[0] = ta, g_bow.tip_g[1] = tb, g_bow.tips_ok = 1;
 	}
 	if (g_bow.hold_mode != SOMVR_BOW_HOLD_FIST || g_bow.nock_set || cnt != BO_BOW_NODES || g_bow.hold_done < 1 ||
@@ -387,6 +422,21 @@ static int bo_flight_at(sv_vec3 *tail, sv_vec3 *dir)
 
 /* the arrow's line for state a (HAND / STRING) on the grips g (tracking space, game convention): its nock end, its
  * direction and a frame (q: +Z along it, the roll from the string hand's grip) - the layer's arrow and the game's */
+/* build 19 (SOMVR_BOW_STRING_REST=ours): where the drawn string's middle and the nocked arrow's nock are - the string
+ * hand, or with the hand in front of the string's rest line (between it and the riser) its point on the rest plane: a
+ * hand there does not push the string toward the riser (continuous where the hand crosses the line). g: the grips */
+static sv_vec3 bo_string_pull(const sa_xf g[2])
+{
+	int B = g_bow.cfg.bow_hand, S = 1 - B;
+	sv_vec3 h = g[S].p;
+	if (!g_bow.srest_ours || !g_bow.tips_ok)
+		return h;
+	sv_vec3 lo = sv_qrot(g[B].q, g_bow.tip_g[0]), hi = sv_qrot(g[B].q, g_bow.tip_g[1]), f = somvr_bow_fwd(&g_bow.cfg, g[B].q);
+	sv_vec3 rest = { g[B].p.x + 0.5f * (lo.x + hi.x), g[B].p.y + 0.5f * (lo.y + hi.y), g[B].p.z + 0.5f * (lo.z + hi.z) };
+	float d = (h.x - rest.x) * f.x + (h.y - rest.y) * f.y + (h.z - rest.z) * f.z;
+	return d > 0 ? (sv_vec3){ h.x - d * f.x, h.y - d * f.y, h.z - d * f.z } : h;
+}
+
 static void bo_arrow_line(const sa_xf g[2], int a, sv_vec3 *tail, sv_vec3 *dir, sv_quat *q)
 {
 	int B = g_bow.cfg.bow_hand, S = 1 - B;
@@ -406,7 +456,7 @@ static void bo_arrow_line(const sa_xf g[2], int a, sv_vec3 *tail, sv_vec3 *dir, 
 		return;
 	}
 	sv_vec3 nock = somvr_bow_nock(&g_bow.cfg, g[B].p, g[B].q); /* nocked: from the string hand along the ray */
-	*tail = g[S].p, *dir = somvr_bow_ray_dir(&g_bow.cfg, g[B].q, nock, g[S].p, NULL);
+	*tail = bo_string_pull(g), *dir = somvr_bow_ray_dir(&g_bow.cfg, g[B].q, nock, g[S].p, NULL);
 	if (q)
 		*q = somvr_bow_align_ax(g[S].q, (sv_vec3){ 0, 0, 1 }, *dir, 1);
 }
@@ -442,6 +492,13 @@ static void bo_game_arrow(const sa_xf g[2], const int valid[2], sa_xf X, sv_vec3
 	} else if (force != BO_GA_HIDE && a == SOMVR_BOW_ARROW_REST) {
 		if (valid[B]) {
 			tail = somvr_bow_nock(&g_bow.cfg, g[B].p, g[B].q), dir = somvr_bow_fwd(&g_bow.cfg, g[B].q);
+			if (g_bow.srest_ours && g_bow.tips_ok) { /* build 19: its nock on the string's rest line, not the riser */
+				sv_vec3 lo = sv_qrot(g[B].q, g_bow.tip_g[0]), hi = sv_qrot(g[B].q, g_bow.tip_g[1]);
+				float d = (tail.x - g[B].p.x - 0.5f * (lo.x + hi.x)) * dir.x + (tail.y - g[B].p.y - 0.5f * (lo.y + hi.y)) *
+					  dir.y + (tail.z - g[B].p.z - 0.5f * (lo.z + hi.z)) * dir.z;
+				if (d > 0)
+					tail = (sv_vec3){ tail.x - d * dir.x, tail.y - d * dir.y, tail.z - d * dir.z };
+			}
 			f.q = somvr_bow_align_ax(g[B].q, (sv_vec3){ 0, 0, 1 }, dir, 1), mode = 3;
 		}
 	} else if (force != BO_GA_HIDE && bo_flight_at(&tail, &dir)) {
@@ -512,10 +569,10 @@ static void bo_vh_string(const sa_xf g[2], const int valid[2], somvr_vrhands_fra
 	sv_vec3 lo = sv_qrot(g[B].q, g_bow.tip_g[0]), hi = sv_qrot(g[B].q, g_bow.tip_g[1]), mid;
 	lo = (sv_vec3){ g[B].p.x + lo.x, g[B].p.y + lo.y, g[B].p.z + lo.z };
 	hi = (sv_vec3){ g[B].p.x + hi.x, g[B].p.y + hi.y, g[B].p.z + hi.z };
+	sv_vec3 rest = { 0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y), 0.5f * (lo.z + hi.z) };
+	mid = rest;
 	if (g_bow.s.phase == SOMVR_BOW_PH_DRAW && valid[S])
-		mid = g[S].p;
-	else
-		mid = (sv_vec3){ 0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y), 0.5f * (lo.z + hi.z) };
+		mid = bo_string_pull(g); /* the string hand (build 19: on the rest plane while in front of it) */
 	const sv_vec3 pts[3] = { lo, mid, hi };
 	for (int k = 0; k < 3; k++) { /* the game convention (cm) -> XR (m), as vh_to_xr */
 		if (!isfinite(pts[k].x + pts[k].y + pts[k].z))

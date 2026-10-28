@@ -123,6 +123,7 @@ _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK ==
 		       (int)SOMVR_PRA_SPAWN == (int)SOMVR_VMPR_SPAWN &&
 		       (int)SOMVR_PRA_REMOVE == (int)SOMVR_VMPR_REMOVE && (int)SOMVR_PRA_ARROWS == (int)SOMVR_VMPR_ARROWS &&
 		       (int)SOMVR_PRA_HEALTH == (int)SOMVR_VMPR_HEALTH && (int)SOMVR_PRA_FAR == (int)SOMVR_VMPR_FAR &&
+		       (int)SOMVR_PRA_GROUP == (int)SOMVR_VMPR_GROUP &&
 		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 3,
 	       "the menu's practice requests = the practice module's");
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
@@ -247,6 +248,8 @@ static struct {
 	double next_clear;
 	uint32_t gate_last;
 	/* counts */
+	int group_n;         /* build 19: SOMVR_PRACTICE_GROUP_N, the group's size (3, 4) */
+	uint64_t groups;
 	uint64_t frames, other, trips[3], arrived, failed, teleports, spawns, spawn_fail, removes, killed, cleared, passes,
 		held, mh_sets, mh_restores, mh_reasserts, advances, weathers, restores, req_trig, req_menu, refused, autos,
 		walked_out;
@@ -418,12 +421,29 @@ static int pr_remove_obj(uintptr_t h, uintptr_t npc)
  * circle's turns, re-xr-pipeline.md 42.10); kept orcs are ours for the keep-clear pass; removed with the next removal
  * after "front keep 0" */
 static struct { int on, n; uintptr_t h[8], npc[8]; } g_pr_keep;
+/* build 19: the practice page's "Spawn group" (re-xr-pipeline.md 70): 3-4 orcs of mixed types around Talion; ours
+ * like the single orc (the keep-clear pass leaves them, Remove and a new spawn remove them) */
+static struct {
+	int n, alive;
+	uintptr_t h[SOMVR_PR_GROUP_MAX], npc[SOMVR_PR_GROUP_MAX], c[SOMVR_PR_GROUP_MAX];
+	int type[SOMVR_PR_GROUP_MAX], down[SOMVR_PR_GROUP_MAX], gone[SOMVR_PR_GROUP_MAX];
+	double t;
+} g_pr_grp;
 static int pr_kept(uintptr_t h)
 {
 	for (int i = 0; i < g_pr_keep.n; i++)
 		if (g_pr_keep.h[i] == h)
 			return 1;
+	for (int i = 0; i < g_pr_grp.n; i++)
+		if (g_pr_grp.h[i] == h)
+			return 1;
 	return 0;
+}
+static int pr_obj_alive(uintptr_t h, uintptr_t npc) /* pr_orc_alive's test for any of ours */
+{
+	uint8_t fl = 0x18;
+	return h && peek(h + PR_HOBJ_FLAGS, &fl, 1) && !(fl & 0x18) && peek_ptr(h + PR_HOBJ_GAMEOBJ) == npc &&
+	       vptr_of((void *)npc) == g_cbg.vt_npc;
 }
 
 static void pr_remove_orc(const char *why, double t)
@@ -437,6 +457,15 @@ static void pr_remove_orc(const char *why, double t)
 	}
 	if (!g_pr_keep.on)
 		g_pr_keep.n = 0;
+	for (int i = 0; i < g_pr_grp.n; i++) { /* build 19: the group goes with every removal */
+		int done = !g_pr_grp.gone[i] && pr_remove_obj(g_pr_grp.h[i], g_pr_grp.npc[i]);
+		g_pr.removes += done;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f remove the group's %s orc %d (%s) hobj=%#lx after %.1f s: %s", t,
+			      somvr_pr_orc_label(g_pr_grp.type[i]), i, why, (unsigned long)g_pr_grp.h[i], t - g_pr_grp.t,
+			      done ? "removal queued" : "already gone");
+	}
+	g_pr_grp.n = g_pr_grp.alive = 0;
 	if (!g_pr.orc_h)
 		return;
 	int alive = pr_orc_alive(), done = alive && pr_remove_obj(g_pr.orc_h, g_pr.orc_npc);
@@ -696,6 +725,134 @@ static void pr_far_tick(const struct pr_me *m, double t)
 		logf_("PRACTICE t=%.3f far orc +%.0f s: %.1f m from Talion (%.1f at the spawn), moved %.1f m; its target %s; %s",
 		      t, age, (double)d, (double)(g_pr.far_dist0 / 100.0f), (double)mv,
 		      at_him ? "Talion" : tg ? "another" : "none", g_pr.far_aware ? "aware (fighting him)" : "unaware");
+}
+
+/* build 19 (the group): one orc of type `type` on the ground under `at`, facing Talion (re-combat-spawn.md 1.2 steps 1-4 as P9's `spawn`):
+ * NULL = made (*o filled), else why not (o->hit, o->ground, o->tn as far as it went) */
+struct pr_made { uintptr_t h, npc, c, zone, ground, tmpl; float hit[3]; uint32_t lvl; char tn[96]; const char *name; };
+static const char *pr_make_at(const struct pr_me *m, int type, const float at[3], struct pr_made *o)
+{
+	const char *fail = NULL;
+	memset(o, 0, sizeof *o);
+	o->name = g_pr_tmpl_test[0] ? g_pr_tmpl_test : somvr_pr_orc_template(type); /* (a test: SOMVR_VERBS) */
+	o->tmpl = PR_FN(PRS_BYNAME, pr_byname_fn)(o->name);
+	if (o->tmpl)
+		fb_rec_name(o->tmpl, o->tn, sizeof o->tn);
+	float q[4], hp[3] = { 0, 0, 0 };
+	uintptr_t ctx, ret = 0;
+	if (!o->tmpl)
+		fail = "no such AI/Templates record (by name)";
+	else if (!pr_ground(at, o->hit, &o->ground))
+		fail = "the ray down hit nothing (no ground within 6 m below the spot ahead)";
+	else if (!(ctx = o->ground ? o->ground : m->pc ? peek_ptr(m->pc + C_HOBJ) : 0))
+		fail = "no context object (neither the ground's nor Talion's)";
+	if (!fail) {
+		somvr_pr_facing(o->hit, m->pos, q);
+		float xf[7] = { o->hit[0], o->hit[1] + 10.0f, o->hit[2], q[0], q[1], q[2], q[3] };
+		ret = PR_FN(PRS_SPAWN, pr_spawn_fn)(ctx, "SomVR_Practice", xf, o->tmpl, 1, 1, 0, 0, 0);
+		o->h = ret ? peek_ptr(ret + 8) : 0;
+		for (uintptr_t cls = o->h ? peek_ptr(peek_ptr(o->h + PR_HOBJ_CLASSES)) : 0, k = 0; cls && k < 32 && !o->npc;
+		     cls = peek_ptr(cls + 8), k++)
+			if (cls == g_prg.class_npc)
+				o->npc = peek_ptr(o->h + PR_HOBJ_GAMEOBJ);
+		if (!o->npc || vptr_of((void *)o->npc) != g_cbg.vt_npc)
+			fail = "FUN_029a4830 made no NPC (placement refused, or the template is a prop)";
+	}
+	if (!fail) {
+		peek(o->h + OBJ_POS, hp, sizeof hp);
+		o->zone = PR_FN(PRS_ZONE, pr_zone_fn)(hp, 0, 0);
+		if (pr_slot_ok(o->npc, PRS_SETZONE, PR_SLOT_SETZONE))
+			PR_FN(PRS_SETZONE, pr_setzone_fn)(o->npc, o->zone, 1);
+		o->c = peek_ptr(o->npc + PR_CH_COMBAT);
+		peek(g_prg.spawn_level, &o->lvl, sizeof o->lvl);
+		if (o->c && vptr_of((void *)o->c) == g_cbg.vt_combat)
+			PR_FN(PRS_LEVEL, pr_level_fn)(o->c, o->lvl);
+		else
+			o->c = 0;
+	}
+	return fail;
+}
+
+/* why a spawn is refused now (NULL = not) */
+static const char *pr_spawn_refusal(void)
+{
+	return !g_pr.ok_spawn ? "the spawn's sites did not check out at start" : !g_pr.here ? "not in the practice area (go there first)"
+	       : g_pr.trip.phase != SOMVR_PRT_IDLE ? "a trip is on" : NULL;
+}
+
+
+/* build 19: "Spawn group" - n (3 or 4; somvr_pr_group_plan) of mixed types around Talion at 4.5-5.5 m, each facing
+ * him; everything of ours out before removed first */
+static void pr_group(const struct pr_me *m, int n, double t, const char *who)
+{
+	const char *fail = pr_spawn_refusal();
+	if (fail) {
+		g_pr.refused++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f group (%s) refused: %s", t, who, fail);
+		return;
+	}
+	pr_remove_orc("a new group", t);
+	somvr_pr_group_orc plan[SOMVR_PR_GROUP_MAX];
+	int k = somvr_pr_group_plan(n, plan), made = 0;
+	sv_vec3 f = sv_qrot(sv_qnormalize(sv_quat_of(m->rot)), (sv_vec3){ 0, 0, 1 });
+	float fwd[3] = { f.x, f.y, f.z };
+	memset(&g_pr_grp, 0, sizeof g_pr_grp);
+	g_pr_grp.t = t;
+	for (int i = 0; i < k; i++) {
+		float at[3];
+		somvr_pr_group_spot(m->pos, fwd, plan[i].yaw_deg, plan[i].dist_cm, at);
+		struct pr_made o;
+		const char *why = pr_make_at(m, plan[i].type, at, &o);
+		if (!why) {
+			int j = g_pr_grp.n++;
+			g_pr_grp.h[j] = o.h, g_pr_grp.npc[j] = o.npc, g_pr_grp.c[j] = o.c, g_pr_grp.type[j] = plan[i].type;
+			made++, g_pr.spawns++;
+		} else {
+			g_pr.spawn_fail++;
+		}
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f group (%s) orc %d: %s '%s' %s%s at %+.0f deg %.1f m (%.1f %.1f %.1f) hobj=%#lx Combat=%#lx "
+			      "level %u", t, who, i, somvr_pr_orc_label(plan[i].type), o.tmpl ? o.tn : "-", why ? "FAILED: " : "ok",
+			      why ? why : "", (double)plan[i].yaw_deg, (double)(plan[i].dist_cm / 100.0f), o.hit[0], o.hit[1], o.hit[2],
+			      (unsigned long)o.h, (unsigned long)o.c, o.lvl);
+	}
+	g_pr_grp.alive = made;
+	g_pr.groups++;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f group (%s): %d of %d orcs out around Talion (two in front, the rest beside and behind him)", t,
+		      who, made, k);
+}
+
+/* a group orc of ours still in the world (dead bodies too: Remove takes them) */
+static int pr_group_out(void)
+{
+	for (int i = 0; i < g_pr_grp.n; i++)
+		if (!g_pr_grp.gone[i])
+			return 1;
+	return 0;
+}
+
+/* the group's orcs: each one's death or removal by the game, once */
+static void pr_group_tick(double t)
+{
+	for (int i = 0; i < g_pr_grp.n; i++) {
+		if (g_pr_grp.gone[i])
+			continue;
+		if (!pr_obj_alive(g_pr_grp.h[i], g_pr_grp.npc[i])) {
+			g_pr_grp.gone[i] = 1, g_pr_grp.alive -= !g_pr_grp.down[i];
+			if (pr_log_ok(t))
+				logf_("PRACTICE t=%.3f the group's %s orc %d is gone (the game removed it) after %.1f s", t,
+				      somvr_pr_orc_label(g_pr_grp.type[i]), i, t - g_pr_grp.t);
+			continue;
+		}
+		if (!g_pr_grp.down[i] && g_pr_grp.c[i] && cb_dead(g_pr_grp.c[i])) {
+			g_pr_grp.down[i] = 1, g_pr_grp.alive--, g_pr.killed++;
+			if (pr_log_ok(t))
+				logf_("PRACTICE t=%.3f the group's %s orc %d is down after %.1f s (%d standing)", t,
+				      somvr_pr_orc_label(g_pr_grp.type[i]), i, t - g_pr_grp.t, g_pr_grp.alive);
+		}
+	}
 }
 
 /* our orc 1 and 3 s after its spawn (P9's SPAWNCHECK) and its death */
@@ -1358,6 +1515,7 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 	case SOMVR_PRA_GO: pr_go(m, have, t, who); break;
 	case SOMVR_PRA_BACK: pr_back(t, who); break;
 	case SOMVR_PRA_SPAWN: pr_spawn(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who); break;
+	case SOMVR_PRA_GROUP: pr_group(m, orc == 3 || orc == 4 ? orc : g_pr.group_n, t, who); break; /* build 19 */
 	case SOMVR_PRA_FAR: /* build 18 */
 		pr_spawn_at(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who, 1);
 		break;
@@ -1389,6 +1547,7 @@ static void pr_new_player(uintptr_t pl, double t)
 	pr_quiet_off(t, "a new player (a load)");
 	g_pr.orc_h = g_pr.orc_npc = g_pr.orc_c = 0;
 	g_pr_keep.n = 0;
+	memset(&g_pr_grp, 0, sizeof g_pr_grp); /* build 19 */
 	memset(&g_pr.trip, 0, sizeof g_pr.trip);
 	g_pr.went = g_pr.here = g_pr.have_back = 0;
 	g_pr.mh_on = 0, g_pr.mh_ch = 0;
@@ -1525,6 +1684,7 @@ static void pr_frame(uintptr_t pl)
 		}
 	}
 	pr_orc_tick(&m, t);
+	pr_group_tick(t); /* build 19 */
 	pr_far_tick(&m, t); /* build 18 */
 	if (g_pr.here && have && t >= g_pr.next_clear) {
 		g_pr.next_clear = t + 1.0;
@@ -1536,7 +1696,7 @@ static void pr_frame(uintptr_t pl)
 	if (g_vm.on)
 		atomic_store_explicit(&g_vmo.pstate,
 				      (g_pr.here ? SOMVR_VMA_PR_HERE : 0u) | (g_pr.have_back ? SOMVR_VMA_PR_BACK : 0u) |
-					      (g_pr.orc_h ? SOMVR_VMA_PR_ORC : 0u) |
+					      (g_pr.orc_h || pr_group_out() ? SOMVR_VMA_PR_ORC : 0u) |
 					      (g_pr.trip.phase != SOMVR_PRT_IDLE || g_pr.pend_act ? SOMVR_VMA_PR_BUSY : 0u),
 				      memory_order_release);
 }
@@ -1619,6 +1779,7 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	}
 	g_pr.minhealth = env_float("SOMVR_PRACTICE_MINHEALTH", 20, 0, 100000, bad);
 	g_pr.ahead_cm = env_float("SOMVR_PRACTICE_AHEAD_CM", 350, 150, 2000, bad);
+	g_pr.group_n = (int)env_float("SOMVR_PRACTICE_GROUP_N", 4, 3, 4, bad); /* build 19: "Spawn group" */
 	g_pr.far_cm = env_float("SOMVR_PRACTICE_FAR_CM", 1800, 800, 4000, bad); /* build 18: Spawn far orc (unaware) */
 	g_pr.auto_s = env_float("SOMVR_PRACTICE_AUTO_S", 5, 0, 600, bad);
 	const char *ot = getenv("SOMVR_PRACTICE_ORC");
@@ -1751,7 +1912,8 @@ static void pr_end_log(void)
 	      (unsigned long long)g_pr.pw_pauses, (unsigned long long)g_pr.pw_open, g_pr.pw_after_max, g_pr.pw_len_max,
 	      (unsigned long long)g_pr.pw_none, (unsigned long long)g_pr.suppressed);
 	logf_("PRACTICE END refills: arrows + focus %llu, health %llu, refused %llu (not in the area, no player, a trip); test "
-	      "aids hurt %llu focus %llu; far orcs %llu (noticed Talion %llu)", (unsigned long long)g_pr.fill_arrows,
-	      (unsigned long long)g_pr.fill_health, (unsigned long long)g_pr.fill_refused, (unsigned long long)g_pr.aid_hurt,
-	      (unsigned long long)g_pr.aid_focus, (unsigned long long)g_pr.far_spawns, (unsigned long long)g_pr.far_noticed);
+	      "aids hurt %llu focus %llu; far orcs %llu (noticed Talion %llu); groups %llu (of %d)",
+	      (unsigned long long)g_pr.fill_arrows, (unsigned long long)g_pr.fill_health, (unsigned long long)g_pr.fill_refused,
+	      (unsigned long long)g_pr.aid_hurt, (unsigned long long)g_pr.aid_focus, (unsigned long long)g_pr.far_spawns,
+	      (unsigned long long)g_pr.far_noticed, (unsigned long long)g_pr.groups, g_pr.group_n);
 }

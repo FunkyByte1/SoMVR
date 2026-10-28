@@ -6,14 +6,17 @@
 #   shove  the same orc: the left hand pushed into its shield (a 150 ms swing, P18_SHOVE_N times), each followed by an
 #          edge cut inside the opening: through its block / the riposte into its shield (the break)
 #   word   a fresh shield orc: `parry open` then an edge cut (the riposte rule alone: into the shield = broken)
+#   dodge  (build 19, SOMVR_PARRY_DODGE) a shield orc: at each red warning the test head 45 cm aside for 1.2 s (a lean:
+#          the head out of the blow), then a step in and an edge cut at each opening (`PARRY dodge`), P18_DODGE_S s
 #   inf    an infantry: `fight guard learn` (P18_LEARN_N strikes), then `fight guard path` (P18_PATH_N strikes): each
 #          contact block a parry (the streak +1, the opening); a watcher answers each opening with a step and an edge cut
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${P18_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
-STEPS=${P18_STEPS:-base shove word inf}
+STEPS=${P18_STEPS:-base shove word dodge inf}
 T0=$(date +%s)
-R=""
+R=${P18_RUN:-} # P18_RUN=RUN: drive a running boot (build 19: tether19-drive.sh chains drivers)
 for i in $(seq 1 120); do
+  [ -n "$R" ] && break
   for d in $(ls -dt $SOM/logs/boot-check-2026* 2>/dev/null | head -3); do
     [ -f "$d/launch-cmd.txt" ] && grep -q "$WT" "$d/launch-cmd.txt" && [ "$(stat -c %Y "$d")" -ge "$T0" ] && R=$d && break
   done
@@ -46,8 +49,13 @@ face() { local y n; y=$(grep -E '^THREAT (cue|warn) ' "$R/somvr.log" | tail -1 |
   [ -n "$y" ] || return 0; n=$(( (${y#+} + (${y#+} < 0 ? -15 : 15)) / 30 ))
   while [ "$n" -gt 0 ]; do w "turn+" 0.6; n=$((n - 1)); done; while [ "$n" -lt 0 ]; do w "turn-" 0.6; n=$((n + 1)); done; }
 # the orc's distance from Talion (FRONT's per-frame score line), cm
-odist() { grep -E '^FRONT score' "$R/somvr.log" | tail -1 | grep -oE ' dist=[0-9.]+' | head -1 | awk -F= '{printf "%d", $2 * 100}'; }
-near() { local k d; for k in $(seq 1 20); do d=$(odist); [ -n "$d" ] && [ "$d" -le "${1:-120}" ] && return 0; face; w "stick 0 1 0 0.30" 0.5; done; return 1; }
+odist() { tail -300 "$R/somvr.log" | grep -E '^FRONT score' | tail -1 | grep -oE ' dist=[0-9.]+' | head -1 | awk -F= '{printf "%d", $2 * 100}'; }
+# walk toward the orc while a fresh FRONT line says it is farther (no fresh line: no orc in the fight, no walk)
+near() { local k d; for k in $(seq 1 8); do d=$(odist); [ -z "$d" ] && return 1; [ "$d" -le "${1:-120}" ] && return 0; face; w "stick 0 1 0 0.30" 0.5; done; return 1; }
+# a fresh orc of kind $1 when the last one is down (the count of "orc is down" lines since its spawn)
+DN0=0
+spawn() { w "practice spawn $1" 2; DN0=$(cnt '^PRACTICE t=.* orc is down'); face; }
+alive_or() { [ "$(cnt '^PRACTICE t=.* orc is down')" -gt "$DN0" ] && spawn "$1"; return 0; }
 REST="hands test R 28 -40 20 0 0 0"
 SLOT="hands test R 10 -10 -15 0 0 0"
 OUT="hands test R 30 -25 40 0 -90 0"
@@ -73,16 +81,16 @@ w "$REST" 2
 drawn || draw_slot
 w "$BEHIND" 1.5
 m p00-start 0.3
-if has base || has shove; then
-  w "practice spawn shield" 2; face; mark0
+if has base; then
+  spawn shield; mark0
   for k in $(seq 1 "${P18_BASE_N:-6}"); do near 115; face; ecut; sleep 0.6; done
   phase "shield orc: edge cuts, no opening (the baseline)"
   grep -E '^(REACT blocked|COMBAT hit tier)' "$R/somvr.log" | tail -4 | cut -c1-240
 fi
 if has shove; then
-  mark0
+  spawn shield; mark0
   for k in $(seq 1 "${P18_SHOVE_N:-6}"); do
-    grep -q "^PRACTICE t=.* orc is down" <(tail -300 "$R/somvr.log") && { w "practice spawn shield" 2; face; }
+    alive_or shield
     near 105; face; w "$EDGE_A" 0.4; w "$LBACK" 0.4
     echo "$(date +%T) the orc at $(odist) cm"; w "$LSHOVE" 0.25
     if waitfor '^PARRY shove' 1; then w "$EDGE" 0.6; w "$EDGE_B" 0.4; [ "$k" = 1 ] && { x "dump"; m p01-shove 0; }; else echo "$(date +%T) no shove"; sleep 0.5; fi
@@ -90,12 +98,12 @@ if has shove; then
     w "$LREST" 0.8; sleep 0.8
   done
   phase "shield orc: a shove, then an edge cut in the opening"
-  grep -E '^PARRY (shove|riposte|open)' "$R/somvr.log" | tail -6 | cut -c1-300
+  grep -E '^PARRY (shove|riposte|open|push refused)' "$R/somvr.log" | tail -8 | cut -c1-330
 fi
 if has word; then
-  w "practice spawn shield" 2; face; mark0
+  spawn shield; mark0
   for k in $(seq 1 "${P18_WORD_N:-4}"); do
-    grep -q "^PRACTICE t=.* orc is down" <(tail -300 "$R/somvr.log") && { w "practice spawn shield" 2; face; }
+    alive_or shield
     near 105; face; w "$EDGE_A" 0.4; w "parry open" 0.4; w "$EDGE" 0.6; w "$EDGE_B" 0.4
     grep -q '^PARRY riposte .*BROKEN' <(tail -200 "$R/somvr.log") && { x "dump"; m "p03-word-broken-$k" 0; }
     sleep 1.2
@@ -103,10 +111,30 @@ if has word; then
   phase "shield orc: 'parry open', then an edge cut"
   grep -E '^PARRY riposte|^COMBAT hit tier=[a-z]+ \(the riposte' "$R/somvr.log" | tail -4 | cut -c1-300
 fi
+if has dodge; then
+  spawn shield; mark0; D0=$(cnt '^PARRY dodge'); DG0=$(cnt '^DEFENCE dodge')
+  timeout "${P18_DODGE_S:-50}" tail -n0 -F "$R/somvr.log" 2>/dev/null | grep --line-buffered -E '^THREAT red orc|^PARRY dodge' | while read -r l; do
+    case $l in
+      THREAT*) printf 'head -45 0 0 s 0.12\n' > "$R/xrtest.txt"; sleep 1.3; printf 'head 0 0 0 s 0.5\n' > "$R/xrtest.txt"; echo "$(date +%T) lean" ;;
+      PARRY*) printf '%s' "stick 0 1 0 0.60" > "$R/somvr.trigger"; sleep 0.3
+              printf '%s' "$EDGE_A" > "$R/somvr.trigger"; sleep 0.25; printf '%s' "$EDGE" > "$R/somvr.trigger"; sleep 0.5
+              printf '%s' "$EDGE_B" > "$R/somvr.trigger"; echo "$(date +%T) the cut after the dodge" ;;
+    esac
+  done &
+  RP=$!
+  for k in $(seq 1 $(( ${P18_DODGE_S:-50} / 3 ))); do face; sleep 2
+    alive_or shield
+    [ "$k" = 6 ] && { x "dump"; m p05-dodge 0; }
+  done
+  wait $RP
+  echo "$(date +%T) dodges $(( $(cnt '^DEFENCE dodge') - DG0 )), dodge openings $(( $(cnt '^PARRY dodge') - D0 ))"
+  phase "shield orc: a lean at each red blow, a step and a cut at each opening"
+  grep -E '^PARRY (dodge|riposte)|^COMBAT hit tier=[a-z]+ \((open|the riposte)' "$R/somvr.log" | tail -5 | cut -c1-300
+fi
 if has inf; then
-  w "practice spawn infantry" 2; face
+  spawn infantry
   w "fight guard frame head" 0.5; w "fight guard learn" 0.5
-  n=0; while [ $n -lt "${P18_LEARN_N:-6}" ]; do waitfor '^THREAT start .* impact=0\.[0-9]' 8 && n=$((n + 1)); face; done
+  n=0; for k in $(seq 1 $(( ${P18_LEARN_N:-6} * 2 ))); do [ $n -ge "${P18_LEARN_N:-6}" ] && break; waitfor '^THREAT start .* impact=0\.[0-9]' 8 && n=$((n + 1)); face; alive_or infantry; done
   mark0; w "fight guard path" 0.5
   timeout "${P18_INF_S:-60}" tail -n0 -F "$R/somvr.log" 2>/dev/null | grep --line-buffered '^PARRY open' | while read -r _; do
     printf '%s' "stick 0 1 0 0.60" > "$R/somvr.trigger"; sleep 0.25
@@ -115,7 +143,7 @@ if has inf; then
   done &
   RP=$!
   for k in $(seq 1 $(( ${P18_INF_S:-60} / 3 ))); do face; sleep 2
-    grep -q "^PRACTICE t=.* orc is down" <(tail -200 "$R/somvr.log") && { w "practice spawn infantry" 2; face; }
+    alive_or infantry
     [ "$k" = 4 ] && { x "dump"; m p04-inf 0; }
   done
   wait $RP
@@ -127,5 +155,5 @@ w "parry status" 0.5
 echo "steps done $(date +%T)"
 w "endlogs" 2
 sleep 2
-echo quit >> "$R/cmd"
+[ -n "${P18_NOQUIT:-}" ] || echo quit >> "$R/cmd" # P18_NOQUIT=1: leave it running
 echo "quit $(date +%T)"

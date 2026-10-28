@@ -44,8 +44,12 @@ enum { SOMVR_PRA_NONE = 0, SOMVR_PRA_GO = 1, SOMVR_PRA_BACK = 2, SOMVR_PRA_SPAWN
         * his max - in the practice area only */
        SOMVR_PRA_ARROWS = 6, SOMVR_PRA_HEALTH = 7,
        /* build 18 (the user's ask; re-xr-pipeline.md 56.9): an orc SOMVR_PRACTICE_FAR_CM ahead, its back to Talion */
-       SOMVR_PRA_FAR = 8, SOMVR_PRA_N = 9 };
-const char *somvr_pr_action_name(int a);  /* "go", "back", "spawn", "remove", "status", "arrows", "health", "far" */
+       SOMVR_PRA_FAR = 8,
+       /* build 19 (re-xr-pipeline.md 70, the design note's item 5): a group of 3-4 orcs of mixed types around Talion
+        * (somvr_pr_group_plan); orc = the count (3, 4; -1 = SOMVR_PRACTICE_GROUP_N) */
+       SOMVR_PRA_GROUP = 9, SOMVR_PRA_N = 10 };
+/* "go", "back", "spawn", "remove", "status", "arrows", "health", "far", "group" ("none"; "?" outside) */
+const char *somvr_pr_action_name(int a);
 typedef struct {
     int action;  /* SOMVR_PRA_* */
     int orc;     /* SOMVR_PRO_* for spawn; -1 = the current type */
@@ -53,9 +57,10 @@ typedef struct {
                   * status ground X Y Z (orc 2): the place whose floor is probed (a test word, nothing moves) */
     float at[3];
 } somvr_pr_req;
-/* the text after "practice ": "go [X Y Z]", "back", "spawn [TYPE]", "far [TYPE]", "remove", "status [nav | look | ground X Y Z]",
- * "arrows" (or "refill arrows"), "health" (or "refill health") (blanks around them ignored); a type that is not one, or
- * not three finite numbers = not taken. 1 = taken (*out set) */
+/* the text after "practice ": "go [X Y Z]", "back", "spawn [TYPE]", "far [TYPE]", "remove", "status [nav | look |
+ * ground X Y Z]", "arrows" (or "refill arrows"), "health" (or "refill health"), "group [3|4]" (build 19; or "spawn group
+ * [3|4]") (blanks around them ignored); a type that is not one, a count not 3 or 4, or not three finite numbers = not
+ * taken. 1 = taken (*out set) */
 int somvr_pr_word(const char *w, somvr_pr_req *out);
 
 /* ---- the trip: the blink there or back ---- */
@@ -142,6 +147,21 @@ void somvr_pr_gate_text(uint32_t bits, char *buf, size_t cap);
 void somvr_pr_ahead(const float pos[3], const float fwd[3], float dist_cm, float out[3]);
 /* the rotation (x, y, z, w; forward +Z) of an orc at `at` facing `face` (the yaw only), as the debug spawn makes it */
 void somvr_pr_facing(const float at[3], const float face[3], float q[4]);
+
+/* ---- build 19: the group (the practice page's "Spawn group") ---- */
+#define SOMVR_PR_GROUP_MAX 4
+typedef struct {
+    int type;      /* SOMVR_PRO_* */
+    float yaw_deg; /* its bearing off Talion's heading (+ = to his right) */
+    float dist_cm; /* from his root */
+} somvr_pr_group_orc;
+/* the group of n (3 or 4; others clamped): mixed types around Talion at 4.5-5.5 m, two in front (+-35 deg) and the
+ * rest beside and behind him (FRONT warns those): 4 = infantry front left, shield front right, infantry behind left,
+ * berserker behind right; 3 = infantry, shield in front, berserker behind. Returns the count */
+int somvr_pr_group_plan(int n, somvr_pr_group_orc out[SOMVR_PR_GROUP_MAX]);
+/* the spot of one: dist_cm from pos at yaw_deg off the ground-plane heading of fwd (none: +Z; + = clockwise seen from
+ * above, the game's +X right of +Z) */
+void somvr_pr_group_spot(const float pos[3], const float fwd[3], float yaw_deg, float dist_cm, float out[3]);
 
 /* ---- the light ---- */
 /* a TOD name (FUN_025ccd10: "Day", "Night"; P9) that is not daylight: contains "night" (case-insensitive) */

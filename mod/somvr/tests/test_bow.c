@@ -819,6 +819,78 @@ static void carry_arrow(void) { /* an arrow from the quiver, the trigger held */
     step();
     quiver_at(0);
 }
+/* build 19, the grab (re-xr-pipeline.md 71): in the user's 17b session every grab was a whole fist (A with the trigger)
+ * and 3 of 10 closed just outside the quiver - each a silent miss, the hand then empty at the bow. With cfg.quiver_held the
+ * trigger held into the quiver takes the arrow there; build 18 (0) took nothing. Returns: 1 taken, +2 then nocked */
+static int grab_case(int held, int arrows) {
+    reset();
+    g_c.quiver = 1, g_c.idle_nock = 0, g_c.nock_zone = 1, g_c.quiver_held = held;
+    g_in.arrows = arrows, g_in.game_aim = 1, g_in.button = 1;
+    steps(2);
+    string_at(40, 175, -10), quiver_at(0); /* beside the head, outside the quiver, 73 cm from the nock */
+    step();
+    g_ev = 0;
+    g_in.string = 1;
+    steps(30); /* the press's window runs out there: a miss */
+    int miss = (g_ev & SOMVR_BOW_E_MISS) != 0;
+    string_at(25, 175, 20), quiver_at(1); /* still held, into the quiver */
+    steps(5);
+    int took = (g_ev & SOMVR_BOW_E_TAKE) && g_s.arrow == SOMVR_BOW_ARROW_HAND;
+    quiver_at(0);
+    string_at(0, 140, 30); /* carried to the string, the trigger still held */
+    steps(3);
+    int nocked = g_s.phase == SOMVR_BOW_PH_DRAW && g_s.arrow == SOMVR_BOW_ARROW_STRING;
+    return miss ? took + 2 * nocked : -1;
+}
+static void test_grab(void) {
+    int r18 = grab_case(0, 5), r19 = grab_case(1, 5);
+    CHECK(r18 == 0, "grab, build 18: pressed outside, held into the quiver: nothing taken (%d)", r18);
+    CHECK(r19 == 3 && g_s.held_takes == 1 && g_s.takes == 1, "grab, held: taken in the quiver, then nocked at the string (%d, "
+          "held takes %llu)", r19, (unsigned long long)g_s.held_takes);
+    int r0 = grab_case(1, 0);
+    CHECK(r0 == 0 && (g_ev & SOMVR_BOW_E_EMPTY) && g_s.empties == 1, "grab, held, the quiver empty: the knocks once (%d, %llu)",
+          r0, (unsigned long long)g_s.empties);
+    /* let go before the quiver: the next entry takes nothing without a new press */
+    reset();
+    g_c.quiver = 1, g_c.idle_nock = 0, g_c.nock_zone = 1, g_c.quiver_held = 1;
+    g_in.arrows = 5, g_in.game_aim = 1, g_in.button = 1;
+    steps(2);
+    string_at(40, 175, -10);
+    g_in.string = 1;
+    steps(5);
+    g_in.string = 0;
+    steps(5);
+    g_ev = 0;
+    string_at(25, 175, 20), quiver_at(1);
+    steps(5);
+    CHECK(!(g_ev & SOMVR_BOW_E_TAKE) && g_s.arrow == SOMVR_BOW_ARROW_NONE, "grab: let go first, then into the quiver: nothing");
+    g_in.string = 1; /* a press inside: the build 16 take */
+    step();
+    CHECK((g_ev & SOMVR_BOW_E_TAKE) && g_s.held_takes == 0, "grab: a press inside still takes");
+    /* the held arrow drawn and shot: the trigger opens, so the quiver needs a new press */
+    /* an empty press 32 cm from the nock, outside the zone (the 17b session's first miss, 30.2 cm) */
+    for (int k = 0; k < 2; k++) {
+        reset();
+        g_c.quiver = 1, g_c.idle_nock = 0, g_c.nock_zone = 1, g_c.noarrow_cm = k ? 35 : 0;
+        g_in.arrows = 5, g_in.game_aim = 1, g_in.button = 1;
+        steps(2);
+        string_at(28, 128, 30);
+        float zd;
+        int in_zone = somvr_bow_at_nock(&g_c, g_in.p[0], g_in.q[0], g_in.p[1], &zd);
+        step();
+        g_ev = 0;
+        g_in.string = 1;
+        step();
+        uint32_t at_press = g_ev;
+        steps(30);
+        if (!k)
+            CHECK(!in_zone && !(at_press & SOMVR_BOW_E_NOARROW) && (g_ev & SOMVR_BOW_E_MISS) && !(g_ev & SOMVR_BOW_E_NOARROW),
+                  "an empty press 32 cm out, build 18: a silent miss (zone %.1f, events %#x)", zd, g_ev);
+        else
+            CHECK((at_press & SOMVR_BOW_E_NOARROW) && !(g_ev & SOMVR_BOW_E_MISS) && g_s.noarrows == 1,
+                  "an empty press 32 cm out, noarrow_cm 35: told at once (events %#x)", g_ev);
+    }
+}
 static void test_zone(void) {
     float zd;
     somvr_bow_cfg c;
@@ -841,6 +913,21 @@ static void test_zone(void) {
               NEAR(somvr_bow_pull(&c, bq, bp, (sv_vec3){ 18, 140, 10 }), 30, 1e-3) &&
               NEAR(somvr_bow_pull(&c, bq, bp, (sv_vec3){ 0, 140, 45 }), 0, 1e-4),
           "pull: beside 0, 30 back 30, in front 0");
+    /* build 19: the string seen at rest 33 cm behind the nock (zone_back_cm): touching it is in; build 17's zone: out */
+    {
+        somvr_bow_cfg z = c;
+        sv_vec3 at_string = { 3, 140, 40 - 33 };
+        int in17 = somvr_bow_at_nock(&z, bp, bq, at_string, &zd);
+        float zd17 = zd;
+        z.zone_back_cm = 33;
+        int in19 = somvr_bow_at_nock(&z, bp, bq, at_string, &zd);
+        CHECK(!in17 && in19 && NEAR(zd, 3, 1e-3), "the string at rest 33 cm back: build 17 out (%.1f), swept zone in (%.1f)",
+              zd17, zd);
+        CHECK(somvr_bow_at_nock(&z, bp, bq, (sv_vec3){ 0, 140, 40 - 33 - 24 }, &zd) && NEAR(zd, 24, 1e-3) &&
+                  !somvr_bow_at_nock(&z, bp, bq, (sv_vec3){ 0, 140, 40 - 33 - 26 }, &zd) &&
+                  !somvr_bow_at_nock(&z, bp, bq, (sv_vec3){ 0, 140, 50 }, &zd),
+              "swept zone: 24 behind the string in, 26 out, 10 in front of the nock out");
+    }
     /* the fist hold (build 16): the limbs on the grip's +Z, the shot on -Y */
     somvr_bow_cfg f = c;
     f.shot_ax[0] = 0, f.shot_ax[1] = -1, f.shot_ax[2] = 0, f.limb_ax[0] = 0, f.limb_ax[1] = 0, f.limb_ax[2] = 1;
@@ -1210,6 +1297,7 @@ int main(void) {
     test_hold_anatomy();
     test_quiver();
     test_zone();
+    test_grab();
     test_string_mode();
     test_standdowns();
     test_hold_mode();

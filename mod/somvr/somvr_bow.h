@@ -41,6 +41,11 @@
  *            build 16 session: nocks only at 13.7-14.9 cm of the 15, the hand 18 and 22 cm from the grip without one).
  *            cfg.noarrow_take (SOMVR_BOW_NOARROW_CUE=take): a press in the zone with no arrow anywhere and arrows left
  *            takes one and nocks it at once (TAKE | NOCK, the quiver skipped); none left: EMPTY.
+ *   grab     build 19 (re-xr-pipeline.md 71; the user's 17b session: every grab was a whole fist, A with the trigger, and
+ *            3 of 10 closed just outside the quiver - each a silent MISS, the hand empty at the bow). cfg.quiver_held: a
+ *            string press that took nothing keeps looking for the quiver while it stays closed - the hand coming in
+ *            takes the arrow (TAKE, or EMPTY), as a held arrow nocks by touching the string. cfg.noarrow_cm: an empty
+ *            press that near the nock (the bow's side of the body, never the quiver's) is NOARROW at once.
  *
  * The bow's frame in the bow hand's grip (build 16, somvr_bow_hold_q): the grip's frame in the game convention
  * (somvr_hand_game) has +Z along the fist's tube from the little finger to the thumb (OpenXR's -Z), +X = OpenXR's +X
@@ -130,6 +135,12 @@ typedef struct {
     float limb_ax[3];        /* the bow's upper limb in the bow hand's grip frame (unit; (0, 1, 0) = builds 11-15b;
                                 HOLD_FIST: (0, 0, 1), somvr_bow_hold_q's +Y) */
     int noarrow_take;        /* build 17: a press in the zone with no arrow takes one and nocks it (see "zone") */
+    int quiver_held;         /* build 19 (SOMVR_BOW_QUIVER_GRAB=held): the string held since a press that took nothing
+                                takes an arrow when the hand comes into the quiver (see "grab") */
+    float noarrow_cm;        /* build 19 (SOMVR_BOW_NOARROW_CM): an empty press this near the nock (outside the zone too)
+                                is told as NOARROW at once, not a silent MISS (0: the zone only, build 18) */
+    float zone_back_cm;      /* build 19 (SOMVR_BOW_STRING_REST=ours: the string's rest line this far behind the nock):
+                                the zone's core reaches back to it - touching the string seen at rest nocks (0: build 17) */
 } somvr_bow_cfg;
 void somvr_bow_cfg_default(somvr_bow_cfg *c);
 
@@ -178,6 +189,8 @@ typedef struct {
     double last_wait;        /* how long the last fired shot waited for the game */
     int arrow;               /* SOMVR_BOW_ARROW_* */
     uint64_t takes, empties, drops, noarrows;
+    int qheld;               /* build 19: the string held since a press that took nothing (cfg.quiver_held) */
+    uint64_t held_takes;     /* ... arrows taken that way (the hand came into the quiver after the press) */
 } somvr_bow;
 
 typedef struct {
@@ -245,7 +258,8 @@ void somvr_bow_fire_xf(sv_vec3 origin, sv_vec3 dir, float yaw_hint, float xf[7])
 /* the nock point: p + R(q) nock_ofs */
 sv_vec3 somvr_bow_nock(const somvr_bow_cfg *c, sv_vec3 p, sv_quat q);
 /* build 17: is the string hand at the nock? point (nock_zone 0): within nock_r_cm of the nock; zone: within zone_r_cm of
- * the segment nock -/+ zone_half_cm along R(q) limb_ax and not more than zone_front_cm in front of the nock along the
+ * the segment nock -/+ zone_half_cm along R(q) limb_ax (build 19: swept zone_back_cm back along the shot to the string's
+ * rest line) and not more than zone_front_cm in front of the nock along the
  * shot. *zd (may be NULL) = the distance tested against the radius (999 in front of the zone) */
 int somvr_bow_at_nock(const somvr_bow_cfg *c, sv_vec3 bow_p, sv_quat bow_q, sv_vec3 string, float *zd);
 /* build 17: the draw with the zone: the pull back behind the nock along the bow's shot, (nock - string) . fwd, at least 0 */

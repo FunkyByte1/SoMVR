@@ -1378,7 +1378,7 @@ static struct {
 	/* SOMVR_COMBAT_STAGGER_CM (build 17): the orcs in a reel (rl_*): their HOBJECT, anchor, g_rl.e index and gen */
 	int rn, ri[RL_N];
 	uintptr_t rh[RL_N];
-	float ra[RL_N][3], rcap;
+	float ra[RL_N][3], rcap, rcapk[RL_N]; /* rcapk: a reel's own cap (build 19: SOMVR_PARRY_REEL_CM for a parry) */
 	uint32_t rgen[RL_N];
 	double t;
 	_Atomic uint64_t calls, near, held, other;
@@ -1476,7 +1476,7 @@ static void rl_hold(uintptr_t mv, const float was[3], float *xf)
 	memcpy(a, g_fs.ra[k], sizeof a), memcpy(root, g_fs.root, sizeof root);
 	int hr = g_fs.have_root, i = g_fs.ri[k];
 	uint32_t gen = g_fs.rgen[k];
-	float cap = g_fs.rcap;
+	float cap = g_fs.rcapk[k] > 0 && g_fs.rcapk[k] < g_fs.rcap ? g_fs.rcapk[k] : g_fs.rcap;
 	if (atomic_load(&g_fs.seq) != s0 || i < 0 || i >= RL_N)
 		return;
 	struct rl_e *e = &g_rl.e[i];
@@ -1585,7 +1585,7 @@ static void fs_frame(uintptr_t pl, int stereo, double t)
 		memcpy(g_fs.root, root, sizeof root);
 	for (int k = 0; k < rn; k++) {
 		const struct rl_e *e = &g_rl.e[ri[k]];
-		g_fs.ri[k] = ri[k], g_fs.rh[k] = e->hobj, g_fs.rgen[k] = atomic_load(&e->gen);
+		g_fs.ri[k] = ri[k], g_fs.rh[k] = e->hobj, g_fs.rgen[k] = atomic_load(&e->gen), g_fs.rcapk[k] = e->cap;
 		memcpy(g_fs.ra[k], e->p0, sizeof e->p0);
 	}
 	g_fs.n = n, g_fs.t = t, g_fs.have_head = hh, g_fs.have_root = hr, g_fs.rn = rn, g_fs.rcap = g_rl.cap;

@@ -160,6 +160,49 @@ static void test_board_gaze(void) {
     }
 }
 
+/* build 19, SOMVR_XR_MENU_PITCH_UP (re-xr-pipeline.md 73.4): the board up a raised gaze too (at most its limit), still
+ * facing the eyes, upright; glyph18's case: the gaze 41 deg up at the arch's glyph -> the board's centre up it (was
+ * level: 49 deg below the gaze); down as before; both limits 0 = the level board */
+static void test_board_gaze_up(void) {
+    somvr_posef eye[2] = {{{0, 0, 0, 1}, {-0.032f, 1.6f, 0}}, {{0, 0, 0, 1}, {0.032f, 1.6f, 0}}};
+    float yaw[4], pitch[4], q[4], n[3], up[3], x[3], to[3];
+    struct { float look, down, upl, want; const char *what; } c[] = {
+        {+40.9f, 30, 45, +40.9f, "the glyph's look up 40.9, up limit 45: up the gaze"},
+        {+70, 30, 45, +45, "looking up 70: the limit's 45"},
+        {-20, 30, 45, -20, "looking down 20: down the gaze (as before)"},
+        {+40.9f, 30, 0, 0, "the up limit 0: build 18's level board"},
+        {-60, 0, 0, 0, "both limits 0: the level board"}};
+    for (unsigned k = 0; k < sizeof c / sizeof c[0]; k++) {
+        axis_q(0, 1, 0, -25, yaw), axis_q(1, 0, 0, c[k].look, pitch);
+        qmul(yaw, pitch, q);
+        memcpy(eye[0].q, q, sizeof q), memcpy(eye[1].q, q, sizeof q);
+        somvr_posef b;
+        somvr_mn_board_pose_gaze2(eye, 0.6f, 0.1f, c[k].down, c[k].upl, &b);
+        float w = c[k].want * 3.14159265f / 180, ya = -25 * 3.14159265f / 180;
+        float ex = -sinf(ya) * 0.6f * cosf(w), ey = 1.6f + 0.6f * sinf(w) - 0.1f, ez = -cosf(ya) * 0.6f * cosf(w);
+        qrot(b.q, EZ, n), qrot(b.q, EY, up), qrot(b.q, EX, x);
+        float mid[3] = {0, 1.6f, 0};
+        for (int i = 0; i < 3; i++) to[i] = mid[i] - b.p[i];
+        float tl = sqrtf(dot3(to, to));
+        for (int i = 0; i < 3; i++) to[i] /= tl;
+        /* the centre's angle from the gaze: the drop's 9.5 deg below it when it follows (the level board: the look's) */
+        float gz[3] = {-sinf(ya) * cosf(c[k].look * 3.14159265f / 180), sinf(c[k].look * 3.14159265f / 180),
+                       -cosf(ya) * cosf(c[k].look * 3.14159265f / 180)};
+        float off = acosf(fminf(1.f, -dot3(gz, to))) * 57.29578f;
+        CHECK(NEAR(b.p[0], ex, 1e-4) && NEAR(b.p[1], ey, 1e-4) && NEAR(b.p[2], ez, 1e-4), "%s: the centre %.3f,%.3f,%.3f "
+              "(want %.3f,%.3f,%.3f), %.1f deg off the gaze", c[k].what, b.p[0], b.p[1], b.p[2], ex, ey, ez, off);
+        CHECK(dot3(n, to) > 0.9999f && fabsf(x[1]) < 1e-4f && up[1] > 0.5f, "%s: faces the eyes (%.4f), level x %.4f",
+              c[k].what, dot3(n, to), x[1]);
+        if (k == 0) CHECK(off < 10.f, "the glyph's page within 10 deg of the raised gaze (%.1f; build 18: 49)", off);
+        if (k == 3) CHECK(off > 45.f, "the up limit 0: the level board far below the raised gaze (%.1f)", off);
+    }
+    /* the old entry point = the up limit 0 */
+    somvr_posef a, b2;
+    somvr_mn_board_pose_gaze(eye, 0.6f, 0.1f, 30, &a);
+    somvr_mn_board_pose_gaze2(eye, 0.6f, 0.1f, 30, 0, &b2);
+    CHECK(!memcmp(&a, &b2, sizeof a), "somvr_mn_board_pose_gaze = _gaze2 with the up limit 0");
+}
+
 /* somvr_hud_split's regions for layout l: every pixel of the w x h image outside the tiles copied in place exactly once,
  * every tile's pixel to its place exactly once, nothing else written (the extra area's gaps stay clear), no region
  * empty or outside; returns the count (-1 = wrong) */
@@ -605,6 +648,7 @@ int main(void) {
     test_switches();
     test_board();
     test_board_gaze();
+    test_board_gaze_up();
     test_minimap();
     test_tiles();
     test_touch();

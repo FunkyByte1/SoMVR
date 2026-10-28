@@ -43,6 +43,11 @@ void somvr_mn_board_pose(const somvr_posef eye[2], float dist, float drop, somvr
  * level board above); a head looking up keeps the level one. The board still faces the eyes' midpoint, upright about
  * the world's up. */
 void somvr_mn_board_pose_gaze(const somvr_posef eye[2], float dist, float drop, float down_max_deg, somvr_posef *out);
+/* Build 19 (SOMVR_XR_MENU_PITCH_UP=DEG, re-xr-pipeline.md 73.4): a head looking up gets the board's centre up its gaze's
+ * pitch too, at most up_max_deg above the level (0 = the level board: _gaze's). The glyph's Ithildin page after a look up
+ * at a glyph high on a wall: where the player looks, not 49 deg below it (glyph18's run 192340). */
+void somvr_mn_board_pose_gaze2(const somvr_posef eye[2], float dist, float drop, float down_max_deg, float up_max_deg,
+                               somvr_posef *out);
 
 /* ==== 2. the wrist minimap ======================================================================================= */
 /* SOMVR_XR_MINIMAP: unset/"off"/"0" = OFF (the minimap stays in the HUD quad), "wrist"/"on"/"1" = WRIST; anything else

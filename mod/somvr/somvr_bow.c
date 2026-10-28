@@ -113,7 +113,9 @@ int somvr_bow_at_nock(const somvr_bow_cfg *c, sv_vec3 bow_p, sv_quat bow_q, sv_v
         return 0;
     }
     k = k > c->zone_half_cm ? c->zone_half_cm : k < -c->zone_half_cm ? -c->zone_half_cm : k;
-    float z = len3(sub3(d, mul3(L, k)));
+    /* build 19: the core swept back to the string's rest line (behind the nock: -front) */
+    float b = c->zone_back_cm > 0 ? fminf(fmaxf(-front, 0), c->zone_back_cm) : 0;
+    float z = len3(add3(sub3(d, mul3(L, k)), mul3(somvr_bow_fwd(c, bow_q), b)));
     if (zd) *zd = z;
     return z <= c->zone_r_cm;
 }
@@ -296,6 +298,15 @@ void somvr_bow_step(somvr_bow *s, const somvr_bow_cfg *c, const somvr_bow_in *in
         if (in->arrows == 0) s->empties++, o->events |= SOMVR_BOW_E_EMPTY;
         else s->arrow = SOMVR_BOW_ARROW_HAND, s->takes++, o->events |= SOMVR_BOW_E_TAKE;
     }
+    if (press) s->qheld = !qpress;
+    if (!s->down) s->qheld = 0;
+    /* build 19, the grab: the string closed outside the quiver and held into it takes the arrow there */
+    if (c->quiver && c->quiver_held && !press && s->qheld && s->phase != SOMVR_BOW_PH_IDLE && in->quiver &&
+        s->arrow == SOMVR_BOW_ARROW_NONE) {
+        qpress = 1, s->qheld = 0, s->looking = 0;
+        if (in->arrows == 0) s->empties++, o->events |= SOMVR_BOW_E_EMPTY;
+        else s->arrow = SOMVR_BOW_ARROW_HAND, s->takes++, s->held_takes++, o->events |= SOMVR_BOW_E_TAKE;
+    }
     if (press && !qpress) s->looking = 1, s->press_t = t;
     if (!s->down) s->looking = 0;
     if (c->quiver && s->arrow == SOMVR_BOW_ARROW_HAND && (open || lost_s)) /* let go before the nock: gone */
@@ -318,6 +329,10 @@ void somvr_bow_step(somvr_bow *s, const somvr_bow_cfg *c, const somvr_bow_in *in
         else
             s->looking = 0, s->noarrows++, o->events |= SOMVR_BOW_E_NOARROW;
     }
+    /* build 19: an empty press near the bow but outside the zone - told at once (the 17b session's 30 cm miss) */
+    if (c->quiver && c->noarrow_cm > 0 && press && s->looking && !near && s->arrow == SOMVR_BOW_ARROW_NONE &&
+        s->phase == SOMVR_BOW_PH_AIM && vb && vs && dist >= 0 && dist <= c->noarrow_cm)
+        s->looking = 0, s->noarrows++, o->events |= SOMVR_BOW_E_NOARROW;
     if (s->looking && !nock_ok && t - s->press_t > c->window_s) { /* the window ran out away from the nock */
         s->looking = 0;
         if (s->phase == SOMVR_BOW_PH_AIM) s->misses++, o->events |= SOMVR_BOW_E_MISS;

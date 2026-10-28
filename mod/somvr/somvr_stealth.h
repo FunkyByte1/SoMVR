@@ -76,4 +76,12 @@ typedef struct {
 } somvr_stl_cue;
 int somvr_stl_cue_step(somvr_stl_cue *q, uintptr_t orc, int possible, double t, double rearm_s);
 
+/* the stand-off (SOMVR_STEALTH_KILL_STANDOFF_CM; docs/re-xr-pipeline.md 72): crouched in an unaware orc's back half,
+ * Talion's move d (cm, this tick, the ground plane) from p is kept outside a circle of radius r around the orc at c -
+ * the game notices him inside ~108 cm root to root (72.1). Only the part toward the orc is cut, eased over the last
+ * ~20 cm (the step toward the edge at most room x (1 - e^(-dt x ease_hz)): a smooth stop at any frame rate); sideways
+ * and back are free; never a push (already inside: no step further in). out = the correction to add to d (0 if none);
+ * returns 1 when it cut something */
+int somvr_stl_standoff(const float p[3], const float c[3], float r, float dt, float ease_hz, const float d[3],
+                       float out[3]);
 #endif

@@ -24,8 +24,8 @@
  * 2. The settings (somvr_settings) and their file (SOMVR_SETTINGS=FILE): one KEY=VALUE per line, '#' comments; the
  *    keys are the switches' names without SOMVR_ (TURN=snap|smooth, SNAP_DEG, TURN_DPS, VIGNETTE, SNAP_BLINK_MS,
  *    SEATED, HEIGHT_CM, HAPTICS, STEP, DASH, PHASE, SWORD_ANGLE, MUSIC, PLAYER_SIZE, CROUCH, CLIMB_FLING,
- *    HANDS_SURFACE: the environment variables of the
- *    same name; HUD=on|off,
+ *    HANDS_SURFACE; build 19: DODGE, WRAITH_STEP, STEALTH_KILL, CROWD_PACE_MS, COUNTER_ICON, BOW_STRING: the
+ *    environment variables of the same name; HUD=on|off,
  *    HUD_DIST_M, HAND=right|left, VIEW=first|third: the menu's own). Parse and format are pure and locale-free.
  *
  * 3. The menu: its items, their values and steps, the panel's layout (a 512 x 768 texture since v2), the hit test of a
@@ -43,12 +43,14 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_VRMENU_SYMBOL "somvr_vrmenu"
 #define SOMVR_VRMENU_MAGIC 0x314e4d56524d4f53ull /* "SOMRVMN1" */
-#define SOMVR_VRMENU_VERSION 6u /* 2: STEP, DASH, PHASE (re-xr-pipeline.md 23): the settings 64 bytes; 3: the practice
+#define SOMVR_VRMENU_VERSION 7u /* 2: STEP, DASH, PHASE (re-xr-pipeline.md 23): the settings 64 bytes; 3: the practice
                                  * page (re-xr-pipeline.md 27): practice, pstate, settings.orc; 168 bytes; 4: the sword
                                  * angle (re-xr-pipeline.md 29): settings.sword_deg, the settings 72 bytes, 176; 5: the
                                  * music volume (re-xr-pipeline.md 34): settings.music, the settings 80 bytes, 184; 6
                                  * (build 17, re-xr-pipeline.md 56): settings.sword_hand, .quiver and 6 spare bytes, the
-                                 * settings 88 bytes, 192 */
+                                 * settings 88 bytes, 192; 7 (build 19, re-xr-pipeline.md 73; t3/menu18's 56.8): avail
+                                 * 64 bits (bits 0..31 kept), everything after it 8 bytes later; the settings 96 bytes
+                                 * (the Fight page's six rows at 88..94; pad6 stays spare), 208 */
 
 enum {                         /* somvr_vrmenu_shared.block: why the palm gesture opens nothing now */
     SOMVR_VMG_BOW = 1u,        /* SOMVR_BOW: the bow is out (nocked, drawn or held) */
@@ -115,12 +117,32 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
      * A = Strike"; the same line count: the mark in the world shows the button too) */
     SOMVR_VMA_STRIKE = 2147483648u, /* 1<<31: the coordinator's (descent 1<<29, bite 1<<30) */
 };
+/* build 18 (re-xr-pipeline.md 56.8): the availability word is 64 bits (somvr_vrmenu v7; every avail parameter and
+ * variable is uint64_t). Bits 32..63 are macros (an enum constant is an int): SOMVR_VMA_BIT(n). Clearing bits from a
+ * 64-bit avail: ~(uint64_t)(...) - a ~ of the 32-bit constants above would clear bits 32..63 too */
+#define SOMVR_VMA_BIT(n) (1ull << (n))
+/* build 19 (re-xr-pipeline.md 73): the Fight page's rows that build 18 and 19 had as switches only. Each bit = the
+ * feature runs in this session (its switch on, its hooks in), so its row is shown and changes it live:
+ * SOMVR_DODGE=on with the step's core (A in a fight = the fixed 1.5 m dash, block17): the Dodge (A) row */
+#define SOMVR_VMA_DODGE SOMVR_VMA_BIT(32)
+#define SOMVR_VMA_WSTEP SOMVR_VMA_BIT(33)   /* SOMVR_WRAITH_STEP=on: the Wraith step row */
+#define SOMVR_VMA_STEALTH SOMVR_VMA_BIT(34) /* SOMVR_STEALTH_KILL=on (with SOMVR_COMBAT): the Stealth kill row */
+#define SOMVR_VMA_CROWD SOMVR_VMA_BIT(35)   /* SOMVR_FRONT=1 with SOMVR_THREAT (the pace's judge): the Crowd pace row */
+#define SOMVR_VMA_CICON SOMVR_VMA_BIT(36)   /* SOMVR_COUNTER_ICON=hide, its two calls hooked: the Counter icon row */
+#define SOMVR_VMA_STRING SOMVR_VMA_BIT(37)  /* SOMVR_BOW: the Bow string row (trigger / grip, taken while the bow is away;
+                                             * the Controls page's bow lines follow it: somvr_vm_ctl_avail) */
+#define SOMVR_VMA_FIGHT_ROWS                                                                                           \
+    (SOMVR_VMA_SWORD | SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND | SOMVR_VMA_BITE | SOMVR_VMA_ARROWS | SOMVR_VMA_DODGE |     \
+     SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON | SOMVR_VMA_STRING)
+/* 38..63: free (the next helpers'; take them in order, from 38) */
 /* the practice page's requests (somvr_vrmenu_shared.practice; = somvr_practice.h's SOMVR_PRA_*) */
 enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_SPAWN = 3, SOMVR_VMPR_REMOVE = 4,
        /* build 17 (5 = the practice's own status word): the bow's arrows and Focus full, Talion's health full */
        SOMVR_VMPR_ARROWS = 6, SOMVR_VMPR_HEALTH = 7,
        /* build 18: an orc far ahead with its back to Talion (unaware: re-xr-pipeline.md 56.9) */
-       SOMVR_VMPR_FAR = 8 };
+       SOMVR_VMPR_FAR = 8,
+       /* build 19: Spawn group (3-4 orcs of mixed types around Talion) */
+       SOMVR_VMPR_GROUP = 9 };
 static inline uint32_t somvr_vm_pr_pack(uint32_t seq, int action, int orc) {
     return seq << 8 | ((uint32_t)orc & 15u) << 4 | ((uint32_t)action & 15u);
 }
@@ -165,37 +187,51 @@ typedef struct {
     uint8_t bite;              /* 82: v6 (the bite17 helper): a landed cut's bite 0 off, 1 on (SOMVR_COMBAT_BITE; needs
                                 * SOMVR_VMA_BITE; was pad6[0]: a preload that sets no SOMVR_VMA_BITE ignores it) */
     uint8_t pad6[5];           /* 83: spare (0) for the next rows: a byte each, no new version */
-} somvr_settings;              /* 88 */
+    /* v7 (build 19, re-xr-pipeline.md 73): the Fight page's rows (each needs its SOMVR_VMA_* bit; a key not in the
+     * file follows its switch) */
+    uint8_t dodge;             /* 88: the A dodge 0 off, 1 on (SOMVR_DODGE; SOMVR_VMA_DODGE) */
+    uint8_t wstep;             /* 89: the wraith step (the right stick's aimed blink) 0 off, 1 on (SOMVR_WRAITH_STEP) */
+    uint8_t stealth;           /* 90: the VR stealth kill 0 off, 1 on (SOMVR_STEALTH_KILL) */
+    uint8_t counter_icon;      /* 91: the game's counter icon 0 hidden, 1 shown (SOMVR_COUNTER_ICON hide|game) */
+    uint16_t crowd_ms;         /* 92: the crowd's pace, ms between blows at Talion, 0 = off (SOMVR_CROWD_PACE_MS) */
+    uint8_t bow_string;        /* 94: the bow's string held by 0 the grip, 1 the trigger (SOMVR_BOW_STRING) */
+    uint8_t pad7;              /* 95: spare (0) */
+} somvr_settings;              /* 96 (88 in v6) */
 
 typedef struct somvr_vrmenu_shared {
     uint64_t magic;            /*   0 */
     uint32_t version, size;    /*   8, 12 */
     _Atomic uint32_t active;   /*  16: set last by the preload (release) */
     int32_t pid;               /*  20 */
-    uint32_t avail;            /*  24: SOMVR_VMA_* (the preload's; the layer adds FLOOR and drops HUD without its quad) */
-    uint32_t blink_on_ms;      /*  28: the blink length "Snap blink: On" selects */
-    _Atomic uint64_t seq;      /*  32: seqlock over set */
-    somvr_settings set;        /*  40 */
-    _Atomic uint32_t gen;      /* 128: +1 per change of set (after it) */
-    _Atomic uint32_t toggles;  /* 132: preload: long presses of the left menu button */
-    _Atomic uint32_t recenters;/* 136: layer: the Recentre button */
-    _Atomic uint32_t open;     /* 140: layer: the panel is shown */
-    _Atomic uint32_t consume;  /* 144: layer: bit h = hand h's trigger is the panel's */
-    _Atomic uint32_t block;    /* 148: preload, every input tick: SOMVR_VMG_* (the gesture's gate; was pad0) */
-    /* 152: the layer's counters: frames with the panel, its texture uploads, clicks that changed something, opens */
+    uint64_t avail;            /*  24: SOMVR_VMA_* (the preload's; the layer adds FLOOR and drops HUD without its quad);
+                                * v7: 64 bits (was 32) */
+    uint32_t blink_on_ms;      /*  32: the blink length "Snap blink: On" selects */
+    uint32_t pad7;             /*  36 */
+    _Atomic uint64_t seq;      /*  40: seqlock over set */
+    somvr_settings set;        /*  48 */
+    _Atomic uint32_t gen;      /* 136: +1 per change of set (after it) */
+    _Atomic uint32_t toggles;  /* 140: preload: long presses of the left menu button */
+    _Atomic uint32_t recenters;/* 144: layer: the Recentre button */
+    _Atomic uint32_t open;     /* 148: layer: the panel is shown */
+    _Atomic uint32_t consume;  /* 152: layer: bit h = hand h's trigger is the panel's */
+    _Atomic uint32_t block;    /* 156: preload, every input tick: SOMVR_VMG_* (the gesture's gate; was pad0) */
+    /* 160: the layer's counters: frames with the panel, its texture uploads, clicks that changed something, opens */
     _Atomic uint64_t n_frames, n_uploads, n_clicks, n_opens;
-    _Atomic uint32_t practice; /* 184: layer: the last practice request (somvr_vm_pr_pack; seq 0 = none yet) */
-    _Atomic uint32_t pstate;   /* 188: preload, every H4 frame: SOMVR_VMA_PR_* */
-} somvr_vrmenu_shared;         /* 192 (v6; 184 in v5, 176 in v4, 168 in v3: the settings grew by 8 each time) */
+    _Atomic uint32_t practice; /* 192: layer: the last practice request (somvr_vm_pr_pack; seq 0 = none yet) */
+    _Atomic uint32_t pstate;   /* 204: preload, every H4 frame: SOMVR_VMA_PR_* (bits 6..9: 32 bits are enough) */
+} somvr_vrmenu_shared;         /* 208 (v7: avail 64 bits, the settings 96; 192 in v6, 184 in v5, 176 in v4, 168 in v3) */
 
-_Static_assert(sizeof(somvr_settings) == 88, "somvr_settings size");
-_Static_assert(offsetof(somvr_vrmenu_shared, avail) == 24 && offsetof(somvr_vrmenu_shared, seq) == 32 &&
-                   offsetof(somvr_vrmenu_shared, set) == 40 && offsetof(somvr_vrmenu_shared, gen) == 128 &&
-                   offsetof(somvr_vrmenu_shared, consume) == 144 && offsetof(somvr_vrmenu_shared, block) == 148 &&
-                   offsetof(somvr_vrmenu_shared, n_frames) == 152 && offsetof(somvr_vrmenu_shared, practice) == 184 &&
-                   offsetof(somvr_vrmenu_shared, pstate) == 188,
+_Static_assert(sizeof(somvr_settings) == 96 && offsetof(somvr_settings, dodge) == 88 &&
+                   offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94,
+               "somvr_settings size");
+_Static_assert(offsetof(somvr_vrmenu_shared, avail) == 24 && offsetof(somvr_vrmenu_shared, blink_on_ms) == 32 &&
+                   offsetof(somvr_vrmenu_shared, seq) == 40 && offsetof(somvr_vrmenu_shared, set) == 48 &&
+                   offsetof(somvr_vrmenu_shared, gen) == 144 && offsetof(somvr_vrmenu_shared, consume) == 160 &&
+                   offsetof(somvr_vrmenu_shared, block) == 164 && offsetof(somvr_vrmenu_shared, n_frames) == 168 &&
+                   offsetof(somvr_vrmenu_shared, practice) == 200 && offsetof(somvr_vrmenu_shared, pstate) == 204,
                "somvr_vrmenu_shared offsets");
-_Static_assert(sizeof(somvr_vrmenu_shared) == 192, "somvr_vrmenu_shared size");
+_Static_assert(sizeof(somvr_vrmenu_shared) == 208 && sizeof(((somvr_vrmenu_shared *)0)->avail) == 8,
+               "somvr_vrmenu_shared size");
 _Static_assert(sizeof(somvr_shared) == 2664 && SOMVR_SHARED_VERSION == 2, "somvr_shared stays v2");
 
 static inline int somvr_vrmenu_ok(const somvr_vrmenu_shared *m) {
@@ -221,7 +257,12 @@ enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, S
        SOMVR_SK_STEP, SOMVR_SK_DASH, SOMVR_SK_PHASE, SOMVR_SK_SWORD_ANGLE /* v4 */, SOMVR_SK_MUSIC /* v5 */,
        SOMVR_SK_PLAYER_SIZE, SOMVR_SK_CROUCH /* build 13 */, SOMVR_SK_CLIMB_FLING, SOMVR_SK_HANDS_SURFACE,
        SOMVR_SK_SWORD_WEIGHT /* build 16 */, SOMVR_SK_SWORD_WEIGHT_HAND /* build 17 */, SOMVR_SK_BOW_QUIVER,
-       SOMVR_SK_COMBAT_BITE /* build 17, the bite */, SOMVR_SK_N };
+       SOMVR_SK_COMBAT_BITE /* build 17, the bite */,
+       /* build 19 (re-xr-pipeline.md 73): the Fight page's new rows */
+       SOMVR_SK_DODGE, SOMVR_SK_WRAITH_STEP, SOMVR_SK_STEALTH_KILL, SOMVR_SK_CROWD_PACE_MS, SOMVR_SK_COUNTER_ICON,
+       SOMVR_SK_BOW_STRING, SOMVR_SK_N };
+/* the key masks are 32 bits: 31 keys at most (one more needs a 64-bit mask: parse, format, diff, the file mask) */
+_Static_assert(SOMVR_SK_N <= 31, "the settings keys fit a 32-bit mask");
 #define SOMVR_SK_ALL ((1u << SOMVR_SK_N) - 1u)
 #define SOMVR_SET_BLINK_MS 140u /* "Snap blink: On" without a SOMVR_SNAP_BLINK_MS: HoF2's quick blink (50 + 90 ms) */
 
@@ -250,8 +291,10 @@ enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMV
        SOMVR_VMI_HEIGHT, SOMVR_VMI_HUD, SOMVR_VMI_HUD_DIST, SOMVR_VMI_HAND, SOMVR_VMI_VIEW, SOMVR_VMI_HAPTICS,
        SOMVR_VMI_STEP, SOMVR_VMI_DASH, SOMVR_VMI_PHASE, SOMVR_VMI_SWORD /* v4 */, SOMVR_VMI_WEIGHT /* build 16 */,
        SOMVR_VMI_SWHAND /* build 17 */, SOMVR_VMI_BITE, SOMVR_VMI_ARROWS, SOMVR_VMI_MUSIC /* v5 */,
-       SOMVR_VMI_SIZE, SOMVR_VMI_CROUCH /* build 13 */, SOMVR_VMI_FLING, SOMVR_VMI_SURFACE, SOMVR_VMI_RECENTER,
-       SOMVR_VMI_CLOSE, SOMVR_VMI_N };
+       SOMVR_VMI_SIZE, SOMVR_VMI_CROUCH /* build 13 */, SOMVR_VMI_FLING, SOMVR_VMI_SURFACE,
+       /* build 19 (re-xr-pipeline.md 73): on the Fight page (somvr_vm_row_page) */
+       SOMVR_VMI_STRING, SOMVR_VMI_DODGE, SOMVR_VMI_WSTEP, SOMVR_VMI_STEALTH, SOMVR_VMI_CROWD, SOMVR_VMI_CICON,
+       SOMVR_VMI_RECENTER, SOMVR_VMI_CLOSE, SOMVR_VMI_N };
 #define SOMVR_VMI_ROWS SOMVR_VMI_RECENTER /* the value rows; then the Recentre button and the close box */
 /* Build 10: a value row whose feature this build does not have at all is not shown (the rows below close up): the
  * assisted step, the dash and the wraith phase without SOMVR_VMA_MOVES (SOMVR_GAMEMOVES=off: they never start, the
@@ -261,7 +304,7 @@ enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMV
  * of 32; build 17's 21 of 28, the boxes 26; all 24 only with MOVES, which no build since 6 has: 25 px). A row that only
  * does not apply now (the snap angle with smooth turns, the Sword hand with the weight Off ...) stays, dimmed. 1 =
  * shown. */
-int somvr_vm_shown(uint32_t avail, int item);
+int somvr_vm_shown(uint64_t avail, int item);
 /* since v3: the page tab (the title bar: "Practice" on the settings page, "Settings" on the practice page) and the
  * practice page's items (SOMVR_VMI_N stays the settings page's count) */
 enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VMI_PR_ORC, SOMVR_VMI_PR_SPAWN,
@@ -274,16 +317,29 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
        /* build 17: the practice page's Refill arrows + focus and Refill health (in the area only, as Spawn) */
        SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH,
        /* build 18: the practice page's Spawn far orc (unaware) (in the area only, as Spawn) */
-       SOMVR_VMI_PR_FAR, SOMVR_VMI_ALL };
-enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2 }; /* the panel's pages */
-/* the page a tab opens (SOMVR_VMPG_*), -1 = not a tab */
+       SOMVR_VMI_PR_FAR,
+       /* build 19: the practice page's Spawn group (beside Spawn an orc; in the area only, as Spawn) */
+       SOMVR_VMI_PR_GROUP,
+       /* build 19 (re-xr-pipeline.md 73): the Settings page's last row "Fight settings >" (the Fight page) and the Fight
+        * page's last row "< Settings" (back); both page buttons, shown while a Fight row is (SOMVR_VMA_FIGHT_ROWS) */
+       SOMVR_VMI_PG_FIGHT, SOMVR_VMI_PG_BACK, SOMVR_VMI_ALL };
+/* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
+ * tab lit as the Settings page's) */
+enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2, SOMVR_VMPG_FIGHT = 3 };
+/* the page a tab or a page button opens (SOMVR_VMPG_*), -1 = not one */
 int somvr_vm_tab_page(int item);
+/* build 19: the page a value row is on: SOMVR_VMPG_FIGHT for the sword's, the bow's and the fight's rows (Sword angle,
+ * Sword weight, Sword hand, Blade bite, Arrows, Bow string, Dodge, Wraith step, Stealth kill, Crowd pace, Counter icon),
+ * SOMVR_VMPG_SETTINGS for the rest; -1 = not a value row */
+int somvr_vm_row_page(int item);
+/* build 19: a Fight page row's two lines of help (shown under the page's rows while the row is hovered); 0 = none */
+int somvr_vm_help(int item, const char **l1, const char **l2);
 /* The Controls page's lines (build 6): line i's key ("Walk") and what does it ("left stick"); returns the number of
  * lines (i out of range: NULL, NULL). Only what works in this build; the bug-mark chord is SOMVR_VM_CTL_REPORT. */
 int somvr_vm_controls(int i, const char **key, const char **what); /* = _av(0, ...) */
 /* build 13: the lines for the preload's avail (SOMVR_VMA_FLING, _VERBS, _DESCENT pick their lines); when more lines
  * than SOMVR_VM_CTL_FIT are wanted the optional ones go (Quit first: the Settings page's own button, then Sheathe) */
-int somvr_vm_controls_av(uint32_t avail, int i, const char **key, const char **what);
+int somvr_vm_controls_av(uint64_t avail, int i, const char **key, const char **what);
 /* ... drawn from y SOMVR_VM_CTL_Y0, one every somvr_vm_ctl_dy() pixels (SOMVR_VM_CTL_DY, closer when the lines, the
  * notes and the card's hint would not fit the panel; never under SOMVR_VM_CTL_DY_MIN); then SOMVR_VM_CTL_NOTES dim
  * lines (what is not in this build) and on the card its close hint */
@@ -293,23 +349,23 @@ int somvr_vm_controls_av(uint32_t avail, int i, const char **key, const char **w
  * apostrophe's top, a g's tail: 28 px at scale 2, so 28-pixel lines never touch; the Settings page's rows are 28 too) */
 #define SOMVR_VM_CTL_DY_MIN 28
 int somvr_vm_ctl_dy(void);                 /* = _av(0) */
-int somvr_vm_ctl_dy_av(uint32_t avail);
+int somvr_vm_ctl_dy_av(uint64_t avail);
 #define SOMVR_VM_CTL_NOTES 2
 /* the lines that fit with the notes and the card's hint at SOMVR_VM_CTL_DY_MIN (21 on the 768-pixel panel; 18 at the
  * font's 32-pixel cell before build 17) */
 #define SOMVR_VM_CTL_FIT ((SOMVR_VM_TEX_H - 16 - 4 - SOMVR_VM_CTL_Y0) / SOMVR_VM_CTL_DY_MIN - SOMVR_VM_CTL_NOTES - 1)
 const char *somvr_vm_controls_note(int i); /* the dim lines (i out of range: NULL); = _av(0, i) */
-const char *somvr_vm_controls_note_av(uint32_t avail, int i); /* with SOMVR_VMA_VERBS: what a held orc does */
+const char *somvr_vm_controls_note_av(uint64_t avail, int i); /* with SOMVR_VMA_VERBS: what a held orc does */
 /* build 17: the avail the Controls page shows for the settings s: with SOMVR_VMA_ARROWS (the Arrows row) the quiver's
  * lines follow s->quiver (SOMVR_VMA_BOWRT with the string on RT, SOMVR_VMA_QVGRIP on the grip; neither: the string's own
  * Shoot line); otherwise avail (somvr_vm_draw draws the page and the card with it) */
-uint32_t somvr_vm_ctl_avail(const somvr_settings *s, uint32_t avail);
+uint64_t somvr_vm_ctl_avail(const somvr_settings *s, uint64_t avail);
 enum { SOMVR_VMP_NONE, SOMVR_VMP_ROW, SOMVR_VMP_LESS, SOMVR_VMP_MORE, SOMVR_VMP_BUTTON };
 typedef struct { int item, part; } somvr_vm_hit; /* item -1 = none */
 
 const char *somvr_vm_label(int item);
 /* the item can be used now (its feature exists: avail; and it matters: the snap angle with snap turns ...) */
-int somvr_vm_enabled(const somvr_settings *s, uint32_t avail, int item);
+int somvr_vm_enabled(const somvr_settings *s, uint64_t avail, int item);
 /* the value as the panel shows it ("Snap", "45\x7f", "40%", "Auto" ...); "" for the buttons */
 void somvr_vm_value(const somvr_settings *s, int item, char *buf, size_t cap);
 enum { SOMVR_VMR_NONE = 0, SOMVR_VMR_CHANGED = 1, SOMVR_VMR_RECENTER = 2, SOMVR_VMR_CLOSE = 3, SOMVR_VMR_PAGE = 4,
@@ -319,7 +375,7 @@ enum { SOMVR_VMR_NONE = 0, SOMVR_VMR_CHANGED = 1, SOMVR_VMR_RECENTER = 2, SOMVR_
 /* A click on (item, part): LESS / MORE step the value down / up (held at the ends; a toggle flips), ROW the next value
  * (wrapping), the buttons act (the tab: PAGE, the other page; a practice button: PRACTICE, its request is
  * somvr_vm_practice_action(item)). A disabled item does nothing. Returns SOMVR_VMR_*. */
-int somvr_vm_apply(somvr_settings *s, uint32_t avail, uint32_t blink_on_ms, int item, int part);
+int somvr_vm_apply(somvr_settings *s, uint64_t avail, uint32_t blink_on_ms, int item, int part);
 /* a practice page button's request (SOMVR_VMPR_*; 0 = not one) */
 int somvr_vm_practice_action(int item);
 
@@ -333,17 +389,17 @@ int somvr_vm_practice_action(int item);
 /* {x, y, w, h} of (item, part) with the rows avail shows (somvr_vm_shown: the shown rows from the top, 38 px each, closer
  * when more than 16 are shown; the bottom row of buttons stays where it is); 0 = the part does not exist (the buttons
  * have only BUTTON, the rows ROW/LESS/MORE; a row not shown has none) */
-int somvr_vm_rect_av(uint32_t avail, int item, int part, int rc[4]);
+int somvr_vm_rect_av(uint64_t avail, int item, int part, int rc[4]);
 int somvr_vm_rect(int item, int part, int rc[4]); /* = somvr_vm_rect_av(0, ...): the rows every build shows */
 /* the item and part under the pointer at uv (0..1, v down) on page SOMVR_VMPG_* (the tab and the close box on all) with
  * the rows avail shows; item -1 outside every part */
-somvr_vm_hit somvr_vm_hit_test_av(uint32_t avail, int page, float u, float v);
+somvr_vm_hit somvr_vm_hit_test_av(uint64_t avail, int page, float u, float v);
 somvr_vm_hit somvr_vm_hit_test(float u, float v);                /* = _av(0, SOMVR_VMPG_SETTINGS, u, v) */
 somvr_vm_hit somvr_vm_hit_test_page(int page, float u, float v); /* = _av(0, page, u, v) */
 
 typedef struct {
     somvr_settings set;
-    uint32_t avail;
+    uint64_t avail;      /* v7: 64 bits */
     somvr_vm_hit hover;  /* item -1 = none */
     int page;            /* SOMVR_VMPG_* (since v3) */
     int quit_armed;      /* the Quit game button was pressed once: it reads Confirm (red) */
@@ -353,7 +409,8 @@ typedef struct {
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;
  * disabled items dimmed, the hovered row and part lit. The practice page (v->page): its state (avail's SOMVR_VMA_PR_*),
- * the Go / Back buttons, the orc type row, the Spawn / Remove buttons (build 17: the two refills, the defence lines);
+ * the Go / Back buttons, the orc type row, the Spawn / Remove buttons (build 17: the two refills, the defence lines;
+ * build 19: Spawn group beside Spawn an orc);
  * the tab on both pages while SOMVR_VMA_PRACTICE. */
 void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_view *v);
 

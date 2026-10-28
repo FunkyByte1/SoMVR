@@ -5,6 +5,7 @@
 #          went): the stick held into the edge with `tether off` + `tether measure old` (build 17: the view walks on
 #          off the edge), `tether on` (the fade catches it, back at his eyes), `tether measure along` (the view stays);
 #          then the test head stepped 100 cm off the edge (25 cm/s): the fade, black, back on the plateau; both eyes
+#   step6  (build 19) mark 6's spot, the view toward the drop, only the test head 100 cm out over the edge and back
 #   flat   the practice meadow: the test head 100 cm ahead and back (the follow takes the body: no fade)
 #   wall   mark 4's spot by the platform's face (H4_AT): the test head 80 cm into the face (HEAD_ROCK and the tether)
 # Several in one boot (PLAN="edge6 flat wall"). Stops at once (quit) when the user goes into VR.
@@ -36,6 +37,15 @@ edge6plan() {
   x "head 0 0 -100 s 4"; sleep 1.0; d "e6-step-a"; sleep 0.2; d "e6-step-b"; sleep 0.2; d "e6-step-c"
   sleep 1.5; d "e6-step-d"; tt 5; echo "$(date +%T) $(root) view $(headoff) $(fol 1)"; m "t18-e6-step"
   x "head 0 0 0 s 3"; sleep 4; echo "$(date +%T) the head back: $(root) $(fol 1)"; tt 2; d "e6-back"; }
+step6plan() { # build 19 (tether19): only the head's step out over mark 6's edge (no stick into it first)
+  echo "== mark 6: the head 100 cm out over the edge (25 cm/s)"
+  x "btn R squeeze 0"; w "hands test off"; x "head 0 0 0"
+  go "$E6_AT"; echo "$(date +%T) at: $(root)"; faceworld; d "s6-start"
+  local n0; n0=$(cnt '^TETHER t=.*fades')
+  x "head 0 0 -100 s 4"; sleep 2.2; d "s6-a"; sleep 0.6; d "s6-b"; sleep 0.6; d "s6-c"; sleep 1.5; d "s6-d"
+  tt 5; echo "$(date +%T) $(root) view $(headoff) $(fol 1)"; m "t19-s6-step"
+  x "head 0 0 0 s 3"; sleep 4; echo "$(date +%T) the head back: $(root) $(fol 1)"; tt 2; d "s6-back"
+  echo "STEP6 tether fades $(( $(cnt '^TETHER t=.*fades') - n0 ))"; }
 flatplan() {
   echo "== flat ground: the head 100 cm ahead and back"
   x "head 0 0 0"; go "${FLAT_AT:-32500 2100 -24800}"; echo "$(date +%T) at: $(root)"
@@ -50,8 +60,9 @@ wallplan() {
   x "head 0 0 -80 s 1.5"; sleep 1.2; d "w4-a"; sleep 1.3; d "w4-b"; sleep 1.5; d "w4-c"; hr 3; tt 3
   x "head 0 0 0 s 1.5"; sleep 2.5; d "w4-back"
   echo "WALL headrock fades $(( $(cnt '^HEADROCK t=.*fades') - h0 )), tether fades $(( $(cnt '^TETHER t=.*fades') - n0 ))"; }
-case " $PLAN " in *" edge6 "*|*" flat "*|*" wall "*) ;; *) echo "no tether18 plan in PLAN=$PLAN"; exit 1 ;; esac
+case " $PLAN " in *" edge6 "*|*" step6 "*|*" flat "*|*" wall "*) ;; *) echo "no tether18 plan in PLAN=$PLAN"; exit 1 ;; esac
 card
-for p in $PLAN; do [ "$p" = edge6 ] && edge6plan; [ "$p" = flat ] && flatplan; [ "$p" = wall ] && wallplan; done
+for p in $PLAN; do [ "$p" = edge6 ] && edge6plan; [ "$p" = step6 ] && step6plan; [ "$p" = flat ] && flatplan; [ "$p" = wall ] && wallplan; done
 grep -E '^TETHER END|^FOLLOW t=' "$L" | tail -2 | cut -c1-300
-echo "steps done $(date +%T)"; sleep 2; echo quit >> "$R/cmd"; echo "quit $(date +%T)"
+echo "steps done $(date +%T)"; [ -n "${TT_NOQUIT:-}" ] && exit 0 # TT_NOQUIT=1: leave it running (PIN_RUN=RUN attaches)
+sleep 2; echo quit >> "$R/cmd"; echo "quit $(date +%T)"

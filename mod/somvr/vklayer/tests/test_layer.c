@@ -5914,7 +5914,7 @@ _Static_assert(SOMVR_ENV_EQ_W * (SOMVR_ENV_EQ_H + SOMVR_ENV_STRIP) >= SOMVR_VM_T
 static somvr_vrmenu_shared *g_vm;
 /* vrmenu_obj.so next to the mock, in the global scope like LD_PRELOAD (absent in every other scenario); the preload's
  * settings (s, or the defaults) published before `active` */
-static int vrmenu_obj(int active, uint32_t avail, const somvr_settings *s) {
+static int vrmenu_obj(int active, uint64_t avail, const somvr_settings *s) {
     char p[4200];
     const char *slash = strrchr(g_mock, '/');
     snprintf(p, sizeof p, "%.*s/vrmenu_obj.so", slash ? (int)(slash - g_mock) : 1, slash ? g_mock : ".");
@@ -6041,7 +6041,7 @@ static int vm_layer(const char *what) {
 }
 /* the last upload is the picture of (s, avail, hover) exactly (somvr_vm_draw into RGBA: the format is R8G8B8A8_SRGB) */
 static uint8_t g_vm_px[SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4];
-static int vm_picture_is(const somvr_settings *s, uint32_t avail, int item, int part) {
+static int vm_picture_is(const somvr_settings *s, uint64_t avail, int item, int part) {
     static somvr_font f;
     static int init;
     if (!init) init = 1, somvr_font_init(&f);
@@ -6173,7 +6173,7 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     aim.trig = 0, vm_mono(&a, &aim, 3);
     CHECK(atomic_load(&g_vm->n_clicks) == 3 && log_has("xr: vrmenu: click Practice button: nothing"),
           "the tab without SOMVR_PRACTICE: clicks %llu", (unsigned long long)atomic_load(&g_vm->n_clicks));
-    uint32_t avail0 = g_vm->avail;
+    uint64_t avail0 = g_vm->avail;
     g_vm->avail = avail0 | SOMVR_VMA_PRACTICE;
     atomic_store(&g_vm->pstate, SOMVR_VMA_PR_HERE | SOMVR_VMA_PR_BACK);
     aim.trig = 0.9f, vm_mono(&a, &aim, 3);
@@ -6199,8 +6199,15 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     aim.trig = 0, vm_mono(&a, &aim, 3);
     CHECK(log_has("xr: vrmenu: click Settings button: the settings page") && atomic_load(&g_vm->practice) == pw,
           "the tab back");
-    /* v4 (re-xr-pipeline.md 29): the Sword angle row, dimmed without SOMVR_VMA_SWORD; with it its > box turns the blade
-     * 5 deg up, published for the game side (SOMVR_SWORD_ANGLE live) */
+    /* build 19 (re-xr-pipeline.md 73): the Settings page's last row "Fight settings >" opens the Fight page (the
+     * sword's, the bow's, the fight's rows) */
+    vm_uv(SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, aim.uv);
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(log_has("xr: vrmenu: click Fight settings button: the fight page"), "the Fight page's button");
+    /* v4 (re-xr-pipeline.md 29): the Sword angle row (build 19: the Fight page's first), dimmed without
+     * SOMVR_VMA_SWORD; with it its > box turns the blade 5 deg up, published for the game side (SOMVR_SWORD_ANGLE live) */
     vm_uv(SOMVR_VMI_SWORD, SOMVR_VMP_MORE, aim.uv);
     vm_mono(&a, &aim, 3);
     aim.trig = 0.9f, vm_mono(&a, &aim, 3);
@@ -6214,6 +6221,13 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
               log_has("xr: vrmenu: click Sword angle >: changed 0\x7f -> +5\x7f (gen"),
           "the sword row: %g deg, gen %u -> %u", vm_set().sword_deg, gs, atomic_load(&g_vm->gen));
     g_vm->avail = avail0;
+    /* build 19: "< Settings" under the Fight page's rows: back to the Settings page */
+    int nback = log_count("xr: vrmenu: click Settings button: the settings page");
+    vm_uv(SOMVR_VMI_PG_BACK, SOMVR_VMP_BUTTON, aim.uv);
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(log_count("xr: vrmenu: click Settings button: the settings page") == nback + 1, "the Fight page's back button");
     atomic_store(&g_vm->pstate, 0);
     atomic_store(&g_vm->n_clicks, 3);
     /* its close box: closed, the palm still up does not open it again until it has been turned away */

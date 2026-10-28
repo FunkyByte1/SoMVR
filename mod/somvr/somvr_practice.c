@@ -97,8 +97,8 @@ int somvr_pr_orc_parse(const char *w)
 
 const char *somvr_pr_action_name(int a)
 {
-    static const char *const n[SOMVR_PRA_N] = { "none", "go",     "back",   "spawn", "remove",
-                                                "status", "arrows", "health", "far" };
+    static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status", "arrows", "health",
+                                                "far", "group" };
     return a >= 0 && a < SOMVR_PRA_N ? n[a] : "?";
 }
 
@@ -108,7 +108,7 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         { "go", SOMVR_PRA_GO },         { "there", SOMVR_PRA_GO },       { "back", SOMVR_PRA_BACK },
         { "return", SOMVR_PRA_BACK },   { "spawn", SOMVR_PRA_SPAWN },    { "remove", SOMVR_PRA_REMOVE },
         { "despawn", SOMVR_PRA_REMOVE }, { "status", SOMVR_PRA_STATUS }, { "arrows", SOMVR_PRA_ARROWS },
-        { "health", SOMVR_PRA_HEALTH }, { "far", SOMVR_PRA_FAR },
+        { "health", SOMVR_PRA_HEALTH }, { "far", SOMVR_PRA_FAR }, { "group", SOMVR_PRA_GROUP }, { "crowd", SOMVR_PRA_GROUP },
     };
     const char *tok, *s = w ? w : "", *arg, *rest;
     size_t n = token(&s, &tok);
@@ -118,6 +118,12 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
     for (size_t i = 0; i < sizeof t / sizeof t[0] && n; i++)
         if (ci_eq(tok, n, t[i].w))
             a = t[i].a;
+    if (a == SOMVR_PRA_SPAWN && !refill) { /* build 19: "spawn group [3|4]" = "group [3|4]" (the button's words) */
+        const char *s2 = s, *g;
+        size_t ng = token(&s2, &g);
+        if (ng && (ci_eq(g, ng, "group") || ci_eq(g, ng, "crowd")))
+            a = SOMVR_PRA_GROUP, s = s2;
+    }
     if (a == SOMVR_PRA_NONE || (refill && a != SOMVR_PRA_ARROWS && a != SOMVR_PRA_HEALTH))
         return 0;
     size_t na = token(&s, &arg);
@@ -152,8 +158,12 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
             orc = 1; /* "status nav": the game's nav markers too (a test word, the story drill's round 2) */
         else if (a == SOMVR_PRA_STATUS && ci_eq(arg, na, "look"))
             orc = 3; /* "status look": what the game's look-at triggers read of the players (the collect drill) */
-        else if ((a != SOMVR_PRA_SPAWN && a != SOMVR_PRA_FAR) || (orc = orc_tok(arg, na)) < 0)
-            return 0; /* only spawn takes a type, status "nav" */
+        else if (a == SOMVR_PRA_GROUP) { /* build 19: the count */
+            if (na != 1 || (arg[0] != '3' && arg[0] != '4'))
+                return 0;
+            orc = arg[0] - '0';
+        } else if ((a != SOMVR_PRA_SPAWN && a != SOMVR_PRA_FAR) || (orc = orc_tok(arg, na)) < 0)
+            return 0; /* only spawn and far take a type, status "nav", group a count */
     }
     if (token(&s, &rest))
         return 0;
@@ -318,4 +328,28 @@ int somvr_pr_is_night(const char *tod_name) { return ci_has(tod_name, "night"); 
 int somvr_pr_is_wet(const char *weather)
 {
     return !ci_has(weather, "norain") && (ci_has(weather, "rain") || ci_has(weather, "storm"));
+}
+
+/* ---- build 19: the group ---- */
+int somvr_pr_group_plan(int n, somvr_pr_group_orc out[SOMVR_PR_GROUP_MAX])
+{
+    static const somvr_pr_group_orc four[4] = {
+        { SOMVR_PRO_INFANTRY, -35.f, 450.f }, { SOMVR_PRO_SHIELD, 35.f, 450.f },
+        { SOMVR_PRO_INFANTRY, -125.f, 550.f }, { SOMVR_PRO_BERSERKER, 125.f, 550.f } };
+    static const somvr_pr_group_orc three[3] = {
+        { SOMVR_PRO_INFANTRY, -35.f, 450.f }, { SOMVR_PRO_SHIELD, 35.f, 450.f }, { SOMVR_PRO_BERSERKER, 180.f, 550.f } };
+    n = n <= 3 ? 3 : 4;
+    memcpy(out, n == 3 ? three : four, (size_t)n * sizeof *out);
+    return n;
+}
+
+void somvr_pr_group_spot(const float pos[3], const float fwd[3], float yaw_deg, float dist_cm, float out[3])
+{
+    float fx = fwd[0], fz = fwd[2], l = sqrtf(fx * fx + fz * fz); /* the heading in the ground plane (somvr_pr_ahead's) */
+    if (!(l > 1e-3f))
+        fx = 0, fz = 1, l = 1;
+    fx /= l, fz /= l;
+    float a = yaw_deg * (float)(M_PI / 180.0), c = cosf(a), sn = sinf(a);
+    float dx = fx * c + fz * sn, dz = -fx * sn + fz * c; /* clockwise from above: +Z -> +X at +90 */
+    out[0] = pos[0] + dx * dist_cm, out[1] = pos[1], out[2] = pos[2] + dz * dist_cm;
 }

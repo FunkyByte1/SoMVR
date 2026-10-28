@@ -105,7 +105,52 @@ static void test_cue(void) {
     CHECK(q.ticks == 3 && q.orc == 0x200, "3 ticks (%llu)", (unsigned long long)q.ticks);
 }
 
+static void test_standoff(void) {
+    const float orc[3] = { 0, 0, 0 }, r = 118.0f, hz = 8.0f, dt = 0.05f;
+    float out[3], p[3] = { 0, 0, -300 }, d[3] = { 0, 0, 7.0f };
+    CHECK(!somvr_stl_standoff(p, orc, r, dt, hz, d, out) && out[2] == 0, "far: the step free");
+    /* walk straight at it at 140 cm/s (20 Hz): stops short of r, never inside, smoothly */
+    float last = 1e9f;
+    int cut = 0, mono = 1;
+    for (int i = 0; i < 200; i++) {
+        float step[3] = { 0, 0, 7.0f };
+        if (somvr_stl_standoff(p, orc, r, dt, hz, step, out))
+            cut++, step[0] += out[0], step[2] += out[2];
+        p[2] += step[2];
+        mono &= step[2] <= last + 1e-4f;
+        if (p[2] > -r - 20)
+            last = step[2];
+    }
+    CHECK(cut > 0 && -p[2] >= r - 1e-3f && -p[2] < r + 1.0f, "walked in: stopped at %.2f (r %.0f)", -p[2], r);
+    CHECK(mono, "the steps only shrink near the edge");
+    /* sideways at the edge: free */
+    float q[3] = { 0, 0, -r }, side[3] = { 7.0f, 0, 0 };
+    CHECK(!somvr_stl_standoff(q, orc, r, dt, hz, side, out), "sideways along the edge: free");
+    float back[3] = { 0, 0, -7.0f };
+    CHECK(!somvr_stl_standoff(q, orc, r, dt, hz, back, out), "back: free");
+    /* inside already (the orc stepped back into him): no push, no step further in */
+    float in[3] = { 0, 0, -90 }, fw[3] = { 0, 0, 5.0f };
+    CHECK(somvr_stl_standoff(in, orc, r, dt, hz, fw, out) && fabsf(out[2] + 5.0f) < 1e-4f, "inside: the inward step cut to 0");
+    CHECK(!somvr_stl_standoff(in, orc, r, dt, hz, back, out) && out[2] == 0, "inside: back out free, no push");
+    /* a diagonal at the edge keeps its sideways part */
+    float diag[3] = { 5.0f, 0, 5.0f };
+    CHECK(somvr_stl_standoff(q, orc, r, dt, hz, diag, out) && fabsf(diag[0] + out[0] - 5.0f) < 1e-4f &&
+          fabsf(diag[2] + out[2]) < 1e-4f, "diagonal: the inward half cut, the sideways half kept");
+    /* frame-rate independent: 90 Hz stops at the same place */
+    float p2[3] = { 0, 0, -300 };
+    for (int i = 0; i < 900; i++) {
+        float step[3] = { 0, 0, 140.0f / 90.0f };
+        if (somvr_stl_standoff(p2, orc, r, 1.0f / 90.0f, hz, step, out))
+            step[2] += out[2];
+        p2[2] += step[2];
+    }
+    CHECK(-p2[2] >= r - 1e-3f && -p2[2] < r + 1.0f, "90 Hz: stopped at %.2f", -p2[2]);
+    float z[3] = { 0, 0, 0 };
+    CHECK(!somvr_stl_standoff(z, orc, r, dt, hz, d, out) && !somvr_stl_standoff(p, orc, 0, dt, hz, d, out), "degenerate");
+}
+
 int main(void) {
+    test_standoff();
     test_angles();
     test_possible();
     test_judge();

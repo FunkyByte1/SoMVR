@@ -27,7 +27,9 @@
  *                     cbt_imp_atk_biped) and the same opening as a parry (its riposte breaks the shield too). Not with
  *                     the bow out, a climb hold, the grab, both hands on the sword; once per orc in 1.5 s.
  *   SOMVR_PARRY_MARKS=N (test only) a SOMVR_MARK (the eyes) at the next N parries, shoves and shield breaks.
- * Test words (SOMVR_HANDS_TEST): "parry open" (the nearest orc opened as by a parry), "parry status".
+ * Test words (SOMVR_HANDS_TEST): "parry open" (the nearest orc opened as by a parry), "parry status", "parry auto MS"
+ * (build 19: MS after each parry's opening the test right hand swings out to the right in 120 ms, then the edge cut
+ * across in 250 ms - a player's counter-cut without the driver's log latency; 0 = off).
  */
 
 /* PARRY_SITES_BEGIN (read only, never patched). PY_STREAK FUN_02726500(hc, bool all): the hit counter's pending
@@ -51,20 +53,26 @@ typedef void (*py_streak_fn)(uintptr_t hc, int all);
 
 static struct {
 	int on, shove, streak, brk, ok_streak, used, marks;
-	float window_s, open_s, shove_mps, shove_reach;
+	float window_s, open_s, shove_mps, shove_reach, dodge_s, reel_cm;
+	int dodge, shield_mode; /* build 19: SOMVR_PARRY_DODGE; SOMVR_PARRY_SHIELD (PY_SH_*) */
 	char sound[64], shove_sound[64], recoil[96];
 	struct py_open { uintptr_t c, hobj; double t0, until, shoved; int why, hits, ripostes; } o[PY_N];
-	/* the left palm (world cm, in_frame) and its history relative to Talion's root (combat_frame) */
+	/* the left palm (world cm) and its history in the tracking space (in_frame: the hand's own motion, mapped to the
+	 * world with the base of the frame it is judged in - a turn, a walk or a game move of Talion is not a push) */
 	int palm_ok;
-	float palm[3], yaw;
-	struct { double t; float rel[3]; } h[PY_HIST];
+	float palm[3];
+	struct { double t; sv_vec3 p; } h[PY_HIST];
 	int nh, hpos;
+	double refused_next;
 	uintptr_t nearest; /* the nearest orc of the last combat frame (the word "parry open") */
+	int auto_ms, auto_step; /* build 19 (test): "parry auto MS" - MS after a parry's opening the test right hand cuts */
+	double auto_t;
 	uint64_t parries, early, opens, streaks, streak_fail, sounds, sound_fail, ripostes, breaks, break_miss, through,
-		rx_skipped, shoves, shove_took, shove_refused, lines, suppressed;
+		rx_skipped, shoves, shove_took, shove_refused, pushes_refused, dodge_opens, reels_short, lines, suppressed;
 } g_py;
 
-static const char *const g_py_why[3] = { "-", "a parry", "a shove" };
+static const char *const g_py_why[4] = { "-", "a parry", "a shove", "a dodge" };
+enum { PY_SH_OFF, PY_SH_GAME, PY_SH_SPHERE };
 
 static int py_log_ok(void)
 {
@@ -83,7 +91,13 @@ static void py_config(void)
 	g_py.window_s = env_float("SOMVR_PARRY_WINDOW_MS", 250, 0, 250, &bad) * 1e-3f;
 	g_py.open_s = env_float("SOMVR_PARRY_OPEN_MS", 1000, 200, 3000, &bad) * 1e-3f;
 	g_py.streak = env_word("SOMVR_PARRY_STREAK", (const char *const[]){ "off", "on" }, 2, 1);
-	g_py.brk = env_word("SOMVR_PARRY_SHIELD", (const char *const[]){ "off", "break" }, 2, 1);
+	/* break = the game's own direction rule decides "into the shield" for the riposte (its shield block, FUN_028adf30);
+	 * sphere = build 18's: our sweep met SOMVR_COMBAT_SHIELD_CM about the shield model's origin (its forearm) first */
+	g_py.shield_mode = env_word("SOMVR_PARRY_SHIELD", (const char *const[]){ "off", "break", "sphere" }, 3, PY_SH_GAME);
+	g_py.brk = g_py.shield_mode != PY_SH_OFF;
+	g_py.dodge = env_word("SOMVR_PARRY_DODGE", (const char *const[]){ "off", "on" }, 2, 0);
+	g_py.dodge_s = env_float("SOMVR_PARRY_DODGE_MS", 1500, 200, 3000, &bad) * 1e-3f;
+	g_py.reel_cm = env_float("SOMVR_PARRY_REEL_CM", 0, 0, 200, &bad);
 	g_py.shove_mps = env_float("SOMVR_SHOVE_MPS", 1.5f, 0.5f, 6, &bad);
 	g_py.shove_reach = env_float("SOMVR_SHOVE_REACH_CM", 25, 0, 60, &bad);
 	g_py.marks = (int)env_float("SOMVR_PARRY_MARKS", 0, 0, 20, &bad);
@@ -93,6 +107,11 @@ static void py_config(void)
 	snprintf(g_py.recoil, sizeof g_py.recoil, "%s", rc && *rc ? rc : "Block_Breaker,Medium,Light");
 	if (!g_py.on && !g_py.shove)
 		return;
+	if (g_py.dodge || g_py.reel_cm > 0)
+		logf_("CONFIG parry (build 19): a dodged blow opens its attacker %s (SOMVR_PARRY_DODGE, %.0f ms); a parry's reel "
+		      "at most %.0f cm (SOMVR_PARRY_REEL_CM; 0 = SOMVR_COMBAT_STAGGER_CM's); the riposte into a raised shield by %s",
+		      g_py.dodge ? "on" : "off", g_py.dodge_s * 1e3f, g_py.reel_cm, g_py.shield_mode == PY_SH_GAME
+		      ? "the game's own direction rule" : g_py.shield_mode == PY_SH_SPHERE ? "our sphere at its origin" : "nothing");
 	char why[160];
 	g_py.ok_streak = check_site(&g_pys[PYS_STREAK], why, sizeof why) == 0;
 	if (!g_py.ok_streak && g_py.streak)
@@ -154,24 +173,55 @@ static void py_sound(const char *name, const float at[3], const float head[3], d
 }
 
 /* the opening (a parry's or a shove's) */
-static void py_open(uintptr_t c, int why, const float at[3], double t)
+static void py_open_for(uintptr_t c, int why, const float at[3], double t, float dur)
 {
 	struct py_open *p = py_slot(c, t);
 	if (!p)
 		return;
 	struct cb_orc o;
 	p->hobj = cb_orc_get(c, &o) ? o.hobj : 0;
-	p->t0 = t, p->until = t + g_py.open_s, p->why = why, p->hits = p->ripostes = 0;
+	p->t0 = t, p->until = t + dur, p->why = why, p->hits = p->ripostes = 0;
 	g_py.opens++;
+	if (g_py.auto_ms > 0 && why == 1) /* the test word "parry auto MS": the counter-cut MS from now */
+		g_py.auto_t = t + g_py.auto_ms * 1e-3, g_py.auto_step = 1;
 	char an[96];
 	if (py_log_ok())
 		logf_("PARRY open orc=%#lx hobj=%#lx t=%.3f by %s for %.0f ms (its attack now '%s', health %.1f, shield %.1f) at "
-		      "%.1f,%.1f,%.1f", (unsigned long)c, (unsigned long)p->hobj, t, g_py_why[why], g_py.open_s * 1e3f,
+		      "%.1f,%.1f,%.1f", (unsigned long)c, (unsigned long)p->hobj, t, g_py_why[why], dur * 1e3f,
 		      rx_rec_name(peek_ptr(c + RX_C_ATTACK), an, sizeof an), cb_health(c), cb_shield_hp(c), at[0], at[1], at[2]);
 	if (g_py.marks > 0) {
 		g_py.marks--;
 		ss_mark("the opening (SOMVR_PARRY_MARKS)", g_py_why[why], t);
 	}
+}
+
+static void py_open(uintptr_t c, int why, const float at[3], double t) { py_open_for(c, why, at, t, g_py.open_s); }
+
+/* SOMVR_PARRY_REEL_CM: the parried orc's reel (stagger17's, started by the clank) eased under a shorter cap */
+static void py_reel_short(uintptr_t c)
+{
+	if (!(g_py.reel_cm > 0) || !(g_rl.cap > 0))
+		return;
+	for (int i = 0; i < RL_N; i++)
+		if (g_rl.e[i].c == c && !g_rl.e[i].t_end && g_rl.e[i].cap > g_py.reel_cm)
+			g_rl.e[i].cap = g_py.reel_cm, g_py.reels_short++;
+}
+
+/* build 19 (SOMVR_PARRY_DODGE): DEFENCE judged a blow dodged (the head out of it, or the A dodge): its attacker open */
+static void py_dodge(uintptr_t c, uintptr_t attack, int applied, float dash_ms, double t)
+{
+	if (!g_py.on || !g_py.dodge || !applied || !c || cb_dead(c))
+		return;
+	struct cb_orc o;
+	float at[3] = { 0, 0, 0 };
+	if (cb_orc_get(c, &o))
+		memcpy(at, o.pos, sizeof at);
+	char an[96];
+	g_py.dodge_opens++;
+	if (py_log_ok())
+		logf_("PARRY dodge orc=%#lx attack '%s' t=%.3f: dodged (%s) -> its opening", (unsigned long)c,
+		      rx_rec_name(attack, an, sizeof an), t, dash_ms >= 0 ? "the A dodge" : "the head out of the blow");
+	py_open_for(c, 3, at, t, g_py.dodge_s);
 }
 
 /* DEFENCE's contact judge accepted a block (df_contact, the recoil and the clank done): a parry if in the window */
@@ -206,6 +256,7 @@ static void py_parry(uintptr_t c, uintptr_t attack, const somvr_df_in *in, const
 		      rx_rec_name(attack, an, sizeof an), t, fabsf(in->impact - in->ts) * 1e3f,
 		      in->ts <= in->impact ? "before" : "after", g_py.window_s * 1e3f, s0, pend0, pend1);
 	py_open(c, 1, point, t);
+	py_reel_short(c);
 }
 
 /* cb_hit: 0 = the orc is not open, 1 = open (its block stops nothing), 2 = open and this hit is the riposte (a committed
@@ -251,6 +302,9 @@ static void py_break_post(uintptr_t c, int set, float was, float hp0, float hp1,
 		ss_mark("the shield broken (SOMVR_PARRY_MARKS)", "riposte", t);
 	}
 }
+/* cb_hit: the riposte's "into a raised shield" is the game's own direction rule (no sphere, no shield down for the call) */
+static int py_shield_game(void) { return g_py.shield_mode == PY_SH_GAME; }
+
 /* through its block: Talion's Combat+0x55b nonzero for the call (*was to put back; 1 = written) */
 static int py_through_set(uintptr_t pc, uint8_t *was)
 {
@@ -277,12 +331,18 @@ static int py_rx_skip(uintptr_t c, double t)
 }
 
 /* in_frame: the left palm in the world (game cm) */
-static void py_hands(const sv_vec3 pw[2])
+static void py_hands(const sv_vec3 p[2], const sv_vec3 pw[2])
 {
 	if (!g_py.shove)
 		return;
 	g_py.palm_ok = g_inp.hands[SOMVR_HAND_L].valid && vec_ok((const float[3]){ pw[0].x, pw[0].y, pw[0].z }, 1e7f);
 	g_py.palm[0] = pw[0].x, g_py.palm[1] = pw[0].y, g_py.palm[2] = pw[0].z;
+	if (!g_py.palm_ok) {
+		g_py.nh = 0;
+		return;
+	}
+	g_py.h[g_py.hpos].t = cb_now(), g_py.h[g_py.hpos].p = p[0];
+	g_py.hpos = (g_py.hpos + 1) % PY_HIST, g_py.nh += g_py.nh < PY_HIST;
 }
 
 /* the shove's reaction: the recoil types of SOMVR_SHOVE_RECOIL in turn until one takes */
@@ -317,6 +377,13 @@ static int py_shove_recoil(const struct cb_orc *o, const float v[3], const float
 /* combat_frame (the sword drawn): the shove; the nearest orc for the word */
 static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float root[3], double t)
 {
+	if (g_py.auto_step && t >= g_py.auto_t) { /* "parry auto MS": out to the right fast, then the edge cut across */
+		const char *wd = g_py.auto_step == 1 ? "swing R 40 -8 35 0 -90 90 120" : "swing R -20 -18 62 0 90 90 250";
+		const char *what = bd_word(wd);
+		if (py_log_ok())
+			logf_("PARRY auto t=%.3f: the test hand's %s (%s)", t, g_py.auto_step == 1 ? "wind-up" : "cut", what);
+		g_py.auto_step = g_py.auto_step == 1 ? 2 : 0, g_py.auto_t = t + 0.13;
+	}
 	float best = 1e9f;
 	g_py.nearest = 0;
 	for (int i = 0; i < n; i++)
@@ -324,18 +391,13 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 			best = o[i].dist, g_py.nearest = o[i].c;
 	if (!g_py.shove || !root)
 		return;
-	float yaw = g_fr.base.yaw;
 	int free_hand = g_py.palm_ok && !bo_out() && !cl_holds(SOMVR_HAND_L) && !vb_grab_held() && !(g_bd.two.w > 0);
-	if (!free_hand || yaw != g_py.yaw) { /* a turn swings the hand about the root: the history starts again */
-		g_py.yaw = yaw, g_py.nh = 0;
-		if (!free_hand)
-			return;
-	}
-	float rel[3] = { g_py.palm[0] - root[0], g_py.palm[1] - root[1], g_py.palm[2] - root[2] };
-	int k = -1;
-	for (int j = 0; j < g_py.nh; j++) { /* the newest sample at least 80 ms old (at most 250) */
-		int ix = (g_py.hpos - 1 - j + PY_HIST) % PY_HIST;
-		double age = t - g_py.h[ix].t;
+	if (!free_hand || g_py.nh < 2 || !pc)
+		return;
+	int now = (g_py.hpos - 1 + PY_HIST) % PY_HIST, k = -1;
+	for (int j = 1; j < g_py.nh; j++) { /* the newest sample at least 80 ms older (at most 250) */
+		int ix = (now - j + PY_HIST) % PY_HIST;
+		double age = g_py.h[now].t - g_py.h[ix].t;
 		if (age > 0.25)
 			break;
 		if (age >= 0.08) {
@@ -343,29 +405,32 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 			break;
 		}
 	}
-	g_py.h[g_py.hpos].t = t, memcpy(g_py.h[g_py.hpos].rel, rel, sizeof rel);
-	g_py.hpos = (g_py.hpos + 1) % PY_HIST, g_py.nh += g_py.nh < PY_HIST;
-	if (k < 0 || !pc)
+	if (k < 0)
 		return;
-	double age = t - g_py.h[k].t;
-	float v[3];
-	for (int i = 0; i < 3; i++)
-		v[i] = (float)((rel[i] - g_py.h[k].rel[i]) / age);
+	double age = g_py.h[now].t - g_py.h[k].t;
+	sv_vec3 a = somvr_rig_point(&g_rig, g_fr.base, g_py.h[k].p), b = somvr_rig_point(&g_rig, g_fr.base, g_py.h[now].p);
+	float v[3] = { (float)((b.x - a.x) / age), (float)((b.y - a.y) / age), (float)((b.z - a.z) / age) };
 	float sp = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-	if (sp < g_py.shove_mps * 100.0f || sp > PY_SHOVE_MAX_CMS) /* (faster: a jump of the hand or of Talion, not a push) */
+	if (sp < g_py.shove_mps * 100.0f || sp > PY_SHOVE_MAX_CMS) /* (faster: a jump of the hand, not a push) */
 		return;
+	int near_i = -1;
+	float near_d = 1e9f, near_cos = 0, near_ht = NAN, near_sh = NAN;
 	for (int i = 0; i < n; i++) {
 		struct py_open *p = py_find(o[i].c);
 		if (p && t - p->shoved < PY_SHOVE_COOL_S)
 			continue;
 		float dx = o[i].pos[0] - g_py.palm[0], dz = o[i].pos[2] - g_py.palm[2], dh = sqrtf(dx * dx + dz * dz);
-		float vh = sqrtf(v[0] * v[0] + v[2] * v[2]);
-		if (!(dh > 1) || !(vh > 1) || (v[0] * dx + v[2] * dz) / (dh * vh) < 0.6f) /* toward the orc */
+		float vh = sqrtf(v[0] * v[0] + v[2] * v[2]), cosv = dh > 1 && vh > 1 ? (v[0] * dx + v[2] * dz) / (dh * vh) : 0;
+		/* the palm's height above the orc's feet (its object sits mid-body: the capsule's SOMVR_ORC_DOWN_CM below) */
+		float ht = g_py.palm[1] - (o[i].pos[1] - g_cb.orc_down), sp3[3], sq[4], shp = cb_shield_hp(o[i].c);
+		int shielded = isfinite(shp) && shp > 0, have_sh = shielded && cb_shield_where(o[i].c, sp3, sq);
+		if (dh < near_d && cosv > 0.3f)
+			near_i = i, near_d = dh, near_cos = cosv, near_ht = ht, near_sh = have_sh ? dist3(sp3, g_py.palm) : NAN;
+		if (cosv < 0.6f) /* toward the orc */
 			continue;
-		float sp3[3], sq[4], shp = cb_shield_hp(o[i].c);
 		const char *into = NULL;
-		int chest = g_py.palm[1] - o[i].pos[1] > 60 && g_py.palm[1] - o[i].pos[1] < 175, shielded = isfinite(shp) && shp > 0;
-		if (shielded && cb_shield_where(o[i].c, sp3, sq) && dist3(sp3, g_py.palm) <= g_cb.shield_cm + PY_HAND_CM)
+		int chest = ht > 60 && ht < 175;
+		if (have_sh && dist3(sp3, g_py.palm) <= g_cb.shield_cm + PY_HAND_CM)
 			into = "its raised shield";
 		else if (shielded && chest && dh <= g_cb.orc_r + g_py.shove_reach) /* the shield held before its body (its
 										  * model's origin sits at its forearm) */
@@ -390,7 +455,23 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 		py_open(o[i].c, 2, g_py.palm, t);
 		if ((p = py_find(o[i].c)))
 			p->shoved = t;
-		break;
+		g_py.nh = 0; /* one push, one shove */
+		return;
+	}
+	/* a push that met nothing: which test refused it (build 18's 0 of 8) */
+	if (t >= g_py.refused_next) {
+		g_py.refused_next = t + 0.4, g_py.pushes_refused++;
+		if (py_log_ok()) {
+			if (near_i >= 0)
+				logf_("PARRY push refused t=%.3f: %.2f m/s; the nearest orc ahead %#lx: the palm %.0f cm from its axis (a shield "
+				      "orc: <= %.0f, a blocking one: <= %.0f), %.0f cm above its feet (60..175), %.0f deg off the push "
+				      "(<= 53), its shield's origin %.0f cm away (<= %.0f), shield %.0f, blocking %d", t, sp * 0.01f,
+				      (unsigned long)o[near_i].c, near_d, g_cb.orc_r + g_py.shove_reach, g_cb.orc_r + PY_HAND_CM, near_ht,
+				      acosf(fminf(1, fmaxf(-1, near_cos))) * 57.29578f, near_sh, g_cb.shield_cm + PY_HAND_CM,
+				      cb_shield_hp(o[near_i].c), g_rx.ok ? RX_FN(RS_BLOCKING, rx_blocking_fn)(o[near_i].c) & 1 : -1);
+			else
+				logf_("PARRY push refused t=%.3f: %.2f m/s, no orc ahead (of %d)", t, sp * 0.01f, n);
+		}
 	}
 }
 
@@ -415,7 +496,12 @@ static const char *py_word(const char *w)
 		      (unsigned long long)g_py.shove_took);
 		return "parry status";
 	}
-	return "parry (not open|status: ignored)";
+	int ms = -1;
+	if (sscanf(w, "auto %d", &ms) == 1 && ms >= 0 && ms <= 1000) { /* build 19: the counter-cut after each parry */
+		g_py.auto_ms = ms, g_py.auto_step = 0;
+		return "parry auto MS (the test right hand cuts MS after each parry's opening; 0 = off)";
+	}
+	return "parry (not open|status|auto MS: ignored)";
 }
 
 static void py_end_log(void)
@@ -424,10 +510,12 @@ static void py_end_log(void)
 		return;
 	logf_("PARRY END parries=%llu (early blocks %llu) streak+1 %llu (failed %llu), sounds %llu (no id %llu), opens %llu, "
 	      "hits through a block %llu, ripostes %llu, shields broken %llu (not taken %llu), REACT rolls skipped %llu, "
-	      "shoves %llu (took %llu, refused %llu); lines suppressed %llu", (unsigned long long)g_py.parries,
+	      "shoves %llu (took %llu, refused %llu), pushes that met nothing %llu; dodge openings %llu, parry reels cut short "
+	      "%llu; lines suppressed %llu", (unsigned long long)g_py.parries,
 	      (unsigned long long)g_py.early, (unsigned long long)g_py.streaks, (unsigned long long)g_py.streak_fail,
 	      (unsigned long long)g_py.sounds, (unsigned long long)g_py.sound_fail, (unsigned long long)g_py.opens,
 	      (unsigned long long)g_py.through, (unsigned long long)g_py.ripostes, (unsigned long long)g_py.breaks,
 	      (unsigned long long)g_py.break_miss, (unsigned long long)g_py.rx_skipped, (unsigned long long)g_py.shoves,
-	      (unsigned long long)g_py.shove_took, (unsigned long long)g_py.shove_refused, (unsigned long long)g_py.suppressed);
+	      (unsigned long long)g_py.shove_took, (unsigned long long)g_py.shove_refused, (unsigned long long)g_py.pushes_refused,
+	      (unsigned long long)g_py.dodge_opens, (unsigned long long)g_py.reels_short, (unsigned long long)g_py.suppressed);
 }

@@ -78,3 +78,23 @@ int somvr_stl_cue_step(somvr_stl_cue *q, uintptr_t orc, int possible, double t, 
     if (tick) q->orc = orc, q->ticks++;
     return tick;
 }
+
+int somvr_stl_standoff(const float p[3], const float c[3], float r, float dt, float ease_hz, const float d[3],
+                       float out[3])
+{
+    out[0] = out[1] = out[2] = 0;
+    float nx = p[0] - c[0], nz = p[2] - c[2], dist = sqrtf(nx * nx + nz * nz);
+    if (!(r > 0) || !(dist > 1e-3f) || !isfinite(d[0] + d[2]))
+        return 0;
+    nx /= dist, nz /= dist;
+    float in = -(d[0] * nx + d[2] * nz); /* cm toward the orc this tick */
+    if (!(in > 0))
+        return 0;
+    float room = dist - r, k = dt > 0 && ease_hz > 0 ? 1.0f - expf(-dt * ease_hz) : 1.0f;
+    float allow = room > 0 ? room * k : 0;
+    if (in <= allow)
+        return 0;
+    float cut = in - allow;
+    out[0] = cut * nx, out[2] = cut * nz;
+    return 1;
+}

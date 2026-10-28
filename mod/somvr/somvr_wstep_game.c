@@ -39,6 +39,17 @@ static struct {
 
 static int ws_log_ok(void) { return g_ws.lines++ < 600; }
 static int ws_wanted(void) { return g_ws.want; }
+/* build 19 (re-xr-pipeline.md 73): the VR menu's Wraith step row: shown with SOMVR_WRAITH_STEP=on; on / off at the next
+ * frame (the word's request: an aim on now is dropped, no blink) */
+static uint64_t ws_vm_avail(void) { return g_ws.want ? SOMVR_VMA_WSTEP : 0u; }
+static void ws_vm_settings(somvr_settings *s) { s->wstep = g_ws.want != 0; }
+static const char *ws_vm_set(const somvr_settings *s)
+{
+	if (!g_ws.want)
+		return " (SOMVR_WRAITH_STEP is off: not used)";
+	atomic_store(&g_ws.req_onoff, s->wstep != 0);
+	return s->wstep ? " (the right stick forward aims the blink)" : " (the right stick forward does nothing)";
+}
 
 static void ws_config(int *bad)
 {
@@ -200,7 +211,7 @@ static void ws_frame(uintptr_t pl, int stereo)
 	if (rq >= 0 && g_ws.want) {
 		g_ws.on = rq;
 		somvr_ws_init(&g_ws.s);
-		logf_("WSTEP t=%.3f now %s (the word)", cb_now(), rq ? "on" : "off");
+		logf_("WSTEP t=%.3f now %s (the word or the VR menu's Wraith step row)", cb_now(), rq ? "on" : "off");
 	}
 	if (!g_ws.on || !stereo || !pl)
 		return;

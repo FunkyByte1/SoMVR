@@ -54,6 +54,11 @@ typedef struct {
     int any_in_view;   /* an orc in view was accepted in it */
     uint64_t passes, judged, in_view, far, ready, waits, vetoes, game_rejects, warnings, prio_warnings, expired, used,
         full;
+    /* build 19 (the crowd's pace): set by the game side while another orc's turn holds for longer than a warning: no
+     * new warning starts (a warned orc could not be granted before its ready time ran out); held = the pass ends that
+     * would have started one */
+    int hold_warn;
+    uint64_t held;
 } somvr_front;
 void somvr_front_init(somvr_front *f);
 
@@ -65,9 +70,14 @@ enum {
     SOMVR_FR_WAIT,     /* out of view, its warning runs: vetoed */
     SOMVR_FR_VETO,     /* out of view, no warning (yet, or quiet): vetoed */
     SOMVR_FR_FULL,     /* no record free: unchanged (fail open) */
+    /* build 19 (SOMVR_CROWD_PACE_MS, the crowd's pace below): the game side's own verdicts after the judge's (never
+     * returned by somvr_front_judge) */
+    SOMVR_FR_PACE,     /* accepted, but another orc's turn holds (its wind-up) or the gap after the last blow runs: vetoed */
+    SOMVR_FR_PASS,     /* accepted, but another candidate of the same pass was kept (one grant a pass): vetoed */
     SOMVR_FR_N
 };
-const char *somvr_front_verdict_name(int v); /* "game", "in-view", "far", "ready", "wait", "veto", "full" */
+/* "game", "in-view", "far", "ready", "wait", "veto", "full", "pace", "pass" */
+const char *somvr_front_verdict_name(int v);
 
 /* One candidate as the game scored it (right after AICombatMgr_ScoreAttacker). pass = the slot's address (a pass =
  * one slot in one tick); now_ms = the fight circle's clock; id = the orc; off_deg = its angle off the head's view
@@ -81,7 +91,7 @@ int somvr_front_judge(somvr_front *f, const somvr_front_cfg *c, uintptr_t pass, 
 /* End the open pass (also once a frame from the game thread, so a warning starts within a frame): expire warnings that
  * ran past warn_s + ready_s (the orc goes quiet for quiet_s); then start one warning: for the best-scored vetoed prio
  * orc if there is one; else, when no orc in view was accepted in the pass and fewer than max_warn run, for the
- * best-scored vetoed orc that is not quiet. Returns that orc (0 = none);
+ * best-scored vetoed orc that is not quiet; none while hold_warn is set (build 19). Returns that orc (0 = none);
  * its record (somvr_front_find) has the direction for the cue. Without an open pass only the expiry runs. */
 uint64_t somvr_front_end_pass(somvr_front *f, const somvr_front_cfg *c, uint32_t now_ms);
 
@@ -115,5 +125,100 @@ void somvr_front_camcopy_fill(somvr_front_camcopy *out, const float head[3], con
 /* The camera term's input as the game computes it (AICombatMgr_ScoreAttacker 0x28ce506..): the cosine between the
  * copy's forward R(q)(0,0,1) and the direction from its position to p (0 when p is at the position). */
 float somvr_front_cam_dot(const somvr_front_camcopy *cc, const float p[3]);
+
+/* ---- build 19: the crowd's pace (SOMVR_CROWD_PACE_MS; handoff/HANDOFF-combat-design.md item 5, docs/re-xr-pipeline.md
+ * 70) ----
+ * One orc winds up at Talion at a time and its blow lands at least gap_s after the last one: from a grant at Talion
+ * (FR_GRANT) the turn is that orc's until its attack's impact (THREAT's track: its start + the impact key), or until
+ * start_s passed without a keyed start (its keyless moves in between are not blows: the turn holds), or the attack
+ * ended early (a hit cancelled it). While a turn holds, every candidate is vetoed (the game's fight circle keeps it circling, its own
+ * wait). After an impact a new grant may come from impact + gap_s - lead (lead = the shortest grant -> impact: lead_s,
+ * or a shorter one seen; 0.05 s to the start + 0.80 s = 0.85 s headless, so a gap up to it costs nothing). An attack
+ * that starts with no grant the pace saw (or while another turn holds: an overlap) is a turn too, and counted.
+ * Time = our clock (s; the THREAT tracks' t0 follow the orc's animation timer). Pure. */
+typedef struct {
+    float gap_s;   /* impacts at Talion at least this far apart (0.7; SOMVR_CROWD_PACE_MS) */
+    float lead_s;  /* the shortest grant -> impact assumed (0.85; SOMVR_CROWD_LEAD_MS) */
+    float start_s; /* a grant whose blow has not started by then lets the turn go (2.5; FRONT's FF_HOLD_S) */
+    float swing_s; /* a pending grant's blow lands at least this long after now (its start -> impact, 0.8) */
+    /* build 19 (the attack from behind, re-xr-pipeline.md 70.7): a berserker whose blow hit Talion answers a cut of his
+     * in the next ~2.7 s (while he recoils: its headbutt sync or its bash; no grant). Such an orc's turn (marked with
+     * somvr_pace_may_answer) does not end at its blow's end (its impact, or cut short by our cut: somvr_pace_end): it
+     * waits verdict_s for the blow's verdict (DEFENCE; the game side also holds it while Talion still recoils from its
+     * last blow that hit), then holds
+     * on for answer_s after a hit (somvr_pace_verdict; the game side lets it go when Talion's recoil ends), so its answer
+     * starts inside its own turn, never while another orc winds up. 0 = off (SOMVR_CROWD_ANSWER_MS) */
+    float answer_s;
+    float verdict_s; /* 0.6 (DEFENCE's verdict of a fast red blow comes after build 18's hold, 0.4 s) */
+} somvr_pace_cfg;
+void somvr_pace_cfg_default(somvr_pace_cfg *c);
+
+#define SOMVR_PACE_TURNS 8
+typedef struct {
+    uint64_t id;     /* the orc (0 = free) */
+    double grant_t;  /* its grant (0 = an attack the pace saw no grant for) */
+    double start_t;  /* its blow's start (0 = not yet) */
+    double impact_t; /* its blow's impact (0 = not started yet) */
+    int answer;      /* it may answer a cut after its blow hit Talion (a berserker; somvr_pace_may_answer) */
+    double hold_t;   /* > 0: an answer hold, no blow of its own yet: the turn stays its until then */
+    double hold0_t;  /* the hold's start (its blow's impact) */
+    int hit;         /* the hold follows a blow that hit Talion (the verdict; 0 = still waiting for it) */
+} somvr_pace_turn;
+typedef struct {
+    somvr_pace_turn turn[SOMVR_PACE_TURNS]; /* the turns now: granted or winding up, not landed */
+    double last_impact_t;  /* the latest blow that landed (0 = none yet) */
+    uint64_t last_id;
+    float lead_seen;       /* the shortest grant -> impact seen (0 = none yet) */
+    double min_gap, max_gap, gap_sum;
+    uint64_t grants, starts, unannounced, overlaps, moves, let_go, cancelled, impacts, gaps, short_gaps, full;
+    /* the answer holds: waited for a verdict, held after a hit, a blow started in one (its answer), released early
+     * (somvr_pace_release: Talion's recoil over), ran out (answer_s or verdict_s), ended by a verdict that was no hit */
+    uint64_t holds_wait, holds, answers, released, expired, no_hit;
+} somvr_pace;
+void somvr_pace_init(somvr_pace *p);
+
+/* the lead in use: lead_s, or the shortest grant -> impact seen if shorter */
+float somvr_pace_lead(const somvr_pace *p, const somvr_pace_cfg *c);
+/* the turns: the blows whose impact is at or before t land (in impact order; each one's gap to the one before is
+ * counted: min, max, under gap_s); grants older than start_s with no start are let go. The landed ones are copied to
+ * out (up to cap) with their gap (s, -1 = the first blow) in gaps; returns how many landed. */
+int somvr_pace_update(somvr_pace *p, const somvr_pace_cfg *c, double t, somvr_pace_turn *out, double *gaps, int cap);
+/* may orc id be granted now (keep its score)? 1 = yes: nothing holds and the gap ran, or the only turn held is its own
+ * (a veto must not take back its grant); 0 = another orc's turn holds or the gap runs (*free_t = the earliest time a
+ * new grant may be: the held turn's impact or its earliest one, + gap - lead; NULL allowed) */
+int somvr_pace_may(const somvr_pace *p, const somvr_pace_cfg *c, uint64_t id, double t, double *free_t);
+/* the earliest time a new grant may come (t when free now; an answer hold: its end) */
+double somvr_pace_free_t(const somvr_pace *p, const somvr_pace_cfg *c, double t);
+/* the game granted orc id at t: its turn (a turn of id not started yet is renewed). Returns 1 when another orc's turn
+ * held already (an overlap: granted past the pace) */
+int somvr_pace_grant(somvr_pace *p, const somvr_pace_cfg *c, uint64_t id, double t);
+/* orc id's attack at Talion started at t0: keyless = all its key times none, or impact_s (its impact key) missing or
+ * under SOMVR_PACE_MIN_WIND_S (run 213948: 7 body-collision records with only a BCOL key, one with its impact at 0 s
+ * right after a parried blow) = a move, not a blow: counted, nothing else; else its impact at t0 + impact_s. Returns
+ * SOMVR_PACE_* bits */
+#define SOMVR_PACE_MIN_WIND_S 0.1f
+enum { SOMVR_PACE_GRANTED = 1, SOMVR_PACE_UNANNOUNCED = 2, SOMVR_PACE_OVERLAP = 4, SOMVR_PACE_MOVE = 8,
+       SOMVR_PACE_ANSWER = 16 /* the blow started in its own answer hold */ };
+int somvr_pace_start(somvr_pace *p, const somvr_pace_cfg *c, uint64_t id, double t0, float impact_s, int keyless);
+/* orc id's attack ended at t before its impact (a hit or a stagger cancelled it, or a parry met it): within near_s
+ * before the impact it counts as landed now (the blow met the blade; *gap as somvr_pace_update's, -1 = the first or
+ * not landed), earlier as cancelled; its turn ends (a marked orc's: its answer hold). Returns 1 = landed, 0 = cancelled,
+ * -1 = no started turn of id */
+int somvr_pace_end(somvr_pace *p, const somvr_pace_cfg *c, uint64_t id, double t, float near_s, double *gap);
+/* one pass (one slot's scoring in one AI tick) grants at most one: a newly accepted candidate against the one the
+ * pass kept so far: 1 = the new one is kept (the old one vetoed), 0 = the new one is vetoed. A prio candidate (the
+ * game sorts it first whatever its score) beats a plain one; else the higher score; a tie keeps the first. */
+int somvr_pace_pass_wins(int new_prio, float new_score, int kept_prio, float kept_score);
+/* build 19, the answer hold (cfg answer_s > 0): orc id's live turn may answer (a berserker; set at its grant or its
+ * blow's start). Its blow's landing (somvr_pace_update) then turns the turn into a hold of verdict_s instead of freeing
+ * it. Returns 1 = marked */
+int somvr_pace_may_answer(somvr_pace *p, const somvr_pace_cfg *c, uint64_t id);
+/* the verdict of orc id's landed blow at t: hit = it hit Talion: the hold runs on to t + answer_s; else it ends now.
+ * Returns 1 = a hold of id held on, 0 = ended (no hit), -1 = no waiting hold of id */
+int somvr_pace_verdict(somvr_pace *p, const somvr_pace_cfg *c, uint64_t id, double t, int hit);
+/* orc id's answer hold ends now (Talion's recoil over: no answer any more). Returns 1 = there was one */
+int somvr_pace_release(somvr_pace *p, uint64_t id);
+/* orc id's answer hold now: 0 = none, 1 = waiting for its verdict, 2 = held after a hit (*since = its start) */
+int somvr_pace_holding(const somvr_pace *p, uint64_t id, double *since);
 
 #endif

@@ -9,8 +9,9 @@ SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${SG_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 STEPS=${SG_STEPS:-pics walk relight}
 T0=$(date +%s)
-R=""
+R=${SG_RUN:-} # SG_RUN=RUN: drive a running boot (build 19: tether19-drive.sh chains drivers)
 for i in $(seq 1 120); do
+  [ -n "$R" ] && break
   for d in $(ls -dt $SOM/logs/boot-check-2026* 2>/dev/null | head -3); do
     [ -f "$d/launch-cmd.txt" ] && grep -q "$WT" "$d/launch-cmd.txt" && [ "$(stat -c %Y "$d")" -ge "$T0" ] && R=$d && break
   done
@@ -161,4 +162,4 @@ fi
 w "bow strike gaze status" 0.5
 grep -cE '^WARN' "$L" | sed 's/^/WARN lines: /'
 echo "$(date +%T) done"
-echo quit >> "$R/cmd"
+[ -n "${SG_NOQUIT:-}" ] || echo quit >> "$R/cmd" # SG_NOQUIT=1: leave it running

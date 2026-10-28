@@ -87,6 +87,10 @@ void somvr_mn_parse_quad(const char *v, float out[3], int *bad) {
 }
 
 void somvr_mn_board_pose_gaze(const somvr_posef eye[2], float dist, float drop, float down_max_deg, somvr_posef *out) {
+    somvr_mn_board_pose_gaze2(eye, dist, drop, down_max_deg, 0.0f, out);
+}
+void somvr_mn_board_pose_gaze2(const somvr_posef eye[2], float dist, float drop, float down_max_deg, float up_max_deg,
+                               somvr_posef *out) {
     static const float fwd0[3] = {0, 0, -1}, up0[3] = {0, 1, 0};
     float f[3], u[3], mid[3];
     qrot(eye[0].q, fwd0, f);
@@ -107,6 +111,11 @@ void somvr_mn_board_pose_gaze(const somvr_posef eye[2], float dist, float drop, 
         pb = asinf(fmaxf(-1.f, f[1]));
         float lim = -down_max_deg * 3.14159265f / 180.f;
         if (pb < lim) pb = lim;
+    }
+    if (up_max_deg > 0 && f[1] > 0 && f[1] == f[1]) { /* build 19: SOMVR_XR_MENU_PITCH_UP, a head looking up */
+        pb = asinf(fminf(1.f, f[1]));
+        float lim = up_max_deg * 3.14159265f / 180.f;
+        if (pb > lim) pb = lim;
     }
     float ch = cosf(pb), sh = sinf(pb);
     out->p[0] = mid[0] + dist * ch * hx, out->p[1] = mid[1] + dist * sh - drop, out->p[2] = mid[2] + dist * ch * hz;

@@ -51,6 +51,7 @@ struct stl_aw {
 };
 static struct {
 	int mode, marks, tid;
+	int start_mode; /* build 19: the mode at the start (the VR menu's Stealth kill row: mode = it or off) */
 	somvr_stl_cfg cfg;
 	float cue_amp;
 	char recs[256];
@@ -79,6 +80,30 @@ static struct {
 	uint64_t contacts, kills, not_killed, log_kills, verdicts[SOMVR_STL_N], cues, changes, frames;
 	uint32_t lines;
 	_Atomic int req_status, req_mode;
+	/* test-only (docs 72): the perception records' dump, the approach's watch */
+	_Atomic int req_dump, req_watch;
+	int watch;
+	double watch_t;
+	uint32_t rlines;
+	float chase_stick, chase_stop_cm;
+	/* the stand-off (SOMVR_STEALTH_KILL_STANDOFF_CM): this tick's circles (the game thread), the cue's request */
+	float so_cm;
+	int so_n;
+	float so_c[4][3], so_root[3], so_dt;
+	uintptr_t so_orc[4], so_last_orc;
+	double so_last_t, so_t;
+	_Atomic int so_cue_req;
+	uint64_t so_ticks, so_stops, silent_stims, silent_rolls;
+	int silent, have_root;
+	float frame_root[3];
+	double silent_log_t;
+	double so_cut_cm;
+	int watch_hz;
+	_Atomic int req_chase;
+	uint8_t htab[256];
+	int htab_ok;
+	uintptr_t seen[160];
+	int nseen;
 } g_stl;
 
 static void stl_sweep(int hand, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
@@ -121,6 +146,234 @@ static float stl_orc_yaw(const struct cb_orc *o)
 
 static int stl_crouched(void) { return g_cr.held || g_cr.game == 1; }
 
+static int stl_who(const struct cb_orc *o, uintptr_t pc, const float root[3], somvr_stl_who *w, struct stl_aw *a);
+/* ---- test-only (docs/re-xr-pipeline.md 72): what the orcs' senses read. `stealth dump`: the player's and the nearest
+ * orc's AI character records (their CCharacter +0x2a8; schema holder 0x4b95f20) - every attribute (its name hash, type,
+ * values) and, for the senses' fields, the records they point to, three levels down (the hashes are named offline:
+ * scripts/somhash.py's table 0x38d7480). `stealth watch on|off`: a line 5 times a second - the nearest orc's awareness
+ * and Talion's state as the game's senses could read it. */
+#define STL_AIREC 0x2a8      /* CCharacter: its AI character record (CCharacter::vf_104/105) */
+#define STL_AI_HOLDER 0x4b95f20
+#define STL_HTAB 0x38d7480
+#define STL_CPLAYER_VT 0x39959a0 /* CPlayerObj's vtable (classes.tsv) */
+/* Talion's CPlayerObj: his HOBJECT's +0x38 (as an NPC's), the vtable checked; 0 = not found */
+static uintptr_t stl_cplayer(uintptr_t pc)
+{
+	uintptr_t me = pc ? peek_ptr(pc + C_HOBJ) : 0, p = me ? peek_ptr(me + STL_HOBJ_NPC) : 0;
+	return p && vptr_of((void *)p) == STL_CPLAYER_VT ? p : 0;
+}
+static uint32_t stl_hash(const char *nm)
+{
+	if (!g_stl.htab_ok)
+		g_stl.htab_ok = peek(STL_HTAB, g_stl.htab, sizeof g_stl.htab) ? 1 : -1;
+	uint32_t h = 0;
+	for (const unsigned char *c = (const unsigned char *)nm; g_stl.htab_ok > 0 && *c; c++)
+		h = h * 0x397u + (uint32_t)(int8_t)g_stl.htab[*c];
+	return h;
+}
+static int stl_rline(void) { return g_stl.rlines < 2500 ? (int)++g_stl.rlines : 0; }
+static void stl_rdump(uintptr_t rec, int depth, int maxd, const uint32_t *follow, int nf, const char *who)
+{
+	unsigned char hdr[2], ents[256 * 16];
+	char nm[96] = "";
+	uintptr_t arr = rec ? peek_ptr(rec + 8) : 0, vals = rec ? peek_ptr(rec + 0x10) : 0;
+	if (!rec || !arr || !peek(rec, hdr, 2) || !peek(arr, ents, (size_t)hdr[0] * 16))
+		return;
+	for (int k = 0; k < g_stl.nseen; k++)
+		if (g_stl.seen[k] == rec) {
+			if (stl_rline())
+				logf_("STLREC %s %*s%#lx (above)", who, depth * 2, "", (unsigned long)rec);
+			return;
+		}
+	if (g_stl.nseen < (int)(sizeof g_stl.seen / sizeof g_stl.seen[0]))
+		g_stl.seen[g_stl.nseen++] = rec;
+	rx_rec_name(rec, nm, sizeof nm);
+	int n = hdr[0], keyoff = (hdr[1] & 1) ? 0 : 4;
+	if (stl_rline())
+		logf_("STLREC %s %*s%#lx '%s' %d attributes", who, depth * 2, "", (unsigned long)rec, nm, n);
+	for (int r = 0; r < n; r++) {
+		uint32_t h;
+		memcpy(&h, ents + (size_t)r * 16 + (size_t)keyoff, 4);
+		int idx = keyoff ? ents[(size_t)r * 16 + 9] : r;
+		if (idx >= n)
+			continue;
+		const unsigned char *e = ents + (size_t)idx * 16;
+		uint16_t cnt, vi;
+		memcpy(&cnt, e + 0xc, 2), memcpy(&vi, e + 0xe, 2);
+		int type = e[0xa] & 0x3f;
+		char buf[400];
+		int bl = 0;
+		buf[0] = 0;
+		uint64_t v[6] = { 0 };
+		int k = cnt < 6 ? cnt : 6;
+		if (type == 1) {
+			uint32_t w = 0;
+			if (vals && peek(vals + (uintptr_t)(vi >> 5) * 8, &w, 4))
+				bl += snprintf(buf, sizeof buf, "%u", (w >> (vi & 31)) & 1u);
+		} else if (vals && k > 0 && peek(vals + (uintptr_t)vi * 8, v, (size_t)k * 8)) {
+			for (int j = 0; j < k && bl < (int)sizeof buf - 120; j++) {
+				if (type == 2) {
+					float f;
+					uint32_t u = (uint32_t)v[j];
+					memcpy(&f, &u, 4);
+					bl += snprintf(buf + bl, sizeof buf - bl, "%s%g", j ? " " : "", (double)f);
+				} else if (type == 0xa) {
+					char rn[96] = "";
+					rx_rec_name((uintptr_t)v[j], rn, sizeof rn);
+					bl += snprintf(buf + bl, sizeof buf - bl, "%s'%s'", j ? " " : "", rn);
+				} else {
+					bl += snprintf(buf + bl, sizeof buf - bl, "%s%#llx", j ? " " : "", (unsigned long long)v[j]);
+				}
+			}
+		}
+		if (stl_rline())
+			logf_("STLREC %s %*s  %08x t%d n%u = %s%s", who, depth * 2, "", h, type, cnt, buf, cnt > 6 ? " ..." : "");
+		if (type != 0xa || depth >= maxd)
+			continue;
+		int go = !follow;
+		for (int f = 0; f < nf && !go; f++)
+			go = follow[f] == h;
+		for (int j = 0; go && j < k; j++)
+			stl_rdump((uintptr_t)v[j], depth + 1, maxd, NULL, 0, who);
+	}
+}
+static void stl_dump(uintptr_t pcomb, uintptr_t pc, const float *root)
+{
+	static const char *const fn[] = { "CharacterVisibleStimulus", "CharacterAudibleStimulus",
+		"CharacterSneakingAudibleStimulus", "SneakingPerceptionDistanceFactor", "Perception", "PerceptionTarget",
+		"AlertnessProfile", "SensorSet", "SightDistanceBonusType", "HearingDistanceBonusType",
+		"SneakingPerceptionDistanceBonusType" };
+	uint32_t fh[16];
+	int nf = (int)(sizeof fn / sizeof fn[0]);
+	for (int i = 0; i < nf; i++)
+		fh[i] = stl_hash(fn[i]);
+	fh[nf++] = 0x7e402290; /* (unnamed: the observers' set, 'Default' -> 'Obscured', 'CloseTarget', 'FOV', ...) */
+	uint32_t sch = 0;
+	uintptr_t a = peek_ptr(STL_AI_HOLDER);
+	if (a)
+		peek(a + 0x30u * 0x2f + 8, &sch, 4);
+	logf_("STLREC the hash table %s: 'CharacterSneakingAudibleStimulus' %08x, the schema's field 0x2f %08x (%s)",
+	      g_stl.htab_ok > 0 ? "read" : "NOT read", fh[2], sch, fh[2] == sch ? "the same" : "DIFFERENT");
+	g_stl.nseen = 0;
+	uintptr_t pl = stl_cplayer(pc);
+	logf_("STLREC the player's CPlayerObj %#lx: its AI record", (unsigned long)pl);
+	if (pl)
+		stl_rdump(peek_ptr(pl + STL_AIREC), 0, 7, fh, nf, "P");
+	struct cb_orc oo[4];
+	int no = pcomb && root ? cb_orcs_r(pcomb, pc, root, 4000.0f, oo, 4) : 0;
+	for (int i = 0; i < no && i < 1; i++) {
+		uintptr_t h = oo[i].hobj, npc = h ? peek_ptr(h + STL_HOBJ_NPC) : 0;
+		logf_("STLREC the nearest orc %#lx at %.0f cm: its NPC %#lx (vtable %#lx): its AI record", (unsigned long)oo[i].c,
+		      (double)oo[i].dist, (unsigned long)npc, (unsigned long)(npc ? vptr_of((void *)npc) : 0));
+		if (npc)
+			stl_rdump(peek_ptr(npc + STL_AIREC), 0, 7, fh, nf, "O");
+	}
+	logf_("STLREC end (%u lines)", g_stl.rlines);
+}
+/* the AI settings' PersonalBubbleDistance (schema holder 0x4b97240, field 1; the record FUN_02177080(), a getter, called once
+ * after its first 16 bytes matched): CAIObserverPersonalBubble::vf_03 perceives a stimulus within it (3D, from the NPC's
+ * +0xd2c) at once, no sneaking factor */
+static float stl_bubble_cm(void)
+{
+	static int state;
+	static float v = NAN;
+	if (!state) {
+		static const unsigned char want[16] = { 0x48, 0x83, 0xec, 0x08, 0xe8, 0xd7, 0x6b, 0xfd,
+							0xff, 0x48, 0x85, 0xc0, 0x74, 0x1a, 0xe8, 0x0d };
+		unsigned char got[16];
+		state = -1;
+		if (peek(0x2177080, got, sizeof got) && !memcmp(got, want, sizeof want)) {
+			uintptr_t rec = ((uintptr_t (*)(void))0x2177080)();
+			char nm[96] = "";
+			rx_rec_name(rec, nm, sizeof nm);
+			v = rx_db_float(rec, 0x4b97240, 1, NAN), state = 1;
+			logf_("STEALTH the AI settings %#lx '%s': PersonalBubbleDistance %.1f, ThreatTooCloseDistance %.1f",
+			      (unsigned long)rec, nm, (double)v, (double)rx_db_float(rec, 0x4b97240, 2, NAN));
+		} else {
+			logf_("STEALTH the AI settings: FUN_02177080's bytes differ: not called");
+		}
+	}
+	return v;
+}
+/* `stealth chase STICK STOP_CM` (a test, SOMVR_HANDS_TEST): the test stick forward at STICK toward the nearest orc within
+ * 40 m (snap turns at the head toward it, as `execute chase`), stopped at STOP_CM from it (0 = off) */
+static void stl_chase(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
+{
+	static double snap_t;
+	struct cb_orc oo[2];
+	int no = pcomb && root ? cb_orcs_r(pcomb, pc, root, 4000.0f, oo, 2) : 0;
+	sv_vec3 hp;
+	sv_quat hq;
+	somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+	float head[3] = { hp.x, hp.y, hp.z }, hqv[4] = { hq.x, hq.y, hq.z, hq.w }, l[3] = { 0, 0, 1 };
+	if (no)
+		somvr_th_local(head, hqv, oo[0].pos, l);
+	float br = no ? somvr_th_direction(l).yaw_deg : 0;
+	int steps = no && fabsf(br) > 20 && t - snap_t > 0.3 ? (int)lrintf(br / (g_rigcfg.snap_rad * 57.29578f)) : 0;
+	if (steps)
+		atomic_fetch_add(&g_req_snap, steps), snap_t = t;
+	float fw = no && oo[0].dist > g_stl.chase_stop_cm && fabsf(br) < 45 ? g_stl.chase_stick : 0;
+	if (g_stl.chase_stick > 0 && no && oo[0].dist <= g_stl.chase_stop_cm) {
+		logf_("STEALTH t=%.3f chase: stopped %.0f cm from orc %#lx", t, (double)oo[0].dist, (unsigned long)oo[0].c);
+		g_stl.chase_stick = 0, fw = 0;
+	}
+	uint32_t b0 = 0, b1;
+	memcpy(&b1, &fw, 4);
+	atomic_store_explicit(&g_tstick[0], b0, memory_order_relaxed);
+	atomic_store_explicit(&g_tstick[1], b1, memory_order_relaxed);
+	atomic_store_explicit(&g_tstick[2], b0, memory_order_relaxed);
+	atomic_store_explicit(&g_tstick_until_ns, fw > 0 ? (int64_t)((mono() + 0.2) * 1e9) : 0, memory_order_release);
+}
+/* the watch: the nearest orc within 25 m and Talion, 5 times a second */
+static void stl_watch(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
+{
+	static double asked0, applied0;
+	if (t - g_stl.watch_t < 1.0 / (g_stl.watch_hz > 0 ? g_stl.watch_hz : 5))
+		return;
+	g_stl.watch_t = t;
+	struct cb_orc oo[2];
+	int no = pcomb && root ? cb_orcs_r(pcomb, pc, root, 2500.0f, oo, 2) : 0;
+	uintptr_t pl = stl_cplayer(pc), mgr = pl ? peek_ptr(pl + 0xb60) : 0, it = mgr ? peek_ptr(mgr + 0x638) : 0;
+	int32_t d64 = -1, d68 = -1;
+	uint32_t ps[2] = { 0, 0 }, os[2] = { 0, 0 };
+	uintptr_t it10 = it && it != mgr + 0x630 ? peek_ptr(it + 0x10) : 0, c6d0 = pl ? peek_ptr(pl + 0x6d0) : 0;
+	unsigned char b569 = 0xff;
+	if (pl)
+		peek(pl + 0xd64, &d64, 4), peek(pl + 0xd68, &d68, 4), peek(pl + 0x2d4, ps, 8);
+	if (c6d0)
+		peek(c6d0 + 0x569, &b569, 1);
+	int sneak_stim = !mgr ? -1 : (it == mgr + 0x630 || !it10 || d64 != 0);
+	double da = g_lo.s.asked_cm - asked0, dp = g_lo.s.applied_cm - applied0;
+	asked0 = g_lo.s.asked_cm, applied0 = g_lo.s.applied_cm;
+	char ob[400] = "no orc within 25 m";
+	if (no > 0) {
+		somvr_stl_who w;
+		struct stl_aw a;
+		stl_who(&oo[0], pc, root, &w, &a);
+		uintptr_t perc = a.npc ? peek_ptr(a.npc + 0xc80) : 0;
+		unsigned char use = 0xff;
+		float fac = NAN, ep[3] = { NAN, NAN, NAN };
+		if (a.npc)
+			peek(a.npc + 0x2d4, os, 8), peek(a.npc + 0xd2c, ep, sizeof ep);
+		if (perc)
+			peek(perc + 0x328, &use, 1), peek(perc + 0x32c, &fac, 4);
+		snprintf(ob, sizeof ob, "orc %#lx %.0f cm %+.0f deg: aware %d (kind %d, +0xeb8 %.3f, fights %d); its stimuli %08x/%08x; "
+			 "its perception %#lx: the sneak factor on %d, %.2f; its eye (+0xd2c) %+.0f cm over its root, 3D to Talion's "
+			 "head %.0f (%.0f over his root), root %.0f, chest %.0f (the bubble %.0f)", (unsigned long)oo[0].c, w.dist_cm,
+			 w.player_off_deg, w.aware, a.kind, (double)a.meter, a.engaged, os[0], os[1], (unsigned long)perc, use,
+			 (double)fac, (double)(ep[1] - oo[0].pos[1]), (double)dist3(ep, g_fr.head),
+			 (double)(g_fr.head[1] - root[1]), (double)dist3(ep, root),
+			 (double)dist3(ep, (const float[3]){ root[0], root[1] + 0.5f * (g_fr.head[1] - root[1]), root[2] }),
+			 (double)stl_bubble_cm());
+	}
+	logf_("STEALTH watch t=%.3f %s | Talion %s (held %d, read %d) %.0f cm/s, moved %.1f of %.1f cm asked; the game's sneaking "
+	      "%s (+0xd68 %d, +0x6d0 -> +0x569 %d); +0xd64 %d, the list %s (it %#lx +0x10 %#lx) -> the %s audible stimulus; his "
+	      "stimuli %08x/%08x", t, ob, stl_crouched() ? "crouched" : "standing", g_cr.held, g_cr.game,
+	      (double)g_stl.speed_cms, dp, da, !pl ? "unread" : (d68 != 0 || (b569 != 0 && b569 != 0xff)) ? "YES" : "no", d68,
+	      b569 == 0xff ? -1 : b569, d64, !mgr ? "unread" : it == mgr + 0x630 ? "empty" : "set", (unsigned long)it,
+	      (unsigned long)it10, sneak_stim < 0 ? "?" : sneak_stim ? "sneaking" : "ordinary", ps[0], ps[1]);
+}
+
 /* the orc as a target now: who (its awareness, the player's angle and distance) */
 static int stl_who(const struct cb_orc *o, uintptr_t pc, const float root[3], somvr_stl_who *w, struct stl_aw *a)
 {
@@ -145,6 +398,92 @@ static int stl_who(const struct cb_orc *o, uintptr_t pc, const float root[3], so
 	return 1;
 }
 
+/* SOMVR_STEALTH_KILL_SILENT (default 1): a swing that heads at an orc which is a stealth kill's target now (the game's
+ * unaware, Talion within the back arc, crouched or slow: somvr_stl_possible) registers no attack stimulus
+ * (cb_stim_start's FUN_026c7180, the call Combat_StartAttack makes) and rolls no block (SOMVR_COMBAT_REACT): the stock
+ * stealth kill starts no attack either, and the stimulus turned the orc ~0.2 s after the wind-up (run 013422:
+ * `ReactToSusp_FromBase`), before the blade landed. Any other swing, as before. */
+static int stl_silent(uintptr_t pc, const struct cb_orc *o, double t, const char *what)
+{
+	if (g_stl.mode != STL_ON || !g_stl.silent || !g_stl.have_root || !pc)
+		return 0;
+	somvr_stl_who w;
+	struct stl_aw a;
+	stl_who(o, pc, g_stl.frame_root, &w, &a);
+	if (somvr_stl_possible(&g_stl.cfg, &w) != SOMVR_STL_KILL)
+		return 0;
+	if (what[4] == 'a')
+		g_stl.silent_stims++;
+	else
+		g_stl.silent_rolls++;
+	if (t - g_stl.silent_log_t > 0.5 && stl_line()) {
+		g_stl.silent_log_t = t;
+		logf_("STEALTH t=%.3f a swing at orc %#lx (unaware, Talion %+.0f deg off its facing at %.0f cm, %s): no %s "
+		      "(SOMVR_STEALTH_KILL_SILENT)", t, (unsigned long)o->c, w.player_off_deg, w.dist_cm,
+		      w.crouched ? "crouched" : "slow", what);
+	}
+	return 1;
+}
+
+#define STL_SO_EASE_HZ 8.0f /* the stand-off's stop: the step toward the edge at most room x (1 - e^(-dt x 8)) */
+/* SOMVR_STEALTH_KILL_STANDOFF_CM (the PM hook, the game thread, after the core's step): crouched (the game's stealth
+ * crouch) in the back half of an orc that has not noticed Talion, within 3 m: his move this tick (stick, steps, dashes)
+ * is kept outside the stand-off circle around it - the game notices a Talion inside ~108 cm root to root, crouched or
+ * not (docs 72.1). Only the part toward the orc is cut (somvr_loco_take_assist: delta, v and the read-back alike), eased
+ * over the last ~20 cm; sideways and back are free; nothing is ever pushed. Standing, in front of it, or an orc that
+ * has noticed him: no stand-off (the game's own rules). */
+static void stl_so_apply(somvr_loco *s, somvr_loco_out *o, double t, int follow)
+{
+	for (int i = 0; i < g_stl.so_n; i++) {
+		float d[3] = { o->delta.x, 0, o->delta.z }, corr[3];
+		if (!somvr_stl_standoff(g_stl.so_root, g_stl.so_c[i], g_stl.so_cm, g_stl.so_dt, STL_SO_EASE_HZ, d, corr))
+			continue;
+		somvr_loco_take_assist(s, o, (sv_vec3){ corr[0], 0, corr[2] }, g_stl.so_dt);
+		g_stl.so_cut_cm += sqrtf(corr[0] * corr[0] + corr[2] * corr[2]);
+		g_stl.so_ticks++;
+		if (follow)
+			continue;
+		float dx = g_stl.so_root[0] - g_stl.so_c[i][0], dz = g_stl.so_root[2] - g_stl.so_c[i][2];
+		if (g_stl.so_orc[i] != g_stl.so_last_orc || t - g_stl.so_last_t > STL_CUE_REARM_S) {
+			g_stl.so_stops++, g_stl.so_cue_req = 1;
+			if (stl_line())
+				logf_("STEALTH t=%.3f stand-off: orc %#lx (unaware, Talion in its back half) at %.0f cm: the walk stops "
+				      "at %.0f cm (the game notices inside ~108 cm)", t, (unsigned long)g_stl.so_orc[i],
+				      sqrtf(dx * dx + dz * dz), (double)g_stl.so_cm);
+		}
+		g_stl.so_last_orc = g_stl.so_orc[i], g_stl.so_last_t = t;
+	}
+}
+static void stl_standoff(uintptr_t pcomb, uintptr_t sc, const float *root, somvr_loco *s, somvr_loco_out *o, float dt,
+			 double t)
+{
+	g_stl.so_n = 0;
+	if (g_stl.mode != STL_ON || !(g_stl.so_cm > 0) || !pcomb || !sc || !root || !stl_crouched())
+		return;
+	struct cb_orc oo[4];
+	int no = cb_orcs_r(pcomb, sc, root, 300.0f, oo, 4);
+	for (int i = 0; i < no; i++) {
+		somvr_stl_who w;
+		struct stl_aw a;
+		stl_who(&oo[i], sc, root, &w, &a);
+		if (w.aware != 0 || w.dead || fabsf(w.player_off_deg) < 90.0f)
+			continue;
+		memcpy(g_stl.so_c[g_stl.so_n], oo[i].pos, sizeof g_stl.so_c[0]);
+		g_stl.so_orc[g_stl.so_n++] = oo[i].c;
+	}
+	if (!g_stl.so_n)
+		return;
+	memcpy(g_stl.so_root, root, sizeof g_stl.so_root);
+	g_stl.so_dt = dt, g_stl.so_t = t;
+	stl_so_apply(s, o, t, 0);
+}
+/* the follow's request merged into the same tick's delta (lo_take_follow): the same circles */
+static void stl_standoff_follow(somvr_loco *s, somvr_loco_out *o)
+{
+	if (g_stl.so_n)
+		stl_so_apply(s, o, g_stl.so_t, 1);
+}
+
 /* every combat frame with a blade (after the orcs are read): the speed, the awareness lines, the cue, the after-kill
  * checks and the view's trace */
 static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t)
@@ -162,8 +501,10 @@ static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		if (!m)
 			return;
 	}
+	g_stl.have_root = root != NULL;
 	if (!root)
 		return;
+	memcpy(g_stl.frame_root, root, sizeof g_stl.frame_root);
 	if (g_stl.sp_t <= 0 || t - g_stl.sp_t > 1.0) {
 		memcpy(g_stl.sp_pos, root, sizeof g_stl.sp_pos), g_stl.sp_t = t, g_stl.speed_cms = NAN;
 	} else if (t - g_stl.sp_t >= 0.2) {
@@ -217,6 +558,11 @@ static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 			      (unsigned long)best, best_d, stl_crouched() ? "crouched" : "standing", (double)g_stl.speed_cms,
 			      (double)g_stl.cue_amp);
 	}
+	if (g_stl.so_cue_req) { /* the stand-off held him at arm's reach: one soft tick (the cue's) */
+		g_stl.so_cue_req = 0;
+		if (g_stl.cue_amp > 0)
+			in_haptic_event(SOMVR_HAND_R, g_stl.cue_amp, 0.03f, SOMVR_HAP_COMBAT);
+	}
 	/* after a kill: did the others notice? (+1 s, +3 s: every live orc within 40 m) */
 	for (int pass = 0; pass < 2; pass++) {
 		double *at = pass ? &g_stl.after3_t : &g_stl.after1_t;
@@ -260,6 +606,25 @@ static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 			ss_mark("SOMVR_STEALTH_KILL_MARKS", "the stealth kill (the next frame)", t);
 		}
 	}
+	if (g_stl.req_dump) {
+		g_stl.req_dump = 0;
+		stl_dump(pcomb, pc, root);
+	}
+	if (g_stl.req_watch) {
+		g_stl.watch = g_stl.req_watch == 2, g_stl.req_watch = 0;
+		logf_("STEALTH t=%.3f watch %s (the word)", t, g_stl.watch ? "on" : "off");
+	}
+	if (g_stl.watch)
+		stl_watch(pcomb, pc, root, t);
+	if (g_stl.req_chase) {
+		g_stl.req_chase = 0;
+		logf_("STEALTH t=%.3f chase %s (the word: stick %.2f, stop at %.0f cm)", t, g_stl.chase_stick > 0 ? "on" : "off",
+		      (double)g_stl.chase_stick, (double)g_stl.chase_stop_cm);
+		if (g_stl.chase_stick <= 0)
+			atomic_store_explicit(&g_tstick_until_ns, 0, memory_order_release);
+	}
+	if (g_stl.chase_stick > 0)
+		stl_chase(pcomb, pc, root, t);
 	if (g_stl.req_status) {
 		g_stl.req_status = 0;
 		struct cb_orc oo[8];
@@ -505,6 +870,25 @@ static const char *stl_word(const char *w)
 		g_stl.req_status = 1;
 		return g_stl.mode ? "stealth status (the STEALTH lines)" : "stealth status (SOMVR_STEALTH_KILL is off)";
 	}
+	if (!strcmp(w, "dump")) {
+		g_stl.req_dump = 1;
+		return "stealth dump (a test: the AI records, STLREC lines)";
+	}
+	if (!strncmp(w, "chase ", 6)) {
+		if (!getenv("SOMVR_HANDS_TEST") || strcmp(getenv("SOMVR_HANDS_TEST"), "1"))
+			return "stealth chase (SOMVR_HANDS_TEST is off: ignored)";
+		float st = 0, cm = 0;
+		if (sscanf(w + 6, "%f %f", &st, &cm) < 1 || st < 0 || st > 1)
+			return "stealth chase STICK [STOP_CM] (0..1: ignored)";
+		g_stl.chase_stop_cm = cm > 0 ? cm : 120, g_stl.chase_stick = st, g_stl.req_chase = 1;
+		return "stealth chase (a test: the test stick toward the nearest orc within 40 m)";
+	}
+	if (!strncmp(w, "watch ", 6)) {
+		int hz = atoi(w + 6);
+		g_stl.req_watch = !strcmp(w + 6, "on") || hz > 0 ? 2 : 1;
+		g_stl.watch_hz = hz > 0 && hz <= 20 ? hz : 5;
+		return "stealth watch on|off|HZ (a test: STEALTH watch lines, 5 a second or HZ)";
+	}
 	for (int m = 0; m < 3; m++)
 		if (!strcmp(w, g_stl_mode_w[m])) {
 			if (!getenv("SOMVR_HANDS_TEST") || strcmp(getenv("SOMVR_HANDS_TEST"), "1"))
@@ -515,6 +899,18 @@ static const char *stl_word(const char *w)
 			return "stealth mode (a test)";
 		}
 	return "stealth status|on|off|log";
+}
+
+/* build 19 (re-xr-pipeline.md 73): the VR menu's Stealth kill row: shown with SOMVR_STEALTH_KILL on (with combat); off =
+ * every orc a normal fight (no tick, no kill), on again = the start's mode (the game thread: combat_frame's) */
+static uint64_t stl_vm_avail(void) { return g_stl.start_mode ? SOMVR_VMA_STEALTH : 0u; }
+static void stl_vm_settings(somvr_settings *s) { s->stealth = g_stl.start_mode != 0; }
+static const char *stl_vm_set(const somvr_settings *s)
+{
+	if (!g_stl.start_mode)
+		return " (SOMVR_STEALTH_KILL is off: not used)";
+	g_stl.mode = s->stealth ? g_stl.start_mode : STL_OFF;
+	return s->stealth ? " (behind an unaware orc, the blade kills)" : " (every orc a normal fight)";
 }
 
 static void stl_start(int *bad)
@@ -543,6 +939,8 @@ static void stl_start(int *bad)
 	g_stl.cfg.high_cm = env_float("SOMVR_STEALTH_KILL_HIGH_CM", g_stl.cfg.high_cm, 0, 200, bad);
 	g_stl.cfg.stab_mps = env_float("SOMVR_STEALTH_KILL_STAB_MPS", g_stl.cfg.stab_mps, 0.1f, 10, bad);
 	g_stl.cue_amp = env_float("SOMVR_STEALTH_KILL_CUE", 0.25f, 0, 1, bad);
+	g_stl.so_cm = env_float("SOMVR_STEALTH_KILL_STANDOFF_CM", 118.0f, 0, 300, bad);
+	g_stl.silent = env_word("SOMVR_STEALTH_KILL_SILENT", (const char *const[]){ "0", "1" }, 2, 1);
 	g_stl.marks = (int)env_float("SOMVR_STEALTH_KILL_MARKS", 0, 0, 20, bad);
 	g_stl.dagger = env_word("SOMVR_STEALTH_KILL_DAGGER", (const char *const[]){ "0", "1" }, 2, 1);
 	sc_blade_cfg_default(&g_stl.dcfg);
@@ -555,11 +953,19 @@ static void stl_start(int *bad)
 	logf_("CONFIG stealth=%s (SOMVR_STEALTH_KILL): behind an orc that has not noticed Talion (the game's AIIsAware read, "
 	      "its target), %s (slow = under %.0f cm/s), within %.0f deg of behind, the blade into its back half %+.0f..%+.0f cm "
 	      "over its root (the pelvis) by a hit or a stab (%.1f m/s along the blade) -> Combat_DealHit with '%s' forceKill (no sync, no view move); "
-	      "the cue %.2f within %.0f cm; the dagger in the left hand %s", g_stl_mode_w[g_stl.mode],
+	      "the cue %.2f within %.0f cm; the dagger in the left hand %s; the stand-off %s%s", g_stl_mode_w[g_stl.mode],
 	      g_stl.cfg.stance == SOMVR_STL_STANCE_EITHER ? "crouched or slow" : somvr_stl_stance_name(g_stl.cfg.stance),
 	      (double)g_stl.cfg.slow_cms, 180.0 - g_stl.cfg.behind_deg, (double)g_stl.cfg.low_cm, (double)g_stl.cfg.high_cm,
 	      (double)g_stl.cfg.stab_mps, g_stl.recs, (double)g_stl.cue_amp, (double)g_stl.cfg.near_cm,
-	      g_stl.dagger ? "too (its own sweep: 4 cm back, a 30 cm blade)" : "not (SOMVR_STEALTH_KILL_DAGGER=0)");
+	      g_stl.dagger ? "too (its own sweep: 4 cm back, a 30 cm blade)" : "not (SOMVR_STEALTH_KILL_DAGGER=0)",
+	      g_stl.so_cm > 0 ? "on" : "off (SOMVR_STEALTH_KILL_STANDOFF_CM=0)",
+	      g_stl.silent ? "; a swing at its target starts no attack stimulus and no block roll (SOMVR_STEALTH_KILL_SILENT)" : "");
+	if (g_stl.so_cm > 0)
+		logf_("CONFIG stealth stand-off=%.0f cm (SOMVR_STEALTH_KILL_STANDOFF_CM): crouched in the back half of an orc that has "
+		      "not noticed Talion, within 3 m, his walk stops this far from it (root to root; the game notices inside ~108 cm, "
+		      "crouched or not: docs 72), eased over the last ~20 cm, sideways and back free, never a push; one soft tick "
+		      "when it holds him", (double)g_stl.so_cm);
+	g_stl.start_mode = g_stl.mode; /* build 19 */
 }
 
 static void stl_end_log(void)
@@ -575,9 +981,13 @@ static void stl_end_log(void)
 				      (unsigned long long)g_stl.verdicts[v]);
 	logf_("STEALTH END frames %llu contacts %llu (%s; the dagger in hand %llu frames, %llu contacts; the sword without "
 	      "combat's blade %llu frames, %llu contacts); kills %llu, not killed %llu, log-only kills %llu; cues %llu, awareness "
-	      "changes %llu", (unsigned long long)g_stl.frames, (unsigned long long)g_stl.contacts, l ? vb : "none",
+	      "changes %llu; the stand-off held him %llu times (%llu ticks, %.0f cm cut); silent swings: %llu stimuli, %llu block "
+	      "rolls left out", (unsigned long long)g_stl.frames,
+	      (unsigned long long)g_stl.contacts, l ? vb : "none",
 	      (unsigned long long)g_stl.dagger_frames, (unsigned long long)g_stl.dagger_contacts,
 	      (unsigned long long)g_stl.sword_frames, (unsigned long long)g_stl.sword_contacts,
 	      (unsigned long long)g_stl.kills, (unsigned long long)g_stl.not_killed, (unsigned long long)g_stl.log_kills,
-	      (unsigned long long)g_stl.cues, (unsigned long long)g_stl.changes);
+	      (unsigned long long)g_stl.cues, (unsigned long long)g_stl.changes, (unsigned long long)g_stl.so_stops,
+	      (unsigned long long)g_stl.so_ticks, g_stl.so_cut_cm, (unsigned long long)g_stl.silent_stims,
+	      (unsigned long long)g_stl.silent_rolls);
 }

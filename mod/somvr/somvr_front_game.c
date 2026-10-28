@@ -24,9 +24,32 @@
  *                           the attack's only ones (THREAT's announce, its sound and its urgent pulse are skipped for the
  *                           warned attack), its edge glow held from the warning to the blow; 0 = round 1's (the pre,
  *                           then THREAT's own announce + sound + urgent pulse: 3 pulses and 2 sounds per blow)
+ *   SOMVR_CROWD_PACE_MS=0    build 19 (re-xr-pipeline.md 70; the design note's item 5, the first crowd): one orc winds
+ *                           up at Talion at a time and the blows land at least this far apart (700; 0 = off, the
+ *                           default): from a grant at Talion the turn is that orc's until its blow's impact (THREAT's
+ *                           track), every other candidate vetoed meanwhile (it circles: the game's own wait); one grant a
+ *                           pass (a second accepted candidate of the same pass: the better one kept, the other's score
+ *                           back to -50); FRONT's warnings start only within a warning's length of the turn's end.
+ *                           SOMVR_CROWD_LEAD_MS=850 the shortest grant -> impact assumed (a shorter one seen is used),
+ *                           SOMVR_CROWD_START_MS=2500 a grant with no blow by then lets the turn go. Needs SOMVR_FRONT=1
+ *                           (=log: judged and logged, nothing written); SOMVR_CROWD_LOGONLY=1 the same with FRONT on (a
+ *                           test baseline: the timeline without the pace). Lines `CROWD grant|start|impact|cancelled|wait|
+ *                           pass|END` (the attack timeline: the gaps, who attacks from where).
+ *   SOMVR_CROWD_ANSWER_MS=0  build 19 (re-xr-pipeline.md 70.7, the attack from behind): a berserker whose blow hit Talion
+ *                           answers a cut of his while he recoils (its headbutt sync or its bash; the game starts it with
+ *                           no grant: all 58 such blows in the logs of 10-26/27). N > 0: its turn stays its own after
+ *                           such a blow, or one our cut cut short (0.6 s for DEFENCE's verdict, then while Talion
+ *                           recoils from its blow, at most N ms), so the
+ *                           answer starts in its own turn and no other orc winds up meanwhile; the answer is warned from
+ *                           our cut (or its start): the warning sound at it, an urgent pulse, out of view the red edge
+ *                           on its side until DEFENCE's verdict of it. 0 = off (its answer is an ungranted blow, logged with its
+ *                           source). SOMVR_CROWD_ANSWER_WARN=cut|start (default cut): warned from the provoking cut
+ *                           (0.2 s earlier; 5 of 9 such cuts drew the answer in the runs) or only at the answer's start.
+ *                           Lines `CROWD provoked|answer-hold|answer ...`, `THREAT answer ...`.
  * Fail-soft: a site that does not match turns its part off; no fresh head (flat, paused, third person: the head is
  * older than 100 ms), no record free or another target than Talion = the game's own choice.
- * Words: `front status`, `front keep 0|1` (a test: the practice's spawns keep the previous orc).
+ * Words: `front status`, `front keep 0|1` (a test: the practice's spawns keep the previous orc), `front answer N` (a
+ * test: SOMVR_CROWD_ANSWER_MS now).
  * Lines: `CONFIG front ...`, `FRONT score|veto|warn|ready|grant|attack|expired|camcopy|damage|lockout|d12 ...`,
  * `THREAT pre ...` (the warning's cue), `THREAT quiet ...` (THREAT's pulse/sound skipped: one warning), `FRONT cues ...`
  * (what the player got for one warned attack), `FRONT END ...`. */
@@ -129,6 +152,24 @@ static struct {
 	int lsec_n, vsec_n, esec_n;
 	double lsec, vsec, esec;
 	uint64_t suppressed;
+	/* build 19: SOMVR_CROWD_PACE_MS (the crowd's pace) */
+	int pace_on, pace_log; /* pace_log: SOMVR_CROWD_LOGONLY=1 (a test baseline: judged and logged, nothing vetoed) */
+	somvr_pace_cfg pcfg;
+	somvr_pace pace;
+	struct { uintptr_t slot, e; uint32_t now; float score; int prio; uint64_t id; } pk; /* the pass's kept candidate */
+	struct ff_seen { uint64_t serial, id; uintptr_t c; int keyed, landed; } seen[TH_TRACKS]; /* THREAT's tracks seen */
+	struct { uint64_t vetoes, pass_vetoes, pass_writes, pass_kept_changed, starts_view, starts_out, starts_warned, impacts_view,
+		impacts_out, lulls, max_wind; } pn;
+	/* build 19, the attack from behind (re-xr-pipeline.md 70.7): a berserker's answer to our cut after its blow hit
+	 * Talion (SOMVR_CROWD_ANSWER_MS: its turn held while he recoils; the answer's warning). Per orc: its last blow that
+	 * hit Talion and our last hit on it (the source of an ungranted start, also with the hold off) */
+	struct ff_ans_orc { uint64_t id; double landed_t, hit_t, calm_t; char rec[48]; } ao[8]; /* calm_t: Talion seen out of
+	* his recoil since (its hold: released 0.35 s after it - a cut in his recoil's last frame draws its answer <= 0.3 s on) */
+	struct { uint64_t id; uintptr_t c; double t0, until, impact_t; int due, at_hit, started; } ans; /* the warning now */
+	int tal_recoil; /* Talion's attack a recoil (or a berserker's paired move on him) at the last frame */
+	int ans_at_cut; /* SOMVR_CROWD_ANSWER_WARN=cut (1, the default) | start (0): the answer warned from the provoking cut */
+	struct { uint64_t provoked, provoked_held, warned_hit, warned_start, answers, unwarned, out_view, lead_n, verdicts_hit,
+		verdicts_other; double lead_sum, lead_min; } an;
 } g_ff;
 static pthread_mutex_t g_ff_mu = PTHREAD_MUTEX_INITIALIZER; /* g_ff's state: the AI tick, the frame, the words */
 static void ff_summary(struct ff_orc *r, double t); /* one warned attack is over: what the player got (g_ff_mu held) */
@@ -217,6 +258,408 @@ static void ff_started(uint64_t id, uint32_t now, double t) /* g_ff_mu held */
 		      r && r->prio ? " prio (the game sorts it first)" : "", somvr_front_warnings(&g_ff.f, &g_ff.cfg, now));
 }
 
+/* ---- build 19: the crowd's pace (SOMVR_CROWD_PACE_MS) ----------------------------------------------------------- */
+/* the orc's character record ('AI_Infantry', 'AI_Defender', ...) from its Combat */
+static void ff_pace_type(uintptr_t c, char *out, size_t cap)
+{
+	out[0] = 0;
+	if (c && vptr_of((void *)c) == g_cbg.vt_combat)
+		fb_rec_name(peek_ptr(c + PR_C_CHARREC), out, cap);
+	if (!out[0])
+		snprintf(out, cap, "?");
+}
+
+/* where orc Combat c stands from the head now: yaw/off/dist, in view (FRONT's test); 0 = not readable */
+static int ff_pace_where(uintptr_t c, somvr_th_dir *d, int *seen)
+{
+	struct cb_orc o;
+	if (!c || !cb_orc_get(c, &o) || !g_ff.head_ok)
+		return 0;
+	float p[3] = { o.pos[0], o.pos[1] + 40.0f, o.pos[2] }, l[3];
+	somvr_th_local(g_ff.head, g_ff.hq, p, l);
+	*d = somvr_th_direction(l);
+	*seen = somvr_th_view_off(&g_th.cfg, *d) <= g_ff.cfg.view_deg * 0.5f;
+	return 1;
+}
+
+/* the turns held now (granted or winding up, not landed) */
+static int ff_pace_held(void)
+{
+	int n = 0;
+	for (int i = 0; i < SOMVR_PACE_TURNS; i++)
+		n += g_ff.pace.turn[i].id != 0;
+	return n;
+}
+
+/* ---- build 19: a berserker's answer (SOMVR_CROWD_ANSWER_MS; re-xr-pipeline.md 70.7) ---- */
+static int ff_ans_type(const char *ty) { return !strncmp(ty, "AI_Berserker", 12); } /* the archetype that answers */
+static struct ff_ans_orc *ff_ans_orc(uint64_t id, int make) /* g_ff_mu held */
+{
+	struct ff_ans_orc *fr = NULL;
+	for (int i = 0; i < 8; i++) {
+		if (g_ff.ao[i].id == id && id)
+			return &g_ff.ao[i];
+		if (!fr || (fr->id && g_ff.ao[i].hit_t + g_ff.ao[i].landed_t < fr->hit_t + fr->landed_t))
+			fr = &g_ff.ao[i];
+	}
+	if (!make || !id)
+		return NULL;
+	memset(fr, 0, sizeof *fr);
+	fr->id = id;
+	return fr;
+}
+/* the pace's id of an orc (FRONT's record: its HOBJECT, or the Combat's owner) */
+static uint64_t ff_pace_id(uintptr_t c, uintptr_t hobj)
+{
+	uintptr_t owner = c ? peek_ptr(c + C_OWNER) : 0;
+	for (int i = 0; i < SOMVR_FRONT_ORCS; i++)
+		if (g_ff.o[i].id && (g_ff.o[i].id == hobj || (owner && g_ff.o[i].ch == owner)))
+			return g_ff.o[i].id;
+	return hobj;
+}
+/* where an ungranted blow came from (the logs): our hit on it just before, after its blow hit Talion */
+static const char *ff_ans_source(uint64_t id, double t, char *out, size_t cap)
+{
+	const struct ff_ans_orc *a = ff_ans_orc(id, 0);
+	if (a && a->hit_t > 0 && t - a->hit_t < 0.5)
+		snprintf(out, cap, "; source: the answer to our hit %.0f ms before%s%.2f s after its blow hit Talion (Talion's attack "
+			 "at our hit '%s')", (t - a->hit_t) * 1e3, a->landed_t > 0 ? ", " : " (", a->landed_t > 0 ? a->hit_t - a->landed_t : 0.0,
+			 a->rec);
+	else if (a && a->landed_t > 0 && t - a->landed_t < 3.5)
+		snprintf(out, cap, "; source: no hit of ours just before, its blow hit Talion %.2f s before", t - a->landed_t);
+	else
+		snprintf(out, cap, "; source: unknown (no hit of ours within 0.5 s, no blow of its on Talion within 3.5 s)");
+	return out;
+}
+/* the answer's warning: from now (our hit, or its start) until its impact */
+static void ff_ans_warn(uint64_t id, uintptr_t c, double t, int at_hit)
+{
+	if (g_ff.ans.id == id && t - g_ff.ans.t0 < 1.5)
+		return; /* warned already */
+	memset(&g_ff.ans, 0, sizeof g_ff.ans);
+	g_ff.ans.id = id, g_ff.ans.c = c, g_ff.ans.t0 = t, g_ff.ans.until = t + 1.5, g_ff.ans.due = 1, g_ff.ans.at_hit = at_hit;
+	at_hit ? g_ff.an.warned_hit++ : g_ff.an.warned_start++;
+}
+
+/* our hit landed on orc (Combat c, HOBJECT hobj) at t (COMBAT's cb_hit, the game thread): the source's record; while its
+ * answer hold runs (its blow hit Talion, he recoils) the answer is likely: its warning now */
+static void ff_ans_hit(uintptr_t c, uintptr_t hobj, uintptr_t pc, double t)
+{
+	if (!g_ff.pace_on || !c)
+		return;
+	char tal[48];
+	rx_rec_name(pc ? peek_ptr(pc + VB_C_ATTACK) : 0, tal, sizeof tal);
+	pthread_mutex_lock(&g_ff_mu);
+	uint64_t id = ff_pace_id(c, hobj);
+	struct ff_ans_orc *a = ff_ans_orc(id, 1);
+	if (a) {
+		a->hit_t = t;
+		snprintf(a->rec, sizeof a->rec, "%s", tal[0] ? tal : "-");
+	}
+	double since = 0;
+	int hold = somvr_pace_holding(&g_ff.pace, id, &since), own = 0;
+	for (int i = 0; i < SOMVR_PACE_TURNS; i++) /* any turn of its own (a hold, or a grant / a blow of its in its hold) */
+		own |= g_ff.pace.turn[i].id == id && id;
+	size_t tl = strlen(tal); /* a recoil from the front (its own blow; from behind: no answer in the logs) */
+	int recoil = (!strncmp(tal, "PC_Recoil", 9) && tl > 2 && !strcmp(tal + tl - 2, "_F")) || !strncmp(tal, "PC_OrcBzrk", 10);
+	if (a && a->landed_t > 0 && t - a->landed_t < 3.5 && recoil) {
+		char ty[64];
+		ff_pace_type(c, ty, sizeof ty);
+		if (ff_ans_type(ty)) {
+			g_ff.an.provoked++;
+			g_ff.an.provoked_held += own;
+			if (g_ff.pcfg.answer_s > 0 && g_ff.ans_at_cut && t - a->landed_t < 2.9) /* its answer comes now: warned from this cut (the
+										   * logs' answers: 0.05-2.73 s after its hit) */
+				ff_ans_warn(id, c, t, 1);
+			if (ff_ev_log_ok(t))
+				logf_("CROWD provoked t=%.3f orc=%#lx '%s': our hit %.2f s after its blow hit Talion (his attack '%s'): "
+				      "its answer (a headbutt or a bash, no grant) is likely - %s", t, (unsigned long)id, ty, t - a->landed_t,
+				      a->rec, g_ff.pcfg.answer_s <= 0 ? "no hold (SOMVR_CROWD_ANSWER_MS=0)" : t - a->landed_t >= 2.9 ?
+				      "past the answers' 2.9 s: not warned" : hold == 2 ?
+				      "its turn holds (the answer hold): warned now" : own ?
+				      "its own turn holds (granted again in its hold): warned now" :
+				      "NOT its turn (released): warned now");
+		}
+	}
+	pthread_mutex_unlock(&g_ff_mu);
+}
+
+/* DEFENCE's verdict of a blow at Talion (df_drain, the game thread): a hit holds a berserker's turn on (its answer) */
+static void ff_ans_verdict(uintptr_t c, uintptr_t hobj, int hit, double t)
+{
+	if (!g_ff.pace_on || !c)
+		return;
+	pthread_mutex_lock(&g_ff_mu);
+	uint64_t id = ff_pace_id(c, hobj);
+	if (hit) {
+		struct ff_ans_orc *a = ff_ans_orc(id, 1);
+		if (a)
+			a->landed_t = t;
+	}
+	hit ? g_ff.an.verdicts_hit++ : g_ff.an.verdicts_other++;
+	if (g_ff.ans.id == id && g_ff.ans.started) /* its answer judged: its warning ends */
+		g_ff.ans.until = t;
+	const struct ff_ans_orc *a0 = ff_ans_orc(id, 0);
+	int still = !hit && g_ff.tal_recoil && a0 && a0->landed_t > 0 && t - a0->landed_t < 3.5; /* its last hit's recoil on */
+	int k = somvr_pace_verdict(&g_ff.pace, &g_ff.pcfg, id, t, hit || still);
+	char ty[64];
+	somvr_th_dir d;
+	int seen = 0, ok = 0;
+	if (hit) {
+		ff_pace_type(c, ty, sizeof ty);
+		ok = ff_pace_where(c, &d, &seen);
+	}
+	if (hit && ff_ans_type(ty) && ff_ev_log_ok(t)) /* the source's first half (also with the hold off) */
+		logf_("CROWD landed t=%.3f orc=%#lx '%s': its blow hit Talion (yaw=%+.0f off=%.0f deg dist=%.1f m %s): a cut of "
+		      "his on it while he recoils draws its answer -> %s", t, (unsigned long)id, ty, ok ? d.yaw_deg : NAN,
+		      ok ? d.off_deg : NAN, ok ? d.dist_cm * 0.01f : NAN, !ok ? "not readable" : seen ? "in view" : "out of view",
+		      k > 0 ? "its turn holds while he recoils (the answer hold)" : g_ff.pcfg.answer_s > 0 ?
+		      "NO hold (not its turn)" : "no hold (SOMVR_CROWD_ANSWER_MS=0)");
+	else if (k >= 0 && ff_ev_log_ok(t))
+		logf_("CROWD answer-hold t=%.3f orc=%#lx: its blow %s -> %s", t, (unsigned long)id, hit ? "hit Talion" :
+		      still ? "did not land, but Talion still recoils from its last one" : "did not land (blocked, parried or dodged)",
+		      k ? "its turn holds while he recoils (its answer to a cut of his starts in its own turn)" :
+		      "no answer to fear: the turn is free");
+	pthread_mutex_unlock(&g_ff_mu);
+}
+
+/* FRONT's judge accepted the candidate (score >= 0): the pace's turn and one grant a pass (g_ff_mu held). Returns the
+ * verdict (v, or SOMVR_FR_PACE / _PASS with *sc the veto) */
+static int ff_pace_judge(uintptr_t e, uintptr_t slot, uint32_t now, uint64_t id, int prio, double t, float *sc, int v)
+{
+	double ft = 0;
+	float veto = g_ff.cfg.veto_score;
+	int act = g_ff.mode == FF_ON && !g_ff.pace_log; /* else judged and logged only */
+	if (!somvr_pace_may(&g_ff.pace, &g_ff.pcfg, id, t, &ft)) {
+		g_ff.pn.vetoes++;
+		const somvr_pace_turn *u = NULL;
+		for (int i = 0; i < SOMVR_PACE_TURNS && !u; i++)
+			if (g_ff.pace.turn[i].id && g_ff.pace.turn[i].id != id)
+				u = &g_ff.pace.turn[i];
+		if (ff_veto_log_ok(t))
+			logf_("CROWD wait t=%.3f orc=%#lx score=%.2f -> %.0f%s: %s (free in %.2f s)", t, (unsigned long)id,
+			      (double)*sc, (double)veto, act ? "" : " (log only)",
+			      !u ? "the gap after the last blow" : u->start_t > 0 ? "another orc winds up" :
+			      "another orc's grant holds", ft - t);
+		if (!act)
+			return v;
+		*sc = veto;
+		return SOMVR_FR_PACE;
+	}
+	if (g_ff.pk.e && g_ff.pk.slot == slot && g_ff.pk.now == now && g_ff.pk.e != e) {
+		if (!somvr_pace_pass_wins(prio, *sc, g_ff.pk.prio, g_ff.pk.score)) {
+			g_ff.pn.pass_vetoes++;
+			if (ff_ev_log_ok(t))
+				logf_("CROWD pass t=%.3f orc=%#lx score=%.2f%s -> %.0f: orc %#lx (%.2f%s) kept in this pass (one grant a "
+				      "pass)", t, (unsigned long)id, (double)*sc, prio ? " prio" : "", (double)veto,
+				      (unsigned long)g_ff.pk.id, (double)g_ff.pk.score, g_ff.pk.prio ? " prio" : "");
+			if (!act)
+				return v;
+			*sc = veto;
+			return SOMVR_FR_PASS;
+		}
+		/* the new one is better: the kept one's score (the game's entry, scored a moment ago in this pass) to the veto */
+		float cur = NAN;
+		int same = peek(g_ff.pk.e + FF_E_SCORE, &cur, sizeof cur) && cur == g_ff.pk.score, wrote = 0;
+		if (same && act)
+			memcpy((void *)(g_ff.pk.e + FF_E_SCORE), &veto, sizeof veto), g_ff.pn.pass_writes++, wrote = 1;
+		g_ff.pn.pass_vetoes++, g_ff.pn.pass_kept_changed += !same;
+		struct ff_orc *r = ff_rec(g_ff.pk.id, 0, t);
+		if (r && wrote)
+			r->verdict = SOMVR_FR_PASS;
+		if (ff_ev_log_ok(t))
+			logf_("CROWD pass t=%.3f orc=%#lx score=%.2f%s kept: orc %#lx (%.2f%s) -> %.0f %s", t, (unsigned long)id,
+			      (double)*sc, prio ? " prio" : "", (unsigned long)g_ff.pk.id, (double)g_ff.pk.score,
+			      g_ff.pk.prio ? " prio" : "", (double)veto, wrote ? "(written back)" : !same ?
+			      "NOT written (its score changed since)" : "(log only)");
+	}
+	g_ff.pk.e = e, g_ff.pk.slot = slot, g_ff.pk.now = now, g_ff.pk.score = *sc, g_ff.pk.prio = prio, g_ff.pk.id = id;
+	return v;
+}
+
+/* FR_GRANT at Talion (g_ff_mu held) */
+static void ff_pace_grant(uint64_t id, const struct ff_orc *r, double t)
+{
+	int over = somvr_pace_grant(&g_ff.pace, &g_ff.pcfg, id, t);
+	char ty[64];
+	ff_pace_type(r && r->ch ? peek_ptr(r->ch + PR_CH_COMBAT) : 0, ty, sizeof ty);
+	if (ff_ans_type(ty))
+		somvr_pace_may_answer(&g_ff.pace, &g_ff.pcfg, id); /* build 19: its turn holds after a blow that hits */
+	if (ff_ev_log_ok(t))
+		logf_("CROWD grant t=%.3f orc=%#lx '%s' off=%.0f deg dist=%.1f m verdict=%s%s; the turn is its until its blow "
+		      "lands (turns held %d)", t, (unsigned long)id, ty, r ? r->off : NAN, r ? r->dist * 0.01f : NAN,
+		      r ? somvr_front_verdict_name(r->verdict) : "unseen",
+		      over ? " - OVERLAP: another orc's turn held already (granted past the pace)" : "", ff_pace_held());
+}
+
+/* one blow landed (the pace's update: at its impact; or its track ended within 0.3 s before it): the timeline */
+static void ff_pace_landed(uint64_t id, uintptr_t c, double at, double gap, double t, const char *how)
+{
+	somvr_th_dir d;
+	int seen = 0, ok = ff_pace_where(c, &d, &seen);
+	char ty[64];
+	ff_pace_type(c, ty, sizeof ty);
+	struct ff_orc *r = ff_rec(id, 0, t);
+	int warned = r && r->grant_warned;
+	g_ff.pn.impacts_view += ok && seen, g_ff.pn.impacts_out += ok && !seen;
+	g_ff.pn.lulls += gap > 4.0;
+	if (ff_ev_log_ok(t))
+		logf_("CROWD impact t=%.3f orc=%#lx '%s' at %.3f (%s) gap=%.2f s%s yaw=%+.0f off=%.0f deg dist=%.1f m %s", t,
+		      (unsigned long)id, ty, at, how, gap, gap < 0 ? " (the first)" :
+		      gap < g_ff.pcfg.gap_s - 1e-6 ? " UNDER THE PACE" : gap > 4.0 ? " (a lull)" : "",
+		      ok ? d.yaw_deg : NAN, ok ? d.off_deg : NAN, ok ? d.dist_cm * 0.01f : NAN,
+		      !ok ? "(not readable)" : seen ? "in view" : warned ? "out of view (warned before its grant)" :
+		      "out of view (THREAT's own cue)");
+}
+
+/* the stereo frame (g_ff_mu held, the game thread, after THREAT's tracks): their starts and ends into the pace, the
+ * blows that landed */
+static void ff_pace_frame(double t, uintptr_t pc)
+{
+	for (int i = 0; i < TH_TRACKS; i++) { /* ended since the last frame */
+		struct ff_seen *w = &g_ff.seen[i];
+		if (!w->serial)
+			continue;
+		int live = 0;
+		for (int j = 0; j < TH_TRACKS && !live; j++)
+			live = g_th.tr[j].c == w->c && g_th.tr[j].serial == w->serial;
+		if (live)
+			continue;
+		if (w->keyed && !w->landed) {
+			double g = -1;
+			int k = somvr_pace_end(&g_ff.pace, &g_ff.pcfg, w->id, t, 0.3f, &g);
+			if (k == 1)
+				ff_pace_landed(w->id, w->c, t, g, t, "its track ended just before the impact: met");
+			else if (k == 0 && ff_ev_log_ok(t))
+				logf_("CROWD cancelled t=%.3f orc=%#lx: its blow ended before the impact (a hit, a stagger): its turn "
+				      "ends", t, (unsigned long)w->id);
+		}
+		memset(w, 0, sizeof *w);
+	}
+	for (int j = 0; j < TH_TRACKS; j++) { /* started since */
+		const struct th_track *tr = &g_th.tr[j];
+		if (!tr->c || !tr->serial)
+			continue;
+		int known = 0, fr = -1;
+		for (int i = 0; i < TH_TRACKS && !known; i++) {
+			known = g_ff.seen[i].serial == tr->serial && g_ff.seen[i].c == tr->c;
+			if (!g_ff.seen[i].serial && fr < 0)
+				fr = i;
+		}
+		if (known || fr < 0)
+			continue;
+		uintptr_t owner = peek_ptr(tr->c + C_OWNER);
+		uint64_t id = tr->hobj;
+		const struct ff_orc *r = NULL;
+		for (int i = 0; i < SOMVR_FRONT_ORCS && !r; i++)
+			if (g_ff.o[i].id && (g_ff.o[i].id == tr->hobj || (owner && g_ff.o[i].ch == owner)))
+				r = &g_ff.o[i];
+		if (r)
+			id = r->id;
+		int kl = somvr_th_keyless(&tr->k);
+		int fl = somvr_pace_start(&g_ff.pace, &g_ff.pcfg, id, tr->t0, tr->k.impact, kl);
+		struct ff_seen *w = &g_ff.seen[fr];
+		w->serial = tr->serial, w->id = id, w->c = tr->c, w->keyed = !(fl & SOMVR_PACE_MOVE), w->landed = 0;
+		if (fl & SOMVR_PACE_MOVE)
+			continue; /* a move, not a blow (keyless, or no impact key: SOMVR_PACE_MIN_WIND_S) */
+		int wind = 0;
+		for (int i = 0; i < SOMVR_PACE_TURNS; i++)
+			wind += g_ff.pace.turn[i].start_t > 0;
+		if ((uint64_t)wind > g_ff.pn.max_wind)
+			g_ff.pn.max_wind = (uint64_t)wind;
+		somvr_th_dir d;
+		int seen = 0, ok = ff_pace_where(tr->c, &d, &seen);
+		g_ff.pn.starts_view += ok && seen, g_ff.pn.starts_out += ok && !seen, g_ff.pn.starts_warned += r && r->grant_warned;
+		char ty[64], src[200] = "", aw[160] = "";
+		ff_pace_type(tr->c, ty, sizeof ty);
+		if (ff_ans_type(ty))
+			somvr_pace_may_answer(&g_ff.pace, &g_ff.pcfg, id); /* build 19: its turn holds after a blow that hits */
+		if (!(fl & SOMVR_PACE_GRANTED)) /* build 19: an answer, or unannounced: where it came from */
+			ff_ans_source(id, t, src, sizeof src);
+		if (fl & SOMVR_PACE_ANSWER) { /* its answer, in its own held turn: warned at our hit, else now */
+			int was = g_ff.ans.id == id && t - g_ff.ans.t0 < 1.5;
+			if (!was)
+				ff_ans_warn(id, tr->c, t, 0);
+			/* the edge until DEFENCE's verdict of it (a fast red bash is held at its impact for a dodge: build 18's
+			 * SOMVR_DODGE_FAST_MS), at most 0.6 s past its impact */
+			g_ff.ans.started = 1, g_ff.ans.impact_t = t + tr->k.impact, g_ff.ans.until = g_ff.ans.impact_t + 0.6;
+			double lead = g_ff.ans.impact_t - g_ff.ans.t0;
+			g_ff.an.answers++, g_ff.an.out_view += ok && !seen, g_ff.an.lead_n++, g_ff.an.lead_sum += lead;
+			if (g_ff.an.lead_n == 1 || lead < g_ff.an.lead_min)
+				g_ff.an.lead_min = lead;
+			snprintf(aw, sizeof aw, "; its warning %.0f ms before its impact (%s)", lead * 1e3,
+				 was && g_ff.ans.at_hit ? "from our hit: the edge on its side, the sound at it, a pulse" :
+				 "from its start");
+		} else if (!(fl & SOMVR_PACE_GRANTED) && ff_ans_type(ty) && g_ff.pcfg.answer_s > 0) {
+			g_ff.an.unwarned++;
+		}
+		if (ff_ev_log_ok(t))
+			logf_("CROWD start t=%.3f orc=%#lx '%s' %s blow, its impact in %.2f s%s%s%s%s; yaw=%+.0f off=%.0f deg dist=%.1f "
+			      "m %s; winding up now %d", t, (unsigned long)id, ty, tr->k.ranged ? "a ranged" : "a melee",
+			      tr->k.impact, "",
+			      fl & SOMVR_PACE_GRANTED ? ", its grant's" : fl & SOMVR_PACE_ANSWER ?
+			      ", ITS ANSWER in its own held turn (no grant)" : ", NO GRANT seen (unannounced)",
+			      fl & SOMVR_PACE_OVERLAP ? " - OVERLAP: another orc winds up too" : "", src, ok ? d.yaw_deg : NAN,
+			      ok ? d.off_deg : NAN, ok ? d.dist_cm * 0.01f : NAN, !ok ? "(not readable)" : seen ? "in view" :
+			      r && r->grant_warned ? "out of view (warned)" : "out of view", wind);
+		if (aw[0] && ff_ev_log_ok(t))
+			logf_("CROWD answer t=%.3f orc=%#lx%s", t, (unsigned long)id, aw);
+	}
+	somvr_pace_turn out[SOMVR_PACE_TURNS];
+	double gaps[SOMVR_PACE_TURNS];
+	int n = somvr_pace_update(&g_ff.pace, &g_ff.pcfg, t, out, gaps, SOMVR_PACE_TURNS);
+	for (int k = 0; k < n && k < SOMVR_PACE_TURNS; k++) {
+		uintptr_t c = 0;
+		for (int i = 0; i < TH_TRACKS; i++) /* its track (still on: the recovery) for where it stands */
+			if (g_ff.seen[i].serial && g_ff.seen[i].id == out[k].id && g_ff.seen[i].keyed && !g_ff.seen[i].landed) {
+				c = g_ff.seen[i].c, g_ff.seen[i].landed = 1;
+				break;
+			}
+		ff_pace_landed(out[k].id, c, out[k].impact_t, gaps[k], t, "its impact");
+	}
+	/* build 19: an answer hold after a hit lasts while Talion recoils from it (his attack a PC_Recoil_*, or a berserker's
+	 * paired move on him), at most answer_s; a hold waiting for its verdict (a blow of its cut short by our cut, or one
+	 * that missed) holds on while he still recoils from its last blow that hit */
+	char an[64] = "";
+	if (pc)
+		rx_rec_name(peek_ptr(pc + VB_C_ATTACK), an, sizeof an);
+	g_ff.tal_recoil = pc && (!strncmp(an, "PC_Recoil", 9) || !strncmp(an, "PC_OrcBzrk", 10));
+	for (int i = 0; i < SOMVR_PACE_TURNS && pc; i++) {
+		const somvr_pace_turn *u = &g_ff.pace.turn[i];
+		double since = 0;
+		int h = u->id ? somvr_pace_holding(&g_ff.pace, u->id, &since) : 0;
+		uint64_t id = u->id;
+		struct ff_ans_orc *a = h ? ff_ans_orc(id, 1) : NULL;
+		if (h == 1 && g_ff.tal_recoil && a && a->landed_t > 0 && t - a->landed_t < 3.5) {
+			somvr_pace_verdict(&g_ff.pace, &g_ff.pcfg, id, t, 1);
+			if (ff_ev_log_ok(t))
+				logf_("CROWD answer-hold t=%.3f orc=%#lx: its blow over (cut short or missed) while Talion still recoils "
+				      "from its last blow that hit (%.2f s ago, his attack '%s') -> its turn holds while he recoils", t,
+				      (unsigned long)id, t - a->landed_t, an);
+			continue;
+		}
+		if (h != 2 || t - since < 0.3)
+			continue;
+		if (g_ff.tal_recoil) {
+			if (a)
+				a->calm_t = 0;
+			continue;
+		}
+		if (a && !(a->calm_t > 0))
+			a->calm_t = t;
+		if (a && t - a->calm_t < 0.35)
+			continue;
+		somvr_pace_release(&g_ff.pace, id);
+		if (ff_ev_log_ok(t))
+			logf_("CROWD answer-hold t=%.3f orc=%#lx released: Talion's recoil over (0.35 s ago) after %.2f s (his attack "
+			      "'%s'): no answer; the turn is free", t, (unsigned long)id, t - since, an[0] ? an : "-");
+		if (a)
+			a->calm_t = 0;
+	}
+	/* FRONT's warnings only within a warning's length of the turn's end (else a warned orc's ready time runs out) */
+	g_ff.f.hold_warn = g_ff.mode == FF_ON && !g_ff.pace_log && somvr_pace_free_t(&g_ff.pace, &g_ff.pcfg, t) - t > g_ff.cfg.warn_s;
+}
+
 /* FR_SCORE: after AICombatMgr_ScoreAttacker(e, tgt, slot, n, ring) (the AI tick) */
 static void ff_judge(uintptr_t e, uintptr_t tgt, uintptr_t slot)
 {
@@ -262,7 +705,12 @@ static void ff_judge(uintptr_t e, uintptr_t tgt, uintptr_t slot)
 	 * is the orc's root, so a close orc straight ahead is 50 deg below the eyes (run 080611: vetoed at yaw -40, 1.4 m)
 	 * - and seen */
 	float vo = somvr_th_view_off(&g_th.cfg, d);
+	if (g_ff.pace_on) /* build 19: no new warning while another orc's turn holds longer than one */
+		g_ff.f.hold_warn = g_ff.mode == FF_ON && !g_ff.pace_log &&
+				   somvr_pace_free_t(&g_ff.pace, &g_ff.pcfg, t) - t > g_ff.cfg.warn_s;
 	int v = somvr_front_judge(&g_ff.f, &g_ff.cfg, slot, now, id, vo, d.dist_cm, prio, &sc, &started);
+	if (g_ff.pace_on && sc >= 0) /* build 19: one wind-up at a time, one grant a pass */
+		v = ff_pace_judge(e, slot, now, id, prio, t, &sc, v);
 	if (started)
 		ff_started(started, now, t);
 	g_ff.n.verdict[v]++;
@@ -290,7 +738,9 @@ static void ff_judge(uintptr_t e, uintptr_t tgt, uintptr_t slot)
 				      now);
 		}
 	}
-	if (v == SOMVR_FR_WAIT || v == SOMVR_FR_VETO) {
+	if (v == SOMVR_FR_PACE || v == SOMVR_FR_PASS) {
+		/* the CROWD line said it */
+	} else if (v == SOMVR_FR_WAIT || v == SOMVR_FR_VETO) {
 		if (ff_veto_log_ok(t))
 			logf_("FRONT veto t=%.3f orc=%#lx score=%.2f -> %.0f%s off=%.0f deg yaw=%+.0f dist=%.1f m ring=%d%s verdict=%s "
 			      "clock=%u slot=%#lx", t, (unsigned long)id, sc0, (double)g_ff.cfg.veto_score, wrote ? "" : " (log only)",
@@ -345,6 +795,8 @@ __attribute__((used)) uint64_t somvr_w_ffgrant(uintptr_t e, uintptr_t now)
 			r->warned = 0, r->grant_t = t, r->start_seen = 0, r->grants++;
 		}
 		somvr_front_granted(&g_ff.f, id);
+		if (g_ff.pace_on)
+			ff_pace_grant(id, r, t);
 	}
 	pthread_mutex_unlock(&g_ff_mu);
 	return rv;
@@ -577,6 +1029,38 @@ static void ff_summary(struct ff_orc *r, double t)
 }
 
 /* SOMVR_THREAT's stereo frame (game thread, after its tracks): the head for the judge, the pass's end, the cues */
+/* build 19: a berserker's answer to our cut (its blow hit Talion, he recoils; SOMVR_CROWD_ANSWER_MS): from our hit (or
+ * the answer's start) to its impact - out of view the red edge on its side at full strength; at the warning's start the
+ * warning sound at the orc and an urgent pulse (its side's hand; both in view) (g_ff_mu held) */
+static void ff_ans_cue(const float head[3], const float hq[4], double t, somvr_threat_frame *e, int haps[2])
+{
+	struct cb_orc o;
+	if (t > g_ff.ans.until || (!g_ff.ans.started && t > g_ff.ans.t0 + 1.2) || !cb_orc_get(g_ff.ans.c, &o)) {
+		memset(&g_ff.ans, 0, sizeof g_ff.ans);
+		return;
+	}
+	float p[3] = { o.pos[0], o.pos[1] + 40.0f, o.pos[2] }, l[3];
+	somvr_th_local(head, hq, p, l);
+	somvr_th_dir d = somvr_th_direction(l);
+	int seen = somvr_th_view_off(&g_th.cfg, d) <= g_ff.cfg.view_deg * 0.5f, side = somvr_th_side(d);
+	if (!seen)
+		for (int s = 0; s < 2; s++)
+			if (side & (1 << s))
+				e->edge[s] = fmaxf(e->edge[s], g_th.cfg.edge), e->flags |= s ? SOMVR_THF_RED_R : SOMVR_THF_RED_L;
+	if (!g_ff.ans.due)
+		return;
+	g_ff.ans.due = 0;
+	for (int s = 0; s < 2; s++)
+		if ((side & (1 << s)) || seen)
+			haps[s] = SOMVR_THH_URGENT;
+	th_sound(p, head, t, (uintptr_t)g_ff.ans.id);
+	if (ff_ev_log_ok(t))
+		logf_("THREAT answer orc=%#lx (a berserker's answer to our cut%s) cue=%s side=%s yaw=%+.0f off=%.0f deg dist=%.1f m "
+		      "haptic=urgent sound", (unsigned long)g_ff.ans.id, g_ff.ans.at_hit ? ", warned at our hit" : ", at its start",
+		      seen ? "in view (the sound, the pulse)" : "red edge", somvr_th_side_name(side), d.yaw_deg, d.off_deg,
+		      d.dist_cm * 0.01f);
+}
+
 static void ff_cues(const float head[3], const float hq[4], double t, somvr_threat_frame *e, int haps[2], uintptr_t pcomb,
 		    uintptr_t pc)
 {
@@ -590,6 +1074,10 @@ static void ff_cues(const float head[3], const float hq[4], double t, somvr_thre
 	g_ff.head_t = t, g_ff.head_ok = 1;
 	if (!g_ff.tid)
 		g_ff.tid = my_tid();
+	if (g_ff.pace_on)
+		ff_pace_frame(t, pc); /* build 19: the turns (sets hold_warn for the pass end) */
+	if (g_ff.ans.id && g_ff.mode == FF_ON) /* build 19: a berserker's answer: its warning */
+		ff_ans_cue(head, hq, t, e, haps);
 	if (clk) {
 		uint64_t s = somvr_front_end_pass(&g_ff.f, &g_ff.cfg, now);
 		if (s)
@@ -712,6 +1200,21 @@ static void ff_prewarned(uintptr_t c, uintptr_t hobj, double t0, double t, somvr
 		    (r->warned || (r->grant_warned && t0 >= r->grant_t - 0.05 && t0 <= r->grant_t + FF_HOLD_S)))
 			w = r;
 	}
+	if (!w && g_ff.ans.id && (g_ff.ans.id == hobj || g_ff.ans.c == c) && t0 >= g_ff.ans.t0 - 0.05 && !g_ff.ans.due) {
+		/* build 19: a berserker's answer warned by ours (the sound, the pulse): not LATE, no second pulse or sound */
+		int qh = g_ff.onecue && k->haptic, qs = g_ff.onecue && k->sound;
+		if (k->late || qh || qs) {
+			g_ff.n.quiet_pulses += qh, g_ff.n.quiet_sounds += qs;
+			if (th_log_ok(t))
+				logf_("THREAT quiet orc=%#lx: its answer warned %.3f s ago%s%s%s", (unsigned long)c, t - g_ff.ans.t0,
+				      k->late ? " (not LATE)" : "", qh ? ", its pulse skipped" : "", qs ? ", its sound skipped" : "");
+			k->late = 0;
+			if (qh)
+				k->haptic = 0;
+			if (qs)
+				k->sound = 0;
+		}
+	}
 	if (w) {
 		double a = t - w->warn_t;
 		if (k->late) {
@@ -775,7 +1278,38 @@ static const char *ff_word(const char *w)
 		return v ? "front keep 1 (a test: the practice's spawns keep the previous orc)"
 			 : "front keep 0 (the kept orcs go with the next practice removal)";
 	}
-	return "front (not status|keep 0|1: ignored)";
+	if (sscanf(w, "answer %d", &v) == 1 && v >= 0 && v <= 6000) { /* build 19 (a test): SOMVR_CROWD_ANSWER_MS now */
+		pthread_mutex_lock(&g_ff_mu);
+		g_ff.pcfg.answer_s = 0.001f * (float)v;
+		pthread_mutex_unlock(&g_ff_mu);
+		logf_("CONFIG crowd answer_ms=%d (the word)", v);
+		return "front answer N (SOMVR_CROWD_ANSWER_MS now)";
+	}
+	return "front (not status|keep 0|1|answer N: ignored)";
+}
+
+/* build 19 (re-xr-pipeline.md 73): the VR menu's Crowd pace row: shown with FRONT's judge and grant hooked (the pace's
+ * veto); Off .. 2.0 s live (g_ff_mu: the next grant uses it; on again from off: the old turns forgotten) */
+static uint64_t ff_vm_avail(void) { return g_ff.mode == FF_ON && g_ff.on_score && g_ff.on_grant ? SOMVR_VMA_CROWD : 0u; }
+static void ff_vm_settings(somvr_settings *s)
+{
+	s->crowd_ms = (uint16_t)(g_ff.pace_on ? lrintf(g_ff.pcfg.gap_s * 1000.f) : 0);
+}
+static const char *ff_vm_set(const somvr_settings *s)
+{
+	if (!ff_vm_avail())
+		return " (no SOMVR_FRONT=1 with its judge: not used)";
+	pthread_mutex_lock(&g_ff_mu);
+	int was = g_ff.pace_on;
+	if (s->crowd_ms) {
+		if (!was) /* the turns were not kept while off: none held now */
+			memset(g_ff.pace.turn, 0, sizeof g_ff.pace.turn);
+		g_ff.pcfg.gap_s = 0.001f * s->crowd_ms, g_ff.pace_on = 1;
+	} else {
+		g_ff.pace_on = 0;
+	}
+	pthread_mutex_unlock(&g_ff_mu);
+	return s->crowd_ms ? " (one orc's blow at a time, this far apart)" : " (no pace: the game's own crowd)";
 }
 
 /* somvr_start, after th_start (the head, the cue, Talion's HOBJECTs) */
@@ -787,8 +1321,12 @@ static void ff_start(int *bad)
 	pthread_mutex_unlock(&g_ff_mu);
 	static const char *const mode_w[] = { "0", "log", "1" }, *const cam_w[] = { "off", "head" }, *const onoff_w[] = { "0", "1" };
 	int mode = env_word("SOMVR_FRONT", mode_w, 3, 0);
-	if (!mode)
+	float pace_ms = env_float("SOMVR_CROWD_PACE_MS", 0, 0, 3000, bad); /* build 19 */
+	if (!mode) {
+		if (pace_ms > 0)
+			logf_("CONFIG crowd: SOMVR_CROWD_PACE_MS=%.0f needs SOMVR_FRONT=1 (its hooks): no pace", pace_ms);
 		return;
+	}
 	if (!g_th.on) {
 		logf_("WARN SOMVR_FRONT needs SOMVR_THREAT=1 (the head pose, the warning's cue, Talion's HOBJECTs): nothing patched");
 		return;
@@ -810,6 +1348,15 @@ static void ff_start(int *bad)
 	g_ff.gamelog = env_word("SOMVR_FRONT_GAMELOG", onoff_w, 2, 0);
 	g_ff.onecue = env_word("SOMVR_FRONT_ONECUE", onoff_w, 2, 1);
 	somvr_front_init(&g_ff.f);
+	somvr_pace_cfg_default(&g_ff.pcfg); /* build 19: the crowd's pace */
+	somvr_pace_init(&g_ff.pace);
+	g_ff.pcfg.lead_s = 0.001f * env_float("SOMVR_CROWD_LEAD_MS", 850, 0, 3000, bad);
+	g_ff.pcfg.start_s = 0.001f * env_float("SOMVR_CROWD_START_MS", 2500, 200, 10000, bad);
+	if (pace_ms > 0)
+		g_ff.pcfg.gap_s = 0.001f * pace_ms, g_ff.pace_on = 1;
+	g_ff.pace_log = env_word("SOMVR_CROWD_LOGONLY", onoff_w, 2, 0);
+	g_ff.pcfg.answer_s = 0.001f * env_float("SOMVR_CROWD_ANSWER_MS", 0, 0, 6000, bad); /* build 19 */
+	g_ff.ans_at_cut = env_word("SOMVR_CROWD_ANSWER_WARN", (const char *const[]){ "start", "cut" }, 2, 1);
 	char why[512], ln[FFS_N][48];
 	for (int i = 0; i < FFS_N; i++) {
 		g_ff.ok[i] = check_site(&g_ff_sites[i], why, sizeof why) == 0;
@@ -846,6 +1393,16 @@ static void ff_start(int *bad)
 	      ln[8]);
 	if (!g_ff.on_score || !g_ff.on_grant)
 		logf_("WARN SOMVR_FRONT: FR_SCORE/FR_GRANT not both in: no veto (the game's own choice)");
+	logf_("CONFIG crowd pace=%s pace_ms=%.0f lead_ms=%.0f start_ms=%.0f (one wind-up at Talion at a time, the blows at "
+	      "least the pace apart, one grant a pass; %s)", g_ff.pace_on ? "on" : "off", pace_ms, g_ff.pcfg.lead_s * 1000.0,
+	      g_ff.pcfg.start_s * 1000.0, !g_ff.pace_on ? "SOMVR_CROWD_PACE_MS unset or 0" :
+	      g_ff.pace_log ? "SOMVR_CROWD_LOGONLY=1: judged and logged only (a test baseline)" :
+	      mode == FF_ON ? "vetoes written" : "SOMVR_FRONT=log: judged and logged only");
+	logf_("CONFIG crowd answer_ms=%.0f warn=%s (%s)", g_ff.pcfg.answer_s * 1000.0, g_ff.ans_at_cut ? "cut" : "start",
+	      g_ff.pcfg.answer_s > 0 && g_ff.pace_on ?
+	      "a berserker whose blow hit Talion keeps its turn while he recoils: its answer to a cut of his (a headbutt, a "
+	      "bash) starts in its own turn, warned from the cut: the red edge on its side, the sound at it, a pulse" :
+	      "off: a berserker's answer is an ungranted blow (logged with its source)");
 }
 
 static void ff_end_log(void)
@@ -883,5 +1440,34 @@ static void ff_end_log(void)
 	      n->warned_atk ? (double)n->warned_sounds / (double)n->warned_atk : 0.0, (unsigned long long)n->quiet_pulses,
 	      (unsigned long long)n->quiet_sounds, (unsigned long long)n->hold_frames, (unsigned long long)g_ffwn.arrivals, (unsigned long long)g_ffwn.in_head,
 	      (unsigned long long)g_ffwn.in_rig, (unsigned long long)g_ffwn.far, (unsigned long long)g_ffwn.departures, (unsigned long long)g_ff.suppressed);
+	if (g_ff.pace_on) { /* build 19 */
+		const somvr_pace *p = &g_ff.pace;
+		logf_("CROWD END pace %.0f ms (lead %.2f s, seen %.2f s; start %.1f s): grants %llu (overlaps %llu), blows started "
+		      "%llu (in view %llu, out of view %llu, warned %llu; unannounced %llu; most winding up at once %llu), keyless "
+		      "moves %llu, grants let go %llu, blows cancelled %llu; impacts %llu (in view %llu, out of view %llu): gaps %llu "
+		      "min %.2f mean %.2f max %.2f s, under the pace %llu, over 4 s %llu; vetoed: the turn %llu, one a pass %llu "
+		      "(written back %llu, changed %llu); warnings held %llu; turns full %llu", g_ff.pcfg.gap_s * 1000.0,
+		      (double)g_ff.pcfg.lead_s, (double)p->lead_seen, (double)g_ff.pcfg.start_s, (unsigned long long)p->grants,
+		      (unsigned long long)p->overlaps, (unsigned long long)p->starts, (unsigned long long)g_ff.pn.starts_view,
+		      (unsigned long long)g_ff.pn.starts_out, (unsigned long long)g_ff.pn.starts_warned,
+		      (unsigned long long)p->unannounced, (unsigned long long)g_ff.pn.max_wind, (unsigned long long)p->moves,
+		      (unsigned long long)p->let_go, (unsigned long long)p->cancelled, (unsigned long long)p->impacts,
+		      (unsigned long long)g_ff.pn.impacts_view, (unsigned long long)g_ff.pn.impacts_out,
+		      (unsigned long long)p->gaps, p->min_gap, p->gaps ? p->gap_sum / (double)p->gaps : 0.0, p->max_gap,
+		      (unsigned long long)p->short_gaps, (unsigned long long)g_ff.pn.lulls, (unsigned long long)g_ff.pn.vetoes,
+		      (unsigned long long)g_ff.pn.pass_vetoes, (unsigned long long)g_ff.pn.pass_writes,
+		      (unsigned long long)g_ff.pn.pass_kept_changed, (unsigned long long)g_ff.f.held, (unsigned long long)p->full);
+		logf_("CROWD END answers (SOMVR_CROWD_ANSWER_MS=%.0f): verdicts at Talion hit %llu / not %llu; holds after a hit "
+		      "%llu (waited for a verdict %llu, no hit %llu), released at the recoil's end %llu, ran out %llu; our cuts on a "
+		      "berserker after its blow hit Talion %llu (in its hold %llu); answers in the hold %llu (out of view %llu), "
+		      "warned at our cut %llu, at the start %llu, the warning's lead to the impact min %.0f mean %.0f ms; berserker "
+		      "blows started ungranted outside a hold %llu", g_ff.pcfg.answer_s * 1000.0,
+		      (unsigned long long)g_ff.an.verdicts_hit, (unsigned long long)g_ff.an.verdicts_other,
+		      (unsigned long long)p->holds, (unsigned long long)p->holds_wait, (unsigned long long)p->no_hit,
+		      (unsigned long long)p->released, (unsigned long long)p->expired, (unsigned long long)g_ff.an.provoked,
+		      (unsigned long long)g_ff.an.provoked_held, (unsigned long long)p->answers, (unsigned long long)g_ff.an.out_view,
+		      (unsigned long long)g_ff.an.warned_hit, (unsigned long long)g_ff.an.warned_start, g_ff.an.lead_min * 1e3,
+		      g_ff.an.lead_n ? g_ff.an.lead_sum / (double)g_ff.an.lead_n * 1e3 : 0.0, (unsigned long long)g_ff.an.unwarned);
+	}
 	pthread_mutex_unlock(&g_ff_mu);
 }

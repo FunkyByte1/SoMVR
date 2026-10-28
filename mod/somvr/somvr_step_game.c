@@ -111,7 +111,7 @@ static const char *const g_dg_why[DGR_N] = { "no fight", "the cooldown", "a move
 static _Atomic int g_dg_probe_req; /* the test word "fight dodge probe" (SOMVR_HANDS_TEST): the rays at the next tick */
 static _Atomic int g_dg_auto_ms;   /* the test word "fight dodge auto MS": A pressed MS after each red warning (0 = off) */
 static struct {
-	int on, a_last, ours, src;
+	int on, want, a_last, ours, src; /* build 19: want = SOMVR_DODGE at the start; on = now (the VR menu's Dodge row) */
 	float cm, s, cool_s, tunnel;
 	float grace_s, late_s;   /* build 17b: SOMVR_DODGE_GRACE_MS / _LATE_MS (dg_dodging) */
 	float fast_s, hold_s;    /* build 18: SOMVR_DODGE_FAST_MS / _HOLD_MS (DEFENCE's held hit, df_held_tick) */
@@ -309,6 +309,8 @@ static void dg_tick(const sc_tick_out *o)
 		why = DGR_NOFIGHT;
 	else if (ab_owner() != SOMVR_AO_DODGE)
 		why = DGR_YIELD; /* a climb holds: A is the climb's (the hang's drop) */
+	else if (g_bow.a_quiet && bo_out())
+		why = DGR_BOW; /* build 19 (SOMVR_BOW_A=quiet): quiet, below */
 	else if (t < g_dg.next_ok)
 		why = DGR_COOL;
 	else if (g_step.run.kind != SOMVR_ST_NONE)
@@ -336,15 +338,19 @@ static void dg_tick(const sc_tick_out *o)
 	}
 	if (why >= 0) {
 		g_dg.n_why[why]++;
-		if (why != DGR_NOFIGHT && why != DGR_YIELD) /* in a fight: told (not in a fight A just does nothing, as before;
-							     * another's press is that one's) */
+		/* build 19 (SOMVR_BOW_A=quiet, re-xr-pipeline.md 71): with the bow out no buzz - the user's 17b session pressed A
+		 * with every whole-fist grab of an arrow, and the dodge's double buzz is the bow's own "no arrow" cue */
+		int quiet = why == DGR_BOW && g_bow.a_quiet;
+		if (why != DGR_NOFIGHT && why != DGR_YIELD && !quiet) /* in a fight: told (not in a fight A just does nothing, as
+									  * before; another's press is that one's) */
 			in_haptic_double(SOMVR_HAND_R, 0.5f, 0.05f, 0.07f, SOMVR_HAP_COMBAT);
 		char gw[160] = "";
 		if (why == DGR_GAME)
 			somvr_loco_why_str(g_dg.game_why, gw, sizeof gw);
 		if (st_log_ok(t))
 			logf_("DODGE t=%.3f frame=%llu A: refused: %s%s (%.1f cm; %s, the attacker %s; fsm %d%s%s)", t,
-			      (unsigned long long)rend_frame(), g_dg_why[why], why == DGR_NOFIGHT ? " (A does nothing)" : ", a double buzz", at,
+			      (unsigned long long)rend_frame(), g_dg_why[why], why == DGR_NOFIGHT ? " (A does nothing)" : quiet ? " (quiet: "
+			      "SOMVR_BOW_A)" : ", a double buzz", at,
 			      somvr_step_dodge_src_name(src), att == 1 ? "attacking" : att == 2 ? "lately" : "none", g_step.fsm,
 			      gw[0] ? "; LOCO: " : "", gw);
 		return;
@@ -675,13 +681,30 @@ static const char *st_set(int k, const somvr_settings *s)
  * run 181931: A by an orc with SOMVR_PHASE=on, no STEP line), the step works (181931: one 50 cm pick on a swing) but is
  * a lunge at the orc the stick did not ask for (the comfort rule); the user turned the phase on and "nothing happens"
  * (session 2026-10-24 16:50: STEP END picks 0, ticks 0). SOMVR_STEP / _DASH / _PHASE still configure them for tests */
-static uint32_t st_avail(void) { return g_step.on && g_inp.cfg.game_moves ? SOMVR_VMA_MOVES : 0u; }
+/* the menu's bits: the moves' rows (the game's moves on); build 19: the Fight page's Dodge (A) row (SOMVR_DODGE at the
+ * start with the step's core, A not the game's) */
+static uint64_t st_avail(void)
+{
+	return (g_step.on && g_inp.cfg.game_moves ? SOMVR_VMA_MOVES : 0u) |
+	       (g_step.on && g_dg.want && !g_inp.cfg.game_moves ? SOMVR_VMA_DODGE : 0u);
+}
 /* vm_start's start values from the switches */
 static void st_settings(somvr_settings *s)
 {
 	s->step = g_step.cfg.step;
 	s->dash = (uint32_t)g_step.cfg.dash;
 	s->phase = (uint32_t)g_step.cfg.phase;
+	s->dodge = g_dg.want != 0; /* build 19 */
+}
+/* build 19 (re-xr-pipeline.md 73): the VR menu's Dodge (A) row (vm_apply_key, the game thread): A in a fight dodges, or
+ * does nothing (the stock evade stays off: SOMVR_GAMEMOVES=off); a dodge on now ends as it would; off also lets the fast
+ * blows land at once (no dodge to wait for: SOMVR_DODGE_FAST_MS is the dodge's) */
+static const char *dg_vm_set(const somvr_settings *s)
+{
+	if (!(st_avail() & SOMVR_VMA_DODGE))
+		return " (no SOMVR_DODGE=on with the step's core: not used)";
+	g_dg.on = s->dodge != 0;
+	return g_dg.on ? " (A in a fight dodges)" : " (A in a fight does nothing; fast blows are not held)";
 }
 
 static void copy_env(const char *k, char *dst, size_t cap); /* the config helpers (somvr.c, below) */
@@ -723,7 +746,7 @@ static void st_config(int *bad)
 			   SOMVR_LOCO_W_MENU | SOMVR_LOCO_W_STRUGGLE); /* never: those keep LOCO out whatever a move wants */
 	/* build 17: SOMVR_DODGE (A in a fight = a fixed dash; off by default) */
 	memset(&g_dg, 0, sizeof g_dg);
-	g_dg.on = env_word("SOMVR_DODGE", (const char *const[]){ "off", "on" }, 2, 0);
+	g_dg.on = g_dg.want = env_word("SOMVR_DODGE", (const char *const[]){ "off", "on" }, 2, 0);
 	g_dg.cm = env_float("SOMVR_DODGE_CM", 150, 50, 300, bad);
 	g_dg.s = env_float("SOMVR_DODGE_MS", 250, 120, 600, bad) / 1000;
 	g_dg.cool_s = env_float("SOMVR_DODGE_COOL_MS", 500, 0, 3000, bad) / 1000;
@@ -818,7 +841,7 @@ static void st_end_log(void)
 	      (unsigned long long)g_step.n_peak, (unsigned long long)g_step.n_reface, (unsigned long long)g_step.n_vis_on,
 	      (unsigned long long)g_step.n_vis_off, (unsigned long long)g_step.n_vis_refused, (unsigned long long)g_step.n_col,
 	      (unsigned long long)g_step.n_col_restored, (unsigned long long)g_step.n_blink, (unsigned long long)g_step.suppressed);
-	if (g_dg.on) { /* build 17 */
+	if (g_dg.want) { /* build 17 (19: also when the menu turned it off) */
 		char rf[512];
 		size_t k = 0;
 		rf[0] = 0;

@@ -91,6 +91,18 @@ static const char *cp_word(const char *w0)
 	return "cprompt (from the next icon)";
 }
 
+/* build 19 (re-xr-pipeline.md 73): the VR menu's Counter icon row: shown with SOMVR_COUNTER_ICON=hide hooked; Shown =
+ * the game's icon again, Hidden = never made (from the next icon, as the word) */
+static uint64_t cp_vm_avail(void) { return g_cp.ok_fx || g_cp.ok_mark ? SOMVR_VMA_CICON : 0u; }
+static void cp_vm_settings(somvr_settings *s) { s->counter_icon = atomic_load(&g_cp.mode) == CP_GAME; }
+static const char *cp_vm_set(const somvr_settings *s)
+{
+	if (!cp_vm_avail())
+		return " (SOMVR_COUNTER_ICON=game: the game's icon, not hooked)";
+	atomic_store(&g_cp.mode, s->counter_icon ? CP_GAME : CP_HIDE);
+	return s->counter_icon ? " (the game's icon from the next one)" : " (no icon from the next one)";
+}
+
 static void cp_start(const struct site_spec *sites, int *bad)
 {
 	(void)bad;

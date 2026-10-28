@@ -1396,6 +1396,143 @@ static void follow_tests(void)
 	g_pl = NULL;
 }
 
+/* ---- SOMVR_HEAD_TETHER through the hooks (build 19): build 18 measured in H4 before the eyes, where g_fr (cleared at
+ * H4's start) had no game view yet: "no head" every frame. Measured after the eyes now; a back re-latches before the
+ * next frame's eyes. The follow's stand-ins: the head walks off the body into a wall (g_wall), the body held there. */
+static int tt_rec_fade(void)
+{
+	somvr_rec rr;
+	return somvr_rec_read(&g_sh, g_frame_no, &rr) ? (int)somvr_rec_fade(rr.flags) : -1;
+}
+
+static void tt_frames(int n)
+{
+	for (int i = 0; i < n; i++) {
+		g_cb_test_t += 1.0 / 90;
+		frame();
+	}
+}
+
+static void tether_hook_tests(void)
+{
+	g_rigcfg.base = SOMVR_BASE_HEAD;
+	g_pl = &g_player;
+	g_follow.on = 1, g_follow.measure_old = 0;
+	g_cb_test_t = 9500;
+	int inp0 = g_inp.on, ctx0 = g_inp.ctx;
+	g_inp.ctx = SC_CTX_WORLD; /* (the input's tests come later: its context is still 0, a menu) */
+	setenv("SOMVR_HEAD_TETHER", "on", 1);
+	tt_config();
+	unsetenv("SOMVR_HEAD_TETHER");
+	EXPECT(g_tt.on && g_tt.cfg.start_cm == 50 && g_tt.cfg.black_cm == 90, "tether: config");
+	atomic_fetch_add(&g_req_recenter, 1);
+	tt_frames(80); /* past the 0.6 s grace */
+	EXPECT(g_tt.frames == 80 && g_tt.skipped == 0 && g_tt.why_n[0] == 0 && g_tt.off_cm < 1,
+	       "tether: not measured in the hooks (frames %llu, not measured %llu, no head %llu; off %.1f)",
+	       (unsigned long long)g_tt.frames, (unsigned long long)g_tt.skipped, (unsigned long long)g_tt.why_n[0],
+	       g_tt.off_cm);
+	/* a step on open ground: the follow takes the body, no fade */
+	sv_vec3 r0 = root();
+	for (int i = 0; i < 6; i++) { /* 10 cm a frame (9 m/s; the stand-in follow takes 30) */
+		g_rt_head[2] -= 0.1f;
+		tt_frames(1);
+	}
+	tt_frames(4);
+	EXPECT(NEAR(root().z, r0.z + 60, 1e-2) && g_tt.s.episodes == 0 && tt_rec_fade() == 0 && g_tt.off_max < 50,
+	       "tether: open ground: root +%g, episodes %llu, fade %d, the most %.1f cm", root().z - r0.z,
+	       (unsigned long long)g_tt.s.episodes, tt_rec_fade(), g_tt.off_max);
+	/* the head quicker than the follow (4 cm a frame here, 10 cm a frame the head: 40 cm/s at 4 Hz...): past 50 cm while
+	 * the follow takes each step whole = catching up, no fade (when=held); build 18's when=always fades */
+	float step0 = g_follow.step_cm;
+	g_follow.step_cm = 4;
+	for (int pass = 0; pass < 2; pass++) {
+		g_tt.always = pass;
+		uint64_t e1 = g_tt.s.episodes, c1 = g_tt.catchup;
+		for (int i = 0; i < 12; i++) {
+			g_rt_head[2] -= 0.1f;
+			tt_frames(1);
+		}
+		float most = g_tt.off_cm;
+		tt_frames(40); /* caught up */
+		EXPECT(most > 55 && g_tt.off_cm < 25 && (pass ? g_tt.s.episodes == e1 + 1 && g_tt.catchup == c1
+							  : g_tt.s.episodes == e1 && g_tt.catchup > c1 + 2),
+		       "tether: catching up (when=%s): the most %.1f cm, now %.1f, episodes +%llu, catch-up frames +%llu",
+		       pass ? "always" : "held", most, g_tt.off_cm, (unsigned long long)(g_tt.s.episodes - e1),
+		       (unsigned long long)(g_tt.catchup - c1));
+	}
+	g_tt.always = 0;
+	g_follow.step_cm = step0;
+	atomic_fetch_add(&g_req_recenter, 1); /* the follow's dead zone left a few cm: the origin back on the head */
+	tt_frames(2);
+	uint64_t ep0 = g_tt.s.episodes;
+	/* the body at a wall, the head 70 cm into it: half faded; the head back in 0.4 s: clear, no back */
+	g_wall = 1, g_wall_z = root().z;
+	g_rt_head[2] -= 0.7f;
+	tt_frames(30);
+	EXPECT(g_tt.s.episodes == ep0 + 1 && NEAR(g_tt.off_cm, 70, 0.5) && tt_rec_fade() >= 120 && tt_rec_fade() <= 135 &&
+		       g_tt.relatches == 0,
+	       "tether: 70 cm into the wall: off %.1f, fade %d, episodes %llu", g_tt.off_cm, tt_rec_fade(),
+	       (unsigned long long)g_tt.s.episodes);
+	g_rt_head[2] += 0.7f;
+	tt_frames(36);
+	EXPECT(tt_rec_fade() == 0 && !g_tt.s.in && g_tt.relatches == 0 && log_has("TETHER t=") &&
+		       log_has("clear again: the view faded in (the farthest 70 cm") && log_has("frames ago): the view fades"),
+	       "tether: the head back from the wall: fade %d, in %d, back %llu", tt_rec_fade(), g_tt.s.in,
+	       (unsigned long long)g_tt.relatches);
+	/* 100 cm into it: black in 0.15 s, 0.3 s of black = back at Talion's eyes (the next frame's eyes), then it fades in */
+	g_rt_head[2] -= 1.0f;
+	float p0x = g_rig.p0.x, p0z = g_rig.p0.z;
+	int black_at = -1, back_at = -1, clear_at = -1;
+	for (int i = 0; i < 90 && clear_at < 0; i++) {
+		tt_frames(1);
+		int fd = tt_rec_fade();
+		if (fd == 255 && black_at < 0)
+			black_at = i;
+		if (g_tt.relatches && back_at < 0)
+			back_at = i;
+		if (back_at >= 0 && fd == 0)
+			clear_at = i;
+	}
+	EXPECT(black_at >= 13 && black_at <= 16 && back_at >= black_at + 27 && back_at <= black_at + 29 &&
+		       clear_at >= back_at + 26 && clear_at <= back_at + 29 && g_tt.relatches == 1 && g_tt.off_cm < 1 &&
+		       NEAR(root().z, g_wall_z, 1e-3),
+	       "tether: 100 cm into the wall: black at frame %d, back %d, clear %d, back %llu, off %.1f", black_at, back_at,
+	       clear_at, (unsigned long long)g_tt.relatches, g_tt.off_cm);
+	EXPECT(log_has("cm off: the view back to Talion's eyes (the rig's origin re-latched by ") &&
+		       NEAR(hypotf(g_rig.p0.x - p0x, g_rig.p0.z - p0z), 100, 0.5),
+	       "tether: the back: the origin moved %g,%g", g_rig.p0.x - p0x, g_rig.p0.z - p0z);
+	/* the head back where it was: the follow takes the body back from the wall (no fade) */
+	g_wall = 0;
+	g_rt_head[2] += 1.0f;
+	uint64_t e0 = g_tt.s.episodes;
+	tt_frames(10);
+	EXPECT(g_tt.s.episodes == e0 && tt_rec_fade() == 0 && NEAR(root().z, g_wall_z - 100, 1e-2),
+	       "tether: back from the wall: episodes +%llu, fade %d, root %g", (unsigned long long)(g_tt.s.episodes - e0),
+	       tt_rec_fade(), root().z - g_wall_z);
+	/* a menu: not measured, logged once (the reason), counted */
+	g_inp.on = 1, g_inp.ctx = SC_CTX_MENU;
+	uint64_t m0 = g_tt.why_n[3];
+	tt_frames(200);
+	EXPECT(g_tt.why_n[3] - m0 == 200 && log_has("not measured: a menu (frames so far"), "tether: the menu %llu",
+	       (unsigned long long)(g_tt.why_n[3] - m0));
+	g_inp.ctx = SC_CTX_WORLD;
+	tt_end_log();
+	EXPECT(log_has("not measured: a menu 200; the grace after ") && log_has(" frames (when=held; the most "),
+	       "tether: END's reasons");
+	printf("tether in the hooks: measured %llu of %llu frames; the follow catching up past 50 cm: no fade (when=held), a "
+	       "fade (always); 70 cm in the wall = half, back out clear; 100 cm = black "
+	       "in %d frames, back after %d, clear %d later; a menu not measured\n", (unsigned long long)(g_tt.frames -
+	       g_tt.skipped), (unsigned long long)g_tt.frames, black_at + 1, back_at - black_at, clear_at - back_at);
+	memset(&g_tt, 0, sizeof g_tt);
+	g_inp.on = inp0, g_inp.ctx = ctx0;
+	g_rt_head[0] = g_rt_head[1] = g_rt_head[2] = 0;
+	g_follow.on = 0;
+	g_cb_test_t = -1;
+	g_rigcfg.base = SOMVR_BASE_CAMERA;
+	g_pl = NULL;
+	frame();
+}
+
 /* ---- SOMVR_COMBAT: stand-ins for PlayerCombat and its targeting bands, the player's server Combat, the orcs'
  * Combat/CCharacter/HOBJECT, the Combat/Attack category, Combat_DealHit, the record lookup, AttackData, the AI stimulus
  * and its manager, the IEngineTimer and its CEngineTimers (references counted like the engine's, re-combat-vr.md 2.2) */
@@ -7684,11 +7821,11 @@ static void vm_tests(const char *base)
 	vm_put_file(path, "# my settings\nSNAP_DEG=45\nTURN_DPS = 90 \r\nVIGNETTE=0,4\nBOGUS=1\nHAPTICS=\"50\"\nVIEW=third\n");
 	vm_restart();
 	somvr_settings s = vm_cur();
-	EXPECT(g_vm.on && somvr_vrmenu_ok(&g_vmo) && g_vmo.size == 192 && g_vmo.version == SOMVR_VRMENU_VERSION &&
+	EXPECT(g_vm.on && somvr_vrmenu_ok(&g_vmo) && g_vmo.size == 208 && g_vmo.version == SOMVR_VRMENU_VERSION &&
 		       g_vmo.pid == (int32_t)getpid() && g_vmo.avail == (SOMVR_VMA_VIEW | SOMVR_VMA_HUD | SOMVR_VMA_COMFORT | sz_vm_avail()) &&
 		       g_vmo.blink_on_ms == 90 && atomic_load(&g_vmo.gen) == 1,
-	       "vrmenu header: ok %d size %u avail %#x blink %u gen %u", somvr_vrmenu_ok(&g_vmo), g_vmo.size, g_vmo.avail,
-	       g_vmo.blink_on_ms, atomic_load(&g_vmo.gen));
+	       "vrmenu header: ok %d size %u avail %#llx blink %u gen %u", somvr_vrmenu_ok(&g_vmo), g_vmo.size,
+	       (unsigned long long)g_vmo.avail, g_vmo.blink_on_ms, atomic_load(&g_vmo.gen));
 	EXPECT(g_vm.file_mask == ((1u << SOMVR_SK_SNAP_DEG) | (1u << SOMVR_SK_TURN_DPS) | (1u << SOMVR_SK_HAPTICS) |
 				  (1u << SOMVR_SK_VIEW)) &&
 		       s.turn == 0 && NEAR(s.snap_deg, 45, 1e-4) && NEAR(s.turn_dps, 90, 1e-4) && NEAR(s.vignette, 0.6, 1e-6) &&
@@ -7932,6 +8069,77 @@ static void vm_tests(const char *base)
 	pthread_mutex_unlock(&g_vm_save_mu);
 	EXPECT(sv1 == sv0 + 1 && vm_slurp(path, buf, sizeof buf) && strstr(buf, "\nSNAP_DEG=90\n"),
 	       "the writer thread did not save within 4 s (saves %llu)", (unsigned long long)(sv1 - sv0));
+	/* build 19 (re-xr-pipeline.md 73): a v6 menu's settings file (build 17b's lines, as its menu wrote them) read by this
+	 * build: its 7 keys and values over the switches, no bad line; the Fight page's new rows shown with their features
+	 * (white box: the wraith step wanted, the stealth kill on, FRONT's judge hooked, the counter icon hooked) and their
+	 * keys following the switches; three Fight changes applied live and saved after the old lines, which stay */
+	{
+		somvr_step_cfg sc0 = g_step.cfg;
+		int hb0 = g_hf.bite, ws_want0 = g_ws.want, ws_on0 = g_ws.on, stl0 = g_stl.mode, stls0 = g_stl.start_mode;
+		int ffm0 = g_ff.mode, ffs0 = g_ff.on_score, ffg0 = g_ff.on_grant, ffp0 = g_ff.pace_on, cpf0 = g_cp.ok_fx;
+		int cpm0 = atomic_load(&g_cp.mode);
+		float gap0 = g_ff.pcfg.gap_s;
+		g_ws.want = g_ws.on = 1, g_stl.mode = g_stl.start_mode = STL_ON;
+		g_ff.mode = FF_ON, g_ff.on_score = g_ff.on_grant = 1, g_ff.pace_on = 1, g_ff.pcfg.gap_s = 0.7f;
+		g_cp.ok_fx = 1, atomic_store(&g_cp.mode, CP_HIDE);
+		static const char v6[] = "# Shadow of Mordor VR settings (SOMVR_SETTINGS), written by the in-game VR menu "
+					 "(SOMVR_VRMENU=1).\n# KEY=VALUE; a key here wins over its SOMVR_* switch, a key not here "
+					 "follows the switch.\nTURN=smooth\nTURN_DPS=90\nVIGNETTE=0.5\nSNAP_BLINK_MS=140\n"
+					 "HAPTICS=100\nPHASE=on\nCOMBAT_BITE=on\n";
+		snprintf(g_vm.path, sizeof g_vm.path, "%s", path);
+		vm_put_file(path, v6);
+		vm_restart();
+		somvr_settings u = vm_cur();
+		uint32_t k7 = 1u << SOMVR_SK_TURN | 1u << SOMVR_SK_TURN_DPS | 1u << SOMVR_SK_VIGNETTE |
+			      1u << SOMVR_SK_SNAP_BLINK_MS | 1u << SOMVR_SK_HAPTICS | 1u << SOMVR_SK_PHASE | 1u << SOMVR_SK_COMBAT_BITE;
+		uint64_t fb = SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON;
+		EXPECT(g_vm.on && g_vm.file_mask == k7 && u.turn == 1 && u.turn_dps == 90 &&
+			       NEAR(u.vignette, 0.5, 1e-6) && u.blink_ms == 140 && NEAR(u.haptics, 1.0, 1e-6) && u.phase == 1 &&
+			       u.bite == 1 && (g_vmo.avail & fb) == fb && u.wstep == 1 && u.stealth == 1 && u.crowd_ms == 700 &&
+			       u.counter_icon == 0 && g_inp.cfg.smooth && NEAR(g_inp.cfg.smooth_rate * VM_DEG, 90, 1e-3),
+		       "a v6 file in v7: mask %#x avail %#llx, wstep %u stealth %u pace %u icon %u", g_vm.file_mask,
+		       (unsigned long long)g_vmo.avail, u.wstep, u.stealth, u.crowd_ms, u.counter_icon);
+		/* the layer's clicks on the Fight page: the pace 1.0 s, the wraith step off, the stealth kill off, the icon on */
+		u.crowd_ms = 1000, u.wstep = 0, u.stealth = 0, u.counter_icon = 1;
+		somvr_vrmenu_publish(&g_vmo, &u);
+		iframe();
+		int req = atomic_load(&g_ws.req_onoff);
+		EXPECT(log_has("VRMENU apply CROWD_PACE_MS=1000 from the menu") && log_has("VRMENU apply WRAITH_STEP=off from the menu") &&
+			       log_has("VRMENU apply STEALTH_KILL=off from the menu") &&
+			       log_has("VRMENU apply COUNTER_ICON=game from the menu") && NEAR(g_ff.pcfg.gap_s, 1.0, 1e-6) &&
+			       g_ff.pace_on && g_stl.mode == STL_OFF && (req == 0 || !g_ws.on) && atomic_load(&g_cp.mode) == CP_GAME,
+		       "the Fight rows live: pace %.2f s on %d, stealth %d, wstep req %d on %d, icon %d", g_ff.pcfg.gap_s,
+		       g_ff.pace_on, g_stl.mode, req, g_ws.on, atomic_load(&g_cp.mode));
+		u.crowd_ms = 0, u.stealth = 1;
+		somvr_vrmenu_publish(&g_vmo, &u);
+		iframe();
+		EXPECT(!g_ff.pace_on && g_stl.mode == STL_ON, "the pace off (%d), the stealth kill on again (%d)", g_ff.pace_on,
+		       g_stl.mode);
+		u.crowd_ms = 1000, u.stealth = 0;
+		somvr_vrmenu_publish(&g_vmo, &u);
+		iframe();
+		somvr_settings w6 = g_vm.start;
+		char w7[4096];
+		somvr_set_format(&u, k7 | 1u << SOMVR_SK_WRAITH_STEP | 1u << SOMVR_SK_STEALTH_KILL | 1u << SOMVR_SK_CROWD_PACE_MS |
+					 1u << SOMVR_SK_COUNTER_ICON, w7, sizeof w7);
+		EXPECT(vm_save_tick(T + 40, 1, 0) == 1 && vm_slurp(path, buf, sizeof buf) && !strcmp(buf, w7) &&
+			       !strncmp(buf, v6, sizeof v6 - 1) && somvr_set_diff(&w6, &u) == (1u << SOMVR_SK_WRAITH_STEP |
+			       1u << SOMVR_SK_STEALTH_KILL | 1u << SOMVR_SK_CROWD_PACE_MS | 1u << SOMVR_SK_COUNTER_ICON),
+		       "saved: the v6 lines unchanged, the four new keys after them:\n%s", buf);
+		vm_restart(); /* read back */
+		u = vm_cur();
+		EXPECT(g_vm.file_mask == (k7 | 1u << SOMVR_SK_WRAITH_STEP | 1u << SOMVR_SK_STEALTH_KILL |
+					  1u << SOMVR_SK_CROWD_PACE_MS | 1u << SOMVR_SK_COUNTER_ICON) &&
+			       u.crowd_ms == 1000 && !u.wstep && !u.stealth && u.counter_icon && u.turn == 1 && u.bite == 1 &&
+			       g_stl.mode == STL_OFF && NEAR(g_ff.pcfg.gap_s, 1.0, 1e-6),
+		       "read back: mask %#x, the Fight values held and applied at the start", g_vm.file_mask);
+		g_step.cfg = sc0, g_hf.bite = hb0, g_ws.want = ws_want0, g_ws.on = ws_on0, atomic_store(&g_ws.req_onoff, -1);
+		g_stl.mode = stl0, g_stl.start_mode = stls0, g_ff.mode = ffm0, g_ff.on_score = ffs0, g_ff.on_grant = ffg0;
+		g_ff.pace_on = ffp0, g_ff.pcfg.gap_s = gap0, g_cp.ok_fx = cpf0, atomic_store(&g_cp.mode, cpm0);
+		printf("vrmenu19 a v6 settings file read by v7 (7 keys, the same values), the Fight page's rows from their "
+		       "switches, live (the pace, the wraith step, the stealth kill, the counter icon), saved after the old "
+		       "lines, read back\n");
+	}
 	/* back to the main run's state: no menu */
 	g_vm.on = 0;
 	unsetenv("SOMVR_VRMENU"), unsetenv("SOMVR_SETTINGS");
@@ -9014,10 +9222,27 @@ static void ab_tests(void)
 	int phase0 = g_sg.g.phase;
 	double t0 = g_cb_test_t;
 	memset(&g_ab, 0, sizeof g_ab);
-	g_dg.on = 1, g_dg.a_last = 0, g_dg.ours = 0, g_dg.next_ok = 1e12; /* a dodge asked for = refused by the cooldown (no rays) */
+	g_dg.on = g_dg.want = 1, g_dg.a_last = 0, g_dg.ours = 0, g_dg.next_ok = 1e12; /* a dodge asked for = refused by the cooldown (no rays) */
 	g_sg.on = 1, g_sg.g.mark = 0, g_sg.g.phase = 0;
 	g_step.on = 1, g_cl.on = 1, g_cl.s.active = 0, g_th.on = 0, g_inp.cfg.game_moves = 0;
 	g_cb_test_t = 40000;
+	/* build 19: the VR menu's 64-bit avail - the Fight page's Dodge (A) row (bit 32) while the dodge is ours; the row
+	 * turns it off and on live (dg_vm_set), the bit stays (SOMVR_DODGE at the start) */
+	uint64_t sa_dodge = st_avail();
+	g_inp.cfg.game_moves = 1;
+	uint64_t sa_game = st_avail();
+	g_inp.cfg.game_moves = 0, g_dg.on = g_dg.want = 0;
+	uint64_t sa_off = st_avail();
+	const char *dn_off = dg_vm_set(&(somvr_settings){ .dodge = 1 });
+	int dg_unused = !g_dg.on;
+	g_dg.on = g_dg.want = 1;
+	const char *dn0 = dg_vm_set(&(somvr_settings){ .dodge = 0 });
+	int dg_off = g_dg.on, dg_bit = (st_avail() & SOMVR_VMA_DODGE) != 0;
+	dg_vm_set(&(somvr_settings){ .dodge = 1 });
+	EXPECT(sa_dodge == SOMVR_VMA_DODGE && sa_game == SOMVR_VMA_MOVES && sa_off == 0 && SOMVR_VMA_DODGE == 1ull << 32 &&
+		       dg_unused && strstr(dn_off, "not used") && !dg_off && dg_bit && strstr(dn0, "does nothing") && g_dg.on,
+	       "st_avail: the dodge %#llx, the game's moves %#llx, off %#llx; the row: off '%s' (on %d, the bit %d), on again %d",
+	       (unsigned long long)sa_dodge, (unsigned long long)sa_game, (unsigned long long)sa_off, dn0, dg_off, dg_bit, g_dg.on);
 	sc_tick_out o;
 	memset(&o, 0, sizeof o);
 	o.live = 1, o.ctx = SC_CTX_WORLD;
@@ -14476,6 +14701,15 @@ static void py_tests(void)
 	EXPECT(set && was == 5 && pcb[RX_C_NOBLOCK] == PY_TYPE_THROUGH, "parry: Talion's +0x55b for the call (%u)", pcb[RX_C_NOBLOCK]);
 	py_through_back(pc, set, was);
 	EXPECT(pcb[RX_C_NOBLOCK] == 5, "parry: +0x55b back (%u)", pcb[RX_C_NOBLOCK]);
+	g_py.dodge = 0, g_py.dodge_s = 1.5f;
+	py_dodge(c, 0, 1, -1, 103);
+	EXPECT(!py_open_now(c, 103.1), "parry: a dodge opens nothing with SOMVR_PARRY_DODGE off");
+	g_py.dodge = 1;
+	py_dodge(c, 0, 0, -1, 103); /* not applied (log mode) */
+	EXPECT(!py_open_now(c, 103.1), "parry: an unapplied dodge opens nothing");
+	py_dodge(c, 0, 1, 250, 103);
+	EXPECT(py_open_now(c, 104.4) && !py_open_now(c, 104.6) && g_py.dodge_opens == 1 && log_has("PARRY dodge"),
+	       "parry: a dodged blow opens its attacker for 1.5 s");
 	g_py.on = 0;
 	in.ts = 0.8f;
 	py_parry(c, 0, &in, pt, 105);
@@ -14484,7 +14718,7 @@ static void py_tests(void)
 	memset(&g_py, 0, sizeof g_py);
 	g_cb_test_t = tt;
 	printf("parry  the window (an early contact a block, 10 ms before the impact a parry), the 1 s opening, through/riposte/none "
-	       "by tier and time, no REACT roll while open, Talion's +0x55b for the call and back, off\n");
+	       "by tier and time, no REACT roll while open, Talion's +0x55b for the call and back, a dodge's 1.5 s opening, off\n");
 }
 
 static void ff_tests(void)
@@ -14615,8 +14849,98 @@ static void ff_tests(void)
 	memcpy(&cc, pl + FF_PL_COPY, sizeof cc);
 	EXPECT(cc.pos[1] == 2.f && g_ff.n.cam_skips == 1 && g_ff.n.cam[0] == 1 && g_ff.n.cam[1] == 1,
 	       "front: camcopy, a stale head: the game's (%.1f)", cc.pos[1]);
+	/* build 19, SOMVR_CROWD_PACE_MS: a grant holds the turn (the next candidate in view vetoed: CROWD wait); let go after
+	 * start_s with no blow; then one grant a pass: a better second candidate of the same pass wins, the kept one's score
+	 * written back to -50; a worse third one vetoed */
+	static _Alignas(16) unsigned char ent2[0x240], ch2[0xd40];
+	uintptr_t chp2 = (uintptr_t)ch2, id2 = 0x5600;
+	memcpy(ent2 + FF_E_ORC, &chp2, 8), memcpy(ch2 + FF_O_HOBJ, &id2, 8), memcpy(ent2 + FF_E_TGT, &g_th.ph[0], 8);
+	memcpy(tgt + FF_T_HOBJ, &g_th.ph[0], 8);
+	memcpy(ch + FF_O_POS, front, 12), memcpy(ch2 + FF_O_POS, front, 12);
+	g_ff.pace_on = 1;
+	somvr_pace_cfg_default(&g_ff.pcfg);
+	somvr_pace_init(&g_ff.pace);
+	g_cb_test_t += 0.01, clk[0] += 10;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	g_fft_score = 4.0f;
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x904, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	somvr_w_ffgrant((uintptr_t)ent, clk[0]);
+	g_cb_test_t += 0.05, clk[0] += 50;
+	somvr_w_ffscore((uintptr_t)ent2, (uintptr_t)tgt, 0x905, 1, 1);
+	float sc2 = 0;
+	memcpy(&sc2, ent2 + FF_E_SCORE, 4);
+	EXPECT(sc == 4.0f && sc2 == -50.f && g_ff.pace.grants == 1 && g_ff.n.verdict[SOMVR_FR_PACE] == 1 &&
+		       log_has("CROWD grant t=") && log_has("CROWD wait t=") && log_has("another orc's grant holds"),
+	       "crowd: the grant holds the turn (%.1f, %.1f)", sc, sc2);
+	g_cb_test_t += 2.6, clk[0] += 2600;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	g_fft_score = 3.0f;
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x906, 1, 1);
+	g_fft_score = 5.0f;
+	somvr_w_ffscore((uintptr_t)ent2, (uintptr_t)tgt, 0x906, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4), memcpy(&sc2, ent2 + FF_E_SCORE, 4);
+	EXPECT(g_ff.pace.let_go == 1 && sc == -50.f && sc2 == 5.0f && g_ff.pn.pass_writes == 1 && log_has("(written back)"),
+	       "crowd: let go after 2.5 s; one grant a pass: the better one kept (%.1f, %.1f)", sc, sc2);
+	g_fft_score = 2.0f;
+	somvr_w_ffscore((uintptr_t)ent, (uintptr_t)tgt, 0x906, 1, 1);
+	memcpy(&sc, ent + FF_E_SCORE, 4);
+	EXPECT(sc == -50.f && g_ff.n.verdict[SOMVR_FR_PASS] == 1 && log_has("kept in this pass (one grant a pass)"),
+	       "crowd: a worse one in the same pass vetoed (%.1f)", sc);
+	/* the frame: THREAT's track of orc 2 (a keyed blow, its impact 0.8 s; its Combat not readable here): its start on
+	 * the timeline (no grant seen: unannounced), the others held meanwhile, then its impact (the first: no gap) */
+	struct th_track tr0 = g_th.tr[0];
+	memset(&g_th.tr[0], 0, sizeof g_th.tr[0]);
+	g_th.tr[0].c = 0x4240, g_th.tr[0].hobj = id2, g_th.tr[0].serial = 777, g_th.tr[0].t0 = g_cb_test_t;
+	g_th.tr[0].k.impact = 0.8f, g_th.tr[0].k.bpw = g_th.tr[0].k.epw = g_th.tr[0].k.bcol = -1.f;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	int held = !somvr_pace_may(&g_ff.pace, &g_ff.pcfg, id, g_cb_test_t + 0.1, NULL);
+	EXPECT(g_ff.pace.starts == 1 && g_ff.pace.unannounced == 1 && held && log_has("CROWD start t=") &&
+		       log_has("NO GRANT seen (unannounced)"),
+	       "crowd: the track's start on the timeline, the others held (%d)", held);
+	g_cb_test_t += 0.85, clk[0] += 850;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	EXPECT(g_ff.pace.impacts == 1 && log_has("CROWD impact t=") && log_has("(the first)") &&
+		       somvr_pace_may(&g_ff.pace, &g_ff.pcfg, id, g_cb_test_t, NULL),
+	       "crowd: its impact on the timeline, the turn free");
+	/* build 19, SOMVR_CROWD_ANSWER_MS: orc 2's next blow (marked as a berserker's) lands and DEFENCE says it hit Talion:
+	 * its turn holds on (the others wait: its answer to a cut starts in its own turn); its answer starts in the hold (no
+	 * grant, no overlap); that one is dodged: the turn is free at once */
+	g_ff.pcfg.answer_s = 3.0f;
+	memset(&g_th.tr[0], 0, sizeof g_th.tr[0]);
+	g_th.tr[0].c = 0x4240, g_th.tr[0].hobj = id2, g_th.tr[0].serial = 778, g_th.tr[0].t0 = g_cb_test_t;
+	g_th.tr[0].k.impact = 0.8f, g_th.tr[0].k.bpw = g_th.tr[0].k.epw = g_th.tr[0].k.bcol = -1.f;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	int marked = somvr_pace_may_answer(&g_ff.pace, &g_ff.pcfg, id2);
+	g_cb_test_t += 0.85, clk[0] += 850;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	int wait = somvr_pace_holding(&g_ff.pace, id2, NULL);
+	ff_ans_verdict(0x4240, id2, 1, g_cb_test_t);
+	EXPECT(marked && wait == 1 && somvr_pace_holding(&g_ff.pace, id2, NULL) == 2 && g_ff.pace.impacts == 2 &&
+		       !somvr_pace_may(&g_ff.pace, &g_ff.pcfg, id, g_cb_test_t + 2.0, NULL) && log_has("CROWD answer-hold t=") &&
+		       log_has("its blow hit Talion -> its turn holds while he recoils"),
+	       "crowd: a berserker's blow that hit: its turn holds (%d)", wait);
+	g_cb_test_t += 0.5, clk[0] += 500;
+	memset(&g_th.tr[0], 0, sizeof g_th.tr[0]);
+	g_th.tr[0].c = 0x4240, g_th.tr[0].hobj = id2, g_th.tr[0].serial = 779, g_th.tr[0].t0 = g_cb_test_t;
+	g_th.tr[0].k.impact = 0.8f, g_th.tr[0].k.bpw = g_th.tr[0].k.epw = g_th.tr[0].k.bcol = -1.f;
+	uint64_t ov0 = g_ff.pace.overlaps, un0 = g_ff.pace.unannounced;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	EXPECT(g_ff.pace.answers == 1 && g_ff.pace.overlaps == ov0 && g_ff.pace.unannounced == un0 &&
+		       log_has("ITS ANSWER in its own held turn (no grant)") && log_has("; source: no hit of ours just before") &&
+		       log_has("CROWD answer t=") && log_has("ms before its impact (from its start)"),
+	       "crowd: its answer starts in its own turn (answers %llu)", (unsigned long long)g_ff.pace.answers);
+	g_cb_test_t += 0.85, clk[0] += 850;
+	ff_cues(head, hq, g_cb_test_t, &e, haps, 0, 0);
+	ff_ans_verdict(0x4240, id2, 0, g_cb_test_t);
+	EXPECT(!somvr_pace_holding(&g_ff.pace, id2, NULL) && somvr_pace_may(&g_ff.pace, &g_ff.pcfg, id, g_cb_test_t, NULL) &&
+		       log_has("did not land (blocked, parried or dodged) -> no answer to fear: the turn is free"),
+	       "crowd: its answer dodged: the turn free");
+	g_th.tr[0] = tr0;
 	ff_end_log();
-	EXPECT(log_has("FRONT END judged") && log_has("grants at Talion 1 (in-view 0, ready 1"), "front: END");
+	EXPECT(log_has("FRONT END judged") && log_has("grants at Talion 2 (in-view 1, ready 1") && log_has("CROWD END pace 700 ms") &&
+		       log_has("CROWD END answers (SOMVR_CROWD_ANSWER_MS=3000): verdicts at Talion hit 1 / not 1; holds after a hit 1"),
+	       "front: END");
 	memset(&g_ff, 0, sizeof g_ff);
 	g_ff_sites = s0, g_ffg.clock_pp = cpp, g_th.ph[0] = ph0, g_th.ph[1] = ph1, g_cb_test_t = tt;
 	g_th.cfg.edge = edge0, g_th.cfg.view_deg = view0;
@@ -15266,6 +15590,7 @@ int main(int argc, char **argv)
 	head_tests();
 	hv_tests();
 	follow_tests();
+	tether_hook_tests();
 	combat_tests();
 	react_tests();
 	input_tests();
