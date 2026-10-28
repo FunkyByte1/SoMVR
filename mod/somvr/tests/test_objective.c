@@ -399,7 +399,32 @@ static void test_strike_ground(void) {
           "none: NaN, at the head, another cell");
 }
 
+/* build 20: the bow's aim ring (SOMVR_OBF_AIM) - centred on the point, facing the head, deg of the view across at any
+ * distance; the gold ring's cell on the world, the strike's ring square on an orc */
+static void test_aim_ring(void) {
+    float head[3] = {0, 1.7f, 0};
+    for (int k = 0; k < 2; k++) {
+        float pos[3] = {k ? 0.5f : 4.0f, k ? 1.5f : 1.0f, k ? -2.0f : -20.0f};
+        float d = sqrtf((pos[0] - head[0]) * (pos[0] - head[0]) + (pos[1] - head[1]) * (pos[1] - head[1]) +
+                        (pos[2] - head[2]) * (pos[2] - head[2]));
+        somvr_ob_place p = somvr_ob_aim(head, pos, 2.2f, k);
+        float ring = 2 * d * tanf(1.1f * 0.0174533f), want = ring * 128 / (k ? 108.0f : 124.0f);
+        const float *q = p.pose;
+        float zx = 2 * (q[0] * q[2] + q[3] * q[1]), zy = 2 * (q[1] * q[2] - q[3] * q[0]), zz = 1 - 2 * (q[0] * q[0] + q[1] * q[1]);
+        CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == (k ? SOMVR_OB_CELL_STRIKE : SOMVR_OB_CELL_RING) &&
+                  fabsf(p.pose[4] - pos[0]) < 1e-5f && fabsf(p.pose[5] - pos[1]) < 1e-5f && fabsf(p.pose[6] - pos[2]) < 1e-5f,
+              "aim ring %s: on the point", k ? "(an orc, near)" : "(the world, far)");
+        CHECK(fabsf(p.size[0] - want) < 1e-4f && p.size[0] == p.size[1], "aim ring: 2.2 deg at %.1f m = the quad %.3f m (%.3f)",
+              d, p.size[0], want);
+        CHECK(fabsf(zx - (head[0] - pos[0]) / d) < 1e-3f && fabsf(zy - (head[1] - pos[1]) / d) < 1e-3f &&
+                  fabsf(zz - (head[2] - pos[2]) / d) < 1e-3f, "aim ring: facing the head");
+    }
+    CHECK(somvr_ob_aim(head, head, 2.2f, 0).kind == SOMVR_OBK_NONE && somvr_ob_aim(head, (float[]){0, 1, -5}, NAN, 0).kind ==
+              SOMVR_OBK_NONE, "aim ring: none at the head or NaN");
+}
+
 int main(void) {
+    test_aim_ring();
     test_strike_ground();
     test_strike_mark();
     test_match_text();

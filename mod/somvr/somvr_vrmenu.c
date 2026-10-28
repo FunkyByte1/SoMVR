@@ -3,6 +3,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ==== 2. the settings ============================================================================================ */
@@ -800,6 +801,23 @@ int somvr_vm_rect_av(uint64_t avail, int item, int part, int rc[4]) {
 static int in_rect(const int rc[4], float x, float y) {
     return x >= (float)rc[0] && x < (float)(rc[0] + rc[2]) && y >= (float)rc[1] && y < (float)(rc[1] + rc[3]);
 }
+/* the buttons a page has (the hit test's order: -1 ends the list) */
+static const int g_page_buttons[4][13] = {
+    {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
+     SOMVR_VMI_TAB_CTL, SOMVR_VMI_PG_FIGHT, -1},
+    {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK,
+     SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH, SOMVR_VMI_PR_FAR,
+     SOMVR_VMI_PR_GROUP, -1},
+    {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, -1},
+    /* build 19: the Fight page = the Settings page's bottom row, the tabs, its back button */
+    {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
+     SOMVR_VMI_TAB_CTL, SOMVR_VMI_PG_BACK, -1}};
+static const int *page_buttons(int page) {
+    return g_page_buttons[page == SOMVR_VMPG_PRACTICE   ? 1
+                          : page == SOMVR_VMPG_CONTROLS ? 2
+                          : page == SOMVR_VMPG_FIGHT    ? 3
+                                                        : 0];
+}
 somvr_vm_hit somvr_vm_hit_test(float u, float v) { return somvr_vm_hit_test_av(0, SOMVR_VMPG_SETTINGS, u, v); }
 somvr_vm_hit somvr_vm_hit_test_page(int page, float u, float v) { return somvr_vm_hit_test_av(0, page, u, v); }
 somvr_vm_hit somvr_vm_hit_test_av(uint64_t avail, int page, float u, float v) {
@@ -807,20 +825,7 @@ somvr_vm_hit somvr_vm_hit_test_av(uint64_t avail, int page, float u, float v) {
     if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) return h; /* NaN too */
     float x = u * SOMVR_VM_TEX_W, y = v * SOMVR_VM_TEX_H;
     int rc[4];
-    static const int buttons[4][13] = {
-        {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
-         SOMVR_VMI_TAB_CTL, SOMVR_VMI_PG_FIGHT, -1},
-        {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK,
-         SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH, SOMVR_VMI_PR_FAR,
-         SOMVR_VMI_PR_GROUP, -1},
-        {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, -1},
-        /* build 19: the Fight page = the Settings page's bottom row, the tabs, its back button */
-        {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
-         SOMVR_VMI_TAB_CTL, SOMVR_VMI_PG_BACK, -1}};
-    const int *bl = buttons[page == SOMVR_VMPG_PRACTICE   ? 1
-                            : page == SOMVR_VMPG_CONTROLS ? 2
-                            : page == SOMVR_VMPG_FIGHT    ? 3
-                                                          : 0];
+    const int *bl = page_buttons(page);
     for (int i = 0; i < 13 && bl[i] >= 0; i++)
         if (somvr_vm_rect_av(avail, bl[i], SOMVR_VMP_BUTTON, rc) && in_rect(rc, x, y))
             return (somvr_vm_hit){bl[i], SOMVR_VMP_BUTTON};
@@ -878,7 +883,13 @@ static const uint8_t C_BG[3] = {22, 26, 33}, C_BORDER[3] = {70, 84, 104}, C_TITL
                      C_LINE[3] = {40, 47, 58}, C_ROW_HOV[3] = {38, 46, 59}, C_LABEL[3] = {208, 213, 222},
                      C_VALUE[3] = {255, 255, 255}, C_DIM[3] = {96, 101, 112}, C_BOX[3] = {52, 61, 76},
                      C_BOX_HOV[3] = {92, 116, 150}, C_BOX_DIM[3] = {32, 37, 45}, C_WARN[3] = {168, 52, 40},
-                     C_WARN_HOV[3] = {208, 72, 56}, C_HELP[3] = {150, 156, 168}; /* build 19: the Fight rows' help */
+                     C_WARN_HOV[3] = {208, 72, 56}, C_HELP[3] = {150, 156, 168}, /* build 19: the Fight rows' help */
+                     C_LOCK[3] = {150, 220, 255}; /* build 20: the locked part's outline (the ray's colour) */
+/* build 20: a w-pixel frame just inside rc */
+static void outline(const canvas *c, const int rc[4], int w, const uint8_t rgb[3]) {
+    fill(c, rc[0], rc[1], rc[2], w, rgb), fill(c, rc[0], rc[1] + rc[3] - w, rc[2], w, rgb);
+    fill(c, rc[0], rc[1], w, rc[3], rgb), fill(c, rc[0] + rc[2] - w, rc[1], w, rc[3], rgb);
+}
 
 /* a value row: its label, the < > boxes, its value (dimmed when disabled, lit when hovered); line = the separator */
 static void draw_row(const somvr_font *f, const canvas *c, const somvr_vm_view *v, int item, int line) {
@@ -894,12 +905,14 @@ static void draw_row(const somvr_font *f, const canvas *c, const somvr_vm_view *
         int b[4];
         somvr_vm_rect_av(v->avail, item, part, b);
         fill_rc(c, b, !on ? C_BOX_DIM : hov && v->hover.part == part ? C_BOX_HOV : C_BOX);
+        if (v->lock && hov && v->hover.part == part) outline(c, b, 3, C_LOCK); /* build 20 */
         char g[2] = {(char)(part == SOMVR_VMP_LESS ? SOMVR_FONT_LEFT : SOMVR_FONT_RIGHT), 0};
         text_mid(f, c, b[0], b[0] + b[2], ty, g, on ? C_VALUE : C_DIM);
     }
     char val[32];
     somvr_vm_value(&v->set, item, val, sizeof val);
     text_mid(f, c, VALUE_X0, MORE_X, ty, val, on ? C_VALUE : C_DIM);
+    if (v->lock && hov && v->hover.part == SOMVR_VMP_ROW) outline(c, rc, 3, C_LOCK); /* build 20: the row locked */
 }
 /* a button: lit when hovered, dimmed when disabled; label NULL = its own */
 static void draw_button(const somvr_font *f, const canvas *c, const somvr_vm_view *v, int item, const char *label) {
@@ -907,6 +920,7 @@ static void draw_button(const somvr_font *f, const canvas *c, const somvr_vm_vie
     int warn = on && item == SOMVR_VMI_QUIT && v->quit_armed; /* pressed once: red, "Confirm" */
     somvr_vm_rect_av(v->avail, item, SOMVR_VMP_BUTTON, rc);
     fill_rc(c, rc, !on ? C_BOX_DIM : warn ? (hov ? C_WARN_HOV : C_WARN) : hov ? C_BOX_HOV : C_BOX);
+    if (v->lock && hov && on) outline(c, rc, 3, C_LOCK); /* build 20: the button locked */
     text_mid(f, c, rc[0], rc[0] + rc[2], rc[1] + (rc[3] - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2,
              label ? label : somvr_vm_label(item), on ? C_VALUE : C_DIM);
 }
@@ -942,6 +956,7 @@ void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_vi
                 fill(&c, rc[0] + 8, rc[1] + rc[3] - 4, rc[2] - 16, 3, C_TITLE);
                 text_mid(f, &c, rc[0], rc[0] + rc[2], rc[1] + (rc[3] - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2,
                          somvr_vm_label(tabs[i]), C_TITLE);
+                if (v->lock && v->hover.item == tabs[i]) outline(&c, rc, 3, C_LOCK); /* build 20 */
             } else {
                 draw_button(f, &c, v, tabs[i], NULL);
             }
@@ -1081,8 +1096,9 @@ int somvr_vm_panel_pose(const somvr_posef *grip, int hand, const somvr_posef *he
 }
 
 static const char *const g_why[] = {"none", "the palm gesture", "the menu button", "looked away", "the hand lost",
-                                    "its close box", "off", "the wrist turned over (the watch)"};
-const char *somvr_vm_why(int why) { return why >= 0 && why <= SOMVR_VMW_TURNED ? g_why[why] : "?"; }
+                                    "its close box", "off", "the wrist turned over (the watch)",
+                                    "the bow came out in its hand"};
+const char *somvr_vm_why(int why) { return why >= 0 && why <= SOMVR_VMW_BOW ? g_why[why] : "?"; }
 
 void somvr_vm_greset(somvr_vm_gstate *g) {
     memset(g, 0, sizeof *g);
@@ -1167,4 +1183,177 @@ int somvr_vm_gesture(somvr_vm_gstate *g, const somvr_vm_gcfg *c, const somvr_vm_
     }
     g->opens += ev > 0, g->closes += ev < 0;
     return ev;
+}
+
+/* ---- build 20: the pointer's lock on the panel's parts (SOMVR_XR_PTR_SNAP) ------------------------------------- */
+void somvr_vm_snapcfg_default(somvr_vm_snapcfg *c) {
+    *c = (somvr_vm_snapcfg){.hold_deg = 1.0f, .magnet_deg = 2.0f, .min_m = 0.003f};
+}
+void somvr_vm_snap_reset(somvr_vm_snap *s) {
+    memset(s, 0, sizeof *s);
+    s->lock = s->raw = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
+}
+/* the parts a pointer can press on page (the hit test's: the buttons, then each shown row's < > and the row itself;
+ * the card: its close box alone) */
+static int snap_parts(uint64_t avail, int page, int card, somvr_vm_hit *out, int cap) {
+    int n = 0, rc[4];
+    if (card) {
+        out[n++] = (somvr_vm_hit){SOMVR_VMI_CLOSE, SOMVR_VMP_BUTTON};
+        return n;
+    }
+    const int *bl = page_buttons(page);
+    for (int i = 0; i < 13 && bl[i] >= 0 && n < cap; i++)
+        if (somvr_vm_rect_av(avail, bl[i], SOMVR_VMP_BUTTON, rc)) out[n++] = (somvr_vm_hit){bl[i], SOMVR_VMP_BUTTON};
+    if (page == SOMVR_VMPG_CONTROLS) return n;
+    int r0 = page == SOMVR_VMPG_PRACTICE ? SOMVR_VMI_PR_ORC : 0, r1 = page == SOMVR_VMPG_PRACTICE ? r0 + 1 : SOMVR_VMI_ROWS;
+    for (int item = r0; item < r1; item++) {
+        if (page != SOMVR_VMPG_PRACTICE &&
+            somvr_vm_row_page(item) != (page == SOMVR_VMPG_FIGHT ? SOMVR_VMPG_FIGHT : SOMVR_VMPG_SETTINGS))
+            continue;
+        if (!somvr_vm_rect_av(avail, item, SOMVR_VMP_ROW, rc)) continue;
+        for (int part = SOMVR_VMP_ROW; part <= SOMVR_VMP_MORE && n < cap; part++) out[n++] = (somvr_vm_hit){item, part};
+    }
+    return n;
+}
+/* texels from (x, y) to the part's own area: its rect (0 inside); a row's own area leaves out its < > boxes (inside one:
+ * none - the small target first: the point on a box takes the box from its row at once, the box then holds) */
+static float own_dist(uint64_t avail, somvr_vm_hit p, float x, float y) {
+    int rc[4];
+    if (!somvr_vm_rect_av(avail, p.item, p.part, rc)) return 1e9f;
+    float dx = fmaxf(fmaxf((float)rc[0] - x, x - (float)(rc[0] + rc[2])), 0);
+    float dy = fmaxf(fmaxf((float)rc[1] - y, y - (float)(rc[1] + rc[3])), 0);
+    float d = sqrtf(dx * dx + dy * dy);
+    if (p.part == SOMVR_VMP_ROW && d == 0)
+        for (int part = SOMVR_VMP_LESS; part <= SOMVR_VMP_MORE; part++)
+            if (somvr_vm_rect_av(avail, p.item, part, rc) && in_rect(rc, x, y)) d = 1e9f;
+    return d;
+}
+somvr_vm_hit somvr_vm_snap_step(somvr_vm_snap *s, const somvr_vm_snapcfg *c, const somvr_settings *set, uint64_t avail,
+                                int page, int card, const float uv[2], float dist, float quad_w_m, float dot[2]) {
+    dot[0] = uv[0], dot[1] = uv[1];
+    somvr_vm_hit none = {-1, SOMVR_VMP_NONE}, raw = somvr_vm_hit_test_av(avail, card ? SOMVR_VMPG_CONTROLS : page, uv[0], uv[1]);
+    if (card && raw.item != SOMVR_VMI_CLOSE) raw = none; /* the card: its X alone */
+    if (raw.item != s->raw.item || raw.part != s->raw.part) s->raw_changes++, s->raw = raw;
+    float x = uv[0] * SOMVR_VM_TEX_W, y = uv[1] * SOMVR_VM_TEX_H;
+    float tpm = quad_w_m > 0 ? SOMVR_VM_TEX_W / quad_w_m : SOMVR_VM_TEX_W / SOMVR_VM_W_M, dd = dist > 0 ? dist : 0;
+    float hold = fmaxf(c->min_m, dd * tanf(c->hold_deg * 0.01745329252f)) * tpm;
+    float mag = fmaxf(c->min_m, dd * tanf(c->magnet_deg * 0.01745329252f)) * tpm;
+    somvr_vm_hit parts[64], lock = none;
+    int n = snap_parts(avail, page, card, parts, 64);
+    if (!(x == x && y == y)) n = 0; /* NaN: nothing */
+    for (int i = 0; i < n && s->lock.item >= 0; i++) /* the lock holds while the point stays near its own area */
+        if (parts[i].item == s->lock.item && parts[i].part == s->lock.part && own_dist(avail, parts[i], x, y) <= hold)
+            lock = s->lock;
+    if (lock.item < 0 && n && raw.item >= 0) lock = raw; /* the part under the point */
+    if (lock.item < 0) { /* on none: the nearest one that can be used, within the magnet's reach */
+        float best = mag;
+        for (int i = 0; i < n; i++) {
+            float d = own_dist(avail, parts[i], x, y);
+            if (d <= best && somvr_vm_enabled(set, avail, parts[i].item)) best = d, lock = parts[i];
+        }
+    }
+    if (lock.item != s->lock.item || lock.part != s->lock.part) s->changes++, s->lock = lock;
+    int rc[4];
+    if (lock.item >= 0 && somvr_vm_rect_av(avail, lock.item, lock.part, rc)) { /* the dot kept on the locked part */
+        float ix = fminf(4.0f, 0.5f * (float)rc[2]), iy = fminf(4.0f, 0.5f * (float)rc[3]);
+        float cx = fminf(fmaxf(x, (float)rc[0] + ix), (float)(rc[0] + rc[2]) - ix);
+        float cy = fminf(fmaxf(y, (float)rc[1] + iy), (float)(rc[1] + rc[3]) - iy);
+        dot[0] = cx / SOMVR_VM_TEX_W, dot[1] = cy / SOMVR_VM_TEX_H;
+    }
+    return lock;
+}
+
+/* ---- build 20: the panel held steady (SOMVR_XR_PANEL_STEADY) --------------------------------------------------- */
+void somvr_vm_stcfg_default(somvr_vm_stcfg *c) {
+    *c = (somvr_vm_stcfg){.hold_m = 0.015f, .hold_deg = 3.0f, .settle_s = 0.35f};
+}
+int somvr_vm_stcfg_parse(const char *v, somvr_vm_stcfg *c, int *bad) {
+    somvr_vm_stcfg_default(c);
+    if (!v || !*v || !strcmp(v, "off") || !strcmp(v, "0")) return 0;
+    if (!strcmp(v, "on") || !strcmp(v, "1")) return 1;
+    float f[3] = {-1, -1, -1};
+    const char *q = v;
+    int n = 0;
+    for (;;) { /* three numbers, a comma between each two, nothing else */
+        char *e = NULL;
+        float x = strtof(q, &e);
+        if (e == q || n == 3) break;
+        f[n++] = x, q = e;
+        if (*q != ',') break;
+        q++;
+    }
+    float cm = f[0], deg = f[1], ms = f[2];
+    if (n != 3 || *q || !(cm > 0 && cm <= 10) || !(deg > 0 && deg <= 20) || !(ms >= 0 && ms <= 3000)) {
+        *bad = 1;
+        return 0;
+    }
+    c->hold_m = cm * 0.01f, c->hold_deg = deg, c->settle_s = ms * 0.001f;
+    return 1;
+}
+void somvr_vm_steady_reset(somvr_vm_steady *s) { memset(s, 0, sizeof *s); }
+static float qangle(const float a[4], const float b[4]) { /* rad between two unit quaternions' rotations */
+    float d = fabsf(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+    return 2.0f * acosf(d < 1 ? d : 1);
+}
+static void qslerp(const float a[4], const float b[4], float k, float o[4]) { /* the short way */
+    float d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3], sg = d < 0 ? -1.0f : 1.0f, wa, wb;
+    d = fabsf(d);
+    if (d > 0.9995f) {
+        wa = 1 - k, wb = k;
+    } else {
+        float th = acosf(d), sn = sinf(th);
+        wa = sinf((1 - k) * th) / sn, wb = sinf(k * th) / sn;
+    }
+    float q[4], n = 0;
+    for (int i = 0; i < 4; i++) q[i] = wa * a[i] + sg * wb * b[i], n += q[i] * q[i];
+    n = sqrtf(n);
+    for (int i = 0; i < 4; i++) o[i] = n > 1e-6f ? q[i] / n : b[i];
+}
+void somvr_vm_steady_step(somvr_vm_steady *s, const somvr_vm_stcfg *c, const somvr_posef *raw, double t,
+                          somvr_posef *out) {
+    if (!unit_quat(raw->q) || !isfinite(raw->p[0] + raw->p[1] + raw->p[2])) { /* a bad pose: the last one stays */
+        *out = s->have ? s->p : *raw;
+        return;
+    }
+    double dt = s->have ? t - s->t : -1;
+    if (!s->have || !(dt >= 0 && dt <= 0.25)) { /* the start, or a gap: at the hand's pose */
+        s->p = *raw, s->have = 1, s->t = t, s->restarts++;
+        *out = *raw;
+        return;
+    }
+    s->frames++;
+    if (dt > 0) {
+        s->t = t;
+        float r = c->hold_m > 1e-4f ? c->hold_m : 1e-4f, d[3], dm = 0;
+        for (int i = 0; i < 3; i++) d[i] = raw->p[i] - s->p.p[i], dm += d[i] * d[i];
+        dm = sqrtf(dm);
+        int moved = 0;
+        if (dm > r) { /* beyond the radius: follows by the excess, 1:1 */
+            float k = (dm - r) / dm;
+            for (int i = 0; i < 3; i++) s->p.p[i] += k * d[i];
+            dm = r, moved = 1;
+        }
+        if (c->settle_s > 0) { /* inside: eases toward the hand, (offset / radius)^2 of the edge's rate */
+            float w = dm / r, a = 1.0f - expf(-(float)dt * w * w / c->settle_s);
+            for (int i = 0; i < 3; i++) s->p.p[i] += a * (raw->p[i] - s->p.p[i]);
+        }
+        float ar = (c->hold_deg > 0.01f ? c->hold_deg : 0.01f) * 0.01745329252f, ang = qangle(s->p.q, raw->q);
+        if (ang > ar) {
+            qslerp(s->p.q, raw->q, (ang - ar) / ang, s->p.q);
+            ang = ar, moved = 1;
+        }
+        if (c->settle_s > 0) {
+            float w = ang / ar, a = 1.0f - expf(-(float)dt * w * w / c->settle_s);
+            qslerp(s->p.q, raw->q, a, s->p.q);
+        }
+        s->follows += moved;
+    }
+    *out = s->p;
+}
+void somvr_vm_corners(const somvr_posef *p, const float size[2], float out[4][3]) {
+    for (int k = 0; k < 4; k++) {
+        float l[3] = {(k & 1 ? 0.5f : -0.5f) * size[0], (k & 2 ? -0.5f : 0.5f) * size[1], 0}, w[3];
+        qrot(p->q, l, w);
+        for (int i = 0; i < 3; i++) out[k][i] = p->p[i] + w[i];
+    }
 }

@@ -155,6 +155,20 @@
  *            blocked as ever, E_TOP_THR_REFUSED once, and the pullover's ring stays the fallback). Over (E_TOP_THR_OFF):
  *            stand's floor under him (the climb's end: over), out of the rock 2 frames after 10 cm (once in it), no move 0.5 s,
  *            thr_max_cm, the top left, the climb's end.
+ *   A mantle (mantle = 1 glide, 2 blink; build 20: the user's build 19b session, hanging over a top with the eyes 110 cm
+ *            over it for 16 s, asked for a press of A onto the ledge once the shoulders are over it) at a top - the push's (topped) or the newest hold's own found top - with the eyes am_head_cm or
+ *            more over it (at most AM_HI_CM): a landing on the top straight ahead of Talion (from the edge in, as the
+ *            pullover's: a floor within 30 cm of the top, room for him) and the way there clear (rays: the head's way up
+ *            and in, his capsule's at the knees and the hips over the top) = available: out.am_show and the landing
+ *            (somvr.c: the pullover's gold ring there, a light tick when it first shows). A's press (holding, hanging or
+ *            in a fling) = every hold let go (the grips must open first) and glide: the root along a curve - up until the
+ *            feet are am_clear_cm over the top, then in onto the landing (a quadratic curve through the corner over the
+ *            edge) - at am_cms (each frame's move through the rock 1:1 as topout's, the head's way checked; phase
+ *            mantle) = the end over (he stands); blocked (the root 25 cm behind the plan 0.25 s) = he stands if the top
+ *            is under him, else the hang. blink: the pullover's quick blink onto the landing. At a top (the eyes top_cm
+ *            over it) with no mantle (too low, no landing, the way not clear) A does nothing but say why (E_AM_NO: a soft
+ *            double buzz); elsewhere A is the drop (mark) as ever. The when is the press, the where the ring (shown before
+ *            it), the move short and fixed (no cancel needed once it goes); nothing moves without the press.
  *   end      both hands open with letgo = fall (released), the drop button while holding or hanging (drop), the game not
  *            allowing it any more (somvr.c: FSM not Supported, mounted, third person ...; "stand down"), the input lost
  *            (letgo = fall), the timeout max_s (letgo = fall), a lift that stalls or runs out of time. Every end gives
@@ -174,7 +188,13 @@ enum { SOMVR_CLIMB_RAY_PALM = 1, SOMVR_CLIMB_RAY_FWD = 2 };                     
 enum { SOMVR_CLIMB_PH_NONE = 0, SOMVR_CLIMB_PH_HOLD = 1, SOMVR_CLIMB_PH_LIFT = 2, SOMVR_CLIMB_PH_CMD = 3,
        SOMVR_CLIMB_PH_HANG = 4 /* letgo = hang: no hand holds, Talion stays (gravity off) until a grip or the drop */,
        SOMVR_CLIMB_PH_FLING = 5 /* fling: no hand holds, our own arc up from a fast release (gravity off) */,
-       SOMVR_CLIMB_PH_BLINK = 6 /* descent: A over a high drop: still (gravity off) until the blink's teleport */ };
+       SOMVR_CLIMB_PH_BLINK = 6 /* descent: A over a high drop: still (gravity off) until the blink's teleport */,
+       SOMVR_CLIMB_PH_MANTLE = 7 /* A mantle: the glide onto the top (gravity off) */ };
+enum { SOMVR_CLIMB_AM_OK = 0, SOMVR_CLIMB_AM_LOW = 1, SOMVR_CLIMB_AM_NOFLOOR = 2, SOMVR_CLIMB_AM_NOROOM = 3,
+       SOMVR_CLIMB_AM_NOWAY = 4, SOMVR_CLIMB_AM_NOBLINK = 5, SOMVR_CLIMB_AM_HIGH = 6 }; /* A mantle: why not (am_why) */
+enum { SOMVR_CLIMB_AME_NONE = 0, SOMVR_CLIMB_AME_DONE = 1, SOMVR_CLIMB_AME_BLOCKED = 2, SOMVR_CLIMB_AME_HANG = 3,
+       SOMVR_CLIMB_AME_GAME = 4 }; /* A mantle: how the last glide ended (am_end) */
+const char *somvr_climb_am_name(int why); /* SOMVR_CLIMB_AM_* */
 enum { SOMVR_CLIMB_FL_NONE = 0, SOMVR_CLIMB_FL_APEX = 1, SOMVR_CLIMB_FL_BLOCKED = 2, SOMVR_CLIMB_FL_TIME = 3,
        SOMVR_CLIMB_FL_CATCH = 4, SOMVR_CLIMB_FL_OVER = 5, SOMVR_CLIMB_FL_EDGE = 6 }; /* how a flight ended (fl_why) */
 enum { SOMVR_CLIMB_LETGO_FALL = 0, SOMVR_CLIMB_LETGO_HANG = 1 }; /* SOMVR_CLIMB_LETGO= */
@@ -257,6 +277,10 @@ enum { /* somvr_climb_out.events2 */
     SOMVR_CLIMB_E_DM_TAP = 1u << 17,  /* drop_mark: A let go under dm_min_s: nothing (the ring stays to dm_show_s) */
     SOMVR_CLIMB_E_DM_NO = 1u << 18,   /* drop_mark: no safe landing (s->bl_why): no ring, nothing moves (a soft buzz) */
     SOMVR_CLIMB_E_DM_MOVE = 1u << 19, /* drop_mark: climbing, the landing found again (moved, gone or back) */
+    SOMVR_CLIMB_E_AM_SHOW = 1u << 25, /* A mantle: available (the landing shown; out.am_land) - its first frame */
+    SOMVR_CLIMB_E_AM_GO = 1u << 26,   /* A mantle: A's press: the glide (phase mantle) or the blink (out.blink) */
+    SOMVR_CLIMB_E_AM_NO = 1u << 27,   /* A mantle: A's press at a top with no mantle (s->am_why): nothing moves */
+    SOMVR_CLIMB_E_AM_END = 1u << 28,  /* A mantle: the glide's end (s->am_end: over, or blocked: stood, or the hang) */
 };
 /* through's ends (s->thr_why) */
 enum { SOMVR_CLIMB_THR_NONE = 0, SOMVR_CLIMB_THR_CLEAR = 1, SOMVR_CLIMB_THR_IDLE = 2, SOMVR_CLIMB_THR_MAX = 3,
@@ -378,6 +402,10 @@ typedef struct {
     float fling_tw;          /* ... mid-face the part toward the wall kept at most this x the up part (0.25) */
     float fling_wall_up;     /* ... and this part of the rest turned up the face (0.5) */
     float fling_side_max;    /* ... the sideways part at most this x the up part (0.6; build 13's rule: 0.5) */
+    int mantle;              /* build 20 (SOMVR_CLIMB_MANTLE=glide|blink, 0 off): at a top, A = onto it (see A mantle) */
+    float am_head_cm;        /* ... the eyes at least this over the top (25: the shoulders at its edge) */
+    float am_cms;            /* ... the glide's speed (350 cm/s) */
+    float am_clear_cm;       /* ... the feet this far over the top when the curve crosses its edge (10) */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -617,6 +645,23 @@ typedef struct {
     float dm_out;       /* the landing's distance past the first spot looked at (cm: 0, 20, ...) */
     uint32_t dm_seq;    /* the newest hold's seq at the press (a newer one = cancel) */
     uint64_t dm_presses, dm_shows, dm_goes, dm_falls, dm_cancels, dm_taps, dm_nos, dm_tests, dm_enemies, dm_norooms;
+    /* A mantle (build 20) */
+    int am_ok;          /* available now: the landing (am_land) shown */
+    int am_why;         /* the last search's SOMVR_CLIMB_AM_* (the last A at a top without a mantle: its why) */
+    double am_test_t;   /* the last search (again when the root moved 5 cm, at most every 0.1 s) */
+    sv_vec3 am_test_root;
+    float am_top_y;     /* the top, its edge straight ahead of Talion, into the top (level unit), the landing (floor) */
+    sv_vec3 am_edge, am_in, am_land;
+#define SOMVR_CLIMB_AM_N 16 /* the glide's curve: this many pieces */
+    sv_vec3 am_pt[SOMVR_CLIMB_AM_N + 1]; /* ... its points (the root: at the press .. at the landing) */
+    float am_len[SOMVR_CLIMB_AM_N + 1];  /* ... the length along it to each point */
+    double am_t0;       /* the press */
+    float am_lag_s;     /* the root behind the plan so long */
+    int am_end;         /* SOMVR_CLIMB_AME_*: how the last glide ended */
+    float am_dbg[6];    /* the last search (logs): the eyes over the top, floors seen, room rays hit, way rays hit */
+    uint64_t am_shows, am_presses, am_goes, am_blinks, am_nos, am_lows, am_nofloors, am_noways, am_dones, am_blocks,
+        am_frames;
+    double am_cm;       /* the glides' way in all */
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
@@ -654,6 +699,8 @@ typedef struct {
     float hug_in;           /* hug: this frame's pull redirected toward the face (cm) */
     float stand_walk;       /* stand: this frame's walk onto the top (cm) */
     float through_lx, through_lz; /* topout: this request's level part through the rock (cm; with through_up) */
+    int am_show;            /* A mantle: available: show the landing (am_land: the floor point, world cm) */
+    sv_vec3 am_land;
     int dm_show;            /* drop_mark: show the ring at dm_land and the line from dm_top down to it (world cm) */
     sv_vec3 dm_land, dm_top;
     float dm_held;          /* ... A held so far, 0..1 of dm_min_s (1: a let-go goes; 0 for a tap's ring) */

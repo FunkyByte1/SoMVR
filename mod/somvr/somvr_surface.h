@@ -42,6 +42,10 @@ typedef struct {
     float clank_cms;           /* the tip's speed into the surface for a clank (60 cm/s; slower: a tick) */
     float clank_full_cms;      /* ... for a full clank (300) */
     float fx_cms;              /* ... for the sparks (150) */
+    /* build 20 (SOMVR_HANDS_SURFACE_BLADE=pivot, docs/re-xr-pipeline.md 79): the drawn blade stays at a surface while the
+     * hand goes on 1:1 - it turns about the grip point (somvr_sf_pivot) instead of pushing the hand back */
+    int blade_pivot;           /* 1: pivot; 0 (default): build 13's push of the hand (up to blade_max_cm) */
+    float pivot_max_rad;       /* the blade turns at most this far off the hand (85 deg; past it the blade goes in) */
 } somvr_sf_cfg;
 void somvr_sf_cfg_default(somvr_sf_cfg *c);
 /* SOMVR_HANDS_SURFACE_GHOST=A (0..1, 0 = no ghost) and _BLADE_MAX_CM=N (0 = the blade never stops): 0 = not understood */
@@ -107,6 +111,28 @@ sv_vec3 somvr_sf_push(const somvr_sf_plane *pl, int npl, const sv_vec3 *s, const
 int somvr_sf_plane_of(sv_vec3 from, sv_vec3 hit, sv_vec3 normal, somvr_sf_plane *out);
 /* one frame of a hand: dt = since the last frame (0: the first) */
 void somvr_sf_step(somvr_sf_hand *h, const somvr_sf_cfg *c, const somvr_sf_in *in, double t, float dt, somvr_sf_out *o);
+
+/* build 20, SOMVR_HANDS_SURFACE_BLADE=pivot: the least turn of the blade about its grip point that keeps it out of the
+ * plane - the blade from grip along unit dir, len cm, its tip at least margin cm off the plane - in the plane of dir and
+ * the plane's normal (the tip rides along the surface); perp = a unit vector across the blade to turn toward when the
+ * blade points straight into the plane. 1 = turned (*rot = the rotation vector: axis x angle, rad, the plane's frame;
+ * *depth = how deep the tip would be, cm); 0 = the blade is out (nothing to do); 2 = it cannot: the grip point itself is
+ * within margin of the plane, or the turn would pass max_rad (the blade goes in). */
+int somvr_sf_pivot(const somvr_sf_plane *pl, sv_vec3 grip, sv_vec3 dir, float len, float margin, float max_rad, sv_vec3 perp,
+                   sv_vec3 *rot, float *depth);
+/* the pivoted blade's contact over frames: one clank (or a tick when slow) as it meets a surface, its release */
+typedef struct {
+    int on;                   /* the blade at a surface (turned) now */
+    double t_on, t_clank, t_tick;
+    sv_vec3 last_tip;         /* the hand's tip last frame (the approach speed) */
+    int have_tip;
+    float depth_max, peak_rad;
+} somvr_sf_pv;
+/* one frame: on = turned this frame (depth: the tip's depth before the turn, ang: the turn, rad), tip = the tip where the
+ * hand puts it, n = the plane's normal. o's events as somvr_sf_step's blade ones: EV_BLADE (o->bspeed into the surface,
+ * o->clank / o->fx, or o->tick), EV_BLADE_OFF (o->bheld_s, o->bdepth_max) */
+void somvr_sf_pv_step(somvr_sf_pv *p, const somvr_sf_cfg *c, int on, float depth, float ang, sv_vec3 tip, sv_vec3 n,
+                      double t, float dt, somvr_sf_out *o);
 
 /* the surfaces that stop a hand (a record's name): not a character's (Flesh*, Armor*, and "" = no record: an orc's
  * capsule has none, boot 001811; orcs' bodies never clamp, so the blade's hits and the hands on orcs stay as they

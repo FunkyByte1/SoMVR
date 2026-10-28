@@ -18,6 +18,7 @@ void somvr_sf_cfg_default(somvr_sf_cfg *c) {
     c->ghost_cm = 4.0f, c->ghost_full_cm = 12.0f, c->ghost_a = 0.35f, c->ghost_in_s = 0.10f, c->ghost_out_s = 0.15f;
     c->spring_s = 0.08f, c->jump_cm = 2.0f, c->contact_cm = 0.3f;
     c->tick_cms = 150.0f, c->tick_gap_s = 0.15f, c->clank_cms = 60.0f, c->clank_full_cms = 300.0f, c->fx_cms = 150.0f;
+    c->blade_pivot = 0, c->pivot_max_rad = 85.0f * 0.01745329f;
 }
 
 static int parse_f(const char *v, float lo, float hi, float *out) {
@@ -170,6 +171,73 @@ void somvr_sf_step(somvr_sf_hand *h, const somvr_sf_cfg *c, const somvr_sf_in *i
         h->last_tip = in->tip, h->have_tip = 1;
     else
         h->have_tip = 0;
+}
+
+static sv_vec3 cross3(sv_vec3 a, sv_vec3 b) {
+    return (sv_vec3){ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+}
+
+int somvr_sf_pivot(const somvr_sf_plane *pl, sv_vec3 grip, sv_vec3 dir, float len, float margin, float max_rad, sv_vec3 perp,
+                   sv_vec3 *rot, float *depth) {
+    *rot = (sv_vec3){ 0, 0, 0 }, *depth = 0;
+    float dl = len3v(dir);
+    if (!pl || !fin3(grip) || !(dl > 0.5f) || !(len > 1.0f)) return 0;
+    sv_vec3 d = mul3(dir, 1.0f / dl), n = pl->n;
+    float hg = dot3v(sub3(grip, pl->p), n), s = dot3v(d, n), need = (margin - hg) / len; /* the tip's height = hg + len s */
+    if (!(s < need)) return 0;                                                          /* out (also NaN) */
+    *depth = margin - (hg + len * s);
+    if (!(hg > margin) || need > 1.0f) return 2; /* the grip itself at the surface: no turn keeps the blade out */
+    sv_vec3 e = sub3(n, mul3(d, s));              /* across the blade toward the normal */
+    float el = len3v(e);
+    if (el < 0.17f) {                             /* within ~10 deg of straight in: toward perp (made across the blade) */
+        sv_vec3 q = sub3(perp, mul3(d, dot3v(perp, d)));
+        float ql = len3v(q);
+        if (!(ql > 1e-3f)) return 2;
+        e = mul3(q, 1.0f / ql);
+    } else {
+        e = mul3(e, 1.0f / el);
+    }
+    /* d' = cos th d + sin th e: its height s cos th + c sin th = R sin(th + phi), c = e.n, R = |(s, c)|, phi = atan2(s, c) */
+    float c = dot3v(e, n), R = sqrtf(s * s + c * c), phi = atan2f(s, c), k = R > 1e-4f ? need / R : 2.0f;
+    if (k > 1.0f) return 2;
+    float th = asinf(k < -1 ? -1 : k) - phi;
+    if (!(th > 0)) return 0;
+    if (th > max_rad) return 2;
+    sv_vec3 a = cross3(d, e);
+    float al = len3v(a);
+    if (!(al > 1e-4f)) return 2;
+    *rot = mul3(a, th / al);
+    return 1;
+}
+
+void somvr_sf_pv_step(somvr_sf_pv *p, const somvr_sf_cfg *c, int on, float depth, float ang, sv_vec3 tip, sv_vec3 n,
+                      double t, float dt, somvr_sf_out *o) {
+    memset(o, 0, sizeof *o);
+    o->plane = o->bplane = -1;
+    if (on && !p->on) {
+        o->ev |= SOMVR_SF_EV_BLADE;
+        p->t_on = t, p->depth_max = 0, p->peak_rad = 0;
+        if (p->have_tip && dt > 0) o->bspeed = -dot3v(sub3(tip, p->last_tip), n) / dt;
+        if (!(o->bspeed > 0)) o->bspeed = 0;
+        if (o->bspeed >= c->clank_cms && (t - p->t_clank >= 0.2 || p->t_clank == 0)) {
+            float k = c->clank_full_cms > 0 ? o->bspeed / c->clank_full_cms : 1;
+            o->clank = k < 0.25f ? 0.25f : k > 1 ? 1 : k, o->fx = o->bspeed >= c->fx_cms;
+            p->t_clank = t;
+        } else if (t - p->t_tick >= c->tick_gap_s || p->t_tick == 0) {
+            o->tick = 0.2f;
+            p->t_tick = t;
+        }
+    } else if (!on && p->on) {
+        o->ev |= SOMVR_SF_EV_BLADE_OFF;
+        o->bheld_s = (float)(t - p->t_on), o->bdepth_max = p->depth_max;
+    }
+    if (on) {
+        if (depth > p->depth_max) p->depth_max = depth;
+        if (ang > p->peak_rad) p->peak_rad = ang;
+        o->bdepth = depth;
+    }
+    p->on = on;
+    p->last_tip = tip, p->have_tip = fin3(tip);
 }
 
 static int has_ci(const char *s, const char *p, int pre) {

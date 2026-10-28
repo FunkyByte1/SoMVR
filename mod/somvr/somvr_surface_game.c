@@ -20,6 +20,16 @@
  *                            (crack + ring) at the blade's, with the defence's sparks (SOMVR_DEFENCE_CLANK=fx) when fast.
  *   SOMVR_HANDS_SURFACE_GHOST=A    the ghost's opacity at full strength (0.35; 0 = none)
  *   SOMVR_HANDS_SURFACE_BLADE_MAX_CM=N  the sword pushes the hand back at most N cm (25; 0 = the blade never stops)
+ *   SOMVR_HANDS_SURFACE_BLADE=push|pivot (default push = build 13; build 20, docs/re-xr-pipeline.md 79) pivot: the blade
+ *                            does not push the hand - the hand stays the controller's (1:1) and the drawn blade turns
+ *                            about the grip so it stays at the surface its ray met (walls, rock, the ground; orcs are no
+ *                            surface), riding along it, up to SOMVR_SF's 85 deg off the hand (past it, or with the grip
+ *                            itself at the surface, it goes in); the hits' blade is the drawn one, so no cut passes a wall.
+ *                            Its meeting: the clank's pulses, SOMVR_HANDS_SURFACE_SOUND and the defence's sparks
+ *                            (SOMVR_DEFENCE_CLANK_FX's name) where the blade meets the surface, in the world (build 13's
+ *                            sparks sat on the sword's model). somvr_hitfeel_game.c's sfb_arm does it each arms frame.
+ *   SOMVR_HANDS_SURFACE_SOUND=EVENT|off (default cbt_imp_surface_player: the game's own hard-surface impact) the pivot's
+ *                            sound at the meeting (posted from THREAT's Wwise object; needs its TH_SND sites)
  * Lines: `CONFIG surface ...`, `SURF clamp|hold|release|blade|ghost|except|hit ...`, a summary every 10 s, `SURF END`. */
 
 #define SF_BODY_X 18.0f /* the body-safe point: the shoulder, cm out (left: -), up, ahead in the head's yaw frame */
@@ -59,6 +69,17 @@ static struct {
 	uint64_t suppressed;
 	struct { uintptr_t obj; uint16_t id; } seen[SF_NHIT];
 	int nseen;
+	/* build 20, SOMVR_HANDS_SURFACE_BLADE=pivot (somvr_hitfeel_game.c sfb_arm) */
+	char sound[64];              /* SOMVR_HANDS_SURFACE_SOUND ("" = none) */
+	somvr_sf_pv pv;              /* the turned blade's contact */
+	float p_now[3];              /* this arms frame's turn of the drawn blade (the grips' space; 0 = none), for swl_arm */
+	double pv_t, pv_hold_next, pv_pend_t;
+	int pv_void, ok_fx, fx_checked;
+	int pv_pend;                 /* a meeting's sound (1) and sparks (2), made in the next combat frame (sfb_h4) */
+	float pv_P[3];               /* ... at the contact (world cm) */
+	char pv_surf[32];
+	uint64_t pv_frames, pv_meets, pv_clanks, pv_sounds, pv_sound_fail, pv_fx, pv_fx_fail, pv_voids;
+	float pv_peak_deg;
 	struct {
 		uint64_t frames, evals, casts, ray_fail, hits, passed_self, passed_soft, far, clamped[2], contacts[2], releases[2],
 			blades, clanks, btouches, voids, fx, ticks, eases, ghosts[2], except[2];
@@ -370,7 +391,7 @@ static void sf_arm(sa_xf gg[2], const int gv[2], const int bowed[2], sv_vec3 shi
 			in.npl = f->npl, in.nbpl = f->nbpl;
 			memcpy(in.pl, f->pl, sizeof in.pl), memcpy(in.bpl, f->bpl, sizeof in.bpl);
 		}
-		if (h == SA_R && sf_blade_on()) {
+		if (h == SA_R && sf_blade_on() && !g_sf.cfg.blade_pivot) { /* (pivot: sfb_arm turns the blade; no push) */
 			in.blade = 1;
 			sf_blade(gw, qw, &in.base, &in.tip);
 		}
@@ -504,6 +525,12 @@ static void sf_config(int *bad)
 	v = getenv("SOMVR_HANDS_SURFACE_BLADE_MAX_CM");
 	if (v && *v && !somvr_sf_parse_blade_max(v, &g_sf.cfg))
 		*bad = 1, logf_("WARN SOMVR_HANDS_SURFACE_BLADE_MAX_CM=%s is not 0..100: %.0f", v, (double)g_sf.cfg.blade_max_cm);
+	static const char *const bw[] = { "push", "pivot" };
+	g_sf.cfg.blade_pivot = env_word("SOMVR_HANDS_SURFACE_BLADE", bw, 2, 0);
+	snprintf(g_sf.sound, sizeof g_sf.sound, "%s", "cbt_imp_surface_player");
+	v = getenv("SOMVR_HANDS_SURFACE_SOUND");
+	if (v && *v)
+		snprintf(g_sf.sound, sizeof g_sf.sound, "%s", strcmp(v, "off") ? v : "");
 }
 
 /* bd_start (after the climb's start: its sites are checked here again, read only) */
@@ -558,6 +585,11 @@ static void sf_start(void)
 	      (double)g_sf.pg[1][1][2], (double)c->blade_r_cm, (double)c->blade_max_cm, (double)c->ghost_cm,
 	      (double)c->ghost_full_cm, (double)c->ghost_a, (double)c->ghost_in_s, (double)c->ghost_out_s, (double)c->jump_cm,
 	      (double)c->spring_s, (double)c->tick_cms, (double)c->clank_cms, (double)c->clank_full_cms, (double)c->fx_cms);
+	if (c->blade_pivot)
+		logf_("CONFIG surface blade=pivot (SOMVR_HANDS_SURFACE_BLADE): the blade never pushes the hand (it stays 1:1); the "
+		      "drawn blade turns about the grip to stay at the surface (at most %.0f deg off the hand; past it, or the grip "
+		      "itself there, it goes in); its meeting: the clank's pulses, the sound '%s' (SOMVR_HANDS_SURFACE_SOUND%s) and "
+		      "the sparks at the contact", (double)c->pivot_max_rad / 0.01745329, g_sf.sound[0] ? g_sf.sound : "none", "");
 }
 
 static void sf_end_log(void)
@@ -580,4 +612,10 @@ static void sf_end_log(void)
 	      (unsigned long long)c->eases, (unsigned long long)c->ghosts[0], (unsigned long long)c->ghosts[1],
 	      (unsigned long long)c->except[0], (unsigned long long)c->except[1], g_sf.nseen,
 	      c->frames ? c->us / (double)c->frames : 0.0, c->us_max, (unsigned long long)g_sf.suppressed);
+	if (g_sf.cfg.blade_pivot)
+		logf_("SURF END blade=pivot: turned frames %llu, meetings %llu (clanks %llu), the largest turn %.1f deg; sounds %llu "
+		      "(no playing id %llu), sparks %llu (failed %llu); went in (past the turn's cap or the grip at the surface) %llu",
+		      (unsigned long long)g_sf.pv_frames, (unsigned long long)g_sf.pv_meets, (unsigned long long)g_sf.pv_clanks,
+		      (double)g_sf.pv_peak_deg, (unsigned long long)g_sf.pv_sounds, (unsigned long long)g_sf.pv_sound_fail,
+		      (unsigned long long)g_sf.pv_fx, (unsigned long long)g_sf.pv_fx_fail, (unsigned long long)g_sf.pv_voids);
 }

@@ -6,10 +6,16 @@
 
 static const char *const g_end_names[SOMVR_CLIMB_NEND] = { "none", "released", "game", "input", "timeout", "top", "lifted",
                                                            "lift-stall", "cmd", "outside", "over", "drop", "blink" };
-static const char *const g_phase_names[7] = { "none", "hold", "lift", "cmd", "hang", "fling", "blink" };
+static const char *const g_phase_names[8] = { "none", "hold", "lift", "cmd", "hang", "fling", "blink", "mantle" };
 
 const char *somvr_climb_end_name(int why) { return why >= 0 && why < SOMVR_CLIMB_NEND ? g_end_names[why] : "?"; }
-const char *somvr_climb_phase_name(int phase) { return phase >= 0 && phase < 7 ? g_phase_names[phase] : "?"; }
+const char *somvr_climb_phase_name(int phase) { return phase >= 0 && phase < 8 ? g_phase_names[phase] : "?"; }
+const char *somvr_climb_am_name(int why) {
+    static const char *const n[7] = { "-", "the eyes not high enough over the top", "no floor on the top ahead",
+                                      "no room for him on the top", "the way onto it not clear", "no blink now",
+                                      "the eyes too high over the top" };
+    return why >= 0 && why < 7 ? n[why] : "?";
+}
 const char *somvr_climb_bl_name(int why) {
     static const char *const n[8] = { "-", "a short drop: the fall", "no ground under him: he stays",
                                       "water under him: he stays", "no blink now: the fall", "no edge ahead",
@@ -61,6 +67,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->fling_up = 0, c->fling_tw = 0.25f, c->fling_wall_up = 0.5f, c->fling_side_max = 0.6f;
     c->drop_mark = 0, c->dm_min_s = 0.3f, c->dm_show_s = 0.6f, c->dm_stick = 0.5f, c->dm_move_cm = 30, c->dm_out_cm = 100;
     c->dm_enemy_cm = 120;
+    c->mantle = 0, c->am_head_cm = 25, c->am_cms = 350, c->am_clear_cm = 10;
 }
 
 void somvr_climb_init(somvr_climb *s) {
@@ -862,38 +869,21 @@ static int mantle(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in
     return 1;
 }
 
-/* pullover (see the header): the top of hold k (rays down over it and 10, 20 cm into the wall) and a landing on it;
- * 1 = found (k->po_*), else k->po_why */
+/* a landing on a top at ty (the pullover's, the A mantle's): from e (on the top's edge) into the top along tw (level
+ * unit), the first of 40, 35, 45 .. 80 cm in with a floor within 30 cm of ty (not water), nothing 180 cm over it and
+ * nothing within PO_ROOM_CM round it at 50 and 140 cm (room for Talion's capsule); 1 = found (*fl). dbg (the logs):
+ * [1] floors seen, [2] the highest, [3] blocked over them, [4] [5] [6] room rays hit: in, out, sides */
 #define PO_ROOM_CM 33.0f
-static int po_find(somvr_climb *s, const somvr_climb_in *in, int h, somvr_climb_hold *k, somvr_climb_ray_fn ray,
-                   void *ctx, somvr_climb_out *o) {
-    sv_vec3 tw = { k->toward.x, 0, k->toward.z };
-    if (len3(tw) < 0.3f && in->head_ok) tw = (sv_vec3){ k->hit.x - in->head_x, 0, k->hit.z - in->head_z };
-    if (len3(tw) < 0.2f) return k->po_why = SOMVR_CLIMB_PO_NOTOP, 0;
-    tw = unit3(tw);
+static int land_find(somvr_climb *s, somvr_climb_out *o, somvr_climb_ray_fn ray, void *ctx, int h, sv_vec3 e, sv_vec3 tw,
+                     float ty, float *dbg, sv_vec3 *fl_out) {
+    static const float ds[] = { 40, 35, 45, 30, 50, 25, 55, 60, 20, 70, 80 };
     sv_vec3 side = { -tw.z, 0, tw.x };
     somvr_climb_hit r, u;
-    float ty = 0;
-    int top = 0;
-    for (float d = 0; d <= 20.5f && !top; d += 10) { /* the top: just over the hold, or a little into the wall */
-        sv_vec3 f = add3(k->hit, (sv_vec3){ tw.x * d, 70, tw.z * d });
-        if (cast(s, o, ray, ctx, h, f, (sv_vec3){ 0, -1, 0 }, 110, &r) && r.hit && r.point.y >= k->hit.y - 25.0f &&
-            r.point.y <= k->hit.y + 60.0f && !r.wet)
-            ty = r.point.y, top = 1;
-    }
-    k->po_has_top = top, k->po_top_y = ty;
-    if (!top) return k->po_why = SOMVR_CLIMB_PO_NOTOP, 0;
-    static const float ds[] = { 40, 35, 45, 30, 50, 25, 55, 60, 20, 70, 80 };
-    int floor_seen = 0;
-    float *dbg = s->po_dbg;
-    memset(s->po_dbg, 0, sizeof s->po_dbg);
-    dbg[0] = ty, dbg[2] = -1e9f;
     for (unsigned i = 0; i < sizeof ds / sizeof ds[0]; i++) {
-        sv_vec3 f = add3(k->hit, (sv_vec3){ tw.x * ds[i], 0, tw.z * ds[i] });
+        sv_vec3 f = add3(e, (sv_vec3){ tw.x * ds[i], 0, tw.z * ds[i] });
         f.y = ty + 60.0f;
         if (!cast(s, o, ray, ctx, h, f, (sv_vec3){ 0, -1, 0 }, 100, &r) || !r.hit || r.wet || fabsf(r.point.y - ty) > 30.0f)
             continue;
-        floor_seen = 1;
         dbg[1]++, dbg[2] = fmaxf(dbg[2], r.point.y);
         sv_vec3 fl = r.point;
         if (!cast(s, o, ray, ctx, h, add3(fl, (sv_vec3){ 0, 10, 0 }), (sv_vec3){ 0, 1, 0 }, 180, &u) || u.hit) {
@@ -908,10 +898,40 @@ static int po_find(somvr_climb *s, const somvr_climb_in *in, int h, somvr_climb_
                 if (!cast(s, o, ray, ctx, h, at, dirs[j], PO_ROOM_CM, &u) || u.hit) room = 0, dbg[j < 2 ? 4 + j : 6]++;
         }
         if (!room) continue;
+        *fl_out = fl;
+        return 1;
+    }
+    return 0;
+}
+
+/* pullover (see the header): the top of hold k (rays down over it and 10, 20 cm into the wall) and a landing on it;
+ * 1 = found (k->po_*), else k->po_why */
+static int po_find(somvr_climb *s, const somvr_climb_in *in, int h, somvr_climb_hold *k, somvr_climb_ray_fn ray,
+                   void *ctx, somvr_climb_out *o) {
+    sv_vec3 tw = { k->toward.x, 0, k->toward.z };
+    if (len3(tw) < 0.3f && in->head_ok) tw = (sv_vec3){ k->hit.x - in->head_x, 0, k->hit.z - in->head_z };
+    if (len3(tw) < 0.2f) return k->po_why = SOMVR_CLIMB_PO_NOTOP, 0;
+    tw = unit3(tw);
+    somvr_climb_hit r;
+    float ty = 0;
+    int top = 0;
+    for (float d = 0; d <= 20.5f && !top; d += 10) { /* the top: just over the hold, or a little into the wall */
+        sv_vec3 f = add3(k->hit, (sv_vec3){ tw.x * d, 70, tw.z * d });
+        if (cast(s, o, ray, ctx, h, f, (sv_vec3){ 0, -1, 0 }, 110, &r) && r.hit && r.point.y >= k->hit.y - 25.0f &&
+            r.point.y <= k->hit.y + 60.0f && !r.wet)
+            ty = r.point.y, top = 1;
+    }
+    k->po_has_top = top, k->po_top_y = ty;
+    if (!top) return k->po_why = SOMVR_CLIMB_PO_NOTOP, 0;
+    float *dbg = s->po_dbg;
+    memset(s->po_dbg, 0, sizeof s->po_dbg);
+    dbg[0] = ty, dbg[2] = -1e9f;
+    sv_vec3 fl;
+    if (land_find(s, o, ray, ctx, h, k->hit, tw, ty, dbg, &fl)) {
         k->po_top_y = ty, k->po_land = fl, k->po_in = tw;
         return k->po_why = SOMVR_CLIMB_PO_OK, 1;
     }
-    return k->po_why = floor_seen ? SOMVR_CLIMB_PO_NOROOM : SOMVR_CLIMB_PO_NOFLOOR, 0;
+    return k->po_why = dbg[1] > 0 ? SOMVR_CLIMB_PO_NOROOM : SOMVR_CLIMB_PO_NOFLOOR, 0;
 }
 
 /* pullover: arm, show, the pull, the cancel; 1 = the pull is done (s->bl_to: the blink onto the landing) */
@@ -1071,10 +1091,10 @@ static void stand_note(somvr_climb *s, const somvr_climb_cfg *c, const somvr_cli
 #define STAND_HOLD_UP_CM 5.0f
 #define TO_NEAR_CM 20.0f /* topout: the head this far under the driving hold's top counts as at it */
 #define STAND_LET_UP_CM 10.0f /* let go: the feet at most this under the floor under his axis */
-/* topout (see the header): the head's way along the move m clear: rays from the head and c->thr_side_cm round it
- * (across the move), c->thr_clear_cm past it; 1 = clear */
-static int to_clear_way(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, sv_vec3 tw,
-                        somvr_climb_ray_fn ray, void *ctx, somvr_climb_out *o, sv_vec3 m) {
+/* topout (see the header), the A mantle: the head's way along the move m clear: rays from the head (to_clear_way: this
+ * frame's) and c->thr_side_cm round it (across the move), c->thr_clear_cm past it; 1 = clear */
+static int way_clear(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 head, sv_vec3 tw, somvr_climb_ray_fn ray,
+                     void *ctx, somvr_climb_out *o, sv_vec3 m) {
     float l = len3(m);
     if (!(l > 0.01f)) return 1;
     sv_vec3 d = mul3(m, 1.0f / l), up = { 0, 1, 0 };
@@ -1082,7 +1102,6 @@ static int to_clear_way(somvr_climb *s, const somvr_climb_cfg *c, const somvr_cl
     if (len3(a) < 0.3f) a = (sv_vec3){ -tw.z, 0, tw.x }; /* straight up or down: across = along the edge */
     a = unit3(a);
     sv_vec3 b = unit3((sv_vec3){ a.y * d.z - a.z * d.y, a.z * d.x - a.x * d.z, a.x * d.y - a.y * d.x }); /* a x d */
-    sv_vec3 head = { in->head_x, in->head_y, in->head_z };
     sv_vec3 offs[5] = { { 0, 0, 0 }, mul3(a, c->thr_side_cm), mul3(a, -c->thr_side_cm), mul3(b, c->thr_side_cm),
                         mul3(b, -c->thr_side_cm) };
     for (int i = 0; i < 5; i++) {
@@ -1090,6 +1109,10 @@ static int to_clear_way(somvr_climb *s, const somvr_climb_cfg *c, const somvr_cl
         if (!cast(s, o, ray, ctx, -1, add3(head, offs[i]), d, l + c->thr_clear_cm, &r) || r.hit) return 0;
     }
     return 1;
+}
+static int to_clear_way(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, sv_vec3 tw,
+                        somvr_climb_ray_fn ray, void *ctx, somvr_climb_out *o, sv_vec3 m) {
+    return way_clear(s, c, (sv_vec3){ in->head_x, in->head_y, in->head_z }, tw, ray, ctx, o, m);
 }
 static void to_off(somvr_climb *s, somvr_climb_out *o, int why) {
     if (!s->to_on) return;
@@ -1547,6 +1570,198 @@ static int dm_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_i
     return 0;
 }
 
+/* A mantle (see the header's "A mantle"): the top Talion is at - the push's (topped) or the newest hold's own found
+ * top - its edge straight ahead of him (his root put on the edge's line) and into the top (level unit); 1 = a top */
+#define AM_HI_CM 230.0f /* the eyes at most this over the top (the feet ~50 cm over it: no mantle, he stands) */
+#define AM_LAG_CM 25.0f /* the glide: the root this far behind the plan ... */
+#define AM_LAG_S 0.25f  /* ... this long = blocked */
+static int am_top(const somvr_climb *s, const somvr_climb_in *in, float *ty, sv_vec3 *e, sv_vec3 *tw) {
+    sv_vec3 hit, t;
+    float y;
+    if (s->topped) {
+        hit = s->top_hit, t = s->top_toward, y = s->top_y;
+    } else {
+        int d = -1;
+        for (int h = 0; h < 2; h++)
+            if (s->h[h].holding && s->h[h].edge && s->h[h].top_found && (d < 0 || s->h[h].seq > s->h[d].seq)) d = h;
+        if (d < 0) return 0;
+        hit = s->h[d].hit, t = s->h[d].toward, y = s->h[d].top_y;
+    }
+    t.y = 0;
+    if (len3(t) < 0.3f && in->head_ok) t = (sv_vec3){ hit.x - in->head_x, 0, hit.z - in->head_z }; /* a hold on the top */
+    if (len3(t) < 0.2f || !in->root_ok) return 0;
+    t = unit3(t);
+    sv_vec3 side = { -t.z, 0, t.x };
+    float a = (in->root.x - hit.x) * side.x + (in->root.z - hit.z) * side.z;
+    *e = (sv_vec3){ hit.x + side.x * a, y, hit.z + side.z * a }, *tw = t, *ty = y;
+    return 1;
+}
+
+/* the glide's curve from the root p0 to the landing's root p2: a quadratic one whose control point is over p0 (up first,
+ * then in), so high that the feet cross the edge (u = 0 along tw from e) am_clear_cm over the top; s->am_pt, am_len */
+static void am_plan(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 p0, sv_vec3 p2) {
+    float u0 = (p0.x - s->am_edge.x) * s->am_in.x + (p0.z - s->am_edge.z) * s->am_in.z;
+    float u2 = (p2.x - s->am_edge.x) * s->am_in.x + (p2.z - s->am_edge.z) * s->am_in.z;
+    float need = s->am_top_y + c->am_clear_cm + c->foot_cm, h1 = fmaxf(fmaxf(p0.y, p2.y), need);
+    if (u0 < 0 && u2 > 0) { /* the crossing at t^2 = -u0 / (u2 - u0): h(t) there = need */
+        float t = sqrtf(-u0 / (u2 - u0)), a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, d = t * t;
+        if (b > 0.05f) h1 = fmaxf(fmaxf(p0.y, p2.y), (need - a * p0.y - d * p2.y) / b);
+    }
+    h1 = fminf(h1, fmaxf(p0.y, p2.y) + 250.0f);
+    sv_vec3 p1 = { p0.x, h1, p0.z };
+    s->am_len[0] = 0;
+    for (int i = 0; i <= SOMVR_CLIMB_AM_N; i++) {
+        float t = (float)i / SOMVR_CLIMB_AM_N, a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, d = t * t;
+        s->am_pt[i] = add3(add3(mul3(p0, a), mul3(p1, b)), mul3(p2, d));
+        if (i) s->am_len[i] = s->am_len[i - 1] + len3(sub3(s->am_pt[i], s->am_pt[i - 1]));
+    }
+}
+/* the point dist cm along the curve */
+static sv_vec3 am_at(const somvr_climb *s, float dist) {
+    for (int i = 1; i <= SOMVR_CLIMB_AM_N; i++) {
+        float l0 = s->am_len[i - 1], l1 = s->am_len[i];
+        if (dist <= l1 || i == SOMVR_CLIMB_AM_N) {
+            float f = l1 > l0 ? fminf(fmaxf((dist - l0) / (l1 - l0), 0.0f), 1.0f) : 1.0f;
+            return add3(s->am_pt[i - 1], mul3(sub3(s->am_pt[i], s->am_pt[i - 1]), f));
+        }
+    }
+    return s->am_pt[SOMVR_CLIMB_AM_N];
+}
+
+/* the search: the eyes high enough, a landing straight ahead on the top, the way there clear (the head along the curve,
+ * his capsule at the knees and the hips over the top from the edge's crossing); 1 = available (s->am_land, am_edge,
+ * am_in, am_top_y and the plan in am_pt), else s->am_why. A top at all: am_top (the caller) */
+static int am_find(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
+                   somvr_climb_out *o) {
+    float ty, dbg[8] = { 0 };
+    sv_vec3 e, tw, fl;
+    memset(s->am_dbg, 0, sizeof s->am_dbg);
+    if (!in->head_ok || !am_top(s, in, &ty, &e, &tw)) return s->am_why = SOMVR_CLIMB_AM_NOFLOOR, 0;
+    s->am_dbg[0] = in->head_y - ty;
+    if (in->head_y < ty + c->am_head_cm) return s->am_why = SOMVR_CLIMB_AM_LOW, 0;
+    if (in->head_y > ty + AM_HI_CM) return s->am_why = SOMVR_CLIMB_AM_HIGH, 0;
+    dbg[2] = -1e9f;
+    int found = land_find(s, o, ray, ctx, -1, e, tw, ty, dbg, &fl);
+    s->am_dbg[1] = dbg[1], s->am_dbg[2] = dbg[3] + dbg[4] + dbg[5] + dbg[6];
+    if (!found) return s->am_why = dbg[1] > 0 ? SOMVR_CLIMB_AM_NOROOM : SOMVR_CLIMB_AM_NOFLOOR, 0;
+    s->am_top_y = ty, s->am_edge = e, s->am_in = tw, s->am_land = fl;
+    am_plan(s, c, in->root, (sv_vec3){ fl.x, fl.y + c->foot_cm + 1.0f, fl.z });
+    /* the head's way along the curve (four pieces, the head as far off the root as now) */
+    sv_vec3 hoff = { in->head_x - in->root.x, in->head_y - in->root.y, in->head_z - in->root.z };
+    int bad = 0;
+    for (int i = 0; i < SOMVR_CLIMB_AM_N && !bad; i += SOMVR_CLIMB_AM_N / 4)
+        if (!way_clear(s, c, add3(s->am_pt[i], hoff), tw, ray, ctx, o,
+                       sub3(s->am_pt[i + SOMVR_CLIMB_AM_N / 4], s->am_pt[i])))
+            bad = 1, s->am_dbg[3]++;
+    /* the capsule over the top: from where the curve crosses the edge (or from the root, over the top already) in to the
+     * landing and his capsule's radius past it, at the knees and the hips */
+    int ic = 0;
+    for (int i = 0; i <= SOMVR_CLIMB_AM_N; i++)
+        if ((s->am_pt[i].x - e.x) * tw.x + (s->am_pt[i].z - e.z) * tw.z >= 0) {
+            ic = i;
+            break;
+        }
+    sv_vec3 pc = s->am_pt[ic], p2 = s->am_pt[SOMVR_CLIMB_AM_N];
+    float run = (p2.x - pc.x) * tw.x + (p2.z - pc.z) * tw.z + PO_ROOM_CM;
+    for (int k = 0; k < 2 && !bad && run > 1.0f; k++) {
+        somvr_climb_hit r;
+        sv_vec3 from = { pc.x, pc.y - c->foot_cm + (k ? c->foot_cm : 40.0f), pc.z };
+        if (!cast(s, o, ray, ctx, -1, from, tw, run, &r) || r.hit) bad = 1, s->am_dbg[4]++;
+    }
+    if (bad) return s->am_why = SOMVR_CLIMB_AM_NOWAY, 0;
+    return s->am_why = SOMVR_CLIMB_AM_OK, 1;
+}
+
+/* while holding or hanging: the landing shown when A would mantle (searched again when the root moved 5 cm, at most
+ * every 0.1 s, and every 0.5 s) */
+static void am_avail(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
+                     somvr_climb_out *o) {
+    float ty;
+    sv_vec3 e, tw;
+    if (!in->head_ok || !in->root_ok || s->dm == 1 || !am_top(s, in, &ty, &e, &tw) || in->head_y < ty + c->am_head_cm ||
+        in->head_y > ty + AM_HI_CM) {
+        s->am_ok = 0, s->am_test_t = 0;
+        return;
+    }
+    int was = s->am_ok;
+    if (s->am_test_t <= 0 || in->t - s->am_test_t >= 0.5 ||
+        (in->t - s->am_test_t >= 0.1 && len3(sub3(in->root, s->am_test_root)) >= 5.0f)) {
+        s->am_test_t = in->t, s->am_test_root = in->root;
+        s->am_ok = am_find(s, c, in, ray, ctx, o);
+    }
+    if (!s->am_ok) return;
+    o->am_show = 1, o->am_land = s->am_land;
+    if (!was) s->am_shows++, o->events2 |= SOMVR_CLIMB_E_AM_SHOW;
+}
+
+/* A's press while climbing: at a top (the eyes top_cm over it) = the mantle (1: the glide or the blink started) or, no
+ * way, nothing but the why (-1: E_AM_NO); not at a top = 0 (A as ever) */
+static int am_press(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
+                    somvr_climb_out *o) {
+    float ty;
+    sv_vec3 e, tw;
+    if (s->descending || !in->head_ok || !am_top(s, in, &ty, &e, &tw) || in->head_y < ty + c->top_cm) return 0;
+    s->am_presses++;
+    int ok = am_find(s, c, in, ray, ctx, o);
+    if (ok && c->mantle == 2 && !in->can_blink) ok = 0, s->am_why = SOMVR_CLIMB_AM_NOBLINK;
+    if (!ok) {
+        s->am_nos++;
+        s->am_lows += s->am_why == SOMVR_CLIMB_AM_LOW || s->am_why == SOMVR_CLIMB_AM_HIGH;
+        s->am_nofloors += s->am_why == SOMVR_CLIMB_AM_NOFLOOR || s->am_why == SOMVR_CLIMB_AM_NOROOM;
+        s->am_noways += s->am_why == SOMVR_CLIMB_AM_NOWAY;
+        o->events2 |= SOMVR_CLIMB_E_AM_NO;
+        return -1;
+    }
+    for (int h = 0; h < 2; h++) let_go(&s->h[h]), s->h[h].armed = 0; /* the grips must open before a new hold */
+    s->carry = (sv_vec3){ 0, 0, 0 }, s->driver = -1, s->po_hand = -1, s->am_ok = 0, s->am_test_t = 0;
+    s->phase_t = in->t, s->am_goes++;
+    o->events2 |= SOMVR_CLIMB_E_AM_GO;
+    o->active = 1, o->driver = -1;
+    if (c->mantle == 2) { /* the pullover's quick blink onto the landing */
+        s->bl_to = (sv_vec3){ s->am_land.x, s->am_land.y + c->foot_cm + 5.0f, s->am_land.z };
+        s->mt_top = s->am_edge, s->mt_floor = s->am_land;
+        s->phase = SOMVR_CLIMB_PH_BLINK, s->blinks++, s->am_blinks++;
+        o->blink = 1, o->blink_to = s->bl_to;
+        return 1;
+    }
+    s->phase = SOMVR_CLIMB_PH_MANTLE, s->am_t0 = in->t, s->am_lag_s = 0, s->am_end = SOMVR_CLIMB_AME_NONE;
+    return 1;
+}
+
+/* the glide: each frame the root toward its place on the curve (am_cms along it from the press), the move through the
+ * rock 1:1 while the head's way is clear (as topout's); at the curve's end = over (he stands); blocked = he stands
+ * if the top is under him, else the hang */
+static void am_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
+                    somvr_climb_out *o, double dt) {
+    float L = s->am_len[SOMVR_CLIMB_AM_N], v = fmaxf(c->am_cms, 50.0f);
+    float d = fminf((float)(in->t - s->am_t0) * v, L);
+    if (!in->root_ok) return; /* nothing this frame (the clock goes on: the next one catches up) */
+    sv_vec3 off = sub3(am_at(s, d), in->root);
+    float lag = len3(off), dts = dt > 0 && dt < 0.2 ? (float)dt : 0.0f;
+    int done = d >= L && (lag < 1.0f || in->t - s->am_t0 > L / v + 0.3);
+    s->am_lag_s = lag > AM_LAG_CM ? s->am_lag_s + dts : 0.0f;
+    if (done || s->am_lag_s >= AM_LAG_S) {
+        float o1[1] = { 0 }, fy;
+        int at;
+        o->events2 |= SOMVR_CLIMB_E_AM_END;
+        if (done || stand_floor(s, c, in, ray, ctx, o, o1, 1, c->stand_down_cm, STAND_LET_UP_CM, &fy, &at)) {
+            s->am_end = done ? SOMVR_CLIMB_AME_DONE : SOMVR_CLIMB_AME_BLOCKED;
+            s->am_dones += done, s->am_blocks += !done;
+            end_climb(s, SOMVR_CLIMB_END_OVER, 1, o);
+        } else {
+            s->am_end = SOMVR_CLIMB_AME_HANG, s->am_blocks++;
+            hang(s, in, 1, o);
+        }
+        return;
+    }
+    sv_vec3 m = somvr_climb_clamp(off, 40.0f);
+    if (!(len3(m) > 0.01f)) return;
+    request(s, o, m);
+    if (o->move && way_clear(s, c, (sv_vec3){ in->head_x, in->head_y, in->head_z }, s->am_in, ray, ctx, o, m))
+        o->through_up = m.y, o->through_lx = m.x, o->through_lz = m.z;
+    s->am_frames++, s->am_cm += len3(m);
+}
+
 /* the ground within ground_cm under the root (a ray down from it): he stands (a hang there would hold him in the air) */
 static int on_ground(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
                      somvr_climb_out *o) {
@@ -1610,7 +1825,7 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
     double dt = s->last_t > 0 && in->t > s->last_t ? in->t - s->last_t : 0;
     s->last_t = in->t;
     if (in->live && in->frozen) { /* a menu or the pause: hold everything, the clocks stop */
-        s->t0 += dt, s->phase_t += dt, s->lift_rise_t += dt, s->fl_t0 += dt, s->fl_glide_t += dt;
+        s->t0 += dt, s->phase_t += dt, s->lift_rise_t += dt, s->fl_t0 += dt, s->fl_glide_t += dt, s->am_t0 += dt;
         for (int h = 0; h < 2; h++) {
             s->h[h].press_t += dt;
             if (s->h[h].lost_t >= 0) s->h[h].lost_t += dt;
@@ -1649,6 +1864,25 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
         }
         o->active = s->active, o->driver = -1;
         return;
+    }
+    if (s->active && s->phase == SOMVR_CLIMB_PH_MANTLE) { /* A mantle: the glide onto the top (A, the grips: nothing) */
+        if (!in->allow || !in->live) { /* the game's stand down: the end; the input lost: the hang where he is */
+            s->am_end = in->allow ? SOMVR_CLIMB_AME_HANG : SOMVR_CLIMB_AME_GAME, s->am_blocks++;
+            o->events2 |= SOMVR_CLIMB_E_AM_END;
+            if (in->allow) hang(s, in, 1, o);
+            else end_climb(s, SOMVR_CLIMB_END_GAME, 1, o);
+        } else {
+            am_step(s, c, in, ray, ctx, o, dt);
+        }
+        o->active = s->active, o->driver = -1;
+        return;
+    }
+    /* A mantle (build 20): A's press at a top = onto it (no way: nothing but the why, no drop there); elsewhere as ever */
+    if (drop && c->mantle && s->active && in->live && in->allow &&
+        (s->phase == SOMVR_CLIMB_PH_HOLD || s->phase == SOMVR_CLIMB_PH_HANG || s->phase == SOMVR_CLIMB_PH_FLING)) {
+        int a = am_press(s, c, in, ray, ctx, o);
+        if (a > 0) return;
+        if (a < 0) drop = 0;
     }
     int hangs = c->letgo == SOMVR_CLIMB_LETGO_HANG &&
                 (s->phase == SOMVR_CLIMB_PH_HOLD || s->phase == SOMVR_CLIMB_PH_HANG ||
@@ -1945,6 +2179,10 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             }
         }
     }
+    if (c->mantle && s->active && (s->phase == SOMVR_CLIMB_PH_HOLD || s->phase == SOMVR_CLIMB_PH_HANG) && !s->descending)
+        am_avail(s, c, in, ray, ctx, o); /* A mantle: the landing shown where A would take him */
+    else
+        s->am_ok = 0, s->am_test_t = 0;
     o->active = s->active, o->driver = s->driver;
 }
 

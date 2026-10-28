@@ -891,6 +891,59 @@ static void test_grab(void) {
                   "an empty press 32 cm out, noarrow_cm 35: told at once (events %#x)", g_ev);
     }
 }
+/* build 20, auto (cfg.auto_arrow, the quiver off): the trigger squeezed on the way and held into the string's zone nocks;
+ * the quiver's count 0: nothing nocked (EMPTY). Case: 0 = build 19's Auto, 1 = auto_arrow; arrows the game's count.
+ * Returns 2 when nocked (a draw on), 1 when EMPTY, 0 neither */
+static int auto_case(int auto_arrow, int arrows, float held_s) {
+    reset();
+    g_c.quiver = 0, g_c.idle_nock = 0, g_c.nock_zone = 1, g_c.auto_arrow = auto_arrow;
+    g_in.arrows = arrows, g_in.game_aim = 1, g_in.button = 1;
+    steps(2);
+    string_at(30, 120, 0); /* by the hip, 50 cm from the nock */
+    steps(3);
+    g_ev = 0;
+    g_in.string = 1;                         /* squeezed on the way ... */
+    steps((int)(held_s * 90));
+    string_at(0, 140, 35);                   /* ... and brought to the string, still squeezed */
+    steps(10);
+    if (g_s.phase == SOMVR_BOW_PH_DRAW && (g_ev & SOMVR_BOW_E_NOCK)) return 2;
+    return (g_ev & SOMVR_BOW_E_EMPTY) ? 1 : 0;
+}
+static void test_auto(void) {
+    int r19 = auto_case(0, 5, 0.6f);
+    CHECK(r19 == 0 && (g_ev & SOMVR_BOW_E_MISS), "auto, build 19: squeezed 0.6 s before the string: no nock, a miss (%d)", r19);
+    int r20 = auto_case(1, 5, 0.6f);
+    CHECK(r20 == 2 && !(g_ev & SOMVR_BOW_E_MISS) && g_s.draws == 1, "auto_arrow: squeezed 0.6 s before, held into the string: "
+          "nocked (%d)", r20);
+    int r20l = auto_case(1, 5, 3.0f);
+    CHECK(r20l == 2, "auto_arrow: squeezed 3 s before: still nocked (%d)", r20l);
+    int r0 = auto_case(1, 0, 0.2f);
+    CHECK(r0 == 1 && g_s.empties == 1 && g_s.draws == 0 && g_s.phase == SOMVR_BOW_PH_AIM,
+          "auto_arrow, no arrows left: the knocks, nothing drawn (%d)", r0);
+    int ru = auto_case(1, -1, 0.2f);
+    CHECK(ru == 2, "auto_arrow, the count unknown: nocked (the shot's gate decides) (%d)", ru);
+    /* a quick squeeze at the string as before (builds 11-15b) */
+    reset();
+    g_c.quiver = 0, g_c.idle_nock = 0, g_c.nock_zone = 1, g_c.auto_arrow = 1;
+    g_in.arrows = 5, g_in.game_aim = 1, g_in.button = 1;
+    steps(2);
+    g_ev = 0;
+    nock_and_grip();
+    CHECK(g_s.phase == SOMVR_BOW_PH_DRAW && (g_ev & SOMVR_BOW_E_NOCK), "auto_arrow: a squeeze at the string nocks at once");
+    draw_to(45, 20);
+    g_in.string = 0;
+    steps(3);
+    CHECK(g_s.shots == 1 && (g_ev & SOMVR_BOW_E_RELEASE), "auto_arrow: drawn 45 and let go: the shot");
+    /* let go again with the hand off the string: nothing keeps looking */
+    g_ev = 0;
+    steps(60);
+    string_at(30, 120, 0);
+    steps(3);
+    string_at(0, 140, 35);
+    steps(10);
+    CHECK(g_s.phase != SOMVR_BOW_PH_DRAW && !(g_ev & SOMVR_BOW_E_NOCK), "auto_arrow: the hand back at the string, not squeezed: "
+          "nothing");
+}
 static void test_zone(void) {
     float zd;
     somvr_bow_cfg c;
@@ -1298,6 +1351,7 @@ int main(void) {
     test_quiver();
     test_zone();
     test_grab();
+    test_auto();
     test_string_mode();
     test_standdowns();
     test_hold_mode();

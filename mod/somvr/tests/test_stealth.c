@@ -1,6 +1,7 @@
 /* test_stealth.c - the VR stealth kill's pure part (somvr_stealth.h): the angles, who may be killed, the contact's
  * judge, the stance switch, the cue's ticks */
 #include "../somvr_stealth.h"
+#include "../somvr_combat.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -89,6 +90,51 @@ static void test_judge(void) {
           somvr_stl_stance_of("x") == -1 && somvr_stl_stance_of(NULL) == -1, "stance words");
     CHECK(!strcmp(somvr_stl_stance_name(1), "slow") && !strcmp(somvr_stl_why(SOMVR_STL_KILL), "the stealth kill") &&
           !strcmp(somvr_stl_why(99), "?"), "names");
+}
+
+/* build 20c: the sword's tier here - build 16's rule's, or where that sees nothing the stroke's. The replay: the
+ * scripted stab's first contact at 20 frames a second (runs 20261028-164235/164926: "tier none, along 1.78 m/s cos
+ * 0.50", combat's "light (build 16's rule: none) - the stroke 32 cm, the contact point 3.9 m/s ... travel since the
+ * crossing 0 cm"): the blade along +z still, then 2 and 4 m/s at 60 deg off its axis; the window's mean crosses the
+ * slash speed on the contact's sample, so build 16's rule has no travel yet - a touch to the judge, while the stroke's
+ * rule deals a light hit that wakes the unaware orc (build 20b) */
+static void test_tier(void) {
+    CHECK(somvr_stl_tier(SC_TIER_NONE, SC_TIER_NONE) == SC_TIER_NONE && somvr_stl_tier(SC_TIER_STAB, SC_TIER_NONE) == SC_TIER_STAB &&
+              somvr_stl_tier(SC_TIER_NONE, SC_TIER_LIGHT) == SC_TIER_LIGHT &&
+              somvr_stl_tier(SC_TIER_LIGHT, SC_TIER_HEAVY) == SC_TIER_LIGHT,
+          "the tier: build 16's when it has one, else the stroke's");
+    sc_cfg c;
+    sc_cfg_default(&c);
+    c.stroke = 1, c.tip_max_mps = 60; /* build 20's SOMVR_COMBAT_SWING=stroke */
+    sc_speed s;
+    sc_speed_reset(&s);
+    somvr_blade b;
+    memset(&b, 0, sizeof b);
+    b.valid = 1, b.base[2] = 0, b.tip[2] = 100;
+    for (int i = 0; i <= 4; i++) /* still for 0.2 s */
+        b.t = 0.05 * i, sc_speed_push(&s, &c, &b);
+    const float mps[2] = { 2.0f, 4.0f }, sn = 0.8660254f, cs = 0.5f;
+    for (int k = 0; k < 2; k++) {
+        float v[3] = { 100 * mps[k] * sn, 0, 100 * mps[k] * cs };
+        for (int i = 0; i < 3; i++)
+            b.base[i] += v[i] * 0.05f, b.tip[i] += v[i] * 0.05f, b.vel_tip[i] = v[i], b.vel_base[i] = v[i];
+        b.t += 0.05, sc_speed_push(&s, &c, &b);
+    }
+    int t16 = sc_tier_cut(&c, &s, NAN), tsw = sc_tier_swing(&c, &s, NAN, 1.0f);
+    CHECK(t16 == SC_TIER_NONE && sc_tier(&c, &s) == SC_TIER_NONE && tsw == SC_TIER_LIGHT && sc_stroke_entered(&s, 0, b.t),
+          "the replay: build 16's none (travel %.1f), the stroke's light (reach %.1f cm, %.2f m/s; got %d %d)", s.travel,
+          s.reach, s.mean_mps, t16, tsw);
+    CHECK(fabsf(s.cos_axis - 0.5f) < 0.01f && s.axis_mps > 0.8f && s.axis_mps < c.stab_mps, "along %.2f m/s cos %.2f",
+          s.axis_mps, s.cos_axis);
+    somvr_stl_cfg sc;
+    somvr_stl_defaults(&sc);
+    somvr_stl_who w = who_behind();
+    somvr_stl_hit h = { 170.0f, 65.0f, t16, s.axis_mps, s.cos_axis };
+    CHECK(somvr_stl_judge(&sc, &w, &h) == SOMVR_STL_WEAK, "build 20b: build 16's tier alone - a touch (the light hit woke it)");
+    h.tier = somvr_stl_tier(t16, tsw);
+    CHECK(somvr_stl_judge(&sc, &w, &h) == SOMVR_STL_KILL, "build 20c: the stroke's light hit - the stealth kill");
+    /* SOMVR_COMBAT_SWING=off: combat's tier is build 16's - nothing changes (that contact a glance, as build 19b's) */
+    CHECK(somvr_stl_tier(t16, t16) == t16, "swing off: build 16's alone");
 }
 
 static void test_cue(void) {
@@ -206,6 +252,7 @@ int main(void) {
     test_angles();
     test_possible();
     test_judge();
+    test_tier();
     test_cue();
     printf("test_stealth: %d checks, %d failures\n", g_n, g_fail);
     return g_fail ? 1 : 0;

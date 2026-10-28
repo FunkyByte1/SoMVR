@@ -343,7 +343,7 @@ static void test_angle(void) {
         bc.pitch_rad = a * DEG, bc.back_cm = 0, bc.len_cm = 100;
         sc_grip g = {1, {0, 0, 0}, {0, 0, 0, 1}, 0, {0, 0, 0}, {0, 0, 0}, 1.0};
         sc_rigxf rig = {{0, 0, 0}, {0, 0, 0}, 0, 0};
-        sc_blade_hist h = {0, {0, 0, 0}, {0, 0, 0}, 0};
+        sc_blade_hist h = {0, {0, 0, 0}, {0, 0, 0}, 0, {0, 0, 0}, {0, 0, 0}};
         somvr_blade bl;
         somvr_blade_controller(&bc, &g, &rig, 1.0, &h, &bl);
         sv_vec3 cd = {bl.tip[0] / 100, bl.tip[1] / 100, bl.tip[2] / 100};

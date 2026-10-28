@@ -206,6 +206,23 @@ somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ri
     return p;
 }
 
+somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, int hit) {
+    somvr_ob_place p;
+    memset(&p, 0, sizeof p);
+    p.pose[3] = 1;
+    float d[3] = {pos[0] - head[0], pos[1] - head[1], pos[2] - head[2]};
+    float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!isfinite(dist + deg) || !(dist > 0.3f) || !(deg > 0.1f) || !(deg < 30.0f)) return p;
+    float ring = 2 * dist * tanf(0.5f * deg * 0.01745329252f), q[4];
+    ob_face(pos, head, q);
+    p.kind = SOMVR_OBK_WORLD, p.cell = hit ? SOMVR_OB_CELL_STRIKE : SOMVR_OB_CELL_RING;
+    memcpy(p.pose, q, sizeof q);
+    memcpy(p.pose + 4, pos, 3 * sizeof(float));
+    p.size[0] = p.size[1] = ring * (float)SOMVR_OB_CELL / (hit ? (float)SOMVR_OB_STRIKE_RING_PX : 124.0f);
+    p.yaw_deg = atan2f(d[0], -d[2]) * 57.29578f; /* logs: its bearing in the reference space */
+    return p;
+}
+
 void somvr_ob_strike_rect(int cell, int part, int32_t r[4]) {
     somvr_ob_rect(cell, r);
     if (part) r[0] += SOMVR_OB_CELL + 2, r[2] = SOMVR_OB_STRIKE_LABEL_PX;

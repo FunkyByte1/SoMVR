@@ -6178,6 +6178,13 @@ static void climb_tests(void)
 			       !strcmp(cl_word("headrock off"), "climb headrock off") && g_hr.mode == 0,
 		       "climb: build 17's words (hug, stand, topout, headrock)");
 		g_cl.cfg.hug = hug0, g_cl.cfg.stand = sd0, g_cl.cfg.topout = to0, g_hr.mode = hr0;
+		int am0 = g_cl.cfg.mantle; /* build 20: SOMVR_CLIMB_MANTLE's word */
+		EXPECT(!strcmp(cl_word("mantle glide"), "climb mantle glide") && g_cl.cfg.mantle == 1 &&
+			       !strcmp(cl_word("mantle blink"), "climb mantle blink") && g_cl.cfg.mantle == 2 &&
+			       !strcmp(cl_word("mantle off"), "climb mantle off") && g_cl.cfg.mantle == 0 &&
+			       !strcmp(somvr_climb_phase_name(SOMVR_CLIMB_PH_MANTLE), "mantle"),
+		       "climb: build 20's word (mantle)");
+		g_cl.cfg.mantle = am0;
 		int th0 = g_cl.cfg.through;
 		EXPECT(!strcmp(cl_word("through on"), "climb through on") && g_cl.cfg.through == 1 &&
 			       !strcmp(cl_word("through off"), "climb through off") && g_cl.cfg.through == 0 &&
@@ -12901,8 +12908,9 @@ static void bd_tests(void)
 		       !strcmp(bd_word("twohold 20 10"), "hands twohold (not LO HI, 4 <= LO <= HI <= 30 cm: ignored)") &&
 		       !strcmp(bd_word("noise 0.1 0.5"), "hands noise") && !strcmp(bd_word("noise 9 1"),
 		       "hands noise (not DEG 0..5 MM 0..20: ignored)") && !strcmp(bd_word("noise 0 0"), "hands noise") &&
-		       !strcmp(bd_word("wiggle R 50 4 2"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20: ignored)") &&
-		       !strcmp(bd_word("wiggle X 10 4 2"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20: ignored)"),
+		       !strcmp(bd_word("wiggle R 50 4 2"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20 [x|y]: ignored)") &&
+		       !strcmp(bd_word("wiggle X 10 4 2"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20 [x|y]: ignored)") &&
+		       !strcmp(bd_word("wiggle R 10 4 2 z"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20 [x|y]: ignored)"),
 	       "the test words");
 	/* build 16: `hands wiggle`: a sine about the grip's own up axis from the test pose, its angular speed added */
 	{
@@ -12925,6 +12933,20 @@ static void bd_tests(void)
 		w3.time += 1100000000LL;
 		hsm_test_wiggle(SOMVR_HAND_R, &w3);
 		EXPECT(!g_hsm.wig_on && w3.pose.q[3] == 1 && log_has("BODY test wiggle R end: "), "the wiggle ends");
+		/* build 20: `hands wiggle R DEG HZ S x`: about the grip's own +X (the edge-on wiggle) */
+		EXPECT(!strcmp(bd_word("wiggle R 10 5 1 x"), "hands wiggle"), "the edge-on wiggle word");
+		somvr_hand wx = wh;
+		memset(wx.ang, 0, sizeof wx.ang);
+		hsm_test_wiggle(SOMVR_HAND_R, &wx);
+		somvr_hand wx2 = wh;
+		memset(wx2.ang, 0, sizeof wx2.ang), wx2.time += 50000000LL;
+		hsm_test_wiggle(SOMVR_HAND_R, &wx2);
+		float angx = 2 * atan2f(wx2.pose.q[0], wx2.pose.q[3]) / 0.01745329f;
+		EXPECT(log_has("for 1.0 s (about the grip's +X (edge-on) axis)") && NEAR(angx, 10, 0.01) && fabsf(wx2.pose.q[1]) < 1e-6f &&
+			       NEAR(wx.ang[0], 10 * 0.01745329 * 6.2831853 * 5, 1e-3),
+		       "the edge-on wiggle: %.3f deg about +X at a quarter, the start's speed %.3f rad/s", angx, wx.ang[0]);
+		wx2.time += 1100000000LL;
+		hsm_test_wiggle(SOMVR_HAND_R, &wx2);
 	}
 	float yaw = 0.6f; /* the head turned 34 deg left (OpenXR: about +Y) */
 	for (int e = 0; e < 2; e++) {
@@ -14423,6 +14445,55 @@ static void pp_stand_ins(void)
 		g_pps[i] = (struct site_spec){ names[i], K_VSLOT, a, a, g_pphex[i], (uintptr_t)fns[i], g_pphex[i] + 128 };
 	}
 }
+/* build 20, SOMVR_SLOTS_GAMESOUND (somvr_gsound_game.c): gs_pre's choice on stand-in posts - Talion's listed sword
+ * sounds posted by the game (BS_POST_B's callback) dropped while the slots step runs; ours (path A), an orc's draw, a
+ * footstep, a stale or missing step, log and game passed; the cookie's source in the line */
+static void gs_tests(void)
+{
+	static char un[] = "fol_ply_cbt_swd_unsheath", sh[] = "fol_ply_cbt_swd_sheath", orc[] = "fol_cmn_unsheathe",
+		    twirl[] = "fol_ply_cbt_swd_twirl", step[] = "fol_ply_step_dirt";
+	static uintptr_t ck[5];
+	struct gs_post p;
+	void *cb = (void *)(uintptr_t)GS_CB;
+	EXPECT(!g_gs.patched && atomic_load(&g_gs.mode) == GS_GAME, "gamesound at start without the switch: %d", g_gs.patched);
+	EXPECT(gs_pre(&p, un, 73, cb, NULL) == 0 && !p.log && !p.name[0], "gamesound game: not passed untouched");
+	EXPECT(gs_parse_names(" a_b, c,") == 2 && !strcmp(g_gs.names[0], "a_b") && !strcmp(g_gs.names[1], "c"),
+	       "gs_parse_names: %d '%s' '%s'", g_gs.nnames, g_gs.names[0], g_gs.names[1]);
+	EXPECT(gs_parse_names(GS_NAMES_DEFAULT) == 3 && gs_listed(un) && gs_listed(sh) && gs_listed(twirl) && !gs_listed(orc),
+	       "the default names: %d", g_gs.nnames);
+	g_gs.patched = 1;
+	struct sl_game g = { .own = 0x1000 };
+	gs_frame(&g);
+	atomic_store(&g_gs.mode, GS_DROP);
+	ck[GS_CK_SRC / 8] = 0x2ba964b8;
+	EXPECT(gs_pre(&p, un, 73, cb, ck) == 1 && p.listed == 3 && p.log && p.src == 0x2ba964b8,
+	       "the game's draw sound on Talion not dropped: listed %d src %#lx", p.listed, (unsigned long)p.src);
+	EXPECT(gs_pre(&p, sh, 73, cb, NULL) == 1 && p.listed == 3 && gs_pre(&p, twirl, 73, cb, NULL) == 1,
+	       "the game's sheathe (its twirl, its sound) on Talion not dropped");
+	EXPECT(gs_pre(&p, un, SL_SND_OBJ, NULL, NULL) == 0 && !p.log, "our own post (path A, no callback) touched");
+	EXPECT(gs_pre(&p, orc, 91, cb, NULL) == 0 && !p.listed && !p.log, "an orc's draw: listed %d log %d", p.listed, p.log);
+	EXPECT(gs_pre(&p, step, 73, cb, NULL) == 0 && !p.log, "a footstep");
+	atomic_store(&g_gs.step_ms, (int64_t)(mono() * 1e3) - 2 * GS_FRESH_MS);
+	EXPECT(gs_pre(&p, un, 73, cb, NULL) == 0 && p.listed == 2, "no slots step for 2 s: listed %d", p.listed);
+	gs_frame(NULL);
+	EXPECT(atomic_load(&g_gs.step_ms) == 0 && gs_pre(&p, sh, 73, cb, NULL) == 0 && p.listed == 2,
+	       "no player read: passed as with no step (listed %d)", p.listed);
+	gs_frame(&g);
+	atomic_store(&g_gs.mode, GS_LOG);
+	EXPECT(gs_pre(&p, un, 73, cb, NULL) == 0 && p.listed == 1 && p.log, "log: listed %d log %d", p.listed, p.log);
+	EXPECT(gs_pre(&p, twirl, 73, cb, NULL) == 0 && p.log && p.listed == 1 && gs_pre(&p, orc, 91, cb, NULL) == 0 &&
+		       p.log && !p.listed && gs_pre(&p, step, 73, cb, NULL) == 0 && !p.log,
+	       "log: the listed and the other sword sounds logged, a footstep not");
+	EXPECT(atomic_load(&g_gs.dropped) == 3 && atomic_load(&g_gs.stale) == 2 && atomic_load(&g_gs.swd) == 1 &&
+		       atomic_load(&g_gs.named) == 7,
+	       "counters: dropped %llu stale %llu swd %llu named %llu", (unsigned long long)atomic_load(&g_gs.dropped),
+	       (unsigned long long)atomic_load(&g_gs.stale), (unsigned long long)atomic_load(&g_gs.swd),
+	       (unsigned long long)atomic_load(&g_gs.named));
+	EXPECT(!strcmp(gs_word("slsnd drop"), "slsnd") && atomic_load(&g_gs.mode) == GS_DROP, "the word slsnd drop");
+	memset(&g_gs, 0, sizeof g_gs);
+	EXPECT(!strncmp(gs_word("slsnd log"), "slsnd (the post is not patched", 30), "the word without the patch");
+}
+
 static void pp_tests(void)
 {
 	typedef void (*dlg_fn)(void *, void *, void *);
@@ -15628,6 +15699,7 @@ int main(int argc, char **argv)
 	vh_tests();     /* SOMVR_VRHANDS: the layer's own hands (build 10) */
 	sf_tests();     /* SOMVR_HANDS_SURFACE: on the climb's stand-ins (build 13) */
 	go_tests();     /* SOMVR_MUSIC / SOMVR_HINTS: their own stand-ins (build 10) */
+	gs_tests();     /* build 20, SOMVR_SLOTS_GAMESOUND: stand-in objects and posts */
 	pp_tests();     /* SOMVR_PAD_PROMPTS, SOMVR_BOW_STRIKE: their own stand-ins (the bow's round 2) */
 	bh_tests();     /* SOMVR_BOW_HITLOG: a stand-in call (the bow's round 2) */
 	uf_tests();     /* SOMVR_HUD_FX: a stand-in thunk (the build 12 HUD round) */

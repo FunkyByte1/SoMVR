@@ -758,6 +758,45 @@ static uintptr_t stl_rec(void)
 }
 
 /* a blade's contact with an orc (the sword's from combat_frame, the dagger's from stl_frame): 1 = the stealth kill took it */
+/* the stealth kill's hit: the stock silent stealth kill's record dealt with forceKill at the contact; the direction the
+ * blade's (or Talion -> the orc); SOMVR_COMBAT_DEATH's type. death = how it falls (the words) */
+static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, const somvr_blade *b, const float *root,
+		     uintptr_t rec, char *death, size_t dcap)
+{
+	float vv = sqrtf(b->vel_tip[0] * b->vel_tip[0] + b->vel_tip[1] * b->vel_tip[1] + b->vel_tip[2] * b->vel_tip[2]);
+	float dir[3] = { o->pos[0] - root[0], 0, o->pos[2] - root[2] }, hd0[3];
+	if (vv > 1.0f)
+		dir[0] = b->vel_tip[0] / vv, dir[1] = b->vel_tip[1] / vv, dir[2] = b->vel_tip[2] / vv;
+	else {
+		float l = sqrtf(dir[0] * dir[0] + dir[2] * dir[2]);
+		dir[0] = l > 1 ? dir[0] / l : 0, dir[2] = l > 1 ? dir[2] / l : 1;
+	}
+	unsigned char once = 0;
+	peek(pc + C_HITDIR, hd0, sizeof hd0), peek(pc + C_HITONCE, &once, 1);
+	memcpy((void *)(pc + C_HITDIR), dir, sizeof dir);
+	*(volatile unsigned char *)(pc + C_HITONCE) = 0;
+	uintptr_t dslot = 0;
+	uint64_t dwas = 0;
+	snprintf(death, dcap, "the record's own RecoilTypeHit");
+	if (g_kd.mode == KD_TYPE) { /* SOMVR_COMBAT_DEATH's type for this kill too (as the executions') */
+		uintptr_t ad = g_df.ok_ad ? DF_FN(DFS_ATTACKDATA, cb_attackdata_fn)(rec) : 0;
+		uintptr_t sl = ad ? kx_slot(ad, g_dfg.sch_ad, DF_AD_RECOIL_HIT) : 0, r = kx_find(g_kd.type);
+		uint64_t want = (uint64_t)r;
+		if (sl && r && peek(sl, &dwas, 8) && (dwas == want || arm_poke(sl, &want, 8))) {
+			dslot = dwas == want ? 0 : sl;
+			snprintf(death, dcap, "RecoilTypeHit '%s' (SOMVR_COMBAT_DEATH)", g_kd.type);
+		} else {
+			snprintf(death, dcap, "no '%s': the record's own", g_kd.type);
+		}
+	}
+	snprintf(g_kd.note, sizeof g_kd.note, "the stealth kill: %.70s", death);
+	g_kd.pre_c = o->c, g_kd.pre_dead = cb_dead(o->c);
+	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, rec, 1);
+	kx_hit_back(dslot, dwas);
+	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
+	*(volatile unsigned char *)(pc + C_HITONCE) = once;
+}
+
 static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier, const somvr_blade *b,
 		      const sc_speed *sp, int hand, const float *root, double t)
 {
@@ -797,43 +836,11 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 		      !rec ? "no stealth kill record in the database" : "combat cannot deal hits (see its CONFIG)");
 		return 0;
 	}
-	/* the hit: the stock silent stealth kill's record, forceKill; the direction the blade's (or Talion -> the orc) */
-	float vv = sqrtf(b->vel_tip[0] * b->vel_tip[0] + b->vel_tip[1] * b->vel_tip[1] + b->vel_tip[2] * b->vel_tip[2]);
-	float dir[3] = { o->pos[0] - root[0], 0, o->pos[2] - root[2] }, hd0[3];
-	if (vv > 1.0f)
-		dir[0] = b->vel_tip[0] / vv, dir[1] = b->vel_tip[1] / vv, dir[2] = b->vel_tip[2] / vv;
-	else {
-		float l = sqrtf(dir[0] * dir[0] + dir[2] * dir[2]);
-		dir[0] = l > 1 ? dir[0] / l : 0, dir[2] = l > 1 ? dir[2] / l : 1;
-	}
-	unsigned char once = 0;
-	peek(pc + C_HITDIR, hd0, sizeof hd0), peek(pc + C_HITONCE, &once, 1);
-	memcpy((void *)(pc + C_HITDIR), dir, sizeof dir);
-	*(volatile unsigned char *)(pc + C_HITONCE) = 0;
-	uintptr_t dslot = 0;
-	uint64_t dwas = 0;
-	char death[160] = "the record's own RecoilTypeHit";
-	if (g_kd.mode == KD_TYPE) { /* SOMVR_COMBAT_DEATH's type for this kill too (as the executions') */
-		uintptr_t ad = g_df.ok_ad ? DF_FN(DFS_ATTACKDATA, cb_attackdata_fn)(rec) : 0;
-		uintptr_t sl = ad ? kx_slot(ad, g_dfg.sch_ad, DF_AD_RECOIL_HIT) : 0, r = kx_find(g_kd.type);
-		uint64_t want = (uint64_t)r;
-		if (sl && r && peek(sl, &dwas, 8) && (dwas == want || arm_poke(sl, &want, 8))) {
-			dslot = dwas == want ? 0 : sl;
-			snprintf(death, sizeof death, "RecoilTypeHit '%s' (SOMVR_COMBAT_DEATH)", g_kd.type);
-		} else {
-			snprintf(death, sizeof death, "no '%s': the record's own", g_kd.type);
-		}
-	}
-	snprintf(g_kd.note, sizeof g_kd.note, "the stealth kill: %s", death);
-	g_kd.pre_c = o->c, g_kd.pre_dead = cb_dead(o->c);
+	char death[160], rn[96] = "?";
 	int dead0 = cb_dead(o->c);
 	float hp0 = cb_health(o->c);
-	char rn[96] = "?";
 	rx_rec_name(rec, rn, sizeof rn);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, rec, 1);
-	kx_hit_back(dslot, dwas);
-	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
-	*(volatile unsigned char *)(pc + C_HITONCE) = once;
+	stl_deal(pc, o, ct, b, root, rec, death, sizeof death);
 	int dead1 = cb_dead(o->c);
 	float hp1 = cb_health(o->c);
 	if (dead1 && !dead0)
@@ -860,10 +867,42 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	return 1;
 }
 
+/* build 20 (SOMVR_VERBS_ASK_KILL=blade; docs/re-xr-pipeline.md 77.2): the sword's stab into the interrogated orc is the
+ * player's kill - its Eliminate choice. The stealth kill's own hit does not take an orc in the interrogation (run
+ * 20261028-123717: Combat_DealHit forceKill on it, dead 0->0, health 95->95): the game's finisher is its only death
+ * there; the stab chooses it, the held view stays, the body walks back after it (SOMVR_BM_RETURN_CM). While the choices
+ * are up; a contact softer than a hit or a stab leaves it held; while its finisher runs no hit on it */
+static int stl_ask_kill(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier, const somvr_blade *b,
+			const float *root, double t)
+{
+	(void)pc, (void)ct, (void)b, (void)root;
+	if (g_vb.mode != VB_ON || g_vb.ask_kill != VB_ASK_BLADE || !g_vb.ask_c || o->c != g_vb.ask_c)
+		return 0;
+	int el = vb_choice(1);
+	if (!el)
+		return g_vb.kind == SOMVR_VBK_ASK || vb_choice(0); /* its finisher (or the choices coming): no hit on it */
+	const sc_speed *sp = &g_cb.sp;
+	if (tier == SC_TIER_NONE && !(sp->axis_mps >= g_stl.cfg.stab_mps && fabsf(sp->cos_axis) >= g_stl.cfg.stab_cos)) {
+		if (g_vb.ask_weak++ % 20 == 0 && vb_log_ok())
+			logf_("VERBS t=%.3f the blade on the interrogated orc %#lx: below a hit and a stab (along %.2f m/s cos %.2f): "
+			      "held on (%llu so far)", t, (unsigned long)o->c, (double)sp->axis_mps, (double)sp->cos_axis,
+			      (unsigned long long)g_vb.ask_weak);
+		return 1;
+	}
+	vb_tap(el, t), g_vb.choices++, g_vb.ask_kills++;
+	in_haptic_event(SOMVR_HAND_R, 0.9f, 0.25f, SOMVR_HAP_COMBAT);
+	logf_("VERBS t=%.3f kill: the blade in the interrogated orc %#lx (tier %s, along %.2f m/s cos %.2f): %d '%s' tapped (its "
+	      "Eliminate: the game's finisher under the held view)", t, (unsigned long)o->c, sc_tier_name(tier),
+	      (double)sp->axis_mps, (double)sp->cos_axis, el, in_cmd_name(el));
+	return 1;
+}
+
 static int stl_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier,
 		       const somvr_blade *b, const float *root, double t)
 {
 	(void)pcomb;
+	if (stl_ask_kill(pc, o, ct, tier, b, root, t))
+		return 1;
 	return stl_strike(pc, o, ct, tier, b, &g_cb.sp, SOMVR_HAND_R, root, t);
 }
 

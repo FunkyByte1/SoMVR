@@ -228,6 +228,8 @@ static struct {
     int ptr, ptr_bad;    /* SOMVR_XR_POINTER (SOMVR_PTRM_*), not understood (logged with the session) */
     int fade, fade_bad;  /* SOMVR_XR_FADE: 1 on (default), 0 off; not understood (logged with the session) */
     int vm, vm_bad;      /* SOMVR_XR_VRMENU: 1 on (default), 0 off; not understood (logged with the session) */
+    int vm_bow;          /* build 20, SOMVR_XR_VRMENU_BOW=keep|close (default keep = build 19): an open panel closes when
+                            the bow comes out (the game's gate SOMVR_VMG_BOW rises; the panel is on the bow hand's wrist) */
     int th, th_bad;      /* SOMVR_XR_THREAT: 1 on (default), 0 off; not understood (logged with the session) */
     int floor_frames;    /* SOMVR_XR_FLOOR: the floor line this many frames into a session (0 = none) */
     const char *loader;
@@ -327,6 +329,8 @@ static void once_init(void) {
     p = getenv("SOMVR_XR_VRMENU"); /* the VR settings menu (the preload's SOMVR_VRMENU) */
     cfg.vm = !p || !*p || (strcmp(p, "off") && strcmp(p, "0"));
     cfg.vm_bad = p && *p && strcmp(p, "on") && strcmp(p, "1") && strcmp(p, "off") && strcmp(p, "0");
+    p = getenv("SOMVR_XR_VRMENU_BOW");
+    cfg.vm_bow = p && !strcmp(p, "close");
     p = getenv("SOMVR_XR_THREAT"); /* the threat cues (the preload's SOMVR_THREAT) */
     cfg.th = !p || !*p || (strcmp(p, "off") && strcmp(p, "0"));
     cfg.th_bad = p && *p && strcmp(p, "on") && strcmp(p, "1") && strcmp(p, "off") && strcmp(p, "0");
@@ -648,6 +652,12 @@ static struct {
     uint32_t ptr_nq;             /* how many of them the next xrEndFrame carries (after the frame's own layers) */
     uint32_t ptr_lines;          /* event lines logged */
     uint64_t n_ptr, n_ptr_on, n_ptr_drawn, n_ptr_clicks;
+    struct {                     /* build 20: the held point's numbers (SOMVR_XR_PTR_HOLD): the point's and the bare
+                                  * ray's spread over the frames on a quad, a line every 2 s of them */
+        uint32_t n, lines;
+        int64_t t0;
+        float lo[2], hi[2], rlo[2], rhi[2];
+    } ph;
     /* the comfort fade (docs/re-xr-pipeline.md 6.8, ./somvr_fade.h) */
     int fade_on;                 /* this session draws the records' fade (an active somvr_shared, SOMVR_XR_FADE on) */
     XrSwapchain fade_sc;         /* the ramp image (SOMVR_FADE_W x _H), filled once */
@@ -2448,9 +2458,13 @@ static void ptr_setup(void) {
     X.ptr_on = X.ptr_hud = X.ptr_draw = 0;
     X.ptr_nq = X.ptr_lines = 0;
     X.n_ptr = X.n_ptr_on = X.n_ptr_drawn = X.n_ptr_clicks = 0;
+    memset(&X.ph, 0, sizeof X.ph);
     somvr_ptr_cfg_default(&X.ptr_cfg);
+    int hold_bad = 0;
+    somvr_ptr_parse_hold(getenv("SOMVR_XR_PTR_HOLD"), &X.ptr_cfg, &hold_bad); /* build 20: the held point */
     somvr_ptr_reset(&X.ptr);
     if (cfg.ptr_bad) lg("xr: pointer: SOMVR_XR_POINTER=%s is not on, dot or off: on", getenv("SOMVR_XR_POINTER"));
+    if (hold_bad) lg("xr: pointer: SOMVR_XR_PTR_HOLD=%s is not on, off, DEG or DEG,MS: off", getenv("SOMVR_XR_PTR_HOLD"));
     if (!I.in || !(I.in->want & SOMVR_INW_POINTER)) return; /* no SOMVR_POINTER on the game side: silent */
     const char *no = !somvr_input_has_ptr(I.in) ? "somvr_input has no pointer block (v1-sized)"
                      : cfg.ptr == SOMVR_PTRM_OFF ? "SOMVR_XR_POINTER=off"
@@ -2466,6 +2480,9 @@ static void ptr_setup(void) {
        "a click survives %d frames without the hand", X.ptr_hud ? " and the world-locked HUD quad" : "",
        cfg.ptr == SOMVR_PTRM_DOT ? "the dot" : "the dot and the ray", c->leave, c->min_cutoff, c->beta, c->trig_on,
        c->trig_off, c->lose_frames);
+    if (c->hold_deg > 0) /* build 20 */
+        lg("xr: pointer: held point (SOMVR_XR_PTR_HOLD): within %.2f deg of the hand the point on a game menu stays put, "
+           "beyond it follows by the excess (%.0f ms ease inside)", c->hold_deg, c->settle_s * 1000);
 }
 
 /* The pointer image's swapchain (a static image if the runtime takes one), filled once from a host buffer and
@@ -2711,6 +2728,24 @@ static void ptr_frame(dev_st *ds, uint32_t quad, const XrPosef *qpose, const flo
     if (o.flags & SOMVR_PTRF_ON) X.n_ptr_on++, atomic_fetch_add_explicit(&I.in->n_ptr_on, 1, memory_order_relaxed);
     if (nq) X.n_ptr_drawn++, atomic_fetch_add_explicit(&I.in->n_ptr_drawn, 1, memory_order_relaxed);
     X.n_ptr_clicks += (o.edges & SOMVR_PTRE_PRESS) != 0;
+    if (X.ptr_cfg.hold_deg > 0 && !touch && (o.flags & SOMVR_PTRF_ON) && o.raw_hit[o.hand & 1]) { /* build 20 */
+        const float *r = o.raw_uv[o.hand & 1];
+        if (!X.ph.n) X.ph.lo[0] = X.ph.hi[0] = o.uv[0], X.ph.lo[1] = X.ph.hi[1] = o.uv[1],
+                     X.ph.rlo[0] = X.ph.rhi[0] = r[0], X.ph.rlo[1] = X.ph.rhi[1] = r[1], X.ph.t0 = in.time;
+        for (int i = 0; i < 2; i++)
+            X.ph.lo[i] = fminf(X.ph.lo[i], o.uv[i]), X.ph.hi[i] = fmaxf(X.ph.hi[i], o.uv[i]),
+            X.ph.rlo[i] = fminf(X.ph.rlo[i], r[i]), X.ph.rhi[i] = fmaxf(X.ph.rhi[i], r[i]);
+        if (++X.ph.n >= 10 && in.time - X.ph.t0 >= 2000000000) {
+            if (X.ph.lines++ < 200)
+                lg("xr: pointer held: the point moved over %.4f x %.4f uv in the last %u frames (2 s) on the %s (the bare ray: "
+                   "%.4f x %.4f; the quad %.2f x %.2f m, %.2f m from the hand)", X.ph.hi[0] - X.ph.lo[0],
+                   X.ph.hi[1] - X.ph.lo[1], X.ph.n, quad == SOMVR_PTRQ_HUD ? "HUD board" : "menu quad",
+                   X.ph.rhi[0] - X.ph.rlo[0], X.ph.rhi[1] - X.ph.rlo[1], in.quad_size[0], in.quad_size[1], o.dist);
+            X.ph.n = 0;
+        }
+    } else {
+        X.ph.n = 0;
+    }
     static const char *const qn[] = {"none", "menu", "hud"};
     if ((o.edges && X.ptr_lines < 200) || X.n_ptr <= 3 || X.n_ptr % 600 == 0) {
         X.ptr_lines += o.edges != 0;
@@ -4275,6 +4310,32 @@ static struct {
     uint32_t nq;                 /* how many of them the next xrEndFrame carries (xr_end_comp clears it) */
     uint64_t n_frames, n_uploads, n_clicks, n_haptics;
     uint32_t lines;
+    uint32_t blk_was;            /* build 20: the last frame's gate (somvr_vrmenu_shared.block) */
+    uint64_t n_bow_closes;
+    /* build 20 (docs/re-xr-pipeline.md 80): the panel held steady (SOMVR_XR_PANEL_STEADY), the pointer's lock on its
+     * parts (SOMVR_XR_PTR_SNAP); their numbers every 2 s while it is open (the corners' moves: the hand's pose and the
+     * pose shown; the lock's changes and the bare hit test's) */
+    int steady, steady_bad, snap, snap_bad;
+    int ray_near, ray_bad;       /* SOMVR_XR_VM_RAY=near: the ray off the panel only aimed within half its size of it */
+    uint64_t n_ray_hidden;       /* ... frames it was not drawn so */
+    somvr_vm_stcfg stc;
+    somvr_vm_steady st;
+    somvr_vm_snapcfg snc;
+    somvr_vm_snap sn;
+    /* build 19's hover beside it, for the numbers: its pointer (build 19's filter) on the hand's panel pose, the bare hit
+     * test there - what build 19 would have lit and pressed with the same hands */
+    somvr_ptr_cfg pc19;
+    somvr_ptr_state ptr19;
+    somvr_vm_hit hit19;
+    uint32_t n_hit19;
+    struct {
+        int have;
+        float c[2][4][3];        /* the last frame's corners: [0] the hand's pose, [1] shown */
+        double sq[2], most[2];   /* the sums of the squared speeds ((m/s)^2), the largest move in a frame (m) */
+        uint32_t n, lock0, raw0, h190, lines;
+        double t0, t;
+        float lag_m, lag_deg;    /* the shown pose off the hand's, the last frame */
+    } sst;
 } VM;
 
 static const char *const vm_part_name[] = {"-", "row", "<", ">", "button"};
@@ -4339,6 +4400,8 @@ static void vm_setup(void) {
     VM.obj = NULL, VM.on = 0, VM.nq = 0, VM.lines = 0;
     VM.n_frames = VM.n_uploads = VM.n_clicks = VM.n_haptics = 0;
     if (cfg.vm_bad) lg("xr: vrmenu: SOMVR_XR_VRMENU=%s is not on or off: on", getenv("SOMVR_XR_VRMENU"));
+    VM.blk_was = 0, VM.n_bow_closes = 0;
+    if (cfg.vm_bow) lg("xr: vrmenu: SOMVR_XR_VRMENU_BOW=close: an open panel closes when the bow comes out");
     somvr_vrmenu_shared *m = (somvr_vrmenu_shared *)dlsym(RTLD_DEFAULT, SOMVR_VRMENU_SYMBOL);
     const char *no = !m ? "no somvr_vrmenu: a preload without it"
                      : !somvr_vrmenu_ok(m) ? "somvr_vrmenu inactive (SOMVR_VRMENU unset) or another version"
@@ -4373,7 +4436,49 @@ static void vm_setup(void) {
     vh_panel_cfg(&VM.gc); /* build 10: SOMVR_XR_PANEL=palm */
     somvr_vm_greset(&VM.gs);
     somvr_ptr_cfg_default(&VM.pc);
+    int hold_bad = 0;
+    somvr_ptr_parse_hold(getenv("SOMVR_XR_PTR_HOLD"), &VM.pc, &hold_bad); /* build 20: the held point (logged by ptr) */
     somvr_ptr_reset(&VM.ptr);
+    { /* build 20: SOMVR_XR_PANEL_STEADY, SOMVR_XR_PTR_SNAP (docs/re-xr-pipeline.md 80) */
+        VM.steady_bad = VM.snap_bad = 0;
+        VM.steady = somvr_vm_stcfg_parse(getenv("SOMVR_XR_PANEL_STEADY"), &VM.stc, &VM.steady_bad);
+        somvr_vm_steady_reset(&VM.st);
+        const char *rp = getenv("SOMVR_XR_VM_RAY");
+        VM.ray_near = rp && !strcmp(rp, "near"), VM.n_ray_hidden = 0;
+        VM.ray_bad = rp && *rp && !VM.ray_near && strcmp(rp, "always");
+        if (VM.ray_bad) lg("xr: vrmenu: SOMVR_XR_VM_RAY=%s is not near or always: always", rp);
+        if (VM.ray_near)
+            lg("xr: vrmenu: the ray (SOMVR_XR_VM_RAY=near): drawn on the panel, and off it only while it is aimed within "
+               "half the panel's size of it - no line out of the hand while the panel is open and the hand does other "
+               "things");
+        const char *sp = getenv("SOMVR_XR_PTR_SNAP");
+        VM.snap = sp && (!strcmp(sp, "on") || !strcmp(sp, "1"));
+        VM.snap_bad = sp && *sp && !VM.snap && strcmp(sp, "off") && strcmp(sp, "0");
+        somvr_vm_snapcfg_default(&VM.snc);
+        somvr_vm_snap_reset(&VM.sn);
+        somvr_ptr_cfg_default(&VM.pc19);
+        somvr_ptr_reset(&VM.ptr19);
+        VM.hit19 = (somvr_vm_hit){-1, SOMVR_VMP_NONE}, VM.n_hit19 = 0;
+        memset(&VM.sst, 0, sizeof VM.sst);
+        if (VM.steady_bad)
+            lg("xr: vrmenu: SOMVR_XR_PANEL_STEADY=%s is not on, off or CM,DEG,MS: off", getenv("SOMVR_XR_PANEL_STEADY"));
+        if (VM.snap_bad) lg("xr: vrmenu: SOMVR_XR_PTR_SNAP=%s is not on or off: off", sp);
+        if (hold_bad) lg("xr: vrmenu: SOMVR_XR_PTR_HOLD=%s is not on, off, DEG or DEG,MS: off", getenv("SOMVR_XR_PTR_HOLD"));
+        lg("xr: vrmenu: build 20: the panel %s; the pointer %s; its point %s", VM.steady ? "held steady" : "on the hand "
+           "(SOMVR_XR_PANEL_STEADY off)", VM.snap ? "locks on its parts (SOMVR_XR_PTR_SNAP)" : "on the bare hit "
+           "(SOMVR_XR_PTR_SNAP off)", VM.pc.hold_deg > 0 ? "held (SOMVR_XR_PTR_HOLD)" : "filtered only");
+        if (VM.steady)
+            lg("xr: vrmenu: steady: it stays put while the hand's pose is within %.1f cm and %.1f deg of it, follows by the "
+               "excess beyond, eases inside (%.0f ms at the edge, (offset / radius)^2 of that inside)",
+               VM.stc.hold_m * 100, VM.stc.hold_deg, VM.stc.settle_s * 1000);
+        if (VM.snap)
+            lg("xr: vrmenu: lock: a part holds the pointer within %.1f deg (at least %.0f mm) of it; on none the nearest "
+               "within %.1f deg; the press goes to the locked part, the dot is drawn on it, the part outlined",
+               VM.snc.hold_deg, VM.snc.min_m * 1000, VM.snc.magnet_deg);
+        if (VM.pc.hold_deg > 0)
+            lg("xr: vrmenu: held point: within %.2f deg the point stays, beyond it follows by the excess (%.0f ms ease)",
+               VM.pc.hold_deg, VM.pc.settle_s * 1000);
+    }
     VM.main_hand = VM.set.hand ? SOMVR_HAND_L : SOMVR_HAND_R;
     VM.ptr.hand = VM.main_hand;
     VM.hover = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
@@ -4675,6 +4780,50 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
 #include "somvr_objective_layer.c" /* build 15: SOMVR_OBJECTIVE's marker in the world, its edge arrow */
 #include "somvr_testhead_layer.c" /* SOMVR_XR_TEST `head X Y Z [yaw DEG] [s SEC]`: a duck, a look behind (headless tests) */
 
+/* build 20: the steady panel's and the lock's numbers while the panel is open (a line every 2 s and at its close): the
+ * corners' speed (rms over the frames, mm/s) and their largest move in a frame - the hand's panel pose (build 19's
+ * panel) and the pose shown; the lock's changes and the bare hit test's (build 19's hover) */
+static void vm_sst_flush(const char *why) {
+    if (VM.sst.n >= 20 && VM.sst.lines < 300) {
+        VM.sst.lines++;
+        lg("xr: vrmenu steady: %u frames%s: the corners' speed %.1f mm/s rms (the hand's pose: %.1f), most %.2f mm in a "
+           "frame (%.2f); the lock changed %u times (the bare hit: %u, build 19's hover: %u); the shown pose %.1f cm and "
+           "%.1f deg off the hand's now (follows %llu, starts %llu; the ray hidden off it %llu frames)", VM.sst.n, why,
+           1000 * sqrt(VM.sst.sq[1] / VM.sst.n),
+           1000 * sqrt(VM.sst.sq[0] / VM.sst.n), 1000 * VM.sst.most[1], 1000 * VM.sst.most[0], VM.sn.changes - VM.sst.lock0,
+           VM.sn.raw_changes - VM.sst.raw0, VM.n_hit19 - VM.sst.h190, 100 * VM.sst.lag_m, VM.sst.lag_deg,
+           (unsigned long long)VM.st.follows,
+           (unsigned long long)VM.st.restarts, (unsigned long long)VM.n_ray_hidden);
+    }
+    VM.sst.n = 0, VM.sst.sq[0] = VM.sst.sq[1] = VM.sst.most[0] = VM.sst.most[1] = 0;
+    VM.sst.lock0 = VM.sn.changes, VM.sst.raw0 = VM.sn.raw_changes, VM.sst.h190 = VM.n_hit19;
+}
+static void vm_sst(const somvr_posef *raw, const somvr_posef *shown, const float size[2], double t) {
+    if (!VM.steady && !VM.snap) return;
+    float c[2][4][3];
+    somvr_vm_corners(raw, size, c[0]), somvr_vm_corners(shown, size, c[1]);
+    double dt = t - VM.sst.t;
+    if (VM.sst.have && dt > 0 && dt < 0.25) {
+        for (int k = 0; k < 2; k++)
+            for (int j = 0; j < 4; j++) {
+                float d = 0;
+                for (int i = 0; i < 3; i++) d += (c[k][j][i] - VM.sst.c[k][j][i]) * (c[k][j][i] - VM.sst.c[k][j][i]);
+                d = sqrtf(d);
+                VM.sst.sq[k] += 0.25 * (d / dt) * (d / dt), VM.sst.most[k] = d > VM.sst.most[k] ? d : VM.sst.most[k];
+            }
+        VM.sst.n++;
+    } else if (!VM.sst.have) {
+        VM.sst.t0 = t, VM.sst.lock0 = VM.sn.changes, VM.sst.raw0 = VM.sn.raw_changes, VM.sst.h190 = VM.n_hit19;
+    }
+    float dp = 0, dq = fabsf(raw->q[0] * shown->q[0] + raw->q[1] * shown->q[1] + raw->q[2] * shown->q[2] +
+                             raw->q[3] * shown->q[3]);
+    for (int i = 0; i < 3; i++) dp += (raw->p[i] - shown->p[i]) * (raw->p[i] - shown->p[i]);
+    VM.sst.lag_m = sqrtf(dp), VM.sst.lag_deg = 2 * acosf(dq < 1 ? dq : 1) * 57.29578f;
+    memcpy(VM.sst.c, c, sizeof c);
+    VM.sst.have = 1, VM.sst.t = t;
+    if (t - VM.sst.t0 >= 2.0) vm_sst_flush(""), VM.sst.t0 = t;
+}
+
 /* One frame (stereo, reuse or mono), before the game's pointer (it has no target while the panel is open) and before
  * the frame's layers are put together: the gesture, the pointer on the panel, the clicks, the picture; VM.q[0 .. nq)
  * = the panel, the ray, the dot. Published: open, consume. */
@@ -4724,9 +4873,18 @@ static void vm_frame(dev_st *ds) {
         lg("xr: vrmenu: opened by %s on the %s wrist (opens %llu)", somvr_vm_why(VM.gs.why),
            ph == SOMVR_HAND_L ? "left" : "right", (unsigned long long)VM.gs.opens);
     } else if (ev < 0) {
-        lg("xr: vrmenu: closed: %s (closes %llu, %llu frames shown)", somvr_vm_why(VM.gs.why),
+        lg("xr: vrmenu: closed: %s (closes %llu, %llu frames shown, the ray hidden off it in %llu)", somvr_vm_why(VM.gs.why),
+           (unsigned long long)VM.gs.closes, (unsigned long long)VM.n_frames, (unsigned long long)VM.n_ray_hidden);
+    }
+    if (VM.gs.open && cfg.vm_bow && (gi.block & ~VM.blk_was & SOMVR_VMG_BOW)) { /* build 20: the bow out in its hand -
+        * the build 19b session: the panel opened on the reach to the bow's shoulder and stayed, its ray an unexplained
+        * line from the right hand all through the draw */
+        VM.gs.open = 0, VM.gs.why = SOMVR_VMW_BOW, VM.gs.closes++, VM.gs.armed = 0, have = 0, ev = -1;
+        VM.n_bow_closes++;
+        lg("xr: vrmenu: closed: %s (closes %llu, %llu frames shown; SOMVR_XR_VRMENU_BOW=close)", somvr_vm_why(VM.gs.why),
            (unsigned long long)VM.gs.closes, (unsigned long long)VM.n_frames);
     }
+    VM.blk_was = gi.block;
     if (VM.gs.open && mn_watch_over(ph, &gi)) { /* build 6: the panel's wrist turned over: the watch, not its back */
         VM.gs.open = 0, VM.gs.why = SOMVR_VMW_TURNED, VM.gs.closes++, VM.gs.armed = 0, have = 0, ev = -1;
         lg("xr: vrmenu: closed: %s (closes %llu, %llu frames shown)", somvr_vm_why(VM.gs.why),
@@ -4739,6 +4897,19 @@ static void vm_frame(dev_st *ds) {
     memset(&o, 0, sizeof o);
     float psz[2];
     mn_card_size(card, psz);
+    somvr_posef raw_panel = panel; /* build 20: the hand's panel pose (build 19's panel) */
+    if (VM.steady && VM.gs.open && !card && have) { /* build 20: the panel held steady (the gesture used the hand's) */
+        somvr_vm_steady_step(&VM.st, &VM.stc, &raw_panel, gi.t, &panel);
+        vm_sst(&raw_panel, &panel, psz, gi.t);
+    } else if (VM.gs.open && !card && have) {
+        vm_sst(&panel, &panel, psz, gi.t);
+    } else if (!VM.gs.open) {
+        if (VM.sst.have) vm_sst_flush(" (closed)");
+        VM.sst.have = 0;
+        somvr_vm_steady_reset(&VM.st);
+    }
+    float dot_uv[2] = {0, 0}; /* build 20: where the dot goes (the lock's: on the locked part) */
+    int dot_lock = 0;
     if ((VM.gs.open || card) && have) { /* the main hand's ray on the panel */
         somvr_ptr_in in;
         memset(&in, 0, sizeof in);
@@ -4753,9 +4924,38 @@ static void vm_frame(dev_st *ds) {
         mn_vm_touch(card, &panel, psz, &o); /* build 6: a fingertip on it wins over the ray */
         somvr_vm_hit hit = {-1, SOMVR_VMP_NONE};
         if (VM.page == SOMVR_VMPG_PRACTICE && !(avail & SOMVR_VMA_PRACTICE)) VM.page = SOMVR_VMPG_SETTINGS; /* (no tab) */
-        if (o.flags & SOMVR_PTRF_ON) /* the rows this build shows (somvr_vm_shown) */
-            hit = somvr_vm_hit_test_av(avail, card ? SOMVR_VMPG_CONTROLS : VM.page, o.uv[0], o.uv[1]);
-        if (card && hit.item != SOMVR_VMI_CLOSE) hit = (somvr_vm_hit){-1, SOMVR_VMP_NONE}; /* the card: its X alone */
+        int locks = VM.snap && !MN.vtouch; /* build 20: the ray locks on the parts (a fingertip touches as before) */
+        if (locks && (o.flags & SOMVR_PTRF_ON)) {
+            hit = somvr_vm_snap_step(&VM.sn, &VM.snc, &VM.set, avail, VM.page, card, o.uv, o.dist, psz[0], dot_uv);
+            dot_lock = hit.item >= 0;
+        } else if (locks) {
+            VM.sn.lock = VM.sn.raw = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
+        } else {
+            if (o.flags & SOMVR_PTRF_ON) /* the rows this build shows (somvr_vm_shown) */
+                hit = somvr_vm_hit_test_av(avail, card ? SOMVR_VMPG_CONTROLS : VM.page, o.uv[0], o.uv[1]);
+            if (card && hit.item != SOMVR_VMI_CLOSE) hit = (somvr_vm_hit){-1, SOMVR_VMP_NONE}; /* the card: its X alone */
+        }
+        if ((VM.steady || VM.snap || VM.pc.hold_deg > 0) && !MN.vtouch) { /* build 19's hover with these hands */
+            somvr_ptr_out o19;
+            in.quad_pose = raw_panel;
+            somvr_ptr_update(&VM.ptr19, &VM.pc19, &in, &o19);
+            somvr_vm_hit h19 = {-1, SOMVR_VMP_NONE};
+            if (o19.flags & SOMVR_PTRF_ON)
+                h19 = somvr_vm_hit_test_av(avail, card ? SOMVR_VMPG_CONTROLS : VM.page, o19.uv[0], o19.uv[1]);
+            if (card && h19.item != SOMVR_VMI_CLOSE) h19 = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
+            if (h19.item != VM.hit19.item || h19.part != VM.hit19.part) VM.n_hit19++, VM.hit19 = h19;
+        }
+        if (locks && (o.edges & SOMVR_PTRE_PRESS) && VM.lines < 400) {
+            VM.lines++;
+            lg("xr: vrmenu: the press on the locked %s %s (the bare hit: %s %s; build 19's: %s %s; uv %.3f,%.3f)",
+               hit.item >= 0 ? somvr_vm_label(hit.item) : "nothing",
+               vm_part_name[hit.part >= 0 && hit.part <= SOMVR_VMP_BUTTON ? hit.part : 0],
+               VM.sn.raw.item >= 0 ? somvr_vm_label(VM.sn.raw.item) : "nothing",
+               vm_part_name[VM.sn.raw.part >= 0 && VM.sn.raw.part <= SOMVR_VMP_BUTTON ? VM.sn.raw.part : 0],
+               VM.hit19.item >= 0 ? somvr_vm_label(VM.hit19.item) : "nothing",
+               vm_part_name[VM.hit19.part >= 0 && VM.hit19.part <= SOMVR_VMP_BUTTON ? VM.hit19.part : 0], o.uv[0],
+               o.uv[1]);
+        }
         if (hit.item >= 0 && hit.item != VM.hover.item && somvr_vm_enabled(&VM.set, avail, hit.item))
             vm_haptic(MN.vtouch ? MN.tvo.hand : main, 0.12f, 0.008f); /* a light tick on a new row */
         VM.hover = hit;
@@ -4787,15 +4987,26 @@ static void vm_frame(dev_st *ds) {
         if (SSN.quit_armed && ss_now() - SSN.quit_t > 5.0) SSN.quit_armed = 0; /* not confirmed in time */
         v.set = VM.set, v.avail = avail, v.hover = VM.hover, v.page = card ? SOMVR_VMPG_CONTROLS : VM.page, v.card = card;
         v.quit_armed = card ? 0 : SSN.quit_armed;
+        v.lock = VM.snap && !MN.vtouch && VM.hover.item >= 0; /* build 20: the locked part outlined */
         if ((!VM.released || memcmp(&v, &VM.drawn, sizeof v)) && vm_upload(ds, &v)) return; /* off now (logged) */
+        float dotp[3]; /* the ray's end and the dot: the pointer's point, or (build 20) the lock's on the locked part */
+        memcpy(dotp, o.hit, sizeof dotp);
+        if (dot_lock && !MN.vtouch && (o.flags & SOMVR_PTRF_ON)) somvr_ptr_quad_point(&panel, psz, dot_uv, 0, dotp);
         VM.q[nq] = vm_quad(&panel);
         VM.q[nq].size.width = psz[0], VM.q[nq++].size.height = psz[1];
         int draw = X.ptr_draw && (o.flags & (SOMVR_PTRF_ON | SOMVR_PTRF_AIM)) && !ptr_fill(ds);
         if (draw && MN.vtouch) nq += mn_touch_marks(&MN.tvo, &panel, NULL, &VM.q[nq]); /* the fingertip's markers */
-        if (draw && !MN.vtouch && cfg.ptr != SOMVR_PTRM_DOT && (o.flags & SOMVR_PTRF_AIM)) { /* the ray: 6 cm ahead */
+        int ray_ok = 1; /* build 20 (SOMVR_XR_VM_RAY=near): off the panel the ray shows only aimed near it */
+        if (VM.ray_near && !(o.flags & SOMVR_PTRF_ON) && (o.flags & SOMVR_PTRF_AIM)) {
+            float nuv[2], nt;
+            ray_ok = somvr_ptr_hit_quad(o.origin, o.dir, &panel, psz, 2.0f, nuv, &nt) && nuv[0] >= -0.5f &&
+                     nuv[0] <= 1.5f && nuv[1] >= -0.5f && nuv[1] <= 1.5f;
+            VM.n_ray_hidden += !ray_ok;
+        }
+        if (draw && ray_ok && !MN.vtouch && cfg.ptr != SOMVR_PTRM_DOT && (o.flags & SOMVR_PTRF_AIM)) { /* the ray: 6 cm ahead */
             float a[3], b[3], len = (o.flags & SOMVR_PTRF_ON) ? o.dist : 0.5f;
             for (int i = 0; i < 3; i++) a[i] = o.origin[i] + 0.06f * o.dir[i], b[i] = o.origin[i] + len * o.dir[i];
-            if (o.flags & SOMVR_PTRF_ON) memcpy(b, o.hit, sizeof b);
+            if (o.flags & SOMVR_PTRF_ON) memcpy(b, dotp, sizeof b);
             somvr_posef rp;
             float rs[2];
             if (len > 0.08f && somvr_ptr_ray_quad(a, b, gi.head_ok ? gi.head.p : NULL, 0.0015f, &rp, rs))
@@ -4804,7 +5015,7 @@ static void vm_frame(dev_st *ds) {
         if (draw && !MN.vtouch && (o.flags & SOMVR_PTRF_ON)) { /* the dot: on the panel, turned like it */
             somvr_posef dp;
             memcpy(dp.q, panel.q, sizeof dp.q);
-            memcpy(dp.p, o.hit, sizeof dp.p);
+            memcpy(dp.p, dotp, sizeof dp.p);
             float d = somvr_ptr_dot_size(o.dist, 0.5f);
             VM.q[nq++] = ptr_layer(0, &dp, d, d);
         }

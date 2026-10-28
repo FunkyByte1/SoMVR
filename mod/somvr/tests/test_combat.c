@@ -4,6 +4,7 @@
  * the re-hit cooldown and the hit charges, the fake blade (geometry, speeds, velocity = the derivative of the tip) and,
  * end to end, the fake's two swings through an orc capsule: one heavy and one light hit per cycle. */
 #include "../somvr_combat.h"
+#include "swing_b19b.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -30,7 +31,7 @@ static float dist3(const float a[3], const float b[3]) {
     return len3(d);
 }
 static somvr_blade blade(float bx, float by, float bz, float tx, float ty, float tz, double t) {
-    somvr_blade b = {1, {bx, by, bz}, {tx, ty, tz}, {0, 0, 0}, t, {0, 0, 0}};
+    somvr_blade b = {1, {bx, by, bz}, {tx, ty, tz}, {0, 0, 0}, t, {0, 0, 0}, {0, 0, 0}};
     return b;
 }
 
@@ -972,6 +973,149 @@ static void test_hit_kind(void) {
           "no bite on a tap, a slap or a stab");
 }
 
+/* ---- build 20: SOMVR_COMBAT_SWING=stroke - a cut needs a real swing ------------------------------------------- */
+/* a blade about a still hand at the origin turned by q (the replay's lay-out: the grip's +Z the blade, +x the flat) */
+static void qrot3t(const float q[4], const float v[3], float o[3]) {
+    float x = q[0], y = q[1], z = q[2], w = q[3];
+    float tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]);
+    o[0] = v[0] + w * tx + (y * tz - z * ty), o[1] = v[1] + w * ty + (z * tx - x * tz), o[2] = v[2] + w * tz + (x * ty - y * tx);
+}
+static void stroke_blade(const float q[4], double t, const somvr_blade *prev, somvr_blade *b) {
+    static const float zt[3] = {0, 0, 100}, zb[3] = {0, 0, -8}, xf[3] = {1, 0, 0};
+    memset(b, 0, sizeof *b);
+    qrot3t(q, zt, b->tip), qrot3t(q, zb, b->base), qrot3t(q, xf, b->flat_n);
+    b->t = t, b->valid = 1;
+    double dt = prev && prev->valid ? t - prev->t : 0;
+    if (dt > 0 && dt <= 0.1)
+        for (int i = 0; i < 3; i++)
+            b->vel_tip[i] = (float)((b->tip[i] - prev->tip[i]) / dt), b->vel_base[i] = (float)((b->base[i] - prev->base[i]) / dt);
+}
+/* a still blade along +z moved by v (cm/s) for dt: the next sample */
+static somvr_blade moved(const somvr_blade *p, const float v[3], double dt) {
+    somvr_blade b = *p;
+    for (int i = 0; i < 3; i++) b.base[i] += (float)(v[i] * dt), b.tip[i] += (float)(v[i] * dt), b.vel_tip[i] = v[i], b.vel_base[i] = v[i];
+    b.t += dt;
+    return b;
+}
+
+static void test_stroke(void) {
+    sc_cfg c;
+    sc_cfg_default(&c);
+    CHECK(c.stroke == 0 && c.tip_max_mps == 0 && NEAR(c.cut_mps, 12, 0) && NEAR(c.full_mps, 20, 0) && NEAR(c.rev_cos, -0.3, 1e-6),
+          "the defaults: off, no drop, 12 / 20 m/s, a turn past -0.3");
+    c.stroke = 1, c.tip_max_mps = 60;
+    sc_speed s;
+    sc_speed_reset(&s);
+    /* one stroke at 10 m/s along +x for 18 samples: 17 of them move it, 189 cm reached */
+    somvr_blade b = blade(0, 0, 0, 0, 0, 100, 0);
+    b.flat_n[1] = 1; /* the flat facing +y: an x motion is edge-on */
+    float vx[3] = {1000, 0, 0}, vmx[3] = {-1000, 0, 0};
+    for (int k = 0; k < 18; k++) b = moved(&b, vx, 1 / HZ), sc_speed_push(&s, &c, &b);
+    CHECK(s.above && NEAR(s.reach, 1700 / HZ * 10, 0.5) && NEAR(s.stroke_cm, s.reach, 0.01) && s.strokes == 1,
+          "one stroke: reach %g path %g strokes %llu",
+          s.reach, s.stroke_cm, (unsigned long long)s.strokes);
+    CHECK(sc_tier_swing(&c, &s, 0, 1) == SC_TIER_LIGHT, "10 m/s at the tip: under the cut's floor, light");
+    for (int k = 0; k < 6; k++) b = moved(&b, vx, 1 / HZ), b.vel_tip[0] = 1600, sc_speed_push(&s, &c, &b);
+    CHECK(sc_tier_swing(&c, &s, 0, 1) == SC_TIER_HEAVY, "16 m/s at the tip, a 2 m stroke: a cut (mean %g)", s.mean_mps);
+    CHECK(sc_tier_swing(&c, &s, 75, 1) == SC_TIER_LIGHT, "... the flat leading: light");
+    CHECK(sc_tier_swing(&c, &s, 0, 0) == SC_TIER_LIGHT, "... at the base (the hand at 10 m/s): light (contact %g m/s)",
+          sc_contact_mps(&s, 0));
+    float k1 = sc_cut_k(&c, 12), k2 = sc_cut_k(&c, 16), k3 = sc_cut_k(&c, 30);
+    CHECK(NEAR(k1, 0.6, 1e-5) && NEAR(k2, 0.8, 1e-5) && NEAR(k3, 1, 0) && NEAR(sc_cut_k(&c, NAN), 0.6, 1e-6),
+          "the damage factor: %g %g %g", k1, k2, k3);
+    /* the blade came into the orc in this stroke: a touch 0.05 s old in a stroke 0.2 s old yes, 0.3 s old no */
+    double now = s.last_t;
+    CHECK(NEAR(now - s.stroke_t0, 23 / HZ, 1e-6) && sc_stroke_entered(&s, 0.05f, now) && sc_stroke_entered(&s, 0, now) &&
+              !sc_stroke_entered(&s, 0.3f, now),
+          "entered in the stroke (%.3f s old): a 0.05 s touch yes, a 0.3 s one no", now - s.stroke_t0);
+    /* the tip turns back: a new stroke; its reach starts again */
+    b = moved(&b, vmx, 1 / HZ), b.vel_tip[0] = -1600, sc_speed_push(&s, &c, &b);
+    CHECK(s.strokes == 2 && s.reach < 20, "a turn back: stroke %llu, reach %g", (unsigned long long)s.strokes, s.reach);
+    CHECK(sc_tier_swing(&c, &s, 0, 1) != SC_TIER_HEAVY, "fast but just turned: no cut");
+    CHECK(!sc_stroke_entered(&s, 0.05f, s.last_t) && sc_stroke_entered(&s, 0, s.last_t),
+          "the new stroke began after a touch 0.05 s old: not brought in by it");
+    /* a wiggle: +-20 deg of a 100 cm blade about the hand at 4 Hz, 2 s: fast at the tip (~9 m/s peak), short strokes */
+    sc_speed_reset(&s);
+    sc_cfg old;
+    sc_cfg_default(&old);
+    sc_speed so;
+    sc_speed_reset(&so);
+    somvr_blade pv = {0}, w;
+    int cuts_new = 0, cuts_old = 0, light_new = 0;
+    float reach_max = 0;
+    for (int k = 0; k <= 180; k++) {
+        double t = k / HZ;
+        float a = DEG(20) * sinf((float)(2 * 3.14159265358979 * 4 * t)), q[4] = {sinf(a / 2), 0, 0, cosf(a / 2)}; /* edge on */
+        stroke_blade(q, t, &pv, &w);
+        sc_speed_push(&s, &c, &w), sc_speed_push(&so, &old, &w);
+        if (k > 20) {
+            float e = sc_edge_deg(&w);
+            cuts_new += sc_tier_swing(&c, &s, e, 1) == SC_TIER_HEAVY, light_new += sc_tier_swing(&c, &s, e, 1) == SC_TIER_LIGHT;
+            cuts_old += sc_tier_cut(&old, &so, e) == SC_TIER_HEAVY;
+            reach_max = fmaxf(reach_max, s.reach);
+        }
+        pv = w;
+    }
+    CHECK(cuts_new == 0 && cuts_old > 100, "a 4 Hz +-20 deg wiggle: cuts on %d frames (build 16's rule %d), light %d, the reach "
+          "%.0f cm at most", cuts_new, cuts_old, light_new, reach_max);
+    /* a tracking jump: a sample at 130 m/s is dropped, not a stab */
+    sc_speed_reset(&s);
+    b = blade(0, 0, 0, 0, 0, 100, 0);
+    float still[3] = {0, 0, 0};
+    for (int k = 0; k < 10; k++) b = moved(&b, still, 1 / HZ), sc_speed_push(&s, &c, &b);
+    somvr_blade j = moved(&b, still, 1 / HZ);
+    j.vel_tip[2] = 13000, j.vel_base[2] = 13000;
+    CHECK(sc_speed_push(&s, &c, &j) == 0 && s.drops == 1 && s.axis_mps < 1 && sc_tier_swing(&c, &s, NAN, 1) == SC_TIER_NONE,
+          "a 130 m/s jump along the blade: dropped (drops %llu, axis %g)", (unsigned long long)s.drops, s.axis_mps);
+    sc_speed_reset(&so);
+    for (int k = 0; k < 10; k++) sc_speed_push(&so, &old, &b);
+    sc_speed_push(&so, &old, &j);
+    CHECK(sc_tier_cut(&old, &so, NAN) == SC_TIER_STAB, "... build 16's rule: a stab (the session's 132 m/s kill)");
+    printf("stroke: one-way reach, the contact point's speed (cut >= %.0f m/s, full damage from %.0f), jumps over %.0f m/s "
+           "dropped; a 4 Hz wiggle: 0 cuts (build 16: %d frames)\n", c.cut_mps, c.full_mps, c.tip_max_mps, cuts_old);
+}
+
+/* the user's own motion (tests/swing_b19b.h): their real cuts stay cuts, the flail of mark 15 does not cut */
+static void test_stroke_replay(void) {
+    sc_cfg c, old;
+    sc_cfg_default(&c), sc_cfg_default(&old);
+    c.stroke = 1, c.tip_max_mps = 60;
+    sc_speed s, so;
+    sc_speed_reset(&s), sc_speed_reset(&so);
+    int nf = (int)(sizeof g_swing_b19b / sizeof g_swing_b19b[0]), nh = (int)(sizeof g_swing_b19b_hits / sizeof g_swing_b19b_hits[0]);
+    int hi = 0, real = 0, real_cut = 0, flail = 0, flail_cut = 0, flail_old_cut = 0;
+    somvr_blade pv = {0}, b;
+    for (int k = 0; k < nf && hi < nh; k++) {
+        const float *r = g_swing_b19b[k];
+        if (k && r[0] - g_swing_b19b[k - 1][0] > 0.1f) /* a new window */
+            sc_speed_reset(&s), sc_speed_reset(&so), pv.valid = 0;
+        stroke_blade(r + 1, r[0], &pv, &b);
+        sc_speed_push(&s, &c, &b), sc_speed_push(&so, &old, &b);
+        pv = b;
+        while (hi < nh && (k + 1 >= nf || g_swing_b19b[k + 1][0] > g_swing_b19b_hits[hi].t + 1e-4f)) {
+            float e = sc_edge_deg(&b), al = g_swing_b19b_hits[hi].along, v = sc_contact_mps(&s, al);
+            int tn = sc_tier_swing(&c, &s, e, al), to = sc_tier_cut(&old, &so, e);
+            char kd = g_swing_b19b_hits[hi].kind;
+            printf("  replay %-38s %s now %-5s (build 16: %-5s) tip %5.1f m/s (logged %5.2f) at %.2f: %5.1f m/s, stroke %4.0f cm, "
+                   "edge %3.0f, k %.2f\n", g_swing_b19b_hits[hi].what, kd == 'R' ? "real " : kd == 'W' ? "flail" : "info ",
+                   sc_tier_name(tn), sc_tier_name(to), s.mean_mps, g_swing_b19b_hits[hi].logged, al, v, s.reach, e,
+                   tn == SC_TIER_HEAVY ? sc_cut_k(&c, v) : 0);
+            if (kd == 'R') {
+                real++, real_cut += tn == SC_TIER_HEAVY;
+                CHECK(tn == SC_TIER_HEAVY, "%s: still a cut", g_swing_b19b_hits[hi].what);
+            } else if (kd == 'W') {
+                flail++, flail_cut += tn == SC_TIER_HEAVY, flail_old_cut += to == SC_TIER_HEAVY;
+                CHECK(tn != SC_TIER_HEAVY, "%s: no cut", g_swing_b19b_hits[hi].what);
+            }
+            hi++;
+        }
+    }
+    CHECK(hi == nh && real == 7 && flail == 4, "every contact replayed (%d of %d)", hi, nh);
+    CHECK(flail_old_cut >= 1, "build 16's rule made the flail cut on the replay too (%d)", flail_old_cut);
+    printf("stroke replay (the build 19b session's own grip, %d frames): real cuts %d of %d stay cuts; the flail's %d contacts: "
+           "%d cuts (build 16's rule: %d)\n", nf, real_cut, real, flail, flail_cut, flail_old_cut);
+}
+
 int main(void) {
     test_space();
     test_body();
@@ -994,6 +1138,8 @@ int main(void) {
     test_swing();
     test_swing_fight();
     test_hit_kind();
+    test_stroke();
+    test_stroke_replay();
     printf("test_combat: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

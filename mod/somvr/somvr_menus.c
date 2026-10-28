@@ -579,9 +579,17 @@ int somvr_xt_parse(const char *line, somvr_xt_cmd *c) {
         int nv = 0, most = 6;
         if (!strcmp(w2, "head")) {
             c->op = SOMVR_XT_HEAD;
-        } else if (!strcmp(w2, "touch")) {
+        } else if (!strcmp(w2, "shake")) { /* build 20 */
+            int k = 0;
+            if (sscanf(p, "%f %f%n", &c->v[0], &c->v[1], &k) != 2 || !(c->v[0] >= 0 && c->v[0] <= 5) ||
+                !(c->v[1] >= 0 && c->v[1] <= 10))
+                return -1;
+            p += k;
+            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+            return *p ? -1 : (c->op = SOMVR_XT_SHAKE, 1);
+        } else if (!strcmp(w2, "touch") || !strcmp(w2, "aim")) { /* build 20: aim */
             char s[16] = "";
-            c->op = SOMVR_XT_TOUCH, most = 3;
+            c->op = !strcmp(w2, "aim") ? SOMVR_XT_AIM : SOMVR_XT_TOUCH, most = 3;
             if (!xt_word(&p, s)) return -1;
             c->what = !strcmp(s, "board") ? SOMVR_XTS_BOARD : !strcmp(s, "panel") ? SOMVR_XTS_PANEL
                       : !strcmp(s, "watch") ? SOMVR_XTS_WATCH : -1;
@@ -639,6 +647,27 @@ void somvr_xt_touch_pose(const somvr_posef *quad, const float size[2], float u, 
     qrot(quad->q, lp, w); /* the aim reach_m behind the fingertip, along the quad's +Z */
     for (int i = 0; i < 3; i++) out->p[i] = quad->p[i] + w[i];
     memcpy(out->q, quad->q, sizeof out->q); /* the aim's -Z = the quad's -Z: into it */
+}
+
+void somvr_xt_shake(const somvr_posef *in, float cm, float deg, double t, int hand, somvr_posef *out) {
+    static const float hz[6] = {0.6f, 1.1f, 1.9f, 5.3f, 7.9f, 9.7f}, wt[6] = {0.25f, 0.2f, 0.15f, 0.15f, 0.15f, 0.1f};
+    float o[6]; /* x y z (m), then about x y z (deg) */
+    for (int a = 0; a < 6; a++) {
+        double sum = 0;
+        for (int k = 0; k < 6; k++) { /* a fixed phase per (hand, axis, sine) */
+            double ph = 6.2831853 * (double)((unsigned)(hand * 7919 + a * 104729 + k * 1299709) % 997u) / 997.0;
+            sum += wt[k] * sin(6.2831853 * hz[k] * t + ph);
+        }
+        o[a] = (float)sum * (a < 3 ? 0.01f * cm : deg);
+    }
+    float q[4] = {in->q[0], in->q[1], in->q[2], in->q[3]}, r[4], t4[4];
+    for (int a = 0; a < 3; a++) {
+        qaxis(a, o[3 + a], r);
+        qmul(q, r, t4);
+        memcpy(q, t4, sizeof q);
+    }
+    memcpy(out->q, q, sizeof out->q);
+    for (int i = 0; i < 3; i++) out->p[i] = in->p[i] + o[i];
 }
 
 void somvr_xt_lerp(const somvr_posef *a, const somvr_posef *b, float k, somvr_posef *out) {

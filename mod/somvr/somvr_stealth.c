@@ -67,6 +67,11 @@ int somvr_stl_judge(const somvr_stl_cfg *c, const somvr_stl_who *w, const somvr_
     return SOMVR_STL_KILL;
 }
 
+int somvr_stl_tier(int tier16, int tier_swing)
+{
+    return tier16 > 0 ? tier16 : tier_swing > 0 ? tier_swing : 0;
+}
+
 int somvr_stl_cue_step(somvr_stl_cue *q, uintptr_t orc, int possible, double t, double rearm_s)
 {
     if (!possible || !orc) {

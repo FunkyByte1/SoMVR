@@ -644,7 +644,34 @@ static void test_tiles(void) {
     CHECK(n > 8 && n < 60, "1080p defaults: %d regions", n);
 }
 
+/* build 20: the test hands' `aim` and `shake` (a shaking hand for the steady panel and the lock) */
+static void test_xt20(void) {
+    somvr_xt_cmd c;
+    CHECK(somvr_xt_parse("hand R aim panel 0.25 0.5 30 s 0.2", &c) == 1 && c.op == SOMVR_XT_AIM && c.what == SOMVR_XTS_PANEL &&
+              c.hand == SOMVR_HAND_R && c.v[2] == 30 && NEAR(c.sec, 0.2, 1e-6), "aim panel");
+    CHECK(somvr_xt_parse("hand L shake 0.5 1.5", &c) == 1 && c.op == SOMVR_XT_SHAKE && c.hand == SOMVR_HAND_L &&
+              NEAR(c.v[0], 0.5, 1e-6) && NEAR(c.v[1], 1.5, 1e-6), "shake");
+    CHECK(somvr_xt_parse("hand L shake 0 0", &c) == 1 && c.op == SOMVR_XT_SHAKE && c.v[0] == 0, "shake 0 0: off");
+    const char *bad[] = {"hand L shake 6 1", "hand L shake 1 11", "hand L shake 1", "hand L shake 1 1 x", "hand R aim sky 0 0 1"};
+    for (int i = 0; i < 5; i++) CHECK(somvr_xt_parse(bad[i], &c) == -1, "'%s' not understood", bad[i]);
+    somvr_posef p = {{0, 0, 0, 1}, {0.1f, 1.2f, -0.3f}}, a, b;
+    float most_p = 0, most_a = 0, sum = 0;
+    for (int f = 0; f < 900; f++) {
+        somvr_xt_shake(&p, 0.5f, 1.5f, f / 90.0, SOMVR_HAND_L, &a);
+        somvr_xt_shake(&p, 0.5f, 1.5f, f / 90.0, SOMVR_HAND_L, &b);
+        CHECK(!memcmp(&a, &b, sizeof a) || f > 0, "deterministic");
+        for (int i = 0; i < 3; i++) most_p = fmaxf(most_p, fabsf(a.p[i] - p.p[i])), sum += fabsf(a.p[i] - p.p[i]);
+        float d = fabsf(a.q[3]);
+        most_a = fmaxf(most_a, 2 * acosf(d < 1 ? d : 1) * 57.29578f);
+    }
+    CHECK(most_p <= 0.005f + 1e-6f && most_p > 0.002f && sum > 1, "at most 0.5 cm along an axis (%.2f cm)", 100 * most_p);
+    CHECK(most_a <= 1.5f * 1.75f && most_a > 0.5f, "turned at most 1.5 deg about each axis (%.2f deg in all)", most_a);
+    somvr_xt_shake(&p, 0, 0, 3.3, SOMVR_HAND_R, &a);
+    CHECK(!memcmp(&a.p, &p.p, sizeof a.p) && NEAR(a.q[3], 1, 1e-6), "0 0: the pose itself");
+}
+
 int main(void) {
+    test_xt20();
     test_switches();
     test_board();
     test_board_gaze();

@@ -377,3 +377,25 @@ float somvr_bm_yaw(somvr_bm *s, float live_yaw, int32_t snaps, float snap_rad, i
     s->yaw_last = y, s->snaps_last = snaps;
     return yaw_mode == SOMVR_BMY_CAMERA ? live_yaw : wrap_pi(y + s->yaw_off);
 }
+
+/* ---- build 20: the grab's hold lets go when the game no longer holds Talion ------------------------------------- */
+void somvr_bm_free_init(somvr_bm_free *f) {
+    memset(f, 0, sizeof *f);
+    f->since = -1;
+}
+
+int somvr_bm_free_step(somvr_bm_free *f, int grab, int loco_ours, double t, float free_s) {
+    if (!grab) {
+        f->since = -1, f->latched = 0;
+        return 0;
+    }
+    if (f->latched) return 1;
+    if (!loco_ours || !(free_s > 0)) {
+        f->since = -1;
+        return 0;
+    }
+    if (f->since < 0) f->since = t;
+    if (t - f->since < free_s) return 0;
+    f->latched = 1, f->frees++;
+    return 1;
+}

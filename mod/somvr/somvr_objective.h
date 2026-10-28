@@ -42,7 +42,11 @@ enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIV
        SOMVR_OBF_STRIKE_CHEST = 128u,   /* build 18: SOMVR_STRIKE_GAZE_MARK=chest - build 17's ring round the chest; without
                                          * it (ground, the default) pos = the landing point on the ground, dist_m = the
                                          * ring's radius: the ring flat there, the label standing beside it (XL_OBJL) */
-       SOMVR_OBF_LAND_NO = 256u }; /* build 18 (SOMVR_WRAITH_STEP, with LAND): the landing refused: the red crossed ring */
+       SOMVR_OBF_LAND_NO = 256u, /* build 18 (SOMVR_WRAITH_STEP, with LAND): the landing refused: the red crossed ring */
+       SOMVR_OBF_AIM = 512u,     /* build 20 (SOMVR_BOW_AIM_RING): not the objective but where the drawn bow's line meets
+                                  * an orc or the world: pos = that point, dist_m = the ring's size in DEGREES of the view
+                                  * (the layer sizes it from the eyes): the gold ring facing the head, at its depth */
+       SOMVR_OBF_AIM_HIT = 1024u }; /* ... on an orc the arrow would hit: the wraith-blue ring (the strike's) */
 
 typedef struct {
     _Atomic uint64_t seq; /* the frame id this entry is for; 0 while written; stored last (release) */
@@ -162,6 +166,10 @@ somvr_ob_place somvr_ob_line(const float top[3], const float bot[3], const float
 /* build 17, the Shadow Strike's mark (SOMVR_OBF_STRIKE): a quad facing the head at pos (the orc's chest, reference
  * space) with the ring's centre on pos, the ring ring_m across (its outer edge), cell one of the strike cells */
 somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ring_m, int cell);
+/* build 20, the bow's aim (SOMVR_OBF_AIM): a square quad facing the head with the ring's centre on pos, deg of the view
+ * across (its outer edge) at that distance; the landing ring's cell (gold, a dot in it), hit: the strike's ring (its
+ * cell's left square - somvr_ob_strike_rect(cell, 0)) */
+somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, int hit);
 /* the ring's diameter for an orc dist_m away: at least min_m, at least deg of the view (the label stays readable) */
 float somvr_ob_strike_ring(float dist_m, float min_m, float deg);
 /* build 18, the ground symbol (SOMVR_OBF_STRIKE without _CHEST): a strike cell's parts - 0 its ring (the left square),

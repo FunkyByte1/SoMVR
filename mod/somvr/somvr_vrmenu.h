@@ -405,6 +405,7 @@ typedef struct {
     int quit_armed;      /* the Quit game button was pressed once: it reads Confirm (red) */
     int card;            /* build 6: the Controls page shown as the arrival card in front of the player (no tabs, the
                           * title and a close hint instead) */
+    int lock;            /* build 20: hover is the pointer's lock (SOMVR_XR_PTR_SNAP): the part outlined as well */
 } somvr_vm_view;
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;
@@ -440,7 +441,9 @@ int somvr_vm_panel_pose(const somvr_posef *grip, int hand, const somvr_posef *he
 
 enum { SOMVR_VMW_NONE, SOMVR_VMW_GESTURE, SOMVR_VMW_BUTTON, SOMVR_VMW_AWAY, SOMVR_VMW_LOST, SOMVR_VMW_CLOSE_BOX,
        /* SOMVR_VMW_OFF, then build 6: the panel's wrist turned over to show the watch (SOMVR_XR_MINIMAP=wrist) */
-       SOMVR_VMW_OFF, SOMVR_VMW_TURNED };
+       SOMVR_VMW_OFF, SOMVR_VMW_TURNED,
+       /* build 20 (the layer's SOMVR_XR_VRMENU_BOW=close): the bow came out in the panel's hand */
+       SOMVR_VMW_BOW };
 const char *somvr_vm_why(int why);
 typedef struct {
     int open;
@@ -482,5 +485,56 @@ int somvr_vm_gesture(somvr_vm_gstate *g, const somvr_vm_gcfg *c, const somvr_vm_
                      int *have_panel);
 /* the gate's bits as words ("the bow+a climb hold", "nothing" for 0) */
 void somvr_vm_gate_text(uint32_t bits, char *buf, size_t cap);
+
+/* ---- build 20: menus that hold still and a pointer that locks on (docs/re-xr-pipeline.md 80) --------------------- */
+/* The pointer's lock on the panel's parts (SOMVR_XR_PTR_SNAP, the layer; not with a fingertip's touch): the part under
+ * the pointer's point locks; a locked part stays locked while the point stays within hold_deg (seen from the hand:
+ * dist x tan, at least min_m) of its own area, so a shake does not change it (a row's own area leaves out its < >
+ * boxes: the point on a box takes it from the row at once - the small target first - and the box then holds); on no
+ * part the nearest one that can be used within magnet_deg locks. The press goes to the locked part; the dot is drawn on
+ * it (the point kept inside it). */
+typedef struct {
+    float hold_deg;     /* 1.0 */
+    float magnet_deg;   /* 2.0 */
+    float min_m;        /* 0.003 */
+} somvr_vm_snapcfg;
+void somvr_vm_snapcfg_default(somvr_vm_snapcfg *c);
+typedef struct {
+    somvr_vm_hit lock;  /* the locked part (item -1 = none) */
+    somvr_vm_hit raw;   /* the bare hit test's part (build 19's hover) */
+    uint32_t changes, raw_changes; /* how often each changed */
+} somvr_vm_snap;
+void somvr_vm_snap_reset(somvr_vm_snap *s);
+/* One frame with the pointer on the panel: uv its point, dist m from the hand, the quad quad_w_m wide; page (card: the
+ * card's close box alone); returns the locked part, dot = the uv to draw the dot at. */
+somvr_vm_hit somvr_vm_snap_step(somvr_vm_snap *s, const somvr_vm_snapcfg *c, const somvr_settings *set, uint64_t avail,
+                                int page, int card, const float uv[2], float dist, float quad_w_m, float dot[2]);
+
+/* The panel held steady (SOMVR_XR_PANEL_STEADY, the layer): the panel shown stays put while the hand's panel pose stays
+ * within hold_m and hold_deg of it, follows by the excess beyond (1:1: a real move at once, never more than that
+ * behind), and inside eases toward the hand, the faster the farther ((offset / radius)^2 of the rate at the edge, 1 /
+ * settle_s: a tremor's small offsets barely move it, a held-still offset settles). Restarted at the hand's pose at the
+ * start and after a gap over 0.25 s. */
+typedef struct {
+    float hold_m;       /* 0.015 */
+    float hold_deg;     /* 3 */
+    float settle_s;     /* 0.35 */
+} somvr_vm_stcfg;
+void somvr_vm_stcfg_default(somvr_vm_stcfg *c);
+/* SOMVR_XR_PANEL_STEADY: unset/off/0 = 0 (build 19's panel on the hand); on/1 = 1 with the defaults; "CM,DEG,MS" = 1
+ * with those (0 < CM <= 10, 0 < DEG <= 20, 0 <= MS <= 3000); anything else 0 and *bad = 1 */
+int somvr_vm_stcfg_parse(const char *v, somvr_vm_stcfg *c, int *bad);
+typedef struct {
+    int have;
+    somvr_posef p;      /* the pose shown */
+    double t;
+    uint64_t frames, follows, restarts;
+} somvr_vm_steady;
+void somvr_vm_steady_reset(somvr_vm_steady *s);
+/* one frame: raw = the hand's panel pose at t (s); out = the pose to show */
+void somvr_vm_steady_step(somvr_vm_steady *s, const somvr_vm_stcfg *c, const somvr_posef *raw, double t,
+                          somvr_posef *out);
+/* the quad's corners (top left, top right, bottom left, bottom right) */
+void somvr_vm_corners(const somvr_posef *p, const float size[2], float out[4][3]);
 
 #endif

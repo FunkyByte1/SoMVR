@@ -3117,7 +3117,157 @@ static void test_fling_up(void) {
     }
 }
 
+/* build 20: the A mantle - topped at the wall's top (300), the eyes `over` cm over it (the feet under it), then (hang)
+ * both hands open: the topped hang of the user's build 19b session (mark 2: the eyes 110 cm over the top for 16 s) */
+static void am_setup(rig_t *r, int mode, float over, int hang) {
+    top_setup(r, SOMVR_CLIMB_TOP_PUSH);
+    r->c.letgo = SOMVR_CLIMB_LETGO_HANG, r->c.over_cm = 200, r->c.stand = 1, r->c.descent = 1, r->c.drop_mark = 1;
+    r->c.mantle = mode;
+    r->in.can_blink = 1, r->in.enemy_near = mock_enemy, g_enemy = 0;
+    pull_to_top(r);
+    frames(r, 2);
+    for (float left = 300 + over - r->head_track_y - r->body.y; left > 0.001f; left -= 3) { /* up 1:1 */
+        hand_move(r, 1, 0, -fminf(3.0f, left), 0);
+        rig_frame(r);
+    }
+    if (hang) grip(r, 1, 0);
+    frames(r, 3);
+}
+typedef struct {
+    int frames, shows, ended, blink, show_ev, go_ev, no_ev, end_ev;
+    float max_step, cross_feet; /* the largest move a frame; the feet over the top at the first frame past the face */
+    sv_vec3 to;
+} am_acc;
+/* A pressed (one frame) and n frames after it */
+static void am_run(rig_t *r, int a, int n, am_acc *k) {
+    memset(k, 0, sizeof *k);
+    k->cross_feet = -1e9f;
+    for (int i = 0; i < n + a; i++) {
+        sv_vec3 b0 = r->body;
+        r->in.drop = a && i == 0;
+        rig_frame(r);
+        float st = sqrtf((r->body.x - b0.x) * (r->body.x - b0.x) + (r->body.y - b0.y) * (r->body.y - b0.y) +
+                         (r->body.z - b0.z) * (r->body.z - b0.z));
+        k->max_step = fmaxf(k->max_step, st);
+        if (r->body.z + 50 > WALL_Z && b0.z + 50 <= WALL_Z) k->cross_feet = r->body.y - WALL_TOP;
+        k->frames++, k->shows += r->o.am_show, k->ended |= r->o.ended;
+        k->show_ev += (r->o.events2 & SOMVR_CLIMB_E_AM_SHOW) != 0, k->go_ev += (r->o.events2 & SOMVR_CLIMB_E_AM_GO) != 0;
+        k->no_ev += (r->o.events2 & SOMVR_CLIMB_E_AM_NO) != 0, k->end_ev += (r->o.events2 & SOMVR_CLIMB_E_AM_END) != 0;
+        if (r->o.blink) k->blink++, k->to = r->o.blink_to;
+        if (k->ended && i > 2) break;
+    }
+    r->in.drop = 0;
+}
+static void test_mantle20(void) {
+    rig_t r;
+    am_acc k;
+    /* off (build 19b): hanging with the eyes 110 cm over the top, A is the drop mark's (a tap: nothing moves); nothing
+     * else gets him on: still hanging under the top after 2 s */
+    am_setup(&r, 0, 110, 1);
+    sv_vec3 b0 = r.body;
+    CHECK(r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.topped && NEAR(r.body.y + 170, 410, 0.5) &&
+              NEAR(r.body.z + 50, 50, 0.01) && !r.o.am_show,
+          "mantle off: the topped hang, the eyes 110 cm over the top (body %g %g, phase %d)", r.body.y, r.body.z, r.s.phase);
+    am_run(&r, 1, 180, &k);
+    CHECK(r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && NEAR3(r.body, b0.x, b0.y, b0.z, 0.01) && !k.go_ev && !k.shows &&
+              r.s.dm_presses == 1 && r.s.am_presses == 0,
+          "mantle off: A = the drop mark's tap, he stays hanging (body %g %g %g)", r.body.x, r.body.y, r.body.z);
+    /* glide: the ring shows while A would mantle; A = the glide up and in onto the landing, he stands */
+    am_setup(&r, 1, 110, 1);
+    CHECK(r.s.am_ok && r.o.am_show && NEAR3(r.o.am_land, 0, 300, 140, 0.5) && r.s.am_shows == 1,
+          "mantle glide: the landing shown 40 cm in from the edge (%g %g %g; shows %llu)", r.o.am_land.x, r.o.am_land.y,
+          r.o.am_land.z, (unsigned long long)r.s.am_shows);
+    am_run(&r, 0, 30, &k);
+    CHECK(k.shows == 30 && !k.show_ev && r.s.am_shows == 1 && r.s.active, "mantle glide: shown every frame, one show (%d)",
+          k.shows);
+    b0 = r.body;
+    am_run(&r, 1, 120, &k);
+    CHECK(k.go_ev == 1 && k.end_ev == 1 && !r.s.active && r.s.last_end == SOMVR_CLIMB_END_OVER &&
+              r.s.am_end == SOMVR_CLIMB_AME_DONE && NEAR(r.body.y, 303, 1.0) && NEAR(r.body.z + 50, 140, 1.0) &&
+              NEAR(r.body.x, 0, 0.01) && r.s.am_dones == 1 && r.s.dm_presses == 0,
+          "mantle glide: A = onto the top: he stands at the landing (body %g, root z %g; end %d)", r.body.y, r.body.z + 50,
+          r.s.am_end);
+    float L = r.s.am_len[SOMVR_CLIMB_AM_N];
+    CHECK(k.max_step <= 350.0f / 90 + 0.5f && k.cross_feet >= 10 - 2 && L > 120 && L < 160 &&
+              k.frames <= (int)(L / 350 * 90) + 6,
+          "mantle glide: smooth (at most %.2f cm a frame), the feet %.1f cm over the top at the edge, %.0f cm in %d frames",
+          k.max_step, k.cross_feet, L, k.frames);
+    printf("mantle glide from the eyes 110 cm over the top, 50 cm off the face: %.0f cm in %d frames (%.2f s), the feet %.1f "
+           "cm over the edge\n", L, k.frames, k.frames / 90.0, k.cross_feet);
+    /* ... from a hold on the top's edge (holding): the same; the closed grip takes no new hold after it */
+    am_setup(&r, 1, 60, 0);
+    CHECK(r.s.active && r.s.phase == SOMVR_CLIMB_PH_HOLD && r.o.am_show, "mantle glide: holding, the eyes 60 over: shown");
+    am_run(&r, 1, 120, &k);
+    frames(&r, 30);
+    CHECK(k.go_ev == 1 && !r.s.active && r.s.am_dones == 1 && NEAR(r.body.y, 303, 1.0) && NEAR(r.body.z + 50, 140, 1.0) &&
+              r.s.climbs == 1,
+          "mantle glide: from a hold, onto the top; the closed grip no new climb (body %g %g, climbs %llu)", r.body.y,
+          r.body.z + 50, (unsigned long long)r.s.climbs);
+    /* too low (the eyes 15 cm over the top: at it, under am_head_cm): A says why, nothing moves, no drop */
+    am_setup(&r, 1, 15, 1);
+    b0 = r.body;
+    CHECK(!r.o.am_show && r.s.phase == SOMVR_CLIMB_PH_HANG, "mantle glide: the eyes 15 over: no ring");
+    am_run(&r, 1, 60, &k);
+    CHECK(k.no_ev == 1 && !k.go_ev && r.s.am_why == SOMVR_CLIMB_AM_LOW && r.s.active && NEAR3(r.body, b0.x, b0.y, b0.z, 0.01) &&
+              r.s.dm_presses == 0 && r.s.am_lows == 1,
+          "mantle glide: too low: E_AM_NO (why %d), he stays, no drop mark", r.s.am_why);
+    /* a roof 90 cm over the top: no room on it: no ring, A says why */
+    g_roof_y = 390, g_roof_z0 = 100, g_roof_z1 = 300;
+    am_setup(&r, 1, 60, 1);
+    CHECK(!r.o.am_show && r.s.active, "mantle glide: a roof over the top: no ring");
+    am_run(&r, 1, 30, &k);
+    CHECK(k.no_ev == 1 && r.s.am_why == SOMVR_CLIMB_AM_NOROOM && r.s.active && r.s.am_nofloors == 1,
+          "mantle glide: no room: E_AM_NO (why %d)", r.s.am_why);
+    g_roof_y = 0;
+    /* not at a top (mid-face, the eyes 130 cm under the top): A is the drop mark's as ever */
+    rig_init(&r);
+    r.c.letgo = SOMVR_CLIMB_LETGO_HANG, r.c.descent = 1, r.c.drop_mark = 1, r.c.mantle = 1;
+    r.in.can_blink = 1, r.in.enemy_near = mock_enemy;
+    grip(&r, 1, 1);
+    frames(&r, 3);
+    for (int i = 0; i < 10; i++) hand_move(&r, 1, 0, -3, 0), rig_frame(&r);
+    grip(&r, 1, 0);
+    frames(&r, 3);
+    CHECK(r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && !r.s.topped && !r.o.am_show, "mantle glide: a hang mid-face");
+    am_run(&r, 1, 2, &k);
+    CHECK(!k.no_ev && !k.go_ev && r.s.am_presses == 0 && r.s.dm_presses == 1 && r.s.active,
+          "mantle glide: under the top: A = the drop mark (dm %d, presses %llu)", r.s.dm, (unsigned long long)r.s.dm_presses);
+    /* blocked (the game takes none of the moves): 0.25 s behind = the hang (no floor under him) */
+    am_setup(&r, 1, 110, 1);
+    b0 = r.body;
+    r.apply = 0;
+    am_run(&r, 1, 60, &k);
+    CHECK(k.end_ev == 1 && r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.am_end == SOMVR_CLIMB_AME_HANG &&
+              r.s.am_blocks == 1,
+          "mantle glide: blocked: the hang (end %d, phase %d)", r.s.am_end, r.s.phase);
+    /* a menu half way: the glide waits (nothing moves), then goes on to the landing */
+    am_setup(&r, 1, 110, 1);
+    am_run(&r, 1, 15, &k);
+    b0 = r.body;
+    r.in.frozen = 1;
+    frames(&r, 40);
+    CHECK(r.s.phase == SOMVR_CLIMB_PH_MANTLE && sqrtf((r.body.y - b0.y) * (r.body.y - b0.y) + (r.body.z - b0.z) * (r.body.z - b0.z)) < 4.5f,
+          "mantle glide: a menu: it waits (moved %g)", r.body.y - b0.y);
+    r.in.frozen = 0;
+    am_run(&r, 0, 120, &k);
+    CHECK(!r.s.active && r.s.am_end == SOMVR_CLIMB_AME_DONE && NEAR(r.body.y, 303, 1.0) && NEAR(r.body.z + 50, 140, 1.0),
+          "mantle glide: after the menu, on the top (%g %g)", r.body.y, r.body.z + 50);
+    /* blink: A = the pullover's quick blink onto the landing */
+    am_setup(&r, 2, 110, 1);
+    am_run(&r, 1, 3, &k);
+    CHECK(k.go_ev == 1 && k.blink == 1 && NEAR3(k.to, 0, 300 + 102 + 5, 140, 0.5) && r.s.phase == SOMVR_CLIMB_PH_BLINK &&
+              r.s.am_blinks == 1,
+          "mantle blink: the blink onto the landing (%g %g %g)", k.to.x, k.to.y, k.to.z);
+    r.in.can_blink = 0;
+    am_setup(&r, 2, 110, 1);
+    r.in.can_blink = 0;
+    am_run(&r, 1, 3, &k);
+    CHECK(k.no_ev == 1 && !k.blink && r.s.am_why == SOMVR_CLIMB_AM_NOBLINK && r.s.phase == SOMVR_CLIMB_PH_HANG,
+          "mantle blink: no blink now: E_AM_NO, the hang");
+}
+
 int main(void) {
+    test_mantle20();
     test_through();
     test_face_toward();
     test_pieces();

@@ -20,6 +20,8 @@ typedef struct somvr_blade {
     double t;              /* s */
     float flat_n[3];       /* the blade's flat facing (unit, world; 0 0 0 = unknown): the grip's +x (the knuckles' side
                             * of the hand; the sword's guard and edges run along the grip's +y, build 15b's pictures) */
+    float vel_base[3];     /* cm/s: the base's velocity the same way (build 20; 0 0 0 = unknown: the hand's part of the
+                            * swing, the contact point's speed along the blade) */
 } somvr_blade;
 
 enum { SC_TIER_NONE = 0, SC_TIER_LIGHT = 1, SC_TIER_HEAVY = 2, SC_TIER_STAB = 3, SC_TIER_N = 4 };
@@ -40,6 +42,18 @@ typedef struct {
                                 * swing began (50), the edge leading (below) */
     float edge_max_deg;        /* ... the tip's motion across the blade at most this far off the edge's plane (60; 90 or
                                 * no flat known = any) */
+    /* SOMVR_COMBAT_SWING=stroke (build 20, docs/re-xr-pipeline.md 79): a cut needs a real swing, Blade & Sorcery's way -
+     * the blade's speed where it meets the orc and its travel in one direction into it; wiggles do not cut */
+    int stroke;                /* 1: sc_tier_swing's rule; the drop of jumps below (0: build 16's travel since the
+                                * crossing, which a flail kept adding to: the user's build 19b session) */
+    float rev_cos;             /* a stroke ends where the tip turns back: its velocity this far off the stroke's
+                                * direction (cos; -0.3 = past ~107 deg) */
+    float cut_mps;             /* a cut's floor: the contact point's speed (12 m/s; build 19b's session: the flail's
+                                * contacts 5.9-9.1 m/s at the tip, its real cuts 19-37 at the contact point) */
+    float full_mps;            /* a cut's full damage from this speed (20); cut_min_k of it at cut_mps */
+    float cut_min_k;           /* 0.6 */
+    float tip_max_mps;         /* a sample faster than this at the tip or the base is a tracking jump, not a swing:
+                                * dropped (60; 0 = none; the session's 132 m/s "stab") */
 } sc_cfg;
 
 void sc_cfg_default(sc_cfg *c);
@@ -71,14 +85,30 @@ int sc_heading_at(const sc_cfg *c, const somvr_blade *b, const float c0[3], cons
 #define SC_RING 64
 typedef struct {
     int n, head;
-    struct { double t; float speed, axis; } s[SC_RING]; /* cm/s: |v_tip| and v_tip along the blade (base -> tip) */
+    struct { double t; float speed, axis, base; } s[SC_RING]; /* cm/s: |v_tip|, v_tip along the blade (base -> tip),
+                                                                * |v_base| */
     int above;        /* the swing: since the mean crossed slash_mps, until it drops below end_frac x slash_mps */
     float travel;     /* cm the tip travelled since the crossing */
     float mean_mps;   /* the time-weighted mean of |v_tip| over the window, m/s */
     float axis_mps;   /* the same for the speed along the blade */
     float cos_axis;   /* cos(v_tip, blade axis) of the last sample (0 when either is ~0) */
     double last_t;
+    /* build 20 (SOMVR_COMBAT_SWING=stroke): the stroke - the tip's motion in one direction, from where it began (the
+     * swing's start, a turn back of the tip, or a rest) - measured on every sample whatever c->stroke */
+    float base_mps;   /* the time-weighted mean of |v_base| over the window, m/s */
+    float reach;      /* cm: the farthest the tip got from where the stroke began (its velocity integrated: the
+                       * tracking-space motion, so walking and turning add nothing) */
+    float stroke_cm;  /* cm: the tip's path in the stroke */
+    float disp[3];    /* the stroke's displacement so far (cm) */
+    float dir[3];     /* the stroke's direction: the tip's velocity eased over SC_STROKE_TAU_S */
+    int have_dir;
+    float rest_s;     /* the tip slower than SC_STROKE_MIN_CMS this long: a rest ends the stroke */
+    double stroke_t0; /* when the stroke began (its first sample's t) */
+    uint64_t strokes, drops; /* strokes begun; samples dropped as jumps (c->tip_max_mps) */
 } sc_speed;
+#define SC_STROKE_MIN_CMS 100.0f /* a tip slower than 1 m/s neither steers nor ends a stroke */
+#define SC_STROKE_TAU_S 0.025f   /* the stroke direction's ease */
+#define SC_STROKE_REST_S 0.08f   /* this long under SC_STROKE_MIN_CMS: a rest */
 
 void sc_speed_reset(sc_speed *s);
 /* one valid blade sample (times must increase; an older or equal t is ignored): 1 = the mean crossed slash_mps upward
@@ -92,6 +122,20 @@ float sc_edge_deg(const somvr_blade *b);
 /* SOMVR_COMBAT_CLASS=cut (build 16): the tier by the cut, not the speed: a stab as sc_tier; a slash that has travelled
  * cut_cm with the edge leading (edge_deg <= edge_max_deg, or NAN) = heavy ("a committed cut"); any other slash = light */
 int sc_tier_cut(const sc_cfg *c, const sc_speed *s, float edge_deg);
+/* build 20 (SOMVR_COMBAT_SWING=stroke): the contact point's speed (m/s) at `along` (0 base .. 1 tip) of the blade: the
+ * window means of the base and the tip, interpolated (a rigid blade's velocity is linear along it) */
+float sc_contact_mps(const sc_speed *s, float along);
+/* the tier by a real swing (Blade & Sorcery's way): a stab as sc_tier; no swing (below slash_mps) none; a cut (heavy)
+ * = the stroke reached cut_cm, the contact point moves at cut_mps or more and the edge leads (as sc_tier_cut); a light
+ * hit = the stroke reached slash_cm and the contact point moves at slash_mps or more; else none (a glancing touch). A
+ * wiggle - a flail of short strokes, or a contact early in a stroke while the blade is still slow - is no cut. */
+int sc_tier_swing(const sc_cfg *c, const sc_speed *s, float edge_deg, float along);
+/* the blade came into the orc during this stroke: its touch (sc_touch_age: how long it has touched) began at or after
+ * the stroke's start - a blade wiggled inside a body touches from before each new stroke; stab tiers pass */
+int sc_stroke_entered(const sc_speed *s, float touch_age, double now);
+/* the cut's damage factor by the contact point's speed: cut_min_k at cut_mps rising linearly to 1 at full_mps (1 when
+ * full_mps <= cut_mps; NaN = cut_min_k) */
+float sc_cut_k(const sc_cfg *c, float contact_mps);
 /* SOMVR_FIGHT_SPACE_CM (build 16): an orc's next position xf (cm) kept at least min(space, the distance it had at
  * was) from Talion's root, horizontally (y untouched; never pushed away, only stopped from coming nearer); 1 = changed,
  * *d_want / *d_got its distance asked and given */
@@ -207,7 +251,8 @@ typedef struct {
     int vel_runtime;        /* 1: the tip's velocity v + w x r from the runtime when it gives both (else deltas);
                              * 0 (default): tracking-space deltas of the tip between two locates */
 } sc_blade_cfg;
-typedef struct { int have; float tip[3], vel[3]; double xr_t; } sc_blade_hist; /* the last tip, tracking space */
+typedef struct { int have; float tip[3], vel[3]; double xr_t; float base[3], vbase[3]; } sc_blade_hist; /* the last
+                                                                                * tip (and base), tracking space */
 void sc_blade_cfg_default(sc_blade_cfg *c);
 /* The blade in the world: base/tip = rig(grip point -/+ along the blade), t = the combat clock; the blade's lengths
  * and offset are world cm (the sword model's): in tracking space they are divided by the rig's size s, so a bigger

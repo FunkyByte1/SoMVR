@@ -200,6 +200,195 @@ static void hf_arm(const int done[2], const sa_xf gg[2], const int gv[2], const 
 	g_hf.d_have = 1, g_hf.d_t = t, g_hf.d_p = g.p, g_hf.d_q = qd, g_hf.d_shift = shift;
 }
 
+/* build 20, SOMVR_HANDS_SURFACE_BLADE=pivot: a meeting's sparks - the defence's spark FX (it wants a parent: build 20's
+ * first boot crashed in the object system making it with none) as df_clank_fx makes it, on the drawn sword's model
+ * object, but at the contact: node -1 and the contact's offset in the object's frame (hf_fx_at's way on an orc).
+ * 1 = made (why_out: rc and place) */
+static int sfb_spark(const char *name, const float P[3], char *why_out, size_t cap)
+{
+	uintptr_t item = g_df.pcomb ? fi_active_item(g_df.pcomb) : 0, b = item ? peek_ptr(item + FI_IT_ENTRIES) : 0;
+	uintptr_t e = item ? peek_ptr(item + FI_IT_ENTRIES + 8) : 0, obj = b && e > b ? peek_ptr(b + FI_IE_OBJ) : 0;
+	uintptr_t os = peek_ptr(g_fig.objsys_pp), vt = vptr_of((void *)os), shell = peek_ptr(g_fig.shell_pp);
+	uintptr_t mgr = shell ? peek_ptr(shell + FI_SH_FXMGR) : 0;
+	float op[3], oq[4];
+	const char *why = !obj ? "no active weapon model object"
+			  : !peek(obj + OBJ_POS, op, sizeof op) || !peek(obj + OBJ_ROT, oq, sizeof oq) || !vec_ok(op, 1e7f) ||
+					  !vec_ok(oq, 2.0f) ? "the sword's place is not readable"
+			  : !os || vt != g_fig.vt_objsys || vt + 0x118 != g_fi_sites[FIS_OBJSYS_MH].addr ||
+					  peek_ptr(vt + 0x118) != g_fi_sites[FIS_OBJSYS_MH].target ? "the object system is not the checked one"
+			  : !mgr ? "no ClientFX manager" : NULL;
+	if (why) {
+		snprintf(why_out, cap, "%s", why);
+		return 0;
+	}
+	sv_quat r = sv_qnormalize(sv_quat_of(oq));
+	sv_vec3 local = sv_qrot(sv_qconj(r), (sv_vec3){ P[0] - op[0], P[1] - op[1], P[2] - op[2] });
+	uintptr_t mh = FI_FN(FIS_OBJSYS_MH, fi_mh_fn)(os, obj);
+	static unsigned char cs[0x400] __attribute__((aligned(16))); /* CLIENTFX_CREATESTRUCT (>= 0x1c8 bytes); game thread */
+	memset(cs, 0, sizeof cs);
+	FI_FN(FIS_FX_CSINIT, fi_cs_fn)(cs, name, mh, 0u /* one shot */, obj);
+	int32_t node = -1;
+	float off[3] = { local.x, local.y, local.z };
+	memcpy(cs + 0x118, &node, sizeof node), memcpy(cs + 0x11c, off, sizeof off);
+	long rc = FI_FN(FIS_FX_CREATE, fi_create_fn)(mgr + 0x30, NULL, cs, 1, 0, 0);
+	FI_FN(FIS_FX_CSFREE, fi_csfree_fn)(cs);
+	snprintf(why_out, cap, "rc=%ld on the sword's object %#lx at %.1f,%.1f,%.1f from it", rc, (unsigned long)obj,
+		 (double)off[0], (double)off[1], (double)off[2]);
+	return 1;
+}
+
+/* the combat frame (H4, hf_h4): a pivot meeting's sound and sparks (sfb_arm asked for them in the arms frame) */
+static void sfb_h4(double t)
+{
+	int k = g_sf.pv_pend;
+	if (!k)
+		return;
+	g_sf.pv_pend = 0;
+	if (t - g_sf.pv_pend_t > 0.25) /* (no combat frame since: too late) */
+		return;
+	char fxw[200] = "-";
+	uint32_t sid = 0;
+	if (k & 1) {
+		float head[3] = { g_fr.head[0], g_fr.head[1], g_fr.head[2] };
+		if (g_th.ok_snd)
+			sid = th_snd_post(g_sf.sound, g_sf.pv_P, head);
+		g_sf.pv_sounds += sid != 0, g_sf.pv_sound_fail += sid == 0;
+	}
+	if (k & 2) {
+		if (!g_sf.fx_checked) {
+			char w[200];
+			g_sf.fx_checked = 1, g_sf.ok_fx = df_fx_check(w, sizeof w);
+			if (!g_sf.ok_fx)
+				logf_("WARN SURF blade pivot: no sparks (%s)", w);
+		}
+		const char *fxn = g_df.clank_fx[0] ? g_df.clank_fx : "fx\\weapons\\shared\\impactsa\\impactsa_sparksmall_weapontip.fxp";
+		if (g_sf.ok_fx && sfb_spark(fxn, g_sf.pv_P, fxw, sizeof fxw))
+			g_sf.pv_fx++, SF_COUNT(fx);
+		else
+			g_sf.pv_fx_fail++;
+	}
+	if (sf_log_ok(t))
+		logf_("SURF t=%.3f blade pivot meeting (%s) at %.1f,%.1f,%.1f: sound '%s' %s %u; sparks %s", t, g_sf.pv_surf,
+		      (double)g_sf.pv_P[0], (double)g_sf.pv_P[1], (double)g_sf.pv_P[2], k & 1 ? g_sf.sound : "-",
+		      !(k & 1) ? "" : !g_th.ok_snd ? "(no THREAT sound sites)" : sid ? "playing id" : "no playing id", sid, fxw);
+}
+
+/* build 20, SOMVR_HANDS_SURFACE_BLADE=pivot (arm_eval, right after hf_arm, before swl_arm; docs/re-xr-pipeline.md 79):
+ * the drawn blade - the hand's, after the weight's offset and the bite's turn - turned about the grip point so it stays
+ * at the world surface its ray met this frame (somvr_surface_game.c sf_frame; somvr_sf_pivot): it rides along a wall or
+ * the ground while the hand goes on where the controller puts it. The hits read the drawn blade (R_Weapon), so a cut
+ * never passes a wall; orcs are no surface (sf_ray passes them). At its meeting: the clank's pulses, the sound
+ * (SOMVR_HANDS_SURFACE_SOUND) and the defence's sparks where the blade meets the surface. Not while an exception holds
+ * the hand (a climb hold, the bow, the wrist panel, a pause, a finisher), the menu's Hands at walls is Off, no sword. */
+static void sfb_arm(const int done[2], const sa_xf gg[2], const int gv[2], const int bowed[2], sa_xf X, sv_vec3 shift)
+{
+	memset(g_sf.p_now, 0, sizeof g_sf.p_now);
+	if (!g_sf.on || !g_sf.cfg.blade_pivot || my_tid() != g_sf.tid)
+		return;
+	double t = cb_now();
+	float dt = g_sf.pv_t > 0 && t > g_sf.pv_t && t - g_sf.pv_t < 0.25 ? (float)(t - g_sf.pv_t) : 0;
+	g_sf.pv_t = t;
+	const sa_chain *c = &g_arm.ch[SA_R];
+	const struct sf_found *f = &g_sf.f[SA_R];
+	int fresh = g_fr.frame >= f->frame && g_fr.frame - f->frame <= 2;
+	int ok = done[SA_R] && gv[SA_R] && !bowed[SA_R] && c->wpn >= 0 && g_aw.s[SA_R].used_held && sf_blade_on() &&
+		 g_arm.weight[SA_R] >= 1 && !g_sf.why[SA_R] && !g_sf.menu_off;
+	sv_vec3 rot = { 0, 0, 0 }, tipw = { NAN, NAN, NAN }, n = { 0, 1, 0 }, P = { 0, 0, 0 };
+	float depth = 0, ang = 0;
+	int r = 0;
+	if (ok) {
+		sa_xf g = gg[SA_R];
+		float zero[3] = { 0, 0, 0 }, e[4];
+		swg_qexp(g_hsm.w_now ? g_hsm.w_rot_now : zero, e); /* the drawn blade: the weight's offset, then the bite's turn */
+		sv_quat qd = sv_qnormalize(sv_qmul(sv_quat_of(e), sv_qnormalize(g.q)));
+		swg_qexp(g_hf.b_now, e);
+		qd = sv_qnormalize(sv_qmul(sv_quat_of(e), qd));
+		const sc_rigxf *rig = &g_arm.rig;
+		const sc_blade_cfg *bc = &g_cb.bcfg;
+		float k = sc_rig_scale(rig);
+		sv_quat y = sv_qyaw(rig->yaw), yi = sv_qyaw(-rig->yaw), qwd = sv_qnormalize(sv_qmul(y, qd));
+		sv_vec3 d0 = sv_qrot(y, (sv_vec3){ k * (g.p.x - rig->p0[0]), k * (g.p.y - rig->p0[1]), k * (g.p.z - rig->p0[2]) });
+		sv_vec3 G = { rig->base[0] + shift.x + d0.x, rig->base[1] + shift.y + d0.y, rig->base[2] + shift.z + d0.z };
+		sv_vec3 dir = sv_qrot(qwd, (sv_vec3){ 0, sinf(bc->pitch_rad), cosf(bc->pitch_rad) });
+		sv_vec3 perp = sv_qrot(qwd, (sv_vec3){ 0, 1, 0 }); /* straight in: the blade turns toward its edge's way */
+		tipw = (sv_vec3){ G.x + bc->len_cm * dir.x, G.y + bc->len_cm * dir.y, G.z + bc->len_cm * dir.z };
+		if (fresh && f->nbpl > 0) {
+			n = f->bpl[0].n;
+			r = somvr_sf_pivot(&f->bpl[0], G, dir, bc->len_cm, g_sf.cfg.blade_r_cm, g_sf.cfg.pivot_max_rad, perp, &rot, &depth);
+		}
+		if (r == 1) {
+			ang = sqrtf(rot.x * rot.x + rot.y * rot.y + rot.z * rot.z);
+			sv_vec3 rt = sv_qrot(yi, rot); /* the turn in the grips' space */
+			float rv[3] = { rt.x, rt.y, rt.z }, e2[4], ew[4];
+			swg_qexp(rv, e2);
+			sv_quat q3 = sv_qnormalize(sv_qmul(sv_quat_of(e2), qd));
+			/* the weapon node as if the drawn grip were turned: W' = gm3 (x) gm2^-1 (x) W (about the grip point, as the bite) */
+			sa_xf g2 = { g.p, qd }, g3 = { g.p, q3 };
+			sa_xf gm2 = sa_grip_to_model(&g_arm.rig, shift, X, g2), gm3 = sa_grip_to_model(&g_arm.rig, shift, X, g3);
+			float bs = sz_body_scale();
+			if (bs != 1.0f)
+				gm2.p = (sv_vec3){ gm2.p.x / bs, gm2.p.y / bs, gm2.p.z / bs }, gm3.p = (sv_vec3){ gm3.p.x / bs, gm3.p.y / bs,
+														gm3.p.z / bs };
+			sa_xf W = sa_node_xf(&g_arm.pose[c->wpn]);
+			sa_node_set(&g_arm.pose[c->wpn], sa_xf_mul(sa_xf_mul(gm3, sa_xf_inv(gm2)), W));
+			memcpy(g_sf.p_now, rv, sizeof g_sf.p_now);
+			float rw[3] = { rot.x, rot.y, rot.z };
+			swg_qexp(rw, ew);
+			sv_vec3 d2 = sv_qrot(sv_quat_of(ew), dir), T2 = { G.x + bc->len_cm * d2.x, G.y + bc->len_cm * d2.y,
+									 G.z + bc->len_cm * d2.z };
+			float h = (T2.x - f->bpl[0].p.x) * n.x + (T2.y - f->bpl[0].p.y) * n.y + (T2.z - f->bpl[0].p.z) * n.z;
+			P = (sv_vec3){ T2.x - h * n.x, T2.y - h * n.y, T2.z - h * n.z }; /* the turned tip on the surface */
+			g_sf.pv_frames++;
+			g_sf.pv_peak_deg = fmaxf(g_sf.pv_peak_deg, ang / 0.01745329f);
+		}
+	}
+	if (r == 2 && !g_sf.pv_void) {
+		g_sf.pv_voids++;
+		if (sf_log_ok(t))
+			logf_("SURF t=%.3f blade pivot: goes in (the tip %.1f cm in; %s)", t, (double)depth,
+			      depth > 0 && fresh ? "past the turn's cap or the grip itself at the surface" : "-");
+	}
+	g_sf.pv_void = r == 2;
+	somvr_sf_out o;
+	somvr_sf_pv_step(&g_sf.pv, &g_sf.cfg, r == 1, depth, ang, tipw, n, t, dt, &o);
+	if (o.ev & SOMVR_SF_EV_BLADE) {
+		g_sf.pv_meets++;
+		SF_COUNT(blades);
+		const char *bn = f->bname[0][0] ? f->bname[0] : "-";
+		if (o.clank > 0) {
+			g_sf.pv_clanks++;
+			SF_COUNT(clanks);
+			in_haptic_event(SOMVR_HAND_R, 0.9f * o.clank, 0.04f, SOMVR_HAP_COMBAT); /* the crack and the ring */
+			in_haptic_ramp(SOMVR_HAND_R, 0.45f * o.clank, 0.15f, SOMVR_HAP_COMBAT);
+			if (g_bd.two.w > 0)
+				in_haptic_event(SOMVR_HAND_L, 0.5f * o.clank, 0.04f, SOMVR_HAP_COMBAT);
+			/* the sound and the sparks in the next combat frame (sfb_h4), not here inside the game's pose update */
+			g_sf.pv_pend = (g_sf.sound[0] ? 1 : 0) | (o.fx ? 2 : 0), g_sf.pv_pend_t = t;
+			g_sf.pv_P[0] = P.x, g_sf.pv_P[1] = P.y, g_sf.pv_P[2] = P.z;
+			snprintf(g_sf.pv_surf, sizeof g_sf.pv_surf, "%s", bn);
+		} else if (o.tick > 0) {
+			SF_COUNT(btouches), SF_COUNT(ticks);
+			in_haptic_event(SOMVR_HAND_R, o.tick, 0.02f, SOMVR_HAP_COMBAT);
+		}
+		if (sf_log_ok(t))
+			logf_("SURF t=%.3f blade pivot %s surf=%s obj=%#lx speed=%.0f cm/s clank=%.2f turn=%.1f deg (the tip %.1f cm in) "
+			      "at %.1f,%.1f,%.1f n=%.2f,%.2f,%.2f; sound %s, sparks %s (the next combat frame); frame=%llu", t,
+			      o.clank > 0 ? "clank" : "touch", bn, (unsigned long)f->bobj[0], (double)o.bspeed, (double)o.clank,
+			      (double)(ang / 0.01745329f), (double)depth, (double)P.x, (double)P.y, (double)P.z, (double)n.x,
+			      (double)n.y, (double)n.z, o.clank > 0 && g_sf.sound[0] ? g_sf.sound : "-", o.clank > 0 && o.fx ? "yes" : "no",
+			      (unsigned long long)g_fr.frame);
+		g_sf.pv_hold_next = t + 0.5;
+	} else if (g_sf.pv.on && t >= g_sf.pv_hold_next) {
+		g_sf.pv_hold_next = t + 0.5;
+		if (sf_log_ok(t))
+			logf_("SURF t=%.3f blade pivot hold: turned %.1f deg, the tip %.1f cm in, at %.1f,%.1f,%.1f (%.2f s on)", t,
+			      (double)(ang / 0.01745329f), (double)depth, (double)P.x, (double)P.y, (double)P.z, t - g_sf.pv.t_on);
+	}
+	if ((o.ev & SOMVR_SF_EV_BLADE_OFF) && sf_log_ok(t))
+		logf_("SURF t=%.3f blade pivot release after %.2f s, deepest %.1f cm, the largest turn %.1f deg", t, (double)o.bheld_s,
+		      (double)o.bdepth_max, (double)(g_sf.pv.peak_rad / 0.01745329f));
+}
+
 /* build 18, SOMVR_SWORD_HAND_LOCK=on (arm_eval, right after hf_arm): the layer's drawn hands of this frame (vh_arm's entry,
  * from the same grips gg) turned with the drawn blade off the controller - the weight's offset and the bite's turn, the
  * blade's q = exp(b) exp(rot) x the grip's - about the right grip point, the weapon node's pivot: the right fist turns on
@@ -213,10 +402,11 @@ static void swl_arm(const sa_xf gg[2], const int gv[2])
 	somvr_vrhands_frame *e = &g_vh.e;
 	if (!(e->flags & SOMVR_VHF_R))
 		return;
-	float zero[3] = { 0, 0, 0 }, ew[4], eb[4];
+	float zero[3] = { 0, 0, 0 }, ew[4], eb[4], ep[4];
 	swg_qexp(g_hsm.w_now ? g_hsm.w_rot_now : zero, ew);
 	swg_qexp(g_hf.b_now, eb);
-	sv_quat R = sv_qnormalize(sv_qmul(sv_quat_of(eb), sv_quat_of(ew)));
+	swg_qexp(g_sf.p_now, ep); /* build 20: the blade's turn at a surface (SOMVR_HANDS_SURFACE_BLADE=pivot) */
+	sv_quat R = sv_qnormalize(sv_qmul(sv_quat_of(ep), sv_qmul(sv_quat_of(eb), sv_quat_of(ew))));
 	if (!(fabsf(R.w) < 0.9999999f))
 		return; /* no turn off the controller this frame */
 	sa_xf r = { gg[SA_R].p, sv_qnormalize(sv_qmul(R, sv_qnormalize(gg[SA_R].q))) };
@@ -241,6 +431,7 @@ static void hf_dump_mark(const char *what, double t)
 /* the combat frame (H4), every frame: the test words' FX switch and dumps, a pending late dump */
 static void hf_h4(double t)
 {
+	sfb_h4(t); /* build 20: a blade's meeting with a surface: its sound and sparks */
 	int f = atomic_exchange(&g_hf.req_fx, 0), d = atomic_exchange(&g_hf.req_dumps, 0);
 	if (f)
 		g_hf.fx = f - 1, logf_("HITFEEL t=%.3f fx %s (trigger word)", t, g_hf.fx ? "on" : "off");

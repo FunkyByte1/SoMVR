@@ -65,6 +65,10 @@ float somvr_stl_off_deg(const float p[3], const float o[3], float yaw);
 int somvr_stl_possible(const somvr_stl_cfg *c, const somvr_stl_who *w);
 /* the contact: KILL or why the ordinary hit */
 int somvr_stl_judge(const somvr_stl_cfg *c, const somvr_stl_who *w, const somvr_stl_hit *h);
+/* build 20c: the tier a sword's contact is judged by here (and by the verbs): build 16's rule's (tier16), or where
+ * that sees nothing SOMVR_COMBAT_SWING=stroke's (tier_swing) - a contact the ordinary hit would deal is never a
+ * touch to the stealth kill (docs/re-xr-pipeline.md 81) */
+int somvr_stl_tier(int tier16, int tier_swing);
 
 /* the cue: one soft tick when an orc becomes a possible stealth kill (the nearest one), again only after it was not
  * possible for rearm_s or another orc took its place; returns 1 = tick now */

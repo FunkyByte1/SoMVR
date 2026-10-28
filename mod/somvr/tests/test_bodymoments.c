@@ -623,6 +623,48 @@ static void test_sequence(void) {
            "flat\n", held_frames, cuts, win_frames);
 }
 
+/* build 20: the grab's hold lets go once the player's own locomotion owns Talion (the user's build 19b session: the
+ * interrogation's end left our_grab set and the view on the held point while the stick walked Talion away) */
+static void test_grab_free(void) {
+    somvr_bm_free f;
+    somvr_bm_free_init(&f);
+    const double dt = 1.0 / 90;
+    double t = 0;
+    int suppressed = 0, start_frees = 0;
+    /* a grab: the player's locomotion owns him 0.46 s (the grab's attempt), then the game's grab and interrogation 15 s */
+    for (int i = 0; i < 90 * 16; i++, t += dt)
+        start_frees += somvr_bm_free_step(&f, 1, t < 0.46, t, 1.0f);
+    CHECK(start_frees == 0 && !f.latched, "the grab's own start (0.46 s ours) and the game's hold: never freed (%d)",
+          start_frees);
+    /* the game's kill is over, our_grab stuck: the stick walks him */
+    double t_free = -1;
+    for (int i = 0; i < 90 * 30; i++, t += dt) {
+        int s = somvr_bm_free_step(&f, 1, 1, t, 1.0f);
+        suppressed += s;
+        if (s && t_free < 0) t_free = t;
+    }
+    CHECK(t_free > 0 && fabs(t_free - (16.0 + 1.0)) < 2 * dt && suppressed > 90 * 28, "freed %.3f s after the game let "
+          "go (want 1.0), suppressed %d frames", t_free - 16.0, suppressed);
+    /* the conditions with it: no hold left */
+    somvr_bm_in in;
+    memset(&in, 0, sizeof in);
+    in.our_grab = !somvr_bm_free_step(&f, 1, 0, t, 1.0f); /* latched: even a game tick does not bring it back */
+    CHECK(!(somvr_bm_conds(&in) & SOMVR_BMC_BIT(SOMVR_BMC_HOLD)), "latched: our_grab no hold");
+    /* the grab ends: re-armed; a new grab under the game's hold holds */
+    CHECK(somvr_bm_free_step(&f, 0, 1, t, 1.0f) == 0 && !f.latched && f.frees == 1, "re-armed after the grab");
+    in.our_grab = !somvr_bm_free_step(&f, 1, 0, t + dt, 1.0f);
+    CHECK((somvr_bm_conds(&in) & SOMVR_BMC_BIT(SOMVR_BMC_HOLD)) != 0, "the next grab holds again");
+    /* 0 = never */
+    somvr_bm_free g;
+    somvr_bm_free_init(&g);
+    int any = 0;
+    for (int i = 0; i < 900; i++)
+        any += somvr_bm_free_step(&g, 1, 1, i * dt, 0.0f);
+    CHECK(any == 0, "SOMVR_BM_GRAB_FREE_S=0: never");
+    printf("grab free: the grab's start and the game's 15 s hold kept, freed %.2f s after the player's locomotion took "
+           "Talion back\n", t_free - 16.0);
+}
+
 int main(void) {
     test_glob();
     test_names();
@@ -636,6 +678,7 @@ int main(void) {
     test_pause_gap();
     test_yaw();
     test_sequence();
+    test_grab_free();
     printf("test_bodymoments: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

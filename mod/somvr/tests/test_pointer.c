@@ -377,8 +377,81 @@ static void test_image(void) {
     CHECK(r[0] == 32 && r[1] == 0 && r[2] == 32 && r[3] == 32, "ray rect");
 }
 
+/* build 20: the held point (SOMVR_XR_PTR_HOLD) - a shaking aim held still, a real sweep followed at once, the parse */
+static void hold_run(const somvr_ptr_cfg *c, float shake_deg, float sweep_deg, float *spread_uv, float *lag_deg,
+                     float *end_uv) {
+    somvr_ptr_state s;
+    somvr_ptr_reset(&s);
+    somvr_ptr_in in;
+    memset(&in, 0, sizeof in);
+    in.quad = SOMVR_PTRQ_MENU, in.quad_pose = MENU, in.quad_size[0] = MSIZE[0], in.quad_size[1] = MSIZE[1];
+    in.ok[SOMVR_HAND_R] = 1;
+    float lo[2] = {9, 9}, hi[2] = {-9, -9}, lag = 0, o0[3] = {0, 0, 0};
+    for (int f = 0; f < 360; f++) { /* 4 s at 90 Hz: 2 s shaking at rest, a 0.5 s sweep, 1.5 s still after it */
+        double t = f / 90.0;
+        float k = f < 180 ? 0 : f > 225 ? 1 : (float)(f - 180) / 45.0f, sh = f < 180 ? shake_deg : 0;
+        float yaw = sweep_deg * k + sh * (0.6f * sinf(6.2831853f * 7.9f * (float)t) + 0.4f * sinf(6.2831853f * 1.1f * (float)t));
+        float pit = sh * (0.5f * sinf(6.2831853f * 9.7f * (float)t + 1) + 0.5f * sinf(6.2831853f * 0.6f * (float)t + 2));
+        float a = 0.5f * yaw * 0.01745329f, b = 0.5f * pit * 0.01745329f;
+        float qy[4] = {0, sinf(a), 0, cosf(a)}, qx[4] = {sinf(b), 0, 0, cosf(b)};
+        in.pose[SOMVR_HAND_R] = (somvr_posef){{qy[3] * qx[0], qy[1] * qx[3], -qy[1] * qx[0], qy[3] * qx[3]}, {0, 0, 0}};
+        in.time = (int64_t)(t * 1e9);
+        somvr_ptr_out o;
+        somvr_ptr_update(&s, c, &in, &o);
+        if (f >= 60 && f < 180)
+            for (int i = 0; i < 2; i++) lo[i] = fminf(lo[i], o.uv[i]), hi[i] = fmaxf(hi[i], o.uv[i]);
+        if (f >= 180 && f <= 225) { /* the angle between the drawn point and the ray */
+            float d[3] = {o.hit[0] - o0[0], o.hit[1] - o0[1], o.hit[2] - o0[2]}, r[3];
+            float rq[4] = {in.pose[SOMVR_HAND_R].q[0], in.pose[SOMVR_HAND_R].q[1], in.pose[SOMVR_HAND_R].q[2],
+                           in.pose[SOMVR_HAND_R].q[3]};
+            somvr_posef rp = {{rq[0], rq[1], rq[2], rq[3]}, {0, 0, 0}};
+            float oo[3];
+            somvr_ptr_ray(&rp, oo, r);
+            float n = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]), cs = (d[0] * r[0] + d[1] * r[1] + d[2] * r[2]) / n;
+            float ang = acosf(cs < 1 ? cs : 1) * 57.29578f;
+            lag = ang > lag ? ang : lag;
+        }
+        if (f == 359) end_uv[0] = o.uv[0], end_uv[1] = o.uv[1];
+    }
+    *spread_uv = fmaxf(hi[0] - lo[0], hi[1] - lo[1]), *lag_deg = lag;
+}
+static void test_hold20(void) {
+    somvr_ptr_cfg c, h;
+    somvr_ptr_cfg_default(&c);
+    CHECK(c.hold_deg == 0, "the default: no hold (build 19's point)");
+    int bad = 0;
+    somvr_ptr_parse_hold("on", &h, &bad);
+    CHECK(!bad && NEAR(h.hold_deg, 0.6, 1e-6) && NEAR(h.settle_s, 0.3, 1e-6), "on: 0.6 deg, 300 ms");
+    somvr_ptr_parse_hold("1.2,500", &h, &bad);
+    CHECK(!bad && NEAR(h.hold_deg, 1.2, 1e-6) && NEAR(h.settle_s, 0.5, 1e-6), "DEG,MS");
+    somvr_ptr_parse_hold("0.8", &h, &bad);
+    CHECK(!bad && NEAR(h.hold_deg, 0.8, 1e-6) && NEAR(h.settle_s, 0.3, 1e-6), "DEG");
+    somvr_ptr_parse_hold("off", &h, &bad);
+    CHECK(!bad && h.hold_deg == 0, "off");
+    const char *bads[] = {"yes", "4", "0.5,", "0.5,3000", "-1", "0.5x"};
+    for (int i = 0; i < 6; i++) {
+        bad = 0;
+        somvr_ptr_parse_hold(bads[i], &h, &bad);
+        CHECK(bad && h.hold_deg == 0, "'%s': not understood, off", bads[i]);
+    }
+    h = c; /* (the parse sets the hold's two fields only) */
+    somvr_ptr_parse_hold("on", &h, &bad);
+    float s0, s1, l0, l1, e0[2], e1[2];
+    hold_run(&c, 0.5f, 10, &s0, &l0, e0);
+    hold_run(&h, 0.5f, 10, &s1, &l1, e1);
+    printf("test_pointer: build 20 hold: a 0.5-deg shake at rest moves the point over %.4f uv (build 19's: %.4f); the "
+           "sweep %.2f deg behind the ray at most (%.2f)\n", s1, s0, l1, l0);
+    CHECK(s0 > 0.008f, "build 19's point shakes with the aim: %.4f uv", s0);
+    CHECK(s1 < 0.4f * s0, "the held point: %.4f uv (build 19's %.4f)", s1, s0);
+    CHECK(l1 <= l0 + 0.65f, "a real sweep followed at once: %.2f deg behind (build 19's filter %.2f)", l1, l0);
+    float ex = e1[0] - e0[0], ey = e1[1] - e0[1];
+    CHECK(sqrtf(ex * ex + ey * ey) * MSIZE[0] / 2.0f * 57.29578f < 0.35f, "1.5 s after the sweep: within 0.35 deg of "
+          "build 19's point (%.3f deg)", sqrtf(ex * ex + ey * ey) * MSIZE[0] / 2.0f * 57.29578f);
+}
+
 int main(void) {
     test_geometry();
+    test_hold20();
     test_in_from();
     test_state();
     test_game_side();

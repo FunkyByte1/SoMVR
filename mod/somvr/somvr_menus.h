@@ -240,18 +240,23 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
  *   hand L|R touch board|panel|watch U V D [s SEC]  the fingertip (the aim + reach) at the point U, V (0..1, from the
  *                                          top left) of that quad, D cm in front of it (negative: behind), the aim
  *                                          into it; the quad's pose at this line; moved there in SEC seconds
+ *   hand L|R aim board|panel|watch U V D [s SEC]    build 20: the aim (the ray's origin, no reach) D cm in front of
+ *                                          that quad's point U, V, its -Z into it: the ray, not the fingertip, on it
+ *   hand L|R shake CM DEG                  build 20: a shaking hand - a tremor over its scripted pose until `shake 0 0`
+ *                                          (somvr_xt_shake: CM 0..5 cm, DEG 0..10 deg at most)
  *   btn L|R menu|a|b|stick|trigger|squeeze V      held (V 1 / 0; trigger and squeeze 0..1)
  *   stick L|R X Y                          held (-1..1)
  * '#' and blank lines are skipped. */
 enum { SOMVR_XT_NONE = 0, SOMVR_XT_DUMP, SOMVR_XT_OFF, SOMVR_XT_HEAD, SOMVR_XT_TOUCH, SOMVR_XT_BTN, SOMVR_XT_STICK,
-       SOMVR_XT_SIZE, SOMVR_XT_LUMLOG };
+       SOMVR_XT_SIZE, SOMVR_XT_LUMLOG, SOMVR_XT_AIM, SOMVR_XT_SHAKE }; /* (build 20: AIM, SHAKE) */
 enum { SOMVR_XTS_BOARD = 0, SOMVR_XTS_PANEL = 1, SOMVR_XTS_WATCH = 2 };
 enum { SOMVR_XTB_MENU = 0, SOMVR_XTB_A, SOMVR_XTB_B, SOMVR_XTB_STICK, SOMVR_XTB_TRIGGER, SOMVR_XTB_SQUEEZE };
 typedef struct {
     int op;        /* SOMVR_XT_* */
     int hand;      /* SOMVR_HAND_L / _R */
     int what;      /* touch: SOMVR_XTS_*; btn: SOMVR_XTB_* */
-    float v[6];    /* head: X Y Z RX RY RZ; touch: U V D; btn: V; stick: X Y; handsize: S, D (-1 = kept); lumlog: N */
+    float v[6];    /* head: X Y Z RX RY RZ; touch, aim: U V D; btn: V; stick: X Y; handsize: S, D (-1 = kept); lumlog: N;
+                    * shake: CM DEG */
     float sec;     /* the move's time */
 } somvr_xt_cmd;
 /* 1 = a command in *c, 0 = nothing (blank, comment), -1 = not understood */
@@ -262,6 +267,10 @@ void somvr_xt_head_pose(const somvr_posef *head, const float cm[3], const float 
  * quad's point (u, v) lifted front_m along the quad's +Z */
 void somvr_xt_touch_pose(const somvr_posef *quad, const float size[2], float u, float v, float front_m, float reach_m,
                          somvr_posef *out);
+/* build 20: the shake command's pose at t (s): in moved by a tremor - per axis a sum of six sines (0.6 to 9.7 Hz, the
+ * slow sway with 60 % of the weight, the fast tremor 40 %; the phases differ per axis and per hand), at most cm along
+ * each axis and deg about each; deterministic (the same t, the same pose) */
+void somvr_xt_shake(const somvr_posef *in, float cm, float deg, double t, int hand, somvr_posef *out);
 /* the pose k (0..1) of the way from a to b (the position linear, the orientation normalised lerp, the short way) */
 void somvr_xt_lerp(const somvr_posef *a, const somvr_posef *b, float k, somvr_posef *out);
 

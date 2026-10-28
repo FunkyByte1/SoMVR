@@ -46,6 +46,10 @@
  *            string press that took nothing keeps looking for the quiver while it stays closed - the hand coming in
  *            takes the arrow (TAKE, or EMPTY), as a held arrow nocks by touching the string. cfg.noarrow_cm: an empty
  *            press that near the nock (the bow's side of the body, never the quiver's) is NOARROW at once.
+ *   auto     build 20 (re-xr-pipeline.md 76; cfg.auto_arrow with the quiver off - "Arrows: Auto", builds 11-15b's way: a
+ *            press at the nock nocks and draws at once): a press keeps looking for the nock while the string stays closed
+ *            (no window_s, no MISS) - the hand that squeezed on its way still nocks when it comes to the string; with
+ *            in.arrows 0 a press there nocks nothing (EMPTY). somvr.c shows the next arrow resting on the string meanwhile.
  *
  * The bow's frame in the bow hand's grip (build 16, somvr_bow_hold_q): the grip's frame in the game convention
  * (somvr_hand_game) has +Z along the fist's tube from the little finger to the thumb (OpenXR's -Z), +X = OpenXR's +X
@@ -141,6 +145,7 @@ typedef struct {
                                 is told as NOARROW at once, not a silent MISS (0: the zone only, build 18) */
     float zone_back_cm;      /* build 19 (SOMVR_BOW_STRING_REST=ours: the string's rest line this far behind the nock):
                                 the zone's core reaches back to it - touching the string seen at rest nocks (0: build 17) */
+    int auto_arrow;          /* build 20 (SOMVR_BOW_AUTO_ARROW=on, the quiver off): see "auto" above */
 } somvr_bow_cfg;
 void somvr_bow_cfg_default(somvr_bow_cfg *c);
 

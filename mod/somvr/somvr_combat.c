@@ -17,6 +17,7 @@ void sc_cfg_default(sc_cfg *c) {
     c->stim_cm = 150.0f, c->stim_cos = 0.5f;
     c->steps = 4;
     c->cut_cm = 50.0f, c->edge_max_deg = 60.0f;
+    c->stroke = 0, c->rev_cos = -0.3f, c->cut_mps = 12.0f, c->full_mps = 20.0f, c->cut_min_k = 0.6f, c->tip_max_mps = 0;
 }
 
 static float dot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
@@ -95,8 +96,9 @@ int sc_heading_at(const sc_cfg *c, const somvr_blade *b, const float c0[3], cons
 
 void sc_speed_reset(sc_speed *s) { memset(s, 0, sizeof *s); }
 
-/* time-weighted mean of field f (0 speed, 1 axis) over [t_now - w, t_now]: each sample covers the time since the one
- * before it (the oldest sample in the ring: nothing before it) */
+/* time-weighted mean of field f (0 speed, 1 axis, 2 base) over [t_now - w, t_now]: each sample covers the time since
+ * the one before it (the oldest sample in the ring: nothing before it) */
+#define WF(x) (f == 2 ? (x).base : f ? (x).axis : (x).speed)
 static float window_mean(const sc_speed *s, float w, int f) {
     if (s->n == 0) return 0;
     int i = (s->head + SC_RING - 1) % SC_RING;
@@ -104,29 +106,63 @@ static float window_mean(const sc_speed *s, float w, int f) {
     for (int k = 0; k < s->n - 1; k++) {
         int j = (i + SC_RING - 1) % SC_RING;
         double a = s->s[j].t > lo ? s->s[j].t : lo, dt = s->s[i].t - a;
-        if (dt > 0) sum += dt * (f ? s->s[i].axis : s->s[i].speed), span += dt;
+        if (dt > 0) sum += dt * WF(s->s[i]), span += dt;
         if (s->s[j].t <= lo) break;
         i = j;
     }
-    if (span <= 0) return f ? s->s[i].axis : s->s[i].speed; /* one sample */
+    if (span <= 0) return WF(s->s[i]); /* one sample */
     return (float)(sum / span);
+}
+#undef WF
+
+static void stroke_reset(sc_speed *s) {
+    s->reach = s->stroke_cm = 0, s->have_dir = 0, s->rest_s = 0;
+    memset(s->disp, 0, sizeof s->disp), memset(s->dir, 0, sizeof s->dir);
+}
+/* the stroke (build 20): a turn back of the tip past c->rev_cos off its direction, or a rest, begins a new one */
+static void stroke_step(sc_speed *s, const sc_cfg *c, const float v[3], float sp, double dt, double t) {
+    if (sp < SC_STROKE_MIN_CMS) {
+        s->rest_s += (float)dt;
+        if (s->rest_s >= SC_STROKE_REST_S && (s->have_dir || s->reach > 0)) stroke_reset(s);
+    } else {
+        s->rest_s = 0;
+        float dl = sqrtf(dot3(s->dir, s->dir));
+        if (s->have_dir && dl > 1e-3f && dot3(v, s->dir) / (sp * dl) < c->rev_cos) stroke_reset(s);
+        if (!s->have_dir) {
+            memcpy(s->dir, v, sizeof s->dir), s->have_dir = 1, s->strokes++, s->stroke_t0 = t;
+        } else {
+            float a = 1.0f - expf(-(float)dt / SC_STROKE_TAU_S);
+            for (int i = 0; i < 3; i++) s->dir[i] += a * (v[i] - s->dir[i]);
+        }
+    }
+    if (!s->have_dir) return; /* a rest before any stroke: nothing to measure */
+    for (int i = 0; i < 3; i++) s->disp[i] += (float)(v[i] * dt);
+    s->stroke_cm += (float)(sp * dt);
+    float r = sqrtf(dot3(s->disp, s->disp));
+    if (r > s->reach) s->reach = r;
 }
 
 int sc_speed_push(sc_speed *s, const sc_cfg *c, const somvr_blade *b) {
     if (!b->valid || (s->n && !(b->t > s->last_t))) return 0;
     float v[3] = {b->vel_tip[0], b->vel_tip[1], b->vel_tip[2]};
     float ax[3] = {b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2]};
-    float sp = sqrtf(dot3(v, v)), la = sqrtf(dot3(ax, ax));
+    float sp = sqrtf(dot3(v, v)), la = sqrtf(dot3(ax, ax)), sb = sqrtf(dot3(b->vel_base, b->vel_base));
     float along = la > 1e-3f ? dot3(v, ax) / la : 0;
-    if (!isfinite(sp) || !isfinite(along)) return 0;
+    if (!isfinite(sp) || !isfinite(along) || !isfinite(sb)) return 0;
+    if (c->tip_max_mps > 0 && (sp > 100.0f * c->tip_max_mps || sb > 100.0f * c->tip_max_mps)) {
+        s->drops++; /* a tracking jump (the next sample's dt spans it) */
+        return 0;
+    }
     double dt = s->n ? b->t - s->last_t : 0;
-    s->s[s->head].t = b->t, s->s[s->head].speed = sp, s->s[s->head].axis = along;
+    s->s[s->head].t = b->t, s->s[s->head].speed = sp, s->s[s->head].axis = along, s->s[s->head].base = sb;
     s->head = (s->head + 1) % SC_RING;
     if (s->n < SC_RING) s->n++;
     s->last_t = b->t;
     s->mean_mps = window_mean(s, c->window_s, 0) * 0.01f;
     s->axis_mps = window_mean(s, c->window_s, 1) * 0.01f;
+    s->base_mps = window_mean(s, c->window_s, 2) * 0.01f;
     s->cos_axis = sp > 1e-3f && la > 1e-3f ? along / sp : 0;
+    stroke_step(s, c, v, sp, dt > 0 && dt <= 0.25 ? dt : 0, b->t);
     if (!s->above && s->mean_mps >= c->slash_mps) {
         s->above = 1, s->travel = 0;
         return 1;
@@ -181,6 +217,32 @@ int sc_tier_cut(const sc_cfg *c, const sc_speed *s, float edge_deg) {
     if (s->travel >= c->cut_cm && !(edge_deg > c->edge_max_deg)) return SC_TIER_HEAVY;
     if (s->travel >= c->slash_cm) return SC_TIER_LIGHT;
     return SC_TIER_NONE;
+}
+
+float sc_contact_mps(const sc_speed *s, float along) {
+    float u = isfinite(along) ? clamp01(along) : 1;
+    return s->base_mps + (s->mean_mps - s->base_mps) * u;
+}
+
+int sc_tier_swing(const sc_cfg *c, const sc_speed *s, float edge_deg, float along) {
+    if (s->axis_mps >= c->stab_mps && s->cos_axis >= c->stab_cos) return SC_TIER_STAB;
+    if (!s->above || !(s->mean_mps >= c->slash_mps)) return SC_TIER_NONE;
+    float v = sc_contact_mps(s, along);
+    if (s->reach >= c->cut_cm && v >= c->cut_mps && !(edge_deg > c->edge_max_deg)) return SC_TIER_HEAVY;
+    if (s->reach >= c->slash_cm && v >= c->slash_mps) return SC_TIER_LIGHT;
+    return SC_TIER_NONE;
+}
+
+int sc_stroke_entered(const sc_speed *s, float touch_age, double now) {
+    return s->have_dir && isfinite(touch_age) && touch_age <= (float)(now - s->stroke_t0) + 1e-3f;
+}
+
+float sc_cut_k(const sc_cfg *c, float v) {
+    float lo = c->cut_min_k;
+    if (!(c->full_mps > c->cut_mps)) return 1.0f;
+    if (!isfinite(v)) return lo;
+    float k = lo + (1.0f - lo) * (v - c->cut_mps) / (c->full_mps - c->cut_mps);
+    return k < lo ? lo : k > 1 ? 1 : k;
 }
 
 int sc_space_hold(const float root[3], const float was[3], float xf[3], float space, float *d_want, float *d_got) {
@@ -408,6 +470,7 @@ void somvr_blade_fake(double t, double t0, const float head[3], float yaw, somvr
         out->base[i] = pv[i] + SC_FAKE_BASE_CM * d[i];
         out->tip[i] = pv[i] + SC_FAKE_TIP_CM * d[i];
         out->vel_tip[i] = SC_FAKE_TIP_CM * rate * dd[i];
+        out->vel_base[i] = SC_FAKE_BASE_CM * rate * dd[i];
     }
     out->t = t;
     out->valid = isfinite(out->tip[0]) && isfinite(out->tip[1]) && isfinite(out->tip[2]);
@@ -457,22 +520,31 @@ int somvr_blade_controller(const sc_blade_cfg *c, const sc_grip *g, const sc_rig
         tip[i] = gp[i] + ki * c->len_cm * d[i];
     }
     double dt = h->have ? g->xr_t - h->xr_t : -1;
+    float vb[3] = {0, 0, 0}; /* the base's the same way (build 20) */
     if (c->vel_runtime && g->vel_valid) {
         float r[3] = {tip[0] - g->pos[0], tip[1] - g->pos[1], tip[2] - g->pos[2]}; /* v + w x r */
+        float rb[3] = {base[0] - g->pos[0], base[1] - g->pos[1], base[2] - g->pos[2]};
         v[0] = g->vel[0] + g->avel[1] * r[2] - g->avel[2] * r[1];
         v[1] = g->vel[1] + g->avel[2] * r[0] - g->avel[0] * r[2];
         v[2] = g->vel[2] + g->avel[0] * r[1] - g->avel[1] * r[0];
+        vb[0] = g->vel[0] + g->avel[1] * rb[2] - g->avel[2] * rb[1];
+        vb[1] = g->vel[1] + g->avel[2] * rb[0] - g->avel[0] * rb[2];
+        vb[2] = g->vel[2] + g->avel[0] * rb[1] - g->avel[1] * rb[0];
     } else if (h->have && dt > 0 && dt <= 0.1) {
-        for (int i = 0; i < 3; i++) v[i] = (float)((tip[i] - h->tip[i]) / dt);
+        for (int i = 0; i < 3; i++)
+            v[i] = (float)((tip[i] - h->tip[i]) / dt), vb[i] = (float)((base[i] - h->base[i]) / dt);
     } else if (h->have && dt == 0) {
         memcpy(v, h->vel, sizeof v); /* the same locate time again (reused views): the last velocity */
+        memcpy(vb, h->vbase, sizeof vb);
     }
     memcpy(h->tip, tip, sizeof h->tip), memcpy(h->vel, v, sizeof h->vel);
+    memcpy(h->base, base, sizeof h->base), memcpy(h->vbase, vb, sizeof h->vbase);
     h->xr_t = g->xr_t, h->have = 1;
     float bw[3], tw[3], vw[3], db[3] = {ks * (base[0] - rig->p0[0]), ks * (base[1] - rig->p0[1]), ks * (base[2] - rig->p0[2])},
                                   dtp[3] = {ks * (tip[0] - rig->p0[0]), ks * (tip[1] - rig->p0[1]), ks * (tip[2] - rig->p0[2])},
-                                  vs[3] = {ks * v[0], ks * v[1], ks * v[2]};
+                                  vs[3] = {ks * v[0], ks * v[1], ks * v[2]}, vbs[3] = {ks * vb[0], ks * vb[1], ks * vb[2]};
     yawrot3(rig->yaw, db, bw), yawrot3(rig->yaw, dtp, tw), yawrot3(rig->yaw, vs, vw);
+    yawrot3(rig->yaw, vbs, out->vel_base);
     float xl[3] = {1, 0, 0}, xg[3];
     qrot3(q, xl, xg);
     yawrot3(rig->yaw, xg, out->flat_n);
@@ -484,6 +556,8 @@ int somvr_blade_controller(const sc_blade_cfg *c, const sc_grip *g, const sc_rig
     out->t = t;
     out->valid = isfinite(out->tip[0]) && isfinite(out->tip[1]) && isfinite(out->tip[2]) && isfinite(out->vel_tip[0]) &&
                  isfinite(out->vel_tip[1]) && isfinite(out->vel_tip[2]);
+    if (!(isfinite(out->vel_base[0]) && isfinite(out->vel_base[1]) && isfinite(out->vel_base[2])))
+        memset(out->vel_base, 0, sizeof out->vel_base);
     return out->valid;
 }
 

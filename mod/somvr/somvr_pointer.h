@@ -46,6 +46,12 @@ typedef struct {
     float trig_on, trig_off; /* the click: trigger above trig_on presses, below trig_off releases (0.6 / 0.4, somvr_ctl's) */
     int lose_frames;    /* frames the pointing hand may lack its pose while a click is held (a tracking gap) before the
                            click ends (6) */
+    /* build 20 (SOMVR_XR_PTR_HOLD; 0 = off, build 19's point): the held point - the output stays put while the filtered
+     * point moves less than hold_deg (seen from the hand: dist x tan) away from it and follows by the excess beyond
+     * (1:1, no lag past the radius); inside it eases toward the filtered point, the faster the farther (settle_s at
+     * the radius' edge, (offset / radius)^2 of that inside: a tremor's small offsets barely move it) */
+    float hold_deg;     /* 0 (SOMVR_XR_PTR_HOLD=on: 0.6) */
+    float settle_s;     /* 0.3 */
 } somvr_ptr_cfg;
 void somvr_ptr_cfg_default(somvr_ptr_cfg *c);
 
@@ -73,7 +79,10 @@ typedef struct {
     int have_f;              /* the filter holds a value */
     float f[2], df[2];       /* the One Euro state: uv and its speed (uv/s) */
     int64_t t;               /* XrTime of the last filtered sample */
-    float uv[2];             /* the last output point (smoothed, clamped) */
+    float uv[2];             /* the last output point (smoothed, clamped; build 20: held) */
+    int have_h;              /* build 20: the held point holds a value */
+    float h[2];              /* ... the held point (uv) */
+    int64_t ht;              /* ... XrTime of its last step */
     float dist;              /* ... its distance from the ray's origin */
     uint32_t downs, ups, enters, switches, cancels;
 } somvr_ptr_state;
@@ -109,7 +118,8 @@ typedef struct {
  *     up to lose_frames frames without the hand's pose; the plane missed, a longer gap or another target: the click ends
  *     (CANCEL) and the pointer goes off;
  *   - uv: a One Euro filter (min_cutoff, beta, d_cutoff) over the frames' times, restarted at the raw point when the
- *     pointer comes on (or the time jumps by more than 0.25 s); output clamped to [0,1];
+ *     pointer comes on (or the time jumps by more than 0.25 s); output clamped to [0,1]; build 20: with hold_deg the
+ *     output is the held point over that (restarted with the filter);
  *   - click: the pointing hand's trigger press while on = PRESS (down); its release = RELEASE. A press while off is no
  *     click (the trigger stays the pad's; somvr routes it by consume). */
 void somvr_ptr_update(somvr_ptr_state *s, const somvr_ptr_cfg *c, const somvr_ptr_in *in, somvr_ptr_out *out);
@@ -124,6 +134,10 @@ int somvr_ptr_pixel(const float uv[2], int iw, int ih, int vx, int vy, int out[2
  * whole hold. Returns 1 while the pointer owns it (the caller drops the pad's trigger). */
 typedef struct { int held[2], mine[2]; } somvr_ptr_route;
 int somvr_ptr_route_tick(somvr_ptr_route *r, int h, int down, int consume);
+
+/* build 20: SOMVR_XR_PTR_HOLD (the layer): unset/"off"/"0" = 0 (build 19's point); "on" = 0.6 deg, 0.3 s; "DEG" or
+ * "DEG,MS" (0 < DEG <= 3, 0 <= MS <= 2000); anything else = off and *bad = 1. Sets c->hold_deg, c->settle_s. */
+void somvr_ptr_parse_hold(const char *v, somvr_ptr_cfg *c, int *bad);
 
 /* SOMVR_XR_POINTER (the layer): unset/"on" = ON (the dot and the ray), "dot" = DOT (the dot only), "off"/"0" = OFF (no
  * pointer at all, nothing published); anything else = ON and *bad = 1 */

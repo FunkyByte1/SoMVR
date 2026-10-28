@@ -8,7 +8,7 @@
 #   places  the same standing, 170 .. 100 cm
 #   sneak   the proof: crouched, the test stick (0.6, ~140 cm/s) straight at its back from 18 m, asked on to 60 cm: the
 #           stand-off holds Talion, 3 s still, then the sword's thrust into its back (the stealth kill); pictures
-#   dsneak  the same with Acharn from the left hip
+#   dsneak  the same with Acharn from the left hip (its thrust on to 95 cm: DTHRUST below; SD_DAGGER=19b the old one)
 #   grab    the sneak, then the left hand reached up at its head and squeezed (SOMVR_VERBS' grab), then the sword's thrust
 #   slow    the sneak's walk at stick 0.3, no blade
 #   stand   standing: walked straight at it (stick 0.6) to 60 cm: it notices (the game's rule)
@@ -67,6 +67,11 @@ dp() { userin && bail "the user is in VR"; echo dump > "$R/xrtest.tmp" && mv "$R
   local f; f=$(grep -o 'dump layers frame [0-9]*' "$R/xr-layer.log" | tail -1 | grep -o '[0-9]*$'); echo "$1 $f" | tee -a "$R/sd-steps.txt"; }
 READY="hands test R 8 -18 -25 0 0 0"       # the sword hand drawn back by the chest, the blade forward, its tip short of
 THRUST="hands swing R 8 -14 60 0 0 0 250"
+# the dagger's thrust (build 20c's driver): on to 95 cm in 300 ms - its 30 cm blade meets the orc's back at the
+# stand-off (118 cm) at ~78 cm, so build 19b's thrust to 80 cm in 250 ms went in only on its last, slowest frames; a
+# frame hitch there (20 frames a second headless) left the blade inside at rest: a touch at 0 m/s, no kill (runs
+# 20261028-151510, 164926). SD_DAGGER=19b: the old thrust
+DTHRUST="-8 -12 95 0 0 0 300"; [ "${SD_DAGGER:-}" = 19b ] && DTHRUST="-8 -12 80 0 0 0 250"
 READY2="hands test R 8 -18 -40 0 0 0"      # build 19: at the stand-off (118 cm) READY's tip touched its back: 15 cm further back   # the orc 1.3 m off (run 195528: at 15 cm ahead it touched the orc and turned it)
 patrol() { w "verbs ahead $1" 0.3; w "verbs template Orc_Infantry_Patrol" 0.3; spawn infantry; w "verbs template off" 0.3; }
 far() { w "practice far" 3
@@ -117,7 +122,7 @@ for s in $STEPS; do
     w "hands test L -18 -62 -5 0 0 0" 0.5; w "hands squeeze L 0" 1.2; w "hands squeeze L 1" 1.2
     w "hands test L -12 -20 32 0 0 0" 0.8; w "hands squeeze L 0" 0.6
     sneak_to 0.6; noticed && echo "$(date +%T) noticed before the blade"; w "execute face" 0.3; m dsneak-approach 0.1
-    w "hands test L -8 -18 15 0 0 0" 0.5; w "hands swing L -8 -12 80 0 0 0 250" 0.3; dp dsneak-kill; m dsneak-stab 0.01; w "hands test L -12 -20 32 0 0 0" 0.5; sleep 3
+    w "hands test L -8 -18 15 0 0 0" 0.5; w "hands swing L $DTHRUST" 0.3; dp dsneak-kill; m dsneak-stab 0.01; w "hands test L -12 -20 32 0 0 0" 0.5; sleep 3
     endr; w "$LREST" 0.5 ;;
   grab)
     round grab; sneak_to 0.6; noticed && echo "$(date +%T) noticed before the grab"; hold; w "execute face" 0.3; w "$READY2" 0.4

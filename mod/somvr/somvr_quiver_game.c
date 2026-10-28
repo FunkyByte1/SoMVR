@@ -154,12 +154,25 @@ static void bo_axes_log(double t, const sv_quat q[2])
  * resting on the string (along the bow's shot) or, after our shot, flying (bo_flight_start). Without the quiver: the
  * drawn arrow and its flight */
 #define BO_ARROW_LEN_CM 72.0f
+/* the arrow shown (the layer's and the game's): the step's; build 20 (SOMVR_BOW_AUTO_ARROW=on, the quiver off): with no
+ * arrow taken, the next one rests on the string while the bow is out and not drawn - once the last shot's flight is over
+ * and while arrows are left (the game's count; unknown: shown) */
+static int bo_arrow_shown(void)
+{
+	if (g_bow.s.phase == SOMVR_BOW_PH_IDLE)
+		return SOMVR_BOW_ARROW_NONE;
+	int a = g_bow.s.arrow;
+	if (a == SOMVR_BOW_ARROW_NONE && g_bow.cfg.auto_arrow && !g_bow.cfg.quiver && g_bow.s.phase == SOMVR_BOW_PH_AIM &&
+	    !g_bow.fl_on && g_bow.arrows_now != 0)
+		a = SOMVR_BOW_ARROW_REST;
+	return a;
+}
 static void bo_vh_arrow(const sa_xf g[2], const int valid[2], somvr_vrhands_frame *e)
 {
 	e->arrow_len = 0, e->arrow_glow = 0;
 	if (!g_bow.on || g_bow.tid != my_tid())
 		return;
-	int B = g_bow.cfg.bow_hand, S = 1 - B, a = g_bow.s.phase == SOMVR_BOW_PH_IDLE ? SOMVR_BOW_ARROW_NONE : g_bow.s.arrow;
+	int B = g_bow.cfg.bow_hand, S = 1 - B, a = bo_arrow_shown();
 	sv_vec3 tail, dir;
 	float glow = 1.0f;
 	/* SOMVR_BOW_GAME_ARROW=on: the game's own arrow is the one in the hand and on the drawn string (bo_game_arrow);
@@ -222,7 +235,13 @@ static struct { int log, drawing; char sound[64], draw[64], draw_stp[72]; uint64
 static uint32_t bs_post(const char *name, uint64_t obj, uint32_t flags, void *cb, void *cookie, uint32_t n_ext, void *ext,
 			uint32_t playing)
 {
+	struct gs_post gp; /* build 20, SOMVR_SLOTS_GAMESOUND: the game's sword sounds on Talion (somvr_gsound_game.c) */
+	if (gs_pre(&gp, name, obj, cb, cookie)) {
+		gs_after(&gp, 0);
+		return 0;
+	}
 	uint32_t id = ((bs_post_fn)g_bs_orig)(name, obj, flags, cb, cookie, n_ext, ext, playing);
+	gs_after(&gp, id);
 	atomic_fetch_add_explicit(&g_bs_posts, 1, memory_order_relaxed);
 	int64_t now = (int64_t)(mono() * 1e3);
 	double since = 0;
@@ -479,7 +498,7 @@ static void bo_game_arrow(const sa_xf g[2], const int valid[2], sa_xf X, sv_vec3
 		g_bow.fl_on = 0;
 	if (force == BO_GA_GAME || g_arm.ch[S].wpn < 0 || g_bow.s.phase == SOMVR_BOW_PH_IDLE)
 		return;
-	int a = g_bow.s.phase == SOMVR_BOW_PH_IDLE ? SOMVR_BOW_ARROW_NONE : g_bow.s.arrow;
+	int a = bo_arrow_shown();
 	sa_xf f = { { 0, 0, 0 }, { 0, 0, 0, 1 } };
 	sv_vec3 tail, dir;
 	int mode = 0; /* 0 away, 1 in the hand, 2 nocked/drawn, 3 resting, 4 flying */

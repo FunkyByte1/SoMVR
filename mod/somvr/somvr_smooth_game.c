@@ -79,8 +79,8 @@ static struct {
 	/* the test wiggle (`hands wiggle`): the writer thread's word (side, degrees, Hz, seconds as float bits; seq) and
 	 * the game thread's run of it (from the first test hand's time after the word) */
 	_Atomic uint32_t wig_b[3];
-	_Atomic int wig_side, wig_seq;
-	int wig_seen, wig_on, wig_s;
+	_Atomic int wig_side, wig_seq, wig_axis_req; /* build 20: wig_axis_req 1 = about the grip's +X (the edge-on wiggle) */
+	int wig_seen, wig_on, wig_s, wig_axis;
 	float wig_deg, wig_hz, wig_dur;
 	int64_t wig_t0, wig_last;
 	uint64_t wig_frames;
@@ -110,15 +110,19 @@ static const char *hsm_noise_word(const char *w)
 	return "hands noise";
 }
 
-/* `hands wiggle L|R DEG HZ S` (bd_word, the writer thread): the test hand turns +-DEG about its own up axis (the blade
- * sweeps sideways) at HZ for S seconds, a sine from its test pose; `hands wiggle R 0 1 1` = none */
+/* `hands wiggle L|R DEG HZ S [x]` (bd_word, the writer thread): the test hand turns +-DEG about its own up axis (the
+ * blade sweeps sideways, its flat leading) at HZ for S seconds, a sine from its test pose; build 20: x = about its own
+ * +X instead (the blade sweeps along its edges: the edge-on wiggle of the build 19b session's flail); the hand's place
+ * stays (a wrist's wiggle); `hands wiggle R 0 1 1` = none */
 static const char *hsm_wiggle_word(const char *w)
 {
-	char side = 0;
+	char side = 0, ax[4] = "";
 	float d, hz, sec;
-	if (sscanf(w, " %c %f %f %f", &side, &d, &hz, &sec) != 4 || (side != 'L' && side != 'R') || !(d >= 0 && d <= 45) ||
-	    !(hz >= 0.2f && hz <= 12) || !(sec > 0 && sec <= 20))
-		return "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20: ignored)";
+	int nv = sscanf(w, " %c %f %f %f %3s", &side, &d, &hz, &sec, ax);
+	if (nv < 4 || (side != 'L' && side != 'R') || !(d >= 0 && d <= 45) || !(hz >= 0.2f && hz <= 12) ||
+	    !(sec > 0 && sec <= 20) || (nv == 5 && strcmp(ax, "x") && strcmp(ax, "y")))
+		return "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20 [x|y]: ignored)";
+	atomic_store(&g_hsm.wig_axis_req, nv == 5 && !strcmp(ax, "x"));
 	float v[3] = { d, hz, sec };
 	for (int i = 0; i < 3; i++) {
 		uint32_t b;
@@ -149,15 +153,15 @@ static void hsm_test_wiggle(int h, somvr_hand *d)
 {
 	int seq = atomic_load(&g_hsm.wig_seq);
 	if (seq != g_hsm.wig_seen && d->time > 0) {
-		g_hsm.wig_seen = seq, g_hsm.wig_s = atomic_load(&g_hsm.wig_side);
+		g_hsm.wig_seen = seq, g_hsm.wig_s = atomic_load(&g_hsm.wig_side), g_hsm.wig_axis = atomic_load(&g_hsm.wig_axis_req);
 		g_hsm.wig_deg = hsm_bits_f(atomic_load(&g_hsm.wig_b[0])), g_hsm.wig_hz = hsm_bits_f(atomic_load(&g_hsm.wig_b[1]));
 		g_hsm.wig_dur = hsm_bits_f(atomic_load(&g_hsm.wig_b[2]));
 		g_hsm.wig_t0 = d->time, g_hsm.wig_on = g_hsm.wig_deg > 0, g_hsm.wig_frames = 0;
 		g_hsm.wig_th = 0, g_hsm.wig_n = 0, g_hsm.wig_off = 0;
 		memset(g_hsm.wig_lk, 0, sizeof g_hsm.wig_lk);
 		g_hsm.wig_h[0] = g_hsm.wig_bl[0] = 1e9f, g_hsm.wig_h[1] = g_hsm.wig_bl[1] = -1e9f;
-		logf_("BODY test wiggle %s: +-%.1f deg at %.1f Hz for %.1f s (about the grip's up axis)", g_arm_side[g_hsm.wig_s],
-		      (double)g_hsm.wig_deg, (double)g_hsm.wig_hz, (double)g_hsm.wig_dur);
+		logf_("BODY test wiggle %s: +-%.1f deg at %.1f Hz for %.1f s (about the grip's %s axis)", g_arm_side[g_hsm.wig_s],
+		      (double)g_hsm.wig_deg, (double)g_hsm.wig_hz, (double)g_hsm.wig_dur, g_hsm.wig_axis ? "+X (edge-on)" : "up");
 	}
 	if (!g_hsm.wig_on || h != g_hsm.wig_s)
 		return;
@@ -190,6 +194,8 @@ static void hsm_test_wiggle(int h, somvr_hand *d)
 	float th = (float)(a * sin(ph)), rate = (float)(a * 6.283185307179586 * g_hsm.wig_hz * cos(ph));
 	sv_quat q = sv_qnormalize(sv_quat_of(d->pose.q)), dq = { 0, sinf(0.5f * th), 0, cosf(0.5f * th) };
 	sv_vec3 up = sv_qrot(q, (sv_vec3){ 0, 1, 0 }); /* the grip's own +Y */
+	if (g_hsm.wig_axis) /* build 20: about the grip's own +X */
+		dq = (sv_quat){ sinf(0.5f * th), 0, 0, cosf(0.5f * th) }, up = sv_qrot(q, (sv_vec3){ 1, 0, 0 });
 	sv_quat_to(sv_qnormalize(sv_qmul(q, dq)), d->pose.q);
 	d->ang[0] += rate * up.x, d->ang[1] += rate * up.y, d->ang[2] += rate * up.z;
 }
@@ -340,9 +346,9 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 	float pdt = dt;
 	int stepped = swg_step(&g_hsm.ws, &g_hsm.wcfg, q, axis, dt, two, rot);
 	if (g_hsm.rec && g_hsm.rec_bytes < SWG_REC_MAX) { /* SOMVR_SWORD_REC: the input as the step had it */
-		int nb = fprintf(g_hsm.rec, "%.6f %.6f %.6f %.6f %.6f %d %d %.2f %.3f\n", T > 0 ? (double)T * 1e-9 : cb_now(),
+		int nb = fprintf(g_hsm.rec, "%.6f %.6f %.6f %.6f %.6f %d %d %.2f %.3f %.2f %.2f %.2f\n", T > 0 ? (double)T * 1e-9 : cb_now(),
 				 (double)q[0], (double)q[1], (double)q[2], (double)q[3], two, g_hsm.weight, (double)g_bd.angle_deg,
-				 stepped ? (double)g_hsm.ws.off / 0.01745329 : 0.0);
+				 stepped ? (double)g_hsm.ws.off / 0.01745329 : 0.0, (double)g.p.x, (double)g.p.y, (double)g.p.z);
 		g_hsm.rec_n++, g_hsm.rec_bytes += nb > 0 ? (uint64_t)nb : 0;
 		if (g_hsm.rec_bytes >= SWG_REC_MAX)
 			logf_("SWORDREC full (%llu frames, %llu bytes): no more recorded", (unsigned long long)g_hsm.rec_n,
@@ -531,9 +537,9 @@ static void hsm_config(int *bad)
 			*bad = 1, logf_("WARN SOMVR_SWORD_REC: %s not opened (%s): not recorded", g_hsm.rec_path, strerror(errno));
 		else {
 			setvbuf(g_hsm.rec, NULL, _IOFBF, 1 << 16);
-			fprintf(g_hsm.rec, "# SWORDREC v1 (re-xr-pipeline.md 52): xr_time_s qx qy qz qw two level sword_angle_deg "
-					   "off_deg - the right grip in the arms' space each arms frame the weight applies (the input "
-					   "of swg_step; replay: SWG_REPLAY=FILE tests/test_smooth)\n");
+			fprintf(g_hsm.rec, "# SWORDREC v2 (re-xr-pipeline.md 52, 79): xr_time_s qx qy qz qw two level sword_angle_deg "
+					   "off_deg px py pz - the right grip in the arms' space each arms frame the weight applies (the "
+					   "input of swg_step; build 20: its place, cm; replay: SWG_REPLAY=FILE tests/test_smooth)\n");
 			logf_("CONFIG sword rec: %s", g_hsm.rec_path);
 		}
 	}

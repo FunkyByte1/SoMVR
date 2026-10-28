@@ -333,7 +333,11 @@ void somvr_bow_step(somvr_bow *s, const somvr_bow_cfg *c, const somvr_bow_in *in
     if (c->quiver && c->noarrow_cm > 0 && press && s->looking && !near && s->arrow == SOMVR_BOW_ARROW_NONE &&
         s->phase == SOMVR_BOW_PH_AIM && vb && vs && dist >= 0 && dist <= c->noarrow_cm)
         s->looking = 0, s->noarrows++, o->events |= SOMVR_BOW_E_NOARROW;
-    if (s->looking && !nock_ok && t - s->press_t > c->window_s) { /* the window ran out away from the nock */
+    /* build 20, auto: the quiver's empty count at the string (nothing nocked), the press held on toward the string */
+    int autoa = !c->quiver && c->auto_arrow;
+    if (autoa && nock_ok && in->arrows == 0 && s->phase == SOMVR_BOW_PH_AIM)
+        nock_ok = 0, s->looking = 0, s->empties++, o->events |= SOMVR_BOW_E_EMPTY;
+    if (s->looking && !nock_ok && !autoa && t - s->press_t > c->window_s) { /* the window ran out away from the nock */
         s->looking = 0;
         if (s->phase == SOMVR_BOW_PH_AIM) s->misses++, o->events |= SOMVR_BOW_E_MISS;
     }

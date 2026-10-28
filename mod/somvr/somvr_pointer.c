@@ -2,6 +2,7 @@
 #include "somvr_pointer.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ---- small vector math (the layer links no other module) -------------------------------------------------------- */
@@ -120,7 +121,7 @@ float somvr_ptr_dot_size(float dist, float deg) {
 /* ---- the pointer state ----------------------------------------------------------------------------------------- */
 void somvr_ptr_cfg_default(somvr_ptr_cfg *c) {
     *c = (somvr_ptr_cfg){.leave = 0.02f, .max_dist = 20.0f, .min_cutoff = 1.2f, .beta = 10.0f, .d_cutoff = 2.5f,
-                         .trig_on = 0.6f, .trig_off = 0.4f, .lose_frames = 6};
+                         .trig_on = 0.6f, .trig_off = 0.4f, .lose_frames = 6, .hold_deg = 0, .settle_s = 0.3f};
 }
 
 void somvr_ptr_in_from(const somvr_input_state *st, somvr_ptr_in *in) {
@@ -158,6 +159,7 @@ static void filter(somvr_ptr_state *s, const somvr_ptr_cfg *c, const float raw[2
         memcpy(s->f, raw, sizeof s->f);
         s->df[0] = s->df[1] = 0;
         s->have_f = 1, s->t = time;
+        s->have_h = 0; /* build 20: the held point starts again with it */
         return;
     }
     float fdt = (float)dt, ad = alpha_of(c->d_cutoff, fdt);
@@ -166,6 +168,29 @@ static void filter(somvr_ptr_state *s, const somvr_ptr_cfg *c, const float raw[2
     for (int i = 0; i < 2; i++) s->f[i] += a * (raw[i] - s->f[i]);
     s->t = time;
 }
+/* build 20: the held point's step toward the filtered point f (clamped uv) on a quad of size[2] m, dist m from the hand */
+static void hold(somvr_ptr_state *s, const somvr_ptr_cfg *c, const float f[2], const float size[2], float dist,
+                 int64_t time) {
+    float r = dist * tanf(c->hold_deg * 0.01745329252f);
+    if (!s->have_h || !(r > 1e-4f) || !(size[0] > 0 && size[1] > 0)) { /* (NaN: no hold) */
+        memcpy(s->h, f, sizeof s->h);
+        s->have_h = 1, s->ht = time;
+        return;
+    }
+    double dt = (double)(time - s->ht) * 1e-9;
+    s->ht = time;
+    float d[2] = {(f[0] - s->h[0]) * size[0], (f[1] - s->h[1]) * size[1]}, dm = sqrtf(d[0] * d[0] + d[1] * d[1]);
+    if (dm > r) { /* beyond the radius: follows by the excess */
+        float k = (dm - r) / dm;
+        for (int i = 0; i < 2; i++) s->h[i] += k * (f[i] - s->h[i]);
+        dm = r;
+    }
+    if (c->settle_s > 0 && dt > 0 && dt <= 0.25) { /* inside: eases toward it, (offset / radius)^2 of the edge's rate */
+        float w = dm / r, a = 1.0f - expf(-(float)dt * w * w / c->settle_s);
+        for (int i = 0; i < 2; i++) s->h[i] += a * (f[i] - s->h[i]);
+    }
+}
+
 static void end_click(somvr_ptr_state *s, somvr_ptr_out *out) {
     if (!s->down) return;
     s->down = 0, s->ups++, s->cancels++;
@@ -216,7 +241,7 @@ void somvr_ptr_update(somvr_ptr_state *s, const somvr_ptr_cfg *c, const somvr_pt
         end_click(s, out);
         s->on = 0;
     }
-    if (!s->on) s->have_f = 0;
+    if (!s->on) s->have_f = 0, s->have_h = 0;
     if (s->on && !s->down && rise[H]) {
         s->down = 1, s->downs++;
         out->edges |= SOMVR_PTRE_PRESS;
@@ -229,6 +254,11 @@ void somvr_ptr_update(somvr_ptr_state *s, const somvr_ptr_cfg *c, const somvr_pt
     out->hand = H;
     if (s->on) {
         if (s->have_f) s->uv[0] = clamp01(s->f[0]), s->uv[1] = clamp01(s->f[1]);
+        if (s->have_f && c->hold_deg > 0) { /* build 20: the held point over the filtered one */
+            float fu[2] = {s->uv[0], s->uv[1]};
+            hold(s, c, fu, in->quad_size, in->ok[H] && plane[H] ? t[H] : s->dist, in->time);
+            s->uv[0] = clamp01(s->h[0]), s->uv[1] = clamp01(s->h[1]);
+        }
         memcpy(out->uv, s->uv, sizeof out->uv);
         somvr_ptr_quad_point(&in->quad_pose, in->quad_size, s->uv, 0, out->hit);
         if (in->ok[H]) {
@@ -262,6 +292,27 @@ int somvr_ptr_route_tick(somvr_ptr_route *r, int h, int down, int consume) {
     if (!down) r->mine[h] = 0;
     r->held[h] = down != 0;
     return r->mine[h] && down;
+}
+
+void somvr_ptr_parse_hold(const char *v, somvr_ptr_cfg *c, int *bad) {
+    c->hold_deg = 0, c->settle_s = 0.3f;
+    if (!v || !*v || !strcmp(v, "off") || !strcmp(v, "0")) return;
+    if (!strcmp(v, "on")) {
+        c->hold_deg = 0.6f;
+        return;
+    }
+    char *e = NULL;
+    float deg = strtof(v, &e), ms = 300;
+    if (e && *e == ',') {
+        const char *m = e + 1;
+        ms = strtof(m, &e);
+        if (e == m) e = NULL; /* "DEG," */
+    }
+    if (!e || *e || !(deg > 0 && deg <= 3) || !(ms >= 0 && ms <= 2000)) {
+        *bad = 1;
+        return;
+    }
+    c->hold_deg = deg, c->settle_s = ms * 0.001f;
 }
 
 int somvr_ptr_parse_mode(const char *v, int *bad) {

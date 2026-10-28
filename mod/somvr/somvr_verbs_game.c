@@ -91,6 +91,17 @@ static struct {
 	uint64_t btn_taps;
 	uintptr_t ask_c;            /* the orc asked (the interrogation: until its choices are gone) */
 	double ask_t;
+	/* build 20 (docs/re-xr-pipeline.md 77): the interrogated orc's kill by the player's own blade (SOMVR_VERBS_ASK_KILL);
+	 * Talion's Combat read for the kind through a body moment's hold too (the test words `verbs old|new`) */
+	int ask_kill, ask_kill_cfg; /* VB_ASK_GAME (build 19b: the blade and B = the game's Eliminate) | VB_ASK_BLADE */
+	int own_read;               /* 1: the kind from Talion's Combat when combat_frame has no player (0 = build 19b's) */
+	uint64_t ask_kills, ask_weak, own_reads, ask_freed;
+	/* build 20 (SOMVR_VERBS_INTEL_BACK_S): the GAIN INTEL menu after Interrogate, left by the pad's Back after this long
+	 * (the game back at the held orc and its choices; run out by itself the game plays its finisher) */
+	float intel_back_s, intel_back_cfg;
+	double intel_ask_t, intel_t0, intel_back_until;
+	int intel_up, intel_backed;
+	uint64_t intels, intel_backs, intel_outs;
 	/* the view while the hand holds an orc (SOMVR_VERBS_VIEW_BACK_CM): the game's grab puts the orc's head where
 	 * Talion's is (run 234655, mark 3: the view inside it); the held view eased back from it */
 	float back_cm, voff[3], vvel[3], vdir[3];
@@ -107,6 +118,8 @@ static struct {
 	uint64_t frames, presses, press_ticks, shows, hides, holds, lines, suppressed;
 	uint64_t ev[SOMVR_VBE_N], b_ticks, hog_starts, hog_completes, hog_outs, stuns, buzzes, head_node, head_est;
 } g_vb;
+
+enum { VB_ASK_GAME, VB_ASK_BLADE };
 
 static int vb_log_ok(void)
 {
@@ -353,6 +366,27 @@ static int vb_grab_held(void)
 	return g_vb.mode == VB_ON && (g_vb.hand.phase == SOMVR_VBH_GRAB || g_vb.ask_c); /* (the interrogation too) */
 }
 
+/* build 20 (bm_pre, SOMVR_BM_GRAB_FREE_S): the game holds Talion no more - an interrogation without its choices is over */
+static int vb_grab_freed(double t)
+{
+	if (!g_vb.ask_c || vb_choice(0) || vb_choice(1))
+		return 0;
+	if (vb_log_ok())
+		logf_("VERBS t=%.3f the interrogation of orc %#lx is over (%.1f s after the pull): the game holds Talion no more",
+		      t, (unsigned long)g_vb.ask_c, t - g_vb.ask_t);
+	g_vb.ask_c = 0, g_vb.ask_freed++;
+	return 1;
+}
+
+/* build 20: Talion's server Combat when combat_frame passes no player (fb_after_body: a body moment's hold with the view
+ * away from his head, a knockdown) - the stereo frame's player as the bodymoments' read takes it (vtable checked) */
+static uintptr_t vb_talion_combat(void)
+{
+	uintptr_t pl = g_vb.own_read ? g_fr.pl : 0, pcomb = pl ? peek_ptr(pl + P_COMBAT) : 0;
+	uintptr_t pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0;
+	return pc && vptr_of((void *)pc) == g_cbg.vt_combat && peek_ptr(pc + C_PLAYER) ? pc : 0;
+}
+
 /* SOMVR_BOW: the left trigger is the verbs' now (a grab held, the wraith press running): no bow */
 static uint32_t vb_vm_avail(void) { return g_vb.mode == VB_ON ? SOMVR_VMA_VERBS : 0u; }
 static int vb_trigger_taken(void) { return g_vb.mode == VB_ON && somvr_vb_trigger_taken(&g_vb.hand); }
@@ -548,6 +582,7 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 		g_vb.press_b = 0;
 		if (g_vb.trig_was && !tr_was) {
 			vb_tap(ch, t), g_vb.choices++;
+			g_vb.intel_ask_t = t; /* build 20: the intel menu comes next */
 			g_vb.hand.b = 0, g_vb.hand.b_done = 1; /* no B from this press when the choices are gone */
 			if (o.event == SOMVR_VBE_WRAITH)
 				o.event = SOMVR_VBE_NONE;
@@ -933,8 +968,8 @@ static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		return 1; /* our press runs: the game's kill takes the orc */
 	/* the orc the left hand holds: the sword's contact = X, the game's own move from the grab (PC_GrabFlurry_Into) */
 	if ((g_vb.hand.phase == SOMVR_VBH_GRAB && o->c == g_vb.held_c) || (g_vb.ask_c && o->c == g_vb.ask_c)) {
-		int el = g_vb.ask_c ? vb_choice(1) : 0;
-		if (el) { /* the interrogation asks: the sword = its Eliminate choice */
+		int el = g_vb.ask_c && g_vb.ask_kill == VB_ASK_GAME ? vb_choice(1) : 0;
+		if (el) { /* the interrogation asks: the sword = its Eliminate choice (build 19b; build 20's blade: stl_ask_kill) */
 			vb_tap(el, t), g_vb.choices++;
 			logf_("VERBS t=%.3f choice: the blade on the held orc %#lx while the interrogation asks: %d '%s' tapped "
 			      "(Eliminate)", t, (unsigned long)o->c, el, in_cmd_name(el));
@@ -1089,6 +1124,41 @@ static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	vb_contact(pcomb0, pc0, &oc, tier, t);
 }
 
+/* build 20 (SOMVR_VERBS_INTEL_BACK_S; docs/re-xr-pipeline.md 77.2): the GAIN INTEL menu - the game paused within 3 s of
+ * the trigger's Interrogate while an orc is asked - left by the pad's Back once it has been up this long: the game goes
+ * back to the held orc with its choices (runs 20261028-111136, -120916), the blade's Eliminate or the game's own release
+ * follow; left by its continue (the user's, 10.1 s in; the Touch's X headless) the game plays its finisher. 0 = never
+ * (the Touch's B still is the menu's Back) */
+static void vb_intel(double t)
+{
+	int menu = game_paused() || g_inp.ctx == SC_CTX_MENU;
+	if (!g_vb.intel_up) {
+		if (!menu || !g_vb.ask_c || !(g_vb.intel_ask_t > 0) || t - g_vb.intel_ask_t > 3.0)
+			return;
+		g_vb.intel_up = 1, g_vb.intel_backed = 0, g_vb.intel_t0 = t, g_vb.intels++;
+		if (vb_log_ok())
+			logf_("VERBS t=%.3f the intel menu up (%.2f s after Interrogate)%s", t, t - g_vb.intel_ask_t,
+			      g_vb.intel_back_s > 0 ? "" : " (SOMVR_VERBS_INTEL_BACK_S=0: the game's own end)");
+		return;
+	}
+	if (!menu) {
+		g_vb.intel_up = 0, g_vb.intel_ask_t = 0;
+		g_vb.intel_outs += !g_vb.intel_backed;
+		if (vb_log_ok())
+			logf_("VERBS t=%.3f the intel menu closed after %.2f s (%s)", t, t - g_vb.intel_t0,
+			      g_vb.intel_backed ? "our Back: the held orc again" : "by itself or the player");
+		return;
+	}
+	if (g_vb.intel_back_s > 0 && !g_vb.intel_backed && t - g_vb.intel_t0 >= g_vb.intel_back_s) {
+		g_vb.intel_backed = 1, g_vb.intel_back_until = t + 0.15, g_vb.intel_backs++;
+		if (vb_log_ok())
+			logf_("VERBS t=%.3f the intel menu up %.2f s: the pad's Back for 150 ms (SOMVR_VERBS_INTEL_BACK_S: back to the "
+			      "held orc, no game finisher)", t, t - g_vb.intel_t0);
+	}
+}
+/* in_apply (the input tick): the intel's Back as the pad's B (its menu binding) this tick */
+static int vb_intel_back(void) { return g_vb.mode == VB_ON && cb_now() < g_vb.intel_back_until; }
+
 /* combat_frame (the game thread, every H4 in the world): the test press's request, the change lines */
 static void vb_frame(uintptr_t pl, const float root[3], double t)
 {
@@ -1112,21 +1182,28 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	if (pc && (vptr_of((void *)pc) != g_cbg.vt_combat || !peek_ptr(pc + C_PLAYER)))
 		pc = 0;
 	char a[96], s[96], y[96];
-	if (pc) {
-		uintptr_t at = peek_ptr(pc + VB_C_ATTACK), st = peek_ptr(pc + VB_C_STATE), sy = vb_sync_rec(pc);
+	/* build 20: with no player from combat_frame (a body moment's hold away from his head) his Combat as it is - else
+	 * the interrogation's end goes unseen and the hold it keeps holds on (the user's build 19b session: 30 s) */
+	uintptr_t pk = pc ? pc : pl ? 0 : vb_talion_combat();
+	g_vb.own_reads += pk && !pc;
+	if (pk) {
+		uintptr_t at = peek_ptr(pk + VB_C_ATTACK), st = peek_ptr(pk + VB_C_STATE), sy = vb_sync_rec(pk);
 		if ((at != g_vb.t_atk || st != g_vb.t_state || sy != g_vb.t_sync) && vb_log_ok())
-			logf_("VERBS t=%.3f Talion attack '%s' state '%s' sync '%s'", t, vb_name(at, a, sizeof a),
-			      vb_name(st, s, sizeof s), vb_name(sy, y, sizeof y));
+			logf_("VERBS t=%.3f Talion attack '%s' state '%s' sync '%s'%s", t, vb_name(at, a, sizeof a),
+			      vb_name(st, s, sizeof s), vb_name(sy, y, sizeof y), pc ? "" : " (read through a body moment)");
 		g_vb.t_atk = at, g_vb.t_state = st, g_vb.t_sync = sy;
 	}
+	if (pk && g_vb.mode == VB_ON)
+		vb_kind(pk, t);
 	if (pc && g_vb.mode == VB_ON)
-		vb_kind(pc, t), vb_tap_window(pcomb, t);
+		vb_tap_window(pcomb, t);
 	if (g_vb.ask_c && !vb_choice(0) && !vb_choice(1) && g_vb.kind != SOMVR_VBK_ASK && t - g_vb.ask_t > 6.0) {
 		if (vb_log_ok())
 			logf_("VERBS t=%.3f the interrogation of orc %#lx is over (%.1f s after the pull)", t, (unsigned long)g_vb.ask_c,
 			      t - g_vb.ask_t);
 		g_vb.ask_c = 0;
 	}
+	vb_intel(t); /* build 20: SOMVR_VERBS_INTEL_BACK_S */
 	if (g_vb.mode == VB_ON && g_vb.hand.phase != SOMVR_VBH_IDLE && t - g_vb.hands_t > 0.5) {
 		/* no stereo frame has read the hand for 0.5 s (a window, a load): let everything go */
 		somvr_vb_hand_reset(&g_vb.hand);
@@ -1180,6 +1257,17 @@ static const char *vb_word(const char *w)
 		w++;
 	if (!g_vb.mode)
 		return "verbs (SOMVR_VERBS is off: ignored)";
+	if (!strncmp(w, "old", 3) || !strncmp(w, "new", 3)) { /* build 20's A/B in one boot (SOMVR_HANDS_TEST) */
+		if (!g_vb.test)
+			return "verbs old|new (SOMVR_HANDS_TEST is off: ignored)";
+		int nw = w[0] == 'n';
+		g_vb.own_read = nw, g_vb.ask_kill = nw ? g_vb.ask_kill_cfg : VB_ASK_GAME;
+		g_vb.intel_back_s = nw ? g_vb.intel_back_cfg : 0;
+		g_bm.free_s = nw ? g_bm.free_cfg : 0, g_bm.ret_cm = nw ? g_bm.ret_cfg : 0;
+		return nw ? "verbs new (build 20: the own read, the grab's free, the body's return, the blade's kill, the intel's "
+			    "Back as configured)" : "verbs old (build 19b: no own read, no free, no return, the game's Eliminate, "
+			    "no intel Back)";
+	}
 	if (!strncmp(w, "status", 6)) {
 		atomic_store(&g_vb.req_status, 1);
 		return "verbs status";
@@ -1271,6 +1359,10 @@ static void vb_start(int *bad)
 	g_vb.tap_s = env_float("SOMVR_VERBS_TAP_S", 0.35f, 0, 1, bad);
 	g_vb.cfg.hold_max_s = env_float("SOMVR_VERBS_HOLD_MAX_S", g_vb.cfg.hold_max_s, 1, 20, bad);
 	g_vb.haptic = env_float("SOMVR_VERBS_HAPTIC", 1, 0, 1, bad);
+	g_vb.ask_kill = g_vb.ask_kill_cfg = env_word("SOMVR_VERBS_ASK_KILL", (const char *const[]){ "game", "blade" }, 2,
+						     VB_ASK_GAME);
+	g_vb.intel_back_s = g_vb.intel_back_cfg = env_float("SOMVR_VERBS_INTEL_BACK_S", 0, 0, 60, bad);
+	g_vb.own_read = 1;
 	{
 		char nw[512];
 		g_vb.ok_head = check_site(&g_node_sites[NS_NODEXF], nw, sizeof nw) == 0;
@@ -1309,6 +1401,10 @@ static void vb_start(int *bad)
 	}
 	if (atomic_load(&g_pp.mode) == PP_GAME)
 		logf_("CONFIG verbs: SOMVR_PAD_PROMPTS=game: the game's prompts are not read (log or vr reads them)");
+	logf_("CONFIG verbs build 20: the interrogated orc's kill %s (SOMVR_VERBS_ASK_KILL); Talion's attack read through a "
+	      "body moment's hold; the intel menu's Back after %.1f s (SOMVR_VERBS_INTEL_BACK_S; 0 = never)", g_vb.ask_kill ==
+	      VB_ASK_BLADE ? "blade: the sword's stab into it = its Eliminate (and the Touch's B)" : "game: the Touch's B = "
+	      "its Eliminate (build 19b)", g_vb.intel_back_s);
 	logf_("CONFIG verbs mode=%s test=%d: %s; the stealth kill %s ('%s'); reach %.0f cm (or out %.0f cm at a head within %.0f deg, %.0f cm), the longest hold %.1f s, haptics x%.2f, the orcs' heads %s",
 	      mode_w[g_vb.mode], g_vb.test, g_vb.mode == VB_ON ? "the left hand's squeeze on an orc's head = B (120) held while "
 	      "the grip stays closed (the game's grab, 123); the left trigger holding it or with the open hand on a head = B (120: a tap "
@@ -1323,6 +1419,13 @@ static void vb_end_log(void)
 {
 	if (!g_vb.mode)
 		return;
+	logf_("VERBS END build 20: the interrogated orc's Eliminate by the blade %llu (contacts too weak %llu) "
+	      "(SOMVR_VERBS_ASK_KILL=%s); Talion's attack read through a body moment %llu frames; interrogations over by "
+	      "the grab's free %llu; intel menus %llu (our Back %llu, closed otherwise %llu)", (unsigned long long)g_vb.ask_kills,
+	      (unsigned long long)g_vb.ask_weak,
+	      g_vb.ask_kill == VB_ASK_BLADE ? "blade" : "game", (unsigned long long)g_vb.own_reads,
+	      (unsigned long long)g_vb.ask_freed, (unsigned long long)g_vb.intels, (unsigned long long)g_vb.intel_backs,
+	      (unsigned long long)g_vb.intel_outs);
 	logf_("VERBS END: %llu frames; the left hand: grabs %llu, near misses %llu, releases %llu, done %llu, lost %llu; B held %llu "
 	      "ticks; the game: holds %llu (completed %llu, out %llu), stuns %llu; pulses %llu; heads by node %llu, estimated %llu; "
 	      "squeezes that took nothing %llu; stealth: asked %llu, kills pressed %llu, squeezes by a stealth target %llu, taken by its back %llu; the grab: 123 held %llu ticks, A taps %llu, "

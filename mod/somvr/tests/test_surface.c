@@ -252,7 +252,62 @@ static void test_solid(void) {
           "not solid");
 }
 
+/* build 20, SOMVR_HANDS_SURFACE_BLADE=pivot: the blade turns about the grip to stay at the surface; the hand stays */
+static sv_vec3 rotv(sv_vec3 r, sv_vec3 v) { /* Rodrigues */
+    float th = sqrtf(r.x * r.x + r.y * r.y + r.z * r.z);
+    if (th < 1e-9f) return v;
+    sv_vec3 a = V(r.x / th, r.y / th, r.z / th), axv = V(a.y * v.z - a.z * v.y, a.z * v.x - a.x * v.z, a.x * v.y - a.y * v.x);
+    float ad = a.x * v.x + a.y * v.y + a.z * v.z, c = cosf(th), s = sinf(th);
+    return V(v.x * c + axv.x * s + a.x * ad * (1 - c), v.y * c + axv.y * s + a.y * ad * (1 - c), v.z * c + axv.z * s + a.z * ad * (1 - c));
+}
+static void test_pivot(void) {
+    somvr_sf_cfg c;
+    somvr_sf_cfg_default(&c);
+    CHECK(c.blade_pivot == 0 && NEAR(c.pivot_max_rad, 85 * 0.01745329, 1e-5), "pivot off by default, 85 deg at most");
+    sv_vec3 rot, up = V(0, 1, 0);
+    float depth;
+    /* the grip 60 cm before the wall (z = -60), the blade 100 cm at 30 deg into it, level: the tip 26.6 cm in */
+    sv_vec3 g = V(0, 0, -60), d = V(sinf(0.5236f), 0, cosf(0.5236f));
+    int r = somvr_sf_pivot(&WALL, g, d, 100, 1, c.pivot_max_rad, up, &rot, &depth);
+    sv_vec3 d2 = rotv(rot, d), tip = V(g.x + 100 * d2.x, g.y + 100 * d2.y, g.z + 100 * d2.z);
+    float th = sqrtf(rot.x * rot.x + rot.y * rot.y + rot.z * rot.z) * 57.29578f;
+    CHECK(r == 1 && NEAR(depth, 1 + 100 * cosf(0.5236f) - 60, 0.01) && NEAR(tip.z, -1, 0.01) && NEAR(tip.y, 0, 0.01) && tip.x > 70,
+          "into a wall: turned %.1f deg, the tip at z %.2f (1 cm off), along the wall x %.1f, depth %.1f", th, tip.z, tip.x, depth);
+    CHECK(NEAR(d2.x * d2.x + d2.y * d2.y + d2.z * d2.z, 1, 1e-5) && d2.x > d.x, "the turn keeps the blade's length, away from the wall");
+    /* out of the wall: nothing */
+    CHECK(somvr_sf_pivot(&WALL, V(0, 0, -120), d, 100, 1, c.pivot_max_rad, up, &rot, &depth) == 0 && depth == 0, "out: 0");
+    /* down at the ground from 100 cm up, 60 deg below level: the tip 100 cm along the ground side */
+    sv_vec3 dg = V(0, -sinf(1.0472f), cosf(1.0472f));
+    r = somvr_sf_pivot(&GROUND, V(0, 70, 0), dg, 100, 1, c.pivot_max_rad, up, &rot, &depth);
+    d2 = rotv(rot, dg);
+    CHECK(r == 1 && NEAR(70 + 100 * d2.y, 1, 0.01) && d2.z > dg.z, "the ground: the tip rests 1 cm up (%.2f)", 70 + 100 * d2.y);
+    /* straight in: toward perp */
+    r = somvr_sf_pivot(&WALL, V(0, 0, -50), V(0, 0, 1), 100, 1, c.pivot_max_rad, up, &rot, &depth);
+    d2 = rotv(rot, V(0, 0, 1));
+    CHECK(r == 1 && d2.y > 0.8f && NEAR(-50 + 100 * d2.z, -1, 0.02), "straight in: up along the wall (%.2f %.2f %.2f)", d2.x, d2.y, d2.z);
+    /* the grip at the wall: it cannot */
+    CHECK(somvr_sf_pivot(&WALL, V(0, 0, -0.5f), d, 100, 1, c.pivot_max_rad, up, &rot, &depth) == 2, "the grip at the wall: 2");
+    /* past the cap: a 60 deg cap and a straight stab with the grip 5 cm off */
+    CHECK(somvr_sf_pivot(&WALL, V(0, 0, -5), V(0, 0, 1), 100, 1, 60 * 0.01745329f, up, &rot, &depth) == 2, "past the cap: 2");
+    /* the contact: a clank at the meeting (fast), sparks, nothing while it rests, the release */
+    somvr_sf_pv pv;
+    memset(&pv, 0, sizeof pv);
+    somvr_sf_out o;
+    somvr_sf_pv_step(&pv, &c, 0, 0, 0, V(0, 0, -10), WALL.n, 1.0, 0, &o);
+    somvr_sf_pv_step(&pv, &c, 1, 20, 0.4f, V(0, 0, 10), WALL.n, 1.011, 0.011f, &o);
+    CHECK((o.ev & SOMVR_SF_EV_BLADE) && NEAR(o.bspeed, 20 / 0.011, 1) && NEAR(o.clank, 1, 0) && o.fx, "met at 18 m/s: a clank, sparks");
+    somvr_sf_pv_step(&pv, &c, 1, 30, 0.5f, V(0, 0, 20), WALL.n, 1.022, 0.011f, &o);
+    CHECK(o.ev == 0, "resting: no new event");
+    somvr_sf_pv_step(&pv, &c, 0, 0, 0, V(0, 0, -5), WALL.n, 1.2, 0.011f, &o);
+    CHECK((o.ev & SOMVR_SF_EV_BLADE_OFF) && NEAR(o.bdepth_max, 30, 0) && NEAR(pv.peak_rad, 0.5, 1e-6), "the release: held, deepest 30");
+    somvr_sf_pv_step(&pv, &c, 1, 2, 0.1f, V(0, 0, -4.5f), WALL.n, 1.3, 0.1f, &o);
+    CHECK((o.ev & SOMVR_SF_EV_BLADE) && o.clank == 0 && NEAR(o.tick, 0.2, 1e-6), "slow onto it: a tick, no clank");
+    printf("pivot: the blade turned about the grip onto walls and the ground (the tip 1 cm off), straight in toward perp, "
+           "the grip at the wall / past the cap: none; the contact's clank, sparks, the tick, the release\n");
+}
+
 int main(void) {
+    test_pivot();
     test_push();
     test_plane();
     test_contact();

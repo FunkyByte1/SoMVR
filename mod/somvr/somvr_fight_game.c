@@ -530,7 +530,8 @@ static uintptr_t kx_stagger_rec(uintptr_t c, int tier, int blk, float hp0, float
 	}
 	const char *ln = "(none)";
 	uintptr_t light = cb_record(SC_TIER_LIGHT, 0, &ln);
-	float e = g_kx.light_dmg * (tier == SC_TIER_HEAVY ? 3.0f : 1.0f), nh = hp0 - e;
+	/* build 20 (SOMVR_COMBAT_SWING=stroke): a cut's damage x g_cb.hit_k (its contact point's speed; 1 = the full 4 x) */
+	float e = g_kx.light_dmg * (tier == SC_TIER_HEAVY ? 4.0f * g_cb.hit_k - 1.0f : 1.0f), nh = hp0 - e;
 	int kill = !(nh > g_kx.light_dmg + 0.5f); /* the tier's hit kills: the light hit kills too (a light death: boot 6's
 						   * heavy record's 'AI_Bip_STR_Death_Hvy_F' threw the body 4.8 m) */
 	if (!kill && g_kx.sliver > 0 && !(nh - g_kx.light_dmg > g_kx.sliver)) /* SOMVR_COMBAT_SLIVER: no sliver left */
@@ -1211,6 +1212,14 @@ static const char *fight_word(const char *w)
 	}
 	if (!strcmp(a, "bite") || !strcmp(a, "hitfx")) /* build 17: "fight bite on|off|hold ...|dumps N", "fight hitfx on|off" */
 		return hf_word(w);
+	if (!strcmp(a, "swing")) { /* build 20: "fight swing on|off" - SOMVR_COMBAT_SWING=stroke live (the proof's both rules) */
+		if (!g_bd.test)
+			return "fight swing (SOMVR_HANDS_TEST is off: ignored)";
+		if (strcmp(b, "on") && strcmp(b, "off"))
+			return "fight swing (not on|off: ignored)";
+		atomic_store(&g_cb.swing_req, 1 + !strcmp(b, "on"));
+		return "fight swing";
+	}
 	if (!strcmp(a, "guard")) {
 		if (!g_bd.test)
 			return "fight guard (SOMVR_HANDS_TEST is off: ignored)";
@@ -1473,6 +1482,8 @@ struct nb_trk {
 	int st;                      /* its model interface reaches code: 0 not checked, 1 yes, -1 no (not measured) */
 	int wst, nw, wtip[2];        /* its weapons (as df_weapons) */
 	uintptr_t wobj[2];
+	uintptr_t went[SL_MAX_ENTRIES]; /* build 20: the entry list they were looked up from (orc_weapon_entries) */
+	int nwent;
 	uint32_t wnode[2];
 	double t0, tmin, seen;
 	uint64_t fmin;               /* the frame of the move's nearest */
@@ -1621,16 +1632,17 @@ static int nb_weapons(struct nb_trk *e, uintptr_t m, float ob[2][3], float ot[2]
 {
 	if (!g_th.ok_node)
 		return 0;
+	/* build 20: the list read every frame, a change looks them up again (orc_weapon_entries: the parry18 crash) */
+	uintptr_t en[SL_MAX_ENTRIES];
+	int ne = orc_weapon_entries(e->c, en);
+	if (e->wst && wpn_list_changed(e->c, e->went, e->nwent, en, ne, e->wobj, e->nw, "nb"))
+		e->wst = 0;
 	if (!e->wst) {
-		e->wst = 1, e->nw = 0;
-		uintptr_t owner = peek_ptr(e->c + C_OWNER), inv = owner ? peek_ptr(owner + 0x910) : 0;
-		uint32_t slot = 8;
-		uintptr_t item = inv && peek(inv + 0x280, &slot, 4) && slot <= 7 ? peek_ptr(inv + 0x30 + (uintptr_t)slot * 0x38) : 0;
-		uintptr_t b = item ? peek_ptr(item + SL_IT_ENTRIES) : 0, en = item ? peek_ptr(item + SL_IT_ENTRIES + 8) : 0;
-		int ne = b && en > b && (en - b) % SL_IT_ESIZE == 0 ? (int)((en - b) / SL_IT_ESIZE) : 0;
+		e->wst = 1, e->nw = 0, e->nwent = ne;
+		memcpy(e->went, en, (size_t)ne * sizeof en[0]);
 		static const char *const tips[] = { "weapon_tip", "axe_tip", "sword_tip" };
-		for (int k = 0; k < ne && k < SL_MAX_ENTRIES && e->nw < 2; k++) {
-			uintptr_t obj = peek_ptr(b + (uintptr_t)k * SL_IT_ESIZE + SL_IE_OBJ);
+		for (int k = 0; k < ne && e->nw < 2; k++) {
+			uintptr_t obj = en[k];
 			uintptr_t mi = obj ? peek_ptr(obj + OBJ_MODEL) : 0, mv = vptr_of((void *)mi), f = mv ? peek_ptr(mv + 0x20) : 0;
 			int pr = f ? page_prot(f) : -1;
 			if (!obj || pr < 0 || !(pr & PROT_EXEC))
@@ -1730,7 +1742,9 @@ static void nb_frame(const struct cb_orc *o, int m, const uintptr_t *hs, int n, 
 			nb_flush(e, "its next move");
 			uintptr_t c = e->c, h = e->hobj;
 			int st = e->st, wst = e->wst, nw = e->nw, wt[2] = { e->wtip[0], e->wtip[1] };
-			uintptr_t wo[2] = { e->wobj[0], e->wobj[1] };
+			uintptr_t wo[2] = { e->wobj[0], e->wobj[1] }, we[SL_MAX_ENTRIES];
+			int nwe = e->nwent;
+			memcpy(we, e->went, sizeof we);
 			uint32_t wn[2] = { e->wnode[0], e->wnode[1] };
 			char kd[24];
 			float pbd = e->prev_bd, pr0 = e->r0, ppos[3] = { e->prev_pos[0], e->prev_pos[1], e->prev_pos[2] };
@@ -1741,6 +1755,7 @@ static void nb_frame(const struct cb_orc *o, int m, const uintptr_t *hs, int n, 
 			memcpy(e->prev_pos, ppos, sizeof ppos);
 			e->c = c, e->hobj = h, e->st = st, e->wst = wst, e->nw = nw, e->atk = a, e->t0 = e->seen = t, e->dmin = INFINITY;
 			memcpy(e->wtip, wt, sizeof wt), memcpy(e->wobj, wo, sizeof wo), memcpy(e->wnode, wn, sizeof wn);
+			memcpy(e->went, we, sizeof we), e->nwent = nwe;
 			memcpy(e->kind, kd, sizeof kd);
 			for (int k = 0; k < NBP_N; k++)
 				e->part[k] = INFINITY;
@@ -1921,14 +1936,14 @@ static void nb_end_log(void)
 	logf_("FIGHT END body %s %.0f cm: stereo frames %llu, orc frames measured %llu (no nodes %llu), at Talion %llu (the "
 	      "hook's calls %llu = %.2f a frame each; frames needing a hold %llu, steps held %llu, %.0f cm; syncs not held %llu "
 	      "frames; frames without the eyes on the last needs %llu; held ahead of a learnt lean %llu; capped %llu, a hold's way out "
-	      "%.0f cm at the most; the pose's root read %llu, not %llu, behind the root by %.0f cm at the most), moves %llu (the table full %llu), lines suppressed %llu", g_nb.on ? "held at" : "measured only,", g_nb.cm,
+	      "%.0f cm at the most; the pose's root read %llu, not %llu, behind the root by %.0f cm at the most), moves %llu (the table full %llu), lines suppressed %llu; the orcs' weapon lists changed %llu times (an object in use gone %llu)", g_nb.on ? "held at" : "measured only,", g_nb.cm,
 	      (unsigned long long)g_nb.frames, (unsigned long long)g_nb.orc_frames, (unsigned long long)g_nb.nonode,
 	      (unsigned long long)g_nb.at_frames, (unsigned long long)g_nb.calls,
 	      g_nb.at_frames ? (double)g_nb.calls / (double)g_nb.at_frames : 0.0, (unsigned long long)g_nb.need_frames,
 	      (unsigned long long)g_nb.steps, g_nb.pushed, (unsigned long long)g_nb.sync_free, (unsigned long long)g_nb.kept,
 	      (unsigned long long)g_nb.antic, (unsigned long long)g_nb.capped, g_nb.push_ep_max,
 	      (unsigned long long)g_nb.null_ok, (unsigned long long)g_nb.null_no, g_nb.lag_max, (unsigned long long)g_nb.moves, (unsigned long long)g_nb.mv_full,
-	      (unsigned long long)g_nb.suppressed);
+	      (unsigned long long)g_nb.suppressed, (unsigned long long)g_wpn_relook, (unsigned long long)g_wpn_gone);
 	int ord[NB_MOVES];
 	for (int i = 0; i < g_nb.nmv; i++)
 		ord[i] = i;

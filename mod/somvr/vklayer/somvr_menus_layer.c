@@ -741,6 +741,7 @@ static struct {
         uint32_t btn;        /* SOMVR_BTN_* held */
         float trigger, squeeze, stick[2];
         int input;           /* the buttons/values are ours */
+        float shake[2];      /* build 20: `shake CM DEG` over the pose (0 0: none) */
     } h[2];
 } XT;
 static void mn_xt_config(void) {
@@ -800,7 +801,7 @@ static void xt_run(const char *line) {
         break;
     case SOMVR_XT_SIZE: res = vh_resize(c.v[0], c.v[1]); break;
     case SOMVR_XT_LUMLOG: res = vh_lumlog((int)c.v[0]); break;
-    case SOMVR_XT_OFF: XT.h[h].on = 0, XT.h[h].input = 0, XT.h[h].btn = 0; break;
+    case SOMVR_XT_OFF: XT.h[h].on = 0, XT.h[h].input = 0, XT.h[h].btn = 0, XT.h[h].shake[0] = XT.h[h].shake[1] = 0; break;
     case SOMVR_XT_HEAD:
         if (!vm_head(&head)) {
             res = "no head now";
@@ -818,6 +819,15 @@ static void xt_run(const char *line) {
             somvr_xt_touch_pose(&to, sz, c.v[0], c.v[1], 0.01f * c.v[2], MN.tcc.reach_m, &head);
         xt_move(h, &head, c.sec);
         break;
+    case SOMVR_XT_AIM: /* build 20: the ray's origin D cm out of the point, into the quad */
+        if (!xt_quad(c.what, &to, sz)) {
+            res = "that quad is not shown now";
+            break;
+        }
+        somvr_xt_touch_pose(&to, sz, c.v[0], c.v[1], 0.01f * c.v[2], 0, &head);
+        xt_move(h, &head, c.sec);
+        break;
+    case SOMVR_XT_SHAKE: XT.h[h].shake[0] = c.v[0], XT.h[h].shake[1] = c.v[1]; break; /* build 20 */
     case SOMVR_XT_BTN: {
         static const uint32_t bit[] = {SOMVR_BTN_MENU, SOMVR_BTN_LOWER, SOMVR_BTN_UPPER, SOMVR_BTN_STICK, 0, 0};
         XT.h[h].input = 1;
@@ -868,6 +878,8 @@ static void mn_xt_apply(void) {
         float k = span > 0 ? (float)((t - XT.h[h].t0) / span) : 1.0f;
         somvr_xt_lerp(&XT.h[h].from, &XT.h[h].to, k, &XT.h[h].cur);
         hi->grip = hi->aim = XT.h[h].cur;
+        if (XT.h[h].shake[0] > 0 || XT.h[h].shake[1] > 0) /* build 20: a shaking hand over the scripted pose */
+            somvr_xt_shake(&XT.h[h].cur, XT.h[h].shake[0], XT.h[h].shake[1], t, h, &hi->grip), hi->aim = hi->grip;
         hi->grip_flags = hi->aim_flags = 0xf;
         memset(hi->lin_vel, 0, sizeof hi->lin_vel), memset(hi->ang_vel, 0, sizeof hi->ang_vel);
         hi->active |= SOMVR_HACT_POSE;

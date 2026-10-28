@@ -182,4 +182,19 @@ float somvr_bm_yaw(somvr_bm *s, float live_yaw, int32_t snaps, float snap_rad, i
  * without body moments (the recentre's own jump; the next frames absorb from there) */
 void somvr_bm_recenter(somvr_bm *s);
 
+/* build 20 (SOMVR_BM_GRAB_FREE_S; docs/re-xr-pipeline.md 77): the player's own grab (somvr_bm_in.our_grab) holds the
+ * view only while the game holds Talion. Once the player's own locomotion has owned his ticks for free_s under such a
+ * hold (the game's grab, its interrogation and its kill no longer move him), our_grab stops counting until it ends: the
+ * hold lets go, the view follows him again - no state of ours can strand the player (the user's build 19b session: an
+ * interrogation's end kept the view on the held point for 30 s while the stick walked Talion away). 0 = never. */
+typedef struct {
+    double since;   /* the player's locomotion has owned Talion since (< 0: not under the grab) */
+    int latched;    /* the grab no longer holds the view (until our_grab ends) */
+    uint64_t frees; /* how often */
+} somvr_bm_free;
+void somvr_bm_free_init(somvr_bm_free *f);
+/* one H4 frame at t: grab = our_grab, loco_ours = the player's locomotion owns Talion this tick -> 1 = our_grab does not
+ * count this frame */
+int somvr_bm_free_step(somvr_bm_free *f, int grab, int loco_ours, double t, float free_s);
+
 #endif

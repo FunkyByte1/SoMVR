@@ -2305,6 +2305,283 @@ static void test_fight19(void) {
           "a change on the Fight page adds its one line after the old ones: '%s'", file + sizeof v6file - 1);
 }
 
+/* ---- build 20: the panel held steady, the pointer's lock (docs/re-xr-pipeline.md 80) ------------------------------ */
+#include "hand_rec20.h"
+static void t20_qmul(const float a[4], const float b[4], float o[4]) {
+    float x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1], y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+    float z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3], w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+    o[0] = x, o[1] = y, o[2] = z, o[3] = w;
+}
+static void t20_qaxis(int axis, float deg, float o[4]) {
+    float h = 0.5f * deg * 0.017453293f;
+    o[0] = o[1] = o[2] = 0, o[axis] = sinf(h), o[3] = cosf(h);
+}
+/* a shaking hand: per axis six sines (0.6 to 9.7 Hz), at most cm and deg (as somvr_xt_shake) */
+static void t20_shake(somvr_posef *p, float cm, float deg, double t) {
+    static const float hz[6] = {0.6f, 1.1f, 1.9f, 5.3f, 7.9f, 9.7f}, wt[6] = {0.25f, 0.2f, 0.15f, 0.15f, 0.15f, 0.1f};
+    float o[6];
+    for (int a = 0; a < 6; a++) {
+        double sum = 0;
+        for (int k = 0; k < 6; k++) sum += wt[k] * sin(6.2831853 * hz[k] * t + 0.7 * a + 1.3 * k);
+        o[a] = (float)sum * (a < 3 ? 0.01f * cm : deg);
+    }
+    for (int a = 0; a < 3; a++) {
+        float r[4], q[4];
+        t20_qaxis(a, o[3 + a], r), t20_qmul(p->q, r, q);
+        memcpy(p->q, q, sizeof q);
+        p->p[a] += o[a];
+    }
+}
+static float t20_deg(const float a[4], const float b[4]) {
+    float d = fabsf(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+    return 2 * acosf(d < 1 ? d : 1) * 57.29578f;
+}
+static float t20_dist(const float a[3], const float b[3]) {
+    return sqrtf((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+}
+/* the corners' speed (rms, m/s) of a run of poses */
+typedef struct { float c[4][3]; int have; double sq; int n; float most; } t20_jit;
+static void t20_jit_add(t20_jit *j, const somvr_posef *p, double dt) {
+    static const float size[2] = {SOMVR_VM_W_M, SOMVR_VM_H_M};
+    float c[4][3];
+    somvr_vm_corners(p, size, c);
+    if (j->have)
+        for (int k = 0; k < 4; k++) {
+            float d = t20_dist(c[k], j->c[k]);
+            j->sq += 0.25 * (d / dt) * (d / dt), j->most = d > j->most ? d : j->most;
+        }
+    j->n += j->have;
+    memcpy(j->c, c, sizeof c), j->have = 1;
+}
+static double t20_rms(const t20_jit *j) { return j->n ? sqrt(j->sq / j->n) : 0; }
+
+static void test_steady20(void) {
+    somvr_vm_stcfg c, d;
+    somvr_vm_stcfg_default(&c);
+    CHECK(NEAR(c.hold_m, 0.015, 1e-6) && NEAR(c.hold_deg, 3, 1e-6) && NEAR(c.settle_s, 0.35, 1e-6), "the defaults");
+    int bad = 0;
+    CHECK(somvr_vm_stcfg_parse(NULL, &d, &bad) == 0 && somvr_vm_stcfg_parse("off", &d, &bad) == 0 &&
+              somvr_vm_stcfg_parse("0", &d, &bad) == 0 && !bad, "unset/off/0: off");
+    CHECK(somvr_vm_stcfg_parse("on", &d, &bad) == 1 && !bad && NEAR(d.hold_m, 0.015, 1e-6), "on: the defaults");
+    CHECK(somvr_vm_stcfg_parse("2,4,500", &d, &bad) == 1 && !bad && NEAR(d.hold_m, 0.02, 1e-6) && NEAR(d.hold_deg, 4, 1e-6) &&
+              NEAR(d.settle_s, 0.5, 1e-6), "CM,DEG,MS");
+    const char *bads[] = {"yes", "2", "2,4", "0,4,500", "2,30,500", "2,4,5000", "2,4,500x", "-1,4,5", "2,4,", "2,4,5,6"};
+    for (int i = 0; i < 10; i++) {
+        bad = 0;
+        CHECK(somvr_vm_stcfg_parse(bads[i], &d, &bad) == 0 && bad, "'%s' is not understood: off", bads[i]);
+    }
+    somvr_vm_gcfg g;
+    somvr_vm_gcfg_default(&g);
+    somvr_vm_gin in = gin_facing(0);
+    /* 1. a shaking hand held up to read (0.5 cm, 1.5 deg, 10 s at 90 Hz): build 19's panel (the hand's pose) against
+     * the steady one */
+    somvr_vm_steady st;
+    somvr_vm_steady_reset(&st);
+    t20_jit jr = {0}, js = {0};
+    float most_off = 0, most_deg = 0;
+    for (int f = 0; f < 900; f++) {
+        double t = f / 90.0;
+        somvr_posef grip = in.grip, raw, sh;
+        t20_shake(&grip, 0.5f, 1.5f, t);
+        somvr_vm_panel_pose(&grip, SOMVR_HAND_L, &HEAD, &g, &raw);
+        somvr_vm_steady_step(&st, &c, &raw, t, &sh);
+        t20_jit_add(&jr, &raw, 1 / 90.0), t20_jit_add(&js, &sh, 1 / 90.0);
+        float o = t20_dist(raw.p, sh.p), a = t20_deg(raw.q, sh.q);
+        most_off = o > most_off ? o : most_off, most_deg = a > most_deg ? a : most_deg;
+    }
+    printf("test_vrmenu: build 20 steady, a shaking hand (0.5 cm, 1.5 deg): the corners %.1f mm/s rms (build 19's: %.1f), "
+           "most %.2f mm a frame (%.2f); %.2f cm, %.2f deg off the hand at most\n", 1000 * t20_rms(&js),
+           1000 * t20_rms(&jr), 1000 * js.most, 1000 * jr.most, 100 * most_off, most_deg);
+    CHECK(t20_rms(&jr) > 0.03, "build 19's panel shakes with the hand: %.1f mm/s", 1000 * t20_rms(&jr));
+    CHECK(t20_rms(&js) < 0.1 * t20_rms(&jr) && t20_rms(&js) < 0.005,
+          "the steady panel holds still: %.2f mm/s rms (build 19's %.1f)", 1000 * t20_rms(&js), 1000 * t20_rms(&jr));
+    CHECK(most_off <= c.hold_m + 1e-4f && most_deg <= c.hold_deg + 0.05f, "never more than the hold off the hand: %.2f cm "
+          "%.2f deg", 100 * most_off, most_deg);
+    /* 2. a real move: 30 cm to the right in 0.3 s - at once, never more than the hold behind; then it settles */
+    somvr_posef base = in.grip, raw, sh;
+    float lag = 0;
+    for (int f = 0; f <= 270; f++) { /* 3 s: 1 s still, the move, then 1.7 s still */
+        double t = 10 + f / 90.0;
+        float k = f < 90 ? 0 : f > 117 ? 1 : (float)(f - 90) / 27.0f;
+        somvr_posef grip = base;
+        grip.p[0] += 0.3f * k;
+        somvr_vm_panel_pose(&grip, SOMVR_HAND_L, &HEAD, &g, &raw);
+        somvr_vm_steady_step(&st, &c, &raw, t, &sh);
+        float o = t20_dist(raw.p, sh.p);
+        if (f >= 90 && f <= 117) lag = o > lag ? o : lag;
+    }
+    CHECK(lag <= c.hold_m + 1e-4f && lag > 0.5f * c.hold_m, "the move: followed at once, %.2f cm behind at most", 100 * lag);
+    CHECK(t20_dist(raw.p, sh.p) < 0.006f, "1.7 s after the move it has eased to the hand: %.2f cm off",
+          100 * t20_dist(raw.p, sh.p));
+    /* 3. a turn: 60 deg about the up in 0.5 s - never more than the hold behind */
+    float turn = 0;
+    for (int f = 0; f <= 90; f++) {
+        double t = 20 + f / 90.0;
+        float r[4], k = f > 45 ? 1 : (float)f / 45.0f;
+        somvr_posef grip = base;
+        t20_qaxis(1, 60 * k, r), t20_qmul(r, base.q, grip.q);
+        somvr_vm_panel_pose(&grip, SOMVR_HAND_L, NULL, &g, &raw);
+        somvr_vm_steady_step(&st, &c, &raw, t, &sh);
+        float a = t20_deg(raw.q, sh.q);
+        turn = a > turn ? a : turn;
+    }
+    CHECK(turn <= c.hold_deg + 0.05f && turn > 0.5f * c.hold_deg, "the turn: %.2f deg behind at most", turn);
+    /* 4. a gap over 0.25 s: at the hand's pose again; a bad pose: the last one stays */
+    raw.p[1] += 0.01f;
+    somvr_vm_steady_step(&st, &c, &raw, 21.5, &sh);
+    CHECK(t20_dist(raw.p, sh.p) == 0 && t20_deg(raw.q, sh.q) < 1e-3f && st.restarts == 3, "after a gap (the turn began after one too): the hand's pose "
+          "(restarts %llu)", (unsigned long long)st.restarts);
+    somvr_posef nan_p = raw, kept;
+    nan_p.p[0] = NAN;
+    somvr_vm_steady_step(&st, &c, &nan_p, 21.51, &kept);
+    CHECK(kept.p[0] == sh.p[0] && isfinite(kept.p[0]), "a NaN pose: the last one");
+    /* 5. the recorded hand (hand_rec20.h): the panel's hand turned by a real hand's 3 s held still */
+    somvr_vm_steady_reset(&st);
+    t20_jit rr = {0}, rs = {0};
+    int nrec = (int)(sizeof g_hand_rec20 / sizeof g_hand_rec20[0]);
+    const float *q0 = &g_hand_rec20[0][1];
+    float q0c[4] = {-q0[0], -q0[1], -q0[2], q0[3]};
+    for (int i = 0; i < nrec; i++) {
+        float dq[4], qi[4] = {g_hand_rec20[i][1], g_hand_rec20[i][2], g_hand_rec20[i][3], g_hand_rec20[i][4]};
+        t20_qmul(q0c, qi, dq); /* the turn since the first sample, in the grip's own frame */
+        somvr_posef grip = base;
+        t20_qmul(base.q, dq, grip.q);
+        double t = 30 + g_hand_rec20[i][0], dt = i ? g_hand_rec20[i][0] - g_hand_rec20[i - 1][0] : 1 / 90.0;
+        somvr_vm_panel_pose(&grip, SOMVR_HAND_L, &HEAD, &g, &raw);
+        somvr_vm_steady_step(&st, &c, &raw, t, &sh);
+        t20_jit_add(&rr, &raw, dt), t20_jit_add(&rs, &sh, dt);
+    }
+    printf("test_vrmenu: build 20 steady, the recorded hand (%d samples): the corners %.1f mm/s rms (build 19's: %.1f), "
+           "most %.2f mm a frame (%.2f)\n", nrec, 1000 * t20_rms(&rs), 1000 * t20_rms(&rr), 1000 * rs.most, 1000 * rr.most);
+    CHECK(t20_rms(&rs) < 0.5 * t20_rms(&rr), "the recorded hand: the steady panel moves less than half as much: %.1f mm/s "
+          "(build 19's %.1f)", 1000 * t20_rms(&rs), 1000 * t20_rms(&rr));
+}
+
+/* the uv of the texel point (x, y) */
+static void t20_uv(float x, float y, float uv[2]) { uv[0] = x / SOMVR_VM_TEX_W, uv[1] = y / SOMVR_VM_TEX_H; }
+static int t20_is(somvr_vm_hit h, int item, int part) { return h.item == item && h.part == part; }
+static void test_snap20(void) {
+    somvr_vm_snapcfg c;
+    somvr_vm_snapcfg_default(&c);
+    CHECK(NEAR(c.hold_deg, 1.0, 1e-6) && NEAR(c.magnet_deg, 2.0, 1e-6) && NEAR(c.min_m, 0.003, 1e-6), "the defaults");
+    somvr_settings set;
+    somvr_set_default(&set);
+    somvr_vm_snap sn;
+    somvr_vm_snap_reset(&sn);
+    CHECK(sn.lock.item == -1 && sn.raw.item == -1, "reset: no lock");
+    const float D = 0.3f, W = SOMVR_VM_W_M; /* the pointing hand 30 cm from the panel: the hold 13.4 texels, the magnet 26.8 */
+    int r0[4], r1[4], mo[4];
+    CHECK(somvr_vm_rect_av(0, SOMVR_VMI_TURN, SOMVR_VMP_ROW, r0) && somvr_vm_rect_av(0, SOMVR_VMI_SNAP, SOMVR_VMP_ROW, r1) &&
+              somvr_vm_rect_av(0, SOMVR_VMI_TURN, SOMVR_VMP_MORE, mo), "the rects");
+    float uv[2], dot[2], cy = r0[1] + 0.5f * r0[3];
+    /* 1. the point on the Turn row's label: it locks */
+    t20_uv(100, cy, uv);
+    somvr_vm_hit h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    CHECK(t20_is(h, SOMVR_VMI_TURN, SOMVR_VMP_ROW) && sn.changes == 1, "the Turn row locks (%d/%d)", h.item, h.part);
+    /* 2. a shake across the row's edge (+-12 texels about its bottom edge, 90 frames): the bare hit flips, the lock holds */
+    uint32_t c0 = sn.changes, r0c = sn.raw_changes;
+    int held = 1, inside = 1;
+    for (int f = 0; f < 90; f++) {
+        float y = (float)(r0[1] + r0[3]) + 12.0f * sinf(f * 0.9f);
+        t20_uv(100 + 5 * cosf(f * 1.7f), y, uv);
+        h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+        held &= t20_is(h, SOMVR_VMI_TURN, SOMVR_VMP_ROW);
+        float dy = dot[1] * SOMVR_VM_TEX_H;
+        inside &= dy >= r0[1] && dy <= r0[1] + r0[3];
+    }
+    CHECK(held && sn.changes == c0, "a shake across the edge: the lock holds (%u changes)", sn.changes - c0);
+    CHECK(sn.raw_changes - r0c >= 20, "... where the bare hit (build 19's hover) flips %u times", sn.raw_changes - r0c);
+    CHECK(inside, "the dot stays on the locked row");
+    /* 3. the next row's middle: it locks (a real move) */
+    t20_uv(100, r1[1] + 0.5f * r1[3], uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    CHECK(t20_is(h, SOMVR_VMI_SNAP, SOMVR_VMP_ROW), "the next row's middle: it locks (%d/%d)", h.item, h.part);
+    /* 4. the row and its > box (the small target first): 3 texels into the box it takes over from the row at once; 10
+     * texels back out onto the row the box holds; the box's middle */
+    t20_uv(100, cy, uv), somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    t20_uv(mo[0] + 3, mo[1] + 0.5f * mo[3], uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    CHECK(t20_is(h, SOMVR_VMI_TURN, SOMVR_VMP_MORE), "3 texels into the > box: the box at once (%d/%d)", h.item, h.part);
+    t20_uv(mo[0] - 10, mo[1] + 0.5f * mo[3], uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    CHECK(t20_is(h, SOMVR_VMI_TURN, SOMVR_VMP_MORE), "10 texels back on the row: the box holds (%d/%d)", h.item, h.part);
+    t20_uv(mo[0] - 20, mo[1] + 0.5f * mo[3], uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    CHECK(t20_is(h, SOMVR_VMI_TURN, SOMVR_VMP_ROW), "20 texels back on the row: the row (%d/%d)", h.item, h.part);
+    t20_uv(mo[0] + 0.5f * mo[2], mo[1] + 0.5f * mo[3], uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    CHECK(t20_is(h, SOMVR_VMI_TURN, SOMVR_VMP_MORE), "the box's middle: the > locks (%d/%d)", h.item, h.part);
+    /* ... and holds through a shake of 10 texels about it */
+    held = 1;
+    for (int f = 0; f < 60; f++) {
+        t20_uv(mo[0] + 0.5f * mo[2] + 10 * sinf(f * 1.1f), mo[1] + 0.5f * mo[3] + 10 * cosf(f * 0.7f), uv);
+        h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+        held &= t20_is(h, SOMVR_VMI_TURN, SOMVR_VMP_MORE);
+    }
+    CHECK(held, "the > box holds through a 10-texel shake");
+    /* 5. a gap between the bottom buttons (Recentre | Report, 12 texels apart): the nearest locks, the dot on it */
+    int rb[4], pb[4];
+    somvr_vm_rect_av(0, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rb), somvr_vm_rect_av(0, SOMVR_VMI_REPORT, SOMVR_VMP_BUTTON, pb);
+    somvr_vm_snap_reset(&sn);
+    t20_uv(rb[0] + rb[2] + 3, rb[1] + 0.5f * rb[3], uv);
+    CHECK(somvr_vm_hit_test_av(0, SOMVR_VMPG_SETTINGS, uv[0], uv[1]).item < 0, "the gap: no bare hit");
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    float dx = dot[0] * SOMVR_VM_TEX_W;
+    CHECK(t20_is(h, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON) && dx >= rb[0] && dx <= rb[0] + rb[2],
+          "the gap: the nearest button (Recentre) locks, the dot on it (%d/%d, x %.1f)", h.item, h.part, dx);
+    /* 6. far from any part (the Controls page's text, the magnet 26.8 texels): nothing */
+    somvr_vm_snap_reset(&sn);
+    t20_uv(256, 400, uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_CONTROLS, 0, uv, D, W, dot);
+    CHECK(h.item < 0 && NEAR(dot[0], uv[0], 1e-6), "the Controls page's text: no lock, the dot at the point");
+    /* 7. a disabled part never pulls: beside the right edge of a disabled row only an enabled one locks */
+    int dis = -1;
+    for (int i = 0; i < SOMVR_VMI_ROWS && dis < 0; i++)
+        if (somvr_vm_row_page(i) == SOMVR_VMPG_SETTINGS && somvr_vm_rect_av(0, i, SOMVR_VMP_ROW, r1) &&
+            !somvr_vm_enabled(&set, 0, i))
+            dis = i;
+    if (dis >= 0) {
+        somvr_vm_snap_reset(&sn);
+        t20_uv(r1[0] + r1[2] + 2, r1[1] + 0.5f * r1[3], uv);
+        h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+        CHECK(h.item != dis && (h.item < 0 || somvr_vm_enabled(&set, 0, h.item)),
+              "beside the disabled %s: it does not pull (%d)", somvr_vm_label(dis), h.item);
+    }
+    CHECK(dis >= 0, "a disabled row on the default settings (a smooth turn's Snap angle)");
+    /* 8. the card: its close box alone */
+    int cb[4];
+    somvr_vm_rect_av(0, SOMVR_VMI_CLOSE, SOMVR_VMP_BUTTON, cb);
+    somvr_vm_snap_reset(&sn);
+    t20_uv(100, cy, uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 1, uv, D, W * 2, dot);
+    CHECK(h.item < 0, "the card: a row is nothing (%d)", h.item);
+    t20_uv(cb[0] - 6, cb[1] + 0.5f * cb[3], uv);
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 1, uv, D, W * 2, dot);
+    CHECK(t20_is(h, SOMVR_VMI_CLOSE, SOMVR_VMP_BUTTON), "the card: beside its X, the X locks (%d)", h.item);
+    /* 9. NaN: nothing */
+    uv[0] = NAN, uv[1] = 0.5f;
+    h = somvr_vm_snap_step(&sn, &c, &set, 0, SOMVR_VMPG_SETTINGS, 0, uv, D, W, dot);
+    CHECK(h.item < 0, "a NaN point: no lock");
+    /* 10. the picture: the locked part outlined (the ray's colour), not without the lock */
+    static somvr_font font;
+    static uint8_t a[SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4], b[SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4];
+    if (somvr_font_init(&font) == 0) {
+        somvr_vm_view v;
+        memset(&v, 0, sizeof v);
+        v.set = set, v.page = SOMVR_VMPG_SETTINGS, v.hover = (somvr_vm_hit){SOMVR_VMI_TURN, SOMVR_VMP_MORE};
+        somvr_vm_draw(&font, a, 0, &v);
+        v.lock = 1;
+        somvr_vm_draw(&font, b, 0, &v);
+        const uint8_t *p = b + 4 * ((size_t)(mo[1] + 0) * SOMVR_VM_TEX_W + (size_t)(mo[0] + mo[2] / 2));
+        const uint8_t *q = a + 4 * ((size_t)(mo[1] + 0) * SOMVR_VM_TEX_W + (size_t)(mo[0] + mo[2] / 2));
+        CHECK(p[0] == 150 && p[1] == 220 && p[2] == 255 && !(q[0] == 150 && q[1] == 220),
+              "the locked > box outlined (%u %u %u; without the lock %u %u %u)", p[0], p[1], p[2], q[0], q[1], q[2]);
+        size_t diff = 0;
+        for (size_t i = 0; i < sizeof a; i++) diff += a[i] != b[i];
+        CHECK(diff > 0 && diff < 4 * 600, "only the outline differs (%zu bytes)", diff);
+    }
+}
+
 int main(void) {
     test_font();
     test_settings();
@@ -2329,6 +2606,8 @@ int main(void) {
     test_far_orc();
     test_build19();
     test_fight19();
+    test_steady20();
+    test_snap20();
     printf("test_vrmenu: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

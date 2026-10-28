@@ -134,7 +134,7 @@ gcc "${CF[@]}" -o "$D/build/tests/test_gaze" "$D/tests/test_gaze.c" "$D/somvr_ga
 "$D/build/tests/test_gaze"
 gcc "${CF[@]}" -o "$D/build/tests/test_execute" "$D/tests/test_execute.c" "$D/somvr_execute.c" -lm # build 13: the execution
 "$D/build/tests/test_execute"
-gcc "${CF[@]}" -o "$D/build/tests/test_stealth" "$D/tests/test_stealth.c" "$D/somvr_stealth.c" -lm # build 18: the stealth kill
+gcc "${CF[@]}" -o "$D/build/tests/test_stealth" "$D/tests/test_stealth.c" "$D/somvr_stealth.c" "$D/somvr_combat.c" -lm # build 18: the stealth kill (20c: + the tiers)
 "$D/build/tests/test_stealth"
 gcc "${CF[@]}" -o "$D/build/tests/test_surface" "$D/tests/test_surface.c" "$D/somvr_surface.c" "$D/somvr_pose.c" -lm # build 13: hands at surfaces
 "$D/build/tests/test_surface"

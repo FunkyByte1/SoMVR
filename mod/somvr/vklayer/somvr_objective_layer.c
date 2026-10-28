@@ -36,7 +36,7 @@ static struct {
     XrCompositionLayerQuad ql, last_ql; /* build 17: the drop's line (XL_OBJL) with the landing's ring */
     int has_l, last_has_l, line_was;
     uint32_t id_was;
-    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land, n_line, n_strike;
+    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land, n_line, n_strike, n_aim;
     uint32_t lines;
 } OB;
 
@@ -279,7 +279,14 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     memset(&pl, 0, sizeof pl);
     int land = have && e.n == 1 && (e.flags & SOMVR_OBF_LAND);
     int strike = have && e.n == 1 && !land && (e.flags & SOMVR_OBF_STRIKE), ground = 0;
-    if (land) { /* build 16: the climb's landing (SOMVR_CLIMB_PULLOVER): a ring flat on the floor where he will stand */
+    int aim = have && e.n == 1 && !land && !strike && (e.flags & SOMVR_OBF_AIM); /* build 20: the bow's aim ring */
+    if (aim) { /* where the drawn bow's line meets an orc (the strike's blue ring) or the world (gold), its size in deg */
+        float head[3];
+        for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
+        p = somvr_ob_aim(head, e.pos, e.dist_m, (e.flags & SOMVR_OBF_AIM_HIT) != 0);
+        ground = p.kind != SOMVR_OBK_NONE && (e.flags & SOMVR_OBF_AIM_HIT); /* the strike cell's ring square alone */
+        OB.in_view = 0;
+    } else if (land) { /* build 16: the climb's landing (SOMVR_CLIMB_PULLOVER): a ring flat on the floor where he will stand */
         p = somvr_ob_floor(e.pos, e.dist_m);
         if (e.flags & SOMVR_OBF_LAND_NO && p.kind != SOMVR_OBK_NONE) /* build 18 (SOMVR_WRAITH_STEP): refused there */
             p.cell = SOMVR_OB_CELL_RING_NO;
@@ -319,7 +326,7 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     }
     if (p.kind != SOMVR_OBK_NONE) {
         char text[16];
-        if (land || strike) snprintf(text, sizeof text, "%s", OB.text); /* the picture as it is: the rings are in every upload */
+        if (land || strike || aim) snprintf(text, sizeof text, "%s", OB.text); /* the picture as it is: the rings are in every upload */
         else somvr_ob_text(e.dist_m, text);
         if ((!OB.released || strcmp(text, OB.text)) && ob_upload(ds, text)) return; /* off now (logged) */
         if (p.kind == SOMVR_OBK_EDGE && !OB.view) return;
@@ -334,7 +341,7 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
                                         .pose = {{p.pose[0], p.pose[1], p.pose[2], p.pose[3]}, {p.pose[4], p.pose[5], p.pose[6]}},
                                         .size = {p.size[0], p.size[1]}};
         OB.has = 1;
-        OB.n_land += land, OB.n_strike += strike;
+        OB.n_land += land, OB.n_strike += strike, OB.n_aim += aim;
         if (pl.kind == SOMVR_OBK_WORLD) {
             int32_t rl[4];
             if (ground) somvr_ob_strike_rect(pl.cell, 1, rl); /* build 18: the strike's label */
@@ -345,9 +352,9 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
             OB.ql.size = (XrExtent2Df){pl.size[0], pl.size[1]};
             OB.has_l = 1, OB.n_line++;
         }
-        OB.n_marker += p.kind == SOMVR_OBK_WORLD && !land && !strike, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
+        OB.n_marker += p.kind == SOMVR_OBK_WORLD && !land && !strike && !aim, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
         OB.n_faint += p.cell == SOMVR_OB_CELL_FAINT;
-        if (!land && !strike)
+        if (!land && !strike && !aim)
             atomic_fetch_add_explicit(p.kind == SOMVR_OBK_WORLD ? &OB.obj->n_marker : &OB.obj->n_edge, 1, memory_order_relaxed);
     } else {
         OB.n_none++;
@@ -364,6 +371,20 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
            ground ? "the landing ring flat on the ground, radius" : "the ring across", (double)e.dist_m,
            ground ? "at" : "round", (double)e.pos[0], (double)e.pos[1], (double)e.pos[2], (double)p.size[0], (double)p.size[1],
            ground ? (OB.has_l ? ", its label standing beside it" : ", NO label") : "", (unsigned long long)OB.n_strike);
+        OB.kind_was = kind, OB.id_was = e.id, OB.line_was = 0;
+        if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
+        return;
+    }
+    if (aim) { /* build 20: a line when what the line meets changes (e.id: 0 far, 1 the world, 2 a body, 3 a head) */
+        if ((kind != OB.kind_was || e.id != OB.id_was) && OB.lines < 400) {
+            OB.lines++;
+            lg("xr: objective frame %llu: the bow's aim ring (%s) at %+.2f,%+.2f,%+.2f m, %.1f deg = %.3f m across (the quad "
+               "%.3f m) (frames with it %llu)", (unsigned long long)rec->frame,
+               e.id == 3 ? "an orc's head: blue" : e.id == 2 ? "an orc's body: blue" : e.id == 1 ? "the world: gold" : "far: gold",
+               (double)e.pos[0], (double)e.pos[1], (double)e.pos[2], (double)e.dist_m,
+               (double)(p.size[0] * ((e.flags & SOMVR_OBF_AIM_HIT) ? SOMVR_OB_STRIKE_RING_PX : 124.0f) / SOMVR_OB_CELL),
+               (double)p.size[0], (unsigned long long)OB.n_aim);
+        }
         OB.kind_was = kind, OB.id_was = e.id, OB.line_was = 0;
         if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
         return;
