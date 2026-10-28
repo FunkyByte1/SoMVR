@@ -255,6 +255,7 @@ static void test_abi(void) {
     e.depth_k = 0.06f; /* v2 */
     e.ghost[1].p[2] = -0.45f, e.ghost[1].q[3] = 1, e.ghost_a[1] = 0.3f; /* v3 */
     e.arrow.p[0] = 0.12f, e.arrow.q[3] = 1, e.arrow_len = 0.72f, e.arrow_glow = 0.6f; /* v4 */
+    e.string[2][1] = 0.31f, e.string_r = 0.002f;                                   /* v5 */
     CHECK(!somvr_vrhands_ok(&sh), "inactive");
     sh.magic = SOMVR_VRHANDS_MAGIC, sh.version = SOMVR_VRHANDS_VERSION, sh.size = sizeof sh;
     atomic_store(&sh.active, 1);
@@ -263,8 +264,9 @@ static void test_abi(void) {
     CHECK(somvr_vrhands_get(&sh, 77, &o) && o.flags == e.flags && o.time == 1234 && o.grip[0].p[1] == -0.3f &&
               o.curl[1][4] == 0.75f && o.depth_k == 0.06f && atomic_load(&o.seq) == 77 && o.ghost[1].p[2] == -0.45f &&
               o.ghost[1].q[3] == 1 && o.ghost_a[1] == 0.3f && o.ghost_a[0] == 0 && o.arrow.p[0] == 0.12f &&
-              o.arrow.q[3] == 1 && o.arrow_len == 0.72f && o.arrow_glow == 0.6f,
-          "round trip (v2: depth_k, v3: the ghost, v4: the arrow)");
+              o.arrow.q[3] == 1 && o.arrow_len == 0.72f && o.arrow_glow == 0.6f && o.string[2][1] == 0.31f &&
+              o.string_r == 0.002f,
+          "round trip (v2: depth_k, v3: the ghost, v4: the arrow, v5: the string)");
     CHECK(!somvr_vrhands_get(&sh, 77 + SOMVR_NREC, &o) && !somvr_vrhands_get(&sh, 0, &o), "another frame's slot");
     somvr_vrhands_put(&sh, 77 + SOMVR_NREC, &e);
     CHECK(!somvr_vrhands_get(&sh, 77, &o), "overwritten");
@@ -280,10 +282,11 @@ static void test_abi(void) {
     somvr_vrhands_depth_publish(&sh, &in);
     CHECK(somvr_vrhands_depth_read(&sh, &out) && !memcmp(&in, &out, sizeof in) && (atomic_load(&sh.dseq) & 1) == 0,
           "the depth info round trip");
-    CHECK(sh.version == 4 && offsetof(somvr_vrhands_shared, dinfo) == offsetof(somvr_vrhands_shared, dseq) + 8 &&
+    CHECK(sh.version == 5 && offsetof(somvr_vrhands_shared, dinfo) == offsetof(somvr_vrhands_shared, dseq) + 8 &&
               offsetof(somvr_vrhands_frame, ghost) == 120 && offsetof(somvr_vrhands_frame, ghost_a) == 176 &&
-              offsetof(somvr_vrhands_frame, arrow) == 184 && offsetof(somvr_vrhands_frame, arrow_glow) == 216,
-          "v4 layout (v3 + the arrow)");
+              offsetof(somvr_vrhands_frame, arrow) == 184 && offsetof(somvr_vrhands_frame, arrow_glow) == 216 &&
+              offsetof(somvr_vrhands_frame, string) == 220 && offsetof(somvr_vrhands_frame, string_r) == 256,
+          "v5 layout (v4 + the string)");
 }
 
 /* build 16: the arrow's mesh (vrhands v4): along the pose's -Z from its nock end, its length, both windings */
@@ -350,6 +353,64 @@ static void test_depth(void) {
 
 /* build 17, SOMVR_XR_HANDS_SIZE: the whole hand scaled about the fist's tube (the grip's origin + the calibration's move):
  * every skinned vertex, the tube, the tip, the wrist and the palm's reach by the size; the grip itself stays */
+/* build 18 (SOMVR_XR_HANDS_GRIP_CM, re-xr-pipeline.md 66.2): the fist closed round a handle on the grip's axis */
+static float grip_pen(const somvr_vh_model *mm, const somvr_vh_cfg *cc, float R, float *jmean) {
+    static const float one[5] = {1, 1, 1, 1, 1};
+    float skin[SOMVR_VH_NJ][12], pen = 0, js = 0;
+    somvr_posef g = {{0, 0, 0, 1}, {0, 0, 0}};
+    somvr_vh_pose(mm, cc, one, skin);
+    somvr_vh_skin(mm, (const float(*)[12])skin, SOMVR_HAND_R, &g, vb);
+    for (int v = 0; v < somvr_vh_nverts(); v++) {
+        if (vb[v].a < 0.5f || fabsf(vb[v].p[2]) > 0.06f) continue;
+        float e = R - hypotf(vb[v].p[0], vb[v].p[1]);
+        if (e > pen) pen = e;
+    }
+    for (int f = 1; f < 5; f++)
+        for (int k = 2; k <= 4; k++) { /* each long finger's PIP, DIP and tip joints */
+            float q[3];
+            somvr_vh_joint_g(mm, (const float(*)[12])skin, (f == 1 ? 5 : f == 2 ? 10 : f == 3 ? 15 : 20) + k, q);
+            js += hypotf(q[0], q[1]);
+        }
+    *jmean = js / 12;
+    return pen;
+}
+static void test_grip(void) {
+    static somvr_vh_model m0, mg;
+    somvr_vh_cfg c0, cg;
+    somvr_vh_cfg_default(&cg);
+    CHECK(somvr_vh_parse_grip(NULL, &cg) && somvr_vh_parse_grip("", &cg) && cg.grip_d_m == 0 && somvr_vh_parse_grip("3.4", &cg) &&
+              fabsf(cg.grip_d_m - 0.034f) < 1e-6f && somvr_vh_parse_grip("0", &cg) && cg.grip_d_m == 0 &&
+              !somvr_vh_parse_grip("1", &cg) && !somvr_vh_parse_grip("6", &cg) && !somvr_vh_parse_grip("3x", &cg) && cg.grip_d_m == 0,
+          "grip: parse unset/empty kept, 3.4 cm, 0 = off; 1 / 6 / 3x refused");
+    for (int pass = 0; pass < 2; pass++) {
+        float size = pass ? 1.3f : 1.2f, jm0, jmg;
+        somvr_vh_cfg_default(&c0), c0.size = size;
+        cg = c0, cg.grip_d_m = 0.034f;
+        CHECK(somvr_vh_init(&m0, &c0) == 0 && somvr_vh_init(&mg, &cg) == 0, "grip %d: the models (%s)", pass, mg.why);
+        float p0 = grip_pen(&m0, &c0, 0.017f, &jm0), pg = grip_pen(&mg, &cg, 0.017f, &jmg);
+        /* build 17's fist: a 3.4 cm handle on the axis runs through the fingers (the cause of the session's clipping) */
+        CHECK(p0 > 0.012f, "grip %d: build 17's fist reaches %.1f cm into a 3.4 cm handle", pass, 100 * p0);
+        CHECK(pg <= 0.0041f && fabsf(pg - mg.grip_pen_m) < 1e-4f && jmg < 0.017f + 0.02f,
+              "grip %d: the fitted fist at most %.2f cm in it (the fit says %.2f), its finger joints %.1f cm from the axis "
+              "on average (build 17's %.1f)", pass, 100 * pg, 100 * mg.grip_pen_m, 100 * jmg, 100 * jm0);
+        CHECK(mg.grip_fit[0] >= -50 && mg.grip_fit[0] <= 10 && mg.grip_fit[1] >= -30 && mg.grip_fit[1] <= 20 &&
+                  mg.grip_fit[2] >= -40 && mg.grip_fit[2] <= 20 && fabsf(mg.grip_fit[3]) <= 0.0151f && fabsf(mg.grip_fit[4]) <= 0.0151f &&
+                  !memcmp(mg.fist[0], c0.fist[0], sizeof mg.fist[0]) && !memcmp(m0.fist, c0.fist, sizeof m0.fist),
+              "grip %d: the fit in its bounds (%+.0f/%+.0f/%+.0f deg, %.2f,%.2f cm), the thumb kept, no fit = cfg's fist", pass,
+              mg.grip_fit[0], mg.grip_fit[1], mg.grip_fit[2], 100 * mg.grip_fit[3], 100 * mg.grip_fit[4]);
+        /* the open hand: build 17's, moved by the fit's shift in the grip's plane */
+        static const float open[5] = {0, 0, 0, 0, 0};
+        float s0[SOMVR_VH_NJ][12], sg[SOMVR_VH_NJ][12], worst = 0;
+        somvr_posef g = {{0, 0, 0, 1}, {0, 0, 0}};
+        somvr_vh_pose(&m0, &c0, open, s0), somvr_vh_pose(&mg, &cg, open, sg);
+        somvr_vh_skin(&m0, (const float(*)[12])s0, SOMVR_HAND_R, &g, va), somvr_vh_skin(&mg, (const float(*)[12])sg, SOMVR_HAND_R, &g, vb);
+        for (int v = 0; v < somvr_vh_nverts(); v++)
+            worst = fmaxf(worst, fmaxf(fabsf(vb[v].p[0] - va[v].p[0] - mg.grip_fit[3]),
+                                       fmaxf(fabsf(vb[v].p[1] - va[v].p[1] - mg.grip_fit[4]), fabsf(vb[v].p[2] - va[v].p[2]))));
+        CHECK(worst < 2e-5f, "grip %d: the open hand = build 17's moved by the fit (worst %.6f m)", pass, worst);
+    }
+}
+
 static void test_size(void) {
     static const float half[5] = {0.3f, 0.5f, 0.5f, 0.6f, 0.7f};
     static somvr_vh_model mk;
@@ -398,6 +459,32 @@ static void test_size(void) {
           "size: parse unset/empty = 1, 2 / 0.5 / 1.2x refused");
 }
 
+/* build 18 (v5): the string's mesh along its three points; the fist's pinch between the thumb and the index */
+static void test_string(void) {
+    static somvr_vh_vert sv[SOMVR_VH_STRING_NV];
+    const float pts[3][3] = {{0, -0.3f, 0}, {0, 0, 0.05f}, {0, 0.3f, 0}};
+    somvr_vh_string(pts, 0.002f, sv);
+    int bad = 0;
+    for (int v = 0; v < SOMVR_VH_STRING_NV; v++) {
+        const float *a = pts[v < 24 ? 0 : 1], *b = pts[v < 24 ? 1 : 2];
+        float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, q[3] = {sv[v].p[0] - a[0], sv[v].p[1] - a[1], sv[v].p[2] - a[2]};
+        float l = len3(d), k = (q[0] * d[0] + q[1] * d[1] + q[2] * d[2]) / (l * l), off[3];
+        for (int i = 0; i < 3; i++) off[i] = q[i] - k * d[i];
+        bad += !(k > -1e-4f && k < 1 + 1e-4f) || fabsf(len3(off) - 0.002f) > 2e-4f || fabsf(len3(sv[v].n) - 1) > 1e-3f;
+    }
+    const uint16_t *ix = somvr_vh_string_indices();
+    int ibad = 0;
+    for (int i = 0; i < SOMVR_VH_STRING_NI; i++) ibad += ix[i] >= SOMVR_VH_STRING_NV;
+    CHECK(!bad && !ibad && ix[0] == 0 && ix[3] == 0 && ix[4] == 2, "string: %d vertices off its segments, %d bad indices", bad,
+          ibad);
+    /* the pinch: by the thumb's tip and the index, out of the fist's tube, up it (the thumb's side: XR -Z) */
+    float p[3];
+    CHECK(somvr_vh_pinch(&m, &c, p), "pinch");
+    float r = sqrtf(p[0] * p[0] + p[1] * p[1]);
+    printf("pinch: %.1f,%.1f,%.1f cm in the right grip (%.1f cm off the tube's axis)\n", 100 * p[0], 100 * p[1], 100 * p[2], 100 * r);
+    CHECK(r > m.tube_r_m - 0.01f && r < 0.07f && p[2] < 0, "pinch %.3f,%.3f,%.3f off the axis %.3f", p[0], p[1], p[2], r);
+}
+
 int main(void) {
     test_model();
     test_fist();
@@ -410,6 +497,8 @@ int main(void) {
     test_arrow();
     test_depth();
     test_size();
+    test_string();
+    test_grip();
     printf("test_vrhands: %d checks, %d failures\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -8,6 +8,14 @@
 #            layer's dump) at two red wind-ups; then B17_DEF_S s with A pressed at each red warning (a watcher on the log,
 #            the stick at rest: away from it), B17_LEAN_S s with the test head 45 cm aside at each (a lean), nothing for
 #            B17_NONE_S s (the baseline); one A with the stick pushed at the orc (refused: something in the way)
+#   auto     a shield orc, `fight dodge auto MS` for each MS of B17_AUTO_MS (B17_AUTO_S s each): A pressed by the game
+#            MS after each red warning (no test-file latency): a human's reaction (350), late (600), after the impact
+#            (900): dodged or hit, and the dash's distance
+#   fast     (build 18) a shield orc with only its ShieldBash in range (`fight range`: the others out of reach): A by the
+#            game B17_FAST_MS after each red warning (after the 0.234 s impact: the held blow) for B17_FAST_S s, then
+#            no A for B17_FAST_S s (the held blow lands late)
+#   icon     (build 18) an infantry's counterable strikes with `cprompt game`, then `cprompt hide`: both eyes and the
+#            layer's dump 0.55 s after each strike's start (inside its parry window: the counter icon's time)
 #   probe    `fight dodge probe`: the dodge's rays in 8 directions at 1.5 and 5 m (walls, ledges where they are)
 #   hurt     an infantry, the blade held out of the way: a hit lands on Talion; pictures 0.1 / 0.4 s after it (the
 #            sword on the hand through his recoil); SWORDWT's off-the-hand angle in the 10 s around it
@@ -128,6 +136,32 @@ if has hurt; then
   done
   phase "hurt (the blade held across the chest, still)"
   grep -E '^SWORDWT' "$R/somvr.log" | tail -2 | cut -c1-300
+fi
+if has auto; then
+  ORC=shield; w "practice spawn $ORC" 1.5
+  for ms in ${B17_AUTO_MS:-350 600 900}; do
+    w "fight dodge auto $ms" 0.3; mark0; fight_for "${B17_AUTO_S:-24}"; phase "defender: A $ms ms after each red warning"
+  done
+  w "fight dodge auto 0" 0.3
+  grep -E '^DEFENCE dodge .*A dodge pressed' "$R/somvr.log" | tail -3 | cut -c1-300
+fi
+if has icon; then
+  ORC=infantry; w "practice spawn $ORC" 1.5; w "$BEHIND" 0.5
+  for mode in game hide; do
+    w "cprompt $mode" 0.3
+    for k in 1 2 3; do
+      waitfor '^THREAT start .* impact=0\.[0-9]' 8 || { face; continue; }
+      sleep 0.45; x "dump"; m "e1$k-icon-$mode" 0; face
+    done
+  done
+  w "cprompt state" 0.5
+  grep -E '^CPROMPT' "$R/somvr.log" | tail -4 | cut -c1-260
+fi
+if has fast; then
+  ORC=shield; w "practice spawn $ORC" 1.5
+  w "fight dodge auto ${B17_FAST_MS:-300}" 0.3; mark0; fight_for "${B17_FAST_S:-24}"; phase "fast: A ${B17_FAST_MS:-300} ms after each red warning"
+  w "fight dodge auto 0" 0.3; mark0; fight_for "${B17_FAST_S:-24}"; phase "fast: no A"
+  grep -E '^DEFENCE (dodge|hit) .*held' "$R/somvr.log" | tail -4 | cut -c1-320
 fi
 if has probe; then
   w "fight dodge probe" 1.5

@@ -330,6 +330,15 @@ def main():
             sys.exit("expected 1 SITE line in somvr_hudfx_game.c's HUDFX_SITES block (the patched UF_CREATE K_JMP), "
                      "found %d" % len(uf))
         sites = sites + uf
+    # SOMVR_PARRY (build 18): its block lives in somvr_parry_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_parry_game\.c"', text, re.M):
+        py = [m for b in text.split("PARRY_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("PARRY_SITES_END", 1)[0])]
+        if len(py) != 1 or py[0][1] != "K_ENTRY":
+            sys.exit("expected 1 read-only K_ENTRY SITE line in somvr_parry_game.c's PARRY_SITES block (PY_STREAK), "
+                     "found %d" % len(py))
+        sites = sites + py
     # SOMVR_BOW_SNDLOG (build 16): its block lives in somvr_quiver_game.c (read with SOURCE.c above)
     if re.search(r'^#include "somvr_quiver_game\.c"', text, re.M):
         bs = [m for b in text.split("BOWSND_SITES_BEGIN")[1:] for m in re.findall(
@@ -381,10 +390,11 @@ def main():
         co = [m for b in text.split("COLLECT_SITES_BEGIN")[1:] for m in re.findall(
             r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
             r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("COLLECT_SITES_END", 1)[0])]
-        if [m[1] for m in co] != ["K_VSLOT", "K_CALL", "K_ENTRY", "K_ENTRY", "K_VSLOT", "K_CALL"]:
-            sys.exit("expected 6 SITE lines in somvr_collect_game.c's COLLECT_SITES block (the patched CO_LAT_TICK K_VSLOT "
+        if [m[1] for m in co] != ["K_VSLOT", "K_CALL", "K_ENTRY", "K_ENTRY", "K_VSLOT", "K_CALL"] + ["K_CALL"] * 8 + ["K_ENTRY"]:
+            sys.exit("expected 15 SITE lines in somvr_collect_game.c's COLLECT_SITES block (the patched CO_LAT_TICK K_VSLOT "
                      "and CO_VLOOK K_CALL, the called CO_LAT_SEE, CO_LAT_VIEW K_ENTRY, the read-only CO_OBJ_PROPS K_VSLOT, "
-                     "SOMVR_TEXT_BUTTONS' patched CO_TXT_ICON K_CALL), found %d" % len(co))
+                     "SOMVR_TEXT_BUTTONS' patched CO_TXT_ICON K_CALL, SOMVR_GLYPH=head's CO_TGEOM_A/B and CO_TSCORE_1..6 "
+                     "K_CALL, the called CO_COLLECT K_ENTRY), found %d" % len(co))
         sites = sites + co
     # SOMVR_BOW_RETICLE (build 17): its block lives in somvr_reticle_game.c (read with SOURCE.c above)
     if re.search(r'^#include "somvr_reticle_game\.c"', text, re.M):
@@ -395,6 +405,15 @@ def main():
             sys.exit("expected 1 SITE line in somvr_reticle_game.c's RETICLE_SITES block (the patched XH_SET K_VSLOT), "
                      "found %d" % len(xh))
         sites = sites + xh
+    # SOMVR_COUNTER_ICON (build 18): its block lives in somvr_cprompt_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_cprompt_game\.c"', text, re.M):
+        cp = [m for b in text.split("CPROMPT_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("CPROMPT_SITES_END", 1)[0])]
+        if [m[1] for m in cp] != ["K_CALL", "K_CALL"]:
+            sys.exit("expected 2 SITE lines in somvr_cprompt_game.c's CPROMPT_SITES block (the patched CP_FX and CP_MARK "
+                     "K_CALLs), found %d" % len(cp))
+        sites = sites + cp
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

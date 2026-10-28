@@ -543,9 +543,11 @@ typedef struct {
     float held_ms, peak_deg, hold_err_cm, max_step_deg, end_deg;
     int capped, idle_after, refused_mid;
 } bres;
+static const swb_cfg *g_bite_cfg; /* build 18: the cfg bite_run uses (NULL = swb_defaults) */
 static bres bite_run(float w, int fps, int weight, int gap_at) {
     swb_cfg c;
     swb_defaults(&c);
+    if (g_bite_cfg) c = *g_bite_cfg;
     swb_state s;
     swb_reset(&s);
     swg_cfg wc;
@@ -592,6 +594,38 @@ static bres bite_run(float w, int fps, int weight, int gap_at) {
     }
     r.held_ms = s.held_s * 1000.0f, r.peak_deg = s.peak / DEG, r.capped = s.capped;
     return r;
+}
+/* build 18 (SOMVR_COMBAT_BITE_DRAG, re-xr-pipeline.md 66.4): build 17's session tore 17 of 18 bites free at 30 deg in
+ * 2-24 ms (its cuts 25-45 rad/s at the tip); build 18's 90 ms / 110 ms / 35 deg with the drag: every cut's bite lasts
+ * the hold - a slow one at the point, a fast one dragged 35 deg behind - and eases back without a jump */
+static void test_bite_drag(void) {
+    swb_cfg c18;
+    swb_defaults(&c18);
+    c18.hold_s = 0.09f, c18.ease_s = 0.11f, c18.max_rad = 35.0f * DEG, c18.drag = 1;
+    static const float ws[] = {2.0f, 8.0f, 15.0f, 30.0f};
+    for (int k = 0; k < 4; k++) {
+        g_bite_cfg = NULL;
+        bres o = bite_run(ws[k], 90, 0, 0);
+        g_bite_cfg = &c18;
+        bres n = bite_run(ws[k], 90, 0, 0);
+        g_bite_cfg = NULL;
+        printf("bite drag: %4.0f rad/s: build 17 held %3.0f ms (peak %4.1f deg, torn free %d) -> build 18 held %3.0f ms "
+               "(peak %4.1f deg, at the cap %d), the point off %.2f cm in the hold, the ease's largest step %.2f deg\n",
+               (double)ws[k], (double)o.held_ms, (double)o.peak_deg, o.capped, (double)n.held_ms, (double)n.peak_deg,
+               n.capped, (double)n.hold_err_cm, (double)n.max_step_deg);
+        CHECK(n.held_ms >= 89.0f && n.held_ms <= 90.0f + 11.2f && n.peak_deg <= 35.01f && n.idle_after && n.end_deg == 0.0f,
+              "drag %.0f rad/s: the whole 90 ms (%.0f), within 35 deg (%.1f), done after", (double)ws[k], (double)n.held_ms,
+              (double)n.peak_deg);
+        CHECK(n.max_step_deg < 8.0f, "drag %.0f rad/s: the ease has no jump (%.2f deg a frame)", (double)ws[k], (double)n.max_step_deg);
+        if (ws[k] >= 15.0f)
+            CHECK(n.capped && o.capped && o.held_ms < 40.0f, "drag %.0f rad/s: build 17 tore free (%.0f ms), build 18 dragged at the cap",
+                  (double)ws[k], (double)o.held_ms);
+        else if (ws[k] >= 8.0f) /* 8 rad/s x 90 ms = 41 deg: the last frames dragged at the cap */
+            CHECK(n.capped && !o.capped, "drag %.0f rad/s: build 17 held 60 ms under 30 deg, build 18 reaches the cap", (double)ws[k]);
+        else
+            CHECK(!n.capped && n.hold_err_cm < 0.5f, "drag %.0f rad/s: held at the point (%.2f cm)", (double)ws[k],
+                  (double)n.hold_err_cm);
+    }
 }
 static void test_bite(void) {
     /* a slow cut, 2 rad/s: held the full 60 ms, 7 deg, not capped */
@@ -728,6 +762,7 @@ int main(void) {
     test_weight();
     test_follow();
     test_bite();
+    test_bite_drag();
     const char *rp = getenv("SWG_REPLAY");
     if (rp && rp[0]) replay(rp);
     printf("test_smooth: %d checks, %d failures\n", checks, fails);

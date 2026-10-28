@@ -131,6 +131,15 @@ void somvr_vh_cfg_default(somvr_vh_cfg *c) {
     c->size = 1;
 }
 
+int somvr_vh_parse_grip(const char *v, somvr_vh_cfg *c) {
+    if (!v || !*v) return 1;
+    char *e;
+    float f = strtof(v, &e);
+    if (e == v || *e || !isfinite(f) || !(f == 0 || (f >= 2.0f && f <= 5.0f))) return 0;
+    c->grip_d_m = 0.01f * f;
+    return 1;
+}
+
 int somvr_vh_parse_size(const char *v, somvr_vh_cfg *c) {
     if (!v || !*v) return 1;
     char *e;
@@ -167,7 +176,7 @@ static void pose_world(const somvr_vh_model *m, const somvr_vh_cfg *c, const flo
     for (int f = 0; f < SOMVR_VH_NF; f++) {
         float k = curl[f] < 0 ? 0 : curl[f] > 1 ? 1 : curl[f];
         if (!isfinite(k)) k = 0;
-        for (int j = 0; j < 3; j++) bend[bend_joint(f, j)] = (c->open[f][j] + k * (c->fist[f][j] - c->open[f][j])) * DEG;
+        for (int j = 0; j < 3; j++) bend[bend_joint(f, j)] = (c->open[f][j] + k * (m->fist[f][j] - c->open[f][j])) * DEG;
         if (f == 0) opp = k * c->thumb_opp_deg * DEG;
     }
     for (int j = 0; j < SOMVR_VH_NJ; j++) {
@@ -249,8 +258,65 @@ static int fit_circle(const float pts[][3], int n, float c[3], float *r) {
     return 1;
 }
 
+/* build 18 (SOMVR_XR_HANDS_GRIP_CM, docs/re-xr-pipeline.md 66.2): the fist closed round a handle of c->grip_d_m on the
+ * grip's axis. Build 17's fist (its tube fitted through the finger joints' centres) puts each long phalanx across that
+ * circle as a chord: the skin reaches 0.1-0.5 cm from the axis, so a 3-4 cm handle runs through the fingers. The fit
+ * opens the four long fingers by one common offset per joint (MCP -50..+10, PIP -30..+20, DIP -40..+20 deg; their
+ * progression index -> pinky kept) and moves the hand in the grip's plane (+-1.5 cm: the handle off the knuckles), so
+ * that no opaque vertex of the fist's span is more than SOMVR_VH_GRIP_TOL inside the handle (the depth test's soft edge
+ * still draws a skin that deep), the fingers as tight round it as that allows (their joints nearest the axis) and the
+ * move small. The thumb stays. */
+#define SOMVR_VH_GRIP_TOL 0.004f
+static void grip_fit(somvr_vh_model *m, const somvr_vh_cfg *c) {
+    static somvr_vh_vert v[SOMVR_HM_NV]; /* (init runs on one thread at a time: the layer's config, the game's) */
+    static const somvr_posef id = {{0, 0, 0, 1}, {0, 0, 0}};
+    float base[SOMVR_VH_NF][3], R = 0.5f * c->grip_d_m, best = 1e30f, bo[5] = {0, 0, 0, 0, 0}, bpen = 0;
+    memcpy(base, m->fist, sizeof base);
+    for (int a = -50; a <= 10; a += 10)
+        for (int b = -30; b <= 20; b += 10)
+            for (int d = -40; d <= 20; d += 10) {
+                for (int f = 1; f < SOMVR_VH_NF; f++) {
+                    m->fist[f][0] = base[f][0] + (float)a;
+                    m->fist[f][1] = fminf(115.0f, base[f][1] + (float)b);
+                    m->fist[f][2] = fmaxf(0.0f, base[f][2] + (float)d);
+                }
+                float skin[SOMVR_VH_NJ][12], one[SOMVR_VH_NF] = {1, 1, 1, 1, 1}, jx[12][2];
+                somvr_vh_pose(m, c, one, skin);
+                somvr_vh_skin(m, (const float(*)[12])skin, SOMVR_HAND_R, &id, v);
+                int nj = 0;
+                for (int f = 1; f < SOMVR_VH_NF; f++)
+                    for (int j = g_base[f] + 2; j <= g_base[f] + 4; j++, nj++) {
+                        float q[3];
+                        somvr_vh_joint_g(m, (const float(*)[12])skin, j, q);
+                        jx[nj][0] = q[0], jx[nj][1] = q[1];
+                    }
+                for (int ix = -6; ix <= 6; ix++)
+                    for (int iy = -6; iy <= 6; iy++) {
+                        float dx = 0.0025f * (float)ix, dy = 0.0025f * (float)iy, pen = 0, jr = 0;
+                        for (int k = 0; k < SOMVR_HM_NV; k++) {
+                            if (m->fade[k] < 0.5f || fabsf(v[k].p[2]) > 0.06f) continue;
+                            float e = R - hypotf(v[k].p[0] + dx, v[k].p[1] + dy);
+                            if (e > pen) pen = e;
+                        }
+                        for (int k = 0; k < nj; k++) jr += hypotf(jx[k][0] + dx, jx[k][1] + dy);
+                        float sc = (pen > SOMVR_VH_GRIP_TOL ? (pen - SOMVR_VH_GRIP_TOL) * 1000 : 0) + jr + 0.2f * hypotf(dx, dy);
+                        if (sc < best)
+                            best = sc, bpen = pen, bo[0] = (float)a, bo[1] = (float)b, bo[2] = (float)d, bo[3] = dx, bo[4] = dy;
+                    }
+            }
+    for (int f = 1; f < SOMVR_VH_NF; f++) {
+        m->fist[f][0] = base[f][0] + bo[0];
+        m->fist[f][1] = fminf(115.0f, base[f][1] + bo[1]);
+        m->fist[f][2] = fmaxf(0.0f, base[f][2] + bo[2]);
+    }
+    m->gp[0] += bo[3], m->gp[1] += bo[4];
+    memcpy(m->grip_fit, bo, sizeof bo);
+    m->grip_pen_m = bpen;
+}
+
 int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c) {
     memset(m, 0, sizeof *m);
+    memcpy(m->fist, c->fist, sizeof m->fist);
     /* the hierarchy: each joint's rest transform in its parent's (the mesh's are model space) */
     for (int j = 0; j < SOMVR_VH_NJ; j++) {
         float rest[7], inv[7];
@@ -338,6 +404,10 @@ int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c) {
         m->fade[v] = 1 - smooth01(-c->fade_from_m, c->fade_to_m, s);
     }
     m->wrist_r_m *= m->gk; /* (measured in model space) */
+    if (c->grip_d_m > 0) { /* build 18: the fist round the handle (moves gp: the wrist again) */
+        grip_fit(m, c);
+        to_grip(m, wr, m->wrist_g);
+    }
     /* how far out of the palm any pose reaches (the right palm's outward normal = the grip's -X), from the origin: the
      * thumb, the index, the middle with the ring and the pinky each at 0, 1/2, 1 (81 poses); then the pointing tip */
     static const float point[SOMVR_VH_NF] = {1, 0, 1, 1, 1}, lv[3] = {0, 0.5f, 1};
@@ -375,6 +445,13 @@ int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c) {
              SOMVR_HM_NV, SOMVR_HM_NI / 3, 200 * (m->tube_r_m - 0.0085f * m->gk), 100 * m->tube_r_m, m->tube_tilt_deg, m->gk,
              100 * sqrtf(dot3(m->wrist_g, m->wrist_g)), 100 * m->palm_reach_m, 100 * m->tip_g[0], 100 * m->tip_g[1],
              100 * m->tip_g[2]);
+    if (c->grip_d_m > 0) { /* build 18 */
+        size_t n = strlen(m->why);
+        snprintf(m->why + n, sizeof m->why - n,
+                 "; the fist round a %.1f cm handle (SOMVR_XR_HANDS_GRIP_CM: the long fingers %+.0f/%+.0f/%+.0f deg, the hand "
+                 "moved %.1f,%.1f cm, the deepest %.1f cm in it)", 100 * c->grip_d_m, m->grip_fit[0], m->grip_fit[1],
+                 m->grip_fit[2], 100 * m->grip_fit[3], 100 * m->grip_fit[4], 100 * m->grip_pen_m);
+    }
     m->ok = 1;
     return 0;
 }
@@ -595,4 +672,58 @@ void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const flo
         x = x < 0 ? 0 : x > 1 ? 1 : x; /* (NaN: 0) */
         v[i].a = x * x * (3 - 2 * x);
     }
+}
+
+/* ---- build 18 (vrhands v5): the bow's string, the arrow's pinch ------------------------------------------------- */
+static uint16_t g_string_idx[SOMVR_VH_STRING_NI];
+const uint16_t *somvr_vh_string_indices(void) {
+    if (g_string_idx[1] == 0) { /* per segment 6 flat sides of 4 vertices: two triangles each, then the same reversed */
+        int n = 0;
+        for (int sg = 0; sg < 2; sg++)
+            for (int k = 0; k < 6; k++) {
+                uint16_t b = (uint16_t)(24 * sg + 4 * k);
+                const uint16_t t[6] = {b, (uint16_t)(b + 1), (uint16_t)(b + 2), b, (uint16_t)(b + 2), (uint16_t)(b + 3)};
+                for (int i = 0; i < 6; i += 3) {
+                    g_string_idx[n++] = t[i], g_string_idx[n++] = t[i + 1], g_string_idx[n++] = t[i + 2];
+                    g_string_idx[n++] = t[i], g_string_idx[n++] = t[i + 2], g_string_idx[n++] = t[i + 1];
+                }
+            }
+    }
+    return g_string_idx;
+}
+
+void somvr_vh_string(const float pts[3][3], float r_m, somvr_vh_vert *out) {
+    if (!(r_m > 0.0005f)) r_m = 0.0005f;
+    if (r_m > 0.02f) r_m = 0.02f;
+    for (int sg = 0; sg < 2; sg++) {
+        const float *a = pts[sg], *b = pts[sg + 1];
+        float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+        if (norm3(d) < 1e-6f) d[0] = 0, d[1] = 1, d[2] = 0;
+        float h[3] = {fabsf(d[0]) < 0.9f ? 1.0f : 0.0f, fabsf(d[0]) < 0.9f ? 0.0f : 1.0f, 0}, u[3], w[3];
+        cross3(d, h, u), norm3(u), cross3(d, u, w);
+        somvr_vh_vert *v = out + 24 * sg;
+        for (int k = 0; k < 6; k++) { /* the sides, flat */
+            float a0 = (float)k * 1.0471976f, a1 = (float)(k + 1) * 1.0471976f, am = 0.5f * (a0 + a1);
+            float c0 = cosf(a0) * r_m, s0 = sinf(a0) * r_m, c1 = cosf(a1) * r_m, s1 = sinf(a1) * r_m;
+            float n[3];
+            for (int i = 0; i < 3; i++) n[i] = cosf(am) * u[i] + sinf(am) * w[i];
+            const float *e[4] = {a, b, b, a};
+            const float cs[4][2] = {{c0, s0}, {c0, s0}, {c1, s1}, {c1, s1}};
+            for (int j = 0; j < 4; j++, v++) {
+                for (int i = 0; i < 3; i++) v->p[i] = e[j][i] + cs[j][0] * u[i] + cs[j][1] * w[i], v->n[i] = n[i];
+                v->a = 1;
+            }
+        }
+    }
+}
+
+int somvr_vh_pinch(const somvr_vh_model *m, const somvr_vh_cfg *c, float out[3]) {
+    if (!m->ok) return 0;
+    static const float fist[SOMVR_VH_NF] = {1, 1, 1, 1, 1};
+    float skin[SOMVR_VH_NJ][12], th[3], ix[3];
+    somvr_vh_pose(m, c, fist, skin);
+    somvr_vh_joint_g(m, (const float(*)[12])skin, tip_joint(0), th);
+    somvr_vh_joint_g(m, (const float(*)[12])skin, SOMVR_VHJ_INDEX + 2, ix);
+    for (int i = 0; i < 3; i++) out[i] = 0.5f * (th[i] + ix[i]);
+    return 1;
 }

@@ -122,7 +122,8 @@ _Static_assert(sizeof g_pr_sites_game / sizeof g_pr_sites_game[0] == PRS_N, "pra
 _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK == (int)SOMVR_VMPR_BACK &&
 		       (int)SOMVR_PRA_SPAWN == (int)SOMVR_VMPR_SPAWN &&
 		       (int)SOMVR_PRA_REMOVE == (int)SOMVR_VMPR_REMOVE && (int)SOMVR_PRA_ARROWS == (int)SOMVR_VMPR_ARROWS &&
-		       (int)SOMVR_PRA_HEALTH == (int)SOMVR_VMPR_HEALTH && SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 3,
+		       (int)SOMVR_PRA_HEALTH == (int)SOMVR_VMPR_HEALTH && (int)SOMVR_PRA_FAR == (int)SOMVR_VMPR_FAR &&
+		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 3,
 	       "the menu's practice requests = the practice module's");
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
 #define PR_FN(i, T) ((T)g_pr_sites[i].target)
@@ -207,6 +208,7 @@ static struct {
 	somvr_pr_tcfg tcfg_down; /* the climb's blink down: tcfg, a short hold (no light to change) */
 	int down_tp;         /* the blink down's teleport sent (pr_down_teleported takes it) */
 	int down_quick;      /* this blink down is the pullover's quick one (tcfg_quick) */
+	int down_ws;         /* build 18: ... it is the wraith step's (SOMVR_WRAITH_STEP; the arrival's line) */
 	somvr_pr_tcfg tcfg_quick; /* build 16, SOMVR_CLIMB_PULLOVER: a mantle's blink (0.12 s out, 0.1 s settle, no hold, 0.2 s in) */
 	int tid;
 	uintptr_t pl;        /* the Player* last seen (another one: a load) */
@@ -232,6 +234,12 @@ static struct {
 	/* our orc */
 	uintptr_t orc_h, orc_npc, orc_c;
 	int orc_type, orc_dead, orc_checks;
+	/* build 18: the far orc (SOMVR_PRA_FAR): SOMVR_PRACTICE_FAR_CM ahead, its back to Talion; the watch of its target
+	 * and its place (pr_far_tick) */
+	float far_cm, far_pos0[3], far_dist0;
+	int far, far_aware, far_logs;
+	double far_next, far_aware_t;
+	uint64_t far_spawns, far_noticed;
 	double orc_t;
 	int cur_orc;         /* the type "practice spawn" without one spawns */
 	/* requests */
@@ -556,7 +564,26 @@ static char g_pr_tmpl_test[64]; /* a test (SOMVR_VERBS' "verbs template NAME"): 
 
 /* one orc of type `type` ahead of Talion, facing him (re-combat-spawn.md 1.2 steps 1-4 as P9's `spawn`); the previous
  * one removed first */
-static void pr_spawn(const struct pr_me *m, int type, double t, const char *who)
+/* build 18: the far orc's place - ahead along Talion's facing at far_cm, or 3 m nearer, 2 m farther, 6 m nearer, each
+ * straight ahead then 15 deg either side: the first with ground under it within the ray's window (2 m over .. 6 m
+ * under Talion's root) */
+static int pr_far_spot(const struct pr_me *m, const float fwd[3], float at[3], float hit[3], uintptr_t *ground,
+		       float *dist)
+{
+	static const float dd[] = { 0, -300, 200, -600 }, yaw[] = { 0, 0.2617994f, -0.2617994f };
+	for (size_t i = 0; i < sizeof dd / sizeof dd[0]; i++)
+		for (size_t j = 0; j < sizeof yaw / sizeof yaw[0]; j++) {
+			float c = cosf(yaw[j]), sn = sinf(yaw[j]);
+			float f[3] = { fwd[0] * c + fwd[2] * sn, 0, -fwd[0] * sn + fwd[2] * c };
+			*dist = g_pr.far_cm + dd[i];
+			somvr_pr_ahead(m->pos, f, *dist, at);
+			if (pr_ground(at, hit, ground))
+				return 1;
+		}
+	return 0;
+}
+
+static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *who, int far)
 {
 	const char *fail = NULL;
 	char tn[96] = "";
@@ -583,18 +610,22 @@ static void pr_spawn(const struct pr_me *m, int type, double t, const char *who)
 	if (tmpl)
 		fb_rec_name(tmpl, tn, sizeof tn);
 	sv_vec3 f = sv_qrot(sv_qnormalize(sv_quat_of(m->rot)), (sv_vec3){ 0, 0, 1 });
-	float fwd[3] = { f.x, f.y, f.z }, at[3], hit[3] = { 0, 0, 0 }, q[4], hp[3] = { 0, 0, 0 };
+	float fwd[3] = { f.x, f.y, f.z }, at[3], hit[3] = { 0, 0, 0 }, q[4], hp[3] = { 0, 0, 0 }, dist = g_pr.ahead_cm;
 	uintptr_t ground = 0, ctx, ret = 0, h = 0, npc = 0, c = 0, zone = 0;
 	uint32_t lvl = 0;
 	somvr_pr_ahead(m->pos, fwd, g_pr.ahead_cm, at);
 	if (!tmpl)
 		fail = "no such AI/Templates record (by name)";
-	else if (!pr_ground(at, hit, &ground))
-		fail = "the ray down hit nothing (no ground within 6 m below the spot ahead)";
+	else if (far ? !pr_far_spot(m, fwd, at, hit, &ground, &dist) : !pr_ground(at, hit, &ground))
+		fail = far ? "no ground ahead at SOMVR_PRACTICE_FAR_CM -6..+2 m (the ray down from 2 m over Talion's root to 6 m "
+			     "under it, 3 directions)"
+			   : "the ray down hit nothing (no ground within 6 m below the spot ahead)";
 	else if (!(ctx = ground ? ground : m->pc ? peek_ptr(m->pc + C_HOBJ) : 0))
 		fail = "no context object (neither the ground's nor Talion's)";
 	if (!fail) {
-		somvr_pr_facing(hit, m->pos, q);
+		/* the far orc turns its back to Talion: it faces the point as far beyond it (its eyes away from him) */
+		float away[3] = { 2 * hit[0] - m->pos[0], hit[1], 2 * hit[2] - m->pos[2] };
+		somvr_pr_facing(hit, far ? away : m->pos, q);
 		float xf[7] = { hit[0], hit[1] + 10.0f, hit[2], q[0], q[1], q[2], q[3] };
 		ret = PR_FN(PRS_SPAWN, pr_spawn_fn)(ctx, "SomVR_Practice", xf, tmpl, 1, 1, 0, 0, 0);
 		h = ret ? peek_ptr(ret + 8) : 0;
@@ -620,15 +651,51 @@ static void pr_spawn(const struct pr_me *m, int type, double t, const char *who)
 		g_pr.orc_dead = 0, g_pr.orc_checks = 0;
 		g_pr.cur_orc = type;
 		g_pr.spawns++;
+		g_pr.far = far, g_pr.far_aware = 0, g_pr.far_logs = 0, g_pr.far_next = t + 2.0, g_pr.far_aware_t = 0;
+		memcpy(g_pr.far_pos0, hp, sizeof hp), g_pr.far_dist0 = dist3(hp, m->pos);
+		g_pr.far_spawns += far != 0;
 	} else {
 		g_pr.spawn_fail++;
 	}
 	if (pr_log_ok(t))
-		logf_("PRACTICE t=%.3f spawn %s (%s) template %s ('%s') %s: %s; at (%.1f %.1f %.1f) %.0f cm ahead, ground object %#lx, "
-		      "facing Talion; hobj=%#lx npc=%#lx Combat=%#lx zone=%#lx level %u", t, somvr_pr_orc_label(type), who, name,
-		      tmpl ? tn : "-", fail ? "FAILED" : "ok", fail ? fail : "one orc out", hit[0], hit[1], hit[2],
-		      (double)g_pr.ahead_cm, (unsigned long)ground, (unsigned long)h, (unsigned long)npc, (unsigned long)c,
-		      (unsigned long)zone, lvl);
+		logf_("PRACTICE t=%.3f spawn%s %s (%s) template %s ('%s') %s: %s; at (%.1f %.1f %.1f) %.0f cm ahead, ground object %#lx, "
+		      "%s; hobj=%#lx npc=%#lx Combat=%#lx zone=%#lx level %u", t, far ? " far" : "", somvr_pr_orc_label(type), who,
+		      name, tmpl ? tn : "-", fail ? "FAILED" : "ok", fail ? fail : "one orc out", hit[0], hit[1], hit[2],
+		      (double)dist, (unsigned long)ground, far ? "its back to Talion (unaware: it sees him only as the game's "
+		      "senses would)" : "facing Talion", (unsigned long)h, (unsigned long)npc, (unsigned long)c, (unsigned long)zone,
+		      lvl);
+}
+static void pr_spawn(const struct pr_me *m, int type, double t, const char *who) { pr_spawn_at(m, type, t, who, 0); }
+
+/* build 18: the far orc's watch (the game thread, every frame while it is out): every 2 s for its first 40 s - how far
+ * from Talion, how far it moved since the spawn, what its Combat targets (+0x4c0: none, Talion's
+ * HOBJECT = it fights him, another); the first frame it targets Talion: "noticed" (the game's own senses, a hit, ...),
+ * then every 2 s for 6 s */
+#define PR_C_TARGET 0x4c0 /* Combat: its current target HOBJECT (as the threat's TH_C_TARGET) */
+static void pr_far_tick(const struct pr_me *m, double t)
+{
+	if (!g_pr.far || !g_pr.orc_h || !g_pr.orc_c || g_pr.orc_dead)
+		return;
+	uintptr_t tg = peek_ptr(g_pr.orc_c + PR_C_TARGET), th = m->pc ? peek_ptr(m->pc + C_HOBJ) : 0;
+	int at_him = tg && (tg == th || tg == m->obj);
+	float p[3] = { 0, 0, 0 };
+	peek(g_pr.orc_h + OBJ_POS, p, sizeof p);
+	float d = dist3(p, m->pos) / 100.0f, mv = dist3(p, g_pr.far_pos0) / 100.0f;
+	double age = t - g_pr.orc_t;
+	if (at_him && !g_pr.far_aware) {
+		g_pr.far_aware = 1, g_pr.far_aware_t = t, g_pr.far_noticed++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f far orc noticed Talion after %.1f s: its target = Talion (Combat+0x4c0 %#lx), %.1f m "
+			      "from him, moved %.1f m", t, age, (unsigned long)tg, (double)d, (double)mv);
+		return;
+	}
+	if (t < g_pr.far_next || (age > 40.5 && !(g_pr.far_aware && t - g_pr.far_aware_t < 6.5)) || g_pr.far_logs >= 40)
+		return; /* (its first 40 s, and 6 s after it noticed him: it comes) */
+	g_pr.far_next = t + 2.0, g_pr.far_logs++;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f far orc +%.0f s: %.1f m from Talion (%.1f at the spawn), moved %.1f m; its target %s; %s",
+		      t, age, (double)d, (double)(g_pr.far_dist0 / 100.0f), (double)mv,
+		      at_him ? "Talion" : tg ? "another" : "none", g_pr.far_aware ? "aware (fighting him)" : "unaware");
 }
 
 /* our orc 1 and 3 s after its spawn (P9's SPAWNCHECK) and its death */
@@ -868,7 +935,8 @@ static int pr_down_ok(void)
 
 static int pr_down_start(sv_vec3 to, double t, int quick)
 {
-	const char *who = quick == 2 ? "the climb's drop mark, quick" : quick ? "the climb's pullover, quick" : "the climb's A";
+	const char *who = quick == 3 ? "the wraith step, quick" : quick == 2 ? "the climb's drop mark, quick"
+			  : quick ? "the climb's pullover, quick" : "the climb's A";
 	if (!pr_down_ok()) {
 		g_pr.refused++;
 		if (pr_log_ok(t))
@@ -877,7 +945,7 @@ static int pr_down_start(sv_vec3 to, double t, int quick)
 		return 0;
 	}
 	float p[3] = { to.x, to.y, to.z };
-	g_pr.down_tp = 0, g_pr.down_quick = quick != 0;
+	g_pr.down_tp = 0, g_pr.down_quick = quick != 0, g_pr.down_ws = quick == 3;
 	pr_trip_begin(PR_TRIP_DOWN, p, pr_now(), who);
 	(void)t;
 	return 1;
@@ -965,7 +1033,8 @@ static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 		if (pr_log_ok(t))
 			logf_("PRACTICE t=%.3f arrived at (%.1f %.1f %.1f) after %d teleport(s); %s", t, m->pos[0], m->pos[1], m->pos[2],
 			      g_pr.trip.tries, g_pr.trip_kind == PR_TRIP_GO ? "in the practice area" : g_pr.trip_kind == PR_TRIP_DOWN
-			      ? "down from the climb (SOMVR_CLIMB_DESCENT)" : "back where Talion was");
+			      ? (g_pr.down_ws ? "the wraith step's blink (SOMVR_WRAITH_STEP)" : "down from the climb (SOMVR_CLIMB_DESCENT)")
+			      : "back where Talion was");
 		if (g_pr.trip_kind == PR_TRIP_GO) {
 			g_pr.went = 1, g_pr.here = 1;
 			pr_light_arrived(t);
@@ -1289,6 +1358,9 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 	case SOMVR_PRA_GO: pr_go(m, have, t, who); break;
 	case SOMVR_PRA_BACK: pr_back(t, who); break;
 	case SOMVR_PRA_SPAWN: pr_spawn(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who); break;
+	case SOMVR_PRA_FAR: /* build 18 */
+		pr_spawn_at(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who, 1);
+		break;
 	case SOMVR_PRA_REMOVE:
 		if (!g_pr.orc_h && pr_log_ok(t))
 			logf_("PRACTICE t=%.3f remove (%s): no orc out", t, who);
@@ -1453,6 +1525,7 @@ static void pr_frame(uintptr_t pl)
 		}
 	}
 	pr_orc_tick(&m, t);
+	pr_far_tick(&m, t); /* build 18 */
 	if (g_pr.here && have && t >= g_pr.next_clear) {
 		g_pr.next_clear = t + 1.0;
 		if (!(gate & ~(uint32_t)SOMVR_PRG_TRIP)) /* the clear's gate: never in a scripted moment */
@@ -1495,8 +1568,8 @@ static const char *pr_word(const char *w)
 		return ak[0] == 'h' ? "practice hurt" : "practice focus";
 	}
 	if (!somvr_pr_word(w, &r))
-		return "practice (not go|back|spawn [infantry|shield|berserker]|remove|status|arrows|health|hurt HP|focus F: "
-		       "ignored)";
+		return "practice (not go|back|spawn [infantry|shield|berserker]|far [TYPE]|remove|status|arrows|health|hurt HP|"
+		       "focus F: ignored)";
 	if (r.have_at) /* the spot first: the trig's release publishes it */
 		for (int i = 0; i < 3; i++) {
 			uint32_t b;
@@ -1506,8 +1579,9 @@ static const char *pr_word(const char *w)
 	atomic_store_explicit(&g_pr_at_has, r.have_at, memory_order_relaxed);
 	uint32_t o = atomic_load(&g_pr_trig);
 	atomic_store_explicit(&g_pr_trig, somvr_vm_pr_pack(somvr_vm_pr_seq(o) + 1, r.action, r.orc + 1), memory_order_release);
-	static const char *const n[SOMVR_PRA_N] = { "practice", "practice go", "practice back", "practice spawn",
-						    "practice remove", "practice status", "practice arrows", "practice health" };
+	static const char *const n[SOMVR_PRA_N] = { "practice",        "practice go",     "practice back",
+						    "practice spawn",  "practice remove", "practice status",
+						    "practice arrows", "practice health", "practice far" };
 	return n[r.action];
 }
 
@@ -1545,6 +1619,7 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	}
 	g_pr.minhealth = env_float("SOMVR_PRACTICE_MINHEALTH", 20, 0, 100000, bad);
 	g_pr.ahead_cm = env_float("SOMVR_PRACTICE_AHEAD_CM", 350, 150, 2000, bad);
+	g_pr.far_cm = env_float("SOMVR_PRACTICE_FAR_CM", 1800, 800, 4000, bad); /* build 18: Spawn far orc (unaware) */
 	g_pr.auto_s = env_float("SOMVR_PRACTICE_AUTO_S", 5, 0, 600, bad);
 	const char *ot = getenv("SOMVR_PRACTICE_ORC");
 	g_pr.def_orc = ot && ot[0] ? somvr_pr_orc_parse(ot) : SOMVR_PRO_INFANTRY;
@@ -1631,8 +1706,8 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	      "the area %.0f m; a blink there and back (fade %.2f/%.2f s, settle %.2f s, hold %.2f s, %d teleports at most); "
 	      "min health %g%s; clear %s within %.0f m every 1 s%s (never in a presentation, a cinematic or scripted camera, a "
 	      "sync, the pause); quiet %s; wait %s; light %s (%s; a dry day kept; a wet day's weather with the teleport)%s; load hold %s; "
-	      "orcs %.0f cm ahead, the type %s (%s), spawn %s; auto after %.1f s; "
-	      "the menu's practice page and the trigger words \"practice go|back|spawn [TYPE]|remove|status\"",
+	      "orcs %.0f cm ahead (the far orc %.0f cm, its back to Talion), the type %s (%s), spawn %s; auto after %.1f s; "
+	      "the menu's practice page and the trigger words \"practice go|back|spawn [TYPE]|far [TYPE]|remove|status\"",
 	      somvr_pr_mode_name(g_pr.mode), g_pr.spot[0], g_pr.spot[1], g_pr.spot[2], (double)(g_pr.radius_cm / 100),
 	      (double)g_pr.tcfg.fade_out_s, (double)g_pr.tcfg.fade_in_s, (double)g_pr.tcfg.settle_s, (double)g_pr.tcfg.hold_s,
 	      g_pr.tcfg.tries, (double)g_pr.minhealth, g_pr.ok_mh ? "" : " (OFF: its site)", clear_w[g_pr.clear],
@@ -1645,7 +1720,7 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	      g_pr.ok_light ? "" : " (OFF: its sites)",
 	      g_pr.load_mode ? "on (the black holds for the game's pause after our ChangeWeather: up to 3.6 s for it to come, "
 	      "until it ends, at most 5.5 s after the arrival)" : "off (SOMVR_PRACTICE_LOADHOLD=0: logged only)",
-	      (double)g_pr.ahead_cm, somvr_pr_orc_label(g_pr.def_orc),
+	      (double)g_pr.ahead_cm, (double)g_pr.far_cm, somvr_pr_orc_label(g_pr.def_orc),
 	      somvr_pr_orc_template(g_pr.def_orc), g_pr.ok_spawn ? "on" : "OFF (its sites)", (double)g_pr.auto_s);
 }
 
@@ -1676,6 +1751,7 @@ static void pr_end_log(void)
 	      (unsigned long long)g_pr.pw_pauses, (unsigned long long)g_pr.pw_open, g_pr.pw_after_max, g_pr.pw_len_max,
 	      (unsigned long long)g_pr.pw_none, (unsigned long long)g_pr.suppressed);
 	logf_("PRACTICE END refills: arrows + focus %llu, health %llu, refused %llu (not in the area, no player, a trip); test "
-	      "aids hurt %llu focus %llu", (unsigned long long)g_pr.fill_arrows, (unsigned long long)g_pr.fill_health,
-	      (unsigned long long)g_pr.fill_refused, (unsigned long long)g_pr.aid_hurt, (unsigned long long)g_pr.aid_focus);
+	      "aids hurt %llu focus %llu; far orcs %llu (noticed Talion %llu)", (unsigned long long)g_pr.fill_arrows,
+	      (unsigned long long)g_pr.fill_health, (unsigned long long)g_pr.fill_refused, (unsigned long long)g_pr.aid_hurt,
+	      (unsigned long long)g_pr.aid_focus, (unsigned long long)g_pr.far_spawns, (unsigned long long)g_pr.far_noticed);
 }

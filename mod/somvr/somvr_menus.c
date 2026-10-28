@@ -546,6 +546,11 @@ int somvr_xt_parse(const char *line, somvr_xt_cmd *c) {
         int k = 0;
         if (sscanf(p, "%f%n", &c->v[0], &k) != 1 || !(c->v[0] >= 0.8f && c->v[0] <= 1.5f)) return -1;
         p += k;
+        c->v[1] = -1; /* build 18: an optional grip diameter (cm: 0, or 2..5; none = kept) */
+        if (sscanf(p, "%f%n", &c->v[1], &k) == 1) {
+            if (!(c->v[1] == 0 || (c->v[1] >= 2 && c->v[1] <= 5))) return -1;
+            p += k;
+        }
         while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
         return *p ? -1 : (c->op = SOMVR_XT_SIZE, 1);
     }

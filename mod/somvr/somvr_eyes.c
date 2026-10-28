@@ -69,6 +69,13 @@ sv_vec3 somvr_follow_step(sv_vec3 o, float dead_cm, float step_cm) {
     return (sv_vec3){k * o.x, 0, k * o.z};
 }
 
+sv_vec3 somvr_follow_along(sv_vec3 m, sv_vec3 q, float *k) {
+    float lq2 = q.x * q.x + q.z * q.z, f = lq2 > 1e-6f ? (m.x * q.x + m.z * q.z) / lq2 : 0.0f;
+    if (k) *k = isfinite(f) ? f : 0.0f;
+    f = isfinite(f) ? fminf(fmaxf(f, 0.0f), 1.0f) : 0.0f;
+    return (sv_vec3){f * q.x, 0, f * q.z};
+}
+
 void somvr_rig_shift(somvr_rig *r, somvr_base b, sv_vec3 a) {
     float k = 1.0f / somvr_rig_scale(r);
     sv_vec3 t = sv_qrot(sv_qyaw(r->yaw0 - b.yaw), (sv_vec3){k * a.x, 0, k * a.z});

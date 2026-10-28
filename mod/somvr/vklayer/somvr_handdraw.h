@@ -99,6 +99,8 @@ hd_vert *hd_slot_verts(hd_ctx *c, uint32_t s);
 hd_vert *hd_slot_ghost(hd_ctx *c, uint32_t s, int h);
 /* build 16 (vrhands v4): slot s's arrow (SOMVR_VH_ARROW_NV vertices, after the ghosts; its indices after the occluders') */
 hd_vert *hd_slot_arrow(hd_ctx *c, uint32_t s);
+/* build 18 (vrhands v5): slot s's string (SOMVR_VH_STRING_NV vertices after the arrow's; its indices after the arrow's) */
+hd_vert *hd_slot_string(hd_ctx *c, uint32_t s);
 /* an occluder quad (centre, its two half-axes) into v[0..3] */
 void hd_quad(hd_vert v[4], const float centre[3], const float half_x[3], const float half_y[3]);
 
@@ -127,6 +129,9 @@ typedef struct {
      * key, a strong ambient and rim), with the plain pipeline after the hands (our depth: the hand holding it hides it) */
     float arrow_a;
     float arrow_base[3];
+    /* build 18 (vrhands v5): string_a > 0 draws hd_slot_string the same way (the bow's string, both sides) */
+    float string_a;
+    float string_base[3];
 } hd_frame;
 /* the screen box (pixels of a w x h eye, padded by pad) of n vertices under the clip matrix vp; 0 = none on the screen,
  * 1 = box, 2 = a vertex behind the eye (the whole eye) */

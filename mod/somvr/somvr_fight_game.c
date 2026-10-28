@@ -1193,6 +1193,15 @@ static const char *fight_word(const char *w)
 	float v = 0;
 	if (sscanf(w, "%15s %47s", a, b) < 2)
 		return "fight (not guard|death ...: ignored)";
+	if (!strcmp(a, "dodge") && !strcmp(b, "auto")) { /* build 17b: "fight dodge auto MS": A MS after each red warning */
+		int ms = -1;
+		if (!g_bd.test)
+			return "fight dodge auto: test only (SOMVR_HANDS_TEST)";
+		if (sscanf(w, "%*s %*s %d", &ms) != 1 || ms < 0 || ms > 2000)
+			return "fight dodge auto MS: MS 0..2000 (0 = off)";
+		atomic_store(&g_dg_auto_ms, ms);
+		return ms ? "fight dodge auto: A pressed that long after each red warning" : "fight dodge auto: off";
+	}
 	if (!strcmp(a, "dodge") && !strcmp(b, "probe")) { /* build 17: SOMVR_DODGE's rays in 8 directions (DODGE probe lines) */
 		if (!g_bd.test)
 			return "fight dodge probe: test only (SOMVR_HANDS_TEST)";

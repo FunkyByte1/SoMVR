@@ -189,7 +189,7 @@ somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ri
     float d[3] = {pos[0] - head[0], pos[1] - head[1], pos[2] - head[2]};
     float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
     if (!isfinite(dist + ring_m) || !(dist > 0.3f) || !(ring_m > 0.05f) || !(ring_m < 20.0f) || cell < SOMVR_OB_CELL_STRIKE ||
-        cell >= SOMVR_OB_CELLS)
+        cell > SOMVR_OB_CELL_STRIKE_GO)
         return p;
     float q[4], right[3];
     static const float xv[3] = {1, 0, 0};
@@ -206,9 +206,90 @@ somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ri
     return p;
 }
 
+void somvr_ob_strike_rect(int cell, int part, int32_t r[4]) {
+    somvr_ob_rect(cell, r);
+    if (part) r[0] += SOMVR_OB_CELL + 2, r[2] = SOMVR_OB_STRIKE_LABEL_PX;
+    else r[2] = SOMVR_OB_CELL;
+}
+
+/* the rotation whose columns are x, y, z (orthonormal, right-handed) as a quaternion x y z w */
+static void ob_quat_cols(const float x[3], const float y[3], const float z[3], float q[4]) {
+    float tr = x[0] + y[1] + z[2];
+    if (tr > 0) {
+        float s = sqrtf(tr + 1.0f) * 2;
+        q[3] = 0.25f * s, q[0] = (y[2] - z[1]) / s, q[1] = (z[0] - x[2]) / s, q[2] = (x[1] - y[0]) / s;
+    } else if (x[0] > y[1] && x[0] > z[2]) {
+        float s = sqrtf(1.0f + x[0] - y[1] - z[2]) * 2;
+        q[3] = (y[2] - z[1]) / s, q[0] = 0.25f * s, q[1] = (y[0] + x[1]) / s, q[2] = (z[0] + x[2]) / s;
+    } else if (y[1] > z[2]) {
+        float s = sqrtf(1.0f + y[1] - x[0] - z[2]) * 2;
+        q[3] = (z[0] - x[2]) / s, q[0] = (y[0] + x[1]) / s, q[1] = 0.25f * s, q[2] = (z[1] + y[2]) / s;
+    } else {
+        float s = sqrtf(1.0f + z[2] - x[0] - y[1]) * 2;
+        q[3] = (x[1] - y[0]) / s, q[0] = (z[0] + x[2]) / s, q[1] = (z[1] + y[2]) / s, q[2] = 0.25f * s;
+    }
+}
+
+somvr_ob_place somvr_ob_strike_floor(const float head[3], const float pos[3], float r_m, int cell) {
+    somvr_ob_place p;
+    memset(&p, 0, sizeof p);
+    p.pose[3] = 1;
+    if (!isfinite(pos[0] + pos[1] + pos[2] + r_m) || !(r_m > 0.05f) || !(r_m < 10.0f) || cell < SOMVR_OB_CELL_STRIKE ||
+        cell > SOMVR_OB_CELL_STRIKE_GO) /* the strike's cells only (cell 8 is the step's refused ring) */
+        return p;
+    p.kind = SOMVR_OBK_WORLD, p.cell = cell;
+    p.pose[0] = -0.70710678f, p.pose[3] = 0.70710678f; /* -90 deg about x: the quad's +z (its face) up */
+    float v[3] = {head[0] - pos[0], head[1] - pos[1], head[2] - pos[2]}, hz = sqrtf(v[0] * v[0] + v[2] * v[2]);
+    if (isfinite(hz + v[1]) && hz > 1e-3f) { /* seen too flat: tilted up toward the head about the level right axis */
+        float elev = atan2f(v[1], hz), tilt = SOMVR_OB_STRIKE_MIN_VIEW_DEG * 0.01745329252f - elev;
+        if (tilt > 0) {
+            float h[3] = {v[0] / hz, 0, v[2] / hz}, c = cosf(tilt), sn = sinf(tilt);
+            float z[3] = {sn * h[0], c, sn * h[2]};              /* the face: up, leaning toward the head */
+            float x[3] = {-h[2], 0, h[0]};                        /* level, the head's right */
+            float y[3] = {z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]}; /* z x x */
+            ob_quat_cols(x, y, z, p.pose);
+            p.off_deg = tilt * 57.29578f; /* logs: the tilt */
+        }
+    }
+    p.pose[4] = pos[0], p.pose[5] = pos[1] + 0.02f, p.pose[6] = pos[2];
+    p.size[0] = p.size[1] = 2 * r_m * (float)SOMVR_OB_CELL / (float)SOMVR_OB_STRIKE_RING_PX;
+    return p;
+}
+
+somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], float r_m, int cell) {
+    somvr_ob_place p;
+    memset(&p, 0, sizeof p);
+    p.pose[3] = 1;
+    float d[3] = {pos[0] - head[0], pos[1] - head[1], pos[2] - head[2]};
+    float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!isfinite(dist + r_m) || !(dist > 0.3f) || !(r_m > 0.05f) || cell < SOMVR_OB_CELL_STRIKE || cell > SOMVR_OB_CELL_STRIKE_GO)
+        return p;
+    float h = 2 * dist * tanf(0.5f * SOMVR_OB_STRIKE_LABEL_DEG * 0.01745329252f);
+    if (h < SOMVR_OB_STRIKE_LABEL_MIN_M) h = SOMVR_OB_STRIKE_LABEL_MIN_M;
+    float w = h * (float)SOMVR_OB_STRIKE_LABEL_PX / (float)SOMVR_OB_CELL;
+    float hz = sqrtf(d[0] * d[0] + d[2] * d[2]), right[3] = {1, 0, 0};
+    if (hz > 1e-3f) right[0] = -d[2] / hz, right[2] = d[0] / hz; /* level, to the head's right of the ring */
+    float at[3];
+    for (int k = 0; k < 3; k++) at[k] = pos[k] + right[k] * (r_m + 0.5f * w + 0.06f);
+    at[1] = pos[1] + 0.05f + 0.5f * h;
+    float q[4];
+    ob_face(at, head, q);
+    p.kind = SOMVR_OBK_WORLD, p.cell = cell;
+    memcpy(p.pose, q, sizeof q);
+    memcpy(p.pose + 4, at, sizeof at);
+    p.size[0] = w, p.size[1] = h;
+    p.yaw_deg = atan2f(d[0], -d[2]) * 57.29578f;
+    return p;
+}
+
 void somvr_ob_rect(int cell, int32_t r[4]) {
     if (cell < 0) cell = 0;
     if (cell >= SOMVR_OB_CELLS) cell = SOMVR_OB_CELLS - 1;
+    if (cell == SOMVR_OB_CELL_RING_NO) { /* build 18: a square after the strike's */
+        int k = SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELL_RING_NO - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE;
+        r[0] = k * SOMVR_OB_STRIDE + 1, r[1] = 1, r[2] = SOMVR_OB_CELL, r[3] = SOMVR_OB_CELL;
+        return;
+    }
     if (cell >= SOMVR_OB_SQUARE_CELLS) { /* the strike's wide cells */
         int k = SOMVR_OB_SQUARE_CELLS + (cell - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE;
         r[0] = k * SOMVR_OB_STRIDE + 1, r[1] = 1, r[2] = SOMVR_OB_WIDE * SOMVR_OB_STRIDE - 2, r[3] = SOMVR_OB_CELL;
@@ -253,7 +334,7 @@ static void ob_strike_cell(uint8_t *px, const somvr_font *f, int cell, int bgra)
     somvr_ob_rect(cell, r);
     int no = cell == SOMVR_OB_CELL_STRIKE_NO, go = cell == SOMVR_OB_CELL_STRIKE_GO;
     const float *rc = no ? grey : blue;
-    float ro = 0.5f * SOMVR_OB_STRIKE_RING_PX, c0 = 0.5f * SOMVR_OB_CELL, band = go ? 11 : 8;
+    float ro = 0.5f * SOMVR_OB_STRIKE_RING_PX, c0 = 0.5f * SOMVR_OB_CELL, band = go ? 15 : 12; /* build 18: on the ground */
     for (int y = 0; y < SOMVR_OB_CELL; y++) /* the ring: a dark rim, the band, a dark rim; pressed: wider, a faint fill */
         for (int x = 0; x < SOMVR_OB_CELL; x++) {
             float dx = x + 0.5f - c0, dy = y + 0.5f - c0, d = sqrtf(dx * dx + dy * dy);
@@ -261,7 +342,7 @@ static void ob_strike_cell(uint8_t *px, const somvr_font *f, int cell, int bgra)
             if (d <= ro && d > ro - 2) ob_px(px, X, Y, dark, 0.7f, bgra);
             else if (d <= ro - 2 && d > ro - band) ob_px(px, X, Y, rc, no ? 0.75f : 1.0f, bgra);
             else if (d <= ro - band && d > ro - band - 2) ob_px(px, X, Y, dark, 0.6f, bgra);
-            else if (go && d <= ro - band - 2) ob_px(px, X, Y, blue, 0.18f, bgra);
+            else if (d <= ro - band - 2) ob_px(px, X, Y, rc, go ? 0.30f : 0.12f, bgra); /* build 18: a faint disc inside */
         }
     int lx = r[0] + SOMVR_OB_CELL + 6; /* the label */
     if (!no) { /* the Touch's A: a round button with its letter */
@@ -341,5 +422,21 @@ void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra
             if (t <= 0.5f) ob_px(px, X, Y, gold, 0.65f * k, bgra);
             else if (t <= 0.85f) ob_px(px, X, Y, dark, 0.35f * k, bgra);
         }
-    for (int c = SOMVR_OB_CELL_STRIKE; c < SOMVR_OB_CELLS; c++) ob_strike_cell(px, f, c, bgra);
+    for (int c = SOMVR_OB_CELL_STRIKE; c <= SOMVR_OB_CELL_STRIKE_GO; c++) ob_strike_cell(px, f, c, bgra);
+    /* cell 8 (build 18): the refused landing - the landing ring's shape in red with a bar across it (the "no" sign) */
+    static const float red[3] = {0.95f, 0.18f, 0.12f};
+    int32_t rn[4];
+    somvr_ob_rect(SOMVR_OB_CELL_RING_NO, rn);
+    for (int y = 0; y < SOMVR_OB_CELL; y++)
+        for (int x = 0; x < SOMVR_OB_CELL; x++) {
+            float dx = x + 0.5f - SOMVR_OB_CELL / 2.0f, dy = y + 0.5f - SOMVR_OB_CELL / 2.0f, d = sqrtf(dx * dx + dy * dy);
+            float bar = fabsf(dx - dy) * 0.70710678f; /* across, corner to corner */
+            int X = rn[0] + x, Y = rn[1] + y;
+            if (d <= 62 && d > 59) ob_px(px, X, Y, dark, 0.6f, bgra);
+            else if (d <= 59 && d > 52) ob_px(px, X, Y, red, 0.85f, bgra);
+            else if (d <= 52 && bar <= 5) ob_px(px, X, Y, red, 0.85f, bgra);
+            else if (d <= 52 && bar <= 7) ob_px(px, X, Y, dark, 0.5f, bgra);
+            else if (d <= 52 && d > 50) ob_px(px, X, Y, dark, 0.5f, bgra);
+            else if (d <= 50) ob_px(px, X, Y, red, 0.10f, bgra);
+        }
 }

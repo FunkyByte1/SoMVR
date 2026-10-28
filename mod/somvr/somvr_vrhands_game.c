@@ -251,6 +251,7 @@ static void vh_arm(const sa_xf g[2], const int valid[2], int64_t T, float dt)
 		e->flags |= SOMVR_VHF_TWO;
 	sf_ghost(e); /* SOMVR_HANDS_SURFACE: the real hands where a surface stopped these (v3) */
 	bo_vh_arrow(g, valid, e); /* SOMVR_BOW: the arrow in the string hand or on the string (v4) */
+	bo_vh_string(g, valid, e); /* build 18, SOMVR_BOW_STRING_DRAW: the bow's string (v5) */
 	g_vh.have = 1;
 }
 

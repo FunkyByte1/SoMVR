@@ -118,7 +118,9 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
 /* the practice page's requests (somvr_vrmenu_shared.practice; = somvr_practice.h's SOMVR_PRA_*) */
 enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_SPAWN = 3, SOMVR_VMPR_REMOVE = 4,
        /* build 17 (5 = the practice's own status word): the bow's arrows and Focus full, Talion's health full */
-       SOMVR_VMPR_ARROWS = 6, SOMVR_VMPR_HEALTH = 7 };
+       SOMVR_VMPR_ARROWS = 6, SOMVR_VMPR_HEALTH = 7,
+       /* build 18: an orc far ahead with its back to Talion (unaware: re-xr-pipeline.md 56.9) */
+       SOMVR_VMPR_FAR = 8 };
 static inline uint32_t somvr_vm_pr_pack(uint32_t seq, int action, int orc) {
     return seq << 8 | ((uint32_t)orc & 15u) << 4 | ((uint32_t)action & 15u);
 }
@@ -270,7 +272,9 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
         * is the Practice tab (only with SOMVR_VMA_PRACTICE), these two the others */
        SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL,
        /* build 17: the practice page's Refill arrows + focus and Refill health (in the area only, as Spawn) */
-       SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH, SOMVR_VMI_ALL };
+       SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH,
+       /* build 18: the practice page's Spawn far orc (unaware) (in the area only, as Spawn) */
+       SOMVR_VMI_PR_FAR, SOMVR_VMI_ALL };
 enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2 }; /* the panel's pages */
 /* the page a tab opens (SOMVR_VMPG_*), -1 = not a tab */
 int somvr_vm_tab_page(int item);

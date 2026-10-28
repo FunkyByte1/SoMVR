@@ -59,8 +59,14 @@ static void test_words(void)
               r.action == SOMVR_PRA_HEALTH && somvr_pr_word("REFILL arrows", &r) && r.action == SOMVR_PRA_ARROWS &&
               !somvr_pr_word("refill", &r) && !somvr_pr_word("arrows 8", &r) && !somvr_pr_word("health full", &r) &&
               !somvr_pr_word("refill go", &r) && !strcmp(somvr_pr_action_name(SOMVR_PRA_ARROWS), "arrows") &&
-              !strcmp(somvr_pr_action_name(SOMVR_PRA_HEALTH), "health") && SOMVR_PRA_N == 8,
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_HEALTH), "health") && SOMVR_PRA_N >= 8,
           "the refills' words");
+    /* build 18: the far orc (the practice page's "Spawn far orc (unaware)") */
+    CHECK(somvr_pr_word("far", &r) && r.action == SOMVR_PRA_FAR && r.orc == -1 && somvr_pr_word(" Far berserker ", &r) &&
+              r.action == SOMVR_PRA_FAR && r.orc == SOMVR_PRO_BERSERKER && !somvr_pr_word("far troll", &r) &&
+              !somvr_pr_word("far 1 2 3", &r) && !somvr_pr_word("refill far", &r) &&
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_FAR), "far") && SOMVR_PRA_N == 9,
+          "the far orc's words");
     CHECK(somvr_pr_word("spawn", &r) && r.action == SOMVR_PRA_SPAWN && r.orc == -1, "spawn: the current type");
     CHECK(somvr_pr_word("spawn berserker", &r) && r.action == SOMVR_PRA_SPAWN && r.orc == SOMVR_PRO_BERSERKER,
           "spawn berserker");

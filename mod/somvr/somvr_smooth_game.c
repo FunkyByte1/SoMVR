@@ -23,6 +23,11 @@
  *                     the left too with both hands on the hilt); their positions and the twist stay the controllers'.
  *                     fixed: the hands stay on the controllers and the handle turns in the fist. Build 17: the VR
  *                     menu's Sword hand row (Fixed / Follow; settings.conf SWORD_WEIGHT_HAND) sets it live.
+ *   SOMVR_SWORD_HAND_LOCK=off|on  (default off; build 18's env: on; docs/re-xr-pipeline.md 66) the drawn hands always on
+ *                     the handle: they turn with every turn of the drawn blade off the controller - the weight's and the
+ *                     bite's (somvr_hitfeel_game.c swl_arm) - about the right grip point (the blade's pivot), the left
+ *                     hand on the hilt with both hands carried round it too; it supersedes SOMVR_SWORD_WEIGHT_HAND (the
+ *                     VR menu's Sword hand row is not shown).
  *   SOMVR_SWORD_REC=off|on  (default off) the right grip as the weight's step gets it, each arms frame it applies, into
  *                     <SOMVR_LOG>.swordrec (text, one line a frame, at most 48 MB) for replays (tests/test_smooth.c with
  *                     SWG_REPLAY=FILE: every level on the user's own motion).
@@ -38,6 +43,8 @@
 static struct {
 	int on, weight;     /* SOMVR_HANDS_SMOOTH; SOMVR_SWORD_WEIGHT's SWG_* */
 	int hand_follow;    /* SOMVR_SWORD_WEIGHT_HAND=follow */
+	int lock;           /* build 18: SOMVR_SWORD_HAND_LOCK=on - the drawn hands on the handle (somvr_hitfeel_game.c swl_arm) */
+	_Atomic int lock_req; /* `hands weighthand lock|unlock` (the writer thread): 1 + on; 0 = none */
 	_Atomic int hand_req; /* `hands weighthand fixed|follow` (the writer thread): 1 + the mode; build 17, the VR menu's
 				 Sword hand row (swg_vm_hand_set): 3 + the mode; 0 = none */
 	hsm_cfg cfg;
@@ -53,7 +60,7 @@ static struct {
 	swg_cfg wcfg;
 	swg_state ws;
 	int64_t w_T; /* the arms' time of the spring's last step */
-	uint64_t w_frames, w_applied, w_surface, w_none, whooshes, hits, w_followed;
+	uint64_t w_frames, w_applied, w_surface, w_none, whooshes, hits, w_followed, w_locked;
 	int whoosh_armed;
 	float w_hand_max, w_blade_max; /* rad/s: the hand's and the blade's peak swing speeds in the window */
 	double drag_t;                 /* the last drag pulse (at most one each SWG_DRAG_GAP_S: a wiggle is no buzz) */
@@ -127,8 +134,12 @@ static const char *hsm_wiggle_word(const char *w)
 static const char *hsm_hand_word(const char *w)
 {
 	char m[16] = "";
+	if (sscanf(w, "%15s", m) == 1 && (!strcmp(m, "lock") || !strcmp(m, "unlock"))) { /* build 18: SOMVR_SWORD_HAND_LOCK */
+		atomic_store(&g_hsm.lock_req, 1 + !strcmp(m, "lock"));
+		return "hands weighthand";
+	}
 	if (sscanf(w, "%15s", m) != 1 || (strcmp(m, "fixed") && strcmp(m, "follow")))
-		return "hands weighthand (not fixed|follow: ignored)";
+		return "hands weighthand (not fixed|follow|lock|unlock: ignored)";
 	atomic_store(&g_hsm.hand_req, 1 + !strcmp(m, "follow"));
 	return "hands weighthand";
 }
@@ -294,6 +305,12 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 		logf_("SWORDWT t=%.3f the drawn hands %s%s (%s)", cb_now(), g_hsm.hand_follow ? "follow the blade" : "fixed",
 		      was == g_hsm.hand_follow ? " (already)" : "", hr >= 3 ? "the VR menu's Sword hand" : "trigger word");
 	}
+	int lr = atomic_exchange(&g_hsm.lock_req, 0);
+	if (lr) {
+		g_hsm.lock = (lr - 1) & 1;
+		logf_("SWORDWT t=%.3f the drawn hands %s (trigger word)", cb_now(), g_hsm.lock ? "locked on the handle (with the bite)"
+		      : "not locked");
+	}
 	g_hsm.w_now = 0;
 	if (!g_hsm.weight)
 		return;
@@ -370,7 +387,8 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 	}
 	if (rot[0] == 0 && rot[1] == 0 && rot[2] == 0)
 		return;
-	if (g_hsm.hand_follow && g_vh.on && g_vh.have) /* SOMVR_SWORD_WEIGHT_HAND=follow: our drawn hands turn with it */
+	/* SOMVR_SWORD_WEIGHT_HAND=follow: our drawn hands turn with it (build 18's lock: swl_arm, with the bite too) */
+	if (g_hsm.hand_follow && !g_hsm.lock && g_vh.on && g_vh.have)
 		swg_vh_follow(&g_vh.e, gg, rot, two);
 	float er[4];
 	swg_qexp(rot, er);
@@ -428,7 +446,8 @@ static const char *swg_vm_hand_set(const somvr_settings *s)
 /* the Sword weight row with the arms; the Sword hand row with the layer's hands too */
 static uint32_t swg_vm_avail(void)
 {
-	return g_arm.on ? SOMVR_VMA_WEIGHT | (g_vh.want ? SOMVR_VMA_SWHAND : 0u) : 0u;
+	/* build 18: with SOMVR_SWORD_HAND_LOCK the hands always follow the handle: no Fixed / Follow to choose */
+	return g_arm.on ? SOMVR_VMA_WEIGHT | (g_vh.want && !g_hsm.lock ? SOMVR_VMA_SWHAND : 0u) : 0u;
 }
 
 static void hsm_summary(double t)
@@ -467,8 +486,10 @@ static void hsm_summary(double t)
 		      (unsigned long long)g_hsm.w_surface, (unsigned long long)g_hsm.w_none,
 		      (double)g_hsm.ws.peak_rad / 0.01745329, (unsigned long long)g_hsm.ws.roped, (double)g_hsm.w_hand_max,
 		      (double)g_hsm.w_blade_max, (unsigned long long)g_hsm.whooshes, (unsigned long long)g_hsm.hits,
-		      (unsigned long long)g_hsm.w_followed, g_hsm.hand_follow ? "follow" : "fixed");
-		g_hsm.w_frames = g_hsm.w_applied = g_hsm.w_surface = g_hsm.w_none = g_hsm.w_followed = 0, g_hsm.ws.peak_rad = 0;
+		      (unsigned long long)(g_hsm.lock ? g_hsm.w_locked : g_hsm.w_followed),
+		      g_hsm.lock ? "lock: on the handle, with the bite" : g_hsm.hand_follow ? "follow" : "fixed");
+		g_hsm.w_frames = g_hsm.w_applied = g_hsm.w_surface = g_hsm.w_none = g_hsm.w_followed = g_hsm.w_locked = 0;
+		g_hsm.ws.peak_rad = 0;
 		g_hsm.ws.roped = 0, g_hsm.w_hand_max = g_hsm.w_blade_max = 0;
 	}
 }
@@ -498,6 +519,10 @@ static void hsm_config(int *bad)
 	if (g_hsm.hand_follow && !g_vh.want)
 		logf_("CONFIG smooth: SOMVR_SWORD_WEIGHT_HAND=follow turns the layer's own hands (SOMVR_VRHANDS=1, off here): "
 		      "nothing to turn");
+	g_hsm.lock = env_word("SOMVR_SWORD_HAND_LOCK", onoff_w, 2, 0); /* build 18 */
+	if (g_hsm.lock && !g_vh.want)
+		logf_("CONFIG smooth: SOMVR_SWORD_HAND_LOCK=on turns the layer's own hands (SOMVR_VRHANDS=1, off here): nothing "
+		      "to turn"), g_hsm.lock = 0;
 	const char *lp = getenv("SOMVR_LOG");
 	if (env_word("SOMVR_SWORD_REC", onoff_w, 2, 0) && !g_hsm.rec && lp && lp[0]) {
 		snprintf(g_hsm.rec_path, sizeof g_hsm.rec_path, "%s.swordrec", lp);

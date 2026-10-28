@@ -12666,10 +12666,14 @@ static void bd_tests(void)
 	g_bd.test = 1;
 	EXPECT(!strcmp(bd_word("test R 20 -30 40 0 0 0"), "hands test") && !strcmp(bd_word("squeeze L 0.8"), "hands squeeze") &&
 		       !strcmp(bd_word("cal R 0 0 0 0 0 0"), "hands cal") &&
-		       !strcmp(bd_word("test Q 1 2 3"), "hands (not test|swing|noise|wiggle|weighthand|squeeze|draw|cal|hide|angle: ignored)") &&
+		       !strcmp(bd_word("test Q 1 2 3"), "hands (not test|swing|noise|wiggle|weighthand|twohold|squeeze|draw|cal|hide|angle: ignored)") &&
 		       !strcmp(bd_word("weighthand follow"), "hands weighthand") &&
 		       atomic_exchange(&g_hsm.hand_req, 0) == 2 &&
-		       !strcmp(bd_word("weighthand loose"), "hands weighthand (not fixed|follow: ignored)") &&
+		       !strcmp(bd_word("weighthand loose"), "hands weighthand (not fixed|follow|lock|unlock: ignored)") &&
+		       !strcmp(bd_word("weighthand lock"), "hands weighthand") && atomic_exchange(&g_hsm.lock_req, 0) == 2 &&
+		       !strcmp(bd_word("weighthand unlock"), "hands weighthand") && atomic_exchange(&g_hsm.lock_req, 0) == 1 &&
+		       !strcmp(bd_word("twohold 10.5 13"), "hands twohold") && atomic_exchange(&g_bd_req_hold, 0) == 1 &&
+		       !strcmp(bd_word("twohold 20 10"), "hands twohold (not LO HI, 4 <= LO <= HI <= 30 cm: ignored)") &&
 		       !strcmp(bd_word("noise 0.1 0.5"), "hands noise") && !strcmp(bd_word("noise 9 1"),
 		       "hands noise (not DEG 0..5 MM 0..20: ignored)") && !strcmp(bd_word("noise 0 0"), "hands noise") &&
 		       !strcmp(bd_word("wiggle R 50 4 2"), "hands wiggle (not L|R DEG 0..45 HZ 0.2..12 S 0..20: ignored)") &&
@@ -13111,6 +13115,40 @@ static void bf_tests(void)
 		swg_vh_follow(&fe, fg, frot, 1);
 		EXPECT(!memcmp(fe.grip[0].p, f0.grip[0].p, 12) && memcmp(fe.grip[0].q, f0.grip[0].q, 16),
 		       "follow: with both hands the left turns too, its position kept");
+		/* build 18: SOMVR_SWORD_HAND_LOCK (somvr_hitfeel_game.c swl_arm): the weight's turn and the bite's on both drawn
+		 * hands about the right grip point - the right turned in place, the left with both hands carried round it */
+		int on0 = g_vh.on, have0 = g_vh.have, lock0 = g_hsm.lock, wn0 = g_hsm.w_now, gv2[2] = { 1, 1 };
+		float wr0[3], bn0[3], tw0 = g_bd.two.w;
+		somvr_vrhands_frame e0 = g_vh.e;
+		memcpy(wr0, g_hsm.w_rot_now, 12), memcpy(bn0, g_hf.b_now, 12);
+		g_vh.on = g_vh.have = 1, g_vh.e = f0, g_hsm.lock = 1, g_hsm.w_now = 1, g_bd.two.w = 1;
+		float lw[3] = { 0, 0.15f, 0.02f }, lb[3] = { 0.05f, -0.3f, 0 }, ew[4], eb[4];
+		memcpy(g_hsm.w_rot_now, lw, 12), memcpy(g_hf.b_now, lb, 12);
+		swl_arm(fg, gv2);
+		swg_qexp(lw, ew), swg_qexp(lb, eb);
+		sv_quat R = sv_qnormalize(sv_qmul(sv_quat_of(eb), sv_quat_of(ew)));
+		sv_vec3 dl = sv_qrot(R, (sv_vec3){ fg[0].p.x - fg[1].p.x, fg[0].p.y - fg[1].p.y, fg[0].p.z - fg[1].p.z });
+		sa_xf wr = { fg[1].p, sv_qnormalize(sv_qmul(R, fg[1].q)) },
+		      wl = { { fg[1].p.x + dl.x, fg[1].p.y + dl.y, fg[1].p.z + dl.z }, sv_qnormalize(sv_qmul(R, fg[0].q)) };
+		somvr_posef xr, xl;
+		vh_to_xr(&wr, &xr), vh_to_xr(&wl, &xl);
+		int okr = 1, okl = 1;
+		for (int k = 0; k < 4; k++)
+			okr &= NEAR(g_vh.e.grip[1].q[k], xr.q[k], 1e-5), okl &= NEAR(g_vh.e.grip[0].q[k], xl.q[k], 1e-5);
+		for (int k = 0; k < 3; k++)
+			okr &= NEAR(g_vh.e.grip[1].p[k], f0.grip[1].p[k], 1e-6), okl &= NEAR(g_vh.e.grip[0].p[k], xl.p[k], 1e-5);
+		EXPECT(okr && okl && memcmp(g_vh.e.grip[0].p, f0.grip[0].p, 12),
+		       "lock: the right hand turned by the weight's and the bite's turn in place, the left carried round the right grip");
+		g_vh.e = f0, g_bd.two.w = 0;
+		swl_arm(fg, gv2);
+		EXPECT(!memcmp(&g_vh.e.grip[0], &f0.grip[0], sizeof f0.grip[0]) && memcmp(g_vh.e.grip[1].q, f0.grip[1].q, 16) &&
+			       !(swg_vm_avail() & SOMVR_VMA_SWHAND),
+		       "lock: one hand - the left untouched; the Sword hand row not offered");
+		g_vh.e = f0, g_hsm.lock = 0;
+		swl_arm(fg, gv2);
+		EXPECT(!memcmp(&g_vh.e, &f0, sizeof f0), "lock off: nothing turned");
+		g_vh.on = on0, g_vh.have = have0, g_vh.e = e0, g_hsm.lock = lock0, g_hsm.w_now = wn0, g_bd.two.w = tw0;
+		memcpy(g_hsm.w_rot_now, wr0, 12), memcpy(g_hf.b_now, bn0, 12);
 	}
 	/* 10c. build 17: the bite (SOMVR_COMBAT_BITE, somvr_hitfeel_game.c): the switch, its row live, which hits bite (a
 	 * landed cut only: no tap, slap or stab, no glance, no blocked one, none without a call or a fresh drawn blade), the
@@ -13537,8 +13575,8 @@ static void pr_tests(const char *trig)
 	       "spawn shield: spawns %d yaw %g from (%g %g %g) zone %d level %d/%u", g_pr_spawns, yaw, g_pr_ray_from[0],
 	       g_pr_ray_from[1], g_pr_ray_from[2], g_pr_zone_calls, g_pr_level_calls, g_pr_level_seen);
 	set_trigger(trig, "practice spawn troll");
-	EXPECT(log_has("TRIGGER cmd=practice (not go|back|spawn [infantry|shield|berserker]|remove|status|arrows|health|hurt "
-		       "HP|focus F: ignored)"),
+	EXPECT(log_has("TRIGGER cmd=practice (not go|back|spawn [infantry|shield|berserker]|far [TYPE]|remove|status|arrows|"
+		       "health|hurt HP|focus F: ignored)"),
 	       "a bad type word");
 	set_trigger(trig, NULL);
 	snprintf(g_trig_path, sizeof g_trig_path, "%s", tp0);
@@ -13569,6 +13607,31 @@ static void pr_tests(const char *trig)
 	pr_word("remove");
 	pr_step(1);
 	EXPECT(log_has("remove (the trigger word): no orc out"), "remove without an orc");
+	/* 6b. build 18: the far orc (the user's ask: unaware, far, for the strike, the bow, the stealth kill): the ray down
+	 * SOMVR_PRACTICE_FAR_CM (18 m) ahead, the spawn facing away from Talion (+Z: yaw 0), the watch every 2 s (no target:
+	 * unaware), then its Combat targeting Talion's HOBJECT = noticed (a hit, the game's senses) */
+	EXPECT(!strcmp(pr_word("far berserker"), "practice far"), "the word: far");
+	pr_step(1);
+	float fyaw = 2 * atan2f(g_pr_spawn_xf[4], g_pr_spawn_xf[6]) * 57.29578f;
+	uintptr_t fc = g_pr.orc_c;
+	EXPECT(g_pr.far && fc && NEAR(g_pr_ray_from[0], 40400, 0.01) && NEAR(g_pr_ray_from[2], -21600 + 1800, 0.01) &&
+		       NEAR(fyaw, 0, 0.01) && g_pr.cur_orc == SOMVR_PRO_BERSERKER &&
+		       log_has("spawn far Berserker (the trigger word) template ") && log_has("1800 cm ahead") &&
+		       log_has("its back to Talion (unaware"),
+	       "far: the ray from (%g %g %g), yaw %g, Combat %#lx", g_pr_ray_from[0], g_pr_ray_from[1], g_pr_ray_from[2], fyaw,
+	       (unsigned long)fc);
+	pr_step(200);
+	EXPECT(log_has("far orc +2 s: 18.0 m from Talion (18.0 at the spawn), moved 0.0 m; its target none; unaware"),
+	       "far: the watch at 2 s");
+	uintptr_t th = (uintptr_t)g_pcs.hobj;
+	memcpy((char *)fc + PR_C_TARGET, &th, 8);
+	pr_step(1);
+	EXPECT(g_pr.far_aware && g_pr.far_noticed == 1 && log_has("far orc noticed Talion after 2.") &&
+		       log_has("its target = Talion (Combat+0x4c0"),
+	       "far: noticed (aware %d)", g_pr.far_aware);
+	th = 0, memcpy((char *)fc + PR_C_TARGET, &th, 8);
+	pr_word("remove"), pr_step(1);
+	EXPECT(!g_pr.orc_h, "far: removed");
 	/* 7. failures: no template, no ground, no NPC */
 	g_pr_spawn_refuse = 2, pr_word("spawn infantry"), pr_step(1);
 	g_pr_spawn_refuse = 0, g_pr_ray_miss = 1, pr_word("spawn"), pr_step(1);
@@ -14377,6 +14440,53 @@ __attribute__((noipa)) static uint64_t t_ffcam(uintptr_t pl, uintptr_t cp)
 	memcpy((void *)(pl + FF_PL_COPY), game, sizeof game);
 	return (uint64_t)++g_fft_cam;
 }
+/* SOMVR_PARRY / SOMVR_SHOVE (build 18): the window, the opening, the riposte's kind, the type byte for the call */
+static void py_tests(void)
+{
+	static _Alignas(16) unsigned char orc[0x800], ch[0x400], pcb[0x800];
+	memset(orc, 0, sizeof orc), memset(ch, 0, sizeof ch), memset(pcb, 0, sizeof pcb);
+	uintptr_t c = (uintptr_t)orc, chp = (uintptr_t)ch;
+	memcpy(orc + C_OWNER, &chp, sizeof chp); /* alive: an owner, no dead flags */
+	double tt = g_cb_test_t;
+	int nh = g_cb.nrec[SC_TIER_HEAVY];
+	memset(&g_py, 0, sizeof g_py);
+	g_py.on = 1, g_py.streak = 1, g_py.window_s = 0.25f, g_py.open_s = 1.0f, g_py.brk = 1;
+	g_cb_test_t = 100;
+	somvr_df_in in;
+	memset(&in, 0, sizeof in);
+	float pt[3] = { 1, 2, 3 };
+	in.impact = 0.8f, in.ts = 0.4f; /* 400 ms before the impact: a block */
+	py_parry(c, 0, &in, pt, 100);
+	EXPECT(g_py.early == 1 && g_py.parries == 0 && !py_open_now(c, 100.1), "parry: an early contact is a block (early %llu)",
+	       (unsigned long long)g_py.early);
+	in.ts = 0.79f; /* 10 ms before it: the parry */
+	py_parry(c, 0, &in, pt, 100);
+	EXPECT(g_py.parries == 1 && py_open_now(c, 100.5) && py_open_now(c, 101.0) && !py_open_now(c, 101.01) &&
+		       log_has("PARRY parry") && log_has("PARRY open"), "parry: the opening 100..101 s");
+	g_cb.nrec[SC_TIER_HEAVY] = 1;
+	EXPECT(py_hit_kind(c, SC_TIER_LIGHT, 100.4) == 1 && py_hit_kind(c, SC_TIER_HEAVY, 100.5) == 2 &&
+		       py_hit_kind(c, SC_TIER_STAB, 100.6) == 2 && py_hit_kind(c, SC_TIER_HEAVY, 101.5) == 0 && g_py.ripostes == 2,
+	       "parry: open = through, a committed cut or a stab the riposte, after it nothing (ripostes %llu)",
+	       (unsigned long long)g_py.ripostes);
+	EXPECT(py_rx_skip(c, 100.2) && !py_rx_skip(c, 102) && !py_rx_skip(c + 8, 100.2), "parry: no REACT roll while open");
+	uintptr_t pc = (uintptr_t)pcb;
+	pcb[RX_C_NOBLOCK] = 5;
+	uint8_t was = 0;
+	int set = py_through_set(pc, &was);
+	EXPECT(set && was == 5 && pcb[RX_C_NOBLOCK] == PY_TYPE_THROUGH, "parry: Talion's +0x55b for the call (%u)", pcb[RX_C_NOBLOCK]);
+	py_through_back(pc, set, was);
+	EXPECT(pcb[RX_C_NOBLOCK] == 5, "parry: +0x55b back (%u)", pcb[RX_C_NOBLOCK]);
+	g_py.on = 0;
+	in.ts = 0.8f;
+	py_parry(c, 0, &in, pt, 105);
+	EXPECT(g_py.parries == 1 && !py_open_now(c, 105.1), "parry: off = nothing");
+	g_cb.nrec[SC_TIER_HEAVY] = nh;
+	memset(&g_py, 0, sizeof g_py);
+	g_cb_test_t = tt;
+	printf("parry  the window (an early contact a block, 10 ms before the impact a parry), the 1 s opening, through/riposte/none "
+	       "by tier and time, no REACT roll while open, Talion's +0x55b for the call and back, off\n");
+}
+
 static void ff_tests(void)
 {
 	static struct site_spec ss[FFS_N];
@@ -15198,6 +15308,7 @@ int main(int argc, char **argv)
 	uf_tests();     /* SOMVR_HUD_FX: a stand-in thunk (the build 12 HUD round) */
 	vg_tests();     /* SOMVR_VERBS_GLOW: two stand-in thunks (build 13) */
 	ff_tests();     /* SOMVR_FRONT: the wrappers on stand-ins (build 14) */
+	py_tests();     /* SOMVR_PARRY / SOMVR_SHOVE: the window, the opening, the riposte (build 18) */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",
 	       (unsigned long long)atomic_load(&g_st_stereo), (unsigned long long)atomic_load(&g_st_mono),

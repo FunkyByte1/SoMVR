@@ -42,8 +42,10 @@ enum { SOMVR_PRA_NONE = 0, SOMVR_PRA_GO = 1, SOMVR_PRA_BACK = 2, SOMVR_PRA_SPAWN
        SOMVR_PRA_STATUS = 5,
        /* build 17 (the user's ask; re-xr-pipeline.md 56): the bow's arrows and Focus to their max, Talion's health to
         * his max - in the practice area only */
-       SOMVR_PRA_ARROWS = 6, SOMVR_PRA_HEALTH = 7, SOMVR_PRA_N = 8 };
-const char *somvr_pr_action_name(int a);  /* "go", "back", "spawn", "remove", "status", "arrows", "health" ("none") */
+       SOMVR_PRA_ARROWS = 6, SOMVR_PRA_HEALTH = 7,
+       /* build 18 (the user's ask; re-xr-pipeline.md 56.9): an orc SOMVR_PRACTICE_FAR_CM ahead, its back to Talion */
+       SOMVR_PRA_FAR = 8, SOMVR_PRA_N = 9 };
+const char *somvr_pr_action_name(int a);  /* "go", "back", "spawn", "remove", "status", "arrows", "health", "far" */
 typedef struct {
     int action;  /* SOMVR_PRA_* */
     int orc;     /* SOMVR_PRO_* for spawn; -1 = the current type */
@@ -51,7 +53,7 @@ typedef struct {
                   * status ground X Y Z (orc 2): the place whose floor is probed (a test word, nothing moves) */
     float at[3];
 } somvr_pr_req;
-/* the text after "practice ": "go [X Y Z]", "back", "spawn [TYPE]", "remove", "status [nav | look | ground X Y Z]",
+/* the text after "practice ": "go [X Y Z]", "back", "spawn [TYPE]", "far [TYPE]", "remove", "status [nav | look | ground X Y Z]",
  * "arrows" (or "refill arrows"), "health" (or "refill health") (blanks around them ignored); a type that is not one, or
  * not three finite numbers = not taken. 1 = taken (*out set) */
 int somvr_pr_word(const char *w, somvr_pr_req *out);

@@ -784,7 +784,7 @@ static void xt_run(const char *line) {
     case SOMVR_XT_DUMP:
         res = dump_next();
         break;
-    case SOMVR_XT_SIZE: res = vh_resize(c.v[0]); break;
+    case SOMVR_XT_SIZE: res = vh_resize(c.v[0], c.v[1]); break;
     case SOMVR_XT_LUMLOG: res = vh_lumlog((int)c.v[0]); break;
     case SOMVR_XT_OFF: XT.h[h].on = 0, XT.h[h].input = 0, XT.h[h].btn = 0; break;
     case SOMVR_XT_HEAD:

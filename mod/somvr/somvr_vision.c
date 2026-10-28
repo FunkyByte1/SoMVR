@@ -4,7 +4,7 @@
 #include <string.h>
 
 void somvr_vis_cfg_default(somvr_vis_cfg *c) {
-    *c = (somvr_vis_cfg){.wait_s = 0.3f, .settle_s = 1.05f, .tries = 6, .tap_ticks = 2};
+    *c = (somvr_vis_cfg){.wait_s = 0.3f, .settle_s = 1.05f, .tries = 6, .tap_ticks = 2, .relight = 1, .relight_min_s = 1.5f};
 }
 
 void somvr_vis_init(somvr_vis *v, int mode) {
@@ -33,6 +33,7 @@ void somvr_vis_tick(somvr_vis *v, const somvr_vis_cfg *c, int world, int y, int 
     if (flag < 0 || flag > 1) flag = -1;
     /* the flag: a change while our tap waits is the tap's, else the game's own */
     if (flag >= 0 && v->flag >= 0 && flag != v->flag) {
+        double on_for = v->flag_t ? t - v->flag_t : 1e9; /* how long the flag held its last state */
         v->flag_t = t;
         if (v->pending) {
             v->pending = 0, v->n_landed++;
@@ -40,6 +41,15 @@ void somvr_vis_tick(somvr_vis *v, const somvr_vis_cfg *c, int world, int y, int 
         } else {
             v->n_game++;
             o->ev |= SOMVR_VIE_GAME;
+            /* build 18: an orc's hit ends the vision while Y is held for it: on again (after the game's dwell) */
+            if (c->relight && v->mode == SOMVR_VIS_HOLD && v->ours && y && flag == 0 && v->want != 0 && !v->relight_stop) {
+                if (v->relit && on_for < c->relight_min_s) { /* the game will not keep it now: stop, no blinking */
+                    v->relight_stop = 1, v->n_relight_stop++, o->ev |= SOMVR_VIE_RELIGHT_STOP;
+                } else {
+                    wish(v, 1, t);
+                    v->relit = 1, v->n_relight++, o->ev |= SOMVR_VIE_RELIGHT;
+                }
+            }
         }
     }
     v->flag = flag;
@@ -50,7 +60,7 @@ void somvr_vis_tick(somvr_vis *v, const somvr_vis_cfg *c, int world, int y, int 
     int eff = v->want >= 0 ? v->want : v->pending ? v->to : flag; /* the state it is in or going to (-1 unknown) */
     /* the wish */
     if (press) {
-        v->n_press++;
+        v->n_press++, v->relit = 0, v->relight_stop = 0;
         int on = eff != 1; /* hold and tap alike: on unless it is on (or going on) */
         wish(v, on, t);
         if (v->mode == SOMVR_VIS_HOLD) v->ours = on;

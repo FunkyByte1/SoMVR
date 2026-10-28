@@ -409,7 +409,10 @@ static void test_xt(void) {
     somvr_xt_cmd c;
     CHECK(somvr_xt_parse("handsize 1.15", &c) == 1 && c.op == SOMVR_XT_SIZE && fabsf(c.v[0] - 1.15f) < 1e-6f &&
               somvr_xt_parse("handsize 2", &c) == -1 && somvr_xt_parse("handsize", &c) == -1 &&
-              somvr_xt_parse("handsize 1.2 x", &c) == -1 && somvr_xt_parse("lumlog 60", &c) == 1 && c.op == SOMVR_XT_LUMLOG &&
+              somvr_xt_parse("handsize 1.2 x", &c) == -1 && somvr_xt_parse("handsize 1.2", &c) == 1 && c.v[1] == -1 &&
+              somvr_xt_parse("handsize 1.2 3.4", &c) == 1 && fabsf(c.v[1] - 3.4f) < 1e-6f && /* build 18: the grip */
+              somvr_xt_parse("handsize 1.2 0", &c) == 1 && c.v[1] == 0 && somvr_xt_parse("handsize 1.2 7", &c) == -1 &&
+              somvr_xt_parse("handsize 1.2 3 x", &c) == -1 && somvr_xt_parse("lumlog 60", &c) == 1 && c.op == SOMVR_XT_LUMLOG &&
               c.v[0] == 60 && somvr_xt_parse("lumlog 0", &c) == -1,
           "xt: handsize (build 17)");
     CHECK(somvr_xt_parse("dump", &c) == 1 && c.op == SOMVR_XT_DUMP && somvr_xt_parse("# step 2", &c) == 0 &&

@@ -96,6 +96,8 @@ static struct {
     int ghost_was;          /* the last frame's ghosts (bit per hand: the on/off lines) */
     uint64_t n_arrow;       /* build 16: frames drawn with the bow's arrow (vrhands v4) */
     int arrow_was;
+    uint64_t n_string;      /* build 18: frames drawn with the bow's string (vrhands v5) */
+    int string_was;
     uint64_t n_space, n_space_drawn; /* never a void: the loading space's own entries, drawn */
     uint32_t lines, was_hide;
     /* build 11: the world's depth (SOMVR_XR_HANDS_DEPTH=world) */
@@ -155,6 +157,8 @@ static void vh_config(void) {
     VH.cal_bad = p && *p && !somvr_vh_parse_cal(p, &VH.vc);
     p = getenv("SOMVR_XR_HANDS_SIZE"); /* build 17 (re-xr-pipeline.md 61.5): the hand's size about the fist's tube */
     if (!somvr_vh_parse_size(p, &VH.vc)) VH.misc_bad |= 0x40;
+    p = getenv("SOMVR_XR_HANDS_GRIP_CM"); /* build 18 (re-xr-pipeline.md 66.2): the fist closed round the handle */
+    if (!somvr_vh_parse_grip(p, &VH.vc)) VH.misc_bad |= 0x80;
     p = getenv("SOMVR_XR_WATCH");
     VH.watch = p && !strcmp(p, "wrist");
     VH.watch_bad = p && *p && !VH.watch && strcmp(p, "old");
@@ -271,13 +275,13 @@ static void vh_setup(void) {
     vh_destroy();
     vh_config();
     VH.n_frames = VH.n_drawn = VH.n_noentry = VH.n_shown_game = VH.n_occ = 0, VH.lines = 0, VH.have_e = 0;
-    VH.n_ghost = 0, VH.ghost_was = 0, VH.n_arrow = 0, VH.arrow_was = 0;
+    VH.n_ghost = 0, VH.ghost_was = 0, VH.n_arrow = 0, VH.arrow_was = 0, VH.n_string = 0, VH.string_was = 0;
     VH.n_dused = VH.n_dnone = VH.n_dnext = 0, VH.dlines = 0;
     memset(&VH.fs, 0, sizeof VH.fs);
     if (VH.bad) lg("xr: hands: SOMVR_XR_HANDS=%s is not on or off: on", getenv("SOMVR_XR_HANDS"));
     if (VH.cal_bad) lg("xr: hands: SOMVR_XR_HANDS_CAL=%s is not x,y,z,rx,ry,rz: 0", getenv("SOMVR_XR_HANDS_CAL"));
     if (VH.misc_bad) lg("xr: hands: a switch not understood (bits 0x%x: MSAA 1/2/4/8, SCALE 0.5..1, LOOK glove|skin, "
-                        "LIGHT 0.2..3, 0x40 SIZE 0.8..1.5): its default", VH.misc_bad);
+                        "LIGHT 0.2..3, 0x40 SIZE 0.8..1.5, 0x80 GRIP_CM 0|2..5): its default", VH.misc_bad);
     if (VH.watch_bad || VH.panel_bad)
         lg("xr: hands: SOMVR_XR_WATCH(_AT) / SOMVR_XR_PANEL(_AT) not understood (%d / %d): %s, %s", VH.watch_bad,
            VH.panel_bad, VH.watch ? "wrist" : "old", VH.panel ? "palm" : "old");
@@ -342,11 +346,13 @@ static const char *vh_lumlog(int n) {
     VH.lumlog_n = n;
     return "ok";
 }
-/* the test file's "handsize S" (build 17): the model rebuilt at that size (the frames' skinning reads VH.m; X.mx held) */
-static const char *vh_resize(float size) {
+/* the test file's "handsize S [D]" (build 17; build 18: D = SOMVR_XR_HANDS_GRIP_CM, 0 = build 17's fist, < 0 = kept): the
+ * model rebuilt at that size (the frames' skinning reads VH.m; X.mx held) */
+static const char *vh_resize(float size, float grip_cm) {
     if (!VH.model_ok) return "no hand model";
     somvr_vh_cfg c = VH.vc;
     c.size = size;
+    if (grip_cm >= 0) c.grip_d_m = 0.01f * grip_cm;
     somvr_vh_model *m = malloc(sizeof *m);
     if (!m) return "no memory";
     if (somvr_vh_init(m, &c) != 0) {
@@ -355,7 +361,7 @@ static const char *vh_resize(float size) {
     }
     VH.vc = c, VH.m = *m;
     free(m);
-    lg("xr: hands: the hand model at size %.2f (the test file): %s", size, VH.m.why);
+    lg("xr: hands: the hand model at size %.2f, grip %.1f cm (the test file): %s", size, 100 * VH.vc.grip_d_m, VH.m.why);
     return "ok";
 }
 
@@ -924,6 +930,17 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         lg("xr: hands: frame %llu: the arrow %s", (unsigned long long)rec->frame, arrow ? "drawn" : "gone");
     if (!own) VH.arrow_was = arrow;
     VH.n_arrow += arrow;
+    int string = !own && e.string_r > 0.0002f; /* build 18 (v5): the bow's string, our own (seen from both sides) */
+    if (string) { /* (drawn back to the cheek: faded near the eyes as the arrow) */
+        somvr_vh_vert *sv = (somvr_vh_vert *)(void *)hd_slot_string(&VH.hc, s);
+        somvr_vh_string((const float(*)[3])e.string, e.string_r, sv);
+        somvr_vh_arrow_fade(sv, SOMVR_VH_STRING_NV, rec->eye[0].pose.p, rec->eye[1].pose.p, 0.06f, 0.16f);
+    }
+    if (!own && string != VH.string_was && VH.lines++ < 200)
+        lg("xr: hands: frame %llu: the string %s (%.1f mm)", (unsigned long long)rec->frame, string ? "drawn" : "gone",
+           (double)(2000 * e.string_r));
+    if (!own) VH.string_was = string;
+    VH.n_string += string;
     uint32_t nocc = 0;
     static const int occ_slots[] = {XL_VM0, XL_MMAP};
     for (size_t k = 0; k < sizeof occ_slots / sizeof occ_slots[0] && nocc < HD_MAX_OCC; k++)
@@ -947,6 +964,8 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         float g = e.arrow_glow > 1 ? 1 : e.arrow_glow < 0 ? 0 : e.arrow_glow, k = 0.7f + 0.3f * g;
         fr.arrow_a = 1, fr.arrow_base[0] = 0.62f * k, fr.arrow_base[1] = 0.82f * k, fr.arrow_base[2] = 1.0f * k;
     }
+    if (string) /* the string: the arrow's wraith light, a little dimmer */
+        fr.string_a = 1, fr.string_base[0] = 0.55f, fr.string_base[1] = 0.74f, fr.string_base[2] = 0.92f;
     if (VH.look == VH_LOOK_SKIN)
         fr.base[0] = 0.50f, fr.base[1] = 0.33f, fr.base[2] = 0.24f, fr.spec = 0.05f;
     else
@@ -1061,7 +1080,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     if (VH.n_drawn % 1800 == 0) vh_time_log("every 1800 frames");
     if (VH.n_drawn <= 3 || VH.n_drawn % 1800 == 0)
         lg("xr: hands frame %llu: %s%s hand(s), %u occluder(s), the world %s (%llu of %llu; %llu eyes the next frame's), boxes %dx%d / %dx%d of %ux%u, light x%.2f (scene %.4f), curls L %.2f %.2f %.2f %.2f %.2f R %.2f %.2f %.2f %.2f "
-           "%.2f, flags 0x%x (drawn %llu of %llu stereo frames; no entry %llu, the game's hands %llu; with a ghost %llu, an arrow %llu)",
+           "%.2f, flags 0x%x (drawn %llu of %llu stereo frames; no entry %llu, the game's hands %llu; with a ghost %llu, an arrow %llu, a string %llu)",
            (unsigned long long)rec->frame, hands[0] ? "L" : "", hands[1] ? "R" : "", nocc,
            !VH.world ? "off" : world ? "hides them" : "not this frame", (unsigned long long)VH.n_dused,
            (unsigned long long)(VH.n_dused + VH.n_dnone), (unsigned long long)VH.n_dnext, fr.box[0][2] - fr.box[0][0],
@@ -1071,7 +1090,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
            e.curl[0][2], e.curl[0][3], e.curl[0][4], e.curl[1][0], e.curl[1][1], e.curl[1][2], e.curl[1][3],
            e.curl[1][4], e.flags, (unsigned long long)VH.n_drawn, (unsigned long long)VH.n_frames,
            (unsigned long long)VH.n_noentry, (unsigned long long)VH.n_shown_game, (unsigned long long)VH.n_ghost,
-           (unsigned long long)VH.n_arrow);
+           (unsigned long long)VH.n_arrow, (unsigned long long)VH.n_string);
 }
 
 static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2], xr_comp *c,

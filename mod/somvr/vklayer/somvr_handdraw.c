@@ -216,14 +216,14 @@ int hd_create(hd_ctx *c, VkDevice dev, const hd_vk *f, const VkPhysicalDeviceMem
     if ((r = pipeline(c, somvr_hands_frag_spv, sizeof somvr_hands_frag_spv, c->pl, NULL, &c->pipe)) != VK_SUCCESS)
         return fail(c, "the pipeline", r);
     /* the buffers: the vertices (HD_NSLOT slots), the indices (right, left, the occluders' quads) */
-    c->slot_bytes = (VkDeviceSize)(4 * nv + 4 * HD_MAX_OCC + SOMVR_VH_ARROW_NV) * sizeof(hd_vert); /* build 13: + the two
-                                                                                          * ghosts; build 16: the arrow */
+    c->slot_bytes = (VkDeviceSize)(4 * nv + 4 * HD_MAX_OCC + SOMVR_VH_ARROW_NV + SOMVR_VH_STRING_NV) * sizeof(hd_vert);
+    /* (build 13: + the two ghosts; build 16: the arrow; build 18: the string) */
     c->slot_bytes = (c->slot_bytes + 255) & ~(VkDeviceSize)255;
     void *map = NULL;
     if (buffer(c, c->slot_bytes * HD_NSLOT, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &c->vb, &c->vb_mem, &map)) return -1;
     c->vb_map = map;
     memset(c->vb_map, 0, (size_t)(c->slot_bytes * HD_NSLOT));
-    if (buffer(c, (VkDeviceSize)(2 * ni + HD_OCC_IDX * HD_MAX_OCC + SOMVR_VH_ARROW_NI) * sizeof(uint16_t),
+    if (buffer(c, (VkDeviceSize)(2 * ni + HD_OCC_IDX * HD_MAX_OCC + SOMVR_VH_ARROW_NI + SOMVR_VH_STRING_NI) * sizeof(uint16_t),
                VK_BUFFER_USAGE_INDEX_BUFFER_BIT, &c->ib, &c->ib_mem, &map))
         return -1;
     uint16_t *ix = map;
@@ -234,6 +234,8 @@ int hd_create(hd_ctx *c, VkDevice dev, const hd_vk *f, const VkPhysicalDeviceMem
         memcpy(ix + 2 * ni + HD_OCC_IDX * q, quad, sizeof quad);
     }
     memcpy(ix + 2 * ni + HD_OCC_IDX * HD_MAX_OCC, somvr_vh_arrow_indices(), SOMVR_VH_ARROW_NI * sizeof *ix);
+    memcpy(ix + 2 * ni + HD_OCC_IDX * HD_MAX_OCC + SOMVR_VH_ARROW_NI, somvr_vh_string_indices(),
+           SOMVR_VH_STRING_NI * sizeof *ix);
     snprintf(c->why, sizeof c->why, "%ux%u per eye, %ux MSAA, format %d, %.1f MB of images", w, h, (unsigned)c->samples,
              (int)fmt, (double)c->vram / (1024.0 * 1024.0));
     return 0;
@@ -341,6 +343,9 @@ hd_vert *hd_slot_ghost(hd_ctx *c, uint32_t s, int h) { return hd_slot_verts(c, s
 #define HD_ARROW_V(c) (4 * (c)->nv + 4 * HD_MAX_OCC) /* build 16: the arrow's first vertex in a slot */
 #define HD_ARROW_I(c) (2 * (c)->ni + HD_OCC_IDX * HD_MAX_OCC) /* ... and its first index */
 hd_vert *hd_slot_arrow(hd_ctx *c, uint32_t s) { return hd_slot_verts(c, s) + HD_ARROW_V(c); }
+#define HD_STRING_V(c) (HD_ARROW_V(c) + SOMVR_VH_ARROW_NV) /* build 18: the string's first vertex in a slot */
+#define HD_STRING_I(c) (HD_ARROW_I(c) + SOMVR_VH_ARROW_NI) /* ... and its first index */
+hd_vert *hd_slot_string(hd_ctx *c, uint32_t s) { return hd_slot_verts(c, s) + HD_STRING_V(c); }
 
 void hd_quad(hd_vert v[4], const float o[3], const float hx[3], const float hy[3]) {
     static const float sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
@@ -456,10 +461,13 @@ void hd_record(hd_ctx *c, VkCommandBuffer cmd, uint32_t slot, hd_frame *fr, VkIm
         int32_t *b = fr->box[e];
         int got = 0;
         b[0] = b[1] = b[2] = b[3] = 0;
-        for (int h = 0; h < 5 && got < 2; h++) { /* the union of the drawn hands' boxes (2, 3: the ghosts; 4: the arrow) */
+        for (int h = 0; h < 6 && got < 2; h++) { /* the union of the drawn hands' boxes (2, 3: the ghosts; 4: the arrow;
+                                                  * 5: the string) */
             int32_t hb[4];
-            if (h < 2 ? !fr->hand[h] : h < 4 ? !(fr->ghost_a[h - 2] > 0) : !(fr->arrow_a > 0)) continue;
-            int r = h == 4 ? hd_box(fr->vp[e], verts + HD_ARROW_V(c), SOMVR_VH_ARROW_NV, c->w, c->h, 4, hb)
+            if (h < 2 ? !fr->hand[h] : h < 4 ? !(fr->ghost_a[h - 2] > 0) : h == 4 ? !(fr->arrow_a > 0) : !(fr->string_a > 0))
+                continue;
+            int r = h == 5 ? hd_box(fr->vp[e], verts + HD_STRING_V(c), SOMVR_VH_STRING_NV, c->w, c->h, 4, hb)
+                  : h == 4 ? hd_box(fr->vp[e], verts + HD_ARROW_V(c), SOMVR_VH_ARROW_NV, c->w, c->h, 4, hb)
                            : hd_box(fr->vp[e], verts + (h < 2 ? (size_t)h * c->nv : HD_GHOST_V(c, h - 2)), c->nv, c->w,
                                     c->h, 4, hb);
             if (!r) continue;
@@ -542,6 +550,16 @@ void hd_record(hd_ctx *c, VkCommandBuffer cmd, uint32_t slot, hd_frame *fr, VkIm
             pc.light[3] = fr->arrow_a > 1 ? 1 : fr->arrow_a;
             f->CmdPushConstants(cmd, c->pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
             f->CmdDrawIndexed(cmd, SOMVR_VH_ARROW_NI, 1, HD_ARROW_I(c), (int32_t)HD_ARROW_V(c), 0);
+        }
+        /* build 18: the bow's string, the same light (the plain pipeline: seen from both sides, the string hand hides it) */
+        if (fr->string_a > 0) {
+            if (c->pipe_w && !(fr->arrow_a > 0) && !(fr->ghost_a[0] > 0 || fr->ghost_a[1] > 0))
+                f->CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, c->pipe);
+            pc.base[0] = fr->string_base[0], pc.base[1] = fr->string_base[1], pc.base[2] = fr->string_base[2], pc.base[3] = 1;
+            pc.params[0] = 0.45f * fr->key, pc.params[1] = 0.9f, pc.params[2] = 0.8f, pc.params[3] = 0.15f;
+            pc.light[3] = fr->string_a > 1 ? 1 : fr->string_a;
+            f->CmdPushConstants(cmd, c->pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
+            f->CmdDrawIndexed(cmd, SOMVR_VH_STRING_NI, 1, HD_STRING_I(c), (int32_t)HD_STRING_V(c), 0);
         }
         f->CmdEndRenderPass(cmd);
         VkImageSubresourceLayers sub = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};

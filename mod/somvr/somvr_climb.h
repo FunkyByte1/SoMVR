@@ -51,6 +51,13 @@
  *            the top under the root within ground_cm: he stands on it); the edge blocking it lifts by the blocked part
  *            (the edge step, at most 50 cm in the glide), then the hang. No fling from the ground (ground_cm), from
  *            lost tracking or while a hand still holds.
+ *            Build 18 (fling_up = 1; the user's build 17b session: launches capped at 500 cm/s with up to 324 of it
+ *            toward the wall, 21-74 cm arcs, most stopped early as the face held the push into it): up first - the cap
+ *            (fling_max) is on the up part alone; mid-face the part toward the wall is kept to fling_tw x the up part and
+ *            fling_wall_up of the rest is turned up the face (a pull down and back slings him up the wall, never out);
+ *            at a top all of it is kept (the glide over it); sideways x fling_side, at most fling_side_max x up; the
+ *            threshold (fling_min) on that up part; in flight a push into the face the face holds is dropped (the
+ *            rise goes on along it).
  *   descent  (descent = 1; build 13, re-xr-pipeline.md 40: a forge tower top's edge had no way down) the way over an edge
  *            and down: (1) a press also casts straight down when not climbing (a hand on a top from above) and along
  *            the wall (while climbing the last hold's `toward`; else from the hand toward the head, level: the face
@@ -367,6 +374,10 @@ typedef struct {
     float stand_reach_cm;    /* ... the stick walks him when a floor is within this toward the top (35: the capsule) */
     float stand_walk_cms;    /* ... at most this fast (150 cm/s, the stick at full tilt) */
     int topout;              /* build 17 (SOMVR_CLIMB_TOPOUT=through, 0 off): a push held at a top goes through 1:1 */
+    int fling_up;            /* build 18 (SOMVR_CLIMB_FLING_UP, 0 off): the fling up first (see fling) */
+    float fling_tw;          /* ... mid-face the part toward the wall kept at most this x the up part (0.25) */
+    float fling_wall_up;     /* ... and this part of the rest turned up the face (0.5) */
+    float fling_side_max;    /* ... the sideways part at most this x the up part (0.6; build 13's rule: 0.5) */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -377,6 +388,7 @@ typedef struct {
     float dist;     /* cm from the ray's start */
     sv_vec3 point;  /* the hit, world cm */
     int wet;        /* descent: a water / liquid surface (somvr_climb_surface_wet) */
+    int chr;        /* build 18: a character's body (an orc; somvr.c's cl_char_hit): the wraith step's ray goes on through */
 } somvr_climb_hit;
 /* the ray callback: from (world cm), dir (unit), len (cm) -> *out; returns 1 if the cast ran (0: no answer, as no hit) */
 typedef int (*somvr_climb_ray_fn)(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, somvr_climb_hit *out);
@@ -588,6 +600,8 @@ typedef struct {
     float to_top_y;     /* ... the top it is at (the push's, or the driving hold's own) */
     double to_all_cm;
     uint64_t to_ons, to_frames, to_refused;
+    float fl_wallup;    /* fling_up: the last launch's push into the wall turned up (cm/s) */
+    uint64_t fl_into_cut; /* fling_up: flights whose push into the face was dropped once the face took it */
     /* drop mark (build 17) */
     int dm;             /* 0 none, 1 A held (choosing), 2 a tap's ring until dm_t0 + dm_show_s */
     int dm_climb;       /* the choice began while climbing (else on foot) */
@@ -772,5 +786,42 @@ typedef struct {
 /* one frame: t (s), ok = the rays answered (0: no change of the target, the level eases out), gap (cm) */
 void somvr_headrock_step(somvr_headrock *s, const somvr_headrock_cfg *c, double t, float dt, int ok, float gap,
                          somvr_headrock_out *o);
+
+/* ==== SOMVR_HEAD_TETHER (build 18, docs/re-xr-pipeline.md 69) ===============================================
+ * The tracked head's level offset from the rig's origin (somvr_rig_offset: what SOMVR_FOLLOW asks Talion's body to
+ * close, 20 cm) when the follow cannot take him there - an edge, a wall, a blocked path: past start_cm the view fades
+ * with the distance, black at black_cm; past start_cm for hold_s = to black too; black for back_s with the head still
+ * past start_cm = back: somvr.c re-latches the rig's origin (the view at Talion's eyes, under the black), then it fades
+ * in. HL:A's head-through-a-wall fade, for the head off the body. */
+typedef struct {
+    float start_cm; /* the fade starts this far from the body (50: the follow keeps 20) */
+    float black_cm; /* ... black this far (90) */
+    float hold_s;   /* past start_cm this long = to black (1.0; 0 = never) */
+    float out_s;    /* to black in this long (0.15) */
+    float in_s;     /* back in this long (0.3) */
+    float back_s;   /* black this long = back to Talion's eyes (0.3; 0 = never) */
+} somvr_tether_cfg;
+void somvr_tether_cfg_default(somvr_tether_cfg *c);
+typedef struct {
+    float level;    /* the fade now, 0..1 */
+    double over_t;  /* past start_cm since (< 0: not) */
+    double black_t; /* black since (< 0: not black) */
+    int backed;     /* back given in this black (again only after the level fell under 0.5) */
+    int in;         /* an episode: past start_cm, until the level is back to 0 */
+    int held;       /* this episode went to black by hold_s */
+    uint64_t frames, faded, black, episodes, backs, holds;
+    float max_cm;   /* the episode's farthest (logs) */
+} somvr_tether;
+void somvr_tether_init(somvr_tether *s);
+typedef struct {
+    float level;    /* the fade for this frame, 0..1 */
+    int back;       /* re-latch now (the view back to Talion's eyes) */
+    int first;      /* an episode's first frame */
+    int held;       /* hold_s passed: to black now */
+    int ended;      /* an episode ended (the level back to 0) */
+} somvr_tether_out;
+/* one frame: ok = measured (0: climbing, a hold, a menu, ...: the level eases out), off_cm = the head's offset */
+void somvr_tether_step(somvr_tether *s, const somvr_tether_cfg *c, double t, float dt, int ok, float off_cm,
+                       somvr_tether_out *o);
 
 #endif

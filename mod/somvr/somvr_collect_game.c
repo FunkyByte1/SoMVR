@@ -25,6 +25,18 @@
  *     thresholds +0x40/+0x44), the targeting's focus (+0x90), its measure (+0x3a0) and flag (+0x566): the event
  *     CCharacter.OnVisionModeLookAt fires when the focus is a listed object and the measure is within the threshold.
  *
+ * SOMVR_GLYPH=head (build 18 candidate, docs/re-xr-pipeline.md 45.13): the Ithildin collected by looking at it. The
+ *   glyph's LookAtTrigger script only marks it spotted (the Nurn objres' Lua: GlyphLocation_SO.Spotted, the item's
+ *   SetLookAtEnabled); the flat game's collection is a combat attack ('Activate_GlyphCollectable' on an 'AutoNode'
+ *   target) that never comes in VR, though the item passes the targeting's rules (run 20261027-191043: 'AutoNode'
+ *   VALIDATED at 5.6 m). CO_TGEOM_A/B (the two calls of FUN_0274ed10, the player's targeting candidates' geometry,
+ *   passed on) follow the InventoryItemUI candidates within SOMVR_GLYPH_M of Talion; a glyph's item ('Lore_Glyph_*')
+ *   whose LookAtTrigger (within 3 m) has fired - the game's own look test with our head as the camera copy
+ *   (SOMVR_FRONT_CAMCOPY=head) and the wraith vision on - is collected at the next input tick by CO_COLLECT, the
+ *   game's InventoryItemUI Collect (Lua's item:Collect(character)): the record into the inventory, OnCollect, the
+ *   game's own Ithildin page. No attack, no animation, no camera: the view stays ours. log: the item candidates and
+ *   their target rules' answers (CO_TSCORE_1..6 = FUN_00a941b0's six calls, passed on) logged, nothing collected.
+ *
  * SOMVR_TEXT_BUTTONS=FROM:TO[,FROM:TO...] (default unset = nothing patched; the headset's 122:119): the game's UI
  *   texts draw an action's button as the flat pad's binding of that command (`{Action}` tokens, FUN_00a15c20). The
  *   wraith vision is CombatSecondary01 122 = the pad's LB ("Enter the Wraith World (LB) ..."), but in VR it is held
@@ -59,7 +71,12 @@
  * [rsi+0xd0]; ret`: an object's property table is at +0xd0 (re-xr-pipeline.md 45.9); SOMVR_TEXT_BUTTONS' patched call
  * CO_TXT_ICON = 0xa15f6f in FUN_00a15c20 (the UI text's ReplaceActionsWithDevices: a `{Action}` token's command, from
  * FUN_025aa700, at [rsp+0x3c] -> FUN_00aaaf50(the player's input, &command) = the binding's button-icon record, whose
- * TextFieldGlyphReplacement is put in the text; re-xr-pipeline.md 45.10). Order = COS_*) */
+ * TextFieldGlyphReplacement is put in the text; re-xr-pipeline.md 45.10); SOMVR_GLYPH=head's patched calls CO_TGEOM_A/B
+ * = 0xa9ca12 (FUN_00a9c8e0) and 0xa9cf2e (FUN_00a9ce70) of FUN_0274ed10(candidate, targeting context), and the
+ * logged calls CO_TSCORE_1..6 of FUN_00a941b0(target record, context, candidate, float *score) -> bool: 0xa98942,
+ * 0xa98a3c (FUN_00a98850), 0xa9865d, 0xa987b7 (FUN_00a98030), 0xa96310, 0xa9641c (FUN_00a961f0); re-xr-pipeline.md
+ * 45.13); the called CO_COLLECT = FUN_02781370(item, character): InventoryItemUI's Collect (Lua's
+ * `item:Collect(c)`, FUN_023f17a0): +0x68f set, the record into the character's inventory, OnCollect. Order = COS_*) */
 static const struct site_spec g_co_sites_game[] = {
 SITE("CO_LAT_TICK", K_VSLOT, 0x398ef98, 0x398ef90, "60 68 8c 00 00 00 00 00 d0 bb 79 02 00 00 00 00", 0x279bbd0, "53 48 89 fb 48 83 ec 30 80 bf d2 00 00 00 00 74"),
 SITE("CO_VLOOK", K_CALL, 0x274f5fe, 0x274f5f3, "49 8b 45 00 48 8b b8 f0 02 00 00 e8 9d 37 38 fe", 0xad2da0, "80 7f 48 00 75 0a c3 66 0f 1f 84 00 00 00 00 00"),
@@ -67,9 +84,19 @@ SITE("CO_LAT_SEE", K_ENTRY, 0x2799e90, 0x2799e90, "48 85 f6 74 1e f6 86 78 01 00
 SITE("CO_LAT_VIEW", K_ENTRY, 0x29a8130, 0x29a8130, "48 83 ec 38 48 8b 86 cc 0b 00 00 f3 0f 10 86 c8", 0x29a8130, "48 83 ec 38 48 8b 86 cc 0b 00 00 f3 0f 10"),
 SITE("CO_OBJ_PROPS", K_VSLOT, 0x3453150, 0x3453140, "b0 70 8c 00 00 00 00 00 d0 74 8c 00 00 00 00 00 d0 6a 8c 00 00 00 00 00", 0x8c6ad0, "48 8b 86 d0 00 00 00 c3"),
 SITE("CO_TXT_ICON", K_CALL, 0xa15f6f, 0xa15f65, "48 8d 74 24 3c 44 89 54 24 18 e8 dc 4f 09 00", 0xaaaf50, "48 8b 4f 60 48 8b 47 68 8b 16 48 29 c8 48 c1 f8"),
+SITE("CO_TGEOM_A", K_CALL, 0xa9ca12, 0xa9ca07, "02 00 00 48 8b 74 24 08 4c 89 ff e8 f9 22 cb 01", 0x274ed10, "48 8b 4f 30 48 85 c9 0f 84 53 0a 00 00 41 57 41"),
+SITE("CO_TGEOM_B", K_CALL, 0xa9cf2e, 0xa9cf23, "b8 f8 02 00 00 48 89 ee 4c 89 ff e8 dd 1d cb 01", 0x274ed10, "48 8b 4f 30 48 85 c9 0f 84 53 0a 00 00 41 57 41"),
+SITE("CO_TSCORE_1", K_CALL, 0xa98942, 0xa98937, "4c 89 f2 c7 44 24 1c 00 00 00 00 e8 69 b8 ff ff", 0xa941b0, "41 57 41 56 49 89 f6 41 55 49 89 cd 41 54 49 89"),
+SITE("CO_TSCORE_2", K_CALL, 0xa98a3c, 0xa98a31, "4c 89 f2 c7 44 24 1c 00 00 00 00 e8 6f b7 ff ff", 0xa941b0, "41 57 41 56 49 89 f6 41 55 49 89 cd 41 54 49 89"),
+SITE("CO_TSCORE_3", K_CALL, 0xa9865d, 0xa98652, "48 89 ea c7 44 24 1c 00 00 00 00 e8 4e bb ff ff", 0xa941b0, "41 57 41 56 49 89 f6 41 55 49 89 cd 41 54 49 89"),
+SITE("CO_TSCORE_4", K_CALL, 0xa987b7, 0xa987ac, "48 89 ea c7 44 24 1c 00 00 00 00 e8 f4 b9 ff ff", 0xa941b0, "41 57 41 56 49 89 f6 41 55 49 89 cd 41 54 49 89"),
+SITE("CO_TSCORE_5", K_CALL, 0xa96310, 0xa96305, "4c 89 ea c7 44 24 0c 00 00 00 00 e8 9b de ff ff", 0xa941b0, "41 57 41 56 49 89 f6 41 55 49 89 cd 41 54 49 89"),
+SITE("CO_TSCORE_6", K_CALL, 0xa9641c, 0xa96411, "4c 89 ea c7 44 24 0c 00 00 00 00 e8 8f dd ff ff", 0xa941b0, "41 57 41 56 49 89 f6 41 55 49 89 cd 41 54 49 89"),
+SITE("CO_COLLECT", K_ENTRY, 0x2781370, 0x2781370, "48 85 f6 0f 84 87 00 00 00 80 bf 8f 06 00 00 00", 0x2781370, "48 85 f6 0f 84 87 00 00 00 80 bf 8f 06 00"),
 };
 /* COLLECT_SITES_END */
-enum { COS_LAT_TICK, COS_VLOOK, COS_LAT_SEE, COS_LAT_VIEW, COS_OBJ_PROPS, COS_TXT_ICON, COS_N };
+enum { COS_LAT_TICK, COS_VLOOK, COS_LAT_SEE, COS_LAT_VIEW, COS_OBJ_PROPS, COS_TXT_ICON, COS_TGEOM_A, COS_TGEOM_B,
+       COS_TSCORE_1, COS_TSCORE_6 = COS_TSCORE_1 + 5, COS_COLLECT, COS_N };
 _Static_assert(sizeof g_co_sites_game / sizeof g_co_sites_game[0] == COS_N, "collect sites");
 static const struct site_spec *g_co_sites = g_co_sites_game; /* selftest: stand-ins */
 #define CO_PLAYERS 0x4c47020u /* the player list (a std::vector of CPlayerObj*; FUN_0279b7a0 walks it) */
@@ -86,14 +113,28 @@ static const struct site_spec *g_co_sites = g_co_sites_game; /* selftest: stand-
 #define CO_TRIGS 48 /* triggers followed (logs) */
 #define CO_RECS 32  /* hint records dumped / their keys cached */
 #define CO_KEEP 8   /* SOMVR_HINTS_KEEP prefixes */
+#define CO_C_OBJ 0x68        /* a targeting candidate (CombatHost+0x2f8): its object (FUN_00a941b0's name) */
+#define CO_C_ONSCREEN 0xb9   /* FUN_0274ed10: FUN_00a60920's on-screen answer */
+#define CO_ITEM_CLASS 0x4c464e0u /* InventoryItemUI's class in an object's class chain *(obj+0x48) (FUN_023f1bb0) */
+#define CO_ITEM_LOOKAT 0x68d /* InventoryItemUI: SetLookAtEnabled's byte (FUN_02781350) */
+#define CO_ITEM_TAKEN 0x68f  /* InventoryItemUI: collected (FUN_02781370, vf_31) */
+#define CO_ITEM_REC 0x5c8    /* InventoryItemUI: its inventory record (FUN_02781370) */
+#define CO_ITEMS 16          /* item candidates followed (logs) */
+#define CO_CHAR_CLASS 0x4c41500u /* CCharacter's class in an object's class chain (FUN_02781370's check) */
+#define CO_SEEN_CM 300.f     /* a glyph's LookAtTrigger within this of its item (round 2: 1 m) */
 
 typedef uint32_t (*co_tick_fn)(uintptr_t trig);
 typedef void (*co_vlook_fn)(uintptr_t list, uintptr_t targ);
 typedef uintptr_t (*co_icon_fn)(uintptr_t input, uint32_t *cmd);
 #define CO_TXMAP 8
-struct co_trig { uintptr_t t; int state, d0, d2, see, view; double next; uint32_t id; };
+struct co_trig { uintptr_t t; int state, d0, d2, see, view; double next; uint32_t id; float pos[3]; };
 typedef int (*co_see_fn)(uintptr_t trig, uintptr_t player);
 typedef int (*co_view_fn)(const float *pos, uintptr_t player);
+typedef void (*co_geom_fn)(uintptr_t cand, uintptr_t ctx);
+typedef uint64_t (*co_score_fn)(uintptr_t rec, uintptr_t ctx, uintptr_t cand, float *score);
+typedef void (*co_collect_fn)(uintptr_t item, uintptr_t character);
+struct co_item { uintptr_t obj, item; double next; uint8_t onscreen, lookat; uint32_t id; char rec[48]; uint64_t rv;
+		 char name[48]; int glyph; };
 
 static struct {
 	/* SOMVR_INSPECT */
@@ -111,7 +152,7 @@ static struct {
 	uint64_t n_flats, n_flat_frames, n_far_frames, n_paused_frames;
 	uint32_t ins_lines;
 	/* SOMVR_GLYPH */
-	int gl_mode;        /* 0 off, 1 log */
+	int gl_mode;        /* 0 off, 1 log, 2 head */
 	float gl_far_cm;
 	int ok[COS_N];
 	int on_tick, on_vlook;
@@ -135,6 +176,16 @@ static struct {
 	_Atomic int camhead; /* the word: 0 off, 1 pos+rot, 2 + the second rotation */
 	uint64_t n_camhead;
 	int camhead_logged;
+	/* SOMVR_GLYPH=head / log: the item candidates of the player's targeting */
+	int on_geom, on_score;
+	uint64_t n_geom_items, n_scores, n_valid;
+	uint32_t it_lines, next_item;
+	uint32_t sc_lines;
+	uintptr_t pend_item, pend_obj; /* a spotted glyph's item: collected at the next input tick */
+	uint32_t pend_id;
+	uint64_t n_collects;
+	struct co_item it[CO_ITEMS];
+	int nit;
 	/* SOMVR_TEXT_BUTTONS */
 	int tx_n, on_txt;
 	uint32_t tx_from[CO_TXMAP], tx_to[CO_TXMAP];
@@ -236,8 +287,10 @@ static int co_pre(uintptr_t pl)
 static int co_flat_now(void) { return g_co.ins_mode == 2 && g_co.flat; }
 
 /* the input tick (game thread), after the crouch's: the test word `collect camstick X Y MS` - the pad's right stick */
+static void co_collect_tick(void); /* SOMVR_GLYPH=head: a spotted glyph's collect */
 static void co_tick(sc_tick_out *o, double t)
 {
+	co_collect_tick();
 	uint32_t q = atomic_load_explicit(&g_co.cs_seq, memory_order_acquire);
 	if (q != g_co.cs_seen) {
 		uint32_t bx = atomic_load(&g_co.cs_x), by = atomic_load(&g_co.cs_y);
@@ -339,6 +392,7 @@ __attribute__((used)) uint32_t somvr_w_colat(uintptr_t trig)
 		r->next = t + 3.0;
 	}
 	r->state = st, r->d0 = d0, r->d2 = d2, r->see = see, r->view = view;
+	memcpy(r->pos, pos, sizeof r->pos);
 	return rv;
 }
 
@@ -383,6 +437,143 @@ __attribute__((used)) void somvr_w_covlook(uintptr_t list, uintptr_t targ)
 	}
 	g_co.vl_last_on = on;
 	((co_vlook_fn)g_co_sites[COS_VLOOK].target)(list, targ);
+}
+
+/* ---- SOMVR_GLYPH=head / log: the player's targeting of a collectible item (the game thread, PlayerCombat's update) ---- */
+/* an object's InventoryItemUI (its class chain *(obj+0x48) holds CO_ITEM_CLASS; the item at +0x38), else 0 */
+static uintptr_t co_item_of(uintptr_t obj)
+{
+	uintptr_t h = obj ? peek_ptr(obj + 0x48) : 0, c = h ? peek_ptr(h) : 0;
+	for (int i = 0; c && i < 16; i++, c = peek_ptr(c + 8))
+		if (c == CO_ITEM_CLASS)
+			return peek_ptr(obj + 0x38);
+	return 0;
+}
+
+/* the item candidate's log record (followed by object), or NULL when full */
+static struct co_item *co_item_rec(uintptr_t obj, uintptr_t item)
+{
+	for (int i = 0; i < g_co.nit; i++)
+		if (g_co.it[i].obj == obj)
+			return &g_co.it[i];
+	if (g_co.nit == CO_ITEMS)
+		return NULL;
+	struct co_item *r = &g_co.it[g_co.nit++];
+	memset(r, 0, sizeof *r);
+	r->obj = obj, r->item = item, r->id = ++g_co.next_item, r->onscreen = 0xff, r->rv = ~0ull;
+	char nm[48];
+	rx_rec_name(peek_ptr(item + CO_ITEM_REC), nm, sizeof nm);
+	snprintf(r->name, sizeof r->name, "%s", nm);
+	r->glyph = !strncmp(nm, "Lore_Glyph_", 11); /* the Ithildin's inventory records (the game database) */
+	float op[3] = { 0, 0, 0 };
+	peek(obj + OBJ_POS, op, sizeof op);
+	if (g_co.it_lines++ < 300)
+		logf_("GLYPH item #%u: a targeting candidate InventoryItemUI %#lx (object %#lx at %.0f %.0f %.0f), its record '%s'",
+		      r->id, (unsigned long)item, (unsigned long)obj, op[0], op[1], op[2], nm);
+	return r;
+}
+
+/* CO_TGEOM_A/B: FUN_0274ed10(candidate, context) - the candidate's distance, angles and on-screen answer */
+__attribute__((used)) void somvr_w_cogeom(uintptr_t cand, uintptr_t ctx)
+{
+	((co_geom_fn)g_co_sites[COS_TGEOM_A].target)(cand, ctx);
+	uintptr_t obj = cand ? peek_ptr(cand + CO_C_OBJ) : 0, item = co_item_of(obj), p = 0;
+	uint8_t taken = 1, lookat = 0;
+	int vis = -1;
+	float me[3], op[3];
+	if (item && peek(item + CO_ITEM_TAKEN, &taken, 1) && !taken && (!co_player(&p, me) ||
+	    !peek(obj + OBJ_POS, op, sizeof op) || dist3(me, op) > g_co.gl_far_cm))
+		item = 0; /* only the items near Talion (SOMVR_GLYPH_M): the targeting also weighs artifacts 800 m away */
+	if (item && !taken) {
+		g_co.n_geom_items++;
+		peek(item + CO_ITEM_LOOKAT, &lookat, 1);
+		vis = co_vision(p);
+	}
+	if (!item || taken)
+		return;
+	struct co_item *r = co_item_rec(obj, item);
+	uint8_t on = 0;
+	float f[8] = { 0 };
+	peek(cand + CO_C_ONSCREEN, &on, 1), peek(cand + 0x80, f, sizeof f);
+	double t = mono();
+	if (r && (on != r->onscreen || lookat != r->lookat || t >= r->next) && g_co.it_lines < 300) {
+		g_co.it_lines++;
+		logf_("GLYPH t=%.3f item #%u geometry: on screen %u (was %d), distance %.1f m, angles %.1f / %.1f deg; "
+		      "look-at enabled %u; vision %d; %s", t, r->id, on, r->onscreen == 0xff ? -1 : r->onscreen, f[0] * 0.01f, f[1],
+		      f[5], lookat, vis, g_co.gl_mode == 2 ? "head" : "log");
+		r->onscreen = on, r->lookat = lookat, r->next = t + 3.0;
+	}
+	/* head: a glyph whose LookAtTrigger has fired with our head (the game's own look test, the vision on) is collected
+	 * at the next input tick (co_collect_tick); the item's look-at byte alone is not used (its start value is data) */
+	if (g_co.gl_mode == 2 && r && r->glyph && vis == 1 && !g_co.pend_item && g_co.ok[COS_COLLECT]) {
+		int seen = 0;
+		for (int i = 0; i < g_co.ntr && !seen; i++)
+			seen = g_co.tr[i].state >= 2 && dist3(g_co.tr[i].pos, op) < CO_SEEN_CM;
+		if (seen)
+			g_co.pend_item = item, g_co.pend_obj = obj, g_co.pend_id = r->id;
+	}
+}
+
+/* the input tick (game thread, outside the targeting's loops): a spotted glyph collected the way the game's scripts
+ * collect an item (Lua's InventoryItemUI:Collect(character) = FUN_02781370): no attack, no animation, no camera */
+static void co_collect_tick(void)
+{
+	uintptr_t item = g_co.pend_item, obj = g_co.pend_obj, p, ch;
+	if (!item)
+		return;
+	g_co.pend_item = 0;
+	float me[3];
+	uint8_t taken = 1;
+	int ok = co_item_of(obj) == item && peek(item + CO_ITEM_TAKEN, &taken, 1) && !taken && co_player(&p, me) &&
+		 co_vision(p) == 1 && (ch = peek_ptr(p + 8)) != 0;
+	int isch = 0;
+	if (ok) { /* FUN_02781370 takes the character whose object's class chain holds CCharacter */
+		uintptr_t h = peek_ptr(ch + 0x48), c = h ? peek_ptr(h) : 0;
+		for (int i = 0; c && i < 16 && !isch; i++, c = peek_ptr(c + 8))
+			isch = c == CO_CHAR_CLASS;
+	}
+	if (!ok || !isch) {
+		if (g_co.it_lines++ < 300)
+			logf_("GLYPH collect: item #%u %#lx not collected (%s)", g_co.pend_id, (unsigned long)item,
+			      !ok ? "taken, gone, or the vision off" : "the player's object has no CCharacter class");
+		return;
+	}
+	((co_collect_fn)g_co_sites[COS_COLLECT].target)(item, p);
+	peek(item + CO_ITEM_TAKEN, &taken, 1);
+	g_co.n_collects += taken != 0;
+	char nm[48];
+	rx_rec_name(peek_ptr(item + CO_ITEM_REC), nm, sizeof nm);
+	logf_("GLYPH collect t=%.3f: item #%u %#lx '%s' collected by our look (the trigger fired with our head, the vision "
+	      "on): InventoryItemUI Collect(player %#lx) -> taken %u", mono(), g_co.pend_id, (unsigned long)item, nm,
+	      (unsigned long)p, taken);
+}
+
+/* CO_TSCORE_1..6: FUN_00a941b0(target record, context, candidate, &score) - a target record's rules (logged, passed) */
+__attribute__((used)) uint64_t somvr_w_coscore(uintptr_t rec, uintptr_t ctx, uintptr_t cand, float *score)
+{
+	uint64_t rv = ((co_score_fn)g_co_sites[COS_TSCORE_1].target)(rec, ctx, cand, score);
+	uintptr_t obj = cand ? peek_ptr(cand + CO_C_OBJ) : 0, item = co_item_of(obj), p;
+	float me[3], op[3];
+	if (!item || !co_player(&p, me) || !peek(obj + OBJ_POS, op, sizeof op) || dist3(me, op) > g_co.gl_far_cm)
+		return rv;
+	g_co.n_scores++;
+	g_co.n_valid += (rv & 0xff) != 0;
+	struct co_item *r = co_item_rec(obj, item);
+	char nm[48];
+	rx_rec_name(rec, nm, sizeof nm);
+	double t = mono();
+	if (r && ((rv & 0xff) != r->rv || strcmp(nm, r->rec)) && g_co.sc_lines < 120) {
+		float sc = 0;
+		if (score)
+			peek((uintptr_t)score, &sc, 4);
+		uint8_t on = 0;
+		peek(cand + CO_C_ONSCREEN, &on, 1);
+		g_co.sc_lines++;
+		logf_("GLYPH t=%.3f item #%u target record '%s': %s (score %.3f; on screen %u)", t, r->id, nm,
+		      (rv & 0xff) ? "VALIDATED" : "rejected", sc, on);
+		r->rv = rv & 0xff, snprintf(r->rec, sizeof r->rec, "%s", nm);
+	}
+	return rv;
 }
 
 /* ---- SOMVR_TEXT_BUTTONS: a UI text's `{Action}` token's button icon (any thread that builds UI text) ---- */
@@ -544,6 +735,11 @@ static const char *co_word(const char *w)
 		      g_co.root[2], g_co.gl_mode, (unsigned long long)g_co.n_ticks, (unsigned long long)g_co.n_near, g_co.ntr,
 		      (unsigned long long)g_co.n_vlook, (unsigned long long)g_co.n_vlook_on, g_co.nrec,
 		      (unsigned long long)g_co.n_kept, atomic_load(&g_co.camhead), (unsigned long long)g_co.n_camhead);
+		if (g_co.gl_mode)
+			logf_("COLLECT glyph items: %llu item geometries, %llu target answers (%llu validated), %d item(s) followed, "
+			      "%llu glyph(s) collected by a look", (unsigned long long)g_co.n_geom_items,
+			      (unsigned long long)g_co.n_scores, (unsigned long long)g_co.n_valid, g_co.nit,
+			      (unsigned long long)g_co.n_collects);
 		if (g_co.on_txt)
 			logf_("COLLECT text buttons: %llu token(s) looked up, %llu shown with the mapped icon",
 			      (unsigned long long)atomic_load(&g_co.n_tx), (unsigned long long)atomic_load(&g_co.n_tx_mapped));
@@ -554,10 +750,10 @@ static const char *co_word(const char *w)
 
 static void co_start(int *bad)
 {
-	static const char *const ins_w[] = { "off", "log", "on" }, *const gl_w[] = { "off", "log" };
+	static const char *const ins_w[] = { "off", "log", "on" }, *const gl_w[] = { "off", "log", "head" };
 	g_co.ins_mode = env_word("SOMVR_INSPECT", ins_w, 3, 0);
 	g_co.ins_far_cm = 100 * env_float("SOMVR_INSPECT_M", 30, 5, 10000, bad);
-	g_co.gl_mode = env_word("SOMVR_GLYPH", gl_w, 2, 0);
+	g_co.gl_mode = env_word("SOMVR_GLYPH", gl_w, 3, 0);
 	g_co.gl_far_cm = 100 * env_float("SOMVR_GLYPH_M", 40, 2, 500, bad);
 	const char *hk = getenv("SOMVR_HINTS_KEEP");
 	for (const char *q = hk; q && *q && g_co.nkeep < CO_KEEP;) {
@@ -614,6 +810,16 @@ static void co_start(int *bad)
 		g_co.on_tick = go_slot(&g_co_sites[COS_LAT_TICK], (void *)somvr_w_colat, &g_co.tick_orig);
 	if (g_co.ok[COS_VLOOK])
 		g_co.on_vlook = bo_patch_call(&g_co_sites[COS_VLOOK], (void *)somvr_w_covlook);
+	g_co.on_geom = g_co.ok[COS_TGEOM_A] && g_co.ok[COS_TGEOM_B];
+	if (g_co.on_geom) /* both or none: one camera rule for both targeting passes */
+		g_co.on_geom = bo_patch_call(&g_co_sites[COS_TGEOM_A], (void *)somvr_w_cogeom) +
+			       bo_patch_call(&g_co_sites[COS_TGEOM_B], (void *)somvr_w_cogeom);
+	for (int i = COS_TSCORE_1; i <= COS_TSCORE_6; i++)
+		g_co.on_score += g_co.ok[i] && bo_patch_call(&g_co_sites[i], (void *)somvr_w_coscore);
+	logf_("CONFIG glyph=%s: the targeting's item candidates: geometry calls %d of 2 ours (%s), target rules logged at %d "
+	      "of 6 calls; %s", gl_w[g_co.gl_mode], g_co.on_geom, g_co.gl_mode == 2 ? "followed" : "logged only",
+	      g_co.on_score, g_co.gl_mode == 2 && g_co.ok[COS_COLLECT] ? "a glyph whose trigger fired with our head and the "
+	      "vision is collected (CO_COLLECT)" : "nothing collected");
 	logf_("CONFIG glyph=%s (SOMVR_GLYPH): LookAtTriggers within %.0f m and the vision look-at logged; hooks: tick %s, "
 	      "vision look-at %s; sites: %s, %s, %s, %s, %s", gl_w[g_co.gl_mode], g_co.gl_far_cm * 0.01f,
 	      g_co.on_tick ? "in" : "OFF", g_co.on_vlook ? "in" : "OFF", ln[0], ln[1], ln[2], ln[3], ln[4]);
@@ -629,7 +835,9 @@ static void co_end_log(void)
 		      (unsigned long long)g_co.n_paused_frames, (unsigned long long)g_co.n_far_frames);
 	}
 	if (g_co.gl_mode)
-		logf_("GLYPH END trigger ticks %llu (near %llu), %d followed; vision look-at calls %llu (on %llu)",
-		      (unsigned long long)g_co.n_ticks, (unsigned long long)g_co.n_near, g_co.ntr, (unsigned long long)g_co.n_vlook,
-		      (unsigned long long)g_co.n_vlook_on);
+		logf_("GLYPH END trigger ticks %llu (near %llu), %d followed; vision look-at calls %llu (on %llu); item "
+		      "geometries %llu; target answers %llu (validated %llu); glyphs collected %llu", (unsigned long long)g_co.n_ticks,
+		      (unsigned long long)g_co.n_near, g_co.ntr, (unsigned long long)g_co.n_vlook,
+		      (unsigned long long)g_co.n_vlook_on, (unsigned long long)g_co.n_geom_items,
+		      (unsigned long long)g_co.n_scores, (unsigned long long)g_co.n_valid, (unsigned long long)g_co.n_collects);
 }

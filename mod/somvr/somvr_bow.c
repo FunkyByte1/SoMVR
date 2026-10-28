@@ -443,3 +443,8 @@ out:
     o->tension = s->phase == SOMVR_BOW_PH_DRAW ? s->tension : 0;
     o->arrow = s->arrow;
 }
+
+int somvr_bow_string_shown(int mode, int phase) {
+    if (phase == SOMVR_BOW_PH_IDLE) return 0; /* the bow away */
+    return mode == SOMVR_BOW_SDRAW_ON || (mode == SOMVR_BOW_SDRAW_DRAWN && phase == SOMVR_BOW_PH_DRAW);
+}

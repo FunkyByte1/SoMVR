@@ -512,7 +512,7 @@ static void vh_setup(void);
 static void vh_destroy(void);
 static void vh_panel_cfg(somvr_vm_gcfg *g);
 static int vh_watch_on(void);
-static const char *vh_resize(float size); /* build 17: the test file's "handsize S" */
+static const char *vh_resize(float size, float grip_cm); /* build 17: the test file's "handsize S [D]" */
 static const char *vh_lumlog(int n);      /* build 17: the test file's "lumlog N" */
 static int vh_watch_pose(int h, const somvr_posef *grip, somvr_posef *face);
 static int vh_watch_facing(const somvr_posef *face, const float eye[3]);

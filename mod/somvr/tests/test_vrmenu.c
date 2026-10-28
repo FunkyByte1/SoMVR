@@ -1893,7 +1893,7 @@ static void test_build17(void) {
     somvr_vm_draw(&F, g_px, 0, &vw);
     int lit[2] = {0, 0};
     for (int l = 0; l < 2; l++)
-        for (int y = 626 + 34 * l; y < 626 + 34 * l + 32; y++)
+        for (int y = 646 + 32 * l; y < 646 + 32 * l + 32; y++) /* (build 18: 574 + 72, + 104) */
             for (int x = 24; x < SOMVR_VM_TEX_W - 16; x++) {
                 const uint8_t *p = pxa(g_px, x, y);
                 lit[l] += p[0] == 208 && p[1] == 213 && p[2] == 222;
@@ -1916,7 +1916,7 @@ static void test_build17(void) {
                   somvr_vm_practice_action(it) == want[i],
               "%s: in the area only, request %d", somvr_vm_label(it), somvr_vm_practice_action(it));
         CHECK(somvr_vm_rect(it, SOMVR_VMP_BUTTON, rr) && !somvr_vm_rect(it, SOMVR_VMP_ROW, rp) &&
-                  rr[1] >= prev[1] + prev[3] && rr[1] + rr[3] <= 550 && rr[3] >= 48 &&
+                  rr[1] >= prev[1] + prev[3] && rr[1] + rr[3] <= 574 && rr[3] >= 48 &&
                   somvr_font_text_w(somvr_vm_label(it), SOMVR_VM_SCALE) <= rr[2] - 16,
               "%s: %d..%d under %d, its label %d of %d px", somvr_vm_label(it), rr[1], rr[1] + rr[3], prev[1] + prev[3],
               somvr_font_text_w(somvr_vm_label(it), SOMVR_VM_SCALE), rr[2]);
@@ -1941,6 +1941,42 @@ static void test_build17(void) {
     CHECK(bp[0] == 52 && bp[1] == 61 && bp[2] == 76, "Refill health a live button in the area (%u %u %u)", bp[0], bp[1], bp[2]);
 }
 
+/* ---- build 18 (re-xr-pipeline.md 56.9): the practice page's Spawn far orc (unaware): in the area only (as Spawn),
+ * request 8 with the orc type, right under Spawn and above Remove, its label inside it, it hits back; the page's last
+ * line still inside the panel ------------------------------------------------------------------------------------ */
+static void test_far_orc(void) {
+    const uint32_t P = SOMVR_VMA_PRACTICE, HERE = P | SOMVR_VMA_PR_HERE;
+    somvr_settings s;
+    somvr_set_default(&s);
+    s.orc = 2;
+    int rf[4], rs[4], rm[4];
+    CHECK(SOMVR_VMPR_FAR == 8 && somvr_vm_practice_action(SOMVR_VMI_PR_FAR) == SOMVR_VMPR_FAR &&
+              !strcmp(somvr_vm_label(SOMVR_VMI_PR_FAR), "Spawn far orc (unaware)") &&
+              !somvr_vm_enabled(&s, P, SOMVR_VMI_PR_FAR) && somvr_vm_enabled(&s, HERE, SOMVR_VMI_PR_FAR) &&
+              !somvr_vm_enabled(&s, HERE | SOMVR_VMA_PR_BUSY, SOMVR_VMI_PR_FAR) &&
+              somvr_vm_apply(&s, HERE, 0, SOMVR_VMI_PR_FAR, SOMVR_VMP_BUTTON) == SOMVR_VMR_PRACTICE &&
+              somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_FAR, SOMVR_VMP_BUTTON) == SOMVR_VMR_NONE &&
+              somvr_vm_pr_orc(somvr_vm_pr_pack(4, SOMVR_VMPR_FAR, (int)s.orc)) == 2,
+          "Spawn far orc: in the area only, request 8 with the type");
+    CHECK(somvr_vm_rect(SOMVR_VMI_PR_FAR, SOMVR_VMP_BUTTON, rf) && somvr_vm_rect(SOMVR_VMI_PR_SPAWN, SOMVR_VMP_BUTTON, rs) &&
+              somvr_vm_rect(SOMVR_VMI_PR_REMOVE, SOMVR_VMP_BUTTON, rm) && rf[1] >= rs[1] + rs[3] &&
+              rf[1] + rf[3] <= rm[1] && rf[3] >= 48 &&
+              somvr_font_text_w(somvr_vm_label(SOMVR_VMI_PR_FAR), SOMVR_VM_SCALE) <= rf[2] - 16,
+          "its place: %d..%d between Spawn's end %d and Remove %d", rf[1], rf[1] + rf[3], rs[1] + rs[3], rm[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, (rf[0] + 0.5f * rf[2]) / SOMVR_VM_TEX_W,
+                                            (rf[1] + 0.5f * rf[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == SOMVR_VMI_PR_FAR && h.part == SOMVR_VMP_BUTTON, "it hits back (%d)", h.item);
+    /* every practice button apart, top to bottom, the last line's ink above the panel's bottom edge */
+    int ids[] = {SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VMI_PR_ORC, SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_FAR,
+                 SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH}, apart = 1, a[4], b[4];
+    for (int i = 0; i + 1 < 8; i++) {
+        somvr_vm_rect(ids[i], ids[i] == SOMVR_VMI_PR_ORC ? SOMVR_VMP_ROW : SOMVR_VMP_BUTTON, a);
+        somvr_vm_rect(ids[i + 1], ids[i + 1] == SOMVR_VMI_PR_ORC ? SOMVR_VMP_ROW : SOMVR_VMP_BUTTON, b);
+        apart &= a[1] + a[3] <= b[1];
+    }
+    CHECK(apart && b[1] + b[3] <= 574 && 574 + 104 + 30 <= SOMVR_VM_TEX_H - 16, "the page's buttons apart, the hints after");
+}
+
 int main(void) {
     test_font();
     test_settings();
@@ -1962,6 +1998,7 @@ int main(void) {
     test_controls();
     test_music_rows();
     test_build17();
+    test_far_orc();
     printf("test_vrmenu: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

@@ -277,5 +277,10 @@ sv_quat somvr_bow_align(sv_quat q, sv_vec3 dir, float w);
 /* the same for the axis ax of q's frame (build 16: the bow's shot axis, cfg.shot_ax) */
 sv_quat somvr_bow_align_ax(sv_quat q, sv_vec3 ax, sv_vec3 dir, float w);
 const char *somvr_bow_arrow_name(int arrow);
+/* build 18 (SOMVR_BOW_STRING_DRAW): our own string on the layer this frame? mode 0 off, 1 on (always while the bow is
+ * out: at rest between the limb ends, drawn to the string hand), 2 drawn (only while an arrow is on the string and the
+ * hand holds it - SOMVR_BOW_PH_DRAW: the game's own string at rest, so never two at once there) */
+enum { SOMVR_BOW_SDRAW_OFF = 0, SOMVR_BOW_SDRAW_ON = 1, SOMVR_BOW_SDRAW_DRAWN = 2 };
+int somvr_bow_string_shown(int mode, int phase);
 
 #endif

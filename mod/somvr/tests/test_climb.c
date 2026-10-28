@@ -2759,6 +2759,57 @@ static void test_headrock(void) {
     }
 }
 
+/* ---- build 18's head tether (re-xr-pipeline.md 69): the head off the body past where the follow can take him ---- */
+static void test_tether(void) {
+    somvr_tether_cfg c;
+    somvr_tether_cfg_default(&c);
+    somvr_tether s;
+    somvr_tether_init(&s);
+    somvr_tether_out o;
+    double t = 100;
+    float dt = 1.0f / 90;
+    int first = 0, backs = 0, held = 0, ended = 0, i;
+    for (i = 0; i < 90; i++, t += dt) somvr_tether_step(&s, &c, t, dt, 1, 20 + 0.3f * (float)i, &o); /* 20..47 cm */
+    CHECK(o.level == 0 && s.episodes == 0, "tether: within 50 cm: nothing (%g)", o.level);
+    for (i = 0; i < 30; i++, t += dt) { /* 70 cm: half, eased in over 0.15 s */
+        somvr_tether_step(&s, &c, t, dt, 1, 70, &o);
+        first += o.first;
+        if (i == 2) CHECK(o.level > 0 && o.level < 0.5f, "tether: eased, not a jump (%g)", o.level);
+    }
+    CHECK(NEAR(o.level, 0.5, 1e-3) && first == 1 && s.episodes == 1 && !o.back, "tether: 70 cm = half (%g)", o.level);
+    for (i = 0; i < 90 && !o.held; i++, t += dt) somvr_tether_step(&s, &c, t, dt, 1, 70, &o);
+    CHECK(o.held && s.holds == 1 && NEAR(t - s.over_t, c.hold_s, 2 * dt), "tether: held %g s = to black", t - s.over_t);
+    for (i = 0; i < 60; i++, t += dt) {
+        somvr_tether_step(&s, &c, t, dt, 1, 70, &o);
+        backs += o.back, held += o.held;
+        if (o.back) CHECK(s.black_t >= 0 && t - s.black_t >= c.back_s - 1e-6, "tether: back after %g s of black", t - s.black_t);
+    }
+    CHECK(backs == 1 && held == 0 && o.level == 1, "tether: black, back to Talion's eyes once (%d)", backs);
+    for (i = 0; i < 40; i++, t += dt) { /* re-latched: the head at the body again */
+        somvr_tether_step(&s, &c, t, dt, 1, 2, &o);
+        ended += o.ended;
+    }
+    CHECK(o.level == 0 && ended == 1 && NEAR(s.max_cm, 70, 1e-4), "tether: faded in (%g, ended %d)", o.level, ended);
+    for (i = 0; i < 25; i++, t += dt) somvr_tether_step(&s, &c, t, dt, 1, 95, &o); /* stepped off an edge: past black */
+    CHECK(o.level == 1 && s.episodes == 2, "tether: past 90 cm = black at once (%g)", o.level);
+    backs = 0;
+    for (i = 0; i < 30; i++, t += dt) backs += (somvr_tether_step(&s, &c, t, dt, 1, 95, &o), o.back);
+    CHECK(backs == 1, "tether: back after 0.3 s of black (%d)", backs);
+    for (i = 0; i < 40; i++, t += dt) somvr_tether_step(&s, &c, t, dt, 0, 300, &o);
+    CHECK(o.level == 0 && s.backs == 2, "tether: not measured (a climb): the fade eases out (%g)", o.level);
+    for (i = 0; i < 300; i++, t += dt) somvr_tether_step(&s, &c, t, dt, 1, 49.9f, &o);
+    CHECK(o.level == 0 && s.holds == 1 && s.episodes == 2, "tether: 49.9 cm for 3 s: nothing (%g)", o.level);
+    for (i = 0; i < 300; i++, t += dt) somvr_tether_step(&s, &c, t, dt, 1, NAN, &o);
+    CHECK(o.level == 0, "tether: NaN: nothing");
+    c.hold_s = 0, c.back_s = 0;
+    somvr_tether_init(&s);
+    for (i = 0; i < 300; i++, t += dt) {
+        somvr_tether_step(&s, &c, t, dt, 1, 60, &o);
+        CHECK(!o.back && !o.held, "tether: hold 0, back 0: never black by time, never back");
+    }
+    CHECK(NEAR(o.level, 0.25, 1e-3), "tether: hold 0: the distance's fade only (%g)", o.level);
+}
+
 /* ---- build 17's drop mark (re-xr-pipeline.md 55): A held = the landing shown, let go = go, the stick = cancel ---- */
 static int g_enemy; /* the mock's enemy_near answer */
 static sv_vec3 g_enemy_q;
@@ -3012,6 +3063,60 @@ static void test_drop_mark(void) {
     g_wall_top = wall0, g_ground_on = ground0;
 }
 
+/* build 18: SOMVR_CLIMB_FLING_UP - the cap on the up part alone, the push into the wall mostly turned up it, the
+ * threshold on that part; in flight a push into the face the face holds dropped (the rise goes on) */
+static void test_fling_up(void) {
+    rig_t r;
+    rig_init(&r);
+    r.c.fling = 1, r.c.fling_up = 1, r.c.fling_max = 650, r.c.fling_min = 110, r.c.fling_side = 0.7f;
+    sv_vec3 v, tw = { 0, 0, 1 };
+    /* the session's strongest: the hand 922 cm/s down and back = the body up 700, toward the wall 597 */
+    int f = somvr_climb_fling_rule(&r.s, &r.c, (sv_vec3){ 0, 700, 597 }, tw, &v);
+    CHECK(f == 1 && NEAR(v.y, 650, 1e-3) && NEAR(v.z, 175, 1e-3) && NEAR(r.s.fl_wallup, 211, 1e-3) && r.s.fl_capped,
+          "fling up: strong: up %g (capped), toward %g, turned up %g", v.y, v.z, r.s.fl_wallup);
+    float h = v.y * v.y / (2 * 981);
+    CHECK(h > 200 && h < 220, "fling up: the strong arc %g cm (build 13: 74)", h);
+    /* a medium one: up 300, toward 250 -> 300 + (250 - 75) / 2 = 387.5 */
+    f = somvr_climb_fling_rule(&r.s, &r.c, (sv_vec3){ 0, 300, 250 }, tw, &v);
+    CHECK(f == 1 && NEAR(v.y, 387.5, 1e-3) && NEAR(v.z, 75, 1e-3) && !r.s.fl_capped, "fling up: medium up %g toward %g", v.y,
+          v.z);
+    /* slow: up 60, toward 80 -> 60 + 32.5 = 92.5 under 110: the hang */
+    f = somvr_climb_fling_rule(&r.s, &r.c, (sv_vec3){ 0, 60, 80 }, tw, &v);
+    CHECK(f == 0 && NEAR(r.s.fl_up, 92.5, 1e-3), "fling up: a slow let-go hangs (up %g)", r.s.fl_up);
+    /* away from the wall: dropped, nothing turned */
+    f = somvr_climb_fling_rule(&r.s, &r.c, (sv_vec3){ 0, 300, -300 }, tw, &v);
+    CHECK(f == 1 && NEAR(v.y, 300, 1e-3) && NEAR(v.z, 0, 1e-3) && NEAR(r.s.fl_out, 300, 1e-3) && r.s.fl_wallup == 0,
+          "fling up: never away (up %g, z %g)", v.y, v.z);
+    /* sideways x 0.7, at most 0.6 of the up */
+    f = somvr_climb_fling_rule(&r.s, &r.c, (sv_vec3){ 400, 300, 0 }, tw, &v);
+    CHECK(f == 1 && NEAR(v.x, 180, 1e-3) && NEAR(v.y, 300, 1e-3), "fling up: sideways %g (0.6 x 300)", v.x);
+    /* at a top: the push into it kept (the glide), nothing turned */
+    r.s.topped = 1;
+    f = somvr_climb_fling_rule(&r.s, &r.c, (sv_vec3){ 0, 300, 250 }, tw, &v);
+    CHECK(f == 1 && NEAR(v.y, 300, 1e-3) && NEAR(v.z, 250, 1e-3) && r.s.fl_wallup == 0, "fling up: at a top all kept (%g %g)",
+          v.y, v.z);
+    /* off: build 13's (the cap on the whole) */
+    r.s.topped = 0, r.c.fling_up = 0, r.c.fling_max = 500;
+    f = somvr_climb_fling_rule(&r.s, &r.c, (sv_vec3){ 0, 700, 597 }, tw, &v);
+    CHECK(f == 1 && v.y < 400 && r.s.fl_capped, "fling up off: build 13's split (up %g)", v.y);
+    /* a flight at the face: the capsule against it (the mock's ledge holds the root 35 cm off it): the push into it
+     * dropped once held, the rise to the arc's top */
+    for (int on = 0; on < 2; on++) {
+        fl_setup(&r);
+        r.c.fling_up = on, r.c.fling_max = 650, r.c.fling_min = 110, r.ledge = 1;
+        for (int i = 0; i < 8; i++) hand_move(&r, 1, 0, 0, -2), rig_frame(&r); /* to the face */
+        float y0 = r.body.y;
+        fl_throw(&r, 1, 0, -5, -4, 10); /* down and back 450 x 360 cm/s at 90 Hz */
+        int n = fl_fly(&r, 200);
+        if (on)
+            CHECK(r.s.fl_why == SOMVR_CLIMB_FL_APEX && r.body.y - y0 > 100 && r.s.fl_into_cut >= 1 && NEAR(r.body.z + 50, 65, 0.6),
+                  "fling up: at the face up %g cm to the arc's top (%d frames, the push into it dropped %llu), never out (root z %g)",
+                  r.body.y - y0, n, (unsigned long long)r.s.fl_into_cut, r.body.z + 50);
+        else
+            printf("fling up off at the face: rose %.1f cm (why %d)\n", r.body.y - y0, r.s.fl_why);
+    }
+}
+
 int main(void) {
     test_through();
     test_face_toward();
@@ -3036,8 +3141,10 @@ int main(void) {
     test_hug();
     test_stand();
     test_headrock();
+    test_tether();
     test_topout();
     test_retop17();
+    test_fling_up();
     test_drop_mark();
     g_desc_all = 1, g_deep = 1; /* the climbs up with descent on: the same answers (the ground 50 m down for A) */
     test_push();

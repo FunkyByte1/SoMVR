@@ -369,7 +369,87 @@ static void test_chain(void) {
     }
 }
 
+/* build 18 (relight): an orc's hit ends the vision while Y holds it ours: on again after the game's dwell, while Y
+ * stays held; Y let go first = off and left off; relight off = build 17b; the game's own vision (not ours) stays off */
+static void test_relight(void) {
+    somvr_vis v;
+    somvr_vis_cfg c;
+    game g;
+    tally k = {0};
+    double t = 900;
+    setup(&v, &c, &g, SOMVR_VIS_HOLD);
+    CHECK(c.relight == 1, "relight on by default");
+    run(&v, &c, &g, &t, 1, 1.5, 1, &k); /* Y held: on */
+    CHECK(g.flag == 1 && v.ours, "held: on (%d)", g.flag);
+    memset(&k, 0, sizeof k);
+    g.flag = 0, g.changed = t; /* the hit: the game's own off */
+    double hit = t;
+    run(&v, &c, &g, &t, 1, 0.9, 1, &k);
+    CHECK((k.ev_or & SOMVR_VIE_RELIGHT) && !k.taps && g.flag == 0, "the hit: on wished again, no tap within the dwell (taps %d)",
+          k.taps);
+    run(&v, &c, &g, &t, 1, 0.6, 1, &k);
+    CHECK(g.flag == 1 && k.taps == 1 && g.refused == 0 && k.first_tap - hit >= 1.05 - 1e-6 && k.first_tap - hit < 1.1,
+          "on again %.3f s after the hit, one tap, none refused (taps %d refused %d)", k.first_tap - hit, k.taps, g.refused);
+    run(&v, &c, &g, &t, 0, 1.6, 1, &k); /* let go: off (after its dwell) */
+    CHECK(g.flag == 0 && !v.ours, "let go after the relight: off (%d)", g.flag);
+    /* three hits 3 s apart while held: on again after each (each relit vision kept 1.9 s) */
+    memset(&k, 0, sizeof k);
+    run(&v, &c, &g, &t, 1, 1.5, 1, &k);
+    for (int i = 0; i < 3; i++) {
+        g.flag = 0, g.changed = t;
+        run(&v, &c, &g, &t, 1, 3.0, 1, &k);
+    }
+    CHECK(g.flag == 1 && k.taps == 4 && g.refused == 0 && !(k.ev_or & SOMVR_VIE_RELIGHT_STOP),
+          "three hits 3 s apart held: on again each time (taps %d refused %d)", k.taps, g.refused);
+    run(&v, &c, &g, &t, 0, 1.6, 1, &k);
+    /* a fight where the game ends each relit vision after its 1 s minimum: one relight, then stopped - no blinking */
+    memset(&k, 0, sizeof k);
+    run(&v, &c, &g, &t, 1, 1.5, 1, &k);
+    int ons = 0;
+    for (int i = 0; i < 4; i++) {
+        g.flag = 0, g.changed = t;
+        for (double e = 0; e < 2.5; e += DT) {
+            int was = g.flag;
+            run(&v, &c, &g, &t, 1, DT, 1, &k);
+            if (g.flag && !was) ons++;
+            if (g.flag && t - g.changed >= 1.0) { g.flag = 0, g.changed = t; } /* the game: off after its minimum */
+        }
+    }
+    CHECK(ons == 1 && (k.ev_or & SOMVR_VIE_RELIGHT_STOP) && k.taps == 2 && g.flag == 0,
+          "a fight ending each relight after 1 s: one relight, then stopped (ons %d taps %d)", ons, k.taps);
+    run(&v, &c, &g, &t, 0, 1.6, 1, &k);
+    memset(&k, 0, sizeof k);
+    run(&v, &c, &g, &t, 1, 1.6, 1, &k);
+    CHECK(g.flag == 1 && k.taps == 1, "Y pressed again: on, relights allowed again (taps %d)", k.taps);
+    run(&v, &c, &g, &t, 0, 1.6, 1, &k);
+    /* the hit, then Y let go within the dwell: no relight tap, off stays */
+    memset(&k, 0, sizeof k);
+    run(&v, &c, &g, &t, 1, 1.5, 1, &k);
+    g.flag = 0, g.changed = t;
+    run(&v, &c, &g, &t, 1, 0.4, 1, &k);
+    run(&v, &c, &g, &t, 0, 2.0, 1, &k);
+    CHECK(g.flag == 0 && k.taps == 1 && !v.ours && v.want == -1, "hit, let go within the dwell: stays off (taps %d)", k.taps);
+    /* relight off: build 17b - left off until Y */
+    setup(&v, &c, &g, SOMVR_VIS_HOLD);
+    c.relight = 0;
+    memset(&k, 0, sizeof k);
+    run(&v, &c, &g, &t, 1, 1.5, 1, &k);
+    g.flag = 0, g.changed = t;
+    run(&v, &c, &g, &t, 1, 2.0, 1, &k);
+    CHECK(g.flag == 0 && k.taps == 1 && !(k.ev_or & SOMVR_VIE_RELIGHT), "relight off: left off (taps %d)", k.taps);
+    /* the game's own vision (not ours) ending while Y is not held: nothing */
+    setup(&v, &c, &g, SOMVR_VIS_HOLD);
+    memset(&k, 0, sizeof k);
+    run(&v, &c, &g, &t, 0, 0.3, 1, &k);
+    g.flag = 1, g.changed = t;
+    run(&v, &c, &g, &t, 0, 1.2, 1, &k);
+    g.flag = 0, g.changed = t;
+    run(&v, &c, &g, &t, 0, 2.0, 1, &k);
+    CHECK(!k.taps && !(k.ev_or & SOMVR_VIE_RELIGHT), "the game's own on and off: no relight (taps %d)", k.taps);
+}
+
 int main(void) {
+    test_relight();
     test_hold();
     test_quick_tap();
     test_press_while_on();

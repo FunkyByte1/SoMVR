@@ -97,15 +97,28 @@ static struct {
 #define DG_STEP_CM 45.0f   /* the ground under the landing at most this far above or below the ground under Talion */
 #define DG_RAY_UP_CM 60.0f /* the ground rays start this far above the root */
 enum { DGR_NOFIGHT = 0, DGR_COOL, DGR_BUSY, DGR_CLIMB, DGR_BOW, DGR_FINISH, DGR_NOROOT, DGR_NORAY, DGR_WALL, DGR_LEDGE,
-       DGR_STEP, DGR_YIELD, DGR_N };
+       DGR_STEP, DGR_YIELD, DGR_GAME, DGR_N };
 static const char *const g_dg_why[DGR_N] = { "no fight", "the cooldown", "a move runs", "a climb holds", "the bow is out",
 					      "a finisher's moment", "no root", "no ray (the climb's cast is not ready)",
 					      "something in the way", "no ground at the landing (a ledge)", "the landing is a step too high",
-					      "the press is another's (ab_tick: the strike's mark, the climb's hang)" };
+					      "the press is another's (ab_tick: the strike's mark, the climb's hang)",
+					      "the game moves Talion (LOCO not ours: a sync, a lock, ...)" };
+/* build 18: LOCO's reasons that keep the dash from moving Talion (the step's mask lifts the attack only): with one of
+ * them the dash ran 0 cm and ended "lost" after 0.1 s (the 17b session: a stale `sync` after the gaze strike, 4 of 4
+ * dashes) - refused at the press instead, with the buzz */
+#define DG_GAME_BITS (SOMVR_LOCO_W_SYNC | SOMVR_LOCO_W_LOCK | SOMVR_LOCO_W_MOUNT | SOMVR_LOCO_W_ATTACH | SOMVR_LOCO_W_DEAD | \
+		      SOMVR_LOCO_W_STRUGGLE | SOMVR_LOCO_W_MENU | SOMVR_LOCO_W_FALLBACK | SOMVR_LOCO_W_FSM)
 static _Atomic int g_dg_probe_req; /* the test word "fight dodge probe" (SOMVR_HANDS_TEST): the rays at the next tick */
+static _Atomic int g_dg_auto_ms;   /* the test word "fight dodge auto MS": A pressed MS after each red warning (0 = off) */
 static struct {
 	int on, a_last, ours, src;
 	float cm, s, cool_s, tunnel;
+	float grace_s, late_s;   /* build 17b: SOMVR_DODGE_GRACE_MS / _LATE_MS (dg_dodging) */
+	float fast_s, hold_s;    /* build 18: SOMVR_DODGE_FAST_MS / _HOLD_MS (DEFENCE's held hit, df_held_tick) */
+	uint32_t game_why;       /* the LOCO reasons of the last DGR_GAME refusal (logs) */
+	double auto_at;          /* the test word's next press (0 = none) */
+	int auto_ticks;          /* ... its ticks held */
+	uint64_t n_grace;        /* blows judged dodged by the press (grace) */
 	double next_ok, t0;
 	sv_vec3 dir, start;
 	uint64_t n_press, n_go, n_end, n_why[DGR_N];
@@ -228,6 +241,35 @@ static void ab_tick(const sc_tick_out *o)
 }
 
 static int ab_owner(void) { return g_ab.owner; }
+
+/* build 17b, SOMVR_DODGE_GRACE_MS (the coordinator's run 161759: dashes pressed in time but judged by the head's place
+ * at the impact; a dash pressed 0.1-0.25 s before it had not yet moved the head 40 cm): a blow whose impact comes
+ * between late_s and grace_s after the dodge's press is dodged (the press commits, as a game's evade does; its dash runs
+ * on, out of the blow). 1 = dodged; *since = the press's age */
+static int dg_dodging(double t, double *since)
+{
+	*since = g_dg.ours || g_dg.n_go ? t - g_dg.t0 : -1;
+	return g_dg.on && g_dg.grace_s > 0 && g_dg.n_go && *since >= g_dg.late_s && *since <= g_dg.grace_s;
+}
+
+/* the test word "fight dodge auto MS" (SOMVR_HANDS_TEST): THREAT's red start (th_red_start) asks for A MS later */
+static void dg_auto_red(double t)
+{
+	int ms = atomic_load(&g_dg_auto_ms);
+	if (g_dg.on && ms > 0)
+		g_dg.auto_at = t + ms * 0.001;
+}
+/* the input tick, before ab_tick: the asked press, held 3 ticks (the right lower button, as a player's A) */
+static void dg_auto_tick(void)
+{
+	double t = cb_now();
+	if (g_dg.auto_at > 0 && t >= g_dg.auto_at)
+		g_dg.auto_at = 0, g_dg.auto_ticks = 3;
+	if (g_dg.auto_ticks > 0) {
+		g_dg.auto_ticks--;
+		g_inp.ctl.down[SOMVR_HAND_R] |= SOMVR_BTN_LOWER;
+	}
+}
 static int ab_not_climbs(void) { return g_ab.owner == SOMVR_AO_STRIKE || g_ab.owner == SOMVR_AO_DODGE; }
 
 /* SOMVR_DODGE, the input tick: A's press in a fight -> the dodge, or refused (a double buzz) */
@@ -279,6 +321,8 @@ static void dg_tick(const sc_tick_out *o)
 		why = DGR_FINISH;
 	else if (!g_step.have_root)
 		why = DGR_NOROOT;
+	else if (g_lo.on && (g_lo.o.why & DG_GAME_BITS))
+		why = DGR_GAME, g_dg.game_why = g_lo.o.why;
 	sv_vec3 dir = { 0, 0, 0 };
 	int src = 0;
 	if (why < 0) {
@@ -295,10 +339,14 @@ static void dg_tick(const sc_tick_out *o)
 		if (why != DGR_NOFIGHT && why != DGR_YIELD) /* in a fight: told (not in a fight A just does nothing, as before;
 							     * another's press is that one's) */
 			in_haptic_double(SOMVR_HAND_R, 0.5f, 0.05f, 0.07f, SOMVR_HAP_COMBAT);
+		char gw[160] = "";
+		if (why == DGR_GAME)
+			somvr_loco_why_str(g_dg.game_why, gw, sizeof gw);
 		if (st_log_ok(t))
-			logf_("DODGE t=%.3f frame=%llu A: refused: %s%s (%.1f cm; %s, the attacker %s; fsm %d)", t,
+			logf_("DODGE t=%.3f frame=%llu A: refused: %s%s (%.1f cm; %s, the attacker %s; fsm %d%s%s)", t,
 			      (unsigned long long)rend_frame(), g_dg_why[why], why == DGR_NOFIGHT ? " (A does nothing)" : ", a double buzz", at,
-			      somvr_step_dodge_src_name(src), att == 1 ? "attacking" : att == 2 ? "lately" : "none", g_step.fsm);
+			      somvr_step_dodge_src_name(src), att == 1 ? "attacking" : att == 2 ? "lately" : "none", g_step.fsm,
+			      gw[0] ? "; LOCO: " : "", gw);
 		return;
 	}
 	somvr_step_start(&g_step.run, &g_step.cfg, SOMVR_ST_DASH, -1, 0, g_dg.cm, g_dg.s, dir, g_step.root, 0);
@@ -679,6 +727,10 @@ static void st_config(int *bad)
 	g_dg.cm = env_float("SOMVR_DODGE_CM", 150, 50, 300, bad);
 	g_dg.s = env_float("SOMVR_DODGE_MS", 250, 120, 600, bad) / 1000;
 	g_dg.cool_s = env_float("SOMVR_DODGE_COOL_MS", 500, 0, 3000, bad) / 1000;
+	g_dg.grace_s = env_float("SOMVR_DODGE_GRACE_MS", 0, 0, 1500, bad) / 1000;
+	g_dg.late_s = env_float("SOMVR_DODGE_LATE_MS", 50, 0, 300, bad) / 1000;
+	g_dg.fast_s = env_float("SOMVR_DODGE_FAST_MS", 0, 0, 1000, bad) / 1000;
+	g_dg.hold_s = env_float("SOMVR_DODGE_HOLD_MS", 350, 50, 800, bad) / 1000;
 	g_dg.tunnel = env_float("SOMVR_DODGE_TUNNEL", 0.4f, 0, 1, bad);
 	g_step.want = c->step > 0 || c->dash || c->phase || g_dg.on;
 }
@@ -730,6 +782,13 @@ static void st_start(const struct site_spec *sites, int menu)
 		      "the landing or the middle is over %.0f cm below / above the ground under Talion%s", g_inp.cfg.game_moves ? "on: "
 		      "the dodge stays off, the stock A evades" : "off", g_dg.cm, g_dg.s * 1e3, c->dash_stick, g_dg.tunnel,
 		      g_dg.cool_s * 1e3, DG_BODY_CM, DG_STEP_CM, g_cl.on ? "" : " (no climb: no rays, every dodge refused)");
+	if (g_dg.on && g_dg.fast_s > 0)
+		logf_("CONFIG dodge fast: an unblockable blow whose impact comes under %.0f ms after its start (no time to react) is "
+		      "held at its impact up to %.0f ms: an A dodge pressed since its start, or the head 30 cm aside / 40 cm back by "
+		      "then, dodges it; else it lands then (SOMVR_DODGE_FAST_MS, _HOLD_MS)", g_dg.fast_s * 1e3, g_dg.hold_s * 1e3);
+	if (g_dg.on && g_dg.grace_s > 0)
+		logf_("CONFIG dodge grace: a blow whose impact comes %.0f..%.0f ms after the dodge's press is dodged (the press commits; "
+		      "SOMVR_DODGE_GRACE_MS, _LATE_MS)", g_dg.late_s * 1e3, g_dg.grace_s * 1e3);
 	if (g_cb.mode == CB_OFF && (c->step > 0 || c->phase))
 		logf_("WARN SOMVR_STEP/SOMVR_PHASE need SOMVR_COMBAT (its orcs): without it only the dash runs");
 }

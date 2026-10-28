@@ -355,7 +355,7 @@ void swg_follow(const float rot[3], const float q[4], float out[4]) {
 
 /* ---- the bite ------------------------------------------------------------------------------------------------------- */
 void swb_defaults(swb_cfg *c) {
-    c->hold_s = 0.06f, c->ease_s = 0.1f, c->max_rad = 30.0f * 0.01745329f;
+    c->hold_s = 0.06f, c->ease_s = 0.1f, c->max_rad = 30.0f * 0.01745329f, c->drag = 0;
 }
 
 void swb_reset(swb_state *s) { memset(s, 0, sizeof *s); }
@@ -414,10 +414,10 @@ int swb_step(swb_state *s, const swb_cfg *c, double t, const float p[3], const f
             memcpy(r, s->b, 12); /* the grip on the point: keep the last turn */
         }
         float a = vlen3(r);
-        int over = a > c->max_rad, end = over || !(t - s->t0 < c->hold_s);
-        if (over) { /* torn free: from the largest turn the hold allows */
+        int over = a > c->max_rad, end = (over && !c->drag) || !(t - s->t0 < c->hold_s);
+        if (over) { /* torn free (or, dragging, held there): the largest turn the hold allows */
             for (int i = 0; i < 3; i++) r[i] *= c->max_rad / a;
-            a = c->max_rad, s->capped = 1, s->caps++;
+            a = c->max_rad, s->caps += !s->capped, s->capped = 1; /* (once a bite) */
         }
         memcpy(s->b, r, 12);
         if (a > s->peak) s->peak = a;

@@ -58,6 +58,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->hug = 0, c->hug_cm = 50, c->hug_in = 0.35f;
     c->stand = 0, c->stand_in_cm = 15, c->stand_up_cm = 15, c->stand_down_cm = 40, c->stand_reach_cm = 35;
     c->stand_walk_cms = 150, c->topout = 0;
+    c->fling_up = 0, c->fling_tw = 0.25f, c->fling_wall_up = 0.5f, c->fling_side_max = 0.6f;
     c->drop_mark = 0, c->dm_min_s = 0.3f, c->dm_show_s = 0.6f, c->dm_stick = 0.5f, c->dm_move_cm = 30, c->dm_out_cm = 100;
     c->dm_enemy_cm = 120;
 }
@@ -172,6 +173,20 @@ int somvr_climb_fling_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw,
     s->fl_up = up, s->fl_into = into, s->fl_out = into < 0 ? -into : 0, s->fl_capped = 0;
     s->fl_side = len3(side);
     *v0 = (sv_vec3){ 0, 0, 0 };
+    s->fl_wallup = 0;
+    if (c->fling_up && len3(tw) >= 0.5f && up > 0) { /* build 18 (see the header's fling): up first */
+        float fwd = into > 0 ? into : 0, keep = s->topped ? fminf(fwd, up) : fminf(fwd, c->fling_tw * up);
+        float extra = s->topped ? 0.0f : (fwd - keep) * c->fling_wall_up; /* into the wall past the kept part: up it */
+        float up2 = up + extra;
+        s->fl_wallup = extra, s->fl_up = up2;
+        if (!(up2 >= c->fling_min)) return 0;
+        if (c->fling_max > 0 && up2 > c->fling_max) up2 = c->fling_max, s->fl_capped = 1;
+        side = somvr_climb_clamp(mul3(side, c->fling_side), c->fling_side_max * up2);
+        sv_vec3 v = { side.x + keep * tw.x, up2, side.z + keep * tw.z };
+        s->fl_side = len3(side), s->fl_into = keep;
+        *v0 = v;
+        return 1;
+    }
     if (!(up >= c->fling_min) || !(up > 0)) return 0;
     side = somvr_climb_clamp(mul3(side, c->fling_side), 0.5f * up);
     float fwd = into > 0 ? fminf(into, up) : 0;
@@ -690,6 +705,10 @@ static void fl_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_
             if (++s->fl_blocked >= 2) stop = SOMVR_CLIMB_FL_BLOCKED;
         } else {
             s->fl_blocked = 0;
+        }
+        if (c->fling_up && !s->topped && !s->fl_glide && into > 0) { /* the face takes the push into it: up it alone */
+            float aq = rq.x * tw.x + rq.z * tw.z, ga = ap.x * tw.x + ap.z * tw.z;
+            if (aq > 0.5f && ga < 0.5f * aq) s->fl_v.x -= into * tw.x, s->fl_v.z -= into * tw.z, into = 0, s->fl_into_cut++;
         }
         sv_vec3 sd = { s->fl_v.x - into * tw.x, 0, s->fl_v.z - into * tw.z };
         float sl = len3(sd);
@@ -2042,5 +2061,48 @@ void somvr_headrock_step(somvr_headrock *s, const somvr_headrock_cfg *c, double 
     }
     s->faded += s->level > 0;
     if (!in && s->in && s->level <= 0) s->in = 0, o->ended = 1;
+    o->level = s->level;
+}
+
+/* ==== SOMVR_HEAD_TETHER (see the header) ==== */
+void somvr_tether_cfg_default(somvr_tether_cfg *c) {
+    c->start_cm = 50, c->black_cm = 90, c->hold_s = 1.0f, c->out_s = 0.15f, c->in_s = 0.3f, c->back_s = 0.3f;
+}
+void somvr_tether_init(somvr_tether *s) {
+    memset(s, 0, sizeof *s);
+    s->over_t = s->black_t = -1;
+}
+void somvr_tether_step(somvr_tether *s, const somvr_tether_cfg *c, double t, float dt, int ok, float off_cm,
+                       somvr_tether_out *o) {
+    memset(o, 0, sizeof *o);
+    s->frames++;
+    int over = ok && isfinite(off_cm) && off_cm > c->start_cm;
+    float want = 0, span = c->black_cm - c->start_cm;
+    if (over) {
+        if (!s->in) s->in = 1, s->held = 0, s->episodes++, s->max_cm = off_cm, o->first = 1;
+        if (off_cm > s->max_cm) s->max_cm = off_cm;
+        if (s->over_t < 0) s->over_t = t;
+        want = span > 0.1f ? fminf((off_cm - c->start_cm) / span, 1.0f) : 1.0f;
+        if (c->hold_s > 0 && t - s->over_t >= c->hold_s) {
+            want = 1;
+            if (!s->held) s->held = 1, s->holds++, o->held = 1;
+        }
+    } else {
+        s->over_t = -1;
+    }
+    float d = dt > 0 && dt < 0.2f ? dt : 0.0f;
+    if (want > s->level) s->level = fminf(want, s->level + (c->out_s > 0 ? d / c->out_s : 1.0f));
+    else s->level = fmaxf(want, s->level - (c->in_s > 0 ? d / c->in_s : 1.0f));
+    if (s->level >= 0.999f) {
+        s->level = 1.0f;
+        if (s->black_t < 0) s->black_t = t;
+        s->black++;
+        if (over && !s->backed && c->back_s > 0 && t - s->black_t >= c->back_s) s->backed = 1, s->backs++, o->back = 1;
+    } else {
+        s->black_t = -1;
+        if (s->level < 0.5f) s->backed = 0;
+    }
+    s->faded += s->level > 0;
+    if (!over && s->in && s->level <= 0) s->in = 0, o->ended = 1;
     o->level = s->level;
 }

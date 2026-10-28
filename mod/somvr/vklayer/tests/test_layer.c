@@ -4290,31 +4290,47 @@ static int sc_objective(void) { /* none, ahead (one upload), the same text (none
         CHECK(e->layer_count == 3 && !memcmp(e->q[1].rect, rl, sizeof rl) && !memcmp(e->q[2].rect, rc, sizeof rc),
               "line: reuse: %u layers", e->layer_count);
     }
-    /* 5c. build 17: the Shadow Strike's mark (SOMVR_OBF_STRIKE): ready, no arrows, pressed - the wide cell's rect on a
-     * quad facing the head with the ring's centre on the orc's chest, no upload (the cells are in every picture) */
-    for (int st = 0; st < 3; st++) {
+    /* 5c. build 17/18: the Shadow Strike's mark (SOMVR_OBF_STRIKE): ready, no arrows, pressed - build 18's default the
+     * landing ring flat on the ground (the strike cell's ring square, XL_OBJ) and its label standing beside it (the cell's
+     * label part, XL_OBJL, under the ring); with SOMVR_OBF_STRIKE_CHEST build 17's ring round the chest (the whole wide
+     * cell facing the head, one quad); no upload (the cells are in every picture) */
+    for (int st = 0; st < 4; st++) {
         CHECK(locate(&v), "strike: locate");
         write_record(f, SOMVR_LAYOUT_B, &v, 3);
         somvr_objective_frame se;
         memset(&se, 0, sizeof se);
-        se.n = 1, se.id = 4, se.dist_m = 1.2f;
-        se.flags = SOMVR_OBF_STRIKE | (st == 1 ? SOMVR_OBF_STRIKE_NO : st == 2 ? SOMVR_OBF_STRIKE_GO : 0u);
+        int chest = st == 3;
+        se.n = 1, se.id = 4, se.dist_m = chest ? 1.2f : 0.45f;
+        se.flags = SOMVR_OBF_STRIKE | (st == 1 ? SOMVR_OBF_STRIKE_NO : st == 2 ? SOMVR_OBF_STRIKE_GO : 0u) |
+                   (chest ? SOMVR_OBF_STRIKE_CHEST : 0u);
         float hd[3];
-        for (int q = 0; q < 3; q++) hd[q] = 0.5f * (v.pose[0].p[q] + v.pose[1].p[q]), se.pos[q] = hd[q] + (q == 1 ? -0.3f : q == 2 ? -8.0f : 1.0f);
+        for (int q = 0; q < 3; q++) hd[q] = 0.5f * (v.pose[0].p[q] + v.pose[1].p[q]), se.pos[q] = hd[q] + (q == 1 ? -1.6f : q == 2 ? -8.0f : 1.0f);
         somvr_objective_put(g_obo, f, &se);
         V.ncp = V.ntr = 0;
         hud_present(&r.a, f++, 0, SOMVR_HUDK_NONE);
         e = MOCK(mockxr_last_end)();
         int cell = st == 1 ? SOMVR_OB_CELL_STRIKE_NO : st == 2 ? SOMVR_OB_CELL_STRIKE_GO : SOMVR_OB_CELL_STRIKE;
-        somvr_ob_place sp = somvr_ob_strike(hd, se.pos, 1.2f, cell);
-        int32_t rc[4];
-        somvr_ob_rect(cell, rc);
-        CHECK(sp.kind == SOMVR_OBK_WORLD && e->layer_count == 2 && e->q[1].sc == k && e->q[1].space == 1 &&
-                  !memcmp(e->q[1].rect, rc, sizeof rc) && fabsf(e->q[1].size[0] - sp.size[0]) < 1e-5f &&
-                  fabsf(e->q[1].size[1] - sp.size[1]) < 1e-5f && pose_near(e->q[1].pose, sp.pose) && V.buf2img == 3 &&
-                  log_has("the Shadow Strike's mark"),
-              "strike %d: %u layers, sc %d space %d rect %d size %g x %g uploads %d", st, e->layer_count, e->q[1].sc,
-              e->q[1].space, e->q[1].rect[0], e->q[1].size[0], e->q[1].size[1], V.buf2img);
+        int32_t rc[4], rl[4];
+        if (chest) {
+            somvr_ob_place sp = somvr_ob_strike(hd, se.pos, 1.2f, cell);
+            somvr_ob_rect(cell, rc);
+            CHECK(sp.kind == SOMVR_OBK_WORLD && e->layer_count == 2 && e->q[1].sc == k && e->q[1].space == 1 &&
+                      !memcmp(e->q[1].rect, rc, sizeof rc) && fabsf(e->q[1].size[0] - sp.size[0]) < 1e-5f &&
+                      fabsf(e->q[1].size[1] - sp.size[1]) < 1e-5f && pose_near(e->q[1].pose, sp.pose) && V.buf2img == 3,
+                  "strike chest: %u layers, sc %d space %d rect %d size %g x %g uploads %d", e->layer_count, e->q[1].sc,
+                  e->q[1].space, e->q[1].rect[0], e->q[1].size[0], e->q[1].size[1], V.buf2img);
+            continue;
+        }
+        somvr_ob_place gp = somvr_ob_strike_floor(hd, se.pos, 0.45f, cell), lp = somvr_ob_strike_label(hd, se.pos, 0.45f, cell);
+        somvr_ob_strike_rect(cell, 0, rc), somvr_ob_strike_rect(cell, 1, rl);
+        CHECK(gp.kind == SOMVR_OBK_WORLD && lp.kind == SOMVR_OBK_WORLD && e->layer_count == 3 && e->q[1].sc == k &&
+                  e->q[1].space == 1 && !memcmp(e->q[1].rect, rl, sizeof rl) && pose_near(e->q[1].pose, lp.pose) &&
+                  fabsf(e->q[1].size[1] - lp.size[1]) < 1e-5f && e->q[2].sc == k && !memcmp(e->q[2].rect, rc, sizeof rc) &&
+                  pose_near(e->q[2].pose, gp.pose) && fabsf(e->q[2].size[0] - gp.size[0]) < 1e-5f && V.buf2img == 3 &&
+                  log_has("the landing ring flat on the ground"),
+              "strike %d ground: %u layers, the label's rect %d (%d wide) size %g x %g, the ring's rect %d size %g uploads %d", st,
+              e->layer_count, e->q[1].rect[0], e->q[1].rect[2], e->q[1].size[0], e->q[1].size[1], e->q[2].rect[0],
+              e->q[2].size[0], V.buf2img);
     }
     CHECK(log_has("the Shadow Strike's mark (ready)") && log_has("the Shadow Strike's mark (no arrows)") &&
               log_has("the Shadow Strike's mark (pressed)"),

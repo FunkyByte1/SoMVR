@@ -15,6 +15,12 @@
  *                     the swing, the release no new one). The haptic: a full pulse for the hold (both hands on the hilt:
  *                     the left at 0.6) and a short weaker beat when the blade comes free - no ring (the clank's is a crack
  *                     and a ring). The VR menu's "Blade bite" row (Off / On; settings.conf COMBAT_BITE) sets it live.
+ *   SOMVR_COMBAT_BITE_DRAG=off|on (default off; build 18's env: on; docs/re-xr-pipeline.md 66.4) at _DEG the blade is not
+ *                     torn free: it drags through, held that far behind, for the hold's whole time (build 17's session:
+ *                     17 of 18 bites tore free at 30 deg within 2-24 ms, so the hold was never seen).
+ *   SOMVR_COMBAT_BITE_HAPTIC=pulse|thud (default pulse = build 17; build 18's env: thud) thud: full strength for the
+ *                     hold (at least 80 ms), then a separate tear (0.85, 60 ms) 25 ms after the blade comes free; the
+ *                     left hand 0.6 with both on the hilt.
  *   SOMVR_COMBAT_HITSND=off|on (default off) our own sound per landed hit kind, posted at the contact from our Wwise object
  *                     (SOMVR_SLOTS' sound): SOMVR_COMBAT_HITSND_CUT, _SLAP, _TAP, _STAB = a game event name each (off =
  *                     none; unset: HF_SND_*, a tap as a slap); the game's own hit sound (cbt_imp_atk_player, posted inside
@@ -47,6 +53,7 @@
 static const char *const g_hf_kind_w[SC_KIND_N] = { "none", "cut", "slap", "tap", "stab" };
 static struct {
 	int bite, snd, fx, log;      /* the switches */
+	int thud;                    /* build 18: SOMVR_COMBAT_BITE_HAPTIC=thud (the hold at full strength, a tear after it) */
 	int fx_orc;                  /* SOMVR_COMBAT_HITFX_ON=orc: on the orc's object at the contact's offset (else the world) */
 	int ok_fx;                   /* SOMVR_FINISH's FX sites matched (df_fx_check) */
 	_Atomic int req;             /* `fight bite on|off` (the writer thread): 1 + on, 0 = none */
@@ -72,6 +79,7 @@ static struct {
 	uint64_t frames_held, frames_eased, applied, cancels, stale, played[SC_KIND_N], snd_fail[SC_KIND_N], fx_made[SC_KIND_N],
 		fx_fail, hits[SC_KIND_N], bites_frees, lines;
 	float peak_deg;
+	float b_now[3];              /* build 18: this arms frame's extra turn of the bite (0 = none), for swl_arm */
 	/* the hits' blade against the held point while a bite holds (hf_blade): frames, the largest distance (cm) */
 	uint64_t chk_n, chk_all;
 	float chk_max, chk_all_max;
@@ -89,10 +97,10 @@ static sv_vec3 hf_world_to_grip(const float P[3], sv_vec3 shift)
 	return sa_world_to_track(&g_arm.rig, w).p;
 }
 
-/* the haptic of a bite: a full pulse for the hold (at least 50 ms), the left hand too with both on the hilt */
+/* the haptic of a bite: a full pulse for the hold (at least 50 ms; thud: 80), the left hand too with both on the hilt */
 static void hf_bite_haptic(void)
 {
-	float dur = g_hf.cfg.hold_s > 0.05f ? g_hf.cfg.hold_s : 0.05f;
+	float lo = g_hf.thud ? 0.08f : 0.05f, dur = g_hf.cfg.hold_s > lo ? g_hf.cfg.hold_s : lo;
 	in_haptic_event(SOMVR_HAND_R, 1.0f, dur, SOMVR_HAP_COMBAT);
 	if (g_bd.two.w > 0)
 		in_haptic_event(SOMVR_HAND_L, 0.6f, dur, SOMVR_HAP_COMBAT);
@@ -120,6 +128,7 @@ static void hf_arm(const int done[2], const sa_xf gg[2], const int gv[2], const 
 		      (double)g_hf.cfg.hold_s * 1e3, (double)g_hf.cfg.ease_s * 1e3, (double)g_hf.cfg.max_rad / 0.01745329);
 	}
 	g_hf.d_have = 0;
+	memset(g_hf.b_now, 0, sizeof g_hf.b_now);
 	const sa_chain *c = &g_arm.ch[SA_R];
 	int ok = g_hf.bite && done[SA_R] && gv[SA_R] && !bowed[SA_R] && c->wpn >= 0 && g_aw.s[SA_R].used_held &&
 		 bd_sword_in_hand() && g_arm.weight[SA_R] >= 1 && !(g_sf.ghost_a[SA_R] > 0);
@@ -146,13 +155,20 @@ static void hf_arm(const int done[2], const sa_xf gg[2], const int gv[2], const 
 		sv_quat_to(qw, q);
 		ph = swb_step(&g_hf.st, &g_hf.cfg, t, p, q, P, b);
 		g_hf.frames_held += ph == SWB_HOLD, g_hf.frames_eased += ph == SWB_EASE;
-		if (was == SWB_HOLD && ph == SWB_EASE) { /* the blade comes free: a short weaker beat */
-			in_haptic_event(SOMVR_HAND_R, 0.5f, 0.04f, SOMVR_HAP_COMBAT);
+		if (was == SWB_HOLD && ph == SWB_EASE) { /* the blade comes free: a short weaker beat (thud: the tear, apart) */
+			if (g_hf.thud) {
+				in_haptic_after(SOMVR_HAND_R, 0.85f, 0.06f, 0.025f, SOMVR_HAP_COMBAT);
+				if (g_bd.two.w > 0)
+					in_haptic_after(SOMVR_HAND_L, 0.6f, 0.06f, 0.025f, SOMVR_HAP_COMBAT);
+			} else {
+				in_haptic_event(SOMVR_HAND_R, 0.5f, 0.04f, SOMVR_HAP_COMBAT);
+			}
 			g_hf.bites_frees++;
 			if (hf_log_ok())
 				logf_("BITE t=%.3f free after %.0f ms: %s at %.1f deg off the drawn blade (the hand on, the blade eases "
 				      "back over %.0f ms); the hits' blade passed %.1f cm from the held point at most in the %llu combat "
-				      "frames held", t, (double)g_hf.st.held_s * 1e3, g_hf.st.capped ? "torn free" : "held its time",
+				      "frames held", t, (double)g_hf.st.held_s * 1e3, g_hf.st.capped ? g_hf.cfg.drag ?
+				      "dragged through at the cap" : "torn free" : "held its time",
 				      (double)g_hf.st.peak / 0.01745329, (double)g_hf.cfg.ease_s * 1e3, (double)g_hf.chk_max,
 				      (unsigned long long)g_hf.chk_n);
 		}
@@ -179,8 +195,38 @@ static void hf_arm(const int done[2], const sa_xf gg[2], const int gv[2], const 
 		sa_xf W = sa_node_xf(&g_arm.pose[c->wpn]);
 		sa_node_set(&g_arm.pose[c->wpn], sa_xf_mul(sa_xf_mul(gm3, sa_xf_inv(gm2)), W));
 		g_hf.applied++;
+		memcpy(g_hf.b_now, b, sizeof g_hf.b_now);
 	}
 	g_hf.d_have = 1, g_hf.d_t = t, g_hf.d_p = g.p, g_hf.d_q = qd, g_hf.d_shift = shift;
+}
+
+/* build 18, SOMVR_SWORD_HAND_LOCK=on (arm_eval, right after hf_arm): the layer's drawn hands of this frame (vh_arm's entry,
+ * from the same grips gg) turned with the drawn blade off the controller - the weight's offset and the bite's turn, the
+ * blade's q = exp(b) exp(rot) x the grip's - about the right grip point, the weapon node's pivot: the right fist turns on
+ * its own grip point, the left on the hilt with both hands is carried round the right one as the hilt is (its place and
+ * its turn), so both fists stay closed on the handle. The positions of a single hand, the twist and the arms are the
+ * controllers'. */
+static void swl_arm(const sa_xf gg[2], const int gv[2])
+{
+	if (!g_hsm.lock || !g_vh.on || !g_vh.have || !gv[SA_R])
+		return;
+	somvr_vrhands_frame *e = &g_vh.e;
+	if (!(e->flags & SOMVR_VHF_R))
+		return;
+	float zero[3] = { 0, 0, 0 }, ew[4], eb[4];
+	swg_qexp(g_hsm.w_now ? g_hsm.w_rot_now : zero, ew);
+	swg_qexp(g_hf.b_now, eb);
+	sv_quat R = sv_qnormalize(sv_qmul(sv_quat_of(eb), sv_quat_of(ew)));
+	if (!(fabsf(R.w) < 0.9999999f))
+		return; /* no turn off the controller this frame */
+	sa_xf r = { gg[SA_R].p, sv_qnormalize(sv_qmul(R, sv_qnormalize(gg[SA_R].q))) };
+	vh_to_xr(&r, &e->grip[SA_R]);
+	if (g_bd.two.w > 0 && gv[SA_L] && (e->flags & SOMVR_VHF_L)) {
+		sv_vec3 pr = gg[SA_R].p, d = { gg[SA_L].p.x - pr.x, gg[SA_L].p.y - pr.y, gg[SA_L].p.z - pr.z }, dr = sv_qrot(R, d);
+		sa_xf l = { { pr.x + dr.x, pr.y + dr.y, pr.z + dr.z }, sv_qnormalize(sv_qmul(R, sv_qnormalize(gg[SA_L].q))) };
+		vh_to_xr(&l, &e->grip[SA_L]);
+	}
+	g_hsm.w_locked++;
 }
 
 /* SOMVR_XR_DUMP_MARKED (tests): this H4 frame's record marked, so the layer dumps the next stereo frame */
@@ -411,6 +457,9 @@ static void hf_config(int *bad)
 	g_hf.cfg.hold_s = env_float("SOMVR_COMBAT_BITE_MS", 60, 0, 200, bad) * 1e-3f;
 	g_hf.cfg.ease_s = env_float("SOMVR_COMBAT_BITE_EASE_MS", 100, 0, 400, bad) * 1e-3f;
 	g_hf.cfg.max_rad = env_float("SOMVR_COMBAT_BITE_DEG", 30, 5, 60, bad) * 0.01745329f;
+	g_hf.cfg.drag = env_word("SOMVR_COMBAT_BITE_DRAG", onoff_w, 2, 0); /* build 18 */
+	static const char *const hap_w[] = { "pulse", "thud" };
+	g_hf.thud = env_word("SOMVR_COMBAT_BITE_HAPTIC", hap_w, 2, 0); /* build 18 */
 	if (g_hf.bite && (!g_arm.on || !g_cb.mode))
 		*bad = 1, logf_("WARN SOMVR_COMBAT_BITE=on needs SOMVR_ARMS=1 and SOMVR_COMBAT (the drawn sword, our hits): no bite"),
 		g_hf.bite = 0;
@@ -446,10 +495,11 @@ static void hf_config(int *bad)
 	if (g_hf.log)
 		bs_install_log(); /* SOMVR_BOW_SNDLOG's patch (somvr_quiver_game.c), once */
 	logf_("CONFIG hitfeel bite=%s (SOMVR_COMBAT_BITE: a landed cut holds the drawn blade at the contact %.0f ms at most, "
-	      "torn free past %.0f deg, eased back over %.0f ms; the VR menu's Blade bite row) hitsnd=%s (cut '%s', slap '%s', "
+	      "%s %.0f deg, eased back over %.0f ms; haptic %s; the VR menu's Blade bite row) hitsnd=%s (cut '%s', slap '%s', "
 	      "tap '%s', stab '%s') hitfx=%s (cut '%s', stab '%s', in %s%s%s) hitlog=%d%s",
-	      g_hf.bite ? "on" : "off", (double)g_hf.cfg.hold_s * 1e3, (double)g_hf.cfg.max_rad / 0.01745329,
-	      (double)g_hf.cfg.ease_s * 1e3, g_hf.snd ? "on" : "off", g_hf.sound[1], g_hf.sound[2], g_hf.sound[3], g_hf.sound[4],
+	      g_hf.bite ? "on" : "off", (double)g_hf.cfg.hold_s * 1e3,
+	      g_hf.cfg.drag ? "dragging through the body at most" : "torn free past", (double)g_hf.cfg.max_rad / 0.01745329,
+	      (double)g_hf.cfg.ease_s * 1e3, g_hf.thud ? "thud (full for the hold, a tear 25 ms after it)" : "pulse", g_hf.snd ? "on" : "off", g_hf.sound[1], g_hf.sound[2], g_hf.sound[3], g_hf.sound[4],
 	      g_hf.fx ? "on" : "off", g_hf.fxname[1], g_hf.fxname[4], g_hf.fx_orc ? "the orc's frame" : "the world",
 	      g_hf.fx && !g_hf.ok_fx ? "; WARN: none: " : "",
 	      g_hf.fx && !g_hf.ok_fx ? fxwhy : "", g_hf.log, g_hf.log ? " (test only: the game's sounds and FX after each of our hits)" : "");

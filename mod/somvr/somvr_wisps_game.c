@@ -64,6 +64,7 @@ static void wp_config(int *bad)
 	if (cal && cal[0])
 		somvr_vh_parse_cal(cal, &g_wp.vc);
 	somvr_vh_parse_size(getenv("SOMVR_XR_HANDS_SIZE"), &g_wp.vc); /* build 17: the layer's drawn size, the same here */
+	somvr_vh_parse_grip(getenv("SOMVR_XR_HANDS_GRIP_CM"), &g_wp.vc); /* build 18: the fist round the handle, as drawn */
 	g_wp.model_ok = somvr_vh_init(&g_wp_m, &g_wp.vc) == 0;
 	logf_("CONFIG wisps=%s (SOMVR_WISPS: %s); the hand model %s: our wrist joint at %.1f,%.1f,%.1f cm in the left grip "
 	      "(game convention)%s", g_wp_w[g_wp.want],

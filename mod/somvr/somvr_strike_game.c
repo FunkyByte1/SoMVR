@@ -438,6 +438,10 @@ static struct {
 	somvr_gz g;
 	somvr_gz_out o;           /* this frame's pick */
 	float ring_min_m, ring_deg;
+	int mark_chest;           /* build 18: SOMVR_STRIKE_GAZE_MARK=chest (build 17's ring round the chest); ground = the default */
+	float land_cm, land_r_m;  /* the landing: this far from the orc's root toward the head (60); the ring at least this radius */
+	uint64_t land_mark, land_frames, land_casts;
+	float land_y, land_oy;    /* the last cast's ground and the orc's root height then */
 	_Atomic int hold_sync;    /* SOMVR_STRIKE_GAZE_AIM_HOLD=sync: the aim held until the strike's sync is over (as the bow
 				   * path holds it: the bow stays out); move (default): until the strike's move begins */
 	uint64_t ends_at_send;    /* g_sk.ends at 121 */
@@ -476,6 +480,8 @@ static void sg_config(int *bad)
 	g_sg.cfg.range_cm = 100 * env_float("SOMVR_STRIKE_GAZE_RANGE_M", g_sg.cfg.range_cm / 100, 3, 60, bad);
 	g_sg.cfg.aim_max_s = 0.001f * env_float("SOMVR_STRIKE_GAZE_AIM_MS", 1000 * g_sg.cfg.aim_max_s, 100, 3000, bad);
 	g_sg.ring_min_m = 1.0f, g_sg.ring_deg = 7.0f;
+	g_sg.mark_chest = env_word("SOMVR_STRIKE_GAZE_MARK", (const char *const[]){ "ground", "chest" }, 2, 0);
+	g_sg.land_cm = env_float("SOMVR_STRIKE_GAZE_LAND_CM", 60, 0, 300, bad), g_sg.land_r_m = 0.42f;
 	atomic_store(&g_sg.hold_sync, env_word("SOMVR_STRIKE_GAZE_AIM_HOLD", (const char *const[]){ "move", "sync" }, 2, 0));
 	atomic_store(&g_sg.req, -1);
 	g_sg.on = on && g_sk.on;
@@ -490,6 +496,12 @@ static void sg_config(int *bad)
 		      g_sg.cfg.cone_deg, g_sg.cfg.keep_deg, g_sg.cfg.switch_deg, g_sg.cfg.dwell_s * 1e3, g_sg.cfg.lose_s * 1e3,
 		      g_sg.cfg.near_cm / 100, g_sg.cfg.range_cm / 100, g_sg.cfg.aim_max_s * 1e3, g_sg.cfg.press_s * 1e3,
 		      g_sg.cfg.hold_s * 1e3, g_sg.ring_min_m, g_sg.ring_deg);
+	if (on)
+		logf_("CONFIG strike gaze mark=%s (SOMVR_STRIKE_GAZE_MARK%s): %s; the landing %.0f cm from the orc's root toward "
+		      "the head (SOMVR_STRIKE_GAZE_LAND_CM)", g_sg.mark_chest ? "chest" : "ground", g_sg.mark_chest ? "" : ", the default",
+		      g_sg.mark_chest ? "a ring round the orc's chest, the label beside it"
+				      : "a ring flat on the ground where Talion lands (its ground by a ray), the label standing beside it",
+		      g_sg.land_cm);
 }
 
 /* "bow strike gaze [on|off]" (the writer thread): the switch from the next frame; a status line */
@@ -673,6 +685,26 @@ static int sg_entry(somvr_objective_frame *e)
 	e->flags = SOMVR_OBF_STRIKE | (g_sg.g.phase ? SOMVR_OBF_STRIKE_GO
 				       : g_sg.arrows >= 0 && g_sg.arrows < g_sg.cfg.arrows_min ? SOMVR_OBF_STRIKE_NO : 0u);
 	e->dist_m = somvr_ob_strike_ring(d, g_sg.ring_min_m, g_sg.ring_deg);
+	if (!g_sg.mark_chest) { /* build 18: the landing on the ground (the user: "a symbol on the ground where I would land") */
+		float o[3] = { g_sg.o.aim[0], g_sg.o.aim[1] - g_sg.cfg.chest_cm, g_sg.o.aim[2] }, l[3], g[3];
+		float hx2 = g_sg.head[0] - o[0], hz2 = g_sg.head[2] - o[2], hl = sqrtf(hx2 * hx2 + hz2 * hz2);
+		float k = hl > 1 ? fminf(g_sg.land_cm, 0.8f * hl) / hl : 0;
+		l[0] = o[0] + hx2 * k, l[2] = o[2] + hz2 * k, l[1] = o[1] - g_sg.cfg.seg_lo_cm - 20.0f; /* the orc's feet (root - 90) */
+		float from[3] = { l[0], o[1] + 60.0f, l[2] };
+		uintptr_t ho = 0;
+		if (g_sg.o.mark == g_sg.land_mark && g_sg.land_frames++ % 8) /* the ground: cast every 8th frame, kept between */
+			l[1] = g_sg.land_y + (o[1] - g_sg.land_oy);
+		else if (pr_ray_ok() && pr_ray_down(from, 300.0f, (uintptr_t)g_sg.o.mark, g, &ho) && vec_ok(g, 1e7f))
+			l[1] = g[1], g_sg.land_y = g[1], g_sg.land_oy = o[1], g_sg.land_mark = g_sg.o.mark, g_sg.land_casts++;
+		else
+			g_sg.land_y = l[1], g_sg.land_oy = o[1], g_sg.land_mark = g_sg.o.mark;
+		somvr_th_to_xr(&mp, l, e->pos);
+		float dl = sqrtf((e->pos[0] - hx[0]) * (e->pos[0] - hx[0]) + (e->pos[1] - hx[1]) * (e->pos[1] - hx[1]) +
+				 (e->pos[2] - hx[2]) * (e->pos[2] - hx[2]));
+		e->dist_m = 0.5f * somvr_ob_strike_ring(dl, 2 * g_sg.land_r_m, 3.2f); /* the radius: 3.2 deg across, >= 0.42 m */
+	} else {
+		e->flags |= SOMVR_OBF_STRIKE_CHEST;
+	}
 	g_sg.published++;
 	return 1;
 }

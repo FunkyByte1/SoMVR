@@ -12,6 +12,7 @@
 #   follow4 mark 4's climb with the test head 70 cm off Talion, let go: SOMVR_FOLLOW brings his body under the head;
 #          then an infantry orc's strikes (the THREAT reach lines: the head against the root)
 #   orc17  an orc's body under the right test hand's grip: `climb orcbody hold` (build 16) vs skip (build 17)
+#   fling18 flings at four hand speeds on the user's cliff, `climb flingup off` (17b) vs on (18), and a catch
 # Several in one boot (PLAN="head4 stand5 hug"). Stops at once (quit) when the user goes into VR.
 CLIMB2_LIB=1 . "$(dirname "$0")/climb2-drive.sh"
 H4_AT=${H4_AT:-33985.5 2016.6 -27131.8}
@@ -168,8 +169,41 @@ orc17plan() {
   orcatt hold; orcatt skip
   grep -E 'rays on an orc' "$L" | tail -1 | cut -c1-200
   w "climb fsm7 block"; w "hands test off" 0.4; }
-case " $PLAN " in *" head4 "*|*" stand5 "*|*" hug "*|*" cliff "*|*" follow4 "*|*" orc17 "*) ;; *) echo "no top17 plan in PLAN=$PLAN"; exit 1 ;; esac
+# fling18 (build 18): on the user's cliff from the meadow (FL_FROM, their session's first launch spot) a hold, one pull
+# off the ground, the left hand higher, the right let go; then the left hand swung down 120 and back 40 cm in MS ms
+# and let go 60 % through it (`hands swing ... MS 0.6`): the launch line (up, toward, turned up), the rise;
+# with `climb flingup off` (build 17b) and on (build 18); a catch: a strong fling, the right grip squeezed 0.3 s in
+FL_FROM=${FL_FROM:-33652 2000 -27228}
+flup() { local ms=$1
+  w "hands test L -20 35 40 0 0 0" 0.4; grabh L 35 40 || { echo "no grab L"; return 1; }
+  w "hands squeeze R 0" 0.5; w "hands test R 20 -40 10 0 0 0" 0.3
+  w "hands swing L -20 -85 0 0 0 0 $ms 0.6" 2.5 # down 120 and back 40 cm, the grip opened 60 % through it
+  grep -E '^CLIMB t=.*fling (launch|none|apex|top|glide)|^CLIMB t=.*(catch|end: over: a fling)' "$L" | tail -2 | sed -E 's/^CLIMB t=[0-9.]+ frame=[0-9]+ //' | cut -c1-250; }
+flingatt() { local mode=$1 ms=$2
+  go "$FL_FROM"; faceto
+  w "hands test R 20 35 40 0 0 0" 0.5; grabh R 35 40 || { echo "no grab R"; return 1; }
+  w "hands swing R 20 -10 40 0 0 0 900" 1.4
+  echo "== $mode, the swing in $ms ms: $(root)"; flup "$ms"
+  w "hands squeeze L 0" 0.3; w "hands squeeze R 0" 0.3; w "hands test off" 0.3
+  climbing && { x "btn R a 1"; x "btn R a 0"; sleep 3; }; }
+fling18plan() { local mode ms
+  echo "== fling18"; x "btn R squeeze 0"; w "hands test off"
+  w "climb jump 60" # (headless 20 Hz: a fast swing's frame step is 25-40 cm, at 90 Hz 8-10)
+  for mode in off on; do w "climb flingup $mode"; for ms in 1200 600 400 250; do flingatt $mode $ms; done; done
+  echo "== the catch (on)"; w "climb flingup on"
+  go "$FL_FROM"; faceto
+  w "hands test R 20 35 40 0 0 0" 0.5; grabh R 35 40 || return 1
+  w "hands swing R 20 -10 40 0 0 0 900" 1.4
+  w "hands test L -20 35 40 0 0 0" 0.4; grabh L 35 40 || return 1
+  w "hands squeeze R 0" 0.5; w "hands test R 20 40 35 0 0 0" 0.3
+  w "hands swing L -20 -85 0 0 0 0 400 0.6 1.0" 2.0 # the right grip closes as the swing ends: in flight
+  grep -E '^CLIMB t=.*(fling launch|fling catch|catch|grab R:|fling apex)' "$L" | tail -3 | sed -E 's/^CLIMB t=[0-9.]+ frame=[0-9]+ //' | cut -c1-250
+  echo "$(date +%T) after the catch: $(root)"; climbing && echo "CLIMBING (the catch holds)"
+  w "hands squeeze L 0" 0.3; w "hands squeeze R 0" 0.3; w "hands test off" 0.3
+  climbing && { x "btn R a 1"; x "btn R a 0"; sleep 3; }
+  grep -E '^CLIMB END' "$L" | grep -oE 'flings [0-9]+ \(none [0-9]+[^)]*\) catches [0-9]+ apexes [0-9]+ \(blocked [0-9]+\)' | tail -1; }
+case " $PLAN " in *" head4 "*|*" stand5 "*|*" hug "*|*" cliff "*|*" follow4 "*|*" orc17 "*|*" fling18 "*) ;; *) echo "no top17 plan in PLAN=$PLAN"; exit 1 ;; esac
 card
 for p in $PLAN; do [ "$p" = head4 ] && head4plan; [ "$p" = stand5 ] && stand5plan; [ "$p" = hug ] && hugplan
-  [ "$p" = cliff ] && cliffplan; [ "$p" = follow4 ] && follow4plan; [ "$p" = orc17 ] && orc17plan; done
+  [ "$p" = cliff ] && cliffplan; [ "$p" = follow4 ] && follow4plan; [ "$p" = orc17 ] && orc17plan; [ "$p" = fling18 ] && fling18plan; done
 echo "steps done $(date +%T)"; sleep 2; echo quit >> "$R/cmd"; echo "quit $(date +%T)"

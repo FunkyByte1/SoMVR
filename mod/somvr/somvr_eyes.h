@@ -70,6 +70,11 @@ void somvr_rig_head(const somvr_rig *r, somvr_base b, const somvr_posef eye[2], 
  * P0 += R(Y(psi - yaw0))^-1 applied / s. */
 sv_vec3 somvr_rig_offset(const somvr_rig *r, somvr_base b, const somvr_posef eye[2]);
 sv_vec3 somvr_follow_step(sv_vec3 offset, float dead_cm, float step_cm);
+/* build 18 (re-xr-pipeline.md 69.1): what the game applied of the follow's request q, from the raw measure m (the root's
+ * move minus the game's own part of the tick's move): only m's part along q, 0..1 of q (horizontal; *k = the share). A
+ * whole move held (the root still, our stick's step in the own part) gives m = -step, against q: 0, not -step (build
+ * 17 shifted the rig's origin by it and the view walked on with the stick) */
+sv_vec3 somvr_follow_along(sv_vec3 m, sv_vec3 q, float *k);
 void somvr_rig_shift(somvr_rig *r, somvr_base b, sv_vec3 applied);
 
 uint32_t somvr_layout_nslots(int layout);

@@ -82,6 +82,7 @@ static struct {
 	uint32_t lines;
 	int range_ok, pos_ok;
 	int land, land_was;  /* build 16: the climb's landing ring published (SOMVR_CLIMB_PULLOVER), shown last frame */
+	int ws, ws_was;      /* build 18: the wraith step's ring published (SOMVR_WRAITH_STEP), shown last frame (1 gold, 2 red) */
 	uint64_t land_frames;
 	int strike;          /* build 17: the Shadow Strike's mark published (SOMVR_STRIKE_GAZE) */
 	uint64_t strike_frames;
@@ -198,7 +199,7 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 static void ob_frame(uintptr_t pl, int stereo)
 {
 	int pub = g_ob.mode >= 2 && g_ob.on;
-	if ((!pub && !g_ob.land && !g_ob.strike) || !stereo)
+	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws) || !stereo)
 		return;
 	if (g_ob.tid && g_ob.tid != ob_tid())
 		return;
@@ -229,6 +230,16 @@ static void ob_frame(uintptr_t pl, int stereo)
 		return;
 	}
 	g_ob.land_was = 0;
+	if (g_ob.ws && ws_entry(&e)) { /* build 18: the wraith step's landing (SOMVR_WRAITH_STEP: gold, or red and crossed) */
+		somvr_objective_put(&g_obj, g_fr.frame, &e);
+		if (g_ob.ws_was != 1 + !!(e.flags & SOMVR_OBF_LAND_NO) && g_ob.lines++ < 400)
+			logf_("OBJECTIVE t=%.3f frame=%llu: the wraith step's landing in the eyes: %s ring, xr (%+.2f %+.2f %+.2f) m, "
+			      "radius %.2f m (SOMVR_WRAITH_STEP)", mono(), (unsigned long long)g_fr.frame,
+			      e.flags & SOMVR_OBF_LAND_NO ? "the red crossed" : "the gold", e.pos[0], e.pos[1], e.pos[2], (double)e.dist_m);
+		g_ob.ws_was = 1 + !!(e.flags & SOMVR_OBF_LAND_NO), g_ob.cur = 0;
+		return;
+	}
+	g_ob.ws_was = 0;
 	if (g_ob.strike && sg_entry(&e)) { /* build 17: the Shadow Strike's mark on the orc looked at (SOMVR_STRIKE_GAZE) */
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
 		g_ob.strike_frames++, g_ob.cur = 0;
@@ -344,8 +355,9 @@ static void ob_start(int *bad)
 	g_ob.land = g_cl.on && (g_cl.cfg.pullover || g_cl.cfg.drop_mark); /* build 16: the climb's landing ring
 									   * (SOMVR_CLIMB_PULLOVER; build 17: _DESCENT_MARK) */
 	g_ob.strike = g_sg.on; /* build 17: the Shadow Strike's mark (SOMVR_STRIKE_GAZE) */
+	g_ob.ws = ws_wanted(); /* build 18: the wraith step's landing (SOMVR_WRAITH_STEP) */
 	if (!g_ob.mode) {
-		if (g_ob.land || g_ob.strike)
+		if (g_ob.land || g_ob.strike || g_ob.ws)
 			ob_publish(&c0, "the climb's landing and the strike's mark only (SOMVR_OBJECTIVE off)");
 		return;
 	}

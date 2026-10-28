@@ -40,7 +40,7 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_VRHANDS_SYMBOL "somvr_vrhands"
 #define SOMVR_VRHANDS_MAGIC 0x3153444e41485256ull /* "VRHANDS1" */
-#define SOMVR_VRHANDS_VERSION 4u
+#define SOMVR_VRHANDS_VERSION 5u
 
 enum {
     SOMVR_VHF_L = 1u,       /* the left grip is valid this frame */
@@ -67,6 +67,12 @@ typedef struct {
      * origin at its nock end, its -Z along the shaft to the head (XR space, metres); arrow_glow 0..1 its wraith light */
     somvr_posef arrow;
     float arrow_len, arrow_glow;
+    /* v5 (build 18, SOMVR_BOW_STRING_DRAW=on, docs/re-xr-pipeline.md 61.10): the bow's string the layer draws
+     * (string_r > 0): the lower limb's tip, the string's middle (at rest between the tips, drawn the string hand), the
+     * upper tip (XR space, metres); string_r its radius (m) */
+    float string[3][3];
+    float string_r;
+    float pad5;
 } somvr_vrhands_frame;
 
 typedef struct somvr_vrhands_shared {
@@ -92,12 +98,12 @@ typedef struct somvr_vrhands_shared {
     _Atomic uint64_t n_dused;     /* layer: frames whose hands were tested against the world */
 } somvr_vrhands_shared;
 
-_Static_assert(sizeof(somvr_vrhands_frame) == 224, "somvr_vrhands_frame size");
+_Static_assert(sizeof(somvr_vrhands_frame) == 264, "somvr_vrhands_frame size");
 _Static_assert(offsetof(somvr_vrhands_shared, last) == 24 && offsetof(somvr_vrhands_shared, f) == 32 &&
-                   offsetof(somvr_vrhands_shared, layer_state) == 32 + 224 * SOMVR_NREC &&
-                   offsetof(somvr_vrhands_shared, dseq) == 32 + 224 * SOMVR_NREC + 40,
+                   offsetof(somvr_vrhands_shared, layer_state) == 32 + 264 * SOMVR_NREC &&
+                   offsetof(somvr_vrhands_shared, dseq) == 32 + 264 * SOMVR_NREC + 40,
                "somvr_vrhands_shared offsets");
-_Static_assert(sizeof(somvr_vrhands_shared) == 32 + 224 * SOMVR_NREC + 40 + 72, "somvr_vrhands_shared size");
+_Static_assert(sizeof(somvr_vrhands_shared) == 32 + 264 * SOMVR_NREC + 40 + 72, "somvr_vrhands_shared size");
 
 static inline int somvr_vrhands_ok(const somvr_vrhands_shared *v) {
     return v && v->magic == SOMVR_VRHANDS_MAGIC && v->version == SOMVR_VRHANDS_VERSION &&
@@ -117,6 +123,9 @@ static inline void somvr_vrhands_put(somvr_vrhands_shared *v, uint64_t frame, co
         for (int k = 0; k < 5; k++) e->curl[h][k] = in->curl[h][k];
     e->ghost[0] = in->ghost[0], e->ghost[1] = in->ghost[1], e->ghost_a[0] = in->ghost_a[0], e->ghost_a[1] = in->ghost_a[1];
     e->arrow = in->arrow, e->arrow_len = in->arrow_len, e->arrow_glow = in->arrow_glow;
+    for (int k = 0; k < 3; k++)
+        for (int i = 0; i < 3; i++) e->string[k][i] = in->string[k][i];
+    e->string_r = in->string_r;
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&v->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&v->n_frames, 1, memory_order_relaxed);
@@ -135,6 +144,9 @@ static inline int somvr_vrhands_get(somvr_vrhands_shared *v, uint64_t frame, som
     out->ghost[0] = e->ghost[0], out->ghost[1] = e->ghost[1];
     out->ghost_a[0] = e->ghost_a[0], out->ghost_a[1] = e->ghost_a[1];
     out->arrow = e->arrow, out->arrow_len = e->arrow_len, out->arrow_glow = e->arrow_glow;
+    for (int k = 0; k < 3; k++)
+        for (int i = 0; i < 3; i++) out->string[k][i] = e->string[k][i];
+    out->string_r = e->string_r;
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);
@@ -191,12 +203,16 @@ typedef struct {
     float cal[6];                /* SOMVR_XR_HANDS_CAL: cm x y z, deg rx ry rz in the right grip's frame (mirrored) */
     float size;                  /* build 17, SOMVR_XR_HANDS_SIZE: the hand's size about the fist's tube (1 = the generic
                                     hand: 17.8 cm wrist to middle tip, the fist's tube 3.1 cm across) */
+    float grip_d_m;              /* build 18, SOMVR_XR_HANDS_GRIP_CM: the handle the fist closes round (m; 0 = build 17's
+                                    fist, whose fingertips reach the tube's axis); docs/re-xr-pipeline.md 66.2 */
 } somvr_vh_cfg;
 void somvr_vh_cfg_default(somvr_vh_cfg *c);
 /* "x,y,z,rx,ry,rz" (cm, deg; |cm| <= 10, |deg| <= 90) into c->cal; 0 = not understood (c unchanged) */
 int somvr_vh_parse_cal(const char *v, somvr_vh_cfg *c);
 /* "S" (0.8 .. 1.5) into c->size; 0 = not understood (c unchanged). NULL / "" = 1 (kept) */
 int somvr_vh_parse_size(const char *v, somvr_vh_cfg *c);
+/* build 18: "D" cm (0 = off, or 2 .. 5) into c->grip_d_m; 0 = not understood (c unchanged). NULL / "" = kept */
+int somvr_vh_parse_grip(const char *v, somvr_vh_cfg *c);
 
 typedef struct {
     int ok;
@@ -206,6 +222,10 @@ typedef struct {
     float gk;                     /* ... scaled by this about the tube's centre (cfg size; p_g = gk gq p + gp) */
     float tube_r_m;               /* the fist's tube: the finger joints' radius round its axis (m) */
     float tube_tilt_deg;          /* its axis against the knuckles' line (logs) */
+    float fist[SOMVR_VH_NF][3];   /* the closed pose the curls reach (cfg fist; build 18: fitted round cfg grip_d_m) */
+    float grip_fit[5];            /* build 18: the fit - the long fingers' MCP/PIP/DIP offsets (deg), the hand's move in the
+                                   * grip frame x y (m; in gp) - and grip_pen_m, the deepest any finger is in the handle */
+    float grip_pen_m;
     float wrist_g[3];             /* the wrist joint at rest in the right grip's frame */
     float arm_g[3];               /* ... the forearm's direction there (toward the elbow, unit) */
     float back_g[3];              /* ... the back of the wrist's normal (unit) */
@@ -215,7 +235,7 @@ typedef struct {
     float tipdir_g[3];            /* ... the index's direction there (its knuckle to its tip, unit) */
     float fade[1400];             /* per vertex: the wrist's fade (1 opaque .. 0 clear) */
     uint16_t idx_mirror[7000];    /* the triangles reversed (the left hand) */
-    char why[320];
+    char why[480];
 } somvr_vh_model;
 /* the model from the mesh and c; 0 = ok (m->why: a summary), -1 = unusable (m->why says why) */
 int somvr_vh_init(somvr_vh_model *m, const somvr_vh_cfg *c);
@@ -246,6 +266,15 @@ void somvr_vh_arrow(const somvr_posef *pose, float len_m, somvr_vh_vert *out);
 /* the arrow's parts near the eyes fade (drawn at full draw the nock and the vanes are at the cheek, a few cm from the
  * eye): each vertex's alpha = smoothstep over near_m .. far_m of its distance to the nearer eye */
 void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const float eye1[3], float near_m, float far_m);
+/* build 18 (vrhands v5): the bow's string - two hexagonal segments (lower tip -> middle -> upper tip), r_m round, both
+ * windings (as the arrow) */
+#define SOMVR_VH_STRING_NV 48
+#define SOMVR_VH_STRING_NI 144
+const uint16_t *somvr_vh_string_indices(void);
+void somvr_vh_string(const float pts[3][3], float r_m, somvr_vh_vert *out);
+/* build 18: where the fist's thumb pinches the index (the arrow held from the quiver): the point between the thumb's
+ * tip and the index's middle joint at curl 1 (the arrow hand's fist), in the right grip's frame (m); 0 = no model */
+int somvr_vh_pinch(const somvr_vh_model *m, const somvr_vh_cfg *c, float out[3]);
 /* a point given in the right grip's frame, on hand `side`'s grip (the left mirrored: x negated) -> XR space */
 void somvr_vh_grip_point(const somvr_posef *grip, int side, const float pg[3], float out[3]);
 /* touch: the drawn pointing hand's index tip on hand `side`'s grip (XR space) */

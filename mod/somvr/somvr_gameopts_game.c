@@ -508,6 +508,12 @@ static void go_vision_tick(sc_tick_out *o, double t)
 		size_t k = 0;
 		w[0] = 0;
 #define GO_VW(...) (k += (size_t)snprintf(w + k, k < sizeof w ? sizeof w - k : 0, __VA_ARGS__), k = k < sizeof w ? k : sizeof w)
+		if (vo.ev & SOMVR_VIE_RELIGHT_STOP) /* build 18: the game will not keep it (a fight): no blinking */
+			GO_VW("; the game ended the relit vision within %.0f ms: no more relights until Y is pressed again (%llu)",
+			      g_go.vis_cfg.relight_min_s * 1e3, (unsigned long long)g_go.vis.n_relight_stop);
+		if (vo.ev & SOMVR_VIE_RELIGHT) /* build 18: SOMVR_VISION_RELIGHT */
+			GO_VW("; the game ended it while Y holds it: on wished again (after the game's %.0f ms dwell; relight %llu)",
+			      g_go.vis_cfg.settle_s * 1e3, (unsigned long long)g_go.vis.n_relight);
 		if (vo.ev & SOMVR_VIE_PRESS_ON)
 			GO_VW("; Y pressed: on wished%s", g_go.vis_mode == SOMVR_VIS_HOLD ? " (ours while held)" : "");
 		if (vo.ev & SOMVR_VIE_PRESS_OFF)
@@ -674,6 +680,8 @@ static void go_start(const struct site_spec *sites, int *bad)
 	static const char *const vis_w[] = { "off", "hold", "tap" };
 	g_go.vis_mode = env_word("SOMVR_VISION", vis_w, 3, 0);
 	somvr_vis_cfg_default(&g_go.vis_cfg);
+	/* build 18: an orc's hit (the game) ends the vision while Y is held for it: on again after the dwell (default on) */
+	g_go.vis_cfg.relight = env_word("SOMVR_VISION_RELIGHT", (const char *const[]){ "off", "on" }, 2, 1);
 	somvr_vis_init(&g_go.vis, g_go.vis_mode);
 	g_go.vis_flag = -1;
 	if (g_go.vis_mode)
@@ -684,6 +692,10 @@ static void go_start(const struct site_spec *sites, int *bad)
 		      g_go.vis_mode == 1 ? "a press with the vision on turns it off, Y not held while it is ours turns it off"
 					 : "a press = the other state", g_go.vis_cfg.wait_s * 1e3, g_go.vis_cfg.settle_s * 1e3,
 		      g_go.vis_cfg.tries);
+	if (g_go.vis_mode == SOMVR_VIS_HOLD)
+		logf_("CONFIG vision relight=%s (SOMVR_VISION_RELIGHT%s): %s", g_go.vis_cfg.relight ? "on" : "off",
+		      g_go.vis_cfg.relight ? ", the default" : "", g_go.vis_cfg.relight ? "the game's own off while Y holds the vision "
+		      "= on again after its dwell" : "the game's own off is left until the next Y press (build 17b)");
 	/* build 17 (re-xr-pipeline.md 61.6): SOMVR_VISION_RAMP_MS=IN,OUT - the vision record's look ramps (the game's
 	 * RampInDuration / RampOutDuration, written into the record at PlayerVisionMode+0x28 as soon as it is seen; the
 	 * game reads them at its next switch); unset = the game's */

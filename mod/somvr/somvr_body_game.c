@@ -20,6 +20,8 @@
  *                        (the default). 8: the fist right under the guard (run 182336's pictures, `hands cal R 0 0 Z 90 0 0`).
  *   SOMVR_TWOHAND=1      the left hand squeezed on the hilt holds the sword with both hands (somvr_body.h 3; needs
  *                        SOMVR_ARMS=1 and SOMVR_SLOTS=1 for the sword's state).
+ *   SOMVR_TWOHAND_HOLD_CM=LO,HI  (default 8,24; build 18's env 10.5,13) where the left fist sits on the hilt, cm behind
+ *                        the right grip point (clamped there whatever the hands' distance): on the leather, not the pommel.
  *   SOMVR_HANDS_TEST=1   headless tests: `hands test L|R x y z [rx ry rz]` puts that grip at x right, y up, z ahead (cm) of
  *                        the head's yaw frame (deg about the grip's X, Y, Z; OpenXR's grip frame), `hands test off`;
  *                        `hands squeeze L|R V` holds a squeeze (0..1; -1 = the controller's again; SOMVR_CLIMB counts that
@@ -103,6 +105,7 @@ static struct {
 /* the writer thread's words -> the game thread */
 static _Atomic uint32_t g_bd_req_seq, g_bd_req_mode = SB_HIDE_N, g_bd_req_edit = BD_EDIT_N;
 static _Atomic uint32_t g_bd_req_angle, g_bd_req_angle_set; /* float bits; 1 once a word set it (0 deg too) */
+static _Atomic uint32_t g_bd_req_hold, g_bd_req_hold_lo, g_bd_req_hold_hi; /* build 18: `hands twohold LO HI` (float bits) */
 static pthread_mutex_t g_bd_mu = PTHREAD_MUTEX_INITIALIZER; /* the test poses, squeezes and calibrations */
 static struct { int seq, on[2], cal_set[2], draw; float v[2][6], sq[2], cal[2][6]; } g_bd_req;
 
@@ -530,7 +533,7 @@ static const char *bd_word(const char *w)
 	if (!g_bd.test)
 		return "hands (SOMVR_HANDS_TEST is off: ignored)";
 	pthread_mutex_lock(&g_bd_mu);
-	const char *what = "hands (not test|swing|noise|wiggle|weighthand|squeeze|draw|cal|hide|angle: ignored)";
+	const char *what = "hands (not test|swing|noise|wiggle|weighthand|twohold|squeeze|draw|cal|hide|angle: ignored)";
 	if (!strcmp(a, "swing")) {
 		what = bd_swing_word(w + 5);
 	} else if (!strcmp(a, "noise")) {
@@ -539,6 +542,16 @@ static const char *bd_word(const char *w)
 		what = hsm_wiggle_word(w + 6); /* SOMVR_SWORD_WEIGHT's proof (somvr_smooth_game.c) */
 	} else if (!strcmp(a, "weighthand")) {
 		what = hsm_hand_word(w + 10); /* SOMVR_SWORD_WEIGHT_HAND live (somvr_smooth_game.c) */
+	} else if (!strcmp(a, "twohold")) { /* build 18: SOMVR_TWOHAND_HOLD_CM live (the pictures) */
+		float lo, hi;
+		if (sscanf(w + 7, " %f %f", &lo, &hi) == 2 && lo >= 4 && hi <= 30 && lo <= hi) {
+			uint32_t bl, bh;
+			memcpy(&bl, &lo, 4), memcpy(&bh, &hi, 4);
+			atomic_store(&g_bd_req_hold_lo, bl), atomic_store(&g_bd_req_hold_hi, bh), atomic_store(&g_bd_req_hold, 1);
+			what = "hands twohold";
+		} else {
+			what = "hands twohold (not LO HI, 4 <= LO <= HI <= 30 cm: ignored)";
+		}
 	} else if (!strcmp(a, "draw")) {
 		g_bd_req.draw = 1, g_bd_req.seq++, what = "hands draw";
 	} else if (!strcmp(a, "test") && strstr(w, "off")) {
@@ -626,6 +639,12 @@ static void bd_twohand(sa_xf g[2], const int valid[2], const int bowed[2], float
 {
 	if (!g_bd.twohand)
 		return;
+	if (atomic_exchange(&g_bd_req_hold, 0)) { /* `hands twohold LO HI` (build 18) */
+		uint32_t bl = atomic_load(&g_bd_req_hold_lo), bh = atomic_load(&g_bd_req_hold_hi);
+		memcpy(&g_bd.tw.hold_lo_cm, &bl, 4), memcpy(&g_bd.tw.hold_hi_cm, &bh, 4);
+		logf_("TWOHAND t=%.3f the left hand held %.1f..%.1f cm behind the right grip (trigger word)", cb_now(),
+		      (double)g_bd.tw.hold_lo_cm, (double)g_bd.tw.hold_hi_cm);
+	}
 	sb_tw_in in;
 	memset(&in, 0, sizeof in);
 	in.sword = bd_sword_in_hand();
@@ -767,6 +786,18 @@ static void bd_config(int *bad)
 	g_bd.grip_cm = env_float("SOMVR_SWORD_GRIP_CM", 0, -10, 25, bad);
 	g_bd.t_sq[0] = g_bd.t_sq[1] = -1, g_bd_req.sq[0] = g_bd_req.sq[1] = -1;
 	sb_tw_cfg_default(&g_bd.tw);
+	/* build 18 (docs/re-xr-pipeline.md 66.3): where the left fist may sit on the hilt, cm behind the right grip point -
+	 * build 17's 8..24 let it ride over the pommel (24 cm behind the grip at SOMVR_SWORD_GRIP_CM 8 = the pommel's end) */
+	const char *hv = getenv("SOMVR_TWOHAND_HOLD_CM");
+	if (hv && hv[0]) {
+		float lo, hi;
+		char tail;
+		if (sscanf(hv, "%f,%f%c", &lo, &hi, &tail) == 2 && lo >= 4 && hi <= 30 && lo <= hi)
+			g_bd.tw.hold_lo_cm = lo, g_bd.tw.hold_hi_cm = hi;
+		else
+			*bad = 1, logf_("WARN SOMVR_TWOHAND_HOLD_CM=%s is not LO,HI (4 <= LO <= HI <= 30 cm): %.0f,%.0f", hv,
+					(double)g_bd.tw.hold_lo_cm, (double)g_bd.tw.hold_hi_cm);
+	}
 	bf_config(bad); /* SOMVR_FINGERS */
 	vh_config(bad); /* SOMVR_VRHANDS */
 	sf_config(bad); /* SOMVR_HANDS_SURFACE */
@@ -824,7 +855,7 @@ static void bd_start(void)
 	logf_("CONFIG body=%s hide=%s edit=%s sword angle %.1f deg (the blade line (0, sin a, cos a) in the grip's frame: the right weapon "
 	      "node's calibration and the combat blade's pitch %.1f deg), grip %.1f cm (SOMVR_SWORD_GRIP_CM: the sword slid along "
 	      "the blade in the fist, the combat blade's tip %.1f cm) twohand=%d (grab within %.0f cm of the hilt %.0f..%.0f cm "
-	      "behind the right grip, the left hand held %.0f..%.0f cm behind it, apart past %.0f cm = one hand, ease %.0f ms) "
+	      "behind the right grip, the left hand held %.1f..%.1f cm behind it, apart past %.0f cm = one hand, ease %.0f ms) "
 	      "test=%d", g_bd.on ? "hands (the body's bones collapsed in the player's skin palette, the hands kept)" : "full",
 	      sb_hide_name(g_bd.mode), bd_edit_name(g_bd.edit), g_bd.angle_deg, g_cb.bcfg.pitch_rad / BD_DEG, g_bd.grip_cm,
 	      g_cb.bcfg.len_cm, g_bd.twohand, g_bd.tw.grab_r_cm,

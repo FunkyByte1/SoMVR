@@ -34,6 +34,9 @@ enum {
     SOMVR_VIE_GIVEUP = 128u,   /* the wish not reached after tries taps: given up */
     SOMVR_VIE_DONE = 256u,     /* the wish reached */
     SOMVR_VIE_BLIND = 512u,    /* the flag unread: the wish's edge tapped once, not followed */
+    SOMVR_VIE_RELIGHT = 1024u, /* build 18 (relight): the game ended the vision while Y holds it ours: on wished again */
+    SOMVR_VIE_RELIGHT_STOP = 2048u, /* ... the game ended a relit vision within relight_min_s: no more until Y again (a
+                                     * fight where the game keeps it only its 1 s minimum: no on/off blinking) */
 };
 
 typedef struct {
@@ -41,6 +44,9 @@ typedef struct {
     float settle_s; /* a tap at the earliest this long after the flag's last change (1.05 s: the game's ~1 s dwell) */
     int tries;      /* taps for one wish at most (6) */
     int tap_ticks;  /* a tap's length in input ticks (2: a toggle; 0.85 s held would be PC_Radiance) */
+    int relight;    /* build 18, hold: the game's own off (an orc's hit) while Y holds the vision ours = on again, tapped
+                     * after settle_s like any wish (SOMVR_VISION_RELIGHT, default on; 0 = build 17b: left off until Y) */
+    float relight_min_s; /* a relit vision the game ends within this (1.5 s) = no more relights until Y is pressed again */
 } somvr_vis_cfg;
 void somvr_vis_cfg_default(somvr_vis_cfg *c);
 
@@ -57,6 +63,8 @@ typedef struct {
     double want_t;     /* the wish's start */
     double flag_t;     /* the flag's last change (0 = none seen) */
     uint64_t n_press, n_taps, n_retry, n_landed, n_game, n_late, n_giveup, n_blind;
+    uint64_t n_relight, n_relight_stop;
+    int relit, relight_stop; /* this hold: the vision on now is a relight's; relights stopped (until Y again) */
 } somvr_vis;
 void somvr_vis_init(somvr_vis *v, int mode);
 

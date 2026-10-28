@@ -39,7 +39,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_step.c" "$D/somvr_finish.c" "$D/somvr_headview.c" "$D/somvr_headparts.c" "$D/somvr_practice.c"
       "$D/somvr_session.c" "$D/somvr_body.c" "$D/somvr_fingers.c" "$D/somvr_size.c" "$D/somvr_vrhands.c"
       "$D/somvr_strike.c" "$D/somvr_gaze.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
-      "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c")
+      "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -107,6 +107,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_defence" "$D/tests/test_defence.c" "$D/so
 "$D/build/tests/test_defence"
 gcc "${CF[@]}" -o "$D/build/tests/test_step" "$D/tests/test_step.c" "$D/somvr_step.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_step"
+gcc "${CF[@]}" -o "$D/build/tests/test_wstep" "$D/tests/test_wstep.c" "$D/somvr_wstep.c" -lm # build 18: the wraith step
+"$D/build/tests/test_wstep"
 gcc "${CF[@]}" -o "$D/build/tests/test_headview" "$D/tests/test_headview.c" "$D/somvr_headview.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_headview"
 gcc "${CF[@]}" -o "$D/build/tests/test_headparts" "$D/tests/test_headparts.c" "$D/somvr_headparts.c" -lpthread -lm
@@ -132,6 +134,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_gaze" "$D/tests/test_gaze.c" "$D/somvr_ga
 "$D/build/tests/test_gaze"
 gcc "${CF[@]}" -o "$D/build/tests/test_execute" "$D/tests/test_execute.c" "$D/somvr_execute.c" -lm # build 13: the execution
 "$D/build/tests/test_execute"
+gcc "${CF[@]}" -o "$D/build/tests/test_stealth" "$D/tests/test_stealth.c" "$D/somvr_stealth.c" -lm # build 18: the stealth kill
+"$D/build/tests/test_stealth"
 gcc "${CF[@]}" -o "$D/build/tests/test_surface" "$D/tests/test_surface.c" "$D/somvr_surface.c" "$D/somvr_pose.c" -lm # build 13: hands at surfaces
 "$D/build/tests/test_surface"
 gcc "${CF[@]}" -o "$D/build/tests/test_verbs" "$D/tests/test_verbs.c" "$D/somvr_verbs.c" -lm # build 13: the Nemesis verbs

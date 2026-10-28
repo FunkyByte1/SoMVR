@@ -245,7 +245,9 @@ static const char *const g_labels[SOMVR_VMI_ALL] = {"Turn",     "Snap angle", "T
                                                     /* build 6: the other two tabs */
                                                     "Settings", "Controls",
                                                     /* build 17: the practice page's refills */
-                                                    "Refill arrows + focus", "Refill health"};
+                                                    "Refill arrows + focus", "Refill health",
+                                                    /* build 18 */
+                                                    "Spawn far orc (unaware)"};
 const char *somvr_vm_label(int item) { return item >= 0 && item < SOMVR_VMI_ALL ? g_labels[item] : ""; }
 static const char *const g_orc_labels[3] = {"Infantry", "Shield", "Berserker"}; /* = somvr_pr_orc_label */
 
@@ -288,6 +290,7 @@ int somvr_vm_enabled(const somvr_settings *s, uint32_t avail, int item) {
     case SOMVR_VMI_PR_SPAWN:
     case SOMVR_VMI_PR_ARROWS: /* build 17: the refills, in the area only (as the spawn) */
     case SOMVR_VMI_PR_HEALTH:
+    case SOMVR_VMI_PR_FAR: /* build 18 */
         return (avail & SOMVR_VMA_PRACTICE) && (avail & SOMVR_VMA_PR_HERE) && !(avail & SOMVR_VMA_PR_BUSY);
     case SOMVR_VMI_PR_REMOVE:
         return (avail & SOMVR_VMA_PRACTICE) && (avail & SOMVR_VMA_PR_ORC) && !(avail & SOMVR_VMA_PR_BUSY);
@@ -433,6 +436,7 @@ int somvr_vm_practice_action(int item) {
     case SOMVR_VMI_PR_REMOVE: return SOMVR_VMPR_REMOVE;
     case SOMVR_VMI_PR_ARROWS: return SOMVR_VMPR_ARROWS; /* build 17 */
     case SOMVR_VMI_PR_HEALTH: return SOMVR_VMPR_HEALTH;
+    case SOMVR_VMI_PR_FAR: return SOMVR_VMPR_FAR; /* build 18 */
     default: return SOMVR_VMPR_NONE;
     }
 }
@@ -589,15 +593,16 @@ int somvr_vm_apply(somvr_settings *s, uint32_t avail, uint32_t blink_on_ms, int 
 #define RECENTER_Y (ROW_Y0 + ROW_FIT * ROW_H + 12) /* the bottom row: where 16 rows end, however many are shown */
 /* the practice page: the state lines at 70 and 104, then the buttons and the orc type row; build 17: the two refills
  * under Spawn / Remove (the buttons 50 px, were 56), then the hints and the defence lines */
-#define PR_GO_Y 136
-#define PR_BACK_Y 194
-#define PR_ORC_Y 256
-#define PR_SPAWN_Y 302
-#define PR_REMOVE_Y 360
-#define PR_ARROWS_Y 426
-#define PR_HEALTH_Y 484
-#define PR_BTN_H 50
-#define PR_HINT_Y 550
+#define PR_GO_Y 136   /* build 18: the far orc under Spawn, the buttons 48 px (50 in build 17) */
+#define PR_BACK_Y 190
+#define PR_ORC_Y 246
+#define PR_SPAWN_Y 292
+#define PR_FAR_Y 346
+#define PR_REMOVE_Y 400
+#define PR_ARROWS_Y 460
+#define PR_HEALTH_Y 514
+#define PR_BTN_H 48
+#define PR_HINT_Y 574
 
 int somvr_vm_shown(uint32_t avail, int item) {
     switch (item) {
@@ -646,8 +651,10 @@ int somvr_vm_rect_av(uint32_t avail, int item, int part, int rc[4]) {
         else if (item == SOMVR_VMI_REPORT) rc[0] = 180, rc[1] = RECENTER_Y, rc[2] = 152, rc[3] = 56;
         else if (item == SOMVR_VMI_QUIT) rc[0] = 344, rc[1] = RECENTER_Y, rc[2] = 152, rc[3] = 56;
         else
-            rc[0] = 40, rc[1] = pa == SOMVR_VMPR_ARROWS ? PR_ARROWS_Y : pa == SOMVR_VMPR_HEALTH ? PR_HEALTH_Y
-                                                                                              : by[item - SOMVR_VMI_PR_GO],
+            rc[0] = 40, rc[1] = pa == SOMVR_VMPR_ARROWS ? PR_ARROWS_Y
+                                : pa == SOMVR_VMPR_HEALTH ? PR_HEALTH_Y
+                                : pa == SOMVR_VMPR_FAR    ? PR_FAR_Y
+                                                          : by[item - SOMVR_VMI_PR_GO],
             rc[2] = SOMVR_VM_TEX_W - 80, rc[3] = PR_BTN_H;
         return 1;
     }
@@ -674,14 +681,14 @@ somvr_vm_hit somvr_vm_hit_test_av(uint32_t avail, int page, float u, float v) {
     if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) return h; /* NaN too */
     float x = u * SOMVR_VM_TEX_W, y = v * SOMVR_VM_TEX_H;
     int rc[4];
-    static const int buttons[3][11] = {
+    static const int buttons[3][12] = {
         {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
          SOMVR_VMI_TAB_CTL, -1},
         {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK,
-         SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH, -1},
+         SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH, SOMVR_VMI_PR_FAR, -1},
         {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, -1}};
     const int *bl = buttons[page == SOMVR_VMPG_PRACTICE ? 1 : page == SOMVR_VMPG_CONTROLS ? 2 : 0];
-    for (int i = 0; i < 11 && bl[i] >= 0; i++)
+    for (int i = 0; i < 12 && bl[i] >= 0; i++)
         if (somvr_vm_rect(bl[i], SOMVR_VMP_BUTTON, rc) && in_rect(rc, x, y)) return (somvr_vm_hit){bl[i], SOMVR_VMP_BUTTON};
     if (page == SOMVR_VMPG_CONTROLS) return h; /* text only */
     int r0 = page == SOMVR_VMPG_PRACTICE ? SOMVR_VMI_PR_ORC : 0, r1 = page == SOMVR_VMPG_PRACTICE ? r0 + 1 : SOMVR_VMI_ROWS;
@@ -837,15 +844,16 @@ void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_vi
         draw_button(f, &c, v, SOMVR_VMI_PR_BACK, NULL);
         draw_row(f, &c, v, SOMVR_VMI_PR_ORC, 0);
         draw_button(f, &c, v, SOMVR_VMI_PR_SPAWN, NULL);
+        draw_button(f, &c, v, SOMVR_VMI_PR_FAR, NULL); /* build 18 */
         draw_button(f, &c, v, SOMVR_VMI_PR_REMOVE, NULL);
         draw_button(f, &c, v, SOMVR_VMI_PR_ARROWS, NULL); /* build 17 */
         draw_button(f, &c, v, SOMVR_VMI_PR_HEALTH, NULL);
         text_at(f, &c, 24, PR_HINT_Y, "No enemies here.", C_DIM);
-        text_at(f, &c, 24, PR_HINT_Y + 34, "Talion cannot die here.", C_DIM);
+        text_at(f, &c, 24, PR_HINT_Y + 32, "Talion cannot die here.", C_DIM);
         /* build 17: how to defend against the orc (somvr_defence.h: the blade in the blow's path; the red warning's
          * attacks - cannot parry / block - only dodged: the head 30 cm aside or 40 cm back) */
-        text_at(f, &c, 24, PR_HINT_Y + 76, "Block: sword across a blow.", C_LABEL);
-        text_at(f, &c, 24, PR_HINT_Y + 110, "Red: can't block, step aside.", C_LABEL);
+        text_at(f, &c, 24, PR_HINT_Y + 72, "Block: sword across a blow.", C_LABEL);
+        text_at(f, &c, 24, PR_HINT_Y + 104, "Red: can't block, step aside.", C_LABEL);
     }
     draw_button(f, &c, v, SOMVR_VMI_CLOSE, NULL);
 }

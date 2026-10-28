@@ -221,8 +221,9 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
 
 /* ==== 4. test hands for headless boots (SOMVR_XR_TEST=PATH, the layer; never in a player's build) ================= */
 /* One line of the test file (scripts/menus-drive.sh writes it; the layer runs each new file's lines once, in order):
- *   handsize S                             build 17: our hands' model rebuilt at the size S (0.8..1.5; SOMVR_XR_HANDS_SIZE
- *                                          live, the layer's hands only: headless pictures)
+ *   handsize S [D]                         build 17: our hands' model rebuilt at the size S (0.8..1.5; SOMVR_XR_HANDS_SIZE
+ *                                          live, the layer's hands only: headless pictures); build 18: D = the handle
+ *                                          the fist closes round (SOMVR_XR_HANDS_GRIP_CM: 0 = build 17's fist, 2..5 cm)
  *   lumlog N                               build 17: eye 0's mean colour logged for the next N frames (1..400; the hands'
  *                                          light probe: a look's ramp timed, e.g. the wraith vision's)
  *   dump                                   a stereo dump at the next frame (SOMVR_XR_DUMP must be on): the eyes, the
@@ -245,7 +246,7 @@ typedef struct {
     int op;        /* SOMVR_XT_* */
     int hand;      /* SOMVR_HAND_L / _R */
     int what;      /* touch: SOMVR_XTS_*; btn: SOMVR_XTB_* */
-    float v[6];    /* head: X Y Z RX RY RZ; touch: U V D; btn: V; stick: X Y; handsize: S; lumlog: N */
+    float v[6];    /* head: X Y Z RX RY RZ; touch: U V D; btn: V; stick: X Y; handsize: S, D (-1 = kept); lumlog: N */
     float sec;     /* the move's time */
 } somvr_xt_cmd;
 /* 1 = a command in *c, 0 = nothing (blank, comment), -1 = not understood */

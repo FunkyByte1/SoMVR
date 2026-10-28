@@ -200,7 +200,20 @@ static void test_image(void) {
     CHECK(band[3] > 200 && band[0] > 200 && fill[3] > 20 && fill[3] < 60 && dot[3] > 200 && corner[3] == 0,
           "the ring's cell: band %d, fill %d, dot %d, corner %d", band[3], fill[3], dot[3], corner[3]);
     somvr_ob_rect(SOMVR_OB_CELL_RING, r);
-    CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 14 * SOMVR_OB_STRIDE, "the ring's rect");
+    CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 15 * SOMVR_OB_STRIDE, "the ring's rect");
+    /* build 18: cell 8, the refused landing: a square after the strike's three wide cells; its band red, the bar across
+     * its middle red, beside the bar faint, the corner empty */
+    somvr_ob_rect(SOMVR_OB_CELL_RING_NO, r);
+    int nx = 1 + 14 * SOMVR_OB_STRIDE;
+    CHECK(r[0] == nx && r[1] == 1 && r[2] == SOMVR_OB_CELL && r[3] == SOMVR_OB_CELL && r[0] + r[2] < SOMVR_OB_IMG_W,
+          "the refused ring's rect %d %d %d %d", r[0], r[1], r[2], r[3]);
+    const uint8_t *nb = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + nx + 64 + 55), *nm = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + nx + 64),
+                  *ns = px + 4 * ((1 + 64 - 20) * SOMVR_OB_IMG_W + nx + 64 + 20), *nf = px + 4 * ((1 + 64 + 25) * SOMVR_OB_IMG_W + nx + 64 + 25),
+                  *nc = px + 4 * ((1 + 4) * SOMVR_OB_IMG_W + nx + 4);
+    CHECK(nb[3] > 200 && nb[0] > 190 && nb[1] < 60 && nm[3] > 200 && nm[0] > 190 && ns[3] > 10 && ns[3] < 40 && nf[3] > 200 &&
+              nc[3] == 0,
+          "the refused ring's cell: band %d (r %d g %d), middle %d, beside the bar %d, on the bar %d, corner %d", nb[3], nb[0],
+          nb[1], nm[3], ns[3], nf[3], nc[3]);
     /* build 17: cell 4, the drop's line: a gold middle, dark edges, nothing at the cell's sides; faded in at its top */
     int lx = 1 + 4 * SOMVR_OB_STRIDE;
     const uint8_t *mid = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + lx + 64), *rim = px + 4 * ((1 + 64) * SOMVR_OB_IMG_W + lx + 64 + 45),
@@ -281,7 +294,7 @@ static void test_strike_mark(void) {
     for (int i = 0; i < 3; i++) somvr_ob_rect(SOMVR_OB_CELL_STRIKE + i, r[i]);
     CHECK(r[0][0] == 5 * SOMVR_OB_STRIDE + 1 && r[0][2] == 3 * SOMVR_OB_STRIDE - 2 && r[0][3] == SOMVR_OB_CELL &&
               r[1][0] == r[0][0] + 3 * SOMVR_OB_STRIDE && r[2][0] == r[1][0] + 3 * SOMVR_OB_STRIDE &&
-              r[2][0] + r[2][2] == SOMVR_OB_IMG_W - 1 && sq[0] + sq[2] < r[0][0],
+              r[2][0] + r[2][2] == SOMVR_OB_IMG_W - 1 - SOMVR_OB_STRIDE && sq[0] + sq[2] < r[0][0], /* build 18: cell 8 after them */
           "the strike's cells: 388 px wide, side by side after the line's, inside the image (%d %d %d)", r[0][0], r[1][0], r[2][0]);
 #define PX(c, x, y) (px + 4 * ((size_t)(r[c][1] + (y)) * SOMVR_OB_IMG_W + (size_t)(r[c][0] + (x))))
     /* the ring's band (5 px inside its outer edge, at its right), its centre, the A button, the text */
@@ -289,10 +302,10 @@ static void test_strike_mark(void) {
                   *btn = PX(0, 134 + 22, 50), *btn1 = PX(1, 134 + 22, 50), *corner = PX(0, 2, 2);
     CHECK(band0[3] == 255 && band0[2] == 255 && band0[0] > 140 && band0[0] < 170, "ready: the band wraith-blue (%d %d %d %d)",
           band0[0], band0[1], band0[2], band0[3]);
-    CHECK(mid0[3] == 0 && corner[3] == 0, "ready: the ring's inside and the corner clear (the orc seen through it)");
+    CHECK(mid0[3] > 20 && mid0[3] < 40 && corner[3] == 0, "ready: the ring's inside faint (%d), the corner clear", mid0[3]);
     CHECK(band1[3] > 170 && band1[3] < 200 && abs((int)band1[0] - (int)band1[2]) < 15, "no arrows: the band grey (%d %d %d %d)",
           band1[0], band1[1], band1[2], band1[3]);
-    CHECK(mid2[3] > 30 && mid2[3] < 60, "pressed: the ring filled faintly (%d)", mid2[3]);
+    CHECK(mid2[3] > 65 && mid2[3] < 90, "pressed: the ring filled (%d)", mid2[3]);
     int blue1 = 0;
     for (int y = 0; y < SOMVR_OB_CELL; y++)
         for (int x = 128; x < r[1][2]; x++) blue1 += PX(1, x, y)[2] == 255 && PX(1, x, y)[0] == 158;
@@ -334,7 +347,60 @@ static void test_strike_mark(void) {
           "no mark: another cell, at the head, NaN");
 }
 
+/* build 18: the strike's ground symbol - the ring square and the label part of a strike cell, the ring flat on the
+ * ground point, the label standing beside it facing the head, readable at 20 m */
+static void test_strike_ground(void) {
+    int32_t r[4], r0[4], r1[4];
+    somvr_ob_rect(SOMVR_OB_CELL_STRIKE_NO, r);
+    somvr_ob_strike_rect(SOMVR_OB_CELL_STRIKE_NO, 0, r0), somvr_ob_strike_rect(SOMVR_OB_CELL_STRIKE_NO, 1, r1);
+    CHECK(r0[0] == r[0] && r0[2] == SOMVR_OB_CELL && r0[3] == SOMVR_OB_CELL && r1[0] == r[0] + SOMVR_OB_CELL + 2 &&
+              r1[2] == SOMVR_OB_STRIKE_LABEL_PX && r1[0] + r1[2] <= r[0] + r[2],
+          "the parts: the ring square at %d, the label at %d (%d wide) inside the cell", r0[0], r1[0], r1[2]);
+    float g[3] = {1.0f, -1.6f, -10.0f}, head[3] = {0, 0, 0};
+    float near_head[3] = {1.0f, 0.0f, -6.0f}; /* 4 m away, 1.6 m over it: seen at 22 deg: tilted 2 deg */
+    float up_head[3] = {1.0f, 0.4f, -8.0f};   /* 2 m away, 2 m over it: seen at 45 deg: flat */
+    somvr_ob_place f = somvr_ob_strike_floor(up_head, g, 0.45f, SOMVR_OB_CELL_STRIKE);
+    const float *q = f.pose;
+    float zy = 2 * (q[1] * q[2] - q[3] * q[0]);
+    CHECK(f.kind == SOMVR_OBK_WORLD && fabsf(zy - 1) < 1e-5f && fabsf(f.pose[5] - (-1.58f)) < 1e-5f && f.pose[4] == 1.0f &&
+              fabsf(f.size[0] - 0.9f * 128 / 108) < 1e-4f && f.off_deg == 0,
+          "seen from above: the ring flat 2 cm over the ground, %.3f m square (its outer edge 0.45 m from the centre)", f.size[0]);
+    /* far: tilted toward the head so it is seen at the minimum angle; the face's normal leans to the head, level right */
+    float far_heads[2][3] = {{1.0f, 0.0f, 10.0f}, {1.0f, 0.0f, -6.0f}};
+    for (int i = 0; i < 2; i++) {
+        const float *hh = i ? near_head : far_heads[0];
+        f = somvr_ob_strike_floor(hh, g, 0.45f, SOMVR_OB_CELL_STRIKE);
+        q = f.pose;
+        float zx = 2 * (q[0] * q[2] + q[3] * q[1]), zy2 = 2 * (q[1] * q[2] - q[3] * q[0]), zz = 1 - 2 * (q[0] * q[0] + q[1] * q[1]);
+        float xy = 2 * (q[0] * q[1] + q[3] * q[2]);
+        float v[3] = {hh[0] - g[0], hh[1] - g[1] - 0.02f, hh[2] - g[2]}, vl = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        float seen = asinf((zx * v[0] + zy2 * v[1] + zz * v[2]) / vl) * 57.29578f; /* the angle between the ray and the plane */
+        float elev = atan2f(hh[1] - g[1], sqrtf((hh[0] - g[0]) * (hh[0] - g[0]) + (hh[2] - g[2]) * (hh[2] - g[2]))) * 57.29578f;
+        CHECK(fabsf(seen - SOMVR_OB_STRIKE_MIN_VIEW_DEG) < 0.3f && fabsf(f.off_deg - (SOMVR_OB_STRIKE_MIN_VIEW_DEG - elev)) < 0.05f &&
+                  fabsf(xy) < 1e-4f && zy2 > 0.9f,
+              "%s: tilted %.1f deg, seen at %.1f deg (flat: %.1f), its right edge level", i ? "4 m away" : "20 m away",
+              f.off_deg, seen, elev);
+    }
+    float dist[3] = {5, 10, 20};
+    for (int i = 0; i < 3; i++) {
+        float gp[3] = {0, -1.6f, -dist[i]};
+        somvr_ob_place l = somvr_ob_strike_label(head, gp, 0.45f, SOMVR_OB_CELL_STRIKE);
+        float d = sqrtf(l.pose[4] * l.pose[4] + l.pose[5] * l.pose[5] + l.pose[6] * l.pose[6]);
+        float deg = 2 * atanf(0.5f * l.size[1] / d) * 57.29578f, xl = l.pose[4] - 0.5f * l.size[0];
+        CHECK(l.kind == SOMVR_OBK_WORLD && l.pose[4] > 0.45f && xl > 0.45f && xl < 0.6f &&
+                  fabsf(l.pose[5] - (-1.6f + 0.05f + 0.5f * l.size[1])) < 1e-4f && deg >= 2.4f &&
+                  fabsf(l.size[0] / l.size[1] - 156.0f / 128.0f) < 1e-4f,
+              "at %.0f m: the label right of the ring (its left edge %.2f m from the centre), its foot on the ground, %.2f deg high",
+              (double)dist[i], xl, deg);
+    }
+    CHECK(somvr_ob_strike_floor(head, g, NAN, SOMVR_OB_CELL_STRIKE).kind == SOMVR_OBK_NONE &&
+              somvr_ob_strike_label(head, head, 0.45f, SOMVR_OB_CELL_STRIKE).kind == SOMVR_OBK_NONE &&
+              somvr_ob_strike_floor(head, g, 0.45f, SOMVR_OB_CELL_RING).kind == SOMVR_OBK_NONE,
+          "none: NaN, at the head, another cell");
+}
+
 int main(void) {
+    test_strike_ground();
     test_strike_mark();
     test_match_text();
     test_line();

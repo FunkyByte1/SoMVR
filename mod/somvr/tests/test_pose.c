@@ -362,6 +362,24 @@ static void test_body(void) {
     CHECK(NEAR(s.x, 18, 1e-5) && s.y == 0 && NEAR(s.z, -24, 1e-5), "(d) 50 cm clamped to 30: %g %g", s.x, s.z);
     s = somvr_follow_step((sv_vec3){NAN, 0, 1}, 8, 30);
     CHECK(s.x == 0 && s.z == 0, "(d) NaN");
+    /* (e) build 18's measure (re-xr-pipeline.md 69.1); the 17b session's mark 6 tick (PM t=881673.09): req -3.47,1.99,
+     * vf_11's move -6.35,2.80 (the stick's own step -2.88,0.81), the root held by the edge: build 17 booked +2.88,-0.81 */
+    sv_vec3 q = {-3.47f, 0, 1.99f}, own = {-6.35f - q.x, 0, 2.80f - q.z};
+    float k;
+    s = somvr_follow_along((sv_vec3){0 - own.x, 0, 0 - own.z}, q, &k);
+    CHECK(s.x == 0 && s.z == 0 && k < 0, "(e) mark 6: the whole move held: 0, not against the request (k %g)", k);
+    s = somvr_follow_along((sv_vec3){-6.35f - own.x, 0, 2.80f - own.z}, q, &k);
+    CHECK(NEAR(s.x, q.x, 1e-4) && NEAR(s.z, q.z, 1e-4), "(e) not held: the request (%g %g)", s.x, s.z);
+    s = somvr_follow_along((sv_vec3){0.5f * q.x, 0, 0.5f * q.z}, q, &k);
+    CHECK(NEAR(s.x, 0.5f * q.x, 1e-4) && NEAR(k, 0.5, 1e-4), "(e) half of it: half (%g)", k);
+    s = somvr_follow_along((sv_vec3){4, 0, 0}, (sv_vec3){0, 0, 4}, &k); /* the follow along a wall, the stick into it */
+    CHECK(s.x == 0 && s.z == 0, "(e) a part across the request is not the follow's (%g %g)", s.x, s.z);
+    s = somvr_follow_along((sv_vec3){0, 0, 9}, (sv_vec3){0, 0, 4}, &k);
+    CHECK(s.z == 4, "(e) never more than asked (%g)", s.z);
+    s = somvr_follow_along((sv_vec3){NAN, 0, 1}, (sv_vec3){0, 0, 4}, &k);
+    CHECK(s.x == 0 && s.z == 0, "(e) NaN: 0");
+    s = somvr_follow_along((sv_vec3){1, 0, 1}, (sv_vec3){0, 0, 0}, &k);
+    CHECK(s.x == 0 && s.z == 0, "(e) no request: 0");
 }
 
 /* An eye with an asymmetric fov, a tilted/turned head, a yawed+pitched game camera and a non-trivial recentre: the

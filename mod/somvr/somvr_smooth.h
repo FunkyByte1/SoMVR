@@ -134,6 +134,8 @@ typedef struct {
     float hold_s;  /* the blade held at the contact at most this long (SOMVR_COMBAT_BITE_MS, 60 ms) */
     float ease_s;  /* then eased back over this (SOMVR_COMBAT_BITE_EASE_MS, 100 ms) */
     float max_rad; /* the hold ends once the blade would be this far off its drawn direction (SOMVR_COMBAT_BITE_DEG, 30) */
+    int drag;      /* build 18 (SOMVR_COMBAT_BITE_DRAG): at max_rad the blade is not torn free but drags through, held that
+                    * far behind (toward the held point) until hold_s, then eases: a fast cut's bite lasts its time too */
 } swb_cfg;
 
 typedef struct {
@@ -149,7 +151,7 @@ typedef struct {
     uint64_t bites, refused, caps, gaps, steps;
 } swb_state;
 
-void swb_defaults(swb_cfg *c); /* 60 ms, 100 ms, 30 deg */
+void swb_defaults(swb_cfg *c); /* 60 ms, 100 ms, 30 deg, no drag */
 void swb_reset(swb_state *s);  /* idle, the counters cleared */
 /* A bite at t: the grip's position p and the drawn blade's orientation q (unit) at the hit's frame, the held point P (on
  * that drawn blade, in the body). 1 = started; 0 = refused (one is on, or not finite). */

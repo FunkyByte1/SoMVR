@@ -38,7 +38,11 @@ enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIV
                                 * orc looked at: pos = its chest, dist_m = the ring's diameter (metres, reference space):
                                 * the ring round it, the button and "Shadow Strike" beside it, facing the head */
        SOMVR_OBF_STRIKE_NO = 32u, /* ... under 2 arrows: the ring grey, "No arrows", no button */
-       SOMVR_OBF_STRIKE_GO = 64u }; /* ... A pressed: the ring filled (the strike on its way) */
+       SOMVR_OBF_STRIKE_GO = 64u,   /* ... A pressed: the ring filled (the strike on its way) */
+       SOMVR_OBF_STRIKE_CHEST = 128u,   /* build 18: SOMVR_STRIKE_GAZE_MARK=chest - build 17's ring round the chest; without
+                                         * it (ground, the default) pos = the landing point on the ground, dist_m = the
+                                         * ring's radius: the ring flat there, the label standing beside it (XL_OBJL) */
+       SOMVR_OBF_LAND_NO = 256u }; /* build 18 (SOMVR_WRAITH_STEP, with LAND): the landing refused: the red crossed ring */
 
 typedef struct {
     _Atomic uint64_t seq; /* the frame id this entry is for; 0 while written; stored last (release) */
@@ -130,8 +134,9 @@ void somvr_ob_cfg_default(somvr_ob_cfg *c);
 
 enum { SOMVR_OBK_NONE = 0, SOMVR_OBK_WORLD = 1, SOMVR_OBK_EDGE = 2 };
 enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2, SOMVR_OB_CELL_RING = 3, SOMVR_OB_CELL_LINE = 4,
-       SOMVR_OB_CELL_STRIKE = 5, SOMVR_OB_CELL_STRIKE_NO = 6, SOMVR_OB_CELL_STRIKE_GO = 7, SOMVR_OB_CELLS = 8 };
-#define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each */
+       SOMVR_OB_CELL_STRIKE = 5, SOMVR_OB_CELL_STRIKE_NO = 6, SOMVR_OB_CELL_STRIKE_GO = 7, SOMVR_OB_CELL_RING_NO = 8,
+       SOMVR_OB_CELLS = 9 };
+#define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each; 8 a square */
 #define SOMVR_OB_WIDE 3
 typedef struct {
     int kind;        /* SOMVR_OBK_*: WORLD = pose in the reference space, EDGE = pose in a VIEW space */
@@ -159,6 +164,20 @@ somvr_ob_place somvr_ob_line(const float top[3], const float bot[3], const float
 somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ring_m, int cell);
 /* the ring's diameter for an orc dist_m away: at least min_m, at least deg of the view (the label stays readable) */
 float somvr_ob_strike_ring(float dist_m, float min_m, float deg);
+/* build 18, the ground symbol (SOMVR_OBF_STRIKE without _CHEST): a strike cell's parts - 0 its ring (the left square),
+ * 1 its label (the button and the two lines) */
+void somvr_ob_strike_rect(int cell, int part, int32_t r[4]);
+/* the ring on the ground point pos (reference space, +y up), 2 cm over it, r_m its outer radius; flat, but tilted up
+ * toward the head where a flat ring would be seen at less than SOMVR_OB_STRIKE_MIN_VIEW_DEG (far: a flat ring 20 m away
+ * is a hairline; run 182152) - its far edge raised, never more than that angle */
+somvr_ob_place somvr_ob_strike_floor(const float head[3], const float pos[3], float r_m, int cell);
+#define SOMVR_OB_STRIKE_MIN_VIEW_DEG 24.0f
+/* its label standing beside it: a billboard facing the head, its foot 5 cm over the ground, left edge just right of the
+ * ring (as the head sees it); SOMVR_OB_STRIKE_LABEL_DEG high (at least SOMVR_OB_STRIKE_LABEL_MIN_M) */
+somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], float r_m, int cell);
+#define SOMVR_OB_STRIKE_LABEL_DEG 4.0f /* run 192114: at 2.6 deg a text line was ~0.65 deg */
+#define SOMVR_OB_STRIKE_LABEL_MIN_M 0.22f
+#define SOMVR_OB_STRIKE_LABEL_PX 156 /* the label part's width (px) */
 
 /* The texture: SOMVR_OB_CELLS cells of SOMVR_OB_CELL px square inside a 1 px guard (a cell's rect is its interior):
  * cell 0 the diamond (gold, a dark rim) with the distance under it (white, a dark rim), cell 1 the same faint (alpha
@@ -166,12 +185,13 @@ float somvr_ob_strike_ring(float dist_m, float min_m, float deg);
  * disc inside, a dot), cell 4 the drop's line (build 17: a faint gold band down the cell's middle with dark edges,
  * fading in over its top 15 %); build 17: cells 5..7 the Shadow Strike's mark, each SOMVR_OB_WIDE strides wide (the
  * ring in its left square, the label right of it): 5 ready (the wraith-blue ring, the A button, "SHADOW STRIKE"), 6 no
- * arrows (the ring grey, "NO ARROWS"), 7 pressed (the ring filled). Premultiplied RGBA8 (bgra: B and R swapped). The
+ * arrows (the ring grey, "NO ARROWS"), 7 pressed (the ring filled); build 18: cell 8 (a square after them) the
+ * refused landing (SOMVR_WRAITH_STEP: the ring red, crossed). Premultiplied RGBA8 (bgra: B and R swapped). The
  * diamond's centre is SOMVR_OB_DIAMOND_V of the cell from its top (the quad is shifted so that it, not the cell's
  * centre, sits on the objective's direction). */
 #define SOMVR_OB_CELL 128
 #define SOMVR_OB_STRIDE (SOMVR_OB_CELL + 2)
-#define SOMVR_OB_IMG_W ((SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELLS - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE) * SOMVR_OB_STRIDE)
+#define SOMVR_OB_IMG_W ((SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELL_RING_NO - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE + 1) * SOMVR_OB_STRIDE)
 #define SOMVR_OB_STRIKE_RING_PX 108 /* the strike ring's outer diameter in its cell (px; the cell is SOMVR_OB_CELL high) */
 #define SOMVR_OB_IMG_H SOMVR_OB_STRIDE
 #define SOMVR_OB_DIAMOND_V 0.3125f

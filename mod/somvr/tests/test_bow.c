@@ -1165,6 +1165,39 @@ static void test_shot(void) {
           f.y, f.z, u.x, u.y, u.z);
 }
 
+/* build 18: SOMVR_BOW_STRING_DRAW=off|on|drawn - our string only while drawn with `drawn` (the game's at rest) */
+static void test_string_mode(void) {
+    int bad = 0;
+    for (int ph = 0; ph < 4; ph++) {
+        bad += somvr_bow_string_shown(SOMVR_BOW_SDRAW_OFF, ph) != 0;
+        bad += somvr_bow_string_shown(SOMVR_BOW_SDRAW_ON, ph) != (ph != SOMVR_BOW_PH_IDLE);
+        bad += somvr_bow_string_shown(SOMVR_BOW_SDRAW_DRAWN, ph) != (ph == SOMVR_BOW_PH_DRAW);
+    }
+    CHECK(!bad, "string modes: off never, on while out, drawn only while drawing (%d wrong)", bad);
+    /* through the quiver's states: resting on the string (AIM) no, nocked and drawn (DRAW) yes, after the shot no */
+    reset();
+    g_c.quiver = 1, g_c.idle_nock = 0;
+    g_in.arrows = 5, g_in.game_aim = 1, g_in.button = 1;
+    steps(2);
+    int s0 = somvr_bow_string_shown(SOMVR_BOW_SDRAW_DRAWN, g_s.phase);
+    g_in.string = 0, string_at(25, 175, 20), quiver_at(1);
+    step();
+    g_in.string = 1;
+    step();
+    quiver_at(0);
+    int s1 = somvr_bow_string_shown(SOMVR_BOW_SDRAW_DRAWN, g_s.phase); /* an arrow in the hand */
+    string_at(0, 140, 35);
+    step();
+    int s2 = somvr_bow_string_shown(SOMVR_BOW_SDRAW_DRAWN, g_s.phase); /* nocked */
+    draw_to(45, 30);
+    int s3 = somvr_bow_string_shown(SOMVR_BOW_SDRAW_DRAWN, g_s.phase); /* drawn */
+    g_in.string = 0;
+    steps(3);
+    int s4 = somvr_bow_string_shown(SOMVR_BOW_SDRAW_DRAWN, g_s.phase); /* shot: following through */
+    CHECK(!s0 && !s1 && s2 && s3 && !s4 && g_s.fired == 1, "drawn mode through a shot: %d %d %d %d %d (fired %llu)", s0, s1,
+          s2, s3, s4, (unsigned long long)g_s.fired);
+}
+
 int main(void) {
     test_geometry();
     test_shot();
@@ -1177,6 +1210,7 @@ int main(void) {
     test_hold_anatomy();
     test_quiver();
     test_zone();
+    test_string_mode();
     test_standdowns();
     test_hold_mode();
     test_hands();

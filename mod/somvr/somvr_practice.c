@@ -97,7 +97,8 @@ int somvr_pr_orc_parse(const char *w)
 
 const char *somvr_pr_action_name(int a)
 {
-    static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status", "arrows", "health" };
+    static const char *const n[SOMVR_PRA_N] = { "none", "go",     "back",   "spawn", "remove",
+                                                "status", "arrows", "health", "far" };
     return a >= 0 && a < SOMVR_PRA_N ? n[a] : "?";
 }
 
@@ -107,7 +108,7 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         { "go", SOMVR_PRA_GO },         { "there", SOMVR_PRA_GO },       { "back", SOMVR_PRA_BACK },
         { "return", SOMVR_PRA_BACK },   { "spawn", SOMVR_PRA_SPAWN },    { "remove", SOMVR_PRA_REMOVE },
         { "despawn", SOMVR_PRA_REMOVE }, { "status", SOMVR_PRA_STATUS }, { "arrows", SOMVR_PRA_ARROWS },
-        { "health", SOMVR_PRA_HEALTH },
+        { "health", SOMVR_PRA_HEALTH }, { "far", SOMVR_PRA_FAR },
     };
     const char *tok, *s = w ? w : "", *arg, *rest;
     size_t n = token(&s, &tok);
@@ -151,7 +152,7 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
             orc = 1; /* "status nav": the game's nav markers too (a test word, the story drill's round 2) */
         else if (a == SOMVR_PRA_STATUS && ci_eq(arg, na, "look"))
             orc = 3; /* "status look": what the game's look-at triggers read of the players (the collect drill) */
-        else if (a != SOMVR_PRA_SPAWN || (orc = orc_tok(arg, na)) < 0)
+        else if ((a != SOMVR_PRA_SPAWN && a != SOMVR_PRA_FAR) || (orc = orc_tok(arg, na)) < 0)
             return 0; /* only spawn takes a type, status "nav" */
     }
     if (token(&s, &rest))
