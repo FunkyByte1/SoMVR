@@ -64,6 +64,23 @@ typedef void (*kp_activate_fn)(uintptr_t fm, int x);
 #define KP_FM_LEVEL 0x340   /* ... XPLevel */
 #define KP_FM_COL 0x3a0     /* ... ColumnNumber (byte) */
 #define KP_FM_FLAGS 0x3a4   /* ... the flags (SOMVR_CP_FL_*) */
+/* build 24: his death's record (FUN_022dbd20, the member's death, called by the death handler FUN_026f61f0(his Combat,
+ * the attack, the killer's Combat) - the game's one place that credits a kill: FUN_022dbc20 fills +0xb0.., FUN_022d09a0
+ * the death type, then IsDead (bit 2) and the KilledByPlayer / KilledByAI / unknown sim event to the faction manager).
+ * The flags' bit 3 "KilledByPlayer" is not written at run time (only Faction.Load's reader 0x22e14de sets it; only
+ * Faction.Dump's 0x22cdfca reads it): the stock kill leaves it 0 too (re-xr-pipeline.md 99.1) */
+#define KP_FM_LD_CHARTYPE 0xc0 /* ... LastDeathCharacterType: the killer's character type record */
+#define KP_FM_LD_ATTACK 0xc8   /* ... LastDeathAttack: the attack record that killed him */
+#define KP_FM_LD_PLAYER 0xd0   /* ... LastDeathPlayerKiller (byte): the killer's Combat had no NPC (+0x80) but the player (+0x88) */
+#define KP_FM_LD_TYPE 0xd8     /* ... LastDeathType (the death's kind from the attack and the killer) */
+#define KP_FM_PLAYERKILLS 0x348 /* ... PlayerKills (int) */
+/* build 24: the game's own stat lines (Combat_LogPrintf "[COMBAT|STATS]: ... Damage Calc ...") - its console bools
+ * (Init_CombatVariables: a CConsoleProgramVariable_Bool, +8 its name, +0x38 its value), a test aid (`captain gamelog`) */
+static const struct { uintptr_t var; const char *name; } g_kp_dbg[] = {
+	{ 0x4c44ca0, "Combat.Debug.Stats" }, { 0x4c44d60, "Combat.Debug.XP" }, { 0x4c44860, "Combat.Debug.HitCounter" },
+	{ 0x4c44ee0, "Combat.Debug.ApplyDamage" },
+};
+#define KP_DBG_VALUE 0x38
 #define KP_NPC_SEED 0x728   /* NPC: its member's seed (0 = no member) */
 #define KP_MAX 64
 #define KP_TRAITS_MAX 48
@@ -98,9 +115,27 @@ static struct {
 	/* counts */
 	uint64_t spawns, spawn_fail, intros_world, intros_window, rule_kills, rule_damage, rule_none, rule_skips,
 		lines, member_reads, floors;
+	/* build 24 (som-b24-captain): our cuts' damage on captains, the test aids, his flight */
+	int dmg;               /* SOMVR_CAPTAIN_DAMAGE=cut (1) | off (0) */
+	float cut_x;           /* SOMVR_CAPTAIN_CUT_X: a full-speed committed cut's factor on the game's damage on a captain */
+	_Atomic int req_gamelog, req_tiers, req_away;
+	int stealth_turn;      /* SOMVR_CAPTAIN_STEALTH_IMMUNE=turn (1) | hit (0) */
+	uint64_t turned;
+	int tiers_step;
+	double tiers_next, place_next;
+	float place_d;
+	uint64_t dmg_hits, dmg_scaled, dmg_unseen, tiers_dealt, flee_lines;
+	double dmg_game, dmg_ours;
 } g_kp = { .last = -1 };
 
-static int kp_log_ok(void) { return g_kp.lines++ < 400; }
+/* build 24: our hit on a captain in flight (cb_hit -> Combat_DealHit -> ... -> FR_DMG_ATK's DamageStruct_DoDamage) */
+static struct {
+	uintptr_t hobj, c;
+	float x, k, a, b, hp0;
+	int tid, on, seen, tier;
+} g_kph;
+
+static int kp_log_ok(void) { return g_kp.lines++ < 900; } /* build 24: 900 (was 400) */
 
 /* the faction manager's current faction (0 = none readable) */
 static uintptr_t kp_faction(void)
@@ -174,6 +209,25 @@ static uintptr_t kp_member_of(uintptr_t npc)
 		if (m[i] && peek_ptr(m[i] + KP_FM_NPC) == npc)
 			return m[i];
 	return 0;
+}
+
+/* build 24: his last death as the member keeps it ("by the player 1, the attack '...', the killer's type '...', the
+ * death type '...', PlayerKills N") */
+static void kp_death_desc(uintptr_t fm, char *out, size_t cap)
+{
+	char at[96] = "-", ty[64] = "-", dt[64] = "-";
+	uint8_t by = 0;
+	int32_t pk = 0;
+	uintptr_t ra = peek_ptr(fm + KP_FM_LD_ATTACK), rc = peek_ptr(fm + KP_FM_LD_CHARTYPE), rd = peek_ptr(fm + KP_FM_LD_TYPE);
+	if (ra)
+		fb_rec_name(ra, at, sizeof at);
+	if (rc)
+		fb_rec_name(rc, ty, sizeof ty);
+	if (rd)
+		fb_rec_name(rd, dt, sizeof dt);
+	peek(fm + KP_FM_LD_PLAYER, &by, 1), peek(fm + KP_FM_PLAYERKILLS, &pk, sizeof pk);
+	snprintf(out, cap, "the last death: by the player %u, the attack '%s', the killer's type '%s', the death type '%s'; "
+		 "PlayerKills %d", by, at, ty, dt, pk);
 }
 
 /* ---- 3. the rules ------------------------------------------------------------------------------------------------- */
@@ -253,6 +307,160 @@ static int kp_no_cheat(uintptr_t c, const char *what)
 	return 1;
 }
 
+/* ---- 5. our cuts on a captain (build 24, SOMVR_CAPTAIN_DAMAGE=cut; docs/re-xr-pipeline.md 99.2) ------------------------
+ * A captain takes the game's own damage for our hit (Combat_DealHit's record through his defence, buffs and clamps) times
+ * a factor: a committed cut or stab (combat's heavy/stab tier: the edge leading, 50 cm of stroke, the contact at 12 m/s
+ * or more) SOMVR_CAPTAIN_CUT_X x the cut's k (its contact speed: 0.6 at 12 m/s, 1 from 20), never under the game's own;
+ * a light hit (a tap, the flat, a slow contact) the game's own. Applied to the DamageStruct the game built
+ * (DamageStruct_DoDamage from FUN_02810e80: FRONT's FR_DMG_ATK hook) - his min health, the death and its credit, his
+ * reaction stay the game's; forceKill's 1e6 and a heal untouched. Plain orcs: unchanged (=stagger's tiers). */
+static int kp_dmg_want(void)
+{
+	const char *c = getenv("SOMVR_CAPTAIN"), *d = getenv("SOMVR_CAPTAIN_DAMAGE");
+	return !(c && !strcmp(c, "off")) && !(d && !strcmp(d, "off"));
+}
+static void kp_hit_pre(uintptr_t c, uintptr_t hobj, int tier, float k, double t)
+{
+	(void)t;
+	g_kph.on = 0;
+	if (!g_kp.dmg || !g_kp.on || !g_ff.on_dmg || !kp_of_combat(c))
+		return;
+	float kk = isfinite(k) && k > 0 ? fminf(k, 1.0f) : 1.0f;
+	float x = somvr_cp_cut_factor(tier == SC_TIER_HEAVY || tier == SC_TIER_STAB, k, g_kp.cut_x);
+	g_kph.hobj = hobj, g_kph.c = c, g_kph.x = x, g_kph.k = kk, g_kph.a = g_kph.b = NAN, g_kph.hp0 = cb_health(c);
+	g_kph.tid = my_tid(), g_kph.seen = 0, g_kph.tier = tier, g_kph.on = 1;
+}
+/* FR_DMG_ATK (every attack's damage, before FRONT's own look at it): our hit's DamageStruct on the captain */
+static void kp_dmg(uintptr_t ds, uintptr_t hobj)
+{
+	if (!g_kph.on || g_kph.seen || hobj != g_kph.hobj || my_tid() != g_kph.tid)
+		return;
+	float a = NAN;
+	if (!peek(ds + FF_DS_AMOUNT, &a, sizeof a))
+		return;
+	g_kph.seen = 1, g_kph.a = g_kph.b = a;
+	if (!(a > 0) || a >= 1e5f || !(g_kph.x > 1.0f)) /* none, a heal, forceKill's 1e6, a light hit */
+		return;
+	float b = a * g_kph.x;
+	memcpy((void *)(ds + FF_DS_AMOUNT), &b, sizeof b);
+	g_kph.b = b;
+}
+static void kp_hit_post(uintptr_t c, double t)
+{
+	if (!g_kph.on)
+		return;
+	g_kph.on = 0;
+	g_kp.dmg_hits++;
+	float hp1 = cb_health(c);
+	if (!g_kph.seen) {
+		g_kp.dmg_unseen++;
+		if (kp_log_ok())
+			logf_("CAPTAIN t=%.3f our %s hit on the captain: no damage reached the game's DamageStruct (his block or the "
+			      "data's 0); his health %.1f -> %.1f", t, sc_tier_name(g_kph.tier), (double)g_kph.hp0, (double)hp1);
+		return;
+	}
+	if (g_kph.b != g_kph.a)
+		g_kp.dmg_scaled++, g_kp.dmg_game += g_kph.a, g_kp.dmg_ours += g_kph.b;
+	if (kp_log_ok())
+		logf_("CAPTAIN t=%.3f our %s hit on the captain: the game's damage %.1f x %.2f = %.1f (the cut's k %.2f, "
+		      "SOMVR_CAPTAIN_CUT_X %.2f); his health %.1f -> %.1f%s", t, sc_tier_name(g_kph.tier), (double)g_kph.a,
+		      (double)g_kph.x, (double)g_kph.b, (double)g_kph.k, (double)g_kp.cut_x, (double)g_kph.hp0, (double)hp1,
+		      cb_dead(c) ? " - dead" : "");
+}
+
+/* ---- 7. the stealth thrust into a captain immune to stealth kills (build 24, SOMVR_CAPTAIN_STEALTH_IMMUNE=turn; default hit:
+ * unproven headless, docs/re-xr-pipeline.md 99.3) ---------------------------------------------------------------------
+ * The game offers no stealth kill on him; build 23 dealt the thrust as an ordinary hit (a wound - the player cannot tell
+ * a refused kill from a poor thrust). turn: the blade is turned at his back - no damage, no stick; the clank's sound and
+ * sparks where it met him (the surface meeting's, sfb_h4, in the next combat frame), the stealth code's knock in the hand
+ * and his alert (the attack stimulus): he turns to fight. 0 = not taken (=hit, or not a captain: the ordinary hit). */
+static int kp_stealth_turn(uintptr_t c, const float E[3], double t)
+{
+	if (!g_kp.stealth_turn || !g_kp.on)
+		return 0;
+	uintptr_t fm = kp_of_combat(c);
+	if (!fm)
+		return 0;
+	g_kp.turned++;
+	memcpy(g_sf.pv_P, E, sizeof g_sf.pv_P);
+	snprintf(g_sf.pv_surf, sizeof g_sf.pv_surf, "a captain's back");
+	g_sf.pv_pend = 3, g_sf.pv_pend_t = t;
+	char who[160];
+	kp_who(fm, who, sizeof who);
+	if (kp_log_ok())
+		logf_("CAPTAIN t=%.3f the stealth thrust turned (%s): immune to stealth kills - no wound, the clank's sound and sparks "
+		      "at %.1f,%.1f,%.1f, the knock in the hand, his alert (SOMVR_CAPTAIN_STEALTH_IMMUNE=turn)", t, who, (double)E[0],
+		      (double)E[1], (double)E[2]);
+	return 1;
+}
+
+/* ---- 6. test aids (build 24): the game's stat lines, the strikes' own damage on him ---------------------------------- */
+static void kp_gamelog(double t)
+{
+	char got[200] = "";
+	size_t o = 0;
+	for (size_t i = 0; i < sizeof g_kp_dbg / sizeof g_kp_dbg[0]; i++) {
+		char nm[48] = "";
+		uintptr_t np = peek_ptr(g_kp_dbg[i].var + 8), v = g_kp_dbg[i].var + KP_DBG_VALUE;
+		uint8_t was = 9, one = 1;
+		int p = page_prot(v);
+		int ok = np && peek(np, nm, sizeof nm - 1) && !strcmp(nm, g_kp_dbg[i].name) && peek(v, &was, 1) && was <= 1 &&
+			 p >= 0 && (p & PROT_WRITE);
+		if (ok)
+			memcpy((void *)v, &one, 1);
+		o += (size_t)snprintf(got + o, sizeof got - o, "%s%s %s", o ? ", " : "", g_kp_dbg[i].name, ok ? "1" : "NOT set");
+		if (o >= sizeof got)
+			o = sizeof got - 1;
+	}
+	char dir[1024], cmd[1100], why[256] = "";
+	snprintf(dir, sizeof dir, "%s", g_log_path);
+	char *sl = strrchr(dir, '/');
+	if (sl)
+		*sl = 0;
+	snprintf(cmd, sizeof cmd, "Combat.Value.LogFileName %s/combat-debug.log", sl ? dir : ".");
+	int rc = es_run(cmd, why, sizeof why);
+	logf_("CAPTAIN t=%.3f gamelog (a test aid): %s; console '%s' %s%s", t, got, cmd, rc == 0 ? "run" : "NOT run: ",
+	      rc == 0 ? "" : why);
+}
+/* `captain tiers`: the four strike records our tiers use (the pad's PC_HC_* strikes) dealt on him one by one, 1.5 s
+ * apart, by Combat_DealHit as combat does (Talion's Combat, his chest, forceKill 0) - the game's own damage, no factor */
+static void kp_tiers_tick(const struct pr_me *m, int have, double t)
+{
+	static const int tier[4] = { SC_TIER_LIGHT, SC_TIER_STAB, CB_MED, SC_TIER_HEAVY };
+	if (!g_kp.tiers_step || t < g_kp.tiers_next)
+		return;
+	struct cb_orc o;
+	int i = g_kp.tiers_step - 1;
+	const char *nm = "(none)";
+	uintptr_t rec = cb_record(tier[i], 0, &nm), pc = have ? m->pc : 0;
+	if (!rec || !pc || !g_kp.c || cb_dead(g_kp.c) || !cb_orc_get(g_kp.c, &o) || !g_cb.ok_hit) {
+		logf_("CAPTAIN t=%.3f tiers: step %d '%s' not dealt (%s)", t, i, nm, !rec ? "no record" : !pc ? "no Talion"
+		      : !g_kp.c || cb_dead(g_kp.c) ? "no captain alive" : !g_cb.ok_hit ? "combat cannot deal hits" : "his place");
+		g_kp.tiers_step = 0;
+		return;
+	}
+	float dir[3] = { o.pos[0] - m->pos[0], 0, o.pos[2] - m->pos[2] }, l = hypotf(dir[0], dir[2]), hd0[3];
+	if (l > 1)
+		dir[0] /= l, dir[2] /= l;
+	else
+		dir[0] = 0, dir[2] = 1;
+	unsigned char once = 0;
+	peek(pc + C_HITDIR, hd0, sizeof hd0), peek(pc + C_HITONCE, &once, 1);
+	memcpy((void *)(pc + C_HITDIR), dir, sizeof dir);
+	*(volatile unsigned char *)(pc + C_HITONCE) = 0;
+	float hp0 = cb_health(g_kp.c);
+	int s0 = xc_streak_now();
+	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ o.pos[0], o.pos[1] + 120.0f, o.pos[2] }, pc, o.hobj, rec, 0);
+	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
+	*(volatile unsigned char *)(pc + C_HITONCE) = once;
+	float hp1 = cb_health(g_kp.c);
+	g_kp.tiers_dealt++;
+	logf_("CAPTAIN t=%.3f tiers: %s '%s' (the game's own, no factor): his health %.1f -> %.1f (%.1f), the streak %d -> %d, "
+	      "%.1f m away", t, tier[i] == CB_MED ? "medium" : sc_tier_name(tier[i]), nm, (double)hp0, (double)hp1,
+	      (double)(hp0 - hp1), s0, xc_streak_now(), (double)(l / 100.0f));
+	g_kp.tiers_step = g_kp.tiers_step < 4 ? g_kp.tiers_step + 1 : 0, g_kp.tiers_next = t + 1.5;
+}
+
 /* ---- 1. the practice's Captain ------------------------------------------------------------------------------------ */
 /* while our captain is out (alive) and the stakes are on: the practice's min health lifted */
 static int kp_stakes_now(void) { return g_kp.stakes && g_kp.npc && !g_kp.dead_seen && !g_kp.gone_seen && pr_orc_alive() && g_pr.orc_npc == g_kp.npc; }
@@ -304,7 +512,9 @@ static void kp_spawn(const struct pr_me *m, double t, const char *who)
 	}
 	if (!fail) {
 		pr_remove_orc("a captain comes", t);
-		somvr_pr_facing(hit, m->pos, q);
+		int away = atomic_exchange(&g_kp.req_away, 0); /* build 24, `captain away`: his back to Talion (a test aid) */
+		float aw[3] = { 2.0f * hit[0] - m->pos[0], hit[1], 2.0f * hit[2] - m->pos[2] };
+		somvr_pr_facing(hit, away ? aw : m->pos, q);
 		float xf[7] = { hit[0], hit[1] + 10.0f, hit[2], q[0], q[1], q[2], q[3] };
 		ret = PR_FN(PRS_SPAWN, pr_spawn_fn)(ctx, "SomVR_Practice", xf, tmpl, 1, 1, 0, fm, 0);
 		h = ret ? peek_ptr(ret + 8) : 0;
@@ -338,6 +548,7 @@ static void kp_spawn(const struct pr_me *m, double t, const char *who)
 		g_kp.last = pick, g_kp.fm = fm, g_kp.npc = npc, g_kp.c = c, g_kp.h = h, g_kp.t0 = t, g_kp.next_watch = t + 1.0;
 		g_kp.hp_last = c ? cb_health(c) : NAN, g_kp.hp_max0 = g_kp.hp_last, g_kp.health_t = t;
 		g_kp.dead_seen = g_kp.gone_seen = g_kp.talion_dead = 0, g_kp.pres_n_world = g_kp.pres_n_window = 0;
+		g_kp.place_d = 0, g_kp.place_next = t;
 		peek(fm + KP_FM_FLAGS, &g_kp.flags0, sizeof g_kp.flags0);
 		kp_who(fm, g_kp.who, sizeof g_kp.who);
 		g_kp.spawns++;
@@ -376,9 +587,12 @@ static void kp_status(double t)
 		cm[i].has_template = KP_FN(KPS_TEMPLATE, kp_template_fn)(mm[i]) != 0;
 		somvr_cp_eligible(&cm[i], &why);
 		kp_who(mm[i], who, sizeof who);
-		logf_("CAPTAIN member %d: %s flags %#x: %s; combat finishers %s, stealth %s, ranged %s, grab %s; traits %s", i, who,
+		char ld[300] = "";
+		if (cm[i].flags & 4 || peek_ptr(mm[i] + KP_FM_LD_ATTACK)) /* build 24: a dead one's record of it */
+			ld[0] = ';', ld[1] = ' ', kp_death_desc(mm[i], ld + 2, sizeof ld - 2);
+		logf_("CAPTAIN member %d: %s flags %#x: %s; combat finishers %s, stealth %s, ranged %s, grab %s; traits %s%s", i, who,
 		      cm[i].flags, why, somvr_cp_rule_name(tr.rule[SOMVR_CPF_COMBAT]), somvr_cp_rule_name(tr.rule[SOMVR_CPF_STEALTH]),
-		      somvr_cp_rule_name(tr.rule[SOMVR_CPF_RANGED]), somvr_cp_rule_name(tr.rule[SOMVR_CPF_GRAB]), names);
+		      somvr_cp_rule_name(tr.rule[SOMVR_CPF_RANGED]), somvr_cp_rule_name(tr.rule[SOMVR_CPF_GRAB]), names, ld);
 	}
 	logf_("CAPTAIN status: the next Captain brings member %d", somvr_cp_next(cm, n, g_kp.last));
 }
@@ -464,6 +678,11 @@ static void kp_frame(const struct pr_me *m, int have, double t)
 {
 	if (atomic_exchange(&g_kp.req_status, 0))
 		kp_status(t);
+	if (atomic_exchange(&g_kp.req_gamelog, 0))
+		kp_gamelog(t);
+	if (atomic_exchange(&g_kp.req_tiers, 0))
+		g_kp.tiers_step = 1, g_kp.tiers_next = t;
+	kp_tiers_tick(m, have, t);
 	int hv = atomic_exchange(&g_kp.req_hp, -1);
 	if (hv >= 0 && g_kp.c && !cb_dead(g_kp.c)) { /* a test aid: his health set (the grab's gate at a given health) */
 		uintptr_t own = peek_ptr(g_kp.c + C_OWNER);
@@ -492,10 +711,12 @@ static void kp_frame(const struct pr_me *m, int have, double t)
 	peek(g_kp.fm + KP_FM_FLAGS, &fl, sizeof fl);
 	if (g_kp.c && !g_kp.dead_seen && alive && cb_dead(g_kp.c)) {
 		g_kp.dead_seen = 1, g_kp.next_watch = t + 2.0;
+		char ld[300];
+		kp_death_desc(g_kp.fm, ld, sizeof ld);
 		logf_("CAPTAIN t=%.3f he died %.1f s after the spawn (%s): the member's flags %#x (in the world %u, IsDead %u, "
-		      "KilledByPlayer %u, IsSevered %u); presentations while he was out: %d in the world, %d in the window", t,
-		      t - g_kp.t0, g_kp.who, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 3 & 1, fl >> 17 & 1, g_kp.pres_n_world,
-		      g_kp.pres_n_window);
+		      "KilledByPlayer %u (no run-time writer: 99.1), IsSevered %u, IsMockDead %u); %s; presentations while he was "
+		      "out: %d in the world, %d in the window", t, t - g_kp.t0, g_kp.who, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 3 & 1,
+		      fl >> 17 & 1, fl >> 23 & 1, ld, g_kp.pres_n_world, g_kp.pres_n_window);
 	} else if (!g_kp.dead_seen && !g_kp.gone_seen && !alive) {
 		g_kp.gone_seen = 1, g_kp.next_watch = t + 2.0;
 		logf_("CAPTAIN t=%.3f he left the world alive %.1f s after the spawn (%s; removed by the practice, or an escape): "
@@ -503,26 +724,48 @@ static void kp_frame(const struct pr_me *m, int have, double t)
 		      fl >> 2 & 1, (unsigned long)peek_ptr(g_kp.fm + KP_FM_NPC));
 	}
 	if ((g_kp.dead_seen || g_kp.gone_seen) && t >= g_kp.next_watch) { /* the member 2 s later: the save's record of it */
+		char ld[300];
+		kp_death_desc(g_kp.fm, ld, sizeof ld);
 		logf_("CAPTAIN t=%.3f the member 2 s on: flags %#x (in the world %u, IsDead %u, KilledByPlayer %u, IsMockDead %u), "
-		      "its NPC %#lx, level %u", t, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 3 & 1, fl >> 23 & 1,
-		      (unsigned long)peek_ptr(g_kp.fm + KP_FM_NPC), (uint32_t)peek_ptr(g_kp.fm + KP_FM_LEVEL));
+		      "its NPC %#lx, level %u; %s", t, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 3 & 1, fl >> 23 & 1,
+		      (unsigned long)peek_ptr(g_kp.fm + KP_FM_NPC), (uint32_t)peek_ptr(g_kp.fm + KP_FM_LEVEL), ld);
 		g_kp.fm = g_kp.npc = g_kp.c = g_kp.h = 0;
 		return;
 	}
 	if (!alive || !g_kp.c || t < g_kp.next_watch)
 		return;
 	g_kp.next_watch = t + 0.25;
-	float hp = cb_health(g_kp.c);
-	if (isfinite(hp) && (!isfinite(g_kp.hp_last) || fabsf(hp - g_kp.hp_last) >= 0.5f) && kp_log_ok()) {
+	float hp = cb_health(g_kp.c), mx = NAN; /* build 24: his max as the character has it now (his level applies ~1 s in) */
+	uintptr_t own = peek_ptr(g_kp.c + C_OWNER);
+	if (own && peek(own + PR_CH_HEALTH_MAX, &mx, sizeof mx) && isfinite(mx) && mx > 0)
+		g_kp.hp_max0 = mx;
+	/* a drop of 0.5, a rise of 10 (build 24: his regeneration in lines of 10, not every quarter second) */
+	if (isfinite(hp) && (!isfinite(g_kp.hp_last) || g_kp.hp_last - hp >= 0.5f || hp - g_kp.hp_last >= 10.0f) && kp_log_ok()) {
 		char an[96] = "-";
 		fb_rec_name(peek_ptr(g_kp.c + RX_C_ATTACK), an, sizeof an);
 		float d = 0;
 		struct cb_orc o;
 		if (have && cb_orc_get(g_kp.c, &o))
 			d = dist3(o.pos, m->pos);
-		logf_("CAPTAIN t=%.3f his health %.1f -> %.1f (of %.1f at the spawn; %.1f s in), %.1f m from Talion, his attack '%s'", t,
+		logf_("CAPTAIN t=%.3f his health %.1f -> %.1f (of %.1f; %.1f s in), %.1f m from Talion, his attack '%s'", t,
 		      (double)g_kp.hp_last, (double)hp, (double)g_kp.hp_max0, t - g_kp.t0, d / 100.0, an);
 		g_kp.hp_last = hp;
+	}
+	/* build 24: his place once a second while he is low (a third of his health or less: Fear_LowHealth's flight) */
+	struct cb_orc po;
+	if (have && t >= g_kp.place_next && isfinite(hp) && g_kp.hp_max0 > 0 && hp <= g_kp.hp_max0 / 3.0f &&
+	    cb_orc_get(g_kp.c, &po)) {
+		float d = dist3(po.pos, m->pos);
+		if (fabsf(d - g_kp.place_d) >= 100.0f && g_kp.flee_lines < 120) {
+			char an[96] = "-";
+			fb_rec_name(peek_ptr(g_kp.c + RX_C_ATTACK), an, sizeof an);
+			g_kp.flee_lines++;
+			logf_("CAPTAIN t=%.3f his place: %.1f m from Talion (%+.1f m since the last line), health %.1f of %.1f, his "
+			      "attack '%s'", t, (double)(d / 100.0f), (double)((d - g_kp.place_d) / 100.0f), (double)hp,
+			      (double)g_kp.hp_max0, an);
+			g_kp.place_d = d;
+		}
+		g_kp.place_next = t + 1.0;
 	}
 }
 
@@ -535,6 +778,10 @@ static const char *kp_word(const char *w)
 		atomic_store(&g_kp.req_status, 1);
 		return "captain status";
 	}
+	if (!strncmp(w, "gamelog", 7)) { /* build 24: the game's own stat lines into the run's combat-debug.log */
+		atomic_store(&g_kp.req_gamelog, 1);
+		return "captain gamelog";
+	}
 	if (!g_vb.test)
 		return "captain (pick and hp need SOMVR_HANDS_TEST: ignored)";
 	char *e;
@@ -544,6 +791,14 @@ static const char *kp_word(const char *w)
 			return "captain pick (not 0..63: ignored)";
 		atomic_store(&g_kp.req_pick, (int)v);
 		return "captain pick (the next Captain brings that member)";
+	}
+	if (!strcmp(w, "away")) { /* build 24: the next Captain comes with his back to Talion (the stealth thrust's test) */
+		atomic_store(&g_kp.req_away, 1);
+		return "captain away (the next one his back to Talion)";
+	}
+	if (!strcmp(w, "tiers")) { /* build 24: the strike records' own damage on him */
+		atomic_store(&g_kp.req_tiers, 1);
+		return "captain tiers (a test aid)";
 	}
 	if (!strcmp(w, "charge")) {
 		atomic_store(&g_kp.req_charge, 1);
@@ -563,7 +818,7 @@ static const char *kp_word(const char *w)
 		atomic_store(&g_kp.req_hp, (int)(v * 10));
 		return "captain hp (a test aid)";
 	}
-	return "captain (not status|pick N|hp V|charge|stakes on|off: ignored)";
+	return "captain (not status|gamelog|pick N|hp V|charge|tiers|away|stakes on|off: ignored)";
 }
 
 static void kp_start(int *bad)
@@ -575,6 +830,11 @@ static void kp_start(int *bad)
 	g_kp.stakes = env_word("SOMVR_PRACTICE_CAPTAIN_STAKES", onoff_w, 2, 1);
 	g_kp.spawn_cm = env_float("SOMVR_PRACTICE_CAPTAIN_CM", 1000, 400, 2500, bad);
 	g_kp.fin_pct = env_float("SOMVR_CAPTAIN_FINISHER_PCT", 33, 5, 95, bad);
+	static const char *const dmg_w[] = { "off", "cut" };
+	g_kp.dmg = env_word("SOMVR_CAPTAIN_DAMAGE", dmg_w, 2, 1); /* build 24 */
+	g_kp.cut_x = env_float("SOMVR_CAPTAIN_CUT_X", 2.0f, 1.0f, 5.0f, bad);
+	static const char *const turn_w[] = { "hit", "turn" };
+	g_kp.stealth_turn = env_word("SOMVR_CAPTAIN_STEALTH_IMMUNE", turn_w, 2, 0); /* hit: turn is unproven (99.3) */
 	somvr_cp_intro_default(&g_kp.icfg);
 	const char *g = getenv("SOMVR_CAPTAIN_INTRO_GEOM");
 	if (g && *g) {
@@ -604,6 +864,16 @@ static void kp_start(int *bad)
 	      g_kp.on ? "on" : "off", g_kp.want && !ok ? ": a site did not check out - off" : "", g_kp.spawn_cm,
 	      onoff_w[g_kp.stakes], g_kp.stakes ? "can die" : "cannot die", intro_w[g_kp.intro_world], g_kp.icfg.range_cm / 100.0,
 	      g_kp.icfg.half_deg, onoff_w[g_kp.rules], g_kp.fin_pct);
+	logf_("CONFIG captain damage=%s (SOMVR_CAPTAIN_DAMAGE, build 24): %s; cut_x=%.2f (SOMVR_CAPTAIN_CUT_X); the damage hook "
+	      "(FRONT's FR_DMG_ATK) %s", dmg_w[g_kp.dmg], g_kp.dmg ? "a committed cut or stab on a captain takes the game's damage "
+	      "x cut_x x the cut's k (at least the game's own), a light hit the game's own" : "the game's own damage for every hit "
+	      "(build 23)", g_kp.cut_x, g_ff.on_dmg ? "in" : g_kp.dmg && g_kp.on ? "NOT in (SOMVR_FRONT off or its site): the "
+	      "game's own damage" : "not needed");
+	logf_("CONFIG captain stealth_immune=%s (SOMVR_CAPTAIN_STEALTH_IMMUNE, build 24): %s", turn_w[g_kp.stealth_turn],
+	      g_kp.stealth_turn ? "a stealth thrust into a captain immune to it is turned (the clank, no wound, his alert)"
+				: "the ordinary hit (build 23)");
+	if (g_kp.dmg && g_kp.on && !g_ff.on_dmg)
+		logf_("WARN SOMVR_CAPTAIN_DAMAGE=cut without FRONT's damage hook (SOMVR_FRONT off or FR_DMG_ATK): no factor on captains");
 }
 
 static void kp_end_log(void)
@@ -616,4 +886,9 @@ static void kp_end_log(void)
 	      (unsigned long long)g_kp.intros_window, (unsigned long long)g_kp.rule_kills,
 	      (unsigned long long)g_kp.rule_damage, (unsigned long long)g_kp.floors, (unsigned long long)g_kp.rule_none, (unsigned long long)g_kp.rule_skips,
 	      (unsigned long long)g_kp.member_reads);
+	logf_("CAPTAIN END damage (%s, cut_x %.2f): our hits on captains %llu, scaled %llu (the game's %.0f -> ours %.0f), no "
+	      "damage reached %llu; tiers dealt %llu; his place lines %llu; stealth thrusts turned %llu", g_kp.dmg ? "cut" : "off", (double)g_kp.cut_x,
+	      (unsigned long long)g_kp.dmg_hits, (unsigned long long)g_kp.dmg_scaled, g_kp.dmg_game, g_kp.dmg_ours,
+	      (unsigned long long)g_kp.dmg_unseen, (unsigned long long)g_kp.tiers_dealt, (unsigned long long)g_kp.flee_lines,
+	      (unsigned long long)g_kp.turned);
 }

@@ -17,6 +17,12 @@
  *             vignette (SOMVR_VIGNETTE) is the layer's and stays.
  *   rain      the drops on the lens: the call 0x9ef2f3 of FUN_00ca53e0(Player+0x438, rt) in FUN_009ee170 (step 10, after
  *             RenderScene) skipped while an eye renders (g_eye >= 0).
+ *   overlay   build 24 (re-xr-pipeline.md 100): ClientFX's full-screen overlays (COverlayFX: the blood splashes and the
+ *             red at low health) - its two draw entries, vf_18 (slot 18 of 0x3b62468, 0x2d7af10) and the
+ *             IClientFXOverlay thunk vf_0xb0_03 (slot 3 of 0x3b62518, 0x2d7b040), both FUN_02d7a700 (an overlay view
+ *             with the eye's camera: H2 ra 0x2d7a743) and return 1 - return 1 at once while H4's eye calls run. A
+ *             screen-fixed sprite in each eye sits at the eye's infinity, a smear in the face; Talion's hurt stays
+ *             SOMVR_HURT's red flash on the view's edges.
  *   Already off in every VR build (SOMVR_COMFORT=1's pokes): motion blur, depth of field, the camera shake. Not in
  *   this build at all (re-ui-effects.md 3.2): chromatic aberration, film grain, lens dirt, screen-space reflections.
  * SOMVR_FX_TEST=1 (headless tests only, never in a player's build): the draws of the other four ClientFX renderers get
@@ -58,7 +64,9 @@
  * FUN_0074b1e0(rt), which binds the target's last / current frame images: the trace) and the K_ENTRY RD_CF_MAKE
  * (FUN_00747e60, the maker of a target's "current frame" image: SOMVR_CURFRAME=eye makes eye 1's with it); build 23
  * (re-xr-pipeline.md 96): SOMVR_KTIME's K_ENTRY RD_KT_UPLOAD (FUN_00750080, a shader constant's upload: called) and the
- * read-only K_CALL RD_KT_LATE (RenderScene's call 0x7d7030, its context the k_fTime := k_fRealTime write after it)) */
+ * read-only K_CALL RD_KT_LATE (RenderScene's call 0x7d7030, its context the k_fTime := k_fRealTime write after it); build
+ * 24 (re-xr-pipeline.md 100): `overlay`'s patched K_VSLOTs RD_OVERLAY (COverlayFX::vf_18; its context slots 14..18) and
+ * RD_OVERLAY_IF (its IClientFXOverlay vtable's slot 3; the context slots 0..3)) */
 static const struct site_spec g_rd_sites_game[] = {
 SITE("RD_LENSFLARE", K_VSLOT, 0x3b5de78, 0x3b5de58, "30 0a d7 02 00 00 00 00 70 0a d7 02 00 00 00 00 20 0a d7 02 00 00 00 00 b0 0a d7 02 00 00 00 00 70 f1 d6 02 00 00 00 00", 0x2d6f170, "41 57 41 56 41 55 41 54 55 53 48 81 ec 98 00"),
 SITE("RD_SHAFTS", K_CALL, 0x7a2541, 0x7a2530, "8b 03 f3 0f 10 43 08 48 89 04 24 f3 0f 11 44 24 08 e8 2a fa ff ff", 0x7a1f70, "53 66 0f ef c9 48 89 fb 48 83 ec 10 f3 0f 10"),
@@ -76,16 +84,21 @@ SITE("RD_BRT_B", K_CALL, 0x74b646, 0x74b638, "48 04 00 00 48 89 df 83 05 36 46 e
 SITE("RD_CF_MAKE", K_ENTRY, 0x747e60, 0x747e60, "48 b8 01 00 00 00 01 00 00 00 41 57 41 56 45 89 c6 41 55 41 89 d5 41 54", 0x747e60, "48 b8 01 00 00 00 01 00 00 00 41 57 41 56 45"),
 SITE("RD_KT_UPLOAD", K_ENTRY, 0x750080, 0x750080, "55 0f b7 ff 53 48 8d 3c 7f 48 83 ec 18 48 8b 05", 0x750080, "55 0f b7 ff 53 48 8d 3c 7f 48 83 ec 18 48 8b"),
 SITE("RD_KT_LATE", K_CALL, 0x7d7030, 0x7d7030, "e8 0b cb f6 ff 80 7c 24 26 00 0f 84 07 01 00 00 b8 80 54 62 04 48 3d 20 54 62 04 74 2d f3 0f 10 05 0b e4 e4 03 0f b7 3d 2c e4 e4 03 f3 0f 11 05 5c e4 e4 03", 0x743b40, "c3 66 2e 0f 1f 84 00 00 00 00 00 0f 1f 44 00"),
+SITE("RD_OVERLAY", K_VSLOT, 0x3b624f8, 0x3b624d8, "60 37 65 02 00 00 00 00 70 37 65 02 00 00 00 00 80 37 65 02 00 00 00 00 d0 a6 d7 02 00 00 00 00 10 af d7 02 00 00 00 00", 0x2d7af10, "48 83 bf c0 00 00 00 00 74 26 80 bf e8 00 00"),
+SITE("RD_OVERLAY_IF", K_VSLOT, 0x3b62530, 0x3b62518, "50 b1 d7 02 00 00 00 00 80 b1 d7 02 00 00 00 00 10 b0 d7 02 00 00 00 00 40 b0 d7 02 00 00 00 00", 0x2d7b040, "48 83 7f 10 00 74 29 80 7f 38 00 74 23 48 83"),
 };
 /* RENDER_SITES_END */
 static const struct site_spec *g_rd_sites = g_rd_sites_game; /* selftest: stand-ins */
 
 enum { RDS_LENSFLARE, RDS_SHAFTS, RDS_RAIN, RDS_PSYS, RDS_GPUPSYS, RDS_SPRITE, RDS_FLARESPR, RDS_PSYS_UPD, RDS_PSYS_PREP,
-       RDS_VIS_INIT, RDS_VIS_REQ, RDS_BRT_A, RDS_BRT_B, RDS_CF_MAKE, RDS_KT_UPLOAD, RDS_KT_LATE, RDS_N };
+       RDS_VIS_INIT, RDS_VIS_REQ, RDS_BRT_A, RDS_BRT_B, RDS_CF_MAKE, RDS_KT_UPLOAD, RDS_KT_LATE, RDS_OVERLAY,
+       RDS_OVERLAY_IF, RDS_N };
 _Static_assert(sizeof g_rd_sites_game / sizeof g_rd_sites_game[0] == RDS_N, "render sites");
 /* the SOMVR_FLATFX parts (bits) */
-enum { RDF_FLARES = 1u << 0, RDF_SHAFTS = 1u << 1, RDF_VIGNETTE = 1u << 2, RDF_RAIN = 1u << 3, RDF_ALL = 15u };
-static const char *const g_rd_part_w[] = { "flares", "shafts", "vignette", "rain" };
+enum { RDF_FLARES = 1u << 0, RDF_SHAFTS = 1u << 1, RDF_VIGNETTE = 1u << 2, RDF_RAIN = 1u << 3, RDF_OVERLAY = 1u << 4,
+       RDF_ALL = 31u };
+#define RD_NPARTS 5
+static const char *const g_rd_part_w[RD_NPARTS] = { "flares", "shafts", "vignette", "rain", "overlay" };
 /* the draws with a pass-through (index into g_rd.orig; bit i of `fx hide`): CPU particles, GPU particles, sprites, flare
  * sprites, lens flares */
 enum { RDD_PSYS, RDD_GPUPSYS, RDD_SPRITE, RDD_FLARESPR, RDD_LENSFLARE, RDD_N };
@@ -116,6 +129,35 @@ __attribute__((naked, used)) void somvr_w_rdupd(void)
 			 "leaq somvr_rd_upd(%rip), %r10\n\t"
 			 "lock incq (%r10,%r11,8)\n\t"
 			 "jmp *somvr_rd_upd_orig(%rip)\n\t");
+}
+/* build 24, `overlay`: COverlayFX's draw entries [0] vf_18, [1] the IClientFXOverlay thunk (game thread, inside an eye's
+ * body call). somvr_rd_ov_skip (rd_ov_eyes: H4 around its eye calls, the part on) = return 1 (drawn, as the game's do)
+ * at once; else the original. Naked: the draw's float arguments in xmm0/xmm1 (FUN_02d7a700 hands them to the renderer's
+ * view setup) and every other register reach the original untouched. Counters: calls, skipped. */
+volatile int somvr_rd_ov_skip;
+uint64_t somvr_rd_ov_n[2], somvr_rd_ov_skipped[2];
+uintptr_t somvr_rd_ov_orig[2];
+__attribute__((naked, used)) void somvr_w_rdov18(void)
+{
+	__asm__ volatile("lock incq somvr_rd_ov_n(%rip)\n\t"
+			 "cmpl $0, somvr_rd_ov_skip(%rip)\n\t"
+			 "je 1f\n\t"
+			 "lock incq somvr_rd_ov_skipped(%rip)\n\t"
+			 "movl $1, %eax\n\t"
+			 "ret\n"
+			 "1:\n\t"
+			 "jmp *somvr_rd_ov_orig(%rip)\n\t");
+}
+__attribute__((naked, used)) void somvr_w_rdovif(void)
+{
+	__asm__ volatile("lock incq somvr_rd_ov_n+8(%rip)\n\t"
+			 "cmpl $0, somvr_rd_ov_skip(%rip)\n\t"
+			 "je 1f\n\t"
+			 "lock incq somvr_rd_ov_skipped+8(%rip)\n\t"
+			 "movl $1, %eax\n\t"
+			 "ret\n"
+			 "1:\n\t"
+			 "jmp *somvr_rd_ov_orig+8(%rip)\n\t");
 }
 
 static struct {
@@ -1472,6 +1514,13 @@ __attribute__((used)) uint64_t somvr_w_rdrain(void *drops, void *rt)
 	return ((rd_rain_fn)g_rd_sites[RDS_RAIN].target)(drops, rt);
 }
 
+/* H4 (game thread) around its two eye calls: 1 = an eye renders - COverlayFX's draws skipped while `overlay` is off in
+ * the eyes (live: the word); 0 = after them (a flat frame's overlays are the game's) */
+static void rd_ov_eyes(int in_eyes)
+{
+	somvr_rd_ov_skip = in_eyes && (atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_OVERLAY);
+}
+
 /* from H1's post (game thread, every call): the game's vignette and box blur out of the scene params */
 static void rd_h1(void *sp)
 {
@@ -1508,7 +1557,7 @@ static void rd_parts(unsigned m, char *o, size_t n)
 		snprintf(o, n, "game");
 		return;
 	}
-	for (int i = 0; i < 4; i++)
+	for (int i = 0; i < RD_NPARTS; i++)
 		if (m & (1u << i))
 			snprintf(o + strlen(o), n - strlen(o), "%s%s", o[0] ? "," : "", g_rd_part_w[i]);
 }
@@ -1525,9 +1574,9 @@ static int rd_parse(const char *s)
 	snprintf(buf, sizeof buf, "%s", s);
 	for (char *sv = NULL, *t = strtok_r(buf, ",", &sv); t; t = strtok_r(NULL, ",", &sv)) {
 		int i = 0;
-		while (i < 4 && strcmp(t, g_rd_part_w[i]))
+		while (i < RD_NPARTS && strcmp(t, g_rd_part_w[i]))
 			i++;
-		if (i == 4)
+		if (i == RD_NPARTS)
 			return -1;
 		m |= 1u << i;
 	}
@@ -1538,7 +1587,8 @@ static void rd_state_line(const char *head)
 {
 	char p[64];
 	rd_parts(atomic_load(&g_rd.off), p, sizeof p);
-	logf_("%s t=%.3f: SOMVR_FLATFX %s (lens flares %s, shafts %s, rain %s); draws (skipped): CPU particles %llu (%llu), "
+	logf_("%s t=%.3f: SOMVR_FLATFX %s (lens flares %s, shafts %s, rain %s, overlay %s); the overlays' draws (skipped in the "
+	      "eyes): %llu (%llu) + %llu (%llu); draws (skipped): CPU particles %llu (%llu), "
 	      "GPU particles %llu (%llu), sprites %llu (%llu), flare sprites %llu (%llu), lens flares %llu (%llu); shaft setups "
 	      "%llu (shafts cleared %llu), rain draws %llu (skipped %llu), the game's vignette cleared %llu, box blur %llu; "
 	      "fx hide %#x eyesame %d; the probe: CPU emitters copied flat %llu / eye 0 %llu / eye 1 %llu, eye 1 the same "
@@ -1547,6 +1597,9 @@ static void rd_state_line(const char *head)
 	      "capacity %u, the most used %u / %u; the frame's request buffer (all views): %u bytes, the most used %u, frames with "
 	      "requests refused %llu of %llu (the most refused %u)", head, cb_now(), p, g_rd.ok[RDS_LENSFLARE] ? "hooked" : "not hooked",
 	      g_rd.ok[RDS_SHAFTS] ? "hooked" : "not hooked", g_rd.ok[RDS_RAIN] ? "hooked" : "not hooked",
+	      g_rd.ok[RDS_OVERLAY] && g_rd.ok[RDS_OVERLAY_IF] ? "hooked" : "not hooked",
+	      (unsigned long long)somvr_rd_ov_n[0], (unsigned long long)somvr_rd_ov_skipped[0],
+	      (unsigned long long)somvr_rd_ov_n[1], (unsigned long long)somvr_rd_ov_skipped[1],
 	      (unsigned long long)g_rd.n_draw[0], (unsigned long long)g_rd.n_skip[0], (unsigned long long)g_rd.n_draw[1],
 	      (unsigned long long)g_rd.n_skip[1], (unsigned long long)g_rd.n_draw[2], (unsigned long long)g_rd.n_skip[2],
 	      (unsigned long long)g_rd.n_draw[3], (unsigned long long)g_rd.n_skip[3], (unsigned long long)g_rd.n_draw[4],
@@ -1560,6 +1613,16 @@ static void rd_state_line(const char *head)
 	      (unsigned long long)g_rd.p_culled[1], (unsigned long long)g_rd.p_over[0], (unsigned long long)g_rd.p_over[1],
 	      g_rd.p_cap, g_rd.p_used_max[0], g_rd.p_used_max[1], g_rd.vis_cap, g_rd.vis_used_max,
 	      (unsigned long long)g_rd.vis_full, (unsigned long long)g_rd.vis_frames, g_rd.vis_over_max);
+}
+
+/* build 24: SOMVR_EYE_MATCH / the word "eyedrop": a state line */
+static void em_state(const char *head)
+{
+	logf_("%s t=%.3f: SOMVR_EYE_MATCH %s: views inside an open eye pass %llu; with a queued view of their hash kept for "
+	      "their pass %llu, taken (hash) %llu; eyedrop: %llu tag(s) without an eye", head, cb_now(),
+	      atomic_load(&g_em.pass) ? "pass" : "hash", (unsigned long long)atomic_load(&g_em.inpass),
+	      (unsigned long long)atomic_load(&g_em.kept), (unsigned long long)atomic_load(&g_em.stolen),
+	      (unsigned long long)atomic_load(&g_em.dropped));
 }
 
 /* "flatfx LIST|all|game|state", "fx hide MASK|eyesame 0|1|state" (writer thread) */
@@ -1576,7 +1639,7 @@ static const char *rd_word(const char *w0)
 	if (!strncmp(w, "flatfx ", 7)) {
 		int m = rd_parse(w + 7);
 		if (m < 0)
-			return "flatfx (not game|all|a list of flares,shafts,vignette,rain: ignored)";
+			return "flatfx (not game|all|a list of flares,shafts,vignette,rain,overlay: ignored)";
 		atomic_store(&g_rd.off, (unsigned)m);
 		char p[64];
 		rd_parts((unsigned)m, p, sizeof p);
@@ -1584,6 +1647,27 @@ static const char *rd_word(const char *w0)
 		      (m & RDF_FLARES) && !g_rd.ok[RDS_LENSFLARE] ? " (the lens flares' slot is NOT hooked)" : "");
 		return "flatfx (from the next frame)";
 	}
+	if (!strcmp(w, "eyematch state") || !strcmp(w, "eyematch")) {
+		em_state("EYEMATCH state");
+		return "eyematch (a state line)";
+	}
+	if (!strcmp(w, "eyematch pass") || !strcmp(w, "eyematch hash")) {
+		int pass = w[9] == 'p';
+		atomic_store(&g_em.pass, pass);
+		logf_("EYEMATCH t=%.3f the word: %s", cb_now(), pass ? "pass (a view with the open eye pass's camera is that "
+		      "eye's)" : "hash (build 23's match: the first queued view with the hash)");
+		return "eyematch";
+	}
+	int de, dn;
+	if (sscanf(w, "eyedrop %d %d", &de, &dn) == 2 && de >= 0 && de <= 1 && dn >= 0) {
+		atomic_store(&g_em.drop_n, (int64_t)dn);
+		atomic_store(&g_em.drop_eye, dn ? de : -1);
+		logf_("EYEDROP t=%.3f the word: eye %d's bit left out of the next %d stereo tag(s) (the layer's stale-frame net)",
+		      cb_now(), de, dn);
+		return "eyedrop";
+	}
+	if (!strncmp(w, "eyematch", 8) || !strncmp(w, "eyedrop", 7))
+		return "eyematch pass|hash|state, eyedrop E N (ignored)";
 	if (!strcmp(w, "ktime state") || !strcmp(w, "ktime")) {
 		rd_kt_state("KTIME state");
 		return "ktime (a state line)";
@@ -1753,10 +1837,17 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		      "eye 1's pass keeps the k_fRealTime the late pass of eye 0's left in k_fTime",
 		      g_kt.want && !g_kt.ok ? " - NOT possible: a site did not match" : "");
 	}
+	{ /* build 24: SOMVR_EYE_MATCH (H3's eye match inside an open eye pass; somvr.c g_em) */
+		int pass = env_word("SOMVR_EYE_MATCH", (const char *const[]){ "hash", "pass" }, 2, 1);
+		atomic_store(&g_em.pass, pass);
+		logf_("CONFIG eyematch=%s (SOMVR_EYE_MATCH: %s)", pass ? "pass" : "hash",
+		      pass ? "a view with the open eye pass's camera is a repeat of that eye's projection, never another queued "
+			     "eye's or frame's" : "build 23's: the first queued view with the hash, also inside another eye's pass");
+	}
 	const char *s = getenv("SOMVR_FLATFX");
 	int m = s ? rd_parse(s) : 0;
 	if (m < 0) {
-		logf_("WARN SOMVR_FLATFX=%s is not game|all|a comma list of flares,shafts,vignette,rain: game", s);
+		logf_("WARN SOMVR_FLATFX=%s is not game|all|a comma list of flares,shafts,vignette,rain,overlay: game", s);
 		++*bad;
 		m = 0;
 	}
@@ -1794,19 +1885,30 @@ static void rd_start(const struct site_spec *sites, int *bad)
 			g_rd.ok[i] = go_slot(&sites[i], (void *)g_rd_stub[d], &g_rd.orig[d]);
 		}
 	}
+	if ((g_rd.want & RDF_OVERLAY) || g_rd.test) /* build 24: COverlayFX's two draw entries (the hooks in: the word works) */
+		for (int i = RDS_OVERLAY; i <= RDS_OVERLAY_IF; i++) {
+			if (check_site(&sites[i], why, sizeof why) != 0) {
+				logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
+				      (unsigned long)sites[i].target, why);
+				continue;
+			}
+			g_rd.ok[i] = go_slot(&sites[i], i == RDS_OVERLAY ? (void *)somvr_w_rdov18 : (void *)somvr_w_rdovif,
+					     &somvr_rd_ov_orig[i - RDS_OVERLAY]);
+		}
 	if (g_rd.test) /* build 22: the trace's BeginRenderTarget bindings */
 		for (int i = RDS_BRT_A; i <= RDS_BRT_B; i++)
 			g_rd.ok[i] = bo_patch_call(&sites[i], (void *)somvr_w_rdbrt);
 	if (g_rd.test) /* build 23: the D3D11 capture's pass-throughs (`fx d3d N`) */
 		dc_install();
 	unsigned have = (g_rd.ok[RDS_LENSFLARE] ? RDF_FLARES : 0) | (g_rd.ok[RDS_SHAFTS] ? RDF_SHAFTS : 0) | RDF_VIGNETTE |
-			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0);
+			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0) | (g_rd.ok[RDS_OVERLAY] && g_rd.ok[RDS_OVERLAY_IF] ? RDF_OVERLAY : 0);
 	atomic_store(&g_rd.off, g_rd.want & have);
 	char p[64], q[64];
 	rd_parts(g_rd.want, p, sizeof p);
 	rd_parts(g_rd.want & ~have, q, sizeof q);
 	logf_("CONFIG flatfx=%s (SOMVR_FLATFX: the flat screen's effects off in the eyes - lens flares' draw, the sun shafts' "
-	      "passes, the game's vignette and box blur, the lens drops; motion blur, DoF and the shake were already off)%s%s "
+	      "passes, the game's vignette and box blur, the lens drops, the full-screen overlays (blood, low health); motion "
+	      "blur, DoF and the shake were already off)%s%s "
 	      "test=%d (SOMVR_FX_TEST: the particle and sprite draws' pass-through %s)", p, g_rd.want & ~have ? "; NOT hooked: " : "",
 	      g_rd.want & ~have ? q : "", g_rd.test,
 	      !g_rd.test ? "off" : g_rd.ok[RDS_PSYS] && g_rd.ok[RDS_GPUPSYS] && g_rd.ok[RDS_SPRITE] && g_rd.ok[RDS_FLARESPR]
@@ -1815,6 +1917,7 @@ static void rd_start(const struct site_spec *sites, int *bad)
 
 static void rd_end_log(void)
 {
+	em_state("EYEMATCH END");
 	rd_kt_state("KTIME END");
 	if (g_rd.want || g_rd.test || g_rd.vis_full)
 		rd_state_line("FLATFX END");

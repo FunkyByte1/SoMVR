@@ -96,3 +96,12 @@ int somvr_cp_intro_world(const somvr_cp_intro_cfg *c, const float head[3], const
         *off_deg = off;
     return isfinite(l) && isfinite(off) && l <= c->range_cm && off <= c->half_deg;
 }
+
+float somvr_cp_cut_factor(int committed, float k, float cut_x)
+{
+    if (!committed || !(cut_x > 1.0f))
+        return 1.0f;
+    float kk = isfinite(k) && k > 0 ? (k < 1.0f ? k : 1.0f) : (isfinite(k) ? 0.0f : 1.0f);
+    float x = cut_x * kk;
+    return x > 1.0f ? x : 1.0f;
+}

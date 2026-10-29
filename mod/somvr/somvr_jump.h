@@ -59,6 +59,8 @@ typedef struct {
     float radius_cm;       /* Talion's capsule (35) */
     float room_cm;         /* the landing: nothing this far over it (180) */
     float side_cm;         /* ... nothing this near round it at 50 and 140 cm up (33) */
+    int v_ring_stop;       /* SOMVR_VAULT_RING_STOP (build 24): the fixed horizontal ends at the ring's distance - a far floor
+                              lower than the plan's (a downhill) falls straight down onto it, not past it (1) */
 } somvr_jp_cfg;
 void somvr_jp_cfg_default(somvr_jp_cfg *c);
 
@@ -105,10 +107,11 @@ typedef struct {
     int settle_step;       /* the last tick's step was that step */
     int ceiling;           /* a ceiling turned the rise into the fall */
     int h_blocked;         /* the vault: ticks its horizontal step was blocked */
+    int h_done;            /* the vault: at the ring's distance (v_ring_stop): no horizontal until the landing */
     float v_land;          /* the fall's speed when the brake started (or at a hard stop) */
     int end;               /* SOMVR_JPE_* of the last end */
     /* totals */
-    uint64_t n_jump, n_vault, n_landed, n_lost, n_climb, n_fall, n_stop, n_ceiling, n_brakes, n_settle_miss, ticks;
+    uint64_t n_jump, n_vault, n_landed, n_lost, n_climb, n_fall, n_stop, n_ceiling, n_brakes, n_settle_miss, ticks, n_ring_stop;
     float max_rise_cm, max_air_s, max_land_cms;
 } somvr_jp;
 void somvr_jp_init(somvr_jp *s);

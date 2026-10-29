@@ -39,6 +39,15 @@ static struct {
 	_Atomic int req_cmd0, req_cmd1, req_ms;
 	_Atomic int req_status;
 	_Atomic int req_behind_cm; /* the test word "verbs behind CM": Talion teleported CM behind the nearest orc */
+	_Atomic int req_behind_at, req_behind_x, req_behind_z; /* build 24: "verbs behind CM X Z": the orc nearest to X,Z */
+	/* build 24 follow-up (som-b24-brand, re-xr-pipeline.md 98.8; tests): "verbs stalk X Z CM" - the left stick steered
+	 * each frame at the orc nearest X,Z (locked at the start), as a player walks up crouched from behind; stops at CM
+	 * root to root (the stand-off's 118 holds it anyway), when Talion is no longer in its back half, when it reacts, or
+	 * after 30 s. "verbs orcs X Z R": every orc within R of X,Z (where, facing, doing what) */
+	_Atomic int req_stalk, req_stalk_x, req_stalk_z, req_stalk_cm, req_orcs, req_orcs_x, req_orcs_z, req_orcs_r;
+	uintptr_t stalk_c;
+	float stalk_cm, stalk_best;
+	double stalk_t0, stalk_next, stalk_best_t;
 	_Atomic int req_tree;      /* the test word "verbs tree": the player's root nodes, their chords, the attacks */
 	int ok_tree;               /* FINISH's selection sites matched (the tree's attacks, the stealth kill's ask) */
 	int stealth;               /* SOMVR_VERBS_STEALTH: the stealth kill by a blade contact (default 1 with on) */
@@ -124,6 +133,9 @@ enum { VB_ASK_GAME, VB_ASK_BLADE };
 
 static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, double t); /* build 21 (somvr_combat21_game.c) */
 static void gc_hands(const somvr_vb_hand_in *in, double t);
+static void br_hands(const somvr_vb_hand_in *in); /* build 23 (somvr_brand_game.c) */
+static void br_prompt_up(int act, const char *str, double t);
+static int br_auto_trigger(double t);
 static int vb_log_ok(void)
 {
 	if (g_vb.lines < VB_LINES) {
@@ -183,6 +195,7 @@ static void vb_prompt(uintptr_t key, int act, const char *str, int up)
 		if (vb_log_ok())
 			logf_("VERBS t=%.3f prompt up: action %d '%s' '%s' key %#lx '%s'", t, act, in_cmd_name(act), p->str,
 			      (unsigned long)key, vb_name(key, kn, sizeof kn));
+		br_prompt_up(act, p->str, t); /* build 23 (somvr_brand_game.c): a test aid's press at the stealth brand's prompt */
 		return;
 	}
 	g_vb.hides++;
@@ -544,6 +557,8 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	in.trigger = (g_inp.st.hand[SOMVR_HAND_L].active & SOMVR_HACT_INPUT) ? g_inp.st.hand[SOMVR_HAND_L].trigger : 0;
 	if (g_bd.test && g_bf.t_trig[SOMVR_HAND_L] >= 0) /* SOMVR_HANDS_TEST: "hands trigger L V" (a frame's timing) */
 		in.trigger = g_bf.t_trig[SOMVR_HAND_L];
+	if (br_auto_trigger(t)) /* build 23, a test aid (`verbs brand auto`): the trigger at the game's stealth brand prompt */
+		in.trigger = 1;
 	in.have_palm = L->valid;
 	in.palm[0] = pw[0].x, in.palm[1] = pw[0].y, in.palm[2] = pw[0].z;
 	in.have_eye = 1, in.eye[0] = eye.x, in.eye[1] = eye.y, in.eye[2] = eye.z;
@@ -569,7 +584,7 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 			in.palm[0] = h[0], in.palm[1] = h[1] - 8, in.palm[2] = h[2];
 		else
 			for (int k = 0; k < 3; k++)
-				in.palm[k] = in.eye[k] + d[k] / l * 25.0f;
+				in.palm[k] = in.eye[k] + d[k] / l * (aim == 3 ? 55.0f : 25.0f);
 	}
 	in.norc = fresh ? g_vb.nheads : 0;
 	memcpy(in.head, g_vb.heads, sizeof in.head);
@@ -580,9 +595,12 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 		memset(in.body_cm, 0, sizeof in.body_cm);
 	in.game_done = g_vb.game_done;
 	int was = g_vb.hand.phase, b_was = g_vb.hand.b;
+	br_hands(&in); /* build 23, SOMVR_VERBS_BRAND: the orc the hand is on or holds (the game's brand offer) */
 	somvr_vb_hand_out o;
 	somvr_vb_hand_step(&g_vb.hand, &g_vb.cfg, &in, &o);
 	g_vb.press_grab = o.grab, g_vb.press_b = o.b;
+	if (o.event == SOMVR_VBE_WRAITH) /* build 23: the brand where the game offers it (B + A, or B's tap) */
+		br_press(was == SOMVR_VBH_IDLE ? (o.orc >= 0 && o.orc < g_vb.nheads ? g_vb.head_c[o.orc] : 0) : g_vb.held_c, t);
 	gc_hands(&in, t); /* build 21, SOMVR_VERBS_CUE: the reach, the cue, its tick and glow (somvr_combat21_game.c) */
 	/* the interrogation asks (its choices up; the grip may have opened meanwhile): the trigger's press = Interrogate */
 	int tr_was = g_vb.trig_was;
@@ -705,10 +723,104 @@ static int vb_nograb(void) { return g_vb.mode == VB_ON && g_fr.frame - g_vb.took
 
 /* the test word "verbs behind CM" (SOMVR_HANDS_TEST): Talion teleported CM behind the nearest orc within 20 m (the
  * console's Teleport, as the practice trips; whole centimetres), to stage a stealth approach headless */
+/* build 24 (tests): an orc's yaw and Talion's angle off its facing (180 = right behind it) */
+static float vb_off_facing(const struct cb_orc *o, const float root[3], float *yaw_deg)
+{
+	float q[4] = { 0, 0, 0, 1 }, yaw = 0;
+	if (peek(o->hobj + OBJ_ROT, q, sizeof q) && vec_ok(q, 2.0f))
+		yaw = sv_heading(sv_qnormalize(sv_quat_of(q)));
+	if (yaw_deg)
+		*yaw_deg = yaw * 57.29578f;
+	return fabsf(sv_wrap_pi(atan2f(root[0] - o->pos[0], root[2] - o->pos[2]) - yaw)) * 57.29578f;
+}
+static void vb_stalk_stop(const char *why, const struct cb_orc *o, float dist, float off, double t)
+{
+	atomic_store_explicit(&g_tstick_until_ns, 0, memory_order_release);
+	char a[96];
+	logf_("VERBS stalk t=%.3f end after %.1f s: %s (orc %#lx at %.0f cm, Talion %.0f deg off its facing, its attack '%s')", t,
+	      t - g_vb.stalk_t0, why, (unsigned long)g_vb.stalk_c, dist, off, o ? vb_name(peek_ptr(o->c + VB_C_ATTACK), a, sizeof a) :
+	      "-");
+	g_vb.stalk_c = 0;
+}
+static void vb_stalk_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
+{
+	if (!root || !pc)
+		return;
+	if (atomic_exchange(&g_vb.req_orcs, 0)) {
+		struct cb_orc o[8];
+		float at[3] = { (float)atomic_load(&g_vb.req_orcs_x), root[1], (float)atomic_load(&g_vb.req_orcs_z) };
+		int n = cb_orcs_r(pcomb, pc, at, (float)atomic_load(&g_vb.req_orcs_r), o, 8);
+		for (int i = 0; i < n; i++) {
+			char a[96];
+			float yaw, off = vb_off_facing(&o[i], root, &yaw);
+			float dx = root[0] - o[i].pos[0], dz = root[2] - o[i].pos[2];
+			logf_("VERBS orcs t=%.3f %d/%d orc %#lx at %.0f,%.0f,%.0f facing %.1f deg, %.0f cm from Talion (%.0f deg off its "
+			      "facing), attack '%s'", t, i + 1, n, (unsigned long)o[i].c, o[i].pos[0], o[i].pos[1], o[i].pos[2], yaw,
+			      sqrtf(dx * dx + dz * dz), off, vb_name(peek_ptr(o[i].c + VB_C_ATTACK), a, sizeof a));
+		}
+		if (!n)
+			logf_("VERBS orcs t=%.3f none within %d cm of %.0f,%.0f", t, atomic_load(&g_vb.req_orcs_r), at[0], at[2]);
+	}
+	if (atomic_exchange(&g_vb.req_stalk, 0)) {
+		int cm = atomic_load(&g_vb.req_stalk_cm);
+		struct cb_orc o[1];
+		float at[3] = { (float)atomic_load(&g_vb.req_stalk_x), root[1], (float)atomic_load(&g_vb.req_stalk_z) };
+		if (g_vb.stalk_c)
+			vb_stalk_stop("a new word", NULL, 0, 0, t);
+		if (cm > 0 && cb_orcs_r(pcomb, pc, at, 1500, o, 1) == 1) {
+			g_vb.stalk_c = o[0].c, g_vb.stalk_cm = (float)cm, g_vb.stalk_t0 = t, g_vb.stalk_next = t;
+			g_vb.stalk_best = 1e9f, g_vb.stalk_best_t = t;
+			float yaw, off = vb_off_facing(&o[0], root, &yaw);
+			float dx = root[0] - o[0].pos[0], dz = root[2] - o[0].pos[2];
+			logf_("VERBS stalk t=%.3f start: orc %#lx at %.0f,%.0f facing %.1f deg, %.0f cm away, Talion %.0f deg off its "
+			      "facing; to %d cm", t, (unsigned long)o[0].c, o[0].pos[0], o[0].pos[2], yaw, sqrtf(dx * dx + dz * dz), off, cm);
+		} else if (cm > 0)
+			logf_("VERBS stalk t=%.3f no orc within 15 m of %.0f,%.0f", t, at[0], at[2]);
+	}
+	if (!g_vb.stalk_c)
+		return;
+	struct cb_orc o;
+	if (!cb_orc_get(g_vb.stalk_c, &o) || cb_dead(g_vb.stalk_c)) {
+		vb_stalk_stop("the orc is gone", NULL, 0, 0, t);
+		return;
+	}
+	float dx = o.pos[0] - root[0], dz = o.pos[2] - root[2], dist = sqrtf(dx * dx + dz * dz), off = vb_off_facing(&o, root, NULL);
+	char a[96];
+	vb_name(peek_ptr(o.c + VB_C_ATTACK), a, sizeof a);
+	if (dist <= g_vb.stalk_cm)
+		{ vb_stalk_stop("arrived", &o, dist, off, t); return; }
+	if (off < 100.0f)
+		{ vb_stalk_stop("Talion is not in its back half", &o, dist, off, t); return; }
+	if (strstr(a, "React") || strstr(a, "Surprise") || strstr(a, "Shoot") || strstr(a, "Alert") || strstr(a, "Showdown"))
+		{ vb_stalk_stop("it reacts", &o, dist, off, t); return; }
+	if (t - g_vb.stalk_t0 > 30.0)
+		{ vb_stalk_stop("30 s", &o, dist, off, t); return; }
+	if (dist < g_vb.stalk_best - 30.0f)
+		g_vb.stalk_best = dist, g_vb.stalk_best_t = t;
+	else if (t - g_vb.stalk_best_t > 3.0) /* no 30 cm nearer in 3 s: a wall or a drop between (the straight line's) */
+		{ vb_stalk_stop("stuck (no 30 cm nearer in 3 s)", &o, dist, off, t); return; }
+	/* the stick in the head's frame (the walk's own: stick x = sin(want - hv), y = cos(want - hv)); a crouched walk */
+	float want = atan2f(dx, dz), d = sv_wrap_pi(want - g_inp.hv), m = 0.55f, v[3] = { m * sinf(d), m * cosf(d), 0 };
+	for (int i = 0; i < 3; i++) {
+		uint32_t b;
+		memcpy(&b, &v[i], 4);
+		atomic_store_explicit(&g_tstick[i], b, memory_order_relaxed);
+	}
+	atomic_store_explicit(&g_tstick_until_ns, (int64_t)((mono() + 0.3) * 1e9), memory_order_release);
+	if (t >= g_vb.stalk_next) {
+		g_vb.stalk_next = t + 0.5;
+		logf_("VERBS stalk t=%.3f orc %#lx at %.0f cm, Talion %.0f deg off its facing, its attack '%s'; the stick %.2f %.2f",
+		      t, (unsigned long)o.c, dist, off, a, v[0], v[1]);
+	}
+}
+
 static void vb_behind(uintptr_t pcomb, uintptr_t pc, const float root[3], float cm, double t)
 {
 	struct cb_orc o[1];
-	int n = pc && root ? cb_orcs_r(pcomb, pc, root, 2000, o, 1) : 0;
+	float near_at[3] = { root ? root[0] : 0, root ? root[1] : 0, root ? root[2] : 0 };
+	if (atomic_exchange(&g_vb.req_behind_at, 0)) /* build 24 (a test): the orc nearest to a given spot (another archer) */
+		near_at[0] = (float)atomic_load(&g_vb.req_behind_x), near_at[2] = (float)atomic_load(&g_vb.req_behind_z);
+	int n = pc && root ? cb_orcs_r(pcomb, pc, near_at, 2000, o, 1) : 0;
 	float q[4] = { 0, 0, 0, 1 };
 	if (!n || !peek(o[0].hobj + OBJ_ROT, q, sizeof q) || !vec_ok(q, 2.0f)) {
 		logf_("VERBS t=%.3f behind: no orc within 20 m (or its rotation unread)", t);
@@ -945,10 +1057,11 @@ static void vb_tree(uintptr_t pcomb, uintptr_t pc, const float root[3], double t
  * that orc. 1 = the contact is ours. Needs FINISH's selection sites (ok_tree). */
 static uintptr_t vb_node_named(uintptr_t pcomb, const char *want)
 {
-	static struct { char name[64]; uintptr_t root, node; } cache[4];
+	enum { VB_NODE_CACHE = 24 }; /* build 23: the brand's names too (4 thrashed: a re-read and a line per miss) */
+	static struct { char name[64]; uintptr_t root, node; } cache[VB_NODE_CACHE];
 	uintptr_t rootrec = pcomb ? peek_ptr(pcomb + FI_PC_ROOT) : 0;
 	int slot = 0;
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < VB_NODE_CACHE; i++) {
 		if (!strcmp(cache[i].name, want)) {
 			if (cache[i].root == rootrec)
 				return cache[i].node;
@@ -1260,6 +1373,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 		vb_status(t);
 	if (atomic_exchange(&g_vb.req_tree, 0))
 		vb_tree(pcomb, pc, root, t);
+	vb_stalk_frame(pcomb, pc, root, t); /* build 24: "verbs stalk", "verbs orcs" (tests) */
 	int bcm = atomic_exchange(&g_vb.req_behind_cm, 0);
 	if (bcm > 0)
 		vb_behind(pcomb, pc, root, (float)bcm, t);
@@ -1304,10 +1418,13 @@ static const char *vb_word(const char *w)
 	if (!strncmp(w, "aim ", 4)) {
 		if (!g_vb.test)
 			return "verbs aim (SOMVR_HANDS_TEST is off: ignored)";
-		int k = !strncmp(w + 4, "head", 4) ? 1 : !strncmp(w + 4, "face", 4) ? 2 : !strncmp(w + 4, "off", 3) ? 0 : -1;
+		int k = !strncmp(w + 4, "head", 4) ? 1 : !strncmp(w + 4, "face", 4) ? 2 : !strncmp(w + 4, "reach", 5) ? 3 :
+			!strncmp(w + 4, "off", 3) ? 0 : -1;
 		if (k < 0)
-			return "verbs aim (head|face|off: ignored)";
+			return "verbs aim (head|face|reach|off: ignored)";
 		atomic_store(&g_vb.aim, k);
+		if (k == 3) /* build 24: an arm reached out at the head (the reach's cone: 55 cm out from the eyes toward it) */
+			return "verbs aim reach (a test: the left palm 55 cm from the eyes toward the nearest orc's head)";
 		return k == 1 ? "verbs aim head (a test: the left palm at the nearest orc's collar)"
 		       : k == 2 ? "verbs aim face (a test: the left palm 25 cm from the eyes toward the orc)" : "verbs aim off";
 	}
@@ -1320,6 +1437,8 @@ static const char *vb_word(const char *w)
 		snprintf(g_pr_tmpl_test, sizeof g_pr_tmpl_test, "%s", nm); /* (a test: the practice's next spawns) */
 		return nm[0] ? "verbs template (a test: the practice spawns that AI/Templates record)" : "verbs template off";
 	}
+	if (!strncmp(w, "brand", 5)) /* build 23 (somvr_brand_game.c) */
+		return br_word(w + 5);
 	if (!strncmp(w, "tree", 4)) {
 		if (!g_vb.test)
 			return "verbs tree (SOMVR_HANDS_TEST is off: ignored)";
@@ -1329,15 +1448,36 @@ static const char *vb_word(const char *w)
 	if (!strncmp(w, "behind ", 7) || !strncmp(w, "ahead ", 6)) {
 		if (!g_vb.test)
 			return "verbs behind|ahead (SOMVR_HANDS_TEST is off: ignored)";
-		long cm = strtol(w + (w[0] == 'b' ? 7 : 6), NULL, 10);
+		char *e;
+		long cm = strtol(w + (w[0] == 'b' ? 7 : 6), &e, 10);
 		if (cm < 50 || cm > 2000)
 			return "verbs behind|ahead (CM 50..2000: ignored)";
 		if (w[0] == 'b') {
+			char *e2;
+			long x = strtol(e, &e2, 10), z = e2 != e ? strtol(e2, &e, 10) : 0;
+			if (e != e2) /* build 24: "verbs behind CM X Z" - the orc nearest to that spot */
+				atomic_store(&g_vb.req_behind_x, (int)x), atomic_store(&g_vb.req_behind_z, (int)z),
+					atomic_store(&g_vb.req_behind_at, 1);
 			atomic_store(&g_vb.req_behind_cm, (int)cm);
 			return "verbs behind (a test: Talion teleported behind the nearest orc)";
 		}
 		g_pr.ahead_cm = (float)cm; /* (a test: the next practice spawns that far ahead) */
 		return "verbs ahead (a test: the practice orcs spawn that far ahead)";
+	}
+	if (!strncmp(w, "stalk ", 6) || !strncmp(w, "orcs ", 5)) { /* build 24 (tests) */
+		if (!g_vb.test)
+			return "verbs stalk|orcs (SOMVR_HANDS_TEST is off: ignored)";
+		int st = w[0] == 's';
+		long x = 0, z = 0, c = 0;
+		if (sscanf(w + (st ? 6 : 5), "%ld %ld %ld", &x, &z, &c) != 3 || c < 0 || c > 5000)
+			return st ? "verbs stalk (X Z CM: ignored; CM 0 = stop)" : "verbs orcs (X Z R: ignored)";
+		if (st)
+			atomic_store(&g_vb.req_stalk_x, (int)x), atomic_store(&g_vb.req_stalk_z, (int)z),
+				atomic_store(&g_vb.req_stalk_cm, (int)c), atomic_store(&g_vb.req_stalk, 1);
+		else
+			atomic_store(&g_vb.req_orcs_x, (int)x), atomic_store(&g_vb.req_orcs_z, (int)z),
+				atomic_store(&g_vb.req_orcs_r, (int)c), atomic_store(&g_vb.req_orcs, 1);
+		return st ? "verbs stalk (a test: the stick steered at that orc, crouched, from behind)" : "verbs orcs (a test)";
 	}
 	if (!strncmp(w, "words ", 6)) {
 		int k = !strncmp(w + 6, "off", 3) ? 0 : !strncmp(w + 6, "test", 4) ? 2 : -1;

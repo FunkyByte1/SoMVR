@@ -736,6 +736,10 @@ static int g_h4_calls, g_h4_first[4], g_h4_bad_state;
 static uint64_t g_h4_frame;
 static somvr_view g_h4_view[4];
 static float g_h4_rect[4][4], g_h4_tan[4][2], g_h4_co[4][2], g_h4_corner[4][2], g_h4_ov[4][4];
+/* build 24 (SOMVR_EYE_MATCH): 1 = the render thread behind the game thread - eye 0's pass (H3, H6, H8, the HUD) runs
+ * after eye 1's view is queued (H1), as in the game; 0 = each eye's pass right after its view */
+static int g_h4_defer;
+static void h4_render(int k, void *rt, void *pl, int ef);
 __attribute__((noipa)) uint64_t t_h4(void *gm, void *rt, const int *org, void *pl, int ef, int first)
 {
 	(void)rt, (void)org, (void)pl, (void)ef;
@@ -753,6 +757,22 @@ __attribute__((noipa)) uint64_t t_h4(void *gm, void *rt, const int *org, void *p
 		float rect[4] = { 0, 0, 1, 1 };
 		((t_h2_fn)g_vt[37])(view.near_z, view.far_z, g_renderer_obj, view.pos, &view.fov_x, rect);
 		memcpy(g_h4_rect[k], g_seen_rect, sizeof g_h4_rect[k]);
+		if (!g_h4_defer)
+			h4_render(k, rt, pl, ef);
+		else if (k == 1) /* both views queued: eye 0's pass, then eye 1's */
+			h4_render(0, rt, pl, ef), h4_render(1, rt, pl, ef);
+		memcpy((char *)gm + GM_LAST_VIEW, &view, sizeof view); /* the body's own "last view" copy */
+	}
+	g_fol[0] = 0x99;
+	((unsigned char *)gm)[0x20] = 0x77;
+	return 5;
+}
+/* the render thread's part of body call k: the view's projection (H3, an overlay with the same camera, H6), the eye's
+ * pass into the 3D surface ending at H8, the HUD */
+static void h4_render(int k, void *rt, void *pl, int ef)
+{
+	{
+		somvr_view view = g_h4_view[k];
 		float xf[7], th[2] = { tanf(0.5f * view.fov_x), tanf(0.5f * view.fov_y) }, co[2] = { 0, 0 };
 		int pr[4] = { 0, 0, 1920, 1080 };
 		memcpy(xf, &view, sizeof xf); /* the command's copy of the transform */
@@ -776,11 +796,7 @@ __attribute__((noipa)) uint64_t t_h4(void *gm, void *rt, const int *org, void *p
 		c_h8(0, (uint32_t)ef);
 		g_hud_k = k; /* the HUD pass after vf_34 (HUD_PASS_EYE; a full-screen video: HUD_PASS_COVER, no player) */
 		g_hud_ret[k] = g_hud_none ? 0 : g_hud_video ? c_hudcov(g_im_obj) : c_hudeye(g_im_obj, pl);
-		memcpy((char *)gm + GM_LAST_VIEW, &view, sizeof view); /* the body's own "last view" copy */
 	}
-	g_fol[0] = 0x99;
-	((unsigned char *)gm)[0x20] = 0x77;
-	return 5;
 }
 __attribute__((noipa)) uint64_t c_h4(void *gm, void *rt, const int *org, void *pl)
 {
@@ -10769,6 +10785,21 @@ static void df_tests(void)
 		got = somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te);
 		EXPECT(g_hu.flashes == fl0 + 1 && got && !te.hurt[0] && !te.hurt[1] && log_has("(SOMVR_HURT off: no pulse, no flash)"),
 		       "hurt off: a flash %llu", (unsigned long long)(g_hu.flashes - fl0));
+		/* build 24, SOMVR_HURT_LOW=0.25: under a quarter of the most seen (120) a faint steady red on both edges
+		 * (SOMVR_HURT_LOW_EDGE 0.3 = 76 of 255) after the blow's flash; above it none */
+		g_hu.on = 1, g_hu.low = 0.25f, g_hu.low_edge = 0.3f, *thp = 20;
+		for (int k = 0; k < 30; k++)
+			iframe();
+		got = somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te);
+		EXPECT(got && te.hurt[0] == 76 && te.hurt[1] == 76 && (te.flags & SOMVR_THF_HURT) &&
+			       log_has("FIGHT low t=") && log_has("Talion's health 20.0 of 120.0: under SOMVR_HURT_LOW - the faint red edge on"),
+		       "hurt low: the edge %u %u flags %#x", te.hurt[0], te.hurt[1], te.flags);
+		*thp = 60;
+		iframe(), iframe();
+		got = somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te);
+		EXPECT(got && !te.hurt[0] && !te.hurt[1] && log_has("Talion's health 60.0 of 120.0: the faint red edge off"),
+		       "hurt low: above it, the edge %u %u", te.hurt[0], te.hurt[1]);
+		g_hu.on = 0, g_hu.low = 0;
 		df_end_attack(0);
 		th_drain_haptics();
 		*thp = hp_was, g_hu.have = 0;
@@ -11442,6 +11473,24 @@ static void fi_hand_frame(const somvr_blade *dprev, const somvr_blade *dag, floa
  * the grip stays closed; the climb told; the game's hold's end lets B go; the test words; the prompts' words */
 static st_dbrec_t g_vb_hold = { .flags = 2, .name = "PC_HoG_Standing_Hold_Normal" },
 		  g_vb_done = { .flags = 2, .name = "PC_HoG_Standing_Complete" };
+/* build 24: the stand-in for the input mode's "is this command enabled" (its vtable slot 3) */
+static int st_brcmd_val;
+static uint32_t st_brcmd_last;
+static uint8_t st_brcmd_on(uintptr_t mode, uint32_t cmd)
+{
+	(void)mode;
+	st_brcmd_last = cmd;
+	return (uint8_t)st_brcmd_val;
+}
+/* build 24: the stand-in for the game's sink write (SOMVR_VERBS_BRAND_NODELOG's call) */
+static int *st_nl_writes;
+static void st_nl_game_write(uintptr_t sink, const char *text)
+{
+	(void)sink, (void)text;
+	if (st_nl_writes)
+		(*st_nl_writes)++;
+}
+
 static void vb_hand_at2(float x, float y, float z, float sq, float tr)
 {
 	sv_vec3 pw[2] = { { x, y, z }, { 0, 0, 0 } }, eye = { 500, 176, -50 };
@@ -11539,6 +11588,167 @@ static void vb_tests(void)
 	g_cb_test_t += 0.1;
 	vb_hand_at2(502, hy - 5, 52, 0, 0);
 	EXPECT(vb_press_cmds(out) == 0 && g_vb.ev[SOMVR_VBE_WRAITH_END] == 1 && !vb_trigger_taken(), "verbs: let go: B let go");
+	/* build 23, SOMVR_VERBS_BRAND (somvr_brand_game.c): the game's offer at the trigger's press = the brand's press
+	 * instead of B held (the offer itself is the game's selection, gc_pick: not in the selftest - set here) */
+	unsetenv("SOMVR_VERBS_BRAND");
+	br_start(&bad);
+	EXPECT(g_br.mode == BR_OFF && !strcmp(br_word(" status"), "verbs brand (SOMVR_VERBS_BRAND is off: ignored)"),
+	       "brand: off by default");
+	g_br.mode = BR_ON, g_br.stealth_tap = 1, g_br.press_s = 0.15f, g_br.fresh_s = 0.3f;
+	uintptr_t oa_c = (uintptr_t)&g_oc[0];
+	g_cb_test_t += 1.0;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 0); /* the open hand on A's head: the orc asked about */
+	EXPECT(g_br.reach_c == oa_c && !g_br.reach_held, "brand: the hand on A's head is the orc asked (%#lx)",
+	       (unsigned long)g_br.reach_c);
+	g_br.ask_c = oa_c, g_br.ask_kind = BRK_COMBAT, g_br.ask_t = g_cb_test_t - 0.05;
+	snprintf(g_br.ask_atk, sizeof g_br.ask_atk, "PC_InstaHOG_F");
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1); /* the trigger: the combat brand offered = the chord */
+	n = vb_press_cmds(out);
+	EXPECT(n == 2 && vb_has(out, n, VB_CMD_B) && vb_has(out, n, VB_CMD_A) && g_br.chords == 1 && !g_vb.press_b &&
+		       log_has("VERBS brand t=") && log_has("the chord B + A (120 + 121)"),
+	       "brand: the combat brand offered: B + A at the press (%d)", n);
+	g_cb_test_t += 0.2;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	EXPECT(vb_press_cmds(out) == 0, "brand: the chord's 150 ms over, the trigger still held: no B");
+	vb_hand_at2(502, hy - 5, 52, 0, 0);
+	g_cb_test_t += 1.0; /* the combat brand offered, but Talion hit meanwhile (a recoil): B held as before, no chord */
+	g_br.ask_t = g_cb_test_t - 0.05, g_br.talion_recoil = 1;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	n = vb_press_cmds(out);
+	EXPECT(n == 1 && out[0] == VB_CMD_B && g_br.chords == 1 && log_has("but Talion is in a recoil now"),
+	       "brand: Talion in a recoil at the press: B as before (%d)", n);
+	g_br.talion_recoil = 0;
+	g_cb_test_t += 0.2;
+	vb_hand_at2(502, hy - 5, 52, 0, 0);
+	g_cb_test_t += 1.0; /* an old answer: B held as before */
+	g_br.ask_t = g_cb_test_t - 1.0;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	n = vb_press_cmds(out);
+	EXPECT(n == 1 && out[0] == VB_CMD_B && g_br.chords == 1, "brand: an answer 1 s old: B held as before (%d)", n);
+	g_cb_test_t += 0.2;
+	vb_hand_at2(502, hy - 5, 52, 0, 0);
+	g_cb_test_t += 1.0; /* the stealth brand offered: B as a 150 ms tap */
+	g_br.ask_kind = BRK_STEALTH, g_br.ask_t = g_cb_test_t;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	n = vb_press_cmds(out);
+	EXPECT(n == 1 && out[0] == VB_CMD_B && g_br.taps == 1 && log_has("B (120) tapped") && !atomic_load(&g_br.unblock_cmd),
+	       "brand: the stealth brand: B's tap, nothing let go (%d)", n);
+	g_cb_test_t += 0.2;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	EXPECT(vb_press_cmds(out) == 0, "brand: the stealth brand's tap over: no B held");
+	vb_hand_at2(502, hy - 5, 52, 0, 0);
+	/* the game's blocking command held by one of our holds (the crouch's 125): let go for the press, then back */
+	int niv0 = g_inp.niv;
+	g_inp.iv[g_inp.niv++] = (struct in_iv){ 0, 125, 0, 1.0f, 1, 1, 0, 0, 0 };
+	g_cb_test_t += 1.0;
+	g_br.ask_kind = BRK_STEALTH, g_br.ask_t = g_cb_test_t;
+	g_br.unblock = 1, g_br.block_cmd = 125, g_br.block_held = 1, g_br.block_t = g_cb_test_t;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	EXPECT(g_br.taps == 2 && br_unblock_now(g_cb_test_t) == 125 && g_br.unblocks == 1 && log_has("is held by us: let go for 200 ms"),
+	       "brand: the game's blocking command of ours let go at the press (%d)", br_unblock_now(g_cb_test_t));
+	EXPECT(br_unblock_now(g_cb_test_t + 0.25) == 0, "brand: ... and back after 200 ms");
+	g_inp.niv = niv0;
+	g_cb_test_t += 0.3;
+	vb_hand_at2(502, hy - 5, 52, 0, 0);
+	g_br.block_held = 0;
+	g_br.mode = BR_LOG; /* log: the line only, B held as before */
+	g_cb_test_t += 1.0;
+	g_br.ask_t = g_cb_test_t, g_br.ask_kind = BRK_COMBAT;
+	g_vb.heads_frame = g_fr.frame + 1;
+	vb_hand_at2(502, hy - 5, 52, 0, 1);
+	n = vb_press_cmds(out);
+	EXPECT(n == 1 && out[0] == VB_CMD_B && g_br.chords == 1 && atomic_load(&g_br.req_c) == oa_c,
+	       "brand: log mode: B held, the press's line asked (%d)", n);
+	g_cb_test_t += 0.2;
+	vb_hand_at2(502, hy - 5, 52, 0, 0);
+	g_br.mode = BR_OFF;
+	atomic_store(&g_br.req_c, 0);
+	{ /* build 24, SOMVR_VERBS_BRAND_NODELOG: the game's node log lines, once per node and again when one changes; the
+	   * byte and the sink set for the window and put back (stand-ins: our own byte and sink; the call not patched) */
+		static uint8_t nl_flag;
+		static uintptr_t nl_sink;
+		static int nl_game_writes;
+		unsetenv("SOMVR_VERBS_BRAND_NODELOG");
+		br_nl_start(g_br_sites_game, (uintptr_t)&nl_flag, (uintptr_t)&nl_sink, &bad);
+		EXPECT(!g_brnl.ok && !g_brnl.want, "brand node log: off by default (nothing patched)");
+		static struct site_spec nl_site;
+		nl_site = g_br_sites_game[0], nl_site.target = (uintptr_t)st_nl_game_write;
+		g_br_sites = &nl_site;
+		st_nl_writes = &nl_game_writes;
+		g_brnl.ok = 1, g_brnl.flag_a = (uintptr_t)&nl_flag, g_brnl.sink_a = (uintptr_t)&nl_sink;
+		g_brnl.dummy = calloc(2, sizeof *g_brnl.dummy);
+		snprintf(g_brnl.filter, sizeof g_brnl.filter, "PC_");
+		double t0 = g_cb_test_t;
+		br_nl_open(t0, 1.0);
+		br_nl_frame(t0);
+		EXPECT(nl_flag == 1 && nl_sink == (uintptr_t)g_brnl.dummy && log_has("VERBS brand node log t=") && log_has(": open for 1.0 s"),
+		       "brand node log: the window sets the byte and our sink");
+		uintptr_t dm = (uintptr_t)g_brnl.dummy;
+		somvr_w_brnodelog(dm, "12.345 [COMBAT|NODE]: Node Rejected 'PC_StealthBrand', InputType (Press)\n");
+		somvr_w_brnodelog(dm, "12.362 [COMBAT|NODE]: Node Rejected 'PC_StealthBrand', InputType (Press)\n");
+		somvr_w_brnodelog(dm, "12.362 [COMBAT|NODE]: Node Rejected 'AI_Bip_Something', InputType (Press)\n");
+		EXPECT(g_brnl.logged == 1 && g_brnl.kept == 2 && g_brnl.lines == 3 &&
+			       log_has("f+0 Node Rejected 'PC_StealthBrand', InputType (Press)") && !log_has("AI_Bip_Something"),
+		       "brand node log: a node's line once, others' filtered (%llu %llu)", (unsigned long long)g_brnl.logged,
+		       (unsigned long long)g_brnl.kept);
+		somvr_w_brnodelog(dm, "12.380 [COMBAT|NODE]: Node Rejected 'PC_StealthBrand', IgnoreIfBlocking\n");
+		somvr_w_brnodelog(dm, "12.380 [COMBAT|NODE]: Root node validated: PC_Stun_Root\n");
+		EXPECT(g_brnl.logged == 3 && log_has("IgnoreIfBlocking (before: 'Node Rejected 'PC_StealthBrand', InputType (Press)' 2 "
+							"time(s)") && log_has("Root node validated: PC_Stun_Root") && g_brnl.nnodes == 2,
+		       "brand node log: a changed line with the one before and its count; the node loop's own");
+		somvr_w_brnodelog((uintptr_t)&nl_sink, "the game's own file");
+		EXPECT(nl_game_writes == 1 && g_brnl.logged == 3, "brand node log: another sink's write is the game's");
+		br_nl_frame(t0 + 2.0);
+		EXPECT(nl_flag == 0 && nl_sink == 0 && !g_brnl.on && log_has("closed after 2.0 s") &&
+			       log_has("the brand nodes' last lines: 'Node Rejected 'PC_StealthBrand', IgnoreIfBlocking' 1 x"),
+		       "brand node log: the window's end puts the byte and the sink back, the brand nodes' runs");
+		free(g_brnl.dummy);
+		memset(&g_brnl, 0, sizeof g_brnl);
+		g_br_sites = g_br_sites_game;
+	}
+	{ /* build 24: the game's combat commands off (the input mode's slot 3, FUN_02271890's first test): a line on each
+	   * change, a brand press then says the game takes none (stand-ins: our mode object, vtable and slot) */
+		static uintptr_t mvt[4], mobj[1], pcb[0x20];
+		mvt[3] = (uintptr_t)st_brcmd_on, mobj[0] = (uintptr_t)mvt, pcb[0x80 / 8] = (uintptr_t)mobj;
+		uintptr_t lo0 = g_br.text_lo, hi0 = g_br.text_hi;
+		g_br.text_lo = (uintptr_t)st_brcmd_on, g_br.text_hi = (uintptr_t)st_brcmd_on + 1;
+		g_br.b_on = -1, g_br.locks = g_br.lock_presses = 0;
+		st_brcmd_val = 1;
+		br_b_on_frame((uintptr_t)pcb, g_cb_test_t);
+		EXPECT(g_br.b_on == 1 && st_brcmd_last == VB_CMD_B && !log_has("the game's combat commands on again"),
+		       "brand: the game's B enabled read (%d, cmd %u)", g_br.b_on, st_brcmd_last);
+		st_brcmd_val = 0;
+		br_b_on_frame((uintptr_t)pcb, g_cb_test_t + 0.05);
+		EXPECT(g_br.b_on == 0 && g_br.locks == 1 && log_has("the game's combat commands OFF (B 120 not enabled"),
+		       "brand: the game's combat commands off: a line");
+		g_br.mode = BR_ON, g_br.stealth_tap = 1;
+		g_cb_test_t += 1.0;
+		g_br.ask_c = oa_c, g_br.ask_kind = BRK_STEALTH, g_br.ask_t = g_cb_test_t;
+		g_vb.heads_frame = g_fr.frame + 1;
+		vb_hand_at2(502, hy - 5, 52, 0, 1);
+		EXPECT(g_br.lock_presses == 1 && log_has("the game has its combat commands off now"),
+		       "brand: a press in the game's lock says so (%llu)", (unsigned long long)g_br.lock_presses);
+		g_cb_test_t += 0.2;
+		vb_hand_at2(502, hy - 5, 52, 0, 0);
+		st_brcmd_val = 1;
+		br_b_on_frame((uintptr_t)pcb, g_cb_test_t);
+		EXPECT(g_br.b_on == 1 && log_has("the game's combat commands on again") && log_has("... off for 1.2 s"),
+		       "brand: the game's combat commands back: a line with the time off");
+		uintptr_t far_vt[4] = { 0, 0, 0, 0x10 }; /* a slot outside the game's code: not called, not read */
+		mobj[0] = (uintptr_t)far_vt;
+		br_b_on_frame((uintptr_t)pcb, g_cb_test_t + 0.1);
+		EXPECT(g_br.b_on == -1 && log_has("the game's combat commands not readable"), "brand: a slot outside the code: not called");
+		g_br.text_lo = lo0, g_br.text_hi = hi0, g_br.b_on = -1, g_br.mode = BR_OFF;
+		atomic_store(&g_br.req_c, 0);
+	}
 	/* the trigger elsewhere: the bow's */
 	g_cb_test_t += 1.0;
 	g_vb.heads_frame = g_fr.frame + 1;
@@ -15584,6 +15794,51 @@ int main(int argc, char **argv)
 	atomic_store(&g_sh.xr.state, SOMVR_XRS_RUNNING);
 	frame();
 	check_eyes("layout B again", 3, 2);
+	/* build 24, SOMVR_EYE_MATCH (re-xr-pipeline.md 100): the render thread behind the game thread (both eyes' views
+	 * queued before eye 0's pass) with an overlay view of the eye's camera in each pass (the game's COverlayFX at low
+	 * health) and both eyes one camera (`fx eyesame 1`). hash (build 23): the overlay in eye 0's pass takes eye 1's
+	 * entry, eye 0's end is copied as eye 1's, eye 1's own end as nothing - the tag says 0x2 (runs 005146, 060526,
+	 * 064728); pass: both eyes, in order. And the same with each eye its own camera, and with the next frame queued. */
+	{
+		g_h4_defer = 1;
+		atomic_store(&g_rd.eyesame, 1);
+		atomic_store(&g_em.pass, 0);
+		uint64_t st0 = atomic_load(&g_em.stolen);
+		frame();
+		somvr_tag t;
+		EXPECT(somvr_tag_get(&g_sh, atomic_load(&g_sh.tag_seq), &t) && t.frame == g_frame_no && t.eyes == 2u &&
+			       atomic_load(&g_em.stolen) == st0 + 1 && g_et.tex[1] &&
+			       ((st_tex_t *)g_et.tex[1])->content == 0xA000u + (uint32_t)g_frame_no * 4u,
+		       "eyematch hash, eyesame, the pass behind: tag eyes %u (want 2: build 23's loss), taken %llu, eye 1's "
+		       "image %#x (want eye 0's %#x)", t.eyes, (unsigned long long)(atomic_load(&g_em.stolen) - st0),
+		       g_et.tex[1] ? ((st_tex_t *)g_et.tex[1])->content : 0, 0xA000u + (uint32_t)g_frame_no * 4u);
+		atomic_store(&g_em.pass, 1);
+		uint64_t k0 = atomic_load(&g_em.kept), r0 = atomic_load(&g_st_repeat);
+		frame();
+		check_eyes("eyematch pass, eyesame, the pass behind", 3, 2);
+		EXPECT(atomic_load(&g_em.kept) == k0 + 1 && atomic_load(&g_st_repeat) == r0 + 2 && g_h4_ov[0][0] == g_h4_tan[0][0] &&
+			       g_h4_ov[1][0] == g_h4_tan[1][0], "eyematch pass: kept %llu (want 1), repeats %llu (want 2), the "
+		       "overlays' tangents %g/%g vs %g/%g", (unsigned long long)(atomic_load(&g_em.kept) - k0),
+		       (unsigned long long)(atomic_load(&g_st_repeat) - r0), g_h4_ov[0][0], g_h4_ov[1][0], g_h4_tan[0][0],
+		       g_h4_tan[1][0]);
+		atomic_store(&g_rd.eyesame, 0);
+		frame();
+		check_eyes("eyematch pass, each eye its camera, the pass behind", 3, 2);
+		g_h4_defer = 0;
+		frame();
+		check_eyes("eyematch pass, the pass right after its view", 3, 2);
+		/* the word "eyedrop E N": eye E's bit out of the next N tags, then back (the layer's stale-frame net) */
+		atomic_store(&g_em.drop_n, 2);
+		atomic_store(&g_em.drop_eye, 0);
+		frame();
+		EXPECT(somvr_tag_get(&g_sh, atomic_load(&g_sh.tag_seq), &t) && t.eyes == 2u, "eyedrop 0 2: tag eyes %u", t.eyes);
+		frame();
+		EXPECT(somvr_tag_get(&g_sh, atomic_load(&g_sh.tag_seq), &t) && t.eyes == 2u, "eyedrop 0 2, 2nd: tag eyes %u", t.eyes);
+		frame();
+		check_eyes("eyedrop over", 3, 2);
+		EXPECT(atomic_load(&g_em.drop_eye) == -1 && atomic_load(&g_em.dropped) == 2, "eyedrop: eye %d, dropped %llu",
+		       atomic_load(&g_em.drop_eye), (unsigned long long)atomic_load(&g_em.dropped));
+	}
 	/* the 3D surface changes size (SetResolution): new textures, the old references dropped, a new gen */
 	uint32_t gen0 = g_et.pub.gen;
 	g_surf.desc.w = 1600, g_surf.desc.h = 1680;

@@ -61,6 +61,9 @@
 #                   copied to RUN/saves/ and SOMVR_SAVEDIR=RUN/saves goes to the game only. The library then serves all
 #                   of the game's remote-storage file calls (WBOnlineService slots 219-222) from that folder and exits
 #                   with status 3 before the game runs if the guard is incomplete. The real-save check still runs.
+#   --save-from F   (with --save-copy) RUN/saves/GameData.sav is a copy of F (an earlier run's RUN/saves/GameData.sav: its
+#                   story progress) instead of the pre-launch backup's; the real save is backed up and checked as always
+#                   (build 23, som-b23-brand: the Sea Fort's checkpoint with the brand unlocked, no 40-min route)
 #   --game-env K=V  extra environment for the game only (repeatable; K =~ ^[A-Z_][A-Z0-9_]*$ and not one the harness or
 #                   --preload sets), e.g. SOMVR_MODE=off30 SOMVR_AT=vp VK_LAYER_PATH=... VK_INSTANCE_LAYERS=...
 #                   @RUN@ in V becomes the run folder RUN (in a dry run the dry-run folder), which exists before the
@@ -160,7 +163,7 @@ HARD=1800
 MAIN=$$
 T0=$(date +%s)
 
-SEED=""; STEAM=0; DRY=0; HEADSET=0; ENDING=""; AUTO=0; HOLD=1200; SIZE=1920x1080; REFRESH=60; BACKUP=""; VRAM_MIN_GB=4; PRELOADS=(); GEXTRA=(); CMDS=""; SAVECOPY=0
+SEED=""; STEAM=0; DRY=0; HEADSET=0; ENDING=""; AUTO=0; HOLD=1200; SIZE=1920x1080; REFRESH=60; BACKUP=""; VRAM_MIN_GB=4; PRELOADS=(); GEXTRA=(); CMDS=""; SAVECOPY=0; SAVEFROM=""
 GARGS=(); PSETS=()
 BCDIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 while [ $# -gt 0 ]; do
@@ -178,6 +181,7 @@ while [ $# -gt 0 ]; do
     --vram-min-gb) VRAM_MIN_GB=${2:?}; shift 2 ;;
     --preload) PRELOADS+=("${2:?}"); shift 2 ;;
     --save-copy) SAVECOPY=1; shift ;;
+    --save-from) SAVEFROM=${2:?}; shift 2 ;;
     --game-env) GEXTRA+=("${2:?}"); shift 2 ;;
     --game-arg) GARGS+=("${2:?}"); shift 2 ;;
     --prefs-set) PSETS+=("${2:?}"); shift 2 ;;
@@ -820,9 +824,15 @@ if [ $STEAM = 1 ]; then   # the pre-launch backup (new folder), checked against 
   fi
   log "pre-launch backup $PRE: identical to $BACKUP ($(cut -c1-16 "$PRE/SHA256SUMS" | tr '\n' ' '))"
   if [ $SAVECOPY = 1 ]; then   # the save guard's folder: a copy of the pre-launch backup
-    mkdir -p "$RUN/saves" && cp -p "$PRE/remote/GameData.sav" "$RUN/saves/GameData.sav" || die "save copy failed"
+    SRC=$PRE/remote/GameData.sav
+    if [ -n "$SAVEFROM" ]; then
+      case $SAVEFROM in /*/saves/GameData.sav) ;; *) die "--save-from must be an absolute RUN/saves/GameData.sav" ;; esac
+      [ -f "$SAVEFROM" ] && ! cmp -s "$SAVEFROM" "$SAVEAPP/remote/GameData.sav" || die "--save-from $SAVEFROM: missing (or the real save itself)"
+      SRC=$SAVEFROM
+    fi
+    mkdir -p "$RUN/saves" && cp -p "$SRC" "$RUN/saves/GameData.sav" || die "save copy failed"
     sha256sum "$RUN/saves/GameData.sav" > "$RUN/saves.before.sha256"
-    log "save guard: $RUN/saves/GameData.sav = copy of $PRE ($(cut -c1-16 "$RUN/saves.before.sha256")); SOMVR_SAVEDIR set for the game"
+    log "save guard: $RUN/saves/GameData.sav = copy of $SRC ($(cut -c1-16 "$RUN/saves.before.sha256")); SOMVR_SAVEDIR set for the game"
   fi
   feral_real > "$RUN/realhome-feral.before"
   log "real-home feral* entries before the launch: $(tr '\n' ' ' < "$RUN/realhome-feral.before")"

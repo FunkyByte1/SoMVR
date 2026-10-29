@@ -102,6 +102,20 @@ static struct {
     double t_hide, t_space, s_hidden, s_space; /* when each began; their totals (s) */
     uint32_t lines;
 } CV;
+/* build 24 (docs/re-xr-pipeline.md 100): SOMVR_XR_STALE - never the last stereo frame again for long (the code below the
+ * cover's) */
+#define SOMVR_STALE_DEFAULT 6u /* presents of the held frame: 67 ms at 90 Hz, then its 0.2 s fade out */
+#define SOMVR_STALE_GOOD 3u    /* stereo frames in a row before the world comes back (no flapping) */
+static struct {
+    uint32_t limit;             /* presents without a new stereo frame before the space; 0 = off */
+    int bad;
+    uint32_t run, good;         /* the reuse presents in a row now; while active, the stereo frames in a row since */
+    int active;                 /* past the limit: the loading space (black without SOMVR_XR_ENV) */
+    int back;                   /* the eyes came back from it: env_decide's way back is through black at once */
+    double t0;                  /* the run's first reuse (s) */
+    uint64_t n_runs, n_frames, n_short, n_black;
+    uint32_t max_run, lines;
+} ST;
 /* the in-world menus' backdrop (SOMVR_XR_MENU_BACK=on; ./somvr_void.h; the code at the file's end) */
 static struct {
     int on, bad, dim_bad;
@@ -124,6 +138,9 @@ static void ka_config(void); /* (the keep-alive's part, below) */
 static void cv_config(void);
 static void cv_session(void);
 static void cv_summary(void);
+static void st_config(void);
+static void st_session(void);
+static void st_summary(void);
 static void mb_config(void);
 static void mb_session(void);
 static void mb_summary(void);
@@ -155,6 +172,7 @@ static void vd_config(void) { /* once_init */
     }
     ka_config();
     cv_config(); /* the game's in-world loading cover (SOMVR_XR_COVER) */
+    st_config(); /* build 24: never the last stereo frame again for long (SOMVR_XR_STALE) */
     mb_config(); /* the in-world menus' backdrop (SOMVR_XR_MENU_BACK) */
     xe_config(); /* build 16: the process's exit (SOMVR_XR_EXIT) */
 }
@@ -296,6 +314,7 @@ static void vd_start(void) {
     if (KA.space && KA.space_ms != SOMVR_VOID_SPACE_MS)
         lg("xr: loadspace: a stall in the world goes to the space after %d ms (SOMVR_XR_LOADSPACE_MS)", KA.space_ms);
     cv_session();
+    st_session();
     mb_session();
 }
 
@@ -321,7 +340,7 @@ static void vd_stop(void) {
         lg("xr: keep-alive (the session's end): %llu stall(s) filled, %llu frame(s) of ours; loadspace frames %llu, with "
            "the lights %llu", (unsigned long long)KA.n_stalls, (unsigned long long)VD.n_ka,
            (unsigned long long)KA.n_space, (unsigned long long)KA.n_lights);
-    if (VD.sess_ns) cv_summary(), mb_summary();
+    if (VD.sess_ns) cv_summary(), st_summary(), mb_summary();
     VD.sess_ns = 0;
     atomic_store(&KA.q, VK_NULL_HANDLE);
     vd_space_destroy(); /* the space's swapchain: before the session */
@@ -756,8 +775,8 @@ static void vd_space_add(dev_st *ds, xr_comp *c, uint32_t n, int stalled, int ma
         XrTime t = X.fs.predictedDisplayTime;
         float dt = KA.level_t && t > KA.level_t ? (float)((double)(t - KA.level_t) * 1e-9) : 0.0f;
         KA.level_t = t;
-        KA.level = somvr_void_level_step(KA.level, stalled || KA.loading || (CV.on && CV.st.space),
-                                         dt); /* the game away, a load, or the game's in-world cover */
+        KA.level = somvr_void_level_step(KA.level, stalled || KA.loading || (CV.on && CV.st.space) || ST.active,
+                                         dt); /* the game away, a load, the game's in-world cover, no new stereo frame */
         if (n < XL_ENV_N) c->l[XL_ENV0 + n++] = (const XrCompositionLayerBaseHeader *)&KA.floor_q;
         int k = somvr_void_level_index(KA.level);
         if (k && n < XL_ENV_N) {
@@ -805,6 +824,8 @@ static int ka_side(int64_t away) {
     int want = shown;
     if (KA.space && away >= (int64_t)KA.space_ms * 1000000 && (KA.filled || !KA.dead) && EV.sky_filled)
         want = SOMVR_ENV_SHOW_ENV;
+    if (ST.active && EV.sky_filled) /* build 24, SOMVR_XR_STALE: the game's presents carry no new stereo frame - our */
+        want = SOMVR_ENV_SHOW_ENV;  /* frames between them keep going to the space (or the fade never gets there) */
     int can_hold = shown == SOMVR_ENV_SHOW_WORLD ? X.last_stereo : vd_board_ok() || EV.sky_filled;
     if (!can_hold) return -1;
     int sw = 0;
@@ -812,10 +833,11 @@ static int ka_side(int64_t away) {
     EV.level = somvr_env_level(&EV.tr);
     if (sw && EV.tr.switches) {
         if (EV.lines < 200)
-            lg("xr: env: %s -> %s after %u hold frame(s) (switch %llu, the keep-alive: the game away %.0f ms)",
+            lg("xr: env: %s -> %s after %u hold frame(s) (switch %llu, the keep-alive: the game away %.0f ms%s)",
                EV.tr.shown == SOMVR_ENV_SHOW_ENV ? "world" : "environment",
                EV.tr.shown == SOMVR_ENV_SHOW_ENV ? "the loading space" : "world", EV.tr.holds,
-               (unsigned long long)EV.tr.switches, (double)away / 1e6);
+               (unsigned long long)EV.tr.switches, (double)away / 1e6,
+               ST.active ? "; its presents without a new stereo frame: SOMVR_XR_STALE" : "");
         EV.lines++;
         if (EV.tr.shown == SOMVR_ENV_SHOW_ENV) KA.space_up = !vd_board_ok(), KA.stall_space = 1;
         else env_world_free(), KA.space_up = 0;
@@ -1250,6 +1272,107 @@ static void cv_space_comp(dev_st *ds, xr_comp *c) {
     if (CV.n_space_frames <= 2 || CV.n_space_frames % 600 == 0)
         lg("xr: cover: frame %llu of the loading space over the game's stereo frames (%u load(s) so far, the lights "
            "%.2f)", (unsigned long long)CV.n_space_frames, CV.st.n_space, (double)KA.level);
+}
+
+/* ==== Build 24 (docs/re-xr-pipeline.md 100): never the last stereo frame again for long - SOMVR_XR_STALE=N|off
+ * (default 6 presents). A layout-B present without its eye images (the tag names no eye, or one: 96.6's hurt Talion with
+ * `fx eyesame 1`, the eye info rewritten, ...) shows the last stereo frame again - for a frame or two that is a dropped
+ * frame the compositor reprojects, world-locked. N such presents in a row: env_decide goes to the environment as at the
+ * cover's load - the held frame darkening over 0.2 s, then the loading space (the sky, the floor, the progress lights,
+ * our hands) - until SOMVR_STALE_GOOD stereo frames in a row came back, then the world through the fade. Without
+ * SOMVR_XR_ENV: no layer at all past the limit (black, never a frozen world). The word "eyedrop E N" (the preload)
+ * makes the fault. Lines: `xr: stale: ...`, the session's end. ==== */
+static void st_config(void) { /* vd_config */
+    const char *p = getenv("SOMVR_XR_STALE");
+    ST.limit = SOMVR_STALE_DEFAULT;
+    if (p && *p) {
+        char *e = NULL;
+        long v = strtol(p, &e, 10);
+        if (!strcmp(p, "off") || !strcmp(p, "0")) ST.limit = 0;
+        else if (e && !*e && v >= 2 && v <= 600) ST.limit = (uint32_t)v;
+        else ST.bad = 1;
+    }
+}
+static void st_session(void) { /* vd_start */
+    if (ST.bad) lg("xr: stale: SOMVR_XR_STALE=%s is not off or 2..600 (presents): %u", getenv("SOMVR_XR_STALE"), ST.limit);
+    ST.run = ST.good = 0, ST.active = ST.back = 0, ST.t0 = 0;
+    ST.n_runs = ST.n_frames = ST.n_short = ST.n_black = 0, ST.max_run = ST.lines = 0;
+    if (ST.limit)
+        lg("xr: stale: on: the last stereo frame shown again for %u presents in a row at most, then %s; the world "
+           "again after %u stereo frames in a row", ST.limit,
+           EV.on ? (KA.space ? "the loading space through the fade" : "the sky through the fade (the floor and the "
+                                                                       "lights need SOMVR_XR_LOADSPACE)")
+                 : "no layer (black; the loading space needs SOMVR_XR_ENV)", SOMVR_STALE_GOOD);
+    else
+        lg("xr: stale: off (SOMVR_XR_STALE=off): the last stereo frame again for as long as no new one comes");
+}
+static void st_summary(void) { /* vd_stop */
+    if (!ST.limit) return;
+    lg("xr: stale (the session's end): %llu time(s) past the limit (%llu presents not shown as the world, %llu of them "
+       "black), the longest run %u presents; %llu shorter run(s) shown as the last stereo frame again",
+       (unsigned long long)ST.n_runs, (unsigned long long)ST.n_frames, (unsigned long long)ST.n_black, ST.max_run,
+       (unsigned long long)ST.n_short);
+}
+/* xr_frame, once this present's kind is known (before env_decide): the run of presents without a new stereo frame */
+static void st_present(somvr_submit_kind kind) {
+    if (!ST.limit) return;
+    double now = (double)vd_now() * 1e-9;
+    if (kind == SOMVR_SUBMIT_REUSE) {
+        ST.good = 0;
+        if (ST.run++ == 0) ST.t0 = now;
+        if (ST.run > ST.max_run) ST.max_run = ST.run;
+        if (ST.active) {
+            ST.n_frames++;
+            if (ST.run % 600 == 0 && ST.lines++ < 200)
+                lg("xr: stale: still no stereo frame after %u presents (%.1f s)", ST.run, now - ST.t0);
+            return;
+        }
+        if (ST.run <= ST.limit) return;
+        ST.active = 1, ST.n_runs++, ST.n_frames++;
+        if (ST.lines++ < 200)
+            lg("xr: stale: %u presents in a row without a new stereo frame (%.0f ms; the last at stereo %llu): %s "
+               "(SOMVR_XR_STALE=%u; %llu time(s))", ST.run, (now - ST.t0) * 1e3, (unsigned long long)X.n_stereo,
+               EV.on ? "to the loading space through the fade until the eyes come back"
+                     : "no layer (black, SOMVR_XR_ENV off) until the eyes come back",
+               ST.limit, (unsigned long long)ST.n_runs);
+        return;
+    }
+    if (kind == SOMVR_SUBMIT_STEREO && ST.active && ++ST.good < SOMVR_STALE_GOOD) {
+        ST.n_frames++; /* (the space over it: env_decide) */
+        return;
+    }
+    if (ST.active && ST.lines++ < 200)
+        lg("xr: stale: %s after %.2f s (%u presents without a new stereo frame): %s", kind == SOMVR_SUBMIT_STEREO ?
+           "the eyes back" : "a mono frame (the environment's)", now - ST.t0, ST.run, kind == SOMVR_SUBMIT_STEREO ?
+           "the world again, from black (fading in)" : "the environment's");
+    else if (!ST.active && ST.run)
+        ST.n_short++;
+    ST.back = ST.active && kind == SOMVR_SUBMIT_STEREO;
+    ST.active = 0, ST.run = ST.good = 0;
+}
+/* env_decide: this present wants the environment (past the limit, with SOMVR_XR_ENV) */
+static int st_want(void) { return ST.active && EV.on; }
+/* env_decide, the shown side's hold: 0 = not held - the eyes came back from the space: the switch to the world at once,
+ * at black, the world fading in (a held space would fade out only on the game's presents while the keep-alive's frames
+ * between them fade it back in: headless, boot 20261029-123651, the space never left) */
+static int st_hold(int can_hold, int shown, int want) {
+    if (!ST.back) return can_hold;
+    if (shown != SOMVR_ENV_SHOW_ENV || want != SOMVR_ENV_SHOW_WORLD) {
+        ST.back = 0;
+        return can_hold;
+    }
+    ST.back = 0;
+    return 0;
+}
+/* xr_frame's reuse (its frame begun): past the limit without SOMVR_XR_ENV - the frame ends without layers (black).
+ * 1 = done */
+static int st_black(void) {
+    if (!ST.active || EV.on) return 0;
+    ST.n_black++;
+    xr_comp c;
+    memset(&c, 0, sizeof c);
+    xr_end_comp(&c);
+    return 1;
 }
 
 /* ==== The in-world menus' backdrop (SOMVR_XR_MENU_BACK=on; docs/re-xr-pipeline.md 36.8, handoff/HANDOFF-void.md

@@ -5822,6 +5822,164 @@ static int sc_cover(void) {
     return 0;
 }
 
+/* ---- build 24 (docs/re-xr-pipeline.md 100): SOMVR_XR_STALE - never the last stereo frame again for long ---- */
+/* layout B, the eye images made and announced; frames from f on: n presents whose tag names `eyes` */
+typedef struct {
+    app_t a;
+    VkImage L, R;
+    uint64_t f;
+} strig;
+static int st_setup(strig *r) {
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (load_layer()) return 1;
+    CHECK(app_setup(&r->a, "Feral3D") == 0, "setup");
+    app_present(&r->a);
+    atomic_store(&g_sh.eyes.expect_w, 1832);
+    atomic_store(&g_sh.eyes.expect_h, 1920);
+    r->L = app_image(&r->a, 1832, 1920, FERAL_USAGE), r->R = app_image(&r->a, 1832, 1920, FERAL_USAGE);
+    r->f = 1;
+    return 0;
+}
+static void st_present_eyes(strig *r, uint32_t eyes) {
+    somvr_views v;
+    CHECK(locate(&v), "frame %llu: locate", (unsigned long long)r->f);
+    eyes_info(2, 1832, 1920, r->L, r->R);
+    write_record(r->f, SOMVR_LAYOUT_B, &v, 3);
+    tagged_present_eyes(&r->a, r->f, 1, TAG_SYNC, eyes, 2);
+    r->f++;
+}
+static int is_proj(void) { return MOCK(mockxr_last_end)()->type == XR_TYPE_COMPOSITION_LAYER_PROJECTION; }
+/* presents with `eyes` until ok() holds (max); the number it took, -1 = never */
+static int st_until(strig *r, uint32_t eyes, int (*ok)(void), int max) {
+    for (int i = 1; i <= max; i++) {
+        st_present_eyes(r, eyes);
+        if (ok()) return i;
+    }
+    return -1;
+}
+/* SOMVR_XR_STALE=6 (the default) with SOMVR_XR_ENV, SOMVR_XR_LOADSPACE: the hurt Talion's fault (the tag says 0x2) -
+ * six presents of the last stereo frame again, the seventh goes to the loading space through the fade and it stays
+ * there until three stereo frames in a row came back, then the world through the fade; a short run (6) stays the
+ * reuse */
+static int sc_stale(void) {
+    strig r;
+    if (st_setup(&r)) return 1;
+    for (int i = 0; i < 10; i++) st_present_eyes(&r, 3);
+    CHECK(is_proj() && log_has("xr: stale: on: the last stereo frame shown again for 6 presents in a row at most, then "
+                               "the loading space through the fade; the world again after 3 stereo frames in a row"),
+          "the world, the stale line");
+    int proj = 0;
+    for (int i = 0; i < 6; i++) {
+        st_present_eyes(&r, 2);
+        proj += is_proj();
+    }
+    CHECK(proj == 6 && log_has("the tag says eyes 0x2") && !log_has("xr: stale: 7 presents"),
+          "six eyeless presents: the last stereo frame again (%d)", proj);
+    int n = st_until(&r, 2, is_space, 60);
+    CHECK(n > 0 && log_has("xr: stale: 7 presents in a row without a new stereo frame (") &&
+              log_has("to the loading space through the fade until the eyes come back (SOMVR_XR_STALE=6; 1 time(s))") &&
+              log_has("xr: env: world -> environment after "),
+          "the seventh eyeless present on: to the loading space (%d presents)", n);
+    int sp = 0;
+    for (int i = 0; i < 40; i++) {
+        st_present_eyes(&r, 2);
+        sp += is_space();
+    }
+    CHECK(sp == 40, "40 more eyeless presents: the space with its progress lights all through (%d)", sp);
+    st_present_eyes(&r, 3), st_present_eyes(&r, 3);
+    CHECK(is_space() && !log_has("xr: stale: the eyes back"), "two stereo frames: still the space");
+    n = st_until(&r, 3, is_proj, 80);
+    CHECK(n == 1 && log_has("xr: stale: the eyes back after ") &&
+              log_has("presents without a new stereo frame): the world again, from black (fading in)") &&
+              log_has("xr: env: environment -> world after 0 hold frame(s) (nothing to show again: at once, from black)"),
+          "the third stereo frame: the world again at once, from black (%d)", n);
+    for (int i = 0; i < 6; i++) st_present_eyes(&r, 2);
+    CHECK(is_proj(), "a short eyeless run (6): the last stereo frame again");
+    for (int i = 0; i < 5; i++) st_present_eyes(&r, 3);
+    CHECK(is_proj() && log_count("xr: stale: 7 presents in a row") == 1, "the short run: no second time");
+    app_teardown(&r.a);
+    CHECK(log_has("xr: stale (the session's end): 1 time(s) past the limit (") &&
+              log_has("0 of them black), the longest run ") && log_has("; 1 shorter run(s) shown as the last stereo frame again"),
+          "the session's end line");
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_STALE with SOMVR_XR_KEEPALIVE (headless: the game presents every 150 ms, our frames fill the gaps): the
+ * keep-alive's frames between the eyeless presents want the space too - else each of them fades the world back in and
+ * the fade never reaches black (run 20261029-114053: "stale: 7 presents", no switch for 11.5 s); the way back is at once
+ * through black - a held space faded out only on the game's presents, back in on ours (run 20261029-123651) */
+static int sc_stale_ka(void) {
+    strig r;
+    if (st_setup(&r)) return 1;
+    for (int i = 0; i < 10; i++) st_present_eyes(&r, 3);
+    int n = -1;
+    for (int i = 1; i <= 20 && n < 0; i++) {
+        void_sleep_ms(150);
+        st_present_eyes(&r, 2);
+        if (log_has("xr: env: world -> ")) n = i;
+    }
+    CHECK(n > 6 && n <= 12 && log_has("xr: stale: 7 presents in a row without a new stereo frame ("),
+          "eyeless presents 150 ms apart (keep-alive frames between them): the switch to the space at present %d", n);
+    int sp = 0;
+    for (int i = 0; i < 6; i++) {
+        void_sleep_ms(150);
+        st_present_eyes(&r, 2);
+        const mockxr_end *e = MOCK(mockxr_last_end)(); /* the sky first, no projection (the fade quad fading in) */
+        sp += e->type == XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR && e->pj_index == 0;
+    }
+    CHECK(sp == 6, "... the space after it (%d of 6)", sp);
+    n = -1;
+    for (int i = 1; i <= 10 && n < 0; i++) { /* 150 ms apart too: the keep-alive's frames between them */
+        void_sleep_ms(150);
+        st_present_eyes(&r, 3);
+        if (is_proj()) n = i;
+    }
+    CHECK(n == 3 && log_has("xr: stale: the eyes back after "),
+          "the eyes back (150 ms apart): the world at the third stereo frame (%d)", n);
+    for (int i = 0; i < 4; i++) void_sleep_ms(150), st_present_eyes(&r, 3);
+    CHECK(is_proj(), "... and it stays (the keep-alive's frames in between)");
+    app_teardown(&r.a);
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_STALE=off: build 23's way - the last stereo frame again for as long as the eyes stay away */
+static int sc_stale_off(void) {
+    strig r;
+    if (st_setup(&r)) return 1;
+    for (int i = 0; i < 5; i++) st_present_eyes(&r, 3);
+    int proj = 0;
+    for (int i = 0; i < 60; i++) {
+        st_present_eyes(&r, 2);
+        proj += is_proj();
+    }
+    CHECK(proj == 60 && log_has("xr: stale: off (SOMVR_XR_STALE=off)") && !log_has("xr: stale: 6"),
+          "stale off: 60 eyeless presents, the frozen world %d times", proj);
+    app_teardown(&r.a);
+    check_mock_clean();
+    return 0;
+}
+/* SOMVR_XR_STALE=4 without SOMVR_XR_ENV: past the limit a frame without layers (black), the world at the third stereo
+ * frame (no env to fade through) */
+static int sc_stale_noenv(void) {
+    strig r;
+    if (st_setup(&r)) return 1;
+    for (int i = 0; i < 5; i++) st_present_eyes(&r, 3);
+    int proj = 0, black = 0;
+    for (int i = 0; i < 20; i++) {
+        st_present_eyes(&r, 1);
+        proj += is_proj(), black += MOCK(mockxr_last_end)()->layer_count == 0;
+    }
+    CHECK(proj == 4 && black == 16 && log_has("no layer (black, SOMVR_XR_ENV off) until the eyes come back"),
+          "no env: the reuse 4 times (%d), then black (%d)", proj, black);
+    st_present_eyes(&r, 3), st_present_eyes(&r, 3);
+    CHECK(is_proj(), "the stereo frames: the world at once (no env to hold)");
+    app_teardown(&r.a);
+    CHECK(log_has("xr: stale (the session's end): 1 time(s) past the limit (") && log_has("16 of them black)"),
+          "the session's end line (no env)");
+    check_mock_clean();
+    return 0;
+}
+
 /* SOMVR_XR_COVER unset: no readback, the black HUD shown as before (build 12) */
 static int sc_cover_off(void) {
     hudrig r;
@@ -7577,6 +7735,12 @@ static const struct {
      "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on SOMVR_XR_EXIT=off MOCKXR_UNLOAD_AT_EXIT=1", 1},
     {"cover", sc_cover, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on SOMVR_XR_COVER=on MOCKXR_EXTS=" EQ_EXT, 1},
     {"cover-off", sc_cover_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1},
+    {"stale", sc_stale, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on MOCKXR_EXTS=" EQ_EXT, 1}, /* build 24 */
+    {"stale-off", sc_stale_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_LOADSPACE=on SOMVR_XR_STALE=off "
+                                "MOCKXR_EXTS=" EQ_EXT, 1},
+    {"stale-noenv", sc_stale_noenv, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_STALE=4", 1},
+    {"stale-ka", sc_stale_ka, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_ENV=on SOMVR_XR_KEEPALIVE=on SOMVR_XR_LOADSPACE=on "
+                              "MOCKXR_EXTS=" EQ_EXT, 1},
     {"menu-back", sc_menu_back, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MENU=front SOMVR_XR_MENU_BACK=on", 1},
     {"menu-back-nomenu", sc_menu_back_nomenu,
      "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MENU_BACK=on SOMVR_XR_MENU_BACK_DIM=2 SOMVR_XR_COVER=yes SOMVR_XR_COVER_MS=x", 1},

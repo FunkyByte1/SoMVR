@@ -388,6 +388,50 @@ static void test_vault(void)
     CHECK(!vfind(&c, 0, &p) && p.why == SOMVR_JPV_NONE, "an orc ahead: no vault (%s)", somvr_jp_vwhy_name(p.why));
 }
 
+/* build 24 (boot 20261029-141005: over a 62 cm ruin wall the far floor ran downhill under the landing; the settle missed
+ * it and the fixed horizontal went on 0.25 s - 55 cm past the ring): the far floor lower than the plan's (planned on
+ * the level, then 30 cm down from 40 cm before the ring on) - with SOMVR_VAULT_RING_STOP the horizontal ends at the
+ * ring's distance and the rest of the fall is straight down onto it; off (build 22/23) lands past the ring */
+static void test_ring_stop(void)
+{
+    somvr_jp_cfg c;
+    somvr_jp_cfg_default(&c);
+    float hz[2] = { 90, 20 };
+    for (int i = 0; i < 2; i++)
+        for (int on = 1; on >= 0; on--) {
+            somvr_jp_vplan p;
+            wreset(), ground();
+            add(-300, 0, 80, 300, 70, 140);
+            int ok = vfind(&c, 230, &p);
+            CHECK(ok && p.kind == SOMVR_JPO_OVER, "the 70 cm wall: over (%s)", somvr_jp_vwhy_name(p.why));
+            if (!ok)
+                return;
+            float zs = p.land.z - 40;
+            wreset();
+            add(-3000, -50, -3000, 3000, 0, zs);
+            add(-3000, -80, zs, 3000, -30, 3000);
+            add(-300, 0, 80, 300, 70, 140);
+            c.v_ring_stop = on;
+            somvr_jp s;
+            somvr_jp_init(&s);
+            somvr_jp_start(&s, SOMVR_JPK_VAULT, (sv_vec3){ 0, 102, 0 }, 0, p.vy0, 2000, p.vh, p.land, p.t_hold);
+            PR = 20;
+            run_out r = run(&c, &s, (sv_vec3){ 0, 0, 0 }, hz[i], (sv_vec3){ 0, 0, 0 }, 600, NULL);
+            float off = r.land_z - p.land.z;
+            printf("  the far floor 30 cm under the plan's, %.0f Hz, ring stop %s: landed %+.1f cm from the ring (%s)\n", hz[i],
+                   on ? "on" : "off", off, somvr_jp_end_name(r.end));
+            if (on)
+                CHECK(r.end == SOMVR_JPE_LANDED && NEAR(r.feet_end, -30, 0.1) && fabsf(off) <= (i ? 12 : 4) &&
+                          s.n_ring_stop == 1, "%.0f Hz, ring stop on: down onto the lower floor %+.1f cm from the ring "
+                          "(%s, the feet %.1f, stops %llu)", hz[i], off, somvr_jp_end_name(r.end), r.feet_end,
+                      (unsigned long long)s.n_ring_stop);
+            else
+                CHECK(r.end == SOMVR_JPE_LANDED && off > 10, "%.0f Hz, ring stop off (build 23): past the ring by %.1f cm",
+                      hz[i], off);
+        }
+    c.v_ring_stop = 1;
+}
+
 static void test_a(void)
 {
     somvr_jp_cfg c;
@@ -417,6 +461,7 @@ int main(void)
 {
     test_arc();
     test_vault();
+    test_ring_stop();
     test_a();
     printf("test_jump: %d/%d checks passed\n", checks - fails, checks);
     return fails ? 1 : 0;

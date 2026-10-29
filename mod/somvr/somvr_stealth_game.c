@@ -1325,8 +1325,16 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	/* build 22 (SOMVR_CAPTAIN_RULES): a captain immune to stealth gets the ordinary hit; vulnerable: the kill; else the
 	 * record's own damage (no forceKill) */
 	int fk = kp_force_kill(o->c, SOMVR_CPF_STEALTH, "the stealth kill", t);
-	if (fk < 0)
-		return 0;
+	if (fk < 0) { /* build 24: immune - the thrust turned on him (the clank, no wound) and he is alerted, or (=hit) the
+		       * ordinary hit (build 23) */
+		if (!kp_stealth_turn(o->c, h.depth_cm >= 0 ? E : ct->point, t))
+			return 0;
+		if (ep)
+			ep->alert_t = 0, ep->alerted_t = t, stl_alert(pc, ep, t);
+		in_haptic_event(hand, 1.0f, 0.06f, SOMVR_HAP_COMBAT);
+		in_haptic_after(hand, 0.45f, 0.18f, 0.06f, SOMVR_HAP_COMBAT);
+		return 1;
+	}
 	char death[160], rn[96] = "?";
 	int dead0 = cb_dead(o->c);
 	float hp0 = cb_health(o->c);
@@ -1356,7 +1364,7 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	/* build 21 (SOMVR_STEALTH_KILL_STICK): a thrust or a stab stays in the wound (the sword in the right hand, the
 	 * drawn one); a heavy thunk as it goes in */
 	int stick = g_stl.stick_on && g_stl.cfg.thrust && hand == SOMVR_HAND_R && sp == &g_cb.sp && g_arm.on && h.depth_cm >= 0 &&
-		    by != SOMVR_STL_BY_NECK && la > 1e-3f;
+		    by != SOMVR_STL_BY_NECK && la > 1e-3f && dead1; /* build 24: only in the dead (a captain survives it) */
 	if (stick) {
 		if (g_stl.stk.on || g_stl.stk_ease)
 			g_stl.stk.on = 0, g_stl.stk_ease = 0, g_stl.stk_have = 0;

@@ -127,6 +127,15 @@ static struct {
 	int ok_name;
 	_Atomic uint64_t n_ev[GO_EV_N], n_show[GO_EV_N], n_drop[GO_EV_N];
 	_Atomic uint32_t hint_lines;
+	/* build 24 (som-b24-brand, re-xr-pipeline.md 98): SOMVR_HINTS_KEEP_TUT=PREFIX[,...] - a tutorial text whose record name
+	 * starts so passes although SOMVR_HINTS=off drops tutorials (the story missions' 'GP_*': the Sea Fort's archers'
+	 * lesson comes while the game has every combat command off - dropped, nothing in VR said why a press did nothing);
+	 * each passed tutorial's record properties logged once */
+	char tut_keep[4][32];
+	int ntut_keep;
+	uintptr_t tut_seen[16];
+	_Atomic int ntut_seen;
+	_Atomic uint64_t n_tut_kept;
 	double next_tick;
 	uint32_t tick_lines;
 	int vis_mode;                /* SOMVR_VISION: 0 off (build 9's 243), 1 hold, 2 tap */
@@ -303,6 +312,31 @@ static void go_rec_name(uintptr_t rec, char *buf, size_t cap)
 	go_str(((go_name_fn)g_go_sites[GOS_RECNAME].target)(rec), buf, cap);
 }
 
+static void co_props(uintptr_t tbl, char *s, size_t cap, char *key, size_t kcap); /* somvr_collect_game.c */
+/* build 24, SOMVR_HINTS_KEEP_TUT: 1 = this tutorial passes (its record's name starts with a prefix); its properties
+ * logged at its first pass */
+static int go_tut_keep(uintptr_t rec)
+{
+	char nm[64];
+	go_rec_name(rec, nm, sizeof nm);
+	int k = 0;
+	for (int i = 0; nm[0] && i < g_go.ntut_keep && !k; i++)
+		k = !strncmp(nm, g_go.tut_keep[i], strlen(g_go.tut_keep[i]));
+	if (!k)
+		return 0;
+	atomic_fetch_add(&g_go.n_tut_kept, 1);
+	int n = atomic_load(&g_go.ntut_seen), seen = 0;
+	for (int i = 0; i < n && i < 16; i++)
+		seen |= g_go.tut_seen[i] == rec;
+	if (!seen && n < 16) {
+		char s[1000];
+		g_go.tut_seen[n] = rec, atomic_store(&g_go.ntut_seen, n + 1);
+		co_props(rec, s, sizeof s, NULL, 0);
+		logf_("HINTS tutorial record %#lx '%s' (kept):%s", (unsigned long)rec, nm, s);
+	}
+	return 1;
+}
+
 /* the three delegates' slot 2 (the game thread): log, drop a hint's or a tutorial's show with SOMVR_HINTS=off */
 static void go_dlg(int ev, void *dlg, void *sender, void *params)
 {
@@ -318,6 +352,8 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 	int drop = ok && show && mode == GO_HINTS_OFF && ev != GO_EV_PROMPT;
 	/* somvr_collect_game.c: SOMVR_HINTS_KEEP's hints pass (the collectibles' wraith-vision tutorial) */
 	int kept = drop && ev == GO_EV_HINT && co_hint_keep(rec);
+	if (drop && ev == GO_EV_TUTORIAL && g_go.ntut_keep) /* build 24: SOMVR_HINTS_KEEP_TUT */
+		kept = go_tut_keep(rec);
 	drop = drop && !kept;
 	uint64_t n = atomic_fetch_add_explicit(&g_go.n_ev[ev], 1, memory_order_relaxed) + 1;
 	atomic_fetch_add_explicit(&g_go.n_show[ev], (uint64_t)show, memory_order_relaxed);
@@ -330,7 +366,7 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 		logf_("HINTS %s #%llu t=%.3f: %s '%s' (record %#lx)%s", g_go_ev_name[ev], (unsigned long long)n, mono(),
 		      !ok ? "unreadable" : show ? "show" : "hide", nm, (unsigned long)rec,
 		      drop ? ": dropped (SOMVR_HINTS=off: what the game's Display Combat Hints off does)"
-		      : kept ? ": kept (SOMVR_HINTS_KEEP)" : ": passed on");
+		      : kept ? (ev == GO_EV_TUTORIAL ? ": kept (SOMVR_HINTS_KEEP_TUT)" : ": kept (SOMVR_HINTS_KEEP)") : ": passed on");
 	}
 	if (!drop)
 		((go_dlg_fn)g_go.hi_orig[ev])(dlg, sender, params);
@@ -677,6 +713,15 @@ static void go_start(const struct site_spec *sites, int *bad)
 	g_go.mu_env = env_float("SOMVR_MUSIC", 1.0f, 0, 1, bad);
 	go_setf(&g_go.mu_share, g_go.mu_env);
 	g_go.hint_want = env_word("SOMVR_HINTS", g_go_hint_w, 3, GO_HINTS_GAME);
+	{ /* build 24: SOMVR_HINTS_KEEP_TUT=PREFIX[,PREFIX...] (unset = every tutorial dropped with SOMVR_HINTS=off, build 23) */
+		const char *tk = getenv("SOMVR_HINTS_KEEP_TUT");
+		for (const char *p = tk; p && *p && g_go.ntut_keep < 4;) {
+			size_t n = strcspn(p, ",");
+			if (n && n < sizeof g_go.tut_keep[0])
+				memcpy(g_go.tut_keep[g_go.ntut_keep], p, n), g_go.tut_keep[g_go.ntut_keep++][n] = 0;
+			p += n + (p[n] == ',');
+		}
+	}
 	static const char *const vis_w[] = { "off", "hold", "tap" };
 	g_go.vis_mode = env_word("SOMVR_VISION", vis_w, 3, 0);
 	somvr_vis_cfg_default(&g_go.vis_cfg);
@@ -752,6 +797,12 @@ static void go_start(const struct site_spec *sites, int *bad)
 						       "pass" : "every hint, tutorial and prompt logged and passed on",
 		      g_go.hi_ok[0] ? "hooked" : "NOT hooked", g_go.hi_ok[1] ? "hooked" : "NOT hooked",
 		      g_go.hi_ok[2] ? "hooked (logged)" : "NOT hooked", g_go.ok_name ? "on" : "off (GO_RECNAME)");
+		if (g_go.ntut_keep)
+			logf_("CONFIG hints_keep_tut=%s%s%s%s%s%s%s (SOMVR_HINTS_KEEP_TUT): tutorial texts whose record name starts so pass "
+			      "with SOMVR_HINTS=off (a story mission's own lesson; the archers' comes while the game has every combat "
+			      "command off)%s", g_go.tut_keep[0], g_go.ntut_keep > 1 ? "," : "", g_go.ntut_keep > 1 ? g_go.tut_keep[1] : "",
+			      g_go.ntut_keep > 2 ? "," : "", g_go.ntut_keep > 2 ? g_go.tut_keep[2] : "", g_go.ntut_keep > 3 ? "," : "",
+			      g_go.ntut_keep > 3 ? g_go.tut_keep[3] : "", g_go.ok_name ? "" : " - NOT matched: no record names (GO_RECNAME)");
 	}
 }
 

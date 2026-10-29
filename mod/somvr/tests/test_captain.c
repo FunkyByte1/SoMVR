@@ -106,11 +106,24 @@ static void test_intro(void)
     CHECK(somvr_cp_intro_world(&c, head, zero, ahead, NULL, NULL), "no forward known: by the distance alone");
 }
 
+/* build 24: a committed cut on a captain hurts by its speed; a light hit is the game's own */
+static void test_cut_factor(void)
+{
+    CHECK(fabsf(somvr_cp_cut_factor(1, 1.0f, 2.0f) - 2.0f) < 1e-5f, "a full-speed cut: x2");
+    CHECK(fabsf(somvr_cp_cut_factor(1, 0.6f, 2.0f) - 1.2f) < 1e-5f, "a 12 m/s cut (k 0.6): x1.2");
+    CHECK(fabsf(somvr_cp_cut_factor(1, 1.7f, 2.0f) - 2.0f) < 1e-5f, "k over 1 clamped");
+    CHECK(fabsf(somvr_cp_cut_factor(1, 0.3f, 2.0f) - 1.0f) < 1e-5f, "never under the game's own");
+    CHECK(fabsf(somvr_cp_cut_factor(0, 1.0f, 2.0f) - 1.0f) < 1e-5f, "a light hit: the game's own");
+    CHECK(fabsf(somvr_cp_cut_factor(1, NAN, 2.5f) - 2.5f) < 1e-5f, "no k known: the full factor");
+    CHECK(fabsf(somvr_cp_cut_factor(1, 1.0f, 1.0f) - 1.0f) < 1e-5f, "cut_x 1 = the game's own (build 23)");
+}
+
 int main(void)
 {
     test_traits();
     test_pick();
     test_intro();
+    test_cut_factor();
     printf("test_captain: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

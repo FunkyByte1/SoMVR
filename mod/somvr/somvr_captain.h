@@ -62,4 +62,9 @@ void somvr_cp_intro_default(somvr_cp_intro_cfg *c);
 int somvr_cp_intro_world(const somvr_cp_intro_cfg *c, const float head[3], const float fwd[3], const float cap[3],
                          float *dist_cm, float *off_deg);
 
+/* ---- build 24: our sword's damage on a captain (SOMVR_CAPTAIN_DAMAGE=cut) ---- */
+/* the factor on the game's own damage for one of our hits: a committed cut or stab (committed = 1) cut_x x its k (the
+ * contact speed's 0.6..1, clamped to 0..1; not finite = 1), never under 1; a light hit 1 */
+float somvr_cp_cut_factor(int committed, float k, float cut_x);
+
 #endif

@@ -208,6 +208,7 @@ static struct {
 	somvr_pr_tcfg tcfg;
 	somvr_pr_tcfg tcfg_down; /* the climb's blink down: tcfg, a short hold (no light to change) */
 	int down_tp;         /* the blink down's teleport sent (pr_down_teleported takes it) */
+	int trip_tp;         /* any other trip's teleport sent (pr_trip_teleported takes it: a climb ends there) */
 	int down_quick;      /* this blink down is the pullover's quick one (tcfg_quick) */
 	int down_ws;         /* build 18: ... it is the wraith step's (SOMVR_WRAITH_STEP; the arrival's line) */
 	somvr_pr_tcfg tcfg_quick; /* build 16, SOMVR_CLIMB_PULLOVER: a mantle's blink (0.12 s out, 0.1 s settle, no hold, 0.2 s in) */
@@ -1125,6 +1126,16 @@ static int pr_down_teleported(void)
 	return 1;
 }
 
+/* a teleport of any other trip (go, back, the menu's): 1 once after it - somvr.c's climb ends there (re-xr-pipeline.md
+ * 101.7: a hang went through two trips and hung in the air at each arrival) */
+static int pr_trip_teleported(void)
+{
+	if (!g_pr.trip_tp)
+		return 0;
+	g_pr.trip_tp = 0;
+	return 1;
+}
+
 static void pr_go(const struct pr_me *m, int have, double t, const char *who)
 {
 	const char *no = !have ? "no player in the world now" : g_pr.went ? "already there (\"practice back\" first)" :
@@ -1175,6 +1186,8 @@ static void pr_teleport(double t)
 	g_pr.trip_first_tp = 0;
 	if (g_pr.trip_kind == PR_TRIP_DOWN)
 		g_pr.down_tp = 1; /* the climb ends now: gravity back, he stands where the Teleport puts him */
+	else
+		g_pr.trip_tp = 1; /* the trips by the menu too: no hang carried into the air at the arrival (101.7) */
 	const float *p = g_pr.trip.target; /* whole centimetres: no locale's decimal point (P5: Teleport x y z) */
 	snprintf(cmd + o, sizeof cmd - o, "Teleport %ld %ld %ld", lroundf(p[0]), lroundf(p[1]), lroundf(p[2]));
 	g_pr.teleports++;

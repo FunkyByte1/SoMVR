@@ -16157,3 +16157,761 @@ each 0 WARN, the install unchanged, the real save UNCHANGED)
 | 20261029-064728 | `SOMVR_KTIME=frame` on: 1339 of 1339 frames set back (no handle: the dirty word); the camp steps lost to the hurt-Talion eye-0 loss (96.6); the `ktime` word was not routed yet (fixed in 8ab2bb7) |
 | 20261029-070912 | the fix (fire23b-drive.sh fix3, the orc removed): the lit campfire and the vision identical in eyesame, the capture 0 of 33 particle draws different, the vision's stereo sky correlation 1.000; 743 of 743 frames set back (the word still unrouted: its "off" steps were on) |
 | 20261029-072312 | the same-run A/B with the word routed (fire23b-drive.sh fix3): 96.5's first table; the capture 0 of 17 particle draws different |
+## 97. Build 23: the stealth brand and the combat brand by the hand, the vault on real walls: `SOMVR_VERBS_BRAND` (2026-10-29, som-b23-brand)
+Code: somvr_brand_game.c (new; included last), small hooks in somvr_verbs_game.c (vb_hands: the reach before the step,
+the press after it; vb_prompt; vb_word `verbs brand ...`; vb_node_named's cache 4 -> 24 names), somvr_combat21_game.c
+(gc_frame calls br_frame), somvr.c (in_apply: the let-go filter), somvr_beasts_game.c (`beasts grant NAME`, a test aid),
+selftest.c. Test tooling: boot_check.sh `--save-from F` / headless_vr.sh `HEADLESS_SAVE_FROM` (the run's save copy from an
+earlier run's copy; the real save backed up and checked as always). handoff/HANDOFF-story.md and HANDOFF-loco.md "build 23".
+
+### 97.1 What the game does with B, read in the binary (static, `ghidra_query.sh som-linux-q3`)
+- The player's node loop FUN_00a8e120 (PlayerCombat): for each root node, KBMNode (FUN_02296f80), the attack window
+  (FUN_02264a70: FINISH's FI_WINDOW), **the predicate (FUN_02272ea0 -> FUN_02271890: the Input record against the input
+  tracker at PlayerCombat+0x80)**, then SharedCombat_SelectAttackFromPool; an attack picked -> FUN_00a85c90(pc, attack)
+  (its target) and, with a target, FUN_00e1a6d0(pc+0x8c8) or not FUN_00a745c0(player+0x308, 2, target, 0, attack) and
+  not FUN_00a75190(...) -> FUN_00a8c700 starts it; else the loop **breaks** (an attack picked, nothing started).
+- Our `vb_pick` (the verbs, the cue, `verbs tree`) asks the window and the selection only: it says what the pools would
+  pick, not whether the predicate and the post-selection gates let it start.
+- FUN_02271890's rejections (its own strings, logged only with the combat node log DAT_04c445d8 and a sink
+  DAT_04c459a0, both off in the shipped game): "Command '%s' is not enabled", "InputType", "held input ...",
+  **"IgnoreIfBlocking"** (the tracker's entry for its blocking command at tracker+0x90 = PlayerCombat+0x110 with b < a,
+  i.e. held), "RequireAnalogInput", direction, Min/MaxHeldDuration. The tracker: PlayerCombat+0x88..+0x90 a vector of
+  12-byte entries {u32 a, u32 b, u16 command} (a = the last press, b = the last release, in the tracker's time).
+- The inputs (`verbs tree`, run 20261028-230057): 'StealthBrand' = CombatPrimary03 (B) pressed, no held action
+  (0x886d5ca8 = None), IgnoreIfBlocking 1; 'InstaBrand_Chord' (PC_InstaHOG, PC_InstaHOG_GetYouThere) = CombatPrimary03 +
+  CombatPrimary04 (**B + A**, the pad's "(A) + (B) with a charged Hit Streak"; 39.1's table said Y+B); RT = CombatSecondary04
+  (125: 'X_Plus_RTHeld', 'Attract_Sneak', 'StealthBrand_Zipline' hold it), LT = CombatSecondary03 (124).
+
+### 97.2 The stealth brand at the Sea Fort (boot 20261029-062035; the drill, each step in the log)
+- The brand of this mission is the mission's: `beasts skills Brand` reads **PSS_Brand=0 after "Ability Unlocked: Brand"**
+  (the popup shown and closed, three times) and the game still offers 'PC_StealthBrand' and its prompt - the mission
+  enables it, the skill bit is not it. A save copy from 234546's end has no brand either (the profile keeps no mid-mission
+  state: Continue = the tower, the golden M again), so `--save-from` gained nothing here; the route is ~3 min by
+  teleports: the golden M, B, A, the video skipped (A, B), **back at the start until the timed objective is up** (a
+  teleport 1 s after the video left the mission without its 'Objective'), 28400 2000 -14300, 26202 1880 -11431, the fort's
+  trigger 23100 2865 450 (the video), the popup (A is taken only ~5 s after it shows).
+- **Not the blocking command**: the game's blocking command reads **0 (None)** in every press and probe of the run; no
+  B input of ours is rejected for IgnoreIfBlocking (SOMVR_VERBS_BRAND_UNBLOCK found nothing to let go).
+- **The press reaches the game**: the tracker's entry for 120 moves with each of our presses (0/0 before the first,
+  984970/985219 after a 0.25 s press, 1232170/1232320 after the 150 ms tap): the command is pressed and released in the
+  game's own input state.
+- **A teleport next to an archer alerts it**: `verbs behind 90` -> the offer and the prompt 0.05-0.10 s after the
+  teleport, the archer aware 0.05-0.15 s later ('AI_Archer_ReactToSurprised_Low_B', then the showdown presentation and
+  "Mission Failed!") - 234546's 1.4 s of grace was that archer's luck. The test-input paths are slower than that window
+  (the layer's test file ~1 s, a trigger word up to 0.25 s), so `verbs brand auto` presses in the prompt's own frame.
+- **Walked up crouched it stays unaware**: from 330 cm behind, the stick's crouched walk; the stealth stand-off (72) stops
+  him **118 cm** from its root, the archer in 'AI_Archer_Tower_Loop_LowAlarm', unaware for 7 s - and **there the game
+  offers no stealth brand** (the pick: "no attack of its pools passes", no prompt). The offers came at 90-110 cm (after
+  the teleports) and once at 142 cm while the archer was turning ('ReactToSurprised'): the press then (our B tap, the
+  pick at that frame **'PC_Archer_StealthBrand_F' sync 'PC_Archer_StealthBrand_F'**, the tracker's press) started
+  nothing - the archer, already turning, failed the gates after the pick (97.1: the target's checks) or the predicate.
+- So far: the brand needs Talion closer than the stand-off lets a crouched walk come (inside the ~108 cm where the game
+  starts to notice) and the archer still unaware at the press; the press itself arrives.
+- **Boot 20261029-065745 (`verbs brand auto`: the press in the prompt's own frame)**: walked up crouched from 330 cm
+  (the stand-off off for the test), the archer unaware in 'AI_Archer_Tower_Loop_LowAlarm' 164 cm ahead, its back to
+  Talion: the game's prompt 'Combat_Stealth_Brand' up, the press 44 ms later (our B tap, 150 ms), **the pick at that frame
+  'PC_Archer_StealthBrand_B' sync 'PC_Archer_StealthBrand_B'**, the blocking command None, the tracker's 120 entry the
+  press (557307/557457), and **for the next second Talion's attack '-', the archer unaware in its loop, the prompt up 5.9
+  s**. Everything our side can see says yes; the game starts nothing. What refuses is past the selection: the predicate
+  (FUN_02271890's other tests: "Command not enabled", the InputType press test) or the node loop's target gates
+  (FUN_00a85c90 / FUN_00a745c0 / FUN_00a75190). Our selection asks cannot see them; the game's own node log can
+  (DAT_04c445d8 with the sink DAT_04c459a0: a call-site hook on FUN_02271890's and FUN_00a8e120's Combat_LogPrintf calls
+  would print "Node Rejected 'PC_StealthBrand', <the reason>" - the next round's first step).
+- **So the stealth brand is not made by the VR hand yet.** What ships (SOMVR_VERBS_BRAND=on): when the game offers it,
+  the trigger's press is the pad's tap (B 150 ms; held B there did nothing either) and the press's line logs the game's
+  offer, the tracker and the aftermath - the headset's sessions will show the same lines. Until it is made, the brand's
+  way in VR is the grab + the left trigger (the drain, which the brand rides once the mission's brand is on) - but a grab
+  alerts the Sea Fort (the mission's fail): the mission's optional "Brand Archers" is not makeable in VR yet.
+
+### 97.3 The combat brand: the chord B + A (`SOMVR_VERBS_BRAND=on`, `SOMVR_VERBS_BRAND_COMBAT=any`)
+- **The game's way works**: with PSS_Instant_Brand (a skill the save does not own: `beasts grant PSS_Instant_Brand`, a
+  test aid) and the hit streak charged (`verbs brand charge`: XC_CHARGE, 8), the selection offers 'PC_InstaHOG' ->
+  'PC_Bip_InstaHOG_F' (sync 'PC_Bip_InstaHOG_F') against an infantry **in the fight, not stunned**, 118 cm ahead; the
+  stock chord (`verbs press 120+121 150`, Talion out of a recoil) started **'PC_Bip_InstaHOG_F'**, the orc
+  'AI_Bip_PC_InstaHOG_F', its health 81 -> 31 (boot 062035). Pressed while Talion is in a recoil ('PC_Recoil_*') it does
+  nothing (the game's attack window), as any press.
+- **Why any orc, not only a stunned one** (the brief's first decision): the stun (B tapped, `verbs press 120 120`) threw
+  the infantry 4.7 m back ('AI_Bip_StunLoop' then 'AI_Bip_StunRecover' 50 ms later, boot 065745): out of the hand's reach
+  for the whole stun, twice. The game itself offers the brand in the fight without the stun, as the pad's A + B is. So
+  with the streak charged, the open left hand on an orc's head + the trigger = the brand where the game offers it; the
+  stun and the drain stay the trigger's when it does not (no charge, a captain who resists, ...); a held orc the same.
+  `=stunned` keeps the first decision (a stunned or held orc only).
+- The press: the chord for 150 ms (VB pcmd, the verbs' press path), no B held after it (the trigger counts from its next
+  press), a 0.6 x 80 ms pulse in the left hand; **no chord while Talion is in a recoil** (boot 072843: the offer 0.10 s
+  old, the orc's blow came in between, the game took nothing - B as before then) and only on an answer of the last
+  0.15 s (the chord's A alone would be the game's own A; in 072843's two refused chords nothing else moved).
+- **By the hand, proven** (boot 20261029-073605, `verbs brand auto combat`: the trigger in the frame the offer is fresh
+  and Talion free): the open left hand on an attacking infantry's head, the trigger -> `press: ... 'PC_Bip_InstaHOG_F'
+  ... the chord B + A` -> **Talion's 'PC_Bip_InstaHOG_F' 50 ms later**, the orc 'AI_Bip_PC_InstaHOG_F', its health to 45;
+  the body moments: `hold by sync` at the press, `released by an ease (20.5 cm from the held point)` 4.4 s later - the
+  view held through the game's sync, eased back after.
+
+### 97.4 The vault on real ground: not found (`SOMVR_VAULT` stays off)
+`vault scan 500` at the tower, the meadow (91.5), and seven Sea Fort spots (23100 2865 450, 23500 2900 1300, 22600 3100
+1700, 24800 3600 3300 and on the way): walls "too high (the climb's)", steps, nothing; the fort trigger's wall read 121-124
+cm from 2-3 m, but walked at it (boot 065745, three headings with SOMVR_VAULT_MAX_CM=130 for the test) its top at the face
+is **131 and 146 cm** - a climb, not a vault. No 45-120 cm obstacle with an edge in either place; the vault stays
+unit-tested only (test_jump) and off. Next: a fence, a cart or a crate line (Udun's camps, the Black Gate's yards) by a
+grid of scans.
+
+### 97.5 Switches, words, lines
+| Switch | Default (code) | build 23 env | What |
+|---|---|---|---|
+| `SOMVR_VERBS_BRAND` | off | **on** | off / on (the brand's presses) / log (the press's line only, B as before) |
+| `SOMVR_VERBS_BRAND_COMBAT` | any | - | any orc the game offers the combat brand for / `stunned` (a stunned or held one) |
+| `SOMVR_VERBS_BRAND_STEALTH` | tap | - | the stealth brand's press as the pad's tap (150 ms) / `hold` (B held as the trigger is) |
+| `SOMVR_VERBS_BRAND_UNBLOCK` | off | - | on: a blocking command of ours (the tracker's +0x90) let go 200 ms at a brand's press (it read None in every press) |
+
+Test words (SOMVR_HANDS_TEST=1): `verbs brand status|probe|charge|auto on|off|stealth tap|hold|unblock on|off`, `beasts
+grant NAME`. Lines: `CONFIG verbs_brand=...`, `VERBS brand t=... orc ... the game offers ...|no brand offered` (on each
+change), `VERBS brand t=... press: ... the chord B + A|B (120) tapped`, `VERBS brand t=... the press: orc ... (the
+crouch, B, A, the tracker: the blocking command, 120, 125) PC_StealthBrand -> ...; PC_InstaHOG -> ...; ...`, `... after
+the press: ...` (tests, 1 s), `VERBS brand END: ...`. Test tooling: `HEADLESS_SAVE_FROM` (boot_check `--save-from`).
+
+### 97.6 Runs (headless, Monado 20 Hz, scripts/headset-build23.env + `SOMVR_VERBS_BRAND=on`, the test hands; logs/boot-check-; each the install unchanged, GameData.sav UNCHANGED)
+| run | what | proves |
+|---|---|---|
+| 20261029-062035 (`--save-from` 234546's copy, the story's practice settings, `SOMVR_VAULT=on`) | the Sea Fort by teleports; five stealth tries; `beasts grant`, `verbs brand charge`; the meadow fight; five fort scans | 97.2 (PSS_Brand 0, the blocking command None, the press in the tracker, the teleport's alert, the 118 cm stand-off without an offer, the 142 cm offer refused); 97.3 (the stock chord: 'PC_Bip_InstaHOG_F', 81 -> 31); 97.4 (the fort scans). **2 WARN**: the practice trip's "did not arrive after 3 teleports" - my targets 1-4 m over the ground (a test's mistake, not code) |
+| 20261029-065745 (+ `SOMVR_VAULT_MAX_CM=130`) | the fort wall walked at, 3 headings; the stun; the mission again (detected once at 28400 -14300, Retry), `verbs brand auto` at an archer | 97.4 (131 / 146 cm at the face); the stun throws the orc 4.7 m (97.3); **the decisive stealth press** (97.2: the pick, the tracker, nothing). 0 WARN |
+| 20261029-071900 | the meadow uncleared (the story's practice settings): a caragor, a graug, Talion knocked down | nothing reached the hand (0 presses). 0 WARN |
+| 20261029-072843 (the env's practice: the meadow cleared) | the gesture twice on an attacking infantry | the hand's chord sent twice on the game's offer; both into a recoil, refused, nothing else moved -> the recoil guard. 0 WARN |
+| 20261029-073605 | `verbs brand auto combat` | **the combat brand by the hand: Talion's 'PC_Bip_InstaHOG_F'**, the view held and eased back. 0 WARN |
+
+### 97.7 Unproven and next
+- **The stealth brand by the hand: not made** (97.2). Next: the game's node log (call-site hooks on the Combat_LogPrintf
+  calls of FUN_02271890 and FUN_00a8e120, DAT_04c445d8 on, the text to somvr.log) at an unaware archer with the prompt
+  up - it names the refusing test; then the stand-off (118 cm) against the brand's own reach.
+- The combat brand needs PSS_Instant_Brand, which the user's save does not own (a skill bought in the game's menu once
+  the story's brand is done); until then the game never offers it and the trigger is the stun / the drain as before.
+- The headset: the brand's feel (the sync under the hold, 4.4 s), whether a player's trigger lands outside recoils often
+  enough (the headless infantry hit Talion every ~1.5 s; a player blocks and dodges), the grabbed orc's chord (not run).
+- The vault: no real obstacle yet (97.4).
+## 98. Build 24: the stealth brand by the hand - why the game said no (its own combat lock), proven after it; "Queen of the Shore" on: `SOMVR_VERBS_BRAND_NODELOG`, `SOMVR_HINTS_KEEP_TUT`, `SOMVR_TEXT_BUTTONS` 120:124 (2026-10-29, som-b24-brand)
+Code: somvr_brand_game.c (the node log, the root loop's gates logged, the game's combat-on read, the offer line's
+geometry), somvr_gameopts_game.c (`SOMVR_HINTS_KEEP_TUT`), somvr_verbs_game.c (`verbs behind CM X Z`), check_sites.py
+(the BRAND_SITES block: 5 patched K_CALLs, test-only), selftest.c. handoff/HANDOFF-story.md "build 24".
+
+### 98.1 The game's own node log (`SOMVR_VERBS_BRAND_NODELOG=on`, a test switch; never in a build's env)
+- Combat_LogPrintf (0x2751a50) formats a line only while its file sink DAT_04c459a0 is set (FUN_02751900 makes one only
+  with a log file name: null in the shipped game), and the node rules (FUN_02271890 the predicate, FUN_02272ea0 its
+  wrapper, FUN_02264a70 the window, FUN_00a8e120 the node loop) call it only with the byte DAT_04c445d8 on
+  (Init_CombatVariables: 0). Every other reader of the byte only logs. So: the one call of the sink's write FUN_00fbb8f0
+  in Combat_LogPrintf (0x2751b73, `BR_NODELOG`) comes to us; for a window (`verbs brand nodelog S`, 3 s from each new
+  stealth brand offer and each brand press) the byte is 1 and the sink a dummy of ours (calloc'd: the game's shutdown
+  FUN_02751960 frees a sink it finds); each player node's line (`PC_`, `SOMVR_VERBS_BRAND_NODELOG_FILTER`) is logged
+  once and again when it changes, with how often the line before came (`VERBS brand node t=.. f+N <the game's line>
+  (before: '<line>' N time(s) from t=..)`); at the window's end the byte and the sink go back to 0 (`... closed after
+  S s, N frames: N lines formatted, ...`). 23735 lines in 12 s at 20 Hz, 99 logged.
+- The root loop's pick and its two target gates are logged too (`BR_SELECT` 0xa8eb08 SharedCombat_SelectAttackFromPool,
+  `BR_GATE_A` 0xa8eba2 FUN_00a745c0, `BR_GATE_B` 0xa8ebd9 FUN_00a75190, `BR_START` 0xa8eb6f FUN_00a8c700; the answers
+  passed on unchanged): `VERBS brand gate t=.. root 'NODE': the pick|gate A|gate B|started -> N (the attack .., the
+  target ..)`.
+
+### 98.2 Why the stealth brand was refused: the game's combat commands were off (boots 20261029-112050, -115309)
+- **The node log at the decisive press** (112050, an unaware archer in 'AI_Archer_Tower_Loop_LowAlarm' 192 cm ahead,
+  the prompt 'Combat_Stealth_Brand' up, our tap 68 ms later): every player node, the brand's and all others, `Node
+  Rejected 'PC_StealthBrand', Command 'CombatPrimary03' is not enabled.` - 115 frames in a row (5.75 s), X, Y, the grab
+  and every other command alike - until t+0.73 s after the press, when the game showed 'tut_BrandUnlocked' ("Ability
+  Unlocked: Brand", a pausing menu). FUN_02271890's first test asks the input mode object at *(PlayerCombat+0x80)
+  (its vtable slot 3, 0xa7d800) whether the command is enabled; FUN_0247e570 names the modes (None, Playing, Menu,
+  PausingTutorial, Showdown, SyncAction, Cinematic, QuestIntro, ..., DisableCombat, ...).
+- **When** (the read of that slot each frame, `VERBS brand t=.. the game's combat commands OFF|on again`): off for the
+  mission card, the videos, the presentations (as expected) - and **from the Sea Fort's video until "Ability Unlocked:
+  Brand" is closed**: 115309 off at 990.7 (the fort's video), the fort's lines, the walk to the archers, the popup at
+  1026.7, on again at 1091.9 when A closed it. After a Retry the approach to an archer replays it: the archers' lesson
+  'GP_Marwen2_Tut_StealthBrandArchers' (5.95-9.3 s, the commands off) and the popup (112050: 693.7-699.8, 891.6-897.5,
+  1032013-1032022). The game's lesson for the archers: a pad's player gets the same lock.
+- **So the refused presses of builds 22-23 fell in that intro** (97.2's 065745: the press at 1015698.7, the popup at
+  1015699.5; 89.5's 234546: the press at 989602.2, the popup 2.4 s later - its other press was at an archer already
+  shooting, 'AI_Archer_Shoot': no offer). Not the input, not the timing, not the target gates.
+- **After it, the same hand press brands** (115309, the popup closed, combat on): the archer unaware, 288 cm ahead and
+  179 deg off its facing - `the game offers the stealth brand`; the prompt up at 254.737, the left trigger with the open
+  hand on its head 43 ms later (`B (120) tapped for 150 ms`), at 162 cm; the root loop: `root 'PC_StealthBrand': the
+  pick -> 'PC_Bip_StealthBrand_B'`, `gate A -> 0`, `gate B -> 0`, `started`; Talion's attack 'PC_Bip_StealthBrand_B'
+  (sync), the body moments' `hold by sync` at the press, released 4.35 s later by the re-seat (39.4 cm, the 50 ms ease
+  within SOMVR_BM_SEAT's 40 cm); the game's lines "Your will is mine!" / "It is yours, Master.", the "Branded +20 Archer"
+  popup at the gaze (frame 3217, both eyes), its 'ArcherBranded' marker, the objective "1 / 6 Brand Archers without
+  being detected".
+
+### 98.3 What changed for the VR player
+- The lock is the game's and stays (the mission's own pacing). What was VR's: SOMVR_HINTS=off dropped the archers'
+  lesson's text, so nothing said why a press did nothing. **`SOMVR_HINTS_KEEP_TUT=GP_`** (gameopts; unset = build 23):
+  a tutorial text whose record name starts with a prefix passes with SOMVR_HINTS=off - the story missions' own lessons
+  (`GP_*`); each passed record's properties logged once (`HINTS tutorial record .. (kept): ..`). The ability popups
+  ('tut_*') stay dropped (their pausing menu shows anyway).
+- **`SOMVR_TEXT_BUTTONS=122:119,120:124`**: in UI texts B's icon (CombatPrimary03 120) is the left trigger's
+  (CombatSecondary03 124) - in VR the brand, the drain and the stun are the left trigger. The popup now reads "Brand:
+  Hold [LT]", "Stealth Brand: Hold [RT] + tap [LT]", "Combat Brand (Ability): Press (A) + [LT] with a charged Hit
+  Streak" (frame 1707). Menus' texts use the Menu* commands (MenuEnter, MenuEscape, MessageBoxDeny), never 120.
+- Each brand press logs the game's lock when it is on (`VERBS brand t=.. press: .. the game has its combat commands off
+  now (B 120 not enabled for N s: ..)`; `status`/`END` count them) - the headset's sessions will show it.
+- The stand-off (72) needs no change: the game offered the stealth brand at 288-292 cm (115309; 192 cm in 112050), far
+  outside the 118 cm stop; the hand reaches out at the head from 118 to 170 cm (SOMVR_VERBS' cone, far_cm 170).
+
+### 98.4 "Queen of the Shore" on, as a VR player meets it (boots 115309, 124218; the run's save copy)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the fort's video, lines | "The Queen told us ...", "If we brand those archers ..." (subtitles at the gaze) | works; **the game's combat is off from here** |
+| the archers' lesson | "Hold [RT] + tap [LT] to Brand from stealth." at the gaze (frame 10916, 124218; kept by SOMVR_HINTS_KEEP_TUT) with "0 / 6 Brand Archers without being detected", "Bonus Objective: Brand Archers in under 3 minutes" | **was dropped (silent lock); fixed**; RT = the crouch in VR (right stick down / a real duck): its icon left (listed) |
+| "Ability Unlocked: Brand" | a pausing popup: "Brand: Hold [LT]", "Stealth Brand: Hold [RT] + tap [LT]", "Combat Brand (Ability): Press (A) + [LT] ..." (frame 1707, 115309); A closes it after ~5 s | **B's icons were the pad's; fixed (120:124)**; combat on when it closes |
+| the stealth brand | crouched behind an unaware archer, the open left hand on its head, the left trigger: 'PC_Bip_StealthBrand_B' / 'PC_Archer_StealthBrand_B' / '_F'; the view held through the sync, the re-seat after; "Your will is mine!" / "It is yours, Master." and the other brand lines; "Branded +20 Archer" at the gaze; 'ArcherBranded' marker; "N / 6" | **works by the hand: 13 brands started in 2 boots** (115309: 1; 124218: 12 - 9 archers, an infantry cheering at the fight pit, 2 idle; at 107-293 cm, one at the stand-off's 118 cm, three while the archer was already turning, 'ReactToSurprised') |
+| detected | the showdown presentation, "Mission Failed" (A = 'QuestFailedRetry'), the Retry from the fort's lines; the lesson and the popup again at the first archer | works (A); the count from 0 |
+| 6 archers, then on | - | **not reached headless** (98.7) |
+- The prompt: 'Combat_Stealth_Brand' (kept since build 22 with the LT glyph) shows in the lock too (the game shows it); a
+  press then logs the lock. The game's offer reaches 288-299 cm, angle-dependent (179 deg behind at 288 cm, 50 deg at
+  292); a real hand reaches out to 170 cm, so a VR press is well inside it.
+- Five of 17 test taps started nothing: the game's own node test passed (`Root node validated: PC_StealthBrand`), its
+  pool picked no attack in the press frame - all at 298-299 cm, the edge of the range, where the test aid (`verbs aim
+  head`: the palm at the collar) put a palm no arm reaches. The other 12 started.
+
+### 98.5 Switches, words, lines
+| Switch | Default (code) | build 24 env | What |
+|---|---|---|---|
+| `SOMVR_HINTS_KEEP_TUT` | unset (every tutorial dropped with SOMVR_HINTS=off) | **GP_** | prefixes of tutorial record names that pass with SOMVR_HINTS=off (the story missions' own lessons) |
+| `SOMVR_TEXT_BUTTONS` | unset | **122:119,120:124** | build 23's 122:119 + B's icon -> the left trigger's in UI texts |
+| `SOMVR_VERBS_BRAND_NODELOG` | off | - (tests only) | the game's node log and the root loop's gates in somvr.log (98.1) |
+| `SOMVR_VERBS_BRAND_NODELOG_FILTER` | PC_ | - | only lines naming this |
+Words (SOMVR_HANDS_TEST): `verbs brand nodelog S` (0 closes), `verbs behind CM X Z` (behind the orc nearest X,Z: another
+archer). Lines: `VERBS brand t=.. the game's combat commands OFF|on again (B 120 .. by the input mode ..'s slot 3 ..)`, `...
+off for N s`, `VERBS brand t=.. press: orc .. - the game has its combat commands off now ..`, the offer line's `(N cm,
+Talion N deg off its facing, +N cm above it)`, `VERBS brand node ..`, `VERBS brand gate ..`, `CONFIG hints_keep_tut=..`,
+`HINTS tutorial #N .. kept (SOMVR_HINTS_KEEP_TUT)`, `HINTS tutorial record .. (kept): ..`; status/END count the locks
+and the presses in them. Sites: BRAND_SITES (5 K_CALLs, patched only with the test switch); check_sites.py counts them.
+
+### 98.6 Runs (headless, Monado 20 Hz, scripts/headset-build24.env + the story's practice settings, the test hands; logs/boot-check-; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| run | what | proves |
+|---|---|---|
+| 20261029-112050 (+ NODELOG) | the mission to the fort (a detection at 28400 -14300, Retry), four tries at an archer (two drivers mid-run) | **the cause**: every node "Command 'CombatPrimary03' is not enabled" for 5.75 s at the press; the lesson + popup timing; a stock B press at 330 cm (no offer) = "Node Accepted 'PC_StealthBrand'" |
+| 20261029-115309 (+ NODELOG, KEEP_TUT, 120:124) | the mission, the popup (frame 1707), tries after it | **the stealth brand by the hand** (98.2: picked, gates 0, started; the hold; the lines; frame 3217); the lock from the fort's video to the popup's close; the offer at 288-292 cm |
+| 20261029-124218 (the env block + NODELOG) | the mission, archers in turn (four drivers: walk-up, quick, live markers) | 12 brands started by the hand (9 archers, 1 infantry, 2 idle; 'PC_Archer_StealthBrand_B'/'_F', 'PC_Bip_StealthBrand_B'); the kept lesson at the gaze (frame 10916); 16 detections -> "Mission Failed" -> Retry; never 6 in one attempt |
+Pictures (logs/boot-check-20261029-115309/xr-layer.log.stereo1707|3217.ppm, -124218 stereo10916; `python3
+scripts/xr_compose.py RUN -f N`).
+
+### 98.7 Unproven and next
+- **The mission after the archers: not reached.** "Brand 6 Archers without being detected" needs six in one attempt;
+  the headless harness's teleports next to the sentries (an archer aware at the teleport, 5321 cm/s) and its 300 cm
+  palm (the archers turn meanwhile) gave 16 detections in 124218. A walking player does neither; the steps after the
+  sixth brand (the bonus timer, the prisoners, the end and its rewards) are unseen. Next: a walking route between the
+  archers from cover (no teleports within sight), or the headset.
+- RT's icon in the lesson and the popup ("Hold [RT]"): in VR the crouch (the right stick down or a real duck); RT
+  (CombatSecondary04 125) is also the bow's in texts, so no single icon is right: left.
+- The stealth brand from above (PC_Brand_FromAbove_F/B, the same B press): the hand reaches out to 170 cm only; an orc
+  below a ledge needs a far reach for orcs below and a ledge to test on. The game's sync would drop Talion under the
+  held view (the body moments' return puts him back): not built.
+- The headset: the brand's feel (the hold 4.4 s, the re-seat), the lesson's text at the gaze (size, place), the
+  popup's LT icons.
+
+## 100. Build 24: the frozen world when Talion is hurt - the eye match inside an open eye pass, the layer's stale-frame net, the game's overlays out of the eyes: `SOMVR_EYE_MATCH`, `SOMVR_XR_STALE`, `SOMVR_FLATFX`'s `overlay`, `SOMVR_HURT_LOW` (2026-10-29, som-b24-render)
+
+96.6 left: a hurt Talion at the campfire spot loses eye 0's image (the layer: "layout B frame .. without its eye images:
+the tag says eyes 0x2", then "no complete record: the last stereo frame again" for minutes; runs 005146, 060526, 064728).
+This round: the cause (a test word, not the headset's path, made it - but the match was fragile), the fix, a net in the
+layer so that no cause can ever freeze the world for long, and the game's damage overlay looked at in both eyes.
+
+### 100.1 The cause: an overlay view inside eye 0's pass took eye 1's queued view (with `fx eyesame 1`)
+- **Both conditions every time.** The loss began only when Talion was at low health **and** the test word `fx eyesame 1`
+  (96.1: both eyes one pose) was on: 005146 - low health from 993328.8 with eyesame 0, no loss for 22 s; `fx eyesame 1`
+  at 993351.05, "the tag says eyes 0x2" at 993351.37; 060526 - eyesame 1 since 1012149.9, health 36 -> 20 at 1012179.45,
+  0x2 at 1012179.65 (~393 presents, until `fx eyesame 0` at 1012239.7); 064728 - health 20 at 1014699.20, eyesame 1 at
+  699.63, 0x2 at 700.21. Low health = the blow 36 -> 20 (of 120); 36 alone never did it (run 114053).
+- **The extra view.** At low health the RATE lines double H2 and H3 gets repeats (064728: `H2=4 H3=4 h3=668+0` per s
+  before, `H2=8..12 H3=8..11 h3=+5..+10` after): one more view per eye. H2's caller (ra `0x2d7a743`) is `FUN_02d7a700`,
+  the draw of ClientFX's full-screen overlay `COverlayFX` (vf_18 `0x2d7af10` and its `IClientFXOverlay` thunk vf_0xb0_03
+  `0x2d7b040`, both `FUN_02d7a700` + return 1; re-ui-effects.md 3.2): it sets up a view of its own with the eye's camera
+  (the same transform) inside the eye's body call, and its H3 comes inside the eye's pass (before its end at H8).
+- **The match.** H3 matched the views the game thread queued (H1) by the transform's hash alone: the first queued entry
+  with it. The render thread runs behind the game thread, so both eyes' entries are queued before eye 0's pass. With
+  `fx eyesame 1` both eyes' transforms are one: the overlay's H3 inside eye 0's pass took **eye 1's** entry -> `g_rt_eye
+  = 1` before eye 0's end -> H8 copied eye 0's image into eye 1's texture; eye 1's own H3 then found no entry (a
+  "repeat"), its end was copied as nothing -> the tag "eyes 0x2", the layer's "the last stereo frame again" for as long
+  as both held. Without eyesame the eyes' transforms differ by the IPD and the overlay's H3 is a repeat - the user's
+  sessions (20261028-193826, 20261026-233334) never lost an eye; their one "without its eye images" line is the
+  session's first frame ("not known yet"). The same steal could take the **next frame's** entry of an eye whose
+  transform did not change (a head that did not move: headless only).
+
+### 100.2 The fix: `SOMVR_EYE_MATCH=pass` (somvr.c H3; code default pass; build 24's env pass)
+An eye's pass is open from its H3 match until its end at H8 (`g_rt_eye >= 0`). `pass`: a view with the open pass's camera
+(`xh == g_h3_last.hash`) is a repeat of that eye's projection and never takes a queued entry - eye 1's view (after eye
+0's end) still matches as before. `hash`: build 23's. Word `eyematch pass|hash|state`; lines `CONFIG eyematch=..`,
+`EYEMATCH t=.. a view with eye E's camera inside its open pass (frame F): a repeat of the open eye's projection, not eye
+E2's queued view of frame F2` (the first 3, every 600th; `hash`: "TAKEN AS"), `EYEMATCH state|END` (views inside an open
+pass, kept, taken). No cost: one compare per H3. The test word `eyedrop E N` (H9 leaves eye E's bit out of the next N
+stereo tags: the fault itself, `EYEDROP` lines) makes the layer's net provable with each eye its own view.
+Selftest (the stand-in render thread run behind the game thread: both views queued before eye 0's pass, an overlay view
+with the eye's camera in each pass): `hash` + eyesame reproduces the loss - the tag 0x2, eye 1's texture holding eye 0's
+image, 1 entry taken; `pass` - both eyes in order, 1 kept, 2 repeats; also each eye its own camera, the pass right after
+its view, and `eyedrop 0 2` (two tags 0x2, then both eyes).
+
+### 100.3 The net: `SOMVR_XR_STALE=N|off` (the layer, somvr_void_layer.c; code default 6; build 24's env 6)
+Whatever the cause, a layout-B present without its eye images shows the last stereo frame again (reprojected by the
+runtime, world-locked): for a frame or two that is a dropped frame. `SOMVR_XR_STALE=6`: after 6 such presents in a row
+(67 ms at 90 Hz) env_decide goes to the environment as at the cover's load (36.7): the held frame darkens over 0.2 s,
+then the loading space (the sky, the floor, the progress lights - kept on while stale - and our hands) fades in over
+0.3 s, and it stays until 3 stereo frames in a row came back (no flapping); then the world at once from black, fading
+in over 0.3 s. A short run is unchanged (the last stereo frame again). Both ways are proof against the keep-alive's own
+frames between slow presents (headless: 3-6 fps presents, our frames every 100 ms): they want the space too while stale
+(else each faded the world back in and the fade never reached black: boot 114053, "stale: 7 presents", no switch in
+11.5 s), and the way back does not hold the space (it faded out only on the game's presents and back in on ours: boot
+123651 never left the space). Without `SOMVR_XR_ENV`: no
+layer past the limit (black, never a frozen world). Comfort: the loading space is what the player already knows from
+loads (HL:A / SteamVR fade to their own space when the app cannot deliver); a mono frame of the game's flat picture was
+the other choice - a flat world at infinity tracking nothing, worse. Lines: `xr: stale: on: ..`, `xr: stale: N presents
+in a row without a new stereo frame (.. ms; the last at stereo K): to the loading space through the fade ..`, `xr:
+stale: the eyes back after .. s (N presents ..): the world again, from black (fading in)`, the session's end (times past the
+limit, presents not shown as the world, the longest run, shorter runs). Layer tests: `stale` (6 eyeless presents the
+world, the 7th on the space, 40 more the space with its lights, 2 stereo frames still the space, the 3rd the world at
+once from black, a short run of 6 the world), `stale-off` (60 eyeless presents: the frozen world, build 23's),
+`stale-noenv` (black after 4), `stale-ka` (presents 150 ms apart with the keep-alive: 0 of 6 frames in the space without
+ka_side's part; never back without st_hold; with both the space at present 7..12 and the world at the third stereo
+frame). The existing `stereo-b` fail-soft list (6 single reuses in a row) is unchanged: the limit is "6 shown again".
+The user's sessions never reuse a frame (20261028-193826: stereo 71257, reuse 0; 20261026-233334: 35400, reuse 0): the
+net only ever acts on a fault.
+
+### 100.4 The hurt effect in VR: `SOMVR_FLATFX`'s `overlay`, `SOMVR_HURT_LOW`
+- What the game draws at low health (boot 114053, marks 114512_7 with the overlays, 114519_8 without; composed with the
+  layer's quads, boot 131134 frames 451 / 483): **blood drops at
+  the bottom-left of each eye's picture** at the same place in both eyes - a screen-fixed sprite, at the eyes' infinity,
+  the "smear in the face" - and **a red-brown wash over the whole picture** (darker, warmer). Both are `COverlayFX`
+  (the H2 doubling stops the moment it is out). The game's box blur and vignette at low health were already cleared by
+  `SOMVR_FLATFX`'s `vignette` (86; 005146: "the game's box blur this frame .. off in the eyes").
+- `SOMVR_FLATFX` gets a fifth part `overlay` (`all` includes it; build 24's env keeps `SOMVR_FLATFX=all`): COverlayFX's
+  two draw entries (slots `0x3b624f8` RD_OVERLAY and `0x3b62530` RD_OVERLAY_IF, K_VSLOTs in the RENDER_SITES block) get a
+  naked stub: while H4's eye calls run with the part on it returns 1 at once (as the game's does after drawing), else the
+  original (the draw's float arguments in xmm0/xmm1 untouched). Flat frames keep the game's overlays. `flatfx state`
+  counts the overlays' draws and skips. Live: `flatfx flares,shafts,vignette,rain` draws them again.
+- In their place the HL:A way: `SOMVR_HURT`'s red flash on the edge bands per blow (build 10) and, new,
+  `SOMVR_HURT_LOW=0.25` (code default 0 = off; build 24's env 0.25): while the health is under a quarter of the most seen
+  (and alive) a faint steady red on both edge bands, `SOMVR_HURT_LOW_EDGE` (0.3) of full, the blow's flash on top.
+  Lines `FIGHT low t=..: Talion's health H of M: under SOMVR_HURT_LOW - the faint red edge on|off`, `CONFIG hurt low=..`.
+  Selftest: 20 of 120 -> both edges 76 of 255 and the hurt flag; 60 of 120 -> none. In the composed frame 483 (boot
+  131134, the overlays out, health 20) a soft red on the outer edges only (the left eye's left, the right eye's right),
+  the world clean; frame 451 (the overlays drawn) has the drops, the wash and the blows' flashes.
+
+### 100.5 `fx d3d` in more places (boot 114053, eyesame; 96.1's capture)
+- The meadow's grass at the camp (pitched 35 deg down, 3109 / 3107 draws): no time-like constant left. Different: the
+  bones (VS b1, 2231 draws: the game thread ahead, 94.4); 14 draws whose VS/PS b0 c0..c2 differ only in the translation
+  (w: 0.112 / 0.119, 0.660 / 0.668 - an object's matrix read live, the same class); **3 draws whose c25 differs (3000,
+  12000, 0, 0.25 in eye 0; 3000, 8250, 0, 0.25 in eye 1)** - a per-view distance (a fade or LOD range) the second pass
+  gets smaller: a candidate for something drawn to a different distance in each eye (not seen in the pictures yet);
+  the foliage's instanced draws part from draw 19 (different instance counts in the two passes, 96.2).
+- The wraith vision with the head turning 90 deg over 6 s (2515 / 2513 draws): the bones (1954), a few object matrices
+  (the turn), the downsample chain's sizes compared one draw off (an alignment of the two sequences, not a difference);
+  0 of 20 CPU-particle draws different (`SOMVR_KTIME=frame` holds while turning).
+- Water was not captured (no water in reach of the practice spot's views).
+
+### 100.6 The runs (headless, scripts/headset-build24.env + SOMVR_HANDS_TEST=1 + SOMVR_FX_TEST=1; each 0 WARN, the install
+unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-) | What it showed |
+|---|---|
+| 20261029-114053 | render24-drive.sh hurt d3d: health 36 -> no overlay views; 20 -> the overlay's views (H2 doubled) while drawn, gone with `flatfx all`; the overlay A/B marks 114512_7 / 114519_8; `eyedrop 0 40`: "stale: 7 presents .. to the loading space", "the eyes back after 11.55 s" but no switch (the keep-alive's frames: fixed in cf2459b); the two captures of 100.5 |
+| 20261029-123651 | hurt with the overlays drawn: `eyematch hash` + eyesame at health 20 - "TAKEN AS eye 1's queued view" 43 times, "the tag says eyes 0x2", stale after 7 presents, the keep-alive's switch to the space ("SOMVR_XR_STALE"); `eyematch pass` - "a repeat of the open eye's projection, not eye 1's queued view", "the eyes back after 9.16 s"; but the space never left (fixed in 922a3e0); `SOMVR_HURT_LOW`: "the faint red edge on" at 20, off at 30.2 |
+| 20261029-131134 | the same with 922a3e0: hash - 58 taken, 0x2, stale after 7 presents (1041 ms), the space (switch 4); pass - 51 kept, "the eyes back after 8.78 s (59 presents)", the world at once from black (switch 5); the eyesame dumps 428-430 at low health with the overlays drawn: both eyes identical (0.000 % pixels off); stereo frames 449-451 (overlays drawn) / 481-483 (out, the faint edge); `eyedrop 0 40`: stale after 7 presents, the space, back after 5.67 s, the world from black |
+
+### 100.7 For the headset (unproven headless)
+- Never seen by the user so far (their sessions: reuse 0). If a frame ever goes missing for longer than 6 presents the
+  world darkens over 0.2 s into the loading space with the ember lights, and comes back from black when the game's
+  pictures do: the user judges whether 6 presents (67 ms) + 0.2 s is the right moment and whether the way back from
+  black is gentle enough.
+- Low health: the game's blood drops and red wash are gone from the eyes; a faint red glow stays on the outer edges while
+  Talion is under a quarter of his health (30 of 120 here), each blow's flash on top. The user judges its strength
+  (`SOMVR_HURT_LOW_EDGE`, 0.3) and whether low health is clear enough without the game's wash.
+- The c25 distance (100.5) - if the user reports grass or far things that differ between the eyes, start there.
+
+
+## 99. Build 24: a captain killed in VR is the player's kill; a captain fight for arms: `SOMVR_CAPTAIN_DAMAGE`, `SOMVR_CAPTAIN_CUT_X`, `SOMVR_CAPTAIN_STEALTH_IMMUNE` (2026-10-29, som-b24-captain)
+Three open ends of build 22's captain (88.5): the member read "KilledByPlayer 0" after our kills, a level-9 captain (976
+health, ~4/s back) took ~100 light cuts, and his escape and the stealth kill on him were never tried. Code:
+somvr_captain_game.c (sections 5-7: the damage, the test aids, the stealth answer), somvr_captain.c/.h (the factor),
+small hooks in somvr.c (cb_hit), somvr_front_game.c (FR_DMG_ATK), somvr_stealth_game.c. Driver
+`scripts/captain24-drive.sh`; handoff/HANDOFF-captain.md "Build 24".
+
+### 99.1 The kill's credit: what the game keeps when Talion kills a captain (RE)
+- **The member's flags' bit 3 "KilledByPlayer" is never written at run time.** The whole binary (objdump, every write to
+  `+0x3a4`: `or`/`and`/`mov` with a mask, the generic bit setter FUN_022cceb0(member, bit, value) and getter
+  FUN_022ccee0 and every caller's bit number) has one writer of bit 3, `0x22e14de` in FUN_022e13b0 - **Faction.Load**,
+  the debug reader of a dumped file - and one reader, `0x22cdfca` in FUN_022cdd90 - **Faction.Dump**'s writer. No caller
+  asks the generic getter/setter for bit 3. So the stock kill of a captain leaves it 0 exactly as ours did (88.5's
+  "KilledByPlayer stays 0" is the game's own state, not a missing credit).
+- **Where the game credits a kill**: the death handler FUN_026f61f0(the victim's Combat, the attack, the killer's
+  Combat, x) - called from ServerCombat_ApplyAttackDamage (re-combat.md 1.2 step 15, the path every Combat_DealHit
+  takes, ours included), Combat::vf_13 and the sync/self-damage paths - finds the victim's member (FUN_023d3d40 with the
+  NPC's id) and calls **FUN_022dbd20(member, attack, killer's Combat)**:
+  - FUN_022dbc20 fills the member's last-death record: `+0xc0` LastDeathCharacterType (the killer's character type),
+    `+0xc8` LastDeathAttack (the attack), **`+0xd0` LastDeathPlayerKiller = 1 when the killer's Combat has no NPC
+    (`+0x80`) but the player (`+0x88`)**;
+  - the sim event: the killer's `+0x88` set (the player) -> FUN_02302260 (the faction record's **KilledByPlayerEvent**,
+    FUN_024c9e60's names), an NPC killer -> FUN_023022d0 (KilledByAIEvents), none -> FUN_023026e0
+    (KilledByUnknownSource); posted to the faction manager (FUN_023d49e0) - what the Nemesis board, the promotion of a
+    replacement and the next save's record follow;
+  - FUN_022d09a0: LastDeathType `+0xd8` (the death's kind from the attack and the killer; skipped for a severed one);
+  - then IsDead (bit 2), `+0x38c |= 4` and `+0x390` = the fight clock's time. The death handler itself drops his loot
+    (CharacterLootDropArgs: the rune, FUN_022eae30 with the member and the killer) and tells the XP/HUD (the
+    struck-through "... KILLED" banner and "+100 Uruk Power" of runs 071459 and 030358).
+- **Ours**: every kill of ours (an edge cut, the execution, the stealth kill, the finisher) is a Combat_DealHit with
+  Talion's server Combat as the attacker - the game's own damage path down to FUN_026f61f0 with Talion as the killer. So
+  no flag is written by us (none needs to be): the credit is the game's. Logged now at his death and in `captain
+  status`: `the last death: by the player 1, the attack '...', the killer's type '...', the death type '...';
+  PlayerKills N`.
+- IsMockDead (bit 23) after a kill without a sever is the game's own roll (a captain killed so can come back); the sever
+  (IsSevered, bit 17, `SeverTargetOnKill` in the death path) makes it final.
+
+### 99.2 The fight's length: the stock numbers, the VR damage model `SOMVR_CAPTAIN_DAMAGE=cut`, `SOMVR_CAPTAIN_CUT_X=2.0`
+- **The strikes' own damage on a captain** (run 114800, `captain tiers`: each record our tiers use - the pad's own
+  `PC_HC_*` strikes - dealt once on Grûblik the Flogger, level 9, 976 health, by Combat_DealHit as combat calls it, no
+  factor): Lowest 10, Low (the thrust) 20, Medium 30, High 40. Again after `captain charge` (the streak 4-7, the
+  execution charged): the same 10/20/30/40. **The hit streak adds no damage**: it picks the strike (the pad's combo
+  climbs Lowest -> High; our committed cut is the Medium below the streak 8, the High from it: SOMVR_COMBAT_CLASS=cut,
+  SOMVR_COMBAT_HIGH_STREAK) and charges the execution. (`captain gamelog` set the game's
+  `Combat.Debug.Stats/XP/HitCounter/ApplyDamage` bools - all four found by name and set - and
+  `Combat.Value.LogFileName`, but no combat-debug.log was written: the stat lines go elsewhere.)
+- **His regeneration** (the same run): 3.9-4.1/s between the tiers' hits while he fought Talion 1-2 m away, 2.4-4.0/s
+  while he walked back from 15 m - the same near and far. It is his `Quirk_BonusHealthRegen`, the item stat
+  `HealthRegenInCombat` (the stat table's entry 0xe beside `HitCounterChargeUses`, FUN_024fed20): he regenerates in
+  combat by design, stock; our path does not put him "out of combat" (no faster regeneration away from the fight). Not
+  every captain has the quirk (the save: members 1 and 20 among the eligible).
+- **The flat fight** (estimate from these numbers): the pad's strikes land ~2-2.5 a second, the combo climbs to the High
+  (40) within ~8 hits and charges an execution (a third of a resistant captain); a skilled flat player kills a lone
+  level-9 captain in roughly 30-45 s (his blocks, his attacks, the counters). **Build 23 in VR**: a committed cut every
+  ~2 s against a fighting captain (his attacks to parry, his blocks), 30 (Medium) / 40 (High) a cut, a tap 10: ~17-21
+  committed cuts and 1-2 executions, 60-80 s of hard swinging - too long for arms, and a hard, fast cut only 3-4x a tap.
+- **Decided (Blade & Sorcery: a committed, fast, well-aimed swing hurts; a waggle does not)**: on a Nemesis captain a
+  committed cut or stab (combat's heavy/stab tier: build 20's stroke - 50 cm one way, the edge leading, the contact at
+  12 m/s or more) takes **the game's own damage for it x `SOMVR_CAPTAIN_CUT_X` (2.0) x the cut's k** (0.6 at 12 m/s ..
+  1.0 from 20 m/s; never under the game's own); a light hit (a tap, the flat, a slow contact) the game's own. A
+  full-speed cut = 60 (Medium) / 80 (High) on him, 6-8x a tap; the user's real cuts (14.5-30 m/s at the contact, build
+  20's SWORDREC) k 0.7-1.0. Estimate: ~11-14 committed cuts and one execution for a level-9 captain, 30-45 s - the flat
+  fight's length. His level still decides (a higher captain's health is larger, the factor the same), his defence,
+  buffs, blocks (a blocked hit's reduced damage is scaled the same), min health, the death and its credit stay the
+  game's: the factor is applied to the DamageStruct the game built for our call (DamageStruct_DoDamage from FUN_02810e80
+  - FRONT's FR_DMG_ATK call hook, now installed when `SOMVR_CAPTAIN_DAMAGE=cut`; `kp_dmg` before FRONT's own look; only
+  for our hit in flight: cb_hit's `kp_hit_pre/post`, the same thread, his HOBJECT; forceKill's 1e6 and a heal
+  untouched). Plain orcs: unchanged (=stagger's tiers, 85/30.16). `=off` = build 23.
+- **The execution** (unchanged, 88.2's clamp): a third of his max at most - but run 114800's second execution, with
+  284.6 of 976 left (under a third: the floor 1.0), **killed him**: `dead=0->1 health 284.6->1.0` - the InstaKill
+  record's death state, not the health (re-combat.md 1.2 step 15: "a pre-death state"). So the rule reads: an execution
+  takes a third of a non-vulnerable captain, or ends him when less is left - the game's own death, the player's credit
+  (that was run 114800's kill: `the attack 'PC_Bip_Standing_InstaKill_F3'`). Kept: it is what the flat game's finisher
+  does to a weakened captain.
+- Lines: `CONFIG captain damage=cut ... the damage hook (FRONT's FR_DMG_ATK) in`, `CAPTAIN t=.. our heavy|stab|light hit
+  on the captain: the game's damage A x X = B (the cut's k K, SOMVR_CAPTAIN_CUT_X C); his health H0 -> H1`, `CAPTAIN END
+  damage (...)`. Pure: `somvr_cp_cut_factor` (tests/test_captain.c `test_cut_factor`, 7 checks).
+
+### 99.3 Two captain moments: his escape, the stealth thrust
+**His escape (Fear_LowHealth)** - run 20261029-121957, Flak the Ranger-Killer (member 3: `Fear_LowHealth3`,
+`Quirk_FastRunner`, `Quirk_Tracker`, `Immune_Ranged`), level 9, 526 health, set to 115 (22 %): 3.5 s later (fighting
+Talion at 1.3 m, no hit taken) **the game's own flight moment** - a presentation (3.1 s) with his line "This isn't going
+to plan!" as a subtitle, played **in the world** by 88.2's rule (2.2 m away, in view: the player's own view, the
+presentation camera ignored; no body moment) - then he turned and ran - `his place` 4.9 m, 10.4, 14.4, 26.2, 41.4, 59.0
+m ... 351.6 m from Talion 90 s later: **6.0-7.1 m/s** (FastRunner), regenerating ~0.7/s as he ran (115 -> 175 in 92 s).
+No other presentation, no camera, no view change while he ran - the view stays the player's. He did not leave the world
+within the 2 min watched (no `he left the world` line); `practice remove` takes him back as before.
+- **Can a VR player catch him?** Talion's speeds in VR are the stock ones 1:1 (`SOMVR_LOCO`: run 2.3 m/s, the sprint
+  latch 6.4 m/s = the stock FreeRun plateau, P10's LR1): against a FastRunner the sprint keeps pace (6.4 vs 6.0-7.1) but
+  does not close in - exactly the flat game's race; a captain without the quirk should be slower and caught by the
+  sprint (not measured). The bow is the stock arrow (88.2): it stops a runner who is not `Immune_Ranged` (15 of the
+  save's 27 are); Flak is immune, so he escapes - the game's own Nemesis outcome (he lives, remembers). (The headless
+  test chase, `execute chase on`, only follows an orc within 15 m: it could not follow him - not a measure of the
+  player's legs.)
+- **Decided: no change.** Speeding Talion up or slowing a fleeing captain would break the stock race and the comfort
+  rule (no motion the player did not make); the escape is part of the Nemesis system. Not tried: a bow shot into a
+  runner who is not ranged-immune (the stock arrow's own rule, build 22's bow round), the Shadow Strike dash after him.
+
+**The stealth thrust on a captain** - built (somvr_captain_game.c section 7, somvr_stealth_game.c):
+- The game's rule (88.2, `SOMVR_CAPTAIN_RULES`): the stealth kill asks his trait - Vulnerable = the kill (forceKill),
+  Resistant / DamagedBy / none = the record's own damage held at a third of him by his min health (he survives), Immune
+  = no stealth kill. The save: `Immune_Stealth` 13 of 27 (Grûblik, Flak and most of the eligible), `Vulnerable_Stealth`
+  6 (the Fool), `Resistant_Stealth` (the Executioner).
+- **Immune** - build 23 deals the thrust as an ordinary hit: a wound and his alert - the same thing a poor thrust gives,
+  so the player cannot tell "he is immune" from "I did it wrong". **Built (`SOMVR_CAPTAIN_STEALTH_IMMUNE=turn`, not
+  shipped: below)**: the thrust is turned at his back like a blade on armour - no wound, no stick; the clank's sound and
+  sparks where the point met him (the surface meeting's own: `cbt_imp_surface_player`, the defence's sparks, sfb_h4 in
+  the next combat frame), a hard knock in the hand (1.0 for 60 ms, then 0.45 for 180 ms), and his alert (the attack
+  stimulus, stl_alert): he turns to fight. The refusal is his - the Nemesis card and the interrogation tell why. `=hit`
+  = build 23.
+- **Resistant** (he survives the stealth kill at two thirds): build 21's stick (`SOMVR_STEALTH_KILL_STICK`) kept the
+  blade in the wound of any stealth kill - in a living captain that turns to fight. Now the stick only when he died
+  (`dead1`): the survivor gets the thunk, the game's blood at the wound and his own reaction; the sword stays the
+  player's.
+- **Vulnerable**: the kill as on any orc (forceKill, the stick, the blood).
+- **Not proven headless** (runs 120340, 121957, 123314, 131501): the scripted thrust (kill22's poses, made for an
+  infantry's back at the 118 cm stand-off) never met a captain's back: at 118 cm the ready blade was already in it
+  (`carried ... 43-58 cm in`); 175 cm: the thrust's end only at his back; 140 cm crouched: the ray past his hip (frame
+  897: Grûblik a head taller than Talion crouched); 130 cm standing with the head at his chest: 14-45 cm off his body
+  (`air ... not its body`). The captains stayed unaware (`aware -2 -> 0` with their backs to Talion: `captain away`),
+  except Flak (`Quirk_Tracker`), who saw Talion at the spawn. So **`turn` ships off**
+  (`SOMVR_CAPTAIN_STEALTH_IMMUNE=hit`, the code default too: build 23's ordinary hit, now x the cut factor when the
+  thrust is committed - run 120340's `the game's damage 20.0 x 2.00 = 40.0`); the stick-only-in-the-dead rule ships (it
+  narrows build 21's stick to the kills it was made for; a plain orc's stealth kill always kills).
+- To prove `turn`: a test aid that holds the right test hand on the line from the eyes to his spine node (the stealth
+  code's own skeleton, stl_body) 20 cm short of it, then the thrust along that line - not built this round.
+
+
+### 99.4 Runs (headless, scripts/headset-build24.env + `SOMVR_HANDS_TEST=1`, the practice meadow, scripts/captain24-drive.sh; each run 0 WARN, no crash, the install unchanged (0 newer), GameData.sav UNCHANGED - the game's writes went to the run's copy)
+**Run 20261029-114800** (steps measure fight army; the user's save):
+- `captain gamelog`: the four console bools found by name and set; no combat-debug.log appeared (99.2).
+- Grûblik the Flogger (member 1, level 9, 976 - his `GP_Grublik_ExtraHealth`) 10 m ahead, his introduction in the world.
+  `captain tiers` twice (the streak 0-3, then charged 4-7): 10 / 20 / 30 / 40 both times; his regeneration ~4/s (99.2).
+- **The fight** (`captain hp 976`, the test guard, the test chase, edge cuts; the right trigger whenever the game's
+  charge was ready): 43 s, 41 hits - the scripted 20 Hz edge cuts mostly met him slow (38 light, 10 each, x 1.00), 3
+  committed (the High record at the streak 8+: `the game's damage 40.0 x 1.23 = 49.2 (the cut's k 0.61)`, `40.0 x 1.29 =
+  51.8 (k 0.65)`; a stab `20.0 x 2.00 = 40.0`; END: scaled 3, the game's 100 -> ours 141); two executions: `he survives
+  it - his min health 572.9 ... health 895.0->572.9`, then with 284.6 left (the floor 1.0)
+  `'PC_Bip_Standing_InstaKill_F3' forceKill=0 ... dead=0->1` - the execution ended him (99.2).
+- **His death** (`CAPTAIN t=1032789.794 he died`): flags 0x9c080e6 - IsDead 1, KilledByPlayer 0, IsMockDead 1, IsSevered
+  0; **the last death: by the player 1, the attack 'PC_Bip_Standing_InstaKill_F3', the killer's type
+  'Player_Character'**; the same 2 s on. His rune at the body ("(B) Pick Up", both eyes composed at frame 3188: the
+  rune's glyph over the slope, "POWER +10"), B -> `Combat_Activate_Collectable` -> Activate: picked.
+- **Sauron's Army** (the pause menu by the fingertip, shots/scr-army.png): the front row's third slot - a standing
+  silhouette on the user's save (run 20261029-022848's board) - now **a body on the ground**: the slain captain.
+- The run's save copy written by the game at 11:52:55 (after the kill).
+**Run 20261029-120340** (steps reload army stealth flee; `HEADLESS_SAVE_FROM` = run 114800's save copy):
+- **The reload**: `captain status`: member 1 Grûblik `flags 0x9c080a4: dead` (in the world 0, IsDead 1, IsMockDead 1),
+  **`the last death: by the player 1, the attack 'PC_Bip_Standing_InstaKill_F3', the killer's type 'Player_Character'`
+  - the kill's record kept by the save**; the Nemesis board the same (his body in his slot, shots/scr-army.png 12:05);
+    the Captain's pick skips him (dead).
+- The stealth rounds failed as tests (99.3): Flak the Ranger-Killer (member 3, `Quirk_Tracker`) saw Talion at the spawn
+  (his introduction 7 s in) - the thrust became an ordinary stab, `the game's damage 20.0 x 2.00 = 40.0`; the Fool
+  (member 5) and the Executioner (member 6), unaware with their backs to Talion at the infantry's stand-off (118 cm),
+  had the ready blade already in their backs (`carried ... the point 43.5-58.6 cm in`): no thrust, a touch, the alert.
+- The flee round failed as a test: Flak set to 12 % (63 of 526) and an edge cut (`30.0 x 1.80 = 54.1`) and a tap killed
+  him (`he died`, by the player 1). Fixed in the driver (a light tap at 22 %).
+**Run 20261029-131501** (steps stealth; 130 cm behind, standing, the head turned to his chest - `bow strike gaze orcs`):
+the captains unaware; the thrust (4.37 m/s along the blade) passed 14 cm from Grûblik's body, the others' 14-45 cm: no
+contact with the body, no kill, no turn. (5 boots in all.)
+
+### 99.5 Switches (my block at the end of scripts/headset-build24.env)
+| Switch | Default (code / env) | Off / other |
+|---|---|---|
+| `SOMVR_CAPTAIN_DAMAGE` | cut / cut | off = build 23: the game's own damage for every hit on a captain |
+| `SOMVR_CAPTAIN_CUT_X` | 2.0 / 2.0 | 1..5: a full-speed committed cut's factor on the game's damage (x the cut's k 0.6..1, never under 1) |
+| `SOMVR_CAPTAIN_STEALTH_IMMUNE` | turn / hit | hit = build 23: the ordinary hit |
+Code changes without a switch: a captain who survives a stealth kill keeps no blade (the stick only in the dead, 99.3);
+the CAPTAIN health line reads his max from the character (was the spawn's health, before his level) and logs a rise only
+per 10 (his regeneration no longer fills the 900-line budget, was 400); his place once a second while he is under a
+third; the death line and `captain status` carry the member's last-death record. Test words (SOMVR_HANDS_TEST but
+gamelog): `captain gamelog`, `captain tiers`, `captain away`. Lines: `CONFIG captain damage=...`, `CONFIG captain
+stealth_immune=...`, `CAPTAIN t=.. our heavy|stab|light hit on the captain: ...`, `CAPTAIN t=.. tiers: ...`, `CAPTAIN
+t=.. gamelog ...`, `CAPTAIN t=.. his place: ...`, `CAPTAIN t=.. the stealth thrust turned ...`, `CAPTAIN END damage
+...`.
+
+### 99.6 Open
+- **The headset**: the fight's length and feel with real arms (the factor 2.0 is reasoned from the stock numbers, not
+  felt: a level-9 captain should fall to ~11-14 committed cuts and an execution); whether real swings come out committed
+  often enough against a captain who blocks and attacks (the scripted 20 Hz cuts mostly came out light); the turned
+  stealth thrust's knock, clank and sparks (`turn` built, not proven, not shipped).
+- The game's own stat lines (`Combat.Debug.Stats`): the bools set, no combat-debug.log written - where Combat_LogPrintf
+  writes was not found; the damage numbers come from the health deltas instead.
+- His escape: a bow shot or the Shadow Strike's dash after a runner who is not `Immune_Ranged`; whether a fled captain
+  "escaped" in the Nemesis record when he leaves the world (not waited for: he was 350 m away and still in it after 2
+  min).
+- KilledByPlayer (bit 3) stays 0 by the game's own design (99.1); a tool or a page that reads it would mislead - read
+  LastDeathPlayerKiller (+0xd0) instead.
+- Not tried: the ground finisher on a captain, a captain met in the open world (his kill's credit is the same path), a
+  severed captain (IsSevered: the death for good).
+### 98.8 Addendum (follow-up, 13:10-14:15): six archers the way a player walks - not reached in 2 boots, and why
+The brief: each archer approached on foot, crouched, from behind (the scripted stick; teleports only to far staging
+points), the hand from inside 120 cm, the order from the archers' facing, the run's save from 115309; at most 2 boots.
+- **Test words** (somvr_verbs_game.c, SOMVR_HANDS_TEST): `verbs stalk X Z CM` steers the left stick each frame at the
+  orc nearest X,Z (locked at the start) in the head's frame, crouched (0.55), and ends `arrived` at CM root to root, `Talion
+  is not in its back half` (under 100 deg off its facing), `it reacts` (its attack *React*/*Surprise*/*Shoot*/*Alert*/
+  *Showdown*), `stuck` (3 s without 30 cm nearer) or `30 s` (lines `VERBS stalk t=.. start|..|end after S s: WHY`);
+  `verbs orcs X Z R` lists the orcs there (where, facing, Talion's angle off it, their attack); `verbs aim reach` puts the
+  palm 55 cm out from the eyes toward the head (an arm reached out: the reach's cone, not a palm on a head 3 m away).
+- **The save copy** (HEADLESS_SAVE_FROM = 115309's, written after the popup): Continue starts at the tower (35400
+  -22400), not in the mission (97.2's finding again): the profile keeps no mid-mission state; the drive started the
+  mission from its marker as before.
+- **Boot 20261029-132424**: the first two archers branded by the walk, as a player would - 25220 2028 and 22706 5008:
+  staged 7.5 and 9 m straight behind, the stalk 5.6-7.1 s, the stand-off's stop at 118 cm (`at rest 118.3 cm .. in
+  reach`), the palm reached out (`the left hand reached out at orc ..'s head (54.9 / 52.2 cm, the reach 0.0 deg off)`),
+  the trigger: 'PC_Bip_StealthBrand_F' and 'PC_Archer_StealthBrand_F' started, "Your will is mine!", "You were made to
+  be cowed by terror!" - both archers already turning ('AI_Archer_ReactToSurprised_Low') at the press: at the stand-off
+  the hand's press beat their turn by a frame or two. The third, the patroller walking the north wall (23726 6338-7250), turned during the walk and saw Talion;
+  after that Retry the run never got two in a row: 24 mission fails, 61 stalks (34 ended at once out of the target's
+  back half, 17 'it reacts' - the archers already in 'AI_Archer_Presentation_Showdown_Idle', the fail's showdown).
+  The fails came 5-7 s after a staging teleport 7-9 m behind an archer with **no orc near Talion aware** (the stealth
+  log's own orcs): a sentry farther off, with a line of sight onto the wall tops. Staged beyond 12 m (the player's loud
+  radius, 72.1) no fail came, but the straight-line walk stuck at a parapet and one walk ended at 118 cm where the game
+  offered **no brand for that archer** (21670 3300, 180 deg behind, the node test passed, no attack of its pool - two
+  others at 117 cm and one in 124218 at 118 cm were offered).
+- **Boot 20261029-135748** (archer 1 first, then 22706 first): archer 1 has no ground behind it past 7.5 m (the wall
+  ends); from 7.5 m the mission failed ~7 s later, every time (9 Retries); 25000 6299's walk stuck at 465 cm (the
+  parapet). 0 brands. Stopped at 14:10 (the 2 boots).
+- **Why six in one attempt did not happen headless**: a player sneaks along cover and watches the sentries; the
+  harness walks straight lines from points it cannot check for sight lines - the detections come from orcs outside
+  Talion's combat bands (none of them in our awareness lines), so the bot cannot see who will see it, and it cannot path
+  around parapets. With a fail every few attempts and the count back to 0 at each Retry, six in a row stays out of
+  reach. The brand by a walked approach itself works (2 of 3 first-attempt archers, the third a patroller).
+- **So the mission after the archers is still unseen** (the branded archers' fight, its cinematics, subtitles and
+  objectives). Next: the headset (the user plays it), or a headless route of hand-picked staging points with cover per
+  archer, found by looking (pictures) rather than by `verbs behind`.
+- Runs: 20261029-132424, -135748: each 0 WARN, the install unchanged, GameData.sav UNCHANGED.
+
+
+## 101. Build 24: the vault, the overhang, climbing down and the jump on the real world's walls (2026-10-29, som-b24-move)
+
+Build 22 built the jump and the vault (91), the overhang's A and down over an edge (93) and proved them on the practice
+meadow's bank, ladder wall and platform; build 23 found no 45-120 cm obstacle by `vault scan` at seven Sea Fort spots
+(97.4). This round takes all four to the save's open world. Driver: scripts/move24-drive.sh (plans `survey`, `calib`,
+`vtry`, `ledge`, `jtry`, `otry`, `dtry`; pin16/climb2's functions).
+
+### 101.1 Finding the places: `vault grid` and `vault edges` (test aids; somvr_jump_game.c `sv_frame`)
+`vault scan` looks from one spot. The two new words survey the ground round Talion, a few points a frame (at most 16
+points and ~500 casts a frame; 317-709 points in 1.2-2.2 s):
+- `vault grid [R] [STEP]` (1500, 150): every STEP cm within R the floor there (the first hit down from 4 m over his
+  root), then the vault's own plan (`somvr_jp_vault_find`, standing) in 8 headings; each obstacle once (its face point,
+  150 cm); lines `VAULT grid ... find: from X Y Z heading H: OVER|ONTO the T cm top F cm ahead (D deep), the face at ..;
+  the ring at ..`, and `near:` for walls of 121-160 cm (a ledge: the climb's).
+- `vault edges [R] [STEP]` (1500, 100): at each point's top, in 8 headings a drop of 150+ cm within 60 cm, its edge by
+  5 cm rays, the face under it from 150 cm out at 20/40/60/100/150 cm under the top: `OVERHANG` (the face 15+ cm behind
+  the lip within 60 cm under it - the climb's am_oh_test), `WALL` (within 30 cm all the way down: down over's), else
+  `SLOPE`; the drop, the room on the top.
+A point that starts inside rock (a cliff over the 4 m start) gives tops with no floor under (drop -1): read only edges
+with a drop and a stand point 20+ cm from the lip.
+Boot 20261029-111118 (`survey` at five places): the meadow (1 vault-ish, 24 walls), **the ruin by the mark-16
+campfire** (30873 3843 -32974: arches, low walls, stubs: 9 vault obstacles, 36 walls of 121-160 cm, 15 overhangs, 17
+walls), the story marker's cliff foot (42632 3839 -22529: rounded boulders - 128 "overhangs", none with a flat top),
+the Sea Fort trigger (23100 2865 450) and the Sea Fort camp (24800 3600 3300: an orc camp's stone walls, 48 walls with
+plumb faces 250-900 cm high).
+
+### 101.2 The vault on real obstacles (`SOMVR_VAULT`)
+The survey's finds at the ruin by the mark-16 campfire, walked at the player's way (the stick toward the face from where
+he stands, the stick's own frame measured by a 0.3 s pulse from the body's velocity; A at the ring's first frame while
+moving), else stood at the survey's spot looking along its heading (the ring along the gaze), A:
+- **over a 75 cm stub** (8 cm deep; boot 20261029-135222): walking, `ring: over the 75 cm top 135 cm ahead ... along
+  the way he moves: the ring at 30507,3720,-33566, 264 cm along the floor (-9 cm)`; A: `go: the vault over the 75 cm
+  top ... at 300 cm/s: up 588 cm/s to the feet 87 cm over the floor, level until 0.38 s ... the least clearance 12.0
+  cm`; `end: landed after 0.808 s ... 242 cm along the floor, -7.3 cm; the highest +86.5 cm; the landing braked (from
+  506 cm/s); 28.2 cm from the ring ... the view's yaw moved 0.00 deg` (a far floor 7 cm lower: the same overshoot as the
+  next one, smaller);
+- **onto a 59 cm block** (120 cm deep; boot 20261029-141005): `ring: onto the 59 cm top 145 cm ahead`; `end: landed
+  after 0.576 s ... 173 cm along the floor, +59.3 cm ... braked (from 174 cm/s); 13.2 cm from the ring`;
+- **over a 62 cm wall** (98 cm deep; the same boot): `go: the vault over the 57 cm top ... at 264 cm/s ... level until
+  0.73 s ... (268 cm along the floor, 1.02 s)`; `end: landed after 1.277 s ... 321 cm along ... the landing hard (from
+  226 cm/s); 54.6 cm from the ring` - the far floor ran downhill under the landing: the brake stopped the fall on the
+  rays' floor, the 2 cm settle steps missed the lower floor under the still-moving capsule (`feet +3.0, +1.4, +0.8`),
+  free fall from rest (226 cm/s at the contact, 12 cm), and the fixed horizontal went on all that time;
+- **onto an 89 cm block** (boot 141005): `ring: onto the 89 cm top 143 cm ahead`; `end: landed after 0.575 s ... +85.7
+  cm ... 1.4 cm from the ring`.
+Refused on the way, nothing moving: `the way over is not clear` (the ruin's 80 cm fence: something on the arc's line), `no room for
+Talion at the landing` (a 64 cm top against a wall), `no landing past it`, `too high (the climb's)`. A "hard" landing
+at 13-20 fps is the brake's 12 cm crossed inside one tick (91.2; at 90 Hz test_jump brakes over ~5 ticks). Both eyes
+(xr_compose): the comfort vignette closes to its tunnel through the move (its rule for a fast move), the horizon level,
+open again on the ring; after it the view stands over the ring (on the block's top: the ruin's wall ahead, nothing in
+the face).
+**Fixed: never past the ring** (`SOMVR_VAULT_RING_STOP`, code default on; somvr_jump.c `somvr_jp_step`): the vault's
+fixed horizontal ends at the ring's distance from the take-off (the last tick's step cut to it); the rest of the fall
+is straight down onto whatever floor is there, the stick still ignored until the landing. test_jump `test_ring_stop`
+(the far floor 30 cm under the plan's from 40 cm before the ring): on -0.3 / +0.0 cm from the ring at 90 / 20 Hz, off
+(build 23) +17.3 / +23.2 cm. **The vault ships on** (`SOMVR_VAULT=on`, `SOMVR_VAULT_RING_STOP=on` in the som-b24-move
+block): four real obstacles over and onto, each refusal on the way a no-op, the view's yaw never moved, no stuck state;
+the ring is the where, A the when, ~0.6-1.0 s and fixed (91.3).
+**The shipped block** (boot 20261029-142108, scripts/headset-build24.env with the block: `CONFIG ... the vault never
+past its ring: on`): onto a 65-74 cm block `4.9 cm from the ring` (+68.3 cm); over the 75 cm stub again `233 cm along
+the floor, -8.4 cm ... 0.0 cm from the ring` (135222's 28 cm overshoot gone); over a 60 cm wall `-15.9 cm ... the
+landing braked (from 549 cm/s); 0.0 cm from the ring`; `JUMP END ... vaults 3 ... stopped at the ring's distance 2`;
+the view's yaw 0.00 deg in each.
+
+### 101.3 The game's own parkour under our moves (item 4): nothing moves the view
+With `SOMVR_GAMEMOVES=off` no `FreeRun` is ever sent and A is ours (91.2); LOCO owns every tick on foot. Run into real
+obstacles (`jump trace`: the root, the FSM, LOCO's owner per tick):
+- the run at the ruin's fence (boot 20261029-135222; 80 cm by the vault's read on the same line): 141 cm, then `asked
+  230.0 body 5.0` - stopped at its face; FSM 6 in all 70 ticks, LOCO ours in all, the root's rise 5.0 cm at most;
+- the run at the ruin's 121+ cm wall at 241 cm/s (boot 20261029-130545): 130 cm, then `asked 241.5 body 0.0` - stopped
+  in one tick; FSM 6 and LOCO ours in all 70 ticks, the rise 4.8 cm;
+- the sprint latch (640 cm/s) toward the fence and the 130 cm wall (boot 135222): the capsule slid along and past them
+  (454-661 cm/s on), FSM 6 and LOCO ours in all 94 ticks each, the largest rise a tick 1.4 / 5.1 cm (the ground's
+  slopes) - nothing vaults, climbs or leaps (32.5's bank the same).
+So the stock auto-vault and climb-up never run under our locomotion: no game-driven move of the view to soften. A low
+wall stops him like any wall (the player's own collision, as in HL:A); getting over is the player's: A at the vault's
+ring (the when, the where), the hands for a higher wall (the climb), A on a climb's top (the mantle). Nothing built
+for item 4. (The capsule's own step-up stays: up to its 40 cm steps, the anchor's 80 ms height low-pass, as on stairs.)
+
+### 101.4 Down over an edge at real walls (`SOMVR_CLIMB_DOWN_OVER=on`, build 22's 93.5; unchanged)
+On foot facing out 45 cm from a wall top's lip, the right hand 115 cm under the eyes 60 cm out over the edge and the
+grip (scripts/move24-drive.sh `dtry`; spots from `vault edges`' `WALL` lines, the stand point 20+ cm from the lip):
+- **the Sea Fort camp's west wall** (boot 20261029-120958; the lip 24649.7,3200.9,3595.2, out -x, the face plumb,
+  297 cm down): `the glide out and down to hang there (... 292 cm in 0.83 s (350 cm/s))`, `the glide's end after 1.02 s:
+  the hand holds the lip ... the eyes 26 cm under the top`; turned to the face, hand over hand down (`grab L ... 'stone'`
+  80 cm under the lip, `grab R ... 'stone'` 135 cm under), the hands opened on the ground;
+- **the Sea Fort camp's east wall** (the same boot; the lip 25549.3,3198.8,3803.7, out +x, 373 cm down): `290 cm in
+  0.83 s`, `the glide's end after 0.98 s ... the eyes 26 cm under the top`, `grab L`, `grab R` down the face, then A
+  held: `A held 0.65 s: the timer ring empty ... (armed)`, `A let go after 1.25 s: the fall (a short drop: the feet 62
+  cm over the ground)`;
+- **the ruin's wall by the mark-16 campfire** (boot 20261029-122615; the lip 30692.9,3669.1,-34267.3, out 0.91,0.42,
+  301 cm down): `278 cm in 0.79 s`, `the glide's end after 0.93 s ... the eyes 25 cm under the top`, `grab L`, `grab R`
+  down, on the ground after 39.5 s.
+Both eyes (xr_compose): during the glide the comfort vignette closes to its tunnel (its rule for a fast move) with the
+horizon level; at the hang, turned round, the wall's coping at the eyes and the climb's gold mantle ring on the top
+behind it (A = back up) - nothing in the face, no view in the rock. With build 22's three meadow walls that is six real
+walls; it stays on.
+
+### 101.5 The overhang at real lips (`SOMVR_CLIMB_MANTLE_OVERHANG=on`): no real overhang in reach
+`vault edges` classed 156 lips `OVERHANG` at the five places; held by the hand, none is an overhang by the climb's own
+test (am_oh_test: a face within 60 cm under a lip whose top was found, 15+ cm behind its edge along the hold's toward):
+- the story marker's boulders (42000-43900, -23300..-22700; lips 230-330 cm over the floor): caught from a jump at the
+  apex (boot 120958: `caught by the climb after 0.350 s`), the hold `edge 0` - a rounded top: `pullover: ... no floor
+  within 30 cm of the top 20..80 cm in`; no ring, A held = the drop mark (the timer, the fall): never stuck;
+- the meadow's slab lip (33037 2122 -23737, 246 cm, no face under it within 150 cm along the survey's heading): caught
+  from a jump (boot 20261029-130545: `edge 1, top 2124.4 (found)`), but the hold's toward is the slab's side face
+  (0.67, 0.74), and along it a face stands within 60 cm: the plain hang; A held = the drop (`A let go after 1.50 s: the
+  fall`); never stuck;
+- the ruin's undercut terrace lip (29773 3902 -33296, 172 cm over the floor, the face 11-32 cm behind it): the head is
+  over its top standing (3905 > 3902): `top: the head over the hold's top -> push`, `stand` - the plain way up (boot
+  20261029-131827);
+- arches and the fort's walkways: openings under the lip (the face never found), 3-7 m up.
+So the overhang's glide stays proven by test_oh22 only (93.7); the code is unchanged and stays on (no real spot to
+fail on; where a face stands under the lip it is the plain hang, A = the drop mark as ever).
+
+### 101.6 The jump on real ground
+- **The climb's catch at a real wall**: at the ruin wall's foot (boot 120958; its top 297 cm over the floor), A and the
+  right grip 0.12 s later: `caught by the climb after 0.350 s in the air ... +49.0 cm (the highest +60.0 cm)`, `grab R
+  ... edge 1, top 3669.8 (found); a lip` - the 3 m wall's lip in the hand, the gravity left to the climb; the same at
+  the meadow slab (130545) and a boulder (120958).
+- **A running jump on the ruin's ground** (boot 122615): `the stick's 225 cm/s carried`, `landed after 0.631 s ... 145
+  cm along the floor ... the landing braked (from 432 cm/s)`; the view's yaw 0.00 deg in every jump, the largest eye step
+  a frame 18-24 cm at 13-20 fps (the arc's own speed).
+- Onto a crate or a ledge: the jump's 60 cm rise takes no real ledge found (the ruin's tops are 61-117 cm): that is the
+  vault's `ONTO` (101.2). A gap: none found by the surveys (the walls' tops are 3-9 m apart); not run.
+
+### 101.7 A climb's hang survives a practice trip (found, not changed)
+Boot 20261029-120958: a hang (both hands open on the boulder, gravity off) went through two `practice go` trips (215 m)
+and stayed a hang in the air at each arrival until A held dropped him (`end: drop: A pressed after 66.95 s ... the
+root 21526.1 cm`). A player meets it only by taking the VR menu's practice trip while hanging; A held is the way down
+there as anywhere. The drivers now drop every climb before a trip (`unclimb`). For a later round: the trip's teleport
+could end a climb as the descent's blink does (`pr_down_teleported`).
+
+### 101.8 Runs (headless, Monado 20 Hz (13-20 fps), scripts/headset-build24.env + `SOMVR_HANDS_TEST=1`; scripts/move24-drive.sh; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| run (logs/boot-check-20261029-) | what | proves |
+|---|---|---|
+| 111118 | `survey` at five places; the vault at three finds (the walk's aim off) | 101.1; the ring shows walking at a ruin block (onto 89 cm), gone when he stopped looking 20 deg off it |
+| 120958 | the jump's catch, the boulder and meadow lips, down over at the Sea Fort camp's two walls | 101.4 (two walls); 101.5 (the boulder: edge 0); 101.6 (the catch at the ruin wall); 101.7 (the hang through the trips) |
+| 122615 | down over at the ruin's wall; a running jump | 101.4 (the third wall); 101.6 (the running jump) |
+| 130545 | the meadow slab from a jump; the run into the ruin's 121+ cm wall | 101.5 (the slab: no overhang by the climb's test); 101.3 (stopped dead, FSM 6, LOCO ours) |
+| 131827 | the ruin's undercut terrace lip | 101.5 (the head over its top: the plain way) |
+| 135222 | the vault walked at (the stick aimed by a pulse); the run and sprint into the fence | 101.2 (over the 75 cm stub); 101.3 (the fence) |
+| 141005 | the vault at three blocks and walls (A released in the dump's write) | 101.2 (onto 59 and 89 cm, over 62 cm: the downhill overshoot) |
+| 142108 | the shipped block (vault on, ring stop on) | 101.2: three vaults 0.0-4.9 cm from the ring, two ring stops; `CONFIG` |
+Runs 111118-131827 also met the drivers' own faults (fixed as found): the snap-turn heading off by 15-25 deg, the stick
+taken in the head's frame (LOCO's is the game view's, `jump state` now logs it), a word's echo captured into the stick,
+A's release overwritten by a dump (A held: no press edge).
+
+### 101.9 Switches, words, lines
+| Switch | Default (code) | build 24 env (som-b24-move block) | What |
+|---|---|---|---|
+| `SOMVR_VAULT` | off | **on** (was off: build 22-23) | the ring past / onto a 45-120 cm obstacle, A = the vault (91.3) |
+| `SOMVR_VAULT_RING_STOP` | on | **on** | the vault's horizontal ends at the ring's distance (101.2) |
+Unchanged and staying on: `SOMVR_JUMP`, `SOMVR_CLIMB_DOWN_OVER`, `SOMVR_CLIMB_MANTLE_OVERHANG`. Words (test aids):
+`vault grid [R] [STEP]`, `vault edges [R] [STEP]` (101.1); `jump state` adds `the stick's H` (the game view's heading:
+LOCO's stick frame). Lines: `VAULT survey ... grid|edges done`, `VAULT grid ... find|near`, `VAULT edge ...
+OVERHANG|WALL|SLOPE`, `CONFIG jump=... the vault never past its ring: on (SOMVR_VAULT_RING_STOP)`, `JUMP END ... stopped
+at the ring's distance N`.
+
+### 101.10 Unproven, for the headset, next
+- The vault's feel at 90 Hz: the take-off and the held level glide over the top (0.6-1.0 s, the vignette's tunnel), the
+  braked landing (headless 13-20 fps lands "hard" when the brake's 12 cm fall inside one tick), whether the gold ring
+  and the hand's tick at every low wall read as help or as noise in a ruin full of them.
+- The ring stop on steeper ground than the ruin's (proven there: 142108's two stops, 0.0 cm from the ring).
+- The overhang's glide on a real lip: none in reach with a flat top in the save's places surveyed (101.5); test_oh22
+  only. Next: buildings with eaves (Udun's forges, the Black Gate's towers) by `vault edges`, then the jump's catch.
+- A jump across a real gap, and onto a 45-58 cm ledge with the jump alone: none found.
+- The practice trip while hanging (101.7).

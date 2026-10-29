@@ -72,6 +72,7 @@ static struct {
 	_Atomic int req_jump, req_vault, req_state, req_stock, req_scan, req_cm;
 	_Atomic int req_trace_ms;
 } g_jp = { .req_jump = -1, .req_vault = -1, .req_stock = -1, .req_cm = -1, .req_via = -1 };
+static _Atomic int g_sv_req, g_sv_req_r, g_sv_req_step; /* build 24: `vault grid|edges` (sv_frame) */
 
 static int jp_log_ok(void) { return g_jp.lines++ < 800; }
 static int jp_tick_ok(void) { return g_jp.tick_lines++ < JP_TICK_LINES; }
@@ -91,6 +92,7 @@ static void jp_config(int *bad)
 	g_jp.cfg.jump_cm = env_float("SOMVR_JUMP_CM", 60, 20, 150, bad);
 	g_jp.cfg.v_max_cm = env_float("SOMVR_VAULT_MAX_CM", 120, 60, 150, bad);
 	g_jp.cfg.v_cms = env_float("SOMVR_VAULT_CMS", 300, 150, 700, bad);
+	g_jp.cfg.v_ring_stop = env_word("SOMVR_VAULT_RING_STOP", (const char *const[]){ "off", "on" }, 2, 1);
 	g_jp.via = env_word("SOMVR_JUMP_VIA", g_jp_via_w, 3, JP_VIA_SETPOS);
 	if (g_cl.cfg.foot_cm > 0)
 		g_jp.cfg.foot_cm = g_cl.cfg.foot_cm;
@@ -100,10 +102,12 @@ static void jp_config(int *bad)
 		      "speed carried 1:1 in the air, the landing braked over the last %.0f cm; a low obstacle (%.0f-%.0f cm over the "
 		      "feet) within %.0f-%.0f cm = its ring past it (or onto a deep top) and A = the vault over it (at least %.0f cm/s, "
 		      "the feet %.0f cm over its top); LOCO's delta with the proxy's gravity off; no animation in the view "
-		      "(SOMVR_JUMP, SOMVR_JUMP_CM, SOMVR_VAULT, SOMVR_VAULT_MAX_CM, SOMVR_VAULT_CMS)",
+		      "(SOMVR_JUMP, SOMVR_JUMP_CM, SOMVR_VAULT, SOMVR_VAULT_MAX_CM, SOMVR_VAULT_CMS); the vault never past its ring: %s "
+		      "(SOMVR_VAULT_RING_STOP)",
 		      g_jp.cfg.jump ? "on" : "off", g_jp.cfg.vault ? "on" : "off", g_jp.cfg.jump_cm,
 		      somvr_jp_takeoff(g_jp.cfg.jump_cm, g_jp.cfg.g), g_jp.cfg.soft_cm, g_jp.cfg.v_min_cm, g_jp.cfg.v_max_cm,
-		      g_jp.cfg.v_reach_cm, g_jp.cfg.v_reach_max_cm, g_jp.cfg.v_cms, g_jp.cfg.v_clear_cm);
+		      g_jp.cfg.v_reach_cm, g_jp.cfg.v_reach_max_cm, g_jp.cfg.v_cms, g_jp.cfg.v_clear_cm,
+		      g_jp.cfg.v_ring_stop ? "on" : "off");
 }
 
 /* the words (another thread: requests only) */
@@ -146,7 +150,15 @@ static const char *jv_word(const char *w)
 		atomic_store(&g_jp.req_scan, cm >= 100 && cm <= 1500 ? cm : 600);
 		return "vault scan";
 	}
-	return "vault on|off|scan [CM]";
+	if (!strncmp(w, "grid", 4) || !strncmp(w, "edges", 5)) { /* build 24's survey (a test aid) */
+		int kind = w[0] == 'g' ? 1 : 2, r = 0, step = 0;
+		sscanf(w + (kind == 1 ? 4 : 5), "%d %d", &r, &step);
+		r = r >= 200 && r <= 3000 ? r : 1500;
+		step = step >= 50 && step <= 500 ? step : (kind == 1 ? 150 : 100);
+		atomic_store(&g_sv_req_r, r), atomic_store(&g_sv_req_step, step), atomic_store(&g_sv_req, kind);
+		return kind == 1 ? "vault grid" : "vault edges";
+	}
+	return "vault on|off|scan [CM]|grid [R] [STEP]|edges [R] [STEP]";
 }
 
 /* the body's horizontal speed (LOCO's read-back: what the root really did) */
@@ -597,6 +609,213 @@ static void jv_scan(double t, uintptr_t pl, int cm)
 	      n[SOMVR_JPV_NOARC], fr, buf);
 }
 
+/* build 24 (som-b24-move, docs/re-xr-pipeline.md 101): `vault grid [R] [STEP]` and `vault edges [R] [STEP]` - test aids
+ * that survey the ground round Talion for the real places the moves need, a few points a frame (the casts spread out):
+ *   grid  every STEP cm within R: the floor there (a ray down), then the vault's own plan (somvr_jp_vault_find, standing)
+ *         in 8 headings - each obstacle found once (its face point), `VAULT grid find ...`; walls 121-160 cm counted;
+ *   edges every STEP cm within R: the top there, in 8 headings a drop of 150+ cm within 60 cm (its edge found by 5 cm
+ *         rays), the face under it from 150 cm out at 20/40/60/100/150 cm under the top: an OVERHANG (the face 15+ cm
+ *         behind the lip within 60 cm under it, as the climb's am_oh_test), a WALL (the face within 30 cm of the lip all
+ *         the way: down over's), else a SLOPE; the drop under it, the room on the top; `VAULT edge ...`.
+ * Each find once (within 150 cm of one already logged, the same way); at most SV_MAX. The answers go to the driver. */
+#define SV_MAX 48
+#define SV_PTS_FRAME 16   /* at most this many points a frame ... */
+#define SV_CASTS_FRAME 500 /* ... and about this many casts */
+static struct {
+	int kind;              /* 0 none, 1 grid, 2 edges */
+	float cx, cy, cz;      /* the centre (Talion's root at the word) */
+	int r, step, side, i;  /* the radius, the spacing, the points a side, the cursor */
+	double t0;
+	int pts, nf, dup, held;
+	sv_vec3 fp[SV_MAX], fu[SV_MAX];
+	int why[SOMVR_JPV_N], high_near;
+	int ek[4];             /* edges: overhangs, walls, slopes, inside */
+	uint64_t casts0;
+} g_sv;
+static int g_sv_lines;
+static int sv_log_ok(void) { return g_sv_lines++ < 600; }
+
+static int sv_cast(sv_vec3 from, sv_vec3 dir, float len, somvr_climb_hit *h)
+{
+	memset(h, 0, sizeof *h);
+	return cl_ray(NULL, -1, from, dir, len, h);
+}
+static int sv_seen(sv_vec3 p, sv_vec3 u)
+{
+	for (int j = 0; j < g_sv.nf; j++)
+		if (hypotf(p.x - g_sv.fp[j].x, p.z - g_sv.fp[j].z) < 150.0f && fabsf(p.y - g_sv.fp[j].y) < 100.0f &&
+		    u.x * g_sv.fu[j].x + u.z * g_sv.fu[j].z > 0.7f)
+			return 1;
+	return 0;
+}
+static void sv_keep(sv_vec3 p, sv_vec3 u)
+{
+	if (g_sv.nf < SV_MAX)
+		g_sv.fp[g_sv.nf] = p, g_sv.fu[g_sv.nf] = u, g_sv.nf++;
+}
+/* the floor (or top) at x,z: the first hit down from 4 m over the centre's root; 0 = none or a body */
+static int sv_floor(float x, float z, float *fy)
+{
+	somvr_climb_hit h;
+	if (!sv_cast((sv_vec3){ x, g_sv.cy + 400.0f, z }, (sv_vec3){ 0, -1, 0 }, 1400.0f, &h) || !h.hit || h.chr)
+		return 0;
+	*fy = h.point.y;
+	return 1;
+}
+static void sv_point_grid(double t, uintptr_t pm, float x, float z)
+{
+	float fy;
+	somvr_climb_hit h;
+	if (!sv_floor(x, z, &fy))
+		return;
+	if (sv_cast((sv_vec3){ x, fy + 10.0f, z }, (sv_vec3){ 0, 1, 0 }, 180.0f, &h) && h.hit) { /* no room to stand */
+		g_sv.held++;
+		return;
+	}
+	somvr_jp_cfg c = g_jp.cfg;
+	c.v_reach_cm = c.v_reach_max_cm = 0.5f * (float)g_sv.step + 100.0f;
+	sv_vec3 root = { x, fy + c.foot_cm, z };
+	for (int k = 0; k < 8; k++) {
+		float a = k * 45.0f * 0.01745329f;
+		sv_vec3 d = { sinf(a), 0, cosf(a) };
+		somvr_jp_vplan p;
+		int ok = somvr_jp_vault_find(&c, cl_ray, NULL, root, fy, d, 0, jp_gravity(pm), &p);
+		g_sv.why[p.why]++;
+		if (!ok && p.why == SOMVR_JPV_HIGH && p.top_cm > c.v_max_cm && p.top_cm <= 160.0f)
+			g_sv.high_near++;
+		if (!ok && !(p.why == SOMVR_JPV_HIGH && p.top_cm > c.v_max_cm && p.top_cm <= 160.0f))
+			continue;
+		sv_vec3 f = { x + d.x * p.face_cm, fy, z + d.z * p.face_cm };
+		if (sv_seen(f, d)) {
+			g_sv.dup++;
+			continue;
+		}
+		sv_keep(f, d);
+		if (sv_log_ok())
+			logf_("VAULT grid t=%.3f %s: from %.0f %.0f %.0f heading %d: %s the %.0f cm top %.0f cm ahead (%.0f deep), the "
+			      "face at %.0f,%.0f; %s%.0f,%.0f,%.0f (%+.0f cm)", t, ok ? "find" : "near", x, root.y, z, k * 45,
+			      ok ? (p.kind == SOMVR_JPO_ONTO ? "ONTO" : "OVER") : "too high:", p.top_cm, p.face_cm, p.depth_cm, f.x,
+			      f.z, ok ? "the ring at " : "-", ok ? p.land.x : 0, ok ? p.land.y : 0, ok ? p.land.z : 0,
+			      ok ? p.land.y - fy : 0);
+	}
+}
+/* the face's offset out along u from the edge (cm, + = out past the lip) at y: a ray in from 150 cm out; -60 = none */
+static float sv_face(sv_vec3 e, sv_vec3 u, float y)
+{
+	somvr_climb_hit h;
+	sv_vec3 f = { e.x + u.x * 150.0f, y, e.z + u.z * 150.0f };
+	if (!sv_cast(f, (sv_vec3){ -u.x, 0, -u.z }, 210.0f, &h) || !h.hit)
+		return -60.0f;
+	return 150.0f - h.dist;
+}
+static void sv_point_edges(double t, float x, float z)
+{
+	float ty;
+	somvr_climb_hit h;
+	if (!sv_floor(x, z, &ty))
+		return;
+	if (sv_cast((sv_vec3){ x, ty + 10.0f, z }, (sv_vec3){ 0, 1, 0 }, 180.0f, &h) && h.hit) {
+		g_sv.ek[3]++;
+		return;
+	}
+	for (int k = 0; k < 8; k++) {
+		float a = k * 45.0f * 0.01745329f;
+		sv_vec3 u = { sinf(a), 0, cosf(a) };
+		/* a drop within 60 cm: nothing 150 cm under the top 60 cm out */
+		if (!sv_cast((sv_vec3){ x + u.x * 60.0f, ty + 30.0f, z + u.z * 60.0f }, (sv_vec3){ 0, -1, 0 }, 180.0f, &h) || h.hit)
+			continue;
+		float last = 0;
+		for (float d = 5; d <= 60; d += 5) {
+			if (!sv_cast((sv_vec3){ x + u.x * d, ty + 30.0f, z + u.z * d }, (sv_vec3){ 0, -1, 0 }, 55.0f, &h))
+				return;
+			if (!h.hit || fabsf(h.point.y - ty) > 25.0f)
+				break;
+			last = d;
+		}
+		sv_vec3 e = { x + u.x * (last + 2.5f), ty, z + u.z * (last + 2.5f) };
+		if (sv_seen(e, u)) {
+			g_sv.dup++;
+			continue;
+		}
+		static const float dep[5] = { 20, 40, 60, 100, 150 };
+		float fo[5], fo_max = -1e9f, fo_min = 1e9f, under = 1e9f;
+		for (int j = 0; j < 5; j++) {
+			fo[j] = sv_face(e, u, ty - dep[j]);
+			fo_max = fmaxf(fo_max, fo[j]), fo_min = fminf(fo_min, fo[j]);
+			if (j < 3)
+				under = fminf(under, fo[j]);
+		}
+		/* the floor under it, past the face */
+		float out = fmaxf(fo_max, 0) + 50.0f, drop = -1;
+		if (sv_cast((sv_vec3){ e.x + u.x * out, ty - 10.0f, e.z + u.z * out }, (sv_vec3){ 0, -1, 0 }, 3000.0f, &h) && h.hit)
+			drop = ty - h.point.y;
+		/* the top's room (its own point had it) and a landing 40 cm in from the lip */
+		int room = !(sv_cast((sv_vec3){ e.x - u.x * 40.0f, ty + 10.0f, e.z - u.z * 40.0f }, (sv_vec3){ 0, 1, 0 }, 180.0f, &h) &&
+			     h.hit);
+		int kind = under <= -15.0f ? 0 : (fo_max - fminf(fo_min, 0) <= 30.0f && fo_max <= 30.0f) ? 1 : 2;
+		g_sv.ek[kind]++;
+		sv_keep(e, u);
+		if (sv_log_ok())
+			logf_("VAULT edge t=%.3f %s: the lip at %.0f %.0f %.0f heading %d (out); the face from the lip at 20/40/60/100/150 "
+			      "cm under: %+.0f %+.0f %+.0f %+.0f %+.0f cm; the drop %.0f cm; room on the top %d; stand at %.0f %.0f %.0f",
+			      t, kind == 0 ? "OVERHANG" : kind == 1 ? "WALL" : "SLOPE", e.x, e.y, e.z, k * 45, fo[0], fo[1], fo[2],
+			      fo[3], fo[4], drop, room, x, ty + g_jp.cfg.foot_cm, z);
+	}
+}
+static void sv_start(double t, uintptr_t pl, int kind, int r, int step)
+{
+	uintptr_t pm = 0, obj = 0;
+	float p[3];
+	if (!pl || !player_objs(pl, &pm, &obj) || !peek(obj + OBJ_POS, p, sizeof p) || !vec_ok(p, 1e7f)) {
+		logf_("VAULT survey t=%.3f: no player", t);
+		return;
+	}
+	memset(&g_sv, 0, sizeof g_sv);
+	g_sv.kind = kind, g_sv.cx = p[0], g_sv.cy = p[1], g_sv.cz = p[2], g_sv.r = r, g_sv.step = step;
+	g_sv.side = 2 * (r / step) + 1, g_sv.t0 = t, g_sv.casts0 = g_cl.casts;
+	logf_("VAULT survey t=%.3f %s: round %.0f %.0f %.0f, %d cm, every %d cm (%d points a side)", t,
+	      kind == 1 ? "grid" : "edges", p[0], p[1], p[2], r, step, g_sv.side);
+}
+static void sv_frame(double t, uintptr_t pl)
+{
+	int rq = atomic_exchange(&g_sv_req, 0);
+	if (rq)
+		sv_start(t, pl, rq, atomic_load(&g_sv_req_r), atomic_load(&g_sv_req_step));
+	if (!g_sv.kind)
+		return;
+	uintptr_t pm = 0, obj = 0;
+	if (!player_objs(pl, &pm, &obj))
+		return;
+	int n = g_sv.side * g_sv.side, done = 0;
+	uint64_t c0 = g_cl.casts;
+	while (g_sv.i < n && done < SV_PTS_FRAME && g_cl.casts - c0 < SV_CASTS_FRAME) {
+		int ix = g_sv.i % g_sv.side, iz = g_sv.i / g_sv.side;
+		g_sv.i++;
+		float dx = (float)((ix - g_sv.side / 2) * g_sv.step), dz = (float)((iz - g_sv.side / 2) * g_sv.step);
+		if (dx * dx + dz * dz > (float)g_sv.r * (float)g_sv.r)
+			continue;
+		g_sv.pts++, done++;
+		if (g_sv.kind == 1)
+			sv_point_grid(t, pm, g_sv.cx + dx, g_sv.cz + dz);
+		else
+			sv_point_edges(t, g_sv.cx + dx, g_sv.cz + dz);
+	}
+	if (g_sv.i < n)
+		return;
+	if (g_sv.kind == 1)
+		logf_("VAULT survey t=%.3f grid done: %d points in %.1f s (%llu casts), found %d (again %d; no room to stand %d); "
+		      "the plans: ok %d, nothing %d, steps %d, too high %d (121-160 cm: %d), no top %d, no landing %d, no room %d, no "
+		      "way %d, no arc %d, slopes %d", t, g_sv.pts, t - g_sv.t0, (unsigned long long)(g_cl.casts - g_sv.casts0),
+		      g_sv.nf, g_sv.dup, g_sv.held, g_sv.why[0], g_sv.why[SOMVR_JPV_NONE], g_sv.why[SOMVR_JPV_LOW],
+		      g_sv.why[SOMVR_JPV_HIGH], g_sv.high_near, g_sv.why[SOMVR_JPV_NOTOP], g_sv.why[SOMVR_JPV_NOFLOOR],
+		      g_sv.why[SOMVR_JPV_NOROOM], g_sv.why[SOMVR_JPV_NOWAY], g_sv.why[SOMVR_JPV_NOARC], g_sv.why[SOMVR_JPV_SLOPE]);
+	else
+		logf_("VAULT survey t=%.3f edges done: %d points in %.1f s (%llu casts): overhangs %d, walls %d, slopes %d (again %d; "
+		      "no room to stand %d)", t, g_sv.pts, t - g_sv.t0, (unsigned long long)(g_cl.casts - g_sv.casts0), g_sv.ek[0],
+		      g_sv.ek[1], g_sv.ek[2], g_sv.dup, g_sv.ek[3]);
+	g_sv.kind = 0;
+}
+
 /* H4, a stereo frame (after ws_frame): the scan word, the vault's ring, the view's path while in the air */
 static void jv_frame(uintptr_t pl, int stereo)
 {
@@ -610,11 +829,13 @@ static void jv_frame(uintptr_t pl, int stereo)
 	int scan = atomic_exchange(&g_jp.req_scan, 0);
 	if (scan > 0)
 		jv_scan(t, pl, scan);
+	sv_frame(t, pl);
 	if (atomic_exchange(&g_jp.req_state, 0))
 		logf_("JUMP state t=%.3f: jump %d vault %d stock %d; %s; the ring %d; in the air %s (%.2f s); the body %.0f cm/s; A ours "
-		      "%d; presses %llu, take-offs %llu; the head's heading %.1f", t, g_jp.cfg.jump, g_jp.cfg.vault, g_jp.stock,
-		      jp_why_not(t) ? jp_why_not(t) : "can go", g_jp.ring, somvr_jp_kind_name(g_jp.s.kind), g_jp.s.t, jp_speed(),
-		      g_jp.a_owned, (unsigned long long)g_jp.presses, (unsigned long long)g_jp.takeoffs, g_inp.hv * 57.29578f);
+		      "%d; presses %llu, take-offs %llu; the head's heading %.1f; the stick's %.1f", t, g_jp.cfg.jump, g_jp.cfg.vault,
+		      g_jp.stock, jp_why_not(t) ? jp_why_not(t) : "can go", g_jp.ring, somvr_jp_kind_name(g_jp.s.kind), g_jp.s.t,
+		      jp_speed(), g_jp.a_owned, (unsigned long long)g_jp.presses, (unsigned long long)g_jp.takeoffs,
+		      g_inp.hv * 57.29578f, g_inp.hc * 57.29578f);
 	if (g_jp.climb_first && t - g_jp.climb_first_t > JP_PASS_S) /* the climb took the press (its edge, its ring) */
 		g_jp.climb_first = 0, g_jp.climb_kept++;
 	/* the view's path while in the air and just after: the anchor's eye point per frame, the base's yaw */
@@ -675,7 +896,7 @@ static void jp_end_log(void)
 		return;
 	const somvr_jp *s = &g_jp.s;
 	logf_("JUMP END build 22: presses %llu (the climb first %llu: passed %llu, kept %llu), refused %llu, take-offs %llu "
-	      "(jumps %llu, vaults %llu; the vault's plan gone at the press %llu); ends: landed %llu, lost %llu, caught by the "
+	      "(jumps %llu, vaults %llu; the vault's plan gone at the press %llu; stopped at the ring's distance %llu); ends: landed %llu, lost %llu, caught by the "
 	      "climb %llu, the game's fall %llu, stopped %llu; ceilings %llu, brakes %llu (settle misses %llu); the highest rise "
 	      "%.1f cm, the longest %.2f s, the fastest landing %.0f cm/s; the vault's rings %llu (%llu frames; %llu finds, %llu "
 	      "casts), the farthest from its ring %.1f cm; ticks %llu; gravity writes %llu (the game set it again %llu); the rise "
@@ -683,6 +904,7 @@ static void jp_end_log(void)
 	      (unsigned long long)g_jp.presses, (unsigned long long)g_jp.climb_firsts, (unsigned long long)g_jp.climb_passes,
 	      (unsigned long long)g_jp.climb_kept, (unsigned long long)g_jp.refused, (unsigned long long)g_jp.takeoffs,
 	      (unsigned long long)s->n_jump, (unsigned long long)s->n_vault, (unsigned long long)g_jp.vault_fallbacks,
+	      (unsigned long long)s->n_ring_stop,
 	      (unsigned long long)s->n_landed, (unsigned long long)s->n_lost, (unsigned long long)s->n_climb,
 	      (unsigned long long)s->n_fall, (unsigned long long)s->n_stop, (unsigned long long)s->n_ceiling,
 	      (unsigned long long)s->n_brakes, (unsigned long long)s->n_settle_miss, s->max_rise_cm, s->max_air_s, s->max_land_cms,

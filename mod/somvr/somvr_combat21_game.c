@@ -422,6 +422,7 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		g_gc.mode = m, logf_("VERBS cue t=%.3f mode %s (the test word)", t, g_gc_w[m]);
 	if (g_vb.mode != VB_ON || !pc || !pcomb || !g_vb.ok_tree)
 		return;
+	br_frame(pcomb, pc, o, n, t); /* build 23, SOMVR_VERBS_BRAND: the game's brand offer for the orc the hand is on */
 	char a[96], s[96], an[96];
 	const char *why;
 	if (atomic_exchange(&g_gc.req_probe, 0)) { /* the data: what the game's selection offers for each near orc */

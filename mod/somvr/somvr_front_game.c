@@ -846,6 +846,7 @@ __attribute__((used)) uint64_t somvr_w_ffcam_b(uintptr_t pl, uintptr_t cp) { ret
 __attribute__((used)) uint64_t somvr_w_ffdmg(uintptr_t ds, uintptr_t hobj)
 {
 	double t = cb_now();
+	kp_dmg(ds, hobj); /* build 24, SOMVR_CAPTAIN_DAMAGE: our cut on a captain (somvr_captain_game.c) */
 	pthread_mutex_lock(&g_ff_mu);
 	g_ff.n.dmg_calls++;
 	float a = NAN;
@@ -1379,7 +1380,7 @@ static void ff_start(int *bad)
 	}
 	g_ff.on_cam[0] = g_ff.ok[FFS_CAM_A] && bo_patch_call(&g_ff_sites[FFS_CAM_A], (void *)somvr_w_ffcam_a);
 	g_ff.on_cam[1] = g_ff.ok[FFS_CAM_B] && bo_patch_call(&g_ff_sites[FFS_CAM_B], (void *)somvr_w_ffcam_b);
-	if (g_ff.ok[FFS_DMG_ATK] && (g_ff.damage < 1 || mode == FF_LOG))
+	if (g_ff.ok[FFS_DMG_ATK] && (g_ff.damage < 1 || mode == FF_LOG || kp_dmg_want())) /* build 24: a captain's damage too */
 		g_ff.on_dmg = bo_patch_call(&g_ff_sites[FFS_DMG_ATK], (void *)somvr_w_ffdmg);
 	if (g_ff.camcopy && !(g_ff.on_cam[0] || g_ff.on_cam[1]))
 		g_ff.camcopy = 0;

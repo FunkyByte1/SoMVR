@@ -925,6 +925,23 @@ static int g_rt_eye = -1;
 static uint64_t g_rt_frame;
 static uintptr_t g_rt_target;
 
+/* build 24 (docs/re-xr-pipeline.md 100): SOMVR_EYE_MATCH=pass|hash (default pass; word "eyematch pass|hash|state").
+ * An eye's pass is open from its H3 match to its end at H8. pass: a view with the open eye's camera inside it (the
+ * game's overlay views - COverlayFX's FUN_02d7a700 sets up one per eye at low health - or any view with that camera)
+ * is a repeat of that eye's projection and never takes a queued entry; hash: build 23's match, the first queued entry
+ * with the view's hash (with `fx eyesame 1`, or a head that did not move, eye 1's or the next frame's entry - eye 0's
+ * end then copied as the wrong eye or frame: "the tag says eyes 0x2", the layer's stale frame). Render thread.
+ * SOMVR_EYEDROP_TEST (the word "eyedrop E N"): H9 leaves eye E's bit out of the next N stereo tags - the fault itself,
+ * for the layer's stale-frame net (SOMVR_XR_STALE). */
+static struct {
+	_Atomic int pass;                 /* SOMVR_EYE_MATCH: 1 pass, 0 hash */
+	_Atomic uint64_t kept, stolen;    /* in-pass views with a queued entry of their hash: kept (pass) / taken (hash) */
+	_Atomic uint64_t inpass;          /* in-pass views (repeats inside the open pass) */
+	_Atomic int drop_eye;             /* the word "eyedrop E N": the eye whose bit H9 leaves out ... */
+	_Atomic int64_t drop_n;           /* ... for this many more stereo tags */
+	_Atomic uint64_t dropped;
+} g_em = { .pass = 1, .drop_eye = -1 };
+
 /* render thread: layout B's eye textures (H8 makes them, copies into them; H9 publishes their VkImages) */
 static struct {
 	int state;                /* 0 not made yet, 1 made, -1 off for the rest of the run (logged once) */
@@ -1168,6 +1185,7 @@ static void tt_fade(void);  /* SOMVR_HEAD_TETHER: a back asked by the last frame
 static void tt_measure(void); /* ... the head off the body: the measure and the fade (H4's stereo path, after the eyes) */
 static int pr_down_start(sv_vec3 to, double t, int quick);
 static int pr_down_teleported(void);
+static int pr_trip_teleported(void);
 static int lo_walk_blocked(double t);           /* SOMVR_CLIMB_DESCENT's edge cue: LOCO's walk stopped (its region) */
 static int game_paused(void); /* the game timer's pause (the input region) */
 /* SOMVR_BOW=1 (its region follows the climb's) */
@@ -1374,6 +1392,14 @@ static void c21_end_log(void);
 static void gc_glow_add(struct th_glow *gl, int *ng);
 static float gc_glow_size_m(void);
 static int ssw_bow_put(double t);
+/* build 23 (somvr_brand_game.c, included last; docs/re-xr-pipeline.md 97): SOMVR_VERBS_BRAND - the brand by the hand */
+struct cb_orc;
+static void br_start(int *bad);
+static void br_end_log(void);
+static int br_press(uintptr_t c, double t);
+static void br_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, double t);
+static const char *br_word(const char *w);
+static int br_unblock_now(double t);
 static int ssw_take(double t);
 static void ssw_took(double t, const char *how);
 static const char *gc_word(const char *w);
@@ -1433,6 +1459,14 @@ static int kp_no_cheat(uintptr_t c, const char *what);
 struct kp_floor { uintptr_t own; float was; int on; };
 static void kp_floor_on(uintptr_t c, int fk, const char *what, double t, struct kp_floor *f);
 static void kp_floor_off(const struct kp_floor *f);
+/* build 24 (SOMVR_CAPTAIN_DAMAGE): our sword's hit on a captain - its damage through the game's own DamageStruct
+ * (FRONT's FR_DMG_ATK hook) times the cut's multiplier */
+static int kp_dmg_want(void);
+static void kp_hit_pre(uintptr_t c, uintptr_t hobj, int tier, float k, double t);
+static void kp_hit_post(uintptr_t c, double t);
+static void kp_dmg(uintptr_t ds, uintptr_t hobj);
+/* build 24 (SOMVR_CAPTAIN_STEALTH_IMMUNE=turn): a stealth thrust into a captain immune to it is turned - 1 = taken */
+static int kp_stealth_turn(uintptr_t c, const float E[3], double t);
 /* SOMVR_PRACTICE (somvr_practice_game.c, included after the finishers') */
 static const struct site_spec *g_pr_sites; /* its PRACTICE_SITES (defined there; selftest: stand-ins) */
 static void pr_start(const struct site_spec *sites, int *bad);
@@ -1542,6 +1576,7 @@ static const char *cp_word(const char *w);
 static const struct site_spec *g_rd_sites; /* its RENDER_SITES (defined there; selftest: stand-ins) */
 static void rd_start(const struct site_spec *sites, int *bad);
 static void rd_end_log(void);
+static void rd_ov_eyes(int in_eyes); /* build 24, SOMVR_FLATFX's overlay: H4 around its eye calls */
 static const char *rd_word(const char *w);
 static void rd_h1(void *sp);
 static int rd_eye_src(int e);
@@ -1880,6 +1915,18 @@ __attribute__((used)) void somvr_h2_c(struct regs *r)
 	      xf[6], fov[0], fov[1], prc[0], prc[1], prc[2], prc[3], xh, (int)(r->rax & 0xff));
 }
 
+/* H3, SOMVR_EYE_MATCH: a view inside the open eye pass with the hash of a queued entry (another eye's or frame's) */
+static void em_queued(int keep, const eye_ent *en)
+{
+	uint64_t k = atomic_fetch_add_explicit(keep ? &g_em.kept : &g_em.stolen, 1, memory_order_relaxed) + 1;
+	if (k <= 3 || k % 600 == 0)
+		logf_("EYEMATCH t=%.6f a view with eye %d's camera inside its open pass (frame %llu): %s eye %u's queued view of "
+		      "frame %llu%s (%llu so far)", mono(), g_rt_eye, (unsigned long long)g_rt_frame,
+		      keep ? "a repeat of the open eye's projection, not" : "TAKEN AS", en->eye, (unsigned long long)en->frame,
+		      keep ? " (SOMVR_EYE_MATCH=pass)" : " (hash: the open pass's end is copied as that eye and frame)",
+		      (unsigned long long)k);
+}
+
 /* H3 (render thread): the eye's exact projection when xf is one of the eye views the game thread queued */
 __attribute__((used)) void somvr_h3_c(struct regs *r)
 {
@@ -1900,10 +1947,19 @@ __attribute__((used)) void somvr_h3_c(struct regs *r)
 		uint64_t w = atomic_load_explicit(&g_fifo_w, memory_order_acquire);
 		if (w - g_fifo_r > FIFO_N)
 			g_fifo_r = w - FIFO_N;
+		/* build 24, SOMVR_EYE_MATCH: a view with the camera of the eye pass that is open (its end not at H8 yet) */
+		int inpass = g_rt_eye >= 0 && g_h3_last.valid && g_h3_last.hash == xh;
+		int keep = inpass && atomic_load_explicit(&g_em.pass, memory_order_relaxed);
+		if (inpass)
+			atomic_fetch_add_explicit(&g_em.inpass, 1, memory_order_relaxed);
 		for (uint64_t i = g_fifo_r; i < w; i++) {
 			eye_ent en = g_fifo[i % FIFO_N];
 			if (en.hash != xh)
 				continue;
+			if (inpass)
+				em_queued(keep, &en); /* the entry build 23 took here: kept for its own pass (pass) or taken (hash) */
+			if (keep)
+				break;
 			tan_half[0] = en.proj.tx, tan_half[1] = en.proj.ty;
 			center[0] = en.proj.cx, center[1] = en.proj.cy;
 			somvr_rec *rc = somvr_rec_slot(&g_sh, en.frame);
@@ -2040,6 +2096,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	unsigned char snap[FOLIAGE_LEN], cut = *((volatile unsigned char *)gm + 0x20);
 	memcpy(snap, (const void *)g_foliage, sizeof snap);
 	g_eye = 0;
+	rd_ov_eyes(1); /* build 24, SOMVR_FLATFX's overlay: COverlayFX's draws out of both eyes */
 	f(gm, rt, org, pl, ef, first);
 	double t2 = mono();
 	memcpy((void *)g_foliage, snap, sizeof snap);
@@ -2048,6 +2105,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	r->rax = f(gm, rt, org, pl, ef, 0);
 	double t3 = mono();
 	g_eye = -1;
+	rd_ov_eyes(0);
 	if (g_fr.have_game)
 		memcpy((char *)gm + GM_LAST_VIEW, &g_fr.game, sizeof g_fr.game); /* the centre view, not eye 1's */
 	tt_measure(); /* SOMVR_HEAD_TETHER: the head off the body where the follow cannot take him (this record; the larger one) */
@@ -2132,6 +2190,17 @@ __attribute__((used)) void somvr_h9_c(struct regs *r)
 		for (int e = 0; e < 2; e++)
 			eyes |= (uint32_t)(g_et.copied[e] == frame) << e;
 		gen = g_et.pub.gen;
+		int de = atomic_load_explicit(&g_em.drop_eye, memory_order_relaxed);
+		if (de >= 0 && atomic_fetch_sub_explicit(&g_em.drop_n, 1, memory_order_relaxed) > 0) {
+			eyes &= ~(1u << de); /* build 24, the word "eyedrop E N": the fault (the layer's stale-frame net) */
+			if (atomic_fetch_add_explicit(&g_em.dropped, 1, memory_order_relaxed) < 3)
+				logf_("EYEDROP t=%.6f frame %llu: eye %d's bit left out of the tag (eyes %#x)", mono(),
+				      (unsigned long long)frame, de, eyes);
+		} else if (de >= 0) {
+			atomic_store_explicit(&g_em.drop_eye, -1, memory_order_relaxed);
+			logf_("EYEDROP t=%.6f frame %llu: over (%llu tag(s) without an eye)", mono(), (unsigned long long)frame,
+			      (unsigned long long)atomic_load(&g_em.dropped));
+		}
 	}
 	/* SOMVR_HUD: somvr_hud's entry for the tag pushed next (this thread is the only pusher), written before it */
 	uint32_t hud = hud_tag_present(atomic_load_explicit(&g_sh.tag_seq, memory_order_relaxed) + 1, frame);
@@ -3966,8 +4035,10 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 	float brk_was = NAN;
 	int brk = into_shield && py_break_pre(o->c, &brk_was); /* SOMVR_PARRY_SHIELD=break: the riposte breaks it */
 	double t0 = mono();
+	kp_hit_pre(o->c, o->hobj, tier, g_cb.hit_k, t); /* build 24, SOMVR_CAPTAIN_DAMAGE: a committed cut on a captain */
 	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, srec ? srec : rec, 0);
 	double t1 = mono();
+	kp_hit_post(o->c, t);
 	ff_ans_hit(o->c, o->hobj, pc, t); /* build 19: a berserker's answer to this cut (SOMVR_CROWD_ANSWER_MS) */
 	py_break_post(o->c, brk, brk_was, hp0, cb_health(o->c), t);
 	kx_hit_back(dslot, dwas);
@@ -4802,6 +4873,10 @@ static void in_apply(const sc_tick_out *o)
 	for (int k = 0; k < nus; k++)
 		if (usc[k] > 0 && usc[k] < SC_NCMD)
 			in_want_add(w, &nw, usc[k], g_inp.first[usc[k]], 1.0f, 1, 1, 0);
+	int ubc = br_unblock_now(cb_now()); /* build 23, SOMVR_VERBS_BRAND: the game's blocking command of ours let go for */
+	for (int j = 0; j < nw && ubc; j++)  /* a brand's press (its B input has IgnoreIfBlocking) */
+		if (w[j].cmd == ubc)
+			w[j].on = 0, w[j].value = 0, w[j].event = 0;
 	if (g_inp.ctx != SC_CTX_MENU) /* the deny list's records read 0/off in the world (re-xr-input.md 3.6) */
 		for (int c = 0; c < SC_NCMD; c++)
 			if (g_inp.rec[c] && sc_denied(c, g_inp.ctx) && c != g_inp.allow_cmd)
@@ -9771,6 +9846,8 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 							      : "the blink's teleport (SOMVR_CLIMB_DESCENT)", g_cl.pm, 1);
 		g_cl.po_blink = 0, g_cl.dm_blink = 0, g_cl.am_blink = 0;
 	}
+	if (pr_trip_teleported() && g_cl.s.active) /* a trip's teleport: no climb or hang kept at the arrival (101.7) */
+		cl_end(SOMVR_CLIMB_END_OUTSIDE, "a practice trip's teleport", g_cl.pm, 1);
 	in.head_ok = g_fr.head_ok;
 	in.head_y = g_fr.head[1], in.head_x = g_fr.head[0], in.head_z = g_fr.head[2];
 	float rt0[3]; /* the root before the step: push's edge step compares it with the last frame's move */
@@ -15145,9 +15222,10 @@ static void *writer_main(void *arg)
 				} else if (seen && !strncmp(w, "cprompt", 7) && (!w[7] || w[7] == ' ' || w[7] == '\n')) {
 					what = cp_word(w); /* build 18, SOMVR_COUNTER_ICON: "cprompt game|hide|state" */
 				} else if (seen && (!strncmp(w, "flatfx", 6) || !strncmp(w, "fx ", 3) || !strncmp(w, "fx\n", 3) ||
-						    !strncmp(w, "curframe", 8) || !strncmp(w, "ktime", 5))) {
+						    !strncmp(w, "curframe", 8) || !strncmp(w, "ktime", 5) ||
+						    !strncmp(w, "eyematch", 8) || !strncmp(w, "eyedrop", 7))) {
 					what = rd_word(w); /* build 21, SOMVR_FLATFX / SOMVR_FX_TEST: "flatfx LIST|state", "fx hide|eyesame";
-							      build 23: "ktime frame|game|state" */
+							      build 23: "ktime frame|game|state"; build 24: "eyematch", "eyedrop" */
 				} else if (seen && !strncmp(w, "slsnd", 5) && (!w[5] || w[5] == ' ' || w[5] == '\n')) {
 					what = gs_word(w); /* build 20, SOMVR_SLOTS_GAMESOUND: "slsnd log|drop|state" */
 				} else if (seen && !strncmp(w, "screens ", 8)) { /* build 22: "screens status|death ..|mouse1 .." */
@@ -16807,6 +16885,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	us_config(&bad);                /* SOMVR_USE: no hook (the input tick's commands, the PP hooks; after pp_start) */
 	vb_start(&bad);                 /* SOMVR_VERBS: the Nemesis verbs (after combat, input and the prompts) */
 	gc_start(&bad);                 /* build 21, SOMVR_VERBS_CUE: the grab cue (after the verbs) */
+	br_start(&bad);                 /* build 23, SOMVR_VERBS_BRAND: the brand by the hand (after the cue) */
 	bz_start(&bad);                 /* build 22, SOMVR_BEASTS: caragors, ghuls, graugs (after the threat) */
 	ssw_start(&bad);                /* build 21, SOMVR_STRIKE_SWORD: the Shadow Strike's sword (after the slots) */
 	kp_start(&bad);                 /* build 22, SOMVR_CAPTAIN: the captain's sites and the config line (after the practice) */
@@ -16987,6 +17066,7 @@ static void somvr_end_logs(const char *why)
 	xc_end_log();  /* SOMVR_EXECUTE */
 	stl_end_log(); /* SOMVR_STEALTH_KILL */
 	vb_end_log();  /* SOMVR_VERBS */
+	br_end_log();  /* build 23: SOMVR_VERBS_BRAND */
 	c21_end_log(); /* build 21: SOMVR_VERBS_CUE, SOMVR_STRIKE_SWORD */
 	bz_end_log();  /* build 22: SOMVR_BEASTS */
 	kp_end_log(); /* build 22: SOMVR_CAPTAIN */
@@ -20432,6 +20512,7 @@ static void df_clank_fx(double t)
 #include "somvr_beasts_game.c" /* build 22: SOMVR_BEASTS - caragors, ghuls, graugs (docs/re-xr-pipeline.md 92) */
 #include "somvr_captain_game.c" /* build 22: SOMVR_CAPTAIN, a Nemesis captain in VR (docs/re-xr-pipeline.md 88) */
 #include "somvr_jump_game.c" /* build 22: SOMVR_JUMP / SOMVR_VAULT, the jump and the vault (docs/re-xr-pipeline.md 91) */
+#include "somvr_brand_game.c" /* build 23: SOMVR_VERBS_BRAND, the brand by the hand (docs/re-xr-pipeline.md 97) */
 static int tk_holding(void) { return g_tk.on && g_tk.active; } /* SOMVR_HEAD_TETHER: not measured while held */
 
 #ifndef SOMVR_SELFTEST

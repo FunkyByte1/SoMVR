@@ -14,6 +14,9 @@
  *   SOMVR_BEASTS_TRACE=N (0): headless proof - N lines at most of the view's per-frame path (the frame's base, which
  *     the body moments hold, Talion's root, the beast) from a beast's attack at Talion until 3 s after it.
  *   test word `beasts skills [SUBSTR]`: the save's Inventory/Skill/Skills records with the owned bit (riding, 92.4).
+ *   test word `beasts grant NAME` (SOMVR_HANDS_TEST only; build 23, som-b23-brand): that record's owned bit set in
+ *     Talion's inventory in memory (e.g. PSS_Instant_Brand, the combat brand's skill: re-xr-pipeline.md 97) - a test
+ *     aid for the run's own session (what the game saves goes to the run's save copy only).
  *
  * BEASTS_SITES_BEGIN (read only, never patched; checked at start with SOMVR_BEASTS; counted on its own by
  * check_sites.py): BZ_SKILL_CAT FUN_0216d900 (the category's registration: its rip load proves the global 0x4b56640);
@@ -78,6 +81,7 @@ static struct {
 	struct bz_one b[BZ_MAX];
 	_Atomic int req_skills;
 	char skill_sub[48];
+	char grant[48]; /* build 23: `beasts grant NAME` (a test aid) */
 	uintptr_t t_sync[2], t_atk, t_strug[2]; /* Talion's Combat +0x188/+0x190, his attack, PlayerCombat's struggles */
 	uintptr_t mount;                        /* the Player's mount HOBJECT (P+0x1d8) last frame */
 	double trace_until;
@@ -469,9 +473,17 @@ static void bz_skills(uintptr_t pc, double t)
 			word = u >> 5, bit = u & 31;
 		}
 		int have = word < words && peek(vb + (uintptr_t)word * 4, &v, 4) && (v >> bit & 1);
-		owned += have;
 		char nm[80];
 		fb_rec_name(rec, nm, sizeof nm);
+		if (g_bz.grant[0] && !strcmp(nm, g_bz.grant) && g_bd.test && word < words) { /* build 23: a test aid */
+			uint32_t v1 = v | 1u << bit;
+			int ok = have || arm_poke(vb + (uintptr_t)word * 4, &v1, sizeof v1);
+			logf_("BEASTS t=%.3f grant: '%s' (word %u bit %u) %s (a test aid: `beasts grant`)", t, nm, word, bit,
+			      have ? "owned already" : ok ? "now owned" : "NOT written");
+			have = ok;
+			g_bz.grant[0] = 0;
+		}
+		owned += have;
 		if (g_bz.skill_sub[0] && !strcasestr(nm, g_bz.skill_sub))
 			continue;
 		shown++;
@@ -502,6 +514,20 @@ static const char *bz_word(const char *w)
 		atomic_store(&g_bz.req_skills, 1);
 		return "beasts skills";
 	}
+	if (!strncmp(w, "grant ", 6)) { /* build 23 (som-b23-brand): a skill's owned bit set (SOMVR_HANDS_TEST) */
+		if (!g_bd.test)
+			return "beasts grant (SOMVR_HANDS_TEST is off: ignored)";
+		const char *s = w + 6;
+		while (*s == ' ')
+			s++;
+		size_t l = strcspn(s, " \t\r\n");
+		if (!l || l >= sizeof g_bz.grant)
+			return "beasts grant (NAME: ignored)";
+		memcpy(g_bz.grant, s, l), g_bz.grant[l] = 0;
+		snprintf(g_bz.skill_sub, sizeof g_bz.skill_sub, "%s", g_bz.grant);
+		atomic_store(&g_bz.req_skills, 1);
+		return "beasts grant (a test aid: that skill's owned bit set in memory)";
+	}
 	if (!strcmp(w, "status")) {
 		logf_("BEASTS status: seen %llu, attacks %llu (at Talion %llu), sweeps %llu contacts %llu, chain frames %llu, "
 		      "facing frames %llu, trace %d/%d", (unsigned long long)g_bz.seen, (unsigned long long)g_bz.attacks,
@@ -509,7 +535,7 @@ static const char *bz_word(const char *w)
 		      (unsigned long long)g_bz.chain_frames, (unsigned long long)g_bz.fb_frames, g_bz.trace_lines, g_bz.trace_max);
 		return "beasts status";
 	}
-	return "beasts (not skills|status: ignored)";
+	return "beasts (not skills|grant|status: ignored)";
 }
 
 static void bz_end_log(void)

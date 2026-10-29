@@ -3,8 +3,15 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 23 - what to test
-- New since build 20c, most important first.
+Build 24 - what to test
+- New since build 20c, most important first. Build 24's own first, then 21-23's.
+- Brand: Queen of the Shore, at the Sea Fort. Close "Ability Unlocked: Brand" first. Crouch and walk up behind an archer until you stop, put your open left hand on his head, pull the left trigger. Brand six unseen to go on.
+- Captain fight: Practice > Captain. Fast, real cuts take big bites; taps barely scratch him. About a dozen good cuts and an execution.
+- After a captain's kill: Pause > Sauron's Army shows his body in his slot; his rune lies by him (B).
+- Low health: no blood drops or red wash in your eyes, only a faint red glow at the edges.
+- Vault: in the ruin by the campfire, walk at a low wall or block. A gold ring shows past it or on top: press A.
+- Climb down: on a wall top, reach down over the edge and grip. You glide over and hang; climb down or hold A to drop.
+- Jump at a wall and grab its top as you rise: the climb catches you.
 - Fire: by a campfire or torch, close one eye, then the other. The flame should look the same in both and sit at its depth.
 - Wraith vision: hold Y and look up. The clouds should be one calm sky far away, not smoke in your face.
 - Stealth kill: sneak behind an orc and stab hard, point first, deep into his back or neck. A touch or a slow push only makes him turn. The sword sticks as he slumps; pull it out.
@@ -16,7 +23,6 @@ Build 23 - what to test
 - Shadow Strike: you land with the sword in your hand.
 - Jump: press A while moving.
 - Drop: hold A over a drop. The white ring empties; at the flash and tick, let go.
-- Climb down: on foot at a ledge, grip with a hand reaching down past the edge. You glide over and hang; climb down.
 - Overhang: hold its edge from below. If a gold ring shows on top, press A.
 - Bow sight: small and white; blue on an orc.
 - XP and subtitles show just under your gaze and stay put.

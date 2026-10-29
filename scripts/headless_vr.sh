@@ -7,7 +7,9 @@
 #   meadow; with the launch below), HEADLESS_HOLD (seconds, default 900), SOMVR_EXTRA ("K=V K=V": more or overriding
 #   --game-env), HEADLESS_LAUNCH=old (the build-5 launch: the pre-game window, the distro box and the logo movies, for
 #   somvr-vr5.cmd), HEADLESS_UNIT=NAME (boot_check runs in a systemd user unit NAME with KillMode=mixed, as the user's
-#   headset session does: `systemctl --user stop NAME` = the PC window's Stop; this script waits for the unit).
+#   headset session does: `systemctl --user stop NAME` = the PC window's Stop; this script waits for the unit),
+#   HEADLESS_SAVE_FROM=/ABS/RUN/saves/GameData.sav (build 23: the run's save copy is that earlier run's copy - its story
+#   progress - not the real save's; boot_check --save-from).
 #   The launch (build 6): --no-feral-options and the run's own prefs with GameOptionsDialogShouldShow 0,
 #   SkipOSWarnings 1, SpecificationAlerts\LnxDistributionUnsupported 1 and DisableSplashVideos 1 (docs/re-launcher.md);
 #   SOMVR_MARK=1 and SOMVR_QUIT=1 (bug marks, the menu's Quit game). boot_check.sh: the one next to this script.
@@ -59,7 +61,8 @@ LA=(--game-arg --no-feral-options --prefs-set GameOptionsDialogShouldShow=0 --pr
     --prefs-set 'SpecificationAlerts\LnxCPUGovernorSubOptimal=1' --prefs-set DisableSplashVideos=1)
 DCMDS=$HERE/cmds/somvr-vr6.cmd
 [ "${HEADLESS_LAUNCH:-}" = old ] && { LA=(); DCMDS=$HERE/cmds/somvr-vr5.cmd; }
-B=(--steam --save-copy --seed-prefs $SOM/logs/boot-check-20261018-003728/preferences.seeded "${LA[@]}"
+SF=(); [ -n "${HEADLESS_SAVE_FROM:-}" ] && SF=(--save-from "$HEADLESS_SAVE_FROM") # build 23: an earlier run's save copy
+B=(--steam --save-copy "${SF[@]}" --seed-prefs $SOM/logs/boot-check-20261018-003728/preferences.seeded "${LA[@]}"
    --preload $MOD/build/somvr.so "${GE[@]}" --cmds "${HEADLESS_CMDS:-$DCMDS}" --hold "${HEADLESS_HOLD:-900}" --refresh 90)
 "$BC" --dry-run "${B[@]}" > "$R5/dry.txt" 2>&1 || { echo "STOP: dry run failed"; tail -20 "$R5/dry.txt"; exit 1; }
 DRY=$(ls -d $SOM/logs/boot-check-dryrun-* | sort | tail -1)

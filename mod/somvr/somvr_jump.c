@@ -12,6 +12,7 @@ void somvr_jp_cfg_default(somvr_jp_cfg *c)
     c->v_min_cm = 45, c->v_max_cm = 120, c->v_clear_cm = 12, c->v_reach_cm = 100, c->v_reach_s = 0.4f;
     c->v_reach_max_cm = 260, c->v_depth_cm = 100, c->v_in_cm = 45, c->v_past_cm = 55, c->v_drop_cm = 150;
     c->v_cms = 300, c->v_cms_max = 700, c->v_cms_min = 120, c->v_rise_max_cm = 190, c->radius_cm = 35;
+    c->v_ring_stop = 1;
     c->room_cm = 180, c->side_cm = 33;
 }
 
@@ -64,6 +65,7 @@ void somvr_jp_start(somvr_jp *s, int kind, sv_vec3 root, float floor_y, float vy
     s->vh = kind == SOMVR_JPK_VAULT ? (sv_vec3){ vh.x, 0, vh.z } : (sv_vec3){ 0, 0, 0 };
     s->land = land, s->asked_dy = 0, s->asked_h = (sv_vec3){ 0, 0, 0 }, s->root_last = root, s->have_root = 0;
     s->apex_y = root.y, s->brake_v = 0, s->brake_a = 0, s->settling = 0, s->settle_step = 0, s->ceiling = 0, s->h_blocked = 0;
+    s->h_done = 0;
     s->v_land = 0, s->end = SOMVR_JPE_NONE;
     if (kind == SOMVR_JPK_VAULT)
         s->n_vault++;
@@ -174,8 +176,23 @@ void somvr_jp_step(somvr_jp *s, const somvr_jp_cfg *c, const somvr_jp_in *in, so
     s->asked_dy = dy;
     o->active = 1, o->dy = dy, o->vy = s->vy;
     if (s->kind == SOMVR_JPK_VAULT && (s->vh.x != 0 || s->vh.z != 0)) {
-        o->fixed_h = 1, o->dh = (sv_vec3){ s->vh.x * dt, 0, s->vh.z * dt };
-        s->asked_h = o->dh;
+        sv_vec3 dh = { s->vh.x * dt, 0, s->vh.z * dt };
+        float vl = hlen(s->vh);
+        if (c->v_ring_stop && in->have_root && vl > 1.0f) {
+            /* build 24 (boot 20261029-141005: the far floor ran downhill, the settle missed it and the fixed horizontal
+             * went on 0.25 s - 55 cm past the ring): never past the ring's distance; the rest of the fall straight down */
+            float L = hlen(v_sub(s->land, s->start)), st = vl * dt;
+            float left = L - ((in->root.x - s->start.x) * s->vh.x + (in->root.z - s->start.z) * s->vh.z) / vl;
+            if (s->h_done || left <= 0.5f) {
+                if (!s->h_done)
+                    s->n_ring_stop++;
+                s->h_done = 1, dh = (sv_vec3){ 0, 0, 0 };
+            } else if (left < st) {
+                dh = v_mul(dh, left / st);
+            }
+        }
+        o->fixed_h = 1, o->dh = dh; /* (at the ring: no horizontal, the stick still ignored until the landing) */
+        s->asked_h = dh;
     } else {
         s->asked_h = (sv_vec3){ 0, 0, 0 };
     }

@@ -7,6 +7,7 @@
 #           the edge, facing out at LAD_YAW)
 #   bank    the meadow bank's 4.4 m edge (run 222900: its face slopes out under the lip - the wall check's refusal)
 #   plat    the platform of build 18's mark 5 (its top 2335, its ruin wall): faced at PLAT_YAWS in turn until an edge
+#   trip    (build 24) a hang at the ladder's wall, then a practice trip: the climb must end at the teleport (101.7)
 # `climb down off` first at the ladder (build 21: nothing but the usual grab). Stops at once (quit) when the user goes
 # into VR.
 CLIMB2_LIB=1 . "$(dirname "$0")/climb2-drive.sh"
@@ -83,6 +84,16 @@ for s in ${DN_SPOTS:-ladder bank plat}; do
   ladder) go "$LAD"; faceyaw "$LAD_YAW"; off_try; spot ladder "$LAD" "$LAD_YAW" ;;
   bank) spot bank "$BANK" "$BANK_YAW" ;;
   plat) for yw in $PLAT_YAWS; do spot plat "$PLAT" "$yw"; r=$?; [ $r = 0 ] && break; done ;;
+  # build 24 (the coordinator, re-xr-pipeline.md 101.7): a hang at the ladder's wall, then a practice trip - the trip's
+  # teleport must end the climb (build 23: the hang went through two trips and hung in the air at each arrival)
+  trip) echo "== trip: a hang at the ladder's wall, then a practice trip"
+        x "btn R squeeze 0"; w "hands test off"; go "$LAD"; faceyaw "$LAD_YAW"
+        if reach trip; then w "hands squeeze R 0" 0.5; w "hands test off" 0.5; sleep 1
+          climbing && echo "$(date +%T) trip: hanging before the trip" || echo "$(date +%T) trip: NOT hanging before the trip"
+          go "$LAD"; sleep 2; dml 2; d "trip-after"
+          if climbing; then echo "$(date +%T) FAIL trip: still a climb after the trip's arrival"; aon; sleep 1.4; aoff; sleep 2
+          else echo "$(date +%T) PASS trip: no climb after the trip ($(grep -E '^CLIMB t=.* end:' "$L" | tail -1 | cut -c1-200))"; fi
+        else echo "$(date +%T) trip: no hang to test"; w "hands squeeze R 0" 0.6; climbing && { aon; sleep 0.5; aoff; sleep 3; }; fi ;;
   esac
 done
 grep -E '^CLIMB END build 21' "$L" | tail -1 | cut -c1-600

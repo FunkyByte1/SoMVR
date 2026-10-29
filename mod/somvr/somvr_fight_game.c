@@ -643,6 +643,10 @@ static void og_probe(const struct th_track *tr, double t)
  *                        side the blow came from at full strength, the other at half (both full when the source is
  *                        unknown: an arrow, a fall); SOMVR_HURT_MS (300) the flash's length, SOMVR_HURT_FLASH (0.8)
  *                        its strength. 0 = the measure only (the default, build 9's behaviour).
+ *   SOMVR_HURT_LOW=F     build 24 (re-xr-pipeline.md 100): while Talion's health is under F of the most seen (0..0.9;
+ *                        default 0 = off; build 24's env 0.25 - the game's own low-health overlay, a screen-fixed red
+ *                        and blood drops in each eye, is out of the eyes with SOMVR_FLATFX's overlay) a faint steady red
+ *                        on both edge bands, SOMVR_HURT_LOW_EDGE (0.3) of full; a blow's flash on top of it.
  * The game's own hit sound and Talion's grunt come from its Combat_DealHit, which DF_IMPACT passes on for a landed
  * hit (untouched). `FIGHT hurt ...` */
 static struct {
@@ -659,7 +663,11 @@ static struct {
 	/* the last landed blow (df_drain): its yaw off the view (rad, + right) */
 	double blow_t;
 	float blow_yaw;
-} g_hu = { .ms = 300, .flash = 0.8f };
+	/* build 24: SOMVR_HURT_LOW, SOMVR_HURT_LOW_EDGE; the edge on now, its turns on */
+	float low, low_edge;
+	int low_on;
+	uint64_t lows;
+} g_hu = { .ms = 300, .flash = 0.8f, .low_edge = 0.3f };
 
 /* df_drain: a landed blow at Talion from the weapon hand at `from` (world cm) */
 static void hu_blow(const float from[3], double t)
@@ -676,12 +684,11 @@ static void hu_blow(const float from[3], double t)
 static void hu_flash(uint8_t out[2], double t)
 {
 	out[0] = out[1] = 0;
+	float low = g_hu.on && g_hu.low_on ? g_hu.low_edge : 0; /* build 24, SOMVR_HURT_LOW: the faint steady edge */
 	float u = g_hu.flash_t > 0 && g_hu.ms > 0 ? (float)((t - g_hu.flash_t) * 1e3 / g_hu.ms) : 2;
-	if (!g_hu.on || !(u >= 0 && u < 1))
-		return;
-	float k = (1 - u) * (1 - u); /* quick in, eased out */
+	float k = g_hu.on && u >= 0 && u < 1 ? (1 - u) * (1 - u) : 0; /* quick in, eased out */
 	for (int s = 0; s < 2; s++)
-		out[s] = (uint8_t)lrintf(255.0f * fminf(1.0f, g_hu.flash * g_hu.side[s] * k));
+		out[s] = (uint8_t)lrintf(255.0f * fminf(1.0f, fmaxf(low, g_hu.flash * g_hu.side[s] * k)));
 }
 
 static void hu_frame(uintptr_t pl, int stereo, double t)
@@ -724,6 +731,13 @@ static void hu_frame(uintptr_t pl, int stereo, double t)
 		g_hu.last_t = t;
 	}
 	g_hu.hp = hp;
+	/* build 24, SOMVR_HURT_LOW: under the share of the most seen (alive), the faint edge; above it (or dead), none */
+	int low = g_hu.low > 0 && g_hu.hp_max > 0 && hp > 0 && hp < g_hu.low * g_hu.hp_max;
+	if (low != g_hu.low_on) {
+		g_hu.low_on = low, g_hu.lows += low;
+		logf_("FIGHT low t=%.3f: Talion's health %.1f of %.1f: %s", t, hp, g_hu.hp_max,
+		      low ? "under SOMVR_HURT_LOW - the faint red edge on" : "the faint red edge off");
+	}
 }
 
 /* ---- SOMVR_COMBAT_DEATH (build 11: "a killed orc's body lands 3.7 m away") ------------------------------------------
@@ -2372,6 +2386,8 @@ static void fight_start(int *bad)
 	g_hu.on = env_word("SOMVR_HURT", (const char *const[]){ "0", "1" }, 2, 0);
 	g_hu.ms = env_float("SOMVR_HURT_MS", g_hu.ms, 50, 2000, bad);
 	g_hu.flash = env_float("SOMVR_HURT_FLASH", g_hu.flash, 0, 1, bad);
+	g_hu.low = env_float("SOMVR_HURT_LOW", 0, 0, 0.9f, bad);
+	g_hu.low_edge = env_float("SOMVR_HURT_LOW_EDGE", g_hu.low_edge, 0, 1, bad);
 	g_kx.mode = env_word("SOMVR_COMBAT_KNOCKBACK", g_kx_mode_w, 4, KX_OFF);
 	g_kx.sliver = env_float("SOMVR_COMBAT_SLIVER", 0, 0, 1000, bad);
 	if (g_kx.sliver > 0)
@@ -2386,9 +2402,13 @@ static void fight_start(int *bad)
 	      "light record (its stagger) after the orc's health took the difference; a clank's 'Heavy_*' recoil the light one",
 	      g_kx.mode == KX_LIGHT || g_kx.mode == KX_MEDIUM ? "; after a hit that does not kill, the stagger (the light "
 	      "record's recoil: the orc's own strike's light/medium RecoilTypeHit, else 'Light_<dir>')" : "");
-	logf_("CONFIG hurt=%d: Talion's health drop = a hit: %s; the flash %.0f ms at %.2f (SOMVR_THREAT's edge bands in red: %s)",
-	      g_hu.on, g_hu.on ? "a pulse in both hands, a red flash on the view's edges (the blow's side full, the other half)"
-	      : "logged only", g_hu.ms, g_hu.flash, g_th.on ? "on" : "SOMVR_THREAT is off: no flash, the pulse only");
+	logf_("CONFIG hurt=%d: Talion's health drop = a hit: %s; the flash %.0f ms at %.2f (SOMVR_THREAT's edge bands in red: %s); "
+	      "low health (SOMVR_HURT_LOW): %s", g_hu.on,
+	      g_hu.on ? "a pulse in both hands, a red flash on the view's edges (the blow's side full, the other half)"
+	      : "logged only", g_hu.ms, g_hu.flash, g_th.on ? "on" : "SOMVR_THREAT is off: no flash, the pulse only",
+	      g_hu.low > 0 && g_hu.on ? "a faint steady red on both edges under that share of the most health seen" : "off");
+	if (g_hu.low > 0 && g_hu.on)
+		logf_("CONFIG hurt low=%.2f edge=%.2f", g_hu.low, g_hu.low_edge);
 }
 
 static void fight_end_log(void)

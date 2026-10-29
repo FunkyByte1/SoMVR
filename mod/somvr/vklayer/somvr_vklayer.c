@@ -1524,6 +1524,10 @@ static int cv_space_shown(void);
 static void cv_space_up(void);
 static void cv_kind(uint32_t kind);
 static void cv_space_comp(dev_st *ds, xr_comp *c);
+static void st_present(somvr_submit_kind kind); /* build 24: SOMVR_XR_STALE (./somvr_void_layer.c) */
+static int st_want(void);
+static int st_hold(int can_hold, int shown, int want);
+static int st_black(void);
 static void mb_frame(dev_st *ds, int menu, const somvr_posef eye[2]); /* SOMVR_XR_MENU_BACK: the menus' backdrop */
 static void mb_layers(xr_comp *c);
 static void mb_off(const char *why, const char *res);
@@ -4270,11 +4274,13 @@ static void env_hold_env(dev_st *ds) { /* the environment and the last menu quad
  * the last stereo frame (world mode); a switch to the world frees it. */
 static int env_decide(dev_st *ds, somvr_submit_kind kind) {
     if (!X.waited && xr_wait_publish()) return 1; /* xr_fail: pass-through from here */
-    int cover = kind != SOMVR_SUBMIT_MONO && cv_space_want(); /* SOMVR_XR_COVER: the game's in-world cover = a load */
+    /* SOMVR_XR_COVER: the game's in-world cover = a load; build 24, SOMVR_XR_STALE: no new stereo frame for too long */
+    int cover = kind != SOMVR_SUBMIT_MONO && (cv_space_want() || st_want());
     int want = kind == SOMVR_SUBMIT_MONO || cover ? SOMVR_ENV_SHOW_ENV : SOMVR_ENV_SHOW_WORLD;
     int shown = EV.tr.started ? EV.tr.shown : want;
     int can_hold = shown == SOMVR_ENV_SHOW_WORLD ? X.last_stereo
                                                  : vd_env_holdable(); /* the board, or the keep-alive's loading space */
+    can_hold = st_hold(can_hold, shown, want); /* build 24, SOMVR_XR_STALE: back from the space at once, from black */
     int sw = 0, act = somvr_env_step(&EV.tr, want, can_hold, X.fs.predictedDisplayTime, &sw);
     EV.level = somvr_env_level(&EV.tr);
     if (sw && EV.tr.switches) { /* not the session's first frame */
@@ -5371,6 +5377,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
     }
     somvr_submit_kind kind = somvr_submit_decide(have_tag, have_tag ? tag.frame : 0, have_rec, X.last_stereo);
     if (kind == SOMVR_SUBMIT_REUSE && vd_video_mono(have_tag, have_rec)) kind = SOMVR_SUBMIT_MONO; /* build 14 */
+    st_present(kind); /* build 24, SOMVR_XR_STALE: the run of presents without a new stereo frame */
     if (X.frame_open && !(kind == SOMVR_SUBMIT_STEREO && tag.frame == X.open_frame && !(X.open_mask >> tag.slot & 1)))
         if (xr_abort_open(kind == SOMVR_SUBMIT_STEREO ? "another frame's slot" : "a present without its next slot"))
             return 0;
@@ -5417,7 +5424,8 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         if (X.n_reuse <= 3 || X.n_reuse % 600 == 0)
             lg("xr: present tag %llu frame %llu has no complete record: the last stereo frame again (reuse %llu)",
                (unsigned long long)tag.seq, (unsigned long long)tag.frame, (unsigned long long)X.n_reuse);
-        if (cv_space_shown()) { /* SOMVR_XR_COVER's load: the loading space, not the world */
+        if (st_black()) return 0; /* build 24, SOMVR_XR_STALE without SOMVR_XR_ENV: past the limit, no layer */
+        if (cv_space_shown()) { /* SOMVR_XR_COVER's load (or SOMVR_XR_STALE): the loading space, not the world */
             xr_comp cc;
             memset(&cc, 0, sizeof cc);
             VH.last = 0;
