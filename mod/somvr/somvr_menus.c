@@ -715,6 +715,47 @@ void somvr_pp_parse_geom(const char *v, somvr_pp_cfg *c, int *bad) {
     }
     c->down_deg = f[0], c->turn_deg = f[1], c->ease_s = f[2] * 1e-3f;
 }
+/* ==== 2d. build 22: the subtitles (SOMVR_XR_SUBTITLES=on) ========================================================== */
+int somvr_sub_parse(const char *v, int *bad) {
+    if (bad) *bad = 0;
+    if (!v || !*v || !strcmp(v, "off") || !strcmp(v, "0")) return 0;
+    if (!strcmp(v, "on") || !strcmp(v, "1") || !strcmp(v, "gaze")) return 1;
+    if (bad) *bad = 1;
+    return 0;
+}
+int somvr_sub_parse_scale(const char *v, int *bad) {
+    if (bad) *bad = 0;
+    if (!v || !*v) return SOMVR_SUB_SCALE_DEFAULT;
+    char *e = NULL;
+    long n = strtol(v, &e, 10);
+    if (e == v || *e || n < 50 || n > 150) {
+        if (bad) *bad = 1;
+        return SOMVR_SUB_SCALE_DEFAULT;
+    }
+    return (int)n;
+}
+int somvr_sub_add(somvr_ht_set *band, const int sub[4], int *ncut) {
+    if (ncut) *ncut = 0;
+    if (!band || !sub || band->n >= SOMVR_HT_MAX) return -1;
+    somvr_ht_set o = *band;
+    int cut = 0, row = 0, sy0 = sub[1], sy1 = sub[1] + sub[3];
+    for (int i = 0; i < o.n; i++) {
+        int *r = o.r[i], y0 = r[1], y1 = r[1] + r[3];
+        row = o.row[i] + 1 > row ? o.row[i] + 1 : row;
+        if (r[0] >= sub[0] + sub[2] || sub[0] >= r[0] + r[2] || y0 >= sy1 || sy0 >= y1) continue;
+        int above = sy0 - y0, below = y1 - sy1; /* the tile's height left above / below the subtitle's */
+        if (below >= above) r[1] = sy1, r[3] = below;
+        else r[3] = above;
+        if (r[3] < 8) return -1;
+        cut++;
+    }
+    int k = o.n++;
+    memcpy(o.r[k], sub, sizeof o.r[k]);
+    o.row[k] = row;
+    *band = o;
+    if (ncut) *ncut = cut;
+    return k;
+}
 int somvr_pp_measure(const uint8_t *px, int w, int nrow, int step, int bb[4]) {
     int n = 0, x0 = w, x1 = 0, y0 = nrow, y1 = -1;
     for (int j = 0; px && j < nrow; j++)

@@ -436,6 +436,11 @@ typedef struct {
     float am_head_cm;        /* ... the eyes at least this over the top (25: the shoulders at its edge) */
     float am_cms;            /* ... the glide's speed (350 cm/s) */
     float am_clear_cm;       /* ... the feet this far over the top when the curve crosses its edge (10) */
+    int am_overhang;         /* build 22 (SOMVR_CLIMB_MANTLE_OVERHANG, with mantle; 0 off): a hand on an overhang's lip
+                              * from below (the eyes under its top, at most AM_OH_LO_CM; the face under the lip at least
+                              * AM_OH_DEPTH_CM behind its edge) with room on its top: the same ring, A = the glide out
+                              * round the lip (the body AM_OH_OUT_CM out of its edge, level), up and in onto it. Nothing
+                              * moves before the press: until then he hangs below the lip */
     int dm_timer;            /* build 21 (SOMVR_CLIMB_DESCENT_TIMER, with drop_mark; 0 off): see timer */
     int unstuck;             /* build 21 (SOMVR_CLIMB_UNSTUCK, 0 off): see unstuck */
     float fl_reach_cm;       /* ... the fling stops rising with no wall this near the chest (120) */
@@ -700,6 +705,8 @@ typedef struct {
     float am_lag_s;     /* the root behind the plan so long */
     int am_end;         /* SOMVR_CLIMB_AME_*: how the last glide ended */
     float am_dbg[6];    /* the last search (logs): the eyes over the top, floors seen, room rays hit, way rays hit */
+    int am_oh;          /* build 22: the last search's (and the glide's) is an overhang's - out round its lip first */
+    uint64_t am_oh_shows, am_oh_goes;
     uint64_t am_shows, am_presses, am_goes, am_blinks, am_nos, am_lows, am_nofloors, am_noways, am_dones, am_blocks,
         am_frames;
     double am_cm;       /* the glides' way in all */

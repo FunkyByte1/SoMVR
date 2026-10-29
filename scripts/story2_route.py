@@ -149,9 +149,17 @@ while time.time() - t0 < SECS:
     ec = edge_cues(ls)
     if ec > e0 and '--noedge' not in args:
         e0 = ec; n_a += 1
-        xt('btn R a 1'); time.sleep(0.3); xt('btn R a 0')
-        print('%5.1f s  the edge cue: A (the blink down)' % (time.time() - t0), flush=True)
-        time.sleep(1.6)
+        # build 17+: A held shows the landing (SOMVR_CLIMB_DESCENT_MARK), let go goes, the move stick cancels: a player
+        # lets the stick go, holds A a moment, lets go, then walks on (the sprint latched again)
+        xt('stick L 0 0', 'head 0 0 0 yaw %.1f s 0.2' % yaw); time.sleep(0.25)
+        xt('stick L 0 0', 'btn R a 1', 'head 0 0 0 yaw %.1f s 0.2' % yaw); time.sleep(0.5)
+        xt('stick L 0 0', 'btn R a 0', 'head 0 0 0 yaw %.1f s 0.2' % yaw)
+        print('%5.1f s  the edge cue: the stick let go, A held 0.5 s (the drop mark), let go (the blink down)' % (time.time() - t0), flush=True)
+        time.sleep(1.8)
+        xt('stick L 0 1', 'head 0 0 0 yaw %.1f s 0.2' % yaw); time.sleep(0.3)
+        if SPRINT:
+            xt('stick L 0 1', 'btn L stick 1', 'head 0 0 0 yaw %.1f s 0.2' % yaw); time.sleep(0.35)
+            xt('stick L 0 1', 'btn L stick 0', 'head 0 0 0 yaw %.1f s 0.2' % yaw)
         prev = None
         continue
     sp = None

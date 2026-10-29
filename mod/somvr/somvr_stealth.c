@@ -24,6 +24,8 @@ void somvr_stl_defaults(somvr_stl_cfg *c)
     c->grab_mps = 0.5f;
     c->side_deg = 60.0f;
     c->grace_s = 0.3f;
+    c->carried = 0;
+    c->own_cm = 4.0f;
 }
 
 const char *somvr_stl_why(int v)
@@ -32,7 +34,8 @@ const char *somvr_stl_why(int v)
                                      "not behind it", "neither crouched nor slow", "the contact on its front half",
                                      "the contact not on its back or neck", "a touch (neither a hit nor a stab)",
                                      "in the body but no thrust (no damage; the alert after the grace)",
-                                     "combat's capsule but not the body (nothing)" };
+                                     "combat's capsule but not the body (nothing)",
+                                     "in the body, carried in by the walk (no touch: no damage, no alert)" };
     return v >= 0 && v < SOMVR_STL_N ? n[v] : "?";
 }
 
@@ -77,9 +80,11 @@ static int judge_thrust(const somvr_stl_cfg *c, const somvr_stl_hit *h)
     if (h->held)
         return point && h->axis_mps >= c->grab_mps && h->depth_cm >= c->grab_depth_cm ? SOMVR_STL_KILL : SOMVR_STL_TOUCH;
     if (h->neck && h->tier_cut == SC_TIER_HEAVY_) return SOMVR_STL_KILL; /* a full-speed cut to the neck from behind */
-    if (!(fabsf(h->contact_off_deg) >= c->side_deg)) return SOMVR_STL_SIDE;
-    if (!(h->contact_up_cm >= c->low_cm && h->contact_up_cm <= c->high_cm)) return SOMVR_STL_LOW;
-    return point && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm ? SOMVR_STL_KILL : SOMVR_STL_TOUCH;
+    int carried = c->carried && h->carried; /* build 22: the walk put it there, the hand did not push it in */
+    if (!(fabsf(h->contact_off_deg) >= c->side_deg)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_SIDE;
+    if (!(h->contact_up_cm >= c->low_cm && h->contact_up_cm <= c->high_cm)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_LOW;
+    if (point && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm) return SOMVR_STL_KILL;
+    return carried ? SOMVR_STL_CARRIED : SOMVR_STL_TOUCH;
 }
 
 int somvr_stl_judge(const somvr_stl_cfg *c, const somvr_stl_who *w, const somvr_stl_hit *h)
@@ -131,6 +136,18 @@ static float body_in(const float p[3], const float (*node)[3], const float *r, i
         if (in > best) best = in, *link = k;
     }
     return best;
+}
+
+float somvr_stl_own_push(const float base[3], const float tip[3], const float vb[3], const float vt[3], float dt,
+                         const float (*node)[3], const float *r, int n)
+{
+    if (!(dt > 0)) return 0;
+    float b0[3], t0[3], e[3];
+    int l;
+    for (int j = 0; j < 3; j++) b0[j] = base[j] - vb[j] * dt, t0[j] = tip[j] - vt[j] * dt;
+    float now = somvr_stl_body_depth(base, tip, node, r, n, e, &l), was = somvr_stl_body_depth(b0, t0, node, r, n, e, &l);
+    float d = fmaxf(now, 0.0f) - fmaxf(was, 0.0f);
+    return isfinite(d) ? d : 0;
 }
 
 float somvr_stl_body_depth(const float base[3], const float tip[3], const float (*node)[3], const float *r, int n,

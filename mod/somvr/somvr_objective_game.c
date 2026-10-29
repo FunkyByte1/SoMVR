@@ -83,6 +83,7 @@ static struct {
 	int range_ok, pos_ok;
 	int land, land_was;  /* build 16: the climb's landing ring published (SOMVR_CLIMB_PULLOVER), shown last frame */
 	int ws, ws_was;      /* build 18: the wraith step's ring published (SOMVR_WRAITH_STEP), shown last frame (1 gold, 2 red) */
+	int vault, vault_was; /* build 22: the vault's ring published (SOMVR_VAULT), shown last frame */
 	int aim;             /* build 20: the bow's aim ring published (SOMVR_BOW_AIM_RING) */
 	uint64_t land_frames;
 	int strike;          /* build 17: the Shadow Strike's mark published (SOMVR_STRIKE_GAZE) */
@@ -90,6 +91,33 @@ static struct {
 } g_ob;
 
 static long ob_tid(void) { return (long)syscall(SYS_gettid); }
+
+/* build 22 (re-xr-pipeline.md 89): the record's RenderOffScreen (re-hud.md 3.4) read as FUN_00ec4a50 reads it at
+ * 0xec4cd9 (the key table *0x4b66f20, its key at +0x338: mode +0x348, index +0x358; the record's entry *(R+8) + idx*16
+ * present when its u16 +0xc, the value's bit vi & 31 of the u32 at *(R+0x10) + (vi >> 5) * 8, vi = its u16 +0xe):
+ * 1 = the game gives it an edge arrow (a way to go), 0 = on screen only (or absent), -1 unreadable, -2 the key looked up
+ * by name (mode <= 1: not read here) */
+#define OB_KEYS 0x4b66f20
+static int ob_offscreen(uintptr_t rec)
+{
+	uintptr_t T = peek_ptr(OB_KEYS), tab, vals;
+	int32_t mode;
+	uint8_t idx;
+	uint16_t pres, vi;
+	uint32_t word;
+	if (!T || !rec || !peek(T + 0x348, &mode, sizeof mode) || !peek(T + 0x358, &idx, 1))
+		return -1;
+	if (mode <= 1)
+		return -2;
+	if (!(tab = peek_ptr(rec + 8)) || !peek(tab + (uintptr_t)idx * 16 + 0xc, &pres, 2))
+		return -1;
+	if (!pres)
+		return 0;
+	if (!peek(tab + (uintptr_t)idx * 16 + 0xe, &vi, 2) || !(vals = peek_ptr(rec + 0x10)) ||
+	    !peek(vals + (uintptr_t)(vi >> 5) * 8, &word, sizeof word))
+		return -1;
+	return (int)(word >> (vi & 31) & 1);
+}
 
 /* the record's name and match, cached (DB records stay put; the table starts again when 3/4 full) */
 static int ob_rec(uintptr_t rec, const char **name)
@@ -179,8 +207,9 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 	}
 	if (first && g_ob.lines < 400) {
 		g_ob.lines++;
-		logf_("OBJECTIVE t=%.3f marker %u m=%#lx '%s'%s: %s at (%.0f %.0f %.0f)", t, k->id, (unsigned long)m, name,
-		      match ? " (an objective)" : "", shown ? "shown by the game" : "not shown", k->pos[0], k->pos[1], k->pos[2]);
+		logf_("OBJECTIVE t=%.3f marker %u m=%#lx '%s'%s: %s at (%.0f %.0f %.0f), offscreen %d", t, k->id, (unsigned long)m,
+		      name, match ? " (an objective)" : "", shown ? "shown by the game" : "not shown", k->pos[0], k->pos[1],
+		      k->pos[2], ob_offscreen(rec));
 	}
 	k->hidden = 0;
 	if (match && shown && g_ob.live == 2 && g_fr.on) { /* ours in the eyes: the game's own hide (FUN_00ec4a50's) */
@@ -200,7 +229,7 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 static void ob_frame(uintptr_t pl, int stereo)
 {
 	int pub = g_ob.mode >= 2 && g_ob.on;
-	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim) || !stereo)
+	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim && !g_ob.vault) || !stereo)
 		return;
 	if (g_ob.tid && g_ob.tid != ob_tid())
 		return;
@@ -251,6 +280,16 @@ static void ob_frame(uintptr_t pl, int stereo)
 		return;
 	}
 	g_ob.ws_was = 0;
+	if (g_ob.vault && jv_entry(&e)) { /* build 22: the vault's landing (SOMVR_VAULT: the gold ring past the obstacle) */
+		somvr_objective_put(&g_obj, g_fr.frame, &e);
+		if (!g_ob.vault_was && g_ob.lines++ < 400)
+			logf_("OBJECTIVE t=%.3f frame=%llu: the vault's landing in the eyes: the gold ring, xr (%+.2f %+.2f %+.2f) m, "
+			      "radius %.2f m (SOMVR_VAULT)", mono(), (unsigned long long)g_fr.frame, e.pos[0], e.pos[1], e.pos[2],
+			      (double)e.dist_m);
+		g_ob.vault_was = 1, g_ob.cur = 0;
+		return;
+	}
+	g_ob.vault_was = 0;
 	if (g_ob.aim && ba_entry(&e)) { /* build 20: the drawn bow's aim ring (SOMVR_BOW_AIM_RING) */
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
 		g_ob.cur = 0;
@@ -373,8 +412,9 @@ static void ob_start(int *bad)
 	g_ob.strike = g_sg.on; /* build 17: the Shadow Strike's mark (SOMVR_STRIKE_GAZE) */
 	g_ob.ws = ws_wanted(); /* build 18: the wraith step's landing (SOMVR_WRAITH_STEP) */
 	g_ob.aim = ba_wanted(); /* build 20: the bow's aim ring (SOMVR_BOW_AIM_RING) */
+	g_ob.vault = jv_wanted(); /* build 22: the vault's landing (SOMVR_VAULT) */
 	if (!g_ob.mode) {
-		if (g_ob.land || g_ob.strike || g_ob.ws || g_ob.aim)
+		if (g_ob.land || g_ob.strike || g_ob.ws || g_ob.aim || g_ob.vault)
 			ob_publish(&c0, "the climb's landing and the strike's mark only (SOMVR_OBJECTIVE off)");
 		return;
 	}

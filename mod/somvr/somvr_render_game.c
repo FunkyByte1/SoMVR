@@ -31,6 +31,13 @@
  *   the naked pass-through on CParticleSystemFX::vf_04 counts the emitters' updates by when they start (outside the
  *   eyes' calls, in eye 0's, in eye 1's). Always (behind RD_VIS_INIT / RD_VIS_REQ): after both eyes, the frame's render
  *   request buffer (both eyes share it; 4 MB) - the most used and any bytes refused (`FLATFX t=.. REFUSED`).
+ * Build 22 (re-xr-pipeline.md 94): SOMVR_CURFRAME=game|eye (default game; word "curframe game|eye|state") - eye 1's
+ *   pass with its own "current frame" images (rt3D +0xc0/+0x110 swapped with two of ours from eye 0's end to eye 1's
+ *   end; see the block below). SOMVR_FX_TEST adds `fx trace N` (FXTRACE lines: the render thread's BeginRenderTarget
+ *   bindings, EndRenderTargets, CPU-particle draws), `fx hideeye E` (`fx hide` in one eye's pass), `fx sync 0|1` (the
+ *   game thread waits after both eyes for eye 1's end), `fx vbgrow N` (the custom draws' dynamic vertex buffers made
+ *   N times bigger), `fx bloomblend 0|game`, and the probes: each CPU emitter's block from its copy to its draw, eye 1's
+ *   draw against eye 0's (the vertices through a proxy on the render context), the vertex memory at the presents.
  * Trigger words: "flatfx LIST|all|game|state" (live; the hooks must be in: boot with a part on or SOMVR_FX_TEST=1),
  * "fx hide MASK", "fx eyesame 0|1", "fx console CMD", "fx state". Lines: CONFIG flatfx=..; FLATFX t=.. (the word; the
  * game's own vignette or box blur seen: the first 8 of each); FLATFX state|END. Fail soft: a site mismatch = that part
@@ -42,7 +49,10 @@
  * (CParticleSystemRender::vf_03, the per-view copy of an emitter's particles: the probe); a slot's
  * context = slots 0..4 of its class's vtable, RD_PSYS_PREP's slots 0..3 - RD_PSYS patches slot 4 before it; the
  * read-only K_ENTRY proofs RD_VIS_INIT (FUN_007b7260: the request buffer's capacity = DAT_0462d734 << 10 at +0x18, its
- * two buffers) and RD_VIS_REQ (FUN_007b79f0: a request's room = +0x18 - +0x1c) before RD_VIS is read) */
+ * two buffers) and RD_VIS_REQ (FUN_007b79f0: a request's room = +0x18 - +0x1c) before RD_VIS is read; build 22
+ * (re-xr-pipeline.md 94): SOMVR_FX_TEST's K_CALLs RD_BRT_A / RD_BRT_B (the two BeginRenderTargets' calls of
+ * FUN_0074b1e0(rt), which binds the target's last / current frame images: the trace) and the K_ENTRY RD_CF_MAKE
+ * (FUN_00747e60, the maker of a target's "current frame" image: SOMVR_CURFRAME=eye makes eye 1's with it)) */
 static const struct site_spec g_rd_sites_game[] = {
 SITE("RD_LENSFLARE", K_VSLOT, 0x3b5de78, 0x3b5de58, "30 0a d7 02 00 00 00 00 70 0a d7 02 00 00 00 00 20 0a d7 02 00 00 00 00 b0 0a d7 02 00 00 00 00 70 f1 d6 02 00 00 00 00", 0x2d6f170, "41 57 41 56 41 55 41 54 55 53 48 81 ec 98 00"),
 SITE("RD_SHAFTS", K_CALL, 0x7a2541, 0x7a2530, "8b 03 f3 0f 10 43 08 48 89 04 24 f3 0f 11 44 24 08 e8 2a fa ff ff", 0x7a1f70, "53 66 0f ef c9 48 89 fb 48 83 ec 10 f3 0f 10"),
@@ -55,12 +65,15 @@ SITE("RD_PSYS_UPD", K_VSLOT, 0x3b625c0, 0x3b625a0, "b0 c8 d7 02 00 00 00 00 80 c
 SITE("RD_PSYS_PREP", K_VSLOT, 0x3b63bb8, 0x3b63ba0, "30 51 d8 02 00 00 00 00 40 51 d8 02 00 00 00 00 80 c5 d8 02 00 00 00 00 b0 80 d8 02 00 00 00 00", 0x2d880b0, "48 8b 4e 08 48 8b 3e 4c 8b 51 18 4c 8b 0f f3"),
 SITE("RD_VIS_INIT", K_ENTRY, 0x7b7260, 0x7b7260, "53 48 89 fb 8b 3d ca 64 e7 03 c1 e7 0a 89 7b 18 e8 5b 9a ae 02 8b 7b 18", 0x7b7260, "53 48 89 fb 8b 3d ca 64 e7 03 c1 e7 0a 89 7b"),
 SITE("RD_VIS_REQ", K_ENTRY, 0x7b79f0, 0x7b79f0, "55 89 d5 53 48 89 fb 48 83 ec 58 8b 47 1c 8b 4b 10 8b 7f 18 29 c7 83 f9", 0x7b79f0, "55 89 d5 53 48 89 fb 48 83 ec 58 8b 47 1c 8b"),
+SITE("RD_BRT_A", K_CALL, 0x74beb6, 0x74beac, "44 89 bb 48 04 00 00 48 89 df e8 25 f3 ff ff", 0x74b1e0, "53 be 00 2e 62 04 48 89 fb 48 81 c7 90 01 00"),
+SITE("RD_BRT_B", K_CALL, 0x74b646, 0x74b638, "48 04 00 00 48 89 df 83 05 36 46 ed 03 01 e8 95 fb ff ff", 0x74b1e0, "53 be 00 2e 62 04 48 89 fb 48 81 c7 90 01 00"),
+SITE("RD_CF_MAKE", K_ENTRY, 0x747e60, 0x747e60, "48 b8 01 00 00 00 01 00 00 00 41 57 41 56 45 89 c6 41 55 41 89 d5 41 54", 0x747e60, "48 b8 01 00 00 00 01 00 00 00 41 57 41 56 45"),
 };
 /* RENDER_SITES_END */
 static const struct site_spec *g_rd_sites = g_rd_sites_game; /* selftest: stand-ins */
 
 enum { RDS_LENSFLARE, RDS_SHAFTS, RDS_RAIN, RDS_PSYS, RDS_GPUPSYS, RDS_SPRITE, RDS_FLARESPR, RDS_PSYS_UPD, RDS_PSYS_PREP,
-       RDS_VIS_INIT, RDS_VIS_REQ, RDS_N };
+       RDS_VIS_INIT, RDS_VIS_REQ, RDS_BRT_A, RDS_BRT_B, RDS_CF_MAKE, RDS_N };
 _Static_assert(sizeof g_rd_sites_game / sizeof g_rd_sites_game[0] == RDS_N, "render sites");
 /* the SOMVR_FLATFX parts (bits) */
 enum { RDF_FLARES = 1u << 0, RDF_SHAFTS = 1u << 1, RDF_VIGNETTE = 1u << 2, RDF_RAIN = 1u << 3, RDF_ALL = 15u };
@@ -121,23 +134,567 @@ static struct {
 	_Atomic int cmd_pend;
 } g_rd;
 
-static inline unsigned rd_hidden(void)
+
+/* ---- build 22 (re-xr-pipeline.md 94): each eye its own "current frame" images - SOMVR_CURFRAME=game|eye ----------
+ * A RenderTarget with flag 0x10 (rt3D has it, flags 0x37d7) carries two images of its own last pixels, made by
+ * FUN_00747e60 (RD_CF_MAKE) into +0xc0 and +0x110 (0x50 bytes each: +4 w, +8 h, +0xc/+0x10 the texture's and the
+ * view's formats, +0x14, +0x18 the texture, +0x20 its render target view, +0x28 its shader view, +0x30 the bindable:
+ * +0x38 the shader view again, +0x48 the bytes). FUN_0074b1e0, at every BeginRenderTarget, binds them as tCurFrameMap
+ * (+0xf0, or +0x140 in mode 1), tForcedCurFrameMap and tCurFrameMapDiscard (the other one); EndRenderTarget(rt, 1)
+ * copies the target's pixels into the first (FUN_0074bff0). A material that reads "the scene behind it" samples them.
+ * Both eyes render into the one rt3D, so whatever one eye's pass leaves there the other eye's pass reads.
+ * eye: from eye 0's end to eye 1's end (render thread, H8's eye ends) the target's two image objects are swapped, all
+ * 0x50 bytes, with two of ours made by the game's own maker with the target's sizes and formats (at the first eye 0
+ * end, again when they change; the game's pixels copied in once): whatever the game copies into them or binds from
+ * them during eye 1's pass is eye 1's own, and eye 0 keeps the game's. A present with the swap still in (an eye 1
+ * end missed) swaps back. Fail soft: RD_CF_MAKE not matched, the target without the images, a maker that fails or
+ * views that are not the expected objects = the game's (logged once). */
+#define RD_CF_OFF 0xc0UL  /* RenderTarget: the first "current frame" image object (the second at +0x110) */
+#define RD_CF_SZ 0x50UL
+#define RD_RT_MODE 0x448  /* RenderTarget: the mode its BeginRenderTarget set (FUN_0074b1e0 reads it; the end sets 0xd) */
+#define RD_RTF_CF 0x10u   /* RenderTarget flag: it has the two images */
+/* the bound values (each binding param + 0x40): tCurFrameMap, tForcedCurFrameMap, tCurFrameMapDiscard, tLastFrameMap */
+static const uintptr_t g_rd_bindv[4] = { 0x4622de0UL, 0x4622d80UL, 0x4622d20UL, 0x4622e40UL };
+typedef int (*rd_cfmake_fn)(void *obj, int w, int h, int fmt, int vfmt, int p6, int noreg);
+#define RD_BLK_N 2048 /* SOMVR_FX_TEST: CPU emitters' per-view blocks remembered from the copy to the draw */
+static struct {
+	int want;                    /* SOMVR_CURFRAME at start: 0 game, 1 eye */
+	_Atomic int on;              /* now (the word) */
+	int ok;                      /* RD_CF_MAKE matched */
+	int state;                   /* render thread: 0 not made, 1 made, -1 off for the run */
+	_Alignas(16) unsigned char x[2][RD_CF_SZ]; /* eye 1's two images (in the target during eye 1's pass) */
+	uintptr_t rt;                /* the target they were made for */
+	int swapped;                 /* render thread: ours are in the target */
+	int phase;                   /* render thread: 0 up to eye 0's end, 1 eye 1's pass, 2 after eye 1's end */
+	uint64_t frame;              /* render thread: the frame of the eye that ended last */
+	uint64_t swaps, late, makes, nocf;
+	_Atomic uint64_t e1_frame;   /* eye 1's last end (`fx sync`) */
+	/* SOMVR_FX_TEST */
+	_Atomic int hide_eye;        /* `fx hideeye E`: `fx hide` only in eye E's pass (-1 both) */
+	_Atomic int sync;            /* `fx sync 1`: the game thread waits after both eyes for eye 1's end on the render thread */
+	uint64_t sync_ok, sync_late;
+	double sync_wait;
+	_Atomic int tr_req;          /* `fx trace N`: frames still to trace */
+	int tracing, tr_frames;      /* render thread */
+	_Atomic uint32_t tr_lines;
+	uint64_t ends[3][2], begins[3][2], ends1[3][2]; /* per phase, [other target, rt3D]: ends, begins, ends with flags 1 */
+	struct { _Atomic uintptr_t key; uint32_t len, frame; int eye; uint64_t h; uintptr_t fx; } blk[RD_BLK_N];
+	/* the draw's own record per emitter (render thread): what eye 0 drew it with, compared at eye 1's draw */
+	struct { uintptr_t fx; uint64_t frame; uint64_t cam, em, vh; uintptr_t props, empp; uint32_t nv, req, granted; } dr[RD_BLK_N];
+	_Atomic uint64_t d_cmp, d_cam, d_em, d_vh, d_nv, d_nomatch, d_props;
+	_Atomic uint32_t d_lines;
+	_Atomic uint64_t b_same[2], b_diff[2], b_norec[2], b_newer[2], b_draws[3];
+	_Atomic uint32_t b_lines;
+} g_rcf;
+
+static void rcf_state_line(const char *head);
+static uint64_t rd_fnv(const unsigned char *p, uint32_t n)
 {
-	unsigned m = atomic_load_explicit(&g_rd.hide, memory_order_relaxed);
-	if (atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_FLARES)
-		m |= 1u << RDD_LENSFLARE;
-	return m;
+	uint64_t h = 1469598103934665603ull ^ n;
+	for (uint32_t i = 0; i < n; i++)
+		h = (h ^ p[i]) * 1099511628211ull;
+	return h;
+}
+
+/* a bound "frame" image by name: 0, CF0 / CF1 (rt3D's, "x" while ours are swapped in), another target's */
+static const char *rd_cfname(uintptr_t v, char *b, size_t n)
+{
+	uintptr_t rt = g_rcf.rt ? g_rcf.rt : (uintptr_t)g_rt_target;
+	if (!v)
+		snprintf(b, n, "0");
+	else if (rt && v == rt + RD_CF_OFF + 0x30)
+		snprintf(b, n, "CF0%s", g_rcf.swapped ? "x" : "");
+	else if (rt && v == rt + RD_CF_OFF + RD_CF_SZ + 0x30)
+		snprintf(b, n, "CF1%s", g_rcf.swapped ? "x" : "");
+	else if (rt && v == rt + 0x190)
+		snprintf(b, n, "LAST");
+	else
+		snprintf(b, n, "%#lx", (unsigned long)v);
+	return b;
+}
+
+/* SOMVR_FX_TEST's trace (`fx trace N`): render-thread events of N stereo frames */
+__attribute__((format(printf, 1, 2))) static void rd_tr(const char *fmt, ...)
+{
+	if (!g_rcf.tracing || atomic_fetch_add(&g_rcf.tr_lines, 1) >= 900)
+		return;
+	char b[400];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(b, sizeof b, fmt, ap);
+	va_end(ap);
+	logf_("FXTRACE t=%.4f f=%llu ph=%d%s %s", mono(), (unsigned long long)g_rt_frame, g_rcf.phase, g_rcf.swapped ? " (swapped)" : "",
+	      b);
+}
+static void rd_tr_bound(char *o, size_t n)
+{
+	char a[4][24];
+	for (int i = 0; i < 4; i++)
+		rd_cfname(*(volatile uintptr_t *)g_rd_bindv[i], a[i], sizeof a[i]);
+	snprintf(o, n, "bound cur=%s forced=%s discard=%s last=%s", a[0], a[1], a[2], a[3]);
+}
+
+static void rcf_swap(uintptr_t rt)
+{
+	for (int k = 0; k < 2; k++) {
+		unsigned char t[RD_CF_SZ], *c = (unsigned char *)(rt + RD_CF_OFF + k * RD_CF_SZ);
+		memcpy(t, c, RD_CF_SZ);
+		memcpy(c, g_rcf.x[k], RD_CF_SZ);
+		memcpy(g_rcf.x[k], t, RD_CF_SZ);
+	}
+	g_rcf.swapped = !g_rcf.swapped;
+}
+
+__attribute__((format(printf, 1, 2))) static int rcf_off(const char *fmt, ...)
+{
+	char b[300];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(b, sizeof b, fmt, ap);
+	va_end(ap);
+	g_rcf.state = -1;
+	logf_("CURFRAME t=%.3f OFF for the run (the game's images in both eyes): %s", mono(), b);
+	return 0;
+}
+
+/* a COM-style object's Release (slot 2), as FUN_00747e60 releases what it replaces */
+static void rcf_release(unsigned char *slot)
+{
+	void *o = *(void **)slot;
+	if (o) {
+		void (*rel)(void *) = (void (*)(void *))(*(uintptr_t **)o)[2];
+		rel(o);
+	}
+	*(void **)slot = NULL;
+}
+
+/* our two images like the target's (render thread); 1 = made */
+static int rcf_make(uintptr_t rt)
+{
+	struct d3d_src s;
+	if (!g_d3d_ok || !d3d_source(HOLDER_TEX3D, &s))
+		return rcf_off("the device, its context or the 3D surface is not the expected object");
+	rd_cfmake_fn make = (rd_cfmake_fn)g_rd_sites[RDS_CF_MAKE].target;
+	for (int k = 0; k < 2; k++) {
+		unsigned char *c = (unsigned char *)(rt + RD_CF_OFF + k * RD_CF_SZ), *x = g_rcf.x[k];
+		void *ctex = *(void **)(c + 0x18);
+		int w = *(int *)(c + 4), h = *(int *)(c + 8);
+		if (!ctex || vptr_of(ctex) != g_d3d.vt_tex || w < 16 || h < 16 || w > 16384 || h > 16384)
+			return rcf_off("target %#lx image %d: texture %p (vtable %#lx) %dx%d is not a made image", (unsigned long)rt, k,
+				      ctex, (unsigned long)vptr_of(ctex), w, h);
+		if (g_rcf.state == 1)
+			for (int i = 0; i < 3; i++)
+				rcf_release(x + 0x18 + 8 * i);
+		memcpy(x, c, RD_CF_SZ);
+		memset(x + 0x18, 0, 0x18);
+		int r = make(x, w, h, *(int *)(c + 0xc), *(int *)(c + 0x10), *(int *)(c + 0x14), 1);
+		void *xt = *(void **)(x + 0x18);
+		if ((r & 0xff) != 1 || !xt || !*(void **)(x + 0x20) || !*(void **)(x + 0x28) || vptr_of(xt) != g_d3d.vt_tex)
+			return rcf_off("the maker for image %d (%dx%d formats %d/%d): %d, texture %p, views %p %p", k, w, h,
+				      *(int *)(c + 0xc), *(int *)(c + 0x10), r & 0xff, xt, *(void **)(x + 0x20), *(void **)(x + 0x28));
+		s.copy(s.ctx, xt, ctex); /* eye 1's first frame reads the game's last pixels, not an empty image */
+	}
+	g_rcf.state = 1, g_rcf.rt = rt, g_rcf.makes++;
+	logf_("CURFRAME t=%.3f made %llu: eye 1's two images for target %#lx (%dx%d formats %d/%d and %d/%d; textures %p %p)",
+	      mono(), (unsigned long long)g_rcf.makes, (unsigned long)rt, *(int *)(rt + RD_CF_OFF + 4),
+	      *(int *)(rt + RD_CF_OFF + 8), *(int *)(rt + RD_CF_OFF + 0xc), *(int *)(rt + RD_CF_OFF + 0x10),
+	      *(int *)(rt + RD_CF_OFF + RD_CF_SZ + 0xc), *(int *)(rt + RD_CF_OFF + RD_CF_SZ + 0x10), *(void **)(g_rcf.x[0] + 0x18),
+	      *(void **)(g_rcf.x[1] + 0x18));
+	return 1;
+}
+/* ours still like the target's (sizes and formats of both) */
+static int rcf_same(uintptr_t rt)
+{
+	for (int k = 0; k < 2; k++)
+		if (memcmp(g_rcf.x[k] + 4, (const void *)(rt + RD_CF_OFF + k * RD_CF_SZ + 4), 0x10))
+			return 0;
+	return 1;
+}
+
+/* H8, before the original (render thread, every EndRenderTarget): the trace and the counts */
+static void rd_rt_end_pre(uintptr_t rt, uint32_t flags)
+{
+	if (!g_rd.test || !rt)
+		return;
+	int is3d = rt == (uintptr_t)g_rt_target || (g_rcf.rt && rt == g_rcf.rt), ph = g_rcf.phase < 3 ? g_rcf.phase : 2;
+	g_rcf.ends[ph][is3d]++;
+	if (flags == 1)
+		g_rcf.ends1[ph][is3d]++;
+	if (g_rcf.tracing) {
+		char b[160];
+		rd_tr_bound(b, sizeof b);
+		rd_tr("end rt=%#lx%s flags=%u mode=%d rtflags=%#x; %s", (unsigned long)rt, is3d ? " (3D)" : "", flags,
+		      *(volatile int *)(rt + RD_RT_MODE), *(volatile uint32_t *)(rt + RT_FLAGS), b);
+	}
+}
+
+/* H8's eye end (render thread, after the original): eye 0's end = eye 1's pass starts (ours in), eye 1's = it is over */
+static void rd_rt_eye_end(int e, uintptr_t rt, uint64_t fr)
+{
+	g_rcf.frame = fr;
+	if (e == 0) {
+		g_rcf.phase = 1;
+		if (atomic_load_explicit(&g_rcf.on, memory_order_relaxed) && g_rcf.ok && g_rcf.state >= 0 && !g_rcf.swapped) {
+			uint32_t rf = *(volatile uint32_t *)(rt + RT_FLAGS);
+			if (!(rf & RD_RTF_CF)) {
+				if (!g_rcf.nocf++)
+					logf_("CURFRAME t=%.3f target %#lx (flags %#x) has no current-frame images: nothing to swap",
+					      mono(), (unsigned long)rt, rf);
+			} else if ((g_rcf.state == 1 && g_rcf.rt == rt && rcf_same(rt)) || rcf_make(rt)) {
+				rcf_swap(rt);
+				g_rcf.swaps++;
+			}
+		}
+	} else if (e == 1) {
+		if (g_rcf.swapped)
+			rcf_swap(g_rcf.rt);
+		g_rcf.phase = 2;
+		atomic_store_explicit(&g_rcf.e1_frame, fr, memory_order_release);
+	}
+	rd_tr("eye %d end (target %#lx)%s", e, (unsigned long)rt, e == 0 && g_rcf.swapped ? ": eye 1's images in" : "");
+}
+
+static void rd_vr_present(void);
+
+/* H9 (render thread): the frame's end */
+static void rd_rt_present(void)
+{
+	if (g_rd.test)
+		rd_vr_present();
+	if (g_rcf.swapped) {
+		rcf_swap(g_rcf.rt);
+		if (g_rcf.late++ < 8)
+			logf_("CURFRAME t=%.3f a present with eye 1's images still in (no eye 1 end since eye 0's): swapped back",
+			      mono());
+	}
+	if (g_rcf.tracing && ++g_rcf.tr_frames >= 1) {
+		rd_tr("present");
+		g_rcf.tracing = 0;
+	}
+	g_rcf.phase = 0;
+	if (!g_rcf.tracing && atomic_load_explicit(&g_rcf.tr_req, memory_order_relaxed) > 0) {
+		atomic_fetch_sub(&g_rcf.tr_req, 1);
+		g_rcf.tracing = 1, g_rcf.tr_frames = 0;
+	}
+}
+
+/* RD_BRT_A / RD_BRT_B (SOMVR_FX_TEST, render thread): a BeginRenderTarget's binding of the target's frame images */
+typedef uint64_t (*rd_brt_fn)(uintptr_t rt);
+__attribute__((used)) uint64_t somvr_w_rdbrt(uintptr_t rt)
+{
+	uint64_t r = ((rd_brt_fn)g_rd_sites[RDS_BRT_A].target)(rt);
+	int is3d = rt && (rt == (uintptr_t)g_rt_target || (g_rcf.rt && rt == g_rcf.rt)), ph = g_rcf.phase < 3 ? g_rcf.phase : 2;
+	g_rcf.begins[ph][is3d]++;
+	if (g_rcf.tracing) {
+		char b[160];
+		rd_tr_bound(b, sizeof b);
+		rd_tr("begin rt=%#lx%s mode=%d rtflags=%#x; %s", (unsigned long)rt, is3d ? " (3D)" : "",
+		      *(volatile int *)(rt + RD_RT_MODE), *(volatile uint32_t *)(rt + RT_FLAGS), b);
+	}
+	return r;
+}
+
+/* draw N skipped: SOMVR_FLATFX's lens flares, or `fx hide`'s bit (in the pass `fx hideeye` names: -1 both) */
+static inline int rd_skip(int n)
+{
+	if (n == RDD_LENSFLARE && (atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_FLARES))
+		return 1;
+	if (!(atomic_load_explicit(&g_rd.hide, memory_order_relaxed) & (1u << n)))
+		return 0;
+	int e = atomic_load_explicit(&g_rcf.hide_eye, memory_order_relaxed);
+	return e < 0 || e == g_rcf.phase;
+}
+
+/* SOMVR_FX_TEST, CPU particles' draw (render thread, before the original sorts the block in place): the block as the
+ * copy left it? (its record from somvr_w_rdprep: the same bytes / changed / re-filled by a later frame) */
+static int rd_draw0_probe(void **a, uintptr_t *fx_out)
+{
+	const unsigned char *blk = a ? (const unsigned char *)a[2] : NULL;
+	int ph = g_rcf.phase < 3 ? g_rcf.phase : 2;
+	atomic_fetch_add_explicit(&g_rcf.b_draws[ph], 1, memory_order_relaxed);
+	*fx_out = 0;
+	if (!blk)
+		return -1;
+	uint32_t n = *(const volatile uint32_t *)blk;
+	if (g_rcf.tracing && n >= 4) {
+		char b[160];
+		rd_tr_bound(b, sizeof b);
+		rd_tr("CPU particles: block %p, %u particles; %s", (const void *)blk, n, b);
+	}
+	unsigned i = (unsigned)(((uintptr_t)blk >> 3) * 2654435761u) % RD_BLK_N;
+	uintptr_t k = atomic_load_explicit(&g_rcf.blk[i].key, memory_order_acquire);
+	if (k != (uintptr_t)blk) {
+		atomic_fetch_add_explicit(&g_rcf.b_norec[ph == 1], 1, memory_order_relaxed);
+		return -1;
+	}
+	uint32_t len = g_rcf.blk[i].len, fr = g_rcf.blk[i].frame;
+	int e = g_rcf.blk[i].eye;
+	uint64_t h0 = g_rcf.blk[i].h;
+	uintptr_t fx = g_rcf.blk[i].fx;
+	if (atomic_load_explicit(&g_rcf.blk[i].key, memory_order_acquire) != (uintptr_t)blk || e < 0 || e > 1)
+		return -1;
+	if (fr > (uint32_t)g_rt_frame && g_rt_frame) {
+		atomic_fetch_add_explicit(&g_rcf.b_newer[e], 1, memory_order_relaxed);
+		if (atomic_fetch_add(&g_rcf.b_lines, 1) < 12)
+			logf_("FLATFX block t=%.3f eye %d's block %p of frame %llu drawn with a record of frame %u: re-filled by a "
+			      "later frame before its draw", mono(), e, (const void *)blk, (unsigned long long)g_rt_frame, fr);
+		return -1;
+	}
+	uint64_t h = rd_fnv(blk, len);
+	int same = h == h0;
+	atomic_fetch_add_explicit(same ? &g_rcf.b_same[e] : &g_rcf.b_diff[e], 1, memory_order_relaxed);
+	if (!same && atomic_fetch_add(&g_rcf.b_lines, 1) < 12)
+		logf_("FLATFX block t=%.3f eye %d's block %p (%u bytes, %u particles, frame %u; the render thread at frame %llu, "
+		      "phase %d) CHANGED between its copy and its draw", mono(), e, (const void *)blk, len, n, fr,
+		      (unsigned long long)g_rt_frame, g_rcf.phase);
+	*fx_out = fx;
+	return e;
+}
+
+/* SOMVR_FX_TEST: the draw's render context behind a proxy for the one call (a[4]: slot 9 the vertex map, slot 15 the
+ * draw - their vertices hashed, the other slots straight through), so the two eyes' vertices of one emitter can be
+ * compared. The proxy is {vtable, the real context}; thunk k = this -> the real one, then its slot k. */
+#define RD_PX_T(K, OFF)                                                                                                \
+	__attribute__((naked, used)) void somvr_rd_px##K(void)                                                         \
+	{                                                                                                              \
+		__asm__ volatile("movq 8(%rdi), %rdi\n\tmovq (%rdi), %rax\n\tjmpq *" #OFF "(%rax)\n\t");                  \
+	}
+RD_PX_T(0, 0) RD_PX_T(1, 8) RD_PX_T(2, 16) RD_PX_T(3, 24) RD_PX_T(4, 32) RD_PX_T(5, 40) RD_PX_T(6, 48) RD_PX_T(7, 56)
+RD_PX_T(8, 64) RD_PX_T(9, 72) RD_PX_T(10, 80) RD_PX_T(11, 88) RD_PX_T(12, 96) RD_PX_T(13, 104) RD_PX_T(14, 112)
+RD_PX_T(15, 120) RD_PX_T(16, 128) RD_PX_T(17, 136) RD_PX_T(18, 144) RD_PX_T(19, 152) RD_PX_T(20, 160) RD_PX_T(21, 168)
+RD_PX_T(22, 176) RD_PX_T(23, 184) RD_PX_T(24, 192) RD_PX_T(25, 200) RD_PX_T(26, 208) RD_PX_T(27, 216) RD_PX_T(28, 224)
+RD_PX_T(29, 232) RD_PX_T(30, 240) RD_PX_T(31, 248)
+static struct { unsigned char *ptr; uint32_t granted, req; int64_t nv; uint64_t h; int maps, draws; } g_px; /* render thread */
+/* the frame's CPU-particle vertex ranges as drawn (render thread), hashed again at the present: memory the dynamic vertex
+ * buffer handed out again before the frame went to the GPU (CD3D11BaseCustomRenderCallback: 4 buffers +0x80..+0x98 in
+ * turn, the one in use +0x100, its fill +0xa0, the capacity +0xc; DISCARD at a buffer's start, NO_OVERWRITE after) */
+#define RD_VR_N 512
+static struct {
+	struct { const unsigned char *p; uint32_t len, idx, off; uint64_t h; int eye; } r[RD_VR_N], pr[RD_VR_N];
+	int n, npr, cap_logged;
+	uint64_t pranges[2], pchanged[2]; /* the previous frame's ranges at this present: changed during this frame */
+	uint32_t last_idx;
+	uint64_t frames, ranges[2], changed[2], rot, rot_max, rot_frame, over;
+	uint32_t lines;
+	void *cb;                    /* the callback seen at a draw */
+	_Atomic int grow;            /* `fx vbgrow N`: its four buffers made N times bigger at the next present */
+} g_vr;
+
+/* `fx vbgrow N` (SOMVR_FX_TEST, H9, render thread, no lock outstanding): the custom draws' four dynamic vertex buffers
+ * made again N times bigger (ID3D11Buffer slot 10 GetDesc, the device's slot 3 CreateBuffer, the old ones released),
+ * the capacity +0xc and the fill +0xa0 set: fewer turns a frame */
+typedef void (*rd_bufdesc_fn)(void *buf, void *desc);
+typedef int32_t (*rd_mkbuf_fn)(void *dev, const void *desc, const void *init, void **out);
+static void rd_vb_grow(void)
+{
+	int n = atomic_exchange(&g_vr.grow, 0);
+	unsigned char *cb = g_vr.cb;
+	struct d3d_src s;
+	if (n < 2 || !cb)
+		return;
+	if (*(volatile unsigned char *)(cb + 0xf8) || !g_d3d_ok || !d3d_source(HOLDER_TEX3D, &s)) {
+		logf_("FLATFX vb t=%.3f vbgrow %d: not now (a lock outstanding or no device)", mono(), n);
+		return;
+	}
+	uint32_t cap0 = *(volatile uint32_t *)(cb + 0xc), d[6], cap = 0;
+	void *nb[4] = { 0 };
+	for (int i = 0; i < 4; i++) {
+		void *b = *(void **)(cb + 0x80 + 8 * i);
+		if (!b) {
+			logf_("FLATFX vb t=%.3f vbgrow %d: buffer %d missing: not grown", mono(), n, i);
+			goto fail;
+		}
+		memset(d, 0, sizeof d);
+		((rd_bufdesc_fn)(*(void ***)b)[10])(b, d);
+		if (d[0] != cap0 || d[0] > (64u << 20) / (uint32_t)n) {
+			logf_("FLATFX vb t=%.3f vbgrow %d: buffer %d is %u bytes (usage %u bind %#x cpu %#x), capacity %u: not grown",
+			      mono(), n, i, d[0], d[1], d[2], d[3], cap0);
+			goto fail;
+		}
+		d[0] *= (uint32_t)n, cap = d[0];
+		int32_t hr = ((rd_mkbuf_fn)(*(void ***)s.dev)[3])(s.dev, d, NULL, &nb[i]);
+		if (hr < 0 || !nb[i]) {
+			logf_("FLATFX vb t=%.3f vbgrow %d: CreateBuffer(%u bytes) %d: hr %#x: not grown", mono(), n, d[0], i, (unsigned)hr);
+			goto fail;
+		}
+	}
+	for (int i = 0; i < 4; i++) {
+		void *b = *(void **)(cb + 0x80 + 8 * i);
+		((void (*)(void *))(*(void ***)b)[2])(b);
+		*(void **)(cb + 0x80 + 8 * i) = nb[i];
+	}
+	*(volatile uint32_t *)(cb + 0xc) = cap, *(volatile uint32_t *)(cb + 0xa0) = 0;
+	logf_("FLATFX vb t=%.3f vbgrow %d: the four buffers %u -> %u bytes (usage %u bind %#x cpu %#x)", mono(), n, cap0, cap, d[1],
+	      d[2], d[3]);
+	return;
+fail:
+	for (int i = 0; i < 4; i++)
+		if (nb[i])
+			((void (*)(void *))(*(void ***)nb[i])[2])(nb[i]);
+}
+
+/* SOMVR_FX_TEST (H9, render thread): the frame's vertex ranges again - changed since their draw = handed out again */
+static void rd_vr_present(void)
+{
+	if (atomic_load_explicit(&g_vr.grow, memory_order_relaxed))
+		rd_vb_grow();
+	int pc[2] = { 0, 0 };
+	for (int k = 0; k < g_vr.npr; k++) { /* the frame before: handed out again while this frame was recorded? */
+		int e = g_vr.pr[k].eye;
+		g_vr.pranges[e]++;
+		if (rd_fnv(g_vr.pr[k].p, g_vr.pr[k].len) != g_vr.pr[k].h)
+			g_vr.pchanged[e]++, pc[e]++;
+	}
+	if ((pc[0] || pc[1]) && g_vr.lines++ < 16)
+		logf_("FLATFX vb t=%.3f frame %llu: of the previous frame's %d CPU-particle vertex ranges %d of eye 0's and %d of eye "
+		      "1's were written again during this frame", mono(), (unsigned long long)g_rt_frame, g_vr.npr, pc[0], pc[1]);
+	memcpy(g_vr.pr, g_vr.r, sizeof g_vr.r[0] * (size_t)g_vr.n);
+	g_vr.npr = g_vr.n;
+	if (!g_vr.n)
+		return;
+	g_vr.frames++;
+	int ch[2] = { 0, 0 }, first = -1;
+	for (int k = 0; k < g_vr.n; k++) {
+		int e = g_vr.r[k].eye;
+		g_vr.ranges[e]++;
+		if (rd_fnv(g_vr.r[k].p, g_vr.r[k].len) != g_vr.r[k].h) {
+			g_vr.changed[e]++, ch[e]++;
+			if (first < 0)
+				first = k;
+		}
+	}
+	if (g_vr.rot_frame > g_vr.rot_max)
+		g_vr.rot_max = g_vr.rot_frame;
+	if ((ch[0] || ch[1]) && g_vr.lines++ < 16) {
+		int k = first;
+		logf_("FLATFX vb t=%.3f frame %llu: of its %d CPU-particle vertex ranges %d of eye 0's and %d of eye 1's CHANGED before "
+		      "the present (the first: eye %d's draw %d, %p %u bytes, buffer %u at %u); buffer turns this frame %llu",
+		      mono(), (unsigned long long)g_rt_frame, g_vr.n, ch[0], ch[1], g_vr.r[k].eye, k, (const void *)g_vr.r[k].p,
+		      g_vr.r[k].len, g_vr.r[k].idx, g_vr.r[k].off, (unsigned long long)g_vr.rot_frame);
+	}
+	g_vr.n = 0, g_vr.rot_frame = 0;
+}
+
+typedef int64_t (*rd_px_map_fn)(void *, int64_t, int64_t, int64_t, void *, int64_t, int64_t);
+typedef int64_t (*rd_px_draw_fn)(void *, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+static int64_t rd_px_map(void **px, int64_t a, int64_t n, int64_t c, void *out, int64_t e, int64_t f)
+{
+	void *real = px[1];
+	int64_t r = ((rd_px_map_fn)(*(void ***)real)[9])(real, a, n, c, out, e, f);
+	g_px.ptr = out && (int32_t)r == 0 ? *(unsigned char **)out : NULL;
+	g_px.granted = out ? *(uint32_t *)((char *)out + 0x10) : 0, g_px.req = (uint32_t)n, g_px.maps++;
+	return r;
+}
+static int64_t rd_px_draw(void **px, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t nv, int64_t g)
+{
+	void *real = px[1];
+	/* the vertices it draws (24 bytes each at least: the smaller of its two formats), read before the draw */
+	if (g_px.ptr && nv > 0 && nv <= (int64_t)g_px.granted) {
+		g_px.h = rd_fnv(g_px.ptr, (uint32_t)nv * 24u), g_px.nv = nv;
+		uint32_t idx = *(volatile uint32_t *)((char *)real + 0x100), off = *(volatile uint32_t *)((char *)real + 0xa0);
+		g_vr.cb = real;
+		if (idx != g_vr.last_idx)
+			g_vr.rot++, g_vr.rot_frame++, g_vr.last_idx = idx;
+		if (!g_vr.cap_logged++)
+			logf_("FLATFX vb t=%.3f the custom draws' dynamic vertex buffer: callback %p, capacity %u bytes, buffers %p %p %p "
+			      "%p, in use %u, filled to %u", mono(), real, *(volatile uint32_t *)((char *)real + 0xc),
+			      *(void **)((char *)real + 0x80), *(void **)((char *)real + 0x88), *(void **)((char *)real + 0x90),
+			      *(void **)((char *)real + 0x98), idx, off);
+		if (g_vr.n < RD_VR_N && (g_rcf.phase == 0 || g_rcf.phase == 1)) {
+			int k = g_vr.n++;
+			g_vr.r[k].p = g_px.ptr, g_vr.r[k].len = (uint32_t)nv * 24u, g_vr.r[k].h = g_px.h, g_vr.r[k].eye = g_rcf.phase;
+			g_vr.r[k].idx = idx, g_vr.r[k].off = off;
+		} else if (g_vr.n >= RD_VR_N)
+			g_vr.over++;
+	}
+	g_px.draws++;
+	return ((rd_px_draw_fn)(*(void ***)real)[15])(real, a, b, c, d, e, nv, g);
+}
+static void *g_px_vt[32] = { somvr_rd_px0, somvr_rd_px1, somvr_rd_px2, somvr_rd_px3, somvr_rd_px4, somvr_rd_px5,
+			     somvr_rd_px6, somvr_rd_px7, somvr_rd_px8, (void *)rd_px_map, somvr_rd_px10, somvr_rd_px11,
+			     somvr_rd_px12, somvr_rd_px13, somvr_rd_px14, (void *)rd_px_draw, somvr_rd_px16, somvr_rd_px17,
+			     somvr_rd_px18, somvr_rd_px19, somvr_rd_px20, somvr_rd_px21, somvr_rd_px22, somvr_rd_px23,
+			     somvr_rd_px24, somvr_rd_px25, somvr_rd_px26, somvr_rd_px27, somvr_rd_px28, somvr_rd_px29,
+			     somvr_rd_px30, somvr_rd_px31 };
+
+/* SOMVR_FX_TEST, CPU particles' draw: the probe, the original through the proxy, then eye 0's draw of an emitter
+ * against eye 1's of the same frame - the camera's and the emitter's transforms it was given (a[0], a[1]: position +
+ * quaternion), its props (a[3]) and the vertices it drew */
+static void rd_draw0_full(void *self, void **a)
+{
+	uintptr_t fx = 0;
+	int e = rd_draw0_probe(a, &fx);
+	if (!a || !a[4] || !a[0] || !a[1]) {
+		((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
+		return;
+	}
+	uint64_t cam = rd_fnv((const unsigned char *)a[0], 28), em = rd_fnv((const unsigned char *)a[1], 28);
+	void *px[2] = { g_px_vt, a[4] }, *real = a[4];
+	memset(&g_px, 0, sizeof g_px);
+	a[4] = px;
+	((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
+	a[4] = real;
+	if (e < 0 || !fx)
+		return;
+	unsigned i = (unsigned)((fx >> 4) * 2654435761u) % RD_BLK_N;
+	if (e == 0) {
+		g_rcf.dr[i].fx = fx, g_rcf.dr[i].frame = g_rt_frame, g_rcf.dr[i].cam = cam, g_rcf.dr[i].em = em;
+		g_rcf.dr[i].vh = g_px.h, g_rcf.dr[i].nv = (uint32_t)g_px.nv, g_rcf.dr[i].props = (uintptr_t)a[3];
+		g_rcf.dr[i].empp = (uintptr_t)a[1], g_rcf.dr[i].req = g_px.req, g_rcf.dr[i].granted = g_px.granted;
+		return;
+	}
+	if (g_rcf.dr[i].fx != fx || g_rcf.dr[i].frame != g_rt_frame) {
+		atomic_fetch_add_explicit(&g_rcf.d_nomatch, 1, memory_order_relaxed);
+		return;
+	}
+	atomic_fetch_add_explicit(&g_rcf.d_cmp, 1, memory_order_relaxed);
+	int dc = cam != g_rcf.dr[i].cam, de = em != g_rcf.dr[i].em, dv = g_px.h != g_rcf.dr[i].vh,
+	    dn = (uint32_t)g_px.nv != g_rcf.dr[i].nv, dp = (uintptr_t)a[3] != g_rcf.dr[i].props;
+	if (dc)
+		atomic_fetch_add_explicit(&g_rcf.d_cam, 1, memory_order_relaxed);
+	if (de)
+		atomic_fetch_add_explicit(&g_rcf.d_em, 1, memory_order_relaxed);
+	if (dv)
+		atomic_fetch_add_explicit(&g_rcf.d_vh, 1, memory_order_relaxed);
+	if (dn)
+		atomic_fetch_add_explicit(&g_rcf.d_nv, 1, memory_order_relaxed);
+	if (dp)
+		atomic_fetch_add_explicit(&g_rcf.d_props, 1, memory_order_relaxed);
+	if ((dv || dn || de || dp || (atomic_load(&g_rd.eyesame) && dc)) && g_px.nv >= 16 &&
+	    atomic_fetch_add(&g_rcf.d_lines, 1) < 24) {
+		const float *m = (const float *)a[1];
+		logf_("FLATFX draw t=%.3f frame %llu emitter %#lx: eye 1's draw against eye 0's: camera %s, emitter transform %s "
+		      "(%p vs %p; now %.2f %.2f %.2f q %.4f %.4f %.4f %.4f), props %s, vertices %s (%lld vs %u drawn; map asked %u "
+		      "got %u vs %u/%u)", mono(), (unsigned long long)g_rt_frame, (unsigned long)fx, dc ? "DIFFERENT" : "the same",
+		      de ? "DIFFERENT" : "the same", a[1], (void *)g_rcf.dr[i].empp, m[0], m[1], m[2], m[3], m[4], m[5], m[6],
+		      dp ? "DIFFERENT" : "the same", dv ? "DIFFERENT" : "the same", (long long)g_px.nv, g_rcf.dr[i].nv, g_px.req,
+		      g_px.granted, g_rcf.dr[i].req, g_rcf.dr[i].granted);
+	}
+}
+/* ... and the record (game thread, after the copy) */
+static void rd_prep_record(const unsigned char *blk, uint32_t len, int e, uintptr_t fx)
+{
+	if (!blk || !len || len > (1u << 20))
+		return;
+	unsigned i = (unsigned)(((uintptr_t)blk >> 3) * 2654435761u) % RD_BLK_N;
+	atomic_store_explicit(&g_rcf.blk[i].key, 0, memory_order_release);
+	g_rcf.blk[i].len = len, g_rcf.blk[i].frame = (uint32_t)g_fr.frame, g_rcf.blk[i].eye = e, g_rcf.blk[i].fx = fx;
+	g_rcf.blk[i].h = rd_fnv(blk, len);
+	atomic_store_explicit(&g_rcf.blk[i].key, (uintptr_t)blk, memory_order_release);
 }
 
 #define RD_DRAW_STUB(N)                                                                                                \
 	__attribute__((used)) void somvr_w_rddraw##N(void *self, void *ctx)                                            \
 	{                                                                                                              \
 		atomic_fetch_add_explicit(&g_rd.n_draw[N], 1, memory_order_relaxed);                                   \
-		if (rd_hidden() & (1u << N)) {                                                                         \
+		if (rd_skip(N)) {                                                                                      \
 			atomic_fetch_add_explicit(&g_rd.n_skip[N], 1, memory_order_relaxed);                           \
 			return;                                                                                        \
 		}                                                                                                      \
-		((rd_draw_fn)g_rd.orig[N])(self, ctx);                                                                 \
+		if (N == 0 && g_rd.test)                                                                               \
+			rd_draw0_full(self, (void **)ctx);                                                             \
+		else                                                                                                   \
+			((rd_draw_fn)g_rd.orig[N])(self, ctx);                                                         \
 	}
 RD_DRAW_STUB(0)
 RD_DRAW_STUB(1)
@@ -220,6 +777,8 @@ __attribute__((used)) void somvr_w_rdprep(void *self, void **a)
 			atomic_fetch_add_explicit(&g_rd.p_wrote[e], 1, memory_order_relaxed);
 		else
 			atomic_fetch_add_explicit(&g_rd.p_culled[e], 1, memory_order_relaxed);
+		if (cb->used > u0 && cb->base)
+			rd_prep_record(cb->base + u0, cb->used - u0, e, fx); /* build 22: its bytes, for the draw's check */
 		if (cb->cap > g_rd.p_cap)
 			g_rd.p_cap = cb->cap;
 		if (cb->used > g_rd.p_used_max[e])
@@ -249,6 +808,17 @@ static void rd_frame(void)
 			g_rd.vis_over_max = over;
 	}
 cmd:
+	if (atomic_load_explicit(&g_rcf.sync, memory_order_relaxed)) { /* `fx sync 1`: no running ahead into the next frame */
+		uint64_t f = g_fr.frame;
+		double t0 = mono();
+		while (atomic_load_explicit(&g_rcf.e1_frame, memory_order_acquire) < f && mono() - t0 < 0.25)
+			usleep(100);
+		double dt = mono() - t0;
+		if (atomic_load_explicit(&g_rcf.e1_frame, memory_order_acquire) >= f)
+			g_rcf.sync_ok++, g_rcf.sync_wait += dt;
+		else
+			g_rcf.sync_late++;
+	}
 	if (!atomic_load_explicit(&g_rd.cmd_pend, memory_order_acquire))
 		return;
 	char why[256] = "";
@@ -257,10 +827,24 @@ cmd:
 	atomic_store(&g_rd.cmd_pend, 0);
 }
 
-/* RD_SHAFTS: the per-view bloom/shaft setup (render thread) */
+/* RD_SHAFTS: the per-view bloom/shaft setup (render thread). SOMVR_FX_TEST's `fx bloomblend 0`: the setup run on a copy
+ * of the HDR state with +0xc = 0 (the factor it turns into the 1-f / f pair at 0x4622000, the bloom blend's) */
+static float g_rd_bb_min = 1e9f, g_rd_bb_max = -1e9f;
+static _Atomic int g_rd_bb_zero;
 __attribute__((used)) void somvr_w_rdshaft(void *params)
 {
-	((rd_shaft_fn)g_rd_sites[RDS_SHAFTS].target)(params);
+	float f = *(const float *)((const char *)params + 0xc);
+	if (f < g_rd_bb_min)
+		g_rd_bb_min = f;
+	if (f > g_rd_bb_max)
+		g_rd_bb_max = f;
+	if (atomic_load_explicit(&g_rd_bb_zero, memory_order_relaxed)) {
+		unsigned char cp[0x5c];
+		memcpy(cp, params, sizeof cp);
+		*(float *)(cp + 0xc) = 0.0f;
+		((rd_shaft_fn)g_rd_sites[RDS_SHAFTS].target)(cp);
+	} else
+		((rd_shaft_fn)g_rd_sites[RDS_SHAFTS].target)(params);
 	atomic_fetch_add_explicit(&g_rd.n_shaft, 1, memory_order_relaxed);
 	volatile uint8_t *b = (volatile uint8_t *)RD_SHAFT_BYTE;
 	if ((atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_SHAFTS) && *b) {
@@ -392,8 +976,53 @@ static const char *rd_word(const char *w0)
 		      (m & RDF_FLARES) && !g_rd.ok[RDS_LENSFLARE] ? " (the lens flares' slot is NOT hooked)" : "");
 		return "flatfx (from the next frame)";
 	}
+	if (!strcmp(w, "curframe state") || !strcmp(w, "curframe")) {
+		rcf_state_line("CURFRAME state");
+		return "curframe (a state line)";
+	}
+	if (!strcmp(w, "curframe game") || !strcmp(w, "curframe eye")) {
+		int on = w[9] == 'e';
+		atomic_store(&g_rcf.on, on);
+		logf_("CURFRAME t=%.3f the word: %s%s", cb_now(), on ? "eye (each eye its own current-frame images)" :
+		      "game (both eyes share the target's)", on && !g_rcf.ok ? " - RD_CF_MAKE did NOT match: stays the game's" : "");
+		return "curframe";
+	}
 	if (!strncmp(w, "fx ", 3) && !g_rd.test)
 		return "fx (needs SOMVR_FX_TEST=1)";
+	int iv;
+	if (sscanf(w, "fx hideeye %d", &iv) == 1) {
+		atomic_store(&g_rcf.hide_eye, iv < 0 || iv > 1 ? -1 : iv);
+		logf_("FLATFX t=%.3f the word: fx hideeye %d (`fx hide` %s)", cb_now(), iv < 0 || iv > 1 ? -1 : iv,
+		      iv == 0 ? "in eye 0's pass only" : iv == 1 ? "in eye 1's pass only" : "in both eyes");
+		return "fx hideeye";
+	}
+	if (sscanf(w, "fx sync %d", &iv) == 1) {
+		atomic_store(&g_rcf.sync, iv != 0);
+		logf_("FLATFX t=%.3f the word: fx sync %d (%s); so far %llu waits done (%.2f ms on average), %llu given up", cb_now(),
+		      iv != 0, iv ? "the game thread waits after both eyes for eye 1's end on the render thread, 250 ms at most" :
+		      "the game thread runs ahead as it does", (unsigned long long)g_rcf.sync_ok,
+		      g_rcf.sync_ok ? 1000.0 * g_rcf.sync_wait / (double)g_rcf.sync_ok : 0.0, (unsigned long long)g_rcf.sync_late);
+		return "fx sync";
+	}
+	if (!strcmp(w, "fx bloomblend 0") || !strcmp(w, "fx bloomblend game")) {
+		atomic_store(&g_rd_bb_zero, w[14] == '0');
+		logf_("FLATFX t=%.3f the word: %s (the HDR state's +0xc so far %.4f..%.4f)", cb_now(), w, g_rd_bb_min, g_rd_bb_max);
+		return "fx bloomblend";
+	}
+	if (sscanf(w, "fx vbgrow %d", &iv) == 1) {
+		atomic_store(&g_vr.grow, iv < 2 ? 0 : iv > 8 ? 8 : iv);
+		logf_("FLATFX t=%.3f the word: fx vbgrow %d (the custom draws' four dynamic vertex buffers that many times bigger at "
+		      "the next present)", cb_now(), iv);
+		return "fx vbgrow";
+	}
+	if (sscanf(w, "fx trace %d", &iv) == 1) {
+		atomic_store(&g_rcf.tr_lines, 0);
+		atomic_store(&g_rcf.tr_req, iv < 0 ? 0 : iv > 4 ? 4 : iv);
+		logf_("FLATFX t=%.3f the word: fx trace %d (the render thread's targets, bindings and CPU particle draws of the "
+		      "next %d stereo frames: FXTRACE lines, 900 at most; BeginRenderTarget's binding %s)", cb_now(), iv, iv,
+		      g_rd.ok[RDS_BRT_A] && g_rd.ok[RDS_BRT_B] ? "hooked" : "NOT hooked");
+		return "fx trace";
+	}
 	unsigned v;
 	if (sscanf(w, "fx hide %i", (int *)&v) == 1) {
 		atomic_store(&g_rd.hide, v & ((1u << RDD_N) - 1));
@@ -415,13 +1044,64 @@ static const char *rd_word(const char *w0)
 		atomic_store_explicit(&g_rd.cmd_pend, 1, memory_order_release);
 		return "fx console (after the next stereo frame)";
 	}
-	return "fx (not hide MASK|eyesame 0|1|console CMD|state: ignored)";
+	return "fx (not hide MASK|hideeye E|eyesame 0|1|sync 0|1|trace N|console CMD|state: ignored)";
+}
+
+static void rcf_state_line(const char *head)
+{
+	logf_("%s t=%.3f: SOMVR_CURFRAME %s (start %s; RD_CF_MAKE %s; images %s for target %#lx), eye 1 passes with its own images "
+	      "%llu, made %llu, swapped back at a present %llu, a target without images %llu; per phase (eye 0 / eye 1 / after): "
+	      "EndRenderTarget of rt3D %llu / %llu / %llu (flags 1: %llu / %llu / %llu), of others %llu / %llu / %llu; "
+	      "BeginRenderTarget of rt3D %llu / %llu / %llu, of others %llu / %llu / %llu; CPU particle draws %llu / %llu / %llu, "
+	      "their blocks as copied (eye 0 / eye 1): the same %llu / %llu, CHANGED %llu / %llu, re-filled by a later frame "
+	      "%llu / %llu, no record %llu / %llu; eye 1's draws against eye 0's of the same emitter: %llu compared (%llu "
+	      "unmatched), camera different %llu, emitter transform different %llu, props different %llu, vertices "
+	      "different %llu, vertex counts different %llu; vertex ranges changed before the present (eye 0 / eye 1): %llu of %llu "
+	      "/ %llu of %llu in %llu frames, the previous frame's written again during the next %llu of %llu / %llu of %llu, "
+	      "buffer turns %llu (the most in a frame %llu, ranges not kept %llu); fx sync: %llu "
+	      "waits (%.2f ms on average), %llu given up", head, cb_now(),
+	      atomic_load(&g_rcf.on) ? "eye" : "game", g_rcf.want ? "eye" : "game", g_rcf.ok ? "matched" : "NOT matched",
+	      g_rcf.state == 1 ? "made" : g_rcf.state < 0 ? "OFF" : "not made yet", (unsigned long)g_rcf.rt,
+	      (unsigned long long)g_rcf.swaps, (unsigned long long)g_rcf.makes, (unsigned long long)g_rcf.late,
+	      (unsigned long long)g_rcf.nocf, (unsigned long long)g_rcf.ends[0][1], (unsigned long long)g_rcf.ends[1][1],
+	      (unsigned long long)g_rcf.ends[2][1], (unsigned long long)g_rcf.ends1[0][1], (unsigned long long)g_rcf.ends1[1][1],
+	      (unsigned long long)g_rcf.ends1[2][1], (unsigned long long)g_rcf.ends[0][0], (unsigned long long)g_rcf.ends[1][0],
+	      (unsigned long long)g_rcf.ends[2][0], (unsigned long long)g_rcf.begins[0][1], (unsigned long long)g_rcf.begins[1][1],
+	      (unsigned long long)g_rcf.begins[2][1], (unsigned long long)g_rcf.begins[0][0], (unsigned long long)g_rcf.begins[1][0],
+	      (unsigned long long)g_rcf.begins[2][0], (unsigned long long)g_rcf.b_draws[0], (unsigned long long)g_rcf.b_draws[1],
+	      (unsigned long long)g_rcf.b_draws[2], (unsigned long long)g_rcf.b_same[0], (unsigned long long)g_rcf.b_same[1],
+	      (unsigned long long)g_rcf.b_diff[0], (unsigned long long)g_rcf.b_diff[1], (unsigned long long)g_rcf.b_newer[0],
+	      (unsigned long long)g_rcf.b_newer[1], (unsigned long long)g_rcf.b_norec[0], (unsigned long long)g_rcf.b_norec[1],
+	      (unsigned long long)g_rcf.d_cmp, (unsigned long long)g_rcf.d_nomatch, (unsigned long long)g_rcf.d_cam,
+	      (unsigned long long)g_rcf.d_em, (unsigned long long)g_rcf.d_props, (unsigned long long)g_rcf.d_vh,
+	      (unsigned long long)g_rcf.d_nv, (unsigned long long)g_vr.changed[0], (unsigned long long)g_vr.ranges[0],
+	      (unsigned long long)g_vr.changed[1], (unsigned long long)g_vr.ranges[1], (unsigned long long)g_vr.frames,
+	      (unsigned long long)g_vr.pchanged[0], (unsigned long long)g_vr.pranges[0], (unsigned long long)g_vr.pchanged[1],
+	      (unsigned long long)g_vr.pranges[1],
+	      (unsigned long long)g_vr.rot, (unsigned long long)g_vr.rot_max, (unsigned long long)g_vr.over,
+	      (unsigned long long)g_rcf.sync_ok, g_rcf.sync_ok ? 1000.0 * g_rcf.sync_wait / (double)g_rcf.sync_ok : 0.0,
+	      (unsigned long long)g_rcf.sync_late);
 }
 
 static void rd_start(const struct site_spec *sites, int *bad)
 {
 	memset(&g_rd, 0, sizeof g_rd);
+	memset(&g_rcf, 0, sizeof g_rcf);
+	atomic_store(&g_rcf.hide_eye, -1);
 	g_rd_sites = sites;
+	{ /* build 22: SOMVR_CURFRAME (the maker proven read-only; used only from H8's eye ends) */
+		char cwhy[512];
+		g_rcf.want = env_word("SOMVR_CURFRAME", (const char *const[]){ "game", "eye" }, 2, 0);
+		g_rcf.ok = check_site(&sites[RDS_CF_MAKE], cwhy, sizeof cwhy) == 0;
+		if (!g_rcf.ok)
+			logf_("FLATFX site %s %#lx MISMATCH: %s (SOMVR_CURFRAME stays the game's)", sites[RDS_CF_MAKE].name,
+			      (unsigned long)sites[RDS_CF_MAKE].addr, cwhy);
+		atomic_store(&g_rcf.on, g_rcf.want);
+		logf_("CONFIG curframe=%s (SOMVR_CURFRAME: %s)%s", g_rcf.want ? "eye" : "game",
+		      g_rcf.want ? "each eye its own current-frame images - eye 1's pass gets two of ours" :
+		      "both eyes share the 3D target's current-frame images, as the game made them",
+		      g_rcf.want && !g_rcf.ok ? " - NOT possible: RD_CF_MAKE did not match" : "");
+	}
 	const char *s = getenv("SOMVR_FLATFX");
 	int m = s ? rd_parse(s) : 0;
 	if (m < 0) {
@@ -463,6 +1143,9 @@ static void rd_start(const struct site_spec *sites, int *bad)
 			g_rd.ok[i] = go_slot(&sites[i], (void *)g_rd_stub[d], &g_rd.orig[d]);
 		}
 	}
+	if (g_rd.test) /* build 22: the trace's BeginRenderTarget bindings */
+		for (int i = RDS_BRT_A; i <= RDS_BRT_B; i++)
+			g_rd.ok[i] = bo_patch_call(&sites[i], (void *)somvr_w_rdbrt);
 	unsigned have = (g_rd.ok[RDS_LENSFLARE] ? RDF_FLARES : 0) | (g_rd.ok[RDS_SHAFTS] ? RDF_SHAFTS : 0) | RDF_VIGNETTE |
 			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0);
 	atomic_store(&g_rd.off, g_rd.want & have);
@@ -481,4 +1164,6 @@ static void rd_end_log(void)
 {
 	if (g_rd.want || g_rd.test || g_rd.vis_full)
 		rd_state_line("FLATFX END");
+	if (g_rcf.want || g_rcf.swaps || g_rd.test)
+		rcf_state_line("CURFRAME END");
 }

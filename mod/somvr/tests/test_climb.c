@@ -3294,6 +3294,110 @@ static void test_mantle20(void) {
 }
 
 
+/* ---- build 22 (SOMVR_CLIMB_MANTLE_OVERHANG, docs 93.1): an overhang's lip held from below, room on its top ---------- */
+/* a slab 70 cm thick flush with the wall's top (230..300), its front 40 cm out of the face (z 60); the right hand on its
+ * front 20 cm under the top, the eyes 100 cm under it (holding; the head 30 cm under the slab) */
+#define AM_OH_OUT_CM_T 45.0f /* somvr_climb.c's AM_OH_OUT_CM */
+static void oh_setup(rig_t *r, int on, int mode) {
+    rig_init(r);
+    r->c.letgo = SOMVR_CLIMB_LETGO_HANG, r->c.descent = 1, r->c.drop_mark = 1, r->c.mantle = mode, r->c.am_overhang = on;
+    r->c.cue = 0, r->c.stand = 1;
+    r->in.can_blink = 1, r->in.enemy_near = mock_enemy, g_enemy = 0;
+    g_slab_y0 = 230, g_slab_y1 = 300, g_slab_z = 60, r->slab = 1, g_wall_top = WALL_TOP;
+    r->body.y = 200 - r->head_track_y; /* the eyes at 200 */
+    r->in.hand[1].p = (sv_vec3){ 20, 280 - r->body.y, 56 - r->body.z }; /* on the slab's front, 20 cm under its top */
+    r->in.hand[1].palm = (sv_vec3){ 0, 0, 1 }, r->in.hand[1].fwd = (sv_vec3){ 0, 1, 0 };
+    grip(r, 1, 1);
+    frames(r, 4);
+}
+static void test_oh22(void) {
+    rig_t r;
+    am_acc k;
+    /* off (build 21): no ring under the lip; A is the drop mark's (a tap: nothing moves), he keeps holding */
+    oh_setup(&r, 0, 1);
+    CHECK(r.s.active && r.s.h[1].holding && r.s.h[1].edge && r.s.h[1].top_found && NEAR(r.s.h[1].top_y, 300, 1.0) &&
+              !r.o.am_show,
+          "overhang off: the lip held from below (edge %d, top %d at %g), no ring", r.s.h[1].edge, r.s.h[1].top_found,
+          r.s.h[1].top_y);
+    sv_vec3 b0 = r.body;
+    am_run(&r, 1, 90, &k);
+    CHECK(!k.go_ev && !k.shows && r.s.am_presses == 0 && r.s.dm_presses == 1 && r.s.active && NEAR3(r.body, b0.x, b0.y, b0.z, 0.01),
+          "overhang off: A = the drop mark's tap, nothing moves (presses %llu, dm %llu)", (unsigned long long)r.s.am_presses,
+          (unsigned long long)r.s.dm_presses);
+    /* on: the ring on the top 40 cm in from the lip's front; nothing moves before the press */
+    oh_setup(&r, 1, 1);
+    b0 = r.body;
+    CHECK(r.o.am_show && r.s.am_oh && NEAR(r.o.am_land.y, 300, 0.5) && r.o.am_land.z >= 95 && r.o.am_land.z <= 145 &&
+              r.s.am_oh_shows == 1,
+          "overhang on: the ring on its top (%g %g %g, oh %d)", r.o.am_land.x, r.o.am_land.y, r.o.am_land.z, r.s.am_oh);
+    am_run(&r, 0, 60, &k);
+    CHECK(k.shows == 60 && NEAR3(r.body, b0.x, b0.y, b0.z, 0.01) && r.s.phase == SOMVR_CLIMB_PH_HOLD,
+          "overhang on: shown, he hangs below the lip until the press (moved %g)", r.body.y - b0.y);
+    /* A: out round the lip (the capsule clear of its front), up, in: on the top */
+    float min_rz = 1e9f, max_hy_under = -1e9f, cross = -1e9f, max_step = 0;
+    int frames_n = 0;
+    for (int i = 0; i < 200; i++) {
+        sv_vec3 p0 = r.body;
+        r.in.drop = i == 0;
+        rig_frame(&r);
+        r.in.drop = 0;
+        float rz = r.body.z + 50, st = sqrtf((r.body.x - p0.x) * (r.body.x - p0.x) + (r.body.y - p0.y) * (r.body.y - p0.y) +
+                                             (r.body.z - p0.z) * (r.body.z - p0.z));
+        max_step = fmaxf(max_step, st), min_rz = fminf(min_rz, rz), frames_n++;
+        if (rz > g_slab_z - 35 && r.body.y < g_slab_y1) /* the capsule under the slab: its top under the underside */
+            max_hy_under = fmaxf(max_hy_under, r.body.y + r.head_track_y + 20 - g_slab_y0);
+        if (p0.z + 50 <= g_slab_z - 35 && rz > g_slab_z - 35) cross = r.body.y - g_slab_y1; /* the capsule's edge at the lip */
+        if (!r.s.active) break;
+    }
+    CHECK(!r.s.active && r.s.last_end == SOMVR_CLIMB_END_OVER && r.s.am_end == SOMVR_CLIMB_AME_DONE && r.s.am_oh_goes == 1 &&
+              NEAR(r.body.y, 303, 1.5) && r.body.z + 50 >= 95,
+          "overhang on: A = onto the top (body %g, root z %g; end %d %d)", r.body.y, r.body.z + 50, r.s.last_end, r.s.am_end);
+    CHECK(min_rz <= g_slab_z - AM_OH_OUT_CM_T + 0.5f && max_hy_under <= 0.5f && cross >= 0 && max_step <= 350.0f / 90 + 0.5f &&
+              r.s.thr_ons == 0,
+          "overhang on: out round the lip (the root at z %g), never up into it (%g), the feet %g over its top as he comes in, "
+          "smooth (%.2f cm a frame), no climb through", min_rz, max_hy_under, cross, max_step);
+    printf("overhang glide from the eyes 100 cm under the top, 40 cm under the lip: %.0f cm in %d frames (%.2f s)\n",
+           r.s.am_len[SOMVR_CLIMB_AM_N], frames_n, frames_n / 90.0);
+    /* a plain ledge (no slab: the face straight under the lip) held from below: not an overhang - A is the drop's */
+    oh_setup(&r, 1, 1);
+    g_slab_y0 = g_slab_y1 = g_slab_z = 0, r.slab = 0;
+    r.in.hand[1].p = (sv_vec3){ 20, 280 - r.body.y, 96 - r.body.z };
+    grip(&r, 1, 0), frames(&r, 2), grip(&r, 1, 1), frames(&r, 4);
+    am_run(&r, 1, 30, &k);
+    CHECK(r.s.h[1].holding && !k.shows && !k.go_ev && r.s.am_presses == 0 && r.s.dm_presses == 1,
+          "overhang on: a ledge's lip from below (no overhang): no ring, A the drop mark (presses %llu)",
+          (unsigned long long)r.s.am_presses);
+    /* no room on its top (a roof 90 cm over it): no ring; A says why, nothing moves */
+    oh_setup(&r, 1, 1);
+    g_roof_y = 390, g_roof_z0 = 0, g_roof_z1 = 300;
+    frames(&r, 60);
+    b0 = r.body;
+    CHECK(!r.o.am_show, "overhang on: a roof over its top: no ring");
+    am_run(&r, 1, 30, &k);
+    CHECK(k.no_ev == 1 && !k.go_ev && r.s.am_why == SOMVR_CLIMB_AM_NOROOM && NEAR3(r.body, b0.x, b0.y, b0.z, 0.01),
+          "overhang on: no room: the why (%d), nothing moves", r.s.am_why);
+    g_roof_y = 0;
+    /* the eyes 130 cm under its top (out of reach of the rule): nothing */
+    oh_setup(&r, 1, 1);
+    r.body.y -= 30, r.in.hand[1].p.y += 30;
+    frames(&r, 30);
+    CHECK(!r.o.am_show, "overhang on: the eyes 130 cm under the top: no ring");
+    /* build 22: at 13 fps (headless; the game takes each request a frame late: 27 cm behind) the glide is not "held" */
+    oh_setup(&r, 1, 1);
+    r.dt = 1.0 / 13;
+    for (int i = 0; i < 60 && (i == 0 || r.s.active); i++) r.in.drop = i == 0, rig_frame(&r);
+    r.in.drop = 0;
+    CHECK(!r.s.active && r.s.am_end == SOMVR_CLIMB_AME_DONE && NEAR(r.body.y, 303, 1.5),
+          "overhang on at 13 fps: onto the top, not held by the frame's lag (end %d, body %g)", r.s.am_end, r.body.y);
+    r.dt = 0;
+    /* =blink: the quick blink onto the ring */
+    oh_setup(&r, 1, 2);
+    am_run(&r, 1, 3, &k);
+    CHECK(k.go_ev == 1 && k.blink == 1 && NEAR(k.to.y, 300 + r.c.foot_cm + 5, 0.5) && r.s.phase == SOMVR_CLIMB_PH_BLINK,
+          "overhang blink: the blink onto it (%g %g %g)", k.to.x, k.to.y, k.to.z);
+    g_slab_y0 = g_slab_y1 = g_slab_z = 0;
+}
+
 /* ---- build 21: the timer, unstuck, the round lip, down over the edge ----------------------------------------------- */
 static void test_b21(void) {
     rig_t r;
@@ -3510,6 +3614,7 @@ static void test_b21(void) {
 int main(void) {
     test_b21();
     test_mantle20();
+    test_oh22();
     test_through();
     test_face_toward();
     test_pieces();

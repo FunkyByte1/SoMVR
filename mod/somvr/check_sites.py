@@ -63,7 +63,8 @@ somvr_practice_game.c, somvr_body_game.c, somvr_minimap_game.c, somvr_session_ga
 somvr_prompts_game.c, somvr_bowhit_game.c, somvr_render_game.c) are read with it. The SOMVR_FLATFX block of
 somvr_render_game.c (RENDER_SITES_BEGIN ... RENDER_SITES_END, re-xr-pipeline.md 86: the patched lens-flare slot, the
 sun shafts' and the lens drops' patched calls, SOMVR_FX_TEST's four patched particle/sprite draw slots) is counted on
-its own.
+its own, as is the SOMVR_BEASTS block of somvr_beasts_game.c (BEASTS_SITES_BEGIN ... BEASTS_SITES_END, re-xr-pipeline.md
+92: 4 read-only K_ENTRY proofs of the skills' category, HasSkill, its bit and the inventory's offset).
 Exit 0 = all sites match.
 """
 import os
@@ -422,12 +423,42 @@ def main():
         rd = [m for b in text.split("RENDER_SITES_BEGIN")[1:] for m in re.findall(
             r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
             r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("RENDER_SITES_END", 1)[0])]
-        if [m[1] for m in rd] != ["K_VSLOT", "K_CALL", "K_CALL"] + ["K_VSLOT"] * 6 + ["K_ENTRY"] * 2:
-            sys.exit("expected 11 SITE lines in somvr_render_game.c's RENDER_SITES block (the patched RD_LENSFLARE K_VSLOT, "
+        if [m[1] for m in rd] != ["K_VSLOT", "K_CALL", "K_CALL"] + ["K_VSLOT"] * 6 + ["K_ENTRY"] * 2 + \
+                ["K_CALL", "K_CALL", "K_ENTRY"]:
+            sys.exit("expected 14 SITE lines in somvr_render_game.c's RENDER_SITES block (the patched RD_LENSFLARE K_VSLOT, "
                      "RD_SHAFTS and RD_RAIN K_CALLs, SOMVR_FX_TEST's RD_PSYS, RD_GPUPSYS, RD_SPRITE, RD_FLARESPR, "
-                     "RD_PSYS_UPD, RD_PSYS_PREP K_VSLOTs, the read-only RD_VIS_INIT and RD_VIS_REQ K_ENTRYs), "
+                     "RD_PSYS_UPD, RD_PSYS_PREP K_VSLOTs, the read-only RD_VIS_INIT and RD_VIS_REQ K_ENTRYs; build 22: "
+                     "SOMVR_FX_TEST's RD_BRT_A and RD_BRT_B K_CALLs, SOMVR_CURFRAME's RD_CF_MAKE K_ENTRY), "
                      "found %d" % len(rd))
         sites = sites + rd
+    # SOMVR_POINTER_MOUSE1 (build 22): its block lives in somvr_screens_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_screens_game\.c"', text, re.M):
+        sc = [m for b in text.split("SCREENS_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("SCREENS_SITES_END", 1)[0])]
+        if [m[1] for m in sc] != ["K_CALL"]:
+            sys.exit("expected 1 SITE line in somvr_screens_game.c's SCREENS_SITES block (the patched SCR_NEM_PAD K_CALL), "
+                     "found %d" % len(sc))
+        sites = sites + sc
+    # SOMVR_BEASTS (build 22): its block lives in somvr_beasts_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_beasts_game\.c"', text, re.M):
+        bz = [m for b in text.split("BEASTS_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("BEASTS_SITES_END", 1)[0])]
+        if [m[1] for m in bz] != ["K_ENTRY"] * 4:
+            sys.exit("expected 4 SITE lines in somvr_beasts_game.c's BEASTS_SITES block (the read-only BZ_SKILL_CAT, "
+                     "BZ_HAS_SKILL, BZ_SKILL_BIT, BZ_PURCHASE K_ENTRYs), found %d" % len(bz))
+        sites = sites + bz
+    # SOMVR_CAPTAIN (build 22): its block lives in somvr_captain_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_captain_game\.c"', text, re.M):
+        cpt = [m for b in text.split("CAPTAIN_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("CAPTAIN_SITES_END", 1)[0])]
+        if [m[1] for m in cpt] != ["K_ENTRY"] * 6 + ["K_VSLOT"]:
+            sys.exit("expected 7 read-only SITE lines in somvr_captain_game.c's CAPTAIN_SITES block (KP_FACTION, KP_TARGET, "
+                     "KP_MEMBERS, KP_FM_TEMPLATE, KP_FM_BIND, KP_FM_ACTIVATE K_ENTRYs, the KP_GS_FMGR K_VSLOT), found %d"
+                     % len(cpt))
+        sites = sites + cpt
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

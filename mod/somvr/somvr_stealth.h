@@ -30,6 +30,10 @@ typedef struct {
     float grab_mps;      /* ... at least this fast along the blade (0.5 m/s) */
     float side_deg;      /* the thrust's way in: its angle off the orc's facing at least this (60: back, neck or side) */
     float grace_s;       /* a touch alerts the orc this long after it unless a kill comes first (0.3 s) */
+    /* build 22 (SOMVR_STEALTH_KILL_CARRIED; docs/re-xr-pipeline.md 93.4): a blade the walk carried into its body is no
+     * touch - only the hand's own motion into the body makes one */
+    int carried;         /* 1: the rule; 0: build 21's (any blade in its body that is no kill is a touch) */
+    float own_cm;        /* ... the hand's own push into the body under this since the blade went in = carried (4 cm) */
 } somvr_stl_cfg;
 
 typedef struct {
@@ -52,6 +56,8 @@ typedef struct {
     int neck;              /* it went in at the neck */
     int tier_cut;          /* SOMVR_COMBAT_SWING=stroke's own tier (2 = a committed full-speed cut) */
     int held;              /* held from behind by the left hand (SOMVR_VERBS' grab) */
+    int carried;           /* build 22: the hand's own push into the body since it went in under cfg.own_cm (the walk
+                            * carried it in: somvr_stl_own_push) */
 } somvr_stl_hit;
 
 enum {
@@ -67,6 +73,8 @@ enum {
     SOMVR_STL_TOUCH,      /* build 21: in the body, but no thrust (a touch, a glance, a wiggle, a slow push): no damage;
                            * the orc is alerted after cfg.grace_s unless a kill comes first */
     SOMVR_STL_AIR,        /* build 21: combat's hit capsule, not the body: nothing */
+    SOMVR_STL_CARRIED,    /* build 22 (cfg.carried): in the body, carried in by the walk, the hand not pushing it in: no
+                           * damage, no alert (a touch is the hand's own motion) */
     SOMVR_STL_N
 };
 
@@ -97,6 +105,12 @@ const char *somvr_stl_by_name(int by);
  * -1 when no point is inside. entry = that point, *link = the link it went in at (either may be NULL) */
 float somvr_stl_body_depth(const float base[3], const float tip[3], const float (*node)[3], const float *r, int n,
                            float entry[3], int *link);
+
+/* build 22: the depth the hand's own motion added this frame (cm, < 0 drawn out): the body depth of the blade now less
+ * that of the blade where the hand alone would have left it - moved back by its own velocity (vb, vt: the base's and
+ * the tip's tracking-space velocity, cm/s: the walk and the turns are not in it) over dt s. Outside = 0 deep */
+float somvr_stl_own_push(const float base[3], const float tip[3], const float vb[3], const float vt[3], float dt,
+                         const float (*node)[3], const float *r, int n);
 
 /* build 21 (SOMVR_STEALTH_KILL_STICK): the blade stays in the wound. Pinned at the wound E along the axis a (unit, into
  * the body) it took in; the hand's grip G slides it in and out along that axis (the guard stays guard_cm out of the

@@ -13821,9 +13821,9 @@ static void pr_tests(const char *trig)
 		       log_has("spawn Shield (the trigger word) template Orc_Defender ('Orc_Defender') ok"),
 	       "spawn shield: spawns %d yaw %g from (%g %g %g) zone %d level %d/%u", g_pr_spawns, yaw, g_pr_ray_from[0],
 	       g_pr_ray_from[1], g_pr_ray_from[2], g_pr_zone_calls, g_pr_level_calls, g_pr_level_seen);
-	set_trigger(trig, "practice spawn troll");
-	EXPECT(log_has("TRIGGER cmd=practice (not go|back|spawn [infantry|shield|berserker]|far [TYPE]|remove|status|arrows|"
-		       "health|hurt HP|focus F: ignored)"),
+	set_trigger(trig, "practice spawn spider");
+	EXPECT(log_has("TRIGGER cmd=practice (not go|back|spawn [infantry|shield|berserker|caragor|ghul|graug]|far [TYPE]|remove|"
+		       "status|arrows|health|hurt HP|focus F: ignored)"),
 	       "a bad type word");
 	set_trigger(trig, NULL);
 	snprintf(g_trig_path, sizeof g_trig_path, "%s", tp0);

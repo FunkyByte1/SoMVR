@@ -42,6 +42,7 @@ static struct {
 	_Atomic int req_tree;      /* the test word "verbs tree": the player's root nodes, their chords, the attacks */
 	int ok_tree;               /* FINISH's selection sites matched (the tree's attacks, the stealth kill's ask) */
 	int stealth;               /* SOMVR_VERBS_STEALTH: the stealth kill by a blade contact (default 1 with on) */
+	int brand_prompt;          /* build 22, SOMVR_VERBS_BRAND_PROMPT: the stealth brand's prompt kept (LT) */
 	char stealth_node[64];     /* SOMVR_VERBS_STEALTH_NODE */
 	uintptr_t stealth_c;
 	double stealth_t, stealth_line;
@@ -240,6 +241,12 @@ static int vb_keep(int act, uintptr_t key)
 			return 0;
 	char nm[96];
 	int yes = !strncmp(rx_rec_name(key, nm, sizeof nm), "Grab_Button", 11);
+	/* build 22 (SOMVR_VERBS_BRAND_PROMPT=on, re-xr-pipeline.md 89): the stealth brand's (torment's) prompt, B on the key
+	 * 'Stealth_ButtonB' ('Combat_Stealth_Brand', 'UI_Stealth_Torment'): the open hand on the orc's head and the left
+	 * trigger send that B (120), so it is kept - with the left trigger's glyph (the map 120 -> 124 above). Build 21
+	 * dropped it ("no VR control sends it": run 20261028-230057 at the Sea Fort's archers) */
+	if (!yes && g_vb.brand_prompt && !strcmp(nm, "Stealth_ButtonB"))
+		yes = 1;
 	if (yes && n_yes < 16)
 		k_yes[n_yes++] = key;
 	else if (!yes && n_no < 64)
@@ -1379,6 +1386,7 @@ static void vb_start(int *bad)
 		g_vb.mode = VB_LOG;
 	}
 	g_vb.stealth = env_word("SOMVR_VERBS_STEALTH", (const char *const[]){ "0", "1" }, 2, 1);
+	g_vb.brand_prompt = env_word("SOMVR_VERBS_BRAND_PROMPT", (const char *const[]){ "off", "on" }, 2, 0); /* build 22 */
 	{
 		const char *sn = getenv("SOMVR_VERBS_STEALTH_NODE");
 		snprintf(g_vb.stealth_node, sizeof g_vb.stealth_node, "%s", sn && sn[0] ? sn : "PC_InstaKill_Sneak_Silent");
@@ -1408,6 +1416,10 @@ static void vb_start(int *bad)
 	}
 	if (atomic_load(&g_pp.mode) == PP_GAME)
 		logf_("CONFIG verbs: SOMVR_PAD_PROMPTS=game: the game's prompts are not read (log or vr reads them)");
+	logf_("CONFIG verbs build 22: the stealth brand's prompt (B on 'Stealth_ButtonB') %s (SOMVR_VERBS_BRAND_PROMPT)",
+	      !g_vb.brand_prompt ? "dropped as build 21 (off)" : g_vb.mode == VB_ON && atomic_load(&g_pp.mode) == PP_VR
+	      ? "kept with the left trigger's glyph (the hand on the orc's head + the trigger = that B)" : "on, but SOMVR_VERBS=on "
+	      "and SOMVR_PAD_PROMPTS=vr are needed: as the game shows it");
 	logf_("CONFIG verbs build 20: the interrogated orc's kill %s (SOMVR_VERBS_ASK_KILL); Talion's attack read through a "
 	      "body moment's hold; the intel menu's Back after %.1f s (SOMVR_VERBS_INTEL_BACK_S; 0 = never)", g_vb.ask_kill ==
 	      VB_ASK_BLADE ? "blade: the sword's stab into it = its Eliminate (and the Touch's B)" : "game: the Touch's B = "

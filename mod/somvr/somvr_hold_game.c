@@ -29,6 +29,8 @@
 static struct {
 	int on, used;                  /* used: on at some point (the END line) */
 	int nopin;                     /* the test word "holdtalion nopin": measured, not pulled back */
+	int beast;                     /* build 22, SOMVR_BEASTS: the hold's sync is a beast's (a caragor's takedown): held
+					* through the struggle and as long as it runs (SOMVR_BZ_HOLD_MAX_S) */
 	/* the hold under way */
 	int active;
 	uintptr_t s0, s1, rec1, atk;   /* Talion's Combat +0x188 / +0x190 at the start, the target sync's record, his attack */
@@ -120,6 +122,7 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 		char n0[96], n1[96], na[96], w[96];
 		g_tk.active = 1, g_tk.t0 = g_tk.atk_t = t, g_tk.ret_t = 0, g_tk.ret_why = NULL;
 		g_tk.s0 = s[0], g_tk.s1 = s[1], g_tk.rec1 = rec1, g_tk.atk = atk;
+		g_tk.beast = bz_hold_beast(rec1);
 		g_tk.ticks = g_tk.owned = g_tk.pulls = g_tk.after = g_tk.rebased = g_tk.view_frames = g_tk.ret_ticks = 0;
 		g_tk.held = g_tk.left = 0, g_tk.dev = g_tk.dev_max = g_tk.asked_cm = g_tk.pulled_cm = g_tk.view_max = 0;
 		g_tk.dev_y = g_tk.dev_y_max = 0;
@@ -128,10 +131,11 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 			memcpy(g_tk.pin, root, sizeof g_tk.pin);
 		if (tk_log_ok())
 			logf_("HOLD talion start t=%.3f frame=%llu: his Combat +0x188 %#lx (record '%s') +0x190 %#lx (record '%s'), "
-			      "his attack '%s'; the game's reasons now %s -> the root held at %.1f,%.1f,%.1f", t,
+			      "his attack '%s'; the game's reasons now %s -> the root held at %.1f,%.1f,%.1f%s", t,
 			      (unsigned long long)rend_frame(), (unsigned long)s[0], rx_rec_name(rec0, n0, sizeof n0),
 			      (unsigned long)s[1], rx_rec_name(rec1, n1, sizeof n1), rx_rec_name(atk, na, sizeof na),
-			      somvr_loco_why_str(in->why, w, sizeof w), g_tk.pin[0], g_tk.pin[1], g_tk.pin[2]);
+			      somvr_loco_why_str(in->why, w, sizeof w), g_tk.pin[0], g_tk.pin[1], g_tk.pin[2],
+			      g_tk.beast ? " (a beast's: held through its struggle, at most 20 s)" : "");
 	} else {
 		if (have_root && g_tk.have_pin && g_lo.s.owned_last) { /* the pin follows our own last move (the stick, the
 									 * follow; not the pull back) */
@@ -159,7 +163,7 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 			tk_finish(t, mine ? "the Shadow Strike or a finisher" : "a sync of his own");
 			return;
 		}
-		const char *why = t - g_tk.t0 > TK_MAX_S ? "the longest hold" : !s[1] && atk != g_tk.atk ? "the sync and his half ended"
+		const char *why = t - g_tk.t0 > (g_tk.beast ? SOMVR_BZ_HOLD_MAX_S : TK_MAX_S) ? "the longest hold" : !s[1] && atk != g_tk.atk ? "the sync and his half ended"
 				: t - (g_tk.atk ? g_tk.atk_t : g_tk.t0) > TK_ATK_S ? "his half ended" : NULL;
 		if (why && !g_tk.ret_t)
 			g_tk.ret_t = t, g_tk.ret_why = why;
@@ -174,8 +178,10 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 		g_tk.pull = (sv_vec3){ (g_tk.pin[0] - root[0]) * k, 0, (g_tk.pin[2] - root[2]) * k };
 	}
 	g_tk.ticks++, g_tk.held_ticks++, g_tk.after += !enemy, g_tk.ret_ticks += g_tk.ret_t > 0;
-	g_tk.held |= in->why & TK_BITS, g_tk.left |= in->why & ~TK_BITS;
-	in->why &= ~TK_BITS;
+	/* build 22: a beast's takedown pins him in its struggle (the game's struggle and the fallback's reasons held too) */
+	uint32_t bits = TK_BITS | (g_tk.beast ? SOMVR_LOCO_W_STRUGGLE | SOMVR_LOCO_W_FALLBACK : 0u);
+	g_tk.held |= in->why & bits, g_tk.left |= in->why & ~bits;
+	in->why &= ~bits;
 	if (!in->why)
 		g_tk.owned++, g_tk.owned_ticks++;
 }
@@ -200,6 +206,13 @@ static void tk_anchor_root(sv_vec3 *root)
 			(root->z - g_tk.pin[2]) * (root->z - g_tk.pin[2]));
 	g_tk.view_max = fmaxf(g_tk.view_max, isfinite(d) ? d : 0), g_tk.view_frames++;
 	root->x = g_tk.pin[0], root->y = g_tk.pin[1], root->z = g_tk.pin[2];
+}
+
+/* build 22: a beast's sync held with the view on its pin (lo_anchor_body: a frame without the head node keeps the pin
+ * rather than the game camera on the carried body) */
+static int tk_beast_pinned(void)
+{
+	return g_tk.on && g_tk.active && g_tk.beast && !g_tk.nopin && g_tk.have_pin && isfinite(g_tk.pin[0] + g_tk.pin[2]);
 }
 
 /* the test words "holdtalion on|off|nopin|pin", "holdtalion health N" (headless A/B in one boot; SOMVR_HANDS_TEST, SOMVR_LOCO on): nopin =

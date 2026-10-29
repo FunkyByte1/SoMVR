@@ -163,7 +163,7 @@ enum { SOMVR_PP_BAND = 0, SOMVR_PP_GAZE = 1 };
 /* SOMVR_XR_POPUPS: unset/"band"/"off"/"0" = BAND (build 20c: the band placed with the HUD); "gaze"/"on"/"1" = GAZE;
  * anything else = BAND and *bad = 1 */
 int somvr_pp_parse(const char *v, int *bad);
-#define SOMVR_PP_MAX 4     /* tiles placed on their own (the band's four); more = the band as build 20c */
+#define SOMVR_PP_MAX 5     /* tiles placed on their own (the band's four, build 22's subtitles); more = the band as 20c */
 #define SOMVR_PP_STEP 4    /* a reading: every 4th row of each tile (an 18-px line's strokes cross 3-4 of them) */
 #define SOMVR_PP_ALPHA 32  /* a texel with this alpha (of 255) or more is content */
 #define SOMVR_PP_MIN_PX 12 /* ... and a tile with this many such texels has some */
@@ -214,6 +214,25 @@ uint32_t somvr_pp_step(somvr_pp_state *s, const somvr_pp_cfg *c, double t, const
                        const somvr_pp_read *rd, const float (*sz)[2], const int (*px)[2]);
 /* a shown tile's quad pose (its content's centre on the line from the eye to the anchor, the quad facing the eye) */
 void somvr_pp_pose(const somvr_pp_tile *tl, float dist, somvr_posef *out);
+
+/* ==== 2d. build 22: the subtitles (SOMVR_XR_SUBTITLES=on; docs/re-xr-pipeline.md 89) =============================== */
+/* The game's subtitle line (CUIHUDSubtitle: one or two lines centred at the HUD's bottom, the first at y 868..892) was cut
+ * by the band's tiles: its right part (x >= 1120, y >= 860) went into the button prompts' popup, the rest stayed in the
+ * world HUD quad at 0.42 deg (run 20261028-230057, hud6966). With on, its rect is a band row of its own (the last: with
+ * SOMVR_XR_POPUPS=gaze its own popup under the gaze, at SOMVR_XR_SUBTITLES_SCALE % of the band's scale) and a band tile
+ * overlapping it is cut to the side of it where most of the tile lies (the prompts' 1120,860,800,220 -> 1120,940,800,140:
+ * the prompts were measured at y 943..1078, re-xr-pipeline.md 31.1). The game wraps a line at about 840 px (x 540..1380);
+ * the rect keeps clear of the minimap (28..328: its health arc filled a 300-wide rect's left end, run 20261028-234546). */
+#define SOMVR_SUB_RECT_DEFAULT "400,820,1120,120"
+#define SOMVR_SUB_SCALE_DEFAULT 80 /* % of the band's scale: a 24-px subtitle line 0.91 deg (the band's 18-px line 0.85) */
+/* SOMVR_XR_SUBTITLES: unset/"off"/"0" = 0; "on"/"1"/"gaze" = 1; anything else = 0 and *bad = 1 */
+int somvr_sub_parse(const char *v, int *bad);
+/* SOMVR_XR_SUBTITLES_SCALE: 50..150 (%); unset = SOMVR_SUB_SCALE_DEFAULT; a bad value = the default and *bad = 1 */
+int somvr_sub_parse_scale(const char *v, int *bad);
+/* the subtitle rect sub (1920x1080) added to the band's set as a row of its own after the others; a tile overlapping it
+ * is cut above or below it (the side with more of the tile; a tile left under 8 px high = no room). Returns the
+ * subtitle's index in the set (its last) or -1 (the set full or no room: the set unchanged); *ncut = tiles cut */
+int somvr_sub_add(somvr_ht_set *band, const int sub[4], int *ncut);
 
 /* ==== 3. touch ===================================================================================================== */
 /* SOMVR_XR_TOUCH: unset/"off"/"0" = OFF, "on"/"1" = ON (the laser stays); anything else = OFF and *bad = 1 */

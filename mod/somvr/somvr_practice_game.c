@@ -123,8 +123,8 @@ _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK ==
 		       (int)SOMVR_PRA_SPAWN == (int)SOMVR_VMPR_SPAWN &&
 		       (int)SOMVR_PRA_REMOVE == (int)SOMVR_VMPR_REMOVE && (int)SOMVR_PRA_ARROWS == (int)SOMVR_VMPR_ARROWS &&
 		       (int)SOMVR_PRA_HEALTH == (int)SOMVR_VMPR_HEALTH && (int)SOMVR_PRA_FAR == (int)SOMVR_VMPR_FAR &&
-		       (int)SOMVR_PRA_GROUP == (int)SOMVR_VMPR_GROUP &&
-		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 3,
+		       (int)SOMVR_PRA_GROUP == (int)SOMVR_VMPR_GROUP && (int)SOMVR_PRA_CAPTAIN == (int)SOMVR_VMPR_CAPTAIN &&
+		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 6 /* the menu's six labels (build 22) */,
 	       "the menu's practice requests = the practice module's");
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
 #define PR_FN(i, T) ((T)g_pr_sites[i].target)
@@ -480,7 +480,13 @@ static void pr_remove_orc(const char *why, double t)
 /* a ray straight down from `from` for len cm, the debug spawn's G21 cast (flags 0x50, filter 0xc); a hit on `self`
  * (Talion's object, 0 = none) goes on from 5 cm below it (at most 4 times); 1 = a hit (*hit, *hobj = the hit object or
  * 0). The game thread; needs PR_RAYCAST's site (SOMVR_PRACTICE's start checked it: g_pr.ok_ray) */
+static int pr_ray_down_r(const float from[3], float len, uintptr_t self, float hit[3], uintptr_t *hobj, unsigned char *rout);
 static int pr_ray_down(const float from[3], float len, uintptr_t self, float hit[3], uintptr_t *hobj)
+{
+	return pr_ray_down_r(from, len, self, hit, hobj, NULL);
+}
+/* (build 22: rout = the hit's record, 0x80 bytes, for its surface: SOMVR_HANDS_SURFACE_GROUND) */
+static int pr_ray_down_r(const float from[3], float len, uintptr_t self, float hit[3], uintptr_t *hobj, unsigned char *rout)
 {
 	uintptr_t phys = peek_ptr(g_prg.phys_pp);
 	if (!phys || !pr_slot_ok(phys, PRS_RAY, PR_SLOT_RAY))
@@ -501,8 +507,11 @@ static int pr_ray_down(const float from[3], float len, uintptr_t self, float hit
 		memcpy(hit, r, 12), memcpy(hobj, r + 0x20, 8);
 		if (!vec_ok(hit, 1e7f))
 			return 0;
-		if (!self || *hobj != self)
+		if (!self || *hobj != self) {
+			if (rout)
+				memcpy(rout, r, 0x80);
 			return 1;
+		}
 		y0 = hit[1] - 5.0f; /* Talion himself: on below him */
 	}
 	return 0;
@@ -1516,6 +1525,7 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 	case SOMVR_PRA_BACK: pr_back(t, who); break;
 	case SOMVR_PRA_SPAWN: pr_spawn(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who); break;
 	case SOMVR_PRA_GROUP: pr_group(m, orc == 3 || orc == 4 ? orc : g_pr.group_n, t, who); break; /* build 19 */
+	case SOMVR_PRA_CAPTAIN: kp_spawn(m, t, who); break; /* build 22: SOMVR_CAPTAIN (somvr_captain_game.c) */
 	case SOMVR_PRA_FAR: /* build 18 */
 		pr_spawn_at(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who, 1);
 		break;
@@ -1669,8 +1679,9 @@ static void pr_frame(uintptr_t pl)
 		if (!in)
 			pr_quiet_off(t, "walked out of the area");
 	}
-	if (have) /* the min health from the start of a trip there to the end of the trip back, while in the area */
-		pr_mh(&m, g_pr.here || g_pr.trip.phase != SOMVR_PRT_IDLE, t);
+	if (have) /* the min health from the start of a trip there to the end of the trip back, while in the area; build 22:
+		   * not while a captain of the save is out (SOMVR_PRACTICE_CAPTAIN_STAKES: he can kill Talion, as anywhere) */
+		pr_mh(&m, (g_pr.here || g_pr.trip.phase != SOMVR_PRT_IDLE) && !kp_stakes_now(), t);
 	/* SOMVR_PRACTICE=auto: once, auto_s after the player is first in the world (alive, no scripted moment, not paused) */
 	if (g_pr.mode == SOMVR_PR_AUTO && !g_pr.auto_done) {
 		int ready = have && (m.life < 0 || m.life == 2) && !(gate & ~(uint32_t)SOMVR_PRG_UNKNOWN);
@@ -1684,6 +1695,7 @@ static void pr_frame(uintptr_t pl)
 		}
 	}
 	pr_orc_tick(&m, t);
+	kp_frame(&m, have, t); /* build 22: SOMVR_CAPTAIN - our captain's fate, the test words */
 	pr_group_tick(t); /* build 19 */
 	pr_far_tick(&m, t); /* build 18 */
 	if (g_pr.here && have && t >= g_pr.next_clear) {
@@ -1728,8 +1740,8 @@ static const char *pr_word(const char *w)
 		return ak[0] == 'h' ? "practice hurt" : "practice focus";
 	}
 	if (!somvr_pr_word(w, &r))
-		return "practice (not go|back|spawn [infantry|shield|berserker]|far [TYPE]|remove|status|arrows|health|hurt HP|"
-		       "focus F: ignored)";
+		return "practice (not go|back|spawn [infantry|shield|berserker|caragor|ghul|graug]|far [TYPE]|remove|status|"
+		       "arrows|health|hurt HP|focus F: ignored)";
 	if (r.have_at) /* the spot first: the trig's release publishes it */
 		for (int i = 0; i < 3; i++) {
 			uint32_t b;

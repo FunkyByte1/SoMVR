@@ -833,7 +833,47 @@ static void test_popups(void) {
     CHECK(ev == 1u && !s.t[1].shown && NEAR(p, -50, 0.1) && NEAR(y, 0, 0.5), "looking at the feet: at %.2f deg (yaw %.2f)", p, y);
 }
 
+/* build 22: the subtitles' rect a band row of its own (SOMVR_XR_SUBTITLES=on, somvr_menus.h 2d) */
+static void test_subtitles(void) {
+    int bad = 0, cut = -1;
+    CHECK(somvr_sub_parse(NULL, &bad) == 0 && !bad && somvr_sub_parse("off", &bad) == 0 && somvr_sub_parse("on", &bad) == 1 &&
+              !bad && somvr_sub_parse("gaze", &bad) == 1 && somvr_sub_parse("yes", &bad) == 0 && bad,
+          "SOMVR_XR_SUBTITLES words");
+    CHECK(somvr_sub_parse_scale(NULL, &bad) == SOMVR_SUB_SCALE_DEFAULT && !bad && somvr_sub_parse_scale("120", &bad) == 120 &&
+              !bad && somvr_sub_parse_scale("20", &bad) == SOMVR_SUB_SCALE_DEFAULT && bad &&
+              somvr_sub_parse_scale("9x", &bad) == SOMVR_SUB_SCALE_DEFAULT && bad,
+          "SOMVR_XR_SUBTITLES_SCALE: 50..150");
+    somvr_ht_set band, sub, full;
+    somvr_ht_parse(NULL, SOMVR_PB_RECTS_DEFAULT, &band, &bad);
+    somvr_ht_parse(NULL, SOMVR_SUB_RECT_DEFAULT, &sub, &bad);
+    CHECK(band.n == 4 && sub.n == 1, "the defaults: the band's four tiles, one subtitle rect");
+    CHECK(sub.r[0][0] >= 28 + 300 + 8 && sub.r[0][0] <= 540 && sub.r[0][0] + sub.r[0][2] >= 1380,
+          "the subtitles' rect clear of the minimap (28..328) and as wide as the game's wrapped line (540..1380)");
+    /* run 20261028-230057 (hud6966): the line at 558..1120+, y 868..892 - its right part was inside the prompts' tile */
+    CHECK(band.r[3][0] == 1120 && band.r[3][1] == 860 && 868 >= band.r[3][1], "build 21: the prompts' tile held the line's right part");
+    int k = somvr_sub_add(&band, sub.r[0], &cut);
+    CHECK(k == 4 && band.n == 5 && band.row[4] == 3 && cut == 1, "added as the last tile, a row of its own, one tile cut");
+    CHECK(band.r[3][0] == 1120 && band.r[3][1] == 940 && band.r[3][2] == 800 && band.r[3][3] == 140,
+          "the prompts' tile below the subtitles: 1120,940,800,140 (the prompts at y 943..1078)");
+    CHECK(band.r[0][1] == 10 && band.r[1][1] == 600 && band.r[1][3] == 180 && band.r[2][3] == 190, "the other tiles unchanged");
+    for (int i = 0; i < band.n - 1; i++)
+        CHECK(band.r[i][1] + band.r[i][3] <= 820 || band.r[i][1] >= 940 || band.r[i][0] >= 1520 || band.r[i][0] + band.r[i][2] <= 400,
+              "no band tile overlaps the subtitles' rect");
+    somvr_hud_layout l;
+    int mm[4] = {28, 770, 300, 310};
+    somvr_ht_set wt;
+    somvr_ht_parse(NULL, SOMVR_WH_RECTS_DEFAULT, &wt, &bad);
+    CHECK(somvr_hud_layout_make(1920, 1080, mm, &wt, 0, NULL, &band, &l) && l.ntile == 1 + wt.n + 5 && l.extra_w >= 1120 &&
+              l.dst[l.ntile - 1][1] + 120 <= 1080 && l.src[l.ntile - 1][1] == 820,
+          "the HUD layout fits the five band tiles, the subtitles' the last");
+    somvr_ht_parse(NULL, "0,0,10,10;20,0,10,10;40,0,10,10;60,0,10,10;80,0,10,10;100,0,10,10", &full, &bad);
+    CHECK(full.n == 6 && somvr_sub_add(&full, sub.r[0], &cut) == -1 && full.n == 6, "a full set: no room, unchanged");
+    somvr_ht_parse(NULL, "200,815,1500,130", &full, &bad);
+    CHECK(somvr_sub_add(&full, sub.r[0], &cut) == -1 && full.r[0][3] == 130, "a tile that would vanish: no room, unchanged");
+}
+
 int main(void) {
+    test_subtitles();
     test_xt20();
     test_switches();
     test_board();

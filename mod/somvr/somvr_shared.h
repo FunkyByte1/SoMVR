@@ -43,6 +43,11 @@ enum { SOMVR_REC_EXTRAPOLATED = 1u, SOMVR_REC_REUSED = 2u, SOMVR_REC_FAKE = 4u }
 /* SOMVR_BODYMOMENTS' knockdown dim (docs/re-xr-pipeline.md 20): the record's fade in dark red, not black. An older
  * layer ignores the bit (black); an older preload leaves it 0. */
 #define SOMVR_REC_FADE_RED (1u << 23)
+/* build 22 (SOMVR_BM_DEATH=first, docs/re-xr-pipeline.md 90): the record's fade dims the world only - the layer puts it
+ * under the HUD, the VR menu and our hands (the menu backdrop's dim slot) instead of over everything: the death's grey
+ * leaves the killer's name and line readable. An older layer ignores the bit (over everything); an older preload
+ * leaves it 0. */
+#define SOMVR_REC_FADE_WORLD (1u << 22)
 /* headless tests (SOMVR_XR_DUMP_MARKED=N): the layer dumps the stereo frame after a record with this bit (the strike's
  * moments, SOMVR_HP_AWAY's proof); a player's layer has N = 0 and ignores it, an older one ignores the bit */
 #define SOMVR_REC_DUMP (1u << 3)

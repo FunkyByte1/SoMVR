@@ -118,7 +118,7 @@ static struct {
 	int stick_on, blood;         /* SOMVR_STEALTH_KILL_STICK, _BLOOD */
 	float keep_s;                /* SOMVR_STEALTH_KILL_STANDOFF_KEEP_S: the stand-off holds this long after the crouch */
 	double crouch_t;             /* the last stand-off tick crouched */
-	struct stl_ep { uintptr_t c, hobj; double t0, last_t, alert_t, alerted_t; float T0[3], d0; int32_t stim; } ep[STL_ORCS];
+	struct stl_ep { uintptr_t c, hobj; double t0, last_t, alert_t, alerted_t; float T0[3], d0, own, od[3]; int32_t stim; } ep[STL_ORCS];
 	struct { uintptr_t hobj; uint32_t node[4]; int st; int logged; } bn[8];
 	int nbn;
 	char fx[128];
@@ -133,7 +133,13 @@ static struct {
 	float stk_fx_P[3];
 	char stk_fx_what[40];
 	uint64_t touches, alerts, airs, sticks, stk_outs, stk_tears, stk_falls, stk_cancels, stk_frames, stk_rumbles, blood_made,
-		blood_fail, by[4], keep_ticks;
+		blood_fail, by[4], keep_ticks, carried;
+	double carried_t;
+	/* build 22: the controller's own blade (g_cb.hand) against Talion's root, this combat frame [0] and the last [1] -
+	 * the hand's own motion (the walk moves both; the drawn sword's bone grip sways with the body) */
+	struct stl_hk { int ok; double t; float tip[3], base[3]; } hk[2];
+	float hk_yaw;
+	uint64_t hk_epoch;
 } g_stl;
 
 static void stl_sweep(int hand, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
@@ -794,7 +800,7 @@ static uintptr_t stl_rec(void)
 /* the stealth kill's hit: the stock silent stealth kill's record dealt with forceKill at the contact; the direction the
  * blade's (or Talion -> the orc); SOMVR_COMBAT_DEATH's type. death = how it falls (the words) */
 static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, const somvr_blade *b, const float *root,
-		     uintptr_t rec, char *death, size_t dcap)
+		     uintptr_t rec, int fk, char *death, size_t dcap)
 {
 	float vv = sqrtf(b->vel_tip[0] * b->vel_tip[0] + b->vel_tip[1] * b->vel_tip[1] + b->vel_tip[2] * b->vel_tip[2]);
 	float dir[3] = { o->pos[0] - root[0], 0, o->pos[2] - root[2] }, hd0[3];
@@ -824,7 +830,7 @@ static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct,
 	}
 	snprintf(g_kd.note, sizeof g_kd.note, "the stealth kill: %.70s", death);
 	g_kd.pre_c = o->c, g_kd.pre_dead = cb_dead(o->c);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, rec, 1);
+	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, rec, fk);
 	kx_hit_back(dslot, dwas);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
 	*(volatile unsigned char *)(pc + C_HITONCE) = once;
@@ -833,6 +839,7 @@ static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct,
 /* ---- build 21 (SOMVR_STEALTH_KILL_THRUST, _STICK, _BLOOD; docs/re-xr-pipeline.md 84) ------------------------------- */
 #define STL_NECK_CM 12.0f    /* the way in within this of the Neck node: the neck */
 #define STL_EP_GAP_S 0.5     /* a new touch after this long without the blade in the body: a new episode */
+#define STL_OWN_MIN_CMS 20.0f /* build 22: the hand's own tip slower than this is held still (no push of its own) */
 #define STL_ALERTED_S 3.0    /* an orc alerted by a touch is not alerted again within this */
 #define STL_STK_MAX_S 10.0   /* the blade left in a body this long: out (a safety) */
 #define STL_STK_EASE_S 0.12  /* the blade back onto the hand after it comes out */
@@ -1135,6 +1142,37 @@ static void stl_b21_frame(const struct cb_orc *o, int n, uintptr_t pc, double t)
 	}
 }
 
+/* build 22 (somvr.c's combat frame, before its contacts): the controller's blade back in the tracking space (the rig it
+ * was placed by undone, in the world's orientation of that rig and its scale): the hand's own motion only - not the
+ * walk, the turns, the body's follow under the head (run 20261029-003708: against Talion's root a still hand moved
+ * 1.17 m/s as the body caught up with the crouched head) */
+static void stl_hand_track(const float *root, double t)
+{
+	g_stl.hk[1] = g_stl.hk[0];
+	struct stl_hk *a = &g_stl.hk[0];
+	const sc_rigxf *rx = &g_cb.hand_rx;
+	a->ok = root && g_cb.hand.valid && isfinite(rx->yaw + rx->base[0] + rx->base[1] + rx->base[2]), a->t = t;
+	if (!a->ok)
+		return;
+	if (g_stl.hk[1].ok && (fabsf(rx->yaw - g_stl.hk_yaw) > 1e-4f || g_rig_epoch != g_stl.hk_epoch))
+		g_stl.hk[1].ok = 0; /* a turn or a jump of the rig: no motion across it */
+	g_stl.hk_yaw = rx->yaw, g_stl.hk_epoch = g_rig_epoch;
+	for (int j = 0; j < 3; j++)
+		a->tip[j] = g_cb.hand.tip[j] - rx->base[j], a->base[j] = g_cb.hand.base[j] - rx->base[j];
+}
+
+/* build 22: the frame's span for the hand's own motion - since the episode's last contact (gap, when under 0.1 s), else
+ * the speed tracker's last two samples (the first frame of a contact) */
+static float stl_frame_dt(const sc_speed *sp, double gap)
+{
+	if (gap > 0 && gap <= 0.1)
+		return (float)gap;
+	if (!sp || sp->n < 2)
+		return 0;
+	double d = sp->s[(sp->head + SC_RING - 1) % SC_RING].t - sp->s[(sp->head + SC_RING - 2) % SC_RING].t;
+	return d > 0 && d <= 0.1 ? (float)d : 0;
+}
+
 static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier, const somvr_blade *b,
 		      const sc_speed *sp, int hand, const float *root, double t)
 {
@@ -1149,7 +1187,7 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	struct stl_aw a;
 	int grabbed = stl_who(o, pc, root, &w, &a) == 2;
 	somvr_stl_hit h = { somvr_stl_off_deg(ct->point, o->pos, stl_orc_yaw(o)), ct->point[1] - o->pos[1], tier,
-			    sp->axis_mps, sp->cos_axis, NAN, 0, g_stl.tier_cut >= 0 ? g_stl.tier_cut : tier, grabbed };
+			    sp->axis_mps, sp->cos_axis, NAN, 0, g_stl.tier_cut >= 0 ? g_stl.tier_cut : tier, grabbed, 0 };
 	/* build 21 (SOMVR_STEALTH_KILL_THRUST): the blade against its body (its skeleton), not combat's hit capsule */
 	float E[3] = { ct->point[0], ct->point[1], ct->point[2] }, nd[4][3];
 	int link = -1, skel = 0;
@@ -1161,18 +1199,48 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 			h.contact_off_deg = somvr_stl_off_deg(E, o->pos, stl_orc_yaw(o)), h.contact_up_cm = E[1] - o->pos[1];
 			h.neck = link == 2 || dist3(E, nd[2]) < STL_NECK_CM;
 			ep = stl_ep_of(o->c, 1);
-			if (!ep->t0 || t - ep->last_t > STL_EP_GAP_S)
-				ep->t0 = t, ep->d0 = h.depth_cm, memcpy(ep->T0, b->tip, sizeof ep->T0);
+			int fresh = !ep->t0 || t - ep->last_t > STL_EP_GAP_S;
+			if (fresh)
+				ep->t0 = t, ep->d0 = h.depth_cm, memcpy(ep->T0, b->tip, sizeof ep->T0), ep->own = 0,
+				ep->od[0] = ep->od[1] = ep->od[2] = 0;
+			/* build 22 (SOMVR_STEALTH_KILL_CARRIED): the hand's own share - its tracking-space velocity over the frame
+			 * (the walk and the turns are not in it): the depth it added, the point's own way */
+			/* the sword's: the controller's own blade (g_cb.hand: the drawn sword's grip is the solved arm's bone, which
+			 * the body's own sway moves - run 20261029-001737: 5 cm of "push" in 0.6 s with the scripted hand still);
+			 * a tip slower than STL_OWN_MIN_CMS is a hand held still (tremor, sway): no push */
+			float vb[3], vt[3], fdt = 0;
+			if (hand != SOMVR_HAND_L) { /* the controller's blade against Talion's root, this frame less the last */
+				const struct stl_hk *h1 = &g_stl.hk[0], *h0 = &g_stl.hk[1];
+				if (h1->ok && h0->ok && h1->t > h0->t && h1->t - h0->t <= 0.1 && fabs(h1->t - t) < 1e-3) {
+					fdt = (float)(h1->t - h0->t);
+					for (int j = 0; j < 3; j++)
+						vt[j] = (h1->tip[j] - h0->tip[j]) / fdt, vb[j] = (h1->base[j] - h0->base[j]) / fdt;
+				}
+			} else { /* the dagger: its provider's velocity */
+				fdt = stl_frame_dt(sp, fresh ? 0 : t - ep->last_t);
+				memcpy(vt, b->vel_tip, sizeof vt), memcpy(vb, b->vel_base, sizeof vb);
+			}
+			float vs = fdt > 0 ? sqrtf(vt[0] * vt[0] + vt[1] * vt[1] + vt[2] * vt[2]) : 0;
+			if (!(vs >= STL_OWN_MIN_CMS))
+				fdt = 0;
+			ep->own = fmaxf(ep->own + somvr_stl_own_push(b->base, b->tip, vb, vt, fdt, (const float(*)[3])nd, g_stl_bn_r, 4),
+					0.0f);
+			for (int j = 0; j < 3; j++)
+				ep->od[j] += vt[j] * fdt;
+			h.carried = ep->own < g_stl.cfg.own_cm;
 			ep->hobj = o->hobj, ep->last_t = t;
 			/* point-first by the point's own way since it went in too (a thrust's first frames can be sideways: the
-			 * sword's weight, the arc - runs 20261028-155330/164235), and the speed it went in at since */
+			 * sword's weight, the arc - runs 20261028-155330/164235), and the speed it went in at since (build 22:
+			 * the hand's own, not the walk's) */
 			float dp[3] = { b->tip[0] - ep->T0[0], b->tip[1] - ep->T0[1], b->tip[2] - ep->T0[2] },
 			      ax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+			if (g_stl.cfg.carried)
+				memcpy(dp, ep->od, sizeof dp);
 			float ld = sqrtf(dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2]), la = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
 			if (ld >= 5.0f && la > 1.0f)
 				h.cos_axis = fmaxf(h.cos_axis, (dp[0] * ax[0] + dp[1] * ax[1] + dp[2] * ax[2]) / (ld * la));
 			if (t > ep->t0 + 1e-3)
-				h.axis_mps = fmaxf(h.axis_mps, (h.depth_cm - ep->d0) / (float)(t - ep->t0) * 0.01f);
+				h.axis_mps = fmaxf(h.axis_mps, (g_stl.cfg.carried ? ep->own : h.depth_cm - ep->d0) / (float)(t - ep->t0) * 0.01f);
 		}
 	}
 	if (grabbed)
@@ -1183,7 +1251,21 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	 * first frames never wake it - the 20b regression); after the grace it is alerted unless the kill came. Not its
 	 * body (the hit capsule only): nothing */
 	int quiet = g_stl.cfg.thrust && g_stl.mode == STL_ON &&
-		    (v == SOMVR_STL_TOUCH || v == SOMVR_STL_SIDE || v == SOMVR_STL_LOW || v == SOMVR_STL_AIR);
+		    (v == SOMVR_STL_TOUCH || v == SOMVR_STL_SIDE || v == SOMVR_STL_LOW || v == SOMVR_STL_AIR || v == SOMVR_STL_CARRIED);
+	if (quiet && v == SOMVR_STL_CARRIED) { /* build 22: the walk carried it in: no damage, no alert, no tick */
+		g_stl.carried++;
+		if (t - g_stl.carried_t > 0.3 && stl_line()) {
+			g_stl.carried_t = t;
+			logf_("STEALTH t=%.3f carried (%s) orc %#lx: the point %.1f cm in at %s%s, carried in by the walk - the hand's own push "
+			      "%.1f cm (under %.0f), its own way %.1f cm: no touch, no alert (along %.2f m/s cos %.2f; Talion %+.0f deg off its "
+			      "facing at %.0f cm, %s)", t, hand == SOMVR_HAND_L ? "the dagger" : "the sword", (unsigned long)o->c,
+			      (double)h.depth_cm, link == 0 ? "its spine" : link == 1 ? "its chest" : link == 2 ? "its neck" : "?",
+			      skel ? "" : " (an estimated body)", ep ? (double)ep->own : -1.0, (double)g_stl.cfg.own_cm,
+			      ep ? (double)sqrtf(ep->od[0] * ep->od[0] + ep->od[1] * ep->od[1] + ep->od[2] * ep->od[2]) : -1.0,
+			      (double)h.axis_mps, (double)h.cos_axis, w.player_off_deg, w.dist_cm, w.crouched ? "crouched" : "standing");
+		}
+		return 2;
+	}
 	if (quiet && v == SOMVR_STL_AIR) {
 		g_stl.airs++;
 		if (t - g_stl.air_t > 0.3 && stl_line()) { /* how far off its body the blade passed (combat's capsule is wider) */
@@ -1207,13 +1289,14 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 		if ((arm || t - g_stl.last_judge_t > 0.3) && stl_line()) {
 			g_stl.last_judge_t = t;
 			logf_("STEALTH t=%.3f touch (%s) orc %#lx: %s - no damage%s (the point %.1f cm in at %s%s, %+.0f deg off its facing, "
-			      "%.0f cm up; along %.2f m/s cos %.2f, the stroke's tier %s; Talion %+.0f deg off its facing at %.0f cm, %s)", t,
+			      "%.0f cm up; along %.2f m/s cos %.2f, the stroke's tier %s; Talion %+.0f deg off its facing at %.0f cm, %s; "
+			      "the hand's own push %.1f cm)", t,
 			      hand == SOMVR_HAND_L ? "the dagger" : "the sword", (unsigned long)o->c, somvr_stl_why(v),
 			      grabbed ? "; held: no alert" : arm ? ", the alert at +0.3 s unless the kill comes" : ep && ep->alert_t
 			      ? ", the alert pending" : ", alerted already", (double)h.depth_cm, link == 0 ? "its spine" : link == 1
 			      ? "its chest" : link == 2 ? "its neck" : "?", skel ? "" : " (an estimated body)", h.contact_off_deg,
 			      h.contact_up_cm, (double)h.axis_mps, (double)h.cos_axis, sc_tier_name(h.tier_cut), w.player_off_deg,
-			      w.dist_cm, w.crouched ? "crouched" : "standing");
+			      w.dist_cm, w.crouched ? "crouched" : "standing", ep ? (double)ep->own : -1.0);
 		}
 		return 2; /* no re-hit cooldown: the thrust's next frames are judged */
 	}
@@ -1239,6 +1322,11 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 		      !rec ? "no stealth kill record in the database" : "combat cannot deal hits (see its CONFIG)");
 		return 0;
 	}
+	/* build 22 (SOMVR_CAPTAIN_RULES): a captain immune to stealth gets the ordinary hit; vulnerable: the kill; else the
+	 * record's own damage (no forceKill) */
+	int fk = kp_force_kill(o->c, SOMVR_CPF_STEALTH, "the stealth kill", t);
+	if (fk < 0)
+		return 0;
 	char death[160], rn[96] = "?";
 	int dead0 = cb_dead(o->c);
 	float hp0 = cb_health(o->c);
@@ -1246,7 +1334,10 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	sc_contact cE = *ct;
 	if (g_stl.cfg.thrust && h.depth_cm >= 0)
 		memcpy(cE.point, E, sizeof cE.point); /* build 21: the hit at the wound (on its body), not combat's capsule */
-	stl_deal(pc, o, &cE, b, root, rec, death, sizeof death);
+	struct kp_floor kf; /* build 22: a captain not vulnerable to it survives it */
+	kp_floor_on(o->c, fk, "the stealth kill", t, &kf);
+	stl_deal(pc, o, &cE, b, root, rec, fk, death, sizeof death);
+	kp_floor_off(&kf);
 	int dead1 = cb_dead(o->c);
 	float hp1 = cb_health(o->c);
 	if (dead1 && !dead0)
@@ -1476,6 +1567,13 @@ static const char *stl_word(const char *w)
 		      (double)g_stl.grab_cm, g_stl.so_decel / 100.0);
 		return w[0] == 'g' ? "stealth grab CM (a test: 0 = the head only)" : "stealth decel M/S2 (a test: 0 = build 19's ease)";
 	}
+	if (!strncmp(w, "carried ", 8)) { /* build 22, a test: build 21's touch rule against the carried one */
+		if (!getenv("SOMVR_HANDS_TEST") || strcmp(getenv("SOMVR_HANDS_TEST"), "1"))
+			return "stealth carried (SOMVR_HANDS_TEST is off: ignored)";
+		g_stl.cfg.carried = !strcmp(w + 8, "on");
+		logf_("STEALTH the word '%s': carried %d (a test)", w, g_stl.cfg.carried);
+		return "stealth carried on|off (a test: build 21's touch against build 22's)";
+	}
 	if (!strncmp(w, "thrust ", 7) || !strncmp(w, "stick ", 6) || !strncmp(w, "keep ", 5)) { /* build 21, tests */
 		if (!getenv("SOMVR_HANDS_TEST") || strcmp(getenv("SOMVR_HANDS_TEST"), "1"))
 			return "stealth thrust|stick|keep (SOMVR_HANDS_TEST is off: ignored)";
@@ -1489,7 +1587,7 @@ static const char *stl_word(const char *w)
 		      g_stl.stick_on, (double)g_stl.keep_s);
 		return "stealth thrust on|off, stick on|off, keep S (a test: build 20c's rule against build 21's)";
 	}
-	return "stealth status|on|off|log|grab CM|decel M/S2|thrust on|off|stick on|off|keep S";
+	return "stealth status|on|off|log|grab CM|decel M/S2|thrust on|off|stick on|off|keep S|carried on|off";
 }
 
 /* build 19 (re-xr-pipeline.md 73): the VR menu's Stealth kill row: shown with SOMVR_STEALTH_KILL on (with combat); off =
@@ -1551,6 +1649,8 @@ static void stl_start(int *bad)
 	g_stl.kcfg.guard_cm = 12.0f;
 	g_stl.blood = env_word("SOMVR_STEALTH_KILL_BLOOD", onoff, 2, 0);
 	g_stl.keep_s = env_float("SOMVR_STEALTH_KILL_STANDOFF_KEEP_S", 0, 0, 30, bad);
+	g_stl.cfg.carried = env_word("SOMVR_STEALTH_KILL_CARRIED", onoff, 2, 0); /* build 22 (docs 93.4) */
+	g_stl.cfg.own_cm = env_float("SOMVR_STEALTH_KILL_CARRIED_CM", g_stl.cfg.own_cm, 0.5f, 30, bad);
 	{
 		const char *fx = getenv("SOMVR_COMBAT_HITFX_STAB");
 		snprintf(g_stl.fx, sizeof g_stl.fx, "%s", fx && fx[0] && strcmp(fx, "off") ? fx : HF_FX_STAB);
@@ -1603,6 +1703,12 @@ static void stl_start(int *bad)
 	      (double)(acosf(g_stl.cfg.thrust_cos) * 57.29578f), (double)g_stl.cfg.thrust_mps, (double)g_stl.cfg.depth_cm,
 	      (double)g_stl.cfg.grab_depth_cm, (double)g_stl.cfg.grace_s * 1e3, onoff[g_stl.stick_on],
 	      (double)g_stl.kcfg.tear_cm, onoff[g_stl.blood], g_stl.fx, (double)g_stl.keep_s);
+	logf_("CONFIG stealth carried=%s (SOMVR_STEALTH_KILL_CARRIED, build 22: %s)", onoff[g_stl.cfg.carried], g_stl.cfg.carried
+	      ? "a blade the walk carried into its body is no touch - the hand's own push into it under "
+		"SOMVR_STEALTH_KILL_CARRIED_CM since it went in: no damage, no alert; the thrust's speed and way are the hand's own"
+	      : "build 21's: any blade in its body that is no kill is a touch");
+	if (g_stl.cfg.carried)
+		logf_("CONFIG stealth carried: the hand's own push %.1f cm (SOMVR_STEALTH_KILL_CARRIED_CM)", (double)g_stl.cfg.own_cm);
 	g_stl.start_mode = g_stl.mode; /* build 19 */
 }
 
@@ -1638,4 +1744,6 @@ static void stl_end_log(void)
 	      (unsigned long long)g_stl.stk_falls, (unsigned long long)g_stl.stk_cancels, (unsigned long long)g_stl.stk_frames,
 	      (unsigned long long)g_stl.stk_rumbles, (unsigned long long)g_stl.blood_made, (unsigned long long)g_stl.blood_fail,
 	      (unsigned long long)g_stl.keep_ticks);
+	logf_("STEALTH END build 22: carried=%s - contacts the walk carried in (no touch, no alert) %llu", g_stl.cfg.carried ? "on"
+	      : "off", (unsigned long long)g_stl.carried);
 }

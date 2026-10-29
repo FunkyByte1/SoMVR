@@ -406,7 +406,11 @@ static int fi_kill_hit(uintptr_t pc, const struct cb_orc *o, const sf_hit *h, co
 	if (sev)
 		memcpy((void *)g_fig.sever, &one, 1);
 	int dead0 = cb_dead(o->c);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ h->point[0], h->point[1], h->point[2] }, pc, o->hobj, rec, 1);
+	int fk = kp_force_kill01(o->c, SOMVR_CPF_COMBAT, "the finisher", cb_now()); /* build 22: a captain's traits */
+	struct kp_floor kf;
+	kp_floor_on(o->c, fk, "the finisher", cb_now(), &kf);
+	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ h->point[0], h->point[1], h->point[2] }, pc, o->hobj, rec, fk);
+	kp_floor_off(&kf);
 	if (sev)
 		memcpy((void *)g_fig.sever, &sev0, 1);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);

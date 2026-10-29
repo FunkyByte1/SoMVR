@@ -464,6 +464,11 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 		      "no execution record in the database" : "combat cannot deal hits (see its CONFIG)");
 		return 0;
 	}
+	/* build 22 (SOMVR_CAPTAIN_RULES): a captain's traits - immune to combat finishers: no execution (the charge kept, the
+	 * ordinary hit); vulnerable: the kill; else the record's own damage through the game's rules (no forceKill) */
+	int fk = kp_force_kill(o->c, SOMVR_CPF_COMBAT, "the execution", t);
+	if (fk < 0)
+		return 0;
 	g_xc.executions++;
 	/* 1. the charge spent as the stock start spends it, before the hit (the hit then counts as one, as the stock) */
 	uintptr_t hc = peek_ptr(pc + FI_C_HITCTR);
@@ -512,7 +517,10 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	int dead0 = cb_dead(o->c);
 	float hp0 = cb_health(o->c);
 	double t0 = mono();
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, e->rec, 1);
+	struct kp_floor kf; /* build 22: a captain not vulnerable to it survives it (a third of his max health taken) */
+	kp_floor_on(o->c, fk, "the execution", t, &kf);
+	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, e->rec, fk);
+	kp_floor_off(&kf);
 	double t1 = mono();
 	kx_hit_back(dslot, dwas);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
@@ -542,11 +550,11 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	/* 3. the moment: the slow motion, a strong pulse, the death's trace, the eye trace, the marks */
 	xc_slowmo(t);
 	in_haptic_event(SOMVR_HAND_R, 1.0f, 0.3f, SOMVR_HAP_COMBAT);
-	logf_("EXECUTE kill t=%.3f: Combat_DealHit(pos=%.1f,%.1f,%.1f, pc=%#lx, hobj=%#lx, rec='%s' %#lx, forceKill=1) %.3f ms "
+	logf_("EXECUTE kill t=%.3f: Combat_DealHit(pos=%.1f,%.1f,%.1f, pc=%#lx, hobj=%#lx, rec='%s' %#lx, forceKill=%d) %.3f ms "
 	      "dead=%d->%d health %.1f->%.1f; from %s (%+.0f deg off its facing), tier heavy at %.2f m/s, the trigger %.2f; the "
 	      "streak %d charge %d/%d uses %u -> spent (%s%s) -> %d charge %d/%d -> after the hit %d charge %d/%d charged %u; "
 	      "the death: %s%s", t, ct->point[0], ct->point[1], ct->point[2], (unsigned long)pc, (unsigned long)o->hobj, e->name,
-	      (unsigned long)e->rec, (t1 - t0) * 1e3, dead0, dead1, hp0, hp1, behind ? "behind" : "the front", off,
+	      (unsigned long)e->rec, fk, (t1 - t0) * 1e3, dead0, dead1, hp0, hp1, behind ? "behind" : "the front", off,
 	      g_cb.sp.mean_mps, (double)g_inp.st.hand[SOMVR_HAND_R].trigger, h0.streak, h0.charge, h0.need, h0.uses,
 	      sp == 1 ? "a use" : sp == 2 ? "the charge" : "nothing to spend", e->reset == 1 ? ", the counter cleared" : "",
 	      h1.streak, h1.charge, h1.need, h2.streak, h2.charge, h2.need, h2.charged, death, sev);

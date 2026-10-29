@@ -222,6 +222,8 @@ static void ab_tick(const sc_tick_out *o)
 				       .climbing = g_cl.on && g_cl.s.active, .drop = g_cl.on };
 		in.fight = in.dodge && (th_attacker(t, DG_FIGHT_S, ap) || g_step.fsm == 7);
 		g_ab.owner = somvr_step_a_owner(&in);
+		if (g_ab.owner == SOMVR_AO_DROP || g_ab.owner == SOMVR_AO_NONE) /* build 22: on foot the jump's or the vault's */
+			jp_a_press(in.world, t);                                    /* (jp_owns_a), else the climb's */
 		g_ab.want = in.world ? (in.strike ? 1 << SOMVR_AO_STRIKE : 0) |
 					       (in.dodge && in.fight && !in.climbing ? 1 << SOMVR_AO_DODGE : 0) |
 					       (in.drop ? 1 << SOMVR_AO_DROP : 0)
@@ -236,6 +238,7 @@ static void ab_tick(const sc_tick_out *o)
 			      in.strike, in.fight, in.climbing);
 	} else if (!a) {
 		g_ab.owner = SOMVR_AO_NONE;
+		jp_a_release();
 	}
 	g_ab.a_was = a;
 }
@@ -270,7 +273,7 @@ static void dg_auto_tick(void)
 		g_inp.ctl.down[SOMVR_HAND_R] |= SOMVR_BTN_LOWER;
 	}
 }
-static int ab_not_climbs(void) { return g_ab.owner == SOMVR_AO_STRIKE || g_ab.owner == SOMVR_AO_DODGE; }
+static int ab_not_climbs(void) { return g_ab.owner == SOMVR_AO_STRIKE || g_ab.owner == SOMVR_AO_DODGE || jp_owns_a(); }
 
 /* SOMVR_DODGE, the input tick: A's press in a fight -> the dodge, or refused (a double buzz) */
 static void dg_tick(const sc_tick_out *o)

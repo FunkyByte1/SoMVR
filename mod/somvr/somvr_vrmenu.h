@@ -131,6 +131,7 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
 #define SOMVR_VMA_CICON SOMVR_VMA_BIT(36)   /* SOMVR_COUNTER_ICON=hide, its two calls hooked: the Counter icon row */
 #define SOMVR_VMA_STRING SOMVR_VMA_BIT(37)  /* SOMVR_BOW: the Bow string row (trigger / grip, taken while the bow is away;
                                              * the Controls page's bow lines follow it: somvr_vm_ctl_avail) */
+#define SOMVR_VMA_JUMP SOMVR_VMA_BIT(38)    /* build 22: SOMVR_JUMP=on: the Controls page's Jump line */
 #define SOMVR_VMA_FIGHT_ROWS                                                                                           \
     (SOMVR_VMA_SWORD | SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND | SOMVR_VMA_BITE | SOMVR_VMA_ARROWS | SOMVR_VMA_DODGE |     \
      SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON | SOMVR_VMA_STRING)
@@ -146,7 +147,9 @@ enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_S
        /* build 18: an orc far ahead with its back to Talion (unaware: re-xr-pipeline.md 56.9) */
        SOMVR_VMPR_FAR = 8,
        /* build 19: Spawn group (3-4 orcs of mixed types around Talion) */
-       SOMVR_VMPR_GROUP = 9 };
+       SOMVR_VMPR_GROUP = 9,
+       /* build 22: Captain (the save's next Nemesis captain) */
+       SOMVR_VMPR_CAPTAIN = 10 };
 static inline uint32_t somvr_vm_pr_pack(uint32_t seq, int action, int orc) {
     return seq << 8 | ((uint32_t)orc & 15u) << 4 | ((uint32_t)action & 15u);
 }
@@ -170,7 +173,8 @@ typedef struct {
     float step;                /* 48: the assisted step's strength 0..1, 0 = off (SOMVR_STEP) */
     uint32_t dash;             /* 52: 0 off, 1 on, 2 blink (SOMVR_DASH) */
     uint32_t phase;            /* 56: 0 off, 1 on, 2 on + re-face, 3 blink (SOMVR_PHASE) */
-    uint32_t orc;              /* 60: the practice page's orc type 0 infantry, 1 shield, 2 berserker (no file key) */
+    uint32_t orc;              /* 60: the practice page's orc type 0 infantry, 1 shield, 2 berserker, build 22: 3 caragor,
+                                * 4 ghul, 5 graug (no file key) */
     float sword_deg;           /* 64: v4: the sword's angle in the fist, deg (SOMVR_SWORD_ANGLE; + = the blade up toward
                                 * the knuckles), -45..45 in the menu */
     float size;                /* 68: the player size, 1 = 100 % (SOMVR_PLAYER_SIZE in %: 100..140; re-xr-pipeline.md 35);
@@ -328,7 +332,10 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
         * page's last row "< Settings" (back); both page buttons, shown while a Fight row is (SOMVR_VMA_FIGHT_ROWS) */
        SOMVR_VMI_PG_FIGHT, SOMVR_VMI_PG_BACK,
        /* build 21 (re-xr-pipeline.md 82; SOMVR_VMA_TESTPAGE): the Test tab, the Test page's Prev / Next buttons */
-       SOMVR_VMI_TAB_TEST, SOMVR_VMI_TEST_PREV, SOMVR_VMI_TEST_NEXT, SOMVR_VMI_ALL };
+       SOMVR_VMI_TAB_TEST, SOMVR_VMI_TEST_PREV, SOMVR_VMI_TEST_NEXT,
+       /* build 22 (re-xr-pipeline.md 88, SOMVR_CAPTAIN): the practice page's Captain (beside Remove; in the area only, as
+        * Spawn): the save's next Nemesis captain */
+       SOMVR_VMI_PR_CAPTAIN, SOMVR_VMI_ALL };
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
 enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2, SOMVR_VMPG_FIGHT = 3,

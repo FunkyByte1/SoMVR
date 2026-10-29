@@ -1231,10 +1231,15 @@ static void test_practice(void) {
               (somvr_vm_value(&s, SOMVR_VMI_PR_ORC, v, sizeof v), !strcmp(v, "Shield")),
           "orc > shield: %s", v);
     CHECK(somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_MORE) == 1 && s.orc == 2 &&
-              somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_MORE) == 0 && s.orc == 2 &&
+              somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_MORE) == 1 && s.orc == 3 && /* build 22: the beasts */
+              (somvr_vm_value(&s, SOMVR_VMI_PR_ORC, v, sizeof v), !strcmp(v, "Caragor")) &&
+              somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_MORE) == 1 && s.orc == 4 &&
+              somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_MORE) == 1 && s.orc == 5 &&
+              (somvr_vm_value(&s, SOMVR_VMI_PR_ORC, v, sizeof v), !strcmp(v, "Graug")) &&
+              somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_MORE) == 0 && s.orc == 5 &&
               somvr_vm_apply(&s, P, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_ROW) == 1 && s.orc == 0 &&
               somvr_vm_apply(&s, 0, 0, SOMVR_VMI_PR_ORC, SOMVR_VMP_MORE) == 0,
-          "orc: berserker, held, wraps, needs practice");
+          "orc: berserker, the beasts, graug held, wraps, needs practice");
     s.orc = 9;
     somvr_vm_value(&s, SOMVR_VMI_PR_ORC, v, sizeof v);
     CHECK(!strcmp(v, "Infantry"), "a bad orc shows Infantry: %s", v);
@@ -2054,6 +2059,47 @@ static void test_build19(void) {
     CHECK(bp[0] == 32 && bp[1] == 37 && bp[2] == 45, "dimmed out of the area (%u %u %u)", bp[0], bp[1], bp[2]);
 }
 
+/* build 22 (re-xr-pipeline.md 88): the practice page's Captain - beside Remove the orc (the same row, apart, both labels
+ * inside), in the area only (as Spawn), its request 10 through the request word, a centre hits back, drawn live */
+static void test_build22_captain(void) {
+    somvr_settings s;
+    somvr_set_default(&s);
+    const uint32_t P = SOMVR_VMA_PRACTICE, HERE = P | SOMVR_VMA_PR_HERE;
+    const int it = SOMVR_VMI_PR_CAPTAIN;
+    CHECK(!somvr_vm_enabled(&s, P, it) && somvr_vm_enabled(&s, HERE, it) &&
+              !somvr_vm_enabled(&s, HERE | SOMVR_VMA_PR_BUSY, it) &&
+              somvr_vm_apply(&s, P, 0, it, SOMVR_VMP_BUTTON) == SOMVR_VMR_NONE &&
+              somvr_vm_apply(&s, HERE, 0, it, SOMVR_VMP_BUTTON) == SOMVR_VMR_PRACTICE &&
+              somvr_vm_practice_action(it) == SOMVR_VMPR_CAPTAIN && SOMVR_VMPR_CAPTAIN == 10 &&
+              !strcmp(somvr_vm_label(it), "Captain"),
+          "Captain: in the area only, request %d", somvr_vm_practice_action(it));
+    int c[4], rm[4], ar[4], rp[4];
+    CHECK(somvr_vm_rect(it, SOMVR_VMP_BUTTON, c) && somvr_vm_rect(SOMVR_VMI_PR_REMOVE, SOMVR_VMP_BUTTON, rm) &&
+              somvr_vm_rect(SOMVR_VMI_PR_ARROWS, SOMVR_VMP_BUTTON, ar) && !somvr_vm_rect(it, SOMVR_VMP_ROW, rp) &&
+              c[1] == rm[1] && c[3] == rm[3] && rm[0] + rm[2] + 8 <= c[0] && c[0] + c[2] <= SOMVR_VM_TEX_W - 40 &&
+              c[1] + c[3] <= ar[1] && rm[0] == 40 &&
+              somvr_font_text_w(somvr_vm_label(it), SOMVR_VM_SCALE) <= c[2] - 16 &&
+              somvr_font_text_w(somvr_vm_label(SOMVR_VMI_PR_REMOVE), SOMVR_VM_SCALE) <= rm[2] - 16,
+          "Remove the orc %d..%d | Captain %d..%d at y %d, above the refills %d", rm[0], rm[0] + rm[2], c[0], c[0] + c[2],
+          c[1], ar[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, (c[0] + 0.5f * c[2]) / SOMVR_VM_TEX_W,
+                                            (c[1] + 0.5f * c[3]) / SOMVR_VM_TEX_H);
+    somvr_vm_hit h2 = somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, (rm[0] + 0.5f * rm[2]) / SOMVR_VM_TEX_W,
+                                             (rm[1] + 0.5f * rm[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == it && h.part == SOMVR_VMP_BUTTON && h2.item == SOMVR_VMI_PR_REMOVE, "the two hit back (%d, %d)", h.item,
+          h2.item);
+    uint32_t pw = somvr_vm_pr_pack(13, SOMVR_VMPR_CAPTAIN, 0);
+    CHECK(somvr_vm_pr_action(pw) == SOMVR_VMPR_CAPTAIN && somvr_vm_pr_seq(pw) == 13, "the request word carries 10");
+    somvr_vm_view vw;
+    memset(&vw, 0, sizeof vw);
+    somvr_set_default(&vw.set);
+    vw.page = SOMVR_VMPG_PRACTICE, vw.hover.item = -1, vw.avail = HERE;
+    somvr_vm_draw(&F, g_px, 0, &vw);
+    const uint8_t *bp = pxa(g_px, c[0] + 3, c[1] + 3), *gap = pxa(g_px, rm[0] + rm[2] + 4, rm[1] + 3);
+    CHECK(bp[0] == 52 && bp[1] == 61 && bp[2] == 76 && !(gap[0] == 52 && gap[1] == 61 && gap[2] == 76),
+          "Captain a live button in the area, the gap not (%u %u %u)", bp[0], bp[1], bp[2]);
+}
+
 /* ---- build 19 (re-xr-pipeline.md 73; t3/menu18's 56.8 ported): the availability word is 64 bits and the Fight page
  * (somvr_vrmenu v7): the layout; the free bits 38..63 change nothing; bits 32..37 only the Fight page; the six rows'
  * keys, values, steps; the page buttons; the Controls page as build 18's (no new line); a v6 menu's settings file read
@@ -2740,6 +2786,7 @@ int main(void) {
     test_build17();
     test_far_orc();
     test_build19();
+    test_build22_captain();
     test_fight19();
     test_steady20();
     test_snap20();

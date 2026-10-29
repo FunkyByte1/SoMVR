@@ -27,13 +27,18 @@ int somvr_pr_mode_parse(const char *v, int *mode);
 const char *somvr_pr_mode_name(int mode);
 
 /* ---- the orc types (the menu's order) ---- */
-enum { SOMVR_PRO_INFANTRY = 0, SOMVR_PRO_SHIELD = 1, SOMVR_PRO_BERSERKER = 2, SOMVR_PRO_N = 3 };
-const char *somvr_pr_orc_word(int t);     /* "infantry", "shield", "berserker" ("" outside) */
-const char *somvr_pr_orc_label(int t);    /* "Infantry", "Shield", "Berserker" (the menu, the logs) */
+enum { SOMVR_PRO_INFANTRY = 0, SOMVR_PRO_SHIELD = 1, SOMVR_PRO_BERSERKER = 2,
+       /* build 22 (SOMVR_BEASTS; docs/re-xr-pipeline.md 92): the beasts of Udun, one at a time as the orcs */
+       SOMVR_PRO_CARAGOR = 3, SOMVR_PRO_GHUL = 4, SOMVR_PRO_GRAUG = 5, SOMVR_PRO_N = 6 };
+#define SOMVR_PRO_ORCS 3 /* the orcs come first (the group's plan mixes only these) */
+const char *somvr_pr_orc_word(int t);     /* "infantry", "shield", "berserker", "caragor", "ghul", "graug" ("" outside) */
+const char *somvr_pr_orc_label(int t);    /* "Infantry", "Shield", "Berserker", "Caragor", "Ghul", "Graug" (the menu, logs) */
 /* the AI/Templates names tried in order (P9: Orc_Defender, Orc_Berserker spawned; Orc_Infantry was the captain's own
- * template): "Orc_Infantry", "Orc_Defender", "Orc_Berserker" */
+ * template): "Orc_Infantry", "Orc_Defender", "Orc_Berserker"; build 22: "Warg_Brown" (the common caragor), "Goblin"
+ * (the ghul), "Troll_Cave" (the cave graug) - the P9 probe's AI/Templates list */
 const char *somvr_pr_orc_template(int t);
-/* a type word: the words, the labels, "defender", "inf", "berserk", "0".."2" (case-insensitive); -1 = none */
+/* a type word: the words, the labels, "defender", "inf", "berserk", "warg", "goblin", "troll", "0".."5"
+ * (case-insensitive); -1 = none */
 int somvr_pr_orc_parse(const char *w);
 
 /* ---- the requests: the trigger word "practice ..." and the menu's buttons (the same codes as somvr_vrmenu.h's
@@ -47,8 +52,10 @@ enum { SOMVR_PRA_NONE = 0, SOMVR_PRA_GO = 1, SOMVR_PRA_BACK = 2, SOMVR_PRA_SPAWN
        SOMVR_PRA_FAR = 8,
        /* build 19 (re-xr-pipeline.md 70, the design note's item 5): a group of 3-4 orcs of mixed types around Talion
         * (somvr_pr_group_plan); orc = the count (3, 4; -1 = SOMVR_PRACTICE_GROUP_N) */
-       SOMVR_PRA_GROUP = 9, SOMVR_PRA_N = 10 };
-/* "go", "back", "spawn", "remove", "status", "arrows", "health", "far", "group" ("none"; "?" outside) */
+       SOMVR_PRA_GROUP = 9,
+       /* build 22 (re-xr-pipeline.md 88, SOMVR_CAPTAIN): the save's next Nemesis captain SOMVR_PRACTICE_CAPTAIN_CM ahead */
+       SOMVR_PRA_CAPTAIN = 10, SOMVR_PRA_N = 11 };
+/* "go", "back", "spawn", "remove", "status", "arrows", "health", "far", "group", "captain" ("none"; "?" outside) */
 const char *somvr_pr_action_name(int a);
 typedef struct {
     int action;  /* SOMVR_PRA_* */

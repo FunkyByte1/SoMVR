@@ -33,14 +33,21 @@ static void test_words(void)
     CHECK(!strcmp(somvr_pr_mode_name(SOMVR_PR_AUTO), "auto") && !strcmp(somvr_pr_mode_name(5), "off"), "mode names");
     CHECK(!strcmp(somvr_pr_orc_template(SOMVR_PRO_INFANTRY), "Orc_Infantry") &&
               !strcmp(somvr_pr_orc_template(SOMVR_PRO_SHIELD), "Orc_Defender") &&
-              !strcmp(somvr_pr_orc_template(SOMVR_PRO_BERSERKER), "Orc_Berserker") && !strcmp(somvr_pr_orc_template(3), ""),
+              !strcmp(somvr_pr_orc_template(SOMVR_PRO_BERSERKER), "Orc_Berserker") && !strcmp(somvr_pr_orc_template(6), ""),
           "templates (P9's names)");
+    /* build 22: the beasts (the P9 probe's AI/Templates names) */
+    CHECK(!strcmp(somvr_pr_orc_template(SOMVR_PRO_CARAGOR), "Warg_Brown") && !strcmp(somvr_pr_orc_template(SOMVR_PRO_GHUL), "Goblin") &&
+              !strcmp(somvr_pr_orc_template(SOMVR_PRO_GRAUG), "Troll_Cave") && !strcmp(somvr_pr_orc_label(SOMVR_PRO_GHUL), "Ghul") &&
+              somvr_pr_orc_parse("warg") == SOMVR_PRO_CARAGOR && somvr_pr_orc_parse(" Caragor ") == SOMVR_PRO_CARAGOR &&
+              somvr_pr_orc_parse("goblin") == SOMVR_PRO_GHUL && somvr_pr_orc_parse("troll") == SOMVR_PRO_GRAUG &&
+              somvr_pr_orc_parse("5") == SOMVR_PRO_GRAUG && somvr_pr_orc_parse("6") == -1 && SOMVR_PRO_ORCS == 3,
+          "the beasts' templates and words");
     CHECK(!strcmp(somvr_pr_orc_label(SOMVR_PRO_SHIELD), "Shield") && !strcmp(somvr_pr_orc_word(SOMVR_PRO_BERSERKER),
                                                                                "berserker"),
           "labels, words");
     CHECK(somvr_pr_orc_parse("Shield") == SOMVR_PRO_SHIELD && somvr_pr_orc_parse("defender") == SOMVR_PRO_SHIELD &&
               somvr_pr_orc_parse(" inf ") == SOMVR_PRO_INFANTRY && somvr_pr_orc_parse("2") == SOMVR_PRO_BERSERKER &&
-              somvr_pr_orc_parse("troll") == -1 && somvr_pr_orc_parse("") == -1 && somvr_pr_orc_parse("shield x") == -1,
+              somvr_pr_orc_parse("spider") == -1 && somvr_pr_orc_parse("") == -1 && somvr_pr_orc_parse("shield x") == -1,
           "type words");
     somvr_pr_req r = { -5, -5, 0, { 0, 0, 0 } };
     CHECK(somvr_pr_word("go", &r) && r.action == SOMVR_PRA_GO && r.orc == -1, "go");
@@ -63,7 +70,7 @@ static void test_words(void)
           "the refills' words");
     /* build 18: the far orc (the practice page's "Spawn far orc (unaware)") */
     CHECK(somvr_pr_word("far", &r) && r.action == SOMVR_PRA_FAR && r.orc == -1 && somvr_pr_word(" Far berserker ", &r) &&
-              r.action == SOMVR_PRA_FAR && r.orc == SOMVR_PRO_BERSERKER && !somvr_pr_word("far troll", &r) &&
+              r.action == SOMVR_PRA_FAR && r.orc == SOMVR_PRO_BERSERKER && !somvr_pr_word("far spider", &r) &&
               !somvr_pr_word("far 1 2 3", &r) && !somvr_pr_word("refill far", &r) &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_FAR), "far") && SOMVR_PRA_N >= 9,
           "the far orc's words");
@@ -87,7 +94,10 @@ static void test_words(void)
     CHECK(somvr_pr_word("status look", &r) && r.action == SOMVR_PRA_STATUS && r.orc == 3 && !r.have_at &&
               !somvr_pr_word("status look 1", &r), "status look");
     r.action = 77;
-    CHECK(!somvr_pr_word("spawn troll", &r) && !somvr_pr_word("go now", &r) && !somvr_pr_word("", &r) &&
+    CHECK(somvr_pr_word("spawn troll", &r) && r.action == SOMVR_PRA_SPAWN && r.orc == SOMVR_PRO_GRAUG,
+          "spawn troll (build 22: the graug)");
+    r.action = 77;
+    CHECK(!somvr_pr_word("spawn spider", &r) && !somvr_pr_word("go now", &r) && !somvr_pr_word("", &r) &&
               !somvr_pr_word("fly", &r) && !somvr_pr_word("spawn shield 3", &r) && !somvr_pr_word(NULL, &r) &&
               r.action == 77,
           "not taken");
@@ -291,8 +301,13 @@ static void test_group(void)
               !somvr_pr_word("group 2", &r) && !somvr_pr_word("group 34", &r) && !somvr_pr_word("group 3 x", &r) &&
               !somvr_pr_word("refill group", &r) && somvr_pr_word("spawn shield", &r) && r.action == SOMVR_PRA_SPAWN &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_GROUP), "group") && !strcmp(somvr_pr_action_name(8), "far") &&
-              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 10,
+              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 11,
           "the group's words");
+    /* build 22: the Captain */
+    CHECK(somvr_pr_word(" Captain ", &r) && r.action == SOMVR_PRA_CAPTAIN && r.orc == -1 && !r.have_at &&
+              !somvr_pr_word("captain shield", &r) && !somvr_pr_word("captain 3", &r) && SOMVR_PRA_CAPTAIN == 10 &&
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(11), "?"),
+          "the captain's word");
     for (int n = 3; n <= 4; n++) {
         somvr_pr_group_orc g[SOMVR_PR_GROUP_MAX];
         int k = somvr_pr_group_plan(n, g), types = 0, front = 0, behind = 0, apart = 1, far_ok = 1;

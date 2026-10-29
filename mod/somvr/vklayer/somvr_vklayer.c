@@ -643,6 +643,9 @@ static struct {
     XrPosef hud_pose;
     int last_hud;                /* the last stereo frame ended with the quad too (its image released): reuse repeats it */
     XrCompositionLayerQuad last_quad;
+    XrPosef mono_pose;           /* build 22: the last mono frame's quad as shown (the board or the theatre's screen) */
+    float mono_size[2];          /* (the test hands aim at it: SOMVR_XR_TEST's `board`) */
+    int mono_ok;
     uint64_t n_hud, n_nohud;     /* stereo frames from the eye images with / without the quad */
     char nohud_why[256];         /* the last reason a stereo frame had no quad (logged when it changes) */
     /* the laser pointer (docs/re-xr-pipeline.md 10, ../somvr_pointer.h) */
@@ -672,6 +675,8 @@ static struct {
     uint32_t fade_n;             /* 1: the next xrEndFrame carries it, after the frame's own layers */
     uint32_t last_fade;          /* the last stereo frame's level (a reuse repeats it) */
     int last_fade_red;           /* ... in red (SOMVR_REC_FADE_RED: SOMVR_BODYMOMENTS' knockdown dim) */
+    int last_fade_world;         /* ... the world only (SOMVR_REC_FADE_WORLD: build 22's death grey, under the HUD) */
+    int fade_under;              /* this frame's fade quad goes under the HUD (XL_MBD) */
     somvr_posef last_fade_eye[2];
     uint64_t n_fade, n_fade_black;
 } X = {.mx = PTHREAD_MUTEX_INITIALIZER};
@@ -695,6 +700,7 @@ enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING,
        XL_HUD,
        XL_BAND, /* build 8: the prompt band (a part of the HUD: off with it; the first to go beyond 16 layers) */
        XL_BAND1, XL_BAND2, XL_BAND3, /* build 21: SOMVR_XR_POPUPS=gaze - the band's tiles each a quad (XL_BAND the first) */
+       XL_BAND4, /* build 22: SOMVR_XR_SUBTITLES - the subtitle line's popup (the band's last tile) */
        XL_MMAP, /* build 6: the wrist minimap (a part of the HUD: off with it) */
        XL_PTR0, XL_PTR1, XL_VM0, XL_VM1, XL_VM2,
        XL_HANDS, /* build 10: our own VR hands (a projection layer over the wrist panel and the watch) */
@@ -702,7 +708,7 @@ enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING,
 enum { XG_FADE = 1u << 0, XG_CF = 1u << 1, XG_PTR = 1u << 2, XG_HUD = 1u << 3, XG_ENV = 1u << 4, XG_VM = 1u << 5,
        XG_TH = 1u << 6, XG_VH = 1u << 7, XG_MB = 1u << 8, XG_OB = 1u << 9 };
 _Static_assert(XL_ENV_N + 1 + 2 + 3 + 1 <= 16, "a mono frame's worst case: env, quad, pointer, VR menu, fade");
-_Static_assert(XL_N - XL_OWN <= 25, "a stereo frame's worst case: every slot from the projection on, less the band's four, "
+_Static_assert(XL_N - XL_OWN <= 26, "a stereo frame's worst case: every slot from the projection on, less the band's five, "
                                     "the hands, the menu backdrop's two, the objective's marker and its line (xl_cap)");
 #define XL_MAX 16 /* XR_MIN_COMPOSITION_LAYERS_SUPPORTED: a frame with more loses the band (xl_cap) */
 _Static_assert(XL_THG2 - XL_THG0 + 1 == SOMVR_TH_GLOWS && XL_THE1 - XL_THE0 == 1, "the threat slots");
@@ -717,7 +723,7 @@ static uint32_t xl_group(int i) {
     if (i == XL_OBJ || i == XL_OBJL) return XG_OB;
     if ((i >= XL_THG0 && i <= XL_THG2) || i == XL_THE0 || i == XL_THE1) return XG_TH;
     return i == XL_FADE ? XG_FADE : i == XL_RING || i == XL_BLINK ? XG_CF : i == XL_PTR0 || i == XL_PTR1 ? XG_PTR
-                                                                        : i == XL_HUD || (i >= XL_BAND && i <= XL_BAND3) || i == XL_MMAP ? XG_HUD : 0u;
+                                                                        : i == XL_HUD || (i >= XL_BAND && i <= XL_BAND4) || i == XL_MMAP ? XG_HUD : 0u;
 }
 
 static void xr_global_init(void) {
@@ -2957,11 +2963,14 @@ static int fade_fill(dev_st *ds) {
 
 /* the record's own level in red (SOMVR_REC_FADE_RED), not a darker one of the environment's transition */
 static int fade_red(uint32_t level) { return X.last_fade_red && level == X.last_fade; }
+/* build 22: the record's own level over the world only (SOMVR_REC_FADE_WORLD), not the environment's transition */
+static int fade_world(uint32_t level) { return X.last_fade_world && level == X.last_fade; }
 
 /* a stereo frame (or its reuse) about to end: its fade level (0..255) and eye poses -> X.fade_q for the next
  * xrEndFrame (X.fade_n = 1); nothing at level 0; red: the dark red ramp */
 static void fade_frame(dev_st *ds, uint32_t level, const somvr_posef eye[2], int red) {
     X.fade_n = 0;
+    X.fade_under = fade_world(level);
     int k = somvr_fade_index(level);
     if (!X.fade_on || !k || fade_fill(ds)) return;
     int32_t rc[4];
@@ -5280,7 +5289,15 @@ static int xr_end(const XrCompositionLayerBaseHeader *layer) {
 }
 /* the fade quad of this frame (fade_frame made it) into the composition: the last layer */
 static void fade_comp(xr_comp *c) {
-    if (X.fade_n) c->l[XL_FADE] = (const XrCompositionLayerBaseHeader *)&X.fade_q;
+    if (!X.fade_n) return;
+    /* build 22: SOMVR_REC_FADE_WORLD - the world's grey under the HUD, the VR menu and our hands (the menu backdrop's dim
+     * slot when it is free; no game menu is up while it is asked for) */
+    int under = X.fade_under && !c->l[XL_MBD];
+    c->l[under ? XL_MBD : XL_FADE] = (const XrCompositionLayerBaseHeader *)&X.fade_q;
+    static uint64_t n_under;
+    if (under && (n_under++ < 3 || n_under % 600 == 0))
+        lg("xr: fade: the world only (SOMVR_REC_FADE_WORLD: under the HUD, the VR menu and our hands; %llu frame(s))",
+           (unsigned long long)n_under);
 }
 
 static const XrCompositionLayerBaseHeader *proj_layer(XrCompositionLayerProjection *proj,
@@ -5535,6 +5552,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
             }
             X.last_fade = somvr_rec_fade(X.open_rec.flags); /* the comfort fade (SOMVR_FALLBACK): the last layer */
             X.last_fade_red = (X.open_rec.flags & SOMVR_REC_FADE_RED) != 0;
+            X.last_fade_world = (X.open_rec.flags & SOMVR_REC_FADE_WORLD) != 0;
             if ((X.open_rec.flags & SOMVR_REC_DUMP) && CF.dump_marked > 0) { /* SOMVR_XR_DUMP_MARKED (tests) */
                 CF.dump_marked--;
                 lg("xr: dump mark: record frame %llu (stereo %llu): a dump of the next stereo frame %llu: %s",
@@ -5607,6 +5625,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                                         .size = {sz[0], sz[1]}};
         mn_mono_quad(&quad, (uint32_t)rc[2], (uint32_t)rc[3]); /* build 6: on the board in front of the head */
         vd_theatre(&quad, (uint32_t)rc[2], (uint32_t)rc[3]);  /* never a void: a video, the cinematic window */
+        X.mono_pose = quad.pose, X.mono_size[0] = quad.size.width, X.mono_size[1] = quad.size.height, X.mono_ok = 1;
         layer = (const XrCompositionLayerBaseHeader *)&quad;
     } else if (replaced) {
         XrViewLocateInfo li = {.type = XR_TYPE_VIEW_LOCATE_INFO,

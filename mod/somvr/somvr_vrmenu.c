@@ -279,9 +279,12 @@ static const char *const g_labels[SOMVR_VMI_ALL] = {"Turn",     "Snap angle", "T
                                                     /* build 19: the two page buttons (their arrows drawn too) */
                                                     "Fight settings", "Settings",
                                                     /* build 21: the Test tab, the Test page's buttons */
-                                                    "Test", "Prev", "Next"};
+                                                    "Test", "Prev", "Next",
+                                                    /* build 22: beside Remove the orc */
+                                                    "Captain"};
 const char *somvr_vm_label(int item) { return item >= 0 && item < SOMVR_VMI_ALL ? g_labels[item] : ""; }
-static const char *const g_orc_labels[3] = {"Infantry", "Shield", "Berserker"}; /* = somvr_pr_orc_label */
+static const char *const g_orc_labels[6] = {"Infantry", "Shield", "Berserker", /* = somvr_pr_orc_label */
+                                            "Caragor", "Ghul", "Graug"}; /* build 22: the beasts */
 
 int somvr_vm_enabled(const somvr_settings *s, uint64_t avail, int item) {
     switch (item) {
@@ -335,6 +338,7 @@ int somvr_vm_enabled(const somvr_settings *s, uint64_t avail, int item) {
     case SOMVR_VMI_PR_HEALTH:
     case SOMVR_VMI_PR_FAR: /* build 18 */
     case SOMVR_VMI_PR_GROUP: /* build 19: the group, as the spawn */
+    case SOMVR_VMI_PR_CAPTAIN: /* build 22: the captain, as the spawn */
         return (avail & SOMVR_VMA_PRACTICE) && (avail & SOMVR_VMA_PR_HERE) && !(avail & SOMVR_VMA_PR_BUSY);
     case SOMVR_VMI_PR_REMOVE:
         return (avail & SOMVR_VMA_PRACTICE) && (avail & SOMVR_VMA_PR_ORC) && !(avail & SOMVR_VMA_PR_BUSY);
@@ -437,6 +441,7 @@ static const vm_ctl_line g_ctl[] = {
     {"Drop", "A (on a wall)", 0, SOMVR_VMA_DESCENT, 0},
     {"Drop", "A (wall, edge)", SOMVR_VMA_DESCENT, SOMVR_VMA_DROPMARK, 0}, /* build 13: A at an edge over a 4 m drop */
     {"Drop", "hold A, let go", SOMVR_VMA_DESCENT | SOMVR_VMA_DROPMARK, 0, 0}, /* build 17: held = the landing shown */
+    {"Jump", "A while moving", SOMVR_VMA_JUMP, 0, 0}, /* build 22: SOMVR_JUMP (standing: A jumps where no edge claims it) */
     {"Bow", "hold left trigger", 0, SOMVR_VMA_BOWSLOT, 0}, /* build 11 (SOMVR_BOW): Swing/Crouch made room */
     {"Bow", "L grip at L shoulder", SOMVR_VMA_BOWSLOT, 0, 0}, /* build 15b: SOMVR_BOW_DRAW=slot */
     {"Shoot", "R grip, pull, let go", 0, SOMVR_VMA_BOWRT | SOMVR_VMA_QVGRIP | SOMVR_VMA_BOWTRIG, 0},
@@ -660,6 +665,7 @@ int somvr_vm_practice_action(int item) {
     case SOMVR_VMI_PR_HEALTH: return SOMVR_VMPR_HEALTH;
     case SOMVR_VMI_PR_FAR: return SOMVR_VMPR_FAR; /* build 18 */
     case SOMVR_VMI_PR_GROUP: return SOMVR_VMPR_GROUP; /* build 19 */
+    case SOMVR_VMI_PR_CAPTAIN: return SOMVR_VMPR_CAPTAIN; /* build 22 */
     default: return SOMVR_VMPR_NONE;
     }
 }
@@ -728,7 +734,7 @@ void somvr_vm_value(const somvr_settings *s, int item, char *buf, size_t cap) {
         else fmt_num(s->crowd_ms / 1000.0, n, sizeof n), snprintf(buf, cap, "%s%s s", n, s->crowd_ms % 1000 ? "" : ".0");
         break;
     case SOMVR_VMI_CICON: snprintf(buf, cap, "%s", s->counter_icon ? "Shown" : "Hidden"); break;
-    case SOMVR_VMI_PR_ORC: snprintf(buf, cap, "%s", g_orc_labels[s->orc < 3 ? s->orc : 0]); break;
+    case SOMVR_VMI_PR_ORC: snprintf(buf, cap, "%s", g_orc_labels[s->orc < 6 ? s->orc : 0]); break;
     default: break;
     }
 }
@@ -818,7 +824,7 @@ int somvr_vm_apply(somvr_settings *s, uint64_t avail, uint32_t blink_on_ms, int 
     case SOMVR_VMI_SIZE: STEP(size, g_size);
     case SOMVR_VMI_DASH: return cycle(&s->dash, 3, dir, wrap);
     case SOMVR_VMI_PHASE: return cycle(&s->phase, 4, dir, wrap);
-    case SOMVR_VMI_PR_ORC: return cycle(&s->orc, 3, dir, wrap);
+    case SOMVR_VMI_PR_ORC: return cycle(&s->orc, 6, dir, wrap);
     case SOMVR_VMI_WEIGHT: {
         uint32_t w = s->sword_weight;
         int r = cycle(&w, 3, dir, wrap);
@@ -855,6 +861,10 @@ int somvr_vm_apply(somvr_settings *s, uint64_t avail, uint32_t blink_on_ms, int 
 #define PR_SPAWN_W 220
 #define PR_GROUP_X 272
 #define PR_GROUP_W 200
+/* build 22: the Remove row split - Remove the orc (40..288) | Captain (300..472) */
+#define PR_REMOVE_W 248
+#define PR_CAPTAIN_X 300
+#define PR_CAPTAIN_W 172
 
 /* build 21 (SOMVR_VMA_TESTPAGE): the tab strip's four tabs - the three 134 wide (the labels' 128 and 3 a side), the
  * Test tab 80, 3 apart from x 10 to 501 */
@@ -937,12 +947,14 @@ int somvr_vm_rect_av(uint64_t avail, int item, int part, int rc[4]) {
         else if (item == SOMVR_VMI_REPORT) rc[0] = 180, rc[1] = RECENTER_Y, rc[2] = 152, rc[3] = 56;
         else if (item == SOMVR_VMI_QUIT) rc[0] = 344, rc[1] = RECENTER_Y, rc[2] = 152, rc[3] = 56;
         else if (pa == SOMVR_VMPR_GROUP) rc[0] = PR_GROUP_X, rc[1] = PR_SPAWN_Y, rc[2] = PR_GROUP_W, rc[3] = PR_BTN_H;
+        else if (pa == SOMVR_VMPR_CAPTAIN) rc[0] = PR_CAPTAIN_X, rc[1] = PR_REMOVE_Y, rc[2] = PR_CAPTAIN_W, rc[3] = PR_BTN_H;
         else
             rc[0] = 40, rc[1] = pa == SOMVR_VMPR_ARROWS ? PR_ARROWS_Y
                                 : pa == SOMVR_VMPR_HEALTH ? PR_HEALTH_Y
                                 : pa == SOMVR_VMPR_FAR    ? PR_FAR_Y
                                                           : by[item - SOMVR_VMI_PR_GO],
-            rc[2] = pa == SOMVR_VMPR_SPAWN ? PR_SPAWN_W : SOMVR_VM_TEX_W - 80, rc[3] = PR_BTN_H;
+            rc[2] = pa == SOMVR_VMPR_SPAWN ? PR_SPAWN_W : pa == SOMVR_VMPR_REMOVE ? PR_REMOVE_W : SOMVR_VM_TEX_W - 80,
+            rc[3] = PR_BTN_H;
         return 1;
     }
     if (item != SOMVR_VMI_PR_ORC && (item < 0 || item >= SOMVR_VMI_ROWS)) return 0;
@@ -962,12 +974,12 @@ static int in_rect(const int rc[4], float x, float y) {
     return x >= (float)rc[0] && x < (float)(rc[0] + rc[2]) && y >= (float)rc[1] && y < (float)(rc[1] + rc[3]);
 }
 /* the buttons a page has (the hit test's order: -1 ends the list) */
-static const int g_page_buttons[5][14] = {
+static const int g_page_buttons[5][15] = {
     {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
      SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, SOMVR_VMI_PG_FIGHT, -1},
     {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, SOMVR_VMI_PR_GO,
      SOMVR_VMI_PR_BACK, SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH,
-     SOMVR_VMI_PR_FAR, SOMVR_VMI_PR_GROUP, -1},
+     SOMVR_VMI_PR_FAR, SOMVR_VMI_PR_GROUP, SOMVR_VMI_PR_CAPTAIN, -1},
     {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, -1},
     /* build 19: the Fight page = the Settings page's bottom row, the tabs, its back button */
     {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
@@ -1215,10 +1227,11 @@ void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_vi
         draw_button(f, &c, v, SOMVR_VMI_PR_FAR, NULL); /* build 18 */
         draw_button(f, &c, v, SOMVR_VMI_PR_GROUP, NULL); /* build 19 */
         draw_button(f, &c, v, SOMVR_VMI_PR_REMOVE, NULL);
+        draw_button(f, &c, v, SOMVR_VMI_PR_CAPTAIN, NULL); /* build 22 */
         draw_button(f, &c, v, SOMVR_VMI_PR_ARROWS, NULL); /* build 17 */
         draw_button(f, &c, v, SOMVR_VMI_PR_HEALTH, NULL);
         text_at(f, &c, 24, PR_HINT_Y, "No enemies here.", C_DIM);
-        text_at(f, &c, 24, PR_HINT_Y + 32, "Talion cannot die here.", C_DIM);
+        text_at(f, &c, 24, PR_HINT_Y + 32, "Only a captain can kill you.", C_DIM); /* build 22 (SOMVR_CAPTAIN) */
         /* build 17: how to defend against the orc (somvr_defence.h: the blade in the blow's path; the red warning's
          * attacks - cannot parry / block - only dodged: the head 30 cm aside or 40 cm back) */
         text_at(f, &c, 24, PR_HINT_Y + 72, "Block: sword across a blow.", C_LABEL);

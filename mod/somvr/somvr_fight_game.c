@@ -516,6 +516,8 @@ static uintptr_t kx_stagger_rec(uintptr_t c, int tier, int blk, float hp0, float
 	*extra = 0;
 	if (g_kx.mode != KX_STAGGER || !isfinite(hp0) || (isfinite(sh0) && sh0 > 0))
 		return 0;
+	if (kp_no_cheat(c, "=stagger's health write and SOMVR_COMBAT_SLIVER")) /* build 22: a captain's hits the game's own */
+		return 0;
 	uintptr_t own = peek_ptr(c + C_OWNER);
 	if (tier == SC_TIER_LIGHT || blk) { /* SOMVR_COMBAT_SLIVER: a light hit, or one through the orc's block (its record's
 					     * own damage: 40 for a High one, boot 035244), that would leave a sliver kills */

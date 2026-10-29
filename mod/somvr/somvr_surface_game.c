@@ -80,6 +80,14 @@ static struct {
 	char pv_surf[32];
 	uint64_t pv_frames, pv_meets, pv_clanks, pv_sounds, pv_sound_fail, pv_fx, pv_fx_fail, pv_voids;
 	float pv_peak_deg;
+	/* build 22, SOMVR_HANDS_SURFACE_GROUND (docs/re-xr-pipeline.md 93.2): the open ground no ray along the blade meets */
+	int ground;                  /* 1: a ray straight down at the tip (the practice's ground query, pr_ray_down) */
+	uintptr_t orc_h[16];         /* the combat frame's orcs (their objects: an orc under the tip is no ground) */
+	int norc;
+	uint64_t gr_casts, gr_planes, gr_orcs, gr_soft, gr_noray;
+	float gr_deep_max;
+	int gr_lines;
+	double gr_line_t;
 	struct {
 		uint64_t frames, evals, casts, ray_fail, hits, passed_self, passed_soft, far, clamped[2], contacts[2], releases[2],
 			blades, clanks, btouches, voids, fx, ticks, eases, ghosts[2], except[2];
@@ -213,6 +221,102 @@ static int sf_ray(uintptr_t phys, sv_vec3 from, sv_vec3 to, float extra, somvr_s
 	return 0;
 }
 
+/* build 22 (SOMVR_HANDS_SURFACE_GROUND): the combat frame's orcs (somvr.c's combat frame) */
+static void sf_note_orcs(const struct cb_orc *o, int n)
+{
+	int k = 0;
+	for (int i = 0; i < n && k < 16; i++)
+		if (o[i].hobj)
+			g_sf.orc_h[k++] = o[i].hobj;
+	g_sf.norc = k;
+}
+/* build 22 (SOMVR_HANDS_SURFACE_GROUND): the open ground of the practice meadow is met by no ray along the blade (79.6:
+ * 0 hits in 4209 casts, the ground query's flags along it 0 too) but a ray straight down finds it every time
+ * (pr_ray_down: the debug spawn's cast). So with the tip under the grip, a ray straight down at the tip from the grip's
+ * height to just under it: a hit there (not Talion, not an orc, a solid surface or the world's unnamed ground) is the
+ * ground's plane - the normal from two more such rays 10 cm round the tip (else straight up). 1 = a plane */
+static int sf_ground(sv_vec3 g, sv_vec3 tip, somvr_sf_plane *pl, char *name, uintptr_t *objp, double t)
+{
+	float r0 = g_sf.cfg.blade_r_cm + 1.0f;
+	if (!(tip.y < g.y - 2.0f))
+		return 0;
+	if (!pr_ray_ok()) {
+		g_sf.gr_noray++;
+		return 0;
+	}
+	unsigned char r[0x80] __attribute__((aligned(16)));
+	/* from 2 m over the tip (run 20261029-001737: 364 rays from the grip's own height down to the tip met nothing - as
+	 * the debug spawn's ray, which starts 2 m up); a surface over the grip is no ground the blade is in: on under it */
+	float from[3] = { tip.x, fmaxf(g.y, tip.y) + 200.0f, tip.z }, hit[3], end = tip.y - r0;
+	uintptr_t obj = 0;
+	int got = 0, k;
+	for (k = 0; k < 4 && from[1] > end; k++) {
+		g_sf.gr_casts++, SF_COUNT(casts);
+		if (!pr_ray_down_r(from, from[1] - end, g_sf.self, hit, &obj, r))
+			break;
+		if (hit[1] <= g.y) {
+			got = 1;
+			break;
+		}
+		from[1] = hit[1] - 2.0f;
+	}
+	if (g_sf.gr_lines < 40 && t - g_sf.gr_line_t > 0.5) { /* (a few lines: where the tip is against the ground) */
+		float gf[3] = { g.x, g.y + 200.0f, g.z }, gh[3] = { 0, NAN, 0 };
+		uintptr_t go = 0;
+		int gg = pr_ray_down(gf, 600.0f, g_sf.self, gh, &go);
+		g_sf.gr_lines++, g_sf.gr_line_t = t;
+		logf_("SURF t=%.3f ground probe: the grip %.1f,%.1f,%.1f, the tip %.1f,%.1f,%.1f: the ray down at the tip %s%.1f "
+		      "(%d casts); the ground under the grip %s%.1f", t, g.x, g.y, g.z, tip.x, tip.y, tip.z, got ? "hit at " : "none ",
+		      got ? hit[1] : (double)NAN, k + 1, gg ? "at " : "none ", gg ? gh[1] : (double)NAN);
+	}
+	if (!got)
+		return 0;
+	for (int i = 0; i < g_sf.norc; i++)
+		if (obj && obj == g_sf.orc_h[i]) {
+			g_sf.gr_orcs++;
+			return 0;
+		}
+	char nm[32];
+	uint16_t id = 0;
+	sf_surface(r, obj, nm, sizeof nm, &id);
+	/* the meadow's ground may have no surface record (''): the world's own; a named soft one (flesh, water..) is not */
+	if (nm[0] && !somvr_sf_solid(nm)) {
+		g_sf.gr_soft++;
+		return 0;
+	}
+	/* the normal: the ground 10 cm round the tip (two more rays; a slope), else straight up */
+	sv_vec3 n = { 0, 1, 0 }, side = { -(tip.z - g.z), 0, tip.x - g.x };
+	float sl = sqrtf(side.x * side.x + side.z * side.z);
+	sv_vec3 fw = sl > 1.0f ? (sv_vec3){ side.z / sl, 0, -side.x / sl } : (sv_vec3){ 0, 0, 1 };
+	side = sl > 1.0f ? (sv_vec3){ side.x / sl, 0, side.z / sl } : (sv_vec3){ 1, 0, 0 };
+	float ha[3], hb[3], fa[3] = { tip.x + 10.0f * fw.x, g.y, tip.z + 10.0f * fw.z },
+			      fb[3] = { tip.x + 10.0f * side.x, g.y, tip.z + 10.0f * side.z };
+	uintptr_t oa = 0, ob = 0;
+	g_sf.gr_casts += 2, SF_COUNT(casts), SF_COUNT(casts);
+	if (pr_ray_down(fa, g.y - tip.y + 60.0f, g_sf.self, ha, &oa) && pr_ray_down(fb, g.y - tip.y + 60.0f, g_sf.self, hb, &ob) &&
+	    oa == obj && ob == obj) {
+		sv_vec3 a = { ha[0] - hit[0], ha[1] - hit[1], ha[2] - hit[2] }, b = { hb[0] - hit[0], hb[1] - hit[1], hb[2] - hit[2] };
+		sv_vec3 c = { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
+		float cl = sqrtf(c.x * c.x + c.y * c.y + c.z * c.z);
+		if (cl > 1e-3f) {
+			c = (sv_vec3){ c.x / cl, c.y / cl, c.z / cl };
+			if (c.y < 0)
+				c = (sv_vec3){ -c.x, -c.y, -c.z };
+			if (c.y > 0.5f) /* at most 60 deg of slope: steeper is a wall the blade's own ray meets */
+				n = c;
+		}
+	}
+	if (!somvr_sf_plane_of(g, (sv_vec3){ hit[0], hit[1], hit[2] }, n, pl))
+		return 0;
+	SF_COUNT(hits);
+	sf_seen(obj, id, nm[0] ? nm : "ground", 1, n, t);
+	snprintf(name, 32, "%s", nm[0] ? nm : "ground");
+	*objp = obj;
+	g_sf.gr_planes++;
+	g_sf.gr_deep_max = fmaxf(g_sf.gr_deep_max, hit[1] - tip.y);
+	return 1;
+}
+
 /* the samples in the game's grip frame from the drawn hand's curls (somvr_vh_joint_g: the right grip's frame, XR m;
  * the left mirrored; the game's frame: (x, y, -z) x 100): the palm (the wrist and the middle knuckle's midpoint), the
  * index, middle and thumb tips */
@@ -333,6 +437,8 @@ static void sf_frame(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp, sv_qu
 			sf_blade(g, qw[h], &base, &tip);
 			if (sf_ray(phys, g, tip, g_sf.cfg.blade_r_cm + 1.0f, &f->bpl[0], f->bname[0], &f->bobj[0], t))
 				f->nbpl = 1;
+			else if (g_sf.ground && sf_ground(g, tip, &f->bpl[0], f->bname[0], &f->bobj[0], t))
+				f->nbpl = 1; /* build 22: the open ground under the tip */
 		}
 	}
 	double us = (mono() - t0) * 1e6;
@@ -527,6 +633,7 @@ static void sf_config(int *bad)
 		*bad = 1, logf_("WARN SOMVR_HANDS_SURFACE_BLADE_MAX_CM=%s is not 0..100: %.0f", v, (double)g_sf.cfg.blade_max_cm);
 	static const char *const bw[] = { "push", "pivot" };
 	g_sf.cfg.blade_pivot = env_word("SOMVR_HANDS_SURFACE_BLADE", bw, 2, 0);
+	g_sf.ground = env_word("SOMVR_HANDS_SURFACE_GROUND", w, 2, 0); /* build 22 (docs 93.2) */
 	snprintf(g_sf.sound, sizeof g_sf.sound, "%s", "cbt_imp_surface_player");
 	v = getenv("SOMVR_HANDS_SURFACE_SOUND");
 	if (v && *v)
@@ -590,6 +697,9 @@ static void sf_start(void)
 		      "drawn blade turns about the grip to stay at the surface (at most %.0f deg off the hand; past it, or the grip "
 		      "itself there, it goes in); its meeting: the clank's pulses, the sound '%s' (SOMVR_HANDS_SURFACE_SOUND%s) and "
 		      "the sparks at the contact", (double)c->pivot_max_rad / 0.01745329, g_sf.sound[0] ? g_sf.sound : "none", "");
+	logf_("CONFIG surface ground=%s (SOMVR_HANDS_SURFACE_GROUND, build 22)%s", g_sf.ground ? "on" : "off", g_sf.ground
+	      ? ": with no surface on the blade's ray, a ray straight down at the tip (the practice's ground query) - the open "
+		"ground the blade's own ray does not meet stops it too" : "");
 }
 
 static void sf_end_log(void)
@@ -618,4 +728,20 @@ static void sf_end_log(void)
 		      (unsigned long long)g_sf.pv_frames, (unsigned long long)g_sf.pv_meets, (unsigned long long)g_sf.pv_clanks,
 		      (double)g_sf.pv_peak_deg, (unsigned long long)g_sf.pv_sounds, (unsigned long long)g_sf.pv_sound_fail,
 		      (unsigned long long)g_sf.pv_fx, (unsigned long long)g_sf.pv_fx_fail, (unsigned long long)g_sf.pv_voids);
+	if (g_sf.ground || g_sf.gr_casts)
+		logf_("SURF END build 22 ground=%s: rays down at the tip %llu, the ground's planes %llu (the tip at most %.1f cm under it), "
+		      "an orc under the tip %llu, a soft surface %llu, no ray (the practice's site) %llu", g_sf.ground ? "on" : "off",
+		      (unsigned long long)g_sf.gr_casts, (unsigned long long)g_sf.gr_planes, (double)g_sf.gr_deep_max,
+		      (unsigned long long)g_sf.gr_orcs, (unsigned long long)g_sf.gr_soft, (unsigned long long)g_sf.gr_noray);
+}
+
+/* build 22, a test word: "surface ground on|off" (build 20's blade against the ground's ray, one boot) */
+static const char *sf_word(const char *w)
+{
+	if (!strcmp(w, "ground on") || !strcmp(w, "ground off")) {
+		g_sf.ground = w[8] == 'n';
+		logf_("SURF the word 'surface %s': SOMVR_HANDS_SURFACE_GROUND now %s (a test)", w, g_sf.ground ? "on" : "off");
+		return g_sf.ground ? "surface ground on" : "surface ground off";
+	}
+	return "surface ground on|off";
 }

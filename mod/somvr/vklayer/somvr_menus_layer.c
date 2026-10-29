@@ -28,6 +28,12 @@
  *                          rows after each stereo frame's copy), placed in front of the gaze when it comes up, held still
  *                          in the room while it shows, eased to the new front when the head turns away more than 40 deg
  *                          (SOMVR_XR_POPUPS_GEOM; ../somvr_menus.h 2c). Default band (build 20c).
+ *   SOMVR_XR_SUBTITLES=on  build 22 (with SOMVR_XR_PROMPTS=on): the game's subtitle line (SOMVR_XR_SUBTITLES_RECT, default
+ *                          400,820,1120,120) a band row of its own, the last - with gaze its own popup (XL_BAND4) at
+ *                          SOMVR_XR_SUBTITLES_SCALE % (80) of the band's scale; a band tile overlapping it is cut to the
+ *                          side of it with more of the tile (the prompts' 1120,860,800,220 -> 1120,940,800,140). Build 21
+ *                          cut the line in two: its right part in the prompts' popup, the rest in the world HUD quad
+ *                          (../somvr_menus.h 2d). Default off.
  *   SOMVR_XR_TEST=PATH     headless tests only: test hands, buttons, sticks and on-demand dumps from that file
  *                          (../somvr_menus.h 4; scripts/menus-drive.sh writes it, scripts/xr_compose.py reads the dumps).
  */
@@ -78,6 +84,9 @@ static struct {
     somvr_pp_read pp_rd[SOMVR_PP_MAX]; /* the latest reading of each tile */
     XrCompositionLayerQuad pq[SOMVR_PP_MAX];
     uint32_t pp_has;                   /* bit i: tile i's quad in the last stereo frame (reuse frames repeat them) */
+    /* build 22: the subtitles (SOMVR_XR_SUBTITLES=on; ../somvr_menus.h 2d) */
+    int sub, sub_bad, sub_scale, sub_idx, sub_cut; /* sub_idx: its index in pb_set (the last; -1 none) */
+    somvr_ht_set sub_set;
     double pp_t;                       /* the last step (s; a gap of 0.5 s starts afresh) */
     struct dev_st *pp_ds;              /* the readings' buffer: its device */
     VkBuffer pp_buf;
@@ -168,6 +177,15 @@ static void mn_config(void) {
     b = 0;
     somvr_pb_parse_quad(getenv("SOMVR_XR_PROMPTS_QUAD"), &MN.pbc, &b);
     MN.pb_bad |= b << 2;
+    MN.sub = somvr_sub_parse(getenv("SOMVR_XR_SUBTITLES"), &MN.sub_bad); /* build 22 */
+    b = 0;
+    MN.sub_scale = somvr_sub_parse_scale(getenv("SOMVR_XR_SUBTITLES_SCALE"), &b);
+    MN.sub_bad |= b << 1;
+    b = 0;
+    somvr_ht_parse(getenv("SOMVR_XR_SUBTITLES_RECT"), SOMVR_SUB_RECT_DEFAULT, &MN.sub_set, &b);
+    if (b || MN.sub_set.n != 1) MN.sub_bad |= 4, somvr_ht_parse(NULL, SOMVR_SUB_RECT_DEFAULT, &MN.sub_set, &b);
+    MN.sub_idx = -1, MN.sub_cut = 0;
+    if (MN.sub && MN.pb) MN.sub_idx = somvr_sub_add(&MN.pb_set, MN.sub_set.r[0], &MN.sub_cut);
     MN.pp = somvr_pp_parse(getenv("SOMVR_XR_POPUPS"), &MN.pp_bad); /* build 21 */
     somvr_pp_cfg_default(&MN.ppc);
     somvr_pp_parse_geom(getenv("SOMVR_XR_POPUPS_GEOM"), &MN.ppc, &MN.ppg_bad);
@@ -242,6 +260,19 @@ static void mn_setup(void) {
     lg("xr: prompts: %s (the rects %s in one band %.2f m from the eyes, %.0f deg below them, an 18-px line %.2f deg; "
        "placed with the HUD quad)", !MN.pb ? "off" : !X.hud ? "on, but no HUD quad" : "on", pr, MN.pbc.dist_m,
        MN.pbc.down_deg, MN.pbc.line_deg);
+    if (MN.sub_bad & 1) lg("xr: subtitles: SOMVR_XR_SUBTITLES=%s is not on or off: off", getenv("SOMVR_XR_SUBTITLES"));
+    if (MN.sub_bad & 2) lg("xr: subtitles: SOMVR_XR_SUBTITLES_SCALE=%s is not 50..150 (%%): %d", getenv("SOMVR_XR_SUBTITLES_SCALE"),
+                           SOMVR_SUB_SCALE_DEFAULT);
+    if (MN.sub_bad & 4) lg("xr: subtitles: SOMVR_XR_SUBTITLES_RECT=%s is not one X,Y,W,H in 1920x1080: %s",
+                           getenv("SOMVR_XR_SUBTITLES_RECT"), SOMVR_SUB_RECT_DEFAULT);
+    lg("xr: subtitles: %s", !MN.sub ? "off (the subtitle line where the band's tiles leave it: build 21)"
+       : !MN.pb ? "on, but no prompt band (SOMVR_XR_PROMPTS): off" : MN.sub_idx < 0 ? "on, but no room in the band: off" : "on");
+    if (MN.sub_idx >= 0)
+        lg("xr: subtitles: the rect %d,%d %dx%d a band row of its own (tile %d of the band, its last; %d tile%s cut to keep "
+           "clear of it)%s at %d %% of the band's scale (a 24-px line %.2f deg)", MN.sub_set.r[0][0], MN.sub_set.r[0][1],
+           MN.sub_set.r[0][2], MN.sub_set.r[0][3], MN.sub_idx, MN.sub_cut, MN.sub_cut == 1 ? "" : "s",
+           MN.pp == SOMVR_PP_GAZE ? ": its own popup under the gaze" : ": in the band", MN.sub_scale,
+           MN.pbc.line_deg * 24.0f / 18.0f * (float)MN.sub_scale * 0.01f);
     if (MN.pp_bad) lg("xr: popups: SOMVR_XR_POPUPS=%s is not gaze or band: band", getenv("SOMVR_XR_POPUPS"));
     if (MN.ppg_bad) lg("xr: popups: SOMVR_XR_POPUPS_GEOM=%s is not DOWN_DEG,TURN_DEG,EASE_MS (0..40, 10..120, 0..2000): "
                        "the defaults", getenv("SOMVR_XR_POPUPS_GEOM"));
@@ -496,6 +527,7 @@ static const XrCompositionLayerBaseHeader *mn_band_reuse(void) {
 }
 
 /* ---- build 21: the popups where the player looks (SOMVR_XR_POPUPS=gaze) ------------------------------------------- */
+_Static_assert(XL_BAND4 - XL_BAND + 1 == SOMVR_PP_MAX, "a layer slot per popup tile");
 #define MN_PP_NE 4 /* readings in flight at once */
 /* the band's tiles placed on their own this frame: their count (0 = the band as one quad: off, a head-locked HUD, a
  * menu, more tiles than SOMVR_PP_MAX, no readback) and the first one's index in MN.lay */
@@ -669,7 +701,8 @@ static void mn_band_layers(xr_comp *c, const somvr_posef eye[2]) {
     int px[SOMVR_PP_MAX][2];
     for (int i = 0; i < n; i++) {
         const int *r = MN.lay.src[first + i];
-        px[i][0] = r[2], px[i][1] = r[3], sz[i][0] = k * (float)r[2], sz[i][1] = k * (float)r[3];
+        float ki = MN.sub_idx >= 0 && i == n - 1 ? k * (float)MN.sub_scale * 0.01f : k; /* build 22: the subtitles' scale */
+        px[i][0] = r[2], px[i][1] = r[3], sz[i][0] = ki * (float)r[2], sz[i][1] = ki * (float)r[3];
     }
     uint32_t ev = somvr_pp_step(&MN.pps, &MN.ppc, t, eye, d, n, MN.pp_rd, (const float(*)[2])sz, (const int(*)[2])px);
     MN.n_pp_frames++;
@@ -727,7 +760,7 @@ static void mn_band_reuse_layers(xr_comp *c) {
 static void xl_cap(xr_comp *c) {
     uint32_t n = 0, max = X.max_layers ? X.max_layers : XL_MAX, nb = 0;
     for (int i = 0; c->l[XL_OWN] && i < XL_N; i++) n += c->l[i] != NULL;
-    for (int i = XL_BAND; i <= XL_BAND3; i++) nb += c->l[i] != NULL; /* build 21: the popups' four */
+    for (int i = XL_BAND; i <= XL_BAND4; i++) nb += c->l[i] != NULL; /* build 21: the popups' four; build 22: five */
     if (n > max + nb && c->l[XL_HANDS]) /* build 10: then our hands (the game's are hidden) */
         c->l[XL_HANDS] = NULL, n--;
     for (int i = XL_MBD; i <= XL_MBK && n > max + nb; i++) /* then the menus' backdrop */
@@ -737,7 +770,7 @@ static void xl_cap(xr_comp *c) {
     if (n > max + nb && c->l[XL_OBJ]) /* build 15: then the objective's marker */
         c->l[XL_OBJ] = NULL, n--;
     if (n <= max || !nb) return;
-    for (int i = XL_BAND; i <= XL_BAND3; i++) c->l[i] = NULL;
+    for (int i = XL_BAND; i <= XL_BAND4; i++) c->l[i] = NULL;
     if (MN.n_capped++ < 3 || MN.n_capped % 600 == 0)
         lg("xr: prompts: a frame of %u layers (the runtime takes %u): without the band (%llu so far)", n, max,
            (unsigned long long)MN.n_capped);
@@ -985,7 +1018,7 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
         if (!l || l->type != XR_TYPE_COMPOSITION_LAYER_QUAD) continue;
         const char *what = i == XL_HUD ? (MN.hud_menu ? "hud (a menu board)" : "hud") : i == XL_MMAP ? "minimap"
                            : i == XL_BAND && !MN.pp_has ? "hud band"
-                           : i >= XL_BAND && i <= XL_BAND3 ? "hud popup" /* build 21: SOMVR_XR_POPUPS=gaze's tiles */
+                           : i >= XL_BAND && i <= XL_BAND4 ? "hud popup" /* build 21: SOMVR_XR_POPUPS=gaze's tiles */
                            : i == XL_VM0 ? (MN.card_state == 1 ? "vrmenu card" : "vrmenu panel")
                            : i == XL_VM1 || i == XL_VM2 ? "vrmenu marker" : i == XL_PTR0 || i == XL_PTR1 ? "pointer marker"
                            : i == XL_RING ? (CF.sc_w && ((const XrCompositionLayerQuad *)l)->subImage.swapchain == CF.sc_w
@@ -1038,6 +1071,13 @@ static void xt_move(int h, const somvr_posef *to, float sec) {
 }
 /* the quad a touch line aims at: 1 = *pose, size */
 static int xt_quad(int what, somvr_posef *pose, float size[2]) {
+    if (what == SOMVR_XTS_BOARD && X.mono_ok && X.last_stereo == 0) {
+        /* build 22: a mono frame shown last - its quad as shown: the board, or the theatre's screen (SOMVR_XR_THEATRE:
+         * the window); before the HUD board, whose pose stays latched from the stereo frames before the flat ones (run
+         * 20261029-004550: the ray 4-6 cm off the board, the theatre never hit) */
+        memcpy(pose, &X.mono_pose, sizeof *pose), size[0] = X.mono_size[0], size[1] = X.mono_size[1];
+        return 1;
+    }
     if (what == SOMVR_XTS_BOARD && MN.hud_menu && MN.hud_latched) {
         *pose = MN.hud_pose, size[0] = X.last_quad.size.width, size[1] = X.last_quad.size.height;
         return 1;

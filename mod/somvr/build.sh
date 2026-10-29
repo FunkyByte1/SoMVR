@@ -39,7 +39,8 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_step.c" "$D/somvr_finish.c" "$D/somvr_headview.c" "$D/somvr_headparts.c" "$D/somvr_practice.c"
       "$D/somvr_session.c" "$D/somvr_body.c" "$D/somvr_fingers.c" "$D/somvr_size.c" "$D/somvr_vrhands.c"
       "$D/somvr_strike.c" "$D/somvr_gaze.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
-      "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c")
+      "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c"
+      "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -94,6 +95,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_bow" "$D/tests/test_bow.c" "$D/somvr_bow.
 "$D/build/tests/test_bow"
 gcc "${CF[@]}" -o "$D/build/tests/test_vrmenu" "$D/tests/test_vrmenu.c" "$D/somvr_vrmenu.c" "$D/somvr_font.c" -lm
 "$D/build/tests/test_vrmenu"
+gcc "${CF[@]}" -o "$D/build/tests/test_captain" "$D/tests/test_captain.c" "$D/somvr_captain.c" -lm
+"$D/build/tests/test_captain"
 gcc "${CF[@]}" -o "$D/build/tests/test_loco" "$D/tests/test_loco.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_loco"
 gcc "${CF[@]}" -o "$D/build/tests/test_threat" "$D/tests/test_threat.c" "$D/somvr_threat.c" "$D/somvr_eyes.c" "$D/somvr_pose.c" -lm
@@ -101,6 +104,9 @@ gcc "${CF[@]}" -o "$D/build/tests/test_threat" "$D/tests/test_threat.c" "$D/somv
 gcc "${CF[@]}" -o "$D/build/tests/test_bodymoments" "$D/tests/test_bodymoments.c" "$D/somvr_bodymoments.c" \
     "$D/somvr_fallback.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_bodymoments"
+gcc "${CF[@]}" -o "$D/build/tests/test_screens" "$D/tests/test_screens.c" "$D/somvr_screens.c" \
+    "$D/somvr_bodymoments.c" "$D/somvr_fallback.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm # build 22: death, Mouse1
+"$D/build/tests/test_screens"
 gcc "${CF[@]}" -o "$D/build/tests/test_slots" "$D/tests/test_slots.c" "$D/somvr_slots.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_slots"
 gcc "${CF[@]}" -o "$D/build/tests/test_defence" "$D/tests/test_defence.c" "$D/somvr_defence.c" "$D/somvr_combat.c" -lm
@@ -109,6 +115,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_step" "$D/tests/test_step.c" "$D/somvr_st
 "$D/build/tests/test_step"
 gcc "${CF[@]}" -o "$D/build/tests/test_wstep" "$D/tests/test_wstep.c" "$D/somvr_wstep.c" -lm # build 18: the wraith step
 "$D/build/tests/test_wstep"
+gcc "${CF[@]}" -o "$D/build/tests/test_jump" "$D/tests/test_jump.c" "$D/somvr_jump.c" "$D/somvr_pose.c" -lm # build 22: the jump, the vault
+"$D/build/tests/test_jump"
 gcc "${CF[@]}" -o "$D/build/tests/test_headview" "$D/tests/test_headview.c" "$D/somvr_headview.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_headview"
 gcc "${CF[@]}" -o "$D/build/tests/test_headparts" "$D/tests/test_headparts.c" "$D/somvr_headparts.c" -lpthread -lm
@@ -136,6 +144,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_execute" "$D/tests/test_execute.c" "$D/so
 "$D/build/tests/test_execute"
 gcc "${CF[@]}" -o "$D/build/tests/test_stealth" "$D/tests/test_stealth.c" "$D/somvr_stealth.c" "$D/somvr_combat.c" -lm # build 18: the stealth kill (20c: + the tiers)
 "$D/build/tests/test_stealth"
+gcc "${CF[@]}" -o "$D/build/tests/test_beasts" "$D/tests/test_beasts.c" "$D/somvr_beasts.c" -lm # build 22: the beasts
+"$D/build/tests/test_beasts"
 gcc "${CF[@]}" -o "$D/build/tests/test_surface" "$D/tests/test_surface.c" "$D/somvr_surface.c" "$D/somvr_pose.c" -lm # build 13: hands at surfaces
 "$D/build/tests/test_surface"
 gcc "${CF[@]}" -o "$D/build/tests/test_verbs" "$D/tests/test_verbs.c" "$D/somvr_verbs.c" -lm # build 13: the Nemesis verbs

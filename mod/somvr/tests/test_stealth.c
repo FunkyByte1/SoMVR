@@ -20,7 +20,7 @@ static int g_fail, g_n;
     } while (0)
 
 static somvr_stl_who who_behind(void) { return (somvr_stl_who){ 0, 1, 20.0f, 175.0f, 90.0f, 0 }; }
-static somvr_stl_hit hit_back(void) { return (somvr_stl_hit){ 170.0f, 40.0f, 1, 0.5f, 0.3f, NAN, 0, 0, 0 }; }
+static somvr_stl_hit hit_back(void) { return (somvr_stl_hit){ 170.0f, 40.0f, 1, 0.5f, 0.3f, NAN, 0, 0, 0, 0 }; }
 
 static void test_angles(void) {
     float o[3] = { 0, 0, 0 }, front[3] = { 0, 0, 100 }, back[3] = { 0, 0, -100 }, right[3] = { 100, 0, 0 };
@@ -129,7 +129,7 @@ static void test_tier(void) {
     somvr_stl_cfg sc;
     somvr_stl_defaults(&sc);
     somvr_stl_who w = who_behind();
-    somvr_stl_hit h = { 170.0f, 65.0f, t16, s.axis_mps, s.cos_axis, NAN, 0, 0, 0 };
+    somvr_stl_hit h = { 170.0f, 65.0f, t16, s.axis_mps, s.cos_axis, NAN, 0, 0, 0, 0 };
     CHECK(somvr_stl_judge(&sc, &w, &h) == SOMVR_STL_WEAK, "build 20b: build 16's tier alone - a touch (the light hit woke it)");
     h.tier = somvr_stl_tier(t16, tsw);
     CHECK(somvr_stl_judge(&sc, &w, &h) == SOMVR_STL_KILL, "build 20c: the stroke's light hit - the stealth kill");
@@ -258,7 +258,7 @@ static void test_thrust(void) {
     somvr_stl_who w = who_behind();
     /* the user's build 20c session, 20261028-193826, t=974943.487 (the mark 14 right after): the tip at its back, point
      * first at 2.72 m/s (cos 0.97, the stab tier) - killed on the first contact (the session's mark 14) */
-    somvr_stl_hit u = { 151.0f, 9.0f, SC_TIER_STAB, 2.72f, 0.97f, 2.0f, 0, SC_TIER_NONE, 0 };
+    somvr_stl_hit u = { 151.0f, 9.0f, SC_TIER_STAB, 2.72f, 0.97f, 2.0f, 0, SC_TIER_NONE, 0, 0 };
     CHECK(somvr_stl_judge(&c, &w, &u) == SOMVR_STL_KILL, "build 20c's rule: the touch killed (the session's)");
     c.thrust = 1;
     CHECK(somvr_stl_judge(&c, &w, &u) == SOMVR_STL_TOUCH, "build 21: a touch 2 cm in - no damage (%d)", somvr_stl_judge(&c, &w, &u));
@@ -284,7 +284,7 @@ static void test_thrust(void) {
     k.depth_cm = NAN;
     CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_AIR, "not measured: nothing");
     /* a full-speed cut to the neck from behind (the stroke's heavy tier), not to the back */
-    somvr_stl_hit n = { 170.0f, 70.0f, SC_TIER_HEAVY, 0.5f, 0.1f, 25.0f, 1, SC_TIER_HEAVY, 0 };
+    somvr_stl_hit n = { 170.0f, 70.0f, SC_TIER_HEAVY, 0.5f, 0.1f, 25.0f, 1, SC_TIER_HEAVY, 0, 0 };
     CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &n) == SOMVR_STL_BY_NECK, "the neck cut");
     n.tier_cut = SC_TIER_LIGHT;
     CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "a light cut to the neck: no");
@@ -293,7 +293,7 @@ static void test_thrust(void) {
     n.tier_cut = SC_TIER_HEAVY, n.neck = 0;
     CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "a full cut to the back: no");
     /* held from behind: a point-first stab 10 cm in */
-    somvr_stl_hit g = { 180.0f, 40.0f, SC_TIER_NONE, 0.6f, 0.9f, 11.0f, 0, SC_TIER_NONE, 1 };
+    somvr_stl_hit g = { 180.0f, 40.0f, SC_TIER_NONE, 0.6f, 0.9f, 11.0f, 0, SC_TIER_NONE, 1, 0 };
     CHECK(somvr_stl_judge(&c, &w, &g) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &g) == SOMVR_STL_BY_GRAB, "held: the stab");
     g.depth_cm = 8.0f;
     CHECK(somvr_stl_judge(&c, &w, &g) == SOMVR_STL_TOUCH, "held: 8 cm, no");
@@ -305,7 +305,54 @@ static void test_thrust(void) {
     CHECK(somvr_stl_judge(&c, &a, &k) == SOMVR_STL_AWARE, "aware: the ordinary hit");
     a = w, a.player_off_deg = 60.0f;
     CHECK(somvr_stl_judge(&c, &a, &k) == SOMVR_STL_FRONT, "in front: the ordinary hit");
-    CHECK(SOMVR_STL_AIR + 1 == SOMVR_STL_N && strcmp(somvr_stl_why(SOMVR_STL_AIR), "?"), "the verdicts' names");
+    CHECK(SOMVR_STL_CARRIED + 1 == SOMVR_STL_N && strcmp(somvr_stl_why(SOMVR_STL_AIR), "?") &&
+          strcmp(somvr_stl_why(SOMVR_STL_CARRIED), "?"), "the verdicts' names");
+}
+
+/* build 22 (SOMVR_STEALTH_KILL_CARRIED, docs 93.4): a blade held forward on the walk up reaches past the stand-off into
+ * its back - the walk carried it in, the hand did not push: no touch. Only the hand's own motion makes one */
+static void test_carried(void) {
+    float node[4][3] = { { 0, 0, 0 }, { 0, 45, 0 }, { 0, 70, 5 }, { 0, 85, 8 } }, r[3] = { 17, 16, 9 };
+    float vz[3] = { 0, 0, 0 }, vin[3] = { 0, 0, 200 }, vout[3] = { 0, 0, -200 };
+    /* the blade level at 30 cm, its point 10 cm behind the spine's axis (7 cm in), Talion's walk having carried it there:
+     * the hand's own velocity 0 - its own push 0, whatever the world moved */
+    float b[3] = { 0, 30, -100 }, t[3] = { 0, 30, -10 };
+    CHECK(fabsf(somvr_stl_own_push(b, t, vz, vz, 0.05f, node, r, 4)) < 1e-3f, "a still hand: no own push");
+    float p = somvr_stl_own_push(b, t, vz, vin, 0.05f, node, r, 4);
+    CHECK(fabsf(p - 7.0f) < 0.6f, "the point pushed 10 cm by the hand from outside to 7 cm in: 7 cm its own (%f)", p);
+    float t2[3] = { 0, 30, 10 };
+    p = somvr_stl_own_push(b, t2, vz, vin, 0.05f, node, r, 4);
+    CHECK(fabsf(p - 10.0f) < 0.6f, "deeper in: the 10 cm the hand pushed (%f)", p);
+    p = somvr_stl_own_push(b, t2, vz, vout, 0.05f, node, r, 4);
+    CHECK(p < -9.0f, "drawn back by the hand: negative (%f)", p);
+    CHECK(somvr_stl_own_push(b, t2, vz, vin, 0, node, r, 4) == 0, "no span: 0");
+    somvr_stl_cfg c;
+    somvr_stl_defaults(&c);
+    c.thrust = 1;
+    CHECK(!c.carried && fabsf(c.own_cm - 4.0f) < 1e-6f, "the code's default off (build 21's), 4 cm");
+    somvr_stl_who w = who_behind();
+    /* run 204131's stand-off: the point 22 cm in at its back, the hand still (the tracking-space speed ~0) */
+    somvr_stl_hit k = { 170.0f, 30.0f, SC_TIER_NONE, 0.02f, 0.1f, 22.0f, 0, SC_TIER_NONE, 0, 1 };
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_TOUCH, "build 21: the carried blade is a touch (the alert)");
+    c.carried = 1;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_CARRIED, "build 22: carried - no touch (%d)", somvr_stl_judge(&c, &w, &k));
+    somvr_stl_hit sd = k;
+    sd.contact_off_deg = 40.0f;
+    CHECK(somvr_stl_judge(&c, &w, &sd) == SOMVR_STL_CARRIED, "carried into its side: no touch either");
+    sd.contact_off_deg = 170.0f, sd.contact_up_cm = 120.0f;
+    CHECK(somvr_stl_judge(&c, &w, &sd) == SOMVR_STL_CARRIED, "carried in over its back: no touch");
+    somvr_stl_hit m = k;
+    m.carried = 0;
+    CHECK(somvr_stl_judge(&c, &w, &m) == SOMVR_STL_TOUCH, "the hand pushed 4+ cm itself: a touch");
+    m = k, m.axis_mps = 3.1f, m.cos_axis = 0.97f, m.depth_cm = 38.0f;
+    CHECK(somvr_stl_judge(&c, &w, &m) == SOMVR_STL_KILL, "then the hand's thrust kills (its first frames still 'carried')");
+    m.carried = 0;
+    CHECK(somvr_stl_judge(&c, &w, &m) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &m) == SOMVR_STL_BY_THRUST, "the thrust");
+    somvr_stl_hit g = { 180.0f, 40.0f, SC_TIER_NONE, 0.0f, 0.1f, 20.0f, 0, SC_TIER_NONE, 1, 1 };
+    CHECK(somvr_stl_judge(&c, &w, &g) == SOMVR_STL_TOUCH, "held from behind: a held orc is never alerted (as build 21)");
+    somvr_stl_who a = w;
+    a.aware = 1;
+    CHECK(somvr_stl_judge(&c, &a, &k) == SOMVR_STL_AWARE, "aware: the ordinary hit (the fight's rules)");
 }
 
 static void test_body(void) {
@@ -373,6 +420,7 @@ int main(void) {
     test_tier();
     test_cue();
     test_thrust();
+    test_carried();
     test_body();
     test_stick();
     printf("test_stealth: %d checks, %d failures\n", g_n, g_fail);

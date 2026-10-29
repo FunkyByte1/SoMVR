@@ -66,9 +66,10 @@ const char *somvr_pr_mode_name(int mode)
     return mode == SOMVR_PR_ON ? "on" : mode == SOMVR_PR_AUTO ? "auto" : "off";
 }
 
-static const char *const g_orc_w[SOMVR_PRO_N] = { "infantry", "shield", "berserker" };
-static const char *const g_orc_l[SOMVR_PRO_N] = { "Infantry", "Shield", "Berserker" };
-static const char *const g_orc_t[SOMVR_PRO_N] = { "Orc_Infantry", "Orc_Defender", "Orc_Berserker" };
+static const char *const g_orc_w[SOMVR_PRO_N] = { "infantry", "shield", "berserker", "caragor", "ghul", "graug" };
+static const char *const g_orc_l[SOMVR_PRO_N] = { "Infantry", "Shield", "Berserker", "Caragor", "Ghul", "Graug" };
+static const char *const g_orc_t[SOMVR_PRO_N] = { "Orc_Infantry", "Orc_Defender", "Orc_Berserker", "Warg_Brown", "Goblin",
+                                                  "Troll_Cave" };
 
 const char *somvr_pr_orc_word(int t) { return t >= 0 && t < SOMVR_PRO_N ? g_orc_w[t] : ""; }
 const char *somvr_pr_orc_label(int t) { return t >= 0 && t < SOMVR_PRO_N ? g_orc_l[t] : ""; }
@@ -81,6 +82,9 @@ static int orc_tok(const char *w, size_t n)
         { "0", SOMVR_PRO_INFANTRY },        { "shield", SOMVR_PRO_SHIELD },  { "defender", SOMVR_PRO_SHIELD },
         { "1", SOMVR_PRO_SHIELD },          { "berserker", SOMVR_PRO_BERSERKER }, { "berserk", SOMVR_PRO_BERSERKER },
         { "2", SOMVR_PRO_BERSERKER },
+        { "caragor", SOMVR_PRO_CARAGOR },   { "warg", SOMVR_PRO_CARAGOR },   { "3", SOMVR_PRO_CARAGOR },
+        { "ghul", SOMVR_PRO_GHUL },         { "goblin", SOMVR_PRO_GHUL },    { "4", SOMVR_PRO_GHUL },
+        { "graug", SOMVR_PRO_GRAUG },       { "troll", SOMVR_PRO_GRAUG },    { "5", SOMVR_PRO_GRAUG },
     };
     for (size_t i = 0; i < sizeof syn / sizeof syn[0]; i++)
         if (ci_eq(w, n, syn[i].w))
@@ -98,7 +102,7 @@ int somvr_pr_orc_parse(const char *w)
 const char *somvr_pr_action_name(int a)
 {
     static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status", "arrows", "health",
-                                                "far", "group" };
+                                                "far", "group", "captain" };
     return a >= 0 && a < SOMVR_PRA_N ? n[a] : "?";
 }
 
@@ -109,6 +113,7 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         { "return", SOMVR_PRA_BACK },   { "spawn", SOMVR_PRA_SPAWN },    { "remove", SOMVR_PRA_REMOVE },
         { "despawn", SOMVR_PRA_REMOVE }, { "status", SOMVR_PRA_STATUS }, { "arrows", SOMVR_PRA_ARROWS },
         { "health", SOMVR_PRA_HEALTH }, { "far", SOMVR_PRA_FAR }, { "group", SOMVR_PRA_GROUP }, { "crowd", SOMVR_PRA_GROUP },
+        { "captain", SOMVR_PRA_CAPTAIN }, /* build 22 */
     };
     const char *tok, *s = w ? w : "", *arg, *rest;
     size_t n = token(&s, &tok);
