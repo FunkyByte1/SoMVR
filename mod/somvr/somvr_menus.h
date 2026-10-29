@@ -99,8 +99,13 @@ int somvr_pb_parse(const char *v, int *bad);
  * column top to bottom; what is cleared with it; the band's rows ('|') of tiles (';') */
 #define SOMVR_WH_RECTS_DEFAULT "0,214,260,96;1540,14,380,104" /* the hit streak, the target panel */
 #define SOMVR_WH_CLEAR_DEFAULT "1400,14,140,104"              /* the target panel's backdrop left of it (9% dark) */
-/* the band: the banners | the hints | the XP gains; the button prompts */
-#define SOMVR_PB_RECTS_DEFAULT "640,10,640,110|440,600,1040,180|30,390,290,190;1120,860,800,220"
+/* the band: the banners | the hints | the XP gains; the button prompts. Build 23 (docs/re-xr-pipeline.md 95): the hints'
+ * tile ends at y 755 (was 780) and the prompts' starts at 940 (was 860): a captain's introduction card (his name's banner
+ * at y 755..830, x 503..1417, over his line at 868..891 - the subtitle line's place) lay across the hints' tile, the HUD
+ * quad and the prompts' tile (run 20261029-023334: in three pieces); now it is in no band tile, and with
+ * SOMVR_XR_SUBTITLES it is the subtitles' tile's (SOMVR_SUB_RECT_DEFAULT): one popup at the gaze. The hints were measured
+ * at y 672..754 (31.1), the prompts at 943..1078 (build 22's subtitles cut the prompts' tile to 940 already). */
+#define SOMVR_PB_RECTS_DEFAULT "640,10,640,110|440,600,1040,155|30,390,290,190;1120,940,800,140"
 typedef struct {
     int n;                   /* tiles */
     int r[SOMVR_HT_MAX][4];  /* rects: 1920x1080 pixels (parsed), the image's pixels (somvr_ht_scale) */
@@ -220,10 +225,14 @@ void somvr_pp_pose(const somvr_pp_tile *tl, float dist, somvr_posef *out);
  * by the band's tiles: its right part (x >= 1120, y >= 860) went into the button prompts' popup, the rest stayed in the
  * world HUD quad at 0.42 deg (run 20261028-230057, hud6966). With on, its rect is a band row of its own (the last: with
  * SOMVR_XR_POPUPS=gaze its own popup under the gaze, at SOMVR_XR_SUBTITLES_SCALE % of the band's scale) and a band tile
- * overlapping it is cut to the side of it where most of the tile lies (the prompts' 1120,860,800,220 -> 1120,940,800,140:
- * the prompts were measured at y 943..1078, re-xr-pipeline.md 31.1). The game wraps a line at about 840 px (x 540..1380);
- * the rect keeps clear of the minimap (28..328: its health arc filled a 300-wide rect's left end, run 20261028-234546). */
-#define SOMVR_SUB_RECT_DEFAULT "400,820,1120,120"
+ * overlapping it is cut to the side of it where most of the tile lies (build 22: the prompts' 1120,860,800,220 ->
+ * 1120,940,800,140: the prompts were measured at y 943..1078, re-xr-pipeline.md 31.1; build 23's band defaults touch
+ * it nowhere). The game wraps a line at about 840 px (x 540..1380);
+ * the rect keeps clear of the minimap (28..328: its health arc filled a 300-wide rect's left end, run 20261028-234546).
+ * Build 23: from y 755 (was 820): the speaker's banner over the line - a captain's introduction card (his name at y
+ * 755..830 over his line at 868..891) - is the line's, so the card comes up whole in the subtitles' popup (re-xr-pipeline
+ * 95); the popup is placed by its content, so a line alone sits where it did. */
+#define SOMVR_SUB_RECT_DEFAULT "400,755,1120,185"
 #define SOMVR_SUB_SCALE_DEFAULT 80 /* % of the band's scale: a 24-px subtitle line 0.91 deg (the band's 18-px line 0.85) */
 /* SOMVR_XR_SUBTITLES: unset/"off"/"0" = 0; "on"/"1"/"gaze" = 1; anything else = 0 and *bad = 1 */
 int somvr_sub_parse(const char *v, int *bad);

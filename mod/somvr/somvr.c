@@ -1550,6 +1550,7 @@ static void rd_frame(void);
 static void rd_rt_end_pre(uintptr_t rt, uint32_t flags);
 static void rd_rt_eye_end(int e, uintptr_t rt, uint64_t fr);
 static void rd_rt_present(void);
+static void rd_kt_eye(int eye, uint64_t frame); /* build 23, SOMVR_KTIME: H3's eye views (render thread) */
 /* SOMVR_BOW_HITLOG (somvr_bowhit_game.c, included after the prompts'; the bow's round 2) */
 static const struct site_spec *g_bh_sites; /* its BOWHIT_SITES (defined there; selftest: a stand-in) */
 static void bh_start(int *bad);
@@ -1911,6 +1912,7 @@ __attribute__((used)) void somvr_h3_c(struct regs *r)
 			atomic_fetch_add_explicit(&g_sh.n_applied, 1, memory_order_relaxed);
 			g_h3_last.valid = 1, g_h3_last.hash = xh, g_h3_last.proj = en.proj;
 			g_rt_eye = (int)en.eye, g_rt_frame = en.frame, g_rt_target = en.rt; /* -> H8 */
+			rd_kt_eye((int)en.eye, en.frame); /* SOMVR_KTIME: eye 1's pass with eye 0's k_fTime */
 			g_fifo_r = i + 1;
 			how = "eye", fr = (long long)en.frame, eye = (int)en.eye;
 			atomic_fetch_add_explicit(&g_st_apply, 1, memory_order_relaxed);
@@ -15143,8 +15145,9 @@ static void *writer_main(void *arg)
 				} else if (seen && !strncmp(w, "cprompt", 7) && (!w[7] || w[7] == ' ' || w[7] == '\n')) {
 					what = cp_word(w); /* build 18, SOMVR_COUNTER_ICON: "cprompt game|hide|state" */
 				} else if (seen && (!strncmp(w, "flatfx", 6) || !strncmp(w, "fx ", 3) || !strncmp(w, "fx\n", 3) ||
-						    !strncmp(w, "curframe", 8))) {
-					what = rd_word(w); /* build 21, SOMVR_FLATFX / SOMVR_FX_TEST: "flatfx LIST|state", "fx hide|eyesame" */
+						    !strncmp(w, "curframe", 8) || !strncmp(w, "ktime", 5))) {
+					what = rd_word(w); /* build 21, SOMVR_FLATFX / SOMVR_FX_TEST: "flatfx LIST|state", "fx hide|eyesame";
+							      build 23: "ktime frame|game|state" */
 				} else if (seen && !strncmp(w, "slsnd", 5) && (!w[5] || w[5] == ' ' || w[5] == '\n')) {
 					what = gs_word(w); /* build 20, SOMVR_SLOTS_GAMESOUND: "slsnd log|drop|state" */
 				} else if (seen && !strncmp(w, "screens ", 8)) { /* build 22: "screens status|death ..|mouse1 .." */

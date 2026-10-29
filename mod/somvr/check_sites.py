@@ -63,7 +63,8 @@ somvr_practice_game.c, somvr_body_game.c, somvr_minimap_game.c, somvr_session_ga
 somvr_prompts_game.c, somvr_bowhit_game.c, somvr_render_game.c) are read with it. The SOMVR_FLATFX block of
 somvr_render_game.c (RENDER_SITES_BEGIN ... RENDER_SITES_END, re-xr-pipeline.md 86: the patched lens-flare slot, the
 sun shafts' and the lens drops' patched calls, SOMVR_FX_TEST's four patched particle/sprite draw slots) is counted on
-its own, as is the SOMVR_BEASTS block of somvr_beasts_game.c (BEASTS_SITES_BEGIN ... BEASTS_SITES_END, re-xr-pipeline.md
+its own (and its D3DCAP_SITES_BEGIN ... D3DCAP_SITES_END block, build 23: SOMVR_FX_TEST's 20 patched slots of the threaded
+D3D11 context, re-xr-pipeline.md 96), as is the SOMVR_BEASTS block of somvr_beasts_game.c (BEASTS_SITES_BEGIN ... BEASTS_SITES_END, re-xr-pipeline.md
 92: 4 read-only K_ENTRY proofs of the skills' category, HasSkill, its bit and the inventory's offset).
 Exit 0 = all sites match.
 """
@@ -424,13 +425,21 @@ def main():
             r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
             r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("RENDER_SITES_END", 1)[0])]
         if [m[1] for m in rd] != ["K_VSLOT", "K_CALL", "K_CALL"] + ["K_VSLOT"] * 6 + ["K_ENTRY"] * 2 + \
-                ["K_CALL", "K_CALL", "K_ENTRY"]:
-            sys.exit("expected 14 SITE lines in somvr_render_game.c's RENDER_SITES block (the patched RD_LENSFLARE K_VSLOT, "
+                ["K_CALL", "K_CALL", "K_ENTRY"] + ["K_ENTRY", "K_CALL"]:
+            sys.exit("expected 16 SITE lines in somvr_render_game.c's RENDER_SITES block (the patched RD_LENSFLARE K_VSLOT, "
                      "RD_SHAFTS and RD_RAIN K_CALLs, SOMVR_FX_TEST's RD_PSYS, RD_GPUPSYS, RD_SPRITE, RD_FLARESPR, "
                      "RD_PSYS_UPD, RD_PSYS_PREP K_VSLOTs, the read-only RD_VIS_INIT and RD_VIS_REQ K_ENTRYs; build 22: "
-                     "SOMVR_FX_TEST's RD_BRT_A and RD_BRT_B K_CALLs, SOMVR_CURFRAME's RD_CF_MAKE K_ENTRY), "
-                     "found %d" % len(rd))
+                     "SOMVR_FX_TEST's RD_BRT_A and RD_BRT_B K_CALLs, SOMVR_CURFRAME's RD_CF_MAKE K_ENTRY; build 23: "
+                     "SOMVR_KTIME's called RD_KT_UPLOAD K_ENTRY and read-only RD_KT_LATE K_CALL), found %d" % len(rd))
         sites = sites + rd
+        # build 23: SOMVR_FX_TEST's D3D11 capture, the threaded context's 20 patched slots (re-xr-pipeline.md 96)
+        dc = [m for b in text.split("D3DCAP_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("D3DCAP_SITES_END", 1)[0])]
+        if [m[1] for m in dc] != ["K_VSLOT"] * 20:
+            sys.exit("expected 20 SITE lines in somvr_render_game.c's D3DCAP_SITES block (SOMVR_FX_TEST's patched K_VSLOTs "
+                     "of IdxD3D11DeviceContextThreaded's vtable), found %d" % len(dc))
+        sites = sites + dc
     # SOMVR_POINTER_MOUSE1 (build 22): its block lives in somvr_screens_game.c (read with SOURCE.c above)
     if re.search(r'^#include "somvr_screens_game\.c"', text, re.M):
         sc = [m for b in text.split("SCREENS_SITES_BEGIN")[1:] for m in re.findall(

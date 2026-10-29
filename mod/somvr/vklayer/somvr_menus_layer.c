@@ -29,11 +29,12 @@
  *                          in the room while it shows, eased to the new front when the head turns away more than 40 deg
  *                          (SOMVR_XR_POPUPS_GEOM; ../somvr_menus.h 2c). Default band (build 20c).
  *   SOMVR_XR_SUBTITLES=on  build 22 (with SOMVR_XR_PROMPTS=on): the game's subtitle line (SOMVR_XR_SUBTITLES_RECT, default
- *                          400,820,1120,120) a band row of its own, the last - with gaze its own popup (XL_BAND4) at
+ *                          400,755,1120,185 since build 23: the speaker's banner over it too - a captain's introduction
+ *                          card) a band row of its own, the last - with gaze its own popup (XL_BAND4) at
  *                          SOMVR_XR_SUBTITLES_SCALE % (80) of the band's scale; a band tile overlapping it is cut to the
- *                          side of it with more of the tile (the prompts' 1120,860,800,220 -> 1120,940,800,140). Build 21
- *                          cut the line in two: its right part in the prompts' popup, the rest in the world HUD quad
- *                          (../somvr_menus.h 2d). Default off.
+ *                          side of it with more of the tile (build 22: the prompts' 1120,860,800,220 -> 1120,940,800,140;
+ *                          build 23's band defaults touch it nowhere). Build 21 cut the line in two: its right part in the
+ *                          prompts' popup, the rest in the world HUD quad (../somvr_menus.h 2d). Default off.
  *   SOMVR_XR_TEST=PATH     headless tests only: test hands, buttons, sticks and on-demand dumps from that file
  *                          (../somvr_menus.h 4; scripts/menus-drive.sh writes it, scripts/xr_compose.py reads the dumps).
  */

@@ -823,7 +823,8 @@ static int vb_field_ix(uintptr_t holder, const char *name)
 	return -1;
 }
 /* the attack the game's selection picks from `node` for orc o as an explicit target (fi_select's setup, one node,
- * the window checked as the update does); 0 = none */
+ * the window checked as the update does - unless g_vb_pick_nowin, build 23's rules probe); 0 = none */
+static int g_vb_pick_nowin;
 static uintptr_t vb_pick(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, uintptr_t node, uintptr_t *sync,
 			 const char **why)
 {
@@ -860,7 +861,7 @@ static uintptr_t vb_pick(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, 
 		*why = "the target did not take the orc";
 	else if (!n2)
 		*why = "no node (KBMNode)";
-	else if (!(FI_FN(FIS_WINDOW, fi_window_fn)(pcomb + FI_PC_WINDOW, n2, busy) & 0xff))
+	else if (!g_vb_pick_nowin && !(FI_FN(FIS_WINDOW, fi_window_fn)(pcomb + FI_PC_WINDOW, n2, busy) & 0xff))
 		*why = "the attack window refuses the node now";
 	else if (!(atk = FI_FN(FIS_SELECT, fi_select_fn)(ctx, n2, 1, tgt, NULL)))
 		*why = "no attack of its pools passes against this orc";

@@ -7,7 +7,8 @@
 # game to the main menu's Continue and the story), in a systemd user unit of its own (somvr-headset).
 # The feature switches come from the frozen build's own file, $SOM/logs/$BUILD/headset.env: one KEY=VALUE per line,
 # blank lines and `#` comments allowed; only SOMVR_* keys (and XR_LOADER_DEBUG / VK_LOADER_DEBUG); values from
-# [A-Za-z0-9_.,:/@+-] (@RUN@ = the run's folder); the launcher's own keys (the layer path and name, the OpenXR runtime,
+# [A-Za-z0-9_.,:/@+|;-] (@RUN@ = the run's folder; build 23: '|' and ';' too, the HUD's tile sets; still no space, quote,
+# '$', backtick or '#'); at most 2000 lines (build 23; build 22's file: 911); the launcher's own keys (the layer path and name, the OpenXR runtime,
 # SOMVR_XR_LOG, SOMVR_SETTINGS, SOMVR_TUNE) and the harness's (SOMVR_SAVEDIR, SOMVR_LOG, SOMVR_TRIGGER) refused. The
 # file is read line by line and checked, never sourced or executed; a bad line = no start (a notification names it).
 # With the file (build 6 on): the build-6 launch (docs/re-launcher.md: --no-feral-options and the run's own prefs with
@@ -46,7 +47,7 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-BUILD=build-vr22                         # the build the user tests (logs/BUILD); changed only between sessions
+BUILD=build-vr23                         # the build the user tests (logs/BUILD); changed only between sessions
 ENVF=$SOM/logs/$BUILD/headset.env       # its feature switches (the header); missing = the built-in build-5 set
 CMDS5=$SCR/cmds/somvr-vr5.cmd   # the start sequences: build 5's (the pre-game window), build 6's
 CMDS6=$SCR/cmds/somvr-vr6.cmd
@@ -72,18 +73,19 @@ SW5=(SOMVR_STEREO=B SOMVR_VIEWS=xr SOMVR_COMFORT=1 SOMVR_XR=1 SOMVR_XR_DUMP=600 
 FIXED=" VK_LAYER_PATH VK_INSTANCE_LAYERS XR_RUNTIME_JSON SOMVR_XR_LOG SOMVR_SETTINGS SOMVR_TUNE SOMVR_SAVEDIR SOMVR_LOG SOMVR_TRIGGER "
 load_switches() {   # $1 = headset.env -> SW (KEY=VALUE words); 1 + ENV_BAD = refused. Read and checked, never sourced.
   local n=0 line k v re_kv='^[[:space:]]*([A-Z][A-Z0-9_]*)=([^[:space:]#]*)[[:space:]]*(#.*)?$' re_skip='^[[:space:]]*(#.*)?$'
+  local re_val='^[A-Za-z0-9_.,:/@+|;-]*$'   # a plain value: words to env, never parsed by a shell ('|' ';' build 23)
   SW=(); ENV_BAD=""
   [ -r "$1" ] || { ENV_BAD="cannot read it"; return 1; }
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1)); line=${line%$'\r'}
-    [ $n -le 1000 ] || { ENV_BAD="more than 1000 lines"; return 1; }   # build 16's file: 425 lines (its comments)
+    [ $n -le 2000 ] || { ENV_BAD="more than 2000 lines"; return 1; }   # build 16's file: 425 lines, build 22's 911
     [[ $line =~ $re_skip ]] && continue
     [[ $line =~ $re_kv ]] || { ENV_BAD="line $n is not KEY=VALUE: $(printf '%s' "$line" | cut -c1-60)"; return 1; }
     k=${BASH_REMATCH[1]}; v=${BASH_REMATCH[2]}
     [[ $k =~ ^SOMVR_[A-Z0-9_]+$ || $k == XR_LOADER_DEBUG || $k == VK_LOADER_DEBUG ]] ||
       { ENV_BAD="line $n: $k is not a SOMVR_ key"; return 1; }
     [[ $FIXED == *" $k "* ]] && { ENV_BAD="line $n: $k is the launcher's own"; return 1; }
-    [ ${#k} -le 64 ] && [[ $v =~ ^[A-Za-z0-9_.,:/@+-]*$ ]] && [ ${#v} -le 256 ] ||
+    [ ${#k} -le 64 ] && [[ $v =~ $re_val ]] && [ ${#v} -le 256 ] ||
       { ENV_BAD="line $n: $k's value is not a plain switch value"; return 1; }
     SW+=("$k=$v")
   done < "$1"

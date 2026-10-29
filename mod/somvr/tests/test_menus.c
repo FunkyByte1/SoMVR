@@ -534,7 +534,8 @@ static void test_tiles(void) {
     CHECK(somvr_ht_parse(NULL, SOMVR_WH_CLEAR_DEFAULT, &t, &bad) == 1 && t.r[0][0] == 1400 && t.r[0][2] == 140 && !bad,
           "the wrist's default clear");
     CHECK(somvr_ht_parse("", SOMVR_PB_RECTS_DEFAULT, &t, &bad) == 4 && t.r[0][0] == 640 && t.r[0][2] == 640 &&
-              t.r[1][0] == 440 && t.r[1][2] == 1040 && t.r[2][1] == 390 && t.r[3][0] == 1120 && t.r[3][2] == 800 && t.r[3][3] == 220 &&
+              t.r[1][0] == 440 && t.r[1][2] == 1040 && t.r[1][3] == 155 && t.r[2][1] == 390 && t.r[3][0] == 1120 &&
+              t.r[3][1] == 940 && t.r[3][2] == 800 && t.r[3][3] == 140 &&
               t.row[0] == 0 && t.row[1] == 1 && t.row[2] == 2 && t.row[3] == 2 && !bad,
           "the band's default rects and rows (%d %d %d %d)", t.row[0], t.row[1], t.row[2], t.row[3]);
     CHECK(somvr_ht_parse("10,20,30,40", SOMVR_PB_RECTS_DEFAULT, &t, &bad) == 1 && t.r[0][0] == 10 && t.r[0][3] == 40 &&
@@ -629,7 +630,8 @@ static void test_tiles(void) {
               l.band[2] == 64 && l.band[3] == 11 && split_check(192, 108, &l, SOMVR_HUD_SPLIT_MAX) > 0,
           "the band alone, one tile: at the extra area's top");
     (void)bt2;
-    /* the real defaults on a 1920x1080 HUD: the watch 688 x 310, the band 1098 x 526 below it, extra 1098 */
+    /* the real defaults on a 1920x1080 HUD: the watch 688 x 310, the band 1098 x 471 below it, extra 1098 (build 22:
+     * 1098 x 526; build 23 shortened the hints' and the prompts' tiles, 95) */
     somvr_ht_set w1, c1, b1;
     int dm[4] = SOMVR_MM_RECT_DEFAULT;
     somvr_ht_parse(NULL, SOMVR_WH_RECTS_DEFAULT, &w1, NULL);
@@ -637,7 +639,7 @@ static void test_tiles(void) {
     somvr_ht_parse(NULL, SOMVR_PB_RECTS_DEFAULT, &b1, NULL);
     CHECK(somvr_hud_layout_make(1920, 1080, dm, &w1, 0, &c1, &b1, &l) && l.watch[2] == 380 + SOMVR_HT_GAP + 300 &&
               l.watch[3] == 310 && l.band[1] == 318 && l.band[2] == 290 + SOMVR_HT_GAP + 800 &&
-              l.band[3] == 110 + SOMVR_HT_GAP + 180 + SOMVR_HT_GAP + 220 && l.extra_w == 1098 && l.nclear == 1,
+              l.band[3] == 110 + SOMVR_HT_GAP + 155 + SOMVR_HT_GAP + 190 && l.extra_w == 1098 && l.nclear == 1,
           "1080p defaults: watch %dx%d, band at %d %dx%d, extra %u", l.watch[2], l.watch[3], l.band[1], l.band[2],
           l.band[3], l.extra_w);
     n = somvr_hud_split(1920, 1080, &l, g, SOMVR_HUD_SPLIT_MAX);
@@ -844,29 +846,87 @@ static void test_subtitles(void) {
               somvr_sub_parse_scale("9x", &bad) == SOMVR_SUB_SCALE_DEFAULT && bad,
           "SOMVR_XR_SUBTITLES_SCALE: 50..150");
     somvr_ht_set band, sub, full;
-    somvr_ht_parse(NULL, SOMVR_PB_RECTS_DEFAULT, &band, &bad);
-    somvr_ht_parse(NULL, SOMVR_SUB_RECT_DEFAULT, &sub, &bad);
-    CHECK(band.n == 4 && sub.n == 1, "the defaults: the band's four tiles, one subtitle rect");
-    CHECK(sub.r[0][0] >= 28 + 300 + 8 && sub.r[0][0] <= 540 && sub.r[0][0] + sub.r[0][2] >= 1380,
-          "the subtitles' rect clear of the minimap (28..328) and as wide as the game's wrapped line (540..1380)");
-    /* run 20261028-230057 (hud6966): the line at 558..1120+, y 868..892 - its right part was inside the prompts' tile */
+    /* build 22's rects (its defaults): the prompts' tile held the subtitle line's right part (run 20261028-230057, hud6966:
+     * the line at 558..1120+, y 868..892), cut to below the rect 400,820,1120,120 */
+    somvr_ht_parse("640,10,640,110|440,600,1040,180|30,390,290,190;1120,860,800,220", NULL, &band, &bad);
+    somvr_ht_parse("400,820,1120,120", NULL, &sub, &bad);
     CHECK(band.r[3][0] == 1120 && band.r[3][1] == 860 && 868 >= band.r[3][1], "build 21: the prompts' tile held the line's right part");
     int k = somvr_sub_add(&band, sub.r[0], &cut);
-    CHECK(k == 4 && band.n == 5 && band.row[4] == 3 && cut == 1, "added as the last tile, a row of its own, one tile cut");
+    CHECK(k == 4 && band.n == 5 && band.row[4] == 3 && cut == 1, "build 22: added as the last tile, a row of its own, one tile cut");
     CHECK(band.r[3][0] == 1120 && band.r[3][1] == 940 && band.r[3][2] == 800 && band.r[3][3] == 140,
-          "the prompts' tile below the subtitles: 1120,940,800,140 (the prompts at y 943..1078)");
-    CHECK(band.r[0][1] == 10 && band.r[1][1] == 600 && band.r[1][3] == 180 && band.r[2][3] == 190, "the other tiles unchanged");
+          "build 22: the prompts' tile below the subtitles: 1120,940,800,140 (the prompts at y 943..1078)");
+    CHECK(band.r[0][1] == 10 && band.r[1][1] == 600 && band.r[1][3] == 180 && band.r[2][3] == 190, "build 22: the other tiles unchanged");
+    /* build 23 (re-xr-pipeline 95): a captain's introduction card (runs 20261029-023334 / -024657, the HUD dumps): his
+     * name's banner 503..1417 x 755..830 (its rules), his line at 705..1120 x 868..891 (a long one up to the game's wrap,
+     * 540..1380). With build 22's rects it lay across three places: the banner's top in the hints' tile, its middle in the
+     * HUD quad, its foot and the line in the subtitles' */
+    static const int card[2][4] = {{503, 755, 914, 76}, {540, 868, 840, 24}};
+    int in_hints = 0, in_sub = 0;
+    for (int j = 0; j < 2; j++) {
+        in_hints |= card[j][1] < band.r[1][1] + band.r[1][3] && card[j][1] + card[j][3] > band.r[1][1];
+        in_sub |= card[j][1] < sub.r[0][1] + sub.r[0][3] && card[j][1] + card[j][3] > sub.r[0][1];
+    }
+    CHECK(in_hints && in_sub && card[0][1] < sub.r[0][1], "build 22: the card split (the banner's top in the hints' tile, the "
+                                                          "line in the subtitles')");
+    /* the defaults now */
+    bad = 0;
+    somvr_ht_parse(NULL, SOMVR_PB_RECTS_DEFAULT, &band, &bad);
+    somvr_ht_parse(NULL, SOMVR_SUB_RECT_DEFAULT, &sub, &bad);
+    CHECK(band.n == 4 && sub.n == 1 && !bad, "the defaults: the band's four tiles, one subtitle rect");
+    CHECK(sub.r[0][0] >= 28 + 300 + 8 && sub.r[0][0] <= 540 && sub.r[0][0] + sub.r[0][2] >= 1380,
+          "the subtitles' rect clear of the minimap (28..328) and as wide as the game's wrapped line (540..1380)");
+    /* what each tile must hold whole (1920x1080; 31.1's measures, 89's line, the card): x0, y0, x1, y1, the tile */
+    static const struct { int r[4], tile; const char *what; } held[] = {
+        {{714, 22, 1200, 71}, 0, "the place banner"},
+        {{687, 672, 1229, 754}, 1, "the hints (two lines)"},
+        {{37, 400, 270, 520}, 2, "the XP gains"},
+        {{1135, 943, 1838, 1078}, 3, "the button prompts"},
+        {{558, 868, 1362, 892}, 4, "a subtitle line (an 80-character one)"},
+        {{540, 868, 1380, 924}, 4, "a two-line subtitle (the game's wrap)"},
+        {{503, 755, 1417, 830}, 4, "the card's banner"},
+        {{540, 868, 1380, 891}, 4, "the card's line"},
+    };
+    int ok_held = 1, ok_alone = 1;
+    for (size_t j = 0; j < sizeof held / sizeof held[0]; j++) {
+        const int *h = held[j].r, *t = held[j].tile < 4 ? band.r[held[j].tile] : sub.r[0];
+        int inside = h[0] >= t[0] && h[1] >= t[1] && h[2] <= t[0] + t[2] && h[3] <= t[1] + t[3];
+        if (!inside)
+            ok_held = 0, printf("  %s %d,%d..%d,%d not inside its tile %d,%d %dx%d\n", held[j].what, h[0], h[1], h[2], h[3], t[0],
+                                t[1], t[2], t[3]);
+        for (int i = 0; i < 5; i++) { /* ... and in no other tile */
+            const int *o = i < 4 ? band.r[i] : sub.r[0];
+            if (i != held[j].tile && h[0] < o[0] + o[2] && o[0] < h[2] && h[1] < o[1] + o[3] && o[1] < h[3])
+                ok_alone = 0, printf("  %s also in tile %d\n", held[j].what, i);
+        }
+    }
+    CHECK(ok_held, "each of the HUD's texts inside its own tile: the banner, the hints, the XP, the prompts, the subtitles, "
+                   "the captain's card (its banner and its line in the subtitles')");
+    CHECK(ok_alone, "... and in no other tile (the card in one piece)");
+    CHECK(band.r[1][1] + band.r[1][3] <= 755 && band.r[1][1] + band.r[1][3] > 754, "the hints' tile ends where the card begins");
+    k = somvr_sub_add(&band, sub.r[0], &cut);
+    CHECK(k == 4 && band.n == 5 && band.row[4] == 3 && cut == 0, "added as the last tile, a row of its own, no tile cut");
+    CHECK(band.r[3][0] == 1120 && band.r[3][1] == 940 && band.r[3][2] == 800 && band.r[3][3] == 140 &&
+              band.r[1][1] == 600 && band.r[1][3] == 155 && band.r[0][1] == 10 && band.r[2][3] == 190,
+          "the band's tiles as given (the prompts' 1120,940,800,140; the hints' 440,600,1040,155)");
     for (int i = 0; i < band.n - 1; i++)
-        CHECK(band.r[i][1] + band.r[i][3] <= 820 || band.r[i][1] >= 940 || band.r[i][0] >= 1520 || band.r[i][0] + band.r[i][2] <= 400,
+        CHECK(band.r[i][1] + band.r[i][3] <= 755 || band.r[i][1] >= 940 || band.r[i][0] >= 1520 || band.r[i][0] + band.r[i][2] <= 400,
               "no band tile overlaps the subtitles' rect");
     somvr_hud_layout l;
     int mm[4] = {28, 770, 300, 310};
     somvr_ht_set wt;
     somvr_ht_parse(NULL, SOMVR_WH_RECTS_DEFAULT, &wt, &bad);
     CHECK(somvr_hud_layout_make(1920, 1080, mm, &wt, 0, NULL, &band, &l) && l.ntile == 1 + wt.n + 5 && l.extra_w >= 1120 &&
-              l.dst[l.ntile - 1][1] + 120 <= 1080 && l.src[l.ntile - 1][1] == 820,
-          "the HUD layout fits the five band tiles, the subtitles' the last");
-    somvr_ht_parse(NULL, "0,0,10,10;20,0,10,10;40,0,10,10;60,0,10,10;80,0,10,10;100,0,10,10", &full, &bad);
+              l.dst[l.ntile - 1][1] + 185 <= 1080 && l.src[l.ntile - 1][1] == 755 && l.src[l.ntile - 1][3] == 185,
+          "the HUD layout fits the five band tiles, the subtitles' the last (dst y %d)", l.dst[l.ntile - 1][1]);
+    /* without the subtitles: the card is in no tile at all (the HUD quad holds it whole, small) */
+    somvr_ht_parse(NULL, SOMVR_PB_RECTS_DEFAULT, &band, &bad);
+    int touched = 0;
+    for (int i = 0; i < band.n; i++)
+        for (int j = 0; j < 2; j++)
+            touched |= card[j][0] < band.r[i][0] + band.r[i][2] && band.r[i][0] < card[j][0] + card[j][2] &&
+                       card[j][1] < band.r[i][1] + band.r[i][3] && band.r[i][1] < card[j][1] + card[j][3];
+    CHECK(!touched, "SOMVR_XR_SUBTITLES off: no band tile cuts the card");
+    somvr_ht_parse("0,0,10,10;20,0,10,10;40,0,10,10;60,0,10,10;80,0,10,10;100,0,10,10", NULL, &full, &bad);
     CHECK(full.n == 6 && somvr_sub_add(&full, sub.r[0], &cut) == -1 && full.n == 6, "a full set: no room, unchanged");
     somvr_ht_parse(NULL, "200,815,1500,130", &full, &bad);
     CHECK(somvr_sub_add(&full, sub.r[0], &cut) == -1 && full.r[0][3] == 130, "a tile that would vanish: no room, unchanged");

@@ -47,6 +47,7 @@ static struct {
 	uint64_t glow_frame;
 	double on_t;
 	_Atomic int req_probe;
+	_Atomic int req_rules;  /* build 23: `cue rules` - the grab's end on a captain, the data (RE) */
 	_Atomic int req_mode;   /* -1 none */
 	_Atomic int req_react[2]; /* react21: the chance x 1000 (-1 none): [0] the defender, [1] the berserker */
 	_Atomic int req_notify;   /* react21 notify: REACT's own FUN_029ac890 on the nearest orc (out of its attack) */
@@ -56,6 +57,13 @@ static struct {
 	int ncounter;
 	uintptr_t seen_counter_c;
 	uint64_t shield_noes, counter_noes;
+	/* build 23: SOMVR_VERBS_CUE_CAPTAIN - a captain's grab asked to its end (the game's own pick of 'PC_Grab_Into_*') */
+	int captain;               /* 1 on (default), 0 = build 22 (the attempt's answer alone) */
+	uintptr_t end_root;        /* Talion's root record the end nodes were read from */
+	int nend;
+	uintptr_t end_node[12];    /* nodes whose pools hold the grab's ends: Talion's TraitReactionNodes, the attempt's Links */
+	char end_atk[96];          /* the last end asked */
+	uint64_t cap_asks, cap_holds, cap_throws, cap_unknown;
 	double notify_until;
 	uint64_t asks, yes, no, ons, ticks, glow_frames, probes, lines;
 } g_gc;
@@ -73,6 +81,8 @@ static void gc_start(int *bad)
 	env_vec("SOMVR_VERBS_CUE_TICK", tk, 2, 0, 1, bad);
 	g_gc.tick_amp = tk[0], g_gc.tick_s = tk[1] > 0.005f ? tk[1] : 0.005f;
 	g_gc.recheck_s = env_float("SOMVR_VERBS_CUE_RECHECK_S", 0.1f, 0.02f, 1, bad);
+	static const char *const cw[] = { "off", "on" };
+	g_gc.captain = env_word("SOMVR_VERBS_CUE_CAPTAIN", cw, 2, 1);
 	somvr_vb_cue_cfg_default(&g_gc.cfg);
 	somvr_vb_cue_reset(&g_gc.st);
 	if (g_vb.mode != VB_ON) {
@@ -88,6 +98,11 @@ static void gc_start(int *bad)
 	      "again for that orc after %.1f s off)%s", g_gc_w[g_gc.mode], g_gc.keep_cm, g_gc.keep_deg, g_gc.recheck_s,
 	      g_gc.size_cm, g_gc.down_cm, g_gc.level, g_gc.cfg.fade_s, g_gc.cfg.grace_s, g_gc.tick_amp, g_gc.tick_s * 1e3,
 	      g_gc.cfg.rearm_s, g_th.on ? "" : " - SOMVR_THREAT is off: the tick only, no glow");
+	logf_("CONFIG verbs_cue build 23: captain=%s (SOMVR_VERBS_CUE_CAPTAIN): %s", g_gc.captain ? "on" : "off",
+	      g_gc.captain ? "on a Nemesis captain the grab is asked to its end - the game's own pick of how it ends "
+			     "('PC_Grab_Into_*' from the nodes that hold them), the cue only where it holds (not '_Resistant' / "
+			     "'_Immune': he throws it off)"
+			   : "build 22: the attempt's answer alone, also on a captain who throws the grab off");
 }
 
 /* the game's pick of a root node for orc o: the attack's name in *atk ('' = none, *why then) */
@@ -121,6 +136,257 @@ static int gc_front(const struct cb_orc *o)
 		return -1;
 	float yaw = sv_heading(sv_qnormalize(sv_quat_of(q))), dx = g_vb.root[0] - o->pos[0], dz = g_vb.root[2] - o->pos[2];
 	return fabsf(sv_wrap_pi(atan2f(dx, dz) - yaw)) < 1.5707963f;
+}
+
+/* ---- build 23: `cue rules` (SOMVR_HANDS_TEST, read only): what decides how a grab ends - the data behind
+ * 'PC_Grab_Into_F' / '_Resistant' (docs/re-xr-pipeline.md 95.2) ---- */
+static uintptr_t kp_of_combat(uintptr_t c); /* somvr_captain_game.c (included later) */
+#define GC_SCH_PRED 0x4ba8f80 /* the attack predicates' schema holder (106 fields, re-xr-pipeline.md 24.1) */
+/* a field's name by its hash in a schema holder ("" = not in it) */
+static const char *gc_fname(uintptr_t holder, uint32_t hash, char *out, size_t cap)
+{
+	uintptr_t a = holder ? peek_ptr(holder) : 0;
+	out[0] = 0;
+	for (int i = 0; a && i < 240; i++) {
+		uint32_t h = 0;
+		char nm[64];
+		if (!peek(a + 0x30u * (unsigned)i + 8, &h, 4) || !rx_str(peek_ptr(a + 0x30u * (unsigned)i), nm, sizeof nm)[0])
+			break;
+		if (h == hash)
+			return snprintf(out, cap, "%s", nm), out;
+	}
+	return out;
+}
+/* every attribute a record has (rx_db_entry's layout), named by holder where it can be (else #hash): records by name
+ * (a list: up to 6), floats, bools, the rest as hex; depth > 0: each record value once more (one level) */
+static void gc_rdump(const char *tag, uintptr_t rec, uintptr_t holder, int depth)
+{
+	unsigned char hdr[2], ents[64 * 16];
+	char line[1400], rn[96], fn[64];
+	uintptr_t arr = rec ? peek_ptr(rec + 8) : 0, vals = rec ? peek_ptr(rec + 0x10) : 0;
+	if (!arr || !peek(rec, hdr, 2) || !hdr[0] || hdr[0] > 64 || !peek(arr, ents, (size_t)hdr[0] * 16)) {
+		logf_("VERBS rules %s '%s': no attributes readable", tag, vb_name(rec, rn, sizeof rn));
+		return;
+	}
+	int n = hdr[0], keyoff = (hdr[1] & 1) ? 0 : 4;
+	size_t o = (size_t)snprintf(line, sizeof line, "VERBS rules %s '%s' (%d):", tag, vb_name(rec, rn, sizeof rn), n);
+	uintptr_t sub[8];
+	int nsub = 0;
+	for (int m = 0; m < n; m++) {
+		uint32_t h;
+		memcpy(&h, ents + (size_t)m * 16 + (size_t)keyoff, 4);
+		int idx = keyoff ? ents[(size_t)m * 16 + 9] : m;
+		if (idx >= n)
+			continue;
+		const unsigned char *e = ents + (size_t)idx * 16;
+		uint16_t cnt, vi;
+		memcpy(&cnt, e + 0xc, 2), memcpy(&vi, e + 0xe, 2);
+		int ty = e[0xa] & 0x3f;
+		if (!gc_fname(holder, h, fn, sizeof fn)[0])
+			snprintf(fn, sizeof fn, "#%08x", h);
+		if (o + 200 > sizeof line) {
+			logf_("%s ...", line);
+			o = (size_t)snprintf(line, sizeof line, "VERBS rules %s (more):", tag);
+		}
+		uint64_t v[6] = { 0 };
+		int k = cnt < 6 ? cnt : 6;
+		if (ty == 1) {
+			uint32_t w = 0;
+			if (vals && cnt)
+				peek(vals + (uintptr_t)(vi >> 5) * 8, &w, 4);
+			o += (size_t)snprintf(line + o, sizeof line - o, " %s=%s", fn, cnt ? (w >> (vi & 31)) & 1 ? "1" : "0" : "-");
+			continue;
+		}
+		if (!vals || (k > 0 && !peek(vals + (uintptr_t)vi * 8, v, (size_t)k * 8)))
+			k = 0;
+		o += (size_t)snprintf(line + o, sizeof line - o, " %s=", fn);
+		if (!k)
+			o += (size_t)snprintf(line + o, sizeof line - o, "t%d:none", ty);
+		for (int j = 0; j < k && o + 110 < sizeof line; j++) {
+			if (ty == 0xa) {
+				o += (size_t)snprintf(line + o, sizeof line - o, "%s'%s'", j ? "," : "", vb_name((uintptr_t)v[j], rn, sizeof rn));
+				if (depth > 0 && v[j] && nsub < 8)
+					sub[nsub++] = (uintptr_t)v[j];
+			} else if (ty == 2) {
+				float f;
+				uint32_t u = (uint32_t)v[j];
+				memcpy(&f, &u, 4);
+				o += (size_t)snprintf(line + o, sizeof line - o, "%s%g", j ? "," : "", (double)f);
+			} else
+				o += (size_t)snprintf(line + o, sizeof line - o, "%st%d:%#llx", j ? "," : "t", ty, (unsigned long long)v[j]);
+		}
+		if (cnt > k)
+			o += (size_t)snprintf(line + o, sizeof line - o, "+%d", cnt - k);
+	}
+	logf_("%s", line);
+	for (int j = 0; j < nsub; j++) {
+		char t2[64];
+		snprintf(t2, sizeof t2, "%s>%d", tag, j);
+		gc_rdump(t2, sub[j], 0, depth - 1);
+	}
+}
+/* a node's pools (field 3) and each pool's attributes; the game's pick from the node for orc o (no window check) */
+static void gc_rules_node(const char *tag, uintptr_t node, uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o)
+{
+	char rn[96], an[96], sn[96];
+	gc_rdump(tag, node, g_fig.sch_node, 0);
+	uint64_t pools[8];
+	int ty = 0, cnt = 0, np = rx_db_list(node, g_fig.sch_node, 3, pools, 8, &ty, &cnt);
+	for (int j = 0; j < np && ty == 0xa; j++) {
+		char t2[64];
+		snprintf(t2, sizeof t2, "%s pool %d", tag, j);
+		gc_rdump(t2, (uintptr_t)pools[j], 0, 0);
+	}
+	if (o) {
+		const char *why = "";
+		uintptr_t sy = 0;
+		g_vb_pick_nowin = 1;
+		uintptr_t a = vb_pick(pcomb, pc, o, node, &sy, &why);
+		g_vb_pick_nowin = 0;
+		logf_("VERBS rules %s '%s': the game's pick for orc %#lx (health %.1f), the window not asked: %s%s%s%s", tag,
+		      vb_name(node, rn, sizeof rn), (unsigned long)o->c, vb_health(o->c), a ? "'" : "none (", a ? vb_name(a, an, sizeof an) : why,
+		      a ? "' sync '" : ")", a ? vb_name(sy, sn, sizeof sn) : "");
+		if (a)
+			logf_("VERBS rules %s: the pick's sync '%s'", tag, sn);
+	}
+}
+static void gc_rules(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, double t)
+{
+	char rn[96];
+	logf_("VERBS rules t=%.3f: the grab's end - the attacks, Talion's TraitReactionNodes, the attempt's links, the nearest "
+	      "orc's traits (%d orcs near)", t, n);
+	static const char *const atk[] = { "PC_Grab_Attempt_F", "PC_Grab_Into_F", "PC_Grab_Into_F_Resistant", "PC_Grab_Into_F_Immune",
+					   "PC_Grab_Attempt_F_Fail" };
+	for (size_t i = 0; i < sizeof atk / sizeof atk[0]; i++) {
+		uintptr_t r = g_cb.ok_hit ? CB_FN(CS_ATK_BYNAME, cb_byname_fn)(atk[i]) : 0;
+		if (!r) {
+			logf_("VERBS rules attack '%s': not found", atk[i]);
+			continue;
+		}
+		gc_rdump(atk[i], r, g_fig.sch_attack, 0);
+		uintptr_t pred = rx_db_rec(r, g_fig.sch_attack, 3);
+		if (pred)
+			gc_rdump("  its Predicate", pred, GC_SCH_PRED, 1);
+		for (int f = 1; f <= 2; f++) { /* AttackData, AttackPostData */
+			uintptr_t d = rx_db_rec(r, g_fig.sch_attack, f);
+			if (d)
+				gc_rdump(f == 1 ? "  its AttackData" : "  its AttackPostData", d, 0, 0);
+		}
+	}
+	const struct cb_orc *o0 = n > 0 ? &o[0] : NULL;
+	uintptr_t root = peek_ptr(pcomb + FI_PC_ROOT);
+	uint64_t nodes[24];
+	int ty = 0, cnt = 0, nn = root ? rx_db_list(root, g_fig.sch_ccr, 12, nodes, 24, &ty, &cnt) : -1;
+	logf_("VERBS rules Talion's '%s' TraitReactionNodes: %d (type %d)", vb_name(root, rn, sizeof rn), cnt, ty);
+	for (int i = 0; i < nn && ty == 0xa; i++) {
+		char tg[48];
+		snprintf(tg, sizeof tg, "trait-node %d", i);
+		gc_rules_node(tg, (uintptr_t)nodes[i], pcomb, pc, o0);
+	}
+	uintptr_t att = vb_node_named(pcomb, "PC_Grab_Attempt");
+	if (att) {
+		gc_rules_node("attempt", att, pcomb, pc, o0);
+		nn = rx_db_list(att, g_fig.sch_node, 4, nodes, 24, &ty, &cnt);
+		for (int i = 0; i < nn && ty == 0xa; i++) {
+			char tg[48];
+			snprintf(tg, sizeof tg, "attempt-link %d", i);
+			gc_rules_node(tg, (uintptr_t)nodes[i], pcomb, pc, o0);
+		}
+	}
+	for (int i = 0; i < n && i < 2; i++) {
+		uintptr_t fm = kp_of_combat(o[i].c), kind = gc_kind(o[i].c);
+		logf_("VERBS rules orc %#lx at %.0f cm: health %.1f, %s, its character record '%s'", (unsigned long)o[i].c, o[i].dist,
+		      vb_health(o[i].c), fm ? "a captain" : "not a captain", vb_name(kind, rn, sizeof rn));
+		if (kind) {
+			nn = rx_db_list(kind, g_fig.sch_ccr, 12, nodes, 24, &ty, &cnt);
+			for (int j = 0; j < nn && ty == 0xa && j < 8; j++) {
+				char tg[48];
+				snprintf(tg, sizeof tg, "orc %d trait-node %d", i, j);
+				gc_rules_node(tg, (uintptr_t)nodes[j], pcomb, pc, NULL);
+			}
+		}
+		uintptr_t b = fm ? peek_ptr(fm + 0x70) : 0, e = fm ? peek_ptr(fm + 0x78) : 0, tr[24];
+		size_t nt = e > b && (e - b) % 8 == 0 ? (e - b) / 8 : 0;
+		if (nt > 24)
+			nt = 24;
+		if (nt && peek(b, tr, nt * 8))
+			for (size_t j = 0; j < nt; j++) {
+				char tg[48];
+				snprintf(tg, sizeof tg, "orc %d trait %zu", i, j);
+				gc_rdump(tg, tr[j], 0, 1);
+			}
+	}
+	logf_("VERBS rules END");
+}
+
+/* build 23: the nodes whose pools hold the grab's ends (an attack named '*Grab_Into*'): Talion's TraitReactionNodes
+ * (character record field 12) and the attempt node's Links (field 4), read once per root record */
+static int gc_pool_has_into(uintptr_t node)
+{
+	uint64_t pools[8], v[24];
+	int ty = 0, cnt = 0, np = rx_db_list(node, g_fig.sch_node, 3, pools, 8, &ty, &cnt);
+	for (int j = 0; j < np && ty == 0xa; j++) { /* any record list of the pool naming one */
+		unsigned char hdr[2], ents[32 * 16];
+		uintptr_t pl = (uintptr_t)pools[j], arr = pl ? peek_ptr(pl + 8) : 0, vals = pl ? peek_ptr(pl + 0x10) : 0;
+		if (!arr || !vals || !peek(pl, hdr, 2) || !hdr[0] || hdr[0] > 32 || !peek(arr, ents, (size_t)hdr[0] * 16))
+			continue;
+		for (int m = 0; m < hdr[0]; m++) {
+			const unsigned char *e = ents + (size_t)m * 16;
+			uint16_t c2, vi;
+			memcpy(&c2, e + 0xc, 2), memcpy(&vi, e + 0xe, 2);
+			int k = c2 < 24 ? c2 : 24;
+			if ((e[0xa] & 0x3f) != 0xa || k <= 0 || !peek(vals + (uintptr_t)vi * 8, v, (size_t)k * 8))
+				continue;
+			for (int i = 0; i < k; i++) {
+				char nm[96];
+				if (strstr(rx_rec_name((uintptr_t)v[i], nm, sizeof nm), "Grab_Into"))
+					return 1;
+			}
+		}
+	}
+	return 0;
+}
+static void gc_end_nodes(uintptr_t pcomb)
+{
+	uintptr_t root = peek_ptr(pcomb + FI_PC_ROOT);
+	if (!root || root == g_gc.end_root)
+		return;
+	g_gc.end_root = root, g_gc.nend = 0;
+	uint64_t nodes[24];
+	int ty = 0, cnt = 0, nn = rx_db_list(root, g_fig.sch_ccr, 12, nodes, 24, &ty, &cnt);
+	for (int i = 0; i < nn && ty == 0xa && g_gc.nend < 12; i++)
+		if (gc_pool_has_into((uintptr_t)nodes[i]))
+			g_gc.end_node[g_gc.nend++] = (uintptr_t)nodes[i];
+	uintptr_t att = vb_node_named(pcomb, "PC_Grab_Attempt");
+	nn = att ? rx_db_list(att, g_fig.sch_node, 4, nodes, 24, &ty, &cnt) : 0;
+	for (int i = 0; i < nn && ty == 0xa && g_gc.nend < 12; i++)
+		if (gc_pool_has_into((uintptr_t)nodes[i]))
+			g_gc.end_node[g_gc.nend++] = (uintptr_t)nodes[i];
+	char line[700], rn[96];
+	size_t o = (size_t)snprintf(line, sizeof line, "VERBS cue: the grab's ends: %d nodes hold a 'PC_Grab_Into_*'", g_gc.nend);
+	for (int i = 0; i < g_gc.nend && o + 100 < sizeof line; i++)
+		o += (size_t)snprintf(line + o, sizeof line - o, "%s '%s'", i ? "," : ":", vb_name(g_gc.end_node[i], rn, sizeof rn));
+	logf_("%s", line);
+}
+/* a captain's grab to its end: the game's pick from the end nodes for orc o (the window not asked: the attempt would be
+ * running then). 1 = it holds ('PC_Grab_Into_*' plain), 0 = he throws it off ('_Resistant' / '_Immune'), -1 = no answer */
+static int gc_grab_end(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o)
+{
+	gc_end_nodes(pcomb);
+	g_gc.end_atk[0] = 0;
+	for (int i = 0; i < g_gc.nend; i++) {
+		const char *why = "";
+		uintptr_t sy = 0;
+		g_vb_pick_nowin = 1;
+		uintptr_t a = vb_pick(pcomb, pc, o, g_gc.end_node[i], &sy, &why);
+		g_vb_pick_nowin = 0;
+		if (!a || !strstr(vb_name(a, g_gc.end_atk, sizeof g_gc.end_atk), "Grab_Into")) {
+			g_gc.end_atk[0] = 0;
+			continue;
+		}
+		return !strstr(g_gc.end_atk, "Resistant") && !strstr(g_gc.end_atk, "Immune");
+	}
+	return -1;
 }
 
 /* vb_frame (after vb_heads): the game's answer for the orc in reach; the probe word's lines; the react21 word */
@@ -175,6 +441,8 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 			logf_("%s", line);
 		}
 	}
+	if (atomic_exchange(&g_gc.req_rules, 0))
+		gc_rules(pcomb, pc, o, n, t);
 	if (!g_gc.mode)
 		return;
 	/* the orc's own answer to our grab: an attack named '*GrabAttempt*' (the shield orc's ShieldBash_GrabAttempt) is a
@@ -233,15 +501,28 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 			why = w0, nn = "PC_Grab_Attempt";
 	}
 	int ok = at && !strstr(a, "Fail") && !(shield > 0 && front == 1) && countered < 0;
+	const char *capwhy = NULL;
+	int e = -2; /* the captain's grab's end: -2 not asked */
+	if (ok && g_gc.captain && kp_of_combat(c)) { /* build 23: a captain - will the grab hold? (the game's pick of its end) */
+		e = gc_grab_end(pcomb, pc, oc);
+		g_gc.cap_asks++, e > 0 ? g_gc.cap_holds++ : e == 0 ? g_gc.cap_throws++ : g_gc.cap_unknown++;
+		if (e == 0)
+			ok = 0, capwhy = "a captain who throws the grab off (the game's end of it: its _Resistant / _Immune)";
+	}
 	g_gc.asks++, g_gc.yes += ok, g_gc.no += !ok;
-	g_gc.ask_c = c, g_gc.ask_body = g_gc.reach_body, g_gc.ask_ok = ok, g_gc.ask_t = t, g_gc.ask_why = ok ? "" : at ? "a fail move" : why;
+	g_gc.ask_c = c, g_gc.ask_body = g_gc.reach_body, g_gc.ask_ok = ok, g_gc.ask_t = t,
+	g_gc.ask_why = ok ? "" : capwhy ? capwhy : at ? "a fail move" : why;
 	snprintf(g_gc.ask_atk, sizeof g_gc.ask_atk, "%s", a), snprintf(g_gc.ask_sync, sizeof g_gc.ask_sync, "%s", s);
 	snprintf(g_gc.ask_node, sizeof g_gc.ask_node, "%s", nn);
 	if ((c != g_gc.said_c || ok != g_gc.said_ok) && g_gc.lines++ < 400 && vb_log_ok())
 		logf_("VERBS cue t=%.3f orc %#lx in reach (%s, %.0f cm from Talion; health %.1f, attack '%s'): the game %s '%s'%s%s%s%s",
 		      t, (unsigned long)c, g_gc.reach_body ? "its back" : "its head", oc->dist, vb_health(c),
 		      vb_name(peek_ptr(c + VB_C_ATTACK), an, sizeof an), ok ? "would grab it:" : "would not grab it:", nn,
-		      ok ? " -> '" : " -> ", ok ? a : at ? a : g_gc.ask_why, ok ? "'" : "", ok && s[0] && strcmp(s, "-") ? " (a sync)" : "");
+		      ok ? " -> '" : " -> ", ok ? a : at && !capwhy ? a : g_gc.ask_why, ok ? "'" : "", ok && s[0] && strcmp(s, "-") ? " (a sync)" : "");
+	if (e > -2 && (c != g_gc.said_c || ok != g_gc.said_ok) && g_gc.lines < 400 && vb_log_ok())
+		logf_("VERBS cue t=%.3f captain %#lx (health %.1f): the grab's end by the game: %s%s%s", t, (unsigned long)c, vb_health(c),
+		      e >= 0 ? "'" : "", e >= 0 ? g_gc.end_atk : "no answer (the attempt's answer kept)",
+		      e > 0 ? "' - it holds: the cue" : e == 0 ? "' - he throws it off: no cue" : "");
 	g_gc.said_c = c, g_gc.said_ok = ok;
 }
 
@@ -400,7 +681,7 @@ static void ssw_took(double t, const char *how)
 }
 
 /* ---- the words, the end -------------------------------------------------------------------------------------------- */
-/* "cue on|off|log|probe|status" (probe: SOMVR_HANDS_TEST) */
+/* "cue on|off|log|probe|rules|status" (probe, rules: SOMVR_HANDS_TEST) */
 static const char *gc_word(const char *w)
 {
 	while (*w == ' ')
@@ -416,6 +697,12 @@ static const char *gc_word(const char *w)
 		atomic_store(&g_gc.req_probe, 1);
 		return "cue probe";
 	}
+	if (!strncmp(w, "rules", 5)) {
+		if (!g_vb.test)
+			return "cue rules (SOMVR_HANDS_TEST is off: ignored)";
+		atomic_store(&g_gc.req_rules, 1);
+		return "cue rules";
+	}
 	if (!strncmp(w, "status", 6)) {
 		logf_("VERBS cue status: mode %s, on %d orc %#llx level %.2f; asks %llu (yes %llu no %llu), ons %llu, ticks %llu, glow "
 		      "frames %llu; the last answer: orc %#lx %s '%s' (%s)", g_gc_w[g_gc.mode], g_gc.st.on,
@@ -425,7 +712,7 @@ static const char *gc_word(const char *w)
 		      g_gc.ask_why ? g_gc.ask_why : "");
 		return "cue status";
 	}
-	return "cue (not on|off|log|probe|status: ignored)";
+	return "cue (not on|off|log|probe|rules|status: ignored)";
 }
 
 /* "ssword hand|off" (SOMVR_HANDS_TEST: the A/B in one boot); "react21 defender|berserker V" (SOMVR_HANDS_TEST) */
@@ -465,11 +752,13 @@ static void c21_end_log(void)
 {
 	if (g_gc.mode || g_gc.asks)
 		logf_("VERBS cue END: mode %s; the game asked %llu (would grab %llu, would not %llu), cues on %llu, ticks %llu, glow "
-		      "frames %llu, probes %llu; no for a shield's front %llu, for a counter seen %llu (%d orcs)", g_gc_w[g_gc.mode],
+		      "frames %llu, probes %llu; no for a shield's front %llu, for a counter seen %llu (%d orcs); captains (%s): the "
+		      "grab's end asked %llu (holds %llu, thrown off %llu, no answer %llu)", g_gc_w[g_gc.mode],
 		      (unsigned long long)g_gc.asks, (unsigned long long)g_gc.yes, (unsigned long long)g_gc.no,
 		      (unsigned long long)g_gc.ons, (unsigned long long)g_gc.ticks, (unsigned long long)g_gc.glow_frames,
 		      (unsigned long long)g_gc.probes, (unsigned long long)g_gc.shield_noes, (unsigned long long)g_gc.counter_noes,
-		      g_gc.ncounter);
+		      g_gc.ncounter, g_gc.captain ? "on" : "off", (unsigned long long)g_gc.cap_asks, (unsigned long long)g_gc.cap_holds,
+		      (unsigned long long)g_gc.cap_throws, (unsigned long long)g_gc.cap_unknown);
 	logf_("STRIKE sword END: %s; strikes %llu, the bow to its slot %llu, the sword taken %llu, take frames %llu, a wall in "
 	      "the hand %llu", g_ssw.on ? "hand" : "off", (unsigned long long)g_ssw.strikes, (unsigned long long)g_ssw.bow_puts,
 	      (unsigned long long)g_ssw.takes, (unsigned long long)g_ssw.frames, (unsigned long long)g_ssw.climbs);

@@ -6844,7 +6844,7 @@ static int sc_prompts(void) {
     somvr_ht_set bt;
     somvr_ht_parse(NULL, SOMVR_PB_RECTS_DEFAULT, &bt, NULL);
     somvr_hud_layout l;
-    int bh = 110 + SOMVR_HT_GAP + 180 + SOMVR_HT_GAP + 220;
+    int bh = 110 + SOMVR_HT_GAP + 155 + SOMVR_HT_GAP + 190; /* build 23: the hints' tile 155 high, the prompts' 140 (95) */
     CHECK(somvr_hud_layout_make(1920, 1080, NULL, NULL, 0, NULL, &bt, &l) && l.extra_w == 1098 &&
               rect_is(l.band, 1920, 0, 1098, bh),
           "the expected band: %d,%d %dx%d", l.band[0], l.band[1], l.band[2], l.band[3]);
@@ -6892,7 +6892,7 @@ static int sc_prompts(void) {
           "after the recentre: the band placed %d times (the HUD %d), from frame %d's eyes",
           log_count("xr: menus: the prompt band placed at"),
           log_count("xr: hud quad placed for frame"), from);
-    CHECK(log_has("xr: prompts: on (the rects 640,10 640x110 | 440,600 1040x180 | 30,390 290x190; 1120,860 800x220 in one "
+    CHECK(log_has("xr: prompts: on (the rects 640,10 640x110 | 440,600 1040x155 | 30,390 290x190; 1120,940 800x140 in one "
                   "band 1.30 m from the eyes, 15 deg below them, an 18-px line 0.85 deg") &&
               log_has("xr: prompts: the band shown (frame") && log_has("xr: wrist hud: off") &&
               log_has("xr: minimap: off (it stays in the HUD)"),

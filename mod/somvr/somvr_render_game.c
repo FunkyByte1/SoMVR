@@ -38,6 +38,10 @@
  *   game thread waits after both eyes for eye 1's end), `fx vbgrow N` (the custom draws' dynamic vertex buffers made
  *   N times bigger), `fx bloomblend 0|game`, and the probes: each CPU emitter's block from its copy to its draw, eye 1's
  *   draw against eye 0's (the vertices through a proxy on the render context), the vertex memory at the presents.
+ * Build 23 (re-xr-pipeline.md 96): SOMVR_KTIME=frame|game (default frame; word "ktime frame|game|state") - eye 1's pass
+ *   gets eye 0's shaders' clock k_fTime back (RenderScene's late pass left k_fRealTime in it: the fire's flame and the
+ *   wraith sky moved differently in each eye). SOMVR_FX_TEST adds the D3D11 capture `fx d3d N` (eye 1's draws against
+ *   eye 0's: shaders, views, constant bytes; DCAP lines) and `fx d3dsame MASK` (eye 1's draws bind eye 0's state).
  * Trigger words: "flatfx LIST|all|game|state" (live; the hooks must be in: boot with a part on or SOMVR_FX_TEST=1),
  * "fx hide MASK", "fx eyesame 0|1", "fx console CMD", "fx state". Lines: CONFIG flatfx=..; FLATFX t=.. (the word; the
  * game's own vignette or box blur seen: the first 8 of each); FLATFX state|END. Fail soft: a site mismatch = that part
@@ -52,7 +56,9 @@
  * two buffers) and RD_VIS_REQ (FUN_007b79f0: a request's room = +0x18 - +0x1c) before RD_VIS is read; build 22
  * (re-xr-pipeline.md 94): SOMVR_FX_TEST's K_CALLs RD_BRT_A / RD_BRT_B (the two BeginRenderTargets' calls of
  * FUN_0074b1e0(rt), which binds the target's last / current frame images: the trace) and the K_ENTRY RD_CF_MAKE
- * (FUN_00747e60, the maker of a target's "current frame" image: SOMVR_CURFRAME=eye makes eye 1's with it)) */
+ * (FUN_00747e60, the maker of a target's "current frame" image: SOMVR_CURFRAME=eye makes eye 1's with it); build 23
+ * (re-xr-pipeline.md 96): SOMVR_KTIME's K_ENTRY RD_KT_UPLOAD (FUN_00750080, a shader constant's upload: called) and the
+ * read-only K_CALL RD_KT_LATE (RenderScene's call 0x7d7030, its context the k_fTime := k_fRealTime write after it)) */
 static const struct site_spec g_rd_sites_game[] = {
 SITE("RD_LENSFLARE", K_VSLOT, 0x3b5de78, 0x3b5de58, "30 0a d7 02 00 00 00 00 70 0a d7 02 00 00 00 00 20 0a d7 02 00 00 00 00 b0 0a d7 02 00 00 00 00 70 f1 d6 02 00 00 00 00", 0x2d6f170, "41 57 41 56 41 55 41 54 55 53 48 81 ec 98 00"),
 SITE("RD_SHAFTS", K_CALL, 0x7a2541, 0x7a2530, "8b 03 f3 0f 10 43 08 48 89 04 24 f3 0f 11 44 24 08 e8 2a fa ff ff", 0x7a1f70, "53 66 0f ef c9 48 89 fb 48 83 ec 10 f3 0f 10"),
@@ -68,12 +74,14 @@ SITE("RD_VIS_REQ", K_ENTRY, 0x7b79f0, 0x7b79f0, "55 89 d5 53 48 89 fb 48 83 ec 5
 SITE("RD_BRT_A", K_CALL, 0x74beb6, 0x74beac, "44 89 bb 48 04 00 00 48 89 df e8 25 f3 ff ff", 0x74b1e0, "53 be 00 2e 62 04 48 89 fb 48 81 c7 90 01 00"),
 SITE("RD_BRT_B", K_CALL, 0x74b646, 0x74b638, "48 04 00 00 48 89 df 83 05 36 46 ed 03 01 e8 95 fb ff ff", 0x74b1e0, "53 be 00 2e 62 04 48 89 fb 48 81 c7 90 01 00"),
 SITE("RD_CF_MAKE", K_ENTRY, 0x747e60, 0x747e60, "48 b8 01 00 00 00 01 00 00 00 41 57 41 56 45 89 c6 41 55 41 89 d5 41 54", 0x747e60, "48 b8 01 00 00 00 01 00 00 00 41 57 41 56 45"),
+SITE("RD_KT_UPLOAD", K_ENTRY, 0x750080, 0x750080, "55 0f b7 ff 53 48 8d 3c 7f 48 83 ec 18 48 8b 05", 0x750080, "55 0f b7 ff 53 48 8d 3c 7f 48 83 ec 18 48 8b"),
+SITE("RD_KT_LATE", K_CALL, 0x7d7030, 0x7d7030, "e8 0b cb f6 ff 80 7c 24 26 00 0f 84 07 01 00 00 b8 80 54 62 04 48 3d 20 54 62 04 74 2d f3 0f 10 05 0b e4 e4 03 0f b7 3d 2c e4 e4 03 f3 0f 11 05 5c e4 e4 03", 0x743b40, "c3 66 2e 0f 1f 84 00 00 00 00 00 0f 1f 44 00"),
 };
 /* RENDER_SITES_END */
 static const struct site_spec *g_rd_sites = g_rd_sites_game; /* selftest: stand-ins */
 
 enum { RDS_LENSFLARE, RDS_SHAFTS, RDS_RAIN, RDS_PSYS, RDS_GPUPSYS, RDS_SPRITE, RDS_FLARESPR, RDS_PSYS_UPD, RDS_PSYS_PREP,
-       RDS_VIS_INIT, RDS_VIS_REQ, RDS_BRT_A, RDS_BRT_B, RDS_CF_MAKE, RDS_N };
+       RDS_VIS_INIT, RDS_VIS_REQ, RDS_BRT_A, RDS_BRT_B, RDS_CF_MAKE, RDS_KT_UPLOAD, RDS_KT_LATE, RDS_N };
 _Static_assert(sizeof g_rd_sites_game / sizeof g_rd_sites_game[0] == RDS_N, "render sites");
 /* the SOMVR_FLATFX parts (bits) */
 enum { RDF_FLARES = 1u << 0, RDF_SHAFTS = 1u << 1, RDF_VIGNETTE = 1u << 2, RDF_RAIN = 1u << 3, RDF_ALL = 15u };
@@ -213,6 +221,601 @@ static const char *rd_cfname(uintptr_t v, char *b, size_t n)
 	return b;
 }
 
+/* ---- build 23 (re-xr-pipeline.md 96): the shaders' clock the same in both eyes - SOMVR_KTIME=frame|game ------------
+ * k_fTime (0x46254c0, re-stereo.md 1), the clock of every time-animated material, is set once per frame by BeginFrame
+ * (FUN_0072a850: the game's time) - and by RenderScene (FUN_007d6e20, 0x7d704d..0x7d705c, proven by RD_KT_LATE) to
+ * k_fRealTime (0x4625460) before its late pass for category-4 nodes (step 11), never set back: on a flat screen the
+ * next frame's BeginFrame does it. In stereo eye 1's whole pass ran on k_fRealTime and eye 0's on the game's time (the
+ * D3D11 capture, run 20261029-060526: the CPU particles' constant c19.y 91.241 / 152.496, the next frame 91.341 /
+ * 158.848): the fire's flame and every other time-animated material moved differently in each eye.
+ * frame (default): at eye 1's view setup (H3, render thread) k_fTime gets back the value it had at eye 0's (the game's
+ * time of this frame) and is uploaded the game's way (FUN_00750080(its handle 0x4625488, its data pointer 0x4625490,
+ * 4) = RD_KT_UPLOAD; no handle yet: the dirty word 0x462548a = 4, as the game does). game: as the game does. Fail soft:
+ * a site mismatch = the game's. Word "ktime frame|game|state"; lines CONFIG ktime=.., KTIME (the first 4 fixes, state). */
+#define RD_KT 0x46254c0UL        /* k_fTime's data (float) */
+#define RD_KT_HANDLE 0x4625488UL /* its binding handle (uint16; 0xffff = none) */
+#define RD_KT_PTR 0x4625490UL    /* the data pointer FUN_00750080 is given */
+#define RD_KT_DIRTY 0x462548aUL  /* uint16: 4 = set without a handle, 0 = uploaded */
+typedef void (*rd_ktup_fn)(uint32_t handle, void *data, uint32_t size);
+static struct {
+	int want, ok;                 /* SOMVR_KTIME at start (1 frame); both sites matched */
+	_Atomic int on;               /* now (the word) */
+	float t, last0, last1;        /* eye 0's k_fTime this frame; the last fix's two values */
+	uint64_t frame, fixed, same, nohandle, lines;
+	int have;
+} g_kt;
+/* H3 (render thread): the eye's view setup, before its pass */
+static void rd_kt_eye(int eye, uint64_t frame)
+{
+	if (!g_kt.ok)
+		return;
+	volatile float *kt = (volatile float *)RD_KT;
+	if (eye == 0) {
+		g_kt.t = *kt, g_kt.frame = frame, g_kt.have = 1;
+		return;
+	}
+	if (eye != 1 || !g_kt.have || g_kt.frame != frame || !atomic_load_explicit(&g_kt.on, memory_order_relaxed))
+		return;
+	float now = *kt;
+	if (now == g_kt.t) {
+		g_kt.same++;
+		return;
+	}
+	g_kt.last0 = g_kt.t, g_kt.last1 = now;
+	*kt = g_kt.t;
+	uint16_t h = *(volatile uint16_t *)RD_KT_HANDLE;
+	if (h == 0xffff) {
+		*(volatile uint16_t *)RD_KT_DIRTY = 4;
+		g_kt.nohandle++;
+	} else {
+		((rd_ktup_fn)g_rd_sites[RDS_KT_UPLOAD].target)(h, *(void *volatile *)RD_KT_PTR, 4);
+		*(volatile uint16_t *)RD_KT_DIRTY = 0;
+	}
+	if (g_kt.fixed++ < 4)
+		logf_("KTIME t=%.3f frame %llu: eye 1's pass found k_fTime %.3f (eye 0's %.3f; RenderScene's late pass left "
+		      "k_fRealTime): set back to %.3f%s", mono(), (unsigned long long)frame, now, g_kt.t, g_kt.t,
+		      h == 0xffff ? " (no handle yet: marked dirty)" : " and uploaded");
+}
+static void rd_kt_state(const char *head)
+{
+	logf_("%s t=%.3f: SOMVR_KTIME %s (start %s; sites %s): eye 1's k_fTime set back %llu times (the last: %.3f -> %.3f), "
+	      "already the same %llu, without a handle %llu", head, cb_now(), atomic_load(&g_kt.on) ? "frame" : "game",
+	      g_kt.want ? "frame" : "game", g_kt.ok ? "matched" : "NOT matched", (unsigned long long)g_kt.fixed, g_kt.last1,
+	      g_kt.last0, (unsigned long long)g_kt.same, (unsigned long long)g_kt.nohandle);
+}
+
+/* ---- build 23 (re-xr-pipeline.md 96): SOMVR_FX_TEST's D3D11 capture, `fx d3d N` -------------------------------------
+ * The engine's render thread draws through IndirectX's threaded context (IdxD3D11DeviceContextThreaded, vtable
+ * 0x45537f0; its slots in ID3D11DeviceContext's order - CopyResource 47 and RSSetViewports 44 are proven, Map 14 and
+ * GetType/GetDesc of a buffer (slots 7/10) read from its code). With SOMVR_FX_TEST twenty of its slots get a
+ * pass-through: the shaders, shader views, constant buffers, pixel samplers, the first render target, the depth view
+ * and the blend state bound are kept (render thread), and while a capture runs the bytes of every buffer bound as
+ * constants (Map ... Unmap, UpdateSubresource). `fx d3d N` captures N stereo frames after one frame of warm-up: each
+ * eye's pass counted from its first BeginRenderTarget of rt3D, eye 1's draw k compared with eye 0's draw k; what
+ * differs is logged (DCAP lines: the slots, the constant registers with both eyes' values). With `fx eyesame 1` both
+ * eyes render one view: whatever still differs is state that changes from one pass to the next. */
+/* D3DCAP_SITES_BEGIN (check_sites.py counts this block on its own: SOMVR_FX_TEST's 20 patched K_VSLOTs of
+ * IdxD3D11DeviceContextThreaded's vtable 0x45537f0: VS/PS constant buffers, PS shader views, PS/VS shaders, PS samplers,
+ * DrawIndexed, Draw, Map, Unmap, PS constant buffers, DrawIndexedInstanced, DrawInstanced, VS shader views,
+ * OMSetRenderTargets, OMSetBlendState, Dispatch, UpdateSubresource, CS shader views, CS shader, CS constant buffers) */
+static const struct site_spec g_dc_sites_game[] = {
+SITE("DC_VSCB", K_VSLOT, 0x4553828, 0x4553828, "50 2a ac 01 00 00 00 00", 0x1ac2a50, "41 57 49 89 cf 41 56 4c 8d b7 c8 00 00 00 41"),
+SITE("DC_PSSRV", K_VSLOT, 0x4553830, 0x4553830, "c0 37 ac 01 00 00 00 00", 0x1ac37c0, "41 57 41 89 f7 41 56 4c 8d b7 c8 00 00 00 41"),
+SITE("DC_PSSH", K_VSLOT, 0x4553838, 0x4553838, "90 10 ac 01 00 00 00 00", 0x1ac1090, "41 55 4c 8d af c8 00 00 00 41 54 49 89 fc 4c"),
+SITE("DC_PSSMP", K_VSLOT, 0x4553840, 0x4553840, "b0 38 ac 01 00 00 00 00", 0x1ac38b0, "41 57 41 89 f7 41 56 4c 8d b7 c8 00 00 00 41"),
+SITE("DC_VSSH", K_VSLOT, 0x4553848, 0x4553848, "10 0e ac 01 00 00 00 00", 0x1ac0e10, "41 55 4c 8d af c8 00 00 00 41 54 49 89 fc 4c"),
+SITE("DC_DRAWIDX", K_VSLOT, 0x4553850, 0x4553850, "60 5d ac 01 00 00 00 00", 0x1ac5d60, "41 57 41 89 f7 41 56 41 89 d6 41 55 41 89 cd"),
+SITE("DC_DRAW", K_VSLOT, 0x4553858, 0x4553858, "40 58 ac 01 00 00 00 00", 0x1ac5840, "41 57 41 56 41 89 f6 41 55 41 89 d5 41 54 4c"),
+SITE("DC_MAP", K_VSLOT, 0x4553860, 0x4553860, "a0 88 ac 01 00 00 00 00", 0x1ac88a0, "41 57 4c 8d bf c8 00 00 00 41 56 45 89 c6 41"),
+SITE("DC_UNMAP", K_VSLOT, 0x4553868, 0x4553868, "40 82 ac 01 00 00 00 00", 0x1ac8240, "41 57 41 56 41 89 d6 41 55 45 31 ed 41 54 4c"),
+SITE("DC_PSCB", K_VSLOT, 0x4553870, 0x4553870, "90 36 ac 01 00 00 00 00", 0x1ac3690, "41 57 49 89 cf 41 56 4c 8d b7 c8 00 00 00 41"),
+SITE("DC_DRAWIDXI", K_VSLOT, 0x4553890, 0x4553890, "90 60 ac 01 00 00 00 00", 0x1ac6090, "41 57 41 89 f7 41 56 45 89 c6 41 55 45 89 cd"),
+SITE("DC_DRAWI", K_VSLOT, 0x4553898, 0x4553898, "f0 5e ac 01 00 00 00 00", 0x1ac5ef0, "41 57 41 56 41 55 4c 8d af c8 00 00 00 41 54"),
+SITE("DC_VSSRV", K_VSLOT, 0x45538b8, 0x45538b8, "80 2b ac 01 00 00 00 00", 0x1ac2b80, "41 57 41 89 f7 41 56 4c 8d b7 c8 00 00 00 41"),
+SITE("DC_OMRT", K_VSLOT, 0x45538f8, 0x45538f8, "80 44 ac 01 00 00 00 00", 0x1ac4480, "55 48 89 e5 41 57 49 89 ff 41 56 49 89 ce 41"),
+SITE("DC_BLEND", K_VSLOT, 0x4553908, 0x4553908, "70 12 ac 01 00 00 00 00", 0x1ac1270, "41 57 41 89 cf 41 56 4c 8d b7 c8 00 00 00 41"),
+SITE("DC_DISPATCH", K_VSLOT, 0x4553938, 0x4553938, "d0 5b ac 01 00 00 00 00", 0x1ac5bd0, "41 57 41 89 f7 41 56 41 89 d6 41 55 41 89 cd"),
+SITE("DC_UPDSUB", K_VSLOT, 0x4553970, 0x4553970, "40 7e ac 01 00 00 00 00", 0x1ac7e40, "41 57 48 89 f8 45 89 cf 41 56 48 05 c8 00 00"),
+SITE("DC_CSSRV", K_VSLOT, 0x4553a08, 0x4553a08, "d0 3a ac 01 00 00 00 00", 0x1ac3ad0, "41 57 41 89 f7 41 56 4c 8d b7 c8 00 00 00 41"),
+SITE("DC_CSSH", K_VSLOT, 0x4553a18, 0x4553a18, "30 11 ac 01 00 00 00 00", 0x1ac1130, "41 55 4c 8d af c8 00 00 00 41 54 49 89 fc 4c"),
+SITE("DC_CSCB", K_VSLOT, 0x4553a28, 0x4553a28, "a0 39 ac 01 00 00 00 00", 0x1ac39a0, "41 57 49 89 cf 41 56 4c 8d b7 c8 00 00 00 41"),
+};
+/* D3DCAP_SITES_END */
+static const struct site_spec *g_dc_sites = g_dc_sites_game; /* selftest: stand-ins */
+enum { DCS_VSCB, DCS_PSSRV, DCS_PSSH, DCS_PSSMP, DCS_VSSH, DCS_DRAWIDX, DCS_DRAW, DCS_MAP, DCS_UNMAP, DCS_PSCB, DCS_DRAWIDXI,
+       DCS_DRAWI, DCS_VSSRV, DCS_OMRT, DCS_BLEND, DCS_DISPATCH, DCS_UPDSUB, DCS_CSSRV, DCS_CSSH, DCS_CSCB, DCS_N };
+_Static_assert(sizeof g_dc_sites_game / sizeof g_dc_sites_game[0] == DCS_N, "capture sites");
+#define DC_CB 8               /* constant buffer slots kept per stage */
+#define DC_SRV 16             /* shader view slots kept per stage */
+#define DC_SMP 8              /* pixel sampler slots kept */
+#define DC_REC_N 12288        /* eye 0's draws kept per frame */
+#define DC_BUF_N 8192         /* constant buffers' last bytes (open addressing by the buffer) */
+#define DC_POOL (32u << 20)   /* the bytes (two pools: the live entries move to the other one at each present) */
+enum { DC_VS, DC_PS, DC_CS };
+static const char *const g_dc_stage[3] = { "VS", "PS", "CS" };
+static const char *const g_dc_kind[6] = { "?", "DrawIndexed", "Draw", "DrawIndexedInstanced", "DrawInstanced", "Dispatch" };
+struct dc_cb { void *buf; uint64_t h; uint32_t off, size; }; /* h 0 = its bytes unknown; off ~0u = not kept */
+struct dc_rec {
+	uint8_t kind, src;
+	uint32_t n;
+	void *sh[3], *srv[3][DC_SRV], *smp[DC_SMP], *rtv0, *dsv, *blend;
+	struct dc_cb cb[3][DC_CB];
+};
+static __thread int dc_rt;    /* this thread is the render thread (set at H9) */
+static __thread int dc_src;   /* inside a ClientFX renderer's draw (RD_DRAW_STUB): its RDD_* + 1 */
+static struct {
+	int ok;                       /* the hooks are in */
+	uintptr_t orig[DCS_N];
+	void *sh[3], *cb[3][DC_CB], *srv[3][DC_SRV], *smp[DC_SMP], *rtv0, *dsv, *blend; /* bound now (render thread) */
+	_Atomic int req;              /* `fx d3d N` */
+	_Atomic int replay;           /* `fx d3dsame MASK` */
+	uint64_t r_draws[2], r_srv, r_cb; /* replayed: other / CPU-particle draws; views and constant buffers rebound */
+	int state, left, pass;        /* 0 off, 1 warm-up, 2 capturing; frames left; the eye pass (-1 none) */
+	uint32_t k[2];                /* draws in each eye's pass this frame */
+	struct dc_rec *rec;           /* eye 0's draws */
+	unsigned char *pool[2];
+	int cur;
+	uint32_t used;
+	struct dc_cb buf[DC_BUF_N];
+	struct { void *res; unsigned char *p; uint32_t size; } map[64];
+	int nmap;
+	uint32_t f_cmp, f_mis, f_srv, f_cb, f_cbunk, f_smp, f_rt, f_bl, f_px, f_pxd, f_lines, f_pxlines, f_mislines;
+	uint32_t f_cbslot[3][DC_CB], f_srvslot[3][DC_SRV];
+	uint64_t frames, maps, upds, full;
+	uint32_t lines;
+} g_dc;
+
+static unsigned dc_bslot(const void *b)
+{
+	return (unsigned)(((uintptr_t)b >> 4) * 2654435761u) & (DC_BUF_N - 1);
+}
+static struct dc_cb *dc_buf_find(void *b, int add)
+{
+	unsigned i = dc_bslot(b);
+	for (unsigned j = 0; j < DC_BUF_N; j++, i = (i + 1) & (DC_BUF_N - 1)) {
+		if (g_dc.buf[i].buf == b)
+			return &g_dc.buf[i];
+		if (!g_dc.buf[i].buf)
+			return add ? (g_dc.buf[i].buf = b, &g_dc.buf[i]) : NULL;
+	}
+	return NULL;
+}
+static uint32_t dc_keep_bytes(const unsigned char *p, uint32_t size)
+{
+	if (!g_dc.pool[g_dc.cur] || g_dc.used + size > DC_POOL) {
+		g_dc.full++;
+		return ~0u;
+	}
+	uint32_t off = g_dc.used;
+	memcpy(g_dc.pool[g_dc.cur] + off, p, size);
+	g_dc.used += (size + 15u) & ~15u;
+	return off;
+}
+static void dc_buf_set(void *b, const unsigned char *p, uint32_t size)
+{
+	struct dc_cb *e = dc_buf_find(b, 1);
+	if (!e)
+		return;
+	e->h = rd_fnv(p, size) | 1, e->size = size, e->off = dc_keep_bytes(p, size);
+}
+/* the present: the live entries' bytes into the other pool, the pool they were in emptied */
+static void dc_pool_turn(void)
+{
+	int o = g_dc.cur;
+	g_dc.cur = !o, g_dc.used = 0;
+	for (unsigned i = 0; i < DC_BUF_N; i++)
+		if (g_dc.buf[i].buf && g_dc.buf[i].off != ~0u)
+			g_dc.buf[i].off = dc_keep_bytes(g_dc.pool[o] + g_dc.buf[i].off, g_dc.buf[i].size);
+}
+typedef void (*dc_gettype_fn)(void *res, int *dim);
+typedef void (*dc_bufdesc_fn)(void *res, uint32_t *desc);
+/* a buffer bound as constants (GetType 1 = a buffer, GetDesc's BindFlags has D3D11_BIND_CONSTANT_BUFFER): its size */
+static uint32_t dc_cb_size(void *res)
+{
+	int dim = 0;
+	((dc_gettype_fn)(*(void ***)res)[7])(res, &dim);
+	if (dim != 1)
+		return 0;
+	uint32_t d[6] = { 0 };
+	((dc_bufdesc_fn)(*(void ***)res)[10])(res, d);
+	return (d[2] & 4u) && d[0] && d[0] <= 65536 ? d[0] : 0;
+}
+
+typedef void (*dc_set_fn)(void *ctx, uint32_t start, uint32_t n, void *const *v);
+typedef void (*dc_sh_fn)(void *ctx, void *sh, void *const *ci, uint32_t nci);
+#define DC_SET(NAME, S, ARR, CAP)                                                                                     \
+	__attribute__((used)) void somvr_dc_##NAME(void *ctx, uint32_t start, uint32_t n, void *const *v)             \
+	{                                                                                                              \
+		if (dc_rt)                                                                                             \
+			for (uint32_t i = 0; i < n && start + i < (CAP); i++)                                          \
+				(ARR)[start + i] = v ? v[i] : NULL;                                                     \
+		((dc_set_fn)g_dc.orig[S])(ctx, start, n, v);                                                           \
+	}
+DC_SET(vscb, DCS_VSCB, g_dc.cb[DC_VS], DC_CB)
+DC_SET(pscb, DCS_PSCB, g_dc.cb[DC_PS], DC_CB)
+DC_SET(cscb, DCS_CSCB, g_dc.cb[DC_CS], DC_CB)
+DC_SET(vssrv, DCS_VSSRV, g_dc.srv[DC_VS], DC_SRV)
+DC_SET(pssrv, DCS_PSSRV, g_dc.srv[DC_PS], DC_SRV)
+DC_SET(cssrv, DCS_CSSRV, g_dc.srv[DC_CS], DC_SRV)
+DC_SET(pssmp, DCS_PSSMP, g_dc.smp, DC_SMP)
+#define DC_SH(NAME, S, ST)                                                                                            \
+	__attribute__((used)) void somvr_dc_##NAME(void *ctx, void *sh, void *const *ci, uint32_t nci)                \
+	{                                                                                                              \
+		if (dc_rt)                                                                                             \
+			g_dc.sh[ST] = sh;                                                                              \
+		((dc_sh_fn)g_dc.orig[S])(ctx, sh, ci, nci);                                                            \
+	}
+DC_SH(vssh, DCS_VSSH, DC_VS)
+DC_SH(pssh, DCS_PSSH, DC_PS)
+DC_SH(cssh, DCS_CSSH, DC_CS)
+typedef void (*dc_omrt_fn)(void *ctx, uint32_t n, void *const *rtv, void *dsv);
+__attribute__((used)) void somvr_dc_omrt(void *ctx, uint32_t n, void *const *rtv, void *dsv)
+{
+	if (dc_rt)
+		g_dc.rtv0 = n && rtv ? rtv[0] : NULL, g_dc.dsv = dsv;
+	((dc_omrt_fn)g_dc.orig[DCS_OMRT])(ctx, n, rtv, dsv);
+}
+typedef void (*dc_blend_fn)(void *ctx, void *bs, const float *f, uint32_t mask);
+__attribute__((used)) void somvr_dc_blend(void *ctx, void *bs, const float *f, uint32_t mask)
+{
+	if (dc_rt)
+		g_dc.blend = bs;
+	((dc_blend_fn)g_dc.orig[DCS_BLEND])(ctx, bs, f, mask);
+}
+typedef int32_t (*dc_map_fn)(void *ctx, void *res, uint32_t sub, uint32_t type, uint32_t flags, void *out);
+__attribute__((used)) int32_t somvr_dc_map(void *ctx, void *res, uint32_t sub, uint32_t type, uint32_t flags, void *out)
+{
+	int32_t hr = ((dc_map_fn)g_dc.orig[DCS_MAP])(ctx, res, sub, type, flags, out);
+	/* WRITE, WRITE_DISCARD, WRITE_NO_OVERWRITE of a constant buffer: its bytes read at the Unmap */
+	if (dc_rt && g_dc.state && hr >= 0 && out && res && !sub && (type == 2 || type == 4 || type == 5) && g_dc.nmap < 64) {
+		uint32_t sz = dc_cb_size(res);
+		if (sz && *(unsigned char **)out)
+			g_dc.map[g_dc.nmap].res = res, g_dc.map[g_dc.nmap].p = *(unsigned char **)out, g_dc.map[g_dc.nmap++].size = sz;
+	}
+	return hr;
+}
+typedef void (*dc_unmap_fn)(void *ctx, void *res, uint32_t sub);
+__attribute__((used)) void somvr_dc_unmap(void *ctx, void *res, uint32_t sub)
+{
+	if (dc_rt)
+		for (int i = g_dc.nmap - 1; i >= 0; i--)
+			if (g_dc.map[i].res == res) {
+				dc_buf_set(res, g_dc.map[i].p, g_dc.map[i].size), g_dc.maps++;
+				g_dc.map[i] = g_dc.map[--g_dc.nmap];
+				break;
+			}
+	((dc_unmap_fn)g_dc.orig[DCS_UNMAP])(ctx, res, sub);
+}
+typedef void (*dc_upd_fn)(void *ctx, void *dst, uint32_t sub, const void *box, const void *src, uint32_t rp, uint32_t dp);
+__attribute__((used)) void somvr_dc_updsub(void *ctx, void *dst, uint32_t sub, const void *box, const void *src, uint32_t rp,
+					   uint32_t dp)
+{
+	if (dc_rt && g_dc.state && dst && src && !box && !sub) {
+		uint32_t sz = dc_cb_size(dst);
+		if (sz)
+			dc_buf_set(dst, src, sz), g_dc.upds++;
+	}
+	((dc_upd_fn)g_dc.orig[DCS_UPDSUB])(ctx, dst, sub, box, src, rp, dp);
+}
+
+static void dc_fill(struct dc_rec *r, int kind, uint32_t n)
+{
+	memset(r, 0, sizeof *r);
+	r->kind = (uint8_t)kind, r->src = (uint8_t)dc_src, r->n = n;
+	r->rtv0 = g_dc.rtv0, r->dsv = g_dc.dsv;
+	for (int s = 0; s < 3; s++) {
+		if ((kind == 5) != (s == DC_CS)) /* a draw: the VS and PS state; a dispatch: the CS state */
+			continue;
+		r->sh[s] = g_dc.sh[s];
+		memcpy(r->srv[s], g_dc.srv[s], sizeof r->srv[s]);
+		for (int j = 0; j < DC_CB; j++) {
+			struct dc_cb *e = g_dc.cb[s][j] ? dc_buf_find(g_dc.cb[s][j], 0) : NULL;
+			r->cb[s][j].buf = g_dc.cb[s][j];
+			if (e)
+				r->cb[s][j].h = e->h, r->cb[s][j].off = e->off, r->cb[s][j].size = e->size;
+		}
+	}
+	if (kind != 5)
+		memcpy(r->smp, g_dc.smp, sizeof r->smp), r->blend = g_dc.blend;
+}
+/* eye 1's draw k against eye 0's: what differs, one line (the constant registers with both eyes' values) */
+static void dc_cmp(uint32_t k, const struct dc_rec *a, const struct dc_rec *b)
+{
+	g_dc.f_cmp++;
+	if (b->src == RDD_PSYS + 1)
+		g_dc.f_px++;
+	if (a->kind != b->kind || a->n != b->n || memcmp(a->sh, b->sh, sizeof a->sh)) {
+		g_dc.f_mis++;
+		if (g_dc.f_mislines++ < 3 && g_dc.lines++ < 400)
+			logf_("DCAP t=%.3f frame %llu draw %u: eye 1's is not eye 0's (%s/%s, count %u/%u, VS %p/%p, PS %p/%p, CS %p/%p)",
+			      mono(), (unsigned long long)g_rt_frame, k, g_dc_kind[a->kind % 6], g_dc_kind[b->kind % 6], a->n, b->n,
+			      a->sh[0], b->sh[0], a->sh[1], b->sh[1], a->sh[2], b->sh[2]);
+		return;
+	}
+	char o[900];
+	size_t n = 0;
+	int what = 0;
+#define DC_P(...) (n += (size_t)snprintf(o + n, n < sizeof o ? sizeof o - n : 0, __VA_ARGS__), n = n < sizeof o ? n : sizeof o - 1)
+	int loud = 0; /* worth a line: not only a view left bound from before (one side NULL) or the bones (VS b1) */
+	for (int s = 0; s < 3; s++)
+		for (int j = 0; j < DC_SRV; j++)
+			if (a->srv[s][j] != b->srv[s][j]) {
+				what |= 1, g_dc.f_srvslot[s][j]++;
+				loud |= a->srv[s][j] && b->srv[s][j];
+				DC_P(" %s t%d %p/%p;", g_dc_stage[s], j, a->srv[s][j], b->srv[s][j]);
+			}
+	for (int s = 0; s < 3; s++)
+		for (int j = 0; j < DC_CB; j++) {
+			const struct dc_cb *x = &a->cb[s][j], *y = &b->cb[s][j];
+			if (x->buf != y->buf) {
+				what |= 2, g_dc.f_cbslot[s][j]++, loud = 1;
+				DC_P(" %s b%d buffer %p/%p;", g_dc_stage[s], j, x->buf, y->buf);
+				continue;
+			}
+			if (!x->buf)
+				continue;
+			if (!x->h || !y->h) {
+				g_dc.f_cbunk++;
+				continue;
+			}
+			if (x->h == y->h)
+				continue;
+			what |= 2, g_dc.f_cbslot[s][j]++;
+			loud |= !(s == DC_VS && j == 1);
+			DC_P(" %s b%d (%u bytes) differs", g_dc_stage[s], j, x->size);
+			if (x->off == ~0u || y->off == ~0u || x->size != y->size) {
+				DC_P(" (bytes not kept);");
+				continue;
+			}
+			/* both in the current pool (kept this frame, or moved there at the present) */
+			const unsigned char *p = g_dc.pool[g_dc.cur] + x->off, *q = g_dc.pool[g_dc.cur] + y->off;
+			int nd = 0;
+			for (uint32_t r = 0; r + 16 <= x->size; r += 16)
+				if (memcmp(p + r, q + r, 16)) {
+					if (nd++ < 4) {
+						const float *f = (const float *)(p + r), *g = (const float *)(q + r);
+						DC_P(" c%u (%g %g %g %g | %g %g %g %g)", r / 16, f[0], f[1], f[2], f[3], g[0], g[1], g[2], g[3]);
+					}
+				}
+			DC_P(": %d registers;", nd);
+		}
+	if (memcmp(a->smp, b->smp, sizeof a->smp))
+		what |= 4, DC_P(" samplers;");
+	if (a->rtv0 != b->rtv0 || a->dsv != b->dsv)
+		what |= 8, DC_P(" target %p/%p depth %p/%p;", a->rtv0, b->rtv0, a->dsv, b->dsv);
+	if (a->blend != b->blend)
+		what |= 16, DC_P(" blend %p/%p;", a->blend, b->blend);
+#undef DC_P
+	g_dc.f_srv += !!(what & 1), g_dc.f_cb += !!(what & 2), g_dc.f_smp += !!(what & 4), g_dc.f_rt += !!(what & 8),
+		g_dc.f_bl += !!(what & 16);
+	int px = b->src == RDD_PSYS + 1;
+	if (px && what)
+		g_dc.f_pxd++;
+	loud |= !!(what & ~3);
+	if (!what || !loud || g_dc.lines >= 400 || (px ? g_dc.f_pxlines++ >= 16 : g_dc.f_lines++ >= 24))
+		return;
+	g_dc.lines++;
+	static const char *const srcw[RDD_N + 1] = { "", " CPU particles", " GPU particles", " sprites", " flare sprites",
+						    " lens flares" };
+	logf_("DCAP t=%.3f frame %llu draw %u (%s%s, count %u, VS %p PS %p CS %p, target %p):%s", mono(),
+	      (unsigned long long)g_rt_frame, k, g_dc_kind[b->kind % 6], srcw[b->src <= RDD_N ? b->src : 0], b->n, b->sh[0],
+	      b->sh[1], b->sh[2], b->rtv0, o);
+}
+/* `fx d3dsame MASK` (eyesame tests): eye 1's draw k binds eye 0's shader views and constant bytes for the draw (bit 0
+ * the CPU-particle draws, bit 1 all others; bit 2 only the views, bit 3 only the constants; neither = both), then its
+ * own again - if the eyes then match, the cause is in that state. Only for draws alike in both eyes (kind, count,
+ * shaders). The originals are called directly (no hook sees our binds). */
+typedef void (*dc_map0_fn)(void *ctx, void *res, uint32_t sub, uint32_t type, uint32_t flags, void *out);
+struct dc_undo { int srv[3], ncb; struct { void *buf; uint32_t off, size; } cb[3 * DC_CB]; };
+static const uint32_t g_dc_setsrv[3] = { DCS_VSSRV, DCS_PSSRV, DCS_CSSRV };
+static void dc_cb_write(void *ctx, void *buf, uint32_t off, uint32_t size)
+{
+	unsigned char m[16] = { 0 };
+	if (((dc_map_fn)g_dc.orig[DCS_MAP])(ctx, buf, 0, 4, 0, m) < 0 || !*(unsigned char **)m)
+		return;
+	memcpy(*(unsigned char **)m, g_dc.pool[g_dc.cur] + off, size);
+	((dc_unmap_fn)g_dc.orig[DCS_UNMAP])(ctx, buf, 0);
+}
+static int dc_replay(void *ctx, const struct dc_rec *a, const struct dc_rec *b, struct dc_undo *u)
+{
+	int m = atomic_load_explicit(&g_dc.replay, memory_order_relaxed), done = 0;
+	if (!(b->src == RDD_PSYS + 1 ? m & 1 : m & 2) || a->kind != b->kind || a->n != b->n || memcmp(a->sh, b->sh, sizeof a->sh))
+		return 0;
+	int views = !(m & 12) || (m & 4), consts = !(m & 12) || (m & 8);
+	memset(u, 0, sizeof *u);
+	for (int s = 0; s < 3 && views; s++)
+		if (memcmp(a->srv[s], b->srv[s], sizeof a->srv[s])) {
+			((dc_set_fn)g_dc.orig[g_dc_setsrv[s]])(ctx, 0, DC_SRV, a->srv[s]);
+			u->srv[s] = 1, done = 1, g_dc.r_srv++;
+		}
+	for (int s = 0; s < 3 && consts; s++)
+		for (int j = 0; j < DC_CB; j++) {
+			const struct dc_cb *x = &a->cb[s][j], *y = &b->cb[s][j];
+			if (!x->buf || x->buf != y->buf || !x->h || !y->h || x->h == y->h || x->off == ~0u || y->off == ~0u ||
+			    x->size != y->size)
+				continue;
+			dc_cb_write(ctx, x->buf, x->off, x->size);
+			u->cb[u->ncb].buf = y->buf, u->cb[u->ncb].off = y->off, u->cb[u->ncb++].size = y->size;
+			done = 1, g_dc.r_cb++;
+		}
+	if (done)
+		g_dc.r_draws[b->src == RDD_PSYS + 1]++;
+	return done;
+}
+static void dc_unreplay(void *ctx, const struct dc_rec *b, const struct dc_undo *u)
+{
+	for (int s = 0; s < 3; s++)
+		if (u->srv[s])
+			((dc_set_fn)g_dc.orig[g_dc_setsrv[s]])(ctx, 0, DC_SRV, b->srv[s]);
+	for (int i = 0; i < u->ncb; i++)
+		dc_cb_write(ctx, u->cb[i].buf, u->cb[i].off, u->cb[i].size);
+}
+/* before a draw: eye 0's kept, eye 1's compared (`fx d3d`) and replayed (`fx d3dsame`); 1 = undo after the draw */
+static int dc_draw(void *ctx, int kind, uint32_t n, struct dc_rec *now, struct dc_undo *u)
+{
+	if (!dc_rt || g_dc.state != 2 || g_dc.pass < 0)
+		return 0;
+	int e = g_dc.pass;
+	uint32_t k = g_dc.k[e]++;
+	if (k >= DC_REC_N)
+		return 0;
+	if (e == 0) {
+		dc_fill(&g_dc.rec[k], kind, n);
+		return 0;
+	}
+	if (k >= g_dc.k[0])
+		return 0;
+	dc_fill(now, kind, n);
+	if (g_dc.left > 0)
+		dc_cmp(k, &g_dc.rec[k], now);
+	return atomic_load_explicit(&g_dc.replay, memory_order_relaxed) && dc_replay(ctx, &g_dc.rec[k], now, u);
+}
+#define DC_DRAW_PRE(KIND, N)                                                                                          \
+	struct dc_rec now;                                                                                             \
+	struct dc_undo u;                                                                                              \
+	int und = dc_draw(ctx, KIND, N, &now, &u)
+#define DC_DRAW_POST()                                                                                                \
+	if (und)                                                                                                       \
+	dc_unreplay(ctx, &now, &u)
+typedef void (*dc_di_fn)(void *ctx, uint32_t n, uint32_t start, int32_t base);
+__attribute__((used)) void somvr_dc_drawidx(void *ctx, uint32_t n, uint32_t start, int32_t base)
+{
+	DC_DRAW_PRE(1, n);
+	((dc_di_fn)g_dc.orig[DCS_DRAWIDX])(ctx, n, start, base);
+	DC_DRAW_POST();
+}
+typedef void (*dc_d_fn)(void *ctx, uint32_t n, uint32_t start);
+__attribute__((used)) void somvr_dc_draw(void *ctx, uint32_t n, uint32_t start)
+{
+	DC_DRAW_PRE(2, n);
+	((dc_d_fn)g_dc.orig[DCS_DRAW])(ctx, n, start);
+	DC_DRAW_POST();
+}
+typedef void (*dc_dii_fn)(void *ctx, uint32_t n, uint32_t inst, uint32_t start, int32_t base, uint32_t sinst);
+__attribute__((used)) void somvr_dc_drawidxi(void *ctx, uint32_t n, uint32_t inst, uint32_t start, int32_t base, uint32_t sinst)
+{
+	DC_DRAW_PRE(3, n * 65536u + inst);
+	((dc_dii_fn)g_dc.orig[DCS_DRAWIDXI])(ctx, n, inst, start, base, sinst);
+	DC_DRAW_POST();
+}
+typedef void (*dc_dri_fn)(void *ctx, uint32_t n, uint32_t inst, uint32_t start, uint32_t sinst);
+__attribute__((used)) void somvr_dc_drawi(void *ctx, uint32_t n, uint32_t inst, uint32_t start, uint32_t sinst)
+{
+	DC_DRAW_PRE(4, n * 65536u + inst);
+	((dc_dri_fn)g_dc.orig[DCS_DRAWI])(ctx, n, inst, start, sinst);
+	DC_DRAW_POST();
+}
+typedef void (*dc_disp_fn)(void *ctx, uint32_t x, uint32_t y, uint32_t z);
+__attribute__((used)) void somvr_dc_dispatch(void *ctx, uint32_t x, uint32_t y, uint32_t z)
+{
+	DC_DRAW_PRE(5, x * 65536u + y * 256u + z);
+	((dc_disp_fn)g_dc.orig[DCS_DISPATCH])(ctx, x, y, z);
+	DC_DRAW_POST();
+}
+
+static void dc_install(void)
+{
+	char why[512];
+	for (int i = 0; i < DCS_N; i++)
+		if (check_site(&g_dc_sites[i], why, sizeof why) != 0) {
+			logf_("DCAP site %s %#lx MISMATCH: %s (no D3D11 capture)", g_dc_sites[i].name,
+			      (unsigned long)g_dc_sites[i].addr, why);
+			return;
+		}
+	void *fn[DCS_N] = { (void *)somvr_dc_vscb, (void *)somvr_dc_pssrv, (void *)somvr_dc_pssh, (void *)somvr_dc_pssmp,
+			    (void *)somvr_dc_vssh, (void *)somvr_dc_drawidx, (void *)somvr_dc_draw, (void *)somvr_dc_map,
+			    (void *)somvr_dc_unmap, (void *)somvr_dc_pscb, (void *)somvr_dc_drawidxi, (void *)somvr_dc_drawi,
+			    (void *)somvr_dc_vssrv, (void *)somvr_dc_omrt, (void *)somvr_dc_blend, (void *)somvr_dc_dispatch,
+			    (void *)somvr_dc_updsub, (void *)somvr_dc_cssrv, (void *)somvr_dc_cssh, (void *)somvr_dc_cscb };
+	int n = 0;
+	for (int i = 0; i < DCS_N; i++)
+		g_dc.orig[i] = g_dc_sites[i].target;
+	for (int i = 0; i < DCS_N; i++)
+		n += go_slot(&g_dc_sites[i], fn[i], &g_dc.orig[i]);
+	g_dc.ok = n == DCS_N;
+	g_dc.pass = -1;
+	logf_("DCAP t=%.3f the threaded context's %d slots %s (`fx d3d N`: N stereo frames compared draw by draw)", mono(), n,
+	      g_dc.ok ? "hooked" : "NOT all hooked");
+}
+/* rd's BeginRenderTarget hook (render thread): an eye's pass starts at its first begin of rt3D */
+static void dc_begin(int is3d, int ph)
+{
+	if (g_dc.state != 2 || !is3d || ph > 1 || g_dc.pass >= ph)
+		return;
+	if (ph == 1 && g_dc.pass < 0 && !g_dc.k[0])
+		return; /* eye 0's pass was not seen this frame */
+	g_dc.pass = ph, g_dc.k[ph] = 0;
+}
+static void dc_frame_line(void)
+{
+	char s[600];
+	size_t n = 0;
+	for (int st = 0; st < 3; st++) {
+		for (int j = 0; j < DC_CB; j++)
+			if (g_dc.f_cbslot[st][j] && n < sizeof s - 40)
+				n += (size_t)snprintf(s + n, sizeof s - n, " %s b%d x%u", g_dc_stage[st], j, g_dc.f_cbslot[st][j]);
+		for (int j = 0; j < DC_SRV; j++)
+			if (g_dc.f_srvslot[st][j] && n < sizeof s - 40)
+				n += (size_t)snprintf(s + n, sizeof s - n, " %s t%d x%u", g_dc_stage[st], j, g_dc.f_srvslot[st][j]);
+	}
+	logf_("DCAP t=%.3f frame %llu: eye 0 drew %u, eye 1 %u; %u compared (%u not alike), different: shader views %u, "
+	      "constants %u (bytes unknown %u), samplers %u, targets %u, blend %u; CPU-particle draws compared %u, different %u;"
+	      " by slot:%s; buffers' bytes so far: %llu maps, %llu updates, pool %u KB used, %llu not kept; d3dsame %#x so far: "
+	      "%llu draws (%llu CPU-particle) given eye 0's state, %llu view sets, %llu constant buffers",
+	      mono(), (unsigned long long)g_rt_frame, g_dc.k[0], g_dc.k[1], g_dc.f_cmp, g_dc.f_mis, g_dc.f_srv, g_dc.f_cb,
+	      g_dc.f_cbunk, g_dc.f_smp, g_dc.f_rt, g_dc.f_bl, g_dc.f_px, g_dc.f_pxd, n ? s : " none",
+	      (unsigned long long)g_dc.maps, (unsigned long long)g_dc.upds, g_dc.used >> 10, (unsigned long long)g_dc.full,
+	      atomic_load(&g_dc.replay), (unsigned long long)(g_dc.r_draws[0] + g_dc.r_draws[1]),
+	      (unsigned long long)g_dc.r_draws[1], (unsigned long long)g_dc.r_srv, (unsigned long long)g_dc.r_cb);
+}
+/* H9 (render thread): the frame's end - its summary, the next frame armed */
+static void dc_present(void)
+{
+	dc_rt = 1;
+	if (!g_dc.ok)
+		return;
+	int rp = atomic_load_explicit(&g_dc.replay, memory_order_relaxed);
+	if (g_dc.state == 2 && g_dc.left > 0) {
+		dc_frame_line(), g_dc.frames++;
+		if (--g_dc.left <= 0)
+			logf_("DCAP t=%.3f the capture is over (%llu frames)%s", mono(), (unsigned long long)g_dc.frames,
+			      rp ? "; recording goes on for fx d3dsame" : "");
+	}
+	if (g_dc.state == 2 && g_dc.left <= 0 && !rp) {
+		g_dc.state = 0;
+		free(g_dc.rec), free(g_dc.pool[0]), free(g_dc.pool[1]);
+		g_dc.rec = NULL, g_dc.pool[0] = g_dc.pool[1] = NULL;
+		memset(g_dc.buf, 0, sizeof g_dc.buf);
+		g_dc.nmap = 0, g_dc.used = 0;
+	} else if (g_dc.state == 1)
+		g_dc.state = 2;
+	if (g_dc.state == 2 && g_dc.left <= 0) { /* recording for `fx d3dsame`: a capture asked for logs from the next frame */
+		int r = atomic_exchange(&g_dc.req, 0);
+		if (r > 0)
+			g_dc.left = r, g_dc.lines = 0;
+	}
+	if (!g_dc.state) {
+		int r = atomic_exchange(&g_dc.req, 0);
+		if (r <= 0 && atomic_load_explicit(&g_dc.replay, memory_order_relaxed))
+			r = -1; /* `fx d3dsame` alone: recording, no logs */
+		if (r) {
+			g_dc.rec = malloc(sizeof(struct dc_rec) * DC_REC_N);
+			g_dc.pool[0] = malloc(DC_POOL), g_dc.pool[1] = malloc(DC_POOL);
+			if (!g_dc.rec || !g_dc.pool[0] || !g_dc.pool[1]) {
+				free(g_dc.rec), free(g_dc.pool[0]), free(g_dc.pool[1]);
+				g_dc.rec = NULL, g_dc.pool[0] = g_dc.pool[1] = NULL;
+				logf_("DCAP t=%.3f no memory for the capture", mono());
+			} else
+				g_dc.state = 1, g_dc.left = r > 0 ? r : 0, g_dc.cur = 0, g_dc.used = 0, g_dc.lines = 0;
+		}
+	} else if (g_dc.state == 2)
+		dc_pool_turn();
+	g_dc.pass = -1, g_dc.k[0] = g_dc.k[1] = 0;
+	g_dc.f_cmp = g_dc.f_mis = g_dc.f_srv = g_dc.f_cb = g_dc.f_cbunk = g_dc.f_smp = g_dc.f_rt = g_dc.f_bl = 0;
+	g_dc.f_px = g_dc.f_pxd = g_dc.f_lines = g_dc.f_pxlines = g_dc.f_mislines = 0;
+	memset(g_dc.f_cbslot, 0, sizeof g_dc.f_cbslot), memset(g_dc.f_srvslot, 0, sizeof g_dc.f_srvslot);
+}
+
 /* SOMVR_FX_TEST's trace (`fx trace N`): render-thread events of N stereo frames */
 __attribute__((format(printf, 1, 2))) static void rd_tr(const char *fmt, ...)
 {
@@ -332,6 +935,7 @@ static void rd_rt_end_pre(uintptr_t rt, uint32_t flags)
 static void rd_rt_eye_end(int e, uintptr_t rt, uint64_t fr)
 {
 	g_rcf.frame = fr;
+	g_dc.pass = -1; /* `fx d3d`: the next pass starts at its first begin of rt3D */
 	if (e == 0) {
 		g_rcf.phase = 1;
 		if (atomic_load_explicit(&g_rcf.on, memory_order_relaxed) && g_rcf.ok && g_rcf.state >= 0 && !g_rcf.swapped) {
@@ -360,7 +964,7 @@ static void rd_vr_present(void);
 static void rd_rt_present(void)
 {
 	if (g_rd.test)
-		rd_vr_present();
+		rd_vr_present(), dc_present();
 	if (g_rcf.swapped) {
 		rcf_swap(g_rcf.rt);
 		if (g_rcf.late++ < 8)
@@ -385,6 +989,7 @@ __attribute__((used)) uint64_t somvr_w_rdbrt(uintptr_t rt)
 	uint64_t r = ((rd_brt_fn)g_rd_sites[RDS_BRT_A].target)(rt);
 	int is3d = rt && (rt == (uintptr_t)g_rt_target || (g_rcf.rt && rt == g_rcf.rt)), ph = g_rcf.phase < 3 ? g_rcf.phase : 2;
 	g_rcf.begins[ph][is3d]++;
+	dc_begin(is3d, ph);
 	if (g_rcf.tracing) {
 		char b[160];
 		rd_tr_bound(b, sizeof b);
@@ -691,10 +1296,13 @@ static void rd_prep_record(const unsigned char *blk, uint32_t len, int e, uintpt
 			atomic_fetch_add_explicit(&g_rd.n_skip[N], 1, memory_order_relaxed);                           \
 			return;                                                                                        \
 		}                                                                                                      \
+		int s0 = dc_src;                                                                                       \
+		dc_src = N + 1;                                                                                        \
 		if (N == 0 && g_rd.test)                                                                               \
 			rd_draw0_full(self, (void **)ctx);                                                             \
 		else                                                                                                   \
 			((rd_draw_fn)g_rd.orig[N])(self, ctx);                                                         \
+		dc_src = s0;                                                                                           \
 	}
 RD_DRAW_STUB(0)
 RD_DRAW_STUB(1)
@@ -976,6 +1584,17 @@ static const char *rd_word(const char *w0)
 		      (m & RDF_FLARES) && !g_rd.ok[RDS_LENSFLARE] ? " (the lens flares' slot is NOT hooked)" : "");
 		return "flatfx (from the next frame)";
 	}
+	if (!strcmp(w, "ktime state") || !strcmp(w, "ktime")) {
+		rd_kt_state("KTIME state");
+		return "ktime (a state line)";
+	}
+	if (!strcmp(w, "ktime frame") || !strcmp(w, "ktime game")) {
+		int on = w[6] == 'f';
+		atomic_store(&g_kt.on, on);
+		logf_("KTIME t=%.3f the word: %s%s", cb_now(), on ? "frame (eye 1's pass with eye 0's k_fTime)" :
+		      "game (eye 1's pass with what the late pass left)", on && !g_kt.ok ? " - a site did NOT match: stays the game's" : "");
+		return "ktime";
+	}
 	if (!strcmp(w, "curframe state") || !strcmp(w, "curframe")) {
 		rcf_state_line("CURFRAME state");
 		return "curframe (a state line)";
@@ -1015,6 +1634,21 @@ static const char *rd_word(const char *w0)
 		      "the next present)", cb_now(), iv);
 		return "fx vbgrow";
 	}
+	if (sscanf(w, "fx d3dsame %i", &iv) == 1) {
+		atomic_store(&g_dc.replay, iv & 15);
+		logf_("DCAP t=%.3f the word: fx d3dsame %#x (eye 1's %s draws bind eye 0's %s; so far %llu draws (%llu CPU-particle), "
+		      "%llu view sets, %llu constant buffers)", cb_now(), iv & 15, (iv & 3) == 3 ? "CPU-particle and other" :
+		      iv & 1 ? "CPU-particle" : iv & 2 ? "non-particle" : "no", !(iv & 12) || (iv & 12) == 12 ? "views and constants" :
+		      iv & 4 ? "shader views" : "constants", (unsigned long long)(g_dc.r_draws[0] + g_dc.r_draws[1]),
+		      (unsigned long long)g_dc.r_draws[1], (unsigned long long)g_dc.r_srv, (unsigned long long)g_dc.r_cb);
+		return "fx d3dsame";
+	}
+	if (sscanf(w, "fx d3d %d", &iv) == 1) {
+		atomic_store(&g_dc.req, iv < 0 ? 0 : iv > 8 ? 8 : iv);
+		logf_("DCAP t=%.3f the word: fx d3d %d (the next %d stereo frames after one of warm-up: eye 1's draws against eye "
+		      "0's, DCAP lines; the hooks %s)", cb_now(), iv, iv, g_dc.ok ? "in" : "NOT in");
+		return "fx d3d";
+	}
 	if (sscanf(w, "fx trace %d", &iv) == 1) {
 		atomic_store(&g_rcf.tr_lines, 0);
 		atomic_store(&g_rcf.tr_req, iv < 0 ? 0 : iv > 4 ? 4 : iv);
@@ -1044,7 +1678,7 @@ static const char *rd_word(const char *w0)
 		atomic_store_explicit(&g_rd.cmd_pend, 1, memory_order_release);
 		return "fx console (after the next stereo frame)";
 	}
-	return "fx (not hide MASK|hideeye E|eyesame 0|1|sync 0|1|trace N|console CMD|state: ignored)";
+	return "fx (not hide MASK|hideeye E|eyesame 0|1|sync 0|1|trace N|d3d N|console CMD|state: ignored)";
 }
 
 static void rcf_state_line(const char *head)
@@ -1102,6 +1736,23 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		      "both eyes share the 3D target's current-frame images, as the game made them",
 		      g_rcf.want && !g_rcf.ok ? " - NOT possible: RD_CF_MAKE did not match" : "");
 	}
+	{ /* build 23: SOMVR_KTIME (the upload proven, the late write proven read-only) */
+		char kwhy[512];
+		memset(&g_kt, 0, sizeof g_kt);
+		g_kt.want = env_word("SOMVR_KTIME", (const char *const[]){ "game", "frame" }, 2, 1);
+		g_kt.ok = 1;
+		for (int i = RDS_KT_UPLOAD; i <= RDS_KT_LATE; i++)
+			if (check_site(&sites[i], kwhy, sizeof kwhy) != 0) {
+				g_kt.ok = 0;
+				logf_("FLATFX site %s %#lx MISMATCH: %s (SOMVR_KTIME stays the game's)", sites[i].name,
+				      (unsigned long)sites[i].addr, kwhy);
+			}
+		atomic_store(&g_kt.on, g_kt.want);
+		logf_("CONFIG ktime=%s (SOMVR_KTIME: %s)%s", g_kt.want ? "frame" : "game",
+		      g_kt.want ? "eye 1's pass gets the shaders' clock k_fTime of eye 0's (the game's time of the frame) back" :
+		      "eye 1's pass keeps the k_fRealTime the late pass of eye 0's left in k_fTime",
+		      g_kt.want && !g_kt.ok ? " - NOT possible: a site did not match" : "");
+	}
 	const char *s = getenv("SOMVR_FLATFX");
 	int m = s ? rd_parse(s) : 0;
 	if (m < 0) {
@@ -1146,6 +1797,8 @@ static void rd_start(const struct site_spec *sites, int *bad)
 	if (g_rd.test) /* build 22: the trace's BeginRenderTarget bindings */
 		for (int i = RDS_BRT_A; i <= RDS_BRT_B; i++)
 			g_rd.ok[i] = bo_patch_call(&sites[i], (void *)somvr_w_rdbrt);
+	if (g_rd.test) /* build 23: the D3D11 capture's pass-throughs (`fx d3d N`) */
+		dc_install();
 	unsigned have = (g_rd.ok[RDS_LENSFLARE] ? RDF_FLARES : 0) | (g_rd.ok[RDS_SHAFTS] ? RDF_SHAFTS : 0) | RDF_VIGNETTE |
 			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0);
 	atomic_store(&g_rd.off, g_rd.want & have);
@@ -1162,6 +1815,7 @@ static void rd_start(const struct site_spec *sites, int *bad)
 
 static void rd_end_log(void)
 {
+	rd_kt_state("KTIME END");
 	if (g_rd.want || g_rd.test || g_rd.vis_full)
 		rd_state_line("FLATFX END");
 	if (g_rcf.want || g_rcf.swaps || g_rd.test)

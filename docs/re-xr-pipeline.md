@@ -15951,3 +15951,209 @@ So it ships on (`SOMVR_CLIMB_DOWN_OVER=on` in the block; the build 21 line comme
 - The kill after a carried walk-up: the judge (test_carried) and the thrust's own speed (4.40 m/s, cos 0.98) are proven;
   the scripted thrust never entered its body (24 cm off). A real hand drawing back and thrusting is the headset's.
 - Down over: hand over hand down the bank's sloping face (the scripted hand found no hold 60 cm under the eyes there).
+
+## 95. Build 23: the captain's card at the gaze, the grab cue on captains, the launcher's limits: `SOMVR_VERBS_CUE_CAPTAIN` (2026-10-29, som-b23-polish)
+Three open ends of build 22 (88.5): the captain's introduction card came up small and in pieces, build 21's grab cue
+glowed on a captain whose grab the game then throws off, and the launcher refused a switches file over 1000 lines and
+the HUD's tile sets (`|`, `;`). Driver `scripts/polish23-drive.sh` (captain22's helpers).
+
+### 95.1 The card in one piece, at the gaze (code defaults, no switch)
+- **Where the card is** (the HUD dumps of runs 20261029-023334 frame 637 and -024657 frame 690, every row): his name's
+  banner - the skull and "Grûblik the Flogger" between two rules - at y 755..830 (the rules 914 px wide, x 503..1417),
+  his line ("Nobody to hear your screams, as I twist my blades into your flesh!") at y 868..891, centred: **the
+  subtitle line's own place** (89.2: the first line at y 868..892). The line under a speaker's banner.
+- **Why it split**: build 21's band tiles cut the HUD image at fixed rects. Build 21: the banner's top (755..780) in the
+  hints' tile (440,600,1040,180), its middle in the HUD quad (0.43 deg a line), the line's right end (x >= 1120) in the
+  prompts' tile (1120,860,800,220) - three places (run 023334: the line's end 13 deg under the gaze as its own popup).
+  Build 22's subtitles (400,820,1120,120) moved the cut: the banner's top in the hints' tile, its middle in the HUD
+  quad, its foot and the line in the subtitles' popup - still three.
+- **The fix** (somvr_menus.h 2b, 2d): the banner belongs to the line, so the subtitles' rect takes it -
+  `SOMVR_SUB_RECT_DEFAULT` 400,755,1120,185 (was 400,820,1120,120) - and no band tile reaches it: the hints' tile ends
+  at 755 (440,600,1040,155; the hints were measured at 672..754, 31.1), the prompts' starts at 940 (1120,940,800,140:
+  what build 22's subtitles cut it to; the prompts at 943..1078). With `SOMVR_XR_SUBTITLES=on` (the env) the card is
+  one popup, placed under the gaze when it comes up and still in the room while it shows, at the subtitles' scale (80 %:
+  his line as large as any subtitle, 0.91 deg a 24-px line; the name larger). A subtitle line alone is placed by its
+  content, as before. With the subtitles off the card is in no tile: whole in the HUD quad (small). The band's extra area
+  is 1098 x 471 now (was 526); the subtitles' tile 1120 x 185 the last.
+- test_menus `test_subtitles`: each of the HUD's texts (the banner, the hints, the XP, the prompts, a one- and a
+  two-line subtitle, the card's banner and line) inside its own tile and in no other; build 22's rects split the card
+  (10 checks fail on build 22's defaults); the layout fits; test_layer's band (1098 x 471).
+
+### 95.2 The grab cue on a captain: `SOMVR_VERBS_CUE_CAPTAIN=on` (preload; default on, the env on)
+- **The game's rule** (`cue rules`, run 20261029-071459: the records read, nothing called but the selection): the root
+  node `PC_Grab_Attempt` (the squeeze's) has three **Links**, in order: `PC_Grab_Into_Immune` (LinkToRoot 1; its pool
+  holds `PC_Grab_Into_F_Resistant`, `_B_Resistant`, `_F_Immune`, `_B_Immune`, `_KD_L/R_Resistant` and 9 more), then
+  `PC_Grab_Into` (its pool `PC_Grab_Into_F`, `_B`, `_KD_L/R`, `_F_Def_GrabVulnerable`, `_F_Def_Stunned` and 6 more; Links
+  `PC_Grab_Release`), then `PC_Grab_Goblin`. When the attempt lands the game takes the first link whose pool passes
+  against the target: a captain with `Resistant_GrabKnockdown` (its item `Item_Resistant_GrabKnockdown`, the trait's
+  counterpart `Vulnerable_Grabknockdown`) passes the Immune pool at full health - the end `PC_Grab_Into_F_Resistant`
+  (sync `PC_Grab_Into_F_Immune`: he throws it off) - and fails it when weakened, so `PC_Grab_Into` takes him. The
+  pools' attacks' Predicates are not DB records the reader knows (no attributes readable), so the health line itself is
+  not read; measured (88.3 and this run): thrown off at 100 % and 48 %, held at 33 %, 11 % and 14 %. Talion's own
+  TraitReactionNodes (character record field 12: one, unnamed) hold no grab end.
+- **Built** (somvr_combat21_game.c `gc_end_nodes`, `gc_grab_end`): the cue's answer for an orc that is a Nemesis captain
+  (`kp_of_combat`: an NPC bound to a faction member) asks the grab **to its end** - the nodes that hold a
+  `*Grab_Into*` attack (Talion's TraitReactionNodes, then the attempt's Links, in the game's order; read once per root
+  record, logged `VERBS cue: the grab's ends: 2 nodes hold a 'PC_Grab_Into_*': 'PC_Grab_Into_Immune', 'PC_Grab_Into'`),
+  the game's own selection (`vb_pick`) from each for him as the explicit target, the attack window not asked (it would
+  be the attempt's then); the first `*Grab_Into*` pick decides: `_Resistant` / `_Immune` = no cue ("a captain who
+  throws the grab off"), else the cue as before; no answer = the attempt's answer kept (build 22). Only when the attempt
+  itself would be taken; plain orcs unchanged. Lines `CONFIG verbs_cue build 23: captain=on ...`, `VERBS cue t=...
+  captain ... the grab's end by the game: '...' - it holds: the cue | he throws it off: no cue`, the END line's
+  `captains (on): the grab's end asked N (holds, thrown off, no answer)`. `=off` = build 22.
+- **`cue rules`** (SOMVR_HANDS_TEST; read only): the attacks `PC_Grab_Attempt_F`, `PC_Grab_Into_F`, `_F_Resistant`,
+  `_F_Immune`, `PC_Grab_Attempt_F_Fail` (every attribute, named by the attack schema), their Predicate / AttackData /
+  AttackPostData, Talion's TraitReactionNodes, the attempt node and its Links with their pools and the game's pick from
+  each (the window not asked), the nearest two orcs' character records' TraitReactionNodes and a captain's trait records
+  one level deep (hashes where no schema names them).
+- Proof (run 20261029-071459): Grûblik the Flogger (Resistant_GrabKnockdown) at 976 health: `the grab's end by the game:
+  'PC_Grab_Into_F_Resistant' - he throws it off: no cue` (44 answers, no cue on); the squeeze: `PC_Grab_Attempt_F` ->
+  `PC_Grab_Into_F_Resistant`, no grab prompts. `captain hp 105` (20 % of his spawn health 526), his regeneration to 105..141: `'PC_Grab_Into_F' - it
+  holds: the cue` (42 answers, the cue on 6 times between the attack window's refusals while he swung); the squeeze:
+  `PC_Grab_Into_F` and the grab's prompts (X 'UI_Combat_GrabFlurry', B 'Combat_Grab_Drain', A 'Domination_Subdue').
+  `VERBS cue END: ... captains (on): the grab's end asked 86 (holds 42, thrown off 44, no answer 0)`.
+
+### 95.3 Runs (headless, scripts/headset-build23.env + `SOMVR_HANDS_TEST=1`, the practice meadow, scripts/polish23-drive.sh; 0 WARN, the install unchanged (0 newer), GameData.sav UNCHANGED)
+**Run 20261029-071459** (steps intro rules grabfull low grablow kill):
+- The band: `xr: subtitles: the rect 400,755 1120x185 a band row of its own (tile 4 ...; 0 tiles cut to keep clear of
+  it)`. **The card**: Grûblik the Flogger 10 m ahead, his introduction in the world; `STORY ... subtitle ch=1
+  'Dead-Man!'`, then `'One on one, is it? A shame… I like an audience when I kill an Elf-lover!'` - **his line is the
+  subtitle channel's** (the card's banner over it). `tile 4 placed (stereo frame 635) ... yaw +10.1 pitch -14.7 deg (the
+  gaze +10.1 -1.7)`: at the gaze, held while the next line replaced the first. Frame 699 composed (both eyes): **the
+  whole card** - the skull, "Grûblik the Flogger" between its rules and his line under it - one popup just under him,
+  readable (the popup crop: the line as large as a subtitle, the name larger). Frames 650, 808, 857 the same place.
+- The cue at full and low health: 95.2.
+- The kill (`captain hp 45`, edge cuts): `he died (IsDead 1, KilledByPlayer 0)`; `tile 2 placed (frame 2488)` - the XP
+  ("+100 Uruk Power ..."), the banners' popup: "Grûblik the Flogger KILLED" (struck through) whole, the rune's "(B) Pick
+  Up" in the world (frame 2539 composed). Head pitched -30 at the body: the popups 13 deg under it.
+
+### 95.4 The launcher's limits (scripts/som-vr-headset.sh)
+`load_switches`: at most **2000** lines (was 1000; build 22's file 911, build 23's 920+), and a value may hold `|` and
+`;` beside `[A-Za-z0-9_.,:/@+-]` (a tile set: `SOMVR_XR_PROMPTS_RECTS=640,10,640,110|440,600,1040,155|...;...`). Still
+refused: a space, quotes, `$`, a backtick, `(`, `&`, `<`, `>`, `*`, `!`, `\`, `{`, `~`, `[`, `=`, `?` (a value is one
+word to `env`, never parsed by a shell: boot_check passes it as `--game-env K=V`, then `env -i ... K=V`), a key that is
+not SOMVR_ (or the two loader debug keys), the launcher's and the harness's own keys, a key over 64 or a value over 256
+characters. systemd-run hands the session's arguments over as they are (checked: `systemd-run --user --pipe --wait
+/usr/bin/printf '[%s]\n' 'SOMVR_XR_PROMPTS_RECTS=640,10,...|...;...' 'SOMVR_X=a;b' ';'` printed all three verbatim).
+New `scripts/tests/test_som_vr_headset.sh` (58 checks; it cuts `load_switches` and `FIXED` out of the
+launcher, `LAUNCHER=FILE` tests another copy): every scripts/headset-build*.env passes with its switch count; 2000
+lines taken, 2001 refused; `|` `;` `,` kept verbatim as one word; each refused character; 8 checks fail on build 22's
+launcher. The BUILD= line untouched.
+
+### 95.5 Open
+- The headset: the card's size and place at 90 Hz (the subtitles' 80 % scale, 13 deg under the gaze), the cue's absence
+  on a strong captain read as "not yet" (no other sign says "weaken him first" - the game's own hint is the resisted
+  grab).
+- The health line where a resistant captain's grab starts to hold is the game's (between 33 % and 48 % of his health
+  for Grûblik); the predicate that holds it is not read (95.2). `Immune_GrabKnockdown` captains (the warchiefs and one
+  other member): the same Immune pool - not met in a run.
+- Other HUD texts at the old cut (y 755..820, x 400..1520) now come up in the subtitles' popup: a three-line hint (the
+  hints were seen at 672..754, one or two lines) would lose its third line to it. None seen.
+- The launcher's dry run (`SOMVR_HEADSET_DRYRUN=1`) was not made this round (the game slot's turns); the check itself is
+  tested offline (95.4).
+
+## 96. Build 23: the fire in both eyes - the shaders' clock k_fTime per eye, `SOMVR_KTIME`; the D3D11 capture `fx d3d` (2026-10-29, som-b23-render)
+
+Sections 86.3 and 94 left the fire at: the CPU side is identical in both eyes (the particles, the vertices, the vertex
+memory), so the per-eye difference of the campfire's flame is born on the GPU side. This round put the D3D11 calls of
+both eye passes side by side and found it in one boot: **the shaders' clock `k_fTime` is not the same in the two eye
+passes** - eye 0 draws with the game's time of the frame, eye 1 with the real-time clock. Fixed by `SOMVR_KTIME=frame`.
+
+### 96.1 The tool: `fx d3d N` (SOMVR_FX_TEST, somvr_render_game.c)
+The engine's render thread draws through IndirectX's threaded context (IdxD3D11DeviceContextThreaded, vtable
+`0x45537f0`, re-view-render.md 5; its slots in ID3D11DeviceContext's order - CopyResource 47 and RSSetViewports 44 were
+proven, Map 14's arguments and a buffer's GetType 7 / GetDesc 10 read from its code `0x1ac88a0`). With SOMVR_FX_TEST
+twenty of its slots get a pass-through (sites DC_*, check_sites.py's D3DCAP block): VS/PS/CS shaders, shader views,
+constant buffers, PS samplers, OMSetRenderTargets, OMSetBlendState, the five draws/dispatch, Map/Unmap and
+UpdateSubresource. The bound state is kept on the render thread; while a capture runs, the bytes of every buffer bound
+as constants (Map WRITE/DISCARD/NO_OVERWRITE ... Unmap, UpdateSubresource; GetDesc's BindFlags has CONSTANT_BUFFER) go
+into a pool. `fx d3d N`: one frame of warm-up, then N stereo frames; each eye's pass counted from its first
+BeginRenderTarget of rt3D (RD_BRT_A/B), eye 1's draw k compared with eye 0's draw k: shaders, the views of 16 slots per
+stage, the bytes of 8 constant buffers per stage (the differing 16-byte registers with both eyes' floats), samplers, the
+first render target, the depth view, the blend state. DCAP lines: one per differing draw (16 CPU-particle and 24 other
+draws a frame at most; draws that differ only by a view one eye has unbound or by the bone matrices VS b1 are counted,
+not printed) and a frame summary (draws per eye, compared, not alike, differences by kind and slot). `fx d3dsame MASK`
+(eyesame tests) makes eye 1's draw k bind eye 0's views and constant bytes for the draw (bit 0 the CPU-particle draws,
+bit 1 the others; bit 2 views only, bit 3 constants only) and its own again after it.
+
+### 96.2 What differs between the eye passes (run 20261029-060526, `fx eyesame 1`)
+At the campfire spot (the fire unlit that boot: the weather had not turned yet; the meadow's CPU emitters drawn) and in
+the wraith vision 60 deg up:
+- **Every CPU-particle draw differs in exactly one constant register: the time.** Shader 0x..ebb0/0x..12e0 (the flame's
+  family) `c19 = (0.5, T, 0, 0)`, another particle shader `c20.w = T`, the vision's `c19.y`/`c19.w`/`c19.z`: eye 0
+  T = 91.241, eye 1 T = 152.496; the next frame 91.341 / 158.848 (eye 0 + 0.1 s = the headless frame time, eye 1
+  + 6.35); in the vision 147.835 / 265.187. Nothing else of those draws differs: the same shaders, textures, samplers,
+  targets, blend state.
+- Other draws: the skinned meshes' bone matrices (VS b1 c4..: the practice orc's pose, read live while the game thread
+  runs ahead, 94.4), the vegetation's instanced draws (different instance counts from draw ~24 on: the two passes'
+  sequences part there), a PS view left bound from eye 0's post chain in eye 1's first draws (PS t3, unused by those
+  depth-only draws), and the time in a few non-particle constant buffers (PS b0).
+
+### 96.3 The cause: RenderScene's late pass sets k_fTime to the real time and never back
+`k_fTime` (`0x46254c0`, re-stereo.md 1) is written by BeginFrame (`FUN_0072a850`, once per frame, render thread:
+`fmod(game time, ..)`) and by RenderScene `FUN_007d6e20` at `0x7d704d..0x7d705c` (proven read-only by RD_KT_LATE):
+when the view has category-4 nodes (`local_822`), before the late pass (step 11, re-resolution.md 3.1: `FUN_007fefa0`
+with the fixed 1.13 x 0.65 frustum) it sets `k_fTime = k_fRealTime` (`0x4625460`) and uploads it
+(`FUN_00750080(*(u16 *)0x4625488, *(void **)0x4625490, 4)`), and nothing sets it back. On a flat screen that is
+harmless: the late pass is the frame's last and the next BeginFrame writes the game's time again. In our stereo both
+eyes are RenderScenes of one frame: eye 0's late pass leaves the real-time clock in `k_fTime`, and **eye 1's whole pass
+animates every time-driven material on another clock** (k_fRealTime here runs ~60x the game's time per headless frame).
+The flame's shape comes from that time (its constants and vertices are otherwise identical): in the right eye it is a
+different, jumping animation - 86.3's sharp tongues in the left eye and broader, softer ones in the right (the 20c
+session's marks 194813_15 and 194843_16). The same holds for every time-animated material in eye 1: the wraith look's particles, water, foliage
+motion, scrolling textures.
+
+### 96.4 The fix: `SOMVR_KTIME=frame` (somvr_render_game.c; build 23's env: frame; code default frame)
+At each eye's view setup (H3, render thread, `rd_kt_eye`) eye 0's `k_fTime` is kept; at eye 1's (the same frame) a
+different value is written back to eye 0's and uploaded the game's way (RD_KT_UPLOAD = `FUN_00750080` with the game's
+handle and data pointer; no handle yet: the dirty word `0x462548a` = 4, as the game does). Eye 1's own late pass still
+sets the real time for its late pass and the HUD after it, as the flat game does. No GPU work, one 4-byte constant
+upload a frame. `game`: as the game does. Word `ktime frame|game|state`; lines `CONFIG ktime=..`, `KTIME t=..` (the
+first 4 fixes), `KTIME state|END` (fixes, already equal, without a handle).
+
+### 96.5 What it changes (headless, eyesame = `fx eyesame 1`: both eyes one view; "off" = pixels off by more than 8 / 40)
+The same-run A/B (run 072312, the word `ktime game` / `ktime frame`, three consecutive frames each):
+| | `ktime game` | `ktime frame` |
+|---|---|---|
+| the lit campfire, eyesame | 1.2-1.4 % / 0.38-0.41 %, mean 0.52-0.57 | 0.000-0.001 % / 0.000 %, mean 0.00 |
+| the wraith vision 60 deg up, eyesame | 33-37 % / 8-14 %, mean 10-16 | 0.000 % / 0.000 %, mean 0.00 (also with `curframe eye`) |
+| the wraith vision, true stereo: the best left-right correlation of the sky (upper 45 %) | 0.30-0.36 | 0.995-0.998 at 4 px |
+| the campfire, true stereo: the whole picture's / the sky's correlation | 0.942-0.946 / 0.966-0.968 | 0.956-0.957 / 0.978 |
+| CPU-particle draws with different constants (the capture, eyesame) | - | 0 of 17 |
+Across runs:
+| | without the fix | with `SOMVR_KTIME=frame` |
+|---|---|---|
+| CPU-particle draws, eye 1's constants against eye 0's (the capture) | 6-7 of 9-10 different, the time only (060526) | 0 of 33 different (070912) |
+| the lit campfire, eyesame | 0.7-1.1 % / 0.13-0.20 %, the flame's tongues and its bloom (20261029-005146, build 22) | 0.000-0.002 % / 0.000 % (070912) |
+| the wraith vision 60 deg up, eyesame | 12.5-14.0 % / 0.001 %, mean 3.6-4.1 (060526) | 0.000 % / 0.000 %, mean 0.00 (070912), with `curframe game` and no `fx sync` |
+| the wraith vision, true stereo: the sky's left-right correlation | 87.2: 0.01-0.04 (nothing in common) | 0.998-1.000 at 0-4 px (070912) |
+The wraith look's sky (87.2, 94.4) was the same cause: its clouds are time-animated, so eye 1 drew clouds from another
+clock - "new clouds in every render" in that eye only. Neither `SOMVR_CURFRAME=eye` nor holding the game thread is
+needed (070912: identical with `curframe game` and the game thread running ahead; why 94.4's "both together" matched
+without the fix is not explained here - the late pass's write does not depend on either). In the stereo pictures (072312's marks: 072812_8 off, 072803_7 on; 072651_4 the
+fire on) the wraith sky without the fix has a bright cloud band in the right eye only and with it the same clouds in
+both eyes; the flame's tongues are the same in both eyes, shifted by their disparity.
+
+What still differs with the fix (070912's capture, eyesame): the skinned meshes' bones (VS b1: the orc's and Talion's
+poses read live while the game thread runs ahead, 94.4 - a frame's motion, not a different look), one family of 8
+draws' `c0.w` (-0.048 / -0.043, a per-object value), a few views left bound from eye 0's post chain in eye 1's first
+draws (PS t3, not read by those depth-only draws). None of them shows in the eyesame pictures.
+
+### 96.6 Notes for the next rounds
+- **A hurt Talion at the campfire loses eye 0's image** (layer: "layout B frame .. without its eye images: the tag says
+  eyes 0x2", then "no complete record: the last stereo frame again" until it recovers): seen in 005146 (build 22),
+  060526 and 064728 whenever the practice orc's blows landed (health 120 -> 57 in 064728, stuck for minutes); the
+  stereo frames stop, `dump` slots stay pending. Not this round's code (it predates it); not chased. Tests at the camp:
+  spawn the orc for the fire, remove it within ~16 s (`practice remove`, `practice health`), as fire23b-drive.sh's fix3.
+- The campfire lights only after the weather has turned (`ChangeWeather SON_Day03` ~30-45 s before) with the practice
+  orc spawned once (070912: spawned, removed after 16 s, lit 30 s later).
+- The flame of the 20c session's marks 15/16 was the time; with the eyes agreeing it should fuse at its depth again. The CPU-side probes of 86.3/94.2 and `SOMVR_CURFRAME` stay as tools.
+
+### 96.7 The runs (headless, scripts/headset-build23.env + SOMVR_HANDS_TEST=1 + SOMVR_FX_TEST=1 + SOMVR_PRACTICE_DAY=0;
+each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-) | What it showed |
+|---|---|
+| 20261029-060526 | the capture without the fix (scripts/fire23-drive.sh cap vcap): the CPU particles' time c19.y / c20.w differs, nothing else of theirs; the vision eyesame 12.5-14 % off; the fire unlit (the weather not turned yet) |
+| 20261029-064728 | `SOMVR_KTIME=frame` on: 1339 of 1339 frames set back (no handle: the dirty word); the camp steps lost to the hurt-Talion eye-0 loss (96.6); the `ktime` word was not routed yet (fixed in 8ab2bb7) |
+| 20261029-070912 | the fix (fire23b-drive.sh fix3, the orc removed): the lit campfire and the vision identical in eyesame, the capture 0 of 33 particle draws different, the vision's stereo sky correlation 1.000; 743 of 743 frames set back (the word still unrouted: its "off" steps were on) |
+| 20261029-072312 | the same-run A/B with the word routed (fire23b-drive.sh fix3): 96.5's first table; the capture 0 of 17 particle draws different |
