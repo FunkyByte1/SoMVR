@@ -1,0 +1,19 @@
+# what-to-test.txt - the VR menu's Test page for this build (docs/re-xr-pipeline.md 82). The layer reads it once at
+# the start of a session (mod/somvr/assets, beside vklayer/build); a frozen build carries its own copy.
+# The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
+# characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
+# ends it. Lines starting with # are not shown.
+Build 21 - what to test
+- Stealth kill: sneak behind an orc and stab hard, point first, deep into his back or neck. A touch or a slow push only makes him turn.
+- After the stab the sword stays in him as he slumps. Pull it out. Blood should come from the wound.
+- Grab: in a fight, reach your empty left hand to an orc's neck. A faint blue glow and a tick mean squeeze to grab. No glow at a raised shield.
+- Shield orc: he should attack you, not block forever.
+- Shadow Strike with the sword on your back: you land with the sword in your hand.
+- Drop down: hold A over a drop. The white ring empties; at the flash and tick, let go to drop. Let go early and nothing happens.
+- Climb down: grab lower on the wall and push that hand up.
+- The wall by the meadow ladder: a ring shows on the real top; pull up or press A.
+- Bow sight: small, thin, white; blue on an orc.
+- XP: kill an orc while looking to the side. The XP shows just under your gaze and stays put.
+- The low sun: no lens flare, no white rays.
+- Bug notes: talk as long as you need (up to 30 s).
+- Not fixed yet: fire looks different in each eye; the wraith world's fog and the interrogation smoke.

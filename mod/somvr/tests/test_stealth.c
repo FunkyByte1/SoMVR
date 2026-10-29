@@ -20,7 +20,7 @@ static int g_fail, g_n;
     } while (0)
 
 static somvr_stl_who who_behind(void) { return (somvr_stl_who){ 0, 1, 20.0f, 175.0f, 90.0f, 0 }; }
-static somvr_stl_hit hit_back(void) { return (somvr_stl_hit){ 170.0f, 40.0f, 1, 0.5f, 0.3f }; }
+static somvr_stl_hit hit_back(void) { return (somvr_stl_hit){ 170.0f, 40.0f, 1, 0.5f, 0.3f, NAN, 0, 0, 0 }; }
 
 static void test_angles(void) {
     float o[3] = { 0, 0, 0 }, front[3] = { 0, 0, 100 }, back[3] = { 0, 0, -100 }, right[3] = { 100, 0, 0 };
@@ -129,10 +129,15 @@ static void test_tier(void) {
     somvr_stl_cfg sc;
     somvr_stl_defaults(&sc);
     somvr_stl_who w = who_behind();
-    somvr_stl_hit h = { 170.0f, 65.0f, t16, s.axis_mps, s.cos_axis };
+    somvr_stl_hit h = { 170.0f, 65.0f, t16, s.axis_mps, s.cos_axis, NAN, 0, 0, 0 };
     CHECK(somvr_stl_judge(&sc, &w, &h) == SOMVR_STL_WEAK, "build 20b: build 16's tier alone - a touch (the light hit woke it)");
     h.tier = somvr_stl_tier(t16, tsw);
     CHECK(somvr_stl_judge(&sc, &w, &h) == SOMVR_STL_KILL, "build 20c: the stroke's light hit - the stealth kill");
+    /* build 21: that first contact (the point 3 cm in, sideways) is a touch - no damage, nothing woken; the kill comes as
+     * the point goes on in */
+    sc.thrust = 1, h.depth_cm = 3.0f, h.tier_cut = tsw;
+    CHECK(somvr_stl_judge(&sc, &w, &h) == SOMVR_STL_TOUCH, "build 21: the sideways first contact - a touch, not the ordinary hit");
+    sc.thrust = 0;
     /* SOMVR_COMBAT_SWING=off: combat's tier is build 16's - nothing changes (that contact a glance, as build 19b's) */
     CHECK(somvr_stl_tier(t16, t16) == t16, "swing off: build 16's alone");
 }
@@ -246,6 +251,119 @@ static void test_brake(void) {
     CHECK(!somvr_stl_standoff_brake(q, orc, r, 0.05f, 0, fw, out), "decel 0: nothing (the old ease's)");
 }
 
+/* build 21 (docs 84): the kill is a thrust - the point leading, driven in at a real speed, 15 cm deep */
+static void test_thrust(void) {
+    somvr_stl_cfg c;
+    somvr_stl_defaults(&c);
+    somvr_stl_who w = who_behind();
+    /* the user's build 20c session, 20261028-193826, t=974943.487 (the mark 14 right after): the tip at its back, point
+     * first at 2.72 m/s (cos 0.97, the stab tier) - killed on the first contact (the session's mark 14) */
+    somvr_stl_hit u = { 151.0f, 9.0f, SC_TIER_STAB, 2.72f, 0.97f, 2.0f, 0, SC_TIER_NONE, 0 };
+    CHECK(somvr_stl_judge(&c, &w, &u) == SOMVR_STL_KILL, "build 20c's rule: the touch killed (the session's)");
+    c.thrust = 1;
+    CHECK(somvr_stl_judge(&c, &w, &u) == SOMVR_STL_TOUCH, "build 21: a touch 2 cm in - no damage (%d)", somvr_stl_judge(&c, &w, &u));
+    somvr_stl_hit k = u;
+    k.depth_cm = 18.0f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &k) == SOMVR_STL_BY_THRUST, "the thrust 18 cm in kills");
+    k.depth_cm = 14.0f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_TOUCH, "14 cm: not yet");
+    k.depth_cm = 30.0f, k.axis_mps = 0.9f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_TOUCH, "a slow push 30 cm in: no");
+    k.axis_mps = 3.0f, k.cos_axis = 0.80f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_TOUCH, "37 deg off the blade: not point-first");
+    k.cos_axis = -0.97f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_TOUCH, "drawn back out: no");
+    k.cos_axis = 0.9f, k.tier = SC_TIER_HEAVY;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_KILL, "point-first at 3 m/s, 30 cm in");
+    k.contact_off_deg = 40.0f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_SIDE, "in its front: no");
+    k.contact_off_deg = 75.0f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_KILL, "its side from behind: yes");
+    k.depth_cm = -1.0f;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_AIR, "the hit capsule only: nothing");
+    k.depth_cm = NAN;
+    CHECK(somvr_stl_judge(&c, &w, &k) == SOMVR_STL_AIR, "not measured: nothing");
+    /* a full-speed cut to the neck from behind (the stroke's heavy tier), not to the back */
+    somvr_stl_hit n = { 170.0f, 70.0f, SC_TIER_HEAVY, 0.5f, 0.1f, 25.0f, 1, SC_TIER_HEAVY, 0 };
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &n) == SOMVR_STL_BY_NECK, "the neck cut");
+    n.tier_cut = SC_TIER_LIGHT;
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "a light cut to the neck: no");
+    n.tier_cut = SC_TIER_STAB;
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "the stab tier is no cut");
+    n.tier_cut = SC_TIER_HEAVY, n.neck = 0;
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "a full cut to the back: no");
+    /* held from behind: a point-first stab 10 cm in */
+    somvr_stl_hit g = { 180.0f, 40.0f, SC_TIER_NONE, 0.6f, 0.9f, 11.0f, 0, SC_TIER_NONE, 1 };
+    CHECK(somvr_stl_judge(&c, &w, &g) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &g) == SOMVR_STL_BY_GRAB, "held: the stab");
+    g.depth_cm = 8.0f;
+    CHECK(somvr_stl_judge(&c, &w, &g) == SOMVR_STL_TOUCH, "held: 8 cm, no");
+    g.depth_cm = 20.0f, g.cos_axis = 0.5f;
+    CHECK(somvr_stl_judge(&c, &w, &g) == SOMVR_STL_TOUCH, "held: sideways, no");
+    /* who: unchanged - aware, in front, standing fast: the ordinary hit */
+    somvr_stl_who a = w;
+    a.aware = 1;
+    CHECK(somvr_stl_judge(&c, &a, &k) == SOMVR_STL_AWARE, "aware: the ordinary hit");
+    a = w, a.player_off_deg = 60.0f;
+    CHECK(somvr_stl_judge(&c, &a, &k) == SOMVR_STL_FRONT, "in front: the ordinary hit");
+    CHECK(SOMVR_STL_AIR + 1 == SOMVR_STL_N && strcmp(somvr_stl_why(SOMVR_STL_AIR), "?"), "the verdicts' names");
+}
+
+static void test_body(void) {
+    /* an orc standing at the origin, its back toward -z: the pelvis, the torso, the neck, the head */
+    float node[4][3] = { { 0, 0, 0 }, { 0, 45, 0 }, { 0, 70, 5 }, { 0, 85, 8 } }, r[3] = { 17, 16, 9 }, e[3];
+    int link = -1;
+    float b0[3] = { 0, 40, -150 }, t0[3] = { 0, 40, -60 };
+    CHECK(somvr_stl_body_depth(b0, t0, node, r, 4, e, &link) < 0, "the point 60 cm behind its axis: not in");
+    float t1[3] = { 0, 40, -10 };
+    float d = somvr_stl_body_depth(b0, t1, node, r, 4, e, &link);
+    CHECK(fabsf(d - 7.0f) < 0.6f && link == 0 && fabsf(e[2] + 17.0f) < 0.6f, "10 cm behind the axis: 7 cm in (%f, link %d, entry z %f)",
+          d, link, e[2]);
+    float t2[3] = { 0, 40, 30 };
+    d = somvr_stl_body_depth(b0, t2, node, r, 4, e, &link);
+    CHECK(fabsf(d - 47.0f) < 0.6f, "through it: from where it went in (%f)", d);
+    float b3[3] = { 0, 88, -100 }, t3[3] = { 0, 88, 10 };
+    d = somvr_stl_body_depth(b3, t3, node, r, 4, e, &link);
+    CHECK(d > 0 && link == 2, "at neck height: the neck's link (%d, %f)", link, d);
+    float b4[3] = { -100, 40, -10 }, t4[3] = { -5, 40, -10 };
+    CHECK(somvr_stl_body_depth(b4, t4, node, r, 4, e, &link) >= 0, "from its side: in");
+    float b5[3] = { 0, 140, -100 }, t5[3] = { 0, 140, 50 };
+    CHECK(somvr_stl_body_depth(b5, t5, node, r, 4, e, &link) < 0, "over its head: air");
+    CHECK(somvr_stl_body_depth(b0, t1, node, r, 1, e, &link) < 0, "no links: nothing");
+}
+
+static void test_stick(void) {
+    somvr_stl_stick s;
+    somvr_stl_stick_cfg c = { 25.0f, 12.0f };
+    float E[3] = { 0, 100, 0 }, a[3] = { 0, 0, 2.0f }, G[3], Gs[3];
+    somvr_stl_stick_start(&s, E, a, 90.0f);
+    CHECK(s.on && fabsf(s.a[2] - 1.0f) < 1e-6f, "started, the axis unit");
+    /* the grip 60 cm behind the wound on the axis: the point 30 cm in */
+    G[0] = 0, G[1] = 100, G[2] = -60;
+    CHECK(somvr_stl_stick_step(&s, &c, E, G, Gs) == SOMVR_STL_STK_HOLD && fabsf(s.depth - 30.0f) < 1e-3f && s.off < 1e-3f,
+          "on the axis: held 30 cm in");
+    /* sideways 15 cm: the blade stays, the hand 15 cm off it */
+    G[0] = 15;
+    CHECK(somvr_stl_stick_step(&s, &c, E, G, Gs) == SOMVR_STL_STK_HOLD && fabsf(Gs[0]) < 1e-3f && fabsf(s.off - 15.0f) < 1e-3f,
+          "sideways: the blade pinned, the offset shown");
+    /* pushed deeper than the guard allows: the blade stops at 78 cm, the hand's overshoot is the offset */
+    G[0] = 0, G[2] = 0;
+    CHECK(somvr_stl_stick_step(&s, &c, E, G, Gs) == SOMVR_STL_STK_HOLD && fabsf(s.depth - 78.0f) < 1e-3f &&
+          fabsf(s.off - 12.0f) < 1e-3f && fabsf(s.peak - 78.0f) < 1e-3f, "the guard at the wound");
+    /* the body slumps: the wound 20 cm lower, the hand still: held; 30 cm: it fell off the blade */
+    float E2[3] = { 0, 80, 0 };
+    G[2] = -50;
+    CHECK(somvr_stl_stick_step(&s, &c, E2, G, Gs) == SOMVR_STL_STK_HOLD && fabsf(Gs[1] - 80.0f) < 1e-3f, "the wound moves: the blade with it");
+    float E3[3] = { 0, 70, 0 };
+    CHECK(somvr_stl_stick_step(&s, &c, E3, G, Gs) == SOMVR_STL_STK_TEAR && !s.on, "30 cm off: free");
+    /* drawn back past the wound: out */
+    somvr_stl_stick_start(&s, E, a, 90.0f);
+    G[0] = 0, G[1] = 100, G[2] = -60;
+    somvr_stl_stick_step(&s, &c, E, G, Gs);
+    G[2] = -91;
+    CHECK(somvr_stl_stick_step(&s, &c, E, G, Gs) == SOMVR_STL_STK_OUT && !s.on && fabsf(s.peak - 30.0f) < 1e-3f, "pulled out");
+    CHECK(somvr_stl_stick_step(&s, &c, E, G, Gs) == SOMVR_STL_STK_OFF, "off stays off");
+}
+
 int main(void) {
     test_standoff();
     test_brake();
@@ -254,6 +372,9 @@ int main(void) {
     test_judge();
     test_tier();
     test_cue();
+    test_thrust();
+    test_body();
+    test_stick();
     printf("test_stealth: %d checks, %d failures\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

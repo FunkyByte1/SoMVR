@@ -64,6 +64,8 @@ enum {                                /* somvr_slots_out.ev[k]: what happened to
     SOMVR_SL_E_REASSERT = 1u << 12,   /* with DRAW: the game put away the sword the player keeps in the hand: back */
     SOMVR_SL_E_INSIST = 1u << 13,     /* with GAME: ... once more within reassert_s after reassert_max: accepted */
     SOMVR_SL_E_UNDRAW = 1u << 14,     /* with PUT: the game drew the sword the player keeps away (undraw): back */
+    SOMVR_SL_E_TAKE = 1u << 15,       /* build 21 (in.take): the game's move puts it in the hand (drawn: the player's from
+                                       * now; not drawn: with DRAW, asked) - the Shadow Strike's sword */
 };
 
 typedef struct {
@@ -109,6 +111,10 @@ typedef struct {
     int valid[2];           /* hand h's grip pose is usable */
     sv_vec3 p[2];           /* the grips, the same space */
     float squeeze[2];       /* 0..1 */
+    int take[SOMVR_NSLOT];  /* build 21 (SOMVR_STRIKE_SWORD): weapon k goes to its hand for the game's move now (the
+                             * Shadow Strike is a sword kill): the game's draw is the player's (no undraw), not drawn
+                             * = asked (not on a suspend: somvr.c gives no take while the hand holds a wall); it stays
+                             * in the hand after (the player puts it back) */
 } somvr_slots_in;
 
 typedef struct {

@@ -670,6 +670,169 @@ static void test_xt20(void) {
     CHECK(!memcmp(&a.p, &p.p, sizeof a.p) && NEAR(a.q[3], 1, 1e-6), "0 0: the pose itself");
 }
 
+/* build 21: the popups where the player looks (SOMVR_XR_POPUPS=gaze; re-xr-pipeline.md 87.1) */
+static void pp_eyes(float yaw_deg, float pitch_deg, somvr_posef e[2]) {
+    float qy[4], qx[4], q[4];
+    axis_q(0, 1, 0, yaw_deg, qy), axis_q(1, 0, 0, pitch_deg, qx), qmul(qy, qx, q);
+    float r[3];
+    qrot(q, EX, r);
+    for (int i = 0; i < 2; i++) {
+        memcpy(e[i].q, q, sizeof q);
+        float sgn = i ? 1.f : -1.f;
+        e[i].p[0] = 0.2f + sgn * 0.032f * r[0], e[i].p[1] = 1.6f + sgn * 0.032f * r[1], e[i].p[2] = -0.4f + sgn * 0.032f * r[2];
+    }
+}
+/* the content's centre of tile tl seen from the eyes' midpoint: yaw, pitch (deg) */
+static void pp_seen(const somvr_pp_tile *tl, float dist, const somvr_posef e[2], float *yaw, float *pitch, float *d) {
+    somvr_posef p;
+    somvr_pp_pose(tl, dist, &p);
+    float r[3], u[3], c[3], mid[3];
+    qrot(p.q, EX, r), qrot(p.q, EY, u);
+    for (int i = 0; i < 3; i++) mid[i] = 0.5f * (e[0].p[i] + e[1].p[i]);
+    for (int i = 0; i < 3; i++) c[i] = p.p[i] + tl->off[0] * r[i] + tl->off[1] * u[i] - mid[i];
+    *d = sqrtf(dot3(c, c));
+    *yaw = atan2f(-c[0], -c[2]) * 57.29578f, *pitch = asinf(c[1] / *d) * 57.29578f;
+}
+static void test_popups(void) {
+    int bad = 0;
+    CHECK(somvr_pp_parse(NULL, &bad) == SOMVR_PP_BAND && !bad && somvr_pp_parse("band", &bad) == SOMVR_PP_BAND &&
+              somvr_pp_parse("gaze", &bad) == SOMVR_PP_GAZE && !bad && somvr_pp_parse("1", &bad) == SOMVR_PP_GAZE,
+          "SOMVR_XR_POPUPS words");
+    CHECK(somvr_pp_parse("look", &bad) == SOMVR_PP_BAND && bad, "a bad word: band, bad");
+    somvr_xt_cmd xc;
+    CHECK(somvr_xt_parse("popups gaze", &xc) == 1 && xc.op == SOMVR_XT_POPUPS && xc.v[0] == SOMVR_PP_GAZE &&
+              somvr_xt_parse("popups band", &xc) == 1 && xc.v[0] == SOMVR_PP_BAND && somvr_xt_parse("popups sky", &xc) == -1 &&
+              somvr_xt_parse("popups gaze x", &xc) == -1, "the test file's popups band|gaze");
+    CHECK(somvr_xt_parse("dump", &xc) == 1 && xc.op == SOMVR_XT_DUMP && xc.v[0] == 1 && somvr_xt_parse("dump 2", &xc) == 1 &&
+              xc.v[0] == 2 && somvr_xt_parse("dump 9", &xc) == -1 && somvr_xt_parse("dump 1.5", &xc) == -1,
+          "dump [K]");
+    somvr_pp_cfg c, c2;
+    somvr_pp_cfg_default(&c);
+    CHECK(c.down_deg == 13 && c.turn_deg == 40 && NEAR(c.ease_s, 0.35, 1e-6) && NEAR(c.hold_s, 0.3, 1e-6), "the defaults");
+    c2 = c;
+    somvr_pp_parse_geom("15,30,500", &c2, &bad);
+    CHECK(!bad && c2.down_deg == 15 && c2.turn_deg == 30 && NEAR(c2.ease_s, 0.5, 1e-6), "GEOM 15,30,500");
+    c2 = c;
+    somvr_pp_parse_geom("15,5,500", &c2, &bad);
+    CHECK(bad && c2.turn_deg == 40, "GEOM: a turn under 10 deg is bad, the defaults kept");
+    /* the reading: 100 texels wide, 10 rows (every 4th of 40) */
+    static uint8_t px[10 * 100 * 4];
+    int bb[4];
+    memset(px, 0, sizeof px);
+    for (int x = 0; x < 100; x++) px[(5 * 100 + x) * 4 + 3] = 31; /* faint: no content */
+    CHECK(!somvr_pp_measure(px, 100, 10, 4, bb), "alpha 31 everywhere in a row: nothing");
+    for (int x = 10; x < 30; x++) px[(3 * 100 + x) * 4 + 3] = 40;
+    for (int x = 12; x < 14; x++) px[(6 * 100 + x) * 4 + 3] = 200;
+    CHECK(somvr_pp_measure(px, 100, 10, 4, bb) && bb[0] == 10 && bb[2] == 30 && bb[1] == 12 && bb[3] == 28,
+          "22 texels: content, its box %d,%d..%d,%d", bb[0], bb[1], bb[2], bb[3]);
+    memset(px, 0, sizeof px);
+    for (int x = 0; x < 11; x++) px[(2 * 100 + x) * 4 + 3] = 255;
+    CHECK(!somvr_pp_measure(px, 100, 10, 4, bb), "11 texels: not enough");
+    /* the state: tile 0 = the XP gains (290 x 190 px), tile 1 = the hints (1040 x 180) at the band's scale */
+    const float D = 1.3f, k = 0.00115f;
+    float sz[2][2] = {{290 * k, 190 * k}, {1040 * k, 180 * k}};
+    int pxs[2][2] = {{290, 190}, {1040, 180}};
+    somvr_pp_read rd[2] = {{0, {0, 0, 0, 0}}, {0, {0, 0, 0, 0}}};
+    somvr_pp_state s;
+    somvr_pp_reset(&s);
+    somvr_posef e[2];
+    float y, p, d;
+    pp_eyes(0, 0, e);
+    uint32_t ev = somvr_pp_step(&s, &c, 0.0, e, D, 2, rd, sz, pxs);
+    CHECK(ev == 0 && !s.t[0].shown && !s.t[1].shown, "nothing read: nothing shown");
+    rd[0].present = 1, rd[0].bb[0] = 20, rd[0].bb[1] = 40, rd[0].bb[2] = 270, rd[0].bb[3] = 100;
+    ev = somvr_pp_step(&s, &c, 0.1, e, D, 2, rd, sz, pxs);
+    pp_seen(&s.t[0], D, e, &y, &p, &d);
+    CHECK(ev == 1u && s.t[0].shown && NEAR(y, 0, 0.05) && NEAR(p, -13, 0.05) && NEAR(d, D, 1e-3),
+          "the XP comes up: placed, its content 13 deg under the gaze at %.3f m (yaw %.2f pitch %.2f; ev %#x)", d, y, p, ev);
+    somvr_posef qp;
+    somvr_pp_pose(&s.t[0], D, &qp);
+    float z[3], mid[3] = {0.2f, 1.6f, -0.4f}, toe[3];
+    qrot(qp.q, EZ, z);
+    for (int i = 0; i < 3; i++) toe[i] = mid[i] - qp.p[i];
+    float n = sqrtf(dot3(toe, toe));
+    CHECK(dot3(z, toe) / n > 0.99f, "the quad faces the eyes (cos %.4f)", dot3(z, toe) / n);
+    /* turned 30 deg: it holds still in the room */
+    pp_eyes(30, 0, e);
+    ev = somvr_pp_step(&s, &c, 0.5, e, D, 2, rd, sz, pxs);
+    pp_seen(&s.t[0], D, e, &y, &p, &d);
+    CHECK(ev == 0 && NEAR(y, 0, 0.05) && NEAR(p, -13, 0.05), "turned 30 deg: it stays (yaw %.2f)", y);
+    /* 50 deg: it eases to the new front (half way at half the time, never a jump), then holds */
+    pp_eyes(50, 0, e);
+    ev = somvr_pp_step(&s, &c, 0.6, e, D, 2, rd, sz, pxs);
+    pp_seen(&s.t[0], D, e, &y, &p, &d);
+    CHECK(ev == (1u << 8) && s.t[0].easing && NEAR(y, 0, 0.05), "turned 50 deg: the ease begins where it was (%.2f)", y);
+    float last = 0, most = 0;
+    for (int f = 1; f <= 35; f++) {
+        somvr_pp_step(&s, &c, 0.6 + 0.01 * f, e, D, 2, rd, sz, pxs);
+        pp_seen(&s.t[0], D, e, &y, &p, &d);
+        most = fmaxf(most, y - last), last = y;
+        if (f == 17) CHECK(y > 20 && y < 30, "half way: yaw %.2f", y);
+    }
+    CHECK(!s.t[0].easing && NEAR(y, 50, 0.05) && NEAR(p, -13, 0.05) && most < 2.5f && s.t[0].n_eased == 1,
+          "eased to 50 deg in 0.35 s, at most %.2f deg a 10-ms step", most);
+    /* gone: kept for 0.3 s (a blink of its text), then over */
+    rd[0].present = 0;
+    ev = somvr_pp_step(&s, &c, 1.1, e, D, 2, rd, sz, pxs);
+    ev |= somvr_pp_step(&s, &c, 1.3, e, D, 2, rd, sz, pxs);
+    CHECK(ev == 0 && s.t[0].shown, "gone 0.2 s: still shown");
+    ev = somvr_pp_step(&s, &c, 1.45, e, D, 2, rd, sz, pxs);
+    CHECK(ev == (1u << 16) && !s.t[0].shown, "gone 0.35 s: over (%#x)", ev);
+    /* the next one where the player looks now: 20 deg right, 20 deg up */
+    pp_eyes(-20, 20, e);
+    rd[0].present = 1;
+    ev = somvr_pp_step(&s, &c, 2.0, e, D, 2, rd, sz, pxs);
+    pp_seen(&s.t[0], D, e, &y, &p, &d);
+    CHECK(ev == 1u && NEAR(y, -20, 0.05) && NEAR(p, 7, 0.05) && s.t[0].n_placed == 2,
+          "the next popup placed afresh at the gaze: yaw %.2f pitch %.2f", y, p);
+    rd[0].present = 0;
+    somvr_pp_step(&s, &c, 2.1, e, D, 2, rd, sz, pxs);
+    rd[0].present = 1;
+    pp_eyes(-10, 20, e);
+    ev = somvr_pp_step(&s, &c, 2.2, e, D, 2, rd, sz, pxs);
+    pp_seen(&s.t[0], D, e, &y, &p, &d);
+    CHECK(ev == 0 && s.t[0].n_placed == 2 && NEAR(y, -20, 0.05), "a 0.1-s blink: kept where it was (yaw %.2f)", y);
+    /* a hint comes up while the XP shows, the gaze on it: stacked under it, not over it */
+    rd[1].present = 1, rd[1].bb[0] = 100, rd[1].bb[1] = 60, rd[1].bb[2] = 900, rd[1].bb[3] = 120;
+    ev = somvr_pp_step(&s, &c, 2.3, e, D, 2, rd, sz, pxs);
+    float y1, p1, d1;
+    pp_seen(&s.t[0], D, e, &y, &p, &d), pp_seen(&s.t[1], D, e, &y1, &p1, &d1);
+    float h0 = s.t[0].hrad * 57.29578f, h1 = s.t[1].hrad * 57.29578f;
+    CHECK(ev == 2u && s.t[1].under == 0 && NEAR(y1, -20, 0.05) && NEAR(p - p1, 0.5f * (h0 + h1) + 1, 0.1),
+          "the hint under the XP: yaw %.2f, %.2f deg lower (want %.2f)", y1, p - p1, 0.5f * (h0 + h1) + 1);
+    /* turned 60 deg away: both ease together, the stack kept */
+    pp_eyes(40, 0, e);
+    ev = somvr_pp_step(&s, &c, 2.5, e, D, 2, rd, sz, pxs);
+    for (int f = 1; f <= 40; f++) somvr_pp_step(&s, &c, 2.5 + 0.01 * f, e, D, 2, rd, sz, pxs);
+    pp_seen(&s.t[0], D, e, &y, &p, &d), pp_seen(&s.t[1], D, e, &y1, &p1, &d1);
+    CHECK(ev == ((1u << 8) | (1u << 9)) && NEAR(y, 40, 0.05) && NEAR(y1, 40, 0.05) && NEAR(p, -13, 0.05) &&
+              NEAR(p - p1, 0.5f * (h0 + h1) + 1, 0.1),
+          "both eased to 40 deg (%.2f, %.2f), the hint still %.2f deg under the XP", y, y1, p - p1);
+    /* the head still turning while it eases: it lands on the front the head reaches (not where the ease began) */
+    rd[0].present = 1, rd[1].present = 0;
+    pp_eyes(40, 0, e);
+    somvr_pp_step(&s, &c, 2.95, e, D, 2, rd, sz, pxs);
+    pp_eyes(-5, 0, e);
+    ev = somvr_pp_step(&s, &c, 3.0, e, D, 2, rd, sz, pxs);
+    for (int f = 1; f <= 40; f++) {
+        float hy = -5 - 40 * fminf(1.f, f / 20.f); /* on to -45 deg over 0.2 s */
+        pp_eyes(hy, 0, e);
+        somvr_pp_step(&s, &c, 3.0 + 0.01 * f, e, D, 2, rd, sz, pxs);
+    }
+    pp_seen(&s.t[0], D, e, &y, &p, &d);
+    CHECK((ev & (1u << 8)) && !s.t[0].easing && NEAR(y, -45, 0.1) && NEAR(p, -13, 0.1),
+          "a head turning on through the ease: the popup at its final front (yaw %.2f, want -45)", y);
+    /* a look at the feet: a new popup no lower than 50 deg under the level */
+    rd[0].present = rd[1].present = 0;
+    somvr_pp_step(&s, &c, 4.0, e, D, 2, rd, sz, pxs);
+    somvr_pp_step(&s, &c, 4.5, e, D, 2, rd, sz, pxs);
+    pp_eyes(0, -80, e);
+    rd[0].present = 1;
+    ev = somvr_pp_step(&s, &c, 5.0, e, D, 2, rd, sz, pxs);
+    pp_seen(&s.t[0], D, e, &y, &p, &d);
+    CHECK(ev == 1u && !s.t[1].shown && NEAR(p, -50, 0.1) && NEAR(y, 0, 0.5), "looking at the feet: at %.2f deg (yaw %.2f)", p, y);
+}
+
 int main(void) {
     test_xt20();
     test_switches();
@@ -678,6 +841,7 @@ int main(void) {
     test_board_gaze_up();
     test_minimap();
     test_tiles();
+    test_popups();
     test_touch();
     test_xt();
     printf("test_menus: %d checks, %d failures\n", checks, fails);

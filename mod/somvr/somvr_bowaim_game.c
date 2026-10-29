@@ -16,6 +16,12 @@
  * view across at any distance; somvr_objective's entry (SOMVR_OBF_AIM), so both eyes see it at its depth (the build 19b
  * session asked for the flat game's aiming circle back, where the bow really aims).
  *
+ * Build 21 (re-xr-pipeline.md 82): SOMVR_BOW_AIM_LOOK=sight|ring20 (default sight): the ring's picture. sight = a thin
+ * soft-white ring with a dot at its centre (about 80 % opaque, a faint dark edge: it reads against a bright sky) on the
+ * world, the same in wraith-blue on an orc it would hit; SOMVR_BOW_AIM_RING_DEG's default 1.5 (half build 20's): the
+ * build 20c session found build 20's ring too big and its gold out of place. ring20 = build 20's gold
+ * ring / the strike's blue ring, 3 deg by default. Where it sits (the trace above) is the same in both.
+ *
  * Lines: CONFIG bow aim ...; BOW t=.. aim: the line meets <what> (once per change, the first 300);
  * BOW t=.. assist: ... (bo_shoot's, as before, "exact" in it); BOW END aim: ... */
 
@@ -23,7 +29,7 @@ enum { BA_FAR = 0, BA_WORLD = 1, BA_BODY = 2, BA_HEAD = 3, BA_N };
 static const char *const g_ba_kind_w[BA_N] = { "nothing (the ring far along the line)", "the world", "an orc's body",
 					       "an orc's head" };
 static struct {
-	int exact, ring;
+	int exact, ring, look; /* look: build 21's SOMVR_BOW_AIM_LOOK (0 sight, 1 ring20) */
 	float head_cm, body_cm, span_lo_cm, span_hi_cm, far_cm, ring_deg;
 	/* the last trace (bo_frame, while drawn) */
 	int have, kind, kind_was;
@@ -216,7 +222,7 @@ static void ba_frame(const somvr_bow_out *o, double t)
 	if (kind != g_ba.kind_was && g_ba.lines++ < 300 && bo_log_ok(t))
 		logf_("BOW t=%.3f aim: the line meets %s %.1f m from the nock at %.0f,%.0f,%.0f%s (the ring %s)", t,
 		      g_ba_kind_w[kind], tc / 100.0f, ring[0], ring[1], ring[2], hobj ? " (an orc on it)" : "",
-		      kind >= BA_BODY ? "wraith-blue: a hit" : "gold");
+		      kind >= BA_BODY ? "wraith-blue: a hit" : g_ba.look ? "gold" : "white");
 	g_ba.kind_was = kind;
 }
 
@@ -231,7 +237,7 @@ static int ba_entry(somvr_objective_frame *e)
 	if (!isfinite(e->pos[0] + e->pos[1] + e->pos[2]))
 		return 0;
 	e->n = 1, e->id = (uint32_t)g_ba.kind;
-	e->flags = SOMVR_OBF_AIM | (g_ba.kind >= BA_BODY ? SOMVR_OBF_AIM_HIT : 0u);
+	e->flags = SOMVR_OBF_AIM | (g_ba.kind >= BA_BODY ? SOMVR_OBF_AIM_HIT : 0u) | (g_ba.look ? 0u : SOMVR_OBF_AIM_SIGHT);
 	e->dist_m = g_ba.ring_deg; /* SOMVR_OBF_AIM: the ring's size in degrees of the view (the layer has the eyes) */
 	g_ba.entries++;
 	return 1;
@@ -246,13 +252,14 @@ static void ba_config(int *bad)
 	memset(&g_ba, 0, sizeof g_ba);
 	g_ba.exact = env_word("SOMVR_BOW_AIM", (const char *const[]){ "assist", "exact" }, 2, 0);
 	g_ba.ring = env_word("SOMVR_BOW_AIM_RING", (const char *const[]){ "off", "on" }, 2, 0);
+	g_ba.look = env_word("SOMVR_BOW_AIM_LOOK", (const char *const[]){ "sight", "ring20" }, 2, 0); /* build 21 */
 	g_ba.head_cm = env_float("SOMVR_BOW_EXACT_HEAD_CM", 16, 5, 40, bad);
 	g_ba.body_cm = env_float("SOMVR_BOW_EXACT_BODY_CM", 24, 5, 60, bad);
 	float span[2] = { 65, 50 }; /* below and above the root (the capsule's middle: COMBAT's -90..+90) */
 	env_vec("SOMVR_BOW_EXACT_SPAN_CM", span, 2, 0, 120, bad);
 	g_ba.span_lo_cm = span[0], g_ba.span_hi_cm = span[1];
 	g_ba.far_cm = 100.0f * env_float("SOMVR_BOW_AIM_FAR_M", 40, 5, 100, bad);
-	g_ba.ring_deg = env_float("SOMVR_BOW_AIM_RING_DEG", 3.0f, 0.5f, 10, bad);
+	g_ba.ring_deg = env_float("SOMVR_BOW_AIM_RING_DEG", g_ba.look ? 3.0f : 1.5f, 0.5f, 10, bad); /* build 21: 1.5 */
 	g_ba.kind_was = -1;
 }
 
@@ -265,8 +272,10 @@ static void ba_config_log(void)
 		      g_ba.body_cm, g_ba.span_lo_cm, g_ba.span_hi_cm, g_cl.on ? "" : ": NOT available, SOMVR_CLIMB is off - no walls");
 	if (g_ba.ring)
 		logf_("CONFIG bow aim_ring=on (SOMVR_BOW_AIM_RING): while drawn, a ring %.1f deg across where the line meets an "
-		      "orc (wraith-blue) or the world (gold), else %.0f m along it; both eyes at its depth%s", g_ba.ring_deg,
-		      g_ba.far_cm / 100.0f, g_cl.on ? "" : " (no G21 cast: SOMVR_CLIMB off - orcs only, else far)");
+		      "orc (wraith-blue) or the world (%s), else %.0f m along it; both eyes at its depth%s; look %s "
+		      "(SOMVR_BOW_AIM_LOOK)", g_ba.ring_deg, g_ba.look ? "gold" : "soft white, a dark edge",
+		      g_ba.far_cm / 100.0f, g_cl.on ? "" : " (no G21 cast: SOMVR_CLIMB off - orcs only, else far)",
+		      g_ba.look ? "ring20 (build 20's rings)" : "sight (build 21: a thin ring and a dot)");
 }
 
 static void ba_end_log(void)

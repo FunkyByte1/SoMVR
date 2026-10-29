@@ -525,6 +525,14 @@ static void test_image(void) {
           "the red cell: centre %u %u %u a %u, corner a %u", rd[0], rd[1], rd[2], rd[3], rg[3]);
     CHECK(somvr_th_glow_row(SOMVR_THK_MELEE) == SOMVR_TH_ROW_GLOW && somvr_th_glow_row(SOMVR_THK_MELEE | SOMVR_THK_RED) ==
               SOMVR_TH_ROW_RED && somvr_th_glow_row(SOMVR_THK_PROJ) == SOMVR_TH_ROW_GLOW, "the glow rows by kind");
+    /* build 21: the blue row (the grab cue): the radial glow in the wraith's blue, fainter than the warm one */
+    somvr_th_rect(SOMVR_TH_ROW_BLUE, SOMVR_TH_LEVELS, rc);
+    const uint8_t *bl = PX(px, rc[0] + 16, rc[1] + 16), *bc = PX(px, rc[0], rc[1]);
+    CHECK(rc[1] == 4 * SOMVR_TH_STRIDE + 1 && bl[2] > 240 && bl[1] > 175 && bl[1] < 200 && bl[0] > 80 && bl[0] < 100 &&
+              bl[3] > 66 && bl[3] < 80 && bc[3] == 0 && rc[1] + rc[3] <= SOMVR_TH_IMG_H - 1 &&
+              somvr_th_glow_row(SOMVR_THK_BLUE) == SOMVR_TH_ROW_BLUE && somvr_th_glow_row(SOMVR_THK_BLUE | SOMVR_THK_RED) ==
+              SOMVR_TH_ROW_BLUE,
+          "the blue cell: centre %u %u %u a %u, corner a %u", bl[0], bl[1], bl[2], bl[3], bc[3]);
     int hb_hc = 0;
     CHECK(somvr_th_hurt_side(0, 0.5f, &hb_hc) == 0 && hb_hc == 8, "no hurt: the band");
     CHECK(somvr_th_hurt_side(255, 0.5f, &hb_hc) == 1 && hb_hc == 16, "a full hurt over a band: red");
@@ -536,7 +544,7 @@ static void test_image(void) {
               somvr_th_cell(0.04f) == 1 && somvr_th_cell(0.5f) == 8 && somvr_th_cell(1) == 16 && somvr_th_cell(3) == 16,
           "cell picks");
     int inside = 1, apart = 1;
-    for (int row = 0; row < 4; row++)
+    for (int row = 0; row <= SOMVR_TH_ROW_BLUE; row++)
         for (int k = 1; k <= SOMVR_TH_LEVELS; k++) {
             somvr_th_rect(row, k, rc);
             inside &= rc[0] >= 1 && rc[1] >= 1 && rc[0] + rc[2] <= SOMVR_TH_IMG_W - 1 && rc[1] + rc[3] <= SOMVR_TH_IMG_H - 1 &&

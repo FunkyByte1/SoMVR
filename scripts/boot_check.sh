@@ -96,9 +96,12 @@
 # `wait` and `waitlog`): RUN/quit.request (the VR menu's Quit game, confirmed) = a clean stop as `quit` (the cleanup stops
 # the game and checks the save); RUN/marks/<time>_<n>/want (a bug mark: the chord B + Y or the menu's Report; the
 # library wrote state.txt there and the layer writes eyes.ppm) = the flat picture (flat.jpg), the log tails
-# (somvr_tail.txt, xr_tail.txt) and voice.wav: VOICE seconds (default 9, SOMVR_MARK_VOICE_S in --game-env) from WiVRn's
-# microphone (its PipeWire source, a name with "wivrn", never another microphone) in a separate process (parecord),
-# voice.txt says what it got; eyes.ppm -> eyes.jpg once written (nice 19, one CPU). want -> served; RUN/marks.log lists them.
+# (somvr_tail.txt, xr_tail.txt) and voice.wav from WiVRn's microphone (its PipeWire source, a name with "wivrn", never
+# another microphone) in a separate process: build 21 (SOMVR_MARK_VOICE=talk in --game-env, the default) voice_rec.py
+# beside this script - until the player stops talking (2 s quiet, SOMVR_MARK_VOICE_QUIET_S; 5 s if nothing is said; at
+# most SOMVR_MARK_VOICE_MAX_S, 30), a new mark ends the last note at once; =fixed (or no voice_rec.py): parecord for
+# VOICE seconds (default 9, SOMVR_MARK_VOICE_S) as build 20. voice.txt says what it got; eyes.ppm -> eyes.jpg once
+# written (nice 19, one CPU). want -> served; RUN/marks.log lists them.
 # Auto screenshots: shots/auto-NNNNs.png every 10 s for the first 240 s of game time, then every 60 s (paused while a
 # batch runs).
 # The stop (every end: the commands' `quit`, the player's Quit, a signal, the limits): with --preload and the trigger
@@ -851,12 +854,28 @@ gel() { echo $(( $(date +%s) - GAME_T0 )); }
 WL_POS=0; MARKS_N=0; PLAYER_QUIT=0
 VOICE_S=$(genv SOMVR_MARK_VOICE_S) || VOICE_S=9
 { [[ $VOICE_S =~ ^[0-9]+$ ]] && [ "$VOICE_S" -ge 1 ] && [ "$VOICE_S" -le 30 ]; } || VOICE_S=9
+# build 21 (docs/re-xr-pipeline.md 82): the note until the player stops talking (voice_rec.py; the 20c session cut 6 of
+# 22 notes mid-sentence at 9.6 s)
+VOICE_MODE=$(genv SOMVR_MARK_VOICE) || VOICE_MODE=talk
+[ "$VOICE_MODE" = fixed ] || VOICE_MODE=talk
+VOICE_MAX=$(genv SOMVR_MARK_VOICE_MAX_S) || VOICE_MAX=30
+{ [[ $VOICE_MAX =~ ^[0-9]+$ ]] && [ "$VOICE_MAX" -ge 5 ] && [ "$VOICE_MAX" -le 30 ]; } || VOICE_MAX=30
+VOICE_QUIET=$(genv SOMVR_MARK_VOICE_QUIET_S) || VOICE_QUIET=2
+[[ $VOICE_QUIET =~ ^[0-9]+(\.[0-9]+)?$ ]] || VOICE_QUIET=2
+VOICE_REC=$BCDIR/voice_rec.py
+[ "$VOICE_MODE" = talk ] && [ ! -r "$VOICE_REC" ] && VOICE_MODE=fixed   # (an old copy without it: build 20's)
+VOICE_PID=""
+voice_stop() {   # the note still recording (talk) ends now: the next mark's note never overlaps it
+  [ -n "$VOICE_PID" ] && kill -0 "$VOICE_PID" 2>/dev/null && kill -TERM "$VOICE_PID" 2>/dev/null
+  VOICE_PID=""
+}
 XRLOG=$(genv SOMVR_XR_LOG) || XRLOG=$RUN/xr-layer.log
 mic_source() {   # WiVRn's microphone: the first PipeWire source with "wivrn" in its name (not a monitor); never another
   timeout 5 pactl list short sources 2>/dev/null | awk '$2 ~ /[Ww][Ii][Vv][Rr][Nn]/ && $2 !~ /\.monitor$/ { print $2; exit }'
 }
 mark_serve() {   # $1 = RUN/marks/<dir> with a new `want`: the flat picture and the log tails now; the voice and the
-                 # pictures' JPEGs in a separate process (nice 19, one CPU) that ends by itself (at most VOICE_S + 25 s)
+                 # pictures' JPEGs in a separate process (nice 19, one CPU) that ends by itself (at most VOICE_S + 25 s;
+                 # build 21's talk: the note its own process, voice_rec.py, at most VOICE_MAX s)
   local d=$1 src head
   mv -f "$d/want" "$d/served" 2>/dev/null || return 0
   MARKS_N=$((MARKS_N + 1))
@@ -865,9 +884,19 @@ mark_serve() {   # $1 = RUN/marks/<dir> with a new `want`: the flat picture and 
   tail -n 200 "$XRLOG" > "$d/xr_tail.txt" 2>/dev/null
   src=$(mic_source)
   head=$(head -1 "$d/state.txt" 2>/dev/null | cut -c1-120)
-  log "bug mark $MARKS_N: $d (${head:-no state.txt}); voice: ${src:+$VOICE_S s from }${src:-none (no WiVRn microphone source: is its microphone on?)}"
+  local how="$VOICE_S s from "
+  [ "$VOICE_MODE" = talk ] && how="until the talk ends (${VOICE_QUIET} s quiet, at most $VOICE_MAX s) from "
+  log "bug mark $MARKS_N: $d (${head:-no state.txt}); voice: ${src:+$how}${src:-none (no WiVRn microphone source: is its microphone on?)}"
   echo "$(date +%T) ${d##*/} ${head:-?} | voice: ${src:+recording }${src:-none}" >> "$RUN/marks.log"
-  ( if [ -n "$src" ]; then
+  voice_stop   # build 21: the last note ends now (no overlap)
+  if [ -n "$src" ] && [ "$VOICE_MODE" = talk ]; then
+    python3 -I "$VOICE_REC" --src "$src" --out "$d/voice.wav" --txt "$d/voice.txt" --err "$d/voice.err" \
+      --max "$VOICE_MAX" --quiet "$VOICE_QUIET" > /dev/null 2>> "$d/voice.err" < /dev/null &
+    VOICE_PID=$!
+  fi
+  ( if [ -n "$src" ] && [ "$VOICE_MODE" = talk ]; then
+      :   # (voice_rec.py records it)
+    elif [ -n "$src" ]; then
       timeout -s INT "$VOICE_S" parecord -d "$src" --channels=1 --rate=48000 --format=s16le --file-format=wav \
         "$d/voice.wav" 2> "$d/voice.err"
       sz=$(stat -c %s "$d/voice.wav" 2>/dev/null || echo 0)

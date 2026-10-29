@@ -176,7 +176,7 @@ static void test_image(void) {
             }
             if (!inside && p[3]) guard++;
             for (int k = 0; k < 3; k++) prem &= p[k] <= p[3];
-            if (x < SOMVR_OB_STRIDE) {
+            if (x < SOMVR_OB_STRIDE && y < SOMVR_OB_STRIDE) { /* (build 21: the second row is the timer's) */
                 full += p[3] > 0;
                 if (y > 75 && p[0] == 255 && p[1] == 255 && p[2] == 255) text++;
                 const uint8_t *fp = p + 4 * SOMVR_OB_STRIDE;
@@ -187,6 +187,27 @@ static void test_image(void) {
         }
     CHECK(guard == 0 && prem, "the guards empty (%d), premultiplied", guard);
     CHECK(full > 1500 && text > 100 && faint_ok, "cell 0 drawn (%d), the white text (%d), cell 1 = 0.4 x cell 0", full, text);
+    { /* build 21: the timer's cells - the bright white part of the timer ring grows with the steps left, all at ARMED */
+        int bright[SOMVR_OB_TIMER_ARMED + 1], mono = 1;
+        for (int k = 0; k <= SOMVR_OB_TIMER_ARMED; k++) {
+            int32_t tr[4];
+            somvr_ob_rect(SOMVR_OB_CELL_TIMER0 + k, tr);
+            bright[k] = 0;
+            for (int y = tr[1]; y < tr[1] + tr[3]; y++)
+                for (int x = tr[0]; x < tr[0] + tr[2]; x++) {
+                    const uint8_t *p = px + 4 * (y * SOMVR_OB_IMG_W + x);
+                    bright[k] += p[3] >= 240 && p[0] >= 235 && p[1] >= 235 && p[2] >= 235;
+                }
+            if (k && k <= SOMVR_OB_TIMER_STEPS && bright[k] <= bright[k - 1]) mono = 0;
+        }
+        int32_t t0[4];
+        somvr_ob_rect(SOMVR_OB_CELL_TIMER0, t0);
+        CHECK(t0[1] == SOMVR_OB_STRIDE + 1 && t0[0] == 1 && bright[0] < 20 && mono && bright[SOMVR_OB_TIMER_STEPS] > 1200 &&
+                  bright[SOMVR_OB_TIMER_ARMED] > bright[SOMVR_OB_TIMER_STEPS] &&
+                  abs(bright[6] - bright[SOMVR_OB_TIMER_STEPS] / 2) < bright[SOMVR_OB_TIMER_STEPS] / 10,
+              "the timer's cells (the second row): white %d (empty), %d (half), %d (full), %d (armed), growing %d", bright[0],
+              bright[6], bright[SOMVR_OB_TIMER_STEPS], bright[SOMVR_OB_TIMER_ARMED], mono);
+    }
     int ax = 2 * SOMVR_OB_STRIDE + 1;
     CHECK(arrow_r - ax > 105 && arrow_l - ax < 40, "the arrow across the cell at its middle row: %d..%d", arrow_l - ax,
           arrow_r - ax);
@@ -200,7 +221,7 @@ static void test_image(void) {
     CHECK(band[3] > 200 && band[0] > 200 && fill[3] > 20 && fill[3] < 60 && dot[3] > 200 && corner[3] == 0,
           "the ring's cell: band %d, fill %d, dot %d, corner %d", band[3], fill[3], dot[3], corner[3]);
     somvr_ob_rect(SOMVR_OB_CELL_RING, r);
-    CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 15 * SOMVR_OB_STRIDE, "the ring's rect");
+    CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 17 * SOMVR_OB_STRIDE, "the ring's rect"); /* 21: 17 */
     /* build 18: cell 8, the refused landing: a square after the strike's three wide cells; its band red, the bar across
      * its middle red, beside the bar faint, the corner empty */
     somvr_ob_rect(SOMVR_OB_CELL_RING_NO, r);
@@ -294,7 +315,7 @@ static void test_strike_mark(void) {
     for (int i = 0; i < 3; i++) somvr_ob_rect(SOMVR_OB_CELL_STRIKE + i, r[i]);
     CHECK(r[0][0] == 5 * SOMVR_OB_STRIDE + 1 && r[0][2] == 3 * SOMVR_OB_STRIDE - 2 && r[0][3] == SOMVR_OB_CELL &&
               r[1][0] == r[0][0] + 3 * SOMVR_OB_STRIDE && r[2][0] == r[1][0] + 3 * SOMVR_OB_STRIDE &&
-              r[2][0] + r[2][2] == SOMVR_OB_IMG_W - 1 - SOMVR_OB_STRIDE && sq[0] + sq[2] < r[0][0], /* build 18: cell 8 after them */
+              r[2][0] + r[2][2] == SOMVR_OB_IMG_W - 1 - 3 * SOMVR_OB_STRIDE && sq[0] + sq[2] < r[0][0], /* build 18: cell 8 after them; 21: 9, 10 */
           "the strike's cells: 388 px wide, side by side after the line's, inside the image (%d %d %d)", r[0][0], r[1][0], r[2][0]);
 #define PX(c, x, y) (px + 4 * ((size_t)(r[c][1] + (y)) * SOMVR_OB_IMG_W + (size_t)(r[c][0] + (x))))
     /* the ring's band (5 px inside its outer edge, at its right), its centre, the A button, the text */
@@ -407,7 +428,7 @@ static void test_aim_ring(void) {
         float pos[3] = {k ? 0.5f : 4.0f, k ? 1.5f : 1.0f, k ? -2.0f : -20.0f};
         float d = sqrtf((pos[0] - head[0]) * (pos[0] - head[0]) + (pos[1] - head[1]) * (pos[1] - head[1]) +
                         (pos[2] - head[2]) * (pos[2] - head[2]));
-        somvr_ob_place p = somvr_ob_aim(head, pos, 2.2f, k);
+        somvr_ob_place p = somvr_ob_aim(head, pos, 2.2f, k, 0);
         float ring = 2 * d * tanf(1.1f * 0.0174533f), want = ring * 128 / (k ? 108.0f : 124.0f);
         const float *q = p.pose;
         float zx = 2 * (q[0] * q[2] + q[3] * q[1]), zy = 2 * (q[1] * q[2] - q[3] * q[0]), zz = 1 - 2 * (q[0] * q[0] + q[1] * q[1]);
@@ -419,12 +440,90 @@ static void test_aim_ring(void) {
         CHECK(fabsf(zx - (head[0] - pos[0]) / d) < 1e-3f && fabsf(zy - (head[1] - pos[1]) / d) < 1e-3f &&
                   fabsf(zz - (head[2] - pos[2]) / d) < 1e-3f, "aim ring: facing the head");
     }
-    CHECK(somvr_ob_aim(head, head, 2.2f, 0).kind == SOMVR_OBK_NONE && somvr_ob_aim(head, (float[]){0, 1, -5}, NAN, 0).kind ==
-              SOMVR_OBK_NONE, "aim ring: none at the head or NaN");
+    CHECK(somvr_ob_aim(head, head, 2.2f, 0, 0).kind == SOMVR_OBK_NONE &&
+              somvr_ob_aim(head, (float[]){0, 1, -5}, NAN, 0, 0).kind == SOMVR_OBK_NONE,
+          "aim ring: none at the head or NaN");
+}
+
+/* build 21 (re-xr-pipeline.md 82): the bow's sight (SOMVR_OBF_AIM_SIGHT) - the 20c session: build 20's ring too big,
+ * its gold out of place. Its own cells: the ring's outer edge deg of the view across (as build 20's),
+ * the quad SOMVR_OB_AIM_PX / SOMVR_OB_AIM_RING_PX of that; on the world no gold or yellow texel, soft white at about
+ * 80 %, a faint dark edge outside and inside the band, a dot at the centre, the band thin (under 0.15 of the ring's
+ * radius); on an orc the same in the strike's blue; nothing outside its square */
+static void test_aim_sight(void) {
+    float head[3] = {0, 1.7f, 0};
+    for (int k = 0; k < 2; k++) {
+        float pos[3] = {k ? 0.5f : 4.0f, k ? 1.5f : 1.0f, k ? -2.0f : -20.0f};
+        float d = sqrtf((pos[0] - head[0]) * (pos[0] - head[0]) + (pos[1] - head[1]) * (pos[1] - head[1]) +
+                        (pos[2] - head[2]) * (pos[2] - head[2]));
+        somvr_ob_place p = somvr_ob_aim(head, pos, 1.5f, k, 1);
+        float ring = 2 * d * tanf(0.75f * 0.0174533f), want = ring * SOMVR_OB_AIM_PX / (float)SOMVR_OB_AIM_RING_PX;
+        CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == (k ? SOMVR_OB_CELL_AIM_HIT : SOMVR_OB_CELL_AIM) &&
+                  fabsf(p.pose[4] - pos[0]) < 1e-5f && fabsf(p.pose[5] - pos[1]) < 1e-5f && fabsf(p.pose[6] - pos[2]) < 1e-5f,
+              "sight %s: its cell, on the point", k ? "(an orc)" : "(the world)");
+        CHECK(fabsf(p.size[0] - want) < 1e-4f && p.size[0] == p.size[1], "sight: 1.5 deg at %.1f m = the quad %.4f m (%.4f)",
+              d, p.size[0], want);
+    }
+    int32_t r[4], rn[4], rh[4];
+    somvr_ob_rect(SOMVR_OB_CELL_AIM, r), somvr_ob_rect(SOMVR_OB_CELL_RING_NO, rn), somvr_ob_rect(SOMVR_OB_CELL_AIM_HIT, rh);
+    CHECK(r[2] == SOMVR_OB_AIM_PX && r[3] == SOMVR_OB_AIM_PX && r[0] >= rn[0] + rn[2] + 1 && rh[0] >= r[0] + SOMVR_OB_CELL &&
+              rh[0] + SOMVR_OB_CELL <= SOMVR_OB_IMG_W && r[1] == 1,
+          "sight cells: %d,%d %dx%d and %d after the refused ring's (%d), inside the texture (%d)", r[0], r[1], r[2], r[3],
+          rh[0], rn[0], SOMVR_OB_IMG_W);
+    uint8_t *px = calloc((size_t)SOMVR_OB_IMG_W * SOMVR_OB_IMG_H, 4);
+    somvr_ob_image(px, NULL, "", 0);
+    for (int k = 0; k < 2; k++) {
+        int32_t c[4];
+        somvr_ob_rect(k ? SOMVR_OB_CELL_AIM_HIT : SOMVR_OB_CELL_AIM, c);
+        int gold = 0, outside = 0, band = 0, edge_out = 0, edge_in = 0, dot = 0, hole = 0, blue = 0;
+        float amax = 0, rmax = 0, rmin = 99;
+        for (int y = c[1] - 1; y < c[1] + SOMVR_OB_CELL; y++)
+            for (int x = c[0] - 1; x < c[0] + SOMVR_OB_CELL; x++) {
+                const uint8_t *t = px + 4 * ((size_t)y * SOMVR_OB_IMG_W + (size_t)x);
+                int in = x >= c[0] && y >= c[1] && x < c[0] + c[2] && y < c[1] + c[3];
+                if (!in) {
+                    outside += t[3] != 0;
+                    continue;
+                }
+                float a = t[3] / 255.0f, R = a > 0 ? t[0] / a : 0, G = a > 0 ? t[1] / a : 0, B = a > 0 ? t[2] / a : 0;
+                float dx = x - c[0] + 0.5f - 0.5f * SOMVR_OB_AIM_PX, dy = y - c[1] + 0.5f - 0.5f * SOMVR_OB_AIM_PX;
+                float rr = sqrtf(dx * dx + dy * dy);
+                if (a > 0.1f && R > B + 30 && G > B + 20) gold++; /* yellow / gold: red and green well over blue */
+                if (a > 0.1f && B > R + 40) blue++;
+                if (a > 0.02f && rr > 6) rmax = rr > rmax ? rr : rmax, rmin = rr < rmin ? rr : rmin;
+                if (rr > 15.5f && rr < 16.9f && a > 0.7f && a < 0.95f && R > 120 && G > 150 && B > 150) band++; /* the band */
+                if (rr > 18.0f && rr < 18.8f && a > 0.25f && R < 40 && G < 40 && B < 40) edge_out++;
+                if (rr > 13.8f && rr < 14.5f && a > 0.25f && R < 40 && G < 40 && B < 40) edge_in++;
+                if (rr < 1.0f && a > 0.7f && G > 150) dot++;
+                if (rr > 4 && rr < 12 && t[3]) hole++;
+                amax = a > amax ? a : amax;
+            }
+        CHECK(!outside && !hole && dot && band > 40 && edge_out > 40 && edge_in > 30,
+              "sight %s: a band (%d), a dark edge outside (%d) and inside (%d), the dot (%d), clear inside (%d) and outside "
+              "its square (%d)", k ? "blue" : "white", band, edge_out, edge_in, dot, hole, outside);
+        CHECK(rmax <= 0.5f * SOMVR_OB_AIM_RING_PX + 0.8f && rmin >= 0.5f * SOMVR_OB_AIM_RING_PX * 0.68f &&
+                  (rmax - rmin) < 0.36f * 0.5f * SOMVR_OB_AIM_RING_PX && amax < 0.95f,
+              "sight: thin (the ring %.1f .. %.1f of %.1f), never opaque (%.2f)", rmin, rmax, 0.5f * SOMVR_OB_AIM_RING_PX, amax);
+        CHECK(k ? blue > 40 && !gold : !gold && !blue, "sight %s: no gold texel (%d), blue %d", k ? "on an orc" : "on the world",
+              gold, blue);
+    }
+    /* build 20's world ring (ring20) is the gold one - the check above fails on it */
+    int32_t c3[4];
+    somvr_ob_rect(somvr_ob_aim(head, (float[]){0, 1, -5}, 3.0f, 0, 0).cell, c3);
+    int gold20 = 0;
+    for (int y = c3[1]; y < c3[1] + c3[3]; y++)
+        for (int x = c3[0]; x < c3[0] + c3[2]; x++) {
+            const uint8_t *t = px + 4 * ((size_t)y * SOMVR_OB_IMG_W + (size_t)x);
+            float a = t[3] / 255.0f;
+            gold20 += a > 0.1f && t[0] / a > t[2] / a + 30 && t[1] / a > t[2] / a + 20;
+        }
+    CHECK(gold20 > 100, "ring20 (build 20's world ring) is gold: %d texels", gold20);
+    free(px);
 }
 
 int main(void) {
     test_aim_ring();
+    test_aim_sight();
     test_strike_ground();
     test_strike_mark();
     test_match_text();

@@ -277,7 +277,9 @@ static const char *const g_labels[SOMVR_VMI_ALL] = {"Turn",     "Snap angle", "T
                                                     /* build 19: beside Spawn an orc */
                                                     "Spawn group",
                                                     /* build 19: the two page buttons (their arrows drawn too) */
-                                                    "Fight settings", "Settings"};
+                                                    "Fight settings", "Settings",
+                                                    /* build 21: the Test tab, the Test page's buttons */
+                                                    "Test", "Prev", "Next"};
 const char *somvr_vm_label(int item) { return item >= 0 && item < SOMVR_VMI_ALL ? g_labels[item] : ""; }
 static const char *const g_orc_labels[3] = {"Infantry", "Shield", "Berserker"}; /* = somvr_pr_orc_label */
 
@@ -320,6 +322,9 @@ int somvr_vm_enabled(const somvr_settings *s, uint64_t avail, int item) {
     case SOMVR_VMI_CLOSE:
     case SOMVR_VMI_TAB_SET:
     case SOMVR_VMI_TAB_CTL: return 1;
+    case SOMVR_VMI_TAB_TEST: /* build 21 */
+    case SOMVR_VMI_TEST_PREV:
+    case SOMVR_VMI_TEST_NEXT: return (avail & SOMVR_VMA_TESTPAGE) != 0;
     case SOMVR_VMI_TAB:
     case SOMVR_VMI_PR_ORC: return (avail & SOMVR_VMA_PRACTICE) != 0;
     case SOMVR_VMI_PR_GO: return (avail & SOMVR_VMA_PRACTICE) && !(avail & (SOMVR_VMA_PR_HERE | SOMVR_VMA_PR_BUSY));
@@ -345,6 +350,7 @@ int somvr_vm_tab_page(int item) {
            : item == SOMVR_VMI_TAB_CTL  ? SOMVR_VMPG_CONTROLS
            : item == SOMVR_VMI_PG_FIGHT ? SOMVR_VMPG_FIGHT    /* build 19: the page buttons */
            : item == SOMVR_VMI_PG_BACK  ? SOMVR_VMPG_SETTINGS
+           : item == SOMVR_VMI_TAB_TEST ? SOMVR_VMPG_TEST /* build 21 */
                                         : -1;
 }
 /* build 19: the Fight page's rows say what they do (two dim lines under the page's rows while one is hovered: HL:A's
@@ -507,6 +513,143 @@ int somvr_vm_controls_av(uint64_t avail, int i, const char **key, const char **w
     return n;
 }
 
+/* ---- build 21 (re-xr-pipeline.md 82): the Test page's text ---------------------------------------------------- */
+/* the character the font draws for the bytes at p (left of them): printable ASCII as it is, a tab a space, UTF-8's
+ * curly quotes, dashes and the degree sign their look-alikes, anything else outside ASCII '?', a control byte 0
+ * (dropped); *adv = the bytes it took */
+static char tx_char(const unsigned char *p, size_t left, size_t *adv) {
+    *adv = 1;
+    if (*p == '\t') return ' ';
+    if (*p >= 32 && *p < 127) return (char)*p;
+    if (*p < 0x80) return 0;
+    size_t n = (*p & 0xE0) == 0xC0 ? 2 : (*p & 0xF0) == 0xE0 ? 3 : (*p & 0xF8) == 0xF0 ? 4 : 1;
+    n = n > left ? left : n;
+    for (size_t k = 1; k < n; k++)
+        if ((p[k] & 0xC0) != 0x80) {
+            n = k;
+            break;
+        }
+    *adv = n;
+    if (n == 3 && p[0] == 0xE2 && p[1] == 0x80) {
+        if (p[2] == 0x98 || p[2] == 0x99) return '\'';
+        if (p[2] == 0x9C || p[2] == 0x9D) return '"';
+        if (p[2] == 0x93 || p[2] == 0x94) return '-';
+    }
+    if (n == 2 && p[0] == 0xC2 && p[1] == 0xB0) return (char)SOMVR_FONT_DEG;
+    return '?';
+}
+static void tx_line(somvr_vm_text *t, int kind, const char *s, size_t n) {
+    if (t->n >= SOMVR_VM_TEST_LINES - 1) { /* the last line says there is more */
+        if (t->n == SOMVR_VM_TEST_LINES - 1) {
+            snprintf(t->line[t->n], sizeof t->line[0], "(more in the file)");
+            t->kind[t->n++] = SOMVR_VMT_NOTE;
+        }
+        t->truncated = 1;
+        return;
+    }
+    n = n > SOMVR_VM_TEST_COLS ? SOMVR_VM_TEST_COLS : n;
+    memcpy(t->line[t->n], s, n);
+    t->line[t->n][n] = 0;
+    t->kind[t->n++] = (uint8_t)kind;
+}
+/* s (n bytes, clean) wrapped by words into lines of kind (an item's: SOMVR_VM_TEST_COLS - 2 wide, its next lines MORE;
+ * a paragraph's next TEXT2); a word longer than a line is cut; at most max lines (the title: 2) */
+static void tx_wrap(somvr_vm_text *t, int kind, const char *s, size_t n, int max) {
+    int w = kind == SOMVR_VMT_ITEM ? SOMVR_VM_TEST_COLS - 2 : SOMVR_VM_TEST_COLS, lines = 0;
+    size_t i = 0;
+    while (i < n && lines < max) {
+        while (i < n && s[i] == ' ') i++;
+        if (i >= n) break;
+        size_t e = i, last = i; /* the end of the last whole word that fits */
+        while (e < n && e - i <= (size_t)w) {
+            if (s[e] == ' ') last = e;
+            e++;
+        }
+        size_t end = e >= n && e - i <= (size_t)w ? n : last > i ? last : i + (size_t)w;
+        int k = lines == 0 ? kind : kind == SOMVR_VMT_ITEM ? SOMVR_VMT_MORE : kind == SOMVR_VMT_TEXT ? SOMVR_VMT_TEXT2 : kind;
+        while (end > i && s[end - 1] == ' ') end--;
+        tx_line(t, k, s + i, end - i);
+        lines++, i = end;
+    }
+}
+int somvr_vm_text_parse(somvr_vm_text *t, const char *text, size_t len) {
+    memset(t, 0, sizeof *t);
+    if (!text) len = 0;
+    if (len > SOMVR_VM_TEST_BYTES) len = SOMVR_VM_TEST_BYTES, t->truncated = 1;
+    static const size_t CAP = SOMVR_VM_TEST_BYTES;
+    char para[SOMVR_VM_TEST_BYTES + 1], ln[SOMVR_VM_TEST_BYTES + 1];
+    size_t pn = 0;
+    int pkind = 0, title = 0;
+    const unsigned char *u = (const unsigned char *)text;
+    for (size_t i = 0; i <= len;) {
+        size_t e = i, n = 0, adv;
+        while (e < len && u[e] != '\n' && u[e]) e++;
+        for (size_t k = i; k < e; k += adv) { /* the line, clean */
+            char ch = tx_char(u + k, e - k, &adv);
+            if (ch && n < CAP) ln[n++] = ch;
+        }
+        while (n && ln[n - 1] == ' ') n--;
+        size_t b = 0;
+        while (b < n && ln[b] == ' ') b++;
+        int comment = n > 0 && ln[0] == '#', blank = b >= n, item = !blank && n - b >= 2 &&
+                                                                  (ln[b] == '-' || ln[b] == '*') && ln[b + 1] == ' ';
+        if (!comment && (blank || item || !title)) { /* the paragraph ends */
+            if (pkind) tx_wrap(t, pkind, para, pn, pkind == SOMVR_VMT_TITLE ? 2 : SOMVR_VM_TEST_LINES);
+            pkind = 0, pn = 0;
+        }
+        if (!comment && !blank) {
+            const char *s = ln + b + (item ? 2 : 0);
+            size_t m = n - b - (item ? 2 : 0);
+            if (!title) pkind = SOMVR_VMT_TITLE, title = 1, t->n_title = 0;
+            else if (item) pkind = SOMVR_VMT_ITEM;
+            else if (!pkind) pkind = SOMVR_VMT_TEXT;
+            else if (pn < CAP) para[pn++] = ' '; /* a line under an item or text continues it */
+            m = m > CAP - pn ? CAP - pn : m;
+            memcpy(para + pn, s, m), pn += m;
+            if (pkind == SOMVR_VMT_TITLE) { /* the title: its own line alone */
+                tx_wrap(t, SOMVR_VMT_TITLE, para, pn, 2);
+                pkind = 0, pn = 0;
+            }
+        }
+        if (e >= len || !u[e]) {
+            if (pkind) tx_wrap(t, pkind, para, pn, SOMVR_VM_TEST_LINES);
+            break;
+        }
+        i = e + 1;
+    }
+    for (int k = 0; k < t->n && t->kind[k] == SOMVR_VMT_TITLE; k++) t->n_title++;
+    t->have = t->n_title > 0;
+    if (!t->have) { /* no file, or nothing in it */
+        t->n = 0;
+        tx_line(t, SOMVR_VMT_TITLE, "What to test", 12);
+        tx_line(t, SOMVR_VMT_NOTE, "No notes in this build.", 23);
+        t->n_title = 1;
+    }
+    /* the pages: the title on each; the rest from under it to above the Prev / Next row, an item kept whole on a page
+     * when it fits one */
+    int top = SOMVR_VM_TEST_Y0 + t->n_title * 34 + 8, bottom = SOMVR_VM_TEST_NAV_Y - 8, page = 0, y = top;
+    for (int k = 0; k < t->n_title; k++) t->page[k] = 0, t->y[k] = (int16_t)(SOMVR_VM_TEST_Y0 + 34 * k);
+    for (int k = t->n_title; k < t->n;) {
+        int g = k + 1;
+        while (g < t->n && (t->kind[g] == SOMVR_VMT_MORE || t->kind[g] == SOMVR_VMT_TEXT2)) g++;
+        int h = (g - k) * SOMVR_VM_TEST_DY, gap = y > top ? SOMVR_VM_TEST_GAP : 0;
+        if (y + gap + h > bottom && y > top && h <= bottom - top) page++, y = top, gap = 0;
+        y += gap;
+        for (int j = k; j < g; j++) {
+            if (y + SOMVR_VM_TEST_DY > bottom) page++, y = top;
+            t->page[j] = (uint8_t)(page < 255 ? page : 255), t->y[j] = (int16_t)y;
+            y += SOMVR_VM_TEST_DY;
+        }
+        k = g;
+    }
+    t->pages = page + 1;
+    return t->pages;
+}
+int somvr_vm_test_turn(const somvr_vm_text *t, int page, int dir) {
+    int n = t && t->pages > 0 ? t->pages : 1, p = page + (dir < 0 ? -1 : dir > 0 ? 1 : 0);
+    return p < 0 ? 0 : p >= n ? n - 1 : p;
+}
+
 int somvr_vm_practice_action(int item) {
     switch (item) {
     case SOMVR_VMI_PR_GO: return SOMVR_VMPR_GO;
@@ -632,6 +775,8 @@ int somvr_vm_apply(somvr_settings *s, uint64_t avail, uint32_t blink_on_ms, int 
     if (somvr_vm_tab_page(item) >= 0) return part == SOMVR_VMP_BUTTON ? SOMVR_VMR_PAGE : SOMVR_VMR_NONE;
     if (item == SOMVR_VMI_REPORT) return part == SOMVR_VMP_BUTTON ? SOMVR_VMR_REPORT : SOMVR_VMR_NONE;
     if (item == SOMVR_VMI_QUIT) return part == SOMVR_VMP_BUTTON ? SOMVR_VMR_QUIT : SOMVR_VMR_NONE;
+    if (item == SOMVR_VMI_TEST_PREV || item == SOMVR_VMI_TEST_NEXT) /* build 21 */
+        return part == SOMVR_VMP_BUTTON ? SOMVR_VMR_SCROLL : SOMVR_VMR_NONE;
     if (somvr_vm_practice_action(item)) return part == SOMVR_VMP_BUTTON ? SOMVR_VMR_PRACTICE : SOMVR_VMR_NONE;
     if (part != SOMVR_VMP_ROW && part != SOMVR_VMP_LESS && part != SOMVR_VMP_MORE) return SOMVR_VMR_NONE;
     int dir = part == SOMVR_VMP_LESS ? -1 : 1, wrap = part == SOMVR_VMP_ROW;
@@ -711,6 +856,12 @@ int somvr_vm_apply(somvr_settings *s, uint64_t avail, uint32_t blink_on_ms, int 
 #define PR_GROUP_X 272
 #define PR_GROUP_W 200
 
+/* build 21 (SOMVR_VMA_TESTPAGE): the tab strip's four tabs - the three 134 wide (the labels' 128 and 3 a side), the
+ * Test tab 80, 3 apart from x 10 to 501 */
+#define TAB4_W 134
+#define TAB4_X3 (10 + 3 * (TAB4_W + 3))
+#define TAB4_W3 80
+
 int somvr_vm_shown(uint64_t avail, int item) {
     switch (item) {
     case SOMVR_VMI_STEP:
@@ -763,12 +914,21 @@ int somvr_vm_rect_av(uint64_t avail, int item, int part, int rc[4]) {
         rc[0] = 16, rc[1] = ROW_Y0 + slot * h + 2, rc[2] = SOMVR_VM_TEX_W - 32, rc[3] = h - 4;
         return 1;
     }
+    int t4 = (avail & SOMVR_VMA_TESTPAGE) != 0; /* build 21: the four tabs, no X on the panel, the Test page's row */
+    if (item == SOMVR_VMI_TAB_TEST || item == SOMVR_VMI_TEST_PREV || item == SOMVR_VMI_TEST_NEXT || (t4 && item == SOMVR_VMI_CLOSE)) {
+        if (!t4 || part != SOMVR_VMP_BUTTON || item == SOMVR_VMI_CLOSE) return 0;
+        if (item == SOMVR_VMI_TAB_TEST) rc[0] = TAB4_X3, rc[1] = 10, rc[2] = TAB4_W3, rc[3] = 44;
+        else rc[0] = item == SOMVR_VMI_TEST_PREV ? 16 : 344, rc[1] = SOMVR_VM_TEST_NAV_Y, rc[2] = 152, rc[3] = 56;
+        return 1;
+    }
     if (item == SOMVR_VMI_CLOSE || item == SOMVR_VMI_RECENTER || somvr_vm_tab_page(item) >= 0 ||
         item == SOMVR_VMI_REPORT || item == SOMVR_VMI_QUIT || somvr_vm_practice_action(item)) {
         static const int by[] = {PR_GO_Y, PR_BACK_Y, 0, PR_SPAWN_Y, PR_REMOVE_Y};
         int pa = somvr_vm_practice_action(item);
         if (part != SOMVR_VMP_BUTTON) return 0;
         if (item == SOMVR_VMI_CLOSE) rc[0] = 452, rc[1] = 10, rc[2] = 48, rc[3] = 44;
+        else if (somvr_vm_tab_page(item) >= 0 && t4) /* build 21: four tabs across: 10, 147, 284 (134 wide), 421 (80) */
+            rc[0] = 10 + (TAB4_W + 3) * somvr_vm_tab_page(item), rc[1] = 10, rc[2] = TAB4_W, rc[3] = 44;
         else if (somvr_vm_tab_page(item) >= 0) /* the tab strip: Settings, Practice, Controls */
             rc[0] = 12 + 144 * somvr_vm_tab_page(item), rc[1] = 10, rc[2] = 140, rc[3] = 44;
         /* the settings page's bottom row: Recentre | Report | Quit game (the last two: somvr_session.h) */
@@ -802,20 +962,24 @@ static int in_rect(const int rc[4], float x, float y) {
     return x >= (float)rc[0] && x < (float)(rc[0] + rc[2]) && y >= (float)rc[1] && y < (float)(rc[1] + rc[3]);
 }
 /* the buttons a page has (the hit test's order: -1 ends the list) */
-static const int g_page_buttons[4][13] = {
+static const int g_page_buttons[5][14] = {
     {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
-     SOMVR_VMI_TAB_CTL, SOMVR_VMI_PG_FIGHT, -1},
-    {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK,
-     SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH, SOMVR_VMI_PR_FAR,
-     SOMVR_VMI_PR_GROUP, -1},
-    {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, -1},
+     SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, SOMVR_VMI_PG_FIGHT, -1},
+    {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, SOMVR_VMI_PR_GO,
+     SOMVR_VMI_PR_BACK, SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH,
+     SOMVR_VMI_PR_FAR, SOMVR_VMI_PR_GROUP, -1},
+    {SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, -1},
     /* build 19: the Fight page = the Settings page's bottom row, the tabs, its back button */
     {SOMVR_VMI_RECENTER, SOMVR_VMI_REPORT, SOMVR_VMI_QUIT, SOMVR_VMI_CLOSE, SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET,
-     SOMVR_VMI_TAB_CTL, SOMVR_VMI_PG_BACK, -1}};
+     SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, SOMVR_VMI_PG_BACK, -1},
+    /* build 21: the Test page = the tabs, its Prev / Next (the X: none with SOMVR_VMA_TESTPAGE - its rect is 0) */
+    {SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, SOMVR_VMI_TEST_PREV, SOMVR_VMI_TEST_NEXT,
+     -1}};
 static const int *page_buttons(int page) {
     return g_page_buttons[page == SOMVR_VMPG_PRACTICE   ? 1
                           : page == SOMVR_VMPG_CONTROLS ? 2
                           : page == SOMVR_VMPG_FIGHT    ? 3
+                          : page == SOMVR_VMPG_TEST     ? 4
                                                         : 0];
 }
 somvr_vm_hit somvr_vm_hit_test(float u, float v) { return somvr_vm_hit_test_av(0, SOMVR_VMPG_SETTINGS, u, v); }
@@ -826,10 +990,10 @@ somvr_vm_hit somvr_vm_hit_test_av(uint64_t avail, int page, float u, float v) {
     float x = u * SOMVR_VM_TEX_W, y = v * SOMVR_VM_TEX_H;
     int rc[4];
     const int *bl = page_buttons(page);
-    for (int i = 0; i < 13 && bl[i] >= 0; i++)
+    for (int i = 0; i < 14 && bl[i] >= 0; i++)
         if (somvr_vm_rect_av(avail, bl[i], SOMVR_VMP_BUTTON, rc) && in_rect(rc, x, y))
             return (somvr_vm_hit){bl[i], SOMVR_VMP_BUTTON};
-    if (page == SOMVR_VMPG_CONTROLS) return h; /* text only */
+    if (page == SOMVR_VMPG_CONTROLS || page == SOMVR_VMPG_TEST) return h; /* text only */
     int r0 = page == SOMVR_VMPG_PRACTICE ? SOMVR_VMI_PR_ORC : 0, r1 = page == SOMVR_VMPG_PRACTICE ? r0 + 1 : SOMVR_VMI_ROWS;
     for (int item = r0; item < r1; item++) {
         if (page != SOMVR_VMPG_PRACTICE && somvr_vm_row_page(item) != (page == SOMVR_VMPG_FIGHT ? SOMVR_VMPG_FIGHT
@@ -918,15 +1082,54 @@ static void draw_row(const somvr_font *f, const canvas *c, const somvr_vm_view *
 static void draw_button(const somvr_font *f, const canvas *c, const somvr_vm_view *v, int item, const char *label) {
     int rc[4], on = somvr_vm_enabled(&v->set, v->avail, item), hov = v->hover.item == item;
     int warn = on && item == SOMVR_VMI_QUIT && v->quit_armed; /* pressed once: red, "Confirm" */
-    somvr_vm_rect_av(v->avail, item, SOMVR_VMP_BUTTON, rc);
+    if (!somvr_vm_rect_av(v->avail, item, SOMVR_VMP_BUTTON, rc)) return; /* build 21: the X with the four tabs */
     fill_rc(c, rc, !on ? C_BOX_DIM : warn ? (hov ? C_WARN_HOV : C_WARN) : hov ? C_BOX_HOV : C_BOX);
     if (v->lock && hov && on) outline(c, rc, 3, C_LOCK); /* build 20: the button locked */
     text_mid(f, c, rc[0], rc[0] + rc[2], rc[1] + (rc[3] - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2,
              label ? label : somvr_vm_label(item), on ? C_VALUE : C_DIM);
 }
 
-void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_view *v) {
+/* build 21: the Test page - the title on every page, the page's lines (an item's bullet a small square in the title's
+ * colour), the Prev / Next row (dimmed at the ends) with "page / pages" between them */
+static void draw_test(const somvr_font *f, const canvas *c, const somvr_vm_view *v) {
+    const somvr_vm_text *t = v->test;
+    int pages = t && t->pages > 0 ? t->pages : 1, pg = v->test_page < 0 ? 0 : v->test_page >= pages ? pages - 1 : v->test_page;
+    if (!t) {
+        text_at(f, c, 20, SOMVR_VM_TEST_Y0, "What to test", C_TITLE);
+        text_at(f, c, 20, SOMVR_VM_TEST_Y0 + 42, "No notes in this build.", C_DIM);
+    }
+    for (int k = 0; t && k < t->n; k++) {
+        int kind = t->kind[k], y = t->y[k], x = 20;
+        if (kind != SOMVR_VMT_TITLE && t->page[k] != pg) continue;
+        const uint8_t *col = kind == SOMVR_VMT_TITLE ? C_TITLE
+                             : kind == SOMVR_VMT_NOTE ? C_DIM
+                             : kind == SOMVR_VMT_TEXT || kind == SOMVR_VMT_TEXT2 ? C_LABEL
+                                                                                  : C_VALUE;
+        if (kind == SOMVR_VMT_ITEM) fill(c, 24, y + 11, 8, 8, C_TITLE); /* the bullet, at the capitals' middle */
+        if (kind == SOMVR_VMT_ITEM || kind == SOMVR_VMT_MORE) x = 52;
+        text_at(f, c, x, y, t->line[k], col);
+    }
+    for (int i = 0; i < 2; i++) {
+        int item = i ? SOMVR_VMI_TEST_NEXT : SOMVR_VMI_TEST_PREV, rc[4];
+        if (!somvr_vm_rect_av(v->avail, item, SOMVR_VMP_BUTTON, rc)) continue;
+        int on = i ? pg < pages - 1 : pg > 0, hov = on && v->hover.item == item;
+        fill_rc(c, rc, !on ? C_BOX_DIM : hov ? C_BOX_HOV : C_BOX);
+        if (v->lock && hov) outline(c, rc, 3, C_LOCK);
+        static const char prev[] = {(char)SOMVR_FONT_LEFT, ' ', 'P', 'r', 'e', 'v', 0},
+                          next[] = {'N', 'e', 'x', 't', ' ', (char)SOMVR_FONT_RIGHT, 0};
+        text_mid(f, c, rc[0], rc[0] + rc[2], rc[1] + (rc[3] - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2, i ? next : prev,
+                 on ? C_VALUE : C_DIM);
+    }
+    char num[24];
+    snprintf(num, sizeof num, "%d / %d", pg + 1, pages);
+    text_mid(f, c, 168, 344, SOMVR_VM_TEST_NAV_Y + (56 - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2, num, C_LABEL);
+}
+
+void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_view *v0) {
     canvas c = {px, bgra};
+    somvr_vm_view vv = *v0; /* build 21: the card has no tabs - build 20's (its X) */
+    if (vv.card) vv.avail &= ~(uint64_t)SOMVR_VMA_TESTPAGE;
+    const somvr_vm_view *v = &vv;
     memset(px, 0, (size_t)SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4);
     /* the panel: a rounded rectangle (radius 20, soft by a pixel), a 3-pixel border. Inside the margin E from every
      * edge and R + E from the top and bottom every pixel is the background, opaque (its distance > R - E > B there):
@@ -947,11 +1150,11 @@ void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_vi
     if (v->card) { /* the arrival card: a title instead of the tabs */
         text_at(f, &c, 24, 14, "CONTROLS", C_TITLE);
     } else { /* the tab strip: the page's own tab lit as the title (underlined), the others as buttons */
-        static const int tabs[3] = {SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB, SOMVR_VMI_TAB_CTL};
-        for (int i = 0; i < 3; i++) {
+        static const int tabs[4] = {SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST};
+        for (int i = 0; i < 4; i++) {
             if (!somvr_vm_enabled(&v->set, v->avail, tabs[i])) continue;
             int rc[4];
-            somvr_vm_rect(tabs[i], SOMVR_VMP_BUTTON, rc);
+            somvr_vm_rect_av(v->avail, tabs[i], SOMVR_VMP_BUTTON, rc); /* build 21: four with SOMVR_VMA_TESTPAGE */
             if (somvr_vm_tab_page(tabs[i]) == (fight ? SOMVR_VMPG_SETTINGS : v->page)) { /* (the Fight page: Settings') */
                 fill(&c, rc[0] + 8, rc[1] + rc[3] - 4, rc[2] - 16, 3, C_TITLE);
                 text_mid(f, &c, rc[0], rc[0] + rc[2], rc[1] + (rc[3] - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2,
@@ -976,6 +1179,8 @@ void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_vi
         for (int i = 0; i < SOMVR_VM_CTL_NOTES; i++, y += dy)
             text_at(f, &c, 20, y, somvr_vm_controls_note_av(ca, i), C_DIM);
         if (v->card) text_at(f, &c, 20, y, "Close: X box or A", C_LABEL);
+    } else if (v->page == SOMVR_VMPG_TEST) { /* build 21: what to test in this build */
+        draw_test(f, &c, v);
     } else if (!pr) { /* the Settings page or (build 19) the Fight page: their rows, the page button under them */
         int pg = fight ? SOMVR_VMPG_FIGHT : SOMVR_VMPG_SETTINGS;
         for (int item = 0; item < SOMVR_VMI_ROWS; item++)
@@ -1202,9 +1407,9 @@ static int snap_parts(uint64_t avail, int page, int card, somvr_vm_hit *out, int
         return n;
     }
     const int *bl = page_buttons(page);
-    for (int i = 0; i < 13 && bl[i] >= 0 && n < cap; i++)
+    for (int i = 0; i < 14 && bl[i] >= 0 && n < cap; i++)
         if (somvr_vm_rect_av(avail, bl[i], SOMVR_VMP_BUTTON, rc)) out[n++] = (somvr_vm_hit){bl[i], SOMVR_VMP_BUTTON};
-    if (page == SOMVR_VMPG_CONTROLS) return n;
+    if (page == SOMVR_VMPG_CONTROLS || page == SOMVR_VMPG_TEST) return n;
     int r0 = page == SOMVR_VMPG_PRACTICE ? SOMVR_VMI_PR_ORC : 0, r1 = page == SOMVR_VMPG_PRACTICE ? r0 + 1 : SOMVR_VMI_ROWS;
     for (int item = r0; item < r1; item++) {
         if (page != SOMVR_VMPG_PRACTICE &&

@@ -324,8 +324,8 @@ def main():
     marks_box = tk.Listbox(root, height=6, bg="#20242c", fg=fg, selectbackground="#3c4a60", borderwidth=0,
                            highlightthickness=0, font=("Monospace", 9))
     note = tk.Label(root, text="Bug marks: in the headset hold B and Y together for half a second and let go (two "
-                               "buzzes), or the wrist menu's Report button. Then say what is wrong (about 10 seconds; "
-                               "the microphone must be on in the WiVRn app).", fg=dim, bg="#16191f", font=("Sans", 9), wraplength=560, justify="left")
+                               "buzzes), or the wrist menu's Report button. Then say what is wrong (it records until you "
+                               "stop talking, up to 30 seconds; the microphone must be on in the WiVRn app).", fg=dim, bg="#16191f", font=("Sans", 9), wraplength=560, justify="left")
     note.pack(anchor="w", padx=12, pady=(8, 2))
     marks_box.pack(fill="x", padx=12, pady=(0, 12))
     q = queue.Queue(maxsize=2)

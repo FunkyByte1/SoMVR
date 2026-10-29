@@ -550,7 +550,13 @@ int somvr_xt_parse(const char *line, somvr_xt_cmd *c) {
     const char *p = line;
     while (*p == ' ' || *p == '\t') p++;
     if (!*p || *p == '#' || *p == '\n' || *p == '\r' || !xt_word(&p, w0)) return 0;
-    if (!strcmp(w0, "dump")) return c->op = SOMVR_XT_DUMP, 1;
+    if (!strcmp(w0, "dump")) { /* build 21: "dump [K]", K = 1..8 stereo frames ahead (default 1) */
+        int k = 0;
+        c->v[0] = 1;
+        if (sscanf(p, "%f%n", &c->v[0], &k) == 1 && !(c->v[0] >= 1 && c->v[0] <= 8 && c->v[0] == (float)(int)c->v[0]))
+            return -1;
+        return c->op = SOMVR_XT_DUMP, 1;
+    }
     if (!strcmp(w0, "handsize")) { /* build 17 */
         int k = 0;
         if (sscanf(p, "%f%n", &c->v[0], &k) != 1 || !(c->v[0] >= 0.8f && c->v[0] <= 1.5f)) return -1;
@@ -562,6 +568,12 @@ int somvr_xt_parse(const char *line, somvr_xt_cmd *c) {
         }
         while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
         return *p ? -1 : (c->op = SOMVR_XT_SIZE, 1);
+    }
+    if (!strcmp(w0, "popups")) { /* build 21 */
+        if (!xt_word(&p, w1) || (strcmp(w1, "band") && strcmp(w1, "gaze"))) return -1;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        c->v[0] = w1[0] == 'g' ? SOMVR_PP_GAZE : SOMVR_PP_BAND;
+        return *p ? -1 : (c->op = SOMVR_XT_POPUPS, 1);
     }
     if (!strcmp(w0, "lumlog")) { /* build 17 */
         int k = 0;
@@ -678,4 +690,144 @@ void somvr_xt_lerp(const somvr_posef *a, const somvr_posef *b, float k, somvr_po
     n = sqrtf(n);
     for (int i = 0; i < 4; i++) out->q[i] = n > 1e-6f ? q[i] / n : b->q[i];
     for (int i = 0; i < 3; i++) out->p[i] = (1 - k) * a->p[i] + k * b->p[i];
+}
+
+/* ==== 2c. build 21: the popups where the player looks (SOMVR_XR_POPUPS=gaze) ======================================= */
+int somvr_pp_parse(const char *v, int *bad) {
+    if (bad) *bad = 0;
+    if (!v || !*v || !strcmp(v, "band") || !strcmp(v, "off") || !strcmp(v, "0")) return SOMVR_PP_BAND;
+    if (!strcmp(v, "gaze") || !strcmp(v, "on") || !strcmp(v, "1")) return SOMVR_PP_GAZE;
+    if (bad) *bad = 1;
+    return SOMVR_PP_BAND;
+}
+void somvr_pp_cfg_default(somvr_pp_cfg *c) {
+    *c = (somvr_pp_cfg){.down_deg = 13.0f, .turn_deg = 40.0f, .ease_s = 0.35f, .hold_s = 0.3f, .pitch_min_deg = -50.0f,
+                        .pitch_max_deg = 10.0f, .gap_deg = 1.0f};
+}
+void somvr_pp_parse_geom(const char *v, somvr_pp_cfg *c, int *bad) {
+    if (bad) *bad = 0;
+    if (!v || !*v) return;
+    static const float lo[3] = {0, 10, 0}, hi[3] = {40, 120, 2000};
+    float f[3];
+    if (!parse_floats(v, 3, f, lo, hi)) {
+        if (bad) *bad = 1;
+        return;
+    }
+    c->down_deg = f[0], c->turn_deg = f[1], c->ease_s = f[2] * 1e-3f;
+}
+int somvr_pp_measure(const uint8_t *px, int w, int nrow, int step, int bb[4]) {
+    int n = 0, x0 = w, x1 = 0, y0 = nrow, y1 = -1;
+    for (int j = 0; px && j < nrow; j++)
+        for (int x = 0; x < w; x++)
+            if (px[((size_t)j * (size_t)w + (size_t)x) * 4 + 3] >= SOMVR_PP_ALPHA) {
+                n++;
+                if (x < x0) x0 = x;
+                if (x + 1 > x1) x1 = x + 1;
+                if (j < y0) y0 = j;
+                if (j > y1) y1 = j;
+            }
+    if (n < SOMVR_PP_MIN_PX) {
+        bb[0] = bb[1] = bb[2] = bb[3] = 0;
+        return 0;
+    }
+    bb[0] = x0, bb[2] = x1, bb[1] = y0 * step, bb[3] = (y1 + 1) * step;
+    return 1;
+}
+void somvr_pp_reset(somvr_pp_state *s) {
+    memset(s, 0, sizeof *s);
+    for (int i = 0; i < SOMVR_PP_MAX; i++) s->t[i].gone_t = -1, s->t[i].under = -1;
+}
+void somvr_pp_gaze(const somvr_posef eye[2], float *yaw, float *pitch, float mid[3]) {
+    static const float fwd0[3] = {0, 0, -1};
+    float f[3];
+    qrot(eye[0].q, fwd0, f);
+    if (!norm3(f)) f[0] = 0, f[1] = 0, f[2] = -1;
+    *yaw = atan2f(-f[0], -f[2]), *pitch = asinf(fmaxf(-1.f, fminf(1.f, f[1])));
+    for (int i = 0; i < 3; i++) mid[i] = 0.5f * (eye[0].p[i] + eye[1].p[i]);
+    if (!(dot3(mid, mid) >= 0)) mid[0] = mid[1] = mid[2] = 0; /* NaN */
+}
+static float pp_wrap(float a) { /* to -pi..pi */
+    while (a > 3.14159265f) a -= 6.2831853f;
+    while (a < -3.14159265f) a += 6.2831853f;
+    return a;
+}
+/* do tiles a and b (their content's angular boxes, a placed at yaw/pitch) overlap? */
+static int pp_overlap(const somvr_pp_tile *a, float yaw, float pitch, const somvr_pp_tile *b, float gap) {
+    float dy = fabsf(pp_wrap(yaw - b->yaw)), dp = fabsf(pitch - (b->pitch - b->dpitch));
+    return dy < 0.5f * (a->wrad + b->wrad) + gap && dp < 0.5f * (a->hrad + b->hrad) + gap;
+}
+uint32_t somvr_pp_step(somvr_pp_state *s, const somvr_pp_cfg *c, double t, const somvr_posef eye[2], float dist, int n,
+                       const somvr_pp_read *rd, const float (*sz)[2], const int (*px)[2]) {
+    const float D = 0.017453293f;
+    float gy, gp, mid[3];
+    somvr_pp_gaze(eye, &gy, &gp, mid);
+    float ap = gp - c->down_deg * D; /* a new popup's centre: down_deg under the gaze, kept in the pitch limits */
+    ap = fminf(c->pitch_max_deg * D, fmaxf(c->pitch_min_deg * D, ap));
+    if (!(dist > 0.05f)) dist = 0.05f;
+    uint32_t ev = 0;
+    if (n > SOMVR_PP_MAX) n = SOMVR_PP_MAX;
+    for (int i = 0; i < n; i++) {
+        somvr_pp_tile *tl = &s->t[i];
+        if (rd[i].present) {
+            tl->gone_t = -1;
+            if (!tl->shown) { /* it came up: in front of the gaze */
+                const int *bb = rd[i].bb;
+                float kx = px[i][0] > 0 ? sz[i][0] / (float)px[i][0] : 0, ky = px[i][1] > 0 ? sz[i][1] / (float)px[i][1] : 0;
+                tl->off[0] = (0.5f * (float)(bb[0] + bb[2]) - 0.5f * (float)px[i][0]) * kx;
+                tl->off[1] = -(0.5f * (float)(bb[1] + bb[3]) - 0.5f * (float)px[i][1]) * ky;
+                tl->wrad = 2 * atanf(0.5f * (float)(bb[2] - bb[0] + 4) * kx / dist);
+                tl->hrad = 2 * atanf(0.5f * (float)(bb[3] - bb[1] + 4) * ky / dist);
+                tl->yaw = gy, tl->pitch = ap, tl->dpitch = 0, tl->under = -1;
+                for (int k = 0, moved = 1; moved && k < 2 * SOMVR_PP_MAX; k++) { /* under any shown one it would cover */
+                    moved = 0;
+                    for (int j = 0; j < n && !moved; j++) {
+                        const somvr_pp_tile *o = &s->t[j];
+                        if (j == i || !o->shown || !pp_overlap(tl, tl->yaw, tl->pitch - tl->dpitch, o, c->gap_deg * D))
+                            continue;
+                        tl->yaw = o->yaw, tl->pitch = o->pitch, tl->under = j, moved = 1;
+                        tl->dpitch = o->dpitch + 0.5f * (o->hrad + tl->hrad) + c->gap_deg * D;
+                    }
+                }
+                memcpy(tl->eye, mid, sizeof tl->eye);
+                tl->shown = 1, tl->easing = 0, tl->shown_t = t, tl->n_placed++;
+                ev |= 1u << i;
+            } else if (!tl->easing && fabsf(pp_wrap(gy - tl->yaw)) > c->turn_deg * D) { /* turned away: to the new front */
+                float from[5] = {tl->yaw, tl->pitch, tl->eye[0], tl->eye[1], tl->eye[2]};
+                float to[5] = {gy, ap, mid[0], mid[1], mid[2]};
+                memcpy(tl->e_from, from, sizeof from), memcpy(tl->e_to, to, sizeof to);
+                tl->easing = 1, tl->e_t0 = t, tl->n_eased++;
+                ev |= 1u << (8 + i);
+            }
+        } else if (tl->shown) {
+            if (tl->gone_t < 0) tl->gone_t = t;
+            else if (t - tl->gone_t >= c->hold_s) {
+                tl->shown = 0, tl->easing = 0, tl->gone_t = -1;
+                ev |= 1u << (16 + i);
+            }
+        }
+        if (tl->shown && tl->easing) {
+            /* the new front follows the head while it eases: it lands where the head is at the ease's end (run
+             * 20261028-215803: a head still turning landed it 27 deg short of the front) */
+            tl->e_to[0] = gy, tl->e_to[1] = ap;
+            memcpy(tl->e_to + 2, mid, sizeof mid);
+            double k = c->ease_s > 0 ? (t - tl->e_t0) / c->ease_s : 1.0;
+            k = k < 0 ? 0 : k > 1 ? 1 : k;
+            float e = (float)(k * k * (3 - 2 * k));
+            tl->yaw = pp_wrap(tl->e_from[0] + e * pp_wrap(tl->e_to[0] - tl->e_from[0]));
+            tl->pitch = tl->e_from[1] + e * (tl->e_to[1] - tl->e_from[1]);
+            for (int a = 0; a < 3; a++) tl->eye[a] = tl->e_from[2 + a] + e * (tl->e_to[2 + a] - tl->e_from[2 + a]);
+            if (k >= 1) tl->easing = 0;
+        }
+    }
+    return ev;
+}
+void somvr_pp_pose(const somvr_pp_tile *tl, float dist, somvr_posef *out) {
+    float yaw = tl->yaw, pitch = tl->pitch - tl->dpitch, qy[4], qx[4];
+    qy[0] = 0, qy[1] = sinf(0.5f * yaw), qy[2] = 0, qy[3] = cosf(0.5f * yaw);
+    qx[0] = sinf(0.5f * pitch), qx[1] = 0, qx[2] = 0, qx[3] = cosf(0.5f * pitch);
+    qmul(qy, qx, out->q);
+    static const float fwd0[3] = {0, 0, -1}, x0[3] = {1, 0, 0}, y0[3] = {0, 1, 0};
+    float f[3], r[3], u[3];
+    qrot(out->q, fwd0, f), qrot(out->q, x0, r), qrot(out->q, y0, u);
+    for (int i = 0; i < 3; i++) out->p[i] = tl->eye[i] + dist * f[i] - tl->off[0] * r[i] - tl->off[1] * u[i];
 }

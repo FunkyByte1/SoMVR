@@ -401,6 +401,84 @@ static void test_back(void)
     CHECK(o.event == SOMVR_VBE_WRAITH && o.by_body, "the open hand's trigger on its back: B (%d %d)", o.event, o.by_body);
 }
 
+/* build 21 (SOMVR_VERBS_CUE): the open hand's reach by the squeeze's rule, and the cue's on / tick / grace / fade */
+static void test_cue(void)
+{
+    somvr_vb_hand s;
+    somvr_vb_hand_in in;
+    somvr_vb_hand_out o;
+    int bb = -1;
+    somvr_vb_hand_reset(&s);
+    in_at(&in, 1.0, 0, 0, 5, 175, 95); /* the open hand at the head (5 cm) */
+    step(&s, &in, &o);
+    CHECK(somvr_vb_reach(&C, &s, &in, -1, 8, 5, &bb) == 0 && bb == 0, "the open hand on the head: in reach");
+    in_at(&in, 1.0, 0, 0, 0, 120, 60); /* low by the hip, not reached out at it (the eyes 56 cm, 26 deg off) */
+    step(&s, &in, &o);
+    CHECK(somvr_vb_reach(&C, &s, &in, -1, 8, 5, &bb) == -1, "the hand by the hip: out of reach");
+    /* the border: 50 cm from the head (reach 45), the cone too far off: out, but kept by an orc already shown */
+    in_at(&in, 1.0, 0, 0, 0, 130, 100);
+    step(&s, &in, &o);
+    CHECK(somvr_vb_reach(&C, &s, &in, -1, 8, 5, &bb) == -1 && somvr_vb_reach(&C, &s, &in, 0, 8, 5, &bb) == 0,
+          "50 cm: out of reach, kept by the shown orc (+8 cm)");
+    in_at(&in, 1.0, 0, 0, 0, 120, 100);
+    step(&s, &in, &o);
+    CHECK(somvr_vb_reach(&C, &s, &in, 0, 8, 5, &bb) == -1, "60 cm: gone even for the shown orc");
+    /* a fist at the head, a hand that holds, a hand not live: none */
+    somvr_vb_hand_reset(&s);
+    in_at(&in, 2.0, 0.9f, 0, 60, 175, 95);
+    step(&s, &in, &o);
+    in_at(&in, 2.05, 0.9f, 0, 5, 175, 95);
+    step(&s, &in, &o);
+    CHECK(s.closed && s.phase == SOMVR_VBH_IDLE && somvr_vb_reach(&C, &s, &in, -1, 8, 5, &bb) == -1,
+          "a fist moved onto the head: no cue (it holds nothing)");
+    somvr_vb_hand_reset(&s);
+    in_at(&in, 3.0, 0.9f, 0, 5, 175, 95);
+    step(&s, &in, &o);
+    CHECK(s.phase == SOMVR_VBH_GRAB && somvr_vb_reach(&C, &s, &in, -1, 8, 5, &bb) == -1, "holding: no cue");
+    somvr_vb_hand_reset(&s);
+    in_at(&in, 4.0, 0, 0, 5, 175, 95);
+    in.live = 0;
+    step(&s, &in, &o);
+    CHECK(somvr_vb_reach(&C, &s, &in, -1, 8, 5, &bb) == -1, "not live (the bow, a wall, a menu): no cue");
+    /* a stealth target's back: in reach by its back */
+    back_at(&in, 26, 30, -10, 20, 92, 45);
+    in.squeeze = 0;
+    somvr_vb_hand_reset(&s);
+    step(&s, &in, &o);
+    CHECK(somvr_vb_reach(&C, &s, &in, -1, 8, 5, &bb) == 0 && bb == 1, "a stealth target's back: in reach by its back");
+
+    somvr_vb_cue_cfg cc;
+    somvr_vb_cue_cfg_default(&cc);
+    somvr_vb_cue q;
+    somvr_vb_cue_out co;
+    somvr_vb_cue_reset(&q);
+    somvr_vb_cue_step(&q, &cc, 10.0, 0, &co);
+    CHECK(!co.on && !co.tick && co.id == 0 && !co.changed, "nothing in reach: no cue");
+    somvr_vb_cue_step(&q, &cc, 10.011, 0x111, &co);
+    CHECK(co.on && co.tick && co.id == 0x111 && co.changed && co.level < 0.2f, "in reach, the game's yes: on, one tick");
+    int ticks = 0;
+    for (int k = 1; k <= 20; k++) {
+        somvr_vb_cue_step(&q, &cc, 10.011 + 0.011 * k, 0x111, &co);
+        ticks += co.tick;
+    }
+    CHECK(co.on && ticks == 0 && co.level == 1.0f, "held: no more ticks, the glow full (%d %.2f)", ticks, co.level);
+    somvr_vb_cue_step(&q, &cc, 10.3, 0, &co);
+    CHECK(co.on && !co.changed, "one frame without the yes: kept (the grace)");
+    somvr_vb_cue_step(&q, &cc, 10.4, 0, &co);
+    CHECK(!co.on && co.changed && co.id == 0x111 && co.level < 1.0f && co.level > 0, "gone: off, fading on its orc");
+    somvr_vb_cue_step(&q, &cc, 10.6, 0x111, &co);
+    CHECK(co.on && !co.tick, "back within the re-arm (0.5 s): on, no second tick");
+    somvr_vb_cue_step(&q, &cc, 10.7, 0, &co);
+    somvr_vb_cue_step(&q, &cc, 10.9, 0, &co);
+    somvr_vb_cue_step(&q, &cc, 11.0, 0, &co);
+    CHECK(!co.on && co.id == 0 && co.level == 0, "off and faded: no orc");
+    somvr_vb_cue_step(&q, &cc, 11.6, 0x111, &co);
+    CHECK(co.on && co.tick, "back after the re-arm: a tick again");
+    somvr_vb_cue_step(&q, &cc, 11.611, 0x222, &co);
+    CHECK(co.on && co.tick && co.id == 0x222 && co.changed && co.level < 0.2f, "another orc: its own tick, its glow anew");
+    CHECK(q.ticks == 3 && q.ons == 4, "ticks %llu ons %llu", (unsigned long long)q.ticks, (unsigned long long)q.ons);
+}
+
 int main(void)
 {
     somvr_vb_cfg_default(&C);
@@ -411,6 +489,7 @@ int main(void)
     test_ask();
     test_kinds();
     test_back();
+    test_cue();
     printf("test_verbs: %d checks, %d failures\n", g_n, g_fail);
     return g_fail != 0;
 }

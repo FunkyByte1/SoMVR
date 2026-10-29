@@ -21,6 +21,15 @@ typedef struct {
     float stab_mps;     /* a stab below the hit rule still counts: along the blade at least this fast (0.8 m/s) */
     float stab_cos;     /* ... the motion this close to the blade's axis (0.7) */
     float near_cm;      /* the cue: the player within this of the orc (250 cm) */
+    /* build 21 (SOMVR_STEALTH_KILL_THRUST; docs/re-xr-pipeline.md 84): the kill is the player's own thrust */
+    int thrust;          /* 1: the rule below; 0: build 20c's (a hit by combat's rule or a stab on the first contact) */
+    float thrust_mps;    /* a thrust: the blade's point driven along the blade at least this fast (1.5 m/s) */
+    float thrust_cos;    /* ... the motion within acos(this) of the blade's axis, the point leading (0.866 = 30 deg) */
+    float depth_cm;      /* ... and the point at least this deep in the body (15 cm along the blade) */
+    float grab_depth_cm; /* held from behind (the left hand): a point-first stab this deep kills (10 cm) */
+    float grab_mps;      /* ... at least this fast along the blade (0.5 m/s) */
+    float side_deg;      /* the thrust's way in: its angle off the orc's facing at least this (60: back, neck or side) */
+    float grace_s;       /* a touch alerts the orc this long after it unless a kill comes first (0.3 s) */
 } somvr_stl_cfg;
 
 typedef struct {
@@ -38,6 +47,11 @@ typedef struct {
     int tier;              /* the hit rule's tier: 0 none (below it), 1 light, 2 heavy */
     float axis_mps;        /* the blade's speed along itself */
     float cos_axis;        /* the cosine of the motion against the blade */
+    /* build 21 (cfg.thrust): the body, not combat's hit capsule */
+    float depth_cm;        /* the blade in the body: cm from where it went in to the point (< 0 or NAN: not in it) */
+    int neck;              /* it went in at the neck */
+    int tier_cut;          /* SOMVR_COMBAT_SWING=stroke's own tier (2 = a committed full-speed cut) */
+    int held;              /* held from behind by the left hand (SOMVR_VERBS' grab) */
 } somvr_stl_hit;
 
 enum {
@@ -50,6 +64,9 @@ enum {
     SOMVR_STL_SIDE,       /* the contact is on its front half */
     SOMVR_STL_LOW,        /* the contact is below its back (the legs) or over its head */
     SOMVR_STL_WEAK,       /* neither the hit rule nor a stab: a touch */
+    SOMVR_STL_TOUCH,      /* build 21: in the body, but no thrust (a touch, a glance, a wiggle, a slow push): no damage;
+                           * the orc is alerted after cfg.grace_s unless a kill comes first */
+    SOMVR_STL_AIR,        /* build 21: combat's hit capsule, not the body: nothing */
     SOMVR_STL_N
 };
 
@@ -69,6 +86,36 @@ int somvr_stl_judge(const somvr_stl_cfg *c, const somvr_stl_who *w, const somvr_
  * that sees nothing SOMVR_COMBAT_SWING=stroke's (tier_swing) - a contact the ordinary hit would deal is never a
  * touch to the stealth kill (docs/re-xr-pipeline.md 81) */
 int somvr_stl_tier(int tier16, int tier_swing);
+
+/* build 21: what killed (a KILL verdict): build 20c's hit or stab, the thrust, the neck cut, the stab into a held orc */
+enum { SOMVR_STL_BY_HIT = 0, SOMVR_STL_BY_THRUST, SOMVR_STL_BY_NECK, SOMVR_STL_BY_GRAB };
+int somvr_stl_kill_by(const somvr_stl_cfg *c, const somvr_stl_hit *h);
+const char *somvr_stl_by_name(int by);
+
+/* build 21: the blade (base -> tip, cm) against the body - a chain of n nodes (the pelvis, torso, neck, head) with a
+ * radius per link (n - 1): the length of blade from the first point of it inside the body (from the base) to the tip,
+ * -1 when no point is inside. entry = that point, *link = the link it went in at (either may be NULL) */
+float somvr_stl_body_depth(const float base[3], const float tip[3], const float (*node)[3], const float *r, int n,
+                           float entry[3], int *link);
+
+/* build 21 (SOMVR_STEALTH_KILL_STICK): the blade stays in the wound. Pinned at the wound E along the axis a (unit, into
+ * the body) it took in; the hand's grip G slides it in and out along that axis (the guard stays guard_cm out of the
+ * wound); sideways the hand leaves it (the offset is shown: the blade lags the hand) and past tear_cm it tears free;
+ * drawn back past the wound it comes out. E follows the body (the caller moves it) */
+typedef struct {
+    float tear_cm;  /* 25 */
+    float guard_cm; /* 12 */
+} somvr_stl_stick_cfg;
+typedef struct {
+    int on;
+    float E[3], a[3], len; /* the wound, the axis, the grip to the point */
+    float depth, peak;     /* the point's depth now, the deepest */
+    float off;             /* the hand's grip off the pinned grip (cm) */
+} somvr_stl_stick;
+enum { SOMVR_STL_STK_OFF = 0, SOMVR_STL_STK_HOLD, SOMVR_STL_STK_OUT, SOMVR_STL_STK_TEAR };
+void somvr_stl_stick_start(somvr_stl_stick *s, const float E[3], const float a[3], float len);
+/* one frame: E the wound now, G the hand's grip; Gs = the pinned grip (HOLD); OUT / TEAR end it (s->on = 0) */
+int somvr_stl_stick_step(somvr_stl_stick *s, const somvr_stl_stick_cfg *c, const float E[3], const float G[3], float Gs[3]);
 
 /* the cue: one soft tick when an orc becomes a possible stealth kill (the nearest one), again only after it was not
  * possible for rearm_s or another orc took its place; returns 1 = tick now */

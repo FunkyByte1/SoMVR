@@ -169,6 +169,32 @@
  *            over it) with no mantle (too low, no landing, the way not clear) A does nothing but say why (E_AM_NO: a soft
  *            double buzz); elsewhere A is the drop (mark) as ever. The when is the press, the where the ring (shown before
  *            it), the move short and fixed (no cancel needed once it goes); nothing moves without the press.
+ *   timer    (dm_timer = 1, with the mark; build 21: the user's build 20c session, mark 21, "a little circle that slowly
+ *            depletes circularly until it is empty. Then it flashes ...") the hold's clock is the timer: out.dm_held 0..1
+ *            of dm_min_s from the press (somvr.c draws it as a white ring at the landing emptying round its circle);
+ *            full = E_DM_ARMED once (somvr.c: the flash and a tick), out.dm_armed_s the time since; the landing lost while
+ *            A is held starts the clock again when it is back (a let-go before then does nothing, as ever).
+ *   unstuck  (unstuck = 1; build 21: the user's build 20c session, mark 5: a fling's apex left him 2.4 m over a spire's
+ *            top, 60 cm out from it, nothing in reach for 22 s; 12 of 13 A presses cancelled by the move stick held at
+ *            the press) every hang has a way out: (1) the move stick cancels the mark only when tilted after the press
+ *            (held at the press it must come back under 0.3 first); (2) climbing with no blink landing (no room, an
+ *            enemy there, no blink now) the mark offers the plain fall straight down (its ring on the ground under him);
+ *            (3) A at a top without a mantle says why (E_AM_NO) and the mark goes on (A held = the way down); (4) a
+ *            fling rising (not topped, not gliding) stops (FL_REACH: the hang) when no wall is within fl_reach_cm of the
+ *            chest (the eyes - 40 cm) along toward, level or 20 deg down: the hands can still reach the wall's top.
+ *   round lip (round_lip = 1; build 21: mark 11, the wall by the meadow's ladder: holds on a rounded mossy lip 30 cm
+ *            under its top found their own crest as the top, no edge and no landing, the pulls blocked under the bulge)
+ *            a hold that is no edge by the edge_cm test is tested again RL_UP_CM higher: no wall there and a floor
+ *            within RL_UP_CM over the hold (a ray down 15 cm into the wall) = an edge hold with that top; the
+ *            pullover's top is the highest of its rays down 0..40 cm into the wall (not the first).
+ *   down     (down_over = 1; build 21: mark 4, "a way to climb down and not just fall") on foot, a grip with the hand
+ *            reaching down over an edge (dn_low_cm or more under the eyes, at most dn_high_cm over the floor, the edge
+ *            of the floor he stands on within dn_reach_cm of the hand, the ground beyond lip_drop_cm or more under it,
+ *            the face under the lip found) = the way down: one short glide (am_cms, through the rock as the mantle's)
+ *            out over the edge and down to the hang under that hand (the eyes dn_under_cm under the top, the root
+ *            dn_gap_cm out from the face); at its end that hand holds the lip (the climb, 1:1 from there: hand over
+ *            hand down, or back up and over). The when: the grip; the where: under the hand, just over the edge; the
+ *            cancel: that grip opened during the glide = the hang where he is. Nothing moves without the grip.
  *   end      both hands open with letgo = fall (released), the drop button while holding or hanging (drop), the game not
  *            allowing it any more (somvr.c: FSM not Supported, mounted, third person ...; "stand down"), the input lost
  *            (letgo = fall), the timeout max_s (letgo = fall), a lift that stalls or runs out of time. Every end gives
@@ -196,7 +222,8 @@ enum { SOMVR_CLIMB_AME_NONE = 0, SOMVR_CLIMB_AME_DONE = 1, SOMVR_CLIMB_AME_BLOCK
        SOMVR_CLIMB_AME_GAME = 4 }; /* A mantle: how the last glide ended (am_end) */
 const char *somvr_climb_am_name(int why); /* SOMVR_CLIMB_AM_* */
 enum { SOMVR_CLIMB_FL_NONE = 0, SOMVR_CLIMB_FL_APEX = 1, SOMVR_CLIMB_FL_BLOCKED = 2, SOMVR_CLIMB_FL_TIME = 3,
-       SOMVR_CLIMB_FL_CATCH = 4, SOMVR_CLIMB_FL_OVER = 5, SOMVR_CLIMB_FL_EDGE = 6 }; /* how a flight ended (fl_why) */
+       SOMVR_CLIMB_FL_CATCH = 4, SOMVR_CLIMB_FL_OVER = 5, SOMVR_CLIMB_FL_EDGE = 6,
+       SOMVR_CLIMB_FL_REACH = 7 /* build 21 (unstuck): the wall below the chest */ }; /* how a flight ended (fl_why) */
 enum { SOMVR_CLIMB_LETGO_FALL = 0, SOMVR_CLIMB_LETGO_HANG = 1 }; /* SOMVR_CLIMB_LETGO= */
 enum { SOMVR_CLIMB_VIA_NONE = 0, SOMVR_CLIMB_VIA_PALM = 1, SOMVR_CLIMB_VIA_FWD = 2, SOMVR_CLIMB_VIA_DOWN = 3,
        SOMVR_CLIMB_VIA_INSIDE = 4, SOMVR_CLIMB_VIA_WALL = 5 }; /* which ray found a surface (somvr_climb_via_name) */
@@ -281,6 +308,9 @@ enum { /* somvr_climb_out.events2 */
     SOMVR_CLIMB_E_AM_GO = 1u << 26,   /* A mantle: A's press: the glide (phase mantle) or the blink (out.blink) */
     SOMVR_CLIMB_E_AM_NO = 1u << 27,   /* A mantle: A's press at a top with no mantle (s->am_why): nothing moves */
     SOMVR_CLIMB_E_AM_END = 1u << 28,  /* A mantle: the glide's end (s->am_end: over, or blocked: stood, or the hang) */
+    SOMVR_CLIMB_E_DM_ARMED = 1u << 29, /* timer: A held dm_min_s with a landing: armed (the flash, a tick) */
+    SOMVR_CLIMB_E_DN_GO = 1u << 30,   /* down: the grip over an edge: the glide down to the hang (s->dn_*) */
+    SOMVR_CLIMB_E_DN_END = 1u << 31,  /* down: the glide's end (s->dn_end: holding the lip, or the hang) */
 };
 /* through's ends (s->thr_why) */
 enum { SOMVR_CLIMB_THR_NONE = 0, SOMVR_CLIMB_THR_CLEAR = 1, SOMVR_CLIMB_THR_IDLE = 2, SOMVR_CLIMB_THR_MAX = 3,
@@ -406,6 +436,16 @@ typedef struct {
     float am_head_cm;        /* ... the eyes at least this over the top (25: the shoulders at its edge) */
     float am_cms;            /* ... the glide's speed (350 cm/s) */
     float am_clear_cm;       /* ... the feet this far over the top when the curve crosses its edge (10) */
+    int dm_timer;            /* build 21 (SOMVR_CLIMB_DESCENT_TIMER, with drop_mark; 0 off): see timer */
+    int unstuck;             /* build 21 (SOMVR_CLIMB_UNSTUCK, 0 off): see unstuck */
+    float fl_reach_cm;       /* ... the fling stops rising with no wall this near the chest (120) */
+    int round_lip;           /* build 21 (SOMVR_CLIMB_ROUND_LIP, 0 off): see round lip */
+    int down_over;           /* build 21 (SOMVR_CLIMB_DOWN_OVER, 0 off): see down */
+    float dn_low_cm;         /* ... the hand at least this under the eyes (40) */
+    float dn_high_cm;        /* ... and at most this over the floor he stands on (90) */
+    float dn_reach_cm;       /* ... the edge within this of the hand, level (45) */
+    float dn_under_cm;       /* ... the hang: the eyes this far under the top (25) */
+    float dn_gap_cm;         /* ... the root this far out from the face (45) */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -482,6 +522,7 @@ typedef struct {
     sv_vec3 toward;     /* horizontal unit toward the wall: the ray's (a ray down onto a top: the head's to the hold,
                          * else the fingers'): where "over the top" is (push, lift) */
     int face;           /* face_toward: toward is the face's normal (the hold's ray was at a slant to the face) */
+    int rl;             /* round lip: an edge by the second, higher test (its top the floor over the rounded lip) */
     sv_vec3 ray_tw;     /* ... the ray's own toward then (logs) */
     int via;            /* SOMVR_CLIMB_VIA_*: the ray of the hold */
     float inside_by;    /* via inside: how far the hand was past the surface (cm) */
@@ -662,6 +703,17 @@ typedef struct {
     uint64_t am_shows, am_presses, am_goes, am_blinks, am_nos, am_lows, am_nofloors, am_noways, am_dones, am_blocks,
         am_frames;
     double am_cm;       /* the glides' way in all */
+    int dm_stick_held;  /* unstuck: the move stick was held at A's press (it cancels only after it came back) */
+    int dm_armed;       /* timer: the hold's clock ran full (E_DM_ARMED sent) */
+    uint64_t dm_armeds, dm_restarts, dm_stick_kept, dm_plain_falls, am_no_marks, fl_reaches;
+    int dn;             /* down: the glide on (the phase mantle's way, s->am_*), its hand dn_hand */
+    int dn_hand, dn_end; /* ... the hand; how it ended (1 holding the lip, 2 the hang: the grip opened, 3 blocked) */
+    sv_vec3 dn_lip, dn_out, dn_face, dn_to; /* ... the lip (the edge point on the top), out (level), the face, the root's end */
+    float dn_top_y, dn_why_cm;  /* ... the top's height; the last refusal's number (logs) */
+    int dn_why;         /* ... the last grip that did not start it: SOMVR_CLIMB_DN_* */
+    uint64_t dn_tries, dn_goes, dn_holds, dn_hangs, dn_blocks, dn_nos;
+    uint64_t rl_tops, rl_po;   /* round lip: holds made edges by the second test; pullover tops raised */
+    int rl_on;          /* round lip: cfg.round_lip for the pullover's search (set each step) */
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
@@ -704,6 +756,7 @@ typedef struct {
     int dm_show;            /* drop_mark: show the ring at dm_land and the line from dm_top down to it (world cm) */
     sv_vec3 dm_land, dm_top;
     float dm_held;          /* ... A held so far, 0..1 of dm_min_s (1: a let-go goes; 0 for a tap's ring) */
+    float dm_armed_s;       /* timer: A held with a landing past dm_min_s: the time since it ran full (s); else -1 */
 } somvr_climb_out;
 
 void somvr_climb_init(somvr_climb *s);
@@ -716,6 +769,9 @@ const char *somvr_climb_end_name(int why);
 const char *somvr_climb_via_name(int via);
 const char *somvr_climb_phase_name(int phase);
 const char *somvr_climb_fl_name(int why); /* SOMVR_CLIMB_FL_* */
+enum { SOMVR_CLIMB_DN_OK = 0, SOMVR_CLIMB_DN_HIGH = 1, SOMVR_CLIMB_DN_NOEDGE = 2, SOMVR_CLIMB_DN_SHORT = 3,
+       SOMVR_CLIMB_DN_NOFACE = 4, SOMVR_CLIMB_DN_NOWAY = 5 }; /* down: why a grip over an edge did not start it */
+const char *somvr_climb_dn_name(int why);
 const char *somvr_climb_bl_name(int why); /* SOMVR_CLIMB_BL_* */
 
 /* the pieces (tested on their own) */

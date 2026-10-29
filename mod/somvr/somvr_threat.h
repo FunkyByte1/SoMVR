@@ -37,6 +37,9 @@ enum { SOMVR_THK_NONE = 0, SOMVR_THK_MELEE = 1, SOMVR_THK_RANGED = 2, SOMVR_THK_
 /* build 17 (SOMVR_THREAT_RED): the glow is an unblockable blow's (the VR judge never blocks it: dodge it): ORed into the
  * kind, the layer draws it from the red row (an older layer: the warm one) */
 #define SOMVR_THK_RED 0x10u
+/* build 21 (SOMVR_VERBS_CUE): not a threat but the grab cue - a faint wraith-blue glow at the collar of an orc the open
+ * left hand could grab now: ORed into the kind, the layer draws it from the blue row (an older layer: the warm one) */
+#define SOMVR_THK_BLUE 0x20u
 enum { SOMVR_THF_WINDOW = 1u, /* the nearest attacker's parry window is open this frame */
        SOMVR_THF_PROJ = 2u,   /* a projectile is inbound this frame */
        SOMVR_THF_NEAR = 4u,   /* an engaged orc is close behind (the edge's low level) */
@@ -268,7 +271,7 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_CELL 32
 #define SOMVR_TH_STRIDE (SOMVR_TH_CELL + 2)
 #define SOMVR_TH_IMG_W (SOMVR_TH_LEVELS * SOMVR_TH_STRIDE)
-#define SOMVR_TH_IMG_H (4 * SOMVR_TH_STRIDE)
+#define SOMVR_TH_IMG_H (5 * SOMVR_TH_STRIDE)
 #define SOMVR_TH_ALPHA 0.35f
 #define SOMVR_TH_R 1.00f /* the warm colour (linear weights; the swapchain is sRGB when the runtime has one) */
 #define SOMVR_TH_G 0.55f
@@ -282,8 +285,13 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_RED_G 0.06f
 #define SOMVR_TH_RED_B 0.03f
 #define SOMVR_TH_RED_ALPHA 0.90f
-enum { SOMVR_TH_ROW_GLOW = 0, SOMVR_TH_ROW_EDGE = 1, SOMVR_TH_ROW_HURT = 2, SOMVR_TH_ROW_RED = 3 };
-int somvr_th_glow_row(uint32_t kind); /* SOMVR_TH_ROW_RED for a red kind, else SOMVR_TH_ROW_GLOW */
+/* build 21: row 4 the radial glow in the wraith's blue, mostly additive (the grab cue: SOMVR_THK_BLUE) */
+#define SOMVR_TH_BLUE_R 0.35f
+#define SOMVR_TH_BLUE_G 0.75f
+#define SOMVR_TH_BLUE_B 1.00f
+#define SOMVR_TH_BLUE_ALPHA 0.30f
+enum { SOMVR_TH_ROW_GLOW = 0, SOMVR_TH_ROW_EDGE = 1, SOMVR_TH_ROW_HURT = 2, SOMVR_TH_ROW_RED = 3, SOMVR_TH_ROW_BLUE = 4 };
+int somvr_th_glow_row(uint32_t kind); /* SOMVR_TH_ROW_BLUE / _RED for a blue / red kind, else SOMVR_TH_ROW_GLOW */
 /* build 17: an unblockable blow's glow level at t s from its start: in over 0.12 s from the wind-up (no wait for the
  * window), then a pulse between 0.7 and 1 at hz (the warm glow is steady: told apart at a glance) up to the impact, out
  * over fade_out_s after it; 0 before the start */

@@ -35,8 +35,9 @@ static struct {
     int has, last_has, kind_was;
     XrCompositionLayerQuad ql, last_ql; /* build 17: the drop's line (XL_OBJL) with the landing's ring */
     int has_l, last_has_l, line_was;
+    int timer_was;      /* build 21: the drop's timer: 0 none, 1 emptying, 2 armed (its log lines) */
     uint32_t id_was;
-    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land, n_line, n_strike, n_aim;
+    uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land, n_line, n_strike, n_aim, n_timer;
     uint32_t lines;
 } OB;
 
@@ -283,13 +284,16 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     if (aim) { /* where the drawn bow's line meets an orc (the strike's blue ring) or the world (gold), its size in deg */
         float head[3];
         for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
-        p = somvr_ob_aim(head, e.pos, e.dist_m, (e.flags & SOMVR_OBF_AIM_HIT) != 0);
-        ground = p.kind != SOMVR_OBK_NONE && (e.flags & SOMVR_OBF_AIM_HIT); /* the strike cell's ring square alone */
+        int sight = (e.flags & SOMVR_OBF_AIM_SIGHT) != 0; /* build 21: the thin sight (its own cells) */
+        p = somvr_ob_aim(head, e.pos, e.dist_m, (e.flags & SOMVR_OBF_AIM_HIT) != 0, sight);
+        ground = !sight && p.kind != SOMVR_OBK_NONE && (e.flags & SOMVR_OBF_AIM_HIT); /* the strike cell's ring square alone */
         OB.in_view = 0;
     } else if (land) { /* build 16: the climb's landing (SOMVR_CLIMB_PULLOVER): a ring flat on the floor where he will stand */
         p = somvr_ob_floor(e.pos, e.dist_m);
         if (e.flags & SOMVR_OBF_LAND_NO && p.kind != SOMVR_OBK_NONE) /* build 18 (SOMVR_WRAITH_STEP): refused there */
             p.cell = SOMVR_OB_CELL_RING_NO;
+        else if (e.flags & SOMVR_OBF_TIMER && p.kind != SOMVR_OBK_NONE) /* build 21: the drop's hold timer in the ring */
+            p.cell = SOMVR_OB_CELL_TIMER0 + (int)(e.id <= SOMVR_OB_TIMER_ARMED ? e.id : SOMVR_OB_TIMER_ARMED);
         OB.in_view = 0;
         if (e.flags & SOMVR_OBF_LINE) { /* build 17 (SOMVR_CLIMB_DESCENT_MARK): the line from the edge down to it */
             float head[3], bot[3] = {e.pos[0], e.pos[1] + 0.02f, e.pos[2]};
@@ -363,6 +367,19 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     OB.last_has_l = OB.has_l, OB.last_ql = OB.ql;
     if (OB.has_l) c->l[XL_OBJL] = (const XrCompositionLayerBaseHeader *)&OB.ql;
     int kind = p.kind * 4 + (p.kind ? p.cell : 0);
+    if (land && p.kind != SOMVR_OBK_NONE && p.cell >= SOMVR_OB_CELL_TIMER0) { /* build 21: the timer: one line as it starts and
+                                                                                * one as it empties, not a line a step */
+        int ts = p.cell == SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED || p.cell == SOMVR_OB_CELL_TIMER0 ? 2 : 1; /* (0 left: the flash's dark beat) */
+        if (ts != OB.timer_was && OB.lines < 400) {
+            OB.lines++;
+            lg("xr: objective frame %llu: the drop's hold timer in the landing ring: %s (cell %d)", (unsigned long long)rec->frame,
+               ts == 2 ? "emptied: the full bright ring, flashing (armed)" : "the white ring emptying", p.cell);
+        }
+        OB.timer_was = ts, OB.n_timer++;
+        kind = p.kind * 4 + SOMVR_OB_CELL_RING; /* the ring's own line as ever */
+    } else if (land) {
+        OB.timer_was = 0;
+    }
     if (strike && (kind != OB.kind_was || e.id != OB.id_was) && OB.lines < 400) {
         OB.lines++;
         lg("xr: objective frame %llu: the Shadow Strike's mark (%s) on orc %u: %s %.2f m %s %+.2f,%+.2f,%+.2f m, the quad %.2f x "
@@ -380,9 +397,14 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
             OB.lines++;
             lg("xr: objective frame %llu: the bow's aim ring (%s) at %+.2f,%+.2f,%+.2f m, %.1f deg = %.3f m across (the quad "
                "%.3f m) (frames with it %llu)", (unsigned long long)rec->frame,
-               e.id == 3 ? "an orc's head: blue" : e.id == 2 ? "an orc's body: blue" : e.id == 1 ? "the world: gold" : "far: gold",
+               e.id == 3   ? "an orc's head: blue"
+               : e.id == 2 ? "an orc's body: blue"
+               : (e.flags & SOMVR_OBF_AIM_SIGHT) ? (e.id == 1 ? "the world: white" : "far: white") /* build 21 */
+               : e.id == 1 ? "the world: gold"
+                           : "far: gold",
                (double)e.pos[0], (double)e.pos[1], (double)e.pos[2], (double)e.dist_m,
-               (double)(p.size[0] * ((e.flags & SOMVR_OBF_AIM_HIT) ? SOMVR_OB_STRIKE_RING_PX : 124.0f) / SOMVR_OB_CELL),
+               (double)((e.flags & SOMVR_OBF_AIM_SIGHT) ? p.size[0] * SOMVR_OB_AIM_RING_PX / SOMVR_OB_AIM_PX
+                        : p.size[0] * ((e.flags & SOMVR_OBF_AIM_HIT) ? SOMVR_OB_STRIKE_RING_PX : 124.0f) / SOMVR_OB_CELL),
                (double)p.size[0], (unsigned long long)OB.n_aim);
         }
         OB.kind_was = kind, OB.id_was = e.id, OB.line_was = 0;

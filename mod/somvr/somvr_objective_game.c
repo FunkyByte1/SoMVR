@@ -221,6 +221,16 @@ static void ob_frame(uintptr_t pl, int stereo)
 			somvr_th_to_xr(&mp, wt, e.top);
 			e.flags |= SOMVR_OBF_LINE;
 		}
+		if (dm && g_cl.cfg.dm_timer && g_cl.s.dm == 1) { /* build 21: the hold's timer in the ring (SOMVR_CLIMB_DESCENT_TIMER):
+								      * the white ring's steps left, then armed - flashing 3 beats, then lit */
+			float a = g_cl.dm_armed_s;
+			e.flags |= SOMVR_OBF_TIMER;
+			e.id = a >= 0 ? (a < 0.36f && ((int)(a / 0.06f) & 1) ? 0u : (uint32_t)SOMVR_OB_TIMER_ARMED)
+				      : (uint32_t)ceilf((1.0f - g_cl.dm_held) * SOMVR_OB_TIMER_STEPS - 1e-3f);
+			if (e.id > SOMVR_OB_TIMER_STEPS && a < 0)
+				e.id = SOMVR_OB_TIMER_STEPS;
+			g_cl.dm_timer_frames++;
+		}
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
 		if (g_ob.land_was != 1 + dm && g_ob.lines++ < 400)
 			logf_("OBJECTIVE t=%.3f frame=%llu: the climb's landing in the eyes: a ring at (%.0f %.0f %.0f), xr (%+.2f %+.2f "

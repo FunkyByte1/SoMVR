@@ -46,7 +46,14 @@ enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIV
        SOMVR_OBF_AIM = 512u,     /* build 20 (SOMVR_BOW_AIM_RING): not the objective but where the drawn bow's line meets
                                   * an orc or the world: pos = that point, dist_m = the ring's size in DEGREES of the view
                                   * (the layer sizes it from the eyes): the gold ring facing the head, at its depth */
-       SOMVR_OBF_AIM_HIT = 1024u }; /* ... on an orc the arrow would hit: the wraith-blue ring (the strike's) */
+       SOMVR_OBF_AIM_HIT = 1024u, /* ... on an orc the arrow would hit: the wraith-blue ring (the strike's) */
+       SOMVR_OBF_AIM_SIGHT = 2048u, /* build 21 (SOMVR_BOW_AIM_LOOK=sight, with AIM): the thin sight's cells (soft white,
+                                     * with _HIT wraith-blue) instead of build 20's rings */
+       SOMVR_OBF_TIMER = 4096u }; /* build 21 (SOMVR_CLIMB_DESCENT_TIMER, with LAND): the drop's hold timer in the ring: id =
+                                   * its state, 0..SOMVR_OB_TIMER_STEPS the white ring's steps left (0: empty), or
+                                   * SOMVR_OB_TIMER_ARMED (emptied: the full bright ring; the flash alternates it with 0) */
+#define SOMVR_OB_TIMER_STEPS 12
+#define SOMVR_OB_TIMER_ARMED (SOMVR_OB_TIMER_STEPS + 1)
 
 typedef struct {
     _Atomic uint64_t seq; /* the frame id this entry is for; 0 while written; stored last (release) */
@@ -139,8 +146,11 @@ void somvr_ob_cfg_default(somvr_ob_cfg *c);
 enum { SOMVR_OBK_NONE = 0, SOMVR_OBK_WORLD = 1, SOMVR_OBK_EDGE = 2 };
 enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2, SOMVR_OB_CELL_RING = 3, SOMVR_OB_CELL_LINE = 4,
        SOMVR_OB_CELL_STRIKE = 5, SOMVR_OB_CELL_STRIKE_NO = 6, SOMVR_OB_CELL_STRIKE_GO = 7, SOMVR_OB_CELL_RING_NO = 8,
-       SOMVR_OB_CELLS = 9 };
-#define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each; 8 a square */
+       SOMVR_OB_CELL_AIM = 9, SOMVR_OB_CELL_AIM_HIT = 10, /* build 21: the bow's sight, white / on an orc wraith-blue */
+       SOMVR_OB_CELL_TIMER0 = 11, /* build 21: the landing ring with the drop's timer, + state (SOMVR_OBF_TIMER's id) */
+       SOMVR_OB_CELLS = SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED + 1 };
+#define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each; 8..10
+                                 * squares (9 and 10: their SOMVR_OB_AIM_PX corner alone); TIMER0.. the second row */
 #define SOMVR_OB_WIDE 3
 typedef struct {
     int kind;        /* SOMVR_OBK_*: WORLD = pose in the reference space, EDGE = pose in a VIEW space */
@@ -168,8 +178,9 @@ somvr_ob_place somvr_ob_line(const float top[3], const float bot[3], const float
 somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ring_m, int cell);
 /* build 20, the bow's aim (SOMVR_OBF_AIM): a square quad facing the head with the ring's centre on pos, deg of the view
  * across (its outer edge) at that distance; the landing ring's cell (gold, a dot in it), hit: the strike's ring (its
- * cell's left square - somvr_ob_strike_rect(cell, 0)) */
-somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, int hit);
+ * cell's left square - somvr_ob_strike_rect(cell, 0)); build 21, sight (SOMVR_OBF_AIM_SIGHT): the sight's cell
+ * (SOMVR_OB_CELL_AIM, hit _AIM_HIT; somvr_ob_rect: its SOMVR_OB_AIM_PX square) */
+somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, int hit, int sight);
 /* the ring's diameter for an orc dist_m away: at least min_m, at least deg of the view (the label stays readable) */
 float somvr_ob_strike_ring(float dist_m, float min_m, float deg);
 /* build 18, the ground symbol (SOMVR_OBF_STRIKE without _CHEST): a strike cell's parts - 0 its ring (the left square),
@@ -194,14 +205,24 @@ somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], fl
  * fading in over its top 15 %); build 17: cells 5..7 the Shadow Strike's mark, each SOMVR_OB_WIDE strides wide (the
  * ring in its left square, the label right of it): 5 ready (the wraith-blue ring, the A button, "SHADOW STRIKE"), 6 no
  * arrows (the ring grey, "NO ARROWS"), 7 pressed (the ring filled); build 18: cell 8 (a square after them) the
- * refused landing (SOMVR_WRAITH_STEP: the ring red, crossed). Premultiplied RGBA8 (bgra: B and R swapped). The
+ * refused landing (SOMVR_WRAITH_STEP: the ring red, crossed); build 21: cells 9 and 10 (squares after it) the bow's sight
+ * in their top left SOMVR_OB_AIM_PX square (drawn at about the size it is seen, so the thin ring is not thinned
+ * further by the compositor's sampling): a soft-white ring (SOMVR_OB_AIM_WHITE_A opaque) and a dot at its centre, a
+ * faint dark edge on both sides (SOMVR_OB_AIM_DARK_A), its outer edge SOMVR_OB_AIM_RING_PX across; 10 the same
+ * wraith-blue (the strike's); build 21: a second row of squares, cell TIMER0 + k the
+ * landing ring with the drop's hold timer (a white ring inside the gold one, k twelfths of it left clockwise from the
+ * top; ARMED: all of it, wider and brighter, a faint white disc in it). Premultiplied RGBA8 (bgra: B and R swapped). The
  * diamond's centre is SOMVR_OB_DIAMOND_V of the cell from its top (the quad is shifted so that it, not the cell's
  * centre, sits on the objective's direction). */
 #define SOMVR_OB_CELL 128
 #define SOMVR_OB_STRIDE (SOMVR_OB_CELL + 2)
-#define SOMVR_OB_IMG_W ((SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELL_RING_NO - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE + 1) * SOMVR_OB_STRIDE)
+#define SOMVR_OB_IMG_W ((SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELL_RING_NO - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE + 3) * SOMVR_OB_STRIDE)
 #define SOMVR_OB_STRIKE_RING_PX 108 /* the strike ring's outer diameter in its cell (px; the cell is SOMVR_OB_CELL high) */
-#define SOMVR_OB_IMG_H SOMVR_OB_STRIDE
+#define SOMVR_OB_AIM_PX 40      /* build 21: the sight's square (px): 1.5 deg is about 24 px in a Quest 2 eye */
+#define SOMVR_OB_AIM_RING_PX 38 /* ... its ring's outer edge across (the dark edge's; a pixel clear all round) */
+#define SOMVR_OB_AIM_WHITE_A 0.80f
+#define SOMVR_OB_AIM_DARK_A 0.40f
+#define SOMVR_OB_IMG_H (2 * SOMVR_OB_STRIDE) /* build 21: the timer's cells in a second row */
 #define SOMVR_OB_DIAMOND_V 0.3125f
 #define SOMVR_OB_FAINT 0.40f
 void somvr_ob_rect(int cell, int32_t r[4]); /* x, y, w, h */

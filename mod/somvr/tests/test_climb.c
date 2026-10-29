@@ -42,6 +42,8 @@ static int g_wet, g_top_far, g_desc_all, g_deep; /* g_deep: a floor 50 m down (A
 
 static float g_slab_y0, g_slab_y1, g_slab_z; /* > 0: a slab out from the face: y0..y1 high, from z slab_z to the face */
 static float g_roof_y, g_roof_z0, g_roof_z1; /* > 0: a roof at y roof_y over z roof_z0..roof_z1 (rays up from under it) */
+static float g_rl_y, g_rl_z; /* build 21 (round lip): > 0: over the top a setback face at z WALL_Z + rl_z up to the floor
+                             * rl_y over the top, that floor from it on (the crest at the top, 0..rl_z deep) */
 static int mock_ray(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, somvr_climb_hit *out) {
     (void)ctx, (void)hand;
     g_rays++;
@@ -90,6 +92,18 @@ static int mock_ray(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, s
         if (t >= 0 && t <= len && t < best)
             best = t, out->hit = 1, out->climbable = 1, out->dist = t, out->wet = 0,
             out->point = (sv_vec3){ from.x + dir.x * t, -5000, from.z + dir.z * t };
+    }
+    if (g_rl_y > 0 && dir.z > 1e-6f && from.z <= WALL_Z + g_rl_z) { /* round lip: the setback face over the crest */
+        float t = (WALL_Z + g_rl_z - from.z) / dir.z;
+        sv_vec3 p = { from.x + dir.x * t, from.y + dir.y * t, WALL_Z + g_rl_z };
+        if (t >= 0 && t <= len && p.y > g_wall_top && p.y <= g_wall_top + g_rl_y && t < best)
+            best = t, out->hit = 1, out->climbable = 1, out->dist = t, out->point = p, out->wet = 0;
+    }
+    if (g_rl_y > 0 && dir.y < -1e-6f && from.y >= g_wall_top + g_rl_y) { /* round lip: the floor behind the crest */
+        float t = (g_wall_top + g_rl_y - from.y) / dir.y;
+        sv_vec3 p = { from.x + dir.x * t, g_wall_top + g_rl_y, from.z + dir.z * t };
+        if (t >= 0 && t <= len && p.z >= WALL_Z + g_rl_z && p.z <= WALL_Z + g_top_depth && t < best)
+            best = t, out->hit = 1, out->climbable = 1, out->dist = t, out->point = p, out->wet = 0;
     }
     if (dir.y < -1e-6f && from.y >= g_wall_top && !g_no_top) { /* the top, from above */
         float t = (g_wall_top - from.y) / dir.y;
@@ -3060,6 +3074,19 @@ static void test_drop_mark(void) {
     memset(&k, 0, sizeof k);
     dm_run(&r, 1, 1, &k);
     CHECK(k.blink == 1 && !k.ev2 && !k.shows, "off: the blink on the press, as build 16");
+    /* down: a ledge sticking out 70 cm from 160 cm under the lip (as run 222900's sloped bank): no glide (why: no wall
+     * under the lip); nothing moves */
+    g_slab_y0 = 600, g_slab_y1 = 740, g_slab_z = 30;
+    desc_setup(&r, 900);
+    r.c.down_over = 1;
+    r.in.hand[1].p = (sv_vec3){ 0, 50, -10 };
+    rig_frame(&r);
+    sv_vec3 bl = r.body;
+    grip(&r, 1, 1);
+    frames(&r, 30);
+    CHECK(!r.s.dn_goes && r.s.dn_why == SOMVR_CLIMB_DN_NOFACE && NEAR3(r.body, bl.x, bl.y, bl.z, 0.5),
+          "down: a ledge 70 cm out under the lip: no glide (%s, %.0f cm)", somvr_climb_dn_name(r.s.dn_why), r.s.dn_why_cm);
+    g_slab_y0 = g_slab_y1 = g_slab_z = 0;
     g_wall_top = wall0, g_ground_on = ground0;
 }
 
@@ -3266,7 +3293,222 @@ static void test_mantle20(void) {
           "mantle blink: no blink now: E_AM_NO, the hang");
 }
 
+
+/* ---- build 21: the timer, unstuck, the round lip, down over the edge ----------------------------------------------- */
+static void test_b21(void) {
+    rig_t r;
+    dm_acc k;
+    float wall0 = g_wall_top;
+    int ground0 = g_ground_on;
+    /* the timer: on foot at a 9 m edge, A held: out.dm_held fills over 0.3 s, then armed once (E_DM_ARMED), dm_armed_s
+     * counts from it; a let-go before it: nothing (the tap); after it: the blink */
+    for (int timer = 0; timer < 2; timer++) {
+        dm_setup(&r, 900);
+        r.c.dm_timer = timer;
+        memset(&k, 0, sizeof k);
+        dm_run(&r, 1, 13, &k);
+        float h13 = r.o.dm_held;
+        CHECK(!(k.ev2 & SOMVR_CLIMB_E_DM_ARMED) && h13 > 0.4f && h13 < 0.5f && r.o.dm_armed_s < 0,
+              "timer %d: 13 frames held: %.2f of the hold, not armed", timer, h13);
+        dm_run(&r, 1, 20, &k);
+        CHECK((k.ev2 & SOMVR_CLIMB_E_DM_ARMED) && r.s.dm_armeds == 1 && r.o.dm_armed_s > 0.0f && r.o.dm_armed_s < 0.1f &&
+                  NEAR(r.o.dm_held, 1, 1e-3),
+              "timer %d: 33 frames: armed once (%llu), %.3f s since", timer, (unsigned long long)r.s.dm_armeds,
+              r.o.dm_armed_s);
+        dm_run(&r, 0, 1, &k);
+        CHECK(k.blink == 1, "timer %d: let go after it: the blink", timer);
+        dm_setup(&r, 900);
+        r.c.dm_timer = timer;
+        memset(&k, 0, sizeof k);
+        dm_run(&r, 1, 20, &k);
+        dm_run(&r, 0, 1, &k);
+        CHECK(!k.blink && !(k.ev2 & SOMVR_CLIMB_E_DM_ARMED) && (k.ev2 & SOMVR_CLIMB_E_DM_TAP), "timer %d: let go before: nothing",
+              timer);
+    }
+    /* the timer: hanging, the landing lost while A is held (the ground under him water, found again 10 cm lower) and
+     * back: the clock starts over (a let-go 0.1 s after it is back = nothing); off: the old clock (the let-go goes) */
+    for (int timer = 0; timer < 2; timer++) {
+        int hung = dm_hang(&r, 900);
+        r.c.dm_timer = timer;
+        memset(&k, 0, sizeof k);
+        dm_run(&r, 1, 20, &k);
+        g_wet = 1, r.body.y -= 12;
+        dm_run(&r, 1, 12, &k);
+        int lost = r.s.dm_kind == SOMVR_CLIMB_DM_NONE;
+        g_wet = 0, r.body.y -= 12;
+        dm_run(&r, 1, 12, &k);
+        int back = r.s.dm_kind == SOMVR_CLIMB_DM_BLINK;
+        dm_run(&r, 0, 1, &k);
+        CHECK(hung && lost && back && (timer ? !k.blink && r.s.dm_restarts == 1 : k.blink == 1),
+              "timer %d: the landing lost and back while held: %s (restarts %llu)", timer, k.blink ? "the blink" : "nothing",
+              (unsigned long long)r.s.dm_restarts);
+    }
+    g_wet = 0;
+    /* unstuck (1): the move stick already held at A's press is no cancel (the user's 12 of 13); a tilt after it has come
+     * back is; off (build 20c): cancelled at once */
+    for (int un = 0; un < 2; un++) {
+        dm_setup(&r, 900);
+        r.c.unstuck = un;
+        r.in.stick = 1.0f;
+        memset(&k, 0, sizeof k);
+        dm_run(&r, 1, 40, &k);
+        int kept = r.s.dm == 1 && r.o.dm_show;
+        dm_run(&r, 0, 1, &k);
+        CHECK(un ? kept && k.blink == 1 && r.s.dm_stick_kept == 1 : !kept && !k.blink && r.s.dm_cancel_why == SOMVR_CLIMB_DMC_STICK,
+              "unstuck %d: the stick held at the press: %s", un, k.blink ? "kept, the blink" : "cancelled");
+        dm_setup(&r, 900);
+        r.c.unstuck = un;
+        r.in.stick = 1.0f;
+        memset(&k, 0, sizeof k);
+        dm_run(&r, 1, 5, &k);
+        r.in.stick = 0;
+        dm_run(&r, 1, 3, &k);
+        r.in.stick = 1.0f;
+        dm_run(&r, 1, 1, &k);
+        CHECK(r.s.dm == 0 && r.s.dm_cancel_why == SOMVR_CLIMB_DMC_STICK, "unstuck %d: back and tilted again: cancelled", un);
+        r.in.stick = 0;
+    }
+    /* unstuck (2): hanging with an orc on the blink's landing: off = no ring, A does nothing; on = the plain fall
+     * straight down, its ring on the ground under him; let go after the hold = the drop */
+    for (int un = 0; un < 2; un++) {
+        int hung = dm_hang(&r, 900);
+        r.c.unstuck = un;
+        g_enemy = 1;
+        memset(&k, 0, sizeof k);
+        dm_run(&r, 1, 40, &k);
+        int kind = r.s.dm_kind;
+        sv_vec3 land = r.o.dm_land;
+        dm_run(&r, 0, 2, &k);
+        g_enemy = 0;
+        CHECK(hung && (un ? kind == SOMVR_CLIMB_DM_FALL && NEAR(land.y, 0, 0.5) && NEAR(land.z, r.s.dm_root.z, 0.5) &&
+                                (k.ev & SOMVR_CLIMB_E_DROP) && k.ended && r.s.dm_plain_falls >= 1
+                          : kind == SOMVR_CLIMB_DM_NONE && !k.ended && r.s.active),
+              "unstuck %d: an orc at the landing: %s", un, k.ended ? "the plain fall" : "nothing (still hanging)");
+    }
+    /* unstuck (3): at a top with the eyes too low for the mantle: off = A only buzzes; on = the buzz and A held is the
+     * drop mark (its landing shown) */
+    g_wall_top = wall0, g_ground_on = 1;
+    for (int un = 0; un < 2; un++) {
+        am_setup(&r, 1, 15, 1);
+        r.c.unstuck = un;
+        am_acc a;
+        am_run(&r, 1, 2, &a);
+        frames(&r, 30);
+        r.in.drop = 1;
+        frames(&r, 2);
+        int dm = r.s.dm, shown = r.o.dm_show;
+        CHECK(a.no_ev == 1 && !a.go_ev && (un ? dm == 1 && shown && r.s.am_no_marks == 2 : dm == 0 && r.s.dm_presses == 0),
+              "unstuck %d: A at a top too low to mantle: the no%s", un, un ? " and the drop mark" : " alone");
+        r.in.drop = 0;
+        frames(&r, 2);
+    }
+    /* unstuck (4): a fling up a thin wall with no top to stand on (mark 5's spire): off = the arc to its top, the eyes
+     * far over the wall's top and out of reach; on = it stops when the wall leaves the chest: the eyes at most 70 cm
+     * over the top, a hand reaches it */
+    for (int un = 0; un < 2; un++) {
+        g_no_top = 1, g_wall_top = 320;
+        fl_setup(&r);
+        r.c.unstuck = un, r.c.fling_max = 650, r.c.fling_min = 110, r.c.fling_gain = 1.15f, r.c.fling_up = 1;
+        r.body.y = 120;
+        frames(&r, 2);
+        fl_throw(&r, 1, 0, -9, 0, 10); /* 810 cm/s down: the fling */
+        int flew = r.s.phase == SOMVR_CLIMB_PH_FLING;
+        fl_fly(&r, 200);
+        float over = r.in.head_y - g_wall_top;
+        CHECK(flew && r.s.phase == SOMVR_CLIMB_PH_HANG &&
+                  (un ? r.s.fl_why == SOMVR_CLIMB_FL_REACH && over > 0 && over < 70 && r.s.fl_reaches == 1 : over > 100),
+              "unstuck %d: a fling past a thin wall's top: the eyes %.0f cm over it (%s)", un, over,
+              somvr_climb_fl_name(r.s.fl_why));
+        g_no_top = 0, g_wall_top = wall0;
+    }
+    /* round lip (mark 11): a hold on the crest of a rounded lip 35 cm under the floor behind it: off = no edge, the
+     * pullover's top the crest (no landing); on = an edge with that floor as its top, the pullover's landing on it */
+    for (int rl = 0; rl < 2; rl++) {
+        g_rl_y = 35, g_rl_z = 5, g_wall_top = 300;
+        rig_init(&r);
+        r.c.round_lip = rl, r.c.pullover = 1, r.c.letgo = SOMVR_CLIMB_LETGO_HANG;
+        r.body = (sv_vec3){ 0, 145, 0 }; /* the right hand (y 150, z 85) at world 295, 15 cm before the face */
+        rig_frame(&r);
+        grip(&r, 1, 1);
+        frames(&r, 3);
+        const somvr_climb_hold *h = &r.s.h[1];
+        CHECK(h->holding && (rl ? h->edge && h->top_found && NEAR(h->top_y, 335, 0.5) && h->rl && h->po_ok &&
+                                      NEAR(h->po_top_y, 335, 0.5)
+                                : !h->edge && !h->po_ok && NEAR(h->po_top_y, 300, 0.5)),
+              "round lip %d: the hold at %.0f: edge %d top %.0f, the pullover's top %.0f (%s)", rl, h->hit.y, h->edge,
+              h->top_y, h->po_top_y, h->po_ok ? "a landing" : "no landing");
+        g_rl_y = 0, g_rl_z = 0;
+    }
+    /* down (mark 4): on foot on a 9 m wall's top, the right hand reaching down 20 cm out over the edge, 50 cm over the
+     * top: the grip = the glide out and down; at its end that hand holds, the eyes 25 cm under the top, the root 45 cm
+     * out from the face; then hand over hand down (the new holds 90 cm under the eyes take); off: nothing moves */
+    for (int dn = 0; dn < 2; dn++) {
+        desc_setup(&r, 900);
+        r.c.down_over = dn;
+        r.in.hand[1].p = (sv_vec3){ 0, 50, -10 }; /* world (0, 950, 80): 20 cm out over the edge (z 100) */
+        rig_frame(&r);
+        grip(&r, 1, 1);
+        sv_vec3 b0 = r.body;
+        uint32_t ev2 = 0;
+        float max_step = 0;
+        int n = 0;
+        for (; n < 200; n++) {
+            sv_vec3 bb = r.body;
+            rig_frame(&r);
+            ev2 |= r.o.events2;
+            float st = sqrtf((r.body.x - bb.x) * (r.body.x - bb.x) + (r.body.y - bb.y) * (r.body.y - bb.y) +
+                             (r.body.z - bb.z) * (r.body.z - bb.z));
+            max_step = fmaxf(max_step, st);
+            if (ev2 & SOMVR_CLIMB_E_DN_END) break;
+        }
+        if (!dn) {
+            CHECK(!(ev2 & SOMVR_CLIMB_E_DN_GO) && NEAR3(r.body, b0.x, b0.y, b0.z, 0.5), "down off: nothing moves");
+            continue;
+        }
+        CHECK((ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_end == 1 && r.s.h[1].holding && r.s.phase == SOMVR_CLIMB_PH_HOLD &&
+                  NEAR(r.in.head_y, 900 - 25, 2) && NEAR(r.body.z + 50, 100 - 45, 2) && max_step < 6.0f && n < 90,
+              "down: the glide (%d frames, the largest step %.1f cm): holding, the eyes %.0f, the root z %.0f", n, max_step,
+              r.in.head_y, r.body.z + 50);
+        float y0 = r.body.y;
+        int got = 1;
+        for (int i = 0, h = 0; i < 4; i++, h = 1 - h) got &= desc_hold(&r, h, 20);
+        CHECK(got && r.body.y < y0 - 200 && r.s.active, "down: four holds down the face under the eyes: %.0f cm lower",
+              y0 - r.body.y);
+    }
+    /* down: the cancel - the grip opened during the glide = the hang where he is; too high a hand: no glide */
+    desc_setup(&r, 900);
+    r.c.down_over = 1;
+    r.in.hand[1].p = (sv_vec3){ 0, 50, -10 };
+    rig_frame(&r);
+    grip(&r, 1, 1);
+    frames(&r, 8);
+    grip(&r, 1, 0);
+    frames(&r, 3);
+    sv_vec3 bc = r.body;
+    frames(&r, 30);
+    CHECK(r.s.dn_end == 2 && r.s.phase == SOMVR_CLIMB_PH_HANG && NEAR3(r.body, bc.x, bc.y, bc.z, 0.01),
+          "down: the grip opened during the glide: the hang where he is");
+    desc_setup(&r, 900);
+    r.c.down_over = 1;
+    r.in.hand[1].p = (sv_vec3){ 0, 130, -10 }; /* chest high */
+    rig_frame(&r);
+    grip(&r, 1, 1);
+    frames(&r, 30);
+    CHECK(!r.s.dn_goes && r.s.dn_why == SOMVR_CLIMB_DN_HIGH, "down: a hand at the chest: no glide (%s)",
+          somvr_climb_dn_name(r.s.dn_why));
+    desc_setup(&r, 900);
+    r.c.down_over = 1;
+    r.in.hand[1].p = (sv_vec3){ 0, 50, 60 }; /* 50 cm before the edge, over the top */
+    rig_frame(&r);
+    grip(&r, 1, 1);
+    frames(&r, 30);
+    CHECK(!r.s.dn_goes && r.s.dn_why == SOMVR_CLIMB_DN_NOEDGE, "down: the edge 50 cm past the hand: no glide (%s)",
+          somvr_climb_dn_name(r.s.dn_why));
+    g_wall_top = wall0, g_ground_on = ground0;
+}
+
 int main(void) {
+    test_b21();
     test_mantle20();
     test_through();
     test_face_toward();

@@ -697,6 +697,56 @@ static void test_robust(void) {
     CHECK(S.frames > 0, "frames");
 }
 
+/* build 21 (in.take, SOMVR_STRIKE_SWORD): the Shadow Strike's sword - the game's draw of a sword kept away is the
+ * player's (no undraw; in the hand after, its sheathe reasserted); not drawn = asked; the take ends: it stays */
+static void test_take(void) {
+    rig();
+    C.undraw = 1;
+    steps(2);
+    CHECK(O.keep[0] == 0 && !O.blade, "kept away");
+    I.take[0] = 1, I.drawn[0] = 1; /* the strike starts: the game draws it */
+    step();
+    CHECK((O.ev[0] & SOMVR_SL_E_GAME) && (O.ev[0] & SOMVR_SL_E_TAKE) && !(O.ev[0] & SOMVR_SL_E_PUT) && O.want[0] == -1 &&
+              O.keep[0] == 1 && O.blade && S.undraws[0] == 0,
+          "the game's draw at the strike: the player's (ev %#x want %d keep %d)", O.ev[0], O.want[0], O.keep[0]);
+    gsteps(5);
+    I.take[0] = 0;
+    gsteps(30);
+    CHECK(I.drawn[0] && O.keep[0] == 1 && O.blade, "after the strike: still in the hand");
+    I.drawn[0] = 0; /* the game's sheathe after the fight: back to the hand (the player keeps it there) */
+    step();
+    CHECK((O.ev[0] & SOMVR_SL_E_REASSERT) && O.want[0] == 1, "the game's sheathe after: reasserted (ev %#x)", O.ev[0]);
+    /* the game did not draw it: asked (DRAW with TAKE), the game follows */
+    rig();
+    C.undraw = 1;
+    steps(2);
+    I.take[0] = 1;
+    step();
+    CHECK((O.ev[0] & SOMVR_SL_E_DRAW) && (O.ev[0] & SOMVR_SL_E_TAKE) && O.want[0] == 1, "not drawn: asked (ev %#x)", O.ev[0]);
+    game_follows();
+    step();
+    I.take[0] = 0;
+    gsteps(20);
+    CHECK(I.drawn[0] && O.keep[0] == 1 && O.blade, "asked, drawn, kept in the hand");
+    /* a pending undraw is dropped by the take */
+    rig();
+    C.undraw = 1;
+    steps(2);
+    I.drawn[0] = 1;
+    step();
+    CHECK(O.want[0] == 0, "the game's draw without the strike: the undraw asked");
+    I.take[0] = 1;
+    step();
+    CHECK(O.want[0] == -1 && O.keep[0] == 1 && O.blade, "the strike's take: the undraw dropped (want %d)", O.want[0]);
+    /* without take (build 20c): the strike's draw went back to the slot (the user's 10-28 marks 6 and 10) */
+    rig();
+    C.undraw = 1;
+    steps(2);
+    I.drawn[0] = 1;
+    step();
+    CHECK((O.ev[0] & SOMVR_SL_E_UNDRAW) && !O.blade, "no take: undrawn (the old way)");
+}
+
 int main(void) {
     test_geometry();
     test_torso_rule();
@@ -711,6 +761,7 @@ int main(void) {
     test_busy();
     test_dagger();
     test_robust();
+    test_take();
     printf("test_slots: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

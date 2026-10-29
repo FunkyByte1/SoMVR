@@ -113,9 +113,31 @@ static struct {
 	int htab_ok;
 	uintptr_t seen[160];
 	int nseen;
+	/* build 21 (docs 84): the thrust, the touch's grace and alert, the body, the blade that sticks, the blood */
+	int tier_cut;                /* SOMVR_COMBAT_SWING=stroke's tier of this contact (combat_frame sets it; -1 none) */
+	int stick_on, blood;         /* SOMVR_STEALTH_KILL_STICK, _BLOOD */
+	float keep_s;                /* SOMVR_STEALTH_KILL_STANDOFF_KEEP_S: the stand-off holds this long after the crouch */
+	double crouch_t;             /* the last stand-off tick crouched */
+	struct stl_ep { uintptr_t c, hobj; double t0, last_t, alert_t, alerted_t; float T0[3], d0; int32_t stim; } ep[STL_ORCS];
+	struct { uintptr_t hobj; uint32_t node[4]; int st; int logged; } bn[8];
+	int nbn;
+	char fx[128];
+	somvr_stl_stick_cfg kcfg;
+	somvr_stl_stick stk;
+	uintptr_t stk_c, stk_hobj;
+	int stk_node, stk_ease, stk_have;
+	float stk_off[3], stk_Ew[3], stk_E0[3], stk_last_G[3], stk_prev_depth, stk_hand_off_max, stk_wound_max;
+	sv_quat stk_last_q;
+	double stk_t0, stk_prev_t, stk_rel_t, stk_line_t, stk_rum_t, stk_ok_t, air_t;
+	_Atomic int stk_fx_req;
+	float stk_fx_P[3];
+	char stk_fx_what[40];
+	uint64_t touches, alerts, airs, sticks, stk_outs, stk_tears, stk_falls, stk_cancels, stk_frames, stk_rumbles, blood_made,
+		blood_fail, by[4], keep_ticks;
 } g_stl;
 
 static void stl_sweep(int hand, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
+static void stl_b21_frame(const struct cb_orc *o, int n, uintptr_t pc, double t); /* build 21 */
 static int stl_line(void) { return g_stl.lines < 600 ? (int)++g_stl.lines : 0; } /* a STEALTH line may go out */
 
 /* the game's awareness of Talion (FUN_0229bbc0 read as memory), and whether it fights him */
@@ -534,8 +556,17 @@ static void stl_standoff(uintptr_t pcomb, uintptr_t sc, const float *root, somvr
 			 double t)
 {
 	g_stl.so_n = 0;
-	if (g_stl.mode != STL_ON || !(g_stl.so_cm > 0) || !pcomb || !sc || !root || !stl_crouched())
+	/* build 21 (SOMVR_STEALTH_KILL_STANDOFF_KEEP_S): an approach begun crouched keeps the stand-off for this long after the
+	 * crouch ends - the sword's draw lets the stealth crouch go (SOMVR_CROUCH: PC_Stealth holds Acharn's slot), and in the
+	 * user's build 20c session the stick still forward then walked Talion in at standing speed to 109 cm: noticed */
+	int cr = stl_crouched(), keep = 0;
+	if (cr)
+		g_stl.crouch_t = t;
+	else
+		keep = g_stl.keep_s > 0 && g_stl.crouch_t > 0 && t - g_stl.crouch_t <= g_stl.keep_s;
+	if (g_stl.mode != STL_ON || !(g_stl.so_cm > 0) || !pcomb || !sc || !root || !(cr || keep))
 		return;
+	g_stl.keep_ticks += keep;
 	struct cb_orc oo[4];
 	int no = cb_orcs_r(pcomb, sc, root, 300.0f, oo, 4);
 	for (int i = 0; i < no; i++) {
@@ -581,6 +612,7 @@ static void stl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 	if (!root)
 		return;
 	memcpy(g_stl.frame_root, root, sizeof g_stl.frame_root);
+	stl_b21_frame(o, n, pc, t); /* build 21: the wound follows the body, the blood as the blade came out, the alerts */
 	if (g_stl.sp_t <= 0 || t - g_stl.sp_t > 1.0) {
 		memcpy(g_stl.sp_pos, root, sizeof g_stl.sp_pos), g_stl.sp_t = t, g_stl.speed_cms = NAN;
 	} else if (t - g_stl.sp_t >= 0.2) {
@@ -757,7 +789,8 @@ static uintptr_t stl_rec(void)
 	return 0;
 }
 
-/* a blade's contact with an orc (the sword's from combat_frame, the dagger's from stl_frame): 1 = the stealth kill took it */
+/* a blade's contact with an orc (the sword's from combat_frame, the dagger's from stl_frame): 1 = the stealth kill took it,
+ * 2 (build 21) = taken with no damage (a touch behind an unaware orc, its capsule only, the blade stuck in it) */
 /* the stealth kill's hit: the stock silent stealth kill's record dealt with forceKill at the contact; the direction the
  * blade's (or Talion -> the orc); SOMVR_COMBAT_DEATH's type. death = how it falls (the words) */
 static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, const somvr_blade *b, const float *root,
@@ -797,6 +830,311 @@ static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct,
 	*(volatile unsigned char *)(pc + C_HITONCE) = once;
 }
 
+/* ---- build 21 (SOMVR_STEALTH_KILL_THRUST, _STICK, _BLOOD; docs/re-xr-pipeline.md 84) ------------------------------- */
+#define STL_NECK_CM 12.0f    /* the way in within this of the Neck node: the neck */
+#define STL_EP_GAP_S 0.5     /* a new touch after this long without the blade in the body: a new episode */
+#define STL_ALERTED_S 3.0    /* an orc alerted by a touch is not alerted again within this */
+#define STL_STK_MAX_S 10.0   /* the blade left in a body this long: out (a safety) */
+#define STL_STK_EASE_S 0.12  /* the blade back onto the hand after it comes out */
+static const char *const g_stl_bn_w[4] = { "Pelvis", "Torso", "Neck", "Head" };
+static const float g_stl_bn_r[3] = { 17.0f, 16.0f, 9.0f }; /* cm: the spine, the chest, the neck (an orc's back from behind) */
+
+/* the orc's body: its Pelvis, Torso, Neck and Head nodes (GetNode by name once per orc, then its world transform); 1 =
+ * its skeleton, 0 = an estimate (a column over its root to its head height) */
+static int stl_body(const struct cb_orc *o, float nd[4][3])
+{
+	int i = 0;
+	while (i < g_stl.nbn && g_stl.bn[i].hobj != o->hobj)
+		i++;
+	if (i == g_stl.nbn) {
+		if (g_stl.nbn == 8)
+			memmove(g_stl.bn, g_stl.bn + 1, 7 * sizeof g_stl.bn[0]), g_stl.nbn--, i--;
+		memset(&g_stl.bn[g_stl.nbn], 0, sizeof g_stl.bn[0]);
+		g_stl.bn[g_stl.nbn++].hobj = o->hobj;
+		i = g_stl.nbn - 1;
+	}
+	uintptr_t m = peek_ptr(g_som.model_pp), mi = o->hobj ? peek_ptr(o->hobj + OBJ_MODEL) : 0, mv = vptr_of((void *)mi);
+	uintptr_t f = mv ? peek_ptr(mv + 0x20) : 0;
+	int ok = 0;
+	if (g_stl.bn[i].st >= 0 && g_th.ok_node && g_node_ok && m && f && (page_prot(f) & PROT_EXEC)) {
+		if (!g_stl.bn[i].st) {
+			g_stl.bn[i].st = 1;
+			for (int k = 0; k < 4 && g_stl.bn[i].st > 0; k++)
+				if (TH_FN(THS_GETNODE, th_getnode_fn)(m, o->hobj, g_stl_bn_w[k], &g_stl.bn[i].node[k]) & 0xff)
+					g_stl.bn[i].st = -1;
+		}
+		ok = g_stl.bn[i].st > 0;
+		for (int k = 0; ok && k < 4; k++) {
+			float xf[16] = { 0 };
+			if ((((nodexf_fn)g_node_sites[NS_NODEXF].target)((void *)m, o->hobj, g_stl.bn[i].node[k], xf, 1) & 0xff) ||
+			    !vec_ok(xf, 1e7f) || dist3(xf, o->pos) > 300.0f)
+				ok = 0;
+			else
+				memcpy(nd[k], xf, 3 * sizeof(float));
+		}
+	}
+	if (!ok) {
+		int kk = stl_kind(o);
+		float hu = kk >= 0 && g_stl.kc[kk].head_up > 30 ? g_stl.kc[kk].head_up : VB_HEAD_UP_CM;
+		float up[4] = { 0, 45, hu - 15, hu };
+		for (int k = 0; k < 4; k++)
+			nd[k][0] = o->pos[0], nd[k][1] = o->pos[1] + up[k], nd[k][2] = o->pos[2];
+	}
+	if (!g_stl.bn[i].logged++ && stl_line()) {
+		float yaw = stl_orc_yaw(o), fx = sinf(yaw), fz = cosf(yaw);
+		logf_("STEALTH orc %#lx body (%s): pelvis, torso, neck, head %+.0f %+.0f %+.0f %+.0f cm over its root, %+.0f %+.0f "
+		      "%+.0f %+.0f cm ahead of it; radii %.0f/%.0f/%.0f cm", (unsigned long)o->c,
+		      ok ? "its skeleton" : g_stl.bn[i].st < 0 ? "an estimate: no such nodes" : "an estimate: not readable",
+		      nd[0][1] - o->pos[1], nd[1][1] - o->pos[1], nd[2][1] - o->pos[1], nd[3][1] - o->pos[1],
+		      (nd[0][0] - o->pos[0]) * fx + (nd[0][2] - o->pos[2]) * fz, (nd[1][0] - o->pos[0]) * fx + (nd[1][2] - o->pos[2]) * fz,
+		      (nd[2][0] - o->pos[0]) * fx + (nd[2][2] - o->pos[2]) * fz, (nd[3][0] - o->pos[0]) * fx + (nd[3][2] - o->pos[2]) * fz,
+		      (double)g_stl_bn_r[0], (double)g_stl_bn_r[1], (double)g_stl_bn_r[2]);
+	}
+	return ok;
+}
+
+static struct stl_ep *stl_ep_of(uintptr_t c, int make)
+{
+	int fr = -1, old = 0;
+	for (int k = 0; k < STL_ORCS; k++) {
+		if (g_stl.ep[k].c == c)
+			return &g_stl.ep[k];
+		if (fr < 0 && !g_stl.ep[k].c)
+			fr = k;
+		if (g_stl.ep[k].last_t < g_stl.ep[old].last_t)
+			old = k;
+	}
+	if (!make)
+		return NULL;
+	if (fr < 0)
+		fr = old;
+	memset(&g_stl.ep[fr], 0, sizeof g_stl.ep[fr]);
+	g_stl.ep[fr].c = c;
+	return &g_stl.ep[fr];
+}
+
+/* the game's blood (SOMVR_COMBAT_HITFX's stab FX, one shot) at P */
+static void stl_blood(uintptr_t hobj, const float P[3], const char *what, double t)
+{
+	if (!g_stl.blood)
+		return;
+	char why[160];
+	int made = hf_fx_at(g_stl.fx, hobj, P, t, why, sizeof why);
+	g_stl.blood_made += made, g_stl.blood_fail += !made;
+	if (stl_line())
+		logf_("STEALTH t=%.3f blood '%s' at %s %.1f,%.1f,%.1f: %s%s", t, g_stl.fx, what, (double)P[0], (double)P[1],
+		      (double)P[2], made ? "made, " : "not made: ", why);
+}
+
+/* the touch's alert: the attack stimulus (the one a swing's start registers; SOMVR_STEALTH_KILL_SILENT keeps it from a
+ * swing at a stealth target) at this orc - it turns as to a wind-up (runs 20261028-011320/013422) */
+static void stl_alert(uintptr_t pc, struct stl_ep *e, double t)
+{
+	const char *name = "", *why = g_cb.mode != CB_FULL ? "log only" : !g_cb.ok_stim ? "a stimulus site did not match"
+				   : !pc ? "no player server Combat" : !e->hobj ? "no orc object" : NULL;
+	uintptr_t rec = 0, ad = 0;
+	if (!why && !(rec = cb_record(SC_TIER_LIGHT, 0, &name)))
+		why = "no attack record";
+	if (!why && !(ad = CB_FN(CS_ATTACKDATA, cb_attackdata_fn)(rec)))
+		why = "the record has no AttackData";
+	int32_t id1 = 0;
+	if (!why) {
+		cb_stim_end(t, "the touch's alert");
+		CB_FN(CS_STIMULUS, cb_stim_fn)(pc, ad, e->hobj);
+		peek(pc + C_STIM, &id1, sizeof id1);
+		g_cb.stim.on = 1, g_cb.stim.pc = pc, g_cb.stim.c = e->c, g_cb.stim.hobj = e->hobj, g_cb.stim.id = id1;
+		g_cb.stim.t = t;
+		e->stim = id1;
+	}
+	g_stl.alerts++;
+	if (stl_line())
+		logf_("STEALTH t=%.3f alert: orc %#lx touched %.0f ms ago and no kill came - the attack stimulus at it: %s", t,
+		      (unsigned long)e->c, (t - e->t0) * 1e3, why ? why : "registered");
+}
+
+static int stl_sticking(void) { return g_stl.stk.on; }
+static void stl_set_tier_cut(int t) { g_stl.tier_cut = t; }
+
+/* the blade comes out (the arms frame): r = SOMVR_STL_STK_OUT|TEAR|OFF (cancelled: why) */
+static void stl_stick_end(double t, int r, const char *why)
+{
+	float mv = dist3(g_stl.stk_Ew, g_stl.stk_E0);
+	int fell = r == SOMVR_STL_STK_TEAR && mv > 15.0f;
+	const char *how = r == SOMVR_STL_STK_OUT ? "drawn out past the wound" : fell ? "the body fell off the blade"
+			  : r == SOMVR_STL_STK_TEAR ? "torn free (the hand off the pinned blade)" : why;
+	g_stl.stk_outs += r == SOMVR_STL_STK_OUT, g_stl.stk_falls += fell, g_stl.stk_tears += r == SOMVR_STL_STK_TEAR && !fell;
+	g_stl.stk_cancels += r == SOMVR_STL_STK_OFF;
+	if (r == SOMVR_STL_STK_OUT) {
+		in_haptic_event(SOMVR_HAND_R, 0.6f, 0.05f, SOMVR_HAP_COMBAT);
+	} else if (r == SOMVR_STL_STK_TEAR) {
+		in_haptic_event(SOMVR_HAND_R, 0.85f, 0.06f, SOMVR_HAP_COMBAT);
+		if (g_bd.two.w > 0)
+			in_haptic_event(SOMVR_HAND_L, 0.5f, 0.06f, SOMVR_HAP_COMBAT);
+	}
+	if (r != SOMVR_STL_STK_OFF) { /* the blood as it comes out, in the next combat frame (not inside the pose update) */
+		for (int j = 0; j < 3; j++)
+			g_stl.stk_fx_P[j] = g_stl.stk_Ew[j] - 3.0f * g_stl.stk.a[j];
+		snprintf(g_stl.stk_fx_what, sizeof g_stl.stk_fx_what, "the wound as the blade came out");
+		atomic_store(&g_stl.stk_fx_req, 1);
+	}
+	g_stl.stk.on = 0;
+	g_stl.stk_ease = g_stl.stk_have, g_stl.stk_rel_t = t;
+	if (stl_line())
+		logf_("STEALTH t=%.3f stick out: %s after %.2f s (the point %.0f cm in at the deepest, the hand up to %.0f cm off the "
+		      "pinned blade, the wound moved %.0f cm); the blade eases back onto the hand over %.0f ms", t, how,
+		      t - g_stl.stk_t0, (double)g_stl.stk.peak, (double)g_stl.stk_hand_off_max, (double)mv, STL_STK_EASE_S * 1e3);
+}
+
+/* the shortest turn taking unit u onto unit v */
+static sv_quat stl_q_from_to(sv_vec3 u, sv_vec3 v)
+{
+	float d = u.x * v.x + u.y * v.y + u.z * v.z;
+	sv_vec3 c = { u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x };
+	if (d < -0.9999f) /* opposite: any axis across */
+		return fabsf(u.x) < 0.9f ? sv_qnormalize((sv_quat){ 0, -u.z, u.y, 0 }) : sv_qnormalize((sv_quat){ u.z, 0, -u.x, 0 });
+	return sv_qnormalize((sv_quat){ c.x, c.y, c.z, 1.0f + d });
+}
+
+/* arm_eval, after sfb_arm (SOMVR_STEALTH_KILL_STICK): the right weapon node pinned in the wound - its grip on the wound's
+ * axis where the hand's grip projects onto it, the blade along the axis (the hand's roll kept), the hand the
+ * controller's (1:1; the sword lags it sideways, the offset shown); after it comes out, eased back onto the hand */
+static void stl_stick_arm(const int done[2], const sa_xf gg[2], const int gv[2], const int bowed[2], sa_xf X, sv_vec3 shift)
+{
+	if (!g_stl.stk.on && !g_stl.stk_ease)
+		return;
+	double t = cb_now();
+	const sa_chain *c = &g_arm.ch[SA_R];
+	/* (not the bite's g_aw used_held: the right hand's held weapon frames are 0 headless - run 20261028-204131's first
+	 * stick ended at once; the turn below moves the node as it is, rigidly) */
+	unsigned bad = (!done[SA_R]) | (!gv[SA_R]) << 1 | (!!bowed[SA_R]) << 2 | (c->wpn < 0) << 3 | (!bd_sword_in_hand()) << 4 |
+		       (!(g_arm.weight[SA_R] >= 1)) << 5;
+	if (!bad)
+		g_stl.stk_ok_t = t;
+	if ((bad && t - g_stl.stk_ok_t > 0.15) || (g_stl.stk.on && t - g_stl.stk_t0 > STL_STK_MAX_S)) {
+		if (g_stl.stk.on) {
+			char why[96];
+			snprintf(why, sizeof why, bad ? "cancelled: no sword in the solved hand for 150 ms (%#x)" : "out: left in the body 10 s", bad);
+			stl_stick_end(t, SOMVR_STL_STK_OFF, why);
+		}
+		if (bad) {
+			g_stl.stk_ease = 0, g_stl.stk_have = 0;
+			return;
+		}
+	}
+	if (bad)
+		return; /* a frame without the solved sword: nothing this frame */
+	sa_xf g = gg[SA_R];
+	float zero[3] = { 0, 0, 0 }, e[4];
+	swg_qexp(g_hsm.w_now ? g_hsm.w_rot_now : zero, e); /* the drawn grip: the weight, the bite's and the pivot's turns */
+	sv_quat qd = sv_qnormalize(sv_qmul(sv_quat_of(e), sv_qnormalize(g.q)));
+	swg_qexp(g_hf.b_now, e);
+	qd = sv_qnormalize(sv_qmul(sv_quat_of(e), qd));
+	swg_qexp(g_sf.p_now, e);
+	qd = sv_qnormalize(sv_qmul(sv_quat_of(e), qd));
+	const sc_rigxf *rig = &g_arm.rig;
+	const sc_blade_cfg *bc = &g_cb.bcfg;
+	float k = sc_rig_scale(rig);
+	sv_quat y = sv_qyaw(rig->yaw), yi = sv_qyaw(-rig->yaw), qwd = sv_qnormalize(sv_qmul(y, qd));
+	sv_vec3 d0 = sv_qrot(y, (sv_vec3){ k * (g.p.x - rig->p0[0]), k * (g.p.y - rig->p0[1]), k * (g.p.z - rig->p0[2]) });
+	float G[3] = { rig->base[0] + shift.x + d0.x, rig->base[1] + shift.y + d0.y, rig->base[2] + shift.z + d0.z }, Pw[3];
+	sv_vec3 dir = sv_qrot(qwd, (sv_vec3){ 0, sinf(bc->pitch_rad), cosf(bc->pitch_rad) });
+	sv_quat qw = qwd;
+	if (g_stl.stk.on) {
+		float Gs[3];
+		int r = somvr_stl_stick_step(&g_stl.stk, &g_stl.kcfg, g_stl.stk_Ew, G, Gs);
+		if (r == SOMVR_STL_STK_HOLD) {
+			sv_vec3 a = { g_stl.stk.a[0], g_stl.stk.a[1], g_stl.stk.a[2] };
+			qw = sv_qnormalize(sv_qmul(stl_q_from_to(dir, a), qwd));
+			memcpy(Pw, Gs, sizeof Pw);
+			memcpy(g_stl.stk_last_G, Gs, sizeof Gs), g_stl.stk_last_q = qw, g_stl.stk_have = 1;
+			g_stl.stk_frames++;
+			g_stl.stk_hand_off_max = fmaxf(g_stl.stk_hand_off_max, g_stl.stk.off);
+			/* the rough rumble while it slides in or out */
+			float dt = (float)(t - g_stl.stk_prev_t), v = dt > 0 && dt < 0.25f ? fabsf(g_stl.stk.depth - g_stl.stk_prev_depth) / dt : 0;
+			if (v > 4.0f && t >= g_stl.stk_rum_t) {
+				float amp = 0.25f + 0.45f * fminf(1.0f, v / 80.0f);
+				in_haptic_event(SOMVR_HAND_R, amp, 0.04f, SOMVR_HAP_COMBAT);
+				if (g_bd.two.w > 0)
+					in_haptic_event(SOMVR_HAND_L, 0.6f * amp, 0.04f, SOMVR_HAP_COMBAT);
+				g_stl.stk_rum_t = t + 0.035, g_stl.stk_rumbles++;
+			}
+			g_stl.stk_prev_depth = g_stl.stk.depth, g_stl.stk_prev_t = t;
+			if (t >= g_stl.stk_line_t && stl_line()) {
+				g_stl.stk_line_t = t + 0.25;
+				logf_("STEALTH t=%.3f stick hold: the point %.1f cm in (deepest %.1f), the hand %.1f cm off the pinned grip, "
+				      "the wound %.1f cm from where it went in, the blade turned %.1f deg off the hand's", t,
+				      (double)g_stl.stk.depth, (double)g_stl.stk.peak, (double)g_stl.stk.off,
+				      (double)dist3(g_stl.stk_Ew, g_stl.stk_E0),
+				      (double)(acosf(fmaxf(-1.0f, fminf(1.0f, dir.x * a.x + dir.y * a.y + dir.z * a.z))) * 57.29578f));
+			}
+		} else {
+			stl_stick_end(t, r, "");
+		}
+	}
+	if (!g_stl.stk.on) {
+		if (!g_stl.stk_ease)
+			return;
+		float u = (float)((t - g_stl.stk_rel_t) / STL_STK_EASE_S);
+		if (u >= 1.0f) {
+			g_stl.stk_ease = 0, g_stl.stk_have = 0;
+			return;
+		}
+		u = u < 0 ? 0 : u * u * (3.0f - 2.0f * u);
+		for (int j = 0; j < 3; j++)
+			Pw[j] = g_stl.stk_last_G[j] + u * (G[j] - g_stl.stk_last_G[j]);
+		sv_quat a = g_stl.stk_last_q, b = qwd;
+		float s = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0 ? -1.0f : 1.0f;
+		qw = sv_qnormalize((sv_quat){ a.x + u * (s * b.x - a.x), a.y + u * (s * b.y - a.y), a.z + u * (s * b.z - a.z),
+					      a.w + u * (s * b.w - a.w) });
+	}
+	/* the weapon node as if the drawn grip were at (Pw, qw): W' = gm3 (x) gm2^-1 (x) W (as the bite and the pivot) */
+	sv_vec3 r3 = sv_qrot(yi, (sv_vec3){ (Pw[0] - rig->base[0] - shift.x) / k, (Pw[1] - rig->base[1] - shift.y) / k,
+					     (Pw[2] - rig->base[2] - shift.z) / k });
+	sa_xf g2 = { g.p, qd }, g3 = { { rig->p0[0] + r3.x, rig->p0[1] + r3.y, rig->p0[2] + r3.z }, sv_qnormalize(sv_qmul(yi, qw)) };
+	sa_xf gm2 = sa_grip_to_model(&g_arm.rig, shift, X, g2), gm3 = sa_grip_to_model(&g_arm.rig, shift, X, g3);
+	float bs = sz_body_scale();
+	if (bs != 1.0f)
+		gm2.p = (sv_vec3){ gm2.p.x / bs, gm2.p.y / bs, gm2.p.z / bs }, gm3.p = (sv_vec3){ gm3.p.x / bs, gm3.p.y / bs, gm3.p.z / bs };
+	sa_xf W = sa_node_xf(&g_arm.pose[c->wpn]);
+	sa_node_set(&g_arm.pose[c->wpn], sa_xf_mul(sa_xf_mul(gm3, sa_xf_inv(gm2)), W));
+}
+
+/* stl_frame (the combat frame): the wound follows the body (its node), the blood as the blade came out, the alerts */
+static void stl_b21_frame(const struct cb_orc *o, int n, uintptr_t pc, double t)
+{
+	(void)o, (void)n;
+	if (atomic_exchange(&g_stl.stk_fx_req, 0))
+		stl_blood(g_stl.stk_hobj, g_stl.stk_fx_P, g_stl.stk_fx_what, t);
+	if (g_stl.stk.on) {
+		float nd[4][3], at[3];
+		struct cb_orc oc;
+		/* the killed orc is out of combat's list (dead): read it by its Combat (its body as it slumps) */
+		if (cb_orc_get(g_stl.stk_c, &oc) && oc.hobj == g_stl.stk_hobj) {
+			if (g_stl.stk_node >= 0 && stl_body(&oc, nd))
+				memcpy(at, nd[g_stl.stk_node], sizeof at);
+			else
+				memcpy(at, oc.pos, sizeof at);
+			for (int j = 0; j < 3; j++)
+				g_stl.stk_Ew[j] = at[j] + g_stl.stk_off[j];
+		}
+		g_stl.stk_wound_max = fmaxf(g_stl.stk_wound_max, dist3(g_stl.stk_Ew, g_stl.stk_E0));
+	}
+	for (int k = 0; k < STL_ORCS; k++) {
+		struct stl_ep *e = &g_stl.ep[k];
+		if (!e->c)
+			continue;
+		if (e->alert_t > 0 && t >= e->alert_t) {
+			e->alert_t = 0, e->alerted_t = t;
+			stl_alert(pc, e, t);
+		}
+		if (e->stim && t - e->alerted_t > 1.0) { /* its stimulus off after 1 s (a swing's would end with the swing) */
+			if (g_cb.stim.on && g_cb.stim.id == e->stim)
+				cb_stim_end(t, "the touch's alert, 1 s on");
+			e->stim = 0;
+		}
+	}
+}
+
 static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier, const somvr_blade *b,
 		      const sc_speed *sp, int hand, const float *root, double t)
 {
@@ -804,16 +1142,81 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 		return 0;
 	if (g_vb.hand.phase == SOMVR_VBH_GRAB && g_vb.held_c == o->c && g_stl.killed_c == o->c)
 		return 1;
+	if (g_stl.stk.on && o->c == g_stl.stk_c)
+		return 2; /* build 21: the blade in its body - no other hit on it (2: taken, no re-hit cooldown) */
 	g_stl.contacts++;
 	somvr_stl_who w;
 	struct stl_aw a;
 	int grabbed = stl_who(o, pc, root, &w, &a) == 2;
 	somvr_stl_hit h = { somvr_stl_off_deg(ct->point, o->pos, stl_orc_yaw(o)), ct->point[1] - o->pos[1], tier,
-			    sp->axis_mps, sp->cos_axis };
+			    sp->axis_mps, sp->cos_axis, NAN, 0, g_stl.tier_cut >= 0 ? g_stl.tier_cut : tier, grabbed };
+	/* build 21 (SOMVR_STEALTH_KILL_THRUST): the blade against its body (its skeleton), not combat's hit capsule */
+	float E[3] = { ct->point[0], ct->point[1], ct->point[2] }, nd[4][3];
+	int link = -1, skel = 0;
+	struct stl_ep *ep = NULL;
+	if (g_stl.cfg.thrust) {
+		skel = stl_body(o, nd);
+		h.depth_cm = somvr_stl_body_depth(b->base, b->tip, (const float(*)[3])nd, g_stl_bn_r, 4, E, &link);
+		if (h.depth_cm >= 0) {
+			h.contact_off_deg = somvr_stl_off_deg(E, o->pos, stl_orc_yaw(o)), h.contact_up_cm = E[1] - o->pos[1];
+			h.neck = link == 2 || dist3(E, nd[2]) < STL_NECK_CM;
+			ep = stl_ep_of(o->c, 1);
+			if (!ep->t0 || t - ep->last_t > STL_EP_GAP_S)
+				ep->t0 = t, ep->d0 = h.depth_cm, memcpy(ep->T0, b->tip, sizeof ep->T0);
+			ep->hobj = o->hobj, ep->last_t = t;
+			/* point-first by the point's own way since it went in too (a thrust's first frames can be sideways: the
+			 * sword's weight, the arc - runs 20261028-155330/164235), and the speed it went in at since */
+			float dp[3] = { b->tip[0] - ep->T0[0], b->tip[1] - ep->T0[1], b->tip[2] - ep->T0[2] },
+			      ax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+			float ld = sqrtf(dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2]), la = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+			if (ld >= 5.0f && la > 1.0f)
+				h.cos_axis = fmaxf(h.cos_axis, (dp[0] * ax[0] + dp[1] * ax[1] + dp[2] * ax[2]) / (ld * la));
+			if (t > ep->t0 + 1e-3)
+				h.axis_mps = fmaxf(h.axis_mps, (h.depth_cm - ep->d0) / (float)(t - ep->t0) * 0.01f);
+		}
+	}
 	if (grabbed)
 		h.contact_off_deg = 180.0f; /* held from behind: wherever the blade goes in */
 	int v = somvr_stl_judge(&g_stl.cfg, &w, &h);
 	g_stl.verdicts[v]++;
+	/* build 21: behind an unaware orc, a blade in its body that is no kill does no damage (no ordinary hit: a thrust's
+	 * first frames never wake it - the 20b regression); after the grace it is alerted unless the kill came. Not its
+	 * body (the hit capsule only): nothing */
+	int quiet = g_stl.cfg.thrust && g_stl.mode == STL_ON &&
+		    (v == SOMVR_STL_TOUCH || v == SOMVR_STL_SIDE || v == SOMVR_STL_LOW || v == SOMVR_STL_AIR);
+	if (quiet && v == SOMVR_STL_AIR) {
+		g_stl.airs++;
+		if (t - g_stl.air_t > 0.3 && stl_line()) { /* how far off its body the blade passed (combat's capsule is wider) */
+			float gap = 1e9f, sa, sb;
+			for (int k2 = 0; k2 < 3; k2++)
+				gap = fminf(gap, sc_seg_dist(b->base, b->tip, nd[k2], nd[k2 + 1], &sa, &sb) - g_stl_bn_r[k2]);
+			g_stl.air_t = t;
+			logf_("STEALTH t=%.3f air (%s) orc %#lx: in combat's hit capsule, not its body - nothing (the blade %.1f cm off "
+			      "its body%s; along %.2f m/s cos %.2f)", t, hand == SOMVR_HAND_L ? "the dagger" : "the sword",
+			      (unsigned long)o->c, (double)gap, skel ? "" : ", an estimated body", (double)h.axis_mps, (double)h.cos_axis);
+		}
+		return 2;
+	}
+	if (quiet) {
+		g_stl.touches++;
+		int arm = ep && !grabbed && !ep->alert_t && !(ep->alerted_t > 0 && t - ep->alerted_t < STL_ALERTED_S);
+		if (arm) {
+			ep->alert_t = ep->t0 + g_stl.cfg.grace_s;
+			in_haptic_event(hand, 0.3f, 0.04f, SOMVR_HAP_COMBAT); /* the touch felt (combat's glancing tick) */
+		}
+		if ((arm || t - g_stl.last_judge_t > 0.3) && stl_line()) {
+			g_stl.last_judge_t = t;
+			logf_("STEALTH t=%.3f touch (%s) orc %#lx: %s - no damage%s (the point %.1f cm in at %s%s, %+.0f deg off its facing, "
+			      "%.0f cm up; along %.2f m/s cos %.2f, the stroke's tier %s; Talion %+.0f deg off its facing at %.0f cm, %s)", t,
+			      hand == SOMVR_HAND_L ? "the dagger" : "the sword", (unsigned long)o->c, somvr_stl_why(v),
+			      grabbed ? "; held: no alert" : arm ? ", the alert at +0.3 s unless the kill comes" : ep && ep->alert_t
+			      ? ", the alert pending" : ", alerted already", (double)h.depth_cm, link == 0 ? "its spine" : link == 1
+			      ? "its chest" : link == 2 ? "its neck" : "?", skel ? "" : " (an estimated body)", h.contact_off_deg,
+			      h.contact_up_cm, (double)h.axis_mps, (double)h.cos_axis, sc_tier_name(h.tier_cut), w.player_off_deg,
+			      w.dist_cm, w.crouched ? "crouched" : "standing");
+		}
+		return 2; /* no re-hit cooldown: the thrust's next frames are judged */
+	}
 	if (v != SOMVR_STL_KILL || g_stl.mode == STL_LOG) {
 		/* the ordinary hit; a line when it was close (unaware, or behind) - from the front the normal fight */
 		if ((w.aware == 0 || fabsf(w.player_off_deg) >= g_stl.cfg.behind_deg || v == SOMVR_STL_KILL) &&
@@ -840,7 +1243,10 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	int dead0 = cb_dead(o->c);
 	float hp0 = cb_health(o->c);
 	rx_rec_name(rec, rn, sizeof rn);
-	stl_deal(pc, o, ct, b, root, rec, death, sizeof death);
+	sc_contact cE = *ct;
+	if (g_stl.cfg.thrust && h.depth_cm >= 0)
+		memcpy(cE.point, E, sizeof cE.point); /* build 21: the hit at the wound (on its body), not combat's capsule */
+	stl_deal(pc, o, &cE, b, root, rec, death, sizeof death);
 	int dead1 = cb_dead(o->c);
 	float hp1 = cb_health(o->c);
 	if (dead1 && !dead0)
@@ -848,7 +1254,47 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	else
 		g_stl.not_killed++;
 	CB_COUNT(calls);
-	in_haptic_event(hand, 0.9f, 0.25f, SOMVR_HAP_COMBAT);
+	int by = somvr_stl_kill_by(&g_stl.cfg, &h);
+	g_stl.by[by]++;
+	if (ep)
+		ep->alert_t = 0;
+	float ax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+	float la = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+	for (int j = 0; j < 3; j++)
+		ax[j] = la > 1e-3f ? ax[j] / la : 0;
+	/* build 21 (SOMVR_STEALTH_KILL_STICK): a thrust or a stab stays in the wound (the sword in the right hand, the
+	 * drawn one); a heavy thunk as it goes in */
+	int stick = g_stl.stick_on && g_stl.cfg.thrust && hand == SOMVR_HAND_R && sp == &g_cb.sp && g_arm.on && h.depth_cm >= 0 &&
+		    by != SOMVR_STL_BY_NECK && la > 1e-3f;
+	if (stick) {
+		if (g_stl.stk.on || g_stl.stk_ease)
+			g_stl.stk.on = 0, g_stl.stk_ease = 0, g_stl.stk_have = 0;
+		somvr_stl_stick_start(&g_stl.stk, E, ax, g_cb.bcfg.len_cm);
+		int nk = link >= 0 && skel ? (dist3(E, nd[link]) <= dist3(E, nd[link + 1]) ? link : link + 1) : -1;
+		const float *at = nk >= 0 ? nd[nk] : o->pos;
+		for (int j = 0; j < 3; j++)
+			g_stl.stk_off[j] = E[j] - at[j];
+		g_stl.stk_node = nk, g_stl.stk_c = o->c, g_stl.stk_hobj = o->hobj, g_stl.stk_t0 = t, g_stl.stk_line_t = t;
+		memcpy(g_stl.stk_Ew, E, sizeof g_stl.stk_Ew), memcpy(g_stl.stk_E0, E, sizeof g_stl.stk_E0);
+		g_stl.stk_hand_off_max = 0, g_stl.stk_wound_max = 0, g_stl.stk_prev_t = 0, g_stl.stk_have = 0, g_stl.stk_ok_t = t;
+		g_stl.sticks++;
+		in_haptic_event(SOMVR_HAND_R, 1.0f, 0.1f, SOMVR_HAP_COMBAT);
+		in_haptic_after(SOMVR_HAND_R, 0.55f, 0.12f, 0.1f, SOMVR_HAP_COMBAT);
+		if (g_bd.two.w > 0)
+			in_haptic_event(SOMVR_HAND_L, 0.6f, 0.1f, SOMVR_HAP_COMBAT);
+	} else {
+		in_haptic_event(hand, 0.9f, 0.25f, SOMVR_HAP_COMBAT);
+	}
+	if (g_stl.cfg.thrust && h.depth_cm >= 0) { /* build 21 (SOMVR_STEALTH_KILL_BLOOD): the game's blood at the wound */
+		float P[3] = { E[0] - 2.0f * ax[0], E[1] - 2.0f * ax[1], E[2] - 2.0f * ax[2] };
+		stl_blood(o->hobj, P, "the wound as the blade went in", t);
+	}
+	if (g_stl.cfg.thrust && stl_line())
+		logf_("STEALTH t=%.3f kill by %s: the point %.1f cm in at %s%s (went in at %.1f,%.1f,%.1f), along %.2f m/s cos %.2f, "
+		      "the stroke's tier %s; %s", t, somvr_stl_by_name(by), (double)h.depth_cm, link == 0 ? "its spine" : link == 1 ?
+		      "its chest" : link == 2 ? "its neck" : "?", skel ? "" : " (an estimated body)", (double)E[0], (double)E[1],
+		      (double)E[2], (double)h.axis_mps, (double)h.cos_axis, sc_tier_name(h.tier_cut), stick ?
+		      "the blade stays in the wound (SOMVR_STEALTH_KILL_STICK), following its nearest node" : "no stick");
 	logf_("STEALTH kill t=%.3f by %s, orc %#lx: Combat_DealHit(pos=%.1f,%.1f,%.1f, rec='%s' %#lx, forceKill=1) dead=%d->%d health "
 	      "%.1f->%.1f; %s (the game's aware %d +0xeb8 %.3f, fights %d), Talion %+.0f deg off its facing at %.0f cm, %s, %.0f "
 	      "cm/s; the contact %+.0f deg, %.0f cm up, tier %s, along %.2f m/s cos %.2f; the death: %s", t,
@@ -979,7 +1425,7 @@ static void stl_sweep(int hand, uintptr_t pc, const struct cb_orc *o, int n, con
 		else
 			g_stl.sword_contacts++;
 		const sc_cfg *cf = hand == SOMVR_HAND_L ? &g_stl.dsc : &g_cb.cfg;
-		if (stl_strike(pc, &o[i], &ct, sc_tier(cf, &g_stl.bsp[hand]), &b, &g_stl.bsp[hand], hand, root, t))
+		if (stl_strike(pc, &o[i], &ct, sc_tier(cf, &g_stl.bsp[hand]), &b, &g_stl.bsp[hand], hand, root, t) == 1)
 			sc_cool_mark(&g_cb.cool, o[i].c, t);
 	}
 }
@@ -1030,7 +1476,20 @@ static const char *stl_word(const char *w)
 		      (double)g_stl.grab_cm, g_stl.so_decel / 100.0);
 		return w[0] == 'g' ? "stealth grab CM (a test: 0 = the head only)" : "stealth decel M/S2 (a test: 0 = build 19's ease)";
 	}
-	return "stealth status|on|off|log|grab CM|decel M/S2";
+	if (!strncmp(w, "thrust ", 7) || !strncmp(w, "stick ", 6) || !strncmp(w, "keep ", 5)) { /* build 21, tests */
+		if (!getenv("SOMVR_HANDS_TEST") || strcmp(getenv("SOMVR_HANDS_TEST"), "1"))
+			return "stealth thrust|stick|keep (SOMVR_HANDS_TEST is off: ignored)";
+		if (w[0] == 'k')
+			g_stl.keep_s = strtof(w + 5, NULL) >= 0 ? strtof(w + 5, NULL) : g_stl.keep_s;
+		else if (w[1] == 'h')
+			g_stl.cfg.thrust = !strcmp(w + 7, "on");
+		else
+			g_stl.stick_on = !strcmp(w + 6, "on");
+		logf_("STEALTH the word '%s': thrust %d, stick %d, the stand-off's keep %.1f s (a test)", w, g_stl.cfg.thrust,
+		      g_stl.stick_on, (double)g_stl.keep_s);
+		return "stealth thrust on|off, stick on|off, keep S (a test: build 20c's rule against build 21's)";
+	}
+	return "stealth status|on|off|log|grab CM|decel M/S2|thrust on|off|stick on|off|keep S";
 }
 
 /* build 19 (re-xr-pipeline.md 73): the VR menu's Stealth kill row: shown with SOMVR_STEALTH_KILL on (with combat); off =
@@ -1078,6 +1537,32 @@ static void stl_start(int *bad)
 	g_stl.silent = env_word("SOMVR_STEALTH_KILL_SILENT", (const char *const[]){ "0", "1" }, 2, 1);
 	g_stl.marks = (int)env_float("SOMVR_STEALTH_KILL_MARKS", 0, 0, 20, bad);
 	g_stl.dagger = env_word("SOMVR_STEALTH_KILL_DAGGER", (const char *const[]){ "0", "1" }, 2, 1);
+	/* build 21 (docs 84) */
+	static const char *const onoff[] = { "off", "on" };
+	g_stl.tier_cut = -1;
+	g_stl.cfg.thrust = env_word("SOMVR_STEALTH_KILL_THRUST", onoff, 2, 0);
+	g_stl.cfg.thrust_mps = env_float("SOMVR_STEALTH_KILL_THRUST_MPS", g_stl.cfg.thrust_mps, 0.3f, 10, bad);
+	g_stl.cfg.thrust_cos = cosf(env_float("SOMVR_STEALTH_KILL_THRUST_DEG", 30, 5, 80, bad) * 0.01745329f);
+	g_stl.cfg.depth_cm = env_float("SOMVR_STEALTH_KILL_DEPTH_CM", g_stl.cfg.depth_cm, 1, 60, bad);
+	g_stl.cfg.grab_depth_cm = env_float("SOMVR_STEALTH_KILL_GRAB_DEPTH_CM", g_stl.cfg.grab_depth_cm, 1, 60, bad);
+	g_stl.cfg.grace_s = env_float("SOMVR_STEALTH_KILL_GRACE_MS", 300, 0, 2000, bad) * 1e-3f;
+	g_stl.stick_on = env_word("SOMVR_STEALTH_KILL_STICK", onoff, 2, 0);
+	g_stl.kcfg.tear_cm = env_float("SOMVR_STEALTH_KILL_STICK_TEAR_CM", 25, 5, 80, bad);
+	g_stl.kcfg.guard_cm = 12.0f;
+	g_stl.blood = env_word("SOMVR_STEALTH_KILL_BLOOD", onoff, 2, 0);
+	g_stl.keep_s = env_float("SOMVR_STEALTH_KILL_STANDOFF_KEEP_S", 0, 0, 30, bad);
+	{
+		const char *fx = getenv("SOMVR_COMBAT_HITFX_STAB");
+		snprintf(g_stl.fx, sizeof g_stl.fx, "%s", fx && fx[0] && strcmp(fx, "off") ? fx : HF_FX_STAB);
+		for (char *q = g_stl.fx; *q; q++)
+			if (*q == '/')
+				*q = '\\';
+		char fw[200] = "";
+		if (g_stl.blood && !g_hf.ok_fx)
+			g_hf.ok_fx = df_fx_check(fw, sizeof fw);
+		if (g_stl.blood && !g_hf.ok_fx)
+			logf_("CONFIG stealth blood: the FX sites did not match (%s): no blood of ours", fw);
+	}
 	sc_blade_cfg_default(&g_stl.dcfg);
 	g_stl.dcfg.back_cm = 4, g_stl.dcfg.len_cm = 30; /* Acharn (SOMVR_FINISH's dagger blade) */
 	sc_cfg_default(&g_stl.dsc);
@@ -1108,6 +1593,16 @@ static void stl_start(int *bad)
 	logf_("CONFIG stealth grab=%.0f cm (SOMVR_STEALTH_KILL_GRAB_CM, build 19b): %s", (double)g_stl.grab_cm, g_stl.grab_cm > 0
 	      ? "SOMVR_VERBS' left hand takes a stealth kill's target by its back too (the column from its root up to its head: "
 		"the palm within this of it, or the arm reached out at it)" : "the left hand's grab on its head only (build 19)");
+	logf_("CONFIG stealth thrust=%s (SOMVR_STEALTH_KILL_THRUST, build 21: %s; the point %.0f deg of the blade's axis at "
+	      "%.1f m/s, %.0f cm into its body - its skeleton's spine, chest and neck - from behind, its back, neck or side; a "
+	      "full-speed cut to its neck; held by the left hand a point-first stab %.0f cm in; anything else in its body no "
+	      "damage and the alert after %.0f ms) stick=%s (the blade stays in the wound: tears free %.0f cm off the hand) "
+	      "blood=%s ('%s' at the wound in and out) stand-off keep=%.1f s (SOMVR_STEALTH_KILL_STANDOFF_KEEP_S: an approach "
+	      "begun crouched keeps the stand-off this long standing)", onoff[g_stl.cfg.thrust], g_stl.cfg.thrust ?
+	      "the kill is the player's own thrust" : "build 20c's rule: a hit or a stab on the contact",
+	      (double)(acosf(g_stl.cfg.thrust_cos) * 57.29578f), (double)g_stl.cfg.thrust_mps, (double)g_stl.cfg.depth_cm,
+	      (double)g_stl.cfg.grab_depth_cm, (double)g_stl.cfg.grace_s * 1e3, onoff[g_stl.stick_on],
+	      (double)g_stl.kcfg.tear_cm, onoff[g_stl.blood], g_stl.fx, (double)g_stl.keep_s);
 	g_stl.start_mode = g_stl.mode; /* build 19 */
 }
 
@@ -1133,4 +1628,14 @@ static void stl_end_log(void)
 	      (unsigned long long)g_stl.cues, (unsigned long long)g_stl.changes, (unsigned long long)g_stl.so_stops,
 	      (unsigned long long)g_stl.so_ticks, g_stl.so_cut_cm, (unsigned long long)g_stl.so_rests,
 	      (unsigned long long)g_stl.silent_stims, (unsigned long long)g_stl.silent_rolls, (unsigned long long)g_stl.back_offers);
+	logf_("STEALTH END build 21: kills by a thrust %llu, a neck cut %llu, a stab into the held orc %llu, build 20c's rule %llu; "
+	      "touches (no damage) %llu, alerts %llu, the capsule only %llu; stuck %llu (out %llu, torn free %llu, fell off %llu, "
+	      "cancelled %llu; %llu frames, %llu rumbles); blood %llu made, %llu not; the stand-off kept standing %llu ticks",
+	      (unsigned long long)g_stl.by[SOMVR_STL_BY_THRUST], (unsigned long long)g_stl.by[SOMVR_STL_BY_NECK],
+	      (unsigned long long)g_stl.by[SOMVR_STL_BY_GRAB], (unsigned long long)g_stl.by[SOMVR_STL_BY_HIT],
+	      (unsigned long long)g_stl.touches, (unsigned long long)g_stl.alerts, (unsigned long long)g_stl.airs,
+	      (unsigned long long)g_stl.sticks, (unsigned long long)g_stl.stk_outs, (unsigned long long)g_stl.stk_tears,
+	      (unsigned long long)g_stl.stk_falls, (unsigned long long)g_stl.stk_cancels, (unsigned long long)g_stl.stk_frames,
+	      (unsigned long long)g_stl.stk_rumbles, (unsigned long long)g_stl.blood_made, (unsigned long long)g_stl.blood_fail,
+	      (unsigned long long)g_stl.keep_ticks);
 }

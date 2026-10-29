@@ -134,7 +134,11 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
 #define SOMVR_VMA_FIGHT_ROWS                                                                                           \
     (SOMVR_VMA_SWORD | SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND | SOMVR_VMA_BITE | SOMVR_VMA_ARROWS | SOMVR_VMA_DODGE |     \
      SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON | SOMVR_VMA_STRING)
-/* 38..63: free (the next helpers'; take them in order, from 38) */
+/* 38..62: free (the next helpers'; take them in order, from 38) */
+/* build 21 (re-xr-pipeline.md 82): the layer's own bit (never the preload's; taken from the top): SOMVR_XR_VM_TEST=on -
+ * the tab strip is [Settings] [Practice] [Controls] [Test] across the panel (the four fill it: the X box leaves the
+ * panel's pages - the card keeps it; the layer clears the bit for the card) and the Test page (SOMVR_VMPG_TEST) */
+#define SOMVR_VMA_TESTPAGE SOMVR_VMA_BIT(63)
 /* the practice page's requests (somvr_vrmenu_shared.practice; = somvr_practice.h's SOMVR_PRA_*) */
 enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_SPAWN = 3, SOMVR_VMPR_REMOVE = 4,
        /* build 17 (5 = the practice's own status word): the bow's arrows and Focus full, Talion's health full */
@@ -322,10 +326,13 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
        SOMVR_VMI_PR_GROUP,
        /* build 19 (re-xr-pipeline.md 73): the Settings page's last row "Fight settings >" (the Fight page) and the Fight
         * page's last row "< Settings" (back); both page buttons, shown while a Fight row is (SOMVR_VMA_FIGHT_ROWS) */
-       SOMVR_VMI_PG_FIGHT, SOMVR_VMI_PG_BACK, SOMVR_VMI_ALL };
+       SOMVR_VMI_PG_FIGHT, SOMVR_VMI_PG_BACK,
+       /* build 21 (re-xr-pipeline.md 82; SOMVR_VMA_TESTPAGE): the Test tab, the Test page's Prev / Next buttons */
+       SOMVR_VMI_TAB_TEST, SOMVR_VMI_TEST_PREV, SOMVR_VMI_TEST_NEXT, SOMVR_VMI_ALL };
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
-enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2, SOMVR_VMPG_FIGHT = 3 };
+enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2, SOMVR_VMPG_FIGHT = 3,
+       SOMVR_VMPG_TEST = 4 /* build 21: what to test in this build (its what-to-test.txt; text only, paged) */ };
 /* the page a tab or a page button opens (SOMVR_VMPG_*), -1 = not one */
 int somvr_vm_tab_page(int item);
 /* build 19: the page a value row is on: SOMVR_VMPG_FIGHT for the sword's, the bow's and the fight's rows (Sword angle,
@@ -371,7 +378,8 @@ void somvr_vm_value(const somvr_settings *s, int item, char *buf, size_t cap);
 enum { SOMVR_VMR_NONE = 0, SOMVR_VMR_CHANGED = 1, SOMVR_VMR_RECENTER = 2, SOMVR_VMR_CLOSE = 3, SOMVR_VMR_PAGE = 4,
        SOMVR_VMR_PRACTICE = 5,
        SOMVR_VMR_REPORT = 6,   /* the Report button: a bug mark (the layer counts somvr_session.report_req) */
-       SOMVR_VMR_QUIT = 7 };   /* the Quit game button: the layer arms it, a second press within 5 s confirms */
+       SOMVR_VMR_QUIT = 7,     /* the Quit game button: the layer arms it, a second press within 5 s confirms */
+       SOMVR_VMR_SCROLL = 8 }; /* build 21: the Test page's Prev / Next: the layer turns its page (somvr_vm_test_turn) */
 /* A click on (item, part): LESS / MORE step the value down / up (held at the ends; a toggle flips), ROW the next value
  * (wrapping), the buttons act (the tab: PAGE, the other page; a practice button: PRACTICE, its request is
  * somvr_vm_practice_action(item)). A disabled item does nothing. Returns SOMVR_VMR_*. */
@@ -397,6 +405,39 @@ somvr_vm_hit somvr_vm_hit_test_av(uint64_t avail, int page, float u, float v);
 somvr_vm_hit somvr_vm_hit_test(float u, float v);                /* = _av(0, SOMVR_VMPG_SETTINGS, u, v) */
 somvr_vm_hit somvr_vm_hit_test_page(int page, float u, float v); /* = _av(0, page, u, v) */
 
+/* ---- build 21 (re-xr-pipeline.md 82): the Test page's text ------------------------------------------------------
+ * The build's mod/somvr/assets/what-to-test.txt (the layer reads it once a session, next to its library: ../../assets
+ * from vklayer/build; the freeze archives mod/, so each frozen build carries its own). Lines starting with # are
+ * comments; the first other non-blank line is the title (the page's title line, on every page); "- " (or "* ") starts
+ * an item (a bullet); a line under an item without a blank line between continues it; other lines are plain text; a
+ * blank line ends an item. Wrapped by words to the panel (SOMVR_VM_TEST_COLS, an item's text SOMVR_VM_TEST_COLS - 2
+ * after its bullet), paged to the room above the Prev / Next row (an item kept whole on a page when it fits one).
+ * No file (or nothing in it): the title "What to test" and a line saying so - never a failure. */
+#define SOMVR_VM_TEST_BYTES 8192  /* the most of the file read */
+#define SOMVR_VM_TEST_LINES 160   /* wrapped lines kept (more: the last says "...") */
+#define SOMVR_VM_TEST_COLS 29     /* characters a line (16 px each from x 20) */
+#define SOMVR_VM_TEST_Y0 70       /* the title's first line */
+#define SOMVR_VM_TEST_DY 30       /* a line's height (the font's ink 28 at scale 2: lines never touch) */
+#define SOMVR_VM_TEST_GAP 8       /* more before an item */
+#define SOMVR_VM_TEST_NAV_Y 684   /* the Prev / Next row (56 high, its page number between them; the Recentre row's) */
+/* a line's kind: the title's, an item's first (its bullet) and next lines (indented under its text), a plain
+ * paragraph's first and next, a dim note (no file; "more in the file") */
+enum { SOMVR_VMT_TITLE = 1, SOMVR_VMT_ITEM = 2, SOMVR_VMT_MORE = 3, SOMVR_VMT_TEXT = 4, SOMVR_VMT_TEXT2 = 5,
+       SOMVR_VMT_NOTE = 6 };
+typedef struct {
+    int have;                 /* 1: from a file with something in it */
+    int n, pages, n_title;    /* lines (the title's first), pages (1..), the title's lines (1..2, on every page) */
+    int truncated;            /* more than SOMVR_VM_TEST_LINES lines or SOMVR_VM_TEST_BYTES: cut */
+    char line[SOMVR_VM_TEST_LINES][SOMVR_VM_TEST_COLS + 1];
+    uint8_t kind[SOMVR_VM_TEST_LINES]; /* SOMVR_VMT_* */
+    uint8_t page[SOMVR_VM_TEST_LINES]; /* the page a line is on (the title's: 0, drawn on every page) */
+    int16_t y[SOMVR_VM_TEST_LINES];    /* its top (texels) */
+} somvr_vm_text;
+/* text (len bytes, need not end in 0; NULL = no file) -> t; returns t->pages */
+int somvr_vm_text_parse(somvr_vm_text *t, const char *text, size_t len);
+/* the page after Prev (dir -1) or Next (+1) from page (clamped to 0 .. pages - 1) */
+int somvr_vm_test_turn(const somvr_vm_text *t, int page, int dir);
+
 typedef struct {
     somvr_settings set;
     uint64_t avail;      /* v7: 64 bits */
@@ -406,6 +447,8 @@ typedef struct {
     int card;            /* build 6: the Controls page shown as the arrival card in front of the player (no tabs, the
                           * title and a close hint instead) */
     int lock;            /* build 20: hover is the pointer's lock (SOMVR_XR_PTR_SNAP): the part outlined as well */
+    const somvr_vm_text *test; /* build 21: the Test page's text (NULL: the page says there is none) */
+    int test_page;             /* ... the page shown (0 ..) */
 } somvr_vm_view;
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;

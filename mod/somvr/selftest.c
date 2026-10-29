@@ -15154,8 +15154,38 @@ static void vg_tests(void)
 	       "vbglow: %d calls of the game's, r %#llx %#llx %#llx %#llx %#llx %#llx, hidden %llu, made %llu, bad %d", g_vgt.n,
 	       (unsigned long long)r0, (unsigned long long)r1, (unsigned long long)r2, (unsigned long long)r3,
 	       (unsigned long long)r4, (unsigned long long)r5, (unsigned long long)g_vg.hidden, (unsigned long long)g_vg.made, bad);
+	/* build 21: SOMVR_FX_FACE by its words in our eyes, whatever it is made on; another name made; "vbglow all N" */
+	static _Alignas(16) unsigned char cam[0x1c8];
+	strcpy((char *)cam, "fx\\ui\\wraith_ranged\\records\\pres_wraith_CAMERA.fxp");
+	memcpy(cam + VG_CS_NODE, &node, sizeof node);
+	char w4[200], w5[200], w6[200]; /* (one static message buffer) */
+	snprintf(w4, sizeof w4, "%s", vg_word("face fx pres_wraith_camera,smoke"));
+	snprintf(w5, sizeof w5, "%s", vg_word("face hide"));
+	snprintf(w6, sizeof w6, "%s", vg_word("all 2"));
+	uintptr_t me = 0x4321, orc = 0x9999, none = 0;
+	vg_frame(1);
+	atomic_store(&g_vg.me, me);
+	memcpy(cam + VG_CS_PARENT, &me, sizeof me);
+	uint64_t r6 = c_vgthunk0(0x111, (uintptr_t)&handle, (uintptr_t)cam, 1, 0, 0); /* on Talion: not made */
+	memcpy(cam + VG_CS_PARENT, &orc, sizeof orc);
+	uint64_t r7 = c_vgthunk1(0x222, (uintptr_t)flare, (uintptr_t)&handle); /* another name: made */
+	uint64_t r7b = c_vgthunk1(0x222, (uintptr_t)cam, (uintptr_t)&handle); /* on an object (the camera's): not made */
+	memcpy(cam + VG_CS_PARENT, &none, sizeof none);
+	uint64_t r8 = c_vgthunk1(0x222, (uintptr_t)cam, (uintptr_t)&handle); /* on nothing: not made */
+	vg_frame(0);
+	memcpy(cam + VG_CS_PARENT, &me, sizeof me);
+	uint64_t r9 = c_vgthunk0(0x111, (uintptr_t)&handle, (uintptr_t)cam, 1, 0, 0); /* a flat frame: made */
+	EXPECT(r6 == 0 && r7 == 0x55 && r7b == 0 && r8 == 0 && r9 == 0x55 && g_vg.face_hidden == 3 && !strncmp(w4, "vbglow face: game, 2 words", 26) &&
+		       !strncmp(w5, "vbglow face: hide, 2 words", 26) && !strncmp(w6, "vbglow all: the next 2 FX logged", 32) &&
+		       log_has("pres_wraith_CAMERA.fxp' on Talion 0x4321 node 90 off 0.0,0.0,0.0 flags 0 start 1 (caller") &&
+		       log_has(" (all): not made (our eyes: the face)") && log_has("pres_wraith_CAMERA.fxp' on an object 0x9999") &&
+		       log_has("pres_wraith_CAMERA.fxp' on nothing 0 node 90") && atomic_load(&g_vg.all) == 0,
+	       "vbglow face: r %#llx %#llx %#llx %#llx, hidden by the face %llu; '%s' '%s' '%s'", (unsigned long long)r6,
+	       (unsigned long long)r7, (unsigned long long)r8, (unsigned long long)r9, (unsigned long long)g_vg.face_hidden, w4,
+	       w5, w6);
 	vg_end_log();
-	EXPECT(log_has("VBGLOW END fx asked 6: made 4, not made in our eyes 2 (the last 'fx\\common\\blood\\blood_level01_weapontrail.fxp')"),
+	EXPECT(log_has("VBGLOW END fx asked 11: made 6, not made in our eyes 5 (the last 'fx\\ui\\wraith_ranged\\records\\pres_wraith_CAMERA.fxp'; "
+		       "3 by SOMVR_FX_FACE)") && log_has("now hide, the face hide"),
 	       "vbglow END");
 	unsetenv("SOMVR_VERBS_GLOW");
 	unsetenv("SOMVR_VERBS_GLOW_FX");

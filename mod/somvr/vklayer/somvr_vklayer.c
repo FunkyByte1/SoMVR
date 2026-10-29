@@ -230,6 +230,8 @@ static struct {
     int vm, vm_bad;      /* SOMVR_XR_VRMENU: 1 on (default), 0 off; not understood (logged with the session) */
     int vm_bow;          /* build 20, SOMVR_XR_VRMENU_BOW=keep|close (default keep = build 19): an open panel closes when
                             the bow comes out (the game's gate SOMVR_VMG_BOW rises; the panel is on the bow hand's wrist) */
+    int vm_test, vm_test_bad; /* build 21, SOMVR_XR_VM_TEST=on|off (default on): the Test tab and page (the build's
+                               * what-to-test.txt; re-xr-pipeline.md 82); off = build 20's three tabs and the X box */
     int th, th_bad;      /* SOMVR_XR_THREAT: 1 on (default), 0 off; not understood (logged with the session) */
     int floor_frames;    /* SOMVR_XR_FLOOR: the floor line this many frames into a session (0 = none) */
     const char *loader;
@@ -331,6 +333,9 @@ static void once_init(void) {
     cfg.vm_bad = p && *p && strcmp(p, "on") && strcmp(p, "1") && strcmp(p, "off") && strcmp(p, "0");
     p = getenv("SOMVR_XR_VRMENU_BOW");
     cfg.vm_bow = p && !strcmp(p, "close");
+    p = getenv("SOMVR_XR_VM_TEST"); /* build 21: the Test page */
+    cfg.vm_test = !p || !*p || (strcmp(p, "off") && strcmp(p, "0"));
+    cfg.vm_test_bad = p && *p && strcmp(p, "on") && strcmp(p, "1") && strcmp(p, "off") && strcmp(p, "0");
     p = getenv("SOMVR_XR_THREAT"); /* the threat cues (the preload's SOMVR_THREAT) */
     cfg.th = !p || !*p || (strcmp(p, "off") && strcmp(p, "0"));
     cfg.th_bad = p && *p && strcmp(p, "on") && strcmp(p, "1") && strcmp(p, "off") && strcmp(p, "0");
@@ -414,6 +419,7 @@ typedef struct {
     int pending; /* fence submitted, not yet waited */
 } slot_st;
 static void cv_slot_done(const slot_st *sl, int idle); /* SOMVR_XR_COVER (./somvr_void_layer.c): its readings */
+static void pp_slot_done(const slot_st *sl, int idle); /* build 21: SOMVR_XR_POPUPS (./somvr_menus_layer.c): its readings */
 
 typedef struct sc_st {
     struct sc_st *next;
@@ -688,6 +694,7 @@ enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING,
        XL_MBD, XL_MBK, /* SOMVR_XR_MENU_BACK: the world's dim and the dark panel behind a game menu's board */
        XL_HUD,
        XL_BAND, /* build 8: the prompt band (a part of the HUD: off with it; the first to go beyond 16 layers) */
+       XL_BAND1, XL_BAND2, XL_BAND3, /* build 21: SOMVR_XR_POPUPS=gaze - the band's tiles each a quad (XL_BAND the first) */
        XL_MMAP, /* build 6: the wrist minimap (a part of the HUD: off with it) */
        XL_PTR0, XL_PTR1, XL_VM0, XL_VM1, XL_VM2,
        XL_HANDS, /* build 10: our own VR hands (a projection layer over the wrist panel and the watch) */
@@ -695,7 +702,7 @@ enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING,
 enum { XG_FADE = 1u << 0, XG_CF = 1u << 1, XG_PTR = 1u << 2, XG_HUD = 1u << 3, XG_ENV = 1u << 4, XG_VM = 1u << 5,
        XG_TH = 1u << 6, XG_VH = 1u << 7, XG_MB = 1u << 8, XG_OB = 1u << 9 };
 _Static_assert(XL_ENV_N + 1 + 2 + 3 + 1 <= 16, "a mono frame's worst case: env, quad, pointer, VR menu, fade");
-_Static_assert(XL_N - XL_OWN <= 22, "a stereo frame's worst case: every slot from the projection on, less the band, "
+_Static_assert(XL_N - XL_OWN <= 25, "a stereo frame's worst case: every slot from the projection on, less the band's four, "
                                     "the hands, the menu backdrop's two, the objective's marker and its line (xl_cap)");
 #define XL_MAX 16 /* XR_MIN_COMPOSITION_LAYERS_SUPPORTED: a frame with more loses the band (xl_cap) */
 _Static_assert(XL_THG2 - XL_THG0 + 1 == SOMVR_TH_GLOWS && XL_THE1 - XL_THE0 == 1, "the threat slots");
@@ -710,7 +717,7 @@ static uint32_t xl_group(int i) {
     if (i == XL_OBJ || i == XL_OBJL) return XG_OB;
     if ((i >= XL_THG0 && i <= XL_THG2) || i == XL_THE0 || i == XL_THE1) return XG_TH;
     return i == XL_FADE ? XG_FADE : i == XL_RING || i == XL_BLINK ? XG_CF : i == XL_PTR0 || i == XL_PTR1 ? XG_PTR
-                                                                        : i == XL_HUD || i == XL_BAND || i == XL_MMAP ? XG_HUD : 0u;
+                                                                        : i == XL_HUD || (i >= XL_BAND && i <= XL_BAND3) || i == XL_MMAP ? XG_HUD : 0u;
 }
 
 static void xr_global_init(void) {
@@ -933,6 +940,7 @@ static void sc_free_slots(sc_st *s, int keep_sems) {
         slot_st *sl = &s->slot[i];
         int idle = slot_wait(ds, sl) == 0;
         cv_slot_done(sl, idle); /* SOMVR_XR_COVER: its readings (dropped when it is not idle) */
+        pp_slot_done(sl, idle); /* build 21: SOMVR_XR_POPUPS: its readings */
         if (sl->cmd && idle) ds->FreeCommandBuffers(ds->dev, ds->pool, 1, &sl->cmd);
         if (sl->fence && idle) ds->DestroyFence(ds->dev, sl->fence, NULL);
         if (sl->sem) {
@@ -1499,6 +1507,10 @@ static int vd_video_mono(int have_tag, int have_rec); /* SOMVR_XR_THEATRE_VIDEO:
 static void cv_cmds(dev_st *ds, VkCommandBuffer cmd, const slot_st *sl, const hud_st *hd); /* SOMVR_XR_COVER */
 static void cv_submitted(int ok);
 static void cv_poll(dev_st *ds, int mono);
+static void pp_cmds(struct dev_st *ds, VkCommandBuffer cmd, const slot_st *sl, const hud_st *hd); /* build 21: popups */
+static void pp_submitted(int ok);
+static void pp_poll(struct dev_st *ds);
+static void pp_destroy(void);
 static void cv_destroy(void);
 static int cv_hud_hidden(void);
 static int cv_space_want(void);
@@ -1528,6 +1540,7 @@ static void xr_teardown_session(void) {
     in_destroy(quiet); /* somvr_input ready = 0, the 4 action spaces, the action set: before the session */
     if (X.ds) sc_wait_all(X.ds);
     cv_destroy(); /* SOMVR_XR_COVER: the readback buffer (its copies waited) */
+    pp_destroy(); /* build 21: SOMVR_XR_POPUPS: its readback buffer */
     hud_destroy(0); /* the HUD swapchain and VIEW space (ours alone): before the session */
     X.hud_on = X.hud_latched = 0;
     ptr_sc_destroy(); /* the pointer image's swapchain (ours alone): before the session */
@@ -1912,6 +1925,7 @@ static VkCommandBuffer slot_begin(dev_st *ds, sc_st *s, uint32_t idx) {
     }
     if (slot_wait(ds, sl)) return VK_NULL_HANDLE;
     cv_slot_done(sl, 1); /* SOMVR_XR_COVER: the readings its last submit carried */
+    pp_slot_done(sl, 1); /* build 21: SOMVR_XR_POPUPS: ... the popups' */
     VkResult r = ds->ResetFences(ds->dev, 1, &sl->fence);
     if (r == VK_SUCCESS) r = ds->ResetCommandBuffer(sl->cmd, 0);
     VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -2091,6 +2105,7 @@ static int eyes_submit(dev_st *ds, VkQueue q, sc_st *s, uint32_t idx, VkImage ds
                          nc ? (uint32_t)nc : 1u, c);
         hud_old = mn_hud_dump_cmds(ds, cmd, hud_dst); /* SOMVR_XR_DUMP: the HUD image too (before the host barrier) */
         cv_cmds(ds, cmd, &s->slot[idx], hd); /* SOMVR_XR_COVER: the HUD image's grid -> the readback buffer */
+        pp_cmds(ds, cmd, &s->slot[idx], hd); /* build 21: SOMVR_XR_POPUPS: the band tiles' rows -> theirs */
     }
     VkImageLayout xr_old = dump_cmds(ds, cmd, dst); /* the XR image as it is released -> D.buf (SOMVR_XR_DUMP) */
     for (int e = 0; e < 2; e++)
@@ -2110,6 +2125,7 @@ static int eyes_submit(dev_st *ds, VkQueue q, sc_st *s, uint32_t idx, VkImage ds
                            NULL, nb, b);
     int ok = slot_submit(ds, q, s, idx, pi);
     cv_submitted(ok);
+    pp_submitted(ok);
     return ok;
 }
 
@@ -2380,15 +2396,16 @@ static void dump_arm(dev_st *ds, int mono, uint64_t count) {
 }
 
 /* a dump of the next stereo frame (the test file's `dump`, build 10's SOMVR_XR_DUMP_HURT): "ok" or why not */
-static const char *dump_next(void) {
+static const char *dump_next_k(uint64_t k) { /* build 21: K stereo frames ahead (the test file's `dump K`) */
     if (!D.n || !D.base[0]) return "no dump (SOMVR_XR_DUMP and SOMVR_XR_LOG off)";
     int i = 0;
     while (i < D.n && !(D.done >> i & 1)) i++;
     if (i == D.n && D.n < SOMVR_DUMP_MAX) D.n++;
     if (i >= D.n) return "every dump slot is pending";
-    D.at[i] = X.n_eyes + 1, D.done &= ~(1u << i);
+    D.at[i] = X.n_eyes + (k ? k : 1), D.done &= ~(1u << i);
     return "ok";
 }
+static const char *dump_next(void) { return dump_next_k(1); }
 
 /* After the armed submit (X.n_eyes / X.n_mono count it): wait its fence (1 s cap; the slot is idle then, as after
  * slot_wait), write D.map as <base>.stereoN.ppm or <base>.monoN.ppm. */
@@ -4291,6 +4308,9 @@ static struct {
     somvr_ptr_state ptr;
     somvr_vm_hit hover;
     int page;                    /* SOMVR_VMPG_*: the settings or the practice page (its tab; v3) */
+    /* build 21 (SOMVR_XR_VM_TEST): the Test page's text (read at the setup), its page shown */
+    somvr_vm_text test;
+    int test_page;
     /* the panel's texture: its swapchain, the staging buffer (mapped, HOST_COHERENT), the upload's command buffer */
     dev_st *ds;
     XrSwapchain sc;
@@ -4395,6 +4415,39 @@ static void vm_set_line(const somvr_settings *s, char *buf, size_t cap) {
 }
 
 /* xr_session_setup, after somvr_input, the HUD, the pointer and the fade, before comfort (which asks vm_comfort_live) */
+/* build 21 (re-xr-pipeline.md 82): the Test page's text - SOMVR_XR_VM_TEST_FILE, else the build's
+ * mod/somvr/assets/what-to-test.txt beside this library (../../assets from vklayer/build: a frozen build carries its
+ * own). Read once a session; none or unreadable: the page says there are no notes (never a failure) */
+static void vm_test_load(void) {
+    char path[4096] = "";
+    const char *fp = getenv("SOMVR_XR_VM_TEST_FILE");
+    Dl_info di;
+    if (fp && *fp) snprintf(path, sizeof path, "%s", fp);
+    else if (dladdr((void *)vm_test_load, &di) && di.dli_fname) {
+        const char *sl = strrchr(di.dli_fname, '/');
+        snprintf(path, sizeof path, "%.*s/../../assets/what-to-test.txt", sl ? (int)(sl - di.dli_fname) : 1,
+                 sl ? di.dli_fname : ".");
+    }
+    static char buf[SOMVR_VM_TEST_BYTES + 1];
+    size_t n = 0;
+    int got = 0, err = 0;
+    FILE *f = path[0] ? fopen(path, "rb") : NULL;
+    if (f) {
+        n = fread(buf, 1, sizeof buf, f), got = !ferror(f);
+        fclose(f);
+    } else {
+        err = errno;
+    }
+    somvr_vm_text_parse(&VM.test, got ? buf : NULL, n);
+    VM.test_page = 0;
+    if (VM.test.have)
+        lg("xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): '%s' - %d lines, %d page%s from %s (%zu bytes%s)", VM.test.line[0],
+           VM.test.n, VM.test.pages, VM.test.pages == 1 ? "" : "s", path, n, VM.test.truncated ? ", cut to fit" : "");
+    else
+        lg("xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): no notes - %s %s (the page says so)", path[0] ? path : "no path",
+           !got ? (err ? strerror(err) : "unreadable") : "has nothing but comments");
+}
+
 static void vm_setup(void) {
     vm_free();
     VM.obj = NULL, VM.on = 0, VM.nq = 0, VM.lines = 0;
@@ -4432,6 +4485,9 @@ static void vm_setup(void) {
         return;
     }
     VM.on = 1;
+    if (cfg.vm_test_bad) lg("xr: vrmenu: SOMVR_XR_VM_TEST=%s is not on or off: on", getenv("SOMVR_XR_VM_TEST"));
+    if (cfg.vm_test) vm_test_load(); /* build 21 */
+    else lg("xr: vrmenu: no Test page (SOMVR_XR_VM_TEST=off): build 20's tabs and X box");
     somvr_vm_gcfg_default(&VM.gc);
     vh_panel_cfg(&VM.gc); /* build 10: SOMVR_XR_PANEL=palm */
     somvr_vm_greset(&VM.gs);
@@ -4508,7 +4564,8 @@ static float vm_vignette(float obj) {
 }
 /* what the menu can change in this session: the preload's, the HUD only with its quad, the seat height with a floor */
 static uint64_t vm_avail(void) { /* v7: 64 bits (a ~ of a 32-bit mask would clear bits 32..63: ~(uint64_t)) */
-    uint64_t a = VM.obj->avail & ~(uint64_t)(SOMVR_VMA_FLOOR | SOMVR_VMA_PR_LIVE);
+    uint64_t a = VM.obj->avail & ~(uint64_t)(SOMVR_VMA_FLOOR | SOMVR_VMA_PR_LIVE | SOMVR_VMA_TESTPAGE);
+    if (cfg.vm_test) a |= SOMVR_VMA_TESTPAGE; /* build 21: the layer's own bit */
     if (a & SOMVR_VMA_PRACTICE) /* the practice area's live state (the preload, every input tick) */
         a |= atomic_load_explicit(&VM.obj->pstate, memory_order_acquire) & SOMVR_VMA_PR_LIVE;
     if (!X.hud || !X.hud_on) a &= ~(uint64_t)SOMVR_VMA_HUD;
@@ -4736,11 +4793,19 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
     } else if (r == SOMVR_VMR_PAGE) { /* a tab: its page (build 6: Settings, Practice, Controls) */
         VM.page = somvr_vm_tab_page(hit->item);
         VM.hover = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
+        if (VM.page == SOMVR_VMPG_TEST) VM.test_page = 0; /* build 21: from its first page */
         what = VM.page == SOMVR_VMPG_PRACTICE   ? "the practice page"
                : VM.page == SOMVR_VMPG_CONTROLS ? "the controls page"
                : VM.page == SOMVR_VMPG_FIGHT    ? "the fight page" /* build 19: the Settings tab's second page */
+               : VM.page == SOMVR_VMPG_TEST     ? "the test page"  /* build 21 */
                                                 : "the settings page";
         vm_haptic(VM.main_hand, 0.3f, 0.012f);
+    } else if (r == SOMVR_VMR_SCROLL) { /* build 21: the Test page's Prev / Next */
+        int was = VM.test_page;
+        VM.test_page = somvr_vm_test_turn(&VM.test, VM.test_page, hit->item == SOMVR_VMI_TEST_NEXT ? 1 : -1);
+        what = VM.test_page != was ? (hit->item == SOMVR_VMI_TEST_NEXT ? "the next test page" : "the last test page")
+                                   : "nothing (the test page's end)";
+        if (VM.test_page != was) vm_haptic(VM.main_hand, 0.3f, 0.012f);
     } else if (r == SOMVR_VMR_PRACTICE) { /* a practice button: the request for the preload's game thread */
         uint32_t w = atomic_load_explicit(&VM.obj->practice, memory_order_relaxed);
         w = somvr_vm_pr_pack(somvr_vm_pr_seq(w) + 1, somvr_vm_practice_action(hit->item), (int)VM.set.orc);
@@ -4893,6 +4958,7 @@ static void vm_frame(dev_st *ds) {
     int card = mn_card(ev, &gi, &panel, &have); /* build 6: the arrival card (the Controls page) in front instead */
     uint32_t consume = 0, nq = 0;
     uint64_t avail = vm_avail();
+    if (card) avail &= ~(uint64_t)SOMVR_VMA_TESTPAGE; /* build 21: the card is build 20's (its X; no tabs) */
     somvr_ptr_out o;
     memset(&o, 0, sizeof o);
     float psz[2];
@@ -4924,6 +4990,7 @@ static void vm_frame(dev_st *ds) {
         mn_vm_touch(card, &panel, psz, &o); /* build 6: a fingertip on it wins over the ray */
         somvr_vm_hit hit = {-1, SOMVR_VMP_NONE};
         if (VM.page == SOMVR_VMPG_PRACTICE && !(avail & SOMVR_VMA_PRACTICE)) VM.page = SOMVR_VMPG_SETTINGS; /* (no tab) */
+        if (VM.page == SOMVR_VMPG_TEST && !card && !(avail & SOMVR_VMA_TESTPAGE)) VM.page = SOMVR_VMPG_SETTINGS;
         int locks = VM.snap && !MN.vtouch; /* build 20: the ray locks on the parts (a fingertip touches as before) */
         if (locks && (o.flags & SOMVR_PTRF_ON)) {
             hit = somvr_vm_snap_step(&VM.sn, &VM.snc, &VM.set, avail, VM.page, card, o.uv, o.dist, psz[0], dot_uv);
@@ -4988,6 +5055,7 @@ static void vm_frame(dev_st *ds) {
         v.set = VM.set, v.avail = avail, v.hover = VM.hover, v.page = card ? SOMVR_VMPG_CONTROLS : VM.page, v.card = card;
         v.quit_armed = card ? 0 : SSN.quit_armed;
         v.lock = VM.snap && !MN.vtouch && VM.hover.item >= 0; /* build 20: the locked part outlined */
+        v.test = &VM.test, v.test_page = VM.test_page; /* build 21: the Test page */
         if ((!VM.released || memcmp(&v, &VM.drawn, sizeof v)) && vm_upload(ds, &v)) return; /* off now (logged) */
         float dotp[3]; /* the ray's end and the dot: the pointer's point, or (build 20) the lock's on the locked part */
         memcpy(dotp, o.hit, sizeof dotp);
@@ -5290,6 +5358,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         if (xr_abort_open(kind == SOMVR_SUBMIT_STEREO ? "another frame's slot" : "a present without its next slot"))
             return 0;
     cv_poll(ds, kind == SOMVR_SUBMIT_MONO); /* SOMVR_XR_COVER: the HUD readings whose submits are done */
+    pp_poll(ds); /* build 21: SOMVR_XR_POPUPS: the band tiles' readings whose submits are done */
     if (EV.on && env_decide(ds, kind)) return 0; /* SoM loading env: a hold frame (the shown side's layers, darker) */
     /* the XR swapchain must fit this frame's source: the eye images, or the presented image (mono, layout A) */
     if (kind == SOMVR_SUBMIT_STEREO && have_eyes) {
@@ -5345,7 +5414,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         xr_comp rc = {.l = {[XL_OWN] = proj_layer(&proj, X.last_pv)}};
         if (X.last_hud && X.hud_sc) /* the HUD swapchain's last released image is that frame's */
             rc.l[XL_HUD] = (const XrCompositionLayerBaseHeader *)&X.last_quad, rc.l[XL_MMAP] = mn_mm_reuse(),
-            rc.l[XL_BAND] = mn_band_reuse();
+            mn_band_reuse_layers(&rc); /* build 8: the band; build 21: the popups */
         mb_layers(&rc); /* SOMVR_XR_MENU_BACK: that frame's backdrop again */
         vm_frame(ds); /* the VR menu: its own frame (the hand moves on) */
         fade_frame(ds, env_level(X.last_fade), X.last_fade_eye, fade_red(env_level(X.last_fade))); /* that frame's again */
@@ -5459,7 +5528,8 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
             if (hud_shown && !space) { /* the pointer's layers come only with the HUD quad */
                 sc.l[XL_HUD] = (const XrCompositionLayerBaseHeader *)&X.last_quad;
                 sc.l[XL_MMAP] = mn_mm_layer(&X.open_rec); /* build 6: the wrist minimap */
-                sc.l[XL_BAND] = mn_band_layer();          /* build 8: the prompt band */
+                somvr_posef pe[2] = {X.open_rec.eye[0].pose, X.open_rec.eye[1].pose};
+                mn_band_layers(&sc, pe);                  /* build 8: the prompt band; build 21: its tiles where you look */
                 for (uint32_t i = 0; i < X.ptr_nq && i < 2; i++)
                     sc.l[XL_PTR0 + i] = (const XrCompositionLayerBaseHeader *)&X.ptr_q[i];
             }

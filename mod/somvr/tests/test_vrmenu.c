@@ -2075,7 +2075,7 @@ static void test_fight19(void) {
     const uint64_t B18 = (0xf7fff027ull | SOMVR_VMA_MARK | SOMVR_VMA_QUIT) & ~(uint64_t)SOMVR_VMA_SWHAND,
                    NEW = SOMVR_VMA_DODGE | SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON |
                          SOMVR_VMA_STRING,
-                   B19 = B18 | NEW, HI = ~0ull << 38;
+                   B19 = B18 | NEW, HI = (~0ull << 38) & ~(uint64_t)SOMVR_VMA_TESTPAGE; /* 63: build 21's (the layer's) */
     somvr_settings s;
     somvr_set_default(&s);
     s.sword_weight = 2, s.quiver = 1, s.bow_string = 1;
@@ -2106,7 +2106,7 @@ static void test_fight19(void) {
     same &= somvr_vm_apply(&s1, B19, 0, SOMVR_VMI_ARROWS, SOMVR_VMP_ROW) ==
                 somvr_vm_apply(&s2, B19 | HI, 0, SOMVR_VMI_ARROWS, SOMVR_VMP_ROW) &&
             !memcmp(&s1, &s2, sizeof s1);
-    CHECK(same && same_set, "bits 38..63 change nothing (%d); bits 32..37 only the Fight page (%d)", same, same_set);
+    CHECK(same && same_set, "bits 38..62 change nothing (%d); bits 32..37 only the Fight page (%d)", same, same_set);
     /* the Controls page: build 18's lines whatever the new bits (no new line); the Bow string row's string decides the
      * bow's lines as BOWTRIG did (the trigger: the same as build 18's) */
     const char *k, *w, *k2, *w2;
@@ -2582,6 +2582,141 @@ static void test_snap20(void) {
     }
 }
 
+/* build 21 (re-xr-pipeline.md 82): the Test tab and page - a page saying what to test in the new build (the 20c
+ * session's ask). The text: the title, items (wrapped by words, their next lines under their text), plain
+ * text, comments and quotes; none = the title and a note; long = pages, an item whole on one. The layout with
+ * SOMVR_VMA_TESTPAGE: four tabs across (no X on the pages; the card's X as build 20), the Test page's Prev / Next; the
+ * picture: the title on every page, the lines inside the panel, Prev dim on the first page */
+static void test_test21(void) {
+    static somvr_vm_text t;
+    const uint64_t T = SOMVR_VMA_TESTPAGE;
+    static const char txt[] = "# a comment: not shown\n"
+                              "Build 21 - what to test\n"
+                              "\n"
+                              "- The bow: the sight is small and white, blue on an orc.\n"
+                              "  This line continues the bow item and wraps at a word boundary.\n"
+                              "- Voice notes: talk as long as you like\n"
+                              "# another comment\n"
+                              "* a star item with \xe2\x80\x9cquotes\xe2\x80\x9d and an \xe2\x80\x93 dash\r\n"
+                              "\n"
+                              "Plain text here.\n"
+                              "- Averyveryveryveryveryverylongwordthatcannotfit at all";
+    int pages = somvr_vm_text_parse(&t, txt, sizeof txt - 1);
+    int ok = t.have && t.n_title == 1 && !strcmp(t.line[0], "Build 21 - what to test") && pages == 1 && !t.truncated;
+    int items = 0, more = 0, texts = 0, fit = 1, comment = 0, quotes = 0, cut = 0;
+    for (int k = 0; k < t.n; k++) {
+        size_t n = strlen(t.line[k]);
+        items += t.kind[k] == SOMVR_VMT_ITEM, more += t.kind[k] == SOMVR_VMT_MORE, texts += t.kind[k] == SOMVR_VMT_TEXT;
+        fit &= n <= (size_t)((t.kind[k] == SOMVR_VMT_ITEM || t.kind[k] == SOMVR_VMT_MORE) ? SOMVR_VM_TEST_COLS - 2
+                                                                                          : SOMVR_VM_TEST_COLS) &&
+               n > 0 && t.line[k][0] != ' ' && t.line[k][n - 1] != ' ';
+        comment |= strstr(t.line[k], "comment") != NULL;
+        quotes |= strstr(t.line[k], "\"quotes\"") != NULL;
+        cut |= !strcmp(t.line[k], "Averyveryveryveryveryverylo");
+    }
+    CHECK(ok && items == 4 && more >= 3 && texts == 1 && fit && !comment && quotes && cut,
+          "the text: the title, %d items, %d next lines, %d text, all within the panel's columns (%d), no comment (%d), "
+          "the quotes plain (%d), a long word cut (%d)", items, more, texts, fit, comment, quotes, cut);
+    CHECK(!strcmp(t.line[1], "The bow: the sight is small") && t.kind[1] == SOMVR_VMT_ITEM && t.kind[2] == SOMVR_VMT_MORE &&
+              !strncmp(t.line[2], "and white, blue on an orc.", 26),
+          "an item wraps by words, its next line under it: '%s' / '%s'", t.line[1], t.line[2]);
+    /* nothing: the title and a note, never a failure */
+    somvr_vm_text_parse(&t, NULL, 0);
+    CHECK(!t.have && t.n == 2 && t.pages == 1 && !strcmp(t.line[0], "What to test") && t.kind[1] == SOMVR_VMT_NOTE,
+          "no file: '%s' + '%s'", t.line[0], t.line[1]);
+    somvr_vm_text_parse(&t, "# only comments\n\n   \n", 22);
+    CHECK(!t.have && t.n == 2, "only comments: the note");
+    /* long: pages; every line between the title and the Prev / Next row; an item whole on one page */
+    static char big[SOMVR_VM_TEST_BYTES + 200];
+    size_t bn = (size_t)snprintf(big, sizeof big, "Build 99 - what to test\n");
+    for (int i = 0; i < 30; i++)
+        bn += (size_t)snprintf(big + bn, sizeof big - bn, "- Item %d: something to try in the headset, said in a few "
+                                                          "words.\n", i);
+    pages = somvr_vm_text_parse(&t, big, bn);
+    int inside = 1, whole = 1, order = 1, last_page = 0;
+    for (int k = t.n_title; k < t.n; k++) {
+        inside &= t.y[k] >= SOMVR_VM_TEST_Y0 + 34 * t.n_title && t.y[k] + SOMVR_VM_TEST_DY <= SOMVR_VM_TEST_NAV_Y - 8;
+        if (t.kind[k] == SOMVR_VMT_MORE) whole &= t.page[k] == t.page[k - 1];
+        order &= t.page[k] >= last_page && t.page[k] <= last_page + 1, last_page = t.page[k];
+    }
+    CHECK(pages >= 3 && t.pages == pages && last_page == pages - 1 && inside && whole && order && !t.truncated,
+          "30 items: %d pages, the lines inside (%d), items whole (%d), in order (%d)", pages, inside, whole, order);
+    CHECK(somvr_vm_test_turn(&t, 0, -1) == 0 && somvr_vm_test_turn(&t, 0, 1) == 1 &&
+              somvr_vm_test_turn(&t, pages - 1, 1) == pages - 1 && somvr_vm_test_turn(NULL, 3, 1) == 0,
+          "Prev / Next: clamped to the pages");
+    while (bn < SOMVR_VM_TEST_BYTES + 100) big[bn++] = 'x';
+    somvr_vm_text_parse(&t, big, bn);
+    CHECK(t.truncated && t.n <= SOMVR_VM_TEST_LINES && t.kind[t.n - 1] == SOMVR_VMT_NOTE, "more than the room: cut, the "
+                                                                                         "last line says so (%d lines)", t.n);
+    /* the layout: four tabs across with the bit, no X on the pages; build 20's without it */
+    int r[4][4], x[4], ok4 = 1;
+    static const int tabs[4] = {SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST};
+    for (int i = 0; i < 4; i++) {
+        ok4 &= somvr_vm_rect_av(T, tabs[i], SOMVR_VMP_BUTTON, r[i]) && r[i][1] + r[i][3] <= 58 &&
+               r[i][2] >= somvr_font_text_w(somvr_vm_label(tabs[i]), SOMVR_VM_SCALE) + 6 &&
+               (i == 0 ? r[i][0] >= 8 : r[i][0] > r[i - 1][0] + r[i - 1][2]) && r[i][0] + r[i][2] <= 502;
+        x[i] = r[i][0];
+    }
+    CHECK(ok4 && !somvr_vm_rect_av(T, SOMVR_VMI_CLOSE, SOMVR_VMP_BUTTON, r[0]) &&
+              somvr_vm_rect_av(0, SOMVR_VMI_CLOSE, SOMVR_VMP_BUTTON, r[1]) &&
+              !somvr_vm_rect_av(0, SOMVR_VMI_TAB_TEST, SOMVR_VMP_BUTTON, r[2]) && !somvr_vm_enabled(NULL, 0, SOMVR_VMI_TAB_TEST),
+          "four tabs across (%d %d %d %d), no X with them; without the bit build 20's X, no Test tab", x[0], x[1], x[2], x[3]);
+    somvr_settings s;
+    somvr_set_default(&s);
+    int all = 1, only = 1;
+    for (int pg = 0; pg <= SOMVR_VMPG_TEST; pg++)
+        for (int i = 0; i < 4; i++) {
+            somvr_vm_rect_av(T, tabs[i], SOMVR_VMP_BUTTON, r[0]);
+            somvr_vm_hit h = somvr_vm_hit_test_av(T | SOMVR_VMA_PRACTICE, pg, (r[0][0] + 0.5f * r[0][2]) / SOMVR_VM_TEX_W,
+                                                  (r[0][1] + 0.5f * r[0][3]) / SOMVR_VM_TEX_H);
+            all &= h.item == tabs[i];
+        }
+    for (int yy = 0; yy < SOMVR_VM_TEX_H; yy += 4)
+        for (int xx = 0; xx < SOMVR_VM_TEX_W; xx += 4) {
+            somvr_vm_hit h = somvr_vm_hit_test_av(T, SOMVR_VMPG_TEST, (xx + 0.5f) / SOMVR_VM_TEX_W, (yy + 0.5f) / SOMVR_VM_TEX_H);
+            if (h.item >= 0 && somvr_vm_tab_page(h.item) < 0 && h.item != SOMVR_VMI_TEST_PREV && h.item != SOMVR_VMI_TEST_NEXT)
+                only = 0;
+        }
+    CHECK(all && only, "every tab on every page (%d); the Test page: only the tabs, Prev and Next (%d)", all, only);
+    CHECK(somvr_vm_tab_page(SOMVR_VMI_TAB_TEST) == SOMVR_VMPG_TEST &&
+              somvr_vm_apply(&s, T, 0, SOMVR_VMI_TAB_TEST, SOMVR_VMP_BUTTON) == SOMVR_VMR_PAGE &&
+              somvr_vm_apply(&s, T, 0, SOMVR_VMI_TEST_NEXT, SOMVR_VMP_BUTTON) == SOMVR_VMR_SCROLL &&
+              somvr_vm_apply(&s, T, 0, SOMVR_VMI_TEST_PREV, SOMVR_VMP_BUTTON) == SOMVR_VMR_SCROLL &&
+              somvr_vm_apply(&s, 0, 0, SOMVR_VMI_TEST_NEXT, SOMVR_VMP_BUTTON) == SOMVR_VMR_NONE,
+          "the Test tab opens its page; Prev / Next scroll (only with the bit)");
+    /* the picture: page 1 and 2 of the long text - the title on both, Prev dim on 1, the lines differ, nothing past
+     * the panel's border; the card with the bit: build 20's (its X drawn) */
+    somvr_font f;
+    somvr_font_init(&f);
+    somvr_vm_text_parse(&t, big, 600);
+    static uint8_t p1[SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4], p2[SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4];
+    somvr_vm_view v;
+    memset(&v, 0, sizeof v);
+    v.set = s, v.avail = T, v.hover.item = -1, v.page = SOMVR_VMPG_TEST, v.test = &t;
+    somvr_vm_draw(&f, p1, 0, &v);
+    v.test_page = 1;
+    somvr_vm_draw(&f, p2, 0, &v);
+    int title1 = 0, title2 = 0, diff_body = 0, prev_dim = 1, next_lit = 0;
+    for (int yy = SOMVR_VM_TEST_Y0; yy < SOMVR_VM_TEST_Y0 + 32; yy++)
+        for (int xx = 20; xx < 400; xx++) {
+            const uint8_t *a = p1 + 4 * (yy * SOMVR_VM_TEX_W + xx), *b = p2 + 4 * (yy * SOMVR_VM_TEX_W + xx);
+            title1 += a[0] == 232 && a[1] == 192, title2 += b[0] == 232 && b[1] == 192;
+        }
+    for (int yy = 110; yy < SOMVR_VM_TEST_NAV_Y - 8; yy++)
+        for (int xx = 20; xx < 490; xx++) diff_body += memcmp(p1 + 4 * (yy * SOMVR_VM_TEX_W + xx), p2 + 4 * (yy * SOMVR_VM_TEX_W + xx), 4) != 0;
+    somvr_vm_rect_av(T, SOMVR_VMI_TEST_PREV, SOMVR_VMP_BUTTON, r[0]), somvr_vm_rect_av(T, SOMVR_VMI_TEST_NEXT, SOMVR_VMP_BUTTON, r[1]);
+    const uint8_t *pp = p1 + 4 * ((r[0][1] + 2) * SOMVR_VM_TEX_W + r[0][0] + 2), *np = p1 + 4 * ((r[1][1] + 2) * SOMVR_VM_TEX_W + r[1][0] + 2);
+    prev_dim = pp[0] == 32 && pp[1] == 37, next_lit = np[0] == 52 && np[1] == 61;
+    CHECK(title1 > 100 && title1 == title2 && diff_body > 500 && prev_dim && next_lit,
+          "the picture: the title on pages 1 and 2 (%d %d texels), their lines differ (%d), Prev dim (%d), Next lit (%d)",
+          title1, title2, diff_body, prev_dim, next_lit);
+    v.card = 1, v.page = SOMVR_VMPG_CONTROLS;
+    somvr_vm_draw(&f, p2, 0, &v);
+    v.avail = 0;
+    somvr_vm_draw(&f, p1, 0, &v);
+    CHECK(!memcmp(p1, p2, sizeof p1), "the card with the bit: build 20's card (its X)");
+}
+
 int main(void) {
     test_font();
     test_settings();
@@ -2608,6 +2743,7 @@ int main(void) {
     test_fight19();
     test_steady20();
     test_snap20();
+    test_test21();
     printf("test_vrmenu: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

@@ -142,9 +142,12 @@ static struct {
     struct { VkImageView v; VkImage img; VkImageAspectFlags asp; VkFormat fmt; } views[64];
     int nviews;
     VkImageAspectFlags tr_aspect[32];
-    uint8_t up_px[SOMVR_ENV_EQ_W * (SOMVR_ENV_EQ_H + SOMVR_ENV_STRIP) * 4]; /* the largest image: the loading env's
-                                                                            * equirect sky (comfort's, the pointer's,
-                                                                            * the fade's, the VR menu's smaller) */
+    uint8_t up_px[SOMVR_ENV_EQ_W * (SOMVR_ENV_EQ_H + SOMVR_ENV_STRIP) * 4 > SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4
+                      ? SOMVR_ENV_EQ_W * (SOMVR_ENV_EQ_H + SOMVR_ENV_STRIP) * 4
+                      : SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4]; /* the largest image: the loading env's equirect sky or
+                                                                * (build 21: two rows, the sight and the timer) the
+                                                                * objective's atlas (comfort's, the pointer's, the
+                                                                * fade's, the VR menu's smaller) */
 } V;
 
 /* image contents, as far as the tests need them: a fill per image, plus the x spans vkCmdCopyImage wrote (newest
@@ -4132,9 +4135,15 @@ static int sc_threat(void) { /* nothing, a glow, three glows and both edges, a r
     check_proj_n(&v, 3, RECT_B, "a red blow", 3);
     th_check_glow(1, &v, &rd.g[0], "a red blow");
     th_check_edge_row(2, &v, SOMVR_TH_LEFT, 0.7f, SOMVR_TH_ROW_HURT, "a red blow");
+    /* 9. build 21 (SOMVR_VERBS_CUE): the grab cue's glow from the blue row */
+    somvr_threat_frame bl = th_frame_of(1, 0.55f, 0.7f, 0);
+    bl.g[0].kind = SOMVR_THK_MELEE | SOMVR_THK_BLUE;
+    th_stereo(&r, f++, &bl, &v);
+    check_proj_n(&v, 3, RECT_B, "the grab cue", 3);
+    th_check_glow(1, &v, &bl.g[0], "the grab cue");
     app_teardown(&r.a);
     CHECK(MOCK(mockxr_live)() == 0 && !MOCK(mockxr_view_live)(), "threat objects outlived the session");
-    CHECK(log_has("xr: threat: image 544x136 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
+    CHECK(log_has("xr: threat: image 544x170 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
                   "cells") &&
               log_has("xr: threat frame") && log_has("(newest entry)") && log_has("L hurt red, R hurt red") &&
               !log_has("threat: off"),
@@ -4414,7 +4423,7 @@ static int sc_threat_absent(void) { return th_none(0, 0, "xr: threat: no threat 
 static int sc_threat_inactive(void) { return th_none(1, 0, "xr: threat: no threat cues (somvr_threat inactive"); }
 static int sc_threat_off(void) { return th_none(1, 1, "xr: threat: no threat cues (SOMVR_XR_THREAT=off)"); }
 
-/* MOCKXR_REJECT_SC=544x136: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
+/* MOCKXR_REJECT_SC=544x170: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
  * once), that frame is ended again without them, the frames go on with the projection (and comfort's ring) */
 static int sc_threat_reject(void) {
     hudrig r;
@@ -6286,6 +6295,115 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     return 0;
 }
 
+/* build 21 (re-xr-pipeline.md 82): the Test tab and page (SOMVR_XR_VM_TEST on by default). The text from
+ * SOMVR_XR_VM_TEST_FILE (a two-page file here; none: the page says so); the panel's pictures exactly somvr_vm_draw's
+ * with the four tabs, the Test page and its pages; Next and Prev turn them (held at the ends); where build 20's X box
+ * was, the Test tab (the panel stays open) */
+static int vm_test_is(const somvr_vm_text *t, int page, int item, int part) {
+    static somvr_font f;
+    static int init;
+    if (!init) init = 1, somvr_font_init(&f);
+    somvr_vm_view v;
+    memset(&v, 0, sizeof v);
+    v.set = vm_set(), v.avail = VMA_MONO | SOMVR_VMA_TESTPAGE, v.hover = (somvr_vm_hit){item, part};
+    v.page = SOMVR_VMPG_TEST, v.test = t, v.test_page = page;
+    somvr_vm_draw(&f, g_vm_px, 0, &v);
+    return V.up_w == SOMVR_VM_TEX_W && V.up_h == SOMVR_VM_TEX_H && !memcmp(V.up_px, g_vm_px, sizeof g_vm_px);
+}
+static void vm_uv_t(int item, float uv[2]) {
+    int rc[4];
+    CHECK(somvr_vm_rect_av(SOMVR_VMA_TESTPAGE, item, SOMVR_VMP_BUTTON, rc), "no rect for item %d", item);
+    uv[0] = (rc[0] + 0.5f * rc[2]) / SOMVR_VM_TEX_W, uv[1] = (rc[1] + 0.5f * rc[3]) / SOMVR_VM_TEX_H;
+}
+static int vm_test_run(int none) {
+    char path[700];
+    static char text[4096];
+    static somvr_vm_text t;
+    size_t tn = (size_t)snprintf(text, sizeof text, "# a comment\nBuild 21t - what to test\n");
+    for (int i = 0; i < 14; i++)
+        tn += (size_t)snprintf(text + tn, sizeof text - tn, "- Item %d: something to try, said in a few words.\n", i);
+    snprintf(path, sizeof path, "%s.what-to-test.txt", g_log);
+    if (none) {
+        snprintf(path, sizeof path, "%s.no-such-file.txt", g_log);
+        somvr_vm_text_parse(&t, NULL, 0);
+    } else {
+        FILE *f = fopen(path, "w");
+        CHECK(f && fwrite(text, 1, tn, f) == tn, "the text file");
+        if (f) fclose(f);
+        somvr_vm_text_parse(&t, text, tn);
+        CHECK(t.pages == 2, "the text's pages: %d", t.pages);
+    }
+    setenv("SOMVR_XR_VM_TEST_FILE", path, 1);
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (input_obj(INW_ALL, 1, SOMVR_INPUT_V2_SIZE) || vrmenu_obj(1, VMA_ALL, NULL)) return 1;
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    vmpose rest = {.palm = 0, .left_ok = 1, .right_ok = 0, .uv = {2, 2}}, palm = rest;
+    vm_mono(&a, &rest, 4);
+    char want[900];
+    if (none)
+        snprintf(want, sizeof want, "xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): no notes - %s No such file or directory "
+                 "(the page says so)", path);
+    else
+        snprintf(want, sizeof want, "xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): 'Build 21t - what to test' - %d lines, 2 "
+                 "pages from %s (%zu bytes)", t.n, path, tn);
+    CHECK(log_has(want), "log lacks: %s", want);
+    palm.palm = 1;
+    int n = 0;
+    while (!atomic_load(&g_vm->open) && n++ < 80) vm_mono(&a, &palm, 1);
+    vm_mono(&a, &palm, 2);
+    somvr_settings s0 = vm_set();
+    CHECK(atomic_load(&g_vm->open) == 1 && vm_picture_is(&s0, VMA_MONO | SOMVR_VMA_TESTPAGE, -1, SOMVR_VMP_NONE),
+          "open: the panel with the four tabs (open %u)", atomic_load(&g_vm->open));
+    vmpose aim = palm;
+    aim.right_ok = 1;
+    vm_uv_t(SOMVR_VMI_TAB_TEST, aim.uv);
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(log_count("xr: vrmenu: click Test button: the test page") == 1 &&
+              vm_test_is(&t, 0, SOMVR_VMI_TAB_TEST, SOMVR_VMP_BUTTON),
+          "the Test tab: its page, the picture somvr_vm_draw's (page 1, the tab hovered)");
+    vm_uv_t(SOMVR_VMI_TEST_NEXT, aim.uv);
+    for (int k = 0; k < 2; k++) {
+        vm_mono(&a, &aim, 3);
+        aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+        aim.trig = 0, vm_mono(&a, &aim, 3);
+    }
+    if (none)
+        CHECK(log_count("xr: vrmenu: click Next button: nothing (the test page's end)") == 2 &&
+                  vm_test_is(&t, 0, SOMVR_VMI_TEST_NEXT, SOMVR_VMP_BUTTON),
+              "no notes: Next stays (its one page)");
+    else
+        CHECK(log_count("xr: vrmenu: click Next button: the next test page") == 1 &&
+                  log_count("xr: vrmenu: click Next button: nothing (the test page's end)") == 1 &&
+                  vm_test_is(&t, 1, SOMVR_VMI_TEST_NEXT, SOMVR_VMP_BUTTON),
+              "Next: page 2, then held there; the picture page 2's");
+    vm_uv_t(SOMVR_VMI_TEST_PREV, aim.uv);
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(vm_test_is(&t, 0, SOMVR_VMI_TEST_PREV, SOMVR_VMP_BUTTON), "Prev: page 1 again");
+    int rc[4]; /* build 20's X box: the Test tab there now; the panel stays open */
+    CHECK(somvr_vm_rect_av(0, SOMVR_VMI_CLOSE, SOMVR_VMP_BUTTON, rc), "build 20's X");
+    aim.uv[0] = (rc[0] + 0.5f * rc[2]) / SOMVR_VM_TEX_W, aim.uv[1] = (rc[1] + 0.5f * rc[3]) / SOMVR_VM_TEX_H;
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(atomic_load(&g_vm->open) == 1 && log_count("xr: vrmenu: click Test button: the test page") == 2 &&
+              !log_has("closed: its close box"),
+          "where the X was: the Test tab (open %u)", atomic_load(&g_vm->open));
+    CHECK(V.viol == 0, "%d Vulkan violations, first: %s", V.viol, V.first);
+    app_teardown(&a);
+    CHECK(V.sems_live == 0 && V.fences_live == 0 && V.buffers_live == 0 && V.mems_live == 0, "layer objects leaked");
+    check_mock_clean();
+    if (!none) remove(path);
+    return 0;
+}
+static int sc_vrmenu_test(void) { return vm_test_run(0); }
+static int sc_vrmenu_test_none(void) { return vm_test_run(1); }
+
 static int sc_card(void) { /* build 7: the arrival card (SOMVR_XR_CARD=on) holds the blade off (open), so a grip
                              * squeezed after it came up (a draw at the shoulder, a grab) puts it away; a grip held
                              * through its arrival does not */
@@ -6779,6 +6897,106 @@ static int sc_prompts(void) {
               log_has("xr: prompts: the band shown (frame") && log_has("xr: wrist hud: off") &&
               log_has("xr: minimap: off (it stays in the HUD)"),
           "the band's lines");
+    app_teardown(&r.a);
+    CHECK(MOCK(mockxr_live)() == 0, "XR objects alive after vkDestroyDevice");
+    check_mock_clean();
+    return 0;
+}
+/* build 21, SOMVR_XR_POPUPS=gaze (re-xr-pipeline.md 87.1): the band's tiles each a quad, shown only while the HUD image has
+ * something in them (the readings of their rows), placed in front of the gaze when it comes up, still in the room while
+ * the head turns (the mock's head turns ~29 deg a second), over 0.3 s after it empties, placed afresh at the next one */
+static float pp_deg(const float q[4], const float p[3], const float eye_mid[3], float *pitch) {
+    float d[3] = {p[0] - eye_mid[0], p[1] - eye_mid[1], p[2] - eye_mid[2]}, n = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    (void)q;
+    *pitch = asinf(d[1] / n) * 57.29578f;
+    return atan2f(-d[0], -d[2]) * 57.29578f;
+}
+static int sc_popups(void) {
+    hudrig r;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    int ix = img_ix(r.H);
+    memcpy(g_img[ix].fill, COVER_CLEAR, 4); /* a quiet HUD: nothing in any tile */
+    somvr_ht_set bt;
+    somvr_ht_parse(NULL, SOMVR_PB_RECTS_DEFAULT, &bt, NULL);
+    somvr_hud_layout l;
+    CHECK(somvr_hud_layout_make(1920, 1080, NULL, NULL, 0, NULL, &bt, &l) && l.ntile == 4, "the band's four tiles");
+    const int *xs = l.src[2], *xd = l.dst[2]; /* the XP gains: the third row's first tile */
+    CHECK(rect_is(xs, 30, 390, 290, 190), "tile 2 is the XP gains' rect (%d,%d %dx%d)", xs[0], xs[1], xs[2], xs[3]);
+    float k = somvr_pb_width(l.band[2], 0.85f, 1.3f) / (float)l.band[2];
+    somvr_views v;
+    uint64_t f = 0;
+    for (int i = 0; i < 6; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    int hsc = MOCK(mockxr_sc_find)(1920 + 1098, 1080);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    CHECK(hsc >= 0 && e->layer_count == 2 && V.img2buf >= 5 && !log_has("xr: popups: tile"),
+          "a quiet HUD: the HUD quad alone, no popup (%u layers, %d readings)", e->layer_count, V.img2buf);
+    /* the XP comes up (columns 40..300 of every row: only the XP tile has them) */
+    g_img[ix].nsp = 1, g_img[ix].sp[0].x0 = 40, g_img[ix].sp[0].x1 = 300;
+    static const uint8_t XP_PX[4] = {200, 210, 220, 230};
+    memcpy(g_img[ix].sp[0].px, XP_PX, 4);
+    int at = -1;
+    for (int i = 0; i < 8 && at < 0; i++) {
+        hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+        if (layer_with(hsc, xd[0], xd[1], xs[2], xs[3])) at = i;
+    }
+    e = MOCK(mockxr_last_end)();
+    int q = layer_with(hsc, xd[0], xd[1], xs[2], xs[3]);
+    float mid[3] = {0.5f * (v.pose[0].p[0] + v.pose[1].p[0]), 0.5f * (v.pose[0].p[1] + v.pose[1].p[1]),
+                    0.5f * (v.pose[0].p[2] + v.pose[1].p[2])};
+    float gyaw = 2 * atan2f(v.pose[0].q[1], v.pose[0].q[3]) * 57.29578f;
+    float pitch, yaw = q ? pp_deg(e->q[q].pose, e->q[q].pose + 4, mid, &pitch) : 0;
+    CHECK(at >= 0 && at <= 4 && e->layer_count == 3 && q == 2 && e->q[q].space == 1 &&
+              fabsf(e->q[q].size[0] - k * 290) < 1e-5f && fabsf(e->q[q].size[1] - k * 190) < 1e-5f &&
+              log_has("xr: popups: tile 2 has something (reading") && log_count("xr: popups: tile 2 placed") == 1,
+          "the XP's own quad %d frames after it came up: %u layers, layer %d, size %.4f x %.4f", at, e->layer_count, q,
+          e->q[q].size[0], e->q[q].size[1]);
+    /* its centre: the content's box is the tile's columns 10..270 of every row (centred 0.5 px left, at the middle) */
+    float want_p = -13.0f;
+    CHECK(fabsf(pitch - want_p) < 1.0f && fabsf(yaw - gyaw) < 3.0f,
+          "placed in front of the gaze (yaw %.1f, the gaze's %.1f; pitch %.1f want ~%.1f)", yaw, gyaw, pitch, want_p);
+    float p0[7];
+    memcpy(p0, e->q[q].pose, sizeof p0);
+    /* the head turns on (the mock: ~0.3 deg a frame): the popup holds still in the room */
+    float g0 = gyaw;
+    for (int i = 0; i < 20; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    e = MOCK(mockxr_last_end)();
+    float g1 = 2 * atan2f(v.pose[0].q[1], v.pose[0].q[3]) * 57.29578f;
+    q = layer_with(hsc, xd[0], xd[1], xs[2], xs[3]);
+    CHECK(q == 2 && pose7_near(e->q[q].pose, p0, 1e-6f) && fabsf(g1 - g0) > 3, "the head turned %.1f deg: the popup still",
+          g1 - g0);
+    /* a reuse frame: the same quads */
+    hud_present(&r.a, 999, 2, SOMVR_HUDK_WORLD);
+    e = MOCK(mockxr_last_end)();
+    CHECK(e->layer_count == 3 && layer_with(hsc, xd[0], xd[1], xs[2], xs[3]) == 2 && pose7_near(e->q[2].pose, p0, 1e-6f),
+          "reuse: the popup again (%u layers)", e->layer_count);
+    /* it empties: kept 0.3 s (27 frames of 11.1 ms), then over */
+    g_img[ix].nsp = 0;
+    int gone = -1;
+    for (int i = 0; i < 40 && gone < 0; i++) {
+        hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+        if (!layer_with(hsc, xd[0], xd[1], xs[2], xs[3])) gone = i;
+    }
+    CHECK(gone >= 26 && gone <= 32 && MOCK(mockxr_last_end)()->layer_count == 2 && log_count("xr: popups: tile 2 over") == 1,
+          "empty: the popup gone %d frames later (want ~27-30)", gone);
+    /* the next one, the head elsewhere now: placed afresh where it looks */
+    for (int i = 0; i < 30; i++) hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+    g_img[ix].nsp = 1;
+    at = -1;
+    for (int i = 0; i < 8 && at < 0; i++) {
+        hud_stereo(&r, ++f, 2, SOMVR_HUDK_WORLD, &v);
+        if (layer_with(hsc, xd[0], xd[1], xs[2], xs[3])) at = i;
+    }
+    e = MOCK(mockxr_last_end)();
+    q = layer_with(hsc, xd[0], xd[1], xs[2], xs[3]);
+    float g2 = 2 * atan2f(v.pose[0].q[1], v.pose[0].q[3]) * 57.29578f;
+    for (int i = 0; i < 3; i++) mid[i] = 0.5f * (v.pose[0].p[i] + v.pose[1].p[i]);
+    yaw = q ? pp_deg(e->q[q].pose, e->q[q].pose + 4, mid, &pitch) : 0;
+    CHECK(q == 2 && !pose7_near(e->q[q].pose, p0, 1e-3f) && fabsf(yaw - g2) < 3.0f && fabsf(g2 - g0) > 2 &&
+              log_count("xr: popups: tile 2 placed") == 2,
+          "the next popup placed afresh at the gaze (yaw %.1f, the gaze %.1f; the first at %.1f)", yaw, g2, g0);
+    CHECK(log_has("xr: popups: gaze: each of the band's tiles its own quad"),
+          "the popups' lines");
     app_teardown(&r.a);
     CHECK(MOCK(mockxr_live)() == 0, "XR objects alive after vkDestroyDevice");
     check_mock_clean();
@@ -7318,7 +7536,7 @@ static const struct {
     {"threat-absent", sc_threat_absent, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-inactive", sc_threat_inactive, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-off", sc_threat_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_THREAT=off", 1},
-    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x136", 1},
+    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x170", 1},
     {"allon", sc_allon, "SOMVR_XR_LOADER=@MOCK MOCKXR_RECENTER_AT=80", 1},
     {"reject-hud-only", sc_reject_hud_only, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=1920x1080", 1},
     /* SoM loading env */
@@ -7363,7 +7581,9 @@ static const struct {
     {"menu-back-nomenu", sc_menu_back_nomenu,
      "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MENU_BACK=on SOMVR_XR_MENU_BACK_DIM=2 SOMVR_XR_COVER=yes SOMVR_XR_COVER_MS=x", 1},
     /* the VR menu */
-    {"vrmenu", sc_vrmenu, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"vrmenu", sc_vrmenu, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_VM_TEST=off", 1}, /* build 20's panel: its X */
+    {"vrmenu-test", sc_vrmenu_test, "SOMVR_XR_LOADER=@MOCK", 1},             /* build 21: the Test tab and page */
+    {"vrmenu-test-none", sc_vrmenu_test_none, "SOMVR_XR_LOADER=@MOCK", 1},
     {"vrmenu-stereo", sc_vrmenu_stereo, "SOMVR_XR_LOADER=@MOCK", 1},
     {"card", sc_card, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_CARD=on", 1},
     {"wrist", sc_wrist, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MINIMAP=wrist", 1},
@@ -7376,6 +7596,7 @@ static const struct {
     {"vrhands-depth-nofuncs", sc_vrhands_depth_nofuncs, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS_DEPTH=world", 1},
     {"wrist-hud", sc_wrist_hud, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MINIMAP=wrist SOMVR_XR_WRIST_HUD=on", 1},
     {"prompts", sc_prompts, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PROMPTS=on MOCKXR_RECENTER_AT=10", 1},
+    {"popups", sc_popups, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PROMPTS=on SOMVR_XR_POPUPS=gaze", 1},
     {"prompts-head", sc_prompts_head, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HUD=head SOMVR_XR_PROMPTS=on "
                                       "SOMVR_XR_PROMPTS_QUAD=1.0,1.0,20", 1},
     {"prompts-cap", sc_prompts_cap, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PROMPTS=on MOCKXR_MAX_LAYERS=2", 1},
@@ -7455,6 +7676,8 @@ int main(int argc, char **argv) {
             unsetenv("SOMVR_XR_HANDS_DEPTH_HELD");
             unsetenv("SOMVR_XR_HANDS_DEPTH_DEBUG");
             unsetenv("SOMVR_XR_EXIT"); /* build 16 */
+            unsetenv("SOMVR_XR_VM_TEST"); /* build 21 */
+            unsetenv("SOMVR_XR_VM_TEST_FILE");
             setenv("SOMVR_XR_LOG", g_log, 1);
             set_env(g_scen[i].env);
             alarm(30);

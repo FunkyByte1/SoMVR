@@ -121,6 +121,8 @@ static struct {
 
 enum { VB_ASK_GAME, VB_ASK_BLADE };
 
+static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, double t); /* build 21 (somvr_combat21_game.c) */
+static void gc_hands(const somvr_vb_hand_in *in, double t);
 static int vb_log_ok(void)
 {
 	if (g_vb.lines < VB_LINES) {
@@ -574,6 +576,7 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	somvr_vb_hand_out o;
 	somvr_vb_hand_step(&g_vb.hand, &g_vb.cfg, &in, &o);
 	g_vb.press_grab = o.grab, g_vb.press_b = o.b;
+	gc_hands(&in, t); /* build 21, SOMVR_VERBS_CUE: the reach, the cue, its tick and glow (somvr_combat21_game.c) */
 	/* the interrogation asks (its choices up; the grip may have opened meanwhile): the trigger's press = Interrogate */
 	int tr_was = g_vb.trig_was;
 	g_vb.trig_was = tr_was ? in.trigger > g_vb.cfg.trig_off : in.trigger >= g_vb.cfg.trig_on;
@@ -1114,7 +1117,10 @@ static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	}
 	if (!hit)
 		return;
-	if (stl_contact(pcomb, pc, &oc, &ct, tier, b, root, t)) { /* build 19b: the stealth hold's stab */
+	int took = stl_contact(pcomb, pc, &oc, &ct, tier, b, root, t);
+	if (took == 2)
+		return; /* build 21: a touch of the held orc that is no kill yet - its next frames judged too */
+	if (took) { /* build 19b: the stealth hold's stab */
 		g_vb.blade_t = t;
 		return;
 	}
@@ -1217,6 +1223,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 		memcpy(g_vb.root, root, sizeof g_vb.root);
 	if (g_vb.mode == VB_ON)
 		vb_heads(o, n, pc, root);
+	gc_frame(pcomb, pc, o, n, t); /* build 21, SOMVR_VERBS_CUE: the game's answer for the orc in reach (somvr_combat21_game.c) */
 	struct vb_orc nw[VB_ORCS];
 	for (int i = 0; i < n; i++) {
 		uintptr_t c = o[i].c;

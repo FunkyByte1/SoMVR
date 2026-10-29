@@ -204,6 +204,15 @@ void somvr_slots_step(somvr_slots *s, const somvr_slots_cfg *c, const somvr_slot
             if (c->restore && !d && s->want[k] != 1) ask(s, o, k, 1, SOMVR_SL_E_RESTORE, t), s->restores[k]++;
         }
     }
+    /* build 21: taken into the hand for the game's move (the Shadow Strike): its draw is the player's; else asked */
+    for (int k = 0; k < SOMVR_NSLOT; k++) {
+        if (!in->take[k] || !in->have[k]) continue;
+        int d = in->drawn[k];
+        given[k] = 0, s->suspended[k] = 0;
+        if (!d && s->want[k] != 1) ask(s, o, k, 1, SOMVR_SL_E_TAKE, t), s->by_hold[k] = 0;
+        else if (d && s->want[k] == 0) s->want[k] = -1; /* a put-back pending (an undraw, a suspend): dropped */
+        if (d && (o->ev[k] & SOMVR_SL_E_GAME)) o->ev[k] |= SOMVR_SL_E_TAKE;
+    }
     /* the game put away what the player keeps in the hand: back to the hand, a few times; with undraw, the game drew
      * what the player keeps away: back to the slot, on the same budget */
     for (int k = 0; k < SOMVR_NSLOT; k++) {

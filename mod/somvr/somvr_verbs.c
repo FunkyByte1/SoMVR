@@ -116,6 +116,64 @@ static int pick_head(const somvr_vb_cfg *c, const somvr_vb_hand_in *in, float *d
     return best;
 }
 
+int somvr_vb_reach(const somvr_vb_cfg *c, const somvr_vb_hand *s, const somvr_vb_hand_in *in, int keep, float keep_cm,
+                   float keep_deg, int *by_body)
+{
+    *by_body = 0;
+    if (s->phase != SOMVR_VBH_IDLE || s->closed || !in->live || !in->have_palm || !fin3(in->palm))
+        return -1;
+    int nearest, by_cone, bb;
+    float dist, cone, nd, bc, bd;
+    if (keep >= 0 && keep < in->norc) {
+        somvr_vb_cfg k = *c;
+        k.reach_cm += keep_cm, k.cone_deg += keep_deg;
+        int b = pick_head(&k, in, &dist, &cone, &by_cone, &bb, &nearest, &nd, &bc, &bd);
+        if (b == keep)
+            return *by_body = bb, b;
+    }
+    int b = pick_head(c, in, &dist, &cone, &by_cone, &bb, &nearest, &nd, &bc, &bd);
+    *by_body = b >= 0 && bb;
+    return b;
+}
+
+void somvr_vb_cue_cfg_default(somvr_vb_cue_cfg *c) { c->fade_s = 0.12f, c->grace_s = 0.15f, c->rearm_s = 0.5f; }
+
+void somvr_vb_cue_reset(somvr_vb_cue *s)
+{
+    memset(s, 0, sizeof *s);
+    s->off_t = -1e9;
+}
+
+void somvr_vb_cue_step(somvr_vb_cue *s, const somvr_vb_cue_cfg *c, double t, uint64_t ok_id, somvr_vb_cue_out *o)
+{
+    memset(o, 0, sizeof *o);
+    double dt = s->t > 0 && t > s->t ? t - s->t : 0;
+    s->t = t;
+    if (ok_id)
+        s->seen_t = t;
+    int was = s->on;
+    uint64_t wid = s->id;
+    uint64_t want = ok_id ? ok_id : s->on && t - s->seen_t <= c->grace_s ? s->id : 0;
+    if (want && (!s->on || want != s->id)) { /* on, or on another orc */
+        int rearmed = !(s->off_id == want && t - s->off_t < c->rearm_s);
+        if (s->on)
+            s->off_id = s->id, s->off_t = t;
+        if (s->id != want)
+            s->level = 0; /* another orc: its glow from nothing */
+        s->on = 1, s->id = want, s->ons++;
+        if (rearmed)
+            o->tick = 1, s->ticks++;
+    } else if (!want && s->on) {
+        s->on = 0, s->off_id = s->id, s->off_t = t;
+    }
+    float k = c->fade_s > 0 ? (float)dt / c->fade_s : 1;
+    s->level = s->on ? fminf(1, s->level + k) : fmaxf(0, s->level - k);
+    if (!s->on && !(s->level > 0))
+        s->id = 0;
+    o->on = s->on, o->id = s->id, o->level = s->level;
+    o->changed = s->on != was || (s->on && s->id != wid);
+}
+
 /* B (the wraith hand) for this step: held while the trigger is, until the game's hold ends or hold_max */
 static void wraith_b(somvr_vb_hand *s, const somvr_vb_cfg *c, const somvr_vb_hand_in *in, somvr_vb_hand_out *o)
 {

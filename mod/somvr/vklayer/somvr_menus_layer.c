@@ -23,6 +23,11 @@
  *   SOMVR_XR_PROMPTS=on    build 8: the hints and notifications, the XP gains and the button prompts
  *                          (SOMVR_XR_PROMPTS_RECTS) cut out of the head-level HUD into one band (XL_BAND), larger
  *                          (SOMVR_XR_PROMPTS_QUAD: an 18-px line at 0.85 deg) and lower than the HUD, placed with it.
+ *   SOMVR_XR_POPUPS=gaze   build 21 (with SOMVR_XR_PROMPTS=on, the HUD world-locked): the band's tiles each their own
+ *                          quad (XL_BAND..XL_BAND3), shown while the HUD image has something in them (a reading of their
+ *                          rows after each stereo frame's copy), placed in front of the gaze when it comes up, held still
+ *                          in the room while it shows, eased to the new front when the head turns away more than 40 deg
+ *                          (SOMVR_XR_POPUPS_GEOM; ../somvr_menus.h 2c). Default band (build 20c).
  *   SOMVR_XR_TEST=PATH     headless tests only: test hands, buttons, sticks and on-demand dumps from that file
  *                          (../somvr_menus.h 4; scripts/menus-drive.sh writes it, scripts/xr_compose.py reads the dumps).
  */
@@ -66,6 +71,30 @@ static struct {
     int band_placed, band_shown;
     XrCompositionLayerQuad bq;
     uint64_t n_band, n_capped;
+    /* build 21: the popups where the player looks (SOMVR_XR_POPUPS=gaze; ../somvr_menus.h 2c) */
+    int pp, pp_bad, ppg_bad;
+    somvr_pp_cfg ppc;
+    somvr_pp_state pps;
+    somvr_pp_read pp_rd[SOMVR_PP_MAX]; /* the latest reading of each tile */
+    XrCompositionLayerQuad pq[SOMVR_PP_MAX];
+    uint32_t pp_has;                   /* bit i: tile i's quad in the last stereo frame (reuse frames repeat them) */
+    double pp_t;                       /* the last step (s; a gap of 0.5 s starts afresh) */
+    struct dev_st *pp_ds;              /* the readings' buffer: its device */
+    VkBuffer pp_buf;
+    VkDeviceMemory pp_mem;
+    uint8_t *pp_map;
+    int pp_dead;                       /* no readback this session: the band as one quad */
+    VkDeviceSize pp_esz;               /* an entry's bytes */
+    struct {
+        const slot_st *sl;      /* the game slot whose submit copies it (its fence), NULL = free */
+        uint64_t seq;
+        int n, w[SOMVR_PP_MAX], nrow[SOMVR_PP_MAX];
+        VkDeviceSize off[SOMVR_PP_MAX];
+    } pp_e[4];
+    int pp_armed;
+    uint64_t pp_sub, pp_seq_read, pp_nread, pp_nlate, n_pp_placed, n_pp_eased, n_pp_over, n_pp_frames;
+    uint32_t pp_lines;
+    double pp_us_max;                  /* the longest reading's measure (us) */
     int shown;              /* the watch face is seen (hysteresis) */
     XrCompositionLayerQuad q;
     uint64_t n_split, n_shown;
@@ -139,6 +168,9 @@ static void mn_config(void) {
     b = 0;
     somvr_pb_parse_quad(getenv("SOMVR_XR_PROMPTS_QUAD"), &MN.pbc, &b);
     MN.pb_bad |= b << 2;
+    MN.pp = somvr_pp_parse(getenv("SOMVR_XR_POPUPS"), &MN.pp_bad); /* build 21 */
+    somvr_pp_cfg_default(&MN.ppc);
+    somvr_pp_parse_geom(getenv("SOMVR_XR_POPUPS_GEOM"), &MN.ppc, &MN.ppg_bad);
     mn_xt_config();
 }
 
@@ -157,6 +189,10 @@ static void mn_setup(void) {
     MN.mono_stereo = 0, MN.extra = 0, MN.card_state = 0, MN.vtouch = 0, MN.lines = 0;
     MN.n_mono_boards = MN.n_hud_boards = MN.n_menu_frames = MN.n_split = MN.n_shown = MN.n_press_g = MN.n_press_v = 0;
     MN.band_placed = MN.band_shown = 0, MN.n_band = MN.n_capped = 0, MN.lay_w = MN.lay_h = 0;
+    somvr_pp_reset(&MN.pps), memset(MN.pp_rd, 0, sizeof MN.pp_rd), memset(MN.pp_e, 0, sizeof MN.pp_e);
+    MN.pp_has = 0, MN.pp_t = 0, MN.pp_dead = 0, MN.pp_armed = -1, MN.pp_lines = 0;
+    MN.pp_sub = MN.pp_seq_read = MN.pp_nread = MN.pp_nlate = MN.n_pp_placed = MN.n_pp_eased = MN.n_pp_over = 0;
+    MN.n_pp_frames = 0, MN.pp_us_max = 0;
     memset(&MN.lay, 0, sizeof MN.lay);
     somvr_tc_reset(&MN.tg), somvr_tc_reset(&MN.tv);
     if (MN.menu_bad & 1) lg("xr: menus: SOMVR_XR_MENU=%s is not front or off: off", getenv("SOMVR_XR_MENU"));
@@ -206,6 +242,19 @@ static void mn_setup(void) {
     lg("xr: prompts: %s (the rects %s in one band %.2f m from the eyes, %.0f deg below them, an 18-px line %.2f deg; "
        "placed with the HUD quad)", !MN.pb ? "off" : !X.hud ? "on, but no HUD quad" : "on", pr, MN.pbc.dist_m,
        MN.pbc.down_deg, MN.pbc.line_deg);
+    if (MN.pp_bad) lg("xr: popups: SOMVR_XR_POPUPS=%s is not gaze or band: band", getenv("SOMVR_XR_POPUPS"));
+    if (MN.ppg_bad) lg("xr: popups: SOMVR_XR_POPUPS_GEOM=%s is not DOWN_DEG,TURN_DEG,EASE_MS (0..40, 10..120, 0..2000): "
+                       "the defaults", getenv("SOMVR_XR_POPUPS_GEOM"));
+    lg("xr: popups: %s", MN.pp != SOMVR_PP_GAZE ? "band (the prompt band's tiles in one quad, placed with the HUD)"
+       : !MN.pb ? "gaze, but no prompt band (SOMVR_XR_PROMPTS): none" : cfg.hud == SOMVR_HUD_HEAD ? "gaze, but the HUD is "
+       "head-locked (SOMVR_XR_HUD=head): the band as it is" : "gaze");
+    if (MN.pp == SOMVR_PP_GAZE && MN.pb && cfg.hud != SOMVR_HUD_HEAD)
+        lg("xr: popups: gaze: each of the band's tiles its own quad, shown while the HUD image has something in it (every "
+           "%dth row read, alpha %d+ on %d texels), placed in front of the gaze as it comes up (its content %.0f deg under "
+           "the gaze, %.0f..%+.0f deg from the level), still in the room while it shows, eased over %.2f s to the new front "
+           "when the head turns more than %.0f deg from it, over %.1f s after it empties; one coming up over another goes "
+           "under it", SOMVR_PP_STEP, SOMVR_PP_ALPHA, SOMVR_PP_MIN_PX, MN.ppc.down_deg, MN.ppc.pitch_min_deg,
+           MN.ppc.pitch_max_deg, MN.ppc.ease_s, MN.ppc.turn_deg, MN.ppc.hold_s);
     lg("xr: card: %s; touch: %s (the fingertip %.1f cm past the aim pose; hover %.0f cm, press %.1f cm through after a front "
        "approach, release at %.1f cm; One Euro %.1f Hz + %.0f/(m/s))",
        MN.card ? (VM.on ? "the Controls page at the first arrival in the practice area" : "on, but no VR menu: none")
@@ -445,21 +494,250 @@ static const XrCompositionLayerBaseHeader *mn_band_layer(void) {
 static const XrCompositionLayerBaseHeader *mn_band_reuse(void) {
     return MN.band_shown ? (const XrCompositionLayerBaseHeader *)&MN.bq : NULL;
 }
+
+/* ---- build 21: the popups where the player looks (SOMVR_XR_POPUPS=gaze) ------------------------------------------- */
+#define MN_PP_NE 4 /* readings in flight at once */
+/* the band's tiles placed on their own this frame: their count (0 = the band as one quad: off, a head-locked HUD, a
+ * menu, more tiles than SOMVR_PP_MAX, no readback) and the first one's index in MN.lay */
+static int mn_pp_tiles(int *first) {
+    int nb = MN.pb ? MN.pb_px.n : 0;
+    if (MN.pp != SOMVR_PP_GAZE || !MN.pb || cfg.hud == SOMVR_HUD_HEAD || MN.pp_dead || !MN.lay.band[2] || nb < 1 ||
+        nb > SOMVR_PP_MAX || MN.lay.ntile < nb)
+        return 0;
+    *first = MN.lay.ntile - nb;
+    return nb;
+}
+static void mn_pp_free(struct dev_st *ds) {
+    if (ds && MN.pp_map) ds->UnmapMemory(ds->dev, MN.pp_mem);
+    if (ds && MN.pp_buf) ds->DestroyBuffer(ds->dev, MN.pp_buf, NULL);
+    if (ds && MN.pp_mem) ds->FreeMemory(ds->dev, MN.pp_mem, NULL);
+    MN.pp_map = NULL, MN.pp_buf = VK_NULL_HANDLE, MN.pp_mem = VK_NULL_HANDLE, MN.pp_ds = NULL;
+    memset(MN.pp_e, 0, sizeof MN.pp_e);
+}
+static void pp_destroy(void) { mn_pp_free(MN.pp_ds); } /* xr_teardown_session, after sc_wait_all */
+/* the readback buffer for entries of esz bytes (made at the first reading); 0 = ready */
+static int mn_pp_buf(struct dev_st *ds, VkDeviceSize esz) {
+    if (MN.pp_map) return MN.pp_ds == ds && esz <= MN.pp_esz ? 0 : -1;
+    if (MN.pp_dead) return -1;
+    MN.pp_dead = 1;
+    const char *what = "the device lacks the readback's functions";
+    if (ds->CmdCopyImageToBuffer && ds->CreateBuffer && ds->DestroyBuffer && ds->GetBufferMemoryRequirements &&
+        ds->AllocateMemory && ds->FreeMemory && ds->BindBufferMemory && ds->MapMemory && ds->UnmapMemory &&
+        ds->is->GetPhysicalDeviceMemoryProperties) {
+        VkBufferCreateInfo bci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = esz * MN_PP_NE,
+                                  .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+        what = "vkCreateBuffer";
+        if (ds->CreateBuffer(ds->dev, &bci, NULL, &MN.pp_buf) != VK_SUCCESS) MN.pp_buf = VK_NULL_HANDLE;
+        else {
+            VkMemoryRequirements mr;
+            VkPhysicalDeviceMemoryProperties mp;
+            ds->GetBufferMemoryRequirements(ds->dev, MN.pp_buf, &mr);
+            ds->is->GetPhysicalDeviceMemoryProperties(ds->pd, &mp);
+            int t = somvr_pick_host_memory(&mp, mr.memoryTypeBits);
+            VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size,
+                                       .memoryTypeIndex = (uint32_t)t};
+            void *m = NULL;
+            what = "no HOST_VISIBLE|HOST_COHERENT memory type";
+            if (t >= 0 && (what = "vkAllocateMemory", ds->AllocateMemory(ds->dev, &ai, NULL, &MN.pp_mem)) != VK_SUCCESS)
+                MN.pp_mem = VK_NULL_HANDLE;
+            else if (t >= 0 && (what = "vkBindBufferMemory", ds->BindBufferMemory(ds->dev, MN.pp_buf, MN.pp_mem, 0)) ==
+                                   VK_SUCCESS &&
+                     (what = "vkMapMemory", ds->MapMemory(ds->dev, MN.pp_mem, 0, VK_WHOLE_SIZE, 0, &m)) == VK_SUCCESS) {
+                MN.pp_map = m, MN.pp_ds = ds, MN.pp_dead = 0, MN.pp_esz = esz;
+                memset(m, 0, (size_t)(esz * MN_PP_NE));
+                return 0;
+            }
+        }
+    }
+    lg("xr: popups: no readback this session: %s (the band as one quad, placed with the HUD)", what);
+    mn_pp_free(ds);
+    return -1;
+}
+/* eyes_submit, after the HUD's copy (the HUD image in TRANSFER_SRC_OPTIMAL): every SOMVR_PP_STEP-th row of each band
+ * tile into a free entry */
+static void pp_cmds(struct dev_st *ds, VkCommandBuffer cmd, const slot_st *sl, const hud_st *hd) {
+    MN.pp_armed = -1;
+    int first = 0, n = mn_pp_tiles(&first);
+    if (!n || !MN.split || (hd->kind & 0xffu) != SOMVR_HUDK_WORLD || hd->w != MN.lay_w || hd->h != MN.lay_h) return;
+    if (!(hd->fmt == VK_FORMAT_R8G8B8A8_UNORM || hd->fmt == VK_FORMAT_R8G8B8A8_SRGB || hd->fmt == VK_FORMAT_B8G8R8A8_UNORM ||
+          hd->fmt == VK_FORMAT_B8G8R8A8_SRGB || hd->fmt == VK_FORMAT_A8B8G8R8_UNORM_PACK32 ||
+          hd->fmt == VK_FORMAT_A8B8G8R8_SRGB_PACK32)) {
+        if (!MN.pp_dead) lg("xr: popups: no readback this session: the HUD image's format %d (not 8-bit RGBA/BGRA): the band "
+                            "as one quad", hd->fmt);
+        MN.pp_dead = 1;
+        return;
+    }
+    VkDeviceSize esz = 0;
+    int rows = 0;
+    for (int i = 0; i < n; i++) {
+        const int *r = MN.lay.src[first + i];
+        esz += (VkDeviceSize)r[2] * (VkDeviceSize)(r[3] / SOMVR_PP_STEP) * 4, rows += r[3] / SOMVR_PP_STEP;
+    }
+    if (!esz || rows > 1024 || mn_pp_buf(ds, esz)) return;
+    int k = -1;
+    for (int i = 0; i < MN_PP_NE && k < 0; i++)
+        if (!MN.pp_e[i].sl) k = i;
+    if (k < 0) return; /* all in flight: no reading this frame */
+    VkBufferImageCopy reg[1024];
+    int nr = 0;
+    VkDeviceSize off = (VkDeviceSize)k * MN.pp_esz;
+    for (int i = 0; i < n; i++) {
+        const int *r = MN.lay.src[first + i];
+        int nrow = r[3] / SOMVR_PP_STEP;
+        MN.pp_e[k].w[i] = r[2], MN.pp_e[k].nrow[i] = nrow, MN.pp_e[k].off[i] = off;
+        for (int j = 0; j < nrow; j++, off += (VkDeviceSize)r[2] * 4)
+            reg[nr++] = (VkBufferImageCopy){.bufferOffset = off, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                            .imageOffset = {r[0], r[1] + j * SOMVR_PP_STEP + SOMVR_PP_STEP / 2, 0},
+                                            .imageExtent = {(uint32_t)r[2], 1, 1}};
+    }
+    ds->CmdCopyImageToBuffer(cmd, hd->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, MN.pp_buf, (uint32_t)nr, reg);
+    VkMemoryBarrier hb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                          .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+    ds->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &hb, 0, NULL, 0, NULL);
+    MN.pp_e[k].sl = sl, MN.pp_e[k].seq = ++MN.pp_sub, MN.pp_e[k].n = n;
+    MN.pp_armed = k;
+}
+/* eyes_submit's end: its submit went (ok) or not (the entry is free again) */
+static void pp_submitted(int ok) {
+    if (MN.pp_armed >= 0 && !ok) MN.pp_e[MN.pp_armed].sl = NULL;
+    MN.pp_armed = -1;
+}
+/* entry i's submit is done: each tile's reading (an older one than the last taken is dropped) */
+static void mn_pp_take(int i) {
+    uint64_t seq = MN.pp_e[i].seq;
+    MN.pp_e[i].sl = NULL;
+    if (!MN.pp_map) return;
+    if (seq <= MN.pp_seq_read) {
+        MN.pp_nlate++;
+        return;
+    }
+    MN.pp_seq_read = seq, MN.pp_nread++;
+    struct timespec ts0, ts1;
+    clock_gettime(CLOCK_MONOTONIC, &ts0);
+    for (int t = 0; t < MN.pp_e[i].n && t < SOMVR_PP_MAX; t++) {
+        int was = MN.pp_rd[t].present;
+        MN.pp_rd[t].present = somvr_pp_measure(MN.pp_map + MN.pp_e[i].off[t], MN.pp_e[i].w[t], MN.pp_e[i].nrow[t],
+                                               SOMVR_PP_STEP, MN.pp_rd[t].bb);
+        if (MN.pp_rd[t].present != was && MN.pp_lines++ < 300) {
+            if (MN.pp_rd[t].present)
+                lg("xr: popups: tile %d has something (reading %llu: its box %d,%d..%d,%d)", t,
+                   (unsigned long long)MN.pp_nread, MN.pp_rd[t].bb[0], MN.pp_rd[t].bb[1], MN.pp_rd[t].bb[2],
+                   MN.pp_rd[t].bb[3]);
+            else
+                lg("xr: popups: tile %d empty (reading %llu)", t, (unsigned long long)MN.pp_nread);
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+    double us = (double)(ts1.tv_sec - ts0.tv_sec) * 1e6 + (double)(ts1.tv_nsec - ts0.tv_nsec) * 1e-3;
+    if (us > MN.pp_us_max) MN.pp_us_max = us;
+    if (MN.pp_nread <= 2 || MN.pp_nread % 1800 == 0)
+        lg("xr: popups: reading %llu (%d tiles, %llu late; its measure %.0f us, the most so far %.0f us)",
+           (unsigned long long)MN.pp_nread, MN.pp_e[i].n, (unsigned long long)MN.pp_nlate, us, MN.pp_us_max);
+}
+/* slot_begin (its fence waited) and sc_free_slots: the readings that slot's last submit carried; idle = 0: dropped */
+static void pp_slot_done(const slot_st *sl, int idle) {
+    for (int i = 0; i < MN_PP_NE; i++)
+        if (MN.pp_e[i].sl == sl) {
+            if (idle) mn_pp_take(i);
+            else MN.pp_e[i].sl = NULL;
+        }
+}
+/* xr_frame, every present: the readings whose submits are done (their fences) */
+static void pp_poll(struct dev_st *ds) {
+    if (MN.pp != SOMVR_PP_GAZE || !ds->GetFenceStatus) return;
+    for (int i = 0; i < MN_PP_NE; i++)
+        if (MN.pp_e[i].sl && ds->GetFenceStatus(ds->dev, MN.pp_e[i].sl->fence) == VK_SUCCESS) mn_pp_take(i);
+}
+/* the stereo frame's band (after hud_quad): with gaze each tile's own quad where it was placed (XL_BAND + i), else the
+ * band as one quad */
+static void mn_band_layers(xr_comp *c, const somvr_posef eye[2]) {
+    int first = 0, n = mn_pp_tiles(&first);
+    MN.pp_has = 0;
+    if (!n || !MN.split || !X.hud_sc) {
+        c->l[XL_BAND] = mn_band_layer();
+        return;
+    }
+    MN.band_shown = 0;
+    double t = (double)X.fs.predictedDisplayTime * 1e-9;
+    if (MN.pp_t > 0 && t - MN.pp_t > 0.5) /* a menu, a video, the cover between: afresh */
+        somvr_pp_reset(&MN.pps), memset(MN.pp_rd, 0, sizeof MN.pp_rd);
+    MN.pp_t = t;
+    float d, a;
+    mn_band_geom(&d, &a);
+    float k = somvr_pb_width(MN.lay.band[2], MN.pbc.line_deg, d) / (float)MN.lay.band[2]; /* the band's metres a pixel */
+    float sz[SOMVR_PP_MAX][2];
+    int px[SOMVR_PP_MAX][2];
+    for (int i = 0; i < n; i++) {
+        const int *r = MN.lay.src[first + i];
+        px[i][0] = r[2], px[i][1] = r[3], sz[i][0] = k * (float)r[2], sz[i][1] = k * (float)r[3];
+    }
+    uint32_t ev = somvr_pp_step(&MN.pps, &MN.ppc, t, eye, d, n, MN.pp_rd, (const float(*)[2])sz, (const int(*)[2])px);
+    MN.n_pp_frames++;
+    float gy, gp, mid[3];
+    somvr_pp_gaze(eye, &gy, &gp, mid);
+    for (int i = 0; i < n; i++) {
+        const somvr_pp_tile *tl = &MN.pps.t[i];
+        if (ev & (1u << i)) MN.n_pp_placed++;
+        if (ev & (1u << (8 + i))) MN.n_pp_eased++;
+        if (ev & (1u << (16 + i))) MN.n_pp_over++;
+        if ((ev & (0x10101u << i)) && MN.pp_lines++ < 300) {
+            if (ev & (1u << i))
+                lg("xr: popups: tile %d placed (stereo frame %llu): its content at yaw %+.1f pitch %+.1f deg from the eyes "
+                   "(the gaze %+.1f %+.1f), %.2f m away, %.1f x %.1f deg%s", i, (unsigned long long)X.n_stereo,
+                   tl->yaw * 57.29578f, (tl->pitch - tl->dpitch) * 57.29578f, gy * 57.29578f, gp * 57.29578f, d,
+                   tl->wrad * 57.29578f, tl->hrad * 57.29578f, tl->under >= 0 ? ", under another" : "");
+            if (ev & (1u << (8 + i)))
+                lg("xr: popups: tile %d eases to the new front (stereo frame %llu): the head %.0f deg from it (yaw %+.1f -> "
+                   "%+.1f over %.2f s)", i, (unsigned long long)X.n_stereo,
+                   fabsf(remainderf(gy - tl->e_from[0], 6.2831853f)) * 57.29578f, tl->e_from[0] * 57.29578f,
+                   tl->e_to[0] * 57.29578f, MN.ppc.ease_s);
+            if (ev & (1u << (16 + i)))
+                lg("xr: popups: tile %d over (stereo frame %llu): empty for %.1f s, shown %.1f s", i,
+                   (unsigned long long)X.n_stereo, MN.ppc.hold_s, t - tl->shown_t);
+        }
+        if (!tl->shown) continue;
+        const int *dst = MN.lay.dst[first + i];
+        MN.pq[i] = (XrCompositionLayerQuad){
+            .type = XR_TYPE_COMPOSITION_LAYER_QUAD,
+            .layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+                          (cfg.hud_alpha == SOMVR_HUD_STRAIGHT ? XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT : 0),
+            .space = X.space,
+            .eyeVisibility = XR_EYE_VISIBILITY_BOTH,
+            .subImage = {X.hud_sc, {{dst[0], dst[1]}, {px[i][0], px[i][1]}}, 0},
+            .size = {sz[i][0], sz[i][1]}};
+        somvr_posef pose;
+        somvr_pp_pose(tl, d, &pose);
+        memcpy(&MN.pq[i].pose, &pose, sizeof MN.pq[i].pose);
+        c->l[XL_BAND + i] = (const XrCompositionLayerBaseHeader *)&MN.pq[i];
+        MN.pp_has |= 1u << i;
+    }
+    if (MN.pp_has) MN.n_band++;
+}
+/* a reuse frame: the last stereo frame's band (or popups) again */
+static void mn_band_reuse_layers(xr_comp *c) {
+    if (!MN.pp_has) {
+        c->l[XL_BAND] = mn_band_reuse();
+        return;
+    }
+    for (int i = 0; i < SOMVR_PP_MAX; i++)
+        if (MN.pp_has >> i & 1) c->l[XL_BAND + i] = (const XrCompositionLayerBaseHeader *)&MN.pq[i];
+}
 /* xr_end_comp: at most the system's layer count (xrGetSystemProperties; the spec's 16): a frame with more (every part
  * at once: 17 slots) goes without the band */
 static void xl_cap(xr_comp *c) {
-    uint32_t n = 0, max = X.max_layers ? X.max_layers : XL_MAX;
+    uint32_t n = 0, max = X.max_layers ? X.max_layers : XL_MAX, nb = 0;
     for (int i = 0; c->l[XL_OWN] && i < XL_N; i++) n += c->l[i] != NULL;
-    if (n > max + (c->l[XL_BAND] != NULL) && c->l[XL_HANDS]) /* build 10: then our hands (the game's are hidden) */
+    for (int i = XL_BAND; i <= XL_BAND3; i++) nb += c->l[i] != NULL; /* build 21: the popups' four */
+    if (n > max + nb && c->l[XL_HANDS]) /* build 10: then our hands (the game's are hidden) */
         c->l[XL_HANDS] = NULL, n--;
-    for (int i = XL_MBD; i <= XL_MBK && n > max + (c->l[XL_BAND] != NULL); i++) /* then the menus' backdrop */
+    for (int i = XL_MBD; i <= XL_MBK && n > max + nb; i++) /* then the menus' backdrop */
         if (c->l[i]) c->l[i] = NULL, n--;
-    if (n > max + (c->l[XL_BAND] != NULL) && c->l[XL_OBJL]) /* build 17: then the drop's line (its ring stays) */
+    if (n > max + nb && c->l[XL_OBJL]) /* build 17: then the drop's line (its ring stays) */
         c->l[XL_OBJL] = NULL, n--;
-    if (n > max + (c->l[XL_BAND] != NULL) && c->l[XL_OBJ]) /* build 15: then the objective's marker */
+    if (n > max + nb && c->l[XL_OBJ]) /* build 15: then the objective's marker */
         c->l[XL_OBJ] = NULL, n--;
-    if (n <= max || !c->l[XL_BAND]) return;
-    c->l[XL_BAND] = NULL;
+    if (n <= max || !nb) return;
+    for (int i = XL_BAND; i <= XL_BAND3; i++) c->l[i] = NULL;
     if (MN.n_capped++ < 3 || MN.n_capped % 600 == 0)
         lg("xr: prompts: a frame of %u layers (the runtime takes %u): without the band (%llu so far)", n, max,
            (unsigned long long)MN.n_capped);
@@ -706,7 +984,8 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
         const XrCompositionLayerBaseHeader *l = c->l[i];
         if (!l || l->type != XR_TYPE_COMPOSITION_LAYER_QUAD) continue;
         const char *what = i == XL_HUD ? (MN.hud_menu ? "hud (a menu board)" : "hud") : i == XL_MMAP ? "minimap"
-                           : i == XL_BAND ? "hud band"
+                           : i == XL_BAND && !MN.pp_has ? "hud band"
+                           : i >= XL_BAND && i <= XL_BAND3 ? "hud popup" /* build 21: SOMVR_XR_POPUPS=gaze's tiles */
                            : i == XL_VM0 ? (MN.card_state == 1 ? "vrmenu card" : "vrmenu panel")
                            : i == XL_VM1 || i == XL_VM2 ? "vrmenu marker" : i == XL_PTR0 || i == XL_PTR1 ? "pointer marker"
                            : i == XL_RING ? (CF.sc_w && ((const XrCompositionLayerQuad *)l)->subImage.swapchain == CF.sc_w
@@ -797,10 +1076,15 @@ static void xt_run(const char *line) {
     float sz[2];
     switch (c.op) {
     case SOMVR_XT_DUMP:
-        res = dump_next();
+        res = dump_next_k((uint64_t)c.v[0]); /* build 21: `dump K` = K frames ahead (two lines: consecutive frames) */
         break;
     case SOMVR_XT_SIZE: res = vh_resize(c.v[0], c.v[1]); break;
     case SOMVR_XT_LUMLOG: res = vh_lumlog((int)c.v[0]); break;
+    case SOMVR_XT_POPUPS: /* build 21: SOMVR_XR_POPUPS live */
+        MN.pp = (int)c.v[0], MN.pp_has = 0, MN.pp_t = 0;
+        somvr_pp_reset(&MN.pps), memset(MN.pp_rd, 0, sizeof MN.pp_rd);
+        res = MN.pp == SOMVR_PP_GAZE ? "popups gaze" : "popups band";
+        break;
     case SOMVR_XT_OFF: XT.h[h].on = 0, XT.h[h].input = 0, XT.h[h].btn = 0, XT.h[h].shake[0] = XT.h[h].shake[1] = 0; break;
     case SOMVR_XT_HEAD:
         if (!vm_head(&head)) {

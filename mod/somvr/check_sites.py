@@ -60,7 +60,10 @@ look-at, the called CO_LAT_SEE and CO_LAT_VIEW, the read-only proof CO_OBJ_PROPS
 SOMVR_TEXT_BUTTONS' patched call CO_TXT_ICON of the UI text's button icons, 45.10). Files
 named by an #include "somvr_*_game.c" line in SOURCE.c (somvr_step_game.c, somvr_finish_game.c, somvr_headparts_game.c,
 somvr_practice_game.c, somvr_body_game.c, somvr_minimap_game.c, somvr_session_game.c, somvr_gameopts_game.c,
-somvr_prompts_game.c, somvr_bowhit_game.c) are read with it.
+somvr_prompts_game.c, somvr_bowhit_game.c, somvr_render_game.c) are read with it. The SOMVR_FLATFX block of
+somvr_render_game.c (RENDER_SITES_BEGIN ... RENDER_SITES_END, re-xr-pipeline.md 86: the patched lens-flare slot, the
+sun shafts' and the lens drops' patched calls, SOMVR_FX_TEST's four patched particle/sprite draw slots) is counted on
+its own.
 Exit 0 = all sites match.
 """
 import os
@@ -414,6 +417,17 @@ def main():
             sys.exit("expected 2 SITE lines in somvr_cprompt_game.c's CPROMPT_SITES block (the patched CP_FX and CP_MARK "
                      "K_CALLs), found %d" % len(cp))
         sites = sites + cp
+    # SOMVR_FLATFX / SOMVR_FX_TEST (build 21): its block lives in somvr_render_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_render_game\.c"', text, re.M):
+        rd = [m for b in text.split("RENDER_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("RENDER_SITES_END", 1)[0])]
+        if [m[1] for m in rd] != ["K_VSLOT", "K_CALL", "K_CALL"] + ["K_VSLOT"] * 6 + ["K_ENTRY"] * 2:
+            sys.exit("expected 11 SITE lines in somvr_render_game.c's RENDER_SITES block (the patched RD_LENSFLARE K_VSLOT, "
+                     "RD_SHAFTS and RD_RAIN K_CALLs, SOMVR_FX_TEST's RD_PSYS, RD_GPUPSYS, RD_SPRITE, RD_FLARESPR, "
+                     "RD_PSYS_UPD, RD_PSYS_PREP K_VSLOTs, the read-only RD_VIS_INIT and RD_VIS_REQ K_ENTRYs), "
+                     "found %d" % len(rd))
+        sites = sites + rd
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

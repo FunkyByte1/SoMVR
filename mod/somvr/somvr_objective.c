@@ -206,7 +206,7 @@ somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ri
     return p;
 }
 
-somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, int hit) {
+somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, int hit, int sight) {
     somvr_ob_place p;
     memset(&p, 0, sizeof p);
     p.pose[3] = 1;
@@ -215,10 +215,12 @@ somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, 
     if (!isfinite(dist + deg) || !(dist > 0.3f) || !(deg > 0.1f) || !(deg < 30.0f)) return p;
     float ring = 2 * dist * tanf(0.5f * deg * 0.01745329252f), q[4];
     ob_face(pos, head, q);
-    p.kind = SOMVR_OBK_WORLD, p.cell = hit ? SOMVR_OB_CELL_STRIKE : SOMVR_OB_CELL_RING;
+    p.kind = SOMVR_OBK_WORLD;
+    p.cell = sight ? (hit ? SOMVR_OB_CELL_AIM_HIT : SOMVR_OB_CELL_AIM) : hit ? SOMVR_OB_CELL_STRIKE : SOMVR_OB_CELL_RING;
     memcpy(p.pose, q, sizeof q);
     memcpy(p.pose + 4, pos, 3 * sizeof(float));
-    p.size[0] = p.size[1] = ring * (float)SOMVR_OB_CELL / (hit ? (float)SOMVR_OB_STRIKE_RING_PX : 124.0f);
+    p.size[0] = p.size[1] = sight ? ring * (float)SOMVR_OB_AIM_PX / (float)SOMVR_OB_AIM_RING_PX
+                                  : ring * (float)SOMVR_OB_CELL / (hit ? (float)SOMVR_OB_STRIKE_RING_PX : 124.0f);
     p.yaw_deg = atan2f(d[0], -d[2]) * 57.29578f; /* logs: its bearing in the reference space */
     return p;
 }
@@ -302,9 +304,16 @@ somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], fl
 void somvr_ob_rect(int cell, int32_t r[4]) {
     if (cell < 0) cell = 0;
     if (cell >= SOMVR_OB_CELLS) cell = SOMVR_OB_CELLS - 1;
-    if (cell == SOMVR_OB_CELL_RING_NO) { /* build 18: a square after the strike's */
-        int k = SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELL_RING_NO - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE;
-        r[0] = k * SOMVR_OB_STRIDE + 1, r[1] = 1, r[2] = SOMVR_OB_CELL, r[3] = SOMVR_OB_CELL;
+    if (cell >= SOMVR_OB_CELL_TIMER0) { /* build 21: the timer's squares in the second row */
+        r[0] = (cell - SOMVR_OB_CELL_TIMER0) * SOMVR_OB_STRIDE + 1, r[1] = SOMVR_OB_STRIDE + 1;
+        r[2] = SOMVR_OB_CELL, r[3] = SOMVR_OB_CELL;
+        return;
+    }
+    if (cell >= SOMVR_OB_CELL_RING_NO) { /* build 18: a square after the strike's; build 21: the sight's two after it */
+        int k = SOMVR_OB_SQUARE_CELLS + (SOMVR_OB_CELL_RING_NO - SOMVR_OB_SQUARE_CELLS) * SOMVR_OB_WIDE +
+                (cell - SOMVR_OB_CELL_RING_NO);
+        int w = cell == SOMVR_OB_CELL_RING_NO ? SOMVR_OB_CELL : SOMVR_OB_AIM_PX;
+        r[0] = k * SOMVR_OB_STRIDE + 1, r[1] = 1, r[2] = w, r[3] = w;
         return;
     }
     if (cell >= SOMVR_OB_SQUARE_CELLS) { /* the strike's wide cells */
@@ -381,6 +390,37 @@ static void ob_strike_cell(uint8_t *px, const somvr_font *f, int cell, int bgra)
     ob_text_rim(px, f, lx, y0 + 2 * SOMVR_FONT_H + 4, no ? "ARROWS" : "STRIKE", 2, no ? red : white, bgra);
 }
 
+/* build 21: the share of texel (x, y) of a SOMVR_OB_AIM_PX square that lies between radii r0 and r1 of its centre (4 x 4
+ * samples: the thin ring's edges smooth) */
+static float ob_cover(int x, int y, float r0, float r1) {
+    const float c = 0.5f * SOMVR_OB_AIM_PX;
+    int n = 0;
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++) {
+            float dx = (float)x + (i + 0.5f) * 0.25f - c, dy = (float)y + (j + 0.5f) * 0.25f - c, d = sqrtf(dx * dx + dy * dy);
+            n += d >= r0 && d < r1;
+        }
+    return (float)n / 16.0f;
+}
+/* build 21: a sight cell - the ring (white or blue SOMVR_OB_AIM_WHITE_A, a dark edge of SOMVR_OB_AIM_DARK_A outside and
+ * inside it) and its centre dot (the same, a dark rim): in texels of the SOMVR_OB_AIM_PX square, the ring's outer edge
+ * SOMVR_OB_AIM_RING_PX / 2 = 19 from the centre: the dark 17.6 .. 19, the band 14.8 .. 17.6 (about 0.11 deg at 1.5 deg
+ * across), the dark 13.6 .. 14.8; the dot 1.7, its rim to 2.9 */
+static void ob_sight_cell(uint8_t *px, int cell, int bgra) {
+    static const float white[3] = {0.95f, 0.96f, 0.98f}, blue[3] = {0.62f, 0.85f, 1.00f}, dark[3] = {0.03f, 0.04f, 0.07f};
+    const float *ink = cell == SOMVR_OB_CELL_AIM_HIT ? blue : white, ro = 0.5f * SOMVR_OB_AIM_RING_PX;
+    int32_t r[4];
+    somvr_ob_rect(cell, r);
+    for (int y = 0; y < SOMVR_OB_AIM_PX; y++)
+        for (int x = 0; x < SOMVR_OB_AIM_PX; x++) {
+            int X = r[0] + x, Y = r[1] + y;
+            float dk = ob_cover(x, y, ro - 5.4f, ro) + ob_cover(x, y, 0, 2.9f), in = ob_cover(x, y, ro - 4.2f, ro - 1.4f) +
+                                                                                       ob_cover(x, y, 0, 1.7f);
+            ob_px(px, X, Y, dark, SOMVR_OB_AIM_DARK_A * dk, bgra); /* the edge first, the ink over it */
+            ob_px(px, X, Y, ink, SOMVR_OB_AIM_WHITE_A * in, bgra);
+        }
+}
+
 void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra) {
     static const float gold[3] = {1.00f, 0.80f, 0.30f}, dark[3] = {0.05f, 0.04f, 0.02f};
     memset(px, 0, (size_t)SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4);
@@ -429,6 +469,34 @@ void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra
             else if (d <= 50 && d > 6) ob_px(px, X, Y, gold, 0.12f, bgra);
             else if (d <= 6) ob_px(px, X, Y, gold, 0.85f, bgra);
         }
+    /* build 21: the timer cells (the second row): cell 3's ring, and inside it the white timer ring - a faint track, the
+     * part left (k of SOMVR_OB_TIMER_STEPS, clockwise from the cell's top) bright with a dark rim; armed: all of it
+     * wider and brighter, a faint white disc inside */
+    static const float white[3] = {1.0f, 1.0f, 1.0f};
+    for (int k = 0; k <= SOMVR_OB_TIMER_ARMED; k++) {
+        int32_t rt[4];
+        somvr_ob_rect(SOMVR_OB_CELL_TIMER0 + k, rt);
+        int armed = k == SOMVR_OB_TIMER_ARMED;
+        float left = armed ? 1.0f : (float)k / SOMVR_OB_TIMER_STEPS, r0 = armed ? 30.0f : 32.0f, r1 = armed ? 43.0f : 41.0f;
+        for (int y = 0; y < SOMVR_OB_CELL; y++)
+            for (int x = 0; x < SOMVR_OB_CELL; x++) {
+                float dx = x + 0.5f - SOMVR_OB_CELL / 2.0f, dy = y + 0.5f - SOMVR_OB_CELL / 2.0f, d = sqrtf(dx * dx + dy * dy);
+                float a = atan2f(dx, -dy) / 6.2831853f; /* 0 at the top, clockwise, 0..1 */
+                if (a < 0) a += 1.0f;
+                int X = rt[0] + x, Y = rt[1] + y;
+                if (d <= 62 && d > 59) ob_px(px, X, Y, dark, 0.6f, bgra); /* cell 3's ring */
+                else if (d <= 59 && d > 52) ob_px(px, X, Y, gold, 0.85f, bgra);
+                else if (d <= 52 && d > 50) ob_px(px, X, Y, dark, 0.5f, bgra);
+                else if (d <= 6) ob_px(px, X, Y, gold, 0.85f, bgra);
+                if (d > r1 + 2 || d <= r0 - 2 || d > 50) { /* outside the timer ring: cell 3's faint disc (armed: white) */
+                    if (d <= 50 && d > 6) ob_px(px, X, Y, armed && d < r0 - 2 ? white : gold, armed && d < r0 - 2 ? 0.22f : 0.12f, bgra);
+                    continue;
+                }
+                if (d > r1 || d <= r0) ob_px(px, X, Y, dark, 0.55f, bgra); /* the timer ring's dark rims */
+                else if (a < left) ob_px(px, X, Y, white, armed ? 1.0f : 0.95f, bgra); /* the part left */
+                else ob_px(px, X, Y, white, 0.22f, bgra); /* the track: the part gone */
+            }
+    }
     /* cell 4: the drop's line (build 17): across, a gold band in the middle and dark edges; down, faded in over its top
      * 15 % (it starts at the edge's height out of nothing; full at the ring) */
     for (int y = 0; y < SOMVR_OB_CELL; y++)
@@ -456,4 +524,7 @@ void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra
             else if (d <= 52 && d > 50) ob_px(px, X, Y, dark, 0.5f, bgra);
             else if (d <= 50) ob_px(px, X, Y, red, 0.10f, bgra);
         }
+    /* cells 9 and 10 (build 21): the bow's sight, soft white / wraith-blue */
+    ob_sight_cell(px, SOMVR_OB_CELL_AIM, bgra);
+    ob_sight_cell(px, SOMVR_OB_CELL_AIM_HIT, bgra);
 }

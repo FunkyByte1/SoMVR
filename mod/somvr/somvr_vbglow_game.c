@@ -20,7 +20,16 @@
  *                                    (a stereo frame within VG_STEREO_S): 0, the game's own answer with ClientFX off
  *                                    (FUN_00d8c7f0's gate byte 0x46b72d1). The other FX of the moment stay.
  * Test word: "vbglow game|log|hide|fx WORDS" (from the next FX on). Lines: `CONFIG verbs_glow=...`, `VBGLOW t=... fx
- * '...' ...` (the moment's FX and every new name, up to VG_LINES), `VBGLOW END ...`. */
+ * '...' ...` (the moment's FX and every new name, up to VG_LINES), `VBGLOW END ...`.
+ *
+ * Build 21 (docs/re-xr-pipeline.md 87.2-87.3, handoff/HANDOFF-hud.md "build 21"): the same hook keeps the game's FX made
+ * for the flat camera at Talion's head out of our eyes - the wraith world's smoke round the camera and Talion:
+ *   SOMVR_FX_FACE=game (default)     nothing (the hook stays as SOMVR_VERBS_GLOW has it)
+ *   SOMVR_FX_FACE=hide               the hook installed (also with SOMVR_VERBS_GLOW=game); an FX whose file name has one
+ *                                    of SOMVR_FX_FACE_WORDS's words (FF_FX_DEFAULT without it; the names are the player's
+ *                                    own presentation's, whatever they are made on) is not made while the game renders
+ *                                    our eyes.
+ * Test words: "vbglow face game|hide|fx WORDS", "vbglow all N" (every FX made from now on logged, N lines, 1..400). */
 
 /* VBGLOW_SITES_BEGIN (check_sites.py counts this block on its own: the patched tail jumps of ClientFX's two create
  * thunks FUN_00d8c7f0 and FUN_00d8c810 into FUN_00d8bae0) */
@@ -45,6 +54,8 @@ typedef uint64_t (*vg_create_fn)(uintptr_t mgr, uintptr_t out, uintptr_t cs, uin
  * and at its Idle, flags 2 / 1 loop); the orc's domination_brand_in/_loop, the wraith world's pres_wraith_* and the drains'
  * hog_* stay */
 #define VG_FX_DEFAULT "domination_in.fxp,domination_loop.fxp"
+/* build 21: the wraith world's FX at the flat camera and on Talion's body (runs 20261028-...: docs 87.2-87.3) */
+#define FF_FX_DEFAULT "pres_wraith_camera,pres_wraith_player"
 
 enum { VG_GAME, VG_LOG, VG_HIDE };
 static struct {
@@ -56,6 +67,11 @@ static struct {
 	_Atomic uintptr_t me, held;    /* Talion's and the held orc's HOBJECTs (H4) */
 	char words[VG_WORDS][48];      /* the hidden FX's name words (the writer thread's word: a seqlock-free swap of n) */
 	_Atomic int nwords;
+	_Atomic int face;              /* build 21: SOMVR_FX_FACE=hide (the word may change it) */
+	char fwords[VG_WORDS][48];     /* ... its words (as words) */
+	_Atomic int nfwords;
+	_Atomic int all;               /* "vbglow all N": this many more FX logged, each */
+	uint64_t face_hidden;
 	uint32_t names[VG_NAMES];      /* the names' hashes seen */
 	int nnames;
 	uint64_t calls, made, hidden, moment, lines;
@@ -65,38 +81,40 @@ static const char *const g_vg_w[] = { "game", "log", "hide" };
 
 static char vg_lower(char c) { return c >= 'A' && c <= 'Z' ? (char)(c + 32) : c; }
 
-static void vg_set_words(const char *s)
+static void vg_set_list(char (*words)[48], _Atomic int *nw, const char *s)
 {
 	int n = 0;
-	atomic_store(&g_vg.nwords, 0);
+	atomic_store(nw, 0);
 	while (s && *s && n < VG_WORDS) {
 		while (*s == ',' || *s == ' ')
 			s++;
 		size_t k = strcspn(s, ", ");
-		if (k && k < sizeof g_vg.words[0]) {
+		if (k && k < sizeof words[0]) {
 			for (size_t i = 0; i < k; i++)
-				g_vg.words[n][i] = vg_lower(s[i]);
-			g_vg.words[n++][k] = 0;
+				words[n][i] = vg_lower(s[i]);
+			words[n++][k] = 0;
 		}
 		s += k;
 	}
-	atomic_store(&g_vg.nwords, n);
+	atomic_store(nw, n);
 }
+static void vg_set_words(const char *s) { vg_set_list(g_vg.words, &g_vg.nwords, s); }
 
 /* the FX file name has one of the words (case-blind); its index + 1, 0 = none */
-static int vg_match(const char *name)
+static int vg_match_list(const char *name, char (*words)[48], _Atomic int *nw)
 {
 	char low[0x104];
 	size_t i = 0;
 	for (; name[i] && i < sizeof low - 1; i++)
 		low[i] = vg_lower(name[i]);
 	low[i] = 0;
-	int n = atomic_load(&g_vg.nwords);
+	int n = atomic_load(nw);
 	for (int k = 0; k < n; k++)
-		if (g_vg.words[k][0] && strstr(low, g_vg.words[k]))
+		if (words[k][0] && strstr(low, words[k]))
 			return k + 1;
 	return 0;
 }
+static int vg_match(const char *name) { return vg_match_list(name, g_vg.words, &g_vg.nwords); }
 
 /* H4 (the game thread): this frame renders our eyes (1) or the flat game (0); the verbs' moment and its HOBJECTs */
 static void vg_frame(int play)
@@ -138,14 +156,19 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 	uintptr_t parent;
 	memcpy(&flags, cs_ + VG_CS_FLAGS, sizeof flags), memcpy(&node, cs_ + VG_CS_NODE, sizeof node);
 	memcpy(off, cs_ + VG_CS_OFF, sizeof off), memcpy(&parent, cs_ + VG_CS_PARENT, sizeof parent);
+	uintptr_t me = atomic_load_explicit(&g_vg.me, memory_order_relaxed);
+	uintptr_t held = atomic_load_explicit(&g_vg.held, memory_order_relaxed);
 	int hit = mode == VG_HIDE && eyes ? vg_match(name) : 0;
+	/* build 21: SOMVR_FX_FACE - by name, on whatever the game made it (Talion, the camera's object, nothing) */
+	int face = !hit && eyes && atomic_load_explicit(&g_vg.face, memory_order_relaxed) &&
+		   vg_match_list(name, g_vg.fwords, &g_vg.nfwords);
 	g_vg.calls++;
 	uint64_t r = 0;
-	if (hit)
-		g_vg.hidden++, snprintf(g_vg.last_hidden, sizeof g_vg.last_hidden, "%.95s", name);
+	if (hit || face)
+		g_vg.hidden++, g_vg.face_hidden += face, snprintf(g_vg.last_hidden, sizeof g_vg.last_hidden, "%.95s", name);
 	else
 		r = ((vg_create_fn)g_vg.orig)(mgr, out, cs, start, b, c), g_vg.made++;
-	g_vg.moment += moment;
+	g_vg.moment += moment && mode != VG_GAME;
 	/* the line: every FX not made, the moment's FX on Talion or the held orc, and each name once */
 	uint32_t h = 2166136261u;
 	for (const char *p = name; *p; p++)
@@ -155,9 +178,8 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 		seen = g_vg.names[i] == h;
 	if (!seen)
 		g_vg.names[g_vg.nnames++] = h;
-	uintptr_t me = atomic_load_explicit(&g_vg.me, memory_order_relaxed);
-	uintptr_t held = atomic_load_explicit(&g_vg.held, memory_order_relaxed);
 	int ours = parent && (parent == me || parent == held); /* (the moment's dust and grass: their first sighting only) */
+	int all = atomic_load_explicit(&g_vg.all, memory_order_relaxed) > 0 && atomic_fetch_sub(&g_vg.all, 1) > 0;
 	double hs = 0;
 	int hk = 0;
 	if (hf_log_window(&hs, &hk)) { /* build 17: SOMVR_COMBAT_HITLOG - every FX made after our hit */
@@ -169,13 +191,14 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 			      (unsigned long)(uintptr_t)__builtin_return_address(0), hs * 1e3,
 			      g_hf_kind_w[hk >= 0 && hk < SC_KIND_N ? hk : 0], hit ? "not made (our eyes: hide)" : r ? "made" : "the game's 0");
 	}
-	if ((hit || (moment && ours) || !seen) && g_vg.lines < VG_LINES) {
-		g_vg.lines++;
-		logf_("VBGLOW t=%.3f fx '%s' on %s %#lx node %d off %.1f,%.1f,%.1f flags %#x start %d (caller %#lx)%s: %s", t,
+	if (all || ((hit || face || (moment && ours && mode != VG_GAME) || !seen) && g_vg.lines < VG_LINES)) {
+		g_vg.lines += !all;
+		logf_("VBGLOW t=%.3f fx '%s' on %s %#lx node %d off %.1f,%.1f,%.1f flags %#x start %d (caller %#lx)%s%s: %s", t,
 		      name, !parent ? "nothing" : parent == me ? "Talion" : parent == held ? "the held orc" : "an object",
 		      (unsigned long)parent, node, (double)off[0], (double)off[1], (double)off[2], flags, (int)(start & 0xff),
 		      (unsigned long)(uintptr_t)__builtin_return_address(0), moment ? " in the verbs' moment" : "",
-		      hit ? "not made (our eyes: hide)" : r ? "made" : "the game's own 0");
+		      all ? " (all)" : "", hit ? "not made (our eyes: hide)" : face ? "not made (our eyes: the face)"
+		      : r ? "made" : "the game's own 0");
 	}
 	return r;
 }
@@ -246,11 +269,15 @@ static void vg_start(const struct site_spec *sites, int *bad)
 	memset(&g_vg, 0, sizeof g_vg);
 	g_vg_sites = sites;
 	int want = env_word("SOMVR_VERBS_GLOW", g_vg_w, 3, VG_GAME);
-	if (!want)
+	static const char *const face_w[] = { "game", "hide" };
+	int face = env_word("SOMVR_FX_FACE", face_w, 2, 0);
+	const char *ffx = getenv("SOMVR_FX_FACE_WORDS");
+	vg_set_list(g_vg.fwords, &g_vg.nfwords, ffx && *ffx ? ffx : FF_FX_DEFAULT);
+	if (!want && !face)
 		return;
 	const char *fx = getenv("SOMVR_VERBS_GLOW_FX");
 	vg_set_words(fx ? fx : VG_FX_DEFAULT);
-	if (g_vb.mode != VB_ON)
+	if (want && g_vb.mode != VB_ON)
 		logf_("CONFIG verbs_glow: SOMVR_VERBS is not on (its FX are still logged and hidden by name)");
 	int n = vg_install(sites, 2);
 	if (n != 2) {
@@ -263,12 +290,18 @@ static void vg_start(const struct site_spec *sites, int *bad)
 	}
 	g_vg.installed = 1;
 	atomic_store(&g_vg.mode, want);
-	char ws[VG_WORDS * 50] = "";
+	atomic_store(&g_vg.face, face);
+	char ws[VG_WORDS * 50] = "", fs[VG_WORDS * 50] = "";
 	for (int i = 0; i < atomic_load(&g_vg.nwords); i++)
 		snprintf(ws + strlen(ws), sizeof ws - strlen(ws), "%s'%s'", i ? ", " : "", g_vg.words[i]);
+	for (int i = 0; i < atomic_load(&g_vg.nfwords); i++)
+		snprintf(fs + strlen(fs), sizeof fs - strlen(fs), "%s'%s'", i ? ", " : "", g_vg.fwords[i]);
 	logf_("CONFIG verbs_glow=%s (SOMVR_VERBS_GLOW: ClientFX's create %s; the verbs' moment's FX logged%s%s)", g_vg_w[want],
-	      want == VG_HIDE ? "watched" : "logged only", want == VG_HIDE ? "; not made in our eyes: the FX named " : "",
+	      want == VG_HIDE ? "watched" : want ? "logged only" : "hooked for SOMVR_FX_FACE, nothing of the verbs' hidden",
+	      want == VG_HIDE ? "; not made in our eyes: the FX named " : "",
 	      want == VG_HIDE ? (ws[0] ? ws : "(no words: none)") : "");
+	logf_("CONFIG fx_face=%s (SOMVR_FX_FACE: %s%s)", face_w[face], face ? "not made in our eyes: the FX named " : "nothing hidden",
+	      face ? (fs[0] ? fs : "(no words: none)") : "");
 }
 
 /* the writer thread: "vbglow game|log|hide|fx WORDS" */
@@ -276,7 +309,25 @@ static const char *vg_word(const char *w)
 {
 	static char msg[200];
 	if (!g_vg.installed)
-		return "vbglow (SOMVR_VERBS_GLOW is game: nothing patched)";
+		return "vbglow (SOMVR_VERBS_GLOW and SOMVR_FX_FACE are game: nothing patched)";
+	if (!strncmp(w, "all ", 4)) { /* build 21: every FX from now on, N lines */
+		int n = atoi(w + 4);
+		atomic_store(&g_vg.all, n < 1 ? 0 : n > 400 ? 400 : n);
+		snprintf(msg, sizeof msg, "vbglow all: the next %d FX logged", atomic_load(&g_vg.all));
+		return msg;
+	}
+	if (!strncmp(w, "face ", 5)) { /* build 21: SOMVR_FX_FACE's "game|hide|fx WORDS" */
+		w += 5;
+		if (!strncmp(w, "fx ", 3))
+			vg_set_list(g_vg.fwords, &g_vg.nfwords, w + 3);
+		else if (!strncmp(w, "hide", 4) || !strncmp(w, "game", 4))
+			atomic_store(&g_vg.face, w[0] == 'h');
+		else
+			return "vbglow face (not game|hide|fx WORDS: ignored)";
+		snprintf(msg, sizeof msg, "vbglow face: %s, %d words", atomic_load(&g_vg.face) ? "hide" : "game",
+			 atomic_load(&g_vg.nfwords));
+		return msg;
+	}
 	if (!strncmp(w, "fx ", 3)) {
 		vg_set_words(w + 3);
 		snprintf(msg, sizeof msg, "vbglow fx: %d words (%s)", atomic_load(&g_vg.nwords), w + 3);
@@ -294,8 +345,9 @@ static void vg_end_log(void)
 {
 	if (!g_vg.installed)
 		return;
-	logf_("VBGLOW END fx asked %llu: made %llu, not made in our eyes %llu (the last '%s'), in the verbs' moment %llu; "
-	      "%d names; now %s", (unsigned long long)g_vg.calls, (unsigned long long)g_vg.made,
-	      (unsigned long long)g_vg.hidden, g_vg.last_hidden, (unsigned long long)g_vg.moment, g_vg.nnames,
-	      g_vg_w[atomic_load(&g_vg.mode)]);
+	logf_("VBGLOW END fx asked %llu: made %llu, not made in our eyes %llu (the last '%s'; %llu by SOMVR_FX_FACE), in the "
+	      "verbs' moment %llu; %d names; now %s, the face %s", (unsigned long long)g_vg.calls, (unsigned long long)g_vg.made,
+	      (unsigned long long)g_vg.hidden, g_vg.last_hidden, (unsigned long long)g_vg.face_hidden,
+	      (unsigned long long)g_vg.moment, g_vg.nnames, g_vg_w[atomic_load(&g_vg.mode)],
+	      atomic_load(&g_vg.face) ? "hide" : "game");
 }

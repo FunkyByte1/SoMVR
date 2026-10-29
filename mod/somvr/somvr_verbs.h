@@ -22,6 +22,7 @@
  * A fist moved onto an orc holds nothing (the squeeze must start at the head); the trigger is the bow's everywhere else. */
 #ifndef SOMVR_VERBS_H
 #define SOMVR_VERBS_H
+#include <stdint.h>
 
 typedef struct {
     float reach_cm;    /* the palm this close to an orc's head point = on its head (45: run 001308's misses at 42-44) */
@@ -125,4 +126,36 @@ enum {
 int somvr_vb_attack_kind(const char *name);
 const char *somvr_vb_kind_name(int k);
 
+/* build 21 (SOMVR_VERBS_CUE, docs/re-xr-pipeline.md 85): the grab cue. somvr_vb_reach: the orc the open, idle left hand
+ * is in grab reach of now by the squeeze's own rule (the head's sphere, the reach-out cone, a stealth target's back);
+ * -1 = none (holding, a fist, not live, no palm). keep >= 0: that orc stays picked a little past the rule's edge
+ * (reach_cm + keep_cm, cone_deg + keep_deg: no flicker at the border). *by_body: by its back (the stealth grab) */
+int somvr_vb_reach(const somvr_vb_cfg *c, const somvr_vb_hand *s, const somvr_vb_hand_in *in, int keep, float keep_cm,
+                   float keep_deg, int *by_body);
+typedef struct {
+    float fade_s;  /* the glow's fade in / out (0.12 s) */
+    float grace_s; /* the cue stays this long after its orc left reach or the game's yes (0.15 s: one stale answer) */
+    float rearm_s; /* the tick again for the same orc only after it was off this long (0.5 s) */
+} somvr_vb_cue_cfg;
+void somvr_vb_cue_cfg_default(somvr_vb_cue_cfg *c);
+typedef struct {
+    int on;
+    uint64_t id;      /* the orc the glow is on (kept while it fades out; 0 = none) */
+    double seen_t;    /* the last step its orc was in reach with the game's yes */
+    double off_t;     /* when the cue last went off (the re-arm) ... */
+    uint64_t off_id;  /* ... for which orc */
+    double t;         /* the last step's time */
+    float level;      /* 0..1, the fade */
+    uint64_t ons, ticks;
+} somvr_vb_cue;
+typedef struct {
+    int on;        /* the cue is on: its orc in reach, the game takes the grab */
+    uint64_t id;   /* the orc the glow is on (also while it fades out; 0 = none) */
+    float level;   /* 0..1 */
+    int tick;      /* the haptic tick now (the cue came on) */
+    int changed;   /* on / off, or another orc (the log) */
+} somvr_vb_cue_out;
+void somvr_vb_cue_reset(somvr_vb_cue *s);
+/* one step at t: ok_id = the orc in reach the game would grab now (0 = none) */
+void somvr_vb_cue_step(somvr_vb_cue *s, const somvr_vb_cue_cfg *c, double t, uint64_t ok_id, somvr_vb_cue_out *o);
 #endif

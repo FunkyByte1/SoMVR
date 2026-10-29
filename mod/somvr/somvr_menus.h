@@ -151,6 +151,70 @@ int somvr_hud_layout_make(uint32_t w, uint32_t h, const int *mm, const somvr_ht_
 #define SOMVR_HUD_SPLIT_MAX 160
 int somvr_hud_split(uint32_t w, uint32_t h, const somvr_hud_layout *l, int32_t out[][6], int cap);
 
+/* ==== 2c. build 21: the popups where the player looks (SOMVR_XR_POPUPS=gaze; docs/re-xr-pipeline.md 87.1) ========== */
+/* With SOMVR_XR_PROMPTS=on the band's tiles (the banners, the hints, the XP gains, the button prompts) were one quad
+ * placed with the HUD quad - once a session, so every XP popup came up at the same place in the room. With gaze, each
+ * tile is its own quad, shown only while the HUD image has something in it (a reading of its rows, every
+ * SOMVR_PP_STEP-th, after each stereo frame's copy): when something comes up it is placed in front of the gaze (its
+ * content's centre down_deg below the gaze, at the band's distance and scale), it holds still in the room while it shows,
+ * the next one is placed afresh (under one still shown where it would overlap it), and a head turned more than turn_deg
+ * from a shown one eases it (ease_s, smoothstep) to the new front. Gone for hold_s = over. */
+enum { SOMVR_PP_BAND = 0, SOMVR_PP_GAZE = 1 };
+/* SOMVR_XR_POPUPS: unset/"band"/"off"/"0" = BAND (build 20c: the band placed with the HUD); "gaze"/"on"/"1" = GAZE;
+ * anything else = BAND and *bad = 1 */
+int somvr_pp_parse(const char *v, int *bad);
+#define SOMVR_PP_MAX 4     /* tiles placed on their own (the band's four); more = the band as build 20c */
+#define SOMVR_PP_STEP 4    /* a reading: every 4th row of each tile (an 18-px line's strokes cross 3-4 of them) */
+#define SOMVR_PP_ALPHA 32  /* a texel with this alpha (of 255) or more is content */
+#define SOMVR_PP_MIN_PX 12 /* ... and a tile with this many such texels has some */
+typedef struct {
+    float down_deg;      /* the content's centre below the gaze when it comes up (13 deg) */
+    float turn_deg;      /* the head turned more than this (yaw) from a shown popup: it eases to the new front (40) */
+    float ease_s;        /* that ease (0.35 s, smoothstep) */
+    float hold_s;        /* nothing in the tile for this long = the popup over (0.3 s; a blink of its text keeps it) */
+    float pitch_min_deg; /* the content's centre never lower than this (-50: a look at the feet) ... */
+    float pitch_max_deg; /* ... nor higher (+10: a look at the sky keeps it near the horizon) */
+    float gap_deg;       /* between two popups stacked (1 deg) */
+} somvr_pp_cfg;
+void somvr_pp_cfg_default(somvr_pp_cfg *c);
+/* SOMVR_XR_POPUPS_GEOM=DOWN_DEG,TURN_DEG,EASE_MS (0..40, 10..120, 0..2000); a bad value = the defaults, *bad = 1 */
+void somvr_pp_parse_geom(const char *v, somvr_pp_cfg *c, int *bad);
+/* a tile's reading: nrow rows of w RGBA/BGRA texels (alpha the 4th byte), row j = the tile's row j * step + step / 2.
+ * Returns 1 when it has content (SOMVR_PP_MIN_PX texels of SOMVR_PP_ALPHA or more); bb = their box in the tile's pixels
+ * (x0, y0, x1, y1; the rows' bands) */
+int somvr_pp_measure(const uint8_t *px, int w, int nrow, int step, int bb[4]);
+typedef struct {
+    int present;  /* the last reading had content */
+    int bb[4];    /* its box (tile pixels) */
+} somvr_pp_read;
+typedef struct {
+    int shown;
+    float yaw, pitch;   /* the anchor (rad; yaw + = to the left, about +Y; pitch + = up) */
+    float dpitch;       /* the content's centre this far below the anchor (stacked under another; rad) */
+    float eye[3];       /* the eyes' midpoint it was placed (or eased) from */
+    float off[2];       /* the content's centre on the quad (m from its centre; x right, y up) */
+    float wrad, hrad;   /* the content's angular size */
+    int easing;
+    double e_t0;
+    float e_from[5], e_to[5]; /* yaw, pitch, the eyes' midpoint */
+    double gone_t;      /* nothing in it since (s; < 0: something) */
+    double shown_t;     /* placed at */
+    int under;          /* stacked under this tile (-1: none) */
+    uint32_t n_placed, n_eased;
+} somvr_pp_tile;
+typedef struct {
+    somvr_pp_tile t[SOMVR_PP_MAX];
+} somvr_pp_state;
+void somvr_pp_reset(somvr_pp_state *s);
+/* the gaze of two eye poses: yaw and pitch (rad) of eye 0's -Z, the eyes' midpoint */
+void somvr_pp_gaze(const somvr_posef eye[2], float *yaw, float *pitch, float mid[3]);
+/* One stereo frame at t (s): the eyes, the popups' distance, n tiles (<= SOMVR_PP_MAX) with their latest readings, quad
+ * sizes (m) and pixel sizes. Returns events: bit i = tile i placed, bit 8 + i = its ease began, bit 16 + i = over. */
+uint32_t somvr_pp_step(somvr_pp_state *s, const somvr_pp_cfg *c, double t, const somvr_posef eye[2], float dist, int n,
+                       const somvr_pp_read *rd, const float (*sz)[2], const int (*px)[2]);
+/* a shown tile's quad pose (its content's centre on the line from the eye to the anchor, the quad facing the eye) */
+void somvr_pp_pose(const somvr_pp_tile *tl, float dist, somvr_posef *out);
+
 /* ==== 3. touch ===================================================================================================== */
 /* SOMVR_XR_TOUCH: unset/"off"/"0" = OFF, "on"/"1" = ON (the laser stays); anything else = OFF and *bad = 1 */
 enum { SOMVR_TC_OFF = 0, SOMVR_TC_ON = 1 };
@@ -231,7 +295,8 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
  *                                          the fist closes round (SOMVR_XR_HANDS_GRIP_CM: 0 = build 17's fist, 2..5 cm)
  *   lumlog N                               build 17: eye 0's mean colour logged for the next N frames (1..400; the hands'
  *                                          light probe: a look's ramp timed, e.g. the wraith vision's)
- *   dump                                   a stereo dump at the next frame (SOMVR_XR_DUMP must be on): the eyes, the
+ *   popups band|gaze                       build 21: SOMVR_XR_POPUPS live (the same boot's before and after)
+ *   dump [K]                               a stereo dump at the next frame (build 21: K frames ahead, 1..8) (SOMVR_XR_DUMP must be on): the eyes, the
  *                                          HUD swapchain image, the VR menu's picture and the frame's quads
  *   hand L|R off                           that hand untracked again
  *   hand L|R head X Y Z [RX RY RZ] [s SEC] the grip and the aim at X right, Y up, Z ahead (cm) of the head (its yaw
@@ -248,7 +313,7 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
  *   stick L|R X Y                          held (-1..1)
  * '#' and blank lines are skipped. */
 enum { SOMVR_XT_NONE = 0, SOMVR_XT_DUMP, SOMVR_XT_OFF, SOMVR_XT_HEAD, SOMVR_XT_TOUCH, SOMVR_XT_BTN, SOMVR_XT_STICK,
-       SOMVR_XT_SIZE, SOMVR_XT_LUMLOG, SOMVR_XT_AIM, SOMVR_XT_SHAKE }; /* (build 20: AIM, SHAKE) */
+       SOMVR_XT_SIZE, SOMVR_XT_LUMLOG, SOMVR_XT_AIM, SOMVR_XT_SHAKE, SOMVR_XT_POPUPS }; /* (build 20: AIM, SHAKE; 21: POPUPS) */
 enum { SOMVR_XTS_BOARD = 0, SOMVR_XTS_PANEL = 1, SOMVR_XTS_WATCH = 2 };
 enum { SOMVR_XTB_MENU = 0, SOMVR_XTB_A, SOMVR_XTB_B, SOMVR_XTB_STICK, SOMVR_XTB_TRIGGER, SOMVR_XTB_SQUEEZE };
 typedef struct {
