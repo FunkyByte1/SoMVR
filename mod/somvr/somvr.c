@@ -465,6 +465,7 @@
 #include "somvr_vision.h" /* SOMVR_VISION (somvr_gameopts_game.c) */
 #include "somvr_wstep.h"
 #include "somvr_jump.h"
+#include "somvr_above.h" /* build 25: SOMVR_ABOVE (somvr_above_game.c, included last) */
 #include "somvr_vrhands.h" /* SOMVR_VRHANDS (somvr_vrhands_game.c, included after the fingers' file) */
 #include "somvr_surface.h" /* SOMVR_HANDS_SURFACE (somvr_surface_game.c, included after the VR hands' file) */
 #include "somvr_smooth.h" /* SOMVR_HANDS_SMOOTH, SOMVR_SWORD_WEIGHT (somvr_smooth_game.c, included after the fight's) */
@@ -1400,6 +1401,16 @@ static int br_press(uintptr_t c, double t);
 static void br_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, double t);
 static const char *br_word(const char *w);
 static int br_unblock_now(double t);
+/* build 25 (somvr_above_game.c, included last; docs/re-xr-pipeline.md 102): SOMVR_ABOVE - kills and brands from above */
+static void fa_start(int *bad);
+static void fa_end_log(void);
+static void fa_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
+static void fa_blade(const float *root, double t);
+static int fa_bm(int act, int *hc, int *w, double t);
+static void fa_fade(void);
+static int fa_lift(double t);
+static void fa_glow_add(struct th_glow *gl, int *ng);
+static const char *fa_word(const char *w);
 static int ssw_take(double t);
 static void ssw_took(double t, const char *how);
 static const char *gc_word(const char *w);
@@ -2076,6 +2087,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	fb_frame(); /* SOMVR_FALLBACK: third person now? (then head_ok = 0: the camera base); the record's fade level */
 	st_frame(); /* SOMVR_DASH / SOMVR_PHASE=blink: the move's black in the fade level (the larger one) */
 	pr_fade();  /* SOMVR_PRACTICE: the blink there or back (the larger one) */
+	fa_fade();  /* build 25, SOMVR_ABOVE: the drop's blink (the larger one) */
 	hr_fade();  /* SOMVR_HEAD_ROCK: the head in the rock (the larger one); back to Talion's eyes under a black */
 	tt_fade();  /* SOMVR_HEAD_TETHER: back to Talion's eyes under the black (the last frame's measure asked) */
 	cl_body();  /* SOMVR_CLIMB: no follow request while a climb is on */
@@ -4236,6 +4248,7 @@ static void combat_frame(uintptr_t pl, int head_ok)
 	}
 	hf_blade(&b, t); /* SOMVR_COMBAT_BITE: the hits' blade against the held point */
 	stl_hand_track(body ? root : NULL, t); /* build 22, SOMVR_STEALTH_KILL_CARRIED: the hand's own motion */
+	fa_blade(body ? root : NULL, t); /* build 25, SOMVR_ABOVE: the sword hand's plunge at an orc below */
 	int edge = hf_biting() || stl_sticking() ? 0 : sc_speed_push(&g_cb.sp, &g_cb.cfg, &b); /* (build 21: or stuck) */
 	uintptr_t pcomb = body ? peek_ptr(pl + P_COMBAT) : 0, pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0;
 	if (pc && (vptr_of((void *)pc) != g_cbg.vt_combat || !peek_ptr(pc + C_PLAYER)))
@@ -11483,6 +11496,7 @@ static int bm_pre(uintptr_t pl)
 	if (g_fb.forced == 2)
 		w = 0;
 	act = bm_ret_frame(act, &hc, w, t); /* build 20: SOMVR_BM_RETURN_CM - his body back under the held view */
+	act = fa_bm(act, &hc, &w, t); /* build 25, SOMVR_ABOVE: the drop's blink holds the view (no window) */
 	int paused = (in.have & SOMVR_FBR_PAUSE) && in.paused;
 	const somvr_bm_cfg *bcfg = &g_bm.cfg; /* build 22, SOMVR_BM_DEATH=first: the death in first person */
 	int step_paused = scr_bm(conds, paused, &w, &wc, (in.have & SOMVR_FBR_PRES) ? in.pres : 0, t, &bcfg);
@@ -14351,7 +14365,7 @@ static void lo_pm_pre(uintptr_t pm, const float *xf)
 	}
 	g_lo.have_post = 0, g_lo.post_pm = pm;
 	st_pm_own(&own, &in, pl, cmb, root, in.have_root); /* SOMVR_DASH / SOMVR_PHASE: the stock evade's ticks ours */
-	if ((in.why & g_lo.hold) && !sk_lift(t)) /* SOMVR_LOCO_HOLD: the game's move plays in place; only the stick moves */
+	if ((in.why & g_lo.hold) && !sk_lift(t) && !fa_lift(t)) /* SOMVR_LOCO_HOLD: the game's move plays in place; only the stick moves */
 		in.why &= ~g_lo.hold, g_lo.n_held++; /* Talion (not the Shadow Strike's: SOMVR_BOW_STRIKE=dash|blink) */
 	tk_pm_own(sc, &in, root, in.have_root, t); /* SOMVR_COMBAT_HOLD_TALION: an enemy's sync on Talion in place */
 	somvr_loco_out *o = &g_lo.o;
@@ -15185,6 +15199,8 @@ static void *writer_main(void *arg)
 					what = xc_word(w + 8);
 				} else if (seen && !strncmp(w, "verbs ", 6)) { /* SOMVR_VERBS: "verbs status|press ..." */
 					what = vb_word(w + 6);
+				} else if (seen && !strncmp(w, "above ", 6)) { /* build 25, SOMVR_ABOVE: "above status|probe|far CM|trace S" */
+					what = fa_word(w + 6);
 				} else if (seen && !strncmp(w, "cue ", 4)) { /* build 21, SOMVR_VERBS_CUE: "cue on|off|log|probe|status" */
 					what = gc_word(w + 4);
 				} else if (seen && !strncmp(w, "ssword ", 7)) { /* build 21, SOMVR_STRIKE_SWORD: "ssword hand|off" */
@@ -16886,6 +16902,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	vb_start(&bad);                 /* SOMVR_VERBS: the Nemesis verbs (after combat, input and the prompts) */
 	gc_start(&bad);                 /* build 21, SOMVR_VERBS_CUE: the grab cue (after the verbs) */
 	br_start(&bad);                 /* build 23, SOMVR_VERBS_BRAND: the brand by the hand (after the cue) */
+	fa_start(&bad);                 /* build 25, SOMVR_ABOVE: kills and brands from above (after the brand) */
 	bz_start(&bad);                 /* build 22, SOMVR_BEASTS: caragors, ghuls, graugs (after the threat) */
 	ssw_start(&bad);                /* build 21, SOMVR_STRIKE_SWORD: the Shadow Strike's sword (after the slots) */
 	kp_start(&bad);                 /* build 22, SOMVR_CAPTAIN: the captain's sites and the config line (after the practice) */
@@ -17067,6 +17084,7 @@ static void somvr_end_logs(const char *why)
 	stl_end_log(); /* SOMVR_STEALTH_KILL */
 	vb_end_log();  /* SOMVR_VERBS */
 	br_end_log();  /* build 23: SOMVR_VERBS_BRAND */
+	fa_end_log();  /* build 25: SOMVR_ABOVE */
 	c21_end_log(); /* build 21: SOMVR_VERBS_CUE, SOMVR_STRIKE_SWORD */
 	bz_end_log();  /* build 22: SOMVR_BEASTS */
 	kp_end_log(); /* build 22: SOMVR_CAPTAIN */
@@ -17818,11 +17836,14 @@ static void th_frame(uintptr_t pl, int stereo)
 		if (haps[s])
 			th_pulse(1 << s, haps[s], t);
 	gc_glow_add(gl, &ng); /* build 21, SOMVR_VERBS_CUE: the grab cue's blue glow at a grabbable orc's collar */
+	fa_glow_add(gl, &ng); /* build 25, SOMVR_ABOVE: the drop kill's cue on the orc below */
 	somvr_th_map m = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
 			   { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
 	for (int i = 0; i < ng; i++) { /* the glow's size for its distance in the room (/ the player size) */
 		somvr_th_to_xr(&m, gl[i].pos, e.g[i].pos);
-		e.g[i].size_m = (gl[i].kind & SOMVR_THK_BLUE) ? gc_glow_size_m()
+		/* (build 25: a blue glow past 2.5 m - SOMVR_ABOVE's cue on an orc below - keeps the angular size it has at 2.5 m;
+		 * the grab cue's reach ends at 1.7 m) */
+		e.g[i].size_m = (gl[i].kind & SOMVR_THK_BLUE) ? gc_glow_size_m() * fmaxf(1.0f, gl[i].dist / 250.0f)
 			: somvr_th_glow_size(&g_th.cfg, gl[i].dist / somvr_rig_scale(&g_rig)), e.g[i].level = gl[i].level,
 		e.g[i].kind = gl[i].kind;
 	}
@@ -20513,6 +20534,7 @@ static void df_clank_fx(double t)
 #include "somvr_captain_game.c" /* build 22: SOMVR_CAPTAIN, a Nemesis captain in VR (docs/re-xr-pipeline.md 88) */
 #include "somvr_jump_game.c" /* build 22: SOMVR_JUMP / SOMVR_VAULT, the jump and the vault (docs/re-xr-pipeline.md 91) */
 #include "somvr_brand_game.c" /* build 23: SOMVR_VERBS_BRAND, the brand by the hand (docs/re-xr-pipeline.md 97) */
+#include "somvr_above_game.c" /* build 25: SOMVR_ABOVE, kills and brands from above (docs/re-xr-pipeline.md 102) */
 static int tk_holding(void) { return g_tk.on && g_tk.active; } /* SOMVR_HEAD_TETHER: not measured while held */
 
 #ifndef SOMVR_SELFTEST

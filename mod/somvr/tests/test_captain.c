@@ -106,6 +106,25 @@ static void test_intro(void)
     CHECK(somvr_cp_intro_world(&c, head, zero, ahead, NULL, NULL), "no forward known: by the distance alone");
 }
 
+/* build 25: a captain the game brought - the geometry of runs 20261029-175250 (Ratlûg's Beast Hunt: 39.7 m, 17 deg off
+ * the view, 15 m below) and 212218 (the Runt joining the fight: 7.8 m, 70 deg off): in the world by the world's rule,
+ * the window by the practice's; behind or past 60 m the window */
+static void test_intro_world(void)
+{
+    somvr_cp_intro_cfg w, p;
+    somvr_cp_intro_world_default(&w), somvr_cp_intro_default(&p);
+    float head[3] = { 0, 170, 0 }, fwd[3] = { 0, 0, 1 }, d = 0, off = 0;
+    float ratlug[3] = { sinf(17.0f / 57.29578f) * 3700.0f, -1300.0f, cosf(17.0f / 57.29578f) * 3700.0f };
+    float runt[3] = { sinf(70.0f / 57.29578f) * 780.0f, 50, cosf(70.0f / 57.29578f) * 780.0f };
+    float behind[3] = { 300, 50, -2000 }, far[3] = { 0, 50, 6100 };
+    CHECK(somvr_cp_intro_world(&w, head, fwd, ratlug, &d, &off) && !somvr_cp_intro_world(&p, head, fwd, ratlug, NULL, NULL),
+          "Ratlug's struggle (%.1f m, %.0f deg): in the world now, the window by build 22's rule", d / 100.0, off);
+    CHECK(somvr_cp_intro_world(&w, head, fwd, runt, &d, &off) && !somvr_cp_intro_world(&p, head, fwd, runt, NULL, NULL),
+          "the Runt joining (%.1f m, %.0f deg): in the world", d / 100.0, off);
+    CHECK(!somvr_cp_intro_world(&w, head, fwd, behind, &d, &off) && off > 170.0f, "behind him: the window (%.0f deg)", off);
+    CHECK(!somvr_cp_intro_world(&w, head, fwd, far, &d, &off) && d > 6000.0f, "61 m: the window");
+}
+
 /* build 24: a committed cut on a captain hurts by its speed; a light hit is the game's own */
 static void test_cut_factor(void)
 {
@@ -123,6 +142,7 @@ int main(void)
     test_traits();
     test_pick();
     test_intro();
+    test_intro_world();
     test_cut_factor();
     printf("test_captain: %d checks, %d failures\n", checks, fails);
     return fails != 0;

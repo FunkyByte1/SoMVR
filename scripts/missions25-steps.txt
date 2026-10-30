@@ -1,0 +1,539 @@
+# missions25-steps.txt - som-b25-missions (build 25, docs/re-xr-pipeline.md 103): the steps as run, per boot.
+# Each boot: headless_vr.sh with scripts/headset-build25.env + SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0
+# SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0 [boots 3-5: + SOMVR_PRACTICE_MINHEALTH=0] SOMVR_HANDS_TEST=1
+# SOMVR_XR_TEST=@RUN@/xrtest.txt SOMVR_EYE_SIZE=2015x2217, and scripts/story22-drive.sh in its ctl mode (ST_PLAN=ctl,
+# ST_SCRIPT=the boot's first lines, then one command per file in ST_CTL_DIR). Repeated lines are folded (xN); the
+# loops' own sync lines (word story, status) are left out. The loops wrote the rest; their text is at the end.
+
+## boot boot-check-20261029-161017
+  word practice status nav
+  pics survey-arrival
+  go -40540 1900 -22160
+  wait 3
+  pics goldenT-at
+  tap R b 0.4
+  wait 3
+  pics goldenT-card
+  tap R a 0.4
+  wait 8
+  pics bg-8s
+  video 8 2
+  tap R a 0.3
+  tap R b 0.3
+  world 120
+  wait 2
+  status
+  pics bg-world
+  ... a loop (follow): 61 commands - see the loops below
+  pics bg-pres
+  world 60
+  wait 2
+  status
+  pics bg-after-pres
+  tap R a 0.4
+  world 30
+  wait 2
+  status
+  pics bg-hunt
+  go -35489 2017 -8364
+  wait 2
+  word verbs orcs -35489 -7864 2500
+  word hands test R 10 -10 -15 0 0 0
+  word hands squeeze R 1
+  word hands test R 30 -25 40 0 -90 0
+  word hands squeeze R 0
+  word hands test R 30 -10 45 0 -35 0
+  word fight guard learn
+  wait 10
+  pics bg-caragor1
+  wait 10
+  pics bg-caragor2
+  pics bg-death1
+  wait 6
+  pics bg-death2
+  wait 6
+  pics bg-death3
+  tap R a 0.4
+  wait 4
+  pics bg-retry1
+  word crouch try 285 300
+  wait 6
+  pics bg-retried
+  world 40
+  status
+  tap R a 0.4
+  world 20
+  word hands test R 10 -10 -15 0 0 0
+  word hands squeeze R 1
+  word hands test R 30 -25 40 0 -90 0
+  word hands squeeze R 0
+  word hands test R 30 -10 45 0 -35 0
+  word fight guard learn
+  wait 3
+  word verbs orcs -35691 -7757 3000
+  wait 25
+  pics bg-car3
+  go -34800 1917 -8452
+  wait 12
+  pics bg-car4
+  wait 8
+  pics bg-car5
+  go -30877 2924 11629
+  wait 4
+  pics bh-leave
+  abandon
+  wait 2
+  world 30
+  pics bh-at
+  tap R b 0.4
+  wait 3
+  pics bh-card
+  tap R a 0.4
+  waitfor ^CAPTAIN.t=.*a.presentation.starts 60
+  wait 1
+  pics bh-intro
+  world 40
+  status
+  word verbs orcs -30877 11629 4000
+  go -30877 2924 11629
+  wait 3
+  pics bh-at2
+  tap R b 0.4
+  wait 3
+  pics bh-card
+  tap R a 0.4
+  waitfor ^CAPTAIN.t=.*a.presentation.starts 60
+  wait 1
+  pics bh-intro
+  world 40
+  status
+  word verbs orcs -30877 11629 4000
+  ... a loop (follow/kills): 14 commands - see the loops below
+  pics bh-kill1
+  wait 5
+  pics bh-kill2
+  tap R b 0.4
+  wait 4
+  pics bh-after1
+  wait 4
+  pics bh-after2
+  status
+  word crouch try 55 300
+  wait 4
+  pics bh-try55
+  word crouch try 261 300
+  wait 4
+  pics bh-try261
+  word crouch try 265 300
+  wait 3
+  pics bh-try265
+  word crouch try 68 300
+  wait 3
+  pics bh-try68
+  pics bh-closed
+  status
+  end
+
+## boot boot-check-20261029-164339
+  go -30877 2924 11629
+  wait 3
+  tap R b 0.4
+  wait 3
+  pics bh2-card
+  tap R a 0.4
+  waitfor ^CAPTAIN.t=.*a.presentation.starts 60
+  wait 2
+  pics bh2-intro
+  world 40
+  word verbs orcs -30877 11629 4000
+  word practice hurt 3
+  go -28505 1500 12426
+  waitfor BODYMOMENT.t=.*grey.by.death 40
+  wait 8
+  pics bh2-dead
+  waitfor ^PROMPTS|SCREENS.t=.*death 20
+  wait 6
+  pics bh2-failed
+  tap R b 0.4
+  wait 5
+  pics bh2-after-board
+  wait 5
+  pics bh2-after-board2
+  word practice status nav
+  word story
+  go 23480 3460 -25300
+  wait 3
+  pics ps2-at
+  tap R b 0.4
+  wait 3
+  pics ps2-card
+  tap R a 0.4
+  waitfor ^CAPTAIN.t=.*a.presentation.starts 60
+  wait 2
+  pics ps2-intro
+  world 60
+  word verbs orcs 23480 -25300 4000
+  word captain hp 1
+  world 30
+  word hands test R 10 -10 -15 0 0 0
+  word hands squeeze R 1
+  word hands test R 30 -25 40 0 -90 0
+  word hands squeeze R 0
+  word verbs orcs 23178 -27029 600
+  go 23178 1960 -26879
+  word captain hp 1
+  ... a loop (steps): 15 commands - see the loops below
+  pics ps2-fight
+  tap R b 0.4
+  wait 4
+  pics ps2-afterB
+  go 34856 2448 -27463
+  wait 2
+  xr head 0 0 0 yaw 90 pitch -60 s 0.4
+  xr btn L b 1
+  wait 5
+  pics art-prompt
+  tap R b 0.4
+  wait 4
+  xr btn L b 0
+  wait 2
+  pics art-open
+  tap R a 0.4
+  wait 3
+  pics art-a
+  xr stick R 1 0
+  wait 1.5
+  xr stick R 0 0
+  pics art-turned
+  tap R b 0.4
+  wait 3
+  pics art-b1
+  tap R b 0.4
+  wait 3
+  pics art-b2
+  tap L menu 0.2
+  wait 4
+  pics art-world
+  world 20
+  go 30953 3639 -14633
+  wait 3
+  pics giver-at
+  word practice status nav
+  tap R b 0.4
+  wait 3
+  pics giver-b
+  xr head 0 0 0 yaw 0 pitch 0 s 0.4
+  go -40540 1950 -22160
+  wait 2
+  tap R b 0.4
+  wait 3
+  tap R a 0.4
+  wait 10
+  tap R a 0.3
+  tap R b 0.3
+  world 60
+  word practice hurt 3
+  go -34800 1917 -8452
+  waitfor BODYMOMENT.t=.*grey.by.death 40
+  wait 10
+  pics bg2-failed
+  tap R a 0.4
+  wait 5
+  pics bg2-retry
+  tap R a 0.4
+  wait 6
+  pics bg2-retry2
+  world 20
+  ... a loop (follow): 74 commands - see the loops below
+  tap R a 0.4
+  world 20
+  word practice hurt 3
+  go -34800 1917 -8452
+  waitfor BODYMOMENT.t=.*grey.by.death 45
+  wait 10
+  pics bg3-failed
+  tap R a 0.4
+  wait 5
+  pics bg3-retry
+  end
+
+## boot boot-check-20261029-172042
+  go -40540 1950 -22160
+  wait 2
+  tap R b 0.4
+  wait 3
+  tap R a 0.4
+  wait 10
+  tap R a 0.3
+  tap R b 0.3
+  world 60
+  wait 2
+  ... a loop (follow): 68 commands - see the loops below
+  tap R a 0.4
+  world 20
+  go -34800 1917 -8452
+  waitfor BODYMOMENT.t=.*grey.by.death 60
+  wait 10
+  pics bg4-failed
+  tap R a 0.4
+  wait 6
+  pics bg4-retry
+  word crouch try 286 300
+  wait 3
+  pics bg4-abandon
+  tap R a 0.4
+  wait 4
+  world 40
+  word story invisible on
+  go 42632 3839 -22529
+  wait 3
+  tap R b 0.4
+  wait 3
+  pics qs-card
+  tap R a 0.4
+  wait 12
+  tap R a 0.3
+  tap R b 0.3
+  world 60
+  wait 3
+  status
+  word story
+  waitfor OBJECTIVE.t=.*'Objective' 30
+  wait 2
+  pics qs-obj
+  go 28400 2000 -14300
+  wait 2
+  go 26202 1880 -11431
+  wait 2
+  go 23100 2865 450
+  wait 3
+  pics qs-fort
+  waitfor SESSION.ui.*video=1 30
+  wait 4
+  tap R a 0.3
+  tap R b 0.3
+  world 60
+  wait 2
+  pics qs-fort2
+  wait 4
+  pics qs-popup
+  tap R a 0.4
+  world 20
+  wait 2
+  word practice status nav
+  word story
+  go 23746 3021 1655
+  brand 100
+  wait 5
+  word story
+  word practice status nav
+  word story
+  go 22719 3280 2983
+  brand 100
+  wait 5
+  word story
+  word practice status nav
+  word story
+  go 22719 3280 2983
+  brand 100
+  wait 5
+  word story
+  word practice status nav
+  word story
+  go 22719 3280 2983
+  brand 100
+  wait 5
+  word story
+  word practice status nav
+  word story
+  go 22719 3280 2983
+  brand 100
+  wait 5
+  word story
+  word practice status nav
+  word story
+  go 22719 3280 2983
+  brand 100
+  wait 5
+  word story
+  word practice status nav
+  word story
+  go 22719 3280 2983
+  brand 100
+  wait 5
+  word story
+  word practice status nav
+  word story
+  go 22719 3280 2983
+  brand 100
+  ... a loop (archers): 30 commands - see the loops below
+  pics qs-after6
+  status
+  wait 6
+  pics qs-after6b
+  word crouch try 38 300
+  wait 4
+  status
+  word crouch try 39 300
+  wait 4
+  status
+  word crouch try 40 300
+  wait 4
+  status
+  word crouch try 41 300
+  wait 4
+  status
+  word crouch try 126 400
+  wait 4
+  word objective status
+  word crouch try 127 400
+  wait 4
+  word objective status
+  word crouch try 128 400
+  wait 4
+  word objective status
+  word crouch try 129 400
+  wait 4
+  word objective status
+  word crouch try 130 400
+  wait 4
+  word objective status
+  word crouch try 131 400
+  wait 4
+  word objective status
+  status
+  pics qs-battle
+  ... a loop (follow/kills): 85 commands - see the loops below
+
+## boot boot-check-20261029-181039
+  word story invisible on
+  go 42632 3839 -22529
+  wait 3
+  tap R b 0.4
+  wait 3
+  tap R a 0.4
+  wait 12
+  tap R a 0.3
+  tap R b 0.3
+  world 60
+  word story
+  waitfor OBJECTIVE.t=.*'Objective' 30
+  wait 2
+  go 28400 2000 -14300
+  wait 2
+  go 26202 1880 -11431
+  wait 2
+  go 23100 2865 450
+  waitfor SESSION.ui.*video=1 30
+  wait 3
+  tap R a 0.3
+  tap R b 0.3
+  world 60
+  waitfor SESSION.ui.*paused=1 40
+  wait 5
+  pics qs4-popup
+  tap R a 0.4
+  world 30
+  wait 2
+  ... a loop (archers): 32 commands - see the loops below
+  waitfor HINTS.tutorial.*ActivateBranded 30
+  word verbs aim off
+  word crouch hold 0
+  word hands test L -10 30 15 0 0 0
+  wait 2
+  pics qs4-lesson
+  tap L trigger 0.3
+  wait 4
+  pics qs4-rally
+  ... a loop (follow/kills): 74 commands - see the loops below
+  pics qs4-after15
+  wait 6
+  pics qs4-after15b
+  video 10 3
+  world 90
+  wait 3
+  pics qs4-end1
+  wait 5
+  pics qs4-end2
+  ... a loop (follow/kills): 246 commands - see the loops below
+  pics qs4-last
+  end
+
+## boot boot-check-20261029-185634
+  go -40540 1950 -22160
+  wait 2
+  tap R b 0.4
+  wait 3
+  tap R a 0.4
+  wait 10
+  tap R a 0.3
+  tap R b 0.3
+  world 60
+  wait 2
+  ... a loop (follow): 68 commands - see the loops below
+  tap R a 0.4
+  world 20
+  go -34800 1917 -8452
+  waitfor BODYMOMENT.t=.*grey.by.death 60
+  wait 10
+  pics bg5-failed
+  tap R a 0.4
+  wait 6
+  pics bg5-retry
+  status
+  end
+
+## the loops (bash; R = the run dir; q.sh appends commands to the driver's ctl queue)
+### q.sh
+    #!/bin/bash
+    # q.sh TAG CMD... : append commands to the driver's ctl queue (next index kept in DIR/next)
+    TAG=$1; shift; D=/tmp/b25m/ctl-$TAG; n=$(cat $D/next 2>/dev/null || ls $D | grep -c '^cmd[0-9]*\.txt$'); 
+    for c in "$@"; do n=$((n+1)); printf '%s\n' "$c" > $D/.t && mv $D/.t $D/cmd$n.txt; done; echo $n > $D/next
+### follow.sh
+    #!/bin/bash
+    # follow.sh TAG ROUNDS NAME_RE [DY] - teleport after the objective marker NAME_RE (status, then go there), ROUNDS times
+    TAG=$1; N=$2; RE=$3; DY=${4:-100}; R=$(cat /tmp/b25m/R-$TAG)
+    sync() { local c0; c0=$(grep -c '^STORY status:' $R/somvr.log); /tmp/b25m/q.sh $TAG "$@" "word story"
+      for k in $(seq 1 90); do sleep 1; [ "$(grep -c '^STORY status:' $R/somvr.log)" -gt "$c0" ] && return 0; done; return 1; }
+    for i in $(seq 1 $N); do
+      l0=$(wc -l < $R/somvr.log); sync "status" || { echo "no sync"; break; }
+      p=$(tail -n +$l0 $R/somvr.log | grep -E "^OBJECTIVE status marker .*'$RE'" | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      nm=$(tail -n +$l0 $R/somvr.log | grep -E "^OBJECTIVE status marker" | grep -oE "'[A-Za-z_0-9]+'[^:]*at \([-0-9 ]*\)" | tr '\n' ';')
+      sub=$(tail -n +$l0 $R/somvr.log | grep -E '^STORY t=.*subtitle ch=1 .[A-Z]' | tail -1 | cut -d"'" -f2)
+      echo "$(date +%T) round $i: $nm | $sub"
+      [ -z "$p" ] && { echo "no $RE marker: stop"; break; }
+      set -- $p; sync "go $1 $(( $2 + DY )) $3" "wait ${WAIT:-3}" || break
+    done
+### archers.sh
+    #!/bin/bash
+    # archers.sh TAG [MAX] - the Sea Fort's archers: their 'ObjectiveGold' places from `practice status nav`, then for each:
+    # a teleport onto it and the driver's `brand 100` (crouched, behind the nearest orc, the palm at its head, the left trigger)
+    TAG=$1; MAX=${2:-8}; R=$(cat /tmp/b25m/R-$TAG)
+    sync() { local c0; c0=$(grep -c '^STORY status:' $R/somvr.log); /tmp/b25m/q.sh $TAG "$@" "word story"
+      for k in $(seq 1 120); do sleep 1; [ "$(grep -c '^STORY status:' $R/somvr.log)" -gt "$c0" ] && return 0; done; return 1; }
+    for round in $(seq 1 $MAX); do
+      l0=$(wc -l < $R/somvr.log); sync "word practice status nav"
+      mapfile -t P < <(tail -n +$l0 $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ 'ObjectiveGold'" | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\), [0-9.]+ m' | sed -E 's/at \(//; s/\),//; s/ m$//' | sort -k4 -n)
+      echo "$(date +%T) round $round: ${#P[@]} archer markers; branded so far: $(grep -cE "PC_(Archer|Bip)_StealthBrand" $R/somvr.log) brand lines; $(grep -E "subtitle ch=1 '[0-9] / 6|Brand Archers" $R/somvr.log | tail -1 | cut -c1-80)"
+      [ ${#P[@]} -eq 0 ] && { echo "no archer markers: stop"; break; }
+      set -- ${P[0]}; echo "  the nearest: $1 $2 $3 ($4 m)"
+      l1=$(wc -l < $R/somvr.log); sync "gobrand $1 $(( $2 + 50 )) $3" "wait 5"
+      tail -n +$l1 $R/somvr.log | grep -E "VERBS brand t=.*(press|started|offer)|attack 'PC_(Archer|Bip)_StealthBrand|Mission Failed|subtitle ch=1" | head -4 | cut -c1-200
+    done
+### kills.sh
+    #!/bin/bash
+    # kills.sh TAG MAX - the mission's enemies ('ObjectiveGoldNoClutter'): a trip to the nearest, its health 1, edge cuts
+    TAG=$1; MAX=${2:-15}; R=$(cat /tmp/b25m/R-$TAG)
+    E1="word hands test R 40 -8 35 0 -90 90"; E2="word hands swing R -20 -18 62 0 90 90 300"; E3="word hands swing R 40 -8 35 0 -90 90 300"
+    sync() { local c0; c0=$(grep -c '^STORY status:' $R/somvr.log); /tmp/b25m/q.sh $TAG "$@" "word story"
+      for k in $(seq 1 120); do sleep 1; [ "$(grep -c '^STORY status:' $R/somvr.log)" -gt "$c0" ] && return 0; done; return 1; }
+    sync "word hands test R 10 -10 -15 0 0 0" "word hands squeeze R 1" "word hands test R 30 -25 40 0 -90 0" "word hands squeeze R 0"
+    for round in $(seq 1 $MAX); do
+      l0=$(wc -l < $R/somvr.log); sync "word practice status nav"
+      mapfile -t P < <(tail -n +$l0 $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ 'ObjectiveGoldNoClutter'" | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\), [0-9.]+ m' | sed -E 's/at \(//; s/\),//; s/ m$//' | sort -k4 -n)
+      echo "$(date +%T) round $round: ${#P[@]} enemy markers"
+      [ ${#P[@]} -eq 0 ] && { echo "none: stop"; break; }
+      set -- ${P[0]}; l1=$(wc -l < $R/somvr.log)
+      sync "go $1 $(( $2 + 50 )) $(( $3 - 120 ))" "word fight health 1" "word execute chase on" "$E1" "$E2" "$E3" "$E1" "$E2" "$E3" "word execute chase off"
+      tail -n +$l1 $R/somvr.log | grep -E "^FIGHT health|COMBAT hit tier|EXECUTE kill" | head -2 | cut -c1-140
+    done

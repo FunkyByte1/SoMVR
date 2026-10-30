@@ -111,7 +111,7 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 		rec1 = s[1] ? peek_ptr(s[1] + FB_SYNC_REC) : 0;
 		atk = peek_ptr(sc + VB_C_ATTACK);
 	}
-	int mine = sk_lift(t) || fi_holds(), enemy = s[1] && !rec0 && !mine;
+	int mine = sk_lift(t) || fi_holds() || fa_lift(t), enemy = s[1] && !rec0 && !mine;
 	if (!g_tk.active) {
 		if (g_tk.refused && (!s[1] || rec1 != g_tk.ref_rec || (g_tk.ref_gone && atk && atk == g_tk.ref_atk)))
 			g_tk.refused = 0;

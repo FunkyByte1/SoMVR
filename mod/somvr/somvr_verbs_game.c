@@ -17,6 +17,7 @@ enum { VB_OFF, VB_LOG, VB_ON };
 #define VB_CMD_GRAB 123  /* CombatSecondary02: the grab (Grab_Attempt pressed, Grab_Held held, Grab_OnRelease let go) */
 #define VB_CMD_A 121     /* CombatPrimary04: pad A, while grabbing the interrogation (Grab_Subdue) */
 #define VB_CMD_X 118     /* CombatPrimary01: pad X, while grabbing the grab's move (UI_Combat_GrabFlurry), the stealth kill */
+#define VB_CMD_RALLY 128 /* CombatTertiary03: the pad's D-pad - "Activate your branded" ('PC_Branded_Infight'; build 25) */
 #define VB_PRESS_N 4     /* commands at once (vb_press_cmds) */
 #define VB_HEAD_UP_CM 75 /* an orc's head above its root without its Head node (combat's capsule: 90 up) */
 #define VB_BACK_APART_CM 30 /* build 19b: the hands closer than this (the left on the hilt): a stealth target's back takes no grab */
@@ -52,6 +53,9 @@ static struct {
 	int ok_tree;               /* FINISH's selection sites matched (the tree's attacks, the stealth kill's ask) */
 	int stealth;               /* SOMVR_VERBS_STEALTH: the stealth kill by a blade contact (default 1 with on) */
 	int brand_prompt;          /* build 22, SOMVR_VERBS_BRAND_PROMPT: the stealth brand's prompt kept (LT) */
+	int rally;                 /* build 25, SOMVR_VERBS_RALLY: the left hand raised + the trigger = 128 */
+	float rally_cm;            /* ... the palm this far over the eyes (SOMVR_VERBS_RALLY_CM, 15) */
+	uint64_t rallies;
 	char stealth_node[64];     /* SOMVR_VERBS_STEALTH_NODE */
 	uintptr_t stealth_c;
 	double stealth_t, stealth_line;
@@ -133,6 +137,7 @@ enum { VB_ASK_GAME, VB_ASK_BLADE };
 
 static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, double t); /* build 21 (somvr_combat21_game.c) */
 static void gc_hands(const somvr_vb_hand_in *in, double t);
+static void fa_hands(const somvr_vb_hand_in *in, double t); /* build 25 (somvr_above_game.c) */
 static void br_hands(const somvr_vb_hand_in *in); /* build 23 (somvr_brand_game.c) */
 static void br_prompt_up(int act, const char *str, double t);
 static int br_auto_trigger(double t);
@@ -602,6 +607,7 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	if (o.event == SOMVR_VBE_WRAITH) /* build 23: the brand where the game offers it (B + A, or B's tap) */
 		br_press(was == SOMVR_VBH_IDLE ? (o.orc >= 0 && o.orc < g_vb.nheads ? g_vb.head_c[o.orc] : 0) : g_vb.held_c, t);
 	gc_hands(&in, t); /* build 21, SOMVR_VERBS_CUE: the reach, the cue, its tick and glow (somvr_combat21_game.c) */
+	fa_hands(&in, t); /* build 25, SOMVR_ABOVE: the open hand aimed down at an orc + the trigger (somvr_above_game.c) */
 	/* the interrogation asks (its choices up; the grip may have opened meanwhile): the trigger's press = Interrogate */
 	int tr_was = g_vb.trig_was;
 	g_vb.trig_was = tr_was ? in.trigger > g_vb.cfg.trig_off : in.trigger >= g_vb.cfg.trig_on;
@@ -620,6 +626,21 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 				logf_("VERBS t=%.3f choice: the trigger while the interrogation asks: %d '%s' tapped (Interrogate)", t, ch,
 				      in_cmd_name(ch));
 		}
+	}
+	/* build 25, SOMVR_VERBS_RALLY (re-xr-pipeline.md 103): the left hand raised over the head + the trigger's press =
+	 * CombatTertiary03 128, the pad's D-pad that commands the branded orcs ("Activate [D-pad] your branded archers" at
+	 * the Sea Fort; the game's 'PC_Branded_Infight', "Surrender your will!"): no VR control sent it, so Queen of the
+	 * Shore could not go on past its archers (boot 20261029-172042, the test press). Not on a head (the brand's), not
+	 * while the hand holds or the interrogation asks, only in the world (in.live). */
+	if (g_vb.rally && in.live && g_vb.trig_was && !tr_was && !ch && was == SOMVR_VBH_IDLE &&
+	    g_vb.hand.phase == SOMVR_VBH_IDLE && o.event != SOMVR_VBE_WRAITH && !g_vb.hand.b && in.have_palm &&
+	    in.palm[1] - in.eye[1] >= g_vb.rally_cm) {
+		vb_tap(VB_CMD_RALLY, t), g_vb.rallies++;
+		if (g_vb.haptic > 0)
+			in_haptic_event(SOMVR_HAND_L, 0.6f * g_vb.haptic, 0.10f, SOMVR_HAP_COMBAT);
+		if (vb_log_ok())
+			logf_("VERBS t=%.3f rally: the left hand %.0f cm over the eyes + the trigger: %d '%s' tapped (the branded "
+			      "orcs commanded; SOMVR_VERBS_RALLY)", t, in.palm[1] - in.eye[1], VB_CMD_RALLY, in_cmd_name(VB_CMD_RALLY));
 	}
 	/* the prompts' own letters on the Touch: holding, X (the left lower button) = 118 (UI_Combat_GrabFlurry) and A (the
 	 * right lower) = 121 (Domination_Subdue: the interrogation); its choice, B (the right upper) = Eliminate */
@@ -1345,6 +1366,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	if (g_vb.mode == VB_ON)
 		vb_heads(o, n, pc, root);
 	gc_frame(pcomb, pc, o, n, t); /* build 21, SOMVR_VERBS_CUE: the game's answer for the orc in reach (somvr_combat21_game.c) */
+	fa_frame(pcomb, pc, o, n, root, t); /* build 25, SOMVR_ABOVE: the game's answers for the orc below (somvr_above_game.c) */
 	struct vb_orc nw[VB_ORCS];
 	for (int i = 0; i < n; i++) {
 		uintptr_t c = o[i].c;
@@ -1528,6 +1550,8 @@ static void vb_start(int *bad)
 	}
 	g_vb.stealth = env_word("SOMVR_VERBS_STEALTH", (const char *const[]){ "0", "1" }, 2, 1);
 	g_vb.brand_prompt = env_word("SOMVR_VERBS_BRAND_PROMPT", (const char *const[]){ "off", "on" }, 2, 0); /* build 22 */
+	g_vb.rally = env_word("SOMVR_VERBS_RALLY", (const char *const[]){ "off", "on" }, 2, 1); /* build 25 */
+	g_vb.rally_cm = env_float("SOMVR_VERBS_RALLY_CM", 15, 0, 60, bad);
 	{
 		const char *sn = getenv("SOMVR_VERBS_STEALTH_NODE");
 		snprintf(g_vb.stealth_node, sizeof g_vb.stealth_node, "%s", sn && sn[0] ? sn : "PC_InstaKill_Sneak_Silent");
@@ -1561,6 +1585,10 @@ static void vb_start(int *bad)
 	      !g_vb.brand_prompt ? "dropped as build 21 (off)" : g_vb.mode == VB_ON && atomic_load(&g_pp.mode) == PP_VR
 	      ? "kept with the left trigger's glyph (the hand on the orc's head + the trigger = that B)" : "on, but SOMVR_VERBS=on "
 	      "and SOMVR_PAD_PROMPTS=vr are needed: as the game shows it");
+	logf_("CONFIG verbs build 25: rally=%s (SOMVR_VERBS_RALLY%s): %s %.0f cm (SOMVR_VERBS_RALLY_CM)", g_vb.rally ? "on" : "off",
+	      getenv("SOMVR_VERBS_RALLY") ? "" : "; unset: on", g_vb.rally ? "the left trigger with the left palm raised over the "
+	      "eyes = CombatTertiary03 128 (the pad's D-pad: the branded orcs commanded, 'PC_Branded_Infight'), the palm at least"
+	      : "the branded orcs have no VR command (build 24); the palm's height would be", g_vb.rally_cm);
 	logf_("CONFIG verbs build 20: the interrogated orc's kill %s (SOMVR_VERBS_ASK_KILL); Talion's attack read through a "
 	      "body moment's hold; the intel menu's Back after %.1f s (SOMVR_VERBS_INTEL_BACK_S; 0 = never)", g_vb.ask_kill ==
 	      VB_ASK_BLADE ? "blade: the sword's stab into it = its Eliminate (and the Touch's B)" : "game: the Touch's B = "
@@ -1586,6 +1614,7 @@ static void vb_end_log(void)
 	      g_vb.ask_kill == VB_ASK_BLADE ? "blade" : "game", (unsigned long long)g_vb.own_reads,
 	      (unsigned long long)g_vb.ask_freed, (unsigned long long)g_vb.intels, (unsigned long long)g_vb.intel_backs,
 	      (unsigned long long)g_vb.intel_outs);
+	logf_("VERBS END build 25: rallies %llu (SOMVR_VERBS_RALLY)", (unsigned long long)g_vb.rallies);
 	logf_("VERBS END: %llu frames; the left hand: grabs %llu, near misses %llu, releases %llu, done %llu, lost %llu; B held %llu "
 	      "ticks; the game: holds %llu (completed %llu, out %llu), stuns %llu; pulses %llu; heads by node %llu, estimated %llu; "
 	      "squeezes that took nothing %llu; stealth: asked %llu, kills pressed %llu, squeezes by a stealth target %llu, taken by its back %llu; the grab: 123 held %llu ticks, A taps %llu, "

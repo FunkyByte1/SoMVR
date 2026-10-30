@@ -481,6 +481,15 @@ def main():
             sys.exit("expected 5 SITE lines in somvr_brand_game.c's BRAND_SITES block (the patched BR_NODELOG, BR_SELECT, "
                      "BR_GATE_A, BR_GATE_B, BR_START K_CALLs), found %d" % len(brs))
         sites = sites + brs
+    # build 25's `story invisible` test aid: its block lives in somvr_story_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_story_game\.c"', text, re.M):
+        sty = [m for b in text.split("STORY_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("STORY_SITES_END", 1)[0])]
+        if [m[1] for m in sty] != ["K_ENTRY"]:
+            sys.exit("expected 1 SITE line in somvr_story_game.c's STORY_SITES block (the SY_INVIS K_ENTRY), found %d"
+                     % len(sty))
+        sites = sites + sty
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

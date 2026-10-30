@@ -57,6 +57,9 @@ typedef struct {
     float half_deg; /* 60: "within 60 deg of the view" */
 } somvr_cp_intro_cfg;
 void somvr_cp_intro_default(somvr_cp_intro_cfg *c);
+/* build 25: a captain the game brought (not the practice's) - where he stands unless behind the player or past 60 m
+ * (SOMVR_CAPTAIN_WORLD_INTRO_GEOM's default 6000,90; docs/re-xr-pipeline.md 104.2) */
+void somvr_cp_intro_world_default(somvr_cp_intro_cfg *c);
 /* the captain at `cap` (his root) seen from the head (pos, forward unit vector): 1 = in the world; *dist_cm the
  * distance head -> his chest (root + 120 cm), *off_deg the angle between the view and him */
 int somvr_cp_intro_world(const somvr_cp_intro_cfg *c, const float head[3], const float fwd[3], const float cap[3],

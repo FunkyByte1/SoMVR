@@ -83,6 +83,11 @@ void somvr_cp_intro_default(somvr_cp_intro_cfg *c)
     c->range_cm = 1500.0f, c->half_deg = 60.0f;
 }
 
+void somvr_cp_intro_world_default(somvr_cp_intro_cfg *c)
+{
+    c->range_cm = 6000.0f, c->half_deg = 90.0f;
+}
+
 int somvr_cp_intro_world(const somvr_cp_intro_cfg *c, const float head[3], const float fwd[3], const float cap[3],
                          float *dist_cm, float *off_deg)
 {

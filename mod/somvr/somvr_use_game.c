@@ -23,13 +23,28 @@
  *     A, B, X, Y, LB, RB for the quest and skip commands only (CinematicSkip 260/261, SkipPresentations 265,
  *     QuestConfirm 282 ... QuestFailedAbandon 286), each when the game has it active: never a move, a jump or a
  *     combat command. Our presses, never the pad's buttons; nothing in a menu (the pad passthrough does it there).
+ *   - build 25 (re-xr-pipeline.md 103), SOMVR_USE_DEATH=on|off (code default on): a death in a mission shows the
+ *     game's "Mission Failed! ... (A) Retry (B) Abandon" (Reason: You died!) in the world view, and with SOMVR_BM_DEATH=
+ *     first (build 22) the body moments open no window then (the death's grey) - so A and B answered nothing and the
+ *     player was stuck on that screen (run 20261029-161017, 'Big Game'). The game binds neither command to a pad button
+ *     there (`USE bindings`: only RB's; boot 20261029-172042) and its own presses of them work (the test press of 285 =
+ *     Retry, boot 161017). While the death's grey holds (the body moments' action GREY, no window) and a presentation
+ *     runs (the failed screen; the dying's own camera too), A = QuestFailedRetry 285, B = QuestFailedAbandon 286, pressed
+ *     directly (no binding, no active flag: as the result screens' 265), the held-button rule as at a window's edge.
+ *   - build 25, SOMVR_USE_SKIP=on|off (code default on): a Nemesis result screen in the window ("Ratlûg the Gluttonous
+ *     - Died - ... (B) Back", run 20261029-161017) binds none of our commands to B (`USE bindings`: only RB's), and B
+ *     did nothing: the screen stayed 4 min; SkipPresentations 265 (a test press) closed it at once. With the window up,
+ *     B pressed while none of B's own commands is pressed = 265 (the game's skip of the presentation; logged with its
+ *     active flag): the result screens' Back, a captain's introduction or a cinematic skipped by an explicit B.
  * Lines: `CONFIG use=...`, `USE bindings: ...` (the pad buttons of those commands, at each new binding table, 8 at
  * most), `USE t=.. pick prompt up|down ...`, `USE t=.. B at '...': 123 held`, `USE t=.. CMD 'NAME' pressed (pad X,
  * active)`, `USE END ...`. Word: `use on|off|status` (live; the before/after in one boot). */
 
 #define US_PICK_CMD 123  /* CombatSecondary02 */
 #define US_UP 8
-static const int g_us_quest[] = { 260, 261, 265, 282, 283, 284, 285, 286 }; /* the window's: skips and quests */
+/* the window's: skips and quests; build 25 (som-b25-nemesis): 307 IdentifySkip - "(B) Back" on a power struggle's outcome
+ * ("Power Increased! ... (A) View Battle Report (B) Back"), which waited 200+ s for it (re-xr-pipeline.md 104.2) */
+static const int g_us_quest[] = { 260, 261, 265, 282, 283, 284, 285, 286, 307 };
 #define US_NQ ((int)(sizeof g_us_quest / sizeof g_us_quest[0]))
 static const uint32_t US_BTNS = (1u << SC_PAD_A) | (1u << SC_PAD_B) | (1u << SC_PAD_X) | (1u << SC_PAD_Y) |
 				(1u << SC_PAD_LB) | (1u << SC_PAD_RB);
@@ -41,10 +56,11 @@ static struct {
 	int nup;
 	int b_prev, latch;                                  /* B's last state, 123 held for this press */
 	uint32_t qprev;                                     /* bit q: g_us_quest[q] pressed last tick */
+	int death, skip;                                    /* build 25: SOMVR_USE_DEATH, SOMVR_USE_SKIP */
 	int win_prev, fresh;                                /* the window last tick; 1 = take the held buttons again */
 	uint32_t held;                                      /* buttons held since before the window opened or closed */
 	int map_lines, lines;
-	uint64_t kept, picks, pick_ticks, quest_presses, quest_ticks, refused_full;
+	uint64_t kept, picks, pick_ticks, quest_presses, quest_ticks, refused_full, skips, deaths;
 } g_us;
 
 static int us_log_ok(void) { return g_us.lines++ < 300; }
@@ -184,11 +200,13 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 	if (g_us.latch)
 		out[n++] = US_PICK_CMD, g_us.pick_ticks++;
 	int win = g_bm.last_win;
-	uint32_t btn = us_btns(win, o->raw);
+	int dwin = !win && g_us.death && g_bm.last_act == SOMVR_BMA_GREY && /* build 25: the death's failed screen */
+		   (g_bm.last_conds & SOMVR_BMC_BIT(SOMVR_FB_PRES));
+	uint32_t btn = us_btns(win || dwin, o->raw);
 	if (!g_inp.map_ok)
 		return n;
 	us_log_bindings();
-	uint32_t want = win ? btn : b && (btn >> SC_PAD_B & 1) ? 1u << SC_PAD_RB : 0, now = 0;
+	uint32_t want = win ? btn : !dwin && b && (btn >> SC_PAD_B & 1) ? 1u << SC_PAD_RB : 0, now = 0;
 	in_active_fn active = IN_FN(IS_CMD_ACTIVE, in_active_fn);
 	for (int i = 0; i < SC_NPAD && want; i++) {
 		if (!(want >> i & 1))
@@ -204,6 +222,28 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 					logf_("USE t=%.3f %d '%s' pressed (the pad's %s, active%s)", t, c, in_cmd_name(c), sc_pad_name(i),
 					      win ? "; a presentation is up" : "; B in the world");
 			}
+		}
+	}
+	for (int k = 0; dwin && k < 2 && n < 12; k++) { /* build 25: A = 285, B = 286 on the death's failed screen */
+		int c = k ? 286 : 285, q = us_quest_ix(c);
+		if (!(btn >> (k ? SC_PAD_B : SC_PAD_A) & 1) || (now >> q & 1))
+			continue;
+		now |= 1u << q, out[n++] = c, g_us.quest_ticks++;
+		if (!(g_us.qprev >> q & 1)) {
+			g_us.quest_presses++, g_us.deaths++;
+			if (us_log_ok())
+				logf_("USE t=%.3f %d '%s' pressed by %s (the death's failed screen, no window; the game's active flag %d; "
+				      "SOMVR_USE_DEATH)", t, c, in_cmd_name(c), k ? "B" : "A", !!(active(g_inp.pi, (unsigned)c) & 0xff));
+		}
+	}
+	if (win && g_us.skip && (btn >> SC_PAD_B & 1) && !now && n < 12) { /* build 25: B = 265 there */
+		int q = us_quest_ix(265), act = !!(active(g_inp.pi, 265u) & 0xff);
+		now |= 1u << q, out[n++] = 265, g_us.quest_ticks++;
+		if (!(g_us.qprev >> q & 1)) {
+			g_us.quest_presses++, g_us.skips++;
+			if (us_log_ok())
+				logf_("USE t=%.3f 265 'SkipPresentations' pressed by B (nothing of B's own bound; the game's active flag "
+				      "%d; SOMVR_USE_SKIP)", t, act);
 		}
 	}
 	g_us.qprev = now;
@@ -244,6 +284,18 @@ static void us_config(int *bad)
 			  "presentation, a cinematic) A B X Y and the grips = the pad's A B X Y LB RB for the skips and the quest "
 			  "cards (260 261 265 282-286), each only while the game has it active"
 			: "B = Activate only (build 13)");
+	g_us.skip = env_word("SOMVR_USE_SKIP", (const char *const[]){ "off", "on" }, 2, 1);
+	if (g_us.want)
+		logf_("CONFIG use_skip=%s (SOMVR_USE_SKIP, build 25%s): %s", g_us.skip ? "on" : "off",
+		      getenv("SOMVR_USE_SKIP") ? "" : "; unset: on", g_us.skip ? "with the window up, B with none of its own "
+		      "commands bound = SkipPresentations 265 (a Nemesis result screen's Back, a captain's introduction skipped)"
+		      : "B in the window presses only what the game binds to it (build 24)");
+	g_us.death = env_word("SOMVR_USE_DEATH", (const char *const[]){ "off", "on" }, 2, 1);
+	if (g_us.want)
+		logf_("CONFIG use_death=%s (SOMVR_USE_DEATH, build 25%s): %s", g_us.death ? "on" : "off",
+		      getenv("SOMVR_USE_DEATH") ? "" : "; unset: on", g_us.death ? "while the death's grey holds (no window) and "
+		      "a presentation runs (a mission's 'You died!' screen), A = QuestFailedRetry 285, B = QuestFailedAbandon "
+		      "286, pressed directly (the game binds neither to the pad there)" : "the death's failed screen answers no button (build 24)");
 }
 
 /* vm_start: the Controls page's "Use: B (pick, missions)", Menu and Pause in one line, Sprint kept (somvr_vrmenu.c) */
@@ -252,7 +304,8 @@ static uint32_t us_vm_avail(void) { return g_us.want ? SOMVR_VMA_USE : 0u; }
 static void us_end_log(void)
 {
 	logf_("USE END on=%d pick prompts kept %llu (refused '_Full' %llu), picks %llu (123 held %llu ticks), quest presses "
-	      "%llu (%llu ticks), binding tables logged %d", g_us.on, (unsigned long long)g_us.kept,
+	      "%llu (%llu ticks; B's skips %llu, the death's screen %llu), binding tables logged %d", g_us.on, (unsigned long long)g_us.kept,
 	      (unsigned long long)g_us.refused_full, (unsigned long long)g_us.picks, (unsigned long long)g_us.pick_ticks,
-	      (unsigned long long)g_us.quest_presses, (unsigned long long)g_us.quest_ticks, g_us.map_lines);
+	      (unsigned long long)g_us.quest_presses, (unsigned long long)g_us.quest_ticks, (unsigned long long)g_us.skips,
+	      (unsigned long long)g_us.deaths, g_us.map_lines);
 }

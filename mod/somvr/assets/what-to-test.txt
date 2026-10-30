@@ -3,8 +3,15 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 24 - what to test
-- New since build 20c, most important first. Build 24's own first, then 21-23's.
+Build 25 - what to test
+- New since build 20c, most important first: build 25's own, then 24's, then 21-23's.
+- Mission Failed (you died in a mission): A = Retry, B = Abandon.
+- Nemesis pages after a fight ("Power Increased!", a captain's fate): B closes them.
+- Branded orcs: raise your left hand above your head and pull the left trigger - they attack.
+- Drop kill: crouch on a wall top above an unaware orc. A faint blue glow on his back means it's there. Sword drawn, stab hard down at him: a short black, then you're behind him as he dies. A slow lowering does nothing.
+- Captains in the world: start a power struggle at its map marker. His intro plays where he stands; his name and line show at your gaze.
+- A captain immune to stealth: stab his back and the blade glances off - a clank, sparks, he turns on you.
+- Artifacts: hold Y, B picks one up; the right stick turns it; B backs out.
 - Brand: Queen of the Shore, at the Sea Fort. Close "Ability Unlocked: Brand" first. Crouch and walk up behind an archer until you stop, put your open left hand on his head, pull the left trigger. Brand six unseen to go on.
 - Captain fight: Practice > Captain. Fast, real cuts take big bites; taps barely scratch him. About a dozen good cuts and an execution.
 - After a captain's kill: Pause > Sauron's Army shows his body in his slot; his rune lies by him (B).

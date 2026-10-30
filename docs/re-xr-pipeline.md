@@ -16915,3 +16915,476 @@ at the ring's distance N`.
   only. Next: buildings with eaves (Udun's forges, the Black Gate's towers) by `vault edges`, then the jump's catch.
 - A jump across a real gap, and onto a 45-58 cm ledge with the jump alone: none found.
 - The practice trip while hanging (101.7).
+
+## 103. Build 25: every kind of mission the save offers, played in VR - the death's failed screen and the Nemesis result screens answered, the branded commanded by the raised hand, the game's own "invisible to the AI" for the drills: `SOMVR_USE_DEATH`, `SOMVR_USE_SKIP`, `SOMVR_VERBS_RALLY` (2026-10-29, som-b25-missions)
+Headless boots on the real save's copy (scripts/headset-build25.env + the story's practice settings `SOMVR_PRACTICE=1
+SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0`, the test hands, the layer's test file; the arrival =
+the save's forge tower); scripts/story22-drive.sh's `ctl` mode driven step by step (scripts/missions25-steps.txt: the
+steps as run). handoff/HANDOFF-story.md "build 25". Every run: the install unchanged, the real save UNCHANGED (all
+progress in the run's save copy).
+
+### 103.1 The survey: what the save offers (the game's own markers, `practice status nav`, boot 20261029-161017)
+| Kind | Marker (record) | Where (x y z) | What |
+|---|---|---|---|
+| story (Marwen) | 'goldenM' | 42632 3889 -22529 (74 m E of the tower) | "Queen of the Shore" (89, 98) |
+| story (Torvin) | 'goldenT' | -40540 1900 -22160 (760 m W) | **"Big Game"** ("This Dwarf claims to know the location of more Artifacts from Celebrimbor's past"): the caragor hunt, unlocks Caragor Hunter (the counter of a caragor's leap, its mount) |
+| Nemesis mission | 'powerStruggle' | -30877 2874 11629 (746 m) | "Beast Hunt" (Ratlûg the Gluttonous); after a death the game offered three more ("New Missions NOW AVAILABLE"): 23480 3410 -25300 (a duel: Nazkûga the All-Eater vs Mozû the Unkillable), 4320 3230 -21260, -22100 1230 30500 |
+| side giver | 'resistance_QuestGiver' | 30906 3607 -14663 (91 m; it walks) | no prompt at it (as 45.4; boot 20261029-164339 again) |
+| region challenges | (the world map's panel, not nav markers) | - | "Survival Challenge 1: Niphredil 1/2" (an herb count), "Hunting Challenge 2: Kill 5 Flying Creatures 0/5" (logs/boot-check-20261026-100942/shots/dr-map1.png) |
+| artifacts | 'Collectible_Artifact' x3 | 34776 2448 -27463 (under the arch), 28596 5553 -33884, 61240 981 -15547 | the 3D inspection (103.5) |
+| Ithildin | 'Collectible_Glyph' x3 | 34269 3233 -28618, 34345 3900 -19589, 57273 1919 -10603 | 45.3, 45.13 |
+| herbs | 'Collectible_Flower_*' x13 | | the pick (43.4) |
+| towers | 'FT_BG' (synced), 'FT_SON_to_BG' | 35675 5519 -22185; -9200 -1180 -55400 | fast travel |
+| other | 'Collectible_Intel' x1, 'RessurrectionStone' x5 | 2710 638 3209; ... | not visited |
+**Not on this save**: weapon / rune legends, outcast or slave rescues (no marker, no prompt at the giver).
+
+### 103.2 Story: "Big Game" (Torvin) as a VR player meets it (boots 161017, 164339)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker | "Big Game - [RB] Start Mission"; B | works (SOMVR_USE: 282 -> the card) |
+| the card | "Big Game ... (A) Accept (B) Cancel" on the theatre | works (283 by A) |
+| the video | on the 6.7 m screen 5 m ahead (`theatre 3: a video`) | works; A then B skips it |
+| "Follow Torvin" | his lines subtitled at the gaze ("First lesson of Caragor hunting: do not die.", ...); the objective top left in the HUD | works (the drill followed by teleports) |
+| a presentation | "That one over there looks quite aggressive." ... "Ask it for a ride." in the window | works |
+| "Ability Unlocked: Caragor Hunter" | a pausing popup: "Counter (Y) a Caragor's leap attack ... Use [RB] to mount stunned Caragors. Press (A)" | A closes it; **its text is the pad's**: listed (103.6) |
+| "Dominate the Caragor" | the caragor's leap 'AI_Warg_JumpAttack' (its parry 'PC_ParrySuccess_Warg', its counter 'PC_Counter_Warg_*'), then its takedown struggle | **the test guard's blade stayed 42-47 cm off the leap**: no counter headless (the headset) |
+| killed by it | "Big Game Mission Failed! (A) Retry (B) Abandon - Reason: You died! Hint: Pick Herbs to restore Health." in the world view, the death's grey | **A and B answered nothing (stuck); fixed: SOMVR_USE_DEATH** (103.4) |
+| left behind | "Mission Failed! Reason: You have left Torvin behind. Hint: Stay near Torvin." | works (the window's A = Retry) |
+| Retry | back at the objective ("Dominate the Caragor" after a death there; "Follow Torvin" after leaving him) | works |
+
+### 103.3 Nemesis missions: "Beast Hunt" and a duel (boots 161017, 164339)
+- **Start**: "Beast Hunt - [RB] Start Mission", B -> the card, A -> the loading cover -> the captain's introduction
+  ("Ratlûg the Gluttonous - Finally, something with a thick hide to kill!"): in the window (SOMVR_CAPTAIN_INTRO=world
+  plays it in the world only within 15 m and 60 deg; he was ~20 m off: `the captain is not near and in view`).
+- **The end, Ratlûg killed by the caragors**: the result screen "Ratlûg the Gluttonous - Died - Elite Captain Power 12 -
+  was slain while hunting beasts - (✣) View Battle Report (B) Back" in the window: **B did nothing, the screen stayed
+  4 min** (`USE bindings (8, ctx 1)`: only RB's commands; MenuEscape 55, CinematicSkip 261 and MessageBoxDeny 68 by the
+  test press did nothing, **SkipPresentations 265 closed it in 14 ms**). Fixed: SOMVR_USE_SKIP (103.4).
+- **The duel** (the second offer, 23480 3410 -25300): the card, both captains' introductions in the window, the result
+  "Nazkûga the All-Eater - Killed / Mozû the Unkillable - Promoted! ... (B) Back" (the test aid's 1 health on the All-Eater
+  decided it) - **B closed it** (boot 164339: `USE t=1050847.298 265 'SkipPresentations' pressed by B (nothing of B's own
+  bound; the game's active flag 0; SOMVR_USE_SKIP)`, the window closed 0.45 s later), then "Retreating - I lose this
+  time, but you lose next time!" (5.7 s) and the world.
+- **A death in a Nemesis mission**: no "Mission Failed": the Nemesis board (Sauron's Army, "Target Selection ...
+  (B) Return to Game", paused: the menu passthrough's B), the respawn at a tower top, "+100 Denied Death", "New Missions
+  NOW AVAILABLE".
+- Note: the game's active flag for 265 reads 0 on the result screen and the press still works: SOMVR_USE_SKIP presses it
+  without asking the flag.
+
+### 103.4 The fixes (somvr_use_game.c, somvr_verbs_game.c; the som-b25-missions block of scripts/headset-build25.env)
+- **`SOMVR_USE_DEATH=on`** (code default on). Cause: a death in a story mission shows the game's "Mission Failed! ...
+  (A) Retry (B) Abandon - Reason: You died!" as a presentation in the world view; with `SOMVR_BM_DEATH=first` (build 22)
+  the body moments open no window then (`act first -> grey by death, window 0 -> 0`, `SCREENS ... the window asked for
+  and dropped (first person)`), and SOMVR_USE answered the quest commands only with the window up - so A and B did
+  nothing (boot 161017: A pressed, no `USE` line, the screen stayed). The game binds neither command to a pad button
+  there (`USE bindings (8, ctx 1): 123 'CombatSecondary02'=RB 282 'QuestConfirm'=RB`, boot 172042) and takes them
+  pressed directly (the test press of 285 = Retry, boot 161017; 286 = Abandon -> "Leave Mission", boot 172042). Now,
+  while the death's grey holds (the body moments' action GREY, no window) and a presentation runs, A = QuestFailedRetry
+  285 and B = QuestFailedAbandon 286, pressed directly; the held-button rule as at a window's edge. Lines `CONFIG
+  use_death=`, `USE t=.. 285 'QuestFailedRetry' pressed by A (the death's failed screen, no window; ...)`. Proven in
+  boot 20261029-185634 (the same caragor death as 161017's: A = Retry, the mission on at "Dominate the Caragor").
+  A death that opens the Nemesis screens first (killed by an orc) goes through the window as before (boot 164339: `285
+  ... a presentation is up`).
+- **`SOMVR_USE_SKIP=on`** (code default on): with the window up, B with none of its own commands bound =
+  SkipPresentations 265, pressed without asking the game's active flag (it reads 0 there and the press works): the
+  Nemesis result screens' "(B) Back", and an explicit B skips a captain's introduction or a cinematic. Line `USE t=..
+  265 'SkipPresentations' pressed by B (...)`.
+- **`SOMVR_VERBS_RALLY=on`** (code default on; `SOMVR_VERBS_RALLY_CM=15`): the branded orcs commanded. Cause: after the
+  six archers Queen of the Shore asks "Activate [D-pad] your branded archers" (the lesson 'GP_Marwen2_Tut_ActivateBranded
+  _NoPause', its token command 128); the game's command is **CombatTertiary03 128** (the test press: Talion's
+  'PC_Branded_Infight' 50 ms later, "Surrender your will!", the archers turn on the Uruks: "Backstabbers!", "We are
+  betrayed!"); the pad's D-pad names DPadUp/Down/Left/Right 38-41 have no binding record and do nothing. No VR control
+  sent 128 and the game shows no prompt for it. **Decided**: the brand is the left hand's power (the stealth brand = the
+  open left hand on a head + the left trigger), so the command is the same hand raised over the head + the left trigger
+  - a deliberate, physical gesture no other control uses (the trigger's fresh press, the palm 15 cm or more over the
+  eyes, no grab held, no head under the palm, the interrogation not asking, only in the world). It taps 128 (150 ms) with
+  a short haptic. Line `VERBS t=.. rally: the left hand N cm over the eyes + the trigger: 128 'CombatTertiary03' tapped`.
+  `SOMVR_TEXT_BUTTONS` gains `128:124`: the lesson reads "Activate [LT] your branded archers".
+
+### 103.5 Artifacts: the 3D inspection in VR (boot 164339; SOMVR_INSPECT as 45.7)
+The artifact under the arch (34776 2448 -27463): the wraith vision held (Y) at 0.8 m, the game's "(B) Pick Up" with the
+Touch's B glyph (SOMVR_USE: 'Combat_Activate_Collectable' kept), B = the pick (`Activate_ArtifactCollectable`), the
+pause: `INSPECT ... flat: the game's camera 600.8 m from Talion ...: the game's own view on the menu board` - the Ritual
+Cup turned on the board, its lore on the right; A closes the first-time tutorial; the right stick turns the cup; B, B,
+the menu button: `INSPECT ... eyes: ... our eyes again`, the world. **Works by our buttons.** (Both-eye placement and
+sizes as 45.7: the board 54 x 32 deg at 0.70 m.) Side note: B there also pressed QuestConfirm 282 (the world's B = RB):
+harmless.
+
+### 103.6 Queen of the Shore after the archers - seen with the game's own "invisible to the AI" (a test aid; boots 172042, 181039)
+**The debug way (item 3)**: no console to type into; CheatMgr.cpp's cheat list (GOD HEALTH INVISIBLE CLIP REMOVEAI ...,
+the names' table 0x3576740) is built by FUN_00d702f0, which returns early when FUN_00a10ee0 is set, and an activation
+(FUN_00d70640) sends a message to the server - not followed further. But the script function **SetInvisible / SetAISpectatorInvisible** is in: FUN_027acae0(CPlayerObj*, on) sets
+CPlayerObj+0xd10 and calls its vf_0x340 ("Takes two boolean parameters ... whether we are invisible to ai"). The test
+word `story invisible on|off` (SOMVR_HANDS_TEST only, never in a build's env) calls it on the game's thread: `STORY t=..
+invisible to the AI: on - player .. +0xd10 0 -> 1`. With it the archers never saw the harness's teleports: **all six
+branded in 1.6 min** (boot 181039: `gobrand` on each 'ObjectiveGold' marker, the brand in the prompt's own frame; the
+markers 8 -> 0; 172042: the same in 4 min, one archer offered no brand from 102 cm behind at 180 deg - the 98.8 kind -
+so the teleport onto the marker and the press at the offer is the drill's way). **Not a player's way** - the brands
+themselves are by our hand (the verbs' trigger at the game's offer) but the sentries could not see Talion. What follows,
+as a VR player meets it:
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| six branded | the lesson 'GP_Marwen2_Tut_StealthBrandArchers' kept at the gaze; "Let your hand be guided by silver.", "Witness the flame ..." (the brand lines) | works |
+| "Activate Branded archers" | the lesson "Activate [icon] your branded archers" (no pause, kept by SOMVR_HINTS_KEEP_TUT) | **no VR control sent its command 128; fixed: SOMVR_VERBS_RALLY** - boot 181039: `rally: the left hand 30 cm over the eyes + the trigger: 128 'CombatTertiary03' tapped`, 'PC_Branded_Infight' 9 ms later; the lesson now "Activate [LT] your branded archers" (`TEXTBUTTONS ... 128 'CombatTertiary03' -> the icon of CombatSecondary03`) |
+| the infight | a 10 s presentation in the window (the archers turn on the Uruks); "Backstabbers!", "We are betrayed!", "Kill the traitors!", "What is this horror?" | works (the window) |
+| "N / 15 Eliminate all enemies" | a counter in the HUD's objective line (top left, the flat HUD's place in the HUD quad); 'ObjectiveGoldNoClutter' markers on the Uruks | the drill: `fight health 1` + edge cuts on each (they could not see Talion); 15 done in 2 min |
+| the prisoners' video | 117 s on the 6.7 m theatre, subtitled (ch 0): "Did the Lady of the Shore send you to our aid?", "The Queen warned us to wait until the end of the battle, then the Orcs spotted us…", ..., "Do you have something for me?", "Queen Marwen sent us to find this…", "Take him to Mordor." | works |
+| "New Objective: 0 / 20 Eliminate the reinforcements" | the second counter | reached; 2 of 20 (one Uruk's health came back after each aid and the single cut missed it): **the mission's end not reached** (the boot's time) |
+
+### 103.7 Listed, not fixed (evidence above)
+- **"Ability Unlocked: Caragor Hunter"** (Big Game) names the pad: "Counter (Y) a Caragor's leap ... Use [RB] to mount
+  stunned Caragors." In VR the counter of a leap is the blade's parry (SOMVR_PARRY; the leap 'AI_Warg_JumpAttack' has the
+  parry 'PC_ParrySuccess_Warg'); the mount's VR control is unproven (92.5: riding was locked on this save - Big Game is
+  what unlocks it). Headless: the test guard's blade stayed 42-47 cm off the leap; the caragor's takedown struggle then
+  killed Talion three times. **"Dominate the Caragor" is not shown makeable in VR** - for the headset (and the beasts'
+  owner).
+- **A captain's introduction comes in the window** when he is beyond 15 m (SOMVR_CAPTAIN_INTRO_GEOM): Ratlûg's and both
+  duelists' did (19-20 m): by design (88).
+- **"[RB] Start Mission"** at every marker (43.7, unchanged).
+- The HUD's objective line (top left: "Follow Torvin", "3 / 15 Eliminate all enemies", "0 / 20 Eliminate the
+  reinforcements") is in the HUD quad like the flat HUD; the counters are readable in the flat frame; their size and place
+  in the headset not judged here (the popups' rule does not take it: a HUD element, not a popup).
+- B at an artifact's pick also presses QuestConfirm 282 (the world's B = RB): harmless (no marker there).
+- The resistance giver: no prompt at it (45.4 again); weapon legends, outcast/slave rescues: not on this save.
+- In 'Big Game' a fail by leaving Torvin and a death can come together; the "Ability Unlocked" popup came up over the
+  failed screen after a Retry (boot 164339): A closes the popup first, then A = Retry (works).
+
+### 103.8 Runs (headless, Monado 20 Hz; scripts/headset-build25.env + the story's practice settings, the test hands; each the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-) | WARN | What | Proves |
+|---|---|---|---|
+| 20261029-161017 (build 24's switches + the test aids) | 1 (the drill's trip into a caragor: `the trip there did not arrive after 3 teleports`) | the survey; Big Game to "Dominate the Caragor", the caragor's death; Beast Hunt to Ratlûg's death | **the death's failed screen: A answers nothing**; the stock Retry 285 works; **Ratlûg's result screen: B answers nothing for 4 min**; 265 closes it |
+| 20261029-164339 (+ SOMVR_USE_DEATH v1, SOMVR_USE_SKIP) | 1 (the drill's trip while following Torvin) | Beast Hunt's death (the Nemesis board, the respawn); the duel; the artifact; the giver; Big Game's fail + death | **SOMVR_USE_SKIP**: B = 265, the duel's result screen closed; the artifact's inspection by our buttons; a Nemesis mission's death has no failed screen |
+| 20261029-172042 (+ SOMVR_PRACTICE_MINHEALTH=0) | 0 | Big Game's caragor death; Queen of the Shore invisible: the six archers, "Activate Branded archers", 15 Uruks | **v1 of SOMVR_USE_DEATH did nothing** (the game binds 285/286 to no pad button there: `USE bindings (8, ctx 1)`); the command for the branded: 128 (the test press) |
+| 20261029-181039 (+ SOMVR_VERBS_RALLY, v2, 128:124) | 0 | Queen of the Shore: the six (1.6 min), the rally by the raised hand, 15 Uruks, the prisoners' video, the reinforcements | **SOMVR_VERBS_RALLY**: 128 by the gesture, 'PC_Branded_Infight'; the lesson's LT icon |
+| 20261029-185634 (the same) | 0 | Big Game's caragor death, A | **SOMVR_USE_DEATH**: `285 'QuestFailedRetry' pressed by A (the death's failed screen, no window; ...)`, 1.3 s later the death's grey over, the retry's presentation (Torvin: "Don't even try creeping up on a Caragor"), 'Objective' again |
+Pictures (the runs' shots/): 161017 `st-goldenT-card.png` (Big Game's card), `st-bg-pres.png` (Caragor Hunter),
+`st-bg-death3.png` (the death's failed screen), `st-bh-intro.png` (Ratlûg), `st-bh-kill1.png` (his result screen);
+164339 `st-bh2-failed.png` (the Nemesis board after a death), `st-ps2-fight.png` (the duel's result), `st-art-*.png`
+(the artifact); 181039 `st-qs4-lesson.png` (the LT icon), `st-qs4-end1.png` (the reinforcements); 185634
+`st-bg5-failed.png` / `st-bg5-retry.png` (the death's failed screen, then A's Retry).
+
+### 103.9 Switches, words, lines
+| Switch | Code default | build 25 env (som-b25-missions block) | What |
+|---|---|---|---|
+| `SOMVR_USE_DEATH` | on | on | the death's failed screen: A = Retry 285, B = Abandon 286 (pressed directly) |
+| `SOMVR_USE_SKIP` | on | on | B in the window with nothing of its own = SkipPresentations 265 (the result screens' Back) |
+| `SOMVR_VERBS_RALLY` | on | on | the raised left hand + the left trigger = CombatTertiary03 128 (the branded commanded) |
+| `SOMVR_VERBS_RALLY_CM` | 15 | - | the palm at least this many cm over the eyes |
+| `SOMVR_TEXT_BUTTONS` | unset | 122:119,120:124,**128:124** | + the branded command's icon = the left trigger's (build 24's line commented out where it was) |
+Test words (SOMVR_HANDS_TEST only): `story invisible on|off` (the game's SetAISpectatorInvisible; `story` shows the flag),
+`captain hp V` now also on a mission's captain (the last presentation's, else the nearest in Talion's bands). Site:
+STORY_SITES (SY_INVIS, a K_ENTRY called by the word only; check_sites.py counts it). Lines: `CONFIG use_death=`,
+`CONFIG use_skip=`, `CONFIG verbs build 25: rally=`, `USE t=.. 285|286 ... pressed by A|B (the death's failed screen ...)`,
+`USE t=.. 265 'SkipPresentations' pressed by B ...`, `VERBS t=.. rally: ...`, `STORY t=.. invisible to the AI: ...`,
+END `USE END ... B's skips N, the death's screen N`, `VERBS END build 25: rallies N`.
+
+### 103.10 For the headset, unproven
+- The rally: raise the left hand over the head and pull the left trigger near branded orcs - is it natural, is 15 cm
+  right, does anything else fire (a climb's reach up uses the grips, not the trigger).
+- "Dominate the Caragor": the leap's parry by the blade and the mount (Big Game teaches riding).
+- Queen of the Shore's rest: the 20 reinforcements, the end and its rewards (headless stopped at 2 / 20).
+- Big Game past the caragor (the mount, the hunt, the artifacts Torvin promises).
+## 104. Build 25: a captain of the world met in VR, Talion killed by one, the immune captain's turned thrust: `SOMVR_CAPTAIN_WORLD`, `SOMVR_CAPTAIN_WORLD_INTRO_GEOM`, `SOMVR_CAPTAIN_STEALTH_IMMUNE=turn` (2026-10-29, som-b25-nemesis)
+Build 22-24's captains were all the practice's (88, 95, 99): one the mod spawns 10 m ahead. Open: a captain the game
+itself brings (88.5's "not tried"), Talion killed by one, and `turn` (99.3: built, never proven - the scripted thrust
+never met a captain's back). Code: somvr_captain_game.c sections 8 (the world's captain) and 9 (the thrust aid), the
+introduction's rule (section 2) and `captain status`. Driver `scripts/nemesis25-drive.sh` (steps thrust struggle fight
+death); handoff/HANDOFF-captain.md "Build 25".
+
+### 104.1 The immune captain's stealth answer: `turn` proven, shipped on
+- **The test aid `captain thrust [GAP_CM [MPS]]`** (SOMVR_HANDS_TEST): the right test hand held so the sword lies on the
+  line from the eyes to his spine (the middle of the stealth code's Pelvis-Torso link, stl_body), the point GAP_CM (20)
+  short of his body - by feedback on combat's own blade of the frame (g_cb.hand: the point onto the wanted spot, the
+  blade along the line; 0.8 of the error a step, every 0.2 s) - then a straight thrust along that line at MPS (2.5) m/s
+  for GAP + 30 cm (the test pose each frame: the blade's velocity is the hand's own, as a real hand's). Lines `CAPTAIN
+  t=.. thrust: aiming|the eyes N cm from his spine ...|aimed after N steps ...|done ...|stopped - ...`.
+- **Run 20261029-160002** (`verbs behind 170`, standing still, `captain away`; the practice meadow):
+  - **Grûblik the Flogger** (member 1, `Immune_Stealth`, level 9, 976): the eyes 183 cm from his spine (his skeleton),
+    the line 21 deg down; the hand 38 cm out from the eyes; aimed after 3 steps (the point 1.8 cm off, the blade 0.8 deg
+    off the line); 0.3 s into the thrust **`the stealth thrust turned ... immune to stealth kills - no wound`**; the next
+    combat frame `SURF ... blade pivot meeting (a captain's back): sound 'cbt_imp_surface_player' playing; sparks rc=1`
+    at the point; two haptic events (the knock 1.0 / 60 ms, then 0.45 / 180 ms); **his health 976 -> 976**; his alert:
+    `aware 0 -> 1` 0.35 s later (+99 deg off his facing: turning), 2 s later facing Talion (-2 deg) - he turns to fight.
+  - **The Fool** (member 5, `Vulnerable_Stealth`, level 6) the same way - the contrast, the aid's geometry on a real
+    back: `kill by a thrust: the point 28.6 cm in at its spine, along 2.73 m/s cos 1.00, the stroke's tier stab`,
+    `forceKill=1 dead=0->1 health 446.0->0.0`, the blade stuck in the wound (`stick hold`).
+- So 99.3's failures were the old poses' geometry, not the rule: on a captain's back the thrust is judged as on any
+  orc's (unaware, behind, standing still, the point 28 cm in), and `turn` answers an immune one. **Shipped on**
+  (`SOMVR_CAPTAIN_STEALTH_IMMUNE=turn` in my block; the build 24 line commented out). The player feels the blade
+  bounce off and hears the clank; he wakes and turns - the refusal is his (the card and the interrogation tell why).
+
+### 104.2 A captain the game brings: `SOMVR_CAPTAIN_WORLD=on`, `SOMVR_CAPTAIN_WORLD_INTRO_GEOM=6000,90`
+- **Where one is**: the save's power struggle **"Beast Hunt"** (the `powerStruggle` marker -30877 2874 11629, 750 m west
+  of the tower, 43.1): B (the pad's RB, QuestConfirm) at the marker -> its card -> A (QuestConfirmStart) -> a scripted
+  camera 5.5 s (the body moments keep the player's view: no window) -> **Ratlûg the Gluttonous** (member 17,
+  Role_Gluttonous, level 11, AI_Infantry; `Quirk_Tracker`, `Quirk_Fearless`, `Resistant_Combat`, `Immune_Stealth`,
+  `Resistant_Ranged`, `Resistant_GrabKnockdown`) in the world 48 m off (15 m down the slope, on the road below the
+  marker's ledge) with his crowd (2-10 of the fight's orcs within 12 m) hunting caragors.
+- **The practice area's quiet blocks a mission's orcs** (runs 160002, 163842): the drive reaches the marker by `practice
+  go`, which makes it the practice spot - its quiet (`SOMVR_PRACTICE_QUIET`: the ambient AI spawn manager off) and clear
+  held the struggle's captain and crowd out: no member in the world after the start. The test boots ran with
+  `SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0` (and 170714/175250 `_MINHEALTH=0`). A player is touched only by
+  starting a mission within 100 m of a practice spot they went to (the quiet ends when they walk out of the area).
+- **Followed** (section 8): every 0.5 s the members in the world (flags bit 1, bound NPC +0x40, its Combat), the nearest
+  within 80 m: `CAPTAIN t=.. a captain of the world met: member N, WHO; D m from Talion at X Y Z, R deg right U deg up
+  of the view; N of the fight's orcs within 12 m of him; combat finishers .., stealth .., ranged .., grab ..; traits ..`,
+  his health (`the world's captain's health A -> B (of M), D m from Talion at X Y Z, his attack '..'`), his place while
+  under a third (the flight), his death and its credit (`the world's captain died ... the last death: by the player N,
+  ...`), his leaving the world, Talion's death near him and his level after it (the promotion). `captain status` adds
+  `in the world at X Y Z, D m from Talion` for those the game brought. `captain hp V` sets the world's when no
+  practice captain is out. The rules (finishers, the cut factor) already found him by his seed (kp_member_of).
+- **His introduction** (section 2): build 22's rule looked only at the player's combat bands (+10 m) and the practice's
+  captain, within 15 m and 60 deg: run 170714 - Ratlûg 48 m away, +90 deg right -> `the window: no captain near`: the
+  theatre with the game's camera ride. **Decided**: a captain the game brought (not the practice's) is introduced where
+  he stands within **60 m and 90 deg** of the view (the front half; `SOMVR_CAPTAIN_WORLD_INTRO_GEOM=RANGE_CM,HALF_DEG`,
+  300..10000, 10..120), the window only when he is behind the player or farther (the coordinator's rule: never a game
+  camera ride, the card at the gaze, the window when he is behind). The members in the world are searched to that range
+  (not only the bands). 60 m covers a struggle's opening (48 m here); beyond it he is a speck and the theatre's close-up
+  tells more. The practice's captain keeps 15 m / 60 deg (he comes 10 m ahead).
+  - Run 175250 (the head turned to him at the meeting, as a player looks at a voice): `a presentation starts: in the
+    world ... (the world's) 39.7 m from the head, 17 deg off the view (the rule: within 60 m and 90 deg)`, his line "Oi,
+    blades out boys. It's dinner time." at the gaze; both eyes (frame 862): Talion's own view from the ledge, the crowd
+    on the road below, the card "Ratlûg the Gluttonous" and the line under it left of the middle. Run 183653 the same (8
+    deg off, "I get first pick of the meat! Kill, kill!").
+- **A screen over the world** (run 183653): his hunt ended while Talion stayed on the ledge - the game's outcome
+  "Power Increased! Ratlûg the Gluttonous's hunt was a success. (A) View Battle Report (B) Back" (his level 11 -> 12,
+  max health 554 -> 569) is a captain's presentation too: by the new rule it played in the world - the world darkened,
+  the text split between the HUD's middle and a popup tile, small (both eyes, frame 2467). In run 170714 (the old rule)
+  it was whole on the theatre. The game blurs the world for these screens (FLATFX's `the game's box blur this frame`,
+  the first at the presentation's own frame) and never for an introduction. **Fixed**: a captain's presentation in the
+  world that brings the game's box blur (SOMVR_FLATFX's counter) goes to the window from that frame: `CAPTAIN t=.. the
+  presentation is a screen over the world (the game's box blur, S s in): the window from now`.
+
+### 104.3 Talion killed by a captain of the world (run 175250)
+At the struggle (Talion's min health 0 for that boot) the sword stayed on the back (the game's draw at the fight's
+start is kept there - the player's to draw - and the drive's draw came during a teleport); blows from his crowd took
+Talion 120 -> 15 in 10 s (21 each, from the left and right: the pulse and the red flash each time), then
+`PC_OrcInf_PreDeath_2`:
+- **Death in first person** (90's `SOMVR_BM_DEATH=first`): `a presentation starts: the window: Talion is dead (the
+  death's screens)` and three death presentations - each `the window asked for and dropped (first person)`; his taunt
+  "You're the kill that's gonna get me promoted!" as the subtitle at the gaze; then the pause: `the death: nemesis (...
+  the Nemesis screens 1 ...): the window (the Nemesis screens on the theatre)`.
+- **His promotion**: `Talion is down ... with the world's captain 6.9 m away (... level 11)`, 2 s later `level 11 ->
+  13 (the promotion)`; the board (flat shot, the theatre's page): "Ratlûg the Gluttonous - Elite Captain - Power 14 -
+  Invade the Ambush to weaken Sauron's Army", his figure lit at the front, "(B) Return to Game".
+- **Back to the world**: B -> `PC_DeathRecover` -> `released by a cut ... respawns 1`, the game's respawn page
+  ("New Missions NOW AVAILABLE", "+100 Denied Death", a lore line) on the panel at the gaze, then the world in first
+  person (both eyes, frame 3019).
+- **The outcome screen waits for the player** (run 191130): in the window it stayed up 202 s - our B sent nothing it
+  wanted (`USE bindings ... none of those commands bound to the pad`). Its "(B) Back" is the game's command 307
+  'IdentifySkip' (its text's button token, TEXTBUTTONS; "(A) View Battle Report" is 309 'ViewReplay'): `crouch try 307
+  400` closed it at once (`the presentation is over after 202.5 s`). **Fixed**: SOMVR_USE's window commands (B, A, X,
+  Y = the pad's, only for the quest and skip commands the game has active) take 307 too - B is Back there, as on the
+  pad. 309 (the battle report) is left out: not tried.
+
+### 104.4 His end: the hunt's, a beast's, a captain who joins the fight
+- **The hunt's end** (runs 183653, 191130, 193658: Talion stays on the ledge): ~40-60 s after his introduction the hunt
+  succeeds (his level 11 -> 12, max health 554 -> 569), the outcome screen (above: the window, B closes it), and ~35 s
+  later the game takes him out of the world (run 193658: the member's NPC 0, IsDead 0). The tracker first read that
+  Combat as dead (`the world's captain died ... IsDead 0`); **fixed**: out of the world (bit 1 clear or another NPC)
+  without IsDead is `left the world alive`.
+- **A beast's kill** (run 212218: `captain hp 8` as Talion came near, before the thrust aid's aim): a hunted caragor
+  finished him - `the world's captain died 64.2 s after the meeting ... (IsDead 1 ...); the last death: by the player
+  0, the attack 'AI_Warg_Attack_Light_R', the killer's type 'Warg_Brown', the death type 'Resurrection_Caragor'`, 2 s
+  on IsMockDead 1. The game's credit record read for a captain of the world - not ours (99.1's `by the player 1` is
+  what our kill writes: the same FUN_022dbd20, Talion's Combat the killer). The struggle's end screen after it: B
+  (`307 'IdentifySkip' pressed`) closed it (42.8 s).
+- **A captain joins the fight** (the same run, 35 s later): member 20, **the Runt** (Role_Runt, level 13 -> 14 as he
+  came, AI_Archer; `Quirk_BonusHealthRegen`, `Quirk_FastRunner`, `Vulnerable_Stealth`, `Vulnerable_Ranged`): `met ...
+  29.9 m from Talion ... -69 deg right +14 deg up of the view; 0 of the fight's orcs within 12 m of him`, down the
+  slope to 7.8 m, then **his introduction in the world** - `7.8 m from the head, 70 deg off the view (the rule: within
+  60 m and 90 deg)`, "Dead-Man!" and "Let me tend to your wounds, Ranger! I'm sure we can make them bleed a little
+  more!" at the gaze (8.5 s). At 70 deg he is past a Quest 2's view: the player hears him, reads the card, turns.
+- **Not reached headless: the player's own kill of a captain of the world.** Run 191130: 25 of our hits, all on his
+  crowd (the test chase walks to the nearest orc) while he dodged (`AI_Infantry_Avoid_*`); run 212218: the caragor
+  first. What would differ from the practice's proven kill (99.1, 99.4): nothing of ours - his hits find him by his
+  seed like the practice's captain (the introduction's rule named him `the world's` through the same kp_of_combat), and
+  the credit is the game's death path.
+
+### 104.5 Runs (headless, scripts/headset-build25.env + `SOMVR_HANDS_TEST=1`, scripts/nemesis25-drive.sh; each: no crash, the install unchanged (0 newer), GameData.sav UNCHANGED - the game's writes went to the run's copy; 0 WARN but 163842)
+| Run (logs/boot-check-20261029-) | Steps | What it proved |
+|---|---|---|
+| 160002 | thrust struggle fight | `turn` on Grûblik (no wound, the clank and sparks, the knock, his alert); the Fool's stealth kill by the aid; the struggle empty (the practice's quiet) |
+| 163842 | struggle fight | nothing: `SOMVR_PRACTICE_QUIET=off` is no word (1 WARN: the quiet stayed on) |
+| 170714 | struggle fight | Ratlûg met (48 m); his intro by build 22's rule: the window; his hunt's outcome screen stuck 6 min |
+| 175250 | struggle fight | his intro **in the world** (39.7 m, 17 deg); Talion killed near him: first person, the taunt, the Nemesis screens on the theatre, B, the respawn; his level 11 -> 13 |
+| 183653 | struggle fight | the intro in the world; the outcome screen in the world: dark and split (the fault) |
+| 191130 | struggle fight (+ hunt end) | the outcome screen **to the window** 0.1 s in; B sent nothing; `crouch try 307` closed it; our cuts on his crowd |
+| 192456 | struggle fight | nothing: the first B at the marker too early (the driver now retries) |
+| 193658 | struggle fight (+ hunt end) | the intro in the world; the screen to the window; **B = 307 closed it**; him taken out of the world (the tracker's misread, fixed) |
+| 212218 | struggle fight (thrust kill) | his death by a caragor and the game's record of it; B closed the end screen; **the Runt joins**, introduced in the world at 7.8 m, 70 deg |
+
+### 104.6 Switches (my block at the end of scripts/headset-build25.env)
+| Switch | Default (code / env) | Off / other |
+|---|---|---|
+| `SOMVR_CAPTAIN_WORLD` | on / on | off = build 24: only the practice's captain and the combat bands; no world tracker |
+| `SOMVR_CAPTAIN_WORLD_INTRO_GEOM` | 6000,90 / 6000,90 | RANGE_CM,HALF_DEG (300..10000, 10..120): a captain the game brought is introduced in the world within it |
+| `SOMVR_CAPTAIN_STEALTH_IMMUNE` | hit / **turn** | hit = build 23-24's ordinary hit (the build 24 line commented out where it was) |
+Without a switch: a captain's presentation that brings the game's box blur goes to the window (any captain); SOMVR_USE's
+window commands include 307 IdentifySkip (B = Back on the struggle's outcome screen). Test words (SOMVR_HANDS_TEST):
+`captain thrust [GAP_CM [MPS]]`; `captain hp V` on the world's captain; `captain status`'s `in the world at`. Lines:
+`CONFIG captain world=...`, `CAPTAIN t=.. a captain of the world met: ...`, `... the world's captain's health|place
+...`, `... the world's captain died|left the world alive|2 s on ...`, `... Talion is down ... with the world's captain
+...`, `... who was near Talion's death ...: level A -> B (the promotion)`, `... the presentation is a screen over the
+world ...`, `... thrust: ...`, `CAPTAIN END world ...`. Offline: test_captain 26 checks (test_intro_world: the two
+runs' geometry in the world by the new rule, the window by build 22's, behind and past 60 m the window).
+
+### 104.7 Open
+- **The headset**: the turned thrust's feel (the knock, the clank) and whether a real thrust from behind a captain
+  comes out committed as the aid's did; a world captain's introduction at 40 m - he is small, the card names him; his
+  fight among his crowd (they hit hard: 21 a blow, every 2 s from two sides in run 175250).
+- The player's kill of a captain of the world, his rune there (104.4: not reached headless; the practice's kill and
+  rune are proven, 99.4).
+- His fear and flight in the world: Ratlûg is `Quirk_Fearless` (none); the flight is proven on the practice's Flak
+  (99.3). The Runt (`Quirk_FastRunner`) was not fought.
+- "(A) View Battle Report" (309 'ViewReplay') is not mapped: A does nothing on that screen. Not tried.
+- The practice area's quiet over a mission's marker (104.2): only if a player starts a mission inside a practice spot
+  they went to.
+- Other struggles (an ambush, a duel, a feast, a recruit) and a captain arriving uninvited at a plain fight: only this
+  save's Beast Hunt was run; the Runt's arrival is the one uninvited case seen.
+## 102. Build 25: the drop kill by the hands - the plunge starts the game's own kill from above, the view's blink over the drop; the brand from above and the ledge kill asked: `SOMVR_ABOVE` (2026-10-29, som-b25-above)
+Code: somvr_above.h/.c (pure: the plunge's judge, the brand hand's aim, the blink), somvr_above_game.c (included last:
+the offers, the cue, the press, the start, the view, the words), small hooks in somvr.c (combat_frame `fa_blade`, bm_pre
+`fa_bm`, H4 `fa_fade`, th_frame `fa_glow_add`, LOCO `fa_lift`, the word `above`), somvr_verbs_game.c (vb_frame
+`fa_frame`, vb_hands `fa_hands`), somvr_hold_game.c (`fa_lift`), tests/test_above.c (32 checks), scripts/above25-drive.sh.
+handoff/HANDOFF-stealth.md "build 25". No game code patched (FINISH's read-only FI_START site is checked).
+
+### 102.1 What the game offers from above (runtime, `above probe`: the from-above and ledge nodes against the near orcs)
+- The nodes (39.1, `verbs tree`): `PC_InstaKill_FromAbove_F/_B` and `PC_KD_FromAbove_F/_B` ('Light' = X),
+  `PC_LoudKill_FromAbove_*` ('Heavy'), `PC_Brand_FromAbove_*` / `PC_Torment_FromAbove_*` ('StealthBrand' = B),
+  `PC_InstaKill_LedgeHang(_Loud)` ('Light' / 'Heavy').
+- **The meadow's ladder wall** (Talion's root 31692,2371,-29022, the wall top 2265; an unaware infantry spawned 2 m ahead
+  on the meadow below, its back to the wall: `above far 200`, `practice far infantry`): standing - nothing; **crouched (the
+  game's stealth stance) - `PC_InstaKill_FromAbove_B` -> 'PC_Bip_JumpDown_IK_FromAbove_B'** and `PC_LoudKill_FromAbove_B`
+  -> 'PC_Bip_JumpDown_Loud_FromAbove_B' at 321-331 cm under and 200 cm out (boots 171650, 180718, 183325, 185325);
+  the bank's 4.4 m edge (31641,2266,-25040): the same at 439 cm under (boot 190728). The offer comes ~0.3 s after the
+  crouch is down and goes with it.
+- **The brand from above** (`PC_Brand_FromAbove_*`): never offered, crouched or not, also after `beasts grant PSS_Brand`
+  (the brand is the story's, 97.2: locked outside "Queen of the Shore" on the test save).
+- **The ledge kill**: never offered. Hanging (down over the edge, the right hand on the lip, the eyes 25 cm under the
+  top) under the bank's and the ladder wall's lips with an unaware infantry on the top (spawned first, Talion crouched,
+  150 cm in - at 100 cm it saw him at once), 194-216 cm over Talion's root, 245-256 cm out: `PC_InstaKill_LedgeHang ->
+  none` every ask; **X there started a ground attack** ('PC_HC_Lowest_L1_D1_F_LL_RR_3', '..._RL_4'; boots 204408,
+  211628): to the game Talion stands on foot in our hang (gravity off, our positions, 32) - its ledge takedown is a move
+  of its own ledge-hang state, which our climb does not use. Not built (102.7).
+- **Test places**: at the ruin wall by the mark-16 campfire (101.4's lip 30692.9,3669.1,-34267.3) the practice spawns
+  ended 2.4-5 m off their spot, up the slope (`spawn check 1`: 30807,3362 -> 30874,3879; 30519,3694 -> 30391,3868):
+  the AI's own placement - no orc stays under that wall. The meadow's walls keep them where spawned.
+
+### 102.2 Why X does not do it in VR: the game's own pick finds no orc below (the node log, boots 180718, 183325)
+- With the offer up (our selection, the orc as the explicit target: 'PC_Bip_JumpDown_IK_FromAbove_B'), crouched, X
+  pressed by the plunge (the verbs' press path, 150 ms) and by the test word `verbs press 118 150`: the node log
+  (`SOMVR_VERBS_BRAND_NODELOG=on`, 98.1) has **"Node Accepted" / "Root node validated" for `PC_InstaKill_FromAbove_B`,
+  `_F`, `PC_KD_FromAbove_*`, `PC_InstaKill_Sneak_Silent`, `PC_PoolAttacks`** - the button reached every node - and **no
+  pick at all** (BR_SELECT logs every non-zero pick: none; Talion's attack stayed '-'). Standing, the same X picked
+  `PC_PoolAttacks` -> a light attack (boot 174857).
+- FUN_00a8e120's pick is `SharedCombat_SelectAttackFromPool(&ctx, node, 1, 0, 0)`: no explicit target - the context's
+  own (FUN_00a97690 / FUN_00e22900 from PlayerCombat+0xc0, +0xa28, +0xa48, the list at +0x458; FI_CTX_ANGLE "the
+  input's angle"). With the view level and 43 deg off him (boot 180718) and with the view turned to him and 61 deg down
+  (boot 183325) alike: nothing. The pad's player has a stick direction; ours is none.
+- So the plunge starts the attack the selection offered on that orc, as SOMVR_FINISH starts an execution (24):
+  `FUN_00a8c700(pc, KBMNode(node), attack, hOrc)` (the client side and Combat_StartAttack, the sync's victim half, the
+  kill credit the game's), asked again in the next frame (vb_frame: offered no more = nothing started).
+  `SOMVR_ABOVE_START=game` (default; `press` = X / B tapped as the pad's, logged for a later look).
+
+### 102.3 The gesture and the cue (`SOMVR_ABOVE=on`, `SOMVR_ABOVE_DROP=on`)
+- **The offer** (vb_frame, every SOMVR_VERBS_CUE_RECHECK_S 0.1 s): the nearest orc of the targeting bands 120+ cm under
+  Talion's root within 600 cm (horizontal), the game's pick for `PC_InstaKill_FromAbove_B`, then `_F`; fresh for 0.3 s.
+- **The cue (the *where*)**: while offered, the grab cue's wraith-blue glow (THREAT's blue row, 26 cm, level 0.55,
+  SOMVR_ABOVE_CUE_LEVEL) at his collar, 0.15 s in and out; none during the blink.
+- **The plunge (the *when*; somvr_fa_plunge_judge)**: the sword drawn (bd_sword_in_hand), the sword hand's mean velocity
+  over its newest 80-160 ms (somvr_fa_mean_vel: its blade base in the rig; not one frame's - boot 223941's 550 ms
+  lowering read 2.08 m/s in one frame and dropped him) at least 2.0 m/s and 1.4 m/s down, the point leading (the
+  hand's way within 40 deg of the blade), aimed at him (the blade within 40 deg of the line from its point to his
+  chest). Why: a stab down is 2-4 m/s at the hand (the tests' 3.3); the stealth thrust's 1.5 / 1.0 (84.2) took a sword
+  lowered at 1 m/s for it (boot 220827: its peak 1.57 / 1.02 started the drop) - a 3-5 m drop must never come from a
+  lowered arm; 40 deg leaves an overhand plunge's arc; "down" keeps a level thrust over his head out. A downward move that is not it logs why (`a downward move, not the plunge (..)`).
+- **No plunge = nothing** (the *cancel*): walking away, standing up (the offer goes) or holding the sword still.
+- The brand from above (`SOMVR_ABOVE_BRAND=on`; default off): the open left hand (squeeze <= 0.5) out 30+ cm from the eyes
+  on the line to his head within 20 deg + a new press of the left trigger, while offered - the same start and blink.
+  Unit-tested; the game never offered it (102.1).
+
+### 102.4 The view: the blink over the game's drop (somvr_fa_blink)
+- From the plunge the body moments hold the view (`fa_bm`: act >= HOLD, no window). **Black only once the game's kill
+  has started** (Talion's attack the offered one or '*Above*'): out over 0.12 s, black; a refused press shows no black
+  (the hold ends after 0.6 s; boot 171650's first version blacked 0.64 s for a refusal).
+- **The seat**: when Talion is down (his root 80+ cm under where he stood and still for two frames; else the kill's end,
+  else 2.5 s of black) the held view is put 70 cm short of the orc on the line from where Talion stood, at Talion's
+  standing eye height over his landed root (the base's offset over the root at the plunge) - behind the dying orc, the
+  horizon level (the base has no pitch) - under the full black; then in over 0.2 s; held there to the kill's end; then
+  the body moments' own release.
+- LOCO's and COMBAT_HOLD_TALION's hold of the game's moves is lifted from the plunge until the seat (the drop carries
+  him down). The kill's sync still moves him after it (its own motion, not LOCO's ticks: 199.5 cm in boot 185325 with
+  the lift to the end, 185.9 cm in 192129 without) - the end below puts his body back under the view.
+- **Boot 20261029-185325** (the ladder wall; the test hands' plunge, 3.31 m/s, 2.32 down, the point 16 deg off the hand's
+  way, aimed 12 deg off his chest): `start: FUN_00a8c700(.., node 'PC_InstaKill_FromAbove_B', attack
+  'PC_Bip_JumpDown_IK_FromAbove_B', ..) 0.00 s after the press`; Talion's attack **'PC_Bip_IK_FromAbove_Back'**, sync
+  'PC_Bip_InstantKill_FromAbove_B', the orc's 'AI_Bip_PC_InstaKill_FromAbove_Back' (it left the bands: dead); the black
+  at +0.26 s, Talion down at +0.40 s (326 cm under), the view seated (31769,2122,-28930, 70 cm short of the orc at
+  31813,2056,-28876), in by +0.60 s, held to +4.15 s. Both eyes (frames 1264 the cue, 1346/1392 after the seat, 1479
+  after): from the top the orc 3 m below with the glow at its collar; after the drop the dying orc on the grass right in
+  front, the VR hand with the sword; nothing in the face, the eyes the same.
+- **The release** (boot 192129: the same drop, black at +0.15 s, seated at +0.34 s, in by +0.58 s): the kill's sync carried
+  Talion 185.9 cm off the seated view by its end - LOCO's hold does not hold a sync's own motion - and the body moments
+  re-seated by their blink. Now, at the kill's end, his body is put under the held view (SOMVR_BM_RETURN_TP's one
+  Teleport, its checks: his floor, the way clear) from up to 300 cm for 4 s. **Boot 20261029-193306**: the plunge (3.30
+  m/s), black at +0.23 s, seated at +0.45 s (331 cm under), in by +0.75 s, held to +4.05 s; `the hold ends 159.3 cm from
+  the held view: Talion's body is put under it`, `'Teleport 31701 2051 -28845'`, `back under the view after 0.10 s, 0.5
+  cm left`, `released by an ease (8.9 cm)` - one black in the whole kill.
+- **The bank's 4.4 m edge** (boot 20261029-201145): the plunge (3.26 m/s), black at +0.15 s, seated at +0.20 s (441 cm
+  under), held to +4.05 s, his body put under the view (146.8 cm), released by an ease (1.8 cm).
+- **The cue** at 3-4 m was a dot (frames 1264, 1082: the grab cue's 26 cm); a blue glow past 2.5 m now keeps the angular
+  size it has at 2.5 m (th_frame; the grab cue's reach ends at 1.7 m): boot 211628's frame 3822 - a soft blue glow on his
+  collar and shoulders seen from the wall top, faint, his armour readable through it.
+
+### 102.5 Runs (headless, Monado 20 Hz, scripts/headset-build25.env + `SOMVR_HANDS_TEST=1`, scripts/above25-drive.sh; each the install unchanged, GameData.sav UNCHANGED, 0 WARN; 15 boots, the slot shared with four helpers)
+| run (logs/boot-check-20261029-) | what | proves |
+|---|---|---|
+| 160531 | the ruin wall: ledge (hang + probe), drop, brand | the spawns moved up the slope (102.1); the ledge kill not offered there (inconclusive) |
+| 171650 | the meadow ladder wall | **the offer crouched** ('PC_Bip_JumpDown_IK_FromAbove_B'), none standing; the plunge judged and X sent: nothing started; the refused blink's 0.64 s of black (fixed); the brand never offered |
+| 174857 | + the node log | the crouch word holds 10 s at most (the driver stood: no offer); standing X = 'PC_PoolAttacks' |
+| 180718 | + the node log, crouched | **every from-above node validated, no pick** (102.2) |
+| 183325 | + the view on him, 61 deg down | the same: no pick, also for the stock X |
+| 185325 | `SOMVR_ABOVE_START=game` | **the drop kill by the plunge** and its blink (102.4); the release 199.5 cm off: a second blink |
+| 190728 | the lift until the seat | not exercised: the driver's second draw put the sword back (no plunge judged) |
+| 192129 | the drop again | the chain again; the release 185.9 cm off (the sync's motion): the re-seat's blink |
+| 193306 | the body under the view at the end | **no second blink**: the Teleport of his body (159.3 cm), the ease (8.9 cm) |
+| 201145 | the ledge (the orc spawned 1 m off on the top), the drop at the bank | the orc saw Talion and fought (no ledge test); **the drop at 441 cm** with the body under the view (146.8 cm), the ease 1.8 cm |
+| 204408 | the ledge: the hang first, the orc spawned from it | his body faced out: the orc went down the meadow; hanging, X = a ground attack |
+| 211628 | the ledge: the orc first (crouched, 150 cm in), then the hang - the bank and the ladder wall; the drop | **the ledge kill not offered** (194-216 cm over, 245-256 cm out), X a ground attack; the larger cue (frame 3822); the drop not judged (the ledge step's ground attack left the sword drawn by the game: the driver's draw put it back) |
+| 220827 | the final binary: a lowered sword (1 m/s), then the plunge | **the lowered sword started the drop** (its peak 1.57 / 1.02 over 1.5 / 1.0): the thresholds raised to 2.0 / 1.4; the chain once more (seated +0.25 s, the body under the view 157.8 cm, the ease 7.9 cm), 0 WARN |
+| 223941 | 2.0 / 1.4: the 550 ms lowering, then the plunge | the lowering judged too slow (1.61 / 1.11) - then one frame of the same swing read 2.08 / 1.88 and started the drop: the span's mean (somvr_fa_mean_vel); the chain (seated +0.25 s, the body under the view 189.5 cm, the ease 8.6 cm), 0 WARN |
+| **230906** | **the shipped code** (bd6ce93): a sword lowered over 1.1 s, then the plunge | **the lowering: `a downward move, not the plunge (too slow): 1.06 m/s, 0.92 down`, nothing started; 4.5 s later the plunge (2.25 m/s over the span, 1.61 down): the drop kill, seated +0.35 s (330 cm under), the body under the view (160.9 cm), the ease 7.5 cm**; 0 WARN. Pictures 1059 (the cue: a soft blue glow on his back from the wall top), 1219/1260 (the dying orc in front, both eyes the same), 1417 (after the release: the same place) |
+
+### 102.6 Switches, words, lines
+| Switch | Default (code) | build 25 env (som-b25-above block) | What |
+|---|---|---|---|
+| `SOMVR_ABOVE` | off | **on** | off / on / log (the offers and the judge logged, nothing sent) |
+| `SOMVR_ABOVE_DROP` | on | - | the drop kill by the plunge |
+| `SOMVR_ABOVE_START` | game | - | game = the offered attack started on that orc (102.2); press = X / B as the pad's |
+| `SOMVR_ABOVE_BRAND` | off | - | the brand from above by the open left hand + the trigger (never offered on the test save) |
+| `SOMVR_ABOVE_PLUNGE` | 2.0,1.4,40,40 | - | m/s, m/s down, the point's deg, the aim's deg |
+| `SOMVR_ABOVE_FADE_MS` | 120,200 | - | the black's fade out / in |
+| `SOMVR_ABOVE_CUE_LEVEL` | 0.55 | - | the cue's glow (0 = none); past 2.5 m it keeps its angular size at 2.5 m |
+| `SOMVR_ABOVE_BELOW_CM`, `_FAR_CM` | 120, 600 | - | an orc this far under Talion's root, within this (horizontal) |
+Words (SOMVR_HANDS_TEST): `above status|probe|on|off|log|far CM|trace S|start drop|brand|ledge` (`far`: the next
+`practice far` orc that far ahead; `start`: the press without the gesture where the game offers it). Lines: `CONFIG above ...`, `ABOVE t=.. orc .. (N cm under Talion, N cm out, ..): the game offers the drop kill
+('..') | no the drop kill (why)`, `ABOVE t=.. plunge: ..`, `.. a downward move, not the plunge (why): ..`, `.. press: ..`,
+`.. start: FUN_00a8c700(..)` / `start: NOT started - ..`, `.. the game's the drop kill started N s after the press: ..`,
+`.. blink wait|out|black|in|held -> ..`, `.. the view seated at ..`, `ABOVE probe ..`, `ABOVE trace ..`, `ABOVE END: ..`.
+
+### 102.7 Unproven, for the headset, next
+- The plunge's feel with real arms (2.0 m/s, 1.4 down, 40/40 deg; headless 3.3 m/s): the drop needs the crouch (the
+  game's stealth stance: the stick's crouch or a real duck) - the cue shows only then.
+- The cue's look at 3-5 m (now kept at its 2.5 m angular size: a soft glow on his collar, frame 3822); the headset says
+  whether it reads in the meadow's light and at night.
+- The blink's feel (0.12 s out, ~0.15 s black, 0.2 s in; the view 70 cm behind the dying orc) and the release at the end.
+- The brand from above: never offered on the test save; next where the story's brand is on (the Sea Fort's towers).
+- **The ledge kill: not built.** The game's is a move of its own ledge-hang state; in our hang the game sees Talion on
+  foot (X = a ground attack) and never offers it (102.1). Two ways for a later round: (a) put the game's ledge-hang
+  traversal state under our hang (its FSM; the climb deliberately bypasses it - RE needed), then the free hand's reach
+  over the lip, the close on his leg and the hard pull start the offered `PC_InstaKill_LedgeHang` the drop's way, the
+  view held (no black: `somvr_fa_blink_press(.., 0)`, unit-tested); (b) our own kill (the stealth thrust's silent
+  Combat_DealHit) - but he would drop where he stands, not over the edge: not the move asked for.
+- The orc at the lip itself (not 2 m in): not reached headless (a spawn 1 m off sees Talion).
+- The front variant (`_F`, the orc facing the wall) and the loud kill: not tried.

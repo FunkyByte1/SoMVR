@@ -94,6 +94,7 @@ static struct {
 	float spawn_cm;        /* SOMVR_PRACTICE_CAPTAIN_CM */
 	float fin_pct;         /* SOMVR_CAPTAIN_FINISHER_PCT: our finisher takes this much of a non-vulnerable captain's max */
 	somvr_cp_intro_cfg icfg;
+	somvr_cp_intro_cfg wcfg; /* build 25: SOMVR_CAPTAIN_WORLD_INTRO_GEOM - a captain the game brought */
 	int last;              /* the member index brought last (-1: none yet) */
 	_Atomic int req_pick;  /* `captain pick N`: the next Captain brings member N (-1: none) */
 	_Atomic int req_status;
@@ -101,6 +102,8 @@ static struct {
 	_Atomic int req_charge; /* `captain charge`: Talion's hit counter charged (a test aid: the execution at once) */
 	/* our captain (the practice's orc while it is him) */
 	uintptr_t fm, npc, c, h;
+	uintptr_t pres_c;      /* build 25: the captain (his combat) a presentation last named - the test aid `captain hp V`'s
+				* target when no practice captain is out (a Nemesis mission's own captain) */
 	double t0, next_watch, health_t;
 	float hp_last, hp_max0;
 	uint32_t flags0;
@@ -110,6 +113,7 @@ static struct {
 	/* the presentation's decision */
 	int pres_on, pres_world;
 	double pres_t0, pres_last;
+	uint64_t pres_box0, pres_screens; /* build 25: the game's box blur count at its start; screens sent to the window */
 	/* the rules: the last captain told per kind (one line each) */
 	uintptr_t told_c[SOMVR_CPF_N + 2];
 	/* counts */
@@ -569,6 +573,364 @@ static void kp_spawn(const struct pr_me *m, double t, const char *who)
 }
 
 /* `captain status`: the hierarchy as the practice sees it */
+/* ---- 8. a captain of the world (build 25, SOMVR_CAPTAIN_WORLD=on; docs/re-xr-pipeline.md 104) ---------------------------
+ * The captains the game itself brings - a power struggle's, one who joins a fight, one on his ground - are the save's
+ * members in the world (flags bit 1) bound to an NPC (+0x40). Every 0.5 s the nearest of them within KW_RANGE_CM of
+ * Talion is followed as section 4 follows ours: the meeting (who, how far, where in the view, the fight's orcs around
+ * him), his health, his place while he is low (the flight), his death and its credit (the member's last-death record),
+ * his leaving the world, Talion's death near him (the promotion: his level as it changes). The introduction's decision
+ * (section 2) sees them too - a captain the game brought need not be in the player's combat bands yet. */
+#define KW_RANGE_CM 8000.0f /* a world captain is followed within 80 m */
+#define KW_CROWD_CM 1200.0f /* the fight's orcs within 12 m of him: his bodyguards or the crowd */
+static struct {
+	int on;                /* SOMVR_CAPTAIN_WORLD=on */
+	uintptr_t fm, npc, c;
+	double t0, next_scan, next_watch, place_next, talion_t;
+	float hp_last, hp_max, place_d;
+	int dead_seen, gone_seen, talion_dead, idx;
+	uint32_t level0, level_last;
+	char who[160];
+	uint64_t met, deaths, gone, talion_deaths, promotions, lines_place;
+	float me[3];           /* Talion's root, the last frame (status) */
+} g_kw;
+
+/* a member's NPC in the world and its Combat (0: not in the world, not bound, or dead) */
+static uintptr_t kw_combat_of(uintptr_t fm, uintptr_t *npc_out)
+{
+	uint32_t fl = 0;
+	uintptr_t npc = peek_ptr(fm + KP_FM_NPC), c;
+	if (!peek(fm + KP_FM_FLAGS, &fl, sizeof fl) || !(fl & 2) || (fl & 4) || !npc || vptr_of((void *)npc) != g_cbg.vt_npc)
+		return 0;
+	c = peek_ptr(npc + PR_CH_COMBAT);
+	if (!c || vptr_of((void *)c) != g_cbg.vt_combat || cb_dead(c))
+		return 0;
+	if (npc_out)
+		*npc_out = npc;
+	return c;
+}
+
+/* the captains in the world within range of p (not the practice's): their Combats added to out (no duplicates) */
+static int kw_world_orcs(const float p[3], float range_cm, struct cb_orc *out, int n, int cap)
+{
+	uintptr_t mm[KP_MAX];
+	int k = kp_members(mm, KP_MAX);
+	for (int i = 0; i < k && n < cap; i++) {
+		uintptr_t c = mm[i] && mm[i] != g_kp.fm ? kw_combat_of(mm[i], NULL) : 0;
+		int dup = !c;
+		for (int j = 0; j < n && !dup; j++)
+			dup = out[j].c == c;
+		struct cb_orc o;
+		if (!dup && cb_orc_get(c, &o) && (o.dist = dist3(o.pos, p)) <= range_cm)
+			out[n++] = o;
+	}
+	return n;
+}
+
+/* the view's bearing of a point: deg right of the head's forward (+), up (+) */
+static void kw_bearing(const float at[3], float *right_deg, float *up_deg)
+{
+	sv_vec3 hp;
+	sv_quat hq;
+	somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq);
+	sv_vec3 f = sv_qrot(sv_qnormalize(hq), (sv_vec3){ 0, 0, 1 }), r = sv_qrot(sv_qnormalize(hq), (sv_vec3){ 1, 0, 0 });
+	float d[3] = { at[0] - hp.x, at[1] - hp.y, at[2] - hp.z }, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+	*right_deg = *up_deg = NAN;
+	if (!(l > 1) || !isfinite(f.x + f.z + r.x + r.z))
+		return;
+	*right_deg = atan2f(d[0] * r.x + d[2] * r.z, d[0] * f.x + d[2] * f.z) * 57.29578f;
+	*up_deg = asinf(fmaxf(-1.0f, fminf(1.0f, d[1] / l))) * 57.29578f;
+}
+
+static void kw_frame(const struct pr_me *m, int have, double t)
+{
+	if (have)
+		memcpy(g_kw.me, m->pos, sizeof g_kw.me);
+	if (!g_kw.on || !g_kp.on || !have)
+		return;
+	/* the member after his death or his leaving: his record 2 s on, his level while Talion is down (the promotion) */
+	if (g_kw.fm && (g_kw.dead_seen || g_kw.gone_seen)) {
+		if (t < g_kw.next_watch)
+			return;
+		uint32_t fl = 0, lv = 0;
+		peek(g_kw.fm + KP_FM_FLAGS, &fl, sizeof fl), peek(g_kw.fm + KP_FM_LEVEL, &lv, sizeof lv);
+		char ld[300];
+		kp_death_desc(g_kw.fm, ld, sizeof ld);
+		logf_("CAPTAIN t=%.3f the world's captain 2 s on (%s): flags %#x (in the world %u, IsDead %u, IsMockDead %u, "
+		      "IsSevered %u), its NPC %#lx, level %u; %s", t, g_kw.who, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 23 & 1,
+		      fl >> 17 & 1, (unsigned long)peek_ptr(g_kw.fm + KP_FM_NPC), lv, ld);
+		if (g_kw.talion_dead && !g_kw.dead_seen) /* Talion died near him: his level next (the promotion) */
+			g_kw.dead_seen = g_kw.gone_seen = 0, g_kw.npc = g_kw.c = 0;
+		else
+			g_kw.fm = g_kw.npc = g_kw.c = 0;
+		return;
+	}
+	if (g_kw.fm && g_kw.talion_dead && !g_kw.c) { /* after Talion's death: his level until it changes (3 min at most) */
+		uint32_t lv = 0;
+		peek(g_kw.fm + KP_FM_LEVEL, &lv, sizeof lv);
+		if (lv != g_kw.level_last) {
+			g_kw.promotions++;
+			logf_("CAPTAIN t=%.3f the world's captain who was near Talion's death (%s): level %u -> %u (%.0f s after it: the "
+			      "promotion)", t, g_kw.who, g_kw.level_last, lv, t - g_kw.talion_t);
+			g_kw.level_last = lv;
+		}
+		if (t - g_kw.talion_t > 180 || lv != g_kw.level0)
+			g_kw.fm = 0, g_kw.talion_dead = 0;
+		return;
+	}
+	/* Talion's death with him near */
+	if (g_kw.fm && g_kw.c && m->pc && cb_dead(m->pc) && !g_kw.talion_dead) {
+		g_kw.talion_dead = 1, g_kw.talion_t = t, g_kw.talion_deaths++;
+		struct cb_orc o;
+		float d = cb_orc_get(g_kw.c, &o) ? dist3(o.pos, m->pos) : NAN;
+		logf_("CAPTAIN t=%.3f Talion is down (his dead flag; life %d) with the world's captain %.1f m away (%s, health %.1f, "
+		      "level %u): the Nemesis death and promotion are the game's", t, m->life, d / 100.0, g_kw.who,
+		      (double)cb_health(g_kw.c), g_kw.level0);
+		g_kw.next_watch = t + 2.0, g_kw.gone_seen = 1; /* his record 2 s on, then his level */
+		return;
+	}
+	if (t >= g_kw.next_scan) { /* the nearest captain in the world */
+		g_kw.next_scan = t + 0.5;
+		uintptr_t mm[KP_MAX], bfm = 0, bc = 0, bnpc = 0;
+		int k = kp_members(mm, KP_MAX), bi = -1;
+		float bd = KW_RANGE_CM;
+		for (int i = 0; i < k; i++) {
+			uintptr_t npc = 0, c = mm[i] && mm[i] != g_kp.fm ? kw_combat_of(mm[i], &npc) : 0;
+			struct cb_orc o;
+			float d;
+			if (c && cb_orc_get(c, &o) && (d = dist3(o.pos, m->pos)) < bd)
+				bd = d, bfm = mm[i], bc = c, bnpc = npc, bi = i;
+		}
+		struct cb_orc co;
+		float cd = g_kw.fm && g_kw.c && !cb_dead(g_kw.c) && cb_orc_get(g_kw.c, &co) ? dist3(co.pos, m->pos) : 1e9f;
+		if (bfm && bfm != g_kw.fm && (cd > KW_RANGE_CM || (bd < 3000.0f && cd > bd + 1000.0f))) { /* a nearer one by 10 m */
+			g_kw.fm = bfm, g_kw.c = bc, g_kw.npc = bnpc, g_kw.idx = bi, g_kw.t0 = t, g_kw.met++;
+			g_kw.dead_seen = g_kw.gone_seen = g_kw.talion_dead = 0, g_kw.hp_last = NAN, g_kw.place_d = 0;
+			g_kw.next_watch = t, g_kw.place_next = t;
+			peek(bfm + KP_FM_LEVEL, &g_kw.level0, sizeof g_kw.level0), g_kw.level_last = g_kw.level0;
+			kp_who(bfm, g_kw.who, sizeof g_kw.who);
+			somvr_cp_traits tr;
+			char names[400];
+			kp_traits(bfm, &tr, names, sizeof names);
+			struct cb_orc o, crowd[24];
+			cb_orc_get(bc, &o);
+			int nc = 0, nb = 0;
+			struct bo_act a;
+			bo_active(m->pl, &a);
+			if (a.pc)
+				nb = cb_orcs_r(a.pc, a.sc, o.pos, KW_CROWD_CM, crowd, 24);
+			for (int j = 0; j < nb; j++)
+				nc += crowd[j].c != bc;
+			float rd, ud;
+			kw_bearing(o.pos, &rd, &ud);
+			logf_("CAPTAIN t=%.3f a captain of the world met: member %d, %s; %.1f m from Talion at %.0f %.0f %.0f, %+.0f deg "
+			      "right %+.0f deg up of the view; %d of the fight's orcs within %.0f m of him; combat finishers %s, stealth "
+			      "%s, ranged %s, grab %s; traits %s", t, bi, g_kw.who, bd / 100.0, (double)o.pos[0], (double)o.pos[1],
+			      (double)o.pos[2], rd, ud, nc, KW_CROWD_CM / 100.0,
+			      somvr_cp_rule_name(tr.rule[SOMVR_CPF_COMBAT]), somvr_cp_rule_name(tr.rule[SOMVR_CPF_STEALTH]),
+			      somvr_cp_rule_name(tr.rule[SOMVR_CPF_RANGED]), somvr_cp_rule_name(tr.rule[SOMVR_CPF_GRAB]), names);
+		}
+	}
+	if (!g_kw.fm || !g_kw.c)
+		return;
+	uint32_t fl = 0;
+	peek(g_kw.fm + KP_FM_FLAGS, &fl, sizeof fl);
+	/* out of the world first: a captain the game takes away (his hunt over, run 20261029-193658) leaves a Combat that
+	 * reads dead - not a death (IsDead 0, the member's NPC 0) */
+	int out = !(fl & 4) && (!(fl & 2) || peek_ptr(g_kw.fm + KP_FM_NPC) != g_kw.npc);
+	if (!out && (cb_dead(g_kw.c) || (fl & 4))) {
+		g_kw.dead_seen = 1, g_kw.deaths++, g_kw.next_watch = t + 2.0;
+		char ld[300];
+		kp_death_desc(g_kw.fm, ld, sizeof ld);
+		logf_("CAPTAIN t=%.3f the world's captain died %.1f s after the meeting (%s): the member's flags %#x (IsDead %u, "
+		      "IsSevered %u, IsMockDead %u); %s", t, t - g_kw.t0, g_kw.who, fl, fl >> 2 & 1, fl >> 17 & 1, fl >> 23 & 1, ld);
+		return;
+	}
+	if (out) {
+		g_kw.gone_seen = 1, g_kw.gone++, g_kw.next_watch = t + 2.0;
+		logf_("CAPTAIN t=%.3f the world's captain left the world alive %.1f s after the meeting (%s): the member's flags "
+		      "%#x, its NPC %#lx", t, t - g_kw.t0, g_kw.who, fl, (unsigned long)peek_ptr(g_kw.fm + KP_FM_NPC));
+		return;
+	}
+	if (t < g_kw.next_watch)
+		return;
+	g_kw.next_watch = t + 0.25;
+	float hp = cb_health(g_kw.c), mx = NAN;
+	uintptr_t own = peek_ptr(g_kw.c + C_OWNER);
+	if (own && peek(own + PR_CH_HEALTH_MAX, &mx, sizeof mx) && isfinite(mx) && mx > 0)
+		g_kw.hp_max = mx;
+	struct cb_orc o = { 0 };
+	float d = cb_orc_get(g_kw.c, &o) ? dist3(o.pos, m->pos) : NAN;
+	if (isfinite(hp) && (!isfinite(g_kw.hp_last) || g_kw.hp_last - hp >= 0.5f || hp - g_kw.hp_last >= 10.0f) && kp_log_ok()) {
+		char an[96] = "-";
+		fb_rec_name(peek_ptr(g_kw.c + RX_C_ATTACK), an, sizeof an);
+		logf_("CAPTAIN t=%.3f the world's captain's health %.1f -> %.1f (of %.1f), %.1f m from Talion at %.0f %.0f %.0f, his "
+		      "attack '%s'", t, (double)g_kw.hp_last, (double)hp, (double)g_kw.hp_max, d / 100.0, (double)o.pos[0],
+		      (double)o.pos[1], (double)o.pos[2], an);
+		g_kw.hp_last = hp;
+	}
+	if (t >= g_kw.place_next && isfinite(hp) && g_kw.hp_max > 0 && hp <= g_kw.hp_max / 3.0f && isfinite(d)) {
+		g_kw.place_next = t + 1.0;
+		if (fabsf(d - g_kw.place_d) >= 100.0f && g_kw.lines_place < 120) {
+			char an[96] = "-";
+			fb_rec_name(peek_ptr(g_kw.c + RX_C_ATTACK), an, sizeof an);
+			g_kw.lines_place++;
+			logf_("CAPTAIN t=%.3f the world's captain's place: %.1f m from Talion at %.0f %.0f %.0f (%+.1f m since the last "
+			      "line), health %.1f of %.1f, his attack '%s'", t, d / 100.0, (double)o.pos[0], (double)o.pos[1],
+			      (double)o.pos[2], (d - g_kw.place_d) / 100.0, (double)hp, (double)g_kw.hp_max, an);
+			g_kw.place_d = d;
+		}
+	}
+}
+
+/* ---- 9. a test aid (build 25): the stealth thrust along the eyes' line into a captain's back -------------------------
+ * `captain thrust [GAP_CM [MPS]]` (SOMVR_HANDS_TEST): build 24's scripted thrusts (kill22's poses, made for an infantry)
+ * never met a captain's back (99.3). This holds the right test hand so the sword lies on the line from the eyes to his
+ * spine (the middle of the stealth code's Pelvis-Torso link, stl_body), its point GAP_CM (20) short of his body - by
+ * feedback on combat's own blade of the frame (g_cb.hand: where the controller holds it) - then thrusts it straight along
+ * that line at MPS (2.5) m/s for GAP_CM + 30 cm: the test pose each frame, the blade's velocity from it as a real hand's.
+ * The captain: the practice's, else the world's followed one. Lines `CAPTAIN t=.. thrust ...`. */
+#define KPT_SPINE_R 17.0f   /* cm: the stealth code's spine link radius (g_stl_bn_r[0]) */
+static struct {
+	_Atomic int req;
+	float gap_cm, mps;
+	int phase, iters;      /* 0 off, 1 aim, 2 thrust, 3 hold */
+	uintptr_t c;
+	double t0, next;
+	float v[6], v0[3], du[3], travel, err_cm, err_deg;
+	uint64_t turned0, aims, thrusts;
+} g_kpt;
+
+/* the frame the test pose is in, in the world: the head's yaw (right R, up U, forward F) and the rig's size s */
+static int kpt_frame(sv_vec3 *eye, float R[3], float U[3], float F[3], float *s)
+{
+	sv_quat hq;
+	somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, eye, &hq);
+	sv_vec3 f = sv_qrot(sv_qnormalize(hq), (sv_vec3){ 0, 0, 1 }), r = sv_qrot(sv_qnormalize(hq), (sv_vec3){ 1, 0, 0 });
+	float lf = sqrtf(f.x * f.x + f.z * f.z), lr = sqrtf(r.x * r.x + r.z * r.z);
+	if (!(lf > 0.1f && lr > 0.1f) || !isfinite(eye->x + eye->y + eye->z))
+		return 0;
+	F[0] = f.x / lf, F[1] = 0, F[2] = f.z / lf, R[0] = r.x / lr, R[1] = 0, R[2] = r.z / lr, U[0] = 0, U[1] = 1, U[2] = 0;
+	*s = somvr_rig_scale(&g_rig);
+	return *s > 0;
+}
+static float kpt_dot(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+static void kpt_pose(const float v[6])
+{
+	pthread_mutex_lock(&g_bd_mu);
+	memcpy(g_bd_req.v[1], v, sizeof g_bd_req.v[1]), g_bd_req.on[1] = 1, g_bd_req.seq++;
+	pthread_mutex_unlock(&g_bd_mu);
+}
+static void kpt_tick(double t)
+{
+	int rq = atomic_exchange(&g_kpt.req, 0);
+	if (rq) {
+		g_kpt.phase = 1, g_kpt.iters = 0, g_kpt.next = t, g_kpt.t0 = t, g_kpt.aims++;
+		g_kpt.c = g_kp.c && pr_orc_alive() && g_pr.orc_c == g_kp.c ? g_kp.c : g_kw.c;
+		g_kpt.v[0] = g_kpt.v[1] = g_kpt.v[2] = g_kpt.v[3] = g_kpt.v[4] = g_kpt.v[5] = NAN;
+		logf_("CAPTAIN t=%.3f thrust: aiming at %s %#lx (the point %.0f cm short of his body, then %.1f m/s)", t,
+		      g_kpt.c == g_kp.c && g_kpt.c ? "the practice's captain" : g_kpt.c ? "the world's captain" : "no captain",
+		      (unsigned long)g_kpt.c, (double)g_kpt.gap_cm, (double)g_kpt.mps);
+	}
+	if (!g_kpt.phase || t < g_kpt.next)
+		return;
+	struct cb_orc o;
+	float nd[4][3], R[3], U[3], F[3], s = 1;
+	sv_vec3 eye;
+	if (!g_kpt.c || cb_dead(g_kpt.c) || !cb_orc_get(g_kpt.c, &o) || !kpt_frame(&eye, R, U, F, &s)) {
+		logf_("CAPTAIN t=%.3f thrust: stopped - %s", t, !g_kpt.c ? "no captain" : cb_dead(g_kpt.c) ? "he is dead"
+		      : "no orc or no head pose");
+		g_kpt.phase = 0;
+		return;
+	}
+	int skel = stl_body(&o, nd);
+	float E[3] = { eye.x, eye.y, eye.z }, S[3], u[3], D = 0;
+	for (int k = 0; k < 3; k++)
+		S[k] = 0.5f * (nd[0][k] + nd[1][k]), u[k] = S[k] - E[k], D += u[k] * u[k];
+	D = sqrtf(D);
+	for (int k = 0; k < 3; k++)
+		u[k] /= D > 1 ? D : 1;
+	if (g_kpt.phase == 1) {
+		g_kpt.next = t + 0.2;
+		float T[3], ut[3] = { kpt_dot(u, R), kpt_dot(u, U), kpt_dot(u, F) };
+		for (int k = 0; k < 3; k++)
+			T[k] = S[k] - u[k] * (KPT_SPINE_R + g_kpt.gap_cm);
+		const somvr_blade *b = &g_cb.hand;
+		int fresh = b->valid && fabs(b->t - cb_now()) <= 0.3;
+		if (!isfinite(g_kpt.v[0])) { /* the start: the grip a blade's length behind the wanted point, on the line */
+			float L = g_cb.bcfg.len_cm, G[3];
+			if (fresh) {
+				float bl[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+				L = sqrtf(kpt_dot(bl, bl)) - g_cb.bcfg.back_cm;
+			}
+			for (int k = 0; k < 3; k++)
+				G[k] = T[k] - u[k] * L - E[k];
+			g_kpt.v[0] = kpt_dot(G, R) / s, g_kpt.v[1] = kpt_dot(G, U) / s, g_kpt.v[2] = kpt_dot(G, F) / s;
+			g_kpt.v[3] = asinf(fmaxf(-1, fminf(1, ut[1]))) * 57.29578f, g_kpt.v[4] = -atan2f(ut[0], ut[2]) * 57.29578f;
+			g_kpt.v[5] = 0;
+			kpt_pose(g_kpt.v);
+			logf_("CAPTAIN t=%.3f thrust: the eyes %.0f cm from his spine (%s), the line %+.0f deg right %+.0f deg up; the hand "
+			      "%.0f cm out from the eyes (the test pose %.1f %.1f %.1f %.1f %.1f 0)", t, (double)D, skel ? "his skeleton"
+			      : "an estimated body", atan2f(ut[0], ut[2]) * 57.29578f, asinf(ut[1]) * 57.29578f,
+			      sqrtf(G[0] * G[0] + G[1] * G[1] + G[2] * G[2]), (double)g_kpt.v[0], (double)g_kpt.v[1], (double)g_kpt.v[2],
+			      (double)g_kpt.v[3], (double)g_kpt.v[4]);
+			if (sqrtf(G[0] * G[0] + G[1] * G[1] + G[2] * G[2]) < 15.0f) {
+				logf_("CAPTAIN t=%.3f thrust: stopped - the hand would be in the face (Talion too near: %.0f cm from his "
+				      "spine; a blade's length and the gap need about %.0f)", t, (double)D, KPT_SPINE_R + g_kpt.gap_cm + L + 30);
+				g_kpt.phase = 0;
+			}
+			return;
+		}
+		if (!fresh)
+			return;
+		/* the feedback: the point onto T, the blade along u */
+		float a[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] }, la = sqrtf(kpt_dot(a, a));
+		if (!(la > 1))
+			return;
+		float at[3] = { kpt_dot(a, R) / la, kpt_dot(a, U) / la, kpt_dot(a, F) / la }, e[3] = { T[0] - b->tip[0],
+			T[1] - b->tip[1], T[2] - b->tip[2] };
+		float yaw_e = atan2f(ut[0], ut[2]) - atan2f(at[0], at[2]), pit_e = asinf(fmaxf(-1, fminf(1, ut[1]))) -
+			asinf(fmaxf(-1, fminf(1, at[1])));
+		yaw_e = sv_wrap_pi(yaw_e);
+		g_kpt.err_cm = sqrtf(kpt_dot(e, e)), g_kpt.err_deg = acosf(fmaxf(-1, fminf(1, kpt_dot(a, u) / la))) * 57.29578f;
+		g_kpt.iters++;
+		if ((g_kpt.err_cm < 2.0f && g_kpt.err_deg < 2.0f) || g_kpt.iters > 25) {
+			memcpy(g_kpt.v0, g_kpt.v, sizeof g_kpt.v0);
+			g_kpt.du[0] = ut[0] / s, g_kpt.du[1] = ut[1] / s, g_kpt.du[2] = ut[2] / s; /* cm of the test frame per world cm */
+			g_kpt.travel = g_kpt.gap_cm + 30.0f, g_kpt.phase = 2, g_kpt.t0 = t, g_kpt.next = t, g_kpt.turned0 = g_kp.turned;
+			g_kpt.thrusts++;
+			logf_("CAPTAIN t=%.3f thrust: aimed after %d steps - the point %.1f cm off the wanted one, the blade %.1f deg off the "
+			      "line (the test pose %.1f %.1f %.1f %.1f %.1f 0); the thrust %.0f cm at %.1f m/s", t, g_kpt.iters,
+			      (double)g_kpt.err_cm, (double)g_kpt.err_deg, (double)g_kpt.v[0], (double)g_kpt.v[1], (double)g_kpt.v[2],
+			      (double)g_kpt.v[3], (double)g_kpt.v[4], (double)g_kpt.travel, (double)g_kpt.mps);
+			return;
+		}
+		g_kpt.v[0] += 0.8f * kpt_dot(e, R) / s, g_kpt.v[1] += 0.8f * kpt_dot(e, U) / s, g_kpt.v[2] += 0.8f * kpt_dot(e, F) / s;
+		g_kpt.v[3] += 0.8f * pit_e * 57.29578f, g_kpt.v[4] -= 0.8f * yaw_e * 57.29578f;
+		kpt_pose(g_kpt.v);
+		return;
+	}
+	if (g_kpt.phase == 2) { /* straight along the line, each frame */
+		float d = fminf((float)(t - g_kpt.t0) * g_kpt.mps * 100.0f, g_kpt.travel);
+		for (int k = 0; k < 3; k++)
+			g_kpt.v[k] = g_kpt.v0[k] + g_kpt.du[k] * d;
+		kpt_pose(g_kpt.v);
+		if (d >= g_kpt.travel)
+			g_kpt.phase = 3, g_kpt.next = t + 1.0;
+		return;
+	}
+	const somvr_blade *b = &g_cb.hand; /* 3: held 1 s at the end: the result */
+	float in = -1;
+	if (b->valid) {
+		int link = -1;
+		float Ew[3];
+		in = somvr_stl_body_depth(b->base, b->tip, (const float(*)[3])nd, g_stl_bn_r, 4, Ew, &link);
+	}
+	logf_("CAPTAIN t=%.3f thrust: done - the point %.1f cm in his body at the end (%s); stealth thrusts turned %llu -> %llu; "
+	      "his health %.1f", t, (double)in, skel ? "his skeleton" : "an estimated body", (unsigned long long)g_kpt.turned0,
+	      (unsigned long long)g_kp.turned, (double)cb_health(g_kpt.c));
+	g_kpt.phase = 0;
+}
+
 static void kp_status(double t)
 {
 	uintptr_t mm[KP_MAX];
@@ -590,6 +952,11 @@ static void kp_status(double t)
 		char ld[300] = "";
 		if (cm[i].flags & 4 || peek_ptr(mm[i] + KP_FM_LD_ATTACK)) /* build 24: a dead one's record of it */
 			ld[0] = ';', ld[1] = ' ', kp_death_desc(mm[i], ld + 2, sizeof ld - 2);
+		uintptr_t wc = kw_combat_of(mm[i], NULL); /* build 25: one the game brought into the world: where */
+		struct cb_orc wo;
+		if (wc && cb_orc_get(wc, &wo) && strlen(ld) < 200)
+			snprintf(ld + strlen(ld), sizeof ld - strlen(ld), "; in the world at %.0f %.0f %.0f, %.1f m from Talion",
+				 (double)wo.pos[0], (double)wo.pos[1], (double)wo.pos[2], dist3(wo.pos, g_kw.me) / 100.0);
 		logf_("CAPTAIN member %d: %s flags %#x: %s; combat finishers %s, stealth %s, ranged %s, grab %s; traits %s%s", i, who,
 		      cm[i].flags, why, somvr_cp_rule_name(tr.rule[SOMVR_CPF_COMBAT]), somvr_cp_rule_name(tr.rule[SOMVR_CPF_STEALTH]),
 		      somvr_cp_rule_name(tr.rule[SOMVR_CPF_RANGED]), somvr_cp_rule_name(tr.rule[SOMVR_CPF_GRAB]), names, ld);
@@ -613,9 +980,19 @@ static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t)
 		return fb;
 	}
 	g_kp.pres_last = t;
+	/* build 25: a captain's presentation that blurs the world is a screen to read (a power struggle's outcome: "Power
+	 * Increased! (A) View Battle Report (B) Back", run 20261029-183653) - not his introduction (no blur): the window */
+	if (g_kp.pres_on && g_kp.pres_world &&
+	    atomic_load_explicit(&g_rd.n_box, memory_order_relaxed) != g_kp.pres_box0) {
+		g_kp.pres_world = 0, g_kp.pres_screens++;
+		if (kp_log_ok())
+			logf_("CAPTAIN t=%.3f the presentation is a screen over the world (the game's box blur, %.1f s in): the window "
+			      "from now", t, t - g_kp.pres_t0);
+	}
 	if (g_kp.pres_on)
 		return g_kp.pres_world ? fb & ~P : fb;
 	g_kp.pres_on = 1, g_kp.pres_t0 = t, g_kp.pres_world = 0;
+	g_kp.pres_box0 = atomic_load_explicit(&g_rd.n_box, memory_order_relaxed);
 	/* the decision, once: the nearest captain to the head in reach of the rule */
 	sv_vec3 hp;
 	sv_quat hq;
@@ -633,6 +1010,8 @@ static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t)
 		if (a.pc)
 			n = cb_orcs_r(a.pc, a.sc, tp, g_kp.icfg.range_cm + 1000.0f, near, 11);
 	}
+	if (body && g_kp.on && g_kw.on) /* build 25: the captains the game brought, in the bands or not */
+		n = kw_world_orcs(tp, fmaxf(g_kp.icfg.range_cm, g_kp.wcfg.range_cm) + 1000.0f, near, n, 11);
 	if (g_kp.c && pr_orc_alive() && g_pr.orc_c == g_kp.c) { /* ours, in the bands or not */
 		int dup = 0;
 		for (int i = 0; i < n; i++)
@@ -643,20 +1022,25 @@ static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t)
 	uintptr_t best = 0, bfm = 0;
 	float bd = 0, bo = 0;
 	int bw = 0;
+	const somvr_cp_intro_cfg *bc = &g_kp.icfg;
 	for (int i = 0; i < n; i++) {
 		uintptr_t fm = kp_of_combat(near[i].c);
 		float d = 0, o = 0;
 		if (!fm)
 			continue;
-		int w = have_head && somvr_cp_intro_world(&g_kp.icfg, head, fwd, near[i].pos, &d, &o);
+		/* build 25: a captain the game brought (not the practice's) by SOMVR_CAPTAIN_WORLD_INTRO_GEOM: where he stands */
+		const somvr_cp_intro_cfg *cf = g_kw.on && near[i].c != g_kp.c ? &g_kp.wcfg : &g_kp.icfg;
+		int w = have_head && somvr_cp_intro_world(cf, head, fwd, near[i].pos, &d, &o);
 		if (!best || (w && !bw) || (w == bw && d < bd))
-			best = near[i].c, bfm = fm, bd = d, bo = o, bw = w;
+			best = near[i].c, bfm = fm, bd = d, bo = o, bw = w, bc = cf;
 	}
 	const char *why = !g_kp.intro_world ? "SOMVR_CAPTAIN_INTRO=window" : dead ? "Talion is dead (the death's screens)"
 			  : !g_kp.on ? "the captain's sites did not check out" : !have_head ? "no head pose yet"
 			  : !best ? "no captain near (another kind of presentation)" : !bw ? "the captain is not near and in view"
 			  : NULL;
 	g_kp.pres_world = !why;
+	if (best)
+		g_kp.pres_c = best;
 	g_kp.pres_world ? g_kp.intros_world++ : g_kp.intros_window++;
 	if (best && best == g_kp.c)
 		g_kp.pres_world ? g_kp.pres_n_world++ : g_kp.pres_n_window++;
@@ -667,8 +1051,8 @@ static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t)
 		logf_("CAPTAIN t=%.3f a presentation starts: %s%s; the captain %s (orc %#lx%s) %.1f m from the head, %.0f deg off "
 		      "the view (the rule: within %.0f m and %.0f deg)", t, g_kp.pres_world ? "in the world - the player's own view, "
 		      "the presentation camera ignored" : "the window: ", why ? why : "", who, (unsigned long)best,
-		      best && best == g_kp.c ? ", the practice's" : "", bd / 100.0, bo, g_kp.icfg.range_cm / 100.0,
-		      g_kp.icfg.half_deg);
+		      best && best == g_kp.c ? ", the practice's" : best ? ", the world's" : "", bd / 100.0, bo,
+		      bc->range_cm / 100.0, bc->half_deg);
 	}
 	return g_kp.pres_world ? fb & ~P : fb;
 }
@@ -683,13 +1067,28 @@ static void kp_frame(const struct pr_me *m, int have, double t)
 	if (atomic_exchange(&g_kp.req_tiers, 0))
 		g_kp.tiers_step = 1, g_kp.tiers_next = t;
 	kp_tiers_tick(m, have, t);
+	kw_frame(m, have, t); /* build 25: the world's captain */
+	kpt_tick(t);           /* build 25: `captain thrust` */
 	int hv = atomic_exchange(&g_kp.req_hp, -1);
-	if (hv >= 0 && g_kp.c && !cb_dead(g_kp.c)) { /* a test aid: his health set (the grab's gate at a given health) */
-		uintptr_t own = peek_ptr(g_kp.c + C_OWNER);
-		float v = hv / 10.0f, was = cb_health(g_kp.c);
-		if (own && v >= 1.0f && arm_poke(own + CH_HEALTH, &v, sizeof v))
-			logf_("CAPTAIN t=%.3f his health %.1f -> %.1f (a test aid: the word)", t, (double)was, (double)cb_health(g_kp.c));
+	/* build 25: the practice's captain while he is out, else the world's (som-b25-nemesis), else a mission's (the last
+	 * presentation's, som-b25-missions), else the nearest captain in Talion's bands (40 m) */
+	uintptr_t hpc = g_kp.c && pr_orc_alive() && g_pr.orc_c == g_kp.c ? g_kp.c : g_kw.c ? g_kw.c : g_kp.pres_c;
+	if (hv >= 0 && !hpc && have && m->pcomb) {
+		struct cb_orc o[12];
+		int n = cb_orcs_r(m->pcomb, m->pc, m->pos, 4000.0f, o, 12);
+		for (int i = 0; i < n && !hpc; i++)
+			if (kp_of_combat(o[i].c))
+				hpc = o[i].c, g_kp.pres_c = hpc;
 	}
+	if (hv >= 0 && hpc && !cb_dead(hpc)) { /* a test aid: his health set (the grab's gate at a given health) */
+		uintptr_t own = peek_ptr(hpc + C_OWNER);
+		float v = hv / 10.0f, was = cb_health(hpc);
+		if (own && v >= 1.0f && arm_poke(own + CH_HEALTH, &v, sizeof v))
+			logf_("CAPTAIN t=%.3f his health %.1f -> %.1f (a test aid: the word%s)", t, (double)was, (double)cb_health(hpc),
+			      hpc == g_kp.c ? "; the practice's captain" : hpc == g_kw.c ? "; the world's captain"
+					    : "; a mission's captain (the last presentation's or the nearest), not the practice's");
+	} else if (hv >= 0)
+		logf_("CAPTAIN t=%.3f captain hp: no live captain (none out, none named by a presentation)", t);
 	if (atomic_exchange(&g_kp.req_charge, 0) && have && m->pc && g_xc.ok_hc) { /* a test aid: the game's own setter */
 		uintptr_t hc = peek_ptr(m->pc + FI_C_HITCTR);
 		int16_t need = 0;
@@ -796,6 +1195,17 @@ static const char *kp_word(const char *w)
 		atomic_store(&g_kp.req_away, 1);
 		return "captain away (the next one his back to Talion)";
 	}
+	if (!strncmp(w, "thrust", 6) && (w[6] == 0 || w[6] == ' ')) { /* build 25: the stealth thrust along the eyes' line */
+		float gap = 20, mps = 2.5f;
+		int k = sscanf(w + 6, " %f %f", &gap, &mps);
+		if (k == EOF)
+			k = 0;
+		if ((k >= 1 && !(gap >= 5 && gap <= 60)) || (k == 2 && !(mps >= 0.5f && mps <= 8)))
+			return "captain thrust (GAP_CM 5..60, MPS 0.5..8: ignored)";
+		g_kpt.gap_cm = gap, g_kpt.mps = mps;
+		atomic_store(&g_kpt.req, 1);
+		return "captain thrust (a test aid: the right hand on the eyes' line to his spine, then the thrust)";
+	}
 	if (!strcmp(w, "tiers")) { /* build 24: the strike records' own damage on him */
 		atomic_store(&g_kp.req_tiers, 1);
 		return "captain tiers (a test aid)";
@@ -818,7 +1228,7 @@ static const char *kp_word(const char *w)
 		atomic_store(&g_kp.req_hp, (int)(v * 10));
 		return "captain hp (a test aid)";
 	}
-	return "captain (not status|gamelog|pick N|hp V|charge|tiers|away|stakes on|off: ignored)";
+	return "captain (not status|gamelog|pick N|hp V|charge|tiers|away|thrust [GAP [MPS]]|stakes on|off: ignored)";
 }
 
 static void kp_start(int *bad)
@@ -835,6 +1245,16 @@ static void kp_start(int *bad)
 	g_kp.cut_x = env_float("SOMVR_CAPTAIN_CUT_X", 2.0f, 1.0f, 5.0f, bad);
 	static const char *const turn_w[] = { "hit", "turn" };
 	g_kp.stealth_turn = env_word("SOMVR_CAPTAIN_STEALTH_IMMUNE", turn_w, 2, 0); /* hit: turn is unproven (99.3) */
+	g_kw.on = env_word("SOMVR_CAPTAIN_WORLD", onoff_w, 2, 1); /* build 25 */
+	somvr_cp_intro_world_default(&g_kp.wcfg); /* build 25: where he stands unless behind the player */
+	const char *wg = getenv("SOMVR_CAPTAIN_WORLD_INTRO_GEOM");
+	if (wg && *wg) {
+		float r = 0, a = 0;
+		if (sscanf(wg, "%f,%f", &r, &a) == 2 && r >= 300 && r <= 10000 && a >= 10 && a <= 120)
+			g_kp.wcfg.range_cm = r, g_kp.wcfg.half_deg = a;
+		else
+			logf_("WARN SOMVR_CAPTAIN_WORLD_INTRO_GEOM=%s is not RANGE_CM,HALF_DEG (300..10000, 10..120): 6000,90", wg), *bad = 1;
+	}
 	somvr_cp_intro_default(&g_kp.icfg);
 	const char *g = getenv("SOMVR_CAPTAIN_INTRO_GEOM");
 	if (g && *g) {
@@ -872,6 +1292,10 @@ static void kp_start(int *bad)
 	logf_("CONFIG captain stealth_immune=%s (SOMVR_CAPTAIN_STEALTH_IMMUNE, build 24): %s", turn_w[g_kp.stealth_turn],
 	      g_kp.stealth_turn ? "a stealth thrust into a captain immune to it is turned (the clank, no wound, his alert)"
 				: "the ordinary hit (build 23)");
+	logf_("CONFIG captain world=%s (SOMVR_CAPTAIN_WORLD, build 25): %s; their introduction in the world within %.0f m and %.0f "
+	      "deg of the view (SOMVR_CAPTAIN_WORLD_INTRO_GEOM), else the window", onoff_w[g_kw.on], g_kw.on ? "the captains the "
+	      "game brings (members in the world) followed within 80 m and seen by the introduction's rule" : "only the "
+	      "practice's captain and the player's combat bands (build 24)", g_kp.wcfg.range_cm / 100.0, g_kp.wcfg.half_deg);
 	if (g_kp.dmg && g_kp.on && !g_ff.on_dmg)
 		logf_("WARN SOMVR_CAPTAIN_DAMAGE=cut without FRONT's damage hook (SOMVR_FRONT off or FR_DMG_ATK): no factor on captains");
 }
@@ -891,4 +1315,10 @@ static void kp_end_log(void)
 	      (unsigned long long)g_kp.dmg_hits, (unsigned long long)g_kp.dmg_scaled, g_kp.dmg_game, g_kp.dmg_ours,
 	      (unsigned long long)g_kp.dmg_unseen, (unsigned long long)g_kp.tiers_dealt, (unsigned long long)g_kp.flee_lines,
 	      (unsigned long long)g_kp.turned);
+	logf_("CAPTAIN END world (%s): met %llu, died %llu, left alive %llu, Talion down near one %llu, promotions seen %llu; "
+	      "screens over the world sent to the window %llu; the thrust aid: aims %llu, thrusts %llu", g_kw.on ? "on" : "off",
+	      (unsigned long long)g_kw.met,
+	      (unsigned long long)g_kw.deaths, (unsigned long long)g_kw.gone, (unsigned long long)g_kw.talion_deaths,
+	      (unsigned long long)g_kw.promotions, (unsigned long long)g_kp.pres_screens, (unsigned long long)g_kpt.aims,
+	      (unsigned long long)g_kpt.thrusts);
 }

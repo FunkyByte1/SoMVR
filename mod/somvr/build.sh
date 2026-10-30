@@ -40,7 +40,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_session.c" "$D/somvr_body.c" "$D/somvr_fingers.c" "$D/somvr_size.c" "$D/somvr_vrhands.c"
       "$D/somvr_strike.c" "$D/somvr_gaze.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
       "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c"
-      "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c")
+      "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c" "$D/somvr_above.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -117,6 +117,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_wstep" "$D/tests/test_wstep.c" "$D/somvr_
 "$D/build/tests/test_wstep"
 gcc "${CF[@]}" -o "$D/build/tests/test_jump" "$D/tests/test_jump.c" "$D/somvr_jump.c" "$D/somvr_pose.c" -lm # build 22: the jump, the vault
 "$D/build/tests/test_jump"
+gcc "${CF[@]}" -o "$D/build/tests/test_above" "$D/tests/test_above.c" "$D/somvr_above.c" -lm # build 25: from above
+"$D/build/tests/test_above"
 gcc "${CF[@]}" -o "$D/build/tests/test_headview" "$D/tests/test_headview.c" "$D/somvr_headview.c" "$D/somvr_pose.c" -lm
 "$D/build/tests/test_headview"
 gcc "${CF[@]}" -o "$D/build/tests/test_headparts" "$D/tests/test_headparts.c" "$D/somvr_headparts.c" -lpthread -lm

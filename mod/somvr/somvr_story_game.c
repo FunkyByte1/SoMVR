@@ -11,6 +11,26 @@
  *   ch=N 'TEXT' (ctx C, video V)` when a channel's text changes, `STORY t=.. subtitle ch=N cleared` when it empties.
  *   Word: `story` (a state line: the channels now). END line: `STORY END lines N, changes N, polls N`. */
 
+/* Build 25 (re-xr-pipeline.md 103, som-b25-missions), a test aid only (SOMVR_HANDS_TEST=1): the word `story invisible
+ * on|off` calls the game's own SetAISpectatorInvisible (FUN_027acae0(CPlayerObj*, bool): CPlayerObj+0xd10 = the flag, then
+ * its vf_0x340; the script function 'SetInvisible' (FUN_027b2460) does the same for "invisible to ai") on every player in
+ * the player list, from the input tick (the game's thread): the AI does not see Talion. For the drills only - to see a
+ * mission's later steps headless where the harness's straight walks get Talion seen (the Sea Fort's six archers, 98.8);
+ * never in a build's env. Lines `STORY t=.. invisible to the AI: on|off ...`; `story` shows the flag. */
+
+/* STORY_SITES_BEGIN (a K_ENTRY called by the test word only). SY_INVIS FUN_027acae0(player, on): `mov [rdi+0xd10], sil;
+ * call [rax+0x340]` (the bytes); its callers: the script binding SetAISpectatorInvisible FUN_023fe950, FUN_0268beb0,
+ * FUN_0268ce40, FUN_02809630. Order = SYS_* */
+static const struct site_spec g_sy_sites_game[] = {
+SITE("SY_INVIS", K_ENTRY, 0x27acae0, 0x27acae0, "55 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 40 88", 0x27acae0, "55 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 40"),
+};
+/* STORY_SITES_END */
+enum { SYS_INVIS, SYS_N };
+_Static_assert(sizeof g_sy_sites_game / sizeof g_sy_sites_game[0] == SYS_N, "story sites");
+typedef void (*sy_invis_fn)(uintptr_t player, int on);
+#define SY_PLAYERS 0x4c47020u /* the player list (a std::vector of CPlayerObj*) */
+#define SY_PL_INVIS 0xd10     /* CPlayerObj: invisible to the AI (SY_INVIS's bytes) */
+
 #define SY_IM_SUB 0x27b0     /* CInterfaceMgr: the CUIHUDSubtitle* (m_GameUI+0xa8) */
 #define SY_SUB_TEXT 0xc0     /* CUIHUDSubtitle: channel 0's text (wchar16[256]) */
 #define SY_SUB_STRIDE 0x210  /* ... one channel */
@@ -26,6 +46,9 @@ static struct {
 						* tail after a line that had no '|': cut off for the log, see sy_tick) */
 	uint64_t polls, changes;
 	uint32_t lines;
+	int test, invis_ok;      /* build 25: SOMVR_HANDS_TEST; SY_INVIS checked */
+	_Atomic int req_invis;   /* `story invisible on|off`: 1 / 0 (-1: none) */
+	int invis_calls;
 } g_sy;
 
 static void sy_start(void)
@@ -33,6 +56,40 @@ static void sy_start(void)
 	const char *v = getenv("SOMVR_STORY_LOG");
 	g_sy.log = !(v && (!strcmp(v, "off") || !strcmp(v, "0")));
 	logf_("CONFIG story_log=%s (SOMVR_STORY_LOG: the game's subtitle lines logged, read only)", g_sy.log ? "on" : "off");
+	const char *ht = getenv("SOMVR_HANDS_TEST");
+	g_sy.test = ht && !strcmp(ht, "1");
+	atomic_store(&g_sy.req_invis, -1);
+	if (g_sy.test) { /* build 25: the test aid's one function */
+		char why[400];
+		g_sy.invis_ok = check_site(&g_sy_sites_game[SYS_INVIS], why, sizeof why) == 0;
+		logf_("STORY site SY_INVIS %s %#lx: %s (the test word `story invisible on|off`)", g_sy.invis_ok ? "ok" : "MISMATCH",
+		      (unsigned long)g_sy_sites_game[SYS_INVIS].addr, why);
+	}
+}
+
+/* build 25: `story invisible on|off` on the game's thread (sy_tick) - every player in the list */
+static void sy_invis_tick(double t)
+{
+	int on = atomic_exchange(&g_sy.req_invis, -1);
+	if (on < 0)
+		return;
+	uintptr_t v[2] = { 0, 0 };
+	if (!g_sy.invis_ok || !peek(SY_PLAYERS, v, sizeof v) || !v[0] || v[1] < v[0] || v[1] - v[0] > 8 * 8) {
+		logf_("STORY t=%.3f invisible to the AI: %s not done (%s)", t, on ? "on" : "off",
+		      g_sy.invis_ok ? "no player list" : "SY_INVIS did not check out");
+		return;
+	}
+	for (uintptr_t a = v[0]; a < v[1]; a += 8) {
+		uintptr_t pl = peek_ptr(a);
+		uint8_t was = 0, now = 0;
+		if (!pl || !peek(pl + SY_PL_INVIS, &was, 1))
+			continue;
+		((sy_invis_fn)g_sy_sites_game[SYS_INVIS].target)(pl, on);
+		peek(pl + SY_PL_INVIS, &now, 1);
+		g_sy.invis_calls++;
+		logf_("STORY t=%.3f invisible to the AI: %s - player %#lx +0xd10 %u -> %u (a test aid: the game's "
+		      "SetAISpectatorInvisible FUN_027acae0; the word)", t, on ? "on" : "off", (unsigned long)pl, was, now);
+	}
 }
 
 /* wchar16 (BMP; a surrogate = '?') -> UTF-8, at most cap - 1 bytes; the hash of the code units (FNV-1a, 0 = empty) */
@@ -61,6 +118,8 @@ static uint32_t sy_utf8(const uint16_t *w, int n, char *out, size_t cap)
 
 static void sy_tick(double t)
 {
+	if (g_sy.test)
+		sy_invis_tick(t);
 	if (!g_sy.log || !g_inp.on || !g_inp.im || t - g_sy.t_poll < 0.05)
 		return;
 	g_sy.t_poll = t;
@@ -102,6 +161,25 @@ static const char *sy_word(const char *w)
 {
 	if (strncmp(w, "story", 5) || (w[5] && w[5] != ' ' && w[5] != '\n'))
 		return NULL;
+	if (!strncmp(w + 5, " invisible", 10)) { /* build 25: a test aid */
+		const char *a = w + 15;
+		while (*a == ' ')
+			a++;
+		int on = !strncmp(a, "on", 2) ? 1 : !strncmp(a, "off", 3) ? 0 : -1;
+		if (!g_sy.test || on < 0)
+			return "story invisible (SOMVR_HANDS_TEST off, or not on|off: ignored)";
+		atomic_store(&g_sy.req_invis, on);
+		return on ? "story invisible on (a test aid)" : "story invisible off (a test aid)";
+	}
+	uint8_t inv = 0xff;
+	uintptr_t v0 = 0;
+	if (peek(SY_PLAYERS, &v0, sizeof v0) && v0) {
+		uintptr_t pl = peek_ptr(v0);
+		if (pl)
+			peek(pl + SY_PL_INVIS, &inv, 1);
+	}
+	logf_("STORY status: the first player's invisible-to-the-AI flag %u (255: no player); test aid calls %d", inv,
+	      g_sy.invis_calls);
 	logf_("STORY status: log %s, im %#lx, the channels: '%s' | '%s' | '%s'; changes %llu, polls %llu", g_sy.log ? "on" : "off",
 	      (unsigned long)g_inp.im, g_sy.text[0], g_sy.text[1], g_sy.text[2], (unsigned long long)g_sy.changes,
 	      (unsigned long long)g_sy.polls);
