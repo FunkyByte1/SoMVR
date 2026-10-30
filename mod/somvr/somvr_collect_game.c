@@ -122,19 +122,20 @@ static const struct site_spec *g_co_sites = g_co_sites_game; /* selftest: stand-
 #define CO_ITEMS 16          /* item candidates followed (logs) */
 #define CO_CHAR_CLASS 0x4c41500u /* CCharacter's class in an object's class chain (FUN_02781370's check) */
 #define CO_SEEN_CM 300.f     /* a glyph's LookAtTrigger within this of its item (round 2: 1 m) */
+#define CO_STALE_S 10.0      /* build 27: a full table's entry untouched this long is reused (re-xr-pipeline.md 107) */
 
 typedef uint32_t (*co_tick_fn)(uintptr_t trig);
 typedef void (*co_vlook_fn)(uintptr_t list, uintptr_t targ);
 typedef uintptr_t (*co_icon_fn)(uintptr_t input, uint32_t *cmd);
 #define CO_TXMAP 8
-struct co_trig { uintptr_t t; int state, d0, d2, see, view; double next; uint32_t id; float pos[3]; };
+struct co_trig { uintptr_t t; int state, d0, d2, see, view; double next; uint32_t id; float pos[3]; double last; };
 typedef int (*co_see_fn)(uintptr_t trig, uintptr_t player);
 typedef int (*co_view_fn)(const float *pos, uintptr_t player);
 typedef void (*co_geom_fn)(uintptr_t cand, uintptr_t ctx);
 typedef uint64_t (*co_score_fn)(uintptr_t rec, uintptr_t ctx, uintptr_t cand, float *score);
 typedef void (*co_collect_fn)(uintptr_t item, uintptr_t character);
 struct co_item { uintptr_t obj, item; double next; uint8_t onscreen, lookat; uint32_t id; char rec[48]; uint64_t rv;
-		 char name[48]; int glyph; };
+		 char name[48]; int glyph; double last; };
 
 static struct {
 	/* SOMVR_INSPECT */
@@ -159,6 +160,7 @@ static struct {
 	uintptr_t tick_orig;
 	struct co_trig tr[CO_TRIGS];
 	int ntr;
+	uint64_t n_tr_reused, n_it_reused; /* build 27: full tables' stale entries reused */
 	uint32_t next_id;
 	uint64_t n_ticks, n_near, n_vlook, n_vlook_on;
 	uint32_t gl_lines, vl_lines;
@@ -202,7 +204,8 @@ static struct {
 } g_co;
 
 static void co_props(uintptr_t tbl, char *s, size_t cap, char *key, size_t kcap);
-static int co_log_ok(void) { return g_co.gl_lines < 800 && ++g_co.gl_lines; }      /* the triggers' lines */
+static struct log_late g_co_late; /* build 27: then 100 a 10 minutes */
+static int co_log_ok(void) { return (g_co.gl_lines < 800 && ++g_co.gl_lines) || log_late_ok(&g_co_late, 100, mono()); } /* the triggers' lines */
 static int co_vl_log_ok(void) { return g_co.vl_lines < 300 && ++g_co.vl_lines; }   /* the vision look-at's */
 
 /* Talion's position for the logs: the first player's object (the list LookAtTrigger walks) */
@@ -339,6 +342,34 @@ static void co_post(void)
 }
 
 /* ---- SOMVR_GLYPH: the LookAtTriggers near Talion ---- */
+/* build 27 (re-xr-pipeline.md 107, the soak): trigger trig's entry (touched now), a new one (*fresh) when it has none.
+ * The table is CO_TRIGS long; before build 27 it only filled - once 48 triggers had come within gl_far_cm of Talion, no
+ * new one was followed and SOMVR_GLYPH=head collected nothing more for the rest of the session (an hour or two of
+ * roaming). Full now: the entry touched longest ago is reused when that was CO_STALE_S or more ago (-1 else). */
+static int co_trig_slot(uintptr_t trig, double now, int *fresh)
+{
+	int k = 0, old = -1;
+	*fresh = 0;
+	while (k < g_co.ntr && g_co.tr[k].t != trig)
+		k++;
+	if (k == g_co.ntr) {
+		if (g_co.ntr == CO_TRIGS) {
+			for (int i = 0; i < g_co.ntr; i++)
+				if (old < 0 || g_co.tr[i].last < g_co.tr[old].last)
+					old = i;
+			if (now - g_co.tr[old].last < CO_STALE_S)
+				return -1;
+			k = old, g_co.n_tr_reused++;
+		} else
+			g_co.ntr++;
+		memset(&g_co.tr[k], 0, sizeof g_co.tr[k]);
+		g_co.tr[k].t = trig, g_co.tr[k].state = -1, g_co.tr[k].id = ++g_co.next_id;
+		*fresh = 1;
+	}
+	g_co.tr[k].last = now;
+	return k;
+}
+
 __attribute__((used)) uint32_t somvr_w_colat(uintptr_t trig)
 {
 	uint32_t rv = ((co_tick_fn)g_co.tick_orig)(trig);
@@ -351,14 +382,10 @@ __attribute__((used)) uint32_t somvr_w_colat(uintptr_t trig)
 	if (d > g_co.gl_far_cm)
 		return rv;
 	g_co.n_near++;
-	int k = 0;
-	while (k < g_co.ntr && g_co.tr[k].t != trig)
-		k++;
-	if (k == g_co.ntr) {
-		if (g_co.ntr == CO_TRIGS)
-			return rv;
-		memset(&g_co.tr[k], 0, sizeof g_co.tr[k]);
-		g_co.tr[k].t = trig, g_co.tr[k].state = -1, g_co.tr[k].id = ++g_co.next_id, g_co.ntr++;
+	int fresh = 0, k = co_trig_slot(trig, mono(), &fresh);
+	if (k < 0)
+		return rv;
+	if (fresh) {
 		if (g_co.ok[COS_OBJ_PROPS] && co_log_ok()) { /* its settings: the radii, the threshold, LookAtScript ... */
 			char s[1000];
 			co_props(peek_ptr(o + CO_OBJ_PROPTBL), s, sizeof s, NULL, 0);
@@ -451,15 +478,32 @@ static uintptr_t co_item_of(uintptr_t obj)
 }
 
 /* the item candidate's log record (followed by object), or NULL when full */
+/* build 27 (re-xr-pipeline.md 107): touched now; full = the entry touched longest ago reused when that was CO_STALE_S or
+ * more ago (before: 16 item objects near Talion in a session and no new one was followed - nothing more collected);
+ * an object address that now holds another item (the old one unloaded, the memory reused) gets a fresh record (before:
+ * the old item's name and glyph flag) */
 static struct co_item *co_item_rec(uintptr_t obj, uintptr_t item)
 {
+	double now = mono();
+	int k = -1, old = -1;
 	for (int i = 0; i < g_co.nit; i++)
-		if (g_co.it[i].obj == obj)
-			return &g_co.it[i];
-	if (g_co.nit == CO_ITEMS)
-		return NULL;
-	struct co_item *r = &g_co.it[g_co.nit++];
+		if (g_co.it[i].obj == obj) {
+			if (g_co.it[i].item == item)
+				return g_co.it[i].last = now, &g_co.it[i];
+			k = i; /* the same address, another item */
+			break;
+		}
+	if (k < 0 && g_co.nit == CO_ITEMS) {
+		for (int i = 0; i < g_co.nit; i++)
+			if (old < 0 || g_co.it[i].last < g_co.it[old].last)
+				old = i;
+		if (now - g_co.it[old].last < CO_STALE_S)
+			return NULL;
+		k = old, g_co.n_it_reused++;
+	}
+	struct co_item *r = &g_co.it[k < 0 ? g_co.nit++ : k];
 	memset(r, 0, sizeof *r);
+	r->last = now;
 	r->obj = obj, r->item = item, r->id = ++g_co.next_item, r->onscreen = 0xff, r->rv = ~0ull;
 	char nm[48];
 	rx_rec_name(peek_ptr(item + CO_ITEM_REC), nm, sizeof nm);
@@ -836,8 +880,10 @@ static void co_end_log(void)
 	}
 	if (g_co.gl_mode)
 		logf_("GLYPH END trigger ticks %llu (near %llu), %d followed; vision look-at calls %llu (on %llu); item "
-		      "geometries %llu; target answers %llu (validated %llu); glyphs collected %llu", (unsigned long long)g_co.n_ticks,
+		      "geometries %llu; target answers %llu (validated %llu); glyphs collected %llu; stale entries reused: triggers %llu, "
+		      "items %llu (%d followed)", (unsigned long long)g_co.n_ticks,
 		      (unsigned long long)g_co.n_near, g_co.ntr, (unsigned long long)g_co.n_vlook,
 		      (unsigned long long)g_co.n_vlook_on, (unsigned long long)g_co.n_geom_items,
-		      (unsigned long long)g_co.n_scores, (unsigned long long)g_co.n_valid, (unsigned long long)g_co.n_collects);
+		      (unsigned long long)g_co.n_scores, (unsigned long long)g_co.n_valid, (unsigned long long)g_co.n_collects,
+		      (unsigned long long)g_co.n_tr_reused, (unsigned long long)g_co.n_it_reused, g_co.nit);
 }

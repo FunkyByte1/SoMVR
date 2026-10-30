@@ -1,0 +1,313 @@
+# story27-steps.txt - som-b27-story2 (build 27, docs/re-xr-pipeline.md 110): how the story was driven headless.
+# Each boot: headless_vr.sh with scripts/headset-build26.env (boot 041718 also SOMVR_ARMY=on, before it was in the env)
+# + SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0 SOMVR_HANDS_TEST=1
+# SOMVR_XR_TEST=@RUN@/xrtest.txt SOMVR_EYE_SIZE=2015x2217, HEADLESS_SAVE_FROM=<a run's saves/GameData.sav>,
+# scripts/story22-drive.sh in its ctl mode, and the director below beside it (boot3.sh -> run.sh -> DIRECTOR). The
+# loops not listed here (lib.sh, q.sh, run.sh, front.sh, kills2.sh, endphase.sh, mission3.sh) are story26-steps.txt's
+# with /tmp/b26s -> /tmp/b27s2; boot3.sh = its boot2.sh polling the gate every 4 s.
+# Boots: 20261030-041718 (nm9.sh: the test presses of 14 / 281 / 95 / 316, the right stick's click and hold; then by
+# hand: mission3.sh on 'goldenL' = The Cure's start, area.sh on its three areas, mission3.sh START=0 (the end),
+# target.sh / target2.sh (the board), intel.sh (no grab: a dead orc)), -045903 (nm10.sh: the relabel, the board x2, the
+# Rescue's start by mission3.sh; then by hand: front.sh / behind.sh at the camp's sentries (out of time), A = Retry,
+# brand6.sh, the trip to Lithariel, area.sh at her captors, her grab, a teleport (no carry)), -055352 (rescue.sh to the
+# captors; then by hand: the last captors with the health aid (it hit Lithariel), her grab, story2_route.py with her
+# (42 m), her death, A = Retry after the grip let go, her grab again, two routes that lost their heading; quit),
+# -065503 (nm11.sh: the intel; the board did not open in the Domination), -070839 (nm12.sh: the intel, B, the board, X:
+# a warchief targeted).
+# Traps: see handoff/HANDOFF-story.md "build 27".
+
+### nm9.sh
+    #!/bin/bash
+    # nm9.sh TAG - from the furthest save (106.7): the markers; "No Warchief Selected - Hold [>]": the game's held commands
+    # one by one (14 Menu = START 1.5 s, then 14 tapped 0.2 s, 281 EnterHierarchyMenu, 95 PDA = BACK, 316 InformationShortcut; then
+    # 1.5 s each), a picture and the session state after each; then Marwen's next mission from its marker (mission3.sh)
+    TAG=$1; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh; echo $$ > /tmp/b27s2/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# n $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    paused() { grep -E '^SESSION ui ' $R/somvr.log | tail -1 | grep -q 'paused=1'; }
+    ev() { tail -n +$1 $R/somvr.log | grep -E "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|^USE t=|window 0 -> 1|SESSION ui|^TEXTBUTTONS|^VRMENU|shown by the game|^WARN|EnterHierarchy|Hierarchy|^VERBS t=.*press" | cut -c1-170 | awk '!s[$0]++' | head -${2:-10}; }
+    wd "story invisible on" 0.5; wd "hands test R 25 -45 -25 0 0 0" 0.5
+    L=$(wc -l < $R/somvr.log); wd "practice status nav" 1.5
+    tail -n +$L $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ '" | grep -vE "Collectible|Flower|Ressur|FT_" | grep -oE "'[A-Za-z_]+' at \([-0-9 ]+\), [0-9.]+ m" | awk '!s[$1]++' | head -16
+    M=$(tail -n +$L $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ 'goldenM'" | head -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+    sleep 2; shot nm-arrival; echo "$(date +%T) arrival: $(state)"
+    for c in 14 14h5 14h9 14t 281 95 316; do L=$(wc -l < $R/somvr.log)
+      case $c in 14t) wd "verbs press 14 200" 2.0;; 14h5) wd "verbs press 14 500" 2.0;; 14h9) wd "verbs press 14 900" 2.0;; *) wd "verbs press $c 1500" 2.6;; esac
+      sleep 1; shot nm-hold-$c; echo "$(date +%T) the hold by $c: $(state)"; ev $L 8
+      sleep 2; shot nm-hold-$c-b
+      paused && { xt b1 "btn R b 1"; xt b2 "btn R b 0"; sleep 2.5; }; paused && { xt b3 "btn R b 1"; xt b4 "btn R b 0"; sleep 2.5; }
+      paused && { xt b5 "btn L menu 1"; sleep 0.2; xt b6 "btn L menu 0"; sleep 2.5; }; echo "   after: $(state)"
+    done
+    # SOMVR_ARMY (BOOT_EXTRA): the right stick's click 0.2 s (the map at the release), then held 1.0 s (the game's Hold [>])
+    for k in click hold; do L=$(wc -l < $R/somvr.log); xt r1 "btn R stick 1"; [ $k = click ] && sleep 0.2 || sleep 1.0; xt r2 "btn R stick 0"; sleep 2.5
+      shot nm-r3-$k; echo "$(date +%T) the right stick $k: $(state)"; ev $L 8; tail -n +$L $R/somvr.log | grep -E "^INPUT t=.*(army|map) " | head -2 | cut -c1-170
+      sleep 2; shot nm-r3-$k-b
+      paused && { xt b1 "btn R b 1"; xt b2 "btn R b 0"; sleep 2.5; }; paused && { xt b3 "btn R b 1"; xt b4 "btn R b 0"; sleep 2.5; }
+      paused && { xt b5 "btn L menu 1"; sleep 0.2; xt b6 "btn L menu 0"; sleep 2.5; }; echo "   after: $(state)"
+    done
+    echo "$(date +%T) Marwen's next marker: ${M:-none}"; [ -n "$M" ] || exit 0
+    /tmp/b27s2/mission3.sh $TAG "$M" nm 17
+
+### nm10.sh
+    #!/bin/bash
+    # nm10.sh TAG - boot 2 (from run 041718's save: The Cure done): the HUD's "Hold [>]" relabelled (14:127); the right
+    # stick's click held (SOMVR_ARMY, Menu 1.5 s) = the board; a live orc dominated by the VR hand, the trigger = Gain Intel,
+    # the army screen (stick up, A); the board again: stick up, X = Mark Target; out; then Lithariel's next mission
+    TAG=$1; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh; echo $$ > /tmp/b27s2/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# n $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    paused() { grep -E '^SESSION ui ' $R/somvr.log | tail -1 | grep -q 'paused=1'; }
+    out() { for k in 1 2 3 4; do paused || break; xt o1 "btn R b 1"; sleep 0.2; xt o2 "btn R b 0"; sleep 2; done; paused && { xt o3 "btn L menu 1"; sleep 0.2; xt o4 "btn L menu 0"; sleep 2.5; }; }
+    ev() { tail -n +$1 $R/somvr.log | grep -E "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|^USE t=|^INPUT t=.*(army|map) |^VERBS t=.*(grab:|choice|button)|PROMPTS show #[0-9]+ .*Domination|Talion attack 'PC_Bip_Sync|SESSION ui|^TEXTBUTTONS|^WARN" | cut -c1-170 | awk '!s[$0]++' | head -${2:-10}; }
+    army() { xt r1 "btn R stick 1"; sleep 1.0; xt r2 "btn R stick 0"; for i in $(seq 1 12); do paused && break; sleep 0.25; done; sleep 2; }
+    wd "story invisible on" 0.5; wd "hands test R 25 -45 -25 0 0 0" 0.5; sleep 3; shot n2-hud; echo "$(date +%T) arrival: $(state)"
+    L=$(wc -l < $R/somvr.log); army; shot n2-board; echo "$(date +%T) the board: $(state)"; ev $L 6; out; echo "   out: $(state)"
+    # a live orc near Talion (its attack not '-'), dominated by the left palm + grip and A
+    read px py pz < <(grep -E "arrived at|PRACTICE t=.*Talion at" $R/somvr.log | tail -1 | grep -oE '\(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tr -d '()' | awk '{printf "%d %d %d\n",$1,$2,$3}')
+    [ -n "$pz" ] || { l=$(wc -l < $R/somvr.log); wd "practice status" 1.2; read px py pz < <(tail -n +$l $R/somvr.log | grep -oE 'Talion at \(?-?[0-9.]+[ ,]+-?[0-9.]+[ ,]+-?[0-9.]+' | head -1 | grep -oE -- '-?[0-9.]+' | awk '{printf "%d ",$1} END {print ""}'); }
+    echo "Talion near $px $py $pz"
+    for spot in "$px $pz" "-22654 -31778" "-11857 -28171"; do set -- $spot; l=$(wc -l < $R/somvr.log); wd "verbs orcs $1 $2 5000" 1.2
+      P=$(tail -n +$l $R/somvr.log | grep -E "^VERBS orcs t=.* [0-9]+/" | grep -v "attack '-'" | grep -v "Caged\|Wrg_" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4 \5/'); [ -n "$P" ] && break; done
+    echo "orc: ${P:-none}"; G=""; [ -n "$P" ] && read G gx gy gz gf <<< "$P"
+    if [ -n "$G" ]; then for try in 1 2 3; do
+      read tx tz < <(python3 -c "import math;f=math.radians($gf);print(round($gx-60*math.sin(f)),round($gz-60*math.cos(f)))")
+      L=$(wc -l < $R/somvr.log); wd "verbs aim head" 0.3; wd "crouch hold 5000" 0.3; wd "practice go $tx $(( gy + 60 )) $tz" 1.2; xt g1 "btn L squeeze 1"; sleep 1.8
+      if tail -n +$L $R/somvr.log | grep -q "grab: the left hand on orc $G"; then xt a1 "btn R a 1"; sleep 0.25; xt a2 "btn R a 0"; sleep 4.5; shot n2-dom; ev $L 8
+        xt t1 "btn L trigger 1"; sleep 0.3; xt t2 "btn L trigger 0"; for i in $(seq 1 16); do paused && break; sleep 0.25; done; sleep 2; shot n2-intel; echo "$(date +%T) Gain Intel: $(state)"
+        xt s1 "stick L 0 1"; sleep 0.4; xt s2 "stick L 0 0"; sleep 1.5; shot n2-intel-up; xt a3 "btn R a 1"; sleep 0.25; xt a4 "btn R a 0"; sleep 4; shot n2-intel-a; echo "$(date +%T) after A: $(state)"
+        paused && { xt a5 "btn R a 1"; sleep 0.25; xt a6 "btn R a 0"; sleep 4; shot n2-intel-a2; echo "$(date +%T) after A2: $(state)"; }
+        sleep 3; shot n2-intel-after; out; xt g2 "btn L squeeze 0"; wd "verbs aim off"; wd "crouch hold 0"; ev $L 16; break; fi
+      xt g3 "btn L squeeze 0"; sleep 1; l=$(wc -l < $R/somvr.log); wd "verbs orcs $gx $gz 600" 1.0
+      P=$(tail -n +$l $R/somvr.log | grep -E "^VERBS orcs t=.* orc $G at" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4 \5/'); [ -n "$P" ] && read G gx gy gz gf <<< "$P"
+    done; fi
+    sleep 2; L=$(wc -l < $R/somvr.log); army; shot n2-board2; for d in "0 1" "1 0" "1 0" "1 0" "1 0"; do xt s3 "stick L $d"; sleep 0.4; xt s4 "stick L 0 0"; sleep 1.2; done; shot n2-board2-sel
+    xt x1 "btn L x 1"; sleep 0.25; xt x2 "btn L x 0"; sleep 3; shot n2-board2-x; out; echo "$(date +%T) the board 2: $(state)"; sleep 2; shot n2-hud2; ev $L 8
+    L=$(wc -l < $R/somvr.log); wd "practice status nav" 1.5; tail -n +$L $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ '" | grep -vE "Collectible|Flower|Ressur|FT_" | grep -oE "'[A-Za-z_]+' at \([-0-9 ]+\), [0-9.]+ m" | awk '!s[$1]++' | head -12
+    M=$(tail -n +$L $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ 'goldenL'" | head -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+    echo "$(date +%T) Lithariel's next: ${M:-none}"; [ -n "$M" ] || exit 0
+    /tmp/b27s2/mission3.sh $TAG "$M" l2 16
+
+### nm11.sh
+    #!/bin/bash
+    # nm11.sh TAG - boot 4 (041718's save): a live orc dominated by the VR hand, the trigger = Gain Intel, the army screen
+    # (pictures; the left stick up, A); the board by the right stick's click held: a warchief selected, the Touch's X
+    # (`btn L a`) = Mark Target; out; the HUD and the markers; then "The Rescue" (rescue2.sh)
+    TAG=$1; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh; echo $$ > /tmp/b27s2/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# n $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    paused() { grep -E '^SESSION ui ' $R/somvr.log | tail -1 | grep -q 'paused=1'; }
+    out() { for k in 1 2 3 4; do paused || break; xt o1 "btn R b 1"; sleep 0.2; xt o2 "btn R b 0"; sleep 2; done; paused && { xt o3 "btn L menu 1"; sleep 0.2; xt o4 "btn L menu 0"; sleep 2.5; }; }
+    ev() { tail -n +$1 $R/somvr.log | grep -E "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|^USE t=|^INPUT t=.*army |^VERBS t=.*(grab:|choice|button)|PROMPTS show #[0-9]+ .*Domination|Talion attack 'PC_Bip_Sync|SESSION ui|^TEXTBUTTONS|^WARN" | cut -c1-170 | awk '!s[$0]++' | head -${2:-10}; }
+    army() { xt r1 "btn R stick 1"; sleep 1.0; xt r2 "btn R stick 0"; for i in $(seq 1 12); do paused && break; sleep 0.25; done; sleep 2; }
+    go() { local a0; a0=$(grep -c 'arrived at' $R/somvr.log); wd "practice go $1 $2 $3" 0.3; for i in $(seq 1 40); do [ "$(grep -c 'arrived at' $R/somvr.log)" -gt "$a0" ] && break; sleep 0.25; done; sleep 1.5; }
+    wd "story invisible on" 0.5; wd "hands test R 25 -45 -25 0 0 0" 0.5; sleep 2
+    G=""; for spot in "-20570 2800 -32339" "-22654 2760 -31778" "-12071 1950 -28349" "-13023 3330 -35323" "20154 3245 -28472"; do set -- $spot; go $1 $2 $3
+      l=$(wc -l < $R/somvr.log); wd "verbs orcs $1 $3 4000" 1.6
+      P=$(tail -n +$l $R/somvr.log | grep -E "^VERBS orcs t=.* [0-9]+/" | grep -v "attack '-'" | grep -v "Caged\|Wrg_\|Grg_" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4 \5/')
+      echo "$(date +%T) at $spot: ${P:-no live orc}"; [ -n "$P" ] && { read G gx gy gz gf <<< "$P"; break; }; done
+    DOM=0
+    if [ -n "$G" ]; then for try in 1 2 3; do
+      read tx tz < <(python3 -c "import math;f=math.radians($gf);print(round($gx-60*math.sin(f)),round($gz-60*math.cos(f)))")
+      L=$(wc -l < $R/somvr.log); wd "verbs aim head" 0.3; wd "crouch hold 5000" 0.3; go $tx $(( gy + 60 )) $tz; xt g1 "btn L squeeze 1"; sleep 1.8
+      if tail -n +$L $R/somvr.log | grep -q "grab: the left hand on orc $G"; then xt a1 "btn R a 1"; sleep 0.25; xt a2 "btn R a 0"; sleep 4.5; shot n4-dom; ev $L 8
+        xt t1 "btn L trigger 1"; sleep 0.3; xt t2 "btn L trigger 0"; for i in $(seq 1 16); do paused && break; sleep 0.25; done; sleep 2.5; shot n4-intel; echo "$(date +%T) Gain Intel: $(state)"
+        paused && { DOM=1; xt s1 "stick L 0 1"; sleep 0.4; xt s2 "stick L 0 0"; sleep 1.5; shot n4-intel-up; xt a3 "btn R a 1"; sleep 0.25; xt a4 "btn R a 0"; sleep 4; shot n4-intel-a; echo "$(date +%T) after A: $(state)"
+          paused && { xt a5 "btn R a 1"; sleep 0.25; xt a6 "btn R a 0"; sleep 4; shot n4-intel-a2; echo "$(date +%T) after A2: $(state)"; }; }
+        sleep 3; shot n4-intel-after; out; xt g2 "btn L squeeze 0"; wd "verbs aim off"; wd "crouch hold 0"; ev $L 16; break; fi
+      xt g3 "btn L squeeze 0"; sleep 1; l=$(wc -l < $R/somvr.log); wd "verbs orcs $gx $gz 800" 1.5
+      P=$(tail -n +$l $R/somvr.log | grep -E "^VERBS orcs t=.* orc $G at" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4 \5/'); [ -n "$P" ] && read G gx gy gz gf <<< "$P"
+    done; fi
+    echo "$(date +%T) intel: $DOM"; sleep 2; L=$(wc -l < $R/somvr.log); army; shot n4-board
+    for d in "0 1" "-1 0" "-1 0" "-1 0" "-1 0"; do xt s3 "stick L $d"; sleep 0.4; xt s4 "stick L 0 0"; sleep 1.2; shot n4-sel-$((++k)); done
+    xt x1 "btn L a 1"; sleep 0.25; xt x2 "btn L a 0"; sleep 3; shot n4-x; xt x3 "btn L a 1"; sleep 0.25; xt x4 "btn L a 0"; sleep 3; shot n4-x2
+    out; echo "$(date +%T) the board: $(state)"; sleep 2; shot n4-hud; ev $L 10
+    L=$(wc -l < $R/somvr.log); wd "practice status nav" 1.5; tail -n +$L $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ '" | grep -vE "Collectible|Flower|Ressur|FT_" | grep -oE "'[A-Za-z_]+' at \([-0-9 ]+\), [0-9.]+ m" | awk '!s[$1]++' | head -12
+    sleep 2; printf "quit
+    " >> $R/cmd; echo "$(date +%T) quit"
+
+### area.sh
+    #!/bin/bash
+    # area.sh TAG RR X Z [X Z...] - each area: the orcs within RR cm of X,Z (`verbs orcs`), each one: Talion 100 cm behind
+    # it, its health 1, the game's own X (118) twice (the stealth kill / a strike); then a picture
+    TAG=$1; RR=$2; shift 2; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    wd "hands test R 25 -45 -25 0 0 0"
+    while [ $# -ge 2 ]; do X=$1; Z=$2; shift 2
+      for pass in 1 2; do
+        a0=$(grep -c 'arrived at' $R/somvr.log); wd "practice go $X ${AREA_Y:-4000} $Z" 0.3
+        for i in $(seq 1 40); do [ "$(grep -c 'arrived at' $R/somvr.log)" -gt "$a0" ] && break; sleep 0.25; done
+        l0=$(wc -l < $R/somvr.log); wd "verbs orcs $X $Z $RR" 1.2
+        mapfile -t O < <(tail -n +$l0 $R/somvr.log | grep -E '^VERBS orcs t=.* [0-9]+/' | grep -v "dead\|health 0" | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.*/\1 \3/')
+        echo "$(date +%T) area $X $Z pass $pass: ${#O[@]} orcs"
+        [ ${#O[@]} -eq 0 ] && break
+        for o in "${O[@]}"; do set -- $o $@; ox=$1; oz=$2; shift 2
+          l1=$(wc -l < $R/somvr.log); wd "verbs behind 100 $ox $oz" 1.0; [ "${AREA_HP:-1}" = 1 ] && wd "fight health 1"; wd "verbs press 118 150" 1.4; wd "verbs press 118 150" 1.2
+          tail -n +$l1 $R/somvr.log | grep -E "^FIGHT health|attack 'PC_[A-Za-z_]*(Kill|Strike|Instakill)" | head -2 | cut -c1-120
+        done
+      done
+      printf 'shot st-area-%s\n' "$X" >> $R/cmd; sleep 1.5
+      grep -E "^STORY t=.*subtitle ch=1 '|Mission|alarm|Alarm" $R/somvr.log | tail -2 | cut -c1-150
+    done
+
+### brand6.sh
+    #!/bin/bash
+    # brand6.sh TAG N - "The Rescue": the camp's sentries branded by the hand (front.sh's approach, the trigger pressed again
+    # until the game's brand starts, 3 tries), until N brands since the start
+    TAG=$1; N=${2:-6}; R=$(cat /tmp/b27s2/R-$TAG)
+    wd() { printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { { echo "# b6 $1"; shift; for l in "$@"; do echo "$l"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; }
+    c0=$(grep -cE "sync 'PC_(Bip|Archer)_StealthBrand" $R/somvr.log); done_n=0
+    for o in "-27214 24202" "-26748 24240" "-27523 24536" "-27363 24537" "-26774 24549" "-26923 24639" "-27438 26371" "-27310 27953" "-27899 30798"; do
+      set -- $o; l0=$(wc -l < $R/somvr.log); wd "verbs orcs $1 $2 900" 1.5
+      L=$(tail -n +$l0 $R/somvr.log | grep -E '^VERBS orcs t=.* [0-9]+/' | head -1); read ox oy oz f < <(echo "$L" | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4/')
+      [ -n "$f" ] || { echo "no orc at $o"; continue; }
+      for D in 150 110; do
+        read tx tz < <(python3 -c "import math;f=math.radians($f);print(round($ox+$D*math.sin(f)),round($oz+$D*math.cos(f)))")
+        wd "crouch hold 10000"; wd "verbs aim head"; b0=$(stat -c %s $R/somvr.log); wd "practice go $tx $(( oy + 60 )) $tz" 0.1
+        for i in $(seq 1 100); do tail -c +$b0 $R/somvr.log | grep -qE "prompt up: action 120 .*Stealth_Brand" && break; sleep 0.05; done
+        ok=0; for k in 1 2 3; do sleep 0.3; xt 1 "btn L trigger 1"; sleep 0.25; xt 2 "btn L trigger 0"; sleep 1.0
+          tail -c +$b0 $R/somvr.log | grep -qE "Talion attack 'PC_(Bip|Archer)_StealthBrand" && { ok=1; break; }; done
+        [ $ok = 1 ] && break
+      done
+      n=$(( $(grep -cE "sync 'PC_(Bip|Archer)_StealthBrand" $R/somvr.log) - c0 )); echo "$(date +%T) orc at $ox $oz: brand ${ok} (D $D), the brand syncs since the start $n"; sleep 2.5
+      done_n=$((done_n + ok)); [ $done_n -ge $N ] && break
+    done
+    printf 'shot st-rs-brands\n' >> $R/cmd
+
+### behind.sh
+    #!/bin/bash
+    # behind.sh TAG X Z D - the orc nearest X,Z: Talion D cm behind it (crouched, the palm at its head), the trigger at the prompt
+    TAG=$1; X=$2; Z=$3; D=${4:-120}; R=$(cat /tmp/b27s2/R-$TAG)
+    wd() { printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { { echo "# bh $1"; shift; for l in "$@"; do echo "$l"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; }
+    wd "crouch hold 10000"; wd "verbs aim head"; b0=$(stat -c %s $R/somvr.log); wd "verbs behind $D $X $Z" 0.1
+    for i in $(seq 1 160); do tail -c +$b0 $R/somvr.log | grep -qE "prompt up: action 120 .*Stealth_Brand" && break; sleep 0.05; done
+    xt 1 "btn L trigger 1"; sleep 0.2; xt 2 "btn L trigger 0"; echo "behind $X $Z: prompt after $i polls"; sleep 3
+    tail -c +$b0 $R/somvr.log | grep -E "attack 'PC_(Archer|Bip)_StealthBrand|no brand offered|offers the stealth" | head -2 | cut -c1-150
+
+### target.sh
+    #!/bin/bash
+    # target.sh TAG - the warchief's target by VR controls: the right stick's click held (SOMVR_ARMY: the board), X = Mark
+    # Target, pictures; then out by the menu button's tap; the HUD's target text and the nav markers
+    TAG=$1; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh
+    xt() { local x; { echo "# t $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    wd() { printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    L=$(wc -l < $R/somvr.log); xt r1 "btn R stick 1"; sleep 1.0; xt r2 "btn R stick 0"; sleep 3; echo "$(date +%T) board: $(state)"; shot tg-board
+    xt x1 "btn L x 1"; sleep 0.2; xt x2 "btn L x 0"; sleep 3; shot tg-marked; echo "$(date +%T) after X: $(state)"
+    xt a1 "btn R a 1"; sleep 0.2; xt a2 "btn R a 0"; sleep 3; shot tg-afterA; echo "$(date +%T) after A: $(state)"
+    for k in 1 2 3; do grep -E '^SESSION ui ' $R/somvr.log | tail -1 | grep -q 'paused=1' || break; xt b1 "btn R b 1"; sleep 0.2; xt b2 "btn R b 0"; sleep 2.5; shot tg-b$k; done
+    grep -E '^SESSION ui ' $R/somvr.log | tail -1 | grep -q 'paused=1' && { xt m1 "btn L menu 1"; sleep 0.2; xt m2 "btn L menu 0"; sleep 2.5; }
+    echo "$(date +%T) out: $(state)"; sleep 2; shot tg-hud
+    tail -n +$L $R/somvr.log | grep -E "^INPUT t=.*army|TEXTBUTTONS|^STORY t=.*subtitle ch=1|^HINTS tutorial #.*show|^WARN|window 0 -> 1" | cut -c1-170 | head -12
+    L2=$(wc -l < $R/somvr.log); wd "practice status nav" 1.5; tail -n +$L2 $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ '" | grep -vE "Collectible|Flower|Ressur|FT_" | grep -oE "'[A-Za-z_]+' at \([-0-9 ]+\), [0-9.]+ m" | awk '!s[$1]++' | head -12
+
+### target2.sh
+    #!/bin/bash
+    TAG=$1; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh
+    xt() { local x; { echo "# u $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    xt r1 "btn R stick 1"; sleep 1.0; xt r2 "btn R stick 0"; sleep 3; echo "$(date +%T) board: $(state)"
+    xt s1 "stick L 0 1"; sleep 0.4; xt s2 "stick L 0 0"; sleep 1.5; shot tg2-up
+    xt s3 "stick L 1 0"; sleep 0.4; xt s4 "stick L 0 0"; sleep 1.5; shot tg2-right
+    xt x1 "btn L x 1"; sleep 0.25; xt x2 "btn L x 0"; sleep 3; shot tg2-x
+    for k in 1 2 3; do state | grep -q 'paused=1' || break; xt m1 "btn L menu 1"; sleep 0.2; xt m2 "btn L menu 0"; sleep 2.5; done
+    echo "$(date +%T) out: $(state)"; sleep 2; shot tg2-hud
+
+### intel.sh
+    #!/bin/bash
+    # intel.sh TAG X Z - an orc near X,Z dominated by the VR hand (the left palm 60 cm behind it + the grip, the Touch's A),
+    # the trigger = Gain Intel, the army screen: the left stick up (a warchief), A = Select for Intel; pictures
+    TAG=$1; X=$2; Z=$3; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh
+    wd() { printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# i $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    ev() { tail -n +$1 $R/somvr.log | grep -E "^VERBS t=.*(grab:|choice|button)|PROMPTS show #[0-9]+ .*Domination|Talion attack 'PC_Bip_Sync|SESSION ui|^WARN" | cut -c1-170 | awk '!s[$0]++' | head -${2:-10}; }
+    a0=$(grep -c 'arrived at' $R/somvr.log); wd "practice go $X 4000 $Z" 0.3; for i in $(seq 1 40); do [ "$(grep -c 'arrived at' $R/somvr.log)" -gt "$a0" ] && break; sleep 0.25; done; sleep 1
+    l=$(wc -l < $R/somvr.log); wd "verbs orcs $X $Z 3000" 1.1
+    P=$(tail -n +$l $R/somvr.log | grep -E "^VERBS orcs t=.* [0-9]+/" | head -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4/'); echo "orc: $P"; [ -n "$P" ] || exit 1
+    read gx gy gz gf <<< "$P"; read tx tz < <(python3 -c "import math;f=math.radians($gf);print(round($gx-60*math.sin(f)),round($gz-60*math.cos(f)))")
+    L=$(wc -l < $R/somvr.log); wd "hands test R 25 -45 -25 0 0 0"; wd "verbs aim head" 0.3; wd "crouch hold 5000" 0.3; wd "practice go $tx $(( gy + 60 )) $tz" 1.2
+    xt g1 "btn L squeeze 1"; sleep 1.8; xt a1 "btn R a 1"; sleep 0.25; xt a2 "btn R a 0"; sleep 4.5; shot in-dom; ev $L 8
+    xt t1 "btn L trigger 1"; sleep 0.3; xt t2 "btn L trigger 0"; sleep 3; shot in-intel; echo "$(date +%T) after the trigger: $(state)"
+    xt s1 "stick L 0 1"; sleep 0.4; xt s2 "stick L 0 0"; sleep 1.5; shot in-up
+    xt a3 "btn R a 1"; sleep 0.25; xt a4 "btn R a 0"; sleep 4; shot in-sel; echo "$(date +%T) after A: $(state)"
+    xt a5 "btn R a 1"; sleep 0.25; xt a6 "btn R a 0"; sleep 3; shot in-sel2; echo "$(date +%T) after A2: $(state)"
+    xt g2 "btn L squeeze 0"; wd "verbs aim off"; ev $L 14
+
+### rescue.sh
+    #!/bin/bash
+    # rescue.sh TAG - "The Rescue" (Lithariel) start to end: the marker (B), the card (A), the video; 6 sentries branded by
+    # the hand (brand6.sh); "Find Lithariel" (a trip); the video; her 5 captors (the game's own X from behind, no health aid:
+    # she is in the AI list); "Hold [LB] near Lithariel" = the VR grab (the left palm at her + the grip) held; "Carry
+    # Lithariel to safety" = walked with the left stick (story2_route.py) holding her; the end (endphase.sh)
+    TAG=$1; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh; echo $$ > /tmp/b27s2/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# r $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    ev() { tail -n +$1 $R/somvr.log | grep -E "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|^USE t=|window 0 -> 1|Talion attack 'PC_Grab[A-Za-z_]*|^WARN" | cut -c1-170 | awk '!s[$0]++' | head -${2:-10}; }
+    nav() { local l0; l0=$(wc -l < $R/somvr.log); wd "practice status nav" 1.5; tail -n +$l0 $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ '$1'" | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\), [0-9.]+ m' | sed -E 's/at \(//; s/\),//; s/ m$//' | sort -k4 -n; }
+    L0=$(wc -l < $R/somvr.log); wd "story invisible on" 0.5; wd "hands test R 25 -45 -25 0 0 0" 0.5
+    SYNC_S=240 sync "go -28209 1439 17049" "wait 3" "pics rs-marker" "tap R b 0.4" "wait 3" "pics rs-card" "tap R a 0.4" "waitfor SESSION.ui.*video=1 40" "wait 4" "tap R a 0.3" "tap R b 0.3" "world 90" "wait 2" "pics rs-start" >/dev/null || exit 1
+    echo "$(date +%T) the start: $(state)"; ev $L0 6
+    /tmp/b27s2/brand6.sh $TAG 6
+    sleep 3; shot rs-brands; L=$(wc -l < $R/somvr.log)
+    O=$(nav Objective | head -1); echo "$(date +%T) Find Lithariel: ${O:-none}"; set -- ${O:--28058 1850 33551}
+    SYNC_S=180 sync "go $1 1400 $3" "waitfor SESSION.ui.*video=1 30" "wait 3" "tap R a 0.3" "tap R b 0.3" "world 60" "wait 2" "pics rs-captors" >/dev/null
+    ev $L 8
+    AREA_HP=0 AREA_Y=1400 /tmp/b27s2/area.sh $TAG 3500 $1 $3 | grep -v "^FIGHT"
+    AREA_HP=0 AREA_Y=1400 /tmp/b27s2/area.sh $TAG 3500 $1 $3 | grep -v "^FIGHT"
+    sleep 2; shot rs-help; L=$(wc -l < $R/somvr.log)
+    # her place: the 'Objective' marker nearest the captors' place; Talion 60 cm from her, the left palm at her, the grip
+    for try in 1 2 3; do O=$(nav Objective | head -1); set -- $O; echo "$(date +%T) Lithariel's marker: $O"
+      wd "verbs aim head" 0.3; wd "practice go $(( $1 + 60 )) 1400 $3" 2.0; xt g1 "btn L squeeze 1"; sleep 2.5
+      tail -n +$L $R/somvr.log | grep -q "Talion attack 'PC_GrabLithariel" && break; xt g0 "btn L squeeze 0"; sleep 1.5; done
+    ev $L 6; sleep 2; S=$(nav Objective | head -1); echo "$(date +%T) the safe place: ${S:-none}"; set -- ${S:--29190 1554 30650}; wd "verbs aim off" 0.3
+    python3 /home/bara/.t3/worktrees/flat2vr/t3-af9264df/ShadowOfMordor/scripts/story2_route.py "$R" --secs 60 --tag rsw --nosprint --waypoints "$1,$3" 2>&1 | tail -4 | cut -c1-170
+    ev $L 12; shot rs-carried
+    xt g2 "btn L squeeze 0"; sleep 2
+    /tmp/b27s2/endphase.sh $TAG 6 rs-end
+    echo "$(date +%T) rescue done: $(state)"
+
+### nm12.sh
+    #!/bin/bash
+    # nm12.sh TAG - boot 5 (nm11 + the warchief row in GAIN INTEL, B = Dismiss after it, X after each board move)
+    # nm11.sh TAG - boot 4 (041718's save): a live orc dominated by the VR hand, the trigger = Gain Intel, the army screen
+    # (pictures; the left stick up, A); the board by the right stick's click held: a warchief selected, the Touch's X
+    # (`btn L a`) = Mark Target; out; the HUD and the markers; then "The Rescue" (rescue2.sh)
+    TAG=$1; R=$(cat /tmp/b27s2/R-$TAG); . /tmp/b27s2/lib.sh; echo $$ > /tmp/b27s2/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# n $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    shot() { printf 'shot st-%s\n' "$1" >> $R/cmd; sleep 1.3; }
+    paused() { grep -E '^SESSION ui ' $R/somvr.log | tail -1 | grep -q 'paused=1'; }
+    out() { for k in 1 2 3 4; do paused || break; xt o1 "btn R b 1"; sleep 0.2; xt o2 "btn R b 0"; sleep 2; done; paused && { xt o3 "btn L menu 1"; sleep 0.2; xt o4 "btn L menu 0"; sleep 2.5; }; }
+    ev() { tail -n +$1 $R/somvr.log | grep -E "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|^USE t=|^INPUT t=.*army |^VERBS t=.*(grab:|choice|button)|PROMPTS show #[0-9]+ .*Domination|Talion attack 'PC_Bip_Sync|SESSION ui|^TEXTBUTTONS|^WARN" | cut -c1-170 | awk '!s[$0]++' | head -${2:-10}; }
+    army() { xt r1 "btn R stick 1"; sleep 1.0; xt r2 "btn R stick 0"; for i in $(seq 1 12); do paused && break; sleep 0.25; done; sleep 2; }
+    go() { local a0; a0=$(grep -c 'arrived at' $R/somvr.log); wd "practice go $1 $2 $3" 0.3; for i in $(seq 1 40); do [ "$(grep -c 'arrived at' $R/somvr.log)" -gt "$a0" ] && break; sleep 0.25; done; sleep 1.5; }
+    wd "story invisible on" 0.5; wd "hands test R 25 -45 -25 0 0 0" 0.5; sleep 2
+    G=""; for spot in "-20570 2800 -32339" "-22654 2760 -31778" "-12071 1950 -28349" "-13023 3330 -35323" "20154 3245 -28472"; do set -- $spot; go $1 $2 $3
+      l=$(wc -l < $R/somvr.log); wd "verbs orcs $1 $3 4000" 1.6
+      P=$(tail -n +$l $R/somvr.log | grep -E "^VERBS orcs t=.* [0-9]+/" | grep -v "attack '-'" | grep -v "Caged\|Wrg_\|Grg_" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4 \5/')
+      echo "$(date +%T) at $spot: ${P:-no live orc}"; [ -n "$P" ] && { read G gx gy gz gf <<< "$P"; break; }; done
+    DOM=0
+    if [ -n "$G" ]; then for try in 1 2 3; do
+      read tx tz < <(python3 -c "import math;f=math.radians($gf);print(round($gx-60*math.sin(f)),round($gz-60*math.cos(f)))")
+      L=$(wc -l < $R/somvr.log); wd "verbs aim head" 0.3; wd "crouch hold 5000" 0.3; go $tx $(( gy + 60 )) $tz; xt g1 "btn L squeeze 1"; sleep 1.8
+      if tail -n +$L $R/somvr.log | grep -q "grab: the left hand on orc $G"; then xt a1 "btn R a 1"; sleep 0.25; xt a2 "btn R a 0"; sleep 4.5; shot n5-dom; ev $L 8
+        xt t1 "btn L trigger 1"; sleep 0.3; xt t2 "btn L trigger 0"; for i in $(seq 1 16); do paused && break; sleep 0.25; done; sleep 2.5; shot n5-intel; echo "$(date +%T) Gain Intel: $(state)"
+        paused && { DOM=1; for u in 1 2 3; do xt s1 "stick L 0 1"; sleep 0.4; xt s2 "stick L 0 0"; sleep 1.5; shot n5-intel-up$u; done; xt a3 "btn R a 1"; sleep 0.25; xt a4 "btn R a 0"; sleep 4; shot n5-intel-a; echo "$(date +%T) after A: $(state)"
+          paused && { xt a5 "btn R a 1"; sleep 0.25; xt a6 "btn R a 0"; sleep 4; shot n5-intel-a2; echo "$(date +%T) after A2: $(state)"; }; }
+        sleep 3; shot n5-intel-after; out; xt b1 "btn R b 1"; sleep 0.25; xt b2 "btn R b 0"; sleep 3; xt g2 "btn L squeeze 0"; wd "verbs aim off"; wd "crouch hold 0"; sleep 2; shot n5-dismissed; ev $L 16; break; fi
+      xt g3 "btn L squeeze 0"; sleep 1; l=$(wc -l < $R/somvr.log); wd "verbs orcs $gx $gz 800" 1.5
+      P=$(tail -n +$l $R/somvr.log | grep -E "^VERBS orcs t=.* orc $G at" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.*/\1 \2 \3 \4 \5/'); [ -n "$P" ] && read G gx gy gz gf <<< "$P"
+    done; fi
+    echo "$(date +%T) intel: $DOM"; sleep 2; L=$(wc -l < $R/somvr.log); army; shot n5-board
+    for d in "0 1" "-1 0" "-1 0" "-1 0" "-1 0" "1 0" "1 0" "1 0" "1 0"; do xt s3 "stick L $d"; sleep 0.4; xt s4 "stick L 0 0"; sleep 1.2; k=$((k+1)); shot n5-sel-$k
+      xt x1 "btn L a 1"; sleep 0.25; xt x2 "btn L a 0"; sleep 2; shot n5-x-$k; paused || break; done
+    out; echo "$(date +%T) the board: $(state)"; sleep 2; shot n5-hud; ev $L 10
+    L=$(wc -l < $R/somvr.log); wd "practice status nav" 1.5; tail -n +$L $R/somvr.log | grep -E "^PRACTICE nav [0-9]+ '" | grep -vE "Collectible|Flower|Ressur|FT_" | grep -oE "'[A-Za-z_]+' at \([-0-9 ]+\), [0-9.]+ m" | awk '!s[$1]++' | head -12
+    sleep 2; printf "quit
+    " >> $R/cmd; echo "$(date +%T) quit"

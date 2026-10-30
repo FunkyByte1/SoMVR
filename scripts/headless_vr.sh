@@ -9,7 +9,8 @@
 #   somvr-vr5.cmd), HEADLESS_UNIT=NAME (boot_check runs in a systemd user unit NAME with KillMode=mixed, as the user's
 #   headset session does: `systemctl --user stop NAME` = the PC window's Stop; this script waits for the unit),
 #   HEADLESS_SAVE_FROM=/ABS/RUN/saves/GameData.sav (build 23: the run's save copy is that earlier run's copy - its story
-#   progress - not the real save's; boot_check --save-from).
+#   progress - not the real save's; boot_check --save-from), HEADLESS_HARD (build 27: seconds, 1801..4500 = boot_check
+#   --hard with --soak, the soak's long boot; unset = boot_check's 1800).
 #   The launch (build 6): --no-feral-options and the run's own prefs with GameOptionsDialogShouldShow 0,
 #   SkipOSWarnings 1, SpecificationAlerts\LnxDistributionUnsupported 1 and DisableSplashVideos 1 (docs/re-launcher.md);
 #   SOMVR_MARK=1 and SOMVR_QUIT=1 (bug marks, the menu's Quit game). boot_check.sh: the one next to this script.
@@ -22,6 +23,10 @@ SOM=$HOME/Projects/flat2vr/ShadowOfMordor; RT=/run/user/$(id -u); MSVC=""
 HERE=$(cd "$(dirname "$0")" && pwd); BC=$HERE/boot_check.sh   # (a worktree's copy runs its own boot_check)
 MOD=${1:?usage: headless_vr.sh /ABS/PATH/TO/mod/somvr}; MOD=$(cd "$MOD" 2>/dev/null && pwd -P) || { echo "STOP: no folder $1"; exit 1; }
 [ -f "$MOD/build/somvr.so" ] && [ -f "$MOD/vklayer/build/libVkLayer_somvr_openxr.so" ] || { echo "STOP: $MOD is not built"; exit 1; }
+# build 27: the runtime's own limit follows HEADLESS_HARD (the first soak's monado was killed at 1800 s, 21 minutes before
+# its boot's end: XR_ERROR_INSTANCE_LOST, the rest of the boot flat - re-xr-pipeline.md 107.4)
+[[ ${HEADLESS_HARD:-} =~ ^[0-9]*$ ]] || { echo "STOP: HEADLESS_HARD must be whole seconds"; exit 1; }
+MON_S=1800; [ -n "${HEADLESS_HARD:-}" ] && MON_S=$((HEADLESS_HARD + 60))
 TS=$(date +%Y%m%d-%H%M%S); R5=$SOM/logs/headless-$TS
 mkdir -p "$R5/mxdg/config" "$R5/mxdg/cache" "$R5/mxdg/data"
 echo "R5=$R5"
@@ -38,7 +43,7 @@ setsid chrt -o 0 env -i HOME="$R5/mxdg" PATH=/usr/bin:/bin XDG_RUNTIME_DIR=$RT \
   SIMULATED_ENABLE=1 XRT_COMPOSITOR_NULL=1 XRT_NO_STDIN=1 \
   XRT_LOG=info XRT_COMPOSITOR_LOG=info XRT_PRINT_OPTIONS=on \
   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
-  timeout -s INT -k 10 1800 /usr/bin/monado-service > "$R5/monado.log" 2>&1 < /dev/null &
+  timeout -s INT -k 10 "$MON_S" /usr/bin/monado-service > "$R5/monado.log" 2>&1 < /dev/null &
 TPID=$!
 for i in $(seq 1 50); do [ -S $RT/monado_comp_ipc ] && break; sleep 0.2; done
 MSVC=$(pgrep -P "$TPID" -x monado-service)
@@ -62,6 +67,7 @@ LA=(--game-arg --no-feral-options --prefs-set GameOptionsDialogShouldShow=0 --pr
 DCMDS=$HERE/cmds/somvr-vr6.cmd
 [ "${HEADLESS_LAUNCH:-}" = old ] && { LA=(); DCMDS=$HERE/cmds/somvr-vr5.cmd; }
 SF=(); [ -n "${HEADLESS_SAVE_FROM:-}" ] && SF=(--save-from "$HEADLESS_SAVE_FROM") # build 23: an earlier run's save copy
+[ -n "${HEADLESS_HARD:-}" ] && SF+=(--hard "$HEADLESS_HARD" --soak) # build 27: the soak's long boot (at most 4500 s)
 B=(--steam --save-copy "${SF[@]}" --seed-prefs $SOM/logs/boot-check-20261018-003728/preferences.seeded "${LA[@]}"
    --preload $MOD/build/somvr.so "${GE[@]}" --cmds "${HEADLESS_CMDS:-$DCMDS}" --hold "${HEADLESS_HOLD:-900}" --refresh 90)
 "$BC" --dry-run "${B[@]}" > "$R5/dry.txt" 2>&1 || { echo "STOP: dry run failed"; tail -20 "$R5/dry.txt"; exit 1; }

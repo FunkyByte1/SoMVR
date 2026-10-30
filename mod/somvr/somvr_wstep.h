@@ -37,6 +37,11 @@ typedef struct {
     float rest;     /* ... the walk waits until it is under this (0.3) */
     float min_s;    /* SOMVR_WRAITH_STEP_HOLD_MS: the hold a let-go needs (0.25) */
     float cool_s;   /* SOMVR_WRAITH_STEP_COOL_MS: after a step (1.0) */
+    /* build 27, the vault over an orc (docs/re-xr-pipeline.md 108): the head's ray meeting an orc's body first, that orc's
+     * root within vault_cm of Talion's along the floor = the ring behind it, behind_cm past its root on the line from
+     * Talion through it, wherever the ray goes on to (to land past an orc, look beside it). 0 = off */
+    float vault_cm;  /* SOMVR_WRAITH_STEP_VAULT_CM (0 in the code; 350 in build 27's env) */
+    float behind_cm; /* SOMVR_WRAITH_STEP_VAULT_BEHIND_CM (120: past orc_cm, so the ring is not "an orc there") */
 } somvr_ws_cfg;
 void somvr_ws_cfg_default(somvr_ws_cfg *c);
 
@@ -55,6 +60,9 @@ typedef struct {
     int far;         /* the head's ray went past max_cm (or met nothing): the farthest along the view's heading */
     int through;     /* orcs the head's ray went through */
     int rays;        /* casts this find */
+    int vault;       /* build 27: 1 = the ring is the vault's, behind orcs[orc] (OK or refused there) */
+    int orc;         /* ... the vaulted orc's index in orcs (-1 none) */
+    float orc_cm;    /* ... its root's distance from Talion's along the floor */
 } somvr_ws_aim;
 
 /* eye/gaze: the head's ray (world cm, gaze ~unit); root: Talion's root, floor_y: the ground under him; orcs: their

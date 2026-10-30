@@ -442,6 +442,10 @@ static const vm_ctl_line g_ctl[] = {
     {"Drop", "A (wall, edge)", SOMVR_VMA_DESCENT, SOMVR_VMA_DROPMARK, 0}, /* build 13: A at an edge over a 4 m drop */
     {"Drop", "hold A, let go", SOMVR_VMA_DESCENT | SOMVR_VMA_DROPMARK, 0, 0}, /* build 17: held = the landing shown */
     {"Jump", "A while moving", SOMVR_VMA_JUMP, 0, 0}, /* build 22: SOMVR_JUMP (standing: A jumps where no edge claims it) */
+    /* build 26 (SOMVR_RIDE, re-xr-pipeline.md 105): a caragor's leap blocked = stunned; the left hand on its head mounts
+     * it (the game's grab); riding: the left stick steers where you look, A leaps, the right trigger bites, B gets off */
+    {"Ride", "grab stunned beast", SOMVR_VMA_RIDE, 0, 0},
+    {"Riding", "A leap RT bite B off", SOMVR_VMA_RIDE, 0, 0},
     {"Bow", "hold left trigger", 0, SOMVR_VMA_BOWSLOT, 0}, /* build 11 (SOMVR_BOW): Swing/Crouch made room */
     {"Bow", "L grip at L shoulder", SOMVR_VMA_BOWSLOT, 0, 0}, /* build 15b: SOMVR_BOW_DRAW=slot */
     {"Shoot", "R grip, pull, let go", 0, SOMVR_VMA_BOWRT | SOMVR_VMA_QVGRIP | SOMVR_VMA_BOWTRIG, 0},
@@ -454,7 +458,8 @@ static const vm_ctl_line g_ctl[] = {
     {"Execute", "R trigger + hard hit", SOMVR_VMA_VERBS, 0, 0}, /* build 12's note; a line with the verbs' notes */
     {"Wraith", "hold Y (vision)", 0, SOMVR_VMA_STRIKE, 0},
     {"Wraith", "hold Y; A = Strike", SOMVR_VMA_STRIKE, 0, 0}, /* build 17: SOMVR_STRIKE_GAZE (the mark says which orc) */
-    {"Map", "click right stick", 0, 0, 0},
+    {"Map", "click right stick", 0, SOMVR_VMA_ARMY, 0},
+    {"Map", "R click, hold=Army", SOMVR_VMA_ARMY, 0, 0}, /* build 27: SOMVR_ARMY (the game's "Hold [>]") */
     {"Minimap", "back of left wrist", 0, 0, 0},
     {"Menu", "L palm / hold button", 0, SOMVR_VMA_USE, 0}, /* build 13: one line (was "left palm to face", "or hold menu button") */
     {"Pause", "tap menu button", 0, SOMVR_VMA_USE, 0},

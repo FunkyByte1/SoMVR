@@ -486,6 +486,7 @@
 #include "somvr_step.h"   /* SOMVR_STEP / SOMVR_DASH / SOMVR_PHASE (somvr_step_game.c, included after the LOCO region) */
 #include "somvr_threat.h" /* SOMVR_THREAT (its region precedes the gate) */
 #include "somvr_beasts.h" /* build 22, SOMVR_BEASTS: caragors, ghuls, graugs (somvr_beasts_game.c, included last) */
+#include "somvr_ride.h"   /* build 26, SOMVR_RIDE: riding in first person, Seat mode (somvr_ride_game.c, included last) */
 #include "somvr_objective.h" /* SOMVR_OBJECTIVE: the objective marker in the world (somvr_objective_game.c, included last) */
 #include "somvr_views.h"
 #include "somvr_vrmenu.h"
@@ -1075,6 +1076,11 @@ static int tk_beast_pinned(void); /* build 22: a beast's takedown held: the view
 static const char *tk_word(const char *w); /* the test word "holdtalion on|off" (SOMVR_HANDS_TEST) */
 /* SOMVR_PARRY / SOMVR_SHOVE (somvr_parry_game.c, included last; build 18, re-xr-pipeline.md 65) */
 static void py_config(void);
+static void stg_config(void); /* build 27: SOMVR_STRUGGLE, the death struggle's answer (somvr_struggle_game.c) */
+static void stg_end_log(void);
+static void stg_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq);
+static int stg_axis_wants(int cmd[2], float val[2]);
+static void stg_tick(sc_tick_out *o);
 static void py_end_log(void);
 static void py_parry(uintptr_t c, uintptr_t attack, const somvr_df_in *in, const float point[3], double t);
 static int py_hit_kind(uintptr_t c, int tier, double t);
@@ -1085,6 +1091,7 @@ static void py_through_back(uintptr_t pc, int set, uint8_t was);
 static int py_rx_skip(uintptr_t c, double t);
 static void py_hands(const sv_vec3 p[2], const sv_vec3 pw[2]);
 static void py_dodge(uintptr_t c, uintptr_t attack, int applied, float dash_ms, double t);
+static void py_vault(uintptr_t c, double t); /* build 27: the wraith step's vault opens the orc (somvr_parry_game.c) */
 static int py_shield_game(void);
 struct cb_orc;
 static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float root[3], double t);
@@ -1428,6 +1435,26 @@ static const char *bz_word(const char *w);
 static int bz_weapons(uintptr_t c, float ob[2][3], float ot[2][3]); /* DEFENCE: a beast's jaws or fists as its weapons */
 static int bz_hold_beast(uintptr_t rec);                           /* HOLD: an enemy's sync is a beast's */
 static int bz_line_judge(uintptr_t c); /* DEFENCE: a caragor's or ghul's blow judged on its line, not its weapon */
+/* build 26 (somvr_ride_game.c, included last; docs/re-xr-pipeline.md 105): SOMVR_RIDE - Seat mode on a caragor or a
+ * graug: the seat, the car-style yaw, the holds of getting on and off, the mounted buttons; the test word ride */
+struct df_track;
+static void mt_config(int *bad);
+static void mt_end_log(void);
+static void mt_frame(void);                         /* eye0_setup's top: the mount, the yaw's turn, the seat */
+static const float *mt_body(const float *body);     /* eye0_setup: seated, the seat is the body point */
+static void mt_after_base(void);                    /* eye0_setup after the moments' base: the facing, the numbers */
+static uint32_t mt_fb(uint32_t fb, const somvr_fb_in *in, uintptr_t atk, double t); /* bm_pre: the ride's conditions */
+static int mt_hold(double t);                       /* bm_pre: getting on or off holds the view */
+static void mt_tick(sc_tick_out *o, double t);      /* the input tick: the mounted buttons */
+static int mt_owns_buttons(void);                   /* ab_tick: A is the beast's while riding */
+static void mt_guard(const struct df_track *d, const somvr_df_in *in, double t); /* `ride guard on` (a test) */
+static const char *mt_word(const char *w);
+static uint64_t mt_vm_avail(void);
+static int mt_is_mount(uintptr_t hobj);             /* combat: the beast ridden is not the blade's */
+static int mt_counter_leap(uintptr_t c, uintptr_t attack); /* DEFENCE: a caragor's counterable leap parried = the counter */
+static void mt_reach(const sv_vec3 pw[2], sv_vec3 eye);   /* in_frame: the left hand reached out at a stunned caragor */
+static int mt_press_cmd(void);                            /* in_apply: the mount's 123 while pressed */
+static int mt_steer_heading(float *h);                     /* in_dpsi: seated, the stick in the beast's frame (b27) */
 static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye); /* in_frame, before the climb: the left hand's grab */
 static int vb_nograb(void);                /* the climb: the left squeeze was the verbs' */
 static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t); /* the stealth kill */
@@ -1643,6 +1670,19 @@ static void log_raw(const char *s, size_t n)
 	pthread_mutex_unlock(&g_mu);
 }
 
+/* build 27 (re-xr-pipeline.md 107, the soak): a module's lines after its fixed first ones - up to n in each 10 minutes
+ * of the clock `now` (s). Before, CAPTAIN, STEALTH, GLYPH, PROMPTS and BEASTS wrote their first 400-900 lines and then
+ * nothing for the rest of the session: the user's 14-minute session (20261028-193826) had used 373 of PROMPTS' 400 and
+ * all of GLYPH's 800 trigger lines, so a bug mark an hour in had none of their lines in its log tail. */
+struct log_late { _Atomic long long win; _Atomic unsigned used; };
+static int log_late_ok(struct log_late *l, unsigned n, double now)
+{
+	long long w = (long long)(now / 600.0), old = atomic_load(&l->win);
+	if (w != old && atomic_compare_exchange_strong(&l->win, &old, w))
+		atomic_store(&l->used, 0);
+	return atomic_fetch_add(&l->used, 1) < n;
+}
+
 __attribute__((format(printf, 1, 2))) static void logf_(const char *fmt, ...)
 {
 	char line[2048];
@@ -1780,6 +1820,7 @@ static void eye0_setup(void *cam)
 		somvr_views_fake(&g_fr.game, g_layout, g_ipd_m, &g_fr.views);
 	for (int e = 0; g_overscan > 0 && e < 2; e++) /* the eyes render (H1/H3) and the record carries this fov */
 		g_fr.views.fov[e] = sv_fov_overscan(&g_fr.views.fov[e], g_overscan);
+	mt_frame(); /* SOMVR_RIDE: the mount, the beast's turn (into the pending turn below), the seat */
 	uint32_t rq = atomic_load(&g_req_recenter), xq = atomic_load(&g_sh.xr.recenter_seq);
 	int32_t sq = atomic_load(&g_req_snap), xs = atomic_load(&g_sh.xr.snap_steps);
 	int want = rq != g_seen_req_recenter || xq != g_seen_xr_recenter;
@@ -1796,9 +1837,11 @@ static void eye0_setup(void *cam)
 	const float *body = g_rigcfg.base != SOMVR_BASE_HEAD ? player : g_fr.head_ok ? g_fr.head : NULL; /* NULL: camera */
 	body = lo_anchor_body(body); /* SOMVR_ANCHOR=root: Talion's root + the calibrated eye height instead of the head node */
 	body = hv_body(body, player); /* SOMVR_EYE_FWD_CM: the eye ahead of the face in Talion's body frame; SOMVR_TUNE */
+	body = mt_body(body);         /* SOMVR_RIDE: seated, the seat (the beast's root + the rider's eyes, filtered) */
 	uint64_t before = g_rig.recenters;
 	g_fr.base = somvr_rig_frame(&g_rig, &g_rigcfg, g_fr.views.pose, &g_fr.game, body, want, snap);
 	bm_base(&g_fr.base); /* SOMVR_BODYMOMENTS: the frozen anchor, the re-seat, the player's yaw */
+	mt_after_base();     /* SOMVR_RIDE: the facing on the blink's black, the view's numbers */
 	sz_rig();            /* SOMVR_PLAYER_SIZE: this frame's size (sz_frame) into the rig, the eyes' rise into the base */
 	int recentred = g_rig.recenters != before;
 	cf_seat_frame(recentred); /* SOMVR_SEATED: the seated eye height at a recentre */
@@ -4280,7 +4323,8 @@ static void combat_frame(uintptr_t pl, int head_ok)
 	vb_blade(pcomb, pc, o, n, &b, sweep, body ? root : NULL, t);
 	for (int i = 0; sweep && i < n; i++) {
 		sc_contact ct;
-		if (!bz_sweep(&o[i], &g_cb.prev, &b, &ct, t)) /* the orc's capsule; SOMVR_BEASTS: a beast's bone capsules */
+		if (mt_is_mount(o[i].hobj) || /* build 26, SOMVR_RIDE: the beast ridden is never the blade's (the rider's legs) */
+		    !bz_sweep(&o[i], &g_cb.prev, &b, &ct, t)) /* the orc's capsule; SOMVR_BEASTS: a beast's bone capsules */
 			continue;
 		CB_COUNT(contacts);
 		/* the touch: a glancing tick when it starts, at most a weak rub while it lasts (a resting blade touches every
@@ -4872,6 +4916,9 @@ static void in_apply(const sc_tick_out *o)
 	int dfc = g_inp.ctx == SC_CTX_WORLD ? df_press_cmd() : 0; /* SOMVR_DEFENCE: a parry's stock counter (the deny list's */
 	if (dfc > 0 && dfc < SC_NCMD)                              /* one exception: our press, never the pad's button) */
 		in_want_add(w, &nw, dfc, g_inp.first[dfc], 1.0f, 1, 1, 0);
+	int mtc = g_inp.ctx != SC_CTX_MENU ? mt_press_cmd() : 0; /* build 26, SOMVR_RIDE: the mount's 123 (our press, never */
+	if (mtc > 0 && mtc < SC_NCMD)                              /* the pad's button) */
+		in_want_add(w, &nw, mtc, g_inp.first[mtc], 1.0f, 1, 1, 0);
 	int vbc[4], nvb = g_inp.ctx != SC_CTX_MENU ? vb_press_cmds(vbc) : 0; /* SOMVR_VERBS: the verbs' stock commands */
 	for (int k = 0; k < nvb; k++)                                          /* (our press, never the pad's button) */
 		if (vbc[k] > 0 && vbc[k] < SC_NCMD)
@@ -4882,6 +4929,12 @@ static void in_apply(const sc_tick_out *o)
 	for (int k = 0; k < nsa; k++)                                          /* mouse axes: values only, our pointer's uv) */
 		if (sac[k] > 0 && sac[k] < SC_NCMD && g_inp.rec[sac[k]])
 			in_want_add(w, &nw, sac[k], g_inp.first[sac[k]], sav[k], 0, 0, 0);
+	int stc[2];
+	float stv[2];
+	int nst = g_inp.ctx == SC_CTX_STRUGGLE ? stg_axis_wants(stc, stv) : 0; /* build 27: an aim struggle's hand (the */
+	for (int k = 0; k < nst; k++)                                           /* cursor's axes, values only) */
+		if (stc[k] > 0 && stc[k] < SC_NCMD)
+			in_want_add(w, &nw, stc[k], g_inp.first[stc[k]], stv[k], 0, 0, 0);
 	int usc[12], nus = us_press_cmds(o, usc); /* SOMVR_USE: a pick prompt's 123, the quests' (our press, never the pad's) */
 	for (int k = 0; k < nus; k++)
 		if (usc[k] > 0 && usc[k] < SC_NCMD)
@@ -4942,6 +4995,9 @@ static float in_dpsi(void)
 	uint64_t rf = rend_frame();
 	if (!g_inp.head_ok || rf - g_inp.head_frame > 2)
 		return 0;
+	float rh; /* build 27, SOMVR_RIDE: seated, the stick in the beast's frame (re-xr-pipeline.md 109.5) */
+	if (mt_steer_heading(&rh))
+		return sv_wrap_pi(rh - g_inp.hc);
 	return sv_wrap_pi((g_inp.move_hand && g_inp.hl_ok ? g_inp.hl : g_inp.hv) - g_inp.hc);
 }
 
@@ -5173,12 +5229,14 @@ static void in_tick(void)
 	vm_tick(&o, live, t);  /* SOMVR_VRMENU: the menu's changes live, the menu button's long press, the panel's trigger */
 	go_tick(t);            /* SOMVR_MUSIC: the menu's Music share once the game's value is known; SOMVR_LOAD_VOICES */
 	dg_auto_tick();        /* build 17b: the test word "fight dodge auto MS" (SOMVR_HANDS_TEST) presses A */
+	mt_tick(&o, t);        /* build 26, SOMVR_RIDE: riding, the buttons are the beast's (A, RT, B, the stick's click) */
 	ab_tick(&o);           /* build 17: A's press -> its one owner (the strike, the dodge, the climb) before any reads it */
 	cl_tick(&o);           /* SOMVR_CLIMB: no move stick while holding; the cmd mode's LedgePullUp pulse */
 	ws_tick(&o);           /* build 18, SOMVR_WRAITH_STEP: no walk and no turn while the wraith step aims */
 	bo_tick(&o);           /* SOMVR_BOW: the aim command while aiming, the fire command's tap */
 	lo_tick(&o);           /* SOMVR_LOCO: the stick's world velocity for the next tick, the leg feed */
 	st_tick(&o);           /* SOMVR_DASH / SOMVR_PHASE: A's press -> the evade's pick; the phase's vision taps */
+	stg_tick(&o);          /* build 27, SOMVR_STRUGGLE: the death struggle's object; a thrust = a press of its command */
 	go_vision_tick(&o, t); /* SOMVR_VISION: Y -> the wraith vision's toggle taps (122) */
 	sk_tick(&o, t);        /* SOMVR_BOW_STRIKE=dash|blink: X with the bow out -> the Shadow Strike (121) */
 	cr_tick(&o, t);        /* SOMVR_CROUCH=duck: the duck's edges -> the game's Crouch (15) */
@@ -5200,6 +5258,20 @@ static void in_tick(void)
 		IN_COUNT(crouch);
 	if (o.edges & SC_E_SPRINT)
 		IN_COUNT(sprint);
+	if (o.edges & (SC_E_ARMY | SC_E_MAP)) { /* build 27, SOMVR_ARMY */
+		static unsigned n_army, n_map;
+		int army = (o.edges & SC_E_ARMY) != 0;
+		army ? n_army++ : n_map++;
+		if (army && g_inp.hap_on)
+			in_haptic_event(SOMVR_HAND_R, 0.3f, 0.02f, SOMVR_HAP_UI);
+		if (n_army + n_map <= 200 && army)
+			logf_("INPUT t=%.3f army %u: the right stick's click held %.2f s: the game's \"Hold [>]\" (%d '%s' for %.0f "
+			      "ms, SOMVR_ARMY)", t, n_army, g_inp.cfg.army_s, g_inp.cfg.army_cmd, in_cmd_name(g_inp.cfg.army_cmd),
+			      g_inp.cfg.army_ms);
+		else if (n_army + n_map <= 200)
+			logf_("INPUT t=%.3f map %u: the right stick's click let go after %.2f s: the map (PDA 95, one tick; "
+			      "SOMVR_ARMY)", t, n_map, t - g_inp.ctl.r3_t0);
+	}
 	in_move_log(&o, t);
 	in_haptics(t, live);
 	if (!g_inp.warned_v2 && (!g_inp.have_st || !g_inp.st.sync_seq) && t - g_inp.t0 > 5.0) {
@@ -5292,8 +5364,10 @@ static void in_frame(void)
 	bo_frame(p, q, pw, qw); /* SOMVR_BOW: the draw gesture and the bow ray (no blade while the bow is out) */
 	sl_frame(p, pw);        /* SOMVR_SLOTS: draw and put back at the body (after the bow, before the climb; no blade
 				 * from an empty hand) */
+	mt_reach(pw, hp);       /* build 26, SOMVR_RIDE: the left hand reached out at a stunned caragor - its mount */
 	vb_hands(pw, hp);       /* SOMVR_VERBS: the left hand's squeeze on an orc's head (before the climb takes it) */
 	py_hands(p, pw);        /* SOMVR_SHOVE (build 18): the left palm for the shove */
+	stg_hands(p, pw, hp, hq); /* build 27, SOMVR_STRUGGLE: a hard thrust of a hand, an aim struggle's hand */
 	cl_frame(p, pw, qw);    /* SOMVR_CLIMB: the grips, the holds, the body's move for the next tick */
 	hr_frame();             /* SOMVR_HEAD_ROCK: the head's clearance (the climb's rays), the next record's fade */
 	sf_frame(pw, qw, hp, hq); /* SOMVR_HANDS_SURFACE: the rays for the next phase 2 (after the climb's) */
@@ -7778,7 +7852,8 @@ static const struct site_spec *g_fb_sites = g_fb_sites_game; /* selftest: stand-
 #define FB_TAGS_SET0 0x8
 #define FB_TAGS_COUNT 0xa0
 #define FB_TAGS_MAX 20
-#define FB_TC_N 64            /* tag records whose class is cached (database records: they live as long as the game) */
+#define FB_TC_N 192           /* tag records whose class is cached (database records: they live as long as the game);
+                                 * build 27: 64 before, and full = no cache (re-xr-pipeline.md 107) */
 /* the reads each condition rests on (any one of them is enough), the sites each read rests on (SOMVR_FBR_* bit order) */
 static const uint32_t g_fb_cond_reads[SOMVR_FB_NCOND] = {
 	[SOMVR_FB_CINE] = SOMVR_FBR_CINE, [SOMVR_FB_SCRIPTED] = SOMVR_FBR_CAM, [SOMVR_FB_PRES] = SOMVR_FBR_PRES,
@@ -7806,7 +7881,8 @@ static struct {
 	somvr_fb_sw sw;
 	somvr_fb_tr tr;
 	struct { uintptr_t rec; uint32_t cls; } tc[FB_TC_N];
-	int ntc, tc_full;
+	int ntc;
+	unsigned tc_full; /* build 27: the full cache's reuses (its cursor) */
 	uint32_t last_raw;
 	int have_last;
 	somvr_fb_in last;
@@ -7884,10 +7960,14 @@ static uint32_t fb_tag_class(uintptr_t rec)
 			return g_fb.tc[i].cls;
 	char nm[SOMVR_FB_TAGLEN + 16];
 	uint32_t c = somvr_fb_tag_class(&g_fb.tags, fb_rec_name(rec, nm, sizeof nm));
-	if (g_fb.ntc < FB_TC_N)
-		g_fb.tc[g_fb.ntc].rec = rec, g_fb.tc[g_fb.ntc].cls = c, g_fb.ntc++;
-	else if (!g_fb.tc_full++)
-		logf_("FALLBACK more than %d distinct state tags: the rest are looked up by name every frame", FB_TC_N);
+	/* build 27 (re-xr-pipeline.md 107, the soak): full = the entries reused in turn (tc_full counts them). Before, the
+	 * tags past the 64th were looked up by name every frame and a classed one's line below was written every frame
+	 * (10 a second: the FALLBACK lines' whole budget after the first 200, its real events dropped) - 33 of 64 were
+	 * used in the user's 14-minute session (20261028-193826) */
+	int k = g_fb.ntc < FB_TC_N ? g_fb.ntc++ : (int)(g_fb.tc_full++ % FB_TC_N);
+	g_fb.tc[k].rec = rec, g_fb.tc[k].cls = c;
+	if (g_fb.tc_full == 1 && k == 0)
+		logf_("FALLBACK more than %d distinct state tags: the cache's entries are reused in turn", FB_TC_N);
 	if (c && fb_log_ok(fb_now()))
 		logf_("FALLBACK tag '%s' (%#lx) is in class%s%s%s", nm, (unsigned long)rec, c & SOMVR_FB_TAGC_DEATH ? " death" : "",
 		      c & SOMVR_FB_TAGC_CLIMB ? " climb" : "", c & SOMVR_FB_TAGC_OTHER ? " tag" : "");
@@ -11153,7 +11233,8 @@ static const struct site_spec *g_bm_sites = g_bm_sites_game; /* selftest: stand-
 #define BM_C_ATTACK 0x4d0 /* Combat: the current attack record (Talion's recoils, counters, PC_RecoilAny_PreDeath ...) */
 #define BM_C_STATE 0x268  /* Combat: the current combat state record (Combat/States/Definitions) */
 #define BM_C_DEAD 0x288   /* Combat: u8, set first thing by the death */
-#define BM_NC_N 96        /* record classes cached (database records live as long as the game) */
+#define BM_NC_N 288       /* record classes cached (database records live as long as the game); build 27: 96
+                            * before, and full = no cache (re-xr-pipeline.md 107) */
 #define BM_HEAD_AWAY_CM 30.0f
 
 static struct {
@@ -11166,7 +11247,8 @@ static struct {
 	somvr_bm s;
 	somvr_bm_out o;      /* this H4's */
 	struct { uintptr_t rec; uint8_t src, cls; } nc[BM_NC_N];
-	int nnc, nc_full;
+	int nnc;
+	unsigned nc_full; /* build 27: the full cache's reuses (its cursor) */
 	uint32_t last_conds, last_names;
 	int have_last, last_act, last_win, last_blink;
 	uintptr_t last_atk, last_state, last_sync;
@@ -11240,10 +11322,13 @@ static uint32_t bm_class(uintptr_t rec, uint32_t src)
 			return g_bm.nc[i].cls;
 	char nm[SOMVR_FB_TAGLEN + 16];
 	uint32_t c = somvr_bm_names_class(&g_bm.names, src, fb_rec_name(rec, nm, sizeof nm));
-	if (g_bm.nnc < BM_NC_N)
-		g_bm.nc[g_bm.nnc].rec = rec, g_bm.nc[g_bm.nnc].src = (uint8_t)src, g_bm.nc[g_bm.nnc].cls = (uint8_t)c, g_bm.nnc++;
-	else if (!g_bm.nc_full++)
-		logf_("BODYMOMENT more than %d distinct records: the rest are classed by name every frame", BM_NC_N);
+	/* build 27 (re-xr-pipeline.md 107): full = the entries reused in turn (nc_full counts them); before, the records past
+	 * the 96th were classed by name every frame, a classed one's line below every frame (the BODYMOMENT lines' budget) -
+	 * 62 of 96 used in the user's 14-minute session (20261028-193826) */
+	int k = g_bm.nnc < BM_NC_N ? g_bm.nnc++ : (int)(g_bm.nc_full++ % BM_NC_N);
+	g_bm.nc[k].rec = rec, g_bm.nc[k].src = (uint8_t)src, g_bm.nc[k].cls = (uint8_t)c;
+	if (g_bm.nc_full == 1 && k == 0)
+		logf_("BODYMOMENT more than %d distinct records: the cache's entries are reused in turn", BM_NC_N);
 	if (c && bm_log_ok(fb_now()))
 		logf_("BODYMOMENT %s '%s' (%#lx) is in class%s%s%s%s%s", src == SOMVR_BMS_ATK ? "attack" : src == SOMVR_BMS_STATE ?
 		      "state" : src == SOMVR_BMS_TAG ? "tag" : "sync", nm, (unsigned long)rec, c & SOMVR_BMN_KNOCKDOWN ?
@@ -11480,6 +11565,7 @@ static int bm_pre(uintptr_t pl)
 	bi.fb = fbraw;
 	bi.names = bm_names(pl, &in, &atk, &st, &bi.dead);
 	bi.fb = kp_fb(pl, bi.fb, bi.dead, t); /* build 22, SOMVR_CAPTAIN: a captain's introduction in the world */
+	bi.fb = mt_fb(bi.fb, &in, atk, t);    /* build 26, SOMVR_RIDE: riding a beast, mount and attach are the ride's */
 	bi.our_climb = g_cl.on && g_cl.s.active;
 	/* SOMVR_VERBS: the left hand holds an orc (the game's grab is a mount and attach); build 20: only while the game holds
 	 * Talion - his ticks the player's own for SOMVR_BM_GRAB_FREE_S: the hold lets go (and the interrogation is over) */
@@ -11492,6 +11578,8 @@ static int bm_pre(uintptr_t pl)
 	}
 	bi.our_grab = grab && !freed;
 	uint32_t conds = somvr_bm_conds(&bi);
+	if (mt_hold(t)) /* build 26, SOMVR_RIDE: getting on or off a beast holds the view (the release blinks to the seat) */
+		conds |= SOMVR_BMC_BIT(SOMVR_BMC_HOLD);
 	int hc, w, wc, act = somvr_bm_actions(&g_bm.pol, conds, &hc, &w, &wc);
 	if (g_fb.forced == 2)
 		w = 0;
@@ -15207,6 +15295,8 @@ static void *writer_main(void *arg)
 					what = ssw_word(w + 7);
 				} else if (seen && !strncmp(w, "react21 ", 8)) { /* build 21: "react21 defender|berserker V" */
 					what = rx21_word(w + 8);
+				} else if (seen && !strncmp(w, "ride ", 5)) { /* build 26, SOMVR_RIDE: "ride status|guard on|off|press CMD MS" */
+					what = mt_word(w + 5);
 				} else if (seen && !strncmp(w, "beasts ", 7)) { /* build 22, SOMVR_BEASTS: "beasts skills [S]|status" */
 					what = bz_word(w + 7);
 				} else if (seen && !strncmp(w, "captain ", 8)) { /* build 22, SOMVR_CAPTAIN: "captain status|pick N|hp V" */
@@ -15495,6 +15585,14 @@ static uint32_t in_config(int *bad)
 	g_inp.rumble = env_word("SOMVR_RUMBLE", onoff_w, 2, 1) && g_inp.hap_on;
 	g_inp.padmode = env_word("SOMVR_PADMODE", onoff_w, 2, 1);
 	g_inp.cfg.game_moves = env_word("SOMVR_GAMEMOVES", on_w, 4, 0) & 1; /* off: the headset session 1 (A's moves) */
+	/* build 27 (re-xr-pipeline.md 110), SOMVR_ARMY=on|off (code default off): the right stick's click held
+	 * SOMVR_ARMY_HOLD_MS (500) = the game's "Hold [>]" (the HUD's "No Warchief Selected - Hold [>]": the pad's START
+	 * held) - SOMVR_ARMY_CMD (14 Menu) for SOMVR_ARMY_MS (1500); a click let go sooner = the map at the release */
+	if (env_word("SOMVR_ARMY", on_w, 4, 0) & 1) {
+		g_inp.cfg.army_s = env_float("SOMVR_ARMY_HOLD_MS", 500, 200, 2000, bad) / 1000.0f;
+		g_inp.cfg.army_ms = env_float("SOMVR_ARMY_MS", 1500, 100, 5000, bad);
+		g_inp.cfg.army_cmd = (int)env_float("SOMVR_ARMY_CMD", 14, 1, 348, bad);
+	}
 	return HK_INPUT_BITS & ~(g_inp.rumble ? 0u : (1u << HK_RUM1) | (1u << HK_RUM2));
 }
 
@@ -15553,6 +15651,12 @@ static void in_start(const struct site_spec *sites)
 	      g_rigcfg.snap_rad * 57.29578f, g_inp.cfg.smooth_rate * 57.29578f, g_inp.cfg.dead, g_inp.hap_scale * 100,
 	      g_inp.rumble, g_inp.padmode, g_inp.ok_mode ? "site ok" : "no site", (void *)&g_in, g_in.version, g_in.size,
 	      g_in.want);
+	if (g_inp.cfg.army_s > 0)
+		logf_("CONFIG army=on (SOMVR_ARMY): the right stick's click held %.0f ms = the game's \"Hold [>]\" (%d '%s' "
+		      "for %.0f ms); a shorter click = the map (PDA 95) at its release", g_inp.cfg.army_s * 1e3,
+		      g_inp.cfg.army_cmd, in_cmd_name(g_inp.cfg.army_cmd), g_inp.cfg.army_ms);
+	else
+		logf_("CONFIG army=off (SOMVR_ARMY): the right stick's click = the map while held (build 26)");
 }
 
 /* SOMVR_K = n comma-separated numbers in lo..hi into v (unset/empty: v kept); anything else: v kept and a warning */
@@ -16498,7 +16602,9 @@ static void vm_start(void)
 			 cr_vm_avail() | us_vm_avail() | (g_bow.on && g_bow.draw_slot ? SOMVR_VMA_BOWSLOT : 0u) | swg_vm_avail() |
 			 bo_vm_avail() | hf_vm_avail() | (sg_on() ? SOMVR_VMA_STRIKE : 0u) | /* build 17: SOMVR_STRIKE_GAZE's Wraith line */
 			 ws_vm_avail() | stl_vm_avail() | ff_vm_avail() | cp_vm_avail() | /* build 19: the Fight page's rows */
-			 jp_vm_avail(); /* build 22: the Jump line */
+			 jp_vm_avail() | /* build 22: the Jump line */
+			 mt_vm_avail() | /* build 26: the Ride lines */
+			 (g_inp.cfg.army_s > 0 ? SOMVR_VMA_ARMY : 0u); /* build 27: SOMVR_ARMY's Map line */
 	g_cl.fling_menu = (avail & SOMVR_VMA_FLING) != 0; /* the menu's row may turn the fling off and on again */
 	uint32_t blink_on = s.blink_ms ? s.blink_ms : g_vm.env.blink_ms ? g_vm.env.blink_ms : SOMVR_SET_BLINK_MS;
 	g_vm.applied = g_vm.env;
@@ -16888,6 +16994,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	fi_start(g_fi_sites, &bad);     /* SOMVR_FINISH=1: its read-only sites and the config line (after combat) */
 	xc_start(g_xc_sites, &bad);     /* SOMVR_EXECUTE=1: the execution's sites and the config line (after the finishers') */
 	py_config();                    /* SOMVR_PARRY / SOMVR_SHOVE (build 18, somvr_parry_game.c) */
+	stg_config();                   /* build 27: SOMVR_STRUGGLE (somvr_struggle_game.c) */
 	stl_start(&bad);                /* SOMVR_STEALTH_KILL: the config line (after combat) */
 	uf_start(g_uf_sites, &bad);     /* SOMVR_HUD_FX=hide: the UI FX groups' tail jump (build 12 HUD round) */
 	pr_start(g_pr_sites, &bad);     /* SOMVR_PRACTICE: its read-only sites and the config line (before the menu) */
@@ -16904,6 +17011,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	br_start(&bad);                 /* build 23, SOMVR_VERBS_BRAND: the brand by the hand (after the cue) */
 	fa_start(&bad);                 /* build 25, SOMVR_ABOVE: kills and brands from above (after the brand) */
 	bz_start(&bad);                 /* build 22, SOMVR_BEASTS: caragors, ghuls, graugs (after the threat) */
+	mt_config(&bad);                /* build 26, SOMVR_RIDE: Seat mode (after the body moments, the input, the beasts) */
 	ssw_start(&bad);                /* build 21, SOMVR_STRIKE_SWORD: the Shadow Strike's sword (after the slots) */
 	kp_start(&bad);                 /* build 22, SOMVR_CAPTAIN: the captain's sites and the config line (after the practice) */
 	vg_start(g_vg_sites, &bad);     /* SOMVR_VERBS_GLOW: ClientFX's create jumps (after the verbs) */
@@ -17070,6 +17178,7 @@ static void somvr_end_logs(const char *why)
 	lo_end_log();  /* SOMVR_LOCO, SOMVR_ANCHOR */
 	tk_end_log();  /* SOMVR_COMBAT_HOLD_TALION */
 	py_end_log();  /* SOMVR_PARRY / SOMVR_SHOVE */
+	stg_end_log(); /* build 27: SOMVR_STRUGGLE */
 	tt_end_log();  /* SOMVR_HEAD_TETHER */
 	st_end_log();  /* SOMVR_STEP, SOMVR_DASH, SOMVR_PHASE */
 	ws_end_log();  /* SOMVR_WRAITH_STEP */
@@ -17087,6 +17196,7 @@ static void somvr_end_logs(const char *why)
 	fa_end_log();  /* build 25: SOMVR_ABOVE */
 	c21_end_log(); /* build 21: SOMVR_VERBS_CUE, SOMVR_STRIKE_SWORD */
 	bz_end_log();  /* build 22: SOMVR_BEASTS */
+	mt_end_log();  /* build 26: SOMVR_RIDE */
 	kp_end_log(); /* build 22: SOMVR_CAPTAIN */
 	vg_end_log();  /* SOMVR_VERBS_GLOW */
 	pr_end_log();  /* SOMVR_PRACTICE */
@@ -19868,10 +19978,13 @@ static void df_parry(struct df_track *d, const somvr_df_in *in, float impact, do
 	char an[96];
 	const char *what = "log only";
 	int cmd = 0, took = 0;
-	if (g_df.mode == DF_ON && g_df.parry == DFP_COUNTER) {
+	int beast = g_df.mode == DF_ON && g_df.parry == DFP_RECOIL && mt_counter_leap(d->c, d->attack); /* build 26 */
+	if (g_df.mode == DF_ON && (g_df.parry == DFP_COUNTER || beast)) {
 		cmd = df_counter_cmd();
 		if (somvr_df_press_start(&g_df.press, cmd, g_df.press_ticks, t, DF_COOL_S))
-			g_df.n.presses++, d->press_t = t, what = "the stock counter pressed";
+			g_df.n.presses++, d->press_t = t,
+			what = beast ? "the stock counter pressed (a caragor's leap: the game's counter stuns it for the mount; "
+				       "SOMVR_RIDE_COUNTER)" : "the stock counter pressed";
 		else
 			g_df.n.refused++, d->press_t = t, what = "the stock counter already pressed for another attack";
 	} else if (g_df.mode == DF_ON && g_df.parry == DFP_RECOIL) {
@@ -20188,6 +20301,8 @@ static void df_frame(uintptr_t pl, int stereo)
 			df_path(d, &in, hq); /* the path's log: where the orc's weapon passes (the first attacks) */
 			tg_track(d, &in, hq, t); /* SOMVR_HANDS_TEST's test guard (`fight guard ...`): learnt paths, the guard */
 		}
+		if (d->line)
+			mt_guard(d, &in, t); /* build 26: `ride guard on` - the test blade across a beast's line (a leap's block) */
 		pthread_mutex_lock(&g_df_mu);
 		for (int k = 0; k < in.norc && k < 2; k++) { /* build 17: THREAT's glow on the weapons (the next frame) */
 			double wdt = t - d->wt;
@@ -20531,10 +20646,12 @@ static void df_clank_fx(double t)
 #include "somvr_combat21_game.c" /* build 21: SOMVR_VERBS_CUE, SOMVR_STRIKE_SWORD (docs/re-xr-pipeline.md 85) */
 #include "somvr_screens_game.c" /* build 22: SOMVR_BM_DEATH, SOMVR_POINTER_MOUSE1 (docs/re-xr-pipeline.md 90) */
 #include "somvr_beasts_game.c" /* build 22: SOMVR_BEASTS - caragors, ghuls, graugs (docs/re-xr-pipeline.md 92) */
+#include "somvr_ride_game.c"   /* build 26: SOMVR_RIDE - riding in first person, Seat mode (docs/re-xr-pipeline.md 105) */
 #include "somvr_captain_game.c" /* build 22: SOMVR_CAPTAIN, a Nemesis captain in VR (docs/re-xr-pipeline.md 88) */
 #include "somvr_jump_game.c" /* build 22: SOMVR_JUMP / SOMVR_VAULT, the jump and the vault (docs/re-xr-pipeline.md 91) */
 #include "somvr_brand_game.c" /* build 23: SOMVR_VERBS_BRAND, the brand by the hand (docs/re-xr-pipeline.md 97) */
 #include "somvr_above_game.c" /* build 25: SOMVR_ABOVE, kills and brands from above (docs/re-xr-pipeline.md 102) */
+#include "somvr_struggle_game.c" /* build 27: SOMVR_STRUGGLE, the death struggle's answer (docs/re-xr-pipeline.md 108.6) */
 static int tk_holding(void) { return g_tk.on && g_tk.active; } /* SOMVR_HEAD_TETHER: not measured while held */
 
 #ifndef SOMVR_SELFTEST

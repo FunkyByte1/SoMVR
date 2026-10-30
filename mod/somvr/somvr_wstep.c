@@ -10,6 +10,7 @@ void somvr_ws_cfg_default(somvr_ws_cfg *c)
     c->max_cm = 700, c->min_cm = 120, c->rise_cm = 150, c->drop_cm = 150, c->room_cm = 180, c->side_cm = 30;
     c->orc_cm = 100, c->ray_cm = 1500, c->stance_cm = 35;
     c->on = 0.7f, c->off = 0.3f, c->cancel = 0.5f, c->rest = 0.3f, c->min_s = 0.25f, c->cool_s = 1.0f;
+    c->vault_cm = 0, c->behind_cm = 120;
 }
 
 const char *somvr_ws_why_name(int why)
@@ -25,7 +26,7 @@ static float v_len(sv_vec3 a) { return sqrtf(a.x * a.x + a.y * a.y + a.z * a.z);
 
 /* a cast that goes on through orcs (their bodies: hit.chr); 1 = it ran, *h the first other hit (or none) */
 static int ws_ray_through(somvr_climb_ray_fn ray, void *ctx, sv_vec3 from, sv_vec3 dir, float len, somvr_climb_hit *h,
-                          int *through, int *rays)
+                          int *through, int *rays, sv_vec3 *first_chr)
 {
     float s = 0;
     for (int k = 0; k < 4; k++) {
@@ -38,6 +39,8 @@ static int ws_ray_through(somvr_climb_ray_fn ray, void *ctx, sv_vec3 from, sv_ve
                 h->dist += s;
             return 1;
         }
+        if (!*through && first_chr) /* build 27: where the ray first met an orc's body (the vault's pick) */
+            *first_chr = h->point;
         (*through)++;
         s += h->dist + 60.0f; /* past the orc's body */
         if (s >= len)
@@ -54,6 +57,9 @@ static int ws_set(somvr_ws_aim *o, int kind, int why, sv_vec3 at, sv_vec3 root, 
     return kind;
 }
 
+static int ws_check(const somvr_ws_cfg *c, somvr_climb_ray_fn ray, void *ctx, sv_vec3 eye, sv_vec3 hd, sv_vec3 q, float top_y,
+                    int far, sv_vec3 root, float floor_y, const sv_vec3 *orcs, int n_orcs, somvr_ws_aim *o);
+
 int somvr_ws_find(const somvr_ws_cfg *c, somvr_climb_ray_fn ray, void *ctx, sv_vec3 eye, sv_vec3 gaze, sv_vec3 root,
                   float floor_y, const sv_vec3 *orcs, int n_orcs, somvr_ws_aim *o)
 {
@@ -69,7 +75,8 @@ int somvr_ws_find(const somvr_ws_cfg *c, somvr_climb_ray_fn ray, void *ctx, sv_v
     sv_vec3 hd = { g.x / hl, 0, g.z / hl };
     somvr_climb_hit h;
     /* 1. where the head's ray meets something other than an orc */
-    if (!ws_ray_through(ray, ctx, eye, g, c->ray_cm, &h, &o->through, &o->rays))
+    sv_vec3 fc = { 0, 0, 0 };
+    if (!ws_ray_through(ray, ctx, eye, g, c->ray_cm, &h, &o->through, &o->rays, &fc))
         return o->why = SOMVR_WSW_NORAY, SOMVR_WSA_NONE;
     int far = !h.hit || hypotf(h.point.x - root.x, h.point.z - root.z) > c->max_cm;
     sv_vec3 q;      /* the down ray's top */
@@ -82,6 +89,45 @@ int somvr_ws_find(const somvr_ws_cfg *c, somvr_climb_ray_fn ray, void *ctx, sv_v
         q = (sv_vec3){ h.point.x - hd.x * 15.0f, h.point.y + 40.0f, h.point.z - hd.z * 15.0f };
         top_y = h.point.y;
     }
+    o->orc = -1;
+    int k = ws_check(c, ray, ctx, eye, hd, q, top_y, far, root, floor_y, orcs, n_orcs, o);
+    /* build 27: the vault - the first thing the ray met an orc's body (one of the list: its root within 80 cm of the
+     * point along the floor) within vault_cm: the ring behind it, wherever the ray goes on to (one rule the player can
+     * read: the head on an orc = over it; to land past one, look beside it) */
+    int vi = -1;
+    float vd = 80.0f;
+    if (c->vault_cm > 0 && o->through > 0)
+        for (int i = 0; i < n_orcs; i++) {
+            float d = hypotf(orcs[i].x - fc.x, orcs[i].z - fc.z);
+            if (d < vd && hypotf(orcs[i].x - root.x, orcs[i].z - root.z) <= c->vault_cm)
+                vd = d, vi = i;
+        }
+    if (vi < 0 || o->why == SOMVR_WSW_NORAY)
+        return k;
+    sv_vec3 ov = orcs[vi];
+    float ux = ov.x - root.x, uz = ov.z - root.z, ul = hypotf(ux, uz);
+    if (ul < 1.0f)
+        return k;
+    ux /= ul, uz /= ul;
+    int through = o->through, rays = o->rays;
+    memset(o, 0, sizeof *o);
+    o->through = through, o->rays = rays, o->vault = 1, o->orc = vi, o->orc_cm = ul;
+    sv_vec3 vq = { ov.x + ux * c->behind_cm, floor_y + c->rise_cm + 60.0f, ov.z + uz * c->behind_cm };
+    /* nothing between the orc and the spot at the waist (a fence at its back the eyes see over) */
+    int thr = 0;
+    if (!ws_ray_through(ray, ctx, (sv_vec3){ ov.x, floor_y + 100.0f, ov.z }, (sv_vec3){ ux, 0, uz }, c->behind_cm + c->side_cm,
+                        &h, &thr, &o->rays, NULL))
+        return o->why = SOMVR_WSW_NORAY, SOMVR_WSA_NONE;
+    if (h.hit)
+        return ws_set(o, SOMVR_WSA_NO, SOMVR_WSW_WALL, (sv_vec3){ h.point.x, floor_y, h.point.z }, root, floor_y);
+    return ws_check(c, ray, ctx, eye, (sv_vec3){ ux, 0, uz }, vq, -1e30f, 1, root, floor_y, orcs, n_orcs, o);
+}
+
+/* steps 2-5 for the spot over q (top_y: what was looked at there, -1e30 = nothing; hd: the heading for the side rays) */
+static int ws_check(const somvr_ws_cfg *c, somvr_climb_ray_fn ray, void *ctx, sv_vec3 eye, sv_vec3 hd, sv_vec3 q, float top_y,
+                    int far, sv_vec3 root, float floor_y, const sv_vec3 *orcs, int n_orcs, somvr_ws_aim *o)
+{
+    somvr_climb_hit h;
     /* 2. the ground under it */
     float down = q.y - (floor_y - c->drop_cm) + 40.0f;
     if (down < 80.0f)
@@ -140,7 +186,7 @@ int somvr_ws_find(const somvr_ws_cfg *c, somvr_climb_ray_fn ray, void *ctx, sv_v
     float dl = v_len(d);
     if (dl > 40.0f) {
         int th = 0;
-        if (!ws_ray_through(ray, ctx, eye, v_mul(d, 1.0f / dl), dl - 30.0f, &h, &th, &o->rays))
+        if (!ws_ray_through(ray, ctx, eye, v_mul(d, 1.0f / dl), dl - 30.0f, &h, &th, &o->rays, NULL))
             return o->why = SOMVR_WSW_NORAY, SOMVR_WSA_NONE;
         if (h.hit)
             return ws_set(o, SOMVR_WSA_NO, SOMVR_WSW_SIGHT, gp, root, floor_y);

@@ -1,0 +1,13 @@
+# Big Game (Torvin): the marker, the card, the video, then the follow loop (follow.sh queues it)
+go -40540 1950 -22160
+wait 2
+tap R b 0.4
+wait 3
+pics bg-card
+tap R a 0.4
+wait 10
+tap R a 0.3
+tap R b 0.3
+world 60
+wait 2
+status

@@ -17388,3 +17388,951 @@ Words (SOMVR_HANDS_TEST): `above status|probe|on|off|log|far CM|trace S|start dr
   Combat_DealHit) - but he would drop where he stands, not over the edge: not the move asked for.
 - The orc at the lip itself (not 2 m in): not reached headless (a spawn 1 m off sees Talion).
 - The front variant (`_F`, the orc facing the wall) and the loud kill: not tried.
+
+## 105. Build 26: "Big Game" and riding in VR - the caragor's leap blocked by the blade = the game's counter, the mount by the reached-out hand, Seat mode on the saddle: `SOMVR_RIDE`, `SOMVR_RIDE_COUNTER` (2026-10-29, som-b26-ride)
+Before build 26 a mount went to the body moments' window (the flat game camera on the calm space's quad for the whole
+ride: `SOMVR_BM_POLICY`'s default mount=window), and no VR player could get one: the meadow's caragors only bite
+(`AI_Warg_Attack_Light_F_Player_1/_2`, AttackType 2: cannot be countered) and "Dominate the Caragor" in Big Game was not
+makeable (103.2, 103.7). handoff/HANDOFF-beasts.md "build 26"; the env block som-b26-ride of scripts/headset-build26.env.
+
+### 105.1 Big Game's caragor as a VR player meets it (boots 215539, 224258; scripts/missions25-steps.txt's way there)
+| Step | What the game does | VR before build 26 | Build 26 |
+|---|---|---|---|
+| "Follow Torvin" | 12 teleports after 'ObjectiveGuttered_ALLMaps' (the drill), his lines subtitled | works | works |
+| the presentation | "That one over there looks quite aggressive." ... "Ask it for a ride." in the window | works | works |
+| "Ability Unlocked" | a pausing popup ('tut_WargRidingUnlocked', A closes it) | works | works |
+| "Dominate the Caragor" | the caragor leaps from ~10 m: 'AI_Warg_JumpAttack' (AttackType 0; impact key 0.40 s, the parry window 0.500..0.633 s; its counter 'PC_Counter_Warg_Upgrade'), the game's slow-motion lesson 'GP_Torvin01_Tut_CaragorCounter' ("Tut_ContinuePressY") | the test guard never on its line (103.2: 42-47 cm off); a player's block = SOMVR_DEFENCE_PARRY=recoil: "its parry recoil (no change)" - blocked, never stunned | **the blade across the line = the game's counter** (105.3): 16 leaps, 16 parries, 16 counters (boot 224258) |
+| the counter | Talion's 'PC_Warg_Sync_Cntr_F' / its 'AI_Warg_PC_Sync_Cntr_F' (a sync, ~3 s; the view held, released by an ease 0.0 cm, Talion's body put back under it: 103-123 cm, `SOMVR_BM_RETURN_CM`); the caragor 'AI_Warg_Knockdown_Idle_*' state 'KnockDown' for ~10 s; the lesson 'GP_Torvin01_Tut_CaragorMount', a far marker 'MountTargetFar' | - | works |
+| the mount's offer | while the stunned caragor is in reach (seen at 1.0-5.9 m) **and in view**, the prompt 'UI_MountWarg_Dominate' on 123 'CombatSecondary02' (key 'Sword_ButtonRB'; PROMPTS drops its picture: "no VR control sends it") - up 3.95-5.5 s when walked at with the head toward it; never while Talion stood looking away | no VR control | **the left hand reached out and closed, or B** (105.4) |
+| a grab at the wrong time | 123 without the offer = 'PC_Grab_Attempt_F_Fail' (a 123 pressed 0.2 s after the offer ended); the left hand on its head (VERBS' grab) while it lay but with no offer: "the game's hold did not run" | - | - |
+
+### 105.2 The meadow (boot 212735, `beasts grant PSS_Warg_Hunter`, `PSS_Warg_Rider`, `PSS_Mount_From_Above`)
+The grants set the bits (`BEASTS skills: PSS_Warg_Rider=1 PSS_Warg_Hunter=1`) but the practice caragor still never
+leapt: 22 bites 'AI_Warg_Attack_Light_F_Player_1/_2' (cannot-counter: only a dodge answers them) and 3
+'AI_WargBrwn_Avoid_Back' in 90 s, so no counter, no stun, no offer; the Shadow Strike at it (the gaze + A, the vision
+held) was refused again ("no Shadow Strike prompt within 800 ms of A", 92.5) - it had charged to 2.1 m. **The only
+counterable leap is Big Game's** (its caragor leaps from ~10 m every ~30 s); everything below was proven there.
+
+### 105.3 The leap blocked = the game's counter: `SOMVR_RIDE_COUNTER` (somvr.c df_parry, somvr_ride_game.c)
+Cause: the build's `SOMVR_DEFENCE_PARRY=recoil` (an orc's counter shows Talion's back and moves the view: never the
+game's counter for orcs). The caragor's leap has no parry recoil worth the name ("its parry recoil (no change)", boot
+215539) - the block skips the hit (`parry-block ... the game's hit skipped`) but the caragor is never stunned, and only
+a stunned caragor can be mounted ("Counter (Y) a Caragor's leap attack ... Use [RB] to mount stunned Caragors").
+**Decided**: the player's own defence, not a gesture of its own - the sword held across between you and the leaping
+caragor's head, as against any blow (DEFENCE's line judge for beasts, 92.3); for this one record (a caragor's
+'AI_Warg_JumpAttack', not '_NoCounter') the parry presses the game's counter (CombatPrimary02 119, DEFENCE's own press)
+even with `SOMVR_DEFENCE_PARRY=recoil`. The counter's sync is a body moment like any: the view held, then released (an
+ease; Talion's body put back under the view). Line: `DEFENCE parry ... -> the stock counter pressed (a caragor's leap:
+the game's counter stuns it for the mount; SOMVR_RIDE_COUNTER)`, then `DEFENCE countered ... now
+'AI_Warg_PC_Sync_Cntr_F'`. Boot 224258: 16 of 16 leaps countered (the blade 1.0-16.3 cm from the line, 84-90 deg across).
+The test hand (`ride guard on`, a test word): the blade's middle 45 cm out on the line from Talion's body to the beast's
+head, laid across it, placed by a 120 ms swing 0.3 s before the window and followed by 60 ms swings - a player's block
+of a leap that comes straight at them; the grip turned the least from the test pose (`tg_pose`, the OpenXR grip). Boot
+212735 showed the first version's failure: re-placed every 0.15 s with 100 ms swings it was mid-swing at a circling
+bite's impact (56-62 cm off).
+
+### 105.4 The mount: the left hand reached out at the stunned caragor and closed, or B (somvr_ride_game.c `mt_reach`)
+The game's mount is RB (123) at its offer 'UI_MountWarg_Dominate' - shown only while the caragor lies stunned, within
+reach (up to ~6 m: the game runs Talion onto it, 'MountTargetFar') and in view. VERBS' grab (the palm on an orc's head)
+cannot reach a beast lying 1-6 m off, and pressed without the offer 123 is a failed grab. **Decided**: HL:A's reach and
+grab - while the game offers the mount, the left hand reached out (30 cm or more from the eyes across the ground, at most
+75 deg off the view's heading: `somvr_rd_reached`) and closed (a fresh squeeze) presses 123 for 0.5 s; B at the offer does
+the same (the button players already use for the game's offers, SOMVR_USE). The view is held from the press (the game's
+run and leap onto the beast are not shown as motion; 0.6 s if nothing comes, longer while Talion's record is a mount's)
+until he sits, then the body moments' blink puts the eyes on the saddle. Lines: `RIDE t=.. the game offers the mount
+('UI_MountWarg_Dominate')`, `RIDE t=.. the mount: the left hand reached out and closed at the game's offer ...: 123
+'CombatSecondary02' pressed`. A test aid, `ride face on`: the view turned to a stunned caragor within 8 m (headless the
+test head never looks at it; a player does - the offer needs it in view).
+
+Boot 010257: three offers, three presses by the left hand at the test's rest pose (`RIDE ... (the left palm 39 cm out
+from the eyes, 40 deg off the view)`), each followed at once by the game's own mount: Talion's
+'PC_Warg_Domination_Mount_Grnd_KD_R' (the caragor's 'AI_Warg_Domination_Mount_Grnd_KD_R', a sync from 2.9 m: the view
+held), 'PC_Warg_Domination_WargRider_Start', then **the domination**, 'PC_Warg_Domination_Attempt_FromR' with a struggle
+on Talion (ctx=struggle, 5 s; Torvin: "Hold tight! Become one with the beast!") - and 'PC_Warg_Domination_Fail' each time:
+the test tapped B, then A (the struggle context passes the pad's A/B/X/Y), nothing held. The struggle's class was not
+read in that boot (the BEASTS lines were past their cap); the line "Hold tight!" and the game's mount being RB point to
+a hold of RB - which the pad never sends in a struggle (sc_tick passes A/B/X/Y only). **Decided (unproven, 105.9)**:
+through the domination (Talion's record 'PC_Warg_Domination_*', not '_Fail') 123 is held while the left hand stays
+closed or B is held - the grip that took the beast holds on to it; every new close presses anew (a press count would
+count them); 123 reaches the game in every context but the menu. The struggle's class is now logged (`RIDE t=..
+Talion's sync struggle 0x..: 'NNCStruggleHold'` - the RTTI name and its first 64 bytes) for the next boot.
+Pictures (boot 010257, frames 7652, 8251: during the domination): the view held on the ground where the hand closed, the
+caragor rearing 3 m ahead, the subtitle "Hold tight! Become one with the beast!" at the gaze; Talion's body (on its back,
+away from the held view) not drawn. Stable and readable; nothing moves the view.
+
+### 105.5 Seat mode (somvr_ride.h/.c, somvr_ride_game.c; tests/test_ride.c, the selftest's 8b) - `SOMVR_RIDE_SEAT`, build 26's env off
+**Not reached in a boot**: no mount came (105.4's domination); build 26's env sets `SOMVR_RIDE_SEAT=off` (a mount is the
+window, as build 25) until a headless ride proves it. What is built and proven on the selftest:
+- **Getting on**: the view held from the mount's press (105.4), through the game's mount sync, until P+0x1d8 holds a beast
+  (a caragor or a graug: the BEASTS cache, else Talion's record 'PC_Warg_*' / '*Troll*'; a mount that is no beast - the
+  game's grab of an orc rides on P+0x1d8 too - is left alone: after 2 s the window as before) and Talion's sync is over
+  (`RIDE t=.. seated on the caragor`); then the body moments' release: the metre and more between the ground and the
+  saddle is a blink (out 50 ms, the cut on black, in 70 ms). **Decided: the blink, not an ease** - an ease of 1.5-2.5 m up
+  and across is a game-driven view move (the comfort rule); the blink has its when (the player's grab), its where (the
+  beast they grabbed) and costs 0.15 s. On the blink's black the view turns to the beast's heading (`SOMVR_RIDE_ALIGN=on`):
+  the player lands seated facing its head, whatever way they faced when they grabbed.
+- **The seat**: the beast's own root (its object position: no gait in it - the gait is its skeleton's) plus the rider's
+  eyes in its frame - Talion's head node on the beast (the first one within 5 m of its root, then its mean over 2 s, at
+  most 10 cm/s: a stride's bob or a lean never reaches it; a node 80 cm off the mean is not the rider's; with no head node
+  the kind's seat: caragor 0,208,10 cm right/up/ahead from build 22's Saddle 133 cm over the root, graug 0,433,0) - through the root anchor's filter (horizontally exact, extrapolated to
+  the display time; the vertical 3rd order with 120 ms ramp lag on a caragor, 200 on a graug). The base has a position and
+  a yaw only: **no pitch or roll of the gait can reach the view**; the eyes' orientation is the HMD's turned by the yaw.
+- **The yaw, car-style**: the beast's heading unwrapped, low-passed (critically damped, 100 ms) and followed by the view
+  at most 150 deg/s, turned about the head as the smooth turn does (the comfort vignette sees it as a turn); a heading
+  jump over 115 deg in a frame (a respawn, another beast) re-latches without a turn. The player's own snap/smooth turns
+  stay theirs.
+- While seated: the moment conditions mount and attach are the ride's (no window), a sync or struggle on Talion (a
+  mounted attack's) does not freeze the view (the seat is the beast's); the beast ridden is never the blade's target (the
+  rider's legs are in its capsules); the room-scale follow asks Talion for no step.
+- **Getting off**: P+0x1d8 cleared: the view held through the game's dismount until Talion stands (his sync over), then
+  the release (a blink for the drop from the saddle, an ease if he lands within 40 cm of the held view).
+- Pure tests (tests/test_ride.c, 42 checks): a 180 deg turn followed, never faster than the beast; a one-frame 60 deg
+  lurch of the game's heading spread over 0.4 s at most 150 deg/s (the old head-follow: the whole 60 deg in a frame, 10x
+  the cap); a 170 deg jump re-latched; the wrap; the seat's height within 1 cm over 5 s of a 10 m/s run while the rider's
+  head node bobs 20 cm a stride and sways 12 cm; the offset's 10 cm/s; the reach. The selftest (bm_tests 8b) on the
+  stand-ins: **off (build 25) the mount is the window**; on: stereo throughout, the getting-on held, the seat at frame 11
+  after his sync, one blink, the eyes on the seat within 0.5 cm, a 5 m/s run with a bobbing head node - the view's height
+  within 1.5 cm (the head node 20 cm), across exact within 1 cm, a mounted sync not freezing it; the getting-off held and
+  blinked back to his head; a grab's mount the window as before.
+
+### 105.6 The mounted buttons and the Controls page
+Riding (the mount a beast's): A = MNT_Jump 183 (the leap), the right trigger = MNT_Attack_1 185 (the bite), B = MNT_GetOff
+182 (off; also the game's own), the left stick's click (latched while the stick is pushed) = MNT_Charge 184 (the run); the
+left stick steers in the head's frame (the stick rotated toward the head; the beast reads the rider's camera-relative
+input, re-traversal.md 3.3). Nothing fires until every button has been seen up since the seat (a press carried over).
+B's interact, the crouch and A's on-foot owners (jump, dash, strike, climb) stand down meanwhile. `RIDE bindings:` logs
+the game's own bindings of 181-188 at each mount (`RIDE press N 'MNT_..' by ...` each press). **Decided**: A is the leap
+as on foot (A jumps), the trigger is the attack (the hand's), B is "back/off" - the Controls page: "Ride: grab stunned
+beast", "Riding: A leap RT bite B off" (SOMVR_VMA_RIDE, bit 41). Unproven: no mount (the game's mounted bindings and
+what 186-188 do are for the first ride's log).
+
+### 105.7 Runs (headless, Monado 20 Hz; scripts/headset-build26.env + SOMVR_HANDS_TEST=1 SOMVR_RIDE_TRACE; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-) | What | Proves |
+|---|---|---|
+| 20261029-212735 (the meadow, scripts/ride26-drive.sh, the grants) | 22 bites, no leap; the guard v1; the Shadow Strike refused | the meadow has no counterable leap (105.2); the guard v1 mid-swing at the impact |
+| 20261029-215539 (Big Game, + SOMVR_PRACTICE=1 QUIET=0 CLEAR=0 DAY=0) | the follow (12 teleports), the presentation, the popup, two leaps blocked by `ride guard on` | **the leap blocked by the blade (1.0 / 6.2 cm off its line, 84-85 deg across): parry-block, the hit skipped - but `its parry recoil (no change)`: no stun** (the cause for 105.3) |
+| 20261029-224258 (the same + SOMVR_RIDE_COUNTER) | 16 leaps | **16 parries -> 16 counters** ('PC_Warg_Sync_Cntr_F'), the stun ('KnockDown' ~10 s), 'MountTargetFar', the offer when walked at with the head toward it (5.5 s, 3.95 s); a grab on its head without the offer = "the game's hold did not run"; 123 after the offer = 'PC_Grab_Attempt_F_Fail' |
+| 20261030-010257 (the same + the mount, `ride face on`) | 5 counters, 3 offers, 3 mounts pressed by the reached-out hand | **the left hand reached out and closed at the offer = the game's mount** ('PC_Warg_Domination_Mount_Grnd_KD_R'); the domination's struggle failed with B and A tapped (105.4) |
+Pictures: 010257 frames 7652 and 8251 (the domination, held view); 224258 shots st-bg-c1..3, st-bg-m1..4 (the flat frame).
+The drives: scripts/missions25-steps.txt's start and follow loop, then (story22-drive.sh's ctl queue) the sword drawn,
+`fight guard learn`, `ride guard on`, `ride face on`, `practice go -34800 1917 -8452`, and per counter: 3.4 s, then the
+stick ahead 0.4 s at a time until `RIDE ... the game offers the mount`, `hands squeeze L 1` (the left test hand at
+-25 -35 30: 39 cm out). The offer came in 5 of 11 tries: the walk is blind (the drill's), a player walks to it.
+
+### 105.8 Switches, words, lines
+| Switch | Code default | build 26 env (som-b26-ride) | What |
+|---|---|---|---|
+| `SOMVR_RIDE` | off | on | the counter, the mount, the domination's hold, the mounted buttons, the ride's state |
+| `SOMVR_RIDE_COUNTER` | on (with SOMVR_RIDE) | - | a caragor's counterable leap parried = the game's counter (with SOMVR_DEFENCE_PARRY=recoil) |
+| `SOMVR_RIDE_SEAT` | on | **off** | Seat mode (105.5); off = a mount is the window (build 25) |
+| `SOMVR_RIDE_Y_MS` | 120,200 | - | the seat's vertical filter (caragor, graug) |
+| `SOMVR_RIDE_YAW_MS` / `_YAW_DPS` | 100 / 150 | - | the car-style yaw's low-pass and its cap |
+| `SOMVR_RIDE_SEAT_S` | 2.0 | - | the head node's mean (0 = the kind's seat only) |
+| `SOMVR_RIDE_SEAT_CARAGOR` / `_GRAUG` | 0,208,10 / 0,433,0 | - | the seat without a head node (cm right, up, ahead) |
+| `SOMVR_RIDE_SETTLE_MS` | 0 | - | the hold after he sits (the moments' own 0.25 s follows) |
+| `SOMVR_RIDE_ALIGN` | on | - | the facing turned to the beast's heading on the blink's black |
+| `SOMVR_RIDE_TRACE` | 0 | - | tests: N `RIDE view` lines |
+Test words (SOMVR_HANDS_TEST): `ride status`, `ride guard on|off`, `ride face on|off`, `ride press CMD MS`. Lines: `CONFIG
+ride=on`, `RIDE t=.. the game offers the mount`, `RIDE t=.. the mount: ...`, `RIDE t=.. the domination: ...`, `RIDE t=..
+Talion's sync struggle ...`, `RIDE t=.. mounted: a caragor ...`, `RIDE bindings:`, `RIDE t=.. seated on ...`, `RIDE t=.. the
+facing on the blink's black`, `RIDE press`, `RIDE view` (trace), `RIDE motion` (every 2 s seated: the largest step, the
+yaw, the seat's spans, pitch/roll), `RIDE t=.. dismounted`, `RIDE t=.. off: standing`, `RIDE guard`, `RIDE END`. DEFENCE:
+`-> the stock counter pressed (a caragor's leap: ... SOMVR_RIDE_COUNTER)`.
+
+### 105.9 For the headset, unproven
+- The leap: hold the sword across between you and the leaping caragor (in its slow-motion lesson) - is it readable, is
+  the window generous enough for a real arm (headless: the blade 1-16 cm off the line, 20 allowed).
+- The domination: does keeping the left hand closed (or B held) through "Hold tight!" dominate it - headless the struggle
+  was failed with B/A tapped, the hold not tried in a boot. The struggle's class line will say which input it counts.
+- Walking to the stunned caragor and the offer coming while you look at it (headless the blind walk found it 5 of 11 times).
+- Everything of Seat mode (env off): the saddle's height, the car-style yaw's feel and sign, the vignette on turns and
+  leaps, the mounted buttons (the game's mounted bindings), the dismount; graugs (`PSS_Troll_Rider` is owned, a graug's
+  mount not tried).
+- Big Game past the mount (the ride, the hunt, the end) - not reached.
+
+## 106. Build 26: the story ahead of the user - "Queen of the Shore" and "The Power of the Wraith" to their ends; a Domination's Dismiss and Command by the Touch's B and Y; the grab's icon in texts: `SOMVR_VERBS_DISMISS`, `SOMVR_VERBS_COMMAND`, `SOMVR_TEXT_BUTTONS` 123:122 (2026-10-29, som-b26-story)
+Headless boots (scripts/headset-build26.env + the story's practice settings `SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0
+SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0`, the test hands, the layer's test file; story22-drive.sh's `ctl` mode with
+loops that write the words straight to the trigger file while the driver waits: scripts/story26-steps.txt). Each boot has
+the 30 minutes of boot_check's hard limit (`--hard` 1800; `near the hard limit: quitting` at +1670 s) and the profile keeps
+no mid-mission state, so a mission is played start to end inside one boot. handoff/HANDOFF-story.md "build 26". Every run:
+the install unchanged, the real save UNCHANGED (all progress in the run's save copy).
+
+### 106.1 "Queen of the Shore" to its end (boot 20261029-201557; the test aid `story invisible on` as 103.6)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| six archers branded | the stealth brand by the left hand + the trigger at the game's offer | the drill's teleports only (below); 6 brands in 4.2 min once the drill stood in front ('PC_Archer_StealthBrand_F' x2, 'PC_Bip_StealthBrand_F' x3, '_B' x1) |
+| "Activate Branded archers" | the raised left hand + the trigger | works (SOMVR_VERBS_RALLY, 103.4): `rally: the left hand 30 cm over the eyes + the trigger: 128 ... tapped`; the 10 s infight in the window |
+| the 15, the prisoners' video, the 20 reinforcements | as 103.6; the branded archers fight on Talion's side | the kill drill (Talion 100 cm behind each objective orc, its health 1, the game's own X 118 + edge cuts) |
+| the end | two presentations in the window (8 s, then the result), the save written (20:37:05), then Marwen's lines in the world: "It is one thing to kill these Uruk. It is another to make them our followers." / "It is a gift. We can use the weapon of the enemy against him." | works |
+| **"Queen of the Shore SUCCESS! Mission Complete +600 XP (B) Back"** | the result screen in the window (picture shots/st-qs-end-w1.png) | **B closes it** (SOMVR_USE_SKIP, 103.4): `USE t=1064315.575 265 'SkipPresentations' pressed by B`, the window shut 0.45 s later |
+| the rewards | +600 XP; no new ability (only 'tut_BrandUnlocked' came, at the fort) | - |
+| the next marker | the golden M moved to 41500 3900 -22100: **"The Power of the Wraith - [RB] Start Mission"** at the gaze (frame 23627, both eyes) | 106.2 |
+- **The harness, not the game**: (1) a teleport onto an archer (b25's `gobrand` onto the 'ObjectiveGold' marker) left
+  Talion 2-14 cm inside it: those archers never offered the brand again ('AI_Archer_ReactToBaseLow_FromSusp', boot
+  194343); (2) three parapet / tower archers offered no stealth brand from 120-200 cm behind (`no brand offered (199 cm,
+  Talion 179 deg off its facing, +30 cm above it)`; `PC_StealthBrand -> none (no attack of its pools passes against
+  this orc)`) and did from 150 cm in front ('PC_Bip_StealthBrand_F' at once): the game's pools for those sentries want
+  the front - whether a player on the wall walk behind them gets an offer is for the headset (listed); (3) `crouch hold`
+  takes at most 10000 ms (a 30000 was ignored: no crouch, no offer).
+
+### 106.2 "The Power of the Wraith" (Marwen; boots 20261029-204820, -213203 from 201557's save copy)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker, the card, the video | "The Power of the Wraith - [RB] Start Mission" at the gaze; B, A; the video on the theatre ("Lady Marwen!", "Why have you returned? You are not done yet.") | works (A, B skip it) |
+| Talion's lines | "Marwen said to bring her an army." / "We shall not build an army, we shall command one!" / "We'll need to find an Uruk Captain to dominate and make our own." / "There is a Slaver near here named Grûblik. We will make him serve our cause." (subtitles at the gaze) | works |
+| **"Locate Grûblik"** | the objective (20154 3245 -28472: a slave camp in the ruins; Grûblik's lines from the camp: "Why bother feeding you? ...") | reached by the drill's grabs among the camp's orcs: his encounter ("Dead-Man!" / "Grave-Walker!", "You know nothing of suffering. But I can show you!") in the window (7.7 s), his 'OrcHealthBar_Marked' marker. What sets "located" off is not pinned (a grab near him both times; a teleport 2.5-4 m behind him did not): a player walking into the camp meets him (listed) |
+| **"Ability Unlocked: Command"** | a pausing popup: "After Dominating a Captain (hold [RB] + tap (A)), you can now press (Y) to issue a Command. This allows you to send your Branded Captain to murder another Captain, or try to become a Warchief's Bodyguard. Press (A)" | A closes it. **[RB] is the grab = in VR the left grip; fixed: `SOMVR_TEXT_BUTTONS` 123:122** - now "hold [LB] + tap (A)" (boot 213203, shots/st-pw4-command.png; `TEXTBUTTONS ... command 123 'CombatSecondary02' -> the icon of CombatSecondary01`): LB = the left grip, where the Touch has the bumper's finger; (Y) = CombatStruggle02 162, the Touch's Y (below) |
+| **"Dominate Grûblik"** | the VR grab: the left palm at his head + the grip (123 held), the Touch's A (121 'Domination_Interrogate_StoryOverride' / 'Domination_Subdue'): 'PC_Bip_Sync_Intrgtn_Into', "Remember, we need him alive.", "You will obey!", his presentation | works by our hand (test aid: `captain hp 5`; his health regrows 5 -> 120-900 between tries). The game's own grab works on him ("grab resistant" at 5 health) |
+| **his only choice: "Press (Y) for Command"** | 'Domination_Command' on CombatStruggle02 162 (shots/st-pw4-grubch.png) | **no VR control sent 162 - stuck in the hold; fixed: `SOMVR_VERBS_COMMAND`** (the Touch's Y = that choice); the test press of 162 opened the Command screens (below) |
+| an orc's Domination | 'Domination_Interrogate' "Gain Intel [LT]" (164) and 'Domination_Cancel' "(B) Dismiss" (163) | **B did nothing (boot 204820: 44 s held, the choices up); fixed: `SOMVR_VERBS_DISMISS`** - boot 213203: `button: the Touch's B: 163 'CombatStruggle03' tapped (...; the Domination's Dismiss, SOMVR_VERBS_DISMISS)`, 'PC_Bip_Sync_Intrgtn_Release' 0.1 s later, the hold over (x3). The trigger = Gain Intel worked already (`choice: the trigger while the interrogation asks: 164`): the Sauron's Army screen "GAIN INTEL - (A) Select for Intel (B) Back", A works there |
+| the Command screens | "This Captain is now under your control. You can create a Power Struggle Mission by sending him to murder another Captain. Press (A) to Continue." / "If Commanded against a Warchief, the Captain will attempt to become his Bodyguard ... Press (A)" on the army board | A works (the menu passthrough) |
+| **"Press (Y) for Command" by the Touch's Y** | boot 20261029-221134: `VERBS t=1070877.680 button: the Touch's Y: 162 'CombatStruggle02' tapped (the prompt's own letter; the Domination's Command, SOMVR_VERBS_COMMAND)`, the Command screens 1.2 s later | **works** (SOMVR_VERBS_COMMAND). Seen with it: the vision's own Y (`Y pressed with the vision on: off wished; a tap of 122` x4 into the opening menu) - **now Y is the Command's alone while that choice is up** (`vb_y_choice_up`, the vision's `held` dropped) |
+| the Command screens | "This Captain is now under your control ... Press (A)", "Press (A) to Command your Captain to infiltrate Târz's squad.", the warchief's card "Târz the Knife - Veteran Warchief ... Ambush Târz by infiltrating his Stronghold. Press (B) to return to game." | A, A, B work (the menu passthrough) |
+| back in the world | "It is done, he's ours." / "We must now make this Captain a bodyguard if he is ever to be a Warchief." / "It is from first strike of thunder that is soon born a storm."; **"Head to the Recruitment Power Struggle"** ('ObjectivePowerStruggleBlueMarked' 13200 2450 -33700) | works |
+| the Recruitment Power Struggle | Grûblik: "Bow to your new Captain!", Târz's men: "Go away! I serve another!", "You lack a Captain's strength, scum."; their 'ObjectiveGoldAlwaysUp' markers; the lessons 'GP_Marwen3_Tut_CaptainDamagedByEnemy' ("I must help our puppet, before they cut his strings.") and '..._CaptainDamagedByPlayer' (kept at the gaze) | 106.3 |
+| **"Mission Failed! Reason: Grûblik was Killed! Hint: Don't kill Grûblik. He's needed to complete the Mission! (A) Retry (B) Abandon"** | the failed screen in the window | A = Retry works (285 'QuestFailedRetry'): back to "Locate Grûblik" after a death there, back to the struggle's start after a death in it. **Both deaths were the harness's**: the scripted sword hand at his side, then the kill drill's `fight health 1` (the nearest orc = Grûblik: 976 -> 1) |
+
+### 106.3 "The Power of the Wraith" to its end (boot 20261029-231219; test aids: `story invisible on`, `captain hp`, the kill drill with the game's own X)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| Locate, the popup, Dominate, Y = Command, the Command screens | as 106.2 | works (Y: `button: the Touch's Y: 162 ... SOMVR_VERBS_COMMAND`, the menu 1.1 s later; **no vision tap any more**) |
+| **the Recruitment Power Struggle: "challengers (Group N of 3)"** | three groups of Târz's men at three places ('ObjectiveGoldAlwaysUp'); Grûblik: "Join me, or face the end of my sword, maggots!", "Stand by my side, or lay dead at my feet!", "I conquered the weak! Now join me in victory"; the converted get 'Followers' markers; Talion: "Our protege wields fear like a weapon. And we are his invisible ally.", "Our captain fights for us well." | the drill: Talion 100 cm behind each, the game's own X x5 (kills4.sh: no health aid near the friend); Grûblik at `captain hp 3000` |
+| "A greater vantage will ready us for this battle." | 'ObjectiveNoMinimum' on a tower (17525 6150 16205); a fail on the way: "Mission Failed! Reason: You died! Hint: Use stealth to avoid all Uruks while headed to the vantage point." | **A = Retry on the death's failed screen works** (SOMVR_USE_DEATH, `285 ... pressed by A (the death's failed screen, no window ...)`); the trip onto the tower |
+| **"Activate Grûblik"** | the lesson 'GP_Marwen3_Tut_FlipCaptain' "Activate [LT] Grûblik when ready to fight." (its token CombatTertiary03 128 -> LT by build 25's 128:124), "Defeat Târz the Knife" with his health bar | **works by the rally gesture** (the raised left hand + the trigger, 103.4): 'PC_Branded_Infight', "Fight for me!", Târz's presentation |
+| "Help Grûblik defeat the Warchief" | "Your Captain is taking damage! Help him!", "Our arrows will even his odds.", "Be cautious, our pawn must not be sacrificed.", "Protect him. Without strings, the puppet is only cloth." | the drill was stuck on the tower the first time: "Mission Failed! Reason: Grûblik was Killed! Hint: Use the Combat Brand ability to create new allies more easily." -> A = Retry at "Activate Grûblik"; then Târz at `captain hp 5` (the test aid), Grûblik won |
+| the end | Grûblik: "I fight for the Dark Lord, and you shall fight for me!", "This is my dominion! ..."; Talion: "Queen Marwen's plan has given us great strength.", ..., "We should return to Marwen, she will have more for us."; a video; the save written (23:37:19) | works |
+| **"The Power of the Wraith SUCCESS! Mission Complete +1400 XP (B) Back"** | the result screen in the window | **B closes it** (`USE t=1075104.425 265 'SkipPresentations' pressed by B`) |
+| after it | "Brand the Warchiefs - 1 / 5 Branded" (top left); "No Warchief Selected - Hold [>]" (top right: the pad's View button held) | listed (106.6) |
+- **What sets "Locate Grûblik" off**: the story's interrogation - a grab of a camp orc and A shows 'Domination_Interrogate_StoryOverride' (A) and his name; in two boots it came at the first or second orc, in one only after Grûblik himself was grabbed four times - then his encounter ("Death-Walker!", "I'll cut you open along with any Uruk that gets between us!"). A player walking the camp and grabbing orcs meets it the same way.
+- The subtitle channel carried one placeholder from the game: `'<short non verbal pissed off yell>'` (Târz) - the game's own string, shown in the popup as it is.
+
+### 106.4 The fixes (somvr_verbs_game.c, somvr_gameopts_game.c; the som-b26-story block of scripts/headset-build26.env)
+- **`SOMVR_VERBS_DISMISS=on`** (code default on). Cause: a Domination (the grab + A on an orc or a captain, once Brand is
+  unlocked: "You will obey!", 'PC_Bip_Sync_Intrgtn_Idle') offers 'Domination_Interrogate' ("Gain Intel", 164) and
+  'Domination_Cancel' ("(B) Dismiss", CombatStruggle03 163); build 19b's B in an interrogation pressed only the choice
+  whose text names Eliminate/Kill, so B found nothing and Talion stood holding the orc (boot 204820: 44 s, the B press
+  logged nothing). Now B with no Eliminate up = the struggle choice named Cancel/Dismiss (`vb_choice_b`). Line `VERBS
+  t=.. button: the Touch's B: 163 'CombatStruggle03' tapped (the prompt's own letter; the Domination's Dismiss,
+  SOMVR_VERBS_DISMISS)`; END `VERBS END build 26: the Domination's Dismiss by B N, its Command by Y N`.
+- **`SOMVR_VERBS_COMMAND=on`** (code default on). Cause: once "Ability Unlocked: Command" came, a captain's Domination
+  offers only 'Domination_Command' ("Press (Y) for Command", CombatStruggle02 162) and no VR control sent 162 - the mission
+  could not go on ("Dominate Grûblik"). Now the Touch's Y (the left upper button, the prompt's own letter) = that choice
+  while a Domination asks (`vb_choice_command`); the vision's Y is dropped while it is up (`vb_y_choice_up` in
+  go_vision_tick: boot 221134 showed the vision's off-taps of 122 going into the opening menu), and the asks state is kept
+  while the Command is offered (the 6 s "the interrogation is over" rule and `vb_grab_freed` looked at Interrogate /
+  Eliminate only).
+- **`SOMVR_TEXT_BUTTONS=122:119,120:124,128:124,123:122`** (build 25's line commented out where it was): the grab
+  (CombatSecondary02 123, the pad's RB) is shown with LB's icon in UI texts - in VR the grab is the left grip, the
+  Touch's bumper finger. "After Dominating a Captain (hold [LB] + tap (A)) ..." (boot 213203). Also touches "Use [RB] to
+  mount stunned Caragors" (Caragor Hunter, 103.7): [LB] there too - right if the ride's mount is the left grip (the
+  som-b26-ride helper's).
+
+### 106.5 Runs (headless, Monado 20 Hz; scripts/headset-build26.env + the story's practice settings, the test hands; each the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-) | Save from | WARN | What | Proves |
+|---|---|---|---|---|
+| 20261029-194343 | the real save's copy | 1 (a drill's trip into the air) | QotS to the archers; 3 of 6 branded | teleports onto archers spoil them; the boot's 30-minute limit |
+| 20261029-201557 | the real save's copy | 8 (the front drill's trips onto tower edges) | **QotS start to end**: 6 archers (from the front), the rally, the 15, the video, the 20, "SUCCESS! +600 XP (B) Back" | the mission's end in VR; B closes the result screen; **its save (20:37:05) = the start of the rest** |
+| 20261029-204820 | 201557 | 0 | The Power of the Wraith: the card, the video, "Locate Grûblik", the Command popup ([RB]), his Domination: Gain Intel by the trigger (the army screen, A), **B did nothing** | the cause for SOMVR_VERBS_DISMISS |
+| 20261029-213203 | 201557 | 0 | (+ SOMVR_VERBS_DISMISS, 123:122) Locate by the camp orcs' Dominations (A = the story's interrogation 'Domination_Interrogate_StoryOverride'), B = Dismiss x3, the popup "hold [LB] + tap (A)", Grûblik grabbed by the hand: **"Press (Y) for Command" only**; the test press of 162: the Command screens | SOMVR_VERBS_DISMISS; 123:122; the cause for SOMVR_VERBS_COMMAND |
+| 20261029-221134 | 201557 | 1 (a trip onto the struggle's marker height) | (+ SOMVR_VERBS_COMMAND v1) Locate, Grûblik dominated, **Y = Command**, the Command screens (A, A, B), "Head to the Recruitment Power Struggle", the struggle; Grûblik killed twice by the harness, Retry x2 | SOMVR_VERBS_COMMAND; the failed screen's Retry checkpoints |
+| 20261029-231219 | 201557 | 0 | (+ the vision's Y set aside, the asks state kept) **The Power of the Wraith start to end**: Locate, the popup, Grûblik dominated, Y = Command (no vision tap), the Command screens, the struggle's 3 groups, the vantage (a death: A = Retry), "Activate Grûblik" by the rally gesture, Târz (a fail: A = Retry), "SUCCESS! +1400 XP (B) Back" | **the mission's end in VR; its save (23:37:19) = the furthest (106.7)** |
+Pictures (the runs' shots/): 201557 `st-qs-end-w1.png` (QotS SUCCESS), `st-next-goldenM.png` and both eyes `python3
+scripts/xr_compose.py RUN -f 23627` (the next marker at the gaze); 204820 `st-pw-win.png` (the Command popup with [RB]),
+`st-pw-dom3.png` (an orc's Domination: Gain Intel / Dismiss), `st-pw-dom5.png` (the Gain Intel army screen); 213203
+`st-pw4-command.png` (**"hold [LB] + tap (A)"**), `st-pw4-grubch.png` ("Press (Y) for Command"), `st-pw4-cmd1.png`,
+`st-pw4-cmd2.png` (the Command screens); 221134 `st-pw5-cs*.png` (Târz's card), `st-pw5-now.png` (the failed screen:
+Grûblik killed); 231219 `st-pw7-vant.png` ("Activate [LT] Grûblik"), `st-pw7-now.png` (the death's failed screen),
+`st-pw7-fin-w9.png` (**The Power of the Wraith SUCCESS! +1400 XP**), `st-pw7-fin-q14.png` ("Brand the Warchiefs 1 / 5").
+
+### 106.6 Listed, not fixed (evidence above)
+- **"No Warchief Selected - Hold [>]"** after the mission: the warchief target is picked by holding the pad's View button;
+  in VR the left menu button gives the game Menu (14) for one tick on a short press and opens the VR panel when held
+  0.6 s (VM_LONG_S, "the game never sees this press") - so if the HUD wants a held Menu, a VR player cannot give it.
+  Which command it wants is not checked (no UI-text token for it); the warchief missions start from it. The next
+  round's test, ready in scripts/story26-steps.txt (nm8.sh, from 106.7's save): the left menu button held, then the
+  test holds of 14 Menu, 316 InformationShortcut, 308 IdentifySetTarget, each with a picture; then Marwen's next
+  marker. (Not run here: the slot went to the coordinator's suite and a 55-minute soak.)
+- **"[RB] Start Mission"** at every marker (43.7; a Flash movie, not a UI text: SOMVR_TEXT_BUTTONS cannot reach it).
+- Wall / tower archers in "Queen of the Shore" offered the stealth brand only from the front in the drill (106.1); the
+  headset judges whether a player on the wall walk behind them gets the offer.
+- The Domination's choices ("Gain Intel [LT]", "(B) Dismiss", "(Y) Command") are HUD prompts at the gaze with the Touch's
+  letters; their size and place in the headset not judged here.
+- "Our arrows will even his odds": the mission suggests the bow from the vantage point; the drill went down instead (the
+  bow from a tower at a moving warchief: the headset).
+- The test aid `fight health 1` takes the nearest orc, a friendly captain too (Grûblik died of it twice): a harness trap,
+  not a game one (story26-steps.txt).
+
+### 106.7 The furthest save, for the next round
+**logs/boot-check-20261029-231219/saves/GameData.sav** (main checkout): "Queen of the Shore" and "The Power of the Wraith"
+done, Grûblik branded (Târz's place), "Brand the Warchiefs 1 / 5". Boot from it with
+`HEADLESS_SAVE_FROM=/home/bara/Projects/flat2vr/ShadowOfMordor/logs/boot-check-20261029-231219/saves/GameData.sav` before
+`scripts/headless_vr.sh` (boot_check copies it into the new run's saves/; the real save is never touched). The arrival is
+the save's own place; Marwen's next marker ('goldenM') is in `practice status nav`. "Queen of the Shore" alone done:
+logs/boot-check-20261029-201557/saves/GameData.sav.
+
+### 106.8 Switches, words, lines
+| Switch | Code default | build 26 env (som-b26-story block) | What |
+|---|---|---|---|
+| `SOMVR_VERBS_DISMISS` | on | on | B in a Domination = its "(B) Dismiss" ('Domination_Cancel', 163) when no Eliminate is offered |
+| `SOMVR_VERBS_COMMAND` | on | on | the Touch's Y in a Domination = its "(Y) Command" ('Domination_Command', 162); the vision's Y set aside while it is offered |
+| `SOMVR_TEXT_BUTTONS` | unset | 122:119,120:124,128:124,**123:122** | + the grab's icon = LB (the left grip) in UI texts (build 25's line commented out where it was) |
+Lines: `CONFIG verbs build 26: dismiss=..`, `CONFIG verbs build 26: command=..`, `VERBS t=.. button: the Touch's B: 163
+'CombatStruggle03' tapped (the prompt's own letter; the Domination's Dismiss, SOMVR_VERBS_DISMISS)`, `VERBS t=.. button:
+the Touch's Y: 162 'CombatStruggle02' tapped (...; the Domination's Command, SOMVR_VERBS_COMMAND)`, END `VERBS END build
+26: the Domination's Dismiss by B N, its Command by Y N`. selftest: the Domination's B with the switch off / on, an
+interrogation's Eliminate, the Command with the switch off / on, Y kept from the vision only while the Command is up.
+
+### 106.9 For the headset, unproven
+- A Domination: grab an orc (the left palm + grip), A; then the trigger = Gain Intel, B = Dismiss. After "Ability
+  Unlocked: Command", a captain's Domination: Y = Command.
+- "Activate Grûblik" by the raised left hand + the trigger, and the fight at Târz's side (the drill used `captain hp`).
+- The Command popup's "hold [LB] + tap (A)": does "LB" read as the left grip?
+## 107. Build 27: hours of play - the session's 2-hour end, VR lost to one compositor stall, tables that only filled, modules gone silent; a 50-minute soak (2026-10-30, som-b27-soak)
+No VR build had run longer than ~20 minutes in one go; the user's sessions so far: 7-15 minutes (logs/boot-check-
+20261024-165018 .. -20261028-193826, the marks-transcript runs). Offline first (the real sessions' growth, a read of
+the code for anything that only grows or can stick), then one long headless soak (`scripts/soak27-drive.sh`). No new
+switch: every change is a fix that leaves a feature's behaviour as it was in a short session. handoff/HANDOFF-soak.md.
+
+### 107.1 The real sessions' growth (offline)
+- 20261028-193826 (14.2 min, build 20c): the run folder 244 MB - somvr.log 6.4 MB (31678 lines: ARMS 0.84 MB, the H3/
+  H6/H2 hook lines, FRONT, LOCO, EYE...; 0.45 MB/min = 27 MB/h at the headset's 90 Hz), xr-layer.log 0.5 MB (2.1 MB/h),
+  shots/ 94 MB (boot_check's auto pictures: every 10 s for 4 minutes, then one a minute, ~3 MB each = 180 MB/h),
+  marks/ 59 MB (22 marks, 2.7 MB each). Four hours: ~110 MB of somvr.log, ~9 MB of the layer's, ~0.75 GB of pictures,
+  the marks as the user makes them - about 1 GB; /home has 395 GB free. Not a concern.
+- The log writer (somvr.c log_raw/flush_log): a 1 MB double buffer flushed by its own thread every 250 ms, drops
+  counted (RATE drops=0 in every real session): no per-line cost on the game's threads, no size cap.
+- The frame rate: the layer's line every 600 stereo frames came 6.6-6.8 s apart from the first minute to the last in
+  each real session (90 fps held; no drift in 14 minutes). 0 WARN in the last three sessions; no "full / no room" line.
+
+### 107.2 The fixes
+1. **The session's limit** (scripts/som-vr-headset.sh): `HARD=7200` = boot_check `--hard 7200` - the game quit at
+   1 h 58 min. Now `HARD=14400` (4 h, boot_check's most; `--hold` stays HARD - 200).
+2. **One compositor stall ended VR** (mod/somvr/vklayer/somvr_vklayer.c): every `xrWaitSwapchainImage` (the eyes',
+   the HUD's, the pointer's, the fade's, comfort's, threat's, the sky's, the world's, the VR menu's, the objective's)
+   took any result but XR_SUCCESS as a failure - but XR_TIMEOUT_EXPIRED (the image not free within the wait's 1 s) is a
+   success code whose answer is to wait again. The eyes' = xr_fail (pass-through to the flat game for the rest of the
+   process), an overlay's = that overlay off for the session. Now `xr_wait_image()`: up to XR_IMAGE_WAIT_TRIES (10)
+   waits, each timeout logged (`xr: image wait: NAME: xrWaitSwapchainImage timed out (1000 ms, try K of 10, N
+   timeouts so far): waiting again|given up`; the first 20, then every 100th); a real error or 10 in a row fail as
+   before. Not seen in ~2000 runs' layer logs (latent: a GPU hiccup, the stream). Test: the mock's
+   `MOCKXR_WAIT_TIMEOUT=N:K` (calls N..N+K-1 time out, the image still acquired), scenarios `wait-timeout` (2 timeouts
+   in frame 3: the session lives, every frame ended and submitted; FAILS on the old layer - "frames ended 2", "no copy
+   submitted after the stall") and `wait-timeout-forever` (the old failure after 10).
+3. **SOMVR_GLYPH=head stopped collecting** (somvr_collect_game.c): its LookAtTrigger table (48) and item table (16,
+   every InventoryItemUI object within 40 m, not only the Ithildin) only filled - after that a new trigger or item was
+   never followed: nothing more collected for the session (an hour or two of roaming). Now `co_trig_slot()` /
+   `co_item_rec()`: an entry's last touch kept; full = the stalest one reused when untouched CO_STALE_S (10 s) or more;
+   an object address that now holds another item (the memory reused after an unload) gets a fresh record (before: the
+   old one's name and glyph flag). GLYPH END: "stale entries reused: triggers N, items N".
+4. **Two per-frame name caches stopped caching** (somvr.c fb_tag_class, bm_class): the fallback's state-tag classes (64)
+   and the body moments' record classes (96) - 33 and 62 used in the user's 14 minutes. Past them every uncached tag was
+   matched by name every frame and a classed one's "is in class" line written every frame: the module's 10/s line budget
+   (after its first 200) spent on it, its real FALLBACK/BODYMOMENT events dropped. Now FB_TC_N 192, BM_NC_N 288; full =
+   the entries reused in turn (the overflow count is the cursor; one line at the first).
+5. **The fight's body hold learnt no new move after the 96th** (somvr_fight_game.c nb_mv_row: one row per orc attack
+   record, -1 when full: the hold no longer kept ahead of a new move's learnt lean). Now NB_MOVES 256; full = a row that
+   learnt no lean, else the next in turn (a tracker's row index is checked against its record before use).
+6. **Five modules silent after their first lines**: PROMPTS 400 (373 used in the user's 14 minutes), GLYPH's trigger
+   lines 800 (all used), STEALTH 600, CAPTAIN 900, BEASTS 600 - a bug mark an hour in had none of their lines in its
+   tail. Now `log_late_ok()` (somvr.c): after the first ones, up to 100 (PROMPTS, GLYPH, BEASTS), 150 (STEALTH) or 200
+   (CAPTAIN) more in each 10 minutes; after soak 2 also SESSION ui (400; ~90 UI changes in 30 minutes of soak 1: silent
+   after ~2 h) and HINTS (300), 100 each.
+- Tests: selftest `soak_tests()` - the glyph tables (49th trigger, 17th item, the reused address), the two caches (the
+  193rd tag, the 289th record), the fight's moves (the 257th), the late lines (3 a window, again 10 minutes on).
+  3-4 and the late lines FAIL on the old code (built with the reuse off and HEAD's somvr.c: 5 failures); the fight test
+  needs the new fields, its old `return -1` is by reading. build.sh --check: selftest ok, 168/168 layer scenarios.
+
+### 107.3 The headless soak's harness
+- `scripts/headless_vr.sh` HEADLESS_HARD (1801..4500) = boot_check `--hard N --soak` (new: `--hard` above 1800 without
+  --headset only with --soak, at most 4500; refused otherwise - tested: `--hard 3900` and `--soak --hard 4600` exit 2).
+- `scripts/soak27-drive.sh` (SK_MIN, SK_SEGS, SK_DEATH_EVERY, SK_RUN): the cycle walk (the stick, 3 snap turns each
+  way), fight (a practice infantry, the sword from its slot, the test guard and chase, edge cuts and the execution's
+  trigger until he is down), bow, vision (Y held 2.5 s), climb (the meadow bank's hang spot: the right hand on the
+  wall, a pull, let go), stealth (a far infantry, Talion 220 cm behind it, crouched, the thrust), menus (the VR menu by
+  the palm, the left menu button, the map by the right stick's click, B), trip (`practice far`, `back`, home); every
+  third cycle a death (the practice's Captain with the stakes on, no guard; the screens answered B/A until the world is
+  back). After each cycle the state lines into RUN/soak-state.txt and a both-eye dump; every 60 s RUN/soak-samples.tsv
+  (the game's RSS / VmSize / threads / fds / CPU cores, monado's RSS, VRAM, the stereo rate from the layer's 600-frame
+  lines, the display-time error, gaps, WARNs, the logs' and the folder's sizes). `scripts/soak27_report.py RUN`: per
+  column the growth per hour (a least-squares line after the first 8 minutes) and at 4 hours, the rate's first and last
+  10 minutes, the cycles' states not back to normal.
+
+### 107.4 Soak 1: 30 minutes of VR, then the harness's own runtime limit (boot 20261030-012737, the old build)
+- The boot ran 51 minutes (13 cycles, 4 deaths), but VR only its first 1786 s: headless_vr.sh starts monado under
+  `timeout 1800` (its own limit, apart from boot_check's) - `xr: xrPollEvent failed: XR_ERROR_INSTANCE_LOST (-13) ->
+  pass-through from now on` at +1786 s, the layer's session-end lines after it (the layer did the right thing: the game
+  went on flat, mono at 90). Everything after - the fights with 0 hits, the VR menu not opening, the fourth death's
+  Nemesis screens never closed (no controller reached the game: B pressed for 3 minutes, one MenuEscape seen) - is that,
+  not the mod. Fixed: monado's limit = HEADLESS_HARD + 60 (headless_vr.sh MON_S); the driver stops at a
+  `pass-through from now on` (soak 2).
+- In the 30 VR minutes (9 cycles, 3 deaths): **no crash, 0 WARN** (somvr.log, xr-layer.log), the install unchanged, the
+  real save UNCHANGED. The game's RSS 1184 MB (minute 2) -> 1196 (minute 9) -> steps at the first deaths and trips
+  (+63 MB at the first death's Nemesis screens, minute 10) -> 1289-1293 from minute 18, and 1288-1291 for the 27 minutes
+  after that (minutes 24-51, flat mode included): a plateau, no slope. Threads 79-82, fds 200-202, monado's RSS 120 MB:
+  flat. VRAM 5143 -> 5.8-6.05 GB in VR (the eye swapchains; back to 5.5 GB once XR was gone). The game's CPU 0.40-0.58
+  cores a minute, no trend. The stereo rate: headless monado paces at 20 Hz (period 50 ms, every headless run) - 19.1
+  fps the first 10 minutes, 19.2 the last VR ones, no drift. The layer's gaps (its session-end line): 55 game-present
+  gaps of 100-250 ms in 1786 s (the practice trips' loads, the keep-alive filled them), none 250 ms or longer (the
+  longest 179 ms).
+- States: 43 spells away from the world (SESSION ui), every one back - the longest in VR the deaths' screens (11.0 and
+  15.8 s after "Talion is down"; 21-25 s from the driver's first B); the boot's own two at the start. The deaths: 1 and 2
+  the mission's failed screen (B = QuestFailedAbandon, SOMVR_USE_DEATH) then the Nemesis screens on the theatre, back in
+  the world; 3 the game's last chance (Talion not down). The pause/map/VR menu closed every cycle; the climb ended each
+  time; no held view, blink or vignette left on (one state check caught the ring at 0.009 in a moving frame).
+- Not covered by soak 1: the bow (the driver's `hands squeeze L 0` held the left grip open - 0.00 curls; now -1 = the
+  controller's) and the pause menu (tapped while the VR menu was still up; now first, the VR menu shut by X).
+- The logs in 30 VR minutes at 20 Hz: somvr.log 7.5 MB, xr-layer.log 0.53 MB (the user's 90 Hz sessions: 27 and 2.1
+  MB/h, 107.1); the run folder's 1.9 GB is the driver's own two both-eye dumps a cycle (~30 MB each), not a session's.
+
+### 107.5 Soak 2: 58 minutes in VR on build 27 (boot 20261030-022913, commit 7c6c816)
+- 16 cycles in 57 minutes (5 deaths, every segment taken - the bow 2 out / 2 full draws / 2 shots a cycle now), the game
+  3493 s, stopped by the driver: **no crash, 0 WARN** (somvr.log, xr-layer.log), VR the whole boot (monado's limit
+  4260 s; no `pass-through`, no `image wait` timeout), the install unchanged, the real save UNCHANGED.
+- The game's RSS: 1216 MB (minute 2) -> 1226 (minute 5) -> steps at deaths (+16 at the first, +33 then -21 at the
+  second, +23 at the fifth) -> 1264-1268 MB for the 28 minutes from minute 20 to 48 (+4 MB: ~9 MB/h between deaths) ->
+  1291 at the end. The least-squares line from minute 8: +55 MB/h, all of it the death steps (the game's Nemesis screens
+  and promotions; whether a vanilla death does the same is not separable headless). Four hours at a death every 10
+  minutes and +15 MB each: ~1.6 GB - the machine has 64 GB. Threads 80-82, fds 202-203, monado 120 MB, gamescope 60 MB:
+  flat. VRAM 5.26 -> 6.06-6.09 GB from minute 3, flat after. CPU 0.24-0.67 cores, no trend.
+- The frame rate (headless 20 Hz): 19.2 fps the first 10 minutes; every minute after 19.8-20.0 except the deaths'
+  (11: 16.6, 19: 15.5, 40: 15.5, 51: 3.2 - the screens are mono frames) and the practice trips' (17.7-17.9); no drift.
+  The layer's gaps: 136 in 58 minutes, median 109 ms, max 179 ms, none 250 ms or more (the trips' loads).
+- The logs at 20 Hz: somvr.log 13.8 MB / 58 min (14 MB/h), xr-layer.log 0.93 MB (0.9 MB/h).
+- States: every death but the fifth back in the world in 21-26 s (the fourth this time too: soak 1's stuck one was the
+  harness); pause/map/VR menu shut every cycle; the climbs ended; no ring, blink or held view left. The pause menu did
+  not open from the driver's tap (its press lasts ~0.9 s: the VR menu's long press opens instead - 2 opens a cycle);
+  the pause stays uncovered.
+- **The fifth death stuck** (the practice's Captain Role_Drowned, AI_Berserker): 107.6.
+
+### 107.6 The death struggle that did not end (soak 2's fifth death)
+- The run (boot 20261030-022913, t=1088302-1088627): the practice's Captain Role_Drowned (AI_Berserker), no guard -
+  Talion kneels (`PC_RecoilAny_PreDeath`, `PC_PreDeathLoop`), 2.4 s later the game's struggle with him
+  (`PC_OrcBzrk_PreDeath`, ctx=struggle) and its first-time tutorial `PC_StruggleTutorial`: **SOMVR_HINTS=off dropped
+  its text, but the game paused for it anyway** (paused=1 0.10 s after the drop). The death code took the pause for the
+  Nemesis screens and opened the theatre on a paused frame with nothing on it. It waited **154 s** - two B presses did
+  nothing, the first A (the driver's, after 150 s) closed it (the hide 0.05 s after `btn R a 1`). Then **167 s more in
+  the struggle** (the game rendering normally, 20 fps stereo, no prompt line, nothing asked of any VR control the mod
+  saw) until the driver's `practice remove` took the captain away; Talion got up (`PC_PreDeathRecover`).
+- Not the mod's tutorial alone: across the user's seven real sessions and both soaks only this tutorial paused the game
+  after a drop (one occurrence). And the struggle has two forms: `PC_OrcBzrk_PreDeath_B` - no chance, Talion down in
+  ~5 s (soak 1's fourth death; the repro boots: 4 of 4) - and the plain one above, the only one with the tutorial.
+- The repro (scripts/struggle27-drive.sh; boots 20261030-034708 and -035843 with the tutorial kept): the Drowned 4 times
+  and the Executioner (but the first driver's `back()` left their tries behind unanswered Nemesis screens - fixed): the
+  quick `_B` every time; the plain struggle not met again. What ends it is unknown (the soak pressed only A and B in it).
+- Shipped: `SOMVR_HINTS_KEEP_TUT=GP_,PC_Struggle` (env block som-b27-soak; build 25's `GP_` line commented out in place):
+  the struggle tutorial is shown - in the theatre the game's pause opens, A answers it (as in soak 2) - instead of an
+  empty pause on the knees. And `WARN SESSION t=.. the game paused N s after SOMVR_HINTS=off dropped its tutorial 'X':
+  ...` (somvr_session_game.c ss_tut_pause, somvr_gameopts_game.c's drop; selftest) for any other tutorial that does it.
+- Not shipped (unproven): anything that ends the plain struggle - the game's struggle button is not known; forcing
+  Talion down or up after a time would decide a fight for the player. Open for the next round: the plain struggle's
+  input (the shown tutorial's text in a boot that meets it again; then mash X/Y/triggers, struggle27-drive.sh's list).
+
+### 107.7 Summary
+- Four hours: no crash, no leak and no slowdown in 88 minutes of VR soak (30 + 58), 0 WARN, the logs ~30 MB/h at 90 Hz,
+  the RSS flat between deaths (+15-30 MB at some deaths, the game's Nemesis screens), threads/fds/VRAM flat, the frame
+  rate flat. The fixes: the session's 4-hour limit, the swapchain wait's timeout, three tables and two caches that only
+  filled, seven modules' logs that went silent. The stuck state found: the plain death struggle (107.6), its tutorial
+  now shown; the struggle itself open.
+
+## 109. Build 27: the caragor's domination won by the grip held on, Seat mode proven and on: `SOMVR_RIDE_DOM_HOLD_MS`, `SOMVR_RIDE_SEAT=on` (2026-10-30, som-b27-ride2)
+Build 26 (105) mounted Big Game's stunned caragor by the reached-out left hand, but the domination that follows
+('PC_Warg_Domination_Attempt_FromR', Torvin: "Hold tight! Become one with the beast!") failed every time, so no ride and
+no Seat mode in a boot. handoff/HANDOFF-beasts.md "build 27"; the env block som-b27-ride2 of scripts/headset-build26.env.
+
+### 109.1 What the domination wants: an aim struggle (boot 20261030-032747)
+The struggle-class line (105.4's RTTI read, now with the class's fields): `RIDE t=.. the struggle (Talion's state,
+0x.. '12CStruggleAim')` - **not a hold of RB**: a `CStruggleAim` on PlayerCombat+0x8d8, 5 s, failed at its end with
+nothing done (the left hand kept closed, 123 held: no effect). Read in the Feral binary (objdump; index/vfuncs.tsv):
+- `CStruggleAim::vf_02` `0xe14f80` (its update): the time since it began against +0x84 (the start) and +0x88 (the
+  length, ~5000 ms); its input = the pad's `MenuAxisX/Y` (56/52) plus the controller's own left stick
+  (`FUN_00ad0af0`, the raw pad - not a command), or with a mouse `YawAccel`/`PitchAccel` (23/22); `FUN_00e114f0` the
+  beast's pull, `FUN_00ed3390` moves a cursor (a Scaleform element) by both, `FUN_00ed36a0` returns 3 while it runs,
+  else its result (+0x8c: 0 lost, else won). **The time running out = lost** (+0x8c = 0). Its UI is a flat HUD widget:
+  not in the eyes (frame 5250 of 032747: only the subtitle) - a VR player cannot see the cursor or the target.
+- The other classes, for the record (their command fields, the delegates' reads): `CStruggleHold` the command u16
+  +0xfc, held +0x118 (OnCommandOn/Off), the result +0xfe, the hold's seconds +0x100; `CStrugglePressCount` the
+  command +0x2f0, needed +0x2f4, made +0x2f5; `CStruggleQuickTime` +0xd0 (a wrong press fails it, +0xd6);
+  `CStruggleAim` +0x58c (a confirm press, unused here: garbage).
+- **The game's own completion**: `FUN_00e114e0` sets ICombatStruggle+0xa5 = 1; `FUN_00a86d90(PlayerCombat)` calls it
+  on both struggles. The aim's next update then wins: +0x591 done, +0x8c = 1, its success UI (`FUN_00ed30f0`), the end
+  callback (`FUN_00e0e3d0`) - the same path as a won struggle (`PC_Warg_Domination_Success` follows).
+- (`DEMO_SetPlayerCanLoseStruggleAim` = PlayerCombat+0xb10, passed into the struggle at its creation by
+  `FUN_00e15690`: a demo build's switch, not used.)
+
+### 109.2 The VR answer: hold on (somvr_ride.c `somvr_rd_strug_*`, somvr_ride_game.c `mt_press_cmd`, `mt_struggle_read`)
+**Decided**: a cursor game on a HUD the eyes do not show, steered by a thumbstick, is no VR act; what Torvin says is
+"Hold tight!" and what the hand did was grab the beast. The answer is the grip that took it: **the left hand kept closed
+(or B held) for `SOMVR_RIDE_DOM_HOLD_MS` (1500 ms) without letting go = the domination won** - completed as the game's
+own (+0xa5, written once from the game thread after the object's vtable is checked to be CStruggleAim's 0x3592bb8).
+Let go before and the count starts again; the struggle's own 5 s still run, so a hand that lets go and does not
+close again loses it as before (the beast throws Talion: 'PC_Warg_Domination_Fail'). The struggle is felt in the
+hand that holds: a pulse every 0.2 s while it holds, 0.3 rising to 0.7 as the beast tires, a strong one (0.9,
+150 ms) when it gives in. For the other classes (none seen in a domination yet) the struggle's own command is held
+while the hand stays closed (Hold) or pressed at each fresh close (PressCount, QuickTime), let go for its first
+0.1 s so the press is a fresh one (build 26 held 123 from the grab on: a struggle registers its delegate when it
+begins and never sees a hold that started before). Only a beast's domination ('PC_Warg_*'/'Troll'/'Graug' records)
+is answered: a captain's Domination stays the brand's (VERBS).
+Lines: `RIDE t=.. the struggle (Talion's state, 0x.. '12CStruggleAim'): an aim ... the answer: the left hand kept
+closed (or B held) - held on = won`, `RIDE t=.. the struggle (an aim) held on 1.55 s by the left hand: won`, `RIDE
+t=.. the struggle 0x.. held on 1.5 s by the grip: completed as the game's own (ICombatStruggle+0xa5 ...)`, `RIDE END
+... struggles ended N won by the grip N`.
+Tests (tests/test_ride.c, 57 checks; failing on build 26's answer, which held from the grab on and never answered an
+aim): the classes by name; Hold let go for the gap, then held, one fresh press; PressCount one press per close; an aim
+won after 1.5 s held (tick 31 of 20 Hz), a let-go at 1.0 s restarting the count, never won unheld or with 0.
+**Boot 20261030-035009**: the counter, the offer, the left hand reached out and closed (39 cm out, 40 deg off the
+view): the mount sync, 'PC_Warg_Domination_Attempt_FromR' with '12CStruggleAim' at +2.7 s, "held on 1.55 s by the
+left hand: won", completed, the struggle ended, **'PC_Warg_Domination_Success'**, `RIDE t=.. mounted: a caragor (by
+the beast cache)` 0.1 s later - **the first mount in VR, on the first try**.
+
+### 109.3 What reaches the ridden beast: the PC command set (boots 20261030-035009, -044057)
+`RIDE bindings:` at the mount: 181 `MNT_Mount`, 182 `MNT_GetOff`, 183 `MNT_Jump` have **no input record** in the PC set
+the game runs (165 records, no pad bindings: the KBM ones - 184 `MNT_Charge` key 32, 185 `MNT_Attack_1` input 1000,
+186/187 `MNT_Attack_2/3` input 1001, 188 `MNT_Attack_4` key 69): build 26's A (183) and B (182) reached nothing (the B
+press at 035009 left Talion seated). The rider's command list (MountInfo+0xf8 = P+0x2b0, count P+0x2c0; now logged:
+`RIDE t=.. the rider's commands`, `the rider's N 'name' on/off`) is the active commands, whatever they are. A probe
+(`ride press CMD 400` while seated, the beast standing; 044057): 16 Jump, 121 CombatPrimary04, 124, 125, 184, 185,
+187, 188, 15 Crouch, 122, 34 Activate - each "on" in the rider's list, nothing seen; **186 `MNT_Attack_2` = the ridden
+bite** ('AI_Warg_Ridden_Attack_Light' 0.05 s later; 185 did nothing); **123 'CombatSecondary02' (the pad's RB, the
+mount's own button) = off** (`dismounted (P+0x1d8 cleared)`, standing 0.15 s later).
+**Decided** (the buttons stay A leap, RT bite, B off - the Controls page unchanged): B held while seated = 123 (sent by
+`mt_press_cmd`, past the deny list: a combat slot), RT = 186, A = the stock pad A's Jump 16 + CombatPrimary04 121, the
+left stick's click = MNT_Charge 184 (the run; on in the rider's list, its effect not measured).
+Proof (052710, 054553): **A mid-run = the leap** (the beast's root up 0.9 m and down in 1 s at 052710; at 054553 a
+leap up a 7.3 m rock face in 0.6 s and on, 4.3 m more); **RT = 'AI_Warg_Ridden_Attack_Light'** (both); **B = off**
+(`press 123 ... by B`, dismounted 0.15 s later, standing 0.10-0.15 s after, released by the body moments' blink
+172.6 cm to Talion on the ground). After the dismount the game offers the mount again ('Combat_Mount_Monster', the
+standing caragor): the same hand or B mounts it.
+
+### 109.4 The steering: the stick in the beast's frame (`mt_steer_heading`, somvr.c `in_dpsi`)
+Cause (052710): build 26 rotated the left stick toward the head, as on foot (re-traversal.md 3.3: the beast runs where
+the stick points from the game camera, i.e. toward the head's heading) while Seat mode turns the view with the beast
+(car-style). With any offset between the two (the head turned, a lag) they chase each other: **the stick straight
+ahead, the caragor circled at ~130 deg/s for 4.5 s** (its heading -114 -> -172 -> +122 ... +61; 33 frames at the
+yaw's cap) - in the headset an endless spin, and looking around would steer. **Decided**: seated, the stick is in the
+beast's own frame (a car's wheel): forward runs straight on whatever the head does, sideways turns it, centred stops
+the turn; the view follows the turn car-style (at most 150 deg/s, the vignette on). Proof (054553): the stick ahead
+with the head turned 60 deg left: the heading -101.0 -> -100.7 over 4 s, 22.7 m run; the stick right 1.5 s: -98.9 ->
++137.5 (236 deg in 1.8 s, the beast's own turn rate); centred: 137.5 -> 138.1 over 4 s. The selftest: seated
+`mt_steer_heading` = the beast's heading; off, the head's again.
+
+### 109.5 Seat mode in a headless ride - shipped on (`SOMVR_RIDE_SEAT=on`, build 27's env)
+Every mount in boots 035009, 044057, 052710, 054553: `seated on the caragor 2.34-2.40 s after the mount (his sync
+over)`, one blink, `the facing on the blink's black: the view turned +71.8 / +45.8 deg to the caragor's heading`.
+The numbers (`RIDE motion`, `RIDE END`; headless Monado 20 Hz, so per-frame steps are 4.5x a 90 Hz headset's):
+| | 035009 | 044057 | 052710 | 054553 |
+|---|---|---|---|---|
+| seated frames | 671 | 1141 | 526 | 624 |
+| the seat over the root (Talion's head node's mean) | 93.7-109.6 cm | ~100 | 97.9-104.7 | ~100 |
+| its raw span (the bob that reaches the seat) | 16.3 cm | 9.4 | 7.2 | 15.6 |
+| the largest step a frame across (20 Hz) | 98.9 cm (+ a window's gap, below) | 97.2 | 93.5 | 84.1 |
+| the largest step up/down | 10.2 cm | 9.1 | 11.7 | 174 (the leap up a 7 m rock) |
+| yaw a frame / the cap | 8.36 deg | 10.31 | 8.36 | 11.35 (150 deg/s; long frames) |
+The base is a position and a yaw: the view's pitch/roll is the HMD's own (the scripted head looking down 40 deg: 37.7
+pitch; 5-9 deg of roll only in that pose with the beast standing still). The steps across are the caragor's own speed
+(up to ~17 m/s, 1:1 - never smoothed); the vertical is the root's 3rd-order filter (120 ms). One fix: a presentation's
+window (the game's 'pres' moment while riding: the flat quad, 3.4 s) left the first stereo frame after it measuring
+the 19 m the beast ran meanwhile as one step (035009: "1913.0 cm") - a frame after missed stereo frames is no step now.
+Pictures (both eyes reviewed as a player; xr_compose):
+- 035009 frame 5340 / 052710 frame 5394: on the saddle, the caragor's spiked neck and head right under the eyes (the
+  domination's blue glow on it), the left hand beside it, the horizon level; looking down 40 deg: its whole back.
+- 035009 frame 5466 (a turn): the comfort vignette closes in as the view turns with the beast.
+- 052710 frame 5581 (the bite, Torvin's "You might be a natural" at the gaze); 054553 frame 5903 (the leap: the
+  vignette, the rock face beside, "Follow Torvin" 30 m); frame 6109 (off: standing in the grass by the ruin, steady).
+- The test right hand holds the sword in the guard's test pose throughout (a test artifact: across the view).
+
+### 109.6 Runs (headless, scripts/headset-build26.env + SOMVR_PRACTICE=1 _QUIET=0 _CLEAR=0 _DAY=0 SOMVR_HANDS_TEST=1 SOMVR_RIDE_TRACE=4000 SOMVR_RIDE_SEAT=on; the install unchanged, GameData.sav UNCHANGED every time)
+| Run (logs/boot-check-) | What | Proves |
+|---|---|---|
+| 20261030-032747 | the 1st domination | the class: '12CStruggleAim' (5 s, lost at its end; 123 held did nothing); its UI not in the eyes (frame 5250) |
+| 20261030-035009 | + the hold's win | **won in 1.55 s, 'PC_Warg_Domination_Success', mounted, seated**; Seat mode's numbers; A (183) and B (182) reach nothing; the window's gap step |
+| 20261030-044057 | + the probe of 18 commands | 186 = the bite, 123 = off; the rider's list; 1 WARN: PRACTICE's teleport of the follow loop (the drive's `go` to a marker 6 m above the ground: "did not arrive after 3 teleports") - a test aid's, before the ride |
+| 20261030-052710 | + B = 123, RT = 186, A = Jump + 121 | the leap, the bite, off by B; **the circling** (the head-frame stick, 109.4) |
+| 20261030-054553 | + the beast-frame stick | straight / looking left / a turn / centred; the leap up a rock; the bite; off - 0 WARN |
+| 20261030-061050 | + Big Game past the mount (`ride steer`, 109.9) | the follow ridden, 5917 seated frames; "Mission Failed: You have left Torvin behind" (the drive steered at the wrong marker); A = Retry while mounted; the restore on the beast lost at 2 s (`not a beast 1`) - 0 WARN |
+| 20261030-064036 | + the follow marker kept, MT_KIND_WAIT_S 8 | Torvin followed 154 s on the caragor to the Uruks ("Knock 'em over!"); "Mission Failed: Your Caragor was killed" (the scripted rider bites blind) - 0 WARN |
+Every domination since the hold (6 of 6) was won at the first offer. The drives: scripts/ride27-bg/ (as run: run.sh,
+boot2.sh, after.sh, follow.sh, q.sh, start.txt, mount27-33.sh (mount32.sh attached to the running 061050); their /tmp/b27-ride2 paths as they were).
+
+### 109.7 Switches, words, lines
+| Switch | Code default | build 27 env (som-b27-ride2) | What |
+|---|---|---|---|
+| `SOMVR_RIDE_DOM_HOLD_MS` | 1500 | - | the domination's aim held on this long by the grip (left hand closed or B) = won; 0 = never |
+| `SOMVR_RIDE_SEAT` | on | **on** (build 26's off commented out where it was) | Seat mode |
+Lines: `RIDE t=.. the struggle (Talion's state|sync, 0x.. 'RTTI'): <class> of <cmd> ... the answer: ...`, `.. held on
+N s by the left hand|B: won`, `.. completed as the game's own (ICombatStruggle+0xa5 ...)`, `.. the struggle 0x..
+ended (...)`, `RIDE t=.. the rider's commands (P+0x2b0, N): ...`, `the rider's N 'name' on|off`, `the ridden caragor:
+'record'`; RIDE END adds `struggles ended N won by the grip N`. `ride press CMD MS` now reaches any command (a test); `ride steer X Z|off` (a test: seated, the stick toward a world
+point in the beast's frame - a rider following a marker).
+
+### 109.8 For the headset, unproven
+- The domination: does closing the hand on the beast and keeping it closed through "Hold tight!" feel like holding
+  on (1.5 s; the pulses rising, the strong one when it gives in)? Letting go early lets the game's 5 s run out.
+- The steering's feel: the beast turns at its own rate while the stick is sideways (236 deg in 1.8 s at 0.9 right) and
+  the view follows at most 150 deg/s with the vignette - too fast? (`SOMVR_RIDE_YAW_DPS`.) Looking around never steers.
+- The leap (A) mid-run: 1:1 with the beast - up a 7 m rock in 0.6 s is fast; the vertical filter smooths it.
+- The run (the stick's click, MNT_Charge): on in the game's list, its speed not measured.
+- Graugs: not tried in this round (`PSS_Troll_Rider` is owned; the domination code answers a graug's by its class too).
+- Big Game's end: the Uruk fight on the caragor (109.9) - a player steering at the orcs and biting; headless the
+  scripted rider lost its caragor.
+
+### 109.9 Big Game past the mount (boots 20261030-061050, -064036)
+After the domination the mission goes on mounted: Torvin's lines ("You might be a natural, Cap'n", the Black Gate
+talk), "Follow Torvin" (the marker 'ObjectiveGuttered_ALLMaps' on him), "Let's find some Uruks. Now that you tamed the
+beast, let's see if it'll fight for you", then the Uruks ("Ahhh! The beast riding Dwarf!", "Gutting Orcs! ... Bet I
+can take down more than you, Ranger", "Knock 'em over! Caragors'll take care of the rest!", "Kill the Caragor! It'll
+crush the Dwarf!") - the contest of kills. The drive: `ride steer X Z` (a test word: the stick toward a point in the
+beast's frame, the bearing over 0.8 rad full lock, slowed beyond 1.2 rad) toward the follow marker's newest position
+every ~2.5 s, a bite (RT) every ~5 s, the hand closed again at an offer if thrown.
+- 061050: the drive switched to a static 'Warg' marker; Torvin rode on: **"Big Game - Mission Failed! Reason: You have
+  left Torvin behind. Hint: Stay near Torvin. (A) Retry (B) Abandon"** in the window (a presentation). **A = Retry
+  works while mounted** (SOMVR_USE: `285 'QuestFailedRetry' pressed (the pad's A, active; a presentation is up)`; the
+  riding's A pair goes too, harmless); the checkpoint restores Talion **on** the beast - and Seat mode lost it: the
+  new beast was in the BEASTS cache only 2.9 s after the mount changed, past MT_KIND_WAIT_S 2.0 (`not a beast 1`): a
+  window ride. **Fixed: 8 s** (the mount is the window while asked, as before; selftest: the window while unknown,
+  not a beast after 8 s). The ride's diagnostic lines (the rider's list, the ridden beast) are rationed (120) and
+  `RIDE motion` goes to every 10 s after 20 lines: a long ride had hit the 400-line cap (27 suppressed).
+- 064036: the follow marker kept: Torvin followed 154 s on the caragor (1940 seated frames, the turns at the yaw's
+  cap 320 frames, the largest step 114.7 cm a 20 Hz frame = the caragor's sprint), the Uruks met, the contest begun -
+  then **"Mission Failed! Reason: Your Caragor was killed. Hint: Biting enemies restores some Health to the Caragor.
+  Watch out for Archers."** The scripted rider bit blind on a timer and steered at Torvin, not at the orcs: a player
+  aims the beast at them. **Big Game's end is not reached headless**; everything up to its fight works in VR.
+
+## 110. Build 27: the story ahead of the user - "No Warchief Selected - Hold [>]" by the right stick's click held (a warchief targeted in VR); "The Cure" and "The Rescue" (Lithariel): `SOMVR_ARMY`, `SOMVR_TEXT_BUTTONS` 14:127 (2026-10-30, som-b27-story2)
+Headless boots (scripts/headset-build26.env + the story's practice settings `SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0
+SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0`, the test hands, the layer's test file; story22-drive.sh's `ctl` mode and
+loops beside it: scripts/story27-steps.txt). handoff/HANDOFF-story.md "build 27". Every run: the install unchanged, the
+real save UNCHANGED (all progress in the run's save copy).
+
+### 110.1 "Hold [>]": what the game wants, why a VR player could not give it (static + boot 20261030-041718)
+- The HUD's target panel is CUIHUDCurrentTarget (FUN_00fdab70: `UI_CurrentTarget_None_Title` / `_Desc`); its text's
+  `{Action}` token is **command 14 'Menu' = the pad's START** (`TEXTBUTTONS a UI text's token: command 14 'Menu'` as the
+  HUD is built at the world's load; the glyph is the 360 pad's START, a right triangle - the "[>]").
+- The game's own command, by a test press of each (`verbs press C MS`, from the furthest save, shots/st-nm-hold-*):
+| Press | What opens |
+|---|---|
+| 14 Menu 1500 ms | **Sauron's Army's warchief board**: "Brand the Warchiefs - Select a Warchief to hunt - 1 / 5 Branded", the five warchiefs on top, "(L) Change Selection (A) Zoom (X) Mark Target (B) Back [>] Exit Menu" (st-nm-hold-14-b) |
+| 14 Menu 200 / 500 / 900 ms | the pause menu (SAURON'S ARMY, WEAPONS & RUNES, UPGRADES, APPENDICES, OPTIONS, QUIT): the game decides at the release, so its hold is between 0.9 and 1.2 s (a 1.2 s hold opened the board) |
+| 281 EnterHierarchyMenu 1500 ms | the same board at once (the command is bound to no button: `VIN press cmd=281 ... rec=0`; FUN_00a375a0 -> FUN_00aca7d0) |
+| 95 PDA 1500 ms | the map (with "Survival Challenge 1: Niphredil 1 / 2", "Hunting Challenge 2: Kill 5 Flying Creatures 0 / 5") |
+| 316 InformationShortcut | nothing |
+- **The cause**: in VR the left menu button is START, but held 0.6 s it opens our VR panel (VM_LONG_S, "the game never
+  sees this press") and let go sooner it gives the game one tick of Menu (the pause menu). No VR control held START.
+- **The decision**: the right stick's click - already the map (the pad's BACK: the game's other big screen) - **held =
+  the game's own START hold**; a click = the map. The menu button keeps the VR panel (its hold since build 10: the panel
+  even mid-fight). The game's own hold (Menu held), not 281: the game's rules for when the board may open stay its own;
+  281 is a switch value away (`SOMVR_ARMY_CMD=281 SOMVR_ARMY_MS=100`). The HUD's "[>]" now shows the right stick click's
+  icon: `SOMVR_TEXT_BUTTONS` + `14:127` (CombatTertiary02 = the pad's R3); the menus' "[>] Exit Menu" is MenuExit 79's
+  token and keeps START's icon (= our menu button there).
+
+### 110.2 The fix: `SOMVR_ARMY` (somvr_ctl.c `army_tick`; somvr.c in_config, in_tick)
+- `SOMVR_ARMY=on` (code default off; the som-b27-story2 block: on). In the world the right stick's click is no longer
+  the map while held: let go within `SOMVR_ARMY_HOLD_MS` (500) = the map (PDA 95 for one tick at the release, `INPUT
+  t=.. map N: the right stick's click let go after S s`); held that long = Menu 14 for `SOMVR_ARMY_MS` (1500) once per
+  press (`INPUT t=.. army N: the right stick's click held 0.50 s: the game's "Hold [>]" (14 'Menu' for 1500 ms,
+  SOMVR_ARMY)`), a short tick on the right hand. A menu that opens ends the hold (nothing carried into it), and a click
+  let go in a menu is that menu's BACK, never a map at the return. The board opens 1.1 s into the hold (1.6 s after the
+  press); the map now opens at the click's release (at most 0.5 s later than before).
+- `CONFIG army=on (SOMVR_ARMY): the right stick's click held 500 ms = the game's "Hold [>]" (14 'Menu' for 1500 ms); a
+  shorter click = the map (PDA 95) at its release` (off: `the right stick's click = the map while held (build 26)`).
+- The Controls page: "Map: R click, hold=Army" with SOMVR_VMA_ARMY (bit 44; 42-43 left to the round's other helpers),
+  "Map: click right stick" without it.
+- test_ctl (`army`): off = PDA every tick held; on: a 0.2 s click = nothing until the release, then the map one tick; held
+  2 s = Menu from tick 44 (0.5 s at 90 Hz) for the test's 1.2 s (108 ticks), one army edge, no map; a hold
+  into a menu: no Menu/START there and no map at the return; the left menu button still Menu. (The on-checks fail on
+  build 26's code: no army there.)
+
+### 110.3 Proof in the game (boots 041718, 045903, 070839)
+| Boot | What | Result |
+|---|---|---|
+| 041718 (`SOMVR_ARMY=on`, ARMY_MS 1200) | `btn R stick` 0.2 s (the test file's sleep made it 0.50 s) | `map 1: ... let go after 0.50 s` -> the map (st-nm-r3-click-b) |
+| 041718 | `btn R stick` held 1.0 s | `army 1: ... held 0.50 s` -> the board (st-nm-r3-hold-b) |
+| 041718 | the board: the left stick up/right | the selection moves to a warchief: "Unknown Warchief - Gain Intel to learn Identity - Location Unknown", "(A) / (X) Mark Target"; B goes back to the pause menu; the menu button's tap leaves (st-tg2-*). (The Touch's X was not pressed: the drill sent `btn L x`, which the test file ignores - X is `btn L a`.) |
+| 045903 (the build 27 env: ARMY_MS 1500, 14:127) | the HUD at the arrival | **"No Warchief Selected - Hold [the right stick's click]"** (st-n2-hud; `TEXTBUTTONS ... command 14 'Menu' -> the icon of CombatTertiary02`) |
+| 045903 | the click held 1.0 s, twice | the board both times (`army 1`, `army 2`; ctx menu 1.1 s after) (st-n2-board, st-n2-board2-sel) |
+| 070839 (the build 27 env) | an orc's intel first (110.8), B = Dismiss; the click held; the left stick to a warchief, the Touch's X (`btn L a`) | **the warchief marked**: its shield red on the board, "(X) Mark Target" gone from the legend (st-n5-x-*); the HUD's target panel now **"Unknown Warchief - Gain Intel to learn Identity"** with his shield (st-n5-hud) instead of "No Warchief Selected" |
+
+### 110.4 "The Cure" (Lithariel; boot 041718 from 106.7's save)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker | 'goldenL' at -14301 1776 -18191 (500 m from the arrival); "The Cure - After Marwen's possession by Saruman, Lithariel needs your help to find the elixir and heal her mother. (A) Accept (B) Cancel" (st-gl-card) | B, A work |
+| the video | Lithariel: "I have no choice, Talion. I need my mother's elixir." | A, B skip it |
+| **"0 / 3 Clear all 3 search areas without triggering an Alarm"**, bonus "0 / 5 Stealth Brand Uruks" (st-gl-now) | three 'Objective' markers (-11857 2154 -28171, -22654 2940 -31778, -13142 4031 -35426), 5-6 orcs each; Talion: "Only in stealth can we clear a path ...", "Why stain our hands with Uruk blood when a Caragor can do it in our stead?" (a caged caragor, 'AI_Wrg_Caged_Loop') | the drill (area.sh: each area's orcs, Talion behind, `fight health 1`, the game's own X): 1 / 3, 2 / 3 ("POWER +6", "Kill +20 Archer"), 3 / 3 |
+| the end | a cinematic in the window, the result screen: **B closes it** (`USE ... 307 'IdentifySkip' pressed (the pad's B ...)`), the save (04:29), the next 'goldenL' at -28209 1389 17049 | works |
+- Not tried: the bonus (5 stealth brands) and the caged caragor (the bow at its cage / its release: the headset).
+
+### 110.5 "The Rescue" (Lithariel; boots 045903, 055352 from 041718's save)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker, the card, the video | "The Rescue"; the orcs' "When you're done with her, hang her high."; "*Screams*", "That scream was Lithariel's. We must find her quickly." | works |
+| **"0 / 6 Brand enemies without raising the Alarm"**, a 6:40 timer | six sentries at a camp 70 m north (-27214 24202 ...); the stealth brand by the left hand + the trigger at the game's offer ("Stealth Brand [LT]" at the gaze) | the sentries from the front (150 cm: 'PC_Bip_StealthBrand_F'); the shield sentry ('AI_Class_Defender_...') only from behind ('PC_Bip_StealthBrand_B'); boot 045903's first try ran out of time (the drill's presses came too early and missed): **"The Rescue - Mission Failed! Reason: Out of Time! (A) Retry (B) Abandon" - A = Retry works** (`USE ... 285 'QuestFailedRetry' pressed (the pad's A ...)`); the retry: 6 brands in 2 min (brand6.sh: the trigger again until the brand starts) |
+| "Find Lithariel" | an 'Objective' at -28058 1850 33551; a video (her interrogation) | works |
+| **"0 / 5 Kill or Brand Lithariel's captors"**, the lesson 'GP_Lithariel2_Tut_Grab_Lith' **"Hold [LB] near Lithariel to help her up."** (123 shown as LB by 123:122: the left grip) | her captors around her; she fights ("You want the Gravewalker? Here I am!") | the drill (Talion behind each, the game's X): 4 / 5, 5 / 5 |
+| **"Carry Lithariel to safety"** | an 'Objective' 32 m away (-29190 1554 30650) | **the VR grab lifts her**: the left palm at her + the grip = 'PC_GrabLithariel_R' (`grab: the left hand on orc 0x2c7c0fc0's head ... the grab (123) held`), the grip opened = 'PC_GrabLithariel_Release' (boot 045903); a teleport does not carry her (the objective stayed); **boot 055352: lifted and walked 42 m holding her** (the drill's left stick, story2_route.py): her "Talion, I can no longer draw my sword." / "Then I will do so in your stead.", the lesson 'GP_Lithariel2_Tut_LitharielDamaged'; the walk stuck 5 m short of the place (an obstacle), then "The Rescue - Mission Failed! Reason: Ally Killed! Hint: Stay near your Allies, and protect them from enemies." - the drill had set her health to 1 (`fight health 1`, harness); **A = Retry** -> back at "Carry Lithariel to safety", her grab again works ('PC_GrabLithariel_L'); two more walks lost the route's heading |
+| the end | not reached headless (the walk to the place) | - |
+- Harness traps: Lithariel is in the AI list the drills read (`verbs orcs`, her health 1000): `fight health 1` set hers to 1
+  (045903: she lived; 055352: she died of it in the carry). Without the health aid (`AREA_HP=0`) the game's X from behind
+  killed 2 of 5 captors in 2 minutes. The test file's left X is `btn L a` (`btn L x` is ignored). A trip to a marker's own height inside a building warns
+  (`WARN PRACTICE ... did not arrive after 3 teleports`): all 9 + 2 WARN of boots 041718 / 045903 are such trips.
+
+### 110.6 Runs (headless, Monado 20 Hz; scripts/headset-build26.env + the story's practice settings, the test hands; each the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-) | Save from | WARN | What | Proves |
+|---|---|---|---|---|
+| 20261030-041718 (+ `SOMVR_ARMY=on`, ARMY_MS 1200) | 106.7's (231219) | 9 (the drill's trips to a fixed height 4000: harness) | the test presses of 14 (1.5 / 0.5 / 0.9 / 0.2 s), 281, 95, 316; the right stick's click and hold; **"The Cure" start to end**; the board's selection | the cause (110.1), SOMVR_ARMY v1 (110.3); **its save = the furthest (110.9)** |
+| 20261030-045903 (the build 27 env) | 041718 | 2 (trips: harness) | the HUD's relabel, the click held x2; "The Rescue": the 6 brands (out of time, Retry), Find Lithariel, the captors, **her grab by the VR hand** | 14:127, SOMVR_ARMY at 1500; the Retry; the grab of Lithariel |
+| 20261030-065503 (the build 27 env) | 041718 | 0 | a live orc at The Cure's stronghold (an archer, 'AI_Archer_Tower_Loop_LowAlarm') dominated by the VR hand, the trigger = Gain Intel, the GAIN INTEL screen (st-n4-intel: "Select a Target to learn more information ... (L) Change Selection (A) Select for Intel (X) Mark Target (B) Back"), the stick, A; the click held while the Domination was still up; quit at +221 s | **the intel chain in VR**; the board does not open during a Domination |
+| 20261030-070839 (the build 27 env) | 041718 | 0 | the intel again (an idle orc at -17576 -30723), B = Dismiss, the board, the stick + X: **a warchief targeted**; quit at +261 s; its save written after it (07:12) | **the "Hold [>]" chain end to end in VR** |
+| 20261030-055352 (the build 27 env) | 041718 | 0 | "The Rescue" again: 6 brands in 3 min, the captors, the grab, **the carry walked 42 m**; her death (the drill's health aid), Retry, the grab again; quit at +1011 s | the carry; the failed screen's A after the grip let go |
+
+### 110.7 What the save offers next (`practice status nav`, boot 045903)
+| Marker | Where | What |
+|---|---|---|
+| 'goldenL' | -28209 1389 17049 | "The Rescue" (110.5) |
+| 'goldenT' | -40540 1900 -22160 | "Big Game" (Torvin, 103.2; the ride's 105) |
+| 'powerStruggle' | -30877 2874 11629 | "Beast Hunt" (103.3) |
+| 'confrontationBranded' | -27450 1410 17220 | a branded captain's confrontation (not started) |
+| 'resistance_QuestGiver' | walks (29806 3486 -14641) | no prompt (45.4) |
+| the map's challenges | the map's panel | "Survival Challenge 1: Niphredil 1 / 2", "Hunting Challenge 2: Kill 5 Flying Creatures 0 / 5" (st-nm-r3-click-b) |
+
+### 110.8 Listed, not fixed
+- **The warchief target needs intel first**: on the board every warchief is "Unknown Warchief - Gain Intel to learn
+  Identity"; the Touch's X marks one anyway (boot 070839, 110.3: the HUD then names "Unknown Warchief - Gain Intel to
+  learn Identity" - his identity and place are the next step: more intel). The intel itself works in VR (boot 065503): the
+  left palm + grip on an orc, A ('PC_Bip_Sync_Intrgtn_Into', "You will obey!"), the trigger = Gain Intel (`choice: the
+  trigger while the interrogation asks: 164`), the GAIN INTEL screen (the left stick, A = Select for Intel), back in the
+  Domination; the selection started on a captain - a warchief's intel needs the stick to the top row. The right stick's
+  hold during a Domination opened nothing (the game's own START there is not checked): B = Dismiss first. The way in VR exists (a Domination's "Gain Intel [LT]" = the trigger,
+  106.2, then the "GAIN INTEL" army screen by A) but was not run here (boot 045903's arrival had no live orc near).
+- "The Cure"'s bonus (5 stealth brands) and its caged caragor: not tried.
+- "Carry Lithariel to safety" to its end: the carry works by the VR grab and the stick (110.5); the last 5 m were not
+  walked headless. A VR player walks it holding the left grip.
+- **A failed screen while a grip is held**: after Lithariel's death in the carry (the left grip still closed) A did
+  nothing; with the grip let go, A = Retry at once (boot 055352: `USE ... 285 'QuestFailedRetry' pressed (the pad's A
+  ...)`). A player lets go of her body as she drops; not changed (SOMVR_USE's held-button rule at a window's edge).
+- The map's challenges (an herb pick by B - the picks work, 43; five flying creatures by the bow): not run.
+- The Nemesis 'confrontationBranded' and the warchief missions after a target: not reached.
+
+### 110.9 The furthest save, for the next round
+**logs/boot-check-20261030-070839/saves/GameData.sav** (main checkout): 106.7's save + "The Cure" done + a warchief
+targeted (the save written at 07:12, after the mark; that a reload keeps the target is not checked). "The Rescue" is next
+('goldenL' at -28209 1389 17049; a mission keeps no mid-mission state across boots). "The Cure" alone done:
+logs/boot-check-20261030-041718/saves/GameData.sav.
+Boot from it with `HEADLESS_SAVE_FROM=<that path>` before `scripts/headless_vr.sh` (boot_check copies it into the new
+run's saves/; the real save is never touched); the arrival is the save's own place (the east tower), the next markers in
+`practice status nav` (110.7).
+
+### 110.10 Switches, words, lines
+| Switch | Code default | build 27 env (som-b27-story2 block) | What |
+|---|---|---|---|
+| `SOMVR_ARMY` | off | on | the right stick's click held = the game's "Hold [>]" (START held: the warchief board); a click = the map at its release |
+| `SOMVR_ARMY_HOLD_MS` | 500 | (default) | how long the click is held for the hold (200..2000) |
+| `SOMVR_ARMY_MS` | 1500 | (default) | how long Menu is held for the game (100..5000; the game's own hold is 0.9-1.2 s) |
+| `SOMVR_ARMY_CMD` | 14 | (default) | the command held (281 EnterHierarchyMenu opens the board at once) |
+| `SOMVR_TEXT_BUTTONS` | unset | 122:119,120:124,128:124,123:122,**14:127** | + the HUD's "Hold [>]" with the right stick click's icon (build 26's line commented out where it was) |
+Lines: `CONFIG army=..`, `INPUT t=.. army N: ...`, `INPUT t=.. map N: ...`, `TEXTBUTTONS a UI text's token: command 14
+'Menu' -> the icon of CombatTertiary02`.
+
+### 110.11 For the headset, unproven
+- Hold the right stick's click (1.6 s to the board): is the wait clear with the tick at 0.5 s? The map now opens at the
+  click's release.
+- The HUD's "Hold [R3]" on the wrist: readable as the right stick's click?
+- The board by the Touch: the left stick moves the selection, X marks, A zooms, B back, the menu button leaves. The
+  warchief's intel: grab an orc (left palm + grip), A, the trigger = Gain Intel, the left stick up to the warchiefs, A.
+- "The Rescue": the brands against the timer by a real hand; Lithariel carried by the left grip held while walking.
+## 108. Build 27: the whole fight audited as a Blade & Sorcery player would fight it; the vault over an orc; the crowd of 8: `SOMVR_WRAITH_STEP_VAULT_CM`, `practice group 3..8` (2026-10-30, som-b27-combat)
+
+### 108.1 The audit: every move of the flat fight, and the VR way today
+
+The flat game's fight is the Arkham freeflow: one strike button that leaps Talion to the targeted orc, a counter on
+the prompt, the stun, the evade (a roll, or a vault over the orc the stick points at), and the streak's specials. In
+VR nothing of that may move the view or play for the player (the comfort rules; HL:A's and B&S's: the hands do the
+move, the game judges it). "Proven" = a headless run with scripted hands held like real hands (the run named);
+"seen" = the user has met it in the headset (the last session was build 20c).
+
+| Flat move (pad) | VR now (the switch) | Proven | Seen | How it should feel / the gap |
+|---|---|---|---|---|
+| Strike (X): leap + canned swing, records by the streak | the blade's own contact: a stroke of 50 cm reaching 12 m/s at the contact, edge leading = a cut (`COMBAT_SWING=stroke`, `CLASS=cut`), damage by the speed, no leap; the bite (`COMBAT_BITE`), a sound and FX per kind | sword20 125512, combat16 | 19b/20c | B&S: right. Reach is the player's feet: the orcs come to arm's length (`FIGHT_REACH`, `FIGHT_SPACE_CM=90`) |
+| Counter (Y on the prompt): a paired kill/throw | the parry: the blade in the blow's path in its last 250 ms = the orc's recoil, the clang, +1 streak, a 1 s opening; a committed cut in it = the riposte (the game's High strike, through its block, breaks a raised shield) (`PARRY`, `PARRY_REEL_CM=25`) | parry18 190102 (20/20), 214613, 021502 (10 parries, 10 ripostes) | 10-26 (blocking, before the riposte) | right: the counter is the player's own parry + cut, never the game's sync (it showed Talion's back and moved the view) |
+| Red blows (cannot counter/block) | the red glow + buzzes; step/lean 30-40 cm or A = the dodge; a dodged blow opens the orc 1.5 s (`PARRY_DODGE`) | block17/18, parry18 214613 | 17b | right; the fast ones held 0.4 s for the dodge (`DODGE_FAST_MS`) |
+| Evade (A): a roll | A in a fight = a 1.5 m dash along the stick (else away from the attacker), the wraith tunnel, never into a wall or off a ledge (`DODGE`) | 17b runs, crowd19 | 17b | right (a fixed distance = a known where) |
+| **Vault over an orc** (A + the stick at it) | **missing before this build** (the wraith step refused an orc at the ring; `PHASE` = the stock vault's motion, inert with the game's moves off) | 108.3 | - | **built here**: the wraith step aimed at an orc = the ring behind it, the blink over it (108.2) |
+| Stun (B) | the open left hand on the orc's head + a trigger tap = the game's stun (`VERBS`) | verbs13 | - | right: the hand does it |
+| Flurry on a stunned orc | ordinary cuts on a stunned orc (no flurry records) | - | - | fine for B&S: real cuts; the stun's value is the pause |
+| Grab / interrogate / throw | the left hand squeezes at the collar (`VERBS`), the cue when the game would allow it (`VERBS_CUE`), pull to the face = interrogate | combat21 221147 | 20c (asked for the cue) | right |
+| Combat drain | the trigger held with the open hand on its head (`VERBS`) | verbs13 | - | right |
+| Execution (streak 8, X+Y) | the game's ready glow; R trigger held + a committed cut = the game's InstaKill record, 0.3x for 0.5 s (`EXECUTE`) | execute-drive | - | right; the streak counts parries now |
+| Ground finisher (a downed orc) | `SOMVR_FINISH`'s ground execution: off (unproven) | - | - | a gap only if knockdowns come back (the shield break knocks down: the riposte's) |
+| Brutalize / wraith flash / wraith stun (streak specials) | brutalize = the stealth module's torment with the wraith charge; the wraith flash and the wraith stun have no VR control | - | - | a gap: low (unlocks on this save not checked; a crowd tool, 108.4) |
+| Shield orc (Defender) | its shield stops frontal cuts by the game's rule; the ways past: around it (physical shield), shove + cut, dodge its red blow + cut (the riposte breaks the shield), **the vault + its back (new)** | 214613 | - | the vault was the flat game's first answer: now there |
+| Berserker | its blows parried by contact; its answer after a landed hit held in its own turn (`CROWD_ANSWER_MS`) | answer19 | - | right |
+| Archers, spearmen | arrows/spears removed by the blade (DEFENCE +0x228); no archer in the practice | threat14 | - | a stopped arrow is silent (open since build 16) |
+| Shadow Strike (bow + Y) | the gaze in the wraith vision + A; with the bow out X (`STRIKE_GAZE`, `BOW_STRIKE=dash`, `STRIKE_SWORD=hand`) | strike17/18, combat21 | 19b/20c | right |
+| The bow's slow-mo (Focus / Elf-shot) | the game's own bow mode while the VR bow is drawn (the aim command held: its slow-motion slot and Focus as for the pad) | bow20 | 20c | right (the game's) |
+| Stealth kill / drop kill / brand | the thrust into an unaware orc's back (`STEALTH_KILL_THRUST`), the plunge from a ledge (`ABOVE`), the brand by the hand (`VERBS_BRAND`) | stealth19, kill22, above25 | 20c (asked for the thrust) | right |
+| Caragor, graug, ghûl | the practice's beasts (`BEASTS`); riding: the build 26 ride helper (105) | beasts | - | not this section's |
+| Fire, grog barrels | the game's own arrow (`BOW_GAME_ARROW=on`): the game's barrel and fire rules | - | - | not met headless (none in the meadow) |
+| Captains | their traits by the game's rules (`CAPTAIN_RULES`), finishers asked (`CAPTAIN_FINISHER_PCT`), cuts x2 (`CAPTAIN_CUT_X`) | captain22/24 | - | right (104) |
+| Turns in a crowd | FRONT: out of view vetoed until warned 1 s; the pace: one winding up, the next impact >= 0.7 s after (`CROWD_PACE_MS`) | crowd19 215437 (4 orcs) | - | 6-8 never run: 108.4 |
+
+What is missing that a B&S player would reach for first: (1) the vault (the flat game's main crowd and shield
+move) - built in 108.2; (2) a real crowd (6-8) checked for fairness - 108.4. The wraith flash/stun and the ground
+finisher are low: neither is a hand move B&S has, and both need the streak's unlocks.
+
+### 108.2 The vault over an orc (`SOMVR_WRAITH_STEP_VAULT_CM`, code default 0 = off; build 27's env 350)
+
+The wraith step (68: the right stick pushed forward and held aims a blink with the head's ray, a gold ring where
+Talion lands, let go = the quick blink, the move stick = cancel) refused a ring on an orc ("an orc there") and, looking
+at an orc's head, flew the farthest 7 m past it. Now: **the head's ray meeting an orc's body first** (one of
+PlayerCombat's orcs, its root within 80 cm of the point along the floor), **that orc's root within 3.5 m** of
+Talion's = the ring **120 cm behind its root on the line from Talion through it**, wherever the ray goes on (one rule
+the player can read: the head on an orc = over it; to land past one, look beside it). The same checks as any ring
+(ground, ledge, step, room, an orc there, the eyes' sight) plus a waist-high ray from the orc's root to the spot (a
+fence at its back the eyes see over): any refusal = the red crossed ring there. Let go = the same blink (the
+practice's quick fade, the teleport). **The facing is kept**: the orc is behind the player after it, the half turn is
+theirs (the right stick's turn or the body) - the view never turns for them; a shield orc's back is then the open
+side. The comfort rule's three parts: the when (the let-go), the where (the ring shown behind the orc while aiming),
+the cancel (the move stick, or let go over red).
+
+Code: somvr_wstep.c (`ws_check` = steps 2-5 split out of `somvr_ws_find`; the first body hit recorded in
+`ws_ray_through`; `somvr_ws_aim.vault/.orc/.orc_cm`; `somvr_ws_cfg.vault_cm/.behind_cm`); somvr_wstep_game.c (the
+config, the aim line's "the vault over orc", the go line, the arrival's `vault:` line: the orc's distance and bearing
+from the head's heading and whether it stood between the start and the landing, `WSTEP END build 27 vault`).
+tests/test_wstep.c `test_vault` (13 checks: off = refused / 7 m past as build 26; on: the chest, level at the head,
+through its body, at its knees, ahead-right on the line, 4 m = no vault, beside it = the aimed spot, a wall and a
+fence at its back, another orc on the landing, a ledge, an unlisted body as off).
+
+### 108.3 The crowd of 8 and the vault: the headless runs
+
+**Run 021916** (logs/boot-check-20261030-021916; scripts/crowd27-drive.sh, build 26's env + the vault; before the turn
+cue and the vault's opening; 0 WARN, the install unchanged, the real save UNCHANGED). `practice group 8`: 8 of 8 out
+(4 infantry, 2 shields, 2 berserkers at 4.5-6.5 m), 170 s of fighting:
+
+| Phase | Impacts | Talion | The crowd |
+|---|---|---|---|
+| still 42 s (the blade behind the hip) | 13 | 13 hits | grants 20, 5 vetoed waits, 0 overlaps |
+| guard 50 s (the path guard, the head to the last cue) | 22 | 15 parries, 7 hits | 7 FRONT warnings |
+| dodge 32 s (A 350 ms after each red warning) | 14 | 8 parries, 3 dodges, 3 hits | 4 warnings |
+| behind 25 s (the head turned 180 deg) | 11 | 11 hits | 0 warnings needed: the turns went to the orcs now in front |
+
+The whole window: 66 impacts, **one orc winding up at a time throughout, 0 overlaps, 0 gaps under the pace** (min
+1.32 s, mean 2.47 s), 5 lulls of 4.9-7.3 s, all in the still phase (a berserker's turn held after its blow hit Talion,
+`CROWD_ANSWER_MS`: a breather while he takes hits). Out of the head's view: 11 blows started - 6 after FRONT's
+warning, 1 a berserker's answer warned at the cut, and **4 with no warning of FRONT's: granted in view (29-49 deg off),
+started 61-85 deg off** 0.2-1.9 s later (the orc walked round from 4 m, or the head turned to another cue), each told
+only by THREAT's late cue 0.3-0.9 s before its impact; all four landed. The vault step added 2 more (108.5). Both
+edges lit in 42 of 105 sampled seconds, 38 of them the hurt flash (the still and behind phases take every blow).
+
+The vault (one shield orc): **3 of 3** - aimed at 99-138 cm, the ring 216-258 cm out behind it, the blink, Talion
+0.3-0.4 cm off the ring's middle, the orc 90-131 cm from him at 160-178 deg off his heading (behind him), between the
+start and the landing every time; no ring refused. Pictures (xr_compose): frame 4898 (the ring drawn through the
+shield orc, 1.1 m ahead), 5011 (after the half turn: the orc has its shield round toward him). The scripted half turn
+and cut came 1.5-2 s after the landing: each cut's light contact went round the shield (damage), its heavy one met
+the shield turned back (+61..+88 deg off its facing: a glance, no damage) - the back's window is shorter than a
+player's turn and cut.
+
+### 108.4 The crowd's fix: the turn that went out of view is warned (`SOMVR_FRONT_TURN_CUE`, code off, env on)
+
+FRONT judges an orc at its grant; the blow starts 0.05-1.9 s later. A turn granted in view whose orc is out of the
+head's view (the 55 deg half-cone) before its blow starts now gets the warning's own cue at that moment: the sound at
+the orc, an announce tick on its side, the edge on its side held until its impact (the warned grant's ONECUE hold;
+THREAT's own pulse and sound for that blow skipped, its LATE cleared). somvr_front_game.c `ff_cues` (the live place
+from the orc's Combat, not the pass's), the `FRONT turn-cue` line, `FRONT END build 27 turn cues`. It warns; it does
+not stop the blow (the grant cannot be taken back once the AI has it).
+
+### 108.5 The vault's opening (`SOMVR_PARRY_VAULT_MS`, code 0 = off, env 2000)
+
+The orc the vault went over (it stood between the start and the landing) is open for 2 s, as a dodged blow opens its
+attacker (`PARRY_DODGE`, 1.5 s; 2 s here for the half turn): its own block skipped, REACT's rolls skipped, a committed
+cut the riposte (the game's High strike; into a shield it has turned back, the game's break). somvr_parry_game.c
+`py_vault` (why 4, "a vault over it"), called from ws_arrival; `PARRY END build 27`.
+
+**Run 043449** (the vault's opening on; the turn cue meant on but read as off - `WARN unknown SOMVR_FRONT_TURN_CUE=on,
+using 0`: FRONT's switches took 0|1, fixed to off|on - so a second baseline for 108.4; otherwise 0 WARN, the install
+unchanged, the real save UNCHANGED): the crowd of 8 for 176 s: 80 impacts, one winding up at a time, gaps min 0.86 s
+mean 2.11 s, 3 lulls over 4 s; 81 blows started - 73 in view, 3 out of view after FRONT's warning, **5 out of view
+unwarned** (4 stale grants at 56-126 deg off, 1 berserker blow with no grant seen). The vault: 3 of 3 over the shield
+orc, each `PARRY open ... by a vault over it for 2000 ms`; the scripted half turn and cut came after the 2 s (the
+driver's dumps) - one heavy cut still landed round its shield (115 -> 77.6) with it turned 28 deg from Talion; the
+driver's dumps now come after the cut.
+
+**Run 045026** (the turn cue on, the vault's opening on; after the struggle tries of 108.6 on the same boot; 0 WARN,
+the install unchanged, the real save UNCHANGED): the crowd of 8 for 134 s: 62 blows started - 59 in view, **3 out of
+view, all 3 warned, 0 unwarned** (runs 021916 / 043449 without it: 4 and 5 unwarned); `FRONT turn-cue` 5 times in the
+run (granted at 1-55 deg, out of view at 55-91 deg 0.05-0.75 s later: the cue then, 0.8 s and more before the blow
+lands); one winding up at a time, 0 overlaps, 0 gaps under the pace. The vault over the shield orc with the faster
+scripted half turn: vault 1 - its heavy cut landed round the shield from behind (125 -> 75); **vault 2 - 1.25 s after
+the landing the cut was the riposte (`PARRY riposte ... into its raised shield: the shield 300 -> 0 BROKEN`)**; vault 3
+over the orc now without a shield. Proven: the vault, its opening, the riposte through a shield turned back.
+
+### 108.6 The death struggle (`SOMVR_STRUGGLE=thrust`, code off, env on): the soak's dead end (107.6)
+
+Every death near an orc starts a struggle - Talion kneels ('PC_RecoilAny_PreDeath'), the orc's `*_PreDeath` sync, and
+the game's last chance at PlayerCombat+0x8d8 (from a combat state) or +0x8e0 (from a sync action) for ~4.7 s (every
+death of both soaks: `BODYMOMENT ... -> struggle` 4.7 s before `-> death`); the first-time one ('PC_StruggleTutorial',
+`PC_OrcBzrk_PreDeath`) waits for its answer with no end (soak 2: 167 s). No VR control ever answered one: in a struggle
+A/B/X/Y pass to the pad, and the struggle listens to one command that the game shows as a pad glyph.
+
+What the struggle wants (static, som-linux; the classes' vtables from the index, their OnCommandOn delegates
+decompiled): `CStrugglePressCount` (vtable 0x3592ab8) counts presses of its command `+0x2f0` up to `+0x2f4`
+(`+0x2f5` the count; `+0x2f6` the phase: 0 waits until `+0x84` ms, 1 open until `+0x88` ms, 2 over; enough presses =
+phase 2 with `+0x8c` = 1); `CStruggleQuickTime` (0x3592af8) one press of `+0xd0` (`+0xd6` set by a wrong command
+first); `CStruggleAim` (0x3592bb8) a press of `+0x58c` while its cursor is in the target (the "StruggleTarget /
+StruggleCursor" sequence UI); `CStruggleHold` (0x3592b38) and `CStruggleInputDirection` (0x3592b78) not answered.
+
+The VR answer: **a hard thrust of either hand** - its speed in the world over 80-250 ms past `SOMVR_STRUGGLE_MPS` (2.0
+m/s; re-armed under a third of it) - is one press of the struggle's own command, read from the object (our tap: 2
+input ticks on, 2 off; up to 4 queued): stab or shove the orc off you; a mash is many thrusts, a timed press one. An
+urgent double pulse in both hands at the struggle's start, a pulse in the thrusting hand per press. The class, the
+command, the fields and a dump are logged at the start and as they change (`STRUGGLE t=...`, `STRUGGLE END`) with
+the switch off too. somvr_struggle_game.c (`stg_hands` after py_hands in in_frame, `stg_tick` after st_tick in the
+input tick). Why the hands and not a button: B&S and HL:A answer a body in your face with the body; the game's own
+button is a pad glyph the Touch does not have, and the struggle is the moment the player is least ready to read one.
+
+**The runs** (each 0 WARN, the install unchanged, the real save UNCHANGED; scripts/struggle27c-drive.sh: the practice
+captain (Role_Drowned / Role_Executioner, AI_Berserker) kills an unguarded Talion, the answer per try):
+- 045026: 3 struggles, all **`CStruggleAim`** at +0x8d8 (`PC_OrcBzrk_PreDeath` and `_B` alike); its command unset at
+  the start (+0x58c 0x7efe), +0x592 1 at 0.6 s (open), +0x591 1 at 4.15 s (over, result +0x8c 0), Talion down at 4.7
+  s. The thrusts (14 a try) pressed nothing (no command yet at the start). The HUD's widget (boot 034708's dump, frame
+  960): a red ring (the target, its arc running down) and a cursor from the left stick's "L" glyph.
+- 053516: the command set when it opens - **CombatStruggle03 or 04, at random**; the hand's circle and the stick's
+  circle (both aims) changed nothing: the widget integrates the aim as the cursor's speed (9), a circle goes nowhere.
+- 063029 (the aim logged from the widget, +0xe8: its aim at +0x474/+0x478, the speed +0x45c): the hand held up = the
+  widget's aim (0, +1) at speed 9 (both the pad's stick and MenuAxisX/Y reach it); the hand down (0, -1); **the stick
+  up arrived turned (-0.69, +0.72)**: the struggle context's stick is rotated by the head's yaw off the body, as the
+  world's walk. +0x57a goes 1 while the cursor is in the ring (e.g. +2.0 .. +3.1 s holding up) and 0 as it passes
+  out. The decompile of CStruggleAim's OnCommandOn then reads: its command (+0x58c) with the cursor in the ring
+  (+0x57a 1) = **the success** (+0x8c 1, or 2), out of it a miss can end it (+0x8c 0); the timeout = +0x8c 0.
+
+So the last chance is: steer the cursor into the ring with the left stick, then press the shown button (X or Y) while
+it is in. The VR answer built on that: **the hand steers** - the hand that moved most from where it was at the
+struggle's start, its offset across the head (right/up) over `SOMVR_STRUGGLE_AIM_CM` (20 cm = full tilt) is the
+cursor's direction (the pad's left stick and MenuAxisX/Y, `SOMVR_STRUGGLE_AIM=both`), or the stick itself, now not
+turned; **a thrust is the strike** - pressed only with the cursor in the ring (a thrust outside is not pressed: no
+miss by a stray stab). An urgent double pulse in both hands at the start.
+- **065853** (that answer; tries: the hand held up / the stick up, the left hand thrusting every 0.4 s): **try 1 won** -
+  the hand up, the cursor into the ring, a thrust outside it not pressed, the next one in it pressed CombatStruggle04 ->
+  `result(+8c) 1`, the struggle over at 2.9 s, Talion's attack **'PC_OrcBzrk_PreDeath_PCWin'** (the captain's
+  'AI_Berserker_PC_PreDeath_PCWin', 8 damage to him), Talion up 3 s later. Tries 2-4: the ring elsewhere (up never
+  met it; 20 thrusts outside it, none pressed), Talion down by the game's own timeout - the loss path untouched.
+- **071307** (the final build, the answer gated to the last chance; 0 WARN, the install unchanged, the real save
+  UNCHANGED): try 1 won again - the hand up, the cursor into the ring at 2.0 s, the press of CombatStruggle02 (the
+  button is random: 02, 03 or 04) -> `result 1`, **'PC_OrcBzrk_PreDeath_PCWin_B'** (the quick `_B` form is winnable
+  too), the captain's 'AI_Berserker_PC_PreDeath_PCWin_B' (8 damage), Talion up 2.5 s later; one more struggle lost
+  by the timeout (the ring not above), two tries without a struggle (the death's screens). In all: **2 wins of 8
+  blind "up" tries**; 32 stabs outside the ring, none pressed.
+- The answer is only for Talion's last chance (his attack `*PreDeath*` at the struggle's start): the caragor's
+  domination is a `CStruggleAim` too (ride2, 109.1: its answer is the held grip), so any other struggle is logged at
+  its start and left alone. Not used: ride2's +0xa5 = 1 (the next update a win) - the win here is the game's own
+  (its command with the cursor in its ring), the player's steer and stab.
+- Not proven: `CStrugglePressCount` / `QuickTime` (never met: every death of these runs and both soaks was the aim);
+  the first-time tutorial's struggle (not met again; with the soak's `SOMVR_HINTS_KEEP_TUT=GP_,PC_Struggle` its pause
+  shows its text and A closes it); the ring's look in the headset (it is the game's HUD widget on the HUD quad).
+
+### 108.7 Summary
+| Item | Switch (code default -> env) | Proven headless |
+|---|---|---|
+| The vault over an orc (the wraith step at an orc) | `SOMVR_WRAITH_STEP_VAULT_CM` 0 -> 350 | 9 of 9 over the shield orc (3 runs), 13 unit checks |
+| The vaulted orc open 2 s | `SOMVR_PARRY_VAULT_MS` 0 -> 2000 | 6 openings; a riposte broke the turned shield (045026) |
+| The crowd's turn gone out of view warned | `SOMVR_FRONT_TURN_CUE` off -> on | 0 unwarned of 3 (045026) against 4-5 a run before |
+| The crowd of 3-8 (`practice group N`) | `SOMVR_PRACTICE_GROUP_N` 4 (kept) | 8 of 8 spawned, 4 runs; test_front's crowd of 8 |
+| The death struggle by the hands | `SOMVR_STRUGGLE` off -> thrust | 2 last chances won ('..._PreDeath_PCWin', 065853; '_PCWin_B', 071307) |

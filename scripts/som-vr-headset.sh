@@ -35,7 +35,8 @@
 # started if it isn't running. The player comes first: a developer's SoM test (boot_check without --headset) is
 # stopped (its own cleanup, about a minute); another game's fresh slot marker (a HoF2 test; its harness stops when the
 # user is in VR) gets 2 minutes to go.
-# Ends: the game quits, Steam's Stop, the headset disconnected for 5 minutes, or the 2-hour limit (boot_check --hard).
+# Ends: the game quits, Steam's Stop, the headset disconnected for 5 minutes, or the 4-hour limit (boot_check --hard;
+# build 27: 2 hours before; 4 h is boot_check's most, docs/re-xr-pipeline.md 107).
 # Desktop notifications (notify-send) say what happens; every step goes to logs/som-vr-headset.log, the session's own
 # logs to logs/boot-check-<ts>/ (named in that log).
 # SOMVR_HEADSET_DRYRUN=1: the same checks (WiVRn's only noted), the switches file, the PC window's modules (its
@@ -47,13 +48,13 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-BUILD=build-vr25                         # the build the user tests (logs/BUILD); changed only between sessions
+BUILD=build-vr26b                         # the build the user tests (logs/BUILD); changed only between sessions
 ENVF=$SOM/logs/$BUILD/headset.env       # its feature switches (the header); missing = the built-in build-5 set
 CMDS5=$SCR/cmds/somvr-vr5.cmd   # the start sequences: build 5's (the pre-game window), build 6's
 CMDS6=$SCR/cmds/somvr-vr6.cmd
 SEED=$SOM/logs/boot-check-20261018-003728/preferences.seeded
 UNIT=somvr-headset
-HARD=7200                               # the session's limit, seconds
+HARD=14400                              # the session's limit, seconds (build 27: 4 h, boot_check's most; was 7200)
 WAIT_HEADSET=300; GONE=300; WAIT_SLOT=120
 RT=/run/user/$(id -u)
 VRS=$RT/vr-session

@@ -85,6 +85,7 @@ static struct {
     int got_req, gave_pd, running, ready_sent, exit_stage, frame_begun, waited, ends;
     int no_stage, recenter_at, recenter_sent, space_type, reject_hud_at, hud_ends, reject_ptr_at, ptr_ends;
     int reject_cf_at, cf_ends, reject_vm_at, vm_ends;
+    int wait_to_at, wait_to_n, wait_calls, wait_timeouts; /* build 27: MOCKXR_WAIT_TIMEOUT=N:K */
     uint32_t reject_sc_w, reject_sc_h; /* MOCKXR_REJECT_SC: every frame showing a swapchain of that size */
     int reject_sc_n;
     int reject_env_at, env_ends;          /* SoM loading env */
@@ -176,6 +177,10 @@ __attribute__((constructor)) static void mock_env(void) {
     if (getenv("MOCKXR_REJECT_SC") && sscanf(getenv("MOCKXR_REJECT_SC"), "%ux%u", &M.reject_sc_w, &M.reject_sc_h) != 2)
         M.reject_sc_w = M.reject_sc_h = 0;
     M.reject_vm_at = getenv("MOCKXR_REJECT_VM") ? atoi(getenv("MOCKXR_REJECT_VM")) : 0;
+    /* build 27: MOCKXR_WAIT_TIMEOUT=N:K - xrWaitSwapchainImage calls N..N+K-1 (any swapchain) return XR_TIMEOUT_EXPIRED,
+     * the image still acquired and not waited (a compositor stall longer than the wait's timeout) */
+    if (getenv("MOCKXR_WAIT_TIMEOUT") && sscanf(getenv("MOCKXR_WAIT_TIMEOUT"), "%d:%d", &M.wait_to_at, &M.wait_to_n) != 2)
+        M.wait_to_at = M.wait_to_n = 0;
     M.reject_env_at = getenv("MOCKXR_REJECT_ENV") ? atoi(getenv("MOCKXR_REJECT_ENV")) : 0;
     M.max_layers = getenv("MOCKXR_MAX_LAYERS") ? (uint32_t)atoi(getenv("MOCKXR_MAX_LAYERS")) : MOCK_MAX_LAYERS;
     const char *ex = getenv("MOCKXR_EXTS"); /* SoM loading env: "a,b" */
@@ -555,6 +560,9 @@ static XrResult m_xrWaitSwapchainImage(XrSwapchain s, const XrSwapchainImageWait
     int k = sc_slot(s);
     if (k < 0) return viol("xrWaitSwapchainImage: unknown swapchain"), XR_ERROR_HANDLE_INVALID;
     if (!M.scs[k].acq || wi->timeout <= 0) viol("wait without acquire / no timeout");
+    M.wait_calls++;
+    if (M.wait_to_n > 0 && M.wait_calls >= M.wait_to_at && M.wait_calls < M.wait_to_at + M.wait_to_n)
+        return M.wait_timeouts++, XR_TIMEOUT_EXPIRED;
     M.scs[k].waited = 1;
     return XR_SUCCESS;
 }
@@ -1300,6 +1308,8 @@ EXPORT int mockxr_view_live(void);
 EXPORT int mockxr_view_live(void) { return (M.view_live & 1) + (M.view_live >> 1 & 1); }
 EXPORT const mockxr_end *mockxr_last_end(void);
 EXPORT const mockxr_end *mockxr_last_end(void) { return &M.end; }
+EXPORT int mockxr_wait_timeouts(void);
+EXPORT int mockxr_wait_timeouts(void) { return M.wait_timeouts; }
 EXPORT int mockxr_live(void);
 EXPORT int mockxr_live(void) {
     return M.sess_live + M.space_live + M.floor_live + (M.view_live & 1) + (M.view_live >> 1 & 1) + sc_any(0) +

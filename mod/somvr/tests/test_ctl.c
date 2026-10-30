@@ -504,6 +504,62 @@ static void test_haptics(void) {
            "hit over rumble, stop, scale clamp, scale 0, ramp refreshed\n");
 }
 
+/* ---- build 27, SOMVR_ARMY: the right stick's click held = the game's "Hold [>]" (re-xr-pipeline.md 110) ------------- */
+static void test_army(void) {
+    sc_tick_out o;
+    /* off (the default): the map while the click is held, every tick */
+    reset_all();
+    tick(SC_CTX_WORLD, 0, &o);
+    press(1, SOMVR_BTN_STICK);
+    int pda = 0, menu = 0;
+    for (int i = 0; i < 90; i++) tick(SC_CTX_WORLD, 0, &o), pda += has_cmd(&o, SC_CMD_PDA), menu += has_cmd(&o, SC_CMD_MENU);
+    CHECK(pda == 90 && menu == 0, "off: PDA %d ticks (90), Menu %d (0)", pda, menu);
+    release(1, SOMVR_BTN_STICK);
+    /* on: a 0.2 s click = the map once, at the release; no Menu */
+    reset_all();
+    C.army_s = 0.5f, C.army_ms = 1200, C.army_cmd = SC_CMD_MENU;
+    tick(SC_CTX_WORLD, 0, &o);
+    press(1, SOMVR_BTN_STICK);
+    pda = menu = 0;
+    for (int i = 0; i < 18; i++) tick(SC_CTX_WORLD, 0, &o), pda += has_cmd(&o, SC_CMD_PDA), menu += has_cmd(&o, SC_CMD_MENU);
+    CHECK(pda == 0 && menu == 0, "on, held 0.2 s: nothing yet (PDA %d, Menu %d)", pda, menu);
+    release(1, SOMVR_BTN_STICK);
+    tick(SC_CTX_WORLD, 0, &o);
+    CHECK(has_cmd(&o, SC_CMD_PDA) && (o.edges & SC_E_MAP) && !has_cmd(&o, SC_CMD_MENU), "on, the click's release: the map");
+    tick(SC_CTX_WORLD, 0, &o);
+    CHECK(!has_cmd(&o, SC_CMD_PDA), "on: the map one tick");
+    /* on: held 2 s = Menu from 0.5 s for 1.2 s (108 ticks), once; no map at the release */
+    press(1, SOMVR_BTN_STICK);
+    int first = -1, armies = 0;
+    pda = menu = 0;
+    for (int i = 0; i < 180; i++) {
+        tick(SC_CTX_WORLD, 0, &o);
+        if (has_cmd(&o, SC_CMD_MENU)) { menu++; if (first < 0) first = i; }
+        pda += has_cmd(&o, SC_CMD_PDA), armies += (o.edges & SC_E_ARMY) != 0;
+    }
+    release(1, SOMVR_BTN_STICK);
+    for (int i = 0; i < 90; i++) tick(SC_CTX_WORLD, 0, &o), pda += has_cmd(&o, SC_CMD_PDA), menu += has_cmd(&o, SC_CMD_MENU);
+    CHECK(first >= 43 && first <= 45 && menu >= 107 && menu <= 109 && armies == 1 && pda == 0,
+          "on, held 2 s: Menu from tick %d (44) for %d ticks (108), %d army edge(s) (1), PDA %d (0)", first, menu, armies, pda);
+    /* on: a hold that opens a menu: nothing carried into it, and the let-go there is no map at the return */
+    press(1, SOMVR_BTN_STICK);
+    for (int i = 0; i < 50; i++) tick(SC_CTX_WORLD, 0, &o);
+    menu = 0;
+    for (int i = 0; i < 30; i++) tick(SC_CTX_MENU, 0, &o), menu += has_cmd(&o, SC_CMD_MENU) || pad_on(&o, SC_PAD_START);
+    release(1, SOMVR_BTN_STICK);
+    tick(SC_CTX_MENU, 0, &o);
+    pda = 0;
+    for (int i = 0; i < 30; i++) tick(SC_CTX_WORLD, 0, &o), pda += has_cmd(&o, SC_CMD_PDA), menu += has_cmd(&o, SC_CMD_MENU);
+    CHECK(menu == 0 && pda == 0, "on, the hold's menu: Menu/START %d (0) there, PDA %d (0) at the return", menu, pda);
+    /* the left menu button is untouched: Menu while it is held */
+    press(0, SOMVR_BTN_MENU);
+    tick(SC_CTX_WORLD, 0, &o);
+    CHECK(has_cmd(&o, SC_CMD_MENU), "on: the left menu button still = Menu");
+    release(0, SOMVR_BTN_MENU);
+    printf("army: off = the map while held; on: a click = the map at the release, held 0.5 s = Menu 1.2 s once, nothing "
+           "carried into its menu\n");
+}
+
 int main(void) {
     test_deny();
     test_sticks();
@@ -513,6 +569,7 @@ int main(void) {
     test_live();
     test_turn_p0();
     test_haptics();
+    test_army();
     printf("test_ctl: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

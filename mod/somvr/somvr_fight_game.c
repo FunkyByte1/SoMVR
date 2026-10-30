@@ -1471,7 +1471,7 @@ static void fs_hold(uintptr_t mv, const float was[3], float *xf)
  * most NB_PUSH_CMS, never nearer than its own step put it). Not the hands or the weapons: the blows still reach
  * Talion's body and the guard. Talion and the view never move. */
 #define NB_TRK 8
-#define NB_MOVES 96
+#define NB_MOVES 256 /* build 27: 96 before, and full = no new move learnt (re-xr-pipeline.md 107) */
 #define NB_LOG_CM 70.0f   /* a move whose body came nearer than this gets its line */
 #define NB_CLOSE_CM 50.0f /* "too close" in the END table */
 #define NB_PUSH_CMS 600.0f /* the hook's ease out: 6 m/s (a step = this x the frame's time: 6.7 cm at 90 Hz, 30 at the
@@ -1545,6 +1545,7 @@ static struct {
 	struct nb_trk tr[NB_TRK];
 	struct nb_move mv[NB_MOVES];
 	int nmv;
+	unsigned mv_next, mv_reused; /* build 27: the full table's reuse cursor and count */
 	uintptr_t pk[FS_ORCS];       /* the snapshot's slots last frame (whose the hook's counters are) */
 	int npk;
 	uint64_t frames, orc_frames, at_frames, nonode, moves, lines, suppressed, mv_full, need_frames, calls, steps,
@@ -1588,21 +1589,34 @@ static int nb_log_ok(void)
 	return 0;
 }
 
-/* the move's row (its attack record; between blows per kind): -1 = the table full */
+/* the move's row (its attack record; between blows per kind). Build 27 (re-xr-pipeline.md 107, the soak): the table
+ * full = a row that learnt no lean, else the next in turn, is reused (before: -1, and no move after the 96th distinct one
+ * was ever learnt - hours of varied fights); a tracker's row index is checked against its record before use (nb_flush) */
 static int nb_mv_row(uintptr_t rec, const char *kind)
 {
 	for (int i = 0; i < g_nb.nmv; i++)
 		if (g_nb.mv[i].rec == rec && (rec || !strcmp(g_nb.mv[i].kind, kind)))
 			return i;
-	if (g_nb.nmv >= NB_MOVES)
-		return -1;
-	struct nb_move *m = &g_nb.mv[g_nb.nmv];
+	int k = g_nb.nmv;
+	if (k >= NB_MOVES) {
+		k = -1;
+		for (int j = 0; j < NB_MOVES && k < 0; j++) {
+			int i = (int)((g_nb.mv_next + (unsigned)j) % NB_MOVES);
+			if (!g_nb.mv[i].n_lean)
+				k = i;
+		}
+		if (k < 0)
+			k = (int)(g_nb.mv_next % NB_MOVES);
+		g_nb.mv_next = (unsigned)k + 1, g_nb.mv_reused++;
+	} else
+		g_nb.nmv++;
+	struct nb_move *m = &g_nb.mv[k];
 	memset(m, 0, sizeof *m);
 	m->rec = rec, m->min = INFINITY, m->t_lean = -1;
 	if (!rec || !rx_rec_name(rec, m->name, sizeof m->name)[0])
 		snprintf(m->name, sizeof m->name, "%s", rec ? "?" : "(between blows)");
 	snprintf(m->kind, sizeof m->kind, "%s", kind);
-	return g_nb.nmv++;
+	return k;
 }
 
 /* a move over (its attack changed, the orc gone or out of range): its row in the table (and what the hold learnt of

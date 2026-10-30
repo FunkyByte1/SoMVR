@@ -221,7 +221,7 @@ static int ob_upload(dev_st *ds, const char *text) {
     XrResult r;
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(OB.sc, &ai, &xi)) || xi >= OB.nimg)
         return ob_off("xrAcquireSwapchainImage (objective): %s, image %u of %u", xr_str(r), xi, OB.nimg), -1;
-    if ((r = X.xrWaitSwapchainImage(OB.sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(OB.sc, &wti, "objective")) != XR_SUCCESS)
         return ob_off("xrWaitSwapchainImage (objective): %s", xr_str(r)), -1;
     const char *what = "vkResetCommandBuffer";
     if ((vr = ds->ResetCommandBuffer(OB.cmd, 0)) == VK_SUCCESS) {

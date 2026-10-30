@@ -132,6 +132,10 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
 #define SOMVR_VMA_STRING SOMVR_VMA_BIT(37)  /* SOMVR_BOW: the Bow string row (trigger / grip, taken while the bow is away;
                                              * the Controls page's bow lines follow it: somvr_vm_ctl_avail) */
 #define SOMVR_VMA_JUMP SOMVR_VMA_BIT(38)    /* build 22: SOMVR_JUMP=on: the Controls page's Jump line */
+#define SOMVR_VMA_RIDE SOMVR_VMA_BIT(41)    /* build 26: SOMVR_RIDE=on: the Controls page's Ride lines (39-40 left to the
+                                             * helpers of builds 25-26 beside it) */
+#define SOMVR_VMA_ARMY SOMVR_VMA_BIT(44)    /* build 27: SOMVR_ARMY=on: the Controls page's Map line names the click's hold
+                                             * (re-xr-pipeline.md 110; 42-43 left to the round's other helpers) */
 #define SOMVR_VMA_FIGHT_ROWS                                                                                           \
     (SOMVR_VMA_SWORD | SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND | SOMVR_VMA_BITE | SOMVR_VMA_ARROWS | SOMVR_VMA_DODGE |     \
      SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON | SOMVR_VMA_STRING)

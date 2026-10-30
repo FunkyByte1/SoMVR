@@ -164,7 +164,7 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         else if (a == SOMVR_PRA_STATUS && ci_eq(arg, na, "look"))
             orc = 3; /* "status look": what the game's look-at triggers read of the players (the collect drill) */
         else if (a == SOMVR_PRA_GROUP) { /* build 19: the count */
-            if (na != 1 || (arg[0] != '3' && arg[0] != '4'))
+            if (na != 1 || arg[0] < '3' || arg[0] > '0' + SOMVR_PR_GROUP_MAX) /* build 27: 3..8 (was 3|4) */
                 return 0;
             orc = arg[0] - '0';
         } else if ((a != SOMVR_PRA_SPAWN && a != SOMVR_PRA_FAR) || (orc = orc_tok(arg, na)) < 0)
@@ -343,8 +343,14 @@ int somvr_pr_group_plan(int n, somvr_pr_group_orc out[SOMVR_PR_GROUP_MAX])
         { SOMVR_PRO_INFANTRY, -125.f, 550.f }, { SOMVR_PRO_BERSERKER, 125.f, 550.f } };
     static const somvr_pr_group_orc three[3] = {
         { SOMVR_PRO_INFANTRY, -35.f, 450.f }, { SOMVR_PRO_SHIELD, 35.f, 450.f }, { SOMVR_PRO_BERSERKER, 180.f, 550.f } };
-    n = n <= 3 ? 3 : 4;
-    memcpy(out, n == 3 ? three : four, (size_t)n * sizeof *out);
+    /* build 27 (docs/re-xr-pipeline.md 108): the crowd of 5-8, the first 5-6 as the four's ring, more round the back */
+    static const somvr_pr_group_orc more[8] = {
+        { SOMVR_PRO_INFANTRY, -30.f, 450.f }, { SOMVR_PRO_SHIELD, 30.f, 450.f },
+        { SOMVR_PRO_BERSERKER, -95.f, 500.f }, { SOMVR_PRO_INFANTRY, 95.f, 500.f },
+        { SOMVR_PRO_INFANTRY, -150.f, 550.f }, { SOMVR_PRO_INFANTRY, 150.f, 550.f },
+        { SOMVR_PRO_SHIELD, 180.f, 600.f }, { SOMVR_PRO_BERSERKER, 0.f, 650.f } };
+    n = n <= 3 ? 3 : n > SOMVR_PR_GROUP_MAX ? SOMVR_PR_GROUP_MAX : n;
+    memcpy(out, n == 3 ? three : n == 4 ? four : more, (size_t)n * sizeof *out);
     return n;
 }
 

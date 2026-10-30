@@ -32,6 +32,10 @@ static struct {
 	double next_aim_line;
 	uint64_t finds, rays, frames_ok, frames_no, other_tid, walk_ticks, turn_ticks, arrived, blink_refused, head_away;
 	float off_max, step_max;
+	uintptr_t aim_c[8];    /* build 27: the aim's orcs (their Combat), the vault's pick by index */
+	uintptr_t go_orc;      /* ... the vaulted orc of the blink running (0 = not a vault) */
+	uint64_t vault_aims, vault_frames, vault_goes, vault_arrived, vault_behind;
+	int was_vault;
 	int lines;
 	_Atomic int req_onoff; /* the word "wstep on|off" (-1 none) */
 	_Atomic int req_state; /* the word "wstep state" */
@@ -59,6 +63,9 @@ static void ws_config(int *bad)
 	g_ws.cfg.max_cm = env_float("SOMVR_WRAITH_STEP_M", 7, 3, 10, bad) * 100;
 	g_ws.cfg.min_s = env_float("SOMVR_WRAITH_STEP_HOLD_MS", 250, 0, 1500, bad) / 1000;
 	g_ws.cfg.cool_s = env_float("SOMVR_WRAITH_STEP_COOL_MS", 1000, 0, 10000, bad) / 1000;
+	/* build 27 (docs/re-xr-pipeline.md 108): the vault over an orc - the head on an orc within this = the ring behind it */
+	g_ws.cfg.vault_cm = env_float("SOMVR_WRAITH_STEP_VAULT_CM", 0, 0, 500, bad);
+	g_ws.cfg.behind_cm = env_float("SOMVR_WRAITH_STEP_VAULT_BEHIND_CM", 120, 105, 250, bad);
 	if (g_ws.on)
 		logf_("CONFIG wraith step=on: the right stick pushed forward and held = aim (a ring where the head's ray meets the "
 		      "ground, %.1f to %.1f m; gold = there, red and crossed = not there: a wall, a ledge over %.1f m, over %.1f m up, "
@@ -66,6 +73,11 @@ static void ws_config(int *bad)
 		      "move stick past %.1f while aiming = the cancel; the next after %.0f ms; no game cost (SOMVR_WRAITH_STEP)",
 		      g_ws.cfg.min_cm / 100, g_ws.cfg.max_cm / 100, g_ws.cfg.drop_cm / 100, g_ws.cfg.rise_cm / 100,
 		      g_ws.cfg.min_s * 1e3, g_ws.cfg.cancel, g_ws.cfg.cool_s * 1e3);
+	if (g_ws.on && g_ws.cfg.vault_cm > 0)
+		logf_("CONFIG wraith step vault: the head's ray on an orc's body (its root within %.1f m of Talion's) = the ring %.0f cm "
+		      "behind its root on the line from Talion through it (the same checks: a wall or a fence at its back, a ledge, "
+		      "another orc there = red); let go = the same blink over it, the facing kept (SOMVR_WRAITH_STEP_VAULT_CM, "
+		      "_BEHIND_CM)", g_ws.cfg.vault_cm / 100, g_ws.cfg.behind_cm);
 }
 
 /* the word "wstep on|off|state" (SOMVR_HANDS_TEST's trigger file; another thread: requests only) */
@@ -164,23 +176,33 @@ static void ws_aim(double t)
 	float at[3] = { g_ws.me.x, g_ws.me.y, g_ws.me.z };
 	int n = pcomb ? cb_orcs_r(pcomb, pc, at, g_ws.cfg.max_cm + 300.0f, near, 8) : 0;
 	for (int i = 0; i < n; i++)
-		orcs[i] = (sv_vec3){ near[i].pos[0], near[i].pos[1], near[i].pos[2] };
+		orcs[i] = (sv_vec3){ near[i].pos[0], near[i].pos[1], near[i].pos[2] }, g_ws.aim_c[i] = near[i].c;
 	somvr_ws_aim a;
 	somvr_ws_find(&g_ws.cfg, cl_ray, NULL, g_ws.eye, g_ws.gaze, g_ws.me, g_ws.floor_y, orcs, n > 0 ? n : 0, &a);
 	g_ws.finds++, g_ws.rays += (uint64_t)a.rays;
 	uint32_t ev = somvr_ws_aimed(&g_ws.s, &a);
+	if (a.vault) /* build 27 */
+		g_ws.vault_frames++, g_ws.vault_aims += !g_ws.was_vault;
+	int vchg = a.vault != g_ws.was_vault;
+	g_ws.was_vault = a.vault;
+	if (vchg && a.vault && a.kind == SOMVR_WSA_OK && !(ev & SOMVR_WSE_TURN_OK)) /* the ring jumped behind an orc: a tick */
+		in_haptic_event(SOMVR_HAND_R, 0.15f, 0.02f, SOMVR_HAP_UI);
 	if (ev & SOMVR_WSE_TURN_NO) /* the pullover's soft "no" (re-xr-pipeline.md 55.1) */
 		in_haptic_double(SOMVR_HAND_R, 0.2f, 0.02f, 0.07f, SOMVR_HAP_UI);
 	else if (ev & SOMVR_WSE_TURN_OK)
 		in_haptic_event(SOMVR_HAND_R, 0.15f, 0.02f, SOMVR_HAP_UI);
-	if ((a.kind != g_ws.last_kind || a.why != g_ws.last_why || t >= g_ws.next_aim_line) && ws_log_ok()) {
+	if ((a.kind != g_ws.last_kind || a.why != g_ws.last_why || vchg || t >= g_ws.next_aim_line) && ws_log_ok()) {
+		char vx[96] = "";
+		if (a.vault && a.orc >= 0 && a.orc < n)
+			snprintf(vx, sizeof vx, "; the vault over orc %#lx (its root %.0f cm away)", (unsigned long)near[a.orc].c,
+				 a.orc_cm);
 		float pit = asinf(fmaxf(-1, fminf(1, g_ws.gaze.y))) * 57.29578f;
 		logf_("WSTEP t=%.3f frame=%llu aim: %s%s%s at (%.0f %.0f %.0f), %.0f cm from Talion along the floor, %+.0f cm over "
-		      "his floor%s%s; the head's ray %+.1f deg (pitch) from (%.0f %.0f %.0f); orcs near %d; %d casts", t,
+		      "his floor%s%s%s; the head's ray %+.1f deg (pitch) from (%.0f %.0f %.0f); orcs near %d; %d casts", t,
 		      (unsigned long long)g_fr.frame, a.kind == SOMVR_WSA_OK ? "the gold ring" : a.kind == SOMVR_WSA_NO ? "refused: "
 		      : "no ring: ", a.kind == SOMVR_WSA_OK ? "" : somvr_ws_why_name(a.why), a.kind == SOMVR_WSA_NO ? " (the red crossed ring)" : "",
 		      a.land.x, a.land.y, a.land.z, a.dist_cm, a.rise_cm, a.far ? ", the farthest (the head's ray past it)" : "",
-		      a.through ? ", through an orc" : "", pit, g_ws.eye.x, g_ws.eye.y, g_ws.eye.z, n, a.rays);
+		      a.through ? ", through an orc" : "", vx, pit, g_ws.eye.x, g_ws.eye.y, g_ws.eye.z, n, a.rays);
 		g_ws.next_aim_line = t + 1.0;
 	}
 	g_ws.last_kind = a.kind, g_ws.last_why = a.why;
@@ -203,6 +225,39 @@ static void ws_arrival(double t)
 		      "the floor; %.1f cm from the ring's middle, his root %+.0f cm over its floor (the target %+.0f)", t,
 		      (unsigned long long)g_fr.frame, (t - g_ws.go_t) * 1e3, p[0], p[1], p[2], step, off, p[1] - g_ws.go_land.y,
 		      g_ws.go_to.y - g_ws.go_land.y);
+	if (g_ws.go_orc) { /* build 27: the vaulted orc against Talion now: behind him (the facing kept) = over it */
+		uintptr_t pl = g_fr.pl, pcomb = pl ? peek_ptr(pl + P_COMBAT) : 0, pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0;
+		if (pc && vptr_of((void *)pc) != g_cbg.vt_combat)
+			pc = 0;
+		struct cb_orc near[8];
+		int n = pcomb ? cb_orcs_r(pcomb, pc, p, 600.0f, near, 8) : 0, found = 0;
+		for (int i = 0; i < n; i++) {
+			if (near[i].c != g_ws.go_orc)
+				continue;
+			float dx = near[i].pos[0] - p[0], dz = near[i].pos[2] - p[2];
+			float b = (atan2f(dx, dz) - atan2f(g_ws.gaze.x, g_ws.gaze.z)) * 57.29578f;
+			while (b > 180)
+				b -= 360;
+			while (b < -180)
+				b += 360;
+			float was = (near[i].pos[0] - g_ws.go_from.x) * (g_ws.go_land.x - g_ws.go_from.x) +
+				    (near[i].pos[2] - g_ws.go_from.z) * (g_ws.go_land.z - g_ws.go_from.z);
+			float L2 = (g_ws.go_land.x - g_ws.go_from.x) * (g_ws.go_land.x - g_ws.go_from.x) +
+				   (g_ws.go_land.z - g_ws.go_from.z) * (g_ws.go_land.z - g_ws.go_from.z);
+			int over = L2 > 1 && was > 0 && was < L2; /* its root between the start and the landing along the line */
+			g_ws.vault_behind += over, found = 1;
+			if (over)
+				py_vault(near[i].c, t); /* SOMVR_PARRY_VAULT_MS: its opening (logged as PARRY open ... by a vault over it) */
+			if (ws_log_ok())
+				logf_("WSTEP t=%.3f vault: the orc %#lx now %.0f cm from Talion at %+.0f deg from the head's heading (%s); "
+				      "%s", t, (unsigned long)g_ws.go_orc, hypotf(dx, dz), b, fabsf(b) > 120 ? "behind him" : fabsf(b) > 60 ?
+				      "beside him" : "in front", over ? "it stands between the start and the landing: over it" :
+				      "NOT between the start and the landing");
+		}
+		if (!found && ws_log_ok())
+			logf_("WSTEP t=%.3f vault: the orc %#lx not among the orcs within 6 m now", t, (unsigned long)g_ws.go_orc);
+		g_ws.vault_arrived++, g_ws.go_orc = 0;
+	}
 }
 
 static void ws_frame(uintptr_t pl, int stereo)
@@ -274,12 +329,15 @@ static void ws_frame(uintptr_t pl, int stereo)
 				      (unsigned long long)g_fr.frame, g_ws.s.held_s);
 		} else {
 			g_ws.going = 1, g_ws.go_t = t, g_ws.go_from = g_ws.me, g_ws.go_land = l, g_ws.go_to = to;
+			const somvr_ws_aim *va = &g_ws.s.aim; /* build 27: the vault's orc */
+			g_ws.go_orc = va->vault && va->orc >= 0 && va->orc < 8 ? g_ws.aim_c[va->orc] : 0;
+			g_ws.vault_goes += g_ws.go_orc != 0;
 			in_haptic_event(SOMVR_HAND_L, 0.3f, 0.05f, SOMVR_HAP_COMBAT), in_haptic_event(SOMVR_HAND_R, 0.3f, 0.05f, SOMVR_HAP_COMBAT);
 			if (ws_log_ok())
 				logf_("WSTEP t=%.3f frame=%llu let go after %.2f s: the blink onto the gold ring at (%.0f %.0f %.0f), %.0f cm from "
-				      "Talion along the floor, %+.0f cm over his floor, under the quick fade (the target %.0f %.0f %.0f)", t,
+				      "Talion along the floor, %+.0f cm over his floor, under the quick fade (the target %.0f %.0f %.0f)%s", t,
 				      (unsigned long long)g_fr.frame, g_ws.s.held_s, l.x, l.y, l.z, hypotf(l.x - g_ws.me.x, l.z - g_ws.me.z),
-				      l.y - g_ws.floor_y, to.x, to.y, to.z);
+				      l.y - g_ws.floor_y, to.x, to.y, to.z, g_ws.go_orc ? "; the vault over the orc" : "");
 		}
 	}
 	if (g_ws.s.phase == SOMVR_WSP_AIM)
@@ -328,4 +386,9 @@ static void ws_end_log(void)
 	      (unsigned long long)s->n_turn_no, (unsigned long long)g_ws.frames_ok, (unsigned long long)g_ws.frames_no,
 	      (unsigned long long)g_ws.finds, (unsigned long long)g_ws.rays, (unsigned long long)g_ws.walk_ticks,
 	      (unsigned long long)g_ws.turn_ticks, (unsigned long long)g_ws.head_away, (unsigned long long)g_ws.other_tid);
+	if (g_ws.cfg.vault_cm > 0)
+		logf_("WSTEP END build 27 vault: aims at an orc %llu (frames %llu), vaults %llu, arrived %llu, the orc between the start "
+		      "and the landing %llu", (unsigned long long)g_ws.vault_aims, (unsigned long long)g_ws.vault_frames,
+		      (unsigned long long)g_ws.vault_goes, (unsigned long long)g_ws.vault_arrived,
+		      (unsigned long long)g_ws.vault_behind);
 }

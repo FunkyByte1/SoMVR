@@ -139,7 +139,8 @@ static struct {
 	int tid, on, seen, tier;
 } g_kph;
 
-static int kp_log_ok(void) { return g_kp.lines++ < 900; } /* build 24: 900 (was 400) */
+static struct log_late g_kp_late; /* build 27: then 200 a 10 minutes */
+static int kp_log_ok(void) { return g_kp.lines++ < 900 || log_late_ok(&g_kp_late, 200, mono()); } /* build 24: 900 (was 400) */
 
 /* the faction manager's current faction (0 = none readable) */
 static uintptr_t kp_faction(void)

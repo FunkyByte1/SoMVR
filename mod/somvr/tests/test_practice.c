@@ -297,7 +297,7 @@ static void test_group(void)
     somvr_pr_req r;
     CHECK(somvr_pr_word("group", &r) && r.action == SOMVR_PRA_GROUP && r.orc == -1 && somvr_pr_word("group 3", &r) &&
               r.orc == 3 && somvr_pr_word("  Spawn Group 4 ", &r) && r.action == SOMVR_PRA_GROUP && r.orc == 4 &&
-              somvr_pr_word("crowd", &r) && r.action == SOMVR_PRA_GROUP && !somvr_pr_word("group 5", &r) &&
+              somvr_pr_word("crowd", &r) && r.action == SOMVR_PRA_GROUP && somvr_pr_word("group 8", &r) && r.orc == 8 && !somvr_pr_word("group 9", &r) &&
               !somvr_pr_word("group 2", &r) && !somvr_pr_word("group 34", &r) && !somvr_pr_word("group 3 x", &r) &&
               !somvr_pr_word("refill group", &r) && somvr_pr_word("spawn shield", &r) && r.action == SOMVR_PRA_SPAWN &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_GROUP), "group") && !strcmp(somvr_pr_action_name(8), "far") &&
@@ -308,14 +308,14 @@ static void test_group(void)
               !somvr_pr_word("captain shield", &r) && !somvr_pr_word("captain 3", &r) && SOMVR_PRA_CAPTAIN == 10 &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(11), "?"),
           "the captain's word");
-    for (int n = 3; n <= 4; n++) {
+    for (int n = 3; n <= 8; n++) { /* build 27: to 8 */
         somvr_pr_group_orc g[SOMVR_PR_GROUP_MAX];
         int k = somvr_pr_group_plan(n, g), types = 0, front = 0, behind = 0, apart = 1, far_ok = 1;
         float pos[3] = {32500, 2100, -24800}, fwd[3] = {0.6f, 0.f, 0.8f}, sp[SOMVR_PR_GROUP_MAX][3];
         for (int i = 0; i < k; i++) {
             types |= 1 << g[i].type;
             front += fabsf(g[i].yaw_deg) <= 55.f, behind += fabsf(g[i].yaw_deg) > 90.f;
-            far_ok &= g[i].dist_cm >= 400.f && g[i].dist_cm <= 600.f;
+            far_ok &= g[i].dist_cm >= 400.f && g[i].dist_cm <= 650.f;
             somvr_pr_group_spot(pos, fwd, g[i].yaw_deg, g[i].dist_cm, sp[i]);
             float dx = sp[i][0] - pos[0], dz = sp[i][2] - pos[2];
             far_ok &= fabsf(sqrtf(dx * dx + dz * dz) - g[i].dist_cm) < 0.5f && sp[i][1] == pos[1];
@@ -327,11 +327,12 @@ static void test_group(void)
                 apart &= sqrtf(ex * ex + ez * ez) >= 250.f;
             }
         }
-        CHECK(k == n && types == 7 && front == 2 && behind == n - 2 && far_ok && apart,
-              "the group of %d: %d orcs, types %#x, %d in front, %d behind, 4-6 m, apart", n, k, types, front, behind);
+        int nf = n == 8 ? 3 : 2; /* the 8th: a berserker straight ahead, farther out */
+        CHECK(k == n && types == 7 && front == nf && behind == n - nf && far_ok && apart,
+              "the group of %d: %d orcs, types %#x, %d in front, %d behind, 4-6.5 m, apart", n, k, types, front, behind);
     }
     somvr_pr_group_orc g[SOMVR_PR_GROUP_MAX];
-    CHECK(somvr_pr_group_plan(9, g) == 4 && somvr_pr_group_plan(0, g) == 3, "the count clamped");
+    CHECK(somvr_pr_group_plan(9, g) == 8 && somvr_pr_group_plan(0, g) == 3, "the count clamped");
     float pos[3] = {0, 0, 0}, z[3] = {0, 0, 0}, o[3];
     somvr_pr_group_spot(pos, z, 90.f, 500.f, o);
     CHECK(fabsf(o[0] - 500.f) < 0.01f && fabsf(o[2]) < 0.01f, "no heading: +Z; +90 deg = +X (%.1f %.1f)", o[0], o[2]);

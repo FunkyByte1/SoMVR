@@ -69,6 +69,12 @@ typedef struct {
     int game_moves;              /* 1 (default): A = the stock A in the world, the sprint latch = FreeRun; 0
                                     (SOMVR_GAMEMOVES=off): A nothing in the world, the latch no FreeRun (the game's
                                     jump, vault, ledge pull-up, evade and free-run never carry the view) */
+    /* build 27 (SOMVR_ARMY, re-xr-pipeline.md 110): the right stick's click in the world. 0 (default) = the map (PDA
+     * held while the click is). > 0: a click let go within army_s = the map (PDA for one tick at the release); held
+     * army_s = the game's "Hold [>]" (the pad's START held: army_cmd for army_ms, once per press) - Sauron's Army /
+     * the warchief's target; the left menu button's hold stays the VR panel's */
+    float army_s, army_ms;
+    int army_cmd;
 } sc_ctl_cfg;
 void sc_ctl_cfg_default(sc_ctl_cfg *c);
 
@@ -95,6 +101,8 @@ typedef struct {
     double flick_next;
     double last_t;
     int was_live;
+    int r3_dn, r3_long;    /* SOMVR_ARMY: the right stick's click down (in the world), its hold given */
+    double r3_t0, army_until;
 } sc_ctl;
 void sc_ctl_reset(sc_ctl *s); /* everything up and disarmed; the counters are re-baselined at the next live tick */
 
@@ -117,7 +125,8 @@ typedef struct {
     uint32_t raw;                /* bit SC_PAD_A/B/X/Y/LB/RB: that button held now, in any context (SOMVR_USE: the
                                   * quest cards' pad buttons while a presentation is up in the world) */
 } sc_tick_out;
-enum { SC_E_SNAP = 1u, SC_E_CROUCH = 2u, SC_E_SPRINT = 4u, SC_E_DPAD = 8u, SC_E_TAP = 16u, SC_E_REPRESS = 32u };
+enum { SC_E_SNAP = 1u, SC_E_CROUCH = 2u, SC_E_SPRINT = 4u, SC_E_DPAD = 8u, SC_E_TAP = 16u, SC_E_REPRESS = 32u,
+       SC_E_MAP = 64u /* SOMVR_ARMY: the click's map */, SC_E_ARMY = 128u /* SOMVR_ARMY: its hold */ };
 
 /* One tick: st = the snapshot (NULL or live = 0: everything off and the state reset), ctx, dpsi = the stick's
  * pre-rotation (the head's world heading minus the game camera's, re-xr-input.md 3.3), t = now (s). The per-button

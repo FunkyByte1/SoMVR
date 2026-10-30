@@ -43,6 +43,8 @@
 #   --hold SECS     command mode: at most SECS seconds of game time (default 1200; the hard limit wins)
 #   --hard SECS     the hard limit of the whole run (default 1800, the 30 minutes of a test); above 1800 only with
 #                   --headset (the user's own sessions, scripts/som-vr-headset.sh), at most 14400
+#   --soak          (build 27) a long test: --hard up to 4500 without --headset (the soak's 45-60 minutes of play,
+#                   scripts/soak27-drive.sh; docs/re-xr-pipeline.md 107)
 #   --size WxH      gamescope output and nested X screen (default 1920x1080)
 #   --refresh HZ    gamescope's refresh, the game's vsync cap (default 60; the headset sessions: the headset's, 90)
 #   --backup DIR    save backup with SHA256SUMS (default: the newest ShadowOfMordor/backups/save-*)
@@ -163,7 +165,7 @@ HARD=1800
 MAIN=$$
 T0=$(date +%s)
 
-SEED=""; STEAM=0; DRY=0; HEADSET=0; ENDING=""; AUTO=0; HOLD=1200; SIZE=1920x1080; REFRESH=60; BACKUP=""; VRAM_MIN_GB=4; PRELOADS=(); GEXTRA=(); CMDS=""; SAVECOPY=0; SAVEFROM=""
+SEED=""; STEAM=0; DRY=0; HEADSET=0; SOAK=0; ENDING=""; AUTO=0; HOLD=1200; SIZE=1920x1080; REFRESH=60; BACKUP=""; VRAM_MIN_GB=4; PRELOADS=(); GEXTRA=(); CMDS=""; SAVECOPY=0; SAVEFROM=""
 GARGS=(); PSETS=()
 BCDIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 while [ $# -gt 0 ]; do
@@ -175,6 +177,7 @@ while [ $# -gt 0 ]; do
     --auto) AUTO=${2:?}; shift 2 ;;
     --hold) HOLD=${2:?}; shift 2 ;;
     --hard) HARD=${2:?}; shift 2 ;;
+    --soak) SOAK=1; shift ;;
     --size) SIZE=${2:?}; shift 2 ;;
     --refresh) REFRESH=${2:?}; shift 2 ;;
     --backup) BACKUP=${2:?}; shift 2 ;;
@@ -192,7 +195,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [[ $HARD =~ ^[0-9]+$ ]] && [ "$HARD" -ge 300 ] && [ "$HARD" -le 14400 ] || { echo "bad --hard $HARD (300..14400)" >&2; exit 2; }
-[ "$HARD" -le 1800 ] || [ $HEADSET = 1 ] || { echo "--hard above 1800 needs --headset" >&2; exit 2; }
+[ "$HARD" -le 1800 ] || [ $HEADSET = 1 ] || { [ $SOAK = 1 ] && [ "$HARD" -le 4500 ]; } ||
+  { echo "--hard above 1800 needs --headset (or --soak: at most 4500)" >&2; exit 2; }
 case $SIZE in [0-9]*x[0-9]*) W=${SIZE%x*}; H=${SIZE#*x} ;; *) echo "bad --size $SIZE" >&2; exit 2 ;; esac
 bad() { echo "$*" >&2; exit 2; }
 PROBE=""; SPIKE1=""   # the probe / spike1 library among the preloads (by file name)

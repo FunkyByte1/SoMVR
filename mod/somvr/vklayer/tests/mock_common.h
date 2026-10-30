@@ -91,6 +91,7 @@ typedef int (*mockxr_rejects_fn)(void);                             /* MOCKXR_RE
 typedef int (*mockxr_floor_locates_fn)(void);                       /* SOMVR_XR_FLOOR: LOCAL located in its STAGE */
 typedef const mockxr_end *(*mockxr_last_end_fn)(void);
 typedef int (*mockxr_live_fn)(void); /* sessions + spaces + swapchains still alive */
+typedef int (*mockxr_wait_timeouts_fn)(void); /* build 27: XR_TIMEOUT_EXPIRED results given (MOCKXR_WAIT_TIMEOUT) */
 typedef int (*mockxr_after_unload_fn)(void); /* MOCKXR_UNLOAD_AT_EXIT: XR calls after the exit-time unload */
 typedef int (*mockxr_unloaded_fn)(void);
 typedef int (*mockxr_inst_live_fn)(void);

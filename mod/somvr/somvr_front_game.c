@@ -133,6 +133,8 @@ struct ff_cnt {
 };
 static struct {
 	int mode, camcopy, gamelog, onecue;
+	int turn_cue; /* build 27: SOMVR_FRONT_TURN_CUE (re-xr-pipeline.md 108.4) */
+	uint64_t turn_cues; /* ... the cues given */
 	somvr_front_cfg cfg;
 	somvr_front f;
 	float fov_h, fov_v, lockout, damage, keep;
@@ -1108,6 +1110,38 @@ static void ff_cues(const float head[3], const float hq[4], double t, somvr_thre
 			double it = ff_track_impact(r->atk_c, r->atk_serial);
 			r->atk_end = it > 0 ? it : fmin(r->atk_end, t);
 		}
+		/* build 27 (SOMVR_FRONT_TURN_CUE; re-xr-pipeline.md 108.4): a turn granted in view whose orc is out of the
+		 * head's view before its blow starts (it walked round, the player turned, a vault put it behind; the crowd of 8
+		 * in run 021916: 6 blows started 61-156 deg off with only THREAT's late cue, 0.3-0.9 s before the impact) =
+		 * FRONT's warning cue now: the sound at it, a tick on its side, the edge there held to its impact as a warned
+		 * grant's (ONECUE: THREAT's own pulse and sound for that blow are skipped, its LATE cleared) */
+		if (g_ff.turn_cue && g_ff.mode == FF_ON && r->grant_t > 0 && !r->start_seen && !r->grant_warned &&
+		    t - r->grant_t <= FF_HOLD_S) {
+			uintptr_t rc = r->ch ? peek_ptr(r->ch + PR_CH_COMBAT) : 0;
+			struct cb_orc ro;
+			if (rc && cb_orc_get(rc, &ro)) {
+				float rp[3] = { ro.pos[0], ro.pos[1] + 40.0f, ro.pos[2] }, rl[3];
+				somvr_th_local(head, hq, rp, rl);
+				somvr_th_dir rd = somvr_th_direction(rl);
+				if (somvr_th_view_off(&g_th.cfg, rd) > g_ff.cfg.view_deg * 0.5f) {
+					int side = somvr_th_side(rd);
+					r->grant_warned = 1, r->warn_t = t, r->edge_t0 = t, r->pre_pulse = 1, r->pre_sound = g_th.sound[0] != 0;
+					r->summed = 0, r->atk_c = 0;
+					for (int s = 0; s < 2; s++)
+						if (side & (1 << s))
+							haps[s] = haps[s] > SOMVR_THH_ANNOUNCE ? haps[s] : SOMVR_THH_ANNOUNCE,
+							e->edge[s] = fmaxf(e->edge[s], g_th.cfg.edge * 0.8f);
+					th_sound(rp, head, t, (uintptr_t)r->id);
+					g_ff.turn_cues++, g_ff.n.warn_cues++;
+					d = rd, seen = 0; /* the hold below: this frame's edge at its live place */
+					if (ff_ev_log_ok(t))
+						logf_("FRONT turn-cue t=%.3f orc=%#lx: granted %.2f s ago at off=%.0f deg (in view), its blow not "
+						      "started, now off=%.0f deg yaw=%+.0f dist=%.1f m (out of view): the warning's cue now (the "
+						      "sound at it, a tick on the %s side, the edge held to its impact)", t, (unsigned long)r->id,
+						      t - r->grant_t, r->off, rd.off_deg, rd.yaw_deg, rd.dist_cm * 0.01f, somvr_th_side_name(side));
+				}
+			}
+		}
 		int hold = g_ff.onecue && g_ff.mode == FF_ON && lv < 0 && r->grant_warned &&
 			   (r->start_seen ? r->atk_c && t < r->atk_end : t - r->grant_t < FF_HOLD_S);
 		if (lv >= 0 && g_ff.mode == FF_ON && seen) {
@@ -1348,6 +1382,7 @@ static void ff_start(int *bad)
 	g_ff.keep = env_float("SOMVR_FRONT_KEEP", 1000, 0, 1e6f, bad);
 	g_ff.gamelog = env_word("SOMVR_FRONT_GAMELOG", onoff_w, 2, 0);
 	g_ff.onecue = env_word("SOMVR_FRONT_ONECUE", onoff_w, 2, 1);
+	g_ff.turn_cue = env_word("SOMVR_FRONT_TURN_CUE", (const char *const[]){ "off", "on" }, 2, 0); /* build 27 (108.4) */
 	somvr_front_init(&g_ff.f);
 	somvr_pace_cfg_default(&g_ff.pcfg); /* build 19: the crowd's pace */
 	somvr_pace_init(&g_ff.pace);
@@ -1392,6 +1427,9 @@ static void ff_start(int *bad)
 	      g_ff.keep, g_ff.gamelog, g_ff.onecue, g_ff.on_score ? "in" : "OFF", g_ff.on_grant ? "in" : "OFF", g_ff.on_cam[0] ? "in" : "off",
 	      g_ff.on_cam[1] ? "in" : "off", g_ff.on_dmg ? "in" : "off", ln[0], ln[1], ln[2], ln[3], ln[4], ln[5], ln[6], ln[7],
 	      ln[8]);
+	if (g_ff.turn_cue)
+		logf_("CONFIG front turn_cue=on: a turn granted in view whose orc is out of view before its blow starts gets the "
+		      "warning's cue then (the sound at it, a tick on its side, the edge held to its impact; SOMVR_FRONT_TURN_CUE)");
 	if (!g_ff.on_score || !g_ff.on_grant)
 		logf_("WARN SOMVR_FRONT: FR_SCORE/FR_GRANT not both in: no veto (the game's own choice)");
 	logf_("CONFIG crowd pace=%s pace_ms=%.0f lead_ms=%.0f start_ms=%.0f (one wind-up at Talion at a time, the blows at "
@@ -1470,5 +1508,8 @@ static void ff_end_log(void)
 		      (unsigned long long)g_ff.an.warned_hit, (unsigned long long)g_ff.an.warned_start, g_ff.an.lead_min * 1e3,
 		      g_ff.an.lead_n ? g_ff.an.lead_sum / (double)g_ff.an.lead_n * 1e3 : 0.0, (unsigned long long)g_ff.an.unwarned);
 	}
+	if (g_ff.turn_cue)
+		logf_("FRONT END build 27 turn cues (SOMVR_FRONT_TURN_CUE): %llu (a turn granted in view, its orc out of view "
+		      "before its blow started: warned then)", (unsigned long long)g_ff.turn_cues);
 	pthread_mutex_unlock(&g_ff_mu);
 }

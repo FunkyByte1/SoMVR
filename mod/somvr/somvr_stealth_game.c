@@ -144,7 +144,8 @@ static struct {
 
 static void stl_sweep(int hand, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
 static void stl_b21_frame(const struct cb_orc *o, int n, uintptr_t pc, double t); /* build 21 */
-static int stl_line(void) { return g_stl.lines < 600 ? (int)++g_stl.lines : 0; } /* a STEALTH line may go out */
+static struct log_late g_stl_late; /* build 27: then 150 a 10 minutes */
+static int stl_line(void) { return g_stl.lines < 600 ? (int)++g_stl.lines : log_late_ok(&g_stl_late, 150, mono()); } /* a STEALTH line may go out */
 
 /* the game's awareness of Talion (FUN_0229bbc0 read as memory), and whether it fights him */
 static int stl_aware(const struct cb_orc *o, uintptr_t me, struct stl_aw *a)

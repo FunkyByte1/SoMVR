@@ -90,10 +90,13 @@ static struct {
 	int kills[SOMVR_BZ_N];
 } g_bz;
 
+static struct log_late g_bz_late; /* build 27 */
 static int bz_log_ok(void)
 {
 	if (g_bz.lines < 600)
 		return ++g_bz.lines;
+	if (log_late_ok(&g_bz_late, 100, mono())) /* build 27: then 100 a 10 minutes */
+		return 1;
 	g_bz.suppressed++;
 	return 0;
 }

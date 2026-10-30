@@ -9933,6 +9933,133 @@ static void bm_tests(void)
 		bm_frame1();
 	EXPECT(!g_bm.o.frozen && g_bm.s.blinks == 1 && g_bm.s.eases == 0, "bodymoments: seat 0: a blink in place");
 	unsetenv("SOMVR_BM_POLICY"), unsetenv("SOMVR_BM_NAMES"), unsetenv("SOMVR_BM_SEAT");
+	/* 8b. build 26, SOMVR_RIDE (docs/re-xr-pipeline.md 105): a caragor mounted. Off (build 25): the mount is the window,
+	 * the flat game camera for the whole ride. On: stereo throughout; getting on held (the game's mount sync, then the
+	 * ride's own hold until he sits), released by a blink onto the seat; seated the eyes on the beast's root + the
+	 * rider's eyes - Talion's head node bobbing 10 cm a stride stays out of the view, the beast's run is exact across;
+	 * getting off held and blinked back to his head; a mount that is no beast (the game's grab) the window as before */
+	bm_restart(g_bms);
+	for (int i = 0; i < 120; i++)
+		bm_frame1();
+	static _Alignas(16) char rbeast[0x40];
+	float rbp[3] = { root().x + 150, root().y - 40, root().z }, rbq[4] = { 0, 0, 0, 1 }, rr0[3];
+	memcpy(rbeast + OBJ_POS, rbp, 12), memcpy(rbeast + OBJ_ROT, rbq, 16), memcpy(rr0, g_pobj.pos, 12);
+	struct bz_one bz0 = g_bz.b[0];
+	memset(&g_bz.b[0], 0, sizeof g_bz.b[0]);
+	g_bz.b[0].c = 0x5150, g_bz.b[0].hobj = (uintptr_t)rbeast, g_bz.b[0].kind = SOMVR_BZ_CARAGOR; /* white box: seen by BEASTS */
+	int rbad = 0;
+	unsetenv("SOMVR_RIDE");
+	mt_config(&rbad);
+	fb_p(FB_P_MOUNT, (uintptr_t)rbeast);
+	for (n = 0; n < 200 && g_h4_calls != 1; n++)
+		bm_frame1();
+	EXPECT(!g_mt.on && g_h4_calls == 1 && g_bm.o.window && g_bm.o.win_cond == SOMVR_FB_MOUNT,
+	       "ride off: a mount is the window (%d frames, window %d by %d)", n, g_bm.o.window, g_bm.o.win_cond);
+	fb_p(FB_P_MOUNT, 0);
+	for (int i = 0; i < 300; i++)
+		bm_frame1();
+	setenv("SOMVR_RIDE", "on", 1), setenv("SOMVR_RIDE_TRACE", "4000", 1);
+	mt_config(&rbad);
+	EXPECT(g_mt.on && !rbad && log_has("CONFIG ride=on (SOMVR_RIDE, build 26)"), "ride: on");
+	uint64_t rbl0 = g_bm.s.blinks;
+	sv_vec3 re0 = eye_mid();
+	bm_set_sync(bm_rec(0)); /* the game's mount: Talion's sync carries him onto the saddle */
+	ok = 1;
+	for (int i = 1; i <= 30; i++) {
+		for (int k = 0; k < 3; k++)
+			g_pobj.pos[k] = rr0[k] + (rbp[k] + (k == 1 ? 133.0f : 0.0f) - rr0[k]) * (float)i / 30.0f;
+		if (i == 20)
+			fb_p(FB_P_MOUNT, (uintptr_t)rbeast); /* P+0x1d8 set before his sync ends */
+		bm_frame1(), ok &= g_h4_calls == 2 && fb_at(eye_mid(), re0, 1e-3);
+	}
+	EXPECT(ok && g_mt.state == MT_MOUNTING && g_mt.beast_ok && g_mt.kind == SOMVR_RD_CARAGOR && log_has("RIDE t=") &&
+		       log_has("mounted: a caragor"), "ride: getting on held in stereo (state %d)", g_mt.state);
+	bm_set_sync(0);
+	int seated_at = -1, blink_at = -1;
+	for (int i = 1; i <= 120; i++) {
+		bm_frame1(), ok &= g_h4_calls == 2;
+		if (seated_at < 0 && g_mt.state == MT_SEATED)
+			seated_at = i;
+		if (blink_at < 0 && g_bm.s.blinks > rbl0)
+			blink_at = i;
+	}
+	float seat_y = rbp[1] + 133 + g_head_up;
+	EXPECT(ok && seated_at >= 8 && seated_at <= 12 && blink_at > seated_at && blink_at <= seated_at + 30 &&
+		       g_bm.s.blinks == rbl0 + 1 && !g_bm.o.frozen && !g_bm.o.window,
+	       "ride: seated at frame %d, the blink at %d (blinks %llu)", seated_at, blink_at, (unsigned long long)g_bm.s.blinks);
+	EXPECT(NEAR(eye_mid().x, rbp[0], 0.5) && NEAR(eye_mid().y, seat_y, 0.5) && NEAR(eye_mid().z, rbp[2], 0.5),
+	       "ride: the eyes on the seat %g %g %g (beast %g %g %g, seat y %g)", eye_mid().x, eye_mid().y, eye_mid().z, rbp[0],
+	       rbp[1], rbp[2], seat_y);
+	EXPECT(!(g_bm.last_conds & (SOMVR_BMC_BIT(SOMVR_FB_MOUNT) | SOMVR_BMC_BIT(SOMVR_FB_SYNC))) && log_has("seated on the caragor"),
+	       "ride: the mount's conditions are the ride's (%#x)", g_bm.last_conds);
+	/* the run: the beast 5 m/s ahead (+z), Talion's head node bobbing 10 cm at 2.5 Hz and swaying 6 cm with the stride;
+	 * a mounted attack's sync on Talion meanwhile does not freeze the view */
+	float ymin = 1e9f, ymax = -1e9f, xerr = 0, zerr = 0, hmin = 1e9f, hmax = -1e9f;
+	ok = 1;
+	for (int i = 1; i <= 180; i++) {
+		float tt = (float)i / 90.0f;
+		rbp[2] += 500.0f / 90.0f;
+		memcpy(rbeast + OBJ_POS, rbp, 12);
+		g_pobj.pos[0] = rbp[0] + 6 * sinf(2 * (float)M_PI * 1.25f * tt), g_pobj.pos[1] = rbp[1] + 133 + 10 * sinf(2 * (float)M_PI * 2.5f * tt);
+		g_pobj.pos[2] = rbp[2];
+		if (i == 60)
+			bm_set_sync(bm_rec(0));
+		if (i == 90)
+			bm_set_sync(0);
+		bm_frame1(), ok &= g_h4_calls == 2 && !g_bm.o.frozen;
+		if (i > 90) {
+			ymin = fminf(ymin, eye_mid().y - rbp[1]), ymax = fmaxf(ymax, eye_mid().y - rbp[1]);
+			hmin = fminf(hmin, fb_head().y - rbp[1]), hmax = fmaxf(hmax, fb_head().y - rbp[1]);
+			xerr = fmaxf(xerr, fabsf(eye_mid().x - rbp[0])), zerr = fmaxf(zerr, fabsf(eye_mid().z - rbp[2]));
+		}
+	}
+	EXPECT(ok, "ride: the run held or flat");
+	EXPECT(ymax - ymin <= 1.5f && hmax - hmin >= 19, "ride: the stride's bob kept out: the view %.2f cm (the head node %.1f)",
+	       ymax - ymin, hmax - hmin);
+	EXPECT(xerr <= 1.0f && zerr <= 1.0f, "ride: the run exact across: %.2f / %.2f cm off the seat", xerr, zerr);
+	float steer = 99; /* build 27: seated, the stick steers in the beast's frame (never the head's: 109.5) */
+	EXPECT(mt_steer_heading(&steer) && steer == g_mt.heading, "ride: seated, the stick in the beast's frame (%g, the beast %g)",
+	       steer, g_mt.heading);
+	/* getting off: the game's dismount sync, P+0x1d8 cleared, Talion on the ground again: held, then the blink to him */
+	uint64_t rbl1 = g_bm.s.blinks;
+	bm_set_sync(bm_rec(0)), fb_p(FB_P_MOUNT, 0);
+	sv_vec3 re1 = eye_mid();
+	ok = 1;
+	for (int i = 1; i <= 20; i++) {
+		g_pobj.pos[0] = rbp[0] - 150, g_pobj.pos[1] = rr0[1], g_pobj.pos[2] = rbp[2];
+		bm_frame1(), ok &= g_h4_calls == 2 && fb_at(eye_mid(), re1, 1e-3);
+	}
+	EXPECT(ok && g_mt.state == MT_DISMOUNTING && log_has("dismounted (P+0x1d8 cleared)"), "ride: getting off held (%d)",
+	       g_mt.state);
+	bm_set_sync(0);
+	for (int i = 0; i < 90; i++)
+		bm_frame1();
+	EXPECT(g_mt.state == MT_OFF && g_bm.s.blinks == rbl1 + 1 && fb_at(eye_mid(), fb_head(), 1e-3) && log_has("off: standing"),
+	       "ride: off by a blink to the head (state %d, blinks %llu)", g_mt.state, (unsigned long long)g_bm.s.blinks);
+	EXPECT(!mt_steer_heading(&steer), "ride: off, the stick the head's again");
+	/* a mount that is no beast (the game's grab of an orc): left alone - the window meanwhile, after 8 s unknown (build
+	 * 27: 2 s lost a checkpoint's restore on the beast) not a beast */
+	memset(&g_bz.b[0], 0, sizeof g_bz.b[0]);
+	fb_p(FB_P_MOUNT, (uintptr_t)rbeast);
+	for (n = 0; n < 250; n++)
+		bm_frame1();
+	EXPECT(g_bm.o.window && g_mt.state == MT_MOUNTING && !g_mt.beast_ok && g_mt.not_beast == 0,
+	       "ride: a mount not known yet: the window while it is asked (state %d)", g_mt.state);
+	for (; n < 800; n++)
+		bm_frame1();
+	EXPECT(g_h4_calls == 1 && g_bm.o.window && g_mt.state == MT_OFF && g_mt.not_beast == 1 && log_has("is not a beast"),
+	       "ride: a grab's mount is the window as before (%d frames)", n);
+	fb_p(FB_P_MOUNT, 0);
+	for (int i = 0; i < 300; i++)
+		bm_frame1();
+	mt_end_log();
+	EXPECT(log_has("RIDE END mounts 1 (not a beast 1) dismounts 1") && log_has("RIDE view f="), "ride: the END line");
+	unsetenv("SOMVR_RIDE"), unsetenv("SOMVR_RIDE_TRACE");
+	mt_config(&rbad);
+	g_bz.b[0] = bz0;
+	memcpy(g_pobj.pos, rr0, 12);
+	for (int i = 0; i < 120; i++)
+		bm_frame1();
 	/* 9. a mismatched BM_CURATK: the attack is not read (the dead flag still is) */
 	struct site_spec bad[BMS_N];
 	memcpy(bad, g_bms, sizeof bad);
@@ -11819,6 +11946,40 @@ static void vb_tests(void)
 	vb_end_log();
 	EXPECT(log_has("VERBS END: ") && log_has("grabs 2, near misses 2, releases 1, done 1, lost 1") &&
 		       log_has("A taps 1, kills pressed 1"), "verbs: the END line");
+	/* build 26 (SOMVR_VERBS_DISMISS, re-xr-pipeline.md 106): a Domination's choices - B = its Dismiss ('Domination_Cancel');
+	 * an interrogation's B = its Eliminate as before */
+	{
+		int nup = g_vb.nup, dis0 = g_vb.dismiss, dis = -1;
+		struct vb_prompt up0 = g_vb.up[0], up1 = g_vb.up[1];
+		EXPECT(log_has("CONFIG verbs build 26: dismiss=on (SOMVR_VERBS_DISMISS; unset: on)"), "verbs: the Dismiss on by default");
+		g_vb.nup = 2;
+		g_vb.up[0] = (struct vb_prompt){ .act = 164 }, snprintf(g_vb.up[0].str, sizeof g_vb.up[0].str, "Domination_Interrogate");
+		g_vb.up[1] = (struct vb_prompt){ .act = 163 }, snprintf(g_vb.up[1].str, sizeof g_vb.up[1].str, "Domination_Cancel");
+		g_vb.dismiss = 0;
+		EXPECT(vb_choice_b(&dis) == 0 && dis == 0, "verbs: a Domination's B with SOMVR_VERBS_DISMISS=off: nothing (build 25)");
+		g_vb.dismiss = 1;
+		EXPECT(vb_choice_b(&dis) == 163 && dis == 1 && vb_choice(0) == 164, "verbs: a Domination's B = its Dismiss 163 (%d)", dis);
+		snprintf(g_vb.up[1].str, sizeof g_vb.up[1].str, "UI_Prompt_Interrogate_Eliminate");
+		EXPECT(vb_choice_b(&dis) == 163 && dis == 0, "verbs: an interrogation's B = its Eliminate");
+		/* a captain's Domination with Command unlocked: only 'Domination_Command' (162, "Press (Y) for Command") */
+		int cm0 = g_vb.command;
+		g_vb.nup = 1, g_vb.up[0] = (struct vb_prompt){ .act = 162 };
+		snprintf(g_vb.up[0].str, sizeof g_vb.up[0].str, "Domination_Command");
+		g_vb.command = 0;
+		EXPECT(vb_choice_command() == 0 && vb_choice_b(&dis) == 0, "verbs: a Domination's Command with SOMVR_VERBS_COMMAND=off: nothing");
+		g_vb.command = 1;
+		EXPECT(vb_choice_command() == 162 && vb_choice_b(&dis) == 0 && vb_choice(0) == 0, "verbs: a Domination's Y = its Command 162");
+		EXPECT(log_has("CONFIG verbs build 26: command=on (SOMVR_VERBS_COMMAND; unset: on)"), "verbs: the Command on by default");
+		uintptr_t ac0 = g_vb.ask_c;
+		int md0 = g_vb.mode;
+		g_vb.mode = VB_ON, g_vb.ask_c = 0;
+		EXPECT(!vb_y_choice_up(), "verbs: Y stays the vision without a Domination asking");
+		g_vb.ask_c = (uintptr_t)&g_oc[0];
+		EXPECT(vb_y_choice_up(), "verbs: Y is the Command's (not the vision's) while that choice is up");
+		g_vb.ask_c = ac0, g_vb.mode = md0;
+		g_vb.command = cm0;
+		g_vb.nup = nup, g_vb.dismiss = dis0, g_vb.up[0] = up0, g_vb.up[1] = up1;
+	}
 	unsetenv("SOMVR_VERBS");
 	vb_start(&bad);
 	atomic_store(&g_vb_words_mode, 0);
@@ -15403,6 +15564,107 @@ static void vg_tests(void)
 	g_vg_sites = g_vg_sites_game;
 }
 
+/* build 27 (re-xr-pipeline.md 107, the soak): SOMVR_GLYPH's trigger and item tables over a long session - before build 27
+ * they only filled (48 triggers, 16 items near Talion) and nothing new was followed or collected after that */
+static void soak_tests(void)
+{
+	static struct co_trig tr0[CO_TRIGS];
+	static struct co_item it0[CO_ITEMS];
+	static uint8_t objs[CO_ITEMS + 2][0x40], items[CO_ITEMS + 2][0x600];
+	memcpy(tr0, g_co.tr, sizeof tr0), memcpy(it0, g_co.it, sizeof it0);
+	int ntr0 = g_co.ntr, nit0 = g_co.nit;
+	uint64_t ru0 = g_co.n_tr_reused, iu0 = g_co.n_it_reused;
+	g_co.ntr = 0, g_co.nit = 0;
+	double now = 1000.0;
+	int fresh = 0, bad = 0;
+	for (int i = 0; i < CO_TRIGS; i++)
+		bad += co_trig_slot(0x10000 + 16 * (uintptr_t)i, now, &fresh) != i || !fresh;
+	EXPECT(!bad && g_co.ntr == CO_TRIGS, "glyph triggers: 48 followed (%d bad, %d)", bad, g_co.ntr);
+	EXPECT(co_trig_slot(0x10000 + 16 * 5, now + 1, &fresh) == 5 && !fresh, "a known trigger: its own entry");
+	EXPECT(co_trig_slot(0x90000, now + 2, &fresh) == -1, "full, all touched within 10 s: the 49th not followed");
+	int k = co_trig_slot(0x90000, now + 20, &fresh);
+	EXPECT(k == 0 && fresh && g_co.tr[0].t == 0x90000 && g_co.tr[0].state == -1 && g_co.tr[0].last == now + 20 &&
+	       g_co.ntr == CO_TRIGS && g_co.n_tr_reused == ru0 + 1,
+	       "full, 20 s on: the 49th in the stalest entry (got %d fresh %d, %d followed)", k, fresh, g_co.ntr);
+	EXPECT(co_trig_slot(0x10000 + 16 * 5, now + 21, &fresh) == 5 && !fresh, "the touched one kept");
+	bad = 0;
+	for (int i = 0; i < CO_ITEMS; i++)
+		bad += co_item_rec((uintptr_t)objs[i], (uintptr_t)items[i]) != &g_co.it[i];
+	EXPECT(!bad && g_co.nit == CO_ITEMS, "glyph items: 16 followed (%d bad)", bad);
+	EXPECT(co_item_rec((uintptr_t)objs[CO_ITEMS], (uintptr_t)items[CO_ITEMS]) == NULL,
+	       "full, all touched now: the 17th not followed");
+	g_co.it[3].last -= 20;
+	uint32_t id3 = g_co.it[3].id;
+	struct co_item *r = co_item_rec((uintptr_t)objs[CO_ITEMS], (uintptr_t)items[CO_ITEMS]);
+	EXPECT(r == &g_co.it[3] && r->obj == (uintptr_t)objs[CO_ITEMS] && r->item == (uintptr_t)items[CO_ITEMS] &&
+	       r->id != id3 && g_co.n_it_reused == iu0 + 1, "full, one untouched 20 s: the 17th in its entry");
+	uint32_t id17 = r ? r->id : 0;
+	r = co_item_rec((uintptr_t)objs[CO_ITEMS], (uintptr_t)items[CO_ITEMS + 1]);
+	EXPECT(r == &g_co.it[3] && r->item == (uintptr_t)items[CO_ITEMS + 1] && r->id != id17 && g_co.nit == CO_ITEMS,
+	       "the same object address with another item: a fresh record in its entry");
+	EXPECT(co_item_rec((uintptr_t)objs[0], (uintptr_t)items[0]) == &g_co.it[0], "a known item: its own record");
+	/* the fallback's state-tag cache and the body moments' record cache: full, a new record is still cached (before
+	 * build 27: looked up by name, and a classed one logged, every frame) */
+	static uint8_t recs[FB_TC_N + BM_NC_N + 4][0x40];
+	static __typeof__(g_fb.tc) tc0;
+	static __typeof__(g_bm.nc) nc0;
+	memcpy(tc0, g_fb.tc, sizeof tc0), memcpy(nc0, g_bm.nc, sizeof nc0);
+	int ntc0 = g_fb.ntc, nnc0 = g_bm.nnc;
+	unsigned tf0 = g_fb.tc_full, nf0 = g_bm.nc_full;
+	g_fb.ntc = 0, g_fb.tc_full = 0;
+	for (int i = 0; i < FB_TC_N + 1; i++)
+		fb_tag_class((uintptr_t)recs[i]);
+	int in = 0;
+	for (int i = 0; i < FB_TC_N; i++)
+		in |= g_fb.tc[i].rec == (uintptr_t)recs[FB_TC_N];
+	EXPECT(in && g_fb.ntc == FB_TC_N && g_fb.tc_full == 1, "fallback tags: the 193rd cached in the full cache (%d, %u)",
+	       g_fb.ntc, g_fb.tc_full);
+	g_bm.nnc = 0, g_bm.nc_full = 0;
+	for (int i = 0; i < BM_NC_N + 1; i++)
+		bm_class((uintptr_t)recs[i], SOMVR_BMS_STATE);
+	in = 0;
+	for (int i = 0; i < BM_NC_N; i++)
+		in |= g_bm.nc[i].rec == (uintptr_t)recs[BM_NC_N] && g_bm.nc[i].src == SOMVR_BMS_STATE;
+	EXPECT(in && g_bm.nnc == BM_NC_N && g_bm.nc_full == 1, "body moments: the 289th record cached in the full cache");
+	memcpy(g_fb.tc, tc0, sizeof tc0), memcpy(g_bm.nc, nc0, sizeof nc0);
+	g_fb.ntc = ntc0, g_bm.nnc = nnc0, g_fb.tc_full = tf0, g_bm.nc_full = nf0;
+	/* the fight's body-hold moves (SOMVR_FIGHT's lean learnt per orc attack): full, a new move still gets a row - one
+	 * that learnt nothing first, else the next in turn (before build 27: -1, nothing more learnt) */
+	static __typeof__(g_nb.mv) mv0;
+	static uint8_t atks[NB_MOVES + 2][0x40];
+	memcpy(mv0, g_nb.mv, sizeof mv0);
+	int nmv0 = g_nb.nmv;
+	unsigned mn0 = g_nb.mv_next, mr0 = g_nb.mv_reused;
+	g_nb.nmv = 0, g_nb.mv_next = 0, g_nb.mv_reused = 0;
+	bad = 0;
+	for (int i = 0; i < NB_MOVES; i++) {
+		bad += nb_mv_row((uintptr_t)atks[i], "attack") != i;
+		g_nb.mv[i].n_lean = i != 7;
+	}
+	EXPECT(!bad && g_nb.nmv == NB_MOVES, "fight moves: 256 rows (%d bad)", bad);
+	EXPECT(nb_mv_row((uintptr_t)atks[3], "attack") == 3, "a known move: its own row");
+	k = nb_mv_row((uintptr_t)atks[NB_MOVES], "attack");
+	EXPECT(k == 7 && g_nb.mv[7].rec == (uintptr_t)atks[NB_MOVES] && !g_nb.mv[7].n_lean && g_nb.mv_reused == 1,
+	       "full: the 257th move in the row that learnt no lean (got %d)", k);
+	g_nb.mv[7].n_lean = 1;
+	k = nb_mv_row((uintptr_t)atks[NB_MOVES + 1], "attack");
+	EXPECT(k == 8 && g_nb.nmv == NB_MOVES, "full, all learnt: the next row in turn (got %d)", k);
+	memcpy(g_nb.mv, mv0, sizeof mv0);
+	g_nb.nmv = nmv0, g_nb.mv_next = mn0, g_nb.mv_reused = mr0;
+	/* a pause within 0.5 s of a tutorial SOMVR_HINTS=off dropped is the tutorial's (the WARN) */
+	EXPECT(ss_tut_pause(100.0, 100.1, 0, 1) && !ss_tut_pause(100.0, 100.7, 0, 1) && !ss_tut_pause(-1, 100.1, 0, 1) &&
+	       !ss_tut_pause(100.0, 100.1, 1, 1) && !ss_tut_pause(100.0, 100.1, 0, 0), "the dropped tutorial's pause");
+	/* a module's lines after its first ones: n in each 10 minutes (before build 27: none for the rest of the session) */
+	struct log_late ll = { 0 };
+	bad = 0;
+	for (int i = 0; i < 3; i++)
+		bad += !log_late_ok(&ll, 3, 5000.0 + i);
+	EXPECT(!bad && !log_late_ok(&ll, 3, 5100.0) && !log_late_ok(&ll, 3, 5399.0), "late lines: 3 in the window, then none");
+	EXPECT(log_late_ok(&ll, 3, 5400.0) && log_late_ok(&ll, 3, 5401.0), "late lines: the next 10 minutes, 3 again");
+	memcpy(g_co.tr, tr0, sizeof tr0), memcpy(g_co.it, it0, sizeof it0);
+	g_co.ntr = ntr0, g_co.nit = nit0, g_co.n_tr_reused = ru0, g_co.n_it_reused = iu0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
@@ -15991,6 +16253,7 @@ int main(int argc, char **argv)
 	vg_tests();     /* SOMVR_VERBS_GLOW: two stand-in thunks (build 13) */
 	ff_tests();     /* SOMVR_FRONT: the wrappers on stand-ins (build 14) */
 	py_tests();     /* SOMVR_PARRY / SOMVR_SHOVE: the window, the opening, the riposte (build 18) */
+	soak_tests();   /* build 27: the long session's tables (SOMVR_GLYPH's triggers and items) */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",
 	       (unsigned long long)atomic_load(&g_st_stereo), (unsigned long long)atomic_load(&g_st_mono),

@@ -1429,6 +1429,28 @@ static int hud_view_space(void) {
     return 0;
 }
 
+/* build 27 (docs/re-xr-pipeline.md 107, the soak): xrWaitSwapchainImage until the image is ours. XR_TIMEOUT_EXPIRED
+ * is a success code - the runtime still holds the image when the 1 s timeout runs out - and the spec's answer is to
+ * wait again (the image stays acquired; it cannot be released before a successful wait). Before build 27 every caller
+ * took any result but XR_SUCCESS as a failure: one compositor stall of a second (a GPU hiccup, the stream) ended VR, or
+ * that overlay (the HUD, the menus, the comfort ring...), for the rest of the session. A real error, or
+ * XR_IMAGE_WAIT_TRIES timeouts in a row, still fails as before. Each timeout is logged (the first 20, then every 100th). */
+#define XR_IMAGE_WAIT_TRIES 10
+static XrResult xr_wait_image(XrSwapchain sc, const XrSwapchainImageWaitInfo *wti, const char *what) {
+    static _Atomic unsigned long long timeouts;
+    XrResult r = XR_TIMEOUT_EXPIRED;
+    for (int k = 1; k <= XR_IMAGE_WAIT_TRIES && r == XR_TIMEOUT_EXPIRED; k++) {
+        r = X.xrWaitSwapchainImage(sc, wti);
+        if (r != XR_TIMEOUT_EXPIRED) break;
+        unsigned long long n = ++timeouts;
+        if (n <= 20 || n % 100 == 0)
+            lg("xr: image wait: %s: xrWaitSwapchainImage timed out (%lld ms, try %d of %d, %llu timeouts so far)%s", what,
+               (long long)(wti->timeout / 1000000), k, XR_IMAGE_WAIT_TRIES, n,
+               k < XR_IMAGE_WAIT_TRIES ? ": waiting again" : ": given up");
+    }
+    return r;
+}
+
 static int hud_acquire(void) {
     XrSwapchainImageAcquireInfo ai = {.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
@@ -1436,7 +1458,7 @@ static int hud_acquire(void) {
     if (XR_FAILED(r) || X.hud_xi >= X.hud_nimg)
         return hud_off("xrAcquireSwapchainImage (HUD): %s, image %u of %u", xr_str(r), X.hud_xi, X.hud_nimg), -1;
     X.hud_acquired = 1;
-    if ((r = X.xrWaitSwapchainImage(X.hud_sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(X.hud_sc, &wti, "HUD")) != XR_SUCCESS)
         return hud_off("xrWaitSwapchainImage (HUD): %s", xr_str(r)), -1;
     X.hud_acquired = 2;
     return 0;
@@ -2560,7 +2582,7 @@ static int ptr_fill(dev_st *ds) {
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(X.ptr_sc, &ai, &xi)) || xi >= n)
         return ptr_off("xrAcquireSwapchainImage (pointer): %s, image %u of %u", xr_str(r), xi, n), -1;
-    if ((r = X.xrWaitSwapchainImage(X.ptr_sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(X.ptr_sc, &wti, "pointer")) != XR_SUCCESS)
         return ptr_off("xrWaitSwapchainImage (pointer): %s", xr_str(r)), -1;
     /* the upload: a host buffer with the image, one copy into the acquired image, waited here (4 KB, once) */
     VkDeviceSize sz = (VkDeviceSize)SOMVR_PTR_IMG_W * SOMVR_PTR_IMG_H * 4;
@@ -2866,7 +2888,7 @@ static int fade_fill(dev_st *ds) {
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(X.fade_sc, &ai, &xi)) || xi >= n)
         return fade_off("xrAcquireSwapchainImage (fade): %s, image %u of %u", xr_str(r), xi, n), -1;
-    if ((r = X.xrWaitSwapchainImage(X.fade_sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(X.fade_sc, &wti, "fade")) != XR_SUCCESS)
         return fade_off("xrWaitSwapchainImage (fade): %s", xr_str(r)), -1;
     VkDeviceSize sz = (VkDeviceSize)SOMVR_FADE_W * SOMVR_FADE_H * 4;
     VkBufferCreateInfo bci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = sz,
@@ -3141,7 +3163,7 @@ static int cf_fill_img(dev_st *ds, int w) { /* w = 1: the wraith tunnel's image 
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(*psc, &ai, &xi)) || xi >= n)
         return cf_off("xrAcquireSwapchainImage (comfort): %s, image %u of %u", xr_str(r), xi, n), -1;
-    if ((r = X.xrWaitSwapchainImage(*psc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(*psc, &wti, "comfort")) != XR_SUCCESS)
         return cf_off("xrWaitSwapchainImage (comfort): %s", xr_str(r)), -1;
     /* the upload: a host buffer with the image, one copy into the acquired image, waited here (1 MB, once) */
     VkDeviceSize sz = (VkDeviceSize)SOMVR_VIG_IMG_W * SOMVR_VIG_IMG_H * 4;
@@ -3487,7 +3509,7 @@ static int th_fill(dev_st *ds) {
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(TH.sc, &ai, &xi)) || xi >= n)
         return th_off("xrAcquireSwapchainImage (threat): %s, image %u of %u", xr_str(r), xi, n), -1;
-    if ((r = X.xrWaitSwapchainImage(TH.sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(TH.sc, &wti, "threat")) != XR_SUCCESS)
         return th_off("xrWaitSwapchainImage (threat): %s", xr_str(r)), -1;
     /* the upload: a host buffer with the image, one copy into the acquired image, waited here (148 KB, once) */
     VkDeviceSize sz = (VkDeviceSize)SOMVR_TH_IMG_W * SOMVR_TH_IMG_H * 4;
@@ -3867,7 +3889,7 @@ static int env_sky_fill(dev_st *ds) {
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(EV.sky_sc, &ai, &xi)) || xi >= n)
         return env_off("xrAcquireSwapchainImage (sky): %s, image %u of %u", xr_str(r), xi, n), -1;
-    if ((r = X.xrWaitSwapchainImage(EV.sky_sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(EV.sky_sc, &wti, "sky")) != XR_SUCCESS)
         return env_off("xrWaitSwapchainImage (sky): %s", xr_str(r)), -1;
     /* the upload: a host buffer with the image, one copy into the acquired image, waited here (2 MB, once) */
     VkDeviceSize sz = (VkDeviceSize)w * h * 4;
@@ -4069,7 +4091,7 @@ static int env_world_freeze(dev_st *ds) {
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(EV.world_sc, &ai, &xi)) || xi >= n)
         return env_world_off("xrAcquireSwapchainImage (world): %s, image %u of %u", xr_str(r), xi, n);
-    if ((r = X.xrWaitSwapchainImage(EV.world_sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(EV.world_sc, &wti, "world")) != XR_SUCCESS)
         return env_world_off("xrWaitSwapchainImage (world): %s", xr_str(r));
     VkImage dst = im[xi].image;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -4731,7 +4753,7 @@ static int vm_upload(dev_st *ds, const somvr_vm_view *v) {
     XrResult r;
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(VM.sc, &ai, &xi)) || xi >= VM.nimg)
         return vm_off("xrAcquireSwapchainImage (VR menu): %s, image %u of %u", xr_str(r), xi, VM.nimg), -1;
-    if ((r = X.xrWaitSwapchainImage(VM.sc, &wti)) != XR_SUCCESS)
+    if ((r = xr_wait_image(VM.sc, &wti, "VR menu")) != XR_SUCCESS)
         return vm_off("xrWaitSwapchainImage (VR menu): %s", xr_str(r)), -1;
     const char *what = "vkResetCommandBuffer";
     if ((vr = ds->ResetCommandBuffer(VM.cmd, 0)) == VK_SUCCESS) {
@@ -5201,7 +5223,7 @@ static int xr_acquire(void) {
     if (XR_FAILED(r = X.xrAcquireSwapchainImage(X.sc, &ai, &X.xi)) || X.xi >= X.nimg)
         return xr_fail("xrAcquireSwapchainImage", r), -1;
     X.img_acquired = 1;
-    if ((r = X.xrWaitSwapchainImage(X.sc, &wti)) != XR_SUCCESS) return xr_fail("xrWaitSwapchainImage", r), -1;
+    if ((r = xr_wait_image(X.sc, &wti, "eyes")) != XR_SUCCESS) return xr_fail("xrWaitSwapchainImage", r), -1;
     return 0;
 }
 

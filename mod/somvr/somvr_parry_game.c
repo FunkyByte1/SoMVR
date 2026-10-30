@@ -69,9 +69,11 @@ static struct {
 	double auto_t;
 	uint64_t parries, early, opens, streaks, streak_fail, sounds, sound_fail, ripostes, breaks, break_miss, through,
 		rx_skipped, shoves, shove_took, shove_refused, pushes_refused, dodge_opens, reels_short, lines, suppressed;
+	float vault_s;       /* build 27: SOMVR_PARRY_VAULT_MS - the orc the wraith step's vault went over is open this long */
+	uint64_t vault_opens;
 } g_py;
 
-static const char *const g_py_why[4] = { "-", "a parry", "a shove", "a dodge" };
+static const char *const g_py_why[5] = { "-", "a parry", "a shove", "a dodge", "a vault over it" };
 enum { PY_SH_OFF, PY_SH_GAME, PY_SH_SPHERE };
 
 static int py_log_ok(void)
@@ -97,6 +99,7 @@ static void py_config(void)
 	g_py.brk = g_py.shield_mode != PY_SH_OFF;
 	g_py.dodge = env_word("SOMVR_PARRY_DODGE", (const char *const[]){ "off", "on" }, 2, 0);
 	g_py.dodge_s = env_float("SOMVR_PARRY_DODGE_MS", 1500, 200, 3000, &bad) * 1e-3f;
+	g_py.vault_s = env_float("SOMVR_PARRY_VAULT_MS", 0, 0, 3000, &bad) * 1e-3f; /* build 27 (re-xr-pipeline.md 108.5) */
 	g_py.reel_cm = env_float("SOMVR_PARRY_REEL_CM", 0, 0, 200, &bad);
 	g_py.shove_mps = env_float("SOMVR_SHOVE_MPS", 1.5f, 0.5f, 6, &bad);
 	g_py.shove_reach = env_float("SOMVR_SHOVE_REACH_CM", 25, 0, 60, &bad);
@@ -112,6 +115,9 @@ static void py_config(void)
 		      "at most %.0f cm (SOMVR_PARRY_REEL_CM; 0 = SOMVR_COMBAT_STAGGER_CM's); the riposte into a raised shield by %s",
 		      g_py.dodge ? "on" : "off", g_py.dodge_s * 1e3f, g_py.reel_cm, g_py.shield_mode == PY_SH_GAME
 		      ? "the game's own direction rule" : g_py.shield_mode == PY_SH_SPHERE ? "our sphere at its origin" : "nothing");
+	if (g_py.on && g_py.vault_s > 0)
+		logf_("CONFIG parry vault (build 27): the orc the wraith step's vault went over is open %.0f ms (its block skipped, a "
+		      "committed cut the riposte; SOMVR_PARRY_VAULT_MS)", g_py.vault_s * 1e3f);
 	char why[160];
 	g_py.ok_streak = check_site(&g_pys[PYS_STREAK], why, sizeof why) == 0;
 	if (!g_py.ok_streak && g_py.streak)
@@ -222,6 +228,21 @@ static void py_dodge(uintptr_t c, uintptr_t attack, int applied, float dash_ms, 
 		logf_("PARRY dodge orc=%#lx attack '%s' t=%.3f: dodged (%s) -> its opening", (unsigned long)c,
 		      rx_rec_name(attack, an, sizeof an), t, dash_ms >= 0 ? "the A dodge" : "the head out of the blow");
 	py_open_for(c, 3, at, t, g_py.dodge_s);
+}
+
+/* build 27 (SOMVR_PARRY_VAULT_MS; re-xr-pipeline.md 108.5): the wraith step's vault landed behind orc c (ws_arrival):
+ * its opening - the player's half turn and a committed cut inside it is the riposte (through its block; into a shield
+ * it has turned back, the break), as after a dodged blow (run 021916: the defender had its shield round in 1.4-2 s) */
+static void py_vault(uintptr_t c, double t)
+{
+	if (!g_py.on || !(g_py.vault_s > 0) || !c || cb_dead(c))
+		return;
+	struct cb_orc o;
+	float at[3] = { 0, 0, 0 };
+	if (cb_orc_get(c, &o))
+		memcpy(at, o.pos, sizeof at);
+	g_py.vault_opens++;
+	py_open_for(c, 4, at, t, g_py.vault_s);
 }
 
 /* DEFENCE's contact judge accepted a block (df_contact, the recoil and the clank done): a parry if in the window */
@@ -518,4 +539,7 @@ static void py_end_log(void)
 	      (unsigned long long)g_py.break_miss, (unsigned long long)g_py.rx_skipped, (unsigned long long)g_py.shoves,
 	      (unsigned long long)g_py.shove_took, (unsigned long long)g_py.shove_refused, (unsigned long long)g_py.pushes_refused,
 	      (unsigned long long)g_py.dodge_opens, (unsigned long long)g_py.reels_short, (unsigned long long)g_py.suppressed);
+	if (g_py.vault_s > 0)
+		logf_("PARRY END build 27: openings by a vault over the orc %llu (SOMVR_PARRY_VAULT_MS %.0f)",
+		      (unsigned long long)g_py.vault_opens, g_py.vault_s * 1e3f);
 }

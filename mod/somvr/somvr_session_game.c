@@ -39,6 +39,16 @@ static struct {
 	float fps, gfps;                   /* the layer's stereo frames and the game's frames per second (the last 2 s) */
 	uint64_t n_short, n_long, n_ignored, n_quit;
 } g_ss;
+/* build 27 (re-xr-pipeline.md 107.6): the last tutorial SOMVR_HINTS=off dropped (somvr_gameopts_game.c) - a pause right
+ * after it is that tutorial's own, waiting unseen for its button (soak 2: 'PC_StruggleTutorial', 154 s on its knees) */
+static double g_ss_tut_t = -1;
+static char g_ss_tut_nm[64];
+static struct log_late g_ss_late; /* build 27: the UI lines after the first 400, 100 a 10 minutes */
+/* 1 = this pause (paused 0 -> 1 at now) came within 0.5 s of a dropped tutorial (tut_t; -1 none) */
+static int ss_tut_pause(double tut_t, double now, int was_paused, int paused)
+{
+	return tut_t >= 0 && !was_paused && paused && now - tut_t >= 0 && now - tut_t < 0.5;
+}
 static _Atomic uint32_t g_ss_wmark, g_ss_wquit; /* the trigger words: the writer thread -> the next input tick */
 static char g_ss_wnote[96];                      /* the word's note, written before g_ss_wmark moves (release) */
 
@@ -414,9 +424,15 @@ static void ss_tick(double t)
 					   : SOMVR_SSM_MENU, memory_order_relaxed);
 	if (g_inp.on && (!g_ss.ui_have || g_inp.ifs != g_ss.ui_ifs || g_inp.menus != g_ss.ui_menus ||
 			 g_inp.paused != g_ss.ui_paused || g_inp.video != g_ss.ui_video || g_inp.ctx != g_ss.ui_ctx)) {
+		int was = g_ss.ui_have && g_ss.ui_paused;
+		double now = mono();
+		if (ss_tut_pause(g_ss_tut_t, now, was, g_inp.paused == 1))
+			logf_("WARN SESSION t=%.3f the game paused %.2f s after SOMVR_HINTS=off dropped its tutorial '%s': the tutorial "
+			      "waits for its button (A) unseen - keep it (SOMVR_HINTS_KEEP_TUT)", t, now - g_ss_tut_t, g_ss_tut_nm),
+				g_ss_tut_t = -1;
 		g_ss.ui_have = 1, g_ss.ui_ifs = g_inp.ifs, g_ss.ui_menus = g_inp.menus, g_ss.ui_paused = g_inp.paused;
 		g_ss.ui_video = g_inp.video, g_ss.ui_ctx = g_inp.ctx;
-		if (g_ss.ui_lines++ < 400)
+		if (g_ss.ui_lines++ < 400 || log_late_ok(&g_ss_late, 100, now))
 			logf_("SESSION ui ifs=%d menus=%d paused=%d video=%d ctx=%s t=%.3f", g_inp.ifs, g_inp.menus, g_inp.paused,
 			      g_inp.video, ss_ctx_name(g_inp.ctx), t);
 	}

@@ -133,6 +133,20 @@ static void stick_of(const somvr_hand_in *hi, float v[2]) {
 static float analog(const somvr_hand_in *hi, float v) { return (hi->active & SOMVR_HACT_INPUT) && v > 0 && v <= 1 ? v : 0; }
 static int hyst(int *dn, float v, float on, float off) { return *dn = *dn ? v > off : v > on; }
 
+/* build 27, SOMVR_ARMY (the world): the right stick's click let go within army_s = the map (PDA, one tick at the
+ * release); held army_s = the game's "Hold [>]": army_cmd (the pad START's Menu 14) for army_ms, once per press */
+static void army_tick(sc_ctl *s, const sc_ctl_cfg *c, sc_tick_out *o, int dn, double t) {
+    if (dn && !s->r3_dn) {
+        s->r3_dn = 1, s->r3_t0 = t, s->r3_long = 0;
+    } else if (!dn && s->r3_dn) {
+        s->r3_dn = 0;
+        if (!s->r3_long) add_cmd(o, SC_CMD_PDA), o->edges |= SC_E_MAP;
+    }
+    if (s->r3_dn && !s->r3_long && t - s->r3_t0 >= c->army_s)
+        s->r3_long = 1, s->army_until = t + c->army_ms / 1000.0, o->edges |= SC_E_ARMY;
+    if (t < s->army_until) add_cmd(o, c->army_cmd);
+}
+
 void sc_tick(sc_ctl *s, const sc_ctl_cfg *c, const somvr_input_state *st, int live, int ctx, float dpsi, double t,
              sc_tick_out *o) {
     memset(o, 0, sizeof *o);
@@ -167,6 +181,8 @@ void sc_tick(sc_ctl *s, const sc_ctl_cfg *c, const somvr_input_state *st, int li
 
     if (ctx == SC_CTX_MENU) { /* the controllers are an Xbox pad (passthrough to the bound, active commands) */
         s->sprint = 0, s->snap_armed = 0, s->crouch_armed = 0, s->ease_t = 0;
+        s->r3_dn = 0, s->army_until = 0; /* SOMVR_ARMY: a click let go in a menu is the menu's (BACK), never a map at
+                                           * the return; a hold's rest is not carried into the menu it opened */
         float lv[2], rv[2];
         sc_deadzone(ls, c->dead, lv), sc_deadzone(rs, c->dead, rv);
         pad(o, SC_PAD_LX, lv[0]), pad(o, SC_PAD_LY, lv[1]), pad(o, SC_PAD_RX, rv[0]), pad(o, SC_PAD_RY, rv[1]);
@@ -209,7 +225,8 @@ void sc_tick(sc_ctl *s, const sc_ctl_cfg *c, const somvr_input_state *st, int li
         if (dn[0] & SOMVR_BTN_UPPER) add_cmd(o, SC_CMD_VISION);   /* Y hold = wraith vision (RT) */
     }
     if (dn[0] & SOMVR_BTN_MENU) add_cmd(o, SC_CMD_MENU);
-    if (dn[1] & SOMVR_BTN_STICK) add_cmd(o, SC_CMD_PDA); /* the map (the stock BACK) */
+    if (c->army_s > 0) army_tick(s, c, o, (dn[1] & SOMVR_BTN_STICK) != 0, t);
+    else if (dn[1] & SOMVR_BTN_STICK) add_cmd(o, SC_CMD_PDA); /* the map (the stock BACK) */
     if ((dn[0] & SOMVR_BTN_STICK) && !(prev[0] & SOMVR_BTN_STICK)) { /* sprint: latched until the stick rests */
         if (!s->sprint) o->edges |= SC_E_SPRINT;
         s->sprint = 1, s->sprint_low = 0;

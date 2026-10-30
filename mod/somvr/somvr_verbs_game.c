@@ -54,6 +54,9 @@ static struct {
 	int stealth;               /* SOMVR_VERBS_STEALTH: the stealth kill by a blade contact (default 1 with on) */
 	int brand_prompt;          /* build 22, SOMVR_VERBS_BRAND_PROMPT: the stealth brand's prompt kept (LT) */
 	int rally;                 /* build 25, SOMVR_VERBS_RALLY: the left hand raised + the trigger = 128 */
+	int dismiss;               /* build 26, SOMVR_VERBS_DISMISS: B = a Domination's Dismiss ('Domination_Cancel') */
+	int command;               /* build 26, SOMVR_VERBS_COMMAND: Y = a Domination's Command ('Domination_Command') */
+	uint64_t dismisses, commands;
 	float rally_cm;            /* ... the palm this far over the eyes (SOMVR_VERBS_RALLY_CM, 15) */
 	uint64_t rallies;
 	char stealth_node[64];     /* SOMVR_VERBS_STEALTH_NODE */
@@ -237,6 +240,35 @@ static int vb_choice(int kill)
 	return 0;
 }
 static void vb_tap(int cmd, double t) { g_vb.tap_cmd = cmd, g_vb.tap_until = t + 0.15; }
+/* build 26 (re-xr-pipeline.md 106, SOMVR_VERBS_DISMISS): a Domination's choices are 'Domination_Interrogate' ("Gain
+ * Intel", the trigger) and 'Domination_Cancel' ("(B) Dismiss", CombatStruggle03 163) - no Eliminate, so B found no
+ * choice and the captain stayed in Talion's hand (boot 20261029-204820, "The Power of the Wraith"): B = that one too */
+static int vb_choice_b(int *dismiss)
+{
+	int c = vb_choice(1);
+	*dismiss = 0;
+	if (c || !g_vb.dismiss)
+		return c;
+	for (int i = 0; i < g_vb.nup; i++) {
+		int a = g_vb.up[i].act;
+		if (a >= 161 && a <= 170 && (strstr(g_vb.up[i].str, "Cancel") || strstr(g_vb.up[i].str, "Dismiss")))
+			return *dismiss = 1, a;
+	}
+	return 0;
+}
+/* build 26 (SOMVR_VERBS_COMMAND): a captain's Domination (with Command unlocked) offers only 'Domination_Command'
+ * ("Press (Y) for Command", CombatStruggle02 162; boot 20261029-213203, Grublik) - no VR control sent it: the Touch's Y
+ * (the left upper, the prompt's own letter) = that choice */
+static int vb_choice_command(void)
+{
+	for (int i = 0; g_vb.command && i < g_vb.nup; i++) {
+		int a = g_vb.up[i].act;
+		if (a >= 161 && a <= 170 && strstr(g_vb.up[i].str, "Command"))
+			return a;
+	}
+	return 0;
+}
+static int vb_y_choice_up(void) { return g_vb.mode == VB_ON && g_vb.ask_c && vb_choice_command(); }
 
 /* SOMVR_PAD_PROMPTS=vr (the show hook, the game thread): the grab's own prompts are kept (their keys 'Grab_Button*':
  * 'UI_Combat_GrabFlurry' on X 118, 'Combat_Grab_Drain' on B 120, 'Domination_Subdue' on A 121; run 233249) - the
@@ -396,7 +428,7 @@ static int vb_grab_held(void)
 /* build 20 (bm_pre, SOMVR_BM_GRAB_FREE_S): the game holds Talion no more - an interrogation without its choices is over */
 static int vb_grab_freed(double t)
 {
-	if (!g_vb.ask_c || vb_choice(0) || vb_choice(1))
+	if (!g_vb.ask_c || vb_choice(0) || vb_choice(1) || vb_choice_command())
 		return 0;
 	if (vb_log_ok())
 		logf_("VERBS t=%.3f the interrogation of orc %#lx is over (%.1f s after the pull): the game holds Talion no more",
@@ -648,9 +680,12 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	uint32_t br = (g_inp.st.hand[SOMVR_HAND_R].active & SOMVR_HACT_INPUT) ? g_inp.st.hand[SOMVR_HAND_R].buttons : 0;
 	uint32_t el = bl & ~g_vb.btn_was[0], er = br & ~g_vb.btn_was[1];
 	g_vb.btn_was[0] = bl, g_vb.btn_was[1] = br;
-	int bcmd = 0;
-	if ((er & SOMVR_BTN_UPPER) && g_vb.ask_c && vb_choice(1))
-		bcmd = vb_choice(1);
+	int bcmd = 0, dis = 0, bc = (er & SOMVR_BTN_UPPER) && g_vb.ask_c ? vb_choice_b(&dis) : 0;
+	int yc = (el & SOMVR_BTN_UPPER) && g_vb.ask_c ? vb_choice_command() : 0;
+	if (bc)
+		bcmd = bc, g_vb.dismisses += (uint64_t)dis;
+	else if (yc)
+		bcmd = yc, g_vb.commands++;
 	else if (g_vb.hand.phase == SOMVR_VBH_GRAB && !g_vb.ask_c && (el & SOMVR_BTN_LOWER))
 		bcmd = VB_CMD_X;
 	else if (g_vb.hand.phase == SOMVR_VBH_GRAB && !g_vb.ask_c && (er & SOMVR_BTN_LOWER))
@@ -658,8 +693,10 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	if (bcmd) {
 		vb_tap(bcmd, t), g_vb.btn_taps++;
 		if (vb_log_ok())
-			logf_("VERBS t=%.3f button: the Touch's %s: %d '%s' tapped (the prompt's own letter)", t,
-			      bcmd == VB_CMD_X ? "X" : bcmd == VB_CMD_A ? "A" : "B", bcmd, in_cmd_name(bcmd));
+			logf_("VERBS t=%.3f button: the Touch's %s: %d '%s' tapped (the prompt's own letter%s)", t,
+			      bcmd == VB_CMD_X ? "X" : bcmd == VB_CMD_A ? "A" : bcmd == yc ? "Y" : "B", bcmd, in_cmd_name(bcmd),
+			      dis ? "; the Domination's Dismiss, SOMVR_VERBS_DISMISS" : bcmd == yc ? "; the Domination's Command, "
+			      "SOMVR_VERBS_COMMAND" : "");
 	}
 	if (o.b && !b_was)
 		g_vb.game_done = g_vb.saw_hog = 0, g_vb.next_buzz = t + 0.25;
@@ -1345,7 +1382,8 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 		vb_kind(pk, t);
 	if (pc && g_vb.mode == VB_ON)
 		vb_tap_window(pcomb, t);
-	if (g_vb.ask_c && !vb_choice(0) && !vb_choice(1) && g_vb.kind != SOMVR_VBK_ASK && t - g_vb.ask_t > 6.0) {
+	if (g_vb.ask_c && !vb_choice(0) && !vb_choice(1) && !vb_choice_command() && g_vb.kind != SOMVR_VBK_ASK &&
+	    t - g_vb.ask_t > 6.0) {
 		if (vb_log_ok())
 			logf_("VERBS t=%.3f the interrogation of orc %#lx is over (%.1f s after the pull)", t, (unsigned long)g_vb.ask_c,
 			      t - g_vb.ask_t);
@@ -1552,6 +1590,8 @@ static void vb_start(int *bad)
 	g_vb.brand_prompt = env_word("SOMVR_VERBS_BRAND_PROMPT", (const char *const[]){ "off", "on" }, 2, 0); /* build 22 */
 	g_vb.rally = env_word("SOMVR_VERBS_RALLY", (const char *const[]){ "off", "on" }, 2, 1); /* build 25 */
 	g_vb.rally_cm = env_float("SOMVR_VERBS_RALLY_CM", 15, 0, 60, bad);
+	g_vb.dismiss = env_word("SOMVR_VERBS_DISMISS", (const char *const[]){ "off", "on" }, 2, 1); /* build 26 */
+	g_vb.command = env_word("SOMVR_VERBS_COMMAND", (const char *const[]){ "off", "on" }, 2, 1); /* build 26 */
 	{
 		const char *sn = getenv("SOMVR_VERBS_STEALTH_NODE");
 		snprintf(g_vb.stealth_node, sizeof g_vb.stealth_node, "%s", sn && sn[0] ? sn : "PC_InstaKill_Sneak_Silent");
@@ -1589,6 +1629,12 @@ static void vb_start(int *bad)
 	      getenv("SOMVR_VERBS_RALLY") ? "" : "; unset: on", g_vb.rally ? "the left trigger with the left palm raised over the "
 	      "eyes = CombatTertiary03 128 (the pad's D-pad: the branded orcs commanded, 'PC_Branded_Infight'), the palm at least"
 	      : "the branded orcs have no VR command (build 24); the palm's height would be", g_vb.rally_cm);
+	logf_("CONFIG verbs build 26: dismiss=%s (SOMVR_VERBS_DISMISS%s): %s", g_vb.dismiss ? "on" : "off",
+	      getenv("SOMVR_VERBS_DISMISS") ? "" : "; unset: on", g_vb.dismiss ? "B in a Domination = its Dismiss ('Domination_Cancel')"
+	      : "B in a Domination does nothing (build 25)");
+	logf_("CONFIG verbs build 26: command=%s (SOMVR_VERBS_COMMAND%s): %s", g_vb.command ? "on" : "off",
+	      getenv("SOMVR_VERBS_COMMAND") ? "" : "; unset: on", g_vb.command ? "the Touch's Y in a Domination = its Command "
+	      "('Domination_Command')" : "a Domination's Command has no VR control (build 25)");
 	logf_("CONFIG verbs build 20: the interrogated orc's kill %s (SOMVR_VERBS_ASK_KILL); Talion's attack read through a "
 	      "body moment's hold; the intel menu's Back after %.1f s (SOMVR_VERBS_INTEL_BACK_S; 0 = never)", g_vb.ask_kill ==
 	      VB_ASK_BLADE ? "blade: the sword's stab into it = its Eliminate (and the Touch's B)" : "game: the Touch's B = "
@@ -1615,6 +1661,8 @@ static void vb_end_log(void)
 	      (unsigned long long)g_vb.ask_freed, (unsigned long long)g_vb.intels, (unsigned long long)g_vb.intel_backs,
 	      (unsigned long long)g_vb.intel_outs);
 	logf_("VERBS END build 25: rallies %llu (SOMVR_VERBS_RALLY)", (unsigned long long)g_vb.rallies);
+	logf_("VERBS END build 26: the Domination's Dismiss by B %llu (SOMVR_VERBS_DISMISS), its Command by Y %llu "
+	      "(SOMVR_VERBS_COMMAND)", (unsigned long long)g_vb.dismisses, (unsigned long long)g_vb.commands);
 	logf_("VERBS END: %llu frames; the left hand: grabs %llu, near misses %llu, releases %llu, done %llu, lost %llu; B held %llu "
 	      "ticks; the game: holds %llu (completed %llu, out %llu), stuns %llu; pulses %llu; heads by node %llu, estimated %llu; "
 	      "squeezes that took nothing %llu; stealth: asked %llu, kills pressed %llu, squeezes by a stealth target %llu, taken by its back %llu; the grab: 123 held %llu ticks, A taps %llu, "

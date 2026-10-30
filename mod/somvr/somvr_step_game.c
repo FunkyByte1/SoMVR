@@ -213,7 +213,7 @@ static struct {
 
 static void ab_tick(const sc_tick_out *o)
 {
-	int a = (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_LOWER) != 0;
+	int a = (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_LOWER) != 0 && !mt_owns_buttons(); /* build 26: riding, A leaps */
 	if (a && !g_ab.a_was) {
 		double t = cb_now();
 		float ap[3];

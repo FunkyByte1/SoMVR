@@ -3,8 +3,18 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 25 - what to test
-- New since build 20c, most important first: build 25's own, then 24's, then 21-23's.
+Build 26 - what to test
+- New since build 20c, most important first: build 26's own, then 25's, 24's, 21-23's.
+- Last chance: when an orc is about to kill you, a red ring shows. Move your hand to steer the cursor into the ring, then stab hard.
+- Vault over an orc: look at a shield orc, push the right stick forward. The gold ring jumps behind him; let go, turn, cut his back within 2 s.
+- Big fights: an orc that walks round behind you warns before he swings.
+- Caragor (Big Game): when it leaps, hold your sword across between you and its head - it goes down, stunned.
+- Mount: look at the stunned caragor, reach out your left hand and grip. Keep gripping through "Hold tight!" until it gives in.
+- Riding: the stick turns like a wheel (looking around doesn't steer). A leap, right trigger bite, B off.
+- A held orc (grab, then A): trigger = Gain Intel, B = Dismiss; Y = Command on a captain.
+- Sauron's Army: hold the right stick's click. A quick click is the map.
+- The Rescue: lift Lithariel with your left grip and walk her out.
+- Play as long as you like: a session now lasts up to 4 hours.
 - Mission Failed (you died in a mission): A = Retry, B = Abandon.
 - Nemesis pages after a fight ("Power Increased!", a captain's fate): B closes them.
 - Branded orcs: raise your left hand above your head and pull the left trigger - they attack.

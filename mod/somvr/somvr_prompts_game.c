@@ -59,6 +59,7 @@ static struct {
 	_Atomic uint32_t lines, hold_lines;
 	_Atomic uint64_t drop_by[PP_NONE + 1];
 } g_pp;
+static struct log_late g_pp_late; /* build 27: after the first 400 lines, 100 a 10 minutes */
 
 /* vr: may a prompt for this command show? (a VR control sends it in the world; never 121 while the bow is out) */
 static int pp_vr_keep(int cmd, int game_moves, int bow_on, int bow_out)
@@ -166,7 +167,7 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 		atomic_fetch_add_explicit(&g_pp.n_kept, 1, memory_order_relaxed);
 		atomic_fetch_add_explicit(&g_pp.n_relab, (uint64_t)(to != act), memory_order_relaxed);
 	}
-	if (atomic_fetch_add_explicit(&g_pp.lines, 1, memory_order_relaxed) < 400) {
+	if (atomic_fetch_add_explicit(&g_pp.lines, 1, memory_order_relaxed) < 400 || log_late_ok(&g_pp_late, 100, mono())) {
 		char sb[64], ib[64];
 		go_str((const char *)str, sb, sizeof sb), go_str((const char *)icon, ib, sizeof ib);
 		char how[96];
@@ -211,7 +212,7 @@ __attribute__((used)) void somvr_w_pphide(void *dlg, void *sender, void *params)
 	if (act == 121 && pp_xkey(key, -1)) /* shown with X's glyph: hidden as that */
 		to = PP_X_CMD;
 	uint64_t n = atomic_fetch_add_explicit(&g_pp.n_hide, 1, memory_order_relaxed) + 1;
-	if (atomic_fetch_add_explicit(&g_pp.lines, 1, memory_order_relaxed) < 400)
+	if (atomic_fetch_add_explicit(&g_pp.lines, 1, memory_order_relaxed) < 400 || log_late_ok(&g_pp_late, 100, mono()))
 		logf_("PROMPTS hide #%llu t=%.3f: action %d '%s' key %#lx: passed on%s", (unsigned long long)n, mono(), act,
 		      in_cmd_name(act), (unsigned long)key, to != act ? " as the shown command" : "");
 	if (to != act) {

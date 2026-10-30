@@ -419,6 +419,67 @@ static void test_pace_hold_warn(void) {
  * two a pass (a worst case); grant -> start 0.05..0.95 s, start -> impact 0.8 s (the berserker's fast blow 0.5 s);
  * the pace: one wind-up at a time, every gap >= 0.7 s once the fast lead is learnt (at most one short gap before),
  * every orc gets turns, no lull over 3 s */
+/* build 27 (docs/re-xr-pipeline.md 108.4): the practice's crowd of 8 (4 infantry, 2 shields, 2 berserkers with quick
+ * blows) for 120 s on the same rules: one winding up at a time, no overlap, gaps under the pace only at a berserker's
+ * first fast blow, no lull over 3 s, every orc a turn */
+static void test_pace_crowd8(void) {
+    enum { NO = 8 };
+    somvr_pace_cfg c;
+    somvr_pace_cfg_default(&c);
+    somvr_pace p;
+    somvr_pace_init(&p);
+    uint64_t ids[NO];
+    float imp[NO];
+    for (int i = 0; i < NO; i++) ids[i] = 0x1000ull + (uint64_t)i * 0x10, imp[i] = i == 2 || i == 7 ? 0.5f : 0.8f;
+    double grant_t[NO] = {0}, start_t[NO] = {0}, land_t[NO] = {0}, recover_t[NO] = {0};
+    int turns[NO] = {0}, winding_max = 0, overlaps = 0, k = 0, short_gaps = 0;
+    double last = -1, min_gap = 99, max_gap = 0;
+    for (int ms = 0; ms <= 120000; ms += 50) {
+        double t = ms * 0.001;
+        somvr_pace_turn out[4];
+        double gaps[4];
+        int n = somvr_pace_update(&p, &c, t, out, gaps, 4);
+        for (int j = 0; j < n; j++) {
+            if (last >= 0) {
+                double g = out[j].impact_t - last;
+                min_gap = g < min_gap ? g : min_gap, max_gap = g > max_gap ? g : max_gap;
+                short_gaps += g < 0.7 - 1e-6;
+            }
+            last = out[j].impact_t;
+        }
+        int winding = 0;
+        for (int i = 0; i < NO; i++) {
+            if (grant_t[i] > 0 && !(start_t[i] > 0)) {
+                double d = 0.05 + 0.9 * (double)((k * 7 + i * 3) % 10) / 9.0;
+                if (t >= grant_t[i] + d) {
+                    start_t[i] = t, k++;
+                    overlaps += (somvr_pace_start(&p, &c, ids[i], t, imp[i], 0) & SOMVR_PACE_OVERLAP) != 0;
+                }
+            }
+            if (start_t[i] > 0 && t >= start_t[i] + imp[i] - 1e-9 && !(land_t[i] > 0)) land_t[i] = t, recover_t[i] = t + 1.0;
+            if (land_t[i] > 0 && t >= recover_t[i]) grant_t[i] = start_t[i] = land_t[i] = 0;
+            winding += start_t[i] > 0 && !(land_t[i] > 0);
+        }
+        winding_max = winding > winding_max ? winding : winding_max;
+        int kept = -1;
+        float kept_score = 0;
+        for (int i = 0; i < NO; i++) {
+            if (grant_t[i] > 0) continue;
+            float sc = 10.f + (float)((ms / 50 + i * 5) % 11);
+            if (!somvr_pace_may(&p, &c, ids[i], t, NULL)) continue;
+            if (kept < 0 || somvr_pace_pass_wins(0, sc, 0, kept_score)) kept = i, kept_score = sc;
+        }
+        if (kept >= 0) overlaps += somvr_pace_grant(&p, &c, ids[kept], t), grant_t[kept] = t, turns[kept]++;
+    }
+    int fewest = 1 << 30;
+    for (int i = 0; i < NO; i++) fewest = turns[i] < fewest ? turns[i] : fewest;
+    CHECK(winding_max == 1 && overlaps == 0, "8: one wind-up at a time (max %d, overlaps %d)", winding_max, overlaps);
+    CHECK(short_gaps <= 2, "8: gaps under 0.7 s: %d (the berserkers' first fast blows)", short_gaps);
+    CHECK(max_gap <= 3.0, "8: no lull: the longest gap %.2f s (shortest %.2f)", max_gap, min_gap);
+    CHECK(fewest >= 3, "8: every orc got turns (the fewest %d)", fewest);
+    CHECK(p.impacts > 70 && p.overlaps == 0 && p.unannounced == 0, "8: impacts %llu in 120 s", (unsigned long long)p.impacts);
+}
+
 static void test_pace_crowd(void) {
     somvr_pace_cfg c;
     somvr_pace_cfg_default(&c);
@@ -622,6 +683,7 @@ int main(void) {
     test_pace();
     test_pace_hold_warn();
     test_pace_crowd();
+    test_pace_crowd8();
     test_pace_answer();
     printf("test_front: %d checks, %d failures\n", checks, fails);
     return fails != 0;

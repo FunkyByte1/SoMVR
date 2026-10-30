@@ -1272,6 +1272,28 @@ static int sc_submit_fail(void) {
     V.submit_fail_at = 3;
     return sc_midrun("our copy submit failed", 2, 0);
 }
+/* build 27 (re-xr-pipeline.md 107): the eyes' image not free within the wait's 1 s, twice (a compositor stall of ~2 s):
+ * XR_TIMEOUT_EXPIRED is waited again - the session lives on, every frame still copied and submitted, the stall logged.
+ * Before build 27 the first timeout was xr_fail: pass-through for the rest of the session. */
+static int sc_wait_timeout(void) {
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    for (int f = 0; f < 6; f++) app_present(&a);
+    CHECK(MOCK(mockxr_wait_timeouts)() == 2, "timeouts given %d (want 2)", MOCK(mockxr_wait_timeouts)());
+    CHECK(MOCK(mockxr_live)() != 0, "the session torn down by a timeout");
+    CHECK(!log_has("pass-through from now on"), "XR given up after a timeout");
+    CHECK(log_has("xrWaitSwapchainImage timed out (1000 ms, try 1 of 10"), "the stall not logged");
+    CHECK(MOCK(mockxr_calls)("xrEndFrame") >= 5, "frames ended %d", MOCK(mockxr_calls)("xrEndFrame"));
+    int sub = V.submits;
+    app_present(&a);
+    CHECK(V.submits > sub, "no copy submitted after the stall");
+    app_teardown(&a);
+    check_mock_clean();
+    return 0;
+}
+/* ... and a runtime that never frees it: after 10 timeouts in a row the old failure (pass-through, torn down clean) */
+static int sc_wait_timeout_forever(void) { return sc_midrun("xrWaitSwapchainImage failed: XR_TIMEOUT_EXPIRED", 2, 0); }
 static int sc_exit_event(void) { /* the runtime stops the session after 3 frames (user quits in the headset) */
     if (load_layer()) return 1;
     app_t a;
@@ -7603,6 +7625,8 @@ static const struct {
     {"blit", sc_blit, "SOMVR_XR_LOADER=@MOCK MOCKXR_FORMATS=43", 1},
     {"endframe-fail", sc_endframe_fail, "SOMVR_XR_LOADER=@MOCK MOCKXR_FAIL=xrEndFrame:3", 1},
     {"submit-fail", sc_submit_fail, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"wait-timeout", sc_wait_timeout, "SOMVR_XR_LOADER=@MOCK MOCKXR_WAIT_TIMEOUT=3:2", 1},
+    {"wait-timeout-forever", sc_wait_timeout_forever, "SOMVR_XR_LOADER=@MOCK MOCKXR_WAIT_TIMEOUT=3:1000", 1},
     {"exit-event", sc_exit_event, "SOMVR_XR_LOADER=@MOCK MOCKXR_EXIT_AT=3", 1},
     {"gpu-mismatch", sc_gpu_mismatch, "SOMVR_XR_LOADER=@MOCK MOCKVK_TRAMP_NAME=llvmpipe", 1},
     {"instance-retry", sc_inst_retry, "SOMVR_XR_LOADER=@MOCK", 1},

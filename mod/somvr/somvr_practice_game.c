@@ -1537,7 +1537,7 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 	case SOMVR_PRA_GO: pr_go(m, have, t, who); break;
 	case SOMVR_PRA_BACK: pr_back(t, who); break;
 	case SOMVR_PRA_SPAWN: pr_spawn(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who); break;
-	case SOMVR_PRA_GROUP: pr_group(m, orc == 3 || orc == 4 ? orc : g_pr.group_n, t, who); break; /* build 19 */
+	case SOMVR_PRA_GROUP: pr_group(m, orc >= 3 && orc <= SOMVR_PR_GROUP_MAX ? orc : g_pr.group_n, t, who); break; /* build 19; 27: 3..8 */
 	case SOMVR_PRA_CAPTAIN: kp_spawn(m, t, who); break; /* build 22: SOMVR_CAPTAIN (somvr_captain_game.c) */
 	case SOMVR_PRA_FAR: /* build 18 */
 		pr_spawn_at(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who, 1);
@@ -1804,7 +1804,7 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	}
 	g_pr.minhealth = env_float("SOMVR_PRACTICE_MINHEALTH", 20, 0, 100000, bad);
 	g_pr.ahead_cm = env_float("SOMVR_PRACTICE_AHEAD_CM", 350, 150, 2000, bad);
-	g_pr.group_n = (int)env_float("SOMVR_PRACTICE_GROUP_N", 4, 3, 4, bad); /* build 19: "Spawn group" */
+	g_pr.group_n = (int)env_float("SOMVR_PRACTICE_GROUP_N", 4, 3, SOMVR_PR_GROUP_MAX, bad); /* build 19: "Spawn group"; 27: to 8 */
 	g_pr.far_cm = env_float("SOMVR_PRACTICE_FAR_CM", 1800, 800, 4000, bad); /* build 18: Spawn far orc (unaware) */
 	g_pr.auto_s = env_float("SOMVR_PRACTICE_AUTO_S", 5, 0, 600, bad);
 	const char *ot = getenv("SOMVR_PRACTICE_ORC");

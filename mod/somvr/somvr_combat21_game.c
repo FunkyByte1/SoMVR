@@ -509,6 +509,9 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		g_gc.cap_asks++, e > 0 ? g_gc.cap_holds++ : e == 0 ? g_gc.cap_throws++ : g_gc.cap_unknown++;
 		if (e == 0)
 			ok = 0, capwhy = "a captain who throws the grab off (the game's end of it: its _Resistant / _Immune)";
+		else if (e < 0) /* build 26b: no answer is no promise - the cue on a captain says the grab will hold (run 081433:
+				 * a full-health captain glowed for 0.1-0.25 s on frames the end query found nothing) */
+			ok = 0, capwhy = "a captain whose grab's end the game did not answer (no cue without its answer)";
 	}
 	g_gc.asks++, g_gc.yes += ok, g_gc.no += !ok;
 	g_gc.ask_c = c, g_gc.ask_body = g_gc.reach_body, g_gc.ask_ok = ok, g_gc.ask_t = t,
@@ -522,7 +525,7 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		      ok ? " -> '" : " -> ", ok ? a : at && !capwhy ? a : g_gc.ask_why, ok ? "'" : "", ok && s[0] && strcmp(s, "-") ? " (a sync)" : "");
 	if (e > -2 && (c != g_gc.said_c || ok != g_gc.said_ok) && g_gc.lines < 400 && vb_log_ok())
 		logf_("VERBS cue t=%.3f captain %#lx (health %.1f): the grab's end by the game: %s%s%s", t, (unsigned long)c, vb_health(c),
-		      e >= 0 ? "'" : "", e >= 0 ? g_gc.end_atk : "no answer (the attempt's answer kept)",
+		      e >= 0 ? "'" : "", e >= 0 ? g_gc.end_atk : "no answer: no cue",
 		      e > 0 ? "' - it holds: the cue" : e == 0 ? "' - he throws it off: no cue" : "");
 	g_gc.said_c = c, g_gc.said_ok = ok;
 }

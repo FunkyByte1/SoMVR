@@ -184,6 +184,75 @@ static void test_find(void)
           "NaN gaze: kind %d calls %d", a.kind, NCALLS);
 }
 
+/* ---- build 27: the vault over an orc (SOMVR_WRAITH_STEP_VAULT_CM; docs/re-xr-pipeline.md 108) ------------------------ */
+static int vfind(float vault_cm, float yaw, float pitch, const sv_vec3 *orcs, int n, somvr_ws_aim *o)
+{
+    somvr_ws_cfg c;
+    somvr_ws_cfg_default(&c);
+    c.vault_cm = vault_cm;
+    return somvr_ws_find(&c, ray, NULL, EYE, look(yaw, pitch), ROOT, 0, orcs, n, o);
+}
+static void test_vault(void)
+{
+    somvr_ws_aim a;
+    /* an orc 2 m ahead (its body z 170..230, 200 tall), looked at in the chest: the old step refuses (its body over the
+     * spot: "an orc there") or flies 7 m past it (level); the vault puts the ring 120 cm behind its root */
+    sv_vec3 orc = { 0, 0, 200 };
+    wreset(), ground(), add(-30, 0, 170, 30, 200, 230, 0, 1);
+    CHECK(vfind(0, 0, -35, &orc, 1, &a) == SOMVR_WSA_NO && a.why == SOMVR_WSW_ORC && !a.vault, "off: the orc's body: kind %d "
+          "why %d vault %d", a.kind, a.why, a.vault);
+    CHECK(vfind(0, 0, 0, &orc, 1, &a) == SOMVR_WSA_OK && a.far && !a.vault, "off, level: 7 m past it (far %d)", a.far);
+    CHECK(vfind(350, 0, -25, &orc, 1, &a) == SOMVR_WSA_OK && a.vault && a.orc == 0 && NEAR(a.land.z, 320, 1) &&
+              NEAR(a.land.x, 0, 1) && NEAR(a.land.y, 0, 0.1) && NEAR(a.orc_cm, 200, 1),
+          "the vault, the chest: kind %d why %d vault %d at %.1f,%.1f,%.1f", a.kind, a.why, a.vault, a.land.x, a.land.y, a.land.z);
+    CHECK(vfind(350, 0, 0, &orc, 1, &a) == SOMVR_WSA_OK && a.vault && NEAR(a.land.z, 320, 1) && !a.far,
+          "the vault, level at its head: kind %d vault %d z %.1f far %d", a.kind, a.vault, a.land.z, a.far);
+    /* an orc ahead-right: the ring on the line from Talion through its root */
+    sv_vec3 o2 = { 150, 0, 150 };
+    wreset(), ground(), add(120, 0, 120, 180, 200, 180, 0, 1);
+    float yaw = 45, p2 = -atan2f(170 - 100, 212) / DEG;
+    CHECK(vfind(350, yaw, p2, &o2, 1, &a) == SOMVR_WSA_OK && a.vault && NEAR(a.land.x, 150 + 84.85f, 2) &&
+              NEAR(a.land.z, 150 + 84.85f, 2), "ahead-right: kind %d why %d vault %d at %.1f,%.1f", a.kind, a.why, a.vault,
+          a.land.x, a.land.z);
+    /* too far (4 m > 350): no vault - as before (its body: refused) */
+    sv_vec3 o3 = { 0, 0, 400 };
+    wreset(), ground(), add(-30, 0, 370, 30, 200, 430, 0, 1);
+    CHECK(vfind(350, 0, -14, &o3, 1, &a) != SOMVR_WSA_OK || !a.vault, "4 m: no vault (kind %d vault %d)", a.kind, a.vault);
+    CHECK(!a.vault, "4 m: not the vault's");
+    /* the head's ray through its body to ground 4.5 m out: still the vault (the head on an orc = over it) */
+    wreset(), ground(), add(-30, 0, 170, 30, 200, 230, 0, 1);
+    CHECK(vfind(350, 0, -20, &orc, 1, &a) == SOMVR_WSA_OK && a.vault && NEAR(a.land.z, 320, 1), "through it: kind %d vault "
+          "%d z %.1f", a.kind, a.vault, a.land.z);
+    CHECK(vfind(350, 0, -35, &orc, 1, &a) == SOMVR_WSA_OK && a.vault && NEAR(a.land.z, 320, 1), "at its knees: kind %d vault "
+          "%d z %.1f", a.kind, a.vault, a.land.z);
+    /* looking beside it (15 deg left) at the ground beyond: that aimed spot, not the vault */
+    CHECK(vfind(350, -15, -20, &orc, 1, &a) == SOMVR_WSA_OK && !a.vault && a.through == 0, "beside it: kind %d vault %d",
+          a.kind, a.vault);
+    /* a wall at its back (z 260..280): the vault refused (a wall), the ring red */
+    wreset(), ground(), add(-30, 0, 170, 30, 200, 230, 0, 1), add(-300, 0, 260, 300, 300, 280, 0, 0);
+    CHECK(vfind(350, 0, -25, &orc, 1, &a) == SOMVR_WSA_NO && a.vault && a.why == SOMVR_WSW_WALL, "a wall at its back: kind "
+          "%d why %d vault %d", a.kind, a.why, a.vault);
+    /* a low fence at its back (z 260..270, 100 high: the eyes see over it): refused by the waist ray */
+    wreset(), ground(), add(-30, 0, 170, 30, 200, 230, 0, 1), add(-300, 0, 260, 300, 105, 270, 0, 0);
+    CHECK(vfind(350, 0, -25, &orc, 1, &a) == SOMVR_WSA_NO && a.vault && a.why == SOMVR_WSW_WALL, "a fence at its back: kind "
+          "%d why %d", a.kind, a.why);
+    /* a second orc standing on the landing: refused (an orc there) */
+    sv_vec3 two[2] = { { 0, 0, 200 }, { 0, 0, 330 } };
+    wreset(), ground(), add(-30, 0, 170, 30, 200, 230, 0, 1), add(-30, 0, 300, 30, 200, 360, 0, 1);
+    CHECK(vfind(350, 0, -25, two, 2, &a) == SOMVR_WSA_NO && a.vault && a.orc == 0 && a.why == SOMVR_WSW_ORC,
+          "an orc on the landing: kind %d why %d vault %d orc %d", a.kind, a.why, a.vault, a.orc);
+    /* a ledge at its back (the ground ends at z 250): refused */
+    wreset(), add(-3000, -50, -3000, 3000, 0, 250, 0, 0), add(-30, 0, 170, 30, 200, 230, 0, 1);
+    CHECK(vfind(350, 0, -25, &orc, 1, &a) == SOMVR_WSA_NO && a.vault && a.why == SOMVR_WSW_LEDGE, "a ledge at its back: kind "
+          "%d why %d", a.kind, a.why);
+    /* a body the ray meets with no orc of the list near it (not PlayerCombat's): as with the vault off */
+    wreset(), ground(), add(-30, 0, 170, 30, 200, 230, 0, 1);
+    somvr_ws_aim b;
+    int k0 = vfind(0, 0, -35, NULL, 0, &b), k1 = vfind(350, 0, -35, NULL, 0, &a);
+    CHECK(k0 == k1 && !a.vault && NEAR(a.land.z, b.land.z, 0.01), "unlisted body: kind %d/%d vault %d z %.1f/%.1f", k0, k1,
+          a.vault, b.land.z, a.land.z);
+}
+
 /* ---- the input ----------------------------------------------------------------------------------------------------- */
 static somvr_ws_cfg C;
 static somvr_ws_state S;
@@ -264,6 +333,7 @@ static void test_input(void)
 int main(void)
 {
     test_find();
+    test_vault();
     test_input();
     printf("test_wstep: %d checks, %d failures\n", checks, fails);
     return fails != 0;

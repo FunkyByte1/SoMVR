@@ -151,6 +151,7 @@ static struct {
 	int ramp_nrec;
 	double ramp_next;
 } g_go;
+static struct log_late g_go_late;
 
 /* build 17: the wraith vision's look ramps in and out over its record's RampInDuration / RampOutDuration
  * (re-xr-pipeline.md 21's "wraith-world look": FUN_00ad3330 -> FUN_009e62d0 -> FUN_0266a8d0 reads them at each switch
@@ -355,10 +356,13 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 	if (drop && ev == GO_EV_TUTORIAL && g_go.ntut_keep) /* build 24: SOMVR_HINTS_KEEP_TUT */
 		kept = go_tut_keep(rec);
 	drop = drop && !kept;
+	if (drop && ev == GO_EV_TUTORIAL) /* build 27: a pause right after it = this tutorial's (somvr_session_game.c) */
+		go_rec_name(rec, g_ss_tut_nm, sizeof g_ss_tut_nm), g_ss_tut_t = mono();
 	uint64_t n = atomic_fetch_add_explicit(&g_go.n_ev[ev], 1, memory_order_relaxed) + 1;
 	atomic_fetch_add_explicit(&g_go.n_show[ev], (uint64_t)show, memory_order_relaxed);
 	atomic_fetch_add_explicit(&g_go.n_drop[ev], (uint64_t)drop, memory_order_relaxed);
-	if (mode != GO_HINTS_GAME && atomic_fetch_add_explicit(&g_go.hint_lines, 1, memory_order_relaxed) < 300) {
+	if (mode != GO_HINTS_GAME && (atomic_fetch_add_explicit(&g_go.hint_lines, 1, memory_order_relaxed) < 300 ||
+				      log_late_ok(&g_go_late, 100, mono()))) { /* build 27: then 100 a 10 minutes */
 		char nm[64];
 		go_rec_name(rec, nm, sizeof nm);
 		if (!nm[0] && ok && ev == GO_EV_HINT) /* (the hint records have no name: their text key, somvr_collect_game.c) */
@@ -507,6 +511,7 @@ static void go_test_y(double t)
 
 static const char *go_vis_name(int f) { return f == 1 ? "on" : f == 0 ? "off" : "unread"; }
 
+static int vb_y_choice_up(void); /* somvr_verbs_game.c (build 26): a Domination asks for its Command on Y */
 static void go_vision_tick(sc_tick_out *o, double t)
 {
 	if (!g_go.vis_mode)
@@ -519,6 +524,8 @@ static void go_vision_tick(sc_tick_out *o, double t)
 		else
 			held = 1;
 	o->ncmd = n;
+	if (held && vb_y_choice_up())
+		held = 0; /* build 26 (SOMVR_VERBS_COMMAND): Y is a Domination's Command now, not the vision */
 	int world = o->live && o->ctx == SC_CTX_WORLD, vis = st_vision();
 	uint32_t rq = atomic_load(&g_go_ramp_seq);
 	int rforce = rq != atomic_load(&g_go_ramp_seen);

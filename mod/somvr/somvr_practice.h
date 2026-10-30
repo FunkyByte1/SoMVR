@@ -156,15 +156,16 @@ void somvr_pr_ahead(const float pos[3], const float fwd[3], float dist_cm, float
 void somvr_pr_facing(const float at[3], const float face[3], float q[4]);
 
 /* ---- build 19: the group (the practice page's "Spawn group") ---- */
-#define SOMVR_PR_GROUP_MAX 4
+#define SOMVR_PR_GROUP_MAX 8 /* build 27: up to 8 (was 4) */
 typedef struct {
     int type;      /* SOMVR_PRO_* */
     float yaw_deg; /* its bearing off Talion's heading (+ = to his right) */
     float dist_cm; /* from his root */
 } somvr_pr_group_orc;
-/* the group of n (3 or 4; others clamped): mixed types around Talion at 4.5-5.5 m, two in front (+-35 deg) and the
+/* the group of n (3..8; others clamped): mixed types around Talion at 4.5-6 m, two in front (+-30..35 deg) and the
  * rest beside and behind him (FRONT warns those): 4 = infantry front left, shield front right, infantry behind left,
- * berserker behind right; 3 = infantry, shield in front, berserker behind. Returns the count */
+ * berserker behind right; 3 = infantry, shield in front, berserker behind; build 27: 5-8 add infantry, a second
+ * berserker and a second shield round the back (8 = 4 infantry, 2 shields, 2 berserkers). Returns the count */
 int somvr_pr_group_plan(int n, somvr_pr_group_orc out[SOMVR_PR_GROUP_MAX]);
 /* the spot of one: dist_cm from pos at yaw_deg off the ground-plane heading of fwd (none: +Z; + = clockwise seen from
  * above, the game's +X right of +Z) */
