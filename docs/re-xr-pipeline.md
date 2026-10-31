@@ -20597,3 +20597,159 @@ icon of CombatPrimary04`.
 - The tower archers among his supporters: a VR player shoots up at them or climbs; the test could not (the parapet).
 - The HUD banner after a captain's death ("KILLED - View Battle Report", 309 alone) keeps A the jump's (decided); the
   board is in the pause menu.
+## 127. Build 28b: the user's session rehearsed - the Test page played through in order in one boot, each item by the driver that proved it alone; what only a sequence shows (2026-10-31, som-b28-rehearsal)
+
+Since build 20c every Test page item (mod/somvr/assets/what-to-test.txt, 40 lines by topic) was proven alone, each in
+its own fresh boot. The user plays them one after another. Driver: scripts/rehearsal28-drive.sh - the items in the
+Test page's order in ONE headless boot (the launch's own way in: the main menu, Continue, the practice meadow's arrival
+card), each item run by the driver that proved it (its scripted real-hand poses; its staging aids: an orc spawned, a
+place reached by `practice go`) as a copy with its `quit` taken out; between items only the test tools are put back
+(the test hands' squeezes, the buttons, the sticks, the test head, the test chase and guard, a spawned orc) - never the
+game's state - then a state line (RUN/rh-state.txt: the UI, the climb, the body moment, the crouch, the bow, the sword,
+the ride, the struggle, the comfort frame, the VR menu, the card, the last 10 s of GPU and game-thread time, the
+layer's gaps, the WARNs), a both-eye dump, and whether the world is back. Plans: `RH_PLAN=a` the start, FIGHTING and BOW;
+`b` MOVING and BEASTS in the world (with an A/B: two items first in a fresh session); `c` what plan a left unproven for
+the harness's own reasons, again in order; `d`, `e`, `f`: the caragor's A/Bs (127.4). Each boot with scripts/headset-build26.env as shipped (328 switches), a
+copy of the user's own settings file (SOMVR_SETTINGS; the real file unchanged, checked), SOMVR_HANDS_TEST=1, the
+layer's test file.
+
+### 127.1 The runs
+| Boot | Plan | What |
+|---|---|---|
+| 20261031-090520 | a, 14 items, 34 min | the start 23/23 PASS; then FIGHTING and BOW, the map, dying (127.2, 127.3) |
+| 20261031-100151 | c, 9 items, 14 min | the harness fixed (127.2): the stealth kill, the flash, the drop kill, the map, dying now work in sequence |
+| 20261031-105422 | b, 10 items, 27 min | the A/B (brutalize, the immune captain first in a fresh session: the same as in sequence), the jump, the ruin, the forge tower, the caragor, the world's captains, the map, dying |
+| 20261031-112617 | d, 4 items | the caragor's A/B: fresh, then the forge tower, then again |
+| 20261031-114621, -115805, -120714 | e, f, e | the caragor three more ways: the save's own skills (no grant), at ride26's proof's place, with the proof's practice settings (127.4) |
+Every boot (7): 0 WARN (somvr.log and the layer's), the install unchanged, the real save UNCHANGED (byte-identical to
+its pre-launch backup), the user's settings file unchanged (only its copy took the menu's writes).
+
+### 127.2 What the sequence broke - the harness, not the game (fixed in the driver)
+Rehearsal 1 (plan a) failed six items that pass alone. Each cause was a test tool's assumption that a fresh boot makes
+true and a session does not; none is a game or mod fault, and none needs a switch:
+- **The sword toggled away.** Every driver draws the sword by its own `draw_slot` (the right hand at the shoulder's slot,
+  squeezed), assuming it starts sheathed. hla27's first fight left it in the hand (`SLOTS ... the game put it away: kept
+  in the hand`), so kill22's draw squeezed at the slot with the sword in the hand = put it back (`put-back asked; now
+  sheathed`), and the stealth kill's thrusts ran bladeless (`COMBAT ... frames=207 noblade=207`, `thrust: kills 0`).
+  The next drivers' draws toggled it in and out again: brutalize and the immune captain's thrust also ran without a
+  blade. This is the right behaviour for a player (a squeeze at the slot with the sword in the hand sheathes it, as
+  HL:A's holsters do). Fix: before each driver the sword is put back in its slot by the same move if it is in the hand.
+- **Words lost in the practice area's pause.** A `practice go` home starts the arrival's weather change, and the game
+  pauses for it (`the black held past its 1.00 s for the game's pause after our ChangeWeather`, up to 5.5 s); the next
+  driver's first trigger words, written while the game was paused, overwrote each other (the trigger file holds one
+  word). above25's own trip to its wall was lost (the drop kill staged at the meadow: `PC_InstaKill_FromAbove_B ->
+  none`, the orc 20 cm under Talion), and dying's Captain was refused (`spawn REFUSED: a trip is on`). Fix: every trip
+  waits for its arrival line, then 7 s.
+- **The view's yaw against the body's.** abil27 pushes the open palm "out from the eyes at the orc ahead" after
+  `execute face` (a test aid that turns Talion's body to the orc); after a dozen items of turns the orc stood 28-63 deg
+  off the head (`the orc +37 deg right of the head`; `not the push (not at the orc): ... 63 deg off the orc`). A player
+  pushes where the orc is seen. Fix: the player's own `recenter` (the same reset as the headset's recenter: the
+  runtime's recenter_seq and the word share one path) before each driver.
+- **The map's click held too long.** The segment's click held the right stick 0.8 s (the test file's own 0.6 s pause +
+  0.2 s), past SOMVR_ARMY's 0.5 s hold: Sauron's Army came up instead of the map (`army 1: the right stick's click held
+  0.50 s`). Fix: a 0.12 s click. (A paused menu on the board makes no stereo frames: the dumps wait for the world.)
+- **Distract not owned.** Rehearsal 1 skipped abil27d's `info` step that grants Wraith Distract on the run's save copy;
+  the user's save does not own it (the Test page: "once bought"): offers 5, presses 0. Plan c grants it (a test aid).
+- **A test captain outlived his item.** captain24's stealth-immune captain was removed only 173 s later (the practice's
+  removal waits while the game is paused or in a sync: `clear held: a sync`) and swung at Talion through the next item
+  (Shadow Strike still passed). A test leftover; a player's own captain stays until fought.
+
+### 127.3 What the sequence shows about the game (no fix needed)
+- **A captain who killed Talion comes back stronger.** The struggle item (the practice's Captain with the stakes on,
+  the save's own member) killed Talion twice; Practice > Captain then brought the same Role_Drowned at **level 11**
+  (level 6 before; 648 health). The cuts bit as built (35 hits, 13 heavy ones x2.00, one execution: 648 -> 3 in 124 s)
+  but the driver's 80 actions ended 3 health short. This is the Nemesis system at work: "about a dozen and an
+  execution" holds for a fresh captain, a promoted one takes more.
+- **Frame times hold.** The GPU's 10-s mean 16.0-17.9 ms at every item of the 34 minutes (p95 16.3-17.7), the game
+  thread's busy time 3.5-5.0 ms; the max spikes (117-119 ms) only at trips and loads; no creep. The layer's "gaps"
+  (100-250 ms without a game present: 430 in 2031 s, none longer) are the headless pacing's - other boots today ran
+  320 in 1136 s and 370 in 570 s.
+- **Nothing left behind between items** that a player would meet: after every item the world was back (`ctx=world`,
+  not paused), no climb, no held view, no VR menu, no struggle; the card was closed once and stayed closed; 0 WARN.
+- The berserker in combat21's grab check fights now (build 27's crowd pace): its blows keep Talion in recoil, so its
+  cue comes on with the hand at rest (its head within 42 cm) and a squeeze in a recoil does not grab - the game's rule.
+  The infantry's cue (6 on, 6 off) and the stealth grab (`PC_Grab_Attempt_F_Stealth` -> `PC_Grab_Into_B`) worked.
+- The struggle (the last chance) cannot be proven by a script: its red ring sits at random, struggle27c holds the hand
+  in fixed directions; 2 tries, both lost, the hand steering the cursor (10 aim lines, 3 thrusts outside the ring: not
+  pressed). Its proof stays 108.6's (a try won when the ring sat where the hand pointed).
+
+### 127.4 The practice's caragor never offers the counter (a finding, not a regression)
+Rehearsal 3 met only `AI_Warg_JumpAttack_NoCounter` leaps (`THREAT red ... (cannot-counter) ... unblockable`), so the
+blade across the line could not stun, and the mount and the ride never came. Five boots took the causes apart:
+fresh as the first item (not the sequence); after the forge tower; without `beasts grant PSS_Warg_Hunter` (the save as
+the user has it: 24 skills, the counter skill not among them); at ride26's proof's place (-41458 1767 -22655); with the
+proof's practice settings (`SOMVR_PRACTICE_DAY=0 SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0`); with the sword in the
+hand (`COMBAT ... noblade=0`). **0 of 89 leaps counterable.** The proof boot (20261029-224258, 16 of 16 countered)
+spawned no practice caragor: its leaps were the world's own caragors' (`Warg_Brown`, health 300); the practice's is the
+template spawn (`spawn far Caragor ... template Warg_Brown`, health 200, level 0), and its leap set has only the
+uncounterable leap. So the VR menu's Practice > Caragor ("sword across a leap") cannot show the counter; the counter,
+the domination and riding are proven on the world's caragors (105, 109, 122). Nothing to fix in the VR side; the
+Test page should send the user to a wild caragor (or Big Game) for the leap, not to Practice > Caragor - the
+coordinator's call (what-to-test.txt). Why the template's caragor lacks the counterable leap (its level or archetype)
+is open (re-combat-spawn.md would be the place to look).
+
+### 127.5 The Test page, item by item
+Worked = the item's own verdict in the sequence (the boot, the evidence). The driver named proved it alone before.
+| Test page item | In sequence | Evidence |
+|---|---|---|
+| Menu > Controls lists every move | worked | 090520 hla27: Controls pages 1-4, Next at the end = nothing, Prev; every build 27 gesture bit |
+| Smooth at 80 Hz; Refresh rate 90 | headset only | headless paces 20 Hz; frame times flat over 34 min (127.3) |
+| Fire and the wraith sky in both eyes, no smoke in the face | pictures | the fire arrow's burn and the wraith flash's burst at their depth in both eyes (100151); the sky not met |
+| Low health: a faint red glow, no lens flare | pictures | the red edges in both eyes at hurt moments (090520 after-captain, 100151 flash); the strength: headset |
+| Popups, XP, subtitles under the gaze | pictures | the death's line at the gaze (100151 death-down) |
+| Stealth kill: hard stab sticks, pull out; a slow push turns him | worked | 100151 kill22: `thrust: kills 1`; the slow push: `touch ... no damage`, `alert` (090520: harness, 127.2) |
+| Grab: the cue at the neck, a squeeze; A: Intel / Dismiss / Command | worked (cue, grab) | 090520 combat21: the infantry's cue 6 on / 6 off, the stealth grab `PC_Grab_Into_B`; the A choices not run (106, 113) |
+| Big fights: warned from behind; shield orcs attack | worked | 090520 crowd27: still 16 blows, behind 11 (0 warnings needed: the turns went to the orcs in front, as 108) |
+| Vault over an orc, cut his back | worked | 090520 crowd27: 2 of 2 vaults; vault 1's cut = the riposte, the shield 300 -> 0 BROKEN |
+| Last chance: steer the red ring's cursor, stab | not provable headless | 090520: 2 struggles, the hand steered the cursor (10 aim lines), the ring at random - 0 of 2 (127.3) |
+| Wraith flash: right trigger + the palm pushed | worked | 100151 abil27: `start: the wraith flash` x2 (090520: harness, 127.2) |
+| A downed orc: stab straight down | worked | 090520 abil27: 2 ground finishers (`PC_Bip_KD_InstaKill_R`, `..._F_Sever`: the head severed) |
+| Drop kill from a wall top | worked | 100151 above25: a slow move refused, the plunge -> `start: ... PC_Bip_JumpDown_IK_FromAbove_B` (090520: harness) |
+| Brutal kill: crouched, LT, a hard stab | **not proven on 28b headless** | fails alike fresh (105422) and in sequence: the thrust reads `carried ... the hand's own push 0.0 cm` after `execute face`'s snap swept the blade in - 121.6's headless limit; 121's proof 2 of 2 |
+| Captains: Practice > Captain; cuts bite; immune to stealth; the rune | worked (cuts); immune not proven | 090520 captain24: 35 hits, 13 heavy x2.00, 1 execution, 648 -> 3 (a level-11 captain, 127.3); the immune thrust missed his body by 26 cm (scripted aim, fresh too); the rune not reached |
+| Captains in the world: a power struggle at its marker | not reached | 105422 nemesis27: `no captain in the world 45 s after the start` (its proof: the furthest save, the practice's quiet off) |
+| A beaten captain: X = Kill + stab / LT = Dominate | not reached | 105422 nemesis27: `k1: no Last Words line` |
+| The bow's sight; Shadow Strike lands with the sword in the hand | worked | 090520 combat21: the strike x2, `the sword in the hand (not kept on the back)`, still in the hand 6 s after |
+| Fire arrow: drawn, B, the tip glows; he burns | worked | 090520 abil27c: the ignite shot, the orc `Wraith_OnFire_KnockedDown`, dead |
+| Whistle: a hand at the mouth | worked | 090520 abil27c: `start: the whistle ... PC_Attract` |
+| Distract (once bought): drawn, X | not proven | the user's save lacks it (090520: offers 5, presses 0); granted (100151): 1 press denied while the offer read "no target" |
+| Branded orcs: the left hand raised, LT | not run | needs the brand (Queen of the Shore); 97/98 |
+| Jump: A; at a wall, grab its top | worked (the jump) | 105422: 2 jumps, 2 landings; the wall grab not run |
+| Vault at the ruin by the campfire: the gold ring, A | the ring worked | 105422 move24: `ring: over the 78 cm top 98 cm ahead`; the driver's A came 0.9 s after the ring left (a jump) |
+| Forge tower by hand; the platform's ring: A | worked | 105422 + 112617 climb27b: to the top in 231 s, 18 pulls, 8 flings (3 caught), 2 mantles by A, 0 stalls |
+| A gold ring: A takes you there | worked | the tower's mantles by A (both boots) |
+| The double buzz; the corner fling | not met | the climb met no stall and no corner |
+| Climb down: reach over an edge and grip | not at this tower | 105422 + 112617: `no way over the edge: no wall under the lip` at the first tower's overhanging platform - the place, not the sequence (123 proved it elsewhere) |
+| Drop: hold A, the ring empties, let go at the flash | worked | both towers: armed at 0.69 s (`it flashes, a tick`), the let-go = the blink down onto the ring |
+| A caragor's leap: the sword across - stunned; grip through "Hold tight!" | **not at Practice > Caragor** | 105422, 112617, 114621, 115805, 120714: every leap of the practice's caragor is the game's `AI_Warg_JumpAttack_NoCounter` - 0 of 89 counterable (127.4) |
+| Riding: steer, A leap, sprint, bite, B off; the bow from the saddle | not reached | no stun, no mount (ride27c proved riding on Big Game's caragors) |
+| Big Game's runner | not reachable | the story's save (122) |
+| Queen of the Shore; The Rescue | not reachable | the story's saves (113, 120) |
+| Mission Failed: A = Retry, B = Abandon; Nemesis pages: B | worked (the death's screens) | 100151 + 105422: the screens answered B / A, back in the world in 27-28 s |
+| Cards that pause the game: A closes them | worked (the arrival card) | every boot: `card: put away (A)`, 0 jumps from it |
+| Map: click; point and pull; on the cross = a waypoint; hold = Sauron's Army | worked | 100151: a press 326 px off = the map brought there, a press on the cross = `A (the waypoint) (commands 54 and 65)`, the waypoint in the world; 090520: a 0.8 s hold = Sauron's Army; 105422: at a Nemesis mission's marker the click sent the map (PDA 95) and the game did not open it (127.5) |
+| Dying: in your own eyes; a captain on the big screen | worked | 100151 + 105422: Talion down, 12 death-view lines, the screens, the world back |
+| The arrival card: A (no jump); Settings > Walk toward | worked | 090520 hla27 23/23: Walk toward Hand turned the walk by the hand's 90 deg, Head again; the settings copy kept every line |
+| Bug notes; a session up to 4 hours | not run | no microphone headless; a 4-hour session is beyond a 70-minute boot (107) |
+
+### 127.6 Open - only the headset
+- **Brutalize and the immune captain's turned thrust** stay unproven on 28b headless: the scripted thrust reads
+  `carried` (the snap of `execute face`, a test aid, sweeps the ready blade in first) or misses his body by 26 cm; the
+  same happens first thing in a fresh session, so the sequence is not the cause. 121 proved brutalize 2 of 2 and 99 the
+  turned thrust; the headset judges both (a player's thrust comes from a still body).
+- **The map at a Nemesis mission's marker**: after nemesis27 started the power struggle at its marker (Talion left
+  there, -30746 2757 12091, no fight near), the right stick's click sent the map (`map 1: ... the map (PDA 95)`) and
+  the game did not open it; on the meadow (100151) the same click opened it. Likely the game's own rule inside that
+  mission's start; the headset will show whether the map opens there.
+- **The last chance** (the struggle's ring at random) and **the distract's press** (denied while the offer read "no
+  target") need a person aiming.
+- The drop kill's held view looks down at the orc's body close to the eyes (100151 drop-in): the headset judges it.
+- Not reached in one session from the user's save: the world's power struggle and Last Words (nemesis27 wants the
+  furthest save and the practice's quiet off), the story items (their saves), Big Game's runner, the brand, the bug
+  note's voice, four hours.
+
+### 127.7 Harness notes
+- Never edit the orchestrator while a boot runs it: bash reads a script as it goes; rehearsal 4's edit at 11:37 made
+  its end re-run and then sit in the watcher's loop in the foreground (no quit; ended by hand: `quit` into its cmd).
+- The scripts' offline test: `RH_SOM=DIR` with a fake run folder (launch-cmd.txt naming the worktree, a somvr.log with
+  an arrival line), a copy of /bin/sleep named ShadowOfMordor, and a loop answering `dump` and `practice go`.
