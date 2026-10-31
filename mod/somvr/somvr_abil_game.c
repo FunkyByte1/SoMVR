@@ -80,8 +80,8 @@ static struct {
 	/* the orcs seen lately: a knocked-down orc leaves Talion's combat bands (cb_orcs_r; run 20261030-100947) */
 	struct { uintptr_t c; double t; } rc[12];
 	/* tests */
-	_Atomic int req_probe, req_kd, req_start, req_links, req_skill, req_watch_ms, req_streak, req_goto, req_rec;
-	char links_name[64], skill_name[64], rec_name[64];
+	_Atomic int req_probe, req_kd, req_start, req_links, req_skill, req_watch_ms, req_streak, req_goto, req_rec, req_refs;
+	char links_name[64], skill_name[64], rec_name[64], refs_sub[64];
 	int probe_nowin;
 	uint32_t lines, lsec_n;
 	double lsec;
@@ -283,6 +283,7 @@ static void abl_probe(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 static void abl_links(uintptr_t pcomb, const char *name, double t);
 static void abl_skill(const char *name, double t);
 static void abl_rec(uintptr_t pcomb, const char *name, double t);
+static void abl_refs(const struct cb_orc *o, int n, double t);
 static void abl_kd(uintptr_t pc, const struct cb_orc *o, int n, double t);
 static void abl_streak(uintptr_t pc, int v, double t);
 static void abl_goto(const struct cb_orc *o, int n, const float root[3], float cm, double t);
@@ -341,6 +342,8 @@ static void abl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		abl_skill(g_abl.skill_name, t);
 	if (atomic_exchange(&g_abl.req_rec, 0))
 		abl_rec(pcomb, g_abl.rec_name, t);
+	if (atomic_exchange(&g_abl.req_refs, 0))
+		abl_refs(o, n, t);
 	if (atomic_exchange(&g_abl.req_kd, 0))
 		abl_kd(pc, o, n, t);
 	int wm = atomic_exchange(&g_abl.req_watch_ms, 0);
@@ -802,6 +805,95 @@ static void abl_rec(uintptr_t pcomb, const char *name, double t)
 	logf_("ABIL rec t=%.3f '%s': not a root node nor an attack record", t, name);
 }
 
+/* `abil refs SUBSTR` (build 29, som-b29-pcaragor): every database record reachable from the nearest orc's character
+ * combat record (Combat+0x4c8) and its AI character record (its CCharacter +0x2a8) by record-typed attributes, breadth
+ * first (at most ABL_REFS records); each one whose name holds SUBSTR logged with its path (the holders' names and the
+ * attribute hashes: scripts/somhash.py names them), the holders dumped raw one level down (abl_rec_dump). Read-only. */
+#define ABL_REFS 12000
+#define ABL_REFS_H 32768
+static void abl_refs(const struct cb_orc *o, int n, double t)
+{
+	static uintptr_t rec[ABL_REFS], tab[ABL_REFS_H];
+	static int par[ABL_REFS];
+	static uint32_t via[ABL_REFS];
+	static unsigned char ents[256 * 16];
+	memset(tab, 0, sizeof tab);
+	if (!n) {
+		logf_("ABIL refs t=%.3f '%s': no orc near", t, g_abl.refs_sub);
+		return;
+	}
+	uintptr_t npc = o[0].hobj ? peek_ptr(o[0].hobj + STL_HOBJ_NPC) : 0;
+	uintptr_t roots[2] = { peek_ptr(o[0].c + BZ_C_CHARREC), npc ? peek_ptr(npc + STL_AIREC) : 0 };
+	int nr = 0, found = 0, maxd = 0;
+	char nm[96], pn[96];
+	for (int k = 0; k < 2; k++) {
+		uintptr_t r = roots[k];
+		if (!r)
+			continue;
+		size_t h = (r >> 4) & (ABL_REFS_H - 1);
+		while (tab[h] && tab[h] != r)
+			h = (h + 1) & (ABL_REFS_H - 1);
+		if (tab[h])
+			continue;
+		tab[h] = r, rec[nr] = r, par[nr] = -1, via[nr] = 0, nr++;
+		logf_("ABIL refs t=%.3f root %d '%s' (record %#lx)", t, k, rx_rec_name(r, nm, sizeof nm), (unsigned long)r);
+	}
+	for (int i = 0; i < nr; i++) {
+		unsigned char hdr[2];
+		uintptr_t arr = peek_ptr(rec[i] + 8), vals = peek_ptr(rec[i] + 0x10);
+		if (!arr || !vals || !peek(rec[i], hdr, 2) || !hdr[0] || !peek(arr, ents, (size_t)hdr[0] * 16))
+			continue;
+		for (int k = 0; k < hdr[0]; k++) {
+			const unsigned char *e = ents + (size_t)k * 16;
+			uint16_t cnt, vi;
+			uint32_t hs;
+			memcpy(&hs, e, 4), memcpy(&cnt, e + 0xc, 2), memcpy(&vi, e + 0xe, 2);
+			if ((e[0xa] & 0x3f) != 0xa || !cnt)
+				continue;
+			uint64_t v[128];
+			int m = cnt < 128 ? cnt : 128;
+			if (!peek(vals + (uintptr_t)vi * 8, v, (size_t)m * 8))
+				continue;
+			for (int j = 0; j < m && nr < ABL_REFS; j++) {
+				uintptr_t r = (uintptr_t)v[j];
+				if (r < 0x10000 || (r & 7))
+					continue;
+				size_t h = (r >> 4) & (ABL_REFS_H - 1);
+				while (tab[h] && tab[h] != r)
+					h = (h + 1) & (ABL_REFS_H - 1);
+				if (tab[h])
+					continue;
+				tab[h] = r, rec[nr] = r, par[nr] = i, via[nr] = hs, nr++;
+			}
+		}
+	}
+	static int holders[64];
+	int nh = 0;
+	for (int i = 0; i < nr; i++) {
+		if (!strstr(rx_rec_name(rec[i], nm, sizeof nm), g_abl.refs_sub))
+			continue;
+		char path[700];
+		size_t po = 0;
+		int d = 0;
+		path[0] = 0;
+		for (int a = i; par[a] >= 0 && po < sizeof path - 120; a = par[a], d++)
+			po += (size_t)snprintf(path + po, sizeof path - po, " <- [%08x] '%s'", via[a], rx_rec_name(rec[par[a]], pn, sizeof pn));
+		maxd = d > maxd ? d : maxd;
+		if (found++ < 60)
+			logf_("ABIL refs   '%s' (record %#lx) depth %d:%s", nm, (unsigned long)rec[i], d, path);
+		int dup = par[i] < 0;
+		for (int k = 0; k < nh && !dup; k++)
+			dup = holders[k] == par[i];
+		if (!dup && nh < 64)
+			holders[nh++] = par[i];
+	}
+	logf_("ABIL refs t=%.3f '%s': %d records read from %s, %d named so (deepest %d), %d holders", t, g_abl.refs_sub, nr,
+	      fb_rec_name(peek_ptr(o[0].c + BZ_C_CHARREC), nm, sizeof nm), found, maxd, nh);
+	g_abl_dumps = 0;
+	for (int k = 0; k < nh && k < 8; k++)
+		abl_rec_dump(rec[holders[k]], "holder", 1, t);
+}
+
 /* `abil skill NAME`: a skill record's raw attributes and its linked records' */
 static void abl_skill(const char *name, double t)
 {
@@ -929,6 +1021,11 @@ static const char *abl_word(const char *w)
 		atomic_store(&g_abl.req_rec, 1);
 		return "abil rec (a test: a node's or an attack's records)";
 	}
+	if (!strncmp(w, "refs ", 5)) {
+		snprintf(g_abl.refs_sub, sizeof g_abl.refs_sub, "%s", w + 5);
+		atomic_store(&g_abl.req_refs, 1);
+		return "abil refs (a test: the records reachable from the nearest orc's that name SUBSTR, and their holders)";
+	}
 	if (!strncmp(w, "skill ", 6)) {
 		snprintf(g_abl.skill_name, sizeof g_abl.skill_name, "%s", w + 6);
 		atomic_store(&g_abl.req_skill, 1);
@@ -967,7 +1064,7 @@ static const char *abl_word(const char *w)
 		atomic_store(&g_abl.req_watch_ms, (int)(s * 1000));
 		return "abil watch (a test: Talion and the near orcs logged as they change)";
 	}
-	return "abil status|on|off|log|probe [nowin]|links NODE|skill NAME|kd|streak N|goto CM|start flash|ground|gaoe|watch S";
+	return "abil status|on|off|log|probe [nowin]|links NODE|skill NAME|refs SUBSTR|kd|streak N|goto CM|start flash|ground|gaoe|watch S";
 }
 
 static void abl_end_log(void)

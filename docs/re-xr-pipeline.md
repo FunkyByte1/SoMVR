@@ -20753,3 +20753,122 @@ Worked = the item's own verdict in the sequence (the boot, the evidence). The dr
   its end re-run and then sit in the watcher's loop in the foreground (no quit; ended by hand: `quit` into its cmd).
 - The scripts' offline test: `RH_SOM=DIR` with a fake run folder (launch-cmd.txt naming the worktree, a somvr.log with
   an arrival line), a copy of /bin/sleep named ShadowOfMordor, and a loop answering `dump` and `practice go`.
+
+## 128. Build 29: Practice > Caragor's leap the counterable kind - the leap's ask for Big Game's caragor riding lifted in the database in memory while the practice's caragor lives: `SOMVR_PRACTICE_CARAGOR` (2026-10-31, som-b29-pcaragor)
+127.4 found Practice > Caragor's leap never counterable (0 of 89, `AI_Warg_JumpAttack_NoCounter`) and left why open.
+handoff/HANDOFF-beasts.md "build 29"; the env block som-b29-pcaragor of scripts/headset-build26.env; scripts/pcar29-drive.sh.
+
+### 128.1 Why: the counterable leap is for a Talion who owns `CP_Warg_Rider` (boot 124150, `abil refs JumpAttack`)
+The test word `abil refs SUBSTR` (new: every record the nearest orc's character records reach, breadth first, each one
+named SUBSTR with its path; its holders dumped raw; the hashes named by scripts/somhash.py's function) on the practice's
+caragor: `Warg_Brown` Nodes -> 'AI_Warg_JumpAttacks' -> Pools -> 'AI_Warg_JumpAttacks' -> Attacks 'AI_Warg_JumpAttack',
+'AI_Warg_JumpAttack_NoCounter', 'AI_Warg_JumpAttack_T1' - the leap is the first whose Predicate passes. The Predicates
+(boots 124150, 131329):
+| Attack | Its Predicate asks (of an inventory) | Its AttackData |
+|---|---|---|
+| 'AI_Warg_JumpAttack' | TargetHasInventoryItem **'CP_Warg_Rider'** (and RequireTarget, AttackerOnScreen True, CanPathToTarget, TargetOnNavMesh, RequiredSpatialQuery, 300 units) | CannotInterruptExceptions 'Warg_JumpAttack_CanCounter' ('PC_Counter_Warg_Upgrade', fire) |
+| 'AI_Warg_JumpAttack_NoCounter' | TargetDoesNotHaveInvItem 'CP_Warg_Rider' | 'Warg_JumpAttack_NoCounter' (fire only: no counter) |
+| 'AI_Warg_JumpAttack_T1' | TargetHasInventoryItem 'CP_Warg_Rider', HasInventoryItem 'Warg_T1_CustomJumpAttack' (a mission's) | - |
+'CP_Warg_Rider' is caragor riding as an inventory item (its one attribute links 'S_Warg_Rider'); Big Game gives it (its
+'tut_WargRidingUnlocked', the counter's lesson comes after). The user's save, before Big Game, has not got it, so **every
+caragor's leap is the no-counter kind** - the practice's, a wild one's, any template's: 'Warg_Tame', 'Warg_Rare',
+'Warg_Unique_LowXP', 'DLC1_Warg_Rare_TorvinMount' spawned in turn (`verbs template`, boot 124150) share the 'Warg' pools;
+no level is asked. `beasts grant PSS_Warg_Rider/PSS_Warg_Hunter` sets skill bits, not this item (the rehearsal granted
+them: still 0 of 89). So the Test page's "a wild one" holds only after Big Game; before it only Big Game's own caragor.
+The item is asked in 20 attack predicates (the scan, 128.2): the leaps above and 'AI_Warg_JumpAttack_PlayerSprinting(_GP)',
+'_GP', 'AI_WargRare_JumpAttack', 'DLC_AI_WargStealth_JumpAttack' (TargetHas), the second no-counter leap
+'AI_Warg_JumpAttack_PlayerSprinting_NoCounter' (TargetHasNot); Talion's mounts 'PC_Warg_Domination_Mount_Grnd_F',
+'_KD_F/B/L/R' and their DLC1 copies, 'PC_Warg_Struggle_PlayerWin_Perfect', 'PC_Warg_PreDeath_PCWin_Perfect'
+(HasInventoryItem); and outside the attacks (a breadth-first read of 80000 records from Talion's root records, boots
+140254-143825, not shipped) the RB and stealth prompts' overrides ('Sword_ButtonRB', 'Stealth_ButtonX/RB': IncludedItem)
+and a caragor's 'Monsters' action predicate ([b86ecfcb]).
+
+### 128.2 The game's way in the practice: `SOMVR_PRACTICE_CARAGOR=unlock|off` (somvr_beasts_game.c; code default unlock, with SOMVR_BEASTS; build 29 env unlock)
+**Decided**: the practice asks the game what Big Game would - not the item lent. Lending 'CP_Warg_Rider' to Talion's
+inventory would unlock caragor riding in the user's campaign the moment the game autosaved during a practice (a story
+step skipped, the save changed by us). So the asks are lifted where they are read: in the game's database in memory
+(the database is the game's data, never a file - as SOMVR_FIGHT_REACH and the tap window already edit it), only while a
+Practice > Caragor lives (and while Talion rides after it), put back the frame it is gone; Talion's inventory and the
+save never change.
+- Once a session (BZU_STEP 400 attack records a frame, after the database is loaded): every attack record's Predicate read;
+  each record-typed value naming 'CP_Warg_Rider' (SOMVR_PRACTICE_CARAGOR_ITEMS) kept with its slot. A "has" ask
+  (TargetHasInventoryItem, HasInventoryItem, HasInventoryItem2) is liftable; a "has not" one (TargetDoesNotHaveInvItem,
+  DoesNotHaveInventoryItem) marks an attack only a Talion without the item gets. 18 liftable, 2 "has not"
+  ('AI_Warg_JumpAttack_NoCounter', 'AI_Warg_JumpAttack_PlayerSprinting_NoCounter').
+- At the practice caragor's spawn: its pools walked (its character record's Nodes, MountedNodes, CombatCircleNodes and
+  their Links -> Pools -> Attacks: 10 nodes, 9 pools); an entry naming a "has not" attack points at its pool's first
+  lifted attack while lifted ('AI_Warg_JumpAttack_NoCounter' -> 'AI_Warg_JumpAttack'): the game with the item owned
+  never picks it; a leap whose other asks fail (the caragor off the screen: AttackerOnScreen) is no leap, as then.
+- Lifted: each liftable slot set to none (the predicates' own "nothing asked"; read back first: a slot that is not what
+  was read is left alone); put back the same way. Lines: `BEASTS t=.. practice caragor: N attacks' predicates read ...:
+  N asks to lift, N others: ...`, `BEASTS practice caragor:   'ATTACK' asks ...` (each attack's inventory asks),
+  `... also asked by '...' [hash] <- path`, `... its pools (...): N entries for Talion without the item: ...`, `... a
+  Practice > Caragor lives - N of N asks ... lifted ... (memory only)` / `... put back`, `BEASTS END practice caragor:`.
+
+### 128.3 What a player gets (boots 125525 - 141103: the leap, the counter, the stun)
+Practice > Caragor 10 m off, the test blade across its line (`ride guard on`, 105.3): **its leaps are 'AI_Warg_JumpAttack'
+and the blade counters them** - boot 125525 the first leap after the lift countered ('PC_Warg_Sync_Cntr_F', the caragor
+'AI_Warg_PC_Sync_Cntr_F', state 'KnockDown'; DEFENCE `parry ... 2.4 cm from the blow, 86 deg across`); boot 130403 (the
+no-counter leap out of the pool) every leap the counterable kind; boots 135040 3 of 3, 140254 1 of 1, 141103 2 of 2
+countered, each stunned ('AI_Warg_Knockdown_Idle_A/C', ~5-10 s). In all, since the no-counter leap left the pool (boots
+130403 - 145126): 29 leaps at Talion, all 'AI_Warg_JumpAttack', 0 '_NoCounter'; 21 parried by the test blade, 21
+countered (the rest met no blade: the test guard placed late, or a driver's second draw had sheathed the sword). The old
+code (boot 124150, the rehearsal's 105422 - 120714): 0 counterable. Each lift put back when the caragor was removed (boot 142052: 4 lifts, 4 put back).
+
+### 128.4 The mount: not offered in the practice (open)
+After the counter the caragor lies 'KnockDown' 60 cm off ('AI_Warg_Knockdown_Idle_A/C', ~5-10 s), but the game never
+offers the mount (no 'UI_MountWarg_Dominate' prompt, no 'MountTargetFar'), and 123 pressed at it (the probe PC_PRESS=1:
+8 presses a stun while walking from 60 cm to 5 m; boot 142950: 5 stuns, 143825: 3) is always Talion's grab
+('PC_Grab_Attempt_F/L/R_Fail'): the game's selection of the root node 'PC_Warg_Domination_Mount_Grnd' (root 11, before
+the grabs; its Input 'Mount'; its pool 'PC_Warg_Domination_Mount_Grnd_KD_F/B/L/R') does not pass. Those attacks'
+Predicate (KD_R, boot 131329): HasInventoryItem 'CP_Warg_Rider' (lifted), DoesNotHaveInventoryItem
+'PC_InQuestStartPoint', Item 'PC_SwordOrDagger', StateTargetList 'KnockedDown', DirectionAllowedToAttacker (each of the
+four), 150 units, ExcludedBehaviorStateSelfList 'Not_OnTheGround', TargetDoesNotHaveCategory (the domination's own),
+the target 'Wargs', TargetHasBrand False. Ruled out (no offer, or the grab on 123): the item's asks lifted (every boot
+since 130403); `beasts grant PSS_Warg_Rider PSS_Warg_Hunter PSS_Mount_From_Above` before the chain (135040: 3 stuns);
+`beasts unask PC_InQuestStartPoint` (134145; 143825 with the presses); the item's asks outside the attack predicates
+lifted too (the RB and stealth prompts' IncludedItem, a caragor's 'Monsters' predicate: 141103, 142950 - found by a
+breadth-first read of 80000 records from Talion's root records; no effect, so not in the shipped code). Not ruled out:
+'PC_SwordOrDagger' (its probe came after the driver's second draw had put the sword away: no counter), the targeting
+(the explicit-target route, `beasts pick`, refused the lying caragor: "the target did not take the orc" - dropped), or
+something Big Game's scripts set besides the item. **So Practice > Caragor before Big Game is the leap, the counter and
+the stun; the mount, the domination and Seat mode stay Big Game's** (proven there: 105, 109, 122). After Big Game the
+save owns the item, the lift changes nothing (an ask of an owned item passes either way) and the practice's caragor
+should offer the whole chain as any caragor does - unproven (no such save).
+
+### 128.5 Practice > Graug: its fight, not a ride (the save)
+A graug's mounts ('PC_Troll_Mount' -> 'PC_Trl_Mount_Grnd_F/B/L/R', boot 135040) ask **TargetHasBrand True** (a branded
+graug; no item): riding one needs the brand (`PSS_Brand`), which the user's save has not got - it comes with the story's
+second part. Lifting that would hand the player the story's central power early, so Practice > Graug stays its fight:
+the blade on its legs (92.2: its bone chain's thighs and shins), its fists met by the guard's contact judge (92.3), the
+dodge and the vault; its own records 'AI_TrlCave_Attack_Front/_Left/_Right/_Back'.
+
+### 128.6 Runs (headless, Monado 20 Hz, scripts/headset-build26.env + the som-b29-pcaragor block + SOMVR_HANDS_TEST=1; scripts/pcar29-drive.sh; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-) | What | Proves |
+|---|---|---|
+| 20261031-124150 (`refs tmpl`) | `abil refs JumpAttack`, `abil rec` of both leaps; Practice > Caragor, then 'Warg_Tame', 'Warg_Rare', 'Warg_Unique_LowXP', 'DLC1_Warg_Rare_TorvinMount' 45 s each | the cause (128.1); the old code: '_NoCounter' leaps only |
+| 125525 (`chain`) | the lift (7 TargetHas asks) | the first leap after it 'AI_Warg_JumpAttack', parried and countered, the caragor stunned; a later '_NoCounter' (still in the pool); no mount offer (Talion's HasInventoryItem not yet lifted) |
+| 130403 | + HasInventoryItem (18 asks), '_NoCounter' out of the pool | the leap the counterable kind, countered; no mount offer |
+| 131329 | + each attack's asks logged, `verbs tree`, the KD_R dump; a second try with grants | the mounts' predicate (128.4); the second try uncountered (the second draw) |
+| 132704, 134145 | `beasts unask PC_InQuestStartPoint`; the respawn far every 25 s; `beasts pick` | countered; no offer; the pick refuses a lying caragor |
+| 135040 | grants before the chain; the mount node, PSS_Warg_Rider, PC_Troll_Mount dumped | 3 of 3 countered, no offer with the skills; the graug's mount asks a brand (128.5) |
+| 140254, 141103 | the breadth-first read logged, then its finds lifted; grants + unask | 1 of 1, 2 of 2 countered; no offer |
+| 142052 | 123 probes | no leap in 6 spawns (bites only: the caragor came at Talion out of the view, AttackerOnScreen); 4 lifts, 4 put back |
+| 142950 | 123 probes | 5 of 5 countered; 123 at 60 cm, KnockDown = 'PC_Grab_Attempt_*_Fail' |
+| 143825 | 123 probes + unask PC_InQuestStartPoint | 3 of 3 countered; 123 the grab |
+| 145126 | the shipped code (`chain`, 4 spawns) | 2 of 2 countered (frames 2291, 3105: both eyes the meadow and the guard, stable, nothing in the face); 4 lifts, 3 put back (lifted at the end); no mount offer |
+
+### 128.7 Switches, words, lines
+| Switch | Code default | build 29 env | What |
+|---|---|---|---|
+| `SOMVR_PRACTICE_CARAGOR` | unlock (with SOMVR_BEASTS) | unlock | the leap's (and the mount's) asks for Big Game's caragor riding lifted in memory while a Practice > Caragor lives |
+| `SOMVR_PRACTICE_CARAGOR_ITEMS` | CP_Warg_Rider | - | the item(s) (the first is the one "owned"; up to 4) |
+Test words (SOMVR_HANDS_TEST): `abil refs SUBSTR` (128.1), `beasts unask NAME` (a test aid: NAME's asks in the riding
+item's attacks set to none, never put back). (`beasts pick` - vb_pick of Talion's mount nodes at the nearest caragor -
+was tried and dropped: the explicit target refuses a lying caragor, "the target did not take the orc".)
+
+### 128.8 For the headset
+- Practice > Caragor: face it, hold the sword across between you and its head as it leaps - countered, it lies stunned.
+- How it reads and feels: the leap from 10 m comes straight at you once you face it (it never leaps from out of view);
+  the window is the game's (0.500..0.633 s into the leap) - generous enough for a real arm?
+- The mount after the stun: only in Big Game (128.4).

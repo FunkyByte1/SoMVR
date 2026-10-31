@@ -3,7 +3,7 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 29b - what to test
+Build 29c - what to test
 - Everything new since build 20c, by topic. Menu > Controls lists every move.
 - Smooth: the headset runs at 80 Hz with a VR graphics preset. Fights, fire and rain should stay smooth. Try Settings > Refresh rate 90; back to 80 if it stutters.
 - Fire and the wraith sky look the same in both eyes, at their depth - no smoke in your face.
@@ -40,7 +40,8 @@ Build 29b - what to test
 - Climb down: reach down over a wall top's or roof's edge (even right at it) and grip - you hang; climb down.
 - Drop: hold A over a drop; the white ring empties; let go at the flash.
 
-- BEASTS. A wild caragor's leap (or Big Game's): hold your sword across its line - it's stunned. Grip it with your left hand and keep gripping through "Hold tight!". Practice > Caragor's leap can't be countered.
+- BEASTS. Practice > Caragor (or Big Game's caragor): as it leaps, hold your sword across between you and its head - it's countered and lies stunned. Wild caragors only after Big Game.
+- Mount (Big Game): look at the stunned caragor, reach out your left hand and grip; keep gripping through "Hold tight!" until it gives in.
 - Riding: the stick steers like a wheel. Tap A = leap, hold A or click the left stick = sprint, right trigger bite, B off. The bow works from the saddle. Retry keeps you on.
 - Big Game's runner: sprint the caragor into him, then bite.
 
