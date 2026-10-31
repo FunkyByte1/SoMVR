@@ -139,12 +139,88 @@ static void test_throw(void)
           somvr_ab_mouth_dist(eye, fwd, rest));
 }
 
+/* build 27d (docs/re-xr-pipeline.md 121): taunt's beckon - the open hand out, palm up, pulled in twice within 1.5 s;
+ * one pull, a slow drift in, pulls with the hand near the body, pulls too far apart, a closed hand, the hover then pull */
+static int beckon_run(const somvr_ab3_cfg *c, const float *d, const int *ok, int n, double dt, int *at)
+{
+    somvr_ab_beckon b;
+    memset(&b, 0, sizeof b);
+    int hits = 0;
+    for (int i = 0; i < n; i++) {
+        const char *why;
+        if (somvr_ab_beckon_step(c, &b, i * dt, d[i], ok ? ok[i] : 1, &why))
+            hits++, *at = i;
+    }
+    return hits;
+}
+static void test_beckon(void)
+{
+    somvr_ab3_cfg c;
+    somvr_ab3_cfg_default(&c);
+    float d[200];
+    int ok[200], n, at = -1;
+    /* 90 Hz: out at 45, in to 33 in 0.15 s, out to 44 in 0.2 s, in to 32 in 0.15 s, held */
+    n = 0;
+    for (int i = 0; i < 20; i++) d[n++] = 45;
+    for (int i = 1; i <= 14; i++) d[n++] = 45 - 12 * i / 14.0f;
+    for (int i = 1; i <= 18; i++) d[n++] = 33 + 11 * i / 18.0f;
+    for (int i = 1; i <= 14; i++) d[n++] = 44 - 12 * i / 14.0f;
+    for (int i = 0; i < 40; i++) d[n++] = 32;
+    CHECK(beckon_run(&c, d, NULL, n, 1 / 90.0, &at) == 1 && at >= 58 && at <= 64, "the beckon: once, 7 cm into the 2nd pull (%d)", at);
+    /* a third pull right after: not another (the hand must go out and pull twice again) */
+    int n3 = n;
+    for (int i = 1; i <= 18; i++) d[n3++] = 32 + 12 * i / 18.0f;
+    for (int i = 1; i <= 14; i++) d[n3++] = 44 - 12 * i / 14.0f;
+    CHECK(beckon_run(&c, d, NULL, n3, 1 / 90.0, &at) == 1, "a 3rd pull: no second beckon");
+    /* one pull only */
+    float d1[120];
+    int n1 = 0;
+    for (int i = 0; i < 52; i++) d1[n1++] = d[i];
+    for (int i = 0; i < 60; i++) d1[n1++] = 44;
+    CHECK(beckon_run(&c, d1, NULL, n1, 1 / 90.0, &at) == 0, "one pull: nothing");
+    /* the same in a closed hand (not ok) */
+    for (int i = 0; i < n; i++) ok[i] = 1;
+    for (int i = 30; i < 50; i++) ok[i] = 0;
+    CHECK(beckon_run(&c, d, ok, n, 1 / 90.0, &at) == 0, "the hand closed between the pulls: nothing");
+    /* slow: the same way at a quarter of the speed (pulls of 12 cm in 0.6 s = 20 cm/s) */
+    CHECK(beckon_run(&c, d, NULL, n, 4 / 90.0, &at) == 0, "a slow drift in and out: nothing");
+    /* near the body: the same pulls 20 cm closer (out at 25) */
+    float dn[200];
+    for (int i = 0; i < n; i++) dn[i] = d[i] - 20;
+    CHECK(beckon_run(&c, dn, NULL, n, 1 / 90.0, &at) == 0, "the hand near the body: nothing");
+    /* the two pulls 2 s apart */
+    int m = 0;
+    float dg[400];
+    for (int i = 0; i < 20; i++) dg[m++] = 45;
+    for (int i = 1; i <= 14; i++) dg[m++] = 45 - 12 * i / 14.0f;
+    for (int i = 1; i <= 18; i++) dg[m++] = 33 + 11 * i / 18.0f;
+    for (int i = 0; i < 160; i++) dg[m++] = 44;
+    for (int i = 1; i <= 14; i++) dg[m++] = 44 - 12 * i / 14.0f;
+    for (int i = 0; i < 20; i++) dg[m++] = 32;
+    CHECK(beckon_run(&c, dg, NULL, m, 1 / 90.0, &at) == 0, "two pulls 2.2 s apart: nothing");
+    /* held out 1 s at the top before the beckon (the pull timed from its last moment there) */
+    m = 0;
+    for (int i = 0; i < 90; i++) dg[m++] = 45 + 0.4f * (i % 3);
+    for (int i = 1; i <= 14; i++) dg[m++] = 45 - 12 * i / 14.0f;
+    for (int i = 1; i <= 18; i++) dg[m++] = 33 + 11 * i / 18.0f;
+    for (int i = 1; i <= 14; i++) dg[m++] = 44 - 12 * i / 14.0f;
+    for (int i = 0; i < 20; i++) dg[m++] = 32;
+    CHECK(beckon_run(&c, dg, NULL, m, 1 / 90.0, &at) == 1, "held out a second, then the beckon");
+    /* a headless frame rate (20 fps) */
+    float d20[40];
+    int k = 0;
+    float seq[] = { 45, 45, 45, 41, 37, 33, 37, 41, 44, 40, 36, 32, 32, 32 };
+    for (size_t i = 0; i < sizeof seq / sizeof seq[0]; i++) d20[k++] = seq[i];
+    CHECK(beckon_run(&c, d20, NULL, k, 0.05, &at) == 1, "the beckon at 20 fps");
+}
+
 int main(void)
 {
     test_push();
     test_stab();
     test_trigger();
     test_throw();
+    test_beckon();
     printf("test_abil: %d/%d checks passed\n", checks - fails, checks);
     return fails ? 1 : 0;
 }

@@ -104,6 +104,7 @@ static float ba_world(const float o[3], const float d[3], float len, const struc
 			return -1;
 		float t = s + dist3(hp, f);
 		int pass = obj && obj == g_cl.obj; /* Talion */
+		pass |= mt_near_mount(obj, hp); /* build 27c: the beast he rides (234922: the ring on its own back, 0.0 m) */
 		for (int i = 0; !pass && i < n; i++) {
 			float dx = hp[0] - orcs[i].pos[0], dz = hp[2] - orcs[i].pos[2], dy = hp[1] - orcs[i].pos[1];
 			pass = (obj && obj == orcs[i].hobj) || (sqrtf(dx * dx + dz * dz) <= g_ba.body_cm + 30.0f &&
@@ -125,7 +126,7 @@ static int ba_trace(sv_vec3 ov, sv_vec3 dv, float pt[3], float ring[3], float *t
 	float o[3] = { ov.x, ov.y, ov.z }, d[3] = { dv.x, dv.y, dv.z };
 	uintptr_t pl = g_fr.pl, pc = pl ? peek_ptr(pl + P_COMBAT) : 0, sc = pc ? peek_ptr(pc + PC_SERVER) : 0;
 	struct cb_orc near[8];
-	int n = pc ? cb_orcs_r(pc, sc, o, g_ba.far_cm, near, 8) : 0, kind = BA_FAR;
+	int n = pc ? bo_orcs_r(pc, sc, o, g_ba.far_cm, near, 8) : 0, kind = BA_FAR; /* (never the beast ridden) */
 	float best = g_ba.far_cm, best_pt = g_ba.far_cm;
 	*hobj = 0, *head_node = 0;
 	for (int i = 0; i < n; i++) {

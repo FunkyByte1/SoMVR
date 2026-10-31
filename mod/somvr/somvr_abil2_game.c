@@ -48,6 +48,10 @@ static struct {
 	int dhand_ok;
 	float thr_hand[3], thr_v[3];
 	double thr_t, away_until, bow_t;
+	/* build 27d (som-b27-abilities3, docs 121): SOMVR_ABIL_THROW_START=press - the game's own input (124 tapped) starts
+	 * the throw, the game's own target and offer; its attack read back after */
+	int thr_press;
+	double thr_check_t;
 	/* the whistle */
 	int mouth_h, mouth_armed, wh_req;
 	double mouth_t0, wh_t;
@@ -83,6 +87,7 @@ static void ab2_start(int *bad)
 	g_ab2.ignite = env_word("SOMVR_ABIL_IGNITE", ow, 2, 0);
 	g_ab2.thr = env_word("SOMVR_ABIL_THROW", ow, 2, 0);
 	g_ab2.whistle = env_word("SOMVR_ABIL_WHISTLE", ow, 2, 0);
+	g_ab2.thr_press = env_word("SOMVR_ABIL_THROW_START", (const char *const[]){ "game", "press" }, 2, 0);
 	const char *e;
 	snprintf(g_ab2.ign_node, sizeof g_ab2.ign_node, "%s", (e = getenv("SOMVR_ABIL_IGNITE_NODE")) && *e ? e :
 		 "PC_Wraith_Ranged_Immolate_Shoot");
@@ -122,6 +127,11 @@ static void ab2_start(int *bad)
 	      "back in the hand %.1f s after (SOMVR_ABIL_THROW_RECALL_MS)", g_ab2.thr ? "on" : "off", g_ab2.thr_node,
 	      g_ab2.cfg.throw_cms / 100, g_ab2.cfg.throw_fwd_deg, g_ab2.cfg.throw_low_cm, g_ab2.cfg.throw_win_s,
 	      g_ab2.cfg.aim_level_deg, g_ab2.cfg.aim_pitch_deg, g_ab2.cfg.aim_min_cm, g_ab2.cfg.aim_max_cm, g_ab2.recall_s);
+	if (g_ab2.thr)
+		logf_("CONFIG abil2 build 27d: the quick throw's start %s (SOMVR_ABIL_THROW_START)", g_ab2.thr_press ?
+		      "press: the game's own input - 124 tapped 100 ms (QuickThrow_Tap), the game's target where the head looks; "
+		      "Talion's attack read 0.35 s after (a 'PC_QckThr_' = thrown, else the dagger stays)" :
+		      "game: the node's selection for the orc on the throw's line, FUN_00a8c700");
 	logf_("CONFIG abil2: the whistle %s (SOMVR_ABIL_WHISTLE; node '%s'): a free hand within %.0f cm of the mouth for %.2f s "
 	      "(SOMVR_ABIL_WHISTLE_CM / _MS)", g_ab2.whistle ? "on" : "off", g_ab2.wh_node, g_ab2.cfg.mouth_cm, g_ab2.cfg.mouth_s);
 }
@@ -260,6 +270,16 @@ static void ab2_ignite_ask(uintptr_t pcomb, uintptr_t pc, double t)
 /* the throw: the orc nearest its line that the game offers the quick throw for, started */
 static void ab2_throw_go(uintptr_t pcomb, uintptr_t pc, double t)
 {
+	if (g_ab2.thr_press) { /* build 27d: the game's own input decides (its target, its offer) */
+		g_vb.pcmd[0] = g_bow.aim_cmd, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.1;
+		g_ab2.thr_check_t = t + 0.35;
+		struct cb_orc nr[AB_WATCH_N];
+		int n = cb_orcs_r(pcomb, pc, g_ab2.thr_hand, 3000, nr, AB_WATCH_N);
+		abl_watch_begin(pc, nr, n, t, 3.0);
+		logf_("ABIL2 t=%.3f the quick throw: %d (the aim) tapped for 100 ms - the game's own QuickThrow_Tap (%d orc(s) within "
+		      "30 m)", t, g_bow.aim_cmd, n);
+		return;
+	}
 	struct cb_orc nr[8], *cand[8];
 	float lv[8], pv[8], dv[8];
 	int n = cb_orcs_r(pcomb, pc, g_ab2.thr_hand, g_ab2.cfg.aim_max_cm + 200, nr, 8), m = 0;
@@ -360,6 +380,22 @@ static void ab2_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t
 	if (g_ab2.thr_req) {
 		g_ab2.thr_req = 0;
 		ab2_throw_go(pcomb, pc, t);
+	}
+	if (g_ab2.thr_check_t > 0 && t >= g_ab2.thr_check_t) { /* build 27d (=press): did the game throw? */
+		g_ab2.thr_check_t = 0;
+		char an[96];
+		vb_name(peek_ptr(pc + VB_C_ATTACK), an, sizeof an);
+		if (!strncmp(an, "PC_QckThr", 9) || strstr(an, "uickthrow") || strstr(an, "uickThrow")) {
+			g_ab2.thr_started++;
+			if (g_vb.haptic > 0)
+				in_haptic_event(somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER), 0.7f * g_vb.haptic, 0.06f, SOMVR_HAP_COMBAT);
+			logf_("ABIL2 t=%.3f the quick throw: the game threw - Talion's attack '%s'", t, an);
+		} else {
+			g_ab2.thr_none++, g_ab2.away_until = 0; /* nothing thrown: the dagger stays in the hand */
+			if (g_vb.haptic > 0)
+				in_haptic_event(somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER), 0.25f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
+			logf_("ABIL2 t=%.3f the quick throw: the game did not throw (Talion's attack '%s'): the dagger stays", t, an);
+		}
 	}
 	/* the quick throw's offer while the dagger is in the hand (the cue; the log on a change) */
 	int dag = g_ab2.thr && g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g);
@@ -626,7 +662,7 @@ static void ab2_probe(uintptr_t pcomb, uintptr_t pc, const float *root, double t
 	struct cb_orc nr[4];
 	int n = cb_orcs_r(pcomb, pc, root, 3000, nr, 4);
 	const char *nodes[] = { g_ab2.ign_node, g_ab2.thr_node, g_ab2.wh_node, "PC_Taunt", "PC_StealthTorment",
-				"PC_Wraith_Ranged_Normal_Distract", "PC_Wraith_Dash_Kill_GetThere", "PC_Ranged_QuickThrow_Upgrade_Attack1",
+				"PC_InstaKill_Sneak_Loud", "PC_Wraith_Ranged_Normal_Distract", "PC_Wraith_Dash_Kill_GetThere", "PC_Ranged_QuickThrow_Upgrade_Attack1",
 				"PC_Wraith_Ranged_Immolate_HC_Shoot" };
 	logf_("ABIL2 probe t=%.3f: skills Wraith_Ignite %d, Quick_Throw_1 %d, Whistle %d, Taunt %d, Shadow_Chaining %d, "
 	      "Wraith_Distract %d; %d orc(s) within 30 m", t, ab2_skill_owned(pc, "PSS_Wraith_Ignite"),

@@ -3,7 +3,7 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 27b - what to test
+Build 28b - what to test
 - Everything new since build 20c, by topic. Menu > Controls lists every move.
 - Smooth: the headset runs at 80 Hz with a VR graphics preset. Fights, fire and rain should stay smooth. Try Settings > Refresh rate 90; back to 80 if it stutters.
 - Fire and the wraith sky look the same in both eyes, at their depth - no smoke in your face.
@@ -18,6 +18,7 @@ Build 27b - what to test
 - Wraith flash: when the sword glows blue, hold the right trigger and push your open left palm at an orc.
 - A downed orc: stab straight down into him while the sword glows.
 - Drop kill: crouch on a wall top above an unaware orc (a blue glow on him), stab hard down at him.
+- Brutal kill: crouch behind an unaware orc, hold the left trigger and stab his back hard.
 - Captains: Practice > Captain. Fast real cuts bite: about a dozen and an execution. Immune to stealth: the blade glances off. His rune drops (B).
 - Captains in the world: start a power struggle at its marker - the intro plays where he stands.
 - A beaten captain held by the game: X = Kill, then stab his chest within 4 s or he gets up. Or LT = Dominate, then LT = Gain Intel: the left stick to the warchiefs, A.
@@ -25,17 +26,20 @@ Build 27b - what to test
 - BOW AND WRAITH. The sight is small and white, blue on an orc. Shadow Strike lands you with the sword in hand.
 - Fire arrow: bow drawn, press B - the tip glows. He burns.
 - Whistle: crouch, an empty hand at your mouth a moment - an orc comes to look.
+- Distract (once bought): bow drawn, press X - orcs go to look where you aim.
 - Branded orcs: raise your left hand above your head and pull the left trigger.
 
 - MOVING. Jump: A. Jump at a wall and grab its top as you rise.
 - Vault: walk at a low wall (the ruin by the campfire); a gold ring shows: A.
 - Forge tower: climb it by hand. At the top hold the platform's edge; the gold ring: A onto it.
 - Whenever a gold ring shows (a top, a lip overhead), A takes you there.
-- Climb down: reach down over a wall top's edge and grip - you hang; climb down.
+- A double buzz at a ledge overhead: no way up there - move along. At a corner, a fling still lifts you.
+- Climb down: reach down over a wall top's or roof's edge (even right at it) and grip - you hang; climb down.
 - Drop: hold A over a drop; the white ring empties; let go at the flash.
 
 - BEASTS. A caragor's leap: hold your sword across its line - it's stunned. Grip it with your left hand and keep gripping through "Hold tight!".
-- Riding: the stick steers like a wheel; A leap, right trigger bite, B off. Retry keeps you on.
+- Riding: the stick steers like a wheel. Tap A = leap, hold A or click the left stick = sprint, right trigger bite, B off. The bow works from the saddle. Retry keeps you on.
+- Big Game's runner: sprint the caragor into him, then bite.
 
 - STORY. Queen of the Shore: after "Ability Unlocked: Brand", crouch behind an archer, open left hand on his head, left trigger. Six unseen.
 - The Rescue: lift Lithariel with your left grip. If she drops, cut the Uruks off her and pick her up.

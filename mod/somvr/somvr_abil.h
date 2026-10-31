@@ -87,4 +87,31 @@ int somvr_ab_throw_aim(const somvr_ab2_cfg *c, const float hand[3], const float 
 /* the mouth: 9 cm under the eyes and 7 cm ahead of them (the head's level forward); the grip's distance to it (cm) */
 float somvr_ab_mouth_dist(const float eye[3], const float fwd[3], const float hand[3]);
 
+/* ---- build 27d (som-b27-abilities3; docs/re-xr-pipeline.md 121): taunt by the beckon ---- */
+typedef struct {
+    float out_cm;       /* a pull starts with the palm at least this far out from the eyes (level) */
+    float pull_cm;      /* a pull: the palm comes in toward the eyes at least this far ... */
+    float pull_cms;     /* ... at least this fast (cm/s, from where it started coming in) */
+    float rearm_cm;     /* the next pull counts after the palm went back out this far from the pull's nearest point */
+    float win_s;        /* two pulls within this of the first one's start = the beckon */
+    float palm_up;      /* the palm's normal's up part at least this (0.5 = within 60 deg of straight up) */
+    float open_max;     /* the grip under this = the hand open */
+    float aim_deg;      /* an orc within this (level) of the eyes -> palm line */
+    float aim_max_cm;   /* ... and within this of the eyes */
+} somvr_ab3_cfg;
+void somvr_ab3_cfg_default(somvr_ab3_cfg *c);
+
+/* the beckon's state (somvr_ab_beckon_step; zero = the start) */
+typedef struct {
+    int armed;          /* 1: waiting for a pull (the palm out); 0: after a pull, waiting for the palm to go out */
+    int pulls;          /* pulls in this beckon so far */
+    float hi, lo;       /* the farthest point since armed (the pull's start), the nearest since the pull */
+    double hi_t, first_t;
+    float last_pull_cm, last_pull_cms;
+} somvr_ab_beckon;
+
+/* one frame: t (s), d = the palm's level distance from the eyes (cm), ok = the hand open, palm up and free. 1 = the
+ * second pull just ended (the beckon); *why = the frame's state ("" when nothing to say) */
+int somvr_ab_beckon_step(const somvr_ab3_cfg *c, somvr_ab_beckon *b, double t, float d, int ok, const char **why);
+
 #endif

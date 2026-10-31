@@ -488,6 +488,8 @@ static const vm_ctl_line g_ctl[] = {
     {CG_SWORD, "Struggle", "hand to ring, stab", SOMVR_VMA_STRUGGLE, 0, 0},
     /* build 27 (114, SOMVR_ABIL): a downed orc the game lets Talion finish (its blue glow) - the stab down into him */
     {CG_SWORD, "Downed", "stab down into him", SOMVR_VMA_GROUNDK, 0, 0},
+    /* build 27d (121, SOMVR_ABIL_BRUTAL): the stealth stab with the left trigger held = the game's brutalize */
+    {CG_SWORD, "Brutal", "stealth stab + LT", SOMVR_VMA_STEALTH | SOMVR_VMA_ABIL2, 0, 0},
     /* ---- Orcs (SOMVR_VERBS: the left hand; the trigger while holding: a tap stuns, held drains) */
     {CG_ORCS, "Grab", "L grip on orc's head", SOMVR_VMA_VERBS, 0, 0},
     {CG_ORCS, "Stun", "held: tap L trigger", SOMVR_VMA_VERBS, 0, 0},
@@ -520,6 +522,7 @@ static const vm_ctl_line g_ctl[] = {
     /* build 27c (118, SOMVR_ABIL_IGNITE): the ignite shot where the game offers it - B while an arrow is drawn (its tip
      * glows), the release shoots it */
     {CG_BOW, "Ignite", "B while drawn", SOMVR_VMA_ABIL2, 0, 0},
+    {CG_BOW, "Distract", "X while drawn", SOMVR_VMA_ABIL2, 0, 0}, /* build 27d (121, SOMVR_ABIL_DISTRACT) */
     /* ---- Beasts (build 26-27, SOMVR_RIDE): a caragor's leap blocked = stunned; the left hand reached out at it and
      * closed (or B) at the game's offer mounts it; "Hold tight!" = that hand kept closed (or B held); riding: the left
      * stick steers, A leaps, the right trigger bites, B gets off */
@@ -528,6 +531,9 @@ static const vm_ctl_line g_ctl[] = {
     {CG_BEAST, "Hold on", "keep the grip closed", SOMVR_VMA_RIDE | SOMVR_VMA_DOMHOLD, 0, 0},
     {CG_BEAST, "Steer", "left stick", SOMVR_VMA_RIDE, 0, 0},
     {CG_BEAST, "Riding", "A leap RT bite B off", SOMVR_VMA_RIDE, 0, 0},
+    /* build 27c (som-b27-ride3, re-xr-pipeline.md 122): the beast's sprint - A held (the stock pad's A: the game's own),
+     * or the left stick's click (latched while the stick stays pushed, as on foot) */
+    {CG_BEAST, "Sprint", "hold A / click stick", SOMVR_VMA_RIDE, 0, 0},
     /* ---- Menus and help */
     /* build 13: the wrist panel by the palm gesture (the left palm turned to the eyes and looked at) or the left menu
      * button held; build 27: the gesture in a first-time player's words, the button's tap and hold on one line */

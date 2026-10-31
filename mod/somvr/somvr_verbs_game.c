@@ -1434,6 +1434,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	fa_frame(pcomb, pc, o, n, root, t); /* build 25, SOMVR_ABOVE: the game's answers for the orc below (somvr_above_game.c) */
 	abl_frame(pcomb, pc, o, n, root, t); /* build 27, SOMVR_ABIL: the abilities' offers (somvr_abil_game.c) */
 	ab2_frame(pcomb, pc, root, t); /* build 27c: the ignite's offer, the throw's and the whistle's starts */
+	ab3_frame(pcomb, pc, root, t); /* build 27d: the taunt's start, the distract's offer */
 	struct vb_orc nw[VB_ORCS];
 	for (int i = 0; i < n; i++) {
 		uintptr_t c = o[i].c;

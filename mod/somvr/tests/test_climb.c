@@ -44,6 +44,27 @@ static float g_slab_y0, g_slab_y1, g_slab_z; /* > 0: a slab out from the face: y
 static float g_roof_y, g_roof_z0, g_roof_z1; /* > 0: a roof at y roof_y over z roof_z0..roof_z1 (rays up from under it) */
 static float g_rl_y, g_rl_z; /* build 21 (round lip): > 0: over the top a setback face at z WALL_Z + rl_z up to the floor
                              * rl_y over the top, that floor from it on (the crest at the top, 0..rl_z deep) */
+/* build 27b (land above): boxes over the top - the rock: from z WALL_Z + rk_z on, y g_wall_top .. + rk_h (the top's
+ * floor runs on under it: a ray from inside finds that floor); a roof: y rf_y0 .. rf_y1 over z 100..400. Each seen from
+ * outside only, or (two) from inside too (the skin it leaves by) */
+static float g_rk_z, g_rk_h, g_rf_y0, g_rf_y1;
+static int g_rk_two;
+static int box_ray(const float lo[3], const float hi[3], sv_vec3 from, sv_vec3 dir, float len, int two, float *tout) {
+    float o3[3] = { from.x, from.y, from.z }, d3[3] = { dir.x, dir.y, dir.z }, t0 = 0, t1 = len;
+    for (int a = 0; a < 3; a++) {
+        if (fabsf(d3[a]) < 1e-6f) {
+            if (o3[a] < lo[a] || o3[a] > hi[a]) return 0;
+            continue;
+        }
+        float ta = (lo[a] - o3[a]) / d3[a], tb = (hi[a] - o3[a]) / d3[a];
+        if (ta > tb) { float x = ta; ta = tb, tb = x; }
+        t0 = fmaxf(t0, ta), t1 = fminf(t1, tb);
+        if (t0 > t1) return 0;
+    }
+    if (t0 > 0) return *tout = t0, 1;                   /* entered from outside */
+    if (two && t1 < len && t1 > 0) return *tout = t1, 1; /* from inside: the skin it leaves by */
+    return 0;
+}
 static int mock_ray(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, somvr_climb_hit *out) {
     (void)ctx, (void)hand;
     g_rays++;
@@ -73,6 +94,13 @@ static int mock_ray(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, s
         if (ok && t0 > 0 && t0 <= len)
             best = t0, out->hit = 1, out->climbable = 1, out->dist = t0,
             out->point = (sv_vec3){ from.x + dir.x * t0, from.y + dir.y * t0, from.z + dir.z * t0 };
+    }
+    for (int b = 0; b < 2; b++) { /* build 27b: the rock, the roof */
+        float lo[3] = { -500, g_wall_top, WALL_Z + g_rk_z }, hi[3] = { 500, g_wall_top + g_rk_h, 1000 }, t;
+        if (b) lo[1] = g_rf_y0, hi[1] = g_rf_y1, lo[2] = 100, hi[2] = 400;
+        if ((b ? g_rf_y1 > g_rf_y0 : g_rk_h > 0) && box_ray(lo, hi, from, dir, len, g_rk_two, &t) && t < best)
+            best = t, out->hit = 1, out->climbable = 1, out->dist = t, out->wet = 0,
+            out->point = (sv_vec3){ from.x + dir.x * t, from.y + dir.y * t, from.z + dir.z * t };
     }
     if (dir.z > 1e-6f && from.z <= WALL_Z) { /* the face, from the player's side */
         float t = (WALL_Z - from.z) / dir.z;
@@ -3705,9 +3733,93 @@ static void test_b27(void) {
     }
 }
 
+/* build 27b (land above): the meadow cliff - the top's ledge 15 cm deep, the rock rising 195 cm behind it, the top's
+ * floor running on under it (its skin seen from outside only, or from both sides). Off (build 27) = the pullover's ring
+ * planned on that floor inside the rock; on = no landing there (no way up here, the floors under the rock counted); a
+ * 20 cm step behind the lip = the landing on its top (found from 60 cm over the top as ever); a roof over the top with air under it (its slab over the first ray's start, or
+ * round it) = the landing as before; the A mantle's ring at a plain top as before */
+static void test_b27b(void) {
+    for (int two = 0; two < 2; two++)
+        for (int on = 0; on < 2; on++) {
+            rig_t r;
+            rig_init(&r);
+            r.c.pullover = 1, r.in.can_blink = 1, r.c.letgo = SOMVR_CLIMB_LETGO_HANG, r.c.land_above = on;
+            r.body.y = 60, r.ceil_y = 232;
+            g_rk_z = 15, g_rk_h = 195, g_rk_two = two;
+            r.in.hand[1].p = (sv_vec3){ 20, 235, 85 }; /* the hold 5 cm under the top */
+            grip(&r, 1, 1);
+            rig_frame(&r);
+            uint32_t ev = 0;
+            int armed = 0;
+            for (int f = 0; f < 80 && !armed; f++)
+                hand_move(&r, 1, 0, -1, 0), rig_frame(&r), ev |= r.o.events2, armed = (ev & SOMVR_CLIMB_E_PO_ARM) != 0;
+            if (!on)
+                CHECK(armed && r.o.po_show && NEAR(r.o.po_land.y, 300, 0.5) && r.o.po_land.z > WALL_Z + 15 &&
+                          r.s.la_unders == 0,
+                      "b27b %d off: the ring planned on the floor inside the rock (%g %g %g)", two, r.o.po_land.x,
+                      r.o.po_land.y, r.o.po_land.z);
+            else
+                CHECK(!armed && !r.o.po_show && r.s.po_arms == 0 && (ev & SOMVR_CLIMB_E_PO_NOWAY) && r.s.la_unders >= 1 &&
+                          r.s.po_why == SOMVR_CLIMB_PO_NOFLOOR && r.s.po_dbg[7] >= 1,
+                      "b27b %d on: no landing inside the rock, no way up here (arms %llu, unders %llu, why %d)", two,
+                      (unsigned long long)r.s.po_arms, (unsigned long long)r.s.la_unders, r.s.po_why);
+        }
+    for (int k = 0; k < 3; k++) { /* on: a 20 cm step behind the lip; a roof 2 m up (its slab over 2.5 m), one round 2.5 m */
+        rig_t r;
+        rig_init(&r);
+        r.c.pullover = 1, r.in.can_blink = 1, r.c.letgo = SOMVR_CLIMB_LETGO_HANG, r.c.land_above = 1;
+        r.body.y = 60, r.ceil_y = 232;
+        g_rk_two = 1;
+        if (k == 0) g_rk_z = 15, g_rk_h = 20;
+        else g_rf_y0 = k == 1 ? 500 : 520, g_rf_y1 = k == 1 ? 540 : 600;
+        r.in.hand[1].p = (sv_vec3){ 20, 235, 85 };
+        grip(&r, 1, 1);
+        rig_frame(&r);
+        int armed = 0;
+        for (int f = 0; f < 80 && !armed; f++)
+            hand_move(&r, 1, 0, -1, 0), rig_frame(&r), armed = (r.o.events2 & SOMVR_CLIMB_E_PO_ARM) != 0;
+        CHECK(armed && r.o.po_show && NEAR(r.o.po_land.y, k ? 300 : 320, 0.5) && NEAR(r.o.po_land.z, 140, 0.5) &&
+                  r.s.la_unders == 0,
+              "b27b case %d: the landing at %g %g %g (unders %llu)", k, r.o.po_land.x, r.o.po_land.y, r.o.po_land.z,
+              (unsigned long long)r.s.la_unders);
+        g_rk_z = g_rk_h = g_rf_y0 = g_rf_y1 = 0, g_rk_two = 0;
+    }
+    g_rk_z = g_rk_h = 0, g_rk_two = 0;
+    for (int nr = 0; nr < 2; nr++) { /* down near: the feet 5 cm from a 9 m wall's edge, the hand 25 cm out over it */
+        rig_t r;
+        desc_setup(&r, 900);
+        r.c.down_over = 1, r.c.dn_near = nr;
+        r.body.z = 55;                              /* the root at z 105 */
+        r.in.hand[1].p = (sv_vec3){ 0, 50, 20 };    /* world (0, 950, 75) */
+        rig_frame(&r);
+        grip(&r, 1, 1);
+        uint32_t ev2 = 0;
+        for (int n = 0; n < 200 && !(ev2 & SOMVR_CLIMB_E_DN_END); n++) rig_frame(&r), ev2 |= r.o.events2;
+        if (!nr)
+            CHECK(!(ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_why == SOMVR_CLIMB_DN_NOEDGE, "b27b down near off: no edge (%s)",
+                  somvr_climb_dn_name(r.s.dn_why));
+        else
+            CHECK((ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_end == 1 && r.s.h[1].holding && NEAR(r.in.head_y, 900 - 25, 2) &&
+                      NEAR(r.body.z + 50, 100 - 45, 2),
+                  "b27b down near on: the glide, holding, the eyes %.0f, the root z %.0f (%s)", r.in.head_y, r.body.z + 50,
+                  somvr_climb_dn_name(r.s.dn_why));
+    }
+    g_wall_top = WALL_TOP, g_ground_on = 0;
+    { /* on: the A mantle at a plain top: the ring 40 cm in as ever */
+        rig_t r;
+        am_setup(&r, 1, 110, 1);
+        r.c.land_above = 1;
+        am_acc k;
+        am_run(&r, 0, 3, &k);
+        CHECK(r.s.am_ok && r.o.am_show && NEAR3(r.o.am_land, 0, 300, 140, 0.5) && r.s.la_unders == 0,
+              "b27b: on, the A mantle's ring as ever (%g %g %g)", r.o.am_land.x, r.o.am_land.y, r.o.am_land.z);
+    }
+}
+
 int main(void) {
     test_b21();
     test_b27();
+    test_b27b();
     test_mantle20();
     test_oh22();
     test_through();

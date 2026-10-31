@@ -273,6 +273,53 @@ static void test_struggle(void)
     CHECK(!s.won, "aim: win_s 0 never wins");
 }
 
+/* build 27c (som-b27-ride3, re-xr-pipeline.md 122): the beast's speed - the same at 20 and 90 Hz, the path (not the
+ * chord) on a turn, a gap or a teleport starts again, the run's top and distance from the mark */
+static void test_speed(void)
+{
+    somvr_rd_speed s;
+    float p[3] = { 0, 0, 0 };
+    for (int hz = 20; hz <= 90; hz += 70) {
+        somvr_rd_speed_init(&s);
+        float v = NAN;
+        for (int i = 0; i <= 2 * hz; i++) {
+            p[0] = 1000.0f * i / hz, p[2] = 0; /* 10 m/s */
+            v = somvr_rd_speed_step(&s, p, 100.0 + (double)i / hz);
+            if (i == hz / 2)
+                CHECK(isnan(v), "%d Hz: no speed before a full window (%g)", hz, v);
+        }
+        CHECK(NEAR(v, 10, 0.05), "%d Hz: 10 m/s straight (%g)", hz, v);
+        CHECK(NEAR(s.dist_m, 20, 0.05) && NEAR(s.time_s, 2, 1e-6), "%d Hz: 20 m in 2 s (%g %g)", hz, s.dist_m, s.time_s);
+    }
+    somvr_rd_speed_init(&s); /* a circle of 10 m radius at 8 m/s: the path's speed */
+    float v = NAN;
+    for (int i = 0; i <= 90 * 3; i++) {
+        double a = 0.8 * i / 90.0; /* rad: 8 m/s over a 10 m radius */
+        p[0] = (float)(1000 * sin(a)), p[2] = (float)(1000 * cos(a));
+        v = somvr_rd_speed_step(&s, p, (double)i / 90);
+    }
+    CHECK(NEAR(v, 8, 0.05), "a turn: the path's speed (%g)", v);
+    somvr_rd_speed_mark(&s);
+    CHECK(s.top == 0 && s.dist_m == 0, "the mark");
+    double t = 3.0;
+    for (int i = 1; i <= 40; i++) { /* 15 m/s for 2 s at 20 Hz */
+        p[0] += 75.0f, t += 0.05;
+        v = somvr_rd_speed_step(&s, p, t);
+    }
+    CHECK(NEAR(s.top, 15, 0.3) && NEAR(s.dist_m, 30, 0.01), "the run's top %g and path %g m", s.top, s.dist_m);
+    uint64_t r0 = s.resets;
+    t += 0.7, p[0] += 1000; /* a window's gap */
+    v = somvr_rd_speed_step(&s, p, t);
+    CHECK(isnan(v) && s.resets == r0 + 1 && NEAR(s.dist_m, 30, 0.01), "a gap starts again, not counted (%g)", v);
+    t += 0.05, p[0] += 3000; /* a teleport */
+    v = somvr_rd_speed_step(&s, p, t);
+    CHECK(isnan(v) && s.resets == r0 + 2, "a teleport starts again");
+    for (int i = 1; i <= 20; i++)
+        p[0] += 30.0f, t += 0.05, v = somvr_rd_speed_step(&s, p, t);
+    CHECK(NEAR(v, 6, 0.05) && NEAR(s.top, 15, 0.3), "6 m/s again (%g), the top kept (%g)", v, s.top);
+    CHECK(somvr_rd_speed_step(&s, p, t) == v, "the same sample twice: no change");
+}
+
 int main(void)
 {
     test_kinds();
@@ -281,6 +328,7 @@ int main(void)
     test_buttons();
     test_reach();
     test_struggle();
+    test_speed();
     printf("test_ride: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

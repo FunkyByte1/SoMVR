@@ -48,6 +48,11 @@
  *   gets eye 0's shaders' clock k_fTime back (RenderScene's late pass left k_fRealTime in it: the fire's flame and the
  *   wraith sky moved differently in each eye). SOMVR_FX_TEST adds the D3D11 capture `fx d3d N` (eye 1's draws against
  *   eye 0's: shaders, views, constant bytes; DCAP lines) and `fx d3dsame MASK` (eye 1's draws bind eye 0's state).
+ * Build 27 (re-xr-pipeline.md 125): SOMVR_FX_CENSUS=on|off (code default on; FXSEEN / FXCENSUS lines: which of the
+ *   game's screen-space effects is up, the ClientFX made - logging only) and SOMVR_FX_NEAR=on|off (code default off) with
+ *   SOMVR_FX_NEAR_CM=R0,R1 (15,30): in the eyes the CPU particles nearer the eye than R0 folded away, up to R1 shrunk
+ *   (word "fxnear on|off|R0,R1|eye E|state"); SOMVR_FX_TEST adds `fx vprobe N` (the CPU emitters' draws: a[0] is the
+ *   emitter's transform, a[1] the eye's view - the FLATFX draw line's "camera" / "emitter" labels are those two).
  * Trigger words: "flatfx LIST|all|game|state" (live; the hooks must be in: boot with a part on or SOMVR_FX_TEST=1),
  * "fx hide MASK", "fx eyesame 0|1", "fx console CMD", "fx state". Lines: CONFIG flatfx=..; FLATFX t=.. (the word; the
  * game's own vignette or box blur seen: the first 8 of each); FLATFX state|END. Fail soft: a site mismatch = that part
@@ -169,6 +174,8 @@ static struct {
 	_Atomic unsigned hide;      /* `fx hide MASK` (bits = RDD_*) */
 	_Atomic int eyesame;        /* `fx eyesame 1` */
 	_Atomic uint64_t n_draw[RDD_N], n_skip[RDD_N], n_shaft, n_shaft_off, n_rain, n_rain_off, n_vig, n_box;
+	_Atomic uint64_t n_vig_raw, n_box_raw, n_shaft_raw; /* build 27: the census - set by the game, whatever the parts */
+	float vig_p[3], box_p[3];   /* the last vignette's / box blur's three floats the game set */
 	_Atomic uint32_t vig_lines;
 	int vis_ok;                 /* RD_VIS_INIT and RD_VIS_REQ matched: RD_VIS may be read (the probe) */
 	uintptr_t orig_prep;        /* RD_PSYS_PREP's original */
@@ -1111,7 +1118,26 @@ RD_PX_T(8, 64) RD_PX_T(9, 72) RD_PX_T(10, 80) RD_PX_T(11, 88) RD_PX_T(12, 96) RD
 RD_PX_T(15, 120) RD_PX_T(16, 128) RD_PX_T(17, 136) RD_PX_T(18, 144) RD_PX_T(19, 152) RD_PX_T(20, 160) RD_PX_T(21, 168)
 RD_PX_T(22, 176) RD_PX_T(23, 184) RD_PX_T(24, 192) RD_PX_T(25, 200) RD_PX_T(26, 208) RD_PX_T(27, 216) RD_PX_T(28, 224)
 RD_PX_T(29, 232) RD_PX_T(30, 240) RD_PX_T(31, 248)
-static struct { unsigned char *ptr; uint32_t granted, req; int64_t nv; uint64_t h; int maps, draws; } g_px; /* render thread */
+/* build 27 (re-xr-pipeline.md 125), `fx vprobe N`: the same thunks that also note the slot's number in the draw's
+ * call sequence (somvr_px_seq, 24 at most) before they jump on */
+unsigned char somvr_px_seq[24];
+unsigned somvr_px_seqn;
+#define RD_PXC_T(K, OFF)                                                                                               \
+	__attribute__((naked, used)) void somvr_rd_pxc##K(void)                                                        \
+	{                                                                                                              \
+		__asm__ volatile("movl somvr_px_seqn(%rip), %eax\n\tcmpl $24, %eax\n\tjae 1f\n\t"                         \
+				 "leaq somvr_px_seq(%rip), %r11\n\tmovb $" #K ", (%r11,%rax)\n\t"                         \
+				 "incl somvr_px_seqn(%rip)\n"                                                         \
+				 "1:\n\tmovq 8(%rdi), %rdi\n\tmovq (%rdi), %rax\n\tjmpq *" #OFF "(%rax)\n\t");          \
+	}
+RD_PXC_T(0, 0) RD_PXC_T(1, 8) RD_PXC_T(2, 16) RD_PXC_T(3, 24) RD_PXC_T(4, 32) RD_PXC_T(5, 40) RD_PXC_T(6, 48)
+RD_PXC_T(7, 56) RD_PXC_T(8, 64) RD_PXC_T(10, 80) RD_PXC_T(11, 88) RD_PXC_T(12, 96) RD_PXC_T(13, 104)
+RD_PXC_T(14, 112) RD_PXC_T(16, 128) RD_PXC_T(17, 136) RD_PXC_T(18, 144) RD_PXC_T(19, 152) RD_PXC_T(20, 160)
+RD_PXC_T(21, 168) RD_PXC_T(22, 176) RD_PXC_T(23, 184) RD_PXC_T(24, 192) RD_PXC_T(25, 200) RD_PXC_T(26, 208)
+RD_PXC_T(27, 216) RD_PXC_T(28, 224) RD_PXC_T(29, 232) RD_PXC_T(30, 240) RD_PXC_T(31, 248)
+static struct { unsigned char *ptr; uint32_t granted, req; int64_t nv; uint64_t h; int maps, draws;
+		int64_t marg[6], darg[7]; } g_px; /* render thread */
+static _Atomic int g_rd_vprobe; /* `fx vprobe N`: N more near emitters' draws logged */
 /* the frame's CPU-particle vertex ranges as drawn (render thread), hashed again at the present: memory the dynamic vertex
  * buffer handed out again before the frame went to the GPU (CD3D11BaseCustomRenderCallback: 4 buffers +0x80..+0x98 in
  * turn, the one in use +0x100, its fill +0xa0, the capacity +0xc; DISCARD at a buffer's start, NO_OVERWRITE after) */
@@ -1230,6 +1256,9 @@ static int64_t rd_px_map(void **px, int64_t a, int64_t n, int64_t c, void *out, 
 	int64_t r = ((rd_px_map_fn)(*(void ***)real)[9])(real, a, n, c, out, e, f);
 	g_px.ptr = out && (int32_t)r == 0 ? *(unsigned char **)out : NULL;
 	g_px.granted = out ? *(uint32_t *)((char *)out + 0x10) : 0, g_px.req = (uint32_t)n, g_px.maps++;
+	g_px.marg[0] = a, g_px.marg[1] = n, g_px.marg[2] = c, g_px.marg[3] = e, g_px.marg[4] = f;
+	if (somvr_px_seqn < 24)
+		somvr_px_seq[somvr_px_seqn++] = 9;
 	return r;
 }
 static int64_t rd_px_draw(void **px, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t nv, int64_t g)
@@ -1255,10 +1284,211 @@ static int64_t rd_px_draw(void **px, int64_t a, int64_t b, int64_t c, int64_t d,
 			g_vr.over++;
 	}
 	g_px.draws++;
+	g_px.darg[0] = a, g_px.darg[1] = b, g_px.darg[2] = c, g_px.darg[3] = d, g_px.darg[4] = e, g_px.darg[5] = nv;
+	g_px.darg[6] = g;
+	if (somvr_px_seqn < 24)
+		somvr_px_seq[somvr_px_seqn++] = 15;
 	return ((rd_px_draw_fn)(*(void ***)real)[15])(real, a, b, c, d, e, nv, g);
 }
+/* ---- build 27 (re-xr-pipeline.md 125): SOMVR_FX_NEAR=on|off - the game's CPU particles kept out of the eyes' faces ----
+ * The game's particle FX were made for a camera 3 m behind Talion; in first person a kill's blood burst, sparks, embers,
+ * dust and the camera's own FX come within a hand's breadth of the eyes (the brutal kill's sync: drops 10-20 cm away,
+ * at a different place in each eye - nothing two eyes can fuse). While an eye's pass is open (g_rt_eye >= 0) each CPU
+ * emitter's draw (CParticleSystemRender::vf_04) goes through a proxy on its render context (a[4]): at the vertices'
+ * unmap (slot 10: after the game wrote them, before its draw, slot 15) every particle's quad (4 vertices of 60 bytes:
+ * the position at +0, the colour at +12 - the same in the four) nearer the eye (a[1]'s position) than SOMVR_FX_NEAR_CM's
+ * first value is folded into its middle (drawn as nothing), between the two values it is shrunk toward its middle in
+ * proportion (no pop), farther it is the game's. The vertices are in the world (the first vertex nearer the emitter's
+ * position a[0] than the origin) or the emitter's own space (world = a[0] + its quaternion applied: the eye is taken
+ * into that space once a draw). A draw whose first quad does not read as that format is left alone (counted). Flat
+ * frames, GPU particles, sprites: the game's. Lines: CONFIG fx_near=..; FXNEAR t=.. (the first 16 draws with a quad
+ * folded or shrunk, then every 2000th); FXNEAR state|END. Word: "fxnear on|off|R0,R1|eye E|state" (eye E: only in eye
+ * E's pass, a test - the other eye the game's: one dump shows both). */
+static struct {
+	_Atomic int on, eye;        /* the switch; the eye it is limited to (-1 both: a test word) */
+	float r0, r1;               /* cm */
+	void **a;                   /* render thread: the draw in progress (its a[]) while the fold applies */
+	_Atomic uint64_t draws, quads, folded, shrunk, skipped, nearest_draws;
+	_Atomic uint32_t lines;
+	int hooked;
+} g_fn = { .eye = -1, .r0 = 15.0f, .r1 = 30.0f };
+
+static void rd_near_state(const char *head);
+static int rd_near_now(void)
+{
+	int e = g_rt_eye, only = atomic_load_explicit(&g_fn.eye, memory_order_relaxed);
+	return atomic_load_explicit(&g_fn.on, memory_order_relaxed) && e >= 0 && e <= 1 && (only < 0 || only == e);
+}
+
+/* the fold over the mapped vertices of the draw in progress (render thread, from the unmap thunk) */
+__attribute__((used)) void somvr_rd_near_unmap(void)
+{
+	void **a = g_fn.a;
+	unsigned char *v = g_px.ptr;
+	if (!a || !v || !a[0] || !a[1])
+		return;
+	g_fn.a = NULL; /* (once a draw) */
+	int64_t n = (int64_t)g_px.req < (int64_t)g_px.granted ? (int64_t)g_px.req : (int64_t)g_px.granted;
+	n &= ~(int64_t)3;
+	if (n < 4 || n > 65536)
+		return;
+	atomic_fetch_add_explicit(&g_fn.draws, 1, memory_order_relaxed);
+	if (memcmp(v + 12, v + 72, 4) || memcmp(v + 12, v + 132, 4) || memcmp(v + 12, v + 192, 4)) {
+		atomic_fetch_add_explicit(&g_fn.skipped, 1, memory_order_relaxed);
+		return;
+	}
+	const float *em = (const float *)a[0], *eye = (const float *)a[1], *p0 = (const float *)v;
+	float dw[3] = { p0[0] - em[0], p0[1] - em[1], p0[2] - em[2] };
+	int local = p0[0] * p0[0] + p0[1] * p0[1] + p0[2] * p0[2] < dw[0] * dw[0] + dw[1] * dw[1] + dw[2] * dw[2];
+	float e[3] = { eye[0], eye[1], eye[2] };
+	if (local) { /* the eye in the emitter's space: the inverse of its quaternion (x, y, z, w) on eye - a[0] */
+		float d[3] = { eye[0] - em[0], eye[1] - em[1], eye[2] - em[2] };
+		float ux = -em[3], uy = -em[4], uz = -em[5], w = em[6];
+		float dot = ux * d[0] + uy * d[1] + uz * d[2], uu = ux * ux + uy * uy + uz * uz;
+		float cx = uy * d[2] - uz * d[1], cy = uz * d[0] - ux * d[2], cz = ux * d[1] - uy * d[0];
+		e[0] = 2 * dot * ux + (w * w - uu) * d[0] + 2 * w * cx;
+		e[1] = 2 * dot * uy + (w * w - uu) * d[1] + 2 * w * cy;
+		e[2] = 2 * dot * uz + (w * w - uu) * d[2] + 2 * w * cz;
+	}
+	float r0 = g_fn.r0, r1 = g_fn.r1, near = 1e9f;
+	uint32_t fold = 0, shr = 0, nq = (uint32_t)(n / 4);
+	for (uint32_t k = 0; k < nq; k++) {
+		unsigned char *q = v + (size_t)k * 240;
+		if (memcmp(q + 12, q + 72, 4) || memcmp(q + 12, q + 132, 4) || memcmp(q + 12, q + 192, 4))
+			continue; /* (not one particle's four corners: left alone) */
+		float *c0 = (float *)q, *c1 = (float *)(q + 60), *c2 = (float *)(q + 120), *c3 = (float *)(q + 180);
+		float m[3];
+		for (int i = 0; i < 3; i++)
+			m[i] = 0.25f * (c0[i] + c1[i] + c2[i] + c3[i]);
+		float x = m[0] - e[0], y = m[1] - e[1], z = m[2] - e[2], d = sqrtf(x * x + y * y + z * z);
+		if (d < near)
+			near = d;
+		if (!(d < r1))
+			continue;
+		float f = d <= r0 ? 0.0f : (d - r0) / (r1 - r0);
+		float *cs[4] = { c0, c1, c2, c3 };
+		for (int j = 0; j < 4; j++)
+			for (int i = 0; i < 3; i++)
+				cs[j][i] = m[i] + (cs[j][i] - m[i]) * f;
+		if (f == 0.0f)
+			fold++;
+		else
+			shr++;
+	}
+	atomic_fetch_add_explicit(&g_fn.quads, nq, memory_order_relaxed);
+	if (fold || shr) {
+		atomic_fetch_add_explicit(&g_fn.folded, fold, memory_order_relaxed);
+		atomic_fetch_add_explicit(&g_fn.shrunk, shr, memory_order_relaxed);
+		uint64_t k = atomic_fetch_add_explicit(&g_fn.nearest_draws, 1, memory_order_relaxed);
+		if ((k < 16 || k % 2000 == 0) && atomic_fetch_add(&g_fn.lines, 1) < 200)
+			logf_("FXNEAR t=%.3f eye %d: a CPU emitter at %.0f cm (%s space): %u of its %u particles folded (nearer than %.0f "
+			      "cm), %u shrunk (to %.0f cm), the nearest %.1f cm from the eye (draw %llu with the fold)", mono(), g_rt_eye,
+			      sqrtf((em[0] - eye[0]) * (em[0] - eye[0]) + (em[1] - eye[1]) * (em[1] - eye[1]) +
+				    (em[2] - eye[2]) * (em[2] - eye[2])), local ? "its own" : "world", fold, nq, (double)r0, shr,
+			      (double)r1, (double)near, (unsigned long long)k + 1);
+	}
+}
+/* slot 10 (the vertices' unmap): the fold first (every register kept), then the real context's slot 10 */
+__attribute__((naked, used)) void somvr_rd_pxu10(void)
+{
+	__asm__ volatile("pushq %rdi\n\tpushq %rsi\n\tpushq %rdx\n\tpushq %rcx\n\tpushq %r8\n\tpushq %r9\n\t"
+			 "subq $136, %rsp\n\t"
+			 "movdqu %xmm0, 0(%rsp)\n\tmovdqu %xmm1, 16(%rsp)\n\tmovdqu %xmm2, 32(%rsp)\n\tmovdqu %xmm3, 48(%rsp)\n\t"
+			 "movdqu %xmm4, 64(%rsp)\n\tmovdqu %xmm5, 80(%rsp)\n\tmovdqu %xmm6, 96(%rsp)\n\tmovdqu %xmm7, 112(%rsp)\n\t"
+			 "call somvr_rd_near_unmap\n\t"
+			 "movdqu 0(%rsp), %xmm0\n\tmovdqu 16(%rsp), %xmm1\n\tmovdqu 32(%rsp), %xmm2\n\tmovdqu 48(%rsp), %xmm3\n\t"
+			 "movdqu 64(%rsp), %xmm4\n\tmovdqu 80(%rsp), %xmm5\n\tmovdqu 96(%rsp), %xmm6\n\tmovdqu 112(%rsp), %xmm7\n\t"
+			 "addq $136, %rsp\n\t"
+			 "popq %r9\n\tpopq %r8\n\tpopq %rcx\n\tpopq %rdx\n\tpopq %rsi\n\tpopq %rdi\n\t"
+			 "movq 8(%rdi), %rdi\n\tmovq (%rdi), %rax\n\tjmpq *80(%rax)\n\t");
+}
+/* the proxy outside SOMVR_FX_TEST: the map noted (rd_px_map), the unmap folds, every other slot straight through */
+static int64_t rd_px_map(void **px, int64_t a, int64_t n, int64_t c, void *out, int64_t e, int64_t f);
+static void *g_pxn_vt[32];
+static void rd_near_vt(void)
+{
+	static void *const plain[32] = { somvr_rd_px0, somvr_rd_px1, somvr_rd_px2, somvr_rd_px3, somvr_rd_px4,
+		somvr_rd_px5, somvr_rd_px6, somvr_rd_px7, somvr_rd_px8, somvr_rd_px9, somvr_rd_px10, somvr_rd_px11,
+		somvr_rd_px12, somvr_rd_px13, somvr_rd_px14, somvr_rd_px15, somvr_rd_px16, somvr_rd_px17, somvr_rd_px18,
+		somvr_rd_px19, somvr_rd_px20, somvr_rd_px21, somvr_rd_px22, somvr_rd_px23, somvr_rd_px24, somvr_rd_px25,
+		somvr_rd_px26, somvr_rd_px27, somvr_rd_px28, somvr_rd_px29, somvr_rd_px30, somvr_rd_px31 };
+	memcpy(g_pxn_vt, plain, sizeof plain);
+	g_pxn_vt[9] = (void *)rd_px_map, g_pxn_vt[10] = (void *)somvr_rd_pxu10;
+}
+/* CPU particles' draw with the fold (outside SOMVR_FX_TEST) */
+static void rd_draw0_near(void *self, void **a)
+{
+	if (!a || !a[4] || !a[0] || !a[1]) {
+		((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
+		return;
+	}
+	void *px[2] = { g_pxn_vt, a[4] }, *real = a[4];
+	g_px.ptr = NULL, g_px.granted = g_px.req = 0;
+	g_fn.a = a;
+	a[4] = px;
+	((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
+	a[4] = real;
+	g_fn.a = NULL;
+}
+
+static void *g_pxc_vt[32] = { somvr_rd_pxc0, somvr_rd_pxc1, somvr_rd_pxc2, somvr_rd_pxc3, somvr_rd_pxc4, somvr_rd_pxc5,
+			      somvr_rd_pxc6, somvr_rd_pxc7, somvr_rd_pxc8, (void *)rd_px_map, somvr_rd_pxu10, somvr_rd_pxc11,
+			      somvr_rd_pxc12, somvr_rd_pxc13, somvr_rd_pxc14, (void *)rd_px_draw, somvr_rd_pxc16,
+			      somvr_rd_pxc17, somvr_rd_pxc18, somvr_rd_pxc19, somvr_rd_pxc20, somvr_rd_pxc21, somvr_rd_pxc22,
+			      somvr_rd_pxc23, somvr_rd_pxc24, somvr_rd_pxc25, somvr_rd_pxc26, somvr_rd_pxc27, somvr_rd_pxc28,
+			      somvr_rd_pxc29, somvr_rd_pxc30, somvr_rd_pxc31 };
+/* `fx vprobe`: after a CPU emitter's draw (3 lines per emitter at most): its arguments (a[0] the game camera, a[1] the
+ * eye's view: position + quaternion; a[2] the per-view block), the map's and the draw's arguments, the slots it called,
+ * the block's head, and the first quad read as 60-byte vertices (a position at +0, the colour at +12 the same in the
+ * four of a quad = that stride holds) */
+static void rd_vprobe_log(void **a, uintptr_t fx, int e)
+{
+	static struct { uintptr_t fx; int n; } seen[64];
+	if (!fx || !g_px.ptr || g_px.nv < 4 || g_px.nv > (int64_t)g_px.granted || g_px.nv > 65536 || !a[2])
+		return;
+	int k = 0;
+	while (k < 64 && seen[k].fx && seen[k].fx != fx)
+		k++;
+	if (k == 64 || (seen[k].fx == fx && seen[k].n >= 3))
+		return;
+	seen[k].fx = fx, seen[k].n++;
+	if (atomic_fetch_sub(&g_rd_vprobe, 1) <= 0)
+		return;
+	const float *cam = (const float *)a[0], *eye = (const float *)a[1], *bf = (const float *)a[2];
+	char seq[80] = "", bh[300] = "", q4[400] = "";
+	for (unsigned i = 0; i < somvr_px_seqn && i < 24; i++)
+		snprintf(seq + strlen(seq), sizeof seq - strlen(seq), "%s%u", i ? " " : "", somvr_px_seq[i]);
+	for (int i = 1; i < 16; i++)
+		snprintf(bh + strlen(bh), sizeof bh - strlen(bh), "%s%.6g", i > 1 ? " " : "", bf[i]);
+	const unsigned char *v = g_px.ptr;
+	int s60 = g_px.nv * 24 >= 4 * 60 && !memcmp(v + 12, v + 72, 4) && !memcmp(v + 12, v + 132, 4) && !memcmp(v + 12, v + 192, 4);
+	double mx = 0, mean = 0;
+	int nq = 0;
+	if (s60) {
+		for (int i = 0; i < 4; i++) {
+			const float *p = (const float *)(v + 60 * i);
+			snprintf(q4 + strlen(q4), sizeof q4 - strlen(q4), "%s%.3f,%.3f,%.3f", i ? " " : "", p[0], p[1], p[2]);
+		}
+		const float *n0 = (const float *)(v + 24);
+		snprintf(q4 + strlen(q4), sizeof q4 - strlen(q4), " (its first vector %.3f %.3f %.3f)", n0[0], n0[1], n0[2]);
+		for (int64_t i = 0; i < g_px.nv && (i + 1) * 60 <= g_px.nv * 24 + 36; i++, nq++) {
+			const float *p = (const float *)(v + 60 * i);
+			double r = sqrt((double)p[0] * p[0] + (double)p[1] * p[1] + (double)p[2] * p[2]);
+			mean += r, mx = r > mx ? r : mx;
+		}
+	}
+	logf_("FXVPROBE t=%.3f eye %d emitter %#lx: a0 %.1f,%.1f,%.1f q %.3f %.3f %.3f %.3f; a1 %.1f,%.1f,%.1f q %.3f %.3f %.3f %.3f; "
+	      "map(%lld %lld %lld %lld %lld) granted %u; draw(%lld %lld %lld %lld %lld nv %lld %lld); slots %s; block n %u, floats "
+	      "1..15: %s; 60-byte vertices %s: the first quad %s; |p| over %d vertices mean %.2f max %.2f", mono(), e,
+	      (unsigned long)fx, cam[0], cam[1], cam[2], cam[3], cam[4], cam[5], cam[6], eye[0], eye[1], eye[2], eye[3], eye[4],
+	      eye[5], eye[6], (long long)g_px.marg[0], (long long)g_px.marg[1], (long long)g_px.marg[2], (long long)g_px.marg[3],
+	      (long long)g_px.marg[4], g_px.granted, (long long)g_px.darg[0], (long long)g_px.darg[1],
+	      (long long)g_px.darg[2], (long long)g_px.darg[3], (long long)g_px.darg[4], (long long)g_px.darg[5],
+	      (long long)g_px.darg[6], seq, *(const uint32_t *)a[2], bh, s60 ? "hold" : "do NOT hold", s60 ? q4 : "-", nq,
+	      nq ? mean / nq : 0.0, mx);
+}
 static void *g_px_vt[32] = { somvr_rd_px0, somvr_rd_px1, somvr_rd_px2, somvr_rd_px3, somvr_rd_px4, somvr_rd_px5,
-			     somvr_rd_px6, somvr_rd_px7, somvr_rd_px8, (void *)rd_px_map, somvr_rd_px10, somvr_rd_px11,
+			     somvr_rd_px6, somvr_rd_px7, somvr_rd_px8, (void *)rd_px_map, somvr_rd_pxu10, somvr_rd_px11,
 			     somvr_rd_px12, somvr_rd_px13, somvr_rd_px14, (void *)rd_px_draw, somvr_rd_px16, somvr_rd_px17,
 			     somvr_rd_px18, somvr_rd_px19, somvr_rd_px20, somvr_rd_px21, somvr_rd_px22, somvr_rd_px23,
 			     somvr_rd_px24, somvr_rd_px25, somvr_rd_px26, somvr_rd_px27, somvr_rd_px28, somvr_rd_px29,
@@ -1276,11 +1506,17 @@ static void rd_draw0_full(void *self, void **a)
 		return;
 	}
 	uint64_t cam = rd_fnv((const unsigned char *)a[0], 28), em = rd_fnv((const unsigned char *)a[1], 28);
-	void *px[2] = { g_px_vt, a[4] }, *real = a[4];
+	int vp = atomic_load_explicit(&g_rd_vprobe, memory_order_relaxed) > 0;
+	void *px[2] = { vp ? g_pxc_vt : g_px_vt, a[4] }, *real = a[4];
 	memset(&g_px, 0, sizeof g_px);
+	somvr_px_seqn = 0;
+	g_fn.a = rd_near_now() ? a : NULL; /* build 27: SOMVR_FX_NEAR's fold at the unmap */
 	a[4] = px;
 	((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
 	a[4] = real;
+	g_fn.a = NULL;
+	if (vp)
+		rd_vprobe_log(a, fx, e);
 	if (e < 0 || !fx)
 		return;
 	unsigned i = (unsigned)((fx >> 4) * 2654435761u) % RD_BLK_N;
@@ -1342,6 +1578,8 @@ static void rd_prep_record(const unsigned char *blk, uint32_t len, int e, uintpt
 		dc_src = N + 1;                                                                                        \
 		if (N == 0 && g_rd.test)                                                                               \
 			rd_draw0_full(self, (void **)ctx);                                                             \
+		else if (N == 0 && rd_near_now())                                                                      \
+			rd_draw0_near(self, (void **)ctx);                                                             \
 		else                                                                                                   \
 			((rd_draw_fn)g_rd.orig[N])(self, ctx);                                                         \
 		dc_src = s0;                                                                                           \
@@ -1436,10 +1674,160 @@ __attribute__((used)) void somvr_w_rdprep(void *self, void **a)
 	}
 }
 
+/* ---- build 27 (re-xr-pipeline.md 125): the census - SOMVR_FX_CENSUS=on|off (code default on) -----------------------
+ * Which of the game's screen-space effects is on, frame by frame, whatever SOMVR_FLATFX does with it: the full-screen
+ * overlay (COverlayFX's draws), the game's vignette and box blur (the scene params after H1), a radial blur (the
+ * per-view RadialBlurEnabled byte after its setup: the sun's shafts or an effect's), the lens drops, the lens flares
+ * (counted only when their draw is hooked). Lines: `FXSEEN t=.. <effect> on (stereo frame F[: its floats])` and `..
+ * off: on for S s (N frames with it)` (10 stereo frames without = off), and once a second `FXCENSUS t=.. made in the
+ * last S s: NAME xN [on Talion|nothing|..], ..` - every ClientFX the game made (the create hook of SOMVR_VERBS_GLOW /
+ * SOMVR_FX_FACE; their names without "fx\" and ".fxp"; NAME- = not made: hidden in our eyes or the game's own 0; a name
+ * once per FC_REPEAT_S at most). Up to FC_LINES lines. Logging only: nothing changes. */
+enum { FC_OV, FC_VIG, FC_BOX, FC_RAD, FC_RAIN, FC_FLARE, FC_N };
+static const char *const g_fc_w[FC_N] = { "the full-screen overlay (COverlayFX)", "the game's vignette",
+					  "the game's box blur", "a radial blur (the sun's shafts or an effect's)",
+					  "the lens drops", "lens flares" };
+#define FC_LINES 3000
+#define FC_FX 64
+#define FC_QUIET 10
+#define FC_REPEAT_S 30.0 /* a ClientFX name logged once per 30 s at most (the ambient dust and flies come every few s) */
+static struct {
+	int on;                     /* SOMVR_FX_CENSUS */
+	uint64_t last[FC_N], n[FC_N], f_on[FC_N];
+	int up[FC_N];
+	uint32_t quiet[FC_N];
+	double t_on[FC_N], win_t;
+	_Atomic uint32_t lines;
+	atomic_flag lock;
+	struct { uint32_t h; uint16_t n, hid; char kind; char name[78]; } fx[FC_FX];
+	int nfx;
+	uint32_t fx_over;
+} g_fc = { .lock = ATOMIC_FLAG_INIT };
+
+static int fc_line_ok(void)
+{
+	return atomic_fetch_add_explicit(&g_fc.lines, 1, memory_order_relaxed) < FC_LINES;
+}
+
+/* from the ClientFX create hook (any thread): one FX asked for; kind 'T' Talion, 'O' the held orc, 'n' nothing, 'o' an
+ * object; made 0 = hidden in our eyes or the game's own 0 */
+static void rd_census_fx(const char *name, char kind, int made)
+{
+	if (!g_fc.on)
+		return;
+	const char *b = name;
+	if (!strncasecmp(b, "fx\\", 3))
+		b += 3;
+	char nm[78];
+	size_t k = 0;
+	for (; b[k] && k < sizeof nm - 1; k++)
+		nm[k] = b[k];
+	nm[k] = 0;
+	if (k > 4 && !strcasecmp(nm + k - 4, ".fxp"))
+		nm[k - 4] = 0;
+	uint32_t h = 2166136261u ^ (unsigned char)kind;
+	for (const char *p = nm; *p; p++)
+		h = (h ^ (unsigned char)*p) * 16777619u;
+	while (atomic_flag_test_and_set_explicit(&g_fc.lock, memory_order_acquire))
+		;
+	int i = 0;
+	while (i < g_fc.nfx && g_fc.fx[i].h != h)
+		i++;
+	if (i == g_fc.nfx) {
+		if (g_fc.nfx < FC_FX) {
+			g_fc.fx[i].h = h, g_fc.fx[i].n = g_fc.fx[i].hid = 0, g_fc.fx[i].kind = kind;
+			memcpy(g_fc.fx[i].name, nm, sizeof nm);
+			g_fc.nfx++;
+		} else
+			g_fc.fx_over++, i = -1;
+	}
+	if (i >= 0)
+		g_fc.fx[i].n++, g_fc.fx[i].hid += !made;
+	atomic_flag_clear_explicit(&g_fc.lock, memory_order_release);
+}
+
+/* after both eyes (H4, game thread): the effects' edges; the FX made in the last second */
+static void rd_census_frame(void)
+{
+	if (!g_fc.on)
+		return;
+	uint64_t now[FC_N] = { somvr_rd_ov_n[0] + somvr_rd_ov_n[1], atomic_load(&g_rd.n_vig_raw),
+			       atomic_load(&g_rd.n_box_raw), atomic_load(&g_rd.n_shaft_raw), atomic_load(&g_rd.n_rain),
+			       atomic_load(&g_rd.n_draw[RDD_LENSFLARE]) };
+	double t = cb_now();
+	for (int i = 0; i < FC_N; i++) {
+		int act = now[i] != g_fc.last[i];
+		g_fc.last[i] = now[i];
+		if (act) {
+			g_fc.quiet[i] = 0, g_fc.n[i]++;
+			if (!g_fc.up[i]) {
+				g_fc.up[i] = 1, g_fc.t_on[i] = t, g_fc.n[i] = 1;
+				char ex[96] = "";
+				if (i == FC_VIG || i == FC_BOX) {
+					const float *v = i == FC_VIG ? g_rd.vig_p : g_rd.box_p;
+					snprintf(ex, sizeof ex, ": %.3g %.3g %.3g", v[0], v[1], v[2]);
+				}
+				if (fc_line_ok())
+					logf_("FXSEEN t=%.3f %s on (stereo frame %llu%s)%s", t, g_fc_w[i],
+					      (unsigned long long)g_fr.frame, ex,
+					      (atomic_load_explicit(&g_rd.off, memory_order_relaxed) &
+					       (i == FC_OV ? RDF_OVERLAY : i == FC_VIG || i == FC_BOX ? RDF_VIGNETTE : i == FC_RAD
+						? RDF_SHAFTS : i == FC_RAIN ? RDF_RAIN : RDF_FLARES)) ? ": out of the eyes (SOMVR_FLATFX)"
+					      : ": drawn in the eyes");
+			}
+		} else if (g_fc.up[i] && ++g_fc.quiet[i] >= FC_QUIET) {
+			g_fc.up[i] = 0;
+			if (fc_line_ok())
+				logf_("FXSEEN t=%.3f %s off: on for %.2f s (%llu frames with it)", t, g_fc_w[i], t - g_fc.t_on[i],
+				      (unsigned long long)g_fc.n[i]);
+		}
+	}
+	if (t - g_fc.win_t < 1.0)
+		return;
+	double dt = g_fc.win_t > 0 ? t - g_fc.win_t : 0;
+	g_fc.win_t = t;
+	char buf[1100];
+	size_t o = 0;
+	while (atomic_flag_test_and_set_explicit(&g_fc.lock, memory_order_acquire))
+		;
+	int n = g_fc.nfx;
+	uint32_t over = g_fc.fx_over;
+	static struct { uint32_t h; double t; } seen[128]; /* a name logged in the last FC_REPEAT_S seconds: not again */
+	static unsigned seen_next;
+	for (int i = 0; i < n; i++) {
+		int k = 0;
+		while (k < 128 && seen[k].h != g_fc.fx[i].h)
+			k++;
+		if (k < 128 && t - seen[k].t < FC_REPEAT_S)
+			continue;
+		if (k == 128)
+			k = (int)(seen_next++ % 128);
+		seen[k].h = g_fc.fx[i].h, seen[k].t = t;
+		const char *kw = g_fc.fx[i].kind == 'T' ? "Talion" : g_fc.fx[i].kind == 'O' ? "the held orc"
+				 : g_fc.fx[i].kind == 'n' ? "nothing" : "";
+		int m = snprintf(buf + o, sizeof buf - o, "%s%s x%u%s%s%s%s", o ? ", " : "", g_fc.fx[i].name, g_fc.fx[i].n,
+				 g_fc.fx[i].hid ? "-" : "", *kw ? " [" : "", kw, *kw ? "]" : "");
+		if (m < 0 || (size_t)m >= sizeof buf - o) { /* this line full: out with it, the entry again on the next */
+			buf[o] = 0;
+			if (fc_line_ok())
+				logf_("FXCENSUS t=%.3f made in the last %.1f s: %s ..", t, dt, buf);
+			o = 0, i--, seen[k].t = 0; /* (again on the next line) */
+			continue;
+		}
+		o += (size_t)m;
+	}
+	g_fc.nfx = 0, g_fc.fx_over = 0;
+	atomic_flag_clear_explicit(&g_fc.lock, memory_order_release);
+	if ((o || over) && fc_line_ok())
+		logf_("FXCENSUS t=%.3f made in the last %.1f s: %s%s", t, dt, o ? buf : "",
+		      over ? " (and more names: the table full)" : "");
+}
+
 /* after both eyes of a stereo frame (H4, game thread): `fx console CMD` */
 static void rd_frame(void)
 {
 	somvr_rd_phase = 0;
+	rd_census_frame(); /* build 27: SOMVR_FX_CENSUS */
 	if (!g_rd.vis_ok)
 		goto cmd;
 	/* the frame's request buffer after both eyes: how full, anything refused (a node, an emitter that got no room in a
@@ -1497,6 +1885,8 @@ __attribute__((used)) void somvr_w_rdshaft(void *params)
 		((rd_shaft_fn)g_rd_sites[RDS_SHAFTS].target)(params);
 	atomic_fetch_add_explicit(&g_rd.n_shaft, 1, memory_order_relaxed);
 	volatile uint8_t *b = (volatile uint8_t *)RD_SHAFT_BYTE;
+	if (*b)
+		atomic_fetch_add_explicit(&g_rd.n_shaft_raw, 1, memory_order_relaxed);
 	if ((atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_SHAFTS) && *b) {
 		*b = 0;
 		atomic_fetch_add_explicit(&g_rd.n_shaft_off, 1, memory_order_relaxed);
@@ -1525,11 +1915,17 @@ static void rd_ov_eyes(int in_eyes)
 static void rd_h1(void *sp)
 {
 	somvr_rd_phase = g_eye == 0 ? 1 : g_eye == 1 ? 2 : 0; /* RD_PSYS_UPD's counters */
-	if (!sp || !(atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_VIGNETTE))
+	if (!sp)
 		return;
 	volatile uint8_t *b = (volatile uint8_t *)sp;
 	int v = b[RD_SP_VIGNETTE], x = b[RD_SP_BOXBLUR];
-	if (!v && !x)
+	if (v) /* build 27, the census: what the game set, whatever the parts */
+		atomic_fetch_add_explicit(&g_rd.n_vig_raw, 1, memory_order_relaxed),
+			memcpy(g_rd.vig_p, (const char *)sp + RD_SP_VIGNETTE + 4, sizeof g_rd.vig_p);
+	if (x)
+		atomic_fetch_add_explicit(&g_rd.n_box_raw, 1, memory_order_relaxed),
+			memcpy(g_rd.box_p, (const char *)sp + RD_SP_BOXBLUR + 4, sizeof g_rd.box_p);
+	if ((!v && !x) || !(atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_VIGNETTE))
 		return;
 	if (atomic_fetch_add(&g_rd.vig_lines, 1) < 8) {
 		const float *vp = (const float *)((const char *)sp + RD_SP_VIGNETTE + 4);
@@ -1733,6 +2129,31 @@ static const char *rd_word(const char *w0)
 		      "0's, DCAP lines; the hooks %s)", cb_now(), iv, iv, g_dc.ok ? "in" : "NOT in");
 		return "fx d3d";
 	}
+	if (!strncmp(w, "fxnear", 6)) { /* build 27: SOMVR_FX_NEAR live */
+		const char *q = w + 6;
+		float a0, a1;
+		int e;
+		while (*q == ' ')
+			q++;
+		if (!g_fn.hooked && strcmp(q, "state") && *q)
+			return "fxnear (the CPU particles' draw is not hooked: boot with SOMVR_FX_NEAR=on or SOMVR_FX_TEST=1)";
+		if (!strcmp(q, "on") || !strcmp(q, "off"))
+			atomic_store(&g_fn.on, q[1] == 'n');
+		else if (sscanf(q, "eye %d", &e) == 1)
+			atomic_store(&g_fn.eye, e < 0 || e > 1 ? -1 : e);
+		else if (sscanf(q, "%f,%f", &a0, &a1) == 2 && a0 >= 0 && a0 < a1 && a1 <= 2000) /* (test radii up to 20 m) */
+			g_fn.r0 = a0, g_fn.r1 = a1;
+		else if (*q && strcmp(q, "state"))
+			return "fxnear (not on|off|R0,R1|eye E|state: ignored)";
+		rd_near_state("FXNEAR state");
+		return "fxnear";
+	}
+	if (sscanf(w, "fx vprobe %d", &iv) == 1) { /* build 27: the near emitters' vertices (SOMVR_FX_TEST) */
+		atomic_store(&g_rd_vprobe, iv < 0 ? 0 : iv > 200 ? 200 : iv);
+		logf_("FLATFX t=%.3f the word: fx vprobe %d (the next CPU-particle draws of emitters within 3 m of the camera)",
+		      cb_now(), iv);
+		return "fx vprobe";
+	}
 	if (sscanf(w, "fx trace %d", &iv) == 1) {
 		atomic_store(&g_rcf.tr_lines, 0);
 		atomic_store(&g_rcf.tr_req, iv < 0 ? 0 : iv > 4 ? 4 : iv);
@@ -1853,6 +2274,10 @@ static void rd_start(const struct site_spec *sites, int *bad)
 	}
 	g_rd.want = (unsigned)m;
 	g_rd.test = env_word("SOMVR_FX_TEST", (const char *const[]){ "0", "1" }, 2, 0);
+	g_fc.on = env_word("SOMVR_FX_CENSUS", (const char *const[]){ "off", "on" }, 2, 1);
+	logf_("CONFIG fx_census=%s (SOMVR_FX_CENSUS: %s)", g_fc.on ? "on" : "off",
+	      g_fc.on ? "FXSEEN lines when the game's overlay, vignette, box blur, radial blur, lens drops or flares come and go; "
+			"FXCENSUS: the ClientFX made, each second" : "no census lines");
 	char vwhy[512];
 	g_rd.vis_ok = 1;
 	for (int i = RDS_VIS_INIT; i <= RDS_VIS_REQ; i++)
@@ -1861,11 +2286,27 @@ static void rd_start(const struct site_spec *sites, int *bad)
 			logf_("FLATFX site %s %#lx MISMATCH: %s (no request-buffer probe)", sites[i].name,
 			      (unsigned long)sites[i].addr, vwhy);
 		}
-	if (!g_rd.want && !g_rd.test)
+	/* build 27: SOMVR_FX_NEAR (the CPU particles' draw hooked for it too) */
+	int near = env_word("SOMVR_FX_NEAR", (const char *const[]){ "off", "on" }, 2, 0);
+	const char *nc = getenv("SOMVR_FX_NEAR_CM");
+	if (nc && *nc) {
+		float a0, a1;
+		if (sscanf(nc, "%f,%f", &a0, &a1) == 2 && a0 >= 0 && a0 < a1 && a1 <= 200)
+			g_fn.r0 = a0, g_fn.r1 = a1;
+		else {
+			logf_("WARN SOMVR_FX_NEAR_CM=%s is not R0,R1 (cm, 0 <= R0 < R1 <= 200): %.0f,%.0f", nc, (double)g_fn.r0,
+			      (double)g_fn.r1);
+			++*bad;
+		}
+	}
+	rd_near_vt();
+	if (!g_rd.want && !g_rd.test && !near) {
+		logf_("CONFIG fx_near=off (SOMVR_FX_NEAR: the game's CPU particles as it draws them, also at the eyes)");
 		return;
+	}
 	char why[512];
 	for (int i = 0; i < RDS_VIS_INIT; i++) {
-		if (i >= RDS_PSYS && !g_rd.test)
+		if (i >= RDS_PSYS && !g_rd.test && (i > RDS_PSYS || !near))
 			break;
 		if (check_site(&sites[i], why, sizeof why) != 0) {
 			logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
@@ -1900,6 +2341,12 @@ static void rd_start(const struct site_spec *sites, int *bad)
 			g_rd.ok[i] = bo_patch_call(&sites[i], (void *)somvr_w_rdbrt);
 	if (g_rd.test) /* build 23: the D3D11 capture's pass-throughs (`fx d3d N`) */
 		dc_install();
+	g_fn.hooked = g_rd.ok[RDS_PSYS];
+	atomic_store(&g_fn.on, near && g_fn.hooked);
+	logf_("CONFIG fx_near=%s (SOMVR_FX_NEAR: %s; SOMVR_FX_NEAR_CM %.0f,%.0f)%s", near ? "on" : "off",
+	      near ? "in the eyes the game's CPU particles nearer than the first value folded away, up to the second shrunk"
+		   : "the game's CPU particles as it draws them, also at the eyes", (double)g_fn.r0, (double)g_fn.r1,
+	      near && !g_fn.hooked ? " - NOT hooked: the game's" : "");
 	unsigned have = (g_rd.ok[RDS_LENSFLARE] ? RDF_FLARES : 0) | (g_rd.ok[RDS_SHAFTS] ? RDF_SHAFTS : 0) | RDF_VIGNETTE |
 			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0) | (g_rd.ok[RDS_OVERLAY] && g_rd.ok[RDS_OVERLAY_IF] ? RDF_OVERLAY : 0);
 	atomic_store(&g_rd.off, g_rd.want & have);
@@ -1915,8 +2362,22 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		      ? "hooked" : "NOT all hooked");
 }
 
+static void rd_near_state(const char *head)
+{
+	logf_("%s t=%.3f: SOMVR_FX_NEAR %s (%.0f,%.0f cm%s; %s): CPU-particle draws in the eyes %llu (not that format, left alone "
+	      "%llu), their particles %llu: folded %llu, shrunk %llu (draws with either %llu)", head, cb_now(),
+	      atomic_load(&g_fn.on) ? "on" : "off", (double)g_fn.r0, (double)g_fn.r1,
+	      atomic_load(&g_fn.eye) >= 0 ? (atomic_load(&g_fn.eye) ? ", eye 1 only" : ", eye 0 only") : "",
+	      g_fn.hooked ? "hooked" : "not hooked", (unsigned long long)atomic_load(&g_fn.draws),
+	      (unsigned long long)atomic_load(&g_fn.skipped), (unsigned long long)atomic_load(&g_fn.quads),
+	      (unsigned long long)atomic_load(&g_fn.folded), (unsigned long long)atomic_load(&g_fn.shrunk),
+	      (unsigned long long)atomic_load(&g_fn.nearest_draws));
+}
+
 static void rd_end_log(void)
 {
+	if (g_fn.hooked)
+		rd_near_state("FXNEAR END");
 	em_state("EYEMATCH END");
 	rd_kt_state("KTIME END");
 	if (g_rd.want || g_rd.test || g_rd.vis_full)

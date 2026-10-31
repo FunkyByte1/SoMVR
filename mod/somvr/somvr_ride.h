@@ -14,10 +14,9 @@
  * the head (as the smooth turn does). A heading jump beyond jump_rad in one frame (a respawn, a new beast) re-latches:
  * no turn.
  *
- * The buttons while riding (the game's mounted commands, re-traversal.md 3.1): A held = MNT_Jump (the leap), the right
- * trigger held = MNT_Attack_1 (the bite), B held = MNT_GetOff (off), the left stick's click latched while the stick is
- * pushed = MNT_Charge (the run); the left stick steers in the head's frame (the game's own: the stick rotated toward the
- * head, the beast reads the rider's camera-relative input).
+ * The buttons while riding (somvr_ride_game.c maps them to the commands that reach the beast, re-xr-pipeline.md 109,
+ * 122): A, the right trigger (the bite), B (off), the left stick's click latched while the stick is pushed (the
+ * sprint); the left stick steers in the beast's frame.
  */
 #ifndef SOMVR_RIDE_H
 #define SOMVR_RIDE_H
@@ -121,5 +120,28 @@ void somvr_rd_btn_init(somvr_rd_btn *b);
  * armed = every button seen up since the seat began (a press carried over from on foot fires nothing) -> SOMVR_RDB_*
  * held now */
 uint32_t somvr_rd_btn_step(somvr_rd_btn *b, const somvr_rd_btn_cfg *c, int a, int bb, float rt, int click, float stick);
+
+/* ---- the beast's speed (build 27c, som-b27-ride3; re-xr-pipeline.md 122) ----
+ * The ground speed of the beast's root: the path its samples ran (horizontal) over the newest SOMVR_RD_SPD_WIN_S of
+ * them, so a 20 Hz headless frame and a 90 Hz headset frame give the same number. A gap longer than SOMVR_RD_SPD_GAP_S
+ * (a window, a load) or a step beyond SOMVR_RD_SPD_JUMP_CM (a teleport, a checkpoint) starts again (no speed until a
+ * window is full again). top, dist_m and time_s count from somvr_rd_speed_mark (a run, a ride). */
+#define SOMVR_RD_SPD_N 256
+#define SOMVR_RD_SPD_WIN_S 1.0
+#define SOMVR_RD_SPD_GAP_S 0.5
+#define SOMVR_RD_SPD_JUMP_CM 2500.0f
+typedef struct {
+    int n, head;
+    double t[SOMVR_RD_SPD_N], cum[SOMVR_RD_SPD_N]; /* the sample's time; the path (cm) up to it since the reset */
+    float x[SOMVR_RD_SPD_N], z[SOMVR_RD_SPD_N];
+    float mps;            /* the newest full window's speed (m/s; NAN while none) */
+    float top;            /* the best window since the mark (m/s) */
+    double dist_m, time_s; /* the path and the time measured since the mark (gaps not counted) */
+    uint64_t resets;
+} somvr_rd_speed;
+void somvr_rd_speed_init(somvr_rd_speed *s);
+void somvr_rd_speed_mark(somvr_rd_speed *s); /* top, dist_m, time_s from now on */
+/* one sample: the beast's root (cm; [0] and [2] the ground), its time (s) -> the speed now (m/s, NAN = none yet) */
+float somvr_rd_speed_step(somvr_rd_speed *s, const float pos[3], double t);
 
 #endif

@@ -76,7 +76,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->mantle = 0, c->am_head_cm = 25, c->am_cms = 350, c->am_clear_cm = 10, c->am_overhang = 0;
     c->dm_timer = 0, c->unstuck = 0, c->fl_reach_cm = 120, c->round_lip = 0;
     c->down_over = 0, c->dn_low_cm = 40, c->dn_high_cm = 90, c->dn_reach_cm = 45, c->dn_under_cm = 25, c->dn_gap_cm = 45;
-    c->retop_edge_cm = 0, c->am_keep = 0, c->fl_reach_hold = 0;
+    c->retop_edge_cm = 0, c->am_keep = 0, c->fl_reach_hold = 0, c->land_above = 0, c->dn_near = 0;
 }
 
 void somvr_climb_init(somvr_climb *s) {
@@ -919,10 +919,31 @@ static int mantle(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in
     return 1;
 }
 
+/* land above (see the header): the floor fl seen from above - a ray down from LA_UP_CM over it (then LA_UP2_CM: the
+ * first may start inside a roof's slab) meets something over fl first, and the ray up from fl meets nothing under that
+ * (inside the rock a ray meets none of its skin, or only that skin itself): fl lies under the rock. 1 = under, 0 = open
+ * (from above it is fl, a ceiling with air under it, or no answer: as before) */
+#define LA_UP_CM 250.0f
+#define LA_UP2_CM 400.0f
+static int la_under(somvr_climb *s, somvr_climb_out *o, somvr_climb_ray_fn ray, void *ctx, int h, sv_vec3 fl) {
+    static const float ups[2] = { LA_UP_CM, LA_UP2_CM };
+    somvr_climb_hit a, u;
+    for (int i = 0; i < 2; i++) {
+        sv_vec3 from = { fl.x, fl.y + ups[i], fl.z };
+        if (!cast(s, o, ray, ctx, h, from, (sv_vec3){ 0, -1, 0 }, ups[i] + 5.0f, &a) || !a.hit || a.point.y <= fl.y + 3.0f)
+            return 0;
+        float up = a.point.y - fl.y - 13.0f; /* from 10 cm over the floor to 3 cm under that top */
+        if (up > 0 && cast(s, o, ray, ctx, h, add3(fl, (sv_vec3){ 0, 10, 0 }), (sv_vec3){ 0, 1, 0 }, up, &u) && u.hit)
+            return 0;
+    }
+    return 1;
+}
+
 /* a landing on a top at ty (the pullover's, the A mantle's): from e (on the top's edge) into the top along tw (level
- * unit), the first of 40, 35, 45 .. 80 cm in with a floor within 30 cm of ty (not water), nothing 180 cm over it and
- * nothing within PO_ROOM_CM round it at 50 and 140 cm (room for Talion's capsule); 1 = found (*fl). dbg (the logs):
- * [1] floors seen, [2] the highest, [3] blocked over them, [4] [5] [6] room rays hit: in, out, sides */
+ * unit), the first of 40, 35, 45 .. 80 cm in with a floor within 30 cm of ty (not water; with land above: not under
+ * the rock), nothing 180 cm over it and nothing within PO_ROOM_CM round it at 50 and 140
+ * cm (room for Talion's capsule); 1 = found (*fl). dbg (the logs): [1] floors seen, [2] the highest, [3] blocked over
+ * them, [4] [5] [6] room rays hit: in, out, sides, [7] floors under the rock (land above) */
 #define PO_ROOM_CM 33.0f
 static int land_find(somvr_climb *s, somvr_climb_out *o, somvr_climb_ray_fn ray, void *ctx, int h, sv_vec3 e, sv_vec3 tw,
                      float ty, float *dbg, sv_vec3 *fl_out) {
@@ -934,8 +955,12 @@ static int land_find(somvr_climb *s, somvr_climb_out *o, somvr_climb_ray_fn ray,
         f.y = ty + 60.0f;
         if (!cast(s, o, ray, ctx, h, f, (sv_vec3){ 0, -1, 0 }, 100, &r) || !r.hit || r.wet || fabsf(r.point.y - ty) > 30.0f)
             continue;
-        dbg[1]++, dbg[2] = fmaxf(dbg[2], r.point.y);
         sv_vec3 fl = r.point;
+        if (s->la_on && la_under(s, o, ray, ctx, h, fl)) { /* land above: a floor inside the rock (the real top higher) */
+            dbg[7]++, s->la_unders++;
+            continue;
+        }
+        dbg[1]++, dbg[2] = fmaxf(dbg[2], fl.y);
         if (!cast(s, o, ray, ctx, h, add3(fl, (sv_vec3){ 0, 10, 0 }), (sv_vec3){ 0, 1, 0 }, 180, &u) || u.hit) {
             dbg[3]++;
             continue;
@@ -1779,7 +1804,7 @@ static int am_find(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_i
     if (in->head_y > ty + AM_HI_CM) return s->am_why = SOMVR_CLIMB_AM_HIGH, 0;
     dbg[2] = -1e9f;
     int found = land_find(s, o, ray, ctx, -1, e, tw, ty, dbg, &fl);
-    s->am_dbg[1] = dbg[1], s->am_dbg[2] = dbg[3] + dbg[4] + dbg[5] + dbg[6];
+    s->am_dbg[1] = dbg[1], s->am_dbg[2] = dbg[3] + dbg[4] + dbg[5] + dbg[6], s->am_dbg[5] = dbg[7];
     if (!found) return s->am_why = dbg[1] > 0 ? SOMVR_CLIMB_AM_NOROOM : SOMVR_CLIMB_AM_NOFLOOR, 0;
     s->am_top_y = ty, s->am_edge = e, s->am_in = tw, s->am_land = fl;
     if (s->am_oh)
@@ -1937,7 +1962,8 @@ static int dn_find(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_i
     u = unit3(u);
     float hd0 = (p.x - in->root.x) * u.x + (p.z - in->root.z) * u.z, last = -1, ty = fl, d;
     somvr_climb_hit r;
-    for (d = 10; d <= hd0 + c->dn_reach_cm + 0.5f; d += 5) { /* the floor he stands on, out along u, until it ends */
+    /* (build 27b, dn_near: from under the root - standing within 10 cm of the edge, the first spot was past it) */
+    for (d = c->dn_near ? 0 : 10; d <= hd0 + c->dn_reach_cm + 0.5f; d += 5) { /* the floor he stands on, out along u */
         sv_vec3 f = add3(in->root, mul3(u, d));
         f.y = fl + 40.0f;
         if (!cast(s, o, ray, ctx, h, f, (sv_vec3){ 0, -1, 0 }, 70, &r)) return s->dn_why = SOMVR_CLIMB_DN_NOEDGE, 0;
@@ -2120,7 +2146,7 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
                  somvr_climb_out *o) {
     memset(o, 0, sizeof *o);
     o->driver = -1;
-    s->rl_on = c->round_lip;
+    s->rl_on = c->round_lip, s->la_on = c->land_above;
     double dt = s->last_t > 0 && in->t > s->last_t ? in->t - s->last_t : 0;
     s->last_t = in->t;
     if (in->live && in->frozen) { /* a menu or the pause: hold everything, the clocks stop */

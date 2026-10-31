@@ -108,3 +108,59 @@ float somvr_ab_mouth_dist(const float eye[3], const float fwd[3], const float ha
     float d[3] = { hand[0] - m[0], hand[1] - m[1], hand[2] - m[2] };
     return len3(d);
 }
+
+/* ---- build 27d (som-b27-abilities3; docs/re-xr-pipeline.md 121): taunt by the beckon ---- */
+void somvr_ab3_cfg_default(somvr_ab3_cfg *c) {
+    memset(c, 0, sizeof *c);
+    c->out_cm = 30, c->pull_cm = 7, c->pull_cms = 45, c->rearm_cm = 4, c->win_s = 1.5f;
+    c->palm_up = 0.5f, c->open_max = 0.5f, c->aim_deg = 30, c->aim_max_cm = 2000;
+}
+
+int somvr_ab_beckon_step(const somvr_ab3_cfg *c, somvr_ab_beckon *b, double t, float d, int ok, const char **why) {
+    const char *w = "";
+    if (!ok || !(d >= 0)) {
+        int had = b->pulls || b->armed;
+        memset(b, 0, sizeof *b);
+        if (why) *why = had ? "the hand not open, palm up and free" : "";
+        return 0;
+    }
+    if (!b->armed && !b->pulls && !b->hi_t) /* the start: armed from here */
+        b->armed = 1, b->hi = d, b->hi_t = t;
+    if (b->pulls && t - b->first_t > c->win_s) {
+        b->pulls = 0;
+        w = "the first pull too long ago";
+    }
+    if (b->armed) {
+        if (d > b->hi - 1.0f) { /* at the top (within 1 cm): a pull is timed from its last moment there */
+            if (d > b->hi) b->hi = d;
+            b->hi_t = t;
+        }
+        float drop = b->hi - d;
+        double dt = t - b->hi_t;
+        if (drop >= c->pull_cm) {
+            float sp = dt > 1e-4 ? (float)(drop / dt) : 0;
+            if (b->hi >= c->out_cm && sp >= c->pull_cms) {
+                if (!b->pulls) b->first_t = b->hi_t;
+                b->pulls++, b->armed = 0, b->lo = d, b->last_pull_cm = drop, b->last_pull_cms = sp;
+                if (b->pulls >= 2) {
+                    float lc = b->last_pull_cm, ls = b->last_pull_cms;
+                    memset(b, 0, sizeof *b);
+                    b->last_pull_cm = lc, b->last_pull_cms = ls;
+                    b->hi_t = t; /* (not armed until the hand goes out again: no third pull from this one) */
+                    b->lo = d;
+                    if (why) *why = "the beckon";
+                    return 1;
+                }
+                w = "a pull";
+            } else {
+                w = b->hi < c->out_cm ? "the hand not out" : "too slow";
+                b->hi = d, b->hi_t = t; /* measured from here again */
+            }
+        }
+    } else {
+        if (d < b->lo) b->lo = d;
+        if (d >= b->lo + c->rearm_cm) b->armed = 1, b->hi = d, b->hi_t = t;
+    }
+    if (why) *why = w;
+    return 0;
+}

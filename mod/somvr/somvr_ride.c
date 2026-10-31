@@ -189,3 +189,50 @@ uint32_t somvr_rd_btn_step(somvr_rd_btn *b, const somvr_rd_btn_cfg *c, int a, in
 		     (b->charge ? SOMVR_RDB_CHARGE : 0u);
 	return b->last = o;
 }
+
+void somvr_rd_speed_init(somvr_rd_speed *s)
+{
+	memset(s, 0, sizeof *s);
+	s->mps = NAN;
+}
+
+void somvr_rd_speed_mark(somvr_rd_speed *s) { s->top = 0, s->dist_m = 0, s->time_s = 0; }
+
+float somvr_rd_speed_step(somvr_rd_speed *s, const float pos[3], double t)
+{
+	if (!isfinite(pos[0]) || !isfinite(pos[2]) || !isfinite(t))
+		return s->mps;
+	double cum = 0;
+	if (s->n) {
+		int l = (s->head + SOMVR_RD_SPD_N - 1) % SOMVR_RD_SPD_N;
+		double dt = t - s->t[l];
+		float step = hypotf(pos[0] - s->x[l], pos[2] - s->z[l]);
+		if (dt == 0)
+			return s->mps; /* the same sample again */
+		if (!(dt > 0) || dt > SOMVR_RD_SPD_GAP_S || step > SOMVR_RD_SPD_JUMP_CM) { /* a gap, a teleport: again */
+			s->n = 0, s->resets++, s->mps = NAN;
+		} else {
+			cum = s->cum[l] + step;
+			s->dist_m += step / 100.0, s->time_s += dt;
+		}
+	}
+	s->t[s->head] = t, s->cum[s->head] = cum, s->x[s->head] = pos[0], s->z[s->head] = pos[2];
+	s->head = (s->head + 1) % SOMVR_RD_SPD_N;
+	if (s->n < SOMVR_RD_SPD_N)
+		s->n++;
+	int o = -1; /* the oldest sample within the window */
+	for (int k = s->n - 1; k >= 1; k--) {
+		int i = (s->head + SOMVR_RD_SPD_N - 1 - k) % SOMVR_RD_SPD_N;
+		if (t - s->t[i] <= SOMVR_RD_SPD_WIN_S + 1e-6) {
+			o = i;
+			break;
+		}
+	}
+	double span = o >= 0 ? t - s->t[o] : 0;
+	if (o < 0 || span < 0.8 * SOMVR_RD_SPD_WIN_S) /* not a full window yet */
+		return s->mps = NAN;
+	s->mps = (float)((cum - s->cum[o]) / 100.0 / span);
+	if (s->mps > s->top)
+		s->top = s->mps;
+	return s->mps;
+}

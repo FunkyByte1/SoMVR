@@ -164,7 +164,10 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
 #define SOMVR_VMA_FLASH SOMVR_VMA_BIT(45)    /* SOMVR_ABIL=on with its flash: "Flash: RT + L palm push out" */
 #define SOMVR_VMA_GROUNDK SOMVR_VMA_BIT(46)  /* SOMVR_ABIL=on with its ground finisher: "Downed: stab down into him" */
 #define SOMVR_VMA_ABIL2 SOMVR_VMA_BIT(42)    /* build 27c (som-b27-abilities2, docs 118): SOMVR_ABIL_IGNITE and _WHISTLE
-                                             * both on: "Ignite", "Whistle" (the quick throw, off, has no line) */
+                                             * both on: "Ignite", "Whistle" (the quick throw, off, has no line); build
+                                             * 27d (som-b27-abilities3, docs 121; no bit was free): the set of abilities
+                                             * on the game's offers - also SOMVR_ABIL_BRUTAL and _DISTRACT on (each
+                                             * shipped on): "Distract", and "Brutal" with STEALTH (the taunt, off: none) */
 #define SOMVR_VMA_FIGHT_ROWS                                                                                           \
     (SOMVR_VMA_SWORD | SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND | SOMVR_VMA_BITE | SOMVR_VMA_ARROWS | SOMVR_VMA_DODGE |     \
      SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON | SOMVR_VMA_STRING)

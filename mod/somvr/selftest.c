@@ -10099,6 +10099,60 @@ static void bm_tests(void)
 		g_inp.ctl.down[SOMVR_HAND_R] = 0, g_bm.last_win = 0, mt_tick(&wo, 50.7);
 		g_inp.ctl.down[SOMVR_HAND_R] = dn_r, g_bm.last_win = lw, g_mt.win_rest = wr, g_mt.in_win = 0;
 	}
+	/* build 27c (som-b27-ride3, re-xr-pipeline.md 122): the beast's speed measured seated (5 m/s above); the left stick's
+	 * click latches the sprint while the stick stays pushed - SOMVR_RIDE_SPRINT_CMDS held, or tapped every
+	 * SOMVR_RIDE_SPRINT_PULSE_MS (fails on build 27's code: MNT_Charge alone, held) */
+	EXPECT(g_mt.spd.top > 4.6f && g_mt.spd.top < 5.4f, "ride: the beast's speed seated %.2f m/s (5 m/s)", g_mt.spd.top);
+	{
+		sc_tick_out so;
+		int sn = g_mt.spr_n, sp = g_mt.spr_pulse_ms, sc0[MT_SPR_MAX];
+		uint32_t dn_l = g_inp.ctl.down[SOMVR_HAND_L], dn_r = g_inp.ctl.down[SOMVR_HAND_R];
+		memcpy(sc0, g_mt.spr_cmd, sizeof sc0);
+		memset(&so, 0, sizeof so), so.live = 1, so.ctx = SC_CTX_WORLD;
+#define ST_HAS(c) ({ int h_ = 0; for (int i_ = 0; i_ < so.ncmd; i_++) h_ |= so.cmd[i_] == (c); h_; })
+		g_inp.ctl.down[SOMVR_HAND_L] = g_inp.ctl.down[SOMVR_HAND_R] = 0, mt_tick(&so, 51.0);
+		g_inp.ctl.down[SOMVR_HAND_L] = SOMVR_BTN_STICK, so.move_raw[1] = 1, so.ncmd = 0, mt_tick(&so, 51.05);
+		int on = ST_HAS(MT_CMD_CHARGE);
+		g_inp.ctl.down[SOMVR_HAND_L] = 0, so.ncmd = 0, mt_tick(&so, 51.1);
+		int latched = ST_HAS(MT_CMD_CHARGE);
+		so.move_raw[1] = 0, so.ncmd = 0, mt_tick(&so, 51.15);
+		int ended = !ST_HAS(MT_CMD_CHARGE);
+		EXPECT(on && latched && ended && g_mt.spr_n == 3 && log_has("CONFIG ride sprint=16,121,184"),
+		       "ride: the sprint (default %d commands) by the click (%d), latched while pushed (%d), the stick centred ends it "
+		       "(%d)", g_mt.spr_n, on, latched, ended);
+		/* A = the stock pad's A (SOMVR_RIDE_A=pad): its three; inside the click's sprint A's press and release are fresh */
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_LOWER, so.ncmd = 0, mt_tick(&so, 51.16);
+		int a3 = ST_HAS(MT_CMD_JUMP_A) && ST_HAS(MT_CMD_EVADE_A) && ST_HAS(MT_CMD_CHARGE);
+		g_inp.ctl.down[SOMVR_HAND_R] = 0, so.ncmd = 0, mt_tick(&so, 51.17);
+		g_inp.ctl.down[SOMVR_HAND_L] = SOMVR_BTN_STICK, so.move_raw[1] = 1, so.ncmd = 0, mt_tick(&so, 51.18);
+		g_inp.ctl.down[SOMVR_HAND_L] = 0, so.ncmd = 0, mt_tick(&so, 51.19);
+		int sp3 = ST_HAS(MT_CMD_JUMP_A) && ST_HAS(MT_CMD_CHARGE);
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_LOWER, so.ncmd = 0, mt_tick(&so, 51.20);
+		int gap_in = !ST_HAS(MT_CMD_JUMP_A) && !ST_HAS(MT_CMD_EVADE_A) && !ST_HAS(MT_CMD_CHARGE);
+		so.ncmd = 0, mt_tick(&so, 51.32);
+		int a_on = ST_HAS(MT_CMD_JUMP_A) && ST_HAS(MT_CMD_CHARGE);
+		g_inp.ctl.down[SOMVR_HAND_R] = 0, so.ncmd = 0, mt_tick(&so, 51.40);
+		int gap_out = !ST_HAS(MT_CMD_JUMP_A) && !ST_HAS(MT_CMD_CHARGE);
+		so.ncmd = 0, mt_tick(&so, 51.52);
+		int resumed = ST_HAS(MT_CMD_JUMP_A) && ST_HAS(MT_CMD_CHARGE);
+		so.move_raw[1] = 0, so.ncmd = 0, mt_tick(&so, 51.55);
+		EXPECT(a3 && sp3 && gap_in && a_on && gap_out && resumed && g_mt.edges >= 2,
+		       "ride: A = the pad's three (%d); the click's sprint (%d): A's press let go first (%d), then held (%d); its "
+		       "release let go (%d), the sprint again (%d)", a3, sp3, gap_in, a_on, gap_out, resumed);
+		g_mt.spr_n = 2, g_mt.spr_cmd[0] = MT_CMD_CHARGE, g_mt.spr_cmd[1] = MT_CMD_JUMP_A, g_mt.spr_pulse_ms = 400;
+		g_inp.ctl.down[SOMVR_HAND_L] = SOMVR_BTN_STICK, so.move_raw[1] = 1, so.ncmd = 0, mt_tick(&so, 52.2);
+		int t0 = ST_HAS(MT_CMD_CHARGE) && ST_HAS(MT_CMD_JUMP_A);
+		g_inp.ctl.down[SOMVR_HAND_L] = 0, so.ncmd = 0, mt_tick(&so, 52.35);
+		int t1 = !ST_HAS(MT_CMD_CHARGE) && !ST_HAS(MT_CMD_JUMP_A);
+		so.ncmd = 0, mt_tick(&so, 52.61);
+		int t2 = ST_HAS(MT_CMD_CHARGE) && ST_HAS(MT_CMD_JUMP_A);
+		so.move_raw[1] = 0, so.ncmd = 0, mt_tick(&so, 52.7);
+		EXPECT(t0 && t1 && t2 && g_mt.sprints >= 2 && log_has("the sprint by the left stick's click"),
+		       "ride: the sprint's list tapped every 400 ms: on %d, between %d, again %d", t0, t1, t2);
+#undef ST_HAS
+		g_mt.spr_n = sn, g_mt.spr_pulse_ms = sp, memcpy(g_mt.spr_cmd, sc0, sizeof sc0);
+		g_inp.ctl.down[SOMVR_HAND_L] = dn_l, g_inp.ctl.down[SOMVR_HAND_R] = dn_r;
+	}
 	/* getting off: the game's dismount sync, P+0x1d8 cleared, Talion on the ground again: held, then the blink to him */
 	uint64_t rbl1 = g_bm.s.blinks;
 	bm_set_sync(bm_rec(0)), fb_p(FB_P_MOUNT, 0);
@@ -15659,6 +15713,67 @@ static int vg_standin(const void *fn, const char *name, struct site_spec *s, cha
 	*s = (struct site_spec){ name, K_JMP, (uintptr_t)(p + k), (uintptr_t)(p + k), hx, (uintptr_t)st_vgcreate, hx + 128 };
 	return 1;
 }
+/* build 27 (re-xr-pipeline.md 125): SOMVR_FX_NEAR's fold on a synthetic draw - 60-byte vertices, quads of 4 with one
+ * colour, the world's or the emitter's space; nearer than 15 cm folded to the middle, 15..30 cm shrunk, farther kept, a
+ * draw of another format left alone */
+static void fn_put(unsigned char *v, int k, float cx, float cy, float cz, uint32_t col)
+{
+	static const float off[4][2] = { { -2, -2 }, { 2, -2 }, { 2, 2 }, { -2, 2 } };
+	for (int j = 0; j < 4; j++) {
+		float *p = (float *)(v + (size_t)(k * 4 + j) * 60);
+		memset(p, 0, 60);
+		p[0] = cx, p[1] = cy + off[j][0], p[2] = cz + off[j][1];
+		memcpy(v + (size_t)(k * 4 + j) * 60 + 12, &col, 4);
+	}
+}
+static float fn_span(const unsigned char *v, int k) /* the quad's height (its corners' y spread) */
+{
+	const float *a = (const float *)(v + (size_t)(k * 4) * 60), *c = (const float *)(v + (size_t)(k * 4 + 2) * 60);
+	return c[1] - a[1];
+}
+static void fn_tests(void)
+{
+	static unsigned char v[4 * 4 * 60 + 64];
+	float eye[7] = { 30000, 2000, -24000, 0, 0, 0, 1 }, em[7] = { 30500, 2000, -24000, 0, 0, 0, 1 };
+	void *a[5] = { em, eye, NULL, NULL, NULL };
+	int e0 = g_rt_eye;
+	g_rt_eye = 0;
+	atomic_store(&g_fn.on, 1), atomic_store(&g_fn.eye, -1), g_fn.r0 = 15, g_fn.r1 = 30;
+	EXPECT(rd_near_now(), "fxnear: on in eye 0's pass");
+	/* the world's space: 10 cm (folded), 22.5 cm (half), 100 cm (kept), 25 cm with four colours (not one particle: kept) */
+	fn_put(v, 0, 30010, 2000, -24000, 0x11223344), fn_put(v, 1, 30022.5f, 2000, -24000, 0x55667788);
+	fn_put(v, 2, 30100, 2000, -24000, 0x99aabbcc), fn_put(v, 3, 30025, 2000, -24000, 0x01020304);
+	memcpy(v + (3 * 4 + 1) * 60 + 12, "\x05\x06\x07\x08", 4);
+	g_px.ptr = v, g_px.req = 16, g_px.granted = 16, g_fn.a = a;
+	uint64_t f0 = atomic_load(&g_fn.folded), s0 = atomic_load(&g_fn.shrunk);
+	somvr_rd_near_unmap();
+	EXPECT(fabsf(fn_span(v, 0)) < 1e-3f && fabsf(fn_span(v, 1) - 2.0f) < 1e-3f && fabsf(fn_span(v, 2) - 4.0f) < 1e-3f &&
+		       fabsf(fn_span(v, 3) - 4.0f) < 1e-3f && atomic_load(&g_fn.folded) == f0 + 1 && atomic_load(&g_fn.shrunk) == s0 + 1 &&
+		       !g_fn.a && log_has("FXNEAR t=") && log_has("(world space): 1 of its 4 particles folded"),
+	       "fxnear world: spans %.2f %.2f %.2f %.2f", fn_span(v, 0), fn_span(v, 1), fn_span(v, 2), fn_span(v, 3));
+	/* the emitter's own space: the emitter 40 cm ahead of the eye (+x), turned 180 deg about y; a particle at +30 cm in
+	 * its own x = 10 cm from the eye (folded), one at -60 = 100 cm (kept) */
+	float em2[7] = { 30040, 2000, -24000, 0, 1, 0, 0 };
+	a[0] = em2;
+	fn_put(v, 0, 30, 0, 0, 0x10101010), fn_put(v, 1, -60, 0, 0, 0x20202020);
+	g_px.req = 8, g_fn.a = a;
+	somvr_rd_near_unmap();
+	EXPECT(fabsf(fn_span(v, 0)) < 1e-3f && fabsf(fn_span(v, 1) - 4.0f) < 1e-3f && log_has("(its own space)"),
+	       "fxnear own space: spans %.2f %.2f", fn_span(v, 0), fn_span(v, 1));
+	/* another format (the first quad's colours differ): nothing written; off / eye 1 only in eye 0: no fold */
+	a[0] = em;
+	fn_put(v, 0, 30010, 2000, -24000, 0x11111111), memcpy(v + 60 + 12, "\x01\x02\x03\x04", 4);
+	uint64_t k0 = atomic_load(&g_fn.skipped);
+	g_px.req = 4, g_fn.a = a;
+	somvr_rd_near_unmap();
+	EXPECT(fabsf(fn_span(v, 0) - 4.0f) < 1e-3f && atomic_load(&g_fn.skipped) == k0 + 1, "fxnear: another format folded");
+	atomic_store(&g_fn.eye, 1);
+	EXPECT(!rd_near_now(), "fxnear eye 1: on in eye 0's pass");
+	atomic_store(&g_fn.eye, -1), atomic_store(&g_fn.on, 0);
+	EXPECT(!rd_near_now(), "fxnear off: on");
+	g_px.ptr = NULL, g_fn.a = NULL, g_rt_eye = e0;
+}
+
 static void vg_tests(void)
 {
 	static struct site_spec s[2];
@@ -16430,6 +16545,7 @@ int main(int argc, char **argv)
 	bh_tests();     /* SOMVR_BOW_HITLOG: a stand-in call (the bow's round 2) */
 	uf_tests();     /* SOMVR_HUD_FX: a stand-in thunk (the build 12 HUD round) */
 	vg_tests();     /* SOMVR_VERBS_GLOW: two stand-in thunks (build 13) */
+	fn_tests();     /* build 27: SOMVR_FX_NEAR's fold on a synthetic draw */
 	ff_tests();     /* SOMVR_FRONT: the wrappers on stand-ins (build 14) */
 	py_tests();     /* SOMVR_PARRY / SOMVR_SHOVE: the window, the opening, the riposte (build 18) */
 	soak_tests();   /* build 27: the long session's tables (SOMVR_GLYPH's triggers and items) */

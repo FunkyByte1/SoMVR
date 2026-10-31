@@ -48,7 +48,8 @@ static uint64_t hla_vm_avail(void)
 		a |= SOMVR_VMA_FLASH;
 	if (g_abl.mode == AB_ON && g_abl.on[ABK_GROUND]) /* build 27, SOMVR_ABIL: the ground finisher by the stab */
 		a |= SOMVR_VMA_GROUNDK;
-	if (g_abl.mode == AB_ON && g_ab2.on && g_ab2.ignite && g_ab2.whistle) /* build 27c: the Ignite and Whistle lines */
+	if (g_abl.mode == AB_ON && g_ab2.on && g_ab2.ignite && g_ab2.whistle && g_ab3.on && g_ab3.brutal && g_ab3.distract)
+		/* build 27c: the Ignite and Whistle lines; 27d: Brutal, Distract (one bit: the set; the taunt, off, has no line) */
 		a |= SOMVR_VMA_ABIL2;
 	return a;
 }

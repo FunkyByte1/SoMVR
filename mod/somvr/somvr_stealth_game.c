@@ -1183,6 +1183,8 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 		return 1;
 	if (g_stl.stk.on && o->c == g_stl.stk_c)
 		return 2; /* build 21: the blade in its body - no other hit on it (2: taken, no re-hit cooldown) */
+	if (ab3_brutal_owns(o->c, t))
+		return 1; /* build 27d (SOMVR_ABIL_BRUTAL): the game's torment on him - no hit of ours meanwhile */
 	g_stl.contacts++;
 	somvr_stl_who w;
 	struct stl_aw a;
@@ -1334,6 +1336,12 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 			ep->alert_t = 0, ep->alerted_t = t, stl_alert(pc, ep, t);
 		in_haptic_event(hand, 1.0f, 0.06f, SOMVR_HAP_COMBAT);
 		in_haptic_after(hand, 0.45f, 0.18f, 0.06f, SOMVR_HAP_COMBAT);
+		return 1;
+	}
+	/* build 27d (SOMVR_ABIL_BRUTAL): the left trigger held - the game's own torment (brutalize) where it offers it */
+	if (ab3_brutal(pc, o, hand, sp == &g_cb.sp, fk, t)) {
+		if (ep)
+			ep->alert_t = 0;
 		return 1;
 	}
 	char death[160], rn[96] = "?";

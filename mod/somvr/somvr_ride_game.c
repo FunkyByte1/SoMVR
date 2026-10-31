@@ -18,9 +18,11 @@
  *       the view turns to the beast's heading (SOMVR_RIDE_ALIGN=on: you land seated facing its head);
  *     - while seated the moment conditions mount and attach are the ride's (not the window) and a sync or struggle on
  *       Talion (a mounted attack's) does not freeze the view (the seat is the beast's, not his);
- *     - the buttons: A = Jump + CombatPrimary04 (the leap), the right trigger = MNT_Attack_2 (the bite), B = 123 (off; build 27), the
- *       left stick's click (latched while pushed) = MNT_Charge (the run); the left stick steers in the head's frame (the
- *       game's own); B's interact, the crouch and A's on-foot owners (jump, dash, strike, climb) stand down meanwhile.
+ *     - the buttons: A = Jump + CombatPrimary04 + MNT_Charge (build 27c, SOMVR_RIDE_A=pad: the stock pad's A - tapped
+ *       the leap, held the sprint), the right trigger = MNT_Attack_2 (the bite), B = 123 (off; build 27), the left
+ *       stick's click (latched while pushed) = the sprint (SOMVR_RIDE_SPRINT_CMDS, the same three); the left stick
+ *       steers in the beast's frame (build 27); B's interact, the crouch and A's on-foot owners (jump, dash, strike,
+ *       climb) stand down meanwhile.
  *     A mount that is not a beast (the game's grab of an orc rides on P+0x1d8 too) is left alone.
  *   SOMVR_RIDE_SEAT=on|off (default on): the Seat mode above; off = a mount is the body moments' window (build 25), the
  *     counter, the mount's press, the domination's hold and the mounted buttons stay (build 26's env: off - Seat mode is
@@ -32,7 +34,8 @@
  *   Test words (SOMVR_HANDS_TEST): `ride status`, `ride guard on|off` (the test right hand holds the blade across a
  *   caragor's line - its head to Talion's body, 45 cm out - from 0.3 s before its parry window to its end: the player's
  *   block of a leap; DEFENCE judges it as it judges a player's), `ride face on|off` (the view turned to a stunned
- *   caragor within 8 m, as a player looks at it), `ride press CMD MS` (one mounted command held).
+ *   caragor within 8 m, as a player looks at it), `ride press CMD MS` (one mounted command held); build 27c: `ride run`,
+ *   `ride sprint`, `ride tap`, `ride trace` (re-xr-pipeline.md 122).
  * The mount (build 26): the countered caragor lies stunned ('AI_Warg_Knockdown_*', ~10 s); while it is in reach and view
  * the game offers 'UI_MountWarg_Dominate' on 123 (the pad's RB) - the left hand reached out (30 cm or more from the eyes,
  * in the front half of the view) and closed, or B, presses 123 for 0.5 s: the game runs Talion onto it and mounts;
@@ -59,6 +62,12 @@
 			    * 2.0 s lost a checkpoint's restore on the beast - the BEASTS cache knew it 2.9 s after, boot
 			    * 20261030-061050; meanwhile the mount is the window, as a grab's) */
 #define MT_GUARD_OUT_CM 45.0f
+#define MT_SPR_MAX 4 /* the sprint's commands at most (SOMVR_RIDE_SPRINT_CMDS, `ride run`) */
+#define MT_LOG_MAX 800 /* RIDE lines at most (build 27c: 400 ran out 25 minutes into Big Game, boot 20261030-220337) */
+#define MT_SPR_TAP_S 0.1 /* a tapped sprint command: on this long of each SOMVR_RIDE_SPRINT_PULSE_MS */
+#define MT_SPR_DEFAULT "16,121,184" /* SOMVR_RIDE_SPRINT_CMDS: the stock pad's A held (Jump, CombatPrimary04, MNT_Charge) */
+#define MT_SPR_EDGE_S 0.1 /* A's press or release inside the click's sprint: the shared commands let go this long first */
+#define MT_SPR_PULSE_DEFAULT 0 /* SOMVR_RIDE_SPRINT_PULSE_MS: held */
 #define MT_VT_STRUGGLE_AIM 0x3592bb8 /* CStruggleAim's vtable (index/vfuncs.tsv; the RTTI '12CStruggleAim') */
 #define MT_STRUG_DONE 0xa5           /* ICombatStruggle: its completion asked (FUN_00e114e0 sets it: the game's own; the */
 				     /* aim's next update wins - +0x8c = 1, its success UI, the end callback) */
@@ -134,6 +143,23 @@ static struct {
 	double next_motion;
 	float win_step_max, win_ystep_max, win_yaw_max;
 	uint64_t win_frames;
+	/* build 27c (som-b27-ride3, re-xr-pipeline.md 122): the beast's speed (seated), the sprint's commands, `ride run` */
+	somvr_rd_speed spd, run_spd;
+	float win_spd_top;
+	int spr_cmd[MT_SPR_MAX], spr_n, spr_pulse_ms, spr_was;
+	double spr_t0, spr_s;
+	uint64_t sprints;
+	_Atomic int req_run_ms, req_sprint, tap_until_ms;
+	int a_pad, rt_cmd[MT_SPR_MAX], rt_n, tap_cmd[MT_SPR_MAX], tap_n; /* SOMVR_RIDE_A; `ride tap` (a test) */
+	double edge_until, tap_until;
+	uint64_t edges;
+	int rs_cmd[MT_SPR_MAX], rs_n, rs_pulse_ms; /* `ride sprint` (a test) */
+	int rq_cmd[MT_SPR_MAX], rq_n, rq_pulse_ms;
+	float rq_mag;
+	int run_cmd[MT_SPR_MAX], run_n, run_pulse_ms, run_ms, run_have1, run_nrec, run_nrc, run_rc[8];
+	float run_mag, run_bearing;
+	double run_t0, run_until, run_d1, run_t1, t_tick;
+	uintptr_t run_rec[4];
 } g_mt;
 
 static void mt_state(uintptr_t mount, double t);
@@ -142,15 +168,32 @@ static const char *atk_name_or_dash(uintptr_t r, char *nm, size_t n) { return r 
 
 static int mt_log_ok(void)
 {
-	if (g_mt.lines < 400)
+	if (g_mt.lines < MT_LOG_MAX)
 		return ++g_mt.lines;
 	g_mt.suppressed++;
 	return 0;
 }
 
+/* "184" / "184,16,121" / "0" (none) -> the commands (each 1..SC_NCMD-1); -1 = not such a list */
+static int mt_cmd_list(const char *s, int *out, int cap)
+{
+	int n = 0;
+	if (!s || !strcmp(s, "0") || !strcmp(s, "none"))
+		return 0;
+	while (*s) {
+		char *e;
+		long v = strtol(s, &e, 10);
+		if (e == s || v <= 0 || v >= SC_NCMD || n >= cap || (*e && *e != ','))
+			return -1;
+		out[n++] = (int)v, s = *e ? e + 1 : e;
+	}
+	return n;
+}
+
 static void mt_config(int *bad)
 {
 	memset(&g_mt, 0, sizeof g_mt);
+	somvr_rd_speed_init(&g_mt.spd), somvr_rd_speed_init(&g_mt.run_spd);
 	static const char *const onoff_w[] = { "off", "on" };
 	g_mt.on = env_word("SOMVR_RIDE", onoff_w, 2, 0);
 	somvr_rd_cfg_default(&g_mt.cfg);
@@ -170,6 +213,20 @@ static void mt_config(int *bad)
 	g_mt.win_rest = env_word("SOMVR_RIDE_WIN_REST", onoff_w, 2, 1);
 	g_mt.dom_hold_s = env_float("SOMVR_RIDE_DOM_HOLD_MS", 1500, 0, 4500, bad) / 1000;
 	g_mt.trace_max = (int)env_float("SOMVR_RIDE_TRACE", 0, 0, 100000, bad);
+	{ /* build 27c (som-b27-ride3, re-xr-pipeline.md 122): what the sprint holds */
+		const char *sc = getenv("SOMVR_RIDE_SPRINT_CMDS");
+		int n = mt_cmd_list(sc && sc[0] ? sc : MT_SPR_DEFAULT, g_mt.spr_cmd, MT_SPR_MAX);
+		if (n < 0) {
+			logf_("WARN SOMVR_RIDE_SPRINT_CMDS=%s is not up to %d commands separated by commas (or 0): the default %s", sc,
+			      MT_SPR_MAX, MT_SPR_DEFAULT), *bad = 1;
+			n = mt_cmd_list(MT_SPR_DEFAULT, g_mt.spr_cmd, MT_SPR_MAX);
+		}
+		g_mt.spr_n = n;
+		g_mt.spr_pulse_ms = (int)env_float("SOMVR_RIDE_SPRINT_PULSE_MS", MT_SPR_PULSE_DEFAULT, 0, 2000, bad);
+		g_mt.a_pad = env_word("SOMVR_RIDE_A", (const char *const[]){ "leap", "pad" }, 2, 1);
+		if (g_mt.spr_pulse_ms > 0 && g_mt.spr_pulse_ms < 2 * MT_SPR_TAP_S * 1000)
+			g_mt.spr_pulse_ms = (int)(2 * MT_SPR_TAP_S * 1000);
+	}
 	g_mt.bcfg.trig_on = 0.6f, g_mt.bcfg.trig_off = 0.4f;
 	for (int k = 0; k < SOMVR_RD_NKIND; k++) { /* the root anchor's filter on the seat (somvr_loco.h) */
 		somvr_anchor_cfg_default(&g_mt.acfg[k]);
@@ -184,8 +241,8 @@ static void mt_config(int *bad)
 	logf_("CONFIG ride=on (SOMVR_RIDE, build 26): Seat mode - the seat = the beast's root + the rider's eyes (caragor "
 	      "%.0f,%.0f,%.0f, graug %.0f,%.0f,%.0f cm right/up/ahead; Talion's head node's mean over %.1f s, at most %.0f cm/s), "
 	      "the vertical filter %.0f / %.0f ms, the yaw car-style (low-pass %.0f ms, at most %.0f deg/s), the hold until "
-	      "seated + %.0f ms, the facing on the blink's black %s; A = Jump+CombatPrimary04, RT = MNT_Attack_2, B = 123 (the pad RB: off), the "
-	      "stick's click = MNT_Charge; a caragor's leap parried = the game's counter %s; the domination's struggle held on %.0f ms "
+	      "seated + %.0f ms, the facing on the blink's black %s; A (SOMVR_RIDE_A), RT = MNT_Attack_2, B = 123 (the pad RB: off), the "
+	      "stick's click = the sprint (SOMVR_RIDE_SPRINT_CMDS); a caragor's leap parried = the game's counter %s; the domination's struggle held on %.0f ms "
 	      "(SOMVR_RIDE_DOM_HOLD_MS); Seat mode %s (SOMVR_RIDE_SEAT; off: a mount is the window, as build 25); trace %d", c->seat[0][0], c->seat[0][1], c->seat[0][2], c->seat[1][0], c->seat[1][1],
 	      c->seat[1][2], c->off_s, c->off_cmps, c->y_s[0] * 1000, c->y_s[1] * 1000, c->yaw_s * 1000, c->yaw_dps,
 	      g_mt.settle_s * 1000, g_mt.align ? "on" : "off", g_mt.counter ? "on" : "off", g_mt.dom_hold_s * 1000, g_mt.seat_on ? "on" : "off",
@@ -195,6 +252,16 @@ static void mt_config(int *bad)
 	      "result screen) a press is the screen's (SOMVR_USE: skip, Retry, Back, Abandon), never the beast's - it acts only "
 	      "once let go after it; a button held since before the window goes on (a held run through a banner), never B" :
 	      "the mounted buttons act through a window (build 27: B on a screen got Talion off, A's Retry leapt)");
+	char cl[64];
+	size_t n = 0;
+	cl[0] = 0;
+	for (int k = 0; k < g_mt.spr_n && n < sizeof cl - 8; k++)
+		n += (size_t)snprintf(cl + n, sizeof cl - n, "%s%d", k ? "," : "", g_mt.spr_cmd[k]);
+	logf_("CONFIG ride sprint=%s (SOMVR_RIDE_SPRINT_CMDS, SOMVR_RIDE_SPRINT_PULSE_MS %d; build 27c): the left stick's click "
+	      "latches the beast's sprint while the stick stays pushed (the on-foot sprint's rule) - %s %s; A=%s (SOMVR_RIDE_A): "
+	      "%s", n ? cl : "none", g_mt.spr_pulse_ms, n ? "its commands" : "nothing sent", !n ? "" : g_mt.spr_pulse_ms ?
+	      "tapped" : "held", g_mt.a_pad ? "pad" : "leap", g_mt.a_pad ? "the stock pad's A (Jump + CombatPrimary04 + "
+	      "MNT_Charge): tapped the leap, held the sprint" : "Jump + CombatPrimary04 (build 27: held, the beast stands)");
 }
 
 static int mt_riding(void) { return g_mt.on && g_mt.beast_ok && g_mt.state != MT_OFF; }
@@ -356,6 +423,13 @@ static void mt_rider_log(double t)
 				logf_("RIDE t=%.3f the rider's %d '%s' %s (%.2f)", t, e[k].id, e[k].id > 0 && e[k].id < SC_NCMD ?
 				      in_cmd_name(e[k].id) : "?", e[k].v != 0 ? "on" : "off", e[k].v);
 			g_mt.rc_id[k] = e[k].id, g_mt.rc_v[k] = e[k].v;
+			if (g_mt.run_until > 0 && e[k].v != 0) { /* `ride run`: the rider's commands seen on */
+				int have = 0;
+				for (int i = 0; i < g_mt.run_nrc; i++)
+					have |= g_mt.run_rc[i] == e[k].id;
+				if (!have && g_mt.run_nrc < 8)
+					g_mt.run_rc[g_mt.run_nrc++] = e[k].id;
+			}
 		}
 		g_mt.rc_n = (int)n;
 	}
@@ -363,6 +437,13 @@ static void mt_rider_log(double t)
 	for (int i = 0; i < BZ_MAX; i++)
 		if (g_bz.b[i].hobj == g_mt.mount && g_bz.b[i].c)
 			a = peek_ptr(g_bz.b[i].c + BZ_C_ATTACK);
+	if (a && g_mt.run_until > 0) { /* `ride run`: the beast's records seen */
+		int have = 0;
+		for (int i = 0; i < g_mt.run_nrec; i++)
+			have |= g_mt.run_rec[i] == a;
+		if (!have && g_mt.run_nrec < 4)
+			g_mt.run_rec[g_mt.run_nrec++] = a;
+	}
 	if (a != g_mt.beast_atk) {
 		char nm[96];
 		g_mt.beast_atk = a;
@@ -526,13 +607,24 @@ static void mt_frame(void)
 	}
 	if (mt_riding()) /* the room-scale follow asks Talion for no step while he rides (his body is the saddle's) */
 		g_follow.pm = 0;
-	if (g_mt.state != MT_SEATED || !g_mt.seat_on)
+	if (g_mt.state != MT_SEATED || !g_mt.seat_on) {
+		g_mt.spd.n = 0, g_mt.spd.mps = NAN; /* (the next seat measures afresh) */
 		return;
+	}
 	float q[4];
 	if (!peek(g_mt.mount + OBJ_POS, g_mt.beast, sizeof g_mt.beast) || !vec_ok(g_mt.beast, 1e7f) ||
 	    !peek(g_mt.mount + OBJ_ROT, q, sizeof q) || !vec_ok(q, 2.0f))
 		return;
 	g_mt.heading = sv_heading(sv_qnormalize(sv_quat_of(q)));
+	float mps = somvr_rd_speed_step(&g_mt.spd, g_mt.beast, t); /* build 27c: the beast's speed (RIDE motion, run, END) */
+	if (mps > g_mt.win_spd_top)
+		g_mt.win_spd_top = mps;
+	if (g_mt.run_until > 0) { /* `ride run` (a test): its own measure from its start */
+		double d0 = g_mt.run_spd.dist_m, t0 = g_mt.run_spd.time_s;
+		somvr_rd_speed_step(&g_mt.run_spd, g_mt.beast, t);
+		if (g_mt.run_have1) /* after its first second (the beast up to speed) */
+			g_mt.run_d1 += g_mt.run_spd.dist_m - d0, g_mt.run_t1 += g_mt.run_spd.time_s - t0;
+	}
 	g_mt.dyaw = somvr_rd_yaw_step(&g_mt.yaw, &g_mt.cfg, g_mt.heading, dt, &g_mt.rate_dps);
 	if (g_inp.on && !(g_bm.on && g_bm.o.frozen)) /* the turn about the head at this frame (in_rig_turn) */
 		g_inp.pend_turn = fmaxf(-0.5f, fminf(0.5f, g_inp.pend_turn + g_mt.dyaw));
@@ -636,10 +728,13 @@ static void mt_after_base(void)
 		if (g_mt.win_frames && mt_log_ok())
 			logf_("RIDE motion t=%.3f last %llu seated frames: the view's largest step %.1f cm across, %.1f cm up/down, "
 			      "%.2f deg of yaw; the seat %.1f cm over the root (Talion's head node's mean), its raw span %.1f cm, the "
-			      "view's %.1f cm; pitch/roll at most %.2f/%.2f deg (the base: a position and a yaw only)", t,
+			      "view's %.1f cm; pitch/roll at most %.2f/%.2f deg (the base: a position and a yaw only); the beast at "
+			      "%.1f m/s now, its top %.1f m/s (a 1-s window)%s", t,
 			      (unsigned long long)g_mt.win_frames, g_mt.win_step_max, g_mt.win_ystep_max, g_mt.win_yaw_max,
 			      g_mt.seat.off[1], g_mt.raw_y_span[1] - g_mt.raw_y_span[0], g_mt.out_y_span[1] - g_mt.out_y_span[0],
-			      g_mt.pitch_max, g_mt.roll_max);
+			      g_mt.pitch_max, g_mt.roll_max, isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f, g_mt.win_spd_top,
+			      (g_mt.held & SOMVR_RDB_CHARGE) ? "; sprinting" : "");
+		g_mt.win_spd_top = 0;
 		g_mt.next_motion = t + (g_mt.motion_lines++ < 20 ? 2.0 : 10.0), g_mt.win_frames = 0, /* (a long ride: 10 s) */ g_mt.win_step_max = g_mt.win_ystep_max = g_mt.win_yaw_max = 0;
 	}
 	memcpy(g_mt.last_base, b, sizeof b), g_mt.last_yaw = yaw, g_mt.have_last = 1;
@@ -773,8 +868,110 @@ static int mt_press_cmd(void)
 /* combat's sweep: the beast ridden is never a target (the rider's own legs are in its capsules) */
 static int mt_is_mount(uintptr_t hobj) { return hobj && mt_riding() && hobj == g_mt.mount; }
 
+/* the bow's line (ba_world): a cast that meets the beast ridden - its object, or within 2.5 m of its root across and
+ * -0.5..+2.5 m up (the rider's nock sits over its back: build 27c, boot 20261030-234922 "the world first 0.0 m") */
+static int mt_near_mount(uintptr_t obj, const float p[3])
+{
+	if (!mt_riding())
+		return 0;
+	if (obj && obj == g_mt.mount)
+		return 1;
+	float dx = p[0] - g_mt.beast[0], dz = p[2] - g_mt.beast[2], dy = p[1] - g_mt.beast[1];
+	return g_mt.state == MT_SEATED && vec_ok(g_mt.beast, 1e7f) && dx * dx + dz * dz <= 250.0f * 250.0f && dy >= -50 &&
+	       dy <= 250;
+}
+
 /* A's on-foot owners stand down while riding (ab_tick) */
 static int mt_owns_buttons(void) { return g_mt.on && g_mt.owns; }
+
+/* build 27c (som-b27-ride3, re-xr-pipeline.md 122): commands into the tick's list, held or tapped (on MT_SPR_TAP_S
+ * of every pulse_ms from `since`'s start) */
+static void mt_add_cmds(sc_tick_out *o, const int *cmds, int n, int pulse_ms, double since)
+{
+	if (pulse_ms > 0 && fmod(since, pulse_ms * 0.001) >= MT_SPR_TAP_S)
+		return;
+	for (int k = 0; k < n; k++) {
+		int have = 0;
+		for (int i = 0; i < o->ncmd; i++)
+			have |= o->cmd[i] == cmds[k];
+		if (!have && o->ncmd < SC_OUT_CMDS)
+			o->cmd[o->ncmd++] = cmds[k];
+	}
+}
+static const char *mt_cmds_str(const int *cmds, int n)
+{
+	static char b[160];
+	size_t o = 0;
+	b[0] = 0;
+	for (int k = 0; k < n && o < sizeof b - 40; k++)
+		o += (size_t)snprintf(b + o, sizeof b - o, "%s%d '%s'", k ? " + " : "", cmds[k], in_cmd_name(cmds[k]));
+	return n ? b : "none";
+}
+static const char *mt_ms_str(int ms)
+{
+	static char b[24];
+	snprintf(b, sizeof b, "%d ms", ms);
+	return b;
+}
+
+/* `ride run MS [CMDS] [PULSE_MS] [MAG]` (a test, SOMVR_HANDS_TEST; seated): the stick MAG (1.0) ahead in the beast's frame,
+ * held on the heading it had at the start (a rider holding a line: at most 0.6 rad of the stick aside), the commands
+ * held (or tapped every PULSE_MS) for MS; then one line - the path, its speed, after the first second (the beast up to
+ * speed), the top 1-s window, the beast's records and the rider's list's commands seen on. What the sprint wants is
+ * measured, not guessed: the same ground, one input set at a time */
+static void mt_run_end(double t, const char *why)
+{
+	char rec[200], rc[200];
+	size_t n = 0;
+	rec[0] = rc[0] = 0;
+	for (int i = 0; i < g_mt.run_nrec && n < sizeof rec - 100; i++) {
+		char nm[96];
+		n += (size_t)snprintf(rec + n, sizeof rec - n, "%s'%s'", i ? ", " : "", fb_rec_name(g_mt.run_rec[i], nm, sizeof nm));
+	}
+	n = 0;
+	for (int i = 0; i < g_mt.run_nrc && n < sizeof rc - 40; i++)
+		n += (size_t)snprintf(rc + n, sizeof rc - n, "%s%d '%s'", i ? ", " : "", g_mt.run_rc[i], g_mt.run_rc[i] > 0 &&
+				      g_mt.run_rc[i] < SC_NCMD ? in_cmd_name(g_mt.run_rc[i]) : "?");
+	const somvr_rd_speed *r = &g_mt.run_spd;
+	logf_("RIDE run t=%.3f over%s: %.1f s, the stick %.2f ahead, %s%s%s: %.1f m in %.1f s = %.1f m/s; after its first second "
+	      "%.1f m in %.1f s = %.1f m/s; the top 1-s %.1f m/s; the beast's records: %s; the rider's list on: %s", t, why,
+	      t - g_mt.run_t0, g_mt.run_mag, mt_cmds_str(g_mt.run_cmd, g_mt.run_n), g_mt.run_n ? (g_mt.run_pulse_ms ?
+	      " tapped every " : " held") : "", g_mt.run_pulse_ms && g_mt.run_n ? mt_ms_str(g_mt.run_pulse_ms) : "", r->dist_m,
+	      r->time_s, r->time_s > 0 ? r->dist_m / r->time_s : 0.0, g_mt.run_d1, g_mt.run_t1, g_mt.run_t1 > 0 ? g_mt.run_d1 /
+	      g_mt.run_t1 : 0.0, r->top, g_mt.run_nrec ? rec : "none", g_mt.run_nrc ? rc : "none");
+	g_mt.run_until = 0;
+}
+static void mt_run(sc_tick_out *o, double t)
+{
+	int ask = atomic_exchange(&g_mt.req_run_ms, 0);
+	if (ask > 0 && mt_seated()) {
+		g_mt.run_n = g_mt.rq_n, g_mt.run_pulse_ms = g_mt.rq_pulse_ms, g_mt.run_mag = g_mt.rq_mag, g_mt.run_ms = ask;
+		memcpy(g_mt.run_cmd, g_mt.rq_cmd, sizeof g_mt.run_cmd);
+		g_mt.run_t0 = t, g_mt.run_until = t + ask * 0.001, g_mt.run_bearing = g_mt.heading;
+		somvr_rd_speed_init(&g_mt.run_spd);
+		g_mt.run_have1 = 0, g_mt.run_d1 = g_mt.run_t1 = 0, g_mt.run_nrec = g_mt.run_nrc = 0;
+		logf_("RIDE run t=%.3f: %d ms, the stick %.2f ahead on the heading %.1f deg, %s%s%s (the beast at %.1f m/s)", t, ask,
+		      g_mt.run_mag, g_mt.heading * 57.29578f, mt_cmds_str(g_mt.run_cmd, g_mt.run_n), g_mt.run_n ?
+		      (g_mt.run_pulse_ms ? " tapped every " : " held") : "", g_mt.run_pulse_ms && g_mt.run_n ?
+		      mt_ms_str(g_mt.run_pulse_ms) : "", isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f);
+	} else if (ask > 0) {
+		logf_("RIDE run t=%.3f: not seated - ignored", t);
+	}
+	if (!(g_mt.run_until > 0))
+		return;
+	if (t >= g_mt.run_until || !mt_seated()) {
+		mt_run_end(t, mt_seated() ? "" : " (off the beast)");
+		return;
+	}
+	if (!g_mt.run_have1 && t - g_mt.run_t0 >= 1.0)
+		g_mt.run_have1 = 1;
+	float d = sv_wrap_pi(g_mt.run_bearing - g_mt.heading), c = fmaxf(-0.6f, fminf(0.6f, d));
+	float m[2] = { g_mt.run_mag * sinf(c), g_mt.run_mag * cosf(c) };
+	sc_rotate(m, in_dpsi()); /* the beast's frame -> the game camera's, as the stick */
+	o->move[0] = m[0], o->move[1] = m[1], o->pad[SC_PAD_LX] = m[0], o->pad[SC_PAD_LY] = m[1];
+	o->pad_on |= 1u << SC_PAD_LX | 1u << SC_PAD_LY;
+	mt_add_cmds(o, g_mt.run_cmd, g_mt.run_n, g_mt.run_pulse_ms, t - g_mt.run_t0);
+}
 
 /* the input tick, after sc_tick: while riding the buttons are the beast's */
 static void mt_tick(sc_tick_out *o, double t)
@@ -787,6 +984,14 @@ static void mt_tick(sc_tick_out *o, double t)
 		g_mt.press_cmd = ask, g_mt.press_until = t + atomic_load(&g_mt.req_press_ms) * 0.001;
 	if (!(g_mt.press_cmd && t < g_mt.press_until)) /* (mt_press_cmd sends it: the deny list does not apply to a test) */
 		g_mt.press_cmd = 0;
+	if (g_mt.run_until > 0 && !mt_seated()) /* `ride run`: off the beast meanwhile */
+		mt_run_end(t, " (off the beast)");
+	if (atomic_exchange(&g_mt.req_sprint, 0)) { /* `ride sprint` (a test) */
+		memcpy(g_mt.spr_cmd, g_mt.rs_cmd, sizeof g_mt.spr_cmd), g_mt.spr_n = g_mt.rs_n, g_mt.spr_pulse_ms = g_mt.rs_pulse_ms;
+		logf_("RIDE t=%.3f the sprint (the test word): %s%s%s", t, mt_cmds_str(g_mt.spr_cmd, g_mt.spr_n), g_mt.spr_n ?
+		      (g_mt.spr_pulse_ms ? " tapped every " : " held") : "", g_mt.spr_pulse_ms && g_mt.spr_n ?
+		      mt_ms_str(g_mt.spr_pulse_ms) : "");
+	}
 	int bb = (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_UPPER) != 0, bfresh = bb && !g_mt.b_was;
 	g_mt.b_was = bb;
 	const char *offer = "";
@@ -811,9 +1016,11 @@ static void mt_tick(sc_tick_out *o, double t)
 	if (atomic_load(&g_mt.steer_on) && g_mt.yaw.have && g_bd.test) { /* `ride steer X Z` (a test: a rider steering) */
 		float d = sv_wrap_pi(atan2f(g_mt.steer_x - g_mt.beast[0], g_mt.steer_z - g_mt.beast[2]) - g_mt.heading);
 		float m[2] = { fmaxf(-0.9f, fminf(0.9f, d / 0.8f)), fabsf(d) > 1.2f ? 0.3f : 1.0f };
+		float len = hypotf(m[0], m[1]);
 		sc_rotate(m, in_dpsi()); /* the beast's frame -> the game camera's, as the stick */
 		o->move[0] = m[0], o->move[1] = m[1], o->pad[SC_PAD_LX] = m[0], o->pad[SC_PAD_LY] = m[1];
 		o->pad_on |= 1u << SC_PAD_LX | 1u << SC_PAD_LY;
+		o->move_raw[0] = 0, o->move_raw[1] = fminf(1.0f, len); /* (build 27c: the thumb on the stick - the sprint's latch reads it) */
 	}
 	/* build 27c (som-b27-story4, re-xr-pipeline.md 120): a window (SOMVR_BODYMOMENTS': a presentation, a failed or a
 	 * result screen) has A B X Y (SOMVR_USE: the skip, Retry, a result's Back, Abandon). A press made in it is the
@@ -849,22 +1056,65 @@ static void mt_tick(sc_tick_out *o, double t)
 	 * nothing reaches the beast); what does: the pad's RB 123 gets off (as it mounted - mt_press_cmd sends it, a combat
 	 * slot), MNT_Attack_2 186 is the ridden bite ('AI_Warg_Ridden_Attack_Light'; 185 did nothing), A = the stock pad A's
 	 * Jump 16 and CombatPrimary04 121 (the rider's list reads them) */
+	/* build 27c (som-b27-ride3, re-xr-pipeline.md 122, boot 20261030-220337's `ride run`s, the stick full ahead): the plain
+	 * stick 5.4-6.5 m/s; MNT_Charge 184 alone 5.3; Jump 16 + CombatPrimary04 121 held (build 27's A) 0.0 - the beast
+	 * stands; the three held together 11.0 m/s (15.1 at the top) - the stock pad's A (its records: 16 and 121 'first
+	 * 32' = Space, 184 bound to the pad's A) held is the sprint. SOMVR_RIDE_A=pad: A sends the three (the stock pad's A:
+	 * tapped the leap, held the sprint); the left stick's click latches the sprint (SOMVR_RIDE_SPRINT_CMDS, the same
+	 * three) while the stick stays pushed. A pressed or let go while the click's sprint holds them: the shared commands
+	 * let go for MT_SPR_EDGE_S first - the game sees A's own press and release (the leap mid-sprint) */
 	static const int cmds[4] = { MT_CMD_JUMP_A, MT_CMD_BITE, MT_CMD_OFF_PAD, MT_CMD_CHARGE };
 	static const char *const by[4] = { "A", "the right trigger", "B", "the left stick's click" };
+	int a_now = (g_mt.held & SOMVR_RDB_JUMP) != 0, a_was = (was & SOMVR_RDB_JUMP) != 0;
+	if (a_now != a_was && (g_mt.held & was & SOMVR_RDB_CHARGE) && g_mt.spr_n) /* A's edge inside the click's sprint */
+		g_mt.edge_until = t + MT_SPR_EDGE_S, g_mt.edges++;
+	int edge = t < g_mt.edge_until;
+	int acmd[3] = { MT_CMD_JUMP_A, MT_CMD_EVADE_A, MT_CMD_CHARGE };
 	for (int k = 0; k < 4; k++) {
 		if (!(g_mt.held >> k & 1))
 			continue;
-		if (k == 0 && o->ncmd < SC_OUT_CMDS) /* A: the stock pad A's pair */
-			o->cmd[o->ncmd++] = MT_CMD_EVADE_A;
-		if (k != 2 && o->ncmd < SC_OUT_CMDS) /* (B's 123 goes by mt_press_cmd) */
+		if (k == 0 && !edge) /* A: the stock pad A's (SOMVR_RIDE_A=pad: the three; leap: build 27's pair) */
+			mt_add_cmds(o, acmd, g_mt.a_pad ? 3 : 2, 0, 0);
+		if (k == 3) { /* build 27c (som-b27-ride3, 122): the sprint's commands, held or tapped */
+			if (!(was >> k & 1))
+				g_mt.spr_t0 = t;
+			if (!edge)
+				mt_add_cmds(o, g_mt.spr_cmd, g_mt.spr_n, g_mt.spr_pulse_ms, t - g_mt.spr_t0);
+		} else if (k != 0 && k != 2 && o->ncmd < SC_OUT_CMDS) /* (B's 123 goes by mt_press_cmd) */
 			o->cmd[o->ncmd++] = cmds[k];
 		if (!(was >> k & 1)) {
 			g_mt.presses[k]++;
-			if (mt_log_ok())
+			if (k == 3 && mt_log_ok())
+				logf_("RIDE t=%.3f the sprint by the left stick's click (latched while the stick is pushed): %d command%s "
+				      "%s%s%s (the beast at %.1f m/s)", t, g_mt.spr_n, g_mt.spr_n == 1 ? "" : "s", mt_cmds_str(g_mt.spr_cmd,
+				      g_mt.spr_n), g_mt.spr_n ? (g_mt.spr_pulse_ms ? " tapped every " : " held") : "",
+				      g_mt.spr_pulse_ms && g_mt.spr_n ? mt_ms_str(g_mt.spr_pulse_ms) : "",
+				      isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f);
+			else if (k == 0 && mt_log_ok())
+				logf_("RIDE t=%.3f press A: %s%s (rec %#lx first %d; the beast at %.1f m/s)", t, mt_cmds_str(acmd,
+				      g_mt.a_pad ? 3 : 2), edge ? " after the click's sprint let them go" : "",
+				      (unsigned long)g_inp.rec[MT_CMD_JUMP_A], g_inp.first[MT_CMD_JUMP_A],
+				      isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f);
+			else if (mt_log_ok())
 				logf_("RIDE t=%.3f press %d '%s' by %s (rec %#lx first %d)", t, cmds[k], in_cmd_name(cmds[k]), by[k],
 				      (unsigned long)g_inp.rec[cmds[k]], g_inp.first[cmds[k]]);
 		}
 	}
+	if (atomic_load(&g_mt.tap_until_ms) && g_bd.test) { /* `ride tap CMDS MS` (a test): the commands held MS */
+		int ms = atomic_exchange(&g_mt.tap_until_ms, 0);
+		g_mt.tap_until = t + ms * 0.001, g_mt.tap_n = g_mt.rt_n, memcpy(g_mt.tap_cmd, g_mt.rt_cmd, sizeof g_mt.tap_cmd);
+		logf_("RIDE t=%.3f tap (the test word): %s for %d ms (the beast at %.1f m/s)", t, mt_cmds_str(g_mt.tap_cmd,
+		      g_mt.tap_n), ms, isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f);
+	}
+	if (t < g_mt.tap_until)
+		mt_add_cmds(o, g_mt.tap_cmd, g_mt.tap_n, 0, 0);
+	if ((g_mt.held & SOMVR_RDB_CHARGE) && g_mt.t_tick > 0 && t > g_mt.t_tick)
+		g_mt.spr_s += fmin(t - g_mt.t_tick, 0.2);
+	if ((g_mt.held & SOMVR_RDB_CHARGE) && !g_mt.spr_was)
+		g_mt.sprints++;
+	g_mt.spr_was = (g_mt.held & SOMVR_RDB_CHARGE) != 0;
+	g_mt.t_tick = t;
+	mt_run(o, t); /* `ride run` (a test) */
 }
 
 /* DEFENCE's tracks (df_frame, a caragor's or ghul's line; outside its lock): `ride guard on` - the test right hand holds
@@ -976,7 +1226,53 @@ static const char *mt_word(const char *w)
 		atomic_store(&g_mt.req_press_ms, ms), atomic_store(&g_mt.req_press_cmd, cmd);
 		return "ride press";
 	}
-	return "ride (not status|guard on|off|face on|off|press CMD MS|steer X Z|steer off: ignored)";
+	if (!strncmp(w, "sprint ", 7)) { /* build 27c: `ride sprint CMDS [PULSE_MS]` - what the click's sprint sends (a test) */
+		if (!g_bd.test)
+			return "ride sprint (SOMVR_HANDS_TEST is off: ignored)";
+		char cl[64] = "";
+		int pulse = 0, rq[MT_SPR_MAX];
+		int nf = sscanf(w + 7, "%63s %d", cl, &pulse), n = mt_cmd_list(cl, rq, MT_SPR_MAX);
+		if (nf < 1 || n < 0 || pulse < 0 || pulse > 2000)
+			return "ride sprint (CMDS|0 [PULSE_MS]: ignored)";
+		memcpy(g_mt.rs_cmd, rq, sizeof rq), g_mt.rs_n = n, g_mt.rs_pulse_ms = pulse > 0 && pulse < 200 ? 200 : pulse;
+		atomic_store(&g_mt.req_sprint, 1);
+		return "ride sprint (a test: the click's sprint sends these from now on)";
+	}
+	if (!strncmp(w, "tap ", 4)) { /* build 27c: `ride tap CMDS MS` - the commands held MS while seated (a test) */
+		if (!g_bd.test)
+			return "ride tap (SOMVR_HANDS_TEST is off: ignored)";
+		char cl[64] = "";
+		int ms = 0, rq[MT_SPR_MAX];
+		int n = sscanf(w + 4, "%63s %d", cl, &ms) == 2 ? mt_cmd_list(cl, rq, MT_SPR_MAX) : -1;
+		if (n <= 0 || ms <= 0 || ms > 10000)
+			return "ride tap (CMDS MS: ignored)";
+		memcpy(g_mt.rt_cmd, rq, sizeof rq), g_mt.rt_n = n;
+		atomic_store(&g_mt.tap_until_ms, ms);
+		return "ride tap (a test: the commands held for MS)";
+	}
+	if (!strncmp(w, "trace ", 6)) { /* build 27c: `ride trace N` - N more RIDE view lines (a test) */
+		int n = atoi(w + 6);
+		if (n <= 0 || n > 20000)
+			return "ride trace (N: ignored)";
+		g_mt.trace_max = (int)g_mt.trace_lines + n;
+		return "ride trace (N more RIDE view lines)";
+	}
+	if (!strncmp(w, "run ", 4)) { /* build 27c: `ride run MS [CMDS] [PULSE_MS] [MAG]` */
+		if (!g_bd.test)
+			return "ride run (SOMVR_HANDS_TEST is off: ignored)";
+		char cl[64] = "0";
+		int ms = 0, pulse = 0;
+		float mag = 1.0f;
+		int nf = sscanf(w + 4, "%d %63s %d %f", &ms, cl, &pulse, &mag);
+		int n = mt_cmd_list(cl, g_mt.rq_cmd, MT_SPR_MAX);
+		if (nf < 1 || ms <= 0 || ms > 30000 || n < 0 || pulse < 0 || pulse > 2000 || !(mag > 0 && mag <= 1.5f))
+			return "ride run (MS [CMDS|0] [PULSE_MS] [MAG]: ignored)";
+		g_mt.rq_n = n, g_mt.rq_pulse_ms = pulse > 0 && pulse < 200 ? 200 : pulse, g_mt.rq_mag = mag;
+		atomic_store(&g_mt.req_run_ms, ms);
+		return "ride run (a test: seated, the stick ahead and the commands for MS)";
+	}
+	return "ride (not status|guard on|off|face on|off|press CMD MS|steer X Z|steer off|run MS [CMDS] [PULSE_MS] [MAG]|sprint CMDS [PULSE_MS]|tap CMDS MS|trace N: "
+	       "ignored)";
 }
 
 static uint64_t mt_vm_avail(void) { return g_mt.on ? SOMVR_VMA_RIDE : 0; }
@@ -989,7 +1285,8 @@ static void mt_end_log(void)
 	      "%.1f cm up/down, %.2f deg of yaw a frame (the turn at most %.0f deg/s); the seat's raw span %.1f cm over the root, "
 	      "the view's %.1f; pitch/roll at most %.2f/%.2f deg; facings on the black %llu; presses jump %llu bite %llu off %llu "
 	      "run %llu; guards %llu; yaw capped %llu frames; mount offers %llu, presses by the hand %llu by B %llu, domination holds "
-	      "%llu, struggles ended %llu won by the grip %llu; windows rested through %llu; %llu lines suppressed", (unsigned long long)g_mt.mounts,
+	      "%llu, struggles ended %llu won by the grip %llu; windows rested through %llu; the beast's top speed %.1f m/s (a 1-s "
+	      "window), sprints %llu (%.1f s); %llu lines suppressed", (unsigned long long)g_mt.mounts,
 	      (unsigned long long)g_mt.not_beast, (unsigned long long)g_mt.dismounts, (unsigned long long)g_mt.seated_frames,
 	      g_mt.step_max, g_mt.ystep_max, g_mt.yaw_step_max, g_mt.yaw_dps_max, g_mt.raw_y_span[1] - g_mt.raw_y_span[0],
 	      g_mt.out_y_span[1] - g_mt.out_y_span[0], g_mt.pitch_max, g_mt.roll_max, (unsigned long long)g_mt.aligns,
@@ -997,6 +1294,6 @@ static void mt_end_log(void)
 	      (unsigned long long)g_mt.presses[3], (unsigned long long)g_mt.g_guards, (unsigned long long)g_mt.yaw.capped,
 	      (unsigned long long)g_mt.offers, (unsigned long long)g_mt.mount_presses[0], (unsigned long long)g_mt.mount_presses[1],
 	      (unsigned long long)g_mt.dom_holds, (unsigned long long)g_mt.sg_ends, (unsigned long long)g_mt.sg_won,
-	      (unsigned long long)g_mt.win_rests,
+	      (unsigned long long)g_mt.win_rests, g_mt.spd.top, (unsigned long long)g_mt.sprints, g_mt.spr_s,
 	      (unsigned long long)g_mt.suppressed);
 }

@@ -1573,8 +1573,9 @@ static void test_controls(void) {
         {"Rally", "L hand high + LT"}, {"Whistle", "duck, hand at mouth"}, {"Dominate", "B dismiss, Y command"},
         {"Bow", "L grip at L shoulder"}, {"Shoot", "RT, pull, let go"}, {"Wraith", "hold Y; A = Strike"}, {"Glyph", "hold Y, look at it"},
         {"Flash", "RT + L palm push out"}, {"Ignite", "B while drawn"},
+        {"Brutal", "stealth stab + LT"}, {"Distract", "X while drawn"}, /* 27d */
         {"Caragor", "sword across a leap"}, {"Mount", "L grip stunned beast"}, {"Hold on", "keep the grip closed"},
-        {"Steer", "left stick"}, {"Riding", "A leap RT bite B off"},
+        {"Steer", "left stick"}, {"Riding", "A leap RT bite B off"}, {"Sprint", "hold A / click stick"},
         {"Menu", "look at left palm"}, {"Pause", "tap menu, hold=Menu"}, {"Screens", "point + trigger/tap"},
         {"Map", "R click, hold=Army"},
         {"Minimap", "back of left wrist"}, {"Failed", "A retry, B abandon"}, {"Nemesis", "B closes the pages"},
@@ -1597,11 +1598,16 @@ static void test_controls(void) {
         {SOMVR_VMA_VAULT, "Vault", 1},     {SOMVR_VMA_ABOVE, "Above", 1},        {SOMVR_VMA_BRAND, "Brand", 1},
         {SOMVR_VMA_RALLY, "Rally", 1},     {SOMVR_VMA_DISMISS, "Dominate", 1},   {SOMVR_VMA_COMMAND, "Dominate", 1},
         {SOMVR_VMA_FAILED, "Failed", 1},   {SOMVR_VMA_NEMESIS, "Nemesis", 1},    {SOMVR_VMA_DOWN, "Down", 1},
-        {SOMVR_VMA_OVERHANG, "Overhang", 1}, {SOMVR_VMA_RIDE, "Mount", 3},       {SOMVR_VMA_JUMP, "Jump", 1},
+        {SOMVR_VMA_OVERHANG, "Overhang", 1}, {SOMVR_VMA_RIDE, "Mount", 4},       {SOMVR_VMA_JUMP, "Jump", 1},
         {SOMVR_VMA_WALKDIR, NULL, 0},      {SOMVR_VMA_COUNTER, NULL, 0},         {SOMVR_VMA_DOMHOLD, NULL, 0},
         {SOMVR_VMA_OVERORC, NULL, 0},      {SOMVR_VMA_STRUGGLE, "Struggle", 1}, {SOMVR_VMA_MANTLE, "Onto top", 1},
         {SOMVR_VMA_GLYPH, "Glyph", 1},     {SOMVR_VMA_SHOVE, "Shove", 1},       {SOMVR_VMA_FLASH, "Flash", 1},
-        {SOMVR_VMA_GROUNDK, "Downed", 1}, {SOMVR_VMA_ABIL2, "Ignite", 2}};
+        {SOMVR_VMA_GROUNDK, "Downed", 1}, {SOMVR_VMA_ABIL2, "Ignite", 3}}; /* 27d: + Distract */
+    /* build 27d (re-xr-pipeline.md 121): the Brutal line with the stealth kill's and the abilities' bits both, not alone */
+    CHECK(ctl_has(SOMVR_VMA_STEALTH | SOMVR_VMA_ABIL2, "Brutal", "stealth stab + LT") && !ctl_has(SOMVR_VMA_STEALTH, "Brutal", NULL) &&
+              !ctl_has(SOMVR_VMA_ABIL2, "Brutal", NULL) && ctl_has(SOMVR_VMA_ABIL2, "Distract", "X while drawn") &&
+              !ctl_has(0, "Distract", NULL) && !ctl_has(SOMVR_VMA_ABIL2 | SOMVR_VMA_STEALTH, "Taunt", NULL),
+          "the Controls page: Brutal with STEALTH and ABIL2, Distract with ABIL2, no Taunt line (off)");
     int n0 = somvr_vm_controls_av(0, 0, &k, &w), ok1 = 1, bad1 = -1;
     for (size_t j = 0; j < sizeof one / sizeof one[0]; j++) {
         int nj = somvr_vm_controls_av(one[j].bit, 0, &k, &w);
@@ -1629,7 +1635,7 @@ static void test_controls(void) {
     off.dodge = off.wstep = off.stealth = 0;
     uint64_t co = somvr_vm_ctl_avail(&off, H26);
     CHECK(!ctl_has(co, "Dodge", NULL) && !ctl_has(co, "Blink", NULL) && !ctl_has(co, "Stealth", NULL) &&
-              !ctl_has(co, "Over orc", NULL) && somvr_vm_controls_av(co, 0, &k, &w) == n - 4 &&
+              !ctl_has(co, "Over orc", NULL) && !ctl_has(co, "Brutal", NULL) && somvr_vm_controls_av(co, 0, &k, &w) == n - 5 &&
               ctl_has(SOMVR_VMA_WSTEP | SOMVR_VMA_OVERORC, "Over orc", NULL) && !ctl_has(SOMVR_VMA_WSTEP, "Over orc", NULL),
           "the Fight rows Off: their lines go (the vault over an orc with the wraith step's)");
     /* the pages: titles and lines inside the room, apart, in order; each line once; each group whole on a page */

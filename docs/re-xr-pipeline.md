@@ -19831,3 +19831,494 @@ struggle build 27: finisher=..`, `CONFIG use_world_back=..`, the END lines `VERB
   introductions in a row, the fight with them. What is ready for them: every captain in the world is listed as he comes
   (`the world's captains: member N came (the warchief, ...)`) and each death is credited; each introduction is decided
   once per presentation by 104.2's rule.
+## 122. Build 27c: the caragor's sprint and the bow from the saddle - Big Game's runner stopped in VR: `SOMVR_RIDE_A`, `SOMVR_RIDE_SPRINT_CMDS`, the bow's orcs never the beast ridden (2026-10-30, som-b27-ride3)
+Headless boots (scripts/headset-build26.env + the som-b27-ride3 block + the story's practice settings, the test hands,
+the layer's test file; story22-drive.sh's `ctl` mode and the directors beside it: scripts/ride27c-steps.txt), Big Game
+from logs/boot-check-20261030-125406/saves/GameData.sav (a copy). handoff/HANDOFF-beasts.md "build 27c". Every run: the
+install unchanged, the real save UNCHANGED.
+
+### 122.1 What the sprint wants: measured, one input set at a time (boot 20261030-220337, `ride run`)
+120.5 left it open: the stick's click (MNT_Charge 184) "left the beast standing", A held (Jump 16 + CombatPrimary04
+121) "did not visibly catch up". The mounted commands' records (`RIDE bindings`): 16 Jump, 121 CombatPrimary04 and 184
+MNT_Charge all `first 32` (Space) in the PC set, and 184's record carries the stock pad's **A** - the stock pad's A on
+the beast is the three together. The test word `ride run MS [CMDS] [PULSE_MS] [MAG]` (seated: the stick MAG ahead in
+the beast's frame, held on the heading it had at the start, the commands held or tapped, then the path, its speed
+after the first second, the top 1-s window; each run started 2.5 s steered at Torvin's marker), 5 s each, on the
+follow after the mount:
+
+| Input (the stick full ahead) | m/s after the first second | top 1-s |
+|---|---|---|
+| the stick alone (two runs) | 6.5, 5.4 | 8.6, 6.9 |
+| 184 MNT_Charge held (the click, build 27) | 5.3 | 6.9 |
+| 16 + 121 held (build 27's A) | **0.0** - the beast stands (it leaps in place: 122.3) | 1.3 |
+| **16 + 121 + 184 held (the stock pad's A)** | **11.0** | **15.1** |
+| 184 tapped every 400 ms | 0.9 | 3.3 |
+| 16 + 121 tapped every 600 ms (leap after leap) | 9.6 | 11.1 |
+| 18 FreeRun held | 3.9 | 6.9 |
+| the stick at 0.5 / at 0.5 + 184 | 0.0 / 0.0 | 0.0 / 2.1 |
+
+So the sprint is the stock pad's A held: Jump, CombatPrimary04 and MNT_Charge together. Build 27's A (the pair without
+MNT_Charge) held made the beast stand - story4's "A held" chase (191822: "moved 1 cm in 12 s") was the beast standing.
+MNT_Charge alone changes nothing. The beast does not walk at half stick (0.5: 0 m/s).
+
+### 122.2 The VR controls (decided; somvr_ride_game.c `mt_tick`, `mt_add_cmds`)
+- **A = the stock pad's A on the beast** (`SOMVR_RIDE_A=pad`, code default pad; the som-b27-ride3 block: pad): the
+  three commands while A is held - tapped the leap, held the sprint (the game's own split: what its lesson
+  `GP_Torvin01_Tut_MountSprint` teaches with the pad's A). `leap` = build 27 (the pair).
+- **The left stick's click = the sprint** (`SOMVR_RIDE_SPRINT_CMDS`, code default `16,121,184`; `SOMVR_RIDE_SPRINT_PULSE_MS`
+  0 = held): latched while the stick stays pushed (the stick under 0.2 ends it) - the on-foot sprint's rule, and the
+  VR riders' habit; it starts the sprint without A's leap.
+- A pressed or let go inside the click's sprint: the shared commands are let go for `MT_SPR_EDGE_S` (0.1 s) first, so
+  the game sees A's own press and release (the leap mid-sprint; the sprint again after).
+- Why A and the click both: A is the game's own (the lesson's button, a stock pad's habit, no new rule); the click is
+  this port's sprint on foot. Both send what the game measured fastest; neither moves the view by itself (the seat
+  follows the beast 1:1, the vignette on the turns as before).
+- Lines: `CONFIG ride sprint=16,121,184 (SOMVR_RIDE_SPRINT_CMDS, SOMVR_RIDE_SPRINT_PULSE_MS 0; build 27c) ... A=pad`,
+  `RIDE t=.. the sprint by the left stick's click (latched while the stick is pushed): 3 commands ... (the beast at N
+  m/s)`, `RIDE t=.. press A: 16 'Jump' + 121 'CombatPrimary04' + 184 'MNT_Charge' [after the click's sprint let them
+  go]`; RIDE motion adds `the beast at N m/s now, its top N m/s (a 1-s window)[; sprinting]`; RIDE END adds `the
+  beast's top speed N m/s (a 1-s window), sprints N (N s)`. The RIDE lines' cap 400 -> 800 (`MT_LOG_MAX`: 220337 ran
+  out 25 minutes into Big Game).
+- The speed: `somvr_rd_speed` (somvr_ride.c, pure): the path of the beast's root over the newest 1 s of samples (the same
+  at 20 and 90 Hz), a gap over 0.5 s or a step over 25 m starts again. tests/test_ride.c `test_speed` (13 checks).
+- selftest: the beast's speed seated (5 m/s); the click latches the three, the stick centred ends it; A = the three;
+  inside the click's sprint A's press lets them go first, then holds, its release lets go, then the sprint again; a
+  list tapped every 400 ms (fails on build 27's code: MNT_Charge alone, held; A the pair).
+- Test words (SOMVR_HANDS_TEST): `ride run MS [CMDS|0] [PULSE_MS] [MAG]`, `ride sprint CMDS [PULSE_MS]` (what the click
+  sends, for a probe), `ride tap CMDS MS` (commands held MS), `ride trace N` (N more RIDE view lines); `ride steer`'s
+  stick now also feeds the click's latch (the harness's thumb on the stick).
+
+### 122.3 The VR controls in the game (boot 20261030-225457, the RIDE view trace: the beast's root every frame)
+| Test (steered at Torvin's marker) | What the beast did |
+|---|---|
+| A held 4 s (`btn R a`, SOMVR_RIDE_A=pad) | the press: a leap (+4.6 m in 0.4 s onto a rock), then **11-19 m/s** while held; let go: back to ~7 m/s |
+| the click tapped (`btn L stick`, latched) | 7.5 -> 12 m/s within 0.5 s, 12-15 m/s on; no leap at its start |
+| A tapped 0.25 s inside the click's sprint | `press A ... after the click's sprint let them go`; no lunge seen (y flat, 12 m/s on) - the leap mid-sprint unproven |
+| A tapped 0.25 s at a trot (6.9 m/s) | **the leap**: a lunge to 15 m/s, +2 m over 1.2 s, down again |
+| 16 + 121 held 1.5 s (build 27's A, `ride tap`) | leaps in place (+3.3 m, +2.6 m, +1.7 m), 0.5-4.7 m/s |
+
+### 122.4 "Stop the runner": the caragor outruns him (boots 20261030-220337, -225457)
+- 220337 (the click's sprint, the director's steering every ~3.3 s at the runner's marker): the chase at a sprint
+  (10.7 m/s mean over 188 1-s samples, 82 of them 12 m/s or more; the beast's top 18.1 m/s) - closest 18 m, 17 Retries:
+  the steering at a marker 3 s old lost what the sprint gained.
+- 225457 (a tight loop: the runner's marker every ~1.3 s, steered where he will be 0.8 s on, the click's sprint, the
+  bite within 9 m): **try 1: 67 m -> 5 m in 23 s** (the runner at 4.9 m/s), then the beast leapt past him and stood
+  against a rock; **try 5: 64 m -> 1.2 m in 29 s**, the runner `AI_Bip_WargCharged_B` state 'KnockDown' (knocked over
+  by the charging caragor - Torvin's "Knock 'em over!"), the bites, his marker gone (t=1160400) and the stage over:
+  **"Torvin is too quiet... something must be wrong." / "Go to him, Talion." / "Perhaps we should track the hunter."**
+  (a new 'Objective' marker at Torvin's, 19262 2381 -22284).
+- So the stage the drill never passed (120.5, 9 tries) passes with the sprint; what a player adds is steering at him.
+
+### 122.5 The bow from the saddle (boots 220337, 225457)
+- The VR bow comes out on the caragor as on foot: `BOW t=1156476.378 slot: the left grip pressed at the shoulder: the
+  bow out (the hand 4.9 cm from the slot)`, `enter (by the button): the aim command 124 'CombatSecondary03' held` - the
+  game's own mounted ranged aim (its slow motion: the prompt 'UI_Ranged_SlowMo_Deactivate' up), nocked, full draw
+  55 cm, and **the shot**: `fire: our shot FUN_02332c50(...) the attack 'PC_Ranged_Ground_Normal_Shoot_Light'`, the
+  game's arrow flying (220337 t=1156680.624). 120.6's refusal was the drill's grip (pressed before the hand reached the
+  slot): the bow came out in 13 of 15 tries over five boots (a grip let go first, the hand 0.6 s at the slot, then
+  closed; the two misses not separated from the drill's timing), 10 shots fired, 3 draws let down (the last point
+  below; the drill's re-aims).
+- **Fixed**: the bow's orcs included the beast ridden - a rider's aim goes out over its head: the aim ring met the
+  caragor's own head 1.1 m from the nock ("an orc on it ... a hit", 220337 t=1156485.826) and SOMVR_BOW_AIM=exact would
+  have given the shot that point; the drill's target was the mount twice (0.8-0.9 m). `bo_orcs_r` (somvr.c): the
+  bow's lists (the aim ring's trace, the assist, the shot's health watch, the target lines, the test words) without
+  the beast ridden, as the blade's (`mt_is_mount`). 225457: the nearest orc a real one 23.1 m out (its chest 0.3 deg
+  off the drawn line).
+- **The hit from the saddle** (boots 20261031-005318, -022345; the test word `bow aimhead` - the shot's line onto the
+  nearest orc's Head node - and SOMVR_BOW_HITLOG=1): the arrow from the saddle flies and hits what its line points
+  at - `BOW hit t=1171900.479: our arrow at -37225.1,1710.7,-9733.0 hit object 0x380f4960 ... the hit node record
+  'Slave_Head', the attack 'PC_Ranged_Normal_Hit_Light_CharOrc'` 31 m from the nock (the game's own arrow-hit path);
+  two more shots met the caragor in front of it (`'Warg_Head'`, 'PC_Ranged_Normal_Hit_Light_HeadWarg'). No health
+  changed: the only two within 40 m on that follow were Torvin's party (health 1000 and 650, his marker beside them -
+  an ally takes no damage from the player), so 005318's "no health changed" was the target, not the saddle. The
+  ridden beast never stopped a shot (a start 2 m along the line, tried as `SOMVR_BOW_SADDLE_CM`, changed nothing and is
+  not shipped). An enemy's damage from the saddle: the same hit path; not shown headless (the archers' shots in 234922
+  missed by 3-10 deg: the drill's aim).
+- The game's mounted aim ends by itself after ~12 s (`prompt down ... 'UI_Ranged_SlowMo_Deactivate' (up 11.95 s)`,
+  the game's arrow put away and back): a draw held longer lets the arrow down (225457, the drill's slow aim). A player
+  draws and looses within that.
+- The ring's world cast (somvr_bowaim_game.c `ba_world`) passed Talion and the orcs but met the beast ridden at the
+  nock (234922: `aim: ... nothing: the world first 0.0 m away`, the ring on the caragor's back): it passes the ridden
+  beast now (`mt_near_mount`: its object, or within 2.5 m of its root across, -0.5..+2.5 m up). The shot itself was not
+  bent by it (BA_WORLD = straight along the ray).
+
+### 122.6 Big Game past the runner (boots 225457, 234922)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the mount, the follow, the Uruk contest, the archers ("shoot from one"), "a fresh batch", the second camp | as 113.5 / 120.5 | ridden through in both boots (the drill's steer, the bite; the Uruks knocked over by the charging beast: `'AI_Bip_WargCharged_B' state 'KnockDown'`) |
+| **"Stop him before he gets reinforcements!"** | catch the runner on the caragor | **passed**: 225457 on its 5th try, 234922 on its 6th (each try ~35-60 s; the misses: the drill's steering at a marker, a rock) |
+| "Torvin is too quiet... something must be wrong." / "Go to him, Talion." / "Perhaps we should track the hunter." | no marker until the wraith vision is held: then 'Objective' markers along the trail (234922: marker 38 at 21958 -26636, then 39 'ObjectiveGuttered_ALLMaps' at 26172 -29215) | the vision by the left Y (SOMVR_VISION=hold) shows them; the drill went from marker to marker (trips) |
+| "You'll make a nice meal, Dwarf!" / "Torvin needs help." | Torvin on the ground ('AI_Bip_Prisoner_OnGround_Loop') and two Uruks on Talion | **not done headless**: the fight there is on foot (the VR sword, sections 88-108); the drill has no on-foot fight |
+| the end and its rewards | | not reached headless |
+
+### 122.7 Runs (headless, Monado 20 Hz; scripts/headset-build26.env + the som-b27-ride3 block + the story's practice settings, the test hands; from 125406's save; the install unchanged, GameData.sav UNCHANGED each time)
+| Run (logs/boot-check-) | WARN | What | Proves |
+|---|---|---|---|
+| 20261030-220337 | 1 (the drill's trip in the follow: PRACTICE's teleport, as 113/120) | the ten `ride run`s; the pick `ride sprint 16,121,184`; the bow x2; the chase by the click with the 3.3 s rounds (17 Retries, closest 18 m) | **what the sprint wants** (122.1); the bow out, drawn and shot in the saddle; the mount in the bow's lists (the fix) |
+| 20261030-225457 | 1 (the same trip) | build 27c: A = the pad's three, the click; the RIDE view trace (122.3); the bow at a real orc (the mount excluded); the tight chase | **A tapped = the leap, held = the sprint, the click = the sprint; "Stop the runner" passed** |
+| 20261031-005318 | 0 | the bow only: 3 tries in the saddle, `bow aimhead` x2 (the shots at the nearest heads, 31 m) | no health changed - the targets were Torvin's party (022345) |
+| 20261031-022345 | 0 | the bow only, SOMVR_BOW_HITLOG=1, `bow aimhead` x3 (the 2nd and 3rd with `bow saddle 200`) | **the arrow from the saddle hits the aimed head 31 m out** (the game's hit); the saddle start not needed |
+| 20261030-234922 | 0 | the bow with the head turned to the orc (2 shots, misses by 3-10 deg: the drill's aim; the ring's cast met the caragor at the nock - fixed: `mt_near_mount`); the chase with the stuck handling; past the runner to "Torvin needs help" | **the runner stopped again** (the beast's top 16.9 m/s); the trail by the vision |
+
+### 122.8 Switches, words, lines
+| Switch | Code default | build 27c env (som-b27-ride3 block) | What |
+|---|---|---|---|
+| `SOMVR_RIDE_A` | pad | pad | A on the beast: `pad` = the stock pad's A (Jump + CombatPrimary04 + MNT_Charge: tapped the leap, held the sprint); `leap` = build 27's pair (held: the beast stands) |
+| `SOMVR_RIDE_SPRINT_CMDS` | 16,121,184 | 16,121,184 | what the left stick's click latches (up to 4 commands; 0 = none) |
+| `SOMVR_RIDE_SPRINT_PULSE_MS` | 0 | - | 0 = held; N = tapped (on 0.1 s of every N ms) |
+Words (SOMVR_HANDS_TEST): `ride run`, `ride sprint`, `ride tap`, `ride trace` (122.2). The Controls page's Beasts
+group: + "Sprint: hold A / click stick" (tests/test_vrmenu.c: the RIDE bit alone adds 4 lines).
+
+### 122.9 For the headset, unproven
+- The sprint's feel: 11-19 m/s with the seat 1:1 on the beast (the vignette on its turns) - smooth, or too much?
+- A's press leaps first (the game's own) - a player who wants the sprint without the leap clicks the stick.
+- A tapped inside the click's sprint: the commands are made fresh, but no lunge was seen - does the leap come?
+- The beast at half stick stands (0 m/s at 0.5): does the Touch's stick reach the walk the game wants?
+- The bow in the saddle: hitting (and hurting) an enemy orc from a moving beast; the game's slow motion while aiming (its own
+  mounted aim, ~12 s at most) - welcome, or odd in VR?
+- Big Game's end: free Torvin (the on-foot fight at the trail's end).
+## 121. Build 27d: brutalize by the stealth thrust with the left trigger, Wraith Distract by X on a drawn arrow, the taunt by the beckon (never offered), the quick throw by the game's own input (never thrown): `SOMVR_ABIL_BRUTAL`, `SOMVR_ABIL_DISTRACT`, `SOMVR_ABIL_TAUNT`, `SOMVR_ABIL_THROW_START` (2026-10-31, som-b27-abilities3)
+
+118.2 decided the VR way of brutalize, taunt, Wraith Distract and Shadow Strike's chain and left them unbuilt; 118.6
+left the quick throw's offer open. This section: what the game really holds for each (118.1 named the wrong node for
+brutalize), the ones built on the game's own offer and attack (somvr_abil3_game.c, under `SOMVR_ABIL`), what was proven
+headless. The skills the save lacks (Taunt, Shadow Chaining, Wraith Distract: bought later in play) were granted on
+each run's save copy by `beasts grant` (a test aid).
+
+### 121.1 What the game holds (runs 20261030-203644, -234411, 20261031-004828, -021629)
+
+- **The stealth prompts at the stand-off** (crouched 118 cm behind an unaware orc, the verbs' prompt table): action 118
+  (X) 'Combat_Sneak_Instakill_Silent', 119 (Y) **'Combat_Sneak_Instakill_Loud'**, 120 (B) 'UI_Stealth_Torment'.
+  **Brutalize is the loud sneak kill**: root node `PC_InstaKill_Sneak_Loud` (input 'Heavy'), offered there as
+  `PC_Bip_SneakInstaKill_Loud_B` / `_B_2` (sync `PC_Bip_Sneak_InstantKill_Loud_B_2`). 118.1's `PC_StealthTorment` is the
+  torment of the B prompt - its pool `PC_BH2_StealthDrain` (`_B`, `_F`, the ledge pulls), offered as
+  `PC_Bip_StealthTorment_B` with the stealth brand's own sync `PC_Bip_StealthBrand_B`; started by the thrust (run 234411)
+  it took the orc 95 -> 45 and let him go unaware (the stealth prompts back), no kill, no witness reaction.
+- **Wraith Distract**: `PC_Wraith_Ranged_Normal_Distract` -> pool `PC_Ranged_Normal_Shoot_Distract` ->
+  `PC_Ranged_Ground/Rails/Troll/Warg_Normal_Shoot_Distract` (its hit links `AI_Str_Fear_Wrth_Pwrs`); the node's own
+  selection offers `PC_Ranged_Ground_Normal_Shoot_Distract` with no target. That record on our arrow (the ignite's way,
+  bo_shoot) did nothing in three runs - the far orc 9.5-10 m off, the arrow 2.1 m and 0.8 m from him at the ground and
+  along the level ray: no health change, no reaction, "unaware, moved 0.0 m" for 8 s. **The game's own prompt
+  'UI_Wraith_Distraction' (action 119, the flat game's Y while aiming) is up the whole time the bow is out** (13.2 s in run
+  004828): pressing 119 there is the game's own distraction (121.3).
+- **Taunt**: `PC_Taunt` -> pool `PC_Taunt` -> `PC_Taunt_A` (input `Taunt_SingleTarget`). Never offered: a fighting orc
+  1.2-1.7 m off without the bow ("no attack of its pools passes", or the window refuses), an unaware orc 10 m off with the
+  bow out (the game's aim held), a fighting orc 3.7-4.0 m off with the bow out; no taunt prompt among any run's prompts.
+- **The quick throw**: its pool's records are directional (`PC_QckThr_Back/Front/Left/Right_LL/RR`); the
+  `PC_STN_` / `PC_KD_Quickthrow_HC_*` names of 118.1 are its hit's reactions on a stunned or downed victim (attributes 9-10
+  of `QT_HC_*`), not conditions. The game's own input - 124 tapped 100 ms (`verbs press 124 100`, `QuickThrow_Tap`) at a
+  fighting orc 8 m and 4 m off - threw nothing; the overhand throw with `SOMVR_ABIL_THROW_START=press` (run 203644:
+  judged 6.4 m/s, 9 deg off the head's way, pitch -18 deg, the hand 8 cm under the eyes; the tap sent) twice "the game did
+  not throw", the dagger stayed in the hand.
+- **Shadow Strike's chain**: `PC_Wraith_Dash_Kill_GetThere` links only `PC_Wraith_Dash_Kill_Auto` (no input) - no chain
+  node in the strike's links; the two-orc gaze test (runs 203644, 234411) never reached a first strike: the game ended the
+  wraith vision as the spawned orcs engaged (the gaze needs the vision).
+
+### 121.2 The design: the game's offer, the player's hand
+
+- **Brutalize: the stealth kill's thrust with the left trigger held** (118.2's decision). The thrust is judged exactly as
+  the stealth kill's (`SOMVR_STEALTH_KILL`: behind an unaware orc, point first, the hand's own push); at its kill verdict,
+  with the left trigger held (0.6+) and the left hand free (not on the hilt, not holding an orc; the sword's thrust, not
+  the dagger's - a fist on the dagger closes the trigger), the game's own loud sneak kill starts on him where it offers it
+  (`FUN_00a8c700(pc, node, attack, orc)`, the flash's and the drop kill's start) instead of our dealt kill. Its paired
+  animation is the game's: the body moments hold the view through its sync (no view move of ours), his body is put
+  back under it after (`SOMVR_BM_RETURN_CM`). No hit of ours on him for 6 s (`SOMVR_ABIL_BRUTAL_OWN_MS`). Not offered (a
+  captain the stealth kill does not kill, two hands on the sword...): the plain stealth kill, a soft buzz in the left
+  hand. Why the trigger: the same stab, the wraith charge (the user's 2026-10-20 decision); the trigger is the left hand's
+  "wraith" button everywhere (brand, drain, rally).
+- **Wraith Distract: X (the bow hand's lower button) while an arrow is drawn**, at the game's own prompt: 119 pressed for
+  150 ms = the game's own distraction along the bow's ray (its aim ray is ours, the free-aim override). One deliberate press,
+  the arrow drawn and aimed (118.2's "the ignite's twin on the other thumb"); no prompt: a short denied buzz, nothing. While
+  the switch is on and the skill owned, X while drawn is the distract's: build 12's X Shadow Strike keeps X with the bow
+  aimed but not drawn (the strike's Controls line is Y + A at the marked orc). `SOMVR_ABIL_DISTRACT_START=record` keeps
+  the record-on-our-arrow way (kindle, release) for tests - it never distracted.
+- **Taunt: a free open hand held out at an orc, palm up, beckoned twice** - pulled 7+ cm toward the eyes at 45+ cm/s,
+  from 30+ cm out, twice within 1.5 s (`somvr_ab_beckon_step`), either hand (with the bow out, the string hand) - the
+  game's `PC_Taunt` on the orc nearest the eyes -> palm line (30 deg). Built and judged (both hands, run 234411); the game
+  never offered it, so `SOMVR_ABIL_TAUNT` ships off.
+- **The quick throw**: `SOMVR_ABIL_THROW_START=press` taps the game's own input on the judged throw and reads Talion's
+  attack 0.35 s after (thrown: the recall; not: the dagger stays). The game threw neither by its input nor by its
+  selection: `SOMVR_ABIL_THROW` stays off.
+- **Shadow Strike's chain**: not built - no chain node in the strike's links on this save, and the gaze test needs the
+  vision through a first strike at one of two orcs, which the game ended (121.6).
+
+Code: somvr_abil.c/.h (`somvr_ab_beckon_step`, `somvr_ab3_cfg`; tests/test_abil.c, 45 checks: + the beckon once at the
+second pull, a third pull no second beckon, one pull, the hand closed between, a slow drift, near the body, 2.2 s apart,
+held out a second first, at 20 fps), somvr_abil3_game.c (new, included after somvr_abil2_game.c: `ab3_brutal` /
+`ab3_brutal_owns` in `stl_strike`, `ab3_hands` after `ab2_hands`, `ab3_frame` after `ab2_frame`, `ab3_x_taken` in
+`sk_tick`, `ab3_shot_attack` / `ab3_glow_add` for =record; words `abil3 status|palm|aimnear|distract NAME`),
+somvr_abil2_game.c (`SOMVR_ABIL_THROW_START`; the probe asks `PC_InstaKill_Sneak_Loud`), the Controls lines (somvr_vrmenu.c:
+"Brutal: stealth stab + LT" under The sword with the stealth kill's bit, "Distract:
+X while drawn" under Bow and wraith - no avail bit was free: bit 42 is the set of abilities on the game's offers, set by
+somvr_hla_game.c with IGNITE, WHISTLE, BRUTAL and DISTRACT on - the taunt, off, has no line; tests/test_vrmenu.c), scripts/abil27d-drive.sh.
+
+### 121.3 The runs (scripts/abil27d-drive.sh; the skills granted on each run's save copy; scripted hands held as real hands: the stealth approach and thrust as kill22-drive.sh's - the sword drawn, Talion placed 220 cm behind the far orc's back, the duck and the test stick to the stand-off, the left trigger by `hands trigger L 1`, the thrust along the ray from the shoulder; the bow by the layer's test hands as bow20's, X = `btn L a`; the beckon palm up (the left grip's +X, the right's -X up) pulled 45 -> 33 -> 44 -> 33 cm out in 0.15 / 0.2 / 0.15 s; 0 WARN, the install unchanged, the real save UNCHANGED in every run)
+
+| Run (logs/boot-check-) | What it proves |
+|---|---|
+| 20261030-203644 | the records (121.1); the distract kindled by X (the node's selection, no target) and shot on our arrow: no reaction; the quick throw by `verbs press 124 100` at a fighting orc 8 m / 4 m and by the judged throw with START=press: never thrown, the dagger stayed; the taunt's palm calibration (the dagger still drawn: not free); the brutalize setup failed (the witness alerted the target) |
+| 20261030-234411 | **the hook**: the thrust with LT held at the stand-off -> `PC_StealthTorment` started (118.1's node): the torment, 95 -> 45, no kill - the wrong node, found by the stealth prompts; the beckon by the right hand with the bow out = the taunt asked: "no attack of its pools passes" (unaware, 10 m); the distract on our arrow 2.1 m from the orc: nothing |
+| 20261031-004828 | the loud kill offered at the stand-off (`PC_Bip_SneakInstaKill_Loud_B`) - every thrust "carried" (the headless frames missed the hand's own push: no verdict, no start); the beckon (left, no bow) at a fighting orc 1.2 m off: "the attack window refuses the node now"; the distract on our arrow 0.8 m from him: nothing; the game's 'UI_Wraith_Distraction' prompt up 13.2 s while the bow was out |
+| **20261031-021629** (20 Hz) | **brutalize**: the thrust with LT held -> `FUN_00a8c700(node 'PC_InstaKill_Sneak_Loud', attack 'PC_Bip_SneakInstaKill_Loud_B_2')`, the body moments' hold by its sync, **the orc 95 -> 0, dead** (+5.5 s), the charge 0 -> 8; the witness 12 m off `AI_Infantry_ReactToSusp_FromBase_Unsheathe` 0.15 s after the start, then `DismissDisturbance_NoticeDeadBody_Unnamed`. **The distract by the game's input**: X at its prompt -> 119 -> the far orc `AI_Infantry_ReactToSusp_FromBase_Unsheathe_L` 0.29 s after, then walked 4.6 m off to look, still unaware of Talion |
+| **20261031-024053** (the env as shipped) | **the distract 2 of 2** after an 8 s control each (drawn at him, no X: "moved 0.0-0.1 m, unaware"): X -> `ReactToSusp_FromBase_Unsheathe_L2` 0.20 s after, he walked 4.5-5.7 m to look, came back 33 s later and found Talion; brutalize: 6 thrusts all "carried" (13 Hz: no verdict) |
+| **20261031-025220** (the env as shipped) | **brutalize** (round 3, the witness 11 m beyond): the first thrust -> `PC_Bip_SneakInstaKill_Loud_B_2`, **95 -> 0, dead** (+3.3 s), Talion's root 43 cm by the sync, the view held and released by an ease (27.4 cm); the witness `AI_Infantry_ReactToSurprised`; rounds 1-2 (the witness 6 / 8 m: the target 90 cm off, the loud kill not offered - aware) no verdict |
+
+In all: **brutalize 2 of 2 started by the LT thrust where offered, both killed** (and the hook's first start, the torment,
+proved the path); **the distract by the game's input 3 of 3, the controls 0 of 2**, the record on our arrow 0 of 3; the
+taunt 0 offers in 4 situations; the quick throw 0 throws by the game's own input.
+
+### 121.4 Seen as a player (both eyes, xr_compose; runs 021629 and 025220)
+
+- The stand-off (025220 frame 3350): the orc's back a step ahead with the game's red stealth outline, the sword low on the
+  right, the open left hand (the trigger held).
+- The loud kill (3379): the game's paired animation plays where Talion stands - the orc's body swings in close, filling
+  the view (the held view is the stand-off's eyes; nothing of the view moves). Looking down (3408): his body at the
+  feet, the game's "+50" kill popup; after (3447): he lies below, the popup. In 021629 (frames 2509-2612, in a thicket)
+  the kill played under the leaves at the feet - the level view saw only foliage until a look down.
+- The distract (021629 frames 966 / 1071): the bow drawn in the wraith dusk at the orc 10 m ahead, a small spark beside
+  him at the press; 4 s later he has turned, hunched, searching. Both eyes alike.
+
+### 121.5 Summary
+| Item | Switch (code default -> env) | Proven headless |
+|---|---|---|
+| Brutalize: the stealth thrust with LT held = the game's loud sneak kill `PC_InstaKill_Sneak_Loud` | `SOMVR_ABIL_BRUTAL` off -> **on** (needs `SOMVR_ABIL`, `SOMVR_STEALTH_KILL`) | 2 of 2 started and killed (021629, 025220); witnesses suspicious / surprised, none fled |
+| Wraith Distract: X while drawn at the game's prompt = its own distraction (119) | `SOMVR_ABIL_DISTRACT` off -> **on**; `SOMVR_ABIL_DISTRACT_START` press | 3 of 3 (021629, 024053 x2), controls 0 of 2 |
+| Taunt: a free open hand, palm up, beckoned twice | `SOMVR_ABIL_TAUNT` off -> **off** | the beckon judged (45 unit checks; both hands headless); the game never offered `PC_Taunt` |
+| The quick throw by the game's own input | `SOMVR_ABIL_THROW_START` game (`SOMVR_ABIL_THROW` stays off) | never thrown |
+| The Controls lines Brutal / Distract | bit 42 with IGNITE, WHISTLE, BRUTAL, DISTRACT on | test_vrmenu (661) |
+| Not built: Shadow Strike's chain | - | - |
+
+### 121.6 Open
+- **Brutalize's terror**: the witnesses at 11-12 m turned suspicious or surprised and found the body; none fled. Whether a
+  closer witness flees (the game's rule; `PSS_Terrorize` is owned) was not met: with the witness 6-8 m beyond, the
+  target was aware at the stand-off (no offer). The kill's paired animation brings the orc's body close to the held
+  eyes (121.4) - the headset judges it.
+- **Headless stealth thrusts** need ~20 frames a second: at 13 Hz every thrust read "carried" (the stealth kill's
+  own-push measure, 84), no verdict - a test limit, not the VR side.
+- **The taunt**: where the game offers `PC_Taunt` (a captain? a certain range in the aim mode?) - never shown by its
+  prompt in these runs. The VR side is built (either free hand); ship it on once offered.
+- **The quick throw**: neither the selection nor the game's own tap threw; its pools' predicates still unread.
+- **Shadow Strike's chain**: no chain node in the strike's links on this save; test it once the skill is bought - the gaze
+  strike at one of two unaware orcs (the vision ends when an orc engages), then the gaze on the second during the kill.
+- **For the headset**: LT held through the thrust (a fist on the sword hand and the trigger on the other); the loud kill
+  played around the held view; X on the bow hand's thumb while drawing - the distraction lands where the arrow points.
+
+## 123. Build 27b: the climb's open ends - the pullover's landing found from above, the fling at a corner, a second forge tower, the Sea Fort camp's walls and tower, a roof, each down and up by hand: `SOMVR_CLIMB_LAND_ABOVE`, `SOMVR_CLIMB_FLING_REACH_HOLD=on`, `SOMVR_CLIMB_DOWN_NEAR` (2026-10-31, som-b27-climb4)
+
+117 left three ends: at the meadow cliff the pullover planned its landing 192 cm under the real top (inside the rock;
+the game's Teleport put him on the top), the fling at a corner (`SOMVR_CLIMB_FLING_REACH_HOLD`, unit-tested only), and
+the real places not yet climbed. Driver: scripts/climb27b-drive.sh (climb27-drive.sh plus a player's ways: ASIDE - two
+stalled moves, or no hold above and no ring, = the free hand 60 cm to the side and the body pulled along, either way;
+`SV_PICK=high` - a survey from the ground takes the highest wall round him; the hand reaching down over an edge 30 cm
+past the lip; a site's `aboveoff` = the old landing search for an A/B).
+
+### 123.1 The pullover's landing inside the rock (`SOMVR_CLIMB_LAND_ABOVE`)
+- **Why** (build 27's boot 20261030-152514, the cliff's bulge): the holds were on a ledge's top at 3349-3353 with the
+  rock rising ~180 cm behind it (its real top, the paved path, at 3532). `land_find`'s floor ray starts 60 cm over the
+  top (3413), 40 cm in: inside that rock. It met a floor under the rock's skin (3337: the ledge's top running on under
+  the rock - two meshes); the ray up from it (180 cm, to 3527) and the room rays (33 cm) ran inside the rock too and met
+  nothing, so the landing passed: `pullover armed (L): ... on a top at 3352.9 ...: the landing shown at
+  33899.9,3337.1,-28115.0` x4, the blink asked the root to 3444, the game's Teleport resolved it to 3636.7 (the feet on
+  3532: 195 cm over the ring shown).
+- **The rule** (somvr_climb.c `la_under`, in `land_find`: the pullover's and A's mantle's searches): a floor found is
+  also looked at from above - a ray down from 250 cm over it (then from 400 cm: the first may start inside a roof's
+  slab) that meets something over it first, with the ray up from the floor meeting nothing under that (inside the rock
+  a ray meets none of its skin, or only that skin itself), = the floor lies under the rock: that spot is no landing
+  (the real top there is higher: climb on). A ceiling with air under it (the ray up meets its underside first) is no
+  rock: the landing stands. Off = build 27.
+- test_climb `test_b27b`: the ledge 15 cm deep, the rock rising 195 cm behind it (its skin seen from outside only, and
+  from both sides): off = the ring planned on the floor inside the rock (both models: the old code fails the new
+  check); on = no landing, the soft double buzz (no way up here), the spots counted; a 20 cm step behind the lip, a
+  roof 2 m up (its slab over the first ray's start, and round it): the landing as before; A's ring at a plain top as
+  before.
+- **The cliff, headless** (boot 20261031-030755, on): the same foot, the same bulge (the root 3230-3247, 28 stalled
+  moves, the ASIDE 2.5 m along it both ways: the ledge runs on, the rock over it): **0 pullover rings** (build 27: 4,
+  all inside the rock), every hold on the ledge `no landing: no floor within 30 cm of the top 20..80 cm in (...;
+  floors under the rock (from above) 10-11)`, `pullover: no way up here` (the buzz) where the pull was blocked. Both
+  eyes (frame 7997): the dark ruin wall under the rock's bulge, no ring anywhere.
+- **The cliff by the user's own route** (boot 20261031-033757, on: from the narrow ledge under the slab, 33686 2575
+  -27297): 11 moves, 84.8 s, no stall, the top's lip in the hand (3535), the ring on the paved path (frame 2377), A =
+  `the glide onto the landing ... 203 cm in 0.58 s`: on the real top. That boot's every landing stood (`floors under the
+  rock 0`): the cliff top, a rock at the Sea Fort's trigger, the camp tower's top.
+- The old code's evidence at this bulge is build 27's boot 152514 (the same climb code without the rule): the 4 rings
+  inside the rock above. An A/B inside one boot (`climb above off` at the bulge) was tried in boot 041801 but its
+  18-move cap ended both climbs ~60 cm under the bulge: not reached.
+
+### 123.2 The fling at a corner (`SOMVR_CLIMB_FLING_REACH_HOLD=on`)
+The forge tower's corner (the shaft near 15372 -3680, a face at z -3671.3 beside him and a lip on the next face): build
+27 (boot 152514, off) twice `fling launch R: ... (up 295, side 124, toward 0 ...)` then `fling apex hang (the wall
+under the chest) after 0.00 s, 1 frames: rose 0.0 cm`. On, the same launch from the same holds (boot 030755: `up 293,
+side 124, toward 0`, root 15365 5088 -3674): `fling apex hang (the arc's top) after 0.25 s, 6 frames: rose 42.5 cm ...;
+the wall toward the hold let go kept it rising`, the left hand caught 5248; boot 035346: rose 44.7 cm, and the climb
+went on round the corner's face to the platform's edge (6134), its ring, A: **on the platform, 17 moves, 112.8 s** from
+the base ledge. Shipped on (`CLIMB END ... fling reach hold=on: flings kept rising by the wall toward the hold 1 / 2`).
+A fling under an overhang (the cliff's ledge over the head) still stops at once: no wall within 120 cm of the chest
+either way (boot 030755, 6 times: right - nothing up there to reach).
+
+### 123.3 More real places, each down and up by hand (boots 030755, 033757, 035346: the shipped block)
+| place | down | up |
+|---|---|---|
+| **FT_BG** (the save's synced forge tower, 35675 5519 -22185; its platform 5299; the only other tower model the save has is the other region's) | survey (12 walls, 6 slopes, 15 overhangs), the platform's OVERHANG lip (13.4 m): the reach down = the glide out and down to hang (it hangs here: the first tower's platform overhangs its shaft), three holds down, A held = the timer's blink to the foot: 53.3 s | 15 moves (10 pulls of 74-94 cm, 5 flings), no stall, the platform's lip (5298.8), its ring (frame 14426), A = `the glide onto the landing ... 159 cm in 0.45 s`: 102.9 s; on the platform among its columns (frame 14556) |
+| **the Sea Fort camp's 9 m east wall** (`SV_PICK=high` from the camp: 48 walls, the walkway's top 3547 the highest) | down over (the glide, three holds, the blink): 47.2 s | from its foot 119.8 s: over the walkway's coping by a fling's glide and on up the inner tower's wall, its coping 4146.9, A = the glide onto the tower's top (frame 9856: its flag pole, the camp below) - 15 m |
+| **the camp's inner tower, 15 m** (its top 4147; the survey's WALL lip 25494 4147 1904, the drop 1514) | the glide out and down to hang (4045), three holds down (3997, 3939, 3877), A held 2.05 s = `the blink down onto the ring: the feet 1154 cm over the ground`: 47.2 s | 15 moves, no stall, 107.8 s, the coping in the hand, A = onto the top |
+| **a roof**: the camp's wooden-plank roof (24800 3199 3300, 5.6 m over the camp's ground; frame 5491) | build 27: the reach down over its edge = `no edge within reach of the hand` (123.4); A held at the edge on foot = the drop mark's 4.06 m blink | 2 pulls, a fling's glide over its edge (`rose 164.3 cm`), on the roof: 59.9 s |
+
+### 123.4 Fixed: down over an edge right under the feet (`SOMVR_CLIMB_DOWN_NEAR`)
+The roof's survey gave a stand point 3 cm from its lip (the camp wall's 22, FT_BG's 32): `dn_find` looks for the floor
+he stands on from 10 cm out along the hand's way, so with his feet within 10 cm of the edge its first spot was past it:
+`no edge within reach of the hand` - a player standing at a roof's edge reaching down over it was refused. On, the
+search starts under his feet. test_climb `test_b27b`: the feet 5 cm from a 9 m wall's edge, the hand 25 cm out over it:
+off = no edge (build 27), on = the glide out and down to hang, holding, the eyes 25 cm under the top, 45 cm out. (The
+driver's hand reaching down was a fixed 60 cm out - 57 past that lip, past the 45 cm the reach allows: now 30 cm past
+the lip, 35-60 cm out.) In the game (boot 20261031-041801, on): `down: the R hand's grip reaching down over the edge
+(the lip 25202.3,3198.7,3199.0 ...): the glide out and down to hang there (root 25200.0,3302.7,3200.0 -> ...; the eyes
+25 cm under the top: 246 cm in 0.70 s)` - the lip 2.3 cm from his root, found only by the spot under his feet; three
+holds down (3048, 3000, 2945), A held = `the fall (a short drop: the feet 47 cm over the ground)`: 37.6 s on the wall;
+up again by 2 pulls and the mantle (A) onto the roof. Both eyes hanging at its edge (frame 1238): the camp's gate and
+walls level, the ground 4 m down, no view in the planks.
+
+### 123.6 Runs (headless, Monado 20 Hz, scripts/headset-build26.env + my block + `SOMVR_HANDS_TEST=1`; scripts/climb27b-drive.sh; each: 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| run (logs/boot-check-20261031-) | what | proves |
+|---|---|---|
+| 030755 | LAND_ABOVE on (env), reach hold on (the word): the cliff's bulge; the tower's corner from the base ledge; FT_BG survey, down, up | 123.1 (0 rings inside the rock, the buzz), 123.2 (rose 42.5 cm), 123.3 FT_BG |
+| 033757 | the cliff by the user's route; the Sea Fort's trigger; the camp (`SV_PICK=high`) down and up | 123.1 (the real top's ring stands), 123.3 the camp wall and up to the tower's top |
+| 035346 | the shipped block (+ reach hold on): the camp's roof; the inner tower down and up; the tower's corner | 123.3 the tower and the roof, 123.2 (44.7 cm, then the platform), 123.4's cause |
+| 041801 | + DOWN_NEAR (EXTRA): the roof; the cliff on, then `aboveoff` (both capped at 18 moves) | 123.4 (the roof down by hand); the A/B not reached |
+
+### 123.7 Switches, words, lines
+| Switch | Default (code) | build 27b env (som-b27-climb4 block) | What |
+|---|---|---|---|
+| `SOMVR_CLIMB_LAND_ABOVE` | off | **on** | a landing's floor also seen from above: one under the rock is no landing (123.1) |
+| `SOMVR_CLIMB_FLING_REACH_HOLD` | off | **on** (was off, unit-tested) | unstuck's reach test also toward the hold let go: a fling at a corner rises (123.2) |
+| `SOMVR_CLIMB_DOWN_NEAR` | off | **on** | down's edge search from under the feet (123.4) |
+Words (test aids): `climb above on|off`, `climb downnear on|off` (and 117's `climb reachhold on|off`). Lines: `CONFIG
+climb land above=...`, `CONFIG climb down near=...`; the pullover's `no landing` line and A's `no way onto it` line end
+with `floors under the rock (from above) N`; `CLIMB END build 27b land above=on: landing spots whose floor lay under the
+rock (no landing there) N`.
+
+### 123.8 Unproven, for the headset, next
+- The cliff's bulge is now honest - no ring inside the rock, the buzz - but it is a dead end for a player who climbs
+  straight up there (a ledge over the head with the rock rising behind it, 2.5 m along at least): the user's own route
+  8 m north goes to the top. Whether a player reads the buzz and moves along: the headset's call.
+- The from-above rule's one known gap: a floor under a thick roof slab whose underside is 190-250 cm over it and whose
+  top is over 400 cm (both rays start inside it, and the slab's skin is seen from inside) reads as under the rock: no
+  landing there (none met in three boots: 0 false refusals at five real tops).
+- The corner: proven at one real corner (twice); other towers' corners likely the same model.
+- The roof's up came once by a fling's glide over its edge (4 of its 8 floors under something on the roof, the rest
+  without room: no pullover ring), once by the plain mantle (boot 041801) - both on the roof.
+## 125. Build 27: nothing flat or smoky in the face - every state's screen-space effects in both eyes (the census), the game's particles folded away at the eyes: `SOMVR_FX_CENSUS`, `SOMVR_FX_NEAR` (2026-10-31, som-b27-fx)
+
+The rule since the build 20c session: no smoke and no flat picture at the eyes (the lens flare and the wraith world's
+fog were its cases; 86, 87, 94, 96, 100 took out the flat screen's effects and made the fire and the wraith sky the same in both
+eyes). Builds 21-27 added states the user has not seen in the headset: the bow's slow-motion aim, Shadow Strike, the
+brutal kill, the execution, the last-chance struggle, riding, the death, the Nemesis screens, the drop kill. This round
+looked at each with both eyes and logged what the game switches on in it.
+
+### 125.1 The census: `SOMVR_FX_CENSUS=on|off` (somvr_render_game.c; code default on; logging only)
+Every screen-space mechanism the game has in this build (re-ui-effects.md 3.2, 86.1), watched at its source frame by
+frame, whatever `SOMVR_FLATFX` does with it: COverlayFX's draws (the full-screen overlay), the scene params' vignette
+(`sp+0x144`) and box blur (`sp+0x130`) after H1, the per-view RadialBlurEnabled byte after its setup (the sun's shafts or
+an effect's radial blur: both through `FUN_007a1530`), the lens drops' draw, the lens flares' draw. Motion blur, depth
+of field and the camera FX (shake, FOV punches) are off at their global gates since spike 1 (`SOMVR_COMFORT=1`);
+chromatic aberration, film grain, lens dirt and SSR do not exist in this build. Lines: `FXSEEN t=.. <effect> on (stereo
+frame F[: its three floats]): out of the eyes (SOMVR_FLATFX)|drawn in the eyes` and `.. off: on for S s (N frames with
+it)` (10 stereo frames without = off), and once a second `FXCENSUS t=.. made in the last S s: NAME xN [on Talion|
+nothing], ..` - every ClientFX the game made (SOMVR_VERBS_GLOW's create hook; `NAME-` = not made). Up to 3000 lines. In
+the user's sessions it says which of the game's effects were up at a bug mark.
+
+### 125.2 The audit (headless, both eyes composed with the layer's quads; `fx eyesame 1` dumps: both eyes one pose)
+| State | What the game switches on (the census) | In VR now | Proof |
+|---|---|---|---|
+| The meadow by day | the sun's shafts (radial blur in ~85-98 % of the views' setups), the lens flares | both out (`FLATFX` shafts, flares: 86); the sun's disc and star sprite stay (the same place in both eyes) | a1 184, 191 (eyesame 0.000 %) |
+| The wraith vision on, held, off | the box blur (0, 1.62, 2.02) for exactly the vision's time; `vm_ping_wraith(_in/_out)` on Talion, `vm_interactiveobjects`; the grey-blue grade, the cloud sky | box blur out; the look is a whole-view grade, the same in both eyes; the clouds fused (KTIME, 96) | a1 222-265; eyesame 235, 247 (held, 60 deg up): 0.000 % |
+| The bow's aim (the Focus slow motion) | `vm_ranged_wraith(_in/_loop/_out)`, `vm_ping_wraith_slowmo_in/_out`, `ping_overlay_orc` (the orc's glow) - no overlay, vignette, blur or radial blur | nothing screen-space: the dark wraith look as the vision, the orc lit through the world | a1 361-393; eyesame 378: 0.000 % |
+| Shadow Strike (the gaze's A) | COverlayFX for 7 s from the strike; `wa_shadow_step`, `shadowstep_swordflame`, the knockdown's FX; the vision's box blur | overlay out, box blur out; our 0.3-s dash and tunnel (build 12) | a1 468-490; eyesame 479: 0.006 % of pixels off by > 40, a 60x10-px sliver at the eye's bottom-left corner (Talion's arm read while the game thread runs ahead, 96.5) |
+| Low health | COverlayFX (`elf_lowhealth03in/loop` on Talion: the drops and the wash) | out since build 24; our faint red edge | a1 516; eyesame 524: 0.000 % |
+| The death | COverlayFX 21.5 s, the box blur (0.8, 1, 4) for 1.3 s at the presentation, the greying (a grade, darker) | overlay and blur out; the greying is a whole-view grade, the same in both eyes; the Nemesis screens on the theatre (90) | a1 775-921; eyesame 795: 0.000 % |
+| The last-chance struggle | the box blur (0.8, 1, 4) as Talion goes down (86 frames) | out | run 20261030-074821 (the FLATFX lines), its dumps |
+| Riding (the caragor, its run and sprint) | the box blur (0, 1.62, 0.7-1.4) - riding's grade; shafts | out | runs 20261030-220337 (1508 frames cleared), -225457 (2278) |
+| Brutalize (the loud kill's sync) | COverlayFX (3230 draws, all skipped in the eyes); **the blood burst: CPU particles 10-20 cm from the eyes** | overlay out; **the burst: wrong** (125.3) | run 20261031-025220 frame 1541 |
+| Rain and night | the lens drops | out (`rain`, 86); the rain the same in both eyes (111.6) | 111.6 |
+| The drop kill's black | ours (`SOMVR_ABOVE`'s blink, 102) | ours: the layer's fade, the same in both eyes | run 20261030-211550 |
+| A fire close by | - (CPU particles) | the same in both eyes since KTIME (96); within 30 cm the fold (125.3) | 96.5 |
+Not reached headless this round: the execution (the 8-hit charge never filled with the chase: a miss reset the streak),
+a Shadow Mount (no prompt). Their screen effects are the same kinds (overlay, box blur), all out.
+
+### 125.3 What was wrong: the game's particles at the eyes - `SOMVR_FX_NEAR=on|off`, `SOMVR_FX_NEAR_CM=R0,R1`
+**What it is.** No screen-space effect is left in the eyes (125.2); what still breaks the rule is 3D: the game's particle
+FX were made for a camera 3 m behind Talion. In the brutal kill's sync (run 20261031-025220 frame 1541, the head down
+on the held orc) the blood burst's lit drops and streaks fly within 10-20 cm of the eyes: a drop at (830,460) in the
+left eye is at (1570,500) in the right (the composed picture at half size, 8.7 px/deg: ~30 deg of disparity = ~12 cm away) - nothing two eyes can
+fuse, smoke or blood in the face. The same at the arrival: a spark emitter of our own blade 28-30 cm from the eyes with
+particles at 9-16 cm (run 20261031-045703, the FXNEAR lines). The camera's own FX (made on the camera's object, e.g.
+the interrogation's `pres_wraith_camera_in`) sit at the eyes by design.
+
+**How the game draws them** (`fx vprobe N`, SOMVR_FX_TEST; runs 20261031-040445, -044459): `CParticleSystemRender::vf_04`
+(render thread, per eye) gets a[0] = the emitter's transform (position + quaternion x,y,z,w; 94.2 took it for the game
+camera - it is the same in both eyes because it is the emitter's), a[1] = the eye's view (its position: the two eyes
+6.3 cm apart), a[2] the per-view block, a[4] the render context; it calls the context's slots
+2, 3, 5, then 9 (map: `(4, n, 4, 0, 0)`, n vertices granted), 10 (unmap), 15 (the indexed draw: `(3, 0, 6n/4, 0, 0, n, 16)`).
+Vertices are 60 bytes: the position at +0, the colour at +12 (the same 4 bytes in a quad's four corners), the UV at
++16, a tangent frame at +24 (the lit particles); one particle = one quad of 4. Positions are in the world (most
+emitters: `23314.2,2832.2,-28281.6`) or in the emitter's own space (the dagger's wisps: within 11 cm of 0) - world =
+a[0] + a[0]'s quaternion applied (a local quad's normal (0.826, 0.563, -0.027) turned by the emitter's quaternion is the
+world quads' (0.949, 0.026, -0.316), the eye's facing).
+
+**The fold** (somvr_render_game.c): with the switch on, while an eye's pass is open (g_rt_eye >= 0) a CPU emitter's draw
+goes through a proxy on its render context; at the unmap (slot 10, a naked thunk that keeps every register: the game has
+written the vertices, the draw comes after) each quad whose middle is nearer the eye than R0 is folded into its middle
+(4 corners on one point: drawn as nothing), between R0 and R1 shrunk toward its middle by (d - R0) / (R1 - R0) - no
+pop as a particle comes in -, farther the game's. The space: the first vertex nearer a[0]'s position than the origin =
+the world; else the emitter's (the eye is taken into it once a draw: the quaternion's inverse on eye - a[0]). Each
+quad's four colours must be one (else that quad is left alone); a draw whose first quad fails is not touched (counted
+"not that format": 0 of 96837 draws in run 045703). Flat frames, GPU particles, sprites and models: the game's.
+`R0,R1` = 15,30 cm (the env): nothing is drawn nearer than 15 cm, full size from 30 cm - the dagger's own wisps at the
+hip (43-57 cm) and the wraith wisps on our left hand stay. Code default `off`; the env `on` (som-b27-fx block). Cost: one
+pass over the vertices the game just wrote (1.23 million particles in 96837 draws in 90 s at 20 Hz: ~13 a draw).
+
+Lines: `CONFIG fx_near=on (..; SOMVR_FX_NEAR_CM 15,30)`, `FXNEAR t=.. eye E: a CPU emitter at D cm (world|its own
+space): N of its M particles folded (nearer than R0 cm), K shrunk (to R1 cm), the nearest X cm from the eye` (the first
+16 draws with either, then every 2000th), `FXNEAR state|END` (draws, not that format, particles, folded, shrunk). Word
+`fxnear on|off|R0,R1|eye E|state` (`eye E`: in eye E's pass only - a test; one dump then shows both).
+
+Selftest (fn_tests, selftest.c): a synthetic draw - world quads at 10 cm (folded), 22.5 cm (half its size), 100 cm (kept)
+and one whose four colours differ (kept); the emitter's own space turned 180 deg (a quad 10 cm from the eye folded, one
+at 100 cm kept); a draw of another format (nothing written); `eye 1` in eye 0's pass and off (no fold).
+
+### 125.4 The sun's star in one eye (seen, left)
+In 24 headless runs' stereo dumps with the sun in view (138 frames; a `/tmp` tool: the pixels at 250+ in R, G and B in each eye's upper 60 %), the sun's
+disc and star sprite (a flare sprite with an occlusion query per view, re-stereo.md 3) are in both eyes at the same
+place in all but two: 20261031-025220 frame 1250 (the held orc's fist in front of the
+sun's place in the left eye only - an occluder near the face hides the sun from one eye: physically right) and
+20261031-033250 frame 393 (two seconds after the bow's shot, the left eye's sky open: the left eye's query still said
+hidden - a stale result from the bow's moments, headless at 3-4 fps). At 80 Hz a stale query lasts a frame or two; left
+as it is. If the user reports the sun blinking in one eye, the flare sprite's per-view query is the place.
+
+### 125.5 The vision's exit
+Letting go of Y the world goes nearly black for ~0.5 s before it comes back (a1 255-256 against 265; both eyes the same:
+the exposure re-adapting from the vision's grade at the headless 3 fps). Not flat and not per eye; not touched.
+
+### 125.6 The runs (headless; scripts/headset-build26.env with the som-b27-fx block, SOMVR_HANDS_TEST=1, the layer's test file; SOMVR_FX_TEST=1 where said; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-) | What it showed |
+|---|---|
+| 20261031-033250 | fx27-drive.sh base vision bow strike hurt rain death (FX_TEST): the census of each state and its pictures (125.2), the eyesame dumps (fx27-eyediff.py); the rain step's weather did not turn in 25 s (111.6 has rain and night) |
+| 20261031-034826 | chain27fx-a2.sh: brutalize (the orc noticed Talion), exec (the charge never filled: a miss reset the streak), ride26 (no Shadow Mount prompt) - the census lines only |
+| 20261031-040445 | fx27 near: the orc's blows on Talion with eye 0 drawn without CPU particles / GPU particles / sprites (his blood small, low, no difference worth a fix); `fx vprobe` (first form): the slots, the 60-byte vertices |
+| 20261031-044459 | `fx vprobe` (second form): a[0] the emitter, a[1] the eye; the world's or the emitter's space (125.3) |
+| 20261031-045703 | SOMVR_FX_NEAR on without FX_TEST (the player's path, 20 Hz): 96837 draws through the fold, 0 not that format; 22 particles folded and 237 shrunk at the arrival (our blade's sparks, an emitter 28-30 cm from the eyes, particles at 9-16 cm); the word not routed yet (32f0e3a) |
+| 20261031-052937 | the word routed: `fxnear 150,200` + `eye 0` folds the wraith wisps on our left hand (two emitters 46-52 cm away, the emitter's space) in eye 0 only (FXNEAR lines; the dumps too dark to show it) |
+| 20261031-054158 | the torch step without FX_TEST: `fx console` needs FX_TEST (no weather), the word's old 400-cm test limit refused 800,1000 (raised to 2000) |
+| 20261031-060017 | the torch step (FX_TEST): the torch still unlit 14 s after SON_Day03 (96.6: 30-45 s); the A/B anyway: `fxnear 800,1000` + `eye 0` - the cyan wisps on our left hand gone in eye 0, there in eye 1 (frame 341; both eyes have them in 328) |
+| 20261031-061245 | brutalize once more with the fold at 15,30 in eye 0 only: 8 thrusts, no kill (the blade in the orc's hit capsule 13 cm off its body, then he noticed - abil27d's staging, not this round's); the census's 30-s repeat rule (the meadow's dust 3 times in 110 s) |
+The brutal kill's burst itself was not caught with the fold on (125.7).
+
+### 125.7 For the headset (unproven headless)
+- The brutal (loud) kill and the execution up close: the blood burst should stop about a hand's breadth from the eyes
+  (folded under 15 cm, shrinking from 30 cm) - the drops of run 025220's frame 1541 were 10-20 cm away. Whether 15,30 is
+  right (or 20,40 - `SOMVR_FX_NEAR_CM`), and that nothing the player wants close (the wraith wisps on the left hand, the
+  bow's glow, a torch held near) shrinks.
+- GPU particles, sprites and models are not folded: if smoke or a glow still sits in the face somewhere, the census
+  lines of that moment (FXCENSUS: the FX made) name it.
+- Every screen-space effect is out (125.2); the user judges whether the vision, the death and riding still read well
+  with their grade alone (no blur).
+- The sun winking in one eye (125.4) and the vision's dark exit (125.5) only if they show at 80 Hz.

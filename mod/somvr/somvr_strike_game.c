@@ -215,6 +215,8 @@ static void sk_tick(sc_tick_out *o, double t)
 	int x = o->live && o->ctx == SC_CTX_WORLD && (g_inp.ctl.down[SOMVR_HAND_L] & SOMVR_BTN_LOWER);
 	int edge = x && !g_sk.x_was;
 	g_sk.x_was = x;
+	if (edge && ab3_x_taken()) /* build 27d (SOMVR_ABIL_DISTRACT, the skill owned): X while drawn is the distract's */
+		edge = 0;
 	sg_tick(o, t); /* build 17, SOMVR_STRIKE_GAZE: A at the orc looked at in the wraith vision (arms the dash below) */
 	if (edge) {
 		int out = g_bow.s.phase != SOMVR_BOW_PH_IDLE;

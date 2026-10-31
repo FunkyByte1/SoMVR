@@ -200,6 +200,14 @@
  *            held him under its edge) a new hold that is an edge whose own found top is retop_edge_cm or more over
  *            the top reached forgets that top as a hold OH_RETOP_CM over it does (E_RETOP; the other hand's edge on
  *            the lower ledge no longer tops him): the next top is the new hold's, reached as any.
+ *   land above (land_above = 1; build 27b: the meadow cliff - a ledge's top at 3353 with the rock rising 180 cm behind
+ *            it: the landing's floor ray, from 60 cm over the top 40 cm in, started inside that rock and found a floor
+ *            under its skin (3337); the ray up from it (180 cm) and the room rays ran inside the rock too and met
+ *            nothing: the pullover's ring was planned 195 cm under the real top, and the game's Teleport put him on
+ *            it) a landing's floor is also looked for from above: a ray down from LA_UP_CM over it (then LA_UP2_CM)
+ *            that meets something higher first, with the ray up from the floor meeting nothing under that, means the
+ *            floor lies under the rock: that spot is no landing (the real top there is higher: climb on). A ceiling
+ *            over the floor with air under it (the ray up meets it first) is no rock: the landing stands as before.
  *   round lip (round_lip = 1; build 21: mark 11, the wall by the meadow's ladder: holds on a rounded mossy lip 30 cm
  *            under its top found their own crest as the top, no edge and no landing, the pulls blocked under the bulge)
  *            a hold that is no edge by the edge_cm test is tested again RL_UP_CM higher: no wall there and a floor
@@ -467,6 +475,9 @@ typedef struct {
     float retop_edge_cm;     /* build 27 (SOMVR_CLIMB_RETOP_EDGE, 0 off; on = 30): see retop edge */
     int am_keep;             /* build 27 (SOMVR_CLIMB_MANTLE_KEEP, 0 off): A while the mantle's ring shows = that ring */
     int fl_reach_hold;       /* build 27 (SOMVR_CLIMB_FLING_REACH_HOLD, 0 off): unstuck's reach test also toward the hold let go */
+    int land_above;          /* build 27b (SOMVR_CLIMB_LAND_ABOVE, 0 off): see land above */
+    int dn_near;             /* build 27b (SOMVR_CLIMB_DOWN_NEAR, 0 off): down's edge search from under the root (the
+                              * feet within 10 cm of the edge: a camp roof's, its first spot past the edge = no edge) */
     float dn_low_cm;         /* ... the hand at least this under the eyes (40) */
     float dn_high_cm;        /* ... and at most this over the floor he stands on (90) */
     float dn_reach_cm;       /* ... the edge within this of the hand, level (45) */
@@ -725,7 +736,7 @@ typedef struct {
     double am_t0;       /* the press */
     float am_lag_s;     /* the root behind the plan so long */
     int am_end;         /* SOMVR_CLIMB_AME_*: how the last glide ended */
-    float am_dbg[6];    /* the last search (logs): the eyes over the top, floors seen, room rays hit, way rays hit */
+    float am_dbg[6];    /* the last search (logs): the eyes over the top, floors seen, room rays hit, way rays hit, [5] floors under the rock */
     int am_oh;          /* build 22: the last search's (and the glide's) is an overhang's - out round its lip first */
     uint64_t am_oh_shows, am_oh_goes;
     uint64_t am_shows, am_presses, am_goes, am_blinks, am_nos, am_lows, am_nofloors, am_noways, am_dones, am_blocks,
@@ -748,6 +759,8 @@ typedef struct {
     int am_kept;               /* ... the last press did (the log) */
     float re_edge_from;        /* ... the top forgotten at the last retop (the log) */
     int rl_on;          /* round lip: cfg.round_lip for the pullover's search (set each step) */
+    int la_on;          /* land above: cfg.land_above for the landing's search (set each step) */
+    uint64_t la_unders; /* ... spots whose floor lay under the rock (found from above): no landing there */
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,

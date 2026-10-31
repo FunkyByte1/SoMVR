@@ -179,6 +179,7 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 	if (!seen)
 		g_vg.names[g_vg.nnames++] = h;
 	int ours = parent && (parent == me || parent == held); /* (the moment's dust and grass: their first sighting only) */
+	rd_census_fx(name, !parent ? 'n' : parent == me ? 'T' : parent == held ? 'O' : 'o', !(hit || face) && r);
 	int all = atomic_load_explicit(&g_vg.all, memory_order_relaxed) > 0 && atomic_fetch_sub(&g_vg.all, 1) > 0;
 	double hs = 0;
 	int hk = 0;
