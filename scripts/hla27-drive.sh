@@ -112,20 +112,20 @@ n0=$(cnt 'click Controls button: the controls page' "$X")
 press $(uv "Controls" button any); sleep 1
 seen "the Controls tab" 'click Controls button: the controls page' 3 "$n0" "$X"
 d 05-controls-1
-NP=3 # the page count: the layer's "page N of M" (build 27: 4 pages once the abilities' lines came)
+NPG=3 # the page count: the layer's "page N of M" (build 27: 4 pages once the abilities' lines came)
 for p in 2 3 4 5 6; do
-  [ "$p" -gt "$NP" ] && break
+  [ "$p" -gt "$NPG" ] && break
   n0=$(cnt "click Next button: the controls page $p of" "$X")
   press $(uv "Next" button any); sleep 1
   seen "Next: page $p" "click Next button: the controls page $p of" 3 "$n0" "$X" && d 0$((p + 4))-controls-$p
-  m=$(grep -oE "click Next button: the controls page $p of [0-9]+" "$X" | tail -1 | grep -oE '[0-9]+$'); [ -n "$m" ] && NP=$m
+  m=$(grep -oE "click Next button: the controls page $p of [0-9]+" "$X" | tail -1 | grep -oE '[0-9]+$'); [ -n "$m" ] && NPG=$m
 done
 n0=$(cnt "click Next button: nothing \(the controls page's end\)" "$X")
 press $(uv "Next" button any); sleep 0.8
 seen "Next at the last page: nothing" "click Next button: nothing \(the controls page's end\)" 3 "$n0" "$X"
-n0=$(cnt "click Prev button: the controls page $((NP - 1)) of" "$X")
+n0=$(cnt "click Prev button: the controls page $((NPG - 1)) of" "$X")
 press $(uv "Prev" button any); sleep 0.8
-seen "Prev: page $((NP - 1))" "click Prev button: the controls page $((NP - 1)) of" 3 "$n0" "$X"
+seen "Prev: page $((NPG - 1))" "click Prev button: the controls page $((NPG - 1)) of" 3 "$n0" "$X"
 n0=$(cnt 'click Settings button: the settings page' "$X")
 press $(uv "Settings" button any); sleep 1
 seen "the Settings tab" 'click Settings button: the settings page' 3 "$n0" "$X"

@@ -50,6 +50,12 @@ static struct {
 	uint64_t n_aim_ticks, n_aim_pad, n_aim_outside;
 	int aim_via;             /* SOMVR_STRUGGLE_AIM: 1 the pad's left stick, 2 MenuAxisX/Y, 3 both */
 	int death;               /* the struggle is Talion's last chance (his attack '*PreDeath*'): ours to answer */
+	int finisher;            /* build 27, SOMVR_STRUGGLE_FINISHER: a beaten captain's Eliminate ('PC_Bip_Finisher_*') too */
+	int fin_now;             /* this struggle is that finisher's */
+	uintptr_t fin_c;         /* its captain (the Last Words answered last) */
+	int fin_stab;            /* a stab of the sword hand at him: the completion asked (stg_tick writes it) */
+	float fin_cos;           /* SOMVR_STRUGGLE_FINISHER_DEG's cosine: how near the stab's line must point at him */
+	uint64_t n_fin, n_fin_stabs, n_fin_won;
 	uint64_t n_struggles, n_kind[STG_N], n_thrusts, n_thrusts_in, n_presses, n_nocmd, n_done;
 	int lines;
 } g_stg = { .armed = { 1, 1 } };
@@ -73,12 +79,20 @@ static void stg_config(void)
 	g_stg.mps = env_float("SOMVR_STRUGGLE_MPS", 2.0f, 0.8f, 6.0f, &bad);
 	g_stg.aim_cm = env_float("SOMVR_STRUGGLE_AIM_CM", 20.0f, 8.0f, 60.0f, &bad);
 	g_stg.aim_via = 1 + env_word("SOMVR_STRUGGLE_AIM", (const char *const[]){ "stick", "axes", "both" }, 3, 2);
+	g_stg.finisher = env_word("SOMVR_STRUGGLE_FINISHER", (const char *const[]){ "off", "on" }, 2, 1); /* build 27 */
+	g_stg.fin_cos = cosf(env_float("SOMVR_STRUGGLE_FINISHER_DEG", 40.0f, 10.0f, 90.0f, &bad) / 57.29578f);
 	logf_("CONFIG struggle=%s: in the game's death struggle (its last chance) a hard thrust of either hand (over %.1f m/s) "
 	      "= one press of the struggle's own command (a mash = many thrusts, a timed press = one); an urgent double "
 	      "pulse at its start, a pulse per press (SOMVR_STRUGGLE, _MPS); an aim struggle (the cursor into the target) "
 	      "steered by the hand that moves from where it was at its start (%.0f cm = full tilt, the head's right/up = the "
 	      "cursor's: MenuAxisX/Y); the struggle's class, command and fields are logged either way",
 	      g_stg.on ? "thrust" : "off", g_stg.mps, g_stg.aim_cm);
+	logf_("CONFIG struggle build 27: finisher=%s (SOMVR_STRUGGLE_FINISHER%s): %s", g_stg.finisher ? "on" : "off",
+	      getenv("SOMVR_STRUGGLE_FINISHER") ? "" : "; unset: on", g_stg.finisher ? "a beaten captain's Eliminate (Talion's "
+	      "'PC_Bip_Finisher_*', the captain's own last chance) answered the same way, and the sword hand's thrust at him "
+	      "(its line within SOMVR_STRUGGLE_FINISHER_DEG of him) = the kill (the struggle completed as the game's own)"
+	      : "only Talion's own last chance "
+	      "(build 26: the captain's finisher struggle left alone - lost, he gets up whole)");
 }
 
 static int stg_kind_of(uintptr_t s)
@@ -190,6 +204,25 @@ static void stg_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 		if (!g_stg.armed[hnd] || sp < g_stg.mps * 100.0f || sp > 1500.0f) /* (faster: a tracking jump) */
 			continue;
 		g_stg.armed[hnd] = 0, g_stg.n_thrusts++;
+		/* build 27: the finisher's struggle - a thrust of the sword hand along a line at the captain held before Talion
+		 * (B&S: the kill is the player's own stab, not a ring on the HUD) completes it as the game's own (+0xa5) */
+		struct cb_orc oc;
+		if (g_stg.on && g_stg.fin_now && g_stg.fin_c && !g_stg.fin_stab && hnd == SOMVR_HAND_R && g_stg.kind == STG_AIM &&
+		    cb_orc_get(g_stg.fin_c, &oc)) {
+			float v[3] = { b.x - a.x, b.y - a.y, b.z - a.z }, d[3] = { oc.pos[0] - a.x, oc.pos[1] + 100.0f - a.y,
+				     oc.pos[2] - a.z };
+			float lv = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]), ld = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+			float c = lv > 1 && ld > 1 ? (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / (lv * ld) : -1;
+			int at = c >= g_stg.fin_cos && ld < 400.0f;
+			g_stg.fin_stab = at, g_stg.n_fin_stabs += (uint64_t)at;
+			if (at)
+				in_haptic_event(hnd, 1.0f, 0.12f, SOMVR_HAP_COMBAT);
+			if (stg_log_ok())
+				logf_("STRUGGLE t=%.3f the finisher: a thrust of the sword hand at %.1f m/s, %.0f deg off the line to the "
+				      "captain %#lx (%.0f cm away): %s", t, sp * 0.01f, acosf(fmaxf(-1.0f, fminf(1.0f, c))) * 57.29578f,
+				      (unsigned long)g_stg.fin_c, ld, at ? "the stab - the kill asked (completed as the game's own)"
+				      : "not at him");
+		}
 		int counts = g_stg.on && g_stg.death && g_stg.cmd > 0;
 		if (counts)
 			g_stg.pending += g_stg.pending < 4, g_stg.n_thrusts_in++,
@@ -224,6 +257,13 @@ static void stg_tick(sc_tick_out *o)
 		char dn[96];
 		g_stg.death = obj && strstr(stg_talion_attack(dn, sizeof dn), "PreDeath") != NULL; /* the last chance only (the
 								 * caragor's domination is a CStruggleAim too: ride2's grip) */
+		/* build 27 (re-xr-pipeline.md 116): a beaten captain's Eliminate at his Last Words is Talion's finisher with the
+		 * captain's own struggle ('PC_Bip_Finisher_PCLose' from its start; boot 20261030-141203: left alone it was lost
+		 * and Ratlug got up whole, 5 -> 569) - the same CStruggleAim, the same answer */
+		g_stg.fin_now = obj && !g_stg.death && g_stg.finisher && strstr(dn, "_Finisher_") != NULL;
+		g_stg.fin_c = g_stg.fin_now ? g_vb.lw_asked_c : 0, g_stg.fin_stab = 0;
+		g_stg.death |= g_stg.fin_now;
+		g_stg.n_fin += g_stg.fin_now;
 		g_stg.pending = g_stg.tap_on = g_stg.tap_off = 0, g_stg.cmd = -1, g_stg.next_line = t + 0.5;
 		g_stg.aim_have = 0, g_stg.aim0_ok[0] = g_stg.aim0_ok[1] = 0, g_stg.aim_line = 0;
 		if (obj && rd) {
@@ -242,7 +282,10 @@ static void stg_tick(sc_tick_out *o)
 				      "+0x80: %s; +%#x: %s; Talion's attack '%s'", t, g_stg_kind[g_stg.kind], (unsigned long)obj,
 				      0x8d8 + 8 * slot, slot ? "sync action" : "combat state", g_stg.cmd, g_stg.cmd > 0 ?
 				      bo_cmd_name(g_stg.cmd) : "-", !g_stg.on ? " (SOMVR_STRUGGLE=off)" : !g_stg.death ?
-				      " - not Talion's last chance (no PreDeath attack): left alone" : g_stg.kind == STG_AIM ?
+				      " - not Talion's last chance (no PreDeath attack): left alone" : g_stg.fin_now ? (g_stg.kind ==
+				      STG_AIM ? " - a captain's finisher (SOMVR_STRUGGLE_FINISHER): the hand steers its cursor, a thrust in "
+				      "its ring presses" : " - a captain's finisher (SOMVR_STRUGGLE_FINISHER): a thrust = one press")
+				      : g_stg.kind == STG_AIM ?
 				      " - the last chance: the hand steers its cursor, a thrust in its ring presses (its command is set as it "
 				      "opens)" : g_stg.cmd > 0 ? " - the last chance: a thrust = one press" : " - the last chance, no "
 				      "answer of ours (its class's command not known)", fl, hx, base2, hx2,
@@ -251,6 +294,14 @@ static void stg_tick(sc_tick_out *o)
 				for (int h = 0; h < 2; h++)
 					in_haptic_double(h, 0.8f, 0.06f, 0.08f, SOMVR_HAP_COMBAT);
 		}
+	}
+	if (obj && obj == g_stg.obj && g_stg.fin_stab == 1 && g_stg.kind == STG_AIM && peek_ptr(obj) == MT_VT_STRUGGLE_AIM) {
+		static const uint8_t one = 1;
+		int ok = arm_poke(obj + MT_STRUG_DONE, &one, 1);
+		g_stg.fin_stab = 2, g_stg.n_fin_won += (uint64_t)ok;
+		if (stg_log_ok())
+			logf_("STRUGGLE t=%.3f +%.2f s: the finisher's stab %s", t, t - g_stg.t0, ok ? "completed it as the game's own "
+			      "(ICombatStruggle+0xa5: its next update wins)" : "NOT written");
 	}
 	if (!obj || !rd)
 		return;
@@ -349,4 +400,7 @@ static void stg_end_log(void)
 	      (unsigned long long)g_stg.n_nocmd, (unsigned long long)g_stg.n_thrusts, (unsigned long long)g_stg.n_thrusts_in,
 	      (unsigned long long)g_stg.n_presses, (unsigned long long)g_stg.n_done, (unsigned long long)g_stg.n_aim_ticks,
 	      (unsigned long long)g_stg.n_aim_pad, (unsigned long long)g_stg.n_aim_outside);
+	logf_("STRUGGLE END build 27: a captain's finisher answered %llu, stabs at him %llu, completed %llu "
+	      "(SOMVR_STRUGGLE_FINISHER=%s)", (unsigned long long)g_stg.n_fin, (unsigned long long)g_stg.n_fin_stabs,
+	      (unsigned long long)g_stg.n_fin_won, g_stg.finisher ? "on" : "off");
 }

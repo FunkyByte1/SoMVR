@@ -66,6 +66,9 @@ static struct {
 	uint32_t qprev;                                     /* bit q: g_us_quest[q] pressed last tick */
 	int death, skip;                                    /* build 25: SOMVR_USE_DEATH, SOMVR_USE_SKIP */
 	int grab, gwin_prev;                                /* build 27b: SOMVR_USE_GRAB; the grab's presentation last tick */
+	int wback;                                          /* build 27: SOMVR_USE_WORLD_BACK */
+	_Atomic uint64_t qc_ns;                             /* build 27: mono() of the last QuestConfirm 282 press (ns) */
+	uint64_t wbacks;
 	int win_prev, fresh;                                /* the window last tick; 1 = take the held buttons again */
 	uint32_t held;                                      /* buttons held since before the window opened or closed */
 	int map_lines, lines;
@@ -204,7 +207,14 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 	int n = 0, b = 0;
 	for (int k = 0; k < o->ncmd; k++)
 		b |= o->cmd[k] == SC_CMD_ACTIVATE;
-	if (b && !g_us.b_prev && g_us.nup) {
+	/* build 27 (re-xr-pipeline.md 116, SOMVR_USE_WORLD_BACK): a power struggle's outcome over the world when its
+	 * captain dies there ("Died - Ratlug the Gluttonous failed to execute his prisoners - (A) View Battle Report (B)
+	 * Back": no presentation, no window) waits for 307 IdentifySkip, the pad's B; the Touch's B in the world went to
+	 * the rune's pick at his body, which the game ignores while that screen is up (boot 20261030-162042: 11 picks, the
+	 * screen up 3 min, the next struggles' cards never came). While 307 is active, B is that Back first */
+	in_active_fn wact = g_inp.map_ok ? IN_FN(IS_CMD_ACTIVE, in_active_fn) : NULL;
+	int idsk = g_us.wback && !g_bm.last_win && wact && (wact(g_inp.pi, 307u) & 0xff);
+	if (b && !g_us.b_prev && g_us.nup && !idsk) {
 		g_us.latch = 1, g_us.picks++;
 		if (us_log_ok())
 			logf_("USE t=%.3f B at '%s': %d '%s' held with Activate (pick %llu)", t, g_us.up[0].str, US_PICK_CMD,
@@ -228,16 +238,21 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 		return n;
 	us_log_bindings();
 	int w = win || gwin;
-	uint32_t want = w ? btn : !dwin && b && (btn >> SC_PAD_B & 1) ? 1u << SC_PAD_RB : 0, now = 0;
+	uint32_t want = w ? btn : !dwin && b && (btn >> SC_PAD_B & 1) ? 1u << SC_PAD_RB | (idsk ? 1u << SC_PAD_B : 0u) : 0,
+		 now = 0;
 	in_active_fn active = IN_FN(IS_CMD_ACTIVE, in_active_fn);
 	for (int i = 0; i < SC_NPAD && want; i++) {
 		if (!(want >> i & 1))
 			continue;
 		for (int k = 0; k < g_inp.nmap[i] && n < 12; k++) {
 			int c = g_inp.map[i][k].cmd, q = us_quest_ix(c);
-			if (q < 0 || (!w && c != 282 && c != 283) || !(active(g_inp.pi, (unsigned)c) & 0xff) || (now >> q & 1))
+			if (q < 0 || (!w && c != 282 && c != 283 && !(c == 307 && idsk)) || !(active(g_inp.pi, (unsigned)c) & 0xff) ||
+			    (now >> q & 1))
 				continue;
 			now |= 1u << q, out[n++] = c, g_us.quest_ticks++;
+			g_us.wbacks += !w && c == 307 && !(g_us.qprev >> q & 1);
+			if (c == 282) /* build 27: a mission's card comes next (somvr_captain_game.c 2: the window, not his introduction) */
+				atomic_store(&g_us.qc_ns, (uint64_t)(mono() * 1e9));
 			if (!(g_us.qprev >> q & 1)) {
 				g_us.quest_presses++, g_us.grabs += gwin;
 				if (us_log_ok())
@@ -245,6 +260,16 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 					      win ? "; a presentation is up" : gwin ? "; a presentation while the left hand holds" :
 					      "; B in the world");
 			}
+		}
+	}
+	if (idsk && !w && b && (btn >> SC_PAD_B & 1) && !(now >> us_quest_ix(307) & 1) && n < 12) { /* 307 unbound: direct */
+		int q = us_quest_ix(307);
+		now |= 1u << q, out[n++] = 307, g_us.quest_ticks++;
+		if (!(g_us.qprev >> q & 1)) {
+			g_us.quest_presses++, g_us.wbacks++;
+			if (us_log_ok())
+				logf_("USE t=%.3f 307 'IdentifySkip' pressed by B over the world (a struggle's outcome; not bound to the "
+				      "pad's B now; SOMVR_USE_WORLD_BACK)", t);
 		}
 	}
 	for (int k = 0; dwin && k < 2 && n < 12; k++) { /* build 25: A = 285, B = 286 on the death's failed screen */
@@ -313,6 +338,12 @@ static void us_config(int *bad)
 		      getenv("SOMVR_USE_SKIP") ? "" : "; unset: on", g_us.skip ? "with the window up, B with none of its own "
 		      "commands bound = SkipPresentations 265 (a Nemesis result screen's Back, a captain's introduction skipped)"
 		      : "B in the window presses only what the game binds to it (build 24)");
+	g_us.wback = env_word("SOMVR_USE_WORLD_BACK", (const char *const[]){ "off", "on" }, 2, 1);
+	if (g_us.want)
+		logf_("CONFIG use_world_back=%s (SOMVR_USE_WORLD_BACK, build 27%s): %s", g_us.wback ? "on" : "off",
+		      getenv("SOMVR_USE_WORLD_BACK") ? "" : "; unset: on", g_us.wback ? "in the world, while the game has 307 "
+		      "IdentifySkip active (a struggle's outcome over the world: \"(B) Back\"), B = that Back before a pick"
+		      : "B in the world = the pick or a quest card only (build 26)");
 	g_us.death = env_word("SOMVR_USE_DEATH", (const char *const[]){ "off", "on" }, 2, 1);
 	if (g_us.want)
 		logf_("CONFIG use_death=%s (SOMVR_USE_DEATH, build 25%s): %s", g_us.death ? "on" : "off",
@@ -339,4 +370,5 @@ static void us_end_log(void)
 	      (unsigned long long)g_us.refused_full, (unsigned long long)g_us.picks, (unsigned long long)g_us.pick_ticks,
 	      (unsigned long long)g_us.quest_presses, (unsigned long long)g_us.quest_ticks, (unsigned long long)g_us.skips,
 	      (unsigned long long)g_us.deaths, (unsigned long long)g_us.grabs, g_us.map_lines);
+	logf_("USE END build 27: B = Back (307) over the world %llu (SOMVR_USE_WORLD_BACK)", (unsigned long long)g_us.wbacks);
 }

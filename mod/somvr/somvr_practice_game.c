@@ -1503,6 +1503,7 @@ static void pr_refill_health(const struct pr_me *m, int have, double t, const ch
 
 /* the test aids (headless proofs of the refills; the writer thread's word, the game thread's write): Talion's health
  * set to HP (1 .. the max) and the Focus to F (0 .. the max) - in the practice area only, as the refills */
+static _Atomic int g_pr_mortal; /* build 27, `practice mortal on|off`: no practice min health while on (a test aid) */
 static _Atomic uint32_t g_pr_aid_seq, g_pr_aid_kind, g_pr_aid_val; /* kind 1 hurt, 2 focus; val = the float's bits */
 static uint32_t g_pr_aid_seen;
 static void pr_aid_tick(const struct pr_me *m, int have, double t)
@@ -1694,7 +1695,7 @@ static void pr_frame(uintptr_t pl)
 	}
 	if (have) /* the min health from the start of a trip there to the end of the trip back, while in the area; build 22:
 		   * not while a captain of the save is out (SOMVR_PRACTICE_CAPTAIN_STAKES: he can kill Talion, as anywhere) */
-		pr_mh(&m, (g_pr.here || g_pr.trip.phase != SOMVR_PRT_IDLE) && !kp_stakes_now(), t);
+		pr_mh(&m, (g_pr.here || g_pr.trip.phase != SOMVR_PRT_IDLE) && !kp_stakes_now() && !atomic_load(&g_pr_mortal), t);
 	/* SOMVR_PRACTICE=auto: once, auto_s after the player is first in the world (alive, no scripted moment, not paused) */
 	if (g_pr.mode == SOMVR_PR_AUTO && !g_pr.auto_done) {
 		int ready = have && (m.life < 0 || m.life == 2) && !(gate & ~(uint32_t)SOMVR_PRG_UNKNOWN);
@@ -1745,6 +1746,10 @@ static const char *pr_word(const char *w)
 		return "practice (SOMVR_PRACTICE is off: ignored)";
 	float av;
 	char ak[8], tail;
+	if (!strncmp(w, "mortal ", 7)) { /* build 27 (a test aid): the game's own min health back while on (Talion can die) */
+		atomic_store(&g_pr_mortal, !strcmp(w + 7, "on"));
+		return atomic_load(&g_pr_mortal) ? "practice mortal on (the game's own min health: Talion can die)" : "practice mortal off";
+	}
 	if (sscanf(w, " %7s %f %c", ak, &av, &tail) == 2 && (!strcmp(ak, "hurt") || !strcmp(ak, "focus")) && isfinite(av)) {
 		uint32_t b; /* build 17's test aids: health / Focus set (pr_aid_tick) */
 		memcpy(&b, &av, sizeof b);

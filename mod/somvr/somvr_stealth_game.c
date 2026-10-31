@@ -1427,6 +1427,10 @@ static int stl_ask_kill(uintptr_t pc, const struct cb_orc *o, const sc_contact *
 	int el = vb_choice(1);
 	if (!el)
 		return g_vb.kind == SOMVR_VBK_ASK || vb_choice(0); /* its finisher (or the choices coming): no hit on it */
+	/* build 27: a captain's Last Words - the blade chooses only after the choice has been up a moment (the swing that
+	 * beat him chose Kill 1.8 s after his last line, before the player could read it: boot 20261030-174916) */
+	if (g_vb.lw_asked_c == g_vb.ask_c && t - g_vb.ask_t < g_vb.lw_blade_s)
+		return 1;
 	const sc_speed *sp = &g_cb.sp;
 	if (tier == SC_TIER_NONE && !(sp->axis_mps >= g_stl.cfg.stab_mps && fabsf(sp->cos_axis) >= g_stl.cfg.stab_cos)) {
 		if (g_vb.ask_weak++ % 20 == 0 && vb_log_ok())

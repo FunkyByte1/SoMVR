@@ -25,7 +25,7 @@
  * tracked view; 0 = off; at its end the timer's values back only while it is still ours: the game's SlowMo manager,
  * e.g. the bow's aim begun meanwhile, keeps its own) and a strong pulse. Nothing starts an attack of Talion's or a sync: no paired animation, no
  * camera, the view is the player's. Not ready, or not a heavy hit, with the trigger held: the ordinary hit (one line).
- * Test only (SOMVR_HANDS_TEST): the words `execute where|face|chase on|off` (the headless player's aim and legs),
+ * Test only (SOMVR_HANDS_TEST): the words `execute where|face|chase on|captain|off` (the headless player's aim and legs),
  * SOMVR_EXECUTE_MARKS / _MARK_MS (a mark of the eyes after each kill).
  *
  * Lines: `CONFIG execute ...`, `EXECUTE site ... MISMATCH`, `EXECUTE streak ...` (each change), `EXECUTE ready ...` /
@@ -308,6 +308,7 @@ static int xc_streak_now(void)
 	return g_xc.mode && g_xc.ok_hc ? g_xc.hc.streak : 0;
 }
 
+static int kw_chase_orc(const float at[3], struct cb_orc *o); /* build 27 (somvr_captain_game.c 8) */
 static void xc_frame(uintptr_t pl, const float root[3], int blade, double t)
 {
 	if (!g_xc.mode)
@@ -387,12 +388,16 @@ static void xc_frame(uintptr_t pl, const float root[3], int blade, double t)
 			ss_mark("SOMVR_EXECUTE_MARKS", "the execution (the next frame)", t);
 		}
 	}
-	/* the test words `execute where|face|chase on`: the nearest orc from the head (a headless player's aim and legs) */
+	/* the test words `execute where|face|chase on`: the nearest orc from the head (a headless player's aim and legs);
+	 * build 27: `execute chase captain` - the captain of the world the tracker follows (somvr_captain_game.c 8), not his
+	 * crowd (re-xr-pipeline.md 116: the test chase walked to the nearest orc of his crowd, 104.4) */
 	if (g_xc.chase && !g_xc.req_where)
 		g_xc.req_where = 3;
 	if (g_xc.req_where) {
 		struct cb_orc oo[4];
 		int no = pcomb && root ? cb_orcs_r(pcomb, pc, root, 1500.0f, oo, 4) : 0;
+		if (g_xc.chase == 2 && g_xc.req_where == 3)
+			no = root && kw_chase_orc(root, &oo[0]) ? 1 : 0;
 		sv_vec3 hp;
 		sv_quat hq;
 		somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq); /* the tracked head, as THREAT's yaw= */
@@ -600,10 +605,11 @@ static const char *xc_word(const char *w)
 	if (!strncmp(w, "chase ", 6)) {
 		if (!g_xc.test)
 			return "execute chase (SOMVR_HANDS_TEST is off: ignored)";
-		g_xc.chase = !strncmp(w + 6, "on", 2);
+		g_xc.chase = !strncmp(w + 6, "on", 2) ? 1 : !strncmp(w + 6, "captain", 7) ? 2 : 0;
 		if (!g_xc.chase)
 			atomic_store_explicit(&g_tstick_until_ns, 0, memory_order_release);
-		return g_xc.chase ? "execute chase on (a test: turn and walk to the nearest orc)" : "execute chase off";
+		return g_xc.chase == 2 ? "execute chase captain (a test: turn and walk to the captain of the world)"
+		       : g_xc.chase ? "execute chase on (a test: turn and walk to the nearest orc)" : "execute chase off";
 	}
 	if (!strncmp(w, "where", 5) || !strncmp(w, "face", 4)) {
 		g_xc.req_where = w[0] == 'f' ? 2 : 1;

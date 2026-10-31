@@ -593,7 +593,9 @@ static struct {
 	char who[160];
 	uint64_t met, deaths, gone, talion_deaths, promotions, lines_place;
 	float me[3];           /* Talion's root, the last frame (status) */
-} g_kw;
+	int want;              /* build 27, `captain follow N`: the member followed while he is in the world (-1: the nearest) */
+	_Atomic int req_where; /* build 27, `captain where`: his place now (a test's legs) */
+} g_kw = { .want = -1 };
 
 /* a member's NPC in the world and its Combat (0: not in the world, not bound, or dead) */
 static uintptr_t kw_combat_of(uintptr_t fm, uintptr_t *npc_out)
@@ -642,12 +644,113 @@ static void kw_bearing(const float at[3], float *right_deg, float *up_deg)
 	*up_deg = asinf(fmaxf(-1.0f, fminf(1.0f, d[1] / l))) * 57.29578f;
 }
 
+/* ---- 10. every captain of the world near Talion (build 27; docs/re-xr-pipeline.md 116) ------------------------------
+ * Section 8 follows the nearest one; a warchief comes with his bodyguards, a struggle can bring two. Each member in the
+ * world within KW_RANGE_CM is listed as he comes (who, a warchief or not, how far, where in the view) and his end as it
+ * comes - his death with the member's last-death record a second later (the credit: by the player 1 or 0), or his
+ * leaving the world alive - for each of them, not only the followed one. */
+#define KR_MAX 12
+static struct {
+	uintptr_t fm[KR_MAX], npc[KR_MAX], c[KR_MAX];
+	int idx[KR_MAX], wc[KR_MAX], end[KR_MAX], n; /* end: 0 in the world, 1 dead, 2 left alive, 3 out of range */
+	double t0[KR_MAX], end_t[KR_MAX], next;
+	uint64_t joined, warchiefs, died, died_player, left, out;
+} g_kr;
+
+static void kr_list(char *out, size_t cap)
+{
+	size_t k = 0;
+	out[0] = 0;
+	for (int i = 0; i < g_kr.n && k + 8 < cap; i++)
+		if (!g_kr.end[i])
+			k += (size_t)snprintf(out + k, cap - k, "%s%d%s", k ? " " : "", g_kr.idx[i], g_kr.wc[i] ? "(W)" : "");
+	if (!out[0])
+		snprintf(out, cap, "none");
+}
+
+static void kr_frame(const struct pr_me *m, double t)
+{
+	if (t < g_kr.next)
+		return;
+	g_kr.next = t + 0.5;
+	char who[160], ld[300], ls[96];
+	for (int i = 0; i < g_kr.n;) { /* their ends: seen, then logged a second later (the record written by then) */
+		uint32_t fl = 0;
+		peek(g_kr.fm[i] + KP_FM_FLAGS, &fl, sizeof fl);
+		if (!g_kr.end[i]) {
+			struct cb_orc o;
+			int out = !(fl & 4) && (!(fl & 2) || peek_ptr(g_kr.fm[i] + KP_FM_NPC) != g_kr.npc[i]);
+			int dead = !out && (cb_dead(g_kr.c[i]) || (fl & 4));
+			int far = !out && !dead && (!cb_orc_get(g_kr.c[i], &o) || dist3(o.pos, m->pos) > KW_RANGE_CM * 1.5f);
+			if (out || dead || far)
+				g_kr.end[i] = dead ? 1 : out ? 2 : 3, g_kr.end_t[i] = t + (dead ? 1.0 : 0);
+		}
+		if (!g_kr.end[i] || t < g_kr.end_t[i]) {
+			i++;
+			continue;
+		}
+		uint8_t by = 0;
+		kp_who(g_kr.fm[i], who, sizeof who);
+		ld[0] = 0;
+		if (g_kr.end[i] == 1) {
+			kp_death_desc(g_kr.fm[i], ld, sizeof ld);
+			peek(g_kr.fm[i] + KP_FM_LD_PLAYER, &by, 1);
+			g_kr.died++, g_kr.died_player += by == 1;
+		} else
+			g_kr.end[i] == 2 ? g_kr.left++ : g_kr.out++;
+		int e = g_kr.end[i], ix = g_kr.idx[i], wc = g_kr.wc[i];
+		double t0 = g_kr.t0[i];
+		g_kr.n--; /* out of the list (the last one moved here) */
+		g_kr.fm[i] = g_kr.fm[g_kr.n], g_kr.npc[i] = g_kr.npc[g_kr.n], g_kr.c[i] = g_kr.c[g_kr.n], g_kr.idx[i] = g_kr.idx[g_kr.n];
+		g_kr.wc[i] = g_kr.wc[g_kr.n], g_kr.end[i] = g_kr.end[g_kr.n], g_kr.t0[i] = g_kr.t0[g_kr.n], g_kr.end_t[i] = g_kr.end_t[g_kr.n];
+		kr_list(ls, sizeof ls);
+		logf_("CAPTAIN t=%.3f the world's captains: member %d (%s%s) %s %.1f s after he came: flags %#x (IsDead %u, "
+		      "IsMockDead %u, IsSevered %u)%s%s; in the world near Talion now: %s", t, ix, wc ? "the warchief, " : "", who,
+		      e == 1 ? "died" : e == 2 ? "left the world alive" : "is out of range (120 m)", t - t0, fl, fl >> 2 & 1,
+		      fl >> 23 & 1, fl >> 17 & 1, ld[0] ? "; " : "", ld, ls);
+	}
+	uintptr_t mm[KP_MAX];
+	int k = kp_members(mm, KP_MAX);
+	for (int i = 0; i < k && g_kr.n < KR_MAX; i++) { /* the ones who came */
+		uintptr_t npc = 0, c = mm[i] && mm[i] != g_kp.fm ? kw_combat_of(mm[i], &npc) : 0;
+		int dup = !c;
+		for (int j = 0; j < g_kr.n && !dup; j++)
+			dup = g_kr.fm[j] == mm[i];
+		struct cb_orc o;
+		float d;
+		if (dup || !cb_orc_get(c, &o) || (d = dist3(o.pos, m->pos)) > KW_RANGE_CM)
+			continue;
+		somvr_cp_traits tr;
+		kp_traits(mm[i], &tr, NULL, 0);
+		int n = g_kr.n++;
+		g_kr.fm[n] = mm[i], g_kr.npc[n] = npc, g_kr.c[n] = c, g_kr.idx[n] = i, g_kr.wc[n] = tr.warchief, g_kr.end[n] = 0;
+		g_kr.t0[n] = t, g_kr.joined++, g_kr.warchiefs += tr.warchief != 0;
+		float rd, ud;
+		kw_bearing(o.pos, &rd, &ud);
+		kp_who(mm[i], who, sizeof who);
+		kr_list(ls, sizeof ls);
+		logf_("CAPTAIN t=%.3f the world's captains: member %d came (%s%s), %.1f m from Talion, %+.0f deg right %+.0f deg up "
+		      "of the view; in the world near Talion now: %s", t, i, tr.warchief ? "the warchief, " : "", who, d / 100.0, rd,
+		      ud, ls);
+	}
+}
+
+/* build 27, `execute chase captain` (a test): the followed captain of the world as the chase's orc */
+static int kw_chase_orc(const float at[3], struct cb_orc *o)
+{
+	if (!g_kw.on || !g_kw.fm || !g_kw.c || g_kw.dead_seen || g_kw.gone_seen || cb_dead(g_kw.c) || !cb_orc_get(g_kw.c, o))
+		return 0;
+	o->dist = dist3(o->pos, at);
+	return 1;
+}
+
 static void kw_frame(const struct pr_me *m, int have, double t)
 {
 	if (have)
 		memcpy(g_kw.me, m->pos, sizeof g_kw.me);
 	if (!g_kw.on || !g_kp.on || !have)
 		return;
+	kr_frame(m, t);
 	/* the member after his death or his leaving: his record 2 s on, his level while Talion is down (the promotion) */
 	if (g_kw.fm && (g_kw.dead_seen || g_kw.gone_seen)) {
 		if (t < g_kw.next_watch)
@@ -700,10 +803,14 @@ static void kw_frame(const struct pr_me *m, int have, double t)
 			float d;
 			if (c && cb_orc_get(c, &o) && (d = dist3(o.pos, m->pos)) < bd)
 				bd = d, bfm = mm[i], bc = c, bnpc = npc, bi = i;
+			if (c && i == g_kw.want && cb_orc_get(c, &o) && (d = dist3(o.pos, m->pos)) < KW_RANGE_CM) { /* `captain follow N` */
+				bd = d, bfm = mm[i], bc = c, bnpc = npc, bi = i;
+				break;
+			}
 		}
 		struct cb_orc co;
 		float cd = g_kw.fm && g_kw.c && !cb_dead(g_kw.c) && cb_orc_get(g_kw.c, &co) ? dist3(co.pos, m->pos) : 1e9f;
-		if (bfm && bfm != g_kw.fm && (cd > KW_RANGE_CM || (bd < 3000.0f && cd > bd + 1000.0f))) { /* a nearer one by 10 m */
+		if (bfm && bfm != g_kw.fm && (cd > KW_RANGE_CM || (bd < 3000.0f && cd > bd + 1000.0f) || bi == g_kw.want)) { /* a nearer one by 10 m */
 			g_kw.fm = bfm, g_kw.c = bc, g_kw.npc = bnpc, g_kw.idx = bi, g_kw.t0 = t, g_kw.met++;
 			g_kw.dead_seen = g_kw.gone_seen = g_kw.talion_dead = 0, g_kw.hp_last = NAN, g_kw.place_d = 0;
 			g_kw.next_watch = t, g_kw.place_next = t;
@@ -751,6 +858,13 @@ static void kw_frame(const struct pr_me *m, int have, double t)
 		logf_("CAPTAIN t=%.3f the world's captain left the world alive %.1f s after the meeting (%s): the member's flags "
 		      "%#x, its NPC %#lx", t, t - g_kw.t0, g_kw.who, fl, (unsigned long)peek_ptr(g_kw.fm + KP_FM_NPC));
 		return;
+	}
+	if (atomic_exchange(&g_kw.req_where, 0)) {
+		struct cb_orc wo;
+		if (cb_orc_get(g_kw.c, &wo))
+			logf_("CAPTAIN t=%.3f the world's captain's place (asked): %.1f m from Talion at %.0f %.0f %.0f, health %.1f",
+			      t, dist3(wo.pos, m->pos) / 100.0, (double)wo.pos[0], (double)wo.pos[1], (double)wo.pos[2],
+			      (double)cb_health(g_kw.c));
 	}
 	if (t < g_kw.next_watch)
 		return;
@@ -1035,7 +1149,14 @@ static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t)
 		if (!best || (w && !bw) || (w == bw && d < bd))
 			best = near[i].c, bfm = fm, bd = d, bo = o, bw = w, bc = cf;
 	}
+	/* build 27 (re-xr-pipeline.md 116.9): a presentation right after QuestConfirm (B at a mission's marker) is that
+	 * mission's card ("Piercing Light ... (A) Accept (B) Cancel", the warchief's), not a captain's introduction - boot
+	 * 20261030-234014: one of his bodyguards stood within 60 m and 90 deg, the card played over the world, its A
+	 * unanswerable there (SOMVR_USE's A is the window's): the window */
+	uint64_t qc = atomic_load(&g_us.qc_ns);
+	int card = g_kw.on && qc && mono() * 1e9 - (double)qc < 1.5e9;
 	const char *why = !g_kp.intro_world ? "SOMVR_CAPTAIN_INTRO=window" : dead ? "Talion is dead (the death's screens)"
+			  : card ? "a mission's card (QuestConfirm pressed just before)"
 			  : !g_kp.on ? "the captain's sites did not check out" : !have_head ? "no head pose yet"
 			  : !best ? "no captain near (another kind of presentation)" : !bw ? "the captain is not near and in view"
 			  : NULL;
@@ -1207,6 +1328,19 @@ static const char *kp_word(const char *w)
 		atomic_store(&g_kpt.req, 1);
 		return "captain thrust (a test aid: the right hand on the eyes' line to his spine, then the thrust)";
 	}
+	if (!strcmp(w, "where")) {
+		atomic_store(&g_kw.req_where, 1);
+		return "captain where (the world's captain's place now)";
+	}
+	if (!strncmp(w, "follow ", 7)) { /* build 27: the world's captain followed (section 8): member N while in the world */
+		long v = strtol(w + 7, &e, 10);
+		if (!strcmp(w + 7, "near"))
+			v = -1;
+		else if (e == w + 7 || v < 0 || v >= KP_MAX)
+			return "captain follow (not 0..63|near: ignored)";
+		g_kw.want = (int)v;
+		return v < 0 ? "captain follow near (the nearest captain of the world)" : "captain follow (that member while he is in the world)";
+	}
 	if (!strcmp(w, "tiers")) { /* build 24: the strike records' own damage on him */
 		atomic_store(&g_kp.req_tiers, 1);
 		return "captain tiers (a test aid)";
@@ -1229,7 +1363,7 @@ static const char *kp_word(const char *w)
 		atomic_store(&g_kp.req_hp, (int)(v * 10));
 		return "captain hp (a test aid)";
 	}
-	return "captain (not status|gamelog|pick N|hp V|charge|tiers|away|thrust [GAP [MPS]]|stakes on|off: ignored)";
+	return "captain (not status|gamelog|pick N|hp V|charge|tiers|away|thrust [GAP [MPS]]|follow N|near|stakes on|off: ignored)";
 }
 
 static void kp_start(int *bad)
@@ -1322,4 +1456,8 @@ static void kp_end_log(void)
 	      (unsigned long long)g_kw.deaths, (unsigned long long)g_kw.gone, (unsigned long long)g_kw.talion_deaths,
 	      (unsigned long long)g_kw.promotions, (unsigned long long)g_kp.pres_screens, (unsigned long long)g_kpt.aims,
 	      (unsigned long long)g_kpt.thrusts);
+	logf_("CAPTAIN END world's captains (build 27): came %llu (warchiefs %llu), died %llu (by the player %llu), left alive "
+	      "%llu, out of range %llu", (unsigned long long)g_kr.joined, (unsigned long long)g_kr.warchiefs,
+	      (unsigned long long)g_kr.died, (unsigned long long)g_kr.died_player, (unsigned long long)g_kr.left,
+	      (unsigned long long)g_kr.out);
 }

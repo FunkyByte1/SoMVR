@@ -19627,3 +19627,207 @@ Site: GO_PAUSETUT (K_ENTRY 0xb0c370, read only; check_sites.py: 8 lines in GAMEO
 - Big Game: the "Ability Unlocked: Caragor Hunter" card comes on the theatre's screen with the game paused - A goes on.
 - Big Game's end: after the second camp, "Stop the runner" - catch the fleeing Uruk on the caragor (the mount's run).
 - A failed screen while riding: A retries, B abandons - neither makes the beast leap or throws Talion off.
+
+## 116. Build 27: the Nemesis beyond one captain - a beaten captain's Last Words answered in VR, his finisher won by the player's own stab, a struggle's outcome closed by B; Execution, Ambush and Duel from their markers; the rune and the board: `SOMVR_VERBS_LASTWORDS`, `SOMVR_STRUGGLE_FINISHER`, `SOMVR_USE_WORLD_BACK` (2026-10-30, som-b27-nemesis2)
+Headless boots from the furthest save (110.9: logs/boot-check-20261030-070839/saves/GameData.sav) and, after a death had
+moved the Nemesis on, from boot 141205's own save (three new power struggles). scripts/headset-build26.env + `SOMVR_HANDS_TEST=1`
++ `SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0` (104.2: the practice's quiet holds a mission's orcs out); driver
+scripts/nemesis27-drive.sh (steps survey, struggle, fight, struggles, army, runes, death). Code: somvr_verbs_game.c (the
+Last Words), somvr_struggle_game.c (the finisher), somvr_use_game.c (the Back over the world), somvr_captain_game.c
+section 10 (every captain of the world near Talion) and the test aids. handoff/HANDOFF-captain.md "Build 27".
+
+### 116.1 A beaten captain's Last Words: the dead end, and the answer (`SOMVR_VERBS_LASTWORDS=on`)
+- **What the game does** when a captain's health runs out in a fight (boots 134042, 141205: Ratlûg the Gluttonous at
+  the Beast Hunt): `AI_Bip_RecoilAny_PreDeath` -> `AI_Bip_PreDeathLoop` (health held at 3-5: our cuts `no damage reached
+  the game's DamageStruct`) -> his last line ('LastWord_Thg_A_AN', "How about a truce? No?", "I will crush you yet!" at
+  the gaze) -> **Talion holds him** ('PC_Bip_Sync_LastWords_Choice', his 'AI_Bip_PC_Sync_LastWords_Choice', our body
+  moment `hold by sync`) and the game asks **Eliminate** (CombatStruggle01 161 'UI_Prompt_Interrogate_Eliminate') or,
+  at this point of the story, **Dominate** (CombatStruggle04 164 'Domination_Interrogate_StoryOverride').
+- **The dead end** (boot 134042): no VR control sent either. The interrogation's controls (77, 106) answer only an orc
+  the left hand grabbed (`ask_c`, set by the grab's A); here the game began the hold, so both prompts were `dropped (no VR
+  control sends it)` and the choice stayed up **190 s** - the presentation never ended, the pause menu did not open,
+  the orcs around stood in 'AI_*_Presentation_Showdown_Idle', Talion could not die. A VR player who beat a captain was
+  stuck with him.
+- **The answer**: the captain seen in a 'LastWord*' attack becomes the asked orc when Talion's sync is the Last Words
+  and their choices are up (`VERBS t=.. last words: the captain .. held by the game ..: answered as an interrogation`)
+  - the interrogation's own controls then answer: **the left trigger = Dominate/Interrogate** (shown as LT, 123:122's
+  map), **the Touch's X = Eliminate** (the prompt reads "Kill (X)": both eyes, boot 141205's s1-k-lw) and B too, the
+  blade's cut or stab on him = Eliminate (`SOMVR_VERBS_ASK_KILL=blade`). The choices' prompts are kept (`passed on`,
+  `shown as 124`). Boots 141205 (B pressed 161: `PC_Bip_Finisher_PCLose` began), 144201 (`the Touch's X: 161
+  'CombatStruggle01' tapped (the prompt's own letter)`).
+- **The blade waits a second** (`SOMVR_VERBS_LASTWORDS_BLADE_S`, 1.0): boot 174916's next cut, still in flight as the
+  choice came up, chose Kill 1.8 s after his last line (`kill: the blade in the interrogated orc ... (tier heavy, along
+  4.08 m/s cos 0.31): 161 'CombatStruggle01' tapped`) - before a player could read "Kill (X) / Dominate (LT)". The blade
+  now chooses only once the choice has been up that long; X and B choose at once.
+- Not every beaten captain reaches his Last Words: boot 162042's Ratlûg (the Execution) died of the cut that took him
+  under (116.3) - the game's own choice.
+
+### 116.2 The Eliminate's struggle: the captain's last chance, won by the player's own stab (`SOMVR_STRUGGLE_FINISHER=on`)
+- **The Eliminate is a struggle** (boots 141205, 144201): Talion's finisher 'PC_Bip_Finisher_PCLose' with a
+  `CStruggleAim` at PlayerCombat+0x8d8 (108.6's class: a cursor to steer into a ring, then its random button 02/03/04),
+  ~4 s. 108.6's answer is gated to Talion's own last chance (`not Talion's last chance (no PreDeath attack): left
+  alone`), so it was lost by the timeout: **Ratlûg got up whole** (health 5 -> 569, then 583/585 a level higher) - the
+  Nemesis' own "he survived", but by no choice of the player's.
+- **Decided** (B&S, HL:A: the kill is the body's act, not a HUD ring): during that struggle **a thrust of the sword hand
+  along a line at the held captain** (its line within `SOMVR_STRUGGLE_FINISHER_DEG` (40) of the line to his chest, him
+  within 4 m; the thrust is 108.6's - 80-250 ms over `SOMVR_STRUGGLE_MPS` 2 m/s) **completes the struggle as the game's
+  own** (ICombatStruggle+0xa5 = 1, ride2's 109.1 write: its next update wins -> 'PC_Bip_Finisher_PCWin', the kill);
+  a strong pulse in the sword hand. The ring also stays answerable as 108.6's (the other hand steers, a thrust inside
+  presses) - the answer is no longer gated away. Not stabbing in time keeps the game's outcome (he gets up).
+  Lines: `STRUGGLE t=.. start: CStruggleAim ... - a captain's finisher (SOMVR_STRUGGLE_FINISHER): ...`, `STRUGGLE t=..
+  the finisher: a thrust of the sword hand at N m/s, D deg off the line to the captain ..: the stab - the kill asked`,
+  `STRUGGLE t=.. +S s: the finisher's stab completed it as the game's own`, `STRUGGLE END build 27: ...`.
+- Boot 144201 (the ring by the hand, before the stab existed): the gate engaged (`a captain's finisher`), the hand
+  steered (`the aim -0.04 +1.00 (the right hand +30 cm up ...)`), `a thrust with the cursor outside the ring: not
+  pressed` - up and right never met the ring (it is random); lost both times. The same class won in that boot for
+  Talion's own last chance (`result(+8c) 1`, 'PC_OrcInf_PreDeath' -> up).
+- **The stab proven** (boot 173801, the Beast Hunt's Ratlûg): his Last Words, the Touch's X, the finisher's struggle;
+  the test's right hand drawn back and thrust forward (110 ms): the first thrust `at 2.2 m/s, 121 deg off the line to
+  the captain (182 cm away): not at him` (the draw-back), the second **`at 2.8 m/s, 35 deg off ... (192 cm away): the
+  stab - the kill asked`**, `+1.60 s: the finisher's stab completed it as the game's own`, the struggle over 0.05 s
+  later, and **`the world's captain died ... (IsDead 1, IsSevered 0, IsMockDead 0); the last death: by the player 1,
+  the attack 'PC_Bip_Finsher_PCWin'`** (the game's own spelling), 'Player_Character', 'Resurrection_PlayerSlash' - a
+  final death (no mock death), the rune at his body, B picked it. Both eyes after the stab: Ratlûg held a metre ahead in
+  the finisher, the hands at the bottom, nothing in the face (st k1-try1-stabbed). Boot 172518 the same Last Words
+  without the stab in time (the driver's picture first: 4 s gone): lost, he got up at 303 of 554 and the next cut
+  killed him (`'PC_HC_Medium_L1_D0_F_RL_LL_UD_1' ... by the player 1`).
+
+### 116.3 Power struggles from their markers: what the save offers, what a VR player does there
+- **What the save offers**: before a death only the Beast Hunt (104.2). **Talion's death moves the Nemesis on** (boot
+  141205: `practice mortal on`, two berserkers, `PC_OrcBzrk_PreDeath`, the respawn at the east tower): three new
+  'powerStruggle' markers - **Execution** (4320 3230 -21260: "Ratlûg the Gluttonous, Elite Captain, Power 14 - To
+  dispense justice against traitors ... Invade the Execution to weaken Sauron's Army! Reward +40"), **Ambush** (24707
+  4151 6382: the Fool against another), **Duel** (-42200 3780 -30670: the BladeSmith against the SkinFlayer); the Beast
+  Hunt gone (Ratlûg's hunt over), the Executioner (member 6) dead. No feast or recruitment on this save (the Recruitment
+  is "The Power of the Wraith"'s, 106).
+- **Each from its marker** (boots 154016, 162042): B at the marker -> the card in the window (st: s1/s2/s3-card) -> A ->
+  the captain(s) come; the introduction where they stand (104.2's rule); **a struggle plays out in 45-60 s**: left
+  alone, the Execution's Ratlûg and the Runt, the Ambush's Fool, the Duel's BladeSmith `left the world alive` 43-63 s
+  after they came, and the Duel's loser died (`the world's captains: member 19 (... SkinFlayer ...) died 60.1 s after he
+  came` - the BladeSmith took his column, 1 -> 4, level 9 -> 10). The player must run to them at once.
+- **The Execution won by the player** (boot 162042): Talion at Ratlûg within seconds of his coming, his cuts (the test's
+  edge cuts; `captain hp 60` the test aid): **`the world's captain died 56.1 s after the meeting ... the last death: by
+  the player 1, the attack 'PC_HC_Lowest_L1_D0_F_LL_RR_RL_5', the killer's type 'Player_Character', the death type
+  'Resurrection_PlayerSlash'`** - a light cut of ours, the game's own credit (99.1); his rune at the body (both eyes:
+  the glowing rune 1.5 m ahead, "Ratlûg the Gluttonous - Died" and the outcome's box "Ratlûg the Gluttonous failed to
+  execute his prisoners - (A) View Battle Report (B) Back" over the world, small, at the HUD).
+- **The outcome over the world waited for B** (the same boot): it is no presentation (no window, nothing dark) and
+  waits for 307 IdentifySkip, the pad's B (`USE bindings ... 307 'IdentifySkip'=B`); the Touch's B in the world went to
+  the rune's pick (`B at 'Combat_Activate_Collectable' ... (pick 1..11)`), which the game ignores while the screen is
+  up: the screen stayed 3+ minutes and the next struggles' B never reached their cards ("no card after 5 B").
+  **Fixed: `SOMVR_USE_WORLD_BACK=on`** - in the world, while the game has 307 active, B is that Back first (through the
+  pad B's binding, or 307 pressed directly when unbound); the next B picks the rune.
+- What a VR player cannot do there (left as found): "(A) View Battle Report" (309) is not mapped (104.7).
+
+### 116.4 Every captain of the world near Talion (section 10 of somvr_captain_game.c)
+Section 8 follows one (the nearest); a warchief brings his bodyguards and a struggle brings two or more. Every member in
+the world within 80 m is listed as he comes and his end as it comes, each with the member's record a second after a
+death: `CAPTAIN t=.. the world's captains: member N came (the warchief, ...| ...), D m from Talion, R deg right U deg
+up of the view; in the world near Talion now: 17 20 5(W)` and `... member N (...) died|left the world alive|is out of
+range (120 m) S s after he came: flags .. (IsDead, IsMockDead, IsSevered); the last death: by the player ..; in the
+world near Talion now: ...`; `CAPTAIN END world's captains (build 27): came, warchiefs, died (by the player), left
+alive, out of range`. Boot 134042 saw the joiners as the Last Words froze the fight: the Runt, the Fool, the
+BladeSmith came within 29 m (+100 deg right); boot 154016 the Duel's two and the loser's death.
+
+### 116.5 Runes and the board by the laser
+- **Weapons & Runes** (boot 151715 - the pause menu by the laser, the 0.86 m board): the sword "Urfael", "Sword
+  Legends", the second rune row "Defiant to the End (Epic)" -> the 15-rune grid ("EQUIPPED Defiant to the End (Epic) -
+  Never surrender as you gain an additional Last Chance ...") -> the first cell (Flame of Anor) picked, a second press
+  equips it: the slot "Flame of Anor (Epic)", the stat line "20 % Chance Critical Hits with the sword will ignite enemies
+  and the blade's flames glow orange" (`on target` x4, 8 POINTER lines). 90.3's flow, now by the laser end to end.
+- **Sauron's Army** (the same boot, and the warchief board by the right stick's hold, 110): "Brand the Warchiefs - 1 / 5
+  Branded", the targeted fifth "Unknown Warchief - Gain Intel to learn Identity - Location Unknown".
+
+### 116.6 Runs (headless; each: no crash, the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-20261030-) | Save | WARN | Steps | What it proved |
+|---|---|---|---|---|
+| 134042 | 070839 | 0 | survey struggle fight army runes death | the board; the Beast Hunt's Ratlûg met and introduced in the world (39.7 m, 4 deg); **his Last Words stuck 190 s** (116.1's cause); the menus and the death blocked by it |
+| 141205 | 070839 | 0 | struggle fight (+ a hand-sent B) army runes death | the Last Words answered (`last words: ...`), the prompts kept; B = Eliminate -> **the finisher's struggle lost unanswered, Ratlûg up whole** (116.2's cause); Talion's death -> **three new struggles** (its save: the next boots') |
+| 144201 | 141205 | 2 (harness trips) | struggles (the Execution) | Talion's own last chance won by the ring answer; the Touch's X = Eliminate; the finisher's struggle answered by the ring (gate on), lost twice (the ring not up/right) |
+| 151715 | 141205 | 3 (harness trips) | struggles army runes | the Execution's captains left alone (the driver late); **the runes by the laser** (116.5) |
+| 154016 | 141205 | 2 (harness trips) | struggles army | **the Execution, the Ambush, the Duel**: each card, each captain met; each left alone plays out in 45-63 s; the Duel's loser died (116.3) |
+| 162042 | 141205 | 1 (a harness trip) | struggles army | **Ratlûg killed by the player's cut, the credit, his rune**; the outcome over the world stuck under B (116.3's cause) |
+| 170419 | 141205 | 1 (a harness trip) | struggles army | nothing: the test's draw missed (no blade 4 min; the driver now draws again) |
+| 172518 | 070839 | 0 | struggle fight army | the Beast Hunt: the Last Words, X, the finisher lost (the stab late); **Ratlûg killed by the player's cut** (`by the player 1`), his rune picked by B (3 presses, the prompt down after 39 s) |
+| 173801 | 070839 | 0 | struggle fight army | **the finisher won by the stab: 'PC_Bip_Finsher_PCWin', by the player 1, a final death**; his rune by B; **the Runt** (joined) **killed by the player's light cut** 23 s after he came, his rune by B; the outcome to the window, B = 307 there |
+| 174916 | 070839 | 0 | struggle fight army | the Last Words: the driver's next cut chose Kill 1.8 s in (the blade's wait, 116.1); the finisher lost (no stab asked), Ratlûg up whole |
+| 182952 | 070839 | 0 | struggle fight army | the Last Words' **LT = Dominate**: 164 tapped -> 'PC_Bip_Sync_LastWords_Dominate', "You will obey!" -> the Domination's hold ('PC_Bip_Sync_Intrgtn_Idle') with Gain Intel 164 / Dismiss 163 / Command 162 - **dropped**: the ask had been let go 6 s after the Last Words began (8.6 s by then); fixed (the ask kept 6 s from the choice) |
+| 194531 | 070839 | 0 | struggle fight army | nothing: the driver's pictures took the hunt's 60 s (Ratlûg left the world before the fight; NM_FAST since) |
+| 201144 | 070839 | 0 | struggle fight army | a caragor killed Ratlûg at the test's 60 health: **`by the player 0, 'AI_Warg_Orc_Maul_B', 'Warg_Brown', 'Resurrection_Caragor'`** - the credit tells the kills apart; his rune dropped all the same (B picked it) |
+| 203059 | 070839 | 0 | struggle fight army | **the Last Words -> LT = Dominate -> the Domination's prompts kept** ("Gain Intel [LT]", "(Y) Command", "(B) Dismiss") **-> the trigger = Gain Intel -> the GAIN INTEL screen** ("Select a Target ... (L) Change Selection (A) Select for Intel (X) Mark Target (B) Back", the selection on a captain); build 20's Back after 8 s closed it before the stick reached the warchiefs (`the intel menu up 8.01 s: the pad's Back`); B = Dismiss let Ratlûg go |
+| 204330 | 070839 | 0 | struggle fight army | (the intel's 30 s) no Last Words this time: **Ratlûg died of the player's light cut** (`by the player 1, 'PC_HC_Lowest_L1_D0_F_RL_LR_RL_1'`), his rune by B |
+| 224857 | 070839 | 0 | struggle fight army (on main cbe6df1 merged) | **the warchief's intel in VR**: the Last Words, LT = Dominate, LT = Gain Intel, the GAIN INTEL screen, the left stick up to the warchiefs' row, A = Select for Intel -> **"Olrok Shield Master - Elite Warchief - Power 16 - Bodyguards 4 - Go to the Mission Start Point"** and his place on the map; the board after: "Show Olrok that an Elven Archer hunts his Supporters", his four bodyguards linked; then the Domination's "Kill (X) / Dismiss (B)" - the test's cut = Kill: `by the player 1, 'PC_Bip_Sync_Intrgtn_Kill_Named'`; his rune by B. **Its save = the warchief's next step** |
+| 234014 | 224857 | 0 | warchief army | the warchief's mission start: a new marker **'confrontationGoldenMarked'** (-8997 2811 -25532); B (282) -> his card **"Piercing Light - Show Olrok Shield Master that an Elven Archer hunts his Supporters - Hint: Defeat the Warchief's Bodyguards before confronting him - Olrok Shield Master, Elite Warchief, Power 16 - (A) Accept (B) Cancel"** - **over the world** (`a presentation starts: in the world ... the captain ... Role_SkinFlayer`: one of his bodyguards stood within 60 m and 90 deg), where A is not the card's: it stayed up (fixed: a presentation within 1.5 s of QuestConfirm = the card = the window) |
+| (10-31) 004441 | 224857 | 0 | warchief | **his card in the window** (`the window: a mission's card (QuestConfirm pressed just before)`), **A = Accept** (`283 'QuestConfirmStart' pressed (the pad's A ...)`): "Piercing Light" begun - Talion: "Rain death from afar and draw the Warchief forth.", the objective **"0 / 5 Kill Supporters with Bow Attacks"**; his bodyguard the SkinFlayer introduced over the world (52 m), the objective's screen (the game's blur) to the window |
+
+### 116.7 Switches (the som-b27-nemesis2 block at the end of scripts/headset-build26.env)
+| Switch | Code default | build 27 env | Off / other |
+|---|---|---|---|
+| `SOMVR_VERBS_LASTWORDS` | on | on | off = build 26: a beaten captain's Last Words have no VR control (the choice stays up) |
+| `SOMVR_VERBS_LASTWORDS_BLADE_S` | 1.0 | (default) | 0..5 s: how long the choice is up before the blade may choose Kill (X and B at once) |
+| `SOMVR_STRUGGLE_FINISHER` | on | on | off = build 26: the Kill's struggle left alone (lost: he gets up) |
+| `SOMVR_STRUGGLE_FINISHER_DEG` | 40 | (default) | 10..90: the stab's line within this of the line to his chest |
+| `SOMVR_USE_WORLD_BACK` | on | on | off = build 26: B over the world only picks or confirms (a struggle's outcome there waits) |
+| `SOMVR_VERBS_INTEL_BACK_S` (build 20) | 0 | **30** (was 8; the build 20 line commented out) | the GAIN INTEL menu's own Back after this long: 8 s closed it before a player reached the warchiefs' row (boot 203059); its stick, A, X and B work (110.3) |
+Test words (SOMVR_HANDS_TEST): `execute chase captain`, `captain follow N|near`, `captain where`, `practice mortal
+on|off`. Lines: `VERBS t=.. last words: ...`, `STRUGGLE t=.. the finisher: ...`, `STRUGGLE t=.. +S s: the finisher's
+stab completed it ...`, `USE t=.. 307 'IdentifySkip' pressed by B over the world ...`, `CAPTAIN t=.. the world's
+captains: ...`, `CAPTAIN t=.. the world's captain's place (asked): ...`, `CONFIG verbs build 27: lastwords=..`, `CONFIG
+struggle build 27: finisher=..`, `CONFIG use_world_back=..`, the END lines `VERBS END build 27`, `STRUGGLE END build
+27`, `USE END build 27`, `CAPTAIN END world's captains (build 27)`.
+
+### 116.8 Open, for the headset
+- The Last Words in the headset: the captain kneels a metre ahead, "Kill (X)" and "Dominate (LT)" under his face; X or
+  B or a cut once the prompt is read = Kill, the left trigger = Dominate. Then the Kill's struggle: **stab him** (a
+  thrust of the sword hand at his chest within ~4 s); miss it and he gets up (the game's "he survived").
+- The finisher's ring (the game's own minigame) is still on the HUD during those 4 s; a player who stabs never needs it.
+  Whether its sight distracts in the headset: the user's call.
+- `SOMVR_USE_WORLD_BACK`: built from boot 162042's failure (the outcome over the world, 307 bound to the pad's B), not
+  yet seen pressing in a boot (173801's outcome came in the window, where B = 307 already worked).
+- The warchief (task 2): identified by VR controls and his mission begun (116.9); the five bow kills that draw him out,
+  his and his four bodyguards' coming and fight not reached.
+- A struggle's outcome when it stays over the world ("Died - ... failed to execute his prisoners - (A) View Battle
+  Report (B) Back", boot 162042): the game's HUD text, small and split (the name and "Died" low left, the box above the
+  rune) - readable in the headset? It closes by B now; 104.2's window takes only those that blur the world.
+- The Ambush and the Duel were started and their captains met, not fought (each plays out in 45-63 s; a player runs to
+  them). "(A) View Battle Report" (309) still unmapped. A feast or a recruitment: not on this save (the map's tower
+  popup "Advance Time", 111, moves the Nemesis on without a death - not tried for this).
+- Every captain of the world near Talion is listed (116.4); a warchief and his bodyguards' introductions in a row were
+  not met (104.2's rule decides each presentation once: one in view = in the world, the card at the gaze).
+
+### 116.9 The warchief (task 2): how far this save goes
+- The save's five warchiefs are members 2 (Role_Knife), 4 (Greedy), 8 (ShieldMaster), 13 (GhulHunter), 16 (Blue), all
+  `Marker_Warchief`, level 13-15, each "a warchief (his bodyguards)" (the practice never brings one). The target set in
+  110.3 is the fifth on the board, "Unknown Warchief - Gain Intel to learn Identity - Location Unknown" (boots 134042,
+  172518: the board by the right stick's hold and from the pause menu by the laser).
+- **The warchief identified by VR controls** (boot 224857, after the two fixes below): the Beast Hunt's Ratlûg beaten,
+  his Last Words, LT = Dominate ("You will obey!"), LT = Gain Intel, the GAIN INTEL screen, the left stick up three
+  times to the warchiefs' row ("Unknown Warchief - Use Intel to learn Strengths and Weaknesses"), A = Select for Intel
+  -> his identity page: **"Olrok Shield Master - Elite Warchief - Power 16 - Motive: ordering his supporters to find
+  some recent beast tracks - Bodyguards: 4 - Go to the Mission Start Point"** with his place on the map; the menu closed
+  after 27.7 s (by the player's own steps, inside the 30 s Back); back in the Domination: "Kill (X) / Dismiss (B)". The
+  board then: "Olrok Shield Master, Elite Warchief, Power 16 - Show Olrok that an Elven Archer hunts his Supporters"
+  (his draw-out condition) and four lines to his bodyguards in the hierarchy.
+- **His mission's card** (boot 234014, from 224857's save): his start point is a new marker 'confrontationGoldenMarked'
+  (-8997 2811 -25532); B there -> "Piercing Light - Show Olrok Shield Master that an Elven Archer hunts his Supporters -
+  Hint: Defeat the Warchief's Bodyguards before confronting him - (A) Accept (B) Cancel". It came **over the world**:
+  104.2's rule took it for a captain's introduction because one of his bodyguards (the SkinFlayer) stood within 60 m and
+  90 deg, and over the world A answers nothing (SOMVR_USE's A is the window's) - the card stayed up, the mission
+  unreachable. **Fixed** (no switch: it is SOMVR_CAPTAIN_WORLD's rule): a presentation that starts within 1.5 s of a
+  QuestConfirm press is the mission's card - the window (`the window: a mission's card (QuestConfirm pressed just
+  before)`). **Boot 20261031-004441**: the card in the window, A = Accept, "Piercing Light" begun - Talion: "Rain death
+  from afar and draw the Warchief forth.", the objective **"0 / 5 Kill Supporters with Bow Attacks"**, his bodyguard the
+  SkinFlayer introduced where he stood (52 m), the objective's screen (blurred) in the window.
+- **The next step for a later round: boot 224857's save** (or start "Piercing Light" again from its marker: five of his
+  supporters killed by the VR bow (76, 82), then Olrok and his four bodyguards) (logs/boot-check-20261030-224857/saves/GameData.sav): his mission start point, the condition (his
+  supporters hunted by the bow), then him and his four bodyguards.
+- The intel a VR player can get: an orc's or a captain's Domination, then its "Gain Intel" (the trigger) and the GAIN
+  INTEL screen's warchiefs' row (110.8). A beaten captain's Last Words now lead there too: LT = Dominate (boot 182952:
+  "You will obey!", the Domination's hold) - its Gain Intel prompt was dropped by the ask's timeout (fixed after that
+  boot). **Boot 203059: the whole chain in VR** - the Last Words, LT = Dominate, the Domination's prompts kept, the
+  trigger = Gain Intel, the GAIN INTEL screen up 1.1 s later; build 20's 8 s auto-Back then closed it before the test's
+  stick reached the warchiefs' row: `SOMVR_VERBS_INTEL_BACK_S=30` now (the menu's own controls work; B is its Back).
+- Not reached headless: his drawing out itself (five supporters by the bow), his coming with his bodyguards, their
+  introductions in a row, the fight with them. What is ready for them: every captain in the world is listed as he comes
+  (`the world's captains: member N came (the warchief, ...)`) and each death is credited; each introduction is decided
+  once per presentation by 104.2's rule.

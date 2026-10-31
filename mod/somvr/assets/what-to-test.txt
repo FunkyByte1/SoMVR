@@ -3,7 +3,7 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 27 - what to test
+Build 27b - what to test
 - Everything new since build 20c, by topic. Menu > Controls lists every move.
 - Smooth: the headset runs at 80 Hz with a VR graphics preset. Fights, fire and rain should stay smooth. Try Settings > Refresh rate 90; back to 80 if it stutters.
 - Fire and the wraith sky look the same in both eyes, at their depth - no smoke in your face.
@@ -20,6 +20,7 @@ Build 27 - what to test
 - Drop kill: crouch on a wall top above an unaware orc (a blue glow on him), stab hard down at him.
 - Captains: Practice > Captain. Fast real cuts bite: about a dozen and an execution. Immune to stealth: the blade glances off. His rune drops (B).
 - Captains in the world: start a power struggle at its marker - the intro plays where he stands.
+- A beaten captain held by the game: X = Kill, then stab his chest within 4 s or he gets up. Or LT = Dominate, then LT = Gain Intel: the left stick to the warchiefs, A.
 
 - BOW AND WRAITH. The sight is small and white, blue on an orc. Shadow Strike lands you with the sword in hand.
 - Fire arrow: bow drawn, press B - the tip glows. He burns.

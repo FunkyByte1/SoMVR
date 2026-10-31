@@ -55,6 +55,13 @@ static struct {
 	int brand_prompt;          /* build 22, SOMVR_VERBS_BRAND_PROMPT: the stealth brand's prompt kept (LT) */
 	int rally;                 /* build 25, SOMVR_VERBS_RALLY: the left hand raised + the trigger = 128 */
 	int dismiss;               /* build 26, SOMVR_VERBS_DISMISS: B = a Domination's Dismiss ('Domination_Cancel') */
+	int lastwords;             /* build 27, SOMVR_VERBS_LASTWORDS: a beaten captain's Last Words answered as an interrogation */
+	uint64_t lastwords_n;
+	uintptr_t lw_c;            /* the last orc seen in a 'LastWord*' attack (his last line, then the game's hold) */
+	uintptr_t lw_asked_c;      /* the captain whose Last Words were answered last (the finisher's struggle: his stab) */
+	double lw_blade_s;         /* SOMVR_VERBS_LASTWORDS_BLADE_S: the blade chooses Eliminate only after this long */
+	double lw_t;
+	float lw_cm;
 	int command;               /* build 26, SOMVR_VERBS_COMMAND: Y = a Domination's Command ('Domination_Command') */
 	uint64_t dismisses, commands;
 	float rally_cm;            /* ... the palm this far over the eyes (SOMVR_VERBS_RALLY_CM, 15) */
@@ -178,6 +185,14 @@ static uintptr_t vb_sync_rec(uintptr_t c)
 	return sy ? peek_ptr(sy + FB_SYNC_REC) : 0;
 }
 
+/* build 27 (re-xr-pipeline.md 116, SOMVR_VERBS_LASTWORDS): Talion's sync is a beaten captain's Last Words
+ * ('PC_Bip_Sync_LastWords_Choice': the game holds him and asks Eliminate or Interrogate) */
+static int vb_lastwords_sync(void)
+{
+	char nm[96];
+	return g_vb.lastwords && g_vb.t_sync && strstr(rx_rec_name(g_vb.t_sync, nm, sizeof nm), "LastWords") != NULL;
+}
+
 /* the PP hooks (the game thread; somvr_prompts_game.c, any mode but game): a prompt shown or hidden */
 static void vb_prompt(uintptr_t key, int act, const char *str, int up)
 {
@@ -279,6 +294,8 @@ static int vb_keep(int act, uintptr_t key)
 		return 0;
 	if (act >= 161 && act <= 170 && g_vb.hand.phase == SOMVR_VBH_GRAB)
 		return 1; /* CombatStruggle01..10 while the hand holds: the interrogation's choices (run 234655) */
+	if (act >= 161 && act <= 170 && (vb_lastwords_sync() || (g_vb.lastwords && g_vb.ask_c)))
+		return 1; /* build 27: a beaten captain's Last Words - the same choices, the same controls */
 	if (!key)
 		return 0;
 	static uintptr_t k_yes[16], k_no[64];
@@ -649,6 +666,11 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 		if (g_vb.trig_was && !tr_was) {
 			vb_tap(ch, t), g_vb.choices++;
 			g_vb.intel_ask_t = t; /* build 20: the intel menu comes next */
+			/* build 27: the asked orc kept 6 s from this choice, not from the pull - a Last Words' Dominate brings the
+			 * Domination's own choices (Gain Intel, Dismiss, Command) 1.4 s later, 8.6 s after the Last Words began:
+			 * the ask had been dropped and their prompts with it (boot 20261030-182951) */
+			if (g_vb.lastwords)
+				g_vb.ask_t = t;
 			g_vb.hand.b = 0, g_vb.hand.b_done = 1; /* no B from this press when the choices are gone */
 			if (o.event == SOMVR_VBE_WRAITH)
 				o.event = SOMVR_VBE_NONE;
@@ -681,6 +703,10 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	uint32_t el = bl & ~g_vb.btn_was[0], er = br & ~g_vb.btn_was[1];
 	g_vb.btn_was[0] = bl, g_vb.btn_was[1] = br;
 	int bcmd = 0, dis = 0, bc = (er & SOMVR_BTN_UPPER) && g_vb.ask_c ? vb_choice_b(&dis) : 0;
+	/* build 27 (SOMVR_VERBS_LASTWORDS): the Last Words show their Eliminate as "Kill (X)" (the pad's glyph, boot
+	 * 20261030-141205's both eyes): the Touch's X (the left lower) = that choice too, B stays */
+	if (!bc && g_vb.lastwords && g_vb.ask_c && (el & SOMVR_BTN_LOWER) && g_vb.hand.phase != SOMVR_VBH_GRAB)
+		bc = vb_choice(1);
 	int yc = (el & SOMVR_BTN_UPPER) && g_vb.ask_c ? vb_choice_command() : 0;
 	if (bc)
 		bcmd = bc, g_vb.dismisses += (uint64_t)dis;
@@ -694,7 +720,8 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 		vb_tap(bcmd, t), g_vb.btn_taps++;
 		if (vb_log_ok())
 			logf_("VERBS t=%.3f button: the Touch's %s: %d '%s' tapped (the prompt's own letter%s)", t,
-			      bcmd == VB_CMD_X ? "X" : bcmd == VB_CMD_A ? "A" : bcmd == yc ? "Y" : "B", bcmd, in_cmd_name(bcmd),
+			      bcmd == VB_CMD_X || (bc && (el & SOMVR_BTN_LOWER)) ? "X" : bcmd == VB_CMD_A ? "A" : bcmd == yc ? "Y" : "B",
+			      bcmd, in_cmd_name(bcmd),
 			      dis ? "; the Domination's Dismiss, SOMVR_VERBS_DISMISS" : bcmd == yc ? "; the Domination's Command, "
 			      "SOMVR_VERBS_COMMAND" : "");
 	}
@@ -1431,6 +1458,23 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	}
 	memcpy(g_vb.orc, nw, (size_t)n * sizeof nw[0]);
 	g_vb.norc = n;
+	/* build 27 (re-xr-pipeline.md 116, SOMVR_VERBS_LASTWORDS): a captain beaten in a fight says his last words and the
+	 * game holds him in Talion's hands ('PC_Bip_Sync_LastWords_Choice', his 'AI_Bip_PC_Sync_LastWords_Choice'), asking
+	 * Eliminate (CombatStruggle01 161) or Interrogate (CombatStruggle04 164). No VR grab began it, so nothing answered:
+	 * the choice stayed up 190 s, the fight frozen (boot 20261030-134042, Ratlug). His orc becomes the one asked: the
+	 * interrogation's own controls answer - the left trigger = Interrogate, B and the blade's cut or stab = Eliminate */
+	for (int i = 0; g_vb.lastwords && i < n; i++) /* (a body moment's hold can pass no orcs: the last one seen is kept) */
+		if (nw[i].atk && strstr(vb_name(nw[i].atk, a, sizeof a), "LastWord"))
+			g_vb.lw_c = nw[i].c, g_vb.lw_t = t, g_vb.lw_cm = o[i].dist;
+	if (g_vb.lastwords && g_vb.mode == VB_ON && !g_vb.ask_c && g_vb.hand.phase != SOMVR_VBH_GRAB && g_vb.lw_c &&
+	    t - g_vb.lw_t < 30.0 && vb_lastwords_sync() && (vb_choice(0) || vb_choice(1))) {
+		g_vb.ask_c = g_vb.lw_asked_c = g_vb.lw_c, g_vb.ask_t = t, g_vb.lastwords_n++;
+		logf_("VERBS t=%.3f last words: the captain %#lx held by the game (%.0f cm, %.1f s ago), its choices up (%d '%s', "
+		      "%d '%s'): answered as an interrogation - the left trigger = Interrogate, B and the blade = Eliminate "
+		      "(SOMVR_VERBS_LASTWORDS)", t, (unsigned long)g_vb.lw_c, g_vb.lw_cm, t - g_vb.lw_t, vb_choice(1),
+		      in_cmd_name(vb_choice(1)), vb_choice(0), in_cmd_name(vb_choice(0)));
+		g_vb.lw_c = 0;
+	}
 	if (atomic_exchange(&g_vb.req_status, 0))
 		vb_status(t);
 	if (atomic_exchange(&g_vb.req_tree, 0))
@@ -1593,6 +1637,8 @@ static void vb_start(int *bad)
 	g_vb.rally = env_word("SOMVR_VERBS_RALLY", (const char *const[]){ "off", "on" }, 2, 1); /* build 25 */
 	g_vb.rally_cm = env_float("SOMVR_VERBS_RALLY_CM", 15, 0, 60, bad);
 	g_vb.dismiss = env_word("SOMVR_VERBS_DISMISS", (const char *const[]){ "off", "on" }, 2, 1); /* build 26 */
+	g_vb.lastwords = env_word("SOMVR_VERBS_LASTWORDS", (const char *const[]){ "off", "on" }, 2, 1); /* build 27 */
+	g_vb.lw_blade_s = env_float("SOMVR_VERBS_LASTWORDS_BLADE_S", 1.0f, 0.0f, 5.0f, bad);
 	g_vb.command = env_word("SOMVR_VERBS_COMMAND", (const char *const[]){ "off", "on" }, 2, 1); /* build 26 */
 	{
 		const char *sn = getenv("SOMVR_VERBS_STEALTH_NODE");
@@ -1634,6 +1680,11 @@ static void vb_start(int *bad)
 	logf_("CONFIG verbs build 26: dismiss=%s (SOMVR_VERBS_DISMISS%s): %s", g_vb.dismiss ? "on" : "off",
 	      getenv("SOMVR_VERBS_DISMISS") ? "" : "; unset: on", g_vb.dismiss ? "B in a Domination = its Dismiss ('Domination_Cancel')"
 	      : "B in a Domination does nothing (build 25)");
+	logf_("CONFIG verbs build 27: lastwords=%s (SOMVR_VERBS_LASTWORDS%s): %s", g_vb.lastwords ? "on" : "off",
+	      getenv("SOMVR_VERBS_LASTWORDS") ? "" : "; unset: on", g_vb.lastwords ? "a beaten captain's Last Words (the game "
+	      "holds him) answered as an interrogation: the left trigger = Interrogate, X, B and the blade = Eliminate (the "
+	      "blade once the choice has been up SOMVR_VERBS_LASTWORDS_BLADE_S)"
+	      : "a beaten captain's Last Words have no VR control (build 26)");
 	logf_("CONFIG verbs build 26: command=%s (SOMVR_VERBS_COMMAND%s): %s", g_vb.command ? "on" : "off",
 	      getenv("SOMVR_VERBS_COMMAND") ? "" : "; unset: on", g_vb.command ? "the Touch's Y in a Domination = its Command "
 	      "('Domination_Command')" : "a Domination's Command has no VR control (build 25)");
@@ -1663,6 +1714,8 @@ static void vb_end_log(void)
 	      (unsigned long long)g_vb.ask_freed, (unsigned long long)g_vb.intels, (unsigned long long)g_vb.intel_backs,
 	      (unsigned long long)g_vb.intel_outs);
 	logf_("VERBS END build 25: rallies %llu (SOMVR_VERBS_RALLY)", (unsigned long long)g_vb.rallies);
+	logf_("VERBS END build 27: last words answered as an interrogation %llu (SOMVR_VERBS_LASTWORDS)",
+	      (unsigned long long)g_vb.lastwords_n);
 	logf_("VERBS END build 26: the Domination's Dismiss by B %llu (SOMVR_VERBS_DISMISS), its Command by Y %llu "
 	      "(SOMVR_VERBS_COMMAND)", (unsigned long long)g_vb.dismisses, (unsigned long long)g_vb.commands);
 	logf_("VERBS END: %llu frames; the left hand: grabs %llu, near misses %llu, releases %llu, done %llu, lost %llu; B held %llu "
