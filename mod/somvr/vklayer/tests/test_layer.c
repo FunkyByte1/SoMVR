@@ -1240,6 +1240,10 @@ static int sc_format(VkFormat game, int64_t want, int copies, int blits, const c
     return 0;
 }
 static int sc_srgb_game(void) { return sc_format(VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB, 2, 0, ": copy"); }
+/* build 27, SOMVR_XR_PERF=on on a device without timestamps or query functions (the fake driver): off once, the frames as before */
+static int sc_perf_noquery(void) {
+    return sc_format(VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB, 2, 0, "perf: off for this run: ");
+}
 static int sc_blit(void) { /* BGRA game, the runtime only offers RGBA: blit (and the log warns about brightness) */
     return sc_format(VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB, 0, 2, "brightness will be off");
 }
@@ -6584,6 +6588,115 @@ static int vm_test_run(int none) {
 static int sc_vrmenu_test(void) { return vm_test_run(0); }
 static int sc_vrmenu_test_none(void) { return vm_test_run(1); }
 
+/* ---- build 27 (re-xr-pipeline.md 119, som-b27-perf2): SOMVR_XR_REFRESH, the headset's refresh rate for the session -- */
+static const mockxr_refresh_info *rr_info(void) { return MOCK(mockxr_refresh_get)(); }
+/* the switch alone (no VR menu): the rate asked once at the session's start, the change event logged */
+static int sc_refresh(void) {
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    for (int f = 0; f < 6; f++) app_present(&a);
+    const mockxr_refresh_info *r = rr_info();
+    CHECK(MOCK(mockxr_ext_enabled)(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) && r->enumerates == 2 && r->requests == 1 &&
+              r->refused == 0 && r->last == 80.0f && r->now == 80.0f && r->events == 1,
+          "the request: enabled %d, enumerates %d, requests %d refused %d, last %.1f now %.1f, events %d",
+          MOCK(mockxr_ext_enabled)(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME), r->enumerates, r->requests, r->refused,
+          (double)r->last, (double)r->now, r->events);
+    CHECK(log_has("xr: refresh: XR_FB_display_refresh_rate enabled; SOMVR_XR_REFRESH=80: asked at the session's start") &&
+              log_has("xr: refresh: the runtime lists 72.0, 80.0, 90.0, 120.0 Hz (XR_SUCCESS); the display 90.0 Hz") &&
+              log_has("xr: refresh: 80 Hz asked (the session's start, SOMVR_XR_REFRESH): 80.0 Hz requested (listed: 72.0, "
+                      "80.0, 90.0, 120.0): XR_SUCCESS (0); the display 90.0 Hz before, 80.0 after") &&
+              log_has("xr: refresh: the display's rate changed 90.0 -> 80.0 Hz (event 1)") && !log_has("xr: event "),
+          "the refresh lines");
+    app_teardown(&a);
+    check_mock_clean();
+    return 0;
+}
+/* a rate the runtime does not list: the highest listed under it; none under it: the lowest */
+static int sc_refresh_pick(void) {
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    for (int f = 0; f < 4; f++) app_present(&a);
+    const mockxr_refresh_info *r = rr_info();
+    CHECK(r->requests == 1 && r->refused == 0 && r->last == 72.0f && r->now == 72.0f && r->events == 1 &&
+              log_has("xr: refresh: 85 Hz asked (the session's start, SOMVR_XR_REFRESH): 72.0 Hz requested (listed: 72.0, "
+                      "90.0)"),
+          "85 Hz among 72, 90: requests %d last %.1f now %.1f", r->requests, (double)r->last, (double)r->now);
+    app_teardown(&a);
+    check_mock_clean();
+    return 0;
+}
+/* off: the extension never enabled (build 26's session); the runtime without it: nothing asked, no WARN */
+static int sc_refresh_quiet(const char *line) {
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    for (int f = 0; f < 4; f++) app_present(&a);
+    CHECK(!MOCK(mockxr_ext_enabled)(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) &&
+              MOCK(mockxr_calls)("xrRequestDisplayRefreshRateFB") == 0 &&
+              MOCK(mockxr_calls)("xrEnumerateDisplayRefreshRatesFB") == 0 && log_has(line) && !log_has("WARN"),
+          "quiet: enabled %d, requests %d, log \"%s\"", MOCK(mockxr_ext_enabled)(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME),
+          MOCK(mockxr_calls)("xrRequestDisplayRefreshRateFB"), line);
+    app_teardown(&a);
+    check_mock_clean();
+    return 0;
+}
+static int sc_refresh_off(void) {
+    return sc_refresh_quiet("xr: refresh: SOMVR_XR_REFRESH=off: XR_FB_display_refresh_rate not enabled");
+}
+static int sc_refresh_absent(void) {
+    return sc_refresh_quiet("xr: refresh: the runtime does not offer XR_FB_display_refresh_rate: its own rate");
+}
+/* the VR menu: the preload's setting (80) asked at the start; the panel's Refresh rate row (shown with the layer's
+ * SOMVR_VMA_REFRESH) clicked > = 90 Hz asked live, published to the preload; its picture says "90 Hz" */
+static int sc_refresh_menu(void) {
+    somvr_settings s;
+    somvr_set_default(&s);
+    s.refresh = 80;
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (input_obj(INW_ALL, 1, SOMVR_INPUT_V2_SIZE) || vrmenu_obj(1, VMA_ALL, &s)) return 1;
+    if (load_layer()) return 1;
+    app_t a;
+    CHECK(app_setup(&a, "Feral3D") == 0, "setup");
+    vmpose rest = {.palm = 0, .left_ok = 1, .right_ok = 0, .uv = {2, 2}}, palm = rest;
+    vm_mono(&a, &rest, 4);
+    const mockxr_refresh_info *r = rr_info();
+    CHECK(r->requests == 1 && r->now == 80.0f &&
+              log_has("xr: refresh: 80 Hz asked (the session's start, the VR menu's setting): 80.0 Hz requested"),
+          "the start: requests %d now %.1f", r->requests, (double)r->now);
+    palm.palm = 1;
+    int n = 0;
+    while (!atomic_load(&g_vm->open) && n++ < 80) vm_mono(&a, &palm, 1);
+    vm_mono(&a, &palm, 2);
+    const uint64_t av = VMA_MONO | SOMVR_VMA_REFRESH;
+    somvr_settings s0 = vm_set();
+    CHECK(atomic_load(&g_vm->open) == 1 && s0.refresh == 80 && vm_picture_is(&s0, av, -1, SOMVR_VMP_NONE),
+          "open: the panel with the Refresh rate row (open %u, refresh %u)", atomic_load(&g_vm->open), s0.refresh);
+    int rc[4], none[4];
+    CHECK(!somvr_vm_rect_av(VMA_MONO, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE, none) &&
+              somvr_vm_rect_av(av, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE, rc),
+          "the row: shown with SOMVR_VMA_REFRESH only");
+    vmpose aim = palm;
+    aim.right_ok = 1;
+    aim.uv[0] = (rc[0] + 0.5f * rc[2]) / SOMVR_VM_TEX_W, aim.uv[1] = (rc[1] + 0.5f * rc[3]) / SOMVR_VM_TEX_H;
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    somvr_settings s1 = vm_set();
+    CHECK(s1.refresh == 90 && r->requests == 2 && r->last == 90.0f && r->now == 90.0f && r->events == 2 &&
+              log_has("xr: refresh: 90 Hz asked (the VR menu): 90.0 Hz requested") &&
+              log_has("xr: refresh: the display's rate changed 80.0 -> 90.0 Hz (event 2)") &&
+              vm_picture_is(&s1, av, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE),
+          "the click: refresh %u, requests %d, last %.1f now %.1f, events %d", s1.refresh, r->requests, (double)r->last,
+          (double)r->now, r->events);
+    vm_mono(&a, &aim, 4);
+    CHECK(r->requests == 2, "asked once per change: %d", r->requests);
+    app_teardown(&a);
+    check_mock_clean();
+    return 0;
+}
+
 static int sc_card(void) { /* build 7: the arrival card (SOMVR_XR_CARD=on) holds the blade off (open), so a grip
                              * squeezed after it came up (a draw at the shoulder, a grab) puts it away; a grip held
                              * through its arrival does not */
@@ -7622,6 +7735,14 @@ static const struct {
     {"quad", sc_quad, "SOMVR_XR_LOADER=@MOCK", 1},
     {"proj", sc_proj, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_LAYER=proj", 1},
     {"srgb-game", sc_srgb_game, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"perf-noquery", sc_perf_noquery, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PERF=on", 1},
+    /* build 27 (re-xr-pipeline.md 119): SOMVR_XR_REFRESH */
+    {"refresh", sc_refresh, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_REFRESH=80 MOCKXR_REFRESH=72,80,90,120", 1},
+    {"refresh-pick", sc_refresh_pick, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_REFRESH=85 MOCKXR_REFRESH=72,90", 1},
+    {"refresh-off", sc_refresh_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_REFRESH=off MOCKXR_REFRESH=72,80,90", 1},
+    {"refresh-absent", sc_refresh_absent, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_REFRESH=80", 1},
+    {"refresh-menu", sc_refresh_menu,
+     "SOMVR_XR_LOADER=@MOCK SOMVR_XR_VM_TEST=off SOMVR_XR_REFRESH=72 MOCKXR_REFRESH=72,80,90,120@72", 1},
     {"blit", sc_blit, "SOMVR_XR_LOADER=@MOCK MOCKXR_FORMATS=43", 1},
     {"endframe-fail", sc_endframe_fail, "SOMVR_XR_LOADER=@MOCK MOCKXR_FAIL=xrEndFrame:3", 1},
     {"submit-fail", sc_submit_fail, "SOMVR_XR_LOADER=@MOCK", 1},

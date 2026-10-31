@@ -1405,6 +1405,8 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 		vb_heads(o, n, pc, root);
 	gc_frame(pcomb, pc, o, n, t); /* build 21, SOMVR_VERBS_CUE: the game's answer for the orc in reach (somvr_combat21_game.c) */
 	fa_frame(pcomb, pc, o, n, root, t); /* build 25, SOMVR_ABOVE: the game's answers for the orc below (somvr_above_game.c) */
+	abl_frame(pcomb, pc, o, n, root, t); /* build 27, SOMVR_ABIL: the abilities' offers (somvr_abil_game.c) */
+	ab2_frame(pcomb, pc, root, t); /* build 27c: the ignite's offer, the throw's and the whistle's starts */
 	struct vb_orc nw[VB_ORCS];
 	for (int i = 0; i < n; i++) {
 		uintptr_t c = o[i].c;

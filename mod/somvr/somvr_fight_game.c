@@ -1283,8 +1283,11 @@ static const char *fight_word(const char *w)
 			return "fight range (SOMVR_HANDS_TEST off, or not ATTACK MIN MAX in 0..1000 cm: ignored)";
 		return fr_range_set(b, lo, hi, "the word") ? "fight range" : "fight range (not set: see the FIGHT range line)";
 	}
-	if (!strcmp(a, "health")) { /* build 16's tests: "fight health N": the nearest orc at Talion (within 8 m) gets N health */
+	if (!strcmp(a, "health")) { /* build 16's tests: "fight health N": the nearest orc at Talion (within 8 m) gets N health;
+				    * build 27b: "fight health N not 0xPTR" - that AI skipped (an ally: Lithariel in "The Rescue") */
 		float hv = (float)atof(b);
+		unsigned long skip = 0;
+		(void)sscanf(w, "%*s %*s %*s not %lx", &skip);
 		uintptr_t pm = 0, obj = 0, pl = g_ft_pl;
 		float root[3];
 		struct cb_orc o[CB_ORCS];
@@ -1295,11 +1298,15 @@ static const char *fight_word(const char *w)
 				pc = 0;
 			m = pcomb ? cb_orcs_r(pcomb, pc, root, 800.0f, o, CB_ORCS) : 0;
 		}
-		uintptr_t own = m ? peek_ptr(o[0].c + C_OWNER) : 0;
-		float h0 = m ? cb_health(o[0].c) : NAN;
-		if (!own || !isfinite(h0) || cb_dead(o[0].c) || !arm_poke(own + CH_HEALTH, &hv, sizeof hv))
+		int k = 0;
+		while (k < m && skip && o[k].c == (uintptr_t)skip)
+			k++;
+		uintptr_t own = k < m ? peek_ptr(o[k].c + C_OWNER) : 0;
+		float h0 = k < m ? cb_health(o[k].c) : NAN;
+		if (!own || !isfinite(h0) || cb_dead(o[k].c) || !arm_poke(own + CH_HEALTH, &hv, sizeof hv))
 			return "fight health (SOMVR_HANDS_TEST off, no live orc within 8 m, or not N in 0..10000: ignored)";
-		logf_("FIGHT health orc=%#lx %.1f -> %.1f (the word; %.0f cm from Talion)", (unsigned long)o[0].c, h0, hv, o[0].dist);
+		logf_("FIGHT health orc=%#lx %.1f -> %.1f (the word; %.0f cm from Talion%s)", (unsigned long)o[k].c, h0, hv, o[k].dist,
+		      k ? "; the nearest skipped: `not`" : "");
 		return "fight health";
 	}
 	if (!strcmp(a, "shield") || !strcmp(a, "class")) { /* build 16's tests: "fight shield game|glance", "fight class speed|cut" */

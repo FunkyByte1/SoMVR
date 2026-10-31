@@ -59,6 +59,7 @@ static struct {
     int panel, panel_bad;   /* SOMVR_XR_PANEL=palm */
     float panel_up, panel_gap;
     int depth, depth_bad;   /* SOMVR_XR_HANDS_DEPTH: 1 world, 0 off */
+    int mem_wc, mem_bad;    /* build 27, SOMVR_XR_HANDS_MEM=wc: the old write-combined vertices (cached by default) */
     float dsoft, dbias;     /* ..._SOFT, ..._BIAS (m) */
     float dheld;            /* ..._HELD: a hand holding a weapon reads the world's depth as Talion's items' (x this) */
     int ddebug;             /* ..._DEBUG=1: the hands show the depth difference (measures, headless) */
@@ -183,6 +184,9 @@ static void vh_config(void) {
         else
             VH.panel_bad = 1;
     }
+    p = getenv("SOMVR_XR_HANDS_MEM"); /* build 27 (re-xr-pipeline.md 115): the vertices in host-cached memory */
+    VH.mem_wc = p && !strcmp(p, "wc");
+    VH.mem_bad = p && *p && !VH.mem_wc && strcmp(p, "cached");
     p = getenv("SOMVR_XR_HANDS_DEPTH");
     VH.depth = somvr_vh_depth_word(p);
     VH.depth_bad = VH.depth < 0;
@@ -534,9 +538,14 @@ static int vh_make(dev_st *ds, uint32_t src_w, uint32_t src_h) {
     }
     VkPhysicalDeviceMemoryProperties mp;
     ds->is->GetPhysicalDeviceMemoryProperties(ds->pd, &mp);
+    hd_prefer_cached(!VH.mem_wc); /* build 27, SOMVR_XR_HANDS_MEM */
     if (hd_create(&VH.hc, ds->dev, &VH.f, &mp, f, ew, eh, (uint32_t)VH.msaa, somvr_vh_indices(&VH.m, 0),
                   somvr_vh_indices(&VH.m, 1), (uint32_t)somvr_vh_nindices(), (uint32_t)somvr_vh_nverts()))
         return vh_off("the drawing: %s", VH.hc.why), -1;
+    lg("xr: hands: the vertices in memory flags 0x%x (%s; SOMVR_XR_HANDS_MEM=%s%s): the CPU reads them back each frame "
+       "(the eyes' boxes)", (unsigned)VH.hc.vb_flags,
+       VH.hc.vb_flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT ? "host-cached" : "write-combined: slow to read",
+       VH.mem_wc ? "wc" : "cached", VH.mem_bad ? ", not cached|wc: cached" : "");
     if (VH.depth) { /* build 11: the world's depth (a failure keeps the hands, without the world) */
         const char *wm = hd_vkw_load(&VH.wf, vh_get, ds);
         if (wm)

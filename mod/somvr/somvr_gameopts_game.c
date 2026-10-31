@@ -62,7 +62,9 @@
  * GO_PROMPT = slot 2 of the three CUIHUDTextManager delegates' vtables (the context: slots 0..3). Read only: GO_OPTIONS
  * = FUN_00c818c0 (the GameOptions object), GO_APPLY = FUN_00cbe980's start (the sound manager from DAT_0466afa8's
  * vf_0x68, master +0x18c, music +0x190 with "options_music" at 0x353598b, both through slot 0xb0), GO_RECNAME =
- * DBRecord_GetName. Order = GOS_*) */
+ * DBRecord_GetName; build 27c: GO_PAUSETUT = the pausing tutorial's delegate slot 2 (CUIHUDPausingTutorial's
+ * CB_OnTutorial call, 0xb0c370: its schema global 0x4b66420 and the field's +0x78 / +0x88 in the bytes; SOMVR_HINTS_PAUSING).
+ * Order = GOS_*) */
 static const struct site_spec g_go_sites_game[] = {
 SITE("GO_RTPC", K_VSLOT, 0x346dac8, 0x346dac0, "70 07 8f 00 00 00 00 00 60 d7 8e 00 00 00 00 00", 0x8ed760, "0f b6 47 08 83 f0 01 48 85 f6 0f 94 c2 08 d0 74"),
 SITE("GO_OPTIONS", K_ENTRY, 0xc818c0, 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 03 48 8d 78 10 e8", 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 03 48 8d 78 10"),
@@ -71,14 +73,15 @@ SITE("GO_HINT", K_VSLOT, 0x351ce10, 0x351ce00, "20 c7 b3 00 00 00 00 00 60 c9 b3
 SITE("GO_TUTORIAL", K_VSLOT, 0x351cd50, 0x351cd40, "20 c6 b3 00 00 00 00 00 b0 c9 b3 00 00 00 00 00 10 cd b3 00 00 00 00 00 20 c9 b3 00 00 00 00 00", 0xb3cd10, "4c 8b 1d 09 97 02 04 48 8b 4a 08 41 54 55 53 41"),
 SITE("GO_PROMPT", K_VSLOT, 0x351cde0, 0x351cdd0, "e0 c6 b3 00 00 00 00 00 a0 ca b3 00 00 00 00 00 d0 cc b3 00 00 00 00 00 60 c8 b3 00 00 00 00 00", 0xb3ccd0, "48 8b 47 18 48 85 c0 74 27 80 3a 00 48 8b b8 e8"),
 SITE("GO_RECNAME", K_ENTRY, 0x25aa530, 0x25aa530, "48 85 ff 74 1b f6 47 01 02 74 15 48 8b 47 20 ba", 0x25aa530, "48 85 ff 74 1b f6 47 01 02 74 15 48 8b 47 20"),
+SITE("GO_PAUSETUT", K_ENTRY, 0xb0c370, 0xb0c370, "4c 8b 15 a9 a0 05 04 48 8b 72 08 41 83 7a 78 01 7e 5e 48 85 f6 0f 84 35 01 00 00 41 0f b6 82 88", 0xb0c370, "4c 8b 15 a9 a0 05 04 48 8b 72 08 41 83 7a 78"),
 };
 /* GAMEOPTS_SITES_END */
-enum { GOS_RTPC, GOS_OPTIONS, GOS_APPLY, GOS_HINT, GOS_TUTORIAL, GOS_PROMPT, GOS_RECNAME, GOS_N };
+enum { GOS_RTPC, GOS_OPTIONS, GOS_APPLY, GOS_HINT, GOS_TUTORIAL, GOS_PROMPT, GOS_RECNAME, GOS_PAUSETUT, GOS_N };
 _Static_assert(sizeof g_go_sites_game / sizeof g_go_sites_game[0] == GOS_N, "gameopts sites");
 static const struct site_spec *g_go_sites = g_go_sites_game; /* selftest: stand-ins */
 /* the game's objects (selftest: stand-ins): the sound manager's holder (GO_APPLY's `mov rdi, [0x466afa8]`), the
  * GameOptions music float (GO_APPLY's `movss xmm0, [rbx+0x190]`, the music slider's init FUN_00bd92b0) */
-static struct { uintptr_t snd_pp; uintptr_t opt_music; } g_gog = { 0x466afa8, 0x190 };
+static struct { uintptr_t snd_pp; uintptr_t opt_music; uintptr_t tut_sch_pp; } g_gog = { 0x466afa8, 0x190, 0x4b66420 };
 #define GO_SND_GET 0x68     /* the holder's vf: the sound manager */
 #define GO_MUSIC "options_music"
 #define GO_DIALOG "options_dialog" /* SOMVR_LOAD_VOICES: FUN_00cbe980's `movss xmm0, [rbx+0x194]; mov esi, 0x3535999` */
@@ -133,9 +136,13 @@ static struct {
 	 * each passed tutorial's record properties logged once */
 	char tut_keep[4][32];
 	int ntut_keep;
-	uintptr_t tut_seen[16];
+	uintptr_t tut_seen[32];
 	_Atomic int ntut_seen;
 	_Atomic uint64_t n_tut_kept;
+	/* build 27c (som-b27-story4, re-xr-pipeline.md 120): SOMVR_HINTS_PAUSING - a tutorial the game pauses for passes */
+	int pause_on;                /* SOMVR_HINTS_PAUSING=on and GO_PAUSETUT matched */
+	int pause_logged;            /* the pausing field's line written (once) */
+	_Atomic uint64_t n_tut_paused; /* tutorials passed by the rule */
 	double next_tick;
 	uint32_t tick_lines;
 	int vis_mode;                /* SOMVR_VISION: 0 off (build 9's 243), 1 hold, 2 tap */
@@ -161,9 +168,11 @@ static struct log_late g_go_late;
  * = set, its u16 +0xe the value's slot (a float for a duration). The value's address, or 0 (not set / unreadable) */
 #define GO_VSCHEMA 0x4c25d20 /* DAT_04c25d20: the vision record's schema (FUN_02608950 fills it) */
 #define GO_VM_REC 0x28       /* PlayerVisionMode: the vision record */
-static uintptr_t go_rec_field(uintptr_t rec, uint32_t hash)
+static uintptr_t go_rec_field_t(uintptr_t rec, uint32_t hash, int *type)
 {
 	uint8_t hd[2];
+	if (type)
+		*type = -1;
 	uintptr_t ents = 0, vals = 0;
 	if (!rec || !peek(rec, hd, 2) || !peek(rec + 8, &ents, 8) || !peek(rec + 0x10, &vals, 8) || !ents || !vals)
 		return 0;
@@ -179,10 +188,13 @@ static uintptr_t go_rec_field(uintptr_t rec, uint32_t hash)
 			return 0;
 		uint16_t set, slot;
 		memcpy(&set, e + 0xc, 2), memcpy(&slot, e + 0xe, 2);
+		if (type) /* the value's kind (0xa = a reference: the pausing tutorial's test, FUN_00b0c370) */
+			*type = e[0xa] & 0x3f;
 		return set ? vals + 8u * slot : 0;
 	}
 	return 0;
 }
+static uintptr_t go_rec_field(uintptr_t rec, uint32_t hash) { return go_rec_field_t(rec, hash, NULL); }
 /* the vision record now (PlayerVisionMode+0x28; 0 = none) */
 static uintptr_t go_vis_rec(void)
 {
@@ -314,6 +326,20 @@ static void go_rec_name(uintptr_t rec, char *buf, size_t cap)
 }
 
 static void co_props(uintptr_t tbl, char *s, size_t cap, char *key, size_t kcap); /* somvr_collect_game.c */
+/* a tutorial record's properties, logged once per record (build 27c: dropped ones too - the data that tells them apart) */
+static void go_tut_props(uintptr_t rec, const char *why)
+{
+	int n = atomic_load(&g_go.ntut_seen), seen = 0;
+	for (int i = 0; i < n && i < 32; i++)
+		seen |= g_go.tut_seen[i] == rec;
+	if (seen || n >= 32 || !rec)
+		return;
+	char s[1000], nm[64];
+	g_go.tut_seen[n] = rec, atomic_store(&g_go.ntut_seen, n + 1);
+	go_rec_name(rec, nm, sizeof nm);
+	co_props(rec, s, sizeof s, NULL, 0);
+	logf_("HINTS tutorial record %#lx '%s' (%s):%s", (unsigned long)rec, nm, why, s);
+}
 /* build 24, SOMVR_HINTS_KEEP_TUT: 1 = this tutorial passes (its record's name starts with a prefix); its properties
  * logged at its first pass */
 static int go_tut_keep(uintptr_t rec)
@@ -326,16 +352,48 @@ static int go_tut_keep(uintptr_t rec)
 	if (!k)
 		return 0;
 	atomic_fetch_add(&g_go.n_tut_kept, 1);
-	int n = atomic_load(&g_go.ntut_seen), seen = 0;
-	for (int i = 0; i < n && i < 16; i++)
-		seen |= g_go.tut_seen[i] == rec;
-	if (!seen && n < 16) {
-		char s[1000];
-		g_go.tut_seen[n] = rec, atomic_store(&g_go.ntut_seen, n + 1);
-		co_props(rec, s, sizeof s, NULL, 0);
-		logf_("HINTS tutorial record %#lx '%s' (kept):%s", (unsigned long)rec, nm, s);
-	}
+	go_tut_props(rec, "kept");
 	return 1;
+}
+
+/* build 27c (som-b27-story4, re-xr-pipeline.md 120), SOMVR_HINTS_PAUSING: 1 = the game pauses for this tutorial. The
+ * game's TutorialParams go to two delegates: the HUD's text manager (GO_TUTORIAL, where SOMVR_HINTS=off drops) and
+ * CUIHUDPausingTutorial's (GO_PAUSETUT, FUN_00b0c370, not patched). That one shows its page (FUN_00b0a610: the game
+ * paused until the tutorial's button) only when the record's field named by the tutorial schema (*0x4b66420: the field's
+ * hash at +0x68; with +0x78 > 1 its index into the record's entries at +0x88) is set to a nonzero reference (the entry's
+ * kind & 0x3f = 0xa). The same test here, read only: 1 = it pauses (*page = the field's value), 0 = no page (the text
+ * manager's text only: an in-play lesson), -1 = unreadable (the schema not built, the record unreadable) */
+#define GO_TS_HASH 0x68  /* the schema: the page field's hash (FUN_00b0c370's `mov ebx, [r10+0x68]`) */
+#define GO_TS_FAST 0x78  /* ... > 1: the quick path by index */
+#define GO_TS_INDEX 0x88 /* ... its index (byte) */
+static int go_tut_pauses(uintptr_t rec, uintptr_t *page)
+{
+	uintptr_t sch = peek_ptr(g_gog.tut_sch_pp), ents = 0, vals = 0, a = 0;
+	int32_t fast = 0;
+	uint32_t h = 0;
+	uint8_t idx = 0;
+	*page = 0;
+	if (!sch || !rec || !peek(sch + GO_TS_FAST, &fast, 4) || !peek(sch + GO_TS_HASH, &h, 4) ||
+	    !peek(sch + GO_TS_INDEX, &idx, 1) || !peek(rec + 8, &ents, 8) || !peek(rec + 0x10, &vals, 8) || !ents || !vals)
+		return -1;
+	if (fast > 1) { /* the game's quick path: the schema's index straight into the record's entries */
+		uint8_t e[16];
+		uint16_t set, slot;
+		if (!peek(ents + 16u * idx, e, 16))
+			return -1;
+		memcpy(&set, e + 0xc, 2), memcpy(&slot, e + 0xe, 2);
+		a = set ? vals + 8u * slot : 0;
+	} else {
+		int type;
+		a = go_rec_field_t(rec, h, &type);
+		a = type == 0xa ? a : 0;
+	}
+	if (!g_go.pause_logged) /* the game thread only */
+		g_go.pause_logged = 1,
+		logf_("HINTS the pausing tutorial's page field: hash %08x (schema %#lx, +0x78 %d: %s, index %u) - a tutorial "
+		      "with it set pauses the game (SOMVR_HINTS_PAUSING)", h, (unsigned long)sch, fast,
+		      fast > 1 ? "by index" : "by hash", idx);
+	return a && peek(a, page, 8) && *page ? 1 : 0;
 }
 
 /* the three delegates' slot 2 (the game thread): log, drop a hint's or a tutorial's show with SOMVR_HINTS=off */
@@ -353,11 +411,18 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 	int drop = ok && show && mode == GO_HINTS_OFF && ev != GO_EV_PROMPT;
 	/* somvr_collect_game.c: SOMVR_HINTS_KEEP's hints pass (the collectibles' wraith-vision tutorial) */
 	int kept = drop && ev == GO_EV_HINT && co_hint_keep(rec);
-	if (drop && ev == GO_EV_TUTORIAL && g_go.ntut_keep) /* build 24: SOMVR_HINTS_KEEP_TUT */
+	/* build 27c: SOMVR_HINTS_PAUSING - a tutorial the game pauses for passes (its page, its text) */
+	uintptr_t page = 0;
+	int pauses = drop && ev == GO_EV_TUTORIAL && g_go.pause_on && go_tut_pauses(rec, &page) == 1;
+	if (pauses)
+		kept = 2, atomic_fetch_add(&g_go.n_tut_paused, 1), go_tut_props(rec, "pauses the game");
+	if (drop && ev == GO_EV_TUTORIAL && !kept && g_go.ntut_keep) /* build 24: SOMVR_HINTS_KEEP_TUT */
 		kept = go_tut_keep(rec);
 	drop = drop && !kept;
 	if (drop && ev == GO_EV_TUTORIAL) /* build 27: a pause right after it = this tutorial's (somvr_session_game.c) */
-		go_rec_name(rec, g_ss_tut_nm, sizeof g_ss_tut_nm), g_ss_tut_t = mono();
+		go_rec_name(rec, g_ss_tut_nm, sizeof g_ss_tut_nm), g_ss_tut_t = mono(), go_tut_props(rec, "dropped");
+	if (pauses) /* build 27c: and its pause seen (or not) after it */
+		go_rec_name(rec, g_ss_ptut_nm, sizeof g_ss_ptut_nm), g_ss_ptut_t = mono();
 	uint64_t n = atomic_fetch_add_explicit(&g_go.n_ev[ev], 1, memory_order_relaxed) + 1;
 	atomic_fetch_add_explicit(&g_go.n_show[ev], (uint64_t)show, memory_order_relaxed);
 	atomic_fetch_add_explicit(&g_go.n_drop[ev], (uint64_t)drop, memory_order_relaxed);
@@ -367,9 +432,13 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 		go_rec_name(rec, nm, sizeof nm);
 		if (!nm[0] && ok && ev == GO_EV_HINT) /* (the hint records have no name: their text key, somvr_collect_game.c) */
 			snprintf(nm, sizeof nm, "%s", co_hint_key(rec));
+		char pg[96] = "";
+		if (pauses)
+			snprintf(pg, sizeof pg, ": kept (it pauses the game: SOMVR_HINTS_PAUSING; its page %#lx)", (unsigned long)page);
 		logf_("HINTS %s #%llu t=%.3f: %s '%s' (record %#lx)%s", g_go_ev_name[ev], (unsigned long long)n, mono(),
 		      !ok ? "unreadable" : show ? "show" : "hide", nm, (unsigned long)rec,
 		      drop ? ": dropped (SOMVR_HINTS=off: what the game's Display Combat Hints off does)"
+		      : kept == 2 ? pg
 		      : kept ? (ev == GO_EV_TUTORIAL ? ": kept (SOMVR_HINTS_KEEP_TUT)" : ": kept (SOMVR_HINTS_KEEP)") : ": passed on");
 	}
 	if (!drop)
@@ -729,6 +798,8 @@ static void go_start(const struct site_spec *sites, int *bad)
 			p += n + (p[n] == ',');
 		}
 	}
+	/* build 27c: SOMVR_HINTS_PAUSING=off|on (default on) - with SOMVR_HINTS=off a tutorial the game pauses for passes */
+	int pause_want = env_word("SOMVR_HINTS_PAUSING", (const char *const[]){ "off", "on" }, 2, 1);
 	static const char *const vis_w[] = { "off", "hold", "tap" };
 	g_go.vis_mode = env_word("SOMVR_VISION", vis_w, 3, 0);
 	somvr_vis_cfg_default(&g_go.vis_cfg);
@@ -804,6 +875,14 @@ static void go_start(const struct site_spec *sites, int *bad)
 						       "pass" : "every hint, tutorial and prompt logged and passed on",
 		      g_go.hi_ok[0] ? "hooked" : "NOT hooked", g_go.hi_ok[1] ? "hooked" : "NOT hooked",
 		      g_go.hi_ok[2] ? "hooked (logged)" : "NOT hooked", g_go.ok_name ? "on" : "off (GO_RECNAME)");
+		g_go.pause_on = pause_want && g_go.hi_ok[GO_EV_TUTORIAL] && ok[GOS_PAUSETUT];
+		if (g_go.hint_want == GO_HINTS_OFF)
+			logf_("CONFIG hints_pausing=%s (SOMVR_HINTS_PAUSING, build 27c%s): %s", pause_want ? "on" : "off",
+			      pause_want ? ", the default" : "",
+			      g_go.pause_on ? "a tutorial the game pauses for passes SOMVR_HINTS=off - the test of the pausing tutorial's "
+					      "own delegate (GO_PAUSETUT: its page field set); the in-play lessons and combat hints stay dropped"
+			      : pause_want ? "NOT on: GO_PAUSETUT did not match (or the tutorial delegate is not hooked)"
+					   : "every tutorial dropped but SOMVR_HINTS_KEEP_TUT's (build 27b)");
 		if (g_go.ntut_keep)
 			logf_("CONFIG hints_keep_tut=%s%s%s%s%s%s%s (SOMVR_HINTS_KEEP_TUT): tutorial texts whose record name starts so pass "
 			      "with SOMVR_HINTS=off (a story mission's own lesson; the archers' comes while the game has every combat "
@@ -831,12 +910,13 @@ static void go_end_log(void)
 		return;
 	logf_("GAMEOPTS END music %s: share %.0f%%, options_music set by the game %llu times (last %.3f), by the menu %llu "
 	      "(last %.3f), other options passed %llu, RTPC calls %llu; hints %s: combat hints %llu (shown %llu, dropped %llu), "
-	      "tutorials %llu (shown %llu, dropped %llu), prompts %llu (shown %llu)", g_go.mu_on ? "on" : "off",
+	      "tutorials %llu (shown %llu, dropped %llu, passed as pausing %llu), prompts %llu (shown %llu)", g_go.mu_on ? "on" : "off",
 	      go_f(&g_go.mu_share) * 100, (unsigned long long)atomic_load(&g_go.n_music), go_f(&g_go.mu_game),
 	      (unsigned long long)atomic_load(&g_go.n_ours), g_go.mu_applied, (unsigned long long)atomic_load(&g_go.n_other_opts),
 	      (unsigned long long)atomic_load(&g_go.n_rtpc), g_go_hint_w[atomic_load(&g_go.hint_mode)],
 	      (unsigned long long)atomic_load(&g_go.n_ev[0]), (unsigned long long)atomic_load(&g_go.n_show[0]),
 	      (unsigned long long)atomic_load(&g_go.n_drop[0]), (unsigned long long)atomic_load(&g_go.n_ev[1]),
 	      (unsigned long long)atomic_load(&g_go.n_show[1]), (unsigned long long)atomic_load(&g_go.n_drop[1]),
-	      (unsigned long long)atomic_load(&g_go.n_ev[2]), (unsigned long long)atomic_load(&g_go.n_show[2]));
+	      (unsigned long long)atomic_load(&g_go.n_tut_paused), (unsigned long long)atomic_load(&g_go.n_ev[2]),
+	      (unsigned long long)atomic_load(&g_go.n_show[2]));
 }

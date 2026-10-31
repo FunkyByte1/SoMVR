@@ -32,6 +32,12 @@
  *                           cube atlas (SOMVR_ENV_CUBE_W x the image height)
  *   MOCKXR_MAX_LAYERS=n     build 8: xrGetSystemProperties reports maxLayerCount n (default 16); more in a frame is a
  *                           violation (LAYER_LIMIT_EXCEEDED)
+ *   MOCKXR_REFRESH=a,b,..[@now] build 27: XR_FB_display_refresh_rate offered (an extension besides MOCKXR_EXTS) with
+ *                           these rates (Hz; at most 8), the display at `now` (default 90 if listed, else the first);
+ *                           a request for a listed rate changes it at once and queues one
+ *                           XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB, an unlisted one is refused
+ *                           (XR_ERROR_DISPLAY_REFRESH_RATE_UNSUPPORTED_FB); its functions without the extension enabled
+ *                           are not given (XR_ERROR_FUNCTION_UNSUPPORTED), without a live session a violation
  *   MOCKXR_UNLOAD_AT_EXIT=1 build 16: the first xrCreateInstance registers an exit handler that "unloads the runtime"
  *                           (as the OpenXR loader's static destructor dlcloses it at exit): every XR call after it is
  *                           counted (mockxr_after_unload) and a violation - the real runtime's code would be unmapped
@@ -93,6 +99,10 @@ static struct {
     char exts[4][XR_MAX_EXTENSION_NAME_SIZE]; /* MOCKXR_EXTS: offered */
     int nexts, ext_on[4], ext_eq;         /* enabled (by index); XR_KHR_composition_layer_equirect2 enabled */
     int locates, locate_bad, locates_space;
+    float rr[8];                          /* build 27: MOCKXR_REFRESH's rates */
+    int nrr, rr_ext, rr_ev;               /* the extension's index in exts (-1 none); an event queued */
+    float rr_from;
+    mockxr_refresh_info rri;
     struct {
         int live, acq, waited, released_ever, released_frame;
         uint32_t next_img;
@@ -188,6 +198,21 @@ __attribute__((constructor)) static void mock_env(void) {
         size_t L = strcspn(ex, ",");
         snprintf(M.exts[M.nexts++], sizeof M.exts[0], "%.*s", (int)L, ex);
         ex += L;
+    }
+    M.rr_ext = -1;
+    if (getenv("MOCKXR_REFRESH") && M.nexts < 4) { /* build 27: XR_FB_display_refresh_rate */
+        const char *r = getenv("MOCKXR_REFRESH"), *at = strchr(r, '@');
+        for (char *e; M.nrr < 8 && *r && *r != '@'; r = *e == ',' ? e + 1 : e) {
+            float v = strtof(r, &e);
+            if (e == r) break;
+            M.rr[M.nrr++] = v;
+        }
+        M.rri.now = at ? strtof(at + 1, NULL) : 0;
+        for (int k = 0; !at && k < M.nrr; k++)
+            if (M.rr[k] == 90.0f) M.rri.now = 90.0f;
+        if (!(M.rri.now > 0) && M.nrr) M.rri.now = M.rr[0];
+        M.rr_ext = M.nexts;
+        snprintf(M.exts[M.nexts++], sizeof M.exts[0], "%s", XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
     }
     M.tramp_name = getenv("MOCKVK_TRAMP_NAME") ? getenv("MOCKVK_TRAMP_NAME") : MOCK_GPU_NAME;
     Q.focus_at = getenv("MOCKXR_FOCUS_AT") ? atoi(getenv("MOCKXR_FOCUS_AT")) : 0;
@@ -406,6 +431,15 @@ static XrResult m_xrPollEvent(XrInstance i, XrEventDataBuffer *ev) {
     (void)i;
     if (HIT()) return FAILR;
     if (ev->type != XR_TYPE_EVENT_DATA_BUFFER) viol("xrPollEvent: buffer type");
+    if (M.rr_ev && M.sess_live) { /* build 27: the display's rate changed */
+        M.rr_ev = 0;
+        M.rri.events++;
+        *(XrEventDataDisplayRefreshRateChangedFB *)ev =
+            (XrEventDataDisplayRefreshRateChangedFB){.type = XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB,
+                                                     .fromDisplayRefreshRate = M.rr_from,
+                                                     .toDisplayRefreshRate = M.rri.now};
+        return XR_SUCCESS;
+    }
     XrSessionState st = XR_SESSION_STATE_UNKNOWN;
     if (M.recenter_at && M.ends >= M.recenter_at && !M.recenter_sent && M.running) {
         M.recenter_sent = 1;
@@ -1189,6 +1223,39 @@ static XrResult m_xrStopHapticFeedback(XrSession s, const XrHapticActionInfo *hi
     return focused() ? XR_SUCCESS : XR_SESSION_NOT_FOCUSED;
 }
 
+/* build 27: XR_FB_display_refresh_rate (MOCKXR_REFRESH) */
+static int rr_check(XrSession s, const char *what) {
+    if (M.rr_ext < 0 || !M.ext_on[M.rr_ext]) return viol(what), 0; /* (gipa does not give them then) */
+    if (s != XR_SESS || !M.sess_live) return viol("XR_FB_display_refresh_rate: no live session"), 0;
+    return 1;
+}
+static XrResult m_xrEnumerateDisplayRefreshRatesFB(XrSession s, uint32_t cap, uint32_t *n, float *r) {
+    if (HIT()) return FAILR;
+    if (!rr_check(s, "xrEnumerateDisplayRefreshRatesFB without the extension")) return XR_ERROR_VALIDATION_FAILURE;
+    M.rri.enumerates++;
+    *n = (uint32_t)M.nrr;
+    if (cap && cap < *n) return XR_ERROR_SIZE_INSUFFICIENT;
+    for (uint32_t k = 0; cap && k < *n; k++) r[k] = M.rr[k];
+    return XR_SUCCESS;
+}
+static XrResult m_xrGetDisplayRefreshRateFB(XrSession s, float *r) {
+    if (HIT()) return FAILR;
+    if (!rr_check(s, "xrGetDisplayRefreshRateFB without the extension")) return XR_ERROR_VALIDATION_FAILURE;
+    *r = M.rri.now;
+    return XR_SUCCESS;
+}
+static XrResult m_xrRequestDisplayRefreshRateFB(XrSession s, float r) {
+    if (HIT()) return FAILR;
+    if (!rr_check(s, "xrRequestDisplayRefreshRateFB without the extension")) return XR_ERROR_VALIDATION_FAILURE;
+    int listed = 0;
+    for (int k = 0; k < M.nrr; k++) listed |= M.rr[k] == r;
+    M.rri.last = r;
+    if (!listed) return M.rri.refused++, XR_ERROR_DISPLAY_REFRESH_RATE_UNSUPPORTED_FB;
+    M.rri.requests++;
+    if (r != M.rri.now) M.rr_from = M.rri.now, M.rri.now = r, M.rr_ev = 1;
+    return XR_SUCCESS;
+}
+
 static XrResult m_xrGetInstanceProcAddr(XrInstance inst, const char *name, PFN_xrVoidFunction *fn);
 #define FN(n) {#n, (PFN_xrVoidFunction)m_##n},
 static const struct {
@@ -1208,11 +1275,14 @@ static const struct {
     FN(xrStringToPath) FN(xrPathToString) FN(xrCreateActionSet) FN(xrDestroyActionSet) FN(xrCreateAction)
     FN(xrSuggestInteractionProfileBindings) FN(xrCreateActionSpace) FN(xrAttachSessionActionSets) FN(xrSyncActions)
     FN(xrGetActionStateBoolean) FN(xrGetActionStateFloat) FN(xrGetActionStateVector2f) FN(xrGetActionStatePose)
-    FN(xrGetCurrentInteractionProfile) FN(xrLocateSpace) FN(xrApplyHapticFeedback) FN(xrStopHapticFeedback)};
+    FN(xrGetCurrentInteractionProfile) FN(xrLocateSpace) FN(xrApplyHapticFeedback) FN(xrStopHapticFeedback)
+    FN(xrEnumerateDisplayRefreshRatesFB) FN(xrGetDisplayRefreshRateFB) FN(xrRequestDisplayRefreshRateFB)};
 
 static XrResult m_xrGetInstanceProcAddr(XrInstance inst, const char *name, PFN_xrVoidFunction *fn) {
     HIT();
     (void)inst;
+    if (strstr(name, "DisplayRefreshRate") && (M.rr_ext < 0 || !M.ext_on[M.rr_ext])) /* build 27: the extension's */
+        return *fn = NULL, XR_ERROR_FUNCTION_UNSUPPORTED;
     for (size_t i = 0; i < sizeof g_fns / sizeof g_fns[0]; i++)
         if (!strcmp(name, g_fns[i].n)) return *fn = g_fns[i].f, XR_SUCCESS;
     *fn = NULL;
@@ -1304,6 +1374,8 @@ EXPORT int mockxr_ext_enabled(const char *name) { /* SoM loading env: the last x
         if (!strcmp(M.exts[k], name)) return M.ext_on[k];
     return 0;
 }
+EXPORT const mockxr_refresh_info *mockxr_refresh_get(void);
+EXPORT const mockxr_refresh_info *mockxr_refresh_get(void) { return &M.rri; } /* build 27 */
 EXPORT int mockxr_view_live(void);
 EXPORT int mockxr_view_live(void) { return (M.view_live & 1) + (M.view_live >> 1 & 1); }
 EXPORT const mockxr_end *mockxr_last_end(void);

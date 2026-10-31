@@ -196,6 +196,8 @@ static const char *jp_why_not(double t)
 		return "the wraith step aims";
 	if (game_paused())
 		return "paused";
+	if (vm_open_recent()) /* build 27 (re-xr-pipeline.md 112.3): A at the card or the panel is theirs */
+		return "the VR menu or the controls card is up";
 	if (!pr_down_ok())
 		return "a blink runs";
 	if (g_jp.s.kind != SOMVR_JPK_NONE)

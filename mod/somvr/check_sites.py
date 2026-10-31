@@ -42,7 +42,7 @@ SOMVR_SKIP_SPLASH block of somvr_session_game.c (SESSION_SITES_BEGIN ... SESSION
 patched call SS_SPLASH and the read-only no-splash test SS_SPLASH_FLAG) and the SOMVR_MUSIC / SOMVR_HINTS block of
 somvr_gameopts_game.c (GAMEOPTS_SITES_BEGIN ... GAMEOPTS_SITES_END, re-xr-pipeline.md 34: the sound manager's patched
 slot GO_RTPC, the HUD text delegates' patched slots GO_HINT / GO_TUTORIAL / GO_PROMPT, the read-only GO_OPTIONS,
-GO_APPLY and GO_RECNAME) and the SOMVR_PAD_PROMPTS block of somvr_prompts_game.c (PADPROMPTS_SITES_BEGIN ...
+GO_APPLY, GO_RECNAME and GO_PAUSETUT) and the SOMVR_PAD_PROMPTS block of somvr_prompts_game.c (PADPROMPTS_SITES_BEGIN ...
 PADPROMPTS_SITES_END, re-bow.md 13: the HUD prompt delegates' patched slots PP_SHOW / PP_HIDE / PP_HOLD) and the
 SOMVR_BOW_HITLOG block of somvr_bowhit_game.c (BOWHIT_SITES_BEGIN ... BOWHIT_SITES_END: the patched call BOW_PJ_HIT) and
 the SOMVR_EXECUTE block of somvr_execute_game.c (EXECUTE_SITES_BEGIN ... EXECUTE_SITES_END: 5 read-only K_ENTRY proofs of
@@ -297,10 +297,11 @@ def main():
         go = [m for b in text.split("GAMEOPTS_SITES_BEGIN")[1:] for m in re.findall(
             r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
             r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("GAMEOPTS_SITES_END", 1)[0])]
-        if len(go) != 7 or [m[1] for m in go] != ["K_VSLOT", "K_ENTRY", "K_ENTRY", "K_VSLOT", "K_VSLOT", "K_VSLOT", "K_ENTRY"]:
-            sys.exit("expected 7 SITE lines in somvr_gameopts_game.c's GAMEOPTS_SITES block (the patched GO_RTPC K_VSLOT, the "
+        if len(go) != 8 or [m[1] for m in go] != ["K_VSLOT", "K_ENTRY", "K_ENTRY", "K_VSLOT", "K_VSLOT", "K_VSLOT", "K_ENTRY",
+                                                  "K_ENTRY"]:
+            sys.exit("expected 8 SITE lines in somvr_gameopts_game.c's GAMEOPTS_SITES block (the patched GO_RTPC K_VSLOT, the "
                      "read-only GO_OPTIONS, GO_APPLY K_ENTRY, the patched GO_HINT, GO_TUTORIAL, GO_PROMPT K_VSLOT, the "
-                     "read-only GO_RECNAME K_ENTRY), found %d" % len(go))
+                     "read-only GO_RECNAME, GO_PAUSETUT K_ENTRY), found %d" % len(go))
     # SOMVR_PAD_PROMPTS (the bow's round 2): its block lives in somvr_prompts_game.c (read with SOURCE.c above)
     pp = []
     if re.search(r'^#include "somvr_prompts_game\.c"', text, re.M):

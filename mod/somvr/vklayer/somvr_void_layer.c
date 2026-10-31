@@ -455,7 +455,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_QueueSubmit(VkQueue q, uint32_t n, const
     dev_st *ds = ka_qdev(q);
     if (!ds || !ds->QueueSubmit) return VK_ERROR_DEVICE_LOST;
     int l = ka_qlock(q);
-    VkResult r = ds->QueueSubmit(q, n, si, f);
+    VkResult r = PF.on ? pf_submit(ds, q, n, si, f) : ds->QueueSubmit(q, n, si, f); /* SOMVR_XR_PERF: timed */
     ka_qunlock(l);
     return r;
 }

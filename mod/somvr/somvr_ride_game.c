@@ -68,6 +68,9 @@ static const char *const g_rd_state_names[] = { "off", "getting on", "seated", "
 
 static struct {
 	int on, align, guard, trace_max, counter, face, seat_on;
+	int win_rest, in_win;               /* build 27c: SOMVR_RIDE_WIN_REST; a window open last tick */
+	uint32_t raw_prev, win_mask, rest_bits; /* ... the buttons last tick (unmasked), held since before the window, resting */
+	uint64_t win_rests;                 /* windows the mounted buttons rested through */
 	double press_mount_until, mount_wait_until; /* the mount's 123 pressed until; the view held until (the run onto it) */
 	int sq_dn, b_was, offered_was, dom_was, dom_hold_was;
 	uint64_t dom_holds;
@@ -164,6 +167,7 @@ static void mt_config(int *bad)
 	g_mt.align = env_word("SOMVR_RIDE_ALIGN", onoff_w, 2, 1);
 	g_mt.counter = g_mt.on && env_word("SOMVR_RIDE_COUNTER", onoff_w, 2, 1);
 	g_mt.seat_on = env_word("SOMVR_RIDE_SEAT", onoff_w, 2, 1);
+	g_mt.win_rest = env_word("SOMVR_RIDE_WIN_REST", onoff_w, 2, 1);
 	g_mt.dom_hold_s = env_float("SOMVR_RIDE_DOM_HOLD_MS", 1500, 0, 4500, bad) / 1000;
 	g_mt.trace_max = (int)env_float("SOMVR_RIDE_TRACE", 0, 0, 100000, bad);
 	g_mt.bcfg.trig_on = 0.6f, g_mt.bcfg.trig_off = 0.4f;
@@ -186,6 +190,11 @@ static void mt_config(int *bad)
 	      c->seat[1][2], c->off_s, c->off_cmps, c->y_s[0] * 1000, c->y_s[1] * 1000, c->yaw_s * 1000, c->yaw_dps,
 	      g_mt.settle_s * 1000, g_mt.align ? "on" : "off", g_mt.counter ? "on" : "off", g_mt.dom_hold_s * 1000, g_mt.seat_on ? "on" : "off",
 	      g_mt.trace_max);
+	logf_("CONFIG ride win_rest=%s (SOMVR_RIDE_WIN_REST, build 27c%s): %s", g_mt.win_rest ? "on" : "off",
+	      g_mt.win_rest ? ", the default" : "", g_mt.win_rest ? "while a window is open (a presentation, a failed or "
+	      "result screen) a press is the screen's (SOMVR_USE: skip, Retry, Back, Abandon), never the beast's - it acts only "
+	      "once let go after it; a button held since before the window goes on (a held run through a banner), never B" :
+	      "the mounted buttons act through a window (build 27: B on a screen got Talion off, A's Retry leapt)");
 }
 
 static int mt_riding(void) { return g_mt.on && g_mt.beast_ok && g_mt.state != MT_OFF; }
@@ -806,6 +815,21 @@ static void mt_tick(sc_tick_out *o, double t)
 		o->move[0] = m[0], o->move[1] = m[1], o->pad[SC_PAD_LX] = m[0], o->pad[SC_PAD_LY] = m[1];
 		o->pad_on |= 1u << SC_PAD_LX | 1u << SC_PAD_LY;
 	}
+	/* build 27c (som-b27-story4, re-xr-pipeline.md 120): a window (SOMVR_BODYMOMENTS': a presentation, a failed or a
+	 * result screen) has A B X Y (SOMVR_USE: the skip, Retry, a result's Back, Abandon). A press made in it is the
+	 * screen's and never the beast's: boot 20261030-163325 - B on a Retry's window also pressed 123, Talion got off the
+	 * beast the Retry had just put him on (the mission's caragor then never offered again); boot -195017 - A's Retry
+	 * also leapt (16) and Talion was off 1.3 s later. A button held since before the window goes on through it (a
+	 * banner's window in a chase - "Stop the runner" - does not stop a held run), but never B (off). A press made in
+	 * the window acts only once let go after it */
+	int win = g_mt.win_rest && g_bm.on && g_bm.last_win, win_start = win && !g_mt.in_win;
+	if (win != g_mt.in_win && mt_log_ok())
+		logf_("RIDE t=%.3f %s", t, win ? "a window while seated: a press is the screen's, not the beast's; held ones go on, "
+		      "never B (SOMVR_RIDE_WIN_REST)" : "the window is over: its presses act once let go");
+	g_mt.win_rests += win_start;
+	g_mt.in_win = win;
+	if (win_start)
+		g_mt.win_mask = g_mt.raw_prev & ~SOMVR_RDB_OFF;
 	const somvr_hand_in *R = &g_inp.st.hand[SOMVR_HAND_R];
 	float rt = (R->active & SOMVR_HACT_INPUT) ? R->trigger : NAN;
 	uint32_t dn0 = g_inp.ctl.down[SOMVR_HAND_L], dn1 = g_inp.ctl.down[SOMVR_HAND_R];
@@ -813,6 +837,14 @@ static void mt_tick(sc_tick_out *o, double t)
 	uint32_t was = g_mt.held;
 	g_mt.held = somvr_rd_btn_step(&g_mt.btn, &g_mt.bcfg, (dn1 & SOMVR_BTN_LOWER) != 0, (dn1 & SOMVR_BTN_UPPER) != 0, rt,
 				      (dn0 & SOMVR_BTN_STICK) != 0, stick);
+	uint32_t raw = g_mt.held; /* build 27c: SOMVR_RIDE_WIN_REST's masks (above) */
+	g_mt.raw_prev = raw;
+	if (win) {
+		g_mt.win_mask &= raw; /* a held button let go in the window is the screen's from then on */
+		g_mt.rest_bits |= raw & ~g_mt.win_mask;
+	}
+	g_mt.rest_bits &= raw; /* let go: acts again */
+	g_mt.held = raw & ~g_mt.rest_bits;
 	/* build 27 (109.4, boot 20261030-044056): the PC command set has no input record for MNT_Mount/GetOff/Jump (181-183:
 	 * nothing reaches the beast); what does: the pad's RB 123 gets off (as it mounted - mt_press_cmd sends it, a combat
 	 * slot), MNT_Attack_2 186 is the ridden bite ('AI_Warg_Ridden_Attack_Light'; 185 did nothing), A = the stock pad A's
@@ -957,7 +989,7 @@ static void mt_end_log(void)
 	      "%.1f cm up/down, %.2f deg of yaw a frame (the turn at most %.0f deg/s); the seat's raw span %.1f cm over the root, "
 	      "the view's %.1f; pitch/roll at most %.2f/%.2f deg; facings on the black %llu; presses jump %llu bite %llu off %llu "
 	      "run %llu; guards %llu; yaw capped %llu frames; mount offers %llu, presses by the hand %llu by B %llu, domination holds "
-	      "%llu, struggles ended %llu won by the grip %llu; %llu lines suppressed", (unsigned long long)g_mt.mounts,
+	      "%llu, struggles ended %llu won by the grip %llu; windows rested through %llu; %llu lines suppressed", (unsigned long long)g_mt.mounts,
 	      (unsigned long long)g_mt.not_beast, (unsigned long long)g_mt.dismounts, (unsigned long long)g_mt.seated_frames,
 	      g_mt.step_max, g_mt.ystep_max, g_mt.yaw_step_max, g_mt.yaw_dps_max, g_mt.raw_y_span[1] - g_mt.raw_y_span[0],
 	      g_mt.out_y_span[1] - g_mt.out_y_span[0], g_mt.pitch_max, g_mt.roll_max, (unsigned long long)g_mt.aligns,
@@ -965,5 +997,6 @@ static void mt_end_log(void)
 	      (unsigned long long)g_mt.presses[3], (unsigned long long)g_mt.g_guards, (unsigned long long)g_mt.yaw.capped,
 	      (unsigned long long)g_mt.offers, (unsigned long long)g_mt.mount_presses[0], (unsigned long long)g_mt.mount_presses[1],
 	      (unsigned long long)g_mt.dom_holds, (unsigned long long)g_mt.sg_ends, (unsigned long long)g_mt.sg_won,
+	      (unsigned long long)g_mt.win_rests,
 	      (unsigned long long)g_mt.suppressed);
 }

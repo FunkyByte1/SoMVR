@@ -30,6 +30,14 @@
 #                   RUN/preferences.seeded shows the result. E.g. GameOptionsDialogShouldShow=0, SkipOSWarnings=1 (the
 #                   unsupported-distro box), DisableSplashVideos=1 (the game's own "+SkipSplashScreens 1": no logo and
 #                   legal movies, docs/re-launcher.md 8)
+#   --render-set NAME=INT  (repeatable; build 27, som-b27-perf2, re-xr-pipeline.md 119) the game's render setting
+#                   Render.Setting.NAME (VegetationQuality, ShadowQuality, MeshQuality, LightingQuality,
+#                   AmbientOcclusionQuality, TessellationToggle, TextureQuality, TextureFiltering, OITToggle; 0..5) in the
+#                   run's own render.cfg (RUN/home's AppData/WB Games/Shadow of Mordor, never the user's): the game's
+#                   first-run detection for this PC (rating 10: vegetation 4, shadows 3, mesh 3, lighting 2, AO 3,
+#                   tessellation 1 ...) with these over it, written before the launch (the game reads it at its start;
+#                   the console's change at run time does not reach the renderer, re-xr-pipeline.md 115.6);
+#                   RUN/render.cfg.seeded shows it
 #   --game-arg ARG  (repeatable) an argument for the game binary, after it in the order given (e.g. --no-feral-options:
 #                   no pre-game window, docs/re-launcher.md 1); in launch-cmd.txt
 #   --dry-run       guards, save check, paths and tools only; prints the launch; reserves and starts nothing
@@ -166,7 +174,7 @@ MAIN=$$
 T0=$(date +%s)
 
 SEED=""; STEAM=0; DRY=0; HEADSET=0; SOAK=0; ENDING=""; AUTO=0; HOLD=1200; SIZE=1920x1080; REFRESH=60; BACKUP=""; VRAM_MIN_GB=4; PRELOADS=(); GEXTRA=(); CMDS=""; SAVECOPY=0; SAVEFROM=""
-GARGS=(); PSETS=()
+GARGS=(); PSETS=(); RSETS=()
 BCDIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 while [ $# -gt 0 ]; do
   case $1 in
@@ -188,6 +196,7 @@ while [ $# -gt 0 ]; do
     --game-env) GEXTRA+=("${2:?}"); shift 2 ;;
     --game-arg) GARGS+=("${2:?}"); shift 2 ;;
     --prefs-set) PSETS+=("${2:?}"); shift 2 ;;
+    --render-set) RSETS+=("${2:?}"); shift 2 ;;
     --cmds) CMDS=${2:?}; shift 2 ;;
     --ending-file) ENDING=${2:?}; shift 2 ;;
     -h|--help) awk 'NR > 1 && /^set -uo/ { exit } NR > 1' "$0"; exit 0 ;;
@@ -227,6 +236,11 @@ for kv in "${PSETS[@]}"; do
   [[ $kv =~ $PSET_RE ]] || bad "--prefs-set: not NAME=INT (letters, digits, _ and blanks; a backslash for a subkey): $kv"
 done
 [ ${#PSETS[@]} -eq 0 ] || [ -f "$PSET_PY" ] || bad "--prefs-set needs $PSET_PY"
+RSET_NAMES=" VegetationQuality ShadowQuality MeshQuality LightingQuality AmbientOcclusionQuality TessellationToggle TextureQuality TextureFiltering OITToggle "
+for kv in "${RSETS[@]}"; do
+  [[ $kv =~ ^([A-Za-z]+)=([0-5])$ && $RSET_NAMES == *" ${BASH_REMATCH[1]} "* ]] ||
+    bad "--render-set: not NAME=0..5 with NAME one of$RSET_NAMES: $kv"
+done
 genv() {   # $1 = KEY: print its --game-env value (the last one wins, as with env); status 1 = not given
   local kv v="" st=1
   for kv in "${GEXTRA[@]}"; do [ "${kv%%=*}" = "$1" ] && { v=${kv#*=}; st=0; }; done
@@ -391,6 +405,17 @@ if [ ${#PSETS[@]} -gt 0 ]; then   # --prefs-set: the run's own copy only (RUN/ho
   printf '%s\n' "$pso" | while IFS= read -r l; do log "prefs (RUN/home only): $l"; done
 fi
 cp "$THOME/.local/share/feral-interactive/ShadowOfMordor/preferences" "$RUN/preferences.seeded"
+if [ ${#RSETS[@]} -gt 0 ]; then   # --render-set: the run's own render.cfg (RUN/home only), the PC's detection under it
+  RCFG_D="$THOME/.local/share/feral-interactive/ShadowOfMordor/AppData/WB Games/Shadow of Mordor"
+  mkdir -p "$RCFG_D"
+  declare -A RCFG=([AmbientOcclusionQuality]=3 [AspectRatioLock]=1 [AutoDetectedGPURating]=10 [AutoDetectionVersion]=1
+    [DepthofFieldToggle]=1 [FrameRateLimit]=2 [LightingQuality]=2 [MeshQuality]=3 [MotionBlurQuality]=3 [OITToggle]=0
+    [ShadowQuality]=3 [TessellationToggle]=1 [TextureFiltering]=3 [TextureQuality]=3 [VegetationQuality]=4)
+  for kv in "${RSETS[@]}"; do RCFG[${kv%%=*}]=${kv#*=}; log "render.cfg (RUN/home only): Render.Setting.$kv"; done
+  for k in $(printf '%s\n' "${!RCFG[@]}" | sort); do printf '"Render.Setting.%s" "%s.000000"\n' "$k" "${RCFG[$k]}"; done \
+    > "$RCFG_D/render.cfg"
+  cp "$RCFG_D/render.cfg" "$RUN/render.cfg.seeded"
+fi
 printf '#!/bin/sh\necho "$(date +%%T) BLOCKED: $0 $*" >> "%s/blocked.log"\nexit 1\n' "$RUN" > "$RUN/steam-stub"
 chmod 755 "$RUN/steam-stub"
 mkdir -p "$RUN/stubbin" && ln -sf "$RUN/steam-stub" "$RUN/stubbin/steam" && ln -sf "$RUN/steam-stub" "$RUN/stubbin/xdg-open"

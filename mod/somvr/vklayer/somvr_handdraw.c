@@ -34,6 +34,9 @@ static int mem_type(const VkPhysicalDeviceMemoryProperties *mp, uint32_t bits, V
     return -1;
 }
 
+static int g_hd_cached = 1; /* build 27: hd_prefer_cached */
+void hd_prefer_cached(int on) { g_hd_cached = on != 0; }
+
 static int fail(hd_ctx *c, const char *what, VkResult r) {
     snprintf(c->why, sizeof c->why, "%s: %d", what, (int)r);
     return -1;
@@ -82,8 +85,13 @@ static int buffer(hd_ctx *c, VkDeviceSize size, VkBufferUsageFlags use, VkBuffer
     if (r != VK_SUCCESS) return *b = VK_NULL_HANDLE, fail(c, "a buffer", r);
     VkMemoryRequirements mr;
     f->GetBufferMemoryRequirements(c->dev, *b, &mr);
-    int t = mem_type(&c->mp, mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    int t = g_hd_cached ? mem_type(&c->mp, mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                              VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+                        : -1; /* build 27: the CPU reads the vertices back (hd_box): never write-combined then */
+    if (t < 0) t = mem_type(&c->mp, mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     if (t < 0) return fail(c, "no host-coherent memory type", VK_ERROR_FEATURE_NOT_PRESENT);
+    if (use & VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) c->vb_flags = c->mp.memoryTypes[t].propertyFlags;
     VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size,
                                .memoryTypeIndex = (uint32_t)t};
     if ((r = f->AllocateMemory(c->dev, &ai, NULL, mem)) != VK_SUCCESS) return *mem = VK_NULL_HANDLE, fail(c, "buffer memory", r);

@@ -295,6 +295,18 @@ static const char *xr_str(XrResult r) {
 static void xr_global_init(void);
 static void mn_config(void); /* build 6 (./somvr_menus_layer.c, included before vm_frame) */
 static void vd_config(void); /* never a void: SOMVR_XR_GAPS (./somvr_void_layer.c) */
+static void pf_config(void); /* build 27: SOMVR_XR_PERF (./somvr_perf_layer.c) */
+static int pf_xt(const char *line); /* SOMVR_XR_TEST `perf NAME`: the window so far logged, the next one named */
+/* build 27 (som-b27-perf2): SOMVR_XR_REFRESH, the headset's refresh rate for the session (./somvr_refresh_layer.c) */
+static void rr_config(void);
+static void rr_offered(const XrExtensionProperties *props, uint32_t n);
+static int rr_want_ext(void);
+static void rr_loaded(int enabled);
+static int rr_menu(void);
+static void rr_begin(void);
+static void rr_end(void);
+static void rr_frame(void);
+static int rr_event(const XrEventDataBuffer *ev);
 static void once_init(void) {
     const char *p = getenv("SOMVR_XR_LOG"), *logp = p;
     if (p && *p) g_log = fopen(p, "ae");
@@ -354,6 +366,8 @@ static void once_init(void) {
     }
     mn_config(); /* build 6: SOMVR_XR_MENU, _MINIMAP, _CARD, _TOUCH (./somvr_menus_layer.c) */
     vd_config(); /* never a void: SOMVR_XR_GAPS (./somvr_void_layer.c) */
+    pf_config(); /* build 27: SOMVR_XR_PERF, what a frame costs (./somvr_perf_layer.c) */
+    rr_config(); /* build 27: SOMVR_XR_REFRESH, the session's refresh rate (./somvr_refresh_layer.c) */
 }
 static void init(void) { pthread_once(&g_once, once_init); }
 
@@ -795,25 +809,32 @@ static int xr_init_work(void) {
             have_vk |= !strcmp(props[i].extensionName, XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
     }
     env_config(XR_SUCCEEDED(r) ? props : NULL, props ? n : 0); /* SoM loading env: SOMVR_XR_ENV, the equirect extension */
+    rr_offered(XR_SUCCEEDED(r) ? props : NULL, props ? n : 0); /* build 27: XR_FB_display_refresh_rate */
     free(props);
     if (XR_FAILED(r) || !have_vk) {
         lg("xr: runtime extensions: %s, XR_KHR_vulkan_enable %s", xr_str(r), have_vk ? "yes" : "missing");
         return -1;
     }
-    const char *ext[2] = {XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME};
+    const char *ext[3] = {XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME};
+    uint32_t next = ENVC.equirect ? 2u : 1u; /* SoM loading env */
+    int rr = rr_want_ext(); /* build 27: XR_FB_display_refresh_rate last */
+    if (rr) ext[next++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME;
     XrInstanceCreateInfo ici = {.type = XR_TYPE_INSTANCE_CREATE_INFO,
                                 .applicationInfo = {.applicationName = "ShadowOfMordorVR",
                                                     .applicationVersion = 1,
                                                     .engineName = "SoMVR vklayer",
                                                     .engineVersion = 1,
                                                     .apiVersion = XR_API_VERSION_1_0},
-                                .enabledExtensionCount = ENVC.equirect ? 2u : 1u, /* SoM loading env */
+                                .enabledExtensionCount = next,
                                 .enabledExtensionNames = ext};
     r = create(&ici, &X.inst);
-    if (XR_FAILED(r) && ENVC.equirect) { /* SoM loading env: the runtime refused the equirect extension: without it */
-        lg("xr: env: xrCreateInstance with %s: %s (%d); again without it (the quad fallback)",
-           XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME, xr_str(r), r);
-        ENVC.equirect = 0;
+    if (XR_FAILED(r) && next > 1) { /* the runtime refused an extension: without them (equirect: the quad fallback) */
+        if (ENVC.equirect)
+            lg("xr: env: xrCreateInstance with %s: %s (%d); again without it (the quad fallback)",
+               XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME, xr_str(r), r);
+        if (rr) lg("xr: refresh: xrCreateInstance with %s: %s (%d); again without it", XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME,
+                   xr_str(r), r);
+        ENVC.equirect = 0, rr = 0;
         ici.enabledExtensionCount = 1;
         r = create(&ici, &X.inst);
     }
@@ -829,6 +850,7 @@ static int xr_init_work(void) {
     }
     XR_FUNCS(LOAD_XFN)
 #undef LOAD_XFN
+    rr_loaded(rr); /* build 27: the refresh rate's functions */
     th_wrap(); /* SOMVR_XR_TEST: the views through the test head (headless tests only) */
     XrSystemGetInfo sgi = {.type = XR_TYPE_SYSTEM_GET_INFO, .formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
     if (XR_FAILED(r = X.xrGetSystem(X.inst, &sgi, &X.sys))) {
@@ -1797,6 +1819,7 @@ static int xr_poll(void) {
                 X.floor_done = 0, X.floor_frames = (uint64_t)(cfg.floor_frames > 100 ? cfg.floor_frames - 100 : 0);
             continue;
         }
+        if (rr_event(&ev)) continue; /* build 27: the display's refresh rate changed */
         if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED && I.on) {
             in_profiles();
             continue;
@@ -1827,10 +1850,12 @@ static int xr_poll(void) {
                 atomic_store(&X.sh->xr.state, SOMVR_XRS_RUNNING);
                 lg("xr: published to somvr_shared: session, space, xrLocateViews (state running)");
             }
+            rr_begin(); /* build 27: the rates listed, the rate asked (SOMVR_XR_REFRESH, the VR menu) */
             break;
         }
         case SOMVR_SA_END:
             X.running = 0;
+            rr_end();
             xr_unpublish(SOMVR_XRS_NONE);
             if (I.on) in_clear(), in_publish(); /* nothing live until the session runs again */
             if (X.img_acquired) {
@@ -4348,6 +4373,7 @@ static struct {
     /* build 21 (SOMVR_XR_VM_TEST): the Test page's text (read at the setup), its page shown */
     somvr_vm_text test;
     int test_page;
+    int ctl_page;                /* build 27: the Controls page's page (re-xr-pipeline.md 112) */
     /* the panel's texture: its swapchain, the staging buffer (mapped, HOST_COHERENT), the upload's command buffer */
     dev_st *ds;
     XrSwapchain sc;
@@ -4477,6 +4503,7 @@ static void vm_test_load(void) {
     }
     somvr_vm_text_parse(&VM.test, got ? buf : NULL, n);
     VM.test_page = 0;
+    VM.ctl_page = 0;
     if (VM.test.have)
         lg("xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): '%s' - %d lines, %d page%s from %s (%zu bytes%s)", VM.test.line[0],
            VM.test.n, VM.test.pages, VM.test.pages == 1 ? "" : "s", path, n, VM.test.truncated ? ", cut to fit" : "");
@@ -4607,6 +4634,7 @@ static uint64_t vm_avail(void) { /* v7: 64 bits (a ~ of a 32-bit mask would clea
         a |= atomic_load_explicit(&VM.obj->pstate, memory_order_acquire) & SOMVR_VMA_PR_LIVE;
     if (!X.hud || !X.hud_on) a &= ~(uint64_t)SOMVR_VMA_HUD;
     if (X.space_type == XR_REFERENCE_SPACE_TYPE_STAGE) a |= SOMVR_VMA_FLOOR;
+    a = (a & ~SOMVR_VMA_REFRESH) | (rr_menu() ? SOMVR_VMA_REFRESH : 0u); /* build 27: the layer's own bit */
     if (SSN.obj) /* the preload's somvr_session: the Report and Quit game buttons */
         a |= ((SSN.obj->avail & SOMVR_SSA_MARK) ? (uint32_t)SOMVR_VMA_MARK : 0u) |
              ((SSN.obj->avail & SOMVR_SSA_QUIT) && !atomic_load_explicit(&SSN.obj->quitting, memory_order_relaxed)
@@ -4831,12 +4859,22 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
         VM.page = somvr_vm_tab_page(hit->item);
         VM.hover = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
         if (VM.page == SOMVR_VMPG_TEST) VM.test_page = 0; /* build 21: from its first page */
+        if (VM.page == SOMVR_VMPG_CONTROLS) VM.ctl_page = 0; /* build 27: from its first page */
         what = VM.page == SOMVR_VMPG_PRACTICE   ? "the practice page"
                : VM.page == SOMVR_VMPG_CONTROLS ? "the controls page"
                : VM.page == SOMVR_VMPG_FIGHT    ? "the fight page" /* build 19: the Settings tab's second page */
                : VM.page == SOMVR_VMPG_TEST     ? "the test page"  /* build 21 */
                                                 : "the settings page";
         vm_haptic(VM.main_hand, 0.3f, 0.012f);
+    } else if (r == SOMVR_VMR_SCROLL && (hit->item == SOMVR_VMI_CTL_PREV || hit->item == SOMVR_VMI_CTL_NEXT)) {
+        /* build 27 (re-xr-pipeline.md 112): the Controls page's Prev / Next */
+        int was = VM.ctl_page, dir = hit->item == SOMVR_VMI_CTL_NEXT ? 1 : -1;
+        uint64_t ca = somvr_vm_ctl_avail(&VM.set, avail);
+        VM.ctl_page = somvr_vm_ctl_turn(ca, VM.ctl_page, dir);
+        static char cw[64];
+        snprintf(cw, sizeof cw, "the controls page %d of %d", VM.ctl_page + 1, somvr_vm_ctl_pages(ca));
+        what = VM.ctl_page != was ? cw : "nothing (the controls page's end)";
+        if (VM.ctl_page != was) vm_haptic(VM.main_hand, 0.3f, 0.012f);
     } else if (r == SOMVR_VMR_SCROLL) { /* build 21: the Test page's Prev / Next */
         int was = VM.test_page;
         VM.test_page = somvr_vm_test_turn(&VM.test, VM.test_page, hit->item == SOMVR_VMI_TEST_NEXT ? 1 : -1);
@@ -4878,6 +4916,8 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
 
 #include "somvr_menus_layer.c" /* build 6: the menu boards, the wrist minimap, the arrival card, touch */
 #include "somvr_vrhands_layer.c" /* build 10: our own VR hands, the watch on the wrist, the panel off the palm */
+#include "somvr_refresh_layer.c" /* build 27: SOMVR_XR_REFRESH, the headset's refresh rate for the session */
+#include "somvr_perf_layer.c" /* build 27: SOMVR_XR_PERF, the frame's GPU time, the game's and ours (before the keep-alive's submit hook) */
 #include "somvr_void_layer.c" /* never a void (HG-9): the present gaps, the keep-alive frames, the loading space */
 #include "somvr_objective_layer.c" /* build 15: SOMVR_OBJECTIVE's marker in the world, its edge arrow */
 #include "somvr_testhead_layer.c" /* SOMVR_XR_TEST `head X Y Z [yaw DEG] [s SEC]`: a duck, a look behind (headless tests) */
@@ -5093,6 +5133,7 @@ static void vm_frame(dev_st *ds) {
         v.quit_armed = card ? 0 : SSN.quit_armed;
         v.lock = VM.snap && !MN.vtouch && VM.hover.item >= 0; /* build 20: the locked part outlined */
         v.test = &VM.test, v.test_page = VM.test_page; /* build 21: the Test page */
+        v.ctl_page = VM.ctl_page;                      /* build 27: the Controls page's page */
         if ((!VM.released || memcmp(&v, &VM.drawn, sizeof v)) && vm_upload(ds, &v)) return; /* off now (logged) */
         float dotp[3]; /* the ray's end and the dot: the pointer's point, or (build 20) the lock's on the locked part */
         memcpy(dotp, o.hit, sizeof dotp);
@@ -5194,7 +5235,9 @@ static void fl_probe(void) {
 static int xr_wait_publish(void) {
     XrFrameWaitInfo wi = {.type = XR_TYPE_FRAME_WAIT_INFO};
     X.fs = (XrFrameState){.type = XR_TYPE_FRAME_STATE};
+    double pw0 = PF.ready ? pf_now() : 0.0;
     XrResult r = X.xrWaitFrame(X.session, &wi, &X.fs);
+    double pw1 = PF.ready ? pf_now() : 0.0, pc1 = PF.ready ? pf_tcpu() : 0.0;
     if (XR_FAILED(r)) return xr_fail("xrWaitFrame", r), -1;
     X.waited = 1;
     vd_waited(); /* never a void: when this wait returned (the watcher's head times) */
@@ -5203,6 +5246,7 @@ static int xr_wait_publish(void) {
                            X.fs.predictedDisplayPeriod);
     if (I.on) in_sync(); /* once per frame, at its start (re-xr-input.md 1.5) */
     fl_probe();          /* SOMVR_XR_FLOOR: the player's real eye height, once (log only) */
+    if (PF.ready && pw0 > 0) pf_wait_ms((pw1 - pw0) * 1e3, (pf_tcpu() - pc1) * 1e3); /* SOMVR_XR_PERF */
     return 0;
 }
 
@@ -5368,6 +5412,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         return 0;
     }
     if (xr_poll() || !X.running) return 0;
+    rr_frame(); /* build 27: the VR menu's Refresh rate changed: asked live */
     in_haptics();
     sc_st *s = LIST_FIND(g_scs, sc, pi->pSwapchains[0]);
     uint32_t idx = pi->pImageIndices[0];
@@ -5484,6 +5529,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         X.open_rec = rec; /* the latest copy: H3's applied bits are final by the last slot */
         uint32_t mask = have_eyes ? 3u : 1u << tag.slot; /* layout B: both slots from the eye images at once */
         int hud_copied = 0;
+        pf_sec(0); /* SOMVR_XR_PERF: the present path by part */
         if (X.fs.shouldRender && (have_eyes || can_copy)) {
             if (!X.img_acquired && xr_acquire()) return 0;
             if (have_hud && hud_acquire()) have_hud = 0; /* the HUD is off now (logged); the eyes go on */
@@ -5511,10 +5557,12 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
             }
         }
         X.open_mask |= mask;
+        pf_sec(1);
         if (X.open_mask != (1u << X.open_rec.nslots) - 1u) return replaced; /* layout B: the next slot follows */
         int whole = X.open_copied == X.open_mask;
         if (X.img_acquired && xr_release()) return replaced;
         if (X.hud_acquired && hud_release()) hud_copied = 0; /* the HUD is off now: no quad this frame */
+        pf_sec(2);
         if (whole) {
             stereo_views(&X.open_rec, X.sc_w / X.nslots, X.sc_h, pv); /* one slot's size */
             memcpy(X.last_pv, pv, sizeof pv);
@@ -5569,6 +5617,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                 for (int i = 0; i < 3; i++) eye[i] = 0.5f * (X.open_rec.eye[0].pose.p[i] + X.open_rec.eye[1].pose.p[i]);
                 ptr_frame(ds, on_hud ? SOMVR_PTRQ_HUD : SOMVR_PTRQ_NONE, &X.last_quad.pose, qs, X.hud_w, X.hud_h, eye);
             }
+            pf_sec(3);
             xr_comp sc = {.l = {[XL_OWN] = space ? NULL : proj_layer(&proj, pv)}};
             if (space) VH.last = 0; /* no game hands over the loading space (ours: cv_space_comp) */
             else mb_layers(&sc);
@@ -5590,16 +5639,20 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
                    (unsigned long long)X.n_eyes + 1, dump_next());
             }
             X.last_fade_eye[0] = X.open_rec.eye[0].pose, X.last_fade_eye[1] = X.open_rec.eye[1].pose;
+            pf_sec(4);
             if (space) cv_space_comp(ds, &sc); /* SOMVR_XR_COVER's load: the sky, the floor, the lights, our hands */
             else fade_frame(ds, env_level(X.last_fade), X.last_fade_eye, fade_red(env_level(X.last_fade))); /* (env) */
             vm_comp(&sc);                    /* the VR menu's panel, ray, dot */
+            pf_sec(5);
             if (!space) {
                 vh_frame(ds, qi->q, &X.open_rec, pv, &sc, have_eyes ? &ey : NULL); /* build 10: our hands over the panel
                                                                                      * and the watch (occluders) */
+                pf_sec(6);
                 cf_layers(ds, &X.open_rec, &sc); /* comfort: the ring under the HUD, the blink over it */
                 th_layers(ds, &X.open_rec, &sc); /* the threat cues: the glows under the ring, the edge bands over it */
                 ob_layers(ds, &X.open_rec, &sc); /* build 15: the objective marker (over the ring, under the HUD) */
             }
+            pf_sec(7);
             fade_comp(&sc);
             mn_dump_layers(pv, &sc); /* build 6: a dumped frame's quads (SOMVR_XR_DUMP), before the end clears them */
             xr_end_comp(&sc);
@@ -5721,13 +5774,16 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_QueuePresentKHR(VkQueue q, const VkPrese
         if (X.ds == ds && (X.phase == P_DEV || X.phase == P_SESSION)) {
             int sess = X.phase == P_SESSION;
             vd_before();
+            pf_present_begin(ds, qi); /* SOMVR_XR_PERF: the read-back, our bracket's start */
             replaced = xr_frame(ds, qi, pi, &sem);
+            pf_present_end(ds, qi);
             if (sess && X.phase == P_SESSION) vd_after(t0);
         }
         pthread_mutex_unlock(&X.mx);
     }
     VkResult r;
     int ql = ka_qlock(q); /* SOMVR_XR_KEEPALIVE: not while the watcher ends a frame */
+    double pp0 = PF.ready && qi && qi->q == PF.q ? pf_now() : 0.0, pc0 = pp0 > 0 ? pf_tcpu() : 0.0; /* SOMVR_XR_PERF */
     if (!replaced) {
         r = ds->QueuePresentKHR(q, pi);
     } else {
@@ -5736,6 +5792,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_QueuePresentKHR(VkQueue q, const VkPrese
         m.pWaitSemaphores = &sem;
         r = ds->QueuePresentKHR(q, &m);
     }
+    if (pp0 > 0) pf_present_call((pf_now() - pp0) * 1e3, (pf_tcpu() - pc0) * 1e3);
     ka_qunlock(ql);
     if (qi && pi && pi->swapchainCount) {
         pthread_mutex_lock(&X.mx);
@@ -5841,6 +5898,7 @@ static VKAPI_ATTR void VKAPI_CALL L_DestroyDevice(VkDevice dev, const VkAllocati
     free(ds->grave);
     if (D.ds == ds) dump_free();
     if (ds->pool) ds->DestroyCommandPool(ds->dev, ds->pool, NULL);
+    pf_destroy(ds); /* SOMVR_XR_PERF: our query pool and command buffers */
     pthread_mutex_unlock(&X.mx);
     for (;;) {
         q_st *qn;
@@ -6122,6 +6180,7 @@ static VKAPI_ATTR void VKAPI_CALL L_DestroyImage(VkDevice dev, VkImage img, cons
 static PFN_vkVoidFunction dev_hook(const char *n) {
     PFN_vkVoidFunction kf = ka_dev_hook(n); /* SOMVR_XR_KEEPALIVE: the game's queue calls under the keep-alive's lock */
     if (kf) return kf;
+    if ((kf = pf_dev_hook(n))) return kf; /* SOMVR_XR_PERF: the game's submits and its eye copies timed */
     static const struct {
         const char *n;
         PFN_vkVoidFunction f;

@@ -67,6 +67,7 @@ static struct {
 	int live;           /* the word "objective on|game|both": 2 on, 0 the game's only, 3 both (starts = mode) */
 	uintptr_t orig;
 	char pats[256];
+	char wpats[128];    /* build 27, SOMVR_OBJECTIVE_WAYPOINT: the player's own waypoint's records ("" = off) */
 	long tid;
 	struct ob_mark mk[OB_MARKS];
 	int nmk;
@@ -119,6 +120,14 @@ static int ob_offscreen(uintptr_t rec)
 	return (int)(word >> (vi & 31) & 1);
 }
 
+/* a record's match: 0 none, 1 an objective, 2 the player's waypoint (build 27, SOMVR_OBJECTIVE_WAYPOINT: it wins) */
+static int ob_match_of(const char *name)
+{
+	if (g_ob.wpats[0] && somvr_ob_match(g_ob.wpats, name))
+		return 2;
+	return somvr_ob_match(g_ob.pats, name);
+}
+
 /* the record's name and match, cached (DB records stay put; the table starts again when 3/4 full) */
 static int ob_rec(uintptr_t rec, const char **name)
 {
@@ -136,7 +145,7 @@ static int ob_rec(uintptr_t rec, const char **name)
 	g_ob.nrc++;
 	g_ob.rc[h].rec = rec;
 	rx_rec_name(rec, g_ob.rc[h].name, sizeof g_ob.rc[h].name);
-	g_ob.rc[h].match = somvr_ob_match(g_ob.pats, g_ob.rc[h].name);
+	g_ob.rc[h].match = ob_match_of(g_ob.rc[h].name);
 	*name = g_ob.rc[h].name;
 	return g_ob.rc[h].match;
 }
@@ -208,7 +217,7 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 	if (first && g_ob.lines < 400) {
 		g_ob.lines++;
 		logf_("OBJECTIVE t=%.3f marker %u m=%#lx '%s'%s: %s at (%.0f %.0f %.0f), offscreen %d", t, k->id, (unsigned long)m,
-		      name, match ? " (an objective)" : "", shown ? "shown by the game" : "not shown", k->pos[0], k->pos[1],
+		      name, match == 2 ? " (the player's waypoint)" : match ? " (an objective)" : "", shown ? "shown by the game" : "not shown", k->pos[0], k->pos[1],
 		      k->pos[2], ob_offscreen(rec));
 	}
 	k->hidden = 0;
@@ -312,11 +321,11 @@ static void ob_frame(uintptr_t pl, int stereo)
 	struct ob_mark *best = NULL;
 	float bd = 0;
 	for (int i = 0; body && !game_paused() && g_ob.live && i < g_ob.nmk; i++) { /* the nearest objective seen now */
-		struct ob_mark *k = &g_ob.mk[i];
+		struct ob_mark *k = &g_ob.mk[i];                                       /* (build 27: the waypoint first) */
 		if (!k->match || !k->elig || t - k->t_seen > 0.25)
 			continue;
 		float d = dist3(tp, k->pos);
-		if (!best || d < bd)
+		if (!best || k->match > best->match || (k->match == best->match && d < bd))
 			best = k, bd = d;
 	}
 	if (best) {
@@ -359,7 +368,7 @@ static const char *ob_word(const char *w)
 		snprintf(g_ob.pats, sizeof g_ob.pats, "%s", p);
 		memset(g_ob.rc, 0, sizeof g_ob.rc), g_ob.nrc = 0;
 		for (int i = 0; i < g_ob.nmk; i++)
-			g_ob.mk[i].match = somvr_ob_match(g_ob.pats, g_ob.mk[i].name);
+			g_ob.mk[i].match = ob_match_of(g_ob.mk[i].name);
 		logf_("OBJECTIVE records now '%s'", g_ob.pats);
 		return "objective: records set";
 	}
@@ -420,6 +429,9 @@ static void ob_start(int *bad)
 	}
 	const char *p = getenv("SOMVR_OBJECTIVE_RECS");
 	snprintf(g_ob.pats, sizeof g_ob.pats, "%s", p && *p ? p : "Objective*");
+	const char *wv = getenv("SOMVR_OBJECTIVE_WAYPOINT"); /* build 27: on (= UserWaypoint) | off | RECORDS */
+	snprintf(g_ob.wpats, sizeof g_ob.wpats, "%s", !wv || !*wv || !strcmp(wv, "off") ? "" : !strcmp(wv, "on") ?
+		 "UserWaypoint" : wv);
 	somvr_ob_cfg c;
 	somvr_ob_cfg_default(&c);
 	float size = env_float("SOMVR_OBJECTIVE_SIZE_DEG", c.size_deg, 1, 15, bad);
@@ -449,11 +461,14 @@ static void ob_start(int *bad)
 		c.size_deg = size, c.dist_m = dist, c.faint_deg = faint, c.edge_deg = edge;
 		ob_publish(&c, g_ob.mode >= 2 ? NULL : "the climb's landing and the strike's mark only (SOMVR_OBJECTIVE=log)");
 	}
-	logf_("CONFIG objective=%s (SOMVR_OBJECTIVE: %s), records '%s'; the marker %.1f deg, at most %.0f m away, faint within "
+	logf_("CONFIG objective=%s (SOMVR_OBJECTIVE: %s), records '%s', the player's waypoint %s%s%s (SOMVR_OBJECTIVE_WAYPOINT: "
+	      "%s); the marker %.1f deg, at most %.0f m away, faint within "
 	      "%.0f deg of the view's centre, the edge arrow %.1f deg; range test %s", w[g_ob.mode],
 	      g_ob.mode == 1 ? "the markers the game shows logged, nothing changed"
 	      : g_ob.mode == 2 ? "our marker in the world, the game's icon hidden in our stereo frames"
-			       : "our marker in the world and the game's icon", g_ob.pats, size, dist, faint, edge,
+			       : "our marker in the world and the game's icon", g_ob.pats, g_ob.wpats[0] ? "'" : "off",
+	      g_ob.wpats, g_ob.wpats[0] ? "'" : "", g_ob.wpats[0] ? "the map's waypoint is our marker, before the nearest "
+	      "objective" : "the game's icon", size, dist, faint, edge,
 	      g_ob.range_ok ? "the game's" : "none (OB_RANGE differs)");
 }
 

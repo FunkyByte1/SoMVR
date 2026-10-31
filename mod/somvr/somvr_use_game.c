@@ -36,6 +36,14 @@
  *     did nothing: the screen stayed 4 min; SkipPresentations 265 (a test press) closed it at once. With the window up,
  *     B pressed while none of B's own commands is pressed = 265 (the game's skip of the presentation; logged with its
  *     active flag): the result screens' Back, a captain's introduction or a cinematic skipped by an explicit B.
+ *   - build 27b (som-b27-story3, re-xr-pipeline.md 113), SOMVR_USE_GRAB=on|off (code default on): while the player's
+ *     left hand holds (SOMVR_VERBS' grab: Lithariel carried in "The Rescue", an orc held) SOMVR_BODYMOMENTS keeps first
+ *     person and masks the game's presentation (somvr_bm_conds' our_grab: the grab's interrogation is one), so a
+ *     presentation that comes meanwhile opened no window and the window's buttons answered nothing: "The Rescue - Mission
+ *     Failed! Reason: Ally Killed! (A) Retry (B) Abandon" took A only after the grip was let go (boot 20261030-055352:
+ *     the presentation up at t=1098411.6, the grip opened at 1098487.5, the window and 285 at once). Now a presentation
+ *     (the fallback's raw bit) under the grab, with no window and not the grab's own interrogation (SOMVR_VERBS' ask),
+ *     is the window for these buttons (the bindings, the skip, the held-button rule); the view stays as it is.
  * Lines: `CONFIG use=...`, `USE bindings: ...` (the pad buttons of those commands, at each new binding table, 8 at
  * most), `USE t=.. pick prompt up|down ...`, `USE t=.. B at '...': 123 held`, `USE t=.. CMD 'NAME' pressed (pad X,
  * active)`, `USE END ...`. Word: `use on|off|status` (live; the before/after in one boot). */
@@ -57,10 +65,11 @@ static struct {
 	int b_prev, latch;                                  /* B's last state, 123 held for this press */
 	uint32_t qprev;                                     /* bit q: g_us_quest[q] pressed last tick */
 	int death, skip;                                    /* build 25: SOMVR_USE_DEATH, SOMVR_USE_SKIP */
+	int grab, gwin_prev;                                /* build 27b: SOMVR_USE_GRAB; the grab's presentation last tick */
 	int win_prev, fresh;                                /* the window last tick; 1 = take the held buttons again */
 	uint32_t held;                                      /* buttons held since before the window opened or closed */
 	int map_lines, lines;
-	uint64_t kept, picks, pick_ticks, quest_presses, quest_ticks, refused_full, skips, deaths;
+	uint64_t kept, picks, pick_ticks, quest_presses, quest_ticks, refused_full, skips, deaths, grabs;
 } g_us;
 
 static int us_log_ok(void) { return g_us.lines++ < 300; }
@@ -177,6 +186,13 @@ static uint32_t us_btns(int win, uint32_t raw)
 	return raw & ~g_us.held;
 }
 
+/* build 27b, SOMVR_USE_GRAB: a presentation (the fallback's raw bit) while the left hand holds - not its interrogation */
+static int us_grab_pres(void)
+{
+	return g_us.grab && g_vb.mode == VB_ON && g_vb.hand.phase == SOMVR_VBH_GRAB && !g_vb.ask_c &&
+	       (g_fb.last_raw & SOMVR_FB_BIT(SOMVR_FB_PRES));
+}
+
 /* the input tick (in_apply, not in a menu): the commands to hold this tick (the deny list's 123 too: our press) */
 static int us_press_cmds(const sc_tick_out *o, int out[12])
 {
@@ -202,25 +218,32 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 	int win = g_bm.last_win;
 	int dwin = !win && g_us.death && g_bm.last_act == SOMVR_BMA_GREY && /* build 25: the death's failed screen */
 		   (g_bm.last_conds & SOMVR_BMC_BIT(SOMVR_FB_PRES));
-	uint32_t btn = us_btns(win || dwin, o->raw);
+	int gwin = !win && !dwin && us_grab_pres(); /* build 27b: the grab's presentation = the window for these buttons */
+	if (gwin != g_us.gwin_prev && us_log_ok())
+		logf_("USE t=%.3f %s", t, gwin ? "a presentation while the left hand holds (no window: the grab keeps first "
+		      "person): A B X Y and the grips answer it as in the window (SOMVR_USE_GRAB)" : "the grab's presentation is over");
+	g_us.gwin_prev = gwin;
+	uint32_t btn = us_btns(win || dwin || gwin, o->raw);
 	if (!g_inp.map_ok)
 		return n;
 	us_log_bindings();
-	uint32_t want = win ? btn : !dwin && b && (btn >> SC_PAD_B & 1) ? 1u << SC_PAD_RB : 0, now = 0;
+	int w = win || gwin;
+	uint32_t want = w ? btn : !dwin && b && (btn >> SC_PAD_B & 1) ? 1u << SC_PAD_RB : 0, now = 0;
 	in_active_fn active = IN_FN(IS_CMD_ACTIVE, in_active_fn);
 	for (int i = 0; i < SC_NPAD && want; i++) {
 		if (!(want >> i & 1))
 			continue;
 		for (int k = 0; k < g_inp.nmap[i] && n < 12; k++) {
 			int c = g_inp.map[i][k].cmd, q = us_quest_ix(c);
-			if (q < 0 || (!win && c != 282 && c != 283) || !(active(g_inp.pi, (unsigned)c) & 0xff) || (now >> q & 1))
+			if (q < 0 || (!w && c != 282 && c != 283) || !(active(g_inp.pi, (unsigned)c) & 0xff) || (now >> q & 1))
 				continue;
 			now |= 1u << q, out[n++] = c, g_us.quest_ticks++;
 			if (!(g_us.qprev >> q & 1)) {
-				g_us.quest_presses++;
+				g_us.quest_presses++, g_us.grabs += gwin;
 				if (us_log_ok())
 					logf_("USE t=%.3f %d '%s' pressed (the pad's %s, active%s)", t, c, in_cmd_name(c), sc_pad_name(i),
-					      win ? "; a presentation is up" : "; B in the world");
+					      win ? "; a presentation is up" : gwin ? "; a presentation while the left hand holds" :
+					      "; B in the world");
 			}
 		}
 	}
@@ -236,11 +259,11 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 				      "SOMVR_USE_DEATH)", t, c, in_cmd_name(c), k ? "B" : "A", !!(active(g_inp.pi, (unsigned)c) & 0xff));
 		}
 	}
-	if (win && g_us.skip && (btn >> SC_PAD_B & 1) && !now && n < 12) { /* build 25: B = 265 there */
+	if (w && g_us.skip && (btn >> SC_PAD_B & 1) && !now && n < 12) { /* build 25: B = 265 there */
 		int q = us_quest_ix(265), act = !!(active(g_inp.pi, 265u) & 0xff);
 		now |= 1u << q, out[n++] = 265, g_us.quest_ticks++;
 		if (!(g_us.qprev >> q & 1)) {
-			g_us.quest_presses++, g_us.skips++;
+			g_us.quest_presses++, g_us.skips++, g_us.grabs += gwin;
 			if (us_log_ok())
 				logf_("USE t=%.3f 265 'SkipPresentations' pressed by B (nothing of B's own bound; the game's active flag "
 				      "%d; SOMVR_USE_SKIP)", t, act);
@@ -296,6 +319,13 @@ static void us_config(int *bad)
 		      getenv("SOMVR_USE_DEATH") ? "" : "; unset: on", g_us.death ? "while the death's grey holds (no window) and "
 		      "a presentation runs (a mission's 'You died!' screen), A = QuestFailedRetry 285, B = QuestFailedAbandon "
 		      "286, pressed directly (the game binds neither to the pad there)" : "the death's failed screen answers no button (build 24)");
+	g_us.grab = env_word("SOMVR_USE_GRAB", (const char *const[]){ "off", "on" }, 2, 1);
+	if (g_us.want)
+		logf_("CONFIG use_grab=%s (SOMVR_USE_GRAB, build 27b%s): %s", g_us.grab ? "on" : "off",
+		      getenv("SOMVR_USE_GRAB") ? "" : "; unset: on", g_us.grab ? "a presentation while the left hand holds (no "
+		      "window: the grab keeps first person; not its interrogation) is the window for A B X Y and the grips - a "
+		      "failed screen's Retry with the grip still closed" : "a presentation under the grab answers no button until "
+		      "the grip opens (build 27)");
 }
 
 /* vm_start: the Controls page's "Use: B (pick, missions)", Menu and Pause in one line, Sprint kept (somvr_vrmenu.c) */
@@ -304,8 +334,9 @@ static uint32_t us_vm_avail(void) { return g_us.want ? SOMVR_VMA_USE : 0u; }
 static void us_end_log(void)
 {
 	logf_("USE END on=%d pick prompts kept %llu (refused '_Full' %llu), picks %llu (123 held %llu ticks), quest presses "
-	      "%llu (%llu ticks; B's skips %llu, the death's screen %llu), binding tables logged %d", g_us.on, (unsigned long long)g_us.kept,
+	      "%llu (%llu ticks; B's skips %llu, the death's screen %llu, under the grab %llu), binding tables logged %d", g_us.on,
+	      (unsigned long long)g_us.kept,
 	      (unsigned long long)g_us.refused_full, (unsigned long long)g_us.picks, (unsigned long long)g_us.pick_ticks,
 	      (unsigned long long)g_us.quest_presses, (unsigned long long)g_us.quest_ticks, (unsigned long long)g_us.skips,
-	      (unsigned long long)g_us.deaths, g_us.map_lines);
+	      (unsigned long long)g_us.deaths, (unsigned long long)g_us.grabs, g_us.map_lines);
 }

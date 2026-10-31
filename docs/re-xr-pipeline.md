@@ -18336,3 +18336,1294 @@ miss by a stray stab). An urgent double pulse in both hands at the start.
 | The crowd's turn gone out of view warned | `SOMVR_FRONT_TURN_CUE` off -> on | 0 unwarned of 3 (045026) against 4-5 a run before |
 | The crowd of 3-8 (`practice group N`) | `SOMVR_PRACTICE_GROUP_N` 4 (kept) | 8 of 8 spawned, 4 runs; test_front's crowd of 8 |
 | The death struggle by the hands | `SOMVR_STRUGGLE` off -> thrust | 2 last chances won ('..._PreDeath_PCWin', 065853; '_PCWin_B', 071307) |
+
+## 112. Build 27: the whole experience held to Half-Life: Alyx as a first-time player - the first ten minutes, every gesture on the Controls page, Walk toward, the card's A: `SOMVR_JUMP_MENU_S` (2026-10-30, som-b27-hla)
+
+Asked: the first ten minutes as a first-time player (the launch, the game's menus, the load, the world, the first
+fight) with both-eye pictures, fixing what is unclear, floating, flat, missing or wrong for VR; the Controls page with
+every VR control and gesture the build has, each true to the code, grouped; the Settings held to HL:A's (turning, the
+vignette, seated/standing and height, the dominant hand, haptics, subtitles) with the most important missing ones
+added and saved like the others; design-hla.md's gap list marked. Branch `t3/85126f86` from main 60622ae, main merged
+twice (9fdf737, 8e9ecdd).
+
+### 112.1 The Controls page: every gesture, in groups, paged
+
+Build 26's page was one page of at most 21 lines; lines were dropped for room (Quit, Sheathe, Sprint) and about twenty
+working gestures had no line at all: the vault, the drop kill, the stealth kill, the dodge, the wraith step, the brand,
+the rally, a Domination's B / Y, Mission Failed's A / B, the Nemesis pages' B, climbing down, the overhang, A onto a
+top, the caragor's counter and "Hold tight!", the shove, the glyph by the look; the drain and the interrogation were two
+dim notes. One line was wrong: "Jump: A while moving" (somvr_jump.h: standing, A jumps too where no edge claims it).
+
+Now (somvr_vrmenu.c `g_ctl`, `ctl_layout`; 67 entries, the variants picked by the switches): on the headset's build 52
+lines in seven groups - Moving, Climbing, The sword, Orcs, Bow and wraith,
+Beasts, Menus and help - each group a gold title over its lines, a group kept whole on a page, three pages with Prev /
+Next and "1 / 3" where the Test page has its row (`SOMVR_VMI_CTL_PREV` / `_NEXT`, always on the Controls page, with or
+without the Test tab). Every line only where its feature runs in this session: the preload's avail word gains bits 39,
+40 and 47..62, set by somvr_hla_game.c from each module's own on-condition (the vault's `g_jp.cfg.vault`, the plunge's
+`FA_ON` with its drop, the verbs' brand / rally / dismiss / command under `VB_ON`, `SOMVR_USE`'s death and skip, the
+climb's down-over / overhang (with the mantle) / mantle, the ride's counter and hold, the step's vault over an orc, the
+struggle, the glyph's `head`, the shove) and `somvr_vm_ctl_avail` drops the Dodge, Blink and Stealth lines (and the
+vault over an orc) while their Fight page rows are Off. Words a player uses: "Menu: look at left palm", "Pause: tap
+menu, hold=Menu", "Jump: A on foot", "Stun / Drain: held: tap / hold L trigger", "Question: held: pull to face",
+"Mount: L grip stunned beast", "Hold on: keep the grip closed". Keys up to 8 characters, the rest up to 20; lines 28 px
+apart (builds 17-26's), the room above the Prev / Next row.
+
+The arrival card (the practice area's first arrival): the first steps only - Walk, Turn, Crouch, Use, Climb, Sword,
+Block, Menu - then "Everything else: Menu > Controls tab", and (new) "This is the practice area. Your game: Menu >
+Practice > Back to where I was": a first-time player landed in the meadow (`SOMVR_PRACTICE=auto`) with no word of how
+to reach their game.
+
+tests/test_vrmenu.c `test_controls` (rewritten): the headset's set (the session 20261030-071307's avail, the ride, Sauron's
+Army, build 27's bits, the switches' settings) has exactly the 52 expected lines, each once and fitting; each bit alone
+adds its own line(s) and nothing without it; build 6's base without switches; the Fight rows Off take their lines; the
+pages: inside the room, apart, in order, each group whole, 7 titles; Prev dimmed on page 1, page 2 another picture; the
+card's first steps and its practice-area lines. 653 checks.
+
+### 112.2 The settings held to HL:A's
+
+| HL:A | Ours (VR menu) | Build 27 |
+|---|---|---|
+| Movement: Blink / Shift / Continuous (Head) / Continuous (Hand) | the stick walk only (the wraith step is an aimed blink, not a mode) | **Walk toward: Head / Hand** (new) |
+| Turn: snap / continuous, the angle, the speed | Turn, Snap angle, Turn speed, Snap blink | - |
+| Comfort | Vignette (beyond HL:A) | - |
+| Standing / seated, height | Seated, Seat height, Player size, Crouch (duck / button) | - |
+| Dominant hand | "Main hand": only the panel's wrist and the pointing hand (somvr.c: "the controls do not swap yet") | renamed **Pointer hand** (what it does); the left-handed mirror stays open (design-hla.md SH-7) |
+| Haptics | Haptics % | - |
+| Subtitles | the game's own option (its menus, by the laser); ours at the gaze (87) | - (a size row: open) |
+
+The most important missing one was the walk's direction: HL:A offers Continuous (Head) and (Hand) side by side, and
+walking toward the left hand lets a player look around while walking straight. `SOMVR_MOVE=head|hand` existed as a
+switch only (in_dpsi, lo_tick). Now the Settings page's **Walk toward** row (under Snap blink, before Seated: row_slot's
+order) sets it live (`vm_apply_key` SOMVR_SK_MOVE -> `g_inp.move_hand`), saved as `MOVE=head|hand` in the settings file
+the way the other rows are; shown with `SOMVR_VMA_WALKDIR` (bit 47, the input on). `SOMVR_MOVE`'s default stays head
+(the user's habit; HL:A's two are equal choices). MOVE is the 32nd key: the settings masks (`somvr_set_parse`,
+`_format`, `_diff`, the file mask, the keys) are 64 bits now; `somvr_settings.move` took pad6[0] (byte 83, no new
+version). The user's file pins eight keys and reads as before (test_walk_toward: those eight lines, MOVE following its
+switch). A true dominant hand (the sword slot, the bow hand, the left hand's verbs mirrored) is SH-7's size (M) and was
+not started; the row that claimed it now says what it does.
+
+### 112.3 The card's "or A" jumped
+
+The card says "Close: X box or A". Since build 22 A on foot is the jump (`SOMVR_JUMP`; standing: where no edge claims
+it), and the jump never asked whether the VR menu or the card was up (and the layer may shut the card on the A before the
+input tick sees the press). So the first thing a first-time player did - put the card away the way it says - made
+Talion jump 60 cm. Now `jp_why_not` refuses while `vm_open_recent()`: the wrist panel or the card up, or shut within
+`SOMVR_JUMP_MENU_S` (code default 0.4 s; 0 = off, build 26); its clock is set in `vm_tick`, which runs before A's owner
+is picked (ab_tick). The press logs "JUMP ... press: ... cannot: the VR menu or the controls card is up". Selftest
+vrmenu27 (open, just shut, 1 s later, off).
+
+### 112.4 The first ten minutes, headless: logs/boot-check-20261030-092910 (scripts/hla27-drive.sh)
+
+One boot with scripts/headset-build26.env's switches (+ `SOMVR_JUMP_MENU_S=0.4`) and a copy of the user's settings file
+(`SOMVR_SETTINGS=/tmp/somvr-hla27/settings.conf`): PASS 22, FAIL 0; 0 WARN; the install unchanged (0 newer entries); the
+real GameData.sav UNCHANGED; the user's settings file unchanged (md5).
+
+- The way in, as the user's launcher starts it: no pre-game window, no splash; the main menu 43 s after the layer's start (`SESSION
+  ui ifs=1 menus=15`), Continue -> Continue Story Mode -> the load -> the world at the save's forge tower (frames 1, 45), then
+  `SOMVR_PRACTICE=auto`'s blink to the meadow (arrived 1110728.763), the card 3.9 s later (the game's pause after the
+  weather change held the blink's black, 1110729-1110732). The menus and the load are mono frames (the board and the
+  loading space): the layer dumps stereo frames only, so they are the flat shots (shots/05-main-menu.png,
+  06-game-mode.png) and builds 13 / 22's reviews (36, 90).
+- The card put away by A, the way it says: `xr: card: put away (A)`, `JUMP ... press: the climb (the body 0 cm/s;
+  cannot: the VR menu or the controls card is up)`, no `JUMP ... go` (build 26 would have jumped: 112.3).
+- The layer's avail 0x7fff93fff67ff027: bits 47..62 all set (0xffff), 39..40 set - every gesture's line with the build
+  26 env.
+- The Controls tab: page 1 (frame 434), Next -> "the controls page 2 of 3" (539), Next -> 3 of 3 (635), Next at the end
+  -> "nothing (the controls page's end)", Prev -> 2 of 3. The Settings tab (891): Walk toward under Snap blink, the
+  user's own values above it.
+- Walk toward live: the left hand turned 90 deg from the head (`hands test L -25 -45 20 0 -90 0`), 1.5 s of the stick
+  forward each: Head 360 cm along the head; the row to Hand (`VRMENU apply MOVE=hand from the menu`) 333 cm at -89 deg
+  from it; back to Head (`MOVE=head`) 345 cm at 2 deg. Build 26 has no row: the second walk would have gone the first's
+  way.
+- The first fight: an infantry orc spawned (1947), the sword drawn from the right shoulder (`SLOTS ... now in the
+  hand`, 2033), four cuts, 4 contacts (2158); the orc removed; then Menu > Practice > Back to where I was: `PRACTICE
+  arrived at (35400.0 5403.2 -22400.0) ... back where Talion was` (2727, the forge tower again).
+- The settings copy kept the user's eight keys unchanged and gained `MOVE=head` (the menu pins a touched key, 73.5).
+
+Pictures: `python3 scripts/xr_compose.py logs/boot-check-20261030-092910 -f 1 45 172 434 539 635 891 1947 2033 2158 2298
+2727` (the panel pages as `-vrmenu-panel.png`). As a player: the pages read on the wrist at the panel's angle (434,
+891); nothing new floats; the sword sits in the fist; the world after Back is the save's own.
+
+### 112.5 What only the headset can judge; what is open
+
+- Whether the three Controls pages read at a real wrist angle and distance (28-px lines, builds 17-26's), and whether
+  a first-time player finds a gesture by its group.
+- Walk toward = Hand's feel (the left grip's heading; while the hand swings in a fight the walk turns with it - HL:A's
+  hand mode behaves the same).
+- Not built (design-hla.md 3.0): the left-handed mirror (SH-7: the row that claimed it is Pointer hand now), turning
+  "off", subtitle sizes, a Blink / Shift locomotion mode (SH-3). A release build would want `SOMVR_PRACTICE=1` (not
+  auto): a player would start in their own world, not be blinked to the meadow (the user's playtests start there by
+  choice).
+## 111. Build 27: the open world's own systems in VR - the map by the laser and the fingertip, the map's waypoint in the world, fast travel, the time of day, the collectibles, night and rain: `SOMVR_MAP_POINT`, `SOMVR_OBJECTIVE_WAYPOINT` (2026-10-30, som-b27-world)
+
+The round played the open world's systems as a VR player - the forge tower, the map, fast travel, the time of day, the
+three kinds of collectibles, the wraith vision, night and rain - on the test save with build 26's switches (headless,
+`scripts/headset-build26.env` + the practice's test words, the test hands), and fixed what a VR player could not do.
+
+### 111.1 What the save offers, and what a VR player met (boots 20261030-073117, -110011)
+- **The forge tower**: the save's synced tower ('FT_BG', a `TravelPoint` WBObject, 35675 5519 -22185) is the arrival
+  (3.7 m from the marker); 'FT_SON_to_BG' (-9200 -1180 -55400) is the region's crossing. **The save's five
+  'RessurrectionStone' markers are Nurn's unsynced towers' stones** (103.1 listed them as "not visited"): one seen as a
+  white beacon in the wraith vision from the tower top (bearing ~315 deg), found by a fan of `practice status ground`
+  probes (a 22 m structure 280 m NW, its top at 6134; boot 20261030-110011), its stone at 15862 6232 -3175.
+- **The sync, played** (boot 110011, `practice go` onto its top - not climbed): "(B) Reforge" ('Combat_Activate_SpiritStone',
+  SOMVR_USE: B holds 123) -> B -> the attack 'Activate_SpiritStone' (2.2 s, first person: no body moment, the view
+  held at the head, a white flash over the stone) -> the game pauses into **the map** on the board: "Cab-Gwanath Bluff",
+  "Fast Travel UNLOCKED", the region revealed, Celebrimbor's line ("This tower, the Elven stones luminous as if they were
+  cast from light.") -> B -> 1.3 s of the game's cover (the loading space, the fade) -> the world, the stone's flame lit
+  (the same in both eyes, frame 9945), "New Missions" and the XP popup. **No camera flight came** (`RT_Vista_0N` in the
+  data did not run, or ran under the paused map): nothing moved the view; nothing to fix. Were a vista to run, it is the
+  body moments' `cine`/`pres` = the window (the theatre) by the policy since build 21.
+- **The map** (the right stick's click; `ctx=menu paused=1`, the mono board 0.86 m at 0.6 m): "Harad Basin", the
+  herbs' legend, the region challenges, the cross in the middle (UI 960,537) on the tower: "(X) Fast Travel (Y) Advance
+  Time"; the bottom bar "(L) Move (R) Zoom (A) Set Waypoint (RB) Legend (◄) Exit Menu". Readable on the board.
+  **The laser and the fingertip did nothing on it**: the hover, a click (GFx: `POINTER down/up ... clicks sent`) and
+  Mouse1 held (`screens mouse1 all`) left the map as it was. The pad's way works: the left stick pans (0.6 -> MapMoveX
+  0.529 for 35 ticks = 334 px), A = MenuEnter 54 + MapSelect 65 (the waypoint: "Waypoint", "Clear Waypoint"), B closes.
+- **Why** [static, som-linux]: `CUIPDAZoneMapLayer::vf_10` (0xc03fc0) takes 0x57 (MenuAux6 87: Fast Travel to the
+  selection's travel point, `FUN_00bf33d0` = the selection +0xd00 -> +0x38 -> +0x48's type list holds 0x46b8260 and
+  nothing blocks it) and 0x58 (MenuAux7 88: Advance Time), 0x52 (the legend), the rest to the base. The prompt bar
+  (`FUN_00bf34d0`) binds the waypoint to 0x36 (MenuEnter), the pan to 0x3b (MapMoveX), the zoom to 0x3e; for a KBM
+  mouse `MouseMoveLC` = "Map_MoveMap" (a left drag) and `RMouseButton` = "Set Waypoint" - in the pad's profile no mouse
+  event reaches the map (no pad check like the Nemesis hierarchy's to answer: the map has none).
+- **The waypoint in the world**: the marker is a nav marker 'UserWaypoint' (`OBJECTIVE ... marker 1 ... 'UserWaypoint':
+  shown by the game at (51335 100 -22416), offscreen 1`): the game's icon placed by its flat camera, at the HUD's edge
+  - not seen in either eye. With `objective recs Objective*,UserWaypoint` (live) it became our marker: `the marker in
+  the eyes: 'UserWaypoint' ... 167.9 m`, the edge arrow at 85 deg off, the faint diamond world-locked when looked at.
+- **Fast travel** (X on the map at the tower): the pause ends, the game's black cover is detected (`cover 3: the
+  game's cover held 0.32 s ... a load - the loading space with the progress lights`), lifted after 6.6 s "back to the
+  world through the fade" - no cut in the open world; works.
+- **Advance Time** (Y on the map at the tower): the Nemesis army board ("Target Selection ... (B) Return to Game", the
+  window) - B: night. Night and the wraith vision at night: the same in both eyes (composed frames 2511, 2631).
+
+### 111.2 The map by the laser and the fingertip: `SOMVR_MAP_POINT=on` (code default off; somvr_map.c/.h, somvr_map_game.c)
+**Decided**: the pointer drives the map's own pad commands - no mouse emulation (none reaches the map in the pad's
+profile, 111.1) and no new map UI. HL:A has no map; its rule for every panel is "point and pull", so the map gets that:
+- **a press on the map** (the trigger with the laser on the board, or the fingertip's push) = "bring this place to the
+  cross": at once the map pans by MapMoveX/Y at full deflection toward it for the time the game's pan takes to cover
+  that distance (`pan_pxs`, `lag_s`); the game's selection then names the place top right and shows its prompts - and
+  the game's own snap pulls the cross onto an icon near it;
+- **a press on the cross** (within 30 px) = A: MenuEnter 54 + MapSelect 65 held 0.12 s - the waypoint set or cleared
+  there;
+- **a press on a forge tower's popup** (only while the selection under the cross is a travel point: the layer's
+  `+0xd00 -> +0x38 -> +0x48` type list holds `0x46b8260`, FUN_00bf33d0's own test, read only): its "(X) Fast Travel"
+  row = MenuAux6 87, its "(Y) Advance Time" row = MenuAux7 88 (the rows' places: UI px -112..148 x -118..-76 / -76..-34
+  from the cross, measured on the 1920 x 1080 UI);
+- **a press still held** after its pan and 0.45 s steers: the map keeps moving toward where the pointer is, full speed
+  360 px from the cross, slower nearer, until it is let go (the player's eye closes the loop for long trips);
+- a new press cancels a pan under way; the map closed ends everything. The view never moves: the map is on the board.
+The pan's numbers (boot 20261030-084650, the word `map hold`, the tower icon tracked in the flat pictures): MapMoveX 1.0
+for 1.0 s moved 375 px, for 0.51 s 223 px -> 310 px/s and about 65 px more after the stick is let go (`lag_s` -0.20 s;
+a press nearer than 65 px gets the shortest touch, 0.05 s, and the game's snap); MapMoveY +1 = up (the content moves
+down); 0.5 deflection is slower than half (the press always uses full deflection). The values go in through in_apply as
+the stick's (`on`, no event), the pad's left stick still pans as before (the larger value wins).
+
+Lines: `CONFIG map pointer on (SOMVR_MAP_POINT): ...`, `MAP t=.. the map is the top menu layer; the selection under the
+cross is|is not a travel point`, `MAP t=.. a press at X,Y px from the cross: the map brought there (L px: MapMoveX/Y
+VX,VY for T s)` / `...: A (the waypoint) (commands 54 and 65)` / `X (Fast Travel)` / `Y (Advance Time)`, `MAP t=.. still
+held ...: steering`, `MAP t=.. the pan done | let go | the map closed`, `MAP END ...`. The word `map status|on|off|pan
+PXS LAG_MS STEER_PX [YSIGN]|hold X Y SEC` (hold: MapMoveX/Y held SEC s while the map is up - the measurement).
+`SOMVR_MAP_POINT=on[,PXS,LAG_MS,STEER_PX]`. Tests: tests/test_map.c (42: the parse, the regions, the press's planned
+pan, the shortest nudge, the buttons held 0.12 s, steering after the pan, a cancel, the map closed, off).
+
+### 111.3 The map's waypoint in the world: `SOMVR_OBJECTIVE_WAYPOINT=on` (code default off; somvr_objective_game.c)
+A record matching `UserWaypoint` (`on`; or a pattern list) is an objective of rank 2: our marker (44: world-locked at its
+distance up to 12 m, the edge arrow when out of view, the game's icon hidden in our frames), chosen before the nearest
+objective - the player set it, the player wants it shown; the game removes it when reached (or "Clear Waypoint"), and the
+nearest objective is shown again. Same picture as the objective's (the diamond and the distance). Lines: `OBJECTIVE ...
+'UserWaypoint' (the player's waypoint): ...`, `CONFIG objective=on ..., the player's waypoint 'UserWaypoint'`.
+
+### 111.4 Proven headless (boots 20261030-084650 and -102725; the tower icon tracked in the flat pictures)
+| Press (the pointer) | Planned | Result |
+|---|---|---|
+| the laser at -400,+200 px from the cross | 447 px, 1.243 s | the map moved 425,-204: the tower 25, 4 px from where it should be (6 %) |
+| the fingertip pushed in at +250,-100 | 269 px, 0.669 s | the tower 6, 2 px from where it should be |
+| the laser on the tower icon (+173,-105) | 202 px, 0.453 s | the tower on the cross (the game's snap), `the selection under the cross is a travel point` |
+| the laser on "(Y) Advance Time" | - | MenuAux7 88: the time advanced ("New Missions NOW AVAILABLE", night) |
+| the laser on "(X) Fast Travel" (boot 084650) | - | MenuAux6 87: the fast travel - the cover, the loading space 6.6 s, the fade back |
+| the laser on the cross (boot 084650, the mission icon brought there first) | - | MenuEnter 54 + MapSelect 65: "Clear Waypoint" - the waypoint on "Queen of the Shore" |
+After the fast travel the waypoint was our marker: `the marker in the eyes: 'UserWaypoint'`, 71 m, the edge arrow at
+144 deg, then (the head turned) the diamond "71 m" world-locked in both eyes (frame 1197). `MAP END pointer on: the map
+up 1077 tick(s) (a travel point under the cross 548); clicks 4: pans 3 (cancelled 0), A 0, X 0, Y 1`. A press still held
+(steering) is unit-tested only.
+
+### 111.5 The collectibles on build 27 (boot 102725, scripts/glyph18-drive.sh "glyph art" as it is)
+- **Ithildin** (the arch's, `Lore_Glyph_27`): the wraith vision held, looked at from 6 m: `GLYPH collect ... collected by
+  our look ... taken 1` (SOMVR_GLYPH=head, 45.13; the soak's table fix 107 in): the game's Ithildin page "1 / 32 ...
+  Nau dan I ngaurhoth" on the board.
+- **The artifact** (art2, the Ritual Cup): "(B) Pick Up" with the vision, B, its page on the board (the tutorial, A),
+  turned to "Press (X) to play Memory" (the right stick, 45.7), B back to the world.
+- Herbs: not run again (B picks, 43.4). The popups at the gaze: SOMVR_XR_POPUPS=gaze (87.1) as before.
+
+### 111.6 Night, rain and the wraith vision in both eyes
+Night (Advance Time; and `SON_Night_Rain01` by the practice trip's ChangeWeather, `SOMVR_PRACTICE_WEATHER=SON_NightRain`),
+the day's rain after a fast travel (boot 084650), each with and without the vision: composed both eyes (073117 frames
+2511/2631, 084650 1197/1902, 102725 10297/10406) - the same picture in both eyes, the vision's sky the same (KTIME,
+96); the rain's fine detail (a 9-px high-pass of the sky and the rock) correlates 0.83 / 0.81 between the eyes at 0 px:
+the same drops in both eyes, no per-eye shimmer; the flat screen's drops on the lens are out (SOMVR_FLATFX `rain`,
+86). Nothing smeared or flat was seen; nothing to fix here.
+
+### 111.7 Unproven, for the headset
+- The map's presses in a real hand: the open-loop pan's error (6 % of the distance headless; the game's snap takes it
+  onto icons), a long press's steering (unit-tested), the popup rows' size under a real laser (about 1.7 deg each).
+- A forge tower's sync in the headset (111.1): the reforge's flash at arm's length, the map coming up on the board.
+- Climbing a tower: not driven this round (the climb system's walls, 101); the drill teleported onto the top.
+
+## 114. Build 27: the abilities Talion gains, by the VR player's hands - the wraith flash by the wraith hand's push, a downed orc finished by the sword's stab: `SOMVR_ABIL` (2026-10-30, som-b27-abilities)
+
+108.1 left two of the fight's specials without a VR control (the wraith flash/stun, the ground finisher) and the rest of
+the skill tree unchecked. This section: what the game's tree really holds (the nodes, their records, what opens them),
+how a VR player does each ability now, the two built here, the gaps left.
+
+### 114.1 What the game holds: the streak's specials are root nodes; the charge opens them
+
+The streak's specials are root nodes of Talion's tree (39.1's `verbs tree`, run 20261029-032347: 105 roots) whose
+predicate is a chord of two commands and whose pools pass only for the right target with the right charge. The data
+(the node's Chord record, schema `0x4bb4560`; `CombatPrimary01..04` = the pad's X, Y, B, A; 39.1's table had X + Y for
+two of them, the records say otherwise):
+
+| Root node | Chord / input | Its records | What opens it (runs below) |
+|---|---|---|---|
+| `PC_InstaKill` (`TokenKill_Chord`) | Y + B (`CombatPrimary02+03`) | `PC_Bip_Standing_InstaKill_*`; on a downed orc `PC_Bip_KD_InstaKill_*` (incl. `_Sever`) | the execution charge full (the hit counter's +0xc6 >= its need 8) |
+| `PC_WraithAoE` (`WraithAoE_Chord`) | X + A (`01+04`) | `WraithAoE_HC_Lowest/Low/Medium/High` (+ `_Tick`); links `PC_WraithAoE_Auto` / `PC_GroundKill_AoE_Auto` (hidden commands) | the charge full - **with none of the `PSS_Wraith_*` skills granted** (run 120747's first probe: `'WraithAoE_HC_Low'` before any grant): on the user's own save |
+| `PC_GroundKill_AoE` (`GroundKillAoE_Chord`) | X + Y (`01+02`) | `GroundKillAoE_HC_*` | never offered (granted `PSS_GroundKillAoE`, its movie `fellTheFallen`; charged; one downed orc at 71 cm) |
+| `PC_InstaHOG` (`InstaBrand_Chord`) | B + A (`03+04`) | `PC_Bip_InstaHOG_*` | the charge + `PSS_Instant_Brand` (97-98) |
+| `PC_GroundTakedown` | X with RT held (`X_Plus_RTHeld`) | `PC_Bip_GroundTakedown_*` (34; the dagger, `MeleeAux`; sync `PC_Bip_KD_GroundTakedown_*`) | never offered on a knocked-down orc (4 runs; `PSS_Faster_Ground_Takedown` owned) |
+| `PC_PoolAttacks_KD` | X | (the downed orc's strikes) | never offered either |
+
+The skills' records (`abil skill NAME`: the record, its `PS_*` / `PSUID_*` links): their texts are empty in these
+records (the strings live elsewhere); what names them is the tutorial movie each links: `PSS_Wraith_Stun_1` ->
+`Wraith_Stun` (`wraith_stun.bndl`), `PSS_Wraith_AOE_1` -> `displayOfPower`, `PSS_GroundKillAoE` -> `fellTheFallen`,
+`PSS_Wraith_Flash_1` -> none. **Granting them one by one** (run 120747: a full charge before each probe) changed none of
+the probed picks: the flash stayed `'WraithAoE_HC_Low'`, the stun `PL_St_L1_D1_*_HC_Lowest`, the vault
+`PC_Bip_Sync_JumpOver_F`. So on this save the AoE wraith special is already open (the charge is its price), and those
+skills act somewhere no root pick shows (the AoE's later levels `_HC_Medium/High`, the stun's links - `PC_Stun_Root`'s
+own pool `PC_Stun` holds the 56 `PL_St_*_HC_Low/Medium/High` stuns its `_Lowest` sibling does not, never offered in
+these runs). **The wraith stun is not a node of its own that a skill opens here**: the game's `WraithStunned` state is
+what the X + A special does to the orcs it hits (114.3) - the wraith flash and the wraith stun of 108.1's row are one
+VR gesture.
+
+A downed orc (`abil kd`, a test aid: our heavy record dealt as the game's, its own `Heavy_*` RecoilTypeHit, so
+`SOMVR_COMBAT_KNOCKBACK=stagger`'s lighter type is not put in): `AI_Bip_Recoil_F_KD_STR` (thrown 2-5 m, ~2 s), state
+`KnockDown`, `AI_Bip_KDLoop` (~2-3 s), `AI_Bip_KDRecover`. **He leaves Talion's combat bands** (`cb_orcs_r` found no
+orc while he lay: run 100947), and **his root stays ~95 cm over the ground** while he lies (run 120747's stab met the
+ground 115-122 cm under it). With the charge full, the execution's own node offers his kill there:
+`PC_InstaKill -> 'PC_Bip_KD_InstaKill_R1_Sever'` (run 120747), `_R2`, `_F_Sever` (122244).
+
+### 114.2 The audit: every ability of the tree and the world's kill tools, and the VR way now
+
+The user's save owns 24 of 127 skills (`beasts skills`): Agility, Ambush, Dash_Over_SC, Death_Threat,
+Faster_Ground_Takedown, Fear_Arrow, Multi_Counter, Quick_Throw_1/2, Shadow_Attack, Shadow_Mount, Terrorize, Token_Arrow,
+Troll_Rider, Whistle, Wraith_Bow, Wraith_Ignite, Wraith_Infight_1/2 and upgrades (health, bow rune slots).
+
+| Ability (the game's node / skill) | Flat input | VR now (switch) | Proven | Gap / why |
+|---|---|---|---|---|
+| Strike, counter, stun, evade, vault, grab, drain, interrogate, execution, combat brand, Shadow Strike, the bow's slow-mo | 108.1 | 108.1 (the blade's contact, the parry, the open hand + LT, the dodge, the wraith step over an orc, the left squeeze, R trigger + hard hit, L palm + LT, the gaze + A) | 108.1 | - |
+| **The wraith flash / stun** (`PC_WraithAoE`; the charge) | X + A | **R trigger held + the open left hand thrust out at an orc** (`SOMVR_ABIL`) | **114.3** | new here |
+| **A downed orc's finish** (`PC_InstaKill` on a `KnockDown` orc; the charge) | Y + B | **the sword's stab down into him** (`SOMVR_ABIL`) | **114.3** | new here |
+| The dagger's ground takedown (`PC_GroundTakedown`; Faster_Ground_Takedown) | X, RT held | - (the cuts hit a downed orc as any) | - | never offered on a knocked-down orc (its pools' predicates not read; maybe only after the game's own takedowns - the drop's `PC_KD_FromAbove_*`, the tackle) |
+| Ground AoE "Fell the Fallen" (`PC_GroundKill_AoE`; PSS_GroundKillAoE) | X + Y | built: R trigger + the stab (`SOMVR_ABIL_GAOE`, **off**) | - | never offered (one downed orc; it may want several) |
+| Brutalize (`PC_StealthTorment` / `_FromAbove` / `_Zipline`; the stealth brand's B) | B behind an unaware orc | the stealth brand's prompt by the hand (`VERBS_BRAND`, 97-98: the open hand on his head + LT = B) | the brand, 98; the torment not re-proven | run 100947's patrol was aware (it struck): no offer |
+| Multi_Counter (owned), Counter_SC | Y on several | the parry: each blow on the blade (`PARRY`) | 108.1 | the parry is per blow |
+| Shadow Chaining | Y again in a strike | - | - | not built (the gaze strike is one dash) |
+| Quick Throw (owned; `PC_Ranged_QuickThrow`) | `CombatSecondary03` tapped | - | - | no VR throw of the dagger (design-vr D12) |
+| Taunt (`PC_Taunt`), Whistle/Attract (owned; `PC_Attract`) | 123 with 124 held; Y with RT held | - | - | no VR control |
+| Wraith Ignite (owned; `PC_Wraith_Ranged_Immolate_Shoot`) | 123 while aiming | - (the VR bow shoots the game's normal arrow) | - | **a fire or a grog barrel exploded by the Ignite shot has no VR control**: 123 (the grab's command) while the bow is drawn |
+| Wraith Distract (`PC_Wraith_Ranged_Normal_Distract`) | Y while aiming | - | - | Y is the vision |
+| Fire/Fear/Token arrows, Pin, HeadExp, draw skills | the bow | the game's own arrow (`BOW_GAME_ARROW=on`): the game's rules | bow20 | a stopped arrow is silent (108.1) |
+| Shadow Mount, riding, the beasts' specials | - | 105, 109 | 105, 109 | - |
+| Brand, Command, Branded_Kill, Spy, Death_Threat | - | 97-98, 103, 106 | - | - |
+| Gravewalker, Struggle_Crit (the last chance) | - | `STRUGGLE` (108.6) | 108.6 | - |
+| Passive / numbers (Agility, Rhythm, HC_*, Crit, Infight, Terrorize, Slaughter, Overpower, Flaming_Sword, the health and rune upgrades) | none | - | - | no control needed |
+| Campfires / grog barrels by an arrow | the bow | the game's arrow: an ordinary arrow's hit, the game's rule | - | none in the meadow; the explosion may need the Ignite shot (above) |
+| Poisoned grog (PSS_Poison) | 123 at the barrel (`PC_Environmental`'s input) | B at a `Combat_Activate_*` prompt (`SOMVR_USE`, 43) | - | not met headless |
+| Caragor bait, hanging meat, hornet/wasp nests | the bow | the game's arrow | - | not met headless |
+
+### 114.2b The design: the game's offer, the player's hand (`SOMVR_ABIL`, code off, env on)
+
+Every ability here is the game's own: its node, its pools, its records, its price (the charge). `SOMVR_ABIL` asks the
+game's selection (`vb_pick`, as the grab cue, the brand and the drop kill ask) for the near orcs every 0.1 s - this
+frame's and the ones seen in the last 20 s (a downed orc is out of the bands) - and the ground's nodes only for an orc
+in a down state (`KnockDown`; the execution's node picks for any). No offer, nothing happens: no charge, no flash. The
+player's part is the gesture, the game's the move. Nothing moves the view: the flash is the game's attack where Talion
+stands (his root held: 0.0 cm in every run), the finisher a hit with no sync. One modifier for the streak's specials:
+**the right trigger, the wraith charge**, as the execution's (R trigger + a hard hit); the sword's blue glow (the game's
+own, the full charge) says both are there.
+
+- **The wraith flash** (`PC_WraithAoE`): **the right trigger held and the open left hand thrust out at an orc** - the
+  palm 2.2+ m/s over its newest 80-160 ms in the body's frame (the walk taken out), within 50 deg of out from the eyes
+  (not a pull, not a sweep across), the palm 25+ cm out, its level way within 60 deg of the orc, the grip under 0.5 (a
+  fist is the grab's). Why: B&S's spells and HL:A's gloves answer "a power from the hand" with the hand thrust out; the
+  trigger makes it deliberate - the free left hand also shoves shields (`SHOVE`: with the charge held and the flash
+  offered the push is the flash's, the shove waits) and strikes the air in a fight. The game's attack starts on that
+  orc (`FUN_00a8c700(pc, node, attack, orc)`, `SOMVR_ABOVE`'s start; `SOMVR_ABIL_START=press` presses X + A instead).
+  The cue: a wraith-blue glow at the left palm while the game offers it, brighter with the trigger held; one soft tick
+  in the left hand when the offer comes (at most every 3 s).
+- **A downed orc's finish**: **the sword's stab down into him** - the sword hand 1.8+ m/s, 1.2+ m/s of it down, the
+  blade within 55 deg of straight down and 45 deg of its way (point first), the tip within 70 cm of his body (over his
+  root at the ground + 25 cm: his root stays up while he lies). The offered record is dealt by `Combat_DealHit` with
+  forceKill at the tip - the execution's and the stealth thrust's way: the stab is the kill, no paired animation, he
+  dies where he lies; the charge spent by the execution's stock rule (`somvr_ex_spend`); a `_Sever` record cuts as
+  `SOMVR_EXECUTE_SEVER=key` cuts an execution's. The cue: his body's blue glow while the game offers it. A sword
+  lowered (1.4 s) is no stab. Without the charge the game offers no finish (`PC_GroundTakedown` / `PC_PoolAttacks_KD`
+  never did); our cuts hit a downed orc as any other.
+- **The ground AoE** (`PC_GroundKill_AoE`): the same stab with the right trigger held starts it where the game offers
+  it - never offered headless, so `SOMVR_ABIL_GAOE` is off in the code and the env.
+
+Code: somvr_abil.c/.h (pure: `somvr_ab_push_judge`, `somvr_ab_stab_judge`, the trigger; tests/test_abil.c, 21 checks: the
+push at him, a loose hand, no trigger, a fist, too slow, a pull, a sweep, at the body, the orc aside, pushed at an orc on
+the right; the stab, lowered, a level cut, the blade level, the flat leading, beside him, out of reach above, into his
+chest 64 cm off the pelvis point), somvr_abil_game.c (included last: the offers, `abl_hands` after the struggle's,
+`abl_blade` after the drop kill's, the start, the kill, the cues, the watch: Talion's attack and root, the near orcs'
+attacks, states and health for 3 s after each; the test words `abil status|probe [nowin]|links NODE|skill NAME|rec
+NAME|kd|streak N|goto CM|start flash|ground|gaoe|watch S`), the shove's veto (somvr_parry_game.c), the Controls lines
+(somvr_vrmenu.c, `SOMVR_VMA_FLASH` bit 45 "Flash: RT + L palm push out" under Bow and wraith, `SOMVR_VMA_GROUNDK` bit 46
+"Downed: stab down into him" under The sword; somvr_hla_game.c sets them with the switch; tests/test_vrmenu.c),
+scripts/abil27-drive.sh.
+
+### 114.3 The runs
+
+Every run: scripts/abil27-drive.sh, build 26's env + `SOMVR_ABIL=on`, the practice meadow, one infantry at a time with
+the test guard (`fight guard path`), the skills granted on the run's save copy (`beasts grant`), the charge by `verbs
+brand charge`, the knockdown by `abil kd`, Talion put 70 cm short of the downed orc by `abil goto 70` and the headless
+head turned to him; scripted hands held as real hands (the push: the open left grip from the chest 45 cm out and up in
+130 ms; the stab: the grip's -Z straight down, 50 cm down in 150 ms); 0 WARN, the install unchanged, the real save
+UNCHANGED.
+
+| Run (logs/boot-check-20261030-) | What it proves |
+|---|---|
+| 100947 | the skills' records, the nodes' links; `abil kd` = `KnockDown` (thrown 4.5 m); the downed orc gone from the bands (no probe found him); the orc killed by our cuts before the streak rose: no flash |
+| 114152 | **the first wraith flash**: the push (4.17 m/s, 33 deg off out, 24 deg off the orc, the trigger held) -> `WraithAoE_HC_Low` started, the orc `AI_Infantry_Avoid_Back_2` -> `AI_Bip_Recoil_WraithStunned_Into_F2`, state `WraithStunned` 0.6 s, 64 -> 44; Talion's root 0.0 cm; the charge 11 -> 1. The same push without the trigger: nothing. The streak alone (`abil streak`) never opened it: the charge does. No ground offer on the downed orc (`PC_GroundTakedown`, `_KD`: none) |
+| 120747 | the flash offered with no `PSS_Wraith_*` granted, unchanged by each grant; `PC_InstaKill -> 'PC_Bip_KD_InstaKill_R1_Sever'` on the downed orc with the charge; the stab refused "the tip not at him" (122 cm: the body point over his root - fixed to the ground); flashes lost to the orc's blows clearing the charge while the driver waited (the game's rule) |
+| 122244 | **2 finishes of 2 stabs**: the tip 39 cm from his body -> `Combat_DealHit(..., 'PC_Bip_KD_InstaKill_R1_Sever' / '_F_Sever', forceKill 1)`: 45 -> 0, dead, the charge spent (8-9 -> 1); the lowered sword (1.4 s): nothing; a second flash: `WraithStunned`, 63 -> 43, root 0.0 cm, the charge 9 -> 1; two pushes the driver made without the trigger seen: "no wraith charge (the right trigger)", nothing |
+| 124054 | a third flash (82 -> 62, root 0.0 cm, the charge 9 -> 1); a third finish (`_R2`, 45 -> 0, the charge 10 -> 1); the lowered sword: nothing; a stab 63 cm off the pelvis point refused at the then 55 cm reach (now 70) |
+| **131053** (the final build: reach 70, the sever, a fresh orc per flash) | **2 flashes of 2 pushes made in an offer** (85 -> 65, 84 -> 64; root 0.0 cm; the charge 10 -> 1, 9 -> 1), the push without the trigger: nothing (a third attempt came after an orc's blow had cleared the charge: no offer, nothing - the game's rule); **2 finishes of 2 stabs** (the tip 46 / 39 cm off: `'PC_Bip_KD_InstaKill_R2_Sever'` -> dead, **severed 'Head'**; `'_R2'` -> dead; the charge spent each; root 0.0 cm), the lowered sword: nothing |
+
+In all: **5 flashes of 5 pushes made with the trigger in an offer, 0 of 7 pushes without the trigger**; **5 finishes of 5
+stabs in reach, 0 of 4 lowered swords**, 1 stab out of reach refused.
+
+### 114.4 Seen as a player (both eyes, xr_compose)
+
+- The flash's cue (124054 frame 888, 122244's 1129): the orc at arm's length, the blade's blue-white glow (the game's
+  own: the charge is full), the left hand low in the view with a small blue glow at the palm - visible, not loud; a
+  player looks at the hand that will push.
+- After the push (114152 frame 1355, 122244's 1188, 124054's 952): the orc 2-4 m off, his whole body lit a bright
+  wraith blue-white, readable against grass and sky; both eyes alike. Nothing of the view moved.
+- The finish's cue (122244 frame 1746, 124054's 1691; the head pitched 35 deg down): the orc lying at the feet, the
+  blade glowing, a blue glow on his body at the ground (before the fix it floated ~1 m over him: 120747 frame 2752).
+- After the stab (122244 frames 2200 / 2239, 124054's 2140, 131053's 2479 / 2519): he lies still, the blade's glow gone (the
+  charge spent), the game's "+15" at the HUD (the kill credited).
+- The final build's flash (131053 frame 1316): the stunned orc a bright white-blue with the flash's arcs, a blue wraith
+  wave to the left of him.
+  A red edge at the left in some frames is THREAT's edge / the hurt flash of the blows before (not this section's).
+
+### 114.5 Summary
+| Item | Switch (code default -> env) | Proven headless |
+|---|---|---|
+| The wraith flash by the push (RT held + the open left hand out at an orc), the game's `PC_WraithAoE` on its offer | `SOMVR_ABIL` off -> on (`SOMVR_ABIL_FLASH` on) | 5 of 5 with the trigger (114152, 122244, 124054, 131053 x2), 0 of 7 pushes without it; root 0.0 cm; 21 unit checks |
+| A downed orc's finish by the stab, the game's `PC_Bip_KD_InstaKill_*` on its offer | `SOMVR_ABIL` (`SOMVR_ABIL_GROUND` on) | 5 of 5 stabs in reach (122244 x2, 124054, 131053 x2: one severed 'Head'), 0 of 4 lowered swords |
+| The ground AoE (RT + the stab) | `SOMVR_ABIL_GAOE` off -> off | never offered |
+| The Controls lines Flash / Downed | with `SOMVR_ABIL` (bits 45-46) | test_vrmenu |
+| Not built (114.2): the dagger's ground takedown, Shadow Chaining, Quick Throw, Taunt, Whistle, the Ignite shot, Distract; the world's kill tools not met headless | - | - |
+## 115. Build 27: 90 frames a second - what a stereo frame costs, the game's and ours; the hands' slow reads, eye 1 with eye 0's sun cascades: `SOMVR_PERF`, `SOMVR_XR_PERF`, `SOMVR_XR_HANDS_MEM`, `SOMVR_SHADOW_SHARE` (2026-10-30, som-b27-perf)
+
+### 115.1 The user's sessions held 90 only on average
+The 10-28 session (logs/boot-check-20261028-193826, the meadow, the LACT VR profile on): of 813 stereo seconds (RATE
+lines, `H4` per second) 430 held 90, 195 held 88-89 and **125 (15 %) fell to 76-86** - in stretches of 5-15 s
+(974403-419 the arrival, 974581-594 a spawn and the wrist panel, 974656-665, 974786-790), not tied to one feature (the
+wrist panel was open through good stretches too). The cover readings' "600 frames per ~6.7 s" was the average. A dropped
+frame in the headset is judder: the cause had to be measured, headless, where the null compositor paces at 20 Hz.
+
+### 115.2 The tools (both off by default; on in the build 27 env block)
+- **`SOMVR_PERF=on`** (the preload, somvr_perf_game.c; `SOMVR_PERF_S` the line's period, default 10 s): per stereo
+  frame, the game thread from one H4 to the next - its wall, its CPU (CLOCK_THREAD_CPUTIME), **busy** = the wall less
+  the vf_24 sync's wait inside eye 0 (eye 0's wall - its CPU; the wait is the pacing), our H4 work before eye 0 and after
+  eye 1 (and after eye 1 by function: `PERF ... ours after eye 1 by function`), each eye pass's wall/CPU, the process's
+  CPU, our `peek`s (process_vm_readv reads); the render thread (H9 to H9; **its frame work** = H3's eye 0 match to the
+  present, i.e. without the wait between frames; each eye = H3's match to H8's end of the eye's target); the four shadow
+  passes of the opaque stage per eye (`PERF ... shadow passes`; the HEAD_SHADOW_* hooks are installed for it). Lines:
+  `PERF[ NAME] t=.. s=.. frames=N (mean/p50/p95/max ms) ...`, `PERF END`. Test words: `perf NAME` (the window so far
+  logged, the next named), `perf skip MASK` (a measurement only: eye 1 skips the shadow passes in MASK, 1 sky, 2 lights,
+  4 sun cascades, 8 deferred lights).
+- **`SOMVR_XR_PERF=on`** (the layer, vklayer/somvr_perf_layer.c; `SOMVR_XR_PERF_S`, default 10 s): GPU timestamps -
+  first and last in each of the game's vkQueueSubmit calls on the session queue (two command buffers of ours per call,
+  recorded once per query pair), right before each copy into an eye image in the game's own command buffer (H8's
+  CopyResource = vkCmdCopyImage into eye e's VkImage: BOTTOM_OF_PIPE = eye e's pass done), and around the layer's present
+  path (two submits of ours); read back frames later without waiting. Per frame: the GPU busy time (the spans in queue
+  order, each from max(its start, the previous end)), split at the eye ends into eye 0 + the frame's shared work, eye 1,
+  the rest; ours. The present path's CPU by part (`... the stereo present path by part`: start, acquire+copy, release,
+  lead+menu+pointer, layers, fade+menu, hands, comfort+threat+objective, xrEndFrame+rest), the driver's present, the
+  xrWaitFrame wait; the shader clock and busy % (sysfs) at the line. Test word (SOMVR_XR_TEST): `perf NAME`.
+- scripts/perf27-drive.sh (the places, the windows, the skips, the share's checks), scripts/perf27-eyediff.py (115.5),
+  headless_vr.sh `HEADLESS_MONADO_ENV` (monado-service's U_PACING_* / XRT_COMPOSITOR_*).
+- Limits of headless numbers: the null compositor's 20 Hz leaves the GPU idle ~2/3 of each frame on the tests' LACT
+  Default profile, so its clock drops and climbs within a frame: **eye 0's GPU time (10-14 ms) holds the ramp, eye 1's
+  (4.4-5.6 ms) is the nearer to a loaded GPU's**; frame rates here say nothing. `U_PACING_APP_IMMEDIATE_WAIT_FRAME_RETURN=1`
+  (boot 113135) does not unpace the game: the null compositor's swapchain images still come at 20 Hz (the wait moved
+  into xrEndFrame, the game thread's xrLocateViews then waited behind it on Monado's IPC lock - that boot's busy, GPU
+  "ours" and game-thread "ours" are artifacts; its CPU per pass, the present path's parts and the shadow skips stand).
+
+### 115.3 The places (headless, the real GPU; boots 100408, 113135, 121256, 123345 + 115.5's)
+The story's furthest save (110.9's copy, `HEADLESS_SAVE_FROM`); the meadow is the practice area (its ambient AI off),
+the crowd = `practice group 8` fighting Talion; the wraith vision = Y held; the Sea Fort = its camp (24800 3600 3300,
+boot 113135 with `SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0`: the world's AI there); the fire = the 20c session's
+mark-16 campfire; night with rain = `SOMVR_PRACTICE_DAY=weather SOMVR_PRACTICE_WEATHER=SON_NightRain` (boot 121256).
+p50 (p95) ms per stereo frame, build 27 with 115.4's fixes, `SOMVR_SHADOW_SHARE` off unless named:
+
+| Place | Game thread busy | ours in H4 | Render thread frame work | frames over 11.1 | GPU: the game (eye 1) | GPU ours |
+|---|---|---|---|---|---|---|
+| Meadow, day | 3.4 (3.8) | 1.1 | 11.9 (12.6) | 618 of 618 | 18.1 (4.6) | 0.33 |
+| Crowd of 8, day | 5.4 (6.5) | 1.8 | 12.7 (13.5) | 798 of 835 | 18.2 (4.6) | 0.33 |
+| Wraith vision | 3.7 (4.2) | 1.2 | 10.3 (12.3) | 85 of 755 | 16.6 (4.5) | 0.33 |
+| Sea Fort camp, day | 3.8 (4.3) | 1.2 | 11.1 (12.1) | 324 of 745 | 15.8 (5.6) | 0.36 |
+| ... with `SOMVR_SHADOW_SHARE=cascades` | 3.7 (4.2) | 1.2 | **10.1 (10.6)** | **1 of 325** | 15.2 (**4.4**) | 0.38 |
+| Campfire, day | 3.4 (3.9) | 1.1 | 12.3 (13.2) | 695 of 695 | 17.7 (4.4) | 0.35 |
+| Meadow, night with rain | 3.4 (3.8) | 1.1 | 11.7 (12.6) | 500 of 613 | 17.9 (4.4) | 0.34 |
+| Crowd of 8, night with rain | 5.9 (7.0) | 1.9 | 12.9 (14.0) | 705 of 705 | 18.0 (4.4) | 0.33 |
+| Campfire, night with rain | 3.5 (4.2) | 1.2 | 13.1 (15.0) | 690 of 690 | 19.2 (4.9) | 0.37 |
+| Sea Fort with its AI (113135) | CPU 9.0 (game) | **4.5** | - | - | - | - |
+
+- **The render thread is the limit.** From eye 0's start to the present it works 10-13 ms a frame (CPU time, not
+  waits), about half per eye (eye 0 5.8-6.5, eye 1 5.4-6.1): the game's command execution and Feral's D3D11-to-Vulkan
+  translation, twice. Headless, every place but the vision is over 11.1 ms in most frames; the user's sessions at ~90
+  on average mean the user's PC runs that work a little faster than these test boots (other helpers' builds beside
+  them) - and the 15 % of seconds at 76-86 are this thread going over. Its own frame work holds no wait to remove.
+- The game thread (3.4-6 ms busy) and our present thread are not the limit. Our H4 work is 1.1-1.9 ms with the
+  practice area's quiet, **4.5 ms with the world's AI around** (113135, the Sea Fort: combat 2.0, input 0.9, fight
+  0.7, threat 0.45), 1,700-4,100 peeks a frame.
+- The GPU: eye 1 4.4-5.6 ms (the GPU's clock ramped by then); a loaded frame is about twice that plus the frame's shared
+  work - near 11.1 ms on the Default profile. Our share is 0.33-0.38 ms (the copies, the hands' 0.12, the quads).
+- Shadows: the opaque stage's sun cascades cost the render thread 0.55-0.75 ms of CPU per eye (the sky 0.03, the
+  lights 0.02-0.03, the deferred lights 0.03-0.6 by the fire) and eye 1's GPU ~0.5 ms (`perf skip 4`, 121256: eye 1
+  4.40 -> 3.88 ms in the meadow, 4.44 -> 3.90 in the crowd); everything else in eye 1 is the view's own.
+
+### 115.4 Ours, cut
+1. **The hands' vertices were read back from write-combined memory** (vklayer/somvr_handdraw.c `buffer()` took the
+   first HOST_VISIBLE|HOST_COHERENT type = RADV's type 2, GTT write-combined; `hd_box` reads every vertex of both hands
+   for both eyes' boxes, the arrow's fade reads its own): **1.85 ms of the present thread's CPU every stereo frame**
+   (113135: the present path's part "hands" 1.90 ms wall / 1.85 CPU of 2.6). A microbenchmark on the real GPU
+   (tools/vk_memread.c): hd_box's reads 1.08 ms from type 2, 0.004 ms from type 5 (HOST_CACHED), 19 ms from
+   the VRAM BAR. Now **`SOMVR_XR_HANDS_MEM=cached`** (default): host-cached first, the old pick as the fallback
+   (`wc` = the old). The line `xr: hands: the vertices in memory flags 0xe (host-cached ...)`. After (121256, 123345):
+   **0.21 ms CPU** (0.23 wall), the present path 2.6 -> 0.85 ms CPU; the hands' GPU time unchanged (0.12 ms).
+2. **`peek`'s getpid**: every process_vm_readv read also made a getpid system call (0.26 of 1.02 us here). The pid is
+   kept (reset in a forked child by pthread_atfork). Our H4 work in the meadow 1.49 -> 1.12 ms (1,720 peeks a frame).
+3. **`SOMVR_SHADOW_SHARE` - built, checked, NOT shipped (code default off, no env line).** Eye 1 would skip the
+   sun-cascade pass (FUN_007f6250, call 0x7dd605) and draw with eye 0's maps of the same frame (`cascades`; `all` also
+   the sky's FUN_007f5820 - its return value decides a branch: eye 1 gets eye 0's - and the lights' FUN_007db760; never
+   the deferred lights FUN_007dbd30, which shade too). Word `shadowshare off|cascades|all`; lines `CONFIG shadow_share`,
+   `SHSHARE`, `SHSHARE END`. The gain it would bring (123345, the sunlit Sea Fort camp, 16 s windows): the render
+   thread's frame work 10.87 -> 10.06 ms p50 (eye 1 5.35 -> 4.22), frames over 11.1 63 of 320 -> 1 of 325; GPU the
+   game 16.03 -> 15.21, eye 1 5.14 -> 4.41 (140626: 11.26 -> 10.49; the crowd 12.08 -> 11.60). It fails 115.5's check.
+
+### 115.5 The share's check: eye 1 alone, frame against frame
+Two dumps minutes apart differ everywhere (the light, the exposure, the grass: 123345's `shcheck`, eye 0 40-52 mean
+difference): useless. `shadowshare alt|altall|altbad` shares only in odd frames, so three consecutive dumped frames go
+off-on-off or on-off-on **in eye 1 alone**; scripts/perf27-eyediff.py `--alt` measures each eye's middle frame against
+the mean of its neighbours (eye 0, never touched, is the yardstick for what moved). The control `altbad` (eye 1 without
+its deferred lights = wrong lighting) must stand out.
+
+| Boot | off (baseline) | alt (cascades) | altall | altbad (the control) |
+|---|---|---|---|---|
+| 131529 (the first share) | +0.02, +0.05, -0.01, +0.04 | +4.50, +4.40 | +5.74, +5.33 | +32.8, +34.5 |
+| 140626 (+ the cascade pass's state) | -0.06, -0.03, +0.00, -0.05 | +6.20, +4.95 | +4.32, +3.66 | +36.2, +31.8 |
+
+(eye 1's deviation minus eye 0's, mean absolute, 0..255; two triples each.) **131529: eye 1 had no sun shadows** in its
+shared frames: the pipeline FUN_007d6e20 clears P+0x3809 for every view (0x7d7897, P = the pipeline state 0x4625840)
+and FUN_007f6250 sets it when it drew the cascades (0x7f8eec, with P+0x70f0 = 0 and five copies P+0x3918/30/48/60/78 =
+P+0x3910/28/40/58/70); the shadow mask FUN_007e2940 clears its target and returns without it (decompile, som-linux).
+140626 gives eye 1 eye 0's values of those fields: the shared frames have sun shadows again, **but not eye 0's** - in the
+Sea Fort camp eye 1's tower shadow shrank to a patch at the bottom where eye 0 (and eye 1 in its own frames) shows it
+over the fire's ground (frames 1351-1353). Not found this round: what else eye 1's mask takes from its own cascade
+pass (most likely the maps' storage reused by the passes between the eyes, or matrices kept per view). Until it is,
+both eyes draw their own cascades.
+
+### 115.6 The game's render settings live: no lever (142404, 143534)
+`Render.Setting.VegetationQuality 3|2`, `ShadowQuality 2`, `MeshQuality 2`, `LightingQuality 1`,
+`AmbientOcclusionQuality 2`, `TessellationToggle 0` on the console (the user's 10-28 settings: 4, 3, 3, 2, 3, 1), each
+for 15 s in the crowd of 8 and set back: the render thread's frame work 13.05-13.34 ms in every window against 13.07-13.33
+without (the GPU 17.5-18.1 ms likewise) - the console's change does not reach the renderer while it runs (the options
+screen's apply or a restart would; a VR preset would be set at the launch, prefs-set, not tried). 142404 ran the same
+with SOMVR_FX_TEST=1 (`fx console`): its hooks cost the render thread ~25 ms (37 ms a frame), no use for timing - hence
+the word `perf console CMD` (SOMVR_PERF's, the same runner without SOMVR_FX_TEST).
+
+### 115.7 What the user's Quest 2 at 90 Hz would see
+The frame is late when the render thread's frame work passes 11.1 ms (the GPU and the game thread are under it; our
+present thread ~1 ms). Headless (this PC with other helpers' work beside it, the tests' Default GPU profile):
+
+| Place | Render thread p50 (p95) | Headroom to 11.1 ms | Headless: frames late |
+|---|---|---|---|
+| Meadow | 11.7-12.1 (12.6) | -0.6 to -1.0 ms | ~all |
+| Crowd of 8 | 12.1-13.2 (13.8) | -1.0 to -2.1 ms | ~all |
+| Wraith vision | 10.3 (12.3) | +0.8 ms | 11-27 % |
+| Sea Fort camp | 11.1-11.3 (12.1) | 0 | 45-70 % |
+| Campfire | 12.3-13.1 (13.2-15.0) | -1.2 to -2.0 ms | all |
+
+The user's 10-28 session held 88-90 in 77 % of its seconds in the meadow and fell below 86 in 15 %, so the user's PC
+does this work some 5-10 % faster than these boots (an inference: no frame times were logged then): the meadow just
+under 11.1 ms, **the crowd, the fire and night with rain over it - judder there**,
+as the 76-86 fps stretches showed. This round's cuts are off the present thread (the hands, 1.65 ms) and the game thread
+(the pid, 0.4 ms), not the render thread: the session's frame rate is not expected to change much from them. What
+would: the shadow share done right (115.5: -0.6 to -0.8 ms of render-thread work), fewer draws (a VR preset at the launch,
+115.6), or less per-eye work in the game's own passes. The next session's PERF / `xr: perf` lines (on in the env) give the
+real numbers: read `its frame work` and `over` per place.
+
+### 115.8 Switches, words, lines
+| Switch | Code default | Env (som-b27-perf) | What |
+|---|---|---|---|
+| `SOMVR_PERF` / `SOMVR_PERF_S` | off / 10 | on | the CPU side (PERF lines), the HEAD_SHADOW_* hooks for the shadow passes' times |
+| `SOMVR_XR_PERF` / `SOMVR_XR_PERF_S` | off / 10 | on | the GPU side and the present path by part (`xr: perf` lines) |
+| `SOMVR_XR_HANDS_MEM` | cached | cached | `wc` = build 26's vertex memory |
+| `SOMVR_SHADOW_SHARE` | off | (not set) | `cascades` / `all`: eye 1 with eye 0's shadow maps - fails 115.5 |
+Words (the trigger file): `perf NAME`, `perf skip MASK`, `perf console CMD`, `shadowshare off|cascades|all|alt|altall|altbad`.
+SOMVR_XR_TEST: `perf NAME`. Lines: `CONFIG perf`, `PERF ...` (+ `shadow passes`, `ours after eye 1 by function`), `PERF
+END`, `xr: perf: on ...`, `xr: perf[ NAME]: ...` (+ `the stereo present path by part`), `xr: hands: the vertices in
+memory flags 0x..`, `CONFIG shadow_share`, `SHSHARE ...`. Tests: build.sh's `perf-noquery` (SOMVR_XR_PERF on a device
+without timestamps: off once, the frames as before). Overhead with both on: ~30 clock reads a frame on the game and
+render threads, 2 command buffers of ours per game submit (2.8 a frame) + 2 bracket submits on the present thread.
+
+### 115.9 Runs (headless, the story's furthest save copy, scripts/headset-build26.env + SOMVR_HANDS_TEST=1; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run | What | Proves |
+|---|---|---|
+| 100408 | meadow, crowd of 8, vision, Sea Fort (quiet), fire | the tools; the first table (115.3); the GPU's clock ramp |
+| 113135 | unpaced try (`HEADLESS_MONADO_ENV`), the world's AI (QUIET/CLEAR 0), skips (hooks not in) | unpacing fails with the null compositor; the hands' 1.85 ms; our H4 work by function with AI (4.5 ms) |
+| 121256 | night with rain; the hands in cached memory; `perf skip` 1..15 in meadow and crowd | the hands 0.21 ms; the shadow passes per eye; eye 1's cascades ~0.5 ms GPU |
+| 123345 | day, every place; the share's windows; the minutes-apart dumps | the main table; the share's gain; why the dumps must be consecutive |
+| 131529 | the share's frame-by-frame check (first share) | eye 1 lost its sun shadows (P+0x3809) |
+| 140626 | the check again (the cascade pass's state given) | eye 1's shadows still not eye 0's: not shipped |
+| 142404, 143534 | render settings live (`fx console`, `perf console`) | no effect while running; FX_TEST's +25 ms |
+## 113. Build 27b: the story ahead of the user - a failed screen answered with the grip still closed, "The Rescue"'s carry (its end not reached headless), the Nemesis missions and the map's challenges, Big Game's Uruk fight: `SOMVR_USE_GRAB` (2026-10-30, som-b27-story3)
+Headless boots (scripts/headset-build26.env + the story's practice settings `SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0
+SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0`, the test hands, the layer's test file; story22-drive.sh's `ctl` mode and
+the directors beside it: scripts/story27b-steps.txt). handoff/HANDOFF-story.md "build 27b". Every run: the install
+unchanged, the real save UNCHANGED (all progress in the run's save copy).
+
+### 113.1 A failed screen while the left hand holds: why A did nothing (boot 20261030-055352's log)
+- "The Rescue - Mission Failed! Reason: Ally Killed!" came up at t=1098411.6 (`CAPTAIN t=1098411.615 a presentation
+  starts`, the fx 'questfail_in.fxp') while the left grip still carried Lithariel (`VERBS t=1098358.257 grab: the left hand
+  on orc 0x40e645c8's head ... held while the grip stays closed`). The body moments' condition stayed `hold` for 76 s
+  (`cond sync,hold -> hold` at 1098362.1, nothing until 1098487.5): **somvr_bm_conds masks the presentation under our
+  grab** (`if (in->our_grab) c = (c & ~(MOUNT | ATTACH | PRES)) | HOLD` - the grab's own interrogation is a presentation
+  and stays first person), so no window opened, and SOMVR_USE answers the quest buttons only in the window (or on the
+  death's grey, 103.4). The grip opened at 1098487.505 (`release after 129.25 s`), the window opened 0.15 s later
+  (`cond hold -> pres`, `window 0 -> 1 by pres`) and A = Retry at once (`USE t=1098488.512 285 'QuestFailedRetry'
+  pressed (the pad's A, active; a presentation is up)`).
+- A player easily still grips: she drops as she dies, the hand stays closed. The same mask held for any presentation
+  under the grab: a result screen's B, a cinematic's skip.
+
+### 113.2 The fix: `SOMVR_USE_GRAB` (somvr_use_game.c `us_grab_pres`, `us_press_cmds`)
+- `SOMVR_USE_GRAB=on` (code default on; the som-b27-story3 block: on). A presentation (the fallback's raw bit,
+  g_fb.last_raw's SOMVR_FB_PRES) while SOMVR_VERBS' grab holds (`g_vb.hand.phase == SOMVR_VBH_GRAB`), with no window and
+  not the grab's own interrogation (`g_vb.ask_c == 0`), is the window for SOMVR_USE's buttons: A B X Y and the grips = the
+  pad's for the quest and skip commands the game binds and has active, B = SkipPresentations 265 when nothing of B's own
+  is bound (SOMVR_USE_SKIP), the held-button rule at its edges (a grip held since before the screen counts for nothing
+  until let go). The view is not changed (the grab's first person stays; the failed screen is on the HUD quad in both
+  eyes, 113.4). Off = build 27 (no button until the grip opens).
+- `CONFIG use_grab=on (SOMVR_USE_GRAB, build 27b): a presentation while the left hand holds (no window: the grab keeps
+  first person; not its interrogation) is the window for A B X Y and the grips - a failed screen's Retry with the grip
+  still closed`; lines `USE t=.. a presentation while the left hand holds (no window: ...) (SOMVR_USE_GRAB)`, `USE t=..
+  the grab's presentation is over`, the press line's `; a presentation while the left hand holds`; USE END adds `under
+  the grab N`.
+- selftest (`use grab`): the grip held at the screen's start + A = 285 'QuestFailedRetry' (bound to A, active), one
+  press; the interrogation (ask) = nothing; off = nothing (build 27's behaviour); no presentation = nothing.
+
+### 113.3 Proof in the game: A = Retry with the grip closed (boots 20261030-090100, -101455, -104104)
+| Boot | The failed screen (the left grip closed since before it) | A | 
+|---|---|---|
+| 090100 | "The Rescue - Mission Failed! Reason: Too far from Mission!" (Lithariel carried with the test aid's 1 health, the walk went on alone after she fell): `USE t=1110001.. a presentation while the left hand holds (no window: ...)` | `USE t=1110014.308 285 'QuestFailedRetry' pressed (the pad's A, active; a presentation while the left hand holds)`, 0 grip releases since the screen; the checkpoint "Carry Lithariel to safety" |
+| 101455 | "Ally Killed!" (the drill's aid had hit her: 1 health), up 140 s | `USE t=1113927.613 285 'QuestFailedRetry' pressed (...; a presentation while the left hand holds)` |
+| 104104 | "Ally Killed!" (the second carry) | `USE t=1115796.044 285 ... a presentation while the left hand holds` |
+- In the eyes (090100 frame 17680, both eyes): the world dark, the failed screen on the HUD quad at the gaze: "The Rescue
+  Mission Failed! - Reason: Too far from Mission! Hint: Stay in the area to complete the Mission." - readable; the game's
+  own layout puts the reason over the "(A) Retry (B) Abandon" line (as on the flat screen).
+
+### 113.4 "The Rescue" to "Carry Lithariel to safety" and what the carry is (boots 090100, 093356, 101455, 104104, 111128)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker, the card, the video | as 110.5 | works (5 boots) |
+| "0 / 6 Brand enemies without raising the Alarm", 6:40 | the camp's sentries walk; 4-5 take the brand from the front (150 / 110 cm), the shield sentry only from behind (120 cm: 'PC_Bip_StealthBrand_B'), one ('AI_Bip_Sentry_Low_*' at -27511 24539) offered none from any side | 6 brands in 2.5 min (brand9.sh: the spots, then the live unbranded ones; boots 093356, 101455, 104104, 111128); 090100's first try ran out ("Mission Failed!", A = Retry) |
+| "Find Lithariel", the video | | works |
+| "0 / 5 Kill or Brand Lithariel's captors" | 5 captors (+2 that come) | the drill (Talion 1 m beyond each on the side away from her, the aid `fight health 1 not <her>`, the game's X): 5 / 5 in 1 min |
+| "Hold [LB] near Lithariel to help her up" | | **the VR grab**: the left palm at her head + the grip ('PC_GrabLithariel_L', 5 boots) |
+| **"Carry Lithariel to safety"** (the objective 32 m, at -29190 30650) | she talks ("They forced me to watch ...", "Plan your vengeance ...") | the grip held + the left stick: walked (boot 090100's line, 6 m steps, scripts/story27b-steps.txt) |
+| at ~25 m: "Talion, I can no longer draw my sword." / "Then I will do so in your stead." | the objective moves on, 80 m south (-27404 1588 23277); **Uruks come without end** ("The Uruks rally when their brethren fall", "The horde is endless... my sword can only take so many."); 'GP_Lithariel2_Tut_LitharielDamaged' = **"Lithariel is taking damage!"** at the gaze (st rsc1-59); a blow knocks her out of Talion's arms ('GP_Lithariel_Ground_Recoil_L/R/B', the game's 'Objective' then on her) and the Uruks go for her on the ground ('AI_Defender_LithGrabbed_AttackLithGround', 'AI_Infantry_Melee_LithGrabbed_AttackLithGround') | the drill: the grip opened, the Uruks within 4 m of her killed (the aid + X), her grab again: 4-9 times per carry (boots 104104, 111128); walked 44 m of the 112 at best |
+| "The Black Hand is near!" | | **"Mission Failed! Reason: Ally Killed!"** each time (093356, 104104 x2, 111128) - **also with the test aid's 9999 health on her** (111128: `FIGHT health orc=0x41e5ea48 ... -> 9999.0`; the screen st auto-1140s): she dies on the ground to their blows whatever her health - a player keeps the Uruks off her (the blade around her, or never lets her fall) |
+| the end | not reached headless | - |
+- **What the harness cannot do here**: fight a horde around a fallen ally fast (the drill's kill is a teleport + the aid
+  + X per orc, 3-5 s each; the Uruks' ground attacks on her come within seconds). A player in VR: the grip opened =
+  put down, the blade at the Uruks around her, the palm + grip = up again (each proven; whether the game lets Talion strike
+  while he carries her was not seen).
+- After a Retry: twice the game put her back at her first place (the captors' yard, -28266 33695) but left Talion where
+  he was: 2.4 s later **"Mission Failed! Reason: Too far from Mission!"** again (093356, Talion 80 m away; both test
+  teleports) - the practice mode's teleports may have moved the game's own idea of his checkpoint: unproven for a player
+  who walked. Once (101455, after "Ally Killed") her "help her up" failed 10 times after the Retry ('PC_Grab_Attempt_F_Fail'
+  from 6 sides; the objective "Carry Lithariel to safety", she standing) - the cause not found.
+- After **B = Abandon** (090100: the drill's B on the failed screen), the marker 'goldenL' stayed but B at it pressed
+  QuestConfirm 282 three times and no card came (the arrival 13 m off the marker; the Abandon's own lock-out not ruled out).
+
+### 113.5 "Big Game" past the Uruk fight (boots 20261030-114640, -132106, -145538)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker, the card, the video ("She didn't see me. She didn't hear me.") | | works (3 boots) |
+| "Follow Torvin" (on foot) | Torvin's marker 'ObjectiveGuttered_ALLMaps' ("First lesson of Caragor hunting: do not die.") | the drill's trips after it (`objective status`; the driver's `status` word lost it in 114640 -> "You have left Torvin behind" under the "Ability Unlocked: Caragor Hunter" card: A closes the card, A = Retry) |
+| "Dominate the Caragor" ("Why'nt you hop in and introduce yourself? Ask it for a ride.") | the caragor charges | **only with the drill's "invisible to the AI" off** (132106: on, it never charged); the test blade across its leap = the counter, the left hand at the offer = the mount, "Hold tight!" = the grip held (`held on 1.50 s by the left hand: won`), Seat mode (132106, 145538) |
+| the ride, "Let's find some Uruks" | "Gutting Orcs! ... Bet I can take down more than you, Ranger", "Knock 'em over!", **"Bonus Objective: Kill more Uruks than Torvin"** with the score banner at the gaze ("Talion 1 VS 5 Torvin", 132106 frame 16592) | the drill steers at the nearest Uruk (`ride steer`, the ridden beast and Torvin's pair left out) and bites (the right trigger = 186; 29 bites in 145538): **Talion's kills count** (1 in 132106, 5 in 145538) |
+| the fight's end | **"You see now, Cap'n? Even the fiercest beast can be used for good."** - the next checkpoint (a Retry later restores here, on the beast) | **passed** (145538) |
+| "Sure you can ride a Caragor, but can you shoot from one? You take 'em up high! Leave the ground Orcs to me." | archers up high near a fire ("That fire better not set my beard alight!"; the 'Objective' at -440 2950 -9340) | the drill only followed: Torvin took them ("Another one for me!") - the bow from the saddle not tried |
+| "Núrnen is infested with these vermin. Care to double down, Cap'n?" / "Not bad, Cap'n... you've got the basics down. Now let's take on a fresh batch." | "Follow Torvin" again ("Talion 5 VS 16 Torvin") | the drill's beast stopped 185 m behind him on the way (`ride steer` against something; the boot's 28 minutes ran out) |
+| the end | not reached headless | - |
+- Failed screens met: "You have left Torvin behind." x3 (the drill steering off him: at the orcs, or when his marker
+  hides during his song); A = Retry each time (`285 ... a presentation is up`), the checkpoint puts Talion back on the
+  beast. One more failed screen in 132106 (its reason not captured) got the drill's B = Abandon (a harness bug, fixed:
+  A only on failed screens).
+- `WARN SESSION ... the game paused 0.10 s after SOMVR_HINTS=off dropped its tutorial 'tut_WargRidingUnlocked': the
+  tutorial waits for its button (A) unseen` (each Big Game boot, at the "Ability Unlocked: Caragor Hunter" card): the
+  card itself is drawn (the flat frame st-x-bg1: "You've gained the ability to Counter (Y) a Caragor's leap ... Use [LB]
+  to mount stunned Caragors. Press (A)") and A closes it; the dropped part is its tutorial text. Not changed (113.8).
+
+### 113.6 The Nemesis missions and the map's challenges (boot 20261030-125406, from 070839's save)
+| What | What the player sees / does | VR state |
+|---|---|---|
+| the survey (`practice status nav`) | 'powerStruggle', 'goldenL' (The Rescue), 'goldenT' (Big Game), 'confrontationBranded', 'resistance_QuestGiver' (now at 30540 3570 -14314: still no prompt, 45.4), 25 flowers of 9 kinds, glyphs, artifacts | - |
+| **'confrontationBranded'** | "[RB] Start Mission": B = QuestConfirm 282, the card, A = QuestConfirmStart 283 (`USE ... 283 ... a presentation is up`); **a captain of the world** (Role_Flogger, level 11) introduced **in the player's own view** 26 m off (`CAPTAIN ... a presentation starts: in the world`, SOMVR_CAPTAIN_WORLD); his 'OrcHealthBar_Marked' marker | killed (the drill: behind him, the aid, X; `the world's captain died 251.0 s after the meeting`); his rune "Worm's Tooth" picked by B ('Activate_RuneCollectable', the card "Equip"); **the marker gone** (done). No result screen came. |
+| **'powerStruggle' "Beast Hunt"** (Ratlûg the Gluttonous) | the card (A), his introduction in the window (48 m: not near and in view); "Get in there and fight, or no meat for you!": the caragors maul his Uruks ('AI_Bip_WargMauled_F'), his health 554 -> 386 by them; **"Beast Hunt RESOLVED!"** in the window: **B closed it** (`307 'IdentifySkip' pressed (the pad's B, active; a presentation is up)` + 265); then Ratlûg himself: "Insect! Come on then. Fight me." (the window again, 8 s), at Talion with heavy blows | killed by the drill (`died 193.1 s after the meeting`); a third captain met at once in the world ("Death-Walker! Not much to look at, are you?") - the Nemesis world goes on |
+| **the herbs** ("Survival Challenge 1: Niphredil 1 / 2") | each kind near: the pick prompt 'Combat_Activate_Flower' at the gaze with B's icon, B = the pick (`USE ... B at 'Combat_Activate_Flower': 123 held with Activate`, 'Activate_HealthCollectable') | **10 picks** of 9 kinds (F G H I J K L O + I again; J K M once no prompt: up a rock / off the path); **the count stayed 1 / 2**: none of them was Niphredil (the map's panel after both rounds, st-map-1) - the Niphredil's place was not found |
+| **the map** (the right stick's click) | "Harad Basin" / "Núrnen Peninsula STRONGHOLD", the challenge panel ("Survival Challenge 1 - Niphredil 1 / 2", "Hunting Challenge 2 - Kill 5 Flying Creatures 0 / 5"), "(L) Move (R) Zoom (A) Set Waypoint (RB) Legend [<] Exit Menu" | `map 1: the right stick's click let go after 0.50 s: the map (PDA 95, one tick; SOMVR_ARMY)`; B closed it |
+| "Hunting Challenge 2: Kill 5 Flying Creatures" | the bow at birds / bats in flight | not run: a scripted bow cannot aim at a flying creature as a person does (the headset) |
+- The run's save **logs/boot-check-20261030-125406/saves/GameData.sav** = 070839's + 'confrontationBranded' done +
+  Beast Hunt resolved + Ratlûg dead + 10 herbs (The Rescue and Big Game still open).
+
+### 113.7 Runs (headless, Monado 20 Hz; scripts/headset-build26.env + the som-b27-story3 block + the story's practice settings, the test hands; each 0 WARN of ours unless named, the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-) | Save from | WARN | What | Proves |
+|---|---|---|---|---|
+| 20261030-090100 | 070839 | 0 | The Rescue: 4 brands (out of time: A = Retry), 6 brands, the captors, her grab; the grab test (her health 1, the walk, "Too far from Mission!", **A with the grip closed**); the carry to the ambush; the drill's B = Abandon (no restart at the marker after it) | **SOMVR_USE_GRAB in the game**; the carry's ambush |
+| 20261030-093356 | 070839 | 0 | The Rescue: 6 brands (brand8), the captors, the carry, "Lithariel is taking damage!", put down / the fight / up again; "Ally Killed" at "The Black Hand is near!"; Retry -> "Too far from Mission!" (Talion not put back); Retry + a teleport, the grab | the carry's mechanics (113.4) |
+| 20261030-101455 | 070839 | 0 | The Rescue (rescue5): 6 brands in 2.5 min, the captors (the aid hit her: 1 health), "Ally Killed" with the grip closed: **A = Retry after 140 s**; her grab failed after that Retry | USE_GRAB 2; the harness trap (`fight health` without `not`) |
+| 20261030-104104 | 070839 | 0 | The Rescue: the captors with `not` her, the carry: 4 downs and ups, "Ally Killed" at "The Black Hand is near!" x2, **A = Retry with the grip closed** | USE_GRAB 3 |
+| 20261030-111128 | 070839 | 0 | The Rescue: her health 9999 (the aid), the walk on boot 090100's line (44 m in 39 s), down, the fight, "Ally Killed" all the same (st auto-1140s); the driver's 15-minute idle quit | she dies on the ground whatever her health |
+| 20261030-114640 | 070839 | 3 (1 the drill's trip; 2 `tut_WargRidingUnlocked`, 113.5) | Big Game: the start, the follow drill lost Torvin ("left Torvin behind" + "Ability Unlocked"), A closes the card, A = Retry | the Retry under the card |
+| 20261030-125406 | 070839 | 0 | the survey, 10 herbs by B, the map by the right stick's click, 'confrontationBranded' (a captain of the world, killed, his rune), 'powerStruggle' Beast Hunt (resolved by the caragors, B closes the result, Ratlûg killed after), a third captain met | the Nemesis missions and the challenges (113.6); **its save = the furthest** |
+| 20261030-132106 | 125406 | 1 (`tut_WargRidingUnlocked`) | Big Game: the follow (`objective status`), the caragor - **no charge while the drill had "invisible to the AI" on** (`story invisible`, a test aid: the caragor never sees Talion); off: the charge, the counter, **the mount by the hand and the domination won by the grip** (`held on 1.50 s by the left hand: won`), two Retries (on the beast), the follow ridden, the Uruks ("Gutting Orcs! ... Bet I can take down more than you", "Knock 'em over!"), **the bite (186 x many) and "Talion 1 VS 5 Torvin"** on the contest's banner at the gaze; a failed screen (the reason not captured) and the drill's B = Abandon | the ride's fight in VR: the bites count kills |
+| 20261030-145538 | 125406 | 1 (`tut_WargRidingUnlocked`) | Big Game again (bg8.sh: invisible off, A only on failed screens): the follow, the counter, the mount, the domination, the Uruk fight ridden with the bites (5 kills), **"You see now, Cap'n? Even the fiercest beast can be used for good."**, two "left Torvin behind" (A = Retry, back on the beast), the archers' stage (Torvin's), "a fresh batch": the drill's beast stuck 185 m behind | **Big Game's Uruk fight passed in VR**; its end not reached |
+
+### 113.8 Listed, not fixed (evidence above)
+- **"The Rescue" to its end**: not reached headless (113.4). Every VR act it asks for works (the brands by the hand, the
+  captors, her grab, the carry with the grip, put down = the grip opened, up again = palm + grip, Retry with the grip
+  closed); what the drill cannot do is a person's fight round a fallen ally against an endless horde. For the headset.
+- **After a Retry Talion is not put back** (093356): she is at her first place, he where he was; 2.4 s later "Too far from
+  Mission!". Seen only after the drill's teleports (the practice mode may have moved the game's checkpoint): unproven for
+  a walking player - if the user meets it, a Retry inside the mission's area avoids it.
+- After "Ally Killed" + Retry (101455) her "help her up" failed ('PC_Grab_Attempt_F_Fail' from 6 sides): once, cause
+  not found.
+- After **Abandon** the mission's marker gave no card (090100, three presses of 282): the Abandon's lock-out or the
+  arrival 13 m off - not separated.
+- **"Survival Challenge 1: Niphredil 1 / 2"**: 10 herbs of 9 kinds picked by B, none Niphredil (the count 1 / 2): where
+  it grows was not found. **"Hunting Challenge 2: Kill 5 Flying Creatures"**: the bow at birds - the headset.
+- 'confrontationBranded' ended without a result screen when its captain died (the marker gone): whether that is the
+  mission's success or its quiet end was not seen.
+- `WARN SESSION ... 'tut_WargRidingUnlocked': the tutorial waits for its button (A) unseen` (114640, 132106): the
+  "Ability Unlocked: Caragor Hunter" card is drawn (the flat frame st-x-bg1) and A closes it; its tutorial text is the
+  dropped part. Whether the card is readable in the headset: the headset (not changed; `SOMVR_HINTS_KEEP_TUT` +
+  `tut_WargRidingUnlocked` keeps the text if it is missed).
+- Harness traps (story27b-steps.txt): `story invisible on` (the game's invisible-to-the-AI) stops a caragor's charge;
+  `fight health N` hits the nearest AI within 8 m - an ally too (`not 0xPTR` now); story22-drive.sh's ctl mode quits
+  after 15 idle minutes (a `wait 1` every 4 min); B on a failed screen is Abandon (the drill's window loops pressed it
+  twice: A only there).
+
+### 113.9 The furthest save, for the next round
+**logs/boot-check-20261030-125406/saves/GameData.sav** (main checkout): 070839's (The Cure done, a warchief targeted) +
+'confrontationBranded' done + the Beast Hunt resolved (Ratlûg the Gluttonous dead) + 10 herbs. Open: "The Rescue"
+('goldenL' -28209 1389 17049), "Big Game" ('goldenT' -40540 1900 -22160). Boot from it with
+`HEADLESS_SAVE_FROM=<that path>` before `scripts/headless_vr.sh` (the real save is never touched).
+
+### 113.10 Switches, words, lines
+| Switch | Code default | build 27b env (som-b27-story3 block) | What |
+|---|---|---|---|
+| `SOMVR_USE_GRAB` | on | on | a presentation while the left hand holds (not its interrogation) is the window for A B X Y and the grips (113.2) |
+Words (SOMVR_HANDS_TEST): `fight health N not 0xPTR` (the nearest AI but that one; FIGHT line `; the nearest skipped:
+\`not\``). scripts/story2_route.py `--learn MPS` (the heading learnt from slower stretches: a carry walks ~0.6 m/s).
+Lines: `CONFIG use_grab=..`, `USE t=.. a presentation while the left hand holds ...`, `USE t=.. the grab's presentation is
+over`, `USE END ... under the grab N`.
+
+### 113.11 For the headset, unproven
+- A failed screen while still holding Lithariel (or an orc): A = Retry, B = Abandon without letting go.
+- "The Rescue"'s carry: when "Lithariel is taking damage!" comes, let go (she lies down), cut the Uruks off her, take her
+  up again (left palm + grip) and walk on; the end after "The Black Hand is near!".
+- Big Game's Uruk fight on the caragor: steer at them, the right trigger bites (the kills count: "Talion N VS N Torvin").
+## 117. Build 27: climbing the real world by hand, end to end - a forge tower to its top, the Sea Fort camp's wall, the meadow cliff, and down again: `SOMVR_CLIMB_RETOP_EDGE`, `SOMVR_CLIMB_MANTLE_KEEP` (2026-10-30, som-b27-climb3)
+
+Build 21-24 proved the climb's pieces one at a time on the practice meadow and a few real walls (83, 93, 101). This round
+climbs whole structures of the save's world the way a player does - hand over hand, the fling, the mantle at a ledge or
+the top, the descent's timer and blink - timed, with every stall logged and both eyes at each stage, and fixes what
+stops a player. Driver: scripts/climb27-drive.sh (pin16/climb2's functions; a site = a spot on its top, its edge if
+known, the levels down).
+
+### 117.1 The method (scripts/climb27-drive.sh)
+- `survey`: on the top, `vault edges` round Talion (101.1); the edge to go down: a `WALL` with room on its top and the
+  largest drop, else the largest `SLOPE`, else an `OVERHANG` (a lip over a set-back face).
+- `down`: at the edge's stand point faced out, the right hand 115 cm under the eyes 60 cm out over the lip and the
+  grip = down over the edge (`SOMVR_CLIMB_DOWN_OVER`: the glide out and down to hang); six snap turns to the face and
+  the probe's nearest wall; three holds hand over hand down (60 cm under the eyes, the hand pushed up); both hands
+  open = the hang; A held (the timer) and let go = the blink to the foot. Where the reach down finds no way (an
+  overhanging top), A held at the edge on foot = the descent's blink (`SOMVR_CLIMB_DESCENT_MARK`). A tower on a crag:
+  the same again a level down.
+- `up`: the nearest wall by the probe, walked to (the face within 45 cm); a hold 35 cm over the eyes; then each move
+  either a pull (the held hand from where it took the wall down to 45 cm under the eyes in 1 s: 80 cm up, the other
+  hand on the wall above) or, every third move, a fling (the held hand 90 cm down in 0.3 s, let go at 70 % of the way,
+  the other hand's grip at the arc's top, ~0.75 s later); a ledge with no hold above = A while the mantle's ring
+  shows; the top's lip in a hand = the mantle (A only while the ring shows - the `climb state` line says so - else the
+  hand pulled further down, as a player looks for the ring before pressing; a top with no ring: climb on). Each move
+  one line: its rise, its time, and a stall (under 15 cm) with the climb's own lines.
+- Headless: Monado's null compositor at 20 Hz (13-20 fps), the test hands (`hands test|squeeze|swing`), the practice's
+  `go` to reach a top.
+
+### 117.2 The forge tower, from the crag's foot to the platform (boots 20261030-122654, -124503, -135123)
+The save's unsynced tower 280 m NW of Cab-Gwanath (its stone 15862 6232 -3175, 111.1) is a white Elven tower on a rock
+crag. Its shape, as the hands and the surveys found it: the ground at the crag's foot ~3892; the crag's rock face up to
+a base ledge round the tower at 4788-4800; the tower's white shaft from there (the south face at z -3671, the east one
+at x ~15370) to a narrow band ledge at 6028.5 (no room on it: the platform over it); the platform at 6134.8, its edge
+27 cm out over the shaft (`vault edges` on it: 19 `OVERHANG` lips, no `WALL`, a 13.4 m drop to the base ledge).
+- **Down**: the reach down over the platform's edge = `no wall under the lip` (it overhangs: nothing to hang on - the
+  right refusal); A held at the edge on foot = the drop's ring 13.2-13.4 m down on the base ledge, the timer's ring,
+  armed after 0.65-0.69 s, let go = the blink (`the feet 1324 cm over the ground ... under the quick fade`). The base
+  ledge to the ground: a practice trip (the driver's; the crag's edge from there was not taken by A).
+- **Up, the crag** (9 m of rock, boot 135123): the probe's nearest face 7.3 m away, walked to; 10 moves (6 pulls of
+  80-89 cm, flings of 58-64 cm), a round lip at the base ledge (`round lip: ... the floor at 4788.0: an edge with that
+  top`), its ring, A = `the glide onto the landing ... 173 cm in 0.49 s`: on the base ledge, **92.65 s** from the
+  first hold. Both eyes: the dark rock, the hands on it, the gold ring and its dot on the white ledge (frame 4404).
+- **Up, the tower** (13.5 m of white stone): 1.5 m to the shaft, 15 moves, a stall-free face (every pull 80-90 cm,
+  blocked pulls 0) to the band ledge at 6028.5 (`pullover: ... a floor on the top, no room for Talion (33 cm round,
+  180 up)`), past it to the platform's edge. Build 26 there (boot 124503): the hand on the platform's edge (`edge 1,
+  top 6134.8 (found)`, the hold 48 cm over the band ledge) changed nothing: the climb kept the band ledge's top
+  (`topped`, push) - A = `no way onto it: the eyes not high enough over the top (the eyes 16 cm over the top 6028.5)`,
+  then `no room for him on the top (the eyes 127 cm over the top 6028.5)`, each with the drop's ring 11 m down; no
+  ring on the platform ever; the push held him with the eyes level with its floor (frame 5588) - **stuck, the only way
+  out the drop**. Fixed (117.4): the hand on the platform's edge forgets the band ledge (`retop ... its own top found
+  at 6134.8 (a ledge passed)`), the ring on the platform, A = `the glide onto the landing ... 176 cm in 0.50 s`, on
+  the platform among its arches: **87.6 s** for the shaft.
+- In all: 22.4 m from the crag's foot to the platform, 25 moves, 180 s of climbing (3 min 49 s with the walk and the
+  pictures). Both eyes at every stage (frames 2490 the crag's foot, 3370 the crag at 4578, 4404 the ring on the base
+  ledge, 5118/5877 the shaft, 6271 the platform's edge in the hand, 6449 the ring on the platform, 6614 standing on
+  it): the hands where the wall is, the horizon level, no view in the rock, nothing moving the view but the player's
+  pulls, the comfort vignette's tunnel during the 0.5 s glides.
+
+### 117.3 The Sea Fort camp's 9 m wall and the meadow cliff (boots -122654, -124503, -135123)
+- **The fort wall** (the camp's east wall, its lip 25522 3547 2000, out +x, a plumb face 907 cm high, `WALL`): down
+  over it = `the glide out and down to hang`, three holds down (55 cm each), A held = `the blink down onto the ring:
+  the feet 545 cm over the ground` (32.6 s on the wall). Up: 11 moves (8 pulls of 73-80 cm, 3 flings) to the coping in
+  74.65 s. The coping projects over the face: **the overhang's ring** came with the eyes 52 cm under its top (`A = the
+  glide out round the overhang's lip and up onto it`) - the first real overhang ring (101.5 found none) - but A 4.5 s
+  later was `drop mark: A held climbing ... the ring ... 6.7 m down`: Talion had settled 2 cm and moved a few cm along
+  the wall; the press searches again (the ring's own search is up to 0.5 s or 5 cm old) and found the face under the
+  lip there - no overhang, the drop's. (The driver's ring test of that boot was faulty - 117.3's cliff - so the ring
+  may already have gone at the press; boot 122654 had the same: A after the ring had gone = the buzz and the drop's
+  ring 9.75 m down.) Made consistent (117.4: A while the ring shows takes it). With the plain mantle (the eyes 40 cm
+  over): `the glide onto the landing ... 194 cm in 0.56 s`, on the walkway. What the player sees there: the inner wall
+  35 cm ahead fills the view (frame 10235: the walkway is that narrow; not in the rock - the eyes at the root, the
+  capsule's room was checked); turning shows the camp.
+- **The meadow cliff** (33773 2022 -28064, the meadow's floor, the face south of the user's build-20 route): 17 moves,
+  2022 -> 3191 (11.7 m) in 90 s; then a slope: holds at 3265-3282 found `edge 1, top 3282.0 (found)` by a down ray but
+  `no floor within 30 cm of the top 20..80 cm in` (rock rising on), the pulls blocked under it (`through: the pull
+  blocked ... goes through the rock 1:1`), +17 and +8 cm. The driver took 3282 for the top and pressed A: `no floor on
+  the top ahead` x4 (the driver's error: its ring test read an empty grep as a ring; now the `climb state` line says
+  when the ring shows). The trip onto the cliff's top (33241 3634 -28082) did not arrive (2 WARN in boot 135123: the
+  driver's spot, no floor there).
+
+### 117.4 Fixed: the platform's ring (`SOMVR_CLIMB_RETOP_EDGE`), the ring A keeps (`SOMVR_CLIMB_MANTLE_KEEP`)
+- **`SOMVR_CLIMB_RETOP_EDGE=on|off|CM`** (code default off; on = 30 cm; somvr_climb.c, the grab's retop): build
+  15b-17's retop forgets a reached top when a new hold is 50+ cm over it (`OH_RETOP_CM`). The tower's band ledge was
+  106 cm under the platform, but the hand on the platform's edge held its face 48 cm over the ledge: no retop. Now
+  also a new hold that is an edge whose own found top is 30+ cm over the reached top retops (and the other hand's edge
+  on the lower ledge no longer tops him): the next top is the new hold's, reached as any (the head over it: push, the
+  mantle's ring). Log: `retop: a hold 48.3 cm over the top reached (6028.5), its own top found at 6134.8 (a ledge
+  passed): that top forgotten ... _RETOP_EDGE`; `CLIMB END build 27 retop edge=30 cm: retops N, of them by a hold's
+  own higher top N`. Word `climb retopedge on|off`. test_climb `test_b27`: a ledge topped 45 cm under the real top,
+  the hand on the real top's edge 35 cm over the ledge: off = the ledge's top kept, the mantle's ring never comes; on
+  = forgotten, the real top reached, the ring on it (the off arm is build 26's code path: it fails the new checks).
+- **`SOMVR_CLIMB_MANTLE_KEEP=on|off`** (code default off; somvr_climb.c `am_press`): A while the mantle's ring shows
+  (what the player sees; its search is up to 0.5 s or 5 cm of movement old, and the press searched again) takes that
+  ring - its landing and its kind (the overhang's glide or the plain one), the curve planned again from where he is -
+  instead of searching again; the glide's own lag test still stops it (blocked: he stands on the top under him, else
+  the hang). No ring shown: as before (under a top A is the drop mark's). Log: `mantle: A (glide) ... ; the ring shown
+  taken as it was (SOMVR_CLIMB_MANTLE_KEEP)`; `CLIMB END build 27 ... mantle keep=on: presses that took the ring shown
+  N`. Word `climb keep on|off`. test_climb `test_b27`: the overhang's ring shown, then the face under the lip found
+  where he is (the coping a few cm aside): off = A is the drop mark's (build 26), on = the overhang's glide.
+- A test aid: the `climb state` line ends its climb phase with `, the mantle's ring shown (the overhang's)` while it
+  shows (the drivers press A only then).
+
+### 117.5 With both fixes on (boot 20261030-152514, the shipped block)
+- **The fort, 15 m**: down over the 9 m wall (34.7 s on it: the glide, three holds down, the timer, the 5.45 m blink);
+  up from its foot, 14 moves: at the walkway's coping (3546.7) no ring at that spot (no landing there), a fling's
+  glide over it (`the arc's top over the top, on toward it ... rose 182.0 cm`), on up the inner tower's wall to its
+  coping at 4146.7: **the overhang's ring with the eyes 19 cm under its top, A = `the glide out round the overhang's
+  lip (build 22) and onto the landing ...: 286 cm in 0.82 s ... the ring shown taken as it was
+  (SOMVR_CLIMB_MANTLE_KEEP)`**: on the tower's top by its flag pole, the camp below (frame 4792). The first overhang
+  mantle on a real lip (101.5 found none; test_oh22 only until now). 105.3 s from the first hold.
+- **The meadow cliff, 15 m** (from 33773 2022 -28064): 2022 -> 3201 in ~85 s (15 moves, 64-84 cm each); then a bulge
+  over the head at 3200-3230: `through refused: the head's way up not clear`, flings `blocked above`, 2-24 cm a move
+  for ~35 s (a player would move aside; the driver reaches straight up); then **the pullover** (build 16): `pullover
+  armed (L): the hold ... on a top at 3352.9 (47 cm over the eyes): the landing shown ... 40 cm in; the 1:1 blocked
+  0.3 s` - a 25 cm pull = its blink - and the trip's teleport put him on the cliff's real top, the paved path at 3532
+  (frame 8965), **192 cm over the landing it planned** (3337: a floor found under the rock's skin; the game's teleport
+  resolved it upward). 129 s on the face.
+- **The tower**: down from the platform by two blinks - A at its edge (13.4 m to the base ledge), A at the base
+  ledge's own edge (`the feet 899 cm over the ground`: to the crag's foot) - each armed in 0.69 s; up the crag in 84.2
+  s, its mantle onto the base ledge `the ring shown taken as it was`; the shaft from its east side to 5277, where the
+  driver's hands (straight up from the head) found nothing round the tower's corner (the right hand past the edge; a
+  player reaches round it) - b3's route up the south face reached the platform.
+- **The tower again, the south face from the base ledge** (boot 20261030-161540, the shipped block): 14 moves, each
+  62-86 cm (flings caught at their tops, 82-84 cm), no stall, the band ledge (6028) passed (the hand 106 cm over it:
+  the old retop), the platform's edge in the hand, the ring (frame 3006, both eyes), A = `the glide onto the landing
+  ... 169 cm in 0.48 s ...; the ring shown taken as it was`: on the platform (frame 3136) **83.95 s** after the first
+  hold; turned round at its edge, A held 2.05 s (armed at 0.64 s) = the 13.4 m blink back to the base ledge.
+- `CLIMB END build 27 retop edge=30 cm: retops 6, of them by a hold's own higher top 2; mantle keep=on: presses that
+  took the ring shown 2`. 0 WARN, the install unchanged, GameData.sav UNCHANGED.
+
+### 117.6 Runs (headless, Monado 20 Hz (13-20 fps), scripts/headset-build26.env (+ my block from 135123 on) + `SOMVR_HANDS_TEST=1`; scripts/climb27-drive.sh; the install unchanged, GameData.sav UNCHANGED in each)
+| run (logs/boot-check-20261030-) | what | proves |
+|---|---|---|
+| 122654 (0 WARN) | the tower's top: survey, down over, A; the fort wall down and up | 117.2 (19 OVERHANG lips, down over refused, the 13 m blink); 117.3 (the fort's coping: the overhang's ring; A after it had gone = the buzz and the drop's ring) |
+| 124503 (0 WARN) | the tower's shaft from the base ledge (build 26) | 117.2: the platform's edge in the hand, the band ledge's top kept: no ring, A = no room / too low, stuck |
+| 135123 (2 WARN: the driver's trip onto the cliff's top, no floor there) | RETOP_EDGE on: the tower from the crag's foot; the fort; the cliff | 117.2: 22.4 m to the platform, `retop ... (a ledge passed)`, the ring, A = onto it; 117.3: the fort's 9 m and its mantle, the cliff to its slope |
+| 152514 (0 WARN) | both on (the shipped block): the fort, the cliff, the tower | 117.5: the real overhang's glide (KEEP), the cliff to its top (the pullover), the tower down by two blinks, the crag up |
+| 161540 (0 WARN) | both on: the tower's shaft from the base ledge, the blink down | 117.5: the base ledge to the platform in 84 s, no stall, the ring and A (KEEP), the 13.4 m blink back |
+Pictures (both eyes, `python3 scripts/xr_compose.py RUN -f FRAME`): 135123 frames 1238 (A at the platform's edge), 2490
+(the crag's foot), 3370, 4404 (the ring on the base ledge), 5118, 5877 (the shaft), 6271 (the platform's edge in the
+hand), 6449 (the ring on the platform), 6614 (on it), 9914 (the fort's coping ring), 10235 (the fort's walkway: the
+inner wall 35 cm ahead); 152514 frames 1159 (the fort's hang after down over), 1668 (the timer ring on the ground
+9 m down), 4661 (the overhang's ring over the tower coping), 4792 (on the tower's top), 8965 (the cliff's top path),
+13211 (the ring on the tower's base ledge); 161540 frames 2832 (the platform's edge in the hand), 3006 (its ring), 3136
+(on the platform), 3326 (A at its edge).
+
+### 117.7 Switches, words, lines
+| Switch | Default (code) | build 27 env (som-b27-climb3 block) | What |
+|---|---|---|---|
+| `SOMVR_CLIMB_RETOP_EDGE` | off | **on** (30 cm) | a hold whose own found top is 30+ cm over a reached ledge's forgets it (117.4) |
+| `SOMVR_CLIMB_MANTLE_KEEP` | off | **on** | A while the mantle's ring shows takes that ring (117.4) |
+| `SOMVR_CLIMB_FLING_REACH_HOLD` | off | off (unit-tested only) | unstuck's reach test also toward the hold let go: a fling at a corner (117.8) |
+Words (test aids): `climb retopedge on|off`, `climb keep on|off`, `climb reachhold on|off`. Lines: `CONFIG climb retop
+edge=...`, `CONFIG climb mantle keep=...`, `CONFIG climb fling reach hold=...`, `retop: ... its own top found at ...
+(a ledge passed) ... _RETOP_EDGE`, `mantle: A ... ; the ring shown taken as it was (SOMVR_CLIMB_MANTLE_KEEP)`, `fling
+apex hang ... ; the wall toward the hold let go kept it rising`, `CLIMB END build 27 ...`; `CLIMB state ... climb
+hold (on), the mantle's ring shown (the overhang's)`.
+
+### 117.8 Unproven, for the headset, next
+- The feel of a 22 m climb at 90 Hz: ~3 min of pulls (the headless pulls are a scripted 80 cm a second; the user's
+  flings rise 1-2 m, headless 60 cm), the arms' fatigue, whether the white shaft gives enough to read for depth.
+- The platform's ring after a ledge with no room (RETOP_EDGE): proven at that tower; other towers' platforms likely
+  the same model (not visited).
+- The cliff's bulge (rock over the head at 3200-3230): ~35 s of blocked pulls before the pullover's ring; a player
+  moving aside may never meet it. The pullover's landing was planned inside the rock there (192 cm under the top) and
+  the game's teleport put him on the top: land_find needs a test from above the top's skin - next.
+- A corner: a fling there is stopped by unstuck (REACH_HOLD off, unit-tested); the driver's hands reach only straight
+  up, so a corner stalls the driver, not necessarily a player.
+- The fort's narrow walkway: the inner wall 35 cm from the eyes after the mantle (real geometry): the headset's call.
+
+## 119. Build 27b: no judder - the headset at 80 Hz for the session, a VR graphics preset at the launch: `SOMVR_XR_REFRESH`, `SOMVR_RENDER_SET` (2026-10-30, som-b27-perf2)
+
+### 119.1 The two levers
+115 found the render thread the limit: 10-13 ms of CPU work a stereo frame (the game's draws and Feral's D3D11-to-Vulkan
+translation, once per eye) against 90 Hz's 11.1 ms - over it in the crowd, by the fire, at night with rain; the 10-28
+session spent 15 % of its seconds at 76-86 fps (judder). Two levers, both built and both on in the env block:
+1. **a rate the game can hold**: the headset at 80 Hz (12.5 ms a frame) for the game's session, by the OpenXR extension
+   the user's runtime has (WiVRn's own config untouched);
+2. **less per-eye work**: the game's own render settings set before the launch in the session's own render.cfg (115.6:
+   changed live on the console they never reached the renderer). Measured: a third of the render thread's work gone.
+
+### 119.2 The refresh rate: `SOMVR_XR_REFRESH` (the layer, vklayer/somvr_refresh_layer.c)
+- WiVRn (/usr/lib64/wivrn/libopenxr_wivrn.so) and Monado implement XR_FB_display_refresh_rate
+  (`xrEnumerateDisplayRefreshRatesFB`, `xrGetDisplayRefreshRateFB`, `xrRequestDisplayRefreshRateFB`, the event
+  `XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB`). The layer owns the XR instance and session: at xrCreateInstance
+  the extension is enabled when the runtime offers it (a refusal: the instance again without it, as the equirect one);
+  when the session runs (after xrBeginSession) the rates listed and the display's rate are logged and the rate asked is
+  requested: **the highest listed rate at or under it** (none under it: the lowest listed; none listed: the rate itself).
+  The rate belongs to the session: the runtime's default comes back for the next app (WiVRn's own rules; nothing of it
+  is written).
+- `SOMVR_XR_REFRESH`: `off` = the extension never enabled (build 26's session); `0` (the code default) = enabled, nothing
+  asked (the runtime's own rate; the menu's row may ask); `60..144` = that rate asked at the session's start. **Env block
+  som-b27-perf2: 80.** A value not understood: one WARN, nothing asked.
+- **The VR menu's Settings page, its last row "Refresh rate"**: 72 / 80 / 90 / 120 Hz (< > step and hold at the ends, the
+  row's click wraps; "Headset" = 0, nothing asked: > gives 72, < 120). Shown only with the layer's own avail bit
+  `SOMVR_VMA_REFRESH` (bit 43, the top of the round's free 42..43: the extension enabled and its functions loaded). The
+  setting: `somvr_settings.refresh` (byte 84, was pad6[0]; pad6 is 3 bytes from 85), the settings file's key
+  `XR_REFRESH` (`SOMVR_SK_XR_REFRESH` = 32, the 33rd key; the mask is 64 bits since 112), the preload fills it from
+  `SOMVR_XR_REFRESH` before the file (so the file's value, once the user picks one, wins - saved like every row). The layer
+  asks at the session's start for the menu's value (no VR menu: the switch's), then every present compares it with the
+  rate last asked: a click is a live request (`xr: refresh: 90 Hz asked (the VR menu) ...`). A failed request is logged and
+  not repeated for that value.
+- The PERF and `xr: perf` lines count "over" against the runtime's display period now (`over 12.5 ms` at 80 Hz; was a
+  fixed 11.1). Headless, Monado's null compositor paces at 20 Hz: those counts say `over 50.0 ms` there - read p50/p95.
+- At 80 Hz the game's logic is time-based (the frame's dt, the predicted display period): the few frame-count constants
+  scale by 9/8 in seconds (the weapon capture's 20 steady frames 0.22 -> 0.25 s, the climb's 16-sample fling ring 0.18 ->
+  0.2 s, the climb's 8 cm a frame cap 7.2 -> 6.4 m/s): none changes a behaviour.
+- Lines: `xr: refresh: XR_FB_display_refresh_rate enabled; SOMVR_XR_REFRESH=80: asked at the session's start ...`, `xr:
+  refresh: the runtime lists 72.0, 80.0, 90.0, 120.0 Hz (...); the display 90.0 Hz`, `xr: refresh: 80 Hz asked (the
+  session's start, the VR menu's setting): 80.0 Hz requested (listed: ...): XR_SUCCESS (0); the display 90.0 Hz before,
+  80.0 after`, `xr: refresh: the display's rate changed 90.0 -> 80.0 Hz (event 1)`; the preload: `VRMENU apply
+  XR_REFRESH=90 from the menu (the layer asks the headset for it)`.
+- Tests: the mock runtime's `MOCKXR_REFRESH=a,b,..[@now]` (the extension offered with those rates; a listed request
+  changes the rate and queues the event, an unlisted one is refused; its functions not given without the extension,
+  a call without a live session a violation). vklayer/tests/test_layer.c: `refresh` (80 asked once: enumerated, requested,
+  the event, no `xr: event` line), `refresh-pick` (85 among 72, 90 -> 72), `refresh-off` and `refresh-absent` (no
+  extension, no call, no WARN), `refresh-menu` (the preload's 80 asked at the start over the switch's 72; the panel open,
+  the row's > clicked by the scripted hand: 90 asked live, the event, the setting published, the panel's picture
+  somvr_vm_draw's with "90 Hz"). tests/test_vrmenu.c `test_refresh27` (the key, the values, the file, the steps, the
+  row's place after Hands at walls, its hit). build.sh --check 174/174.
+- Headless (boot 162838): Monado's null compositor lists one rate: `the runtime lists 20.0 Hz; ... 80 Hz asked: 20.0 Hz
+  requested (listed: 20.0): XR_SUCCESS` - the whole path against a real runtime; the headset's own switch only the
+  headset can show.
+
+### 119.3 The preset at the launch: boot_check `--render-set`, `SOMVR_RENDER_SET`
+- The game keeps its render settings in `AppData/WB Games/Shadow of Mordor/render.cfg` under the run's home
+  (RUN/home/.local/share/feral-interactive/ShadowOfMordor/...); every session's home is new, so every headset session so
+  far started from the game's first-run detection on this PC (rating 10: vegetation 4 = Ultra, shadows 3, mesh 3,
+  lighting 2, ambient occlusion 3, tessellation 1, textures 3 - the 10-28 session's file).
+- **boot_check `--render-set NAME=INT`** (repeatable; VegetationQuality, ShadowQuality, MeshQuality, LightingQuality,
+  AmbientOcclusionQuality, TessellationToggle, TextureQuality, TextureFiltering, OITToggle; 0..5) writes that file before
+  the launch: the detection's values with these over them (the game's own format), RUN/render.cfg.seeded a copy. The
+  game takes it: the file it writes at its exit is byte-identical (171655), and the numbers move (119.4). Never the user's
+  own game settings or the install (install unchanged in every run).
+- **scripts/som-vr-headset.sh**: the build's env file's `SOMVR_RENDER_SET=NAME:V,NAME:V` -> `--render-set NAME=V` each (a
+  bad entry is noted in its log and left out; the session starts with the rest). **scripts/headless_vr.sh** takes the
+  same key from SOMVR_EXTRA (the env block's lines), `HEADLESS_RENDER="NAME:V,..."` instead (set but empty: none).
+
+### 119.4 The presets measured (headless, the story's furthest save, scripts/headset-build26.env + SOMVR_HANDS_TEST=1, scripts/perf27-drive.sh `meadow crowd remove fire pics`)
+The render thread's frame work (CPU, eye 0's start to the present), p50 (p95) ms; GPU total p50 (the null compositor's
+20 Hz: pessimistic, 115.2). A, D, E, F: weather SON_Day01 (the world's own, the same in each); B: SON_Day03 (overcast).
+
+| Boot | Preset (vegetation, mesh, shadows, lighting) | Meadow | Crowd of 8 | Fire | GPU meadow / crowd / fire |
+|---|---|---|---|---|---|
+| A 162838 | none: 4, 3, 3, 2 (Ultra/High) | 11.69 (12.70) | 12.92 (13.84) | 13.59 (14.27) | 18.2 / 18.8 / 19.0 |
+| D 173335 | 4, 2, 2, 1 | 11.32 (11.86) | 11.93 (12.55) | 11.84 (12.65) | 16.9 / 17.1 / 17.4 |
+| **E 174450** | **3, 2, 2, 1 (shipped)** | **8.73 (9.22)** | **9.34 (9.89)** | **9.10 (9.74)** | 16.0 / 16.6 / 16.8 |
+| F 175802 | 3, 2, 2, 1 by the env file | 8.61 (9.15) | 9.56 (10.39) | 9.81 (10.25) | 16.1 / 16.2 / 16.8 |
+| B 171655 | 2, 2, 2, 1 (overcast) | 7.64 (8.22) | 8.53 (9.38) | 8.44 (9.03) | 16.1 / 16.3 / 17.7 |
+
+- **The vegetation is the lever**: 4 -> 3 takes 2.6-2.7 ms off the render thread (D -> E; the grass's draws, twice), 3 ->
+  2 another 0.7-1.1 ms (B, another weather). Mesh, shadows and lighting one step down: 0.4 ms in the meadow, 1.0 in the crowd,
+  1.75 by the fire (A -> D; the fire's shadowed light). Eye 0 and eye 1 fall alike (crowd 6.4/6.0 -> 4.6/4.2 ms CPU).
+- **The look** (the left eyes side by side, as a player; the marks' eyes.jpg): E against A - the meadow's grass a little
+  thinner right at the feet (the path's stones show between the blades), still a full meadow to the distance; the orcs,
+  the armour, the ruins and the fire unchanged to the eye; the distance a little clearer (less haze, lighting 1). B's
+  vegetation 2 thins the grass around Talion clearly (the meadow turns sparse): not shipped. D alone (no vegetation step)
+  leaves the crowd and the fire at p95 12.55-12.65: over 12.5.
+- **Shipped on: E** (`SOMVR_RENDER_SET=VegetationQuality:3,MeshQuality:2,ShadowQuality:2,LightingQuality:1` in the env
+  block): p95 under 11.1 ms in every place measured, the least visible loss of the presets that clear 12.5 with margin.
+  F repeats E through the env file's path (som-vr-headset.sh's own key): the same within the boots' spread.
+- Not measured with the preset: night with rain - SOMVR_PRACTICE_DAY=weather only turns a wet or dark arrival into a dry
+  day, it cannot make the rain (115's 121256 met it by chance). 115 measured night with rain at +0.2..0.8 ms over the day
+  in the same places: about 10-11 ms p95 with E, under 12.5.
+
+### 119.5 What the Quest 2 should see
+With the preset the render thread's work is 8.6-9.8 ms p50, 9.2-10.4 p95 in the heaviest places measured headless (the
+user's PC ran this work 5-10 % faster than such boots, 115.7): **80 Hz (12.5 ms) has 2-3 ms to spare - no dropped
+frame from the render thread expected**; 90 Hz (the menu's row) about 1 ms. The GPU is the open number: headless it reads
+16-17 ms a frame at the null compositor's 20 Hz clock ramp (115.2); the preset took 2.1-2.2 ms off it. The session's
+PERF and `xr: perf` lines (on) now count frames over the real period: read `its frame work ... (over: N)` and the GPU
+total's `over 12.5 ms`. Only the headset can judge the rate's switch itself (WiVRn's answer is logged), the feel at 80
+Hz, and the preset's look in the lenses.
+
+### 119.6 `SOMVR_SHADOW_SHARE`: left off
+Not investigated this round: with the preset the render thread has 2-3 ms to spare at 80 Hz, the share's 0.6-0.8 ms is
+not needed for it; its bug (115.5: eye 1's sun shadows not eye 0's - most likely the cascade matrices or the maps'
+storage per view) stays open for a 90 Hz round.
+
+### 119.7 Switches, words, lines
+| Switch | Code default | Env (som-b27-perf2) | What |
+|---|---|---|---|
+| `SOMVR_XR_REFRESH` | 0 (enabled, nothing asked) | 80 | the headset's rate for the session; `off` = build 26; the menu's Refresh rate row (XR_REFRESH) over it |
+| `SOMVR_RENDER_SET` | (none: the game's detection) | VegetationQuality:3,MeshQuality:2,ShadowQuality:2,LightingQuality:1 | the launcher's: the session's render.cfg (boot_check --render-set) |
+boot_check `--render-set NAME=INT`; headless_vr.sh `HEADLESS_RENDER`; the mock's `MOCKXR_REFRESH`. Lines: `xr: refresh:
+...` (119.2), boot_check's `render.cfg (RUN/home only): Render.Setting.NAME=V`, som-vr-headset.log's `the VR graphics
+preset: ...`.
+
+### 119.8 Runs (headless; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run | What | Proves |
+|---|---|---|
+| 162838 | no preset, SOMVR_XR_REFRESH=80 | the baseline (A); the refresh path against Monado (20 Hz listed, requested) |
+| 171655 | vegetation 2, mesh 2, shadows 2, lighting 1 | the game takes the seeded render.cfg (its exit file identical); the biggest cut, the sparse grass |
+| 173335 | mesh 2, shadows 2, lighting 1 | those three alone: not enough by the fire and in the crowd |
+| 174450 | vegetation 3 + the three | the shipped preset's numbers and pictures |
+| 175802 | the same by the env file's SOMVR_RENDER_SET | the shipping path; a repeat |
+
+## 118. Build 27c: the abilities the save owns that had no VR control - the ignite shot by B on a drawn arrow, the whistle by a hand at the mouth, the dagger's quick throw by a real throw: `SOMVR_ABIL_IGNITE`, `SOMVR_ABIL_WHISTLE`, `SOMVR_ABIL_THROW` (2026-10-30, som-b27-abilities2)
+
+114.2 left the ignite shot, the quick throw, the whistle, taunt, Shadow Strike's chain, distract and brutalize without
+a VR control. This section: what the game holds for each, the VR way decided for each, the ones the user's save owns
+built on the game's own offer and attack (somvr_abil2_game.c, under `SOMVR_ABIL`), what was proven headless.
+
+### 118.1 What the game holds (`verbs tree` of run 20261029-032347; `beasts skills` of run 20261029-042923; `abil rec` and `abil2 probe` of runs 20261030-145019 / -165922 / -172142)
+
+| Ability | Root node (type 5) | Its input (the flat game's) | The save | Offered headless (the game's selection) |
+|---|---|---|---|---|
+| The ignite shot | `PC_Wraith_Ranged_Immolate_Shoot` (pool `PC_Ranged_Immolate_Shoot`: `PC_Ranged_Ground_/Rails_Immolate_Shoot_AOE/_Single`; hit `Hit_WraithRanged_Immolate`, `Wraith_Ranged_Burn(_OnGround)`, `AI_Str_Fear_Wrth_Pwrs`) | `Wraith_Ranged_Immolate`: 123 (CombatSecondary02) while aiming | `PSS_Wraith_Ignite` owned | never by the node's selection (no target, an orc on the bow's ray with the aim mode on, the attack window ignored or not); its record by name: yes (118.3) |
+| The whistle | `PC_Attract` (`PC_Attract_Standing`; `PC_AttractAI`, `UI_Attract`) | `Attract_Sneak`: Y with CombatSecondary04 held | `PSS_Whistle` owned | **only crouched** (the stealth crouch) at an orc that has not noticed Talion; standing or in a fight: no |
+| The quick throw | `PC_Ranged_QuickThrow` (+ `_Upgrade_Attack1`; pools `Quick_Throw_Attacks_HC_*`: `PC_QckThr_Back_LL/RR`, `PC_STN_Quickthrow_HC_*`, `PC_KD_Quickthrow_HC_*`; `PC_Dagger_Quickthrow`, `WeaponAbility_Dagger_QuickThrow`: Acharn's throw) | `QuickThrow_Tap`: 124 (the aim) tapped, at most 0.2 s | `PSS_Quick_Throw_1`, `_2` owned | see 118.3 |
+| Taunt | `PC_Taunt` | `Taunt_SingleTarget`: 123 with 124 held | `PSS_Taunt` **not owned** | no |
+| Wraith Distract | `PC_Wraith_Ranged_Normal_Distract` | `Wraith_Ranged_Distract`: Y while aiming | `PSS_Wraith_Distract` **not owned** | no |
+| Shadow Strike's chain | inside the strike (`PC_Wraith_Dash_Kill_GetThere`) | X again in the strike | `PSS_Shadow_Chaining` **not owned** | - |
+| Brutalize | `PC_StealthTorment` (`_FromAbove`, `_Zipline`) | `StealthBrand`: B behind an unaware orc (the brand's input) | no skill of its own in the 127 | **yes**: `PC_Bip_StealthTorment_B` crouched, at an unaware orc 10 m ahead (the window ignored) |
+
+The world's kill tools: `abil2 props` reads the nav markers' list (pr_navdump's): 125 `Explosive` / `Firepit` markers
+in it at the meadow, none active and enabled (the nearest an inactive `Firepit` 53 m off, then 80, 88, 106 m); at the
+mark-16 ruin 0. A fire or a barrel that the game would let an arrow explode was not met headless (118.6).
+
+### 118.2 The design: each the game's offer, the player's hand
+
+- **The ignite shot: B while an arrow is drawn.** The flat game's ignite is its interact button pressed while aiming;
+  B is our interact, on the string hand's thumb, free while the trigger holds the string. Both hands are on the bow,
+  so no free hand can touch the arrow; a held trigger or a long full draw would light arrows the player did not ask
+  for (the user grips with whole fists: the bow hand's trigger is down while it holds the bow). So one deliberate press
+  with the arrow drawn kindles it where the game offers the ignite - a wraith-blue glow at the arrow's tip and a tick
+  in both hands say so; the release shoots our arrow with the game's ignite attack (bo_shoot puts the attack at
+  Combat+0x4d0 for FUN_02332c50, with its RangedWeaponOverride / RangedAccuracyOverride: the game's ignite and its
+  rules - what burns, the fear it spreads). B again, or a let-down, puts it out; no offer: a short denied buzz, nothing
+  lit. A visible state the player sets before letting go is HL:A's way (the weapon shows its mode). The offer: the
+  node's own selection for the orc on the ray (8 deg), else with no target - neither ever passed headless - else its
+  record by name (`SOMVR_ABIL_IGNITE_ATTACK`, default `PC_Ranged_Ground_Immolate_Shoot_Single`, the node's own pool's
+  record) **with the skill owned** (`PSS_Wraith_Ignite`'s bit in Talion's inventory, beasts' read): the game's price
+  (the skill) kept, the game's record and hit.
+- **The whistle: a hand at the mouth.** Two fingers to the lips is how a person whistles: an empty hand (not holding
+  the sword, the dagger, the bow, a climb hold or an orc) within 16 cm of the mouth (9 cm under the eyes, 7 cm ahead)
+  for 0.3 s = the game's whistle started on the nearest orc within 30 m it offers it for (`FUN_00a8c700`, as the
+  flash). The game offers it only in the stealth crouch (SOMVR_CROUCH's duck) - the game's rule. The hand must leave
+  the mouth before the next one (2 s apart); never while the bow is out or 1.5 s after (the string hand anchors at the
+  corner of the mouth: boot 145019's drawn hand passed at 11 cm). A tick in that hand.
+- **The quick throw: the dagger thrown.** Blade & Sorcery's thrown daggers: draw Acharn at the left hip (the slots' "L
+  grip at L hip"), throw it overhand and open the hand. The judge (somvr_ab_throw_judge): the hand 3+ m/s (over its
+  newest 80-160 ms, or the runtime's own grip velocity, the faster - a slow frame rate puts no two samples inside a
+  throw), within 50 deg of the head's way (thrown ahead, not across), 35 deg down to 30 deg up, the hand at most 25 cm
+  under the eyes (overhand: the shoulders' line - boot 145019's underhand toss let go 28 cm under, 29 deg up), the grip
+  let go within 0.25 s of that move. The target: the orc nearest the throw's line (15 deg level, 30 deg pitch - a
+  thrown blade arcs - 1-25 m; at his chest, a downed orc's body at the ground) that the game offers its quick throw for;
+  its attack starts on him. While the dagger is in the hand the game's offer is asked every 0.1 s: a blue glow at the
+  dagger hand and one tick when it comes (the flash's way). No offer on the line: nothing thrown (a soft buzz), the
+  dagger stays in the hand. **How the dagger comes back:** the game's quick throw never spends Acharn (its own
+  projectile flies), so ours leaves the hand for the flight (the slots' away = put back at the hip by the game's
+  re-attach) and comes back to the hand 0.9 s later with a thunk (the slots' restore) - design-vr D12's wraith recall,
+  the game's dagger never lost.
+
+Not built - the decided VR way, for when the save owns them (each needs its own proof):
+- **Shadow Strike's chain** (not owned): the strike is "hold Y, A at the marked orc" (`STRIKE_GAZE`); its chain is the
+  same again during the strike - the gaze on the next orc in the vision, A. Each link a blink the player asks for (A =
+  when, the marked orc = where, no press = cancel).
+- **Taunt** (not owned): the open left hand held out at an orc and beckoned (pulled in toward the chest twice within a
+  second) - the "come here" everyone knows - = the game's `PC_Taunt` on that orc.
+- **Wraith Distract** (not owned): X (the bow hand's thumb) while an arrow is drawn - the ignite's twin on the other
+  thumb, its own glow; the release shoots the game's distract arrow.
+- **Brutalize** (offered on this save): the stealth kill's thrust with the left trigger held (the user's 2026-10-20
+  decision, 24: the same stab, the wraith charge) = the game's `PC_StealthTorment` where it offers it. Not built this
+  round: the torment's point is its terror (the fleeing orcs), which the game raises from the sync's start, not from a
+  hit - our stealth kill deals its record as a hit (no sync, nothing moves the view), so a torment dealt that way would
+  be a plain kill. It needs the game's own torment started (`FUN_00a8c700`, its sync aligning the bodies while the view
+  holds, 24's rule) and its own proof. The brand's hand gesture (`VERBS_BRAND`) asks only `PC_StealthBrand`.
+
+Code: somvr_abil.c/.h (pure: `somvr_ab_throw_judge`, `somvr_ab_throw_aim`, `somvr_ab_mouth_dist`; tests/test_abil.c, 36
+checks: + the overhand throw ahead, too slow, across, up, down, from the hip, thrown where the head looks, the orc on the
+line / 30 deg aside / too near / too far, an orc in the fight at 1.2 m, boot 145019's underhand toss, the mouth and the
+rest), somvr_abil2_game.c (new, included after somvr_abil_game.c: `ab2_frame` after `abl_frame` - the offers, the
+starts; `ab2_hands` after `abl_hands` - B, the throw, the mouth; `ab2_shot_attack` / `ab2_shot_aim` in `bo_shoot`;
+`ab2_dagger_away` in the slots' `in.away`; `ab2_glow_add`; the words `abil2 status|probe|props|aim N|aim off`), the
+Controls lines (somvr_vrmenu.c: "Ignite: B while drawn" under Bow and wraith, "Whistle: duck, hand at mouth" under
+Orcs, bit 42 `SOMVR_VMA_ABIL2`, set by somvr_hla_game.c with both switches on; tests/test_vrmenu.c), scripts/abil27c-drive.sh.
+
+### 118.3 The runs (scripts/abil27c-drive.sh; scripted hands held as real hands: the hand at the mouth = the grip 9 cm under and 9 cm ahead of the eyes, the bow by the layer's test hands as bow20's, the throw an arc about the left shoulder from up behind it to ahead at eye level in 200 ms, the grip opened mid-swing; 0 WARN, the install unchanged, the real save UNCHANGED in every run)
+
+| Run (logs/boot-check-20261030-) | What it proves |
+|---|---|
+| 145019 (`SOMVR_FX_TEST=1`, `SOMVR_PRACTICE_DAY=0`: 3.7 fps) | the records (118.1); the whistle not offered standing (`PC_Attract`: none), offered crouched (the probe); the hand at the chest: nothing; the hand at the mouth (2 cm, 0.55 s) = the gesture; the underhand toss passed the first judge (28 cm under, +29 deg: hence 25 cm / 30 deg); the quick throw not offered on an unaware orc 10 m ahead; no explosive or fire pit active near; the bow never came out (the test squeeze held the left grip at 0: the driver's fault) |
+| **165922** (20 fps) | **the whistle**: crouched, the left hand at the mouth (2 cm, 0.35 s) -> `start: the whistle - FUN_00a8c700(..., node 'PC_Attract', attack 'PC_Attract_Standing', orc at 1001 cm)`; the orc `AI_Infantry_ReactToSusp_FromBase_Unsheathe_B3` 0.05 s later (he heard it, drew his weapon) and came to Talion (frame 992: at arm's length); Talion's root 0.0 cm; the hand at the chest before: nothing. **The ignite**: B while drawn (56 cm) -> kindled ('by name, PSS_Wraith_Ignite owned'); the release -> `the shot: the ignite - attack 'PC_Ranged_Ground_Immolate_Shoot_Single' instead of 'PC_Ranged_Ground_Normal_Shoot_Light'` -> the orc 10 m off **95 -> 0, dead** (the game's "+15 ... Burned"); the same shot without B at a fresh orc: 95 -> 75 (the plain arrow); B then a let-down: put out. The quick throw: the toss refused ("not overhand", 60 cm under); a throw judged (6.1 m/s, 8 deg, -13 deg) at a fighting orc 1.1 m off was outside the line (25 deg); the second throw's start not asked (the combat frame without Talion's body: the eyes now stand in) - the dagger put back and drawn again 0.9 s later (the recall) |
+| 172142 | the quick throw at a downed orc (`abil kd`, `KnockDown`, 3 m): not offered (the window ignored too); throws judged 6.0-6.3 m/s; the right hand's guard pose passed the mouth (16 cm): the whistle now needs an empty hand |
+| 182556 | the quick throw in a crowd of 3 (1-6 m, the fight): never offered in ~60 s ("the attack window refuses the node now" while Talion was busy, else "no attack of its pools passes"); 3 throws judged, none on an offered line |
+| 183808 | the quick throw at a fighting orc 3.5 m off: not offered (the range scenario's teleports did not run) |
+| **191435** (the final build: main 5bf3df3 merged, the env as shipped - the throw off) | **the whistle**: crouched, the hand at the mouth (2 cm, 0.35 s) -> `PC_Attract_Standing` started on the orc 10 m off -> `AI_Infantry_ReactToSusp_FromBase_Unsheathe_B` 0.05 s later, he walked in (frame 845); root 0.0 cm; the chest: nothing. **The ignite**: kindled by B, the release -> `PC_Ranged_Ground_Immolate_Shoot_Single` -> 95 -> 0, dead (frames 1329 / 1369); the plain arrow at a fresh orc 95 -> 75; B then a let-down: put out |
+
+In all: **the whistle 2 of 2 at the mouth crouched** (0 from the hand at the chest, 0 standing - not offered), **the
+ignite 2 of 2 shots kindled killed by wraith fire** (95 -> 0) where the plain arrow took 20, 2 let-downs put it out;
+**the quick throw 0 offers** in five situations (118.6), the judge right on 1 toss and 9 throws.
+
+### 118.4 Seen as a player (both eyes, xr_compose; runs 165922 and the final 191435)
+
+- The ignite kindled (frame 1481): the bow drawn in the bow's wraith dusk, the orc 10 m ahead lit blue, a soft blue
+  glow at the arrow's tip where it rests on the bow hand's fist - in both eyes, at the same depth; readable, not loud.
+- The hit (frame 1516): the orc wrapped in blue wraith fire behind the bow's limb, the game's own popup "+15 ... Kill
+  ... Burned"; both eyes alike. After (1565): he lies dead, the next arrow resting on the string. The plain arrow's hit
+  at the same range (1998): no fire.
+- The whistle (frame 844, crouched): the hand at the mouth fills the lower view (as a real hand that close does), the
+  orc far ahead turning; 4 s later (992) he stands at arm's length with his blade out - lured. Nothing of the view moved.
+- The final build (191435): the kindled tip's glow beside the game's own glowing arrow (1329), the orc burning blue with
+  the "+15" popup (1369), the lured orc walking in, spear out (845) - each in both eyes alike.
+
+### 118.5 Summary
+| Item | Switch (code default -> env) | Proven headless |
+|---|---|---|
+| The ignite shot: B while drawn kindles, the release = the game's `PC_Ranged_Ground_Immolate_Shoot_Single` (with `PSS_Wraith_Ignite` owned) | `SOMVR_ABIL_IGNITE` off -> **on** (needs `SOMVR_ABIL`) | 2 of 2 burned to death (165922, 191435); the plain arrow 20 damage; 2 let-downs put out |
+| The whistle: an empty hand at the mouth 0.3 s, crouched = the game's `PC_Attract` | `SOMVR_ABIL_WHISTLE` off -> **on** | 2 of 2 (165922, 191435), the orc lured; 0 from the chest |
+| The dagger's quick throw: thrown overhand and let go = the game's `PC_Ranged_QuickThrow`; the recall | `SOMVR_ABIL_THROW` off -> **off** | the judge and the recall; the game's offer never met |
+| The Controls lines Ignite / Whistle | bit 42 with both switches on | test_vrmenu (660) |
+| Decided, not built: the chain, taunt, distract (not owned), brutalize (offered; its terror needs the sync) | - | - |
+
+### 118.6 Open
+- **The quick throw's offer.** Not on an unaware orc 10 m ahead, a fighting one at 1-6 m (alone or in a crowd of 3;
+  often "the attack window refuses the node now" while Talion was busy, else "no attack of its pools passes"), a
+  knocked-down one 3 m off (the window ignored too). Its pools' records (`PC_STN_Quickthrow_HC_*`, `PC_KD_Quickthrow_HC_*`,
+  `PC_QckThr_Back_*`) suggest a stunned or downed orc or one with his back turned - but the downed one was refused. Next:
+  `abil rec Quick_Throw_Attacks_HC_Lowest` (the predicates of its pool), an orc in the fight 8-12 m off (the scenario
+  of run 183808 that did not run), a stunned and a fleeing orc. The VR side is built; ship it on once offered.
+- **The ignite**: the node's own selection never passed (no target; an orc on the bow's ray in the game's aim mode;
+  the window ignored or not) - the record by name, gated by the skill, carries it. Whether the game's ignite costs more
+  than our shot's one arrow, and a fire pit or grog barrel shot with it (125 `Explosive`/`Firepit` markers in the list,
+  none active near the meadow or the ruin) - not met.
+- **For the headset**: B on the string hand's thumb while drawing; the tip's glow at the bow hand's fist (clear in the
+  pictures, small); the whistle's 16 cm / 0.3 s with a Quest controller at the lips; the whistle's crouch (the game's
+  rule) - whether a player finds it from the line "duck, hand at mouth".
+
+## 120. Build 27c: no hidden pause - a tutorial the game pauses for always shows (the game's own pausing-tutorial test); a window's B never gets off the beast; Big Game and the story onward: `SOMVR_HINTS_PAUSING`, `SOMVR_RIDE_WIN_REST` (2026-10-30, som-b27-story4)
+Headless boots (scripts/headset-build26.env + the som-b27-story4 block + the story's practice settings, the test hands,
+the layer's test file; story22-drive.sh's `ctl` mode and the directors beside it: scripts/story27c-steps.txt).
+handoff/HANDOFF-story.md "build 27c". Every run: the install unchanged, the real save UNCHANGED.
+
+### 120.1 What tells a pausing tutorial from an in-play lesson (the game's data and its call)
+- The game's `TutorialParams` event (CPlayerUI) has **two** subscribers (index/classes.tsv): the HUD's text manager
+  (`CUIHUDTextManager::CB_OnTutorial`, the delegate SOMVR_HINTS=off drops at, GO_TUTORIAL) and
+  **`CUIHUDPausingTutorial::CB_OnTutorial`** (its delegate's slot 2 = FUN_00b0c370, never patched). That one reads the
+  tutorial schema (`*0x4b66420`): the field whose hash is at +0x68 (with +0x78 > 1 its index at +0x88 straight into the
+  record's entries), a reference (the entry's kind & 0x3f = 0xa); **set and nonzero** = it shows its page
+  (FUN_00b0a610: the game paused until the tutorial's button), else it hides (FUN_00eee370). So the game itself decides
+  a pause by one field of the tutorial's record, not by its name.
+- At run time (boot 20261030-154733): `HINTS the pausing tutorial's page field: hash 03644968 (schema 0x4b66460, +0x78
+  2: by index, index 2)`. The records' properties (logged since build 24 for kept tutorials, now for dropped ones too):
+
+| Tutorial | 03644968 (the page) | other fields | the game paused after it |
+|---|---|---|---|
+| `PC_StruggleTutorial` (the Berserker's struggle, 107.6) | 0x7f..036018 | 'Tut_ContinuePressA', 'ui_tutorial_pause_on/off', struggletutorial.bndl | yes (soak 2: 154 s) |
+| `tut_WargRidingUnlocked` ("Ability Unlocked: Caragor Hunter") | 0x7f..036018 (the same page record) | 'Tut_ContinuePressA', 'ui_tutorial_pause_on/off', wargridingunlocked.bndl | yes (every Big Game boot) |
+| `GP_Torvin01_Tut_CaragorCounter` (the counter's lesson) | 0 | 'Tut_ContinuePressY', wargcounter.bndl | no |
+| `GP_Torvin01_Tut_CaragorRangedAttacks`, `_GetDistance`, `_CaragorMount`, `_MountSprint`, `_CaraSlash`, `_CaraMaul`, `_ReMount`, `GP_Lithariel2_*`, `GP_Marwen2/3_*` (the missions' lessons) | 0 | - | no |
+| `tut_BrandUnlocked`, `tut_DominateUnlocked` (ability cards, dropped in build 24-26 boots) | not logged then | - | yes (boot 20261029-201557: paused 0.10 s after the drop, 4 s until A) |
+- The combat hints (`Hint_Combat_*`, `Tut_Collectible_*`: the "press L, T and A" hints the user asked to be rid of in
+  build 19b) are another event (CombatHintParams, GO_HINT) and are never pausing.
+
+### 120.2 The fix: `SOMVR_HINTS_PAUSING` (somvr_gameopts_game.c `go_tut_pauses`, GO_PAUSETUT)
+- `SOMVR_HINTS_PAUSING=on` (code default on; the som-b27-story4 block: on): with SOMVR_HINTS=off a tutorial whose record
+  has the page field set passes - the same test, read only, as the pausing tutorial's own delegate (the site
+  GO_PAUSETUT = FUN_00b0c370's first 32 bytes: the schema global and its +0x78 / +0x88 in them; a mismatch = the rule
+  off, logged). Whatever its name: the struggle's, every "Ability Unlocked" card, any pause the game adds later. The
+  missions' lessons pass by `SOMVR_HINTS_KEEP_TUT=GP_` (their own naming; they never pause, they carry the mission's
+  instructions: build 24's decision); everything else stays dropped. The build 27 block's
+  `SOMVR_HINTS_KEEP_TUT=GP_,PC_Struggle,tut_WargRidingUnlocked` is commented out in place: the block sets `GP_` only.
+  Off = build 27b (every tutorial dropped but the keep list's).
+- Lines: `CONFIG hints_pausing=..`, `HINTS the pausing tutorial's page field: hash ..` (once), `HINTS tutorial #N ..: show
+  'X' (record ..): kept (it pauses the game: SOMVR_HINTS_PAUSING; its page 0x..)`, `HINTS tutorial record .. 'X'
+  (pauses the game|kept|dropped): <its properties>` (once per record, dropped ones too), `SESSION t=.. the game paused N s
+  after the tutorial 'X' passed (SOMVR_HINTS_PAUSING): ..` - or `.. did not pause the game within 1 s` (the rule's
+  prediction checked both ways); GAMEOPTS END adds `passed as pausing N`. build 27's `WARN SESSION .. dropped its
+  tutorial ..` stays as the net.
+- selftest (`the pausing tutorial passed`): a record with the page field set passes (by hash, and by the schema's index),
+  one without it is dropped (an in-play lesson), off = dropped, a combat hint stays dropped with the rule on (fails on
+  build 27b's code: the struggle's record is dropped without the keep list).
+
+### 120.3 Proof in the game (boots 20261030-154733, -163325, Big Game from 125406's save)
+| What | Boot | Lines |
+|---|---|---|
+| the caragor's card `tut_WargRidingUnlocked`, **not** in the keep list | 154733 | `kept (it pauses the game: SOMVR_HINTS_PAUSING; its page 0x7fa1fa036018)`, `SESSION t=1134164.680 the game paused 0.10 s after the tutorial 'tut_WargRidingUnlocked' passed`, no WARN (113.5's WARN every Big Game boot) |
+| the same, with A | 163325 | paused at 1136397.023; the card on the flat frame (shots/st-bg-ptut-1.png: "Ability Unlocked: Caragor Hunter - You've gained the ability to Counter (Y) a Caragor's leap attack ... Use [LB] to mount stunned Caragors. Press (A)"), the cinematic window open over the whole pause (BODYMOMENT window 0 -> 1 at 1136384.078 .. 1 -> 0 at 1136410.273: the flat frames on the theatre's 4 m screen at 3 m), **A closed it** (`btn R a 1` at 1136409.818, paused=0 at 1136409.971) |
+| the missions' lessons | both | `GP_Torvin01_Tut_GetDistance`, `_CaragorCounter`, `_CaragorMount`, `_MountSprint`, `_CaraSlash`, `_CaraMaul`, `_ReMount`: `kept (SOMVR_HINTS_KEEP_TUT)`, none paused |
+| an in-play hint | 154733 | `HINTS combat hint #1 ..: show 'Hint_Combat_HC_EnemyClose' ..: dropped` |
+| the struggle's | (data) | its record's page field = the same page record (`03644968:t10=0x7f..036018`, soak 2's log) - passes by the rule; the plain struggle is rare (107.6) and was not met again |
+- A pausing tutorial without a window over it (none met): the session's state is then SOMVR_SSM_LOAD (paused, no menu)
+  and the game's flat frames go on the loading space's 2.4 m panel - shown either way (the layer's vd_theatre).
+
+### 120.4 A window's B got Talion off the beast: `SOMVR_RIDE_WIN_REST` (somvr_ride_game.c `mt_tick`)
+- Boot 163325 (t=1137157): a failed screen's Retry put Talion back on the caragor (`seated on the caragor 3.05 s after
+  the mount`), the window was still open, the drill's B (the screen's skip, SOMVR_USE) also reached the ride: `RIDE
+  t=1137157.829 press 123 'CombatSecondary02' by B` - **dismounted** 0.1 s later; the mission's caragor then stood
+  beckoning ('AI_Warg_GP_Mounted_Beckon') and never offered the mount again (6 tries of the reached-out hand); Torvin
+  waited ("Don't want to hunt? I'll wait here ...") - stuck. A VR player closing or skipping a screen with B on the beast
+  meets the same.
+- `SOMVR_RIDE_WIN_REST=on` (code default on; the block: on): while SOMVR_BODYMOMENTS' window is open a press made in it
+  is the screen's (SOMVR_USE: the skip, Retry, a result's Back, Abandon) and never the beast's - it acts only once let
+  go after the window; a button held since before the window goes on through it (a held run through a banner's window
+  in a chase), never B (off). A first version rested B only - 195017 showed A's Retry also leaping (120.7) - so every
+  press made in a window rests. Lines `RIDE t=.. a window while seated: a press is the screen's, not the beast's; held
+  ones go on, never B ..`, `.. the window is over: its presses act once let go`, RIDE END `windows rested through N`.
+  Off = build 27.
+- selftest (`ride: B in a window rests`, `ride: A held through a window goes on`): B pressed in a window = nothing, still
+  held after it = nothing, a fresh B after = 123; A held from before a window = the leap goes on, A pressed in it =
+  nothing, also while held after it; off = 123 in the window (fails on build 27's code).
+
+### 120.5 "Big Game" past the archers: the whole mission as the game runs it (boots 163325, 184105, 191822, 195017, 201642)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker, the card, the video; "Follow Torvin" | as 113.5 | works (6 boots) |
+| **"Ability Unlocked: Caragor Hunter"** (`tut_WargRidingUnlocked`, pausing) | the card, "Press (A)" | **shown and answered** (120.3); 180229: the drill's A came 4 min late (the game waited paused: a harness gap, fixed: `ptut` in every wait) |
+| "Dominate the Caragor" | the leap countered, the mount by the hand, the domination by the grip | works (5 of 6; 180229: countered, no offer - the drill's hand) |
+| the Uruk fight ridden ("Gutting Orcs! ... Bet I can take down more than you", "Knock 'em over!") | the bonus banner "Kill more Uruks than Torvin" ("Talion 2 VS 35 Torvin") | the drill's steer + bite: passed in each boot |
+| "You see now, Cap'n? Even the fiercest beast can be used for good." / "Sure you can ride a Caragor, but can you shoot from one? You take 'em up high! Leave the ground Orcs to me." (`GP_Torvin01_Tut_CaragorRangedAttacks`) | archers up high at a ruin ('Objective' at -6590 3251 -11250) | **"Mission Failed! Reason: Your Caragor was killed. Hint: Biting enemies restores some Health to the Caragor. Watch out for Archers."** (163325 x5, 184105 x1, 191822, 195017); passed in 184105 (Torvin's "Another one for me!") |
+| "Not bad, Cap'n... you've got the basics down. Now let's take on a fresh batch." / **"We'll find another camp. Put you to a final test. Fight 'em however you like."** | "Follow Torvin" to a second camp (Torvin's marker at 15132 3347 -23081) | ridden there (184105; the drill's steer + 75-deg sidesteps where the beast stuck) |
+| the camp's fight; **"Something wrong with your blade? You missed one!" / "Stop him before he gets reinforcements!"** - **"New Objective: Stop the runner"** | a runner flees for reinforcements: his 'Objective' marker moves ~15 m between two reads (2 s; boot 184105: from 15491 -34395 to -1722 -40007) | **"Mission Failed! Reason: Target Escaped! Hint: Use a Mounted Caragor's speed to catch fleeing enemies."** - every try (184105 x4, 191822 x5): the drill's beast ran at the plain stick (the steer word) and never closed in |
+| the end and its rewards | | not reached headless |
+
+The mounted commands the chase needs (boot 184105's probe while seated, `ride press CMD 1500`): **124 'CombatSecondary03' (the pad's LT) = the mounted ranged aim** ('Ranged_ButtonY', 'Ranged_SlowMo', 'UI_Ranged_SlowMo_Deactivate': the game's slow-motion aim - what "shoot from one" asks); 187 and 185 nothing seen. The left stick's click held (MNT_Charge 184, VR's "the stick's click") left the beast standing in 184105 (8 s held: 0 m; let go, 22 m in 8 s) - its use is not the run. A held (the pad's A: 16 'Jump' + 121) through the chase: the drill's tries in 191822 still lost the runner (but each try lost 10-15 s to the drill's own window handling at the "New Objective" banner); 201642 did not reach the chase (120.7).
+
+### 120.6 The bow from the saddle (unproven)
+The game's own ranged attack while riding is the aim command 124 held (above) - the command SOMVR_BOW holds while the VR
+bow aims (SOMVR_BOW_AIM_CMD 124). The scripted bow (bow20-drive.sh's poses: the left hand at the slot over the shoulder,
+its grip, the string hand at the nock) did not take the bow out in the saddle (184105: `VERBS squeeze: nothing ... bow 0
+slot 0`, the squeeze registered with the hand already ahead - the test file's timing, not separated from a real refusal).
+Whether a player's bow comes out on the caragor and shoots: the headset.
+
+### 120.7 The window's presses while riding, in the game (boots 163325, 195017, 201642)
+| Boot (build) | The failed screen's A (Retry) | After it |
+|---|---|---|
+| 163325 (build 27) | 285 'QuestFailedRetry'; then the drill's B on the window still open: `press 123 'CombatSecondary02' by B` | **dismounted** 0.1 s later; the mission's caragor stood beckoning and never offered again |
+| 195017 (B rests, A went on) | 285 **and** `press 16 'Jump' by A` at the same t=1148713.805 | dismounted 1.3 s later and never re-seated by the game |
+| 201642 (the final rule) | 285 alone (t=1149978.011; the last Jump 25 s before) | the game's own reload: dismounted 0.8 s later, **mounted again and seated 5.1 s after** (`seated on the caragor 3.15 s after the mount`); `windows rested through 4` |
+- So a press made in a window is the screen's only; the beast hears nothing of it until it is let go. The drill's own
+  remount (a practice teleport while the game was re-seating him) then took Talion off in 201642 - a harness fault
+  (fixed in the director: no remount check within 8 s of a window, and only when `ride status` says off).
+
+### 120.8 Runs (headless, Monado 20 Hz; scripts/headset-build26.env + the som-b27-story4 block + the story's practice settings, the test hands; from 125406's save; the install unchanged, GameData.sav UNCHANGED each time)
+| Run (logs/boot-check-) | WARN | What | Proves |
+|---|---|---|---|
+| 20261030-154733 | 0 | Big Game (bg9): the card passed by the rule and paused, the lessons kept, a combat hint dropped; the drill's end-loop B on a Retry left Talion off (harness) | **SOMVR_HINTS_PAUSING in the game** |
+| 20261030-163325 | 0 | bg10: the card (picture, A), the Uruk fight, "Your Caragor was killed" x5; B on a Retry's window = off | the card shown and answered; **the window's B bug** |
+| 20261030-180229 | 1 (the drill's trip) | bg12: the card unanswered 4 min (the drill), the leap countered, no offer | - (harness) |
+| 20261030-184105 | 0 | bg13-15: the archers' stage passed, "a fresh batch", the second camp, "Stop the runner" - "Target Escaped!" x4; the mounted probe (124 = the slow-motion aim); the bow not out in the saddle | **Big Game mapped to its last stage** |
+| 20261030-191822 | 0 | bg16-17: the chase with A held - lost each try (the drill's window handling); the drill's B on a failed screen = Abandon (harness trap, fixed: B only after three A's did nothing) | - |
+| 20261030-195017 | 1 (the drill's trip) | bg18 on the B-only build: A's Retry also leapt, Talion off, no re-seat | why A must rest too |
+| 20261030-201642 | 0 | bg18 on the final build: the Retry's A alone, the game re-seated Talion | **SOMVR_RIDE_WIN_REST in the game** |
+
+### 120.9 Listed, not fixed (evidence above)
+- **Big Game's end**: not reached headless. The last stage is "Stop the runner" (a fleeing Uruk, "Use a Mounted
+  Caragor's speed"): the drill's scripted steering never caught him. What the mounted run needs in VR is open: the
+  stick's click (MNT_Charge) held left the beast standing; A held (the stock pad's Jump + CombatPrimary04) did not
+  visibly catch up (not measured cleanly). **If the user cannot catch the runner in the headset, the mount's sprint
+  is the next thing to map** (the game's lesson `GP_Torvin01_Tut_MountSprint` is shown in VR: its text names the
+  button).
+- **The archers' stage**: "Your Caragor was killed" in 4 of 6 runs (the drill bites only near Uruks; a rider bites to
+  heal it and keeps off the archers). The bow from the saddle: the game's own is the slow-motion aim on 124 (= the VR
+  bow's aim command); the VR bow in the saddle is unproven (120.6).
+- **"The Rescue" to its end**: not attempted this round (113.4: she dies on the ground to the Uruks' ground attacks
+  whatever her health; a fair guard needs a person's blade round her - the drill's kill is a teleport + aid + X).
+- **After a Retry at a checkpoint on foot** the mission's caragor beckons ('AI_Warg_GP_Mounted_Beckon') and the drill's
+  remount (a teleport beside it, the hand out) got no offer (154733, 195017); a player walks up to it - unproven.
+- A pausing tutorial with no window over it was not met (the session's LOAD state then shows the flat frame on the
+  loading space's panel); `tut_BrandUnlocked` / `tut_DominateUnlocked` were not met again (the save is past them).
+
+### 120.10 The furthest save, the switches, the lines
+- No mission ended in these runs: the furthest save stays **logs/boot-check-20261030-125406/saves/GameData.sav** (113.9:
+  "The Rescue" 'goldenL' and "Big Game" 'goldenT' open, 'powerStruggle', 'resistance_QuestGiver'). Boot from it with
+  `HEADLESS_SAVE_FROM=<that path>`.
+
+| Switch | Code default | build 27c env (som-b27-story4 block) | What |
+|---|---|---|---|
+| `SOMVR_HINTS_PAUSING` | on | on | a tutorial the game pauses for (its page field: the pausing tutorial delegate's own test) passes SOMVR_HINTS=off (120.2) |
+| `SOMVR_HINTS_KEEP_TUT` | (unset) | `GP_` (was `GP_,PC_Struggle,tut_WargRidingUnlocked`) | the missions' lessons by name; the pausing ones by the rule |
+| `SOMVR_RIDE_WIN_REST` | on | on | a press made in a window is the screen's, never the beast's (B never gets off, A's Retry never leaps); a button held from before goes on (120.4, 120.7) |
+Site: GO_PAUSETUT (K_ENTRY 0xb0c370, read only; check_sites.py: 8 lines in GAMEOPTS_SITES). Lines: 120.2, 120.4.
+
+### 120.11 For the headset, unproven
+- Big Game: the "Ability Unlocked: Caragor Hunter" card comes on the theatre's screen with the game paused - A goes on.
+- Big Game's end: after the second camp, "Stop the runner" - catch the fleeing Uruk on the caragor (the mount's run).
+- A failed screen while riding: A retries, B abandons - neither makes the beast leap or throws Talion off.

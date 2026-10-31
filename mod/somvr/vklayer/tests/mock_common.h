@@ -129,5 +129,9 @@ typedef const mockxr_haptic *(*mockxr_haptic_get_fn)(int hand);
 typedef const mockxr_input *(*mockxr_input_get_fn)(void);
 typedef int (*mockxr_first_fn)(const char *name); /* global order of the first call of name (1, 2, ...; 0 = never) */
 typedef int (*mockxr_space_bad_fn)(void);         /* xrLocateSpace with a dead space/session or a bad argument */
+/* build 27 (re-xr-pipeline.md 119): XR_FB_display_refresh_rate (MOCKXR_REFRESH): the requests taken or refused, the
+ * last rate requested, the display's rate now, the change events delivered */
+typedef struct { int requests, refused, events, enumerates; float last, now; } mockxr_refresh_info;
+typedef const mockxr_refresh_info *(*mockxr_refresh_get_fn)(void);
 
 #endif

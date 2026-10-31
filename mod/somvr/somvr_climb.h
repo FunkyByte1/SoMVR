@@ -182,6 +182,24 @@
  *            (3) A at a top without a mantle says why (E_AM_NO) and the mark goes on (A held = the way down); (4) a
  *            fling rising (not topped, not gliding) stops (FL_REACH: the hang) when no wall is within fl_reach_cm of the
  *            chest (the eyes - 40 cm) along toward, level or 20 deg down: the hands can still reach the wall's top.
+ *   reach hold (fl_reach_hold = 1, with unstuck; build 27: the forge tower's corner - the right hand on the south face
+ *            beside him, the left on the east one he hung by; the fling from the right stopped in its first frame,
+ *            `the wall under the chest`, rose 0.0 cm: its toward ran along the east face, no wall that way) unstuck's
+ *            reach test also casts level from the chest toward the hold let go: a wall there within fl_reach_cm =
+ *            in reach, the fling rises on.
+ *   mantle keep (am_keep = 1; build 27: the Sea Fort camp's 9 m wall - the overhang's ring shown at its coping, A
+ *            later with the root 2 cm lower and a few cm aside, where the face under the lip was found: the press
+ *            searched again, found no overhang and was the drop mark; the ring's own search is up to 0.5 s / 5 cm old)
+ *            A while the ring shows (the last frame's search: am_ok) is that ring: its landing and its kind (the
+ *            overhang's glide or the plain one), the curve planned again from where he is; the glide's own lag test
+ *            still stops it (blocked: he stands on the top under him, else the hang). No ring shown: as before.
+ *   retop edge (retop_edge_cm > 0; build 27: the forge tower climbed from its foot - a narrow ledge 106 cm under the
+ *            platform's overhanging lip (no room on it) was reached first (topped, push), then a hand took the lip: its
+ *            hit 48 cm over the ledge's top (under OH_RETOP_CM), its own top found 106 cm over it - the old top was
+ *            kept, the mantle said "no room on the top" of the ledge, the platform's ring never came and the push
+ *            held him under its edge) a new hold that is an edge whose own found top is retop_edge_cm or more over
+ *            the top reached forgets that top as a hold OH_RETOP_CM over it does (E_RETOP; the other hand's edge on
+ *            the lower ledge no longer tops him): the next top is the new hold's, reached as any.
  *   round lip (round_lip = 1; build 21: mark 11, the wall by the meadow's ladder: holds on a rounded mossy lip 30 cm
  *            under its top found their own crest as the top, no edge and no landing, the pulls blocked under the bulge)
  *            a hold that is no edge by the edge_cm test is tested again RL_UP_CM higher: no wall there and a floor
@@ -446,6 +464,9 @@ typedef struct {
     float fl_reach_cm;       /* ... the fling stops rising with no wall this near the chest (120) */
     int round_lip;           /* build 21 (SOMVR_CLIMB_ROUND_LIP, 0 off): see round lip */
     int down_over;           /* build 21 (SOMVR_CLIMB_DOWN_OVER, 0 off): see down */
+    float retop_edge_cm;     /* build 27 (SOMVR_CLIMB_RETOP_EDGE, 0 off; on = 30): see retop edge */
+    int am_keep;             /* build 27 (SOMVR_CLIMB_MANTLE_KEEP, 0 off): A while the mantle's ring shows = that ring */
+    int fl_reach_hold;       /* build 27 (SOMVR_CLIMB_FLING_REACH_HOLD, 0 off): unstuck's reach test also toward the hold let go */
     float dn_low_cm;         /* ... the hand at least this under the eyes (40) */
     float dn_high_cm;        /* ... and at most this over the floor he stands on (90) */
     float dn_reach_cm;       /* ... the edge within this of the hand, level (45) */
@@ -720,6 +741,12 @@ typedef struct {
     int dn_why;         /* ... the last grip that did not start it: SOMVR_CLIMB_DN_* */
     uint64_t dn_tries, dn_goes, dn_holds, dn_hangs, dn_blocks, dn_nos;
     uint64_t rl_tops, rl_po;   /* round lip: holds made edges by the second test; pullover tops raised */
+    uint64_t re_edges;         /* retop edge: retops by a hold's own higher top (not by its height) */
+    uint64_t am_keeps;         /* mantle keep: presses that took the ring shown (not searched again) */
+    uint64_t fl_reach_holds;   /* reach hold: flings kept rising by the wall toward the hold let go (none along toward) */
+    int fl_rh;                 /* ... this fling counted */
+    int am_kept;               /* ... the last press did (the log) */
+    float re_edge_from;        /* ... the top forgotten at the last retop (the log) */
     int rl_on;          /* round lip: cfg.round_lip for the pullover's search (set each step) */
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,

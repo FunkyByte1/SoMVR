@@ -562,6 +562,40 @@ This is where SoM differs most from HL:A, and where the most honest compromises 
 Ranked within each tier. Sizes as in the header. Every item is off by default until its boot passes, then on in the
 next VR build.
 
+### 3.0 Where each item stands at build 27 (2026-10-30, re-xr-pipeline.md 112)
+
+The gap list as the builds have answered it, so the next rounds aim at what is really open. "Done" = built, proven
+headless and on in the headset build (the feel is still the headset's); "part" = some of it; "open" = nothing built.
+Numbers are re-xr-pipeline.md sections.
+
+| # | Where it stands | Still open |
+|---|---|---|
+| HG-1 | **Done:** the root anchor and the 1:1 core (17), the head out of the view (25, 26), no game move of the player in a fight (64), the head tether at an edge (69), the body under the held view after a finisher (93) | staggers and knockdowns judged in the headset |
+| HG-2 | **Done for the moments met so far:** body moments (20), syncs in place (64), the interrogation's end (77), death in first person (90), the beasts' takedown (92), the drop kill's held view (102), Seat mode on a caragor (105, 109) | moments not met yet in the story; the window stays the fallback |
+| HG-3 | **Done:** the warnings (18), block / parry / dodge judged at the blade (22, 62, 65), the red unblockable warning (62), the vault over an orc and its riposte (108) | block bars / ground arrows (not needed so far) |
+| HG-4 | **Done:** the wrist panel (15), live and saved rows (34, 56), the Fight page and the 64-bit word (73), a steady panel and a pointer that locks (80), the Test page (82); build 27 (112): **Walk toward** (head / hand), the honest **Pointer hand**, the settings masks 64 bits | a true dominant hand (SH-7); turning "off"; per-trigger vignette levels |
+| HG-5 | **Part:** the warnings (18), the attacker choice mapped (42), the crowd's pace (70), the turn cue for an orc that left the view (108) | the 1 s veto and damage x0.5 as tuning (42.9 built, judged in the headset) |
+| HG-6 | **Done** (38) | - |
+| HG-7 | **Done:** the slots (21), the sword over the shoulder and the bow at the left shoulder (46), the blade kept in the fist (66), its sounds from the hand (75) | slot ticks' feel |
+| HG-8 | **Part:** the wrist HUD and the prompt band (31), the watch (33), the objective in the world (44), popups at the gaze (87), the captain's card (95), the game's overlays out of the eyes (100) | arrows on the bow, the streak on the runes, markers at the orcs |
+| HG-9 | **Done:** the keep-alive, the loading space, the theatre (36), the Nemesis screens on it (90) | the captured backdrop (SH-10) |
+| HG-10 | **Part:** finger curl from the Touch (29), our own VR hands (33), the bow held like a bow (51, 71) | per-object poses for the dagger and the neck claw |
+| HG-11 | **Done:** the duck (41); the seated reach assist **open** | the seated reach assist |
+| SH-1 | **Part:** VR-native finishers (24), the execution by the trigger and a hard hit (39), the interrogation's own kill (77) | the rune glow and slow-mo |
+| SH-2 | **Done** (105, 109) | the feel of the yaw |
+| SH-3 | **Part:** the wraith step's aimed blink (68), the jump and the vault (91, 101), the vault over an orc (108) | a Blink / Shift locomotion mode on the ground |
+| SH-4 | **Part:** the theatre (36), captains' introductions in the world (88, 104), the card at the gaze (95) | scripted level cameras |
+| SH-5 | **Part:** B at every pick and mission start (43, 103) | touch-to-use by the hand |
+| SH-6 | **Open** | the hand-held wheel |
+| SH-7 | **Part:** subtitles at the gaze (87, 89); build 27: the Main hand row renamed Pointer hand (it only moves the panel and the pointer) | the left-handed mirror (the sword slot, the bow hand, the left hand's verbs), subtitle sizes |
+| SH-8 | **Done:** the stealth kill by the thrust (67, 72, 81, 84), the brand and drain by the left hand (39, 97, 98), the drop kill by the plunge (102) | - |
+| SH-9 | **Part:** the turn cue (108); the spawner mapped (42.6) | a cue for arrivals from behind |
+| SH-10 | **Open** | - |
+| NH-1..NH-9 | **Open** (NH-3: the inspect view on the theatre, 45) | - |
+
+The first ten minutes (launch, menus, load, the world, the first fight) and the Controls page with every gesture are
+re-xr-pipeline.md 112's.
+
 ### 3.1 Must-have before a user release
 
 | # | Item | Size | Depends on |

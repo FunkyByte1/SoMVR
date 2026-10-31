@@ -10,7 +10,11 @@
 #   headset session does: `systemctl --user stop NAME` = the PC window's Stop; this script waits for the unit),
 #   HEADLESS_SAVE_FROM=/ABS/RUN/saves/GameData.sav (build 23: the run's save copy is that earlier run's copy - its story
 #   progress - not the real save's; boot_check --save-from), HEADLESS_HARD (build 27: seconds, 1801..4500 = boot_check
-#   --hard with --soak, the soak's long boot; unset = boot_check's 1800).
+#   --hard with --soak, the soak's long boot; unset = boot_check's 1800), HEADLESS_MONADO_ENV (build 27: "K=V ..." for
+#   monado-service, U_PACING_* / XRT_COMPOSITOR_* only, e.g. U_PACING_APP_IMMEDIATE_WAIT_FRAME_RETURN=1: the game unpaced).
+#   Build 27b (som-b27-perf2, re-xr-pipeline.md 119): SOMVR_RENDER_SET=NAME:V,NAME:V in SOMVR_EXTRA (the env file's VR
+#   graphics preset, as scripts/som-vr-headset.sh takes it) = boot_check --render-set NAME=V each (the run's own
+#   render.cfg); HEADLESS_RENDER="NAME:V,..." instead of it (set but empty: none - the game's own detection).
 #   The launch (build 6): --no-feral-options and the run's own prefs with GameOptionsDialogShouldShow 0,
 #   SkipOSWarnings 1, SpecificationAlerts\LnxDistributionUnsupported 1 and DisableSplashVideos 1 (docs/re-launcher.md);
 #   SOMVR_MARK=1 and SOMVR_QUIT=1 (bug marks, the menu's Quit game). boot_check.sh: the one next to this script.
@@ -27,6 +31,15 @@ MOD=${1:?usage: headless_vr.sh /ABS/PATH/TO/mod/somvr}; MOD=$(cd "$MOD" 2>/dev/n
 # its boot's end: XR_ERROR_INSTANCE_LOST, the rest of the boot flat - re-xr-pipeline.md 107.4)
 [[ ${HEADLESS_HARD:-} =~ ^[0-9]*$ ]] || { echo "STOP: HEADLESS_HARD must be whole seconds"; exit 1; }
 MON_S=1800; [ -n "${HEADLESS_HARD:-}" ] && MON_S=$((HEADLESS_HARD + 60))
+# build 27 (som-b27-perf, re-xr-pipeline.md 115): HEADLESS_MONADO_ENV="K=V ..." more environment for monado-service, only
+# its pacing and compositor options (U_PACING_*, XRT_COMPOSITOR_*): U_PACING_APP_IMMEDIATE_WAIT_FRAME_RETURN=1 = xrWaitFrame
+# returns at once, the game runs as fast as it can (the null compositor still shows 20 Hz): frame rates then say what the
+# GPU and the CPU can hold
+MONENV=()
+for kv in ${HEADLESS_MONADO_ENV:-}; do
+  [[ $kv =~ ^(U_PACING_|XRT_COMPOSITOR_)[A-Z0-9_]*=[A-Za-z0-9._-]*$ ]] || { echo "STOP: HEADLESS_MONADO_ENV: $kv is not U_PACING_*=V or XRT_COMPOSITOR_*=V"; exit 1; }
+  MONENV+=("$kv")
+done
 TS=$(date +%Y%m%d-%H%M%S); R5=$SOM/logs/headless-$TS
 mkdir -p "$R5/mxdg/config" "$R5/mxdg/cache" "$R5/mxdg/data"
 echo "R5=$R5"
@@ -41,7 +54,7 @@ trap stop_monado EXIT
 setsid chrt -o 0 env -i HOME="$R5/mxdg" PATH=/usr/bin:/bin XDG_RUNTIME_DIR=$RT \
   XDG_CONFIG_HOME="$R5/mxdg/config" XDG_CACHE_HOME="$R5/mxdg/cache" XDG_DATA_HOME="$R5/mxdg/data" \
   SIMULATED_ENABLE=1 XRT_COMPOSITOR_NULL=1 XRT_NO_STDIN=1 \
-  XRT_LOG=info XRT_COMPOSITOR_LOG=info XRT_PRINT_OPTIONS=on \
+  XRT_LOG=info XRT_COMPOSITOR_LOG=info XRT_PRINT_OPTIONS=on "${MONENV[@]}" \
   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
   timeout -s INT -k 10 "$MON_S" /usr/bin/monado-service > "$R5/monado.log" 2>&1 < /dev/null &
 TPID=$!
@@ -61,6 +74,9 @@ GE+=(--game-env SOMVR_THREAT=1 --game-env SOMVR_BODYMOMENTS=1 --game-env SOMVR_S
     --game-env SOMVR_DEFENCE=1 --game-env SOMVR_GAMEMOVES=off --game-env SOMVR_PRACTICE=auto --game-env SOMVR_LOCO_HOLD=attack --game-env SOMVR_HP_NEARLOG=1)
 GE+=(--game-env SOMVR_MARK=1 --game-env SOMVR_QUIT=1)
 for kv in ${SOMVR_EXTRA:-}; do GE+=(--game-env "$kv"); done
+RS=""; for kv in ${SOMVR_EXTRA:-}; do case $kv in SOMVR_RENDER_SET=*) RS=${kv#*=} ;; esac; done # build 27b: the preset
+[ -n "${HEADLESS_RENDER+x}" ] && RS=$HEADLESS_RENDER
+RSA=(); for p in ${RS//,/ }; do RSA+=(--render-set "${p/:/=}"); done
 LA=(--game-arg --no-feral-options --prefs-set GameOptionsDialogShouldShow=0 --prefs-set GameOptionsDialogShouldShowBigPicture=0
     --prefs-set SkipOSWarnings=1 --prefs-set 'SpecificationAlerts\LnxDistributionUnsupported=1'
     --prefs-set 'SpecificationAlerts\LnxCPUGovernorSubOptimal=1' --prefs-set DisableSplashVideos=1)
@@ -69,7 +85,7 @@ DCMDS=$HERE/cmds/somvr-vr6.cmd
 SF=(); [ -n "${HEADLESS_SAVE_FROM:-}" ] && SF=(--save-from "$HEADLESS_SAVE_FROM") # build 23: an earlier run's save copy
 [ -n "${HEADLESS_HARD:-}" ] && SF+=(--hard "$HEADLESS_HARD" --soak) # build 27: the soak's long boot (at most 4500 s)
 B=(--steam --save-copy "${SF[@]}" --seed-prefs $SOM/logs/boot-check-20261018-003728/preferences.seeded "${LA[@]}"
-   --preload $MOD/build/somvr.so "${GE[@]}" --cmds "${HEADLESS_CMDS:-$DCMDS}" --hold "${HEADLESS_HOLD:-900}" --refresh 90)
+   "${RSA[@]}" --preload $MOD/build/somvr.so "${GE[@]}" --cmds "${HEADLESS_CMDS:-$DCMDS}" --hold "${HEADLESS_HOLD:-900}" --refresh 90)
 "$BC" --dry-run "${B[@]}" > "$R5/dry.txt" 2>&1 || { echo "STOP: dry run failed"; tail -20 "$R5/dry.txt"; exit 1; }
 DRY=$(ls -d $SOM/logs/boot-check-dryrun-* | sort | tail -1)
 grep -q '^# game only (--game-env):.* XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_monado\.json' "$DRY/launch-cmd.txt" ||

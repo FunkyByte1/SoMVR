@@ -48,7 +48,7 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-BUILD=build-vr26b                         # the build the user tests (logs/BUILD); changed only between sessions
+BUILD=build-vr27                         # the build the user tests (logs/BUILD); changed only between sessions
 ENVF=$SOM/logs/$BUILD/headset.env       # its feature switches (the header); missing = the built-in build-5 set
 CMDS5=$SCR/cmds/somvr-vr5.cmd   # the start sequences: build 5's (the pre-game window), build 6's
 CMDS6=$SCR/cmds/somvr-vr6.cmd
@@ -136,6 +136,22 @@ if [ -e "$ENVF" ]; then   # build 6 on: its own switches, the build-6 launch and
     --prefs-set 'SpecificationAlerts\LnxDistributionUnsupported=1' --prefs-set 'SpecificationAlerts\LnxCPUGovernorSubOptimal=1'
     --prefs-set DisableSplashVideos=1)
   note "switches: ${#SW[@]} from $ENVF; the build-6 launch, $CMDS"
+  # build 27b (som-b27-perf2, re-xr-pipeline.md 119): SOMVR_RENDER_SET=NAME:V,... = the session's VR graphics preset in its
+  # own render.cfg (boot_check --render-set; the user's own game settings and the install untouched); a bad entry is noted
+  # and left out (the session starts with the rest)
+  for kv in "${SW[@]}"; do
+    case $kv in SOMVR_RENDER_SET=*)
+      v=${kv#*=}
+      for p in ${v//,/ }; do
+        if [[ $p =~ ^(VegetationQuality|ShadowQuality|MeshQuality|LightingQuality|AmbientOcclusionQuality|TessellationToggle|TextureQuality|TextureFiltering|OITToggle):[0-5]$ ]]; then
+          LAUNCH+=(--render-set "${p/:/=}")
+        else
+          note "SOMVR_RENDER_SET: '$p' is not NAME:0..5 (left out)"
+        fi
+      done
+      note "the VR graphics preset: $v" ;;
+    esac
+  done
 else
   SW=("${SW5[@]}"); B6=0; CMDS=$CMDS5; LAUNCH=()
   note "switches: the built-in build-5 set (${#SW[@]}; no $ENVF); the build-5 launch, $CMDS"

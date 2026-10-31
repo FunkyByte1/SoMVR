@@ -136,6 +136,35 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
                                              * helpers of builds 25-26 beside it) */
 #define SOMVR_VMA_ARMY SOMVR_VMA_BIT(44)    /* build 27: SOMVR_ARMY=on: the Controls page's Map line names the click's hold
                                              * (re-xr-pipeline.md 110; 42-43 left to the round's other helpers) */
+/* build 27 (re-xr-pipeline.md 112, som-b27-hla): every gesture on the Controls page, each line only where its feature
+ * runs in this session (bits 47..59; 42..46 left to the other build 27 helpers) */
+#define SOMVR_VMA_WALKDIR SOMVR_VMA_BIT(47)  /* the stick's walk pre-rotation runs (SOMVR_INPUT): the Walk toward row */
+#define SOMVR_VMA_VAULT SOMVR_VMA_BIT(48)    /* SOMVR_VAULT=on: "Vault: A at the gold ring" */
+#define SOMVR_VMA_ABOVE SOMVR_VMA_BIT(49)    /* SOMVR_ABOVE=on with its plunge: "Above: stab down from ledge" */
+#define SOMVR_VMA_BRAND SOMVR_VMA_BIT(50)    /* SOMVR_VERBS_BRAND=on: "Brand: L palm on head + LT" */
+#define SOMVR_VMA_RALLY SOMVR_VMA_BIT(51)    /* SOMVR_VERBS_RALLY=on: "Rally: L hand high + LT" */
+#define SOMVR_VMA_DISMISS SOMVR_VMA_BIT(52)  /* SOMVR_VERBS_DISMISS=on: a Domination's (B) Dismiss by B */
+#define SOMVR_VMA_COMMAND SOMVR_VMA_BIT(53)  /* SOMVR_VERBS_COMMAND=on: its (Y) Command by Y */
+#define SOMVR_VMA_FAILED SOMVR_VMA_BIT(54)   /* SOMVR_USE_DEATH=on: Mission Failed's A / B */
+#define SOMVR_VMA_NEMESIS SOMVR_VMA_BIT(55)  /* SOMVR_USE_SKIP=on: the Nemesis result pages closed by B */
+#define SOMVR_VMA_DOWN SOMVR_VMA_BIT(56)     /* SOMVR_CLIMB_DOWN_OVER=on: "Down: grip over the edge" */
+#define SOMVR_VMA_OVERHANG SOMVR_VMA_BIT(57) /* SOMVR_CLIMB_MANTLE_OVERHANG=on: "Overhang: A at its gold ring" */
+#define SOMVR_VMA_COUNTER SOMVR_VMA_BIT(58)  /* SOMVR_RIDE_COUNTER on (with SOMVR_RIDE): a caragor's leap blocked */
+#define SOMVR_VMA_DOMHOLD SOMVR_VMA_BIT(59)  /* SOMVR_RIDE_DOM_HOLD_MS > 0: "Hold tight!" held by the closed hand */
+#define SOMVR_VMA_OVERORC SOMVR_VMA_BIT(60)  /* SOMVR_WRAITH_STEP_VAULT_CM > 0: the wraith step aimed at an orc = over it */
+#define SOMVR_VMA_STRUGGLE SOMVR_VMA_BIT(61) /* SOMVR_STRUGGLE=thrust: the last chance won by the hand and a stab */
+#define SOMVR_VMA_MANTLE SOMVR_VMA_BIT(62)   /* SOMVR_CLIMB_MANTLE (glide|blink): A at a top's gold ring = onto it */
+/* build 27 (re-xr-pipeline.md 119, som-b27-perf2): the layer's own bit (never the preload's; 43 = the top of the round's
+ * free 42..43): the runtime has XR_FB_display_refresh_rate enabled (SOMVR_XR_REFRESH not off) - the Refresh rate row */
+#define SOMVR_VMA_REFRESH SOMVR_VMA_BIT(43)
+/* (39-40: never taken by the build 25-26 helpers they were kept for) */
+#define SOMVR_VMA_GLYPH SOMVR_VMA_BIT(39)    /* SOMVR_GLYPH=head: an Ithildin glyph collected by the look in the vision */
+#define SOMVR_VMA_SHOVE SOMVR_VMA_BIT(40)    /* SOMVR_SHOVE=on: a shield shoved aside by the free left hand */
+/* build 27 (re-xr-pipeline.md 114, som-b27-abilities; 45-46 of the 42..46 left to the round's helpers, 44 the army's) */
+#define SOMVR_VMA_FLASH SOMVR_VMA_BIT(45)    /* SOMVR_ABIL=on with its flash: "Flash: RT + L palm push out" */
+#define SOMVR_VMA_GROUNDK SOMVR_VMA_BIT(46)  /* SOMVR_ABIL=on with its ground finisher: "Downed: stab down into him" */
+#define SOMVR_VMA_ABIL2 SOMVR_VMA_BIT(42)    /* build 27c (som-b27-abilities2, docs 118): SOMVR_ABIL_IGNITE and _WHISTLE
+                                             * both on: "Ignite", "Whistle" (the quick throw, off, has no line) */
 #define SOMVR_VMA_FIGHT_ROWS                                                                                           \
     (SOMVR_VMA_SWORD | SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND | SOMVR_VMA_BITE | SOMVR_VMA_ARROWS | SOMVR_VMA_DODGE |     \
      SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON | SOMVR_VMA_STRING)
@@ -198,7 +227,12 @@ typedef struct {
                                 * string hand's shoulder (SOMVR_BOW_QUIVER; needs SOMVR_VMA_ARROWS) */
     uint8_t bite;              /* 82: v6 (the bite17 helper): a landed cut's bite 0 off, 1 on (SOMVR_COMBAT_BITE; needs
                                 * SOMVR_VMA_BITE; was pad6[0]: a preload that sets no SOMVR_VMA_BITE ignores it) */
-    uint8_t pad6[5];           /* 83: spare (0) for the next rows: a byte each, no new version */
+    uint8_t move;              /* 83: build 27: the walk toward 0 the head, 1 the left hand (SOMVR_MOVE head|hand; needs
+                                * SOMVR_VMA_WALKDIR; was pad6[0]: a preload that sets no SOMVR_VMA_WALKDIR ignores it) */
+    uint8_t refresh;           /* 84: build 27: the headset's refresh rate asked, Hz (72, 80, 90, 120; 0 = the runtime's
+                                * own; SOMVR_XR_REFRESH; the layer's SOMVR_VMA_REFRESH; was pad6[0]: a layer that sets no
+                                * SOMVR_VMA_REFRESH ignores it) */
+    uint8_t pad6[3];           /* 85: spare (0) for the next rows: a byte each, no new version */
     /* v7 (build 19, re-xr-pipeline.md 73): the Fight page's rows (each needs its SOMVR_VMA_* bit; a key not in the
      * file follows its switch) */
     uint8_t dodge;             /* 88: the A dodge 0 off, 1 on (SOMVR_DODGE; SOMVR_VMA_DODGE) */
@@ -272,10 +306,14 @@ enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, S
        SOMVR_SK_COMBAT_BITE /* build 17, the bite */,
        /* build 19 (re-xr-pipeline.md 73): the Fight page's new rows */
        SOMVR_SK_DODGE, SOMVR_SK_WRAITH_STEP, SOMVR_SK_STEALTH_KILL, SOMVR_SK_CROWD_PACE_MS, SOMVR_SK_COUNTER_ICON,
-       SOMVR_SK_BOW_STRING, SOMVR_SK_N };
-/* the key masks are 32 bits: 31 keys at most (one more needs a 64-bit mask: parse, format, diff, the file mask) */
-_Static_assert(SOMVR_SK_N <= 31, "the settings keys fit a 32-bit mask");
-#define SOMVR_SK_ALL ((1u << SOMVR_SK_N) - 1u)
+       SOMVR_SK_BOW_STRING,
+       /* build 27 (re-xr-pipeline.md 112): the walk's direction, HL:A's "Continuous (Head)" / "(Hand)" */
+       SOMVR_SK_MOVE,
+       /* build 27 (re-xr-pipeline.md 119): the headset's refresh rate (XR_REFRESH=off|0|72..120, SOMVR_XR_REFRESH) */
+       SOMVR_SK_XR_REFRESH, SOMVR_SK_N };
+/* build 27: the key masks are 64 bits (parse, format, diff, the file mask; 32 bits held 31 keys) */
+_Static_assert(SOMVR_SK_N <= 63, "the settings keys fit a 64-bit mask");
+#define SOMVR_SK_ALL ((1ull << SOMVR_SK_N) - 1ull)
 #define SOMVR_SET_BLINK_MS 140u /* "Snap blink: On" without a SOMVR_SNAP_BLINK_MS: HoF2's quick blink (50 + 90 ms) */
 
 void somvr_set_default(somvr_settings *s);  /* the switches' defaults (snap 30, 120 deg/s, no vignette ... 100 %, the
@@ -291,10 +329,10 @@ void somvr_set_get(const somvr_settings *s, int k, char *buf, size_t cap);
 /* Lines of KEY=VALUE ('#' starts a comment; blanks, a CR and one pair of quotes round the value dropped; the last good
  * line of a key wins). Returns the mask of the keys taken; *bad = lines that were not empty and not taken (an unknown
  * key, a bad value, no '='); note: the first such line's reason. */
-uint32_t somvr_set_parse(somvr_settings *s, const char *text, int *bad, char *note, size_t cap);
+uint64_t somvr_set_parse(somvr_settings *s, const char *text, int *bad, char *note, size_t cap);
 /* the file: a comment header, then KEY=VALUE for every key in mask (in key order). Returns the length (as snprintf). */
-size_t somvr_set_format(const somvr_settings *s, uint32_t mask, char *buf, size_t cap);
-uint32_t somvr_set_diff(const somvr_settings *a, const somvr_settings *b); /* bit k: key k's value differs */
+size_t somvr_set_format(const somvr_settings *s, uint64_t mask, char *buf, size_t cap);
+uint64_t somvr_set_diff(const somvr_settings *a, const somvr_settings *b); /* bit k: key k's value differs */
 /* a locale-free decimal: [+-]digits[.digits]; 1 = the whole text (blanks around it allowed) was one */
 int somvr_set_num(const char *v, double *out);
 
@@ -306,6 +344,11 @@ enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMV
        SOMVR_VMI_SIZE, SOMVR_VMI_CROUCH /* build 13 */, SOMVR_VMI_FLING, SOMVR_VMI_SURFACE,
        /* build 19 (re-xr-pipeline.md 73): on the Fight page (somvr_vm_row_page) */
        SOMVR_VMI_STRING, SOMVR_VMI_DODGE, SOMVR_VMI_WSTEP, SOMVR_VMI_STEALTH, SOMVR_VMI_CROWD, SOMVR_VMI_CICON,
+       /* build 27 (re-xr-pipeline.md 112): Walk toward (Head / Hand), shown under the turn's rows (row_slot's order) */
+       SOMVR_VMI_MOVE,
+       /* build 27 (re-xr-pipeline.md 119): Refresh rate (72 / 80 / 90 / 120 Hz), the Settings page's last row, with the
+        * layer's SOMVR_VMA_REFRESH only */
+       SOMVR_VMI_REFRESH,
        SOMVR_VMI_RECENTER, SOMVR_VMI_CLOSE, SOMVR_VMI_N };
 #define SOMVR_VMI_ROWS SOMVR_VMI_RECENTER /* the value rows; then the Recentre button and the close box */
 /* Build 10: a value row whose feature this build does not have at all is not shown (the rows below close up): the
@@ -339,7 +382,9 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
        SOMVR_VMI_TAB_TEST, SOMVR_VMI_TEST_PREV, SOMVR_VMI_TEST_NEXT,
        /* build 22 (re-xr-pipeline.md 88, SOMVR_CAPTAIN): the practice page's Captain (beside Remove; in the area only, as
         * Spawn): the save's next Nemesis captain */
-       SOMVR_VMI_PR_CAPTAIN, SOMVR_VMI_ALL };
+       SOMVR_VMI_PR_CAPTAIN,
+       /* build 27 (re-xr-pipeline.md 112): the Controls page's Prev / Next (its groups paged; where the Test page's are) */
+       SOMVR_VMI_CTL_PREV, SOMVR_VMI_CTL_NEXT, SOMVR_VMI_ALL };
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
 enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2, SOMVR_VMPG_FIGHT = 3,
@@ -352,31 +397,35 @@ int somvr_vm_tab_page(int item);
 int somvr_vm_row_page(int item);
 /* build 19: a Fight page row's two lines of help (shown under the page's rows while the row is hovered); 0 = none */
 int somvr_vm_help(int item, const char **l1, const char **l2);
-/* The Controls page's lines (build 6): line i's key ("Walk") and what does it ("left stick"); returns the number of
- * lines (i out of range: NULL, NULL). Only what works in this build; the bug-mark chord is SOMVR_VM_CTL_REPORT. */
+/* The Controls page (build 6; build 27, re-xr-pipeline.md 112: every VR control and gesture this build has, in groups -
+ * Moving, Climbing, The sword, Orcs, Bow and wraith, Beasts, Menus and help - each line only where its feature runs
+ * (avail), paged with Prev / Next, a group kept whole on a page when it fits one). Line i (every group's, in page order;
+ * no titles): its key ("Walk") and what does it ("left stick"); returns the number of lines (i out of range: NULL,
+ * NULL). The bug-mark chord is SOMVR_VM_CTL_REPORT. */
 int somvr_vm_controls(int i, const char **key, const char **what); /* = _av(0, ...) */
-/* build 13: the lines for the preload's avail (SOMVR_VMA_FLING, _VERBS, _DESCENT pick their lines); when more lines
- * than SOMVR_VM_CTL_FIT are wanted the optional ones go (Quit first: the Settings page's own button, then Sheathe) */
 int somvr_vm_controls_av(uint64_t avail, int i, const char **key, const char **what);
-/* ... drawn from y SOMVR_VM_CTL_Y0, one every somvr_vm_ctl_dy() pixels (SOMVR_VM_CTL_DY, closer when the lines, the
- * notes and the card's hint would not fit the panel; never under SOMVR_VM_CTL_DY_MIN); then SOMVR_VM_CTL_NOTES dim
- * lines (what is not in this build) and on the card its close hint */
-#define SOMVR_VM_CTL_Y0 68
-#define SOMVR_VM_CTL_DY 34
-/* build 17: the closest lines: 28 px (was the font's 32-pixel cell; the ink the lines use is its rows 1..14 - an
- * apostrophe's top, a g's tail: 28 px at scale 2, so 28-pixel lines never touch; the Settings page's rows are 28 too) */
-#define SOMVR_VM_CTL_DY_MIN 28
-int somvr_vm_ctl_dy(void);                 /* = _av(0) */
-int somvr_vm_ctl_dy_av(uint64_t avail);
-#define SOMVR_VM_CTL_NOTES 2
-/* the lines that fit with the notes and the card's hint at SOMVR_VM_CTL_DY_MIN (21 on the 768-pixel panel; 18 at the
- * font's 32-pixel cell before build 17) */
-#define SOMVR_VM_CTL_FIT ((SOMVR_VM_TEX_H - 16 - 4 - SOMVR_VM_CTL_Y0) / SOMVR_VM_CTL_DY_MIN - SOMVR_VM_CTL_NOTES - 1)
-const char *somvr_vm_controls_note(int i); /* the dim lines (i out of range: NULL); = _av(0, i) */
-const char *somvr_vm_controls_note_av(uint64_t avail, int i); /* with SOMVR_VMA_VERBS: what a held orc does */
+enum { SOMVR_VMC_NONE = 0, SOMVR_VMC_GROUP = 1, SOMVR_VMC_LINE = 2 };
+const char *somvr_vm_ctl_group(int g);       /* group g's title (NULL outside) */
+int somvr_vm_ctl_pages(uint64_t avail);      /* the pages (1 ..) */
+/* entry i of page (0 ..): SOMVR_VMC_GROUP (key = its title, what NULL) or SOMVR_VMC_LINE; *y = its top (texels);
+ * SOMVR_VMC_NONE past the page's last */
+int somvr_vm_ctl_entry(uint64_t avail, int page, int i, const char **key, const char **what, int *y);
+int somvr_vm_ctl_turn(uint64_t avail, int page, int dir); /* the page after Prev (-1) / Next (+1), clamped */
+/* the arrival card's lines (the first steps: walk, turn, crouch, the sword, the block, the climb, use, the menu), then
+ * the card says where the rest is; returns their number */
+int somvr_vm_ctl_card(uint64_t avail, int i, const char **key, const char **what);
+#define SOMVR_VM_CTL_Y0 68      /* the first entry's top */
+#define SOMVR_VM_CTL_DY 28      /* an entry's height (the font's ink 28 at scale 2: lines never touch; builds 17-26's too) */
+#define SOMVR_VM_CTL_GAP 6      /* more before a group's title (not at a page's top) */
+#define SOMVR_VM_CTL_BOTTOM (SOMVR_VM_TEST_NAV_Y - 4) /* the entries end above the Prev / Next row */
+#define SOMVR_VM_CTL_KEY_W 8    /* a key's characters at most */
+#define SOMVR_VM_CTL_WHAT_X (20 + 16 * (SOMVR_VM_CTL_KEY_W + 1)) /* the what column (16 px a character) */
+#define SOMVR_VM_CTL_WHAT_W 20  /* its characters at most (to x 484) */
+#define SOMVR_VM_CARD_DY 34     /* the card's lines */
 /* build 17: the avail the Controls page shows for the settings s: with SOMVR_VMA_ARROWS (the Arrows row) the quiver's
  * lines follow s->quiver (SOMVR_VMA_BOWRT with the string on RT, SOMVR_VMA_QVGRIP on the grip; neither: the string's own
- * Shoot line); otherwise avail (somvr_vm_draw draws the page and the card with it) */
+ * Shoot line); build 27: the Dodge, Wraith step and Stealth kill rows Off take their lines away; otherwise avail
+ * (somvr_vm_draw draws the page and the card with it) */
 uint64_t somvr_vm_ctl_avail(const somvr_settings *s, uint64_t avail);
 enum { SOMVR_VMP_NONE, SOMVR_VMP_ROW, SOMVR_VMP_LESS, SOMVR_VMP_MORE, SOMVR_VMP_BUTTON };
 typedef struct { int item, part; } somvr_vm_hit; /* item -1 = none */
@@ -460,6 +509,7 @@ typedef struct {
     int lock;            /* build 20: hover is the pointer's lock (SOMVR_XR_PTR_SNAP): the part outlined as well */
     const somvr_vm_text *test; /* build 21: the Test page's text (NULL: the page says there is none) */
     int test_page;             /* ... the page shown (0 ..) */
+    int ctl_page;              /* build 27: the Controls page's page shown (0 ..) */
 } somvr_vm_view;
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;

@@ -76,6 +76,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->mantle = 0, c->am_head_cm = 25, c->am_cms = 350, c->am_clear_cm = 10, c->am_overhang = 0;
     c->dm_timer = 0, c->unstuck = 0, c->fl_reach_cm = 120, c->round_lip = 0;
     c->down_over = 0, c->dn_low_cm = 40, c->dn_high_cm = 90, c->dn_reach_cm = 45, c->dn_under_cm = 25, c->dn_gap_cm = 45;
+    c->retop_edge_cm = 0, c->am_keep = 0, c->fl_reach_hold = 0;
 }
 
 void somvr_climb_init(somvr_climb *s) {
@@ -645,7 +646,7 @@ static int fl_release(somvr_climb *s, const somvr_climb_cfg *c, const somvr_clim
     int n = 0, last = (k->vh_i + SOMVR_CLIMB_VH_N - 1) % SOMVR_CLIMB_VH_N;
     /* now's position counts unless it jumped from the ring's newest (a glitch: the ring alone) */
     int now_ok = hd->valid && k->vh_n > 0 && fin3(hd->p) && len3(sub3(hd->p, k->vh_p[last])) <= c->jump_cm;
-    s->fl_hand = h, s->fl_n = k->vh_n, s->fl_span = 0, s->fl_up = s->fl_side = s->fl_into = s->fl_out = 0;
+    s->fl_hand = h, s->fl_n = k->vh_n, s->fl_span = 0, s->fl_up = s->fl_side = s->fl_into = s->fl_out = 0, s->fl_rh = 0;
     if (!vh_mean(k, pose_t(in), now_ok ? &hd->p : NULL, c->fling_win_s, &vh, &span, &n)) return -1;
     float ks = in->rig_scale >= 0.5f && in->rig_scale <= 2.0f ? in->rig_scale : 1.0f;
     sv_vec3 vw = mul3(somvr_climb_to_world(vh, in->rig_yaw), -ks * c->fling_gain);
@@ -728,6 +729,14 @@ static int fl_reach_lost(somvr_climb *s, const somvr_climb_cfg *c, const somvr_c
     somvr_climb_hit r;
     if (!cast(s, o, ray, ctx, s->fl_hand, ch, tw, c->fl_reach_cm, &r) || r.hit) return 0;
     if (!cast(s, o, ray, ctx, s->fl_hand, ch, dn, c->fl_reach_cm, &r) || r.hit) return 0;
+    /* build 27 (reach hold): or level toward the hold let go (a corner: the hold on the face beside him, its toward
+     * along the one he hangs by - the forge tower's corner, the fling stopped in its first frame, rose 0.0 cm) */
+    sv_vec3 th = { s->fl_hit.x - ch.x, 0, s->fl_hit.z - ch.z };
+    if (c->fl_reach_hold && len3(th) >= 10.0f) {
+        th = unit3(th);
+        if (!cast(s, o, ray, ctx, s->fl_hand, ch, th, c->fl_reach_cm, &r)) return 0;
+        if (r.hit) return s->fl_reach_holds += !s->fl_rh, s->fl_rh = 1, 0;
+    }
     return 1;
 }
 #define FL_GLIDE_LIFT_CM 50.0f
@@ -1833,10 +1842,22 @@ static int am_press(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_
     float ty;
     sv_vec3 e, tw;
     if (s->descending || !in->head_ok || !am_top(s, in, &ty, &e, &tw)) return 0;
+    /* build 27 (keep): the ring shown now (am_avail's search, up to 0.5 s / 5 cm old) is what A does - its landing and
+     * its kind, the curve planned again from where he is (the Sea Fort camp's coping: the overhang's ring, a press
+     * after he had settled a few cm aside searched again, found the face under the lip there: the drop mark) */
+    int keep = c->am_keep && s->am_ok && s->am_test_t > 0 && !(c->mantle == 2 && !in->can_blink);
     /* under the top: A as ever (the drop mark) - unless it is an overhang's lip held from below (build 22) */
-    if (in->head_y < ty + c->top_cm && !(c->am_overhang && am_oh_test(s, in, ty, e, tw, ray, ctx, o))) return 0;
+    if (!keep && in->head_y < ty + c->top_cm && !(c->am_overhang && am_oh_test(s, in, ty, e, tw, ray, ctx, o))) return 0;
     s->am_presses++;
-    int ok = am_find(s, c, in, ray, ctx, o);
+    int ok;
+    s->am_kept = keep;
+    if (keep) {
+        sv_vec3 p2 = { s->am_land.x, s->am_land.y + c->foot_cm + 1.0f, s->am_land.z };
+        if (s->am_oh) am_plan_oh(s, c, in->root, p2);
+        else am_plan(s, c, in->root, p2);
+        ok = 1, s->am_why = SOMVR_CLIMB_AM_OK, s->am_keeps++;
+    } else
+        ok = am_find(s, c, in, ray, ctx, o);
     if (ok && c->mantle == 2 && !in->can_blink) ok = 0, s->am_why = SOMVR_CLIMB_AM_NOBLINK;
     if (!ok) {
         s->am_nos++;
@@ -2301,14 +2322,20 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             if (k->lip) s->lips++, o->events |= SOMVR_CLIMB_E_LIP_L << h;
             /* a ledge passed on the way up: the next top is this hold's wall's (build 17: also with stand / topout -
              * the session's cliff kept the narrow ledge's top 9.7 m under the real one: no edge step, no over there) */
+            /* build 27 (retop edge): or a hold that is an edge with its own top found retop_edge_cm or more over the
+             * reached one (the forge tower: a no-room ledge 106 cm under the platform's lip, the lip's hold 48 cm over
+             * it - the mantle and the pullover kept the ledge's top, the ring never on the platform) */
+            int re_edge = c->retop_edge_cm > 0 && s->topped && k->edge && k->top_found &&
+                          k->top_y >= s->top_y + c->retop_edge_cm && !(k->hit.y > s->top_y + OH_RETOP_CM);
             if ((c->overhang > 0 || c->stand || c->topout) && s->active && s->topped && !s->descending &&
-                k->hit.y > s->top_y + OH_RETOP_CM) {
+                (k->hit.y > s->top_y + OH_RETOP_CM || re_edge)) {
+                float below = re_edge ? k->top_y - c->retop_edge_cm : k->hit.y - OH_RETOP_CM;
+                s->re_edge_from = s->top_y, s->re_edges += re_edge;
                 s->topped = 0, s->retops++;
                 to_off(s, o, SOMVR_CLIMB_THR_END);
                 if (c->stand || c->topout) /* the other hand's hold on that ledge tops him there no more */
                     for (int j = 0; j < 2; j++)
-                        if (j != h && s->h[j].holding && s->h[j].edge && s->h[j].top_y < k->hit.y - OH_RETOP_CM)
-                            s->h[j].edge = 0;
+                        if (j != h && s->h[j].holding && s->h[j].edge && s->h[j].top_y < below) s->h[j].edge = 0;
                 o->events2 |= SOMVR_CLIMB_E_RETOP;
             }
             if (lipstart) { /* the way down from the top he stands on */

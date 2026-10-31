@@ -413,7 +413,7 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 	if (!g_py.shove || !root)
 		return;
 	int free_hand = g_py.palm_ok && !bo_out() && !cl_holds(SOMVR_HAND_L) && !vb_grab_held() && !(g_bd.two.w > 0);
-	if (!free_hand || g_py.nh < 2 || !pc)
+	if (!free_hand || g_py.nh < 2 || !pc || abl_shove_veto()) /* build 27: the push with the wraith charge is the flash's */
 		return;
 	int now = (g_py.hpos - 1 + PY_HIST) % PY_HIST, k = -1;
 	for (int j = 1; j < g_py.nh; j++) { /* the newest sample at least 80 ms older (at most 250) */

@@ -79,7 +79,13 @@ typedef struct {
     int zero_ready;
     float soft_m, bias_m, texel;
     int debug;              /* the world's pipeline shows the depth difference (SOMVR_XR_HANDS_DEPTH_DEBUG) */
+    VkMemoryPropertyFlags vb_flags; /* build 27: the vertex buffer's memory type (logs) */
 } hd_ctx;
+
+/* build 27 (re-xr-pipeline.md 115, SOMVR_XR_HANDS_MEM): the host buffers' memory, set before hd_create. 1 (default) =
+ * host-cached first (the CPU reads the vertices back: hd_box's eye boxes, the arrow's fade); 0 = the first host-coherent
+ * type (build 10..26: write-combined system memory, where those reads cost ~1.1 ms a frame on the present thread) */
+void hd_prefer_cached(int on);
 
 /* everything for eyes of w x h in format fmt (the destination's; samples 1, 2, 4 or 8), the hands' indices (the right
  * hand's and the mirrored left's, ni each, for nv vertices each). 0 = ready, -1 = not (c->why; hd_destroy cleans up) */

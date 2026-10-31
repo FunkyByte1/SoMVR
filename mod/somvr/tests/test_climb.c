@@ -3611,8 +3611,103 @@ static void test_b21(void) {
     g_wall_top = wall0, g_ground_on = ground0;
 }
 
+/* build 27 (retop edge): the forge tower - a ledge reached on the way (topped, push) 45 cm under the real top, then a
+ * hand on the real top's edge only 35 cm over that ledge (under OH_RETOP_CM): off = the ledge's top kept (no floor
+ * there: the mantle's ring never comes, the push holds him under the edge); on = that top forgotten at the grab, the
+ * real top reached by the head as any, the mantle's ring on it */
+static void test_b27(void) {
+    rig_t r;
+    float wall0 = g_wall_top;
+    g_wall_top = 300;
+    for (int re = 0; re < 2; re++) {
+        rig_init(&r);
+        r.c.stand = 1, r.c.mantle = 1, r.c.letgo = SOMVR_CLIMB_LETGO_HANG, r.c.retop_edge_cm = re ? 30.0f : 0.0f;
+        r.body = (sv_vec3){ 0, 140, 0 };            /* the head at 310; the left hand (y 150) at world 290 */
+        r.in.hand[1].p = (sv_vec3){ 20, 70, 85 };   /* the right one at world 210, 15 cm before the face */
+        r.in.hand[0].p = (sv_vec3){ -20, 150, 85 }; /* the left one at world 290: 10 cm under the real top */
+        rig_frame(&r);
+        grip(&r, 1, 1);
+        frames(&r, 3);
+        CHECK(r.s.active && r.s.h[1].holding && !r.s.h[1].edge, "retop edge %d: the right hand holds the face", re);
+        /* a ledge reached on the way: its top 255 (the push over it, as the tower's 6028.5 under the lip's 6134.8) */
+        r.s.topped = 1, r.s.top_y = 255, r.s.top_hit = (sv_vec3){ 20, 255, WALL_Z }, r.s.top_toward = (sv_vec3){ 0, 0, 1 };
+        grip(&r, 0, 1);
+        frames(&r, 3);
+        const somvr_climb_hold *k = &r.s.h[0];
+        CHECK(k->holding && k->edge && k->top_found && NEAR(k->top_y, 300, 0.5) && k->hit.y < 255 + 50,
+              "retop edge %d: the left hand on the real top's edge: hit %.0f (%.0f over the ledge), its top %.0f", re,
+              k->hit.y, k->hit.y - 255, k->top_y);
+        CHECK(re ? r.s.re_edges == 1 && r.s.retops == 1 && (!r.s.topped || NEAR(r.s.top_y, 300, 0.5))
+                 : r.s.topped && NEAR(r.s.top_y, 255, 0.01) && r.s.retops == 0,
+              "retop edge %d: %s (topped %d, the top %.0f, retops %llu, by its own top %llu)", re,
+              re ? "the ledge's top forgotten (the real one reached: the head over it)" : "the ledge's top kept", r.s.topped, r.s.top_y,
+              (unsigned long long)r.s.retops, (unsigned long long)r.s.re_edges);
+        /* the right hand opens, the left pulls 45 cm down: the head 45 cm over the real top */
+        grip(&r, 1, 0);
+        frames(&r, 2);
+        for (int i = 0; i < 45; i++) hand_move(&r, 0, 0, -1, 0), rig_frame(&r);
+        int shown = 0;
+        float land_y = -1;
+        for (int i = 0; i < 60; i++) {
+            rig_frame(&r);
+            if (r.o.am_show) shown = 1, land_y = r.o.am_land.y;
+        }
+        CHECK(re ? shown && NEAR(land_y, 300, 1) && r.s.topped && NEAR(r.s.top_y, 300, 0.5) : !shown,
+              "retop edge %d: the head %.0f cm over the real top: the mantle's ring %s (at %.0f; the top %s %.0f)", re,
+              r.in.head_y - 300, shown ? "shown" : "never shown", land_y, r.s.topped ? "reached" : "-", r.s.top_y);
+    }
+    g_wall_top = wall0;
+    /* mantle keep: the overhang's ring shown at a lip held from below; then, before the press, the face under the lip
+     * is found where he is (the slab's front reaches down: the coping a few cm aside) - off = the press searches again,
+     * no overhang: A is the drop mark's; on = A takes the ring shown: the overhang's glide */
+    for (int kp = 0; kp < 2; kp++) {
+        oh_setup(&r, 1, 1);
+        r.c.am_keep = kp;
+        int shown = r.o.am_show && r.s.am_oh;
+        g_slab_y0 = 100; /* the face straight under the lip from now on */
+        uint32_t ev2 = 0;
+        for (int i = 0; i < 3; i++) {
+            r.in.drop = i == 0;
+            rig_frame(&r);
+            r.in.drop = 0;
+            ev2 |= r.o.events2;
+        }
+        CHECK(shown && (kp ? (ev2 & SOMVR_CLIMB_E_AM_GO) && r.s.am_oh_goes == 1 && r.s.am_keeps == 1 && r.s.dm_presses == 0
+                           : !(ev2 & SOMVR_CLIMB_E_AM_GO) && r.s.am_goes == 0 && r.s.dm_presses == 1),
+              "mantle keep %d: the overhang's ring shown (%d), A after the face under the lip was found: %s (goes %llu, "
+              "the overhang's %llu, kept %llu, drop presses %llu)", kp, shown,
+              kp ? "the ring's glide" : "the drop mark", (unsigned long long)r.s.am_goes,
+              (unsigned long long)r.s.am_oh_goes, (unsigned long long)r.s.am_keeps, (unsigned long long)r.s.dm_presses);
+        g_slab_y0 = g_slab_y1 = g_slab_z = 0;
+    }
+    /* fling reach hold: a fling at a corner - the release hold's toward along the face he hangs by (no wall that way
+     * from the chest; the tower's corner): off = unstuck stops it in its first frames (rose ~0); on = the wall toward
+     * the hold let go is in reach: it rises on */
+    for (int rh = 0; rh < 2; rh++) {
+        g_wall_top = 2000;
+        fl_setup(&r);
+        r.c.unstuck = 1, r.c.fling_max = 650, r.c.fling_min = 110, r.c.fling_gain = 1.15f, r.c.fling_up = 1;
+        r.c.fl_reach_hold = rh;
+        r.body.y = 120;
+        frames(&r, 2);
+        fl_throw(&r, 1, 0, -9, 0, 10); /* the pull (90 cm up) and the release */
+        float y0 = r.body.y;
+        int flew = r.s.phase == SOMVR_CLIMB_PH_FLING;
+        r.s.fl_toward = (sv_vec3){ 1, 0, 0 }; /* the corner: toward runs along the face */
+        fl_fly(&r, 200);
+        float rose = r.body.y - y0;
+        CHECK(flew && (rh ? r.s.fl_why != SOMVR_CLIMB_FL_REACH && rose > 60 && r.s.fl_reach_holds == 1
+                          : r.s.fl_why == SOMVR_CLIMB_FL_REACH && rose < 25),
+              "fling reach hold %d: a fling at a corner rose %.0f cm (%s, kept by the hold %llu)", rh, rose,
+              somvr_climb_fl_name(r.s.fl_why), (unsigned long long)r.s.fl_reach_holds);
+        printf("fling at a corner, reach hold %d: rose %.1f cm (%s)\n", rh, rose, somvr_climb_fl_name(r.s.fl_why));
+        g_wall_top = wall0;
+    }
+}
+
 int main(void) {
     test_b21();
+    test_b27();
     test_mantle20();
     test_oh22();
     test_through();

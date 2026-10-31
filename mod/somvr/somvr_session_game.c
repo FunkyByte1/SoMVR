@@ -43,6 +43,10 @@ static struct {
  * after it is that tutorial's own, waiting unseen for its button (soak 2: 'PC_StruggleTutorial', 154 s on its knees) */
 static double g_ss_tut_t = -1;
 static char g_ss_tut_nm[64];
+/* build 27c (re-xr-pipeline.md 120): the last tutorial SOMVR_HINTS_PAUSING passed as pausing - its pause logged (or its
+ * absence after 1 s: the rule passed a tutorial that did not pause) */
+static double g_ss_ptut_t = -1;
+static char g_ss_ptut_nm[64];
 static struct log_late g_ss_late; /* build 27: the UI lines after the first 400, 100 a 10 minutes */
 /* 1 = this pause (paused 0 -> 1 at now) came within 0.5 s of a dropped tutorial (tut_t; -1 none) */
 static int ss_tut_pause(double tut_t, double now, int was_paused, int paused)
@@ -422,10 +426,18 @@ static void ss_tick(double t)
 					   : co_flat_now() ? SOMVR_SSM_MENU
 					   : g_inp.on && g_inp.ifs == 3 && g_inp.menus == 0 && g_inp.paused == 1 ? SOMVR_SSM_LOAD
 					   : SOMVR_SSM_MENU, memory_order_relaxed);
+	if (g_ss_ptut_t >= 0 && g_inp.on && mono() - g_ss_ptut_t > 1.0) /* build 27c: passed as pausing, no pause */
+		logf_("SESSION t=%.3f the tutorial '%s' SOMVR_HINTS_PAUSING passed did not pause the game within 1 s%s", t,
+		      g_ss_ptut_nm, g_inp.paused == 1 ? " (the game was paused already)" : ""),
+			g_ss_ptut_t = -1;
 	if (g_inp.on && (!g_ss.ui_have || g_inp.ifs != g_ss.ui_ifs || g_inp.menus != g_ss.ui_menus ||
 			 g_inp.paused != g_ss.ui_paused || g_inp.video != g_ss.ui_video || g_inp.ctx != g_ss.ui_ctx)) {
 		int was = g_ss.ui_have && g_ss.ui_paused;
 		double now = mono();
+		if (ss_tut_pause(g_ss_ptut_t, now, was, g_inp.paused == 1))
+			logf_("SESSION t=%.3f the game paused %.2f s after the tutorial '%s' passed (SOMVR_HINTS_PAUSING): its page "
+			      "and its text are shown, its button goes on", t, now - g_ss_ptut_t, g_ss_ptut_nm),
+				g_ss_ptut_t = -1;
 		if (ss_tut_pause(g_ss_tut_t, now, was, g_inp.paused == 1))
 			logf_("WARN SESSION t=%.3f the game paused %.2f s after SOMVR_HINTS=off dropped its tutorial '%s': the tutorial "
 			      "waits for its button (A) unseen - keep it (SOMVR_HINTS_KEEP_TUT)", t, now - g_ss_tut_t, g_ss_tut_nm),

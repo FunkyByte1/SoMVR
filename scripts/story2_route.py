@@ -4,7 +4,7 @@ the left stick held forward, the sprint latched by its click (our locomotion's 6
 toward the next point of a route (or the game's objective marker on the flat picture), Talion's position from
 `practice status` every cycle, a flat shot every few seconds. For a running headless boot (RUN = its
 logs/boot-check-<ts>/, SOMVR_XR_TEST=RUN/xrtest.txt and SOMVR_PRACTICE on):
-  story2_route.py RUN [--secs 150] [--tag rt] [--nosprint] [--waypoints X,Z;X,Z;...] [--yaw0 DEG] [--dumps S]
+  story2_route.py RUN [--secs 150] [--tag rt] [--nosprint] [--waypoints X,Z;X,Z;...] [--yaw0 DEG] [--dumps S] [--learn MPS]
 --waypoints: world points (cm) walked through in turn (each counts as reached within 5 m; the last is the goal, walked
 on toward until the run ends); A when SOMVR_CLIMB_DESCENT's edge cue comes (--noedge: never); the head's yaw for a world
 heading is learnt from the walk itself (the test head's yaw + = atan2(dx, dz) +, run 20261026-094108); without
@@ -19,6 +19,7 @@ def opt(name, dflt):
     return args[args.index(name) + 1] if name in args else dflt
 SECS = float(opt('--secs', 150)); TAG = opt('--tag', 'rt'); SPRINT = '--nosprint' not in args
 DUMPS = float(opt('--dumps', 0))  # every this many seconds the eyes too (a dump: xr_compose.py; 0 = none)
+LEARN = float(opt('--learn', 1.5))  # the heading is learnt from stretches faster than this (m/s; a carry walks ~0.6)
 WPS = [tuple(float(v) for v in p.split(',')) for p in opt('--waypoints', '').split(';') if p]
 LOG = os.path.join(R, 'somvr.log')
 seq = [0]
@@ -167,7 +168,7 @@ while time.time() - t0 < SECS:
         dx, dz = pos[0] - prev[1][0], pos[2] - prev[1][2]
         sp = math.hypot(dx, dz) / 100.0 / max(t - prev[0], 1e-3)
         # the world heading of the head's yaw 0: from a straight fast stretch (the yaw unchanged since the last cycle)
-        if sp > 1.5 and abs(yaw - yaw_prev) < 1:
+        if sp > LEARN and abs(yaw - yaw_prev) < 1:
             b = wrap(math.atan2(dx, dz) - math.radians(yaw))
             base = b if base is None else base + 0.3 * wrap(b - base)
     if pos:

@@ -191,11 +191,11 @@ static void test_settings(void) {
     char note[128];
     const char *text = "# a comment\n\n  TURN = smooth  \r\nSNAP_DEG=45 # trailing comment\nVIGNETTE=\"0.6\"\n"
                        "HUD='off'\nFOO=1\nSEATED=maybe\nno equals sign\nSNAP_DEG=60\nSOMVR_HAPTICS=75\nHAND=left";
-    uint32_t mask = somvr_set_parse(&p, text, &nbad, note, sizeof note);
+    uint64_t mask = somvr_set_parse(&p, text, &nbad, note, sizeof note);
     CHECK(mask == ((1u << SOMVR_SK_TURN) | (1u << SOMVR_SK_SNAP_DEG) | (1u << SOMVR_SK_VIGNETTE) | (1u << SOMVR_SK_HUD) |
                    (1u << SOMVR_SK_HAPTICS) | (1u << SOMVR_SK_HAND)) &&
               nbad == 3 && !strcmp(note, "line 7: unknown key"),
-          "parse: mask %#x bad %d note '%s'", mask, nbad, note);
+          "parse: mask %#llx bad %d note '%s'", (unsigned long long)mask, nbad, note);
     CHECK(p.turn == 1 && p.snap_deg == 60 && NEAR(p.vignette, 0.6, 1e-6) && p.hud == 0 && NEAR(p.haptics, 0.75, 1e-6) &&
               p.hand == 1 && !p.seated,
           "parse: the values (the last SNAP_DEG wins, SEATED unchanged)");
@@ -210,7 +210,8 @@ static void test_settings(void) {
     mask = somvr_set_parse(&b, file, &nbad, note, sizeof note);
     CHECK(n == strlen(file) && mask == SOMVR_SK_ALL && nbad == 0 && somvr_set_diff(&a, &b) == 0 &&
               !memcmp(&a, &b, sizeof a),
-          "round trip: %zu bytes mask %#x bad %d diff %#x", n, mask, nbad, somvr_set_diff(&a, &b));
+          "round trip: %zu bytes mask %#llx bad %d diff %#llx", n, (unsigned long long)mask, nbad,
+          (unsigned long long)somvr_set_diff(&a, &b));
     CHECK(strstr(file, "\nSNAP_DEG=22.5\n") && strstr(file, "\nHEIGHT_CM=117.5\n") && strstr(file, "\nVIEW=third\n") &&
               strstr(file, "\nHAPTICS=25\n") && file[0] == '#',
           "the file's lines:\n%s", file);
@@ -221,7 +222,8 @@ static void test_settings(void) {
     n = somvr_set_format(&a, SOMVR_SK_ALL, tiny, sizeof tiny);
     CHECK(n == want && n > sizeof tiny && strlen(tiny) == sizeof tiny - 1, "a short buffer: %zu (want %zu)", n, want);
     b.snap_deg = 30, b.hud = 1;
-    CHECK(somvr_set_diff(&a, &b) == ((1u << SOMVR_SK_SNAP_DEG) | (1u << SOMVR_SK_HUD)), "diff %#x", somvr_set_diff(&a, &b));
+    CHECK(somvr_set_diff(&a, &b) == ((1u << SOMVR_SK_SNAP_DEG) | (1u << SOMVR_SK_HUD)), "diff %#llx",
+          (unsigned long long)somvr_set_diff(&a, &b));
 }
 
 /* ---- the menu's model ------------------------------------------------------------------------------------------ */
@@ -741,9 +743,10 @@ static void test_moves(void) {
     somvr_settings b;
     somvr_set_default(&b);
     int bad = 0;
-    uint32_t m = somvr_set_parse(&b, file, &bad, NULL, 0);
+    uint64_t m = somvr_set_parse(&b, file, &bad, NULL, 0);
     CHECK(m == ((1u << SOMVR_SK_STEP) | (1u << SOMVR_SK_DASH) | (1u << SOMVR_SK_PHASE)) && !bad && !somvr_set_diff(&s, &b),
-          "the round trip: mask %#x bad %d diff %#x", m, bad, somvr_set_diff(&s, &b));
+          "the round trip: mask %#llx bad %d diff %#llx", (unsigned long long)m, bad,
+          (unsigned long long)somvr_set_diff(&s, &b));
     /* the rows: dimmed without the LOCO core, the values, the clicks */
     somvr_set_default(&s);
     CHECK(!somvr_vm_enabled(&s, 0, SOMVR_VMI_STEP) && !somvr_vm_enabled(&s, SOMVR_VMA_COMFORT, SOMVR_VMI_PHASE) &&
@@ -856,7 +859,7 @@ static void test_sword(void) {
     int rp[4], rs[4], rr[4], rq[4], lb[4], mb[4];
     memset(rp, 0, sizeof rp), memset(rs, 0, sizeof rs), memset(rr, 0, sizeof rr), memset(rq, 0, sizeof rq);
     memset(lb, 0, sizeof lb), memset(mb, 0, sizeof mb);
-    CHECK(SOMVR_VMI_ROWS == 31 && SOMVR_VMI_SWORD == SOMVR_VMI_ROWS - 16 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
+    CHECK(SOMVR_VMI_ROWS == 33 && SOMVR_VMI_MOVE == 31 && SOMVR_VMI_REFRESH == 32 && SOMVR_VMI_SWORD == SOMVR_VMI_MOVE - 16 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_ROW, rs) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_QUIT, SOMVR_VMP_BUTTON, rq) && somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_LESS, lb) &&
@@ -883,7 +886,7 @@ static void test_size(void) {
     CHECK(s.size == 1.0f && offsetof(somvr_settings, size) == 68 && sizeof(somvr_settings) == 96 &&
               !strcmp(somvr_set_key(SOMVR_SK_PLAYER_SIZE), "PLAYER_SIZE") &&
               !strcmp(somvr_set_env(SOMVR_SK_PLAYER_SIZE), "SOMVR_PLAYER_SIZE") &&
-              somvr_set_find("SOMVR_PLAYER_SIZE") == SOMVR_SK_PLAYER_SIZE && SOMVR_SK_PLAYER_SIZE == SOMVR_SK_N - 14,
+              somvr_set_find("SOMVR_PLAYER_SIZE") == SOMVR_SK_PLAYER_SIZE && SOMVR_SK_PLAYER_SIZE == SOMVR_SK_MOVE - 14,
           "the default 100 %%, the old pad's place, the key and its switch");
     CHECK(somvr_set_put(&s, SOMVR_SK_PLAYER_SIZE, " 115 ") && NEAR(s.size, 1.15, 1e-6) &&
               somvr_set_put(&s, SOMVR_SK_PLAYER_SIZE, "300") && NEAR(s.size, 1.4, 1e-6) &&
@@ -906,7 +909,7 @@ static void test_size(void) {
      * wraps */
     const uint32_t A = SOMVR_VMA_SIZE;
     somvr_set_default(&s);
-    CHECK(SOMVR_VMI_SIZE == SOMVR_VMI_ROWS - 10 && !strcmp(somvr_vm_label(SOMVR_VMI_SIZE), "Player size") &&
+    CHECK(SOMVR_VMI_SIZE == SOMVR_VMI_MOVE - 10 && !strcmp(somvr_vm_label(SOMVR_VMI_SIZE), "Player size") &&
               !somvr_vm_enabled(&s, SOMVR_VMA_SWORD, SOMVR_VMI_SIZE) && somvr_vm_enabled(&s, A, SOMVR_VMI_SIZE) &&
               somvr_vm_apply(&s, 0, 0, SOMVR_VMI_SIZE, SOMVR_VMP_MORE) == SOMVR_VMR_NONE && s.size == 1.0f,
           "the row, its switch");
@@ -950,8 +953,8 @@ static void test_feel(void) {
               !strcmp(somvr_set_key(SOMVR_SK_CLIMB_FLING), "CLIMB_FLING") &&
               !strcmp(somvr_set_env(SOMVR_SK_CLIMB_FLING), "SOMVR_CLIMB_FLING") &&
               !strcmp(somvr_set_key(SOMVR_SK_HANDS_SURFACE), "HANDS_SURFACE") &&
-              somvr_set_find("SOMVR_HANDS_SURFACE") == SOMVR_SK_HANDS_SURFACE && SOMVR_SK_HANDS_SURFACE == SOMVR_SK_N - 11 &&
-              SOMVR_SK_CLIMB_FLING == SOMVR_SK_N - 12,
+              somvr_set_find("SOMVR_HANDS_SURFACE") == SOMVR_SK_HANDS_SURFACE && SOMVR_SK_HANDS_SURFACE == SOMVR_SK_MOVE - 11 &&
+              SOMVR_SK_CLIMB_FLING == SOMVR_SK_MOVE - 12,
           "the defaults off, the bytes 77 and 78, the keys and their switches");
     CHECK(somvr_set_put(&s, SOMVR_SK_CLIMB_FLING, " on ") && s.fling == 1 && somvr_set_put(&s, SOMVR_SK_HANDS_SURFACE, "1") &&
               s.surface == 1 && somvr_set_put(&s, SOMVR_SK_HANDS_SURFACE, "off") && s.surface == 0 &&
@@ -967,7 +970,7 @@ static void test_feel(void) {
               somvr_set_diff(&s, &b) == 0 && b.crouch == 0,
           "the file round trip");
     somvr_set_default(&s);
-    CHECK(SOMVR_VMI_FLING == SOMVR_VMI_ROWS - 8 && SOMVR_VMI_SURFACE == SOMVR_VMI_ROWS - 7 &&
+    CHECK(SOMVR_VMI_FLING == SOMVR_VMI_MOVE - 8 && SOMVR_VMI_SURFACE == SOMVR_VMI_MOVE - 7 &&
               !strcmp(somvr_vm_label(SOMVR_VMI_FLING), "Climb fling") &&
               !strcmp(somvr_vm_label(SOMVR_VMI_SURFACE), "Hands at walls") && !somvr_vm_shown(0, SOMVR_VMI_FLING) &&
               !somvr_vm_shown(SOMVR_VMA_SURFACE, SOMVR_VMI_FLING) && somvr_vm_shown(SOMVR_VMA_FLING, SOMVR_VMI_FLING) &&
@@ -1007,7 +1010,7 @@ static void test_weight_row(void) {
     CHECK(s.sword_weight == 0 && offsetof(somvr_settings, sword_weight) == 79 && sizeof(somvr_settings) == 96 &&
               !strcmp(somvr_set_key(SOMVR_SK_SWORD_WEIGHT), "SWORD_WEIGHT") &&
               !strcmp(somvr_set_env(SOMVR_SK_SWORD_WEIGHT), "SOMVR_SWORD_WEIGHT") &&
-              somvr_set_find("SOMVR_SWORD_WEIGHT") == SOMVR_SK_SWORD_WEIGHT && SOMVR_SK_SWORD_WEIGHT == SOMVR_SK_N - 10,
+              somvr_set_find("SOMVR_SWORD_WEIGHT") == SOMVR_SK_SWORD_WEIGHT && SOMVR_SK_SWORD_WEIGHT == SOMVR_SK_MOVE - 10,
           "the default off, the old pad's byte, the key and its switch");
     CHECK(somvr_set_put(&s, SOMVR_SK_SWORD_WEIGHT, " heavy ") && s.sword_weight == 2 &&
               somvr_set_put(&s, SOMVR_SK_SWORD_WEIGHT, "on") && s.sword_weight == 1 &&
@@ -1081,7 +1084,7 @@ static void test_bite_row(void) {
     CHECK(s.bite == 0 && offsetof(somvr_settings, bite) == 82 && sizeof(somvr_settings) == 96 &&
               SOMVR_VMA_BITE == 1u << 30 && !strcmp(somvr_set_key(SOMVR_SK_COMBAT_BITE), "COMBAT_BITE") &&
               !strcmp(somvr_set_env(SOMVR_SK_COMBAT_BITE), "SOMVR_COMBAT_BITE") &&
-              somvr_set_find("SOMVR_COMBAT_BITE") == SOMVR_SK_COMBAT_BITE && SOMVR_SK_COMBAT_BITE == SOMVR_SK_N - 7,
+              somvr_set_find("SOMVR_COMBAT_BITE") == SOMVR_SK_COMBAT_BITE && SOMVR_SK_COMBAT_BITE == SOMVR_SK_MOVE - 7,
           "the default off, the spare byte 82, bit 30, the key and its switch");
     CHECK(somvr_set_put(&s, SOMVR_SK_COMBAT_BITE, " on ") && s.bite == 1 && somvr_set_put(&s, SOMVR_SK_COMBAT_BITE, "0") &&
               s.bite == 0 && somvr_set_put(&s, SOMVR_SK_COMBAT_BITE, "1") && s.bite == 1 &&
@@ -1135,7 +1138,7 @@ static void test_crouch(void) {
     somvr_set_default(&s);
     CHECK(s.crouch == 0 && offsetof(somvr_settings, crouch) == 76 && sizeof(somvr_settings) == 96 &&
               !strcmp(somvr_set_key(SOMVR_SK_CROUCH), "CROUCH") && !strcmp(somvr_set_env(SOMVR_SK_CROUCH), "SOMVR_CROUCH") &&
-              somvr_set_find("CROUCH") == SOMVR_SK_CROUCH && SOMVR_SK_CROUCH == SOMVR_SK_N - 13,
+              somvr_set_find("CROUCH") == SOMVR_SK_CROUCH && SOMVR_SK_CROUCH == SOMVR_SK_MOVE - 13,
           "the default button, the old pad's place, the key and its switch");
     CHECK(somvr_set_put(&s, SOMVR_SK_CROUCH, " duck ") && s.crouch == 1 && somvr_set_put(&s, SOMVR_SK_CROUCH, "button") &&
               s.crouch == 0 && !somvr_set_put(&s, SOMVR_SK_CROUCH, "1") && !somvr_set_put(&s, SOMVR_SK_CROUCH, "on"),
@@ -1154,7 +1157,7 @@ static void test_crouch(void) {
     CHECK(somvr_set_diff(&s, &b) == 1u << SOMVR_SK_CROUCH, "the diff sees it");
     const uint32_t A = SOMVR_VMA_CROUCH;
     somvr_set_default(&s);
-    CHECK(SOMVR_VMI_CROUCH == SOMVR_VMI_ROWS - 9 && !strcmp(somvr_vm_label(SOMVR_VMI_CROUCH), "Crouch") &&
+    CHECK(SOMVR_VMI_CROUCH == SOMVR_VMI_MOVE - 9 && !strcmp(somvr_vm_label(SOMVR_VMI_CROUCH), "Crouch") &&
               !somvr_vm_shown(0, SOMVR_VMI_CROUCH) && somvr_vm_shown(A, SOMVR_VMI_CROUCH) &&
               !somvr_vm_enabled(&s, SOMVR_VMA_SIZE, SOMVR_VMI_CROUCH) && somvr_vm_enabled(&s, A, SOMVR_VMI_CROUCH),
           "the row after the size, shown and enabled with SOMVR_VMA_CROUCH only");
@@ -1487,7 +1490,17 @@ static void test_session_buttons(void) {
     CHECK(d[0] == 32 && d[1] == 37 && d[2] == 45, "without the session: both dimmed (%u %u %u)", d[0], d[1], d[2]);
 }
 
-/* build 6 (re-xr-pipeline.md 28): the tab strip and the Controls page (and the arrival card's picture) */
+/* build 6 (re-xr-pipeline.md 28): the tab strip and the Controls page (and the arrival card's picture); build 27
+ * (re-xr-pipeline.md 112): every gesture in groups, paged, each line only with its feature */
+static int ctl_has(uint64_t avail, const char *key, const char *what) { /* the line (what NULL: any) is on the page */
+    const char *k, *w;
+    int n = somvr_vm_controls_av(avail, 0, &k, &w), c = 0;
+    for (int i = 0; i < n; i++) {
+        somvr_vm_controls_av(avail, i, &k, &w);
+        c += !strcmp(k, key) && (!what || !strcmp(w, what));
+    }
+    return c;
+}
 static void test_controls(void) {
     somvr_settings s;
     somvr_set_default(&s);
@@ -1504,7 +1517,8 @@ static void test_controls(void) {
           "the tabs: Settings and Controls always, Practice with SOMVR_PRACTICE");
     CHECK(!strcmp(somvr_vm_label(SOMVR_VMI_TAB_SET), "Settings") && !strcmp(somvr_vm_label(SOMVR_VMI_TAB_CTL), "Controls"),
           "the tab labels");
-    /* the hit test: each tab on every page; on the Controls page only the tabs and the close box */
+    /* the hit test: each tab on every page; on the Controls page only the tabs, the close box and (build 27) Prev /
+     * Next */
     int tabs[3] = {SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB, SOMVR_VMI_TAB_CTL}, all = 1, rc[4];
     for (int pg = 0; pg < 3; pg++)
         for (int i = 0; i < 3; i++) {
@@ -1513,146 +1527,145 @@ static void test_controls(void) {
             all &= h.item == tabs[i] && h.part == SOMVR_VMP_BUTTON;
         }
     CHECK(all, "every tab hit on every page");
-    int only = 1;
+    int only = 1, prev = 0, next = 0;
     for (int y = 0; y < SOMVR_VM_TEX_H; y += 4)
         for (int x = 0; x < SOMVR_VM_TEX_W; x += 4) {
             somvr_vm_hit h = somvr_vm_hit_test_page(SOMVR_VMPG_CONTROLS, (x + 0.5f) / SOMVR_VM_TEX_W, (y + 0.5f) / SOMVR_VM_TEX_H);
-            if (h.item >= 0 && h.item != SOMVR_VMI_CLOSE && somvr_vm_tab_page(h.item) < 0) only = 0;
+            prev |= h.item == SOMVR_VMI_CTL_PREV, next |= h.item == SOMVR_VMI_CTL_NEXT;
+            if (h.item >= 0 && h.item != SOMVR_VMI_CLOSE && h.item != SOMVR_VMI_CTL_PREV && h.item != SOMVR_VMI_CTL_NEXT &&
+                somvr_vm_tab_page(h.item) < 0)
+                only = 0;
         }
-    CHECK(only, "the Controls page: nothing but the tabs and X to click");
-    /* the lines: every key and text fits its column, the walk, the sword, the menu (build 10: the palm or the menu
-     * button held, which opens it mid-fight too) and quit are there, nothing for A but the climb's drop (build 10: A
-     * lets go of a wall) or the dash (off in this build); build 10 dropped "Orc: Practice > Spawn"; build 11: the bow
-     * (the left trigger; the right grip at the bow, pull, let go) */
+    somvr_vm_rect(SOMVR_VMI_CTL_NEXT, SOMVR_VMP_BUTTON, rc);
+    CHECK(only && prev && next && rc[1] == SOMVR_VM_TEST_NAV_Y && rc[0] == 344 &&
+              somvr_vm_apply(&s, 0, 0, SOMVR_VMI_CTL_NEXT, SOMVR_VMP_BUTTON) == SOMVR_VMR_SCROLL &&
+              somvr_vm_apply(&s, 0, 0, SOMVR_VMI_CTL_PREV, SOMVR_VMP_BUTTON) == SOMVR_VMR_SCROLL &&
+              !strcmp(somvr_vm_label(SOMVR_VMI_CTL_PREV), "Prev") && somvr_vm_hit_test_page(SOMVR_VMPG_SETTINGS,
+              (rc[0] + 0.5f * rc[2]) / SOMVR_VM_TEX_W, (rc[1] + 0.5f * rc[3]) / SOMVR_VM_TEX_H).item != SOMVR_VMI_CTL_NEXT,
+          "the Controls page: the tabs, X and its Prev / Next (with or without the Test tab) - not on the Settings page");
+    /* the headset's build 26-27 set (scripts/headset-build26.env: the session 20261030-071307's 0x7ff67ff027, the
+     * layer's Report / Quit / Test, the ride, build 27's bits) with the switches' settings (the dodge, the wraith step,
+     * the stealth kill on; the string on the trigger, arrows on the string) */
+    const uint64_t NEWB = SOMVR_VMA_WALKDIR | SOMVR_VMA_VAULT | SOMVR_VMA_ABOVE | SOMVR_VMA_BRAND | SOMVR_VMA_RALLY |
+                          SOMVR_VMA_DISMISS | SOMVR_VMA_COMMAND | SOMVR_VMA_FAILED | SOMVR_VMA_NEMESIS | SOMVR_VMA_DOWN |
+                          SOMVR_VMA_OVERHANG | SOMVR_VMA_COUNTER | SOMVR_VMA_DOMHOLD | SOMVR_VMA_OVERORC |
+                          SOMVR_VMA_STRUGGLE | SOMVR_VMA_MANTLE | SOMVR_VMA_GLYPH | SOMVR_VMA_SHOVE | SOMVR_VMA_FLASH |
+                          SOMVR_VMA_GROUNDK | /* (FLASH, GROUNDK: the abilities helper's, re-xr-pipeline.md 114) */
+                          SOMVR_VMA_ABIL2;    /* (ABIL2: the abilities2 helper's, re-xr-pipeline.md 118) */
+    const uint64_t H26 = 0x7ff67ff027ull | SOMVR_VMA_MARK | SOMVR_VMA_QUIT | SOMVR_VMA_TESTPAGE | SOMVR_VMA_RIDE |
+                         SOMVR_VMA_ARMY | NEWB; /* (ARMY: the story2 helper's, re-xr-pipeline.md 110) */
+    somvr_settings hs;
+    somvr_set_default(&hs);
+    hs.dodge = hs.wstep = hs.stealth = 1, hs.bow_string = 1, hs.quiver = 0;
+    uint64_t ca = somvr_vm_ctl_avail(&hs, H26);
+    static const struct { const char *k, *w; } want[] = {
+        {"Walk", "left stick"}, {"Sprint", "click left stick"}, {"Turn", "right stick"},
+        {"Crouch", "duck or R stick down"}, {"Jump", "A on foot"}, {"Vault", "A at the gold ring"},
+        {"Blink", "R stick fwd, let go"}, {"Use", "B (pick, missions)"},
+        {"Climb", "grip, pull; fling up"}, {"Ledge", "pull at the ring"}, {"Onto top", "A at the gold ring"}, {"Overhang", "A at its gold ring"},
+        {"Down", "grip over the edge"}, {"Drop", "hold A, let go"},
+        {"Sword", "grip at R shoulder"}, {"Sheathe", "grip there again"}, {"2 hands", "L grip/LT on hilt"},
+        {"Block", "sword across a blow"}, {"Dodge", "A in a fight"}, {"Dagger", "L grip at L hip"}, {"Shove", "L hand push a shield"},
+        {"Stealth", "stab his back hard"}, {"Above", "stab down from ledge"}, {"Over orc", "blink aimed at him"},
+        {"Struggle", "hand to ring, stab"}, {"Downed", "stab down into him"},
+        {"Grab", "L grip on orc's head"}, {"Stun", "held: tap L trigger"}, {"Drain", "held: hold L trigger"},
+        {"Question", "held: pull to face"}, {"Execute", "R trigger + hard hit"}, {"Brand", "L palm on head + LT"},
+        {"Rally", "L hand high + LT"}, {"Whistle", "duck, hand at mouth"}, {"Dominate", "B dismiss, Y command"},
+        {"Bow", "L grip at L shoulder"}, {"Shoot", "RT, pull, let go"}, {"Wraith", "hold Y; A = Strike"}, {"Glyph", "hold Y, look at it"},
+        {"Flash", "RT + L palm push out"}, {"Ignite", "B while drawn"},
+        {"Caragor", "sword across a leap"}, {"Mount", "L grip stunned beast"}, {"Hold on", "keep the grip closed"},
+        {"Steer", "left stick"}, {"Riding", "A leap RT bite B off"},
+        {"Menu", "look at left palm"}, {"Pause", "tap menu, hold=Menu"}, {"Screens", "point + trigger/tap"},
+        {"Map", "R click, hold=Army"},
+        {"Minimap", "back of left wrist"}, {"Failed", "A retry, B abandon"}, {"Nemesis", "B closes the pages"},
+        {"Recentre", "Settings > Recentre"}, {"Report", "hold B + Y (0.5 s)"}, {"Quit", "Settings > Quit x2"}};
+    const int NW = (int)(sizeof want / sizeof want[0]);
     const char *k, *w;
-    int n = somvr_vm_controls(0, &k, &w), fit = 1, walk = 0, sword = 0, menu = 0, orc = 0, quit = 0, off = 0, rep = 0, mm = 0,
-        drop = 0;
-    int held = 0, bow = 0, shoot = 0;
+    int n = somvr_vm_controls_av(ca, 0, &k, &w), fit = 1, missing = -1;
     for (int i = 0; i < n; i++) {
-        somvr_vm_controls(i, &k, &w);
-        fit &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
-        held |= !strcmp(k, "Menu") && strstr(w, "palm") && strstr(w, "hold"); /* build 13: one line */
-        walk |= !strcmp(k, "Walk"), sword |= !strcmp(k, "Sword"), menu |= !strcmp(k, "Menu"), orc |= !strcmp(k, "Orc");
-        quit |= !strcmp(k, "Quit") && strstr(w, "Settings") != NULL; /* the bottom row of the Settings page */
-        mm |= !strcmp(k, "Minimap") && strstr(w, "wrist") != NULL;
-        rep |= !strcmp(k, "Report") && strstr(w, "B + Y") != NULL; /* somvr_session.h's chord */
-        drop |= !strcmp(k, "Drop") && !strcmp(w, "A (on a wall)");
-        bow |= !strcmp(k, "Bow") && !strcmp(w, "hold left trigger");
-        shoot |= !strcmp(k, "Shoot") && strstr(w, "R grip") == w && strstr(w, "let go") != NULL;
-        off |= (strstr(w, "A ") == w && strcmp(k, "Drop")) || strstr(w, "dash") != NULL;
+        somvr_vm_controls_av(ca, i, &k, &w);
+        fit &= k && w && *k && *w && strlen(k) <= SOMVR_VM_CTL_KEY_W && strlen(w) <= SOMVR_VM_CTL_WHAT_W;
     }
-    somvr_vm_controls(n, &k, &w);
-    CHECK(n >= 14 && fit && walk && sword && menu && held && !orc && quit && rep && mm && drop && bow && shoot && !off && !k &&
-              !w,
-          "the controls: %d lines (held %d, drop %d, bow %d, shoot %d)", n, held, drop, bow, shoot);
-    /* build 15b: SOMVR_BOW_DRAW=slot names the left shoulder, not the trigger */
-    {
-        int nb = somvr_vm_controls_av(SOMVR_VMA_BOWSLOT, 0, &k, &w), slot = 0, trig = 0;
-        for (int i = 0; i < nb; i++) {
-            somvr_vm_controls_av(SOMVR_VMA_BOWSLOT, i, &k, &w);
-            slot |= !strcmp(k, "Bow") && !strcmp(w, "L grip at L shoulder") && strlen(w) <= 20;
-            trig |= !strcmp(k, "Bow") && strstr(w, "trigger") != NULL;
-        }
-        CHECK(slot && !trig && nb == n, "the controls with the bow's slot: slot %d trigger %d lines %d/%d", slot, trig, nb, n);
+    for (int j = 0; j < NW && missing < 0; j++)
+        if (ctl_has(ca, want[j].k, want[j].w) != 1) missing = j;
+    somvr_vm_controls_av(ca, n, &k, &w);
+    CHECK(n == NW && fit && missing < 0 && !k && !w && !ctl_has(ca, "Arrow", NULL),
+          "build 26-27's headset: %d lines (want %d), each once and fitting (%d); the first missing: %s %s", n, NW, fit,
+          missing < 0 ? "none" : want[missing].k, missing < 0 ? "" : want[missing].w);
+    /* each build 27 bit alone adds its own line(s) and nothing else; none of them without it */
+    static const struct { uint64_t bit; const char *k; int lines; } one[] = {
+        {SOMVR_VMA_VAULT, "Vault", 1},     {SOMVR_VMA_ABOVE, "Above", 1},        {SOMVR_VMA_BRAND, "Brand", 1},
+        {SOMVR_VMA_RALLY, "Rally", 1},     {SOMVR_VMA_DISMISS, "Dominate", 1},   {SOMVR_VMA_COMMAND, "Dominate", 1},
+        {SOMVR_VMA_FAILED, "Failed", 1},   {SOMVR_VMA_NEMESIS, "Nemesis", 1},    {SOMVR_VMA_DOWN, "Down", 1},
+        {SOMVR_VMA_OVERHANG, "Overhang", 1}, {SOMVR_VMA_RIDE, "Mount", 3},       {SOMVR_VMA_JUMP, "Jump", 1},
+        {SOMVR_VMA_WALKDIR, NULL, 0},      {SOMVR_VMA_COUNTER, NULL, 0},         {SOMVR_VMA_DOMHOLD, NULL, 0},
+        {SOMVR_VMA_OVERORC, NULL, 0},      {SOMVR_VMA_STRUGGLE, "Struggle", 1}, {SOMVR_VMA_MANTLE, "Onto top", 1},
+        {SOMVR_VMA_GLYPH, "Glyph", 1},     {SOMVR_VMA_SHOVE, "Shove", 1},       {SOMVR_VMA_FLASH, "Flash", 1},
+        {SOMVR_VMA_GROUNDK, "Downed", 1}, {SOMVR_VMA_ABIL2, "Ignite", 2}};
+    int n0 = somvr_vm_controls_av(0, 0, &k, &w), ok1 = 1, bad1 = -1;
+    for (size_t j = 0; j < sizeof one / sizeof one[0]; j++) {
+        int nj = somvr_vm_controls_av(one[j].bit, 0, &k, &w);
+        int good = nj == n0 + one[j].lines && (!one[j].k || (ctl_has(one[j].bit, one[j].k, NULL) && !ctl_has(0, one[j].k, NULL)));
+        if (!good && bad1 < 0) bad1 = (int)j;
+        ok1 &= good;
     }
-    /* build 16: the quiver on the right trigger: "Arrow" and the new "Shoot"; with every build 16 line the page holds 21
-     * since build 17 (28 px apart): Quit and Sheathe go for the room, the dagger and Sprint stay; Parry is the Block
-     * line, never dropped */
-    {
-        uint32_t a16 = SOMVR_VMA_FLING | SOMVR_VMA_VERBS | SOMVR_VMA_DESCENT | SOMVR_VMA_MARK | SOMVR_VMA_QUIT |
-                       SOMVR_VMA_CROUCH | SOMVR_VMA_USE | SOMVR_VMA_BOWSLOT | SOMVR_VMA_BOWRT;
-        int n16 = somvr_vm_controls_av(a16, 0, &k, &w), arrow = 0, shoot16 = 0, grip = 0, spr = 0, parry = 0, fit16 = 1;
-        for (int i = 0; i < n16; i++) {
-            somvr_vm_controls_av(a16, i, &k, &w);
-            fit16 &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
-            arrow |= !strcmp(k, "Arrow") && !strcmp(w, "RT at R shoulder");
-            shoot16 |= !strcmp(k, "Shoot") && !strcmp(w, "nock, pull, let go");
-            grip |= !strcmp(k, "Shoot") && strstr(w, "R grip") != NULL;
-            spr |= !strcmp(k, "Sprint"), parry |= !strcmp(k, "Parry") || (!strcmp(k, "Block") && strstr(w, "across"));
+    CHECK(ok1 && ctl_has(SOMVR_VMA_RIDE | SOMVR_VMA_COUNTER, "Caragor", NULL) && !ctl_has(SOMVR_VMA_COUNTER, "Caragor", NULL) &&
+              ctl_has(SOMVR_VMA_RIDE | SOMVR_VMA_DOMHOLD, "Hold on", NULL) && !ctl_has(SOMVR_VMA_RIDE, "Hold on", NULL) &&
+              ctl_has(SOMVR_VMA_DISMISS, "Dominate", "B dismiss") && ctl_has(SOMVR_VMA_COMMAND, "Dominate", "Y command") &&
+              ctl_has(SOMVR_VMA_ARMY, "Map", "R click, hold=Army") && ctl_has(0, "Map", "click right stick") &&
+              somvr_vm_controls_av(SOMVR_VMA_ARMY, 0, &k, &w) == n0,
+          "each gesture's bit: its line only with it (the first wrong: %d); the counter and the hold only with the ride", bad1);
+    /* build 6's base without any switch: the walk, the sword, the menu with pause, quit, the report, the minimap, the
+     * wall's drop, the bow on the trigger; no grab, no A in a fight, no dash */
+    CHECK(ctl_has(0, "Walk", NULL) && ctl_has(0, "Sword", NULL) && ctl_has(0, "Menu", "look at left palm") &&
+              ctl_has(0, "Pause", "tap menu, hold=Menu") && ctl_has(0, "Quit", NULL) && ctl_has(0, "Report", NULL) &&
+              ctl_has(0, "Minimap", NULL) && ctl_has(0, "Drop", "A (on a wall)") && ctl_has(0, "Bow", "hold left trigger") &&
+              ctl_has(0, "Shoot", "R grip, pull, let go") && ctl_has(0, "Turn", "R stick, down=crouch") &&
+              !ctl_has(0, "Grab", NULL) && !ctl_has(0, "Dodge", NULL) && !ctl_has(0, "Stealth", NULL) &&
+              !ctl_has(0, "Blink", NULL) && !ctl_has(0, "Execute", NULL),
+          "no switch: build 6's lines (%d)", n0);
+    /* a Fight row Off takes its line (the dodge, the wraith step, the stealth kill) */
+    somvr_settings off = hs;
+    off.dodge = off.wstep = off.stealth = 0;
+    uint64_t co = somvr_vm_ctl_avail(&off, H26);
+    CHECK(!ctl_has(co, "Dodge", NULL) && !ctl_has(co, "Blink", NULL) && !ctl_has(co, "Stealth", NULL) &&
+              !ctl_has(co, "Over orc", NULL) && somvr_vm_controls_av(co, 0, &k, &w) == n - 4 &&
+              ctl_has(SOMVR_VMA_WSTEP | SOMVR_VMA_OVERORC, "Over orc", NULL) && !ctl_has(SOMVR_VMA_WSTEP, "Over orc", NULL),
+          "the Fight rows Off: their lines go (the vault over an orc with the wraith step's)");
+    /* the pages: titles and lines inside the room, apart, in order; each line once; each group whole on a page */
+    int pages = somvr_vm_ctl_pages(ca), lines = 0, inside = 1, order = 1, whole = 1, titles = 0, seen_g[16] = {0};
+    for (int pg = 0; pg < pages; pg++) {
+        int last = -1000, kind, y;
+        const char *grp = NULL;
+        for (int i = 0; (kind = somvr_vm_ctl_entry(ca, pg, i, &k, &w, &y)) != SOMVR_VMC_NONE; i++) {
+            inside &= y >= SOMVR_VM_CTL_Y0 && y + SOMVR_VM_CTL_DY <= SOMVR_VM_CTL_BOTTOM;
+            order &= y >= last + SOMVR_VM_CTL_DY, last = y;
+            if (kind == SOMVR_VMC_GROUP) {
+                titles++, grp = k;
+                for (int g = 0; somvr_vm_ctl_group(g); g++)
+                    if (!strcmp(somvr_vm_ctl_group(g), k)) whole &= !seen_g[g]++;
+            } else {
+                lines++, order &= grp != NULL;
+            }
         }
-        CHECK(n16 == SOMVR_VM_CTL_FIT && n16 == 21 && fit16 && arrow && shoot16 && !grip && spr && parry,
-              "build 16's controls: %d lines, arrow %d shoot %d grip %d sprint %d block %d", n16, arrow, shoot16, grip, spr,
-              parry);
-        int nq = somvr_vm_controls_av(SOMVR_VMA_BOWRT, 0, &k, &w);
-        CHECK(nq == n + 1, "the quiver alone: one line more (%d, %d)", nq, n);
     }
-    int dy = somvr_vm_ctl_dy();
-    CHECK(SOMVR_VM_CTL_Y0 + dy * (n + SOMVR_VM_CTL_NOTES + 1) + 4 <= SOMVR_VM_TEX_H - 12 &&
-              dy >= SOMVR_VM_CTL_DY_MIN && dy <= SOMVR_VM_CTL_DY && somvr_vm_controls_note(0) &&
-              !somvr_vm_controls_note(SOMVR_VM_CTL_NOTES),
-          "the lines, the notes and the card's hint fit the panel (%d px apart)", dy);
-    /* the notes: the execution (build 13; no stale "Not yet"; the second empty without the verbs) */
-    CHECK(!strstr(somvr_vm_controls_note(0), "Not yet") && !strstr(somvr_vm_controls_note(1), "Not yet") &&
-              strstr(somvr_vm_controls_note(0), "Execute") && !*somvr_vm_controls_note(1) &&
-              strlen(somvr_vm_controls_note(0)) <= 29 && strlen(somvr_vm_controls_note(1)) <= 29,
-          "the notes: '%s' '%s'", somvr_vm_controls_note(0), somvr_vm_controls_note(1));
-    /* build 13's switches (the fling, the verbs, the descent; the Report and Quit buttons): 21 lines since build 17 (18
-     * at 32 px before), the climb's fling, the drop at an edge, the grab and the execution as lines, the held orc's drain
-     * and interrogation in the notes; Quit dropped for room (the Settings page's own Quit button), Sheathe and Sprint
-     * kept */
-    {
-        uint32_t a13 = SOMVR_VMA_FLING | SOMVR_VMA_VERBS | SOMVR_VMA_DESCENT | SOMVR_VMA_MARK | SOMVR_VMA_QUIT;
-        int n13 = somvr_vm_controls_av(a13, 0, &k, &w), climb = 0, edge = 0, grab = 0, exe = 0, q13 = 0, sh = 0, spr = 0,
-            fit13 = 1, old_drop = 0;
-        for (int i = 0; i < n13; i++) {
-            somvr_vm_controls_av(a13, i, &k, &w);
-            fit13 &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
-            climb |= !strcmp(k, "Climb") && strstr(w, "fling") != NULL;
-            edge |= !strcmp(k, "Drop") && !strcmp(w, "A (wall, edge)");
-            old_drop |= !strcmp(w, "A (on a wall)");
-            grab |= !strcmp(k, "Grab") && strstr(w, "L grip") == w;
-            exe |= !strcmp(k, "Execute"), q13 |= !strcmp(k, "Quit"), sh |= !strcmp(k, "Sheathe");
-            spr |= !strcmp(k, "Sprint");
-        }
-        int dy13 = somvr_vm_ctl_dy_av(a13);
-        const char *n0 = somvr_vm_controls_note_av(a13, 0), *n1 = somvr_vm_controls_note_av(a13, 1);
-        CHECK(n13 == SOMVR_VM_CTL_FIT && n13 == 21 && fit13 && climb && edge && !old_drop && grab && exe && !q13 && sh &&
-                  spr && dy13 >= SOMVR_VM_CTL_DY_MIN &&
-                  SOMVR_VM_CTL_Y0 + dy13 * (n13 + SOMVR_VM_CTL_NOTES + 1) + 4 <= SOMVR_VM_TEX_H - 12 && strstr(n0, "drain") &&
-                  strstr(n1, "interrogate") && strlen(n0) <= 29 && strlen(n1) <= 29,
-              "build 13's controls: %d lines at %d px (climb %d edge %d grab %d execute %d quit %d sheathe %d), notes '%s' '%s'",
-              n13, dy13, climb, edge, grab, exe, q13, sh, n0, n1);
-        /* build 14 candidate: the crouch's line and SOMVR_USE: Use names the picks and missions, Menu and Pause in one
-         * line, so Sprint stays (build 13 with the crouch dropped it); without SOMVR_USE as build 13 */
-        uint32_t a14 = a13 | SOMVR_VMA_CROUCH | SOMVR_VMA_USE;
-        int n14 = somvr_vm_controls_av(a14, 0, &k, &w), spr14 = 0, use14 = 0, menu14 = 0, pause14 = 0, fit14 = 1;
-        for (int i = 0; i < n14; i++) {
-            somvr_vm_controls_av(a14, i, &k, &w);
-            fit14 &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
-            spr14 |= !strcmp(k, "Sprint") && !strcmp(w, "click left stick");
-            use14 |= !strcmp(k, "Use") && !strcmp(w, "B (pick, missions)");
-            menu14 |= !strcmp(k, "Menu") && strstr(w, "pause") != NULL, pause14 |= !strcmp(k, "Pause");
-        }
-        int n13c = somvr_vm_controls_av(a13 | SOMVR_VMA_CROUCH, 0, &k, &w), spr13c = 0;
-        for (int i = 0; i < n13c; i++)
-            somvr_vm_controls_av(a13 | SOMVR_VMA_CROUCH, i, &k, &w), spr13c |= !strcmp(k, "Sprint");
-        /* (build 16: Parry goes before Sprint, so build 13 with the crouch keeps Sprint now; build 17: 21 lines) */
-        CHECK(n14 == 21 && fit14 && spr14 && use14 && menu14 && !pause14 && n13c == 21 && spr13c,
-              "build 14's controls (the crouch, SOMVR_USE): %d lines, sprint %d use %d menu %d pause %d; build 13 with the "
-              "crouch: %d lines, sprint %d", n14, spr14, use14, menu14, pause14, n13c, spr13c);
-        /* one switch alone: its own line, the rest as build 12 (the drop at an edge only with the descent) */
-        somvr_vm_controls_av(SOMVR_VMA_DESCENT, 9, &k, &w); /* (build 17: the two hands, the block, the dagger above) */
-        CHECK(!strcmp(k, "Drop") && !strcmp(w, "A (wall, edge)") &&
-                  somvr_vm_controls_av(SOMVR_VMA_DESCENT, 0, &k, &w) == n,
-              "the descent alone: line 10 '%s: %s', %d lines", k, w, somvr_vm_controls_av(SOMVR_VMA_DESCENT, 0, &k, &w));
-        /* build 17: SOMVR_CLIMB_DESCENT_MARK: the same line says hold A and let go (the count unchanged); the mark
-         * without the descent: the wall's A as ever */
-        const uint32_t dmk = SOMVR_VMA_DESCENT | SOMVR_VMA_DROPMARK;
-        somvr_vm_controls_av(dmk, 9, &k, &w);
-        CHECK(!strcmp(k, "Drop") && !strcmp(w, "hold A, let go") && somvr_vm_controls_av(dmk, 0, &k, &w) == n,
-              "the drop mark: line 10 '%s: %s'", k, w);
-        somvr_vm_controls_av(SOMVR_VMA_DROPMARK, 9, &k, &w);
-        CHECK(!strcmp(k, "Drop") && !strcmp(w, "A (on a wall)"), "the mark alone: '%s: %s'", k, w);
-        const uint32_t a16m = SOMVR_VMA_FLING | SOMVR_VMA_VERBS | SOMVR_VMA_DESCENT | SOMVR_VMA_MARK | SOMVR_VMA_QUIT |
-                              SOMVR_VMA_CROUCH | SOMVR_VMA_USE | SOMVR_VMA_BOWSLOT | SOMVR_VMA_BOWRT;
-        int n16m = somvr_vm_controls_av(a16m | SOMVR_VMA_DROPMARK, 0, &k, &w), drop16m = 0;
-        for (int i = 0; i < n16m; i++)
-            somvr_vm_controls_av(a16m | SOMVR_VMA_DROPMARK, i, &k, &w),
-                drop16m += !strcmp(k, "Drop") && !strcmp(w, "hold A, let go");
-        CHECK(n16m == somvr_vm_controls_av(a16m, 0, &k, &w) && drop16m == 1, "build 16's lines with the mark: %d, the drop's "
-              "line once", n16m);
+    int p0 = somvr_vm_ctl_entry(ca, 0, 0, &k, &w, NULL);
+    CHECK(pages >= 2 && pages <= 4 && lines == n && inside && order && whole && titles == 7 && p0 == SOMVR_VMC_GROUP &&
+              !strcmp(k, "Moving") && somvr_vm_ctl_entry(ca, pages, 0, &k, &w, NULL) == SOMVR_VMC_NONE &&
+              somvr_vm_ctl_turn(ca, 0, -1) == 0 && somvr_vm_ctl_turn(ca, 0, 1) == 1 &&
+              somvr_vm_ctl_turn(ca, pages - 1, 1) == pages - 1 && somvr_vm_ctl_pages(0) >= 1,
+          "the headset's pages: %d, %d lines and %d titles inside the room (%d), apart (%d), each group whole (%d)", pages,
+          lines, titles, inside, order, whole);
+    /* the card: the first steps, what a first-time player needs before anything else */
+    int nc = somvr_vm_ctl_card(ca, 0, &k, &w), cw = 0, cs = 0, cm = 0;
+    for (int i = 0; i < nc; i++) {
+        somvr_vm_ctl_card(ca, i, &k, &w);
+        cw |= !strcmp(k, "Walk"), cs |= !strcmp(k, "Sword"), cm |= !strcmp(k, "Menu");
     }
-    /* the pictures: the Controls page, the card (no tabs: a title; the close hint) */
+    CHECK(nc >= 6 && nc <= 10 && cw && cs && cm && SOMVR_VM_CTL_Y0 + 4 + nc * SOMVR_VM_CARD_DY + 12 + 2 * SOMVR_VM_CARD_DY + 12 +
+              3 * SOMVR_VM_CARD_DY + 12 + SOMVR_VM_CTL_DY <= SOMVR_VM_TEX_H - 16,
+          "the card: %d first steps (walk %d sword %d menu %d), the pointer to the rest and the close hint fit", nc, cw, cs, cm);
+    /* the pictures: the Controls page, its second page, the card (no tabs: a title; the close hint) */
     somvr_vm_view vw;
     memset(&vw, 0, sizeof vw);
     somvr_set_default(&vw.set);
@@ -1671,15 +1684,35 @@ static void test_controls(void) {
     const uint8_t *bt = pxa(g_px, t0[0] + 2, t0[1] + 2);
     CHECK(ul[0] == 232 && ul[1] == 192 && ul[2] == 112 && bt[0] == 52 && bt[1] == 61 && bt[2] == 76,
           "Controls lit (%u %u %u), Settings a button (%u %u %u)", ul[0], ul[1], ul[2], bt[0], bt[1], bt[2]);
-    vw.page = SOMVR_VMPG_CONTROLS;
-    vw.card = 1;
+    /* Prev dimmed on the first page, Next lit; the second page another picture with Prev lit */
+    int pv[4], nx[4];
+    somvr_vm_rect(SOMVR_VMI_CTL_PREV, SOMVR_VMP_BUTTON, pv), somvr_vm_rect(SOMVR_VMI_CTL_NEXT, SOMVR_VMP_BUTTON, nx);
+    vw.set = hs, vw.avail = H26, vw.page = SOMVR_VMPG_CONTROLS, vw.ctl_page = 0;
+    somvr_vm_draw(&F, g_px, 0, &vw);
+    uint8_t p1[4], n1[4];
+    memcpy(p1, pxa(g_px, pv[0] + 3, pv[1] + 3), 4), memcpy(n1, pxa(g_px, nx[0] + 3, nx[1] + 3), 4);
+    vw.ctl_page = 1;
+    somvr_vm_draw(&F, g_px2, 0, &vw);
+    const uint8_t *p2 = pxa(g_px2, pv[0] + 3, pv[1] + 3);
+    CHECK(memcmp(g_px, g_px2, sizeof g_px) != 0 && memcmp(p1, n1, 4) != 0 && !memcmp(p2, n1, 4),
+          "page 1: Prev dimmed (%u %u %u), Next lit (%u %u %u); page 2 another picture, its Prev lit", p1[0], p1[1], p1[2],
+          n1[0], n1[1], n1[2]);
+    vw.ctl_page = 0, vw.card = 1;
     somvr_vm_draw(&F, g_px2, 0, &vw);
     bt = pxa(g_px2, t0[0] + 2, t0[1] + 2);
     int diff_low = 0;
-    for (int y = SOMVR_VM_CTL_Y0 + dy * (n + SOMVR_VM_CTL_NOTES) - 2; y < SOMVR_VM_TEX_H; y++) /* the hint's row */
+    for (int y = SOMVR_VM_TEST_NAV_Y; y < SOMVR_VM_TEX_H - 16; y++) /* the card has no Prev / Next row */
         for (int x = 0; x < SOMVR_VM_TEX_W; x++) diff_low += memcmp(pxa(g_px, x, y), pxa(g_px2, x, y), 4) != 0;
-    CHECK(bt[0] == 22 && bt[1] == 26 && bt[2] == 33 && diff_low > 200, "the card: no tab buttons (%u %u %u), the close "
-          "hint drawn (%d pixels)", bt[0], bt[1], bt[2], diff_low);
+    CHECK(bt[0] == 22 && bt[1] == 26 && bt[2] == 33 && diff_low > 200, "the card: no tab buttons (%u %u %u), no page row "
+          "(%d pixels differ)", bt[0], bt[1], bt[2], diff_low);
+    /* build 27: at the practice area's arrival the card says the way back to the game (Menu > Practice > Back) */
+    vw.avail = H26 & ~(uint64_t)SOMVR_VMA_PRACTICE;
+    somvr_vm_draw(&F, g_px, 0, &vw);
+    int diff_pr = 0;
+    for (int y = 400; y < SOMVR_VM_TEX_H - 16; y++)
+        for (int x = 0; x < SOMVR_VM_TEX_W; x++) diff_pr += memcmp(pxa(g_px, x, y), pxa(g_px2, x, y), 4) != 0;
+    CHECK((H26 & SOMVR_VMA_PRACTICE) && diff_pr > 500, "the card with the practice area: the way back drawn (%d pixels)",
+          diff_pr);
 }
 
 /* ---- v5 (build 10, re-xr-pipeline.md 34): the Music row, the rows a build does not show -------------------------- */
@@ -1779,15 +1812,16 @@ static void test_build17(void) {
     somvr_set_default(&s);
     CHECK(SOMVR_VRMENU_VERSION == 7 && sizeof(somvr_settings) == 96 && offsetof(somvr_settings, sword_hand) == 80 &&
               offsetof(somvr_settings, quiver) == 81 && offsetof(somvr_settings, bite) == 82 &&
-              offsetof(somvr_settings, pad6) == 83 && s.sword_hand == 0 && s.quiver == 0 && !s.bite && !s.pad6[0] &&
-              !s.pad6[4],
+              offsetof(somvr_settings, pad6) == 85 && s.sword_hand == 0 && s.quiver == 0 && !s.bite && !s.pad6[0] &&
+              !s.pad6[2] && offsetof(somvr_settings, move) == 83 && !s.move && /* build 27: MOVE took pad6[0] */
+              offsetof(somvr_settings, refresh) == 84 && !s.refresh, /* build 27 (perf2): XR_REFRESH the next */
           "v6: the two bytes after the weight, 5 spare, the defaults 0");
     CHECK(!strcmp(somvr_set_key(SOMVR_SK_SWORD_WEIGHT_HAND), "SWORD_WEIGHT_HAND") &&
               !strcmp(somvr_set_env(SOMVR_SK_SWORD_WEIGHT_HAND), "SOMVR_SWORD_WEIGHT_HAND") &&
               !strcmp(somvr_set_key(SOMVR_SK_BOW_QUIVER), "BOW_QUIVER") &&
               !strcmp(somvr_set_env(SOMVR_SK_BOW_QUIVER), "SOMVR_BOW_QUIVER") &&
               somvr_set_find("SOMVR_BOW_QUIVER") == SOMVR_SK_BOW_QUIVER &&
-              somvr_set_find("SWORD_WEIGHT_HAND") == SOMVR_SK_SWORD_WEIGHT_HAND && SOMVR_SK_BOW_QUIVER == SOMVR_SK_N - 8,
+              somvr_set_find("SWORD_WEIGHT_HAND") == SOMVR_SK_SWORD_WEIGHT_HAND && SOMVR_SK_BOW_QUIVER == SOMVR_SK_MOVE - 8,
           "the keys, their switches, the last two");
     CHECK(somvr_set_put(&s, SOMVR_SK_SWORD_WEIGHT_HAND, " follow ") && s.sword_hand == 1 &&
               somvr_set_put(&s, SOMVR_SK_SWORD_WEIGHT_HAND, "fixed") && s.sword_hand == 0 &&
@@ -1877,7 +1911,7 @@ static void test_build17(void) {
         int block = 0, two = 0, dagger = 0, ledge = 0, sprint = 0, sheathe = 0, quit = 0, parry = 0;
         for (int i = 0; i < n; i++) {
             somvr_vm_controls_av(ca, i, &k, &w);
-            fit &= k && w && strlen(k) <= 7 && strlen(w) <= 20 && *w;
+            fit &= k && w && strlen(k) <= SOMVR_VM_CTL_KEY_W && strlen(w) <= SOMVR_VM_CTL_WHAT_W && *w;
             if (!strcmp(k, "Arrow")) arrows++, arrow_ok = cs[c].arrow && !strcmp(w, cs[c].arrow);
             if (!strcmp(k, "Shoot")) shoots++, shoot_ok = !strcmp(w, cs[c].shoot);
             block |= !strcmp(k, "Block") && !strcmp(w, "sword across a blow");
@@ -1887,13 +1921,12 @@ static void test_build17(void) {
             sprint |= !strcmp(k, "Sprint"), sheathe |= !strcmp(k, "Sheathe"), quit |= !strcmp(k, "Quit");
             parry |= !strcmp(k, "Parry");
         }
-        int dy = somvr_vm_ctl_dy_av(ca);
-        CHECK(n == SOMVR_VM_CTL_FIT && fit && arrows == (cs[c].arrow != NULL) && arrow_ok && shoots == 1 && shoot_ok &&
-                  block && two && ledge && sprint && dagger == cs[c].dagger && !sheathe && !quit && !parry &&
-                  dy == SOMVR_VM_CTL_DY_MIN && SOMVR_VM_CTL_Y0 + dy * (n + SOMVR_VM_CTL_NOTES + 1) + 4 <= SOMVR_VM_TEX_H - 16,
-              "build 17's controls, quiver %d %s: %d lines at %d px, arrow %d shoot %d block %d two %d ledge %d sprint %d "
+        /* (build 27: every line on its group's page - nothing dropped for room, the dagger, Sheathe and Quit too) */
+        CHECK(fit && arrows == (cs[c].arrow != NULL) && arrow_ok && shoots == 1 && shoot_ok && block && two && ledge &&
+                  sprint && dagger && sheathe && quit && !parry,
+              "build 17's controls, quiver %d %s: %d lines, arrow %d shoot %d block %d two %d ledge %d sprint %d "
               "dagger %d sheathe %d quit %d",
-              cs[c].quiver, (cs[c].base & SOMVR_VMA_BOWTRIG) ? "RT" : "grip", n, dy, arrow_ok, shoot_ok, block, two, ledge,
+              cs[c].quiver, (cs[c].base & SOMVR_VMA_BOWTRIG) ? "RT" : "grip", n, arrow_ok, shoot_ok, block, two, ledge,
               sprint, dagger, sheathe, quit);
     }
     { /* build 17, the strike17 helper: SOMVR_STRIKE_GAZE's Wraith line instead of the plain one, the count unchanged */
@@ -1917,11 +1950,16 @@ static void test_build17(void) {
     somvr_vm_view vw;
     memset(&vw, 0, sizeof vw);
     somvr_set_default(&vw.set);
-    vw.avail = C17, vw.hover.item = -1, vw.page = SOMVR_VMPG_CONTROLS, vw.set.quiver = 1;
-    somvr_vm_draw(&F, g_px, 0, &vw);
-    vw.set.quiver = 0;
-    somvr_vm_draw(&F, g_px2, 0, &vw);
-    CHECK(memcmp(g_px, g_px2, sizeof g_px) != 0, "the Controls page follows the Arrows row");
+    vw.avail = C17, vw.hover.item = -1, vw.page = SOMVR_VMPG_CONTROLS;
+    int differ = 0; /* build 27: the bow's group on its own page */
+    for (int pg = 0; pg < 4; pg++) {
+        vw.ctl_page = pg, vw.set.quiver = 1;
+        somvr_vm_draw(&F, g_px, 0, &vw);
+        vw.set.quiver = 0;
+        somvr_vm_draw(&F, g_px2, 0, &vw);
+        differ |= memcmp(g_px, g_px2, sizeof g_px) != 0;
+    }
+    CHECK(differ, "the Controls page follows the Arrows row");
     /* the practice page's two defence lines (labels' colour) under its hints, inside the panel */
     vw.avail = SOMVR_VMA_PRACTICE, vw.page = SOMVR_VMPG_PRACTICE;
     somvr_vm_draw(&F, g_px, 0, &vw);
@@ -2108,20 +2146,23 @@ static void test_fight19(void) {
     CHECK(SOMVR_VRMENU_VERSION == 7 && sizeof(((somvr_vrmenu_shared *)0)->avail) == 8 &&
               offsetof(somvr_vrmenu_shared, avail) == 24 && offsetof(somvr_vrmenu_shared, blink_on_ms) == 32 &&
               offsetof(somvr_vrmenu_shared, set) == 48 && sizeof(somvr_vrmenu_shared) == 208 &&
-              sizeof(somvr_settings) == 96 && offsetof(somvr_settings, pad6) == 83 &&
+              sizeof(somvr_settings) == 96 && offsetof(somvr_settings, pad6) == 85 &&
               offsetof(somvr_settings, dodge) == 88 && offsetof(somvr_settings, wstep) == 89 &&
               offsetof(somvr_settings, stealth) == 90 && offsetof(somvr_settings, counter_icon) == 91 &&
               offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94 &&
               SOMVR_VMA_DODGE == (1ull << 32) && SOMVR_VMA_WSTEP == (1ull << 33) && SOMVR_VMA_STEALTH == (1ull << 34) &&
               SOMVR_VMA_CROWD == (1ull << 35) && SOMVR_VMA_CICON == (1ull << 36) && SOMVR_VMA_STRING == (1ull << 37) &&
-              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 31 && SOMVR_SK_ALL == 0x7fffffffu,
-          "v7: avail 64 bits at 24, the settings 96 (the six rows at 88..94, pad6 spare), 208; bits 32..37; 31 keys");
+              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 33 && SOMVR_SK_ALL == 0x1ffffffffull /* build 27 */,
+          "v7: avail 64 bits at 24, the settings 96 (the six rows at 88..94, pad6 spare), 208; bits 32..37; 33 keys (build 27)");
     /* build 17b's preload avail (the session 174757: 0xf7fff027) with the layer's Report / Quit; build 18 hides the
      * Sword hand (SOMVR_SWORD_HAND_LOCK) */
     const uint64_t B18 = (0xf7fff027ull | SOMVR_VMA_MARK | SOMVR_VMA_QUIT) & ~(uint64_t)SOMVR_VMA_SWHAND,
                    NEW = SOMVR_VMA_DODGE | SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON |
                          SOMVR_VMA_STRING,
-                   B19 = B18 | NEW, HI = (~0ull << 38) & ~(uint64_t)SOMVR_VMA_TESTPAGE; /* 63: build 21's (the layer's) */
+                   B19 = B18 | NEW,
+                   /* 63: build 21's (the layer's); 47: build 27's Walk toward row (its own test: test_walk_toward) */
+                   HI = (~0ull << 38) & ~(uint64_t)(SOMVR_VMA_TESTPAGE | SOMVR_VMA_WALKDIR | SOMVR_VMA_REFRESH);
+    /* (43: build 27's Refresh rate row, the layer's: test_refresh27) */
     somvr_settings s;
     somvr_set_default(&s);
     s.sword_weight = 2, s.quiver = 1, s.bow_string = 1;
@@ -2152,7 +2193,8 @@ static void test_fight19(void) {
     same &= somvr_vm_apply(&s1, B19, 0, SOMVR_VMI_ARROWS, SOMVR_VMP_ROW) ==
                 somvr_vm_apply(&s2, B19 | HI, 0, SOMVR_VMI_ARROWS, SOMVR_VMP_ROW) &&
             !memcmp(&s1, &s2, sizeof s1);
-    CHECK(same && same_set, "bits 38..62 change nothing (%d); bits 32..37 only the Fight page (%d)", same, same_set);
+    CHECK(same && same_set, "bits 38..62 change nothing on the rows (%d); bits 32..37 only the Fight page (%d)", same,
+          same_set);
     /* the Controls page: build 18's lines whatever the new bits (no new line); the Bow string row's string decides the
      * bow's lines as BOWTRIG did (the trigger: the same as build 18's) */
     const char *k, *w, *k2, *w2;
@@ -2162,7 +2204,7 @@ static void test_fight19(void) {
         somvr_vm_controls_av(c18, i, &k, &w), somvr_vm_controls_av(c19, i, &k2, &w2);
         lines_same &= !strcmp(k, k2) && !strcmp(w, w2) && strcmp(k, "Dodge");
     }
-    CHECK(lines_same && n18 == SOMVR_VM_CTL_FIT, "the Controls page: build 18's %d lines with the new bits (%d)", n18, n19);
+    CHECK(lines_same, "the Controls page: build 18's %d lines with the new bits (%d)", n18, n19);
     somvr_settings g = s;
     g.bow_string = 0;
     uint64_t cg = somvr_vm_ctl_avail(&g, B19), cgq = (g.quiver = 0, somvr_vm_ctl_avail(&g, B19));
@@ -2192,7 +2234,7 @@ static void test_fight19(void) {
         keys &= !strcmp(v, K[i].val);
         mask |= 1u << K[i].k;
     }
-    CHECK(keys && SOMVR_SK_BOW_STRING == SOMVR_SK_N - 1 && b.dodge && b.wstep && b.stealth && b.crowd_ms == 700 &&
+    CHECK(keys && SOMVR_SK_BOW_STRING == SOMVR_SK_MOVE - 1 && b.dodge && b.wstep && b.stealth && b.crowd_ms == 700 &&
               !b.counter_icon && b.bow_string,
           "the six keys: the switches' names and words (the defaults: off, no pace, the icon shown, the grip)");
     char file[2048], note[64];
@@ -2763,6 +2805,144 @@ static void test_test21(void) {
     CHECK(!memcmp(p1, p2, sizeof p1), "the card with the bit: build 20's card (its X)");
 }
 
+/* ---- build 27 (re-xr-pipeline.md 112): Walk toward (HL:A's "Continuous (Head)" / "(Hand)") - the MOVE key as
+ * SOMVR_MOVE, the row under the turn's rows with SOMVR_VMA_WALKDIR only, live; Pointer hand says what the row does ---- */
+static void test_walk_toward(void) {
+    somvr_settings s, b;
+    char v[32], file[1024], note[64];
+    int bad = 0;
+    somvr_set_default(&s);
+    CHECK(s.move == 0 && offsetof(somvr_settings, move) == 83 && sizeof(somvr_settings) == 96 &&
+              !strcmp(somvr_set_key(SOMVR_SK_MOVE), "MOVE") && !strcmp(somvr_set_env(SOMVR_SK_MOVE), "SOMVR_MOVE") &&
+              somvr_set_find("SOMVR_MOVE") == SOMVR_SK_MOVE && SOMVR_SK_MOVE == 31 && SOMVR_SK_N == 33,
+          "MOVE: the default head, the old pad's byte 83, the key and its switch; the 32nd key");
+    CHECK(somvr_set_put(&s, SOMVR_SK_MOVE, " hand ") && s.move == 1 && (somvr_set_get(&s, SOMVR_SK_MOVE, v, sizeof v), !strcmp(v, "hand")) &&
+              somvr_set_put(&s, SOMVR_SK_MOVE, "head") && s.move == 0 && !somvr_set_put(&s, SOMVR_SK_MOVE, "1") &&
+              !somvr_set_put(&s, SOMVR_SK_MOVE, "left") && s.move == 0,
+          "MOVE takes SOMVR_MOVE's words (head|hand) only");
+    /* the 64-bit masks: the 32nd key's bit round trips with the others (32 bits held 31) */
+    s.move = 1, s.snap_deg = 45;
+    somvr_set_format(&s, 1ull << SOMVR_SK_MOVE | 1ull << SOMVR_SK_SNAP_DEG, file, sizeof file);
+    somvr_set_default(&b);
+    uint64_t m = somvr_set_parse(&b, file, &bad, note, sizeof note);
+    CHECK(strstr(file, "SNAP_DEG=45\nMOVE=hand\n") && m == (1ull << SOMVR_SK_MOVE | 1ull << SOMVR_SK_SNAP_DEG) && !bad &&
+              b.move == 1 && somvr_set_diff(&s, &b) == 0 && (m >> 31 & 1) &&
+              somvr_set_diff(&s, &(somvr_settings){0}) >> SOMVR_SK_MOVE & 1,
+          "the file: MOVE=hand read back, bit 31 in the mask and the diff (mask %#llx)", (unsigned long long)m);
+    /* the user's own file (the eight keys it pins) reads as before: MOVE not in it follows the switch */
+    const char *user = "TURN=smooth\nTURN_DPS=90\nVIGNETTE=0.3\nSNAP_BLINK_MS=140\nVIEW=first\nHAPTICS=100\nPHASE=off\n"
+                       "COMBAT_BITE=on\n";
+    somvr_set_default(&b);
+    m = somvr_set_parse(&b, user, &bad, note, sizeof note);
+    CHECK(!bad && m == (1ull << SOMVR_SK_TURN | 1ull << SOMVR_SK_TURN_DPS | 1ull << SOMVR_SK_VIGNETTE |
+                        1ull << SOMVR_SK_SNAP_BLINK_MS | 1ull << SOMVR_SK_VIEW | 1ull << SOMVR_SK_HAPTICS |
+                        1ull << SOMVR_SK_PHASE | 1ull << SOMVR_SK_COMBAT_BITE) &&
+              b.turn == 1 && b.turn_dps == 90 && b.bite == 1 && b.move == 0,
+          "the user's eight pinned keys read as before; MOVE follows its switch");
+    /* the row: shown and enabled with SOMVR_VMA_WALKDIR only; Head / Hand; a click flips it */
+    const uint64_t A = SOMVR_VMA_COMFORT | SOMVR_VMA_HUD | SOMVR_VMA_VIEW | SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE |
+                       SOMVR_VMA_CROUCH | SOMVR_VMA_FLING | SOMVR_VMA_SURFACE | SOMVR_VMA_SWORD; /* the headset's Settings rows */
+    somvr_set_default(&s);
+    int rb[4], rm[4], rs[4], rr[4], r0[4], rq[4];
+    somvr_vm_value(&s, SOMVR_VMI_MOVE, v, sizeof v);
+    int shown = somvr_vm_shown(A | SOMVR_VMA_WALKDIR, SOMVR_VMI_MOVE) && !somvr_vm_shown(A, SOMVR_VMI_MOVE) &&
+                somvr_vm_enabled(&s, A | SOMVR_VMA_WALKDIR, SOMVR_VMI_MOVE) && !somvr_vm_enabled(&s, A, SOMVR_VMI_MOVE) &&
+                !somvr_vm_rect_av(A, SOMVR_VMI_MOVE, SOMVR_VMP_ROW, r0);
+    CHECK(shown && !strcmp(v, "Head") && !strcmp(somvr_vm_label(SOMVR_VMI_MOVE), "Walk toward") &&
+              somvr_vm_row_page(SOMVR_VMI_MOVE) == SOMVR_VMPG_SETTINGS &&
+              somvr_vm_apply(&s, A | SOMVR_VMA_WALKDIR, 0, SOMVR_VMI_MOVE, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.move == 1 &&
+              (somvr_vm_value(&s, SOMVR_VMI_MOVE, v, sizeof v), !strcmp(v, "Hand")) &&
+              somvr_vm_apply(&s, A | SOMVR_VMA_WALKDIR, 0, SOMVR_VMI_MOVE, SOMVR_VMP_ROW) == SOMVR_VMR_CHANGED && s.move == 0 &&
+              somvr_vm_apply(&s, A, 0, SOMVR_VMI_MOVE, SOMVR_VMP_ROW) == SOMVR_VMR_NONE && s.move == 0,
+          "Walk toward: with its bit only, Head / Hand, a click flips it; without the bit nothing");
+    /* its place: right under Snap blink, Seated under it; the bottom buttons still below the last row */
+    const uint64_t AW = A | SOMVR_VMA_WALKDIR;
+    CHECK(somvr_vm_rect_av(AW, SOMVR_VMI_BLINK, SOMVR_VMP_ROW, rb) && somvr_vm_rect_av(AW, SOMVR_VMI_MOVE, SOMVR_VMP_ROW, rm) &&
+              somvr_vm_rect_av(AW, SOMVR_VMI_SEATED, SOMVR_VMP_ROW, rs) &&
+              somvr_vm_rect_av(AW, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rq) &&
+              somvr_vm_rect_av(AW, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rm[1] == rb[1] + rb[3] &&
+              rs[1] == rm[1] + rm[3] && rq[1] + rq[3] <= rr[1] && rm[3] >= 28,
+          "under Snap blink (%d) at %d, Seated after (%d); rows %d px; the page button ends %d, the buttons at %d", rb[1],
+          rm[1], rs[1], rm[3], rq[1] + rq[3], rr[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_av(AW, SOMVR_VMPG_SETTINGS, (rm[0] + 40.5f) / SOMVR_VM_TEX_W,
+                                          (rm[1] + 0.5f * rm[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == SOMVR_VMI_MOVE && h.part == SOMVR_VMP_ROW, "its row hits (%d %d)", h.item, h.part);
+    /* Pointer hand: the row moves the panel's wrist and the pointing hand only (the controls do not swap) */
+    CHECK(!strcmp(somvr_vm_label(SOMVR_VMI_HAND), "Pointer hand"), "Main hand is Pointer hand (what it does)");
+}
+
+
+/* ---- build 27 (re-xr-pipeline.md 119, som-b27-perf2): the Refresh rate row (XR_REFRESH, SOMVR_XR_REFRESH; the layer's
+ * SOMVR_VMA_REFRESH): the key, the file, the steps 72 / 80 / 90 / 120 Hz, the row last on the Settings page ---------- */
+static void test_refresh27(void) {
+    somvr_settings s, b;
+    char v[32], file[1024], note[64];
+    int bad = 0;
+    somvr_set_default(&s);
+    CHECK(s.refresh == 0 && offsetof(somvr_settings, refresh) == 84 && sizeof(somvr_settings) == 96 &&
+              !strcmp(somvr_set_key(SOMVR_SK_XR_REFRESH), "XR_REFRESH") &&
+              !strcmp(somvr_set_env(SOMVR_SK_XR_REFRESH), "SOMVR_XR_REFRESH") &&
+              somvr_set_find("SOMVR_XR_REFRESH") == SOMVR_SK_XR_REFRESH && SOMVR_SK_XR_REFRESH == 32 &&
+              SOMVR_VMA_REFRESH == (1ull << 43),
+          "XR_REFRESH: the default 0 (nothing asked), byte 84, the key and its switch; the 33rd key; bit 43");
+    CHECK(somvr_set_put(&s, SOMVR_SK_XR_REFRESH, " 80 ") && s.refresh == 80 &&
+              (somvr_set_get(&s, SOMVR_SK_XR_REFRESH, v, sizeof v), !strcmp(v, "80")) &&
+              somvr_set_put(&s, SOMVR_SK_XR_REFRESH, "off") && s.refresh == 0 &&
+              somvr_set_put(&s, SOMVR_SK_XR_REFRESH, "45") && s.refresh == 60 &&
+              somvr_set_put(&s, SOMVR_SK_XR_REFRESH, "200") && s.refresh == 144 &&
+              somvr_set_put(&s, SOMVR_SK_XR_REFRESH, "0") && s.refresh == 0 &&
+              !somvr_set_put(&s, SOMVR_SK_XR_REFRESH, "fast") && s.refresh == 0,
+          "XR_REFRESH's values: Hz 60..144, off / 0 = nothing asked, words refused");
+    s.refresh = 90;
+    somvr_set_format(&s, 1ull << SOMVR_SK_XR_REFRESH, file, sizeof file);
+    somvr_set_default(&b);
+    uint64_t m = somvr_set_parse(&b, file, &bad, note, sizeof note);
+    CHECK(strstr(file, "\nXR_REFRESH=90\n") && m == 1ull << SOMVR_SK_XR_REFRESH && !bad && b.refresh == 90 &&
+              somvr_set_diff(&s, &b) == 0,
+          "the file: XR_REFRESH=90 round trip");
+    /* the row: shown and enabled with SOMVR_VMA_REFRESH only; 72 / 80 / 90 / 120 Hz, held at the ends by < >, the row's
+     * click wraps; from the headset's own (0): > 72, < 120 */
+    const uint64_t A = SOMVR_VMA_COMFORT | SOMVR_VMA_HUD | SOMVR_VMA_VIEW | SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE |
+                       SOMVR_VMA_CROUCH | SOMVR_VMA_FLING | SOMVR_VMA_SURFACE | SOMVR_VMA_SWORD | SOMVR_VMA_WALKDIR,
+                   AR = A | SOMVR_VMA_REFRESH;
+    int r0[4];
+    somvr_set_default(&s);
+    s.refresh = 80;
+    somvr_vm_value(&s, SOMVR_VMI_REFRESH, v, sizeof v);
+    int shown = somvr_vm_shown(AR, SOMVR_VMI_REFRESH) && !somvr_vm_shown(A, SOMVR_VMI_REFRESH) &&
+                somvr_vm_enabled(&s, AR, SOMVR_VMI_REFRESH) && !somvr_vm_enabled(&s, A, SOMVR_VMI_REFRESH) &&
+                !somvr_vm_rect_av(A, SOMVR_VMI_REFRESH, SOMVR_VMP_ROW, r0);
+    CHECK(shown && !strcmp(v, "80 Hz") && !strcmp(somvr_vm_label(SOMVR_VMI_REFRESH), "Refresh rate") &&
+              somvr_vm_row_page(SOMVR_VMI_REFRESH) == SOMVR_VMPG_SETTINGS,
+          "Refresh rate: with its bit only, \"80 Hz\" (%s)", v);
+    int seq = somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.refresh == 90 &&
+              somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.refresh == 120 &&
+              somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_NONE && s.refresh == 120 &&
+              somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_ROW) == SOMVR_VMR_CHANGED && s.refresh == 72 &&
+              somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_LESS) == SOMVR_VMR_NONE && s.refresh == 72 &&
+              somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.refresh == 80 &&
+              somvr_vm_apply(&s, A, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_NONE && s.refresh == 80;
+    s.refresh = 0;
+    somvr_vm_value(&s, SOMVR_VMI_REFRESH, v, sizeof v);
+    seq &= !strcmp(v, "Headset");
+    seq &= somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.refresh == 72;
+    s.refresh = 0;
+    seq &= somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_LESS) == SOMVR_VMR_CHANGED && s.refresh == 120;
+    CHECK(seq, "the steps: 80 > 90 > 120 > held, the row wraps to 72, < held at 72; from Headset > 72, < 120");
+    /* its place: the Settings page's last row (after Hands at walls), the page button and the bottom buttons below */
+    int rf[4], rl[4], rq[4], rr[4];
+    CHECK(somvr_vm_rect_av(AR, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW, rl) &&
+              somvr_vm_rect_av(AR, SOMVR_VMI_REFRESH, SOMVR_VMP_ROW, rf) &&
+              somvr_vm_rect_av(AR, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rq) &&
+              somvr_vm_rect_av(AR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rf[1] == rl[1] + rl[3] &&
+              rq[1] >= rf[1] + rf[3] && rq[1] + rq[3] <= rr[1] && rf[3] >= 28,
+          "after Hands at walls (%d) at %d, %d px; the page button %d..%d; the buttons at %d", rl[1], rf[1], rf[3], rq[1],
+          rq[1] + rq[3], rr[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_av(AR, SOMVR_VMPG_SETTINGS, (rf[0] + 40.5f) / SOMVR_VM_TEX_W,
+                                          (rf[1] + 0.5f * rf[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == SOMVR_VMI_REFRESH && h.part == SOMVR_VMP_ROW, "its row hits (%d %d)", h.item, h.part);
+}
+
 int main(void) {
     test_font();
     test_settings();
@@ -2782,6 +2962,8 @@ int main(void) {
     test_bite_row();
     test_session_buttons();
     test_controls();
+    test_walk_toward(); /* build 27 */
+    test_refresh27(); /* build 27 (perf2) */
     test_music_rows();
     test_build17();
     test_far_orc();

@@ -3,47 +3,45 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 26 - what to test
-- New since build 20c, most important first: build 26's own, then 25's, 24's, 21-23's.
-- Last chance: when an orc is about to kill you, a red ring shows. Move your hand to steer the cursor into the ring, then stab hard.
-- Vault over an orc: look at a shield orc, push the right stick forward. The gold ring jumps behind him; let go, turn, cut his back within 2 s.
-- Big fights: an orc that walks round behind you warns before he swings.
-- Caragor (Big Game): when it leaps, hold your sword across between you and its head - it goes down, stunned.
-- Mount: look at the stunned caragor, reach out your left hand and grip. Keep gripping through "Hold tight!" until it gives in.
-- Riding: the stick turns like a wheel (looking around doesn't steer). A leap, right trigger bite, B off.
-- A held orc (grab, then A): trigger = Gain Intel, B = Dismiss; Y = Command on a captain.
-- Sauron's Army: hold the right stick's click. A quick click is the map.
-- The Rescue: lift Lithariel with your left grip and walk her out.
-- Play as long as you like: a session now lasts up to 4 hours.
-- Mission Failed (you died in a mission): A = Retry, B = Abandon.
-- Nemesis pages after a fight ("Power Increased!", a captain's fate): B closes them.
-- Branded orcs: raise your left hand above your head and pull the left trigger - they attack.
-- Drop kill: crouch on a wall top above an unaware orc. A faint blue glow on his back means it's there. Sword drawn, stab hard down at him: a short black, then you're behind him as he dies. A slow lowering does nothing.
-- Captains in the world: start a power struggle at its map marker. His intro plays where he stands; his name and line show at your gaze.
-- A captain immune to stealth: stab his back and the blade glances off - a clank, sparks, he turns on you.
-- Artifacts: hold Y, B picks one up; the right stick turns it; B backs out.
-- Brand: Queen of the Shore, at the Sea Fort. Close "Ability Unlocked: Brand" first. Crouch and walk up behind an archer until you stop, put your open left hand on his head, pull the left trigger. Brand six unseen to go on.
-- Captain fight: Practice > Captain. Fast, real cuts take big bites; taps barely scratch him. About a dozen good cuts and an execution.
-- After a captain's kill: Pause > Sauron's Army shows his body in his slot; his rune lies by him (B).
-- Low health: no blood drops or red wash in your eyes, only a faint red glow at the edges.
-- Vault: in the ruin by the campfire, walk at a low wall or block. A gold ring shows past it or on top: press A.
-- Climb down: on a wall top, reach down over the edge and grip. You glide over and hang; climb down or hold A to drop.
-- Jump at a wall and grab its top as you rise: the climb catches you.
-- Fire: by a campfire or torch, close one eye, then the other. The flame should look the same in both and sit at its depth.
-- Wraith vision: hold Y and look up. The clouds should be one calm sky far away, not smoke in your face.
-- Stealth kill: sneak behind an orc and stab hard, point first, deep into his back or neck. A touch or a slow push only makes him turn. The sword sticks as he slumps; pull it out.
-- Walk up with the sword held out: touching his back that way doesn't wake him.
-- Grab: in a fight, reach your empty left hand to an orc's neck. A faint blue glow and a tick mean squeeze.
-- Captain: Practice > Captain. His intro plays where he stands; his name and first line show together under him. A fresh captain has no grab glow: wear him down to about a third and it appears. He can kill you.
-- Beasts: Practice > Caragor or Graug. Cut a caragor's head and back; hold the sword across between you and its head when it lunges. A pounce never moves your view.
-- Shield orc: he attacks, no endless block.
-- Shadow Strike: you land with the sword in your hand.
-- Jump: press A while moving.
-- Drop: hold A over a drop. The white ring empties; at the flash and tick, let go.
-- Overhang: hold its edge from below. If a gold ring shows on top, press A.
-- Bow sight: small and white; blue on an orc.
-- XP and subtitles show just under your gaze and stay put.
-- Dying: you stay in your own eyes as the world greys. On the big screen, point at a captain and press.
-- Pause menu: the board is bigger. Buy a skill and equip a rune with the laser or a fingertip.
-- The low sun: no lens flare, no white rays.
-- Bug notes: talk as long as you need (up to 30 s).
+Build 27 - what to test
+- Everything new since build 20c, by topic. Menu > Controls lists every move.
+- Smooth: the headset runs at 80 Hz with a VR graphics preset. Fights, fire and rain should stay smooth. Try Settings > Refresh rate 90; back to 80 if it stutters.
+- Fire and the wraith sky look the same in both eyes, at their depth - no smoke in your face.
+- Low health: only a faint red glow at the edges. No lens flare.
+- Popups, XP and subtitles sit just under your gaze.
+
+- FIGHTING. Stealth kill: sneak up, stab hard point first into his back or neck. The sword sticks; pull it out. A slow push only makes him turn.
+- Grab: your empty left hand at an orc's neck - a blue glow and a tick mean squeeze. Then A: trigger = Intel, B = Dismiss, Y = Command (captains).
+- Big fights: an orc behind you warns before he swings. Shield orcs attack, no endless block.
+- Vault over an orc: look at him, push the right stick forward, let go. Cut his back within 2 s.
+- Last chance: when an orc is about to kill you, steer the red ring's cursor in with your hand, then stab.
+- Wraith flash: when the sword glows blue, hold the right trigger and push your open left palm at an orc.
+- A downed orc: stab straight down into him while the sword glows.
+- Drop kill: crouch on a wall top above an unaware orc (a blue glow on him), stab hard down at him.
+- Captains: Practice > Captain. Fast real cuts bite: about a dozen and an execution. Immune to stealth: the blade glances off. His rune drops (B).
+- Captains in the world: start a power struggle at its marker - the intro plays where he stands.
+
+- BOW AND WRAITH. The sight is small and white, blue on an orc. Shadow Strike lands you with the sword in hand.
+- Fire arrow: bow drawn, press B - the tip glows. He burns.
+- Whistle: crouch, an empty hand at your mouth a moment - an orc comes to look.
+- Branded orcs: raise your left hand above your head and pull the left trigger.
+
+- MOVING. Jump: A. Jump at a wall and grab its top as you rise.
+- Vault: walk at a low wall (the ruin by the campfire); a gold ring shows: A.
+- Forge tower: climb it by hand. At the top hold the platform's edge; the gold ring: A onto it.
+- Whenever a gold ring shows (a top, a lip overhead), A takes you there.
+- Climb down: reach down over a wall top's edge and grip - you hang; climb down.
+- Drop: hold A over a drop; the white ring empties; let go at the flash.
+
+- BEASTS. A caragor's leap: hold your sword across its line - it's stunned. Grip it with your left hand and keep gripping through "Hold tight!".
+- Riding: the stick steers like a wheel; A leap, right trigger bite, B off. Retry keeps you on.
+
+- STORY. Queen of the Shore: after "Ability Unlocked: Brand", crouch behind an archer, open left hand on his head, left trigger. Six unseen.
+- The Rescue: lift Lithariel with your left grip. If she drops, cut the Uruks off her and pick her up.
+- Mission Failed: A = Retry (even while gripping), B = Abandon. Nemesis pages: B closes.
+- Cards that pause the game show their text; A closes them.
+
+- MENUS. Map: click the right stick. Point and pull to slide a place to the cross; pull on the cross = a waypoint, shown in the world. Hold the click = Sauron's Army.
+- Dying: you stay in your own eyes; point at a captain on the big screen.
+- The arrival card: A closes it (no jump). Settings > Walk toward: Head or Hand.
+- Bug notes: talk up to 30 s. A session lasts up to 4 hours.

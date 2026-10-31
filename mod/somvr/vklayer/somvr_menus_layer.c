@@ -1101,6 +1101,7 @@ static int xt_quad(int what, somvr_posef *pose, float size[2]) {
 }
 static void xt_run(const char *line) {
     if (vd_xt(line) || th_xt(line)) return; /* `stall MS` (./somvr_void_layer.c), `head X Y Z` (./somvr_testhead_layer.c) */
+    if (pf_xt(line)) return; /* build 27: `perf NAME` (./somvr_perf_layer.c) */
     somvr_xt_cmd c;
     int r = somvr_xt_parse(line, &c);
     if (r == 0) return;

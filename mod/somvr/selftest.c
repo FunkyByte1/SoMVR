@@ -7845,7 +7845,8 @@ static void vm_tests(const char *base)
 	vm_restart();
 	somvr_settings s = vm_cur();
 	EXPECT(g_vm.on && somvr_vrmenu_ok(&g_vmo) && g_vmo.size == 208 && g_vmo.version == SOMVR_VRMENU_VERSION &&
-		       g_vmo.pid == (int32_t)getpid() && g_vmo.avail == (SOMVR_VMA_VIEW | SOMVR_VMA_HUD | SOMVR_VMA_COMFORT | sz_vm_avail()) &&
+		       g_vmo.pid == (int32_t)getpid() &&
+		       g_vmo.avail == (SOMVR_VMA_VIEW | SOMVR_VMA_HUD | SOMVR_VMA_COMFORT | sz_vm_avail() | hla_vm_avail()) &&
 		       g_vmo.blink_on_ms == 90 && atomic_load(&g_vmo.gen) == 1,
 	       "vrmenu header: ok %d size %u avail %#llx blink %u gen %u", somvr_vrmenu_ok(&g_vmo), g_vmo.size,
 	       (unsigned long long)g_vmo.avail, g_vmo.blink_on_ms, atomic_load(&g_vmo.gen));
@@ -7854,7 +7855,7 @@ static void vm_tests(const char *base)
 		       s.turn == 0 && NEAR(s.snap_deg, 45, 1e-4) && NEAR(s.turn_dps, 90, 1e-4) && NEAR(s.vignette, 0.6, 1e-6) &&
 		       s.blink_ms == 90 && !s.seated && s.height_cm == 0 && s.hud == 1 && NEAR(s.hud_dist_m, 1.5, 1e-6) &&
 		       s.hand == 0 && s.view == 1 && NEAR(s.haptics, 0.5, 1e-6),
-	       "start settings: mask %#x snap %g dps %g vignette %g view %u haptics %g", g_vm.file_mask, s.snap_deg, s.turn_dps,
+	       "start settings: mask %#llx snap %g dps %g vignette %g view %u haptics %g", (unsigned long long)g_vm.file_mask, s.snap_deg, s.turn_dps,
 	       s.vignette, s.view, s.haptics);
 	EXPECT(NEAR(g_rigcfg.snap_rad * VM_DEG, 45, 1e-3) && NEAR(g_inp.cfg.smooth_rate * VM_DEG, 90, 1e-3) &&
 		       NEAR(g_inp.hap_scale, 0.5, 1e-6) && g_inp.cfg.smooth == 0 && NEAR(g_cf.vignette, 0.6, 1e-6) &&
@@ -8027,7 +8028,7 @@ static void vm_tests(const char *base)
 		       strstr(buf, "\nSNAP_DEG=60\n") && strstr(buf, "\nHAPTICS=75\n") && strstr(buf, "\nVIEW=first\n") &&
 		       !strstr(buf, "HEIGHT_CM") && access(tmp, F_OK) != 0 && g_vm.keys == keys &&
 		       log_has("VRMENU save ") && log_has("keys SNAP_DEG=60 TURN_DPS=150 VIGNETTE=0.4"),
-	       "saved file (keys %#x):\n%s\nwant:\n%s", g_vm.keys, buf, want);
+	       "saved file (keys %#llx):\n%s\nwant:\n%s", (unsigned long long)g_vm.keys, buf, want);
 	/* a comma locale: still '.' in the file, and the file reads back the same */
 	int comma = 0;
 	if (setlocale(LC_NUMERIC, "de_DE.UTF-8") || setlocale(LC_NUMERIC, "de_DE.utf8")) {
@@ -8044,7 +8045,8 @@ static void vm_tests(const char *base)
 	       "saved under %s: %s", comma ? "de_DE" : "C", buf);
 	vm_restart(); /* the file read back (under the same locale) */
 	EXPECT(g_vm.on && g_vm.file_mask == keys && somvr_set_diff(&g_vm.start, &cur) == 0 && NEAR(g_cf.vignette, 0.3, 1e-6),
-	       "read back: mask %#x diff %#x", g_vm.file_mask, somvr_set_diff(&g_vm.start, &cur));
+	       "read back: mask %#llx diff %#llx", (unsigned long long)g_vm.file_mask,
+	       (unsigned long long)somvr_set_diff(&g_vm.start, &cur));
 	/* v4: the sword angle from the menu, live (bd_vm_set; SOMVR_ARMS decides whether a sword turns), then back */
 	float sw0 = g_bd.angle_deg;
 	cur.sword_deg = 10;
@@ -8120,7 +8122,7 @@ static void vm_tests(const char *base)
 			       NEAR(u.vignette, 0.5, 1e-6) && u.blink_ms == 140 && NEAR(u.haptics, 1.0, 1e-6) && u.phase == 1 &&
 			       u.bite == 1 && (g_vmo.avail & fb) == fb && u.wstep == 1 && u.stealth == 1 && u.crowd_ms == 700 &&
 			       u.counter_icon == 0 && g_inp.cfg.smooth && NEAR(g_inp.cfg.smooth_rate * VM_DEG, 90, 1e-3),
-		       "a v6 file in v7: mask %#x avail %#llx, wstep %u stealth %u pace %u icon %u", g_vm.file_mask,
+		       "a v6 file in v7: mask %#llx avail %#llx, wstep %u stealth %u pace %u icon %u", (unsigned long long)g_vm.file_mask,
 		       (unsigned long long)g_vmo.avail, u.wstep, u.stealth, u.crowd_ms, u.counter_icon);
 		/* the layer's clicks on the Fight page: the pace 1.0 s, the wraith step off, the stealth kill off, the icon on */
 		u.crowd_ms = 1000, u.wstep = 0, u.stealth = 0, u.counter_icon = 1;
@@ -8155,13 +8157,52 @@ static void vm_tests(const char *base)
 					  1u << SOMVR_SK_CROWD_PACE_MS | 1u << SOMVR_SK_COUNTER_ICON) &&
 			       u.crowd_ms == 1000 && !u.wstep && !u.stealth && u.counter_icon && u.turn == 1 && u.bite == 1 &&
 			       g_stl.mode == STL_OFF && NEAR(g_ff.pcfg.gap_s, 1.0, 1e-6),
-		       "read back: mask %#x, the Fight values held and applied at the start", g_vm.file_mask);
+		       "read back: mask %#llx, the Fight values held and applied at the start", (unsigned long long)g_vm.file_mask);
 		g_step.cfg = sc0, g_hf.bite = hb0, g_ws.want = ws_want0, g_ws.on = ws_on0, atomic_store(&g_ws.req_onoff, -1);
 		g_stl.mode = stl0, g_stl.start_mode = stls0, g_ff.mode = ffm0, g_ff.on_score = ffs0, g_ff.on_grant = ffg0;
 		g_ff.pace_on = ffp0, g_ff.pcfg.gap_s = gap0, g_cp.ok_fx = cpf0, atomic_store(&g_cp.mode, cpm0);
 		printf("vrmenu19 a v6 settings file read by v7 (7 keys, the same values), the Fight page's rows from their "
 		       "switches, live (the pace, the wraith step, the stealth kill, the counter icon), saved after the old "
 		       "lines, read back\n");
+	}
+	{ /* build 27 (re-xr-pipeline.md 112): the Walk toward row - MOVE=hand in the file is SOMVR_MOVE=hand from the start,
+	   * the row's change live, the 32nd key's bit in the 64-bit masks */
+		int mh0 = g_inp.move_hand;
+		g_inp.move_hand = 0;
+		vm_put_file(path, "MOVE=hand\n");
+		vm_restart();
+		somvr_settings u = vm_cur();
+		int start_ok = g_inp.move_hand == 1 && u.move == 1 && g_vm.file_mask == 1ull << SOMVR_SK_MOVE &&
+			       !!(g_vmo.avail & SOMVR_VMA_WALKDIR) == !!g_inp.on;
+		u.move = 0;
+		somvr_vrmenu_publish(&g_vmo, &u);
+		iframe();
+		EXPECT(start_ok && g_inp.move_hand == 0 && g_vm.applied.move == 0,
+		       "vrmenu27: MOVE=hand from the file (move_hand %d, mask %#llx, avail %#llx), the row's Head live (%d)", start_ok,
+		       (unsigned long long)g_vm.file_mask, (unsigned long long)g_vmo.avail, g_inp.move_hand);
+		g_inp.move_hand = mh0;
+		printf("vrmenu27 Walk toward: MOVE=hand read at the start, Head applied live\n");
+	}
+	{ /* build 27 (re-xr-pipeline.md 112.3): A at the arrival card or the open panel - or within 0.4 s of its closing -
+	   * is not a jump (build 26: "Close: X box or A" jumped too) */
+		float js0 = g_vm.jump_s;
+		double om0 = g_vm.open_mono;
+		uint32_t op0 = atomic_load(&g_vmo.open);
+		g_vm.jump_s = 0.4f;
+		atomic_store(&g_vmo.open, 1u);
+		int r_open = vm_open_recent();
+		atomic_store(&g_vmo.open, 0u);
+		g_vm.open_mono = mono() - 0.1; /* closed 0.1 s ago (the layer took the A first) */
+		int r_just = vm_open_recent();
+		g_vm.open_mono = mono() - 1.0;
+		int r_late = vm_open_recent();
+		atomic_store(&g_vmo.open, 1u), g_vm.jump_s = 0;
+		int r_off = vm_open_recent();
+		EXPECT(r_open && r_just && !r_late && !r_off,
+		       "the card's A (vm_open_recent, jp_why_not's): open %d, just shut %d, 1 s later %d, SOMVR_JUMP_MENU_S=0 %d",
+		       r_open, r_just, r_late, r_off);
+		g_vm.jump_s = js0, g_vm.open_mono = om0, atomic_store(&g_vmo.open, op0);
+		printf("vrmenu27 the card's A: no jump while it is up or just put away\n");
 	}
 	/* back to the main run's state: no menu */
 	g_vm.on = 0;
@@ -10020,6 +10061,44 @@ static void bm_tests(void)
 	float steer = 99; /* build 27: seated, the stick steers in the beast's frame (never the head's: 109.5) */
 	EXPECT(mt_steer_heading(&steer) && steer == g_mt.heading, "ride: seated, the stick in the beast's frame (%g, the beast %g)",
 	       steer, g_mt.heading);
+	{ /* build 27c, SOMVR_RIDE_WIN_REST (default on): a window's B is the screen's, never the get-off (boot 163325: a
+	   * Retry's window, B, Talion off the beast); after it nothing until every button is up */
+		sc_tick_out wo;
+		uint32_t dn_r = g_inp.ctl.down[SOMVR_HAND_R];
+		int lw = g_bm.last_win, wr = g_mt.win_rest;
+		memset(&wo, 0, sizeof wo), wo.live = 1, wo.ctx = SC_CTX_WORLD;
+		g_mt.win_rest = 1, g_inp.ctl.down[SOMVR_HAND_R] = 0, g_bm.last_win = 0;
+		mt_tick(&wo, 50.0); /* armed: every button up */
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_UPPER, g_bm.last_win = 1;
+		mt_tick(&wo, 50.1);
+		int in_win = mt_press_cmd();
+		g_bm.last_win = 0;
+		mt_tick(&wo, 50.2);
+		int held_after = mt_press_cmd();
+		g_inp.ctl.down[SOMVR_HAND_R] = 0, mt_tick(&wo, 50.3);
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_UPPER, mt_tick(&wo, 50.4);
+		int fresh = mt_press_cmd();
+		EXPECT(in_win == 0 && held_after == 0 && fresh == MT_CMD_OFF_PAD && g_mt.win_rests >= 1 &&
+			       log_has("a window while seated: a press is the screen's"),
+		       "ride: B in a window rests (%d), held past it (%d), a fresh B gets off (%d)", in_win, held_after, fresh);
+		g_mt.win_rest = 0, g_inp.ctl.down[SOMVR_HAND_R] = 0, g_bm.last_win = 0, mt_tick(&wo, 50.5);
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_UPPER, g_bm.last_win = 1, mt_tick(&wo, 50.6);
+		EXPECT(mt_press_cmd() == MT_CMD_OFF_PAD, "ride: SOMVR_RIDE_WIN_REST=off - B in a window gets off (build 27)");
+		g_mt.win_rest = 1, g_inp.ctl.down[SOMVR_HAND_R] = 0, g_bm.last_win = 0, mt_tick(&wo, 50.65);
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_LOWER, mt_tick(&wo, 50.655); /* A held (the run) before the window */
+		g_bm.last_win = 1, mt_tick(&wo, 50.66);
+		int held_on = (g_mt.held & SOMVR_RDB_JUMP) != 0;
+		g_inp.ctl.down[SOMVR_HAND_R] = 0, mt_tick(&wo, 50.67);
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_LOWER, mt_tick(&wo, 50.68); /* A pressed in the window: the Retry */
+		int fresh_a = (g_mt.held & SOMVR_RDB_JUMP) != 0;
+		g_bm.last_win = 0, mt_tick(&wo, 50.69); /* still held after it */
+		int after_a = (g_mt.held & SOMVR_RDB_JUMP) != 0;
+		EXPECT(held_on && !fresh_a && !after_a, "ride: A held through a window goes on (%d); A pressed in it is the "
+		       "screen's (%d), also while still held after it (%d)", held_on, fresh_a, after_a);
+		g_inp.ctl.down[SOMVR_HAND_R] = 0, mt_tick(&wo, 50.695), g_mt.win_rest = 0;
+		g_inp.ctl.down[SOMVR_HAND_R] = 0, g_bm.last_win = 0, mt_tick(&wo, 50.7);
+		g_inp.ctl.down[SOMVR_HAND_R] = dn_r, g_bm.last_win = lw, g_mt.win_rest = wr, g_mt.in_win = 0;
+	}
 	/* getting off: the game's dismount sync, P+0x1d8 cleared, Talion on the ground again: held, then the blink to him */
 	uint64_t rbl1 = g_bm.s.blinks;
 	bm_set_sync(bm_rec(0)), fb_p(FB_P_MOUNT, 0);
@@ -14555,6 +14634,7 @@ __attribute__((noipa)) const char *st_go_recname(uintptr_t rec) { return rec ? (
 __attribute__((noipa)) void st_go_dlg0(void *d, void *s, void *p) { (void)d, (void)s, (void)p, g_go_dlg_n[0]++; }
 __attribute__((noipa)) void st_go_dlg1(void *d, void *s, void *p) { (void)d, (void)s, (void)p, g_go_dlg_n[1]++; }
 __attribute__((noipa)) void st_go_dlg2(void *d, void *s, void *p) { (void)d, (void)s, (void)p, g_go_dlg_n[2]++; }
+__attribute__((noipa)) void st_go_pausetut(void *d, void *s, void *p) { (void)d, (void)s, (void)p; } /* GO_PAUSETUT: read only */
 static void go_site(void *volatile *slot, void *fn, const char *name, int i, int kind)
 {
 	if (kind == K_VSLOT)
@@ -14573,6 +14653,7 @@ static void go_stand_ins(void)
 	go_site(&g_go_vt_dlg[1][2], (void *)st_go_dlg1, "GO_TUTORIAL", GOS_TUTORIAL, K_VSLOT);
 	go_site(&g_go_vt_dlg[2][2], (void *)st_go_dlg2, "GO_PROMPT", GOS_PROMPT, K_VSLOT);
 	go_site(NULL, (void *)st_go_recname, "GO_RECNAME", GOS_RECNAME, K_ENTRY);
+	go_site(NULL, (void *)st_go_pausetut, "GO_PAUSETUT", GOS_PAUSETUT, K_ENTRY);
 	g_go_snd.vt = (uintptr_t)g_go_vt_snd, g_go_snd.ready = 1;
 	g_go_vt_holder[GO_SND_GET / 8] = (void *)st_go_sndget;
 	g_go_holder.vt = (uintptr_t)g_go_vt_holder;
@@ -14663,6 +14744,65 @@ static void go_tests(void)
 	EXPECT(g_go_dlg_n[0] == 3 && log_has(": passed on"), "hints log: the show passed: %d", g_go_dlg_n[0]);
 	EXPECT(!strcmp(go_word("gameopts"), "gameopts") && log_has("GAMEOPTS t=") && log_has("combat hints 4 (shown 2, dropped 1)"),
 	       "the state line");
+	/* build 27c, SOMVR_HINTS_PAUSING (default on): a tutorial whose record has the pausing tutorial's page field set (the
+	 * schema's hash at +0x68, a reference, nonzero) passes SOMVR_HINTS=off - the game pauses for it; one without the
+	 * field set is dropped (an in-play lesson); the game's quick path by the schema's index; off = dropped (build 27b) */
+	EXPECT(g_go.pause_on && log_has("CONFIG hints_pausing=on (SOMVR_HINTS_PAUSING, build 27c, the default)"),
+	       "the pausing rule on at start: %d", g_go.pause_on);
+	{
+		static uint8_t sch[0x90], prec[0x40], nrec[0x40], ents[2][2][16];
+		static uint64_t vals[2][2];
+		static uintptr_t sch_ptr;
+		uint32_t ph = 0x03644968, nh = 0x706b234a;
+		int32_t fast = 0;
+		memcpy(sch + GO_TS_HASH, &ph, 4), memcpy(sch + GO_TS_FAST, &fast, 4), sch[GO_TS_INDEX] = 1;
+		sch_ptr = (uintptr_t)sch;
+		uintptr_t sch_pp = g_gog.tut_sch_pp;
+		g_gog.tut_sch_pp = (uintptr_t)&sch_ptr;
+		uint8_t *recs[2] = { prec, nrec };
+		for (int r = 0; r < 2; r++) { /* two entries (layout 1: the hash at +0): the name, the page (kind 0xa) */
+			uint16_t one = 1, zero = 0;
+			memcpy(ents[r][0], &nh, 4), ents[r][0][0xa] = 3, memcpy(ents[r][0] + 0xc, &one, 2), memcpy(ents[r][0] + 0xe, &zero, 2);
+			memcpy(ents[r][1], &ph, 4), ents[r][1][0xa] = 0xa, memcpy(ents[r][1] + 0xe, &one, 2);
+			memcpy(ents[r][1] + 0xc, r ? &zero : &one, 2); /* the in-play lesson: the field not set */
+			vals[r][1] = r ? 0 : 0x1234;
+			uintptr_t ep = (uintptr_t)ents[r], vp = (uintptr_t)vals[r];
+			recs[r][0] = 2, recs[r][1] = 2 | 1, memcpy(recs[r] + 8, &ep, 8), memcpy(recs[r] + 0x10, &vp, 8);
+			snprintf((char *)recs[r] + 0x20, 0x20, r ? "tut_InPlayLesson" : "PC_StruggleTutorial");
+		}
+		uintptr_t pg = 0;
+		EXPECT(go_tut_pauses((uintptr_t)prec, &pg) == 1 && pg == 0x1234 && go_tut_pauses((uintptr_t)nrec, &pg) == 0 &&
+			       go_tut_pauses(0, &pg) == -1,
+		       "the page field: %d %d", go_tut_pauses((uintptr_t)prec, &pg), go_tut_pauses((uintptr_t)nrec, &pg));
+		go_word("hints off");
+		int n1 = g_go_dlg_n[1];
+		tp.show = 1, tp.rec = (uintptr_t)prec;
+		((st_go_dlg_fn)g_go_vt_dlg[1][2])((void *)1, (void *)2, &tp);
+		EXPECT(g_go_dlg_n[1] == n1 + 1 && atomic_load(&g_go.n_tut_paused) == 1 &&
+			       log_has("show 'PC_StruggleTutorial' (record") &&
+			       log_has(": kept (it pauses the game: SOMVR_HINTS_PAUSING; its page 0x1234)") &&
+			       log_has("HINTS the pausing tutorial's page field: hash 03644968") && log_has("(pauses the game):") &&
+			       g_ss_ptut_t >= 0 && !strcmp(g_ss_ptut_nm, "PC_StruggleTutorial"),
+		       "the pausing tutorial passed: %d calls", g_go_dlg_n[1] - n1);
+		tp.rec = (uintptr_t)nrec;
+		((st_go_dlg_fn)g_go_vt_dlg[1][2])((void *)1, (void *)2, &tp);
+		EXPECT(g_go_dlg_n[1] == n1 + 1 && log_has("show 'tut_InPlayLesson' (record") && log_has("(dropped):"),
+		       "the in-play lesson dropped: %d calls", g_go_dlg_n[1] - n1);
+		fast = 2, memcpy(sch + GO_TS_FAST, &fast, 4); /* the quick path: entry 1 by the schema's index */
+		tp.rec = (uintptr_t)prec;
+		((st_go_dlg_fn)g_go_vt_dlg[1][2])((void *)1, (void *)2, &tp);
+		EXPECT(g_go_dlg_n[1] == n1 + 2, "the quick path: %d calls", g_go_dlg_n[1] - n1);
+		g_go.pause_on = 0; /* SOMVR_HINTS_PAUSING=off: build 27b's drop */
+		((st_go_dlg_fn)g_go_vt_dlg[1][2])((void *)1, (void *)2, &tp);
+		EXPECT(g_go_dlg_n[1] == n1 + 2, "off: dropped: %d calls", g_go_dlg_n[1] - n1);
+		/* the combat hints stay dropped whatever the rule */
+		g_go.pause_on = 1;
+		int h0 = g_go_dlg_n[0];
+		hp.show = 1;
+		((st_go_dlg_fn)g_go_vt_dlg[0][2])((void *)1, (void *)2, &hp);
+		EXPECT(g_go_dlg_n[0] == h0, "a combat hint with the rule on: dropped (%d)", g_go_dlg_n[0] - h0);
+		g_gog.tut_sch_pp = sch_pp, g_ss_ptut_t = g_ss_tut_t = -1;
+	}
 	go_end_log();
 	EXPECT(log_has("GAMEOPTS END music on"), "the END line");
 	/* a mismatched slot (the game's own value not ours): that part off, nothing written */
@@ -14986,6 +15126,45 @@ static void pp_tests(void)
 	       "the held buttons across the window's edges");
 	g_us.fresh = 1;
 	EXPECT(us_btns(0, pb) == 0 && us_btns(0, 0) == 0 && us_btns(0, pb) == pb, "back from a menu: B held counts after a release");
+	{ /* build 27b, SOMVR_USE_GRAB: "The Rescue - Mission Failed! (A) Retry" while the left grip still carries Lithariel:
+	   * the grab masks the presentation (no window, boot 20261030-055352); A = the game's bound and active 285 there, the
+	   * grip held since before the screen counts for nothing, the grab's interrogation keeps its own buttons; off = none */
+		int mk = g_inp.map_ok, na = g_inp.nmap[SC_PAD_A], vm = g_vb.mode, ph = g_vb.hand.phase, lw = g_bm.last_win;
+		int lact = g_bm.last_act, ug = g_us.grab, a285 = g_act_world[285];
+		uintptr_t ak = g_vb.ask_c;
+		uint32_t fr = g_fb.last_raw, plb = 1u << SC_PAD_LB;
+		struct in_bind ba = g_inp.map[SC_PAD_A][0];
+		g_inp.map_ok = 1, g_inp.map[SC_PAD_A][0].cmd = 285, g_inp.nmap[SC_PAD_A] = 1, g_act_world[285] = 1;
+		g_vb.mode = VB_ON, g_vb.hand.phase = SOMVR_VBH_GRAB, g_vb.ask_c = 0, g_bm.last_win = 0, g_bm.last_act = 0;
+		g_fb.last_raw = SOMVR_FB_BIT(SOMVR_FB_PRES), g_us.grab = 1, g_us.on = 1;
+		g_us.fresh = 0, g_us.win_prev = 0, g_us.held = 0, g_us.qprev = 0, g_us.gwin_prev = 0;
+		memset(&uo, 0, sizeof uo);
+		uo.live = 1, uo.ctx = SC_CTX_WORLD, uo.raw = plb;
+		int g1 = us_press_cmds(&uo, uc); /* the grip held at the screen's start: nothing */
+		uo.raw = plb | pa;
+		int g2 = us_press_cmds(&uo, uc), c2 = g2 ? uc[0] : 0;
+		int g3 = us_press_cmds(&uo, uc); /* A held: 285 held, one press */
+		EXPECT(g1 == 0 && g2 == 1 && c2 == 285 && g3 == 1 && g_us.grabs == 1 &&
+			       log_has("a presentation while the left hand holds (no window: the grab keeps first person)") &&
+			       log_has("285 'QuestFailedRetry' pressed (the pad's A, active; a presentation while the left hand holds)"),
+		       "use grab: A = Retry with the grip closed: %d %d %d %d", g1, g2, c2, g3);
+		uo.raw = plb, us_press_cmds(&uo, uc);
+		g_vb.ask_c = 0x1234; /* the grab's interrogation: its own buttons */
+		uo.raw = plb | pa;
+		int g4 = us_press_cmds(&uo, uc);
+		g_vb.ask_c = 0, g_us.grab = 0, uo.raw = plb, us_press_cmds(&uo, uc);
+		uo.raw = plb | pa;
+		int g5 = us_press_cmds(&uo, uc); /* off: build 27 */
+		g_us.grab = 1, g_fb.last_raw = 0, uo.raw = plb, us_press_cmds(&uo, uc);
+		uo.raw = plb | pa;
+		int g6 = us_press_cmds(&uo, uc); /* no presentation: A in the world is not ours */
+		EXPECT(g4 == 0 && g5 == 0 && g6 == 0 && log_has("the grab's presentation is over"),
+		       "use grab: the interrogation, off, no presentation: %d %d %d", g4, g5, g6);
+		g_inp.map_ok = mk, g_inp.map[SC_PAD_A][0] = ba, g_inp.nmap[SC_PAD_A] = na, g_act_world[285] = (unsigned char)a285;
+		g_vb.mode = vm, g_vb.hand.phase = ph, g_vb.ask_c = ak, g_bm.last_win = lw, g_bm.last_act = lact;
+		g_fb.last_raw = fr, g_us.grab = ug, g_us.grabs = 0, g_us.gwin_prev = 0;
+		memset(&uo, 0, sizeof uo);
+	}
 	EXPECT(!strcmp(us_word("off"), "use off") && !g_us.on && !strcmp(us_word("status"), "use status") &&
 		       !strcmp(us_word("x"), "use (not on|off|status: ignored)"),
 	       "use words");
