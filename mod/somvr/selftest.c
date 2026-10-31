@@ -15219,6 +15219,62 @@ static void pp_tests(void)
 		g_fb.last_raw = fr, g_us.grab = ug, g_us.grabs = 0, g_us.gwin_prev = 0;
 		memset(&uo, 0, sizeof uo);
 	}
+	{ /* build 27b, SOMVR_USE_REPORT: a struggle's outcome's "(A) View Battle Report" (309) - in the window A = the pad's
+	   * A (bound) or 309 directly (unbound); over the world (309 and 307 active, no window) A's press is the report's
+	   * when ab_tick gives it (not in a fight, not the strike's, not a hang), held while A is; 307 alone: not; off:
+	   * never. And SOMVR_USE_WORLD_BACK (build 27): B over the world with 307 active and unbound = 307 directly */
+		int mk = g_inp.map_ok, na = g_inp.nmap[SC_PAD_A], lw = g_bm.last_win, ur = g_us.report, wb = g_us.wback;
+		int a307 = g_act_world[307], a309 = g_act_world[309];
+		struct in_bind ba = g_inp.map[SC_PAD_A][0];
+		g_inp.map_ok = 1, g_inp.map[SC_PAD_A][0].cmd = 309, g_inp.nmap[SC_PAD_A] = 1, g_act_world[309] = 1;
+		g_act_world[307] = 1, g_bm.last_win = 1, g_us.report = 1, g_us.wback = 1, g_us.reports = 0;
+		atomic_store(&g_us.on, 1);
+		g_us.fresh = 0, g_us.win_prev = 1, g_us.held = 0, g_us.qprev = 0, g_us.rep_a = 0, g_us.rep_up = 0;
+		memset(&uo, 0, sizeof uo);
+		uo.live = 1, uo.ctx = SC_CTX_WORLD, uo.raw = pa;
+		int r1 = us_press_cmds(&uo, uc), c1 = r1 ? uc[0] : 0; /* the window, 309 bound to A */
+		uo.raw = 0, us_press_cmds(&uo, uc);
+		g_inp.nmap[SC_PAD_A] = 0, uo.raw = pa;
+		int r2 = us_press_cmds(&uo, uc), c2 = r2 ? uc[r2 - 1] : 0; /* the window, unbound: directly */
+		EXPECT(r1 == 1 && c1 == 309 && r2 == 1 && c2 == 309 && g_us.reports == 2 &&
+			       log_has("309 'ViewReplay' pressed (the pad's A, active; a presentation is up)") &&
+			       log_has("309 'ViewReplay' pressed by A (the window; not bound to the pad's A now; SOMVR_USE_REPORT)"),
+		       "use report: A in the window = 309: %d %d %d %d %llu", r1, c1, r2, c2, (unsigned long long)g_us.reports);
+		uo.raw = 0, us_press_cmds(&uo, uc);
+		g_bm.last_win = 0, uo.raw = 0, us_press_cmds(&uo, uc); /* over the world, A up */
+		int f1 = us_report_takes_a(1.0, 0, 1, 0), f2 = us_report_takes_a(1.0, 1, 0, 0), f3 = us_report_takes_a(1.0, 0, 0, 1);
+		int tk = us_report_takes_a(1.0, 0, 0, 0);
+		uo.raw = pa;
+		int r3 = us_press_cmds(&uo, uc), c3 = r3 ? uc[r3 - 1] : 0, o3 = us_report_owns_a();
+		int r4 = us_press_cmds(&uo, uc); /* held: still 309, one press */
+		uo.raw = 0;
+		int r5 = us_press_cmds(&uo, uc), o5 = us_report_owns_a(); /* let go: over */
+		EXPECT(!f1 && !f2 && !f3 && tk && r3 == 1 && c3 == 309 && o3 && r4 == 1 && r5 == 0 && !o5 && g_us.reports == 3 &&
+			       g_us.rep_ups == 1 && log_has("a struggle's outcome over the world: 309 'ViewReplay' and 307 'IdentifySkip' active") &&
+			       log_has("A over the world while a struggle's outcome is up") &&
+			       log_has("309 'ViewReplay' pressed by A (a struggle's outcome over the world;"),
+		       "use report: over the world, A = 309 (not in a fight, not the strike's, not a hang): %d %d %d %d %d %d %d %d %d",
+		       f1, f2, f3, tk, r3, c3, r4, r5, o5);
+		/* SOMVR_USE_WORLD_BACK: B over the world (Activate, the Touch's B), 307 active and unbound: 307 directly */
+		uo.raw = 1u << SC_PAD_B, uo.ncmd = 0, uo.cmd[uo.ncmd++] = 34;
+		int r6 = us_press_cmds(&uo, uc), c6 = 0;
+		for (int k = 0; k < r6; k++)
+			c6 |= uc[k] == 307;
+		uo.raw = 0, uo.ncmd = 0, us_press_cmds(&uo, uc);
+		EXPECT(c6 && g_us.wbacks >= 1 && log_has("307 'IdentifySkip' pressed by B over the world (a struggle's outcome;"),
+		       "use world back: B = 307 over the world: %d %d", r6, c6);
+		g_act_world[307] = 0; /* 309 alone (the outcome not up): A is the jump's */
+		int t2 = us_report_takes_a(2.0, 0, 0, 0);
+		g_act_world[307] = 1, g_us.report = 0;
+		int t3 = us_report_takes_a(3.0, 0, 0, 0); /* off: build 27b */
+		uo.raw = pa;
+		int r7 = us_press_cmds(&uo, uc);
+		EXPECT(!t2 && !t3 && r7 == 0 && log_has("no longer both active"), "use report: 307 not active, off: %d %d %d", t2, t3, r7);
+		g_inp.map_ok = mk, g_inp.map[SC_PAD_A][0] = ba, g_inp.nmap[SC_PAD_A] = na, g_act_world[307] = (unsigned char)a307;
+		g_act_world[309] = (unsigned char)a309, g_bm.last_win = lw, g_us.report = ur, g_us.wback = wb, g_us.rep_a = 0;
+		g_us.rep_up = 0, g_us.qprev = 0;
+		memset(&uo, 0, sizeof uo);
+	}
 	EXPECT(!strcmp(us_word("off"), "use off") && !g_us.on && !strcmp(us_word("status"), "use status") &&
 		       !strcmp(us_word("x"), "use (not on|off|status: ignored)"),
 	       "use words");
@@ -15305,6 +15361,31 @@ static void bh_tests(void)
 	       (unsigned long long)g_bh.overrides);
 	bh_end_log();
 	EXPECT(log_has("BOW HIT END calls 2, ours 1, with an override attack 1"), "bowhit END");
+	{ /* build 27b, SOMVR_BOW_HEADKILL (unset: on): the game's own light head hit on an orc (no captain near: no orcs) -> the
+	   * call gets its heavy head hit; off: passed on as the game picked it */
+		static _Alignas(8) char lh[0x30], hh[0x30];
+		static const char *const hn[2] = { "PC_Ranged_Normal_Hit_Light_HeadOrc", "PC_Ranged_Normal_Hit_Heavy_HeadOrc" };
+		lh[1] = hh[1] = 2;
+		memcpy(lh + 0x20, &hn[0], 8), memcpy(hh + 0x20, &hn[1], 8);
+		g_bh.head_state = 1, g_bh.body_atk = (uintptr_t)lh, g_bh.head_atk = (uintptr_t)hh;
+		uintptr_t base = 0x1000 ^ (uintptr_t)&hit ^ 0x55 ^ 0x66 ^ (uintptr_t)nodeh ^ 1;
+		int kon = g_kp.on;
+		g_kp.on = 0; /* SOMVR_CAPTAIN off: no captain list - kept */
+		c_bhhit(0x1000, (uintptr_t)&hit, (uintptr_t)lh, (uintptr_t)nodeh);
+		uintptr_t x0 = g_bh_last;
+		g_kp.on = 1; /* the captains followed, none in the world (no faction): an orc */
+		c_bhhit(0x1000, (uintptr_t)&hit, (uintptr_t)lh, (uintptr_t)nodeh);
+		uintptr_t x1 = g_bh_last;
+		g_kp.on = kon, g_bh.headkill = 0;
+		c_bhhit(0x1000, (uintptr_t)&hit, (uintptr_t)lh, (uintptr_t)nodeh);
+		uintptr_t x2 = g_bh_last;
+		EXPECT(log_has("CONFIG bow_headkill=on (SOMVR_BOW_HEADKILL, build 27b; unset: on)") && g_bh.headkills == 1 &&
+			       g_bh.hk_captains == 1 && x0 == (base ^ (uintptr_t)lh) && x1 == (base ^ (uintptr_t)hh) &&
+			       x2 == (base ^ (uintptr_t)lh) && log_has("a Nemesis captain (or SOMVR_CAPTAIN off): kept") &&
+			       log_has("on an orc: 'PC_Ranged_Normal_Hit_Heavy_HeadOrc' instead (SOMVR_BOW_HEADKILL)"),
+		       "bow headkill: the light head hit -> the heavy one; off: the game's: %d %d %llu", x1 == (base ^ (uintptr_t)hh),
+		       x2 == (base ^ (uintptr_t)lh), (unsigned long long)g_bh.headkills);
+	}
 	unsetenv("SOMVR_BOW_HITLOG");
 	g_bow.on = bon, g_bow.fire_sc = fsc, g_bow.atk = fatk;
 	g_bh_sites = g_bh_sites_game;
@@ -15731,6 +15812,68 @@ static float fn_span(const unsigned char *v, int k) /* the quad's height (its co
 	const float *a = (const float *)(v + (size_t)(k * 4) * 60), *c = (const float *)(v + (size_t)(k * 4 + 2) * 60);
 	return c[1] - a[1];
 }
+/* build 28 (re-xr-pipeline.md 126): SOMVR_FX_NEAR_MEM through the proxy's map (slot 9) on a stand-in context whose
+ * map fills out as vf_09 does (+0 the pointer, +0x10 the vertices granted, +0x18 the stride): shadow - the game is
+ * handed our copy, never its mapping (poisoned: what the game wrote can only get there by our copy), the fold there,
+ * the copy and out+0 back at the unmap; another stride - the mapping handed as it is, nothing folded or copied;
+ * direct - the mapping handed, folded in place */
+static unsigned char *fn_real;
+static uint32_t fn_stride = 60;
+static int64_t fn_map(void *self, int64_t a, int64_t n, int64_t c, void *out, int64_t e, int64_t f)
+{
+	(void)self, (void)a, (void)c, (void)e, (void)f;
+	*(unsigned char **)out = fn_real;
+	*(uint32_t *)((char *)out + 0x10) = (uint32_t)n, *(uint32_t *)((char *)out + 0x18) = fn_stride;
+	return 0;
+}
+static void fn_shadow_tests(void **a)
+{
+	static unsigned char real[4 * 4 * 60 + 64];
+	static void *vt[16], *ctx[1];
+	unsigned char out[0x30];
+	vt[9] = (void *)fn_map, ctx[0] = vt, fn_real = real;
+	rd_near_vt();
+	void *px[2] = { g_pxn_vt, ctx };
+	/* shadow */
+	atomic_store(&g_fn.direct, 0), fn_stride = 60;
+	memset(real, 0xee, sizeof real), memset(out, 0, sizeof out);
+	g_px.ptr = NULL, g_fn.a = a, g_fn.sh_real = NULL;
+	uint64_t c0 = atomic_load(&g_fn.copies), f0 = atomic_load(&g_fn.folded);
+	int64_t r = ((rd_px_map_fn)g_pxn_vt[9])(px, 4, 16, 4, out, 0, 0);
+	unsigned char *gp = *(unsigned char **)out;
+	EXPECT(r == 0 && gp && gp != real && g_px.ptr == real && g_fn.sh_real == real,
+	       "fxnear shadow: the game handed %p (its mapping %p)", (void *)gp, (void *)real);
+	if (!gp || gp == real)
+		return;
+	fn_put(gp, 0, 30010, 2000, -24000, 0x11223344), fn_put(gp, 1, 30022.5f, 2000, -24000, 0x55667788);
+	fn_put(gp, 2, 30100, 2000, -24000, 0x99aabbcc), fn_put(gp, 3, 30025, 2000, -24000, 0x01020304);
+	memcpy(gp + (3 * 4 + 1) * 60 + 12, "\x05\x06\x07\x08", 4);
+	somvr_rd_near_unmap();
+	EXPECT(*(unsigned char **)out == real && !g_fn.sh_real && fabsf(fn_span(real, 0)) < 1e-3f &&
+		       fabsf(fn_span(real, 1) - 2.0f) < 1e-3f && fabsf(fn_span(real, 2) - 4.0f) < 1e-3f &&
+		       fabsf(fn_span(real, 3) - 4.0f) < 1e-3f && !memcmp(real + (3 * 4 + 1) * 60 + 12, "\x05\x06\x07\x08", 4) &&
+		       real[16 * 60] == 0xee && atomic_load(&g_fn.copies) == c0 + 1 && atomic_load(&g_fn.folded) == f0 + 1,
+	       "fxnear shadow: the mapping after the unmap: out+0 %p, spans %.2f %.2f %.2f %.2f, past the grant %#x, copies +%llu",
+	       *(void **)out, fn_span(real, 0), fn_span(real, 1), fn_span(real, 2), fn_span(real, 3), real[16 * 60],
+	       (unsigned long long)(atomic_load(&g_fn.copies) - c0));
+	/* another stride: the mapping as it is */
+	fn_stride = 24, g_fn.a = a, g_fn.sh_real = NULL;
+	uint64_t k0 = atomic_load(&g_fn.skipped);
+	((rd_px_map_fn)g_pxn_vt[9])(px, 4, 16, 4, out, 0, 0);
+	EXPECT(*(unsigned char **)out == real && !g_fn.sh_real && !g_fn.a && atomic_load(&g_fn.skipped) == k0 + 1,
+	       "fxnear shadow: a 24-byte draw handed %p", *(void **)out);
+	somvr_rd_near_unmap();
+	EXPECT(atomic_load(&g_fn.copies) == c0 + 1, "fxnear shadow: a 24-byte draw copied");
+	/* direct: the mapping handed, folded in place */
+	atomic_store(&g_fn.direct, 1), fn_stride = 60, g_fn.a = a, g_fn.sh_real = NULL;
+	((rd_px_map_fn)g_pxn_vt[9])(px, 4, 4, 4, out, 0, 0);
+	EXPECT(*(unsigned char **)out == real && !g_fn.sh_real, "fxnear direct: the game handed %p", *(void **)out);
+	fn_put(real, 0, 30010, 2000, -24000, 0x11223344);
+	somvr_rd_near_unmap();
+	EXPECT(fabsf(fn_span(real, 0)) < 1e-3f && atomic_load(&g_fn.copies) == c0 + 1, "fxnear direct: span %.2f",
+	       fn_span(real, 0));
+	atomic_store(&g_fn.direct, 0), g_px.ptr = NULL, g_fn.a = NULL;
+}
 static void fn_tests(void)
 {
 	static unsigned char v[4 * 4 * 60 + 64];
@@ -15769,7 +15912,9 @@ static void fn_tests(void)
 	EXPECT(fabsf(fn_span(v, 0) - 4.0f) < 1e-3f && atomic_load(&g_fn.skipped) == k0 + 1, "fxnear: another format folded");
 	atomic_store(&g_fn.eye, 1);
 	EXPECT(!rd_near_now(), "fxnear eye 1: on in eye 0's pass");
-	atomic_store(&g_fn.eye, -1), atomic_store(&g_fn.on, 0);
+	atomic_store(&g_fn.eye, -1);
+	fn_shadow_tests(a);
+	atomic_store(&g_fn.on, 0);
 	EXPECT(!rd_near_now(), "fxnear off: on");
 	g_px.ptr = NULL, g_fn.a = NULL, g_rt_eye = e0;
 }

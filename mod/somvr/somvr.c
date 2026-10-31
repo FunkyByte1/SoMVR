@@ -1222,6 +1222,7 @@ static void bo_tick(sc_tick_out *o);
 static void bo_guard(sc_tick_out *o);
 static int bo_node_world(uintptr_t obj, uint32_t node, float out[3]);
 static _Atomic int g_bo_req_aimhead; /* the test word "bow aimhead": the next shot's ray onto the nearest orc's Head node */
+static float g_bo_aim_at[3];          /* build 27b: "bow aimhead X Y Z" - the orc nearest that point (within 4 m) instead */
 static _Atomic int g_bh_head_crit_req = -1; /* the word "bow headcrit 0|1" for somvr_bowhit_game.c (-1 none) */
 static void bo_moves(const somvr_bow_out *o, int was, double t);
 static int bo_arm_grip(int h, const somvr_hand hands[2], sa_xf *g, sa_xf *cal);
@@ -1406,6 +1407,11 @@ static int us_keep(int act, const char *str);
 static void us_prompt(uintptr_t key, int act, const char *str, int up);
 static int us_hide_to(uintptr_t key, int act);
 static int us_press_cmds(const sc_tick_out *o, int out[12]);
+/* build 27b (som-b27-nemesis3), SOMVR_USE_REPORT: "(A) View Battle Report" over the world - A's press taken (ab_tick)
+ * when nothing else wants it; held while A is (the climb then sees A up) */
+static int us_report_takes_a(double t, int strike, int fight, int climbing);
+static int us_report_owns_a(void);
+static int kp_hobj_captain(uintptr_t hobj); /* a Nemesis captain's object, any distance (somvr_captain_game.c; SOMVR_BOW_HEADKILL) */
 static const char *us_word(const char *w);
 static void us_config(int *bad);
 static void us_end_log(void);
@@ -12959,14 +12965,18 @@ static int bo_shoot(double t, int game_aim)
 	if (atomic_exchange(&g_bo_req_aimhead, 0)) { /* the test word "bow aimhead": a perfect head aim (headless only) */
 		struct cb_orc nr[1];
 		float at[3] = { in.origin.x, in.origin.y, in.origin.z }, hp[3];
-		if (a.pc && bo_orcs_r(a.pc, a.sc, at, BO_HC_RANGE_CM, nr, 1) > 0 && bo_node_world(nr[0].hobj, g_som.head, hp)) {
+		int pt = g_bo_aim_at[0] != 0 || g_bo_aim_at[2] != 0;
+		if (pt) /* build 27b (som-b27-nemesis3): a marked orc far off - the one nearest the word's point */
+			memcpy(at, g_bo_aim_at, sizeof at), memset(g_bo_aim_at, 0, sizeof g_bo_aim_at);
+		if (a.pc && bo_orcs_r(a.pc, a.sc, at, pt ? 400.0f : BO_HC_RANGE_CM, nr, 1) > 0 && bo_node_world(nr[0].hobj, g_som.head, hp)) {
 			sv_vec3 v = { hp[0] - in.origin.x, hp[1] - in.origin.y, hp[2] - in.origin.z };
 			float l = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z), c;
 			if (l > 1) {
 				v = (sv_vec3){ v.x / l, v.y / l, v.z / l };
 				c = v.x * in.dir.x + v.y * in.dir.y + v.z * in.dir.z;
 				logf_("BOW t=%.3f test: the shot's ray turned %.1f deg onto the nearest orc's Head node %.1f m away (bow "
-				      "aimhead)", t, acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f, l / 100.0f);
+				      "aimhead%s)", t, acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f, l / 100.0f, pt ? ": the orc nearest "
+				      "the word's point" : "");
 				in.dir = v;
 			}
 		}
@@ -13988,6 +13998,12 @@ static const char *bo_word(const char *w)
 		      atomic_load(&g_bow.strike_block) ? "block" : "game", (unsigned long long)g_bow.strike_cut,
 		      sk_prompt_up() ? "up" : "not up");
 		return "bow where";
+	}
+	float ap[3];
+	if (nw >= 1 && !strcmp(a, "aimhead") && sscanf(w, "%*s %f %f %f", &ap[0], &ap[1], &ap[2]) == 3) {
+		memcpy(g_bo_aim_at, ap, sizeof ap), atomic_store(&g_bo_req_aimhead, 1);
+		return "bow aimhead X Y Z (the next shot's ray onto the Head node of the orc nearest that point, within 4 m: headless "
+		       "tests only)";
 	}
 	if (nw >= 1 && !strcmp(a, "aimhead")) {
 		atomic_store(&g_bo_req_aimhead, 1);

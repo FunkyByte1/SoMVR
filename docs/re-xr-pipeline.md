@@ -20322,3 +20322,278 @@ The brutal kill's burst itself was not caught with the fold on (125.7).
 - Every screen-space effect is out (125.2); the user judges whether the vision, the death and riding still read well
   with their grade alone (no blur).
 - The sun winking in one eye (125.4) and the vision's dark exit (125.5) only if they show at 80 Hz.
+
+## 126. Build 28: the particles kept out of the eyes' faces at no cost to the render thread - the fold on our cached copy, not the game's mapping: `SOMVR_FX_NEAR_MEM`, `SOMVR_FX_NEAR=on` again (2026-10-31, som-b28-fxnear2)
+
+### 126.1 What was wrong: reading the game's vertex memory back
+Build 28's suite measured 125.3's fold at the render thread's limit: its CPU a stereo frame (p50) 17.5 / 21.4 / 25.7 ms
+(the meadow / a crowd of 8 / perf27's campfire) with `SOMVR_FX_NEAR=on` against 8.7 / 9.4 / 9.0 ms off (runs
+20261031-064537, -075549, -080016); build 28b shipped it off. The fold's work is small - ~260 particles a stereo frame in
+~21 draws (run 080016's `FXNEAR END`: 1064845 particles in 84541 draws) - but each costs ~50 us: every quad's four
+colours and corners were read from the pointer the game's map handed out, and that memory is the game's dynamic vertex
+buffer: GPU memory the CPU writes through write-combining and reads back uncached, one load at a time (as the hands'
+`SOMVR_XR_HANDS_MEM=cached`, 115.4: reading such memory back cost the present thread 1.85 ms a stereo frame).
+
+**The map** (`CD3D11BaseCustomRenderCallback::vf_09`, 0x7a5980; the particle draw `CParticleSystemRender::vf_04`
+0x2d885d0 calls it once, at 0x2d8891b, as `(ctx, 4, n, 4, out, 0, 0)` with out = its frame +0xd0): the stride is the
+bound format's (`*(u16 *)(ctx[+0x78] + 0x218 + 2 * stream)`: 60 for the particles), the vertices granted may be fewer
+than asked (the buffer's room); it fills out: +0 the pointer to write, +8 the buffer, +0x10 the vertices granted, +0x14
+the byte offset, +0x18 the stride, +0x1c the stream - and moves the buffer's fill (+0xa0) past granted x stride. vf_04
+reads out+0 right after the map (0x2d88930) and writes every vertex through it (its own loop or the helper 0x2d874a0),
+then unmaps (`vf_10`, 0x7a5fb0, at 0x2d8937e: its `vf_52` = ID3D11DeviceContext::Unmap of out+8; then out+8 bound as the
+stream at out+0x14; out+0, +8, +0x18 cleared - out+0 never read), then draws the quads it wrote (`vf_15`). A failed map
+returns before the unmap; every other way out of vf_04 after the map passes the unmap.
+
+### 126.2 The fix: the game writes into our memory - `SOMVR_FX_NEAR_MEM=shadow|direct` (code default shadow)
+In the eyes' passes with the fold on, the proxy's map (`rd_px_map` -> `rd_near_map`, somvr_render_game.c) lets the
+game's map run, then - for the 60-byte format - puts the pointer to our own cached buffer (64-byte aligned, grown in
+64 KB steps to the largest draw; the game caps a draw at 0x4000 vertices = 983040 bytes) into out+0. The game writes its
+vertices there at cached speed; at the unmap (the naked thunk on slot 10, every register kept) the fold of 125.3 runs on
+our copy, then the granted bytes go into the game's mapping in one sequential `memcpy` (writes to write-combined memory
+combine into whole lines: fast) and out+0 gets the mapping back before the real unmap. Nothing of the mapping is read.
+Another stride: the mapping is the game's, untouched (counted "not that format"); no memory for the copy: that draw
+unfolded (counted). `direct` = build 27's fold in the mapping itself: kept only as the measured "before" (never for
+play). Word `fxnear mem shadow|direct` (live). Lines: `CONFIG fx_near=.. (..; SOMVR_FX_NEAR_MEM shadow: ..)`,
+`FXNEAR state|END .. mem shadow ..; our copy into the game's mapping N times, X MB (no memory K)`.
+
+Selftest (fn_shadow_tests, selftest.c): through the proxy's slot 9 on a stand-in context whose map fills out as vf_09
+does, into a poisoned "mapping": the game is handed our copy, never its mapping (on the build 27 code this check fails:
+"the game handed 0x7037e0 (its mapping 0x7037e0)"); after the unmap the mapping holds the folded quads (10 cm folded,
+22.5 cm half its size, 100 cm and a four-colour quad as written), the bytes past the grant still poisoned, out+0 the
+mapping again, one copy; a 24-byte draw: the mapping handed as it is, nothing copied; direct: the mapping handed and
+folded in place.
+
+### 126.3 The measurement: the fold costs the render thread nothing (run 20261031-083512)
+The player's path (no SOMVR_FX_TEST; 20 Hz headless, the real GPU), scripts/fxnear28-drive.sh `perf`: in one boot, the
+fold's mode switched live (`fxnear on|off`, `fxnear mem shadow|direct`) with a 20-s `perf NAME` window per mode, in the
+practice meadow (the head level), with eight orcs fighting Talion (`practice group 8`) and at perf27's campfire
+(30873.5 3900 -32973.7). The render thread's CPU a stereo frame (the preload's PERF lines; ms, p50 (mean / p95);
+~420 stereo frames a window):
+
+| Place | shadow | off | direct (build 27) | shadow again | off again |
+|---|---|---|---|---|---|
+| meadow | 8.62 (8.68 / 9.27) | 8.58 (8.74 / 9.69) | 13.06 (12.95 / 14.13) | 8.64 (8.71 / 9.28) | 8.82 (8.91 / 9.80) |
+| crowd of 8 | 9.47 (9.53 / 10.13) | 9.54 (9.73 / 10.56) | 15.89 (16.05 / 20.06) | 9.40 (9.47 / 10.03) | 9.39 (10.74 / 10.60) |
+| campfire | 8.84 (8.88 / 9.51) | 8.79 (9.17 / 10.16) | 18.65 (18.44 / 20.97) | 8.80 (8.84 / 9.38) | 8.78 (8.81 / 9.30) |
+
+Shadow against off, the two windows each: -0.07 / -0.03 / +0.04 ms p50 - within the windows' own spread (off against
+off: 0.24 / 0.15 / 0.01). Direct, the same boot: +4.4 / +6.5 / +9.9 ms (build 28's suite: +8.8 / +12.0 / +16.7 with
+more particles about). The whole boot: 142131 CPU-particle draws in the eyes, 1544830 particles (0 not that format), 227
+folded and 3519 shrunk (the arrival's sparks of our blade at 18-30 cm, both eyes: the FXNEAR lines); our copy into the
+game's mapping 100248 times, 265.6 MB (2.6 KB a draw), no memory 0. The scene through our copy (frame 7263, both eyes
+at 15,30): the same as the game's - the ruin's torch, the grass, nothing torn or missing.
+
+### 126.4 Still correct: eye 0 through our copy = eye 1 the game's, to the pixel (run 20261031-094021)
+SOMVR_FX_TEST=1 (`fx eyesame 1`: both eyes rendered from one pose - whatever still differs is per-eye state), at perf27's
+campfire, the left hand ahead (its wraith wisps - CPU particles - in view, as 125's run 060017), fxnear28-drive.sh `same`;
+scripts/fx27-eyediff.py on the dumps (the share of pixels off by more than 8 / 40 between the two halves):
+
+| Dump (frame) | Eye 0 | Eye 1 | > 8 | > 40 |
+|---|---|---|---|---|
+| game-floor (207) | the game's (`fxnear off`) | the game's | 0.000 % | 0.000 % |
+| shadow 15,30 (215, 217) | our copy, folded at 15,30 (`fxnear eye 0`) | the game's | 0.000 % | 0.000 % |
+| control 1500,2000 (221) | our copy, everything nearer than 15 m folded | the game's | 1.464 % | 0.412 %, the box 53,1808-649,2143: the left hand's wisps |
+| direct 15,30 (229) | build 27's fold in the mapping | the game's | 0.000 % | 0.000 % |
+| shadow 15,30 again (236) | our copy | the game's | 0.000 % | 0.000 % |
+
+So the game writes every vertex through the pointer it is handed and our copy puts back exactly what it wrote: the
+picture through it is the game's, bit for bit, wherever nothing is near; the control proves the dumps can tell (the
+wisps gone in eye 0, there in eye 1: 752 particles folded in its ~1 s). The far wisps at 15,30 untouched in both modes.
+The brutal kill's burst with the fold: not caught - abil27d-drive.sh's `brutal` chained on run 083512 failed as in 125.6
+(the blade "carried by the walk", then "not behind it": that driver's staging); the arrival's sparks of our blade at
+18-30 cm were shrunk in both eyes through our copy (the FXNEAR lines).
+
+### 126.5 The runs (headless; scripts/headset-build26.env with the som-b28-fxnear2 block, SOMVR_HANDS_TEST=1, the layer's test file; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-) | What it showed |
+|---|---|
+| 20261031-083512 | fxnear28-drive.sh `perf ab` + abil27d-drive.sh `brutal` (the player's path): 126.3's table; the ab step's 800,1000 showed nothing (the wisps out of view, nothing else within 8 m: 6 quads shrunk) - the A/B moved to 094021 with the hand ahead; the brutal kill not landed |
+| 20261031-094021 | `same` (SOMVR_FX_TEST=1): 126.4's table |
+
+### 126.6 Switches; for the headset
+`SOMVR_FX_NEAR=on` again (the som-b28-fxnear2 block; build 28b's `off` line commented out), `SOMVR_FX_NEAR_MEM=shadow`
+(code default; the env says it). `direct` and the word `fxnear mem direct` are the measured "before" only.
+For the headset (125.7 still holds): the brutal kill and the execution up close - the blood stops a hand's breadth from
+the eyes (15,30); nothing the player wants close (the wraith wisps on the left hand, a torch held near) shrinks; and the
+frame rate the same with it as without (the render thread's PERF line in the session's log: ~9 ms headless).
+
+## 124. Build 27b: the warchief drawn out by the VR bow - an arrow in an orc's head kills, "Piercing Light" to Olrok and his bodyguards; a struggle's outcome's "View Battle Report" by A: `SOMVR_BOW_HEADKILL`, `SOMVR_USE_REPORT` (2026-10-31, som-b27-nemesis3)
+Headless boots from logs/boot-check-20261031-004441/saves/GameData.sav (nemesis2's furthest: the warchief identified, his
+mission's marker up) and boot 20261030-141205's (the Execution, the Ambush, the Duel; 116.3). scripts/headset-build26.env + `SOMVR_HANDS_TEST=1 SOMVR_PRACTICE_QUIET=0
+SOMVR_PRACTICE_CLEAR=0` (+ `SOMVR_BOW_HITLOG=1` for the hit lines); driver scripts/nemesis27-drive.sh, step `olrok` (and
+`struggles` with `NM_REPORT=1`). Code: somvr_bowhit_game.c (the head kill), somvr_use_game.c and somvr_step_game.c (the
+report on A), somvr.c (the test aid `bow aimhead X Y Z`). handoff/HANDOFF-captain.md "Build 27b".
+
+### 124.1 His supporters by the VR bow: five arrows an orc (the cause); one now (`SOMVR_BOW_HEADKILL=on`)
+- **"Piercing Light"** (boot 025854 and each after): B at his start point 'confrontationGoldenMarked' (-8997 2811
+  -25532), the card in the window (116.9's fix), A -> "Rain death from afar and draw the Warchief forth.", the HUD
+  **"0 / 5 Kill Supporters with Bow Attacks"**. His supporters are eight orcs the game marks 'ObjectiveGoldLowClutter'
+  (`practice status nav` lists them where they are: archers on the camp's towers and walls, others walking, 25-143 m
+  from the start) among the camp's other orcs and its prisoners below the start's ledge.
+- **The cause** (boot 025854): our arrows in a supporter's head took **'PC_Ranged_Normal_Hit_Light_HeadOrc': 20 of an
+  orc's 95** (eight hits at 1-7 m, 95 -> 75, 115 -> 85: none killed) - re-bow.md 13.4's "the one-arrow kill the flat
+  game shows is not reproduced"; the quiver holds 8 arrows. Five supporters by the bow meant five quivers and a walk to
+  each corpse's bundle: not the flat game's mission.
+- The game's database has **'PC_Ranged_Normal_Hit_Heavy_HeadOrc'** (`bow attacks`, boot 025854); in the light one's place
+  (the old test swap `SOMVR_BOW_HEADSHOT_CM` with its records set) it **killed at once: 95 -> 0 DEAD at 29.4 m** (boot
+  032341; `BOW headshot ... the attack 'PC_Ranged_Normal_Hit_Heavy_HeadOrc' instead of '..._Light_HeadOrc'`).
+- **Decided** (the flat game's headshot; Blade & Sorcery: an arrow to the head kills): when the game itself picks the
+  light head hit - its impact at the Head node, i.e. the player's own aim (SOMVR_BOW_AIM=exact, no assist: ASSIST_DEG 0)
+  - on an orc who is **not a Nemesis captain**, the hit gets the heavy one. A captain keeps the game's (his traits
+  decide); body hits, goblins, beasts and prisoners keep theirs. Lines `BOW headkill t=.. the game's own head hit
+  '..Light_HeadOrc' on an orc: '..Heavy_HeadOrc' instead` / `on a Nemesis captain: kept`, `BOW HIT END ... headkills N
+  (captains kept N)`.
+- **Proven** (boot 040842, the switch as shipped): from the start point 23 shots, six head hits, **five orcs 95 -> 0
+  DEAD at 26-31 m**; the HUD after (flat shot): **"2 / 5 Kill Supporters with Bow Attacks"** - the heavy head hit counts
+  as a bow attack; three of the five were the camp's other orcs. Boot 050130: 1 / 5, 2 / 5, 3 / 5, then the fifth.
+
+### 124.2 Olrok drawn out: his coming with his bodyguards, their introductions, the fight
+- **The warchief came** (boot 050130, the supporters' fifth by the bow): `the world's captains: member 8 came (the
+  warchief, ... Role_ShieldMaster level 15 AI_Defender column 2), 66.4 m from Talion` with **his bodyguards** member 9
+  (Sawbones, Defender, level 9), 11 (Unkillable, Defender, 8), 12 (AllEater, Berserker, 13) in the same tick, 65-67 m
+  off (section 10's lines; the SkinFlayer, his fourth, already in the world).
+- **Their introductions came one at a time, not in a row**: the warchief's arrival (a presentation, the window 10.4 s),
+  then each bodyguard as he reached Talion 15-30 s apart - the SkinFlayer 91 deg off the view (the window, 7.2 s:
+  "Death-Walker!" "I will butcher you where you stand!"), Sawbones (no captain near and in view: the window, 6.9 s: "Like
+  to watch from a distance, do ya? I prefer to get in close..."), the AllEater 4.6 m ahead (in the world, 2.9 s). Each
+  decided once by 104.2's rule (in the world near and in view, the window otherwise); no queue of cards, nothing held
+  up. `CAPTAIN END: presentations in the world 8, in the window 7` over the boot.
+- **The fight** (the test's cuts: `execute chase captain`, `captain hp 60`; NM_OL_FIRST unset - the bodyguards first, as
+  the card's hint): **Sawbones killed by the player in 19 s** (a light cut, `by the player 1, 'PC_HC_Lowest_...'`, no
+  Last Words), **Unkillable in 42 s** (his Last Words - "Mercy! Mercy!" -, X = Kill, the Defender's finisher:
+  `'PC_Def_Finsher_PCWin', by the player 1`), **the AllEater in 51 s** ('PC_Bzrk_Finsher_PCWin'); their runes by B (2 of
+  3 picks seen). The finisher's stab line read "not won" at the driver's check for two of them and the win came after
+  it (the stab's completion lands on the struggle's next update; 116.2).
+- **Olrok's Last Words** ('PC_Bip_Sync_LastWords_Choice_Warchief_Defender': "You could have persuaded me to join you. We
+  could have had so much fun together!"): **answered as an interrogation** - `last words: the captain .. held by the
+  game (205 cm ..), its choices up (161 'CombatStruggle01', 164 'CombatStruggle04')`, Kill passed on, Dominate's prompt
+  as LT - the same choice as a captain's (116.1). The boot's 30-minute limit ended it there (`near the hard limit:
+  quitting`, +1670 s).
+- **Olrok killed in VR** (boot 084537: 3 / 5 by the driver's hunt, then by hand on the live boot - the marks nearest
+  Talion, `bow aimhead X Y Z`: 4 / 5, and a tower archer 21.6 m off the fifth): **he came with his four bodyguards**
+  (Sawbones, the BladeSmith, Unkillable, the AllEater, 41-45 m off); fought first (`olfight`): his introduction in the
+  world, his Last Words ("You could have persuaded me to join you..."), **X = Kill**, the warchief's finisher
+  ('DefWarchief_PC_Finisher_PCLose' sync, a CStruggleAim of **1.9 s** - half a captain's 4 s): the test's three thrusts
+  were "not at him" as stabs (119, 47, 126 deg off the line to his chest - the scripted thrust goes straight ahead, he
+  stood to the side), the third (6.9 m/s, the cursor steered down-left by the hand) **pressed inside the ring: `result 1`
+  -> 'PC_Def_Finisher_PCWin_Perfect'** -> `member 8 (the warchief ...) died 84.1 s after he came: (IsDead 1, IsMockDead 1,
+  IsSevered 1); the last death: by the player 1, the attack 'PC_Def_Finisher_PCWin_Perfect'` - beheaded, the player's
+  kill. Both eyes in the finisher: his shield and blade a metre ahead, the sword hand low (st ol-w-try1-stabbed). The
+  SkinFlayer then killed by the player's cut (20.9 s). The mission's end: a window 2.9 s ("another kind of
+  presentation"), then the world by day with "Unlock Ability" and the board's "No Warchief Selected" (flat shot ol-w-end).
+
+### 124.3 A struggle's outcome's "View Battle Report" by A (`SOMVR_USE_REPORT=on`)
+- **What a VR player could not do** (116.3, 104.3): the outcome screen ("Ratlûg the Gluttonous - Died - Elite Captain,
+  Power 14 - Ratlûg the Gluttonous failed to execute his prisoners - [d-pad] View Battle Report (B) Back") offers 309
+  'ViewReplay'; no VR control sent it (B was Back, 307, since build 25/27).
+- **Decided**: A is View Battle Report wherever the screen waits for an answer - **in the window** (a presentation: the
+  pad's A binding if the game binds it, else 309 directly while the game has it active), and **over the world** while
+  the game has 309 *and* 307 active (the outcome that waits, 116.3) and A would be the jump's or the climb's: never the
+  strike's mark, never the dodge in a fight, never a hang's drop (ab_tick decides A's owner at the press; that press is
+  then not the jump, the climb sees A up). The HUD banner a captain's death leaves over the world ("KILLED - [d-pad]
+  View Battle Report", 309 alone, a few seconds) keeps A the jump's: a jump right after a kill must not open a board;
+  the board is in the pause menu (Sauron's Army) too. The text's d-pad glyph is drawn as A's (`SOMVR_TEXT_BUTTONS`
+  309:121).
+- **Proven in the window** (boot 061841, from boot 20261030-141205's save): the Execution's Ratlûg (his Last Words, X,
+  the finisher won, `by the player 1, 'PC_Bip_Finsher_PCWin'`), the outcome in the window, **A: `309 'ViewReplay'
+  pressed by A (the window; not bound to the pad's A now; SOMVR_USE_REPORT)`** -> the battle report = **Sauron's Army
+  at his slot: "Ratlûg the Gluttonous - Elite Captain - Power 14 - Eliminated! Select a new Target", (B) Return to Game**
+  (flat shot s1-k-report) -> B -> the world (`ctx=world` 23 s later), then B picked his rune. The Ambush's Fool (killed
+  by the player in 8 s, `'PC_HC_Lowest_...'`) the same: 309 by A, the board, B, the rune.
+- **Over the world** (boot 080447, the Duel): the outcome came over the world as the BladeSmith died ("Ükbûk Skin-Flayer
+  - Power Increased! VS Hoshû Blade Smith - Killed - Ükbûk Skin-Flayer has defeated Hoshû Blade Smith in the duel - **(A)
+  View Battle Report (B) Back**": the glyph now A's, `TEXTBUTTONS a UI text's token: command 309 'ViewReplay' -> the icon
+  of CombatPrimary04`); the winner was at Talion, so **A stayed the dodge's** (`A t=.. press: the dodge's (... a fight
+  1 ...)`, the dodge itself refused: the game moved Talion) - no board in a fight, as decided; **B closed it:
+  `307 'IdentifySkip' pressed (the pad's B, active; B in the world)`, `309 + 307 over the world: no longer both active`
+  0.15 s later** - SOMVR_USE_WORLD_BACK seen firing (through the pad's B binding, 116.3's first path). Then the
+  SkinFlayer killed by the player (6 s, his rune by B). A over the world outside a fight (the board): not met in a boot.
+- The pictures of a window are the flat shots: the eyes' dump during a window keeps the last stereo frame (the world),
+  not the window's quad.
+- Lines: `USE t=.. 309 'ViewReplay' pressed by A (the window|a struggle's outcome over the world; ...)`, `USE t=.. A over
+  the world while a struggle's outcome is up ...: View Battle Report - not the jump`, `USE t=.. a struggle's outcome
+  over the world: 309 ... and 307 ... active` / `... no longer both active`, `CONFIG use_report=..`, `USE END build 27b:
+  View Battle Report (309) pressed N; a struggle's outcome over the world N times`.
+
+### 124.4 The Execution, the Ambush and the Duel as a player meets them (boots 060315, 061841)
+- From boot 20261030-141205's save (Talion's death had made them, 116.3): each marker (284-750 m off; the test's
+  `practice go`), B, the card in the window, A; the captain met 25-39 m off within seconds; Talion brought 3 m from him
+  at once (a struggle plays out in 45-60 s); the player's cuts (`captain hp 60`, the test's edge cuts).
+- **The Execution** (061841): Ratlûg's introduction, his Last Words in 24 s, X = Kill, the finisher (the stab: its win
+  landed after the driver's check), `by the player 1, 'PC_Bip_Finsher_PCWin'`, the outcome in the window, the report by
+  A, B, his rune by B; **the Runt** (his second) killed by the player's light cut in 14 s - the HUD banner above.
+- **The Ambush** (061841): the Fool (Role_Fool, level 7, an archer) met at 38.6 m, **killed by the player in 8 s**, the
+  outcome in the window, the report by A, B, his rune; no other captain of the Ambush near Talion after it.
+- **The Duel** (061841): the BladeSmith met at 34.2 m; our cuts took him to 480 (the game healed him back to 555 twice in
+  the duel), the SkinFlayer killed him 43 s in ('AI_NamOrc_OrcBip_Infight_InstaKill_F', `IsDead 1, IsMockDead 1`) and
+  the Duel's outcome came **over the world** while the test still cut at the winner 2.7 m off: the SkinFlayer (at the
+  test's 60 health) took no cut for 4 minutes with the outcome unanswered. Boot 080447: the BladeSmith killed by the
+  player in 4 s (`'PC_HC_Medium_...', by the player 1`), the outcome over the world, B = Back (above), **the SkinFlayer
+  killed by the player in 6 s** - both of the Duel's captains (the SkinFlayer's rune by B; at the BladeSmith's body B
+  went to QuestConfirm 282 three times, no pick seen).
+- **The Execution again** (080447): Ratlûg killed by the player's cut in 10 s (no Last Words this time), the Runt in 9 s,
+  both runes by B; the outcome came in the window after the test's 12 s wait and its B (pick) closed it (307).
+- **Talion's death at the Execution** (boot 060315): two of the test's trips 2.5 m from Ratlûg did not arrive (the ground
+  3 m under the target: `WARN PRACTICE ... the trip there did not arrive after 3 teleports`); a failed trip leaves the
+  practice's min health off (Talion away from its spot), and Ratlûg's crowd killed him - a harness effect (a player
+  walks); the driver now trips again to where Talion stands (`anchor`).
+
+### 124.5 Runs (headless; each: no crash, the install unchanged, GameData.sav UNCHANGED; every WARN a test trip that did not arrive, `WARN PRACTICE ... the trip there did not arrive`)
+| Run (logs/boot-check-20261031-) | Save | WARN | Steps | What it proved |
+|---|---|---|---|---|
+| 025854 | 004441 | 2 | olrok (trips 18 m from the marks) | **the cause**: eight head hits on supporters at 1-7 m, 95 -> 75 each, none killed; `bow attacks` (the heavy head record exists); a failed trip turned the practice's min health off and the camp killed Talion |
+| 032341 | 004441 | 0 | olrok (from the start) + the test swap to '..Heavy_HeadOrc' | **95 -> 0 DEAD at 29.4 m** in one arrow; the quiver (8) ran dry (the driver refills since) |
+| 040842 | 004441 | 0 | olrok, SOMVR_BOW_HEADKILL as shipped | **five orcs killed in 23 shots at 26-31 m**, the HUD "2 / 5 Kill Supporters with Bow Attacks"; a captain's head hit kept (the SkinFlayer 540 -> 515) |
+| 042743 | 004441 | 9 | olrok (the nav list, a driver bug) | five more camp orcs killed, all eight marks stayed (not his); a captain met and fought (the trips' WARN) |
+| 044749 | 004441 | 0 | olrok (aimed at the marks from the start) | the aid's point search finds only orcs in the player's bands (~40 m): one kill, no mark gone |
+| **050130** | 004441 | 1 | olrok (start, then the hunt) | **1 / 5, 2 / 5, 3 / 5 (flat shots), the fifth -> the warchief and his bodyguards came** (124.2); their introductions; the three bodyguards killed by the player; **Olrok's Last Words** answered as an interrogation; the 30-minute limit |
+| 053438 | 004441 | 0 | olrok (the hunt) | the objective's screen put the bow away (no shot; the driver re-takes it since); a trip to a mark 149 m off: Talion under the world, the mission gone |
+| 054458 | 004441 | 0 | olrok (the hunt) | a tower archer's mark: the test's turned shots met the parapet; no ground mark within 75 m later |
+| 060316 | 141205 | 2 | struggles | two trips beside Ratlûg failed, the min health off, the Execution's orcs killed Talion; the next cards did not come (the death) |
+| **061841** | 141205 | 1 | struggles | **the report by A in the window twice** (the Execution's Ratlûg after his Last Words, X and the stab; the Ambush's Fool killed in 8 s): Sauron's Army at the captain, B back; the Runt 14 s; the Duel's outcome over the world unanswered |
+| 074703 | 141205 | 2 | struggles (1, 3) | Talion killed at the Execution again (the failed trip's 5 s; the driver anchors at once since) |
+| **080448** | 141205 | 2 | struggles (1, 3) | Ratlûg 10 s and the Runt 9 s by the player; **the Duel: the outcome over the world, "(A) View Battle Report" with A's glyph, A = the dodge in the fight, B = 307 (the world's Back)**; the BladeSmith (4 s) and the SkinFlayer (6 s) both killed by the player |
+| 082500 | 004441 | 0 | olrok | stopped by me after 9 min: the slot given back to the coordinator's suite |
+| **084537** | 004441 | 2 | olrok (both) + by hand + `olfight` | 3 / 5 by the hunt, **4 / 5 and 5 / 5 by the test's shots at the nearest marks**; **the warchief and his four bodyguards came; Olrok's Last Words, X, his finisher won by the ring's press: 'PC_Def_Finisher_PCWin_Perfect', beheaded, by the player 1**; the SkinFlayer killed; the mission's end |
+| 094255 | 141205 | 1 | struggles (3) | the Duel: its two captains left the world alive 21.6 s after they came (the card's window, then a presentation in the window; no fight); the test's chase went after another captain 76 m off - stopped; A over the world outside a fight still not met |
+
+### 124.6 Switches (the som-b27-nemesis3 block at the end of scripts/headset-build26.env)
+| Switch | Code default | build 27b env | Off / other |
+|---|---|---|---|
+| `SOMVR_BOW_HEADKILL` | on | on | off = build 27b: our arrows' head hits are the game's light one (20 of 95: five arrows an orc) |
+| `SOMVR_USE_REPORT` | on | on | off = build 27b: a struggle's outcome's View Battle Report (309) has no VR control |
+| `SOMVR_TEXT_BUTTONS` (build 23) | unset | **...,14:127,309:121** (the som-b27-story2 line commented out) | 309's d-pad glyph drawn as A's |
+`SOMVR_BOW_HEADSHOT_CM/_BODY/_ATTACK` (build 11's test swap) stay test switches: with HEADKILL on they default to the
+light -> heavy head records and need no ray test. Lines: `CONFIG bow_headkill=..`, `BOW headkill t=..`, `BOW HIT END ...
+headkills N (captains kept N; SOMVR_BOW_HEADKILL on)`, `CONFIG use_report=..`, `USE t=.. 309 'ViewReplay' pressed by A
+...`, `USE t=.. A over the world while a struggle's outcome is up ...`, `USE END build 27b: View Battle Report (309)
+pressed N; a struggle's outcome over the world N times`, `TEXTBUTTONS a UI text's token: command 309 'ViewReplay' -> the
+icon of CombatPrimary04`.
+
+### 124.7 Test aids and the driver
+- `bow aimhead X Y Z` (SOMVR_HANDS_TEST, somvr.c): the next shot's ray onto the Head node of the orc nearest that point
+  (within 4 m). The orc must be in the player's combat bands (~40 m; boot 044749: farther marks found nothing) and there
+  is no line-of-sight test (the game's hit is immediate at the aimed point): a scripted aim, the player's own in the
+  headset. `bow aimhead` alone is build 13's (the nearest orc to the arrow).
+- scripts/nemesis27-drive.sh `olrok`: the card if the marker is up; `NM_SUP_FROM=start` (the nearest orcs from the start
+  point, `look`), `hunt` (the marks 'ObjectiveGoldLowClutter' on the ground within 75 m of the start, Talion 18 m short,
+  the head turned to the orc at the mark's distance, two shots at the mark), `both` (start, then hunt); the quiver refilled
+  (`bow arrows 8`), the bow re-taken when a screen put it away; his coming (150 s), the introductions' pictures, the fight
+  (`NM_OL_FIRST=1`: him first). `NM_REPORT=1`: after each death the outcome (window or world) - A, the pictures, B; over
+  the world mid-fight too (A that is the dodge's keeps it up for after the fight); `NM_STRUG_ONLY`. A trip that does not
+  arrive is followed by one to where Talion stands (`anchor`: the practice's min health on again - boots 060316, 074703).
+- The flat shot shows the HUD's objective ("N / 5 Kill Supporters with Bow Attacks") at its top right; the eyes' dump does
+  not show a window (124.3).
+
+### 124.8 Open, for the headset
+- **The headshot**: one arrow kills a regular orc; whether that feels right next to the flat game (and the quiver's 8)
+  is the user's call. A partial draw kills as a full one (the game picks the head by the impact).
+- **Olrok's end in VR**: seen won by the finisher ring's press (084537), not by the stab: his finisher is a 1.9 s
+  struggle and he stands to the side of a straight thrust - in the headset, does a player stab him (at his chest, within
+  40 deg) in under 2 s? If not, the ring (the other hand's steer) wins it, as here; a loss lets him get up (fight on).
+- **A over the world outside a fight** (the board from a struggle's outcome that came over the world, Talion not
+  fought): not met; in the fight A stays the dodge (seen), B closes it (seen). The window's A and B: seen.
+- The Duel's and the outcome's HUD over the world is small and split ("Duel VS Duel" low in the view, the card at the
+  top of the HUD quad): readable in the headset? (116.8's question still.)
+- The tower archers among his supporters: a VR player shoots up at them or climbs; the test could not (the parapet).
+- The HUD banner after a captain's death ("KILLED - View Battle Report", 309 alone) keeps A the jump's (decided); the
+  board is in the pause menu.

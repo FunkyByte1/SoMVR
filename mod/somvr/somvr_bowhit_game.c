@@ -16,7 +16,18 @@
  *   (the latched draw, g_bow.fire_o/fire_d) passed within R cm of the hit orc's Head node (GetNodeTransform) and the
  *   game picked the body override SOMVR_BOW_HEADSHOT_BODY ('PC_Ranged_Normal_Hit_Light_CharOrc'), the call gets the
  *   head override SOMVR_BOW_HEADSHOT_ATTACK ('PC_Ranged_Normal_Hit_Light_HeadOrc') instead: the stock arrow's own
- *   AttackOverrides entry for an orc's head, the game's damage. Other characters (goblins, beasts) keep the game's. */
+ *   AttackOverrides entry for an orc's head, the game's damage. Other characters (goblins, beasts) keep the game's.
+ *
+ * SOMVR_BOW_HEADKILL=on (build 27b, som-b27-nemesis3; docs/re-xr-pipeline.md 124; default on) - an arrow in an orc's head
+ *   kills him, as the flat game's one-arrow headshot. Our arrows' head hits came with the game's own
+ *   'PC_Ranged_Normal_Hit_Light_HeadOrc' (20 of an orc's 95: re-bow.md 13.4; boot 20261031-025854: "Piercing Light"'s
+ *   supporters hit in the head at 1-7 m, 95 -> 75, none killed; the mission asks five killed by the bow). The game's own
+ *   'PC_Ranged_Normal_Hit_Heavy_HeadOrc' in its place killed at once (boot 20261031-032341: 95 -> 0 at 29 m). So when the
+ *   game itself picks the light head hit (its impact at the Head node: the player's own aim with SOMVR_BOW_AIM=exact) on
+ *   an orc who is not a Nemesis captain (kp_hobj_captain: the members in the world, at any distance; SOMVR_CAPTAIN off =
+ *   no way to tell: kept), the call gets the heavy one; a captain keeps the game's (his Nemesis traits decide). With it on, SOMVR_BOW_HEADSHOT_BODY / _ATTACK default to the light / heavy head records and no ray test is
+ *   made (SOMVR_BOW_HEADSHOT_CM is the off case's). Lines: `BOW headkill t=..`, `BOW HIT END ... headkills N (captains
+ *   kept N)`. Off: build 27b (the light head hit, five arrows an orc). */
 
 /* BOWHIT_SITES_BEGIN (check_sites.py counts this block on its own: the patched K_CALL in FUN_027be5d0) */
 static const struct site_spec g_bh_sites_game[] = {
@@ -35,7 +46,8 @@ static struct {
 	float head_cm;
 	char head_name[96], body_name[96];
 	uintptr_t head_atk, body_atk;
-	uint64_t calls, ours, overrides, heads, head_miss;
+	uint64_t calls, ours, overrides, heads, head_miss, headkills, hk_captains;
+	int headkill;               /* build 27b: SOMVR_BOW_HEADKILL */
 	uint32_t lines;
 } g_bh;
 
@@ -69,6 +81,7 @@ static float bh_ray_dist(sv_vec3 o, sv_vec3 d, const float p[3])
 	return sqrtf(w.x * w.x + w.y * w.y + w.z * w.z);
 }
 
+
 /* the call (the game thread, in a projectile's update or our shot's fire call): logged for the player's arrows */
 __attribute__((used)) uint64_t somvr_w_bowhit(uintptr_t shooter, uintptr_t hit, uintptr_t attack, uintptr_t ranged,
 					     uintptr_t a5, uintptr_t node, uint64_t inc, uint64_t crit)
@@ -88,7 +101,16 @@ __attribute__((used)) uint64_t somvr_w_bowhit(uintptr_t shooter, uintptr_t hit, 
 		g_bh.overrides += (uint64_t)ovr;
 		char an[96], nn[96], rn[96];
 		float hp[3], hd = -1;
-		if (g_bh.head_cm > 0 && obj && attack && bh_head_records() && attack == g_bh.body_atk &&
+		if (g_bh.headkill && obj && attack && bh_head_records() && attack == g_bh.body_atk) {
+			int cap = kp_hobj_captain(obj); /* every captain in the world, at any distance */
+			g_bh.headkills += !cap, g_bh.hk_captains += cap;
+			if (g_bh.lines++ < 200)
+				logf_("BOW headkill t=%.3f: the game's own head hit '%s' on %s%s%s (SOMVR_BOW_HEADKILL)", cb_now(),
+				      g_bh.body_name, cap ? "a Nemesis captain (or SOMVR_CAPTAIN off): kept" : "an orc: '", cap ? "" : g_bh.head_name,
+				      cap ? "" : "' instead");
+			if (!cap)
+				attack = g_bh.head_atk;
+		} else if (!g_bh.headkill && g_bh.head_cm > 0 && obj && attack && bh_head_records() && attack == g_bh.body_atk &&
 		    bo_node_world(obj, g_som.head, hp) && (hd = bh_ray_dist(g_bow.fire_o, g_bow.fire_d, hp)) >= 0) {
 			if (hd <= g_bh.head_cm) {
 				g_bh.heads++;
@@ -125,10 +147,18 @@ static void bh_start(int *bad)
 	g_bh.log = env_word("SOMVR_BOW_HITLOG", onoff_w, 2, 0);
 	g_bh.head_cm = env_float("SOMVR_BOW_HEADSHOT_CM", 0, 0, 100, bad);
 	atomic_store(&g_bh.head_crit, env_word("SOMVR_BOW_HEADSHOT_CRIT", onoff_w, 2, 0));
+	g_bh.headkill = env_word("SOMVR_BOW_HEADKILL", (const char *const[]){ "off", "on" }, 2, 1);
 	const char *hn = getenv("SOMVR_BOW_HEADSHOT_ATTACK"), *bn = getenv("SOMVR_BOW_HEADSHOT_BODY");
-	snprintf(g_bh.head_name, sizeof g_bh.head_name, "%s", hn && *hn ? hn : "PC_Ranged_Normal_Hit_Light_HeadOrc");
-	snprintf(g_bh.body_name, sizeof g_bh.body_name, "%s", bn && *bn ? bn : "PC_Ranged_Normal_Hit_Light_CharOrc");
-	if (!g_bh.log && !(g_bh.head_cm > 0))
+	snprintf(g_bh.head_name, sizeof g_bh.head_name, "%s", hn && *hn ? hn : g_bh.headkill ?
+		 "PC_Ranged_Normal_Hit_Heavy_HeadOrc" : "PC_Ranged_Normal_Hit_Light_HeadOrc");
+	snprintf(g_bh.body_name, sizeof g_bh.body_name, "%s", bn && *bn ? bn : g_bh.headkill ?
+		 "PC_Ranged_Normal_Hit_Light_HeadOrc" : "PC_Ranged_Normal_Hit_Light_CharOrc");
+	if (g_bow.on)
+		logf_("CONFIG bow_headkill=%s (SOMVR_BOW_HEADKILL, build 27b%s): %s", g_bh.headkill ? "on" : "off",
+		      getenv("SOMVR_BOW_HEADKILL") ? "" : "; unset: on", g_bh.headkill ? "an arrow in an orc's head kills him - the "
+		      "game's own light head hit on an orc (not a Nemesis captain) becomes its heavy one, the flat game's one-arrow "
+		      "headshot" : "the game's light head hit (20 of 95: five arrows an orc; build 27b)");
+	if (!g_bh.log && !(g_bh.head_cm > 0) && !g_bh.headkill)
 		return;
 	if (!g_bow.on) {
 		logf_("CONFIG bow_hitlog / bow_headshot need SOMVR_BOW=1: not patched");
@@ -144,7 +174,9 @@ static void bh_start(int *bad)
 static void bh_end_log(void)
 {
 	if (g_bh.on)
-		logf_("BOW HIT END calls %llu, ours %llu, with an override attack %llu; headshots %llu (rays too far from the head %llu)",
-		      (unsigned long long)g_bh.calls, (unsigned long long)g_bh.ours, (unsigned long long)g_bh.overrides,
-		      (unsigned long long)g_bh.heads, (unsigned long long)g_bh.head_miss);
+		logf_("BOW HIT END calls %llu, ours %llu, with an override attack %llu; headshots %llu (rays too far from the head %llu); "
+		      "headkills %llu (captains kept %llu; SOMVR_BOW_HEADKILL %s)", (unsigned long long)g_bh.calls,
+		      (unsigned long long)g_bh.ours, (unsigned long long)g_bh.overrides, (unsigned long long)g_bh.heads,
+		      (unsigned long long)g_bh.head_miss, (unsigned long long)g_bh.headkills, (unsigned long long)g_bh.hk_captains,
+		      g_bh.headkill ? "on" : "off");
 }

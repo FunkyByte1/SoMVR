@@ -612,6 +612,23 @@ static uintptr_t kw_combat_of(uintptr_t fm, uintptr_t *npc_out)
 	return c;
 }
 
+/* build 27b (som-b27-nemesis3, SOMVR_BOW_HEADKILL): 1 = the object a Nemesis captain's in the world (any distance), or
+ * the captains not followed (SOMVR_CAPTAIN off: no way to tell - the caller keeps the game's hit) */
+static int kp_hobj_captain(uintptr_t hobj)
+{
+	if (!g_kp.on)
+		return 1;
+	uintptr_t m[KP_MAX];
+	int n = kp_members(m, KP_MAX);
+	for (int i = 0; i < n; i++) {
+		struct cb_orc o;
+		uintptr_t c = m[i] ? kw_combat_of(m[i], NULL) : 0;
+		if (c && cb_orc_get(c, &o) && o.hobj == hobj)
+			return 1;
+	}
+	return 0;
+}
+
 /* the captains in the world within range of p (not the practice's): their Combats added to out (no duplicates) */
 static int kw_world_orcs(const float p[3], float range_cm, struct cb_orc *out, int n, int cap)
 {

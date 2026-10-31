@@ -52,7 +52,14 @@
 #define US_UP 8
 /* the window's: skips and quests; build 25 (som-b25-nemesis): 307 IdentifySkip - "(B) Back" on a power struggle's outcome
  * ("Power Increased! ... (A) View Battle Report (B) Back"), which waited 200+ s for it (re-xr-pipeline.md 104.2) */
-static const int g_us_quest[] = { 260, 261, 265, 282, 283, 284, 285, 286, 307 };
+static const int g_us_quest[] = { 260, 261, 265, 282, 283, 284, 285, 286, 307, 309 };
+/* build 27b (som-b27-nemesis3; re-xr-pipeline.md 124, SOMVR_USE_REPORT): that screen's "(A) View Battle Report" is 309
+ * 'ViewReplay' (104.3), never pressed by a VR control in builds 25-27b. In the window A presses it as the pad's A (its
+ * binding, or directly while the game has it active and binds it to nothing); over the world (the captain died there:
+ * "Died - ... (A) View Battle Report (B) Back", 116.3) A's press is the report's while the game has both 309 and 307
+ * active and A would be the jump's or the climb's (ab_tick: never the strike's mark, the dodge in a fight, a hang) */
+#define US_REPORT 309
+#define US_BACK 307
 #define US_NQ ((int)(sizeof g_us_quest / sizeof g_us_quest[0]))
 static const uint32_t US_BTNS = (1u << SC_PAD_A) | (1u << SC_PAD_B) | (1u << SC_PAD_X) | (1u << SC_PAD_Y) |
 				(1u << SC_PAD_LB) | (1u << SC_PAD_RB);
@@ -67,6 +74,9 @@ static struct {
 	int death, skip;                                    /* build 25: SOMVR_USE_DEATH, SOMVR_USE_SKIP */
 	int grab, gwin_prev;                                /* build 27b: SOMVR_USE_GRAB; the grab's presentation last tick */
 	int wback;                                          /* build 27: SOMVR_USE_WORLD_BACK */
+	int report, rep_a, rep_up;                          /* build 27b: SOMVR_USE_REPORT; A's press is the report's;
+							     * 309 + 307 active over the world last tick */
+	uint64_t reports, rep_ups;
 	_Atomic uint64_t qc_ns;                             /* build 27: mono() of the last QuestConfirm 282 press (ns) */
 	uint64_t wbacks;
 	int win_prev, fresh;                                /* the window last tick; 1 = take the held buttons again */
@@ -196,11 +206,35 @@ static int us_grab_pres(void)
 	       (g_fb.last_raw & SOMVR_FB_BIT(SOMVR_FB_PRES));
 }
 
+/* build 27b, SOMVR_USE_REPORT: a struggle's outcome over the world - the game has View Battle Report 309 and Back 307
+ * active (no window, no menu) */
+static int us_report_up(void)
+{
+	if (!atomic_load_explicit(&g_us.on, memory_order_relaxed) || !g_us.report || !g_inp.map_ok || g_bm.last_win)
+		return 0;
+	in_active_fn act = IN_FN(IS_CMD_ACTIVE, in_active_fn);
+	return act && (act(g_inp.pi, US_REPORT) & 0xff) && (act(g_inp.pi, US_BACK) & 0xff);
+}
+
+/* ab_tick, A's press in the world that would be the jump's or the climb's: 1 = the report's (held until A is let go) */
+static int us_report_takes_a(double t, int strike, int fight, int climbing)
+{
+	if (strike || fight || climbing || !us_report_up())
+		return 0;
+	g_us.rep_a = 1;
+	if (us_log_ok())
+		logf_("USE t=%.3f A over the world while a struggle's outcome is up (309 'ViewReplay' and 307 'IdentifySkip' "
+		      "active): View Battle Report - not the jump (SOMVR_USE_REPORT)", t);
+	return 1;
+}
+
+static int us_report_owns_a(void) { return g_us.rep_a; }
+
 /* the input tick (in_apply, not in a menu): the commands to hold this tick (the deny list's 123 too: our press) */
 static int us_press_cmds(const sc_tick_out *o, int out[12])
 {
 	if (!atomic_load_explicit(&g_us.on, memory_order_relaxed) || !o->live || o->ctx == SC_CTX_MENU) {
-		g_us.b_prev = g_us.latch = 0, g_us.qprev = 0, g_us.fresh = 1;
+		g_us.b_prev = g_us.latch = 0, g_us.qprev = 0, g_us.fresh = 1, g_us.rep_a = 0;
 		return 0;
 	}
 	double t = cb_now();
@@ -272,6 +306,28 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 				      "pad's B now; SOMVR_USE_WORLD_BACK)", t);
 		}
 	}
+	/* build 27b, SOMVR_USE_REPORT: View Battle Report 309 - A in the window (unbound there: directly), over the world
+	 * the press ab_tick gave it (held while A is) */
+	if (!(o->raw >> SC_PAD_A & 1))
+		g_us.rep_a = 0;
+	int rup = us_report_up();
+	if (rup != g_us.rep_up && us_log_ok())
+		logf_("USE t=%.3f %s", t, rup ? "a struggle's outcome over the world: 309 'ViewReplay' and 307 'IdentifySkip' "
+		      "active (A = View Battle Report, B = Back)" : "309 'ViewReplay' + 307 over the world: no longer both active");
+	g_us.rep_ups += rup && !g_us.rep_up, g_us.rep_up = rup;
+	int rq = us_quest_ix(US_REPORT), rpress = g_us.report && !(now >> rq & 1) && n < 12 &&
+						  (w ? (btn >> SC_PAD_A & 1) && (active(g_inp.pi, US_REPORT) & 0xff)
+						     : g_us.rep_a && rup);
+	if (rpress) {
+		now |= 1u << rq, out[n++] = US_REPORT, g_us.quest_ticks++;
+		if (!(g_us.qprev >> rq & 1)) {
+			g_us.quest_presses++, g_us.reports++;
+			if (us_log_ok())
+				logf_("USE t=%.3f 309 'ViewReplay' pressed by A (%s; not bound to the pad's A now; SOMVR_USE_REPORT)", t,
+				      w ? "the window" : "a struggle's outcome over the world");
+		}
+	} else if ((now >> rq & 1) && !(g_us.qprev >> rq & 1))
+		g_us.reports++;
 	for (int k = 0; dwin && k < 2 && n < 12; k++) { /* build 25: A = 285, B = 286 on the death's failed screen */
 		int c = k ? 286 : 285, q = us_quest_ix(c);
 		if (!(btn >> (k ? SC_PAD_B : SC_PAD_A) & 1) || (now >> q & 1))
@@ -344,6 +400,12 @@ static void us_config(int *bad)
 		      getenv("SOMVR_USE_WORLD_BACK") ? "" : "; unset: on", g_us.wback ? "in the world, while the game has 307 "
 		      "IdentifySkip active (a struggle's outcome over the world: \"(B) Back\"), B = that Back before a pick"
 		      : "B in the world = the pick or a quest card only (build 26)");
+	g_us.report = env_word("SOMVR_USE_REPORT", (const char *const[]){ "off", "on" }, 2, 1);
+	if (g_us.want)
+		logf_("CONFIG use_report=%s (SOMVR_USE_REPORT, build 27b%s): %s", g_us.report ? "on" : "off",
+		      getenv("SOMVR_USE_REPORT") ? "" : "; unset: on", g_us.report ? "a struggle's outcome's \"(A) View Battle "
+		      "Report\" (309 'ViewReplay'): A in the window; over the world (309 and 307 active) A's press when it would be "
+		      "the jump's or the climb's (not in a fight, not the strike's mark, not a hang)" : "309 never pressed (build 27b)");
 	g_us.death = env_word("SOMVR_USE_DEATH", (const char *const[]){ "off", "on" }, 2, 1);
 	if (g_us.want)
 		logf_("CONFIG use_death=%s (SOMVR_USE_DEATH, build 25%s): %s", g_us.death ? "on" : "off",
@@ -371,4 +433,6 @@ static void us_end_log(void)
 	      (unsigned long long)g_us.quest_presses, (unsigned long long)g_us.quest_ticks, (unsigned long long)g_us.skips,
 	      (unsigned long long)g_us.deaths, (unsigned long long)g_us.grabs, g_us.map_lines);
 	logf_("USE END build 27: B = Back (307) over the world %llu (SOMVR_USE_WORLD_BACK)", (unsigned long long)g_us.wbacks);
+	logf_("USE END build 27b: View Battle Report (309) pressed %llu (SOMVR_USE_REPORT); a struggle's outcome over the "
+	      "world %llu times", (unsigned long long)g_us.reports, (unsigned long long)g_us.rep_ups);
 }

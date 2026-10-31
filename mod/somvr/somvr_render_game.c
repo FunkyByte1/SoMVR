@@ -53,6 +53,9 @@
  *   SOMVR_FX_NEAR_CM=R0,R1 (15,30): in the eyes the CPU particles nearer the eye than R0 folded away, up to R1 shrunk
  *   (word "fxnear on|off|R0,R1|eye E|state"); SOMVR_FX_TEST adds `fx vprobe N` (the CPU emitters' draws: a[0] is the
  *   emitter's transform, a[1] the eye's view - the FLATFX draw line's "camera" / "emitter" labels are those two).
+ * Build 28 (re-xr-pipeline.md 126): SOMVR_FX_NEAR_MEM=shadow|direct (code default shadow; word "fxnear mem M") - the
+ *   fold's vertices: shadow = the game writes them into our cached copy, folded there and copied once into its mapping
+ *   at the unmap; direct = build 27's fold in the mapping itself (uncached: ~50 us a particle, the measured "before").
  * Trigger words: "flatfx LIST|all|game|state" (live; the hooks must be in: boot with a part on or SOMVR_FX_TEST=1),
  * "fx hide MASK", "fx eyesame 0|1", "fx console CMD", "fx state". Lines: CONFIG flatfx=..; FLATFX t=.. (the word; the
  * game's own vignette or box blur seen: the first 8 of each); FLATFX state|END. Fail soft: a site mismatch = that part
@@ -1250,6 +1253,7 @@ static void rd_vr_present(void)
 
 typedef int64_t (*rd_px_map_fn)(void *, int64_t, int64_t, int64_t, void *, int64_t, int64_t);
 typedef int64_t (*rd_px_draw_fn)(void *, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+static void rd_near_map(void *out);
 static int64_t rd_px_map(void **px, int64_t a, int64_t n, int64_t c, void *out, int64_t e, int64_t f)
 {
 	void *real = px[1];
@@ -1257,6 +1261,8 @@ static int64_t rd_px_map(void **px, int64_t a, int64_t n, int64_t c, void *out, 
 	g_px.ptr = out && (int32_t)r == 0 ? *(unsigned char **)out : NULL;
 	g_px.granted = out ? *(uint32_t *)((char *)out + 0x10) : 0, g_px.req = (uint32_t)n, g_px.maps++;
 	g_px.marg[0] = a, g_px.marg[1] = n, g_px.marg[2] = c, g_px.marg[3] = e, g_px.marg[4] = f;
+	if (g_px.ptr)
+		rd_near_map(out); /* build 28: SOMVR_FX_NEAR's cached copy (g_px.ptr stays the game's mapping) */
 	if (somvr_px_seqn < 24)
 		somvr_px_seq[somvr_px_seqn++] = 9;
 	return r;
@@ -1303,12 +1309,24 @@ static int64_t rd_px_draw(void **px, int64_t a, int64_t b, int64_t c, int64_t d,
  * into that space once a draw). A draw whose first quad does not read as that format is left alone (counted). Flat
  * frames, GPU particles, sprites: the game's. Lines: CONFIG fx_near=..; FXNEAR t=.. (the first 16 draws with a quad
  * folded or shrunk, then every 2000th); FXNEAR state|END. Word: "fxnear on|off|R0,R1|eye E|state" (eye E: only in eye
- * E's pass, a test - the other eye the game's: one dump shows both). */
+ * E's pass, a test - the other eye the game's: one dump shows both).
+ * Build 28 (re-xr-pipeline.md 126): the mapping is the game's dynamic vertex buffer (CD3D11BaseCustomRenderCallback::
+ * vf_09, 0x7a5980) - GPU memory the CPU may write but reads back uncached: build 27's fold read every particle's corners
+ * from it at ~50 us a particle (the render thread 8.7 -> 17.5 ms a stereo frame in the meadow, 9.0 -> 25.7 at the
+ * fire). SOMVR_FX_NEAR_MEM=shadow (code default): at the map the game gets our cached copy instead (out+0 = the
+ * pointer it writes through; vf_09's out+0x10 = the vertices granted, +0x18 their stride: 60 or not ours), at the
+ * unmap the fold runs there and the granted bytes go into the real mapping in one sequential copy (writes to that
+ * memory combine; reads do not); out+0 is put back before the real unmap (vf_10 reads only out+8, the buffer).
+ * direct = build 27's fold in the mapping (the "before" of 126's measurement; never for play). */
 static struct {
 	_Atomic int on, eye;        /* the switch; the eye it is limited to (-1 both: a test word) */
+	_Atomic int direct;         /* SOMVR_FX_NEAR_MEM: 0 shadow, 1 direct */
 	float r0, r1;               /* cm */
 	void **a;                   /* render thread: the draw in progress (its a[]) while the fold applies */
-	_Atomic uint64_t draws, quads, folded, shrunk, skipped, nearest_draws;
+	unsigned char *sh, *sh_real; /* render thread: our cached copy; the game's mapping it stands in for (NULL: none) */
+	void *sh_out;               /* the map's out (its +0 put back at the unmap) */
+	size_t sh_cap, sh_bytes;
+	_Atomic uint64_t draws, quads, folded, shrunk, skipped, nearest_draws, copies, copied, nomem;
 	_Atomic uint32_t lines;
 	int hooked;
 } g_fn = { .eye = -1, .r0 = 15.0f, .r1 = 30.0f };
@@ -1320,11 +1338,39 @@ static int rd_near_now(void)
 	return atomic_load_explicit(&g_fn.on, memory_order_relaxed) && e >= 0 && e <= 1 && (only < 0 || only == e);
 }
 
-/* the fold over the mapped vertices of the draw in progress (render thread, from the unmap thunk) */
-__attribute__((used)) void somvr_rd_near_unmap(void)
+/* build 28: at the map (render thread, the eyes' passes, the fold on): the game's mapping traded for our cached copy -
+ * the game writes its vertices there (vf_04 reads the pointer from out+0 after the map and writes only through it) */
+static void rd_near_map(void *out)
+{
+	if (!g_fn.a || atomic_load_explicit(&g_fn.direct, memory_order_relaxed))
+		return;
+	uint32_t n = *(uint32_t *)((char *)out + 0x10), stride = *(uint32_t *)((char *)out + 0x18);
+	if (stride != 60 || n < 4 || n > 65536) { /* (not the fold's format: the game's mapping, untouched and unread) */
+		g_fn.a = NULL;
+		atomic_fetch_add_explicit(&g_fn.draws, 1, memory_order_relaxed);
+		atomic_fetch_add_explicit(&g_fn.skipped, 1, memory_order_relaxed);
+		return;
+	}
+	size_t bytes = (size_t)n * 60;
+	if (bytes > g_fn.sh_cap) {
+		size_t cap = (bytes + 0xffff) & ~(size_t)0xffff;
+		void *p = NULL;
+		if (posix_memalign(&p, 64, cap)) { /* (no copy: this draw the game's, unfolded) */
+			g_fn.a = NULL;
+			atomic_fetch_add_explicit(&g_fn.nomem, 1, memory_order_relaxed);
+			return;
+		}
+		free(g_fn.sh), g_fn.sh = p, g_fn.sh_cap = cap;
+	}
+	g_fn.sh_real = *(unsigned char **)out, g_fn.sh_bytes = bytes, g_fn.sh_out = out;
+	*(unsigned char **)out = g_fn.sh;
+}
+
+/* the fold over the vertices of the draw in progress (render thread, from the unmap thunk): v = our copy (shadow) or
+ * the game's mapping (direct) */
+static void rd_near_fold(unsigned char *v)
 {
 	void **a = g_fn.a;
-	unsigned char *v = g_px.ptr;
 	if (!a || !v || !a[0] || !a[1])
 		return;
 	g_fn.a = NULL; /* (once a draw) */
@@ -1388,6 +1434,22 @@ __attribute__((used)) void somvr_rd_near_unmap(void)
 			      (double)r1, (double)near, (unsigned long long)k + 1);
 	}
 }
+/* the unmap (render thread, the thunk below): with our copy handed out at the map, the fold there, the granted bytes
+ * into the game's mapping in one go and its pointer back in out+0; else the fold in the mapping (direct) */
+__attribute__((used)) void somvr_rd_near_unmap(void)
+{
+	unsigned char *real = g_fn.sh_real;
+	if (!real) {
+		rd_near_fold(g_px.ptr);
+		return;
+	}
+	g_fn.sh_real = NULL;
+	rd_near_fold(g_fn.sh);
+	memcpy(real, g_fn.sh, g_fn.sh_bytes);
+	*(unsigned char **)g_fn.sh_out = real;
+	atomic_fetch_add_explicit(&g_fn.copies, 1, memory_order_relaxed);
+	atomic_fetch_add_explicit(&g_fn.copied, g_fn.sh_bytes, memory_order_relaxed);
+}
 /* slot 10 (the vertices' unmap): the fold first (every register kept), then the real context's slot 10 */
 __attribute__((naked, used)) void somvr_rd_pxu10(void)
 {
@@ -1424,7 +1486,7 @@ static void rd_draw0_near(void *self, void **a)
 	}
 	void *px[2] = { g_pxn_vt, a[4] }, *real = a[4];
 	g_px.ptr = NULL, g_px.granted = g_px.req = 0;
-	g_fn.a = a;
+	g_fn.a = a, g_fn.sh_real = NULL;
 	a[4] = px;
 	((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
 	a[4] = real;
@@ -1510,7 +1572,7 @@ static void rd_draw0_full(void *self, void **a)
 	void *px[2] = { vp ? g_pxc_vt : g_px_vt, a[4] }, *real = a[4];
 	memset(&g_px, 0, sizeof g_px);
 	somvr_px_seqn = 0;
-	g_fn.a = rd_near_now() ? a : NULL; /* build 27: SOMVR_FX_NEAR's fold at the unmap */
+	g_fn.a = rd_near_now() ? a : NULL, g_fn.sh_real = NULL; /* build 27: SOMVR_FX_NEAR's fold at the unmap */
 	a[4] = px;
 	((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
 	a[4] = real;
@@ -2139,12 +2201,14 @@ static const char *rd_word(const char *w0)
 			return "fxnear (the CPU particles' draw is not hooked: boot with SOMVR_FX_NEAR=on or SOMVR_FX_TEST=1)";
 		if (!strcmp(q, "on") || !strcmp(q, "off"))
 			atomic_store(&g_fn.on, q[1] == 'n');
+		else if (!strcmp(q, "mem shadow") || !strcmp(q, "mem direct")) /* build 28: SOMVR_FX_NEAR_MEM live */
+			atomic_store(&g_fn.direct, q[4] == 'd');
 		else if (sscanf(q, "eye %d", &e) == 1)
 			atomic_store(&g_fn.eye, e < 0 || e > 1 ? -1 : e);
 		else if (sscanf(q, "%f,%f", &a0, &a1) == 2 && a0 >= 0 && a0 < a1 && a1 <= 2000) /* (test radii up to 20 m) */
 			g_fn.r0 = a0, g_fn.r1 = a1;
 		else if (*q && strcmp(q, "state"))
-			return "fxnear (not on|off|R0,R1|eye E|state: ignored)";
+			return "fxnear (not on|off|R0,R1|eye E|mem shadow|mem direct|state: ignored)";
 		rd_near_state("FXNEAR state");
 		return "fxnear";
 	}
@@ -2288,6 +2352,7 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		}
 	/* build 27: SOMVR_FX_NEAR (the CPU particles' draw hooked for it too) */
 	int near = env_word("SOMVR_FX_NEAR", (const char *const[]){ "off", "on" }, 2, 0);
+	atomic_store(&g_fn.direct, env_word("SOMVR_FX_NEAR_MEM", (const char *const[]){ "shadow", "direct" }, 2, 0));
 	const char *nc = getenv("SOMVR_FX_NEAR_CM");
 	if (nc && *nc) {
 		float a0, a1;
@@ -2343,9 +2408,11 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		dc_install();
 	g_fn.hooked = g_rd.ok[RDS_PSYS];
 	atomic_store(&g_fn.on, near && g_fn.hooked);
-	logf_("CONFIG fx_near=%s (SOMVR_FX_NEAR: %s; SOMVR_FX_NEAR_CM %.0f,%.0f)%s", near ? "on" : "off",
+	logf_("CONFIG fx_near=%s (SOMVR_FX_NEAR: %s; SOMVR_FX_NEAR_CM %.0f,%.0f; SOMVR_FX_NEAR_MEM %s)%s", near ? "on" : "off",
 	      near ? "in the eyes the game's CPU particles nearer than the first value folded away, up to the second shrunk"
 		   : "the game's CPU particles as it draws them, also at the eyes", (double)g_fn.r0, (double)g_fn.r1,
+	      atomic_load(&g_fn.direct) ? "direct: folded in the game's mapping, read back uncached"
+					: "shadow: the game writes into our cached copy, folded there, copied once into its mapping",
 	      near && !g_fn.hooked ? " - NOT hooked: the game's" : "");
 	unsigned have = (g_rd.ok[RDS_LENSFLARE] ? RDF_FLARES : 0) | (g_rd.ok[RDS_SHAFTS] ? RDF_SHAFTS : 0) | RDF_VIGNETTE |
 			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0) | (g_rd.ok[RDS_OVERLAY] && g_rd.ok[RDS_OVERLAY_IF] ? RDF_OVERLAY : 0);
@@ -2364,14 +2431,17 @@ static void rd_start(const struct site_spec *sites, int *bad)
 
 static void rd_near_state(const char *head)
 {
-	logf_("%s t=%.3f: SOMVR_FX_NEAR %s (%.0f,%.0f cm%s; %s): CPU-particle draws in the eyes %llu (not that format, left alone "
-	      "%llu), their particles %llu: folded %llu, shrunk %llu (draws with either %llu)", head, cb_now(),
+	logf_("%s t=%.3f: SOMVR_FX_NEAR %s (%.0f,%.0f cm%s; %s; mem %s): CPU-particle draws in the eyes %llu (not that format, "
+	      "left alone %llu), their particles %llu: folded %llu, shrunk %llu (draws with either %llu); our copy into the "
+	      "game's mapping %llu times, %.1f MB (no memory %llu)", head, cb_now(),
 	      atomic_load(&g_fn.on) ? "on" : "off", (double)g_fn.r0, (double)g_fn.r1,
 	      atomic_load(&g_fn.eye) >= 0 ? (atomic_load(&g_fn.eye) ? ", eye 1 only" : ", eye 0 only") : "",
-	      g_fn.hooked ? "hooked" : "not hooked", (unsigned long long)atomic_load(&g_fn.draws),
+	      g_fn.hooked ? "hooked" : "not hooked", atomic_load(&g_fn.direct) ? "direct" : "shadow",
+	      (unsigned long long)atomic_load(&g_fn.draws),
 	      (unsigned long long)atomic_load(&g_fn.skipped), (unsigned long long)atomic_load(&g_fn.quads),
 	      (unsigned long long)atomic_load(&g_fn.folded), (unsigned long long)atomic_load(&g_fn.shrunk),
-	      (unsigned long long)atomic_load(&g_fn.nearest_draws));
+	      (unsigned long long)atomic_load(&g_fn.nearest_draws), (unsigned long long)atomic_load(&g_fn.copies),
+	      (double)atomic_load(&g_fn.copied) / 1e6, (unsigned long long)atomic_load(&g_fn.nomem));
 }
 
 static void rd_end_log(void)
