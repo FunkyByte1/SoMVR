@@ -1425,6 +1425,7 @@ static void gc_start(int *bad);
 static void ssw_start(int *bad);
 static void c21_end_log(void);
 static void gc_glow_add(struct th_glow *gl, int *ng);
+static void mt_glow_add(struct th_glow *gl, int *ng); /* build 29b, SOMVR_RIDE_CUE (somvr_ride_game.c) */
 static float gc_glow_size_m(void);
 static int ssw_bow_put(double t);
 /* build 23 (somvr_brand_game.c, included last; docs/re-xr-pipeline.md 97): SOMVR_VERBS_BRAND - the brand by the hand */
@@ -18220,6 +18221,7 @@ static void th_frame(uintptr_t pl, int stereo)
 	abl_glow_add(gl, &ng); /* build 27, SOMVR_ABIL: the wraith flash's palm, a downed orc's body */
 	ab2_glow_add(gl, &ng); /* build 27c: the kindled arrow's tip */
 	ab3_glow_add(gl, &ng); /* build 27d: the distract arrow's tip */
+	mt_glow_add(gl, &ng); /* build 29b, SOMVR_RIDE_CUE: the mount's offer on the stunned caragor */
 	somvr_th_map m = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
 			   { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
 	for (int i = 0; i < ng; i++) { /* the glow's size for its distance in the room (/ the player size) */

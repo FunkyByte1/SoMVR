@@ -60,7 +60,10 @@ static struct {
 	int lines;
 } g_stg = { .armed = { 1, 1 } };
 
-static int stg_log_ok(void) { return g_stg.lines++ < 400; }
+static struct log_late g_stg_late;
+/* the first 400, then (build 29, som-b29-soak2) 100 a 10 minutes: before, silent after ~20 last chances (17-22 lines
+ * each in the rehearsals; re-xr-pipeline.md 129) */
+static int stg_log_ok(void) { return g_stg.lines++ < 400 || log_late_ok(&g_stg_late, 100, mono()); }
 
 /* Talion's attack record now (his Combat's: the PreDeath sync's own, 'PC_PreDeathRecover' when he gets up) */
 static const char *stg_talion_attack(char *buf, size_t cap)

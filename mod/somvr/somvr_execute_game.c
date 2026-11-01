@@ -114,7 +114,10 @@ static struct {
 	uint64_t lapse_writes, lapse_lines, lapsed, lapsed_ours, cleared_early;
 } g_xc;
 
-static int xc_log_ok(void) { return g_xc.streak_lines < 400; }
+static struct log_late g_xc_late;
+/* the streak's lines: the first 400, then (build 29, som-b29-soak2) 100 a 10 minutes - before, silent for the rest of the
+ * session (the user's 14 minutes of 10-28: 78 of them, the budget gone ~70 minutes in; re-xr-pipeline.md 129) */
+static int xc_log_ok(void) { return g_xc.streak_lines < 400 || log_late_ok(&g_xc_late, 100, mono()); }
 
 /* the counter (Combat+0x1f0, FI_HITCOUNT's offsets) */
 static int xc_read_hc(uintptr_t pc, somvr_ex_hc *h)

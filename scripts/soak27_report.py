@@ -52,7 +52,7 @@ def main():
         s = fit([m for m, _ in fps if m >= warm], [v for m, v in fps if m >= warm])
         print(f"  stereo fps: the first 10 min {sum(early) / len(early):.1f}, the last 10 min {sum(late) / len(late):.1f};"
               f" the worst minute {worst[1]:.1f} at minute {worst[0]:.0f}" + ("" if s is None else f"; the trend {s * 60:+.2f} fps/h"))
-    errs = [abs(num(r[col["disp_err_ms"]])) for r in rows if num(r[col["disp_err_ms"]]) is not None]
+    errs = [abs(num(r[col["disp_err_ms"]])) for r in rows if "disp_err_ms" in col and num(r[col["disp_err_ms"]]) is not None]
     if errs:
         print(f"  |display-time error| at the samples: max {max(errs):.2f} ms, median {sorted(errs)[len(errs) // 2]:.2f} ms")
     st = os.path.join(run, "soak-state.txt")

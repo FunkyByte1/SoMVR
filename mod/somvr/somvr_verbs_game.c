@@ -139,7 +139,7 @@ static struct {
 				     * nearest orc's head (its collar, 8 cm under it) or 25 cm from the eyes toward it */
 	uint64_t stale_lets;        /* holds let go because no stereo frame read the hand for 0.5 s */
 	/* counts */
-	uint64_t frames, presses, press_ticks, shows, hides, holds, lines, suppressed;
+	uint64_t frames, presses, press_ticks, shows, hides, holds, lines, suppressed, late;
 	uint64_t ev[SOMVR_VBE_N], b_ticks, hog_starts, hog_completes, hog_outs, stuns, buzzes, head_node, head_est;
 } g_vb;
 
@@ -151,12 +151,17 @@ static void fa_hands(const somvr_vb_hand_in *in, double t); /* build 25 (somvr_a
 static void br_hands(const somvr_vb_hand_in *in); /* build 23 (somvr_brand_game.c) */
 static void br_prompt_up(int act, const char *str, double t);
 static int br_auto_trigger(double t);
+static struct log_late g_vb_late;
 static int vb_log_ok(void)
 {
 	if (g_vb.lines < VB_LINES) {
 		g_vb.lines++;
 		return 1;
 	}
+	/* build 29 (som-b29-soak2): then 150 a 10 minutes - before, silent for the rest of the session (the user's 14
+	 * minutes of 10-28 wrote 396: the budget gone ~55 minutes in; re-xr-pipeline.md 129) */
+	if (log_late_ok(&g_vb_late, 150, mono()))
+		return g_vb.late++, 1;
 	g_vb.suppressed++;
 	return 0;
 }
@@ -1140,34 +1145,46 @@ static void vb_tree(uintptr_t pcomb, uintptr_t pc, const float root[3], double t
  * silent stealth kill for (the root node SOMVR_VERBS_STEALTH_NODE, default PC_InstaKill_Sneak_Silent: unaware, from
  * behind - the game's predicates), presses its button (X, 118) for 150 ms instead of our hit: the game plays its kill on
  * that orc. 1 = the contact is ours. Needs FINISH's selection sites (ok_tree). */
+/* the root nodes' cache (build 23: 24 names; build 29, som-b29-soak2: 96, full = the entries reused in turn). Before,
+ * full = slot 0 for every name not in it: past 24 names asked in a session (the abilities' roots: 43 in rehearsal 1,
+ * boot 20261031-090520) the ignite's and the distract's, asked while an arrow is drawn, took turns in slot 0 - each ask
+ * a read of the 105 root nodes and a VERBS line (843 lines in 34 minutes). re-xr-pipeline.md 129. */
+#define VB_NODE_CACHE 96
+static struct { char name[96]; uintptr_t root, node; } g_vb_nc[VB_NODE_CACHE];
+static unsigned g_vb_nc_n, g_vb_nc_next;
+static uint64_t g_vb_nc_reads, g_vb_nc_reused;
+/* WANT's entry: *hit = 1 when it holds WANT's node read under this root record; else the entry to read it into - WANT's
+ * own (another root record), a free one, or (full) the next in turn */
+static int vb_nc_slot(const char *want, uintptr_t root, int *hit)
+{
+	for (unsigned i = 0; i < g_vb_nc_n; i++)
+		if (!strcmp(g_vb_nc[i].name, want)) {
+			*hit = g_vb_nc[i].root == root;
+			return (int)i;
+		}
+	*hit = 0;
+	if (g_vb_nc_n < VB_NODE_CACHE)
+		return (int)g_vb_nc_n++;
+	g_vb_nc_reused++;
+	return (int)(g_vb_nc_next++ % VB_NODE_CACHE);
+}
 static uintptr_t vb_node_named(uintptr_t pcomb, const char *want)
 {
-	enum { VB_NODE_CACHE = 24 }; /* build 23: the brand's names too (4 thrashed: a re-read and a line per miss) */
-	static struct { char name[64]; uintptr_t root, node; } cache[VB_NODE_CACHE];
 	uintptr_t rootrec = pcomb ? peek_ptr(pcomb + FI_PC_ROOT) : 0;
-	int slot = 0;
-	for (int i = 0; i < VB_NODE_CACHE; i++) {
-		if (!strcmp(cache[i].name, want)) {
-			if (cache[i].root == rootrec)
-				return cache[i].node;
-			slot = i;
-			break;
-		}
-		if (!cache[i].name[0]) {
-			slot = i;
-			break;
-		}
-	}
-	snprintf(cache[slot].name, sizeof cache[slot].name, "%s", want);
-	cache[slot].root = rootrec, cache[slot].node = 0;
+	int hit, slot = vb_nc_slot(want, rootrec, &hit);
+	if (hit)
+		return g_vb_nc[slot].node;
+	g_vb_nc_reads++;
+	snprintf(g_vb_nc[slot].name, sizeof g_vb_nc[slot].name, "%s", want);
+	g_vb_nc[slot].root = rootrec, g_vb_nc[slot].node = 0;
 	uint64_t nodes[VB_TREE_NODES];
 	int type = 0, count = 0, nn = rootrec ? rx_db_list(rootrec, g_fig.sch_ccr, FI_CCR_NODES, nodes, VB_TREE_NODES, &type, &count) : -1;
 	char nm[96];
-	for (int k = 0; k < nn && type == 0xa && !cache[slot].node; k++)
+	for (int k = 0; k < nn && type == 0xa && !g_vb_nc[slot].node; k++)
 		if (!strcmp(rx_rec_name((uintptr_t)nodes[k], nm, sizeof nm), want))
-			cache[slot].node = (uintptr_t)nodes[k];
-	logf_("VERBS the root node '%s' %s (%d of %d root nodes read)", want, cache[slot].node ? "found" : "NOT found", nn, count);
-	return cache[slot].node;
+			g_vb_nc[slot].node = (uintptr_t)nodes[k];
+	logf_("VERBS the root node '%s' %s (%d of %d root nodes read)", want, g_vb_nc[slot].node ? "found" : "NOT found", nn, count);
+	return g_vb_nc[slot].node;
 }
 static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t)
 {
@@ -1715,6 +1732,9 @@ static void vb_end_log(void)
 	      (unsigned long long)g_vb.ask_freed, (unsigned long long)g_vb.intels, (unsigned long long)g_vb.intel_backs,
 	      (unsigned long long)g_vb.intel_outs);
 	logf_("VERBS END build 25: rallies %llu (SOMVR_VERBS_RALLY)", (unsigned long long)g_vb.rallies);
+	logf_("VERBS END build 29: the root nodes' cache: %u names of %d, %llu reads, %llu entries reused; the late lines %llu",
+	      g_vb_nc_n, VB_NODE_CACHE, (unsigned long long)g_vb_nc_reads, (unsigned long long)g_vb_nc_reused,
+	      (unsigned long long)g_vb.late);
 	logf_("VERBS END build 27: last words answered as an interrogation %llu (SOMVR_VERBS_LASTWORDS)",
 	      (unsigned long long)g_vb.lastwords_n);
 	logf_("VERBS END build 26: the Domination's Dismiss by B %llu (SOMVR_VERBS_DISMISS), its Command by Y %llu "

@@ -20872,3 +20872,223 @@ was tried and dropped: the explicit target refuses a lying caragor, "the target 
 - How it reads and feels: the leap from 10 m comes straight at you once you face it (it never leaps from out of view);
   the window is the game's (0.500..0.633 s into the leap) - generous enough for a real arm?
 - The mount after the stun: only in Big Game (128.4).
+
+## 129. Build 29: the long session again - two 70-minute soaks on everything builds 27-29 added; the root nodes' cache that thrashed past 24 names, six logs that went silent (2026-10-31, som-b29-soak2)
+107's soaks ran build 27's cycle (walk, fight, bow, vision, climb, stealth, menus, trip, death). Since then builds 27-29
+added the wraith flash, the downed finisher, the fire arrow, the whistle, the brutal kill, the drop kill, the forge tower
+by hand, the map's waypoint, Practice > Captain's fight, the practice caragor's counter, the last chance by the hands.
+Driver: scripts/soak29-drive.sh - soak27's segments interleaved with those items, each run by the driver that proved it
+alone (as rehearsal28-drive.sh runs them: a copy without its `quit` and `endlogs`, the test tools put back after it, the
+player's `recenter` and the sword back in its slot before it, every trip waiting out the practice area's pause), in this
+order and looped: walk fight bow flash(abil27) fire(abil27c) map menus drop(above25) captain(captain24) death vision
+climb brutal(abil27d) pcar(pcar29) tower(climb27b) struggle(struggle27c) stealth(kill22) crowd(crowd27) trip death.
+Every minute RUN/soak-samples.tsv (soak27's columns plus the last 10-s PERF window: the game thread's busy time and our
+share, our peeks a frame, the render thread's frame work, the GPU; the VERBS root-node lines so far; the item);
+scripts/soak29_report.py RUN (the growth lines, per item, the modules' log budgets, the PERF windows by the root-node
+reads). The boot from a frozen copy of the built mod (builds went on beside it), scripts/headset-build26.env as shipped
+(332 switches), SOMVR_HANDS_TEST=1, the layer's test file, a copy of the user's settings file (SOMVR_SETTINGS);
+HEADLESS_HARD=4500 (boot_check --soak, the most without a headset). No new switch: the fixes leave every feature as it
+was; handoff/HANDOFF-soak.md "build 29".
+
+### 129.1 The runs
+| Boot (logs/boot-check-) | Build | VR minutes | Items | Deaths | WARN | The real save | Settings |
+|---|---|---|---|---|---|---|---|
+| 20261031-154821 (soak 3) | 29c as shipped (1cce0e9) | 71 | 33 (the first pass whole, the second to its last death) | 3; 5 last chances (the tutorial's one 327 s: 129.5) | 0 / 0 | UNCHANGED | unchanged |
+| 20261031-171620 (soak 4) | 29c + 129.2-129.3 (7800406) | 67 | 49 (two passes, the third to its first death) | 7; 9 last chances, 3.7-6.0 s each (all lost by the scripted hands) | 0 / 0 | UNCHANGED | unchanged |
+Both: no crash, VR the whole boot (no `pass-through`, no image-wait timeout), the install unchanged (0 entries newer).
+Soak 3's driver stopped itself at 16:15 (its own check found kill22's `w "endlogs" 2` not taken out); the game stood at
+home 15 minutes (16:15-16:30, sampled: a flat stretch), the rest ran attached to the boot (`S29_RUN`, `S29_NOSAMP`).
+Not covered in either: the crowd item (crowd27's `still` wants the group its `look` step spawns: `STOP: no group` 4 of
+4 - this harness's choice of steps), the mount after the practice caragor's stun (128.4: never offered; the counter
+PASSed in each pass).
+
+### 129.2 The root nodes' cache thrashed past 24 names (fixed)
+- `vb_node_named()` (somvr_verbs_game.c) finds a root node of Talion's attack tree by name for every module that asks
+  the game's selection (the stealth kill, the grab, the drop kill, the abilities): a read of the 105 root nodes (each
+  name a peek of its record: ~900 process_vm_readv a read) and a line `VERBS the root node 'X' found (105 of 105 root
+  nodes read)`, cached by name. The cache held 24 names; full, every name not in it went into **slot 0**. A session asks
+  more: 40-43 names (rehearsal 1, soaks 3 and 4: the abilities' builds added the flash, the ground finisher, the ignite,
+  the distract, the whistle, the throw, the taunt, the drop kill's four, the ledge's two). Two names first asked after
+  the 24th, asked again and again, take turns in slot 0: each ask a read and a line.
+- Evidence: rehearsal 1 (20261031-090520): `PC_Wraith_Ranged_Immolate_Shoot` 423 and `..._Normal_Distract` 420 lines in
+  34 minutes - the ignite's and the distract's offers, asked with an arrow drawn (504 lines in one 32-s stretch: ~8
+  reads a second at 20 Hz). Soak 3 (build 29c): `PC_InstaKill_FromAbove_B` 60, `_F` 59 in the drop item's 68 s (the
+  drop kill's cue on the wall top), 355 root-node lines for 41 names in all; soak 4 (fixed): **41 lines for 41 names**
+  (`VERBS END build 29: the root nodes' cache: 41 names of 96, 41 reads, 0 entries reused`), the drop item +9 (its
+  names, once) where soak 3's two drops had +126 and +160.
+- The cost (soak 3's PERF windows by their root-node lines): windows with none - busy 3.70 ms, our peeks 1816 a frame;
+  with 10 or more (0.27 reads a frame) - busy 3.83, 2062 peeks: ~0.5 ms of the game thread and ~900 peeks a read. At
+  rehearsal 1's 0.8 reads a frame (the bow) ~0.4 ms a frame and two lines a frame. Not a frame drop at 20 Hz; at 90 Hz
+  the asks come as often a frame, and the log grew by ~40 KB a minute while it lasted.
+- Fix: 96 entries; full = the entries reused in turn (a cursor), never one entry for every new name; an entry read under
+  another root record is read again in place. Selftest `soak29_tests()`: 41 names then 400 asks of two = 43 reads (the
+  old policy: **441**), a new root record = the name's own entry, full + 8 names = 8 reused, the two newest and two
+  evicted ones asked 200 times = no read; built with the old policy (24, slot 0): 3 of these fail.
+
+### 129.3 Logs that went silent for the rest of a session (fixed)
+A module's lines after its budget: none, for hours - a bug mark late in a session has none of them (107.2's fix 6 for
+seven others). From the user's real session of 10-28 (14 minutes, build 20c) and the soaks:
+| Module | Budget | The rate | Silent from | Now after it |
+|---|---|---|---|---|
+| VERBS (the change lines) | 1500 | the user's 14 min: 396; soak 4: 1500 + 265 late + 175 suppressed in 67 min | ~55 min (the user's rate) | 150 a 10 minutes |
+| the effects census (FXCENSUS/FXSEEN) | 3000 | 790-1200 an hour (rehearsals, soaks 3-4) | 2.5-3.8 h | 150 a 10 minutes |
+| EXECUTE streak | 400 | the user's 14 min: 78 | ~70 min | 100 a 10 minutes |
+| STRUGGLE | 400 | ~20 a quick struggle; soak 3's long one 300+ (an aim line every 0.25 s) | after 1 long or ~20 quick ones | 100 a 10 minutes |
+| RIDE | 800 | build 27c: 400 in 25 min of Big Game | ~50 min of riding | 100 a 10 minutes |
+| OBJECTIVE (markers, rings) | 400 | the user's 14 min: 30; soak 3: 127 in 71 min | ~3 h | 100 a 10 minutes |
+`log_late_ok()` (107.2) in vb_log_ok, fc_line_ok, xc_log_ok, stg_log_ok, mt_log_ok and the new ob_log_ok; `VERBS END
+build 29` counts the late lines. Selftest: past each budget 300 asks = 150/150/100/100/100/100 lines (the old code: 0
+each). Checked and left: MAP and USE (300; 6 and 27 lines in 67 minutes), the abilities' ABIL/ABIL2/ABIL3 (6 a second
+after their first lines: never silent), the layer's gap lines (400, then its `gaps (so far)` summary keeps the counts),
+HINTS' tutorial-record properties (32 records: logging only).
+
+### 129.4 The numbers against the first soak (107.5's soak 2)
+| | soak 2 (build 27, 58 min) | soak 3 (29c, 71 min) | soak 4 (29c + fixes, 67 min) |
+|---|---|---|---|
+| RSS (MB) | 1216 -> 1291; +55 MB/h | 1232 -> 1354; +85 MB/h | 1292 -> 1422; +74 MB/h |
+| between deaths | +4 MB in 28 min | flat (1311-1312 for 25 min, the idle 15 included) | flat (1393 for 10 min, 1417-1422 for 20) |
+| at deaths | +16..+33 | +53 (the first), +1, +22, +7 | +11, 0, +22, 0, 0 (the death items) |
+| threads / fds | 80-82 / 202-203 | 80-83 / 202-203 | 80-83 / 202-203 |
+| monado / gamescope RSS | 120 / 60, flat | 120 / 60, flat | 120 / 60, flat |
+| VRAM (the GPU's) | 6.06-6.09 GB | 5.4 -> 6.2-6.4 GB from minute 21 | 5.4 -> 6.2-6.55 GB from minute 21 |
+| CPU (cores) | 0.24-0.67 | 0.19-0.58 | 0.32-0.64 |
+| the stereo rate (20 Hz headless) | 19.2 -> 19.8-20.0 | 19.1 first 10 min, 17.9 last 10; the worst minute 3.2 (the tutorial's paused card: mono frames) | 19.7 / 19.2, the trend +0.05 fps/h |
+| the layer's gaps 100-250 ms (none longer) | 136, max 179 ms | 540 in 4285 s, max 192 ms | 610 in 3985 s, max 208 ms |
+| somvr.log / layer log | 14 / 0.9 MB/h | 17 MB (14 MB/h) / 1.7 MB | 19 MB (17 MB/h) / 1.9 MB |
+| WARN | 0 | 0 | 0 |
+The game thread's busy time a stereo frame (the PERF windows sampled per item, soak 4): 3.0-4.6 ms (p95 3.4-5.6; the
+trips' p95 10.9), every item, both passes alike - no creep from the first pass to the third; our share 0.7-1.2 ms; our
+peeks 1170-2150 a frame. The render thread's frame work 4.3-8.8 ms, the GPU 7-17 ms (the headless clock's ramp, 115's
+note). The RSS steps come at deaths (the Nemesis screens and promotions) and at a first visit (the meadow bank +12, the
+first stealth kill +10); four hours at a death every 10 minutes: +0.3-0.5 GB, the machine has 64 GB. The run folders
+(11 and 16 GB) are the drivers' own both-eye dumps, not a session's.
+
+### 129.5 States
+- After every item the world back (`ctx=world`, not paused), no climb, no held view, no VR menu, no bow out; the comfort
+  ring at 0.000 at rest (the state checks' two exceptions each soak: the ring on while Talion moved, then off).
+- The last chance's first time: a captain's first plain struggle (`PC_OrcDef_PreDeath`, Role_Unkillable, soak 3's
+  third death) brings the game's `PC_StruggleTutorial`, shown (SOMVR_HINTS_PAUSING) with the game paused. Soak 3's
+  death segment pressed nothing for 150 s (it waited for "Talion is down"): the card stood **160 s** until its first A,
+  then the struggle **167 s** with the hands at rest, until the captain was removed - as in 107.6. Soak 4's death segment
+  answers as a player does (A on the card, then the hands' thrusts, struggle27c's): the same tutorial struggle over in
+  5.95 s; its nine last chances 3.7-6.0 s. So the plain struggle waits for the player's answer (no timer of its own) -
+  not a dead end for a player who acts; 107.6's open question closed.
+- The prompts that might stick (107's open list): `VERBS END ... (0 up at the end)` after 7 deaths and the trips; USE's
+  pick 1. Not seen.
+
+### 129.6 Harness notes
+- Every driver copy now loses `w "endlogs" N` wherever it stands (soak 3: kill22's on its own line stopped the soak).
+- A pass in which nothing fits the time left ends the loop (soak 3 spun 1055 empty passes in its last minute).
+- Soak 4's death segment answers the struggle tutorial (A) and thrusts in the last chance.
+
+### 129.7 For the headset
+- A long session's late hour as its first: the drop kill's cue, the fire arrow, distract - no slower to come; the VR
+  menu, the map, dying and the screens after it the same each time.
+- The 90 Hz numbers (the frame budget, the logs at ~4.5 x these rates), four hours (a boot here ends at 75 minutes).
+## 130. Build 29b: the mount in the practice - Practice > Caragor's whole chain (the counter, the stun, the mount by the hand, the domination held, Seat mode, the run, off by B) in the meadow; the RB prompt's ask for Big Game's item lifted too (`SOMVR_PRACTICE_CARAGOR`, 2026-10-31, som-b29-pcaragor2)
+128.4 left the practice's mount open: 123 at the stunned caragor was always Talion's grab, never the mount's offer.
+handoff/HANDOFF-beasts.md "build 29b"; NOTES.md; the env block som-b29-pcaragor2 (a comment: no new key); scripts/pcar29-drive.sh.
+
+### 130.1 What refused it: the stunned caragor was never within the mount's 3 m (boots 154357 - 183422)
+- **The game's own node log at the press** (98.1's `SOMVR_VERBS_BRAND_NODELOG`, a test switch; boot 154357): root
+  'PC_Warg_Domination_Mount_Grnd' is validated at every 123 (the input, the node's predicate) but its pool picks nothing;
+  the loop falls through to 'PC_Grab_Attempt_Fail' -> 'PC_Grab_Attempt_F_Fail' with **the target 0**. Not the predicate
+  of an attack: no target.
+- **The targeting test's own lines** (new, tests only): the player's targeting FUN_00a941b0(record, context, candidate,
+  &score) (PlayerCombatTargeting.cpp) logs "'%s' Rejected (%s)- <why>" / "Validated (%s), Score" only with the candidate's
+  debug byte +0xbd (the game's Combat.Vis.Target); while the node log's window is open, SOMVR_GLYPH's CO_TSCORE wrapper
+  (somvr_collect_game.c, already on its six calls) sets it for the call and puts it back. The mount's AttackData names
+  the targeting record **'PC_Warg_Mount'**; boots 170037/171204: during the whole stun the practice caragor
+  ('SomVR_Practice') is tested against 'InstantKO_KD', 'InstaBrand', 'PC_Spider_InstantKO_Token' ... and **never against
+  'PC_Warg_Mount'** (tested and validated only once it stood again 5 m off).
+- **Why** (`practice caragor tg`, bzt_diag, tests only; boot 183422): FUN_00a98850 tests a candidate against its type's
+  entry list (targeting = PlayerCombat+0x360; the list at +0x48 indexed by the candidate's type record, here
+  'Warg_Brown': 31 entries) **sorted by range, down to the first entry whose range is under the candidate's distance**
+  (+0x80 of its target struct = its Combat+0x2f8; FUN_02296aa0: the surface distance to Talion's root). 'PC_Warg_Mount'
+  has range 300 cm; the stunned caragor's distance read **686-1095 cm**: **the counter throws it 7-9 m behind Talion**
+  (VERBS' "near at 61 cm" is the sync's start). 128's probes walked ahead, away from it (`ride face on` looked for a
+  stunned caragor within 8 m only: it never turned); the item gate of the entries (FUN_02280000 by the inventory) was
+  not it - all 107 entries on, none of their records asks 'CP_Warg_Rider' (boot 171204).
+- **Walked at it** (boot 184645: `ride face on` to 15 m): 686 -> 622 -> 432 -> 262 cm - from 262 cm 'PC_Warg_Mount'
+  validated each frame (scores 5-20), the caragor still 'AI_Warg_Knockdown_Idle_C'. Boot 185824: 123 pressed 68 cm off
+  = **root 'PC_Warg_Domination_Mount_Grnd': the pick 'PC_Warg_Domination_Mount_Grnd_KD_R', gates A and B 0, started**,
+  the domination after it ('PC_Warg_Domination_WargRider_Start', 'PC_Warg_Domination_Attempt_FromR') - twice. 128's
+  lift of the 18 asks is all the mount's predicate needs (no other unask: 'PC_InQuestStartPoint', 'PC_SwordOrDagger',
+  'Not_OnTheGround' pass as they are).
+- **But no prompt** (185824): the HUD showed nothing on RB, so the VR mount (105.4: the left hand reached out and
+  closed *at the game's offer* 'UI_MountWarg_Dominate') never fired. The RB button's override that names the mount's
+  prompt asks the item too (128.1's breadth-first read): 'Player_Character' -> [07de1722] 'DefaultSword' -> [245e4bd7]
+  Buttons 'Sword_ButtonRB' -> [31775628] its overrides -> [a582699f] IncludedItem 'CP_Warg_Rider' (and 'PC_Stealth' ->
+  'StealthMode' -> 'Stealth_ButtonX' / 'Stealth_ButtonRB'). 128 lifted those once while Talion stood out of the 3 m: no
+  effect then, not tested within reach.
+
+### 130.2 The change: the RB prompt's IncludedItem lifted with the rest (somvr_beasts_game.c `bzp_scan`, the same `SOMVR_PRACTICE_CARAGOR=unlock`)
+- At the first lift (a Practice > Caragor spawned): Talion's root and character records' records 3 deep (record-typed
+  values; 1069 read), each one's Buttons -> overrides -> IncludedItem naming the item kept (found: 'Sword_ButtonRB'; the
+  stealth buttons are not reached from the sword's root - a stunned caragor is met with the sword drawn). Lifted to none
+  and put back exactly as 128.2's asks (read back first; a changed slot left alone), in the same line: `BEASTS t=..
+  practice caragor: a Practice > Caragor lives - 18 of 18 asks for 'CP_Warg_Rider', 1 of 1 pool entries and 1 of 1
+  prompt asks lifted ...` / `... put back`. Memory only; Talion's inventory and the save untouched. No new switch: the
+  mount is part of what `unlock` asks the game for (off = the save's caragor, as before).
+- Nothing else in the mount's chain changed: 105.4's hand (the offer, the left hand reached out 30+ cm and closed, 123
+  for 0.5 s, the view held), 109's domination held by the grip, Seat mode, 122's run, off by B.
+- A test aid widened: `ride face on` turns the view to a stunned caragor within 15 m (was 8). The driver walks at it
+  with the left hand out and closes at the offer at once (the offer can come in the stun's last 0.6 s).
+
+### 130.3 What a player gets (boot 191201)
+Counter -> the caragor thrown behind Talion, stunned ~6-8 s -> turned and walked at it -> **'UI_MountWarg_Dominate'
+offered** -> the left hand (39 cm out, 40 deg off the view) closed -> 123 -> 'PC_Warg_Domination_Mount_Grnd_KD_R' ->
+the domination's struggle ('12CStruggleAim') held 1.5 s by the grip: won -> 'PC_Warg_Domination_Success' -> **seated
+2.4 s after the mount: Seat mode**, the view turned to the caragor's heading on the blink's black -> the run (ForwardAxis
+0.99) -> B -> dismounted after 14.3 s, standing 0.15 s later. Pictures (frames 1233 seated, 1297 the run, 1595 off):
+both eyes the same, the caragor's head and spikes below the view, the meadow; the run inside the comfort vignette;
+nothing moves the view but the blinks.
+
+### 130.4 The offer shown: `SOMVR_RIDE_CUE=on|off` (somvr_ride_game.c `mt_glow_add`; code default on with SOMVR_RIDE; build 29b env on)
+The game's prompt for the mount is dropped in VR (`PROMPTS show ... 'UI_MountWarg_Dominate' ...: dropped (no VR control
+sends it)`; the user: no prompts in play), so a player could not tell when the offer is up - and it can be short: the
+caragor gets up 6-8 s after the counter, the walk to it takes most of that (boot 192058: the offer up 0.60 s before
+'AI_Warg_Knockdown_Recover'). **Decided**: HL:A shows a thing you can grab - while the game offers the mount, the
+stunned caragor nearest the eyes (within 15 m, its attack a knockdown's) gets the grab cue's faint wraith-blue glow
+(SOMVR_VERBS_CUE's: THREAT's blue row, its level 0.55, its size; beyond 2.5 m it keeps its angular size) 20 cm over its
+chest bone (boot 195001: over its root it floated beside the lying body), 0.15 s in and out; no prompt, no sound, nothing moves. Big Game's caragor gets it too (the
+same offer). Lines: `CONFIG ride cue=`, `RIDE END cue: N frames ...`. A test aid: `ride cue test S` (the glow S s on a
+stunned caragor whatever the offer: for a picture). Boot 194015: 19 frames (0.95 s) at the offer.
+
+### 130.5 Runs (headless, Monado 20 Hz, scripts/headset-build26.env (+ my block from 194015) + SOMVR_HANDS_TEST=1; scripts/pcar29-drive.sh `PC_STEPS=chain`; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-20261031-) | What | Proves |
+|---|---|---|
+| 154357 | node log at 123 (PC_PRESS=1) | the mount's root validated, no pick; the grab's fail with the target 0 |
+| 170037 | + the targeting test's lines | the stunned caragor never tested against 'PC_Warg_Mount' |
+| 171204 | an item lift of the targeting entries (tried, removed) | all 107 entries on, none asks the item; 'PC_Warg_Mount' validated only once it stood 5 m off |
+| 182512 | bzt_diag | no leap in 2 spawns (bites only) |
+| 183422 | bzt_diag | its list: 'PC_Warg_Mount' range 300; its distance 686-1095 (the walk went away) |
+| 184645 | `ride face on` 15 m, walked at it | 686 -> 262 cm: 'PC_Warg_Mount' validated in the stun; no prompt |
+| 185824 | 123 probe within 68 cm | **the pick = 'PC_Warg_Domination_Mount_Grnd_KD_R', started; the domination** (twice); no prompt (the old code: no offer) |
+| 191201 | + the RB prompt's IncludedItem lifted | **the whole chain**: offer, hand, domination won, Seat mode, the run, off by B (the driver's B check raced) |
+| 192058 | the shipped env | the offer up 0.60 s at the stun's end: the driver's close came 1.3 s late (no mount) |
+| 192918 | the shipped env, the driver's close at once | **the whole chain**, `practice remove`: 18 + 1 + 1 put back |
+| 194015 | + SOMVR_RIDE_CUE | the cue 19 frames at the offer (the picture came 0.14 s after it) |
+| 195001 | + `ride cue test 3` | **the whole chain again**; the cue's picture: over the root it floated beside the body (-> its chest) |
+| 195812 | the cue over its chest bone | **the whole chain a third time**; the cue's picture (frame 937): the faint blue on the lying caragor's chest ~8 m off, both eyes |
+
+### 130.6 Switches, words, lines
+| Switch | Code default | build 29b env | What |
+|---|---|---|---|
+| `SOMVR_PRACTICE_CARAGOR` | unlock | unlock (som-b29-pcaragor) | now also the RB prompt's IncludedItem: the mount offered in the practice |
+| `SOMVR_RIDE_CUE` | on (with SOMVR_RIDE) | on | the mount's offer = the grab cue's glow on the stunned caragor |
+Test words: `ride cue test S`; `ride face on` (15 m). Test lines with `SOMVR_VERBS_BRAND_NODELOG=on` (never in a build's
+env): the targeting test's "'TARGET' Rejected (RECORD)- why" / "Validated (RECORD), Score" in the node log (its filter:
+`A|B|C`), `BEASTS t=.. practice caragor tg: ...` (every 2 s: the type list) / `tg dist N cm ('ATTACK')` (4 a second).
+Lines: `BEASTS t=.. practice caragor: the button prompts' overrides asking 'CP_Warg_Rider' (IncludedItem): 1
+('Sword_ButtonRB'), N records read ...`, the lift/put back line with `N of N prompt asks`, `CONFIG ride cue=`, `RIDE END cue:`.
+
+### 130.7 For the headset, unproven
+- Practice > Caragor: counter the leap; it's thrown behind you - turn, walk to it, and when it glows faint blue reach out
+  with the left hand and close it; keep gripping through "the struggle" -> you're on it. B gets off.
+- The window: the caragor gets up 6-8 s after the counter (the view held ~2-3 s of it): enough to turn and walk 4-6 m?
+  The game's (the same in Big Game). If too tight, the next step is the game's stun time, not ours to stretch blindly.
+- The cue's look at 3-8 m (its size keeps its angle past 2.5 m), and whether a player finds the caragor behind them.
+- The stealth buttons' IncludedItem are not lifted (not reached from the sword's root): a crouched approach shows no
+  offer. Whether a practice ride leaves a stat or tutorial flag in the campaign: Talion's inventory is untouched (not
+  compared in a session's autosave).

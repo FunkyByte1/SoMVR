@@ -43,8 +43,8 @@ SITE("BR_START", K_CALL, 0xa8eb6f, 0xa8eb63, "4c 89 d9 4c 89 d2 4c 89 e6 48 89 d
 static const struct site_spec *g_br_sites = g_br_sites_game; /* selftest: stand-ins */
 #define BR_NL_FLAG 0x4c445d8u  /* the node log's byte */
 #define BR_NL_SINK 0x4c459a0u  /* Combat_LogPrintf's sink (a FILE * holder; null) */
-#define BR_NL_NODES 192
-#define BR_NL_MAXLINES 600
+#define BR_NL_NODES 512
+#define BR_NL_MAXLINES 1500
 typedef void (*br_sink_write_fn)(uintptr_t sink, const char *text);
 static struct {
 	int want, ok;                /* the switch; the call patched */
@@ -53,8 +53,8 @@ static struct {
 	int on;                      /* the byte and our sink set now */
 	double until;                /* the window (the game thread) */
 	_Atomic int busy;            /* the line table (Combat_LogPrintf may run off the game thread) */
-	char filter[32];             /* only lines naming this (default "PC_": the player's nodes) */
-	struct { char key[64], text[200]; double t0; uint32_t n; } node[BR_NL_NODES];
+	char filter[96];             /* only lines naming this (default "PC_": the player's nodes; names split by '|', build 29b) */
+	struct { char key[96], text[200]; double t0; uint32_t n; } node[BR_NL_NODES];
 	int nnodes;
 	uint64_t lines, kept, logged, dropped, busy_drops, windows, frame0;
 	double t_open;
@@ -64,7 +64,16 @@ static struct {
 static void br_nl_key(const char *s, char *key, size_t cap)
 {
 	const char *q = strchr(s, '\''), *v = strstr(s, "validated: ");
+	const char *tr = strstr(s, "' Rejected ("), *tv = strstr(s, "' Validated (");
 	size_t n = 0;
+	if ((tr || tv) && q && q < (tr ? tr : tv)) { /* build 29b: the targeting test's - one key per target and record */
+		const char *e = strchr(tr ? tr : tv, ')');
+		n = e ? (size_t)(e - q + 1) : strlen(q);
+		n = n + 1 < cap ? n : cap - 1;
+		memcpy(key, q, n);
+		key[n] = 0;
+		return;
+	}
 	if (v) {
 		v += 11;
 		while (v[n] && v[n] != ' ' && v[n] != '\n' && n + 1 < cap)
@@ -79,6 +88,21 @@ static void br_nl_key(const char *s, char *key, size_t cap)
 	key[n] = 0;
 }
 
+/* the filter: one name, or names split by '|' (build 29b) */
+static int br_nl_match(const char *s)
+{
+	const char *f = g_brnl.filter;
+	while (*f) {
+		size_t n = strcspn(f, "|");
+		char one[sizeof g_brnl.filter];
+		memcpy(one, f, n), one[n] = 0;
+		if (n && strstr(s, one))
+			return 1;
+		f += n + (f[n] == '|');
+	}
+	return 0;
+}
+
 /* one formatted line of Combat_LogPrintf ("%.3lf [COMBAT|NODE]: TEXT\n"): logged when the node's line is new or changed
  * (returns 1 then); the game's clock and the prefix cut */
 static int br_nl_line(const char *text, double t)
@@ -88,10 +112,10 @@ static int br_nl_line(const char *text, double t)
 		return 0;
 	const char *s = strstr(text, "]: ");
 	s = s ? s + 3 : text;
-	if (g_brnl.filter[0] && !strstr(s, g_brnl.filter))
+	if (g_brnl.filter[0] && !br_nl_match(s))
 		return 0;
 	g_brnl.kept++;
-	char key[64], line[200];
+	char key[96], line[200];
 	size_t n = strcspn(s, "\r\n");
 	n = n < sizeof line - 1 ? n : sizeof line - 1;
 	memcpy(line, s, n), line[n] = 0;
@@ -199,11 +223,12 @@ static void br_nl_frame(double t)
 		}
 		g_brnl.nnodes = 0, g_brnl.logged = 0, g_brnl.frame0 = g_fr.frame, g_brnl.t_open = t, g_brnl.windows++;
 		*sink = (uintptr_t)g_brnl.dummy, *flag = 1, g_brnl.on = 1;
+		g_co_tgt_debug = 1; /* build 29b: the targeting test's own lines (somvr_w_coscore) */
 		logf_("VERBS brand node log t=%.3f: open for %.1f s (the game's combat node log, lines naming '%s')", t,
 		      g_brnl.until - t, g_brnl.filter);
 		return;
 	}
-	*flag = 0, *sink = 0, g_brnl.on = 0;
+	*flag = 0, *sink = 0, g_brnl.on = 0, g_co_tgt_debug = 0;
 	int z = 0;
 	while (!atomic_compare_exchange_weak(&g_brnl.busy, &z, 1))
 		z = 0;
@@ -259,8 +284,9 @@ static void br_nl_start(const struct site_spec *sites, uintptr_t flag_a, uintptr
 		*bad = 1;
 	logf_("CONFIG verbs brand node log=%s (SOMVR_VERBS_BRAND_NODELOG, a test switch): the game's combat node log into "
 	      "somvr.log (lines naming '%s', SOMVR_VERBS_BRAND_NODELOG_FILTER) for 3 s from each new stealth brand offer and each "
-	      "brand press, and `verbs brand nodelog S`; the root loop's pick, its two target gates and the start %s", g_brnl.ok ? "on" :
-	      "NOT hooked", g_brnl.filter, gates ? "logged too" : "NOT all hooked");
+	      "brand press, and `verbs brand nodelog S`; the root loop's pick, its two target gates and the start %s; the targeting "
+	      "test's own lines %s", g_brnl.ok ? "on" : "NOT hooked", g_brnl.filter, gates ? "logged too" : "NOT all hooked",
+	      g_co.on_score == 6 ? "too (CO_TSCORE_1..6)" : "NOT (SOMVR_GLYPH's CO_TSCORE calls not in)");
 }
 
 #define BR_C_BLOCKING 0xdc /* Combat: the current attack is a blocking one (AttackData.IsBlock; re-combat.md 3.2) */

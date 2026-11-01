@@ -9,7 +9,8 @@
 #          the counter, the stun; then the mount by the left hand reached out and closed at the game's offer (PC_PRESS=1: 123
 #          pressed at the stunned caragor instead, a probe), the domination held, Seat mode, the run, off by B.
 #          PC_RECS: records dumped first (`abil rec`/`abil skill`); PC_PRE: grants / `unask:NAME` before; PC_GRANT: the
-#          same after a first try without a mount (probes)
+#          same after a first try without a mount (probes); PC_NODELOG=S: the game's node log and targeting lines for S s
+#          from each stun (build 29b, SOMVR_VERBS_BRAND_NODELOG=on)
 # PC_RUN=RUN drives a running boot. Lines: ABIL refs/skill, BEASTS, DEFENCE, RIDE; pc-steps.txt (PASS/FAIL, dump frames).
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${PC_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
@@ -114,15 +115,41 @@ press_try() { # PC_PRESS=1 (a probe): the game's mount pressed (123, RB) by the 
 mount_try() { # the stunned caragor: the left hand reached out and closed at the game's offer, held through the domination
   [ -n "${PC_PRESS:-}" ] && { press_try; local r=$?; [ $r = 0 ] && { w "hands squeeze L 1" 0.3; waitfor '^RIDE t=.* seated on the' 14 && pass "seated"; w "hands squeeze L 0" 0.3; }; mounted "$M0"; return; }
   local n1; n1=$(lines)
-  w "ride face on" 0.3
-  waitfor "^RIDE t=.* the game offers the mount" 3 # standing by it first (the kneeling mounts ask 150 units)
-  for i in $(seq 1 12); do
+  w "ride face on" 0.5
+  # build 29b: the counter throws the caragor 7-9 m behind Talion and the mount's targeting ('PC_Warg_Mount') reaches
+  # 3 m: turned to it (`ride face on`, 15 m), walked at it (one long stick) with the left hand out, the offer polled every
+  # 0.1 s and the hand closed at once (boot 192058: the offer came 0.6 s before the stun's end - a slow close missed it);
+  # with the node log's window stopped within 120 cm by the targeting's own distance (`practice caragor tg dist`)
+  local dist
+  w "hands test L -25 -35 30 0 0 0" 0.3
+  # build 29b: PC_CUE_PIC=1 - SOMVR_RIDE_CUE's glow forced on the lying caragor (`ride cue test 3`) and a picture of it
+  [ -n "${PC_CUE_PIC:-}" ] && { w "ride cue test 3" 0.3; T_S=0.6 d "cue"; PC_CUE_PIC=; } # (once)
+  local ws=${PC_WALK_S:-6.0}
+  w "stick 0 1 0 $ws" 0.05
+  for i in $(seq 1 $(( ${ws%.*} * 10 + 10 ))); do
     since "$n1" "^RIDE t=.* the game offers the mount" | grep -q . && break
-    w "stick 0 1 0 0.4" 0.6
+    dist=$(since "$n1" "^BEASTS t=.* practice caragor tg dist " | tail -1 | grep -oE 'dist [0-9.]+' | cut -c6-)
+    [ -n "$dist" ] && awk "BEGIN{exit !($dist < 120)}" && break
+    sleep 0.1
   done
+  if since "$n1" "^RIDE t=.* the game offers the mount" | grep -q .; then
+    w "hands squeeze L 1" 0.3 # the reach and the close at the offer (the grip kept closed through the domination)
+    SQ=1
+  fi
+  w "stick 0 0 0 0.1" 0.3
+  echo "walked: tg dist ${dist:-?}; $(since "$n1" "^BEASTS t=.* practice caragor tg dist " | tail -1 | grep -oE "\('[^']*'\)")" | tee -a "$R/pc-steps.txt"
+  if ! since "$n1" "^RIDE t=.* the game offers the mount" | grep -q . && [ -n "${PC_PROBE:-}" ]; then
+    w "ride press 123 400" 0.4 # a probe: the game's mount pressed there (the node log: the root's pick)
+    w "hands squeeze L 1" 0.6   # the domination held by the left grip (as after the hand's mount)
+    echo "probe 123: $(since "$n1" "^VERBS brand gate .* root '[^']*': the pick" | tail -2 | grep -oE "root '[^']*': the pick -> [0-9]+ \(the attack '[^']*'" | tr '\n' ' ')" | tee -a "$R/pc-steps.txt"
+    waitfor '^RIDE t=.* seated on the' 14 && pass "seated (the probe's press)"
+    w "hands squeeze L 0" 0.3; w "ride face off" 0.3
+    mounted "$M0"; return
+  fi
   since "$n1" "^RIDE t=.* the game offers the mount" | grep -q . || { fail "no mount offer"; w "ride face off" 0.3; return 1; }
   pass "the game offers the mount"
-  w "hands test L -25 -35 30 0 0 0" 0.2; w "hands squeeze L 1" 0.3
+  [ -n "${SQ:-}" ] || { w "hands test L -25 -35 30 0 0 0" 0.2; w "hands squeeze L 1" 0.3; }
+  SQ=
   waitfor '^RIDE t=.* the mount: the left hand' 3 && pass "the mount pressed by the reached-out hand"
   waitfor '^RIDE t=.* seated on the' 14 && pass "seated" || fail "not seated"
   w "hands squeeze L 0" 0.3; w "ride face off" 0.3
@@ -137,8 +164,14 @@ chain_try() { # $1 = label: the leap across the blade, the counter, the stun, th
   [ -n "$DRAWN" ] || { draw_slot; DRAWN=1; } # (once: a second draw puts the sword back - 127.2)
   w "$GUARDP" 0.6; w "fight guard learn" 0.5; sleep 1.5
   n0=$(lines)
+  local un=0
   for sp in $(seq 1 ${PC_SPAWNS:-4}); do
     mounted "$M0" && break
+    # build 29b: PC_UNASKS="A B C" - before spawn k+1 the k-th name unasked (cumulative: which ask stops the mount)
+    if [ "$sp" -gt 1 ] && [ -n "${PC_UNASKS:-}" ]; then
+      un=$((un + 1)); u=$(echo $PC_UNASKS | cut -d' ' -f$un)
+      [ -n "$u" ] && { w "beasts unask $u" 1.0; echo "spawn $sp: + unask $u" | tee -a "$R/pc-steps.txt"; }
+    fi
     w "practice remove" 1.5; head_to 0 -10; w "ride guard on" 0.4
     n1=$(lines); w "practice far caragor" 1.5
     if waitfor "^BEASTS t=.* attack 'AI_Warg_JumpAttack[^']*' at Talion" 25; then
@@ -147,6 +180,9 @@ chain_try() { # $1 = label: the leap across the blade, the counter, the stun, th
       if since "$n1" "now 'AI_Warg_PC_Sync_Cntr" | grep -q .; then
         pass "$1: the leap countered by the blade across its line"; T_S=0.05 d "countered"
         w "ride guard off" 0.3
+        # build 29b (PC_NODELOG=S, with SOMVR_VERBS_BRAND_NODELOG=on): the game's node log and its targeting test's lines
+        # for S s from the stun (what refuses the mount at the stunned caragor: re-xr-pipeline.md 130)
+        [ -n "${PC_NODELOG:-}" ] && w "verbs brand nodelog $PC_NODELOG" 0.3
         if [ -n "${PC_PICK:-}" ]; then
           for i in 1 2; do w "beasts pick" 0.7; done
           for u in $PC_PICK; do w "beasts unask $u" 0.6; w "beasts pick" 0.7; done
@@ -165,6 +201,7 @@ chain_try() { # $1 = label: the leap across the blade, the counter, the stun, th
 if has chain; then
   echo "== chain: Practice > Caragor - the leap across the blade, the counter, the stun, the mount, the ride, off"
   grep -E "^BEASTS practice caragor:   " "$L" | cut -c1-300
+  for k in ${PC_SKILLS:-}; do w "beasts skills $k" 1.2; done # build 29b: Talion's owned bits (items are skills' bits)
   for r in ${PC_RECS:-PC_Warg_Domination_Mount_Grnd_KD_R}; do case $r in PSS_*) w "abil skill $r" 1.5 ;; *) w "abil rec $r" 1.5 ;; esac; done
   for s in ${PC_PRE:-}; do case $s in unask:*) w "beasts unask ${s#unask:}" 1.2 ;; *) w "beasts grant $s" 1.2 ;; esac; done
   ok=1; chain_try "chain" || ok=0
@@ -179,9 +216,13 @@ if has chain; then
     n2=$(lines); w "stick 0 1 0 3.0" 1.5; d "ride-run"; sleep 1.8
     since "$n2" '^RIDE (press|motion)' | head -3 | cut -c1-220
     n4=$(lines); t "btn R b 1"; T_S=0.05 d "ride-off"; T_S=0.4 t "btn R b 0"
-    waitfor '^RIDE t=.* off: standing' 8 && pass "off by B" || fail "not off by B"
+    for i in $(seq 1 32); do since "$n4" '^RIDE t=.* off: standing' | grep -q . && break; sleep 0.25; done
+    since "$n4" '^RIDE t=.* off: standing' | grep -q . && pass "off by B" || fail "not off by B" # (since B: the line may come first)
     sleep 1.0; d "ride-off-b"
     since "$n4" '^(RIDE|BODYMOMENT .*(released|blink))' | head -6 | cut -c1-220
+    # build 29b: the practice's caragor removed - the lifted asks (the prompt's too) put back
+    n5=$(lines); w "practice remove" 2.0
+    since "$n5" "^BEASTS t=.* practice caragor: .* put back" | tail -1 | cut -c1-240 | tee -a "$R/pc-steps.txt"
   else
     fail "not mounted on Practice > Caragor"
   fi

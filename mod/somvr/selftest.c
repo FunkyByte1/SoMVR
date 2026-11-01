@@ -16104,6 +16104,73 @@ static void soak_tests(void)
 	g_co.ntr = ntr0, g_co.nit = nit0, g_co.n_tr_reused = ru0, g_co.n_it_reused = iu0;
 }
 
+/* build 29 (som-b29-soak2, docs/re-xr-pipeline.md 129): the root nodes' cache past 24 names, and the logs that went
+ * silent for the rest of a session (VERBS, the effects census, the execution's streak, RIDE, STRUGGLE, OBJECTIVE) */
+static void soak29_tests(void)
+{
+	static __typeof__(g_vb_nc) nc0;
+	memcpy(nc0, g_vb_nc, sizeof nc0);
+	unsigned n0 = g_vb_nc_n, x0 = g_vb_nc_next;
+	uint64_t rd0 = g_vb_nc_reads, ru0 = g_vb_nc_reused;
+	g_vb_nc_n = 0, g_vb_nc_next = 0, memset(g_vb_nc, 0, sizeof g_vb_nc);
+	char nm[48];
+	/* rehearsal 1's session: 41 names asked once, then the ignite's and the distract's in turns while an arrow is drawn */
+	uint64_t r = g_vb_nc_reads;
+	for (int i = 0; i < 41; i++)
+		snprintf(nm, sizeof nm, "PC_Test_Root_%02d", i), vb_node_named(0, nm);
+	for (int i = 0; i < 200; i++)
+		vb_node_named(0, "PC_Wraith_Ranged_Immolate_Shoot"), vb_node_named(0, "PC_Wraith_Ranged_Normal_Distract");
+	EXPECT(g_vb_nc_reads - r == 43, "root nodes: 43 names, then 400 asks of two = 43 reads (got %llu; the old cache: 441)",
+	       (unsigned long long)(g_vb_nc_reads - r));
+	int hit = -1, k = vb_nc_slot("PC_Test_Root_07", 0x1234, &hit), k2 = vb_nc_slot("PC_Test_Root_07", 0, &hit);
+	EXPECT(k == k2 && k == 7 && hit == 1, "root nodes: another root record = the name's own entry read again (%d %d %d)", k, k2, hit);
+	/* full: the next in turn, never one entry for every new name */
+	for (int i = 41; i < VB_NODE_CACHE + 6; i++)
+		snprintf(nm, sizeof nm, "PC_Test_Root_%02d", i), vb_node_named(0, nm);
+	EXPECT(g_vb_nc_n == VB_NODE_CACHE && g_vb_nc_reused == ru0 + 8, "root nodes: full, 8 names more = 8 entries reused (%u, %llu)",
+	       g_vb_nc_n, (unsigned long long)(g_vb_nc_reused - ru0));
+	r = g_vb_nc_reads;
+	for (int i = 0; i < 100; i++)
+		vb_node_named(0, "PC_Test_Root_99"), vb_node_named(0, "PC_Test_Root_100");
+	EXPECT(g_vb_nc_reads == r, "root nodes: full, the two newest asked 200 times = no read (%llu)", (unsigned long long)(g_vb_nc_reads - r));
+	vb_node_named(0, "PC_Test_Root_00"), vb_node_named(0, "PC_Test_Root_01");
+	r = g_vb_nc_reads;
+	for (int i = 0; i < 100; i++)
+		vb_node_named(0, "PC_Test_Root_00"), vb_node_named(0, "PC_Test_Root_01");
+	EXPECT(g_vb_nc_reads == r, "root nodes: full, two evicted names back = read once each, then kept (%llu)",
+	       (unsigned long long)(g_vb_nc_reads - r));
+	memcpy(g_vb_nc, nc0, sizeof nc0), g_vb_nc_n = n0, g_vb_nc_next = x0, g_vb_nc_reads = rd0, g_vb_nc_reused = ru0;
+	/* the late lines: past each budget, lines still go out (each window 100-150), not none for the rest of the session */
+	for (int tries = 0; tries < 2; tries++) {
+		long long w0 = (long long)(mono() / 600.0);
+		uint64_t vl = g_vb.lines, vs = g_vb.suppressed, vlate = g_vb.late;
+		uint32_t fl = atomic_load(&g_fc.lines);
+		uint64_t xl = g_xc.streak_lines;
+		int ml = g_mt.lines, sl = g_stg.lines;
+		uint32_t ol = g_ob.lines;
+		uint64_t ms = g_mt.suppressed;
+		struct log_late a = g_vb_late, b = g_fc_late, c = g_xc_late, d = g_mt_late, e = g_stg_late, f = g_ob_late;
+		memset(&g_vb_late, 0, sizeof g_vb_late), memset(&g_fc_late, 0, sizeof g_fc_late), memset(&g_xc_late, 0, sizeof g_xc_late);
+		memset(&g_mt_late, 0, sizeof g_mt_late), memset(&g_stg_late, 0, sizeof g_stg_late), memset(&g_ob_late, 0, sizeof g_ob_late);
+		g_vb.lines = VB_LINES, atomic_store(&g_fc.lines, FC_LINES + 5), g_xc.streak_lines = 500, g_mt.lines = MT_LOG_MAX;
+		g_stg.lines = 450, g_ob.lines = 400;
+		int nv = 0, nf = 0, nx = 0, nm2 = 0, ns = 0, no = 0;
+		for (int i = 0; i < 300; i++)
+			nv += vb_log_ok(), nf += fc_line_ok(), nx += xc_log_ok(), nm2 += mt_log_ok() != 0, ns += stg_log_ok(),
+			no += ob_log_ok();
+		long long w1 = (long long)(mono() / 600.0);
+		g_vb.lines = vl, g_vb.suppressed = vs, g_vb.late = vlate, atomic_store(&g_fc.lines, fl), g_xc.streak_lines = xl;
+		g_mt.lines = ml, g_mt.suppressed = ms, g_stg.lines = sl, g_ob.lines = ol;
+		g_vb_late = a, g_fc_late = b, g_xc_late = c, g_mt_late = d, g_stg_late = e, g_ob_late = f;
+		if (w0 != w1 && !tries)
+			continue; /* (a 10-minute window turned during the loop: again) */
+		EXPECT(nv == 150 && nf == 150 && nx == 100 && nm2 == 100 && ns == 100 && no == 100,
+		       "late lines past the budgets (300 asked): VERBS %d (150), census %d (150), streak %d (100), RIDE %d (100), "
+		       "STRUGGLE %d (100), OBJECTIVE %d (100); the old code: 0 each", nv, nf, nx, nm2, ns, no);
+		break;
+	}
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
@@ -16694,6 +16761,7 @@ int main(int argc, char **argv)
 	ff_tests();     /* SOMVR_FRONT: the wrappers on stand-ins (build 14) */
 	py_tests();     /* SOMVR_PARRY / SOMVR_SHOVE: the window, the opening, the riposte (build 18) */
 	soak_tests();   /* build 27: the long session's tables (SOMVR_GLYPH's triggers and items) */
+	soak29_tests(); /* build 29: the root nodes' cache, the late lines */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",
 	       (unsigned long long)atomic_load(&g_st_stereo), (unsigned long long)atomic_load(&g_st_mono),

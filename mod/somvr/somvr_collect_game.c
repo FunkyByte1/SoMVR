@@ -592,10 +592,21 @@ static void co_collect_tick(void)
 	      (unsigned long)p, taken);
 }
 
+/* build 29b (som-b29-pcaragor2; re-xr-pipeline.md 130): while SOMVR_VERBS_BRAND_NODELOG's window is open, the
+ * candidate's debug byte +0xbd (the game's Combat.Vis.Target) is set for the call and put back after: the test's own
+ * "[COMBAT|TARGET]: 'TARGET' Rejected (RECORD)- why" / "Validated (RECORD), Score" lines reach the node log's sink */
+#define CO_C_TGTDEBUG 0xbd
+static volatile int g_co_tgt_debug;
 /* CO_TSCORE_1..6: FUN_00a941b0(target record, context, candidate, &score) - a target record's rules (logged, passed) */
 __attribute__((used)) uint64_t somvr_w_coscore(uintptr_t rec, uintptr_t ctx, uintptr_t cand, float *score)
 {
+	uint8_t dbg = 1;
+	int set = g_co_tgt_debug && cand && peek(cand + CO_C_TGTDEBUG, &dbg, 1) && !dbg;
+	if (set)
+		*(volatile uint8_t *)(cand + CO_C_TGTDEBUG) = 1;
 	uint64_t rv = ((co_score_fn)g_co_sites[COS_TSCORE_1].target)(rec, ctx, cand, score);
+	if (set)
+		*(volatile uint8_t *)(cand + CO_C_TGTDEBUG) = 0;
 	uintptr_t obj = cand ? peek_ptr(cand + CO_C_OBJ) : 0, item = co_item_of(obj), p;
 	float me[3], op[3];
 	if (!item || !co_player(&p, me) || !peek(obj + OBJ_POS, op, sizeof op) || dist3(me, op) > g_co.gl_far_cm)

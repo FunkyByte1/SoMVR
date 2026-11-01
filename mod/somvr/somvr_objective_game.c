@@ -90,6 +90,10 @@ static struct {
 	int strike;          /* build 17: the Shadow Strike's mark published (SOMVR_STRIKE_GAZE) */
 	uint64_t strike_frames;
 } g_ob;
+static struct log_late g_ob_late;
+/* the first 400 lines, then (build 29, som-b29-soak2) 100 a 10 minutes: before, silent for the rest of the session (the
+ * user's 14 minutes of 10-28 wrote 30: the budget gone ~3 hours in; re-xr-pipeline.md 129) */
+static int ob_log_ok(void) { return g_ob.lines++ < 400 || log_late_ok(&g_ob_late, 100, mono()); }
 
 static long ob_tid(void) { return (long)syscall(SYS_gettid); }
 
@@ -214,8 +218,7 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 			k->elig = elig;
 		}
 	}
-	if (first && g_ob.lines < 400) {
-		g_ob.lines++;
+	if (first && ob_log_ok()) {
 		logf_("OBJECTIVE t=%.3f marker %u m=%#lx '%s'%s: %s at (%.0f %.0f %.0f), offscreen %d", t, k->id, (unsigned long)m,
 		      name, match == 2 ? " (the player's waypoint)" : match ? " (an objective)" : "", shown ? "shown by the game" : "not shown", k->pos[0], k->pos[1],
 		      k->pos[2], ob_offscreen(rec));
@@ -270,7 +273,7 @@ static void ob_frame(uintptr_t pl, int stereo)
 			g_cl.dm_timer_frames++;
 		}
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
-		if (g_ob.land_was != 1 + dm && g_ob.lines++ < 400)
+		if (g_ob.land_was != 1 + dm && ob_log_ok())
 			logf_("OBJECTIVE t=%.3f frame=%llu: the climb's landing in the eyes: a ring at (%.0f %.0f %.0f), xr (%+.2f %+.2f "
 			      "%+.2f) m, radius %.2f m%s (%s)", mono(), (unsigned long long)g_fr.frame, w[0], w[1], w[2], e.pos[0],
 			      e.pos[1], e.pos[2], (double)e.dist_m, dm ? ", the line from its top 2 cm over it down to it" : "",
@@ -281,7 +284,7 @@ static void ob_frame(uintptr_t pl, int stereo)
 	g_ob.land_was = 0;
 	if (g_ob.ws && ws_entry(&e)) { /* build 18: the wraith step's landing (SOMVR_WRAITH_STEP: gold, or red and crossed) */
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
-		if (g_ob.ws_was != 1 + !!(e.flags & SOMVR_OBF_LAND_NO) && g_ob.lines++ < 400)
+		if (g_ob.ws_was != 1 + !!(e.flags & SOMVR_OBF_LAND_NO) && ob_log_ok())
 			logf_("OBJECTIVE t=%.3f frame=%llu: the wraith step's landing in the eyes: %s ring, xr (%+.2f %+.2f %+.2f) m, "
 			      "radius %.2f m (SOMVR_WRAITH_STEP)", mono(), (unsigned long long)g_fr.frame,
 			      e.flags & SOMVR_OBF_LAND_NO ? "the red crossed" : "the gold", e.pos[0], e.pos[1], e.pos[2], (double)e.dist_m);
@@ -291,7 +294,7 @@ static void ob_frame(uintptr_t pl, int stereo)
 	g_ob.ws_was = 0;
 	if (g_ob.vault && jv_entry(&e)) { /* build 22: the vault's landing (SOMVR_VAULT: the gold ring past the obstacle) */
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
-		if (!g_ob.vault_was && g_ob.lines++ < 400)
+		if (!g_ob.vault_was && ob_log_ok())
 			logf_("OBJECTIVE t=%.3f frame=%llu: the vault's landing in the eyes: the gold ring, xr (%+.2f %+.2f %+.2f) m, "
 			      "radius %.2f m (SOMVR_VAULT)", mono(), (unsigned long long)g_fr.frame, e.pos[0], e.pos[1], e.pos[2],
 			      (double)e.dist_m);
@@ -339,7 +342,7 @@ static void ob_frame(uintptr_t pl, int stereo)
 	somvr_objective_put(&g_obj, g_fr.frame, &e);
 	uintptr_t cur = best ? best->m : 0;
 	if (cur != g_ob.cur || (best && best->id != g_ob.cur_id)) {
-		if (g_ob.lines++ < 400)
+		if (ob_log_ok())
 			logf_("OBJECTIVE t=%.3f frame=%llu: %s%s%s%s", t, (unsigned long long)g_fr.frame,
 			      best ? "the marker in the eyes: '" : "no objective in the eyes",
 			      best ? best->name : "", best ? "'" : "", best ? "" : (game_paused() ? " (paused)" : ""));

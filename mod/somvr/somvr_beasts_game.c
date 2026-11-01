@@ -114,6 +114,27 @@ static const uint32_t g_bzu_hasnot[] = { 0x95447be3u /* TargetDoesNotHaveInvItem
 #define BZU_NODES 400
 #define BZU_H_POOLS 0xe6a2e99fu   /* a node's Pools */
 #define BZU_H_ATTACKS 0xe9b632dbu /* a pool's Attacks */
+/* build 29b (som-b29-pcaragor2; re-xr-pipeline.md 130): the player's targeting, read by bzt_diag (a test). A stunned
+ * caragor's mount takes its target from the targeting record 'PC_Warg_Mount' (range 300 cm); FUN_00a98850 tests a
+ * candidate only against the entries of its type's list (sorted by range) down to the first whose range is under the
+ * candidate's distance (+0x80: FUN_02296aa0, the surface distance to Talion's root) - the counter throws the caragor
+ * 7-9 m behind Talion, so its mount is offered only once he has walked to within 3 m of it (as in Big Game). */
+/* build 29b (som-b29-pcaragor2; re-xr-pipeline.md 130): the mount's prompt. With the caragor stunned and within the
+ * targeting's 3 m the game's own pick takes Talion's mount (boot 20261031-185824: 123 pressed = 'PC_Warg_Domination_
+ * Mount_Grnd_KD_R', the domination after it), but the HUD shows no prompt for it - the RB button's override that names
+ * the mount's prompt asks the item too: 'Player_Character' -> [07de1722] 'DefaultSword' -> [245e4bd7] Buttons
+ * 'Sword_ButtonRB' -> [31775628] its overrides -> [a582699f] IncludedItem 'CP_Warg_Rider' (and 'PC_Stealth' -> 'StealthMode'
+ * -> 'Stealth_ButtonX' / 'Stealth_ButtonRB': build 29's breadth-first read, 128.1). Those IncludedItem asks are lifted
+ * with the rest while a Practice > Caragor lives (found once: Talion's root and character records' records 3 deep, each
+ * one's Buttons -> overrides -> IncludedItem naming the item); put back after. */
+#define BZP_SLOTS 8
+#define BZP_RECS 3000
+#define BZP_H_BUTTONS 0x245e4bd7u   /* a mode's Buttons */
+#define BZP_H_OVERRIDES 0x31775628u /* a button's overrides */
+#define BZP_H_INCLUDED 0xa582699fu  /* an override's IncludedItem */
+#define BZT_PC_TARGETING 0x360 /* PlayerCombat: its targeting (FUN_00a847a0: this + 0x360 -> FUN_00a97ce0) */
+#define BZT_E_REC 0x40         /* a targeting entry: its targeting record */
+#define BZT_E_OFF 0x8e         /* ... its off bits (0 = on, FUN_0227d570) */
 static const uint32_t g_bzu_nodef[] = { 0xc016c081u /* Nodes */, 0xb86785e9u /* MountedNodes */, 0x23f4e9cdu
 					/* CombatCircleNodes */, 0x85069a49u /* Links */ };
 static struct {
@@ -135,6 +156,9 @@ static struct {
 	int np;
 	uint64_t lifts, restores, frames;
 	double lift_t;
+	/* build 29b: the HUD's button prompts' overrides that ask the item (IncludedItem: the mount's prompt on RB) */
+	struct { uintptr_t slot, item, btn; } ps[BZP_SLOTS];
+	int nps, ps_done, ps_recs;
 } g_bzu;
 
 static struct log_late g_bz_late; /* build 27 */
@@ -188,8 +212,8 @@ static void bz_start(int *bad)
 	}
 	logf_("CONFIG practice caragor=%s (SOMVR_PRACTICE_CARAGOR; build 29): %s", uw[g_bzu.on], g_bzu.on ? "while a Practice "
 	      "> Caragor lives (and Talion rides after it), the attack predicates' ask for the item(s) of Big Game's caragor riding "
-	      "(SOMVR_PRACTICE_CARAGOR_ITEMS) lifted in the database in memory: its leap the counterable kind, the counter's stun "
-	      "(the mount: not offered before Big Game); put back after (Talion's inventory and the save untouched)" :
+	      "(SOMVR_PRACTICE_CARAGOR_ITEMS) lifted in the database in memory: its leap the counterable kind, the counter's stun, "
+	      "the mount; put back after (Talion's inventory and the save untouched)" :
 	      "the practice's caragor as the save has it (before Big Game: its leap is never counterable)");
 }
 
@@ -644,9 +668,154 @@ static void bzu_unask(double t)
 	logf_("BEASTS t=%.3f practice caragor: unask '%s' - %d asks set to none in %d attacks (a test aid, memory only)", t,
 	      g_bzu.unask, n, atks);
 }
-/* the practice's caragor lives (or Talion rides after it): the asks lifted; else put back */
-static void bzu_frame(double t)
+/* build 29b (a test, only while SOMVR_VERBS_BRAND_NODELOG's window is open; every 1 s): the practice caragor as the
+ * player's targeting sees it - its target struct (its Combat + 0x2f8: FUN_00a98030's Object_GetCombatHost + 0x2f8), the
+ * type item at +0x70 that picks its entry lists (FUN_00a98850: the lists at targeting+0x48 / +0xa8, 0x20 bytes each:
+ * the type, the entries' begin, end), and each listed entry's record, range (+0x48), best score (+0x88), target, off bits */
+static void bzt_diag(uintptr_t pcomb, double t)
 {
+	static double next, next_full;
+	if (!g_co_tgt_debug || !pcomb || !g_pr.orc_c || t < next)
+		return;
+	next = t + 0.25;
+	uintptr_t tg = pcomb + BZT_PC_TARGETING, cand = g_pr.orc_c + 0x2f8, obj = peek_ptr(cand + 0x68), ty = peek_ptr(cand + 0x70);
+	float f[8] = { 0 };
+	peek(cand + 0x78, f, sizeof f);
+	if (t < next_full) { /* between the full dumps: its distance (+0x80) and its record, 4 a second */
+		char an[64];
+		logf_("BEASTS t=%.3f practice caragor tg dist %.1f cm ('%s')", t, f[2], fb_rec_name(peek_ptr(g_pr.orc_c + 0x4d0), an,
+		      sizeof an));
+		return;
+	}
+	next_full = t + 2.0;
+	uint8_t ty1 = 0;
+	uintptr_t own = ty ? peek_ptr(ty + 0x18) : 0;
+	peek(ty + 1, &ty1, 1);
+	char line[1800], tn[48], cn[48];
+	uintptr_t ctype = peek_ptr(g_pr.orc_c + 0x4d0); /* FUN_026d4510: the type is this record, or one of its list */
+	uint8_t cnt = 0;
+	peek(g_pr.orc_c + 0x55c, &cnt, 1);
+	size_t o = (size_t)snprintf(line, sizeof line, "BEASTS t=%.3f practice caragor tg: its target struct %#lx (obj %#lx %s, "
+				    "type '%s' %#lx flags %#x; its Combat's +0x4d0 '%s', +0x55c %u) +0x78.. %.1f %.1f %.1f %.1f %.1f %.1f "
+				    "%.1f %.1f;", t, (unsigned long)cand, (unsigned long)obj, obj == g_pr.orc_h ? "= the caragor" :
+				    "NOT the caragor", ty ? fb_rec_name(ty, tn, sizeof tn) : "-", (unsigned long)ty, ty1, ctype ?
+				    fb_rec_name(ctype, cn, sizeof cn) : "-", cnt, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+	for (int set = 0; set < 2 && own; set++) {
+		uintptr_t lists = peek_ptr(tg + (set ? 0xa8 : 0x48)), base = peek_ptr(own + ((ty1 & 2) ? 0x38 : 0x48));
+		uint32_t nl = 0;
+		peek(tg + (set ? 0xb0 : 0x50), &nl, 4);
+		uint64_t idx = (ty1 & 2) ? (uint64_t)(uint32_t)((uint32_t)((ty - base) >> 4) * 0xaaaaaaabu) : (ty - base) >> 5;
+		uintptr_t b[3] = { 0 };
+		if (!lists || idx >= nl || !peek(lists + (uintptr_t)idx * 0x20, b, sizeof b)) {
+			o += (size_t)snprintf(line + o, sizeof line - o, " list %c[%llu of %u]: none;", set ? 'B' : 'A', (unsigned long long)idx, nl);
+			continue;
+		}
+		o += (size_t)snprintf(line + o, sizeof line - o, " list %c[%llu of %u] %s, %lu entries:", set ? 'B' : 'A',
+				      (unsigned long long)idx, nl, b[0] == ty ? "its type" : "ANOTHER type", (unsigned long)((b[2] - b[1]) / 8));
+		for (uintptr_t q = b[1]; q && q < b[2] && q < b[1] + 8 * 48 && o < sizeof line - 90; q += 8) {
+			uintptr_t en = peek_ptr(q), rec = en ? peek_ptr(en + BZT_E_REC) : 0, et = en ? peek_ptr(en + 0x68) : 0;
+			float mx = 0, best = 0;
+			uint8_t off = 0xff;
+			char rn[48];
+			peek(en + 0x48, &mx, 4), peek(en + 0x88, &best, 4), peek(en + BZT_E_OFF, &off, 1);
+			o += (size_t)snprintf(line + o, sizeof line - o, " '%s' %.0f/%.0f%s%s", fb_rec_name(rec, rn, sizeof rn), mx, best,
+					      off ? " OFF" : "", et == obj && obj ? " (it)" : et ? " (other)" : "");
+		}
+		o += (size_t)snprintf(line + o, sizeof line - o, ";");
+	}
+	logf_("%s", line);
+}
+/* build 29b: a record's record-typed values under attribute h (up to cap); n */
+static int bzp_vals(uintptr_t rec, uint32_t h, uintptr_t *out, int cap, uintptr_t *slots)
+{
+	unsigned char e[16];
+	uint16_t c, vi;
+	uintptr_t vals = rec ? peek_ptr(rec + 0x10) : 0;
+	if (!vals || rx_db_entry(rec, h, e) || (e[0xa] & 0x3f) != 0xa)
+		return 0;
+	memcpy(&c, e + 0xc, 2), memcpy(&vi, e + 0xe, 2);
+	int m = c < cap ? c : cap;
+	uint64_t v[64];
+	if (m > 64)
+		m = 64;
+	if (!m || !peek(vals + (uintptr_t)vi * 8, v, (size_t)m * 8))
+		return 0;
+	for (int j = 0; j < m; j++) {
+		out[j] = (uintptr_t)v[j];
+		if (slots)
+			slots[j] = vals + (uintptr_t)(vi + j) * 8;
+	}
+	return m;
+}
+/* build 29b: the button prompts' overrides that ask the item - Talion's root and character records' records, 3 deep
+ * (every record-typed value), each one's Buttons -> overrides -> IncludedItem */
+static void bzp_scan(uintptr_t pcomb, uintptr_t pc, double t)
+{
+	static uintptr_t q[BZP_RECS];
+	static int depth[BZP_RECS];
+	static unsigned char ents[256 * 16];
+	int n = 0;
+	g_bzu.ps_done = 1, g_bzu.nps = 0;
+	uintptr_t roots[2] = { pcomb ? peek_ptr(pcomb + FI_PC_ROOT) : 0, pc ? peek_ptr(pc + BZ_C_CHARREC) : 0 };
+	for (int r = 0; r < 2; r++)
+		if (roots[r] && n < BZP_RECS && !(n == 1 && q[0] == roots[r]))
+			depth[n] = 0, q[n++] = roots[r];
+	for (int i = 0; i < n; i++) {
+		uintptr_t rec = q[i], btn[32];
+		int nb = bzp_vals(rec, BZP_H_BUTTONS, btn, 32, NULL);
+		for (int b = 0; b < nb; b++) { /* a mode's buttons: their overrides' IncludedItem */
+			uintptr_t ov[32];
+			int no = bzp_vals(btn[b], BZP_H_OVERRIDES, ov, 32, NULL);
+			for (int k = 0; k < no; k++) {
+				uintptr_t it[8], sl[8];
+				int ni = bzp_vals(ov[k], BZP_H_INCLUDED, it, 8, sl);
+				for (int j = 0; j < ni; j++) {
+					int ok = 0, dup = 0;
+					for (int x = 0; x < g_bzu.nitems; x++)
+						ok |= g_bzu.item[x] && it[j] == g_bzu.item[x];
+					for (int x = 0; x < g_bzu.nps && !dup; x++)
+						dup = g_bzu.ps[x].slot == sl[j];
+					if (ok && !dup && g_bzu.nps < BZP_SLOTS)
+						g_bzu.ps[g_bzu.nps].slot = sl[j], g_bzu.ps[g_bzu.nps].item = it[j], g_bzu.ps[g_bzu.nps++].btn = btn[b];
+				}
+			}
+		}
+		if (depth[i] >= 3)
+			continue;
+		uintptr_t arr = peek_ptr(rec + 8), vals = peek_ptr(rec + 0x10);
+		unsigned char hdr[2];
+		if (!arr || !vals || !peek(rec, hdr, 2) || !hdr[0] || !peek(arr, ents, (size_t)hdr[0] * 16))
+			continue;
+		for (int k = 0; k < hdr[0] && n < BZP_RECS; k++) { /* the records it names, one deeper */
+			const unsigned char *pe = ents + (size_t)k * 16;
+			uint16_t c, vi;
+			memcpy(&c, pe + 0xc, 2), memcpy(&vi, pe + 0xe, 2);
+			uint64_t v[16];
+			int m = c < 16 ? c : 16;
+			if ((pe[0xa] & 0x3f) != 0xa || !m || !peek(vals + (uintptr_t)vi * 8, v, (size_t)m * 8))
+				continue;
+			for (int j = 0; j < m && n < BZP_RECS; j++) {
+				int dup = !v[j] || (v[j] & 7) || v[j] < 0x10000;
+				for (int x = 0; x < n && !dup; x++)
+					dup = q[x] == (uintptr_t)v[j];
+				if (!dup)
+					depth[n] = depth[i] + 1, q[n++] = (uintptr_t)v[j];
+			}
+		}
+	}
+	g_bzu.ps_recs = n;
+	char ls[400], bn[48];
+	size_t o = 0;
+	ls[0] = 0;
+	for (int k = 0; k < g_bzu.nps && o < sizeof ls - 60; k++)
+		o += (size_t)snprintf(ls + o, sizeof ls - o, "%s'%s'", k ? ", " : "", fb_rec_name(g_bzu.ps[k].btn, bn, sizeof bn));
+	logf_("BEASTS t=%.3f practice caragor: the button prompts' overrides asking '%s' (IncludedItem): %d (%s), %d records "
+	      "read 3 deep from Talion's root and character records", t, g_bzu.item_name[0], g_bzu.nps, o ? ls : "none", n);
+}
+/* the practice's caragor lives (or Talion rides after it): the asks lifted; else put back */
+static void bzu_frame(uintptr_t pcomb, uintptr_t pc, double t)
+{
+	bzt_diag(pcomb, t); /* build 29b: a test (the node log's window) */
 	if (!g_bzu.on)
 		return;
 	if (g_bzu.state != 2)
@@ -680,16 +849,26 @@ static void bzu_frame(double t)
 		}
 		done += arm_poke(g_bzu.s[k].slot, &to, 8) != 0;
 	}
+	if (want && !g_bzu.ps_done) /* build 29b: the mount's prompt (found once) */
+		bzp_scan(pcomb, pc, t);
+	int pr = 0;
+	for (int k = 0; k < g_bzu.nps; k++) {
+		uint64_t cur = 0, from = want ? g_bzu.ps[k].item : 0, to = want ? 0 : g_bzu.ps[k].item;
+		if (!peek(g_bzu.ps[k].slot, &cur, 8) || cur != from)
+			odd++;
+		else
+			pr += arm_poke(g_bzu.ps[k].slot, &to, 8) != 0;
+	}
 	g_bzu.lifted = want;
 	if (want)
 		g_bzu.lifts++, g_bzu.lift_t = t;
 	else
 		g_bzu.restores++;
-	logf_("BEASTS t=%.3f practice caragor: %s - %d of %d asks for '%s' and %d of %d pool entries %s%s (memory only)", t,
-	      want ? "a Practice > Caragor lives" : g_pr.orc_c && g_pr.orc_type == SOMVR_PRO_CARAGOR ? "the practice's caragor is "
-	      "down, Talion afoot" : "no Practice > Caragor, Talion afoot", done, g_bzu.nlift, g_bzu.item_name[0], pdone, g_bzu.np,
-	      want ? "lifted (its leap the counterable kind)" : "put back",
-	      odd ? " (some slots changed: left alone)" : "");
+	logf_("BEASTS t=%.3f practice caragor: %s - %d of %d asks for '%s', %d of %d pool entries and %d of %d prompt asks %s%s "
+	      "(memory only)", t, want ? "a Practice > Caragor lives" : g_pr.orc_c && g_pr.orc_type == SOMVR_PRO_CARAGOR ? "the "
+	      "practice's caragor is down, Talion afoot" : "no Practice > Caragor, Talion afoot", done, g_bzu.nlift,
+	      g_bzu.item_name[0], pdone, g_bzu.np, pr, g_bzu.nps, want ? "lifted (its leap the counterable kind, the mount's "
+	      "prompt)" : "put back", odd ? " (some slots changed: left alone)" : "");
 }
 
 static void bz_frame(uintptr_t pl, const float root[3], const struct cb_orc *o, int n, double t)
@@ -709,7 +888,7 @@ static void bz_frame(uintptr_t pl, const float root[3], const struct cb_orc *o, 
 		pc = 0;
 	if (atomic_exchange(&g_bz.req_skills, 0))
 		bz_skills(pc, t);
-	bzu_frame(t); /* build 29: SOMVR_PRACTICE_CARAGOR */
+	bzu_frame(pcomb, pc, t); /* build 29: SOMVR_PRACTICE_CARAGOR */
 	uintptr_t mnt = 0;
 	if (peek(pl + BZ_P_MOUNT, &mnt, sizeof mnt) && mnt != g_bz.mount) {
 		float mp[3] = { 0, 0, 0 };

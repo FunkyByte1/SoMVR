@@ -102,6 +102,10 @@ static struct {
 	uintptr_t beast_atk;
 	uint64_t diag_lines, motion_lines; /* the rider's/ridden lines (120) and RIDE motion (every 2 s for 20, then 10 s) */
 	uint64_t offers, mount_presses[2], faces;
+	int cue;                       /* build 29b: SOMVR_RIDE_CUE - the mount's offer shown by the grab cue's glow */
+	float cue_glow;                /* its level now (0.15 s in and out) */
+	double cue_t, cue_test_until; /* `ride cue test S` (a test): the glow shown S s whatever the offer */
+	uint64_t cue_frames;
 	float settle_s;
 	somvr_rd_cfg cfg;
 	somvr_rd_btn_cfg bcfg;
@@ -166,10 +170,14 @@ static void mt_state(uintptr_t mount, double t);
 static int mt_riding(void);
 static const char *atk_name_or_dash(uintptr_t r, char *nm, size_t n) { return r ? fb_rec_name(r, nm, n) : "-"; }
 
+static struct log_late g_mt_late;
 static int mt_log_ok(void)
 {
 	if (g_mt.lines < MT_LOG_MAX)
 		return ++g_mt.lines;
+	if (log_late_ok(&g_mt_late, 100, mono())) /* build 29 (som-b29-soak2): then 100 a 10 minutes (before: silent ~50
+						    * minutes into a ride; re-xr-pipeline.md 129) */
+		return 1;
 	g_mt.suppressed++;
 	return 0;
 }
@@ -209,6 +217,7 @@ static void mt_config(int *bad)
 	g_mt.settle_s = env_float("SOMVR_RIDE_SETTLE_MS", 0, 0, 2000, bad) / 1000;
 	g_mt.align = env_word("SOMVR_RIDE_ALIGN", onoff_w, 2, 1);
 	g_mt.counter = g_mt.on && env_word("SOMVR_RIDE_COUNTER", onoff_w, 2, 1);
+	g_mt.cue = g_mt.on && env_word("SOMVR_RIDE_CUE", onoff_w, 2, 1); /* build 29b */
 	g_mt.seat_on = env_word("SOMVR_RIDE_SEAT", onoff_w, 2, 1);
 	g_mt.win_rest = env_word("SOMVR_RIDE_WIN_REST", onoff_w, 2, 1);
 	g_mt.dom_hold_s = env_float("SOMVR_RIDE_DOM_HOLD_MS", 1500, 0, 4500, bad) / 1000;
@@ -252,6 +261,8 @@ static void mt_config(int *bad)
 	      "result screen) a press is the screen's (SOMVR_USE: skip, Retry, Back, Abandon), never the beast's - it acts only "
 	      "once let go after it; a button held since before the window goes on (a held run through a banner), never B" :
 	      "the mounted buttons act through a window (build 27: B on a screen got Talion off, A's Retry leapt)");
+	logf_("CONFIG ride cue=%s (SOMVR_RIDE_CUE, build 29b): %s", g_mt.cue ? "on" : "off", g_mt.cue ? "while the game offers the "
+	      "mount, the stunned caragor glows the grab cue's faint wraith blue (no prompt)" : "the mount's offer not shown");
 	char cl[64];
 	size_t n = 0;
 	cl[0] = 0;
@@ -586,7 +597,9 @@ static void mt_frame(void)
 	g_mt.t_last = t;
 	g_mt.have_body = 0, g_mt.dyaw = 0;
 	if (g_mt.face && g_bd.test && !mt_riding() && g_inp.on && g_inp.head_ok) { /* `ride face on` (a test): the view turned */
-		float best = 800, tgt[3];                                             /* to a stunned caragor (a player looks) */
+		float best = 1500, tgt[3];                                            /* to a stunned caragor (a player looks; */
+		                                                                       /* build 29b: 15 m - the counter throws */
+		                                                                       /* it 7-9 m behind Talion) */
 		int have = 0;
 		for (int i = 0; i < BZ_MAX; i++) {
 			struct bz_one *e = &g_bz.b[i];
@@ -763,6 +776,44 @@ static int mt_offered(const char **str)
 			return 1;
 		}
 	return 0;
+}
+
+/* build 29b (som-b29-pcaragor2; re-xr-pipeline.md 130): SOMVR_RIDE_CUE=on|off (default on with SOMVR_RIDE) - the
+ * mount's offer shown as HL:A shows a thing to grab: while the game offers the mount (its prompt is never drawn in VR:
+ * PROMPTS drops 123's), the stunned caragor nearest the eyes within 15 m (its attack a knockdown's) gets the grab cue's
+ * faint wraith-blue glow (SOMVR_VERBS_CUE's: THREAT's blue row, its level) over its body, 0.15 s in and out. No prompt,
+ * no sound, nothing moves. th_frame (the game thread) */
+static void mt_glow_add(struct th_glow *gl, int *ng)
+{
+	if (!g_mt.cue)
+		return;
+	double t = cb_now();
+	float dt = g_mt.cue_t > 0 && t > g_mt.cue_t ? (float)(t - g_mt.cue_t) : 0, a = dt / 0.15f;
+	g_mt.cue_t = t;
+	float best = 1500, p[3], tgt[3];
+	struct bz_one *be = NULL;
+	if (!mt_riding() && (mt_offered(NULL) || t < g_mt.cue_test_until))
+		for (int i = 0; i < BZ_MAX; i++) {
+			struct bz_one *e = &g_bz.b[i];
+			char an[96];
+			if (!e->c || e->kind != SOMVR_BZ_CARAGOR || !peek(e->hobj + OBJ_POS, p, sizeof p) || !vec_ok(p, 1e7f))
+				continue;
+			fb_rec_name(peek_ptr(e->c + BZ_C_ATTACK), an, sizeof an);
+			float dd = dist3(p, g_fr.head);
+			if (strstr(an, "Knockdown") && dd < best)
+				best = dd, memcpy(tgt, p, sizeof tgt), be = e;
+		}
+	g_mt.cue_glow += ((be ? g_gc.level : 0) - g_mt.cue_glow) * (a < 1 ? a : 1);
+	if (!be || !(g_mt.cue_glow > 0.01f))
+		return;
+	uintptr_t m = peek_ptr(g_som.model_pp);
+	if (be->nodes_st && be->have[SOMVR_BZP_CHEST] && m && bz_node_pos(m, be->hobj, be->node[SOMVR_BZP_CHEST], p) &&
+	    dist3(p, tgt) < 600.0f) /* over its chest (the lying body: its root is not under it - boot 195001) */
+		memcpy(tgt, p, sizeof tgt), tgt[1] += 20;
+	else
+		tgt[1] += 45; /* (no bone chain: over its root) */
+	th_glow_add(gl, ng, tgt, g_mt.cue_glow, dist3(tgt, g_fr.head), SOMVR_THK_MELEE | SOMVR_THK_BLUE);
+	g_mt.cue_frames++;
 }
 
 /* the mount's press: 123 for 0.5 s (the game's own run and leap onto the beast follows), the view held meanwhile */
@@ -1201,6 +1252,12 @@ static const char *mt_word(const char *w)
 		g_mt.guard = !strcmp(w + 6, "on");
 		return g_mt.guard ? "ride guard on (the test blade across a beast's line in its parry window)" : "ride guard off";
 	}
+	if (!strncmp(w, "cue test ", 9)) { /* build 29b: SOMVR_RIDE_CUE's glow for a picture (a test) */
+		if (!g_bd.test)
+			return "ride cue test (SOMVR_HANDS_TEST is off: ignored)";
+		g_mt.cue_test_until = cb_now() + fmin(fmax(atof(w + 9), 0), 30);
+		return "ride cue test (the mount's cue shown on a stunned caragor whatever the offer)";
+	}
 	if (!strncmp(w, "face ", 5)) {
 		if (!g_bd.test)
 			return "ride face (SOMVR_HANDS_TEST is off: ignored)";
@@ -1281,6 +1338,8 @@ static void mt_end_log(void)
 {
 	if (!g_mt.on)
 		return;
+	logf_("RIDE END cue: %llu frames the stunned caragor glowed at the mount's offer (SOMVR_RIDE_CUE)",
+	      (unsigned long long)g_mt.cue_frames);
 	logf_("RIDE END mounts %llu (not a beast %llu) dismounts %llu, seated frames %llu: the view's largest step %.1f cm across, "
 	      "%.1f cm up/down, %.2f deg of yaw a frame (the turn at most %.0f deg/s); the seat's raw span %.1f cm over the root, "
 	      "the view's %.1f; pitch/roll at most %.2f/%.2f deg; facings on the black %llu; presses jump %llu bite %llu off %llu "

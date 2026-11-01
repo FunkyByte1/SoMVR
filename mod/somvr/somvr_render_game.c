@@ -1766,9 +1766,11 @@ static struct {
 	uint32_t fx_over;
 } g_fc = { .lock = ATOMIC_FLAG_INIT };
 
-static int fc_line_ok(void)
+static struct log_late g_fc_late;
+static int fc_line_ok(void) /* build 29 (som-b29-soak2): after the first FC_LINES, 150 a 10 minutes (before: silent - the
+			     * rehearsals' 790-1200 lines an hour spend them 2.5-3.8 hours in; re-xr-pipeline.md 129) */
 {
-	return atomic_fetch_add_explicit(&g_fc.lines, 1, memory_order_relaxed) < FC_LINES;
+	return atomic_fetch_add_explicit(&g_fc.lines, 1, memory_order_relaxed) < FC_LINES || log_late_ok(&g_fc_late, 150, mono());
 }
 
 /* from the ClientFX create hook (any thread): one FX asked for; kind 'T' Talion, 'O' the held orc, 'n' nothing, 'o' an
