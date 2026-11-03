@@ -20,13 +20,13 @@
 
 /* HUDFX_SITES_BEGIN (check_sites.py counts this block on its own: the patched tail jump of CBaseUI::CreateUIFXGroup,
  * FUN_00cbcad0 = mov 0x8(%rdi),%rdi; add $0x68,%rdi; jmp FUN_00cbbe60) */
-static const struct site_spec g_uf_sites_game[] = {
+static SITE_TABLE struct site_spec g_uf_sites_game[] = {
 SITE("UF_CREATE", K_JMP, 0xcbcad8, 0xcbcad0, "48 8b 7f 08 48 83 c7 68 e9 83 f3 ff ff", 0xcbbe60, "41 57 41 56 41 55 41 54 55 53 48 81 ec f8 09 00 00 48 83 7f 60 00"),
 };
 /* HUDFX_SITES_END */
 static const struct site_spec *g_uf_sites = g_uf_sites_game; /* selftest: a stand-in */
 typedef uint64_t (*uf_create_fn)(uintptr_t mgr, uintptr_t desc);
-#define UF_DESC_GROUP 0x18 /* the desc's GROUPID (FUN_00cbbe60's log line) */
+#define UF_DESC_GROUP OFS(UF_DESC_GROUP, 0x18) /* the desc's GROUPID (FUN_00cbbe60's log line) */
 #define UF_STEREO_S 0.5    /* a stereo H4 frame this recent = the eyes are ours */
 #define UF_LINES 40
 
@@ -75,18 +75,7 @@ static int uf_install(const struct site_spec *s)
 	int ok = s->kind == K_JMP && check_site(s, why, sizeof why) == 0;
 	if (s->kind != K_JMP)
 		snprintf(why, sizeof why, "not a jmp site");
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) {
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3c0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3c0000) : NULL;
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {

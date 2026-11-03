@@ -1463,7 +1463,7 @@ static void cb_shield_log(const struct cb_orc *o, const sc_contact *ct, const so
  * nearer is not pushed, only stopped from coming nearer. The strikes' blows (136-154 cm at their impact) are not in it. */
 /* SPACE_SITES_BEGIN (check_sites.py counts this block on its own: the patched K_VSLOT FS_AIMOVE, docs/re-xr-pipeline.md
  * 54; the slot: design-locomotion.md 2.8's LOCO_MOUNT_AIMOVE) */
-static const struct site_spec g_fs_sites[] = {
+static SITE_TABLE struct site_spec g_fs_sites[] = {
 SITE("FS_AIMOVE", K_VSLOT, 0x3ad3ef0, 0x3ad3ee0, "80 5e a7 02 00 00 00 00 80 8c a7 02 00 00 00 00 e0 81 a7 02 00 00 00 00", 0x2a781e0, "41 54 49 89 f4 55 53 48 89 fb 48 83 ec 20 c6"),
 };
 /* SPACE_SITES_END */

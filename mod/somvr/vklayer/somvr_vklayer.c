@@ -635,6 +635,8 @@ static int th_xt(const char *line);
 enum { P_NONE, P_PENDING, P_DEAD, P_READY, P_INST, P_DEV, P_SESSION };
 static const char *const phase_name[] = {"none", "pending", "dead", "ready", "instance", "device", "session"};
 
+#include "somvr_bridge_layer.c" /* winport: the PE DLL's objects (SOMVR_BRIDGE), the locate thread's hooks */
+
 static struct {
     pthread_mutex_t mx;
     pthread_cond_t cv;
@@ -1198,7 +1200,7 @@ static void in_begin(void) {
         I.in->xr.grip_space[h] = (uint64_t)(uintptr_t)I.grip[h];
         I.in->xr.aim_space[h] = (uint64_t)(uintptr_t)I.aim[h];
     }
-    I.in->xr.locate_space = (void *)X.xrLocateSpace;
+    I.in->xr.locate_space = br_pe() && br_get("locate_space") ? br_get("locate_space") : (void *)X.xrLocateSpace;
     I.in->xr.locate_spaces = NULL;
     atomic_store_explicit(&I.in->xr.ready, 1, memory_order_release);
     lg("xr: input: published to somvr_input: grip/aim spaces L/R, xrLocateSpace (ready)");
@@ -1632,6 +1634,7 @@ static void env_destroy(void);
 /* ---- XR session ------------------------------------------------------------------------------------------------- */
 /* X.mx held. Stop the game thread's xrLocateViews (somvr_shared xr.state; wait until none is in flight). 1 = quiet. */
 static int xr_unpublish(uint32_t state) {
+    xl_stop(); /* the locate thread first (joined): it locates only inside the provider guard anyway */
     if (!X.sh || atomic_load(&X.sh->xr.state) == state) return 1;
     int quiet = somvr_xr_stop(X.sh, state, 1000);
     lg("xr: somvr_shared xr.state -> %s%s", state == SOMVR_XRS_DEAD ? "dead" : "none",
@@ -1737,7 +1740,7 @@ static int xr_session_setup(dev_st *ds, q_st *qi) {
                                     .queueIndex = qi->index};
     /* the LD_PRELOAD library's objects: in the global scope if it is loaded (this layer is dlopened RTLD_LOCAL).
      * Lookups only; before the session because the actions and suggestions must precede it (re-xr-input.md 1.4). */
-    somvr_shared *sh = (somvr_shared *)dlsym(RTLD_DEFAULT, SOMVR_SHARED_SYMBOL);
+    somvr_shared *sh = (somvr_shared *)somvr_obj(SOMVR_SHARED_SYMBOL);
     X.sh = somvr_shared_ok(sh) ? sh : NULL;
     atomic_store(&g_sh_seen, X.sh);
     X.nslots = X.sh && X.sh->layout == SOMVR_LAYOUT_B ? 2u : 1u;
@@ -1757,7 +1760,7 @@ static int xr_session_setup(dev_st *ds, q_st *qi) {
                                                 : "the pipeline lead measured from the submitted records");
     } else
         lg("xr: no active somvr_shared (%s): mono presents only", sh ? "inactive or another version" : "no preload");
-    somvr_hud_shared *hud = (somvr_hud_shared *)dlsym(RTLD_DEFAULT, SOMVR_HUD_SYMBOL);
+    somvr_hud_shared *hud = (somvr_hud_shared *)somvr_obj(SOMVR_HUD_SYMBOL);
     X.hud = X.nslots == 2 && cfg.hud != SOMVR_HUD_OFF && somvr_hud_ok(hud) ? hud : NULL;
     X.hud_on = X.hud != NULL;
     X.hud_latched = X.last_hud = 0;
@@ -1779,7 +1782,7 @@ static int xr_session_setup(dev_st *ds, q_st *qi) {
                                          : !hud                  ? "no somvr_hud: a preload without H11"
                                          : !somvr_hud_ok(hud)    ? "somvr_hud inactive (SOMVR_HUD unset) or another version"
                                                                  : "not layout B");
-    somvr_input_shared *in = (somvr_input_shared *)dlsym(RTLD_DEFAULT, SOMVR_INPUT_SYMBOL);
+    somvr_input_shared *in = (somvr_input_shared *)somvr_obj(SOMVR_INPUT_SYMBOL);
     I.in = somvr_input_ok(in) && (in->want & SOMVR_INW_STATE) ? in : NULL;
     if (cfg.input == SOMVR_INPUT_OFF)
         lg("xr: input: SOMVR_XR_INPUT=off: no actions");
@@ -1896,11 +1899,14 @@ static int xr_poll(void) {
                 X.sh->xr.instance = (uint64_t)(uintptr_t)X.inst;
                 X.sh->xr.session = (uint64_t)(uintptr_t)X.session;
                 X.sh->xr.space = (uint64_t)(uintptr_t)X.space;
-                X.sh->xr.locate_views = (void *)X.xrLocateViews;
+                X.sh->xr.locate_views = br_pe() && br_get("locate_views") ? br_get("locate_views") /* PE: the DLL's */
+                                                                          : (void *)X.xrLocateViews;
                 X.sh->xr.space_type = (uint32_t)X.space_type;
                 X.sh->xr.view_w = X.rec_w, X.sh->xr.view_h = X.rec_h;
                 atomic_store(&X.sh->xr.state, SOMVR_XRS_RUNNING);
-                lg("xr: published to somvr_shared: session, space, xrLocateViews (state running)");
+                lg("xr: published to somvr_shared: session, space, xrLocateViews (state running)%s",
+                   br_pe() ? ": the PE DLL's stand-in, answered by the locate thread" : "");
+                xl_start(); /* a PE bridge: the 1 ms locate thread (somvr_xrloc_layer.c) */
             }
             rr_begin(); /* build 27: the rates listed, the rate asked (SOMVR_XR_REFRESH, the VR menu) */
             break;
@@ -1997,6 +2003,14 @@ static int xr_swapchain_ensure(dev_st *ds, VkFormat src, uint32_t w, uint32_t h,
 
 static void img_barrier(VkImageMemoryBarrier *b, VkImage img, VkAccessFlags sa, VkAccessFlags da, VkImageLayout ol,
                         VkImageLayout nl) {
+    /* the PE DLL's textures under DXVK idle in DXVK's layout, not Feral's TRANSFER_DST_OPTIMAL (somvr_xrloc v2) */
+    int64_t idle = (ol == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL || nl == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                       ? xl_idle_layout((uint64_t)(uintptr_t)img) : -1;
+    if (idle >= 0 && idle != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        if (ol == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) ol = (VkImageLayout)idle, sa |= VK_ACCESS_MEMORY_WRITE_BIT;
+        if (nl == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+            nl = (VkImageLayout)idle, da |= VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    }
     *b = (VkImageMemoryBarrier){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                                 .srcAccessMask = sa,
                                 .dstAccessMask = da,
@@ -2677,7 +2691,7 @@ static int mk_wait_idle(const char *why) {
  * answered (the preload's buzz does not wait for it) */
 static void ss_setup(void) {
     SSN.obj = NULL, SSN.want = 0, SSN.dead = 0, SSN.quit_armed = 0;
-    somvr_session_shared *s = (somvr_session_shared *)dlsym(RTLD_DEFAULT, SOMVR_SESSION_SYMBOL);
+    somvr_session_shared *s = (somvr_session_shared *)somvr_obj(SOMVR_SESSION_SYMBOL);
     if (!s || !somvr_session_ok(s)) {
         lg("xr: session: %s (no bug-mark pictures, no Report / Quit game buttons)",
            !s ? "no somvr_session (a preload without it)" : "somvr_session inactive (SOMVR_MARK and SOMVR_QUIT off) or another version");
@@ -3377,7 +3391,7 @@ __attribute__((format(printf, 1, 2))) static void cf_off(const char *fmt, ...) {
 /* xr_session_setup, after the other lookups: is there a vignette or a blink for this session? */
 static void cf_setup(void) {
     cf_destroy();
-    somvr_comfort_shared *c = (somvr_comfort_shared *)dlsym(RTLD_DEFAULT, SOMVR_COMFORT_SYMBOL);
+    somvr_comfort_shared *c = (somvr_comfort_shared *)somvr_obj(SOMVR_COMFORT_SYMBOL);
     memset(&CF.vs, 0, sizeof CF.vs);
     CF.t_last = 0, CF.target = CF.amount = CF.blink = CF.lin = CF.ang = 0, CF.clear_deg = 0;
     CF.ring_was = CF.blink_was = 0;
@@ -3747,7 +3761,7 @@ __attribute__((format(printf, 1, 2))) static void th_off(const char *fmt, ...) {
 /* xr_session_setup, after comfort's: are there threat cues for this session? */
 static void th_setup(void) {
     th_destroy();
-    somvr_threat_shared *t = (somvr_threat_shared *)dlsym(RTLD_DEFAULT, SOMVR_THREAT_SYMBOL);
+    somvr_threat_shared *t = (somvr_threat_shared *)somvr_obj(SOMVR_THREAT_SYMBOL);
     TH.n_frames = TH.n_glow = TH.n_edge = TH.n_missing = TH.n_near = TH.n_hurt = 0, TH.lines = 0, TH.hurt_was = 0;
     const char *dh = getenv("SOMVR_XR_DUMP_HURT");
     TH.dump_hurt = dh && dh[0] ? atoi(dh) : 0;
@@ -4831,7 +4845,7 @@ static void vm_setup(void) {
     if (cfg.vm_bad) lg("xr: vrmenu: SOMVR_XR_VRMENU=%s is not on or off: on", getenv("SOMVR_XR_VRMENU"));
     VM.blk_was = 0, VM.n_bow_closes = 0;
     if (cfg.vm_bow) lg("xr: vrmenu: SOMVR_XR_VRMENU_BOW=close: an open panel closes when the bow comes out");
-    somvr_vrmenu_shared *m = (somvr_vrmenu_shared *)dlsym(RTLD_DEFAULT, SOMVR_VRMENU_SYMBOL);
+    somvr_vrmenu_shared *m = (somvr_vrmenu_shared *)somvr_obj(SOMVR_VRMENU_SYMBOL);
     const char *no = !m ? "no somvr_vrmenu: a preload without it"
                      : !somvr_vrmenu_ok(m) ? "somvr_vrmenu inactive (SOMVR_VRMENU unset) or another version"
                      : !I.in ? "no somvr_input (the menu needs SOMVR_INPUT=1)" : NULL;
@@ -5247,6 +5261,7 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
 #include "somvr_void_layer.c" /* never a void (HG-9): the present gaps, the keep-alive frames, the loading space */
 #include "somvr_objective_layer.c" /* build 15: SOMVR_OBJECTIVE's marker in the world, its edge arrow */
 #include "somvr_testhead_layer.c" /* SOMVR_XR_TEST `head X Y Z [yaw DEG] [s SEC]`: a duck, a look behind (headless tests) */
+#include "somvr_xrloc_layer.c" /* winport: the 1 ms locate thread for the PE DLL (../somvr_xrloc.h) */
 #include "somvr_fog_layer.c" /* build 31: SOMVR_XR_FOG, the fog by the distance; SOMVR_XR_SPV_DUMP (headless tests) */
 
 /* build 20: the steady panel's and the lock's numbers while the panel is open (a line every 2 s and at its close): the
@@ -6397,7 +6412,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_CreateInstance(const VkInstanceCreateInf
     const VkApplicationInfo *ai = ci->pApplicationInfo;
     const char *engine = ai && ai->pEngineName ? ai->pEngineName : "";
     uint32_t api = ai && ai->apiVersion ? ai->apiVersion : VK_API_VERSION_1_0;
-    int eligible = cfg.mode == SOMVR_MODE_FORCE || (cfg.mode == SOMVR_MODE_AUTO && !strcmp(engine, "Feral3D"));
+    /* the Feral build; under Proton DXVK with the DLL's bridge file for this process (its exe gate passed) */
+    int eligible = cfg.mode == SOMVR_MODE_FORCE ||
+                   (cfg.mode == SOMVR_MODE_AUTO && (!strcmp(engine, "Feral3D") || (!strcmp(engine, "DXVK") && br_pe())));
     lg("vk: vkCreateInstance app \"%s\" engine \"%s\" api %u.%u -> %s",
        ai && ai->pApplicationName ? ai->pApplicationName : "", engine, VK_API_VERSION_MAJOR(api),
        VK_API_VERSION_MINOR(api),

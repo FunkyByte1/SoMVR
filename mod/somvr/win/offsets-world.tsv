@@ -1,0 +1,151 @@
+name	kind	linux	windows	confidence	evidence	notes
+# winport-world (groups B/D/G/H + map, ride, surface); globals are RVAs on the Steam-Win exe; L = Linux address, W = Windows; docs/re-winport.md 7.4
+IN_SH_LOCALS	off	0x10	0x10	same	L 0xa18044 / W 0x140415659 (the interface update): shell+0x10 -> the locals getter FUN_00c40c20 = 0x1404e8770 (int current +0, vector +8)	the vector at shell+0x18/+0x20 on both
+IN_SH_IM	off	0x80ff8	0x80ff8	same	424 aligned uses, e.g. IN_CMD_OFF L 0xaab607 / W 0x1404a8ff3: mov rcx,[shell+0x80ff8]	the shell's front shifts -8 (0x78..0x80dc8) but is even again by here
+IN_EN_PROFILE	off	0x08	0x08	same	IN_INPUT_MODE L 0xa0eeba / W 0x140410ce2: mov rcx,[entry+0x8]	-
+IN_EN_PI	off	0x10	0x10	same	IN_INPUT_MODE L 0xa0eecd / W 0x140410cfa: lea rcx,[entry+0x10]	-
+IN_PROF_PAD	off	0x238	0x218	confirmed	FUN_00cbe610 = 0x140438660 (the pad-mode setter: cmp/mov byte [profile+0x218],dl) and FUN_00cbe650 = 0x140438320 (the getter: cmp [rcx+0x218])	the profile's "using gamepad" byte moved -0x20: forcing pad mode writes here
+IN_PI_ENTRIES	off	0x60	0x60	same	FUN_00aaaf50 = 0x1404a9fe0: PlayerInput +0x60/+0x68 vector, (end-begin)/0x30	-
+IN_PIE_SIZE	size	0x30	0x30	same	as IN_PI_ENTRIES: Windows divides by 48 (imul 0x2aaaaaaaaaaaaaab, sar 3)	-
+IN_REC_CTX	off	0x18	0x18	same	IN_ISON L 0x9011ed / W 0x140dfb140: mov rsi,[rec+0x18]	-
+IN_REC_INPUTS	off	0x20	0x20	same	IN_VALUE's body 0x140dfb750 at 0x140dfb83c: mov r8d,[rec+rdi*4+0x20] (Linux 0x903590 the same)	-
+IN_REC_VALIDX	off	0x30	0x30	same	0x140dfb8ac: cmp dword [rec+rdi*4+0x30],-1 (Linux vf_22's [rbx+0x30])	-
+IN_CTX_VALRECS	off	0x10	0x10	same	0x140dfb8ce: mov rax,[ctx+0x10]	-
+IN_VALREC_SIZE	size	0x14	0x14	same	0x140dfb8ca: lea rcx,[rax+rax*4] then *4 (= Linux leaq (%rax,%rax,4), (%rdx,%rax,4))	-
+IN_PC_STRUGGLE	off	0x8d8	0x8d8	same	26 aligned uses in PlayerCombat functions, e.g. L 0xa85671 / W 0x14044aac6	+0x8e0 the sync struggle: 15 aligned, same
+GL_UI_GAME	off	0x2708	0x2700	confirmed	the interface update FUN_00a18030 = 0x140415640: lea 0x2708 -> [rbx+0x2700] (its vt+0x10 call 0x14041569f); CGameUI's dtor 0x140503690 runs on im+0x2700 (0x14041785d)	-
+GL_UI_MSGBOX	off	0x2a50	0x2a40	confirmed	as GL_UI_GAME: [rbx+0x2a40] at 0x14041568e; CMessageBoxUI's dtor 0x1404de540 on im+0x2a40 (0x140417851)	-
+GL_UI_HOLDER	off	0x08	0x08	same	the CBaseUI update L 0xcb7ef1 / W 0x14052a36c: mov rcx,[ui+0x8]	-
+GL_HOLDER_VIEW	off	0x50	0x50	same	L 0xcb7ef5 / W 0x14052a370: cmp qword [holder+0x50],0	-
+GL_UI_DONE	off	0x10	?	unknown	the Windows CBaseUI update 0x14052a360 has no 'registered' byte	GLYPHS is off on Windows (sites-world.tsv GL_REARM)
+GL_VIEW_COUNT	off	0xd0	0xd0	same	GL_VIEW_CLEAR side by side (L 0x90c520 / W 0x140e67f50: mov dword [view+0xd0],0)	-
+GL_MGR_VEC	off	0x90	?	unknown	Feral's SDL controller manager: no Windows counterpart	Linux only
+LP_SH_UIRECT	off	0x80dc8	0x80dc0	confirmed	FUN_00ec4a50 = 0x1404e6770: L 0xec4a94 movdqu [shell+0x80dc8] / W 0x1404e6815 movups [shell+0x80dc0]; then L +0x80dd0/d4 = W +0x80dc8/cc	the UI rect moved -8
+LP_IM_GAMEUI	off	0x2710	0x2708	confirmed	= GL_UI_GAME + GL_UI_HOLDER (im+0x2700's +0x08)	-
+LP_GAMEUI_VIEW	off	0x50	0x50	same	= GL_HOLDER_VIEW	-
+LP_VIEW_OFS	off	0x28	0x28	plausible	W CUIView's forwarder 0x140e690a0: sub r8d,[view+0x28]; sub r9d,[view+0x2c] (the display offset)	the Linux twin not read side by side
+LP_P_INDEX	off	0x431	0x431	same	LP_GUARD's target L 0xa38e8b / W 0x1403f1464: movzx [player+0x431]	-
+CL_PM_PROXY	off	0x50	0x50	same	CL_GRAVITY_WISH L 0xab58a4 / W 0x14046c82f: mov rbx,[pm+0x50]	-
+CL_PC_GRAV	off	0x60	0x60	same	CL_PC_GRAVITY_SET L 0x98d9c0 / W 0x140e21500: mov [pc+0x60],dl	-
+CL_P_FSM	off	0x7f0	0x7f0	same	CL_FSM_GET: the same 3 instructions at 0x14042eac0	-
+CL_P_MOUNT	off	0x1d8	0x1d8	same	CL_MOUNT L 0xa3e450 / W 0x1403fc72b: mov rdx,[p+0x1d8]	-
+CL_OBJ_SURF	off	0x5a	0x5a	same	CL_SURF_FROM_RAY: Windows reads (u32 [obj+0x58]) >> [0x141863dec], that shift is 16 in the exe's data (never written): = Linux's u16 at +0x5a	if the shift global ever changes, read it
+CL_CAST_FLAGS	const	0x58	0x58	plausible	the query layout is the same: FUN_008de5e0 = 0x140e14800 read q+0..+0x14 (the points), +0x18 (flags), +0x20/+0x28 (callback), +0x30 (user data) on both	the flag bits themselves not proven
+CL_CAST_MATERIAL	const	0x80	0x80	plausible	as CL_CAST_FLAGS	-
+CL_SLOT_RAYCAST	const	64	63	confirmed	LIVE (winport-base, run 20261103-012113): the IEnginePhysics object 0x141868c50 has vptr 0x141481d30, not 0x141481d20 (the finder took 2 qwords before the first slot); the raycast forwarder 0x140deab90 sits at 0x141481f28 = vptr + 8 x 63 (the usual -1); the 75-slot vote of +1 was against the wrong base	+1, not -1
+CL_SLOT_PC_GRAV	const	12	11	confirmed	CPhysicsCharacter 0x1414868f0: 17 paired slots vote -1; slot 11 = the setter	-
+LO_PM_ATTACK	off	0x38	0x38	same	PM vf_11 L 0xab5ec3 / W 0x14046efea and CL_GRAVITY_WISH L 0xab58ed / W 0x14046c897	-
+LO_PM_VELMODE	off	0x1a2	0x1a2	same	LOCO_VELMODE L 0x20c6ff0 / W 0x14081d630	-
+LO_PM_ATTACHED	off	0x1a6	0x1a6	same	LOCO_ATTACH L 0x20cac15 / W 0x140822750	-
+LO_MGR_LOCK_T	off	0x62a	0x62a	same	LOCO_LOCK_T L 0xab5515 / W 0x14046c1b5 (the chain pm+0x218 -> +0x2d8 -> +0x3b8 the same)	-
+LO_MGR_LOCK_R	off	0x629	0x629	same	LOCO_LOCK_R (0x14046c1c0)	-
+LO_VT_LOCK_T	const	30	29	confirmed	PlayerMovement 0x1413c0cc0 holds LOCO_LOCK_T 0x14046c1a0 at slot 29	-
+LO_VT_LOCK_R	const	31	30	confirmed	0x14046c1c0 at slot 30	-
+LO_P_FSM	off	0x7f0	0x7f0	same	= CL_P_FSM	-
+LO_P_MOUNT	off	0x1d8	0x1d8	same	= CL_P_MOUNT	-
+LO_P_LIFE	off	0x4c4	0x4c4	same	LOCO_LIFE L 0xa36830 / W 0x1403f2ab0	-
+ST_C_COLLIDE	off	0x56c	0x56c	same	ST_COL_MOVE7 W 0x14081dba3, ST_COL_OFF W 0x140c2c38a, ST_COL_DEFAULT W 0x140c2cd53	-
+ST_C_COLDIRTY	off	0x56f	0x56f	same	the solver L 0x20ce5a6 / W 0x1408234dd (aligned) and COLLISION_OFF W 0x140c2c3a0	-
+ST_P_VISION	off	0x2f0	0x2f0	same	ST_VISION_GET L 0xa413b6 / W 0x140400f18; the Player ctor stores it at 0x140402193	-
+ST_VM_OWNER	off	0x08	0x08	same	the ctor's caller W 0x14040219a: mov [vm+0x8],player; L 0xad3acb / W 0x1404e99b6	-
+ST_VM_ON	off	0x48	0x48	same	ST_VISION_ON L 0xad3b60 / W 0x1404e9a34	-
+IN_SHELL_PP	global	0x46a9560	0x18f1228	confirmed	1171 aligned RIP uses	g_ing.shell_pp
+IN_PAUSE_PP	global	0x463e290	0x198ddd0	confirmed	140 aligned RIP uses	g_ing.pause_pp (the game timer's holder)
+IN_ALLOW_KBM	global	0x46b0d61	0x17fa770	confirmed	the auto switch to KBM: L 0xa138a0 `cmp byte [0x46b0d61],1; jne; ... FUN_00a0eeb0(im,entry,0)` = W 0x140414d6b `cmp byte [0x1417fa770],0; je; ... call 0x140410cd0 (IN_INPUT_MODE) with r8d 0`	g_ing.allow_kbm; a .data byte (Linux sets it in a static init)
+GL_NAMES_TAB	global	0x355eb20	?	unknown	the 22 pad textures' name table of Feral's skip	GLYPHS off on Windows
+GL_MGR_GUARD	global	0x4b4c420	?	unknown	Feral's controller manager guard	Linux only
+GL_MGR_OBJ	global	0x4b4c440	?	unknown	Feral's controller manager	Linux only
+CL_PHYS_PP	global	0x466c758	0x19d7da0	plausible	an IEnginePhysics.Default holder: each TU registers its own (10 on each side; Linux 0x56b0f7, Windows e.g. 0x14137d180: lea "IEnginePhysics.Default", the holder 0x1419d7da0 zeroed and registered with 0x140745270); the interface manager fills all of them	any of the 10 Windows holders is the same pointer once registered
+CL_SURF_TAB0	global	0x4c5cb50	0x198de18	confirmed	CL_SURF_BYID / CL_SURF_FROM_RAY: the table's begin (2 aligned)	-
+CL_SURF_TAB1	global	0x4c5cb58	0x198de20	confirmed	the table's end (2 aligned)	-
+ST_VT_VM	global	0x3503bc0	0x13c66c0	confirmed	PlayerVisionMode's ctor 0x1404e9590 (lea 0x1413c66c0; mov [rcx],rax; 0x50 bytes), called by the Player ctor that stores it at P+0x2f0 (0x140402193)	a vtable address: compare vptrs with image base + it
+SS_SPLASH_BYTE	global	0x46b2061	0x18f47cf	confirmed	SS_SPLASH_FLAG: W 0x140527f88 cmp [0x1418f47cf],r14b before the Client.SplashMovies record	read only by the game; never written
+BZ_SKILL_CAT_PP	global	0x4b56640	0x18f9308	confirmed	BZ_SKILL_CAT: the static initialiser stores "Inventory/Skill/Skills" at W 0x1407ba8c2	-
+BZ_CH_INV	off	0x910	0x910	same	aligned in 5 Character bindings, e.g. FUN_0268ea70 = 0x140bebd10 (PurchaseSkill's neighbour)	-
+BZ_INV_SKILLS	off	0x268	0x268	same	BZ_HAS_SKILL L 0x2313575 / W 0x1407bf405: add rcx,0x268	-
+BZ_C_CHARREC	off	0x4c8	0x4c8	same	2 aligned (L 0x26c3b29 / W 0x140c10181), 57 in all	-
+BZ_C_ATTACK	off	0x4d0	0x4d0	same	GetCurrentAttack L 0x26d451d / W 0x140c12d24	-
+BZ_C_TARGET	off	0x4c0	0x4c0	plausible	64 aligned uses keep 0x4c0 (none in a function of ours)	-
+BZ_P_MOUNT	off	0x1d8	0x1d8	same	= CL_P_MOUNT	-
+BZ_PC_STRUGGLE	off	0x8d8	0x8d8	same	= IN_PC_STRUGGLE	-
+BZT_PC_TARGETING	off	0x360	0x360	same	Linux FUN_00a847a0 `add rdi,0x360; jmp` = the Windows run of PlayerCombat thunks `add rcx,0x360; jmp` at 0x14044a2f0..0x14044a320	-
+BZT_E_REC	off	0x40	0x40	plausible	824 aligned uses keep 0x40 (none in the entry's functions)	-
+BZT_E_OFF	off	0x8e	0x8e	same	FUN_0227d570 = 0x1408d3830: cmp [entry+0x8e]	-
+KP_GS_FMGR	off	0x6c58	0x6c58	same	KP_GS_FMGR L 0x9ebde0 / W 0x1403ef410	-
+KP_FMGR_FACREC	off	0xe8	0xe8	same	KP_TARGET L 0x23d3f84 / W 0x14074bd14	-
+KP_FAC_MEMBERS	off	0x38	0x38	same	KP_MEMBERS L 0x22aeed0 / W 0x1408e1850 (+0x38/+0x40, +0x1b0)	-
+KP_FM_NPC	off	0x40	0x40	plausible	824 aligned uses keep 0x40 (no aligned use in the member functions checked)	-
+KP_FM_SEED	off	0x48	0x48	same	KP_FM_BIND L 0x2975f33 / W 0x140abf296: member+0x48 -> NPC+0x728	-
+KP_FM_NAMEHASH	off	0x50	0x50	plausible	936 aligned keep 0x50	-
+KP_FM_TREE	off	0x60	0x60	same	KP_FM_TEMPLATE L 0x22d71b0 / W 0x14084ee40	-
+KP_FM_TRAITS	off	0x70	0x70	plausible	KP_FM_BIND's Windows twin reads [+0x70] at 0x140abf2b1/2f6 (unaligned)	-
+KP_FM_POS	off	0x88	0x88	plausible	328 aligned keep 0x88	-
+KP_FM_SPAWNCOND	off	0xa0	0xa0	plausible	200 aligned keep 0xa0	-
+KP_FM_LD_CHARTYPE	off	0xc0	0xc0	plausible	by the distribution only	-
+KP_FM_LD_ATTACK	off	0xc8	0xc8	plausible	by the distribution only	-
+KP_FM_LD_PLAYER	off	0xd0	0xd0	plausible	by the distribution only	-
+KP_FM_LD_TYPE	off	0xd8	0xd8	plausible	by the distribution only	-
+KP_FM_ROLE	off	0x2b8	0x2b8	plausible	71 aligned keep 0x2b8	-
+KP_FM_LEVEL	off	0x340	0x340	plausible	30 aligned keep 0x340 (18 -> 0x338: other objects)	-
+KP_FM_COL	off	0x3a0	0x3a0	plausible	16 aligned keep 0x3a0	-
+KP_FM_FLAGS	off	0x3a4	0x3a4	same	KP_FM_ACTIVATE (+0x3a4, +0x3a9) and FUN_022cf590 L / W 0x14085db66	-
+KP_FM_PLAYERKILLS	off	0x348	0x348	plausible	15 aligned keep 0x348	-
+KP_NPC_SEED	off	0x728	0x728	same	KP_FM_BIND L 0x2975f37 / W 0x140abf29a: cmp [npc+0x728]	-
+SY_PLAYERS	global	0x4c47020	0x1988a90	confirmed	8 aligned RIP uses (= winport-ui's CO_PLAYERS)	std::vector begin/end
+PRL_PLAYERS	global	0x4c47020	0x1988a90	confirmed	= SY_PLAYERS	-
+SY_PL_INVIS	off	0xd10	0xd10	same	SY_INVIS L 0x27acaee / W 0x140bd6d63	-
+SY_IM_SUB	off	0x27b0	0x27a0	confirmed	4 aligned: FUN_00a10670 L 0xa106cf / W 0x140412980 and FUN_00a10740 L 0xa10773 / W 0x1404129e7: mov rcx,[im+0x27a0]	m_GameUI+0xa8 -> +0xa0
+SY_SUB_TEXT	off	0xc0	0xc0	plausible	not read side by side (CUIHUDSubtitle's channel text)	a story drill read
+SY_SUB_STRIDE	size	0x210	0x210	plausible	the Windows subtitle code still indexes 0x210-byte channels (imul 0x210 at 0x14053445c)	-
+BR_NL_FLAG	global	0x4c445d8	0x1989eca	confirmed	5 aligned; the root node path W 0x1404596d0: cmp byte [0x141989eca],0 before "Root node validated"	-
+BR_NL_SINK	global	0x4c459a0	?	unknown	Combat_LogPrintf is an empty stub on Windows: no sink	BR_NODELOG is a redesign
+BR_C_BLOCKING	off	0xdc	0xdc	plausible	11 aligned keep 0xdc	-
+BR_PC_TRACK	off	0x80	0x80	same	the root loop L 0xa8e121 / W 0x140459e1d and L 0xa8ddbc / W 0x140459774: lea [pc+0x80]	-
+BR_TR_VEC	off	0x08	0x08	plausible	the predicate test FUN_02271890 = 0x1408c2310 (str) reads its +0x08 vector (unaligned)	-
+BR_TR_BLOCK	off	0x90	0x90	plausible	FUN_02271890's twin reads [+0x90] at 0x1408c257f (unaligned)	-
+PRF_RES_MAX	off	0x4c	0x4c	same	PRF_TOKENS_ADD: L 0x2720aaf / W 0x140cdb3e2: mov [res+0x4c]	-
+PRF_RES_ENERGY	off	0x44	0x44	same	PRF_ENERGY_FULL identical (W 0x140cdb3bd: movss [rcx+0x44],xmm0)	-
+PRF_RES_EMAX	off	0x48	0x48	same	PRF_ENERGY_FULL W 0x140cdb3b3: movss xmm0,[rcx+0x48]	-
+PRF_RES_EUNLIM	off	0x60	0x60	same	PRF_ENERGY_FULL W 0x140cdb3b0: mov [rcx+0x60],dl; FUN_0271e300's cmp [+0x60] aligned	-
+PR_CH_HEALTHC	off	0x130	0x130	plausible	72 aligned keep 0x130 (none in a function of ours)	-
+PR_CH_HEALTH_MAX	off	0x160	0x160	plausible	70 aligned keep 0x160	-
+PR_CH_MINHEALTH	off	0x9b4	0x9b4	same	PR_SETMINHEALTH W 0x140be25b0: movss [rcx+0x9b4],xmm1	-
+PR_CH_HEALTH	off	0x164	0x164	plausible	23 aligned keep 0x164	logs only
+PR_CH_COMBAT	off	0x6d0	0x6d0	plausible	41 aligned keep 0x6d0	-
+PR_C_CHARREC	off	0x4c8	0x4c8	same	= BZ_C_CHARREC	-
+PR_C_TARGET	off	0x4c0	0x4c0	plausible	= BZ_C_TARGET	-
+PR_HOBJ_GAMEOBJ	off	0x38	0x38	plausible	by the distribution	-
+PR_HOBJ_CLASSES	off	0x48	0x48	plausible	by the distribution	-
+PR_HOBJ_FLAGS	off	0x5c	0x5c	plausible	417 aligned keep 0x5c	-
+PR_W_RECORD	off	0x60	0x60	same	the TOD's caller FUN_00e43190 = 0x14053a500: L 0xe43365 / W 0x14053a6b5	-
+PR_W_TOD	off	0x68	0x68	same	L 0xe43330 / W 0x14053a690: movzx [weather+0x68]	-
+PRQ_MGR_FLAG	off	0x164	0x164	same	PRQ_FLAG_ON 0x140ad8dc0	-
+PRQ_MGR_LIST	off	0x48	0x48	same	PRQ_REMOVEALL's target 0x140ad9700: +0x48/+0x50	-
+PRQ_ENTRY	size	0x50	0x50	same	0x140ad9700 divides by 80	-
+PR_SLOT_RAY	vt	0x200	0x1f8	confirmed	= CL_SLOT_RAYCAST: slot 63 of the live vptr 0x141481d30 (0x141481f28 - 0x141481d30); the site PR_RAYCAST 0x1481f28 is right	-
+PR_SLOT_SETZONE	vt	0x288	0x258	confirmed	NPC 0x1414498b0 slot 75 (PR_NPC_SETZONE)	-6 slots in the NPC vtable
+PR_SLOT_REMOVE	vt	0x58	0x50	confirmed	CObjectSystemInterface 0x14148ca00 slot 10 (PR_OBJSYS_REMOVE)	-
+PR_SLOT_WEATHER	vt	0xa8	0xa0	confirmed	CGameServices 0x1413ba940 slot 20 (PR_WEATHER)	-
+PRN_LIST	global	0x46b9200	?	unknown	PRN_NAV_POS not found	a test word's diagnostic
+PRN_NODE	off	0x80	?	unknown	as PRN_LIST	-
+PRN_REC	off	0x298	?	unknown	as PRN_LIST	-
+PRN_ACTIVE	off	0x2e0	?	unknown	as PRN_LIST (a Windows caller reads +0x2e0 at 0x1404e2656, not proven the same object)	-
+MAP_VT_ZONE	global	0x353e120	0x13cfba0	confirmed	CUIPDAZoneMapLayer's Windows vtable 0x1413cfba0 (25 slots; Linux 31): its slot 8 = the command handler below (paired Linux slots 1/2/10/11/14/15 = Windows 0/1/8/9/12/13)	a vtable address: compare vptrs with the image base + it
+MAP_VT_ZONE_VF10	global	0xc03fc0	0x5f1190	confirmed	L FUN_00c03fc0 / W 0x1405f1190 (tier 1): the same switch on the command (0x52, 0x57 Fast Travel, 0x58 Advance Time)	a function address
+MAP_ZONE_CMD_SLOT	const	10	8	confirmed	the handler is slot 8 of 0x1413cfba0 (Linux slot 10): -2 here, not -1	-
+MAP_L_SEL	off	0xd00	0xd00	same	the handler's 0x57 case L 0xc04008 / W 0x1405f1349: mov rcx,[layer+0xd00]	-
+MAP_SEL_OBJ	off	0x38	0x38	same	L 0xc04014 / W 0x1405f1357: mov rcx,[sel+0x38]	-
+MAP_OBJ_TYPES	off	0x48	0x48	same	L 0xc04021 / W 0x1405eca77 (the type test MSVC kept as a call): mov rax,[obj+0x48], the list node +0 the type, +8 the next	-
+MAP_TYPE_TRAVEL	global	0x46b8260	0x17fc260	confirmed	L 0xc04041 cmp rbx,0x46b8260 / W 0x1405eca8d lea r8,[0x1417fc260]; cmp rax,r8 (in the same list walk)	-
+MT_P_MOUNT	off	0x1d8	0x1d8	same	= CL_P_MOUNT	-
+MT_C_ATTACK	off	0x4d0	0x4d0	same	= BZ_C_ATTACK	-
+MT_P_RIDER_CMDS	off	0x2b0	0x2b0	plausible	40 aligned uses keep 0x2b0 (none in a rider function checked)	-
+MT_P_RIDER_NCMD	off	0x2c0	0x2c0	plausible	21 aligned keep 0x2c0, 11 -> 0x2b8 (other objects?): check at the first ride boot	-
+MT_VT_STRUGGLE_AIM	global	0x3592bb8	0x13cdf48	plausible	the 5-slot struggle vtable whose functions read +0x588..+0x592 (the aim's fields; Linux's aim command +0x58c) - no RTTI on Windows to prove the name	-
+MT_VT_STRUG_HOLD	global	0x3592b38	0x13cdf20	plausible	its functions read +0xfc/+0xfe/+0x100/+0x118 (the hold's command, result, seconds, held)	new on Windows: the class by vtable
+MT_VT_STRUG_COUNT	global	0x3592ab8	0x13cded0	plausible	its functions read +0x2f0/+0x2f4/+0x2f5/+0x2f6 (the press count's)	-
+MT_VT_STRUG_QT	global	0x3592af8	0x13cdef8	plausible	its functions read +0xd0/+0xd4/+0xd5 (the quick time's command)	-
+MT_VT_STRUG_DIR	global	0x3592b78	0x13cddf8	plausible	the remaining 5-slot vtable of the group (+0x200..+0x204)	-
+MT_STRUG_DONE	off	0xa5	0xa5	plausible	every struggle vtable's functions read +0xa5 on Windows; 5 aligned uses keep it	-
+SF_CAST_FLAGS	const	0xf8	0xf8	plausible	= CL_CAST_FLAGS or CL_CAST_MATERIAL or 0x20 (the same query layout)	-
+JP_PC_GRAVITY	off	0x58	0x58	plausible	the proxy's gravity float (Linux CPhysicsCharacter vf_08 reads it after the +0x60 flag); 460 aligned uses keep 0x58, the Windows twin not read side by side	the jump checks the value (-60 < g < -5) and falls back to its default

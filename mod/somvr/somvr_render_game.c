@@ -85,7 +85,7 @@
  * RD_OVERLAY_IF (its IClientFXOverlay vtable's slot 3; the context slots 0..3); build 31 (re-xr-pipeline.md 137):
  * SOMVR_FX_TEST's patched K_CALL RD_FOG (the deferred pipeline FUN_007d6e20's call of the fog overlay FUN_007e6820,
  * `fx nofog`: a measurement, never for play)) */
-static const struct site_spec g_rd_sites_game[] = {
+static SITE_TABLE struct site_spec g_rd_sites_game[] = {
 SITE("RD_LENSFLARE", K_VSLOT, 0x3b5de78, 0x3b5de58, "30 0a d7 02 00 00 00 00 70 0a d7 02 00 00 00 00 20 0a d7 02 00 00 00 00 b0 0a d7 02 00 00 00 00 70 f1 d6 02 00 00 00 00", 0x2d6f170, "41 57 41 56 41 55 41 54 55 53 48 81 ec 98 00"),
 SITE("RD_SHAFTS", K_CALL, 0x7a2541, 0x7a2530, "8b 03 f3 0f 10 43 08 48 89 04 24 f3 0f 11 44 24 08 e8 2a fa ff ff", 0x7a1f70, "53 66 0f ef c9 48 89 fb 48 83 ec 10 f3 0f 10"),
 SITE("RD_RAIN", K_CALL, 0x9ef2f3, 0x9ef2e4, "e8 e7 5f 2b 00 84 c0 74 0b 4c 89 f6 4c 89 e7 e8 e8 60 2b 00", 0xca53e0, "48 8b 57 10 48 8b 47 18 48 29 d0 48 c1 f8 03"),
@@ -123,14 +123,14 @@ static const char *const g_rd_part_w[RD_NPARTS] = { "flares", "shafts", "vignett
 enum { RDD_PSYS, RDD_GPUPSYS, RDD_SPRITE, RDD_FLARESPR, RDD_LENSFLARE, RDD_N };
 static const char *const g_rd_draw_w[RDD_N] = { "CPU particles", "GPU particles", "sprites", "flare sprites",
 						"lens flares" };
-#define RD_SHAFT_BYTE 0x46257acUL /* DAT_046257ac: this view's RadialBlurEnabled (FUN_007a1f70 writes it, FUN_007a1530 reads) */
+#define RD_SHAFT_BYTE GADDR(RD_SHAFT_BYTE, 0x46257ac) /* DAT_046257ac: this view's RadialBlurEnabled (FUN_007a1f70 writes it, FUN_007a1530 reads) */
 /* the renderer's per-frame visibility request buffer (FUN_007b79f0 / FUN_007b72a0; the RenderScene custom nodes' per-view
  * blocks, CParticleSystemRender::vf_03 among them): two buffers +0/+8 (this frame's index +0x10, BeginFrame
  * FUN_007b7ad0 toggles it and zeroes +0x1c/+0x20), the capacity +0x18 (FUN_007b7260 at the renderer's start:
  * DAT_0462d734 KB << 10 = 4 MB, set by _INIT_95), the bytes used this frame +0x1c (all views together), refused +0x20 */
-#define RD_VIS 0x462d700UL
-#define RD_SP_BOXBLUR 0x130       /* sp: the box blur's enable byte (-> ctx+0x1c8) */
-#define RD_SP_VIGNETTE 0x144      /* sp: the game's vignette's enable byte (-> ctx+0x1dc) */
+#define RD_VIS GADDR(RD_VIS, 0x462d700)
+#define RD_SP_BOXBLUR OFS(RD_SP_BOXBLUR, 0x130)       /* sp: the box blur's enable byte (-> ctx+0x1c8) */
+#define RD_SP_VIGNETTE OFS(RD_SP_VIGNETTE, 0x144)      /* sp: the game's vignette's enable byte (-> ctx+0x1dc) */
 
 typedef void (*rd_draw_fn)(void *self, void *ctx);
 typedef void (*rd_shaft_fn)(void *params);
@@ -220,9 +220,9 @@ static struct {
  * them during eye 1's pass is eye 1's own, and eye 0 keeps the game's. A present with the swap still in (an eye 1
  * end missed) swaps back. Fail soft: RD_CF_MAKE not matched, the target without the images, a maker that fails or
  * views that are not the expected objects = the game's (logged once). */
-#define RD_CF_OFF 0xc0UL  /* RenderTarget: the first "current frame" image object (the second at +0x110) */
-#define RD_CF_SZ 0x50UL
-#define RD_RT_MODE 0x448  /* RenderTarget: the mode its BeginRenderTarget set (FUN_0074b1e0 reads it; the end sets 0xd) */
+#define RD_CF_OFF OFS(RD_CF_OFF, 0xc0)  /* RenderTarget: the first "current frame" image object (the second at +0x110) */
+#define RD_CF_SZ OFS(RD_CF_SZ, 0x50)
+#define RD_RT_MODE OFS(RD_RT_MODE, 0x448)  /* RenderTarget: the mode its BeginRenderTarget set (FUN_0074b1e0 reads it; the end sets 0xd) */
 #define RD_RTF_CF 0x10u   /* RenderTarget flag: it has the two images */
 /* the bound values (each binding param + 0x40): tCurFrameMap, tForcedCurFrameMap, tCurFrameMapDiscard, tLastFrameMap */
 static const uintptr_t g_rd_bindv[4] = { 0x4622de0UL, 0x4622d80UL, 0x4622d20UL, 0x4622e40UL };
@@ -295,10 +295,10 @@ static const char *rd_cfname(uintptr_t v, char *b, size_t n)
  * time of this frame) and is uploaded the game's way (FUN_00750080(its handle 0x4625488, its data pointer 0x4625490,
  * 4) = RD_KT_UPLOAD; no handle yet: the dirty word 0x462548a = 4, as the game does). game: as the game does. Fail soft:
  * a site mismatch = the game's. Word "ktime frame|game|state"; lines CONFIG ktime=.., KTIME (the first 4 fixes, state). */
-#define RD_KT 0x46254c0UL        /* k_fTime's data (float) */
-#define RD_KT_HANDLE 0x4625488UL /* its binding handle (uint16; 0xffff = none) */
-#define RD_KT_PTR 0x4625490UL    /* the data pointer FUN_00750080 is given */
-#define RD_KT_DIRTY 0x462548aUL  /* uint16: 4 = set without a handle, 0 = uploaded */
+#define RD_KT GADDR(RD_KT, 0x46254c0)        /* k_fTime's data (float) */
+#define RD_KT_HANDLE GADDR(RD_KT_HANDLE, 0x4625488) /* its binding handle (uint16; 0xffff = none) */
+#define RD_KT_PTR GADDR(RD_KT_PTR, 0x4625490)    /* the data pointer FUN_00750080 is given */
+#define RD_KT_DIRTY GADDR(RD_KT_DIRTY, 0x462548a)  /* uint16: 4 = set without a handle, 0 = uploaded */
 typedef void (*rd_ktup_fn)(uint32_t handle, void *data, uint32_t size);
 static struct {
 	int want, ok;                 /* SOMVR_KTIME at start (1 frame); both sites matched */
@@ -361,7 +361,7 @@ static void rd_kt_state(const char *head)
  * IdxD3D11DeviceContextThreaded's vtable 0x45537f0: VS/PS constant buffers, PS shader views, PS/VS shaders, PS samplers,
  * DrawIndexed, Draw, Map, Unmap, PS constant buffers, DrawIndexedInstanced, DrawInstanced, VS shader views,
  * OMSetRenderTargets, OMSetBlendState, Dispatch, UpdateSubresource, CS shader views, CS shader, CS constant buffers) */
-static const struct site_spec g_dc_sites_game[] = {
+static SITE_TABLE struct site_spec g_dc_sites_game[] = {
 SITE("DC_VSCB", K_VSLOT, 0x4553828, 0x4553828, "50 2a ac 01 00 00 00 00", 0x1ac2a50, "41 57 49 89 cf 41 56 4c 8d b7 c8 00 00 00 41"),
 SITE("DC_PSSRV", K_VSLOT, 0x4553830, 0x4553830, "c0 37 ac 01 00 00 00 00", 0x1ac37c0, "41 57 41 89 f7 41 56 4c 8d b7 c8 00 00 00 41"),
 SITE("DC_PSSH", K_VSLOT, 0x4553838, 0x4553838, "90 10 ac 01 00 00 00 00", 0x1ac1090, "41 55 4c 8d af c8 00 00 00 41 54 49 89 fc 4c"),
@@ -1124,11 +1124,22 @@ static int rd_draw0_probe(void **a, uintptr_t *fx_out)
 /* SOMVR_FX_TEST: the draw's render context behind a proxy for the one call (a[4]: slot 9 the vertex map, slot 15 the
  * draw - their vertices hashed, the other slots straight through), so the two eyes' vertices of one emitter can be
  * compared. The proxy is {vtable, the real context}; thunk k = this -> the real one, then its slot k. */
+#ifdef _WIN32 /* Win64: `this` in rcx; the context's interface is one slot lower (docs/re-winport.md 7.5): map 8, unmap
+	       * 9, draw 14 (Linux 9, 10, 15) */
+#define RD_PX_T(K, OFF)                                                                                                \
+	__attribute__((naked, used)) void somvr_rd_px##K(void)                                                         \
+	{                                                                                                              \
+		__asm__ volatile("movq 8(%rcx), %rcx\n\tmovq (%rcx), %rax\n\tjmpq *" #OFF "(%rax)\n\t");                  \
+	}
+enum { RD_PXS_MAP = 8, RD_PXS_UNMAP = 9, RD_PXS_DRAW = 14 };
+#else
 #define RD_PX_T(K, OFF)                                                                                                \
 	__attribute__((naked, used)) void somvr_rd_px##K(void)                                                         \
 	{                                                                                                              \
 		__asm__ volatile("movq 8(%rdi), %rdi\n\tmovq (%rdi), %rax\n\tjmpq *" #OFF "(%rax)\n\t");                  \
 	}
+enum { RD_PXS_MAP = 9, RD_PXS_UNMAP = 10, RD_PXS_DRAW = 15 };
+#endif
 RD_PX_T(0, 0) RD_PX_T(1, 8) RD_PX_T(2, 16) RD_PX_T(3, 24) RD_PX_T(4, 32) RD_PX_T(5, 40) RD_PX_T(6, 48) RD_PX_T(7, 56)
 RD_PX_T(8, 64) RD_PX_T(9, 72) RD_PX_T(10, 80) RD_PX_T(11, 88) RD_PX_T(12, 96) RD_PX_T(13, 104) RD_PX_T(14, 112)
 RD_PX_T(15, 120) RD_PX_T(16, 128) RD_PX_T(17, 136) RD_PX_T(18, 144) RD_PX_T(19, 152) RD_PX_T(20, 160) RD_PX_T(21, 168)
@@ -1138,19 +1149,27 @@ RD_PX_T(29, 232) RD_PX_T(30, 240) RD_PX_T(31, 248)
  * call sequence (somvr_px_seq, 24 at most) before they jump on */
 unsigned char somvr_px_seq[24];
 unsigned somvr_px_seqn;
+#ifdef _WIN32
+#define RD_PX_THIS "movq 8(%rcx), %rcx\n\tmovq (%rcx), %rax\n\t" /* this -> the real context, its vtable in rax */
+#else
+#define RD_PX_THIS "movq 8(%rdi), %rdi\n\tmovq (%rdi), %rax\n\t"
+#endif
 #define RD_PXC_T(K, OFF)                                                                                               \
 	__attribute__((naked, used)) void somvr_rd_pxc##K(void)                                                        \
 	{                                                                                                              \
 		__asm__ volatile("movl somvr_px_seqn(%rip), %eax\n\tcmpl $24, %eax\n\tjae 1f\n\t"                         \
 				 "leaq somvr_px_seq(%rip), %r11\n\tmovb $" #K ", (%r11,%rax)\n\t"                         \
 				 "incl somvr_px_seqn(%rip)\n"                                                         \
-				 "1:\n\tmovq 8(%rdi), %rdi\n\tmovq (%rdi), %rax\n\tjmpq *" #OFF "(%rax)\n\t");          \
+				 "1:\n\t" RD_PX_THIS "jmpq *" #OFF "(%rax)\n\t");                                      \
 	}
 RD_PXC_T(0, 0) RD_PXC_T(1, 8) RD_PXC_T(2, 16) RD_PXC_T(3, 24) RD_PXC_T(4, 32) RD_PXC_T(5, 40) RD_PXC_T(6, 48)
 RD_PXC_T(7, 56) RD_PXC_T(8, 64) RD_PXC_T(10, 80) RD_PXC_T(11, 88) RD_PXC_T(12, 96) RD_PXC_T(13, 104)
 RD_PXC_T(14, 112) RD_PXC_T(16, 128) RD_PXC_T(17, 136) RD_PXC_T(18, 144) RD_PXC_T(19, 152) RD_PXC_T(20, 160)
 RD_PXC_T(21, 168) RD_PXC_T(22, 176) RD_PXC_T(23, 184) RD_PXC_T(24, 192) RD_PXC_T(25, 200) RD_PXC_T(26, 208)
 RD_PXC_T(27, 216) RD_PXC_T(28, 224) RD_PXC_T(29, 232) RD_PXC_T(30, 240) RD_PXC_T(31, 248)
+#ifdef _WIN32
+RD_PXC_T(15, 120) /* (Windows: slot 15 is a plain one, the draw is 14) */
+#endif
 static struct { unsigned char *ptr; uint32_t granted, req; int64_t nv; uint64_t h; int maps, draws;
 		int64_t marg[6], darg[7]; } g_px; /* render thread */
 static _Atomic int g_rd_vprobe; /* `fx vprobe N`: N more near emitters' draws logged */
@@ -1270,14 +1289,14 @@ static void rd_near_map(void *out);
 static int64_t rd_px_map(void **px, int64_t a, int64_t n, int64_t c, void *out, int64_t e, int64_t f)
 {
 	void *real = px[1];
-	int64_t r = ((rd_px_map_fn)(*(void ***)real)[9])(real, a, n, c, out, e, f);
+	int64_t r = ((rd_px_map_fn)(*(void ***)real)[RD_PXS_MAP])(real, a, n, c, out, e, f);
 	g_px.ptr = out && (int32_t)r == 0 ? *(unsigned char **)out : NULL;
 	g_px.granted = out ? *(uint32_t *)((char *)out + 0x10) : 0, g_px.req = (uint32_t)n, g_px.maps++;
 	g_px.marg[0] = a, g_px.marg[1] = n, g_px.marg[2] = c, g_px.marg[3] = e, g_px.marg[4] = f;
 	if (g_px.ptr)
 		rd_near_map(out); /* build 28: SOMVR_FX_NEAR's cached copy (g_px.ptr stays the game's mapping) */
 	if (somvr_px_seqn < 24)
-		somvr_px_seq[somvr_px_seqn++] = 9;
+		somvr_px_seq[somvr_px_seqn++] = RD_PXS_MAP;
 	return r;
 }
 static int64_t rd_px_draw(void **px, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t nv, int64_t g)
@@ -1306,8 +1325,8 @@ static int64_t rd_px_draw(void **px, int64_t a, int64_t b, int64_t c, int64_t d,
 	g_px.darg[0] = a, g_px.darg[1] = b, g_px.darg[2] = c, g_px.darg[3] = d, g_px.darg[4] = e, g_px.darg[5] = nv;
 	g_px.darg[6] = g;
 	if (somvr_px_seqn < 24)
-		somvr_px_seq[somvr_px_seqn++] = 15;
-	return ((rd_px_draw_fn)(*(void ***)real)[15])(real, a, b, c, d, e, nv, g);
+		somvr_px_seq[somvr_px_seqn++] = RD_PXS_DRAW;
+	return ((rd_px_draw_fn)(*(void ***)real)[RD_PXS_DRAW])(real, a, b, c, d, e, nv, g);
 }
 /* ---- build 27 (re-xr-pipeline.md 125): SOMVR_FX_NEAR=on|off - the game's CPU particles kept out of the eyes' faces ----
  * The game's particle FX were made for a camera 3 m behind Talion; in first person a kill's blood burst, sparks, embers,
@@ -1599,7 +1618,21 @@ __attribute__((used)) void somvr_rd_near_unmap(void)
 	atomic_fetch_add_explicit(&g_fn.copies, 1, memory_order_relaxed);
 	atomic_fetch_add_explicit(&g_fn.copied, g_fn.sh_bytes, memory_order_relaxed);
 }
-/* slot 10 (the vertices' unmap): the fold first (every register kept), then the real context's slot 10 */
+/* slot 10 (the vertices' unmap): the fold first (every register kept), then the real context's slot 10. Windows: slot 9,
+ * the four argument registers and xmm0-3 kept (the rest is the callee's to keep), 32 bytes of home area for the call */
+#ifdef _WIN32
+__attribute__((naked, used)) void somvr_rd_pxu10(void)
+{
+	__asm__ volatile("pushq %rcx\n\tpushq %rdx\n\tpushq %r8\n\tpushq %r9\n\t"
+			 "subq $104, %rsp\n\t"
+			 "movdqu %xmm0, 32(%rsp)\n\tmovdqu %xmm1, 48(%rsp)\n\tmovdqu %xmm2, 64(%rsp)\n\tmovdqu %xmm3, 80(%rsp)\n\t"
+			 "call somvr_rd_near_unmap\n\t"
+			 "movdqu 32(%rsp), %xmm0\n\tmovdqu 48(%rsp), %xmm1\n\tmovdqu 64(%rsp), %xmm2\n\tmovdqu 80(%rsp), %xmm3\n\t"
+			 "addq $104, %rsp\n\t"
+			 "popq %r9\n\tpopq %r8\n\tpopq %rdx\n\tpopq %rcx\n\t"
+			 "movq 8(%rcx), %rcx\n\tmovq (%rcx), %rax\n\tjmpq *72(%rax)\n\t");
+}
+#else
 __attribute__((naked, used)) void somvr_rd_pxu10(void)
 {
 	__asm__ volatile("pushq %rdi\n\tpushq %rsi\n\tpushq %rdx\n\tpushq %rcx\n\tpushq %r8\n\tpushq %r9\n\t"
@@ -1613,6 +1646,7 @@ __attribute__((naked, used)) void somvr_rd_pxu10(void)
 			 "popq %r9\n\tpopq %r8\n\tpopq %rcx\n\tpopq %rdx\n\tpopq %rsi\n\tpopq %rdi\n\t"
 			 "movq 8(%rdi), %rdi\n\tmovq (%rdi), %rax\n\tjmpq *80(%rax)\n\t");
 }
+#endif
 /* the proxy outside SOMVR_FX_TEST: the map noted (rd_px_map), the unmap folds, every other slot straight through */
 static int64_t rd_px_map(void **px, int64_t a, int64_t n, int64_t c, void *out, int64_t e, int64_t f);
 static void *g_pxn_vt[32];
@@ -1624,7 +1658,7 @@ static void rd_near_vt(void)
 		somvr_rd_px19, somvr_rd_px20, somvr_rd_px21, somvr_rd_px22, somvr_rd_px23, somvr_rd_px24, somvr_rd_px25,
 		somvr_rd_px26, somvr_rd_px27, somvr_rd_px28, somvr_rd_px29, somvr_rd_px30, somvr_rd_px31 };
 	memcpy(g_pxn_vt, plain, sizeof plain);
-	g_pxn_vt[9] = (void *)rd_px_map, g_pxn_vt[10] = (void *)somvr_rd_pxu10;
+	g_pxn_vt[RD_PXS_MAP] = (void *)rd_px_map, g_pxn_vt[RD_PXS_UNMAP] = (void *)somvr_rd_pxu10;
 }
 /* a draw (N: CPU particles, sprites, flare sprites) through the proxy: SOMVR_FX_NEAR's fold (CPU particles only) and
  * build 31's SOMVR_FX_BILLBOARD turn at the unmap (outside SOMVR_FX_TEST; the sprites' and flare sprites' also in it) */
@@ -1643,12 +1677,21 @@ static void rd_draw_px(void *self, void **a, int d)
 	g_fn.a = NULL;
 }
 
+#ifdef _WIN32
+static void *g_pxc_vt[32] = { somvr_rd_pxc0, somvr_rd_pxc1, somvr_rd_pxc2, somvr_rd_pxc3, somvr_rd_pxc4, somvr_rd_pxc5,
+			      somvr_rd_pxc6, somvr_rd_pxc7, (void *)rd_px_map, somvr_rd_pxu10, somvr_rd_pxc10, somvr_rd_pxc11,
+			      somvr_rd_pxc12, somvr_rd_pxc13, (void *)rd_px_draw, somvr_rd_pxc15, somvr_rd_pxc16,
+			      somvr_rd_pxc17, somvr_rd_pxc18, somvr_rd_pxc19, somvr_rd_pxc20, somvr_rd_pxc21, somvr_rd_pxc22,
+			      somvr_rd_pxc23, somvr_rd_pxc24, somvr_rd_pxc25, somvr_rd_pxc26, somvr_rd_pxc27, somvr_rd_pxc28,
+			      somvr_rd_pxc29, somvr_rd_pxc30, somvr_rd_pxc31 };
+#else
 static void *g_pxc_vt[32] = { somvr_rd_pxc0, somvr_rd_pxc1, somvr_rd_pxc2, somvr_rd_pxc3, somvr_rd_pxc4, somvr_rd_pxc5,
 			      somvr_rd_pxc6, somvr_rd_pxc7, somvr_rd_pxc8, (void *)rd_px_map, somvr_rd_pxu10, somvr_rd_pxc11,
 			      somvr_rd_pxc12, somvr_rd_pxc13, somvr_rd_pxc14, (void *)rd_px_draw, somvr_rd_pxc16,
 			      somvr_rd_pxc17, somvr_rd_pxc18, somvr_rd_pxc19, somvr_rd_pxc20, somvr_rd_pxc21, somvr_rd_pxc22,
 			      somvr_rd_pxc23, somvr_rd_pxc24, somvr_rd_pxc25, somvr_rd_pxc26, somvr_rd_pxc27, somvr_rd_pxc28,
 			      somvr_rd_pxc29, somvr_rd_pxc30, somvr_rd_pxc31 };
+#endif
 /* `fx vprobe`: after a CPU emitter's draw (3 lines per emitter at most): its arguments (a[0] the game camera, a[1] the
  * eye's view: position + quaternion; a[2] the per-view block), the map's and the draw's arguments, the slots it called,
  * the block's head, and the first quad read as 60-byte vertices (a position at +0, the colour at +12 the same in the
@@ -1699,12 +1742,21 @@ static void rd_vprobe_log(void **a, uintptr_t fx, int e)
 	      (long long)g_px.darg[6], seq, *(const uint32_t *)a[2], bh, s60 ? "hold" : "do NOT hold", s60 ? q4 : "-", nq,
 	      nq ? mean / nq : 0.0, mx);
 }
+#ifdef _WIN32
+static void *g_px_vt[32] = { somvr_rd_px0, somvr_rd_px1, somvr_rd_px2, somvr_rd_px3, somvr_rd_px4, somvr_rd_px5,
+			     somvr_rd_px6, somvr_rd_px7, (void *)rd_px_map, somvr_rd_pxu10, somvr_rd_px10, somvr_rd_px11,
+			     somvr_rd_px12, somvr_rd_px13, (void *)rd_px_draw, somvr_rd_px15, somvr_rd_px16, somvr_rd_px17,
+			     somvr_rd_px18, somvr_rd_px19, somvr_rd_px20, somvr_rd_px21, somvr_rd_px22, somvr_rd_px23,
+			     somvr_rd_px24, somvr_rd_px25, somvr_rd_px26, somvr_rd_px27, somvr_rd_px28, somvr_rd_px29,
+			     somvr_rd_px30, somvr_rd_px31 };
+#else
 static void *g_px_vt[32] = { somvr_rd_px0, somvr_rd_px1, somvr_rd_px2, somvr_rd_px3, somvr_rd_px4, somvr_rd_px5,
 			     somvr_rd_px6, somvr_rd_px7, somvr_rd_px8, (void *)rd_px_map, somvr_rd_pxu10, somvr_rd_px11,
 			     somvr_rd_px12, somvr_rd_px13, somvr_rd_px14, (void *)rd_px_draw, somvr_rd_px16, somvr_rd_px17,
 			     somvr_rd_px18, somvr_rd_px19, somvr_rd_px20, somvr_rd_px21, somvr_rd_px22, somvr_rd_px23,
 			     somvr_rd_px24, somvr_rd_px25, somvr_rd_px26, somvr_rd_px27, somvr_rd_px28, somvr_rd_px29,
 			     somvr_rd_px30, somvr_rd_px31 };
+#endif
 
 /* SOMVR_FX_TEST, CPU particles' draw: the probe, the original through the proxy, then eye 0's draw of an emitter
  * against eye 1's of the same frame - the camera's and the emitter's transforms it was given (a[0], a[1]: position +
@@ -2706,6 +2758,10 @@ static void rd_start(const struct site_spec *sites, int *bad)
 	}
 	if ((g_rd.want & RDF_OVERLAY) || g_rd.test) /* build 24: COverlayFX's two draw entries (the hooks in: the word works) */
 		for (int i = RDS_OVERLAY; i <= RDS_OVERLAY_IF; i++) {
+#ifdef _WIN32
+			if (i == RDS_OVERLAY) /* winport (re-winport.md 7.5): MSVC has no main-vtable slot for the interface's draw */
+				continue;
+#endif
 			if (check_site(&sites[i], why, sizeof why) != 0) {
 				logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
 				      (unsigned long)sites[i].target, why);
@@ -2714,6 +2770,9 @@ static void rd_start(const struct site_spec *sites, int *bad)
 			g_rd.ok[i] = go_slot(&sites[i], i == RDS_OVERLAY ? (void *)somvr_w_rdov18 : (void *)somvr_w_rdovif,
 					     &somvr_rd_ov_orig[i - RDS_OVERLAY]);
 		}
+#ifdef _WIN32
+	g_rd.ok[RDS_OVERLAY] = g_rd.ok[RDS_OVERLAY_IF]; /* ... RD_OVERLAY_IF is every call of it there */
+#endif
 	if (g_rd.test) /* build 22: the trace's BeginRenderTarget bindings */
 		for (int i = RDS_BRT_A; i <= RDS_BRT_B; i++)
 			g_rd.ok[i] = bo_patch_call(&sites[i], (void *)somvr_w_rdbrt);

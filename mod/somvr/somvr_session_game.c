@@ -65,12 +65,12 @@ static char g_ss_wnote[96];                      /* the word's note, written bef
  * somvr_w_splash, which sets the byte for that call, then puts it back. Not a movie cut short (the SplashScreen's
  * stop event pops the queue unchecked): no movie starts. docs/re-launcher.md 8. Fail soft: a mismatch = the movies. */
 /* SESSION_SITES_BEGIN (check_sites.py counts this block: the patched SS_SPLASH K_CALL, the read-only SS_SPLASH_FLAG) */
-static const struct site_spec g_ssp_sites_game[] = {
+static SITE_TABLE struct site_spec g_ssp_sites_game[] = {
 SITE("SS_SPLASH", K_CALL, 0xa21107, 0xa21101, "48 89 ee 48 89 df e8 c4 e6 ff ff", 0xa1f7d0, "41 57 66 0f ef c0 31 c9 48 8d 87 28 2e 00 00"),
 SITE("SS_SPLASH_FLAG", K_ENTRY, 0xa1fab0, 0xa1fab0, "80 3d aa 25 c9 03 00 48 c7 43 20 38 60 6b 04 48", 0xa1fab0, "80 3d aa 25 c9 03 00 48 c7 43 20 38 60 6b 04"),
 };
 /* SESSION_SITES_END */
-#define SS_SPLASH_BYTE 0x46b2061u /* the cmp's operand: 0xa1fab7 + 0x3c925aa */
+#define SS_SPLASH_BYTE GADDR(SS_SPLASH_BYTE, 0x46b2061) /* the cmp's operand: 0xa1fab7 + 0x3c925aa */
 typedef void (*ss_splash_fn)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 static struct {
 	uintptr_t orig;
@@ -106,18 +106,7 @@ static void ss_splash_start(void)
 		logf_("SESSION splash site %s MISMATCH %#lx: %s", g_ssp_sites_game[1].name,
 		      (unsigned long)g_ssp_sites_game[1].addr, why);
 	ok = ok && s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) { /* a stub page of its own within +-2 GB (as MM_CAMQ) */
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3b0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3b0000) : NULL; /* its own page (as MM_CAMQ) */
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -141,8 +130,8 @@ static void ss_splash_start(void)
 	hex_of((const unsigned char *)s->addr, 5, nb, sizeof nb);
 	logf_("HOOK %s ok call %#lx target=%#lx now=[%s] via=%#lx (the menu's init without the boot movies)", s->name,
 	      (unsigned long)s->addr, (unsigned long)s->target, nb, (unsigned long)pg);
-	logf_("CONFIG skip_splash=1 (the boot movies are not queued: the no-splash byte %#x for the menu's init)",
-	      SS_SPLASH_BYTE);
+	logf_("CONFIG skip_splash=1 (the boot movies are not queued: the no-splash byte %#lx for the menu's init)",
+	      (unsigned long)SS_SPLASH_BYTE);
 }
 
 static const char *ss_ctx_name(int c)

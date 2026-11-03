@@ -45,7 +45,7 @@
  *                   CPhysicsClothVisualization slot 1, TRenderNodeMeshCustomHandle slot 1, CRenderNodeMeshCustom slot 1);
  *   HP_CUST_CREATE  CRendererHandle slot 5 = vf_05 (the only maker of custom handles).
  * Order = HPS_*) */
-static const struct site_spec g_hp_sites_game[] = {
+static SITE_TABLE struct site_spec g_hp_sites_game[] = {
 SITE("HP_DRAW_DEEP", K_CALL, 0x822bcc, 0x822bbd, "00 00 00 ba 01 00 00 00 4c 89 e7 44 89 14 24 e8 af d3 ff ff", 0x81ff80, "41 57 66 0f ef e4 66 0f ef ed 49 89 f7 41 56 41"),
 SITE("HP_DRAW_FWD", K_CALL, 0x822d19, 0x822d0a, "4d 89 e8 b9 01 00 00 00 4c 89 e7 44 89 14 24 e8 62 d2 ff ff", 0x81ff80, "41 57 66 0f ef e4 66 0f ef ed 49 89 f7 41 56 41"),
 SITE("HP_DRAW_LATE", K_CALL, 0x823068, 0x823059, "89 f8 b9 01 00 00 00 ba 01 00 00 00 4c 89 e7 e8 13 cf ff ff", 0x81ff80, "41 57 66 0f ef e4 66 0f ef ed 49 89 f7 41 56 41"),
@@ -88,25 +88,25 @@ _Static_assert((int)HPS_DEEP == (int)SOMVR_HP_DEEP && (int)HPS_FWD == (int)SOMVR
 		       (int)HPS_VEL == (int)SOMVR_HP_VEL && SOMVR_HP_PASSES == 5,
 	       "the call sites = the passes");
 static const struct site_spec *g_hp_sites = g_hp_sites_game; /* selftest: stand-ins */
-#define SM_SLOTS 0x0b8         /* CSimpleModel: CSimpleModelRenderable *part[20] (HP_SLOT_STORE) */
-#define SM_MAIN 0x0b0          /* CSimpleModel: the main renderable (run 12/headset 1: Talion's whole body; RT) */
+#define SM_SLOTS OFS(SM_SLOTS, 0x0b8)         /* CSimpleModel: CSimpleModelRenderable *part[20] (HP_SLOT_STORE) */
+#define SM_MAIN OFS(SM_MAIN, 0x0b0)          /* CSimpleModel: the main renderable (run 12/headset 1: Talion's whole body; RT) */
 #define HP_EMPTY_FRAMES 300     /* stereo frames with the model but no head node: the run-time fallback */
-#define SM_CLOTH 0x088         /* CSimpleModel: its CSimpleModelClothNode (HP_CLOTH_STORE; 0 = a model without cloth) */
-#define CN_SET 0x138           /* CSimpleModelClothNode: the cloth set (HP_CLOTH_SET): +0 the entries, +8 their end */
-#define CN_DESC 0x170          /* ... its display-mesh descriptors (0x10c bytes: the name first), +0x178 their end */
-#define CN_DESC_SIZE 0x10c
-#define CS_ENTRY 0x18          /* a cloth set entry: +0 the CPhysicsClothVisualization (HP_CLOTH_ENTRY) */
-#define VIS_HANDLE 0x10        /* CPhysicsClothVisualization: its TRenderNodeMeshCustomHandle (HP_CLOTH_HANDLE) */
-#define CHANDLE_NODE 0x10      /* the custom handle embeds its CRenderNodeMeshCustom here (HP_CUST_INLINE) */
+#define SM_CLOTH OFS(SM_CLOTH, 0x088)         /* CSimpleModel: its CSimpleModelClothNode (HP_CLOTH_STORE; 0 = a model without cloth) */
+#define CN_SET OFS(CN_SET, 0x138)           /* CSimpleModelClothNode: the cloth set (HP_CLOTH_SET): +0 the entries, +8 their end */
+#define CN_DESC OFS(CN_DESC, 0x170)          /* ... its display-mesh descriptors (0x10c bytes: the name first), +0x178 their end */
+#define CN_DESC_SIZE OFS(CN_DESC_SIZE, 0x10c)
+#define CS_ENTRY OFS(CS_ENTRY, 0x18)          /* a cloth set entry: +0 the CPhysicsClothVisualization (HP_CLOTH_ENTRY) */
+#define VIS_HANDLE OFS(VIS_HANDLE, 0x10)        /* CPhysicsClothVisualization: its TRenderNodeMeshCustomHandle (HP_CLOTH_HANDLE) */
+#define CHANDLE_NODE OFS(CHANDLE_NODE, 0x10)      /* the custom handle embeds its CRenderNodeMeshCustom here (HP_CUST_INLINE) */
 #define HPC_MESHES 8           /* display meshes per model read at most */
-#define NODE_BOX 0x10          /* a render node's world box: lo +0x10, hi +0x20 (3 floats each; FUN_008225c0) */
-#define NODE_KIND 0xb0         /* 0 rigid, 1 skeletal, 2 custom (re-resolution.md 2.2) */
-#define NODE_CAT 0xb1          /* its pass category */
-#define SK_POS 0x04c           /* a skeletal node: its position (FUN_0081ff80's LOD distance from the camera) */
-#define SK_MESH 0x0c8          /* ... its mesh (FUN_0081ff80: the sections' table) */
-#define SK_OVR_N 0x380         /* ... its material overrides (FUN_0081ff80: +0x378 the list, 0x10 bytes each) */
-#define SK_POSE 0x0f0          /* ... the CSkeletalTransforms that animate it (also at +0xf8; run 034707's "who" lines) */
-#define HP_SKT_VT 0x33606d8    /* CSkeletalTransforms' vtable (classes.tsv; non-PIE: fixed) */
+#define NODE_BOX OFS(NODE_BOX, 0x10)          /* a render node's world box: lo +0x10, hi +0x20 (3 floats each; FUN_008225c0) */
+#define NODE_KIND OFS(NODE_KIND, 0xb0)         /* 0 rigid, 1 skeletal, 2 custom (re-resolution.md 2.2) */
+#define NODE_CAT OFS(NODE_CAT, 0xb1)          /* its pass category */
+#define SK_POS OFS(SK_POS, 0x04c)           /* a skeletal node: its position (FUN_0081ff80's LOD distance from the camera) */
+#define SK_MESH OFS(SK_MESH, 0x0c8)          /* ... its mesh (FUN_0081ff80: the sections' table) */
+#define SK_OVR_N OFS(SK_OVR_N, 0x380)         /* ... its material overrides (FUN_0081ff80: +0x378 the list, 0x10 bytes each) */
+#define SK_POSE OFS(SK_POSE, 0x0f0)          /* ... the CSkeletalTransforms that animate it (also at +0xf8; run 034707's "who" lines) */
+#define HP_SKT_VT GADDR(HP_SKT_VT, 0x33606d8)    /* CSkeletalTransforms' vtable (classes.tsv; non-PIE: fixed) */
 #define HP_POSE_LINES 8        /* SOMVR_HP_POSE: distinct nodes logged at their first skip */
 enum { HPC_SLOT_CLOTH = 3, HPC_SLOT_VIS = 1, HPC_SLOT_CHANDLE = 1, HPC_SLOT_CNODE = 1, HPC_SLOT_CREATE = 5 };
 #define HP_NEAR_LINES 128      /* SOMVR_HP_NEARLOG: distinct nodes logged at most */
@@ -407,9 +407,11 @@ static void hp_who(uintptr_t node)
 		return;
 	}
 	int n = 0;
+	uintptr_t rlo = 0, rhi = 0;
+	game_range(1, &rlo, &rhi); /* the game's read-only data (Windows: .rdata) */
 	for (int i = 0; i < (int)(sizeof q / 8) && n < 32; i++) {
 		uintptr_t v = q[i] >= 0x10000 && !(q[i] & 7) ? vptr_of((void *)q[i]) : 0;
-		if (i == 0 || (v >= 0x3300000 && v < 0x3d00000)) {
+		if (i == 0 || (v >= rlo && v < rhi)) {
 			logf_("HEADPARTS who %#lx: %s%#x = %#lx%s (vtable %#lx)", (unsigned long)node, i < 2 ? "-" : "+",
 			      i < 2 ? 0x10 - i * 8 : i * 8 - 0x10, (unsigned long)q[i], i == 0 ? " = the handle's vtable" : "",
 			      (unsigned long)(i == 0 ? q[0] : v));
@@ -579,39 +581,51 @@ static const char *hp_copies_word(const char *w)
 
 typedef uint64_t (*hp_sub_fn)(uint64_t ctx, uint64_t node, uint64_t a, uint64_t b, uint64_t list, uint64_t pos);
 
+#ifdef _WIN32 /* Windows: the deep/fwd/late calls are FUN_140dd2b90(ctx rcx, node rdx, r8, r9, [rsp+0x20], [rsp+0x28]); the
+	       * G-buffer and velocity calls are their per-node dispatchers (ctx, node, r8, r9 + three on the stack) with the
+	       * skeletal draw inlined: 7 forwarded (one more than the skeletal draw reads: harmless) */
+typedef uint64_t (*hp_sub7_fn)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+#endif
+
 /* the five calls (render thread): FUN_0081ff80(ctx = rdi, node = rsi, dl, cl, r8, r9), no stack arguments and no
- * return value read by its callers. Skipped for this frame's head nodes while an eye renders */
+ * return value read by its callers. Skipped for this frame's head nodes while an eye renders. The node is argument 2
+ * (RA2: rsi, Windows rdx). Windows' HP_DRAW_GBUF/VEL call a dispatcher of any node kind: only a skeletal one (NODE_KIND
+ * 1) can be a head node, the others go through untouched (docs/re-winport.md 7.5, 7.8) */
 static void hp_draw(struct regs *r, int pass)
 {
 	struct hook *h = &g_hp_h[pass];
 	atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed);
 	int eye = g_rt_eye;
+#ifdef _WIN32
+	if ((pass == SOMVR_HP_GBUF || pass == SOMVR_HP_VEL) && RA2(r) && *(const uint8_t *)(RA2(r) + NODE_KIND) != 1)
+		eye = -1;
+#endif
 	if (eye >= 0 && hp_live()) {
 		uint64_t fr = g_rt_frame;
 		const somvr_hp_set *set = hp_rt_set();
-		if (hp_xskip((uintptr_t)r->rsi)) {
+		if (hp_xskip((uintptr_t)RA2(r))) {
 			r->rax = 0;
 			return;
 		}
-		if (set && set->pose && somvr_hp_skip_pose(eye, pass, set, fr, *(const uintptr_t *)(r->rsi + SK_POSE)) &&
-		    somvr_hp_match(set, (uintptr_t)r->rsi) < 0) { /* SOMVR_HP_POSE: not the body itself (counted below) */
+		if (set && set->pose && somvr_hp_skip_pose(eye, pass, set, fr, *(const uintptr_t *)(RA2(r) + SK_POSE)) &&
+		    somvr_hp_match(set, (uintptr_t)RA2(r)) < 0) { /* SOMVR_HP_POSE: not the body itself (counted below) */
 			atomic_fetch_add_explicit(&g_hp_pose_skips[pass], 1, memory_order_relaxed);
-			hp_pose_first(pass, (uintptr_t)r->rsi, fr, eye);
+			hp_pose_first(pass, (uintptr_t)RA2(r), fr, eye);
 			r->rax = 0;
 			return;
 		}
-		if (set && set->away && somvr_hp_skip_mesh(eye, pass, set, fr, *(const uintptr_t *)(r->rsi + SK_MESH)) &&
-		    somvr_hp_match(set, (uintptr_t)r->rsi) < 0) { /* SOMVR_HP_AWAY: Talion's own mesh, transforms of its own */
+		if (set && set->away && somvr_hp_skip_mesh(eye, pass, set, fr, *(const uintptr_t *)(RA2(r) + SK_MESH)) &&
+		    somvr_hp_match(set, (uintptr_t)RA2(r)) < 0) { /* SOMVR_HP_AWAY: Talion's own mesh, transforms of its own */
 			atomic_fetch_add_explicit(&g_hp_mesh_skips[pass], 1, memory_order_relaxed);
-			hp_mesh_first(pass, (uintptr_t)r->rsi, fr, eye);
+			hp_mesh_first(pass, (uintptr_t)RA2(r), fr, eye);
 			r->rax = 0;
 			return;
 		}
-		if (set && set->nweap && somvr_hp_match(set, (uintptr_t)r->rsi) < 0) { /* SOMVR_HP_COPIES: a weapon's copy */
-			int w = somvr_hp_copy_of(set, (uintptr_t)r->rsi, *(const uintptr_t *)(r->rsi + SK_MESH));
+		if (set && set->nweap && somvr_hp_match(set, (uintptr_t)RA2(r)) < 0) { /* SOMVR_HP_COPIES: a weapon's copy */
+			int w = somvr_hp_copy_of(set, (uintptr_t)RA2(r), *(const uintptr_t *)(RA2(r) + SK_MESH));
 			if (w >= 0) {
-				int skip = somvr_hp_skip_copy(eye, pass, set, fr, (uintptr_t)r->rsi, set->wmesh[w]);
-				hp_copy_first(pass, (uintptr_t)r->rsi, set, w, fr, eye, skip);
+				int skip = somvr_hp_skip_copy(eye, pass, set, fr, (uintptr_t)RA2(r), set->wmesh[w]);
+				hp_copy_first(pass, (uintptr_t)RA2(r), set, w, fr, eye, skip);
 				if (skip) {
 					atomic_fetch_add_explicit(&g_hp_copy_skips[pass], 1, memory_order_relaxed);
 					r->rax = 0;
@@ -620,21 +634,25 @@ static void hp_draw(struct regs *r, int pass)
 				atomic_fetch_add_explicit(&g_hp_copy_drawn, 1, memory_order_relaxed);
 			}
 		}
-		if (somvr_hp_skip(eye, pass, set, fr, (uintptr_t)r->rsi)) {
+		if (somvr_hp_skip(eye, pass, set, fr, (uintptr_t)RA2(r))) {
 			atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 			if (!atomic_exchange(&g_hp_first[pass], 1)) {
-				int i = somvr_hp_match(set, (uintptr_t)r->rsi);
+				int i = somvr_hp_match(set, (uintptr_t)RA2(r));
 				logf_("HEADPARTS first skip in the %s pass (%s): node %#lx = slot %d (%s), frame %llu eye %d: not drawn",
-				      somvr_hp_pass_name(pass), h->name, (unsigned long)r->rsi, set->slot[i],
+				      somvr_hp_pass_name(pass), h->name, (unsigned long)RA2(r), set->slot[i],
 				      somvr_hp_slot_name(set->slot[i]), (unsigned long long)fr, eye);
 			}
 			r->rax = 0;
 			return;
 		}
 		if (g_hp_near_cm > 0)
-			hp_near(set, h->name, pass, (uintptr_t)r->rsi, eye);
+			hp_near(set, h->name, pass, (uintptr_t)RA2(r), eye);
 	}
+#ifdef _WIN32
+	r->rax = ((hp_sub7_fn)h->orig)(RA1(r), RA2(r), RA3(r), RA4(r), RA5(r), RA6(r), RA7(r));
+#else
 	r->rax = ((hp_sub_fn)h->orig)(r->rdi, r->rsi, r->rdx, r->rcx, r->r8, r->r9);
+#endif
 }
 __attribute__((used)) void somvr_hpdeep_c(struct regs *r) { hp_draw(r, SOMVR_HP_DEEP); }
 __attribute__((used)) void somvr_hpfwd_c(struct regs *r) { hp_draw(r, SOMVR_HP_FWD); }
@@ -645,7 +663,8 @@ __attribute__((used)) void somvr_hpvel_c(struct regs *r) { hp_draw(r, SOMVR_HP_V
 typedef void (*hpc_sub_fn)(uint64_t dl, uint64_t obj, uint64_t node, uint64_t pass, uint64_t flag);
 
 /* the eight custom calls (render thread): FUN_007ccec0(dl = rdi, obj = rsi, node = rdx, pass = ecx 6, flag = r8d), no
- * stack arguments, no return value. Skipped for this frame's cloth nodes while an eye renders */
+ * stack arguments, no return value. Skipped for this frame's cloth nodes while an eye renders. Windows: FUN_140d72230
+ * (dl rcx, obj rdx, node r8, pass r9d, flag [rsp+0x20]) - the node is argument 3 on both (RA3), the flag argument 5 */
 static void hpc_draw(struct regs *r, int site)
 {
 	struct hook *h = &g_hpc_h[site];
@@ -654,20 +673,20 @@ static void hpc_draw(struct regs *r, int site)
 	if (eye >= 0 && hp_live() && hpc_live()) {
 		uint64_t fr = g_rt_frame;
 		const somvr_hp_set *set = hp_rt_set();
-		if (hp_xskip((uintptr_t)r->rdx)) {
+		if (hp_xskip((uintptr_t)RA3(r))) {
 			r->rax = 0;
 			return;
 		}
-		if (somvr_hp_skip(eye, pass, set, fr, (uintptr_t)r->rdx)) {
+		if (somvr_hp_skip(eye, pass, set, fr, (uintptr_t)RA3(r))) {
 			atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 			if (!atomic_exchange(&g_hpc_first[site], 1)) {
-				int i = somvr_hp_match(set, (uintptr_t)r->rdx);
+				int i = somvr_hp_match(set, (uintptr_t)RA3(r));
 				float lo[3], hi[3];
-				int box = hp_node_box((uintptr_t)r->rdx, lo, hi);
+				int box = hp_node_box((uintptr_t)RA3(r), lo, hi);
 				logf_("HEADPARTS first skip in the %s pass (%s): node %#lx = %s (kind %u, category %u, box %.0f x %.0f x "
 				      "%.0f, %.1f cm from the head point), frame %llu eye %d: not drawn", somvr_hp_pass_name(pass), h->name,
-				      (unsigned long)r->rdx, somvr_hp_slot_name(set->slot[i]), *(const uint8_t *)(r->rdx + NODE_KIND),
-				      *(const uint8_t *)(r->rdx + NODE_CAT), box ? hi[0] - lo[0] : -1.0f, box ? hi[1] - lo[1] : -1.0f,
+				      (unsigned long)RA3(r), somvr_hp_slot_name(set->slot[i]), *(const uint8_t *)(RA3(r) + NODE_KIND),
+				      *(const uint8_t *)(RA3(r) + NODE_CAT), box ? hi[0] - lo[0] : -1.0f, box ? hi[1] - lo[1] : -1.0f,
 				      box ? hi[2] - lo[2] : -1.0f, box ? somvr_hp_box_dist(lo, hi, set->at) : -1.0f,
 				      (unsigned long long)fr, eye);
 			}
@@ -675,9 +694,9 @@ static void hpc_draw(struct regs *r, int site)
 			return;
 		}
 		if (g_hp_near_cm > 0)
-			hp_near(set, h->name, pass, (uintptr_t)r->rdx, eye);
+			hp_near(set, h->name, pass, (uintptr_t)RA3(r), eye);
 	}
-	((hpc_sub_fn)h->orig)(r->rdi, r->rsi, r->rdx, r->rcx, r->r8);
+	((hpc_sub_fn)h->orig)(RA1(r), RA2(r), RA3(r), RA4(r), RA5(r));
 	r->rax = 0;
 }
 __attribute__((used)) void somvr_hpcdeep_c(struct regs *r) { hpc_draw(r, 0); }
@@ -927,8 +946,8 @@ static uintptr_t hp_pose_of(uintptr_t main_node)
 		if (g_hp_pose_bad_lines < 4 && pose != g_hp_pose_last) {
 			g_hp_pose_bad_lines++;
 			logf_("HEADPARTS pose: the body node %#lx's +0xf0 %#lx (vtable %#lx, +0xf8 %#lx) is not its CSkeletalTransforms "
-			      "(vtable %#x): SOMVR_HP_POSE hides nothing more while so", (unsigned long)main_node, (unsigned long)pose,
-			      (unsigned long)vt, (unsigned long)peek_ptr(main_node + SK_POSE + 8), HP_SKT_VT);
+			      "(vtable %#lx): SOMVR_HP_POSE hides nothing more while so", (unsigned long)main_node, (unsigned long)pose,
+			      (unsigned long)vt, (unsigned long)peek_ptr(main_node + SK_POSE + 8), (unsigned long)HP_SKT_VT);
 		}
 		g_hp_pose_last = pose;
 		return 0;
@@ -1217,18 +1236,7 @@ static int hp_install_group(int first, int n, struct hook *hk, void (*const *wr)
 		good &= ok[i];
 		lo = s->addr < lo ? s->addr : lo, hi = s->addr > hi ? s->addr : hi;
 	}
-	unsigned char *pg = NULL;
-	for (int i = 0; good && i < 64 + 4 && !pg; i++) { /* as stub_page: below the code first, then the low 2 GB */
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, lo) && stub_reach((uintptr_t)p, hi))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = good ? stub_alloc(lo, hi, 0x3f0000) : NULL; /* as stub_page */
 	if (good && !pg)
 		for (int i = 0; i < n; i++)
 			ok[i] = 0, snprintf(why[i], sizeof why[i], "no stub page within +-2 GB");

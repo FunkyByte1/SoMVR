@@ -33,18 +33,18 @@
 
 /* VBGLOW_SITES_BEGIN (check_sites.py counts this block on its own: the patched tail jumps of ClientFX's two create
  * thunks FUN_00d8c7f0 and FUN_00d8c810 into FUN_00d8bae0) */
-static const struct site_spec g_vg_sites_game[] = {
+static SITE_TABLE struct site_spec g_vg_sites_game[] = {
 SITE("VG_FXC", K_JMP, 0xd8c807, 0xd8c7f0, "80 3d da aa 92 03 00 75 07 31 c0 c3 0f 1f 40 00 0f b6 c9 45 0f b6 c0 e9 d4 f2 ff ff", 0xd8bae0, "41 57 41 56 41 55 41 54 49 89 f4 55 48 89 d5 53 48 89 fb 48 89 d7 48 81"),
 SITE("VG_FXC1", K_JMP, 0xd8c834, 0xd8c810, "80 3d ba aa 92 03 00 48 89 d0 75 04 31 c0 c3 90 48 89 f2 45 31 c9 b9 01 00 00 00 48 89 c6 41 b8 01 00 00 00 e9 a7 f2 ff ff", 0xd8bae0, "41 57 41 56 41 55 41 54 49 89 f4 55 48 89 d5 53 48 89 fb 48 89 d7 48 81"),
 };
 /* VBGLOW_SITES_END */
 static const struct site_spec *g_vg_sites = g_vg_sites_game; /* selftest: stand-ins */
 typedef uint64_t (*vg_create_fn)(uintptr_t mgr, uintptr_t out, uintptr_t cs, uint64_t start, uint64_t b, uint64_t c);
-#define VG_CS_NAME 0x000   /* CLIENTFX_CREATESTRUCT: the FX file name (0x104 chars) */
-#define VG_CS_FLAGS 0x104  /* 1 = loop, 2 = no smooth shutdown */
-#define VG_CS_PARENT 0x108 /* the parent HOBJECT */
-#define VG_CS_NODE 0x118   /* the parent's node (-1 = its root) */
-#define VG_CS_OFF 0x11c    /* the offset from it (cm, 3 floats) */
+#define VG_CS_NAME OFS(VG_CS_NAME, 0x000)   /* CLIENTFX_CREATESTRUCT: the FX file name (0x104 chars) */
+#define VG_CS_FLAGS OFS(VG_CS_FLAGS, 0x104)  /* 1 = loop, 2 = no smooth shutdown */
+#define VG_CS_PARENT OFS(VG_CS_PARENT, 0x108) /* the parent HOBJECT */
+#define VG_CS_NODE OFS(VG_CS_NODE, 0x118)   /* the parent's node (-1 = its root) */
+#define VG_CS_OFF OFS(VG_CS_OFF, 0x11c)    /* the offset from it (cm, 3 floats) */
 #define VG_STEREO_S 0.5    /* a stereo H4 frame this recent = the eyes are ours */
 #define VG_AFTER_S 1.5     /* the verbs' moment's FX logged this long after it */
 #define VG_LINES 300
@@ -205,6 +205,28 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 }
 
 /* one stub page for both tail jumps (as uf_install's), their rel32s written; the number hooked */
+#ifdef _WIN32
+/* Windows (docs/re-winport.md 7.6, 7.8): the two wrappers FUN_00d8c7f0 / FUN_00d8c810 are inlined into their 66 callers,
+ * which all call 0x140432b00 - the wrapper's gate byte test (0x1417fab60) + the create, with the inner create's 6
+ * arguments (mgr, out, cs, start, b, c: rcx rdx r8 r9 + 2 on the stack). One entry hook there (MinHook) covers both
+ * thunks; somvr_w_vbglow keeps its prototype (a plain C function: Win64 passes the 6 where it reads them). It also sees
+ * the creates the gate turns away (the original answers 0 for them: "the game's 0"). CP_FX's call and FI_FX_CREATE's
+ * check name the same function: both start before this (cp_start, the finishers' start) */
+static SITE_TABLE struct site_spec g_vgw_sites_game[] = {
+SITE("VG_FXCREATE", K_ENTRY, 0, 0, "", 0, ""),
+};
+static int vg_install_win(void)
+{
+	char why[512] = "";
+	const struct site_spec *w = &g_vgw_sites_game[0];
+	int ok = check_site(w, why, sizeof why) == 0 &&
+		 somvr_win_hook_entry(w->target, (void *)somvr_w_vbglow, (void **)&g_vg.orig, why, sizeof why) == 0;
+	logf_("HOOK %s %s %#llx (ClientFX's create, the wrappers' inlined body: the verbs' glow, SOMVR_FX_FACE): %s", w->name,
+	      ok ? "ok entry" : "SKIPPED", (unsigned long long)w->target, why);
+	return ok;
+}
+#endif
+
 static int vg_install(const struct site_spec *s, int n)
 {
 	char why[512] = "", err[200] = "", nb[64];
@@ -217,21 +239,10 @@ static int vg_install(const struct site_spec *s, int n)
 			snprintf(t, sizeof t, "%s: %s", s[i].name, why);
 			memcpy(why, t, sizeof why), ok = 0;
 		}
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) {
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3a0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		int reach = 1;
-		for (int k = 0; k < n; k++)
-			reach &= stub_reach((uintptr_t)p, s[k].addr);
-		if (reach)
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	uintptr_t vg_lo = UINTPTR_MAX, vg_hi = 0; /* the jumps' span */
+	for (int k = 0; k < n; k++)
+		vg_lo = s[k].addr < vg_lo ? s[k].addr : vg_lo, vg_hi = s[k].addr > vg_hi ? s[k].addr : vg_hi;
+	unsigned char *pg = ok ? stub_alloc(vg_lo, vg_hi, 0x3a0000) : NULL;
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -280,7 +291,12 @@ static void vg_start(const struct site_spec *sites, int *bad)
 	vg_set_words(fx ? fx : VG_FX_DEFAULT);
 	if (want && g_vb.mode != VB_ON)
 		logf_("CONFIG verbs_glow: SOMVR_VERBS is not on (its FX are still logged and hidden by name)");
+#ifdef _WIN32 /* both thunks are inlined into 66 callers: one entry hook covers both (n = 2 when in) */
+	(void)sites;
+	int n = vg_install_win() ? 2 : 0;
+#else
 	int n = vg_install(sites, 2);
+#endif
 	if (n != 2) {
 		logf_("WARN SOMVR_VERBS_GLOW=%s: %d of 2 ClientFX create jumps hooked%s", g_vg_w[want], n,
 		      n ? " (the FX through the other thunk stay the game's)" : ": the verbs' glow stays the game's");

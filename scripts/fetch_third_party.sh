@@ -5,6 +5,10 @@
 #   Vulkan-Headers-1.4.341  KhronosGroup/Vulkan-Headers tag v1.4.341 (matches the system loader 1.4.341):
 #                           include/, LICENSE.md, LICENSES/, README.md
 #   OpenXR-SDK-1.1.61       KhronosGroup/OpenXR-SDK tag release-1.1.61: include/openxr/*.h, LICENSE
+#   minhook-1.3.4           TsudaKageyu/minhook tag v1.3.4 (BSD-2-Clause; the Windows DLL's entry trampolines,
+#                           mod/somvr/win/README.md): include/MinHook.h, src/ (+ hde/), LICENSE.txt, AUTHORS.txt, README.md
+#                           (codeload tarball sha256 1aebeae4ca898330c507860acc2fca2eb335fe446a3a2b8444c3bf8b2660a14e,
+#                           2026-11-02)
 # Each folder is checked against a pinned hash of its files (names and contents, so a re-packed tarball still passes)
 # before it is moved into place; the hashes are those of the copies the builds were made with (2026-10-18), and the
 # downloads were checked against them 2026-10-25. A folder that is already there is checked, never replaced.
@@ -43,4 +47,7 @@ fetch Vulkan-Headers-1.4.341 https://codeload.github.com/KhronosGroup/Vulkan-Hea
   d440df3b2b2d025148038e16e861450837f5d725f77e900e9ba1b5178ad2ca25 include LICENSE.md LICENSES README.md
 fetch OpenXR-SDK-1.1.61 https://codeload.github.com/KhronosGroup/OpenXR-SDK/tar.gz/refs/tags/release-1.1.61 \
   049df0f2d0cf910746fa10a82ff8bcb576e8742c6c275017bbd24902052830ae 'include/openxr/*.h' LICENSE
+fetch minhook-1.3.4 https://codeload.github.com/TsudaKageyu/minhook/tar.gz/refs/tags/v1.3.4 \
+  3416efdc13b5e66a78c4cae84f2306f15f7b97560bb4002733beb59139e9a95e include/MinHook.h 'src/*.c' 'src/*.h' src/hde \
+  LICENSE.txt AUTHORS.txt README.md
 echo "third_party ready: $TP"

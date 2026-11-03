@@ -1,0 +1,61 @@
+name	kind	linux	windows	confidence	evidence	notes
+# winport-core (group A): RVAs for globals; docs/re-winport.md 7.2
+CAM_PLAYER_POS	off	0x44c	0x44c	same	L 0xa3ae90 Cmd_PlayerGetPos / W 0x1403f2620 ("PlayerPos %f %f %f"): mov eax,[rcx+0x44c] after [player+0x2d0]	CPlayerCamera = player+0x2d0 on both
+GM_LAST_VIEW	off	0x70	0x70	same	L 0x9eefc7 movups [r15+0x70] / W 0x14050c5dd movss [rdi+0x70] (rdi = gm, H4 target 0x14050bfa0)	the last view gm+0x70..0x9b
+GM_FOLIAGE_CUT	off	0x20	0x20	same	L 0x9ee830 cmp byte [r15+0x20],0 / W 0x14050c4b2 cmp byte [rdi+0x20],0	inline gm + 0x20 in h4 (no OFS needed)
+FOLIAGE_LEN	size	0x30	0x30	same	L statics 0x46a9de0..0x46a9e0f / W 0x1418f4630..0x1418f465f in the H4 target (W 0x14050c097..0x14050c286)	member order may differ; the hook snapshots the whole block
+P_PM	off	0x2c8	0x2c8	same	L 0x9ee39a mov rax,[rbx+0x2c8] / W 0x14050c28e mov rcx,[rsi+0x2c8] (player)	-
+P_BODY	off	0x2d8	0x2d8	same	L 0x9ee18d mov rax,[rcx+0x2d8] / W 0x14050c00d mov rax,[r9+0x2d8]	-
+BODY_OBJ	off	0x1b8	0x1b8	same	L 0x9ee1a7 mov rax,[rax+0x1b8] / W 0x14050c04e mov rcx,[rax+0x1b8] (after P_BODY)	-
+BODY_MGR	off	0x3b8	0x3b8	plausible	L 0xab61b6..bd [pl+0x2d8]->[+0x3b8] (PM vf_11) / W: 64 places load [x+0x2d8] then [+0x3b8] (e.g. 0x1403f0fa0)	-
+MGR_CHAR	off	0x560	?	unknown	no Windows read found	player_objs falls back to BODY_OBJ only when this reads 0; on Windows read BODY_OBJ directly (equal in run 3) until found
+PM_OWNER	off	0x218	0x218	same	PM vf_11: L 0xab5e80 mov rax,[rdi+0x218] / W 0x14046ee9e mov rcx,[rcx+0x218]	-
+PM_XPOS	off	0x428	0x428	same	PM vf_11 W 0x14046eefe mov eax,[rbx+0x428] (+0x42c/0x430), cleared 0x14046ef9d	-
+PM_XROT	off	0x434	0x434	same	PM vf_11 W 0x14046ef04 movss xmm0,[rbx+0x434] (..0x440 = 1.0 at 0x14046efb2)	-
+PM_PENDING	off	0x444	0x444	same	PM vf_11 W 0x14046eef1 cmp byte [rbx+0x444],0; 0x14046efbc clears it	-
+OBJ_POS	off	0x08	0x08	plausible	engine object header; small offsets unchanged in every pair compared	not read side by side
+OBJ_ROT	off	0x14	0x14	plausible	as OBJ_POS	-
+OBJ_MODEL	off	0x38	0x38	same	Object_GetSimpleModel L 0x8f3c20 [rdi+0x38] / W 0x140e0a620 [rcx+0x38], then its vtable +0x20 on both	head_read peeks mv + 0x20: same slot
+SOM_HEAD_HASH	const	0x72598328	0x72598328	plausible	the Head node name hash (data, not code)	check at the first boot (head_read logs it)
+HOLDER_CTX	off	0x8	0x8	same	W 0x140d6232f mov rsi,[holder+8] -> call [rax+0x108] (ID3D11DeviceContext:33 OMSetRenderTargets)	-
+HOLDER_TEXUI	off	0x1b8	0x1b8	same	L 0x7414b0 / W 0x140d4d1e0 (18/20 offsets incl. 0x1b0..0x1f0); W 0x140d4b85b mov rax,[rcx+8*rax+0x1b0]	-
+HOLDER_TEX3D	off	0x1c0	0x1c0	same	as HOLDER_TEXUI	the ID3D11Texture2D* on Windows
+DS_TARGET	off	0x8	0x8	same	EndRenderTarget body L 0x72aca2 [rbx+8] / W 0x140d73db8 mov rcx,[rdi+0x8]	-
+RT_FLAGS	off	0x8	0x8	same	L 0x74c107 test byte [rbx+9],0x40 / W 0x140d6239f mov eax,[rbx+8]; shr eax,0xe	-
+RT_UI	const	0x4000	0x4000	same	bit 14 as RT_FLAGS evidence	-
+RT_SCREEN	const	0x400	0x400	plausible	L 0x7439e5 test byte [rdx+9],4; Windows inlines it (same flags word)	-
+TEX_F3D	off	0x80	?	unknown	Feral IdxD3D11Texture2D only	Windows: no Feral texture; VkImage via IDXGIVkInteropSurface::GetVulkanImageInfo (DXVK)
+VKTEX_IMAGE	off	0x108	?	unknown	Feral CVulkanTexture only	as TEX_F3D
+SM_MASK	off	0x6c	0x6c	same	CSimpleModel slot 50 W 0x140903b68 and/or [rbx+4*rdx+4] with rbx = model+0x68	dirty byte +0x68 same
+SM_REND	off	0xb0	0xb0	same	W 0x140903d60 mov rax,[rcx+0xb0] (CSimpleModel slot 161/162)	-
+REND_HANDLE	off	0x50	0x50	same	renderable update W 0x1408fe5c0 mov rcx,[rbx+0x50] -> [vt+0x1a0]	renderable dirty/mask copy moved +4 (0x44/0x48/0x4c) but the code does not read them
+HANDLE_NODE	off	0x10	0x10	same	W 0x140d42d55 lea rcx,[rbx+0x10] -> node ctor 0x140d560e0; W 0x140d401cb lea rax,[rsi+0x10]	-
+NODE_MASK	off	0x130	0x148	confirmed	CRenderNodeMeshSkeletal SetMask L 0x71d510 mov [rdi+0x130],esi; mov [rdi+0x134],edx / W 0x140d52b20 mov [rcx+0x148],edx; mov [rcx+0x14c],r8d	node fields after some member +0x18 (also +0xc8 -> +0xe0)
+HS_SLOT_MODEL_MASK	const	50	50	confirmed	CSimpleModel W 0x1413caed0 slot 50 = 0x140903b30 (SetPieceHidden)	-
+HS_SLOT_MODEL_REND	const	162	162	confirmed	W 0x140903b83 call [rax+0x510] in slot 50	-
+HS_SLOT_REND	const	2	1	confirmed	CSimpleModelRenderable W 0x1413ff908 slot 1 = 0x1408fe570 (the render update)	-1: one dtor
+HS_SLOT_HANDLE	const	53	52	confirmed	TRenderNodeMeshSkeletalHandle W 0x141471ed0 slot 52 = 0x140d40190 (posts SetMask)	-1
+HS_SLOT_NODE	const	5	4	confirmed	CRenderNodeMeshSkeletal W 0x141473888 slot 4 = 0x140d52b20	-1
+RENDERER_FRAME_OFF	off	0x38	0x38	same	CRendererHandle BeginFrame L 0x703304 add [rdi+0x38],1 / W slot 28 0x140d3a106 inc dword [rcx+0x38]	-
+ES_SLOT_RUNSTRING	const	32	31	confirmed	CWBEngine W vtable 0x141483670 slot 31 = 0x140e006d0 (sites-core ES_RUNSTRING); L 31 (mov rax,[g]; ret) -> W 30	the live-engine vtable check in es_run
+SM_TRK	off	0x178	0x178	same	CSimpleModel L slot 46 0x234fb60 mov rdi,[rdi+0x178] / W slots 45/46 mov rcx,[rcx+0x178]	arms
+TRK_SLOT	const	3	2	confirmed	CSimpleModelTrackerNode W vtable 0x141402bf0 slot 2 = 0x14098e040 (L slot 3 0x23899b0: mov byte [+0x148],0; [+0x338]/[+0x340]; [+0x808] -> W [+0x8c8])	-1 (one dtor)
+TRK_POSE	off	0x58	0x58	same	eval L 0x2389a1f mov rbp,[rbx+0x58] / W 0x14098e10c mov rdi,[rbx+0x58]	-
+TRK_HOBJ	off	0x168	0x168	plausible	W eval 0x14098e46c mov rcx,[rbx+0x168] (the Linux eval does not read it)	logged only
+TRK_MDATA	off	0x808	0x8c8	confirmed	eval L 0x23899b0 mov rdx,[rdi+0x808] / W 0x14098e04b cmp [rcx+0x8c8],0, 0x14098e0f4 mov rax,[rbx+0x8c8]; slot 9->8 (cmp [+0x808]/[+0x8c8]), slot 8->7 (+0x810/+0x815 -> +0x8d0/+0x8d5)	the tracker grew +0xc0 past 0x340 (Linux object 0x818 bytes)
+PB_NODES	off	0x40	0x40	same	eval L 0x2389a41 mov rdx,[rbp+0x40] / W 0x14098e176 mov rdx,[rdi+0x40] (rbp/rdi = [trk+0x58])	-
+PB_COUNT	off	0x48	0x48	plausible	the pose buffer header next to PB_NODES (not read side by side)	-
+MD_SKEL	off	0x10	0x10	same	eval L 0x2389ad4 mov rax,[rdx+0x10] / W 0x14098e0fb mov r8,[rax+0x10] (after TRK_MDATA)	-
+SK_COUNT	off	0x08	0x08	plausible	skeleton data (a small struct; not read side by side)	-
+SK_HASHES	off	0x40	0x40	plausible	as SK_COUNT	-
+SK_ENTRY	size	0x40	0x40	plausible	as SK_COUNT	-
+SOM_MODEL_PP	global	0x46a9230	0x1868c70	plausible	W .data 0x141868c70 holds &IEngineModel impl (0x141868c80, vtable 0x141482210); registered as "IEngineModel.Default" at W 0x1403eee91	Linux is a holder filled at run time; on Windows a static pointer to the implementation: check *it == base+0x1868c80 at start
+SOM_VT_PM	global	0x34fc7e0	0x13c0cc0	confirmed	PlayerMovement vtable (sites-core PM: slot 10 at 0x13c0d10)	-
+D3D_HOLDER	global	0x461fa40	0x198ef80	confirmed	present executor W 0x140d51450 lea rcx,[0x14198ef80] -> 0x140d4d4a0 (= L 0x7c9c90 mov edi,0x461fa40 -> 0x742ff0)	-
+POKE_SHAKE_OFF	global	0x46b72d2	0x18f2af4	confirmed	camera FX getter L 0xd8afc0 cmp byte [0x46b72d2],0 / W 0x140430f84 cmp byte [0x1418f2af4],0 (then zero offset, scale 1.0)	1 = no shake on both
+POKE_MOTION_BLUR	global	0x46b6651	0x17fc931	confirmed	getter L 0xd292d0 / W 0x14050e1b0 movzx eax,[0x1417fc931]; W 0x14045d643 call it, then [sp+0x58]=0	-
+POKE_DOF	global	0x46b6652	0x17fc930	confirmed	getter L 0xd292c0 / W 0x14050e1a0 movzx eax,[0x1417fc930]; W 0x14045d6a2 call it -> [sp+0x114]	-
+POKE_VELBLUR55	global	0x46a9300	0x17fa472	confirmed	H4 target after H1: L 0x9ee82d (sp+0x55) / W 0x14050c4a3 cmp byte [0x1417fa472],0 for [rbp+0x365] (sp = rbp+0x310)	-
+POKE_VELBLUR58	global	0x46a9301	0x17fa471	confirmed	L 0x9ee7ee (sp+0x58) / W 0x14050c463 cmp byte [0x1417fa471],0 for [rbp+0x368]	sp+0x60 uses 0x1417fa470 (L 0x46a9302)
+CORE_FOLIAGE	global	0x46a9de0	0x18f4630	confirmed	H4 target statics: L 0x9ee242 movaps [0x46a9de0] / W 0x14050c0c7.. movss [0x1418f4630..0x1418f465c] (guard L 0x46a9dc0 / W 0x1418f4660)	-
+ES_ENG_PP	global	0x466afa8	0x19d80c8	confirmed	H4 target: L 0x9ef1a5 mov rdi,[0x466afa8]; call [rax+0xd8] / W 0x14050c909 mov rcx,[0x1419d80c8]; call [rax+0xd0]	CWBEngine static object W .data 0x14188cf38 (vtable 0x141483670)

@@ -31,7 +31,7 @@
  * the NPC bound to the member (FUN_022cf590: fm+0x40 = npc, +0x3a4 bit 1; npc+0x728 = fm+0x48); KP_FM_ACTIVATE
  * FUN_022cdad0(fm, 1) (P9's step for a member with +0xa0); KP_GS_FMGR CGameServices (vtable 0x34e2a90) slot 15 (+0x78):
  * `mov rax, [rdi+0x6c58]; ret` = the faction manager. Order = KPS_* */
-static const struct site_spec g_kp_sites_game[] = {
+static SITE_TABLE struct site_spec g_kp_sites_game[] = {
 SITE("KP_FACTION", K_ENTRY, 0x23d8930, 0x23d8930, "48 85 f6 74 58 48 8b 46 18 48 8b 50 38 f6 46 01", 0x23d8930, "48 85 f6 74 58 48 8b 46 18 48 8b 50 38 f6 46"),
 SITE("KP_TARGET", K_ENTRY, 0x23d3f80, 0x23d3f80, "48 83 ec 08 48 8b b7 e8 00 00 00 e8 a0 49 00 00", 0x23d3f80, "48 83 ec 08 48 8b b7 e8 00 00 00 e8 a0 49 00"),
 SITE("KP_MEMBERS", K_ENTRY, 0x22aeed0, 0x22aeed0, "48 8b 77 38 48 8b 57 40 31 c0 8b 8f b0 01 00 00", 0x22aeed0, "48 8b 77 38 48 8b 57 40 31 c0 8b 8f b0 01 00"),
@@ -50,38 +50,46 @@ typedef uintptr_t (*kp_template_fn)(uintptr_t fm);
 typedef void (*kp_bind_fn)(uintptr_t npc, uintptr_t fm, int x);
 typedef void (*kp_activate_fn)(uintptr_t fm, int x);
 
-#define KP_GS_FMGR 0x6c58   /* CGameServices: the faction manager (KP_GS_FMGR's bytes) */
-#define KP_FMGR_FACREC 0xe8 /* the faction manager: the current faction record (KP_TARGET's bytes) */
-#define KP_FAC_MEMBERS 0x38 /* a faction: its members, begin and end (+8) (KP_MEMBERS' bytes) */
-#define KP_FM_NPC 0x40      /* member: the character bound to it (FUN_022cf590) */
-#define KP_FM_SEED 0x48     /* ... RandomSeed (copied to the NPC's +0x728 by the bind) */
-#define KP_FM_NAMEHASH 0x50 /* ... NameStringIDHash */
-#define KP_FM_TREE 0x60     /* ... CombatTree record */
-#define KP_FM_TRAITS 0x70   /* ... its trait records, begin and end (+8) (the dump's "Trait") */
-#define KP_FM_POS 0x88      /* ... its hierarchy position (0: none, the dump's row 255) */
-#define KP_FM_SPAWNCOND 0xa0 /* ... SpawnCondition (P9's FM_ACTIVE) */
-#define KP_FM_ROLE 0x2b8    /* ... Role record */
-#define KP_FM_LEVEL 0x340   /* ... XPLevel */
-#define KP_FM_COL 0x3a0     /* ... ColumnNumber (byte) */
-#define KP_FM_FLAGS 0x3a4   /* ... the flags (SOMVR_CP_FL_*) */
+#define KP_GS_FMGR OFS(KP_GS_FMGR, 0x6c58)   /* CGameServices: the faction manager (KP_GS_FMGR's bytes) */
+#define KP_FMGR_FACREC OFS(KP_FMGR_FACREC, 0xe8) /* the faction manager: the current faction record (KP_TARGET's bytes) */
+#define KP_FAC_MEMBERS OFS(KP_FAC_MEMBERS, 0x38) /* a faction: its members, begin and end (+8) (KP_MEMBERS' bytes) */
+#define KP_FM_NPC OFS(KP_FM_NPC, 0x40)      /* member: the character bound to it (FUN_022cf590) */
+#define KP_FM_SEED OFS(KP_FM_SEED, 0x48)     /* ... RandomSeed (copied to the NPC's +0x728 by the bind) */
+#define KP_FM_NAMEHASH OFS(KP_FM_NAMEHASH, 0x50) /* ... NameStringIDHash */
+#define KP_FM_TREE OFS(KP_FM_TREE, 0x60)     /* ... CombatTree record */
+#define KP_FM_TRAITS OFS(KP_FM_TRAITS, 0x70)   /* ... its trait records, begin and end (+8) (the dump's "Trait") */
+#define KP_FM_POS OFS(KP_FM_POS, 0x88)      /* ... its hierarchy position (0: none, the dump's row 255) */
+#define KP_FM_SPAWNCOND OFS(KP_FM_SPAWNCOND, 0xa0) /* ... SpawnCondition (P9's FM_ACTIVE) */
+#define KP_FM_ROLE OFS(KP_FM_ROLE, 0x2b8)    /* ... Role record */
+#define KP_FM_LEVEL OFS(KP_FM_LEVEL, 0x340)   /* ... XPLevel */
+#define KP_FM_COL OFS(KP_FM_COL, 0x3a0)     /* ... ColumnNumber (byte) */
+#define KP_FM_FLAGS OFS(KP_FM_FLAGS, 0x3a4)   /* ... the flags (SOMVR_CP_FL_*) */
 /* build 24: his death's record (FUN_022dbd20, the member's death, called by the death handler FUN_026f61f0(his Combat,
  * the attack, the killer's Combat) - the game's one place that credits a kill: FUN_022dbc20 fills +0xb0.., FUN_022d09a0
  * the death type, then IsDead (bit 2) and the KilledByPlayer / KilledByAI / unknown sim event to the faction manager).
  * The flags' bit 3 "KilledByPlayer" is not written at run time (only Faction.Load's reader 0x22e14de sets it; only
  * Faction.Dump's 0x22cdfca reads it): the stock kill leaves it 0 too (re-xr-pipeline.md 99.1) */
-#define KP_FM_LD_CHARTYPE 0xc0 /* ... LastDeathCharacterType: the killer's character type record */
-#define KP_FM_LD_ATTACK 0xc8   /* ... LastDeathAttack: the attack record that killed him */
-#define KP_FM_LD_PLAYER 0xd0   /* ... LastDeathPlayerKiller (byte): the killer's Combat had no NPC (+0x80) but the player (+0x88) */
-#define KP_FM_LD_TYPE 0xd8     /* ... LastDeathType (the death's kind from the attack and the killer) */
-#define KP_FM_PLAYERKILLS 0x348 /* ... PlayerKills (int) */
+#define KP_FM_LD_CHARTYPE OFS(KP_FM_LD_CHARTYPE, 0xc0) /* ... LastDeathCharacterType: the killer's character type record */
+#define KP_FM_LD_ATTACK OFS(KP_FM_LD_ATTACK, 0xc8)   /* ... LastDeathAttack: the attack record that killed him */
+#define KP_FM_LD_PLAYER OFS(KP_FM_LD_PLAYER, 0xd0)   /* ... LastDeathPlayerKiller (byte): the killer's Combat had no NPC (+0x80) but the player (+0x88) */
+#define KP_FM_LD_TYPE OFS(KP_FM_LD_TYPE, 0xd8)     /* ... LastDeathType (the death's kind from the attack and the killer) */
+#define KP_FM_PLAYERKILLS OFS(KP_FM_PLAYERKILLS, 0x348) /* ... PlayerKills (int) */
 /* build 24: the game's own stat lines (Combat_LogPrintf "[COMBAT|STATS]: ... Damage Calc ...") - its console bools
  * (Init_CombatVariables: a CConsoleProgramVariable_Bool, +8 its name, +0x38 its value), a test aid (`captain gamelog`) */
-static const struct { uintptr_t var; const char *name; } g_kp_dbg[] = {
+static struct { uintptr_t var; const char *name; } g_kp_dbg[] = { /* (Windows: kp_dbg_win) */
 	{ 0x4c44ca0, "Combat.Debug.Stats" }, { 0x4c44d60, "Combat.Debug.XP" }, { 0x4c44860, "Combat.Debug.HitCounter" },
 	{ 0x4c44ee0, "Combat.Debug.ApplyDamage" },
 };
 #define KP_DBG_VALUE 0x38
-#define KP_NPC_SEED 0x728   /* NPC: its member's seed (0 = no member) */
+#ifdef _WIN32 /* the four console bools are not found on Windows (the cvar objects of Linux: +0x38 the value): 0 = the
+	       * gamelog test aid stays off there instead of reading Linux addresses (docs/re-winport.md 7.8) */
+static void kp_dbg_win(void)
+{
+	g_kp_dbg[0].var = GADDR(KP_DBG_STATS, 0x4c44ca0), g_kp_dbg[1].var = GADDR(KP_DBG_XP, 0x4c44d60);
+	g_kp_dbg[2].var = GADDR(KP_DBG_HITS, 0x4c44860), g_kp_dbg[3].var = GADDR(KP_DBG_APPLY, 0x4c44ee0);
+}
+#endif
+#define KP_NPC_SEED OFS(KP_NPC_SEED, 0x728)   /* NPC: its member's seed (0 = no member) */
 #define KP_MAX 64
 #define KP_TRAITS_MAX 48
 
@@ -455,7 +463,7 @@ static void kp_tiers_tick(const struct pr_me *m, int have, double t)
 	*(volatile unsigned char *)(pc + C_HITONCE) = 0;
 	float hp0 = cb_health(g_kp.c);
 	int s0 = xc_streak_now();
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ o.pos[0], o.pos[1] + 120.0f, o.pos[2] }, pc, o.hobj, rec, 0);
+	CB_DEALHIT_CALL((cb_ltvec){ o.pos[0], o.pos[1] + 120.0f, o.pos[2] }, pc, o.hobj, rec, 0);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
 	*(volatile unsigned char *)(pc + C_HITONCE) = once;
 	float hp1 = cb_health(g_kp.c);

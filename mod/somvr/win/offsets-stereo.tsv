@@ -1,0 +1,4 @@
+name	kind	linux	windows	confidence	evidence	notes
+# winport-stereo (docs/re-winport.md 7.7)
+CORE_RA_VP	global	0x9ef2bc	0x50c82b	confirmed	L 0x9ef2b5 / W 0x14050c824: call [r8+0x128] / call [r10+0x120] in the per-view body (L FUN_009ee170 = W 0x14050bfa0): CRendererHandle slot 37/36 (H2) with the SomView at rsp+0x80 / rsp+0x40 (fov +0x1c, near +0x24, far +0x28), right after the renderer getter [vt+0xd8] / [vt+0xd0]	H2's player-view return address (g_ra_vp): the code address after the call, an RVA like a global
+# RD_SP_BOXBLUR / RD_SP_VIGNETTE (offsets-render.tsv, windows ?): the Linux values hold on Windows - sp is H1's third argument there too (r8 = rbp+0x310 at 0x50c449), and the DoF consumer W 0x140dad640 (= L 0x7eb1d0, the k_fBoxBlurParams / k_fVignetteParams strings) tests byte [r12+0x130] and byte [r12+0x144] of the same scene-param block (L: ctx+0x1c8 / ctx+0x1dc = sp+0x98-based copies); render may flip its rows to same

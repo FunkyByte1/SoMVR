@@ -18,7 +18,7 @@
 
 /* RETICLE_SITES_BEGIN (check_sites.py counts this block on its own: one patched K_VSLOT, slot 2 of the
  * TypedDelegate<CUIHUDCrosshair, .., CrosshairSetParams, OnCrosshairSet> vtable 0x35a3670; the context: slots 0..3) */
-static const struct site_spec g_xh_sites_game[] = {
+static SITE_TABLE struct site_spec g_xh_sites_game[] = {
 SITE("XH_SET", K_VSLOT, 0x35a3680, 0x35a3670, "d0 b2 e6 00 00 00 00 00 50 b5 e6 00 00 00 00 00 60 bb e6 00 00 00 00 00 10 b5 e6 00 00 00 00 00", 0xe6bb60, "55 53 48 83 ec 08 48 8b 5f 18 48 85 db 74 61 8b"),
 };
 /* RETICLE_SITES_END */

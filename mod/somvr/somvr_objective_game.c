@@ -23,7 +23,7 @@
  * 0xec4f70: the node, next, the marker, the call); called: OB_POS = FUN_00ebc700(marker, float out[3]) -> bool (the
  * marker's world position, the probe's F_NAV_POS), OB_RANGE = FUN_00ebced0(marker) -> {min, max} metres in xmm0 (its
  * record's range; FUN_00ec4a50 hides a marker outside it). Order = OBS_*) */
-static const struct site_spec g_ob_sites_game[] = {
+static SITE_TABLE struct site_spec g_ob_sites_game[] = {
 SITE("OB_EACH", K_CALL, 0xec4f83, 0xec4f70, "48 89 dd 4c 8b 63 08 48 83 c5 80 74 2a 4c 89 ee 48 89 ef e8 c8 fa ff ff", 0xec4a50, "41 57 41 56 41 55 41 54 49 89 fc 55 53 48 89"),
 SITE("OB_POS", K_ENTRY, 0xebc700, 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7 48", 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7"),
 SITE("OB_RANGE", K_ENTRY, 0xebced0, 0xebced0, "55 53 48 83 ec 28 48 8b 1d 43 a0 ca 03 48 8b af", 0xebced0, "55 53 48 83 ec 28 48 8b 1d 43 a0 ca 03 48 8b"),
@@ -32,12 +32,12 @@ SITE("OB_RANGE", K_ENTRY, 0xebced0, 0xebced0, "55 53 48 83 ec 28 48 8b 1d 43 a0 
 enum { OBS_EACH, OBS_POS, OBS_RANGE, OBS_N };
 _Static_assert(sizeof g_ob_sites_game / sizeof g_ob_sites_game[0] == OBS_N, "objective sites");
 static const struct site_spec *g_ob_sites = g_ob_sites_game; /* selftest: stand-ins */
-#define OB_SHOWN1 0x45   /* CNavMarkerInstance: byte, the primary icon shown this view (re-hud.md 3.2) */
-#define OB_SHOWN2 0x6d   /* ... the secondary */
-#define OB_CLIP 0xb0     /* ... the icon's Scaleform clip (vf_0x208 = set visible) */
-#define OB_REC 0x298     /* ... the NavMarkerData record */
-#define OB_ACTIVE 0x2e0  /* ... bytes active, enabled (+0x2e1) */
-#define OB_CLIP_VIS 0x208
+#define OB_SHOWN1 OFS(OB_SHOWN1, 0x45)   /* CNavMarkerInstance: byte, the primary icon shown this view (re-hud.md 3.2) */
+#define OB_SHOWN2 OFS(OB_SHOWN2, 0x6d)   /* ... the secondary */
+#define OB_CLIP OFS(OB_CLIP, 0xb0)     /* ... the icon's Scaleform clip (vf_0x208 = set visible) */
+#define OB_REC OFS(OB_REC, 0x298)     /* ... the NavMarkerData record */
+#define OB_ACTIVE OFS(OB_ACTIVE, 0x2e0)  /* ... bytes active, enabled (+0x2e1) */
+#define OB_CLIP_VIS OFS(OB_CLIP_VIS, 0x208)
 #define OB_MARKS 48      /* markers tracked (log, status) */
 #define OB_RECS 256      /* records' names and matches cached (open addressing on the pointer) */
 
@@ -45,6 +45,29 @@ typedef void (*ob_each_fn)(uintptr_t m, uintptr_t pl);
 typedef int (*ob_pos_fn)(uintptr_t m, float *out); /* bool in al */
 typedef struct { float lo, hi; } ob_range_t;
 typedef ob_range_t (*ob_range_fn)(uintptr_t m);
+#ifdef _WIN32 /* Windows (docs/re-winport.md 7.6, 7.8): OB_RANGE is inlined into the marker update 0x1404e6770 - its three
+	       * calls instead: kind = 0x1404e0bf0(rec), then (kind & *0x1418f4308) ? 0x1404e0c90 : 0x1404e0b30 (out*, rec) ->
+	       * the record's {min, max} m (each fills its own default first) */
+static SITE_TABLE struct site_spec g_obw_sites_game[] = {
+SITE("OB_RANGE_KIND", K_ENTRY, 0, 0, "", 0, ""),
+SITE("OB_RANGE_A", K_ENTRY, 0, 0, "", 0, ""),
+SITE("OB_RANGE_B", K_ENTRY, 0, 0, "", 0, ""),
+};
+typedef uint32_t (*ob_kind_fn)(uintptr_t rec);
+typedef ob_range_t *(*ob_rng_fn)(ob_range_t *out, uintptr_t rec);
+static ob_range_t ob_range_win(uintptr_t m)
+{
+	uintptr_t rec = peek_ptr(m + OB_REC);
+	uint32_t kind = ((ob_kind_fn)g_obw_sites_game[0].target)(rec), mask = 0;
+	(void)peek(GADDR(OB_RANGE_MASK, 0x46b9120), &mask, sizeof mask);
+	ob_range_t r = { 0, 0 };
+	((ob_rng_fn)g_obw_sites_game[(kind & mask) ? 2 : 1].target)(&r, rec);
+	return r;
+}
+#define OB_RANGE_OF(m) ob_range_win(m)
+#else
+#define OB_RANGE_OF(m) ((ob_range_fn)g_ob_sites[OBS_RANGE].target)(m)
+#endif
 typedef void (*ob_vis_fn)(uintptr_t clip, uint64_t on);
 
 /* the ninth exported object (somvr_objective.h): zero unless SOMVR_OBJECTIVE=on|both is on */
@@ -102,7 +125,7 @@ static long ob_tid(void) { return (long)syscall(SYS_gettid); }
  * present when its u16 +0xc, the value's bit vi & 31 of the u32 at *(R+0x10) + (vi >> 5) * 8, vi = its u16 +0xe):
  * 1 = the game gives it an edge arrow (a way to go), 0 = on screen only (or absent), -1 unreadable, -2 the key looked up
  * by name (mode <= 1: not read here) */
-#define OB_KEYS 0x4b66f20
+#define OB_KEYS GADDR(OB_KEYS, 0x4b66f20)
 static int ob_offscreen(uintptr_t rec)
 {
 	uintptr_t T = peek_ptr(OB_KEYS), tab, vals;
@@ -210,7 +233,7 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 				float tp[3];
 				uintptr_t pm = 0, obj = 0;
 				if (player_objs(pl, &pm, &obj) && peek(obj + OBJ_POS, tp, sizeof tp)) {
-					ob_range_t r = ((ob_range_fn)g_ob_sites[OBS_RANGE].target)(m);
+					ob_range_t r = OB_RANGE_OF(m);
 					float d = dist3(tp, p) / 100.0f;
 					elig = !(d < r.lo) && !(r.hi < d);
 				}
@@ -455,6 +478,16 @@ static void ob_start(int *bad)
 		if (i == OBS_RANGE)
 			g_ob.range_ok = k;
 	}
+#ifdef _WIN32 /* OB_RANGE has no Windows site (inlined): its three calls stand in for it */
+	g_ob.range_ok = 1;
+	for (int i = 0; i < 3; i++) {
+		int k = check_site(&g_obw_sites_game[i], why, sizeof why) == 0;
+		logf_("OBJECTIVE site %s %s %#llx: %s", g_obw_sites_game[i].name, k ? "ok" : "MISMATCH",
+		      (unsigned long long)g_obw_sites_game[i].addr, why);
+		g_ob.range_ok &= k;
+	}
+	g_ob.range_ok &= GADDR(OB_RANGE_MASK, 0x46b9120) != 0;
+#endif
 	g_ob.pos_ok = ok;
 	g_ob.orig = g_ob_sites[OBS_EACH].target;
 	if (!ok || !(g_ob.on = bo_patch_call(&g_ob_sites[OBS_EACH], (void *)somvr_w_obeach))) {

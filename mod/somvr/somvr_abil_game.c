@@ -470,7 +470,7 @@ static void abl_ground_kill(uintptr_t pc, const float tip[3], double t)
 	float kv[3] = { 0, -300.0f, 0 }, kax[3] = { 0, -1, 0 };
 	int klt = kl_take(pc, &oc, of->atk, of->atk, 0, tip, kv, kax, SOMVR_KL_DOWNED, "the downed orc's stab", t);
 	if (!klt)
-		CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ tip[0], tip[1], tip[2] }, pc, oc.hobj, of->atk, 1);
+		CB_DEALHIT_CALL((cb_ltvec){ tip[0], tip[1], tip[2] }, pc, oc.hobj, of->atk, 1);
 	g_abl.kills++, g_abl.started[ABK_GROUND]++;
 	/* a record that severs (the '_Sever' ones: SeverTarget 'Head') cuts as SOMVR_EXECUTE_SEVER=key cuts an execution's: the
 	 * game's own sever, the stab's way down as the velocity (our hit plays no SEVER key) */
@@ -934,7 +934,7 @@ static void abl_kd(uintptr_t pc, const struct cb_orc *o, int n, double t)
 	float at[3] = { o[0].pos[0], o[0].pos[1] + 40, o[0].pos[2] };
 	abl_watch_begin(pc, o, 1, t, 4.0);
 	float hp0 = vb_health(o[0].c);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ at[0], at[1], at[2] }, pc, o[0].hobj, rec, 0);
+	CB_DEALHIT_CALL((cb_ltvec){ at[0], at[1], at[2] }, pc, o[0].hobj, rec, 0);
 	logf_("ABIL kd t=%.3f: orc %#lx at %.0f cm dealt '%s' (a test aid): health %.1f -> %.1f", t, (unsigned long)o[0].c,
 	      o[0].dist, rn, hp0, vb_health(o[0].c));
 }

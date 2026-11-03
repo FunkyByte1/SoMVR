@@ -26,7 +26,7 @@
  *   ST_COL_DEFAULT  Combat_StartAttack without an animation record: +0x56c = 1 (the default the next attack restores);
  *   ST_VISION_GET   the player update's call of FUN_00ad3ac0(*(P+0x2f0)): the PlayerVisionMode pointer;
  *   ST_VISION_ON    FUN_00ad3b60 (the component's on/off): +0x48 = the vision is on. */
-static const struct site_spec g_step_sites_game[] = {
+static SITE_TABLE struct site_spec g_step_sites_game[] = {
 SITE("ST_COL_SOLVER", K_ENTRY, 0x20ce555, 0x20ce555, "80 ba 6c 05 00 00 00 0f 85 9e 0b 00 00", 0x20ce555, "80 ba 6c 05 00 00 00 0f 85 9e 0b 00"),
 SITE("ST_COL_MOVE7", K_ENTRY, 0x20c5cf0, 0x20c5cf0, "53 48 83 ec 20 48 8b 5f 38 48 85 db 74 16 48 89 df e8 0a e8 60 00 48 85 c0 74 09 80 bb 6c 05 00 00 00", 0x20c5cf0, "53 48 83 ec 20 48 8b 5f 38 48 85 db 74 16 48"),
 SITE("ST_COL_OFF", K_ENTRY, 0x26fd137, 0x26fd137, "80 bb 6c 05 00 00 00 0f 84 ef cc ff ff c6 83 6c 05 00 00 00 c6 83 6f 05 00 00 01", 0x26fd137, "80 bb 6c 05 00 00 00 0f 84 ef cc ff ff c6 83"),
@@ -39,12 +39,16 @@ enum { STS_COL_SOLVER, STS_COL_MOVE7, STS_COL_OFF, STS_COL_DEFAULT, STS_VISION_G
 _Static_assert(sizeof g_step_sites_game / sizeof g_step_sites_game[0] == STS_N, "step sites");
 static const struct site_spec *g_step_sites = g_step_sites_game; /* selftest: stand-ins */
 /* the game objects (selftest: stand-ins): PlayerVisionMode's vtable (classes: 0x3503bc0) */
-static struct { uintptr_t vt_vm; } g_stepg = { 0x3503bc0 };
-#define ST_C_COLLIDE 0x56c  /* Combat (pm+0x38, the player's): u8 the current attack's EnableCollision (ST_COL_*) */
-#define ST_C_COLDIRTY 0x56f /* ... u8 "changed" (COLLISION_ON/OFF set it, the solver clears it) */
-#define ST_P_VISION 0x2f0   /* Player: PlayerVisionMode* (ST_VISION_GET) */
-#define ST_VM_OWNER 0x08    /* PlayerVisionMode: the Player */
-#define ST_VM_ON 0x48       /* PlayerVisionMode: u8 the vision is on (ST_VISION_ON) */
+#ifdef _WIN32 /* world_win_globals() (somvr.c) */
+static struct { uintptr_t vt_vm; } g_stepg;
+#else
+static struct { uintptr_t vt_vm; } g_stepg = { GADDR(ST_VT_VM, 0x3503bc0) };
+#endif
+#define ST_C_COLLIDE OFS(ST_C_COLLIDE, 0x56c)  /* Combat (pm+0x38, the player's): u8 the current attack's EnableCollision (ST_COL_*) */
+#define ST_C_COLDIRTY OFS(ST_C_COLDIRTY, 0x56f) /* ... u8 "changed" (COLLISION_ON/OFF set it, the solver clears it) */
+#define ST_P_VISION OFS(ST_P_VISION, 0x2f0)   /* Player: PlayerVisionMode* (ST_VISION_GET) */
+#define ST_VM_OWNER OFS(ST_VM_OWNER, 0x08)    /* PlayerVisionMode: the Player */
+#define ST_VM_ON OFS(ST_VM_ON, 0x48)       /* PlayerVisionMode: u8 the vision is on (ST_VISION_ON) */
 #define ST_CMD_VISION 122   /* CombatSecondary01 = PC_WraithPing's toggle (P9; on the deny list: allowed for our tap) */
 #define ST_TAP_TICKS 2      /* a tap: held two input ticks (a toggle; 0.85 s held would be PC_Radiance) */
 #define ST_ORCS 16

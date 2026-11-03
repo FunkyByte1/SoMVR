@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Shadow of Mordor VR (Windows)
+Comment=The VR build on the GOG (Windows) game - no Steam needed, adds no Steam hours. Plays on its own save (the first time a copy of your Steam save). Connect the Quest in WiVRn first.
+Exec=/home/bara/Projects/flat2vr/ShadowOfMordor/scripts/som-vr-headset-win.sh
+Icon=steam_icon_241930
+Terminal=false
+Type=Application
+Categories=Game;X-WiVRn-VR;

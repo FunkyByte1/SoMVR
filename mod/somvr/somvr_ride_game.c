@@ -43,8 +43,8 @@
  * Lines: CONFIG ride=, RIDE t=.. mounted|seated|dismounted|off, RIDE bindings, RIDE press, RIDE view (trace), RIDE
  * motion (every 2 s seated), RIDE guard, RIDE END. */
 
-#define MT_P_MOUNT 0x1d8 /* Player: the mount HOBJECT (re-traversal.md 3.1; FB_MOUNT's proof) */
-#define MT_C_ATTACK 0x4d0 /* Combat: the current attack record */
+#define MT_P_MOUNT OFS(MT_P_MOUNT, 0x1d8) /* Player: the mount HOBJECT (re-traversal.md 3.1; FB_MOUNT's proof) */
+#define MT_C_ATTACK OFS(MT_C_ATTACK, 0x4d0) /* Combat: the current attack record */
 #define MT_CMD_MOUNT 181
 #define MT_CMD_GETOFF 182
 #define MT_CMD_JUMP 183
@@ -54,8 +54,8 @@
 #define MT_CMD_JUMP_A 16    /* Jump: the stock pad A (build 27; MNT_Jump has no record) */
 #define MT_CMD_EVADE_A 121  /* CombatPrimary04: the stock pad A's other */
 #define MT_CMD_OFF_PAD 123  /* CombatSecondary02, the pad's RB: off (build 27; MNT_GetOff has no record) */
-#define MT_P_RIDER_CMDS 0x2b0 /* Player: MountInfo+0xf8, the rider's commands {int id; float value}[] (re-traversal.md */
-#define MT_P_RIDER_NCMD 0x2c0 /* 3.1: filled each frame from the mount's data and the active commands), its count */
+#define MT_P_RIDER_CMDS OFS(MT_P_RIDER_CMDS, 0x2b0) /* Player: MountInfo+0xf8, the rider's commands {int id; float value}[] (re-traversal.md */
+#define MT_P_RIDER_NCMD OFS(MT_P_RIDER_NCMD, 0x2c0) /* 3.1: filled each frame from the mount's data and the active commands), its count */
 #define MT_RIDER_MAX 24
 #define MT_HOLD_MAX_S 6.0  /* getting on or off: held at most this long */
 #define MT_KIND_WAIT_S 8.0 /* a mount whose kind is not known yet: asked again this long, then not a beast (build 27:
@@ -68,8 +68,8 @@
 #define MT_SPR_DEFAULT "16,121,184" /* SOMVR_RIDE_SPRINT_CMDS: the stock pad's A held (Jump, CombatPrimary04, MNT_Charge) */
 #define MT_SPR_EDGE_S 0.1 /* A's press or release inside the click's sprint: the shared commands let go this long first */
 #define MT_SPR_PULSE_DEFAULT 0 /* SOMVR_RIDE_SPRINT_PULSE_MS: held */
-#define MT_VT_STRUGGLE_AIM 0x3592bb8 /* CStruggleAim's vtable (index/vfuncs.tsv; the RTTI '12CStruggleAim') */
-#define MT_STRUG_DONE 0xa5           /* ICombatStruggle: its completion asked (FUN_00e114e0 sets it: the game's own; the */
+#define MT_VT_STRUGGLE_AIM GADDR(MT_VT_STRUGGLE_AIM, 0x3592bb8) /* CStruggleAim's vtable (index/vfuncs.tsv; the RTTI '12CStruggleAim') */
+#define MT_STRUG_DONE OFS(MT_STRUG_DONE, 0xa5)           /* ICombatStruggle: its completion asked (FUN_00e114e0 sets it: the game's own; the */
 				     /* aim's next update wins - +0x8c = 1, its success UI, the end callback) */
 
 enum { MT_OFF = 0, MT_MOUNTING, MT_SEATED, MT_DISMOUNTING };
@@ -467,6 +467,28 @@ static void mt_rider_log(double t)
 /* bm_pre (every H4, before the moment's conditions): Talion's attack record and the fallback's read; while riding a
  * beast the conditions mount and attach are the ride's, and while seated a sync or struggle on Talion (a mounted
  * attack's) is the beast's too - the seat is its, not his */
+#ifdef _WIN32
+/* winport-world (docs/re-winport.md 7.4): the five struggle classes' Windows vtables (each read by its own fields: the
+ * press count +0x2f0..+0x2f6, the quick time +0xd0..+0xd5, the hold +0xfc..+0x118, the aim +0x588..+0x592, the
+ * direction +0x200..+0x204), named as the Linux typeinfo names them so somvr_rd_strug_kind() reads them the same */
+static void mt_win_class(uintptr_t vt, char *cn, size_t n)
+{
+	const struct { uintptr_t vt; const char *nm; } k[] = {
+		{ GADDR(MT_VT_STRUG_HOLD, 0x3592b38), "13CStruggleHold" },
+		{ GADDR(MT_VT_STRUG_COUNT, 0x3592ab8), "19CStrugglePressCount" },
+		{ GADDR(MT_VT_STRUG_QT, 0x3592af8), "18CStruggleQuickTime" },
+		{ MT_VT_STRUGGLE_AIM, "12CStruggleAim" },
+		{ GADDR(MT_VT_STRUG_DIR, 0x3592b78), "23CStruggleInputDirection" },
+	};
+	cn[0] = 0;
+	for (size_t i = 0; vt && i < sizeof k / sizeof k[0]; i++)
+		if (k[i].vt && vt == k[i].vt) {
+			snprintf(cn, n, "%s", k[i].nm);
+			return;
+		}
+}
+#endif
+
 static uint32_t mt_fb(uint32_t fb, const somvr_fb_in *in, uintptr_t atk, double t)
 {
 	if (!g_mt.on)
@@ -478,10 +500,16 @@ static uint32_t mt_fb(uint32_t fb, const somvr_fb_in *in, uintptr_t atk, double 
 		if (o == g_mt.strug_last[k])
 			continue;
 		g_mt.strug_last[k] = o;
+#ifdef _WIN32 /* the Windows exe has RTTI only for its libraries' classes: the struggle's class by its vtable */
+		uintptr_t vt = o ? peek_ptr(o) : 0;
+		char cn[48] = "", an[96];
+		mt_win_class(vt, cn, sizeof cn);
+#else
 		uintptr_t vt = o ? peek_ptr(o) : 0, ti = vt ? peek_ptr(vt - 8) : 0, np = ti ? peek_ptr(ti + 8) : 0;
 		char cn[48] = "", an[96];
 		if (np)
 			peek(np, cn, sizeof cn - 1);
+#endif
 		uint32_t wv[16] = { 0 };
 		if (o)
 			peek(o + 8, wv, sizeof wv);

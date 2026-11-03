@@ -41,7 +41,7 @@
  * sever the stock SEVER animation key and the death handler call (re-combat.md 2.4); XC_LAPSE FUN_027259c0+0x46: the
  * counter's timer expiry (+0x61 running, +0x60 paused, +0x38 the start, +0x40 the delay, +0x58 the clock's +0x18 = now:
  * now - start >= delay -> the value 0, the clear; the proof of the offsets SOMVR_EXECUTE_LAPSE_S writes). Order = XCS_* */
-static const struct site_spec g_xc_sites_game[] = {
+static SITE_TABLE struct site_spec g_xc_sites_game[] = {
 SITE("XC_CHARGE", K_ENTRY, 0x27256c0, 0x27256c0, "53 80 bf d4 00 00 00 00 48 89 fb 66 89 b7 c6 00 00 00 48 8b 47 30 75 09 66 3b b7 c8 00 00 00", 0x27256c0, "53 80 bf d4 00 00 00 00 48 89 fb 66 89 b7 c6"),
 SITE("XC_SPEND", K_ENTRY, 0x2728bb7, 0x2728bb7, "0f b6 85 d2 00 00 00 3c 01 76 0e 83 e8 01 88 85 d2 00 00 00", 0x2728bb7, "0f b6 85 d2 00 00 00 3c 01 76 0e 83 e8 01 88"),
 SITE("XC_CLEAR", K_ENTRY, 0x2727200, 0x2727200, "55 53 48 89 fb 48 83 ec 58 48 8b 47 70 48 2b 47 68 48 c1 f8 03", 0x2727200, "55 53 48 89 fb 48 83 ec 58 48 8b 47 70 48 2b"),
@@ -74,7 +74,7 @@ typedef void (*xc_sever_fn)(uintptr_t victim, uintptr_t type, const float *vel, 
 #define XC_AD_SEVER_ON_KILL 59
 #define XC_AD_CONSUME 70    /* ConsumeHitCounterCharge */
 #define XC_AD_RESET 83      /* ResetHitCounterOnStart */
-#define XC_SYNC_SCHEMA 0x4baa4a0
+#define XC_SYNC_SCHEMA GADDR(XC_SYNC_SCHEMA, 0x4baa4a0)
 #define XC_SYNC_SLOWMO 33   /* Combat/Sync: EnableDynamicSlowMo */
 #define XC_RECS 24
 #define XC_TRACE_S 1.5      /* the eye trace after the kill */
@@ -535,7 +535,7 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	struct kp_floor kf; /* build 22: a captain not vulnerable to it survives it (a third of his max health taken) */
 	if (!klt) {
 		kp_floor_on(o->c, fk, "the execution", t, &kf);
-		CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, e->rec, fk);
+		CB_DEALHIT_CALL((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, e->rec, fk);
 		kp_floor_off(&kf);
 	}
 	double t1 = mono();

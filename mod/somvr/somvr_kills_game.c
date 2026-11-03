@@ -44,7 +44,7 @@
  * which an NPC starts its own attacks and reactions - KL_AI_NPC (NPC::vf_92+0x63e: its scheduled attack), KL_AI_ACT1/2
  * (FUN_02a88710+0xfdd/+0x101d: the AI actions' attacks, the avoid among them), KL_AI_MISC (FUN_02741140+0x175) - go
  * through somvr_w_klai, which refuses a start on an orc whose kill plays (the role a sync's +0x190 plays for its target) */
-static const struct site_spec g_kl_sites_game[] = {
+static SITE_TABLE struct site_spec g_kl_sites_game[] = {
 SITE("KL_START", K_ENTRY, 0x26ed9b0, 0x26ed9b0, "48 c7 87 50 01 00 00 00 00 00 00 45 0f b6 c0 c7 87 58 01 00 00", 0x26ed9b0, "48 c7 87 50 01 00 00 00 00 00 00 45 0f b6 c0"),
 SITE("KL_NAV", K_ENTRY, 0x2972f90, 0x2972f90, "44 0f b6 87 98 0e 00 00 89 d1 b8 01 00 00 00 d3", 0x2972f90, "44 0f b6 87 98 0e 00 00 89 d1 b8 01 00 00 00"),
 SITE("KL_PREP_A", K_ENTRY, 0x2697700, 0x2697700, "48 8b bf d0 06 00 00 48 85 ff 74 0c e9 2f 20 03", 0x2697700, "48 8b bf d0 06 00 00 48 85 ff 74 0c e9 2f 20"),
@@ -469,7 +469,7 @@ static void kl_sync_frame(uintptr_t pc, double t)
 		if (s0 && rec0 && g_kl.ok_sync_end)
 			KL_FN(KLS_SYNC_END, kl_ptr_fn)(s0);
 		atomic_store(&g_kl.dealing, 1);
-		CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ o.pos[0], o.pos[1] + 100.0f, o.pos[2] }, pc, o.hobj, stl_rec(), 1);
+		CB_DEALHIT_CALL((cb_ltvec){ o.pos[0], o.pos[1] + 100.0f, o.pos[2] }, pc, o.hobj, stl_rec(), 1);
 		atomic_store(&g_kl.dealing, 0);
 		g_kl.sync_forced++;
 	} else if (strstr(why, "dead"))
@@ -505,7 +505,11 @@ static struct {
 } g_kst;
 
 /* the AI hold: an NPC's own attack or reaction start on an orc whose kill plays is refused (any thread) */
+#ifdef _WIN32
+__attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, float rate, int flag)
+#else
 __attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, int flag)
+#endif
 {
 	if (c && c == atomic_load(&g_kst.c)) { /* build 31b: the test's still orc */
 		atomic_fetch_add(&g_kst.refused, 1);
@@ -521,7 +525,11 @@ __attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t a
 		}
 	}
 	atomic_fetch_add(&g_kl.ai_passed, 1);
+#ifdef _WIN32
+	KL_FN(KLS_START, kl_start_fn)(c, node, attack, target, rate, flag);
+#else
 	KL_FN(KLS_START, kl_start_fn)(c, node, attack, target, 1.0f, flag);
+#endif
 }
 
 /* the fight circle's score hook (SOMVR_FRONT's ff_judge, its thread): this orc's kill plays - no attack granted */
@@ -606,7 +614,7 @@ static int kl_deal(uintptr_t pc, struct kl_one *k, const char *why, double t)
 	int dead0 = cb_dead(k->c);
 	float hp0 = cb_health(k->c);
 	atomic_store(&g_kl.dealing, 1);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ at[0], at[1], at[2] }, pc, k->hobj, k->drec, k->fk);
+	CB_DEALHIT_CALL((cb_ltvec){ at[0], at[1], at[2] }, pc, k->hobj, k->drec, k->fk);
 	atomic_store(&g_kl.dealing, 0);
 	kx_hit_back(dslot, dwas);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);

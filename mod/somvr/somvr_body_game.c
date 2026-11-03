@@ -32,7 +32,7 @@
 
 /* HANDS_SITES_BEGIN (SOMVR_BODY=hands: the patched slot BD_REND_COPY and three read-only proofs that the listener call
  * hands the skinning transforms in rcx and that vf_02 copies from there) */
-static const struct site_spec g_bd_sites_game[] = {
+static SITE_TABLE struct site_spec g_bd_sites_game[] = {
 SITE("BD_REND_COPY", K_VSLOT, 0x38de488, 0x38de480, "b0 fc 37 02 00 00 00 00 e0 fd 37 02 00 00 00 00 10 fd 37 02 00 00 00 00", 0x237fde0, "41 57 41 56 41 55 41 54 55 53 48 81 ec b8 00 00"),
 SITE("BD_LISTEN_CALL", K_ENTRY, 0x237cf10, 0x237cf10, "44 89 f8 8b 0c 24 49 8b b6 88 03 00 00 48 89 da 49 8b bc c6 20 02 00 00 49 89 e9 41 83 c7 01 48 8b 07 51 4c 89 e9 41 54 44 8b 84 24 30 01 00 00 ff 50 10", 0x237cf10, "44 89 f8 8b 0c 24 49 8b b6 88 03 00 00 48 89"),
 SITE("BD_COPY_SRC", K_ENTRY, 0x237fe07, 0x237fe07, "80 bf a4 00 00 00 00 48 89 cd 49 89 d4 48 89 fb", 0x237fe07, "80 bf a4 00 00 00 00 48 89 cd 49 89 d4 48 89"),
@@ -52,10 +52,10 @@ static const struct site_spec *g_bd_sites = g_bd_sites_game; /* selftest: stand-
 #define BD_REND_SLOT 2      /* BD_REND_COPY = slot 2 of the CSimpleModelRenderable vtable */
 #define BD_LIVE_FRAMES 3    /* the last H4's first-person word holds for this many renderer frames */
 #define BD_DEG 0.01745329252f
-#define BD_R_OWNER 0x008    /* CSimpleModelRenderable: its owner (the caller's r14: +0x348 the shared skin buffer) */
-#define BD_R_BUF 0x0b8      /* ... the skin buffer it draws (0x237fe77: the owner's shared one on the no-copy path) */
-#define BD_R_MAP 0x1e8      /* ... its bone map (begin, end at +0x1f0): empty = no copy (0x237fe30) */
-#define BD_O_SHARED 0x348   /* the owner: the shared skin buffer the caller maps and hands every listener (0x237cea6) */
+#define BD_R_OWNER OFS(BD_R_OWNER, 0x008)    /* CSimpleModelRenderable: its owner (the caller's r14: +0x348 the shared skin buffer) */
+#define BD_R_BUF OFS(BD_R_BUF, 0x0b8)      /* ... the skin buffer it draws (0x237fe77: the owner's shared one on the no-copy path) */
+#define BD_R_MAP OFS(BD_R_MAP, 0x1e8)      /* ... its bone map (begin, end at +0x1f0): empty = no copy (0x237fe30) */
+#define BD_O_SHARED OFS(BD_O_SHARED, 0x348)   /* the owner: the shared skin buffer the caller maps and hands every listener (0x237cea6) */
 enum { BD_EDIT_AUTO, BD_EDIT_INPLACE, BD_EDIT_COPY, BD_EDIT_N }; /* SOMVR_BODY_EDIT */
 static const char *const g_bd_edit_w[BD_EDIT_N] = { "auto", "inplace", "copy" };
 static const char *bd_edit_name(int e) { return e >= 0 && e < BD_EDIT_N ? g_bd_edit_w[e] : "?"; }

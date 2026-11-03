@@ -31,7 +31,7 @@
  * IEnginePhysics (vtable 0x3472258) slot 64; PR_NPC_SETZONE the NPC's (vtable 0x3a2b3d0) slot 81 (+0x288);
  * PR_OBJSYS_REMOVE the object system's (vtable 0x3453058) slot 11 (+0x58); PR_WEATHER CGameServices (vtable 0x34e2a90,
  * the object at *0x46b7310 = IGameServices.Default) slot 21 (+0xa8). Order = PRS_* */
-static const struct site_spec g_pr_sites_game[] = {
+static SITE_TABLE struct site_spec g_pr_sites_game[] = {
 SITE("PR_TMPL_BYNAME", K_ENTRY, 0x2153910, 0x2153910, "0f b6 07 31 d2 84 c0 74 21 0f 1f 80 00 00 00 00", 0x2153910, "0f b6 07 31 d2 84 c0 74 21 0f 1f 80 00 00 00"),
 SITE("PR_SPAWN_AI", K_ENTRY, 0x29a4830, 0x29a4830, "48 85 ff 0f 84 b7 07 00 00 41 57 48 89 f8 45 89", 0x29a4830, "48 85 ff 0f 84 b7 07 00 00 41 57 48 89 f8 45"),
 SITE("PR_ZONE_AT", K_ENTRY, 0x22a2a80, 0x22a2a80, "41 57 41 56 41 55 41 54 49 89 d4 55 53 48 89 fb", 0x22a2a80, "41 57 41 56 41 55 41 54 49 89 d4 55 53 48 89"),
@@ -55,7 +55,7 @@ enum { PRS_BYNAME, PRS_SPAWN, PRS_ZONE, PRS_LEVEL, PRS_MINHEALTH, PRS_TODNAME, P
  * bytes each, +0x30 the NPC, the NPC's +8 HOBJECT) through the object system's vtbl+0x58 (deferred, as ours). The
  * manager's update FUN_02921370 runs its five spawn queues only while +0x164 is set. PRQ_FLAG_ON = FUN_02919d70 itself
  * (`movb $1, 0x164(%rdi); ret`): it proves the offset we read first. Order = PRQ_* */
-static const struct site_spec g_prq_sites_game[] = {
+static SITE_TABLE struct site_spec g_prq_sites_game[] = {
 SITE("PRQ_ENABLE", K_ENTRY, 0x286fb80, 0x286fb80, "48 8b 3d 39 fc 3d 02 e9 e4 a1 0a 00 0f 1f 40 00", 0x286fb80, "48 8b 3d 39 fc 3d 02 e9 e4 a1 0a 00 0f 1f 40"),
 SITE("PRQ_DISABLE", K_ENTRY, 0x286fb90, 0x286fb90, "48 8b 3d 29 fc 3d 02 e9 e4 a1 0a 00 0f 1f 40 00", 0x286fb90, "48 8b 3d 29 fc 3d 02 e9 e4 a1 0a 00 0f 1f 40"),
 SITE("PRQ_REMOVEALL", K_ENTRY, 0x286fba0, 0x286fba0, "48 8b 3d 19 fc 3d 02 e9 e4 a1 0a 00 0f 1f 40 00", 0x286fba0, "48 8b 3d 19 fc 3d 02 e9 e4 a1 0a 00 0f 1f 40"),
@@ -73,7 +73,7 @@ static const struct site_spec *g_prq_sites = g_prq_sites_game; /* selftest: stan
  * 0x46b9200 (first = +8, next = node+8, the marker = node - 0x80), the NavMarkerData record at +0x298 (its name at +0x20
  * when the record's byte +1 has bit 2), active / enabled bytes +0x2e0 / +0x2e1, an object at +0x260/+0x268/+0x270/+0xb0
  * (the probe's rule for asking the position). Order = PRN_* */
-static const struct site_spec g_prn_sites_game[] = {
+static SITE_TABLE struct site_spec g_prn_sites_game[] = {
 SITE("PRN_NAV_POS", K_ENTRY, 0xebc700, 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7 48", 0xebc700, "48 8b 87 50 02 00 00 48 85 c0 74 0f 48 89 c7"),
 };
 /* PRNAV_SITES_END */
@@ -88,7 +88,7 @@ enum { PRN_NAV_POS, PRN_N };
  * notify FUN_0271d600 (the HUD meter) - its bytes prove the three offsets; PRF_HEAL FUN_02763910(health, amount): the heal
  * the damage path calls for a negative amount (re-combat.md 1.3, FUN_02810e80), CCharacter+0x130's component: +0x34 the
  * health (CCharacter+0x164) raised by amount up to +0x30, the max (CCharacter+0x160) - its bytes prove both. Order = PRF_* */
-static const struct site_spec g_prf_sites_game[] = {
+static SITE_TABLE struct site_spec g_prf_sites_game[] = {
 SITE("PRF_TOKENS_ADD", K_ENTRY, 0x2720a90, 0x2720a90, "8b 47 50 01 c6 39 f0 0f 84 c3 00 00 00 55 31 c0", 0x2720a90, "8b 47 50 01 c6 39 f0 0f 84 c3 00 00 00 55 31"),
 SITE("PRF_ENERGY_FULL", K_ENTRY, 0x271e2e0, 0x271e2e0, "f3 0f 10 47 48 40 88 77 60 f3 0f 11 47 54 f3 0f", 0x271e2e0, "f3 0f 10 47 48 40 88 77 60 f3 0f 11 47 54 f3"),
 SITE("PRF_HEAL", K_ENTRY, 0x2763910, 0x2763910, "f3 0f 10 57 34 f3 0f 10 4f 30 31 c0 0f 2f d1 73", 0x2763910, "f3 0f 10 57 34 f3 0f 10 4f 30 31 c0 0f 2f d1"),
@@ -97,26 +97,26 @@ SITE("PRF_HEAL", K_ENTRY, 0x2763910, 0x2763910, "f3 0f 10 57 34 f3 0f 10 4f 30 3
 enum { PRF_TOKENS_ADD, PRF_ENERGY_FULL, PRF_HEAL, PRF_N };
 _Static_assert(sizeof g_prf_sites_game / sizeof g_prf_sites_game[0] == PRF_N, "practice refill sites");
 static const struct site_spec *g_prf_sites = g_prf_sites_game; /* selftest: stand-ins */
-#define PRF_RES_MAX 0x4c        /* the resource object (Combat+0x1c0, BO_SC_RES): int, the arrows' max (BO_RES_COUNT +0x50) */
-#define PRF_RES_ENERGY 0x44     /* ... float, the energy = the Focus (FUN_0271e300 reads it; +0x48 when unlimited) */
-#define PRF_RES_EMAX 0x48       /* ... float, its max */
-#define PRF_RES_EUNLIM 0x60     /* ... byte, the energy unlimited (BO_RES_UNLIM +0x61: the arrows') */
-#define PR_CH_HEALTHC 0x130     /* CCharacter: the health component (+0x30 the max, +0x34 the health: PRF_HEAL) */
-#define PR_CH_HEALTH_MAX 0x160  /* CCharacter: float, the max health */
+#define PRF_RES_MAX OFS(PRF_RES_MAX, 0x4c)        /* the resource object (Combat+0x1c0, BO_SC_RES): int, the arrows' max (BO_RES_COUNT +0x50) */
+#define PRF_RES_ENERGY OFS(PRF_RES_ENERGY, 0x44)     /* ... float, the energy = the Focus (FUN_0271e300 reads it; +0x48 when unlimited) */
+#define PRF_RES_EMAX OFS(PRF_RES_EMAX, 0x48)       /* ... float, its max */
+#define PRF_RES_EUNLIM OFS(PRF_RES_EUNLIM, 0x60)     /* ... byte, the energy unlimited (BO_RES_UNLIM +0x61: the arrows') */
+#define PR_CH_HEALTHC OFS(PR_CH_HEALTHC, 0x130)     /* CCharacter: the health component (+0x30 the max, +0x34 the health: PRF_HEAL) */
+#define PR_CH_HEALTH_MAX OFS(PR_CH_HEALTH_MAX, 0x160)  /* CCharacter: float, the max health */
 typedef void (*prf_tokens_fn)(uintptr_t res, int delta);
 typedef void (*prf_energy_fn)(uintptr_t res, int unlimited);
 typedef int (*prf_heal_fn)(uintptr_t health, float amount);
 #define PRF_FN(i, T) ((T)g_prf_sites[i].target)
 _Static_assert(sizeof g_prn_sites_game / sizeof g_prn_sites_game[0] == PRN_N, "practice nav sites");
 static const struct site_spec *g_prn_sites = g_prn_sites_game; /* selftest: stand-ins */
-#define PRN_LIST 0x46b9200
-#define PRN_NODE 0x80
-#define PRN_REC 0x298
-#define PRN_ACTIVE 0x2e0 /* +0x2e1 enabled */
+#define PRN_LIST GADDR(PRN_LIST, 0x46b9200)
+#define PRN_NODE OFS(PRN_NODE, 0x80)
+#define PRN_REC OFS(PRN_REC, 0x298)
+#define PRN_ACTIVE OFS(PRN_ACTIVE, 0x2e0) /* +0x2e1 enabled */
 typedef void (*prn_pos_fn)(uintptr_t marker, float *out);
-#define PRQ_MGR_FLAG 0x164   /* the spawn manager: byte, its spawn queues run (FUN_02919d70/d80's store) */
-#define PRQ_MGR_LIST 0x48    /* ... its ambient AI: begin, end (+8), 0x50 bytes each (FUN_02919d90) */
-#define PRQ_ENTRY 0x50
+#define PRQ_MGR_FLAG OFS(PRQ_MGR_FLAG, 0x164)   /* the spawn manager: byte, its spawn queues run (FUN_02919d70/d80's store) */
+#define PRQ_MGR_LIST OFS(PRQ_MGR_LIST, 0x48)    /* ... its ambient AI: begin, end (+8), 0x50 bytes each (FUN_02919d90) */
+#define PRQ_ENTRY OFS(PRQ_ENTRY, 0x50)
 typedef void (*prq_fn)(void);
 _Static_assert(sizeof g_pr_sites_game / sizeof g_pr_sites_game[0] == PRS_N, "practice sites");
 _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK == (int)SOMVR_VMPR_BACK &&
@@ -130,19 +130,19 @@ _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK ==
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
 #define PR_FN(i, T) ((T)g_pr_sites[i].target)
 #define PRQ_FN_CALL(i) (((prq_fn)g_prq_sites[i].target)())
-#define PR_SLOT_RAY 0x200       /* IEnginePhysics: the cast (vf_64) */
-#define PR_SLOT_SETZONE 0x288   /* NPC: the zone (vf_81) */
-#define PR_SLOT_REMOVE 0x58     /* the object system: the deferred removal (vf_11) */
-#define PR_SLOT_WEATHER 0xa8    /* CGameServices: the weather state (vf_21) */
-#define PR_CH_MINHEALTH 0x9b4   /* CCharacter: float, the min health (PR_SETMINHEALTH's store) */
-#define PR_CH_HEALTH 0x164      /* CCharacter: float, the health (the probe's AGGROWATCH lines; logs only) */
-#define PR_CH_COMBAT 0x6d0      /* CCharacter: its Combat* (re-combat.md 1.3) */
-#define PR_C_CHARREC 0x4c8      /* Combat: the character record ('AI_Infantry', 'Warg_Brown', 'AI_Slave_Human': P7) */
-#define PR_HOBJ_GAMEOBJ 0x38    /* HOBJECT: its game object (the NPC) */
-#define PR_HOBJ_CLASSES 0x48    /* HOBJECT: its class list (first *(+0x48), next node +8) */
-#define PR_HOBJ_FLAGS 0x5c      /* HOBJECT: byte, 0x08 queued for removal, 0x10 being deleted */
-#define PR_W_RECORD 0x60        /* the weather state: the weather record */
-#define PR_W_TOD 0x68           /* ... the TOD byte (FUN_025ccd10's argument) */
+#define PR_SLOT_RAY OFS(PR_SLOT_RAY, 0x200)       /* IEnginePhysics: the cast (vf_64) */
+#define PR_SLOT_SETZONE OFS(PR_SLOT_SETZONE, 0x288)   /* NPC: the zone (vf_81) */
+#define PR_SLOT_REMOVE OFS(PR_SLOT_REMOVE, 0x58)     /* the object system: the deferred removal (vf_11) */
+#define PR_SLOT_WEATHER OFS(PR_SLOT_WEATHER, 0xa8)    /* CGameServices: the weather state (vf_21) */
+#define PR_CH_MINHEALTH OFS(PR_CH_MINHEALTH, 0x9b4)   /* CCharacter: float, the min health (PR_SETMINHEALTH's store) */
+#define PR_CH_HEALTH OFS(PR_CH_HEALTH, 0x164)      /* CCharacter: float, the health (the probe's AGGROWATCH lines; logs only) */
+#define PR_CH_COMBAT OFS(PR_CH_COMBAT, 0x6d0)      /* CCharacter: its Combat* (re-combat.md 1.3) */
+#define PR_C_CHARREC OFS(PR_C_CHARREC, 0x4c8)      /* Combat: the character record ('AI_Infantry', 'Warg_Brown', 'AI_Slave_Human': P7) */
+#define PR_HOBJ_GAMEOBJ OFS(PR_HOBJ_GAMEOBJ, 0x38)    /* HOBJECT: its game object (the NPC) */
+#define PR_HOBJ_CLASSES OFS(PR_HOBJ_CLASSES, 0x48)    /* HOBJECT: its class list (first *(+0x48), next node +8) */
+#define PR_HOBJ_FLAGS OFS(PR_HOBJ_FLAGS, 0x5c)      /* HOBJECT: byte, 0x08 queued for removal, 0x10 being deleted */
+#define PR_W_RECORD OFS(PR_W_RECORD, 0x60)        /* the weather state: the weather record */
+#define PR_W_TOD OFS(PR_W_TOD, 0x68)           /* ... the TOD byte (FUN_025ccd10's argument) */
 #define PR_BANDS_MAX 48         /* entries read per targeting band */
 #define PR_LIGHT_WEATHER_S 0.6  /* after the arrival: the weather this much after the TOD step (both under the black) */
 #define PR_PAUSE_WAIT_S 3.6     /* SOMVR_PRACTICE_LOADHOLD: our ChangeWeather's pause comes this soon (runs 154417 .. 163004:
@@ -491,8 +491,16 @@ static int pr_ray_down(const float from[3], float len, uintptr_t self, float hit
 static int pr_ray_down_r(const float from[3], float len, uintptr_t self, float hit[3], uintptr_t *hobj, unsigned char *rout)
 {
 	uintptr_t phys = peek_ptr(g_prg.phys_pp);
-	if (!phys || !pr_slot_ok(phys, PRS_RAY, PR_SLOT_RAY))
+	static int said; /* winport: why a ray fails, once (the first Windows practice spawn's "the ray down hit nothing") */
+	if (!phys || !pr_slot_ok(phys, PRS_RAY, PR_SLOT_RAY)) {
+		if (!said++)
+			logf_("PRACTICE ray: not cast: IEnginePhysics %#lx (holder %#lx), vtable %#lx + %#lx vs the site %#lx -> %#lx (live %#lx)",
+			      (unsigned long)phys, (unsigned long)g_prg.phys_pp, (unsigned long)(phys ? vptr_of((void *)phys) : 0),
+			      (unsigned long)PR_SLOT_RAY, (unsigned long)g_pr_sites[PRS_RAY].addr,
+			      (unsigned long)g_pr_sites[PRS_RAY].target,
+			      (unsigned long)(phys ? peek_ptr(vptr_of((void *)phys) + PR_SLOT_RAY) : 0));
 		return 0;
+	}
 	float y0 = from[1];
 	for (int k = 0; k < 5; k++) {
 		unsigned char q[0x40] __attribute__((aligned(16))), r[0x80] __attribute__((aligned(16)));
@@ -504,8 +512,12 @@ static int pr_ray_down_r(const float from[3], float len, uintptr_t self, float h
 		memset(q, 0, sizeof q), memset(r, 0, sizeof r);
 		memcpy(q, f, 12), memcpy(q + 12, to, 12), memcpy(q + 0x18, &fl, 4), memcpy(q + 0x1c, &flt, 4);
 		memcpy(r + 0x28, &none, 2);
-		if (!(PR_FN(PRS_RAY, pr_ray_fn)(phys, q, r) & 0xff))
+		if (!(PR_FN(PRS_RAY, pr_ray_fn)(phys, q, r) & 0xff)) {
+			if (!said++)
+				logf_("PRACTICE ray: cast from %.0f,%.0f,%.0f down %.0f cm: no hit (the call returned 0)", (double)f[0],
+				      (double)f[1], (double)f[2], (double)len);
 			return 0;
+		}
 		memcpy(hit, r, 12), memcpy(hobj, r + 0x20, 8);
 		if (!vec_ok(hit, 1e7f))
 			return 0;
@@ -718,7 +730,7 @@ static void pr_spawn(const struct pr_me *m, int type, double t, const char *who)
  * from Talion, how far it moved since the spawn, what its Combat targets (+0x4c0: none, Talion's
  * HOBJECT = it fights him, another); the first frame it targets Talion: "noticed" (the game's own senses, a hit, ...),
  * then every 2 s for 6 s */
-#define PR_C_TARGET 0x4c0 /* Combat: its current target HOBJECT (as the threat's TH_C_TARGET) */
+#define PR_C_TARGET OFS(PR_C_TARGET, 0x4c0) /* Combat: its current target HOBJECT (as the threat's TH_C_TARGET) */
 static void pr_far_tick(const struct pr_me *m, double t)
 {
 	if (!g_pr.far || !g_pr.orc_h || !g_pr.orc_c || g_pr.orc_dead)
@@ -1262,6 +1274,10 @@ static void pr_rtti(uintptr_t obj, char *b, size_t n)
 {
 	uintptr_t vp = 0, ti = 0, np = 0;
 	b[0] = 0;
+#ifdef _WIN32 /* the Windows exe has RTTI only for its libraries' classes (MSVC's, not this layout): the logs show "" */
+	(void)obj, (void)n, (void)vp, (void)ti, (void)np;
+	return;
+#endif
 	if (!obj || !peek(obj, &vp, sizeof vp) || !vp || !peek(vp - 8, &ti, sizeof ti) || !ti || !peek(ti + 8, &np, sizeof np) || !np)
 		return;
 	for (size_t i = 0; i + 1 < n; i++) {
@@ -1402,7 +1418,7 @@ static void pr_floor(const struct pr_me *m, int have, double t)
  * set, FUN_0279b150 wants the vision mode's byte *(+0x10)+0x118 when the trigger's RequireVisionMode is set,
  * FUN_027982d0 / FUN_029a8130 test the point against the camera copy +0xbb0 pos, +0xbbc quat, +0xbcc FOVs) read of
  * each player now */
-#define PRL_PLAYERS 0x4c47020
+#define PRL_PLAYERS GADDR(PRL_PLAYERS, 0x4c47020)
 static void pr_look(const struct pr_me *m, int have, double t)
 {
 	uintptr_t b = 0, e = 0;

@@ -65,7 +65,7 @@
  * DBRecord_GetName; build 27c: GO_PAUSETUT = the pausing tutorial's delegate slot 2 (CUIHUDPausingTutorial's
  * CB_OnTutorial call, 0xb0c370: its schema global 0x4b66420 and the field's +0x78 / +0x88 in the bytes; SOMVR_HINTS_PAUSING).
  * Order = GOS_*) */
-static const struct site_spec g_go_sites_game[] = {
+static SITE_TABLE struct site_spec g_go_sites_game[] = {
 SITE("GO_RTPC", K_VSLOT, 0x346dac8, 0x346dac0, "70 07 8f 00 00 00 00 00 60 d7 8e 00 00 00 00 00", 0x8ed760, "0f b6 47 08 83 f0 01 48 85 f6 0f 94 c2 08 d0 74"),
 SITE("GO_OPTIONS", K_ENTRY, 0xc818c0, 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 03 48 8d 78 10 e8", 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 03 48 8d 78 10"),
 SITE("GO_APPLY", K_ENTRY, 0xcbe980, 0xcbe980, "41 54 55 53 48 89 fb 48 8b 3d 1a c6 9a 03 48 8b 07 ff 50 68 f3 0f 10 83 8c 01 00 00 be 7c 59 53 03 48 8b 10 48 89 c7 ff 92 b0 00 00 00 48 8b 3d f4 c5 9a 03 48 8b 07 ff 50 68 f3 0f 10 83 90 01 00 00 be 8b 59 53 03 48 8b 10 48 89 c7 ff 92 b0 00 00 00", 0xcbe980, "41 54 55 53 48 89 fb 48 8b 3d 1a c6 9a 03 48 8b"),
@@ -81,11 +81,16 @@ _Static_assert(sizeof g_go_sites_game / sizeof g_go_sites_game[0] == GOS_N, "gam
 static const struct site_spec *g_go_sites = g_go_sites_game; /* selftest: stand-ins */
 /* the game's objects (selftest: stand-ins): the sound manager's holder (GO_APPLY's `mov rdi, [0x466afa8]`), the
  * GameOptions music float (GO_APPLY's `movss xmm0, [rbx+0x190]`, the music slider's init FUN_00bd92b0) */
-static struct { uintptr_t snd_pp; uintptr_t opt_music; uintptr_t tut_sch_pp; } g_gog = { 0x466afa8, 0x190, 0x4b66420 };
-#define GO_SND_GET 0x68     /* the holder's vf: the sound manager */
+#ifdef _WIN32 /* GADDR is no constant there: the two globals are set in go_start */
+static struct { uintptr_t snd_pp; uintptr_t opt_music; uintptr_t tut_sch_pp; } g_gog = { 0, OFS(GO_OPT_MUSIC, 0x190), 0 };
+#else
+static struct { uintptr_t snd_pp; uintptr_t opt_music; uintptr_t tut_sch_pp; } g_gog = {
+	GADDR(GO_SND_PP, 0x466afa8), OFS(GO_OPT_MUSIC, 0x190), GADDR(GO_TUT_SCHEMA, 0x4b66420) };
+#endif
+#define GO_SND_GET OFS(GO_SND_GET, 0x68)     /* the holder's vf: the sound manager */
 #define GO_MUSIC "options_music"
 #define GO_DIALOG "options_dialog" /* SOMVR_LOAD_VOICES: FUN_00cbe980's `movss xmm0, [rbx+0x194]; mov esi, 0x3535999` */
-#define GO_SLOT_RTPC 0xb0   /* the sound manager's SetRTPC (slot 22) */
+#define GO_SLOT_RTPC OFS(GO_SLOT_RTPC, 0xb0)   /* the sound manager's SetRTPC (slot 22) */
 #define LV_STILL_S 0.25     /* SOMVR_LOAD_VOICES: no stereo frame for this long in the load's state = a load */
 
 enum { GO_HINTS_GAME, GO_HINTS_LOG, GO_HINTS_OFF };
@@ -166,8 +171,8 @@ static struct log_late g_go_late;
  * (byte *r): r[0] its fields, r[1] & 1 the layout, *(r+8) the 16-byte entries (sorted by the hash at +4, the real entry
  * at entries[+9]; or by the hash at +0 with layout 1), *(r+0x10) the 8-byte values: the real entry's u16 +0xc nonzero
  * = set, its u16 +0xe the value's slot (a float for a duration). The value's address, or 0 (not set / unreadable) */
-#define GO_VSCHEMA 0x4c25d20 /* DAT_04c25d20: the vision record's schema (FUN_02608950 fills it) */
-#define GO_VM_REC 0x28       /* PlayerVisionMode: the vision record */
+#define GO_VSCHEMA GADDR(GO_VSCHEMA, 0x4c25d20) /* DAT_04c25d20: the vision record's schema (FUN_02608950 fills it) */
+#define GO_VM_REC OFS(GO_VM_REC, 0x28)       /* PlayerVisionMode: the vision record */
 static uintptr_t go_rec_field_t(uintptr_t rec, uint32_t hash, int *type)
 {
 	uint8_t hd[2];
@@ -363,9 +368,9 @@ static int go_tut_keep(uintptr_t rec)
  * hash at +0x68; with +0x78 > 1 its index into the record's entries at +0x88) is set to a nonzero reference (the entry's
  * kind & 0x3f = 0xa). The same test here, read only: 1 = it pauses (*page = the field's value), 0 = no page (the text
  * manager's text only: an in-play lesson), -1 = unreadable (the schema not built, the record unreadable) */
-#define GO_TS_HASH 0x68  /* the schema: the page field's hash (FUN_00b0c370's `mov ebx, [r10+0x68]`) */
-#define GO_TS_FAST 0x78  /* ... > 1: the quick path by index */
-#define GO_TS_INDEX 0x88 /* ... its index (byte) */
+#define GO_TS_HASH OFS(GO_TS_HASH, 0x68)  /* the schema: the page field's hash (FUN_00b0c370's `mov ebx, [r10+0x68]`) */
+#define GO_TS_FAST OFS(GO_TS_FAST, 0x78)  /* ... > 1: the quick path by index */
+#define GO_TS_INDEX OFS(GO_TS_INDEX, 0x88) /* ... its index (byte) */
 static int go_tut_pauses(uintptr_t rec, uintptr_t *page)
 {
 	uintptr_t sch = peek_ptr(g_gog.tut_sch_pp), ents = 0, vals = 0, a = 0;
@@ -838,6 +843,9 @@ static void go_start(const struct site_spec *sites, int *bad)
 		return;
 	int ok[GOS_N];
 	char why[512];
+#ifdef _WIN32
+	g_gog.snd_pp = GADDR(GO_SND_PP, 0x466afa8), g_gog.tut_sch_pp = GADDR(GO_TUT_SCHEMA, 0x4b66420);
+#endif
 	for (int i = 0; i < GOS_N; i++) {
 		ok[i] = check_site(&sites[i], why, sizeof why) == 0;
 		if (!ok[i])

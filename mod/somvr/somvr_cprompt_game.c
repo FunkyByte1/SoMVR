@@ -23,7 +23,7 @@
  * of the next N marker calls, SOMVR_XR_DUMP_MARKED). */
 
 /* CPROMPT_SITES_BEGIN (check_sites.py counts this block on its own: four patched K_CALLs in FUN_026e5f90) */
-static const struct site_spec g_cp_sites_game[] = {
+static SITE_TABLE struct site_spec g_cp_sites_game[] = {
 SITE("CP_FX", K_CALL, 0x26e67d7, 0x26e67c5, "48 8d b5 68 04 00 00 48 8b b8 78 0c 08 00 48 83 c7 30 e8 14 60 6a fe", 0xd8c7f0, "80 3d da aa 92 03 00 75 07 31 c0 c3 0f 1f 40 00"),
 SITE("CP_MARK", K_CALL, 0x26e6420, 0x26e640f, "48 8b bd 80 04 00 00 48 85 ff 74 0a be 01 00 00 00 e8 cb aa 7d fe", 0xec0ef0, "55 53 48 89 fb 48 83 ec 18 40 84 f6 75 72 80 bf"),
 SITE("CP_REC", K_CALL, 0x26e63db, 0x26e63d1, "48 8b b5 a0 04 00 00 4c 89 ef e8 10 a4 7d fe", 0xec07f0, "48 8b 87 30 02 00 00 48 89 c2 48 85 c0 0f 84 2d"),

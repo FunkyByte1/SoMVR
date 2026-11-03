@@ -20,7 +20,7 @@
  * rotate-with-camera branch (the context from 0xb00915: P from rsp+0x80, cam = P+0x2d0, the two leas, the call); read
  * only: MM_OPT = the call 0xafec3c of FUN_00c818c0 followed by test/je and cmpb $0,0x203(%rax) (the option's byte,
  * the branch to 0xb00915); called: MM_OPTIONS = FUN_00c818c0 (the GameOptions object, or 0). Order = MMS_*) */
-static const struct site_spec g_mm_sites_game[] = {
+static SITE_TABLE struct site_spec g_mm_sites_game[] = {
 SITE("MM_CAMQ", K_CALL, 0xb0093a, 0xb00915, "48 8b 84 24 80 00 00 00 48 8d bc 24 90 01 00 00 48 8b 80 d0 02 00 00 48 8d 90 58 04 00 00 48 8d b0 84 04 00 00 e8 81 8f f4 ff", 0xa498c0, "f3 0f 10 46 0c f3 0f 10 3e 48 89 f8 f3 0f 10 22"),
 SITE("MM_OPT", K_CALL, 0xafec3c, 0xafec3c, "e8 7f 2c 18 00 48 85 c0 0f 84 fa 1b 00 00 80 b8 03 02 00 00 00 0f 85 be 1c 00 00", 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 03 48 8d 78 10 e8"),
 SITE("MM_OPTIONS", K_ENTRY, 0xc818c0, 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 03 48 8d 78 10 e8", 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 03 48 8d 78 10"),
@@ -29,9 +29,19 @@ SITE("MM_OPTIONS", K_ENTRY, 0xc818c0, 0xc818c0, "48 83 ec 08 48 8b 05 95 7c a2 0
 enum { MMS_CAMQ, MMS_OPT, MMS_OPTIONS, MMS_N };
 _Static_assert(sizeof g_mm_sites_game / sizeof g_mm_sites_game[0] == MMS_N, "minimap sites");
 static const struct site_spec *g_mm_sites = g_mm_sites_game; /* selftest: stand-ins */
-#define MM_OPT_ROTATE 0x203 /* GameOptions: RotateMinimapwithCamera (FUN_02431350's save, the HUD's cmpb) */
+#define MM_OPT_ROTATE OFS(MM_OPT_ROTATE, 0x203) /* GameOptions: RotateMinimapwithCamera (FUN_02431350's save, the HUD's cmpb) */
 
+/* the product is a member function returning by value: GCC passes (hidden result, this, b), MSVC (this, hidden result,
+ * b) - on Windows the call is FUN_1403f1f10(a = cam+0x484, out, b = cam+0x458) (docs/re-winport.md 7.6) */
+#ifdef _WIN32
+#define MM_QMUL_PARAMS const float *a, float *out, const float *b
+typedef void *(*mm_qmul_fn)(const float *a, float *out, const float *b);
+#define MM_QMUL(f, out, a, b) ((mm_qmul_fn)(f))(a, out, b)
+#else
+#define MM_QMUL_PARAMS float *out, const float *a, const float *b
 typedef void *(*mm_qmul_fn)(float *out, const float *a, const float *b);
+#define MM_QMUL(f, out, a, b) ((mm_qmul_fn)(f))(out, a, b)
+#endif
 typedef uintptr_t (*mm_options_fn)(void);
 static struct hook g_mm_h = { .name = "MM_CAMQ" };
 static struct {
@@ -75,9 +85,9 @@ static float mm_yaw_of(const float *q) /* the yaw of a game quaternion's +Z (deg
 }
 
 /* MM_CAMQ (game thread, the HUD pass): the camera product, replaced by the head's yaw in a stereo frame */
-__attribute__((used)) void *somvr_w_mmcamq(float *out, const float *a, const float *b)
+__attribute__((used)) void *somvr_w_mmcamq(MM_QMUL_PARAMS)
 {
-	void *r = ((mm_qmul_fn)g_mm_h.orig)(out, a, b);
+	void *r = MM_QMUL(g_mm_h.orig, out, a, b);
 	uint64_t n = ++g_mm.calls;
 	float q[4], yaw = 0;
 	g_mm.yaw_game = mm_yaw_of(out);
@@ -147,18 +157,7 @@ static int mm_install(const struct site_spec *s)
 {
 	char why[512] = "", err[200] = "", nb[64];
 	int ok = s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) {
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3d0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3d0000) : NULL;
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {

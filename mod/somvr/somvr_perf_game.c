@@ -311,7 +311,7 @@ static atomic_int g_ssh_alt;            /* the check: only in odd frames */
  * for every view, 0x7d7897), P+0x70f0 = 0 and five copies P+0x3918/30/48/60/78 = P+0x3910/28/40/58/70 (0x7f8eec..):
  * eye 1's skip leaves them as eye 0's pass left them (build 27's first try without this: eye 1 had no sun shadows, the
  * check of 115.5) */
-#define SSH_P 0x4625840ul
+#define SSH_P GADDR(SSH_P, 0x4625840)
 static const uint32_t g_ssh_off[7] = { 0x3809, 0x70f0, 0x3918, 0x3930, 0x3948, 0x3960, 0x3978 };
 static uint64_t g_ssh_val[7];           /* eye 0's values after its pass (the first one byte) */
 static uint64_t g_ssh_vframe;           /* ... of this frame */

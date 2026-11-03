@@ -59,7 +59,7 @@
  * FR_DMG_ATK (DamageStruct_DoDamage from FUN_02810e80). Read only: FR_CAMTERM (the camera term's class test and the
  * copy's reader), FR_VF59 (the copy's layout), FR_REARM (the 0.25 s static), FR_DMG_ALL (DoDamage's tail jump: the
  * alternative, not patched). Order = FFS_*) */
-static const struct site_spec g_ff_sites_game[] = {
+static SITE_TABLE struct site_spec g_ff_sites_game[] = {
 SITE("FR_SCORE", K_CALL, 0x28d7d31, 0x28d7d1b, "8b 4c 24 10 45 89 e0 4c 89 fa 48 89 ee 44 88 54 24 08 41 83 c6 01 e8 6a 5a ff ff 44 39 b4 24 50", 0x28cd7a0, "41 57 41 56 41 55 41 54 55 53 48 89 fb 48 81 ec"),
 SITE("FR_GRANT", K_CALL, 0x28d8295, 0x28d8281, "4c 89 c7 44 89 f6 88 44 24 2f 44 88 54 24 2e 4c 89 44 24 20 e8 16 52 ff ff 4c 8b 44 24 20", 0x28cd4b0, "48 83 bf 00 02 00 00 00 0f 84 9a 01 00 00 41 56"),
 SITE("FR_CAMCOPY_A", K_CALL, 0x27add66, 0x27add60, "48 89 ee 48 89 df e8 25 c7 ff ff e9 24 ff ff ff", 0x27aa490, "48 8b 86 d0 02 00 00 f3 0f 10 80 90 04 00 00"),
@@ -92,7 +92,7 @@ static struct { uintptr_t clock_pp, lock_a, lock_b, dbg_sel, dbg_aimgr; } g_ffg 
 #define FF_E_PRIO 0x23a  /* "Can Be Attacker" prio flag */
 #define FF_T_HOBJ 0x70   /* target entry: the target's HOBJECT */
 #define FF_O_HOBJ 0x8
-#define FF_O_POS 0xd2c
+#define FF_O_POS OFS(FF_O_POS, 0xd2c)
 #define FF_PL_COPY 0xb94 /* CPlayerObj: the AI's camera copy (0x40 bytes) */
 #define FF_PL_D12 0xd12  /* CPlayerObj: FUN_027aa490's second call is skipped while set */
 #define FF_DS_DAMAGER 0x20 /* DamageStruct: the damager's HOBJECT (DoDamage's tail jump passes it) */

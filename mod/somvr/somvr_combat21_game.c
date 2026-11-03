@@ -161,7 +161,7 @@ static int gc_front(const struct cb_orc *o)
 /* ---- build 23: `cue rules` (SOMVR_HANDS_TEST, read only): what decides how a grab ends - the data behind
  * 'PC_Grab_Into_F' / '_Resistant' (docs/re-xr-pipeline.md 95.2) ---- */
 static uintptr_t kp_of_combat(uintptr_t c); /* somvr_captain_game.c (included later) */
-#define GC_SCH_PRED 0x4ba8f80 /* the attack predicates' schema holder (106 fields, re-xr-pipeline.md 24.1) */
+#define GC_SCH_PRED GADDR(GC_SCH_PRED, 0x4ba8f80) /* the attack predicates' schema holder (106 fields, re-xr-pipeline.md 24.1) */
 /* a field's name by its hash in a schema holder ("" = not in it) */
 static const char *gc_fname(uintptr_t holder, uint32_t hash, char *out, size_t cap)
 {

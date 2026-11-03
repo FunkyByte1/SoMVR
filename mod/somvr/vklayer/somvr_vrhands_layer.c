@@ -303,7 +303,7 @@ static void vh_setup(void) {
         lg("xr: hands: the wrist panel %.1f cm off the palm's grip (the hand reaches %.1f cm out of it, + %.1f cm), its "
            "centre %.1f cm up", 100 * (VH.m.palm_reach_m + VH.panel_gap), 100 * VH.m.palm_reach_m, 100 * VH.panel_gap,
            100 * VH.panel_up);
-    somvr_vrhands_shared *o = (somvr_vrhands_shared *)dlsym(RTLD_DEFAULT, SOMVR_VRHANDS_SYMBOL);
+    somvr_vrhands_shared *o = (somvr_vrhands_shared *)somvr_obj(SOMVR_VRHANDS_SYMBOL);
     const char *no = !X.sh ? "no stereo path" : !o ? "no somvr_vrhands: a preload without it"
                      : !somvr_vrhands_ok(o) ? "somvr_vrhands inactive (SOMVR_VRHANDS unset) or another version"
                      : !VH.want ? "SOMVR_XR_HANDS=off" : !VH.model_ok ? "the hand model is unusable" : NULL;

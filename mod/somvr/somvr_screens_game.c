@@ -19,23 +19,23 @@
  *    press (Mouse1) opens his card. Each click logs the menu stack (the state, the layers' vtables).
  * The test word `screens status|death first|game|mouse1 off|nemesis|all`. */
 
-#define SCR_VT_HIER 0x35b8da8UL     /* CUIHierarchyLayer's vtable (reference/index/classes.tsv) */
-#define SCR_VT_HIER_VF10 0xedf470UL /* its slot 10: CUIHierarchyLayer::vf_10, the command handler (Mouse1 = 100) */
-#define SCR_P_UI 0x2e0              /* Player: the CPlayerUI (re-ui-pointer.md 1.2: FUN_00a0f760 -> FUN_00acbca0) */
-#define SCR_UI_SM 0xb0              /* CPlayerUI: its CPlayerUIStateMachine */
-#define SCR_SM_STATE 0xc            /* the state (-1: the one at +0x8) */
-#define SCR_SM_STATE0 0x8
-#define SCR_SM_MGR 0x10             /* state 5 (the pause menus): CUIMenuManagerBase embedded here (FUN_00acbd10) */
-#define SCR_MGR_LAYERS 0x198        /* its layer stack: 8 pointers */
-#define SCR_MGR_COUNT 0x1e8
-#define SCR_MGR_OVERRIDE 0x1ec
+#define SCR_VT_HIER GADDR(SCR_VT_HIER, 0x35b8da8)     /* CUIHierarchyLayer's vtable (reference/index/classes.tsv) */
+#define SCR_VT_HIER_VF10 GADDR(SCR_VT_HIER_VF10, 0xedf470) /* its slot 10: CUIHierarchyLayer::vf_10, the command handler (Mouse1 = 100) */
+#define SCR_P_UI OFS(SCR_P_UI, 0x2e0)              /* Player: the CPlayerUI (re-ui-pointer.md 1.2: FUN_00a0f760 -> FUN_00acbca0) */
+#define SCR_UI_SM OFS(SCR_UI_SM, 0xb0)              /* CPlayerUI: its CPlayerUIStateMachine */
+#define SCR_SM_STATE OFS(SCR_SM_STATE, 0xc)            /* the state (-1: the one at +0x8) */
+#define SCR_SM_STATE0 OFS(SCR_SM_STATE0, 0x8)
+#define SCR_SM_MGR OFS(SCR_SM_MGR, 0x10)             /* state 5 (the pause menus): CUIMenuManagerBase embedded here (FUN_00acbd10) */
+#define SCR_MGR_LAYERS OFS(SCR_MGR_LAYERS, 0x198)        /* its layer stack: 8 pointers */
+#define SCR_MGR_COUNT OFS(SCR_MGR_COUNT, 0x1e8)
+#define SCR_MGR_OVERRIDE OFS(SCR_MGR_OVERRIDE, 0x1ec)
 #define SCR_CMD_MOUSE1 100
 #define SCR_CMD_MAXIS_X 104         /* MouseAxisX / MouseAxisY: the hierarchy manager's mouse move (FUN_00a07730) */
 #define SCR_CMD_MAXIS_Y 105
 
 /* SCREENS_SITES_BEGIN (check_sites.py counts this block on its own: the patched pad check of the hierarchy's mouse
  * pick, FUN_009fe470's first call) */
-static const struct site_spec g_scr_sites_game[] = {
+static SITE_TABLE struct site_spec g_scr_sites_game[] = {
 SITE("SCR_NEM_PAD", K_CALL, 0x9fe483, 0x9fe47f, "48 8b 7f 18 e8 f8 a9 03 00 84 c0 75 1b", 0xa38e80, "48 83 ec 08 48 8b 05 d5 06 c7 03 0f b6 b7 31"),
 };
 /* SCREENS_SITES_END */
@@ -223,7 +223,7 @@ __attribute__((used)) void somvr_scrpad_c(struct regs *r)
 		r->rax = 0;
 		atomic_fetch_add_explicit(&g_scr_h.mods, 1, memory_order_relaxed);
 	} else {
-		r->rax = ((lp_padmode_fn)g_scr_h.orig)((void *)r->rdi);
+		r->rax = ((lp_padmode_fn)g_scr_h.orig)((void *)RA1(r));
 	}
 }
 
@@ -234,18 +234,7 @@ static int scr_install(const struct site_spec *s)
 	int ok = s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
 	if (s->kind != K_CALL)
 		snprintf(why, sizeof why, "not a call site");
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) {
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3f0000) : NULL;
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -309,7 +298,7 @@ static void scr_start(int *bad)
 		logf_("WARN SOMVR_POINTER_MOUSE1=%s is not off|nemesis|all: off", mv);
 	}
 	uintptr_t vf = 0;
-	g_scr.hier_ok = peek(SCR_VT_HIER + 10 * 8, &vf, sizeof vf) && vf == SCR_VT_HIER_VF10;
+	g_scr.hier_ok = peek(SCR_VT_HIER + OFS(SCR_HIER_VF10_AT, 0x50), &vf, sizeof vf) && vf == SCR_VT_HIER_VF10;
 	if (g_scr.pm1 && (!g_ptr.on || !g_inp.inject || !g_scr.hier_ok)) {
 		logf_("WARN SOMVR_POINTER_MOUSE1=%s: %s: off", somvr_pm1_names[g_scr.pm1], !g_ptr.on ? "needs SOMVR_POINTER" :
 		      !g_inp.inject ? "needs SOMVR_INPUT's command events" : "CUIHierarchyLayer's vtable does not match");
@@ -332,7 +321,7 @@ static void scr_start(int *bad)
 		      "command Mouse1" : g_scr.pm1 ? "a pointer click on the Nemesis screens (the top menu layer the hierarchy) "
 		      "also holds the command Mouse1 (the selected captain's card), its point over the hierarchy selects the "
 		      "captain under it (SCR_NEM_PAD, MouseAxisX/Y)" : "the pointer drives the mouse only",
-		      SCR_VT_HIER, g_scr.hier_ok ? "checked" : "NOT matched");
+		      (unsigned long)SCR_VT_HIER, g_scr.hier_ok ? "checked" : "NOT matched");
 }
 
 /* the trigger word "screens ..." (the writer thread) */

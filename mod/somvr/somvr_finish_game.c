@@ -32,7 +32,7 @@
  * (re-combat-items.md 2.4, the probe's weaponfx); FI_OBJSYS_MH the object system's vtbl+0x118 (an object's model
  * handle); FI_ITEM FUN_02311e20 (the active item: inv+0x280 the slot, inv+0x30+slot*0x38); FI_KBMNODE FUN_02296f80.
  * Order = FIS_* */
-static const struct site_spec g_fi_sites_game[] = {
+static SITE_TABLE struct site_spec g_fi_sites_game[] = {
 SITE("FI_HITCOUNT", K_ENTRY, 0x26d6110, 0x26d6110, "48 8b 97 f0 01 00 00 31 c0 48 85 d2 74 07 0f bf 82 c4 00 00 00 c3", 0x26d6110, "48 8b 97 f0 01 00 00 31 c0 48 85 d2 74 07 0f"),
 SITE("FI_CTX", K_ENTRY, 0x22617f0, 0x22617f0, "48 b8 00 00 80 bf 08 00 00 01 41 55 41 54 55 48", 0x22617f0, "48 b8 00 00 80 bf 08 00 00 01 41 55 41 54 55"),
 SITE("FI_CTX_PC", K_ENTRY, 0xa84540, 0xa84540, "41 54 55 48 89 f5 53 48 89 fb 4c 8b a7 c8 08 00", 0xa84540, "41 54 55 48 89 f5 53 48 89 fb 4c 8b a7 c8 08"),
@@ -97,7 +97,7 @@ static struct {
 #define FI_INV_OF 0xe8
 #define FI_IT_ENTRIES 0x28   /* InventoryItem: vector of 0x48-byte model entries, +0x20 the model object */
 #define FI_IE_OBJ 0x20
-#define FI_SH_FXMGR 0x80c78  /* CGameClientShell: the ClientFX manager (create at +0x30) */
+#define FI_SH_FXMGR OFS(FI_SH_FXMGR, 0x80c78) /* CGameClientShell: the ClientFX manager (create at +0x30) */
 #define FI_TM_NUM 0x20       /* the game timer (*(0x463e290)+8): num, den (SlowMO.Set writes them) */
 #define FI_CCR_NODES 1       /* schema 0x4ba0ca0 field 1: Nodes */
 #define FI_ATK_ANIM 0        /* schema 0x4ba23c0 field 0: AnimationData */
@@ -409,7 +409,7 @@ static int fi_kill_hit(uintptr_t pc, const struct cb_orc *o, const sf_hit *h, co
 	int fk = kp_force_kill01(o->c, SOMVR_CPF_COMBAT, "the finisher", cb_now()); /* build 22: a captain's traits */
 	struct kp_floor kf;
 	kp_floor_on(o->c, fk, "the finisher", cb_now(), &kf);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ h->point[0], h->point[1], h->point[2] }, pc, o->hobj, rec, fk);
+	CB_DEALHIT_CALL((cb_ltvec){ h->point[0], h->point[1], h->point[2] }, pc, o->hobj, rec, fk);
 	kp_floor_off(&kf);
 	if (sev)
 		memcpy((void *)g_fig.sever, &sev0, 1);

@@ -273,7 +273,7 @@ static float jp_gravity(uintptr_t pm)
 {
 	uintptr_t pc = pm ? peek_ptr(pm + CL_PM_PROXY) : 0;
 	float g = 0;
-	if (pc && vptr_of((void *)pc) == g_cl.vt_pc && peek(pc + 0x58, &g, sizeof g) && isfinite(g) && g < -5 && g > -60)
+	if (pc && vptr_of((void *)pc) == g_cl.vt_pc && peek(pc + OFS(JP_PC_GRAVITY, 0x58), &g, sizeof g) && isfinite(g) && g < -5 && g > -60)
 		return -100.0f * g;
 	return g_jp.cfg.g;
 }

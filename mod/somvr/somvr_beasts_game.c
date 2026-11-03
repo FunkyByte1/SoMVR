@@ -23,7 +23,7 @@
  * BZ_HAS_SKILL FUN_02313570 (HasSkill: inv+0x268's bit set, then FUN_023134f0); BZ_SKILL_BIT FUN_023134f0 (the bit
  * of a record: its index in its category); BZ_PURCHASE FUN_0268eee0 (Character.PurchaseSkill: the inventory at
  * CCharacter+0x910). Order = BZS_* */
-static const struct site_spec g_bz_sites_game[] = {
+static SITE_TABLE struct site_spec g_bz_sites_game[] = {
 SITE("BZ_SKILL_CAT", K_ENTRY, 0x216d900, 0x216d900, "40 0f b6 ce 48 8b 35 35 8d 9e 02 48 89 fa bf 44", 0x216d900, "40 0f b6 ce 48 8b 35 35 8d 9e 02 48 89 fa bf"),
 SITE("BZ_HAS_SKILL", K_ENTRY, 0x2313570, 0x2313570, "48 85 f6 74 13 48 81 c7 68 02 00 00 e9 6f ff ff", 0x2313570, "48 85 f6 74 13 48 81 c7 68 02 00 00 e9 6f ff"),
 SITE("BZ_SKILL_BIT", K_ENTRY, 0x23134f0, 0x23134f0, "48 85 f6 74 6b 48 8b 46 18 48 8b 50 38 f6 46 01", 0x23134f0, "48 85 f6 74 6b 48 8b 46 18 48 8b 50 38 f6 46"),
@@ -34,14 +34,14 @@ enum { BZS_SKILL_CAT, BZS_HAS_SKILL, BZS_SKILL_BIT, BZS_PURCHASE, BZS_N };
 _Static_assert(sizeof g_bz_sites_game / sizeof g_bz_sites_game[0] == BZS_N, "beasts sites");
 static const struct site_spec *g_bz_sites = g_bz_sites_game; /* selftest: stand-ins */
 
-#define BZ_SKILL_CAT_PP 0x4b56640 /* Inventory/Skill/Skills (BZ_SKILL_CAT) */
-#define BZ_CH_INV 0x910           /* CCharacter: the inventory (BZ_PURCHASE) */
-#define BZ_INV_SKILLS 0x268       /* inventory: the owned skills, a bit vector (begin, end) (BZ_HAS_SKILL) */
-#define BZ_C_CHARREC 0x4c8        /* Combat: the character record ('Warg_Brown': P7) */
-#define BZ_C_ATTACK 0x4d0         /* Combat: the current attack record (THREAT's TH_CURATK) */
-#define BZ_C_TARGET 0x4c0         /* Combat: the attack's target HOBJECT (THREAT's TH_ATK_START) */
-#define BZ_P_MOUNT 0x1d8          /* Player: the mount HOBJECT (the fallback's FB_P_MOUNT, FB_MOUNT's proof) */
-#define BZ_PC_STRUGGLE 0x8d8      /* PlayerCombat: the state struggle, +0x8e0 the sync struggle (re-m1m2.md 6.2) */
+#define BZ_SKILL_CAT_PP GADDR(BZ_SKILL_CAT_PP, 0x4b56640) /* Inventory/Skill/Skills (BZ_SKILL_CAT) */
+#define BZ_CH_INV OFS(BZ_CH_INV, 0x910)           /* CCharacter: the inventory (BZ_PURCHASE) */
+#define BZ_INV_SKILLS OFS(BZ_INV_SKILLS, 0x268)       /* inventory: the owned skills, a bit vector (begin, end) (BZ_HAS_SKILL) */
+#define BZ_C_CHARREC OFS(BZ_C_CHARREC, 0x4c8)        /* Combat: the character record ('Warg_Brown': P7) */
+#define BZ_C_ATTACK OFS(BZ_C_ATTACK, 0x4d0)         /* Combat: the current attack record (THREAT's TH_CURATK) */
+#define BZ_C_TARGET OFS(BZ_C_TARGET, 0x4c0)         /* Combat: the attack's target HOBJECT (THREAT's TH_ATK_START) */
+#define BZ_P_MOUNT OFS(BZ_P_MOUNT, 0x1d8)          /* Player: the mount HOBJECT (the fallback's FB_P_MOUNT, FB_MOUNT's proof) */
+#define BZ_PC_STRUGGLE OFS(BZ_PC_STRUGGLE, 0x8d8)      /* PlayerCombat: the state struggle, +0x8e0 the sync struggle (re-m1m2.md 6.2) */
 #define BZ_MAX 16
 #define BZ_NEAR_CM 1500.0f        /* the BEASTS lines: a beast within 15 m */
 #define BZ_TRACE_CM 800.0f        /* the trace: an attack of a beast within 8 m at Talion */
@@ -132,9 +132,9 @@ static const uint32_t g_bzu_hasnot[] = { 0x95447be3u /* TargetDoesNotHaveInvItem
 #define BZP_H_BUTTONS 0x245e4bd7u   /* a mode's Buttons */
 #define BZP_H_OVERRIDES 0x31775628u /* a button's overrides */
 #define BZP_H_INCLUDED 0xa582699fu  /* an override's IncludedItem */
-#define BZT_PC_TARGETING 0x360 /* PlayerCombat: its targeting (FUN_00a847a0: this + 0x360 -> FUN_00a97ce0) */
-#define BZT_E_REC 0x40         /* a targeting entry: its targeting record */
-#define BZT_E_OFF 0x8e         /* ... its off bits (0 = on, FUN_0227d570) */
+#define BZT_PC_TARGETING OFS(BZT_PC_TARGETING, 0x360) /* PlayerCombat: its targeting (FUN_00a847a0: this + 0x360 -> FUN_00a97ce0) */
+#define BZT_E_REC OFS(BZT_E_REC, 0x40)         /* a targeting entry: its targeting record */
+#define BZT_E_OFF OFS(BZT_E_OFF, 0x8e)         /* ... its off bits (0 = on, FUN_0227d570) */
 static const uint32_t g_bzu_nodef[] = { 0xc016c081u /* Nodes */, 0xb86785e9u /* MountedNodes */, 0x23f4e9cdu
 					/* CombatCircleNodes */, 0x85069a49u /* Links */ };
 static struct {

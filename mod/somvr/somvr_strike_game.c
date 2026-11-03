@@ -129,8 +129,8 @@ static void sk_config(int *bad)
 /* the test word "bow strike free|cost" (headless only: run 065308 struck once, then the game showed no Shadow Strike
  * prompt again): the game's debug switches Combat.DisableEnergyCost and Combat.DisableChargeCost (their bool values,
  * reference/work-gameplay/combat_cvars.tsv) set / cleared, so several strikes can be tested in one boot */
-#define SK_CV_ENERGY 0x4c44398u
-#define SK_CV_CHARGE 0x4c44358u
+#define SK_CV_ENERGY GADDR(SK_CV_ENERGY, 0x4c44398)
+#define SK_CV_CHARGE GADDR(SK_CV_CHARGE, 0x4c44358)
 /* which = 3 both, 1 the energy alone, 2 the charge alone ("bow strike free energy|charge": which cost blocks the next) */
 static const char *sk_cost_word(int free_, int which)
 {

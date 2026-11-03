@@ -38,7 +38,7 @@
 #define SF_PAST_CM 6.0f   /* a passed hit (Talion, a soft surface): the ray goes on from this far past it */
 #define SF_MAX_STEPS 6
 #define SF_FAR_CM 60.0f   /* a palm deeper than this behind a plane: not that surface (a ray past an edge) */
-#define SF_CAST_FLAGS 0xf8u /* CL_CAST_FLAGS (0x58) | CL_CAST_MATERIAL (0x80) | 0x20: the hit's normal */
+#define SF_CAST_FLAGS OFS(SF_CAST_FLAGS, 0xf8) /* CL_CAST_FLAGS (0x58) | CL_CAST_MATERIAL (0x80) | 0x20: the hit's normal */
 #define SF_NHIT 24        /* distinct hit objects / surfaces logged once (`SURF hit`) */
 
 static somvr_vh_model g_sf_m; /* our drawn hand: the samples' places in the grip frame (the layer's model) */

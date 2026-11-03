@@ -8,12 +8,12 @@
  * 0x46b8260 (FUN_00bf33d0's own test; read only). Nothing is patched. The word `map status|on|off|pan PXS LAG_MS
  * STEER_PX|hold X Y SEC` (hold = the stick's values held SEC seconds: the pan's rate measured). */
 
-#define MAP_VT_ZONE 0x353e120UL      /* CUIPDAZoneMapLayer's vtable (reference/index/classes.tsv) */
-#define MAP_VT_ZONE_VF10 0xc03fc0UL  /* its slot 10: the command handler (0x57 Fast Travel, 0x58 Advance Time) */
-#define MAP_L_SEL 0xd00              /* the layer: the selected map icon under the cross */
-#define MAP_SEL_OBJ 0x38             /* the icon: its object */
-#define MAP_OBJ_TYPES 0x48           /* the object: its type list (a node: +0 the type, +8 the next) */
-#define MAP_TYPE_TRAVEL 0x46b8260UL  /* the travel point's type (FUN_00bf33d0, vf_10) */
+#define MAP_VT_ZONE GADDR(MAP_VT_ZONE, 0x353e120)      /* CUIPDAZoneMapLayer's vtable (reference/index/classes.tsv) */
+#define MAP_VT_ZONE_VF10 GADDR(MAP_VT_ZONE_VF10, 0xc03fc0)  /* its slot 10: the command handler (0x57 Fast Travel, 0x58 Advance Time) */
+#define MAP_L_SEL OFS(MAP_L_SEL, 0xd00)              /* the layer: the selected map icon under the cross */
+#define MAP_SEL_OBJ OFS(MAP_SEL_OBJ, 0x38)             /* the icon: its object */
+#define MAP_OBJ_TYPES OFS(MAP_OBJ_TYPES, 0x48)           /* the object: its type list (a node: +0 the type, +8 the next) */
+#define MAP_TYPE_TRAVEL GADDR(MAP_TYPE_TRAVEL, 0x46b8260)  /* the travel point's type (FUN_00bf33d0, vf_10) */
 
 static struct {
 	somvr_map_cfg cfg;
@@ -156,7 +156,7 @@ static void map_start(int *bad)
 		logf_("WARN SOMVR_MAP_POINT=%s is not on|off[,PXS,LAG_MS,STEER_PX]: off", v);
 	}
 	uintptr_t vf = 0;
-	g_map.vt_ok = peek(MAP_VT_ZONE + 10 * 8, &vf, sizeof vf) && vf == MAP_VT_ZONE_VF10;
+	g_map.vt_ok = peek(MAP_VT_ZONE + OFS(MAP_ZONE_CMD_SLOT, 10) * 8, &vf, sizeof vf) && vf == MAP_VT_ZONE_VF10;
 	if (g_map.cfg.on && (!g_ptr.on || !g_inp.inject || !g_map.vt_ok)) {
 		logf_("WARN SOMVR_MAP_POINT=on: %s: off", !g_ptr.on ? "needs SOMVR_POINTER" : !g_inp.inject ?
 		      "needs SOMVR_INPUT's command events" : "CUIPDAZoneMapLayer's vtable does not match");

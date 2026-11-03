@@ -176,6 +176,12 @@ gcc "${CF[@]}" -o "$D/build/tests/test_objective" "$D/tests/test_objective.c" "$
 
 echo "== patch sites (read-only, the game binary on disk)"
 python3 -I "$D/check_sites.py" "$D/somvr.c" "${SOM_BIN:-$D/../../reference/bin/linux/ShadowOfMordor}"
+echo "== Windows tables (win/README.md: win/sites-*.tsv and offsets-*.tsv against the Steam-Windows exe, read-only)"
+python3 -I "$D/win/wintables.py" --check --quiet
+gcc "${CF[@]}" -o "$D/build/tests/test_fogdxbc" "$D/win/tests/test_fogdxbc.c" # winport: the fog edit in DXBC (+ the checksum on the exe's 927 blobs)
+"$D/build/tests/test_fogdxbc" "$D/../../reference/bin/ShadowOfMordor.exe"
+gcc "${CF[@]}" -o "$D/build/tests/test_winabi" "$D/tests/test_winabi.c" # winport-hooks: the by-name lookup, the Win64 argument slots
+"$D/build/tests/test_winabi" "$D/../../reference/bin/linux/ShadowOfMordor" "$D/../../reference/bin/ShadowOfMordor.exe"
 
 echo "== inert outside the game"
 T=$(mktemp -d)

@@ -77,7 +77,7 @@
  * 0xa98a3c (FUN_00a98850), 0xa9865d, 0xa987b7 (FUN_00a98030), 0xa96310, 0xa9641c (FUN_00a961f0); re-xr-pipeline.md
  * 45.13); the called CO_COLLECT = FUN_02781370(item, character): InventoryItemUI's Collect (Lua's
  * `item:Collect(c)`, FUN_023f17a0): +0x68f set, the record into the character's inventory, OnCollect. Order = COS_*) */
-static const struct site_spec g_co_sites_game[] = {
+static SITE_TABLE struct site_spec g_co_sites_game[] = {
 SITE("CO_LAT_TICK", K_VSLOT, 0x398ef98, 0x398ef90, "60 68 8c 00 00 00 00 00 d0 bb 79 02 00 00 00 00", 0x279bbd0, "53 48 89 fb 48 83 ec 30 80 bf d2 00 00 00 00 74"),
 SITE("CO_VLOOK", K_CALL, 0x274f5fe, 0x274f5f3, "49 8b 45 00 48 8b b8 f0 02 00 00 e8 9d 37 38 fe", 0xad2da0, "80 7f 48 00 75 0a c3 66 0f 1f 84 00 00 00 00 00"),
 SITE("CO_LAT_SEE", K_ENTRY, 0x2799e90, 0x2799e90, "48 85 f6 74 1e f6 86 78 01 00 00 01 75 15 48 8b", 0x2799e90, "48 85 f6 74 1e f6 86 78 01 00 00 01 75 15"),
@@ -99,29 +99,33 @@ enum { COS_LAT_TICK, COS_VLOOK, COS_LAT_SEE, COS_LAT_VIEW, COS_OBJ_PROPS, COS_TX
        COS_TSCORE_1, COS_TSCORE_6 = COS_TSCORE_1 + 5, COS_COLLECT, COS_N };
 _Static_assert(sizeof g_co_sites_game / sizeof g_co_sites_game[0] == COS_N, "collect sites");
 static const struct site_spec *g_co_sites = g_co_sites_game; /* selftest: stand-ins */
-#define CO_PLAYERS 0x4c47020u /* the player list (a std::vector of CPlayerObj*; FUN_0279b7a0 walks it) */
-#define CO_LAT_STATE 0xc8
-#define CO_LAT_DWELL 0xb8
-#define CO_LAT_MODE 0xcc
-#define CO_LAT_RADIUS 0xb0
-#define CO_LAT_LOOKER 0x80
-#define CO_OBJ_PROPTBL 0xd0 /* an engine object's property table (CO_OBJ_PROPS) */
-#define CO_VL_ON 0x48
-#define CO_VL_TARGET 0x90
-#define CO_VL_MEASURE 0x3a0
-#define CO_VL_FLAG 0x566
+#define CO_PLAYERS GADDR(CO_PLAYERS, 0x4c47020) /* the player list (a std::vector of CPlayerObj*; FUN_0279b7a0 walks it) */
+#define CO_LAT_STATE OFS(CO_LAT_STATE, 0xc8)
+#define CO_LAT_DWELL OFS(CO_LAT_DWELL, 0xb8)
+#define CO_LAT_MODE OFS(CO_LAT_MODE, 0xcc)
+#define CO_LAT_RADIUS OFS(CO_LAT_RADIUS, 0xb0)
+#define CO_LAT_LOOKER OFS(CO_LAT_LOOKER, 0x80)
+#define CO_OBJ_PROPTBL OFS(CO_OBJ_PROPTBL, 0xd0) /* an engine object's property table (CO_OBJ_PROPS) */
+#define CO_VL_ON OFS(CO_VL_ON, 0x48)
+#define CO_VL_TARGET OFS(CO_VL_TARGET, 0x90)
+#define CO_VL_MEASURE OFS(CO_VL_MEASURE, 0x3a0)
+#define CO_VL_FLAG OFS(CO_VL_FLAG, 0x566)
 #define CO_TRIGS 48 /* triggers followed (logs) */
 #define CO_RECS 32  /* hint records dumped / their keys cached */
 #define CO_KEEP 8   /* SOMVR_HINTS_KEEP prefixes */
-#define CO_C_OBJ 0x68        /* a targeting candidate (CombatHost+0x2f8): its object (FUN_00a941b0's name) */
-#define CO_C_ONSCREEN 0xb9   /* FUN_0274ed10: FUN_00a60920's on-screen answer */
-#define CO_ITEM_CLASS 0x4c464e0u /* InventoryItemUI's class in an object's class chain *(obj+0x48) (FUN_023f1bb0) */
-#define CO_ITEM_LOOKAT 0x68d /* InventoryItemUI: SetLookAtEnabled's byte (FUN_02781350) */
-#define CO_ITEM_TAKEN 0x68f  /* InventoryItemUI: collected (FUN_02781370, vf_31) */
-#define CO_ITEM_REC 0x5c8    /* InventoryItemUI: its inventory record (FUN_02781370) */
+#define CO_C_OBJ OFS(CO_C_OBJ, 0x68)        /* a targeting candidate (CombatHost+0x2f8): its object (FUN_00a941b0's name) */
+#define CO_C_ONSCREEN OFS(CO_C_ONSCREEN, 0xb9)   /* FUN_0274ed10: FUN_00a60920's on-screen answer */
+#define CO_ITEM_CLASS GADDR(CO_ITEM_CLASS, 0x4c464e0) /* InventoryItemUI's class in an object's class chain *(obj+0x48) (FUN_023f1bb0) */
+#define CO_ITEM_LOOKAT OFS(CO_ITEM_LOOKAT, 0x68d) /* InventoryItemUI: SetLookAtEnabled's byte (FUN_02781350) */
+#define CO_ITEM_TAKEN OFS(CO_ITEM_TAKEN, 0x68f)  /* InventoryItemUI: collected (FUN_02781370, vf_31) */
+#define CO_ITEM_REC OFS(CO_ITEM_REC, 0x5c8)    /* InventoryItemUI: its inventory record (FUN_02781370) */
 #define CO_ITEMS 16          /* item candidates followed (logs) */
-#define CO_CHAR_CLASS 0x4c41500u /* CCharacter's class in an object's class chain (FUN_02781370's check) */
+#define CO_CHAR_CLASS GADDR(CO_CHAR_CLASS, 0x4c41500) /* CCharacter's class in an object's class chain (FUN_02781370's check) */
 #define CO_SEEN_CM 300.f     /* a glyph's LookAtTrigger within this of its item (round 2: 1 m) */
+#define CO_CAM_POS OFS(CO_CAM_POS, 0x44c)   /* CPlayerCamera: the transform copy's position (3 floats) */
+#define CO_CAM_ROT OFS(CO_CAM_ROT, 0x458)   /* ... its rotation (a quaternion) */
+#define CO_CAM_ROT2 OFS(CO_CAM_ROT2, 0x484) /* ... the same rotation again */
+#define CO_P_VIEW OFS(CO_P_VIEW, 0xbb0)     /* the player: the view pose CO_LAT_VIEW reads (+0xbb0..+0xbcc) */
 #define CO_STALE_S 10.0      /* build 27: a full table's entry untouched this long is reused (re-xr-pipeline.md 107) */
 
 typedef uint32_t (*co_tick_fn)(uintptr_t trig);
@@ -326,7 +330,7 @@ static void co_post(void)
 		return;
 	if (!g_co.camhead_logged++) {
 		float f[24];
-		if (peek(c + 0x44c, f, sizeof f))
+		if (peek(c + CO_CAM_POS, f, sizeof f))
 			logf_("GLYPH camhead: the camera %#lx +0x44c..: %.1f %.1f %.1f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f "
 			      "| +0x478 %.3f %.3f %.3f | +0x484 %.3f %.3f %.3f %.3f; the game's view %.1f %.1f %.1f q %.3f %.3f %.3f %.3f; "
 			      "eye 0 %.1f %.1f %.1f q %.3f %.3f %.3f %.3f", (unsigned long)c, f[0], f[1], f[2], f[3], f[4], f[5], f[6],
@@ -334,10 +338,10 @@ static void co_post(void)
 			      g_fr.game.pos[1], g_fr.game.pos[2], g_fr.game.quat[0], g_fr.game.quat[1], g_fr.game.quat[2],
 			      g_fr.game.quat[3], pos[0], pos[1], pos[2], q[0], q[1], q[2], q[3]);
 	}
-	memcpy((void *)(c + 0x44c), pos, sizeof pos);
-	memcpy((void *)(c + 0x458), q, sizeof q);
+	memcpy((void *)(c + CO_CAM_POS), pos, sizeof pos);
+	memcpy((void *)(c + CO_CAM_ROT), q, sizeof q);
 	if (m == 2)
-		memcpy((void *)(c + 0x484), q, sizeof q);
+		memcpy((void *)(c + CO_CAM_ROT2), q, sizeof q);
 	g_co.n_camhead++;
 }
 
@@ -410,7 +414,7 @@ __attribute__((used)) uint32_t somvr_w_colat(uintptr_t trig)
 	struct co_trig *r = &g_co.tr[k];
 	if ((st != r->state || d0 != r->d0 || d2 != r->d2 || see != r->see || view != r->view || t >= r->next) && co_log_ok()) {
 		float cp[3] = { 0, 0, 0 };
-		peek(p + 0xbb0, cp, sizeof cp);
+		peek(p + CO_P_VIEW, cp, sizeof cp);
 		logf_("GLYPH t=%.3f trigger #%u %#lx at (%.0f %.0f %.0f) %.1f m from Talion (%.0f %.0f %.0f): state %d dwell %.2f s "
 		      "eye mode %d radius %.0f gates d0=%u d2=%u d3=%u looker %#lx; vision %d; the game's tests: see %d view %d "
 		      "(the camera copy at %.0f %.0f %.0f, %.1f m from it)", t, r->id, (unsigned long)trig, pos[0], pos[1], pos[2],
@@ -595,7 +599,7 @@ static void co_collect_tick(void)
 /* build 29b (som-b29-pcaragor2; re-xr-pipeline.md 130): while SOMVR_VERBS_BRAND_NODELOG's window is open, the
  * candidate's debug byte +0xbd (the game's Combat.Vis.Target) is set for the call and put back after: the test's own
  * "[COMBAT|TARGET]: 'TARGET' Rejected (RECORD)- why" / "Validated (RECORD), Score" lines reach the node log's sink */
-#define CO_C_TGTDEBUG 0xbd
+#define CO_C_TGTDEBUG OFS(CO_C_TGTDEBUG, 0xbd)
 static volatile int g_co_tgt_debug;
 /* CO_TSCORE_1..6: FUN_00a941b0(target record, context, candidate, &score) - a target record's rules (logged, passed) */
 __attribute__((used)) uint64_t somvr_w_coscore(uintptr_t rec, uintptr_t ctx, uintptr_t cand, float *score)

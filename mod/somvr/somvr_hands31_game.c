@@ -678,8 +678,8 @@ static void ov_collision(uintptr_t pm, int want)
  * the one-shot extra move (Talion's frame, the fields at rest), the follow's request dropped; 1 = handled */
 static int ov_pm(struct hook *h, struct regs *r)
 {
-	uintptr_t pm = (uintptr_t)r->rdi;
-	float *xf = (float *)r->rsi;
+	uintptr_t pm = (uintptr_t)RA1(r); /* (pm, xf): rdi/rsi, Win64 rcx/rdx */
+	float *xf = (float *)RA2(r);
 	if (!ov_active() || pm != g_ov.act_pm || my_tid() != g_ov.tid)
 		return 0;
 	g_follow.req = 0;

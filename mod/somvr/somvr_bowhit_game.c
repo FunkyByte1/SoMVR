@@ -30,7 +30,7 @@
  *   kept N)`. Off: build 27b (the light head hit, five arrows an orc). */
 
 /* BOWHIT_SITES_BEGIN (check_sites.py counts this block on its own: the patched K_CALL in FUN_027be5d0) */
-static const struct site_spec g_bh_sites_game[] = {
+static SITE_TABLE struct site_spec g_bh_sites_game[] = {
 SITE("BOW_PJ_HIT", K_CALL, 0x27bf8ba, 0x27bf8a7, "5c 24 20 48 8b 54 24 70 4c 8b 8c 24 b0 00 00 00 48 89 de e8 51 95 f0 ff", 0x26c8e10, "41 57 49 89 f7 41 56 41 55 4d 89 cd 41 54 49"),
 };
 /* BOWHIT_SITES_END */

@@ -1,0 +1,2 @@
+name	kind	rva	ctx_rva	ctx	target_rva	prologue	confidence	how	notes
+# winport-base owns no game SITE: the DLL's own hooks (the d3d11/dxgi entry points, the COM objects) are found at run time

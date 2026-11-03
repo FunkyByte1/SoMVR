@@ -216,7 +216,7 @@ static void bo_vh_arrow(const sa_xf g[2], const int valid[2], somvr_vrhands_fram
  * that event at our shot from the bow (sl_sound: our own Wwise object, with the slots' sound on) - our shot has no
  * shoot animation, so none of its sounds come by themselves */
 /* BOWSND_SITES_BEGIN (check_sites.py counts this block on its own: the two patched K_CALLs of AK::PostEvent by name) */
-static const struct site_spec g_bs_sites_game[] = {
+static SITE_TABLE struct site_spec g_bs_sites_game[] = {
 SITE("BS_POST_A", K_CALL, 0x8c9865, 0x8c9852, "48 0f 45 f0 48 89 d7 45 31 c9 6a 00 45 31 c0 31 c9 31 d2 e8 06 e0 b9 00", 0x1467870, "41 57 4d 89 c7 41 56 49 89 ce 41 55 41 89 d5"),
 SITE("BS_POST_B", K_CALL, 0x8c988d, 0x8c987a, "89 f6 6a 00 45 31 c9 b9 a0 8b 8c 00 ba 05 00 00 00 6a 00 e8 de df b9 00", 0x1467870, "41 57 4d 89 c7 41 56 49 89 ce 41 55 41 89 d5"),
 };

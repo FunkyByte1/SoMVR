@@ -1,0 +1,35 @@
+name	kind	linux	windows	confidence	evidence	notes
+# winport-render (group E); docs/re-winport.md 7.5. global = RVA on the Steam-Windows exe
+RD_SHAFT_BYTE	global	0x46257ac	0x19a1b41	confirmed	L 0x7a1f70 / W 0x140d93480: DAT_046257ac = params+0x30 <-> DAT_1419a1b41 = params+0x30 (RadialBlurEnabled)	the override float DAT_046257b8 <-> DAT_1419a1b44
+RD_VIS	global	0x462d700	0x198f548	confirmed	L 0x7a2ff0 / W 0x140d97170: FUN_007b7260(&DAT_0462d700) <-> FUN_140d50250(&DAT_14198f548)	+0x18 cap, +0x1c used, +0x20 refused: RD_VIS_REQ 6/6 offsets
+RD_KT	global	0x46254c0	0x199e340	confirmed	W 0x141377ed0: FUN_140d59e70(&DAT_14199e300,"k_fTime",5,0,4,&DAT_14199e340,1) (L _INIT_82 0x561370: &DAT_04625480 .. &DAT_046254c0); W 0x140d9820c movss [0x14199e340] := [0x14199e390] (L 0x7d705c)	k_fRealTime data 0x4625460 <-> 0x199e390
+RD_KT_HANDLE	global	0x4625488	0x199e308	confirmed	W 0x140d981f8 movzx ecx,word [0x14199e308] (L 0x7d7055 movzx edi,word [0x4625488])	constant object +8
+RD_KT_PTR	global	0x4625490	0x199e310	confirmed	W 0x140d98219 mov rdx,[0x14199e310]; call FUN_140d75cb0 (= RD_KT_UPLOAD)	constant object +0x10
+RD_KT_DIRTY	global	0x462548a	0x199e30a	confirmed	W 0x140d98228/0x140d98231 mov word [0x14199e30a] (L 0x7d7073)	constant object +0xa
+RD_SP_BOXBLUR	off	0x130	?	unknown	the H1 caller FUN_007eb1d0's stack (H1 = FUN_00a5a820 <-> 0x14045e5a0 fills sp)	REDESIGN: on Windows H1 is a plain C hook without the caller's sp; clear the final post's ctx+0x1c8 (box blur) instead, or find the slot in the Windows caller's frame (group A's H1)
+RD_SP_VIGNETTE	off	0x144	?	unknown	as RD_SP_BOXBLUR (-> ctx+0x1dc k_fVignetteParams)	REDESIGN as RD_SP_BOXBLUR: the FLATFX vignette part stays the game's until then
+RD_CF_OFF	off	0xc0	?	unknown	RenderTarget's two "current frame" images (+0xc0, +0x110)	SOMVR_CURFRAME (off in every build) only; not read on Windows
+RD_CF_SZ	size	0x50	0x50	plausible	W 0x140d60350 (= RD_CF_MAKE) writes the image's +4..+0x48 as L 0x747e60 (+4..+0x14 the same)	-
+RD_RT_MODE	off	0x448	0x448	same	L 0x74b1e0 / W 0x140d61a90 (RD_BRT target, 10/10 offsets): if (*(int *)(rt + 0x448) != 1)	rt +0x450 list / +0x470 / +0x478 count also the same (W 0x140d61f30)
+SM_SLOTS	off	0xb8	0xb8	same	L 0x2357e60 / W 0x1409099f0 (CSimpleModel vf_20 = W slot 19): param_1[slot + 0x17]; W 0x140909a4b lea rsi,[rbx+rsi*8+0xb8]	-
+SM_MAIN	off	0xb0	0xb0	plausible	W 0x140909a92 cmp qword [rbx+0xb0],0 in vf_20 (the main renderable test before the skin setup)	-
+SM_CLOTH	off	0x88	0x88	same	L 0x23590c0 / W 0x14090a3b0 (vf_14): param_1[0x11] := the cloth node; W 0x14090a739 lea rcx,[rdi+0x88]	-
+CN_SET	off	0x138	0x138	same	L 0x235d6d0 / W 0x14098ef50: the cloth set (0x58 b) -> +0x138 (W 0x14098ef8c mov [rbx+0x138],rax)	-
+CN_DESC	off	0x170	0x170	plausible	W 0x14098f750 (the cloth node ctor) zeroes the vector +0x170/+0x178	-
+CN_DESC_SIZE	size	0x10c	0x10c	same	W FUN_14098ee00 (the display-mesh loop, = L 0x235e3c0): 0x14098eea2 imul r8,r8,0x10c; 0x14098eee6 add rsi,0x10c (L 0x235e1cf imul r8,r8,0x10c)	-
+CS_ENTRY	size	0x18	0x18	same	L 0x2b0373e / W 0x140eec052: lea rax,[rcx+0x18] (the entry appended, 3 qwords)	-
+VIS_HANDLE	off	0x10	0x10	same	L 0x2b21c9b / W 0x140ef5344: lea rdx|r8,[rbx+0x10] handed to the custom create (HP_CLOTH_HANDLE)	-
+CHANDLE_NODE	off	0x10	0x10	same	W 0x140d40b44 add rcx,0x10; call FUN_140d55a20 (the CRenderNodeMeshCustom ctor) in the handle ctor	handle allocs 0x160 (L 0x130), refcount +0x140 (L +0x120)
+NODE_BOX	off	0x10	?	unknown	the static draw FUN_008225c0 <-> FUN_140dd4800 not read	the node base (+0x40 the same) probably keeps it; logs only (SOMVR_HP_NEARLOG)
+NODE_KIND	off	0xb0	0xc0	confirmed	L 0x822a40 / W 0x140dd5010: kind = *(char *)(node + 0xb0) <-> (node + 0xc0); W 0x140dd49b0 the same	-
+NODE_CAT	off	0xb1	0xc1	confirmed	L 0x822a40 / W 0x140dd52e0: (node + 0xb1) == 2 <-> (node + 0xc1) == 2 || == 3	-
+SK_POS	off	0x4c	0x60	confirmed	L 0x81ff80 / W 0x140dd2b90: the LOD distance from node+0x4c/50/54 (radius +0x68, +0x14c) <-> +0x60/64/68 (+0x7c, +0x164)	-
+SK_MESH	off	0xc8	0xe0	confirmed	L 0x81ff80 **(node + 0xc8) / W 0x140dd2b90 **(node + 0xe0) (-> +8 -> +0x20 the mesh, the same path)	-
+SK_OVR_N	off	0x380	0x398	confirmed	L 0x81ff80: *(int *)(node + 0x380), list +0x378 (0x10 each) / W FUN_140dd25f0: *(uint *)(node + 0x398), list +0x390	-
+SK_POSE	off	0xf0	0x108	plausible	not read: the skeletal node's fields after +0xb0 moved +0x18 (+0xc8->+0xe0, +0x14c->+0x164, +0x158->+0x170, +0x378->+0x390)	checked at run time by HP_SKT_VT and +8 = the same pointer (a mismatch = the pose path off, WARN)
+HP_SKT_VT	global	0x33606d8	0x1473a20	plausible	CSkeletalTransforms: its slot 0 0x724200 <-> 0x140d59870 (str pair) sits in slot 0 of 0x141473a20	the primary vtable; the run-time check falls back safely
+BD_R_OWNER	off	0x8	0x8	same	L 0x237fde0 / W 0x1408fe570: *(*(param_1 + 8) + 0x348)	-
+BD_R_BUF	off	0xb8	0xb8	same	W 0x1408fbb70 / 0x1408fe570: param_1 + 0xb8 := owner+0x348	-
+BD_R_MAP	off	0x1e8	0x1e8	same	W 0x1408fe570: if (*(param_1 + 0x1e8) == *(param_1 + 0x1f0))	-
+BD_O_SHARED	off	0x348	0x348	same	W 0x1408fbdee / 0x1408fcc04 mov rcx,[rbx+0x348] (CSimpleModelOutputPose::vf_03 = FUN_1408fbd80)	-
+SSH_P	global	0x4625840	?	unknown	the sun cascades pass FUN_007f6250 (22 KB, called at HEAD_SHADOW_CASCADES 0x7dd605 - group A's site) gets the pipeline state P = 0x4625840 as its first argument: its Windows image not pinned (P+0x3809 = 1 is set only in 0x140da7a20 = FUN_007f3f10 on Windows)	somvr_perf_game.c SOMVR_SHADOW_SHARE: unknown = GADDR 0 = no pass matches P = never shared (both eyes draw their shadows: the safe default); P+0x3809/0x70f0/0x3918..0x3978 (g_ssh_off) wait for it

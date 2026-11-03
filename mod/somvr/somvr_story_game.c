@@ -21,19 +21,19 @@
 /* STORY_SITES_BEGIN (a K_ENTRY called by the test word only). SY_INVIS FUN_027acae0(player, on): `mov [rdi+0xd10], sil;
  * call [rax+0x340]` (the bytes); its callers: the script binding SetAISpectatorInvisible FUN_023fe950, FUN_0268beb0,
  * FUN_0268ce40, FUN_02809630. Order = SYS_* */
-static const struct site_spec g_sy_sites_game[] = {
+static SITE_TABLE struct site_spec g_sy_sites_game[] = {
 SITE("SY_INVIS", K_ENTRY, 0x27acae0, 0x27acae0, "55 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 40 88", 0x27acae0, "55 89 f5 53 48 89 fb 48 83 ec 08 48 8b 07 40"),
 };
 /* STORY_SITES_END */
 enum { SYS_INVIS, SYS_N };
 _Static_assert(sizeof g_sy_sites_game / sizeof g_sy_sites_game[0] == SYS_N, "story sites");
 typedef void (*sy_invis_fn)(uintptr_t player, int on);
-#define SY_PLAYERS 0x4c47020u /* the player list (a std::vector of CPlayerObj*) */
-#define SY_PL_INVIS 0xd10     /* CPlayerObj: invisible to the AI (SY_INVIS's bytes) */
+#define SY_PLAYERS GADDR(SY_PLAYERS, 0x4c47020) /* the player list (a std::vector of CPlayerObj*) */
+#define SY_PL_INVIS OFS(SY_PL_INVIS, 0xd10)     /* CPlayerObj: invisible to the AI (SY_INVIS's bytes) */
 
-#define SY_IM_SUB 0x27b0     /* CInterfaceMgr: the CUIHUDSubtitle* (m_GameUI+0xa8) */
-#define SY_SUB_TEXT 0xc0     /* CUIHUDSubtitle: channel 0's text (wchar16[256]) */
-#define SY_SUB_STRIDE 0x210  /* ... one channel */
+#define SY_IM_SUB OFS(SY_IM_SUB, 0x27b0)     /* CInterfaceMgr: the CUIHUDSubtitle* (m_GameUI+0xa8) */
+#define SY_SUB_TEXT OFS(SY_SUB_TEXT, 0xc0)     /* CUIHUDSubtitle: channel 0's text (wchar16[256]) */
+#define SY_SUB_STRIDE OFS(SY_SUB_STRIDE, 0x210)  /* ... one channel */
 #define SY_SUB_CHARS 256
 #define SY_SUB_CH 3
 

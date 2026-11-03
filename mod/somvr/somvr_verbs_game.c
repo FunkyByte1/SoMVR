@@ -975,10 +975,12 @@ static void vb_behind(uintptr_t pcomb, uintptr_t pc, const float root[3], float 
  * the attack SharedCombat_SelectAttackFromPool picks for that orc as an explicit target (SOMVR_FINISH's fi_select: no
  * chord check, no start). The schemas' field names are logged once. */
 #define VB_TREE_NODES 160
-#define VB_SCH_CHORD 0x4ba8ea0   /* the node's Predicate: 0 Input, 1 Chord, 2 DoubleTap */
-#define VB_SCH_INPUT 0x4bb4560   /* its Chord: 0 Command1, 1 Command2, 2 MaxPressDelta */
-#define VB_SCH_INREC 0x4bb4860   /* its Input (FUN_02271890's schema) */
-#define VB_CMD_TABLE 0x4c3a3c0   /* the command table (FUN_025e1450): 349 x {name, hash, id} */
+/* the schema holders (Linux: these; Windows: hooks_win_globals from offsets-hooks.tsv, then the schema checker) */
+static struct { uintptr_t chord, input, inrec; } g_vbsch = { 0x4ba8ea0, 0x4bb4560, 0x4bb4860 };
+#define VB_SCH_CHORD g_vbsch.chord /* the node's Predicate (CombatNodePredicate): 0 Input, 1 Chord, 2 DoubleTap */
+#define VB_SCH_INPUT g_vbsch.input /* its Chord (Combat.Chord): 0 Command1, 1 Command2, 2 MaxPressDelta */
+#define VB_SCH_INREC g_vbsch.inrec /* its Input (Combat.Input; FUN_02271890's schema) */
+#define VB_CMD_TABLE GADDR(VB_CMD_TABLE, 0x4c3a3c0)   /* the command table (FUN_025e1450): 349 x {name, hash, id} */
 static void vb_schema(const char *what, uintptr_t holder)
 {
 	char line[900], nm[64];

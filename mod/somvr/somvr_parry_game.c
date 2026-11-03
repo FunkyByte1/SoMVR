@@ -44,7 +44,7 @@
 /* PARRY_SITES_BEGIN (read only, never patched). PY_STREAK FUN_02726500(hc, bool all): the hit counter's pending
  * increments, +0xcf += all ? +0xca : 1 (re-xr-pipeline.md 30.23's "pending increments FUN_026d4940 / FUN_02726500 add
  * at a hit"; FUN_027259c0 applies them: the streak, the charge, the timer's restart). Order = PYS_* */
-static const struct site_spec g_py_sites[] = {
+static SITE_TABLE struct site_spec g_py_sites[] = {
 SITE("PY_STREAK", K_ENTRY, 0x2726500, 0x2726500, "0f b6 97 cf 00 00 00 8d 42 01 40 84 f6 74 09 0f b6 87 ca 00 00 00 01 d0 88 87 cf 00 00 00 c3", 0x2726500, "0f b6 97 cf 00 00 00 8d 42 01 40 84 f6 74 09"),
 };
 /* PARRY_SITES_END */

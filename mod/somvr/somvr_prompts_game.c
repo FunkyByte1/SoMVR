@@ -31,7 +31,7 @@
 /* PADPROMPTS_SITES_BEGIN (check_sites.py counts this block on its own: three patched K_VSLOT, slot 2 of the
  * CUIHUDPrompts delegates' vtables for PromptShow 0x3515bc8, PromptHide 0x3515bf8, PromptHoldUpdate 0x3515c58; the
  * context: slots 0..3. Order = PPS_*) */
-static const struct site_spec g_pp_sites_game[] = {
+static SITE_TABLE struct site_spec g_pp_sites_game[] = {
 SITE("PP_SHOW", K_VSLOT, 0x3515bd8, 0x3515bc8, "f0 2a b2 00 00 00 00 00 80 2e b2 00 00 00 00 00 d0 31 b2 00 00 00 00 00 f0 2d b2 00 00 00 00 00", 0xb231d0, "55 53 48 83 ec 08 48 8b 5f 18 48 85 db 74 71 44"),
 SITE("PP_HIDE", K_VSLOT, 0x3515c08, 0x3515bf8, "30 2b b2 00 00 00 00 00 d0 2e b2 00 00 00 00 00 40 31 b2 00 00 00 00 00 b0 2d b2 00 00 00 00 00", 0xb23140, "55 53 48 83 ec 08 48 8b 5f 18 48 85 db 74 39 48"),
 SITE("PP_HOLD", K_VSLOT, 0x3515c68, 0x3515c58, "b0 2b b2 00 00 00 00 00 20 2f b2 00 00 00 00 00 b0 30 b2 00 00 00 00 00 30 2d b2 00 00 00 00 00", 0xb230b0, "48 8b 4f 18 48 89 d0 48 85 c9 74 1c 8b 52 08 48"),

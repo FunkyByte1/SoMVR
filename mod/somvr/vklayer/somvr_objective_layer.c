@@ -82,7 +82,7 @@ __attribute__((format(printf, 1, 2))) static void ob_off(const char *fmt, ...) {
 /* xr_session_setup: is there an objective marker for this session? */
 static void ob_setup(void) {
     ob_destroy();
-    somvr_objective_shared *o = (somvr_objective_shared *)dlsym(RTLD_DEFAULT, SOMVR_OBJECTIVE_SYMBOL);
+    somvr_objective_shared *o = (somvr_objective_shared *)somvr_obj(SOMVR_OBJECTIVE_SYMBOL);
     const char *e = getenv("SOMVR_XR_OBJECTIVE");
     int want = !e || !*e || (strcmp(e, "off") && strcmp(e, "0"));
     OB.n_frames = OB.n_marker = OB.n_edge = OB.n_faint = OB.n_uploads = OB.n_missing = OB.n_none = 0, OB.lines = 0;

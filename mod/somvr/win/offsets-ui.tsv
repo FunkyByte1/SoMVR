@@ -1,0 +1,60 @@
+name	kind	linux	windows	confidence	evidence	notes
+# winport-ui (group I); globals are RVAs on the Steam-Win exe; docs/re-winport.md 7.6
+CO_PLAYERS	global	0x4c47020	0x1988a90	confirmed	L 0x279b7a0 / W 0x140cbeb20 (LookAtTrigger state 0): the player vector DAT_04c47020/28 = DAT_141988a90/98	std::vector begin/end at +0/+8 on both
+CO_ITEM_CLASS	global	0x4c464e0	0x1860800	confirmed	L 0x23f17a0 / W 0x1407fa120 (the InventoryItemUI:Collect binding): the class-chain compare &DAT_04c464e0 = &PTR_s_InventoryItemUI_141860800	-
+CO_CHAR_CLASS	global	0x4c41500	0x185e360	confirmed	L 0x2781370 / W 0x140c92560 (CO_COLLECT): &DAT_04c41500 = &PTR_s_CCharacter_14185e360	-
+CO_LAT_STATE	off	0xc8	0xc8	same	L 0x279bbd0 / W 0x140cbee20 (CO_LAT_TICK): switch on *(int *)(this+200); W 0x140cbeb20 writes it	LookAtTrigger
+CO_LAT_DWELL	off	0xb8	0xb8	same	L 0x279b7a0 / W 0x140cbeb20: *(this+0xb8) = 0 with the state 1	-
+CO_LAT_MODE	off	0xcc	0xcc	plausible	not seen in a decompiled pair; its neighbours +0xc4/+0xc8 and +0xd0/+0xd2/+0xd3 are unchanged	-
+CO_LAT_RADIUS	off	0xb0	0xb0	same	L 0x2799e90 / W 0x140cbde80 (CO_LAT_SEE): *(undefined4 *)(this+0xb0) to 0x27982d0 / 0x140cbd050	-
+CO_LAT_LOOKER	off	0x80	0x80	same	L 0x2799e90 / W 0x140cbde80: this+0x80 vs the player's +8; L 0x279baa0 / W 0x140cbed20	-
+CO_OBJ_PROPTBL	off	0xd0	0xd0	same	CO_OBJ_PROPS: W 0x140e63c30 `mov rax,[rdx+0xd0]; ret` = L `mov rax,[rsi+0xd0]; ret`	-
+CO_VL_ON	off	0x48	0x48	same	L 0xad2da0 / W 0x1404e9ca0 (CO_VLOOK's target): *(char *)(list+0x48)	-
+CO_VL_TARGET	off	0x90	0x90	same	L 0xad2da0 / W 0x1404e9ca0: *(targ+0x90)	-
+CO_VL_MEASURE	off	0x3a0	0x3a0	same	L 0xad2da0 / W 0x1404e9ca0: *(float *)(targ+0x3a0)	-
+CO_VL_FLAG	off	0x566	0x566	same	L 0xad2da0 / W 0x1404e9ca0: *(char *)(targ+0x566)	-
+CO_C_OBJ	off	0x68	0x68	same	L 0xa941b0 / W 0x140591fa0 (CO_TSCORE's target) and L 0x274ed10 / W 0x140c65d60: the candidate's +0x68	-
+CO_C_ONSCREEN	off	0xb9	0xb9	same	L 0x274ed10 / W 0x140c65d60: *(param_1+0xb9); L 0xa941b0 / W 0x140591fa0	-
+CO_C_TGTDEBUG	off	0xbd	0xbd	same	L 0xa941b0 / W 0x140591fa0: the candidate's +0xbd byte (35 / 28 uses)	written by the mod (SOMVR target debug)
+CO_ITEM_LOOKAT	off	0x68d	0x68d	plausible	SetLookAtEnabled (L 0x2781350) has no Windows pair yet (inlined?); InventoryItemUI's +0x5b0/+0x5c8/+0x68f are unchanged (W 0x140c92560)	read only
+CO_ITEM_TAKEN	off	0x68f	0x68f	same	L 0x2781370 / W 0x140c92560 (CO_COLLECT): the +0x68f test and set	-
+CO_ITEM_REC	off	0x5c8	0x5c8	same	L 0x2781370 / W 0x140c92560: *(this+0x5c8) to AddItem	-
+CO_CAM_POS	off	0x44c	0x44c	same	L 0x274ed10 / W 0x140c65d60 (the targeting update): *(float *)(cam+0x44c..0x454)	written by the mod (co_post)
+CO_CAM_ROT	off	0x458	0x458	same	W 0x140c65d60 and W 0x1405d72d0 (MM_CAMQ): the product's b = cam+0x458	written by the mod
+CO_CAM_ROT2	off	0x484	0x484	same	W 0x140c65d60 and W 0x1405d72d0: the product's a = cam+0x484	written by the mod
+CO_P_VIEW	off	0xbb0	0xbb0	same	L 0x29a8130 / W 0x140b03070 (CO_LAT_VIEW): the player's +0xbb0..+0xbcc (read in another order)	-
+GO_SND_GET	vt	0x68	0x60	confirmed	L 0xcbe980 / W 0x14043c600 (GO_APPLY): (**(*DAT_0466afa8 + 0x68))() = (**(*DAT_1419d80c8 + 0x60))()	slot -1
+GO_SLOT_RTPC	vt	0xb0	0xa8	confirmed	GO_APPLY: SetRTPC (*snd + 0xb0) = (*snd + 0xa8); the slot 0x141482118 = vtable 0x141482070 + 0xa8	the mod derives the vtable from GO_RTPC's slot minus this
+GO_SND_PP	global	0x466afa8	0x19d80c8	confirmed	GO_APPLY: DAT_0466afa8 = DAT_1419d80c8 (the sound manager's holder)	-
+GO_OPT_MUSIC	off	0x190	0x170	confirmed	GO_APPLY: "options_music" with *(GameOptions+400) = *(GameOptions+0x170)	GameOptions' volumes all -0x20 (master 0x18c->0x16c, sfx 0x188->0x168, dialog 0x194->0x174)
+GO_TUT_SCHEMA	global	0x4b66420	0x183bcf0	confirmed	L 0xb0c370 (inline) / W 0x140466d30 (the page test GO_PAUSETUT calls): *(int *)(PTR_DAT_14183bcf0 + 0x78), the key +0x68, the index byte +0x88	-
+GO_TS_HASH	off	0x68	0x68	same	W 0x140466d30: FUN_1403f3800(rec, sch+0x68) (the hash lookup)	-
+GO_TS_FAST	off	0x78	0x78	same	W 0x140466d30: *(int *)(sch+0x78) < 2	-
+GO_TS_INDEX	off	0x88	0x88	same	W 0x140466d30: sch[0x88] * 0x10 + *(rec+8)	the record's entries (+8, 16 bytes: kind +0xa, set +0xc, slot +0xe) and values (+0x10) unchanged
+GO_VSCHEMA	global	0x4c25d20	?	unknown	L 0x266a8d0 reads *(DAT_04c25d20 + 0xf8/0x128); W 0x140c3c6b0 (its pair) has the ramp reads out of line; the Windows schema is filled field by field (RampInDuration 0x1409a85c0, RampOutDuration 0x1409a8630: descriptor constructors) - the global not traced	0 on Windows: SOMVR_VISION_RAMP_MS reads nothing and writes nothing
+GO_VM_REC	off	0x28	?	unknown	PlayerVisionMode's record; the tool aligned 0x30 in W 0x140c3c6b0 (weak, conflicting)	only with GO_VSCHEMA
+OB_SHOWN1	off	0x45	0x45	same	L 0xec4a50 / W 0x1404e6770 (OB_EACH's target): *(marker+0x45) = 0	written by the mod
+OB_SHOWN2	off	0x6d	0x6d	same	L 0xec4a50 / W 0x1404e6770: *(marker+0x6d) = 0	written by the mod
+OB_CLIP	off	0xb0	0xb0	same	W 0x1404e6770: plVar1 = *(marker+0xb0); (*plVar1 + 0x200)(plVar1, 0)	-
+OB_REC	off	0x298	0x298	same	L 0xec4a50 / W 0x1404e6770: *(marker+0x298) (the record)	-
+OB_ACTIVE	off	0x2e0	0x2e0	same	L 0xec4a50 / W 0x1404e6770: *(char *)(marker+0x2e0), +0x2e1	-
+OB_CLIP_VIS	vt	0x208	0x200	confirmed	L 0xec4a50 / W 0x1404e6770: (**(code **)(*clip + 0x208))(clip, 0) = (*clip + 0x200)	slot -1
+OB_KEYS	global	0x4b66f20	0x183b550	confirmed	L 0xebced0 (OB_RANGE) / W 0x1404e0bf0: *(DAT_04b66f20 + 0x558/0x548/0x568) = PTR_DAT_14183b550 + the same; L 0xec4a50 / W 0x1404df420: +0x338/+0x348/+0x358 unchanged	the nav-marker schema
+MM_OPT_ROTATE	off	0x203	0x1e3	confirmed	MM_OPT: W 0x1405d7fa7 `cmp byte [rax+0x1e3],0` after the call of GO_OPTIONS (L `cmpb $0,0x203(%rax)`)	GameOptions -0x20 (as GO_OPT_MUSIC)
+VG_CS_NAME	off	0x000	0x000	plausible	the CLIENTFX_CREATESTRUCT ctor L 0xa09e70 / W 0x1403fd5b0: the same layout to +0x110 (parent +0x108)	-
+VG_CS_FLAGS	off	0x104	0x104	same	W 0x140432b00 (the create): *(byte *)(cs+0x104) & 1; L 0xa09e70 stores param_4 there	-
+VG_CS_PARENT	off	0x108	0x108	same	L 0xa09e70 / W 0x1403fd5b0: *(cs+0x108) = param_5	-
+VG_CS_NODE	off	0x118	0x118	plausible	L 0xa09e70 sets +0x118 = 0xffffffff; the W ctor's decompile does not show it (the layout before is unchanged)	-
+VG_CS_OFF	off	0x11c	0x11c	plausible	as VG_CS_NODE	-
+SCR_VT_HIER	global	0x35b8da8	0x13d72d0	confirmed	CUIHierarchyLayer's vtable: LEA'd in W 0x14067fe30 / 0x14067f2d0 (ctor/dtor, with the secondary 0x1413d72c8); slot 0 = 0x1406800e0 (deleting dtor -> 0x14067f2d0 = L vf_00's pair)	-
+SCR_VT_HIER_VF10	global	0xedf470	0x684660	confirmed	L CUIHierarchyLayer::vf_10 0xedf470 <-> W 0x140684660 (pairs.tsv) at 0x1413d7310 = the vtable's slot 8	-
+SCR_HIER_VF10_AT	vt	0x50	0x40	confirmed	the slot of vf_10 in the vtable: W 0x1413d7310 - 0x1413d72d0; MSVC's order differs from slot -1 here (L vf_02 -> W 1, vf_10 -> 8, vf_24..28 -> 19..23)	per-slot, no fixed rule in this class
+SCR_P_UI	off	0x2e0	0x2e0	same	L 0xec4a50 / W 0x1404e6770: FUN_00ac11e0(*(player+0x2e0)) = FUN_1404634d0(*(player+0x2e0))	the CPlayerUI pointer
+SCR_UI_SM	off	0xb0	?	unknown	CPlayerUI's state machine (L 0xacbca0: no Windows pair found)	-
+SCR_SM_STATE	off	0xc	0xc	plausible	the interface manager's state machine in L 0xa0f760 / W 0x140412440 (LP_IM_DOWN): +0xc, -1 -> +0x8 unchanged (a sibling state machine class)	-
+SCR_SM_STATE0	off	0x8	0x8	plausible	as SCR_SM_STATE	-
+SCR_SM_MGR	off	0x10	?	unknown	the menu manager embedded in the CPlayerUI state machine (L 0xacbd10, inside another function) - not traced	-
+SCR_MGR_LAYERS	off	0x198	?	unknown	CUIMenuManagerBase's layer stack - not traced (it holds std:: members: may shift)	-
+SCR_MGR_COUNT	off	0x1e8	?	unknown	as SCR_MGR_LAYERS	-
+SCR_MGR_OVERRIDE	off	0x1ec	?	unknown	as SCR_MGR_LAYERS	-
+UF_DESC_GROUP	off	0x18	0x18	same	L 0xcbbe60 / W 0x14052b690 (UF_CREATE's target): the log "CreateUIFXGroup: GROUPID %d" with *(desc+0x18)	-

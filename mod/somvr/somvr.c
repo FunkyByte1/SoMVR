@@ -439,7 +439,7 @@
 
 #define SOM_BUILDID  "87ec5d6fd94afd47a24d5da7c9b0c2b74b30c6e9"
 #define SOM_EXE_NAME "ShadowOfMordor"
-#define RENDERER_FRAME_OFF 0x38 /* CRendererHandle::vf_29 BeginFrame (0x703300) starts with add [rdi+0x38],1 */
+#define RENDERER_FRAME_OFF OFS(RENDERER_FRAME_OFF, 0x38) /* CRendererHandle::vf_29 BeginFrame (0x703300) starts with add [rdi+0x38],1 */
 
 #include "somvr_arms.h"
 #include "somvr_bodymoments.h"
@@ -482,6 +482,14 @@
 #include "somvr_practice.h" /* SOMVR_PRACTICE (somvr_practice_game.c, included after the finishers') */
 #include "somvr_session.h"  /* SOMVR_MARK / SOMVR_QUIT (somvr_session_game.c, included after the practice area's) */
 #include "somvr_shared.h"
+#include "somvr_site.h" /* the sites, offsets and globals of both builds (win/README.md) */
+#ifdef _WIN32
+#include "win/somvr_win.h"      /* somvr_win_log, the SITE entries by name */
+#include "win/somvr_win_hook.h" /* entry trampolines, mid-function detours (MinHook): RES_3D_DESC_MID, 7.8 */
+#define SOMVR_MTIM(st) ((struct timespec){ (st).st_mtime, 0 }) /* the UCRT's stat: whole seconds */
+#else
+#define SOMVR_MTIM(st) ((st).st_mtim)
+#endif
 #include "somvr_size.h"   /* SOMVR_PLAYER_SIZE, the VR menu's Player size (somvr_size_game.c, included last) */
 #include "somvr_crouch.h" /* SOMVR_CROUCH=duck: crouch by ducking (somvr_crouch_game.c, included last) */
 #include "somvr_front.h" /* SOMVR_FRONT: front-first enemies (somvr_front_game.c, included last) */
@@ -494,27 +502,15 @@
 #include "somvr_views.h"
 #include "somvr_vrmenu.h"
 
-#define FOLIAGE_LEN 0x30
-#define GM_LAST_VIEW 0x70     /* FUN_009ee170 copies the SomView to gm+0x70..0x9b (the "last view") */
-#define CAM_PLAYER_POS 0x44c  /* Player.GetPos prints *(float[3]*)(cam+0x44c) (re-gameplay.md) */
+#define FOLIAGE_LEN OFS(FOLIAGE_LEN, 0x30)
+#define GM_LAST_VIEW OFS(GM_LAST_VIEW, 0x70)     /* FUN_009ee170 copies the SomView to gm+0x70..0x9b (the "last view") */
+#define CAM_PLAYER_POS OFS(CAM_PLAYER_POS, 0x44c)  /* Player.GetPos prints *(float[3]*)(cam+0x44c) (re-gameplay.md) */
 #define FIFO_N 16
 
 /* ------------------------------------------------------------------------------------------------------------ */
 /* Patch sites                                                                                                    */
 
-/* K_JMP: an E9 rel32 tail jump at addr (patched like a call); K_ENTRY: a function we only call (addr = target, its
- * first bytes checked; never patched) */
-enum { K_CALL = 1, K_VSLOT = 2, K_JMP = 3, K_ENTRY = 4 };
-struct site_spec {
-	const char *name;
-	int kind;
-	uintptr_t addr;         /* K_CALL/K_JMP: the E8/E9 byte; K_VSLOT: the 8-byte slot; K_ENTRY: the function */
-	uintptr_t ctx;          /* start of the bytes checked (contains addr) */
-	const char *ctx_hex;    /* expected bytes from ctx on */
-	uintptr_t target;       /* expected call target / slot value */
-	const char *prologue_hex; /* expected first bytes of the target */
-};
-#define SITE(n, k, a, c, h, t, p) { n, k, a, c, h, t, p }
+/* K_CALL/K_VSLOT/K_JMP/K_ENTRY, struct site_spec, SITE(), SITE_TABLE, OFS(), GADDR(): somvr_site.h */
 
 enum { HK_H1, HK_H2, HK_H3, HK_H4, HK_H6, HK_H9, HK_H8, HK_AUD, HK_PM,
        HK_IN_TICK, HK_IN_VALUE, HK_IN_VALUE2, HK_IN_ISON, HK_RUM1, HK_RUM2, /* SOMVR_INPUT=1 */
@@ -522,7 +518,7 @@ enum { HK_H1, HK_H2, HK_H3, HK_H4, HK_H6, HK_H9, HK_H8, HK_AUD, HK_PM,
        HK_N };
 
 /* SITES-BEGIN (check_sites.py parses these lines; one SITE per line; order = HK_*) */
-static const struct site_spec g_game_sites[HK_N] = {
+static SITE_TABLE struct site_spec g_game_sites[HK_N] = {
 SITE("H1", K_CALL, 0x9ee7d4, 0x9ee7c1, "48 8d 94 24 b0 00 00 00 48 8d b4 24 80 00 00 00 48 89 ef e8 47 c0 06 00", 0xa5a820, "41 55 49 89 d5 41 54 55 48 89 f5 53 48 89 fb"),
 SITE("H2", K_VSLOT, 0x335cb60, 0x335cb20, "00 33 70 00 00 00 00 00 20 4a 70 00 00 00 00 00 c0 33 70 00 00 00 00 00 40 53 70 00 00 00 00 00 d0 34 70 00 00 00 00 00 b0 4e 70 00 00 00 00 00 a0 2a 70 00 00 00 00 00 80 48 70 00 00 00 00 00 00 55 70 00 00 00 00 00", 0x705500, "41 55 66 0f ef db 49 89 cd 41 54 49 89 d4"),
 SITE("H3", K_CALL, 0x72c749, 0x72c734, "4c 8d 44 24 40 48 8d 4c 24 38 48 89 ee 48 89 df 48 8d 54 24 30 e8 d2 f3 ff ff", 0x72bb20, "41 57 49 89 d7 41 56 49 89 ce 41 55 45 89 cd"),
@@ -550,7 +546,7 @@ SITE("ARM_TRK_EVAL", K_VSLOT, 0x38df398, 0x38df380, "80 79 38 02 00 00 00 00 30 
 
 /* SITES-BEGIN (read only, never patched: IEngineModel (vtable 0x3484130) slot 23, the GetNodeTransform stub
  * (m, obj, node, float *xf, world) SOMVR_BASE=head calls for the head node; checked at start then. Order = NS_*) */
-static const struct site_spec g_node_sites_game[] = {
+static SITE_TABLE struct site_spec g_node_sites_game[] = {
 SITE("G12_NODEXF", K_VSLOT, 0x34841e8, 0x34841d8, "10 ab 91 00 00 00 00 00 70 ab 91 00 00 00 00 00 60 c3 91 00 00 00 00 00", 0x91c360, "48 85 f6 0f 84 97 00 00 00 41 55 48 89 f7 49"),
 };
 /* SITES-END */
@@ -561,25 +557,25 @@ static const struct site_spec *g_node_sites = g_node_sites_game; /* selftest: st
 /* SOMVR_BASE=head / SOMVR_FOLLOW: the game objects (selftest: stand-ins). model_pp = the IEngineModel* holder
  * (re-gameplay.md 2), vt_pm = the PlayerMovement vtable (re-m1m2.md 3), head = the Head node's id = the hash of its
  * name (node 28, docs/runtime-probes.md run 3; GetNodeTransform takes the hash, re-firstperson.md 2.1) */
-static struct { uintptr_t model_pp, vt_pm; uint32_t head; } g_som = { 0x46a9230, 0x34fc7e0, 0x72598328 };
-#define P_PM 0x2c8        /* Player (H4's 4th argument): PlayerMovement* (vf_11 once per tick, run 3) */
-#define P_BODY 0x2d8      /* Player: PlayerBody* */
-#define BODY_OBJ 0x1b8    /* PlayerBody: the client player object (bodyObj) */
-#define BODY_MGR 0x3b8    /* PlayerBody: the animation manager, +0x560 = hChar, the object it animates (= bodyObj, run 3) */
-#define MGR_CHAR 0x560
-#define OBJ_POS 0x08      /* engine object: pos[3] (the root, cm), rot[4] x y z w at +0x14 */
-#define OBJ_ROT 0x14
-#define OBJ_MODEL 0x38    /* engine object: the interface FUN_008f3c20 asks for the model (its vtbl+0x20) */
-#define PM_OWNER 0x218    /* PlayerMovement: the Player* */
-#define PM_XPOS 0x428     /* float[3] the one-shot extra move, Talion's frame (x right, y up, z forward), cm */
-#define PM_XROT 0x434     /* float[4] its rotation x y z w */
-#define PM_PENDING 0x444  /* byte: vf_11 adds the extra and clears it (re-m1m2.md 3.2; the game never sets it) */
+static struct { uintptr_t model_pp, vt_pm; uint32_t head; } g_som = { 0x46a9230, 0x34fc7e0, OFS(SOM_HEAD_HASH, 0x72598328) };
+#define P_PM OFS(P_PM, 0x2c8)        /* Player (H4's 4th argument): PlayerMovement* (vf_11 once per tick, run 3) */
+#define P_BODY OFS(P_BODY, 0x2d8)      /* Player: PlayerBody* */
+#define BODY_OBJ OFS(BODY_OBJ, 0x1b8)    /* PlayerBody: the client player object (bodyObj) */
+#define BODY_MGR OFS(BODY_MGR, 0x3b8)    /* PlayerBody: the animation manager, +0x560 = hChar, the object it animates (= bodyObj, run 3) */
+#define MGR_CHAR OFS(MGR_CHAR, 0x560)
+#define OBJ_POS OFS(OBJ_POS, 0x08)      /* engine object: pos[3] (the root, cm), rot[4] x y z w at +0x14 */
+#define OBJ_ROT OFS(OBJ_ROT, 0x14)
+#define OBJ_MODEL OFS(OBJ_MODEL, 0x38)    /* engine object: the interface FUN_008f3c20 asks for the model (its vtbl+0x20) */
+#define PM_OWNER OFS(PM_OWNER, 0x218)    /* PlayerMovement: the Player* */
+#define PM_XPOS OFS(PM_XPOS, 0x428)     /* float[3] the one-shot extra move, Talion's frame (x right, y up, z forward), cm */
+#define PM_XROT OFS(PM_XROT, 0x434)     /* float[4] its rotation x y z w */
+#define PM_PENDING OFS(PM_PENDING, 0x444)  /* byte: vf_11 adds the extra and clears it (re-m1m2.md 3.2; the game never sets it) */
 
 /* SITES-BEGIN (read only, never patched: what H8 calls - IdxD3D11Device slot 5 CreateTexture2D, IdxD3D11DeviceContext
  * and ...Threaded slot 47 CopyResource, IdxD3D11Texture2D slots 10 GetDesc and 2 Release - and the CVulkanTexture copy
  * slots 10/11 whose layouts (dst TRANSFER_DST_OPTIMAL) the layer relies on. Checked at start; any mismatch = H8 copies
  * nothing. Order = DS_*) */
-static const struct site_spec g_d3d_sites_game[] = {
+static SITE_TABLE struct site_spec g_d3d_sites_game[] = {
 SITE("D3D_CREATETEX2D", K_VSLOT, 0x4552960, 0x4552960, "b0 56 ab 01 00 00 00 00", 0x1ab56b0, "41 56 66 0f ef c0 49 89 ce 41 55 49 89 fd 41 54"),
 SITE("D3D_COPYRESOURCE", K_VSLOT, 0x4553360, 0x4553360, "40 70 ab 01 00 00 00 00", 0x1ab7040, "48 85 f6 0f 95 c1 48 39 d6 0f 95 c0 84 c1 74 05"),
 SITE("D3D_COPYRESOURCE_MT", K_VSLOT, 0x4553968, 0x4553968, "00 0a ac 01 00 00 00 00", 0x1ac0a00, "41 56 4c 8d b7 c8 00 00 00 41 55 49 89 f5 41 54"),
@@ -598,15 +594,15 @@ _Static_assert(sizeof g_d3d_sites_game / sizeof g_d3d_sites_game[0] == DS_N, "D3
 static struct {
 	uintptr_t holder, vt_dev, vt_ctx, vt_ctx_mt, vt_tex, vt_vktex;
 } g_d3d = { 0x461fa40, 0x4552938, 0x45531e8, 0x45537f0, 0x4555240, 0x456a438 };
-#define HOLDER_CTX 0x8
-#define HOLDER_TEXUI 0x1b8 /* the UI surface texture (FUN_007414b0): an alias of +0x1c0 when the UI and 3D sizes are equal */
-#define HOLDER_TEX3D 0x1c0
-#define DS_TARGET 0x8      /* DeviceState 0x461e840: +0 state (3 = a target is bound), +8 the bound RenderTarget* */
-#define RT_FLAGS 0x8       /* RenderTarget flags: 0x400 screen target (pixels in a device surface), 0x4000 the UI one */
-#define RT_SCREEN 0x400u
-#define RT_UI 0x4000u
-#define TEX_F3D 0x80       /* IdxD3D11Texture2D: +8 the inner resource, whose +0x78 = the Feral3D (CVulkanTexture) object */
-#define VKTEX_IMAGE 0x108  /* CVulkanTexture: the VkImage (vf_11/vf_14 pass it to vkCmdCopyImage) */
+#define HOLDER_CTX OFS(HOLDER_CTX, 0x8)
+#define HOLDER_TEXUI OFS(HOLDER_TEXUI, 0x1b8) /* the UI surface texture (FUN_007414b0): an alias of +0x1c0 when the UI and 3D sizes are equal */
+#define HOLDER_TEX3D OFS(HOLDER_TEX3D, 0x1c0)
+#define DS_TARGET OFS(DS_TARGET, 0x8)      /* DeviceState 0x461e840: +0 state (3 = a target is bound), +8 the bound RenderTarget* */
+#define RT_FLAGS OFS(RT_FLAGS, 0x8)       /* RenderTarget flags: 0x400 screen target (pixels in a device surface), 0x4000 the UI one */
+#define RT_SCREEN ((uint32_t)OFS(RT_SCREEN, 0x400))
+#define RT_UI ((uint32_t)OFS(RT_UI, 0x4000))
+#define TEX_F3D OFS(TEX_F3D, 0x80)       /* IdxD3D11Texture2D: +8 the inner resource, whose +0x78 = the Feral3D (CVulkanTexture) object */
+#define VKTEX_IMAGE OFS(VKTEX_IMAGE, 0x108)  /* CVulkanTexture: the VkImage (vf_11/vf_14 pass it to vkCmdCopyImage) */
 enum { SLOT_CREATETEX2D = 5, SLOT_COPYRESOURCE = 47, SLOT_GETDESC = 10, SLOT_RELEASE = 2 };
 typedef struct { uint32_t w, h, mips, array, format, samples, quality, usage, bind, cpu, misc; } d3d_tex_desc; /* D3D11_TEXTURE2D_DESC */
 _Static_assert(sizeof(d3d_tex_desc) == 44, "D3D11_TEXTURE2D_DESC");
@@ -620,7 +616,7 @@ typedef uint32_t (*d3d_release_fn)(void *obj);
  * the persistent stimulus' lookup/remove as FUN_026c7180 itself does it at 0x26c7758 (re-combat-vr.md 1.2, 1.4), the
  * IEngineTimer (CWBTimer vtable 0x3473cd0) slots 3 CreateTimer, 9 SetObjectTimer, 10 GetObjectTimer and the HTIMER
  * release FUN_009ec850 (2.2, 2.4). Checked at start with SOMVR_COMBAT set; a mismatch turns that part off. Order = CS_*) */
-static const struct site_spec g_cb_sites_game[] = {
+static SITE_TABLE struct site_spec g_cb_sites_game[] = {
 SITE("CB_DEALHIT", K_ENTRY, 0x26d4ff0, 0x26d4ff0, "41 57 49 89 f7 41 56 41 89 ce 41 55 41 54 55 48", 0x26d4ff0, "41 57 49 89 f7 41 56 41 89 ce 41 55 41 54 55"),
 SITE("CB_ATK_BYNAME", K_ENTRY, 0x2166790, 0x2166790, "0f b6 07 31 d2 84 c0 74 21 0f 1f 80 00 00 00 00", 0x2166790, "0f b6 07 31 d2 84 c0 74 21 0f 1f 80 00 00 00"),
 SITE("CB_ATTACKDATA", K_ENTRY, 0xa91300, 0xa91300, "48 8b 35 b9 10 11 04 83 7e 48 01 7e 33 48 85 ff", 0xa91300, "48 8b 35 b9 10 11 04 83 7e 48 01 7e 33 48 85"),
@@ -643,7 +639,22 @@ static const struct site_spec *g_cb_sites = g_cb_sites_game; /* selftest: stand-
  * IEngineTimer holder and the CWBTimer / CEngineTimer vtables (2.2) */
 static struct {
 	uintptr_t vt_combat, vt_npc, atkcat_pp, stim_mgr_pp, nostim, timer_pp, vt_timer, vt_etimer;
-} g_cbg = { 0x396bb40, 0x3a2b3d0, 0x4b568d0, 0x4c500e0, 0x4c47090, 0x466c718, 0x3473cd0, 0x34a4e08 };
+} g_cbg
+#ifndef _WIN32
+	= { 0x396bb40, 0x3a2b3d0, 0x4b568d0, 0x4c500e0, 0x4c47090, 0x466c718, 0x3473cd0, 0x34a4e08 }
+#endif
+	;
+#ifdef _WIN32
+/* GADDR is no constant on Windows: the same globals set at the combat start (win/offsets-combat.tsv; unknown = 0, so
+ * the checks that read them fail) */
+static void cb_globals_win(void)
+{
+	g_cbg.vt_combat = GADDR(CB_VT_COMBAT, 0x396bb40), g_cbg.vt_npc = GADDR(CB_VT_NPC, 0x3a2b3d0);
+	g_cbg.atkcat_pp = GADDR(CB_ATKCAT_PP, 0x4b568d0), g_cbg.stim_mgr_pp = GADDR(CB_STIM_MGR_PP, 0x4c500e0);
+	g_cbg.nostim = GADDR(CB_NOSTIM, 0x4c47090), g_cbg.timer_pp = GADDR(CB_TIMER_PP, 0x466c718);
+	g_cbg.vt_timer = GADDR(CB_VT_TIMER, 0x3473cd0), g_cbg.vt_etimer = GADDR(CB_VT_ETIMER, 0x34a4e08);
+}
+#endif
 #define P_COMBAT 0x2e8    /* Player: PlayerCombat* (the probe's ctx_get) */
 #define PC_BANDS 0x2f0    /* PlayerCombat: three targeting vectors (0x18 apart) of 0x38-byte entries, Combat* at +0x30 */
 #define PCB_SIZE 0x38
@@ -661,14 +672,17 @@ static struct {
 #define CH_FLAGS 0x178
 #define CH_HEALTH 0x164   /* CCharacter: float health (the probe's CH_HEALTH; runtime-probes.md P8: 120 -> 99 per hit) */
 #define OBJ_TIMER 0x68    /* HOBJECT: its HTIMER, the clock of its animation (re-combat-vr.md 2.1) */
-#define TM_FRAME_MS 0x0c  /* CEngineTimer: u32 frame ms, float frame s, u32 total ms, double total s, num, den, scale */
-#define TM_FRAME_S 0x10
-#define TM_TOTAL_MS 0x14
-#define TM_TOTAL_S 0x18
-#define TM_NUM 0x20
-#define TM_DEN 0x24
-#define TM_SCALE 0x28
-#define TM_CARRY 0x78
+/* CEngineTimer: u32 frame ms, float frame s, u32 total ms, double total s, num, den, scale; the ms carry. Windows: every
+ * field later (+4, then +8 from the double: Itanium put them in the {vptr, refcount} base's tail padding, MSVC does not;
+ * its update FUN_140e127b0 and ctor FUN_140e12b50, docs/re-winport.md 7.8) */
+#define TM_FRAME_MS OFS(TM_FRAME_MS, 0x0c)
+#define TM_FRAME_S OFS(TM_FRAME_S, 0x10)
+#define TM_TOTAL_MS OFS(TM_TOTAL_MS, 0x14)
+#define TM_TOTAL_S OFS(TM_TOTAL_S, 0x18)
+#define TM_NUM OFS(TM_NUM, 0x20)
+#define TM_DEN OFS(TM_DEN, 0x24)
+#define TM_SCALE OFS(TM_SCALE, 0x28)
+#define TM_CARRY OFS(TM_CARRY, 0x78)
 #define CAT_COUNT 0x28    /* Combat/Attack category: record count, records (0x30 bytes each) */
 #define CAT_RECS 0x38
 #define DBREC_SIZE 0x30
@@ -676,7 +690,7 @@ static struct {
 /* SITES-BEGIN (save guard, SOMVR_SAVEDIR): WBOnlineService vtable 0x34823a0, slots 219-222 = the game's only callers
  * of the remote-storage accessor FUN_01bc5510 that touch files (FileWrite, GetFileSize, FileRead, FileDelete); no
  * direct calls to these four functions exist and each pointer appears once in the binary (checked 2026-10-18) */
-static const struct site_spec g_guard_sites[4] = {
+static SITE_TABLE struct site_spec g_guard_sites[4] = {
 SITE("G219", K_VSLOT, 0x3482a78, 0x3482a78, "70 99 91 00 00 00 00 00", 0x919970, "41 54 41 89 cc 55 48 89 d5 53 48 8b 07 48 89 f3"),
 SITE("G220", K_VSLOT, 0x3482a80, 0x3482a80, "10 99 91 00 00 00 00 00", 0x919910, "53 48 8b 07 48 89 f3 48 8b 80 d0 06 00 00 48 3d"),
 SITE("G221", K_VSLOT, 0x3482a88, 0x3482a88, "60 9a 91 00 00 00 00 00", 0x919a60, "41 54 41 89 cc 55 48 89 d5 53 48 8b 07 48 89 f3"),
@@ -687,7 +701,7 @@ SITE("G222", K_VSLOT, 0x3482a90, 0x3482a90, "b0 98 91 00 00 00 00 00", 0x9198b0,
 /* SITES-BEGIN (SOMVR_EYE_SIZE, SOMVR_HIDE_HEAD and SOMVR_HUD, docs/re-resolution.md 1.4 and 2.3, re-hud.md 1.5: call
  * sites patched like H1, the RES_* three only with SOMVR_EYE_SIZE, the HEAD_SHADOW_* four only with SOMVR_HIDE_HEAD,
  * the HUD_PASS_* two and UI_PRESENT_COMPOSITE only with SOMVR_HUD=quad. Order = EX_*) */
-static const struct site_spec g_ex_sites_game[] = {
+static SITE_TABLE struct site_spec g_ex_sites_game[] = {
 SITE("RES_3D_DESC", K_CALL, 0x741ceb, 0x741cc0, "41 8b 94 24 80 00 00 00 48 8d b3 d8 00 00 00 89 44 24 0c f3 0f 2a c2 f3 44 0f 59 c0 f3 44 0f 5e c7 f3 44 0f 58 c1 f3 49 0f 2c c8 e8 f0 df ff ff", 0x73fce0, "44 8b 15 6d 03 ee 03 66 0f ef c0"),
 SITE("RES_RECT_LETTERBOX", K_CALL, 0x9e6bd0, 0x9e6bc5, "48 8d bb f0 0d 08 00 89 ee 31 d2 e8 7b 1f 34 00", 0xd28b50, "48 b8 00 00 00 00 01 00 00 00 41 54"),
 SITE("RES_RECT_LETTERBOX_INIT", K_CALL, 0x9ea53f, 0x9ea533, "31 d2 48 8d bb f0 0d 08 00 44 89 e6 e8 0c e6 33 00", 0xd28b50, "48 b8 00 00 00 00 01 00 00 00 41 54"),
@@ -707,6 +721,18 @@ static const struct site_spec *g_ex_sites = g_ex_sites_game; /* selftest: stand-
 #define EX_RES_BITS ((1u << EX_RES3D) | (1u << EX_LB) | (1u << EX_LB_INIT))
 #define EX_HEAD_BITS ((1u << EX_SH_PRE) | (1u << EX_SH_LIGHTS) | (1u << EX_SH_CASC) | (1u << EX_SH_LIGHTS2))
 #define EX_HUD_BITS ((1u << EX_HUD_EYE) | (1u << EX_HUD_COVER) | (1u << EX_UI_COMP))
+#ifdef _WIN32
+/* Windows-only sites (win/sites-stereo.tsv; no Linux counterpart, so no SITES block: check_sites.py never sees them).
+ * H3_OVR: the second call of H3's target (the fixed-tanHalf override branch Linux inlined into H3's one call), patched
+ * with H3's stub. RES_3D_DESC_MID: RES_3D_DESC's place - the inline 3D desc's height store, a mid-function detour
+ * (K_ENTRY: its bytes checked, then somvr_win_hook_mid). Filled by name at start like every SITE_TABLE. Order = WS_* */
+static SITE_TABLE struct site_spec g_ws_sites_game[] = {
+SITE("H3_OVR", K_CALL, 0, 0, "", 0, ""),
+SITE("RES_3D_DESC_MID", K_ENTRY, 0, 0, "", 0, ""),
+};
+enum { WS_H3_OVR, WS_RES3D_MID, WS_N };
+_Static_assert(sizeof g_ws_sites_game / sizeof g_ws_sites_game[0] == WS_N, "Windows-only sites");
+#endif
 
 /* SITES-BEGIN (read only, never patched: what SOMVR_HIDE_HEAD calls and the objects it walks. IEngineModel (vtable
  * 0x3484130) slots 7 SetPieceHidden and 3 GetNumPieces, the stub's call of FUN_008f3c20 (obj -> CSimpleModel); the
@@ -714,7 +740,7 @@ static const struct site_spec *g_ex_sites = g_ex_sites_game; /* selftest: stand-
  * slot 162 (the renderable getter = *(model+0xb0)), CSimpleModelRenderable slot 2 (its render update sends the mask to
  * the handle at +0x50), TRenderNodeMeshSkeletalHandle slot 53 (node = handle+0x10) and CRenderNodeMeshSkeletal slot 5
  * (the render-thread mask +0x130/+0x134). Checked at start with the switch; any mismatch = no head hiding. Order = HS_*) */
-static const struct site_spec g_hh_sites_game[] = {
+static SITE_TABLE struct site_spec g_hh_sites_game[] = {
 SITE("G12_HIDEPIECE", K_VSLOT, 0x3484168, 0x3484160, "70 af 91 00 00 00 00 00 10 b3 91 00 00 00 00 00 b0 b2 91 00 00 00 00 00", 0x91b310, "48 85 f6 74 4b 55 48 89 f7 89 d5 53 0f b6 d9 48"),
 SITE("G12_NUMPIECES", K_VSLOT, 0x3484148, 0x3484140, "f0 c9 91 00 00 00 00 00 60 ae 91 00 00 00 00 00 b0 ae 91 00 00 00 00 00", 0x91ae60, "48 85 f6 74 3b 53 48 89 f7 48 89 d3 e8 af 8d fd"),
 SITE("G12_MODELOF", K_CALL, 0x91b323, 0x91b310, "48 85 f6 74 4b 55 48 89 f7 89 d5 53 0f b6 d9 48 83 ec 08 e8 f8 88 fd ff", 0x8f3c20, "48 8b 7f 38 48 85 ff 74 0f 48 8b 07 48 8b 40 20"),
@@ -730,41 +756,47 @@ enum { HS_HIDEPIECE, HS_NUMPIECES, HS_MODELOF, HS_MODEL_MASK, HS_MODEL_VT, HS_MO
 _Static_assert(sizeof g_hh_sites_game / sizeof g_hh_sites_game[0] == HS_N, "HS sites");
 static const struct site_spec *g_hh_sites = g_hh_sites_game; /* selftest: stand-ins */
 /* the vtables' address points = the checked slot's address - 8 x its index (so the selftest's stand-in tables work) */
-enum { HS_SLOT_MODEL_MASK = 50, HS_SLOT_MODEL_REND = 162, HS_SLOT_REND = 2, HS_SLOT_HANDLE = 53, HS_SLOT_NODE = 5 };
+enum { HS_SLOT_MODEL_MASK = OFS(HS_SLOT_MODEL_MASK, 50), HS_SLOT_MODEL_REND = OFS(HS_SLOT_MODEL_REND, 162),
+       HS_SLOT_REND = OFS(HS_SLOT_REND, 2), HS_SLOT_HANDLE = OFS(HS_SLOT_HANDLE, 53), HS_SLOT_NODE = OFS(HS_SLOT_NODE, 5) };
 static struct { uintptr_t vt_model, vt_rend, vt_handle, vt_node; } g_hh;
-#define SM_MASK 0x6c     /* CSimpleModel: uint32 mask[2], bit n = piece n hidden (game thread) */
-#define SM_REND 0xb0     /* CSimpleModel: CSimpleModelRenderable* */
-#define REND_HANDLE 0x50 /* CSimpleModelRenderable: TRenderNodeMeshSkeletalHandle* */
-#define HANDLE_NODE 0x10 /* the handle embeds the render-thread CRenderNodeMeshSkeletal here */
-#define NODE_MASK 0x130  /* CRenderNodeMeshSkeletal: uint32 mask[2], what every pass tests (FUN_0071fb80) */
+#define SM_MASK OFS(SM_MASK, 0x6c)     /* CSimpleModel: uint32 mask[2], bit n = piece n hidden (game thread) */
+#define SM_REND OFS(SM_REND, 0xb0)     /* CSimpleModel: CSimpleModelRenderable* */
+#define REND_HANDLE OFS(REND_HANDLE, 0x50) /* CSimpleModelRenderable: TRenderNodeMeshSkeletalHandle* */
+#define HANDLE_NODE OFS(HANDLE_NODE, 0x10) /* the handle embeds the render-thread CRenderNodeMeshSkeletal here */
+#define NODE_MASK OFS(NODE_MASK, 0x130)  /* CRenderNodeMeshSkeletal: uint32 mask[2], what every pass tests (FUN_0071fb80) */
 
 /* ------------------------------------------------------------------------------------------------------------ */
 /* Register frame built by the asm wrappers                                                                      */
 
-struct regs {
-	uint64_t rax, rcx, rdx, rsi, rdi, r8, r9, r10, r11, ra; /* ra = the game's return address */
-	float xmm[16][4];
-};
-_Static_assert(offsetof(struct regs, ra) == 0x48, "regs.ra");
-_Static_assert(offsetof(struct regs, xmm) == 0x50, "regs.xmm");
-_Static_assert(sizeof(struct regs) == 0x150, "regs size");
+#include "somvr_regs.h" /* struct regs and RA1..RA7: a WRAPPER hook's arguments on either ABI */
 
 #define WSAVEX(i) "  movdqu %xmm" #i ", 0x50+" #i "*16(%rsp)\n"
 #define WLOADX(i) "  movdqu 0x50+" #i "*16(%rsp), %xmm" #i "\n"
+#ifdef _WIN32 /* COFF; the C function takes the regs in rcx with its 32-byte home area (Win64). The hooks' C side
+		* reads the game's arguments from rcx, rdx, r8, r9 there: each is ported per site (win/README.md 2). */
+#define WRAPPER_HEAD(name) ".text\n.p2align 4\n.globl " name "\n.def " name ";\n.scl 2;\n.type 32;\n.endef\n" name ":\n"
+#define WRAPPER_CALL(cfn) "  lea 8(%rbp), %rcx\n  mov %rcx, 0x150(%rsp)\n  mov %rsp, %rcx\n  sub $0x20, %rsp\n  cld\n" \
+			  "  call " cfn "\n  add $0x20, %rsp\n" /* 0x150(%rsp): the entry rsp ([rsp] = the return address) */
+#define WRAPPER_TAIL(name) ""
+#else
+#define WRAPPER_HEAD(name) ".text\n.p2align 4\n.globl " name "\n.hidden " name "\n.type " name ",@function\n" name ":\n"
+#define WRAPPER_CALL(cfn) "  mov %rsp, %rdi\n  cld\n  call " cfn "\n"
+#define WRAPPER_TAIL(name) ".size " name ", .-" name "\n"
+#endif
 #define WRAPPER(name, cfn)                                                                                     \
-	__asm__(".text\n.p2align 4\n.globl " name "\n.hidden " name "\n.type " name ",@function\n" name ":\n"   \
+	__asm__(WRAPPER_HEAD(name)                                                                              \
 		"  push %rbp\n  mov %rsp, %rbp\n  sub $0x160, %rsp\n  and $-16, %rsp\n"                           \
 		"  mov %rax, 0x00(%rsp)\n  mov %rcx, 0x08(%rsp)\n  mov %rdx, 0x10(%rsp)\n  mov %rsi, 0x18(%rsp)\n" \
 		"  mov %rdi, 0x20(%rsp)\n  mov %r8, 0x28(%rsp)\n  mov %r9, 0x30(%rsp)\n  mov %r10, 0x38(%rsp)\n"  \
 		"  mov %r11, 0x40(%rsp)\n  mov 8(%rbp), %rax\n  mov %rax, 0x48(%rsp)\n"                           \
 		WSAVEX(0) WSAVEX(1) WSAVEX(2) WSAVEX(3) WSAVEX(4) WSAVEX(5) WSAVEX(6) WSAVEX(7)                \
 		WSAVEX(8) WSAVEX(9) WSAVEX(10) WSAVEX(11) WSAVEX(12) WSAVEX(13) WSAVEX(14) WSAVEX(15)          \
-		"  mov %rsp, %rdi\n  cld\n  call " cfn "\n"                                                       \
+		WRAPPER_CALL(cfn)                                                                                \
 		WLOADX(0) WLOADX(1) WLOADX(2) WLOADX(3) WLOADX(4) WLOADX(5) WLOADX(6) WLOADX(7)                \
 		WLOADX(8) WLOADX(9) WLOADX(10) WLOADX(11) WLOADX(12) WLOADX(13) WLOADX(14) WLOADX(15)          \
 		"  mov 0x08(%rsp), %rcx\n  mov 0x10(%rsp), %rdx\n  mov 0x18(%rsp), %rsi\n  mov 0x20(%rsp), %rdi\n" \
 		"  mov 0x28(%rsp), %r8\n  mov 0x30(%rsp), %r9\n  mov 0x38(%rsp), %r10\n  mov 0x40(%rsp), %r11\n"  \
-		"  mov 0x00(%rsp), %rax\n  leave\n  ret\n.size " name ", .-" name "\n")
+		"  mov 0x00(%rsp), %rax\n  leave\n  ret\n" WRAPPER_TAIL(name))
 
 void somvr_h1_c(struct regs *r);
 void somvr_h2_c(struct regs *r);
@@ -977,6 +1009,9 @@ static struct {
 	uint64_t copies, makes, misses, other, dups;
 } g_et;
 static int g_d3d_ok;          /* every g_d3d_sites entry matched at start */
+#ifdef _WIN32
+static int g_d3d_late_done;   /* win_late_d3d has run (the COM sites exist only from the first Present) */
+#endif
 static const struct site_spec *g_d3d_sites = g_d3d_sites_game;
 static void et_publish(void);
 static uint32_t hud_tag_present(uint64_t seq, uint64_t frame); /* SOMVR_HUD (H9 -> somvr_hud's tag for this present) */
@@ -1924,11 +1959,25 @@ static void comfort_poke(void)
 /* Hooks                                                                                                          */
 
 typedef uint64_t (*h1_fn)(void *cam, void *view, void *sp);
+#ifdef _WIN32 /* Win64 is positional: the floats in their declaration places (docs/re-winport.md 7.2, 7.7; the callers
+	       * read side by side: H2 0x14050c824, H3 0xd750f3 / 0xd74db8, H6 0xd997b5) */
+typedef uint64_t (*h2_fn)(void *self, const float *xf, const float *fov, const float *rect, float nz, float fz);
+typedef uint64_t (*h3_fn)(void *ds, const float *xf, float *tan_half, float *center, int *prect, int type, float nz,
+			  float fz);
+typedef uint64_t (*h6_fn)(void *corners, const float *xf, const float *tan_half, float nz, float fz, int ortho);
+#define H2_CALL(f, nz, fz, self, xf, fov, rect) ((h2_fn)(f))(self, xf, fov, rect, nz, fz)
+#define H3_CALL(f, nz, fz, ds, xf, th, co, prect, type) ((h3_fn)(f))(ds, xf, th, co, prect, type, nz, fz)
+#define H6_CALL(f, nz, fz, corners, xf, th, ortho) ((h6_fn)(f))(corners, xf, th, nz, fz, ortho)
+#else /* SysV: the floats in xmm0/xmm1 whatever their places */
 typedef uint64_t (*h2_fn)(float nz, float fz, void *self, const float *xf, const float *fov, const float *rect);
 typedef uint64_t (*h3_fn)(float nz, float fz, void *ds, const float *xf, float *tan_half, float *center,
 			  int *prect, int type);
-typedef uint64_t (*h4_fn)(void *gm, void *rt, const int *origin, void *player, int end_flags, int first);
 typedef uint64_t (*h6_fn)(float nz, float fz, void *corners, const float *xf, const float *tan_half, int ortho);
+#define H2_CALL(f, nz, fz, self, xf, fov, rect) ((h2_fn)(f))(nz, fz, self, xf, fov, rect)
+#define H3_CALL(f, nz, fz, ds, xf, th, co, prect, type) ((h3_fn)(f))(nz, fz, ds, xf, th, co, prect, type)
+#define H6_CALL(f, nz, fz, corners, xf, th, ortho) ((h6_fn)(f))(nz, fz, corners, xf, th, ortho)
+#endif
+typedef uint64_t (*h4_fn)(void *gm, void *rt, const int *origin, void *player, int end_flags, int first);
 typedef uint64_t (*h9_fn)(void *self, uint64_t sync, uint64_t flags);
 typedef uint64_t (*h8_fn)(void *ds, uint32_t flags);
 
@@ -1992,8 +2041,8 @@ static void eye0_setup(void *cam)
 __attribute__((used)) void somvr_h1_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_H1];
-	void *cam = (void *)r->rdi, *sp = (void *)r->rdx;
-	somvr_view *view = (somvr_view *)r->rsi; /* pos[3] quat[4] fovX fovY near far, 0x2c bytes */
+	void *cam = (void *)RA1(r), *sp = (void *)RA3(r); /* Win64 too: rcx, rdx, r8 (0x50c449) */
+	somvr_view *view = (somvr_view *)RA2(r); /* pos[3] quat[4] fovX fovY near far, 0x2c bytes */
 	r->rax = ((h1_fn)h->orig)(cam, view, sp);
 	rd_h1(sp); /* build 21, SOMVR_FLATFX vignette: the game's vignette and box blur out of this view's scene params */
 
@@ -2070,9 +2119,13 @@ __attribute__((used)) void somvr_h1_c(struct regs *r)
 __attribute__((used)) void somvr_h2_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_H2];
+#ifdef _WIN32
+	float nz = RF_STK(r, 5), fz = RF_STK(r, 6); /* (this, xf, fov, rect, nz, fz): nz/fz are stack arguments 5/6 */
+#else
 	float nz = r->xmm[0][0], fz = r->xmm[1][0];
-	void *self = (void *)r->rdi;
-	const float *xf = (const float *)r->rsi, *fov = (const float *)r->rdx, *rect = (const float *)r->rcx;
+#endif
+	void *self = (void *)RA1(r);
+	const float *xf = (const float *)RA2(r), *fov = (const float *)RA3(r), *rect = (const float *)RA4(r);
 	uintptr_t expect = 0;
 	atomic_compare_exchange_strong(&g_renderer, &expect, (uintptr_t)self);
 	if (g_comfort || stereo_wanted())
@@ -2088,7 +2141,7 @@ __attribute__((used)) void somvr_h2_c(struct regs *r)
 		prc = g_fr.rect[e]; /* never the caller's memory */
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 	}
-	r->rax = ((h2_fn)h->orig)(nz, fz, self, xf, fov, prc);
+	r->rax = H2_CALL(h->orig, nz, fz, self, xf, fov, prc);
 	if (!should_log(h, n))
 		return;
 	atomic_fetch_add_explicit(&h->logged, 1, memory_order_relaxed);
@@ -2116,11 +2169,16 @@ static void em_queued(int keep, const eye_ent *en)
 __attribute__((used)) void somvr_h3_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_H3];
+#ifdef _WIN32 /* (ds, xf, tan_half, center, prect, type, nz, fz): 5-8 on the stack; also H3_OVR's call (0xd74db8) */
+	float nz = RF_STK(r, 7), fz = RF_STK(r, 8);
+	int *prect = (int *)RA_STK(r, 5), type = (int)(uint32_t)RA_STK(r, 6);
+#else
 	float nz = r->xmm[0][0], fz = r->xmm[1][0];
-	void *ds = (void *)r->rdi;
-	const float *xf = (const float *)r->rsi;
-	float *tan_half = (float *)r->rdx, *center = (float *)r->rcx;
 	int *prect = (int *)r->r8, type = (int)r->r9;
+#endif
+	void *ds = (void *)RA1(r);
+	const float *xf = (const float *)RA2(r);
+	float *tan_half = (float *)RA3(r), *center = (float *)RA4(r);
 
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
 	float t0[2] = { tan_half[0], tan_half[1] }, c0[2] = { center[0], center[1] };
@@ -2173,7 +2231,7 @@ __attribute__((used)) void somvr_h3_c(struct regs *r)
 	int pr[4];
 	if (lg)
 		memcpy(pr, prect, sizeof pr);
-	r->rax = ((h3_fn)h->orig)(nz, fz, ds, xf, tan_half, center, prect, type);
+	r->rax = H3_CALL(h->orig, nz, fz, ds, xf, tan_half, center, prect, type);
 	if (!lg)
 		return;
 	atomic_fetch_add_explicit(&h->logged, 1, memory_order_relaxed);
@@ -2194,9 +2252,13 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_H4];
 	h4_fn f = (h4_fn)h->orig;
-	void *gm = (void *)r->rdi, *rt = (void *)r->rsi, *pl = (void *)r->rcx;
-	const int *org = (const int *)r->rdx;
+	void *gm = (void *)RA1(r), *rt = (void *)RA2(r), *pl = (void *)RA4(r);
+	const int *org = (const int *)RA3(r);
+#ifdef _WIN32 /* (gm, rt, origin, player, end_flags, first): 5/6 on the stack (0x50d25f) */
+	int ef = (int)(uint32_t)RA_STK(r, 5), first = (int)(RA_STK(r, 6) & 0xff);
+#else
 	int ef = (int)r->r8, first = (int)(r->r9 & 0xff);
+#endif
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
 	uintptr_t rend = atomic_load_explicit(&g_renderer, memory_order_relaxed);
 	pfg_h4_entry();   /* build 27, SOMVR_PERF: the last frame's times (a stereo one) */
@@ -2281,7 +2343,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	sz_frame(); /* SOMVR_PLAYER_SIZE: a change's blink (the fade level, the larger one) and landing, this frame's size */
 	vh_h4((g_fr.head_ok && !bm_head_away() && !fb_third()) || hp_away); /* SOMVR_VRHANDS: this frame's hands for the layer */
 
-	unsigned char snap[FOLIAGE_LEN], cut = *((volatile unsigned char *)gm + 0x20);
+	unsigned char snap[FOLIAGE_LEN], cut = *((volatile unsigned char *)gm + OFS(GM_FOLIAGE_CUT, 0x20));
 	memcpy(snap, (const void *)g_foliage, sizeof snap);
 	g_eye = 0;
 	rd_ov_eyes(1); /* build 24, SOMVR_FLATFX's overlay: COverlayFX's draws out of both eyes */
@@ -2290,7 +2352,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	pfg_eye(0, 1);
 	double t2 = mono();
 	memcpy((void *)g_foliage, snap, sizeof snap);
-	*((volatile unsigned char *)gm + 0x20) = cut;
+	*((volatile unsigned char *)gm + OFS(GM_FOLIAGE_CUT, 0x20)) = cut;
 	g_eye = 1;
 	pfg_eye(1, 0);
 	r->rax = f(gm, rt, org, pl, ef, 0);
@@ -2358,8 +2420,14 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 __attribute__((used)) void somvr_h6_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_H6];
-	const float *th = (const float *)r->rdx; /* &vs[0xc]: tanHalf[2], centerOffset[2] follow */
+	const float *th = (const float *)RA3(r); /* &vs[0xc]: tanHalf[2], centerOffset[2] follow */
+#ifdef _WIN32 /* (corners, xf, tan_half, nz xmm3, fz [5], ortho [6]) (0xd997b5) */
+	int ortho = (int)(RA_STK(r, 6) & 0xff);
+	float nz = r->xmm[3][0], fz = RF_STK(r, 5);
+#else
 	int ortho = (int)(r->rcx & 0xff);
+	float nz = r->xmm[0][0], fz = r->xmm[1][0];
+#endif
 	float wide[4];
 	const float *pass = th;
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
@@ -2369,7 +2437,7 @@ __attribute__((used)) void somvr_h6_c(struct regs *r)
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 		atomic_fetch_add_explicit(&g_st_widen, 1, memory_order_relaxed);
 	}
-	r->rax = ((h6_fn)h->orig)(r->xmm[0][0], r->xmm[1][0], (void *)r->rdi, (const float *)r->rsi, pass, ortho);
+	r->rax = H6_CALL(h->orig, nz, fz, (void *)RA1(r), (const float *)RA2(r), pass, ortho);
 	if (!should_log(h, n) || pass == th)
 		return;
 	atomic_fetch_add_explicit(&h->logged, 1, memory_order_relaxed);
@@ -2386,9 +2454,20 @@ __attribute__((used)) void somvr_h9_c(struct regs *r)
 	struct hook *h = &g_h[HK_H9];
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
 	pfg_h9(); /* build 27, SOMVR_PERF: the render thread's CPU since the last present */
+#ifdef _WIN32 /* DXGI_PRESENT_TEST presents nothing: no tag (DXVK presents on its own thread: the layer takes the tags in
+	       * order, present_tid stays 0 - somvr_tag_for_present's queue path) */
+	if (RA3(r) & 1u) {
+		r->rax = ((h9_fn)h->orig)((void *)RA1(r), RA2(r) & 0xffffffffu, RA3(r) & 0xffffffffu);
+		return;
+	}
+#endif
 	uint64_t frame = atomic_exchange_explicit(&g_sh.rec_pending, 0, memory_order_acq_rel);
 	uint32_t slot = frame ? somvr_layout_nslots(g_layout) - 1 : 0;
+#ifdef _WIN32
+	int32_t tid = 0;
+#else
 	int32_t tid = (int32_t)my_tid();
+#endif
 	uint32_t eyes = 0, gen = 0;
 	if (frame && g_layout == SOMVR_LAYOUT_B && g_et.state == 1) { /* which eye images hold this frame (H8, same thread) */
 		et_publish();
@@ -2420,7 +2499,7 @@ __attribute__((used)) void somvr_h9_c(struct regs *r)
 	}
 	double t0 = mono();
 	pfg_h9_call(0); /* build 27, SOMVR_PERF: the Present call (Feral's, the layer's present path, the driver's) */
-	r->rax = ((h9_fn)h->orig)((void *)r->rdi, r->rsi & 0xffffffffu, r->rdx & 0xffffffffu);
+	r->rax = ((h9_fn)h->orig)((void *)RA1(r), RA2(r) & 0xffffffffu, RA3(r) & 0xffffffffu);
 	pfg_h9_call(1);
 	double t1 = mono();
 	atomic_store_explicit(&g_sh.present_tid, 0, memory_order_release);
@@ -2430,7 +2509,7 @@ __attribute__((used)) void somvr_h9_c(struct regs *r)
 	char hd[128];
 	line_head(hd, sizeof hd, "H9", n);
 	logf_("%s ra=%#lx sync=%u flags=%#x tag=%llu frame=%llu slot=%u eyes=%u gen=%u hr=%#x present_ms=%.3f hud=%u", hd,
-	      (unsigned long)r->ra, (unsigned)(r->rsi & 0xffffffffu), (unsigned)(r->rdx & 0xffffffffu),
+	      (unsigned long)r->ra, (unsigned)(RA2(r) & 0xffffffffu), (unsigned)(RA3(r) & 0xffffffffu),
 	      (unsigned long long)seq, (unsigned long long)frame, slot, eyes, gen, (unsigned)(r->rax & 0xffffffffu),
 	      (t1 - t0) * 1e3, hud);
 }
@@ -2495,8 +2574,14 @@ static void tex_drop(void **t)
 	*t = NULL;
 }
 /* the VkImage behind an IdxD3D11Texture2D: +0x80 the CVulkanTexture (vtable checked), its +0x108; 0 = not known yet */
+#ifdef _WIN32
+uint64_t somvr_win_tex_vkimage(const void *tex); /* win/somvr_win_d3d.c: DXVK's IDXGIVkInteropSurface */
+#endif
 static uint64_t tex_vkimage(const void *t)
 {
+#ifdef _WIN32 /* no CVulkanTexture under DXVK (VK_TEX_COPY's redesign, docs/re-winport.md 7.2): the interop's image */
+	return somvr_win_tex_vkimage(t);
+#endif
 	uintptr_t f3d = t ? peek_ptr((uintptr_t)t + TEX_F3D) : 0;
 	return f3d && vptr_of((void *)f3d) == g_d3d.vt_vktex ? (uint64_t)peek_ptr(f3d + VKTEX_IMAGE) : 0;
 }
@@ -2582,6 +2667,10 @@ static int et_copy(int e, uint64_t frame)
 	if (g_et.state < 0)
 		return 0;
 	if (!g_d3d_ok) {
+#ifdef _WIN32
+		if (!g_d3d_late_done)
+			return 0; /* before the first Present: the D3D sites are not filled yet (not a mismatch) */
+#endif
 		et_off("a D3D11/Vulkan site did not match at start (see the D3D lines)");
 		return 0;
 	}
@@ -2612,8 +2701,8 @@ static int et_copy(int e, uint64_t frame)
 __attribute__((used)) void somvr_h8_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_H8];
-	void *ds = (void *)r->rdi;
-	uint32_t flags = (uint32_t)r->rsi;
+	void *ds = (void *)RA1(r); /* Win64: the executor's lea rcx,[ds]; jmp (0xd511a7), flags in edx */
+	uint32_t flags = (uint32_t)RA2(r);
 	uintptr_t rt = peek_ptr((uintptr_t)ds + DS_TARGET);
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
 	rd_rt_end_pre(rt, flags); /* build 22, SOMVR_FX_TEST: the trace */
@@ -2685,7 +2774,11 @@ static int player_objs(uintptr_t pl, uintptr_t *pm, uintptr_t *obj)
 {
 	uintptr_t body = pl ? peek_ptr(pl + P_BODY) : 0, mgr = body ? peek_ptr(body + BODY_MGR) : 0;
 	*pm = pl ? peek_ptr(pl + P_PM) : 0;
+#ifdef _WIN32
+	*obj = 0; (void)mgr; /* MGR_CHAR not found on Windows (offsets-core.tsv): bodyObj (= hChar in run 3) */
+#else
 	*obj = mgr ? peek_ptr(mgr + MGR_CHAR) : 0;
+#endif
 	if (!*obj && body)
 		*obj = peek_ptr(body + BODY_OBJ);
 	return *pm && vptr_of((void *)*pm) == g_som.vt_pm && peek_ptr(*pm + PM_OWNER) == pl && *obj;
@@ -2791,9 +2884,13 @@ typedef uint64_t (*aud_fn)(void *self, const float *pos, const float *front, con
 __attribute__((used)) void somvr_aud_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_AUD];
-	void *self = (void *)r->rdi;
-	const float *pos = (const float *)r->rsi, *front = (const float *)r->rdx, *top = (const float *)r->rcx;
+	void *self = (void *)RA1(r);
+	const float *pos = (const float *)RA2(r), *front = (const float *)RA3(r), *top = (const float *)RA4(r);
+#ifdef _WIN32
+	uint32_t idx = (uint32_t)RA_STK(r, 5); /* (this, pos, front, top, idx): idx at [rsp+0x28] */
+#else
 	uint32_t idx = (uint32_t)r->r8;
+#endif
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1, rf = rend_frame();
 	int fresh = g_head.valid && g_head.tid == my_tid() && rf - g_head.frame <= 2;
 	int use = g_audio && idx == 0 && fresh && stereo_wanted();
@@ -2928,8 +3025,8 @@ static int pm_at_rest(uintptr_t pm)
 __attribute__((used)) void somvr_pm_c(struct regs *r)
 {
 	struct hook *h = &g_h[HK_PM];
-	uintptr_t pm = (uintptr_t)r->rdi;
-	float *xf = (float *)r->rsi;
+	uintptr_t pm = (uintptr_t)RA1(r);
+	float *xf = (float *)RA2(r);
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1, rf = 0;
 	ct_pre(pm); /* `climb trace S` (a test aid) */
 	un_pre(pm); /* SOMVR_CLIMB_UNPIN: pinned in the rock: the asked move given to the proxy */
@@ -3003,11 +3100,33 @@ typedef uintptr_t (*cb_attackdata_fn)(uintptr_t attack);
 typedef void (*cb_stim_fn)(uintptr_t c, uintptr_t attack_data, uintptr_t target);
 typedef uintptr_t (*cb_stimfind_fn)(uintptr_t mgr, int32_t id);
 typedef void (*cb_stimremove_fn)(uintptr_t mgr, int32_t id);
+#ifdef _WIN32 /* MSVC passes a member's hidden return pointer after `this` (docs/re-winport.md 7.3): (T, out[, h]) */
+typedef void *(*cb_tcreate_fn)(void *T, uintptr_t *out);                /* HTIMER* CreateTimer(T, HTIMER *out) */
+typedef void *(*cb_tget_fn)(void *T, uintptr_t *out, uintptr_t h);      /* GetObjectTimer(T, out, HOBJECT): +1 ref */
+#define CB_TCREATE(f, out, T) (f)((T), (out))
+#define CB_TGET(f, out, T, h) (f)((T), (out), (h))
+#else
 typedef void *(*cb_tcreate_fn)(uintptr_t *out, void *T);                /* HTIMER* CreateTimer(HTIMER *out, T) */
 typedef void *(*cb_tget_fn)(uintptr_t *out, void *T, uintptr_t h);      /* GetObjectTimer(out, T, HOBJECT): +1 ref */
+#define CB_TCREATE(f, out, T) (f)((out), (T))
+#define CB_TGET(f, out, T, h) (f)((out), (T), (h))
+#endif
 typedef uint64_t (*cb_tset_fn)(void *T, uintptr_t h, const uintptr_t *t); /* SetObjectTimer: +1 the new, -1 the old */
 typedef void (*cb_trelease_fn)(uintptr_t *t);                           /* FUN_009ec850: -1 ref (*t is left as is) */
 #define CB_FN(i, T) ((T)g_cb_sites[i].target)
+#ifdef _WIN32
+/* Windows: Combat_DealHit is (attacker, target, LTVector pos, attack, bool kill) - MSVC passes the 12-byte vector by
+ * pointer in its source position; SysV put it in xmm0/xmm1, so the Linux typedef lists it first (docs/re-winport.md
+ * 7.3). Declared in the source order the C call is right for the MSVC ABI */
+typedef void (*cb_dealhit_win_fn)(uintptr_t attacker, uintptr_t target, cb_ltvec pos, uintptr_t attack, int kill);
+static inline void cb_dealhit_win(cb_ltvec pos, uintptr_t attacker, uintptr_t target, uintptr_t attack, int kill)
+{
+	((cb_dealhit_win_fn)g_cb_sites[CS_DEALHIT].target)(attacker, target, pos, attack, kill);
+}
+#define CB_DEALHIT_CALL cb_dealhit_win
+#else
+#define CB_DEALHIT_CALL CB_FN(CS_DEALHIT, cb_dealhit_fn)
+#endif
 
 enum { CB_OFF = 0, CB_FULL = 1, CB_LOG = 2 };         /* SOMVR_COMBAT=0|1|log */
 enum { CB_BLADE_CONTROLLER = 0, CB_BLADE_FAKE = 1 }; /* SOMVR_BLADE */
@@ -3303,16 +3422,16 @@ static void *cb_tslot(void **T, int slot, int site)
 static void cb_hs_start(const struct cb_orc *o, double t, float dur, const char *what)
 {
 	void *T = NULL;
-	cb_tcreate_fn create = (cb_tcreate_fn)cb_tslot(&T, 3, CS_TIMER_CREATE);
-	cb_tget_fn get = (cb_tget_fn)cb_tslot(&T, 10, CS_OBJTIMER_GET);
-	cb_tset_fn set = (cb_tset_fn)cb_tslot(&T, 9, CS_OBJTIMER_SET);
+	cb_tcreate_fn create = (cb_tcreate_fn)cb_tslot(&T, OFS(CB_TSLOT_CREATE, 3), CS_TIMER_CREATE);
+	cb_tget_fn get = (cb_tget_fn)cb_tslot(&T, OFS(CB_TSLOT_GET, 10), CS_OBJTIMER_GET);
+	cb_tset_fn set = (cb_tset_fn)cb_tslot(&T, OFS(CB_TSLOT_SET, 9), CS_OBJTIMER_SET);
 	cb_trelease_fn rel = CB_FN(CS_TIMER_RELEASE, cb_trelease_fn);
 	const char *why = !g_cb.ok_stop ? "a CB_TIMER/CB_OBJTIMER site did not match at start"
 			  : g_cb.hs.on ? "another orc is held"
 			  : !create || !get || !set ? "*0x466c718 is not the CWBTimer with the checked slots"
 			  : cb_sync(o->c) ? "the orc is in a sync action" : NULL;
 	if (!why && !g_cb.hs.mine) {
-		create(&g_cb.hs.mine, T);
+		CB_TCREATE(create, &g_cb.hs.mine, T);
 		if (!g_cb.hs.mine || vptr_of((void *)g_cb.hs.mine) != g_cbg.vt_etimer) {
 			why = "CreateTimer gave no CEngineTimer (hit-stop off for the run)";
 			g_cb.ok_stop = 0, g_cb.hs.mine = 0;
@@ -3322,7 +3441,7 @@ static void cb_hs_start(const struct cb_orc *o, double t, float dur, const char 
 	}
 	if (!why) {
 		uintptr_t old = 0, m = g_cb.hs.mine;
-		get(&old, T, o->hobj);
+		CB_TGET(get, &old, T, o->hobj);
 		if (!old || old == m || vptr_of((void *)old) != g_cbg.vt_etimer) {
 			why = "the orc's timer is not a CEngineTimer";
 			if (old)
@@ -3363,7 +3482,7 @@ static void cb_hs_tick(double t)
 	if (!g_cb.hs.on)
 		return;
 	void *T = NULL;
-	cb_tset_fn set = (cb_tset_fn)cb_tslot(&T, 9, CS_OBJTIMER_SET);
+	cb_tset_fn set = (cb_tset_fn)cb_tslot(&T, OFS(CB_TSLOT_SET, 9), CS_OBJTIMER_SET);
 	cb_trelease_fn rel = CB_FN(CS_TIMER_RELEASE, cb_trelease_fn);
 	struct cb_orc o;
 	int alive = cb_orc_get(g_cb.hs.c, &o) && o.hobj == g_cb.hs.hobj && peek_ptr(o.hobj + OBJ_TIMER) == g_cb.hs.mine;
@@ -3502,7 +3621,7 @@ static void cb_stim_start(uintptr_t pc, const struct cb_orc *o, int n, const som
  * GetCombat, the current attack FUN_026d4510 = Combat+0x4d0 (its first bytes), then cmpb $0,0xe1 / $0,0xe0 of that
  * Combat: in an attack with both 0 = no goal); no library patches this call (the probe's P_GOAL_REL is the vtable slot
  * 0x3a4e0d8). Checked at start with SOMVR_COMBAT_REACT set; any mismatch = no rolls, no block reads. Order = RS_*) */
-static const struct site_spec g_rx_sites_game[] = {
+static SITE_TABLE struct site_spec g_rx_sites_game[] = {
 SITE("RX_CHARREC", K_ENTRY, 0x26ff330, 0x26ff330, "48 8b 35 09 7f 52 02 83 7e 48 01 7e 2b 48 85 ff", 0x26ff330, "48 8b 35 09 7f 52 02 83 7e 48 01 7e 2b 48 85"),
 SITE("RX_ROLL", K_ENTRY, 0xc73440, 0xc73440, "48 83 ec 18 f3 0f 11 44 24 0c f3 0f 11 4c 24 08", 0xc73440, "48 83 ec 18 f3 0f 11 44 24 0c f3 0f 11 4c 24"),
 SITE("RX_NOTIFY", K_ENTRY, 0x29ac890, 0x29ac890, "41 55 49 89 f5 41 54 55 53 48 83 ec 38 48 8b 6f", 0x29ac890, "41 55 49 89 f5 41 54 55 53 48 83 ec 38 48 8b"),
@@ -4048,7 +4167,7 @@ static const char *cb_ad_desc(uintptr_t rec, char *out, size_t cap)
 /* an orc's shield (the damage context's test, 0x2817717..0x28177c4): its inventory's active item's object, whose class
  * chain (+0x48: the first link, then +8) holds the shield class 0x4c4d6e0, then +0x38 the shield, +0xa8 its hit points
  * (FUN_028adf30: none left = it blocks nothing). NAN = no shield (read only, no game call) */
-#define CB_SHIELD_CLASS 0x4c4d6e0
+#define CB_SHIELD_CLASS GADDR(CB_SHIELD_CLASS, 0x4c4d6e0)
 /* an orc's shield item (its game object's class chain has the shield class): the active slot first, then the other
  * seven (build 16: a defender inside its own swing has its weapon's slot active; the shield read NAN there); *sh = the
  * shield component (HP at +0xa8); 0 = none */
@@ -4282,7 +4401,7 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 	kp_hit_pre(o->c, o->hobj, tier, g_cb.hit_k, t); /* build 24, SOMVR_CAPTAIN_DAMAGE: a committed cut on a captain */
 	struct kl_floor klf; /* build 31, SOMVR_KILLS: the blow that would kill is known exactly (the orc's min health 1) */
 	kl_floor_on(o, &klf);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, srec ? srec : rec, 0);
+	CB_DEALHIT_CALL((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, srec ? srec : rec, 0);
 	kl_floor_off(&klf);
 	double t1 = mono();
 	kp_hit_post(o->c, t);
@@ -4307,7 +4426,7 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 		float bax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
 		klt = kl_take(pc, o, rec, rec, 0, ct->point, b->vel_tip, bax, ry == 2 ? SOMVR_KL_COUNTER : 0, "the killing blow", t);
 		if (!klt) /* not taken: the kill now, as the hit would have dealt it */
-			CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj,
+			CB_DEALHIT_CALL((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj,
 							 srec ? srec : rec, 1);
 		dead1 = klt || cb_dead(o->c);
 		hp1 = cb_health(o->c);
@@ -4635,7 +4754,7 @@ static void combat_frame(uintptr_t pl, int head_ok)
  * test FUN_00a10d30(im) (the probe's F_CMD_ON/OFF/ACTIVE, F_INPUT_MODE, F_VIDEOCOVER). Checked at start: a mismatch of
  * the first three = no injection; of the input mode = no forced pad mode; of the video test = videos unseen. Order =
  * IS_*) */
-static const struct site_spec g_in_sites_game[] = {
+static SITE_TABLE struct site_spec g_in_sites_game[] = {
 SITE("IN_CMD_ON", K_ENTRY, 0xaab660, 0xaab660, "80 7f 78 00 75 0a c3 66 0f 1f 84 00 00 00 00 00", 0xaab660, "80 7f 78 00 75 0a c3 66 0f 1f 84 00 00 00 00"),
 SITE("IN_CMD_OFF", K_ENTRY, 0xaab5d0, 0xaab5d0, "80 7f 78 00 75 0a c3 66 0f 1f 84 00 00 00 00 00", 0xaab5d0, "80 7f 78 00 75 0a c3 66 0f 1f 84 00 00 00 00"),
 SITE("IN_CMD_ACTIVE", K_ENTRY, 0xaab900, 0xaab900, "89 f2 48 81 fa 5c 01 00 00 77 1a 48 c1 ea 06 89", 0xaab900, "89 f2 48 81 fa 5c 01 00 00 77 1a 48 c1 ea 06"),
@@ -4649,21 +4768,26 @@ static const struct site_spec *g_in_sites = g_in_sites_game; /* selftest: stand-
 
 /* the game objects (selftest: stand-ins): the CGameClientShell holder, the game timer's holder (paused), the
  * "auto-switch pad -> KBM allowed" byte (re-input.md 3.4) */
-static struct { uintptr_t shell_pp, pause_pp, allow_kbm; } g_ing = { 0x46a9560, 0x463e290, 0x46b0d61 };
-#define IN_SH_LOCALS 0x10    /* CGameClientShell: int current local player (6 = none), vector<entry*> at +0x18/+0x20 */
-#define IN_SH_IM 0x80ff8     /* CGameClientShell: CInterfaceMgr* (+0 the interface state machine, +0x10 the menus') */
-#define IN_EN_PROFILE 0x08   /* local player entry: +0x8 the profile (+0x238 "using gamepad"), +0x10 PlayerInput */
-#define IN_EN_PI 0x10
-#define IN_PROF_PAD 0x238
-#define IN_PI_ENTRIES 0x60   /* PlayerInput: per-command entries of 0x30 bytes, +0 the CWBInput command record */
-#define IN_PIE_SIZE 0x30
-#define IN_REC_CTX 0x18      /* the record (0x40): +0x18 its context (+0x10 value records of 0x14 bytes, scale first),
+#ifdef _WIN32 /* GADDR is no constant there: world_win_globals() sets these at start */
+static struct { uintptr_t shell_pp, pause_pp, allow_kbm; } g_ing;
+#else
+static struct { uintptr_t shell_pp, pause_pp, allow_kbm; } g_ing = { GADDR(IN_SHELL_PP, 0x46a9560),
+	GADDR(IN_PAUSE_PP, 0x463e290), GADDR(IN_ALLOW_KBM, 0x46b0d61) };
+#endif
+#define IN_SH_LOCALS OFS(IN_SH_LOCALS, 0x10)    /* CGameClientShell: int current local player (6 = none), vector<entry*> at +0x18/+0x20 */
+#define IN_SH_IM OFS(IN_SH_IM, 0x80ff8)     /* CGameClientShell: CInterfaceMgr* (+0 the interface state machine, +0x10 the menus') */
+#define IN_EN_PROFILE OFS(IN_EN_PROFILE, 0x08)   /* local player entry: +0x8 the profile (+0x238 "using gamepad"), +0x10 PlayerInput */
+#define IN_EN_PI OFS(IN_EN_PI, 0x10)
+#define IN_PROF_PAD OFS(IN_PROF_PAD, 0x238)
+#define IN_PI_ENTRIES OFS(IN_PI_ENTRIES, 0x60)   /* PlayerInput: per-command entries of 0x30 bytes, +0 the CWBInput command record */
+#define IN_PIE_SIZE OFS(IN_PIE_SIZE, 0x30)
+#define IN_REC_CTX OFS(IN_REC_CTX, 0x18)      /* the record (0x40): +0x18 its context (+0x10 value records of 0x14 bytes, scale first),
 			      * +0x20 four input ids (-1 none), +0x30 four value-record indices */
-#define IN_REC_INPUTS 0x20
-#define IN_REC_VALIDX 0x30
-#define IN_CTX_VALRECS 0x10
-#define IN_VALREC_SIZE 0x14
-#define IN_PC_STRUGGLE 0x8d8 /* PlayerCombat: +0x8d8 the state struggle, +0x8e0 the sync struggle (re-m1m2.md 6.2) */
+#define IN_REC_INPUTS OFS(IN_REC_INPUTS, 0x20)
+#define IN_REC_VALIDX OFS(IN_REC_VALIDX, 0x30)
+#define IN_CTX_VALRECS OFS(IN_CTX_VALRECS, 0x10)
+#define IN_VALREC_SIZE OFS(IN_VALREC_SIZE, 0x14)
+#define IN_PC_STRUGGLE OFS(IN_PC_STRUGGLE, 0x8d8) /* PlayerCombat: +0x8d8 the state struggle, +0x8e0 the sync struggle (re-m1m2.md 6.2) */
 #define IN_MAPN 24           /* commands bound to one pad input */
 #define IV_MAX 96            /* records we hold at once (passthrough, command presses, the deny list) */
 
@@ -4766,7 +4890,7 @@ static int game_paused(void)
 {
 	uintptr_t pz = peek_ptr(peek_ptr(g_ing.pause_pp) + 8);
 	unsigned char b = 0;
-	return pz && peek(pz + 0x34, &b, 1) && b;
+	return pz && peek(pz + OFS(IN_PAUSE_FLAG, 0x34), &b, 1) && b;
 }
 
 /* a state machine's state as the probe's msm_state reads it: +0xc, or +0x8 while +0xc is -1 */
@@ -4789,7 +4913,7 @@ static void in_context(void)
 	g_inp.menus = g_inp.im ? in_msm(peek_ptr(g_inp.im + 0x10)) : -9;
 	uintptr_t pz = peek_ptr(peek_ptr(g_ing.pause_pp) + 8);
 	unsigned char pb = 0;
-	g_inp.paused = pz && peek(pz + 0x34, &pb, 1) ? pb : 0;
+	g_inp.paused = pz && peek(pz + OFS(IN_PAUSE_FLAG, 0x34), &pb, 1) ? pb : 0;
 	g_inp.entry = g_inp.pi = g_inp.profile = 0;
 	if (sh && peek(sh + IN_SH_LOCALS, &cur, sizeof cur) && cur >= 0 && cur != 6 && (b = peek_ptr(sh + IN_SH_LOCALS + 8)) &&
 	    (e = peek_ptr(sh + IN_SH_LOCALS + 0x10)) > b && (uintptr_t)cur < (e - b) / 8)
@@ -4847,7 +4971,7 @@ static void in_padmode(double t)
  * im+0x2a50 and im+0x2708 (FUN_00a18030); vf_05's re-arm test of ui+0x10; the no-pad skip; the Feral controller
  * manager (FUN_01fdca30: the guard 0x4b4c420, the object 0x4b4c440) and its count (FUN_020473f0: +0x90..+0x98).
  * Checked at start with SOMVR_INPUT=1; any mismatch = no re-arm (the raw codes stay). Order = GL_*) */
-static const struct site_spec g_gl_sites_game[] = {
+static SITE_TABLE struct site_spec g_gl_sites_game[] = {
 SITE("GL_VIEW_HAS", K_VSLOT, 0x3482168, 0x3482168, "c0 c4 90 00 00 00 00 00", 0x90c4c0, "80 3e 00 b8 01 00 00 00 75 06 c3 0f 1f 44 00 00"),
 SITE("GL_VIEW_CLEAR", K_VSLOT, 0x3482180, 0x3482180, "20 c5 90 00 00 00 00 00", 0x90c520, "c7 87 d0 00 00 00 00 00 00 00 48 8b b7 e8 1c 00"),
 SITE("GL_GAMEUI_UPDATE", K_VSLOT, 0x3597dd0, 0x3597dd0, "f0 0a e4 00 00 00 00 00", 0xe40af0, "e9 eb 73 e7 ff"),
@@ -4865,15 +4989,20 @@ enum { GL_VIEW_HAS, GL_VIEW_CLEAR, GL_GAMEUI_UPDATE, GL_MSGBOX_UPDATE, GL_UIS_MS
 _Static_assert(sizeof g_gl_sites_game / sizeof g_gl_sites_game[0] == GL_N, "glyph sites");
 static const struct site_spec *g_gl_sites = g_gl_sites_game; /* selftest: stand-ins */
 /* the objects (selftest: stand-ins): the pad texture names, the Feral controller manager's guard and object */
-static struct { uintptr_t names, mgr_guard, mgr; } g_glg = { 0x355eb20, 0x4b4c420, 0x4b4c440 };
+#ifdef _WIN32 /* world_win_globals() (all 0 there: Feral's controller manager is Linux-only, GLYPHS stays off) */
+static struct { uintptr_t names, mgr_guard, mgr; } g_glg;
+#else
+static struct { uintptr_t names, mgr_guard, mgr; } g_glg = { GADDR(GL_NAMES_TAB, 0x355eb20), GADDR(GL_MGR_GUARD, 0x4b4c420),
+	GADDR(GL_MGR_OBJ, 0x4b4c440) };
+#endif
 #define GL_NAMES 22
-#define GL_UI_GAME 0x2708   /* CInterfaceMgr: CGameUI (menus, HUD prompts) */
-#define GL_UI_MSGBOX 0x2a50 /* CInterfaceMgr: CMessageBoxUI (dialogs) */
-#define GL_UI_HOLDER 0x08   /* CBaseUI: its holder, whose +0x50 = the CUIView */
-#define GL_HOLDER_VIEW 0x50
-#define GL_UI_DONE 0x10     /* CBaseUI: 1 = the substitutions are registered (vf_05 re-registers while 0) */
-#define GL_VIEW_COUNT 0xd0  /* CUIView: the pairs in the table (at most 0x80) */
-#define GL_MGR_VEC 0x90     /* the controller manager: vector<controller*> +0x90..+0x98 */
+#define GL_UI_GAME OFS(GL_UI_GAME, 0x2708)   /* CInterfaceMgr: CGameUI (menus, HUD prompts) */
+#define GL_UI_MSGBOX OFS(GL_UI_MSGBOX, 0x2a50) /* CInterfaceMgr: CMessageBoxUI (dialogs) */
+#define GL_UI_HOLDER OFS(GL_UI_HOLDER, 0x08)   /* CBaseUI: its holder, whose +0x50 = the CUIView */
+#define GL_HOLDER_VIEW OFS(GL_HOLDER_VIEW, 0x50)
+#define GL_UI_DONE OFS(GL_UI_DONE, 0x10)     /* CBaseUI: 1 = the substitutions are registered (vf_05 re-registers while 0) */
+#define GL_VIEW_COUNT OFS(GL_VIEW_COUNT, 0xd0)  /* CUIView: the pairs in the table (at most 0x80) */
+#define GL_MGR_VEC OFS(GL_MGR_VEC, 0x90)     /* the controller manager: vector<controller*> +0x90..+0x98 */
 typedef uint64_t (*gl_has_fn)(void *view, const char *name);
 typedef void (*gl_clear_fn)(void *view);
 static struct {
@@ -5706,9 +5835,13 @@ static uint64_t in_vf25(void *self, void *rec, uint64_t a3)
 static void in_rumble(int hk, struct regs *r)
 {
 	struct hook *h = &g_h[hk];
-	int ch = (int)(uint32_t)r->rsi;
+	int ch = (int)(uint32_t)RA2(r);
+#ifdef _WIN32
+	float v = r->xmm[2][0]; /* (pi rcx, ch edx, v xmm2): Win64 is positional (0x45c5ac, 0x45bc80) */
+#else
 	float v = r->xmm[0][0];
-	((in_rumble_fn)h->orig)((void *)r->rdi, ch, v);
+#endif
+	((in_rumble_fn)h->orig)((void *)RA1(r), ch, v);
 	r->rax = 0;
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
 	if (g_inp.on && (ch == 0 || ch == 1) && g_inp.tid && my_tid() == g_inp.tid) {
@@ -5720,7 +5853,7 @@ static void in_rumble(int hk, struct regs *r)
 	if (n <= 3) {
 		char hd[128];
 		line_head(hd, sizeof hd, h->name, n);
-		logf_("%s ra=%#lx pi=%#lx ch=%d v=%.3f", hd, (unsigned long)r->ra, (unsigned long)r->rdi, ch, v);
+		logf_("%s ra=%#lx pi=%#lx ch=%d v=%.3f", hd, (unsigned long)r->ra, (unsigned long)RA1(r), ch, v);
 	}
 }
 __attribute__((used)) void somvr_rum1_c(struct regs *r) { in_rumble(HK_RUM1, r); }
@@ -5730,24 +5863,24 @@ __attribute__((used)) void somvr_rum2_c(struct regs *r) { in_rumble(HK_RUM2, r);
 /* SITES-BEGIN (read only, never patched: what SOMVR_ARMS=1 calls - FUN_008f3c20(obj), the object's CSimpleModel
  * (obj+0x38's vtbl+0x20, checked to be code once per object as SOMVR_HIDE_HEAD does), whose +0x178 is the tracker the
  * ARM_TRK_EVAL hook acts on. Checked at start with the switch; a mismatch = arms off. Order = AS_*) */
-static const struct site_spec g_arm_sites_game[] = {
+static SITE_TABLE struct site_spec g_arm_sites_game[] = {
 SITE("ARM_MODELOF", K_ENTRY, 0x8f3c20, 0x8f3c20, "48 8b 7f 38 48 85 ff 74 0f 48 8b 07 48 8b 40 20", 0x8f3c20, "48 8b 7f 38 48 85 ff 74 0f 48 8b 07 48 8b 40"),
 };
 /* SITES-END */
 enum { AS_MODELOF, AS_N };
 _Static_assert(sizeof g_arm_sites_game / sizeof g_arm_sites_game[0] == AS_N, "arm sites");
 static const struct site_spec *g_arm_sites = g_arm_sites_game; /* selftest: stand-ins */
-#define SM_TRK 0x178     /* CSimpleModel: its CSimpleModelTrackerNode (re-animation.md 1.1) */
-#define TRK_SLOT 3       /* ARM_TRK_EVAL = slot 3 of the tracker's vtable (its address point = the slot - 0x18) */
-#define TRK_POSE 0x58    /* tracker: the output pose buffer, +0x40 the nodes (0x20 bytes each), +0x48 their count */
-#define TRK_HOBJ 0x168   /* tracker: the HOBJECT it animates (logged against the player's object, not relied on) */
-#define TRK_MDATA 0x808  /* tracker: the model data, +0x10 the skeleton (vf_03's bind-pose path walks it) */
-#define PB_NODES 0x40
-#define PB_COUNT 0x48
-#define MD_SKEL 0x10
-#define SK_COUNT 0x08    /* skeleton: +0 the 0x40-byte node entries (+0 the parent byte), +8 the count, +0x40 the hashes */
-#define SK_HASHES 0x40
-#define SK_ENTRY 0x40
+#define SM_TRK OFS(SM_TRK, 0x178)     /* CSimpleModel: its CSimpleModelTrackerNode (re-animation.md 1.1) */
+#define TRK_SLOT OFS(TRK_SLOT, 3)       /* ARM_TRK_EVAL = slot 3 of the tracker's vtable (its address point = the slot - 0x18) */
+#define TRK_POSE OFS(TRK_POSE, 0x58)    /* tracker: the output pose buffer, +0x40 the nodes (0x20 bytes each), +0x48 their count */
+#define TRK_HOBJ OFS(TRK_HOBJ, 0x168)   /* tracker: the HOBJECT it animates (logged against the player's object, not relied on) */
+#define TRK_MDATA OFS(TRK_MDATA, 0x808)  /* tracker: the model data, +0x10 the skeleton (vf_03's bind-pose path walks it) */
+#define PB_NODES OFS(PB_NODES, 0x40)
+#define PB_COUNT OFS(PB_COUNT, 0x48)
+#define MD_SKEL OFS(MD_SKEL, 0x10)
+#define SK_COUNT OFS(SK_COUNT, 0x08)    /* skeleton: +0 the 0x40-byte node entries (+0 the parent byte), +8 the count, +0x40 the hashes */
+#define SK_HASHES OFS(SK_HASHES, 0x40)
+#define SK_ENTRY OFS(SK_ENTRY, 0x40)
 #define ARM_RIG_S 0.1    /* the last stereo frame's rig serves the next phase 2 for at most this long */
 
 typedef void (*arm_eval_fn)(void *trk);
@@ -6405,10 +6538,43 @@ static struct {
 	uint64_t pend_sets, held, held_outs, switches[2], fails, logged;
 	char pend_cmd[64];
 } g_es = { .cur = -1, .hold_s = 2.0, .eng_pp = 0x466afa8 };
+#ifdef _WIN32
+/* winport-core (docs/re-winport.md 7.2): group A's game globals on Windows. GADDR is no constant there (image base +
+ * RVA), so the static initialisers above keep the Linux addresses and the DLL's start calls this before any site check
+ * (a 0 = not known: the peek_* reads through it fail and the feature stays off). */
+void somvr_core_win_globals(void);
+void somvr_core_win_globals(void)
+{
+	g_som.model_pp = GADDR(SOM_MODEL_PP, 0x46a9230); /* the IEngineModel* (Windows: a static pointer to the impl) */
+	g_som.vt_pm = GADDR(SOM_VT_PM, 0x34fc7e0);
+	g_d3d.holder = GADDR(D3D_HOLDER, 0x461fa40);
+	g_d3d.vt_dev = g_d3d.vt_ctx = g_d3d.vt_ctx_mt = g_d3d.vt_tex = g_d3d.vt_vktex = 0; /* somvr_core_win_com() */
+	g_foliage = GADDR(CORE_FOLIAGE, 0x46a9de0);
+	g_ra_vp = GADDR(CORE_RA_VP, 0x9ef2bc); /* winport-stereo: H2's player-view return address (0 = any) */
+	g_es.eng_pp = GADDR(ES_ENG_PP, 0x466afa8);
+	const uintptr_t pokes[] = { GADDR(POKE_SHAKE_OFF, 0x46b72d2), GADDR(POKE_MOTION_BLUR, 0x46b6651),
+				    GADDR(POKE_DOF, 0x46b6652), GADDR(POKE_VELBLUR55, 0x46a9300),
+				    GADDR(POKE_VELBLUR58, 0x46a9301) };
+	_Static_assert(sizeof pokes / sizeof pokes[0] == sizeof g_pokes / sizeof g_pokes[0], "pokes");
+	for (size_t i = 0; i < sizeof pokes / sizeof pokes[0]; i++)
+		g_pokes[i].addr = pokes[i];
+}
+/* after the DLL filled the COM rows (D3D_* sites: addr = &vtbl[slot] of the runtime objects): the vtables H8's
+ * checks compare with. No Feral threaded context and no CVulkanTexture on Windows (the VkImage: DXVK interop). */
+void somvr_core_win_com(void);
+void somvr_core_win_com(void)
+{
+	const struct site_spec *d = g_d3d_sites;
+	g_d3d.vt_dev = d[DS_CREATETEX2D].addr ? d[DS_CREATETEX2D].addr - 8 * SLOT_CREATETEX2D : 0;
+	g_d3d.vt_ctx = g_d3d.vt_ctx_mt = d[DS_COPY].addr ? d[DS_COPY].addr - 8 * SLOT_COPYRESOURCE : 0;
+	g_d3d.vt_tex = d[DS_GETDESC].addr ? d[DS_GETDESC].addr - 8 * SLOT_GETDESC : 0;
+	g_d3d.vt_vktex = 0;
+}
+#endif
 /* SITES-BEGIN (read only, never patched: what SOMVR_EYE_SIZE's switch calls - the console's RunConsoleString, CWBEngine
  * (vtable 0x344d550) slot 32 -> 0x8bd8b0 (re-m1m2.md 2.2; the probe's exec, P7's SetResolution); the live engine's
  * vtable is checked before every call. Checked at start with the switch; a mismatch = no switching (always). Order = ES_*) */
-static const struct site_spec g_es_sites_game[] = {
+static SITE_TABLE struct site_spec g_es_sites_game[] = {
 SITE("ES_RUNSTRING", K_VSLOT, 0x344d650, 0x344d640, "20 d3 8b 00 00 00 00 00 30 d3 8b 00 00 00 00 00 b0 d8 8b 00 00 00 00 00 80 d8 8b 00 00 00 00 00 40 d3 8b 00 00 00 00 00", 0x8bd8b0, "53 48 89 f3 e8 77 f8 ff ff 48 89 de 48 89 c7"),
 };
 /* SITES-END */
@@ -6460,8 +6626,8 @@ static int es_eyes_ok(void)
 static int es_run(const char *cmd, char *why, size_t cap)
 {
 	uintptr_t eng = peek_ptr(g_es.eng_pp), vt = vptr_of((void *)eng);
-	uintptr_t fn = vt ? peek_ptr(vt + 32 * 8) : 0;
-	if (!eng || vt + 32 * 8 != g_es_sites[ES_RUNSTRING].addr || fn != g_es_sites[ES_RUNSTRING].target)
+	uintptr_t fn = vt ? peek_ptr(vt + OFS(ES_SLOT_RUNSTRING, 32) * 8) : 0;
+	if (!eng || vt + OFS(ES_SLOT_RUNSTRING, 32) * 8 != g_es_sites[ES_RUNSTRING].addr || fn != g_es_sites[ES_RUNSTRING].target)
 		return snprintf(why, cap, "the engine %#lx has vtable %#lx, slot 32 %#lx (want %#lx -> %#lx)", (unsigned long)eng,
 				(unsigned long)vt, (unsigned long)fn, (unsigned long)g_es_sites[ES_RUNSTRING].addr,
 				(unsigned long)g_es_sites[ES_RUNSTRING].target), -1;
@@ -6555,25 +6721,32 @@ static void es_tick(void)
 
 typedef uint64_t (*res_desc_fn)(void *dev, void *desc, uint32_t w, uint32_t h, uint32_t windowed, uint32_t flag);
 typedef uint64_t (*rect_fn)(void *rect, uint64_t letterbox, uint64_t ui);
+#ifdef _WIN32 /* the shadow calls: (rcx, rdx[, r8, r9d, [rsp+0x28]]) or CASCADES' (rcx, rdx, xmm2, xmm3) */
+typedef uint64_t (*win_fn)(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
+typedef uint64_t (*win_casc_fn)(uint64_t ctx, uint64_t view, float f3, float f4);
+#else
 /* the shadow calls: (rdi, rsi[, rdx, ecx, r8]) or (xmm0, xmm1, rdi, rsi); every argument register passed on */
 typedef uint64_t (*win_fn)(float x0, float x1, uint64_t di, uint64_t si, uint64_t dx, uint64_t cx, uint64_t r8, uint64_t r9);
+#endif
 
 /* RES_3D_DESC: FUN_00741980's call FUN_0073fce0(dev, &dev+0xd8, ScreenWidth, round(ScreenWidth * bbH / bbW), windowed,
  * 0) at a mode set (render thread, the game thread waits; or the init thread at the first one). With SOMVR_EYE_SIZE
  * the 3D surface's desc gets the eye size: everything sized from it follows (rt3D and its G-buffer, the camera aspect,
  * H8's eye textures via GetDesc, H3's pixel rect). The back buffer and the UI surface are other calls (untouched). */
-__attribute__((used)) void somvr_res3d_c(struct regs *r)
+/* the size the 3D desc gets at this mode set (the eye size, or the game's w0 x h0); 1 = changed */
+static int res3d_pick(uint32_t w0, uint32_t h0, uint32_t *w, uint32_t *hh, const char **why, double *k)
 {
-	struct hook *h = &g_ex[EX_RES3D];
-	void *desc = (void *)r->rsi;
-	uint32_t w0 = (uint32_t)r->rdx, h0 = (uint32_t)r->rcx, w = w0, hh = h0;
-	const char *why = "-";
-	double k = 1;
-	int mod = eye_size_now(&w, &hh, &why, &k);
+	*w = w0, *hh = h0, *why = "-", *k = 1;
+	int mod = eye_size_now(w, hh, why, k);
 	if (mod && g_es.sw && !atomic_load_explicit(&g_es.target, memory_order_acquire)) /* the switch: no stereo now */
-		mod = 0, w = w0, hh = h0, k = 1, why = "the game's: no stereo now, SOMVR_EYE_SIZE switches at runtime";
-	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
-	r->rax = ((res_desc_fn)h->orig)((void *)r->rdi, desc, w, hh, (uint32_t)r->r8, (uint32_t)(r->r9 & 0xff));
+		mod = 0, *w = w0, *hh = h0, *k = 1, *why = "the game's: no stereo now, SOMVR_EYE_SIZE switches at runtime";
+	return mod;
+}
+
+/* after the desc is set: the state es_tick reads, then the RES line (d = the desc's first 5 words as they end up) */
+static void res3d_done(struct hook *h, uint64_t n, int mod, uint32_t w0, uint32_t h0, uint32_t w, uint32_t hh,
+		       const char *why, double k, const uint32_t d[5], uintptr_t ra, unsigned windowed)
+{
 	if (mod)
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 	atomic_store(&g_es.cur_w, w), atomic_store(&g_es.cur_h, hh);
@@ -6583,16 +6756,52 @@ __attribute__((used)) void somvr_res3d_c(struct regs *r)
 	atomic_fetch_add_explicit(&g_es.sets, 1, memory_order_release); /* last: es_tick sees the mode set complete */
 	if (!es_log_ok(n))
 		return;
-	uint32_t d[5] = { 0, 0, 0, 0, 0 }; /* the desc: +0 width, +4 height, +0x10 DXGI format */
-	peek((uintptr_t)desc, d, sizeof d);
 	char hd[128];
 	line_head(hd, sizeof hd, "RES", n);
 	char ks[80] = "";
 	if (k != 1)
 		snprintf(ks, sizeof ks, " x %.3f for SOMVR_OVERSCAN %.3f", k, k - 1);
 	logf_("%s 3D surface ra=%#lx the game's %ux%u -> %ux%u (%s%s); desc now %ux%u format %u windowed=%u", hd,
-	      (unsigned long)r->ra, w0, h0, w, hh, why, ks, d[0], d[1], d[4], (unsigned)(r->r8 & 0xffffffffu));
+	      (unsigned long)ra, w0, h0, w, hh, why, ks, d[0], d[1], d[4], windowed);
 }
+
+__attribute__((used)) void somvr_res3d_c(struct regs *r)
+{
+	struct hook *h = &g_ex[EX_RES3D];
+	void *desc = (void *)r->rsi;
+	uint32_t w0 = (uint32_t)r->rdx, h0 = (uint32_t)r->rcx, w, hh;
+	const char *why;
+	double k;
+	int mod = res3d_pick(w0, h0, &w, &hh, &why, &k);
+	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
+	r->rax = ((res_desc_fn)h->orig)((void *)r->rdi, desc, w, hh, (uint32_t)r->r8, (uint32_t)(r->r9 & 0xff));
+	uint32_t d[5] = { 0, 0, 0, 0, 0 }; /* the desc: +0 width, +4 height, +0x10 DXGI format */
+	if (es_log_ok(n))
+		peek((uintptr_t)desc, d, sizeof d);
+	res3d_done(h, n, mod, w0, h0, w, hh, why, k, d, r->ra, (unsigned)(r->r8 & 0xffffffffu));
+}
+
+#ifdef _WIN32
+/* Windows (docs/re-winport.md 7.2, 7.7): the mode set 0x140d4d870 fills the 3D desc inline (MSVC inlined FUN_0073fce0
+ * for it): a detour at RVA 0xd4dc69 (RES_3D_DESC_MID), `mov [rdi+0xdc], eax` - the width is in the desc (+0xd8, from
+ * ScreenWidth at 0xd4dc17), the height in eax (stored by that instruction, run after us), the windowed flag in cl
+ * (+0x110 later), the format (+0xe8) set. The desc gets w; eax gets hh. */
+#define RES3D_HOLDER_DESC 0xd8 /* the 3D desc in the holder (= Linux's &dev+0xd8) */
+static void somvr_res3d_mid(struct somvr_win_regs *wr)
+{
+	struct hook *h = &g_ex[EX_RES3D];
+	volatile uint32_t *desc = (volatile uint32_t *)(wr->rdi + RES3D_HOLDER_DESC);
+	uint32_t w0 = desc[0], h0 = (uint32_t)wr->rax, w, hh;
+	const char *why;
+	double k;
+	int mod = res3d_pick(w0, h0, &w, &hh, &why, &k);
+	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
+	desc[0] = w;
+	wr->rax = hh; /* the next instruction (relocated) stores eax at +0xdc; rax is reloaded right after it */
+	uint32_t d[5] = { w, hh, desc[2], desc[3], desc[4] };
+	res3d_done(h, n, mod, w0, h0, w, hh, why, k, d, h->orig, (unsigned)(wr->rcx & 0xff));
+}
+#endif
 
 /* RES_RECT_LETTERBOX / _INIT: FUN_00d28b50(&cs->rect3D, Video.UseWidescreen, 0) (FUN_009e6b50 after a mode set, and the
  * shell init). With SOMVR_EYE_SIZE in layout B the 3D rect is never letterboxed: a 16:9 band of a portrait surface
@@ -6600,17 +6809,17 @@ __attribute__((used)) void somvr_res3d_c(struct regs *r)
 static void rect_hook(struct regs *r, int x)
 {
 	struct hook *h = &g_ex[x];
-	uint64_t lb = r->rsi & 0xff, ui = r->rdx & 0xff, pass = lb;
+	uint64_t lb = RA2(r) & 0xff, ui = RA3(r) & 0xff, pass = lb; /* (rect, letterbox, ui): Win64 rcx, dl, r8b */
 	if (g_eye_sz.mode && g_layout == SOMVR_LAYOUT_B && !ui)
 		pass = 0;
 	uint64_t n = atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed) + 1;
-	r->rax = ((rect_fn)h->orig)((void *)r->rdi, pass, r->rdx);
+	r->rax = ((rect_fn)h->orig)((void *)RA1(r), pass, RA3(r));
 	if (pass != lb)
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 	if (n > 20)
 		return;
 	int32_t rc[4] = { 0, 0, 0, 0 };
-	peek((uintptr_t)r->rdi, rc, sizeof rc);
+	peek((uintptr_t)RA1(r), rc, sizeof rc);
 	char hd[128];
 	line_head(hd, sizeof hd, "RES", n);
 	logf_("%s rect3D %s ra=%#lx UseWidescreen=%u -> %u rect=%d,%d,%d,%d%s", hd, h->name, (unsigned long)r->ra,
@@ -6690,14 +6899,21 @@ static void head_window(struct regs *r, int x)
 		atomic_fetch_add_explicit(&g_hs_noentry, 1, memory_order_relaxed);
 	}
 	/* build 27: SOMVR_SHADOW_SHARE (eye 1 draws with eye 0's shadow maps) and SOMVR_PERF's test word `perf skip MASK` */
-	if (pfg_sh_skip(x - EX_SH_PRE, g_rt_eye, g_rt_frame, (uintptr_t)r->rdi, &r->rax)) {
+	if (pfg_sh_skip(x - EX_SH_PRE, g_rt_eye, g_rt_frame, (uintptr_t)RA1(r), &r->rax)) {
 		if (clr[0] | clr[1])
 			mask[0] |= clr[0], mask[1] |= clr[1];
 		return;
 	}
 	double pw0 = pfg_sh_t0(); /* build 27, SOMVR_PERF: each shadow pass's render-thread time per eye */
+#ifdef _WIN32 /* (ctx, view[, r8, r9, [5]]) or CASCADES (ctx, view, float xmm2, float xmm3): passed on as they came */
+	if (x == EX_SH_CASC)
+		r->rax = ((win_casc_fn)h->orig)(RA1(r), RA2(r), r->xmm[2][0], r->xmm[3][0]);
+	else
+		r->rax = ((win_fn)h->orig)(RA1(r), RA2(r), RA3(r), RA4(r), RA_STK(r, 5));
+#else
 	r->rax = ((win_fn)h->orig)(r->xmm[0][0], r->xmm[1][0], r->rdi, r->rsi, r->rdx, r->rcx, r->r8, r->r9);
-	pfg_sh_t1(x - EX_SH_PRE, g_rt_eye, g_rt_frame, (uintptr_t)r->rdi, pw0, r->rax);
+#endif
+	pfg_sh_t1(x - EX_SH_PRE, g_rt_eye, g_rt_frame, (uintptr_t)RA1(r), pw0, r->rax);
 	if (!(clr[0] | clr[1]))
 		return;
 	mask[0] |= clr[0], mask[1] |= clr[1];
@@ -7024,6 +7240,10 @@ static const char *ht_copy(uint64_t frame, uint32_t kind)
 	if (g_ht.state < 0)
 		return "off";
 	if (!g_d3d_ok) {
+#ifdef _WIN32
+		if (!g_d3d_late_done)
+			return "off"; /* before the first Present: the D3D sites are not filled yet (not a mismatch) */
+#endif
 		ht_off("a D3D11/Vulkan site did not match at start (see the D3D lines)");
 		return "off";
 	}
@@ -7090,13 +7310,13 @@ static void hud_pass(struct regs *r, int x)
 		g_hudq.skips++;
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 	} else {
-		r->rax = ((hudpass_fn)h->orig)((void *)r->rdi, (void *)r->rsi, (uint32_t)r->rdx, (uint32_t)r->rcx);
+		r->rax = ((hudpass_fn)h->orig)((void *)RA1(r), (void *)RA2(r), (uint32_t)RA3(r), (uint32_t)RA4(r));
 		if (eye == 1) {
 			what = "kept";
 			g_hudq.kept++;
 			/* build 6: a game menu open over the world (the interface's menu machine not idle, or paused): the
 			 * layer shows this HUD on its menu board (SOMVR_XR_MENU=front) */
-			uintptr_t ms = r->rdi ? peek_ptr((uintptr_t)r->rdi + 0x10) : 0;
+			uintptr_t ms = RA1(r) ? peek_ptr((uintptr_t)RA1(r) + 0x10) : 0;
 			uint32_t menu = (ms && in_msm(ms) > 0) || game_paused() ? SOMVR_HUDF_MENU : 0u;
 			atomic_store_explicit(&g_hud_kind, (x == EX_HUD_EYE ? SOMVR_HUDK_WORLD : SOMVR_HUDK_VIDEO) | menu,
 					      memory_order_relaxed);
@@ -7107,10 +7327,15 @@ static void hud_pass(struct regs *r, int x)
 	if (!should_log(h, n))
 		return;
 	logf_("HUD %s n=%llu t=%.6f eye=%d frame=%llu ra=%#lx im=%p player=%p -> %s", h->name, (unsigned long long)n, mono(),
-	      eye, (unsigned long long)(eye >= 0 ? g_fr.frame : 0), (unsigned long)r->ra, (void *)r->rdi, (void *)r->rsi,
+	      eye, (unsigned long long)(eye >= 0 ? g_fr.frame : 0), (unsigned long)r->ra, (void *)RA1(r), (void *)RA2(r),
 	      what);
 }
+#ifdef _WIN32 /* one call on Windows (0x50c960, the two tail-merged): the cover pass is the one without a player (rdx 0,
+	       * as Linux's second call's xor esi,esi); HUD_PASS_COVER is installed with it (ex_install) */
+__attribute__((used)) void somvr_hudeye_c(struct regs *r) { hud_pass(r, RA2(r) ? EX_HUD_EYE : EX_HUD_COVER); }
+#else
 __attribute__((used)) void somvr_hudeye_c(struct regs *r) { hud_pass(r, EX_HUD_EYE); }
+#endif
 __attribute__((used)) void somvr_hudcov_c(struct regs *r) { hud_pass(r, EX_HUD_COVER); }
 
 typedef uint64_t (*comp_fn)(void *dev);
@@ -7134,11 +7359,11 @@ __attribute__((used)) void somvr_uicomp_c(struct regs *r)
 				atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 		}
 	}
-	r->rax = ((comp_fn)h->orig)((void *)r->rdi);
+	r->rax = ((comp_fn)h->orig)((void *)RA1(r)); /* Win64: (holder rcx) (0xd4d4ba) */
 	if (!should_log(h, n) || (what[0] == '-' && n > 3))
 		return;
 	logf_("UI n=%llu t=%.6f frame=%llu dev=%p -> %s gen=%u %ux%u copies=%llu", (unsigned long long)n, mono(),
-	      (unsigned long long)fr, (void *)r->rdi, what, g_ht.pub.gen, g_ht.pub.w, g_ht.pub.h,
+	      (unsigned long long)fr, (void *)RA1(r), what, g_ht.pub.gen, g_ht.pub.w, g_ht.pub.h,
 	      (unsigned long long)g_ht.copies);
 }
 
@@ -7192,6 +7417,9 @@ static void hex_of(const unsigned char *p, int n, char *out, size_t cap)
 /* protection of the page holding addr from /proc/self/maps, -1 = not mapped */
 static int page_prot(uintptr_t addr)
 {
+#ifdef _WIN32
+	return somvr_page_prot(addr); /* VirtualQuery */
+#endif
 	FILE *f = fopen("/proc/self/maps", "re");
 	if (!f)
 		return -1;
@@ -7266,6 +7494,12 @@ static unsigned char *stub_page(uintptr_t near_lo, uintptr_t near_hi)
 {
 	if (g_stub)
 		return g_stub;
+#ifdef _WIN32 /* the exe sits at 0x140000000 or higher (ASLR): a free page within +-2 GB of the sites */
+	unsigned char *wp = somvr_alloc_near(near_lo, near_hi, 4096);
+	if (wp)
+		memset(wp, 0xcc, 4096);
+	return g_stub = wp;
+#endif
 	static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
 	for (int i = 0; i < 64 + 4; i++) {
 		uintptr_t want = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
@@ -7284,6 +7518,52 @@ static unsigned char *stub_page(uintptr_t near_lo, uintptr_t near_hi)
 	return NULL;
 }
 
+/* the game image's code (rodata 0) or read-only data (1): a function pointer / a vtable must lie in it. Linux: the
+ * non-PIE ELF's fixed ranges (text 0x400000..0x3400000, .rodata with the vtables 0x3300000..0x3d00000); Windows: the
+ * PE's .text / .rdata at somvr_img (somvr_pe.h). 0 = unknown (the caller's test then fails) */
+#include "somvr_pe.h"
+static int game_range(int rodata, uintptr_t *lo, uintptr_t *hi)
+{
+#ifdef _WIN32
+	uint32_t rva = 0, size = 0;
+	if (!somvr_img || !somvr_pe_section((const void *)somvr_img, rodata ? ".rdata" : ".text", &rva, &size))
+		return *lo = *hi = 0, 0;
+	*lo = somvr_img + rva, *hi = somvr_img + rva + size;
+	return 1;
+#else
+	*lo = rodata ? 0x3300000 : 0x400000, *hi = rodata ? 0x3d00000 : 0x3400000;
+	return 1;
+#endif
+}
+
+/* a fresh read-write page of int3 within +-2 GB of lo..hi: a hook group's own stub page (the caller writes its jumps,
+ * then makes it r-x). Linux: free low addresses from `top` down in 64 KB steps, then the low 2 GB (as stub_page);
+ * Windows: the exe sits at 0x140000000 or higher, the low probes never reach it - somvr_alloc_near. NULL = none */
+static unsigned char *stub_alloc(uintptr_t lo, uintptr_t hi, uintptr_t top)
+{
+#ifdef _WIN32
+	(void)top;
+	unsigned char *w = somvr_alloc_near(lo, hi, 4096);
+	if (w)
+		memset(w, 0xcc, 4096);
+	return w;
+#else
+	static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
+	for (int i = 0; i < 64 + 4; i++) {
+		uintptr_t at = i < 64 ? top - (uintptr_t)i * 0x10000 : far_tries[i - 64];
+		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+		if (p == MAP_FAILED)
+			continue;
+		if (stub_reach((uintptr_t)p, lo) && stub_reach((uintptr_t)p, hi)) {
+			memset(p, 0xcc, 4096);
+			return p;
+		}
+		munmap(p, 4096);
+	}
+	return NULL;
+#endif
+}
+
 /* verify one site; 0 = ok. why gets the reason or the original bytes */
 static int check_site(const struct site_spec *s, char *why, size_t cap)
 {
@@ -7292,6 +7572,10 @@ static int check_site(const struct site_spec *s, char *why, size_t cap)
 	size_t off = s->addr - s->ctx;
 	char live[400];
 	int rel = s->kind == K_CALL || s->kind == K_JMP;
+	if (!s->ctx_hex || !s->ctx_hex[0]) { /* Windows: a SITE with no live row in win/sites-*.tsv (win/README.md 1.1) */
+		snprintf(why, cap, "no Windows site");
+		return -1;
+	}
 	if (n <= 0 || np <= 0 || s->addr < s->ctx || off + (rel ? 5 : 8) > (size_t)n ||
 	    (s->kind == K_ENTRY && s->addr != s->target)) {
 		snprintf(why, cap, "bad site spec");
@@ -7334,6 +7618,34 @@ static int check_site(const struct site_spec *s, char *why, size_t cap)
 	return 0;
 }
 #define REL_KIND(k) ((k) == K_CALL || (k) == K_JMP)
+
+#ifdef _WIN32
+/* Windows: H3_OVR, the second call of H3's target (the fixed-tanHalf override branch, RVA 0xd74db8), gets H3's stub:
+ * one hook, one count (the branch passes type 1: somvr_h3_c leaves it alone, as Linux's single call does) */
+static void h3_ovr_install(uintptr_t st)
+{
+	const struct site_spec *s = &g_ws_sites_game[WS_H3_OVR];
+	char why[512], err[200] = "", nb[64];
+	if (check_site(s, why, sizeof why) != 0 || s->target != g_game_sites[HK_H3].target) {
+		logf_("HOOK H3_OVR SKIPPED %#llx: %s", (unsigned long long)s->addr,
+		      s->target != g_game_sites[HK_H3].target ? "not H3's target" : why);
+		return;
+	}
+	if (!stub_reach(st, s->addr)) {
+		logf_("HOOK H3_OVR SKIPPED %#llx: H3's stub %#llx out of rel32 reach", (unsigned long long)s->addr,
+		      (unsigned long long)st);
+		return;
+	}
+	int32_t rel = (int32_t)((int64_t)st - (int64_t)(s->addr + 5));
+	if (write_code(s->addr + 1, &rel, 4, err, sizeof err) != 0) {
+		logf_("HOOK H3_OVR SKIPPED %#llx: write failed: %s", (unsigned long long)s->addr, err);
+		return;
+	}
+	hex_of((const unsigned char *)s->addr, 5, nb, sizeof nb);
+	logf_("HOOK H3_OVR ok call %#llx orig=[%s] target=%#llx now=[%s] via=%#llx (H3's stub)", (unsigned long long)s->addr,
+	      why, (unsigned long long)s->target, nb, (unsigned long long)st);
+}
+#endif
 
 /* want: bit i = install hook i (the HK_OPTIONAL ones only with their switch) */
 static void install_all(const struct site_spec *sites, uint32_t want)
@@ -7417,7 +7729,42 @@ static void install_all(const struct site_spec *sites, uint32_t want)
 			      ok[i] ? err : why[i]);
 		}
 	}
+#ifdef _WIN32
+	if (g_h[HK_H3].installed && stub_slot[HK_H3] >= 0)
+		h3_ovr_install((uintptr_t)(g_stub + 16 * stub_slot[HK_H3]));
+#endif
 }
+
+#ifdef _WIN32
+/* Windows (docs/re-winport.md 7.7), after ex_install's calls: RES_3D_DESC as the mid-function detour at
+ * RES_3D_DESC_MID (somvr_res3d_mid), HUD_PASS_COVER as HUD_PASS_EYE's own call (one call there; somvr_hudeye_c tells
+ * the passes apart). want: the bits of the two */
+static void ex_install_win(uint32_t want)
+{
+	char why[512];
+	if (want >> EX_RES3D & 1) {
+		const struct site_spec *s = &g_ws_sites_game[WS_RES3D_MID];
+		if (check_site(s, why, sizeof why) == 0 && somvr_win_hook_mid(s->addr, somvr_res3d_mid, why, sizeof why) == 0) {
+			g_ex[EX_RES3D].orig = s->addr; /* no function: the detour's place (the RES lines' ra) */
+			g_ex[EX_RES3D].installed = 1;
+			logf_("HOOK RES_3D_DESC ok mid %#llx (RES_3D_DESC_MID, the inline 3D desc's height store): %s",
+			      (unsigned long long)s->addr, why);
+		} else {
+			logf_("HOOK RES_3D_DESC SKIPPED %#llx (RES_3D_DESC_MID): %s", (unsigned long long)s->addr, why);
+		}
+	}
+	if (want >> EX_HUD_COVER & 1) {
+		if (g_ex[EX_HUD_EYE].installed) {
+			g_ex[EX_HUD_COVER].orig = g_ex[EX_HUD_EYE].orig;
+			g_ex[EX_HUD_COVER].installed = 1;
+			logf_("HOOK HUD_PASS_COVER ok: HUD_PASS_EYE's call %#llx (MSVC merged the two; no player = the cover pass)",
+			      (unsigned long long)g_ex_sites[EX_HUD_EYE].addr);
+		} else {
+			logf_("HOOK HUD_PASS_COVER SKIPPED: it is HUD_PASS_EYE's call on Windows, and that is not installed");
+		}
+	}
+}
+#endif
 
 /* the EX_* call sites (SOMVR_EYE_SIZE, SOMVR_HIDE_HEAD): verified like install_all's, their stubs in a page of their
  * own (install_all's is RX already); want: bit i = install EX_* i. Runs in the constructor, before the game's code. */
@@ -7428,6 +7775,12 @@ static void ex_install(uint32_t want)
 	char why[EX_N][512];
 	int ok[EX_N], slot[EX_N], used = 0;
 	uintptr_t lo = UINTPTR_MAX, hi = 0;
+#ifdef _WIN32 /* RES_3D_DESC is a detour there and HUD_PASS_COVER rides on HUD_PASS_EYE's call: ex_install_win */
+	const uint32_t special = (1u << EX_RES3D) | (1u << EX_HUD_COVER), want_win = want & special;
+	want &= ~special;
+#else
+	const uint32_t special = 0;
+#endif
 	for (int i = 0; i < EX_N; i++) {
 		ok[i] = 0, slot[i] = -1, why[i][0] = 0;
 		if (!(want >> i & 1))
@@ -7439,22 +7792,11 @@ static void ex_install(uint32_t want)
 		if (ok[i])
 			lo = g_ex_sites[i].addr < lo ? g_ex_sites[i].addr : lo, hi = g_ex_sites[i].addr > hi ? g_ex_sites[i].addr : hi;
 	}
-	unsigned char *pg = NULL;
-	for (int i = 0; hi && i < 64 + 4 && !pg; i++) { /* as stub_page: below the code first, then the low 2 GB */
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, lo) && stub_reach((uintptr_t)p, hi))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = hi ? stub_alloc(lo, hi, 0x3f0000) : NULL; /* as stub_page: below the code, then the low 2 GB */
 	for (int i = 0; i < EX_N; i++) {
 		if (!ok[i])
 			continue;
-		if (!pg) {
+		if (!pg || !stub_reach((uintptr_t)pg, g_ex_sites[i].addr)) {
 			ok[i] = 0;
 			snprintf(why[i], sizeof why[i], "no stub page within +-2 GB");
 			continue;
@@ -7473,7 +7815,8 @@ static void ex_install(uint32_t want)
 		const struct site_spec *s = &g_ex_sites[i];
 		char err[200] = "", nb[64];
 		if (!(want >> i & 1)) {
-			logf_("HOOK %s off %#lx: its switch is not set (not patched)", s->name, (unsigned long)s->addr);
+			if (!(special >> i & 1))
+				logf_("HOOK %s off %#lx: its switch is not set (not patched)", s->name, (unsigned long)s->addr);
 			continue;
 		}
 		uintptr_t st = ok[i] ? (uintptr_t)(pg + 16 * slot[i]) : 0;
@@ -7489,6 +7832,9 @@ static void ex_install(uint32_t want)
 		logf_("HOOK %s ok call %#lx orig=[%s] target=%#lx now=[%s] via=%#lx", s->name, (unsigned long)s->addr, why[i],
 		      (unsigned long)s->target, nb, (unsigned long)st);
 	}
+#ifdef _WIN32
+	ex_install_win(want_win);
+#endif
 }
 
 /* ------------------------------------------------------------------------------------------------------------ */
@@ -7505,7 +7851,7 @@ static void ex_install(uint32_t want)
 /* POINTER_SITES_BEGIN (check_sites.py reads this block on its own, not as one of the SITES blocks: SOMVR_POINTER's two
  * call sites, patched only with the switch, and the five functions it calls (K_ENTRY: their first bytes checked, never
  * patched). Order = LP_*) */
-static const struct site_spec g_lp_sites_game[] = {
+static SITE_TABLE struct site_spec g_lp_sites_game[] = {
 SITE("LP_GUARD_HOVER", K_CALL, 0xb4e5d8, 0xb4e5c8, "48 89 d3 e8 a0 4f e9 ff 48 85 c0 74 0c 48 89 c7 e8 a3 a8 ee ff", 0xa38e80, "48 83 ec 08 48 8b 05 d5 06 c7 03 0f b6 b7 31"),
 SITE("LP_GUARD_CLICK", K_CALL, 0xb4e62c, 0xb4e61c, "af b5 03 e8 4c 4f e9 ff 48 85 c0 74 0c 48 89 c7 e8 4f a8 ee ff", 0xa38e80, "48 83 ec 08 48 8b 05 d5 06 c7 03 0f b6 b7 31"),
 SITE("LP_IM_DOWN", K_ENTRY, 0xa0f760, 0xa0f760, "41 55 41 89 f5 41 54 41 89 d4 55 48 89 cd 53 48", 0xa0f760, "41 55 41 89 f5 41 54 41 89 d4 55 48 89 cd 53"),
@@ -7518,11 +7864,11 @@ SITE("LP_IFS_FRONTEND", K_ENTRY, 0xa10ee0, 0xa10ee0, "48 8b 17 8b 42 0c 83 f8 ff
 enum { LP_GUARD_HOVER, LP_GUARD_CLICK, LP_IM_DOWN, LP_IM_UP, LP_IM_MOVE, LP_LOCALPLAYER, LP_IFS_FRONTEND, LP_N, LP_NHOOK = 2 };
 _Static_assert(sizeof g_lp_sites_game / sizeof g_lp_sites_game[0] == LP_N, "pointer sites");
 static const struct site_spec *g_lp_sites = g_lp_sites_game; /* selftest: stand-ins */
-#define LP_SH_UIRECT 0x80dc8 /* CGameClientShell: the UI rect {l, t, r, b} (InterfaceWidth/Height = r - l, b - t) */
-#define LP_IM_GAMEUI 0x2710  /* CInterfaceMgr: m_GameUI holder (im+0x2708+8), its +0x50 = the CUIView */
-#define LP_GAMEUI_VIEW 0x50
-#define LP_VIEW_OFS 0x28     /* CUIView: the display offset {x, y} its forwarders subtract (expected 0) */
-#define LP_P_INDEX 0x431     /* Player: the local player index the mouse code passes (u8) */
+#define LP_SH_UIRECT OFS(LP_SH_UIRECT, 0x80dc8) /* CGameClientShell: the UI rect {l, t, r, b} (InterfaceWidth/Height = r - l, b - t) */
+#define LP_IM_GAMEUI OFS(LP_IM_GAMEUI, 0x2710)  /* CInterfaceMgr: m_GameUI holder (im+0x2708+8), its +0x50 = the CUIView */
+#define LP_GAMEUI_VIEW OFS(LP_GAMEUI_VIEW, 0x50)
+#define LP_VIEW_OFS OFS(LP_VIEW_OFS, 0x28)     /* CUIView: the display offset {x, y} its forwarders subtract (expected 0) */
+#define LP_P_INDEX OFS(LP_P_INDEX, 0x431)     /* Player: the local player index the mouse code passes (u8) */
 #define LP_STALE_NS 250000000 /* a pointer block older than this (the layer stopped computing it) = no target */
 #define LP_LIVE_S 0.5        /* the guards stay off this long after the pointer's last activity (an up is handled at
 				  the movie's next Advance, after our tick) */
@@ -7575,11 +7921,11 @@ static void lp_guard(struct regs *r, int k)
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 		atomic_fetch_add_explicit(k == LP_GUARD_HOVER ? &g_ptr.ev_hover : &g_ptr.ev_click, 1, memory_order_release);
 	} else {
-		r->rax = ((lp_padmode_fn)h->orig)((void *)r->rdi);
+		r->rax = ((lp_padmode_fn)h->orig)((void *)RA1(r));
 	}
 	if (n <= 20 || n % 300 == 0)
 		logf_("POINTER %s n=%llu t=%.6f tid=%d player=%p -> %llu (%s)", h->name, (unsigned long long)n, mono(), my_tid(),
-		      (void *)r->rdi, (unsigned long long)(r->rax & 0xff), live ? "the pointer is live" : "the game's answer");
+		      (void *)RA1(r), (unsigned long long)(r->rax & 0xff), live ? "the pointer is live" : "the game's answer");
 }
 __attribute__((used)) void somvr_lphover_c(struct regs *r) { lp_guard(r, LP_GUARD_HOVER); }
 __attribute__((used)) void somvr_lpclick_c(struct regs *r) { lp_guard(r, LP_GUARD_CLICK); }
@@ -7604,18 +7950,7 @@ static int ptr_install(void)
 		if (ok[i])
 			lo = g_lp_sites[i].addr < lo ? g_lp_sites[i].addr : lo, hi = g_lp_sites[i].addr > hi ? g_lp_sites[i].addr : hi;
 	}
-	unsigned char *pg = NULL;
-	for (int i = 0; hi && i < 64 + 4 && !pg; i++) { /* as stub_page: below the code first, then the low 2 GB */
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, lo) && stub_reach((uintptr_t)p, hi))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = hi ? stub_alloc(lo, hi, 0x3f0000) : NULL; /* as stub_page: below the code, then the low 2 GB */
 	for (int i = 0; i < LP_NHOOK; i++) {
 		if (ok[i] && !pg)
 			ok[i] = 0, snprintf(why[i], sizeof why[i], "no stub page within +-2 GB");
@@ -8064,7 +8399,7 @@ static void guard_or_die(const struct site_spec *sites, int log_ok)
  * teardown's sync+0x10; FB_STRUGGLE_SYNC / _STATE PlayerCombat+0x8e0 / +0x8d8; FB_TAGS body+0x3c0 into FUN_0239d980
  * (+0x158 the set, 0xa8 apart from +8); FB_TAG_COUNT HasTag's count +0xa0 (8-byte records, at most 20);
  * FB_RECNAME DBRecord_GetName (flags +1 bit 1, name +0x20); FB_ATTACH the attach setter's movement+0x1a6. Order = FS_* */
-static const struct site_spec g_fb_sites_game[] = {
+static SITE_TABLE struct site_spec g_fb_sites_game[] = {
 SITE("FB_LIFE", K_ENTRY, 0xa36830, 0xa36830, "80 bf c4 04 00 00 01 0f 95 c0 c3", 0xa36830, "80 bf c4 04 00 00 01 0f 95 c0 c3"),
 SITE("FB_SPECT", K_ENTRY, 0xa3aac0, 0xa3aac0, "55 53 48 89 fb 48 83 ec 18 85 f6 0f 85 97 00 00 00 80 bf c4 04 00 00 02 c7 87 c8 04 00 00 00 00 00 00", 0xa3aac0, "55 53 48 89 fb 48 83 ec 18 85 f6 0f 85 97 00 00 00 80 bf c4 04 00 00 02 c7 87 c8 04 00 00 00"),
 SITE("FB_PHOTO", K_ENTRY, 0xa36840, 0xa36840, "48 8b 97 18 03 00 00 31 c0 48 85 d2 74 07 83 7a 30 03 0f 95 c0 c3", 0xa36840, "48 8b 97 18 03 00 00 31 c0 48 85 d2 74 07 83 7a 30 03 0f 95 c0 c3"),
@@ -8101,7 +8436,7 @@ static const struct site_spec *g_fb_sites = g_fb_sites_game; /* selftest: stand-
 #define FB_P_SPECT 0x4c8      /* Player: int, 0 = no spectator mode */
 #define FB_P_FSM 0x7f0        /* Player: the FSM state id byte (re-traversal.md 1.2) */
 #define FB_CAM_SCRIPTED 0x390 /* camera: a scripted level camera is active (FUN_00a5b7a0(cam, 0)) */
-#define FB_SH_CINE 0xb0       /* CGameClientShell: the cinematic camera manager; +0x20 its active camera */
+#define FB_SH_CINE OFS(FB_SH_CINE, 0xb0) /* CGameClientShell: the cinematic camera manager; +0x20 its active camera */
 #define FB_CINE_CAM 0x20
 #define FB_PC_SERVER 0xa08    /* PlayerCombat: the player's server Combat* */
 #define FB_PC_STRUGGLE 0x8d8  /* PlayerCombat: the state struggle, +0x8e0 the sync struggle (re-m1m2.md 6.2) */
@@ -8290,7 +8625,7 @@ static void fb_read(uintptr_t P, somvr_fb_in *in, float root[3], int *have_root)
 		if (sh && (r & SOMVR_FBR_CINE))
 			in->cine = cm ? peek_ptr(cm + FB_CINE_CAM) : 0, in->have |= SOMVR_FBR_CINE;
 		uintptr_t pz = peek_ptr(peek_ptr(g_ing.pause_pp) + 8);
-		if ((r & SOMVR_FBR_PAUSE) && pz && peek(pz + 0x34, &b, 1))
+		if ((r & SOMVR_FBR_PAUSE) && pz && peek(pz + OFS(IN_PAUSE_FLAG, 0x34), &b, 1))
 			in->paused = b, in->have |= SOMVR_FBR_PAUSE;
 	}
 	if (!P)
@@ -8605,7 +8940,7 @@ static void fb_end_log(void)
  * cmpb $0,0x60(%rdi): the flag); CL_FSM_GET the graph's PlayerState getter (movzx P+0x7f0); CL_MOUNT P+0x1d8;
  * CL_PC_SETPOS / CL_PC_GETPOS CPhysicsCharacter slots 5 and 9 (build 16, SOMVR_CLIMB_UNPIN: the proxy's position in cm,
  * set (hkpCharacterProxy's, x 0.01 m) and read). Order = CLS_* */
-static const struct site_spec g_cl_sites_game[] = {
+static SITE_TABLE struct site_spec g_cl_sites_game[] = {
 SITE("CL_RAYCAST", K_VSLOT, 0x3472458, 0x3472458, "d0 4f 8f 00 00 00 00 00", 0x8f4fd0, "48 8b 7f 08 48 85 ff 74 07 e9 02 96 fe ff 66"),
 SITE("CL_SURF_FROM_RAY", K_ENTRY, 0x2ae5d90, 0x2ae5d90, "48 8b 47 20 48 85 c0 74 45 0f b7 48 5a 89 ce 85", 0x2ae5d90, "48 8b 47 20 48 85 c0 74 45 0f b7 48 5a 89 ce"),
 SITE("CL_SURF_BYID", K_ENTRY, 0x2ae5e60, 0x2ae5e60, "80 7f 02 00 74 52 0f b7 0f 66 85 c9 74 4a 48 8b", 0x2ae5e60, "80 7f 02 00 74 52 0f b7 0f 66 85 c9 74 4a 48"),
@@ -8623,7 +8958,7 @@ SITE("CL_PC_GETPOS", K_VSLOT, 0x34b6868, 0x34b6868, "e0 d9 98 00 00 00 00 00 00 
  * handler, mgr+0x8e0) slot 2 = PlayerBody::vf_0x30_02 (FUN_0219b380(out, a2, a3, body+0x3b8): FindContextActionOptim,
  * returns 1). CAnimationMgr::ContextActionFinder::vf_13 (0x21d0cd0) calls it through mgr+0x8e0's vtable +0x10 and finds
  * nothing when it returns 0 (re-traversal.md 1.3: the authored ledges, beams, edges the stock traversal takes) */
-static const struct site_spec g_cl_ledge_site_game[] = {
+static SITE_TABLE struct site_spec g_cl_ledge_site_game[] = {
 SITE("CL_CTXACT", K_VSLOT, 0x34f2908, 0x34f28f8, "60 55 a5 00 00 00 00 00 e0 55 a5 00 00 00 00 00 90 d2 a4 00 00 00 00 00", 0xa4d290, "48 89 c8 48 83 ec 08 48 8b 8f 88 03 00 00 48"),
 };
 /* CLEDGE_SITES_END */
@@ -8634,14 +8969,19 @@ _Static_assert(sizeof g_cl_sites_game / sizeof g_cl_sites_game[0] == CLS_N, "cli
 static const struct site_spec *g_cl_sites = g_cl_sites_game; /* selftest: stand-ins */
 /* the IEnginePhysics* holder; the surface table's [begin, end) holders (FUN_02ae5d90's {u16 id; Record*} x 16 bytes:
  * `climb probe table`) (selftest: stand-ins) */
-static struct { uintptr_t phys_pp, tab_pp[2]; } g_clg = { 0x466c758, { 0x4c5cb50, 0x4c5cb58 } };
-#define CL_SLOT_RAYCAST 64     /* IEnginePhysics: the cast (its vtable = the slot's address - 8 x 64) */
-#define CL_SLOT_PC_GRAV 12     /* CPhysicsCharacter: the flag's setter (its vtable = the slot's address - 8 x 12) */
-#define CL_PM_PROXY 0x50       /* PlayerMovement: the CPhysicsCharacter (CL_GRAVITY_WISH) */
-#define CL_PC_GRAV 0x60        /* CPhysicsCharacter: u8 gravity on (CL_PC_GRAVITY_SET) */
-#define CL_P_FSM 0x7f0         /* Player: the FSM's state id (CL_FSM_GET; 6 = AliveStateSupported) */
-#define CL_P_MOUNT 0x1d8       /* Player: the mount HOBJECT (CL_MOUNT) */
-#define CL_OBJ_SURF 0x5a       /* HOBJECT: u16 surface id (CL_SURF_FROM_RAY) */
+#ifdef _WIN32 /* world_win_globals() */
+static struct { uintptr_t phys_pp, tab_pp[2]; } g_clg;
+#else
+static struct { uintptr_t phys_pp, tab_pp[2]; } g_clg = { GADDR(CL_PHYS_PP, 0x466c758),
+	{ GADDR(CL_SURF_TAB0, 0x4c5cb50), GADDR(CL_SURF_TAB1, 0x4c5cb58) } };
+#endif
+#define CL_SLOT_RAYCAST OFS(CL_SLOT_RAYCAST, 64)     /* IEnginePhysics: the cast (its vtable = the slot's address - 8 x 64) */
+#define CL_SLOT_PC_GRAV OFS(CL_SLOT_PC_GRAV, 12)     /* CPhysicsCharacter: the flag's setter (its vtable = the slot's address - 8 x 12) */
+#define CL_PM_PROXY OFS(CL_PM_PROXY, 0x50)       /* PlayerMovement: the CPhysicsCharacter (CL_GRAVITY_WISH) */
+#define CL_PC_GRAV OFS(CL_PC_GRAV, 0x60)        /* CPhysicsCharacter: u8 gravity on (CL_PC_GRAVITY_SET) */
+#define CL_P_FSM OFS(CL_P_FSM, 0x7f0)         /* Player: the FSM's state id (CL_FSM_GET; 6 = AliveStateSupported) */
+#define CL_P_MOUNT OFS(CL_P_MOUNT, 0x1d8)       /* Player: the mount HOBJECT (CL_MOUNT) */
+#define CL_OBJ_SURF OFS(CL_OBJ_SURF, 0x5a)       /* HOBJECT: u16 surface id (CL_SURF_FROM_RAY) */
 #define CL_FSM_SUPPORTED 6
 #define CL_FSM_COMBAT 7        /* AliveStateCombat: an orc engages (its throw at a climber: run 063028), a hit's recoil */
 #define CL_CMD_PULLUP 27       /* LedgePullUp (re-traversal.md 1.3) */
@@ -8854,6 +9194,7 @@ static void cw_sample(const unsigned char *p, size_t n, pid_t tid)
 	g_cw.nkeys++;
 }
 
+#ifndef _WIN32 /* perf_event write watches: Linux only (a probe) */
 static void cw_drain(int i)
 {
 	static unsigned char rec[4096];
@@ -8949,6 +9290,13 @@ static void cw_poll(double t, uintptr_t obj)
 	if (t >= g_cw.until)
 		cw_stop(t);
 }
+#else
+static void cw_poll(double t, uintptr_t obj)
+{
+	(void)t, (void)obj;
+	atomic_store(&g_cw.req, 0u);
+}
+#endif
 
 /* CLIMB event lines: the first 200, then at most 10 per second */
 static int cl_log_ok(double t)
@@ -8979,8 +9327,8 @@ static uint64_t cl_ray_filter(uintptr_t obj, uintptr_t ud)
  * does Physics_RayCast (0x8de5e0) fill the hit's material id r+0x28 and r+0x2a = 1, the surface of world geometry (the
  * game's wall plant FUN_021a3a60 casts with 0xf0; the combat's 0x58 gave every wall id 0, run 052132). 1 = a hit (r:
  * point +0, object +0x20, surface +0x28/2a) */
-#define CL_CAST_FLAGS 0x58u   /* the combat collider's: the point (0x10), the object (0x40), 0x08 */
-#define CL_CAST_MATERIAL 0x80u
+#define CL_CAST_FLAGS OFS(CL_CAST_FLAGS, 0x58)   /* the combat collider's: the point (0x10), the object (0x40), 0x08 */
+#define CL_CAST_MATERIAL OFS(CL_CAST_MATERIAL, 0x80)
 static int cl_cast1(uintptr_t phys, const float from[3], const float to[3], unsigned char *r)
 {
 	unsigned char q[0x40] __attribute__((aligned(16)));
@@ -10656,8 +11004,8 @@ static void cl_thr_set(uintptr_t pm, float thr, float lx, float lz)
  * 1 = handled (the caller returns) */
 static int cl_pm(struct hook *h, struct regs *r)
 {
-	uintptr_t pm = (uintptr_t)r->rdi;
-	float *xf = (float *)r->rsi;
+	uintptr_t pm = (uintptr_t)RA1(r);
+	float *xf = (float *)RA2(r);
 	if (!g_cl.on || !g_cl.s.active || pm != g_cl.act_pm || my_tid() != g_cl.tid)
 		return 0;
 	uint64_t rf = rend_frame();
@@ -11635,7 +11983,7 @@ static void cl_end_log(void)
  * check_sites.py). BM_CURATK = Combat_GetCurrentAttack (the variation byte +0x55c, the attack record +0x4d0); BM_STATE =
  * FUN_026c6a80, the combat state record getter (+0x268, re-combat.md 2.2); BM_DEAD = the death FUN_026f61f0 (its
  * once-only guard cmpb $0,+0x288; the byte is set right after, re-combat.md 2.3). Order = BMS_* */
-static const struct site_spec g_bm_sites_game[] = {
+static SITE_TABLE struct site_spec g_bm_sites_game[] = {
 SITE("BM_CURATK", K_ENTRY, 0x26d4510, 0x26d4510, "55 53 48 83 ec 08 0f b6 87 5c 05 00 00 48 8b af d0 04 00 00", 0x26d4510, "55 53 48 83 ec 08 0f b6 87 5c 05 00 00 48 8b af d0 04 00 00"),
 SITE("BM_STATE", K_ENTRY, 0x26c6a80, 0x26c6a80, "48 8b 87 68 02 00 00 c3", 0x26c6a80, "48 8b 87 68 02 00 00 c3"),
 SITE("BM_DEAD", K_ENTRY, 0x26f61f0, 0x26f61f0, "80 bf 88 02 00 00 00 0f 85 f3 0e 00 00 55 48 89 e5", 0x26f61f0, "80 bf 88 02 00 00 00 0f 85 f3 0e 00 00"),
@@ -12296,7 +12644,7 @@ static void bm_end_log(void)
  * BOW_FX_CLEAR / BOW_FXALT_CLEAR = the FX (mode field 11, 'WraithBase' for the bow) and FXAlt (12, 'WraithRanged')
  * components in the two passes (FUN_00e1c400 / FUN_00e1c800(wm, rec) when the mode's FX record changed; FUN_00e1c510 /
  * FUN_00e1ca10 in the clear pass), patched only with SOMVR_BOW_FX set. Order = BOS_*) */
-static const struct site_spec g_bo_sites_game[] = {
+static SITE_TABLE struct site_spec g_bo_sites_game[] = {
 SITE("BOW_FA_CAMXF", K_CALL, 0xa9a1d0, 0xa9a1bd, "a8 01 00 00 48 8b 03 48 8d 74 24 40 48 8b b8 d0 02 00 00 e8 db 16 fc ff", 0xa5b8b0, "55 48 89 fd 53 48 89 f3 48 83 ec 28 e8 6f 8e"),
 SITE("BOW_AMMO", K_ENTRY, 0x26c6a40, 0x26c6a40, "48 8b bf c0 01 00 00 48 85 ff 74 0c e9 0f 6b 05", 0x26c6a40, "48 8b bf c0 01 00 00 48 85 ff 74 0c e9 0f 6b"),
 SITE("BOW_AMMO_RES", K_ENTRY, 0x271d560, 0x271d560, "80 7f 61 00 b8 e7 03 00 00 75 03 8b 47 50 c3 90", 0x271d560, "80 7f 61 00 b8 e7 03 00 00 75 03 8b 47 50 c3"),
@@ -12322,6 +12670,14 @@ enum { BOS_CAMXF, BOS_AMMO, BOS_AMMO_RES, BOS_FIRE, BOS_FIRE_ITEM, BOS_ITEM, BOS
        BOS_FX_CLEAR, BOS_FXALT_CLEAR, BOS_N };
 _Static_assert(sizeof g_bo_sites_game / sizeof g_bo_sites_game[0] == BOS_N, "bow sites");
 static const struct site_spec *g_bo_sites = g_bo_sites_game; /* selftest: stand-ins */
+#ifdef _WIN32 /* BOW_TOKENS_ADD (Linux FUN_02720a90: +0x50 += delta, clamped, the event, the HUD) is inlined on Windows;
+	       * its body after the add is the setter 0x140cdb3d0(res, new value) (`cmp edx,[rcx+0x50]; je`, the clamp to
+	       * [byte 0x141989ed3 ? 1 : 0, +0x4c], the store, the event, the HUD's 999 / count): the DLL's add calls it
+	       * (docs/re-winport.md 7.8; the game's own spend 0x140cdb6b0 does `+0x50 - cost` into it the same way) */
+static SITE_TABLE struct site_spec g_bow_win_sites_game[] = {
+SITE("BOW_TOKENS_SET", K_ENTRY, 0, 0, "", 0, ""),
+};
+#endif
 #define BO_SC_RES 0x1c0     /* the player's server Combat: the resource object (BOW_AMMO) */
 #define BO_RES_COUNT 0x50   /* resource: int tokens = the arrows; +0x61 u8 unlimited (BOW_AMMO_RES) */
 #define BO_RES_UNLIM 0x61
@@ -13695,8 +14051,8 @@ static void bo_camxf(float *xf, uint64_t n)
 __attribute__((used)) void somvr_bowcamxf_c(struct regs *r)
 {
 	uint64_t n = atomic_fetch_add_explicit(&g_bow_h.calls, 1, memory_order_relaxed) + 1;
-	r->rax = ((bo_camxf_fn)g_bow_h.orig)((void *)r->rdi, (float *)r->rsi);
-	bo_camxf((float *)r->rsi, n);
+	r->rax = ((bo_camxf_fn)g_bow_h.orig)((void *)RA1(r), (float *)RA2(r)); /* (cam, xf): rdi rsi / rcx rdx */
+	bo_camxf((float *)RA2(r), n);
 }
 
 /* arm_eval (phase 2, SOMVR_ARMS): while the bow is out the bow hand's weapon node takes SOMVR_BOW_CAL; while it is drawn
@@ -13992,18 +14348,7 @@ static int bo_patch_call(const struct site_spec *s, void *fn)
 {
 	char why[512] = "", err[200] = "";
 	int ok = s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) {
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3e0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3e0000) : NULL;
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -14031,18 +14376,7 @@ static int bo_install(void)
 	int ok = s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
 	if (s->kind != K_CALL)
 		snprintf(why, sizeof why, "not a call site");
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) { /* as stub_page: below the code first, then the low 2 GB */
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3f0000) : NULL; /* as stub_page */
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -14663,7 +14997,7 @@ static void bo_end_log(void)
  * vf_30/vf_31 (pm+0x218 -> +0x2d8 -> +0x3b8 -> +0x62a / +0x629: the locks), the FSM getter (P+0x7f0), FUN_020c6ff0
  * (pm+0x1a2: root-motion mode), the mount (P+0x1d8), the attach (pm+0x1a6), life (P+0x4c4), GetObjectTimer (h+0x68).
  * Order = LOS_*) */
-static const struct site_spec g_lo_sites_game[] = {
+static SITE_TABLE struct site_spec g_lo_sites_game[] = {
 SITE("LOCO_ROOTDELTA", K_CALL, 0xab5ea9, 0xab5e99, "44 24 28 00 00 80 3f 48 c7 44 24 20 00 00 00 00 e8 f2 b4 f9 ff", 0xa513a0, "55 48 89 fd 53 48 89 f3 48 83 ec 18 48 8b 47"),
 SITE("LOCO_ATTACK_Q", K_CALL, 0xab5ed0, 0xab5ec3, "48 8b 7d 38 48 85 ff 0f 84 c8 02 00 00 e8 3b e6 c1 01", 0x26d4510, "55 53 48 83 ec 08 0f b6 87 5c 05 00 00 48 8b"),
 SITE("LOCO_COMBAT_OWNS", K_ENTRY, 0xa85590, 0xa85590, "55 53 48 83 ec 18 48 8b 87 08 0a 00 00 48 85 c0", 0xa85590, "55 53 48 83 ec 18 48 8b 87 08 0a 00 00 48 85"),
@@ -14681,16 +15015,16 @@ enum { LOS_ROOTDELTA, LOS_ATTACK_Q, LOS_COMBAT_OWNS, LOS_LOCK_T, LOS_LOCK_R, LOS
        LOS_LIFE, LOS_OBJTIMER, LOS_N };
 _Static_assert(sizeof g_lo_sites_game / sizeof g_lo_sites_game[0] == LOS_N, "loco sites");
 static const struct site_spec *g_lo_sites = g_lo_sites_game; /* selftest: stand-ins */
-#define LO_PM_ATTACK 0x38     /* PlayerMovement: the Combat vf_11 asks for the current attack (LOCO_ATTACK_Q) */
-#define LO_PM_VELMODE 0x1a2   /* PlayerMovement: u8 1 = root-motion mode, 0 = momentum (LOCO_VELMODE) */
-#define LO_PM_ATTACHED 0x1a6  /* PlayerMovement: u8 an attach-to-object move (LOCO_ATTACH) */
-#define LO_MGR_LOCK_T 0x62a   /* CAnimationMgr (PlayerBody+0x3b8): u8 the translation lock (LOCO_LOCK_T) */
-#define LO_MGR_LOCK_R 0x629   /* ... the rotation lock (LOCO_LOCK_R) */
-#define LO_VT_LOCK_T 30       /* PlayerMovement's vtable slots of the stock lock getters (the game reads the byte only then) */
-#define LO_VT_LOCK_R 31
-#define LO_P_FSM 0x7f0        /* Player: the FSM's state (LOCO_FSM_GET); 6 Supported, 7 Combat, 8 Falling, 9 Transition */
-#define LO_P_MOUNT 0x1d8      /* Player: the mount HOBJECT (LOCO_MOUNT) */
-#define LO_P_LIFE 0x4c4       /* Player: u8 1 not in the world, 2 alive, 3 dying (LOCO_LIFE) */
+#define LO_PM_ATTACK OFS(LO_PM_ATTACK, 0x38)     /* PlayerMovement: the Combat vf_11 asks for the current attack (LOCO_ATTACK_Q) */
+#define LO_PM_VELMODE OFS(LO_PM_VELMODE, 0x1a2)   /* PlayerMovement: u8 1 = root-motion mode, 0 = momentum (LOCO_VELMODE) */
+#define LO_PM_ATTACHED OFS(LO_PM_ATTACHED, 0x1a6)  /* PlayerMovement: u8 an attach-to-object move (LOCO_ATTACH) */
+#define LO_MGR_LOCK_T OFS(LO_MGR_LOCK_T, 0x62a)   /* CAnimationMgr (PlayerBody+0x3b8): u8 the translation lock (LOCO_LOCK_T) */
+#define LO_MGR_LOCK_R OFS(LO_MGR_LOCK_R, 0x629)   /* ... the rotation lock (LOCO_LOCK_R) */
+#define LO_VT_LOCK_T OFS(LO_VT_LOCK_T, 30)       /* PlayerMovement's vtable slots of the stock lock getters (the game reads the byte only then) */
+#define LO_VT_LOCK_R OFS(LO_VT_LOCK_R, 31)
+#define LO_P_FSM OFS(LO_P_FSM, 0x7f0)        /* Player: the FSM's state (LOCO_FSM_GET); 6 Supported, 7 Combat, 8 Falling, 9 Transition */
+#define LO_P_MOUNT OFS(LO_P_MOUNT, 0x1d8)      /* Player: the mount HOBJECT (LOCO_MOUNT) */
+#define LO_P_LIFE OFS(LO_P_LIFE, 0x4c4)       /* Player: u8 1 not in the world, 2 alive, 3 dying (LOCO_LIFE) */
 #define LO_FSM_FALLING 8
 #define LO_GAP_S 0.25         /* PM calls further apart: the read-back starts again (a load, a menu, flat frames) */
 
@@ -15063,8 +15397,8 @@ static void lo_pm_post(uintptr_t pm, const float *xf)
  * on an armed tick of that body, our translation (and the body yaw); anything else passes untouched */
 __attribute__((used)) void somvr_lorootdelta_c(struct regs *r)
 {
-	void *body = (void *)r->rdi;
-	float *d = (float *)r->rsi;
+	void *body = (void *)RA1(r); /* (body, delta): rdi rsi / rcx rdx */
+	float *d = (float *)RA2(r);
 	r->rax = ((lo_rd_fn)g_lo_h.orig)(body, d);
 	atomic_fetch_add_explicit(&g_lo_h.calls, 1, memory_order_relaxed);
 	if (!g_lo.armed || g_lo.fired || (uintptr_t)body != g_lo.arm_body || my_tid() != g_inp.tid) {
@@ -15349,7 +15683,7 @@ static void hv_tune_poll(double t)
 		return;
 	}
 	if (g_hv.tune_state == 1 && st.st_dev == g_hv.dev && st.st_ino == g_hv.ino && st.st_size == g_hv.size &&
-	    st.st_mtim.tv_sec == g_hv.mtime.tv_sec && st.st_mtim.tv_nsec == g_hv.mtime.tv_nsec)
+	    SOMVR_MTIM(st).tv_sec == g_hv.mtime.tv_sec && SOMVR_MTIM(st).tv_nsec == g_hv.mtime.tv_nsec)
 		return;
 	char buf[2048];
 	int fd = open(g_hv.tune, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
@@ -15363,7 +15697,7 @@ static void hv_tune_poll(double t)
 		return;
 	}
 	buf[n] = 0;
-	g_hv.dev = st.st_dev, g_hv.ino = st.st_ino, g_hv.size = st.st_size, g_hv.mtime = st.st_mtim;
+	g_hv.dev = st.st_dev, g_hv.ino = st.st_ino, g_hv.size = st.st_size, g_hv.mtime = SOMVR_MTIM(st);
 	g_hv.tune_state = 1, g_hv.tune_reads++;
 	somvr_tune tu;
 	somvr_tune_parse(buf, &tu);
@@ -15476,18 +15810,7 @@ static int lo_install(void)
 	int ok = s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
 	if (s->kind != K_CALL)
 		snprintf(why, sizeof why, "not a call site");
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) { /* as stub_page: below the code first, then the low 2 GB */
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3f0000) : NULL; /* as stub_page */
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -15651,6 +15974,8 @@ static const char *in_stick_word(const char *p)
 	return "stick";
 }
 
+static void sch_poll(double t);       /* the schema checker (below) */
+static const char *sch_word(void);
 static void *writer_main(void *arg)
 {
 	(void)arg;
@@ -15662,6 +15987,7 @@ static void *writer_main(void *arg)
 	while (!atomic_load(&g_stop)) {
 		struct timespec ts = { 0, 250 * 1000 * 1000 };
 		nanosleep(&ts, NULL);
+		sch_poll(mono()); /* the schema holders, once a second until confirmed (docs/re-winport.md 7.9) */
 		if (g_trig_path[0]) { /* file present = stereo on; a content change with a command word acts once */
 			int on = 0;
 			char w[64] = { 0 };
@@ -15673,8 +15999,8 @@ static void *writer_main(void *arg)
 				on = fstat(fd, &st) == 0;
 				close(fd);
 			}
-			if (on && (strcmp(w, last_word) || st.st_mtim.tv_sec != last_mt.tv_sec ||
-				   st.st_mtim.tv_nsec != last_mt.tv_nsec)) {
+			if (on && (strcmp(w, last_word) || SOMVR_MTIM(st).tv_sec != last_mt.tv_sec ||
+				   SOMVR_MTIM(st).tv_nsec != last_mt.tv_nsec)) {
 				const char *what = NULL;
 				int seen = last_mt.tv_sec || last_mt.tv_nsec; /* not the content the file had when it appeared */
 				if (seen && !strncmp(w, "recenter", 8))
@@ -15714,6 +16040,8 @@ static void *writer_main(void *arg)
 					what = hp_word(w + 10) ? "headparts" : "headparts (not a slot list 0..19: ignored)";
 				} else if (seen && !strncmp(w, "fallback", 8)) { /* SOMVR_FALLBACK: "fallback third|first|auto" */
 					what = fb_word(w + 8);
+				} else if (seen && !strncmp(w, "schema", 6)) { /* the schema holders checked now, every line logged */
+					what = sch_word();
 				} else if (seen && !strncmp(w, "practice ", 9)) { /* SOMVR_PRACTICE: "practice go|back|..." */
 					what = pr_word(w + 9);
 				} else if (seen && !strncmp(w, "hands ", 6)) { /* SOMVR_BODY / SOMVR_HANDS_TEST: "hands ..." */
@@ -15824,7 +16152,7 @@ static void *writer_main(void *arg)
 				if (what)
 					logf_("TRIGGER cmd=%s t=%.6f", what, mono());
 				snprintf(last_word, sizeof last_word, "%s", w);
-				last_mt = st.st_mtim;
+				last_mt = SOMVR_MTIM(st);
 			}
 			if (on != atomic_load(&g_trig)) {
 				atomic_store_explicit(&g_trig, on, memory_order_release);
@@ -16000,6 +16328,9 @@ static void combat_start(const struct site_spec *sites, int *bad)
 		      (double)g_cb.cfg.cut_cm, acos((double)g_cb.cfg.rev_cos) * 57.29578, SC_STROKE_REST_S * 1e3,
 		      (double)g_cb.cfg.cut_mps, (double)g_cb.cfg.cut_min_k * 100, (double)g_cb.cfg.full_mps,
 		      (double)g_cb.cfg.slash_cm, (double)g_cb.cfg.slash_mps, (double)g_cb.cfg.tip_max_mps);
+#ifdef _WIN32
+	cb_globals_win();
+#endif
 	g_cb_sites = sites;
 	int ok[CS_N];
 	for (int i = 0; i < CS_N; i++) {
@@ -17446,6 +17777,20 @@ static void vm_end_log(void)
 }
 
 /* everything after the gate: open the log, patch, start the writer. Returns 0 if the log is open. */
+#ifdef _WIN32
+/* winport-world: the globals of the input, glyph, climb and step code (GADDR is no constant on Windows) */
+static void world_win_globals(void)
+{
+	g_ing.shell_pp = GADDR(IN_SHELL_PP, 0x46a9560), g_ing.pause_pp = GADDR(IN_PAUSE_PP, 0x463e290);
+	g_ing.allow_kbm = GADDR(IN_ALLOW_KBM, 0x46b0d61);
+	g_glg.names = GADDR(GL_NAMES_TAB, 0x355eb20), g_glg.mgr_guard = GADDR(GL_MGR_GUARD, 0x4b4c420);
+	g_glg.mgr = GADDR(GL_MGR_OBJ, 0x4b4c440);
+	g_clg.phys_pp = GADDR(CL_PHYS_PP, 0x466c758);
+	g_clg.tab_pp[0] = GADDR(CL_SURF_TAB0, 0x4c5cb50), g_clg.tab_pp[1] = GADDR(CL_SURF_TAB1, 0x4c5cb58);
+	g_stepg.vt_vm = GADDR(ST_VT_VM, 0x3503bc0);
+}
+#endif
+
 static int somvr_start(const struct site_spec *sites, const struct site_spec *d3d, const char *who)
 {
 	copy_env("SOMVR_LOG", g_log_path, sizeof g_log_path);
@@ -17463,6 +17808,9 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	clock_gettime(CLOCK_REALTIME, &wall);
 	logf_("START somvr built %s %s pid=%d ppid=%d exe=%s gate=%s t=%.6f wall=%lld.%03ld", __DATE__, __TIME__,
 	      (int)getpid(), (int)getppid(), exe, who, mono(), (long long)wall.tv_sec, wall.tv_nsec / 1000000);
+#ifdef _WIN32
+	world_win_globals();
+#endif
 
 	static const char *const stereo_w[] = { "off", "A", "B" }, *const views_w[] = { "xr", "fake" },
 				 *const base_w[] = { "camera", "player", "head" }, *const yaw_w[] = { "camera", "fixed" },
@@ -17858,7 +18206,7 @@ static void somvr_end_logs(const char *why)
  * TH_PJ_MOVE = its call of FUN_027c53f0 after lea 0x1b8(%rbx) (the position). The sound (K_ENTRY, called):
  * TH_SND_REGOBJ / _SETPOS / _POST = FUN_008c97c0 / 0x8c9b80 / 0x8c9840 (re-combat-items.md 5; P7: our own object's post
  * returned a playing id). Order = THS_*) */
-static const struct site_spec g_th_sites_game[] = {
+static SITE_TABLE struct site_spec g_th_sites_game[] = {
 SITE("TH_ATK_START", K_CALL, 0x26eb768, 0x26eb6fe, "48 c7 83 c0 04 00 00 00 00 00 00 4d 85 e4 74 40 41 f6 44 24 5c 10 0f 85 76 13 00 00 49 8b 44 24 30 49 8d 7c 24 28 48 89 7c 24 20 f3 0f 7e 44 24 20 48 89 44 24 20 0f 16 44 24 20 0f 11 83 b0 04 00 00 48 89 08 48 8b 83 b0 04 00 00 48 89 48 08 4c 89 a3 c0 04 00 00 0f b6 04 24 48 89 ea 4c 89 f6 4c 89 ff 88 83 7f 02 00 00 e8 73 8b b7 ff 48 8b b3 a0 04 00 00 4c 89 ff 48 89 ea", 0x22642e0, "41 57 41 56 41 55 41 54 49 89 d4 55 53 48 89"),
 SITE("TH_WS", K_CALL, 0x26f9e88, 0x26f9e77, "48 8b 93 a0 04 00 00 48 8d bb b0 00 00 00 48 89 ee e8 63 c9 b6 ff", 0x22667f0, "41 57 41 56 41 55 49 89 fd 41 54 49 89 f4 55"),
 SITE("TH_KEYTABLE", K_CALL, 0x226369d, 0x226369d, "e8 ee 43 02 00 48 85 c0 0f 84 e5 00 00 00 0f b7 50 0c 66 41 89 54 24 1c 0f b7 50 08 66 41 89 54 24 18 0f b7 50 0a 66 41 89 54 24 1a 0f b7 50 0e 66 41 89 54 24 1e 0f b7 50 12 66 41 89 54 24 22 0f b7 50 10 66 41 89 54 24 20 0f b7 50 14 66 41 89 54 24 24 0f b7 50 16 66 41 89 54 24 26 0f b7 50 18 66 41 89 54 24 28 0f b7 40 1a 66 41 89 44 24 2a", 0x2287a90, "44 8b 87 30 70 00 00 41 83 e8 01 0f 88 96 00"),
@@ -18773,7 +19121,7 @@ static void th_end_log(void)
  * +0x34 by r12b, its AttachChild call FUN_02affd20, the jump back and the sheathable branch's cmpb $0,0xa3(%r13)),
  * FUN_02311e20 (the active item: inv+0x280, inv+0x30 + slot x 0x38) and Character_GetInventory FUN_02699990
  * (+0x910); the sound: FUN_008c97c0 / 0x8c9b80 / 0x8c9840 (as TH_SND_*). Order = SLS_*) */
-static const struct site_spec g_sl_sites_game[] = {
+static SITE_TABLE struct site_spec g_sl_sites_game[] = {
 SITE("SL_SHEATH_JMP", K_JMP, 0x231650b, 0x23164f5, "ba 01 00 00 00 48 83 c4 18 4c 89 f7 5b 5d 41 5c 41 5d 41 5e 41 5f e9 e0 b1 ff ff", 0x23116f0, "41 57 41 56 41 55 41 54 55 53 48 83 ec 08 48"),
 SITE("SL_SHEATHE", K_ENTRY, 0x23116f0, 0x23116f0, "41 57 41 56 41 55 41 54 55 53 48 83 ec 08 48 85 f6 74 18 49 89 fc 48 8b 7e 78 41 89 d5 48 89 f5 e8 9b ec 01 00 89 c3 84 c0 75 15 31 db 48 83 c4 08 89 d8 5b 5d 41 5c 41 5d 41 5e 41 5f c3 66 90 80 bd a3 00 00 00 00 0f 95 c0 41 38 c5 74 dc 48 89 ef 41 0f b6 f5", 0x23116f0, "41 57 41 56 41 55 41 54 55 53 48 83 ec 08 48"),
 SITE("SL_REATTACH", K_ENTRY, 0x231e2e0, 0x231e2e0, "41 55 49 89 fd 41 54 55 53 48 83 ec 08 0f b6 9f a2 00 00 00 48 8b 7f 78 e8 b3 20 01 00 84 c0 0f 85 b3 00 00 00", 0x231e2e0, "41 55 49 89 fd 41 54 55 53 48 83 ec 08 0f b6"),
@@ -18914,11 +19262,27 @@ static uint32_t sl_sheath(uintptr_t inv, uintptr_t item, uint32_t sheathe)
 		atomic_store_explicit(&g_sl.pass_fresh[sh], fresh, memory_order_relaxed);
 		atomic_fetch_add_explicit(&g_sl.n_passed[sh], 1, memory_order_relaxed);
 	}
+#ifdef _WIN32 /* the jump's target is the 2-argument wrapper (inv, bool sheathe) that takes the active item itself */
+	(void)item;
+	return ((uint32_t (*)(uintptr_t, uint32_t))g_sl_h.orig)(inv, sheathe);
+#else
 	return ((sl_sheathe_fn)g_sl_h.orig)(inv, item, sheathe);
+#endif
 }
 __attribute__((used)) void somvr_slsheath_c(struct regs *r)
 {
+#ifdef _WIN32
+	/* Windows (docs/re-winport.md 7.3, 7.8): the handler's dl=1 tail jump goes to 0x1407bdc70(inv rcx, bool sheathe dl),
+	 * which reads the active item as SL_ITEM does (inv+0x30 + slot x 0x38, slot = inv+0x280 < 8) and jumps on to
+	 * SL_SHEATHE(inv, item, sheathe): the item for our test the same way, the original called with its own two */
+	uintptr_t inv = (uintptr_t)RA1(r), item = 0;
+	uint32_t slot = 8;
+	if (inv && peek(inv + SL_INV_SLOT, &slot, 4) && slot < 8)
+		item = peek_ptr(inv + SL_INV_ITEMS + (uintptr_t)slot * SL_INV_STRIDE);
+	r->rax = sl_sheath(inv, item, (uint32_t)(RA2(r) & 0xff));
+#else
 	r->rax = sl_sheath((uintptr_t)r->rdi, (uintptr_t)r->rsi, (uint32_t)r->rdx);
+#endif
 }
 
 /* an item of the player's inventory: its owner, a record, 1..8 model entries; *n = the entries, *inact = the first's
@@ -19518,18 +19882,7 @@ static int sl_install(const struct site_spec *s)
 	int ok = s->kind == K_JMP && check_site(s, why, sizeof why) == 0;
 	if (s->kind != K_JMP)
 		snprintf(why, sizeof why, "not a jmp site");
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) {
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3f0000) : NULL;
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -19719,7 +20072,7 @@ static void sl_end_log(void)
  * FUN_02810af0(attacker HOBJECT, target CCharacter*, attack, recoil|0, HitInfo*) the block recoil of
  * ServerCombat_ApplyAttackDamage (its rdx test: the attack), DF_ATTACKDATA = FUN_00a91300 (the attack's AttackData, as
  * CB_ATTACKDATA). Order = DFS_*) */
-static const struct site_spec g_df_sites_game[] = {
+static SITE_TABLE struct site_spec g_df_sites_game[] = {
 SITE("DF_IMPACT", K_CALL, 0x26e5468, 0x26e544b, "89 d9 4c 89 e2 4c 89 f6 4c 89 ef f3 0f 7e 84 24 a8 00 00 00 f3 0f 10 8c 24 b0 00 00 00 e8 83 fb fe ff 41 c6 85 87 02 00 00 00", 0x26d4ff0, "41 57 49 89 f7 41 56 41 89 ce 41 55 41 54 55"),
 SITE("DF_WINDOW", K_ENTRY, 0x227d1f0, 0x227d1f0, "31 c0 80 be 62 05 00 00 00 74 0a 48 39 be c0 04 00 00 0f 94 c0 c3", 0x227d1f0, "31 c0 80 be 62 05 00 00 00 74 0a 48 39 be c0"),
 SITE("DF_TYPE", K_ENTRY, 0x2282e10, 0x2282e10, "53 48 89 fb e8 f7 16 45 00 48 85 c0 74 12 0f b6 83 5b 05 00 00 5b 83 e8 01 83 f8 01 0f 97 c0 c3", 0x2282e10, "53 48 89 fb e8 f7 16 45 00 48 85 c0 74 12 0f"),
@@ -19763,6 +20116,13 @@ void somvr_dfimpact_c(struct regs *r);
 void somvr_w_dfimpact(void);
 WRAPPER("somvr_w_dfimpact", "somvr_dfimpact_c");
 static struct hook g_df_h = { .name = "DF_IMPACT" };
+/* the original DealHit (the impact passed on, a held blow's release, the late recoil) */
+#ifdef _WIN32 /* Combat_DealHit's Windows order (attacker, target, const LTVector *pos, attack, bool kill): re-winport.md 7.3 */
+typedef void (*df_dealhit_win_fn)(uintptr_t attacker, uintptr_t target, cb_ltvec pos, uintptr_t attack, int kill);
+#define DF_ORIG(v, att, tgt, atk, kill) ((df_dealhit_win_fn)g_df_h.orig)((att), (tgt), (v), (atk), (kill))
+#else
+#define DF_ORIG(v, att, tgt, atk, kill) ((cb_dealhit_fn)g_df_h.orig)((v), (att), (tgt), (atk), (kill))
+#endif
 
 enum { DF_OFF = 0, DF_ON = 1, DF_LOG = 2 };         /* SOMVR_DEFENCE=0|1|log */
 enum { DFP_COUNTER = 0, DFP_RECOIL = 1, DFP_OFF = 2 }; /* SOMVR_DEFENCE_PARRY */
@@ -20358,7 +20718,7 @@ static void df_held_tick(double t)
 		by == 1 ? g_dfh.dodged_a++ : g_dfh.dodged_head++;
 	} else {
 		g_dfh.landed++;
-		((cb_dealhit_fn)g_df_h.orig)(g_dfh.v, g_dfh.att, g_dfh.tgt, g_dfh.atk, g_dfh.kill);
+		DF_ORIG(g_dfh.v, g_dfh.att, g_dfh.tgt, g_dfh.atk, g_dfh.kill);
 	}
 	pthread_mutex_lock(&g_df_mu);
 	struct df_track *d = df_find(g_dfh.att);
@@ -20370,7 +20730,18 @@ static void df_held_tick(double t)
 
 __attribute__((used)) void somvr_dfimpact_c(struct regs *r)
 {
+#ifdef _WIN32 /* rcx attacker, rdx target, r8 &pos, r9 attack, the bool kill at [entry rsp + 0x28] */
+	uintptr_t att = RA1(r), tgt = RA2(r), atk = RA4(r);
+	const float *pp = (const float *)RA3(r);
+	cb_ltvec pos = { 0, 0, 0 };
+	if (pp)
+		pos = (cb_ltvec){ pp[0], pp[1], pp[2] };
+	int kill = (int)(RA5(r) & 0xff);
+#else /* SysV: the vector in xmm0 (x, y) and xmm1 (z), attacker rdi, target rsi, attack rdx, kill ecx */
 	uintptr_t att = r->rdi, tgt = r->rsi, atk = r->rdx;
+	cb_ltvec pos = { r->xmm[0][0], r->xmm[0][1], r->xmm[1][0] };
+	int kill = (int)(r->rcx & 0xff);
+#endif
 	int veto = 0;
 	atomic_fetch_add_explicit(&g_df_h.calls, 1, memory_order_relaxed);
 	if (g_df.mode != DF_OFF && tgt) {
@@ -20408,8 +20779,8 @@ __attribute__((used)) void somvr_dfimpact_c(struct regs *r)
 				if (v == SOMVR_DFO_HIT && g_df.mode == DF_ON && g_dg.on && g_dg.fast_s > 0 && !g_dfh.on &&
 				    somvr_df_is_red(&g_df.cfg, d->type) && t - d->th_t0 < g_dg.fast_s) { /* build 18: held */
 					g_dfh.on = 1, g_dfh.t_imp = t, g_dfh.t_start = d->th_t0, g_dfh.t_rel = t + g_dg.hold_s;
-					g_dfh.v = (cb_ltvec){ r->xmm[0][0], r->xmm[0][1], r->xmm[1][0] };
-					g_dfh.att = att, g_dfh.tgt = tgt, g_dfh.atk = atk, g_dfh.kill = (int)(r->rcx & 0xff);
+					g_dfh.v = pos;
+					g_dfh.att = att, g_dfh.tgt = tgt, g_dfh.atk = atk, g_dfh.kill = kill;
 					g_dfh.e = e, g_dfh.s = d->s, g_dfh.held++;
 					d->outcome = DF_HELD; /* judged when the hold ends */
 					veto = 1;
@@ -20424,7 +20795,7 @@ __attribute__((used)) void somvr_dfimpact_c(struct regs *r)
 		atomic_fetch_add_explicit(&g_df_h.mods, 1, memory_order_relaxed);
 		return;
 	}
-	((cb_dealhit_fn)g_df_h.orig)((cb_ltvec){ r->xmm[0][0], r->xmm[0][1], r->xmm[1][0] }, att, tgt, atk, (int)(r->rcx & 0xff));
+	DF_ORIG(pos, att, tgt, atk, kill);
 }
 
 /* THREAT's projectile slot (TH_PJ_UPDATE, before the game's update of p): 1 = its next step meets the blade */
@@ -21069,7 +21440,7 @@ static void df_frame(uintptr_t pl, int stereo)
 	df_held_tick(t); /* build 18: SOMVR_DODGE_FAST_MS's held blow, judged with this frame's head (outside the lock) */
 	if (g_df.bl.on) { /* build 31: the blade-in-the-body hit the game's range missed, landed by the game's own call */
 		g_df.bl.on = 0;
-		((cb_dealhit_fn)g_df_h.orig)(g_df.bl.v, g_df.bl.att, g_df.bl.tgt, g_df.bl.atk, 0);
+		DF_ORIG(g_df.bl.v, g_df.bl.att, g_df.bl.tgt, g_df.bl.atk, 0);
 	}
 	if (t >= g_df.next_sum && (g_df.n.parries || g_df.n.impacts || g_df.n.arrows || g_df.n.contacts)) {
 		g_df.next_sum = t + 10.0;
@@ -21093,18 +21464,7 @@ static int df_install(void)
 	const struct site_spec *s = &g_df_sites[DFS_IMPACT];
 	char why[512] = "", err[200] = "", nb[64];
 	int ok = s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
-	unsigned char *pg = NULL;
-	for (int i = 0; ok && i < 64 + 4 && !pg; i++) {
-		static const uintptr_t far_tries[] = { 0x40000000, 0x50000000, 0x60000000, 0x70000000 };
-		uintptr_t at = i < 64 ? (uintptr_t)0x3f0000 - (uintptr_t)i * 0x10000 : far_tries[i - 64];
-		void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-		if (p == MAP_FAILED)
-			continue;
-		if (stub_reach((uintptr_t)p, s->addr))
-			memset(pg = p, 0xcc, 4096);
-		else
-			munmap(p, 4096);
-	}
+	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3f0000) : NULL;
 	if (ok && !pg)
 		ok = 0, snprintf(why, sizeof why, "no stub page within +-2 GB");
 	if (ok) {
@@ -21416,10 +21776,158 @@ static void df_clank_fx(double t)
 #include "somvr_swordphys_game.c" /* build 31: SOMVR_SWORD_PHYS, SOMVR_SWORD_FLESH (docs/re-xr-pipeline.md 134) */
 static int tk_holding(void) { return g_tk.on && g_tk.active; } /* SOMVR_HEAD_TETHER: not measured while held */
 
+/* ---- the schema checker (docs/re-winport.md 7.9; somvr_schema.h) ------------------------------------------------
+ * Every records-DB schema holder the mod reads, by the schema's own full name and field count, then by the names of
+ * the fields the mod uses (once the database has loaded). Windows: found in the registry FUN_140aa4a20 (SCH_REGISTRY,
+ * decoded), logged as RVAs, compared with offsets-hooks.tsv's rows; a holder is set from the registry when the row
+ * is unknown or differs, and cleared (0) when its fields do not match - the mod's own variables only, nothing written
+ * in the game. Linux: the same checks on the Linux holders (a self-test of the fingerprints). The writer thread runs
+ * it once a second until every holder is confirmed (or 300 s), the word "schema" at once (its result logged). */
+#include "somvr_schema.h"
+#ifdef _WIN32
+static SITE_TABLE struct site_spec g_sch_sites_game[] = {
+SITE("SCH_REGISTRY", K_ENTRY, 0, 0, "", 0, ""),
+};
+#define SCH_REG_MAX 1400
+#define SCH_IMG somvr_img
+#else
+#define SCH_IMG ((uintptr_t)0)
+#endif
+struct sch_want {
+	struct somvr_sch_spec s;
+	uintptr_t *dst[2]; /* the mod's holder variable(s) */
+};
+static struct sch_want g_sch_want[] = {
+	{ { "Combat.Tree", 106, 3, { { 0, "Weapons" }, { 1, "Nodes" }, { 2, "RecoilNodes" } } }, { &g_fig.sch_ccr, &g_rxg.sch_ccr } },
+	{ { "Combat.Node", 11, 3, { { 0, "Type" }, { 2, "Predicate" }, { 3, "Pools" } } }, { &g_fig.sch_node } },
+	{ { "Combat.Attack", 7, 2, { { 0, "AnimationData" }, { 1, "AttackData" } } }, { &g_fig.sch_attack, &g_rxg.sch_attack } },
+	{ { "CombatAttackAnimationData", 34, 3, { { 0, "Name" }, { 2, "BehaviorNode" }, { 8, "Sync" } } }, { &g_fig.sch_anim } },
+	{ { "Combat.AIBlockTable", 1, 1, { { 0, "Entries" } } }, { &g_rxg.sch_btbl } },
+	{ { "CombatAIBlockChance", 2, 2, { { 0, "Category" }, { 1, "BlockChance" } } }, { &g_rxg.sch_bent } },
+	{ { "CombatAttackData", 104, 3, { { 0, "AlignToTargetType" }, { 16, "RecoilTypeHit" }, { 23, "CanInterrupt" } } },
+	  { &g_rxg.sch_ad, &g_dfg.sch_ad } },
+	{ { "Combat.CategoryList", 1, 0, { { 0, NULL } } }, { &g_dfg.sch_cl } }, /* (its one field's name: not recorded) */
+	{ { "Inventory.Item", 27, 2, { { 0, "MaxQuantity" }, { 6, "RangedWeaponData" } } }, { &g_bog.sch_item } },
+	{ { "CombatNodePredicate", 3, 3, { { 0, "Input" }, { 1, "Chord" }, { 2, "DoubleTap" } } }, { &g_vbsch.chord } },
+	{ { "Combat.Chord", 3, 3, { { 0, "Command1" }, { 1, "Command2" }, { 2, "MaxPressDelta" } } }, { &g_vbsch.input } },
+	{ { "Combat.Input", 10, 3, { { 0, "ActionId" }, { 1, "InputType" }, { 8, "MaxHeldDuration" } } }, { &g_vbsch.inrec } },
+};
+#define SCH_N ((int)(sizeof g_sch_want / sizeof g_sch_want[0]))
+static struct {
+	int done, tries, nreg, found[SCH_N], state[SCH_N]; /* state: SOMVR_SCH_* (-2 not looked at yet) */
+	uintptr_t obj[SCH_N];
+	double next;
+} g_sch;
+static int sch_read(uintptr_t at, void *out, size_t n)
+{
+	return peek(at, out, n);
+}
+#ifdef _WIN32 /* (Linux never changes its holders) */
+static void sch_set(int i, uintptr_t v)
+{
+	for (int k = 0; k < 2; k++)
+		if (g_sch_want[i].dst[k])
+			*(volatile uintptr_t *)g_sch_want[i].dst[k] = v;
+}
+#endif
+/* one pass (the writer thread; `say`: a line per holder); 1 = nothing left to do */
+static int sch_pass(int say)
+{
+	char why[200];
+	int left = 0;
+#ifdef _WIN32
+	static uintptr_t reg[SCH_REG_MAX];
+	if (!g_sch.nreg) {
+		const struct site_spec *rs = &g_sch_sites_game[0];
+		g_sch.nreg = -1;
+		if (check_site(rs, why, sizeof why) == 0)
+			g_sch.nreg = somvr_sch_reg_decode((const unsigned char *)rs->target, 0x8000, rs->target, reg, SCH_REG_MAX);
+		logf_("SCHEMA registry %s %#llx: %d slots%s%s", rs->name, (unsigned long long)rs->target, g_sch.nreg,
+		      g_sch.nreg > 0 ? "" : " - not decoded (no checker on this exe): ", g_sch.nreg > 0 ? "" : why);
+	}
+#endif
+	for (int i = 0; i < SCH_N; i++) {
+		const struct somvr_sch_spec *s = &g_sch_want[i].s;
+		if (g_sch.state[i] == SOMVR_SCH_OK || g_sch.state[i] == SOMVR_SCH_DIFFERS) {
+			if (say)
+				logf_("SCHEMA %s: %s at %#llx (rva %#llx)", s->name, g_sch.state[i] == SOMVR_SCH_OK ? "confirmed" : "NOT the "
+				      "schema (holder 0)", (unsigned long long)g_sch.obj[i],
+				      (unsigned long long)(g_sch.obj[i] ? g_sch.obj[i] - SCH_IMG : 0));
+			continue;
+		}
+		if (!g_sch.found[i]) { /* the identity (name + count): at once */
+			uintptr_t have = *g_sch_want[i].dst[0], obj = have;
+#ifdef _WIN32
+			int m = 0;
+			uintptr_t r = g_sch.nreg > 0 ? somvr_sch_find(sch_read, reg, g_sch.nreg, s, &m) : 0;
+			obj = r ? r : have; /* the registry's, else the table's - either way checked below before it stays */
+			logf_("SCHEMA %s (%u fields): the registry's %s%#llx (rva %#llx; %d named so), the table's rva %#llx: %s",
+			      s->name, s->count, r ? "" : "none ", (unsigned long long)r, (unsigned long long)(r ? r - somvr_img : 0),
+			      m, (unsigned long long)(have ? have - somvr_img : 0),
+			      !obj ? "no holder" : !r ? "the table's (checked)" : r == have ? "the same" : have ? "DIFFERENT: the "
+			      "registry's taken" : "the registry's taken");
+			sch_set(i, obj);
+#endif
+			g_sch.found[i] = 1, g_sch.obj[i] = obj;
+		}
+		int st = g_sch.obj[i] ? somvr_sch_check(sch_read, g_sch.obj[i], s, why, sizeof why) : SOMVR_SCH_DIFFERS;
+		if (!g_sch.obj[i])
+			snprintf(why, sizeof why, "no schema object");
+		if (st == SOMVR_SCH_UNLOADED) {
+			left++;
+			if (say)
+				logf_("SCHEMA %s: at %#llx, the database not loaded yet (its fields unread)", s->name,
+				      (unsigned long long)g_sch.obj[i]);
+			continue;
+		}
+		g_sch.state[i] = st;
+#ifdef _WIN32 /* (Linux: the proven holders stay; a difference there is a fingerprint to fix, logged) */
+		if (st != SOMVR_SCH_OK)
+			sch_set(i, 0);
+#endif
+		char fl[160] = "";
+		for (int k = 0, o = 0; k < s->nf && o < (int)sizeof fl; k++)
+			o += snprintf(fl + o, sizeof fl - (size_t)o, "%s%d %s", k ? ", " : "", s->f[k].ix, s->f[k].name);
+		logf_("SCHEMA %s: %s at %#llx (rva %#llx)%s%s%s", s->name, st == SOMVR_SCH_OK ? "CONFIRMED by its fields" : "NOT the schema",
+		      (unsigned long long)g_sch.obj[i], (unsigned long long)(g_sch.obj[i] ? g_sch.obj[i] - SCH_IMG : 0),
+		      st == SOMVR_SCH_OK ? " (" : ": ", st == SOMVR_SCH_OK ? (s->nf ? fl : "name and count only") : why,
+		      st == SOMVR_SCH_OK ? ")" : " - its holder 0, the features that read it off");
+	}
+	return left == 0;
+}
+/* the writer thread, every 250 ms: once a second until done (30 min at most: a long stay in the menus). A holder
+ * whose identity matched but whose fields never loaded in that time stays (logged "identity only") */
+static void sch_poll(double t)
+{
+	if (g_sch.done || t < g_sch.next)
+		return;
+	g_sch.next = t + 1.0;
+	if (!g_sch.tries++)
+		for (int i = 0; i < SCH_N; i++)
+			g_sch.state[i] = -2;
+	if (sch_pass(0) || g_sch.tries > 1800) {
+		g_sch.done = 1;
+		int ok = 0, id = 0;
+		for (int i = 0; i < SCH_N; i++)
+			ok += g_sch.state[i] == SOMVR_SCH_OK, id += g_sch.state[i] < 0 && g_sch.obj[i];
+		logf_("SCHEMA done after %d s: %d of %d holders confirmed by their fields, %d by their identity only (the "
+		      "database's fields never read), %d none (holder 0)", g_sch.tries, ok, SCH_N, id, SCH_N - ok - id);
+	}
+}
+static const char *sch_word(void)
+{
+	if (!g_sch.tries++)
+		for (int i = 0; i < SCH_N; i++)
+			g_sch.state[i] = -2;
+	sch_pass(1);
+	return "schema";
+}
+
 #ifndef SOMVR_SELFTEST
 /* ------------------------------------------------------------------------------------------------------------ */
 /* Gate: only the game's own process                                                                              */
 
+#ifndef _WIN32 /* the Linux gate: /proc/self/exe, the cmdline, the GNU build-id; the ELF constructor */
 static int exe_is_game(void)
 {
 	char exe[4096];
@@ -21542,4 +22050,314 @@ __attribute__((constructor)) static void somvr_ctor(void)
 		logf_("ENV LD_PRELOAD was=%s now=%s (children do not load the library)", was, now);
 	guard_or_die(g_guard_sites, rc == 0);
 }
+#else
+/* Windows, the first Present (after the COM fill): the D3D sites H8's layout-B copy and the HUD copy call, checked as
+ * somvr_start checks them on Linux (at start they are blank there: no runtime objects yet) */
+static void win_late_d3d(void)
+{
+	if (!g_active || !g_d3d_sites || g_d3d_ok)
+		return;
+	int all = 1;
+	for (int i = 0; i < DS_N; i++) {
+		char why[512];
+		if (i == DS_VKCOPY || i == DS_VKCOPY_MT) { /* Feral's CVulkanTexture copy: none under DXVK (the interop) */
+			logf_("D3D %s not needed on Windows (tex_vkimage = IDXGIVkInteropSurface)", g_d3d_sites[i].name);
+			continue;
+		}
+		int ok = check_site(&g_d3d_sites[i], why, sizeof why) == 0;
+		all &= ok;
+		logf_("D3D %s %s %#llx -> %#llx (late, COM): %s", g_d3d_sites[i].name, ok ? "ok" : "MISMATCH",
+		      (unsigned long long)g_d3d_sites[i].addr, (unsigned long long)g_d3d_sites[i].target, why);
+	}
+	g_d3d_ok = all;
+	g_d3d_late_done = 1;
+	if (g_layout == SOMVR_LAYOUT_B && !g_d3d_ok)
+		logf_("WARN layout B without the D3D sites: no eye images (the layer reuses or monos the frames)");
+}
+
+/* Windows: H9 is a COM slot (IDXGISwapChain::Present, DXVK's vtable): its SITE is filled at the first Present
+ * (win/somvr_win_d3d.c), then patched here as install_all patches a K_VSLOT; with it the other late COM work: the D3D
+ * sites (win_late_d3d) and SOMVR_FX_TEST's D3D11 capture slots (dc_install, the immediate context's vtable) */
+static void win_late_h9(void);
+void somvr_win_late_h9(void);
+void somvr_win_late_h9(void)
+{
+	win_late_d3d();
+	win_late_h9();
+	if (g_active && g_rd.test && !g_dc.ok)
+		dc_install(); /* render's `fx d3d N` (test only): the 20 DC_* rows filled from ID3D11DeviceContext */
+}
+static void win_late_h9(void)
+{
+	const struct site_spec *s = &g_game_sites[HK_H9];
+	char why[512], err[200] = "";
+	if (g_h[HK_H9].installed)
+		return;
+	if (check_site(s, why, sizeof why) != 0) {
+		logf_("HOOK H9 (late, COM) not installed: %s", why);
+		return;
+	}
+	uintptr_t w = (uintptr_t)somvr_w_h9;
+	g_h[HK_H9].orig = s->target; /* before the slot: the next Present already comes through */
+	if (write_code(s->addr, &w, 8, err, sizeof err) != 0) {
+		logf_("HOOK H9 (late, COM) write failed: %s", err);
+		return;
+	}
+	g_h[HK_H9].installed = 1;
+	logf_("HOOK H9 ok vslot %#llx (late, COM: IDXGISwapChain::Present) orig=%#llx now=%#llx", (unsigned long long)s->addr,
+	      (unsigned long long)s->target, (unsigned long long)w);
+}
+
+/* ---- the DLL's own stand-ins for game functions MSVC inlined away (docs/re-winport.md 7.8) ---------------------
+ * Each SITE entry points at the function here (somvr_win_provide: its first bytes are the check), so the features'
+ * checks and calls stay as on Linux. The by-name lookups: somvr_recdb.h (Linux FUN_02166790 / FUN_02153910). */
+#include "somvr_recdb.h"
+__attribute__((noinline)) static uintptr_t win_atk_byname(const char *name) /* CB_ATK_BYNAME: Combat/Attack */
+{
+	return somvr_recdb_byname(peek_ptr(GADDR(CB_ATKCAT_PP, 0x4b568d0)), (const signed char *)GADDR(RDB_FOLD, 0x3898a10),
+				  name);
+}
+__attribute__((noinline)) static uintptr_t win_tmpl_byname(const char *name) /* PR_TMPL_BYNAME: AI/Templates */
+{
+	return somvr_recdb_byname(peek_ptr(GADDR(PR_TMPL_CAT_PP, 0x4b56fb0)), (const signed char *)GADDR(RDB_FOLD, 0x3898a10),
+				  name);
+}
+/* CB_TIMER_RELEASE (Linux FUN_009ec850: -1 on the HTIMER's i32 at +8, at 0 its destroy slot; *t left as it is). MSVC
+ * inlines it everywhere (SetObjectTimer 0x140dea760: `dec dword [h+8]`, at 0 `call [vtbl+8]`): the destroy is slot 1 */
+__attribute__((noinline)) static void win_timer_release(uintptr_t *t)
+{
+	uintptr_t h = t ? *t : 0;
+	if (!h || *(volatile int32_t *)(h + 8) == 0) /* (0: Linux asserts; nothing to drop) */
+		return;
+	if (--*(volatile int32_t *)(h + 8) == 0)
+		((void (*)(uintptr_t))(*(uintptr_t **)h)[1])(h);
+}
+__attribute__((noinline)) static void win_tokens_add(uintptr_t res, int delta) /* BOW_TOKENS_ADD */
+{
+	int32_t cur = 0;
+	if (res && peek(res + BO_RES_COUNT, &cur, sizeof cur))
+		((void (*)(uintptr_t, int))g_bow_win_sites_game[0].target)(res, cur + delta);
+}
+int somvr_win_provide(const char *name, void *fn); /* win/somvr_win_sites.c */
+static void win_provide_all(void)
+{
+	static const struct { const char *name; void *fn; } p[] = {
+		{ "CB_ATK_BYNAME", (void *)win_atk_byname },
+		{ "PR_TMPL_BYNAME", (void *)win_tmpl_byname },
+		{ "CB_TIMER_RELEASE", (void *)win_timer_release },
+		{ "BOW_TOKENS_ADD", (void *)win_tokens_add }, /* only on its setter's checked bytes */
+	};
+	char why[512] = "";
+	int n = 0, set_ok = check_site(&g_bow_win_sites_game[0], why, sizeof why) == 0;
+	for (size_t i = 0; i < sizeof p / sizeof p[0]; i++)
+		n += (p[i].fn != (void *)win_tokens_add || set_ok) && somvr_win_provide(p[i].name, p[i].fn) == 0;
+	somvr_win_log("SITES provided by the DLL: %d of %d (CB_ATK_BYNAME, PR_TMPL_BYNAME, CB_TIMER_RELEASE, BOW_TOKENS_ADD: "
+		      "inlined on Windows)%s%s", n, (int)(sizeof p / sizeof p[0]), set_ok ? "" : "; BOW_TOKENS_SET: ",
+		      set_ok ? "" : why);
+}
+
+/* winport-stereo (docs/re-winport.md 7.7): the Win64 WRAPPER's argument reads - RA1-RA4, RA_STK / RF_STK (arguments
+ * 5+ on the stack), the positional xmm - and the H2/H3/H6 orig calls' order, through the real wrapper: the stand-in's
+ * hook test (SOMVR_WIN_TEST=1) calls it in each hook's shape; the C side reads the arguments as the hook does and
+ * passes them on to a stand-in "original", which records them. 0 = every value arrived in its place. */
+void somvr_abit_c(struct regs *r);
+void somvr_w_abit(void);
+WRAPPER("somvr_w_abit", "somvr_abit_c");
+static struct { int shape; uint64_t a[6]; float f[2]; uint64_t got[6]; float gotf[2]; } g_abit;
+static uint64_t abit_h2(void *self, const float *xf, const float *fov, const float *rect, float nz, float fz)
+{
+	g_abit.got[0] = (uintptr_t)self, g_abit.got[1] = (uintptr_t)xf, g_abit.got[2] = (uintptr_t)fov;
+	g_abit.got[3] = (uintptr_t)rect, g_abit.gotf[0] = nz, g_abit.gotf[1] = fz;
+	return 0x22;
+}
+static uint64_t abit_h3(void *ds, const float *xf, float *th, float *co, int *prect, int type, float nz, float fz)
+{
+	g_abit.got[0] = (uintptr_t)ds, g_abit.got[1] = (uintptr_t)xf, g_abit.got[2] = (uintptr_t)th;
+	g_abit.got[3] = (uintptr_t)co, g_abit.got[4] = (uintptr_t)prect, g_abit.got[5] = (uint32_t)type;
+	g_abit.gotf[0] = nz, g_abit.gotf[1] = fz;
+	return 0x33;
+}
+static uint64_t abit_h6(void *corners, const float *xf, const float *th, float nz, float fz, int ortho)
+{
+	g_abit.got[0] = (uintptr_t)corners, g_abit.got[1] = (uintptr_t)xf, g_abit.got[2] = (uintptr_t)th;
+	g_abit.got[3] = (uint32_t)ortho, g_abit.gotf[0] = nz, g_abit.gotf[1] = fz;
+	return 0x66;
+}
+static void abit_rum(void *pi, int ch, float v)
+{
+	g_abit.got[0] = (uintptr_t)pi, g_abit.got[1] = (uint32_t)ch, g_abit.gotf[0] = v;
+}
+static uint64_t abit_aud(void *self, const float *pos, const float *front, const float *top, uint32_t idx)
+{
+	g_abit.got[0] = (uintptr_t)self, g_abit.got[1] = (uintptr_t)pos, g_abit.got[2] = (uintptr_t)front;
+	g_abit.got[3] = (uintptr_t)top, g_abit.got[4] = idx;
+	return 0xa0;
+}
+static uint64_t abit_h4(void *gm, void *rt, const int *org, void *pl, int ef, int first)
+{
+	g_abit.got[0] = (uintptr_t)gm, g_abit.got[1] = (uintptr_t)rt, g_abit.got[2] = (uintptr_t)org;
+	g_abit.got[3] = (uintptr_t)pl, g_abit.got[4] = (uint32_t)ef, g_abit.got[5] = (uint32_t)first;
+	return 0x44;
+}
+static uint64_t abit_sh(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5)
+{
+	g_abit.got[0] = a1, g_abit.got[1] = a2, g_abit.got[2] = a3, g_abit.got[3] = a4, g_abit.got[4] = a5;
+	return 0x55;
+}
+static uint64_t abit_casc(uint64_t ctx, uint64_t view, float f3, float f4)
+{
+	g_abit.got[0] = ctx, g_abit.got[1] = view, g_abit.gotf[0] = f3, g_abit.gotf[1] = f4;
+	return 0x5c;
+}
+__attribute__((used)) void somvr_abit_c(struct regs *r)
+{
+	uint64_t *a = g_abit.a;
+	float *f = g_abit.f;
+	switch (g_abit.shape) { /* each case reads its arguments exactly as the hook of that shape does */
+	case 2: /* H2 */
+		a[0] = RA1(r), a[1] = RA2(r), a[2] = RA3(r), a[3] = RA4(r), f[0] = RF_STK(r, 5), f[1] = RF_STK(r, 6);
+		r->rax = H2_CALL(abit_h2, f[0], f[1], (void *)a[0], (const float *)a[1], (const float *)a[2], (const float *)a[3]);
+		break;
+	case 3: /* H3 / H3_OVR */
+		a[0] = RA1(r), a[1] = RA2(r), a[2] = RA3(r), a[3] = RA4(r), a[4] = RA_STK(r, 5);
+		a[5] = (uint32_t)RA_STK(r, 6), f[0] = RF_STK(r, 7), f[1] = RF_STK(r, 8);
+		r->rax = H3_CALL(abit_h3, f[0], f[1], (void *)a[0], (const float *)a[1], (float *)a[2], (float *)a[3],
+				 (int *)a[4], (int)a[5]);
+		break;
+	case 4: /* H4 */
+		a[0] = RA1(r), a[1] = RA2(r), a[2] = RA3(r), a[3] = RA4(r), a[4] = (uint32_t)RA_STK(r, 5);
+		a[5] = RA_STK(r, 6) & 0xff;
+		r->rax = ((h4_fn)abit_h4)((void *)a[0], (void *)a[1], (const int *)a[2], (void *)a[3], (int)a[4], (int)a[5]);
+		break;
+	case 6: /* H6 */
+		a[0] = RA1(r), a[1] = RA2(r), a[2] = RA3(r), a[3] = RA_STK(r, 6) & 0xff, f[0] = r->xmm[3][0];
+		f[1] = RF_STK(r, 5);
+		r->rax = H6_CALL(abit_h6, f[0], f[1], (void *)a[0], (const float *)a[1], (const float *)a[2], (int)a[3]);
+		break;
+	case 7: /* RUM1/2 */
+		a[0] = RA1(r), a[1] = (uint32_t)RA2(r), f[0] = r->xmm[2][0];
+		((in_rumble_fn)abit_rum)((void *)a[0], (int)a[1], f[0]);
+		r->rax = 0;
+		break;
+	case 8: /* AUDIO */
+		a[0] = RA1(r), a[1] = RA2(r), a[2] = RA3(r), a[3] = RA4(r), a[4] = (uint32_t)RA_STK(r, 5);
+		r->rax = ((aud_fn)abit_aud)((void *)a[0], (const float *)a[1], (const float *)a[2], (const float *)a[3],
+					   (uint32_t)a[4]);
+		break;
+	case 9: /* HEAD_SHADOW_LIGHTS (5 integers) */
+		a[0] = RA1(r), a[1] = RA2(r), a[2] = RA3(r), a[3] = RA4(r), a[4] = RA_STK(r, 5);
+		r->rax = ((win_fn)abit_sh)(a[0], a[1], a[2], a[3], a[4]);
+		break;
+	case 10: /* HEAD_SHADOW_CASCADES */
+		a[0] = RA1(r), a[1] = RA2(r), f[0] = r->xmm[2][0], f[1] = r->xmm[3][0];
+		r->rax = ((win_casc_fn)abit_casc)(a[0], a[1], f[0], f[1]);
+		break;
+	}
+}
+int somvr_win_abi_test(char *out, size_t cap);
+int somvr_win_abi_test(char *out, size_t cap)
+{
+	static float xf[7], fov[2], rect[4], th[4], co[2];
+	static int prect[4], org[2];
+	const uint64_t P[6] = { 0x1111222233334444ull, (uintptr_t)xf, (uintptr_t)fov, (uintptr_t)rect, (uintptr_t)prect,
+				0x7fff0007ull };
+	int bad = 0, n = 0;
+	size_t o = 0;
+	out[0] = 0;
+#define ABIT_CHECK(name, cond)                                                                                         \
+	do {                                                                                                           \
+		n++;                                                                                                   \
+		if (!(cond)) {                                                                                         \
+			bad++;                                                                                         \
+			o += (size_t)snprintf(out + o, o < cap ? cap - o : 0, "%s%s", o ? ", " : "", name);           \
+		}                                                                                                      \
+	} while (0)
+	uint64_t rv;
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 2;
+	rv = ((h2_fn)(void *)somvr_w_abit)((void *)P[0], xf, fov, rect, 27.5f, 1.5e5f);
+	ABIT_CHECK("H2 in", g_abit.a[0] == P[0] && g_abit.a[1] == P[1] && g_abit.a[2] == P[2] && g_abit.a[3] == P[3] &&
+				   g_abit.f[0] == 27.5f && g_abit.f[1] == 1.5e5f);
+	ABIT_CHECK("H2 out", g_abit.got[0] == P[0] && g_abit.got[3] == P[3] && g_abit.gotf[0] == 27.5f &&
+				    g_abit.gotf[1] == 1.5e5f && rv == 0x22);
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 3;
+	rv = ((h3_fn)(void *)somvr_w_abit)((void *)P[0], xf, th, co, prect, 1, 12.0f, 2.0e5f);
+	ABIT_CHECK("H3 in", g_abit.a[0] == P[0] && g_abit.a[1] == P[1] && g_abit.a[2] == (uintptr_t)th &&
+				   g_abit.a[3] == (uintptr_t)co && g_abit.a[4] == P[4] && g_abit.a[5] == 1 &&
+				   g_abit.f[0] == 12.0f && g_abit.f[1] == 2.0e5f);
+	ABIT_CHECK("H3 out", g_abit.got[4] == P[4] && g_abit.got[5] == 1 && g_abit.gotf[0] == 12.0f &&
+				    g_abit.gotf[1] == 2.0e5f && rv == 0x33);
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 4;
+	rv = ((h4_fn)(void *)somvr_w_abit)((void *)P[0], (void *)P[1], org, (void *)P[3], 2, 1);
+	ABIT_CHECK("H4 in", g_abit.a[0] == P[0] && g_abit.a[1] == P[1] && g_abit.a[2] == (uintptr_t)org &&
+				   g_abit.a[3] == P[3] && g_abit.a[4] == 2 && g_abit.a[5] == 1);
+	ABIT_CHECK("H4 out", g_abit.got[4] == 2 && g_abit.got[5] == 1 && rv == 0x44);
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 6;
+	rv = ((h6_fn)(void *)somvr_w_abit)((void *)P[0], xf, th, 7.0f, 3.0e5f, 1);
+	ABIT_CHECK("H6 in", g_abit.a[0] == P[0] && g_abit.a[2] == (uintptr_t)th && g_abit.a[3] == 1 && g_abit.f[0] == 7.0f &&
+				   g_abit.f[1] == 3.0e5f);
+	ABIT_CHECK("H6 out", g_abit.got[3] == 1 && g_abit.gotf[0] == 7.0f && g_abit.gotf[1] == 3.0e5f && rv == 0x66);
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 7;
+	((in_rumble_fn)(void *)somvr_w_abit)((void *)P[0], 1, 0.625f);
+	ABIT_CHECK("RUM", g_abit.a[0] == P[0] && g_abit.a[1] == 1 && g_abit.f[0] == 0.625f && g_abit.got[1] == 1 &&
+			      g_abit.gotf[0] == 0.625f);
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 8;
+	rv = ((aud_fn)(void *)somvr_w_abit)((void *)P[0], xf, fov, rect, 3);
+	ABIT_CHECK("AUDIO", g_abit.a[3] == P[3] && g_abit.a[4] == 3 && g_abit.got[4] == 3 && rv == 0xa0);
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 9;
+	rv = ((win_fn)(void *)somvr_w_abit)(P[0], P[1], P[2], 0, P[5]);
+	ABIT_CHECK("SHADOW", g_abit.a[4] == P[5] && g_abit.got[0] == P[0] && g_abit.got[2] == P[2] && g_abit.got[4] == P[5] &&
+				 rv == 0x55);
+	memset(&g_abit, 0, sizeof g_abit), g_abit.shape = 10;
+	rv = ((win_casc_fn)(void *)somvr_w_abit)(P[0], P[1], 0.25f, 4096.0f);
+	ABIT_CHECK("CASCADES", g_abit.f[0] == 0.25f && g_abit.f[1] == 4096.0f && g_abit.gotf[1] == 4096.0f && rv == 0x5c);
+#undef ABIT_CHECK
+	if (!bad)
+		snprintf(out, cap, "%d checks ok (H2 H3 H4 H6 RUM AUDIO SHADOW CASCADES through WRAPPER)", n);
+	return bad;
+}
+
+/* the static-initialised global sets that still held Linux addresses on Windows (winport-hooks, docs/re-winport.md
+ * 7.8): every field from its row (GADDR: 0 = unknown there - its reads then fail safe, and nothing is written to a Linux
+ * address in the Windows process). The records DB's schema holders are not found yet (the leads in 7.8) */
+static void hooks_win_globals(void)
+{
+	g_fig.sch_ccr = GADDR(SCH_CCR, 0x4ba0ca0), g_fig.sch_node = GADDR(SCH_NODE, 0x4ba20c0);
+	g_fig.sch_attack = GADDR(SCH_ATTACK, 0x4ba23c0), g_fig.sch_anim = GADDR(SCH_ANIM, 0x4ba8640);
+	g_fig.shell_pp = GADDR(IN_SHELL_PP, 0x46a9560), g_fig.objsys_pp = GADDR(OBJSYS_PP, 0x466afa0);
+	g_fig.vt_objsys = GADDR(VT_OBJSYS, 0x3453058), g_fig.fx_on = GADDR(FX_GATE, 0x46b72d1);
+	g_fig.sever = GADDR(FI_SEVER, 0x4c449d8), g_fig.timer_pp = GADDR(IN_PAUSE_PP, 0x463e290);
+	g_fig.vt_target = GADDR(FI_VT_TARGET, 0x38c3290);
+	g_prg.objsys_pp = GADDR(OBJSYS_PP, 0x466afa0), g_prg.phys_pp = GADDR(CL_PHYS_PP, 0x466c758);
+	g_prg.gsvc_pp = GADDR(GSVC_PP, 0x46b7310), g_prg.class_npc = GADDR(STL_NPC_CLASS, 0x4c52780);
+	g_prg.spawn_level = GADDR(PR_SPAWN_LEVEL, 0x4c471cc), g_prg.vt_playerobj = GADDR(STL_CPLAYER_VT, 0x39959a0);
+	g_prg.spawnmgr_pp = GADDR(PR_SPAWNMGR_PP, 0x4c4f7c0);
+	g_rxg.sch_ccr = GADDR(SCH_CCR, 0x4ba0ca0), g_rxg.sch_btbl = GADDR(SCH_BTBL, 0x4ba6460);
+	g_rxg.sch_bent = GADDR(SCH_BENT, 0x4ba64e0), g_rxg.sch_attack = GADDR(SCH_ATTACK, 0x4ba23c0);
+	g_rxg.sch_ad = GADDR(SCH_AD, 0x4ba7280);
+	g_bog.sch_item = GADDR(SCH_ITEM, 0x4c314c0);
+	g_thg.snd_wrap = GADDR(SND_WRAP, 0x466df00), g_slg.snd_wrap = GADDR(SND_WRAP, 0x466df00);
+	g_dfg.sch_ad = GADDR(SCH_AD, 0x4ba7280), g_dfg.sch_cl = GADDR(SCH_CL, 0x4baca00);
+	g_ffg.clock_pp = GADDR(IN_PAUSE_PP, 0x463e290), g_ffg.lock_a = GADDR(FR_LOCK_A, 0x4c4e1b0);
+	g_ffg.lock_b = GADDR(FR_LOCK_B, 0x4c4e1b4), g_ffg.dbg_sel = GADDR(FR_DBG_SEL, 0x4c44458);
+	g_ffg.dbg_aimgr = GADDR(FR_DBG_AIMGR, 0x4c444d8);
+	g_vbsch.chord = GADDR(VB_SCH_CHORD, 0x4ba8ea0), g_vbsch.input = GADDR(VB_SCH_INPUT, 0x4bb4560);
+	g_vbsch.inrec = GADDR(VB_SCH_INREC, 0x4bb4860);
+	kp_dbg_win();
+}
+
+/* Windows: win/somvr_win_main.c gates on the exe's sha256 (and the tables' exe), then calls this once from the
+ * DLL's start (DllMain's thread-safe point, before the game's own code runs) */
+int somvr_win_start(const char *who, int game);
+int somvr_win_start(const char *who, int game)
+{
+	if (game) {
+		somvr_core_win_globals(); /* winport-core: group A's globals from their RVAs, before any check */
+		win_provide_all();        /* winport-hooks: the stand-ins above into their SITE entries */
+		hooks_win_globals();      /* winport-hooks: the remaining static global sets */
+	}
+	int rc = somvr_start(g_game_sites, g_d3d_sites_game, who);
+	guard_or_die(g_guard_sites, rc == 0);
+	return rc;
+}
+#endif
 #endif

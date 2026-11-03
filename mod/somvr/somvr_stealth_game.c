@@ -27,7 +27,7 @@
  * Test-only: SOMVR_STEALTH_KILL_MARKS=N (a bug mark the frame after each of the first N kills), the words `stealth
  * status|on|off|log` (SOMVR_HANDS_TEST for on/off/log). Lines: `CONFIG stealth ...`, `STEALTH ...`, `STEALTH END`. */
 
-#define STL_NPC_CLASS 0x4c52780 /* the NPC game object class (re-combat-spawn.md; FUN_0229bbc0's compare) */
+#define STL_NPC_CLASS GADDR(STL_NPC_CLASS, 0x4c52780) /* the NPC game object class (re-combat-spawn.md; FUN_0229bbc0's compare) */
 #define STL_HOBJ_CLASSES 0x48   /* HOBJECT: its class list (each entry: the class, +8 the next) */
 #define STL_HOBJ_NPC 0x38       /* HOBJECT: the NPC */
 #define STL_NPC_INFO 0x10       /* NPC: -> +0x7c its kind (4 = the kind with senses: FUN_0229bbc0) */
@@ -191,9 +191,9 @@ static int stl_who(const struct cb_orc *o, uintptr_t pc, const float root[3], so
  * scripts/somhash.py's table 0x38d7480). `stealth watch on|off`: a line 5 times a second - the nearest orc's awareness
  * and Talion's state as the game's senses could read it. */
 #define STL_AIREC 0x2a8      /* CCharacter: its AI character record (CCharacter::vf_104/105) */
-#define STL_AI_HOLDER 0x4b95f20
-#define STL_HTAB 0x38d7480
-#define STL_CPLAYER_VT 0x39959a0 /* CPlayerObj's vtable (classes.tsv) */
+#define STL_AI_HOLDER GADDR(STL_AI_HOLDER, 0x4b95f20)
+#define STL_HTAB GADDR(STL_HTAB, 0x38d7480)
+#define STL_CPLAYER_VT GADDR(STL_CPLAYER_VT, 0x39959a0) /* CPlayerObj's vtable (classes.tsv) */
 /* Talion's CPlayerObj: his HOBJECT's +0x38 (as an NPC's), the vtable checked; 0 = not found */
 static uintptr_t stl_cplayer(uintptr_t pc)
 {
@@ -320,7 +320,12 @@ static float stl_bubble_cm(void)
 							0xff, 0x48, 0x85, 0xc0, 0x74, 0x1a, 0xe8, 0x0d };
 		unsigned char got[16];
 		state = -1;
+#ifdef _WIN32 /* Linux addresses (the getter, its schema 0x4b97240): not on Windows - the bubble stays unknown (NAN) */
+		(void)got, (void)want;
+		if (0) {
+#else
 		if (peek(0x2177080, got, sizeof got) && !memcmp(got, want, sizeof want)) {
+#endif
 			uintptr_t rec = ((uintptr_t (*)(void))0x2177080)();
 			char nm[96] = "";
 			rx_rec_name(rec, nm, sizeof nm);
@@ -392,7 +397,7 @@ static void stl_watch(uintptr_t pcomb, uintptr_t pc, const float *root, double t
 		unsigned char use = 0xff;
 		float fac = NAN, ep[3] = { NAN, NAN, NAN };
 		if (a.npc)
-			peek(a.npc + 0x2d4, os, 8), peek(a.npc + 0xd2c, ep, sizeof ep);
+			peek(a.npc + 0x2d4, os, 8), peek(a.npc + OFS(STL_NPC_EYE, 0xd2c), ep, sizeof ep);
 		if (perc)
 			peek(perc + 0x328, &use, 1), peek(perc + 0x32c, &fac, 4);
 		snprintf(ob, sizeof ob, "orc %#lx %.0f cm %+.0f deg: aware %d (kind %d, +0xeb8 %.3f, fights %d); its stimuli %08x/%08x; "
@@ -838,7 +843,7 @@ static int stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, 
 	}
 	snprintf(g_kd.note, sizeof g_kd.note, "the stealth kill: %.70s", death);
 	g_kd.pre_c = o->c, g_kd.pre_dead = cb_dead(o->c);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, rec, fk);
+	CB_DEALHIT_CALL((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, rec, fk);
 	kx_hit_back(dslot, dwas);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
 	*(volatile unsigned char *)(pc + C_HITONCE) = once;

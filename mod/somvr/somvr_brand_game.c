@@ -32,7 +32,7 @@
  * node's line changes, with how often the line before came. The byte and the sink go back to 0 when the window ends.
  * Nothing the game decides reads the byte (every reader only logs; FUN_02271890 then answers 1 for its own non-zero). */
 /* BRAND_SITES_BEGIN (check_sites.py counts this block on its own: SOMVR_VERBS_BRAND_NODELOG's patched K_CALL) */
-static const struct site_spec g_br_sites_game[] = {
+static SITE_TABLE struct site_spec g_br_sites_game[] = {
 SITE("BR_NODELOG", K_CALL, 0x2751b73, 0x2751b62, "48 8b 3d 37 3e 4f 02 48 85 ff 74 0a be 80 51 c4 04 e8 78 9d 86 fe", 0xfbb8f0, "48 83 3f 00 0f 84 8e 00 00 00 53 48 89 fb 48 83"),
 SITE("BR_SELECT", K_CALL, 0xa8eb08, 0xa8eb01, "48 8d bd 30 ff ff ff e8 03 31 7d 01", 0x2261c10, "41 57 49 89 ff 41 56 41 55 4d 89 c5 41 54 55 53"),
 SITE("BR_GATE_A", K_CALL, 0xa8eba2, 0xa8eb94, "48 8b b8 08 03 00 00 4c 89 9d a0 fe ff ff e8 19 5a fe ff", 0xa745c0, "41 57 45 31 ff 41 56 41 55 41 54 55 53 48 81 ec"),
@@ -41,8 +41,14 @@ SITE("BR_START", K_CALL, 0xa8eb6f, 0xa8eb63, "4c 89 d9 4c 89 d2 4c 89 e6 48 89 d
 };
 /* BRAND_SITES_END */
 static const struct site_spec *g_br_sites = g_br_sites_game; /* selftest: stand-ins */
-#define BR_NL_FLAG 0x4c445d8u  /* the node log's byte */
-#define BR_NL_SINK 0x4c459a0u  /* Combat_LogPrintf's sink (a FILE * holder; null) */
+#ifdef _WIN32 /* Windows only (docs/re-winport.md 7.4, 7.8): Combat_LogPrintf itself (0x140e90860, 363 callers) is an empty
+	       * stub there - no sink, no write to take: its entry is hooked (MinHook) and the lines formatted here */
+static SITE_TABLE struct site_spec g_brw_sites_game[] = {
+SITE("BR_LOGPRINTF", K_ENTRY, 0, 0, "", 0, ""),
+};
+#endif
+#define BR_NL_FLAG GADDR(BR_NL_FLAG, 0x4c445d8)  /* the node log's byte */
+#define BR_NL_SINK GADDR(BR_NL_SINK, 0x4c459a0)  /* Combat_LogPrintf's sink (a FILE * holder; null) */
 #define BR_NL_NODES 512
 #define BR_NL_MAXLINES 1500
 typedef void (*br_sink_write_fn)(uintptr_t sink, const char *text);
@@ -163,6 +169,31 @@ __attribute__((used)) void somvr_w_brnodelog(uintptr_t sink, const char *text)
 	atomic_store(&g_brnl.busy, 0);
 }
 
+#ifdef _WIN32
+/* BR_LOGPRINTF (Windows): Combat_LogPrintf(prefix rcx, fmt rdx, ...) - the stub's entry, any thread that logs. Only
+ * while the window is open (the node byte set) is a line formatted; Linux's sink line is "<prefix>...]: <text>" and
+ * br_nl_line keeps the text after "]: ", so the text alone is the same line */
+static void *g_brw_orig;
+__attribute__((used)) static void br_win_logprintf(const char *prefix, const char *fmt, ...)
+{
+	(void)prefix;
+	if (!g_brnl.on || !fmt)
+		return;
+	char text[1024];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(text, sizeof text, fmt, ap);
+	va_end(ap);
+	int z = 0;
+	if (!atomic_compare_exchange_strong(&g_brnl.busy, &z, 1)) {
+		g_brnl.busy_drops++;
+		return;
+	}
+	br_nl_line(text, cb_now());
+	atomic_store(&g_brnl.busy, 0);
+}
+#endif
+
 /* BR_SELECT, BR_GATE_A, BR_GATE_B, BR_START (with the node log; the player's root node loop FUN_00a8e120, the game
  * thread): a validated root node's pick (SharedCombat_SelectAttackFromPool), its target's two gates (FUN_00a745c0(...,
  * 2, target, 0, attack), FUN_00a75190(..., 1, target, 0, attack): either 1 = the loop breaks, nothing starts) and the
@@ -216,19 +247,23 @@ static void br_nl_frame(double t)
 	uint8_t *flag = (uint8_t *)g_brnl.flag_a;
 	uintptr_t *sink = (uintptr_t *)g_brnl.sink_a;
 	if (want) {
-		if (*sink && *sink != (uintptr_t)g_brnl.dummy) { /* the game's own sink (a log file named): leave it alone */
+		if (sink && *sink && *sink != (uintptr_t)g_brnl.dummy) { /* the game's own sink (a log file named): leave it */
 			logf_("VERBS brand node log t=%.3f: the game's sink is set (%#lx): not opened", t, (unsigned long)*sink);
 			g_brnl.until = 0;
 			return;
 		}
 		g_brnl.nnodes = 0, g_brnl.logged = 0, g_brnl.frame0 = g_fr.frame, g_brnl.t_open = t, g_brnl.windows++;
-		*sink = (uintptr_t)g_brnl.dummy, *flag = 1, g_brnl.on = 1;
+		if (sink)
+			*sink = (uintptr_t)g_brnl.dummy;
+		*flag = 1, g_brnl.on = 1;
 		g_co_tgt_debug = 1; /* build 29b: the targeting test's own lines (somvr_w_coscore) */
 		logf_("VERBS brand node log t=%.3f: open for %.1f s (the game's combat node log, lines naming '%s')", t,
 		      g_brnl.until - t, g_brnl.filter);
 		return;
 	}
-	*flag = 0, *sink = 0, g_brnl.on = 0, g_co_tgt_debug = 0;
+	*flag = 0, g_brnl.on = 0, g_co_tgt_debug = 0;
+	if (sink) /* (Windows: no sink) */
+		*sink = 0;
 	int z = 0;
 	while (!atomic_compare_exchange_weak(&g_brnl.busy, &z, 1))
 		z = 0;
@@ -267,7 +302,12 @@ static void br_nl_start(const struct site_spec *sites, uintptr_t flag_a, uintptr
 		return;
 	uint8_t fl = 0xff;
 	uintptr_t sk = 1;
+#ifdef _WIN32 /* no sink on Windows (BR_NL_SINK unknown = 0): the byte only, the stub's entry instead of the write */
+	sk = 0;
+	if (!peek(flag_a, &fl, 1) || fl > 1) {
+#else
 	if (!peek(flag_a, &fl, 1) || !peek(sink_a, &sk, sizeof sk) || fl > 1 || sk) {
+#endif
 		logf_("WARN SOMVR_VERBS_BRAND_NODELOG=on: the node log's byte (%#x) or sink (%#lx) is not the shipped game's 0: off",
 		      fl, (unsigned long)sk);
 		*bad = 1;
@@ -275,7 +315,18 @@ static void br_nl_start(const struct site_spec *sites, uintptr_t flag_a, uintptr
 	}
 	g_brnl.flag_a = flag_a, g_brnl.sink_a = sink_a;
 	g_brnl.dummy = calloc(2, sizeof *g_brnl.dummy); /* [0] = 0: the game's own write and close would do nothing with it */
+#ifdef _WIN32
+	{
+		char why[512] = "";
+		const struct site_spec *w = &g_brw_sites_game[0];
+		g_brnl.ok = g_brnl.dummy && check_site(w, why, sizeof why) == 0 &&
+			    somvr_win_hook_entry(w->target, (void *)br_win_logprintf, &g_brw_orig, why, sizeof why) == 0;
+		logf_("HOOK %s %s entry %#llx (Combat_LogPrintf, an empty stub on Windows: the node log's lines here)%s%s", w->name,
+		      g_brnl.ok ? "ok" : "SKIPPED", (unsigned long long)w->target, g_brnl.ok ? "" : ": ", g_brnl.ok ? "" : why);
+	}
+#else
 	g_brnl.ok = g_brnl.dummy && bo_patch_call(&sites[0], (void *)somvr_w_brnodelog);
+#endif
 	int gates = g_brnl.ok && bo_patch_call(&sites[1], (void *)somvr_w_brsel);
 	gates = gates && bo_patch_call(&sites[2], (void *)somvr_w_brgatea);
 	gates = gates && bo_patch_call(&sites[3], (void *)somvr_w_brgateb);
@@ -289,14 +340,14 @@ static void br_nl_start(const struct site_spec *sites, uintptr_t flag_a, uintptr
 	      g_co.on_score == 6 ? "too (CO_TSCORE_1..6)" : "NOT (SOMVR_GLYPH's CO_TSCORE calls not in)");
 }
 
-#define BR_C_BLOCKING 0xdc /* Combat: the current attack is a blocking one (AttackData.IsBlock; re-combat.md 3.2) */
+#define BR_C_BLOCKING OFS(BR_C_BLOCKING, 0xdc) /* Combat: the current attack is a blocking one (AttackData.IsBlock; re-combat.md 3.2) */
 /* PlayerCombat's input tracker (PlayerCombat+0x80: FUN_00a8e120 passes it to the predicate test FUN_02272ea0 ->
  * FUN_02271890): +0x08/+0x10 its tracked commands (12-byte entries {u32 a, u32 b, u16 cmd}; b < a = held), +0x90 the
  * blocking command - an Input record with IgnoreIfBlocking=1 is rejected ("Node Rejected '%s', IgnoreIfBlocking")
  * while that command's entry has b < a. Read only. */
-#define BR_PC_TRACK 0x80
-#define BR_TR_VEC 0x08
-#define BR_TR_BLOCK 0x90
+#define BR_PC_TRACK OFS(BR_PC_TRACK, 0x80)
+#define BR_TR_VEC OFS(BR_TR_VEC, 0x08)
+#define BR_TR_BLOCK OFS(BR_TR_BLOCK, 0x90)
 static const char *const g_br_w[] = { "off", "on", "log" };
 enum { BR_OFF = 0, BR_ON = 1, BR_LOG = 2 };
 enum { BRK_NONE = 0, BRK_STEALTH, BRK_COMBAT };
@@ -355,7 +406,8 @@ static void br_start(int *bad)
 	static const char *const sw[] = { "hold", "tap" };
 	g_br.stealth_tap = env_word("SOMVR_VERBS_BRAND_STEALTH", sw, 2, 1);
 	g_br.press_s = 0.15f, g_br.fresh_s = 0.3f;
-	g_br.b_on = -1, g_br.text_lo = 0x400000, g_br.text_hi = 0x3400000;
+	g_br.b_on = -1;
+	game_range(0, &g_br.text_lo, &g_br.text_hi); /* (Windows: the PE's .text) */
 	static const char *const ow[] = { "off", "on" };
 	g_br.unblock = env_word("SOMVR_VERBS_BRAND_UNBLOCK", ow, 2, 0);
 	static const char *const cw[] = { "stunned", "any" };

@@ -21,11 +21,11 @@
  *   stg_config / stg_end_log (start / end). Lines: `CONFIG struggle`, `STRUGGLE t=...` (start with its fields and a
  *   dump, the thrusts, the presses, its fields as they change, the end and Talion's state), `STRUGGLE END`. */
 
-#define STG_VT_PRESS 0x3592ab8u
-#define STG_VT_QT 0x3592af8u
-#define STG_VT_HOLD 0x3592b38u
-#define STG_VT_DIR 0x3592b78u
-#define STG_VT_AIM 0x3592bb8u
+#define STG_VT_PRESS GADDR(STG_VT_PRESS, 0x3592ab8)
+#define STG_VT_QT GADDR(STG_VT_QT, 0x3592af8)
+#define STG_VT_HOLD GADDR(STG_VT_HOLD, 0x3592b38)
+#define STG_VT_DIR GADDR(STG_VT_DIR, 0x3592b78)
+#define STG_VT_AIM GADDR(STG_VT_AIM, 0x3592bb8)
 enum { STG_NONE = 0, STG_PRESS, STG_QT, STG_HOLD, STG_DIR, STG_AIM, STG_OTHER, STG_N };
 static const char *const g_stg_kind[STG_N] = { "none", "CStrugglePressCount", "CStruggleQuickTime", "CStruggleHold",
 					       "CStruggleInputDirection", "CStruggleAim", "unknown" };
