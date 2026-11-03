@@ -978,6 +978,25 @@ static void overscan_tests(void)
 }
 
 static char g_hex[80][256];
+static int st_cpn, st_cpv[4]; /* build 31b: the counter marker's calls (CP_MARK's stand-in) */
+static uintptr_t st_cpm;
+static void st_cp_mark_rec(uintptr_t marker, int on)
+{
+	if (st_cpn < 4)
+		st_cpv[st_cpn] = on;
+	st_cpn++, st_cpm = marker;
+}
+static int st_cprec, st_cpshow, st_cpshow_ms;
+static void st_cp_rec_rec(uintptr_t marker, uintptr_t rec)
+{
+	(void)marker, (void)rec;
+	st_cprec++;
+}
+static void st_cp_show_rec(uintptr_t marker, int ms, int a, int b)
+{
+	(void)marker, (void)a, (void)b;
+	st_cpshow++, st_cpshow_ms = ms;
+}
 static int call_site(void *caller, void *target, struct site_spec *s, const char *name, int i)
 {
 	const unsigned char *p = caller;
@@ -8212,6 +8231,32 @@ static void vm_tests(const char *base)
 		printf("vrmenu19 a v6 settings file read by v7 (7 keys, the same values), the Fight page's rows from their "
 		       "switches, live (the pace, the wraith step, the stealth kill, the counter icon), saved after the old "
 		       "lines, read back\n");
+	}
+	{ /* build 31b (re-xr-pipeline.md 139.2): SOMVR_COUNTER_ICON=hide with _SETUP=skip - the marker's record and its timed
+	   * show (the glyph's set-up) skipped as well as its on; _SETUP=game = build 30's hide (the set-up runs, the on is
+	   * an off); game = everything the game's */
+		const struct site_spec *cps0 = g_cp_sites;
+		static struct site_spec cs[4];
+		cs[1].target = (uintptr_t)st_cp_mark_rec, cs[2].target = (uintptr_t)st_cp_rec_rec;
+		cs[3].target = (uintptr_t)st_cp_show_rec;
+		g_cp_sites = cs;
+		int m0 = atomic_load(&g_cp.mode), u0 = atomic_load(&g_cp.setup_skip);
+		atomic_store(&g_cp.mode, CP_HIDE), atomic_store(&g_cp.setup_skip, 1);
+		st_cpn = st_cprec = st_cpshow = 0;
+		somvr_w_cprec(0x4321, 0x99), somvr_w_cpshow(0x4321, 250, 0, 0), somvr_w_cpmark(0x4321, 1);
+		EXPECT(st_cprec == 0 && st_cpshow == 0 && st_cpn == 1 && st_cpv[0] == 0, "hide + skip: the set-up ran (%d %d), "
+		       "the marker %d calls (%d)", st_cprec, st_cpshow, st_cpn, st_cpv[0]);
+		atomic_store(&g_cp.setup_skip, 0), st_cpn = st_cprec = st_cpshow = 0;
+		somvr_w_cprec(0x4321, 0x99), somvr_w_cpshow(0x4321, 250, 0, 0), somvr_w_cpmark(0x4321, 1);
+		EXPECT(st_cprec == 1 && st_cpshow == 1 && st_cpshow_ms == 250 && st_cpn == 1 && st_cpv[0] == 0,
+		       "hide, set-up game: build 30's (%d %d %d, %d calls %d)", st_cprec, st_cpshow, st_cpshow_ms, st_cpn, st_cpv[0]);
+		atomic_store(&g_cp.mode, CP_GAME), atomic_store(&g_cp.setup_skip, 1), st_cpn = st_cprec = st_cpshow = 0;
+		somvr_w_cprec(0x4321, 0x99), somvr_w_cpshow(0x4321, 250, 0, 0), somvr_w_cpmark(0x4321, 1);
+		EXPECT(st_cprec == 1 && st_cpshow == 1 && st_cpn == 1 && st_cpv[0] == 1, "game: the game's (%d %d, %d calls %d)",
+		       st_cprec, st_cpshow, st_cpn, st_cpv[0]);
+		g_cp_sites = cps0, atomic_store(&g_cp.mode, m0), atomic_store(&g_cp.setup_skip, u0);
+		printf("cprompt31b hide skips the counter glyph's set-up (its record, its timed show) with _SETUP=skip; game and "
+		       "_SETUP=game as before\n");
 	}
 	{ /* build 27 (re-xr-pipeline.md 112): the Walk toward row - MOVE=hand in the file is SOMVR_MOVE=hand from the start,
 	   * the row's change live, the 32nd key's bit in the 64-bit masks */

@@ -419,9 +419,9 @@ def main():
         cp = [m for b in text.split("CPROMPT_SITES_BEGIN")[1:] for m in re.findall(
             r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
             r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("CPROMPT_SITES_END", 1)[0])]
-        if [m[1] for m in cp] != ["K_CALL", "K_CALL"]:
-            sys.exit("expected 2 SITE lines in somvr_cprompt_game.c's CPROMPT_SITES block (the patched CP_FX and CP_MARK "
-                     "K_CALLs), found %d" % len(cp))
+        if [m[1] for m in cp] != ["K_CALL"] * 4:
+            sys.exit("expected 4 SITE lines in somvr_cprompt_game.c's CPROMPT_SITES block (the patched CP_FX and CP_MARK "
+                     "K_CALLs; build 31b: CP_REC and CP_SHOW), found %d" % len(cp))
         sites = sites + cp
     # SOMVR_FLATFX / SOMVR_FX_TEST (build 21): its block lives in somvr_render_game.c (read with SOURCE.c above)
     if re.search(r'^#include "somvr_render_game\.c"', text, re.M):

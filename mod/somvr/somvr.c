@@ -1230,6 +1230,7 @@ static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 static void kl_start(int *bad);
 static void kl_end_log(void);
 static const char *kl_word(const char *w);
+static const char *ov_word(const char *w); /* build 31b (re-xr-pipeline.md 139): `ovault auto N|off` (somvr_hands31_game.c) */
 struct df_track;
 static void tg_track(struct df_track *d, const somvr_df_in *in, sv_quat hq, double t);
 static const char *fight_word(const char *w); /* the trigger word "fight guard|death ..." (headless drives) */
@@ -15771,6 +15772,8 @@ static void *writer_main(void *arg)
 					what = stl_word(w + 8);
 				} else if (seen && !strncmp(w, "kills ", 6)) { /* build 31, SOMVR_KILLS: "kills status|play N|cat|kill N|sever" */
 					what = kl_word(w + 6);
+				} else if (seen && !strncmp(w, "ovault ", 7)) { /* build 31b, SOMVR_VAULT_HANDS (a test): "ovault auto N|off" */
+					what = ov_word(w + 7);
 				} else if (seen && !strncmp(w, "use ", 4)) { /* SOMVR_USE: "use on|off|status" */
 					what = us_word(w + 4);
 				} else if (seen && !strncmp(w, "objective ", 10)) { /* SOMVR_OBJECTIVE: "objective status|on|game|both|recs P" */

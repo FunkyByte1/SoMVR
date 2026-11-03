@@ -3,12 +3,13 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 31b - what to test
+Build 31c - what to test
 - New since build 30 first, then what you didn't reach. Menu > Controls lists every move.
 
 - KILLS. Finish a fighting orc with a full cut or a stab: he plays the game's own death all the way to the ground. A hard cut across his neck takes his head off.
 - Block his blow, then kill him on the counter: the game's counter-kill fall. A stunned orc has its own.
-- Execution: when the sword glows, just swing hard - no trigger.
+- Execution: when the sword glows, swing a full committed cut - no trigger. Quick wrist flicks only land light hits now.
+- No gold Y floating in front of you when an orc winds up.
 - Stealth: crouch behind an unaware orc and stab his back: the game's own stealth kill plays on him - he's pulled onto your blade and dies. Your view and hands stay yours, no screen.
 
 - THE SWORD has weight now. A quick flick leaves the blade behind; a full committed swing carries it.
@@ -41,4 +42,4 @@ Build 31b - what to test
 - Fire arrow: bow drawn, press B. Whistle: crouch, an empty hand at your mouth.
 - Caragor: Practice > Caragor. Block the leap with the sword across, walk to the stunned beast, grip it when it glows; keep gripping to ride. B gets off.
 - Map: click the right stick; point and pull. Hold the click = Sauron's Army.
-- Bug notes: talk up to 30 s. A session lasts up to 4 hours.
+- Bug notes: talk up to 30 s; each one now keeps a picture of what you saw. A session lasts up to 4 hours.

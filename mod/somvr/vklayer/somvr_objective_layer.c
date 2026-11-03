@@ -476,6 +476,15 @@ static void ob_dump(uint64_t frame) {
        SOMVR_OB_IMG_W, SOMVR_OB_IMG_H, OB.text, ok ? "" : ": write failed");
 }
 
+/* build 31b: a mark's frame with the marker (mn_dump_layers): its picture copied for MK's writer (xr.log.objectiveN.ppm) */
+static void ob_mark(void) {
+    if (!OB.on || !OB.map || !OB.released || MK.ob) return;
+    size_t n = (size_t)SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4;
+    if (!(MK.ob = malloc(n))) return;
+    memcpy(MK.ob, OB.map, n);
+    MK.ob_w = SOMVR_OB_IMG_W, MK.ob_h = SOMVR_OB_IMG_H, MK.ob_bgra = OB.bgra;
+}
+
 /* a reuse frame (the last stereo frame's image again): its marker again, unchanged, in its place */
 static void ob_reuse_layers(xr_comp *c) {
     OB.has = OB.on && OB.sc ? OB.last_has : 0;

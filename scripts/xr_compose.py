@@ -34,6 +34,7 @@ LINE = re.compile(r"xr: dump layers frame (\d+): (.+?) pose ([-+\d.]+),([-+\d.]+
 EYE = re.compile(r"fov ([-+\d.]+) ([-+\d.]+) ([-+\d.]+) ([-+\d.]+) rect (\d+),(\d+) (\d+)x(\d+)")
 QUAD = re.compile(r"size ([\d.]+) x ([\d.]+) rect (-?\d+),(-?\d+) (\d+)x(\d+)(?: flags 0x([0-9a-f]+) slot (\d+))?")
 HANDS = re.compile(r"xr: dump layers frame (\d+): hands (\d+)x(\d+) per eye slot (\d+)")
+BOXES = re.compile(r" boxes (-?\d+),(-?\d+),(-?\d+),(-?\d+) (-?\d+),(-?\d+),(-?\d+),(-?\d+)")
 
 
 def read_pnm(path):
@@ -57,6 +58,10 @@ def parse(log):
             if m:  # build 10: our VR hands, a projection layer with the eyes' poses (<log>.handsN.ppm side by side)
                 fr = frames.setdefault(int(m.group(1)), {"eyes": {}, "quads": []})
                 fr["hands"] = {"w": int(m.group(2)), "h": int(m.group(3)), "slot": int(m.group(4))}
+                b = BOXES.search(ln)
+                if b:  # build 31b: a bug mark's hands - each eye's drawn box (<log>.handsN.eK.ppm crops)
+                    v = [int(b.group(i)) for i in range(1, 9)]
+                    fr["hands"]["boxes"] = [v[:4], v[4:]]
                 continue
             m = LINE.search(ln)
             if not m:
@@ -168,6 +173,25 @@ def texture(base, n, qd):
     if not qd["flags"] & 0x2:  # no BLEND_TEXTURE_SOURCE_ALPHA: opaque
         a = np.ones_like(a)
     return np.concatenate([rgb, a], axis=2)
+
+
+def hands_from_boxes(log, n, hands):
+    """build 31b: a bug mark keeps only our hands' drawn boxes (<log>.handsN.e0/e1.ppm + .alpha.pgm); the whole picture
+    (both eyes side by side, transparent outside the boxes) as the dump's handsN.ppm would be"""
+    w, h = hands["w"], hands["h"]
+    rgb, al = np.zeros((h, 2 * w, 3), np.uint8), np.zeros((h, 2 * w), np.uint8)
+    for e, b in enumerate(hands["boxes"]):
+        x0, y0, x1, y1 = b
+        if x1 <= x0 or y1 <= y0:
+            continue
+        c, ca = read_pnm(f"{log}.hands{n}.e{e}.ppm"), read_pnm(f"{log}.hands{n}.e{e}.alpha.pgm")
+        if c is None or ca is None:
+            continue
+        if ca.ndim == 3:
+            ca = ca[..., 0]
+        rgb[y0:y1, e * w + x0:e * w + x1] = c[:y1 - y0, :x1 - x0]
+        al[y0:y1, e * w + x0:e * w + x1] = ca[:y1 - y0, :x1 - x0]
+    return rgb, al
 
 
 def qmul(a, b):
@@ -294,6 +318,8 @@ def main():
     ap.add_argument("-f", "--frame", type=int, nargs="*")
     ap.add_argument("-o", "--out")
     ap.add_argument("--ppd", type=float, default=0, help="draw the eyes at this many px/deg (20: a Quest 2)")
+    ap.add_argument("--eyes", help="build 31b: the stereo picture for every frame (a bug mark: <mark>/eyes.ppm or "
+                    "eyes.jpg with <mark>/xr.log as the log)")
     a = ap.parse_args()
     log = a.run if os.path.isfile(a.run) else os.path.join(a.run, "xr-layer.log")
     out = a.out or os.path.join(os.path.dirname(os.path.abspath(log)), "compose")
@@ -303,7 +329,7 @@ def main():
         if a.frame and n not in a.frame:
             continue
         fr = frames[n]
-        st = read_pnm(f"{log}.stereo{n}.ppm")
+        st = read_pnm(a.eyes) if a.eyes else read_pnm(f"{log}.stereo{n}.ppm")
         if st is None or len(fr["eyes"]) != 2:
             print(f"frame {n}: no stereo picture or eyes, skipped")
             continue
@@ -322,7 +348,10 @@ def main():
             hands = fr.get("hands")
             hl = None
             if hands:  # its half for this eye at this eye's size, premultiplied
-                hrgb, ha = read_pnm(f"{log}.hands{n}.ppm"), read_pnm(f"{log}.hands{n}.alpha.pgm")
+                if "boxes" in hands:  # build 31b: a mark's crops in a whole (transparent) picture of both eyes
+                    hrgb, ha = hands_from_boxes(log, n, hands)
+                else:
+                    hrgb, ha = read_pnm(f"{log}.hands{n}.ppm"), read_pnm(f"{log}.hands{n}.alpha.pgm")
                 if hrgb is not None and ha is not None:
                     hw = hands["w"]
                     rgb = Image.fromarray(hrgb[:, ei * hw:(ei + 1) * hw]).resize(size, Image.BILINEAR)

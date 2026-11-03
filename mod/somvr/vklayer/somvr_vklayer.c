@@ -33,6 +33,14 @@
  *                          (either kind) of the N-th XR swapchain the layer made (1 = the first; each size change makes
  *                          one, logged "(swapchain N, replacing WxH)") -> <SOMVR_XR_LOG>.swapchainN.ppm: SOMVR_EYE_SIZE's
  *                          switch between the menus' 16:9 and the eye size (docs/re-xr-pipeline.md 9), e.g. s2,s3,s4.
+ *     SOMVR_XR_MARK_LAYERS=on|off  (build 31b, docs/re-xr-pipeline.md 139) a bug mark of a stereo frame also keeps what
+ *                          the headset showed over the eyes: on (default) = the HUD image (and the minimap's column),
+ *                          our hands' boxes, the VR menu's and the objective marker's pictures and the frame's eyes and
+ *                          quads as text (<mark>/xr.log + xr.log.hudN.ppm ...: scripts/xr_compose.py --eyes composes
+ *                          them, scripts/mark_compose.sh after the session); the copies go into D's buffer in the
+ *                          frame's own submits, an empty submit with a fence of the mark's own follows, a writer thread
+ *                          waits that fence and writes every file (no fence wait, no file on the present thread); off =
+ *                          build 30's mark (eyes.ppm alone, its fence waited and its bytes copied on the present thread).
  *     SOMVR_XR_PREDICT=auto|off|MS  the time published for the game thread's xrLocateViews (docs/re-xr-pipeline.md
  *                          7.1): auto (default) = predictedDisplayTime + the pipeline lead measured from the submitted
  *                          records (the game renders ~2 frames ahead of the present that submits them); off = the
@@ -265,6 +273,40 @@ static struct {
     int quit_armed;              /* the menu's Quit game was pressed once at quit_t */
     double quit_t;
 } SSN;
+/* build 31b (SOMVR_XR_MARK_LAYERS, docs/re-xr-pipeline.md 139): a stereo mark's layers. Its frame's eyes and HUD image
+ * go into D's buffer in the eye submit (as a dump's), our hands' boxes after them in the hands' submit, the VR menu's and
+ * the objective's pictures are copied, the frame's eyes and quads written as text (mn_dump_layers); then an empty submit
+ * signals MK.fence once all of it ran, and a writer thread waits that fence and writes the files. busy: the writer reads
+ * D.map - no new arm, D's buffer stays (dump_free waits). X.mx held for everything but busy and the writer's reads. */
+static struct {
+    int on;                      /* SOMVR_XR_MARK_LAYERS (default on) */
+    int stage;                   /* 1: the marked frame's eyes are in D.buf - its hands and quads follow, then mk_launch */
+    _Atomic int busy;            /* 1 from mk_launch until the writer has read D's buffer and written the files */
+    uint64_t frame;              /* X.n_eyes of the marked frame: the files' N */
+    uint32_t req;                /* the preload's dump_req it serves */
+    char dir[SOMVR_SS_DIR_MAX];
+    uint32_t w, h;               /* the XR image (both eyes) in D.buf at 0 */
+    int bgra;
+    int hud;                     /* the HUD image was copied after it: hud_w x hud_h (with the minimap's column) */
+    uint32_t hud_w, hud_h;
+    int hud_bgra;
+    VkDeviceSize hud_off, hands_off, cap; /* D.buf's parts: the HUD at hud_off, our hands' boxes from hands_off (cap) */
+    int hands;                   /* our hands' boxes copied: hbox (x0 y0 x1 y1 per eye; empty: x1 <= x0) at hoff */
+    uint32_t hew, heh;
+    int hbgra, hslot;
+    int32_t hbox[2][4];
+    VkDeviceSize hoff[2];
+    uint8_t *vm, *ob;            /* the VR menu's / the objective's picture (RGBA or BGRA, premultiplied), owned */
+    int vm_w, vm_h, vm_bgra, ob_w, ob_h, ob_bgra;
+    char *txt;                   /* the frame's eyes and quads as xr_compose.py reads them ("xr: dump layers frame N: ") */
+    size_t txt_n, txt_cap;
+    int nquads;
+    VkFence fence;               /* the empty submit's (made at the first mark; destroyed with D's buffer) */
+    struct dev_st *fence_ds;
+    double cost_ms;              /* the present thread's time on this mark */
+    uint64_t n_done, n_failed;
+    somvr_session_shared *obj;   /* the preload's object the mark answers */
+} MK;
 static void ss_setup(void); /* (with the dump code below) */
 
 __attribute__((format(printf, 1, 2))) static void lg(const char *fmt, ...) {
@@ -353,6 +395,8 @@ static void once_init(void) {
     p = getenv("SOMVR_XR_THREAT"); /* the threat cues (the preload's SOMVR_THREAT) */
     cfg.th = !p || !*p || (strcmp(p, "off") && strcmp(p, "0"));
     cfg.th_bad = p && *p && strcmp(p, "on") && strcmp(p, "1") && strcmp(p, "off") && strcmp(p, "0");
+    p = getenv("SOMVR_XR_MARK_LAYERS"); /* build 31b: a mark keeps the layer's quads too (docs/re-xr-pipeline.md 139) */
+    MK.on = !p || !*p || (strcmp(p, "off") && strcmp(p, "0"));
     p = getenv("SOMVR_XR_DUMP");
     if (p && *p && g_log) { /* the files are named after the log: no log, no dump */
         int n = somvr_parse_dump(p, D.at);
@@ -1547,6 +1591,7 @@ static void ob_setup(void);   /* build 15: the objective marker (./somvr_objecti
 static void ob_destroy(void);
 __attribute__((format(printf, 1, 2))) static void ob_off(const char *fmt, ...);
 static void ob_dump(uint64_t frame); /* ... a dumped frame's marker picture (mn_dump_layers) */
+static void ob_mark(void); /* build 31b: ... a mark's (copied for MK's writer) */
 static void env_setup(void);  /* SoM loading env: the sky behind mono frames (its region follows comfort's) */
 static void vd_start(void);   /* never a void (./somvr_void_layer.c): the present gaps, the watcher */
 static void vd_stop(void);
@@ -2236,9 +2281,13 @@ __attribute__((format(printf, 1, 2))) static void dump_off(const char *fmt, ...)
 }
 
 /* The buffer is idle here: every armed copy was waited for, or the device is being destroyed. */
+static int mk_wait_idle(const char *why);
 static void dump_free(void) {
     dev_st *ds = D.ds;
     if (!ds) return;
+    if (!mk_wait_idle("D's buffer goes")) return; /* build 31b: a mark's writer still reads it (kept: a leak, logged) */
+    if (MK.fence && MK.fence_ds == ds) ds->DestroyFence(ds->dev, MK.fence, NULL);
+    if (MK.fence_ds == ds) MK.fence = VK_NULL_HANDLE, MK.fence_ds = NULL;
     if (D.map) ds->UnmapMemory(ds->dev, D.mem);
     if (D.buf) ds->DestroyBuffer(ds->dev, D.buf, NULL);
     if (D.mem) ds->FreeMemory(ds->dev, D.mem, NULL);
@@ -2364,19 +2413,32 @@ static void *ss_writer(void *arg) {
     free(j);
     return NULL;
 }
-/* dump_arm's first step: a mark's request arms this frame's copy (D's buffer, made if needed) */
-static void ss_arm(dev_st *ds) {
+static VkDeviceSize vh_mark_cap(void); /* build 31b: room for our hands' boxes in a mark (./somvr_vrhands_layer.c) */
+static int mn_dump_hud_take(uint32_t *w, uint32_t *h, int *bgra); /* ... the HUD image copied after the eyes (menus) */
+/* dump_arm's first step: a mark's request arms this frame's copy (D's buffer, made if needed); build 31b: a stereo mark
+ * with SOMVR_XR_MARK_LAYERS also has room for the HUD image and our hands' boxes after the eyes */
+static void ss_arm(dev_st *ds, int mono) {
     int srgb;
+    double t0 = ss_now();
+    VkDeviceSize eyes = (VkDeviceSize)X.sc_w * X.sc_h * 4, more = !mono && MK.on ? mn_dump_extra() + vh_mark_cap() : 0;
     if (somvr_dump_order(X.sc_fmt, &srgb) < 0)
         ss_fail(1, "the XR swapchain format %d is not 8-bit RGBA/BGRA", X.sc_fmt);
-    else if (dump_buffer(ds, (VkDeviceSize)X.sc_w * X.sc_h * 4))
+    else if (dump_buffer(ds, eyes + more))
         ss_fail(1, "no host-visible buffer (see the dump line above)");
     else
         D.armed = 1, D.arm_ix = -1;
+    MK.cost_ms = (ss_now() - t0) * 1e3;
 }
-/* after the armed submit: its fence (1 s cap), a copy of the pixels, the writer thread (detached) */
+static void mk_mark(int bgra); /* build 31b: a stereo mark with its layers (below) */
+/* after the armed submit: its fence (1 s cap), a copy of the pixels, the writer thread (detached); build 31b: a stereo
+ * mark with SOMVR_XR_MARK_LAYERS waits nothing here (mk_mark: its hands and quads follow, then mk_launch) */
 static void ss_write(dev_st *ds, slot_st *sl, int mono) {
     D.armed = 0;
+    if (!mono && MK.on) {
+        int srgb = 0;
+        mk_mark(somvr_dump_order(X.sc_fmt, &srgb));
+        return;
+    }
     VkResult r = ds->WaitForFences(ds->dev, 1, &sl->fence, VK_TRUE, FENCE_TIMEOUT_NS);
     if (r != VK_SUCCESS) {
         ss_fail(0, "vkWaitForFences(the copy): %d", r);
@@ -2409,6 +2471,208 @@ static void ss_write(dev_st *ds, slot_st *sl, int mono) {
        mono ? "the menus' screen" : "both eyes", SSN.dir, SSN.want);
     SSN.want = 0;
 }
+
+/* ---- build 31b: a stereo mark with its layers (SOMVR_XR_MARK_LAYERS, MK above; docs/re-xr-pipeline.md 139) -------- */
+/* the frame's text for xr_compose.py: "xr: dump layers frame N: " + the line (a newline added) */
+__attribute__((format(printf, 1, 2))) static void mk_text(const char *fmt, ...) {
+    char line[640];
+    int k = snprintf(line, sizeof line, "xr: dump layers frame %llu: ", (unsigned long long)MK.frame);
+    va_list ap;
+    va_start(ap, fmt);
+    int m = vsnprintf(line + k, sizeof line - (size_t)k - 1, fmt, ap);
+    va_end(ap);
+    size_t n = (size_t)k + (m < 0 ? 0 : (size_t)m < sizeof line - (size_t)k - 1 ? (size_t)m : sizeof line - (size_t)k - 2);
+    line[n++] = '\n';
+    if (MK.txt_n + n + 1 > MK.txt_cap) {
+        size_t cap = MK.txt_cap ? 2 * MK.txt_cap : 4096;
+        while (cap < MK.txt_n + n + 1) cap *= 2;
+        char *t = realloc(MK.txt, cap);
+        if (!t) return;
+        MK.txt = t, MK.txt_cap = cap;
+    }
+    memcpy(MK.txt + MK.txt_n, line, n);
+    MK.txt_n += n;
+    MK.txt[MK.txt_n] = 0;
+}
+/* ss_write's stereo path: the frame's eyes (and HUD) are in D.buf once its submit runs - no wait; the hands' frame and
+ * mn_dump_layers see the mark through mn_dump_frame / mn_mark */
+static uint64_t mn_dump_frame; /* (./somvr_menus_layer.c: the dumped frame, its quads logged at the frame's end) */
+static int mn_mark;            /* ... that frame is a mark's (MK): its quads go into MK's text */
+static void mk_mark(int bgra) {
+    double t0 = ss_now();
+    MK.stage = 1, MK.frame = X.n_eyes, MK.req = SSN.want, MK.obj = SSN.obj;
+    memcpy(MK.dir, SSN.dir, sizeof MK.dir);
+    MK.w = X.sc_w, MK.h = X.sc_h, MK.bgra = bgra;
+    MK.hud_off = (VkDeviceSize)X.sc_w * X.sc_h * 4;
+    MK.hud = mn_dump_hud_take(&MK.hud_w, &MK.hud_h, &MK.hud_bgra);
+    MK.hands_off = MK.hud_off + mn_dump_extra();
+    MK.cap = D.size > MK.hands_off ? D.size - MK.hands_off : 0;
+    MK.hands = 0, MK.nquads = 0, MK.txt_n = 0;
+    if (MK.txt) MK.txt[0] = 0;
+    free(MK.vm), free(MK.ob);
+    MK.vm = MK.ob = NULL;
+    mn_dump_frame = X.n_eyes, mn_mark = 1;
+    SSN.n_threads++;
+    SSN.want = 0;
+    MK.cost_ms += (ss_now() - t0) * 1e3;
+}
+/* vh_frame (a mark's frame): room for our hands' boxes in D.buf - 0 = none (no mark, or no room) */
+static VkDeviceSize mk_hands_room(VkDeviceSize *off) {
+    if (MK.stage != 1 || !mn_mark || !D.buf || !MK.cap) return 0;
+    *off = MK.hands_off;
+    return MK.cap;
+}
+/* the writer: RGB rows (and the alpha) of a w x h picture at src (rows of `stride` pixels) into path (+ apath) */
+static int mk_put(const char *path, const char *apath, const uint8_t *src, uint32_t w, uint32_t h, uint32_t stride,
+                  int bgra) {
+    char part[SOMVR_SS_DIR_MAX + 96];
+    snprintf(part, sizeof part, "%s.part", path);
+    FILE *f = fopen(part, "we"), *a = apath ? fopen(apath, "we") : NULL;
+    uint8_t *row = f ? malloc((size_t)w * 3 + 1) : NULL, *arow = apath && row ? malloc((size_t)w + 1) : NULL;
+    int ok = row && (!apath || (a && arow)) && fprintf(f, "P6\n%u %u\n255\n", w, h) > 0 &&
+             (!a || fprintf(a, "P5\n%u %u\n255\n", w, h) > 0);
+    for (uint32_t y = 0; ok && y < h; y++) {
+        const uint8_t *s = src + (size_t)y * stride * 4;
+        somvr_dump_row(s, row, w, bgra);
+        ok = fwrite(row, 3, w, f) == w;
+        if (ok && a) {
+            for (uint32_t x = 0; x < w; x++) arow[x] = s[4 * x + 3];
+            ok = fwrite(arow, 1, w, a) == w;
+        }
+    }
+    free(row), free(arow);
+    if (f && fclose(f)) ok = 0;
+    if (a && fclose(a)) ok = 0;
+    if (ok && rename(part, path)) ok = 0;
+    if (!ok) unlink(part);
+    return ok;
+}
+/* the writer thread: MK.fence (all the mark's copies ran), then the files, eyes.ppm last; dump_done; busy 0 */
+static void *mk_writer(void *arg) {
+    dev_st *ds = arg;
+    double t0 = ss_now();
+    VkResult r = ds->WaitForFences(ds->dev, 1, &MK.fence, VK_TRUE, 2 * FENCE_TIMEOUT_NS);
+    double t1 = ss_now();
+    char base[SOMVR_SS_DIR_MAX + 16], path[SOMVR_SS_DIR_MAX + 64], apath[SOMVR_SS_DIR_MAX + 64];
+    snprintf(base, sizeof base, "%s/xr.log", MK.dir);
+    unsigned long long n = (unsigned long long)MK.frame;
+    int ok = r == VK_SUCCESS, parts = 0, eyes = 0;
+    const uint8_t *m = D.map;
+    if (ok) {
+        FILE *f = fopen(base, "we");
+        if (f) parts += fputs(MK.txt ? MK.txt : "", f) >= 0, fclose(f);
+        if (MK.hud) {
+            snprintf(path, sizeof path, "%s.hud%llu.ppm", base, n), snprintf(apath, sizeof apath, "%s.hud%llu.alpha.pgm", base, n);
+            parts += mk_put(path, apath, m + MK.hud_off, MK.hud_w, MK.hud_h, MK.hud_w, MK.hud_bgra);
+        }
+        for (int e = 0; MK.hands && e < 2; e++) {
+            const int32_t *b = MK.hbox[e];
+            if (b[2] <= b[0] || b[3] <= b[1]) continue;
+            snprintf(path, sizeof path, "%s.hands%llu.e%d.ppm", base, n, e);
+            snprintf(apath, sizeof apath, "%s.hands%llu.e%d.alpha.pgm", base, n, e);
+            parts += mk_put(path, apath, m + MK.hoff[e], (uint32_t)(b[2] - b[0]), (uint32_t)(b[3] - b[1]),
+                            (uint32_t)(b[2] - b[0]), MK.hbgra);
+        }
+        if (MK.vm) {
+            snprintf(path, sizeof path, "%s.vrmenu%llu.ppm", base, n), snprintf(apath, sizeof apath, "%s.vrmenu%llu.alpha.pgm", base, n);
+            parts += mk_put(path, apath, MK.vm, (uint32_t)MK.vm_w, (uint32_t)MK.vm_h, (uint32_t)MK.vm_w, MK.vm_bgra);
+        }
+        if (MK.ob) {
+            snprintf(path, sizeof path, "%s.objective%llu.ppm", base, n);
+            snprintf(apath, sizeof apath, "%s.objective%llu.alpha.pgm", base, n);
+            parts += mk_put(path, apath, MK.ob, (uint32_t)MK.ob_w, (uint32_t)MK.ob_h, (uint32_t)MK.ob_w, MK.ob_bgra);
+        }
+        snprintf(path, sizeof path, "%s/eyes.ppm", MK.dir);
+        eyes = mk_put(path, NULL, m, MK.w, MK.h, MK.w, MK.bgra);
+    }
+    double t2 = ss_now();
+    if (ok && eyes)
+        lg("xr: mark: eyes %ux%u -> %s/eyes.ppm, with the layers: %d quad(s)%s%s%s%s -> %s (%d files; the copies' fence "
+           "%.1f ms, writing %.0f ms on the writer thread)", MK.w, MK.h, MK.dir, MK.nquads, MK.hud ? ", the HUD image" : "",
+           MK.hands ? ", our hands' boxes" : "", MK.vm ? ", the VR menu's picture" : "", MK.ob ? ", the objective's" : "",
+           base, parts + 1, (t1 - t0) * 1e3, (t2 - t1) * 1e3);
+    else
+        lg("xr: mark: no eyes for %s: %s", MK.dir, !ok ? "the copies' fence did not signal within 2 s" : "eyes.ppm not written");
+    somvr_session_shared *obj = MK.obj;
+    uint32_t req = MK.req;
+    if (!(ok && eyes) && obj) atomic_fetch_add_explicit(&obj->dump_fail, 1, memory_order_relaxed);
+    if (ok && eyes) MK.n_done++;
+    else MK.n_failed++;
+    atomic_store_explicit(&MK.busy, 0, memory_order_release);
+    if (obj) atomic_store_explicit(&obj->dump_done, req, memory_order_release);
+    return NULL;
+}
+/* the marked frame's end (after mn_dump_layers; or the next present if it did not get there): the empty submit that
+ * signals MK.fence after all the mark's copies, then the writer thread. X.mx held, the present thread, q = the queue the
+ * frame's submits went to. */
+static void mk_launch(dev_st *ds, VkQueue q, const char *why) {
+    if (MK.stage != 1) return;
+    double t0 = ss_now();
+    MK.stage = 0, mn_mark = 0;
+    if (mn_dump_frame == MK.frame) mn_dump_frame = 0;
+    VkFenceCreateInfo fci = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    VkResult r = VK_SUCCESS;
+    if (MK.fence && MK.fence_ds != ds) MK.fence = VK_NULL_HANDLE; /* (another device's: that one went with it) */
+    if (!MK.fence) {
+        VkFence f = VK_NULL_HANDLE;
+        if ((r = ds->CreateFence(ds->dev, &fci, NULL, &f)) == VK_SUCCESS) MK.fence = f, MK.fence_ds = ds;
+    } else {
+        r = ds->ResetFences(ds->dev, 1, &MK.fence); /* (busy 0: the last writer waited it) */
+    }
+    if (r == VK_SUCCESS) r = ds->QueueSubmit(q, 0, NULL, MK.fence);
+    if (r != VK_SUCCESS) {
+        if (MK.fence && MK.fence_ds == ds) ds->DestroyFence(ds->dev, MK.fence, NULL);
+        MK.fence = VK_NULL_HANDLE, MK.fence_ds = NULL;
+        lg("xr: mark: no eyes for %s: the fence or its submit failed: %d", MK.dir, r);
+        if (MK.obj) {
+            atomic_fetch_add_explicit(&MK.obj->dump_fail, 1, memory_order_relaxed);
+            atomic_store_explicit(&MK.obj->dump_done, MK.req, memory_order_release);
+        }
+        MK.n_failed++;
+        return;
+    }
+    atomic_store_explicit(&MK.busy, 1, memory_order_release);
+    pthread_t th;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    int e = pthread_create(&th, &at, mk_writer, ds);
+    pthread_attr_destroy(&at);
+    if (e) { /* no thread: the fence waited here (rare), nothing written */
+        ds->WaitForFences(ds->dev, 1, &MK.fence, VK_TRUE, FENCE_TIMEOUT_NS);
+        atomic_store_explicit(&MK.busy, 0, memory_order_release);
+        lg("xr: mark: no eyes for %s: pthread_create: %s", MK.dir, strerror(e));
+        if (MK.obj) {
+            atomic_fetch_add_explicit(&MK.obj->dump_fail, 1, memory_order_relaxed);
+            atomic_store_explicit(&MK.obj->dump_done, MK.req, memory_order_release);
+        }
+        MK.n_failed++;
+        return;
+    }
+    MK.cost_ms += (ss_now() - t0) * 1e3;
+    lg("xr: mark: a stereo frame (both eyes%s%s, %d quad(s)%s%s) for %s (request %u, frame %llu%s%s): the present "
+       "thread's part %.2f ms; the files on a thread of its own", MK.hud ? ", the HUD image" : "",
+       MK.hands ? ", our hands" : "", MK.nquads, MK.vm ? ", the VR menu" : "", MK.ob ? ", the objective" : "", MK.dir,
+       MK.req, (unsigned long long)MK.frame, why ? "; " : "", why ? why : "", MK.cost_ms);
+}
+/* D's buffer goes, or a new arm: a running writer first (5 s at most); a mark not launched is answered as failed.
+ * 1 = idle */
+static int mk_wait_idle(const char *why) {
+    if (MK.stage == 1) {
+        MK.stage = 0, mn_mark = 0;
+        lg("xr: mark: no eyes for %s: %s before the frame ended", MK.dir, why);
+        if (MK.obj) {
+            atomic_fetch_add_explicit(&MK.obj->dump_fail, 1, memory_order_relaxed);
+            atomic_store_explicit(&MK.obj->dump_done, MK.req, memory_order_release);
+        }
+        MK.n_failed++;
+    }
+    for (int i = 0; i < 5000 && atomic_load_explicit(&MK.busy, memory_order_acquire); i++)
+        nanosleep(&(struct timespec){0, 1000000}, NULL);
+    if (!atomic_load_explicit(&MK.busy, memory_order_acquire)) return 1;
+    lg("xr: mark: the writer still runs after 5 s (%s): its buffer kept", why);
+    return 0;
+}
 /* the session's setup: the preload's somvr_session (SOMVR_MARK / SOMVR_QUIT); a request older than the session is
  * answered (the preload's buzz does not wait for it) */
 static void ss_setup(void) {
@@ -2423,7 +2687,9 @@ static void ss_setup(void) {
     SSN.seen = atomic_load_explicit(&s->dump_req, memory_order_acquire);
     atomic_store_explicit(&s->dump_done, SSN.seen, memory_order_release);
     lg("xr: session: somvr_session found at %p (v%u, preload pid %d): marks %s, quit %s", (void *)s, s->version, s->pid,
-       (s->avail & SOMVR_SSA_MARK) ? "on (the eyes of the next frame on request; the menu's Report)" : "off",
+       (s->avail & SOMVR_SSA_MARK) ? MK.on ? "on (the eyes of the next frame on request, with the layer's quads: "
+                                              "SOMVR_XR_MARK_LAYERS; the menu's Report)"
+                                            : "on (the eyes of the next frame on request; the menu's Report)" : "off",
        (s->avail & SOMVR_SSA_QUIT) ? "on (the menu's Quit game, pressed twice)" : "off");
 }
 
@@ -2432,8 +2698,10 @@ static void ss_setup(void) {
  * the buffer exists from the first such frame on; armed if this frame is the first one at or after a pending N. */
 static void dump_arm(dev_st *ds, int mono, uint64_t count) {
     int want = -1, pending = 0, srgb;
+    D.armed = 0;
+    if (atomic_load_explicit(&MK.busy, memory_order_acquire)) return; /* build 31b: a mark's writer reads D's buffer */
     if (ss_pending()) { /* a bug mark's eyes first (SSN); SOMVR_XR_DUMP's frames wait for the next one */
-        ss_arm(ds);
+        ss_arm(ds, mono);
         if (D.armed) return;
     }
     for (int i = 0; i < D.n; i++) { /* sN: this frame is the N-th swapchain's first copied one (either kind) */
@@ -5603,6 +5871,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
         if (X.fs.shouldRender && (have_eyes || can_copy)) {
             if (!X.img_acquired && xr_acquire()) return 0;
             if (have_hud && hud_acquire()) have_hud = 0; /* the HUD is off now (logged); the eyes go on */
+            if (MK.stage == 1) mk_launch(ds, qi->q, "its frame did not end: no quads"); /* build 31b (rare) */
             if (have_eyes && (D.n || ss_pending())) dump_arm(ds, 0, X.n_eyes + 1); /* (SSN: a mark) */
             replaced = have_eyes ? eyes_submit(ds, qi->q, s, idx, X.img[X.xi], pi, &ey, have_hud ? &hd : NULL)
                                  : copy_submit(ds, qi->q, s, idx, X.img[X.xi], pi, tag.slot, 0);
@@ -5725,6 +5994,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
             pf_sec(7);
             fade_comp(&sc);
             mn_dump_layers(pv, &sc); /* build 6: a dumped frame's quads (SOMVR_XR_DUMP), before the end clears them */
+            mk_launch(ds, qi->q, NULL); /* build 31b: a mark's frame - its copies fenced, its files on a thread */
             xr_end_comp(&sc);
             if (hud_shown && !space && X.hud_on) { /* the frame ended with it (a rejected quad turned the HUD off) */
                 X.n_hud++;
@@ -5751,6 +6021,7 @@ static int xr_frame(dev_st *ds, q_st *qi, const VkPresentInfoKHR *pi, VkSemaphor
     if (X.sh) atomic_fetch_add_explicit(&X.sh->n_mono, 1, memory_order_relaxed);
     if (X.fs.shouldRender && can_copy) {
         if (xr_acquire()) return 0;
+        if (MK.stage == 1) mk_launch(ds, qi->q, "its frame did not end: no quads"); /* build 31b (rare) */
         if (D.n || ss_pending()) dump_arm(ds, 1, X.n_mono); /* (SSN: a mark) */
         replaced = copy_submit(ds, qi->q, s, idx, X.img[X.xi], pi, 0, 1);
         if (replaced) {

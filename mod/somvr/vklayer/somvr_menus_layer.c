@@ -952,6 +952,13 @@ static VkImageLayout mn_hud_dump_cmds(struct dev_st *ds, VkCommandBuffer cmd, Vk
     mn_dump_hud = 1;
     return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 }
+/* build 31b: a mark's frame (ss_write -> mk_mark): was the HUD image copied after the eyes - its size and byte order */
+static int mn_dump_hud_take(uint32_t *w, uint32_t *h, int *bgra) {
+    int srgb = 0, was = mn_dump_hud;
+    mn_dump_hud = 0;
+    *w = X.hud_w + MN.extra, *h = X.hud_h, *bgra = somvr_dump_order(X.hud_fmt, &srgb);
+    return was && *bgra >= 0;
+}
 /* dump_write, after the stereo file (its fence waited): <base>.hudN.ppm (the RGB as stored) and <base>.hudN.alpha.pgm */
 static void mn_dump_write(void) {
     if (!mn_dump_hud) return;
@@ -980,13 +987,28 @@ static void mn_dump_write(void) {
        (unsigned long long)X.n_eyes, path, w, h, X.hud_w, X.hud_h, MN.extra ? " and the minimap's column" : "", X.hud_fmt,
        ok ? "" : ": write failed");
 }
+/* a dumped frame's line: the log's "xr: dump layers frame N: ..."; build 31b, a mark's frame: into the mark's text
+ * (MK: <mark>/xr.log for xr_compose.py) and the log's "xr: mark layers frame N: ..." */
+__attribute__((format(printf, 1, 2))) static void mn_dl(const char *fmt, ...) {
+    char b[560];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    if (mn_mark) {
+        mk_text("%s", b);
+        lg("xr: mark layers frame %llu: %s", (unsigned long long)mn_dump_frame, b);
+    } else {
+        lg("xr: dump layers frame %llu: %s", (unsigned long long)mn_dump_frame, b);
+    }
+}
 static void mn_log_quad(const char *what, int slot, const XrCompositionLayerQuad *q) {
-    lg("xr: dump layers frame %llu: %s pose %+.4f,%+.4f,%+.4f q %+.4f,%+.4f,%+.4f,%+.4f size %.4f x %.4f rect %d,%d %dx%d "
-       "flags 0x%llx slot %d%s", (unsigned long long)mn_dump_frame, what, q->pose.position.x, q->pose.position.y,
-       q->pose.position.z, q->pose.orientation.x, q->pose.orientation.y, q->pose.orientation.z, q->pose.orientation.w,
-       q->size.width, q->size.height, q->subImage.imageRect.offset.x, q->subImage.imageRect.offset.y,
-       q->subImage.imageRect.extent.width, q->subImage.imageRect.extent.height, (unsigned long long)q->layerFlags, slot,
-       q->space == X.space ? "" : " space other");
+    mn_dl("%s pose %+.4f,%+.4f,%+.4f q %+.4f,%+.4f,%+.4f,%+.4f size %.4f x %.4f rect %d,%d %dx%d flags 0x%llx slot %d%s", what,
+          q->pose.position.x, q->pose.position.y, q->pose.position.z, q->pose.orientation.x, q->pose.orientation.y,
+          q->pose.orientation.z, q->pose.orientation.w, q->size.width, q->size.height, q->subImage.imageRect.offset.x,
+          q->subImage.imageRect.offset.y, q->subImage.imageRect.extent.width, q->subImage.imageRect.extent.height,
+          (unsigned long long)q->layerFlags, slot, q->space == X.space ? "" : " space other");
+    MK.nquads += mn_mark;
 }
 /* the VR menu's picture of the dumped frame (its panel or card): <base>.vrmenuN.ppm + .alpha.pgm (premultiplied) */
 static void mn_dump_vrmenu(void) {
@@ -1012,13 +1034,14 @@ static void mn_dump_vrmenu(void) {
  * order (scripts/xr_compose.py draws them), the VR menu's picture */
 static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const xr_comp *c) {
     if (!mn_dump_frame) return;
+    double t0 = mn_mark ? ss_now() : 0;
     for (int e = 0; e < 2; e++)
-        lg("xr: dump layers frame %llu: eye %d pose %+.4f,%+.4f,%+.4f q %+.4f,%+.4f,%+.4f,%+.4f fov %+.4f %+.4f %+.4f %+.4f "
-           "rect %d,%d %dx%d", (unsigned long long)mn_dump_frame, e, pv[e].pose.position.x, pv[e].pose.position.y,
-           pv[e].pose.position.z, pv[e].pose.orientation.x, pv[e].pose.orientation.y, pv[e].pose.orientation.z,
-           pv[e].pose.orientation.w, pv[e].fov.angleLeft, pv[e].fov.angleRight, pv[e].fov.angleUp, pv[e].fov.angleDown,
-           pv[e].subImage.imageRect.offset.x, pv[e].subImage.imageRect.offset.y, pv[e].subImage.imageRect.extent.width,
-           pv[e].subImage.imageRect.extent.height);
+        mn_dl("eye %d pose %+.4f,%+.4f,%+.4f q %+.4f,%+.4f,%+.4f,%+.4f fov %+.4f %+.4f %+.4f %+.4f rect %d,%d %dx%d", e,
+              pv[e].pose.position.x, pv[e].pose.position.y, pv[e].pose.position.z, pv[e].pose.orientation.x,
+              pv[e].pose.orientation.y, pv[e].pose.orientation.z, pv[e].pose.orientation.w, pv[e].fov.angleLeft,
+              pv[e].fov.angleRight, pv[e].fov.angleUp, pv[e].fov.angleDown, pv[e].subImage.imageRect.offset.x,
+              pv[e].subImage.imageRect.offset.y, pv[e].subImage.imageRect.extent.width,
+              pv[e].subImage.imageRect.extent.height);
     for (int i = XL_OWN + 1; i < XL_N; i++) {
         const XrCompositionLayerBaseHeader *l = c->l[i];
         if (!l || l->type != XR_TYPE_COMPOSITION_LAYER_QUAD) continue;
@@ -1040,6 +1063,16 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
                                                                          * space); build 17: the drop's line */
                                          : "threat cue";
         mn_log_quad(what, i, (const XrCompositionLayerQuad *)l);
+    }
+    if (mn_mark) { /* build 31b: a mark's frame - the VR menu's and the objective's pictures copied (written by MK's writer) */
+        if (c->l[XL_VM0] && VM.on && VM.map && VM.released &&
+            (MK.vm = malloc((size_t)SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4)) != NULL) {
+            memcpy(MK.vm, VM.map, (size_t)SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4);
+            MK.vm_w = SOMVR_VM_TEX_W, MK.vm_h = SOMVR_VM_TEX_H, MK.vm_bgra = VM.bgra;
+        }
+        if (c->l[XL_OBJ] || c->l[XL_OBJL]) ob_mark();
+        MK.cost_ms += (ss_now() - t0) * 1e3;
+        return; /* (mk_launch clears mn_dump_frame) */
     }
     if (c->l[XL_VM0]) mn_dump_vrmenu();
     if (c->l[XL_OBJ] || c->l[XL_OBJL]) ob_dump(mn_dump_frame); /* build 15: the objective marker's picture */

@@ -22261,3 +22261,134 @@ leading) read the drawn blade. The kills helper's scripted cuts read light with 
   'AI_Bip_PC_Standing_InstaKill_F3'`, `EXECUTE kill ... forceKill=1 ... tier heavy at 23.35 m/s`. Headset only: whether
   11 m/s and the fist's 25 cm feel right in a real fight (the replay says committed swings cut a little more often than in
   build 30, flicks a fifth as often).
+## 139. Build 31b: bug marks that keep what the headset showed; the Y glyph a player saw while blocking found on the HUD quad (the game's counter glyph) and hidden; the vault by the hands in a fight: `SOMVR_XR_MARK_LAYERS`, `SOMVR_COUNTER_ICON_SETUP`, `SOMVR_VAULT_HANDS` (2026-11-02, som-b31-marks-vault)
+
+Handoffs: handoff/HANDOFF-hla.md "build 31b marks", handoff/HANDOFF-combat.md "build 31b vault". Driver:
+scripts/marksvault31-drive.sh (steps `marks`, `vault`). Env block "som-b31-marks-vault" at the end of
+scripts/headset-build26.env.
+
+### 139.1 A mark keeps the layer's quads (`SOMVR_XR_MARK_LAYERS=on|off`, code default on, env on)
+- **What was missing.** A bug mark (B + Y, the menu's Report, the word `mark`) saved the game's eye images (eyes.jpg),
+  the flat window (flat.jpg, taken up to 0.5 s later by the harness) and the logs - none of the layer's own quads: the
+  HUD quad (the game's UI), the threat glows and edge bands, low health's ring, the comfort ring, the wrist minimap, the
+  VR menu, the prompt tiles, the objective marker, our hands. A thing the player marked on one of those could not be
+  seen (136.10: mark 2's Y not found).
+- **What a mark of a stereo frame saves now** (vklayer/somvr_vklayer.c `MK`, `mk_*`): the frame's XR image and HUD image
+  (with the minimap's column) go into the dump buffer D in the eye submit (as a SOMVR_XR_DUMP's), our hands' drawn boxes
+  after them in the hands' submit (`vh_mark_cmds`: the boxes only, a quarter of the image at most), the VR menu's and
+  the objective marker's pictures are copied (`mn_dump_layers`, `ob_mark`), both eyes and every quad of the frame are
+  written as text (`mn_dl` -> `<mark>/xr.log`, the lines xr_compose.py reads; in xr-layer.log as `xr: mark layers frame
+  N:`, so a run's own compose does not take them for a dump). Then **an empty submit with a fence of the mark's own**
+  (`vkQueueSubmit(q, 0, NULL, fence)`: signalled once every earlier submit of the queue ran) and **a writer thread** that
+  waits that fence and writes `xr.log`, `xr.log.hudN.ppm` (+ `.alpha.pgm`), `xr.log.handsN.eK.ppm`, `xr.log.vrmenuN.ppm`,
+  `xr.log.objectiveN.ppm`, then eyes.ppm (renamed in when complete), then answers the preload (its second buzz). While
+  it runs D's buffer stays (no new arm; `dump_free` waits up to 5 s). A mono mark (menus, loading) is build 30's.
+- **After the session** boot_check.sh's cleanup runs scripts/mark_compose.sh (the launcher copies it and xr_compose.py
+  into the session's own folder): each mark's `seen.jpg` (both eyes, half size, every quad drawn as the compositor does:
+  `xr_compose.py <mark>/xr.log --eyes <eyes.ppm|eyes.jpg>`, the hands from their boxes), `seen/<quad>.png` (the left eye
+  around each quad), `seen.txt` (each quad's distance and size); the raw pictures removed after (`KEEP=1` keeps them).
+  nice 19 under the ordinary scheduler (it drops a real-time caller's class: see 139.5), ~2 s a mark, at most 200 s of
+  the unit's 240 s stop time; the rest by hand (`scripts/mark_compose.sh RUN`).
+- **The cost** (boot 20261102-190251, headless, the null compositor at 20 Hz, the layer's 10-s perf windows): the present
+  thread's part of a mark 0.07-0.09 ms (the first one 2.7 ms: D's buffer made); the windows with a mark: our present
+  path's wall max 2.36 / 2.11 / 2.16 ms against 2.00-3.40 ms in those without - no wait, no copy, no file on the present
+  thread. The GPU: our max 4.2-4.9 ms in a mark's frame (the image's 49 MB into host memory, the copy build 30 made too)
+  against 0.5-0.7. Build 30's mark in the 11-02 headset session (120 Hz): the window with mark 2 had our present path's wall
+  max 12.43 ms (`acquire+copy` 11.67: the fence wait and the 36 MB copy on the present thread) against 1.3-5.4 in the
+  others, the GPU's ours max 9.91 ms. A mark now costs the GPU copy alone (one frame) and nothing on the CPU path.
+- **Tests.** vklayer/tests/test_layer.c `mark-layers` (layout B with the HUD quad and our hands, the session object's
+  request: `xr.log` with both eyes, the HUD quad and the hands' boxes, the HUD image's texels, the crops' sizes, one
+  empty submit, no fence wait on the present thread beyond a plain frame's, the next frame as before) and `mark-plain`
+  (`SOMVR_XR_MARK_LAYERS=off`: eyes.ppm alone, its fence waited in the present: build 30). `mark-layers` against the
+  layer built from the branch's base (5389a27): 11 FAILs (no xr.log, no HUD, no crops, the present thread's extra
+  wait); `mark-plain` passes on both. The mock driver now takes an empty submit with a fence (all earlier work done).
+  Boots: 190251 (4 marks), 192315 (3), 193325 (3), each composed (`seen.jpg`).
+
+### 139.2 The session's mark 2 (a Y button glyph while blocking): the game's counter glyph on our HUD quad - its set-up skipped (`SOMVR_COUNTER_ICON_SETUP=skip|game`, code default skip, only with `SOMVR_COUNTER_ICON=hide`)
+- **Seen.** Boot 190251's frame-600 dump, 0.19 s into an infantry's wind-up: the HUD image held one element, a gold Y
+  in a ring (176 x 173 px at 1120,147 of 1920x1080: the orc's point on the game's flat screen), drawn on the HUD quad in
+  front of the player. Boot 192315's mark 3 (0.40 s into a wind-up): the Y in both eyes in the middle of the view with
+  the orc off to the side (its `seen.jpg`). It stands about a quarter second from the attack's counter window (the
+  `BPW` key) on, so pictures 0.45 s or later into a wind-up miss it. `CPROMPT ... the counter icon's marker ...:
+  switched off` came at every one: build 18 turned the nav marker's link off, and its proof (62.8) looked at the eye
+  images only.
+- **The session's mark 2** (t=2108.767): the orc's wind-up `AI_Infantry_Melee_Front_2_LL` started at 2108.166 (impact
+  2108.97), CPROMPT's marker line at 2108.168, the chord pressed while the player's blade met the orc (2108.79). The
+  layer then (xr-layer.log): the HUD quad, a threat glow at the orc's raised weapon hand (`layers 0x1` at 2108.228 and
+  2108.839), our hands; no comfort ring, no menu, no prompt tile (tile 2 empty 2090.0-2113.07), no objective, the wrist
+  minimap turned away. The Y was this glyph: on the HUD quad at every counterable wind-up of the session.
+- **Why the hide missed it** (static, the Linux binary): `FUN_026e5f90` reads the game's CombatPrompts option
+  (GameOptions `+0x1f4`; 1 = the 3D flare, 2 = the flare and the HUD glyph); at 2 it sets the marker up - its record
+  `FUN_00ec07f0(marker, Combat+0x4a0)` at 0x26e63db, its target `FUN_00ec1d90`, its timed show
+  `FUN_00ebf660(marker, windowMs, 0, 0)` at 0x26e63fd - and then links it (`FUN_00ec0ef0(marker, 1)` at 0x26e6420, the
+  call build 18 turns into an off). `FUN_00ec0ef0`'s off path acts only on a marker that is on (`+0x2e0`), and the
+  set-up shows the glyph by itself. Tried first and dropped: the link switched on and off at once (boot 192315: the
+  glyph still there).
+- **The fix**: sites `CP_REC` and `CP_SHOW` (K_CALLs in the same function; check_sites' CPROMPT block now 4): with
+  `SOMVR_COUNTER_ICON=hide` and `_SETUP=skip` both calls are skipped (`somvr_w_cprec`, `somvr_w_cpshow`); `game` =
+  build 30's hide. The flare (CP_FX) and the link (CP_MARK) as before. Words `cprompt setup skip|game`, `cprompt dumps
+  N` (a test: the layer's dump of the frame after each of the next N marker calls, SOMVR_XR_DUMP_MARKED). selftest
+  `cprompt31b` (the three modes against stand-ins).
+- **Proven** (boot 193325, the HUD image of the frame after each marker call, gold pixels of the glyph counted):
+  `cprompt game` (the game's own icon) 2946 px; `hide` + `setup game` (build 30) 3317 and 3070 px; `hide` + `setup
+  skip` 0 and 0 px (the HUD image empty) - `CPROMPT state ... the glyph's set-up 9/9 (skipped 3/3)`. The flare stays
+  off as before (CP_FX `not made`).
+
+### 139.3 The vault by the hands in a fight: still not proven - `SOMVR_VAULT_HANDS` stays off
+The pass-through under the stock evade (135.5b) needs Talion's fight (FSM 7). Two test aids, then three boots:
+- **`kills still on|off`** (somvr_kills_game.c `g_kst`, a test word): the nearest orc's own attack and reaction starts
+  refused (the AI hold's four sites, `somvr_w_klai`), the fight circle's grants vetoed (`kl_hobj_busy`), its navigation
+  held (KL_NAV), its state every 0.5 s (`KILLS still`). Boot 190251: refused 7, vetoed 153 - and still it walked up to
+  3.4 m (the fight's repositioning is not that navigation bit's) and Talion's FSM fell to 6 within a second (an orc that
+  never attacks is no fight): its crown 113-147 cm from the eyes, no try. Not enough to stage the vault; kept as a word.
+- **`ovault auto N`** (somvr_hands31_game.c `g_ova`, a test word): the scripted left hand through the same `hands`
+  words a driver sends (`bd_word`), with no driver latency - the test pose put so that the palm lands 8 cm over the
+  orc's head point (the palm's offset from the grip of that frame, the crown led by its last frame's move) and the
+  squeeze in one frame, the hold's push (30 down, 15 back in 200 ms), the throw (50 down, 50 back in 150 ms, the grip
+  opened at 80 %), the layer's dumps through the first flight (SOMVR_XR_DUMP_MARKED). Every step `OVAULT ... auto`.
+- Boot 192315 (the hand first, the squeeze a frame later, at a wind-up): the palm 43.6 cm off the head point at the
+  squeeze (he moved) - the verbs' collar grab took it, 3 tries. Boot 193325 (pose and squeeze in one frame, at a still
+  moment of an attack): **3 crown grabs of 3 in a fight** (FSM 7, the palm 3.6-20.2 cm from the head point) - each hold
+  ended by `he moved away from the hold` (his root 40 cm from where it stood: the attack's lunge) after 0.10, 0.10 and
+  0.60 s, before the throw. Boot 203639 (between his attacks): the practice infantry chains an attack every 1.85 s and
+  Talion's FSM is 6 between them - no try in 150 s.
+- Built, not booted (the slot went to the build-vr31b suite): the try at the first frame of his attack (its wind-up,
+  the lunge coming toward the impact 0.8 s later), the hold 0.2 s, the throw at 0.22 s - the vault the game's own A
+  makes in a fight (over an attacker). `MV_STEPS=vault` of the driver runs it.
+- **What the boots say about the design**: in a fight an orc is almost always in an attack, and the hold's 40 cm break
+  (135.5) counts the attack's own root motion - a hold on an attacking orc ends in 0.1-0.6 s. The vault by the hands in
+  a real fight needs either that one-frame-early timing or a hold that does not count his lunge toward Talion; not
+  changed here without a boot that shows the whole flight. `SOMVR_VAULT_HANDS=off` (the kills block's line stays).
+
+### 139.4 Switches, words, lines
+- The som-b31-marks-vault block: `SOMVR_XR_MARK_LAYERS=on` (the layer; code default on), `SOMVR_COUNTER_ICON_SETUP=skip`
+  (code default skip). `SOMVR_VAULT_HANDS` stays off. No key of the user's settings file (COUNTER_ICON is not pinned
+  there; the VR menu's Counter icon row still switches game/hide).
+- Words (SOMVR_HANDS_TEST): `cprompt setup skip|game`, `cprompt dumps N`, `kills still on|off`, `ovault auto N|off`.
+- Lines: the layer's `xr: mark: a stereo frame (both eyes, the HUD image, our hands, N quad(s)) ... the present
+  thread's part X ms`, `xr: mark: eyes WxH -> ..., with the layers: ... (N files; the copies' fence X ms, writing Y ms
+  on the writer thread)`, `xr: mark layers frame N: ...`; boot_check's `mark_compose: N composed ...`; `CONFIG counter
+  icon=... the glyph's set-up skipped`, `CPROMPT ... the counter glyph's set-up skipped`, `CPROMPT state ... the
+  glyph's set-up A/B (skipped C/D)`; `KILLS still ...`; `OVAULT ... auto: ...`; the vault's landing line now carries
+  `the view's yaw +X deg since the grab` (the comfort check of a flight).
+
+### 139.5 Runs (logs/boot-check-20261102-; headless, scripts/headset-build26.env + SOMVR_HANDS_TEST + the layer's test file; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| Run | Steps | What it shows |
+|---|---|---|
+| 190251 | marks, vault (still) | 4 marks with their layers, composed after the session (seen.jpg: the threat edge bands, the glows, our hands); the frame-600 dump's HUD: **the counter Y**; the mark's cost in the perf windows (139.1); `kills still`: the orc walks, FSM 6 |
+| 192315 | marks by mode, vault (auto at wind-ups) | mark 3's seen.jpg: **the Y in both eyes mid-view** under hide (+ the on/off link: no effect); the auto's palm off at the squeeze |
+| 193325 | marks by mode, vault (auto) | the glyph by mode: game 2946 px, build 30's hide 3317/3070, **SETUP=skip 0/0**; 3 crown grabs in a fight, each hold ended by his lunge |
+| 203639 | vault (auto between attacks) | no try: his attacks chain every 1.85 s, FSM 6 between |
+
+**The machine's hang on 11-02** (a hard reset): `rcu_preempt detected stalls ... P1526762` - a python3 of the mark
+compose (boot 193325's cleanup), pinned to one CPU by the old `taskset -c 15`, under **SCHED_FIFO 49 inherited from the
+T3 session** (a real-time key daemon's start: `ps -o cls= -p $$` = FF 49 for every command of the session), preempted inside
+an RCU read section and never run again. Since then mark_compose.sh drops a real-time caller's class (`chrt -o -p 0`)
+and is not pinned; this round's later boots ran under `chrt -o 0`. Every helper's boot and build from a FIFO-49 T3
+runs real-time.
+
+### 139.6 For the headset (unproven headless)
+- A composed mark is drawn from the layer's own poses: does it match what the player remembers seeing?
+- With SETUP=skip no gold Y over an attacking orc any more; the cues are THREAT's glows and the red warning (build 18's
+  intent). The 3D flare stays off as before.
+- A mark's GPU copy (one frame) at 120 Hz: no hitch the player feels (the CPU path's 12 ms are gone).

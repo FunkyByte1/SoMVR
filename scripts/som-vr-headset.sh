@@ -48,7 +48,7 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-BUILD=build-vr31b                         # the build the user tests (logs/BUILD); changed only between sessions
+BUILD=build-vr31c                         # the build the user tests (logs/BUILD); changed only between sessions
 ENVF=$SOM/logs/$BUILD/headset.env       # its feature switches (the header); missing = the built-in build-5 set
 CMDS5=$SCR/cmds/somvr-vr5.cmd   # the start sequences: build 5's (the pre-game window), build 6's
 CMDS6=$SCR/cmds/somvr-vr6.cmd
@@ -237,6 +237,10 @@ WIN=0; cp -f "$SCR/somvr_window.py" "$PRIV/somvr_window.py" 2>/dev/null && WIN=1
 # build 21: the voice notes until the talk ends (none: boot_check records build 20's fixed length)
 rm -f "$PRIV/voice_rec.py"; cp -f "$SCR/voice_rec.py" "$PRIV/voice_rec.py" 2>/dev/null ||
   note "no voice_rec.py beside the launcher: fixed-length voice notes"
+# build 31b: the marks' pictures with the layer's quads, composed after the session (boot_check's cleanup)
+rm -f "$PRIV/mark_compose.sh" "$PRIV/xr_compose.py"
+cp -f "$SCR/mark_compose.sh" "$SCR/xr_compose.py" "$PRIV/" 2>/dev/null ||
+  note "no mark_compose.sh / xr_compose.py beside the launcher: the marks' pictures without the layer (compose by hand)"
 GE=(--game-env VK_LAYER_PATH="$BLD/mod/somvr/vklayer" --game-env VK_INSTANCE_LAYERS=VK_LAYER_SOMVR_openxr
   --game-env XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_wivrn.json --game-env SOMVR_XR_LOG=@RUN@/xr-layer.log
   --game-env "SOMVR_SETTINGS=$HOME/.local/share/somvr/settings.conf" --game-env SOMVR_TUNE=@RUN@/tune.txt)

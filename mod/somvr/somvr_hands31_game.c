@@ -254,6 +254,7 @@ static struct {
 	int cue_on;
 	double cue_line_t;
 	float start[3], path_max_y;
+	float yaw_grab;                 /* build 31b (139): the view's yaw (the rig's) at the grab - the landing's line */
 	uint64_t grabs, throws, letgos, lands, blocked, opens, pm_moves, pm_busy, pm_notcons, ticks_held, lines, through_ticks;
 } g_ov;
 
@@ -312,6 +313,127 @@ static void ov_end(const char *what, double t)
 	if (ov_log_ok())
 		logf_("OVAULT t=%.3f end: %s; gravity %s", t, what, v < 0 ? "not written" : v == 1 ? "1 already" : "0 -> 1");
 	g_ov.act_pm = g_ov.act_pc = 0, g_ov.req = 0, g_ov.orc_c = 0;
+}
+
+/* build 31b (re-xr-pipeline.md 139.3; a test aid, SOMVR_HANDS_TEST): `ovault auto N` - N vaults by the scripted left
+ * hand with no driver's latency, through the same `hands` words a driver sends (bd_word: the test poses feed the hands
+ * as a controller would): at the first frame of a fighting orc's attack (its wind-up; Talion's FSM 7, the orc vaultable)
+ * the
+ * hand's test pose is moved so that the palm lands 8 cm over its head point (the palm's offset from the grip taken from
+ * this frame), the squeeze, the hold's push down and back (30 down, 15 back in 200 ms: the body up 1:1), then the throw
+ * (50 down, 50 back in 150 ms, the grip opened at 80 %: a real fling's let-go). Every step logged (`OVAULT ... auto`). */
+static struct {
+	_Atomic int req;    /* N + 1 asked (1 = off) */
+	int left, step;
+	double t, cool;
+	float pose[3];      /* the test pose on the crown (cm, the head's yaw frame) */
+	uint64_t tries, grabs;
+	double next_dump;   /* the first vault's pictures (SOMVR_XR_DUMP_MARKED: the layer's dumps of marked frames) */
+	int dumps, fdumps, flights, head_ok;
+	uintptr_t atk0;     /* his attack record the last frame (a new one = its start) */
+	sv_vec3 head0;      /* the orc's head point the last frame (its move: a still orc is the moment) */
+} g_ova;
+static const char *ov_word(const char *w)
+{
+	int n = 0;
+	if (!strcmp(w, "auto off"))
+		return atomic_store(&g_ova.req, 1), "ovault auto off";
+	if (sscanf(w, "auto %d", &n) == 1 && n > 0 && n < 20)
+		return atomic_store(&g_ova.req, n + 1), "ovault auto (at the next wind-ups)";
+	return "ovault (not auto N|off: ignored)";
+}
+static void ova_hand(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void ova_hand(const char *fmt, ...)
+{
+	char b[160];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(b, sizeof b, fmt, ap);
+	va_end(ap);
+	const char *r = bd_word(b);
+	if (ov_log_ok())
+		logf_("OVAULT t=%.3f auto: hands %s -> %s", cb_now(), b, r);
+}
+static void ova_end(const char *why, double t)
+{
+	ova_hand("squeeze L 0");
+	ova_hand("test L -25 -35 30 0 0 0");
+	if (ov_log_ok())
+		logf_("OVAULT t=%.3f auto: try %llu over (%s); %d left", t, (unsigned long long)g_ova.tries, why, g_ova.left - 1);
+	g_ova.left--, g_ova.step = 0, g_ova.cool = t + 2.5;
+}
+static void ova_frame(double t, const somvr_ov_in *in, uintptr_t oc, sv_vec3 hp, float fx, float fz, const sv_vec3 pw0)
+{
+	int rq = atomic_exchange(&g_ova.req, 0);
+	if (rq)
+		g_ova.left = rq - 1, g_ova.step = 0, g_ova.cool = t;
+	if (g_ova.left <= 0)
+		return;
+	switch (g_ova.step) {
+	case 0: { /* armed: a vaultable fighting orc standing (its head under 3 cm a frame): the hand onto its crown and the
+		   * squeeze in one frame (both taken by the next frame's hands), the crown led by its last frame's move */
+		sv_vec3 hv = { in->head.x - g_ova.head0.x, in->head.y - g_ova.head0.y, in->head.z - g_ova.head0.z };
+		int had = g_ova.head_ok;
+		uintptr_t atk = oc ? peek_ptr(oc + VB_C_ATTACK) : 0, atk0 = g_ova.atk0;
+		g_ova.head0 = in->head, g_ova.head_ok = in->orc_ok, g_ova.atk0 = atk;
+		/* the first frame of a new attack of his (its wind-up: he stands; the lunge comes toward its impact 0.8 s on -
+		 * boot 193325's holds taken later in the attack ended within 0.1-0.6 s by his root's 40 cm; between his attacks
+		 * Talion's FSM is 6, boot 203639: no try in 150 s) */
+		if (t < g_ova.cool || g_ov.s.phase != SOMVR_OV_IDLE || !in->orc_ok || !in->live || !in->free[SOMVR_HAND_L] ||
+		    !oc || !had || !atk || atk == atk0 || !(sqrtf(hv.x * hv.x + hv.y * hv.y + hv.z * hv.z) < 15))
+			return;
+		float tx = in->head.x + hv.x - hp.x, ty = in->head.y + hv.y + 8 - hp.y, tz = in->head.z + hv.z - hp.z;
+		float px = pw0.x - hp.x, py = pw0.y - hp.y, pz = pw0.z - hp.z;
+		float d[3] = { (tx - px) * fz - (tz - pz) * fx, ty - py, (tx - px) * fx + (tz - pz) * fz };
+		float cur[3] = { g_bd_req.v[SOMVR_HAND_L][0], g_bd_req.v[SOMVR_HAND_L][1], g_bd_req.v[SOMVR_HAND_L][2] };
+		for (int i = 0; i < 3; i++)
+			g_ova.pose[i] = cur[i] + d[i];
+		char an[96];
+		g_ova.tries++, g_ova.step = 2, g_ova.t = t;
+		if (ov_log_ok())
+			logf_("OVAULT t=%.3f auto: try %llu at orc %#lx's attack start (its head %.1f cm in the last frame; attack '%s', Talion's "
+			      "FSM %d): the left hand from %.0f,%.0f,%.0f to %.0f,%.0f,%.0f cm (its palm 8 cm over the crown) and the "
+			      "squeeze", t, (unsigned long long)g_ova.tries, (unsigned long)oc, sqrtf(hv.x * hv.x + hv.y * hv.y + hv.z * hv.z),
+			      vb_name(peek_ptr(oc + VB_C_ATTACK), an, sizeof an), g_ov.fsm, cur[0], cur[1], cur[2], g_ova.pose[0],
+			      g_ova.pose[1], g_ova.pose[2]);
+		ova_hand("test L %.1f %.1f %.1f 0 0 0", g_ova.pose[0], g_ova.pose[1], g_ova.pose[2]);
+		ova_hand("squeeze L 1");
+		return;
+	}
+	case 1:
+		g_ova.step = 2;
+		return;
+	case 2: /* the grab: the hold's push down and back */
+		if (g_ov.s.phase == SOMVR_OV_HOLD) {
+			g_ova.grabs++;
+			if (!g_ova.flights && g_ova.dumps < 2)
+				hf_dump_mark("ovault hold", t), g_ova.dumps++;
+			ova_hand("swing L %.1f %.1f %.1f 0 0 0 200", g_ova.pose[0], g_ova.pose[1] - 30, g_ova.pose[2] - 15);
+			g_ova.step = 3, g_ova.t = t;
+		} else if (t - g_ova.t > 0.25) {
+			if (ov_log_ok())
+				logf_("OVAULT t=%.3f auto: no grab - the palm %.1f cm from the head point (%+.1f over it), FSM %d, live %d, "
+				      "orc %d", t, dist3((float[3]){ pw0.x, pw0.y, pw0.z }, (float[3]){ in->head.x, in->head.y, in->head.z }),
+				      pw0.y - in->head.y, g_ov.fsm, in->live, in->orc_ok);
+			ova_end("no grab within 0.25 s", t);
+		}
+		return;
+	case 3: /* the hold's push done: the throw */
+		if (g_ov.s.phase != SOMVR_OV_HOLD) {
+			ova_end("the hold ended before the throw", t);
+		} else if (t - g_ova.t >= 0.22) {
+			ova_hand("swing L %.1f %.1f %.1f 0 0 0 150 0.8", g_ova.pose[0], g_ova.pose[1] - 80, g_ova.pose[2] - 65);
+			g_ova.step = 4, g_ova.t = t, g_ova.next_dump = t + 0.15, g_ova.flights++;
+		}
+		return;
+	default: /* the flight to its end */
+		if (g_ova.flights == 1 && g_ova.fdumps < 6 && t >= g_ova.next_dump) /* the first throw: 6 pictures 0.15 s apart */
+			hf_dump_mark(g_ov.s.phase == SOMVR_OV_FLIGHT ? "ovault flight" : "ovault after", t), g_ova.fdumps++,
+				g_ova.next_dump = t + 0.15;
+		if ((g_ov.s.phase == SOMVR_OV_IDLE && t - g_ova.t > 0.3) || t - g_ova.t > 4)
+			ova_end(g_ov.s.phase == SOMVR_OV_IDLE ? "the vault's end" : "4 s", t);
+		return;
+	}
 }
 
 /* in_frame (the game thread, a stereo frame), before the verbs' hands: the vault's step */
@@ -395,6 +517,7 @@ static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qua
 	char an[96];
 	if (o.events & SOMVR_OVE_GRAB) {
 		g_ov.grabs++, g_ov.orc_c = oc, g_ov.act_pm = g_cl.pm, g_ov.act_pc = g_cl.pc, g_ov.path_n = 0;
+		g_ov.yaw_grab = in.rig_yaw;
 		memcpy(g_ov.start, rt, sizeof g_ov.start), g_ov.path_max_y = rt[1];
 		in_haptic_event(SOMVR_HAND_L, 0.5f, 0.05f, SOMVR_HAP_COMBAT);
 		if (ov_log_ok())
@@ -435,10 +558,11 @@ static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qua
 			past = ax * bx + az * bz > 0 && hypotf(bx, bz) > hypotf(ax, az);
 		}
 		uintptr_t c = g_ov.orc_c;
-		char w[220];
-		snprintf(w, sizeof w, "landed (%s) %.0f cm from the start, the arc's top %.0f cm over it; %s", somvr_ov_why_name(o.why),
-			 hypotf(rt[0] - g_ov.start[0], rt[2] - g_ov.start[2]), g_ov.path_max_y - g_ov.start[1],
-			 past ? "past the orc: its opening" : "not past the orc");
+		char w[280];
+		snprintf(w, sizeof w, "landed (%s) %.0f cm from the start, the arc's top %.0f cm over it; %s; the view's yaw %+.1f "
+			 "deg since the grab", somvr_ov_why_name(o.why), hypotf(rt[0] - g_ov.start[0], rt[2] - g_ov.start[2]),
+			 g_ov.path_max_y - g_ov.start[1], past ? "past the orc: its opening" : "not past the orc",
+			 sv_wrap_pi(in.rig_yaw - g_ov.yaw_grab) * 57.29578f);
 		ov_end(w, t);
 		if (past && c)
 			py_vault(c, t), g_ov.opens++;
@@ -473,6 +597,7 @@ static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qua
 		g_ov.req = 0;
 	}
 	(void)ph0;
+	ova_frame(t, &in, oc, hp, fx, fz, pw[SOMVR_HAND_L]); /* build 31b: `ovault auto N` (a test) */
 	/* the cue: his crown, faint while the left hand is free and open; full with the palm on it (one tick) */
 	g_ov.cue_level = 0;
 	if (g_ov.s.phase == SOMVR_OV_IDLE && in.orc_ok && in.live && in.free[SOMVR_HAND_L] && !g_ov.s.closed[SOMVR_HAND_L]) {

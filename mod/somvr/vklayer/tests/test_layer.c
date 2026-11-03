@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -63,6 +64,7 @@
 __attribute__((visibility("default"))) somvr_shared g_sh __asm__(SOMVR_SHARED_SYMBOL);
 
 static const char *g_layer, *g_mock, *g_tmp;
+static pthread_t g_main_th; /* build 31b: the scenario's thread (the presents); a mark's writer is another */
 static char g_log[600];
 static int g_fail;
 #define CHECK(c, ...)                                                                                                  \
@@ -122,6 +124,8 @@ static struct {
     char first[256];
     int next_id;
     uint8_t fence[MAXH], sem[MAXH], app_used[APP_SEMS];
+    uint8_t fence_all[MAXH];     /* build 31b: the fence of an empty submit - signalled once all earlier work ran */
+    int empty_submits, fence_waits_main; /* ... those submits; the fence waits on the test's (present) thread */
     int cmd_fence[64], ncmd;
     int fences_live, sems_live, pool_live;
     /* SOMVR_XR_DUMP: buffers and memory over host memory */
@@ -341,6 +345,12 @@ static VKAPI_ATTR VkResult VKAPI_CALL d_QueuePresentKHR(VkQueue q, const VkPrese
 }
 static VKAPI_ATTR VkResult VKAPI_CALL d_QueueSubmit(VkQueue q, uint32_t n, const VkSubmitInfo *si, VkFence f) {
     (void)q;
+    if (n == 0 && f) { /* build 31b (a mark's): valid Vulkan - the fence signals once all earlier submits completed */
+        int fid = HID(f);
+        if (V.fence[fid] != 0) vviol("submit with a fence that is not reset");
+        V.fence[fid] = 1, V.fence_all[fid] = 1, V.empty_submits++;
+        return VK_SUCCESS;
+    }
     V.submits++;
     if (V.submit_fail_at && V.submits == V.submit_fail_at) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     if (n != 1) vviol("submit count != 1");
@@ -498,9 +508,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL d_WaitForFences(VkDevice d, uint32_t n, co
                                                       uint64_t t) {
     (void)d, (void)all;
     V.fence_waits++;
+    if (pthread_equal(pthread_self(), g_main_th)) V.fence_waits_main++;
     if (t == UINT64_MAX) vviol("unbounded fence wait");
     for (uint32_t i = 0; i < n; i++) {
         if (V.fence[HID(f[i])] == 0) vviol("waiting a fence that was never submitted (would time out)");
+        if (V.fence_all[HID(f[i])]) { /* build 31b: an empty submit's fence - every earlier submit is done */
+            for (int k = 0; k < MAXMEM; k++)
+                if (g_mem[k].m && g_mem[k].dirty_cmd >= 0) {
+                    memcpy(g_mem[k].p, g_mem[k].gpu, g_mem[k].size);
+                    g_mem[k].dirty_cmd = -1;
+                }
+            for (int k = 0; k < MAXH; k++)
+                if (V.fence[k] == 1) V.fence[k] = 2;
+        }
         V.fence[HID(f[i])] = 2; /* the copy finished */
         for (int k = 0; k < MAXMEM; k++) /* its writes into memory reach the host now */
             if (g_mem[k].m && g_mem[k].dirty_cmd >= 0 && V.cmd_fence[g_mem[k].dirty_cmd] == HID(f[i])) {
@@ -526,7 +546,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL d_ResetFences(VkDevice d, uint32_t n, cons
     (void)d;
     for (uint32_t i = 0; i < n; i++) {
         if (V.fence[HID(f[i])] == 1) vviol("reset of a fence in flight");
-        V.fence[HID(f[i])] = 0;
+        V.fence[HID(f[i])] = 0, V.fence_all[HID(f[i])] = 0;
     }
     return VK_SUCCESS;
 }
@@ -7500,6 +7520,112 @@ static int sc_vrhands(void) {
     check_mock_clean();
     return 0;
 }
+/* build 31b (SOMVR_XR_MARK_LAYERS, docs/re-xr-pipeline.md 139): a bug mark of a stereo frame with the HUD quad and our
+ * hands keeps what the headset showed - <mark>/xr.log (both eyes and every quad as xr_compose.py reads them), the HUD
+ * image (and the minimap's column), our hands' boxes, then eyes.ppm, all written by a thread after an empty submit's
+ * fence: the present thread waits no fence for it. =off: build 30's mark - eyes.ppm alone, the slot's fence waited in
+ * the present. */
+static long file_size(const char *p) {
+    struct stat st;
+    return stat(p, &st) ? -1 : (long)st.st_size;
+}
+static int mark_run(int layers) {
+    somvr_session_shared *ss = void_session();
+    if (!ss) return 1;
+    ss->avail = SOMVR_SSA_MARK;
+    hudrig r;
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (input_obj(INW_ALL, 1, SOMVR_INPUT_V2_SIZE) || vrhands_obj(1)) return 1;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    somvr_views v;
+    uint32_t hands = SOMVR_VHF_L | SOMVR_VHF_R | SOMVR_VHF_HIDE;
+    for (uint64_t f = 1; f <= 5; f++) vh_stereo(&r, f, hands, 1, &v); /* (every slot used once: the frames' waits steady) */
+    int w1 = V.fence_waits_main;
+    vh_stereo(&r, 6, hands, 1, &v);
+    int plain_waits = V.fence_waits_main - w1; /* a frame's own waits (the slots' reuse, our hands' last submit) */
+    char dir[700], p[900], line[400];
+    snprintf(dir, sizeof dir, "%s/mark-%s", g_tmp, layers ? "layers" : "plain");
+    mkdir(dir, 0700);
+    static const char *const old[] = {"eyes.ppm", "xr.log", "xr.log.hud7.ppm", "xr.log.hud7.alpha.pgm",
+                                      "xr.log.hands7.e0.ppm", "xr.log.hands7.e0.alpha.pgm", "xr.log.hands7.e1.ppm",
+                                      "xr.log.hands7.e1.alpha.pgm"};
+    for (size_t i = 0; i < sizeof old / sizeof old[0]; i++) snprintf(p, sizeof p, "%s/%s", dir, old[i]), unlink(p);
+    snprintf(ss->dump_dir, sizeof ss->dump_dir, "%.400s", dir);
+    uint32_t req = atomic_fetch_add(&ss->dump_req, 1) + 1, subs = (uint32_t)V.submits;
+    int wm = V.fence_waits_main, es = V.empty_submits;
+    vh_stereo(&r, 7, hands, 1, &v); /* the marked frame (the 7th layout-B eye submit) */
+    int mark_waits = V.fence_waits_main - wm;
+    for (int i = 0; i < 5000 && atomic_load(&ss->dump_done) != req; i++) usleep(1000);
+    CHECK(atomic_load(&ss->dump_done) == req && atomic_load(&ss->dump_fail) == 0, "the mark answered: done %u (want %u), "
+          "failed %u", atomic_load(&ss->dump_done), req, atomic_load(&ss->dump_fail));
+    snprintf(p, sizeof p, "%s/eyes.ppm", dir);
+    CHECK(file_size(p) == (long)strlen("P6\n3664 1920\n255\n") + 3664L * 1920 * 3, "eyes.ppm: %ld bytes", file_size(p));
+    snprintf(p, sizeof p, "%s/xr.log", dir);
+    if (!layers) {
+        CHECK(file_size(p) < 0 && mark_waits == plain_waits + 1 && V.empty_submits == es,
+              "off: build 30's mark (xr.log %ld bytes; the present thread's fence waits %d, a plain frame's %d; empty "
+              "submits %d)", file_size(p), mark_waits, plain_waits, V.empty_submits - es);
+        CHECK(log_has("xr: mark: a stereo frame (both eyes) copied for "), "off: build 30's mark line");
+    } else {
+        CHECK(mark_waits == plain_waits && V.empty_submits == es + 1 && (uint32_t)V.submits == subs + 2,
+              "no fence waited for the mark on the present thread (%d, a plain frame's %d), one empty submit (%d), the "
+              "frame's own submits %u", mark_waits, plain_waits, V.empty_submits - es, (uint32_t)V.submits - subs);
+        char *t = NULL;
+        size_t n = 0;
+        FILE *f = fopen(p, "r");
+        if (f) {
+            t = malloc(1 << 16);
+            n = t ? fread(t, 1, (1 << 16) - 1, f) : 0;
+            if (t) t[n] = 0;
+            fclose(f);
+        }
+        CHECK(t && strstr(t, "xr: dump layers frame 7: eye 0 pose ") && strstr(t, "xr: dump layers frame 7: eye 1 pose ") &&
+                  strstr(t, "xr: dump layers frame 7: hud pose ") && strstr(t, " size 1.2000 x 0.6750 rect 0,0 1920x1080 "),
+              "xr.log: the eyes and the HUD quad (%zu bytes):\n%s", n, t ? t : "(none)");
+        const char *h = t ? strstr(t, "xr: dump layers frame 7: hands 1832x1920 per eye slot ") : NULL;
+        int b[2][4] = {{0}};
+        CHECK(h && sscanf(strstr(h, " boxes ") ? strstr(h, " boxes ") : "", " boxes %d,%d,%d,%d %d,%d,%d,%d", &b[0][0],
+                          &b[0][1], &b[0][2], &b[0][3], &b[1][0], &b[1][1], &b[1][2], &b[1][3]) == 8 &&
+                  b[0][2] > b[0][0] && b[0][3] > b[0][1] && b[1][2] > b[1][0] && b[1][3] > b[1][1],
+              "xr.log: our hands' line with both boxes (%s)", h ? h : "none");
+        for (int e = 0; e < 2; e++) {
+            snprintf(p, sizeof p, "%s/xr.log.hands7.e%d.ppm", dir, e);
+            int k = snprintf(line, sizeof line, "P6\n%d %d\n255\n", b[e][2] - b[e][0], b[e][3] - b[e][1]);
+            CHECK(file_size(p) == (long)k + 3L * (b[e][2] - b[e][0]) * (b[e][3] - b[e][1]), "%s: %ld bytes", p,
+                  file_size(p));
+            snprintf(p, sizeof p, "%s/xr.log.hands7.e%d.alpha.pgm", dir, e);
+            CHECK(file_size(p) > 0, "%s missing", p);
+        }
+        free(t);
+        snprintf(p, sizeof p, "%s/xr.log.hud7.ppm", dir);
+        long hs = file_size(p);
+        CHECK(hs > 3L * 1920 * 1080, "the HUD image: %ld bytes", hs);
+        FILE *hf = fopen(p, "rb");
+        unsigned hw = 0, hh = 0;
+        uint8_t px[3] = {0};
+        CHECK(hf && fscanf(hf, "P6 %u %u 255", &hw, &hh) == 2 && fgetc(hf) == '\n' && fread(px, 1, 3, hf) == 3 &&
+                  hw >= 1920 && hh == 1080 && px[0] == HUD_PX[0] && px[1] == HUD_PX[1] && px[2] == HUD_PX[2],
+              "the HUD image %ux%u, its first texel %u,%u,%u (want %u,%u,%u)", hw, hh, px[0], px[1], px[2], HUD_PX[0],
+              HUD_PX[1], HUD_PX[2]);
+        if (hf) fclose(hf);
+        snprintf(p, sizeof p, "%s/xr.log.hud7.alpha.pgm", dir);
+        CHECK(file_size(p) > 1920L * 1080, "the HUD image's alpha: %ld bytes", file_size(p));
+        CHECK(log_has("xr: mark: a stereo frame (both eyes, the HUD image, our hands, ") &&
+                  log_has("the present thread's part ") && log_has("xr: mark layers frame 7: hud pose ") &&
+                  log_has("with the layers: ") && !log_has("xr: dump layers frame 7"),
+              "the mark's lines (and none the run's xr_compose.py would read as a dump)");
+    }
+    vh_stereo(&r, 8, hands, 1, &v); /* the next frame as before */
+    vh_check(&v, 2, "after the mark");
+    app_teardown(&r.a);
+    CHECK(MOCK(mockxr_live)() == 0 && V.gfx_live == 0, "after vkDestroyDevice: XR objects %d, drawing objects %d",
+          MOCK(mockxr_live)(), V.gfx_live);
+    check_mock_clean();
+    return 0;
+}
+static int sc_mark_layers(void) { return mark_run(1); }
+static int sc_mark_plain(void) { return mark_run(0); }
 /* build 13 (SOMVR_HANDS_SURFACE, re-xr-pipeline.md 38): an entry with the right hand's ghost (somvr_vrhands v3): the
  * ghost skinned at the real grip and drawn once more per eye after the hands; its on/off lines; without it as before */
 static int sc_vrhands_ghost(void) {
@@ -7932,6 +8058,8 @@ static const struct {
     {"vrhands-inactive", sc_vrhands_inactive, "SOMVR_XR_LOADER=@MOCK", 1},
     {"vrhands-depth", sc_vrhands_depth, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS_DEPTH=world", 1},
     {"vrhands-ghost", sc_vrhands_ghost, "SOMVR_XR_LOADER=@MOCK", 1},
+    {"mark-layers", sc_mark_layers, "SOMVR_XR_LOADER=@MOCK", 1}, /* build 31b */
+    {"mark-plain", sc_mark_plain, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MARK_LAYERS=off", 1},
     {"vrhands-depth-nofuncs", sc_vrhands_depth_nofuncs, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS_DEPTH=world", 1},
     {"wrist-hud", sc_wrist_hud, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MINIMAP=wrist SOMVR_XR_WRIST_HUD=on", 1},
     {"prompts", sc_prompts, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PROMPTS=on MOCKXR_RECENTER_AT=10", 1},
@@ -7979,6 +8107,7 @@ static void set_env(const char *spec) {
 int main(int argc, char **argv) {
     if (argc < 4) return fprintf(stderr, "usage: test_layer LAYER.so MOCK.so TMPDIR [scenario]\n"), 2;
     g_layer = argv[1], g_mock = argv[2], g_tmp = argv[3];
+    g_main_th = pthread_self();
     static char lay[4096], mock[4096]; /* absolute: dump-nolog runs in TMPDIR */
     if (realpath(g_layer, lay)) g_layer = lay;
     if (realpath(g_mock, mock)) g_mock = mock;
@@ -7996,6 +8125,7 @@ int main(int argc, char **argv) {
             unsetenv("XR_RUNTIME_JSON");
             unsetenv("SOMVR_XR_SPACE");
             unsetenv("SOMVR_XR_DUMP");
+            unsetenv("SOMVR_XR_MARK_LAYERS"); /* build 31b */
             unsetenv("SOMVR_XR_INPUT");
             unsetenv("SOMVR_XR_PREDICT");
             unsetenv("SOMVR_XR_HUD");

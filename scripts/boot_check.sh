@@ -114,7 +114,9 @@
 # beside this script - until the player stops talking (2 s quiet, SOMVR_MARK_VOICE_QUIET_S; 5 s if nothing is said; at
 # most SOMVR_MARK_VOICE_MAX_S, 30), a new mark ends the last note at once; =fixed (or no voice_rec.py): parecord for
 # VOICE seconds (default 9, SOMVR_MARK_VOICE_S) as build 20. voice.txt says what it got; eyes.ppm -> eyes.jpg once
-# written (nice 19, one CPU). want -> served; RUN/marks.log lists them.
+# written (nice 19, one CPU). want -> served; RUN/marks.log lists them. Build 31b: a stereo mark also has the layer's
+# quads (xr.log + xr.log.*, SOMVR_XR_MARK_LAYERS): after the session the cleanup composes marks/<id>/seen.jpg (both eyes
+# as the headset showed them) with mark_compose.sh beside this script (200 s from the stop at most; the rest by hand).
 # Auto screenshots: shots/auto-NNNNs.png every 10 s for the first 240 s of game time, then every 60 s (paused while a
 # batch runs).
 # The stop (every end: the commands' `quit`, the player's Quit, a signal, the limits): with --preload and the trigger
@@ -779,6 +781,13 @@ cleanup() {
   [ -n "$KEEPER" ] && kill "$KEEPER" 2>/dev/null
   rm -f "$RES"
   summary
+  # build 31b (docs/re-xr-pipeline.md 139): each bug mark's picture with the layer's quads (marks/<id>/seen.jpg) - after
+  # the game, at the lowest priority, inside the unit's stop time (240 s): the rest later by hand (mark_compose.sh RUN)
+  local mb=$(( 200 - ($(date +%s) - te) ))
+  if [ -d "$RUN/marks" ] && compgen -G "$RUN/marks/*/xr.log" > /dev/null && [ -x "$BCDIR/mark_compose.sh" ]; then
+    if [ "$mb" -ge 15 ]; then log "$("$BCDIR/mark_compose.sh" "$RUN" --budget "$mb" 2>&1 | tail -3 | tr '\n' ' ')"
+    else log "mark_compose: no time left in the stop ($mb s): mark_compose.sh $RUN later"; fi
+  fi
   local tg=${GAME_END:-$te}; [ "$tg" -ge "$te" ] || tg=$te
   log "the end: $(( $(date +%s) - te )) s (the game gone at +$((tg - te)) s, the save checked at +$((ts - te)) s)"
 }

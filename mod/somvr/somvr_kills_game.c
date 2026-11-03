@@ -61,7 +61,9 @@ enum { KLS_START, KLS_NAV, KLS_PREP_A, KLS_PREP_B, KLS_PREP_C, KLS_SYNC_END, KLS
        KLS_N };
 _Static_assert(sizeof g_kl_sites_game / sizeof g_kl_sites_game[0] == KLS_N, "kills sites");
 static const struct site_spec *g_kl_sites = g_kl_sites_game;
-typedef void (*kl_start_fn)(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, int flag);
+/* build 31c: Combat_StartAttack reads a float rate (SysV xmm0, stored at 0x44(%rsp) at 0x26eb3a7; Win64 its 5th
+ * argument) - the game passes 1.0; this order puts it in xmm0 on Linux and in the 5th slot on Windows */
+typedef void (*kl_start_fn)(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, float rate, int flag);
 typedef void (*kl_nav_fn)(uintptr_t ai, int on, int bit);
 typedef void (*kl_ptr_fn)(uintptr_t p);
 typedef void (*kl_flag_fn)(uintptr_t p, int on);
@@ -488,9 +490,27 @@ static struct kl_one *kl_of(uintptr_t c)
 			return &g_kl.k[i];
 	return NULL;
 }
+/* build 31b (som-b31-marks-vault, re-xr-pipeline.md 139.3; a test aid): `kills still on|off` (SOMVR_HANDS_TEST) keeps
+ * the nearest orc in its fight but still - its own attack and reaction starts refused (the AI hold's four sites), the
+ * fight circle grants it no attack, its navigation held (KL_NAV) - so a scripted hand can reach a fighting orc (the
+ * vault by the hands needs the fight's FSM 7); its state logged every 0.5 s (`KILLS still`) */
+static struct {
+	_Atomic int req;              /* 1 off, 2 on (the words' thread) */
+	_Atomic uintptr_t c, hobj;    /* the held orc (the start wrapper's and the fight circle's threads read them) */
+	uintptr_t ai;
+	double t0, next;
+	float pos0[3], moved;
+	_Atomic uint64_t refused, vetoed;
+	uint64_t holds;
+} g_kst;
+
 /* the AI hold: an NPC's own attack or reaction start on an orc whose kill plays is refused (any thread) */
 __attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, int flag)
 {
+	if (c && c == atomic_load(&g_kst.c)) { /* build 31b: the test's still orc */
+		atomic_fetch_add(&g_kst.refused, 1);
+		return;
+	}
 	if (g_kl.on && g_kl.ai_hold && c && !atomic_load(&g_kl.dealing)) {
 		int held = g_kl.pl.on && g_kl.pl.c == c;
 		for (int i = 0; i < KL_N && !held; i++)
@@ -501,12 +521,14 @@ __attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t a
 		}
 	}
 	atomic_fetch_add(&g_kl.ai_passed, 1);
-	KL_FN(KLS_START, kl_start_fn)(c, node, attack, target, flag);
+	KL_FN(KLS_START, kl_start_fn)(c, node, attack, target, 1.0f, flag);
 }
 
 /* the fight circle's score hook (SOMVR_FRONT's ff_judge, its thread): this orc's kill plays - no attack granted */
 static int kl_hobj_busy(uintptr_t hobj)
 {
+	if (hobj && hobj == atomic_load(&g_kst.hobj)) /* build 31b: the test's still orc */
+		return atomic_fetch_add(&g_kst.vetoed, 1), 1;
 	if (hobj && g_kl.pl.on && g_kl.pl.hobj == hobj)
 		return 1; /* (the catalogue's play) */
 	for (int i = 0; hobj && i < KL_N; i++)
@@ -712,7 +734,7 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 	float hp0 = cb_health(o->c);
 	int freed = g_kl.free && kl_free(vr, &fat, &fwas);
 	int prepped = kl_prep(o->c), braked = kl_brain(o->c);
-	KL_FN(KLS_START, kl_start_fn)(o->c, 0, vr, hp, 0);
+	KL_FN(KLS_START, kl_start_fn)(o->c, 0, vr, hp, 1.0f, 0);
 	uintptr_t now = peek_ptr(o->c + VB_C_ATTACK);
 	if (now != vr) {
 		kl_free_back(fat, fwas);
@@ -869,6 +891,69 @@ static int kl_aim(uintptr_t mv, const float was[3], float *xf)
 
 /* every combat frame (combat_frame, after xc_frame): each kill's moment; the catalogue's play */
 static void kl_play_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t);
+/* build 31b: the still orc (g_kst; the game thread) - taken, held, its state, let go */
+static void kl_still_end(const char *why, double t)
+{
+	uintptr_t c = atomic_exchange(&g_kst.c, 0);
+	atomic_store(&g_kst.hobj, 0);
+	struct cb_orc o;
+	if (g_kst.ai && c && cb_orc_get(c, &o) && g_kl.ok_nav)
+		KL_FN(KLS_NAV, kl_nav_fn)(g_kst.ai, 1, KL_NAV_BIT);
+	if (c)
+		logf_("KILLS still t=%.3f off (%s): orc %#lx after %.1f s, moved up to %.0f cm; its starts refused %llu, attacks "
+		      "vetoed %llu", t, why, (unsigned long)c, t - g_kst.t0, g_kst.moved, (unsigned long long)atomic_load(&g_kst.refused),
+		      (unsigned long long)atomic_load(&g_kst.vetoed));
+	g_kst.ai = 0;
+}
+static void kl_still_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
+{
+	int rq = atomic_exchange(&g_kst.req, 0);
+	if (rq == 1)
+		kl_still_end("the word", t);
+	if (rq == 2) {
+		struct cb_orc o[1];
+		kl_still_end("a new still orc", t);
+		if (!root || cb_orcs_r(pcomb, pc, root, 500, o, 1) != 1) {
+			logf_("KILLS still t=%.3f: no orc within 5 m", t);
+		} else {
+			g_kst.ai = g_kl.ok_nav ? peek_ptr(o[0].c + C_AI) : 0;
+			if (g_kst.ai)
+				KL_FN(KLS_NAV, kl_nav_fn)(g_kst.ai, 0, KL_NAV_BIT); /* its navigation held, as a kill holds it */
+			memcpy(g_kst.pos0, o[0].pos, sizeof g_kst.pos0);
+			g_kst.t0 = t, g_kst.next = t, g_kst.moved = 0, g_kst.holds++;
+			atomic_store(&g_kst.refused, 0), atomic_store(&g_kst.vetoed, 0);
+			atomic_store(&g_kst.hobj, o[0].hobj);
+			atomic_store(&g_kst.c, o[0].c);
+			struct stl_aw aw;
+			memset(&aw, 0, sizeof aw);
+			stl_aware(&o[0], peek_ptr(pc + C_HOBJ), &aw);
+			logf_("KILLS still t=%.3f on: orc %#lx at %.0f cm (aware %d): its own starts refused (the AI hold's sites: %d), "
+			      "no attack granted, its navigation %s", t, (unsigned long)o[0].c, o[0].dist, aw.game, g_kl.ok_ai,
+			      g_kst.ai ? "held" : "NOT held (KL_NAV)");
+		}
+	}
+	uintptr_t c = atomic_load(&g_kst.c);
+	struct cb_orc o;
+	if (!c)
+		return;
+	if (!cb_orc_get(c, &o) || cb_dead(c)) {
+		kl_still_end("the orc dead or gone", t);
+		return;
+	}
+	g_kst.moved = fmaxf(g_kst.moved, hypotf(o.pos[0] - g_kst.pos0[0], o.pos[2] - g_kst.pos0[2]));
+	if (t >= g_kst.next) {
+		g_kst.next = t + 0.5;
+		unsigned char fsm = 0;
+		if (g_fr.pl)
+			peek(g_fr.pl + LO_P_FSM, &fsm, 1);
+		char an[96];
+		logf_("KILLS still t=%.3f orc %#lx: %.0f cm from Talion, moved %.0f cm (most %.0f), attack '%s', health %.1f; "
+		      "Talion's FSM %d; refused %llu, vetoed %llu", t, (unsigned long)c, root ? hypotf(o.pos[0] - root[0], o.pos[2] - root[2]) : -1.0f,
+		      hypotf(o.pos[0] - g_kst.pos0[0], o.pos[2] - g_kst.pos0[2]), g_kst.moved,
+		      vb_name(peek_ptr(c + VB_C_ATTACK), an, sizeof an), cb_health(c), fsm,
+		      (unsigned long long)atomic_load(&g_kst.refused), (unsigned long long)atomic_load(&g_kst.vetoed));
+	}
+}
 static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 {
 	if (!g_kl.ok)
@@ -894,6 +979,7 @@ static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 	g_kl.pcomb = pcomb;
 	kl_play_frame(pcomb, pc, root, t);
 	kl_sync_frame(pc, t);
+	kl_still_frame(pcomb, pc, root, t);
 	{ /* helper 134's blade state on an orc that is gone (or another orc now at its address: the practice's respawns reuse
 	   * them) holds every later contact on that Combat - out (boot 20261102-140609: 150 contacts, no hit) */
 		uintptr_t sh = 0, sc = swp_held_orc(&sh);
@@ -1015,7 +1101,7 @@ static void kl_play_start(uintptr_t pcomb, uintptr_t pc, const float *root, cons
 		KL_FN(KLS_NAV, kl_nav_fn)(g_kl.pl.ai, 1, KL_NAV_BIT);
 	int prepped = kl_prep(o[0].c);
 	kl_brain(o[0].c);
-	KL_FN(KLS_START, kl_start_fn)(o[0].c, 0, rec, peek_ptr(pc + C_HOBJ), 0);
+	KL_FN(KLS_START, kl_start_fn)(o[0].c, 0, rec, peek_ptr(pc + C_HOBJ), 1.0f, 0);
 	uintptr_t now = peek_ptr(o[0].c + VB_C_ATTACK);
 	float nd[4][3];
 	int sk = stl_body(&o[0], nd);
@@ -1126,6 +1212,9 @@ static const char *kl_word(const char *w)
 		return g_kl.free = w[6] == 'n', g_kl.free ? "kills free on (the victim's SyncToAnim off while it plays)" : "kills free off";
 	if (!strcmp(w, "brain on") || !strcmp(w, "brain off"))
 		return g_kl.brain = w[7] == 'n', g_kl.brain ? "kills brain on" : "kills brain off";
+	if (!strcmp(w, "still on") || !strcmp(w, "still off")) /* build 31b: a test aid (g_kst) */
+		return atomic_store(&g_kst.req, w[7] == 'n' ? 2 : 1), w[7] == 'n' ? "kills still on (the nearest orc: in its fight, "
+		       "still, no attack)" : "kills still off";
 	if (!strcmp(w, "aihold on") || !strcmp(w, "aihold off"))
 		return g_kl.ai_hold = w[8] == 'n', g_kl.ai_hold ? "kills aihold on" : "kills aihold off";
 	if (!strcmp(w, "unaware on") || !strcmp(w, "unaware off") || !strcmp(w, "unaware wake") || !strcmp(w, "unaware sync"))

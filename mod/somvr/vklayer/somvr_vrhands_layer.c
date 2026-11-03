@@ -617,6 +617,47 @@ static int vh_dump_buffer(dev_st *ds, VkDeviceSize need) {
     VH.dsize = need;
     return 0;
 }
+/* build 31b (SOMVR_XR_MARK_LAYERS): room for our hands' boxes in a mark's buffer - a quarter of the whole image (both
+ * eyes); boxes bigger than that (the hands right at the eyes) are not kept */
+static VkDeviceSize vh_mark_cap(void) {
+    return VH.on && VH.ready && VH.ew && VH.eh ? (VkDeviceSize)2 * VH.ew * VH.eh : 0;
+}
+/* ... a mark's frame (its image in TRANSFER_SRC after hd_record): each eye's drawn box -> the mark's buffer at off
+ * (tightly packed, eye 0 then eye 1), the image back to COLOR_ATTACHMENT, the host's read; MK gets the boxes and the
+ * text's hands line. Nothing waited: MK's fence follows all of the frame's submits. */
+static void vh_mark_cmds(dev_st *d, VkCommandBuffer cmd, const int32_t box[2][4], VkDeviceSize off, VkDeviceSize cap) {
+    VkBufferImageCopy bc[2];
+    uint32_t n = 0;
+    VkDeviceSize at = off, used = 0;
+    int srgb = 0, bgra = somvr_dump_order(VH.fmt, &srgb);
+    for (int e = 0; e < 2; e++) {
+        const int32_t *b = box[e];
+        int32_t w = b[2] - b[0], h = b[3] - b[1];
+        MK.hbox[e][0] = MK.hbox[e][1] = MK.hbox[e][2] = MK.hbox[e][3] = 0;
+        if (w <= 0 || h <= 0 || b[0] < 0 || b[1] < 0 || b[2] > (int32_t)VH.ew || b[3] > (int32_t)VH.eh) continue;
+        VkDeviceSize sz = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+        if (used + sz > cap || bgra < 0) continue; /* (too big: that eye's hands not kept) */
+        bc[n++] = (VkBufferImageCopy){.bufferOffset = at, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                      .imageOffset = {(int32_t)((uint32_t)e * VH.ew) + b[0], b[1], 0},
+                                      .imageExtent = {(uint32_t)w, (uint32_t)h, 1}};
+        memcpy(MK.hbox[e], b, sizeof MK.hbox[e]);
+        MK.hoff[e] = at, at += sz, used += sz;
+    }
+    if (n) d->CmdCopyImageToBuffer(cmd, VH.img[VH.xi], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, D.buf, n, bc);
+    VkImageMemoryBarrier ib;
+    img_barrier(&ib, VH.img[VH.xi], VK_ACCESS_TRANSFER_READ_BIT,
+                VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkMemoryBarrier hb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                          .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+    d->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT,
+                          0, 1, &hb, 0, NULL, 1, &ib);
+    MK.hands = n > 0, MK.hew = VH.ew, MK.heh = VH.eh, MK.hbgra = bgra, MK.hslot = XL_HANDS;
+    if (n)
+        mk_text("hands %ux%u per eye slot %d boxes %d,%d,%d,%d %d,%d,%d,%d (premultiplied, the eyes' poses and fovs; "
+                "crops xr.log.handsN.eK.ppm)", VH.ew, VH.eh, XL_HANDS, MK.hbox[0][0], MK.hbox[0][1], MK.hbox[0][2],
+                MK.hbox[0][3], MK.hbox[1][0], MK.hbox[1][1], MK.hbox[1][2], MK.hbox[1][3]);
+}
 /* ... its fence waited: <base>.handsN.ppm (premultiplied RGB as stored) + .alpha.pgm, and the layers line */
 static void vh_dump_write(uint64_t n) {
     int srgb = 0, bgra = somvr_dump_order(VH.fmt, &srgb);
@@ -990,7 +1031,8 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     if ((r = X.xrWaitSwapchainImage(VH.sc, &wi)) != XR_SUCCESS) return vh_off("xrWaitSwapchainImage (hands): %s", xr_str(r));
     VkCommandBuffer cmd = VH.cmd[s];
     uint64_t dump_n = mn_dump_frame; /* SOMVR_XR_DUMP: this frame's eyes were dumped (its quads are logged at the end) */
-    int dump = !own && dump_n && D.base[0] && vh_dump_buffer(d, (VkDeviceSize)2 * VH.ew * VH.eh * 4) == 0;
+    VkDeviceSize mk_off = 0, mk_cap = !own && dump_n && D.ds == d ? mk_hands_room(&mk_off) : 0; /* build 31b: a mark */
+    int dump = !mn_mark && !own && dump_n && D.base[0] && vh_dump_buffer(d, (VkDeviceSize)2 * VH.ew * VH.eh * 4) == 0;
     VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     VkResult vr = d->ResetFences(d->dev, 1, &VH.fence[s]);
@@ -1029,7 +1071,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         } else if (world)
             vh_depth_barrier(d, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         hd_record(&VH.hc, cmd, s, &fr, VH.img[VH.xi], VK_IMAGE_LAYOUT_UNDEFINED,
-                  dump ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                  dump || mk_cap ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         if (world)
             vh_depth_barrier(d, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         if (VH.qp) {
@@ -1049,6 +1091,8 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
                                   .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
             d->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                   VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &hb, 0, NULL, 1, &b);
+        } else if (mk_cap) {
+            vh_mark_cmds(d, cmd, fr.box, mk_off, mk_cap); /* build 31b: the boxes into the mark's buffer, no wait */
         }
         vr = d->EndCommandBuffer(cmd);
     }
