@@ -13,11 +13,11 @@ static float bo_shoulder_dist(int h, const float ofs[3], const sv_vec3 *p, float
 	float yaw = 0;
 	if (!sl_torso(&yaw))
 		yaw = somvr_slots_heading(hq);
-	sv_vec3 o = { (h == SOMVR_HAND_L ? -1.0f : 1.0f) * ofs[0], ofs[1], ofs[2] };
+	sv_vec3 o = { (IN_SIDE(h) == SOMVR_HAND_L ? -1.0f : 1.0f) * ofs[0], ofs[1], ofs[2] }; /* build 30: its side */
 	sv_vec3 r = sv_qrot(sv_qyaw(yaw), o), d = { p->x - hp.x - r.x, p->y - hp.y - r.y, p->z - hp.z - r.z };
 	if (off) { /* build 19: d on the torso's yaw (right toward that hand's side, up, ahead) for the take / miss lines */
 		sv_vec3 l = sv_qrot(sv_qconj(sv_qyaw(yaw)), d);
-		off[0] = (h == SOMVR_HAND_L ? -1.0f : 1.0f) * l.x, off[1] = l.y, off[2] = l.z;
+		off[0] = (IN_SIDE(h) == SOMVR_HAND_L ? -1.0f : 1.0f) * l.x, off[1] = l.y, off[2] = l.z;
 	}
 	return sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
 }
@@ -444,16 +444,50 @@ static int bo_flight_at(sv_vec3 *tail, sv_vec3 *dir)
 /* build 19 (SOMVR_BOW_STRING_REST=ours): where the drawn string's middle and the nocked arrow's nock are - the string
  * hand, or with the hand in front of the string's rest line (between it and the riser) its point on the rest plane: a
  * hand there does not push the string toward the riser (continuous where the hand crosses the line). g: the grips */
+/* build 31 (SOMVR_BOW_DRAW_MAX_CM, SOMVR_BOW_FACE_CM; re-xr-pipeline.md 136): the pull point p held on its line from
+ * the rest point r no further than the cap, nor past SOMVR_BOW_FACE_CM in front of the eyes' plane across that line
+ * (-10: 10 cm behind it; an arrow drawn far past the face runs through the head and shoulder: the 11-02 session's mark
+ * 23, 108 cm); at least 20 cm. Visual only:
+ * the draw's length, its tension and the shot are the hand's */
+static sv_vec3 bo_draw_cap(sv_vec3 r, sv_vec3 p)
+{
+	if (!(g_bow.draw_max_cm > 0))
+		return p;
+	sv_vec3 d = { p.x - r.x, p.y - r.y, p.z - r.z };
+	float n = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+	if (!(n > 1.0f))
+		return p;
+	sv_vec3 u = { d.x / n, d.y / n, d.z / n }, hp;
+	sv_quat hq;
+	somvr_head_game(g_fr.views.pose, &hp, &hq);
+	float s = g_bow.draw_max_cm, face = (hp.x - r.x) * u.x + (hp.y - r.y) * u.y + (hp.z - r.z) * u.z - g_bow.face_cm;
+	if (isfinite(face) && face + g_bow.face_cm > 0 && face < s) /* the eyes behind the bow along the draw: their plane */
+		s = face;
+	s = fmaxf(s, 20.0f);
+	int on = n > s;
+	if (on)
+		g_bow.cap_frames++, g_bow.cap_most = fmaxf(g_bow.cap_most, n - s);
+	if (on != g_bow.cap_on && g_bow.cap_lines < 40 && bo_log_ok(cb_now())) {
+		g_bow.cap_lines++;
+		logf_("BOW t=%.3f the drawn arrow %s: the hand %.1f cm from the string's rest, the arrow's nock held at %.1f cm "
+		      "(SOMVR_BOW_DRAW_MAX_CM %.0f, the eyes' plane %.1f cm back less SOMVR_BOW_FACE_CM %.0f; frames %llu, the hand "
+		      "past it up to %.1f cm)", cb_now(), on ? "held in front of the face" : "free again", n, on ? s : n,
+		      g_bow.draw_max_cm, face + g_bow.face_cm, g_bow.face_cm, (unsigned long long)g_bow.cap_frames, g_bow.cap_most);
+	}
+	g_bow.cap_on = on, g_bow.cap_s = on ? s : -1;
+	return on ? (sv_vec3){ r.x + s * u.x, r.y + s * u.y, r.z + s * u.z } : p;
+}
+
 static sv_vec3 bo_string_pull(const sa_xf g[2])
 {
 	int B = g_bow.cfg.bow_hand, S = 1 - B;
 	sv_vec3 h = g[S].p;
 	if (!g_bow.srest_ours || !g_bow.tips_ok)
-		return h;
+		return bo_draw_cap(somvr_bow_nock(&g_bow.cfg, g[B].p, g[B].q), h);
 	sv_vec3 lo = sv_qrot(g[B].q, g_bow.tip_g[0]), hi = sv_qrot(g[B].q, g_bow.tip_g[1]), f = somvr_bow_fwd(&g_bow.cfg, g[B].q);
 	sv_vec3 rest = { g[B].p.x + 0.5f * (lo.x + hi.x), g[B].p.y + 0.5f * (lo.y + hi.y), g[B].p.z + 0.5f * (lo.z + hi.z) };
 	float d = (h.x - rest.x) * f.x + (h.y - rest.y) * f.y + (h.z - rest.z) * f.z;
-	return d > 0 ? (sv_vec3){ h.x - d * f.x, h.y - d * f.y, h.z - d * f.z } : h;
+	return d > 0 ? (sv_vec3){ h.x - d * f.x, h.y - d * f.y, h.z - d * f.z } : bo_draw_cap(rest, h);
 }
 
 static void bo_arrow_line(const sa_xf g[2], int a, sv_vec3 *tail, sv_vec3 *dir, sv_quat *q)

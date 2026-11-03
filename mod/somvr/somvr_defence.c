@@ -495,3 +495,78 @@ somvr_df_clank_haptic somvr_df_clank_haptic_of(float scale)
 	h.knock_amp = 0.45f * k, h.knock_s = 0.06f;
 	return h;
 }
+
+/* ---- build 31: the blade through the body ------------------------------------------------------------------------- */
+void somvr_df_body_cfg_default(somvr_df_body_cfg *c)
+{
+	*c = (somvr_df_body_cfg){ .head_r = 10, .head_down = 6, .torso_r = 16, .torso_top = 25, .torso_bot = 70, .grace = 6,
+				  .steps = 4 };
+}
+
+const char *somvr_df_body_part_name(int part) { return part == 1 ? "head" : part == 2 ? "torso" : "-"; }
+
+/* the closest points of segments p0p1 and q0q1: their distance; *s on the first (0..1), *u on the second */
+static float seg_seg(const float p0[3], const float p1[3], const float q0[3], const float q1[3], float *s, float *u)
+{
+	float d1[3], d2[3], r[3];
+	for (int k = 0; k < 3; k++)
+		d1[k] = p1[k] - p0[k], d2[k] = q1[k] - q0[k], r[k] = p0[k] - q0[k];
+	float a = dot3(d1, d1), e = dot3(d2, d2), f = dot3(d2, r), sc = 0, tc = 0;
+	if (a <= 1e-9f && e <= 1e-9f) {
+		sc = tc = 0;
+	} else if (a <= 1e-9f) {
+		sc = 0, tc = f / e;
+	} else {
+		float c = dot3(d1, r);
+		if (e <= 1e-9f) {
+			tc = 0, sc = -c / a;
+		} else {
+			float b = dot3(d1, d2), den = a * e - b * b;
+			sc = den > 1e-9f ? (b * f - c * e) / den : 0;
+			sc = sc < 0 ? 0 : sc > 1 ? 1 : sc;
+			tc = (b * sc + f) / e;
+			if (tc < 0)
+				tc = 0, sc = -c / a;
+			else if (tc > 1)
+				tc = 1, sc = (b - c) / a;
+		}
+	}
+	sc = sc < 0 ? 0 : sc > 1 ? 1 : sc, tc = tc < 0 ? 0 : tc > 1 ? 1 : tc;
+	float w[3];
+	for (int k = 0; k < 3; k++)
+		w[k] = p0[k] + sc * d1[k] - (q0[k] + tc * d2[k]);
+	*s = sc, *u = tc;
+	return len3(w);
+}
+
+float somvr_df_body_sweep(const somvr_df_body_cfg *c, const float head[3], const float pb[3], const float pt[3],
+			  const float b[3], const float t[3], int *part, float out_pt[3])
+{
+	float best = -1e9f;
+	*part = SOMVR_DF_BODY_NONE;
+	if (!head || !b || !t || !isfinite(head[0] + head[1] + head[2] + b[0] + b[1] + b[2] + t[0] + t[1] + t[2]))
+		return best;
+	float hc[3] = { head[0], head[1] - c->head_down, head[2] };
+	float ta[3] = { head[0], head[1] - c->torso_top, head[2] }, tb[3] = { head[0], head[1] - c->torso_bot, head[2] };
+	int n = pb && pt ? (c->steps > 0 ? c->steps : 1) : 1;
+	for (int i = pb && pt ? 1 : 0; i <= n; i++) {
+		float k = pb && pt ? (float)i / (float)n : 1, bb[3], bt[3], s, u;
+		for (int a = 0; a < 3; a++)
+			bb[a] = pb && pt ? pb[a] + k * (b[a] - pb[a]) : b[a], bt[a] = pb && pt ? pt[a] + k * (t[a] - pt[a]) : t[a];
+		float dh = seg_seg(bb, bt, hc, hc, &s, &u), in_h = c->head_r - dh;
+		if (in_h > best) {
+			best = in_h, *part = SOMVR_DF_BODY_HEAD;
+			if (out_pt)
+				for (int a = 0; a < 3; a++)
+					out_pt[a] = bb[a] + s * (bt[a] - bb[a]);
+		}
+		float dt = seg_seg(bb, bt, ta, tb, &s, &u), in_t = c->torso_r - dt;
+		if (in_t > best) {
+			best = in_t, *part = SOMVR_DF_BODY_TORSO;
+			if (out_pt)
+				for (int a = 0; a < 3; a++)
+					out_pt[a] = bb[a] + s * (bt[a] - bb[a]);
+		}
+	}
+	return best;
+}

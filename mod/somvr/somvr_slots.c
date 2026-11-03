@@ -85,7 +85,7 @@ int somvr_slots_ofs(const somvr_slots_cfg *c, int k, sv_vec3 *ofs) {
         *ofs = (sv_vec3){0, 0, 0};
         return 0;
     }
-    float mx = c->main_hand ? 1.0f : -1.0f;
+    float mx = (c->main_hand ? 1.0f : -1.0f) * (c->mirror ? -1.0f : 1.0f); /* build 30: the left-handed mirror */
     *ofs = (sv_vec3){mx * o[0], o[1], o[2]};
     return 1;
 }
@@ -199,7 +199,7 @@ void somvr_slots_step(somvr_slots *s, const somvr_slots_cfg *c, const somvr_slot
         if (in->away[h] && (d || s->want[k] == 1) && s->want[k] != 0) {
             ask(s, o, k, 0, SOMVR_SL_E_SUSPEND, t);
             s->suspended[k] = 1, s->suspends[k]++, s->by_hold[k] = 0;
-        } else if (!in->away[h] && !in->busy[h] && s->suspended[k]) {
+        } else if (!in->away[h] && !in->busy[h] && !in->climb_free[h] && s->suspended[k]) {
             s->suspended[k] = 0;
             if (c->restore && !d && s->want[k] != 1) ask(s, o, k, 1, SOMVR_SL_E_RESTORE, t), s->restores[k]++;
         }
@@ -249,7 +249,7 @@ void somvr_slots_step(somvr_slots *s, const somvr_slots_cfg *c, const somvr_slot
     }
     { /* the quick draw: two presses of the main hand outside its slot within quick_s */
         int k = SOMVR_SLOT_SWORD, h = somvr_slots_hand(c, k);
-        int ok = c->quick_s > 0 && in->have[k] && !in->busy[h] && !in->away[h] && in->valid[h];
+        int ok = c->quick_s > 0 && in->have[k] && !in->busy[h] && !in->away[h] && !in->climb_free[h] && in->valid[h];
         if (!ok) {
             s->quick_armed = 0;
         } else if (press[h] && !s->took[h] && !s->inside[k]) {

@@ -1,0 +1,352 @@
+# story30-steps.txt - som-b30-story5 (build 30, docs/re-xr-pipeline.md 131): how the story was driven headless. The harness
+# is story27b-steps.txt's (/tmp/b27s3: lib.sh, q.sh, run.sh, rescue7.sh, rescue3.sh, brand9.sh, brand7.sh, find.sh,
+# carry8.sh, fight.sh, grabat.sh, grabaround.sh, aidher.sh, endphase.sh, mission3.sh) and story27c's gate2.sh / boot3c.sh,
+# copied to /tmp/b30s5 with the worktree t3-51204a93 and the owner som-b30-story5. Changes:
+#   fight.sh   any AI over 300 health lowered by the aid is an ally: its health 9999 again at once
+#   rescue7.sh before the carry: `story invisible ${CARRY_INVIS:-off}`, `fight guard learn`
+#   carry8.sh  her fall: fight2.sh (below) instead of fight.sh, then the aid and her grab, up to 3 cycles before giving up
+# Boots (logs/boot-check-), each SAVE_FROM=logs/boot-check-20261030-234922/saves/GameData.sav:
+#   20261031-213935 boot3c.sh 1, DIRECTOR=chain30.sh (The Rescue, then the next markers) - the aid's bug seen
+#   20261031-215322 boot3c.sh 2, chain30.sh on the fixed `fight health` + fight2.sh
+#   20261031-222105 boot3c.sh 3, chain30.sh SKIP_RESCUE=1 NEXT="goldenT powerStruggle" -> mission3.sh idled at the old
+#                   marker; t2.sh by hand (the follow), then the X probes by hand (trigger words)
+#   20261031-225738 boot3c.sh 4, gprobe.sh (the probe before the graug ate; a race quit the boot)
+#   20261031-231619 boot3c.sh 5, gprobe.sh GP_STOP="show 'GP_Torvin02_Tut_TrollBleed'": the game's X = the hamstring
+#   20261031-234132 boot3c.sh 6, gprobe2.sh -> gprobe3.sh by hand (the sword on the back: no contact)
+#   20261101-000432 boot3c.sh 7, gprobe5.sh by run2.sh (the driver had taken the old run dir): A/B proof; mount3.sh by hand
+# Harness traps: see handoff/HANDOFF-story.md "build 30".
+
+### fight2.sh
+    #!/bin/bash
+    # fight2.sh TAG HX HZ [HY] [ROUNDS] - som-b30-story5: the Uruks round Lithariel cut down at once (what a person's blade does
+    # in seconds; the drill's teleport per orc took 4 s each): Talion 80 cm beside her, `fight health 1 all 700 not HER` (the
+    # test aid; `not` read since build 30), the game's X every 0.9 s (4 per round) while an Uruk stays within 7 m of her
+    TAG=$1; HX=$2; HZ=$3; HY=${4:-1350}; R=$(cat /tmp/b30s5/R-$TAG); L=$R/somvr.log
+    wd() { printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    near() { local l0; l0=$(wc -l < $L); wd "verbs orcs $HX $HZ 700" 1.2; tail -n +$l0 $L | grep -aE '^VERBS orcs t=.* [0-9]+/' | grep -av "orc ${HER:-none} " | wc -l; }
+    wd "practice go $((HX + 80)) $((HY + 50)) $HZ" 1.5
+    for r in $(seq 1 ${5:-6}); do n=$(near); echo "$(date +%T) fight2 round $r: $n Uruks within 7 m of her"; [ "$n" -eq 0 ] && break
+      l1=$(wc -l < $L); wd "fight health 1 all 700${HER:+ not $HER}" 1.0
+      echo "  the aid on $(tail -n +$l1 $L | grep -ac '^FIGHT health'); her line: $(tail -n +$l1 $L | grep -a "^FIGHT health orc=${HER:-none} " | head -1 | cut -c1-80)"
+      if tail -n +$l1 $L | grep -aq "^FIGHT health orc=${HER:-none} "; then wd "practice go $((HX + 60)) $((HY + 50)) $HZ" 1.2; wd "fight health 9999" 0.8; echo "  HER HIT: restored"; fi
+      for k in 1 2 3 4; do wd "verbs press 118 150" 0.9; done
+    done
+
+### chain30.sh
+    #!/bin/bash
+    # chain30.sh TAG - som-b30-story5 boot: "The Rescue" to its end (rescue7.sh: the brands, find, the captors, her grab,
+    # carry8.sh with the ally-safe aid, the end's screens), then the next missions' markers by mission3.sh (Torvin's next
+    # 'goldenT' first, then a new 'goldenL'), each MIN minutes; then quit
+    TAG=$1; R=$(cat /tmp/b30s5/R-$TAG); . /tmp/b30s5/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b30s5/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    touch /tmp/b30s5/hold-$TAG
+    echo "CHAIN markers at the start:"; markers '(golden[A-Z]|powerStruggle|confrontation[A-Za-z]*|resistance_QuestGiver)' | head -8
+    if [ "${SKIP_RESCUE:-0}" = 0 ]; then echo "CHAIN rescue $(date +%T)"; CARRY_MIN=${CARRY_MIN:-20} /tmp/b30s5/rescue7.sh $TAG; echo "CHAIN rescue rc $? $(date +%T)"; fi
+    wd "story invisible off" 0.5; wd "fight guard off" 0.3
+    echo "CHAIN markers after it:"; M=$(markers '(golden[A-Z]|powerStruggle|confrontation[A-Za-z]*)'); echo "$M" | head -8
+    for K in ${NEXT:-goldenT goldenL}; do
+      P=$(markers "$K" | head -1 | cut -d' ' -f1-3); [ -n "$P" ] || { echo "CHAIN no $K"; continue; }
+      echo "CHAIN $K at $P $(date +%T)"; /tmp/b30s5/mission3.sh $TAG "$P" "n-$K" ${MIN:-18}; echo "CHAIN $K done $(date +%T)"
+      markers '(golden[A-Z]|powerStruggle)' | head -5
+    done
+    SYNC_S=60 sync "status" >/dev/null
+    echo "CHAIN END $(date +%T)"; rm -f /tmp/b30s5/hold-$TAG; echo quit >> $R/cmd
+
+### t2.sh
+    #!/bin/bash
+    # t2.sh TAG MIN - som-b30-story5: a story mission run as far as the harness goes, after Torvin: each round Torvin's
+    # 'ObjectiveGuttered_ALLMaps' (else the newest 'Objective*' marker the game shows) by a trip beside it; a video: pictures,
+    # A, B; a pausing tutorial or a window: pictures, A (then B if still up); enemies on an 'ObjectiveGold*' marker within
+    # 40 m: the kill drill (behind, the aid, X); new subtitles / lessons / markers printed; MIN minutes or the SUCCESS
+    TAG=$1; MIN=${2:-25}; R=$(cat /tmp/b30s5/R-$TAG); . /tmp/b30s5/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b30s5/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# t2 $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    dump() { xt dump "dump"; sleep 1.2; echo "DUMP $1 $(grep -o 'dump layers frame [0-9]*' $R/xr-layer.log 2>/dev/null | tail -1 | grep -o '[0-9]*$')" | tee -a /tmp/b30s5/dumps-$TAG.txt; }
+    win() { local a b; a=$(grep -an 'window 0 -> 1' $L | tail -1 | cut -d: -f1); b=$(grep -an 'window 1 -> 0' $L | tail -1 | cut -d: -f1); [ "${a:-0}" -gt "${b:-0}" ]; }
+    news() { tail -n +$1 $L | grep -aE "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|^USE t=|Mission|^OBJECTIVE t=.*marker [0-9]+ m=.*shown by the game|^RIDE t=.*(offers|mounted|seated on)|^WARN" | cut -c1-170 | awk '!s[substr($0,index($0," ")+20)]++' | head -${2:-8}; }
+    T=$((SECONDS + MIN * 60)); n=0; LB=$(wc -l < $L)
+    while [ $SECONDS -lt $T ]; do n=$((n + 1)); l0=$(wc -l < $L); s=$(state)
+      if echo "$s" | grep -q 'video=1'; then echo "$(date +%T) #$n video"; dump t2-v$n; SYNC_S=60 sync "wait 6" "pics t2-v$n" "tap R a 0.3" "tap R b 0.3" "wait 2" >/dev/null
+      elif echo "$s" | grep -q 'paused=1' || win; then echo "$(date +%T) #$n window/paused ($s)"; sleep 2; dump t2-w$n; printf 'shot st-t2-w%s\n' $n >> $R/cmd; sleep 2
+        xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2.5
+        if win || state | grep -q 'paused=1'; then printf 'shot st-t2-w%s-b\n' $n >> $R/cmd; sleep 1.5; xt b1 "btn R b 1"; sleep 0.3; xt b0 "btn R b 0"; sleep 2.5; fi
+      else
+        wd "objective status" 1.2; wd "practice status" 0.6
+        TV=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'ObjectiveGuttered_ALLMaps'" | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+        OB=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'(Objective|ObjectiveGold[A-Za-z]*)' " | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+        read px py pz < <(tail -n +$l0 $L | grep -aoE 'Talion known at \(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tail -1 | grep -oE -- '-?[0-9.]+' | awk 'NR==1{x=$1} NR==2{y=$1} NR==3{printf "%d %d %d\n",x,y,$1}')
+        G=${TV:-$OB}; [ $((n % 6)) = 1 ] && echo "$(date +%T) #$n Talion ${px:-?} ${pz:-?} | Torvin ${TV:-none} | objective ${OB:-none}"
+        if [ -n "$G" ]; then read gx gy gz <<< "$G"; d=$(awk -v a=$gx -v b=$gz -v x=${px:-0} -v z=${pz:-0} 'BEGIN{print int(sqrt((a-x)^2+(b-z)^2))}')
+          if [ "$d" -gt 400 ]; then SYNC_S=60 sync "go $((gx + 150)) $((gy + 100)) $gz" "wait 2" >/dev/null; else sleep 3; fi
+        else sleep 3; fi
+        [ $((n % 15)) = 0 ] && dump t2-n$n
+      fi
+      news $l0 6
+      tail -n +$LB $L | grep -aqE "SUCCESS|Mission Complete" && { echo "$(date +%T) success?"; }
+      [ -n "${STOP_RE:-}" ] && tail -n +$LB $L | grep -aqE "$STOP_RE" && { echo "$(date +%T) T2 STOP: $(tail -n +$LB $L | grep -aE "$STOP_RE" | head -1 | cut -c1-120)"; break; }
+    done
+    echo "T2 END $(date +%T) $(state)"; SYNC_S=60 sync "status" "word practice status nav" >/dev/null
+    grep -aE "^PRACTICE nav [0-9]+ '(golden|Objective|power|quest|Quest|mission|resistance)" $L | tail -6 | cut -c1-120
+
+### gprobe5.sh
+    #!/bin/bash
+    # gprobe2.sh TAG - som-b30-story5 boot 6: Torvin's Graug mission with SOMVR_GRAUG_BLEED: the start, the follow (t2.sh) to
+    # the lesson 'GP_Torvin02_Tut_TrollBleed', the sword drawn, then the VR blade's low thrust at the eating graug's legs from
+    # behind, crouched, facing it: round A with `verbs bleed off` (build 30's code as before: the ordinary hit), round B (and
+    # retries) with `verbs bleed on` (the game's hamstring); then the mount the game offers (the left hand out + the grip held),
+    # the ride after the objective markers (`ride steer`, the click's sprint), windows answered; MIN3 minutes
+    TAG=$1; R=$(cat /tmp/b30s5/R-$TAG); . /tmp/b30s5/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b30s5/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# g2 $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    dump() { xt dump "dump"; sleep 1.2; echo "DUMP $1 $(grep -o 'dump layers frame [0-9]*' $R/xr-layer.log 2>/dev/null | tail -1 | grep -o '[0-9]*$')" | tee -a /tmp/b30s5/dumps-$TAG.txt; }
+    win() { local a b; a=$(grep -an 'window 0 -> 1' $L | tail -1 | cut -d: -f1); b=$(grep -an 'window 1 -> 0' $L | tail -1 | cut -d: -f1); [ "${a:-0}" -gt "${b:-0}" ]; }
+    PRE_L="hands test R 20 -45 -18 -30 0 0"; THRUST_L="hands swing R 10 -85 50 -30 0 0 180"
+    touch /tmp/b30s5/hold-$TAG; wd "story invisible off" 0.4
+    if [ "${SKIP_START:-0}" = 0 ]; then echo "PHASE start $(date +%T)"
+    SYNC_S=200 sync "go 23266 3500 -19020" "wait 3" "pics g2-marker" "tap R b 0.4" "wait 3" "pics g2-card" "tap R a 0.4" "wait 4" >/dev/null
+    echo "PHASE follow $(date +%T)"; STOP_RE="show 'GP_Torvin02_Tut_TrollBleed'" /tmp/b30s5/t2.sh $TAG ${MIN1:-12}; fi
+    wd "story invisible on" 0.5   # (a test aid: the trips never wake it; a hit still does)
+    wd "hands test R 10 -10 -15 0 0 0" 0.7; wd "hands squeeze R 1" 0.6; wd "hands test R 30 -25 40 0 -90 0" 0.6; wd "hands squeeze R 0" 0.5
+    graug() { local l0 TM mx my mz; l0=$(wc -l < $L); wd "objective status" 1.2
+      TM=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'Troll'" | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      read mx my mz <<< "${TM:-32281 2209 -27717}"; l0=$(wc -l < $L); wd "verbs orcs $mx $mz 3500" 1.6
+      wd "verbs orcs 32281 -27717 3500" 1.6
+      tail -n +$l0 $L | grep -aE "^VERBS orcs t=.*attack '(Trl|AI_Trl|AI_Troll|Troll)" | sort -t"'" -k2 | grep -a Eating | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.* attack .(.*)./\1 \2 \3 \4 \5 \6/'; }
+    round() { local nm=$1 D=$2 k G gc gx gy gz gf ga tx tz B0
+      for k in $(seq 1 40); do G=$(graug); echo "$G" | grep -q 'Eating' && break; sleep 4; done
+      [ -n "$G" ] || { echo "$(date +%T) $nm: no graug"; return 1; }; read gc gx gy gz gf ga <<< "$G"
+      read tx tz < <(python3 -c "import math;f=math.radians($gf);print(round($gx-$D*math.sin(f)),round($gz-$D*math.cos(f)))")
+      B0=$(wc -l < $L); wd "practice go $tx $((gy - 150)) $tz" 3.0; wd "ride face graug" 2.5; wd "ride face off" 0.3
+      wd "crouch hold 9000" 1.0; wd "hands test R 10 -10 -15 0 0 0" 0.7; wd "hands squeeze R 1" 0.6; wd "hands test R 30 -25 40 0 -90 0" 0.6
+      wd "hands squeeze R 0" 0.5; wd "$PRE_L" 0.8; grep -a '^SLOTS t=.*sword' $L | tail -1 | cut -c1-120; dump g2-$nm-ready; printf 'shot st-g2-%s-ready\n' $nm >> $R/cmd; sleep 0.8
+      wd "$THRUST_L" 1.0; dump g2-$nm-in; sleep 2.5; wd "$PRE_L" 0.6; sleep 2; printf 'shot st-g2-%s-after\n' $nm >> $R/cmd
+      echo "$(date +%T) $nm: graug $gc ($ga, health ?) at $gx $gz facing $gf, Talion $D cm behind:"
+      tail -n +$B0 $L | grep -aE "arrived|did not arrive|VERBS t=.*bleed|VERBS the root nodes named|Talion attack|STEALTH t=.*aware orc $gc|BEASTS t=.*(graug 'AI_Troll[A-Za-z_]*' Combat=$gc attack|Talion: attack .PC)|^STORY t=.*subtitle ch=1 '|^COMBAT t=.*(hit|kill)|DEFENCE t=.*$gc|^STEALTH t=.*(kill|touch)" | sed -E 's/t=[0-9]+\.[0-9]+//' | cut -c1-200 | awk '!s[$0]++' | head -14
+      tail -n +$B0 $L | grep -aqE "Talion attack 'PC_Hamstring"; }
+    echo "PHASE A (bleed off) $(date +%T)"; wd "verbs bleed off" 0.4; round A 160; echo "A: hamstring $([ $? = 0 ] && echo yes || echo no)"
+    # the old rule's hit woke it (boot 20261031-234128): the graug kills the passive Talion, the game's own reset brings it back
+    # eating; every window answered by A (a failed screen's Retry), up to 4 minutes
+    echo "PHASE reset $(date +%T)"; wd "story invisible off" 0.4; wd "crouch stand" 0.3; RT=$((SECONDS + 240)); W0=$(wc -l < $L)
+    while [ $SECONDS -lt $RT ]; do
+      if win || state | grep -q 'paused=1'; then sleep 2; printf 'shot st-g2-reset-w\n' >> $R/cmd; sleep 1; xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 3; fi
+      tail -n +$W0 $L | grep -aqE "window 1 -> 0" && G=$(graug) && echo "$G" | grep -q Eating && { echo "$(date +%T) eating again: $G"; break; }
+      sleep 3; done
+    tail -n +$W0 $L | grep -aE "^FIGHT hurt|window 0 -> 1|Mission|^STORY t=.*subtitle ch=1 '|QuestFailed" | cut -c1-150 | awk '!s[substr($0,20)]++' | head -8
+    wd "story invisible on" 0.5
+    echo "PHASE B (bleed on) $(date +%T)"; wd "verbs bleed on" 0.4; HS=1
+    for D in 160 130 200 150; do round B$D $D && { HS=0; break; }; sleep 10; done; echo "B: hamstring $([ $HS = 0 ] && echo yes || echo no)"
+    wd "crouch stand" 0.3; wd "hands test R 22 -40 15 0 0 0" 0.3; wd "story invisible off" 0.4
+    echo "PHASE mount $(date +%T)"; M0=$(wc -l < $L); MOUNTED=0
+    for k in $(seq 1 6); do
+      for i in $(seq 1 60); do tail -n +$M0 $L | grep -aqE "^RIDE t=.* the game offers the mount" && break; sleep 1; done
+      O=$(tail -n +$M0 $L | grep -aE "^OBJECTIVE t=.*'MountTarget(Far)?': shown by the game at" | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      [ -n "$O" ] && { read ox oy oz <<< "$O"; SYNC_S=40 sync "go $((ox + 150)) $((oy + 60)) $oz" "wait 1" >/dev/null; }
+      wd "hands test L -25 -35 30 0 0 0" 1.0; B1=$(wc -l < $L); wd "hands squeeze L 1" 0.3
+      for i in $(seq 1 60); do tail -n +$B1 $L | grep -aqE "^RIDE t=.* (seated on|mounted)" && break; sleep 0.25; done; sleep 3
+      tail -n +$B1 $L | grep -aE "^RIDE t=.*(mounted|seated on|held on|offers)" | head -4 | cut -c1-160
+      tail -n +$B1 $L | grep -aq "^RIDE t=.* seated on" && { MOUNTED=1; break; }
+      wd "hands squeeze L 0" 0.5; M0=$(wc -l < $L); done
+    wd "hands squeeze L 0" 0.3; wd "hands test L off" 0.3; echo "mounted $MOUNTED"
+    echo "PHASE ride $(date +%T)"; T=$((SECONDS + ${MIN3:-10} * 60)); n=0; LB=$(wc -l < $L)
+    while [ $SECONDS -lt $T ]; do n=$((n + 1)); l0=$(wc -l < $L)
+      if win; then sleep 2; dump g2-w$n; printf 'shot st-g2-w%s\n' $n >> $R/cmd; sleep 1.5; xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2.5
+        win && { xt b1 "btn R b 1"; sleep 0.3; xt b0 "btn R b 0"; sleep 2.5; }; fi
+      wd "objective status" 1.0; wd "practice status" 0.5
+      OB=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'(Objective|ObjectiveGold[A-Za-z]*|ObjectiveGuttered_ALLMaps)' " | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      [ -n "$OB" ] && { read ox oy oz <<< "$OB"; wd "ride steer $ox $oz" 1.5; [ $((n % 5)) = 1 ] && { xt c1 "btn L stick 1"; sleep 0.15; xt c0 "btn L stick 0"; }; } || sleep 1.5
+      [ $((n % 8)) = 1 ] && echo "$(date +%T) #$n objective ${OB:-none} | $(tail -n +$l0 $L | grep -aoE 'Talion known at \([^)]*\)' | tail -1)"
+      [ $((n % 20)) = 0 ] && dump g2-ride$n
+      tail -n +$l0 $L | grep -aE "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|Mission|^OBJECTIVE t=.*marker [0-9]+ m=.*shown by the game|^RIDE t=.*(dismounted|seated on)|^WARN" | cut -c1-170 | awk '!s[substr($0,20)]++' | head -6
+      tail -n +$LB $L | grep -aqE "SUCCESS|Mission Complete" && echo "$(date +%T) success?"
+    done
+    wd "ride steer off" 0.3; echo "GPROBE2 END $(date +%T)"; SYNC_S=60 sync "status" "word practice status nav" >/dev/null
+    grep -aE "^PRACTICE nav [0-9]+ '(golden|power|Objective)" $L | tail -5 | cut -c1-120
+    rm -f /tmp/b30s5/hold-$TAG; echo quit >> $R/cmd
+
+### mount3.sh
+    #!/bin/bash
+    # mount2.sh TAG MIN - som-b30-story5: after the bleed, "Jump on one before she jumps on you": Big Game's mount chain (bgr6.sh's
+    # caragor phase): the sword drawn, the test blade's guard (`fight guard learn`, `ride guard on`: the blade across a leap =
+    # the counter), the view to a stunned caragor (`ride face on`), the left hand out; each counter: the offer, the grip held =
+    # the mount and the domination; then the ride after the objective (`ride steer`, the click's sprint), MIN minutes
+    TAG=$1; MIN=${2:-12}; R=$(cat /tmp/b30s5/R-$TAG); . /tmp/b30s5/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b30s5/pid-m3-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# m2 $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    dump() { xt dump "dump"; sleep 1.2; echo "DUMP $1 $(grep -o 'dump layers frame [0-9]*' $R/xr-layer.log 2>/dev/null | tail -1 | grep -o '[0-9]*$')" | tee -a /tmp/b30s5/dumps-$TAG.txt; }
+    win() { local a b; a=$(grep -an 'window 0 -> 1' $L | tail -1 | cut -d: -f1); b=$(grep -an 'window 1 -> 0' $L | tail -1 | cut -d: -f1); [ "${a:-0}" -gt "${b:-0}" ]; }
+    cnt() { grep -acE "$1" "$L"; }
+    wd "story invisible off" 0.3; wd "crouch stand" 0.3
+    wd "hands test R 10 -10 -15 0 0 0" 0.7; wd "hands squeeze R 1" 0.6; wd "hands test R 30 -25 40 0 -90 0" 0.6; wd "hands squeeze R 0" 0.5
+    wd "hands test R 30 -10 45 0 -35 0" 0.4; wd "fight guard learn" 0.4; wd "ride guard on" 0.3; wd "ride face on" 0.3; wd "hands test L -25 -35 30 0 0 0" 0.5
+    l0=$(wc -l < $L); wd "practice status" 1; read px pz < <(tail -n +$l0 $L | grep -aoE 'Talion known at \(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tail -1 | grep -oE -- '-?[0-9.]+' | awk 'NR==1{x=$1} NR==3{printf "%d %d\n",x,$1}')
+    l0=$(wc -l < $L); wd "verbs orcs $px $pz 5000" 1.5; tail -n +$l0 $L | grep -a "^VERBS orcs t=" | cut -c1-150 | head -5
+    echo "PHASE caragor $(date +%T)"; MOUNTED=0
+    for round in 1 2 3 4 5 6; do n0=$(cnt 'DEFENCE countered.*JumpAttack')
+      for i in $(seq 1 240); do [ "$(cnt 'DEFENCE countered.*JumpAttack')" -gt "$n0" ] && break; sleep 0.25
+        win && { xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2; }; done
+      B0=$(stat -c %s "$L"); [ "$(cnt 'DEFENCE countered.*JumpAttack')" -gt "$n0" ] && echo "$(date +%T) countered (round $round)" || { echo "$(date +%T) no counter in 60 s (round $round)"; continue; }; sleep 3.1
+      # (boot 20261101-000432: the counter throws it metres off, the offer line only on a change): beside the countered beast
+      C=$(grep -a 'DEFENCE countered' $L | tail -1 | grep -oE 'orc=0x[0-9a-f]+' | cut -c5-); l1=$(wc -l < $L); wd "practice status" 1.0
+      read px pz < <(tail -n +$l1 $L | grep -aoE 'Talion known at \(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tail -1 | grep -oE -- '-?[0-9.]+' | awk 'NR==1{x=$1} NR==3{printf "%d %d\n",x,$1}')
+      l1=$(wc -l < $L); wd "verbs orcs $px $pz 4000" 1.2
+      P=$(tail -n +$l1 $L | grep -a "orc $C at" | tail -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.*/\1 \2 \3/')
+      echo "$(date +%T) the countered $C at ${P:-?}"
+      if [ -n "$P" ]; then set -- $P; wd "practice go $(( $1 + 130 )) $(( $2 + 60 )) $3" 1.5; wd "ride face on" 0.3; wd "hands test L -25 -35 30 0 0 0" 1.2; fi
+      wd "hands squeeze L 1" 0.3
+      for i in $(seq 1 100); do tail -c +$B0 $L | grep -aqE "^RIDE t=.* mounted|PC_Warg_Domination_Fail" && break; sleep 0.1; done
+      tail -c +$B0 $L | grep -aq '^RIDE t=.* mounted' && { MOUNTED=1; break; }
+      wd "hands squeeze L 0" 0.2; echo "NOT mounted (round $round)"; done
+    wd "ride face off" 0.2; wd "ride guard off" 0.2
+    for i in $(seq 1 40); do grep -aq "^RIDE t=.* seated on" <(tail -c +${B0:-1} $L) && break; sleep 0.25; done; sleep 1.5
+    wd "hands squeeze L 0" 0.3; xt h "head 0 0 0 yaw 0 pitch -10 s 0.3"; dump m3-seated; echo "mounted $MOUNTED $(date +%T)"
+    echo "PHASE ride $(date +%T)"; T=$((SECONDS + MIN * 60)); n=0
+    while [ $SECONDS -lt $T ]; do n=$((n + 1)); l0=$(wc -l < $L)
+      if win; then sleep 2; dump m3-w$n; printf 'shot st-m3-w%s\n' $n >> $R/cmd; sleep 1.5; xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2.5
+        win && { xt b1 "btn R b 1"; sleep 0.3; xt b0 "btn R b 0"; sleep 2.5; }; fi
+      wd "objective status" 1.0
+      OB=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'(Objective|ObjectiveGold[A-Za-z]*|ObjectiveGuttered_ALLMaps)' " | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      if [ -n "$OB" ]; then read ox oy oz <<< "$OB"; wd "ride steer $ox $oz" 1.5; [ $((n % 5)) = 1 ] && { xt c1 "btn L stick 1"; sleep 0.15; xt c0 "btn L stick 0"; }; else sleep 1.5; fi
+      [ $((n % 8)) = 1 ] && echo "$(date +%T) #$n objective ${OB:-none}"
+      [ $((n % 25)) = 0 ] && dump m3-ride$n
+      tail -n +$l0 $L | grep -aE "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|Mission|^OBJECTIVE t=.*marker [0-9]+ m=.*shown by the game|^RIDE t=.*(dismounted|seated on)|^WARN|SUCCESS" | cut -c1-170 | awk '!s[substr($0,20)]++' | head -6
+    done
+    wd "ride steer off" 0.3; echo "MOUNT3 END $(date +%T)"
+
+### run2.sh
+    #!/bin/bash
+    # run2.sh TAG RUNDIR DIRECTOR - run.sh with the run given (ST_RUN): the driver attached to that boot, then the director
+    TAG=$1; NR=$2; DIR=$3; WT=/home/bara/.t3/worktrees/flat2vr/t3-51204a93/ShadowOfMordor
+    rm -rf /tmp/b30s5/ctl-$TAG; mkdir -p /tmp/b30s5/ctl-$TAG; echo "$NR" > /tmp/b30s5/R-$TAG
+    cd $WT/scripts && ST_RUN=$NR ST_PLAN=ctl ST_CTL_DIR=/tmp/b30s5/ctl-$TAG ./story22-drive.sh > /tmp/b30s5/drv-$TAG.log 2>&1 &
+    for i in $(seq 1 100); do grep -q 'waiting for' /tmp/b30s5/drv-$TAG.log && break; grep -q 'STOP' /tmp/b30s5/drv-$TAG.log && exit 1; sleep 2; done
+    ( while sleep 240; do [ -d /proc/$$ ] || exit 0; /tmp/b30s5/q.sh $TAG "wait 1"; done ) & KA=$!
+    "$DIR" $TAG; kill $KA 2>/dev/null
+
+# boot 20261101-004226: boot3c.sh 8, DIRECTOR=gprobe6.sh (gprobe5 without round A/reset; mount4.sh = mount3 + hard thrusts in a
+# struggle); lure.sh by hand after the mount (MIN 16; its 0.5 s reads were too short at first: 1.2 s)
+
+### gprobe6.sh
+    #!/bin/bash
+    # gprobe2.sh TAG - som-b30-story5 boot 6: Torvin's Graug mission with SOMVR_GRAUG_BLEED: the start, the follow (t2.sh) to
+    # the lesson 'GP_Torvin02_Tut_TrollBleed', the sword drawn, then the VR blade's low thrust at the eating graug's legs from
+    # behind, crouched, facing it: round A with `verbs bleed off` (build 30's code as before: the ordinary hit), round B (and
+    # retries) with `verbs bleed on` (the game's hamstring); then the mount the game offers (the left hand out + the grip held),
+    # the ride after the objective markers (`ride steer`, the click's sprint), windows answered; MIN3 minutes
+    TAG=$1; R=$(cat /tmp/b30s5/R-$TAG); . /tmp/b30s5/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b30s5/pid-dir-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# g2 $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    dump() { xt dump "dump"; sleep 1.2; echo "DUMP $1 $(grep -o 'dump layers frame [0-9]*' $R/xr-layer.log 2>/dev/null | tail -1 | grep -o '[0-9]*$')" | tee -a /tmp/b30s5/dumps-$TAG.txt; }
+    win() { local a b; a=$(grep -an 'window 0 -> 1' $L | tail -1 | cut -d: -f1); b=$(grep -an 'window 1 -> 0' $L | tail -1 | cut -d: -f1); [ "${a:-0}" -gt "${b:-0}" ]; }
+    PRE_L="hands test R 20 -45 -18 -30 0 0"; THRUST_L="hands swing R 10 -85 50 -30 0 0 180"
+    touch /tmp/b30s5/hold-$TAG; wd "story invisible off" 0.4
+    if [ "${SKIP_START:-0}" = 0 ]; then echo "PHASE start $(date +%T)"
+    SYNC_S=200 sync "go 23266 3500 -19020" "wait 3" "pics g2-marker" "tap R b 0.4" "wait 3" "pics g2-card" "tap R a 0.4" "wait 4" >/dev/null
+    echo "PHASE follow $(date +%T)"; STOP_RE="show 'GP_Torvin02_Tut_TrollBleed'" /tmp/b30s5/t2.sh $TAG ${MIN1:-12}; fi
+    wd "story invisible on" 0.5   # (a test aid: the trips never wake it; a hit still does)
+    wd "hands test R 10 -10 -15 0 0 0" 0.7; wd "hands squeeze R 1" 0.6; wd "hands test R 30 -25 40 0 -90 0" 0.6; wd "hands squeeze R 0" 0.5
+    graug() { local l0 TM mx my mz; l0=$(wc -l < $L); wd "objective status" 1.2
+      TM=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'Troll'" | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      read mx my mz <<< "${TM:-32281 2209 -27717}"; l0=$(wc -l < $L); wd "verbs orcs $mx $mz 3500" 1.6
+      wd "verbs orcs 32281 -27717 3500" 1.6
+      tail -n +$l0 $L | grep -aE "^VERBS orcs t=.*attack '(Trl|AI_Trl|AI_Troll|Troll)" | sort -t"'" -k2 | grep -a Eating | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.* attack .(.*)./\1 \2 \3 \4 \5 \6/'; }
+    round() { local nm=$1 D=$2 k G gc gx gy gz gf ga tx tz B0
+      for k in $(seq 1 40); do G=$(graug); echo "$G" | grep -q 'Eating' && break; sleep 4; done
+      [ -n "$G" ] || { echo "$(date +%T) $nm: no graug"; return 1; }; read gc gx gy gz gf ga <<< "$G"
+      read tx tz < <(python3 -c "import math;f=math.radians($gf);print(round($gx-$D*math.sin(f)),round($gz-$D*math.cos(f)))")
+      B0=$(wc -l < $L); wd "practice go $tx $((gy - 150)) $tz" 3.0; wd "ride face graug" 2.5; wd "ride face off" 0.3
+      wd "crouch hold 9000" 1.0; wd "hands test R 10 -10 -15 0 0 0" 0.7; wd "hands squeeze R 1" 0.6; wd "hands test R 30 -25 40 0 -90 0" 0.6
+      wd "hands squeeze R 0" 0.5; wd "$PRE_L" 0.8; grep -a '^SLOTS t=.*sword' $L | tail -1 | cut -c1-120; dump g2-$nm-ready; printf 'shot st-g2-%s-ready\n' $nm >> $R/cmd; sleep 0.8
+      wd "$THRUST_L" 1.0; dump g2-$nm-in; sleep 2.5; wd "$PRE_L" 0.6; sleep 2; printf 'shot st-g2-%s-after\n' $nm >> $R/cmd
+      echo "$(date +%T) $nm: graug $gc ($ga, health ?) at $gx $gz facing $gf, Talion $D cm behind:"
+      tail -n +$B0 $L | grep -aE "arrived|did not arrive|VERBS t=.*bleed|VERBS the root nodes named|Talion attack|STEALTH t=.*aware orc $gc|BEASTS t=.*(graug 'AI_Troll[A-Za-z_]*' Combat=$gc attack|Talion: attack .PC)|^STORY t=.*subtitle ch=1 '|^COMBAT t=.*(hit|kill)|DEFENCE t=.*$gc|^STEALTH t=.*(kill|touch)" | sed -E 's/t=[0-9]+\.[0-9]+//' | cut -c1-200 | awk '!s[$0]++' | head -14
+      tail -n +$B0 $L | grep -aqE "Talion attack 'PC_Hamstring"; }
+    echo "PHASE B (bleed on) $(date +%T)"; wd "verbs bleed on" 0.4; HS=1
+    for D in 130 120 140 130; do round B$D $D && { HS=0; break; }; sleep 10; done; echo "B: hamstring $([ $HS = 0 ] && echo yes || echo no)"
+    wd "crouch stand" 0.3; wd "hands test R 22 -40 15 0 0 0" 0.3; wd "story invisible off" 0.4
+    echo "PHASE mount $(date +%T)"; /tmp/b30s5/mount4.sh $TAG ${MIN3:-12}
+    echo "GPROBE6 END $(date +%T)"; SYNC_S=60 sync "status" "word practice status nav" >/dev/null
+    grep -aE "^PRACTICE nav [0-9]+ '(golden|power|Objective)" $L | tail -5 | cut -c1-120
+    rm -f /tmp/b30s5/hold-$TAG; echo quit >> $R/cmd
+
+### mount4.sh
+    #!/bin/bash
+    # mount2.sh TAG MIN - som-b30-story5: after the bleed, "Jump on one before she jumps on you": Big Game's mount chain (bgr6.sh's
+    # caragor phase): the sword drawn, the test blade's guard (`fight guard learn`, `ride guard on`: the blade across a leap =
+    # the counter), the view to a stunned caragor (`ride face on`), the left hand out; each counter: the offer, the grip held =
+    # the mount and the domination; then the ride after the objective (`ride steer`, the click's sprint), MIN minutes
+    TAG=$1; MIN=${2:-12}; R=$(cat /tmp/b30s5/R-$TAG); . /tmp/b30s5/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b30s5/pid-m4-$TAG
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# m2 $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    dump() { xt dump "dump"; sleep 1.2; echo "DUMP $1 $(grep -o 'dump layers frame [0-9]*' $R/xr-layer.log 2>/dev/null | tail -1 | grep -o '[0-9]*$')" | tee -a /tmp/b30s5/dumps-$TAG.txt; }
+    win() { local a b; a=$(grep -an 'window 0 -> 1' $L | tail -1 | cut -d: -f1); b=$(grep -an 'window 1 -> 0' $L | tail -1 | cut -d: -f1); [ "${a:-0}" -gt "${b:-0}" ]; }
+    cnt() { grep -acE "$1" "$L"; }
+    wd "story invisible off" 0.3; wd "crouch stand" 0.3
+    wd "hands test R 10 -10 -15 0 0 0" 0.7; wd "hands squeeze R 1" 0.6; wd "hands test R 30 -25 40 0 -90 0" 0.6; wd "hands squeeze R 0" 0.5
+    wd "hands test R 30 -10 45 0 -35 0" 0.4; wd "fight guard learn" 0.4; wd "ride guard on" 0.3; wd "ride face on" 0.3; wd "hands test L -25 -35 30 0 0 0" 0.5
+    l0=$(wc -l < $L); wd "practice status" 1; read px pz < <(tail -n +$l0 $L | grep -aoE 'Talion known at \(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tail -1 | grep -oE -- '-?[0-9.]+' | awk 'NR==1{x=$1} NR==3{printf "%d %d\n",x,$1}')
+    l0=$(wc -l < $L); wd "verbs orcs $px $pz 5000" 1.5; tail -n +$l0 $L | grep -a "^VERBS orcs t=" | cut -c1-150 | head -5
+    echo "PHASE caragor $(date +%T)"; MOUNTED=0
+    for round in 1 2 3 4 5 6; do n0=$(cnt 'DEFENCE countered.*JumpAttack')
+      for i in $(seq 1 240); do [ "$(cnt 'DEFENCE countered.*JumpAttack')" -gt "$n0" ] && break; sleep 0.25
+        win && { xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2; }
+        if state | grep -q 'ctx=struggle'; then echo "$(date +%T) a struggle: hard thrusts (SOMVR_STRUGGLE)" # a pounce
+          for k in $(seq 1 10); do wd "hands test R 20 -27 -18 12 0 0" 0.25; wd "hands swing R 5 -11 54 12 0 0 150" 0.35; state | grep -q 'ctx=struggle' || break; done
+          wd "hands test R 30 -10 45 0 -35 0" 0.3; grep -a '^STRUGGLE t=' $L | tail -2 | cut -c1-150; fi; done
+      B0=$(stat -c %s "$L"); [ "$(cnt 'DEFENCE countered.*JumpAttack')" -gt "$n0" ] && echo "$(date +%T) countered (round $round)" || { echo "$(date +%T) no counter in 60 s (round $round)"; continue; }; sleep 3.1
+      # (boot 20261101-000432: the counter throws it metres off, the offer line only on a change): beside the countered beast
+      C=$(grep -a 'DEFENCE countered' $L | tail -1 | grep -oE 'orc=0x[0-9a-f]+' | cut -c5-); l1=$(wc -l < $L); wd "practice status" 1.0
+      read px pz < <(tail -n +$l1 $L | grep -aoE 'Talion known at \(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tail -1 | grep -oE -- '-?[0-9.]+' | awk 'NR==1{x=$1} NR==3{printf "%d %d\n",x,$1}')
+      l1=$(wc -l < $L); wd "verbs orcs $px $pz 4000" 1.2
+      P=$(tail -n +$l1 $L | grep -a "orc $C at" | tail -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.*/\1 \2 \3/')
+      echo "$(date +%T) the countered $C at ${P:-?}"
+      if [ -n "$P" ]; then set -- $P; wd "practice go $(( $1 + 130 )) $(( $2 + 60 )) $3" 1.5; wd "ride face on" 0.3; wd "hands test L -25 -35 30 0 0 0" 1.2; fi
+      wd "hands squeeze L 1" 0.3
+      for i in $(seq 1 100); do tail -c +$B0 $L | grep -aqE "^RIDE t=.* mounted|PC_Warg_Domination_Fail" && break; sleep 0.1; done
+      tail -c +$B0 $L | grep -aq '^RIDE t=.* mounted' && { MOUNTED=1; break; }
+      wd "hands squeeze L 0" 0.2; echo "NOT mounted (round $round)"; done
+    wd "ride face off" 0.2; wd "ride guard off" 0.2
+    for i in $(seq 1 40); do grep -aq "^RIDE t=.* seated on" <(tail -c +${B0:-1} $L) && break; sleep 0.25; done; sleep 1.5
+    wd "hands squeeze L 0" 0.3; xt h "head 0 0 0 yaw 0 pitch -10 s 0.3"; dump m4-seated; echo "mounted $MOUNTED $(date +%T)"
+    echo "PHASE ride $(date +%T)"; T=$((SECONDS + MIN * 60)); n=0
+    while [ $SECONDS -lt $T ]; do n=$((n + 1)); l0=$(wc -l < $L)
+      if win; then sleep 2; dump m4-w$n; printf 'shot st-m4-w%s\n' $n >> $R/cmd; sleep 1.5; xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2.5
+        win && { xt b1 "btn R b 1"; sleep 0.3; xt b0 "btn R b 0"; sleep 2.5; }; fi
+      wd "objective status" 1.0
+      OB=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'(Objective|ObjectiveGold[A-Za-z]*|ObjectiveGuttered_ALLMaps)' " | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      if [ -n "$OB" ]; then read ox oy oz <<< "$OB"; wd "ride steer $ox $oz" 1.5; [ $((n % 5)) = 1 ] && { xt c1 "btn L stick 1"; sleep 0.15; xt c0 "btn L stick 0"; }; else sleep 1.5; fi
+      [ $((n % 8)) = 1 ] && echo "$(date +%T) #$n objective ${OB:-none}"
+      [ $((n % 25)) = 0 ] && dump m4-ride$n
+      tail -n +$l0 $L | grep -aE "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|Mission|^OBJECTIVE t=.*marker [0-9]+ m=.*shown by the game|^RIDE t=.*(dismounted|seated on)|^WARN|SUCCESS" | cut -c1-170 | awk '!s[substr($0,20)]++' | head -6
+    done
+    wd "ride steer off" 0.3; echo "MOUNT4 END $(date +%T)"
+
+### lure.sh
+    #!/bin/bash
+    # lure.sh TAG MIN - som-b30-story5: "Get 'er to chase you. I'll be waiting." - seated on the caragor: the graug found (an
+    # AI whose attack is a graug's within 60 m of Talion, else the 'Troll' marker), ridden at until 12 m off, then led to the
+    # objective (Torvin, 'Objective' marker) at the stick (no sprint) while it stays within 35 m, else back toward it; windows A
+    TAG=$1; MIN=${2:-12}; R=$(cat /tmp/b30s5/R-$TAG); . /tmp/b30s5/lib.sh; L=$R/somvr.log
+    wd() { userin && { echo "USER IN VR: stop"; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# lu $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    dump() { xt dump "dump"; sleep 1.2; echo "DUMP $1 $(grep -o 'dump layers frame [0-9]*' $R/xr-layer.log 2>/dev/null | tail -1 | grep -o '[0-9]*$')" | tee -a /tmp/b30s5/dumps-$TAG.txt; }
+    win() { local a b; a=$(grep -an 'window 0 -> 1' $L | tail -1 | cut -d: -f1); b=$(grep -an 'window 1 -> 0' $L | tail -1 | cut -d: -f1); [ "${a:-0}" -gt "${b:-0}" ]; }
+    T=$((SECONDS + MIN * 60)); n=0; MODE=seek; LB=$(wc -l < $L)
+    while [ $SECONDS -lt $T ]; do n=$((n + 1)); l0=$(wc -l < $L)
+      if win; then sleep 2; dump lu-w$n; printf 'shot st-lu-w%s\n' $n >> $R/cmd; sleep 1.5; xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2.5
+        win && { xt b1 "btn R b 1"; sleep 0.3; xt b0 "btn R b 0"; sleep 2.5; }; continue; fi
+      wd "objective status" 1.0; wd "practice status" 1.2
+      read px pz < <(tail -n +$l0 $L | grep -aoE 'Talion known at \(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tail -1 | grep -oE -- '-?[0-9.]+' | awk 'NR==1{x=$1} NR==3{printf "%d %d\n",x,$1}')
+      OB=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'(Objective|ObjectiveGold[A-Za-z]*|ObjectiveGuttered_ALLMaps)' " | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      TM=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'Troll'" | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      l1=$(wc -l < $L); wd "verbs orcs ${px:-0} ${pz:-0} 9000" 1.2
+      G=$(tail -n +$l1 $L | grep -aE "^VERBS orcs t=.*attack '(Trl|AI_Trl|AI_Troll|Troll)" | head -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.* ([0-9]+) cm from Talion.*attack .(.*)./\1 \3 \4 \5/')
+      read gx gz gd ga <<< "${G:-}"; [ -z "$G" ] && [ -n "$TM" ] && { read gx gy0 gz <<< "$TM"; gd=99999; ga=marker; }
+      if [ -z "${gx:-}" ]; then [ -n "$OB" ] && { read ox oy oz <<< "$OB"; wd "ride steer $ox $oz" 1.0; }; else
+        if [ "$MODE" = seek ] && [ "$gd" -lt 1200 ]; then MODE=lead; echo "$(date +%T) #$n the graug ${gd} cm off ($ga): lead it"; fi
+        if [ "$MODE" = lead ] && [ "$gd" -gt 3500 ]; then MODE=seek; echo "$(date +%T) #$n the graug ${gd} cm behind: back to it"; fi
+        if [ "$MODE" = seek ]; then wd "ride steer $gx $gz" 1.0; elif [ -n "$OB" ]; then read ox oy oz <<< "$OB"; wd "ride steer $ox $oz" 1.0; fi; fi
+      [ $((n % 6)) = 1 ] && echo "$(date +%T) #$n $MODE Talion ${px:-?} ${pz:-?} | graug ${gx:-?} ${gz:-?} ${gd:-?} cm ($ga) | objective ${OB:-none}"
+      [ $((n % 25)) = 0 ] && dump lu-$n
+      tail -n +$l0 $L | grep -aE "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|Mission|^OBJECTIVE t=.*marker [0-9]+ m=.*shown by the game|^RIDE t=.*(dismounted|seated on)|^WARN|SUCCESS" | grep -avE "Over here|Look here|Hey|beard|morsel|so close|filthy|Spiders" | cut -c1-170 | awk '!s[substr($0,20)]++' | head -6
+    done
+    wd "ride steer off" 0.3; echo "LURE END $(date +%T)"

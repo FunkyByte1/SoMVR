@@ -255,6 +255,22 @@ static void vh_arm(const sa_xf g[2], const int valid[2], int64_t T, float dt)
 	g_vh.have = 1;
 }
 
+/* build 30 (SOMVR_HANDED=left): the entry's hands back to the controllers (the layer draws side h's model on grip h) */
+static void vh_mirror(somvr_vrhands_frame *e)
+{
+	if (!g_lh)
+		return;
+	somvr_posef g = e->grip[0], gh = e->ghost[0];
+	e->grip[0] = e->grip[1], e->grip[1] = g, e->ghost[0] = e->ghost[1], e->ghost[1] = gh;
+	float c[5], a = e->ghost_a[0];
+	memcpy(c, e->curl[0], sizeof c), memcpy(e->curl[0], e->curl[1], sizeof c), memcpy(e->curl[1], c, sizeof c);
+	e->ghost_a[0] = e->ghost_a[1], e->ghost_a[1] = a;
+	uint32_t f = e->flags & ~(uint32_t)(SOMVR_VHF_L | SOMVR_VHF_R | SOMVR_VHF_HOLD_L | SOMVR_VHF_HOLD_R);
+	f |= (e->flags & SOMVR_VHF_L ? SOMVR_VHF_R : 0u) | (e->flags & SOMVR_VHF_R ? SOMVR_VHF_L : 0u) |
+	     (e->flags & SOMVR_VHF_HOLD_L ? SOMVR_VHF_HOLD_R : 0u) | (e->flags & SOMVR_VHF_HOLD_R ? SOMVR_VHF_HOLD_L : 0u);
+	e->flags = f;
+}
+
 /* H4, after hp_frame: this frame's entry (live: a first-person stereo frame) */
 static void vh_h4(int live)
 {
@@ -271,6 +287,7 @@ static void vh_h4(int live)
 	if (live && vh_hides() && g_hp_main_hid == g_fr.frame) /* SOMVR_HEAD_PARTS hid the body node: ours are drawn */
 		e.flags |= SOMVR_VHF_HIDE, g_vh.hidden++, atomic_fetch_add_explicit(&g_vho.n_hidden, 1, memory_order_relaxed);
 	e.depth_k = 0; /* SOMVR_XR_HANDS_DEPTH=world: set by the eyes' H1 (vh_eye_near), which run after this */
+	vh_mirror(&e); /* build 30: the hands' roles -> the controllers */
 	somvr_vrhands_put(&g_vho, g_fr.frame, &e);
 	g_vh.pub++;
 	uint32_t st = atomic_load_explicit(&g_vho.layer_state, memory_order_acquire);

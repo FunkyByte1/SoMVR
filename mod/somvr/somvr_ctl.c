@@ -46,6 +46,19 @@ sv_vec3 sc_turn_p0(sv_vec3 p0, sv_vec3 h, float dpsi) {
     return (sv_vec3){h.x - r.x, p0.y, h.z - r.z};
 }
 
+void sc_mirror_state(somvr_input_state *st) {
+    somvr_hand_in h = st->hand[0];
+    st->hand[0] = st->hand[1], st->hand[1] = h;
+    uint16_t p = st->profile[0];
+    st->profile[0] = st->profile[1], st->profile[1] = p;
+    const int mb = __builtin_ctz(SOMVR_BTN_MENU); /* the menu button back where it was (index 0) */
+    uint32_t m0 = st->hand[1].buttons & SOMVR_BTN_MENU, m1 = st->hand[0].buttons & SOMVR_BTN_MENU;
+    st->hand[0].buttons = (st->hand[0].buttons & ~(uint32_t)SOMVR_BTN_MENU) | m0;
+    st->hand[1].buttons = (st->hand[1].buttons & ~(uint32_t)SOMVR_BTN_MENU) | m1;
+    uint8_t c = st->hand[0].presses[mb];
+    st->hand[0].presses[mb] = st->hand[1].presses[mb], st->hand[1].presses[mb] = c;
+}
+
 void sc_ctl_cfg_default(sc_ctl_cfg *c) {
     memset(c, 0, sizeof *c);
     c->dead = 0.15f;

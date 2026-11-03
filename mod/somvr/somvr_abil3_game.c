@@ -346,7 +346,7 @@ static void ab3_hands(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp)
 			const somvr_hand_in *hi = &g_inp.st.hand[h];
 			float sq = bd_squeeze(h, (hi->active & SOMVR_HACT_INPUT) ? hi->squeeze : 0);
 			/* the palm's normal: OpenXR's grip +X points out of the left palm and into the right one */
-			sv_vec3 n = sv_qrot(sv_qnormalize(qw[h]), (sv_vec3){ h == SOMVR_HAND_L ? 1.0f : -1.0f, 0, 0 });
+			sv_vec3 n = sv_qrot(sv_qnormalize(qw[h]), (sv_vec3){ IN_SIDE(h) == SOMVR_HAND_L ? 1.0f : -1.0f, 0, 0 });
 			int dag = g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g) && somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER) == h;
 			int sword = h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD) && bd_sword_in_hand();
 			int bow = bo_out() && (h == g_bow.cfg.bow_hand || g_bow.s.phase == SOMVR_BOW_PH_DRAW);

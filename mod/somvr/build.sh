@@ -41,7 +41,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_strike.c" "$D/somvr_gaze.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
       "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c"
       "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c" "$D/somvr_above.c" "$D/somvr_ride.c"
-      "$D/somvr_map.c" "$D/somvr_abil.c")
+      "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c")
 mkdir -p "$D/build/tests"
 CHECK=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
@@ -151,6 +151,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_execute" "$D/tests/test_execute.c" "$D/so
 "$D/build/tests/test_execute"
 gcc "${CF[@]}" -o "$D/build/tests/test_stealth" "$D/tests/test_stealth.c" "$D/somvr_stealth.c" "$D/somvr_combat.c" -lm # build 18: the stealth kill (20c: + the tiers)
 "$D/build/tests/test_stealth"
+gcc "${CF[@]}" -o "$D/build/tests/test_kills" "$D/tests/test_kills.c" "$D/somvr_kills.c" -lm # build 31: kills the game's way
+"$D/build/tests/test_kills"
 gcc "${CF[@]}" -o "$D/build/tests/test_beasts" "$D/tests/test_beasts.c" "$D/somvr_beasts.c" -lm # build 22: the beasts
 "$D/build/tests/test_beasts"
 gcc "${CF[@]}" -o "$D/build/tests/test_ride" "$D/tests/test_ride.c" "$D/somvr_ride.c" -lm # build 26: riding, Seat mode
@@ -159,6 +161,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_surface" "$D/tests/test_surface.c" "$D/so
 "$D/build/tests/test_surface"
 gcc "${CF[@]}" -o "$D/build/tests/test_verbs" "$D/tests/test_verbs.c" "$D/somvr_verbs.c" -lm # build 13: the Nemesis verbs
 "$D/build/tests/test_verbs"
+gcc "${CF[@]}" -o "$D/build/tests/test_ovault" "$D/tests/test_ovault.c" "$D/somvr_ovault.c" "$D/somvr_pose.c" -lm # build 31: the vault by the hands
+"$D/build/tests/test_ovault"
 gcc "${CF[@]}" -o "$D/build/tests/test_crouch" "$D/tests/test_crouch.c" "$D/somvr_crouch.c" -lm # build 13: crouch by ducking
 "$D/build/tests/test_crouch"
 gcc "${CF[@]}" -o "$D/build/tests/test_vision" "$D/tests/test_vision.c" "$D/somvr_vision.c" "$D/somvr_session.c" \

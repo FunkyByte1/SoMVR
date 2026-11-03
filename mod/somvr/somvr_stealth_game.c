@@ -133,7 +133,7 @@ static struct {
 	float stk_fx_P[3];
 	char stk_fx_what[40];
 	uint64_t touches, alerts, airs, sticks, stk_outs, stk_tears, stk_falls, stk_cancels, stk_frames, stk_rumbles, blood_made,
-		blood_fail, by[4], keep_ticks, carried;
+		blood_fail, by[5], keep_ticks, carried;
 	double carried_t;
 	/* build 22: the controller's own blade (g_cb.hand) against Talion's root, this combat frame [0] and the last [1] -
 	 * the hand's own motion (the walk moves both; the drawn sword's bone grip sways with the body) */
@@ -800,9 +800,16 @@ static uintptr_t stl_rec(void)
  * 2 (build 21) = taken with no damage (a touch behind an unaware orc, its capsule only, the blade stuck in it) */
 /* the stealth kill's hit: the stock silent stealth kill's record dealt with forceKill at the contact; the direction the
  * blade's (or Talion -> the orc); SOMVR_COMBAT_DEATH's type. death = how it falls (the words) */
-static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, const somvr_blade *b, const float *root,
-		     uintptr_t rec, int fk, char *death, size_t dcap)
+static int stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, const somvr_blade *b, const float *root,
+		    uintptr_t rec, int fk, char *death, size_t dcap)
 {
+	/* build 31 (SOMVR_KILLS): the orc plays its half of the silent kill the blow picks (the Sneak_IK rows), the death at
+	 * its moment; 1 = taken (no hit here). A captain is never taken (his rules: the caller's fk) */
+	float bax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+	if (fk > 0 && kl_take(pc, o, 0, rec, 1, ct->point, b->vel_tip, bax, SOMVR_KL_UNAWARE, "the stealth kill", cb_now())) {
+		snprintf(death, dcap, "the victim's half, then SOMVR_COMBAT_DEATH's type (SOMVR_KILLS)");
+		return 1;
+	}
 	float vv = sqrtf(b->vel_tip[0] * b->vel_tip[0] + b->vel_tip[1] * b->vel_tip[1] + b->vel_tip[2] * b->vel_tip[2]);
 	float dir[3] = { o->pos[0] - root[0], 0, o->pos[2] - root[2] }, hd0[3];
 	if (vv > 1.0f)
@@ -835,6 +842,7 @@ static void stl_deal(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct,
 	kx_hit_back(dslot, dwas);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
 	*(volatile unsigned char *)(pc + C_HITONCE) = once;
+	return 0;
 }
 
 /* ---- build 21 (SOMVR_STEALTH_KILL_THRUST, _STICK, _BLOOD; docs/re-xr-pipeline.md 84) ------------------------------- */
@@ -1179,6 +1187,8 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 {
 	if (!g_stl.mode || !root || !pc)
 		return 0;
+	if (kl_busy(o->c))
+		return 2; /* build 31, SOMVR_KILLS: its kill plays - nothing more (the sword's and the dagger's) */
 	if (g_vb.hand.phase == SOMVR_VBH_GRAB && g_vb.held_c == o->c && g_stl.killed_c == o->c)
 		return 1;
 	if (g_stl.stk.on && o->c == g_stl.stk_c)
@@ -1353,11 +1363,13 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 		memcpy(cE.point, E, sizeof cE.point); /* build 21: the hit at the wound (on its body), not combat's capsule */
 	struct kp_floor kf; /* build 22: a captain not vulnerable to it survives it */
 	kp_floor_on(o->c, fk, "the stealth kill", t, &kf);
-	stl_deal(pc, o, &cE, b, root, rec, fk, death, sizeof death);
+	int klt = stl_deal(pc, o, &cE, b, root, rec, fk, death, sizeof death);
 	kp_floor_off(&kf);
-	int dead1 = cb_dead(o->c);
+	int dead1 = klt || cb_dead(o->c); /* build 31: SOMVR_KILLS took it (the death at its moment) */
 	float hp1 = cb_health(o->c);
-	if (dead1 && !dead0)
+	if (dead1 && !dead0 && klt)
+		g_stl.kills++; /* (SOMVR_KILLS counts its kill at the death) */
+	else if (dead1 && !dead0)
 		g_stl.kills++, CB_COUNT(kills);
 	else
 		g_stl.not_killed++;
@@ -1455,10 +1467,15 @@ static int stl_ask_kill(uintptr_t pc, const struct cb_orc *o, const sc_contact *
 	return 1;
 }
 
+static int h31_held_blow(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier, const somvr_blade *b,
+			 const float *root, double t); /* build 31, somvr_hands31_game.c: the orc the left hand holds */
 static int stl_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, int tier,
 		       const somvr_blade *b, const float *root, double t)
 {
 	(void)pcomb;
+	int hb = h31_held_blow(pc, o, ct, tier, b, root, t); /* build 31 (SOMVR_HOLD31): any blow on the held orc kills */
+	if (hb)
+		return hb;
 	if (stl_ask_kill(pc, o, ct, tier, b, root, t))
 		return 1;
 	return stl_strike(pc, o, ct, tier, b, &g_cb.sp, SOMVR_HAND_R, root, t);
@@ -1665,6 +1682,7 @@ static void stl_start(int *bad)
 	g_stl.cfg.depth_cm = env_float("SOMVR_STEALTH_KILL_DEPTH_CM", g_stl.cfg.depth_cm, 1, 60, bad);
 	g_stl.cfg.grab_depth_cm = env_float("SOMVR_STEALTH_KILL_GRAB_DEPTH_CM", g_stl.cfg.grab_depth_cm, 1, 60, bad);
 	g_stl.cfg.grace_s = env_float("SOMVR_STEALTH_KILL_GRACE_MS", 300, 0, 2000, bad) * 1e-3f;
+	g_stl.cfg.slash = env_word("SOMVR_STEALTH_KILL_SLASH", onoff, 2, 0); /* build 31 (docs 133.6) */
 	g_stl.stick_on = env_word("SOMVR_STEALTH_KILL_STICK", onoff, 2, 0);
 	g_stl.kcfg.tear_cm = env_float("SOMVR_STEALTH_KILL_STICK_TEAR_CM", 25, 5, 80, bad);
 	g_stl.kcfg.guard_cm = 12.0f;

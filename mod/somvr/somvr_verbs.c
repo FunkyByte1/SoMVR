@@ -10,6 +10,7 @@ void somvr_vb_cfg_default(somvr_vb_cfg *c)
     c->reach_cm = 45, c->cone_deg = 25, c->out_cm = 35, c->far_cm = 170;
     c->grip_on = 0.7f, c->grip_off = 0.35f, c->trig_on = 0.6f, c->trig_off = 0.4f;
     c->ask_cm = 35, c->ask_s = 0.25f, c->hold_max_s = 6, c->cool_s = 0.4f;
+    c->fist_s = 0, c->grab_max_s = 0, c->ask_low_cm = 0; /* build 31: off here (build 30); somvr_verbs_game.c sets SOMVR_VERBS_FIST_S, _GRAB_MAX_S */
 }
 
 const char *somvr_vb_event_name(int e)
@@ -204,22 +205,30 @@ void somvr_vb_hand_step(somvr_vb_hand *s, const somvr_vb_cfg *c, const somvr_vb_
         return;
     }
     if (s->phase == SOMVR_VBH_GRAB) {
-        if (!s->closed) {
+        int cap = c->grab_max_s > 0 && in->t - s->t0 >= c->grab_max_s;
+        if (!s->closed || in->let_go || cap) {
             o->event = SOMVR_VBE_RELEASE, o->held_s = (float)(in->t - s->t0);
+            o->why = !s->closed ? SOMVR_VBR_OPEN : in->let_go ? SOMVR_VBR_PUSH : SOMVR_VBR_MAX;
             to_idle(s, in->t);
             return;
         }
         o->grab = 1, o->orc = s->orc;
         if (!s->trig)
             s->b = s->b_done = 0;
+        else if (tedge && !s->b_done && c->fist_s > 0 && in->t - s->t0 < c->fist_s)
+            s->b_done = 1, o->fist = 1; /* build 31: the fist closing after the grip: counts from its next press */
         else if (tedge && !s->b_done)
             s->b = 1, s->tb = in->t, o->event = SOMVR_VBE_WRAITH;
         wraith_b(s, c, in, o);
+        if (in->no_ask)
+            s->near_t = -1; /* build 31: the blade busy - the pull starts over */
         /* the pull to the face: the interrogation, once per grab */
-        if (in->have_eye && in->have_palm && fin3(in->eye) && fin3(in->palm) && !s->asked) {
+        if (in->have_eye && in->have_palm && fin3(in->eye) && fin3(in->palm) && !s->asked && !in->no_ask) {
             float de = d3(in->palm, in->eye);
             if (de >= c->ask_cm + 10) {
                 s->far_seen = 1, s->near_t = -1;
+            } else if (de <= c->ask_cm && s->far_seen && c->ask_low_cm > 0 && in->eye[1] - in->palm[1] > c->ask_low_cm) {
+                s->near_t = -1; /* build 31: at the chest, under the face - no pull */
             } else if (de <= c->ask_cm && s->far_seen) {
                 if (s->near_t < 0)
                     s->near_t = in->t;

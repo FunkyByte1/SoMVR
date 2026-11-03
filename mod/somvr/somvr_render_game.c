@@ -23,6 +23,10 @@
  *             with the eye's camera: H2 ra 0x2d7a743) and return 1 - return 1 at once while H4's eye calls run. A
  *             screen-fixed sprite in each eye sits at the eye's infinity, a smear in the face; Talion's hurt stays
  *             SOMVR_HURT's red flash on the view's edges.
+ *   stars     build 31 (re-xr-pipeline.md 137): the flare sprites (CFlareSpriteRender::vf_04, slot 4 of 0x3b5bc20,
+ *             0x2d6a110) return at once. The sun's disc and star are one flare sprite in the sky's scene: this takes
+ *             the sun out of the sky. Only by name (`all` stays the five above); SOMVR_FX_BILLBOARD=eye makes the sun
+ *             right in VR instead (world-locked, below).
  *   Already off in every VR build (SOMVR_COMFORT=1's pokes): motion blur, depth of field, the camera shake. Not in
  *   this build at all (re-ui-effects.md 3.2): chromatic aberration, film grain, lens dirt, screen-space reflections.
  * SOMVR_FX_TEST=1 (headless tests only, never in a player's build): the draws of the other four ClientFX renderers get
@@ -56,6 +60,10 @@
  * Build 28 (re-xr-pipeline.md 126): SOMVR_FX_NEAR_MEM=shadow|direct (code default shadow; word "fxnear mem M") - the
  *   fold's vertices: shadow = the game writes them into our cached copy, folded there and copied once into its mapping
  *   at the unmap; direct = build 27's fold in the mapping itself (uncached: ~50 us a particle, the measured "before").
+ * Build 31 (re-xr-pipeline.md 137): SOMVR_FX_BILLBOARD=eye|game (code default game; word "fxbill eye|game|state") - in
+ *   the eyes the game's camera-facing particles, sprites and flare sprites turned to face the eye's position with the
+ *   world's up (their look no longer swings or rolls with the head; the block below rd_near's). SOMVR_FX_TEST adds
+ *   `fx nofog 0|1` (the fog overlay skipped in the eyes: RD_FOG) and `fx fsprobe N` (FXFSPROBE lines: the flare sprites).
  * Trigger words: "flatfx LIST|all|game|state" (live; the hooks must be in: boot with a part on or SOMVR_FX_TEST=1),
  * "fx hide MASK", "fx eyesame 0|1", "fx console CMD", "fx state". Lines: CONFIG flatfx=..; FLATFX t=.. (the word; the
  * game's own vignette or box blur seen: the first 8 of each); FLATFX state|END. Fail soft: a site mismatch = that part
@@ -74,7 +82,9 @@
  * (re-xr-pipeline.md 96): SOMVR_KTIME's K_ENTRY RD_KT_UPLOAD (FUN_00750080, a shader constant's upload: called) and the
  * read-only K_CALL RD_KT_LATE (RenderScene's call 0x7d7030, its context the k_fTime := k_fRealTime write after it); build
  * 24 (re-xr-pipeline.md 100): `overlay`'s patched K_VSLOTs RD_OVERLAY (COverlayFX::vf_18; its context slots 14..18) and
- * RD_OVERLAY_IF (its IClientFXOverlay vtable's slot 3; the context slots 0..3)) */
+ * RD_OVERLAY_IF (its IClientFXOverlay vtable's slot 3; the context slots 0..3); build 31 (re-xr-pipeline.md 137):
+ * SOMVR_FX_TEST's patched K_CALL RD_FOG (the deferred pipeline FUN_007d6e20's call of the fog overlay FUN_007e6820,
+ * `fx nofog`: a measurement, never for play)) */
 static const struct site_spec g_rd_sites_game[] = {
 SITE("RD_LENSFLARE", K_VSLOT, 0x3b5de78, 0x3b5de58, "30 0a d7 02 00 00 00 00 70 0a d7 02 00 00 00 00 20 0a d7 02 00 00 00 00 b0 0a d7 02 00 00 00 00 70 f1 d6 02 00 00 00 00", 0x2d6f170, "41 57 41 56 41 55 41 54 55 53 48 81 ec 98 00"),
 SITE("RD_SHAFTS", K_CALL, 0x7a2541, 0x7a2530, "8b 03 f3 0f 10 43 08 48 89 04 24 f3 0f 11 44 24 08 e8 2a fa ff ff", 0x7a1f70, "53 66 0f ef c9 48 89 fb 48 83 ec 10 f3 0f 10"),
@@ -94,19 +104,20 @@ SITE("RD_KT_UPLOAD", K_ENTRY, 0x750080, 0x750080, "55 0f b7 ff 53 48 8d 3c 7f 48
 SITE("RD_KT_LATE", K_CALL, 0x7d7030, 0x7d7030, "e8 0b cb f6 ff 80 7c 24 26 00 0f 84 07 01 00 00 b8 80 54 62 04 48 3d 20 54 62 04 74 2d f3 0f 10 05 0b e4 e4 03 0f b7 3d 2c e4 e4 03 f3 0f 11 05 5c e4 e4 03", 0x743b40, "c3 66 2e 0f 1f 84 00 00 00 00 00 0f 1f 44 00"),
 SITE("RD_OVERLAY", K_VSLOT, 0x3b624f8, 0x3b624d8, "60 37 65 02 00 00 00 00 70 37 65 02 00 00 00 00 80 37 65 02 00 00 00 00 d0 a6 d7 02 00 00 00 00 10 af d7 02 00 00 00 00", 0x2d7af10, "48 83 bf c0 00 00 00 00 74 26 80 bf e8 00 00"),
 SITE("RD_OVERLAY_IF", K_VSLOT, 0x3b62530, 0x3b62518, "50 b1 d7 02 00 00 00 00 80 b1 d7 02 00 00 00 00 10 b0 d7 02 00 00 00 00 40 b0 d7 02 00 00 00 00", 0x2d7b040, "48 83 7f 10 00 74 29 80 7f 38 00 74 23 48 83"),
+SITE("RD_FOG", K_CALL, 0x7d75fe, 0x7d75ec, "80 7c 24 27 01 4c 89 ef 48 89 de 19 d2 f7 d2 83 e2 02 e8 1d f2 00 00", 0x7e6820, "53 48 8b 3d 18 65 e4 03 83 fa 01 75 43 e8 be"),
 };
 /* RENDER_SITES_END */
 static const struct site_spec *g_rd_sites = g_rd_sites_game; /* selftest: stand-ins */
 
 enum { RDS_LENSFLARE, RDS_SHAFTS, RDS_RAIN, RDS_PSYS, RDS_GPUPSYS, RDS_SPRITE, RDS_FLARESPR, RDS_PSYS_UPD, RDS_PSYS_PREP,
        RDS_VIS_INIT, RDS_VIS_REQ, RDS_BRT_A, RDS_BRT_B, RDS_CF_MAKE, RDS_KT_UPLOAD, RDS_KT_LATE, RDS_OVERLAY,
-       RDS_OVERLAY_IF, RDS_N };
+       RDS_OVERLAY_IF, RDS_FOG, RDS_N };
 _Static_assert(sizeof g_rd_sites_game / sizeof g_rd_sites_game[0] == RDS_N, "render sites");
 /* the SOMVR_FLATFX parts (bits) */
 enum { RDF_FLARES = 1u << 0, RDF_SHAFTS = 1u << 1, RDF_VIGNETTE = 1u << 2, RDF_RAIN = 1u << 3, RDF_OVERLAY = 1u << 4,
-       RDF_ALL = 31u };
-#define RD_NPARTS 5
-static const char *const g_rd_part_w[RD_NPARTS] = { "flares", "shafts", "vignette", "rain", "overlay" };
+       RDF_STARS = 1u << 5, RDF_ALL = 31u /* (build 31: `all` = the five above; `stars` only by name - it is the sun) */ };
+#define RD_NPARTS 6
+static const char *const g_rd_part_w[RD_NPARTS] = { "flares", "shafts", "vignette", "rain", "overlay", "stars" };
 /* the draws with a pass-through (index into g_rd.orig; bit i of `fx hide`): CPU particles, GPU particles, sprites, flare
  * sprites, lens flares */
 enum { RDD_PSYS, RDD_GPUPSYS, RDD_SPRITE, RDD_FLARESPR, RDD_LENSFLARE, RDD_N };
@@ -1056,6 +1067,8 @@ static inline int rd_skip(int n)
 {
 	if (n == RDD_LENSFLARE && (atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_FLARES))
 		return 1;
+	if (n == RDD_FLARESPR && (atomic_load_explicit(&g_rd.off, memory_order_relaxed) & RDF_STARS))
+		return 1; /* build 31: the sun's star (re-xr-pipeline.md 137) */
 	if (!(atomic_load_explicit(&g_rd.hide, memory_order_relaxed) & (1u << n)))
 		return 0;
 	int e = atomic_load_explicit(&g_rcf.hide_eye, memory_order_relaxed);
@@ -1329,9 +1342,138 @@ static struct {
 	_Atomic uint64_t draws, quads, folded, shrunk, skipped, nearest_draws, copies, copied, nomem;
 	_Atomic uint32_t lines;
 	int hooked;
+	int kind;                   /* render thread: the draw in progress - 0 CPU particles, 1 sprites, 2 flare sprites */
 } g_fn = { .eye = -1, .r0 = 15.0f, .r1 = 30.0f };
 
+/* ---- build 31 (re-xr-pipeline.md 137): SOMVR_FX_BILLBOARD=eye|game - the game's camera-facing quads world-locked ----
+ * The game turns every camera-facing particle and sprite to the view's own axes: its quad lies in the view's plane, its
+ * "up" is the view's up (the quaternion's X and Y; CParticleSystemRender::vf_04 for the CPU particles, FUN_02db39f0 for
+ * the sprites and the flare sprites with props+0xb0 set). On a flat screen the camera turns slowly and never rolls; in
+ * the headset every head turn swings every such card about its middle - a big mist card's edge, where it fades into
+ * the ground, sweeps across the valley as the head turns, and a roll of the head rolls them all. eye: in the eyes'
+ * passes each quad whose plane is the view's (its normal within 1.8 deg of the view's forward axis; any other quad - an
+ * emitter's own orientation, an axis-locked one - is the game's) is turned to face the eye's position with the world's
+ * up (Y): a card's look then depends on where the eye is, never on where it looks. The corners keep their place in the
+ * card (each corner's right / up / forward parts carried over), the vertices' three vectors (+24, +36, +48: the
+ * normal and the tangents the game lights them with) turn with it. The same 60-byte vertices and the same proxy on the
+ * render context (a[4]: map slot 9, unmap slot 10) as SOMVR_FX_NEAR's fold: the CPU particles' draw (RD_PSYS), the
+ * sprites' (RD_SPRITE) and the flare sprites' (RD_FLARESPR, when the `stars` part leaves them drawn) - the cached copy
+ * at the map (shadow), turned there, copied once. The game's vertices are in the world or in the emitter's space (the
+ * view's axes and the world's up taken into that space). Lines: CONFIG fx_billboard=..; FXBILL t=.. (the first 12
+ * draws with a quad turned, then every 5000th); FXBILL state|END. Word: "fxbill eye|game|state". */
+static struct {
+	_Atomic int on;
+	int hooked;                 /* the draws through the proxy */
+	_Atomic uint64_t draws[3], quads[3], turned[3], kept[3], local[3];
+	_Atomic uint32_t lines;
+	float min_cos;              /* render thread: the largest turn seen (its cosine) */
+} g_rbb = { .min_cos = 1.0f };
+static int rd_bill_now(void)
+{
+	int e = g_rt_eye;
+	return atomic_load_explicit(&g_rbb.on, memory_order_relaxed) && e >= 0 && e <= 1;
+}
+/* v by the quaternion q (x, y, z, w) - or by its inverse (inv) - into o (o may be v) */
+static void rd_qrot(const float *q, const float *v, int inv, float *o)
+{
+	float ux = inv ? -q[0] : q[0], uy = inv ? -q[1] : q[1], uz = inv ? -q[2] : q[2], w = q[3];
+	float tx = 2 * (uy * v[2] - uz * v[1]), ty = 2 * (uz * v[0] - ux * v[2]), tz = 2 * (ux * v[1] - uy * v[0]);
+	float r0 = v[0] + w * tx + (uy * tz - uz * ty), r1 = v[1] + w * ty + (uz * tx - ux * tz),
+	      r2 = v[2] + w * tz + (ux * ty - uy * tx);
+	o[0] = r0, o[1] = r1, o[2] = r2;
+}
+static inline float rd_dot(const float *a, const float *b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+static inline void rd_cross(const float *a, const float *b, float *o)
+{
+	float x = a[1] * b[2] - a[2] * b[1], y = a[2] * b[0] - a[0] * b[2], z = a[0] * b[1] - a[1] * b[0];
+	o[0] = x, o[1] = y, o[2] = z;
+}
+/* the turn over the draw's nq quads (render thread, from the fold): e = the eye in the vertices' space, em = the
+ * emitter's transform (local: the vertices in its space), eye = the eye's transform (its quaternion: the view's axes) */
+static void rd_bill(unsigned char *v, uint32_t nq, const float *em, const float *eye, int local, const float *e, int kind)
+{
+	static const float X[3] = { 1, 0, 0 }, Y[3] = { 0, 1, 0 }, Z[3] = { 0, 0, 1 };
+	float R[3], U[3], F[3], up[3] = { 0, 1, 0 };
+	rd_qrot(eye + 3, X, 0, R), rd_qrot(eye + 3, Y, 0, U), rd_qrot(eye + 3, Z, 0, F);
+	if (local) {
+		rd_qrot(em + 3, R, 1, R), rd_qrot(em + 3, U, 1, U), rd_qrot(em + 3, F, 1, F), rd_qrot(em + 3, Y, 1, up);
+		atomic_fetch_add_explicit(&g_rbb.local[kind], 1, memory_order_relaxed);
+	}
+	uint32_t turned = 0, kept = 0;
+	float minc = 1.0f;
+	for (uint32_t k = 0; k < nq; k++) {
+		unsigned char *q = v + (size_t)k * 240;
+		if (memcmp(q + 12, q + 72, 4) || memcmp(q + 12, q + 132, 4) || memcmp(q + 12, q + 192, 4))
+			continue; /* (not one quad's four corners: left alone) */
+		float *c[4] = { (float *)q, (float *)(q + 60), (float *)(q + 120), (float *)(q + 180) };
+		float m[3], e1[3], e2[3], n[3];
+		for (int i = 0; i < 3; i++)
+			m[i] = 0.25f * (c[0][i] + c[1][i] + c[2][i] + c[3][i]), e1[i] = c[1][i] - c[0][i], e2[i] = c[2][i] - c[0][i];
+		rd_cross(e1, e2, n);
+		float nl = sqrtf(rd_dot(n, n));
+		if (!(nl > 1e-9f) || fabsf(rd_dot(n, F)) < 0.9995f * nl) {
+			kept++; /* (degenerate, or not in the view's plane: the emitter's own orientation - the game's) */
+			continue;
+		}
+		float F2[3] = { m[0] - e[0], m[1] - e[1], m[2] - e[2] }, dl = sqrtf(rd_dot(F2, F2)), R2[3], U2[3];
+		if (!(dl > 1e-3f))
+			continue;
+		for (int i = 0; i < 3; i++)
+			F2[i] /= dl;
+		float fu = rd_dot(F2, up);
+		if (fabsf(fu) > 0.9995f) { /* straight above or below the eye: the view's right, flattened onto the card */
+			float rf = rd_dot(R, F2);
+			for (int i = 0; i < 3; i++)
+				R2[i] = R[i] - rf * F2[i];
+		} else
+			rd_cross(up, F2, R2);
+		float rl = sqrtf(rd_dot(R2, R2));
+		if (!(rl > 1e-6f))
+			continue;
+		for (int i = 0; i < 3; i++)
+			R2[i] /= rl;
+		rd_cross(F2, R2, U2);
+		float cf = rd_dot(F, F2);
+		if (cf < minc)
+			minc = cf;
+		for (int j = 0; j < 4; j++) {
+			float o[3] = { c[j][0] - m[0], c[j][1] - m[1], c[j][2] - m[2] };
+			float pr = rd_dot(o, R), pu = rd_dot(o, U), pf = rd_dot(o, F);
+			for (int i = 0; i < 3; i++)
+				c[j][i] = m[i] + pr * R2[i] + pu * U2[i] + pf * F2[i];
+			for (int t = 0; t < 3; t++) { /* the vertex's normal and tangents (unit vectors: else not touched) */
+				float *w = c[j] + 6 + 3 * t, l2 = rd_dot(w, w);
+				if (l2 < 0.8f || l2 > 1.2f)
+					continue;
+				float wr = rd_dot(w, R), wu = rd_dot(w, U), wf = rd_dot(w, F);
+				for (int i = 0; i < 3; i++)
+					w[i] = wr * R2[i] + wu * U2[i] + wf * F2[i];
+			}
+		}
+		turned++;
+	}
+	atomic_fetch_add_explicit(&g_rbb.draws[kind], 1, memory_order_relaxed);
+	atomic_fetch_add_explicit(&g_rbb.quads[kind], nq, memory_order_relaxed);
+	atomic_fetch_add_explicit(&g_rbb.kept[kind], kept, memory_order_relaxed);
+	if (!turned)
+		return;
+	uint64_t t0 = atomic_fetch_add_explicit(&g_rbb.turned[kind], turned, memory_order_relaxed);
+	if (minc < g_rbb.min_cos)
+		g_rbb.min_cos = minc;
+	static _Atomic uint64_t nd;
+	uint64_t k = atomic_fetch_add_explicit(&nd, 1, memory_order_relaxed);
+	(void)t0;
+	if ((k < 12 || k % 5000 == 0) && atomic_fetch_add(&g_rbb.lines, 1) < 200)
+		logf_("FXBILL t=%.3f eye %d: %s at %.0f cm (%s space): %u of its %u quads turned to face the eye (the most by %.1f "
+		      "deg), %u not in the view's plane (the game's) (draw %llu with a turn)", mono(), g_rt_eye,
+		      kind == 0 ? "CPU particles" : kind == 1 ? "a sprite" : "a flare sprite",
+		      sqrtf((em[0] - eye[0]) * (em[0] - eye[0]) + (em[1] - eye[1]) * (em[1] - eye[1]) + (em[2] - eye[2]) * (em[2] - eye[2])),
+		      local ? "its own" : "world", turned, nq, acosf(minc > 1.0f ? 1.0f : minc) * 57.29578f, kept,
+		      (unsigned long long)k + 1);
+}
+
 static void rd_near_state(const char *head);
+static void rd_bill_state(const char *head);
 static int rd_near_now(void)
 {
 	int e = g_rt_eye, only = atomic_load_explicit(&g_fn.eye, memory_order_relaxed);
@@ -1374,13 +1516,16 @@ static void rd_near_fold(unsigned char *v)
 	if (!a || !v || !a[0] || !a[1])
 		return;
 	g_fn.a = NULL; /* (once a draw) */
+	int kind = g_fn.kind < 0 || g_fn.kind > 2 ? 0 : g_fn.kind, fold = kind == 0 && rd_near_now(), bill = rd_bill_now();
 	int64_t n = (int64_t)g_px.req < (int64_t)g_px.granted ? (int64_t)g_px.req : (int64_t)g_px.granted;
 	n &= ~(int64_t)3;
-	if (n < 4 || n > 65536)
+	if (n < 4 || n > 65536 || (!fold && !bill))
 		return;
-	atomic_fetch_add_explicit(&g_fn.draws, 1, memory_order_relaxed);
+	if (fold)
+		atomic_fetch_add_explicit(&g_fn.draws, 1, memory_order_relaxed);
 	if (memcmp(v + 12, v + 72, 4) || memcmp(v + 12, v + 132, 4) || memcmp(v + 12, v + 192, 4)) {
-		atomic_fetch_add_explicit(&g_fn.skipped, 1, memory_order_relaxed);
+		if (fold)
+			atomic_fetch_add_explicit(&g_fn.skipped, 1, memory_order_relaxed);
 		return;
 	}
 	const float *em = (const float *)a[0], *eye = (const float *)a[1], *p0 = (const float *)v;
@@ -1396,8 +1541,12 @@ static void rd_near_fold(unsigned char *v)
 		e[1] = 2 * dot * uy + (w * w - uu) * d[1] + 2 * w * cy;
 		e[2] = 2 * dot * uz + (w * w - uu) * d[2] + 2 * w * cz;
 	}
+	if (bill) /* build 31: SOMVR_FX_BILLBOARD - the camera-facing quads turned to face the eye (before the fold) */
+		rd_bill(v, (uint32_t)(n / 4), em, eye, local, e, kind);
+	if (!fold)
+		return;
 	float r0 = g_fn.r0, r1 = g_fn.r1, near = 1e9f;
-	uint32_t fold = 0, shr = 0, nq = (uint32_t)(n / 4);
+	uint32_t nfold = 0, shr = 0, nq = (uint32_t)(n / 4);
 	for (uint32_t k = 0; k < nq; k++) {
 		unsigned char *q = v + (size_t)k * 240;
 		if (memcmp(q + 12, q + 72, 4) || memcmp(q + 12, q + 132, 4) || memcmp(q + 12, q + 192, 4))
@@ -1417,20 +1566,20 @@ static void rd_near_fold(unsigned char *v)
 			for (int i = 0; i < 3; i++)
 				cs[j][i] = m[i] + (cs[j][i] - m[i]) * f;
 		if (f == 0.0f)
-			fold++;
+			nfold++;
 		else
 			shr++;
 	}
 	atomic_fetch_add_explicit(&g_fn.quads, nq, memory_order_relaxed);
-	if (fold || shr) {
-		atomic_fetch_add_explicit(&g_fn.folded, fold, memory_order_relaxed);
+	if (nfold || shr) {
+		atomic_fetch_add_explicit(&g_fn.folded, nfold, memory_order_relaxed);
 		atomic_fetch_add_explicit(&g_fn.shrunk, shr, memory_order_relaxed);
 		uint64_t k = atomic_fetch_add_explicit(&g_fn.nearest_draws, 1, memory_order_relaxed);
 		if ((k < 16 || k % 2000 == 0) && atomic_fetch_add(&g_fn.lines, 1) < 200)
 			logf_("FXNEAR t=%.3f eye %d: a CPU emitter at %.0f cm (%s space): %u of its %u particles folded (nearer than %.0f "
 			      "cm), %u shrunk (to %.0f cm), the nearest %.1f cm from the eye (draw %llu with the fold)", mono(), g_rt_eye,
 			      sqrtf((em[0] - eye[0]) * (em[0] - eye[0]) + (em[1] - eye[1]) * (em[1] - eye[1]) +
-				    (em[2] - eye[2]) * (em[2] - eye[2])), local ? "its own" : "world", fold, nq, (double)r0, shr,
+				    (em[2] - eye[2]) * (em[2] - eye[2])), local ? "its own" : "world", nfold, nq, (double)r0, shr,
 			      (double)r1, (double)near, (unsigned long long)k + 1);
 	}
 }
@@ -1477,18 +1626,19 @@ static void rd_near_vt(void)
 	memcpy(g_pxn_vt, plain, sizeof plain);
 	g_pxn_vt[9] = (void *)rd_px_map, g_pxn_vt[10] = (void *)somvr_rd_pxu10;
 }
-/* CPU particles' draw with the fold (outside SOMVR_FX_TEST) */
-static void rd_draw0_near(void *self, void **a)
+/* a draw (N: CPU particles, sprites, flare sprites) through the proxy: SOMVR_FX_NEAR's fold (CPU particles only) and
+ * build 31's SOMVR_FX_BILLBOARD turn at the unmap (outside SOMVR_FX_TEST; the sprites' and flare sprites' also in it) */
+static void rd_draw_px(void *self, void **a, int d)
 {
 	if (!a || !a[4] || !a[0] || !a[1]) {
-		((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
+		((rd_draw_fn)g_rd.orig[d])(self, a);
 		return;
 	}
 	void *px[2] = { g_pxn_vt, a[4] }, *real = a[4];
 	g_px.ptr = NULL, g_px.granted = g_px.req = 0;
-	g_fn.a = a, g_fn.sh_real = NULL;
+	g_fn.a = a, g_fn.sh_real = NULL, g_fn.kind = d == RDD_PSYS ? 0 : d == RDD_SPRITE ? 1 : 2;
 	a[4] = px;
-	((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
+	((rd_draw_fn)g_rd.orig[d])(self, a);
 	a[4] = real;
 	g_fn.a = NULL;
 }
@@ -1572,7 +1722,8 @@ static void rd_draw0_full(void *self, void **a)
 	void *px[2] = { vp ? g_pxc_vt : g_px_vt, a[4] }, *real = a[4];
 	memset(&g_px, 0, sizeof g_px);
 	somvr_px_seqn = 0;
-	g_fn.a = rd_near_now() ? a : NULL, g_fn.sh_real = NULL; /* build 27: SOMVR_FX_NEAR's fold at the unmap */
+	g_fn.a = rd_near_now() || rd_bill_now() ? a : NULL, g_fn.sh_real = NULL, g_fn.kind = 0; /* build 27: SOMVR_FX_NEAR's
+	fold at the unmap; build 31: SOMVR_FX_BILLBOARD's turn */
 	a[4] = px;
 	((rd_draw_fn)g_rd.orig[RDD_PSYS])(self, a);
 	a[4] = real;
@@ -1628,6 +1779,130 @@ static void rd_prep_record(const unsigned char *blk, uint32_t len, int e, uintpt
 	atomic_store_explicit(&g_rcf.blk[i].key, (uintptr_t)blk, memory_order_release);
 }
 
+/* build 31 (re-xr-pipeline.md 137), SOMVR_FX_TEST's `fx fsprobe N`: the next N flare sprites' draws (one line per props
+ * block, render thread): the sprite's and the camera's transforms (a[0], a[1]: position + quaternion), the distance,
+ * the angle between the view's forward axis and the sprite (CFlareSpriteRender::vf_04's fade: props+0xdc set = by the
+ * view's axis, else by the sprite's own; under props+0xb8's cosine nothing is drawn), the props' facing bytes (+0xb0
+ * the view's axes, +0xb1 locked to an axis, +0xaf two-sided) and floats */
+static _Atomic int g_rd_fsp;
+static void rd_fs_probe(void **a)
+{
+	if (atomic_load_explicit(&g_rd_fsp, memory_order_relaxed) <= 0 || !a || !a[0] || !a[1] || !a[3])
+		return;
+	static uintptr_t seen[64];
+	static int ns;
+	uintptr_t pr = (uintptr_t)a[3];
+	for (int i = 0; i < ns; i++)
+		if (seen[i] == pr)
+			return;
+	if (ns < 64)
+		seen[ns++] = pr;
+	if (atomic_fetch_sub(&g_rd_fsp, 1) <= 0)
+		return;
+	const float *sp = (const float *)a[0], *cam = (const float *)a[1], *in = (const float *)a[2];
+	const unsigned char *p = (const unsigned char *)a[3];
+	static const float Z[3] = { 0, 0, 1 };
+	float d[3] = { sp[0] - cam[0], sp[1] - cam[1], sp[2] - cam[2] }, f[3], g[3];
+	float dl = sqrtf(rd_dot(d, d));
+	rd_qrot(cam + 3, Z, 0, f), rd_qrot(sp + 3, Z, 0, g);
+	float cv = dl > 0 ? rd_dot(f, d) / dl : 0, cs = dl > 0 ? rd_dot(g, d) / dl : 0;
+	logf_("FXFSPROBE t=%.3f eye %d props %#lx: the sprite at %.0f,%.0f,%.0f q %.3f %.3f %.3f %.3f, %.1f m from the camera "
+	      "(%.0f,%.0f,%.0f), %.1f deg off the view's axis (cos %.3f; the sprite's own facing: cos %.3f); props +0xb0 %u (the "
+	      "view's axes) +0xb1 %u (an axis) +0xaf %u (two-sided) +0xb5 %u (near fade) +0xdc %u (fade by the view's axis) "
+	      "+0xde %u; floats +0x98 %.3g +0x9c %.3g +0xb8 %.3g +0xbc %.3g +0xc0 %.3g +0xd0 %.3g +0xd4 %.3g; instance %.3g %.3g "
+	      "%.3g %.3g", mono(), g_rt_eye, (unsigned long)pr, sp[0], sp[1], sp[2], sp[3], sp[4], sp[5], sp[6], dl * 0.01f,
+	      cam[0], cam[1], cam[2], acosf(cv > 1 ? 1 : cv < -1 ? -1 : cv) * 57.29578f, cv, cs, p[0xb0], p[0xb1], p[0xaf],
+	      p[0xb5], p[0xdc], p[0xde], *(const float *)(p + 0x98), *(const float *)(p + 0x9c), *(const float *)(p + 0xb8),
+	      *(const float *)(p + 0xbc), *(const float *)(p + 0xc0), *(const float *)(p + 0xd0), *(const float *)(p + 0xd4),
+	      in ? in[0] : 0, in ? in[1] : 0, in ? in[2] : 0, in ? in[3] : 0);
+}
+/* build 31, SOMVR_FX_BILLBOARD for the flare sprites (the sun): CFlareSpriteRender::vf_04 fades the sprite by the angle
+ * between the camera's forward axis and the sprite (props+0xdc; the sun: under cos 0.259 gone, full only when looked
+ * at) and FUN_02db39f0 lays its quad on the camera's axes (props+0xb0) - the sun's star rolled with the head and dimmed
+ * and brightened as the head turned. The draw gets a camera with the eye's position looking straight at the sprite with
+ * the world's up (a[1] pointed at our copy for the call): the fade is a constant (full: the sun is as bright wherever it
+ * is in the view) and the quad faces the eye with the world's up. q = the quaternion of the axes R, U, F (columns) */
+static void rd_axes_q(const float *R, const float *U, const float *F, float *q)
+{
+	float t = R[0] + U[1] + F[2];
+	if (t > 0) {
+		float k = 2.0f * sqrtf(t + 1.0f);
+		q[3] = 0.25f * k, q[0] = (U[2] - F[1]) / k, q[1] = (F[0] - R[2]) / k, q[2] = (R[1] - U[0]) / k;
+	} else if (R[0] > U[1] && R[0] > F[2]) {
+		float k = 2.0f * sqrtf(1.0f + R[0] - U[1] - F[2]);
+		q[3] = (U[2] - F[1]) / k, q[0] = 0.25f * k, q[1] = (U[0] + R[1]) / k, q[2] = (F[0] + R[2]) / k;
+	} else if (U[1] > F[2]) {
+		float k = 2.0f * sqrtf(1.0f + U[1] - R[0] - F[2]);
+		q[3] = (F[0] - R[2]) / k, q[0] = (U[0] + R[1]) / k, q[1] = 0.25f * k, q[2] = (F[1] + U[2]) / k;
+	} else {
+		float k = 2.0f * sqrtf(1.0f + F[2] - R[0] - U[1]);
+		q[3] = (R[1] - U[0]) / k, q[0] = (F[0] + R[2]) / k, q[1] = (F[1] + U[2]) / k, q[2] = 0.25f * k;
+	}
+}
+/* the look-at camera for a sprite at sp seen from cam (position + quaternion): 0 = straight above or below (none) */
+static int rd_lookat(const float *sp, const float *cam, float *out)
+{
+	static const float Y[3] = { 0, 1, 0 };
+	float F[3] = { sp[0] - cam[0], sp[1] - cam[1], sp[2] - cam[2] }, R[3], U[3], l = sqrtf(rd_dot(F, F));
+	if (!(l > 1e-3f))
+		return 0;
+	for (int i = 0; i < 3; i++)
+		F[i] /= l;
+	if (fabsf(F[1]) > 0.9995f)
+		return 0;
+	rd_cross(Y, F, R);
+	float rl = sqrtf(rd_dot(R, R));
+	for (int i = 0; i < 3; i++)
+		R[i] /= rl;
+	rd_cross(F, R, U);
+	memcpy(out, cam, 3 * sizeof(float));
+	rd_axes_q(R, U, F, out + 3);
+	return 1;
+}
+static void rd_draw_fs(void *self, void **a)
+{
+	float cam2[7];
+	if (!a || !a[0] || !a[1] || !rd_lookat((const float *)a[0], (const float *)a[1], cam2)) {
+		((rd_draw_fn)g_rd.orig[RDD_FLARESPR])(self, a);
+		return;
+	}
+	void *real = a[1];
+	const float *rq = (const float *)real + 3;
+	static const float Z[3] = { 0, 0, 1 };
+	float f0[3], f1[3];
+	rd_qrot(rq, Z, 0, f0), rd_qrot(cam2 + 3, Z, 0, f1);
+	float c = rd_dot(f0, f1);
+	if (c < g_rbb.min_cos)
+		g_rbb.min_cos = c;
+	atomic_fetch_add_explicit(&g_rbb.draws[2], 1, memory_order_relaxed);
+	atomic_fetch_add_explicit(&g_rbb.quads[2], 1, memory_order_relaxed);
+	uint64_t k = atomic_fetch_add_explicit(&g_rbb.turned[2], 1, memory_order_relaxed);
+	if ((k < 6 || k % 20000 == 0) && atomic_fetch_add(&g_rbb.lines, 1) < 200)
+		logf_("FXBILL t=%.3f eye %d: a flare sprite %.0f m away drawn for a camera looking straight at it (the view's axis "
+		      "%.1f deg off it: its fade and its quad's axes no longer the head's) (flare sprite draw %llu)", mono(), g_rt_eye,
+		      0.01f * sqrtf((((const float *)a[0])[0] - cam2[0]) * (((const float *)a[0])[0] - cam2[0]) +
+				    (((const float *)a[0])[1] - cam2[1]) * (((const float *)a[0])[1] - cam2[1]) +
+				    (((const float *)a[0])[2] - cam2[2]) * (((const float *)a[0])[2] - cam2[2])),
+		      acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f, (unsigned long long)k + 1);
+	a[1] = cam2;
+	((rd_draw_fn)g_rd.orig[RDD_FLARESPR])(self, a);
+	a[1] = real;
+}
+
+/* build 31, SOMVR_FX_TEST's `fx nofog 0|1`: RD_FOG - the deferred pipeline's call of the fog overlay FUN_007e6820 (render
+ * thread) skipped in the eyes' passes (a measurement: which part of the picture is the fog's, never for play) */
+static _Atomic int g_rd_nofog;
+static _Atomic uint64_t g_rd_fog_n, g_rd_fog_skip;
+__attribute__((used)) void somvr_w_rdfog(void *a, void *b, int c)
+{
+	atomic_fetch_add_explicit(&g_rd_fog_n, 1, memory_order_relaxed);
+	if (atomic_load_explicit(&g_rd_nofog, memory_order_relaxed) && g_rt_eye >= 0) {
+		atomic_fetch_add_explicit(&g_rd_fog_skip, 1, memory_order_relaxed);
+		return;
+	}
+	((void (*)(void *, void *, int))g_rd_sites[RDS_FOG].target)(a, b, c);
+}
+
 #define RD_DRAW_STUB(N)                                                                                                \
 	__attribute__((used)) void somvr_w_rddraw##N(void *self, void *ctx)                                            \
 	{                                                                                                              \
@@ -1638,10 +1913,14 @@ static void rd_prep_record(const unsigned char *blk, uint32_t len, int e, uintpt
 		}                                                                                                      \
 		int s0 = dc_src;                                                                                       \
 		dc_src = N + 1;                                                                                        \
+		if (N == 3 && g_rd.test)                                                                               \
+			rd_fs_probe((void **)ctx);                                                                     \
 		if (N == 0 && g_rd.test)                                                                               \
 			rd_draw0_full(self, (void **)ctx);                                                             \
-		else if (N == 0 && rd_near_now())                                                                      \
-			rd_draw0_near(self, (void **)ctx);                                                             \
+		else if (N == 3 && rd_bill_now())                                                                      \
+			rd_draw_fs(self, (void **)ctx);                                                                \
+		else if ((N == 0 && rd_near_now()) || ((N == 0 || N == 2) && rd_bill_now()))                           \
+			rd_draw_px(self, (void **)ctx, N);                                                             \
 		else                                                                                                   \
 			((rd_draw_fn)g_rd.orig[N])(self, ctx);                                                         \
 		dc_src = s0;                                                                                           \
@@ -2099,12 +2378,13 @@ static const char *rd_word(const char *w0)
 	if (!strncmp(w, "flatfx ", 7)) {
 		int m = rd_parse(w + 7);
 		if (m < 0)
-			return "flatfx (not game|all|a list of flares,shafts,vignette,rain,overlay: ignored)";
+			return "flatfx (not game|all|a list of flares,shafts,vignette,rain,overlay,stars: ignored)";
 		atomic_store(&g_rd.off, (unsigned)m);
 		char p[64];
 		rd_parts((unsigned)m, p, sizeof p);
-		logf_("FLATFX t=%.3f the word: %s off in the eyes from the next frame%s", cb_now(), p,
-		      (m & RDF_FLARES) && !g_rd.ok[RDS_LENSFLARE] ? " (the lens flares' slot is NOT hooked)" : "");
+		logf_("FLATFX t=%.3f the word: %s off in the eyes from the next frame%s%s", cb_now(), p,
+		      (m & RDF_FLARES) && !g_rd.ok[RDS_LENSFLARE] ? " (the lens flares' slot is NOT hooked)" : "",
+		      (m & RDF_STARS) && !g_rd.ok[RDS_FLARESPR] ? " (the flare sprites' slot is NOT hooked)" : "");
 		return "flatfx (from the next frame)";
 	}
 	if (!strcmp(w, "eyematch state") || !strcmp(w, "eyematch")) {
@@ -2213,6 +2493,32 @@ static const char *rd_word(const char *w0)
 			return "fxnear (not on|off|R0,R1|eye E|mem shadow|mem direct|state: ignored)";
 		rd_near_state("FXNEAR state");
 		return "fxnear";
+	}
+	if (!strncmp(w, "fxbill", 6)) { /* build 31: SOMVR_FX_BILLBOARD live */
+		const char *q = w + 6;
+		while (*q == ' ')
+			q++;
+		if (!g_rbb.hooked && strcmp(q, "state") && *q)
+			return "fxbill (the draws are not hooked: boot with SOMVR_FX_BILLBOARD=eye or SOMVR_FX_TEST=1)";
+		if (!strcmp(q, "eye") || !strcmp(q, "game"))
+			atomic_store(&g_rbb.on, q[0] == 'e');
+		else if (*q && strcmp(q, "state"))
+			return "fxbill (not eye|game|state: ignored)";
+		rd_bill_state("FXBILL state");
+		return "fxbill";
+	}
+	if (sscanf(w, "fx fsprobe %d", &iv) == 1) { /* build 31: the flare sprites (SOMVR_FX_TEST) */
+		atomic_store(&g_rd_fsp, iv < 0 ? 0 : iv > 64 ? 64 : iv);
+		logf_("FLATFX t=%.3f the word: fx fsprobe %d (the next flare sprites' draws, one line per props block%s)", cb_now(),
+		      iv, g_rd.ok[RDS_FLARESPR] && g_rd.test ? "" : " - NOT hooked with the test's pass-through");
+		return "fx fsprobe";
+	}
+	if (sscanf(w, "fx nofog %d", &iv) == 1) { /* build 31: the fog overlay skipped in the eyes (SOMVR_FX_TEST) */
+		atomic_store(&g_rd_nofog, iv != 0);
+		logf_("FLATFX t=%.3f the word: fx nofog %d (the fog overlay %s in the eyes; RD_FOG %s; calls %llu, skipped %llu)",
+		      cb_now(), iv != 0, iv ? "skipped" : "drawn", g_rd.ok[RDS_FOG] ? "hooked" : "NOT hooked",
+		      (unsigned long long)atomic_load(&g_rd_fog_n), (unsigned long long)atomic_load(&g_rd_fog_skip));
+		return "fx nofog";
 	}
 	if (sscanf(w, "fx vprobe %d", &iv) == 1) { /* build 27: the near emitters' vertices (SOMVR_FX_TEST) */
 		atomic_store(&g_rd_vprobe, iv < 0 ? 0 : iv > 200 ? 200 : iv);
@@ -2334,7 +2640,7 @@ static void rd_start(const struct site_spec *sites, int *bad)
 	const char *s = getenv("SOMVR_FLATFX");
 	int m = s ? rd_parse(s) : 0;
 	if (m < 0) {
-		logf_("WARN SOMVR_FLATFX=%s is not game|all|a comma list of flares,shafts,vignette,rain,overlay: game", s);
+		logf_("WARN SOMVR_FLATFX=%s is not game|all|a comma list of flares,shafts,vignette,rain,overlay,stars: game", s);
 		++*bad;
 		m = 0;
 	}
@@ -2367,14 +2673,19 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		}
 	}
 	rd_near_vt();
-	if (!g_rd.want && !g_rd.test && !near) {
+	/* build 31: SOMVR_FX_BILLBOARD (the CPU particles', the sprites' and the flare sprites' draws hooked for it) */
+	int bill = env_word("SOMVR_FX_BILLBOARD", (const char *const[]){ "game", "eye" }, 2, 0);
+	if (!g_rd.want && !g_rd.test && !near && !bill) {
 		logf_("CONFIG fx_near=off (SOMVR_FX_NEAR: the game's CPU particles as it draws them, also at the eyes)");
+		logf_("CONFIG fx_billboard=game (SOMVR_FX_BILLBOARD: the game's camera-facing particles and sprites in the view's "
+		      "plane, turning with the head)");
 		return;
 	}
 	char why[512];
 	for (int i = 0; i < RDS_VIS_INIT; i++) {
-		if (i >= RDS_PSYS && !g_rd.test && (i > RDS_PSYS || !near))
-			break;
+		if (i >= RDS_PSYS && !g_rd.test && !((i == RDS_PSYS && (near || bill)) || (i == RDS_SPRITE && bill) ||
+						     (i == RDS_FLARESPR && (bill || (g_rd.want & RDF_STARS)))))
+			continue;
 		if (check_site(&sites[i], why, sizeof why) != 0) {
 			logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
 			      (unsigned long)sites[i].target, why);
@@ -2408,8 +2719,22 @@ static void rd_start(const struct site_spec *sites, int *bad)
 			g_rd.ok[i] = bo_patch_call(&sites[i], (void *)somvr_w_rdbrt);
 	if (g_rd.test) /* build 23: the D3D11 capture's pass-throughs (`fx d3d N`) */
 		dc_install();
+	if (g_rd.test) { /* build 31: `fx nofog` (a measurement) */
+		if (check_site(&sites[RDS_FOG], why, sizeof why) != 0)
+			logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[RDS_FOG].name, (unsigned long)sites[RDS_FOG].addr,
+			      (unsigned long)sites[RDS_FOG].target, why);
+		else
+			g_rd.ok[RDS_FOG] = bo_patch_call(&sites[RDS_FOG], (void *)somvr_w_rdfog);
+	}
 	g_fn.hooked = g_rd.ok[RDS_PSYS];
 	atomic_store(&g_fn.on, near && g_fn.hooked);
+	g_rbb.hooked = g_rd.ok[RDS_PSYS] && g_rd.ok[RDS_SPRITE] && g_rd.ok[RDS_FLARESPR];
+	atomic_store(&g_rbb.on, bill && g_rbb.hooked);
+	logf_("CONFIG fx_billboard=%s (SOMVR_FX_BILLBOARD: %s)%s", bill ? "eye" : "game",
+	      bill ? "in the eyes the game's camera-facing particles, sprites and flare sprites turned to face the eye's "
+		     "position with the world's up - their look no longer turns or rolls with the head"
+		   : "the game's camera-facing particles and sprites in the view's plane, turning with the head",
+	      bill && !g_rbb.hooked ? " - NOT hooked: the game's" : "");
 	logf_("CONFIG fx_near=%s (SOMVR_FX_NEAR: %s; SOMVR_FX_NEAR_CM %.0f,%.0f; SOMVR_FX_NEAR_MEM %s)%s", near ? "on" : "off",
 	      near ? "in the eyes the game's CPU particles nearer than the first value folded away, up to the second shrunk"
 		   : "the game's CPU particles as it draws them, also at the eyes", (double)g_fn.r0, (double)g_fn.r1,
@@ -2417,13 +2742,15 @@ static void rd_start(const struct site_spec *sites, int *bad)
 					: "shadow: the game writes into our cached copy, folded there, copied once into its mapping",
 	      near && !g_fn.hooked ? " - NOT hooked: the game's" : "");
 	unsigned have = (g_rd.ok[RDS_LENSFLARE] ? RDF_FLARES : 0) | (g_rd.ok[RDS_SHAFTS] ? RDF_SHAFTS : 0) | RDF_VIGNETTE |
-			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0) | (g_rd.ok[RDS_OVERLAY] && g_rd.ok[RDS_OVERLAY_IF] ? RDF_OVERLAY : 0);
+			(g_rd.ok[RDS_RAIN] ? RDF_RAIN : 0) | (g_rd.ok[RDS_OVERLAY] && g_rd.ok[RDS_OVERLAY_IF] ? RDF_OVERLAY : 0) |
+			(g_rd.ok[RDS_FLARESPR] ? RDF_STARS : 0);
 	atomic_store(&g_rd.off, g_rd.want & have);
 	char p[64], q[64];
 	rd_parts(g_rd.want, p, sizeof p);
 	rd_parts(g_rd.want & ~have, q, sizeof q);
 	logf_("CONFIG flatfx=%s (SOMVR_FLATFX: the flat screen's effects off in the eyes - lens flares' draw, the sun shafts' "
-	      "passes, the game's vignette and box blur, the lens drops, the full-screen overlays (blood, low health); motion "
+	      "passes, the game's vignette and box blur, the lens drops, the full-screen overlays (blood, low health), the "
+	      "flare sprites (the sun's star; build 31); motion "
 	      "blur, DoF and the shake were already off)%s%s "
 	      "test=%d (SOMVR_FX_TEST: the particle and sprite draws' pass-through %s)", p, g_rd.want & ~have ? "; NOT hooked: " : "",
 	      g_rd.want & ~have ? q : "", g_rd.test,
@@ -2446,8 +2773,26 @@ static void rd_near_state(const char *head)
 	      (double)atomic_load(&g_fn.copied) / 1e6, (unsigned long long)atomic_load(&g_fn.nomem));
 }
 
+static void rd_bill_state(const char *head)
+{
+	logf_("%s t=%.3f: SOMVR_FX_BILLBOARD %s (%s): draws CPU particles %llu / sprites %llu / flare sprites %llu, their quads "
+	      "%llu / %llu / %llu: turned to face the eye %llu / %llu / %llu, not in the view's plane (the game's) %llu / %llu / "
+	      "%llu; in the emitter's space %llu / %llu / %llu draws; the most turned %.1f deg", head, cb_now(),
+	      atomic_load(&g_rbb.on) ? "eye" : "game", g_rbb.hooked ? "hooked" : "not hooked",
+	      (unsigned long long)atomic_load(&g_rbb.draws[0]), (unsigned long long)atomic_load(&g_rbb.draws[1]),
+	      (unsigned long long)atomic_load(&g_rbb.draws[2]), (unsigned long long)atomic_load(&g_rbb.quads[0]),
+	      (unsigned long long)atomic_load(&g_rbb.quads[1]), (unsigned long long)atomic_load(&g_rbb.quads[2]),
+	      (unsigned long long)atomic_load(&g_rbb.turned[0]), (unsigned long long)atomic_load(&g_rbb.turned[1]),
+	      (unsigned long long)atomic_load(&g_rbb.turned[2]), (unsigned long long)atomic_load(&g_rbb.kept[0]),
+	      (unsigned long long)atomic_load(&g_rbb.kept[1]), (unsigned long long)atomic_load(&g_rbb.kept[2]),
+	      (unsigned long long)atomic_load(&g_rbb.local[0]), (unsigned long long)atomic_load(&g_rbb.local[1]),
+	      (unsigned long long)atomic_load(&g_rbb.local[2]), acosf(g_rbb.min_cos > 1.0f ? 1.0f : g_rbb.min_cos) * 57.29578f);
+}
+
 static void rd_end_log(void)
 {
+	if (g_rbb.hooked)
+		rd_bill_state("FXBILL END");
 	if (g_fn.hooked)
 		rd_near_state("FXNEAR END");
 	em_state("EYEMATCH END");

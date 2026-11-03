@@ -397,7 +397,11 @@ static void sfb_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
  * controllers'. */
 static void swl_arm(const sa_xf gg[2], const int gv[2])
 {
-	if (!g_hsm.lock || !g_vh.on || !g_vh.have || !gv[SA_R])
+	/* build 31, SOMVR_SWORD_PHYS: the hand drawn on the hilt where the weighted sword is (its place too), lock or not */
+	sv_vec3 pd = { 0, 0, 0 };
+	float gha = 0;
+	int phys = swp_drawn(&pd, &gha);
+	if (!(g_hsm.lock || phys) || !g_vh.on || !g_vh.have || !gv[SA_R])
 		return;
 	somvr_vrhands_frame *e = &g_vh.e;
 	if (!(e->flags & SOMVR_VHF_R))
@@ -407,12 +411,15 @@ static void swl_arm(const sa_xf gg[2], const int gv[2])
 	swg_qexp(g_hf.b_now, eb);
 	swg_qexp(g_sf.p_now, ep); /* build 20: the blade's turn at a surface (SOMVR_HANDS_SURFACE_BLADE=pivot) */
 	sv_quat R = sv_qnormalize(sv_qmul(sv_quat_of(ep), sv_qmul(sv_quat_of(eb), sv_quat_of(ew))));
-	if (!(fabsf(R.w) < 0.9999999f))
+	if (phys && gha > 0 && !(e->ghost_a[SA_R] > 0)) /* the controller's faint hand while the drawn one is far from it */
+		vh_to_xr(&gg[SA_R], &e->ghost[SA_R]), e->ghost_a[SA_R] = gha;
+	if (!(fabsf(R.w) < 0.9999999f) && !(pd.x * pd.x + pd.y * pd.y + pd.z * pd.z > 1e-6f))
 		return; /* no turn off the controller this frame */
-	sa_xf r = { gg[SA_R].p, sv_qnormalize(sv_qmul(R, sv_qnormalize(gg[SA_R].q))) };
+	sv_vec3 pr = { gg[SA_R].p.x + pd.x, gg[SA_R].p.y + pd.y, gg[SA_R].p.z + pd.z };
+	sa_xf r = { pr, sv_qnormalize(sv_qmul(R, sv_qnormalize(gg[SA_R].q))) };
 	vh_to_xr(&r, &e->grip[SA_R]);
 	if (g_bd.two.w > 0 && gv[SA_L] && (e->flags & SOMVR_VHF_L)) {
-		sv_vec3 pr = gg[SA_R].p, d = { gg[SA_L].p.x - pr.x, gg[SA_L].p.y - pr.y, gg[SA_L].p.z - pr.z }, dr = sv_qrot(R, d);
+		sv_vec3 d = { gg[SA_L].p.x - gg[SA_R].p.x, gg[SA_L].p.y - gg[SA_R].p.y, gg[SA_L].p.z - gg[SA_R].p.z }, dr = sv_qrot(R, d);
 		sa_xf l = { { pr.x + dr.x, pr.y + dr.y, pr.z + dr.z }, sv_qnormalize(sv_qmul(R, sv_qnormalize(gg[SA_L].q))) };
 		vh_to_xr(&l, &e->grip[SA_L]);
 	}
@@ -470,6 +477,8 @@ static int hf_biting(void) { return g_hf.bite && g_hf.st.phase != SWB_IDLE; }
 /* cb_hit, before its haptic: this hit will bite (its own haptic then instead of the hit's) */
 static int hf_will_bite(int kind, int glance, int blk, int call)
 {
+	if (swp_flesh()) /* build 31: the blade meets flesh instead of the bite (a landed cut or stab: somvr_swordphys_game.c) */
+		return call && (kind == SC_KIND_CUT || kind == SC_KIND_TAP || kind == SC_KIND_STAB) && !glance && !blk;
 	return g_hf.bite && call && sc_kind_bites(kind, glance, blk) && g_hf.st.phase == SWB_IDLE && g_hf.d_have &&
 	       cb_now() - g_hf.d_t < HF_FRESH_S;
 }
@@ -516,7 +525,12 @@ static void hf_hit(const struct cb_orc *o, const sc_contact *ct, int kind, int b
 {
 	(void)call;
 	g_hf.hits[kind]++;
-	if (bite) {
+	if (bite && swp_flesh()) { /* build 31: the wound (its own haptics) */
+		if (landed)
+			swp_hit(o, kind == SC_KIND_STAB ? SWP_W_STAB : SWP_W_CUT, t);
+		else
+			in_haptic_event(SOMVR_HAND_R, 1.0f, 0.2f, SOMVR_HAP_COMBAT);
+	} else if (bite) {
 		float P[3];
 		for (int i = 0; i < 3; i++)
 			P[i] = b->base[i] + ct->along * (b->tip[i] - b->base[i]); /* on the drawn blade, in the body */
@@ -541,7 +555,7 @@ static void hf_hit(const struct cb_orc *o, const sc_contact *ct, int kind, int b
 	}
 	if (!landed || glance || blk)
 		return;
-	if (g_hf.dumps > 0 && kind == SC_KIND_CUT) /* tests: 0.12 s after (inside a long test hold: a dump's own stall would
+	if (g_hf.dumps > 0 && (kind == SC_KIND_CUT || ((kind == SC_KIND_STAB || kind == SC_KIND_TAP) && swp_flesh()))) /* tests: 0.12 s after (inside a long test hold: a dump's own stall would
 						     * end a bite as a gap) and 0.5 s after (the FX grown) */
 		g_hf.dumps--, g_hf.dump_t[0] = t + 0.12, g_hf.dump_t[1] = t + 0.5;
 	if (g_hf.snd && g_hf.sound[kind][0]) {

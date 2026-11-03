@@ -470,6 +470,7 @@ static float bd_squeeze(int h, float v)
 {
 	if (!g_bd.test || h < 0 || h > 1)
 		return v;
+	int p = IN_SIDE(h); /* build 30: the test words name controllers; h is a hand's role */
 	double t = cb_now();
 	if (h == SA_R && g_bd.t_draw > 0) { /* two quick presses: 0-0.08 s, 0.16-0.24 s (the quick draw, 0.35 s) */
 		double a = t - g_bd.t_draw;
@@ -477,14 +478,14 @@ static float bd_squeeze(int h, float v)
 			g_bd.t_draw = 0;
 		return (a < 0.08 || (a >= 0.16 && a < 0.24)) ? 1.0f : 0.0f;
 	}
-	return g_bd.t_sq[h] >= 0 ? g_bd.t_sq[h] : v;
+	return g_bd.t_sq[p] >= 0 ? g_bd.t_sq[p] : v;
 }
 
 /* a test squeeze drives hand h now (`hands squeeze`, the right's `hands draw`): SOMVR_CLIMB counts its grip as live
  * then, as if the controller's inputs were active (headless: no controller) */
 static int bd_test_squeezing(int h)
 {
-	return g_bd.test && h >= 0 && h <= 1 && (g_bd.t_sq[h] >= 0 || (h == SA_R && g_bd.t_draw > 0));
+	return g_bd.test && h >= 0 && h <= 1 && (g_bd.t_sq[IN_SIDE(h)] >= 0 || (h == SA_R && g_bd.t_draw > 0));
 }
 
 /* the writer thread: "hands ..." (one word at a time; NULL = not ours) */
@@ -668,6 +669,9 @@ static void bd_twohand(sa_xf g[2], const int valid[2], const int bowed[2], float
 	if (o->w > 0)
 		g[0] = o->g[0], g[1] = o->g[1];
 }
+
+/* build 31 (SOMVR_VRMENU_GATE=hand): the left hand holds the hilt now (the two-handed grip's weight on) */
+static int bd_two_held(void) { return g_bd.twohand && g_bd.two.w > 0; }
 
 /* ---- H4 ------------------------------------------------------------------------------------------------------------- */
 

@@ -163,4 +163,124 @@ int swb_step(swb_state *s, const swb_cfg *c, double t, const float p[3], const f
 /* ends a bite at once (the sword gone, a surface holds the hand, the switch off): idle, b 0 */
 void swb_cancel(swb_state *s);
 
+/* ---- build 31: the sword as a weighted body on a joint to the hand (Blade & Sorcery's; docs/re-xr-pipeline.md 134) ----
+ * The sword is a rigid body - its mass, its centre of mass along the blade, its moments of inertia across and about the
+ * blade - held to the controller's grip by a spring-damper in place and in turn whose force and torque are limited (the
+ * hand's strength): a slow, committed swing carries it fully; a fast flick of the wrist asks more torque than the hand
+ * has, so the tip cannot whip (it trails, then swings through to the hand); the hand's push off the centre of mass turns
+ * it too (an arm's sweep leaves the tip behind). Both hands on the hilt: stronger and stiffer; a blow coming at Talion
+ * (the guard): stronger, so a block is not slowed. The twist about the blade has almost no inertia: the edge follows the
+ * wrist. Integrated in 0.5 ms sub-steps (the frame's controller motion spread over them): the same at 20 and 90 Hz.
+ * The flesh: a landed cut or stab opens a wound in the struck body (a chain of capsules: the pelvis, torso, neck, head):
+ * the blade is held at the wound by a stiff spring whose force is limited by the flesh - past that limit the wound gives
+ * (an elastic-plastic pin): a cut's edge moves on through the body against y_cut (y_core near the spine), back out the way
+ * it came against y_back, along the blade against y_slide; a stab's blade is held across (the wound pivots it and carries
+ * it with the body) and slides out only when pulled along the blade harder than y_pull (in, against y_push, never past
+ * the guard). The wound ends when a cut's point leaves the body (through the far side, or back out), the blade slides out
+ * past its tip, the joint stretches past tear_m or turns past tear_rad (torn free), after max_s, or by the caller. A hit
+ * landed before the blade reaches the body waits for it (pend_s). The wound is kept in the body's own frame (the caller's
+ * origin and turn each frame), so it moves and reels with the body. Units: m, kg, s, N; the caller's space (the grips'). */
+enum { SWP_W_NONE = 0, SWP_W_CUT = 1, SWP_W_STAB = 2 };
+enum { SWP_END_NONE = 0, SWP_END_OUT, SWP_END_THROUGH, SWP_END_BACK, SWP_END_TEAR, SWP_END_TIME, SWP_END_CANCEL,
+       SWP_END_MISS, SWP_END_N };
+enum { SWP_EV_START = 1, SWP_EV_END = 2, SWP_EV_RESET = 4 };
+
+typedef struct {
+    float mass, com;            /* kg; m from the grip point along the blade to the centre of mass */
+    float i_perp, i_axis;       /* kg m^2 about the centre of mass: across the blade, about it */
+    float k_lin, zeta_lin, f_max; /* the grip point's spring to the controller (N/m), its damping ratio, its strongest pull */
+    float k_ang, zeta_ang, t_max; /* the turn's (N m/rad, about the grip), its damping ratio, the strongest torque (N m) */
+    float w_hill, hill_min;     /* the torque t_max falls with the sword's swing speed (Hill's curve) to 0 at w_hill
+                                 * (rad/s), never below hill_min x t_max */
+    float t_stop;               /* N m: the strongest torque braking the sword's own swing (the hand stops it harder) */
+    float t_twist;              /* the strongest torque about the blade (N m) */
+    float rope_rad, rope_m;     /* free (no wound): never farther off the controller than these */
+    float rope_close, rope_close_m; /* rad/s, m/s: an opened rope (after a wound) closes at most this fast */
+    float w_max;                /* rad/s: the safety cap of the sword's swing speed */
+    float two_k, two_f;         /* both hands on the hilt: the springs x two_k, the limits x two_f, the ropes / two_f */
+    float guard_k, guard_f;     /* a blow coming (the caller's guard): the same, not below both hands' */
+    float sub_s;                /* the sub-step (s) */
+    float reset_m, reset_rate_m, reset_rad, reset_rate_rad; /* a controller step larger and faster than these: a jump */
+    float s_guard, s_tip;       /* m from the grip: the blade's first edge (the guard), its tip */
+    /* the flesh */
+    float k_w, zeta_w;          /* the wound's spring (N/m) and its damping ratio */
+    float y_cut, y_cut_s, v_slice; /* N: a cut's edge on through the body while it slices (faster than v_slice m/s), and
+                                 * to start (a slow push does not cut) */
+    float core_k, y_back, y_slide; /* near the spine x core_k; back out the way it came; along the blade (N) */
+    float skin_m;               /* a cut's yield grows from 0.3 x at the skin to 1 x this deep (m) */
+    float stab_cut_m;           /* a stab levered this far across (the edge cutting its way out): torn free (m) */
+    float stab_lever_rad;       /* a stab's blade turned this far in the body (levered): torn free */
+    float y_stab_lat, y_pull, y_pull_kin, y_push; /* N: a stab across, pulled out (to start, once sliding), pushed in */
+    float core_frac;            /* the spine: within this share of a link's radius from its axis */
+    float tear_m, tear_rad;     /* the joint stretched / turned past these: torn free */
+    float max_s, pend_s;        /* a wound at most this long; a landed hit waits at most this for the blade in the body */
+    float enter_m;              /* the blade this far inside a capsule = in the body */
+    float wound_k;              /* the blade in a wound: the turn's spring and limits x this (the wrist braces) */
+} swp_cfg;
+
+#define SWP_NODES 4
+typedef struct {
+    int n;                      /* nodes (2..SWP_NODES); links n - 1 */
+    float node[SWP_NODES][3];   /* the caller's space, m */
+    float r[SWP_NODES - 1];     /* each link's radius, m */
+    float o[3], q[4];           /* the body's frame: the wound is kept in it (its origin and turn) */
+} swp_body;
+
+typedef struct {
+    int have;
+    float p[3], q[4];           /* the sword's grip pose (where the hand drawn on the hilt is) */
+    float vc[3], w[3];          /* the centre of mass's velocity, the angular velocity */
+    float tp[3], tq[4];         /* the controller's last pose */
+    float tw_last[3];           /* the controller's angular velocity over the last frame */
+    /* the wound */
+    int wound, pend;            /* SWP_W_* (pend: a landed hit of that kind waits for the blade in the body) */
+    double t, t0, pend_t;       /* now, the wound's start, the pending hit's */
+    float pend_pen;             /* m: the deepest the blade came into the body while the hit waited (< 0: outside by) */
+    float Wl[3];                /* the wound in the body's frame */
+    float W0l[3];               /* where it went in (the body's frame) */
+    float s;                    /* the blade at the wound (m from the grip) */
+    float din[3];               /* a cut's way in (the body's frame, unit) */
+    float a0l[3];               /* the blade's direction as it went in (the body's frame) */
+    int link;                   /* the link it went in at */
+    float sliding;              /* a stab: 1 = sliding (the kinetic pull), 0 = held */
+    int cutting;                /* a cut: the edge slicing on (the kinetic yield) */
+    float rope_now, rope_m_now; /* the ropes now (opened after a wound, closing) */
+    swp_body body, body0;       /* this frame's body and the last's */
+    int body_have;
+    float nodel[SWP_NODES][3];  /* this frame's nodes in the body's frame */
+    float Wt[3];                /* the wound now (the caller's space) */
+    /* this frame's numbers */
+    float stretch, off_rad;     /* the grip off the controller (m), the sword's turn off it (rad) */
+    float depth;                /* m: a cut's edge under the surface / a stab's blade past the wound */
+    float slide_v, flow_v;      /* m/s: the blade along the wound, the wound through the body */
+    float f_wound;              /* N: the wound's force on the blade (the frame's largest) */
+    float tip_v;                /* m/s: the tip's speed */
+    float in_v;                 /* m/s: the blade point's speed against the body as it went in */
+    int ev, end, end_kind;      /* SWP_EV_* this frame; the last wound's end (SWP_END_*) and kind */
+    int tear_why;               /* a tear's rule: 1 the joint stretched, 2 turned, 3 a stab levered, 4 cut out sideways */
+    float dbg_lever, dbg_cut;   /* a stab's tear: the blade's turn in the body (rad), the wound's slide in it (m) */
+    float end_P[3];             /* where it came out (the caller's space) */
+    /* the window's peaks (the caller clears them) */
+    float peak_off, peak_stretch, peak_w, peak_tw, peak_tip, peak_depth;
+    uint64_t steps, resets, roped, wounds, misses, ends[SWP_END_N];
+} swp_state;
+
+/* level SWG_HEAVY (Urfael: 1.3 kg, the balance a hand's width over the guard) or SWG_LIGHT (a lighter step) */
+void swp_defaults(swp_cfg *c, int level);
+void swp_reset(swp_state *s);
+/* One frame at t (s): the controller's grip p (m), q (unit) after dt (s); axis = the blade's direction in the grip's own
+ * frame (unit); two = both hands on the hilt; guard = a blow coming; body = the wounded (or pending) body this frame
+ * (NULL: none - a wound without its body for over 0.15 s is cancelled). Out: the sword's grip pose (op, oq). 0 = reset:
+ * the sword on the controller (the first frame, a jump, a gap). */
+int swp_step(swp_state *s, const swp_cfg *c, double t, const float p[3], const float q[4], const float axis[3], float dt,
+             int two, int guard, const swp_body *body, float op[3], float oq[4]);
+/* A landed hit of this kind (SWP_W_CUT / _STAB) on this body: the wound opens where the blade is in the body now, or
+ * when it gets there within pend_s. 1 = taken (open or pending), 0 = refused (one is on, no body, not a cut or stab) */
+int swp_wound_hit(swp_state *s, const swp_cfg *c, int kind, const swp_body *body);
+/* ends a wound (or a pending hit) now: why = SWP_END_* */
+void swp_wound_end(swp_state *s, int why);
+const char *swp_end_name(int why);
+/* the closest points of the segments a0-a1 and b0-b1: their parameters (0..1) and the distance */
+float swp_seg_seg(const float a0[3], const float a1[3], const float b0[3], const float b1[3], float *ua, float *ub);
+
 #endif

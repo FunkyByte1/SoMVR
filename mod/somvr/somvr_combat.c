@@ -116,11 +116,11 @@ static float window_mean(const sc_speed *s, float w, int f) {
 #undef WF
 
 static void stroke_reset(sc_speed *s) {
-    s->reach = s->stroke_cm = 0, s->have_dir = 0, s->rest_s = 0;
-    memset(s->disp, 0, sizeof s->disp), memset(s->dir, 0, sizeof s->dir);
+    s->reach = s->stroke_cm = 0, s->have_dir = 0, s->rest_s = 0, s->base_reach = 0;
+    memset(s->disp, 0, sizeof s->disp), memset(s->dir, 0, sizeof s->dir), memset(s->bdisp, 0, sizeof s->bdisp);
 }
 /* the stroke (build 20): a turn back of the tip past c->rev_cos off its direction, or a rest, begins a new one */
-static void stroke_step(sc_speed *s, const sc_cfg *c, const float v[3], float sp, double dt, double t) {
+static void stroke_step(sc_speed *s, const sc_cfg *c, const float v[3], const float vb[3], float sp, double dt, double t) {
     if (sp < SC_STROKE_MIN_CMS) {
         s->rest_s += (float)dt;
         if (s->rest_s >= SC_STROKE_REST_S && (s->have_dir || s->reach > 0)) stroke_reset(s);
@@ -136,10 +136,11 @@ static void stroke_step(sc_speed *s, const sc_cfg *c, const float v[3], float sp
         }
     }
     if (!s->have_dir) return; /* a rest before any stroke: nothing to measure */
-    for (int i = 0; i < 3; i++) s->disp[i] += (float)(v[i] * dt);
+    for (int i = 0; i < 3; i++) s->disp[i] += (float)(v[i] * dt), s->bdisp[i] += (float)(vb[i] * dt);
     s->stroke_cm += (float)(sp * dt);
-    float r = sqrtf(dot3(s->disp, s->disp));
+    float r = sqrtf(dot3(s->disp, s->disp)), rb = sqrtf(dot3(s->bdisp, s->bdisp));
     if (r > s->reach) s->reach = r;
+    if (rb > s->base_reach) s->base_reach = rb;
 }
 
 int sc_speed_push(sc_speed *s, const sc_cfg *c, const somvr_blade *b) {
@@ -162,7 +163,7 @@ int sc_speed_push(sc_speed *s, const sc_cfg *c, const somvr_blade *b) {
     s->axis_mps = window_mean(s, c->window_s, 1) * 0.01f;
     s->base_mps = window_mean(s, c->window_s, 2) * 0.01f;
     s->cos_axis = sp > 1e-3f && la > 1e-3f ? along / sp : 0;
-    stroke_step(s, c, v, sp, dt > 0 && dt <= 0.25 ? dt : 0, b->t);
+    stroke_step(s, c, v, b->vel_base, sp, dt > 0 && dt <= 0.25 ? dt : 0, b->t);
     if (!s->above && s->mean_mps >= c->slash_mps) {
         s->above = 1, s->travel = 0;
         return 1;
@@ -228,7 +229,8 @@ int sc_tier_swing(const sc_cfg *c, const sc_speed *s, float edge_deg, float alon
     if (s->axis_mps >= c->stab_mps && s->cos_axis >= c->stab_cos) return SC_TIER_STAB;
     if (!s->above || !(s->mean_mps >= c->slash_mps)) return SC_TIER_NONE;
     float v = sc_contact_mps(s, along);
-    if (s->reach >= c->cut_cm && v >= c->cut_mps && !(edge_deg > c->edge_max_deg)) return SC_TIER_HEAVY;
+    if (s->reach >= c->cut_cm && v >= c->cut_mps && !(edge_deg > c->edge_max_deg) && !(s->base_reach < c->arm_cm))
+        return SC_TIER_HEAVY;
     if (s->reach >= c->slash_cm && v >= c->slash_mps) return SC_TIER_LIGHT;
     return SC_TIER_NONE;
 }

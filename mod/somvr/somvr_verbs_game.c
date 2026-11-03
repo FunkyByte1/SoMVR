@@ -70,6 +70,11 @@ static struct {
 	uintptr_t stealth_c;
 	double stealth_t, stealth_line;
 	uint64_t stealth_asks, stealth_kills;
+	int bleed;                 /* build 30, SOMVR_GRAUG_BLEED: the blade on a graug = the game's hamstring (X) when it offers it */
+	char bleed_node[64];       /* SOMVR_GRAUG_BLEED_NODE: the root node's name holds this (default 'Hamstring') */
+	uintptr_t bleed_c;
+	double bleed_t, bleed_line;
+	uint64_t bleed_asks, bleeds;
 	uint32_t req_done;
 	int pcmd[2];
 	double press_until;
@@ -118,6 +123,7 @@ static struct {
 	/* build 20 (docs/re-xr-pipeline.md 77): the interrogated orc's kill by the player's own blade (SOMVR_VERBS_ASK_KILL);
 	 * Talion's Combat read for the kind through a body moment's hold too (the test words `verbs old|new`) */
 	int ask_kill, ask_kill_cfg; /* VB_ASK_GAME (build 19b: the blade and B = the game's Eliminate) | VB_ASK_BLADE */
+	int chord_safe;             /* build 31, SOMVR_VERBS_CHORD_SAFE: the Touch's B/Y through the bug mark's chord */
 	int own_read;               /* 1: the kind from Talion's Combat when combat_frame has no player (0 = build 19b's) */
 	uint64_t ask_kills, ask_weak, own_reads, ask_freed;
 	/* build 20 (SOMVR_VERBS_INTEL_BACK_S): the GAIN INTEL menu after Interrogate, left by the pad's Back after this long
@@ -151,6 +157,14 @@ static void fa_hands(const somvr_vb_hand_in *in, double t); /* build 25 (somvr_a
 static void br_hands(const somvr_vb_hand_in *in); /* build 23 (somvr_brand_game.c) */
 static void br_prompt_up(int act, const char *str, double t);
 static int br_auto_trigger(double t);
+/* build 31 (som-b31-hands, somvr_hands31_game.c): the held kill, the hold's push, the pull's guard */
+static void h31_start(int *bad);
+static void h31_hands(const somvr_vb_hand_in *in, double t, int *let_go, int *no_ask, float v[3], float *sp);
+static void h31_after(const somvr_vb_hand_out *o, uintptr_t held, const float v[3], float sp, double t);
+static void h31_frame(const float *root, double t);
+static void h31_end_log(void);
+static int ov_active(void);
+static void ov_end_log(void);
 static struct log_late g_vb_late;
 static int vb_log_ok(void)
 {
@@ -611,7 +625,8 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	in.t = t;
 	/* a new grab in the world only; a hold goes on through the game's own contexts (not a menu) */
 	in.live = (g_vb.hand.phase != SOMVR_VBH_IDLE ? g_inp.ctx != SC_CTX_MENU : g_inp.ctx == SC_CTX_WORLD) && !game_paused() &&
-		  !vm_open() && !bo_out() && !cl_holds(SOMVR_HAND_L) && !sl_nograb();
+		  !vm_open() && !bo_out() && !cl_holds(SOMVR_HAND_L) && !sl_nograb() &&
+		  (g_vb.hand.phase != SOMVR_VBH_IDLE || !ov_active()); /* build 31: the hand on a crown is the vault's */
 	in.squeeze = bd_squeeze(SOMVR_HAND_L, g_inp.st.hand[SOMVR_HAND_L].squeeze);
 	in.trigger = (g_inp.st.hand[SOMVR_HAND_L].active & SOMVR_HACT_INPUT) ? g_inp.st.hand[SOMVR_HAND_L].trigger : 0;
 	if (g_bd.test && g_bf.t_trig[SOMVR_HAND_L] >= 0) /* SOMVR_HANDS_TEST: "hands trigger L V" (a frame's timing) */
@@ -655,8 +670,12 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	in.game_done = g_vb.game_done;
 	int was = g_vb.hand.phase, b_was = g_vb.hand.b;
 	br_hands(&in); /* build 23, SOMVR_VERBS_BRAND: the orc the hand is on or holds (the game's brand offer) */
+	float pv[3] = { 0, 0, 0 }, psp = 0;
+	h31_hands(&in, t, &in.let_go, &in.no_ask, pv, &psp); /* build 31: the hold's push, the pull's guard */
+	uintptr_t held0 = g_vb.held_c;
 	somvr_vb_hand_out o;
 	somvr_vb_hand_step(&g_vb.hand, &g_vb.cfg, &in, &o);
+	h31_after(&o, held0, pv, psp, t);
 	g_vb.press_grab = o.grab, g_vb.press_b = o.b;
 	if (o.event == SOMVR_VBE_WRAITH) /* build 23: the brand where the game offers it (B + A, or B's tap) */
 		br_press(was == SOMVR_VBH_IDLE ? (o.orc >= 0 && o.orc < g_vb.nheads ? g_vb.head_c[o.orc] : 0) : g_vb.held_c, t);
@@ -703,8 +722,13 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	}
 	/* the prompts' own letters on the Touch: holding, X (the left lower button) = 118 (UI_Combat_GrabFlurry) and A (the
 	 * right lower) = 121 (Domination_Subdue: the interrogation); its choice, B (the right upper) = Eliminate */
-	uint32_t bl = (g_inp.st.hand[SOMVR_HAND_L].active & SOMVR_HACT_INPUT) ? g_inp.st.hand[SOMVR_HAND_L].buttons : 0;
-	uint32_t br = (g_inp.st.hand[SOMVR_HAND_R].active & SOMVR_HACT_INPUT) ? g_inp.st.hand[SOMVR_HAND_R].buttons : 0;
+	/* build 31 (SOMVR_VERBS_CHORD_SAFE, code default on): B and Y as the game sees them - through the bug mark's chord
+	 * (B + Y held together is a mark, never the game's B or Y). The session 20261102-101318: the user's mark 15 chord's B
+	 * was the interrogation's Eliminate (`VERBS t=2747.009 button: the Touch's B: 163 ... tapped`, the mark at 2747.6) -
+	 * a kill the player did not make (mark 16); build 19b's first Eliminate the same (re-xr-pipeline.md 77) */
+	const somvr_input_state *bs = g_vb.chord_safe && g_ss.mark ? &g_ss.fst : &g_inp.st;
+	uint32_t bl = (bs->hand[SOMVR_HAND_L].active & SOMVR_HACT_INPUT) ? bs->hand[SOMVR_HAND_L].buttons : 0;
+	uint32_t br = (bs->hand[SOMVR_HAND_R].active & SOMVR_HACT_INPUT) ? bs->hand[SOMVR_HAND_R].buttons : 0;
 	uint32_t el = bl & ~g_vb.btn_was[0], er = br & ~g_vb.btn_was[1];
 	g_vb.btn_was[0] = bl, g_vb.btn_was[1] = br;
 	int bcmd = 0, dis = 0, bc = (er & SOMVR_BTN_UPPER) && g_vb.ask_c ? vb_choice_b(&dis) : 0;
@@ -781,7 +805,9 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	default: /* release, lost, wraith end, done */
 		if (vb_log_ok())
 			logf_("VERBS t=%.3f %s after %.2f s: %s (the game's hold %s; the orc's health %.1f)", t,
-			      somvr_vb_event_name(o.event), o.held_s, o.event == SOMVR_VBE_RELEASE ? "the grip opened: the grab let go"
+			      somvr_vb_event_name(o.event), o.held_s, o.event == SOMVR_VBE_RELEASE ? (o.why == SOMVR_VBR_PUSH ?
+			      "the hand pushed him away: the grab let go (build 31)" : o.why == SOMVR_VBR_MAX ? "the longest hold "
+			      "(SOMVR_VERBS_GRAB_MAX_S): the grab let go" : "the grip opened: the grab let go")
 			      : o.event == SOMVR_VBE_DONE ? (g_vb.game_done ? "B let go: the game's hold ended" : "B let go: the longest hold")
 			      : o.event == SOMVR_VBE_WRAITH_END ? "the trigger let go: B let go" : "the hand is busy or the world gone",
 			      g_vb.saw_hog ? "ran" : "did not run", vb_health(g_vb.held_c));
@@ -809,7 +835,10 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 }
 
 /* SOMVR_CLIMB: the left hand's squeeze was the verbs' this frame (or it holds an orc): no wall grab */
-static int vb_nograb(void) { return g_vb.mode == VB_ON && g_fr.frame - g_vb.took_frame <= 1 && g_vb.took_frame; }
+static int vb_nograb(void)
+{
+	return (g_vb.mode == VB_ON && g_fr.frame - g_vb.took_frame <= 1 && g_vb.took_frame) || ov_active(); /* build 31: the vault */
+}
 
 /* the test word "verbs behind CM" (SOMVR_HANDS_TEST): Talion teleported CM behind the nearest orc within 20 m (the
  * console's Teleport, as the practice trips; whole centimetres), to stage a stealth approach headless */
@@ -917,6 +946,8 @@ static void vb_behind(uintptr_t pcomb, uintptr_t pc, const float root[3], float 
 		return;
 	}
 	float yaw = sv_heading(sv_qnormalize(sv_quat_of(q)));
+	if (cm < 0) /* build 31 (a test, `verbs front CM`): in front of it - the vault by the hands from its front */
+		cm = -cm, yaw += 3.14159265f;
 	/* right behind it, else turned about it by 30, 60, 90 deg either way: the first spot with ground at its height
 	 * (the practice's ray down; run 231228's spot behind an orc on a ridge was a 6 m drop: Talion died) */
 	static const float turn_deg[] = { 0, 30, -30, 60, -60, 90, -90 };
@@ -1228,12 +1259,92 @@ static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		g_vb.stealth_line = t;
 		return 0;
 	}
+	if (kl_on()) { /* build 31 (SOMVR_KILLS, docs 133): the orc plays its half of the kill the game offers - never its button
+			* (build 30's X here was the user's "a whole animation outside of me", mark 18); not taken: the hit */
+		float bax[3] = { 0, 0, 1 };
+		if (g_kl_b)
+			bax[0] = g_kl_b->tip[0] - g_kl_b->base[0], bax[1] = g_kl_b->tip[1] - g_kl_b->base[1], bax[2] = g_kl_b->tip[2] - g_kl_b->base[2];
+		int took = g_kl_ct && g_kl_b && kl_take(pc, o, atk, atk, 0, g_kl_ct->point, g_kl_b->vel_tip, bax, SOMVR_KL_UNAWARE,
+							"the offered stealth kill", t);
+		logf_("VERBS t=%.3f stealth: the blade on orc %#lx (health %.1f): the game offers '%s' (sync '%s'): %s (no X)", t,
+		      (unsigned long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn),
+		      took ? "SOMVR_KILLS plays the orc's half" : "not taken - the ordinary hit");
+		if (took)
+			g_vb.stealth_kills++, g_vb.stealth_t = t, g_vb.stealth_c = o->c;
+		return took;
+	}
 	g_vb.stealth_kills++;
 	g_vb.stealth_t = t, g_vb.stealth_c = o->c;
 	g_vb.pcmd[0] = VB_CMD_X, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.15;
 	if (g_vb.haptic > 0)
 		in_haptic_event(SOMVR_HAND_R, 0.7f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
 	logf_("VERBS t=%.3f stealth: the blade on orc %#lx (health %.1f): the game offers '%s' (sync '%s'): X (118) for 150 ms "
+	      "instead of the hit", t, (unsigned long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn));
+	return 1;
+}
+
+/* build 30 (som-b30-story5, re-xr-pipeline.md 131): SOMVR_GRAUG_BLEED=on|off (code default on; needs SOMVR_VERBS=on and
+ * SOMVR_BEASTS). Torvin's Graug mission asks "Hold [RT] to sneak up behind an unaware Graug and press (X) to Bleed it"
+ * (tut_TrollBleedUnlocked): the stock X crouched behind the eating graug is 'PC_Hamstring_CaveTroll_Sitting_RightLeg' (boot
+ * 20261031-231622: its health 2000 -> 999, then "the blood'll attract Caragors"), and no VR control sent X there - the
+ * blade met its legs with the ordinary hit, which wakes it. Now a blade contact that would deal a hit on a graug the game's
+ * own selection offers its hamstring for (the first root node whose name holds SOMVR_GRAUG_BLEED_NODE, 'Hamstring': its
+ * predicates are the game's - crouched, behind, unaware, in reach) presses X (118) for 150 ms instead of the hit, as the
+ * stealth kill's does (vb_contact): the game plays its bleed. */
+static int bz_is_graug(uintptr_t c, uintptr_t hobj); /* somvr_beasts_game.c */
+static uintptr_t vb_node_like(uintptr_t pcomb, const char *sub)
+{
+	char key[96];
+	snprintf(key, sizeof key, "~%s", sub); /* the cache's entry for a part of a name (no node is named with '~') */
+	uintptr_t rootrec = pcomb ? peek_ptr(pcomb + FI_PC_ROOT) : 0;
+	int hit, slot = vb_nc_slot(key, rootrec, &hit);
+	if (hit)
+		return g_vb_nc[slot].node;
+	g_vb_nc_reads++;
+	snprintf(g_vb_nc[slot].name, sizeof g_vb_nc[slot].name, "%s", key);
+	g_vb_nc[slot].root = rootrec, g_vb_nc[slot].node = 0;
+	uint64_t nodes[VB_TREE_NODES];
+	int type = 0, count = 0, nn = rootrec ? rx_db_list(rootrec, g_fig.sch_ccr, FI_CCR_NODES, nodes, VB_TREE_NODES, &type, &count) : -1;
+	char nm[96], names[400] = "";
+	int like = 0;
+	for (int k = 0; k < nn && type == 0xa; k++)
+		if (strstr(rx_rec_name((uintptr_t)nodes[k], nm, sizeof nm), sub)) {
+			if (!like++)
+				g_vb_nc[slot].node = (uintptr_t)nodes[k];
+			size_t l = strlen(names);
+			snprintf(names + l, sizeof names - l, "%s'%s'", l ? ", " : "", nm);
+		}
+	logf_("VERBS the root nodes named like '%s': %d (%s) of %d root nodes read; the first %s", sub, like, names, nn,
+	      g_vb_nc[slot].node ? "taken" : "- none");
+	return g_vb_nc[slot].node;
+}
+static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t)
+{
+	if (g_vb.mode != VB_ON || !g_vb.bleed || tier == SC_TIER_NONE || !pcomb || !pc || !g_vb.ok_tree || !bz_is_graug(o->c, o->hobj))
+		return 0;
+	if (t < g_vb.press_until && g_vb.pcmd[0] == VB_CMD_X)
+		return 1; /* our press runs: the game's bleed takes the graug */
+	if (t - g_vb.bleed_t < 1.5 && g_vb.bleed_c == o->c)
+		return 1; /* the same graug a moment ago: the game's bleed is starting */
+	uintptr_t node = vb_node_like(pcomb, g_vb.bleed_node), sy = 0;
+	if (!node)
+		return 0;
+	const char *why = "";
+	uintptr_t atk = vb_pick(pcomb, pc, o, node, &sy, &why);
+	char an[96], sn[96];
+	g_vb.bleed_asks++;
+	if (!atk) {
+		if (t - g_vb.bleed_line > 2.0 && vb_log_ok())
+			logf_("VERBS t=%.3f bleed: graug %#lx not offered (%s): the ordinary hit", t, (unsigned long)o->c, why);
+		g_vb.bleed_line = t;
+		return 0;
+	}
+	g_vb.bleeds++;
+	g_vb.bleed_t = t, g_vb.bleed_c = o->c;
+	g_vb.pcmd[0] = VB_CMD_X, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.15;
+	if (g_vb.haptic > 0)
+		in_haptic_event(SOMVR_HAND_R, 0.7f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
+	logf_("VERBS t=%.3f bleed: the blade on graug %#lx (health %.1f): the game offers '%s' (sync '%s'): X (118) for 150 ms "
 	      "instead of the hit", t, (unsigned long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn));
 	return 1;
 }
@@ -1398,6 +1509,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	if (g_vb.tid != my_tid())
 		return;
 	g_vb.frames++;
+	h31_frame(root, t); /* build 31: the hold's push - the shove once the game has let the orc go */
 	uint32_t seq = atomic_load_explicit(&g_vb.req_seq, memory_order_acquire);
 	if (seq != g_vb.req_done) {
 		g_vb.req_done = seq;
@@ -1499,7 +1611,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 		vb_tree(pcomb, pc, root, t);
 	vb_stalk_frame(pcomb, pc, root, t); /* build 24: "verbs stalk", "verbs orcs" (tests) */
 	int bcm = atomic_exchange(&g_vb.req_behind_cm, 0);
-	if (bcm > 0)
+	if (bcm != 0) /* (build 31: negative = in front, `verbs front`) */
 		vb_behind(pcomb, pc, root, (float)bcm, t);
 }
 
@@ -1524,6 +1636,13 @@ static const char *vb_word(const char *w)
 	if (!strncmp(w, "status", 6)) {
 		atomic_store(&g_vb.req_status, 1);
 		return "verbs status";
+	}
+	if (!strncmp(w, "bleed ", 6)) { /* build 30, a test: the old rule (the blade's hit on a graug) against the new in one boot */
+		if (!g_vb.test || (strcmp(w + 6, "on") && strcmp(w + 6, "off")))
+			return "verbs bleed (SOMVR_HANDS_TEST off, or not on|off: ignored)";
+		g_vb.bleed = !strcmp(w + 6, "on");
+		logf_("VERBS the word: graug bleed %s (SOMVR_GRAUG_BLEED; a test)", g_vb.bleed ? "on" : "off");
+		return g_vb.bleed ? "verbs bleed on (the blade on a graug = the game's hamstring when offered)" : "verbs bleed off (the hit)";
 	}
 	if (!strncmp(w, "press ", 6)) {
 		if (!g_vb.test)
@@ -1568,6 +1687,13 @@ static const char *vb_word(const char *w)
 			return "verbs tree (SOMVR_HANDS_TEST is off: ignored)";
 		atomic_store(&g_vb.req_tree, 1);
 		return "verbs tree (a test: the root nodes, their chords and the attacks against the nearest orc)";
+	}
+	if (!strncmp(w, "front ", 6)) { /* build 31 (a test): Talion teleported CM in front of the nearest orc */
+		long cm = strtol(w + 6, NULL, 10);
+		if (!g_vb.test || cm < 50 || cm > 2000)
+			return "verbs front (SOMVR_HANDS_TEST off, or CM not 50..2000: ignored)";
+		atomic_store(&g_vb.req_behind_cm, (int)-cm);
+		return "verbs front (a test: Talion teleported in front of the nearest orc)";
 	}
 	if (!strncmp(w, "behind ", 7) || !strncmp(w, "ahead ", 6)) {
 		if (!g_vb.test)
@@ -1637,6 +1763,12 @@ static void vb_start(int *bad)
 	g_vb.back_cm = env_float("SOMVR_VERBS_VIEW_BACK_CM", 35, 0, 80, bad);
 	g_vb.tap_s = env_float("SOMVR_VERBS_TAP_S", 0.35f, 0, 1, bad);
 	g_vb.cfg.hold_max_s = env_float("SOMVR_VERBS_HOLD_MAX_S", g_vb.cfg.hold_max_s, 1, 20, bad);
+	/* build 31 (som-b31-hands): the fist rule, the hold's longest, the pull's time, the chord-safe buttons */
+	g_vb.cfg.fist_s = env_float("SOMVR_VERBS_FIST_S", 0.5f, 0, 2, bad);
+	g_vb.cfg.grab_max_s = env_float("SOMVR_VERBS_GRAB_MAX_S", 10, 0, 60, bad);
+	g_vb.cfg.ask_s = env_float("SOMVR_VERBS_ASK_S", g_vb.cfg.ask_s, 0.05f, 2, bad);
+	g_vb.cfg.ask_low_cm = env_float("SOMVR_VERBS_ASK_LOW_CM", 15, 0, 60, bad);
+	g_vb.chord_safe = env_word("SOMVR_VERBS_CHORD_SAFE", (const char *const[]){ "off", "on" }, 2, 1);
 	g_vb.haptic = env_float("SOMVR_VERBS_HAPTIC", 1, 0, 1, bad);
 	g_vb.ask_kill = g_vb.ask_kill_cfg = env_word("SOMVR_VERBS_ASK_KILL", (const char *const[]){ "game", "blade" }, 2,
 						     VB_ASK_GAME);
@@ -1662,7 +1794,12 @@ static void vb_start(int *bad)
 		const char *sn = getenv("SOMVR_VERBS_STEALTH_NODE");
 		snprintf(g_vb.stealth_node, sizeof g_vb.stealth_node, "%s", sn && sn[0] ? sn : "PC_InstaKill_Sneak_Silent");
 	}
-	if (g_vb.test || (g_vb.mode == VB_ON && g_vb.stealth)) { /* the selection: SOMVR_FINISH's read-only sites */
+	g_vb.bleed = env_word("SOMVR_GRAUG_BLEED", (const char *const[]){ "off", "on" }, 2, 1); /* build 30 */
+	{
+		const char *bn = getenv("SOMVR_GRAUG_BLEED_NODE");
+		snprintf(g_vb.bleed_node, sizeof g_vb.bleed_node, "%s", bn && bn[0] ? bn : "Hamstring");
+	}
+	if (g_vb.test || (g_vb.mode == VB_ON && (g_vb.stealth || g_vb.bleed))) { /* the selection: SOMVR_FINISH's read-only sites */
 		static const int need[] = { FIS_CTX, FIS_CTX_PC, FIS_WINDOW, FIS_SELECT, FIS_TGT_INIT, FIS_TGT_SET, FIS_PLAYERROOT,
 					    FIS_WEAPON, FIS_DIRANGLE, FIS_KBMNODE };
 		char why[512];
@@ -1691,6 +1828,10 @@ static void vb_start(int *bad)
 	      !g_vb.brand_prompt ? "dropped as build 21 (off)" : g_vb.mode == VB_ON && atomic_load(&g_pp.mode) == PP_VR
 	      ? "kept with the left trigger's glyph (the hand on the orc's head + the trigger = that B)" : "on, but SOMVR_VERBS=on "
 	      "and SOMVR_PAD_PROMPTS=vr are needed: as the game shows it");
+	logf_("CONFIG verbs build 30: graug_bleed=%s (SOMVR_GRAUG_BLEED%s): %s '%s' (SOMVR_GRAUG_BLEED_NODE)", g_vb.bleed ? "on" : "off",
+	      getenv("SOMVR_GRAUG_BLEED") ? "" : "; unset: on", g_vb.bleed && g_vb.mode == VB_ON ? "the blade's stroke or stab on a "
+	      "graug the game offers its hamstring for (crouched, behind, unaware: its own selection) = X (118) for 150 ms instead "
+	      "of the hit - the game's bleed; the first root node named like" : "the blade's ordinary hit on a graug; the node", g_vb.bleed_node);
 	logf_("CONFIG verbs build 25: rally=%s (SOMVR_VERBS_RALLY%s): %s %.0f cm (SOMVR_VERBS_RALLY_CM)", g_vb.rally ? "on" : "off",
 	      getenv("SOMVR_VERBS_RALLY") ? "" : "; unset: on", g_vb.rally ? "the left trigger with the left palm raised over the "
 	      "eyes = CombatTertiary03 128 (the pad's D-pad: the branded orcs commanded, 'PC_Branded_Infight'), the palm at least"
@@ -1722,6 +1863,8 @@ static void vb_start(int *bad)
 
 static void vb_end_log(void)
 {
+	h31_end_log(); /* build 31 */
+	ov_end_log();
 	if (!g_vb.mode)
 		return;
 	logf_("VERBS END build 20: the interrogated orc's Eliminate by the blade %llu (contacts too weak %llu) "
@@ -1732,6 +1875,8 @@ static void vb_end_log(void)
 	      (unsigned long long)g_vb.ask_freed, (unsigned long long)g_vb.intels, (unsigned long long)g_vb.intel_backs,
 	      (unsigned long long)g_vb.intel_outs);
 	logf_("VERBS END build 25: rallies %llu (SOMVR_VERBS_RALLY)", (unsigned long long)g_vb.rallies);
+	logf_("VERBS END build 30: graug bleeds by the blade %llu of %llu asks (SOMVR_GRAUG_BLEED)", (unsigned long long)g_vb.bleeds,
+	      (unsigned long long)g_vb.bleed_asks);
 	logf_("VERBS END build 29: the root nodes' cache: %u names of %d, %llu reads, %llu entries reused; the late lines %llu",
 	      g_vb_nc_n, VB_NODE_CACHE, (unsigned long long)g_vb_nc_reads, (unsigned long long)g_vb_nc_reused,
 	      (unsigned long long)g_vb.late);

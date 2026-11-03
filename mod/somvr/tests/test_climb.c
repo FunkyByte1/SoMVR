@@ -1421,7 +1421,7 @@ static void test_fling(void) {
           "rule: no wall direction: only the up");
     CHECK(somvr_climb_fling_rule(&s, &dc, (sv_vec3){ NAN, 300, 0 }, tw, &v) == 0, "rule: NaN: none");
     CHECK(!strcmp(somvr_climb_phase_name(SOMVR_CLIMB_PH_FLING), "fling") &&
-              !strcmp(somvr_climb_fl_name(SOMVR_CLIMB_FL_APEX), "the arc's top") && !strcmp(somvr_climb_fl_name(9), "?"),
+              !strcmp(somvr_climb_fl_name(SOMVR_CLIMB_FL_APEX), "the arc's top") && !strcmp(somvr_climb_fl_name(11), "?"), /* (build 31: 8..10 the fling down's) */
           "the names");
 
     /* off (the default): a fast release hangs as build 10 */
@@ -3816,7 +3816,165 @@ static void test_b27b(void) {
     }
 }
 
+/* build 31 (fling down, re-xr-pipeline.md 138): the rule; a hard push up and let go = the flight down along the throw
+ * to rest (v^2 / 2g), continuous with the hand's speed; the catch; the landing at the floor; the end of a pull up (the
+ * hand already rising at the let-go: the 20c session's climbs up) and a slow push = the hang; nograb_h; water. Each
+ * throw also with the switch off: the hang (build 30) */
+static int g_b31_frames; /* fd_go: the frames flown; the largest step (cm) and the first flight frame's speed (cm/s) */
+static float g_b31_max_step, g_b31_v1;
+static void fd_go(rig_t *r, int n) {
+    g_b31_frames = 0, g_b31_max_step = 0, g_b31_v1 = -1;
+    while (g_b31_frames < n && r->s.phase == SOMVR_CLIMB_PH_FLING && r->o.active) {
+        sv_vec3 b0 = r->body;
+        rig_frame(r);
+        float st = sqrtf((r->body.x - b0.x) * (r->body.x - b0.x) + (r->body.y - b0.y) * (r->body.y - b0.y) +
+                         (r->body.z - b0.z) * (r->body.z - b0.z));
+        if (g_b31_frames == 1) g_b31_v1 = st * 90; /* (the first flight frame's move is applied a frame later) */
+        g_b31_max_step = fmaxf(g_b31_max_step, st), g_b31_frames++;
+    }
+}
+static void fd_setup(rig_t *r, float body_y, int on) {
+    rig_init(r);
+    r->c.letgo = SOMVR_CLIMB_LETGO_HANG, r->c.fling = 1, r->c.fling_up = 1, r->c.fling_max = 650, r->c.fling_min = 110;
+    r->c.fling_side = 0.7f, r->c.fling_gain = 1.15f, r->c.fling_down = on, r->c.unstuck = 1;
+    r->body.y = body_y;
+    grip(r, 1, 1);
+    rig_frame(r);
+}
+static void test_b31(void) {
+    somvr_climb_cfg dc;
+    somvr_climb_cfg_default(&dc);
+    CHECK(!dc.fling_down && dc.fd_min == 250 && dc.fd_max == 650 && dc.fd_g == 981 && dc.fd_net_cm == 15 &&
+              dc.fd_land_cm == 25, "b31: the defaults (off, 250, 650, 981, 15, 25)");
+    somvr_climb s;
+    somvr_climb_init(&s);
+    somvr_climb_cfg c = dc;
+    c.fling_down = 1, c.fling_side = 0.7f;
+    sv_vec3 v, tw = { 0, 0, 1 };
+    CHECK(somvr_climb_fling_down_rule(&s, &c, (sv_vec3){ 0, -400, 0 }, tw, 40, &v) == 1 && NEAR3(v, 0, -400, 0, 1e-3),
+          "b31 rule: straight down 400");
+    CHECK(somvr_climb_fling_down_rule(&s, &c, (sv_vec3){ 0, -200, 0 }, tw, 40, &v) == 0 && s.fd_why == SOMVR_CLIMB_FD_SLOW,
+          "b31 rule: 200 down = the hang (slow)");
+    CHECK(somvr_climb_fling_down_rule(&s, &c, (sv_vec3){ 0, -340, 0 }, tw, -60, &v) == 0 && s.fd_why == SOMVR_CLIMB_FD_NET,
+          "b31 rule: the end of a pull up (net -60) = the hang");
+    CHECK(somvr_climb_fling_down_rule(&s, &c, (sv_vec3){ 0, -400, -300 }, tw, 40, &v) == 1 && NEAR3(v, 0, -400, 0, 1e-3) &&
+              NEAR(s.fl_out, 300, 1e-3), "b31 rule: never away from the wall (z %g)", v.z);
+    CHECK(somvr_climb_fling_down_rule(&s, &c, (sv_vec3){ 500, -400, 300 }, tw, 40, &v) == 1 && NEAR(v.x, 240, 1e-3) &&
+              NEAR(v.z, 100, 1e-3), "b31 rule: sideways x0.7 at most 0.6 x down (%g), toward at most 0.25 x down (%g)", v.x,
+          v.z);
+    CHECK(somvr_climb_fling_down_rule(&s, &c, (sv_vec3){ 0, -900, 0 }, tw, 40, &v) == 1 && NEAR(v.y, -650, 1e-3) &&
+              s.fl_capped, "b31 rule: capped at 650 (%g)", v.y);
+    c.fling_down = 0;
+    CHECK(somvr_climb_fling_down_rule(&s, &c, (sv_vec3){ 0, -400, 0 }, tw, 40, &v) == 0 && s.fd_why == SOMVR_CLIMB_FD_OFF,
+          "b31 rule: off");
+    for (int on = 0; on < 2; on++) { /* a hard push up 50 cm (the hand 450 cm/s at 90 Hz) and let go, nothing under him */
+        rig_t r;
+        fd_setup(&r, 150, on);
+        fl_throw(&r, 1, 0, 5, 0, 9);
+        float y0 = r.body.y, z0 = r.body.z;
+        if (!on) {
+            frames(&r, 30);
+            CHECK(r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.flings == 0 && NEAR(r.body.y, y0, 9),
+                  "b31 off: the throw hangs (moved %g)", r.body.y - y0);
+            continue;
+        }
+        int launched = r.s.fl_down && r.s.fd_flings == 1;
+        fd_go(&r, 300);
+        float fell = y0 - r.body.y, want = 450.0f * 1.15f * 450.0f * 1.15f / (2 * 981);
+        CHECK(launched && r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.fl_why == SOMVR_CLIMB_FL_REST && NEAR(fell, want, 12) &&
+                  NEAR(r.body.z, z0, 0.01) && g_b31_max_step <= 450 * 1.15f / 90 + 0.5f && NEAR(g_b31_v1, 518, 40),
+              "b31: the flight down %g cm (v^2/2g %g), at rest; never off the wall (z %g); the first frame %g cm/s, the "
+              "largest step %g cm (%d frames)", fell, want, r.body.z - z0, g_b31_v1, g_b31_max_step, g_b31_frames);
+    }
+    { /* the catch: the left hand's press in flight */
+        rig_t r;
+        fd_setup(&r, 150, 1);
+        fl_throw(&r, 1, 0, 5, 0, 9);
+        float y0 = r.body.y;
+        frames(&r, 6);
+        grip(&r, 0, 1);
+        frames(&r, 2);
+        CHECK(r.s.phase == SOMVR_CLIMB_PH_HOLD && r.s.fl_why == SOMVR_CLIMB_FL_CATCH && r.s.fd_catches == 1 &&
+                  r.s.h[0].holding && y0 - r.body.y > 20 && y0 - r.body.y < 60,
+              "b31: the catch after %g cm", y0 - r.body.y);
+    }
+    for (int on = 0; on < 2; on++) { /* the floor 58 cm under the feet: landed */
+        rig_t r;
+        g_ground_on = 1;
+        fd_setup(&r, 110, on);
+        fl_throw(&r, 1, 0, 5, 0, 9); /* the throw itself takes him 50 cm down: the feet 60 cm over the floor */
+        float y0 = r.body.y;
+        fd_go(&r, 300);
+        frames(&r, 2);
+        if (on)
+            CHECK(r.s.fl_why == SOMVR_CLIMB_FL_LAND && !r.s.active && r.s.last_end == SOMVR_CLIMB_END_RELEASED &&
+                      r.body.y >= 0 && r.body.y <= 7.01f && r.s.fd_lands == 1,
+                  "b31: landed: the feet %g cm over the floor (fell %g), the climb's end (gravity back)", r.body.y,
+                  y0 - r.body.y);
+        else
+            CHECK(r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && NEAR(r.body.y, y0, 9), "b31 off: the hang %g over the floor",
+                  r.body.y);
+        g_ground_on = 0;
+    }
+    { /* a short fling that comes to rest just over the floor (within fd_land_cm): landed too */
+        rig_t r;
+        g_ground_on = 1;
+        fd_setup(&r, 73, 1);
+        fl_throw(&r, 1, 0, 3.2f, 0, 9); /* 288 cm/s x 1.15 = 331: 56 cm to rest; the throw 32 cm: the feet 39 cm up */
+        fd_go(&r, 300);
+        frames(&r, 2);
+        CHECK(r.s.fl_why == SOMVR_CLIMB_FL_LAND && !r.s.active && r.s.fd_lands == 1 && r.body.y <= 7.01f,
+              "b31: a short fling to the floor: landed (the feet %g)", r.body.y);
+        g_ground_on = 0;
+    }
+    { /* water under him: the hang over it */
+        rig_t r;
+        g_ground_on = 1, g_wet = 1;
+        fd_setup(&r, 110, 1);
+        fl_throw(&r, 1, 0, 5, 0, 9);
+        fd_go(&r, 300);
+        CHECK(r.s.fl_why == SOMVR_CLIMB_FL_WET && r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && r.body.y > 10,
+              "b31: water: the hang %g over it", r.body.y);
+        g_ground_on = 0, g_wet = 0;
+    }
+    { /* the end of a pull up: the hand down 60 cm (the body up), then up 52 at 360 cm/s and let go = the hang */
+        rig_t r;
+        fd_setup(&r, 100, 1);
+        for (int i = 0; i < 30; i++) hand_move(&r, 1, 0, -2, 0), rig_frame(&r);
+        fl_throw(&r, 1, 0, 4, 0, 12); /* (the hand up 52 of the 60: the body still 8 cm up on this hold) */
+        float y0 = r.body.y;
+        frames(&r, 30);
+        CHECK(r.s.phase == SOMVR_CLIMB_PH_HANG && !r.s.fl_down && r.s.fd_why == SOMVR_CLIMB_FD_NET && r.s.fd_nets == 1 &&
+                  r.s.fd_down > 250 && NEAR(r.body.y, y0, 5),
+              "b31: the end of a pull up (the hand up %g cm/s, net %g cm) = the hang", r.s.fd_down, r.s.fd_net);
+    }
+    { /* a slow push down (the hand up 150 cm/s) and let go = the hang */
+        rig_t r;
+        fd_setup(&r, 150, 1);
+        for (int i = 0; i < 30; i++) hand_move(&r, 1, 0, 1.67f, 0), rig_frame(&r);
+        hand_move(&r, 1, 0, 1.67f, 0), grip(&r, 1, 0), rig_frame(&r);
+        float y0 = r.body.y;
+        frames(&r, 30);
+        CHECK(r.s.phase == SOMVR_CLIMB_PH_HANG && !r.s.fl_down && r.s.fd_why == SOMVR_CLIMB_FD_SLOW && NEAR(r.body.y, y0, 5),
+              "b31: a slow push down (%g cm/s) = the hang", r.s.fd_down);
+    }
+    { /* nograb_h: the right hand's press is spent, the left one grabs */
+        rig_t r;
+        rig_init(&r);
+        r.c.letgo = SOMVR_CLIMB_LETGO_HANG;
+        r.in.nograb_h[1] = 1;
+        grip(&r, 1, 1);
+        frames(&r, 3);
+        int r_held = r.s.h[1].holding;
+        grip(&r, 0, 1);
+        frames(&r, 3);
+        CHECK(!r_held && !r.s.h[1].holding && r.s.h[0].holding && r.s.nograb_h_n == 1,
+              "b31: nograb_h: the right's press spent (%d), the left holds (%d)", r_held, r.s.h[0].holding);
+    }
+}
+
 int main(void) {
+    test_b31();
     test_b21();
     test_b27();
     test_b27b();

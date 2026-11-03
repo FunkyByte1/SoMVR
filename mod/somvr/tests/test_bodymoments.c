@@ -173,6 +173,12 @@ static void test_conds(void) {
     in.fb = 0;
     CHECK(somvr_bm_conds(&in) == CB(SOMVR_BMC_HOLD), "our grab alone: a hold");
     in.our_grab = 0;
+    /* build 31b: SOMVR_KILLS' game stealth kill - its sync, presentation and cinematic stay first person */
+    in.fb = FB(SYNC) | FB(PRES) | FB(CINE) | FB(MOUNT), in.our_kill = 1;
+    CHECK(somvr_bm_conds(&in) == FB(MOUNT), "our kill: sync, pres, cine exempt");
+    in.our_kill = 0;
+    CHECK(somvr_bm_conds(&in) == (FB(SYNC) | FB(PRES) | FB(CINE) | FB(MOUNT)), "without our kill");
+    in.fb = 0;
 }
 
 /* a test rig: the step and the base at 90 Hz with a live base that the test moves */

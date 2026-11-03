@@ -34,6 +34,9 @@ typedef struct {
      * touch - only the hand's own motion into the body makes one */
     int carried;         /* 1: the rule; 0: build 21's (any blade in its body that is no kill is a touch) */
     float own_cm;        /* ... the hand's own push into the body under this since the blade went in = carried (4 cm) */
+    /* build 31 (SOMVR_STEALTH_KILL_SLASH; docs/re-xr-pipeline.md 133.6): a full cut (the stroke's heavy tier) into its
+     * back from behind kills too, not only at the neck - the game's silent kill either way */
+    int slash;
 } somvr_stl_cfg;
 
 typedef struct {
@@ -96,7 +99,7 @@ int somvr_stl_judge(const somvr_stl_cfg *c, const somvr_stl_who *w, const somvr_
 int somvr_stl_tier(int tier16, int tier_swing);
 
 /* build 21: what killed (a KILL verdict): build 20c's hit or stab, the thrust, the neck cut, the stab into a held orc */
-enum { SOMVR_STL_BY_HIT = 0, SOMVR_STL_BY_THRUST, SOMVR_STL_BY_NECK, SOMVR_STL_BY_GRAB };
+enum { SOMVR_STL_BY_HIT = 0, SOMVR_STL_BY_THRUST, SOMVR_STL_BY_NECK, SOMVR_STL_BY_GRAB, SOMVR_STL_BY_SLASH };
 int somvr_stl_kill_by(const somvr_stl_cfg *c, const somvr_stl_hit *h);
 const char *somvr_stl_by_name(int by);
 

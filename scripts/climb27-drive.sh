@@ -33,13 +33,13 @@ faceyaw() { local want=$1 k y d
     [ "${d#-}" -le 16 ] && { echo "$(date +%T) the head's yaw $y (want $want)"; return 0; }
     [ "$d" -gt 0 ] && w "turn+" 0.9 >/dev/null || w "turn-" 0.9 >/dev/null
   done; echo "$(date +%T) the head's yaw $y (want $want): not reached"; }
-aon() { local n0 k; n0=$(grep -c "'btn R a 1': ok" "$R/xr-layer.log"); printf 'btn R a 1\n' > "$R/xrtest.txt"
-  for k in $(seq 1 40); do [ "$(grep -c "'btn R a 1': ok" "$R/xr-layer.log")" -gt "$n0" ] && break; sleep 0.05; done
+aon() { local n0 k; n0=$(grep -c "'btn ${LH_A:-R} a 1': ok" "$R/xr-layer.log"); printf 'btn %s a 1\n' "${LH_A:-R}" > "$R/xrtest.txt"
+  for k in $(seq 1 40); do [ "$(grep -c "'btn ${LH_A:-R} a 1': ok" "$R/xr-layer.log")" -gt "$n0" ] && break; sleep 0.05; done
   echo "$(date +%T) A down"; }
-aoff() { printf 'btn R a 0\n' > "$R/xrtest.txt"; echo "$(date +%T) A up"; sleep 0.6; }
-tapA() { local k n0; n0=$(grep -c "'btn R a 1': ok" "$R/xr-layer.log"); printf 'btn R a 1\n' > "$R/xrtest.txt"
-  for k in $(seq 1 40); do [ "$(grep -c "'btn R a 1': ok" "$R/xr-layer.log")" -gt "$n0" ] && break; sleep 0.05; done
-  sleep 0.1; printf 'btn R a 0\n' > "$R/xrtest.txt"; sleep 1.2; }
+aoff() { printf 'btn %s a 0\n' "${LH_A:-R}" > "$R/xrtest.txt"; echo "$(date +%T) A up"; sleep 0.6; }
+tapA() { local k n0; n0=$(grep -c "'btn ${LH_A:-R} a 1': ok" "$R/xr-layer.log"); printf 'btn %s a 1\n' "${LH_A:-R}" > "$R/xrtest.txt"
+  for k in $(seq 1 40); do [ "$(grep -c "'btn ${LH_A:-R} a 1': ok" "$R/xr-layer.log")" -gt "$n0" ] && break; sleep 0.05; done
+  sleep 0.1; printf 'btn %s a 0\n' "${LH_A:-R}" > "$R/xrtest.txt"; sleep 1.2; }
 # both eyes: a dump named $1 (the frame into $ST)
 dd() { local f; printf 'dump\n' > "$R/xrtest.txt"; sleep 1.2
   f=$(grep -o 'dump layers frame [0-9]*' "$R/xr-layer.log" | tail -1 | grep -o '[0-9]*$'); echo "$1 $f" | tee -a "$ST"; }

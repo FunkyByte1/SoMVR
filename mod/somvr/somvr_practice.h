@@ -54,7 +54,10 @@ enum { SOMVR_PRA_NONE = 0, SOMVR_PRA_GO = 1, SOMVR_PRA_BACK = 2, SOMVR_PRA_SPAWN
         * (somvr_pr_group_plan); orc = the count (3, 4; -1 = SOMVR_PRACTICE_GROUP_N) */
        SOMVR_PRA_GROUP = 9,
        /* build 22 (re-xr-pipeline.md 88, SOMVR_CAPTAIN): the save's next Nemesis captain SOMVR_PRACTICE_CAPTAIN_CM ahead */
-       SOMVR_PRA_CAPTAIN = 10, SOMVR_PRA_N = 11 };
+       SOMVR_PRA_CAPTAIN = 10,
+       /* build 31 (re-xr-pipeline.md 136, the 11-02 session's mark 21): Place an orc - the hand's aim on the ground (a
+        * gold ring), the trigger puts an unaware orc of the type there (B cancels) */
+       SOMVR_PRA_PLACE = 11, SOMVR_PRA_N = 12 };
 /* "go", "back", "spawn", "remove", "status", "arrows", "health", "far", "group", "captain" ("none"; "?" outside) */
 const char *somvr_pr_action_name(int a);
 typedef struct {

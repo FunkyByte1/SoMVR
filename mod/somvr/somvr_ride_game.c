@@ -33,8 +33,8 @@
  *   SOMVR_RIDE_TRACE=N (tests): N lines at most of the view's per-frame numbers while mounted (RIDE view).
  *   Test words (SOMVR_HANDS_TEST): `ride status`, `ride guard on|off` (the test right hand holds the blade across a
  *   caragor's line - its head to Talion's body, 45 cm out - from 0.3 s before its parry window to its end: the player's
- *   block of a leap; DEFENCE judges it as it judges a player's), `ride face on|off` (the view turned to a stunned
- *   caragor within 8 m, as a player looks at it), `ride press CMD MS` (one mounted command held); build 27c: `ride run`,
+ *   block of a leap; DEFENCE judges it as it judges a player's), `ride face on|graug|off` (the view turned to a stunned
+ *   caragor within 8 m, as a player looks at it; build 30: graug = the nearest graug), `ride press CMD MS` (one mounted command held); build 27c: `ride run`,
  *   `ride sprint`, `ride tap`, `ride trace` (re-xr-pipeline.md 122).
  * The mount (build 26): the countered caragor lies stunned ('AI_Warg_Knockdown_*', ~10 s); while it is in reach and view
  * the game offers 'UI_MountWarg_Dominate' on 123 (the pad's RB) - the left hand reached out (30 cm or more from the eyes,
@@ -605,11 +605,12 @@ static void mt_frame(void)
 			struct bz_one *e = &g_bz.b[i];
 			char an[96];
 			float p[3];
-			if (!e->c || e->kind != SOMVR_BZ_CARAGOR || !peek(e->hobj + OBJ_POS, p, sizeof p) || !vec_ok(p, 1e7f))
+			if (!e->c || e->kind != (g_mt.face == 2 ? SOMVR_BZ_GRAUG : SOMVR_BZ_CARAGOR) || !peek(e->hobj + OBJ_POS, p, sizeof p) ||
+			    !vec_ok(p, 1e7f))
 				continue;
 			fb_rec_name(peek_ptr(e->c + BZ_C_ATTACK), an, sizeof an);
 			float dd = hypotf(p[0] - g_fr.head[0], p[2] - g_fr.head[2]);
-			if ((strstr(an, "Knockdown") || strstr(an, "Sync_Cntr")) && dd < best)
+			if ((g_mt.face == 2 || strstr(an, "Knockdown") || strstr(an, "Sync_Cntr")) && dd < best) /* build 30: `face graug` any */
 				best = dd, memcpy(tgt, p, sizeof tgt), have = 1;
 		}
 		if (have) {
@@ -1174,7 +1175,7 @@ static void mt_tick(sc_tick_out *o, double t)
  * holds the sword: the test pose's grip turned the least that lays the blade across) */
 static void mt_guard(const struct df_track *d, const somvr_df_in *in, double t)
 {
-	if (!g_mt.guard || !g_bd.test || !g_bd.t_on[1] || !g_tg.have_blade || !(in->bpw >= 0) || !(in->epw > in->bpw))
+	if (!g_mt.guard || !g_bd.test || !g_bd.t_on[IN_SIDE(1)] || !g_tg.have_blade || !(in->bpw >= 0) || !(in->epw > in->bpw))
 		return;
 	int live = in->ts >= in->bpw - 0.3f && in->ts <= in->epw + 0.05f;
 	if (g_mt.g_c && (g_mt.g_c != d->c || g_mt.g_serial != d->serial)) {
@@ -1261,8 +1262,9 @@ static const char *mt_word(const char *w)
 	if (!strncmp(w, "face ", 5)) {
 		if (!g_bd.test)
 			return "ride face (SOMVR_HANDS_TEST is off: ignored)";
-		g_mt.face = !strcmp(w + 5, "on");
-		return g_mt.face ? "ride face on (a test: the view turned to a stunned caragor, as a player looks at it)" : "ride face off";
+		g_mt.face = !strcmp(w + 5, "on") ? 1 : !strcmp(w + 5, "graug") ? 2 : 0; /* build 30 (som-b30-story5): `graug` */
+		return g_mt.face == 2 ? "ride face graug (a test: the view turned to the nearest graug, as a player looks at it)"
+			: g_mt.face ? "ride face on (a test: the view turned to a stunned caragor, as a player looks at it)" : "ride face off";
 	}
 	if (!strncmp(w, "steer ", 6)) {
 		if (!g_bd.test)
@@ -1328,7 +1330,7 @@ static const char *mt_word(const char *w)
 		atomic_store(&g_mt.req_run_ms, ms);
 		return "ride run (a test: seated, the stick ahead and the commands for MS)";
 	}
-	return "ride (not status|guard on|off|face on|off|press CMD MS|steer X Z|steer off|run MS [CMDS] [PULSE_MS] [MAG]|sprint CMDS [PULSE_MS]|tap CMDS MS|trace N: "
+	return "ride (not status|guard on|off|face on|graug|off|press CMD MS|steer X Z|steer off|run MS [CMDS] [PULSE_MS] [MAG]|sprint CMDS [PULSE_MS]|tap CMDS MS|trace N: "
 	       "ignored)";
 }
 

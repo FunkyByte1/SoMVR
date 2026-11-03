@@ -1172,7 +1172,8 @@ static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t)
 	 * unanswerable there (SOMVR_USE's A is the window's): the window */
 	uint64_t qc = atomic_load(&g_us.qc_ns);
 	int card = g_kw.on && qc && mono() * 1e9 - (double)qc < 1.5e9;
-	const char *why = !g_kp.intro_world ? "SOMVR_CAPTAIN_INTRO=window" : dead ? "Talion is dead (the death's screens)"
+	const char *why = kl_sync_view(t) ? NULL /* build 31b: SOMVR_KILLS' game stealth kill - its camera ignored, no window */
+			  : !g_kp.intro_world ? "SOMVR_CAPTAIN_INTRO=window" : dead ? "Talion is dead (the death's screens)"
 			  : card ? "a mission's card (QuestConfirm pressed just before)"
 			  : !g_kp.on ? "the captain's sites did not check out" : !have_head ? "no head pose yet"
 			  : !best ? "no captain near (another kind of presentation)" : !bw ? "the captain is not near and in view"

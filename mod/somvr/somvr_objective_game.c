@@ -241,7 +241,7 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 static void ob_frame(uintptr_t pl, int stereo)
 {
 	int pub = g_ob.mode >= 2 && g_ob.on;
-	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim && !g_ob.vault) || !stereo)
+	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim && !g_ob.vault && !pr_place_on()) || !stereo)
 		return;
 	if (g_ob.tid && g_ob.tid != ob_tid())
 		return;
@@ -292,6 +292,11 @@ static void ob_frame(uintptr_t pl, int stereo)
 		return;
 	}
 	g_ob.ws_was = 0;
+	if (pr_place_entry(&e)) { /* build 31: Practice > Place orc's spot (the gold ring and its post) */
+		somvr_objective_put(&g_obj, g_fr.frame, &e);
+		g_ob.cur = 0;
+		return;
+	}
 	if (g_ob.vault && jv_entry(&e)) { /* build 22: the vault's landing (SOMVR_VAULT: the gold ring past the obstacle) */
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
 		if (!g_ob.vault_was && ob_log_ok())

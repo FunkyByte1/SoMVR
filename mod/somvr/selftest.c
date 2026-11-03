@@ -2924,6 +2924,54 @@ static void input_tests(void)
 	for (int i = 0; i < 4; i++)
 		iframe();
 	EXPECT(hap_take(0, &q) && q.amplitude == 0 && hap_take(1, &q) && q.amplitude == 0, "rumble gone: no stop (%g)", q.amplitude);
+	/* build 30 (SOMVR_HANDED=left, re-xr-pipeline.md 132): the left-handed mirror at the source - the located grips and
+	 * the snapshot swapped (the sword hand is the left controller), the physical X is the game's A (the jump), the
+	 * physical A not, the right stick walks; a haptic for the sword hand goes to the left controller, the word's "r" to
+	 * the right one; off again: as before */
+	g_lh = 1;
+	iframe(), iframe();
+	EXPECT(g_inp.hands[SOMVR_HAND_R].valid && NEAR(g_inp.hands[SOMVR_HAND_R].pose.p[0], g_lpose[0].position.x, 1e-6) &&
+		       NEAR(g_inp.hands[SOMVR_HAND_L].pose.p[0], g_lpose[1].position.x, 1e-6) &&
+		       NEAR(g_inp.st.hand[SOMVR_HAND_R].grip.p[0], g_lpose[0].position.x, 1e-6),
+	       "mirror: the sword hand at the left controller (x %g, want %g)", g_inp.hands[SOMVR_HAND_R].pose.p[0],
+	       g_lpose[0].position.x);
+	int lj0 = g_ninev;
+	ipress(1, SOMVR_BTN_LOWER);
+	iframe(), iframe();
+	int lj_a = nev('N', SC_CMD_JUMP, lj0);
+	irelease(1, SOMVR_BTN_LOWER);
+	iframe(), iframe();
+	lj0 = g_ninev;
+	ipress(0, SOMVR_BTN_LOWER);
+	iframe(), iframe();
+	int lj_x = nev('N', SC_CMD_JUMP, lj0);
+	irelease(0, SOMVR_BTN_LOWER);
+	g_lst.hand[1].stick[1] = 1;
+	iframe(), iframe(), iframe();
+	float lfw = poll22(SC_CMD_FORWARDAXIS);
+	g_lst.hand[1].stick[1] = 0;
+	iframe(), iframe();
+	EXPECT(lj_a == 0 && lj_x == 1 && lfw > 0.5f, "mirror: the physical A jumps %d (0), X %d (1); the right stick walks %g",
+	       lj_a, lj_x, lfw);
+	while (hap_take(0, &q) || hap_take(1, &q)) {}
+	in_haptic_event(SOMVR_HAND_R, 0.4f, 0.05f, SOMVR_HAP_COMBAT);
+	iframe();
+	int lhs = hap_take(0, &q), rhs = hap_take(1, &q);
+	EXPECT(lhs && !rhs, "mirror: the sword hand's pulse on the left controller (%d), not the right (%d)", lhs, rhs);
+	for (int i = 0; i < 12; i++)
+		iframe();
+	while (hap_take(0, &q) || hap_take(1, &q)) {}
+	in_haptic_word("r 0.5 100");
+	iframe();
+	lhs = hap_take(0, &q), rhs = hap_take(1, &q);
+	EXPECT(rhs && !lhs && log_has("HAPTIC word: hand L amp 0.50 100 ms"),
+	       "mirror: the word's r = the right controller (%d / %d), its hand the logical left", lhs, rhs);
+	for (int i = 0; i < 12; i++)
+		iframe();
+	g_lh = 0;
+	iframe(), iframe();
+	while (hap_take(0, &q) || hap_take(1, &q)) {}
+	EXPECT(NEAR(g_inp.hands[SOMVR_HAND_R].pose.p[0], g_lpose[1].position.x, 1e-6), "mirror off: the right hand back");
 	/* the controller blade: a 160 deg swing of the right grip through an orc 1 m ahead = a heavy hit through
 	 * Combat_DealHit, and a pulse on the right hand */
 	g_pobj.pos[0] = 100, g_pobj.pos[1] = 120, g_pobj.pos[2] = 300;
@@ -7439,13 +7487,13 @@ static void ao_frame(void)
 		uint32_t got = atomic_load(&g_vmo.block);
 		g_ao.vm_checked++;
 		g_ao.vm_bow += (got & SOMVR_VMG_BOW) != 0, g_ao.vm_climb += (got & SOMVR_VMG_CLIMB) != 0;
-		g_ao.vm_swing += (got & SOMVR_VMG_SWING) != 0;
+		g_ao.vm_swing += (got & (SOMVR_VMG_SWING | SOMVR_VMG_SOFT)) != 0;
 		if (got != g_ao.vm_want && !g_ao.bad_vm++)
 			g_ao.vm_first = g_ao.frames;
 	}
 	g_ao.vm_want = (bo_out() ? SOMVR_VMG_BOW : 0u) |
 		       (g_cl.s.active && (g_cl.s.h[0].holding || g_cl.s.h[1].holding) ? SOMVR_VMG_CLIMB : 0u) |
-		       (g_cb.sp.above ? SOMVR_VMG_SWING : 0u);
+		       (g_cb.sp.above ? (g_vm.gate_all || bd_two_held() ? SOMVR_VMG_SWING : SOMVR_VMG_SOFT) : 0u);
 	g_ao.vm_tick = g_inp.ticks;
 	if (cb_swings() != sw0 && !g_ao.swing_at) /* a swing nobody made (the hands still or holding): where */
 		g_ao.swing_at = g_ao.frames;
@@ -7746,7 +7794,8 @@ static void allon_tests(void)
 	EXPECT(!g_ao.bad_vm && g_ao.vm_checked > 600 && g_ao.vm_bow >= g_ao.bow - 2 && g_ao.vm_bow > 100 &&
 		       g_ao.vm_climb >= 20 && g_ao.vm_swing >= 3 && g_vm.gate_ticks[0] >= (uint64_t)g_ao.vm_bow &&
 		       log_has("VRMENU gate on: the bow (the palm gesture opens nothing meanwhile)") &&
-		       log_has("VRMENU gate on: a climb hold") && log_has("VRMENU gate on: a blade swing") &&
+		       log_has("VRMENU gate on: a climb hold") &&
+		       (log_has("VRMENU gate on: a blade swing") || log_has("VRMENU gate on: the sword hand's swing")) &&
 		       log_has("VRMENU gate off: nothing"),
 	       "allon: the VR menu's gate: %d checked frames, %d wrong (the first at frame %d), bow %d (out %d) climb %d swing %d",
 	       g_ao.vm_checked, g_ao.bad_vm, g_ao.vm_first, g_ao.vm_bow, g_ao.bow, g_ao.vm_climb, g_ao.vm_swing);
@@ -7901,8 +7950,7 @@ static void vm_tests(const char *base)
 	       (unsigned long long)(g_vm.applies - ap0));
 	EXPECT(log_has("VRMENU apply TURN=smooth from the menu") && log_has("VRMENU apply SNAP_DEG=60 from the menu") &&
 		       log_has("VRMENU apply HUD=off from the menu (the layer's HUD quad)") &&
-		       log_has("VRMENU apply HAND=left from the menu (the panel's wrist and the pointing hand; the controls do not "
-			       "swap yet)"),
+		       log_has("VRMENU apply HAND=left from the menu (the panel's wrist and the pointing hand)"),
 	       "no VRMENU apply lines for the clicks");
 	/* the snap angle is the rig's: a controller snap now turns 60 deg */
 	somvr_rig_init(&g_rig);
@@ -9422,6 +9470,8 @@ static void threat_tests(void)
 	       tick_l, (unsigned long long)g_th.n.ticks);
 	float peak = 0, tpeak = 0, prev = 0, size = 0, pos[3] = { 0, 0, 0 };
 	int rising = 1, window = 0, frames = 0, g_before = 0, g_nbefore = 0, g_after = 0, g_nafter = 0;
+	int gate_all0 = g_vm.gate_all;
+	g_vm.gate_all = 1; /* build 30's gate (SOMVR_VRMENU_GATE=all): an attack incoming gates */
 	for (int i = 0; i < 100; i++) {
 		iframe();
 		e = th_entry("A");
@@ -9464,6 +9514,7 @@ static void threat_tests(void)
 	EXPECT(!th_tr_of(0) && log_has("THREAT end orc=") && log_has("(the attack is over; impact 0.800 s)") &&
 		       th_entry("A over").threats == 0,
 	       "threat A: not ended");
+	g_vm.gate_all = gate_all0;
 	EXPECT(g_nbefore >= 65 && g_before == g_nbefore && g_nafter >= 10 && g_after == 0 && atomic_load(&g_vmo.block) == 0 &&
 		       g_vm.gate_ticks[3] >= (uint64_t)g_nbefore && log_has("VRMENU gate on: an attack incoming") &&
 		       log_has("VRMENU gate off: nothing"),
@@ -11047,7 +11098,7 @@ static void df_tests(void)
 		       "hurt off: a flash %llu", (unsigned long long)(g_hu.flashes - fl0));
 		/* build 24, SOMVR_HURT_LOW=0.25: under a quarter of the most seen (120) a faint steady red on both edges
 		 * (SOMVR_HURT_LOW_EDGE 0.3 = 76 of 255) after the blow's flash; above it none */
-		g_hu.on = 1, g_hu.low = 0.25f, g_hu.low_edge = 0.3f, *thp = 20;
+		g_hu.on = 1, g_hu.low = 0.25f, g_hu.low_edge = 0.3f, g_hu.ring = 0, *thp = 20; /* build 24's edges */
 		for (int k = 0; k < 30; k++)
 			iframe();
 		got = somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te);
@@ -11059,6 +11110,34 @@ static void df_tests(void)
 		got = somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te);
 		EXPECT(got && !te.hurt[0] && !te.hurt[1] && log_has("Talion's health 60.0 of 120.0: the faint red edge off"),
 		       "hurt low: above it, the edge %u %u", te.hurt[0], te.hurt[1]);
+		/* build 31 (re-xr-pipeline.md 136), SOMVR_HURT_LOW_STYLE=ring, SOMVR_HURT_LOW=0.30, SOMVR_HURT_BEAT=0.2: the
+		 * session's 20 of 120 - the ring (how low 0.53), no faint edges; its throb beats at once (a lub) and the hands
+		 * feel it (under 0.2); 30 of 120: none */
+		g_hu.ring = 1, g_hu.low = 0.30f, g_hu.beat_below = 0.2f, *thp = 20, g_hu.hp = 20; /* (no blow: no flash) */
+		somvr_haptic_req hq;
+		while (hap_take(SOMVR_HAND_L, &hq) || hap_take(SOMVR_HAND_R, &hq)) {}
+		uint64_t bf0 = g_hu.beats_felt;
+		iframe(), iframe();
+		got = somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te);
+		int lub_l = hap_take(SOMVR_HAND_L, &hq), lub_r = hap_take(SOMVR_HAND_R, &hq);
+		EXPECT(got && te.low > 130 && te.low < 140 && te.beat > 200 && (te.flags & SOMVR_THF_LOW) && !te.hurt[0] &&
+			       !te.hurt[1] && lub_l && lub_r && g_hu.beats_felt == bf0 + 1 &&
+			       log_has("Talion's health 20.0 of 120.0: under SOMVR_HURT_LOW - the red ring on"),
+		       "hurt low ring: low %u beat %u flags %#x edges %u %u, the lub felt L %d R %d (%llu)", te.low, te.beat, te.flags,
+		       te.hurt[0], te.hurt[1], lub_l, lub_r, (unsigned long long)(g_hu.beats_felt - bf0));
+		uint8_t bmin = 255;
+		for (int k = 0; k < 20; k++) { /* 0.22 s: the lub fades */
+			iframe();
+			if (somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te) && te.beat < bmin)
+				bmin = te.beat;
+		}
+		EXPECT(bmin < 40, "hurt low ring: the lub fades (%u)", bmin);
+		*thp = 36;
+		iframe(), iframe();
+		got = somvr_threat_get(&g_tht, atomic_load(&g_tht.last), &te);
+		EXPECT(got && !te.low && !(te.flags & SOMVR_THF_LOW) && log_has("Talion's health 36.0 of 120.0: the red ring off"),
+		       "hurt low ring: at 30 %% none (%u)", te.low);
+		g_hu.ring = 1;
 		g_hu.on = 0, g_hu.low = 0;
 		df_end_attack(0);
 		th_drain_haptics();
@@ -11805,6 +11884,12 @@ static void vb_tests(void)
 	EXPECT(g_vb.press_grab && !g_vb.press_b && n == 1 && out[0] == VB_CMD_GRAB && vb_nograb() && vb_trigger_taken() &&
 		       g_vb.held_c == (uintptr_t)&g_oc[0] && log_has("grab: the left hand on orc"),
 	       "verbs: the squeeze on A's head: the grab held (%d %d)", n, n ? out[0] : 0);
+	vb_hand_at2(530, 140, 20, 0.6f, 1); /* build 31 (SOMVR_VERBS_FIST_S): the trigger with the grab = the fist: no B */
+	n = vb_press_cmds(out);
+	EXPECT(n == 1 && out[0] == VB_CMD_GRAB && g_vb.hand.b_done, "verbs: build 31's fist: the trigger 0 s after the grab: no B (%d)",
+	       n);
+	vb_hand_at2(530, 140, 20, 0.6f, 0); /* the trigger let go; pressed again 0.6 s after the grab */
+	g_cb_test_t += 0.6;
 	vb_hand_at2(530, 140, 20, 0.6f, 1); /* the trigger while holding: B too */
 	n = vb_press_cmds(out);
 	EXPECT(n == 2 && vb_has(out, n, VB_CMD_GRAB) && vb_has(out, n, VB_CMD_B) && log_has("wraith: the left hand holding orc"),
@@ -15919,6 +16004,92 @@ static void fn_tests(void)
 	g_px.ptr = NULL, g_fn.a = NULL, g_rt_eye = e0;
 }
 
+/* build 31 (re-xr-pipeline.md 137): SOMVR_FX_BILLBOARD's turn on a synthetic draw - quads in the view's plane turned to
+ * face the eye's position with the world's up (a quad 45 deg to the right; a quad ahead of a rolled head: the roll
+ * gone), a quad in another plane left alone, the vertices' unit vectors turned with the quad, sprites never folded */
+static void rbb_put(unsigned char *v, int k, const float *m, const float *R, const float *U, const float *nrm, uint32_t col)
+{
+	static const float off[4][2] = { { -2, -2 }, { 2, -2 }, { 2, 2 }, { -2, 2 } };
+	for (int j = 0; j < 4; j++) {
+		float *p = (float *)(v + (size_t)(k * 4 + j) * 60);
+		memset(p, 0, 60);
+		for (int i = 0; i < 3; i++)
+			p[i] = m[i] + off[j][0] * R[i] + off[j][1] * U[i], p[6 + i] = nrm[i];
+		memcpy(v + (size_t)(k * 4 + j) * 60 + 12, &col, 4);
+	}
+}
+static int rbb_near(const float *p, float x, float y, float z) { return fabsf(p[0] - x) + fabsf(p[1] - y) + fabsf(p[2] - z) < 2e-3f; }
+static void rbb_tests(void)
+{
+	static unsigned char v[4 * 4 * 60 + 64];
+	float eye[7] = { 30000, 2000, -24000, 0, 0, 0, 1 }, em[7] = { 30500, 2000, -24000, 0, 0, 0, 1 };
+	void *a[5] = { em, eye, NULL, NULL, NULL };
+	const float X[3] = { 1, 0, 0 }, Y[3] = { 0, 1, 0 }, Zm[3] = { 0, 0, -1 };
+	int e0 = g_rt_eye;
+	g_rt_eye = 1;
+	atomic_store(&g_fn.on, 0), atomic_store(&g_rbb.on, 1);
+	EXPECT(rd_bill_now() && !rd_near_now(), "fxbill: on in eye 1's pass");
+	/* a level view (forward +Z): a quad 1 m right and 1 m ahead, in the view's plane; one in the YZ plane (kept) */
+	float m0[3] = { 30100, 2000, -23900 }, m1[3] = { 30000, 2000, -23800 };
+	rbb_put(v, 0, m0, X, Y, Zm, 0x11223344), rbb_put(v, 1, m1, Zm, Y, X, 0x55667788);
+	g_px.ptr = v, g_px.req = 8, g_px.granted = 8, g_fn.a = a, g_fn.kind = 1;
+	uint64_t t0 = atomic_load(&g_rbb.turned[1]), k0 = atomic_load(&g_rbb.kept[1]);
+	somvr_rd_near_unmap();
+	const float *c2 = (const float *)(v + 2 * 60), *n2 = (const float *)(v + 2 * 60 + 24), *d2 = (const float *)(v + 6 * 60);
+	float h = 2.0f * 0.70710678f;
+	EXPECT(rbb_near(c2, 30100 + h, 2002, -23900 - h) && rbb_near(n2, -0.70710678f, 0, -0.70710678f) &&
+		       rbb_near(d2, 30000, 2002, -23802) && atomic_load(&g_rbb.turned[1]) == t0 + 1 &&
+		       atomic_load(&g_rbb.kept[1]) == k0 + 1 && !g_fn.a && log_has("FXBILL t=") && log_has("a sprite at"),
+	       "fxbill level: corner %.3f %.3f %.3f normal %.3f %.3f %.3f, the other quad %.3f %.3f %.3f", c2[0], c2[1], c2[2],
+	       n2[0], n2[1], n2[2], d2[0], d2[1], d2[2]);
+	/* a head rolled 30 deg (the view's right tilted up): a quad straight ahead, its corners on the rolled axes - the
+	 * roll gone after the turn (the corner +R +U at +2 +2 in the world's right and up) */
+	float sr = sinf(15.0f * 0.01745329f), cr = cosf(15.0f * 0.01745329f);
+	eye[3] = 0, eye[4] = 0, eye[5] = sr, eye[6] = cr;
+	float R[3] = { cosf(30.0f * 0.01745329f), sinf(30.0f * 0.01745329f), 0 }, U[3] = { -R[1], R[0], 0 };
+	rbb_put(v, 0, m1, R, U, Zm, 0x01020304);
+	g_px.req = 4, g_fn.a = a, g_fn.kind = 0;
+	somvr_rd_near_unmap();
+	EXPECT(rbb_near(c2, 30002, 2002, -23800) && rbb_near(n2, 0, 0, -1), "fxbill roll: corner %.3f %.3f %.3f normal %.3f %.3f %.3f",
+	       c2[0], c2[1], c2[2], n2[0], n2[1], n2[2]);
+	/* off: nothing turned; a sprite with SOMVR_FX_NEAR on: never folded (the fold is the CPU particles') */
+	eye[5] = 0, eye[6] = 1;
+	atomic_store(&g_rbb.on, 0);
+	rbb_put(v, 0, m0, X, Y, Zm, 0x11223344);
+	g_px.req = 4, g_fn.a = a, g_fn.kind = 0;
+	somvr_rd_near_unmap();
+	EXPECT(rbb_near(c2, 30102, 2002, -23900) && !rd_bill_now(), "fxbill off: corner %.3f %.3f %.3f", c2[0], c2[1], c2[2]);
+	atomic_store(&g_fn.on, 1), g_fn.r0 = 15, g_fn.r1 = 30;
+	float m2[3] = { 30000, 2000, -23990 };
+	rbb_put(v, 0, m2, X, Y, Zm, 0x11223344);
+	g_px.req = 4, g_fn.a = a, g_fn.kind = 1;
+	somvr_rd_near_unmap();
+	EXPECT(rbb_near(c2, 30002, 2002, -23990), "fxbill: a sprite at 10 cm folded: corner %.3f %.3f %.3f", c2[0], c2[1], c2[2]);
+	g_px.req = 4, g_fn.a = a, g_fn.kind = 0;
+	somvr_rd_near_unmap();
+	EXPECT(rbb_near(c2, 30000, 2000, -23990), "fxbill: CPU particles at 10 cm not folded: corner %.3f %.3f %.3f", c2[0],
+	       c2[1], c2[2]);
+	atomic_store(&g_fn.on, 0), g_fn.kind = 0;
+	g_px.ptr = NULL, g_fn.a = NULL, g_rt_eye = e0;
+	/* the flare sprites' camera: the eye's position looking straight at the sprite with the world's up (the sun far up
+	 * to the left behind: forward = the direction to it, right level, up = forward x right's partner), any quadrant */
+	static const float sps[4][3] = { { -131700, -2264000, 199060 }, { 5000, 100, -9000 }, { -3, -2, -40 }, { 10, 0, 0.5f } };
+	for (int t = 0; t < 4; t++) {
+		float cam[7] = { 0, -2341300 * (t == 0), -9550 * (t == 0), 0.1f, 0.2f, 0.3f, 0.927f }, out[7], f[3], r[3], u[3];
+		static const float Xa[3] = { 1, 0, 0 }, Ya[3] = { 0, 1, 0 }, Za[3] = { 0, 0, 1 };
+		int ok = rd_lookat(sps[t], cam, out);
+		rd_qrot(out + 3, Za, 0, f), rd_qrot(out + 3, Xa, 0, r), rd_qrot(out + 3, Ya, 0, u);
+		float d[3] = { sps[t][0] - cam[0], sps[t][1] - cam[1], sps[t][2] - cam[2] }, dl = sqrtf(rd_dot(d, d));
+		float ql = out[3] * out[3] + out[4] * out[4] + out[5] * out[5] + out[6] * out[6];
+		EXPECT(ok && fabsf(rd_dot(f, d) / dl - 1) < 1e-4f && fabsf(r[1]) < 1e-4f && u[1] > 0 && fabsf(ql - 1) < 1e-4f &&
+			       !memcmp(out, cam, 3 * sizeof(float)),
+		       "fxbill lookat %d: forward %.4f %.4f %.4f (want the direction), right %.4f %.4f %.4f, up %.4f %.4f %.4f, |q|^2 %.5f",
+		       t, f[0], f[1], f[2], r[0], r[1], r[2], u[0], u[1], u[2], ql);
+	}
+	float up_sp[3] = { 0, 1000, 0 }, cam0[7] = { 0, 0, 0, 0, 0, 0, 1 }, o2[7];
+	EXPECT(!rd_lookat(up_sp, cam0, o2), "fxbill lookat: straight up has no level right");
+}
+
 static void vg_tests(void)
 {
 	static struct site_spec s[2];
@@ -16758,6 +16929,7 @@ int main(int argc, char **argv)
 	uf_tests();     /* SOMVR_HUD_FX: a stand-in thunk (the build 12 HUD round) */
 	vg_tests();     /* SOMVR_VERBS_GLOW: two stand-in thunks (build 13) */
 	fn_tests();     /* build 27: SOMVR_FX_NEAR's fold on a synthetic draw */
+	rbb_tests();    /* build 31: SOMVR_FX_BILLBOARD's turn on a synthetic draw */
 	ff_tests();     /* SOMVR_FRONT: the wrappers on stand-ins (build 14) */
 	py_tests();     /* SOMVR_PARRY / SOMVR_SHOVE: the window, the opening, the riposte (build 18) */
 	soak_tests();   /* build 27: the long session's tables (SOMVR_GLYPH's triggers and items) */

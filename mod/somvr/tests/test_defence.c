@@ -850,8 +850,47 @@ static void test_build17(void)
     CHECK(r.fires == 0 && tr.still, "move from the blade: a still tip (5 cm) is still");
 }
 
+/* build 31 (re-xr-pipeline.md 136): the orc's blade through the tracked body */
+static void test_body31(void)
+{
+    somvr_df_body_cfg c;
+    somvr_df_body_cfg_default(&c);
+    const float head[3] = { 0, 170, 0 };
+    int part = -1;
+    float pt[3];
+    /* a level cut through the chest (30 cm under the eyes), the blade from 60 cm left to 20 cm right of the spine */
+    float b1[3] = { -60, 140, 5 }, t1[3] = { 20, 140, 5 };
+    float in = somvr_df_body_sweep(&c, head, NULL, NULL, b1, t1, &part, pt);
+    CHECK(part == SOMVR_DF_BODY_TORSO && NEAR(in, 11, 1e-3) && in >= c.grace && NEAR(pt[0], 0, 1e-3),
+          "a cut through the chest 5 cm before the spine: torso, %.2f cm in (part %d)", in, part);
+    /* the same cut 12 cm before the spine: a graze (4 cm in), not a hit */
+    float b2[3] = { -60, 140, 12 }, t2[3] = { 20, 140, 12 };
+    in = somvr_df_body_sweep(&c, head, NULL, NULL, b2, t2, &part, pt);
+    CHECK(part == SOMVR_DF_BODY_TORSO && in > -0.01f && in < c.grace, "a graze: %.2f cm in (under the grace)", in);
+    /* swept: the blade in front of the body last frame (60 cm out), behind the spine's line now: the sweep finds it */
+    float pb3[3] = { -40, 140, 60 }, pt3[3] = { 40, 140, 60 }, b3[3] = { -40, 140, -20 }, t3[3] = { 40, 140, -20 };
+    float now = somvr_df_body_sweep(&c, head, NULL, NULL, b3, t3, &part, NULL);
+    in = somvr_df_body_sweep(&c, head, pb3, pt3, b3, t3, &part, pt);
+    CHECK(now < c.grace && in >= c.grace && part == SOMVR_DF_BODY_TORSO,
+          "a fast cut seen behind the body: this frame alone %.1f, swept %.1f cm in", now, in);
+    /* through the head (its middle 6 cm under the eyes): in; 20 cm over the head: out */
+    float b4[3] = { -50, 165, 0 }, t4[3] = { 50, 165, 0 };
+    in = somvr_df_body_sweep(&c, head, NULL, NULL, b4, t4, &part, pt);
+    CHECK(part == SOMVR_DF_BODY_HEAD && in > 8.9f && in >= c.grace, "through the head: %s %.2f", somvr_df_body_part_name(part), in);
+    float b5[3] = { -50, 190, 0 }, t5[3] = { 50, 190, 0 };
+    in = somvr_df_body_sweep(&c, head, NULL, NULL, b5, t5, &part, pt);
+    CHECK(in < 0, "over the head: %.2f (outside)", in);
+    /* the 11-02 session's first dodge (boot 101318, 2377.357): the defender's weapon 88 cm off the spine at its impact */
+    float b6[3] = { -34, 104, 90 }, t6[3] = { -191, 111, -60 };
+    in = somvr_df_body_sweep(&c, head, NULL, NULL, b6, t6, &part, pt);
+    CHECK(in < -40, "the session's dodge at 2377: the blade %.1f cm outside the body: the dodge stands", -in);
+    float bad[3] = { NAN, 0, 0 };
+    CHECK(somvr_df_body_sweep(&c, head, NULL, NULL, bad, t1, &part, pt) < -1e8f && part == SOMVR_DF_BODY_NONE, "NaN: none");
+}
+
 int main(void)
 {
+    test_body31();
     test_types();
     test_guard();
     test_zone();

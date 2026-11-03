@@ -46,6 +46,8 @@ grep -q "^PRACTICE t=.* arrived" "$L" || bail "no arrival"
 w() { userin && bail "the user is in VR"; printf '%s' "$1" > "$R/somvr.trigger"; echo "$(date +%T) word: $1"; sleep "${2:-0.8}"; }
 m() { sleep "${2:-0.3}"; w "mark $1" 4; }
 x() { printf '%s\n' "$1" > "$R/xrtest.txt"; echo "$(date +%T) xrtest: $1"; sleep 0.8; }
+# build 30 (som-b30-leftie): MIRROR_LH=1 = every test hand and button mirrored for a SOMVR_HANDED=left boot (lh-mirror.sh)
+[ "${MIRROR_LH:-0}" = 1 ] && . "$(dirname "${BASH_SOURCE[0]}")/lh-mirror.sh"
 cnt() { grep -cE "$1" "$L"; }
 waitfor() { local n0 i; n0=$(cnt "$1"); for i in $(seq 1 $((${2:-10} * 4))); do
   userin && bail "the user is in VR"; [ "$(cnt "$1")" -gt "$n0" ] && return 0; sleep 0.25; done; return 1; }

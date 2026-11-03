@@ -332,7 +332,7 @@ static void sf_samples(int h, const float curl[5])
 	somvr_vh_joint_g(&g_sf_m, (const float(*)[12])skin, 4, th);
 	const float *pt[SOMVR_SF_NS] = { pal, j[2], j[3], th };
 	for (int i = 0; i < SOMVR_SF_NS; i++) {
-		g_sf.pg[h][i][0] = (h ? 100.0f : -100.0f) * pt[i][0];
+		g_sf.pg[h][i][0] = (IN_SIDE(h) ? 100.0f : -100.0f) * pt[i][0]; /* build 30: its controller's side */
 		g_sf.pg[h][i][1] = 100.0f * pt[i][1];
 		g_sf.pg[h][i][2] = -100.0f * pt[i][2];
 	}

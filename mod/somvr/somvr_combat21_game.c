@@ -13,6 +13,12 @@
  *    own draw of it is the player's (the slots' take: not kept on the back, no undraw), else our draw is asked; it stays
  *    in the hand after (the player puts it back). Not while that hand holds a wall (a climb hold is never let go by us).
  *    =off: build 20c (the game's draw kept on the back: the strike's blue streak with no sword, marks 194211_6, 194517_10).
+ *    Build 31 (som-b31-hands, re-xr-pipeline.md 135): SOMVR_VERBS_CUE_NEAR=on|off (code default on) - the user could not
+ *    tell where to put the hand (marks 12, 17: behind an unaware orc at the stand-off's 118 cm, the hand low, no cue all
+ *    the while): the orc the player faces whose collar is within SOMVR_VERBS_CUE_NEAR_CM (190) of the eyes and
+ *    SOMVR_VERBS_CUE_NEAR_DEG (50) of the head's heading, if the game would grab it now, shows the same glow at its collar
+ *    fainter (SOMVR_VERBS_CUE_NEAR_K x the level, 0.45) before the hand is in reach - the spot to put the hand; the hand
+ *    in reach: the full glow and the tick as before.
  * 3. The test words `react21 defender|berserker V` (SOMVR_HANDS_TEST): REACT's no-table chance at run time, and
  *    `react21 notify`: REACT's own FUN_029ac890 (rx_notify) on the nearest orc once it is out of its own attack - the
  *    turtle's A/B in one boot (build 21 ships SOMVR_COMBAT_REACT_DEFENDER=0: 85.2). */
@@ -66,6 +72,13 @@ static struct {
 	uint64_t cap_asks, cap_holds, cap_throws, cap_unknown;
 	double notify_until;
 	uint64_t asks, yes, no, ons, ticks, glow_frames, probes, lines;
+	/* build 31: SOMVR_VERBS_CUE_NEAR - the faint glow before the hand is in reach */
+	int near_on;
+	float near_cm, near_deg, near_k, near_level;
+	uintptr_t near_c, near_shown;
+	int near_body;
+	uint64_t near_frame, near_frames, near_ons;
+	double near_t;
 } g_gc;
 
 static void gc_start(int *bad)
@@ -85,6 +98,10 @@ static void gc_start(int *bad)
 	g_gc.captain = env_word("SOMVR_VERBS_CUE_CAPTAIN", cw, 2, 1);
 	somvr_vb_cue_cfg_default(&g_gc.cfg);
 	somvr_vb_cue_reset(&g_gc.st);
+	g_gc.near_on = env_word("SOMVR_VERBS_CUE_NEAR", cw, 2, 1);
+	g_gc.near_cm = env_float("SOMVR_VERBS_CUE_NEAR_CM", 190, 60, 400, bad);
+	g_gc.near_deg = env_float("SOMVR_VERBS_CUE_NEAR_DEG", 50, 5, 90, bad);
+	g_gc.near_k = env_float("SOMVR_VERBS_CUE_NEAR_K", 0.45f, 0.05f, 1, bad);
 	if (g_vb.mode != VB_ON) {
 		if (g_gc.mode)
 			logf_("CONFIG verbs_cue=%s: SOMVR_VERBS is not on - no cue", g_gc_w[g_gc.mode]);
@@ -98,6 +115,9 @@ static void gc_start(int *bad)
 	      "again for that orc after %.1f s off)%s", g_gc_w[g_gc.mode], g_gc.keep_cm, g_gc.keep_deg, g_gc.recheck_s,
 	      g_gc.size_cm, g_gc.down_cm, g_gc.level, g_gc.cfg.fade_s, g_gc.cfg.grace_s, g_gc.tick_amp, g_gc.tick_s * 1e3,
 	      g_gc.cfg.rearm_s, g_th.on ? "" : " - SOMVR_THREAT is off: the tick only, no glow");
+	logf_("CONFIG verbs_cue build 31: near=%s (SOMVR_VERBS_CUE_NEAR): %s%.0f cm of the eyes and %.0f deg of the head's "
+	      "heading, at %.2f x the level", g_gc.near_on ? "on" : "off", g_gc.near_on ? "the faint glow before the hand is in "
+	      "reach - the collar of the orc the game would grab within " : "off - (", g_gc.near_cm, g_gc.near_deg, g_gc.near_k);
 	logf_("CONFIG verbs_cue build 23: captain=%s (SOMVR_VERBS_CUE_CAPTAIN): %s", g_gc.captain ? "on" : "off",
 	      g_gc.captain ? "on a Nemesis captain the grab is asked to its end - the game's own pick of how it ends "
 			     "('PC_Grab_Into_*' from the nodes that hold them), the cue only where it holds (not '_Resistant' / "
@@ -469,7 +489,10 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		}
 	}
 	uintptr_t c = g_fr.frame - g_gc.reach_frame <= 2 ? g_gc.reach_c : 0;
-	if (!c || (c == g_gc.ask_c && g_gc.reach_body == g_gc.ask_body && t - g_gc.ask_t < g_gc.recheck_s))
+	int cbody = g_gc.reach_body;
+	if (!c && g_gc.near_on && g_fr.frame - g_gc.near_frame <= 2) /* build 31: the faint glow's orc, before the reach */
+		c = g_gc.near_c, cbody = g_gc.near_body;
+	if (!c || (c == g_gc.ask_c && cbody == g_gc.ask_body && t - g_gc.ask_t < g_gc.recheck_s))
 		return;
 	const struct cb_orc *oc = NULL;
 	for (int i = 0; i < n && !oc; i++)
@@ -514,13 +537,13 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 			ok = 0, capwhy = "a captain whose grab's end the game did not answer (no cue without its answer)";
 	}
 	g_gc.asks++, g_gc.yes += ok, g_gc.no += !ok;
-	g_gc.ask_c = c, g_gc.ask_body = g_gc.reach_body, g_gc.ask_ok = ok, g_gc.ask_t = t,
+	g_gc.ask_c = c, g_gc.ask_body = cbody, g_gc.ask_ok = ok, g_gc.ask_t = t,
 	g_gc.ask_why = ok ? "" : capwhy ? capwhy : at ? "a fail move" : why;
 	snprintf(g_gc.ask_atk, sizeof g_gc.ask_atk, "%s", a), snprintf(g_gc.ask_sync, sizeof g_gc.ask_sync, "%s", s);
 	snprintf(g_gc.ask_node, sizeof g_gc.ask_node, "%s", nn);
 	if ((c != g_gc.said_c || ok != g_gc.said_ok) && g_gc.lines++ < 400 && vb_log_ok())
-		logf_("VERBS cue t=%.3f orc %#lx in reach (%s, %.0f cm from Talion; health %.1f, attack '%s'): the game %s '%s'%s%s%s%s",
-		      t, (unsigned long)c, g_gc.reach_body ? "its back" : "its head", oc->dist, vb_health(c),
+		logf_("VERBS cue t=%.3f orc %#lx %s (%s, %.0f cm from Talion; health %.1f, attack '%s'): the game %s '%s'%s%s%s%s",
+		      t, (unsigned long)c, c == g_gc.reach_c ? "in reach" : "faced (the faint glow's)", cbody ? "its back" : "its head", oc->dist, vb_health(c),
 		      vb_name(peek_ptr(c + VB_C_ATTACK), an, sizeof an), ok ? "would grab it:" : "would not grab it:", nn,
 		      ok ? " -> '" : " -> ", ok ? a : at && !capwhy ? a : g_gc.ask_why, ok ? "'" : "", ok && s[0] && strcmp(s, "-") ? " (a sync)" : "");
 	if (e > -2 && (c != g_gc.said_c || ok != g_gc.said_ok) && g_gc.lines < 400 && vb_log_ok())
@@ -528,6 +551,52 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		      e >= 0 ? "'" : "", e >= 0 ? g_gc.end_atk : "no answer: no cue",
 		      e > 0 ? "' - it holds: the cue" : e == 0 ? "' - he throws it off: no cue" : "");
 	g_gc.said_c = c, g_gc.said_ok = ok;
+}
+
+/* build 31 (SOMVR_VERBS_CUE_NEAR): the orc the player faces, near enough to reach for (vb_hands; gc_frame asks the game
+ * for it), and its faint glow while no orc is in reach (the glow of the reach replaces it) */
+static void gc_near(const somvr_vb_hand_in *in, uintptr_t reach, int reach_on, double t)
+{
+	double dt = g_gc.near_t > 0 && t > g_gc.near_t ? t - g_gc.near_t : 0;
+	g_gc.near_t = t;
+	uintptr_t best = 0;
+	int bk = -1;
+	if (g_gc.near_on && in->live && g_vb.hand.phase == SOMVR_VBH_IDLE && !reach && in->have_eye) {
+		float fx = sinf(g_inp.hv), fz = cosf(g_inp.hv), bd = INFINITY;
+		for (int k = 0; k < in->norc && k < g_vb.nheads; k++) {
+			float cl[3] = { in->head[k][0], in->head[k][1] - g_gc.down_cm, in->head[k][2] };
+			float d = dist3(cl, in->eye), dx = cl[0] - in->eye[0], dz = cl[2] - in->eye[2], dh = hypotf(dx, dz);
+			if (!(d <= g_gc.near_cm) || !(dh > 1) || cb_dead(g_vb.head_c[k]))
+				continue;
+			float cs = (dx * fx + dz * fz) / dh;
+			if (acosf(fminf(1, fmaxf(-1, cs))) * 57.29578f > g_gc.near_deg || !(d < bd))
+				continue;
+			bd = d, best = g_vb.head_c[k], bk = k;
+		}
+	}
+	g_gc.near_c = best, g_gc.near_body = bk >= 0 && in->body_cm[bk] > 0, g_gc.near_frame = g_fr.frame;
+	int yes = best && g_gc.ask_c == best && g_gc.ask_ok && t - g_gc.ask_t <= 0.3 && !reach_on;
+	float k = g_gc.cfg.fade_s > 0 ? (float)dt / g_gc.cfg.fade_s : 1;
+	int fresh = yes && g_gc.near_shown != best;
+	if (fresh)
+		g_gc.near_level = 0, g_gc.near_shown = best, g_gc.near_ons++;
+	g_gc.near_level = yes ? fminf(1, g_gc.near_level + k) : fmaxf(0, g_gc.near_level - k);
+	if (fresh && g_gc.lines < 400 && vb_log_ok())
+		g_gc.lines++, logf_("VERBS cue t=%.3f near: orc %#lx faced, its collar %.0f cm from the eyes: the faint glow (the hand "
+				    "not in reach yet; the palm %.0f cm from its head point)", t, (unsigned long)best,
+				    dist3((float[3]){ in->head[bk][0], in->head[bk][1] - g_gc.down_cm, in->head[bk][2] }, in->eye),
+				    in->have_palm ? dist3(in->palm, in->head[bk]) : -1.0f);
+	if (!(g_gc.glow > 0) && g_gc.near_level > 0.01f && g_gc.near_shown) {
+		for (int j = 0; j < g_vb.nheads; j++)
+			if (g_vb.head_c[j] == g_gc.near_shown) {
+				g_gc.pos[0] = g_vb.heads[j][0], g_gc.pos[1] = g_vb.heads[j][1] - g_gc.down_cm, g_gc.pos[2] = g_vb.heads[j][2];
+				g_gc.glow = g_gc.near_level * g_gc.level * g_gc.near_k, g_gc.glow_frame = g_fr.frame;
+				g_gc.dist_cm = dist3(g_gc.pos, in->eye);
+				g_gc.near_frames++;
+			}
+	}
+	if (!yes && !(g_gc.near_level > 0))
+		g_gc.near_shown = 0;
 }
 
 /* vb_hands (after the hand's step): the reach, the cue's state, the tick, the glow's place */
@@ -561,6 +630,7 @@ static void gc_hands(const somvr_vb_hand_in *in, double t)
 			g_gc.glow = o.level * g_gc.level, g_gc.glow_frame = g_fr.frame;
 			g_gc.dist_cm = dist3(g_gc.pos, in->eye);
 		}
+	gc_near(in, c, o.on, t); /* build 31: the faint glow before the reach */
 	if (o.changed) {
 		if (o.on)
 			g_gc.ons++, g_gc.on_t = t;
@@ -577,8 +647,10 @@ static void gc_hands(const somvr_vb_hand_in *in, double t)
 }
 
 /* th_frame: the cue's glow among the frame's (the blue row) */
+static void ov_glow_add(struct th_glow *gl, int *ng); /* build 31 (somvr_hands31_game.c): the vault's cue on a crown */
 static void gc_glow_add(struct th_glow *gl, int *ng)
 {
+	ov_glow_add(gl, ng);
 	if (g_gc.mode != GC_ON || !(g_gc.glow > 0.01f) || g_fr.frame - g_gc.glow_frame > 2 || !vec_ok(g_gc.pos, 1e7f))
 		return;
 	th_glow_add(gl, ng, g_gc.pos, g_gc.glow, g_gc.dist_cm, SOMVR_THK_MELEE | SOMVR_THK_BLUE);
@@ -763,6 +835,9 @@ static void c21_end_log(void)
 		      (unsigned long long)g_gc.probes, (unsigned long long)g_gc.shield_noes, (unsigned long long)g_gc.counter_noes,
 		      g_gc.ncounter, g_gc.captain ? "on" : "off", (unsigned long long)g_gc.cap_asks, (unsigned long long)g_gc.cap_holds,
 		      (unsigned long long)g_gc.cap_throws, (unsigned long long)g_gc.cap_unknown);
+	if (g_gc.mode && g_gc.near_on)
+		logf_("VERBS cue END build 31: the faint glow before the reach on %llu orcs, %llu frames",
+		      (unsigned long long)g_gc.near_ons, (unsigned long long)g_gc.near_frames);
 	logf_("STRIKE sword END: %s; strikes %llu, the bow to its slot %llu, the sword taken %llu, take frames %llu, a wall in "
 	      "the hand %llu", g_ssw.on ? "hand" : "off", (unsigned long long)g_ssw.strikes, (unsigned long long)g_ssw.bow_puts,
 	      (unsigned long long)g_ssw.takes, (unsigned long long)g_ssw.frames, (unsigned long long)g_ssw.climbs);

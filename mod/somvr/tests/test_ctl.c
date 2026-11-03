@@ -560,6 +560,57 @@ static void test_army(void) {
            "carried into its menu\n");
 }
 
+/* ---- build 30: the left-handed mirror at the source (sc_mirror_state) ------------------------------------------------ */
+static void test_mirror(void) {
+    reset_all();
+    somvr_input_state raw = ST; /* the controllers as the layer gives them: [0] the physical left, [1] the right */
+    raw.profile[0] = SOMVR_PROF_TOUCH, raw.profile[1] = SOMVR_PROF_INDEX;
+    raw.hand[1].stick[0] = 0, raw.hand[1].stick[1] = 1.0f; /* the right stick pushed forward */
+    raw.hand[0].stick[0] = 0.95f;                         /* the left stick to the right */
+    raw.hand[0].trigger = 0.8f, raw.hand[1].squeeze = 0.9f;
+    raw.hand[0].grip.p[0] = -0.2f, raw.hand[1].grip.p[0] = 0.2f;
+    raw.hand[1].buttons = SOMVR_BTN_LOWER, raw.hand[1].presses[0] = 3; /* A held (3 presses so far) */
+    raw.hand[0].buttons = SOMVR_BTN_UPPER | SOMVR_BTN_MENU, raw.hand[0].presses[1] = 2, raw.hand[0].presses[3] = 5;
+    somvr_input_state m = raw;
+    sc_mirror_state(&m);
+    CHECK(m.hand[SOMVR_HAND_L].stick[1] == 1.0f && m.hand[SOMVR_HAND_R].stick[0] == 0.95f,
+          "the move stick is the physical right one, the turn stick the left one");
+    CHECK(m.hand[SOMVR_HAND_R].trigger == 0.8f && m.hand[SOMVR_HAND_L].squeeze == 0.9f &&
+              m.hand[SOMVR_HAND_R].grip.p[0] == -0.2f && m.hand[SOMVR_HAND_L].grip.p[0] == 0.2f,
+          "the sword hand's trigger and pose are the physical left controller's");
+    CHECK(m.profile[0] == SOMVR_PROF_INDEX && m.profile[1] == SOMVR_PROF_TOUCH, "the profiles follow their hands");
+    CHECK((m.hand[SOMVR_HAND_L].buttons & SOMVR_BTN_LOWER) && m.hand[SOMVR_HAND_L].presses[0] == 3 &&
+              (m.hand[SOMVR_HAND_R].buttons & SOMVR_BTN_UPPER) && m.hand[SOMVR_HAND_R].presses[1] == 2,
+          "A (the physical right's lower) is the move hand's lower now, Y the sword hand's upper");
+    CHECK((m.hand[SOMVR_HAND_L].buttons & SOMVR_BTN_MENU) && !(m.hand[SOMVR_HAND_R].buttons & SOMVR_BTN_MENU) &&
+              m.hand[SOMVR_HAND_L].presses[3] == 5 && m.hand[SOMVR_HAND_R].presses[3] == 0,
+          "the menu button (the physical left's) stays in hand[L]: bit 0x%x / 0x%x, presses %u / %u",
+          m.hand[0].buttons, m.hand[1].buttons, m.hand[0].presses[3], m.hand[1].presses[3]);
+    somvr_input_state back = m;
+    sc_mirror_state(&back);
+    CHECK(!memcmp(&back, &raw, sizeof raw), "twice = the snapshot as it was");
+    /* the controls on the mirrored snapshot: the pad and the commands as a right-hander's, from the other controllers */
+    sc_tick_out o;
+    for (int i = 0; i < 3; i++) tick(SC_CTX_MENU, 0, &o); /* seen up first (a button counts once it was) */
+    raw.sync_seq = ST.sync_seq, raw.hand[1].presses[0]++, raw.hand[0].presses[1]++, raw.hand[0].presses[3]++;
+    ST = raw, sc_mirror_state(&ST);
+    for (int i = 0; i < 3; i++) tick(SC_CTX_MENU, 0, &o);
+    CHECK(pad_on(&o, SC_PAD_X) && !pad_on(&o, SC_PAD_A) && pad_on(&o, SC_PAD_B) && !pad_on(&o, SC_PAD_Y) &&
+              pad_on(&o, SC_PAD_START),
+          "menus: the physical A = the pad's X, Y = B, the left menu button = START (pad 0x%x)", o.pad_on);
+    reset_all();
+    for (int i = 0; i < 3; i++) tick(SC_CTX_WORLD, 0, &o); /* the sticks seen centred */
+    raw = ST;
+    raw.hand[1].stick[1] = 1.0f, raw.hand[0].stick[0] = 0.95f;
+    ST = raw, sc_mirror_state(&ST);
+    int snaps = 0;
+    for (int i = 0; i < 5; i++) tick(SC_CTX_WORLD, 0, &o), snaps += o.snap;
+    CHECK(NEAR(o.move[1], 1, 1e-5) && NEAR(o.move[0], 0, 1e-5) && snaps == 1,
+          "the world: the physical right stick walks (%.2f %.2f), the left one snaps once to the right (%d)", o.move[0],
+          o.move[1], snaps);
+    printf("mirror: the controllers swapped at the source (sticks, buttons, triggers, poses), the menu button kept\n");
+}
+
 int main(void) {
     test_deny();
     test_sticks();
@@ -570,6 +621,7 @@ int main(void) {
     test_turn_p0();
     test_haptics();
     test_army();
+    test_mirror();
     printf("test_ctl: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

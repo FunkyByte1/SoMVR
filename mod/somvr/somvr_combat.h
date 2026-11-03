@@ -54,6 +54,9 @@ typedef struct {
     float cut_min_k;           /* 0.6 */
     float tip_max_mps;         /* a sample faster than this at the tip or the base is a tracking jump, not a swing:
                                 * dropped (60; 0 = none; the session's 132 m/s "stab") */
+    float arm_cm;              /* build 31b (SOMVR_COMBAT_CUT_ARM_CM): a cut (the heavy tier) also needs the fist - the
+                                * blade's base - this far from where the stroke began: the arm in it, not the wrist
+                                * alone (0 = no such rule: build 20-31) */
 } sc_cfg;
 
 void sc_cfg_default(sc_cfg *c);
@@ -100,6 +103,8 @@ typedef struct {
                        * tracking-space motion, so walking and turning add nothing) */
     float stroke_cm;  /* cm: the tip's path in the stroke */
     float disp[3];    /* the stroke's displacement so far (cm) */
+    float bdisp[3];   /* build 31b: the base's (the fist's) displacement in the stroke (cm) */
+    float base_reach; /* cm: the farthest the base got from where the stroke began */
     float dir[3];     /* the stroke's direction: the tip's velocity eased over SC_STROKE_TAU_S */
     int have_dir;
     float rest_s;     /* the tip slower than SC_STROKE_MIN_CMS this long: a rest ends the stroke */

@@ -55,9 +55,15 @@
 enum {                         /* somvr_vrmenu_shared.block: why the palm gesture opens nothing now */
     SOMVR_VMG_BOW = 1u,        /* SOMVR_BOW: the bow is out (nocked, drawn or held) */
     SOMVR_VMG_CLIMB = 2u,      /* SOMVR_CLIMB: a hand holds in our climb */
-    SOMVR_VMG_SWING = 4u,      /* SOMVR_COMBAT: a blade swing is on (the sword's speed above the slash speed) */
-    SOMVR_VMG_THREAT = 8u,     /* SOMVR_THREAT: an attack at Talion before its impact, or an arrow inbound */
-    SOMVR_VMG_ALL = 15u,
+    SOMVR_VMG_SWING = 4u,      /* SOMVR_COMBAT: a blade swing is on (the sword's speed above the slash speed); build 31's
+                                * SOMVR_VRMENU_GATE=hand: only with the panel's hand on the hilt too (two hands) */
+    SOMVR_VMG_THREAT = 8u,     /* SOMVR_THREAT: an attack at Talion before its impact, or an arrow inbound (build 31's
+                                * SOMVR_VRMENU_GATE=hand: never set) */
+    SOMVR_VMG_SOFT = 16u,      /* build 31 (re-xr-pipeline.md 136), SOMVR_VRMENU_GATE=hand: the sword hand's own swing - the
+                                * other hand: no open while it lasts and gate_s after it, but no disarm (a palm held up
+                                * through it opens the panel then; an older layer: an unknown bit, ignored) */
+    SOMVR_VMG_HARD = 15u,      /* the bits that disarm the gesture (a fresh one after them) */
+    SOMVR_VMG_ALL = 31u,
 };
 
 enum {                         /* somvr_vrmenu_shared.avail: what the game side can change live */
@@ -185,7 +191,10 @@ enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_S
        /* build 19: Spawn group (3-4 orcs of mixed types around Talion) */
        SOMVR_VMPR_GROUP = 9,
        /* build 22: Captain (the save's next Nemesis captain) */
-       SOMVR_VMPR_CAPTAIN = 10 };
+       SOMVR_VMPR_CAPTAIN = 10,
+       /* build 31 (re-xr-pipeline.md 136): Place an orc - aim the hand at the ground (a gold ring), the trigger puts an
+        * unaware orc there */
+       SOMVR_VMPR_PLACE = 11 };
 static inline uint32_t somvr_vm_pr_pack(uint32_t seq, int action, int orc) {
     return seq << 8 | ((uint32_t)orc & 15u) << 4 | ((uint32_t)action & 15u);
 }
@@ -235,7 +244,14 @@ typedef struct {
     uint8_t refresh;           /* 84: build 27: the headset's refresh rate asked, Hz (72, 80, 90, 120; 0 = the runtime's
                                 * own; SOMVR_XR_REFRESH; the layer's SOMVR_VMA_REFRESH; was pad6[0]: a layer that sets no
                                 * SOMVR_VMA_REFRESH ignores it) */
-    uint8_t pad6[3];           /* 85: spare (0) for the next rows: a byte each, no new version */
+    uint8_t handed;            /* 85: build 30 (re-xr-pipeline.md 132): the Handedness row 0 right, 1 left - the sword
+                                * hand; the left-handed mirror swaps the controllers' roles from the next start
+                                * (SOMVR_HANDED; was pad6[0]: a preload without it never sets it) */
+    uint8_t handed_on;         /* 86: build 30: this session's controls are mirrored (the preload's, at its start: the
+                                * Controls page, the card and the layer's card A follow it; no key, never saved; the
+                                * menu never changes it; was pad6[1]) */
+    uint8_t test_key;          /* 87: build 31 (re-xr-pipeline.md 136): the Test page's text it was on (a hash 1..255; 0 =
+                                * none) - TEST_PAGE's second half; was pad6[0] (0) */
     /* v7 (build 19, re-xr-pipeline.md 73): the Fight page's rows (each needs its SOMVR_VMA_* bit; a key not in the
      * file follows its switch) */
     uint8_t dodge;             /* 88: the A dodge 0 off, 1 on (SOMVR_DODGE; SOMVR_VMA_DODGE) */
@@ -244,7 +260,8 @@ typedef struct {
     uint8_t counter_icon;      /* 91: the game's counter icon 0 hidden, 1 shown (SOMVR_COUNTER_ICON hide|game) */
     uint16_t crowd_ms;         /* 92: the crowd's pace, ms between blows at Talion, 0 = off (SOMVR_CROWD_PACE_MS) */
     uint8_t bow_string;        /* 94: the bow's string held by 0 the grip, 1 the trigger (SOMVR_BOW_STRING) */
-    uint8_t pad7;              /* 95: spare (0) */
+    uint8_t test_page;         /* 95: build 31: the Test page's page it was on (0 ..), for that text (test_key): the menu
+                                * opens it there again, this session and the next (TEST_PAGE=P@KK; was pad7 (0)) */
 } somvr_settings;              /* 96 (88 in v6) */
 
 typedef struct somvr_vrmenu_shared {
@@ -313,7 +330,12 @@ enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, S
        /* build 27 (re-xr-pipeline.md 112): the walk's direction, HL:A's "Continuous (Head)" / "(Hand)" */
        SOMVR_SK_MOVE,
        /* build 27 (re-xr-pipeline.md 119): the headset's refresh rate (XR_REFRESH=off|0|72..120, SOMVR_XR_REFRESH) */
-       SOMVR_SK_XR_REFRESH, SOMVR_SK_N };
+       SOMVR_SK_XR_REFRESH,
+       /* build 30 (re-xr-pipeline.md 132): the left-handed mirror (HANDED=right|left, SOMVR_HANDED; at the next start) */
+       SOMVR_SK_HANDED,
+       /* build 31 (re-xr-pipeline.md 136): the Test page's page (TEST_PAGE=P@KK: the page, the text's key in hex; no
+        * switch) */
+       SOMVR_SK_TEST_PAGE, SOMVR_SK_N };
 /* build 27: the key masks are 64 bits (parse, format, diff, the file mask; 32 bits held 31 keys) */
 _Static_assert(SOMVR_SK_N <= 63, "the settings keys fit a 64-bit mask");
 #define SOMVR_SK_ALL ((1ull << SOMVR_SK_N) - 1ull)
@@ -352,6 +374,9 @@ enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMV
        /* build 27 (re-xr-pipeline.md 119): Refresh rate (72 / 80 / 90 / 120 Hz), the Settings page's last row, with the
         * layer's SOMVR_VMA_REFRESH only */
        SOMVR_VMI_REFRESH,
+       /* build 30 (re-xr-pipeline.md 132): Handedness (Right / Left), on the Settings page above Pointer hand (row_slot's
+        * order); a change applies at the next start (the label says so meanwhile) and moves the pointer with it */
+       SOMVR_VMI_HANDED,
        SOMVR_VMI_RECENTER, SOMVR_VMI_CLOSE, SOMVR_VMI_N };
 #define SOMVR_VMI_ROWS SOMVR_VMI_RECENTER /* the value rows; then the Recentre button and the close box */
 /* Build 10: a value row whose feature this build does not have at all is not shown (the rows below close up): the
@@ -387,7 +412,10 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
         * Spawn): the save's next Nemesis captain */
        SOMVR_VMI_PR_CAPTAIN,
        /* build 27 (re-xr-pipeline.md 112): the Controls page's Prev / Next (its groups paged; where the Test page's are) */
-       SOMVR_VMI_CTL_PREV, SOMVR_VMI_CTL_NEXT, SOMVR_VMI_ALL };
+       SOMVR_VMI_CTL_PREV, SOMVR_VMI_CTL_NEXT,
+       /* build 31 (re-xr-pipeline.md 136): the practice page's Place an orc (beside Refill health; in the area only, as
+        * Spawn) */
+       SOMVR_VMI_PR_PLACE, SOMVR_VMI_ALL };
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
 enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2, SOMVR_VMPG_FIGHT = 3,
@@ -430,6 +458,13 @@ int somvr_vm_ctl_card(uint64_t avail, int i, const char **key, const char **what
  * Shoot line); build 27: the Dodge, Wraith step and Stealth kill rows Off take their lines away; otherwise avail
  * (somvr_vm_draw draws the page and the card with it) */
 uint64_t somvr_vm_ctl_avail(const somvr_settings *s, uint64_t avail);
+/* build 30 (re-xr-pipeline.md 132): a control's text for the left-handed mirror - the words left/right (Left/Right),
+ * the sides L/R, the triggers LT/RT and grips LB/RB, the buttons A/X and B/Y swapped, whole words only (the rest as
+ * it was); out may not be in. The Controls page, the card and the Fight page's help draw their text through it while
+ * s->handed_on (the panel's wrist lines - Menu, Minimap - by s->hand, the Pointer hand: somvr_vm_ctl_mirrored) */
+void somvr_vm_mirror_text(const char *in, char *out, size_t cap);
+/* 1 = the Controls line with that key is drawn mirrored for the settings s (see somvr_vm_mirror_text) */
+int somvr_vm_ctl_mirrored(const somvr_settings *s, const char *key);
 enum { SOMVR_VMP_NONE, SOMVR_VMP_ROW, SOMVR_VMP_LESS, SOMVR_VMP_MORE, SOMVR_VMP_BUTTON };
 typedef struct { int item, part; } somvr_vm_hit; /* item -1 = none */
 
@@ -569,6 +604,11 @@ typedef struct {
     int gated;          /* this frame the gate held the closed panel's gesture */
     int held;           /* the palm faces through the gate now (counted once per episode in held_off) */
     uint64_t gate_frames, held_off; /* frames gated; gate episodes the palm faced through (opens refused) */
+    /* build 31: the soft gate (SOMVR_VMG_SOFT): its last frame (-1 = never), the palm waiting through it now (counted
+     * once per episode in soft_waits) */
+    double soft_t;
+    int soft_held, soft_wait;
+    uint64_t soft_waits;
 } somvr_vm_gstate;
 void somvr_vm_greset(somvr_vm_gstate *g);
 typedef struct {
@@ -585,11 +625,15 @@ typedef struct {
 /* One frame: the menu button's toggles, the palm gesture (palm toward the eyes, the hand within reach, the panel looked
  * at, held hold_s, armed), looking away (away_s, not busy), the hand lost (lost_s). Returns +1 opened, -1 closed, 0
  * neither (g->why the reason); *panel = this frame's panel pose when one could be made (*have_panel).
- * The gate: while in->block is set and gate_s after it, a closed panel's gesture is disarmed every frame, so it opens
- * nothing then and a palm held through it opens nothing when it ends (it must turn away rearm_s and face again hold_s:
- * a fresh gesture). The menu button still toggles (a deliberate press), an open panel's gesture still closes it. */
+ * The gate: while in->block's hard bits (SOMVR_VMG_HARD) are set and gate_s after them, a closed panel's gesture is
+ * disarmed every frame, so it opens nothing then and a palm held through it opens nothing when it ends (it must turn
+ * away rearm_s and face again hold_s: a fresh gesture). Build 31: the soft bit (SOMVR_VMG_SOFT: the other hand's swing)
+ * only waits - no open while it lasts and gate_s after it, the hold counting on: a palm held up through it opens the
+ * panel the moment it ends. The menu button still toggles (a deliberate press), an open panel's gesture still closes it. */
 int somvr_vm_gesture(somvr_vm_gstate *g, const somvr_vm_gcfg *c, const somvr_vm_gin *in, somvr_posef *panel,
                      int *have_panel);
+/* build 31: the Test page's text's key (1..255, never 0: FNV-1a folded) */
+uint8_t somvr_vm_test_key(const char *text, size_t n);
 /* the gate's bits as words ("the bow+a climb hold", "nothing" for 0) */
 void somvr_vm_gate_text(uint32_t bits, char *buf, size_t cap);
 

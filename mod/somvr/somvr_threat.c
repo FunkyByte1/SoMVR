@@ -290,9 +290,14 @@ float somvr_th_edge_profile(float u, float v) {
     return h * h * smooth(0, 0.2f, v) * smooth(0, 0.2f, 1 - v);
 }
 
+float somvr_th_low_profile(float r) {
+    if (!(r >= 0)) return 0;
+    return smooth(SOMVR_TH_LOW_R0, SOMVR_TH_LOW_R1, r);
+}
+
 void somvr_th_image(uint8_t *px, int bgra) {
     memset(px, 0, (size_t)SOMVR_TH_IMG_W * SOMVR_TH_IMG_H * 4);
-    for (int row = 0; row <= SOMVR_TH_ROW_BLUE; row++)
+    for (int row = 0; row <= SOMVR_TH_ROW_LOW; row++)
         for (int k = 1; k <= SOMVR_TH_LEVELS; k++) {
             int32_t rc[4];
             somvr_th_rect(row, k, rc);
@@ -302,17 +307,24 @@ void somvr_th_image(uint8_t *px, int bgra) {
                     float u = ((float)i + 0.5f) / SOMVR_TH_CELL, v = ((float)j + 0.5f) / SOMVR_TH_CELL;
                     float p = row == SOMVR_TH_ROW_GLOW || row == SOMVR_TH_ROW_RED || row == SOMVR_TH_ROW_BLUE
                                   ? somvr_th_glow_profile(hypotf(2 * u - 1, 2 * v - 1))
-                                  : somvr_th_edge_profile(u, v);
+                              : row == SOMVR_TH_ROW_LOW ? somvr_th_low_profile(hypotf(2 * u - 1, 2 * v - 1))
+                                                        : somvr_th_edge_profile(u, v);
                     float w = p * lv;
                     uint8_t *o = px + 4 * ((size_t)(rc[1] + j) * SOMVR_TH_IMG_W + (size_t)(rc[0] + i));
-                    int hurt = row == SOMVR_TH_ROW_HURT, red = row == SOMVR_TH_ROW_RED, blue = row == SOMVR_TH_ROW_BLUE;
+                    int low = row == SOMVR_TH_ROW_LOW, hurt = row == SOMVR_TH_ROW_HURT || low, red = row == SOMVR_TH_ROW_RED,
+                        blue = row == SOMVR_TH_ROW_BLUE;
                     float R = hurt ? SOMVR_TH_HURT_R : red ? SOMVR_TH_RED_R : blue ? SOMVR_TH_BLUE_R : SOMVR_TH_R,
                           G = hurt ? SOMVR_TH_HURT_G : red ? SOMVR_TH_RED_G : blue ? SOMVR_TH_BLUE_G : SOMVR_TH_G,
                           B = hurt ? SOMVR_TH_HURT_B : red ? SOMVR_TH_RED_B : blue ? SOMVR_TH_BLUE_B : SOMVR_TH_B;
                     uint8_t cr = (uint8_t)lrintf(255.0f * w * R), cg = (uint8_t)lrintf(255.0f * w * G),
                             cb = (uint8_t)lrintf(255.0f * w * B);
                     o[0] = bgra ? cb : cr, o[1] = cg, o[2] = bgra ? cr : cb;
-                    o[3] = (uint8_t)lrintf(255.0f * w * (hurt ? SOMVR_TH_HURT_ALPHA : red ? SOMVR_TH_RED_ALPHA
+                    if (low) /* the ring: opaque red at its level (premultiplied), no additive part */
+                        cr = (uint8_t)lrintf(255.0f * w * SOMVR_TH_LOW_ALPHA * SOMVR_TH_HURT_R),
+                        cg = (uint8_t)lrintf(255.0f * w * SOMVR_TH_LOW_ALPHA * SOMVR_TH_HURT_G),
+                        cb = (uint8_t)lrintf(255.0f * w * SOMVR_TH_LOW_ALPHA * SOMVR_TH_HURT_B),
+                        o[0] = bgra ? cb : cr, o[1] = cg, o[2] = bgra ? cr : cb;
+                    o[3] = (uint8_t)lrintf(255.0f * w * (low ? SOMVR_TH_LOW_ALPHA : hurt ? SOMVR_TH_HURT_ALPHA : red ? SOMVR_TH_RED_ALPHA
                                                          : blue ? SOMVR_TH_BLUE_ALPHA : SOMVR_TH_ALPHA));
                 }
         }
@@ -349,6 +361,38 @@ int somvr_th_cell(float level) {
 void somvr_th_rect(int row, int cell, int32_t rc[4]) {
     int k = cell < 1 ? 1 : cell > SOMVR_TH_LEVELS ? SOMVR_TH_LEVELS : cell;
     rc[0] = (k - 1) * SOMVR_TH_STRIDE + 1;
-    rc[1] = (row < 0 ? 0 : row > SOMVR_TH_ROW_BLUE ? SOMVR_TH_ROW_BLUE : row) * SOMVR_TH_STRIDE + 1;
+    rc[1] = (row < 0 ? 0 : row > SOMVR_TH_ROW_LOW ? SOMVR_TH_ROW_LOW : row) * SOMVR_TH_STRIDE + 1;
     rc[2] = rc[3] = SOMVR_TH_CELL;
+}
+
+/* ---- build 31: low health ---------------------------------------------------------------------------------------- */
+float somvr_th_low_amount(float hp, float hp_max, float below, int *on) {
+    *on = 0;
+    if (!(hp > 0) || !(hp_max > 0) || !(below > SOMVR_TH_LOW_FLOOR)) return 0;
+    float share = hp / hp_max;
+    if (!(share < below)) return 0;
+    *on = 1;
+    return clamp01((below - share) / (below - SOMVR_TH_LOW_FLOOR));
+}
+
+float somvr_th_beat_bpm(float amount) { return 60.0f + 50.0f * clamp01(amount); }
+
+float somvr_th_beat(float amount, double s, int *index, int *phase) {
+    double per = 60.0 / somvr_th_beat_bpm(amount);
+    if (!(s >= 0)) s = 0;
+    double n = floor(s / per), tb = s - n * per;
+    if (index) *index = (int)n;
+    if (phase) *phase = tb >= 0.25 ? 2 : 1; /* 1 the lub, 2 the dub */
+    float lub = expf(-(float)tb / 0.09f), dub = tb >= 0.25 ? 0.6f * expf(-(float)(tb - 0.25) / 0.09f) : 0;
+    return clamp01(lub > dub ? lub : dub);
+}
+
+float somvr_th_low_half(float amount, float beat, float cover_tan) {
+    float a = clamp01(amount), h = (1.7f + (1.1f - 1.7f) * a) * (1 - 0.05f * clamp01(beat));
+    return h > cover_tan ? h : cover_tan;
+}
+
+int somvr_th_low_cell(float amount, float beat) {
+    float a = clamp01(amount), al = 0.35f + 0.30f * a + 0.15f * clamp01(beat);
+    return somvr_th_cell(al > 0.95f ? 0.95f : al);
 }

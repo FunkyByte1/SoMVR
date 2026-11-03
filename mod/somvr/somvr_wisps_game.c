@@ -131,7 +131,7 @@ static void wp_arm(const sa_xf gg[2], const int gv[2], sa_xf X, sv_vec3 shift, c
 		gm.p = (sv_vec3){ gm.p.x / bs, gm.p.y / bs, gm.p.z / bs };
 	/* our drawn left hand's wrist joint: the model's rest wrist in the right grip, mirrored (x), in game convention
 	 * (z negated, m -> cm) */
-	sv_vec3 pw = { -100 * g_wp_m.wrist_g[0], 100 * g_wp_m.wrist_g[1], -100 * g_wp_m.wrist_g[2] };
+	sv_vec3 pw = { (IN_SIDE(SA_L) ? 100 : -100) * g_wp_m.wrist_g[0], 100 * g_wp_m.wrist_g[1], -100 * g_wp_m.wrist_g[2] };
 	sv_vec3 ow = sv_qrot(gm.q, pw);
 	sv_vec3 wm = { gm.p.x + ow.x, gm.p.y + ow.y, gm.p.z + ow.z };
 	sa_node *hn = &g_arm.pose[c->w];

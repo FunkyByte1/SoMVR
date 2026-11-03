@@ -250,4 +250,24 @@ typedef struct {
 } somvr_df_clank_haptic;
 somvr_df_clank_haptic somvr_df_clank_haptic_of(float scale);
 
+/* ---- build 31 (re-xr-pipeline.md 136; the 11-02 session's mark 9): an orc's blade through the tracked body ------------
+ * The game lands an orc's blow by Talion's root (ApplyDamageRange and its half angle at the APPLYDAMAGE key); the VR
+ * player's body is the HMD's. The body: a head sphere (head_r around the eyes' point lowered head_down) and a torso
+ * capsule (a vertical segment torso_top .. torso_bot below the eyes, radius torso_r); a blade inside by grace or more
+ * is a hit ("somewhat forgiving": a graze, or a blade passing a hand's width off the middle of the chest, is not). */
+typedef struct {
+    float head_r, head_down;      /* 10, 6 cm */
+    float torso_r, torso_top, torso_bot; /* 16 cm; 25 .. 70 cm below the eyes */
+    float grace;                  /* SOMVR_DEFENCE_BODY_GRACE_CM: 6 (the cores: the head's 4 cm, the torso's 10 cm) */
+    int steps;                    /* the sweep between two frames' blades: this many blades (4) */
+} somvr_df_body_cfg;
+void somvr_df_body_cfg_default(somvr_df_body_cfg *c);
+enum { SOMVR_DF_BODY_NONE = 0, SOMVR_DF_BODY_HEAD = 1, SOMVR_DF_BODY_TORSO = 2 };
+const char *somvr_df_body_part_name(int part); /* "-", "head", "torso" */
+/* the blade swept from (pb, pt) to (b, t) (base, tip; cm, Y up; pb NULL = this frame's alone) against the body at the
+ * eyes' point `head`: the deepest it went in (cm; < 0 = it stayed outside by that much), its part and the point of
+ * the blade there (out_pt, may be NULL) */
+float somvr_df_body_sweep(const somvr_df_body_cfg *c, const float head[3], const float pb[3], const float pt[3],
+                          const float b[3], const float t[3], int *part, float out_pt[3]);
+
 #endif

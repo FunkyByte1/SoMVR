@@ -158,6 +158,8 @@ uint32_t somvr_bm_conds(const somvr_bm_in *in) {
     if (in->names & SOMVR_BMN_HOLD) c |= SOMVR_BMC_BIT(SOMVR_BMC_HOLD);
     if (in->names & SOMVR_BMN_WINDOW) c |= SOMVR_BMC_BIT(SOMVR_BMC_WINDOW);
     if (in->names & SOMVR_BMN_FIRST) c &= ~SOMVR_BMC_BIT(SOMVR_FB_SYNC); /* a sync record that stays live */
+    if (in->our_kill) /* build 31b: the game's stealth kill under SOMVR_KILLS - first person through it */
+        c &= ~(SOMVR_BMC_BIT(SOMVR_FB_SYNC) | SOMVR_BMC_BIT(SOMVR_FB_PRES) | SOMVR_BMC_BIT(SOMVR_FB_CINE));
     if (in->our_climb) c &= ~(SOMVR_BMC_BIT(SOMVR_FB_CLIMB) | SOMVR_BMC_BIT(SOMVR_FB_ATTACH));
     if (in->our_grab) /* (the interrogation that the grab leads to is a presentation: first person too) */
         c = (c & ~(SOMVR_BMC_BIT(SOMVR_FB_MOUNT) | SOMVR_BMC_BIT(SOMVR_FB_ATTACH) | SOMVR_BMC_BIT(SOMVR_FB_PRES))) |

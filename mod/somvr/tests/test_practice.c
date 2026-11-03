@@ -301,13 +301,18 @@ static void test_group(void)
               !somvr_pr_word("group 2", &r) && !somvr_pr_word("group 34", &r) && !somvr_pr_word("group 3 x", &r) &&
               !somvr_pr_word("refill group", &r) && somvr_pr_word("spawn shield", &r) && r.action == SOMVR_PRA_SPAWN &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_GROUP), "group") && !strcmp(somvr_pr_action_name(8), "far") &&
-              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 11,
+              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 12,
           "the group's words");
     /* build 22: the Captain */
     CHECK(somvr_pr_word(" Captain ", &r) && r.action == SOMVR_PRA_CAPTAIN && r.orc == -1 && !r.have_at &&
               !somvr_pr_word("captain shield", &r) && !somvr_pr_word("captain 3", &r) && SOMVR_PRA_CAPTAIN == 10 &&
-              !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(11), "?"),
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(12), "?"),
           "the captain's word");
+    /* build 31: "place [TYPE]" (the page's Place orc) */
+    CHECK(somvr_pr_word("place", &r) && r.action == SOMVR_PRA_PLACE && r.orc == -1 && somvr_pr_word("place berserker", &r) &&
+              r.action == SOMVR_PRA_PLACE && r.orc >= 0 && !somvr_pr_word("place far", &r) && SOMVR_PRA_PLACE == 11 &&
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_PLACE), "place"),
+          "the place word");
     for (int n = 3; n <= 8; n++) { /* build 27: to 8 */
         somvr_pr_group_orc g[SOMVR_PR_GROUP_MAX];
         int k = somvr_pr_group_plan(n, g), types = 0, front = 0, behind = 0, apart = 1, far_ok = 1;

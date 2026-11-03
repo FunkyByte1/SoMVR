@@ -1020,6 +1020,27 @@ static void test_stroke(void) {
     CHECK(sc_tier_swing(&c, &s, 75, 1) == SC_TIER_LIGHT, "... the flat leading: light");
     CHECK(sc_tier_swing(&c, &s, 0, 0) == SC_TIER_LIGHT, "... at the base (the hand at 10 m/s): light (contact %g m/s)",
           sc_contact_mps(&s, 0));
+    /* build 31b (SOMVR_COMBAT_CUT_ARM_CM): the same cut with the fist (the base) moved with it - 2 m - is still a cut at
+     * 25 cm; a flick - the tip as fast, the fist still - is light with the rule and heavy without it */
+    c.arm_cm = 25;
+    CHECK(s.base_reach > 150 && sc_tier_swing(&c, &s, 0, 1) == SC_TIER_HEAVY, "the arm in it (the fist %g cm): a cut",
+          s.base_reach);
+    {
+        sc_speed f;
+        sc_speed_reset(&f);
+        somvr_blade fb, fp;
+        memset(&fp, 0, sizeof fp);
+        for (int k = 0; k <= 12; k++) { /* 105 deg of the wrist in 12 samples at 90 Hz (~17 rad/s, the tip ~17 m/s) */
+            float a = 0.153f * (float)k, q[4] = {0, sinf(0.5f * a), 0, cosf(0.5f * a)};
+            stroke_blade(q, k / HZ, k ? &fp : NULL, &fb), fp = fb;
+            sc_speed_push(&f, &c, &fb);
+        }
+        int with = sc_tier_swing(&c, &f, 0, 1);
+        c.arm_cm = 0;
+        int without = sc_tier_swing(&c, &f, 0, 1);
+        CHECK(with == SC_TIER_LIGHT && without == SC_TIER_HEAVY, "a wrist flick (the tip %g m/s, reach %g cm, the fist %g cm): "
+              "light with the fist rule (%d), heavy without (%d)", f.mean_mps, f.reach, f.base_reach, with, without);
+    }
     float k1 = sc_cut_k(&c, 12), k2 = sc_cut_k(&c, 16), k3 = sc_cut_k(&c, 30);
     CHECK(NEAR(k1, 0.6, 1e-5) && NEAR(k2, 0.8, 1e-5) && NEAR(k3, 1, 0) && NEAR(sc_cut_k(&c, NAN), 0.6, 1e-6),
           "the damage factor: %g %g %g", k1, k2, k3);

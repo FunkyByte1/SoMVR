@@ -4,7 +4,9 @@
  * snapshot read, the binding layer, the ON/OFF events, pad mode and the rig). Tested by tests/test_ctl.c.
  *
  * Hands: the move hand (left by default) has the locomotion stick, X/Y (lower/upper) and the menu button (always the
- * physical left controller); the sword hand (right) has the turn stick and A/B. SOMVR_HAND=left swaps the roles.
+ * physical left controller); the sword hand (right) has the turn stick and A/B. Build 30 (SOMVR_HANDED=left, the
+ * Settings page's Handedness): somvr.c swaps the two controllers at the source (sc_mirror_state), so everything here
+ * reads hand[SOMVR_HAND_R] as the sword hand whichever controller that is.
  */
 #ifndef SOMVR_CTL_H
 #define SOMVR_CTL_H
@@ -65,7 +67,8 @@ typedef struct {
     float rep0, rep;             /* d-pad repeat: after 0.4 s, then every 0.12 s */
     float stall_s;               /* the snapshot's sync_seq still for 4 ticks and this long = input lost (0.05) */
     int stall_ticks;
-    int left_handed;             /* 1: the sword in the left hand, the move stick on the right */
+    int left_handed;             /* the VR menu's Pointer hand row (1: the left points; logs only - build 30's
+                                    left-handed mirror is SOMVR_HANDED: sc_mirror_state) */
     int game_moves;              /* 1 (default): A = the stock A in the world, the sprint latch = FreeRun; 0
                                     (SOMVR_GAMEMOVES=off): A nothing in the world, the latch no FreeRun (the game's
                                     jump, vault, ledge pull-up, evade and free-run never carry the view) */
@@ -77,6 +80,14 @@ typedef struct {
     int army_cmd;
 } sc_ctl_cfg;
 void sc_ctl_cfg_default(sc_ctl_cfg *c);
+
+/* build 30 (SOMVR_HANDED=left, docs/re-xr-pipeline.md 132): the left-handed mirror at the source. The snapshot's two
+ * hands swapped - poses, velocities, sticks, triggers, grips, buttons and their press counters, active flags, the
+ * profiles - so hand[SOMVR_HAND_R] (the sword hand: A/B, the turn stick, the string hand) is the physical left
+ * controller and hand[SOMVR_HAND_L] (the wraith hand: X/Y, the move stick, the bow hand) the physical right one. Only
+ * the menu button (on the physical left controller alone) stays in hand[SOMVR_HAND_L], its bit and its counter: the
+ * Pause / VR menu button keeps its one place whatever the roles. Applied twice = the snapshot as it was. */
+void sc_mirror_state(somvr_input_state *st);
 
 /* why a tick is not live (sc_live) */
 enum { SC_LIVE_OK = 0, SC_LIVE_NOREAD, SC_LIVE_NOSYNC, SC_LIVE_NOTRUNNING, SC_LIVE_UNFOCUSED, SC_LIVE_STALLED };

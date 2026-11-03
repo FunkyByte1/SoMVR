@@ -408,6 +408,13 @@ static int bz_line_judge(uintptr_t c)
 	return e && (e->kind == SOMVR_BZ_CARAGOR || e->kind == SOMVR_BZ_GHUL);
 }
 
+/* build 30, SOMVR_GRAUG_BLEED (vb_bleed): this enemy is a graug */
+static int bz_is_graug(uintptr_t c, uintptr_t hobj)
+{
+	struct bz_one *e = g_bz.on && c ? bz_get(c, hobj, cb_now()) : NULL;
+	return e && e->kind == SOMVR_BZ_GRAUG;
+}
+
 /* SOMVR_COMBAT_HOLD_TALION (tk_pm_own): an enemy's sync on Talion is a beast's (its record 'AI_Warg_...', 'AI_Goblin_...',
  * 'AI_Troll_...'): held through the struggle too, as long as it runs (SOMVR_BZ_HOLD_MAX_S) */
 static int bz_hold_beast(uintptr_t rec)

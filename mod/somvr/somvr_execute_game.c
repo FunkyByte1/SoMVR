@@ -442,7 +442,10 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 {
 	if (!g_xc.mode)
 		return 0;
-	int j = somvr_ex_judge(g_xc.ready, g_xc.trig, tier);
+	int trig = g_xc.trig;
+	if (kl_exec_blow()) /* build 31 (SOMVR_KILLS_EXEC=blow): the next heavy blow while charged, no button (mark 20) */
+		trig = g_xc.ready && tier == SC_TIER_HEAVY;
+	int j = somvr_ex_judge(g_xc.ready, trig, tier);
 	if (j == SOMVR_EXJ_NO_TRIGGER)
 		return 0;
 	if (j != SOMVR_EXJ_EXECUTE) {
@@ -525,21 +528,27 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	int dead0 = cb_dead(o->c);
 	float hp0 = cb_health(o->c);
 	double t0 = mono();
+	/* build 31 (SOMVR_KILLS): the orc plays the victim's half the blow picks, the death (this record's DealHit) at its
+	 * moment; a captain is never taken (his rules below) */
+	float bax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+	int klt = fk > 0 && kl_take(pc, o, 0, e->rec, 1, ct->point, b->vel_tip, bax, 0, "the execution", t);
 	struct kp_floor kf; /* build 22: a captain not vulnerable to it survives it (a third of his max health taken) */
-	kp_floor_on(o->c, fk, "the execution", t, &kf);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, e->rec, fk);
-	kp_floor_off(&kf);
+	if (!klt) {
+		kp_floor_on(o->c, fk, "the execution", t, &kf);
+		CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, e->rec, fk);
+		kp_floor_off(&kf);
+	}
 	double t1 = mono();
 	kx_hit_back(dslot, dwas);
 	memcpy((void *)(pc + C_HITDIR), hd0, sizeof hd0);
 	*(volatile unsigned char *)(pc + C_HITONCE) = once;
-	int dead1 = cb_dead(o->c);
+	int dead1 = klt || cb_dead(o->c);
 	float hp1 = cb_health(o->c);
 	/* SOMVR_EXECUTE_SEVER=key: a record that severs (its SeverTarget: the _Sever family, 'Head') does it in the stock
 	 * game by its animation's SEVER key, which our hit does not play; the game's own sever with that type, as the key
 	 * calls it, the blade's direction as the velocity (the death handler's sever-on-kill did not cut: run 100848) */
 	char sev[160] = "";
-	if (g_xc.sever && g_xc.ok_sever && e->sever && dead1 && !dead0 && peek_ptr(o->c + 0x90)) {
+	if (!klt && g_xc.sever && g_xc.ok_sever && e->sever && dead1 && !dead0 && peek_ptr(o->c + 0x90)) {
 		float vel[3] = { dir[0] * 300.0f, dir[1] * 300.0f + 150.0f, dir[2] * 300.0f }, rot[3] = { 0, 0, 0 };
 		char sn[96] = "?";
 		rx_rec_name(e->sever, sn, sizeof sn);
@@ -550,9 +559,11 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	}
 	somvr_ex_hc h2;
 	xc_read_hc(pc, &h2);
-	if (dead1 && !dead0)
-		g_xc.kills++, CB_COUNT(kills);
-	else
+	if (dead1 && !dead0) {
+		g_xc.kills++;
+		if (!klt) /* (SOMVR_KILLS counts its kill at the death) */
+			CB_COUNT(kills);
+	} else
 		g_xc.not_killed++;
 	CB_COUNT(calls);
 	/* 3. the moment: the slow motion, a strong pulse, the death's trace, the eye trace, the marks */
@@ -566,7 +577,8 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	      g_cb.sp.mean_mps, (double)g_inp.st.hand[SOMVR_HAND_R].trigger, h0.streak, h0.charge, h0.need, h0.uses,
 	      sp == 1 ? "a use" : sp == 2 ? "the charge" : "nothing to spend", e->reset == 1 ? ", the counter cleared" : "",
 	      h1.streak, h1.charge, h1.need, h2.streak, h2.charge, h2.need, h2.charged, death, sev);
-	kb_note(o->c, o->hobj, e->rec, "an execution", t); /* COMBAT death orc ...: where the body goes */
+	if (!klt) /* (SOMVR_KILLS: from its death) */
+		kb_note(o->c, o->hobj, e->rec, "an execution", t); /* COMBAT death orc ...: where the body goes */
 	g_xc.trace_until = t + XC_TRACE_S;
 	if (g_xc.marks > 0)
 		g_xc.mark_at = t + g_xc.mark_s; /* the kill (SOMVR_EXECUTE_MARK_MS after it: default the next frame's eyes) */

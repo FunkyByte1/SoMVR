@@ -95,6 +95,15 @@ static void test_geometry(void) {
     p = somvr_slots_pos(&C, SOMVR_SLOT_DAGGER, h, 0);
     CHECK(NEAR3(p, 18, 98, -5, 1e-4) && somvr_slots_hand(&C, SOMVR_SLOT_DAGGER) == 1, "left-handed dagger: %g %g %g", p.x,
           p.y, p.z);
+    /* build 30 (SOMVR_HANDED=left): the hands' indices kept (the controllers swapped at the source), the slots mirrored */
+    C.main_hand = 1, C.mirror = 1;
+    p = somvr_slots_pos(&C, SOMVR_SLOT_SWORD, h, 0);
+    CHECK(NEAR3(p, -10, 150, -15, 1e-4) && somvr_slots_hand(&C, SOMVR_SLOT_SWORD) == 1,
+          "the mirror: the sword hand (index 1) over the left shoulder: %g %g %g", p.x, p.y, p.z);
+    p = somvr_slots_pos(&C, SOMVR_SLOT_DAGGER, h, 0);
+    CHECK(NEAR3(p, 18, 98, -5, 1e-4) && somvr_slots_hand(&C, SOMVR_SLOT_DAGGER) == 0,
+          "the mirror: the dagger (index 0) at the right hip: %g %g %g", p.x, p.y, p.z);
+    C.mirror = 0;
     C.main_hand = 1, C.dagger_at = SOMVR_SLOTS_DAGGER_BACK;
     p = somvr_slots_pos(&C, SOMVR_SLOT_DAGGER, h, 0);
     CHECK(NEAR3(p, -8, 105, -22, 1e-4), "the dagger at the back: %g %g %g", p.x, p.y, p.z);
@@ -616,6 +625,46 @@ static void test_busy(void) {
     I.live = 1;
     gsteps(2);
     CHECK(I.drawn[0], "live again: restored");
+    /* build 31 (SOMVR_CLIMB_SWORD): climbing, the right hand free (climb_free, not busy): the slot's press draws, the
+     * quick draw does not; a sword the climb put back stays back while the hand is free on the wall (no restore at each
+     * let-go), the press draws it, the climb's end restores what is still suspended; the old way (busy) draws nothing */
+    for (int on = 0; on < 2; on++) {
+        rig();
+        I.busy[0] = 1, I.away[0] = 1; /* the left hand holds the wall */
+        I.busy[1] = !on, I.climb_free[1] = on;
+        step();
+        press(1), step(), open_(1), step(), press(1), gsteps(3), open_(1), gsteps(2); /* a double grip on the wall */
+        int quick = I.drawn[0] || (EV[0] & SOMVR_SL_E_QUICK);
+        hand_to_slot(1, SOMVR_SLOT_SWORD), step();
+        press(1), gsteps(3);
+        int drew = I.drawn[0], took = O.nograb;
+        open_(1), I.p[1] = (sv_vec3){ 30, 100, 20 }, gsteps(2);
+        if (on)
+            CHECK(!quick && drew && took && I.drawn[0] && O.blade, "b31 climb free: no quick draw (%d), the slot's press draws "
+                  "(%d, its press the slot's: nograb %d), the blade", quick, drew, took);
+        else
+            CHECK(!quick && !drew && !I.drawn[0], "b31 busy (build 30): the slot's press draws nothing (%d)", drew);
+    }
+    rig();
+    I.drawn[0] = 1;
+    step();
+    I.busy[0] = I.busy[1] = 1, I.away[0] = I.away[1] = 1; /* both hands on the wall: the sword back */
+    gsteps(3);
+    I.away[1] = 0, I.busy[1] = 0, I.climb_free[1] = 1; /* the right lets go: free on the wall */
+    gsteps(5);
+    int stayed = !I.drawn[0] && S.suspended[0] && !(EV[0] & SOMVR_SL_E_RESTORE);
+    I.away[1] = 1, I.busy[1] = 1, I.climb_free[1] = 0, gsteps(3); /* a hold again, then free again */
+    I.away[1] = 0, I.busy[1] = 0, I.climb_free[1] = 1, gsteps(3);
+    int stayed2 = !I.drawn[0] && !(EV[0] & SOMVR_SL_E_RESTORE);
+    hand_to_slot(1, SOMVR_SLOT_SWORD), step(), press(1), gsteps(3);
+    CHECK(stayed && stayed2 && I.drawn[0] && !S.suspended[0], "b31 climb free: no restore at each let-go (%d %d), the press "
+          "draws it", stayed, stayed2);
+    open_(1), I.p[1] = (sv_vec3){ 30, 100, 20 }, gsteps(2);
+    I.away[1] = 1, I.busy[1] = 1, I.climb_free[1] = 0, gsteps(3); /* the sword hand grabs again: back */
+    I.away[1] = 0, I.busy[1] = 0, I.climb_free[1] = 1, gsteps(3);
+    int back = !I.drawn[0];
+    I.away[0] = I.busy[0] = 0, I.climb_free[1] = 0, gsteps(3); /* the climb ends */
+    CHECK(back && I.drawn[0] && (EV[0] & SOMVR_SL_E_RESTORE), "b31: the climb's end restores the sword (%d)", back);
 }
 
 static void test_dagger(void) {

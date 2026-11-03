@@ -448,6 +448,7 @@
 #include "somvr_gaze.h" /* build 17: SOMVR_STRIKE_GAZE, the Shadow Strike by gaze (somvr_strike_game.c) */
 #include "somvr_execute.h" /* SOMVR_EXECUTE (somvr_execute_game.c, included last) */
 #include "somvr_stealth.h" /* SOMVR_STEALTH_KILL (somvr_stealth_game.c, included last) */
+#include "somvr_kills.h" /* build 31, SOMVR_KILLS (somvr_kills_game.c, included last) */
 #include "somvr_screens.h" /* build 22: SOMVR_BM_DEATH, SOMVR_POINTER_MOUSE1 (somvr_screens_game.c, included last) */
 #include "somvr_map.h"     /* build 27: SOMVR_MAP_POINT, the world map by the pointer (somvr_map_game.c, included last) */
 #include "somvr_climb.h"
@@ -818,6 +819,26 @@ static struct hook g_h[HK_N] = { { .name = "H1" }, { .name = "H2" }, { .name = "
 __attribute__((visibility("default"), used)) somvr_shared g_sh __asm__(SOMVR_SHARED_SYMBOL);
 /* the motion-controller ABI (somvr_input.h), the second exported object: zero unless SOMVR_INPUT=1 */
 __attribute__((visibility("default"), used)) somvr_input_shared g_in __asm__(SOMVR_INPUT_SYMBOL);
+/* build 30 (SOMVR_HANDED=left, the Settings page's Handedness; docs/re-xr-pipeline.md 132): the left-handed mirror,
+ * decided once at the input's config (lh_decide: the settings file's HANDED over the switch) for the whole session. 1 =
+ * the two controllers swapped at the source - the snapshot (sc_mirror_state), the located grips - so every role keyed
+ * by SOMVR_HAND_R (the sword, A/B, the turn stick, the string hand) is the physical left controller and every one by
+ * SOMVR_HAND_L (the wraith hand, X/Y, the move stick, the bow) the right one; what goes back to a physical controller
+ * (the haptics, the layer's hands, its pointer's and panel's trigger bits) is swapped back, and what depends on a
+ * hand's side (a palm's normal, a shoulder or a hip, the hand model's mirror) asks IN_SIDE. 0 = build 29 exactly. */
+static int g_lh;
+#define IN_SIDE(h) ((h) ^ g_lh) /* the physical controller (SOMVR_HAND_L / _R: its side) of logical hand h */
+static inline uint32_t in_side_bits(uint32_t b) /* bit h of a physical hand's mask -> bit h of the logical hand's */
+{
+	return g_lh ? (b & ~3u) | ((b & 1u) << 1) | ((b >> 1) & 1u) : b;
+}
+static inline void in_mirror_hands(somvr_hand h[2]) /* the located grips: physical -> logical (involution) */
+{
+	if (g_lh) {
+		somvr_hand t = h[0];
+		h[0] = h[1], h[1] = t;
+	}
+}
 /* the HUD ABI (somvr_hud.h), the third exported object: zero unless SOMVR_HUD=quad (H11) */
 __attribute__((visibility("default"), used)) somvr_hud_shared g_hud __asm__(SOMVR_HUD_SYMBOL);
 
@@ -1018,6 +1039,19 @@ static int hf_will_bite(int kind, int glance, int blk, int call);
 struct cb_orc;
 static void hf_hit(const struct cb_orc *o, const sc_contact *ct, int kind, int bite, int glance, int blk, int call,
 		   int landed, const somvr_blade *b, double t);
+/* build 31: SOMVR_SWORD_PHYS / SOMVR_SWORD_FLESH, the sword a weighted body, the blade in flesh (somvr_swordphys_game.c,
+ * included near the end; re-xr-pipeline.md 134) */
+static int swp_arm(const sa_xf *g, const float q[4], const float axis[3], float dt, int two, sa_xf X, sv_vec3 shift, int64_t T);
+static void swp_none(const char *why);
+static int swp_flesh(void);
+static int swp_stuck(void);
+static int swp_contact_held(uintptr_t c);
+static int swp_drawn(sv_vec3 *dp, float *ghost_a);
+static void swp_hit(const struct cb_orc *o, int kind, double t);
+static void swp_h4(const struct cb_orc *o, int n, double t);
+static const char *swp_word(const char *w);
+static void swp_config(int *bad);
+static void swp_end_log(void);
 static int hf_log_window(double *since, int *kind);
 static void hf_log_open(int kind, double t);
 static void hf_h4(double t);
@@ -1156,6 +1190,7 @@ static void kb_note(uintptr_t c, uintptr_t hobj, uintptr_t rec, const char *what
 static void rl_note(uintptr_t c, uintptr_t hobj, const char *what, double t); /* SOMVR_COMBAT_STAGGER_CM: a reel starts */
 static void fight_start(int *bad);
 static void hu_flash(uint8_t out[2], double t);       /* SOMVR_HURT: the red flash's levels for the threat entry */
+static void hu_low(uint8_t *low, uint8_t *beat);       /* build 31, SOMVR_HURT_LOW_STYLE=ring: low health's ring */
 static void hu_blow(const float from[3], double t);   /* ... a landed blow's weapon hand (its side) */
 /* SOMVR_COMBAT_KNOCKBACK: our record's RecoilTypeHit for one Combat_DealHit (put back after); a clank's lighter recoil */
 static int kx_hit_set(uintptr_t rec, int tier, const float vel[3], uintptr_t hobj, uintptr_t *slot, uint64_t *was);
@@ -1172,6 +1207,29 @@ static void cb_shield_log(const struct cb_orc *o, const sc_contact *ct, const so
 static void kx_stagger_back(uintptr_t c, int tier, float hp0, float extra, float hp1);
 /* build 11: a killing blow's reaction (SOMVR_COMBAT_DEATH); the test guard (SOMVR_HANDS_TEST, `fight guard ...`) */
 static void kd_pre(uintptr_t c, uintptr_t pc, uintptr_t rec, int tier, int light, uintptr_t *slot, uint64_t *was, float dir[3]);
+/* build 31, SOMVR_KILLS (somvr_kills_game.c, docs/re-xr-pipeline.md 133): kills the game's way - the orc plays its half */
+struct cb_orc;
+struct kl_floor { int on; uintptr_t own; float was, fl; };
+static int kl_busy(uintptr_t c);
+static int kl_hobj_busy(uintptr_t hobj); /* (any thread: the fight circle's score hook) */
+static int kl_aim(uintptr_t mv, const float was[3], float *xf);
+static int kl_take(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uintptr_t deal, int src_first, const float point[3],
+		   const float vel[3], const float axis[3], int hint, const char *who, double t);
+static void kl_floor_on(const struct cb_orc *o, struct kl_floor *f);
+static void kl_floor_off(const struct kl_floor *f);
+static int kl_floor_hit(const struct kl_floor *f, float hp0, float hp1);
+static int kl_exec_blow(void);
+static int kl_sync_hold(double t); /* build 31b: the game's own stealth kill on an unaware orc runs - Talion held (hold_game) */
+static int kl_sync_view(double t); /* ... and until his body is back under the view after it (the body moments, the window) */
+static int kl_held_kill(uintptr_t pc, const struct cb_orc *o, uintptr_t rec, const float point[3], const float vel[3],
+			const float axis[3], double t); /* helper 135's held orc (h31_held_kill) */
+static int kl_on(void);
+static const sc_contact *g_kl_ct;  /* the contact loop's: the contact and the blade for vb_contact's offer (this call only) */
+static const somvr_blade *g_kl_b;
+static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t);
+static void kl_start(int *bad);
+static void kl_end_log(void);
+static const char *kl_word(const char *w);
 struct df_track;
 static void tg_track(struct df_track *d, const somvr_df_in *in, sv_quat hq, double t);
 static const char *fight_word(const char *w); /* the trigger word "fight guard|death ..." (headless drives) */
@@ -1279,6 +1337,7 @@ static void cf_frame(int32_t snap, int recentred, int base_jump);
 static void vm_tick(sc_tick_out *o, int live, double t);
 static int vm_save_tick(double now, int force, int writer);
 static int vm_open(void); /* the layer shows the wrist panel (SOMVR_COMBAT: no blade meanwhile) */
+static int vm_read_file(const char *path, char **out); /* build 30: lh_decide reads the settings file's HANDED */
 /* SOMVR_LOCO=1, SOMVR_ANCHOR=root (their region follows the bow's) */
 static void lo_tick(sc_tick_out *o);
 static void lo_pm_pre(uintptr_t pm, const float *xf);
@@ -1313,6 +1372,8 @@ static void ws_config(int *bad);
 static void ws_tick(sc_tick_out *o);
 static void ws_frame(uintptr_t pl, int stereo);
 static int ws_entry(somvr_objective_frame *e);
+static int pr_place_entry(somvr_objective_frame *e); /* build 31: Place an orc's gold ring (somvr_practice_game.c) */
+static int pr_place_on(void);
 static void ws_end_log(void);
 static const char *ws_word(const char *w);
 static int ws_wanted(void); /* SOMVR_WRAITH_STEP=on at the start (the objective's object then carries its ring) */
@@ -1354,6 +1415,7 @@ static void df_end_log(void);
 /* SOMVR_SLOTS (its region follows the threat's) */
 static void sl_frame(const sv_vec3 p[2], const sv_vec3 pw[2]);
 static int sl_nograb(void);
+static int sl_nograb_hand(int h); /* build 31: the same for one hand (SOMVR_CLIMB_SWORD) */
 static const struct site_spec *g_sl_sites; /* its SLOTS_SITES (defined there; selftest: stand-ins) */
 static void sl_start(const struct site_spec *sites, int *bad);
 static void sl_end_log(void);
@@ -1422,6 +1484,14 @@ static const char *vb_word(const char *w);
  * the Shadow Strike's sword to the hand; the test words cue / ssword / react21 */
 struct th_glow;
 static void gc_start(int *bad);
+static void h31_start(int *bad); /* build 31, som-b31-hands (somvr_hands31_game.c) */
+static void ov_start(int *bad);  /* build 31: SOMVR_VAULT_HANDS, the vault by the hands (somvr_hands31_game.c) */
+static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq);
+static int ov_pm(struct hook *h, struct regs *r);
+static void ov_tick(sc_tick_out *o);
+static int ov_active(void);
+static int ov_flying(void);
+static void ov_pm_own(somvr_loco_in *in, int attack);
 static void ssw_start(int *bad);
 static void c21_end_log(void);
 static void gc_glow_add(struct th_glow *gl, int *ng);
@@ -1517,6 +1587,7 @@ static int mt_steer_heading(float *h);                     /* in_dpsi: seated, t
 static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye); /* in_frame, before the climb: the left hand's grab */
 static int vb_nograb(void);                /* the climb: the left squeeze was the verbs' */
 static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t); /* the stealth kill */
+static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t); /* build 30: the graug's bleed */
 static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, int sweep,
 		     const float *root, double t);
 /* SOMVR_STEALTH_KILL (somvr_stealth_game.c, included last): the stealth kill by the blade from behind an unaware orc */
@@ -2866,6 +2937,8 @@ __attribute__((used)) void somvr_pm_c(struct regs *r)
 		un_post(pm, xf), ct_post(pm, xf);
 		return;
 	}
+	if (ov_pm(h, r)) /* build 31, SOMVR_VAULT_HANDS: the vault's hold or flight (its move, the gravity flag) */
+		return;
 	const char *what = "-";
 	float x0[7] = { 0 }, r0[3] = { 0 }, loc[3] = { 0, 0, 0 };
 	int go = 0, have_x0 = peek((uintptr_t)xf, x0, sizeof x0), asked = g_follow.req;
@@ -2991,6 +3064,12 @@ static struct {
 	somvr_blade prev;
 	somvr_blade hand; /* build 17: this frame's blade where the controller holds it (no weight's trail; DEFENCE) */
 	sc_rigxf hand_rx; /* build 22: ... and the rig it was placed by (SOMVR_STEALTH_KILL_CARRIED: the hand's own motion) */
+	/* build 31b (SOMVR_COMBAT_TIER_HAND=on): the stroke's tier from the hand's own swing - the controller's blade with
+	 * its own history (g_cb.hand has none: no velocity) through its own tracker; the contact and the edge stay the drawn
+	 * blade's (re-xr-pipeline.md 134.7) */
+	int tier_hand;
+	sc_blade_hist hhist;
+	sc_speed sp_hand;
 	sc_speed sp;
 	sc_cool cool;
 	sc_charges ch;
@@ -3706,6 +3785,8 @@ static void rx_roll(uintptr_t pc, const struct cb_orc *o, float dist, float cosv
 {
 	if (py_rx_skip(o->c, t)) /* SOMVR_PARRY / SOMVR_SHOVE (build 18): an open orc rolls no block */
 		return;
+	if (kl_busy(o->c)) /* build 31, SOMVR_KILLS: its kill plays - no block or dodge roll */
+		return;
 	RX_COUNT(toward);
 	const char *why = NULL, *aname = "(none)";
 	uintptr_t npc = peek_ptr(o->c + C_OWNER), own = pc ? peek_ptr(pc + C_OWNER) : 0, brain = 0, atk = 0, state = 1;
@@ -4161,8 +4242,9 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 		 sc_charges_now(&g_cb.ch, &g_cb.cfg, t));
 	if (g_cb.cfg.stroke) { /* build 20: the stroke's reach, the contact point's speed, the cut's damage factor */
 		size_t hl = strlen(hd);
-		snprintf(hd + hl, sizeof hd - hl, " stroke=%.0f contact=%.1f hand=%.1f k=%.2f", g_cb.sp.reach, g_cb.hit_v,
-			 g_cb.sp.base_mps, g_cb.hit_k);
+		const sc_speed *tsp = g_cb.tier_hand ? &g_cb.sp_hand : &g_cb.sp; /* (build 31b: the tier's tracker) */
+		snprintf(hd + hl, sizeof hd - hl, " stroke=%.0f contact=%.1f hand=%.1f k=%.2f%s arm=%.0f", tsp->reach, g_cb.hit_v,
+			 tsp->base_mps, g_cb.hit_k, g_cb.tier_hand ? " (by the hand's swing)" : "", tsp->base_reach);
 	}
 	if (why) {
 		py_through_back(pc, pyset, pyw);
@@ -4197,7 +4279,10 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 	int brk = into_shield && py_break_pre(o->c, &brk_was); /* SOMVR_PARRY_SHIELD=break: the riposte breaks it */
 	double t0 = mono();
 	kp_hit_pre(o->c, o->hobj, tier, g_cb.hit_k, t); /* build 24, SOMVR_CAPTAIN_DAMAGE: a committed cut on a captain */
+	struct kl_floor klf; /* build 31, SOMVR_KILLS: the blow that would kill is known exactly (the orc's min health 1) */
+	kl_floor_on(o, &klf);
 	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj, srec ? srec : rec, 0);
+	kl_floor_off(&klf);
 	double t1 = mono();
 	kp_hit_post(o->c, t);
 	ff_ans_hit(o->c, o->hobj, pc, t); /* build 19: a berserker's answer to this cut (SOMVR_CROWD_ANSWER_MS) */
@@ -4216,6 +4301,16 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 	cb_type_back(pc, typed, ty0);
 	int dead1 = cb_dead(o->c);
 	float hp1 = cb_health(o->c), sh1 = cb_shield_hp(o->c), orot[4] = { 0, 0, 0, 1 }, side = NAN;
+	int klt = 0; /* build 31, SOMVR_KILLS: the killing blow - the orc plays its half, the death at its moment */
+	if (!dead1 && kl_floor_hit(&klf, hp0, hp1)) {
+		float bax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+		klt = kl_take(pc, o, rec, rec, 0, ct->point, b->vel_tip, bax, ry == 2 ? SOMVR_KL_COUNTER : 0, "the killing blow", t);
+		if (!klt) /* not taken: the kill now, as the hit would have dealt it */
+			CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ ct->point[0], ct->point[1], ct->point[2] }, pc, o->hobj,
+							 srec ? srec : rec, 1);
+		dead1 = klt || cb_dead(o->c);
+		hp1 = cb_health(o->c);
+	}
 	char shs[96] = "";
 	if (isfinite(sh0) || isfinite(sh1))
 		snprintf(shs, sizeof shs, ", its shield %.1f->%.1f%s", sh0, sh1, downed ? " (around it: down for the call)" : "");
@@ -4224,7 +4319,7 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 		side = sv_wrap_pi(atan2f(ct->point[0] - o->pos[0], ct->point[2] - o->pos[2]) -
 				  sv_heading(sv_qnormalize(sv_quat_of(orot)))) * 57.29578f;
 	CB_COUNT(calls);
-	if (dead1 && !dead0)
+	if (dead1 && !dead0 && !klt) /* (SOMVR_KILLS counts its kill at the death) */
 		CB_COUNT(kills);
 	if (!dead1 && isfinite(hp0) && isfinite(hp1) && !(hp1 < hp0))
 		CB_COUNT(blocked); /* no damage: a block (the orc's IsBlock, its shield) or the data's 0 */
@@ -4238,7 +4333,8 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 	hf_hit(o, ct, kind, bite, glance, blk, 1, (dead1 && !dead0) || (isfinite(hp0) && isfinite(hp1) && hp1 < hp0), b, t);
 	if (!dead1) /* SOMVR_COMBAT_KNOCKBACK: the light stagger instead of the reaction the hit picked (build 10) */
 		kx_restagger(o->c, o->hobj, b->vel_tip, ct->point, t);
-	kb_note(o->c, o->hobj, rec, tier == SC_TIER_HEAVY ? "a heavy hit" : tier == SC_TIER_STAB ? "a stab" : "a light hit", t);
+	if (!klt) /* (a kill of SOMVR_KILLS: the body's trace from its death) */
+		kb_note(o->c, o->hobj, rec, tier == SC_TIER_HEAVY ? "a heavy hit" : tier == SC_TIER_STAB ? "a stab" : "a light hit", t);
 	if (!dead1) { /* the reel (build 17): what the hit was, for its line */
 		char rw[64];
 		snprintf(rw, sizeof rw, "a %s%s", fam == CB_MED ? "medium hit" : tier == SC_TIER_HEAVY ? "heavy hit"
@@ -4368,6 +4464,11 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		if (!(have && somvr_blade_controller(&bcf, &gh, &rx, t, &hh, &g_cb.hand)))
 			g_cb.hand.valid = 0;
 		g_cb.hand_rx = rx;
+		somvr_blade hb2;
+		if (g_cb.tier_hand && have && somvr_blade_controller(&bcf, &gh, &rx, t, &g_cb.hhist, &hb2))
+			sc_speed_push(&g_cb.sp_hand, &g_cb.cfg, &hb2); /* build 31b: the hand's own swing */
+		else if (g_cb.tier_hand)
+			sc_speed_reset(&g_cb.sp_hand), g_cb.hhist.have = 0;
 	}
 	if (!b.valid) {
 		CB_COUNT(noblade);
@@ -4379,6 +4480,7 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		g_cb.prev.valid = 0;
 		g_cb.sw_strokes += g_cb.sp.strokes, g_cb.sw_drops += g_cb.sp.drops; /* (build 20's totals) */
 		sc_speed_reset(&g_cb.sp);
+		sc_speed_reset(&g_cb.sp_hand), g_cb.hhist.have = 0; /* (build 31b) */
 		cb_stim_end(t, "no blade");
 		xc_frame(pl, body ? root : NULL, 0, t); /* SOMVR_EXECUTE: the counter, the ready signal (no glow without a blade) */
 		stl_noblade(pl, body ? root : NULL, t); /* SOMVR_STEALTH_KILL: its own sweep (the game sheathed the sword) */
@@ -4399,7 +4501,8 @@ static void combat_frame(uintptr_t pl, int head_ok)
 	stl_hand_track(body ? root : NULL, t); /* build 22, SOMVR_STEALTH_KILL_CARRIED: the hand's own motion */
 	fa_blade(body ? root : NULL, t); /* build 25, SOMVR_ABOVE: the sword hand's plunge at an orc below */
 	abl_blade(body ? root : NULL, t); /* build 27, SOMVR_ABIL: the sword's stab into a downed orc */
-	int edge = hf_biting() || stl_sticking() ? 0 : sc_speed_push(&g_cb.sp, &g_cb.cfg, &b); /* (build 21: or stuck) */
+	/* (build 21: or stuck; build 31: in flesh) */
+	int edge = hf_biting() || stl_sticking() || swp_stuck() ? 0 : sc_speed_push(&g_cb.sp, &g_cb.cfg, &b);
 	uintptr_t pcomb = body ? peek_ptr(pl + P_COMBAT) : 0, pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0;
 	if (pc && (vptr_of((void *)pc) != g_cbg.vt_combat || !peek_ptr(pc + C_PLAYER)))
 		pc = 0;
@@ -4408,6 +4511,7 @@ static void combat_frame(uintptr_t pl, int head_ok)
 	sf_note_orcs(o, n); /* build 22: an orc under the blade's tip is no ground (SOMVR_HANDS_SURFACE_GROUND) */
 	g_cb.orcs = n;
 	stl_frame(pcomb, pc, o, n, body ? root : NULL, t); /* SOMVR_STEALTH_KILL: awareness, the cue, the trace */
+	swp_h4(o, n, t); /* build 31, SOMVR_SWORD_FLESH: the wounded orc's body, the blood where the blade came out */
 	bz_frame(pl, body ? root : NULL, o, n, t); /* SOMVR_BEASTS: the lines, the view's trace */
 	if (edge < 0)
 		cb_stim_end(t, "the swing ended");
@@ -4419,6 +4523,7 @@ static void combat_frame(uintptr_t pl, int head_ok)
 	st_combat(o, n, &b, edge, root, t); /* SOMVR_STEP: this frame's orcs; a swing's start -> the assisted step */
 	fi_sword(pcomb, pc, o, n, &b, edge, t); /* SOMVR_FINISH: the swing's start, the glow, ground executions */
 	xc_frame(pl, body ? root : NULL, 1, t); /* SOMVR_EXECUTE: the counter, the ready signal and glow, the trigger */
+	kl_frame(pcomb, pc, body ? root : NULL, t); /* build 31, SOMVR_KILLS: each kill's moment, the catalogue's play */
 	vb_frame(pl, body ? root : NULL, t); /* SOMVR_VERBS: the verbs' prompts, the grab, the change lines */
 	py_frame(pc, o, n, body ? root : NULL, t); /* SOMVR_SHOVE (build 18): the left hand into a guard */
 	cb_tip_check(pl, &b, t); /* the sword model's tip against our blade (every 2 s while drawn; logs) */
@@ -4434,6 +4539,10 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		    !bz_sweep(&o[i], &g_cb.prev, &b, &ct, t)) /* the orc's capsule; SOMVR_BEASTS: a beast's bone capsules */
 			continue;
 		CB_COUNT(contacts);
+		if (swp_contact_held(o[i].c))
+			continue; /* build 31, SOMVR_SWORD_FLESH: the blade is in this orc (no other hit while it is) */
+		if (kl_busy(o[i].c))
+			continue; /* build 31, SOMVR_KILLS: its kill plays - no other hit */
 		/* the touch: a glancing tick when it starts, at most a weak rub while it lasts (a resting blade touches every
 		 * frame; build 7's glance marked the re-hit cooldown, so a resting blade ticked about 4 times a second) */
 		int touch = sc_touch_step(&g_cb.touch, o[i].c, t, g_cb.sp.mean_mps, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S,
@@ -4450,7 +4559,10 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		int tier16 = g_cb.klass == CB_CLASS_CUT ? sc_tier_cut(&g_cb.cfg, &g_cb.sp, edge_d) : sc_tier(&g_cb.cfg, &g_cb.sp);
 		/* build 20, SOMVR_COMBAT_SWING=stroke: the hit's tier by a real swing (the stroke's reach, the contact point's
 		 * speed); the stealth kill and the verbs keep their own rules (any slash or a stab: build 16's tier, below) */
-		int tier = g_cb.cfg.stroke ? sc_tier_swing(&g_cb.cfg, &g_cb.sp, edge_d, ct.along) : tier16;
+		/* build 31b (SOMVR_COMBAT_TIER_HAND): how hard by the hand's own swing (the weighted blade's lag and catch-up
+		 * are its feel, not the blow's force), where and with which edge by the drawn blade */
+		const sc_speed *tsp = g_cb.tier_hand ? &g_cb.sp_hand : &g_cb.sp;
+		int tier = g_cb.cfg.stroke ? sc_tier_swing(&g_cb.cfg, tsp, edge_d, ct.along) : tier16;
 		/* a hit (light or cut) only when this stroke brought the blade into the orc: a wiggle inside its body (each new
 		 * stroke begins while the blade already touches it) deals nothing more */
 		if (g_cb.cfg.stroke && (tier == SC_TIER_LIGHT || tier == SC_TIER_HEAVY) &&
@@ -4460,6 +4572,10 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		 * would deal is no touch to them (runs 20261028-155330/164235/164926: the stab's first contact, cos 0.50 at
 		 * 3.9 m/s, a touch by build 16's rule and a light hit by the stroke's: that hit woke the unaware orc) */
 		int tier_own = somvr_stl_tier(tier16, tier);
+		if (vb_bleed(pcomb, pc, &o[i], tier_own, t)) {
+			sc_cool_mark(&g_cb.cool, o[i].c, t);
+			continue; /* build 30, SOMVR_GRAUG_BLEED: the game offers its hamstring on this graug: X instead of our hit */
+		}
 		stl_set_tier_cut(tier); /* build 21: the neck cut is the stroke's own heavy tier */
 		int stl_took = stl_contact(pcomb, pc, &o[i], &ct, tier_own, &b, body ? root : NULL, t);
 		stl_set_tier_cut(-1);
@@ -4469,13 +4585,16 @@ static void combat_frame(uintptr_t pl, int head_ok)
 			sc_cool_mark(&g_cb.cool, o[i].c, t);
 			continue; /* SOMVR_STEALTH_KILL: the blade into an unaware orc's back from behind: the silent kill */
 		}
-		if (vb_contact(pcomb, pc, &o[i], tier_own, t))
+		g_kl_ct = &ct, g_kl_b = &b; /* build 31 (SOMVR_KILLS): the offered kill is the orc's half, no button */
+		int vbt = vb_contact(pcomb, pc, &o[i], tier_own, t);
+		g_kl_ct = NULL, g_kl_b = NULL;
+		if (vbt)
 			continue; /* SOMVR_VERBS: the game offers its stealth kill on this orc: its button instead of our hit */
 		if (g_cb.cfg.stroke && tier != tier16)
 			cb_swing_note(&o[i], &ct, tier, tier16, edge_d, t);
 		if (tier != SC_TIER_NONE && sc_charges_take(&g_cb.ch, &g_cb.cfg, t)) {
 			sc_cool_mark(&g_cb.cool, o[i].c, t); /* the re-hit cooldown: hits only (a glance deals nothing) */
-			g_cb.hit_v = sc_contact_mps(&g_cb.sp, ct.along);
+			g_cb.hit_v = sc_contact_mps(tsp, ct.along);
 			g_cb.hit_k = g_cb.cfg.stroke && tier == SC_TIER_HEAVY ? sc_cut_k(&g_cb.cfg, g_cb.hit_v) : 1.0f;
 			g_cb.sw_cuts += g_cb.cfg.stroke && tier == SC_TIER_HEAVY, g_cb.sw_lights += g_cb.cfg.stroke && tier == SC_TIER_LIGHT;
 			if (!xc_contact(pc, &o[i], &ct, tier, &b, t)) /* SOMVR_EXECUTE: a heavy hit, the trigger held, ready */
@@ -4577,6 +4696,7 @@ static struct {
 	int ifs, menus, paused, video, struggle, ctx;
 	/* the snapshot and its liveness */
 	somvr_input_state st;
+	somvr_input_state st_raw; /* build 30: the same as the layer gave it (st is sc_mirror_state'd with SOMVR_HANDED=left) */
 	int have_st, live, why, warned_v2;
 	/* the binding layer: the records per command, the commands per pad input */
 	uintptr_t rec[SC_NCMD];
@@ -5120,7 +5240,7 @@ static void in_hap_post(int h, double t)
 	float per = somvr_time_read(&g_sh, &tm) && tm.period > 0 ? (float)tm.period * 1e-9f : 1.0f / 90;
 	if (!sc_hap_tick(&g_inp.hap[h], t, g_inp.hap_scale, per, &q))
 		return;
-	uint32_t n = somvr_haptic_post(&g_in, h, &q);
+	uint32_t n = somvr_haptic_post(&g_in, IN_SIDE(h), &q); /* build 30: hand h's controller */
 	IN_COUNT(hap);
 	if (q.source == SOMVR_HAP_TEST || in_log_ok(t)) /* a test pulse (the trigger word) is always logged */
 		logf_("HAP %c n=%u amp=%.2f dur=%.0fms src=%s", "LR"[h], n, q.amplitude,
@@ -5177,7 +5297,7 @@ static void in_haptics(double t, int live)
 	uint32_t seq = atomic_load_explicit(&g_hapw_seq, memory_order_acquire);
 	if (seq != g_inp.hapw_seen) {
 		g_inp.hapw_seen = seq;
-		int h = atomic_load(&g_hapw_h) ? 1 : 0;
+		int h = IN_SIDE(atomic_load(&g_hapw_h) ? 1 : 0); /* build 30: the word's controller -> its hand's mixer */
 		float a = (float)atomic_load(&g_hapw_pm) * 0.001f, d = (float)atomic_load(&g_hapw_ms) * 0.001f;
 		if (live)
 			sc_hap_add(&g_inp.hap[h], t, a, d, 0, SOMVR_HAP_TEST);
@@ -5193,7 +5313,7 @@ static void in_haptics(double t, int live)
 			in_hap_post(h, t);
 		} else if (g_inp.hap[h].last > 0) {
 			somvr_haptic_req q = { 0, SOMVR_HAP_NONE, 0, 0, -1 };
-			somvr_haptic_post(&g_in, h, &q);
+			somvr_haptic_post(&g_in, IN_SIDE(h), &q);
 			sc_hap_reset(&g_inp.hap[h]);
 		} else {
 			sc_hap_reset(&g_inp.hap[h]);
@@ -5325,9 +5445,12 @@ static void in_tick(void)
 	in_padmode(t);
 	in_glyphs(t); /* the pad glyphs without a pad (run 6's raw {2010}) */
 	somvr_input_state st;
-	if (somvr_input_read(&g_in, &st)) /* a failed read keeps the last snapshot (sync_seq unchanged) */
+	if (somvr_input_read(&g_in, &st)) { /* a failed read keeps the last snapshot (sync_seq unchanged) */
+		g_inp.st_raw = st;
+		if (g_lh) /* build 30: the left-handed mirror at the source */
+			sc_mirror_state(&st);
 		g_inp.st = st, g_inp.have_st = 1;
-	else
+	} else
 		IN_COUNT(read_fail);
 	in_test_stick(t); /* the test word "stick LX LY RX S" (headless walks) */
 	go_test_y(t);     /* the test word "vision y MS" (SOMVR_VISION) */
@@ -5344,6 +5467,7 @@ static void in_tick(void)
 	mt_tick(&o, t);        /* build 26, SOMVR_RIDE: riding, the buttons are the beast's (A, RT, B, the stick's click) */
 	ab_tick(&o);           /* build 17: A's press -> its one owner (the strike, the dodge, the climb) before any reads it */
 	cl_tick(&o);           /* SOMVR_CLIMB: no move stick while holding; the cmd mode's LedgePullUp pulse */
+	ov_tick(&o);           /* build 31, SOMVR_VAULT_HANDS: no move stick while the vault holds or flies */
 	ws_tick(&o);           /* build 18, SOMVR_WRAITH_STEP: no walk and no turn while the wraith step aims */
 	bo_tick(&o);           /* SOMVR_BOW: the aim command while aiming, the fire command's tap */
 	lo_tick(&o);           /* SOMVR_LOCO: the stick's world velocity for the next tick, the leg feed */
@@ -5442,11 +5566,12 @@ static void in_frame(void)
 	somvr_input_state sn;
 	int have = somvr_input_read(&g_in, &sn);
 	if (!have && g_inp.have_st)
-		sn = g_inp.st, have = 1;
+		sn = g_inp.st_raw, have = 1; /* (the controllers as the layer gave them: their grip spaces' order) */
 	somvr_time tm;
 	int64_t per = somvr_time_read(&g_sh, &tm) && tm.period > 0 ? tm.period : 11111111;
 	somvr_hands_locate(&g_sh, &g_in, have ? &sn : NULL, g_inp.hands_mode, g_fr.views.time, 2 * per, &g_inp.hst, g_inp.hands);
-	bd_test_hands(g_inp.hands, g_fr.views.time, 1); /* SOMVR_HANDS_TEST: test grips (headless) */
+	bd_test_hands(g_inp.hands, g_fr.views.time, 1); /* SOMVR_HANDS_TEST: test grips (headless; the words' L/R physical) */
+	in_mirror_hands(g_inp.hands);                   /* build 30: SOMVR_HANDED=left - the roles from here on */
 	hsm_inp(g_inp.hands, g_fr.views.time);          /* SOMVR_HANDS_SMOOTH: the same filter on H4's grips */
 	for (int h = 0; h < 2; h++) {
 		memset(&p[h], 0, sizeof p[h]), memset(&pw[h], 0, sizeof pw[h]);
@@ -5477,6 +5602,7 @@ static void in_frame(void)
 	sl_frame(p, pw);        /* SOMVR_SLOTS: draw and put back at the body (after the bow, before the climb; no blade
 				 * from an empty hand) */
 	mt_reach(pw, hp);       /* build 26, SOMVR_RIDE: the left hand reached out at a stunned caragor - its mount */
+	ov_frame(p, pw, hp, hq); /* build 31, SOMVR_VAULT_HANDS: the hand on an orc's crown (before the verbs' grab) */
 	vb_hands(pw, hp);       /* SOMVR_VERBS: the left hand's squeeze on an orc's head (before the climb takes it) */
 	py_hands(p, pw);        /* SOMVR_SHOVE (build 18): the left palm for the shove */
 	stg_hands(p, pw, hp, hq); /* build 27, SOMVR_STRUGGLE: a hard thrust of a hand, an aim struggle's hand */
@@ -5872,11 +5998,12 @@ static void arm_eval(uintptr_t trk)
 		somvr_input_state sn;
 		int have = somvr_input_read(&g_in, &sn);
 		if (!have && g_inp.have_st)
-			sn = g_inp.st, have = 1;
+			sn = g_inp.st_raw, have = 1;
 		somvr_time tm;
 		int64_t per = somvr_time_read(&g_sh, &tm) && tm.period > 0 ? tm.period : 11111111;
 		somvr_hands_locate(&g_sh, &g_in, have ? &sn : NULL, g_inp.hands_mode, T, 2 * per, &g_arm.hst, g_arm.hands);
 		bd_test_hands(g_arm.hands, T, 0); /* SOMVR_HANDS_TEST */
+		in_mirror_hands(g_arm.hands);     /* build 30: SOMVR_HANDED=left */
 		hsm_arm(g_arm.hands, T);          /* SOMVR_HANDS_SMOOTH: the drawn grips (and HANDJIT's measurement) */
 	}
 	int done[2] = { 0, 0 }, bowed[2] = { 0, 0 }, gv[2] = { 0, 0 };
@@ -7637,6 +7764,11 @@ static void ptr_tick(sc_tick_out *o, int live, double t)
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	int64_t now = (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
 	int have = somvr_ptr_read(&g_in, &p) && p.frame;
+	if (have && g_lh) { /* build 30: the layer's controllers -> the hands (SOMVR_HANDED=left) */
+		p.consume = in_side_bits(p.consume);
+		if (p.hand == 0 || p.hand == 1)
+			p.hand = IN_SIDE(p.hand);
+	}
 	int fresh = have && now - p.mono_ns >= 0 && now - p.mono_ns < LP_STALE_NS;
 	int target = fresh && (p.quad == SOMVR_PTRQ_MENU || ((g_ptr.hud || g_inp.ctx == SC_CTX_MENU) && p.quad == SOMVR_PTRQ_HUD));
 	int menu = live && g_inp.ctx == SC_CTX_MENU && g_inp.im;
@@ -8615,6 +8747,10 @@ static struct {
 				     * engaged orc headless: the session's grabs came in FSM 6, between its engagements) */
 	double w_hug_cut, w_hug_in; /* SOMVR_CLIMB_HUG: this second's moves away from the wall cut, pulls redirected in */
 	float hug_far;              /* ... the farthest from the face while a hold drove (all climbs; logs) */
+	int sword;                  /* build 31 (SOMVR_CLIMB_SWORD): the hand not on a hold may draw and use the sword */
+	uint64_t sw_draws, sw_frames, sw_keep_h; /* ... draws while climbing; frames with the sword drawn in a climb; the
+						  * sword hand's presses kept off the wall in a fight (per hand) */
+	int sw_drawn_last;          /* ... the sword was in the hand in a climb the frame before (its log line) */
 } g_cl;
 static const char *const g_cl_top_w[] = { "release", "lift", "cmd", "push" };
 static const char *const g_cl_surf_n[] = { "walls", "game", "any" }; /* SOMVR_CLIMB_SURF= */
@@ -9400,6 +9536,16 @@ static const char *cl_word(const char *w)
 		      g_cl.cfg.fling_gain, g_cl.cfg.fling_side);
 		return on ? "climb flingup on" : "climb flingup off";
 	}
+	if (k == 2 && (!strcmp(a, "flingdown") || !strcmp(a, "sword")) && (!strcmp(b, "on") || !strcmp(b, "off"))) {
+		int on = b[1] == 'n'; /* build 31, test aids: one boot, both */
+		if (a[0] == 'f')
+			g_cl.cfg.fling_down = on && g_cl.cfg.fling;
+		else
+			g_cl.sword = on;
+		logf_("CLIMB t=%.3f %s %s (the trigger word, a test aid): SOMVR_CLIMB_%s now %s", cb_now(), a, b,
+		      a[0] == 'f' ? "FLING_DOWN" : "SWORD", (a[0] == 'f' ? g_cl.cfg.fling_down : g_cl.sword) ? "on" : "off");
+		return a[0] == 'f' ? (on ? "climb flingdown on" : "climb flingdown off") : on ? "climb sword on" : "climb sword off";
+	}
 	if (k == 2 && !strcmp(a, "fsm7") && (!strcmp(b, "allow") || !strcmp(b, "block"))) { /* a test aid */
 		g_cl.fsm7_test = b[0] == 'a';
 		logf_("CLIMB t=%.3f fsm7 %s (the trigger word, a test aid): a new climb in Combat (7) %s", cb_now(), b,
@@ -9793,7 +9939,19 @@ static void cl_fling_log(const somvr_climb_out *o, const somvr_climb_in *in, dou
 	const somvr_climb *s = &g_cl.s;
 	unsigned long long fr = (unsigned long long)g_fr.frame;
 	float rose = in->root_ok && s->fl_root_ok ? in->root.y - s->fl_root0.y : 0;
-	if (o->events & SOMVR_CLIMB_E_FLING) {
+	if ((o->events & SOMVR_CLIMB_E_FLING) && s->fl_down) { /* build 31: the fling down */
+		float v = sqrtf(s->fl_v0.x * s->fl_v0.x + s->fl_v0.y * s->fl_v0.y + s->fl_v0.z * s->fl_v0.z);
+		float hv = sqrtf(s->fl_hand_v.x * s->fl_hand_v.x + s->fl_hand_v.y * s->fl_hand_v.y + s->fl_hand_v.z * s->fl_hand_v.z);
+		float a = g_cl.cfg.fd_g > 0 ? g_cl.cfg.fd_g : 981.0f;
+		in_haptic_event(s->fl_hand, 0.3f, 0.02f, SOMVR_HAP_UI), g_cl.fling_pulses++;
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu fling down launch %s: v=%.0f cm/s (down %.0f, side %.0f, toward %.0f; "
+			      "out-dropped %.0f cm/s; the hand %.0f cm/s over %.0f ms, %d samples%s; the hold took him %.0f cm down): at "
+			      "rest in %.2f s, %.0f cm down; root %.1f,%.1f,%.1f, head %.1f", t, fr, cl_hand_name(s->fl_hand), v,
+			      -s->fl_v0.y, s->fl_side, s->fl_into, s->fl_out, hv, s->fl_span * 1e3, s->fl_n,
+			      s->fl_capped ? "; capped" : "", s->fd_net, -s->fl_v0.y / a, s->fl_v0.y * s->fl_v0.y / (2 * a), in->root.x,
+			      in->root.y, in->root.z, in->head_y);
+	} else if (o->events & SOMVR_CLIMB_E_FLING) {
 		float v = sqrtf(s->fl_v0.x * s->fl_v0.x + s->fl_v0.y * s->fl_v0.y + s->fl_v0.z * s->fl_v0.z);
 		float hv = sqrtf(s->fl_hand_v.x * s->fl_hand_v.x + s->fl_hand_v.y * s->fl_hand_v.y + s->fl_hand_v.z * s->fl_hand_v.z);
 		float g = g_cl.cfg.fling_g > 0 ? g_cl.cfg.fling_g : 981.0f;
@@ -9811,7 +9969,13 @@ static void cl_fling_log(const somvr_climb_out *o, const somvr_climb_in *in, dou
 			      s->topped ? "reached already (push)" : s->fl_edge ? "known from the hold" : s->fl_wall_d >= 0 ? "looked for by the head's ray" : "unknown");
 	}
 	if ((o->events & SOMVR_CLIMB_E_FLING_NONE) && cl_log_ok(t)) {
-		if (s->fl_none == 0)
+		if (s->fl_none == 0 && g_cl.cfg.fling_down && s->fd_down > 0) /* build 31: the hand rising: why no fling down */
+			logf_("CLIMB t=%.3f frame=%llu fling none %s: down %.0f cm/s (SOMVR_CLIMB_FLING_DOWN_MIN %.0f), the hold took "
+			      "him %.0f cm down (_NET_CM %.0f): %s (the hand %.0f ms, %d samples): the hang", t, fr,
+			      cl_hand_name(s->fl_hand), s->fd_down, g_cl.cfg.fd_min, s->fd_net, g_cl.cfg.fd_net_cm,
+			      s->fd_why == SOMVR_CLIMB_FD_NET ? "the end of a pull up, no fling down" : "too slow for a fling down",
+			      s->fl_span * 1e3, s->fl_n);
+		else if (s->fl_none == 0)
 			logf_("CLIMB t=%.3f frame=%llu fling none %s: up %.0f cm/s (SOMVR_CLIMB_FLING_MIN %.0f), out %.0f, side %.0f (the "
 			      "hand %.0f ms, %d samples): the hang", t, fr, cl_hand_name(s->fl_hand), s->fl_up, g_cl.cfg.fling_min,
 			      s->fl_out, s->fl_side, s->fl_span * 1e3, s->fl_n);
@@ -9827,9 +9991,21 @@ static void cl_fling_log(const somvr_climb_out *o, const somvr_climb_in *in, dou
 		logf_("CLIMB t=%.3f frame=%llu fling glide: the arc's top over the top, on toward it at %.0f cm/s (rose %.1f cm; "
 		      "the edge may lift %.0f cm)", t, fr, sqrtf(s->fl_v.x * s->fl_v.x + s->fl_v.z * s->fl_v.z), rose, s->fl_glide_cap);
 	if ((o->events & SOMVR_CLIMB_E_CATCH) && cl_log_ok(t))
-		logf_("CLIMB t=%.3f frame=%llu fling catch: a hold after %.2f s of flight (rose %.1f cm; root %.1f,%.1f,%.1f)", t, fr,
-		      t - s->fl_t0, rose, in->root.x, in->root.y, in->root.z);
-	if ((o->events & SOMVR_CLIMB_E_APEX) && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu fling%s catch: a hold after %.2f s of flight (%s %.1f cm; root %.1f,%.1f,%.1f)", t,
+		      fr, s->fl_down ? " down" : "", t - s->fl_t0, s->fl_down ? "fell" : "rose", s->fl_down ? -rose : rose,
+		      in->root.x, in->root.y, in->root.z);
+	if ((o->events & SOMVR_CLIMB_E_APEX) && s->fl_down) { /* build 31: the flight down's end (always logged: few) */
+		if (s->fl_why == SOMVR_CLIMB_FL_LAND)
+			logf_("CLIMB t=%.3f frame=%llu fling down landed after %.2f s, %d frames: fell %.1f cm, the feet %.1f cm over "
+			      "the floor at %.1f (root %.1f,%.1f,%.1f): the climb's end, gravity back (the game's landing)", t, fr,
+			      t - s->fl_t0, s->fl_frames, -rose, s->fd_feet, s->fd_floor.y, in->root.x, in->root.y, in->root.z);
+		else
+			logf_("CLIMB t=%.3f frame=%llu fling down hang (%s) after %.2f s, %d frames: fell %.1f cm (root %.1f,%.1f,%.1f, "
+			      "head %.1f); Talion stays (gravity off; a grip on the wall climbs on, A drops)", t, fr,
+			      s->fl_why == SOMVR_CLIMB_FL_BLOCKED ? "blocked below: the game's collision holds him"
+							   : somvr_climb_fl_name(s->fl_why), t - s->fl_t0, s->fl_frames, -rose, in->root.x, in->root.y, in->root.z,
+			      in->head_y);
+	} else if ((o->events & SOMVR_CLIMB_E_APEX) && cl_log_ok(t))
 		logf_("CLIMB t=%.3f frame=%llu fling apex hang (%s) after %.2f s, %d frames: rose %.1f cm (root %.1f,%.1f,%.1f, head "
 		      "%.1f); Talion stays (gravity off; a grip on the wall climbs on, A drops)%s%s", t, fr, somvr_climb_fl_name(s->fl_why),
 		      t - s->fl_t0, s->fl_frames, rose, in->root.x, in->root.y, in->root.z, in->head_y,
@@ -10062,8 +10238,16 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	in.live = g_inp.live;
 	in.frozen = g_inp.ctx == SC_CTX_MENU;
 	in.allow = !g_cl.why_not;
-	in.nograb = bo_out() || sl_nograb() || vb_nograb() || df_keep_sword(t); /* SOMVR_BOW: the hands are on the bow; SOMVR_SLOTS: a slot took
-							       * the press; SOMVR_VERBS: an orc's head did */
+	if (g_cl.sword && g_cl.s.active) { /* build 31 (SOMVR_CLIMB_SWORD): a slot's press and the sword in a fight keep that
+					    * hand alone off the wall - the other climbs on */
+		in.nograb = bo_out() || vb_nograb();
+		for (int h = 0; h < 2; h++)
+			in.nograb_h[h] = sl_nograb_hand(h) || (h == SOMVR_HAND_R && df_keep_sword(t));
+		g_cl.sw_keep_h += in.nograb_h[SOMVR_HAND_R] && !sl_nograb_hand(SOMVR_HAND_R);
+	} else {
+		in.nograb = bo_out() || sl_nograb() || vb_nograb() || df_keep_sword(t); /* SOMVR_BOW: the hands are on the bow; SOMVR_SLOTS: a slot took
+								       * the press; SOMVR_VERBS: an orc's head did */
+	}
 	{ /* the drop button: A (the right controller's lower button; with SOMVR_GAMEMOVES=off it does nothing on foot) */
 		const somvr_hand_in *ra = &g_inp.st.hand[SOMVR_HAND_R];
 		in.drop = (ra->active & SOMVR_HACT_INPUT) && (ra->buttons & SOMVR_BTN_LOWER) &&
@@ -10109,7 +10293,7 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 		hd->valid = g_inp.hands[h].valid;
 		hd->p = p[h], hd->pw = pw[h];
 		/* OpenXR's grip +X: out of the left palm, into the right one; its -Z (after the mirror +Z) along the fingers */
-		hd->palm = sv_qrot(qw[h], (sv_vec3){ h == SOMVR_HAND_L ? 1.0f : -1.0f, 0, 0 });
+		hd->palm = sv_qrot(qw[h], (sv_vec3){ IN_SIDE(h) == SOMVR_HAND_L ? 1.0f : -1.0f, 0, 0 }); /* build 30: its side */
 		hd->fwd = sv_qrot(qw[h], (sv_vec3){ 0, 0, 1 });
 		/* SOMVR_HANDS_TEST: a test squeeze (`hands squeeze`) over the controller's; its grip counts as live while it
 		 * drives the hand (headless: no controller, so no active inputs) */
@@ -10260,6 +10444,8 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 		       : o.end_why == SOMVR_CLIMB_END_OVER && ph0 == SOMVR_CLIMB_PH_FLING
 			 ? (g_cl.s.fl_landed ? "a fling onto the top (the top under his root; SOMVR_CLIMB_FLING)"
 					     : "a fling over the top (SOMVR_CLIMB_FLING)")
+		       : o.end_why == SOMVR_CLIMB_END_RELEASED && ph0 == SOMVR_CLIMB_PH_FLING && g_cl.s.fl_why == SOMVR_CLIMB_FL_LAND
+			 ? "a fling down: the feet at the floor, the game's landing (SOMVR_CLIMB_FLING_DOWN)"
 		       : NULL, g_cl.pm, 0);
 	g_cl.req = o.move && g_cl.s.active;
 	g_cl.req_frame = g_fr.frame, g_cl.req_w = o.move_w, g_cl.req_thr = g_cl.req ? o.through_up : 0.0f;
@@ -10802,6 +10988,30 @@ static int cl_config(int *bad)
 		      "sideways x %.2f, at most %.2f of the up; from %.0f cm/s up (that part); in flight a push into the face the "
 		      "face holds is dropped", c->fling_max, c->fling_max * c->fling_max / (2 * c->fling_g), c->fling_tw,
 		      c->fling_wall_up, c->fling_side, c->fling_side_max, c->fling_min);
+	/* build 31 (re-xr-pipeline.md 138): the fling down; the sword in the free hand while climbing */
+	c->fling_down = env_word("SOMVR_CLIMB_FLING_DOWN", fling_w, 2, 0);
+	c->fd_min = env_float("SOMVR_CLIMB_FLING_DOWN_MIN", c->fd_min, 100, 1000, bad);
+	c->fd_max = env_float("SOMVR_CLIMB_FLING_DOWN_MAX", c->fd_max, 200, 900, bad);
+	c->fd_g = env_float("SOMVR_CLIMB_FLING_DOWN_G", c->fd_g, 300, 3000, bad);
+	c->fd_net_cm = env_float("SOMVR_CLIMB_FLING_DOWN_NET_CM", c->fd_net_cm, 0, 100, bad);
+	c->fd_land_cm = env_float("SOMVR_CLIMB_FLING_DOWN_LAND_CM", c->fd_land_cm, 5, 60, bad);
+	if (c->fling_down && !c->fling)
+		logf_("CONFIG climb fling down: on needs SOMVR_CLIMB_FLING=on: off"), c->fling_down = 0;
+	logf_("CONFIG climb fling down=%s%s", fling_w[c->fling_down], c->fling_down ? "" : " (a let-go with the hand rising = "
+	      "the hang, as build 30)");
+	if (c->fling_down)
+		logf_("CONFIG climb fling down: the last hold let go while its hand rises at %.0f cm/s or more (the body thrown "
+		      "down) and that hold took him down %.0f cm or more (not the end of a pull up): on down along the throw from "
+		      "the hand's speed (at most %.0f cm/s; sideways x %.2f, toward the wall at most %.2f of it, away dropped), "
+		      "slowing %.0f cm/s^2 to rest (at most %.0f cm on) = the hang there; a grip catches; the feet at a floor = "
+		      "landed (the game's landing, from %.0f cm at most); water, blocked below, the wall ended = the hang",
+		      c->fd_min, c->fd_net_cm, c->fd_max, c->fling_side, c->fling_tw, c->fd_g,
+		      c->fd_max * c->fd_max / (2 * c->fd_g), c->fd_land_cm);
+	g_cl.sword = env_word("SOMVR_CLIMB_SWORD", fling_w, 2, 0);
+	logf_("CONFIG climb sword=%s%s", fling_w[g_cl.sword], g_cl.sword ? ": climbing, the hand not on a hold may draw the "
+	      "sword at its slot (the slot's press; no quick draw on the wall, no restore of a sword the climb put back until "
+	      "it ends) and cut with it as on the ground; a slot's press and the sword hand in a fight keep only that hand "
+	      "off the wall; the bow stays off (two hands)" : " (climbing, both hands' slots off: build 30)");
 	/* build 17 (re-xr-pipeline.md 60.2): a push held at a top's corner goes through 1:1, the head's way kept clear */
 	static const char *const to_w[] = { "off", "through" };
 	c->topout = env_word("SOMVR_CLIMB_TOPOUT", to_w, 2, 0);
@@ -11381,6 +11591,16 @@ static void cl_end_log(void)
 		      g_cl.cfg.retop_edge_cm, (unsigned long long)s->retops, (unsigned long long)s->re_edges,
 		      g_cl.cfg.am_keep ? "on" : "off", (unsigned long long)s->am_keeps, g_cl.cfg.fl_reach_hold ? "on" : "off",
 		      (unsigned long long)s->fl_reach_holds);
+	if (g_cl.cfg.fling_down || s->fd_flings || g_cl.sword || g_cl.sw_draws)
+		logf_("CLIMB END build 31 fling down=%s: flings %llu (caught %llu, landed %llu, at rest %llu, blocked below %llu, "
+		      "water %llu, the wall's end %llu; %.0f cm flown), let-gos with the hand rising and no fling: too slow %llu, "
+		      "the end of a pull up %llu; sword=%s: draws while climbing %llu, frames with it %llu, the sword hand kept off "
+		      "the wall in a fight %llu, presses spent by one hand's nograb %llu", g_cl.cfg.fling_down ? "on" : "off",
+		      (unsigned long long)s->fd_flings, (unsigned long long)s->fd_catches, (unsigned long long)s->fd_lands,
+		      (unsigned long long)s->fd_rests, (unsigned long long)s->fd_blocks, (unsigned long long)s->fd_wets,
+		      (unsigned long long)s->fd_reaches, s->fd_cm, (unsigned long long)s->fd_slows, (unsigned long long)s->fd_nets,
+		      g_cl.sword ? "on" : "off", (unsigned long long)g_cl.sw_draws, (unsigned long long)g_cl.sw_frames,
+		      (unsigned long long)g_cl.sw_keep_h, (unsigned long long)s->nograb_h_n);
 	if (g_cl.cfg.land_above || s->la_unders)
 		logf_("CLIMB END build 27b land above=%s: landing spots whose floor lay under the rock (no landing there) %llu",
 		      g_cl.cfg.land_above ? "on" : "off", (unsigned long long)s->la_unders);
@@ -11758,6 +11978,9 @@ static int bm_pre(uintptr_t pl)
 	uintptr_t atk, st;
 	bi.fb = fbraw;
 	bi.names = bm_names(pl, &in, &atk, &st, &bi.dead);
+	/* build 31b: the game's stealth kill under SOMVR_KILLS - HOLD talion keeps the view on his pin; the body moments' own
+	 * hold would ease the view 35 cm at its release (boot 181649), its presentation opened the window (184052) */
+	bi.our_kill = kl_sync_view(cb_now());
 	bi.fb = kp_fb(pl, bi.fb, bi.dead, t); /* build 22, SOMVR_CAPTAIN: a captain's introduction in the world */
 	bi.fb = mt_fb(bi.fb, &in, atk, t);    /* build 26, SOMVR_RIDE: riding a beast, mount and attach are the ride's */
 	bi.our_climb = g_cl.on && g_cl.s.active;
@@ -12250,6 +12473,14 @@ static struct {
 	 * SOMVR_BOW_STRING_REST=ours - the game's string node at rest on our string's middle (its strip along ours);
 	 * qv_off: the string hand from the quiver's middle (right, up, ahead on the torso's yaw, cm) for the lines */
 	int a_quiet, srest_ours, qv_cap, brace_logs;
+	/* build 31 (re-xr-pipeline.md 136; the 11-02 session's mark 23: drawn to 108 cm the arrow ran through the face):
+	 * SOMVR_BOW_DRAW_MAX_CM - the drawn string's middle and the nocked arrow no further back than that from the string's
+	 * rest, nor further back than SOMVR_BOW_FACE_CM in front of the eyes' plane across the shot (-10: 10 cm behind it,
+	 * an archer's anchor at the cheek and ear stays free); the hand goes on (1:1), the draw's length
+	 * and the shot are the hand's. Its frames, the most the hand went past, the line's turns */
+	float draw_max_cm, face_cm, cap_most, cap_s; /* cap_s: the pull's length allowed now (while cap_on) */
+	int cap_on, cap_lines;
+	uint64_t cap_frames;
 	float string_lo[2]; /* build 19: SOMVR_BOW_STRING_LOW_CM (NAN: the upper's) */
 	float min_draw0, full_draw0, rest_min_cm, brace_logged; /* build 19: bo_brace */
 	float qv_off[3], qv_to[3];
@@ -13158,7 +13389,7 @@ static void bo_frame(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 pw[2]
 	int rm = atomic_exchange(&g_bo_req_hold, -1);
 	if (rm >= 0) { /* build 16, headless A/B: the other hold, measured and turned again at the next steady aim */
 		g_bow.hold_mode = rm, g_bow.hold_auto = 1, g_bow.hold_done = 0, g_bow.hold_steady = 0;
-		g_bow.hold_q = somvr_bow_hold_q(rm, g_bow.cfg.bow_hand, g_bow.tilt_deg, g_bow.cant_deg);
+		g_bow.hold_q = somvr_bow_hold_q(rm, IN_SIDE(g_bow.cfg.bow_hand), g_bow.tilt_deg, g_bow.cant_deg);
 		sv_vec3 ax = sv_qrot(g_bow.hold_q, (sv_vec3){ 0, 0, 1 }), lb = sv_qrot(g_bow.hold_q, (sv_vec3){ 0, 1, 0 });
 		g_bow.cfg.shot_ax[0] = ax.x, g_bow.cfg.shot_ax[1] = ax.y, g_bow.cfg.shot_ax[2] = ax.z;
 		g_bow.cfg.limb_ax[0] = lb.x, g_bow.cfg.limb_ax[1] = lb.y, g_bow.cfg.limb_ax[2] = lb.z;
@@ -13634,6 +13865,16 @@ static void bo_skel(uintptr_t trk)
 				float rz = bo_string_rest_mid(nd).z;
 				if (l.z > rz)
 					l.z = rz;
+			}
+			if (g_bow.cap_on && g_bow.cap_s > 0) { /* build 31 (SOMVR_BOW_DRAW_MAX_CM): the string held with the arrow */
+				sv_vec3 rm = g_bow.srest_ours ? bo_string_rest_mid(nd)
+					: (sv_vec3){ 0.5f * (nd[BO_TIP_LO].pos[0] + nd[BO_TIP_HI].pos[0]), 0.5f * (nd[BO_TIP_LO].pos[1] +
+						     nd[BO_TIP_HI].pos[1]), 0.5f * (nd[BO_TIP_LO].pos[2] + nd[BO_TIP_HI].pos[2]) };
+				sv_vec3 dl = { l.x - rm.x, l.y - rm.y, l.z - rm.z };
+				float nl = sqrtf(dl.x * dl.x + dl.y * dl.y + dl.z * dl.z);
+				if (nl > g_bow.cap_s)
+					l = (sv_vec3){ rm.x + dl.x * g_bow.cap_s / nl, rm.y + dl.y * g_bow.cap_s / nl,
+						       rm.z + dl.z * g_bow.cap_s / nl };
 			}
 			g_bow.string_drawn++;
 		} else { /* at rest: straight between the tips */
@@ -14119,7 +14360,7 @@ static void bo_start(const struct site_spec *sites, int *bad)
 	 * and puts the bow's grip node on the controller's grip. SOMVR_BOW_TILT_DEG / _CANT_DEG lean it */
 	g_bow.tilt_deg = env_float("SOMVR_BOW_TILT_DEG", 0, -45, 45, bad);
 	g_bow.cant_deg = env_float("SOMVR_BOW_CANT_DEG", 0, -45, 45, bad);
-	g_bow.hold_q = somvr_bow_hold_q(g_bow.hold_mode, c->bow_hand, g_bow.tilt_deg, g_bow.cant_deg);
+	g_bow.hold_q = somvr_bow_hold_q(g_bow.hold_mode, IN_SIDE(c->bow_hand), g_bow.tilt_deg, g_bow.cant_deg); /* build 30 */
 	{
 		sv_vec3 ax = sv_qrot(g_bow.hold_q, (sv_vec3){ 0, 0, 1 }), lb = sv_qrot(g_bow.hold_q, (sv_vec3){ 0, 1, 0 });
 		c->shot_ax[0] = ax.x, c->shot_ax[1] = ax.y, c->shot_ax[2] = ax.z;
@@ -14137,7 +14378,8 @@ static void bo_start(const struct site_spec *sites, int *bad)
 	g_bow.noarrow_cue = env_word("SOMVR_BOW_NOARROW_CUE", g_bo_noarrow_w, 3, 0);
 	c->noarrow_take = g_bow.noarrow_cue == 2;
 	g_bow.rest_cm = env_float("SOMVR_BOW_REST_CM", 4, -10, 15, bad); /* the arrow's height over the grip, along the tube */
-	g_bow.side_cm = (c->bow_hand == SOMVR_HAND_L ? -1.0f : 1.0f) * 1.2f; /* beside the riser, on the bow hand's side */
+	g_bow.side_cm = (IN_SIDE(c->bow_hand) == SOMVR_HAND_L ? -1.0f : 1.0f) * 1.2f; /* beside the riser, on the bow hand's
+										 * side (build 30: its controller's) */
 	if (g_bow.hold_mode == SOMVR_BOW_HOLD_FIST && !g_bow.nock_set) /* until the live string is measured (bo_nock_skel) */
 		c->nock_ofs[0] = g_bow.side_cm, c->nock_ofs[1] = 1.7f, c->nock_ofs[2] = g_bow.rest_cm;
 	if (g_bow.hold_mode == SOMVR_BOW_HOLD_AUTO) /* boot 023643 measured the bow 90 deg about the grip's X off the sword's
@@ -14169,6 +14411,12 @@ static void bo_start(const struct site_spec *sites, int *bad)
 	c->noarrow_cm = env_float("SOMVR_BOW_NOARROW_CM", 0, 0, 60, bad);
 	g_bow.a_quiet = env_word("SOMVR_BOW_A", (const char *const[]){ "buzz", "quiet" }, 2, 0);
 	g_bow.srest_ours = env_word("SOMVR_BOW_STRING_REST", (const char *const[]){ "tips", "ours" }, 2, 0);
+	{ /* build 31 */
+		int cbad = 0;
+		g_bow.draw_max_cm = env_float("SOMVR_BOW_DRAW_MAX_CM", 0, 0, 200, &cbad);
+		g_bow.face_cm = env_float("SOMVR_BOW_FACE_CM", -10, -50, 50, &cbad); /* - = behind the eyes: an ear anchor */
+		(void)cbad;
+	}
 	/* build 20 (re-xr-pipeline.md 76): SOMVR_BOW_AUTO_ARROW=on - with the quiver off ("Arrows: Auto") the next arrow
 	 * rests on the string and the trigger held into the zone nocks it; the aim (somvr_bowaim_game.c) */
 	c->auto_arrow = env_word("SOMVR_BOW_AUTO_ARROW", (const char *const[]){ "off", "on" }, 2, 0);
@@ -14280,7 +14528,7 @@ static void bo_start(const struct site_spec *sites, int *bad)
 		      "yaw, radius %g): the %s grip pressed there = the bow out while it stays closed, let go there = put back, let "
 		      "go elsewhere = the hands apart end it; the string grip at the nock brings no bow; the %s trigger is a grab "
 		      "(climb holds, the hilt with both hands)", g_bo_hand_w[c->bow_hand],
-		      (c->bow_hand == SOMVR_HAND_L ? -1 : 1) * g_bow.sl_ofs[0], g_bow.sl_ofs[1], g_bow.sl_ofs[2], g_bow.sl_r,
+		      (IN_SIDE(c->bow_hand) == SOMVR_HAND_L ? -1 : 1) * g_bow.sl_ofs[0], g_bow.sl_ofs[1], g_bow.sl_ofs[2], g_bow.sl_r,
 		      g_bo_hand_w[c->bow_hand], g_bo_hand_w[c->bow_hand]);
 	logf_("CONFIG bow hold=%s (SOMVR_BOW_HOLD%s): the bow in the grip: its shot along (%.3f %.3f %.3f), its upper limb along "
 	      "(%.3f %.3f %.3f) of the grip's frame (+z = the fist's tube, little finger to thumb; +y back toward the player "
@@ -14302,7 +14550,7 @@ static void bo_start(const struct site_spec *sites, int *bad)
 		      "(%g,%g,%g cm from the head on the torso's yaw%s, radius %g) takes an arrow (none left: a buzz); touched to "
 		      "the string it is nocked; let go before that it is gone; let go below %.0f cm of draw it rests on the string",
 		      g_bo_hand_w[1 - c->bow_hand], g_bo_string_w[g_bow.string_trigger],
-		      (c->bow_hand == SOMVR_HAND_L ? 1 : -1) * g_bow.qv_ofs[0], g_bow.qv_ofs[1], g_bow.qv_ofs[2],
+		      (IN_SIDE(c->bow_hand) == SOMVR_HAND_L ? 1 : -1) * g_bow.qv_ofs[0], g_bow.qv_ofs[1], g_bow.qv_ofs[2],
 		      g_bow.qv_cap ? " down to the back's end (SOMVR_BOW_QUIVER_TO_CM)" : "", g_bow.qv_r, c->min_draw_cm);
 	if (c->quiver && g_bow.qv_cap)
 		logf_("CONFIG bow quiver capsule (SOMVR_BOW_QUIVER_TO_CM): to %g,%g,%g cm from the head", (c->bow_hand ==
@@ -14629,7 +14877,8 @@ static void lo_pm_pre(uintptr_t pm, const float *xf)
 	}
 	own.read_ok = ok, own.fsm = fsm, own.rootmotion = vm == 1, own.lock_t = lt != 0, own.lock_r = lr != 0;
 	own.attached = att != 0, own.life = life, own.mounted = mount != 0;
-	own.climbing = g_cl.on && g_cl.s.active;
+	own.climbing = (g_cl.on && g_cl.s.active) || (ov_active() && !(ov_flying() && own.attack)); /* build 31: the vault's
+		      * hold as a climb; its flight under the stock evade LOCO's (ov_pm_own) */
 	own.fallback = g_fb.on && (g_fb.tr.shown || g_fb.last_raw);
 	own.sprint = g_lo.sprint;
 	own.aiming = g_bow.on && g_bow.s.phase != SOMVR_BOW_PH_IDLE;
@@ -14658,6 +14907,7 @@ static void lo_pm_pre(uintptr_t pm, const float *xf)
 	}
 	g_lo.have_post = 0, g_lo.post_pm = pm;
 	st_pm_own(&own, &in, pl, cmb, root, in.have_root); /* SOMVR_DASH / SOMVR_PHASE: the stock evade's ticks ours */
+	ov_pm_own(&in, own.attack); /* build 31b, SOMVR_VAULT_HANDS: the evade under the flight - its ticks ours */
 	if ((in.why & g_lo.hold) && !sk_lift(t) && !fa_lift(t)) /* SOMVR_LOCO_HOLD: the game's move plays in place; only the stick moves */
 		in.why &= ~g_lo.hold, g_lo.n_held++; /* Talion (not the Shadow Strike's: SOMVR_BOW_STRIKE=dash|blink) */
 	tk_pm_own(sc, &in, root, in.have_root, t); /* SOMVR_COMBAT_HOLD_TALION: an enemy's sync on Talion in place */
@@ -15519,6 +15769,8 @@ static void *writer_main(void *arg)
 					what = sf_word(w + 8);
 				} else if (seen && !strncmp(w, "stealth ", 8)) { /* SOMVR_STEALTH_KILL: "stealth status|on|off|log" */
 					what = stl_word(w + 8);
+				} else if (seen && !strncmp(w, "kills ", 6)) { /* build 31, SOMVR_KILLS: "kills status|play N|cat|kill N|sever" */
+					what = kl_word(w + 6);
 				} else if (seen && !strncmp(w, "use ", 4)) { /* SOMVR_USE: "use on|off|status" */
 					what = us_word(w + 4);
 				} else if (seen && !strncmp(w, "objective ", 10)) { /* SOMVR_OBJECTIVE: "objective status|on|game|both|recs P" */
@@ -15543,10 +15795,11 @@ static void *writer_main(void *arg)
 					what = cp_word(w); /* build 18, SOMVR_COUNTER_ICON: "cprompt game|hide|state" */
 				} else if (seen && (!strncmp(w, "flatfx", 6) || !strncmp(w, "fx ", 3) || !strncmp(w, "fx\n", 3) ||
 						    !strncmp(w, "curframe", 8) || !strncmp(w, "ktime", 5) ||
-						    !strncmp(w, "eyematch", 8) || !strncmp(w, "eyedrop", 7) || !strncmp(w, "fxnear", 6))) {
+						    !strncmp(w, "eyematch", 8) || !strncmp(w, "eyedrop", 7) || !strncmp(w, "fxnear", 6) ||
+						    !strncmp(w, "fxbill", 6))) {
 					what = rd_word(w); /* build 21, SOMVR_FLATFX / SOMVR_FX_TEST: "flatfx LIST|state", "fx hide|eyesame";
 							      build 23: "ktime frame|game|state"; build 24: "eyematch", "eyedrop";
-							      build 27: "fxnear on|off|R0,R1|eye E|state" */
+							      build 27: "fxnear on|off|R0,R1|eye E|state"; build 31: "fxbill eye|game|state" */
 				} else if (seen && !strncmp(w, "slsnd", 5) && (!w[5] || w[5] == ' ' || w[5] == '\n')) {
 					what = gs_word(w); /* build 20, SOMVR_SLOTS_GAMESOUND: "slsnd log|drop|state" */
 				} else if (seen && !strncmp(w, "screens ", 8)) { /* build 22: "screens status|death ..|mouse1 .." */
@@ -15712,6 +15965,15 @@ static void combat_start(const struct site_spec *sites, int *bad)
 	g_cb.high_streak = (int)env_float("SOMVR_COMBAT_HIGH_STREAK", 8, 0, 100, bad);
 	g_cb.cfg.cut_cm = env_float("SOMVR_COMBAT_CUT_CM", 50, 0, 300, bad);
 	g_cb.cfg.edge_max_deg = env_float("SOMVR_COMBAT_EDGE_DEG", 60, 0, 90, bad);
+	/* build 31b (re-xr-pipeline.md 134.7): the tier by the hand's own swing; a cut needs the fist this far into the stroke */
+	static const char *const th_w[] = { "off", "on" };
+	g_cb.tier_hand = env_word("SOMVR_COMBAT_TIER_HAND", th_w, 2, 0);
+	g_cb.cfg.arm_cm = env_float("SOMVR_COMBAT_CUT_ARM_CM", 0, 0, 200, bad);
+	sc_speed_reset(&g_cb.sp_hand), g_cb.hhist.have = 0;
+	if (g_cb.tier_hand || g_cb.cfg.arm_cm > 0)
+		logf_("COMBAT config tier=%s (SOMVR_COMBAT_TIER_HAND: how hard a blow is by the hand's own swing, where it lands by the "
+		      "drawn blade); a cut needs the fist %.0f cm into the stroke (SOMVR_COMBAT_CUT_ARM_CM: the arm in it, not the "
+		      "wrist alone)", g_cb.tier_hand ? "the hand's swing" : "the drawn blade", (double)g_cb.cfg.arm_cm);
 	static const char *const swing_w[] = { "off", "stroke" };
 	g_cb.cfg.stroke = env_word("SOMVR_COMBAT_SWING", swing_w, 2, 0);
 	g_cb.cfg.tip_max_mps = g_cb.cfg.stroke ? CB_SWING_JUMP_MPS : 0;
@@ -15786,6 +16048,33 @@ static void combat_start(const struct site_spec *sites, int *bad)
 }
 
 /* SOMVR_INPUT (before the hooks go in): the switches; the hooks to install */
+/* build 30 (re-xr-pipeline.md 132): the left-handed mirror for this session, decided before every module's config:
+ * SOMVR_HANDED=right|left (default right = build 29), the settings file's HANDED over it (read as vm_start reads it:
+ * SOMVR_VRMENU on, SOMVR_SETTINGS) - the menu's Handedness row saves it there; it applies from the next start */
+static void lh_decide(void)
+{
+	static const char *const hand_w[] = { "right", "left" }, *const on_w[] = { "0", "1", "off", "on" };
+	g_lh = env_word("SOMVR_HANDED", hand_w, 2, 0) != 0;
+	const char *src = getenv("SOMVR_HANDED") ? "SOMVR_HANDED" : "unset", *path = getenv("SOMVR_SETTINGS");
+	if ((env_word("SOMVR_VRMENU", on_w, 4, 0) & 1) && path && *path) {
+		char *text = NULL;
+		if (!vm_read_file(path, &text) && text) {
+			somvr_settings st;
+			somvr_set_default(&st);
+			int nb = 0;
+			char note[16];
+			if (somvr_set_parse(&st, text, &nb, note, sizeof note) >> SOMVR_SK_HANDED & 1)
+				g_lh = st.handed != 0, src = "the settings file's HANDED";
+		}
+		free(text);
+	}
+	logf_("CONFIG handed=%s (%s): %s", g_lh ? "left" : "right", src,
+	      g_lh ? "the left-handed mirror - the controllers' roles swapped at the source: the sword, A/B, the turn stick "
+		     "and the string in the LEFT hand; the wraith hand, X/Y, the move stick and the bow in the RIGHT; the "
+		     "menu button stays the left's; the slots, the quiver and the hands' sides mirrored"
+		   : "build 29's hands (the sword in the right hand)");
+}
+
 static uint32_t in_config(int *bad)
 {
 	static const char *const on_w[] = { "0", "1", "off", "on" }, *const hands_w[] = { "game", "layer" },
@@ -15794,6 +16083,7 @@ static uint32_t in_config(int *bad)
 	g_inp.on = env_word("SOMVR_INPUT", on_w, 4, 0) & 1;
 	if (!g_inp.on)
 		return 0;
+	lh_decide(); /* build 30: SOMVR_HANDED, before the modules' configs (the slots' and the bow's sides) */
 	sc_ctl_cfg_default(&g_inp.cfg);
 	g_inp.hands_mode = env_word("SOMVR_HANDS", hands_w, 2, SOMVR_HANDS_GAME);
 	g_inp.move_hand = env_word("SOMVR_MOVE", move_w, 2, 0);
@@ -16476,7 +16766,8 @@ static struct {
 	uint32_t gate;            /* the gesture's gate published last (SOMVR_VMG_*) */
 	double open_mono;         /* build 27: the last input tick with the panel or the card shown (mono()) */
 	float jump_s;             /* build 27: SOMVR_JUMP_MENU_S - A within this of the panel or card is not a jump (0 off) */
-	uint64_t gate_ticks[4], gate_on; /* ticks with each cause; episodes */
+	uint64_t gate_ticks[5], gate_on; /* ticks with each cause; episodes */
+	int gate_all;             /* build 31: SOMVR_VRMENU_GATE=all (build 30's gate) | hand (0: re-xr-pipeline.md 136) */
 	/* saving (under g_vm_save_mu) */
 	uint32_t w_gen, saved_gen; /* the newest gen seen (since w_t), the gen of the last save */
 	double w_t;
@@ -16669,14 +16960,20 @@ static int vm_apply_key(int k, const somvr_settings *s, const char *who)
 		break;
 	case SOMVR_SK_HAND:
 		g_inp.cfg.left_handed = s->hand != 0;
-		note = " (the panel's wrist and the pointing hand; the controls do not swap yet)";
+		note = " (the panel's wrist and the pointing hand)";
+		break;
+	case SOMVR_SK_HANDED: /* build 30 (re-xr-pipeline.md 132): decided at the start (lh_decide), never live */
+		note = (s->handed != 0) == g_lh ? " (as this session's controls)"
+						: " (the controls swap at the next start: saved for it)";
 		break;
 	case SOMVR_SK_XR_REFRESH: /* build 27 (re-xr-pipeline.md 119): the layer reads the menu's value and asks */
 		note = s->refresh ? " (the layer asks the headset for it)" : " (the headset's own rate: nothing asked)";
 		break;
 	case SOMVR_SK_MOVE: /* build 27 (re-xr-pipeline.md 112): the Walk toward row = SOMVR_MOVE live (in_dpsi, lo_tick) */
 		g_inp.move_hand = s->move != 0;
-		note = s->move ? " (the walk toward the left hand)" : " (the walk toward the head)";
+		note = s->move ? (g_lh ? " (the walk toward the move hand: the right one, SOMVR_HANDED=left)"
+				       : " (the walk toward the left hand)")
+			       : " (the walk toward the head)";
 		break;
 	case SOMVR_SK_VIEW:
 		if (g_fb.on)
@@ -16774,6 +17071,12 @@ static uint32_t vm_config(void)
 			      : "off (build 26: the A that closes the card jumps too)");
 		(void)jbad; /* (env_float warns) */
 	}
+	g_vm.gate_all = env_word("SOMVR_VRMENU_GATE", (const char *const[]){ "hand", "all" }, 2, 0); /* build 31 */
+	if (g_vm.want)
+		logf_("CONFIG vrmenu gate=%s (SOMVR_VRMENU_GATE): %s", g_vm.gate_all ? "all" : "hand", g_vm.gate_all
+		      ? "build 30's: the bow, a climb hold, any blade swing, an incoming attack - each needs a fresh palm after it"
+		      : "the bow, a climb hold, a two-handed swing need a fresh palm after them; the sword hand's own swing only "
+		      "delays the open to 0.3 s after it; an incoming attack does not gate");
 	if (!g_vm.want)
 		return 0;
 	if (!g_inp.on) {
@@ -16813,7 +17116,13 @@ static void vm_start(void)
 	s.height_cm = g_cf.seat_cfg.has_height ? g_cf.seat_cfg.height_cm : 0;
 	s.hud = 1;
 	s.hud_dist_m = vm_hud_dist_env();
+	/* build 30: this session's mirror (lh_decide's; the file's HANDED, read below, is the same) - the Controls page,
+	 * the card and the layer's card A follow handed_on; a left-hander's pointer is the left hand unless the file
+	 * pins HAND */
+	if (g_lh)
+		g_inp.cfg.left_handed = 1;
 	s.hand = g_inp.cfg.left_handed != 0;
+	s.handed = (uint8_t)g_lh, s.handed_on = (uint8_t)g_lh;
 	s.move = g_inp.move_hand != 0; /* build 27: SOMVR_MOVE */
 	s.view = g_fb.on && g_fb.forced == 1;
 	s.haptics = g_inp.hap_scale;
@@ -16924,7 +17233,13 @@ static void vm_tap_menu(sc_tick_out *o)
 
 /* the palm gesture's gate (re-xr-pipeline.md 15.7): the hands are busy now - the bow out, a hand holding in our climb,
  * a blade swing on, an attack at Talion before its impact or an arrow inbound (SOMVR_THREAT); this tick's states are
- * the last H4's (the same game thread). The layer opens no panel by the gesture meanwhile (and 0.3 s after it). */
+ * the last H4's (the same game thread). The layer opens no panel by the gesture meanwhile (and 0.3 s after it).
+ * Build 31 (re-xr-pipeline.md 136; the 11-02 session: 26 palms refused for "a blade swing" - the sword hand moves all
+ * fight long and each swing disarmed the other hand's gesture): SOMVR_VRMENU_GATE=hand (the default) gates on what
+ * conflicts - the bow (in the panel's hand), a climb hold, a swing with the panel's hand on the hilt too (two hands);
+ * the sword hand's own swing only makes the gesture wait (SOMVR_VMG_SOFT: no open during it and 0.3 s after, no
+ * fresh gesture needed); an incoming attack does not gate. =all: build 30's gate. */
+static int bd_two_held(void); /* SOMVR_TWOHAND: the left hand holds the hilt now (somvr_body_game.c) */
 static uint32_t vm_gate(double t)
 {
 	uint32_t b = 0;
@@ -16933,8 +17248,8 @@ static uint32_t vm_gate(double t)
 	if (cl_holds(SOMVR_HAND_L) || cl_holds(SOMVR_HAND_R))
 		b |= SOMVR_VMG_CLIMB;
 	if (g_cb.mode != CB_OFF && g_cb.tid == my_tid() && g_cb.sp.above)
-		b |= SOMVR_VMG_SWING;
-	if (th_incoming(t))
+		b |= g_vm.gate_all || bd_two_held() ? SOMVR_VMG_SWING : SOMVR_VMG_SOFT;
+	if (g_vm.gate_all && th_incoming(t))
 		b |= SOMVR_VMG_THREAT;
 	return b;
 }
@@ -16950,7 +17265,7 @@ static void vm_tick(sc_tick_out *o, int live, double t)
 		g_vm.open_mono = mono();
 	uint32_t gate = vm_gate(t);
 	atomic_store_explicit(&g_vmo.block, gate, memory_order_release);
-	for (int i = 0; i < 4; i++)
+	for (int i = 0; i < 5; i++)
 		g_vm.gate_ticks[i] += gate >> i & 1u;
 	if (gate != g_vm.gate) {
 		char w[96];
@@ -17008,7 +17323,7 @@ static void vm_tick(sc_tick_out *o, int live, double t)
 		}
 	}
 	int open = atomic_load_explicit(&g_vmo.open, memory_order_acquire) != 0;
-	uint32_t cons = open ? atomic_load_explicit(&g_vmo.consume, memory_order_acquire) : 0;
+	uint32_t cons = open ? in_side_bits(atomic_load_explicit(&g_vmo.consume, memory_order_acquire)) : 0; /* build 30 */
 	for (int h = 0; h < 2; h++) { /* the panel's trigger is not the pad's (nor the bow's): decided at its press */
 		somvr_hand_in *hi = &g_inp.st.hand[h];
 		float v = live && (hi->active & SOMVR_HACT_INPUT) && hi->trigger == hi->trigger ? hi->trigger : 0;
@@ -17114,14 +17429,15 @@ static void vm_end_log(void)
 		return;
 	logf_("VRMENU END ticks=%llu applies=%llu toggles=%llu (menu button) taps=%llu held_ticks=%llu consumed=%llu "
 	      "recentres=%llu saves=%llu (fails %llu, %zu bytes last); gesture gate %llu times, ticks bow %llu climb %llu "
-	      "swing %llu threat %llu; layer: opens %llu, panel frames %llu, uploads %llu, clicks %llu, gen %u",
+	      "swing %llu threat %llu, the sword hand's swing (waits, build 31) %llu; layer: opens %llu, panel frames %llu, "
+	      "uploads %llu, clicks %llu, gen %u",
 	      (unsigned long long)g_vm.ticks, (unsigned long long)g_vm.applies,
 	      (unsigned long long)g_vm.toggles, (unsigned long long)g_vm.taps, (unsigned long long)g_vm.held_ticks,
 	      (unsigned long long)g_vm.consumed, (unsigned long long)g_vm.recentres, (unsigned long long)g_vm.saves,
 	      (unsigned long long)g_vm.save_fails, g_vm.last_bytes, (unsigned long long)g_vm.gate_on,
 	      (unsigned long long)g_vm.gate_ticks[0], (unsigned long long)g_vm.gate_ticks[1],
 	      (unsigned long long)g_vm.gate_ticks[2], (unsigned long long)g_vm.gate_ticks[3],
-	      (unsigned long long)atomic_load(&g_vmo.n_opens),
+	      (unsigned long long)g_vm.gate_ticks[4], (unsigned long long)atomic_load(&g_vmo.n_opens),
 	      (unsigned long long)atomic_load(&g_vmo.n_frames), (unsigned long long)atomic_load(&g_vmo.n_uploads),
 	      (unsigned long long)atomic_load(&g_vmo.n_clicks), atomic_load(&g_vmo.gen));
 }
@@ -17257,6 +17573,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	stg_config();                   /* build 27: SOMVR_STRUGGLE (somvr_struggle_game.c) */
 	pfg_config();                   /* build 27: SOMVR_PERF (somvr_perf_game.c) */
 	stl_start(&bad);                /* SOMVR_STEALTH_KILL: the config line (after combat) */
+	kl_start(&bad);                 /* build 31, SOMVR_KILLS: the config line (after the execution and the stealth kill) */
 	uf_start(g_uf_sites, &bad);     /* SOMVR_HUD_FX=hide: the UI FX groups' tail jump (build 12 HUD round) */
 	pr_start(g_pr_sites, &bad);     /* SOMVR_PRACTICE: its read-only sites and the config line (before the menu) */
 	bd_start();                     /* SOMVR_BODY=hands: its slot; the sword angle, two hands (after arms, combat, slots) */
@@ -17269,6 +17586,8 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	us_config(&bad);                /* SOMVR_USE: no hook (the input tick's commands, the PP hooks; after pp_start) */
 	vb_start(&bad);                 /* SOMVR_VERBS: the Nemesis verbs (after combat, input and the prompts) */
 	gc_start(&bad);                 /* build 21, SOMVR_VERBS_CUE: the grab cue (after the verbs) */
+	h31_start(&bad);                /* build 31, SOMVR_HOLD31: the held kill, the hold's push (after the verbs) */
+	ov_start(&bad);                 /* build 31, SOMVR_VAULT_HANDS: the vault by the hands (after the verbs) */
 	br_start(&bad);                 /* build 23, SOMVR_VERBS_BRAND: the brand by the hand (after the cue) */
 	fa_start(&bad);                 /* build 25, SOMVR_ABOVE: kills and brands from above (after the brand) */
 	abl_start(&bad);                 /* build 27, SOMVR_ABIL: the abilities by the hands (after the above) */
@@ -17280,6 +17599,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	kp_start(&bad);                 /* build 22, SOMVR_CAPTAIN: the captain's sites and the config line (after the practice) */
 	vg_start(g_vg_sites, &bad);     /* SOMVR_VERBS_GLOW: ClientFX's create jumps (after the verbs) */
 	hf_config(&bad);                /* build 17: SOMVR_COMBAT_BITE, _HITSND, _HITFX, _HITLOG (after the FX sites, the bow's) */
+	swp_config(&bad);               /* build 31: SOMVR_SWORD_PHYS, SOMVR_SWORD_FLESH (after the weight's and the bite's) */
 	ex_start(); /* SOMVR_EYE_SIZE, SOMVR_HIDE_HEAD (a piece list), SOMVR_HUD */
 	ssh_config(); /* build 27: SOMVR_SHADOW_SHARE (somvr_perf_game.c; after ex_start's install of the HEAD_SHADOW_* hooks) */
 	vm_start(); /* SOMVR_VRMENU: the settings (the switches, SOMVR_SETTINGS over them), somvr_vrmenu active */
@@ -17432,6 +17752,7 @@ static void somvr_end_logs(const char *why)
 	bd_end_log();  /* SOMVR_BODY, SOMVR_TWOHAND */
 	hsm_end_log(); /* SOMVR_HANDS_SMOOTH, SOMVR_SWORD_WEIGHT */
 	hf_end_log();  /* build 17: SOMVR_COMBAT_BITE, the hit sounds and FX */
+	swp_end_log(); /* build 31: SOMVR_SWORD_PHYS, SOMVR_SWORD_FLESH */
 	fight_end_log(); /* build 10's fight (somvr_fight_game.c) */
 	ptr_end_log(); /* SOMVR_POINTER */
 	cf_end_log();  /* SOMVR_VIGNETTE, SOMVR_SNAP_BLINK_MS, SOMVR_SEATED */
@@ -17459,6 +17780,7 @@ static void somvr_end_logs(const char *why)
 	fi_end_log();  /* SOMVR_FINISH */
 	xc_end_log();  /* SOMVR_EXECUTE */
 	stl_end_log(); /* SOMVR_STEALTH_KILL */
+	kl_end_log();  /* build 31, SOMVR_KILLS */
 	vb_end_log();  /* SOMVR_VERBS */
 	br_end_log();  /* build 23: SOMVR_VERBS_BRAND */
 	fa_end_log();  /* build 25: SOMVR_ABOVE */
@@ -18241,6 +18563,9 @@ static void th_frame(uintptr_t pl, int stereo)
 	hu_flash(e.hurt, t); /* SOMVR_HURT: the red flash on the edge bands */
 	if (e.hurt[0] || e.hurt[1])
 		e.flags |= SOMVR_THF_HURT;
+	hu_low(&e.low, &e.beat); /* build 31: low health's ring (SOMVR_HURT_LOW_STYLE=ring) */
+	if (e.low)
+		e.flags |= SOMVR_THF_LOW;
 	somvr_threat_put(&g_tht, g_fr.frame, &e);
 	if ((ng || e.edge[0] > 0 || e.edge[1] > 0) && t >= g_th.next_sum) {
 		g_th.next_sum = t + 1.0;
@@ -19072,7 +19397,8 @@ static void sl_frame(const sv_vec3 p[2], const sv_vec3 pw[2])
 	in.drawn[1] = in.have[1] && sl_dagger_drawn(g);
 	in.take[SOMVR_SLOT_SWORD] = take;
 	for (int h = 0; h < 2; h++) {
-		in.busy[h] = bow_busy || climb;
+		in.busy[h] = bow_busy || (climb && (!g_cl.sword || cl_holds(h)));
+		in.climb_free[h] = climb && g_cl.sword && !cl_holds(h); /* build 31 (SOMVR_CLIMB_SWORD): the free hand's slot */
 		in.away[h] = bow || cl_holds(h) || ab2_dagger_away(h); /* build 27c: the thrown dagger flies */
 		if (take && h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD)) /* the strike's sword: this hand is free for it */
 			in.busy[h] = in.away[h] = 0;
@@ -19085,6 +19411,24 @@ static void sl_frame(const sv_vec3 p[2], const sv_vec3 pw[2])
 	in.head_ok = 1, in.head = hp, in.head_q = hq;
 	somvr_slots_out o;
 	somvr_slots_step(&g_sl.s, &g_sl.cfg, &in, &o);
+	if (climb && g_cl.sword) { /* build 31 (SOMVR_CLIMB_SWORD): the sword while climbing - its draw, the frames */
+		int sh = somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD);
+		if ((o.ev[SOMVR_SLOT_SWORD] & SOMVR_SL_E_DRAW) && !(o.ev[SOMVR_SLOT_SWORD] & SOMVR_SL_E_RESTORE)) {
+			g_cl.sw_draws++;
+			logf_("SLOTS t=%.3f frame=%llu sword: drawn while climbing (SOMVR_CLIMB_SWORD): the %s hand free, the %s on "
+			      "%s (the climb %s)", t, (unsigned long long)g_fr.frame, sh == SOMVR_HAND_R ? "right" : "left",
+			      sh == SOMVR_HAND_R ? "left" : "right", cl_holds(1 - sh) ? "a hold" : "nothing (hanging)",
+			      somvr_climb_phase_name(g_cl.s.phase));
+		}
+		int dr = in.drawn[SOMVR_SLOT_SWORD];
+		g_cl.sw_frames += dr;
+		if (dr != g_cl.sw_drawn_last && sl_log_ok(t))
+			logf_("SLOTS t=%.3f frame=%llu sword: %s while climbing (the blade %s)", t, (unsigned long long)g_fr.frame,
+			      dr ? "in the hand" : "back on the shoulder", o.blade ? "live" : "off");
+		g_cl.sw_drawn_last = dr;
+	} else {
+		g_cl.sw_drawn_last = 0;
+	}
 	g_sl.frames++;
 	g_sl.frame = rend_frame();
 	g_sl.why_last = not;
@@ -19159,6 +19503,10 @@ static int sl_nograb(void)
 	return g_sl.on && g_sl.tid == my_tid() && rend_frame() - g_sl.frame <= SL_KEEP_FRAMES &&
 	       (g_sl.s.took[0] || g_sl.s.took[1]);
 }
+static int sl_nograb_hand(int h)
+{
+	return g_sl.on && g_sl.tid == my_tid() && rend_frame() - g_sl.frame <= SL_KEEP_FRAMES && g_sl.s.took[h & 1];
+}
 
 /* the stub page for the tail jump (as bo_install's), the rel32 written; 1 = in */
 static int sl_install(const struct site_spec *s)
@@ -19218,7 +19566,8 @@ static void sl_start(const struct site_spec *sites, int *bad)
 	}
 	somvr_slots_cfg *c = &g_sl.cfg;
 	somvr_slots_cfg_default(c);
-	c->main_hand = SOMVR_HAND_R; /* the blade and R_Weapon are the right hand's (the controls do not swap yet) */
+	c->main_hand = SOMVR_HAND_R; /* the blade and R_Weapon are the right hand's (the sword hand: SOMVR_HAND_R) */
+	c->mirror = g_lh;            /* build 30: SOMVR_HANDED=left - that hand the left controller, its slots mirrored */
 	c->dagger_at = env_word("SOMVR_SLOTS_DAGGER", g_sl_dagger_w, 3, SOMVR_SLOTS_DAGGER_HIP);
 	env_vec("SOMVR_SLOTS_SWORD_CM", c->sword_ofs, 3, -100, 100, bad);
 	env_vec("SOMVR_SLOTS_HIP_CM", c->hip_ofs, 3, -120, 100, bad);
@@ -19438,12 +19787,19 @@ struct df_track {
 	int wn;
 	double wt;
 	float wmid[2][3], wtp[2][3], wsp[2];
+	/* build 31 (SOMVR_DEFENCE_BODY, re-xr-pipeline.md 136): its weapons last frame (the sweep), the deepest they went
+	 * into the tracked body in the hit window, where, the verdict the hook would give at the impact, judged once */
+	int bw_n, body_part, body_v, body_vset, body_done;
+	float bwb[2][3], bwt[2][3], body_pen, body_pt[3], body_ts;
 };
 struct df_event {              /* from the hooks to the next frame (logs, haptics, the block's recoil) */
 	int outcome, type, applied, at, contact; /* contact: the blades met before (the clank and the recoil were then) */
 	float dash_ms;             /* build 17b: a dodge by the A dodge's press: its age at the impact (ms; -1 = none) */
 	float held_ms;             /* build 18: a held fast blow, judged this long after its impact (ms; 0 = not held) */
 	int held_by;               /* ... dodged by: 1 the A dodge's press, 2 the head's move; 0 = it landed then */
+	int body, body_part;       /* build 31 (SOMVR_DEFENCE_BODY): 1 the game's range missed, our blade-in-the-body hit
+				    * landed it; 2 a head's-move dodge undone (the blade still went through the body) */
+	float body_pen;
 	uintptr_t c, hobj, attack, p;
 	float point[3], dist, cross, align, lateral, back, carried, speed;
 	float hand[3], orc[3], head[3]; /* the weapon hand's last place, the orc at the attack's start, Talion's head */
@@ -19500,6 +19856,12 @@ static struct {
 	struct { uintptr_t c, attack, tried; double t; float point[3]; } late[DF_LATE_N];
 	uintptr_t seen[DF_SEEN_N]; /* the orc attacks already described (rules, reach) */
 	int nseen;
+	/* build 31 (re-xr-pipeline.md 136): SOMVR_DEFENCE_BODY - an orc's blade through the tracked body lands the game's
+	 * hit; the body's shape and grace; the landed call pending (made after the lock, as the held blow's); counts */
+	int body_on;
+	somvr_df_body_cfg bodyc;
+	struct { int on; cb_ltvec v; uintptr_t att, tgt, atk; } bl;
+	uint64_t body_seen, body_landed, body_undodged, body_game, body_blocked, body_dodged, body_outside, body_notgt;
 } g_df;
 static pthread_mutex_t g_df_mu = PTHREAD_MUTEX_INITIALIZER;
 
@@ -20026,6 +20388,9 @@ __attribute__((used)) void somvr_dfimpact_c(struct regs *r)
 					v = SOMVR_DFO_DODGE, g_df.n.dash_grace++; /* build 17b: the A dodge's press, in time */
 				else
 					since = -1;
+				int undodged = 0; /* build 31 (SOMVR_DEFENCE_BODY): the head moved, but the blade went through the body */
+				if (v == SOMVR_DFO_DODGE && since < 0 && g_df.body_on && d->body_pen >= g_df.bodyc.grace)
+					v = SOMVR_DFO_HIT, undodged = 1, g_df.body_undodged++;
 				struct df_event e = { .outcome = v, .type = d->type, .c = d->c, .hobj = d->hobj, .attack = d->attack,
 						      .dist = d->s.g.dist_cm, .cross = d->s.g.cross_deg, .align = d->s.g.align_deg,
 						      .lateral = d->s.lateral_cm, .back = d->s.back_cm, .carried = d->s.moved_cm, .t = t, .ts = t - d->th_t0 };
@@ -20034,6 +20399,7 @@ __attribute__((used)) void somvr_dfimpact_c(struct regs *r)
 				memcpy(e.head, g_df.head, sizeof e.head), e.have_hand = d->s.have_hand;
 				e.contact = d->s.contact_t >= 0;
 				e.dash_ms = since >= 0 ? (float)(since * 1e3) : -1;
+				e.body = undodged ? 2 : 0, e.body_part = d->body_part, e.body_pen = d->body_pen;
 				e.applied = veto = v != SOMVR_DFO_HIT && g_df.mode == DF_ON;
 				d->outcome = v ? v : -1; /* -1: judged, landed */
 				if (v == SOMVR_DFO_HIT && g_df.mode == DF_ON && g_dg.on && g_dg.fast_s > 0 && !g_dfh.on &&
@@ -20329,11 +20695,16 @@ static void df_drain(double t)
 			hu_blow(e->hand, t);
 		if (e->applied && e->outcome != SOMVR_DFO_HIT && !(blocked && (g_df.clank & SOMVR_DFC_HAPTIC)) && !(blocked && e->contact))
 			df_haptic(e->outcome);
-		char dm[96];
+		char dm[200];
 		if (blocked && e->contact) /* SOMVR_DEFENCE_JUDGE=contact: the clank and the recoil came when the blades met */
 			more = "; the clank and the recoil were at the contact";
 		else if (e->outcome == SOMVR_DFO_DODGE && e->dash_ms >= 0) /* build 17b */
 			snprintf(dm, sizeof dm, "; the A dodge pressed %.0f ms before the impact (SOMVR_DODGE_GRACE_MS)", e->dash_ms),
+				more = dm;
+		else if (e->body) /* build 31 */
+			snprintf(dm, sizeof dm, "; %s %.1f cm into the %s (SOMVR_DEFENCE_BODY)", e->body == 1 ? "the game's range "
+				 "missed Talion's root, but the blade went" : "the head moved, but the blade still went", e->body_pen,
+				 somvr_df_body_part_name(e->body_part)),
 				more = dm;
 		else if (e->held_ms > 0) /* build 18 */
 			snprintf(dm, sizeof dm, "; a fast blow held %.0f ms (SOMVR_DODGE_FAST_MS): %s", e->held_ms,
@@ -20367,10 +20738,90 @@ static void df_drain(double t)
 	}
 }
 
+/* build 31 (SOMVR_DEFENCE_BODY, re-xr-pipeline.md 136; the 11-02 session's mark 9): per frame of an attack at Talion
+ * (under g_df_mu, after the step): its weapons swept from last frame against the tracked body inside the hit window
+ * (its first BCOL, else 0.25 s before the impact, to 0.1 s after it); at the impact the verdict the hook would give;
+ * at the window's end (or the track's: df_over) once: the case logged - and when the game's range missed it (no
+ * DF_IMPACT) while the blade went the grace or more into the body, unblocked: the game's hit landed now (its own
+ * Combat_DealHit, after the lock), the event as the hook's */
+static void df_body_judge(struct df_track *d, double t, float ts);
+static void df_body(struct df_track *d, const somvr_df_in *in, const struct th_track *tr, const somvr_df_cfg *sc, double t)
+{
+	if (!g_df.body_on || d->body_done || in->type == SOMVR_DF_TYPE_RANGED || !(tr->k.impact > 0))
+		return;
+	float w0 = tr->k.bcol >= 0 && tr->k.bcol < tr->k.impact ? tr->k.bcol : tr->k.impact - 0.25f, w1 = tr->k.impact + 0.10f;
+	int n = in->norc < 2 ? in->norc : 2;
+	if (in->ts >= w0 - 0.05f && in->ts <= w1)
+		for (int k = 0; k < n; k++) {
+			int part = 0;
+			float pt[3], pen = somvr_df_body_sweep(&g_df.bodyc, in->head, d->bw_n > k ? d->bwb[k] : NULL,
+							       d->bw_n > k ? d->bwt[k] : NULL, in->ob[k], in->ot[k], &part, pt);
+			if (pen > d->body_pen)
+				d->body_pen = pen, d->body_part = part, memcpy(d->body_pt, pt, sizeof pt), d->body_ts = in->ts;
+		}
+	for (int k = 0; k < n; k++)
+		memcpy(d->bwb[k], in->ob[k], sizeof d->bwb[k]), memcpy(d->bwt[k], in->ot[k], sizeof d->bwt[k]);
+	d->bw_n = n;
+	if (!d->body_vset && in->ts >= tr->k.impact) /* the verdict the hook would give now */
+		d->body_v = !d->outcome ? somvr_df_verdict(sc, &d->s, t, d->type) : 0, d->body_vset = 1;
+	if (in->ts > w1)
+		df_body_judge(d, t, in->ts);
+}
+static void df_body_judge(struct df_track *d, double t, float ts)
+{
+	if (!g_df.body_on || d->body_done || d->body_pen < -1e8f)
+		return;
+	d->body_done = 1, g_df.body_seen++;
+	int in = d->body_pen >= g_df.bodyc.grace;
+	const char *what;
+	if (d->outcome == -1)
+		what = in ? "the game's hit landed (its range), the blade in the body too" : "the game's hit landed (its range)",
+		g_df.body_game++;
+	else if (d->outcome == SOMVR_DFO_BLOCK || d->outcome == SOMVR_DFO_PARRY_BLOCK)
+		what = "blocked", g_df.body_blocked++;
+	else if (d->outcome == SOMVR_DFO_DODGE)
+		what = in ? "dodged by the A dodge (the blade in the body: the A's press stands)" : "dodged (the blade stayed out "
+		       "of the body)", g_df.body_dodged++;
+	else if (d->outcome || d->stopped)
+		what = "stopped before its impact (a contact's recoil, a counter)", g_df.body_blocked++;
+	else if (!in)
+		what = "the game's range missed and the blade stayed out of the body: no hit", g_df.body_outside++;
+	else if (d->body_vset && (d->body_v == SOMVR_DFO_BLOCK || d->body_v == SOMVR_DFO_PARRY_BLOCK))
+		what = "the game's range missed; the blade went in, but our blade was in its way: blocked", g_df.body_blocked++;
+	else {
+		uintptr_t tg = peek_ptr(d->c + 0x4c0); /* the orc's target (DF_WINDOW's +0x4c0): one of Talion's HOBJECTs */
+		if (g_df.mode != DF_ON || !g_df.ok_impact || !(tg == g_df.ph[0] || tg == g_df.ph[1]) || g_df.bl.on) {
+			what = g_df.mode != DF_ON ? "the game's range missed; the blade went in: a hit (log only)"
+			       : "the game's range missed; the blade went in, but its target is not Talion now: no hit";
+			g_df.body_notgt++;
+		} else {
+			g_df.bl = (typeof(g_df.bl)){ 1, (cb_ltvec){ d->body_pt[0], d->body_pt[1], d->body_pt[2] }, d->c, tg, d->attack };
+			d->outcome = -1, g_df.body_landed++;
+			struct df_event e = { .outcome = SOMVR_DFO_HIT, .type = d->type, .c = d->c, .hobj = d->hobj, .attack = d->attack,
+					      .dist = d->s.g.dist_cm, .cross = d->s.g.cross_deg, .align = d->s.g.align_deg,
+					      .lateral = d->s.lateral_cm, .back = d->s.back_cm, .carried = d->s.moved_cm, .t = t,
+					      .ts = ts, .body = 1, .body_part = d->body_part, .body_pen = d->body_pen };
+			memcpy(e.point, d->body_pt, sizeof e.point);
+			memcpy(e.hand, d->s.hand, sizeof e.hand), memcpy(e.orc, d->s.orc0, sizeof e.orc);
+			memcpy(e.head, g_df.head, sizeof e.head), e.have_hand = d->s.have_hand, e.dash_ms = -1;
+			df_queue(&e);
+			what = "the game's range missed; the blade went in, unblocked: the game's hit landed now (its Combat_DealHit)";
+		}
+	}
+	if (df_log_ok(t)) {
+		char an[96];
+		logf_("DEFENCE body orc=%#lx attack '%s' (%s): the blade's deepest %+.1f cm into the %s at %.3f s (the grace %.0f: %s) "
+		      "-> %s", (unsigned long)d->c, rx_rec_name(d->attack, an, sizeof an), somvr_df_type_name(d->type), d->body_pen,
+		      somvr_df_body_part_name(d->body_part), d->body_ts, g_df.bodyc.grace, in ? "in" : "out", what);
+	}
+}
+
 /* H4, after th_frame (stereo = a complete stereo record this frame): the tracks' guard, parries and the hooks' data */
 /* an attack's track ends (under g_df_mu): after our parry, replaced or gone before an impact = countered */
 static void df_over(struct df_track *d, double t)
 {
+	if (d->body_vset) /* build 31: an attack past its impact that ended inside the hit window: judged now */
+		df_body_judge(d, t, (float)(t - d->th_t0));
 	if (g_df.cfg.contact && d->c && d->s.still) { /* build 11: SOMVR_DEFENCE_CONTACT_MOVE_CM refused a still guard */
 		char an[96];
 		g_df.n.still++;
@@ -20540,6 +20991,7 @@ static void df_frame(uintptr_t pl, int stereo)
 			memset(d, 0, sizeof *d);
 			d->c = tr->c, d->hobj = tr->hobj, d->attack = tr->attack, d->serial = tr->serial, d->th_t0 = tr->t0;
 			somvr_df_track_init(&d->s);
+			d->body_pen = -1e9f; /* build 31 */
 			g_df.n.tracks++;
 			if (nnew < TH_TRACKS)
 				fresh[nnew++] = tr->attack;
@@ -20595,6 +21047,7 @@ static void df_frame(uintptr_t pl, int stereo)
 		if (d->line)
 			sc.contact = 0;
 		int fire = !d->outcome ? somvr_df_step(&sc, &d->s, t, &in) : 0;
+		df_body(d, &in, tr, &sc, t); /* build 31: SOMVR_DEFENCE_BODY */
 		if (fire) {
 			pthread_mutex_unlock(&g_df_mu);
 			if (fire == 2)
@@ -20611,6 +21064,10 @@ static void df_frame(uintptr_t pl, int stereo)
 	for (int i = 0; i < nnew; i++) /* the new attacks' rules and reach, once per record (outside the lock: a game call) */
 		df_describe(fresh[i], t);
 	df_held_tick(t); /* build 18: SOMVR_DODGE_FAST_MS's held blow, judged with this frame's head (outside the lock) */
+	if (g_df.bl.on) { /* build 31: the blade-in-the-body hit the game's range missed, landed by the game's own call */
+		g_df.bl.on = 0;
+		((cb_dealhit_fn)g_df_h.orig)(g_df.bl.v, g_df.bl.att, g_df.bl.tgt, g_df.bl.atk, 0);
+	}
 	if (t >= g_df.next_sum && (g_df.n.parries || g_df.n.impacts || g_df.n.arrows || g_df.n.contacts)) {
 		g_df.next_sum = t + 10.0;
 		const struct df_cnt *n = &g_df.n;
@@ -20701,6 +21158,17 @@ static void df_start(const struct site_spec *sites, int *bad)
 	g_df.parry = env_word("SOMVR_DEFENCE_PARRY", g_df_parry_w, 3, DFP_COUNTER);
 	g_df.block = env_word("SOMVR_DEFENCE_BLOCK", g_df_block_w, 3, DFB_RECOIL);
 	c->contact = env_word("SOMVR_DEFENCE_JUDGE", (const char *const[]){ "line", "contact" }, 2, 0);
+	/* build 31 (re-xr-pipeline.md 136): the blade through the tracked body */
+	somvr_df_body_cfg_default(&g_df.bodyc);
+	g_df.body_on = env_word("SOMVR_DEFENCE_BODY", (const char *const[]){ "off", "on" }, 2, 0);
+	g_df.bodyc.grace = env_float("SOMVR_DEFENCE_BODY_GRACE_CM", g_df.bodyc.grace, 0, 15, bad);
+	if (g_df.body_on)
+		logf_("CONFIG defence body=on (SOMVR_DEFENCE_BODY, build 31): an orc's blade through the tracked body - the head "
+		      "%.0f cm round %.0f cm under the eyes, the torso %.0f cm round from %.0f to %.0f cm under them - %.0f cm in or "
+		      "more (SOMVR_DEFENCE_BODY_GRACE_CM) inside its hit window, unblocked, lands the game's hit when its range "
+		      "(Talion's root) missed, and undoes a dodge by the head's move; needs SOMVR_DEFENCE_JUDGE=contact (the "
+		      "orc's weapons)%s", g_df.bodyc.head_r, g_df.bodyc.head_down, g_df.bodyc.torso_r, g_df.bodyc.torso_top,
+		      g_df.bodyc.torso_bot, g_df.bodyc.grace, c->contact ? "" : ": it is not - inactive");
 	c->contact_cm = env_float("SOMVR_DEFENCE_CONTACT_CM", c->contact_cm, 1, 40, bad);
 	c->contact_pre_s = env_float("SOMVR_DEFENCE_CONTACT_PRE_MS", c->contact_pre_s * 1000, 30, 800, bad) * 0.001f;
 	c->contact_post_s = env_float("SOMVR_DEFENCE_CONTACT_POST_MS", c->contact_post_s * 1000, 0, 300, bad) * 0.001f;
@@ -20797,6 +21265,13 @@ static void df_end_log(void)
 {
 	if (g_df.mode == DF_OFF)
 		return;
+	if (g_df.body_on) /* build 31 */
+		logf_("DEFENCE END body (SOMVR_DEFENCE_BODY): attacks judged %llu - landed by the blade in the body %llu, dodges "
+		      "undone %llu, the game's own hits %llu, blocked or stopped %llu, dodged %llu, missed and out of the body %llu, "
+		      "in the body but no target or log only %llu", (unsigned long long)g_df.body_seen,
+		      (unsigned long long)g_df.body_landed, (unsigned long long)g_df.body_undodged, (unsigned long long)g_df.body_game,
+		      (unsigned long long)g_df.body_blocked, (unsigned long long)g_df.body_dodged, (unsigned long long)g_df.body_outside,
+		      (unsigned long long)g_df.body_notgt);
 	const struct df_cnt *n = &g_df.n;
 	logf_("DEFENCE END frames=%llu flat=%llu paused=%llu other_thread=%llu no_blade=%llu: attacks %llu, parries %llu "
 	      "(presses %llu, refused %llu, stale %llu, countered %llu), impacts at Talion %llu (untracked %llu; hook calls %llu, skipped "
@@ -20919,6 +21394,7 @@ static void df_clank_fx(double t)
 #include "somvr_parry_game.c" /* SOMVR_PARRY / SOMVR_SHOVE: the parry pays off, the shove opens a guard (re-xr-pipeline.md 65) */
 #include "somvr_stealth_game.c" /* SOMVR_STEALTH_KILL: the VR stealth kill (docs/re-xr-pipeline.md 67) */
 #include "somvr_combat21_game.c" /* build 21: SOMVR_VERBS_CUE, SOMVR_STRIKE_SWORD (docs/re-xr-pipeline.md 85) */
+#include "somvr_hands31_game.c" /* build 31: SOMVR_HOLD31, the free hand on an orc (docs/re-xr-pipeline.md 135) */
 #include "somvr_screens_game.c" /* build 22: SOMVR_BM_DEATH, SOMVR_POINTER_MOUSE1 (docs/re-xr-pipeline.md 90) */
 #include "somvr_map_game.c"     /* build 27: SOMVR_MAP_POINT, the world map by the pointer (docs/re-xr-pipeline.md 111) */
 #include "somvr_beasts_game.c" /* build 22: SOMVR_BEASTS - caragors, ghuls, graugs (docs/re-xr-pipeline.md 92) */
@@ -20931,8 +21407,10 @@ static void df_clank_fx(double t)
 #include "somvr_abil_game.c" /* build 27: SOMVR_ABIL, the abilities by the hands (docs/re-xr-pipeline.md 114) */
 #include "somvr_abil2_game.c" /* build 27c: the ignite shot, the quick throw, the whistle (docs/re-xr-pipeline.md 118) */
 #include "somvr_abil3_game.c" /* build 27d: brutalize, the taunt, Wraith Distract (docs/re-xr-pipeline.md 121) */
+#include "somvr_kills_game.c" /* build 31: SOMVR_KILLS, kills the game's way - the orc plays its half (docs 133) */
 #include "somvr_hla_game.c" /* build 27: the VR menu's Walk toward row and every gesture's Controls line (docs 112) */
 #include "somvr_perf_game.c" /* build 27: SOMVR_PERF, the CPU time of a stereo frame (docs/re-xr-pipeline.md 115) */
+#include "somvr_swordphys_game.c" /* build 31: SOMVR_SWORD_PHYS, SOMVR_SWORD_FLESH (docs/re-xr-pipeline.md 134) */
 static int tk_holding(void) { return g_tk.on && g_tk.active; } /* SOMVR_HEAD_TETHER: not measured while held */
 
 #ifndef SOMVR_SELFTEST

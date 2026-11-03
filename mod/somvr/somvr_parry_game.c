@@ -27,6 +27,15 @@
  *                     cbt_imp_atk_biped) and the same opening as a parry (its riposte breaks the shield too). Not with
  *                     the bow out, a climb hold, the grab, both hands on the sword; once per orc in 1.5 s.
  *   SOMVR_PARRY_MARKS=N (test only) a SOMVR_MARK (the eyes) at the next N parries, shoves and shield breaks.
+ *   build 31 (som-b31-hands, docs/re-xr-pipeline.md 135): SOMVR_SHOVE_FAR=on|off (code default on) - the pushed orc goes
+ *                     2-3 m back: its reel is not eased under SOMVR_COMBAT_STAGGER_CM (the session's shoves stopped at
+ *                     its 55 cm: `COMBAT reel ... after a shove ... the cap 55 cm: 112 steps eased (119 cm off)`) and the
+ *                     recoil is the first of SOMVR_SHOVE_RECOIL_FAR's that takes (a push at SOMVR_SHOVE_HARD_MPS or
+ *                     faster: SOMVR_SHOVE_RECOIL_HARD's first - the type that throws it furthest). off = build 30.
+ *                     SOMVR_SHOVE_ANY=on|off (code default on): any orc's chest takes the push (not only a raised shield
+ *                     or a blocking orc): within its radius + SOMVR_SHOVE_ANY_CM (15) of its axis, 60..175 cm above its
+ *                     feet. The word "parry shove TYPE[,TYPE]" (SOMVR_HANDS_TEST) shoves the nearest orc with those
+ *                     types (the measure of each type's distance: the `COMBAT reel ... after a shove` line).
  * Test words (SOMVR_HANDS_TEST): "parry open" (the nearest orc opened as by a parry), "parry status", "parry auto MS"
  * (build 19: MS after each parry's opening the test right hand swings out to the right in 120 ms, then the edge cut
  * across in 250 ms - a player's counter-cut without the driver's log latency; 0 = off).
@@ -71,6 +80,16 @@ static struct {
 		rx_skipped, shoves, shove_took, shove_refused, pushes_refused, dodge_opens, reels_short, lines, suppressed;
 	float vault_s;       /* build 27: SOMVR_PARRY_VAULT_MS - the orc the wraith step's vault went over is open this long */
 	uint64_t vault_opens;
+	/* build 31 (som-b31-hands): SOMVR_SHOVE_FAR / _ANY; the hold's push (h31: the held orc let go, then shoved) */
+	int far, any;
+	float hard_mps, any_cm;
+	char recoil_far[96], recoil_hard[96];
+	uintptr_t pend_c;    /* the orc the hold's push let go: shoved once the game has let it go (h31_frame) */
+	float pend_v[3], pend_sp;
+	double pend_t0, pend_until;
+	uint64_t far_shoves, hard_shoves, any_shoves, word_shoves, hold_shoves, hold_shove_miss;
+	_Atomic int req_word; /* "parry shove TYPES" (the word thread) -> py_frame */
+	char req_types[96];
 } g_py;
 
 static const char *const g_py_why[5] = { "-", "a parry", "a shove", "a dodge", "a vault over it" };
@@ -108,6 +127,15 @@ static void py_config(void)
 	snprintf(g_py.sound, sizeof g_py.sound, "%s", s && *s ? (strcmp(s, "off") ? s : "") : "cbt_imp_surface_player");
 	snprintf(g_py.shove_sound, sizeof g_py.shove_sound, "%s", ss && *ss ? (strcmp(ss, "off") ? ss : "") : "cbt_imp_atk_biped");
 	snprintf(g_py.recoil, sizeof g_py.recoil, "%s", rc && *rc ? rc : "Block_Breaker,Medium,Light");
+	g_py.far = env_word("SOMVR_SHOVE_FAR", (const char *const[]){ "off", "on" }, 2, 1);
+	g_py.any = env_word("SOMVR_SHOVE_ANY", (const char *const[]){ "off", "on" }, 2, 1);
+	g_py.hard_mps = env_float("SOMVR_SHOVE_HARD_MPS", 2.5f, 1, 8, &bad);
+	g_py.any_cm = env_float("SOMVR_SHOVE_ANY_CM", 15, 0, 40, &bad);
+	const char *rf = getenv("SOMVR_SHOVE_RECOIL_FAR"), *rh = getenv("SOMVR_SHOVE_RECOIL_HARD");
+	/* boot 20261102-112615 (re-xr-pipeline.md 135.2): Knockback_Straight - the shield orc 1.8 m, the infantry 3.1 m;
+	 * Heavy_Straight - both 3.1-3.3 m (a stagger, 'AI_Bip_H300_ST_F'); Block_Breaker 0.5 / 1.4 m */
+	snprintf(g_py.recoil_far, sizeof g_py.recoil_far, "%s", rf && *rf ? rf : "Knockback_Straight,Heavy_Straight,Block_Breaker");
+	snprintf(g_py.recoil_hard, sizeof g_py.recoil_hard, "%s", rh && *rh ? rh : "Heavy_Straight,Knockback_Straight,Block_Breaker");
 	if (!g_py.on && !g_py.shove)
 		return;
 	if (g_py.dodge || g_py.reel_cm > 0)
@@ -133,6 +161,15 @@ static void py_config(void)
 	      g_py.open_s * 1e3f, PY_TYPE_THROUGH, g_py.brk ? " and breaks a raised shield it meets" : "", g_py.shove_reach,
 	      g_py.shove_mps,
 	      g_py.recoil, g_py.shove_sound[0] ? g_py.shove_sound : "off");
+	if (g_py.shove)
+		logf_("CONFIG shove build 31 (som-b31-hands): far=%s (SOMVR_SHOVE_FAR: %s), any=%s (SOMVR_SHOVE_ANY: %s)",
+		      g_py.far ? "on" : "off", g_py.far ? "the shoved orc's reel not eased; a push's recoil the first of SOMVR_SHOVE_RECOIL_FAR "
+		      "that takes, at SOMVR_SHOVE_HARD_MPS or faster SOMVR_SHOVE_RECOIL_HARD's" : "build 30: the reel's cap, SOMVR_SHOVE_RECOIL",
+		      g_py.any ? "on" : "off", g_py.any ? "any orc's chest takes a push" : "a raised shield or a blocking orc only");
+	if (g_py.shove && g_py.far)
+		logf_("CONFIG shove far: '%s'; at %.1f m/s or faster '%s'", g_py.recoil_far, g_py.hard_mps, g_py.recoil_hard);
+	if (g_py.shove && g_py.any)
+		logf_("CONFIG shove any: the palm within the orc's radius + %.0f cm of its axis at its chest", g_py.any_cm);
 }
 
 static struct py_open *py_find(uintptr_t c)
@@ -367,12 +404,13 @@ static void py_hands(const sv_vec3 p[2], const sv_vec3 pw[2])
 }
 
 /* the shove's reaction: the recoil types of SOMVR_SHOVE_RECOIL in turn until one takes */
-static int py_shove_recoil(const struct cb_orc *o, const float v[3], const float at[3], char *used, size_t cap)
+static int py_shove_recoil(const struct cb_orc *o, const float v[3], const float at[3], const char *types, char *used,
+			   size_t cap)
 {
 	const char *ln = "(none)";
 	uintptr_t owner = peek_ptr(o->c + C_OWNER), light = cb_record(SC_TIER_LIGHT, 0, &ln);
 	char list[96], nm[48];
-	snprintf(list, sizeof list, "%s", g_py.recoil);
+	snprintf(list, sizeof list, "%s", types);
 	used[0] = 0;
 	if (!owner || !light || !g_df.ok_recoil || !g_df.ph[0] || g_kx.state != 2)
 		return 0;
@@ -395,6 +433,78 @@ static int py_shove_recoil(const struct cb_orc *o, const float v[3], const float
 	return 0;
 }
 
+/* build 31: the far shove's reel - not eased under the stagger's cap (rl_hold: a negative cap measures only) */
+static void py_reel_free(uintptr_t c)
+{
+	for (int i = 0; i < RL_N; i++)
+		if (g_rl.e[i].c == c && !g_rl.e[i].t_end)
+			g_rl.e[i].cap = -1;
+}
+
+/* the shove of orc o (the push of the palm at `at`, velocity v cm/s, speed sp): its recoil, the thump, the sound, the
+ * reel, the opening. types NULL = by the switches (build 31: the far lists by the push's speed). 1 = a recoil took */
+static int py_shove_orc(const struct cb_orc *o, const float v[3], float sp, const float at[3], const float *root,
+			const char *into, float dh, const char *types, double t)
+{
+	char used[200], an[96], bn[96];
+	int hard = g_py.far && sp >= g_py.hard_mps * 100.0f;
+	if (!types)
+		types = !g_py.far ? g_py.recoil : hard ? g_py.recoil_hard : g_py.recoil_far;
+	uintptr_t before = peek_ptr(o->c + RX_C_ATTACK);
+	int took = py_shove_recoil(o, v, at, types, used, sizeof used);
+	g_py.shoves++, g_py.shove_took += took, g_py.shove_refused += !took;
+	g_py.far_shoves += g_py.far && took, g_py.hard_shoves += hard && took;
+	in_haptic_event(SOMVR_HAND_L, 1.0f, 0.12f, SOMVR_HAP_COMBAT); /* the thump in the shoving hand */
+	float head[3] = { at[0], at[1] + 30, at[2] };
+	if (root)
+		head[0] = root[0], head[1] = root[1] + 160, head[2] = root[2];
+	py_sound(g_py.shove_sound, at, head, t, "the shove");
+	rl_note(o->c, o->hobj, "a shove", t); /* SOMVR_COMBAT_STAGGER_CM: the reel's cap (build 31, far: measured only) */
+	if (g_py.far)
+		py_reel_free(o->c);
+	if (py_log_ok())
+		logf_("PARRY shove orc=%#lx hobj=%#lx t=%.3f: the left hand into %s at %.2f m/s (%.0f cm from its root) -> "
+		      "its recoil: %s; its attack '%s' -> '%s'%s", (unsigned long)o->c, (unsigned long)o->hobj, t, into,
+		      sp * 0.01f, dh, used[0] ? used : "none known", rx_rec_name(before, an, sizeof an),
+		      rx_rec_name(peek_ptr(o->c + RX_C_ATTACK), bn, sizeof bn),
+		      !g_py.far ? "" : hard ? " (far, a hard push: its reel free)" : " (far: its reel free)");
+	py_open(o->c, 2, at, t);
+	struct py_open *p = py_find(o->c);
+	if (p)
+		p->shoved = t;
+	return took;
+}
+
+/* build 31 (h31): the hold's push - the held orc let go by a push of the hand; shoved once the game has let it go */
+static void py_hold_push(uintptr_t c, const float v[3], float sp, double t)
+{
+	if (!g_py.shove || !c)
+		return;
+	g_py.pend_c = c, memcpy(g_py.pend_v, v, sizeof g_py.pend_v), g_py.pend_sp = sp;
+	g_py.pend_t0 = t, g_py.pend_until = t + 1.5;
+}
+/* the game thread (h31_frame): the pending push's shove - the orc out of Talion's grab (released = 1) */
+static void py_hold_push_frame(int released, const float *root, double t)
+{
+	if (!g_py.pend_c)
+		return;
+	uintptr_t c = g_py.pend_c;
+	struct cb_orc o;
+	if (t > g_py.pend_until || cb_dead(c) || !cb_orc_get(c, &o)) {
+		g_py.hold_shove_miss++, g_py.pend_c = 0;
+		if (py_log_ok())
+			logf_("PARRY shove t=%.3f: the hold's push on orc %#lx not made (%s)", t, (unsigned long)c,
+			      t > g_py.pend_until ? "the game held it 1.5 s past the push" : "dead or gone");
+		return;
+	}
+	if (!released)
+		return;
+	float at[3] = { o.pos[0], o.pos[1], o.pos[2] };
+	float dh = root ? hypotf(o.pos[0] - root[0], o.pos[2] - root[2]) : 0;
+	g_py.hold_shoves++, g_py.pend_c = 0;
+	py_shove_orc(&o, g_py.pend_v, g_py.pend_sp, at, root, "the held orc (the hold's push)", dh, NULL, t);
+}
+
 /* combat_frame (the sword drawn): the shove; the nearest orc for the word */
 static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float root[3], double t)
 {
@@ -412,6 +522,17 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 			best = o[i].dist, g_py.nearest = o[i].c;
 	if (!g_py.shove || !root)
 		return;
+	if (atomic_exchange(&g_py.req_word, 0) && n > 0) { /* build 31: "parry shove TYPES" - Talion's push at the nearest */
+		int k = 0;
+		for (int i = 1; i < n; i++)
+			if (o[i].dist < o[k].dist)
+				k = i;
+		float d[3] = { o[k].pos[0] - root[0], 0, o[k].pos[2] - root[2] }, l = hypotf(d[0], d[2]);
+		float v[3] = { l > 1 ? d[0] / l * 300.0f : 0, 0, l > 1 ? d[2] / l * 300.0f : 300.0f };
+		float at[3] = { o[k].pos[0] - (l > 1 ? d[0] / l : 0) * g_cb.orc_r, o[k].pos[1], o[k].pos[2] - (l > 1 ? d[2] / l : 0) * g_cb.orc_r };
+		g_py.word_shoves++;
+		py_shove_orc(&o[k], v, 300.0f, at, root, "the word's push", l, g_py.req_types, t);
+	}
 	int free_hand = g_py.palm_ok && !bo_out() && !cl_holds(SOMVR_HAND_L) && !vb_grab_held() && !(g_bd.two.w > 0);
 	if (!free_hand || g_py.nh < 2 || !pc || abl_shove_veto()) /* build 27: the push with the wraith charge is the flash's */
 		return;
@@ -458,24 +579,11 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 			into = "the shield before its body";
 		else if (g_rx.ok && (RX_FN(RS_BLOCKING, rx_blocking_fn)(o[i].c) & 1) && chest && dh <= g_cb.orc_r + PY_HAND_CM)
 			into = "its blocking body";
+		if (!into && g_py.any && chest && dh <= g_cb.orc_r + g_py.any_cm && !cb_dead(o[i].c)) /* build 31 */
+			into = "its chest", g_py.any_shoves++;
 		if (!into)
 			continue;
-		char used[200], an[96], bn[96];
-		uintptr_t before = peek_ptr(o[i].c + RX_C_ATTACK);
-		int took = py_shove_recoil(&o[i], v, g_py.palm, used, sizeof used);
-		g_py.shoves++, g_py.shove_took += took, g_py.shove_refused += !took;
-		in_haptic_event(SOMVR_HAND_L, 1.0f, 0.12f, SOMVR_HAP_COMBAT); /* the thump in the shoving hand */
-		float head[3] = { root[0], root[1] + 160, root[2] };
-		py_sound(g_py.shove_sound, g_py.palm, head, t, "the shove");
-		rl_note(o[i].c, o[i].hobj, "a shove", t); /* SOMVR_COMBAT_STAGGER_CM: the reel's cap */
-		if (py_log_ok())
-			logf_("PARRY shove orc=%#lx hobj=%#lx t=%.3f: the left hand into %s at %.2f m/s (%.0f cm from its root) -> "
-			      "its recoil: %s; its attack '%s' -> '%s'", (unsigned long)o[i].c, (unsigned long)o[i].hobj, t, into,
-			      sp * 0.01f, dh, used[0] ? used : "none known", rx_rec_name(before, an, sizeof an),
-			      rx_rec_name(peek_ptr(o[i].c + RX_C_ATTACK), bn, sizeof bn));
-		py_open(o[i].c, 2, g_py.palm, t);
-		if ((p = py_find(o[i].c)))
-			p->shoved = t;
+		py_shove_orc(&o[i], v, sp, g_py.palm, root, into, dh, NULL, t);
 		g_py.nh = 0; /* one push, one shove */
 		return;
 	}
@@ -517,6 +625,13 @@ static const char *py_word(const char *w)
 		      (unsigned long long)g_py.shove_took);
 		return "parry status";
 	}
+	if (!strncmp(w, "shove ", 6) && w[6]) { /* build 31: the nearest orc shoved by these recoil types (py_frame) */
+		if (!g_py.shove)
+			return "parry shove (SOMVR_SHOVE off: ignored)";
+		snprintf(g_py.req_types, sizeof g_py.req_types, "%s", w + 6);
+		atomic_store(&g_py.req_word, 1);
+		return "parry shove TYPES (the nearest orc, at the next combat frame)";
+	}
 	int ms = -1;
 	if (sscanf(w, "auto %d", &ms) == 1 && ms >= 0 && ms <= 1000) { /* build 19: the counter-cut after each parry */
 		g_py.auto_ms = ms, g_py.auto_step = 0;
@@ -542,4 +657,8 @@ static void py_end_log(void)
 	if (g_py.vault_s > 0)
 		logf_("PARRY END build 27: openings by a vault over the orc %llu (SOMVR_PARRY_VAULT_MS %.0f)",
 		      (unsigned long long)g_py.vault_opens, g_py.vault_s * 1e3f);
+	logf_("PARRY END build 31: far shoves %llu (hard %llu), by any orc's chest %llu, by the word %llu, by the hold's push %llu "
+	      "(not made %llu)", (unsigned long long)g_py.far_shoves, (unsigned long long)g_py.hard_shoves,
+	      (unsigned long long)g_py.any_shoves, (unsigned long long)g_py.word_shoves, (unsigned long long)g_py.hold_shoves,
+	      (unsigned long long)g_py.hold_shove_miss);
 }

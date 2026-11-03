@@ -465,7 +465,12 @@ static void abl_ground_kill(uintptr_t pc, const float tip[3], double t)
 			XC_FN(XCS_CHARGE, xc_charge_fn)(hc, 0), spent = "; the charge spent";
 	}
 	int dead0 = cb_dead(of->c);
-	CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ tip[0], tip[1], tip[2] }, pc, oc.hobj, of->atk, 1);
+	/* build 31 (SOMVR_KILLS): the downed orc plays its half of the game's ground kill (the offered record's own pairing),
+	 * the death at its moment; the stab's way down as the blow */
+	float kv[3] = { 0, -300.0f, 0 }, kax[3] = { 0, -1, 0 };
+	int klt = kl_take(pc, &oc, of->atk, of->atk, 0, tip, kv, kax, SOMVR_KL_DOWNED, "the downed orc's stab", t);
+	if (!klt)
+		CB_FN(CS_DEALHIT, cb_dealhit_fn)((cb_ltvec){ tip[0], tip[1], tip[2] }, pc, oc.hobj, of->atk, 1);
 	g_abl.kills++, g_abl.started[ABK_GROUND]++;
 	/* a record that severs (the '_Sever' ones: SeverTarget 'Head') cuts as SOMVR_EXECUTE_SEVER=key cuts an execution's: the
 	 * game's own sever, the stab's way down as the velocity (our hit plays no SEVER key) */
@@ -475,7 +480,7 @@ static void abl_ground_kill(uintptr_t pc, const float tip[3], double t)
 	if (ad && rx_db_list(ad, g_rxg.sch_ad, XC_AD_SEVER, sv, 1, &sty, &sn) >= 0 && sn && sty == 0xa)
 		sev = (uintptr_t)sv[0];
 	char sevl[120] = "";
-	if (g_xc.sever && g_xc.ok_sever && sev && cb_dead(of->c) && !dead0 && peek_ptr(of->c + 0x90)) {
+	if (!klt && g_xc.sever && g_xc.ok_sever && sev && cb_dead(of->c) && !dead0 && peek_ptr(of->c + 0x90)) {
 		float vel[3] = { 0, -300.0f, 0 }, rot[3] = { 0, 0, 0 };
 		char snm[96] = "?";
 		XC_FN(XCS_SEVER, xc_sever_fn)(of->c, sev, vel, rot, peek_ptr(pc + C_HOBJ));
@@ -485,8 +490,9 @@ static void abl_ground_kill(uintptr_t pc, const float tip[3], double t)
 	if (g_vb.haptic > 0)
 		in_haptic_event(SOMVR_HAND_R, 0.9f * g_vb.haptic, 0.25f, SOMVR_HAP_COMBAT);
 	logf_("ABIL t=%.3f the ground finisher: Combat_DealHit(the tip %.0f,%.0f,%.0f, Talion, orc %#lx, '%s' (by '%s'), "
-	      "forceKill 1): health %.1f -> %.1f%s%s%s", t, tip[0], tip[1], tip[2], (unsigned long)of->c, of->atk_name, of->node,
-	      hp0, vb_health(of->c), cb_dead(of->c) ? ", dead" : "", spent, sevl);
+	      "forceKill 1): health %.1f -> %.1f%s%s%s%s", t, tip[0], tip[1], tip[2], (unsigned long)of->c, of->atk_name, of->node,
+	      hp0, vb_health(of->c), cb_dead(of->c) ? ", dead" : "", spent, sevl,
+	      klt ? " - SOMVR_KILLS: not yet dealt, the orc's half plays (the DealHit at its moment)" : "");
 }
 
 /* combat_frame (the game thread), every frame with a blade: the sword hand's stab into a downed orc the game offers */

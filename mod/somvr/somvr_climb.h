@@ -58,6 +58,23 @@
  *            at a top all of it is kept (the glide over it); sideways x fling_side, at most fling_side_max x up; the
  *            threshold (fling_min) on that up part; in flight a push into the face the face holds is dropped (the
  *            rise goes on along it).
+ *            Build 31 (fling_down = 1, re-xr-pipeline.md 138; the build 30 session asked for a fling down the wall
+ *            like the fling up): the mirror. The last hold let go while its hand still moved up fast (the body thrown down):
+ *            the same release velocity; its downward part at least fd_min (250 cm/s) and the hold having taken him
+ *            down by fd_net_cm (15) or more since it began to drive (its hand that much higher at the release than at
+ *            the drive's start: the end of a pull up, where the hand already rises toward the next hold before the grip
+ *            opens - releases of 240-340 cm/s "down" in the 20c session's climbs up - never flings him down); the
+ *            down part capped at fd_max (650), sideways x fling_side (at most fling_side_max x down), toward the wall
+ *            at most fling_tw x down, away from it dropped. The flight (the phase fling, fl_down): along the throw,
+ *            the whole velocity slowing evenly so the downward part loses fd_g (981 cm/s^2) each second: at rest
+ *            after v^2 / 2 fd_g (at most 2.15 m) = the hang there (FL_REST: the mirror of the arc's top). A grip on
+ *            the way = the catch (as up); the feet within fd_land_cm (25) of a floor under him (a ray down from the
+ *            root) = landed: the climb ends (gravity back, the game's own landing from at most that height - never a
+ *            fall: no drop is deadly then, and A's blink stays the way down a high one); water there = the hang
+ *            (FL_WET); the downward part blocked twice with no floor = the hang (blocked below); the sideways part
+ *            blocked = it stops; a push into the face the face holds is dropped; no wall within fl_reach_cm of the
+ *            chest level or 20 deg up (the wall ended under him) = the hang (FL_REACH, unstuck). A, a menu, a hit,
+ *            the input as for a fling up.
  *   descent  (descent = 1; build 13, re-xr-pipeline.md 40: a forge tower top's edge had no way down) the way over an edge
  *            and down: (1) a press also casts straight down when not climbing (a hand on a top from above) and along
  *            the wall (while climbing the last hold's `toward`; else from the hand toward the head, level: the face
@@ -249,7 +266,13 @@ enum { SOMVR_CLIMB_AME_NONE = 0, SOMVR_CLIMB_AME_DONE = 1, SOMVR_CLIMB_AME_BLOCK
 const char *somvr_climb_am_name(int why); /* SOMVR_CLIMB_AM_* */
 enum { SOMVR_CLIMB_FL_NONE = 0, SOMVR_CLIMB_FL_APEX = 1, SOMVR_CLIMB_FL_BLOCKED = 2, SOMVR_CLIMB_FL_TIME = 3,
        SOMVR_CLIMB_FL_CATCH = 4, SOMVR_CLIMB_FL_OVER = 5, SOMVR_CLIMB_FL_EDGE = 6,
-       SOMVR_CLIMB_FL_REACH = 7 /* build 21 (unstuck): the wall below the chest */ }; /* how a flight ended (fl_why) */
+       SOMVR_CLIMB_FL_REACH = 7 /* build 21 (unstuck): the wall below the chest */,
+       SOMVR_CLIMB_FL_LAND = 8 /* build 31 (fling down): the feet at a floor: the climb's end, the game's landing */,
+       SOMVR_CLIMB_FL_REST = 9 /* build 31 (fling down): the flight slowed to rest: the hang */,
+       SOMVR_CLIMB_FL_WET = 10 /* build 31 (fling down): water under the feet: the hang */ }; /* how a flight ended (fl_why) */
+enum { SOMVR_CLIMB_FD_NONE = 0, SOMVR_CLIMB_FD_SLOW = 1, SOMVR_CLIMB_FD_NET = 2, SOMVR_CLIMB_FD_OFF = 3 };
+/* build 31 (fling down): why a let-go with the hand rising was no fling down (fd_why): slower than fd_min down; the hold
+ * did not take him down by fd_net_cm (the end of a pull up); the switch off */
 enum { SOMVR_CLIMB_LETGO_FALL = 0, SOMVR_CLIMB_LETGO_HANG = 1 }; /* SOMVR_CLIMB_LETGO= */
 enum { SOMVR_CLIMB_VIA_NONE = 0, SOMVR_CLIMB_VIA_PALM = 1, SOMVR_CLIMB_VIA_FWD = 2, SOMVR_CLIMB_VIA_DOWN = 3,
        SOMVR_CLIMB_VIA_INSIDE = 4, SOMVR_CLIMB_VIA_WALL = 5 }; /* which ray found a surface (somvr_climb_via_name) */
@@ -483,6 +506,12 @@ typedef struct {
     float dn_reach_cm;       /* ... the edge within this of the hand, level (45) */
     float dn_under_cm;       /* ... the hang: the eyes this far under the top (25) */
     float dn_gap_cm;         /* ... the root this far out from the face (45) */
+    int fling_down;          /* build 31 (SOMVR_CLIMB_FLING_DOWN, with fling; 0 off): the fling down (see fling) */
+    float fd_min;            /* ... the least downward speed (250 cm/s: 32 cm on to rest) */
+    float fd_max;            /* ... the downward part's cap (650 cm/s: 2.15 m on to rest) */
+    float fd_g;              /* ... its slowing, cm/s^2 (981: the mirror of the arc up) */
+    float fd_net_cm;         /* ... the hold took him down at least this since it began to drive (15) */
+    float fd_land_cm;        /* ... the feet this near a floor under him = landed (25) */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -516,6 +545,8 @@ typedef struct {
     int allow;          /* the game allows a climb now (somvr.c: FSM Supported, not mounted, first person, the objects) */
     int nograb;         /* no new hold now (somvr.c: the hands are on the bow): a press is spent, the grip must open
                          * before it may grab; holds already taken are kept */
+    int nograb_h[2];    /* build 31: the same for hand h alone (somvr.c, SOMVR_CLIMB_SWORD: the press a slot took, the
+                         * sword hand in a fight - the other hand climbs on) */
     float rig_yaw;      /* psi - yaw0: tracking space -> world, as somvr_rig_vec */
     float rig_scale;    /* the player size s (somvr_rig_scale; 0 = 1): a hold carries s x the hand's tracked move */
     int head_ok;        /* head_y, head_x, head_z are this frame's head node */
@@ -570,6 +601,8 @@ typedef struct {
     sv_vec3 vh_p[SOMVR_CLIMB_VH_N]; /* fling: the hand's tracking-space positions while it drives (a ring) ... */
     double vh_t[SOMVR_CLIMB_VH_N];  /* ... and their times */
     int vh_n, vh_i;     /* samples kept, the next slot */
+    float dv_y0;        /* build 31 (fling down): the hand's tracking-space y when it began to drive (dv_ok) */
+    int dv_ok;
     int lip;            /* descent: the hold is a lip (lip_*: its top, a point on its edge, out = away from the wall,
                          * the ground beyond it this far under the hold) */
     float lip_top_y, lip_drop;
@@ -761,6 +794,17 @@ typedef struct {
     int rl_on;          /* round lip: cfg.round_lip for the pullover's search (set each step) */
     int la_on;          /* land above: cfg.land_above for the landing's search (set each step) */
     uint64_t la_unders; /* ... spots whose floor lay under the rock (found from above): no landing there */
+    /* fling down (build 31) */
+    int fl_down;        /* the flight now (or the last) is a fling down */
+    float fd_down;      /* the last release's downward speed (cm/s, after the gain; > 0 = down) */
+    float fd_net;       /* ... how far the hold took him down since it began to drive (cm; < 0: up) */
+    int fd_why;         /* SOMVR_CLIMB_FD_*: the last let-go with the hand rising that was no fling down */
+    float fd_v0;        /* the launch's downward speed (cm/s, capped) */
+    float fd_feet;      /* the landing: the feet over the floor when it was found (cm) */
+    sv_vec3 fd_floor;   /* ... the floor point */
+    double fd_cm;       /* the way flown down, in all (cm) */
+    uint64_t fd_flings, fd_slows, fd_nets, fd_catches, fd_lands, fd_rests, fd_blocks, fd_wets, fd_reaches;
+    uint64_t nograb_h_n; /* build 31: presses spent by nograb_h (the hand alone) */
     /* totals */
     uint64_t climbs, grabs, lets, lost, misses, noclimb, tops, lifts, cmds, standdowns, timeouts, jumps, cuts, rays,
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
@@ -829,6 +873,10 @@ sv_vec3 somvr_climb_clamp(sv_vec3 v, float max_len);                /* v shorten
  * horizontal into the wall, or 0): only up (see fling above); 1 = a fling (*v0, the parts in s->fl_up/side/into/out,
  * fl_capped), 0 = under fling_min (the parts filled all the same) */
 int somvr_climb_fling_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw, sv_vec3 toward, sv_vec3 *v0);
+/* build 31: the fling down's rule (see fling): vw as above, net_cm how far the hold took him down since it began to
+ * drive; 1 = a fling down (*v0; s->fd_down, fd_net, fl_side/into/out, fl_capped), 0 = none (s->fd_why) */
+int somvr_climb_fling_down_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw, sv_vec3 toward, float net_cm,
+                                sv_vec3 *v0);
 
 /* which surfaces hold a hand (SOMVR_CLIMB_SURF=walls|game|any; somvr.c's ray callback answers hit.climbable with it).
  * walls (default): every solid surface record, the game's CanWallClimb ignored: not a character's (Flesh*, Armor*),

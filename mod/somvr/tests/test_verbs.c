@@ -479,6 +479,89 @@ static void test_cue(void)
     CHECK(q.ticks == 3 && q.ons == 4, "ticks %llu ons %llu", (unsigned long long)q.ticks, (unsigned long long)q.ons);
 }
 
+/* build 31 (som-b31-hands): the fist (the trigger with the grip), the push's let-go, the hold's longest, the pull's guard */
+static void test_b31(void)
+{
+    somvr_vb_cfg c = C;
+    c.fist_s = 0.5f, c.grab_max_s = 10;
+    somvr_vb_hand s;
+    somvr_vb_hand_in in;
+    somvr_vb_hand_out o;
+    somvr_vb_hand_reset(&s);
+    in_at(&in, 1.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.event == SOMVR_VBE_GRAB, "b31: the grab");
+    in_at(&in, 1.011, 0.9f, 0.9f, 5, 175, 95); /* the session's fist: the trigger 11 ms after the grip */
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.grab && !o.b && o.fist && o.event == SOMVR_VBE_NONE, "b31: the trigger 11 ms after the grab: the fist, no B (%d %d)",
+          o.b, o.event);
+    in_at(&in, 3.0, 0.9f, 0.9f, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.grab && !o.b, "b31: the fist held 2 s: still no B");
+    in_at(&in, 3.1, 0.9f, 0, 5, 175, 95); /* let go, pressed again: B (the drain or the brand) */
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    in_at(&in, 3.2, 0.9f, 0.9f, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.grab && o.b && o.event == SOMVR_VBE_WRAITH, "b31: a new press of the trigger: B (%d)", o.event);
+    in_at(&in, 3.3, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    in_at(&in, 10.9, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.grab && o.event == SOMVR_VBE_NONE, "b31: held 9.9 s");
+    in_at(&in, 11.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(!o.grab && o.event == SOMVR_VBE_RELEASE && o.why == SOMVR_VBR_MAX && s.phase == SOMVR_VBH_IDLE,
+          "b31: the hold's longest (10 s): let go (%d %d)", o.event, o.why);
+    somvr_vb_hand_reset(&s); /* the push lets go */
+    in_at(&in, 20.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    in_at(&in, 20.5, 0.9f, 0, 5, 175, 95);
+    in.let_go = 1;
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(!o.grab && o.event == SOMVR_VBE_RELEASE && o.why == SOMVR_VBR_PUSH, "b31: the push: let go (%d %d)", o.event, o.why);
+    somvr_vb_hand_reset(&s); /* the grip opened: why OPEN */
+    in_at(&in, 30.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    in_at(&in, 30.5, 0, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.event == SOMVR_VBE_RELEASE && o.why == SOMVR_VBR_OPEN, "b31: the grip opened (%d)", o.why);
+    somvr_vb_hand_reset(&s); /* the pull to the face held off while the blade is busy, then counted from its end */
+    in_at(&in, 40.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    for (int k = 1; k <= 6; k++) {
+        in_at(&in, 40.0 + 0.1 * k, 0.9f, 0, 3, 172, 68);
+        in.no_ask = 1;
+        somvr_vb_hand_step(&s, &c, &in, &o);
+        CHECK(!o.ask, "b31: near the face with the blade busy: no ask (%d)", k);
+    }
+    in_at(&in, 40.7, 0.9f, 0, 3, 172, 68);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(!o.ask, "b31: the blade still: the pull starts now");
+    in_at(&in, 40.96, 0.9f, 0, 3, 172, 68);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.ask && o.event == SOMVR_VBE_ASK, "b31: 0.26 s after: A (%d)", o.event);
+    somvr_vb_hand_reset(&s); /* the hand at the chest (22 under the eyes, 32 from them): no pull with ask_low_cm 15 */
+    c.ask_low_cm = 15;
+    in_at(&in, 45.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    for (int k = 1; k <= 8; k++) {
+        in_at(&in, 45.0 + 0.1 * k, 0.9f, 0, -12, 153, 60);
+        somvr_vb_hand_step(&s, &c, &in, &o);
+        CHECK(!o.ask, "b31: the hand at the chest: no pull (%d)", k);
+    }
+    in_at(&in, 46.0, 0.9f, 0, 3, 168, 68); /* at the face (7 under the eyes): the pull */
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    in_at(&in, 46.3, 0.9f, 0, 3, 168, 68);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.ask, "b31: at the face: the pull (%d)", o.event);
+    somvr_vb_hand_reset(&s); /* off (build 30): the trigger 11 ms after the grab is B */
+    in_at(&in, 50.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &C, &in, &o);
+    in_at(&in, 50.011, 0.9f, 0.9f, 5, 175, 95);
+    somvr_vb_hand_step(&s, &C, &in, &o);
+    CHECK(o.b && o.event == SOMVR_VBE_WRAITH && !o.fist, "b31 off: the trigger 11 ms after the grab: B (build 30)");
+}
+
 int main(void)
 {
     somvr_vb_cfg_default(&C);
@@ -490,6 +573,7 @@ int main(void)
     test_kinds();
     test_back();
     test_cue();
+    test_b31();
     printf("test_verbs: %d checks, %d failures\n", g_n, g_fail);
     return g_fail != 0;
 }

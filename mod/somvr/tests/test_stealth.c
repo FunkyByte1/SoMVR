@@ -292,6 +292,30 @@ static void test_thrust(void) {
     CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "the stab tier is no cut");
     n.tier_cut = SC_TIER_HEAVY, n.neck = 0;
     CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "a full cut to the back: no");
+    /* build 31 (slash): a full cut into its back kills too; a light one, or one low on its legs, does not */
+    c.slash = 1;
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &n) == SOMVR_STL_BY_SLASH,
+          "slash: a full cut into its back kills");
+    n.tier_cut = SC_TIER_LIGHT;
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_TOUCH, "slash: a light cut is still a touch");
+    n.tier_cut = SC_TIER_HEAVY, n.contact_up_cm = -40.0f;
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_LOW, "slash: at its legs, no");
+    n.contact_up_cm = 70.0f, n.neck = 1;
+    CHECK(somvr_stl_kill_by(&c, &n) == SOMVR_STL_BY_NECK, "slash: at the neck it is the neck cut");
+    c.slash = 0, n.neck = 0;
+    /* the user's real stab of 11-02 (mark 18, boot 20261102-101318 t=2828.409): the point 8.6 cm in at its spine, -133
+     * deg off its facing, 21 cm up, 8.68 m/s at cos 0.55 (4.8 m/s along the blade), the stroke's tier heavy: build 30's
+     * rule (30 deg, 15 cm) called it "no thrust"; build 31's env (60 deg, 6 cm, slash on) kills */
+    somvr_stl_hit m18 = { -133.0f, 21.0f, SC_TIER_HEAVY, 8.68f * 0.55f, 0.55f, 8.6f, 0, SC_TIER_HEAVY, 0, 0 };
+    CHECK(somvr_stl_judge(&c, &w, &m18) == SOMVR_STL_TOUCH, "mark 18 under build 30's rule: a touch (the user's complaint)");
+    somvr_stl_cfg c31 = c;
+    c31.thrust_cos = cosf(60.0f * 0.01745329f), c31.depth_cm = 6.0f, c31.slash = 1;
+    CHECK(somvr_stl_judge(&c31, &w, &m18) == SOMVR_STL_KILL && somvr_stl_kill_by(&c31, &m18) == SOMVR_STL_BY_THRUST,
+          "mark 18 under build 31's: the thrust kills");
+    m18.tier_cut = SC_TIER_LIGHT;
+    CHECK(somvr_stl_judge(&c31, &w, &m18) == SOMVR_STL_KILL, "mark 18 as a light stroke: the thrust still kills");
+    m18.axis_mps = 0.4f, m18.cos_axis = 0.9f;
+    CHECK(somvr_stl_judge(&c31, &w, &m18) == SOMVR_STL_TOUCH, "a slow push (0.4 m/s) the same depth: still a touch");
     /* held from behind: a point-first stab 10 cm in */
     somvr_stl_hit g = { 180.0f, 40.0f, SC_TIER_NONE, 0.6f, 0.9f, 11.0f, 0, SC_TIER_NONE, 1, 0 };
     CHECK(somvr_stl_judge(&c, &w, &g) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &g) == SOMVR_STL_BY_GRAB, "held: the stab");

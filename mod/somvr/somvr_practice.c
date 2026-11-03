@@ -102,7 +102,7 @@ int somvr_pr_orc_parse(const char *w)
 const char *somvr_pr_action_name(int a)
 {
     static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status", "arrows", "health",
-                                                "far", "group", "captain" };
+                                                "far", "group", "captain", "place" };
     return a >= 0 && a < SOMVR_PRA_N ? n[a] : "?";
 }
 
@@ -114,6 +114,7 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         { "despawn", SOMVR_PRA_REMOVE }, { "status", SOMVR_PRA_STATUS }, { "arrows", SOMVR_PRA_ARROWS },
         { "health", SOMVR_PRA_HEALTH }, { "far", SOMVR_PRA_FAR }, { "group", SOMVR_PRA_GROUP }, { "crowd", SOMVR_PRA_GROUP },
         { "captain", SOMVR_PRA_CAPTAIN }, /* build 22 */
+        { "place", SOMVR_PRA_PLACE }, /* build 31 */
     };
     const char *tok, *s = w ? w : "", *arg, *rest;
     size_t n = token(&s, &tok);
@@ -167,8 +168,8 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
             if (na != 1 || arg[0] < '3' || arg[0] > '0' + SOMVR_PR_GROUP_MAX) /* build 27: 3..8 (was 3|4) */
                 return 0;
             orc = arg[0] - '0';
-        } else if ((a != SOMVR_PRA_SPAWN && a != SOMVR_PRA_FAR) || (orc = orc_tok(arg, na)) < 0)
-            return 0; /* only spawn and far take a type, status "nav", group a count */
+        } else if ((a != SOMVR_PRA_SPAWN && a != SOMVR_PRA_FAR && a != SOMVR_PRA_PLACE) || (orc = orc_tok(arg, na)) < 0)
+            return 0; /* only spawn, far and place take a type, status "nav", group a count */
     }
     if (token(&s, &rest))
         return 0;

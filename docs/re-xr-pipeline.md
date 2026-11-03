@@ -21092,3 +21092,1172 @@ Lines: `BEASTS t=.. practice caragor: the button prompts' overrides asking 'CP_W
 - The stealth buttons' IncludedItem are not lifted (not reached from the sword's root): a crouched approach shows no
   offer. Whether a practice ride leaves a stat or tutorial flag in the campaign: Talion's inventory is untouched (not
   compared in a session's autosave).
+
+## 131. Build 30: the story ahead once more - Big Game's end found in boot 234922, The Rescue's "Ally Killed" was the harness's aid, Torvin's Graug mission and the graug's bleed by the blade: `SOMVR_GRAUG_BLEED` (2026-10-31/11-01, som-b30-story5)
+Headless boots (scripts/headset-build26.env + the som-b30-story5 block + the story's practice settings, the test hands,
+the layer's test file; story22-drive.sh's `ctl` mode and the directors in scripts/story30-steps.txt), each from a copy of
+logs/boot-check-20261030-234922/saves/GameData.sav. handoff/HANDOFF-story.md "build 30". Every run: the install
+unchanged, the real save UNCHANGED.
+
+### 131.1 Big Game ended in boot 20261030-234922 (122.6 has it "not reached")
+122's director ran on after its last table row: its end phase (trips to the trail's markers, the wraith vision) reached
+the camp where Torvin lies ('AI_Bip_Prisoner_OnGround_Loop'): "You'll make a nice meal, Dwarf!" / "Torvin needs help."
+(t=1163893), the banner **"New Objective: Save Torvin"** (st-bg-end-win-1, A), the lesson 'GP_Torvin01_Tut_DeathFromAbove'
+(the drop kill, 102). Two plain Uruks (95 health each) on Talion; the drill has no on-foot fight: the test blade's guard
+(`fight guard learn`, DEFENCE's parries) wore them down over 21 minutes (95 -> 11, then dead; COMBAT `kills=0`, no hit of
+ours). Then "And that's the thrill of the hunt!" / "Just so you know, I had him…", the end video ("What does riding Caragors
+have to do with killing Graugs?" … "Maybe it will even call you sir, eh? Hahaha!"), the result window **"Big Game
+SUCCESS! Mission Complete +600 XP (B) Back"** (st-bg-end-win-2): B closed it (`307 'IdentifySkip'`); the save at 00:39:50;
+the next 'goldenT' at (23266 3450 -19020).
+- What a VR player meets there: an on-foot fight with the VR sword against two plain Uruks (88-108) - nothing new.
+- **logs/boot-check-20261030-234922/saves/GameData.sav = Big Game done** (The Rescue still open): the furthest save.
+
+### 131.2 "The Rescue": the deaths 113.4 blamed on the game were the harness's aid
+- `fight health N not 0xPTR` (build 27b) never skipped anyone: fight_word's text starts at "health", so its
+  `"%*s %*s %*s not %lx"` ate one token too many and `not` never matched - the aid took the nearest AI, Lithariel included.
+  The logs: 104104 `FIGHT health orc=0x220576e8 658.0 -> 1.0` (her: grabbed at line 17307) and `0x22123f78 925.2 -> 1.0`
+  (her again); 111128 `0x41e5ea48 9593.6 -> 1.0` 3 s before "Ally Killed" - 113.4's "dies whatever her health" (the 9999
+  aid) was this; this round's 213935 `0x1ed41b10 1000.0 -> 1.0` in the captors' round, `9921.9 -> 1.0` in the carry.
+- **Fixed** (a test aid, SOMVR_HANDS_TEST only; somvr_fight_game.c): `not` read; + `all CM`: every live AI within CM (up to
+  800) gets N, the `not` one never. 215322: `FIGHT health orc=.. 95.0 -> 1.0 (the word; 169 cm from Talion; skipped:
+  \`not\`; \`all\`)` - her health touched only by the 9999 aid from then on.
+- 215322, the carry with a faster guard (fight2.sh: Talion beside her when she is down, `fight health 1 all 700 not HER`,
+  the game's X four times a round): 8 downs and ups in 16 minutes, past "Talion, I can no longer draw my sword." / "Then I
+  will do so in your stead." (the 25 m point, 113.4); her health 9999 -> 8376 (the aid's) - about 100 a minute while
+  the drill's slow guard goes on. With her own 1000 a guard that slow loses her in ~10 minutes; the Uruks keep coming
+  ("The horde is endless"). Her grab then failed every try ('PC_Grab_Attempt_F' -> 'PC_Grab_Release_F', her branded Uruks
+  beside her; not separated); the drill stopped about 30 m into the 112.
+- So the end is not reached headless; nothing in it is a VR blocker found: every act it asks is proven (113: the brands,
+  the captors, the grab, the carry with the grip, put down = the grip opened, up = palm + grip, Retry with the grip
+  closed). What the harness lacks is a person's speed with the blade round her.
+
+### 131.3 Torvin's Graug mission ('goldenT' after Big Game; boots 222105, 225738, 231619, 234132, 20261101-000432)
+| Step | What the player sees / does | VR state |
+|---|---|---|
+| the marker, the card, the video ("Hope you're not put off by my wee scars.") | B, A, A/B | works (5 boots) |
+| the follow ("You wanna hunt Graug? Then so you shall… but not just any Graug.", "Step one: When he's crunchin' on an Uruk, sneak up behind the giant beast and bleed the bastard's ankle.") | Torvin's marker | trips after it (t2.sh) |
+| "There it goes! What a fine fine specimen!" - **"Tutorial: Graug Bleed: Hold [RT] to sneak up behind an unaware Graug and press (X) to Bleed it. Bleeding the Graug will cause massive damage and attract Caragors."** (tut_TrollBleedUnlocked, pausing; st-t2-w11) | the card, A | shown and answered (SOMVR_HINTS_PAUSING, 120) |
+| **"Bleed the Graug"** - "Use [RT] + (X) on the Graug from behind to Bleed." (st-graug-b3: the tokens 125 'CombatSecondary04' = the stealth crouch, SOMVR_CROUCH's 125, and 118 X); the graug eats ('TrlCave_Eating_Loop', 'Ambient_Sitting', health 1900-2000) | crouch, sneak behind, X | **blocked before build 30** (below); **the blade's thrust at its legs now** (131.5) |
+| "Step Two, Cap'n, the blood'll attract Caragors." / "Jump on one before she jumps on you. Your speed'll now match the Graug's." / "Get 'er to chase you. I'll be waiting." | caragors come and leap; the mount ('UI_MountWarg_Dominate') | **Big Game's chain (105, 109, 130)**: 004226 - the blade across a leap countered it, Talion beside the thrown caragor, the hand: `mounted ... 'PC_Warg_Domination_Success'`, `seated on the caragor 2.45 s after the mount: Seat mode` (000432: 5 counters, no mount - the drill's hand stayed where Talion was) |
+| "Sounds easy enough…" / "Ride her, Cap'n!" - Torvin at the objective (22100 2350 -26650) taunting the graug ("Over here! Look over here! Nothing like Dwarf for dessert!") | ride near the graug so it chases, lead it to Torvin | not done headless: the drill rode straight to Torvin (the graug left 90 m behind), then its caragor stood on a ridge 17 m above him |
+| the end | | not reached headless |
+
+### 131.4 Why a VR player could not bleed it
+- No VR control sends the game's X there. The VR stealth kill (67) is our own silent kill when the blade enters an orc's
+  back -10..100 cm over its root; a graug's root is its pelvis ~2.8 m up, its legs far below that window, and the blade's
+  ordinary hit on its legs wakes it. Torvin nags ("The ankle, Cap'n… we discussed this!").
+- The game's own (231619): crouched (125 held), 170 cm behind the eating graug, the view turned to it (`ride face graug`),
+  X = **'PC_Hamstring_CaveTroll_Sitting_RightLeg'** (sync 'AI_TrlCave_Hamstring_Kneel_RightLeg'): its health 2000 -> 999 and
+  "Step Two". Facing away it does nothing (222105, 4 tries crouched); standing, X is an ordinary combo
+  ('PC_HC_Lowest_L1_D0_L_LL_RL_LR_3'). The game's root node is 'PC_TrlCave_Hamstring' (1 of its 105 root nodes).
+
+### 131.5 The fix: `SOMVR_GRAUG_BLEED=on|off` (somvr_verbs_game.c `vb_bleed`; code default on; the som-b30-story5 block: on)
+- A blade contact that would deal a hit (a stroke or a stab, combat's own tier) on a graug (SOMVR_BEASTS' kind: its record
+  '*Troll*') that the game's own selection offers its hamstring for - `vb_pick` from the first root node whose name holds
+  `SOMVR_GRAUG_BLEED_NODE` ('Hamstring'), as the stealth kill's `vb_contact` asks 'PC_InstaKill_Sneak_Silent' - presses X
+  (118) for 150 ms instead of the hit; a haptic pulse. The game's predicates decide (crouched, behind, unaware, in reach,
+  facing it); anything else is the ordinary hit as before. Called in the contact loop before the stealth kill (somvr.c).
+- The view: the game's sync is a body moment (`hold by sync`), the view held; at its end "Talion's body is put under it
+  (the view stays, no blink)" (000432, 114 cm) - nothing moves the view.
+- Why the blade and not a button: the game's lesson asks for an ankle cut from behind ("I've got to pierce its ankle if I
+  want to bleed it."); the crouch is the player's own (SOMVR_CROUCH); the stab where the game shows it is the Blade &
+  Sorcery way and the port's stealth kill's. A button would be a flat-game habit with no VR meaning.
+- Test words (SOMVR_HANDS_TEST): `verbs bleed on|off` (the old rule against the new in one boot), `ride face graug` (the
+  view turned to the nearest graug). Lines: `CONFIG verbs build 30: graug_bleed=on ...`, `VERBS the root nodes named like
+  'Hamstring': 1 ('PC_TrlCave_Hamstring') of 105 ...`, `VERBS t=.. bleed: the blade on graug .. the game offers '..'
+  (sync '..'): X (118) for 150 ms instead of the hit` / `.. not offered (why): the ordinary hit`, `VERBS END build 30:
+  graug bleeds by the blade N of N asks`.
+
+### 131.6 Proof in the game (boot 20261101-000432; gprobe5.sh: the sword drawn by the hand at its slot before each try, the stealth crouch held, the view turned to the graug, the right hand's low thrust: `hands test R 20 -45 -18 -30 0 0` then `hands swing R 10 -85 50 -30 0 0 180`)
+| Round | Rule | What happened |
+|---|---|---|
+| A, 160 cm behind | `verbs bleed off` (the code before build 30) | the blade in its legs (contacts 17, 20, 4, 14 in four seconds), **no bleed**; it woke: a blow on Talion (120 -> 64), a failed screen, A = Retry, the graug eating again 43 s later |
+| B, 160 cm | `verbs bleed on` | `bleed: graug .. not offered (no attack of its pools passes against this orc): the ordinary hit` (out of the game's reach) |
+| B, 130 cm | `verbs bleed on` | **`bleed: the blade on graug 0x231cf868 (health 1900.0): the game offers 'PC_Hamstring_CaveTroll_Sitting_RightLeg' (sync 'AI_TrlCave_Hamstring_Kneel_RightLeg'): X (118) for 150 ms instead of the hit`**, Talion's hamstring, the graug 'AI_TrlCave_Recoil_Hamstrung_Kneel_B_RightLeg', "Step Two, Cap'n, the blood'll attract Caragors." |
+- Both-eye pictures (frames 18286, 18350 of 000432): ready - the graug's back and legs from behind at arm's length, the
+  ruin ahead; after the bleed the risen graug's legs fill the view at arm's length while the view holds (131.9).
+
+### 131.7 Runs (headless, Monado 20 Hz; each from 234922's save copy; the install unchanged, GameData.sav UNCHANGED each time)
+| Run (logs/boot-check-) | WARN | What | Proves |
+|---|---|---|---|
+| 20261031-213935 | 0 | The Rescue: 6 brands in 1.7 min, the captors, the grab, the carry; the aid set her health to 1 twice; the grab failed at her first fall | **the cause** (131.2) |
+| 20261031-215322 | 0 | The Rescue with the fixed aid + fight2.sh: 8 downs and ups, past "Then I will do so in your stead", her grab failing at 16 min | **`not` / `all` in the game**; the carry's horde (131.2) |
+| 20261031-222105 | 2 (the drill's trips: a fixed height; a word split by zsh) | the Graug mission: the start, the follow, the Bleed card, the objective; the game's X probed (facing away: nothing; standing: a combo) | the mission's ask (131.3) |
+| 20261031-225738 | 0 | the probe before the graug ate (its intro 'AI_Troll_Presentation_Showdown_Idle'); a harness race quit the boot | - (harness) |
+| 20261031-231619 | 0 | the game's X crouched, facing it, 170 cm behind | **the game's bleed = 'PC_Hamstring_CaveTroll_Sitting_RightLeg'** (131.4) |
+| 20261031-234132 | 0 | build 30's code; the drill's sword on the back (the game sheathes it when idle; the VR sword stays there until drawn): no contact | - (harness: draw before each try) |
+| 20261101-000432 | 0 | A/B (131.6); the mount after it (5 counters, no mount: the drill's hand) | **SOMVR_GRAUG_BLEED in the game**; the view held |
+| 20261101-004226 | 0 | the start, the follow, **the bleed by the blade at the first try** (130 cm; `graug bleeds by the blade 1 of 1 asks`), Big Game's mount chain (countered, beside it, the hand: mounted, Seat mode), the ride to Torvin's taunts (the lure not done) | the bleed again; the mission past it in VR |
+
+### 131.8 The furthest save, the switches
+- **logs/boot-check-20261030-234922/saves/GameData.sav** (main checkout): 125406's + **Big Game done** (+600 XP; Torvin's
+  Graug mission 'goldenT' at 23266 3450 -19020 open; The Rescue 'goldenL' at -28209 1389 17049 open; a 'powerStruggle' at
+  29180 5150 -33800). Boot from it with `HEADLESS_SAVE_FROM=<that path>`. No mission ended in this round's runs (a mission
+  keeps no mid-mission state across boots).
+
+| Switch | Code default | build 30 env (som-b30-story5 block) | What |
+|---|---|---|---|
+| `SOMVR_GRAUG_BLEED` | on | on | the blade on a graug = the game's hamstring (X) where it offers it (131.5) |
+| `SOMVR_GRAUG_BLEED_NODE` | Hamstring | - | the root node's name holds this |
+Test words: `fight health N [not 0xPTR] [all CM]` (fixed / new), `verbs bleed on|off`, `ride face graug`.
+
+### 131.9 For the headset, unproven
+- The bleed: crouch for real, walk round behind the eating graug, stab or cut its lower leg - is the reach the game wants
+  (130 cm from its root worked, 160 did not) easy to find? Does the haptic pulse and the game's kneel read as "I cut it"?
+- After the bleed the risen graug's legs fill the view at arm's length while the view holds: step back - or too close?
+- "Jump on one before she jumps on you": counter a caragor's leap with the blade, walk to the stunned one, mount by the
+  hand (Big Game's chain, proven 004226), then ride past the graug so it chases and lead it to Torvin - the rest of the
+  mission (not reached headless).
+- The Rescue: the fight round Lithariel when she falls (a person's blade), then carry her on.
+## 132. Build 30: the left-handed mirror - the sword in the left hand, the bow and the wraith hand in the right, every gesture mirrored; the Settings page's Handedness: `SOMVR_HANDED` (2026-10-31, som-b30-leftie)
+design-hla.md SH-7 (the biggest HL:A setting still missing; 112 renamed "Main hand" to Pointer hand because the controls
+never swapped). handoff/HANDOFF-hla.md "build 30"; NOTES.md; the env block som-b30-leftie (`SOMVR_HANDED=right`);
+scripts/leftie30-drive.sh, scripts/lh-mirror.sh.
+
+### 132.1 The design: swap the controllers at the source, not the roles in 40 modules
+- **What a left-hander needs** (HL:A's "Dominant hand", Blade & Sorcery's handedness): the whole scheme as its mirror
+  image, so the same thumb does the same thing - the sword, its slot over the shoulder and its A/B on the left
+  controller; the wraith hand (the grab, the stun and drain, the brand, the rally, the flash, the shove, the mount), the
+  bow and the move stick on the right; the turn stick on the left. **The buttons mirror with their hands** (the game's A
+  is the left X, B the left Y, X the right A, Y the right B; LT/RT and the stick clicks too): every A/B/X/Y gesture here
+  is tied to the hand doing it (B on a drawn arrow is the string hand's thumb, X there the bow hand's), so swapping the
+  hands but not the buttons would put each such press on the wrong hand. **The menu button stays on the left
+  controller** (it has no twin: the right's is the system's).
+- **Where**: the roles are SOMVR_HAND_R / SOMVR_HAND_L in ~500 places over ~40 files (the sword, the bow's
+  B/S hands, the verbs, the climb's per-hand holds, the stealth kill's thrust, the controls' maps, the haptics, the
+  arms' Talion side). Rewriting them is a big diff with a bug per missed site. Instead the preload swaps the two
+  controllers where their data comes in - the snapshot (`sc_mirror_state`) and the located grips (`in_mirror_hands`,
+  after `somvr_hands_locate` and the test grips) - so SOMVR_HAND_R *is* the sword hand whatever controller holds it,
+  and every module is unchanged. What goes back out to a physical controller is swapped back; what depends on a
+  hand's *side* (a mirror-image geometry) asks `IN_SIDE(h)` = h ^ g_lh, the controller of role h.
+- **Live or at the next start**: at the next start. Every module keeps per-hand state (the controls' press baselines,
+  the climb's holds, the bow's phase, the slots, the filters, the two-hand hold); a swap mid-session would turn held
+  states into phantom presses. The row saves HANDED; `lh_decide` reads it once, at the input's config, before every
+  module's config. The row says "At next start" while its value differs from the session's.
+- **One row**: Handedness (Right / Left) takes Pointer hand's place on the Settings page (same slot: the page keeps its
+  20 rows of 30 px) and sets the pointer with it (HL:A: the main hand points, the off hand holds the panel) - the panel
+  moves to the other wrist at once, the controls at the next start. The HAND key stays the file's (the pointer alone).
+  A left-hander's pointer defaults to the left when the file does not pin HAND.
+
+### 132.2 The code
+| Where | What |
+|---|---|
+| somvr_ctl.c `sc_mirror_state` | the snapshot's hands swapped (poses, velocities, sticks, triggers, grips, buttons, press counters, active, profiles); the menu button's bit and counter stay in hand[L]; an involution |
+| somvr.c `g_lh`, `IN_SIDE`, `in_side_bits`, `in_mirror_hands`, `lh_decide` | the session's mirror (SOMVR_HANDED, the settings file's HANDED over it, as vm_start reads it); in_tick keeps `g_inp.st_raw` for the grips' fallback (the grip spaces' order) |
+| in_tick / the arms' locate | locate (physical) -> `bd_test_hands` (the test words name controllers) -> `in_mirror_hands` -> the filters and every module |
+| haptics | `somvr_haptic_post(IN_SIDE(h))`; the `haptic L/R` word names a controller |
+| the layer's pointer, the panel's trigger | `consume` bits and `ptr.hand` swapped into roles (ptr_tick, vm_tick) |
+| the layer's hands (vh_h4 -> `vh_mirror`) | the entry's grips, curls, ghosts, L/R and HOLD flags back to the controllers just before it is published (the layer draws side h's model on grip h) |
+| sides | the climb's palm normal and the taunt's (`IN_SIDE(h) == L ? +X : -X`), the quiver and the bow slot's shoulder (`bo_shoulder_dist`), the bow's cant (`somvr_bow_hold_q`) and the arrow's side of the riser (`side_cm`), the surface samples' mirror, the wisps' wrist; the slots: `somvr_slots_cfg.mirror` (the sword over the left shoulder, the dagger at the right hip, SOMVR_HAND_R kept) |
+| the test words | `bd_squeeze` / `bd_test_squeezing`, the fight's and the ride's test-blade checks, the fingers' test trigger: the words name controllers, the code asks by role (`IN_SIDE`) |
+| somvr_vrmenu.c/h | `settings.handed` (85, was pad6[0]) and `handed_on` (86, the session's, no key); `SOMVR_SK_HANDED` "HANDED" (right/left, env SOMVR_HANDED); `SOMVR_VMI_HANDED` "Handedness" in Pointer hand's slot (`row_order`), Pointer hand hidden; the click sets hand with it; `somvr_vm_mirror_text` (left/right, L/R, LT/RT, LB/RB, A/X, B/Y swapped, whole words) for the Controls page, the card, the Fight help and the row labels ("Dodge (X)") while `handed_on`; the Menu and Minimap lines follow the Pointer hand (`somvr_vm_ctl_mirrored`); the card's "Close: X box or X button" |
+| the layer (somvr_menus_layer.c) | the card's A = the left controller's lower button with `handed_on` (`mn_a_hand`) |
+| unchanged | Talion's skeleton sides (R_Weapon on his right hand bone, IK'd to the left controller: only our hands and the weapons are drawn, SOMVR_BODY=hands + SOMVR_VRHANDS), the arms' calibrations (R_x(90): symmetric), the sword's grip offsets (on the grip's Z axis: symmetric), every module's role logic |
+
+### 132.3 Tests
+- **Offline**: test_ctl `test_mirror` (the sticks, triggers, poses, profiles swapped; A -> the move hand's lower, Y ->
+  the sword hand's upper; the menu bit and counter kept; twice = as it was; the controls on it: the physical A = the
+  pad's X, Y = B, the menu = START; the right stick walks, the left snaps); test_slots (mirror: the sword hand index 1
+  over the left shoulder, the dagger at the right hip); test_vrmenu `test_handed` (HANDED's words and file, the row in
+  Pointer hand's place, the click with the pointer, the words both ways, every Controls line and Fight help line
+  mirrored within its columns, the panel's wrist lines by the Pointer hand) and the layouts' tests read top to bottom;
+  the selftest's mirror block (the sword hand's grip = the left controller's, the physical X jumps and the A does not,
+  the right stick walks, the sword hand's pulse on the left controller, the haptic word's r on the right); the layer
+  test's click on Handedness (hand 1, handed 1, handed_on 0, the panel on the right wrist). `build.sh --check` green.
+- **The headless boots mirror the right-handed drivers** (scripts/lh-mirror.sh): every test hand and button of a
+  right-hander's choreography played by the other controller, the hand's x and its turns about Y and Z negated, the
+  menu button kept; the game must answer as it answered the right-handed run (its logs name roles), plus physical
+  checks. On build 29 the card, the draw, the grab and the climb's holds would fail (the other controllers have the
+  other roles there).
+
+| Run | Driver | What it proves |
+|---|---|---|
+| 221552 | leftie30-drive.sh (settings file HANDED=left) | CONFIG handed=left from the file; the card mirrored ("Sword: grip at L shoulder", "Menu: look at right palm", "Close: X box or X button"); the physical A leaves it up, the left X puts it away (`card: put away (X: ...)`), no jump; the panel opened by the RIGHT palm, pointed at by the left hand; the Controls pages 1-4 mirrored (right stick walks, X jumps, L stick blink, back of right wrist ...); Handedness: Left in Pointer hand's place; the sword drawn from the LEFT shoulder by the left controller (`SLOTS ... now in the hand`), its grip -30.3 cm right of the head, the layer's left fist round it (VRHANDS flags 0xf: HOLD_L); 3 contacts from the left hand's cuts; the bow out of the RIGHT shoulder by the right grip, the right fist round it (0x17: HOLD_R), nocked by the left trigger, full draw 56 cm by the left hand, the shot, put back; the left grip grabs no orc, the right grip grabs (`grab: the left hand on orc ...` = the wraith hand), the right trigger on the held orc = the wraith press (`B (120) held while the trigger is`, the hold); 23 PASS; the meadow bank: no climbing wall since SOMVR_CLIMB_SURF=walls (stone, not CanWallClimb) - not a mirror question |
+| 224503 | climb27-drive.sh, MIRROR_LH=1, the Sea Fort wall | the climb end to end with the other hands - see 132.4 |
+
+Pictures (`python3 scripts/xr_compose.py logs/boot-check-20261031-221552 -f 351 676 1101 1446 1666 2256 2635`): the card
+and the Controls page read mirrored; the Settings page's Handedness row; the drawn sword is the right-handed run's
+picture (hla27's 092910 frame 2033) mirrored - the fist on the left, the hilt at the left edge; the drawn bow is bow20's
+(135039 frame 684) mirrored - the riser in the right fist, the arrowhead on the riser's right (bow20: its left).
+
+### 132.4 The climb, mirrored (boot 224503)
+climb27-drive.sh (117) at the Sea Fort's wall (the site "fort", its known edge), every hand and button through
+lh-mirror.sh (pin16's `MIRROR_LH=1`; the A on the left controller, `LH_A`): **down** - the hand reached down over the
+lip, the glide out and down to the hang, three holds hand over hand down, the left X held 2.05 s = the drop mark's blink
+onto the ring 5.8 m down (`end: blink ... A let go over the ring`), at the foot after 49 s; **up** - 23 moves to the top
+(16 pulls, 7 flings: none caught - as the right-handed runs at this wall's ledges), the top's lip in the hand, the left
+X = the mantle's glide onto the top (`end: over: A at the top: the glide onto it`), ON TOP after 185 s. The logs' hand
+names are the roles, as the right-handed run's. 0 WARN, the install unchanged, GameData.sav UNCHANGED.
+
+### 132.5 Switches, keys, words, lines
+| Switch / key | Code default | build 30 env | What |
+|---|---|---|---|
+| `SOMVR_HANDED` / the file's `HANDED` | right | right (som-b30-leftie) | left = the left-handed mirror from the next start; the file (the menu's row) wins over the switch |
+Lines: `CONFIG handed=left|right (SOMVR_HANDED|the settings file's HANDED|unset): ...`; `VRMENU apply HANDED=... from the
+menu (the controls swap at the next start: saved for it)` / `(as this session's controls)`; the layer: `card: put away
+(X: the left-handed mirror's A)`. The logs name the hands' roles: with HANDED=left "the left hand" (grab, verbs, climb,
+HAND's L) is the right controller; the VRHANDS line's flags and curls are the controllers'.
+
+### 132.6 For the headset, unproven
+- Handedness: Left on the Settings page (the panel moves to the right wrist at once), quit, start again: the sword from
+  the left shoulder, the bow from the right; the card and the Controls page say which buttons.
+- Not mirrored: the game's own button icons in its texts and prompts (a tutorial's [A] is the left X with HANDED=left;
+  SOMVR_TEXT_BUTTONS only maps commands to other commands' icons) - most prompts are hidden in play.
+- Talion's skeleton keeps its sides (his right arm IK'd across to the left controller): invisible in first person (only
+  our hands and the weapons are drawn); a third-person moment shows the game's own animation, as before.
+- The brand itself was not booted mirrored (it needs the skill granted and an unaware orc or a hit streak): its input is
+  the wraith hand's palm and trigger, both proven by the grab and the press on the held orc.
+
+## 135. Build 31: the free hand on an orc - the shove 2-3 m, the grab shown before the reach, the hold the player's (no drain by the fist, any blow of the blade kills, the push lets go), the bug mark's chord out of the game's B: `SOMVR_SHOVE_FAR`, `SOMVR_SHOVE_ANY`, `SOMVR_HOLD31`, `SOMVR_VERBS_FIST_S`, `SOMVR_VERBS_GRAB_MAX_S`, `SOMVR_VERBS_CHORD_SAFE`, `SOMVR_VERBS_CUE_NEAR` (2026-11-02, som-b31-hands)
+
+The user's build 30 session (logs/boot-check-20261102-101318, game t of each mark): the shove worked but the
+orc should go much further (2574.9); grabbing an orc is hard - where does the hand go, and the player could not get closer
+(2637.1, 2806.5); the hold too short to work out what to do (2701.3); a kill came without the player's doing, and a cut at
+the held orc started the interrogation instead (2751.7); the vault over an orc is a teleport (3157.5). Code: somvr_hands31_game.c
+(new; included after somvr_combat21_game.c), somvr_parry_game.c (the shove), somvr_verbs.c/.h (the hold's rules, pure),
+somvr_verbs_game.c (the wiring, the chord-safe buttons), somvr_combat21_game.c (the faint glow), one line each in
+somvr_stealth_game.c (`stl_contact` asks `h31_held_blow` first) and somvr_fight_game.c (`rl_hold`: a negative cap =
+measured only); tests/test_verbs.c `test_b31`, selftest.c (the fist). Driver scripts/hands31-drive.sh.
+
+### 135.1 What the log says
+- **The shove went 36-55 cm.** All four shoves of the session took (`Block_Breaker`), and each orc's reaction would have
+  carried it further - `AI_Defender_Recoil_Block_Knockback` 212 cm, `AI_Defender_H300_ST_B` 416 cm - but a shove starts a
+  reel (`rl_note`) and the reel is eased under `SOMVR_COMBAT_STAGGER_CM` (55): `COMBAT reel ... after a shove ... the cap
+  55 cm: 112 steps eased (119 cm off)`, `... 135 steps eased (343 cm off)`. The cap is right for a hit (the orc stays in
+  reach), wrong for a push whose point is distance.
+- **Mark 12 is a downed orc.** The shield orc's shield was broken by a riposte (2632.9), it lay in `AI_Bip_KDLoop` 65-76 cm
+  away; the game has no grab of a downed orc (its finish is the stab, 114) - no cue there is the game's answer.
+- **Mark 17: the stand-off and a hand never in reach.** Crouched behind an unaware orc, the stealth stand-off held Talion at
+  118 cm (`STEALTH ... stand-off: ... the walk stops at 118 cm (the game notices inside ~108 cm)`): closer = seen. The 13
+  squeezes of the next 25 s were all off the hilt with the hand low (the eyes: no hand reached out), no `VERBS cue` line:
+  the cue showed only once the hand was already in reach - nothing told where to put it. The two grabs that worked
+  (2693.9, 2740.4) were 44 and 59 cm from its back.
+- **The hold's 3 s: the fist's trigger.** Both grabs: `VERBS ... grab` then 11 ms later `wraith: ... B (120) held while the
+  trigger is` - the left trigger closing with the grip (a fist, as the user holds the sword: mark 20) was the wraith hand =
+  the game's drain (`PC_Grab_HOG_Into`), which completes in ~3 s (`PC_Grab_HOG_Complete`) and lets the orc go
+  (`PC_Grab_Release_F`, 2698.3): mark 14 at 2701.
+- **The kill without input: the bug mark's B.** In the interrogation (`PC_Bip_Sync_Intrgtn_Idle_NoBrand`, its choices
+  Eliminate / Interrogate up from 2745.9), `VERBS t=2747.009 button: the Touch's B: 163 'CombatStruggle03' tapped` ->
+  `PC_Bip_Sync_Intrgtn_Kill_NoHdExp`, and `MARK #15 (the chord B + Y)` right after: the B of the user's mark chord. The
+  chord holds B and Y back from the game (somvr_session), but vb_hands read the Touch's buttons raw (`g_inp.st`). Build
+  19b's "first ended with the Touch's B = Eliminate (not the player's doing)" (77) fits the same cause.
+- **The cut that interrogated.** At 2742.64 a heavy cut (8.6 m/s) met the held orc: `STEALTH ... touch (the sword) ... in
+  the body but no thrust (no damage)` - the stealth judge wants a thrust; 0.27 s later the hand was 29 cm from the eyes:
+  `ask: ... pulled to the face ... A (121) tapped`.
+
+### 135.2 The shove 2-3 m: `SOMVR_SHOVE_FAR=on|off` (code default on), `SOMVR_SHOVE_ANY=on|off` (code default on)
+- **far**: the shoved orc's reel is measured only, never eased (`py_reel_free`: the reel entry's cap -1; `rl_hold` reads a
+  negative cap as none - the one change in somvr_fight_game.c), and the recoil is the first that takes of
+  `SOMVR_SHOVE_RECOIL_FAR` (`Knockback_Straight,Heavy_Straight,Block_Breaker`), or for a push at `SOMVR_SHOVE_HARD_MPS`
+  (2.5 m/s) or faster of `SOMVR_SHOVE_RECOIL_HARD` (`Heavy_Straight,Knockback_Straight,Block_Breaker`). The block is
+  untouched (the user liked it); the push's detection is build 19's (1.5 m/s of the hand's own motion, 80-250 ms, within
+  53 deg of the orc, its chest 60-175 cm over its feet). off = build 30 (`SOMVR_SHOVE_RECOIL`, the stagger's cap).
+- **The types, measured** (boot 20261102-112615, the word `parry shove TYPE`: Talion's push at the nearest orc, 3 m/s; the
+  `COMBAT reel ... after a shove` line, cm from where the push found it, at most / at the reaction's end):
+
+| Type | Infantry | Shield orc |
+|---|---|---|
+| `Heavy_Straight` | `AI_Bip_H300_ST_F` (a heavy stagger) 332 / 309 | `AI_Bip_H300_ST_F` 358 / 333 |
+| `Knockback_Straight` | `AI_Bip_H300_ST_F` 332 / 310 | `AI_Defender_Recoil_Block_Knockback` 181 / 179 |
+| `Block_Breaker` (build 30's) | `AI_Infantry_Blockbreaker` 144 / 137 | `AI_Defender_Recoil_Block_H` 62 / 51 |
+| `Character_KnockedBack` | `AI_Bip_KnockedBackByAI_B` 151 / 142 | - |
+| `Knockdown_ShoulderRam` | `AI_Bip_Recoil_F__KD_ShoulderRam` 281 / 281 (on the ground) | - |
+
+  So a push sends a shield orc 1.8 m (3.3 m when hard) and an infantry 3.1 m, on its feet (a stagger, not a knockdown -
+  the shoulder ram's knockdown would hand the player a free ground kill). Not chosen: the knockdown; `Character_KnockedBack`
+  (1.4 m: too short).
+- **any**: an orc's chest takes the push (within its radius + `SOMVR_SHOVE_ANY_CM` 15 of its axis), not only a raised
+  shield or a blocking orc - Blade & Sorcery's push works on anyone (`PARRY shove ... into its chest`). The same opening as
+  a parry follows (1 s), as before.
+- `py_shove_orc` is the one shove (the hand's, the word's, the hold's push).
+
+### 135.3 The grab shown: `SOMVR_VERBS_CUE_NEAR=on|off` (code default on), the reach
+- **The faint glow before the reach** (somvr_combat21_game.c `gc_near`): the orc the player faces - its collar within
+  `SOMVR_VERBS_CUE_NEAR_CM` (190) of the eyes and `SOMVR_VERBS_CUE_NEAR_DEG` (50) of the head's heading - is asked of the
+  game (the cue's own `vb_pick` of `PC_Grab_Attempt` / `_Stealth`, every 0.1 s); if it would grab it, the cue's wraith-blue
+  glow sits at its collar at `SOMVR_VERBS_CUE_NEAR_K` (0.45) of its level, no tick. The hand in reach: the full glow and
+  the tick (build 21). `VERBS cue t=.. orc .. faced (the faint glow's)` (the game's answer), `VERBS cue t=.. near: orc ..
+  faced, its collar N cm from the eyes: the faint glow`, `VERBS cue END build 31: the faint glow before the reach on N orcs`.
+- **The reach** (env, my block): `SOMVR_VERBS_REACH_CM` 45 -> 55 (the head's sphere), `SOMVR_VERBS_CONE_DEG` 25 -> 30 (the
+  arm reached out at it), `SOMVR_STEALTH_KILL_GRAB_CM` 45 -> 55 (an unaware orc's back). From the stealth stand-off (118 cm,
+  which stays: closer, the orc notices) the arm reached out toward the glow takes the grab: 6 grabs in two boots at 60-66 cm
+  from its back, 8-25 deg off (`grab: the left hand reached out at orc ..'s back`).
+- A downed orc (mark 12) is not grabbable in the game: no glow, as it should be (its finish is the stab).
+
+### 135.4 The hold: the player's (`SOMVR_HOLD31=on|off`, code default on; `SOMVR_VERBS_FIST_S`, `_GRAB_MAX_S`, `_ASK_S`, `_ASK_LOW_CM`, `_CHORD_SAFE`)
+- **The fist is no drain** (somvr_verbs.c, `SOMVR_VERBS_FIST_S` 0.5 s, code default 0.5): a trigger press within 0.5 s of
+  the grab is the fist closing - it counts from its next press (let go and pressed again: B, the drain or the brand where
+  the game has it, as built). `HOLD31 t=.. the trigger N ms after the grab: the fist closing, not the wraith hand`.
+- **The hold lasts**: with no drain the game keeps the grab as long as the grab's command is held (boot 114641: 10 s, no
+  end of its own); ours lets go at `SOMVR_VERBS_GRAB_MAX_S` (10 s) - `release after 10.01 s: the longest hold`, the game's
+  `PC_Grab_Release_Root_F`. Nothing else ends it but the open hand, the push, a blow or an interrogation.
+- **Any blow of the blade kills the held orc** (`h31_held_blow`, the first word of `stl_contact`): a hit's tier, or a stab
+  along the blade, on the orc the left hand holds = `h31_held_kill`: the stealth kill's own hit (the stock
+  `PC_Bip_SneakInstaKill_Silent_B`, forceKill; a captain by his combat rule, `kp_force_kill`), haptics in both hands.
+  A touch below a blow holds on (`HOLD31 t=.. the blade touches the held orc ..: below a blow - held on`). Build 30 sent X
+  (the grab's 'Shank': 10 health) for an aware hold and wanted a thrust for a stealth hold (the session's cut: "no
+  thrust"). The interrogated orc's kill stays its Eliminate by the blade (77.2, any blow). **h31_held_kill is the one
+  place a held orc dies: som-b31-kills' kill path belongs there.**
+- **The push lets go**: the holding hand pushed toward the held orc (`SOMVR_HOLD31_PUSH_MPS` 1.5 m/s, 80-250 ms, within
+  53 deg, along the floor) releases the grab and, once the game has let the orc go, shoves it (`py_hold_push`: the far
+  shove). `HOLD31 t=.. the push`, `PARRY shove ... into the held orc (the hold's push)`.
+- **The pull to the face** (the interrogation, A) is the player's on purpose: not while the sword swings (over 1.5 m/s) or
+  within 0.8 s of the blade's contact with the held orc (`no_ask`); held `SOMVR_VERBS_ASK_S` (0.5 s, build 30's 0.25) at
+  the face - the palm at most `SOMVR_VERBS_ASK_LOW_CM` (15, code default) under the eyes: boot 112615's push from the chest
+  (22 cm under the eyes, 32 from them) asked the interrogation.
+- **The bug mark's B + Y never reach the game** (`SOMVR_VERBS_CHORD_SAFE`, code default on): vb_hands' Touch buttons are
+  the chord's filtered ones (`g_ss.fst`, the game's view). Boot 114641: the interrogation's choices up, the chord held
+  0.8 s: a mark, 0 B taps, no finisher; the stab after it = the Eliminate.
+- The text: the game's own prompts stay (X flurry, B/LT drain, A interrogate; Eliminate / Interrogate) - the HUD has no
+  words of ours (its StringId lookup, 39.3) and a new text cell in the layer's atlas was out of this round. The Controls
+  page carries it (135.7).
+
+### 135.5 The vault by the hands (`SOMVR_VAULT_HANDS=on|off`, code default off, env off): the hold and the throw built, his body stops the flight
+Code: somvr_ovault.c/.h (pure; tests/test_ovault.c, 15 checks), the game side in somvr_hands31_game.c (`ov_*`), hooks in
+somvr.c (in_frame's `ov_frame` before the verbs' hands, the PM hook's `ov_pm` after the climb's, the input tick's
+`ov_tick`, LOCO's `own.climbing`), the verbs (no grab while it holds), the cue's glow (`ov_glow_add`). The test word
+`verbs front CM` (Talion put CM in front of the nearest orc).
+- **The rule.** The open left hand closed on a facing orc's crown (the palm within `SOMVR_VAULT_HANDS_TOP_CM` 30 of its
+  head point, not 5 under it - the collar under it stays the grab's; the orc within `SOMVR_VAULT_HANDS_CM` 160 and
+  `_DEG` 50 of the head's heading) holds as the climb holds a wall: the body moves 1:1 against the hand's own tracked
+  motion (push down = rise, at most 90 cm), the proxy's gravity flag off, the move stick off, LOCO's ticks given up.
+  His idle sway does not end it (the hold is a fixed point); his body walking 40 cm off, a hit, 5 s, the world gone
+  do (no drag). Let go fast = the throw by the climb fling's rule: minus the hand's mean velocity over 100 ms, only up
+  and over him (backward and downward dropped, sideways halved), the part over him x `SOMVR_VAULT_HANDS_GAIN` 1.6, at
+  most 550 cm/s; a throw whose arc would land short of 80 cm past his root is a plain let-go. The flight: that arc
+  under 981 cm/s^2 on the PM hook's extra move, every frame logged (`OVAULT t=.. flight: Talion ..., asked ...`), the
+  landing past him = his opening (`py_vault`, as the stick vault's). The cue: the grab cue's glow on his crown (faint;
+  full with the palm on it, a tick).
+- **What the boots showed** (scripted hand poses, the palm corrected onto the crown from the logged crown and palm,
+  `story invisible on` so the orc stands still): from behind, his crown is 100-113 cm from the eyes (he hunches away):
+  out of an arm's reach; from his front at 80 cm it is 44-60 cm: in reach. Boot 20261102-142210: the grab (14.8 cm from
+  his head point), **the body up 73 cm with the hand**, the throw (the hand up 368 over 313 cm/s -> the body 325 up,
+  ~440 over: it would land 372 cm along, 128 needed), then `blocked`: the step along the floor kept under half, 87 cm
+  from him with Talion's feet ~117 cm up - his body stops the flight; straight down, 56 cm from the start. Boot 143759
+  the same (the throw 340 up, 433 over; blocked at the first step).
+- **The pass-through, not done.** The proxy put on the arc by the climb's own position calls (`CLS_PC_GETPOS/SETPOS`,
+  `SOMVR_VAULT_HANDS_THROUGH`) moved nothing (5 ticks, the root unchanged: the movement's step puts the proxy back).
+  The game's own switch is `Combat+0x56c` (the animation's COLLISION_ON/OFF; the phase's `SOMVR_PHASE_NOCOLLIDE`), but
+  the movement solver reads it only while an attack runs (23.x) - the flight runs under none. The records'
+  `EnableCharacterCollision` (attribute 40) / `EnableCharacterCollisionWithTarget` (41) are registered by
+  `FUN_02514fb0` (+0xff2..+0x1071), their reader still untraced. Next: run the flight under the stock evade's attack
+  (A's press at the throw, as the phase does - its `+0x56c` held 0, our motion owning the ticks: `SOMVR_STEP_OWN`), or
+  trace the attribute 41 reader. Until then the switch is off: an arc that meets his chest and drops is not the vault.
+
+### 135.5b Build 31b: the pass-through - the flight under an attack with `Combat+0x56c` held 0 (`SOMVR_VAULT_HANDS_EVADE`, code default on)
+- **Proven: the orc's body lets the flight through while an attack runs with its EnableCollision 0.** Boot
+  20261102-151458 (a test: the throw tapped X, `SOMVR_VAULT_HANDS_EVADE_CMD=118`, so a swing ran under the flight; the
+  proxy setter off, `SOMVR_VAULT_HANDS_THROUGH=off`): `attack 'PC_HC_Lowest_L1_D0_F_LL_RL_ST_3_FrontKick' collision off
+  (+0x56c 0)` from the second flight frame; the orc 80 -> 37 -> 43 -> 95 -> 133 cm: Talion went over and through him on
+  the thrown arc, its top 165 cm up, 402 cm along - against `blocked` at 87 cm in every flight without it. The same
+  boot showed the cost: with the correction off the floor did not stop the fall (135 cm under the start at the
+  flight's time). Boot 151029 (the same with the proxy setter on) proved nothing: the setter took the moves.
+- **Built from it** (somvr_hands31_game.c): the throw taps the stock evade (A, 121: `vb_tap`); `ov_collision` holds the
+  running attack's `+0x56c` 0 and `+0x56f` 1 (st_collision's way) only while the flight is not yet past him (Talion's
+  root under his far side + 40 cm along the throw, not under the start's height) and puts the attack's value back
+  after; the evade's ticks are LOCO's during the flight (`ov_pm_own` after `st_pm_own`: `why` 0, the yaw ours; the stick
+  held 0) so its own root motion (the stock vault's flip, its 180 deg re-face) is replaced by nothing and the arc is
+  the only motion; the orc is vaultable only in a fight (FSM 7: the game's evade exists only there; `not_fight` counts
+  the rest). somvr.c: `own.climbing` excludes the flight under an attack, `ov_pm_own` after `st_pm_own`.
+- Not chosen: X's swing as the attack (a front kick on the orc the player did not make).
+- **Not proven: the in-fight vault itself.** The evade exists only in a fight (FSM 7), and headless that was not
+  stageable with scripted hands: an aware practice orc keeps moving and attacking (its crown 75-153 cm from the eyes at
+  each try, boots 150320 and 172457), and blinding the AI (`story invisible on`) ends the fight (FSM 6: `frames not
+  vaultable out of a fight 919`). An earlier try of the phase's own path (boot 145602, `SOMVR_PHASE=on`, A at an orc 2 m
+  ahead) got the dodge dash: in a fight the dodge owns A first. So `SOMVR_VAULT_HANDS` stays off: the hold, the throw
+  and the pass-through are each proven, the in-fight sequence (the evade's start under a mid-air hold, its ticks
+  owned) only by the headset or a driver with a still, fighting orc.
+- Boots 145602 (phase), 150320, 151029, 151458, 172457: each 0 WARN, the install unchanged, GameData.sav UNCHANGED.
+
+### 135.6 Runs (headless, Monado 20 Hz, scripts/headset-build26.env + the som-b31-hands block + `SOMVR_HANDS_TEST=1`; scripts/hands31-drive.sh; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-20261102-) | Steps | What it shows |
+|---|---|---|
+| 112615 | shove grab kill push chord | **the types' table (135.2)**, every far shove's reel free (`the cap -1 cm: 0 steps eased`); the faint glow on 22 orcs (770 frames; both eyes, frame 3167: a soft blue patch at the unaware orc's collar; 3291: the full glow); **the stand-off grab** (118 cm; reached out, 60.6 cm from its back) and **the held kill by a horizontal cut** (`HOLD31 kill ... tier heavy ... dead 0->1 health 95.0->0.0`; frames 3355/3391/3474: held, the cut, down); void: the hand pushes at an aware infantry that walked off, the fist (two words in 0.05 s: the trigger alone = the stealth torment), the push (the hand drawn to the chest asked the interrogation: fixed, `SOMVR_VERBS_ASK_LOW_CM`), the chord (no orc placed) |
+| 114641 | hpush grab push chord | **the fist** (`the trigger 250 ms after the grab: the fist closing`), **the hold 10 s with no drain** (`the game's hold did not run`; `release after 10.01 s: the longest hold`, then the game's `PC_Grab_Release_Root_F`); **the chord in the interrogation** (its choices up, B + Y held 0.8 s: the mark, 0 Touch B taps, no finisher), the stab after it = its Eliminate; void: the hold's push found no head (the held orc out of the bands: fixed, `cb_orc_get`), the hand pushes (a teleport to 95 cm alerted the orc, it walked off) |
+| 122148 | hpush push | **the hand's push into an unaware orc's back** from the stand-off, 4.29 m/s: `into its chest ... 'Heavy_Straight' took` -> `AI_Bip_H300_ST_B`, 327 cm (frames 1281/1340: it staggers off, then stands 4.4 m away); the soft push (300 ms) ended 68 cm from its axis (the scripted arm short of it: no push); **the hold's push**: `HOLD31 ... the push ... 4.45 m/s: let go` -> `release ... the hand pushed him away` -> `PARRY shove ... into the held orc (the hold's push) ... 'Heavy_Straight' took` -> 324 cm, ending 2 m from the head |
+| 132239, 133317, 134441, 135250, 140003, 141249, 142210, 143014, 143759 | vault | the vault by the hands, step by step: the crown's reach from behind (100-113 cm: out of reach) and from his front (44-60 cm); the scripted palm 17-20 cm over its grip pose (corrected from the logged palm); the grabs, **the hold's 1:1 rise (73 cm)**, the throws by the rule, `blocked` by his body each flight; the head's idle sway ended holds (fixed: his root, 40 cm); the proxy position calls no pass-through. Each 0 WARN, the install unchanged, the real save UNCHANGED |
+Unit: tests/test_verbs.c `test_b31` (the fist, a new press = B, the 10 s let-go, the push's let-go, the open hand's why, no pull while the blade is busy then 0.26 s after it, no pull at the chest, the pull at the face, build 30 with the rules off); selftest.c the fist (no B at once, B 0.6 s later).
+
+### 135.7 Switches, words, lines, the Controls page
+- The som-b31-hands block: `SOMVR_SHOVE_FAR=on`, `SOMVR_SHOVE_ANY=on`, `SOMVR_HOLD31=on`, `SOMVR_VERBS_FIST_S=0.5`,
+  `SOMVR_VERBS_GRAB_MAX_S=10`, `SOMVR_VERBS_ASK_S=0.5`, `SOMVR_VERBS_CHORD_SAFE=on`, `SOMVR_VERBS_CUE_NEAR=on`,
+  `SOMVR_VERBS_REACH_CM=55`, `SOMVR_VERBS_CONE_DEG=30`, `SOMVR_STEALTH_KILL_GRAB_CM=55` (build 30's 45 commented out where it
+  was). Code defaults: all on as listed; `SOMVR_VERBS_ASK_LOW_CM` 15 (code only), `SOMVR_VERBS_ASK_S` 0.25 in code. More:
+  `SOMVR_SHOVE_HARD_MPS` (2.5), `SOMVR_SHOVE_ANY_CM` (15), `SOMVR_SHOVE_RECOIL_FAR`, `SOMVR_SHOVE_RECOIL_HARD`,
+  `SOMVR_HOLD31_PUSH_MPS` (1.5), `SOMVR_VERBS_CUE_NEAR_CM` (190), `_NEAR_DEG` (50), `_NEAR_K` (0.45). No key of the user's
+  settings file.
+- Word: `parry shove TYPE[,TYPE]` (SOMVR_HANDS_TEST: the nearest orc shoved by those types).
+- Lines: `CONFIG shove build 31`, `CONFIG hold31`, `CONFIG verbs_cue build 31`, `PARRY shove ... (far[, a hard push]: its
+  reel free)`, `HOLD31 t=.. the push`, `HOLD31 kill`, `HOLD31 t=.. the trigger N ms after the grab: the fist closing`,
+  `VERBS cue t=.. near:`, `VERBS ... release after N s: the hand pushed him away | the longest hold`, `PARRY END build 31`,
+  `HOLD31 END`, `VERBS cue END build 31`.
+- The Controls page (the coordinator's): Shove "L hand push a shield" -> "L hand push an orc"; Grab "L grip on orc's
+  head" -> "L grip at blue glow"; Drain "held: hold L trigger" -> "held: LT again"; new "Kill held" "held: any sword hit",
+  "Let go" "open hand or push".
+
+### 135.8 For the headset (unproven headless)
+- The push's feel: 3 m on a hard push, 1.8 m (shield) on a soft one - right, or too much for the infantry's soft push
+  (3.1 m either way)? The push from a real arm reaching a chest (the scripted soft one fell short).
+- The faint glow: seen in time, not too faint at 0.45 of the cue's level, not on an orc the player does not mean.
+- The hold: 10 s enough; the fist rule (a deliberate second squeeze of the trigger for the drain/brand) found; the pull to
+  the face only at the face.
+- The held kill is a ragdoll today (som-b31-kills' victim animations will replace it through `h31_held_kill`).
+## 138. Build 31: the fling down, and the sword in the free hand while hanging: `SOMVR_CLIMB_FLING_DOWN`, `SOMVR_CLIMB_SWORD` (2026-11-02, som-b31-climb)
+The build 30 session (logs/boot-check-20261102-101318): climbing felt much better (no complaint); the player asked to
+fling themselves down a wall the way they fling up instead of climbing down slowly, and wished for the sword (or the
+bow) ready while clinging to a wall. Code: somvr_climb.c/.h (the rule `somvr_climb_fling_down_rule`, the flight
+`fd_step`, `fd_reach_lost`; per-hand `nograb_h`), somvr_slots.c/.h (`climb_free`), somvr.c's climb and slots regions
+(the switches, the words `climb flingdown on|off`, `climb sword on|off`, the logs). Tests: test_climb `test_b31`,
+test_slots (the b31 checks). Driver: scripts/fling31-drive.sh. Handoff: handoff/HANDOFF-climb.md "build 31".
+
+### 138.1 What the session's log says
+- **The way the player went down** (t 2305-2321, a 7 m wall at 31000,-30450): one hand at a time - a grip, a push of the
+  hand up by about 1 m in 0.3-0.4 s (the body down 1:1), the grip opened while the hand still rose, a hang, the next grip:
+  `fling none R: up -525 cm/s` ... `-632`, `-605`, `-562`, `-534`, `-356`, `-347`, `-207` (the body's speed at each
+  let-go, 10 of them; the voice note came in the middle). Every one of those let-gos stopped Talion dead from 2-6 m/s
+  (build 10's hang): the fling down is that same motion continuing.
+- **Climbing up gives "down" let-gos too.** The 20c session's climbs up (t 974827-830, the meadow wall, the root
+  4371 -> 4772) let go at `up -239`, `-143`, `-82`, `-342`: at the end of a pull the hand already rises toward the next
+  hold before the grip opens. A speed threshold alone would fling a climber down in the middle of a climb up. Each of
+  those holds took him **up** (a pull); every push down the user made took him down. Hence the second test: how far the
+  hold itself took him down.
+- Hand over hand with one hand always on the wall never reaches the let-go rule (the launch needs no hand holding).
+
+### 138.2 The fling down (`SOMVR_CLIMB_FLING_DOWN=on`, default off in the code; on in the som-b31-climb block)
+- **When**: the last hold let go (its grip opened) while that hand still rises fast - the same release velocity as a
+  fling up (the mean over 100 ms, the rig's yaw, the player size, x `SOMVR_CLIMB_FLING_GAIN`) - with its downward part
+  at least `SOMVR_CLIMB_FLING_DOWN_MIN` (250 cm/s) **and** that hold having taken him down at least
+  `SOMVR_CLIMB_FLING_DOWN_NET_CM` (15 cm) since it began to drive (its hand that much higher at the let-go than when it
+  began to drive). Under either = the hang, as build 30 (`fling none R: down N cm/s ..., the hold took him N cm down:
+  too slow | the end of a pull up`). Not from the ground, not with a hand still holding, not from lost tracking (as up).
+- **Where**: along the throw: the downward part capped at `_MAX` (650 cm/s), sideways x `SOMVR_CLIMB_FLING_SIDE` (at
+  most 0.6 of the down part), toward the wall at most 0.25 of it (the face holds it; in flight a push the face holds is
+  dropped), away from the wall dropped (never pushed off the wall).
+- **The flight**: the climb stays on (gravity off), each frame's piece asked as a move (the game's collision clips it);
+  the whole velocity slows evenly so the downward part loses `_G` (981 cm/s^2) a second: the exact mirror of the arc up.
+  At rest after v^2 / 2g: 32 cm at 250 cm/s, 1.02 m at 450, **2.15 m at the cap** - then the hang where he is (`fling
+  down hang (at rest)`). The view moves only by what the player threw: its speed continuous with the hand's at the
+  let-go, slowing to rest; a light pulse in the releasing hand at the launch.
+- **The ends**: a grip on the way = the catch (the hold drives at once, as a fling up's catch: Gorilla Tag's); the feet
+  within 5 cm of a floor under him (a ray down from the root) = **landed**: the climb ends, gravity back, the game's own
+  landing from those 5 cm (or from at most `_LAND_CM`, 25 cm, when the flight came to rest just over a floor); water
+  within reach under the feet = the hang over it; the downward part blocked twice with no floor = the hang (a slope, a
+  lip under him); no wall within 120 cm of the chest level or 20 deg up (the wall ended under him) = the hang
+  (`SOMVR_CLIMB_UNSTUCK`'s reach); A, a menu, a hit, the input as for any climb.
+- **No deadly drop**: the game deals no fall damage (re-traversal.md, `FallDamageMin/Max` 0), and the flight never ends
+  in a fall - it lands only at the floor; A held (the timer ring) stays the way down a high drop.
+- Logs: `fling down launch R: v=... (down D, side S, toward T; out-dropped O; the hand ...; the hold took him N cm down):
+  at rest in X s, Y cm down`, `fling down catch`, `fling down landed after ...: fell N cm, the feet N cm over the floor`,
+  `fling down hang (at rest | blocked above | water under the feet | the wall under the chest)`, the end line `a fling
+  down: the feet at the floor, the game's landing`; CLIMB END build 31.
+
+### 138.3 The sword in the free hand while climbing (`SOMVR_CLIMB_SWORD=on`, default off in the code; on in the block)
+- Build 30: while any climb was on, both hands' slots were busy (no draw, no put-back) and a hand on a hold put its
+  weapon back (restored when the climb ended).
+- Now: the hand **not on a hold** keeps its slot - the sword's press at the right shoulder draws (and puts back) as on
+  the ground; the blade is live as on the ground (somvr.c's combat already idled only while the sword hand holds a
+  hold), so a cut at an orc within reach (on the ledge above, at the foot of the wall below) hits as on foot.
+- Two guards for the wall: **no quick draw** for a free hand while climbing (two grips on the wall within 0.35 s are a
+  regrab, not a draw) and **no restore** of a sword the climb put back while the hand is free between holds (it would
+  come and go at every let-go); the press draws it, and the climb's end restores it as before.
+- **One hand off the wall, not both**: the press a slot took, and the sword hand in a fight (SOMVR_DEFENCE_KEEP_SWORD),
+  now keep only that hand from taking a hold (`nograb_h`) while a climb is on - the other hand climbs on. On foot the
+  guards stay as they were (both hands).
+- **The bow stays off on the wall**: it needs both hands (`climbing (SOMVR_CLIMB)` refuses it as before).
+- A hit on Talion while hanging still ends the climb (`SOMVR_CLIMB_HIT=drop`: the game's fall).
+- Logs: `SLOTS ... sword: drawn while climbing (SOMVR_CLIMB_SWORD): the right hand free, the left on a hold`, `sword: in
+  the hand while climbing (the blade live)`; CLIMB END build 31's `sword=on: draws while climbing N, frames with it N`.
+- Not built: the game's ledge kills (`PC_InstaKill_LedgeHang(_Loud)`, the victim rows `AI_Bip_PC_LedgeHang_LoudKill*`)
+  are paired animations that move Talion; helper 133 (the kills) may play the orc's half when a cut from a hang kills an
+  orc on the ledge above.
+
+### 138.4 Unit evidence (test_climb `test_b31`, test_slots; each feature also with the switch off: build 30's answer)
+- The rule: 400 down = a fling straight down; 200 = the hang (too slow); 340 with the hold having taken him 60 cm up =
+  the hang (the end of a pull up); away from the wall dropped (300 out -> 0); sideways 500 -> 240 (0.6 x 400), toward 300
+  -> 100 (0.25 x 400); 900 -> 650 (capped); off = none.
+- A push up of the hand 50 cm in 0.11 s and let go (518 cm/s after the gain), nothing under him: the flight **136.5 cm to
+  rest** (v^2/2g 136.5), its first frame at **501 cm/s** (continuous with the hand), at most 5.7 cm a frame at 90 Hz,
+  never off the wall (z unchanged); the hang. Off: the hang where he let go.
+- The other hand's grip 6 frames in: the catch after 37 cm. A floor 58 cm under the feet: landed with the feet 5 cm over
+  it, the climb's end; a short fling that comes to rest over a floor: landed. Water there: the hang 28 cm over it.
+- The end of a pull up (the hand down 60, then up 48 at 414 cm/s, let go: the hold took him 8 cm up): the hang. A slow
+  push (173 cm/s): the hang. `nograb_h` on the right: its press spent, the left hand's holds.
+- Slots: climbing with the right hand free - a double grip on the wall draws nothing, the slot's press draws (its press
+  the slot's: no hold), the blade live; build 30's busy draws nothing; the sword the climb put back stays back through
+  two let-gos, the press draws it, the climb's end restores it.
+
+### 138.5 Runs (headless, Monado 20 Hz, scripts/headset-build26.env with the som-b31-climb block + the test hands, scripts/fling31-drive.sh; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-20261102-) | What it showed |
+|---|---|
+| 114233 (`ladder fort`) | The driver's first try: a dump stalled a frame mid-throw (the hand 75 cm in one frame: the jump guard), the trace word lost to the next word, the fort's reach-over hand too far past its lip. The sword: `climb sword off` = the slot's press while hanging draws nothing; on = `sword: drawn while climbing ... the right hand free, the left on a hold`. The orc below (spawned on a rock 1.1 m up, 1.2 m off) saw him after 5 s and kept 2-3 m away throwing things: no hit |
+| 115645 (`ladder fort`, fixed) | **The guards at runtime**, the Sea Fort's wall: a slow push and let-go = `fling none R: down 163 cm/s ..., the hold took him 90 cm down: too slow` (the hang); **the end of a pull up** = `down 318 cm/s ..., the hold took him -50 cm down: the end of a pull up, no fling down` (318 is over the threshold: speed alone would have flung him) - the hang; `flingdown off` = `fling none R: up -565` (the hang). The launches `fling down launch R: v=559 ... the hold took him 75 cm down` and capped 650 ones; most stopped at once **blocked below** (`fell 0.0`): the wall's stone courses hold the capsule there - the hand's own push before the let-go moved him 0 cm too (trace: `asked -7.5 moved 0.0`, a contact `h-57 n0.89,0.28,0.37`), so it is the place, not the flight; below them one flew **215.2 cm to rest in 0.94 s** (the trace: -238, -497, -424, -192, -237, -86, -55 cm/s, 0; at most 0.6 cm a tick along or off the wall); the ladder's hang after down over is held the same way (`h-56`). Sword drawn while hanging again |
+| 121321 (`wall`: the build 30 session's own 7 m wall, 30992 3700 -30443, faced -150) | **Up by hand** 7 pulls (no fling down: every let-go with the other hand on the wall); `flingdown off`: the throw = the hang; on: **the catch** `fling down launch R: v=565 ... at rest in 0.58 s, 162 cm down` -> `fling down catch: a hold after 0.15 s of flight (fell 73.4 cm)` (the trace: the pull -90/-130/-150, the flight -547/-476/-446, the grip); **to rest** `fell 159.6 cm` (0.65 s); a capped one `fell 213.5 cm` (0.79 s); **landed** `fling down landed after 0.10 s, 3 frames: fell 40.7 cm, the feet 5.0 cm over the floor at 3608.5 ...: the climb's end, gravity back` (the trace: -620, the step cut to the floor, then the game's own -80). CLIMB END build 31: `flings 4 (caught 1, landed 1, at rest 2 ...; 492 cm flown)`. Both eyes (frames 2087 the catch, 2232 in flight, 2511/2516 landed): the wall face, the comfort vignette closing in flight and opening once he stands; nothing per-eye odd |
+| 122555, 125122 (`swordlow`) | Hanging low on that wall by the left hand (the feet ~30 cm up): `sword: drawn while climbing ... the right hand free, the left on a hold (the climb hold)`, `in the hand while climbing (the blade live)`. The practice's far orc comes up beside the wall ~0.7-0.9 m off and strikes within 4-5 s; in 122555 the head's turn to it took 7 s (the chop's plane 13 deg off it: `swings 0+1 (toward an orc + not)`); in 125122 the orc's blow ended the hang (`end: drop: a hit on Talion`) 1.35 s before the cut's hit - a hit on the ground, not counted |
+| 125711 (`swordlow`, the cut at once) | **The hit while hanging**: drawn while hanging, the far orc 67 cm off at 117 deg, the chop at once along it: `COMBAT hit tier=heavy (medium) ... speed=14.73 ... stroke=125 contact=14.7 ... -> Combat_DealHit` between the climb's `start` and its `end` (the orc's blow 2.4 s later: `end: drop: a hit on Talion`, as SOMVR_CLIMB_HIT=drop does). Both eyes (frames 941 hanging, the sword's grip in the right fist and the left hand on the hold; 1175/1178 turned to the orc: the blade through it, the hit's sparks, the orc reeling at the wall's foot) |
+
+### 138.6 Shipped, unproven, open
+- **Ship on** (the som-b31-climb block): `SOMVR_CLIMB_FLING_DOWN=on`, `SOMVR_CLIMB_SWORD=on`; the code's defaults stay off (the
+  block decides). No key of either is in the user's settings file: the block reaches them as it is.
+- **Only the headset can judge**: the fling down's feel at 90 Hz (the flight continuous with a real hand's 2.5-6.5 m/s,
+  the distance a throw gives - 32 cm at 250 cm/s to 2.15 m at the cap, the comfort vignette over it); the 250 cm/s
+  threshold against the player's own slow and fast descents (the session's let-gos: slow ones 66-240, the throws
+  350-630); the sword's draw over the shoulder with a hand on the wall, a cut from a hang.
+- **Walls that hold the capsule**: where the face leans out under the hips (the ladder wall's hang after down over,
+  the Sea Fort's stone courses near its top) the game's sweep refuses every downward move - a hand pushing down moves
+  him 0 cm there as well - so a fling down there stops at once (`blocked below`), the hang where he was. The flight never
+  slides him off the face (the rule: never away from the wall); a slide along a leaning face would be the next step if
+  the headset shows such walls often.
+- Not built: the bow on the wall (two hands); the game's ledge kills (138.3).
+
+- Headless 20 Hz caps a hand-driven pull at 8 cm a frame (160 cm/s), so in the traces the flight's first frames are faster than the pull before it; at 90 Hz the cap is 720 cm/s and the flight starts at the hand's own speed (test_b31: 518 cm/s let-go, 501 the first flight frame).
+## 137. Build 31: the sun and the fog held to the world - the camera-facing cards and the sun's star turned to face the eye, the fog by the distance along each eye's ray: `SOMVR_FX_BILLBOARD`, `SOMVR_XR_FOG` (2026-11-02, som-b31-render)
+The user's 11-02 session (logs/boot-check-20261102-101318, build 30, the practice cliff at 31832 4820 -30530, weather
+SON_Day01) marked two things that turned with the head: "lines" coming out of the low sun (mark 102012_5; the lens flare
+and the screen-space shafts were already gone, `SOMVR_FLATFX=all`) and a wall of fog over the valley (mark 102029_6).
+handoff/HANDOFF-render.md "build 31"; NOTES.md; the env block som-b31-render; scripts/render31-drive.sh,
+render31-yaw.py, spv_find.py, spv_dec.py, spv_dis.py; vklayer/shaders/fog_radial.py.
+
+### 137.1 What turned with the head
+| What | Where | Why it follows the head | Measured |
+|---|---|---|---|
+| The sun's disc and star (the "lines") | one ClientFX flare sprite in the sky's own scene (2585 m from the sky's camera at 0, -23413 m, -95 m), drawn by `CFlareSpriteRender::vf_04` (`0x2d6a110`) -> `FUN_02db39f0` | props +0xb0 = 1: the quad is laid on the camera's own axes (it rolls with the head); +0xdc = 1: its brightness follows the angle between the view's axis and the sun (cos under +0xb8 = 0.259: not drawn, then (cos - 0.259) / 0.741) | `fx fsprobe` (FXFSPROBE line, boot 112029); the roll test below |
+| The valley's mist and dust cards | the game's camera-facing CPU particles (`CParticleSystemRender::vf_04`) and sprites (`CSpriteRender::vf_04` -> `FUN_02db39f0`, props +0xb0): son_mistlarge, son_fogfarbig, son_env_distdust (x25) ... | every such quad lies in the view's plane with the view's up: as the head turns, each card swings about its middle; at the view's edges a card is turned up to 50-75 deg away from facing the eye, and its soft edge where it fades into the ground sweeps across the valley | FXBILL END of boot 123200: 68 % of the CPU particles' 1.87 M quads and 92.5 % of the sprites' 765 k in the view's plane; sprites at 400-500 m turned 47-55 deg |
+| The fog itself | the fog overlay (`FUN_007e6820`, fog_overlay.mat; its pixel shader and its OIT twin) | its path length is the pixel's depth along the view's axis, not its distance: in a ~100-deg headset view the edges get ~65 % of their fog, the middle all of it - the thick fog sits where the head points and moves with it | the far terrain's brightness against the view's axis (137.3) |
+
+Ruled out: the VR graphics preset (`SOMVR_RENDER_SET`, 119.3) changes the vegetation's density and the meshes' detail
+by distance from the camera's position, not its direction (nothing in it turns with the head); GPU particles (none drawn
+at the cliff: 0 draws); the screen-space shafts and lens flares (already off). Per eye: every one of the three is computed
+from each eye's own camera (each eye is right on its own; the error is the direction-dependence, the same in both).
+
+### 137.2 `SOMVR_FX_BILLBOARD=eye|game` (somvr_render_game.c; code default game, env som-b31-render: eye)
+- **Cards** (CPU particles, sprites): in the eyes' passes the draw goes through SOMVR_FX_NEAR's proxy on its render
+  context (a[4]: the map, slot 9, hands the game our cached copy; the unmap, slot 10, works there and copies once - 126)
+  - now also for the sprites (RD_SPRITE patched outside SOMVR_FX_TEST when the switch is on). Each quad (4 vertices of
+  60 bytes, one colour) whose plane is the view's (its normal within 1.8 deg of the view's forward axis; others - the
+  emitter's own orientation, an axis-locked one - are the game's) is turned to face the eye's position with the world's
+  up (Y): each corner keeps its right / up / forward parts on the new axes, the three unit vectors (+24 normal, +36, +48
+  tangents) turn with it. Straight above or below the eye: the view's right flattened onto the card. Vertices in the
+  emitter's own space: the view's axes and the world's up taken into it (the inverse of a[0]'s quaternion). The fold
+  (SOMVR_FX_NEAR) stays the CPU particles' only.
+- **The sun** (flare sprites): the draw gets a camera at the eye's position looking straight at the sprite with the
+  world's up (a[1] pointed at our 7 floats for the call): `vf_04`'s fade reads cos = 1 (the sun as bright wherever it
+  is in the view: the game's look when looked at) and `FUN_02db39f0` lays the quad on that camera's axes (facing the eye,
+  world up). Nothing of the sun follows the head; the sun, its star and its glow stay (`stars` - the flare sprites'
+  draw skipped - takes the whole sun away: the disc is the sprite; boot 112029's `flatfx all` with stars: a sunless
+  sky. So `stars` is a FLATFX part by name only; `all` stays the five old parts).
+- Word `fxbill eye|game|state` (live when the hooks are in: the switch on at the start or SOMVR_FX_TEST). Lines: CONFIG
+  fx_billboard=..; FXBILL t=.. (the first 12 draws with a turn, then every 5000th; the flare sprites' first 6); FXBILL
+  state|END (draws, quads, turned, not in the view's plane, in the emitter's space, the largest turn).
+- Test-only additions: `fx fsprobe N` (FXFSPROBE lines: each flare sprite's transforms, distance, the angle off the view's
+  axis, its props' facing bytes and floats), `fx nofog 0|1` (RD_FOG: the deferred pipeline's call `0x7d75fe` of the fog
+  overlay skipped in the eyes - a measurement), the test head's `roll DEG` (somvr_testhead_layer.c: + = the right ear
+  down; the eyes roll about their middle).
+
+### 137.3 `SOMVR_XR_FOG=radial|game` (the layer: somvr_fog_layer.c, somvr_fogpatch.h; code default game, env radial)
+- **Finding the shader.** The game's D3D11 shaders reach Vulkan as SPIR-V made at runtime (IndirectX's DXBC -> GLSL, then
+  glslang); the layer sees them at vkCreateShaderModule. `SOMVR_XR_SPV_DUMP=DIR[,all]` (test only) wrote all 1300
+  modules of a boot (19 MB; no names survive: the DXBC registers r0.., cb0.., v1..); scripts/spv_find.py ranked the 633
+  fragment shaders by the fog's marks (exponentials, the 1.5 power of the sun's Henyey-Greenstein phase, few samples),
+  scripts/spv_dec.py read the two that stood out as one line per store: the fog overlay (FNV-1a 64 `5bb4420b4b219149`,
+  18776 bytes) and its OIT pass (`3b25070a5c940c06`, 24116 bytes; the same fog on each transparent layer of the deep
+  buffer). Both: a planet-sized atmosphere (6.371e8 cm + its height), Rayleigh and Mie extinction by height, the sun's
+  phase; the pixel's view position rN = (z, x*z, y*z) from the linear depth (1e7 = the sky) and the view ray at depth 1
+  (v2.xy / v1.w); the path length `movc(sky, the atmosphere's edge, rN.x)` - **rN.x is the depth along the view's axis**.
+- **The edit** (somvr_fogpatch.h): the movc's third argument becomes length(rN.xyz), the distance from the eye (4 new
+  instructions before the argument's bitcast: load the register, bitcast to float4, take xyz, GLSL.std.450 Length; the
+  bound +4). Every link of the chain is checked first (the call's id, the last store before it, OpBitcast %uint, OpLoad
+  %int, OpAccessChain %reg 0, the register an int4 variable): any mismatch = the game's module, a line. Only modules of
+  the two sizes are hashed (the rest pass untouched). The game's own fog strength is kept: in the middle of the view
+  (z = distance) nothing changes; off the axis the fog is what the middle shows for the same distance.
+- tests/test_fogpatch.c (vklayer/build.sh --check): a synthetic module shaped like the translation (the edit's words,
+  the bound, the rest word for word; the .y loaded, a float load, another call id: nothing written) and, given files, the
+  C edit against shaders/fog_radial.py's (the two real modules: identical).
+- Lines: `xr: fog: SOMVR_XR_FOG=..`, `xr: fog: module .. created with the fog by the distance along the eye's ray`, or
+  `.. NOT changed - why`.
+
+### 137.4 The pictures and the numbers (scripts/render31-yaw.py: a dump re-projected into another by the two eyes' logged poses - a pure turn of the eye - and compared after one gain per colour, the exposure's re-adaptation)
+- **The sun's star** (boot 123200, the head level against the head rolled 25 deg, the rolled picture taken back into
+  the world; a 400-px window on the sun): before (`fxbill game`) the difference picture is the whole star - its spikes
+  rolled with the head: 0.51 % / 0.52 % of the window off by more than 12 levels (rolled left / right), against 0.00 %
+  for the same pose again; after (`fxbill eye`): 0.00 % / 0.06 % (a bird), the star where it was in the world. Yaws of
+  15 deg: both 0.00-0.02 %. Brightness: within the 17 deg tested the sun's core is saturated either way (2000-2300
+  pixels at 250+ in a 120-px box); the fade by the view's axis (0.52 of full at 50 deg) is gone by construction.
+- **The fog** (the far terrain -12..-3 deg below the horizon and the horizon band -3..+2 deg; the brightness difference
+  A - B' of each pixel against cos(its angle off A's axis) - cos(off B's): a fog by the view's depth makes a pixel
+  foggier, here brighter, the nearer it is to the view's axis):
+
+| Run | Fog | Pairs | Far terrain: corr, slope (levels per unit cos) | Horizon band | The sky |
+|---|---|---|---|---|---|
+| 112029 (clear) | game | y0/ym30, y0/yp30 | 0.81, 44.7; 0.73, 33.0 | 0.56, 20.3; 0.82, 30.6 | 0 (-0.08, 0.28) |
+| 123200 (misty) | game | y0/yp30, y0b/ym30 | 0.68, 43.0; 0.75, 40.7 | 0.70, 33.0; 0.67, 34.8 | - |
+| 130010 (misty, low sun) | **radial** | y0/yp30, y0b/ym30 | 0.32, 8.8; 0.56, 15.8 | 0.49, 7.2; 0.15, 2.5 | 0.17, 0.03 |
+
+  The game's fog: up to 6-10 levels (of 255) brighter where the head points than at 30 deg off, at every turn - the
+  wall. Radial: a quarter of the slope and less; what is left matches the pairs of the same pose taken seconds apart
+  (the rig's few degrees of drift: slope 4.6-14 at the same pose) - the mist's own drift and the vegetation's forward
+  shading. The look: the both-eye pictures at the session's spot (130010 frame 1676: the blue haze over the valley, the
+  low sun at the cliff, as in the user's mark 6) show the same fog as the game's in the middle of the view and no seam;
+  both eyes alike.
+- **The cards**: the counters and the unit tests prove the turn (FXBILL: 68 % / 92.5 % of the quads turned, up to 55
+  deg for the far mist at the view's edges); in the pictures the mist's own drift between two dumps (2-3 s) is as large
+  as the change, so the headless pictures neither show nor rule out the cards' swing - the headset judges it.
+
+### 137.5 The frame's cost (headless, the null compositor's 20 Hz: the render thread's frame work, CPU, eye 0's start to the present, mean of the 10-s windows' p50 (p95); GPU total p50)
+| Place | Boot 123200 (fog game): turn off / on | Boot 130010 (fog radial): turn off / on | GPU total p50, off / on (123200; 130010) |
+|---|---|---|---|
+| The misty valley (the fog view) | 7.17 (7.88) / 7.15 (7.70) | 7.40 (9.29) / 7.17 (8.83) | 7.29 / 7.28; 7.22 / 7.26 |
+| The practice meadow | 8.72 (9.61) / 8.74 (9.64) | 8.38 (9.22) / 8.38 (9.17) | 5.00 / 6.36; 6.67 / 6.27 |
+| The build 20c campfire | 10.23 (10.99) / 10.16 (11.27) | 8.97 (9.45) / 9.06 (9.65) | 8.63 / 8.63; 8.63 / 8.57 |
+
+  Two windows of 20 s per mode and place, alternating (off, on, off, on; the windows that held a trip to the next place
+  left out). The turn: within the windows' own spread (±0.3 ms) in every place - the sprites now go through the proxy
+  too (~300 a frame, a 240-byte copy each). The radial fog: one length per pixel, the GPU the same within 0.1 ms. The
+  places' totals differ between the boots by the weather and the hour (the fire's 10.2 against 9.0), not by the
+  switches. Under 12.5 ms (80 Hz) everywhere, as 119.5.
+
+### 137.6 Runs (logs/boot-check-20261102-; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run | What | Proves |
+|---|---|---|
+| 112029 | SOMVR_FX_TEST: the sun found by `fx fsprobe`; the sun at three yaws and two rolls; the fog view at three yaws with each ClientFX renderer hidden and the fog overlay skipped (`fxbill` was not yet routed: its "bill" pictures are a repeat of the game's) | the sun is one flare sprite (props +0xb0, +0xdc); `stars` removes the whole sun; no GPU particles; the far terrain's fog follows the view's axis (corr 0.73-0.83) |
+| 120337 | SOMVR_FX_TEST, the misty valley: before / `fxbill eye` at yaws and rolls; the first module census (no names) | FXBILL: sprites at 400-500 m turned 47-55 deg, CPU particles' quads in the view's plane |
+| 123200 | no FX_TEST, `SOMVR_FX_BILLBOARD=eye`, `SOMVR_XR_SPV_DUMP=..,all`: the sun before / turned at two rolls and three yaws; the fog with repeats of the same pose between turns; the cost windows | the star rolls with the head before, not after (137.4); the 1300 modules; the cost of the turn |
+| 130010 | no FX_TEST, `SOMVR_FX_BILLBOARD=eye`, `SOMVR_XR_FOG=radial`: the sun at two rolls and three yaws, the fog with the repeats, the cost windows | both fog modules created with the edit (`xr: fog: module ..: created ..: 0`), the game's pipelines built and drawn from them; the fog's direction-dependence a quarter (137.4); the cost |
+
+### 137.7 For the headset (not provable headless)
+- Whether the valley's fog now reads as part of the world when the head turns (the radial fog and the turned cards
+  together), and the sun's star with the head rolled.
+- The sun is as bright off-centre as in the middle now: if it reads as too strong at the view's edge in the lenses, the
+  fade can come back by the eye's position (not its direction).
+- Other forward-shaded materials that might do their own planar fog (water, the hair, the transparent glass) were not
+  audited; the OIT pass covers the transparent layers that go through the deep buffer.
+## 134. Build 31: the sword as a weighted body on a joint to the hand, the blade in flesh: `SOMVR_SWORD_PHYS`, `SOMVR_SWORD_FLESH` (2026-11-02, som-b31-sword)
+
+The session of 11-02 (build 30, boot-check-20261102-101318): the sword still moved with every flick of the hand (no
+weight to match), and cuts felt like slashing through the orcs - build 17-30's bite (59, 66.4) too short to see. The
+session's `SWORDWT` windows: the blade at the old rope (16 deg) in nearly every swinging window, the hand up to 25-50
+rad/s and the blade's own speed the same ("the swing speed up to 25.1 rad/s, the blade's 23.8"); its 46 `BITE` lines all
+"dragged through at the cap at 35.0 deg" after 90 ms. Handoff: handoff/HANDOFF-combat.md "Build 31 sword".
+
+### 134.1 Why build 16-30's heavy felt weightless
+Build 16's heavy (52.2) is an acceleration-limited follower of the hand's blade direction with a hard rope at 9-16 deg: a
+fast motion is at the rope at once, and at the rope the blade is carried rigidly by the hand - so above a few rad/s the
+blade's tip moves as fast as the hand's (test_smooth: a 90 deg flick in 150 ms, the hand's tip 19.5 m/s, the old blade's
+20.0). The user's own session replayed through it (`SWP_REPLAY` on the session's `.swordrec`, 34577 frames, 11572 of them
+with the hand's tip over 3 m/s): the blade off the hand p50 8.9 deg, p95 16.0 (= the rope), its tip / the hand's p90
+1.26. The hand's turn rates in that recording: p50 2.2, p90 11.6, p95 18.1, p99 41.9 rad/s; 1296 swing episodes over 6
+rad/s, half of them two frames long (flicks). No frame with both hands on the hilt.
+
+### 134.2 The weighted body (somvr_smooth.c `swp_*`, pure; tests/test_smooth.c)
+- The sword is a rigid body: Urfael as an arming sword, 1.3 kg, its balance 15 cm over the fist's centre (a hand's width
+  over the guard), 0.055 kg m^2 across the blade about the balance (0.084 about the fist), 0.0012 about the blade. Held to
+  the controller's grip (the solved grip, the grips' space) by a spring-damper in place (8000 N/m, critically damped,
+  600 N at most) at the fist and in turn about it (55 N m/rad, damping ratio 1.0). The torque the hand can give falls with
+  the speed the sword already turns at - the muscles' force-velocity (Hill) curve: 36 N m held, 20 at 4 rad/s, 12 at 8, 7.6
+  at 12, nothing more past 28 rad/s (never below 8 %); braking the sword's own swing up to 50 N m (no run-on past the
+  hand); the twist about the blade nearly 1:1 (its inertia is tiny: the edge follows the wrist). The coupling is real:
+  the hand's push at the fist, off the balance, turns the sword too (an arm's sweep leaves the tip behind).
+- Integrated in 0.5 ms sub-steps with the frame's controller motion spread over them (semi-implicit Euler about the centre
+  of mass, the gyroscopic term kept): 20 and 90 Hz agree within 2 deg. Both hands on the hilt: the springs x2.5, the
+  limits x2.8; a blow coming at Talion (an attack SOMVR_DEFENCE tracks: `g_df.tr[].live`) x2 / x2.2 - so a guard is never
+  later than build 30's. Free, never more than 55 deg (both hands 20) or 10 cm off the controller (the ropes, a safety;
+  after a wound they open to where the sword is and close at 3 rad/s, 0.8 m/s: the sword swings back, never snaps).
+  Resets onto the hand: the first frame, a gap over 0.1 s, a controller step over 30 cm faster than 12 m/s or over 1 rad
+  faster than 45 rad/s.
+- Why these numbers: a real arming sword's committed cut turns at 10-15 rad/s (the tip 10-20 m/s); a wrist alone cannot
+  give the 30-80 N m a fast flick of a 1.3 kg blade would need. With the curve a committed cut (its torque needed while the
+  sword is still slow) is carried; a flick (its torque needed while the sword already swings) is not. The Light step
+  (the menu's Sword weight row): the hand's spring x1.8 and its strength x1.7.
+
+| motion (90 Hz; the hand's tip speed) | build 31 heavy: lag, the tip | both hands | build 30 heavy: lag, the tip |
+|---|---|---|---|
+| slow wrist turn 60 deg / 0.8 s (2.5 m/s) | 0.8 deg, 2.5 m/s | 0.3 | 0.6, 2.5 |
+| committed arm cut 100 deg / 0.40 s (12.7 m/s) | 9.8 deg, 14.3 m/s; past the hand 9 deg, back in 122 ms | 4.5 | 11.0, 13.5 |
+| fast arm cut 120 deg / 0.28 s (21.7 m/s) | 32.8 deg, 26.4 m/s | 10.0 | 12.8, 22.6 |
+| wrist flick 90 deg / 0.15 s (19.5 m/s) | 33.5 deg, 13.9 m/s | 13.8 | 15.4, 20.0 |
+| wrist snap 60 deg / 80 ms (24.1 m/s) | 35.8 deg, 10.6 m/s | 19.6 | 16.0, 23.8 |
+| wiggle +-15 deg at 4 Hz (6.6 m/s) | 7.3 deg, 7.3 m/s | 4.0 | 11.2, 4.9 |
+| guard raise: 35 cm up, the blade 80 deg across in 0.25 s | within 10 deg of the hand 6 ms after it (a blow coming: 6) | 6 | 6 |
+
+The grip (the drawn hand) is at most 2 cm off the controller in any of these. On the user's own session (`SWP_REPLAY`):
+build 31 heavy off the hand p50 1.4 deg, while swinging p50 5.0 / p95 42.9 deg, the tip / the hand's p10 0.40 p50 0.88
+(build 30: p50 8.9, p95 16.0; p10 0.24, p50 0.85); light p50 3.3 / p95 29.0. So slow and moderate motion is closer to
+1:1 than before (the old follower lagged everything a little), and the fast flicks the user made are now the sword's own
+weight to match.
+
+### 134.3 The flesh (somvr_smooth.c `swp_wound_hit`, `swp_step`)
+- When: a hit combat lands (it did damage or killed) of the kind cut (the heavy tier), tap (a light, edge-led one: the
+  weak cut) or stab - not a flat slap, a glance off a raised shield, nor one the orc's block took (hf_will_bite with the
+  flesh on). The struck orc's body: its Pelvis, Torso, Neck and Head nodes (stl_body, 84.3: only a real skeleton, so no
+  beast) as three capsules (17, 16, 9 cm), read each combat frame by its object - also once the dead leave combat's list.
+  The wound opens where the blade is inside a capsule by 1 cm, at once or within 0.4 s (combat's capsule is 35 cm, the
+  body's 16-17: at the headset's rate the hit comes a frame or two before the edge reaches the body).
+- The wound is an elastic-plastic pin in the body's frame (the torso node and the orc's turn): the blade's point there is
+  held to it by a stiff spring (20000 N/m) whose force the flesh limits; past the limit the wound gives:
+  - a cut: on through the body at 130 N while the edge slices (it moves over 0.8 m/s), 160 N to start again once stalled
+    (a slow push does not cut), from 0.3 x at the skin to full 10 cm in, x2.2 near the spine; back out the way it came at
+    25 N; along the blade (a draw cut) at 40 N. It ends when the wound's point leaves the body (through the far side, or
+    back out), the blade slides off past its tip, or the hand goes on until the joint is 30 cm or 80 deg off (ripped free);
+  - a stab: held across at 300 N (the body carries it, the hand levers it), pushed in at 70 N (never past the guard),
+    drawn out along the blade only past 400 N (200 once sliding): about 3 cm of the hand behind the drawn hilt (8000
+    N/m). Levered 25 deg in the body or cut 8 cm sideways: torn free.
+  - While in, the hand's joint braces (x2: the arm drives the blade, not the wrist alone); 10 s at most.
+- The game side (somvr_swordphys_game.c): the drawn hands on the hilt where the sword is (swl_arm: its place and turn,
+  the left with both hands carried as the hilt is), the controller's faint hand (the layer's ghost, up to 0.35) while the
+  blade is held and they are 6+ cm or 25+ deg apart, or free 6+ cm apart (a free flick's turn lag is the weight itself:
+  no ghost). No other hit on that orc while the blade is in it (combat's contact loop skips it; counted), the
+  swing tracker waits (as the bite and the stealth stick). Haptics: a thud going in (1.0, 90 ms), a rumble while it
+  slides or cuts (0.25-0.75 by the speed, every 35 ms), a faint tick held still (0.12 every 120 ms), out: 0.6 (drawn or
+  back), 0.55 (through), 0.85 (ripped); the left hand 0.6 x with both on the hilt. The game's blood (SOMVR_COMBAT_HITFX's
+  cut / stab FX) where it came out, in the next combat frame. The orc's own hit reaction is the game's, from the hit.
+- The bite (59, 66.4) does not run with the flesh on; the Blade bite row's Off turns the flesh off.
+
+| into a capsule body (90 Hz) | outcome |
+|---|---|
+| committed arm cut 140 deg / 0.35 s (in at 16 m/s) | 15 cm deep, held 67 ms, the tip 20 -> 4 m/s, ripped free as the hand goes on |
+| the same, both hands | through (out the far side) in 11 ms |
+| weak cut 85 deg / 1.2 s (in at 2.5 m/s) | stops 4.6 cm in; drawn back: out the way it came |
+| the same, both hands | 9.4 cm in, stays |
+| stab 35 cm / 0.25 s, then the body 20 cm aside | 38 cm in, stays; the wound kept on the blade within 0.27 cm as the body moved |
+| ... then drawn back 45 cm / 0.6 s | out along the blade, starting with the hand 3.2 cm behind the hilt |
+| ... yanked 60 cm sideways in 0.12 s | levered out: torn free |
+| a hit whose blade never reaches the body (the capsule's edge) | no wound (missed after 0.4 s) |
+| at 20 Hz (the headless runtime) the committed cut | crosses the body between two frames: no wound (the boots cut slower) |
+
+### 134.4 Switches, words, lines
+| Switch | Default | Build 31's env | What |
+|---|---|---|---|
+| `SOMVR_SWORD_PHYS=off\|on` | off | on | 134.2 with SOMVR_SWORD_WEIGHT=heavy\|light (off = 1:1, as before) |
+| `SOMVR_SWORD_FLESH=off\|on` | on | on | 134.3 with SOMVR_SWORD_PHYS and SOMVR_COMBAT_BITE / the Blade bite row |
+| `SOMVR_SWORD_PHYS_GHOST=off\|on` | on | on | the controller's faint hand while the drawn one is far from it |
+
+The user's saved settings: SWORD_WEIGHT=heavy now means the weighted body (134.2), Light its lighter step, Off 1:1;
+COMBAT_BITE=on now means the flesh; SWORD_WEIGHT_HAND (fixed/follow) has no effect with SOMVR_SWORD_PHYS - the drawn hands
+are always on the hilt. Nothing in the settings file needs rewriting.
+Words (SOMVR_HANDS_TEST): `fight phys on|off`, `fight flesh on|off`; `fight bite dumps N` also marks stabs with the flesh.
+Lines: `CONFIG swordphys=...`, `SWORDPHYS t=... hit (cut|stab) orc=...: waiting for the blade in its body|refused`,
+`... wound open (kind) ...: the blade N cm from the grip into its belly|chest|neck at V m/s`, `... wound hold ...` (every
+0.25 s), `... wound end (kind): out|through|back|torn free|... after N ms`, `... blood where it came out ...`, `... swing:`
+(each frame of a test hand's swing), `... last 10 s: ...`, `SWORDPHYS END ...`. SOMVR_SWORD_REC records the input as
+before (its offset column: the body's turn off the hand).
+For the kill helper: `swp_blade_in(c)` (the blade is in that orc now; a killing stab stays in the dying body until drawn
+out, 10 s at most) and `swp_release(why)` (free it now).
+
+### 134.5 The headless proof (scripts/sword31-drive.sh; build 26's env with my block, the test hands; Monado 20 Hz; every run 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-20261102-) | Steps | What it shows |
+|---|---|---|
+| 120800 | air two cut weak stab parry | **the weight in the game = the model**: a 150 ms wrist flick (the hand 20.0 rad/s): the sword 12.9 rad/s, 32.6 deg behind, its tip 13.9 m/s (test_smooth: 33.5 deg, 13.9); a committed 450 ms arm cut: 7.8 deg; a slow 1.5 s one: 0.8 deg; the grip within 0.4 cm. **The parry in time with the weighted sword**: parry18's `inf` (the test guard's 300 ms swing to the learnt path) - contacts 10, parries 10, openings 10, the blades meeting 49-50 ms before each impact. Cuts and the stab: the hits came at combat's 35 cm capsule and the blade never reached the 16-17 cm stealth body (a 1.2 cm miss logged later) - the flesh's own radii since (134.3) |
+| 121749 | air two cut weak stab | two hands grabbed (`hands squeeze L 1`): the flick's turn comes from both hands' places (no wrist turn). Cuts with the roll 0 were flat slaps (edge 86-89 deg: no wound, rightly); the stab at Talion's eye height passed the orc's neck by 1.2 cm |
+| 122858, 125422, 130907 | cut weak stab | **wounds in the game**: cuts at the orc's chest at 6-10 m/s: `wound open (cut) ... into its chest`, 2-15 cm deep, out (drawn along the blade) or through after 49-99 ms (one or two 20 Hz frames), **the game's blood made where it came out (rc=1)** each time. 122858's stab started inside combat's capsule (glances only, no new stroke); 125422's and 130907's opened (71 cm along the blade, 37 cm deep) but ended torn free in the same frame (300 N across, 8 cm, 25 deg: made sturdier since) |
+| 132001 | stab | (the sturdier stab: 700 N across, out past 15 cm / 35 deg) the hit came with the tip 5.2 cm short of the body: no wound (logged) |
+| 132613 | stab | **the stab stays in**: open at 3.5 m/s, then held 1.6 s, 22-36 cm deep, 72-86 cm along the blade, the flesh's force 80-260 N, the drawn hand 0.5-1.3 cm and 6-23 deg off the controller as the reeling orc carried the blade; ended when the driver teleported the test hand behind the hip (a reset: cancelled) |
+
+Pictures (scripts/xr_compose.py, both eyes with the layer's quads): 130907 frame 622 (a cut's wound frame: the blade ahead
+of the fist into the orc's chest), 845 (a stab going in: the blade into its torso, the fist on the hilt); 132613 frames 731
+(+0.8 s: the reeling orc with the blade in its belly) and 765 (+1.4 s: turned away, the blade still through its side, the
+tip past its shoulder). Every picture both eyes alike.
+
+### 134.6 What only the headset shows, and the limits
+- Whether the weight reads as weight and not as lag: committed cuts ~10 deg behind and ~9 deg through, flicks 30-35 deg
+  behind (the drawn hand turns with the sword: up to 35 deg off the wrist in a flick). If too heavy: the menu's Light.
+- The 20 Hz headless runtime: a cut faster than ~10 m/s crosses the body between two frames - the hit comes after it, no
+  wound; and at 20 Hz the cuts' wounds last one or two frames. At 80-120 Hz the model (90 Hz in test_smooth) holds a
+  committed cut 67 ms and a weak one in the body; seen there only.
+- The stab drawn out by a pull (~3 cm of the hand behind the hilt) and levered out: proven in test_smooth only (the
+  scripted arcs of `hands swing` are no straight pull).
+- The haptics (the thud, the rumble, the held tick, the exit beats) are in the layer's haptic lines only.
+- Two hands: the user did not two-hand in the session; the stronger joint is proven offline only.
+## 136. Build 31: the session's smaller fixes - low health's red ring and heartbeat, the left palm in a fight, the Test page's page, Practice > Place orc, an orc's blade through the tracked body, the drawn arrow kept out of the face (2026-11-02, som-b31-polish)
+
+The 11-02 session (build 30, boot 20261102-101318) left seven smaller items besides the combat overhaul: a button prompt
+seen while blocking, orc blades that reached the player without a hit, no sign of low health, a left palm panel that
+was hard to bring up in a fight, no way to put an unaware orc where the player wants it (a drop kill from a ledge), a
+Test page that forgot its page, and a fully drawn arrow running through the player's body.
+
+### 136.1 Low health: what the session showed, the ring and the heartbeat (`SOMVR_HURT_LOW_STYLE`, `SOMVR_HURT_BEAT`)
+- **Why nothing was seen**: `FIGHT low t=2640.842: Talion's health 20.0 of 120.0: under SOMVR_HURT_LOW - the faint red
+  edge on` to 2657.812 - build 24's faint steady edge was drawn (the layer's threat line: `hurt 1590` frames) but it is
+  SOMVR_THREAT's two edge bands: the outer 30 % of each eye's outer half at 0.3 of the flash (alpha ~0.2), the left eye's
+  left and the right eye's right only - where a Quest 2's lens shows little. A Quest-visible cue needs the whole rim.
+- **The ring** (`SOMVR_HURT_LOW_STYLE=ring`, the code default; `=edge` = build 24's): a sixth row in THREAT's texture
+  (`SOMVR_TH_ROW_LOW`: a square cell, clear inside 0.35 of its half-size, a smoothstep to full at 0.85, full to the
+  corners, opaque hurt red x the level, premultiplied - the world stays seen through it), one head-locked quad 1 m ahead
+  in THREAT's VIEW space over the whole view (`XL_LOW`: over comfort's ring, under the edge bands and the HUD; the first
+  dropped after the objective's marker when a frame would pass 16 layers). The preload sends how low and the throb in the
+  threat entry's two spare bytes (`somvr_threat_frame.low`, `.beat`, `SOMVR_THF_LOW`; same size, same version).
+- **How it grows** (`somvr_th_low_*`, tests/test_threat.c `test_low`): from `SOMVR_HURT_LOW` of the most health seen
+  (build 31's env 0.30) down to 5 % the amount goes 0 -> 1; the quad's half-size 1.7 -> 1.1 tangent units (never under the
+  view's cover: the clear middle closes from ~31 to ~21 deg), its alpha 0.45 -> 0.75 (at the lens's edge, ~45 deg: about
+  0.2 at the line, full at 5 %).
+- **The heartbeat**: 60 bpm at the line to 110 at 5 %; a lub at each beat (up at once, down over 90 ms) and a softer dub
+  0.25 s later; on the throb the alpha +0.2 and the ring 5 % tighter. Under `SOMVR_HURT_BEAT` (0.2 of the most seen; the
+  practice keeps Talion at 20 of 120 = 0.17) both hands feel it: 0.45 / 50 ms on the lub, 0.3 / 40 ms on the dub. A blow's
+  red flash still comes on the edge bands on top. Nothing moves the view.
+- Lines: `FIGHT low t=..: Talion's health H of M: under SOMVR_HURT_LOW - the red ring on`, `FIGHT low t=..: the ring: how
+  low A, the heartbeat B bpm, the hands' beat ..`, `FIGHT END low health: ..`; the layer's `threat frame N: low health's
+  ring on|off (how low, throb, cell, half-size)`. `SOMVR_XR_DUMP_LOW=N` (headless): dumps at the ring's first frame and
+  the next lubs (scripts/xr_compose.py knows the row: `threat low`).
+
+### 136.2 The left palm panel in a fight (`SOMVR_VRMENU_GATE=hand|all`)
+- **Cause**: the session's layer log has 29 refused palms - 23 `the palm gesture held off: a blade swing`, 5 the bow, 1
+  both (mark 19's at 2861.483: "26 so far"); `VRMENU END`: swing ticks 11072 (~123 s of the 22 minutes - the sword hand
+  moves above the slash speed whenever the player gestures). Build 15.7's gate disarmed the palm on every such tick, so a
+  palm raised while the sword hand moved needed to turn away and come back after the swing.
+- **The change** (`=hand`, the code default): a hard gate (a fresh palm after it) only for what is in the panel's hand
+  or holds the player - the bow out, a climb hold, a swing with the panel's hand on the hilt too (SOMVR_TWOHAND's grip,
+  `bd_two_held`); the sword hand's own swing is a soft gate (`SOMVR_VMG_SOFT`): no open while it lasts and 0.3 s after
+  it, the palm's hold counting on - a palm held up through a swing opens the panel 0.3 s after it; an incoming attack no
+  longer gates (a flinch is not a palm held 0.5 s toward the eyes within reach and looked at). `=all` = build 30's.
+- How to open it in a fight: raise the left palm toward the eyes (it opens 0.3 s after the last sword swing, or after
+  0.5 s of holding if the sword is still); the left menu button's long press always works.
+- Lines: `CONFIG vrmenu gate=..`, the layer's `the palm gesture waits for the sword hand's swing (N so far; it opens
+  0.3 s after the swing)`, `VRMENU END ... the sword hand's swing (waits, build 31) N`. tests/test_vrmenu.c `test_gate`:
+  the palm up through 2 s of swinging opens 26-27 frames after it; a short swing at the hold's 0.5 s; the hard gate and
+  soft + the bow as before.
+
+### 136.3 The Test page keeps its page (`TEST_PAGE`)
+- Build 21 sent the Test tab to its first page at every click: the session's Practice -> Test round trips lost the page.
+  Now the tab opens where it was left; a turn of the page is saved in the settings file as `TEST_PAGE=P@KK` (KK = a key
+  of the Test page's text, `somvr_vm_test_key`), and the next session's menu opens it there for the same text (another
+  build's text: its first page). `somvr_settings.test_key` (87, was pad6) and `.test_page` (95, was pad7), key 35.
+- Lines: the layer's `vrmenu: the Test page opens at page P of N (TEST_PAGE ..)`, the click's `the test page (page P of
+  N)`. tests/test_vrmenu.c `test_testpage31`.
+
+### 136.4 Practice > Place orc (`SOMVR_PRA_PLACE` = 11, the word `practice place [TYPE]`)
+- The far orc needs ground 18 m ahead within 2 m over to 6 m under Talion's root: from a ledge (mark 21's) it failed
+  twice (`spawn far Infantry .. FAILED: no ground ahead`). A new button beside Refill health: the sword hand's aim (its
+  laser's line, the aim pose) cast 40 m into the world (cl_ray, Talion's body skipped); 30 cm back along it and down to
+  the ground (a wall's face puts it at the wall's foot) is the spot: the gold ring and its post (the objective layer, as
+  the wraith step's; 45 cm, an orc's footprint). With the panel closed, a fresh trigger press puts an orc of the page's
+  type there, its back to Talion (unaware: the far orc's facing and watch); B, the button again or 30 s cancel. In the
+  practice area only, as Spawn.
+- Lines: `PRACTICE t=.. place (the menu): ..`, `place: the spot (X Y Z), D m from Talion, H m below him`, `spawn placed ..`,
+  `place: placed|cancelled|timed out`.
+
+### 136.5 An orc's blade through the tracked body (`SOMVR_DEFENCE_BODY`, `SOMVR_DEFENCE_BODY_GRACE_CM`)
+- **What the session shows** (around mark 9, 2376-2390, a shield orc): the "reached me" blows were the game's hits that
+  DEFENCE judged dodged by the head's move (`DEFENCE dodge .. 'AI_Defender_Radial' .. head 37.8 cm aside, 73.5 cm back
+  -> the game's hit skipped`), the defender's 2.2 m weapon sweeping close by; at 2377.357 the weapon passed 88 cm from the
+  spine - a real miss. The game itself lands an orc's blow by Talion's root (ApplyDamageRange and its half angle at the
+  APPLYDAMAGE key, 22.1); a blow whose root test fails never reaches DF_IMPACT, so a blade through the player's real
+  head or chest (a lean, the roomscale offset) did nothing.
+- **The judge** (somvr_defence.c `somvr_df_body_sweep`, tests/test_defence.c `test_body31`): the body is a head sphere
+  (10 cm round 6 cm under the eyes) and a torso capsule (16 cm round, 25..70 cm under the eyes) at the HMD; the orc's
+  weapons (DEFENCE's contact judge's model nodes) swept between frames (4 steps) inside the hit window (its first BCOL,
+  else 0.25 s before the impact, to 0.1 s after it); a blade 6 cm or more inside (a hand's width of grace less a
+  tracking margin: the head's core 4 cm, the torso's 10 cm) is in the body. Grazes and a blade a hand off the middle of
+  the chest are not.
+- **What it changes**: the game's range missed, the blade went in, not blocked (the verdict the hook would have given
+  at the impact) -> the game's own Combat_DealHit after the window (the target the orc's +0x4c0 names, one of Talion's;
+  the hook's original call, outside the lock as the held blow's) and DEFENCE's hit event (the flash, the pulse); a
+  head's-move dodge while the blade still went in -> the hit lands (the A dodge's press still dodges). Every attack at
+  Talion with a weapon read gets one line: `DEFENCE body orc=.. attack '..' (type): the blade's deepest +X cm into the
+  head|torso at T s (the grace 6: in|out) -> ..`; `DEFENCE END body ..`.
+
+### 136.6 The drawn arrow out of the face (`SOMVR_BOW_DRAW_MAX_CM`, `SOMVR_BOW_FACE_CM`)
+- Mark 23: `BOW .. draw 108.2 cm (tension 1.00)` - the string hand pulled ~50 cm past a real draw; the arrow (the game's
+  own on the right weapon node, nocked at the string hand) then lay through the head and shoulder.
+- Now the drawn string's middle and the arrow's nock stop at `SOMVR_BOW_DRAW_MAX_CM` (72) from the string's rest and no
+  further back than `SOMVR_BOW_FACE_CM` (-10: 10 cm behind the eyes' plane across the draw - a cheek or ear anchor stays
+  free), at least 20 cm; the layer's string, the game's string node and the arrow all hold there while the hand goes on
+  1:1 (as in other VR bows the hand leaves the string). Visual only: the draw's length, its tension and the shot are the
+  hand's. It cannot keep the hand itself in front of the body - that is the player's own hand; the arrow no longer
+  follows it through the head. Lines: `BOW t=.. the drawn arrow held in front of the face: ..` / `free again`.
+
+### 136.7 Runs (headless, Monado 20 Hz, scripts/headset-build26.env + the som-b31-polish block + SOMVR_HANDS_TEST=1 + SOMVR_XR_DUMP_LOW; scripts/polish31-drive.sh; each 0 WARN, the install unchanged, GameData.sav UNCHANGED)
+
+| Run (logs/boot-check-) | Steps | What it showed |
+|---|---|---|
+| 20261102-115228 | low bow place palm test fight | `practice hurt 20`: the ring on (0.53, 86 bpm, the hands' beat), off at the refill; the cheek draw (56 cm) free, past the ear the arrow held (`the arrow's nock held at 32.9 cm ... the eyes' plane 22.9 cm back`); the gold ring 5 m ahead (frame 1190) but the spawn refused (my bug: no context object); the palm raised through three sword swings: `the palm gesture waits for the sword hand's swing`, opened 0.3 s after the last (no `held off`); Test, Next, Practice, Test: `the test page (page 2 of 10)`; an infantry's 8 blows at a still Talion: `DEFENCE body` +6.2 / +15.2 / +8.3 cm (in) and 5 out, each the game's own hit |
+| 20261102-124815 | low (32 then 20) place bow | the toned-down ring: the onset at 32/120 (0.13, 67 bpm; frame 400 with the blow's flash) and 0.38 at a lub (frame 579): a red rim, the middle clear, the world seen through it; the bow again; the spawn bug again |
+| 20261102-133704 | place | the spot 5.3 m ahead, 1.3 m down the slope; the trigger: `spawn placed Infantry (Place orc) ... ok`, its back to Talion; `far orc +8 s: 4.8 m from Talion ... its target none; unaware` (frame 600) |
+
+Unit tests (each fails on build 30's code: the new functions / bits did not exist): test_threat `test_low` (the amount,
+the beat, the quad, the row), test_vrmenu `test_gate` (the soft gate; build 30's hard gate kept for SOMVR_VMG_SWING),
+`test_testpage31`, `test_place31`, test_defence `test_body31` (a cut through the chest in, a graze out, a fast cut found
+by the sweep, through the head, over it, the session's 2377 dodge 88 cm out), test_practice (`place`), the layer's
+sc_threat (the ring's quad), selftest (the ring and the lub's pulses at 20/120, off at 36; the gate's soft bit).
+
+### 136.8 Switches (the som-b31-polish block at the end of scripts/headset-build26.env)
+
+| Switch | Code default | Build 31 env | What |
+|---|---|---|---|
+| `SOMVR_HURT_LOW` | 0 (off) | **0.30** (build 30's 0.25 commented out where it was) | low health's share of the most health seen |
+| `SOMVR_HURT_LOW_STYLE` | ring | ring | `ring` the red ring and its heartbeat, `edge` build 24's faint edges |
+| `SOMVR_HURT_BEAT` | 0.2 | 0.2 | the hands' heartbeat under this share (0 off) |
+| `SOMVR_VRMENU_GATE` | hand | hand | the palm gesture's gate; `all` = build 30's |
+| `SOMVR_DEFENCE_BODY` | off | **on** | the orc's blade through the tracked body (needs SOMVR_DEFENCE_JUDGE=contact) |
+| `SOMVR_DEFENCE_BODY_GRACE_CM` | 6 | 6 | how far in a blade must go |
+| `SOMVR_BOW_DRAW_MAX_CM` | 0 (off) | **72** | the drawn arrow's and string's longest pull |
+| `SOMVR_BOW_FACE_CM` | -10 | -10 | ... and no further back than this in front of the eyes' plane |
+| `SOMVR_XR_DUMP_LOW` | 0 | (tests) | the layer's dumps at the ring's first frame and its lubs |
+
+Settings file: `TEST_PAGE=P@KK` (written by the menu when the Test page turns). The user's saved settings pin none of
+these keys. The word `practice place [TYPE]`.
+
+### 136.9 For the headset, unproven
+- The ring's strength through the lens and its heartbeat (60 bpm at 30 % .. 110 at 5 %); the hands' beat under 20 %.
+- The palm in a real fight (0.3 s after the last swing); the menu button's long press as the sure way.
+- Place orc from a ledge: the gold ring under the hand's aim, the trigger with the panel closed.
+- Body hits: whether 6 cm of grace reads as "somewhat forgiving"; the landed-by-the-blade case is unit-tested only.
+- The arrow held while the hand draws past the ear (the hand leaves the string, as in other VR bows).
+- Mark 2's prompt: not reproduced (136.10).
+
+### 136.10 Mark 2: the Y prompt while blocking (not found)
+Every prompt path of the session around it (2080-2110) is clean: PROMPTS' only Y prompt ('UI_Attract', Stealth_ButtonY,
+2080.8-2082.9) was dropped; every HINTS show was dropped; the counter icon's FX and marker were switched off (`CPROMPT
+END ... prompt FX asked 35 (not made 35), markers on 35 (switched off 35)`); the HUD texture in the mark's flat picture
+and the auto shots holds no Y (its top right is "No Target Selected - Hold" with the stick-click icon). Boot 115228's
+infantry wind-up picture (frame 2314) shows nothing either. The one thing drawn at every wind-up is THREAT's warm glow
+at the orc's weapon hand, which looks like the game's counter flare - the likely look-alike; left as it is. The bug
+mark's eyes picture holds the game's eye images only, not the layer's quads: a quad-drawn prompt would not be in it.
+## 133. Build 31: kills the game's way - the orc plays its half of the game's paired kill, Talion's half is the player's blade: `SOMVR_KILLS` (2026-11-02, som-b31-kills)
+
+The session of build 30 (logs/boot-check-20261102-101318): a kill ended in a plain ragdoll at zero health, and the one
+stealth kill from behind went to the game's own paired cinematic in a window. Mark 18's lines: at t=2828.409 the stab
+into an unaware orc's spine read `touch ... in the body but no thrust` (the point 8.6 cm in, the motion at cos 0.55 to
+the blade, 8.68 m/s, the stroke's tier heavy: build 21's thrust wants 30 deg and 15 cm), the orc was alerted 0.3 s later,
+and at 2829.653 VERBS pressed X for the game's offered `PC_Bip_SneakInstaKill_Silent_F_1` (sync
+`PC_Bip_Sneak_InstantKill_F_1`): Talion's half started and the layer put it on the theatre (`theatre 3`, 2830.106). The
+orc's half was `AI_Bip_PC_Sneak_IK_F_2`. Handoff: handoff/HANDOFF-combat.md "build 31". Code: somvr_kills.c/.h (pure,
+tests/test_kills.c), somvr_kills_game.c (included by somvr.c), driver scripts/kills31-drive.sh.
+
+### 133.1 What the game does (static RE, 2026-11-02)
+- **A victim record carries the same sync as its source.** `AI_Bip_PC_Standing_InstaKill_F4`'s AnimationData.Sync is
+  `PC_Bip_Standing_InstaKill_F4` (attacks-full.tsv, the sync column of the AI_ rows). Started on an orc alone it makes no
+  sync action (VERBS: `sync '-'`; nothing reached Talion in 5 boots: no `Talion attack` line, no HOLD, no presentation).
+- **The start**: `FUN_026ed9b0(Combat*, node, attack, target, bool)` (clears +0x150/+0x158/+0x170, +0x178 = -1, jumps
+  to Combat_StartAttack) - the wrapper NPC::vf_92 and the sync's `FUN_02807d20` use. With node 0 Combat_StartAttack's
+  "attack at the same time as a recoil" reject is not reached.
+- **The sync start's target side** (`FUN_028081a0`): `FUN_02697700(char)` (FUN_026c9740: each entry of Combat+0x98
+  FUN_02710f60(e, 0)), `FUN_02693a80(char)` (two look targets cleared), `FUN_00d61d00(Combat+0x90, 0)` and +0x12f = 1,
+  `FUN_02972f90(AI, 0, 2)` (bit 2 of AI+0xe98: its movement held; `FUN_02aeba60`), `FUN_020c6160` (a velocity zeroed).
+- **The ragdoll keys are the sync's**: `DELAYRAGDOLL` / `RESUMERAGDOLL` / `ALLOWRAGDOLL` / `RAGDOLL` are handled by
+  `FUN_02804050` (from Combat_OnModelString+0x766) on the sync action: its +0x238 flag. Without a sync nothing holds a
+  ragdoll, so the death is ours to time. The sync record's `KillTargetDamage` is field 25 of 0x4baa4a0 (0 on the brand
+  sync, P7).
+- **AnimationData** (schema 0x4ba8640): Name (a string: `Bip_PL_Sync_Instakill_F_SlashNeckStab`,
+  `OrcInf_Sync_StealthKill_B_Elf`, `Bip_PL_Sync_StealthKill_B_StabNeckBreak` ...), BehaviorNode and SyncToAnim are
+  strings (empty on the victims), PlaybackRate, AllowedBehaviorNodes.
+- **The min health**: an orc left at exactly 1.0 by a hit is dead (boot 113313: `health 11.0->1.0 dead=0->1` with the
+  min health at 1); at 2.0 it lives. So the killing blow is found exactly with the min health at 2 for the call.
+- **The game's sever on a living orc kills it** (boot 113313, `kills sever`: the head off, the body thrown 2 m, dead):
+  the head comes off at the death, not before.
+
+### 133.2 The catalogue: does the orc's half play alone? (boots 113313, 124147, 131221)
+`kills play NAME` starts a victim record on the nearest orc with no death and traces it every 0.1 s (`KILLS play +S
+...`: its attack, the root, the pelvis/neck/head heights, `KILLS play END`), `kills cat` plays every row.
+- **On an unaware orc most halves do not play**: 35 rows on the practice's far orc (113313): the orc's attack holds the
+  record for the whole 6 s but it stands idle (the head 64-76 cm over the root, the idle's breathing; pictures: standing)
+  except F4, F7_Sever, B, Stunned_B, Sneak_IK_B/F_1/F_2 (some fall, some half). Readying it as the sync readies its target
+  (`SOMVR_KILLS_PREP`, 131221) changed nothing: Sneak_IK_B, B_3, F3 stood. The record is never cleared at the
+  animation's end either (F4 fell at 0.7-1.7 s and stood up again from 4.5 s with the record still on).
+- **On a fighting orc they play** (124147, 131221: the heads drop within 0.3-1.2 s: F -6 cm at 1.25 s, F5 -9 at 0.75, F9
+  -10 at 0.68, F10_Sever -5 at 0.96, F4 -2 at 0.70, F3 -2 at 0.85, F7_Sever +30 at 0.86, Sneak_IK_B_3 +30 at 0.72,
+  Sneak_IK_F_1 +31 at 0.63) - **and the orc's own AI cuts them** after 0.3-1.7 s: `AI_Infantry_Avoid_Back(_2)`, its
+  melee (`Melee_Front_*`), a hit recoil; the fight circle's veto (ff_judge, below) and the movement hold did not stop the
+  avoid. So a half shows its first 0.3-1.3 s: the hit, the doubling over, the knees going, the fall's start.
+- Pictures (both eyes, `xr_compose.py`): 124147/132856 `stab-a..e` (F4: doubled over in front at +0.1 s, lower at +0.3,
+  on the ground by +0.6), `front-a..e` (F2_Sever: the orc in its stance, then down by +0.6 s, the head off at the death).
+
+### 133.3 The switch: `SOMVR_KILLS=on|off` (code default off; build 31's env: on)
+A kill by the player's hand is handed to `kl_take` before the game's Combat_DealHit:
+- **the killing blow** (cb_hit): the hit is dealt with the orc's min health at 2 (PR_SETMINHEALTH, back after the
+  call); a hit that took it to the floor from above was the killing blow - `kl_take`; not taken: the kill now
+  (DealHit forceKill), as before. A riposte (`ry == 2`) is "countered mid-attack".
+- **the execution** (xc_contact): `SOMVR_KILLS_EXEC=blow` (env): while the charge is ready the next heavy blow is the
+  execution - no trigger (the player holds the trigger with the grip); its charge spent as before; the row by the blow.
+- **the stealth kill** (stl_deal) and **the kill the game offers** where build 30 pressed X (vb_contact): never a
+  button again; the offered record's own pairing (its sync's TargetAttack).
+- **the downed orc's stab** (SOMVR_ABIL's ground finisher): the offered record's own pairing.
+- **helper 135's held orc**: `kl_held_kill(pc, o, rec, point, vel, axis, t)` (the interrogation's standing kills).
+
+What `kl_take` does: the blow from the contact (somvr_kills.c: the side by the contact's angle off the orc's facing,
+110 deg = its back; the kind - a stab when the tip's motion runs within 60 deg of the blade, point first, else a cut:
+overhead / rising when it falls / climbs steeply, else level; the part - the neck when the contact is within 12 cm of
+its Neck or Head node; the state - downed or stunned by its combat state's or attack's name, else the caller's
+(unaware, countered, held) or fighting). The victim: the caller's record's own sync's TargetAttack when it has one,
+else the table (somvr_kills_game.c, 39 rows: the standing executions' F/F3-F6/F8/F9, F2/F7/F10_Sever, B/B2/B4,
+B3/B4_Sever; the counter kills; the stunned; the sneak kills; the held; the downed) by the blow, in turn among the fits
+(a neck cut picks a _Sever row; a stab a stab row; its back the B rows). Then: `FUN_026ed9b0(orc, 0, victim, Talion,
+0)` (KL_START), checked by the orc's attack (+0x4d0); its movement held (KL_NAV bit 2); placed (the
+NPC movement slot: turned to face Talion with its front or back, at most 45 deg, slid only inside 55 cm, at most 30 cm,
+over 150 ms; never the player). **Refused** (the old path, at once): a captain (his rules, Last Words), a beast, an orc
+in a sync, a dead one, 4 kills at once, a record that does not start - and **an unaware orc** (`SOMVR_KILLS_UNAWARE=off`:
+its half does not play, 133.2): the stealth kill stays the silent kill.
+
+While its kill plays: no hit of ours on it (the contact loop, the stealth judge), no block or dodge roll (rx_roll), the
+fight circle grants it no attack (ff_judge's veto), its root kept 55 cm from Talion's (the fight space's 90 cm and the
+body hold are off for it: the blade stays where it went in).
+
+**The death** (`kl_deal`): Combat_DealHit(its torso node, Talion's Combat, the orc, the record, forceKill 1) with
+SOMVR_COMBAT_DEATH's type (Block_Light: no death reaction, the ragdoll from the pose it is in) - XP, the Nemesis line and
+the loot as any player kill - at the first of: its half cut (the attack leaves the record: the AI's avoid or melee),
+**down** (the head 25 cm under where it was and not falling further for 0.2 s, or rising 8 cm), **not playing** (the
+head moved under 6 cm in 0.35 s), a fall (the root 150 cm down), 2.0 s. A _Sever row's head comes off at the death with
+the game's own sever (XC_SEVER, the blade's velocity). Tunables: SOMVR_KILLS_ALIGN_MS/_DEG/_CM, _MIN_CM, _MAX_S,
+_STALL_MS/_CM, _DOWN_CM, _STAB_DEG, _SEVER=death|blow (blow kills at once: 133.1), _PREP (off: the sync start's readying, no difference seen), _FREE (SyncToAnim off: it is
+a string, never applied), _UNAWARE. Lines: `CONFIG kills=...`, `KILLS start ...` (the blow, the row and why, the
+placement), `KILLS place ...` (the movement calls, the rotation checked against the object's: 4-5 of 4-5 in every run),
+`KILLS kill ...` (when and why, the credit: dead 0->1, health -> 0), `KILLS status|END`. Test words (SOMVR_HANDS_TEST):
+`kills status|on|off|play NAME [S]|cat [FROM]|kill ROW|sever|prep on|off|free on|off|unaware on|off`.
+
+### 133.4 The stealth kill from behind by hand (`SOMVR_STEALTH_KILL_SLASH`, the thrust's numbers)
+Build 31's env: a stab within 60 deg of the blade (`SOMVR_STEALTH_KILL_THRUST_DEG=60`), 6 cm in
+(`SOMVR_STEALTH_KILL_DEPTH_CM=6`), and a full cut (the stroke's heavy tier) into its back (`SOMVR_STEALTH_KILL_SLASH=on`,
+`SOMVR_STL_BY_SLASH`) kill - the game's silent kill either way. The slow push (under 1.5 m/s along the blade), the
+blade the walk carried in, a light stroke's cut stay touches. tests/test_stealth.c: mark 18's own numbers are a touch
+under build 30's rule and the kill under build 31's.
+
+### 133.5 Runs (headless, scripts/kills31-drive.sh; logs/boot-check-20261102-; every run 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run | What | What it shows |
+|---|---|---|
+| 113313 | `kills cat` on an unaware orc; `kills kill`; front/neck cuts; `kills sever` | most halves stand idle on an unaware orc (133.2); the min health at 1 still kills (`health 11.0->1.0 dead=0->1`); the downed stab's KD half cut by its KD loop at 0.2 s, the death and its credit (`dead 0->1 health 45.0->0.0`); the sever on a living orc kills it |
+| 124147 | halves on a fighting orc; kills by hand | F3/F4/Sneak_IK_B_2/Intrgtn play (heads to -2 cm at 0.7-0.85 s) and are cut by the orc's AI; **7 takes, 7 kills**: the killing blow (F2_Sever, F10_Sever: head off at the death), **the execution by the heavy blow with no trigger** (twice: `the trigger 0.00`, the charge spent), the downed stab (KD_R3_Sever, head off) |
+| 131221 | PREP on an unaware orc; the catalogue on a fighting orc | PREP changes nothing (unaware halves idle); on the fighting orc every row starts, the AI's `Avoid_Back(_2)` / melee cut them at 0.3-1.7 s (the table's numbers in 133.2) |
+| 132856 | the pose rules (cut / down / not playing / 2 s), front/neck/stab/ground | F2_Sever riposte: down by 0.6 s, the head off at the death (the cut, 1.30 s); F4 stab: `down (the head 47 cm lower at +0.96 s)`; KD_R1_Sever: cut by `AI_Bip_KDRecover_3` at 0.30 s, head off; pictures `stab-a..e` (doubled over at +0.1 s, on the ground by +0.6 s), `front-a..e` |
+| 133951 | the neck rule (the Neck/Head nodes), the unaware refusal, the execution again | `not taken (unaware ...)` - the old path; a chest cut = `the body` -> F3 (cut at 0.50 s); a stab -> F4 (`down` at 0.65 s); the execution (no trigger) -> F6 (cut at 1.43 s) |
+| 134830 | a level cut; kill22's thrust round | F3 at the cut (0.30 s); kill22's thrust passed 13-32 cm off the body (`air`: its geometry on this build), no stealth contact to judge - the stealth path not booted end to end this round |
+
+### 133.6 For the headset, unproven
+- How 0.3-1.3 s of the game's death motion before the ragdoll reads in VR; whether the orc's AI cut (its first frame of
+  `Avoid_Back` before the ragdoll) shows.
+- The stealth kill's animation: refused on an unaware orc (133.2) - the user gets the judge's stab and the silent kill
+  with no window, not the backstab animation. Holding the orc's AI as a sync does (Combat+0x190 and whatever the AI
+  reads for "in a sync") is the next RE step; the victim half on an unaware orc may need it too.
+- The counter kill (Sync_CntrKill) and the stunned rows: picked by the table, not booted (the riposte read as
+  "countered mid-attack" took F2_Sever in 132856: a CntrKill row comes in turn).
+- Placement: the turn proven against the object's rotation (`KILLS place`: 4-5 of 4-5 calls), the slide (inside 55 cm)
+  never needed headless.
+- Helper 135's held orc (`kl_held_kill`) is wired at integration; helper 134's stuck blade (`swp_blade_in`) is not wired
+  to the kills (their blade steps aside for the stealth kill's own stick only).
+
+### 133.7 Round 2: the AI hold - the half runs to the ground (2026-11-02, after the integration merge)
+- **What cut the halves** (133.2): the orc's own attack and reaction starts, all through the start wrapper FUN_026ed9b0
+  (its callers: `NPC::vf_92`+0x63e - the NPC's scheduled attack; `FUN_02a88710`+0xfdd/+0x101d - the AI actions', the
+  avoid among them; `FUN_02741140`+0x175; besides the player's FUN_00a8c700, the sync's branch FUN_02807d20 and
+  CAIActionChangePrimaryWeapon). A sync keeps its target out of them; without one, those four call sites are patched
+  (KL_AI_NPC, KL_AI_ACT1, KL_AI_ACT2, KL_AI_MISC: `somvr_w_klai`) to refuse a start on an orc whose kill (or the
+  catalogue's play) runs - `SOMVR_KILLS_AI_HOLD=on` (code default on). The death's own DealHit is never held (a flag
+  while kl_deal runs). Every release path ends the hold with the kill: the death, the half cut (by anything else), a fall,
+  the orc gone or dead by another, `SOMVR_KILLS_MAX_S` (5 s); a half that does not play dies at 0.6 s (the head moved
+  under 12 cm: `SOMVR_KILLS_STALL_MS/_CM`; idle breathing moves it 5-8 cm).
+- **Runs** (logs/boot-check-20261102-): 140609 (held, the catalogue on a fighting orc: F3 down to -5 cm at 4.3 s,
+  Sneak_IK_B_3 to -32 at 2.6 s, no cut in 6 s; 11 AI starts held), 141650 and 142539 (by the hand: F3 `down (the
+  head 51-62 cm lower at +1.0-1.25 s)`, the counter kill `Sync_CntrKill_F` `down (82 cm lower at +1.07 s)`, the stunned
+  kill `Stunned_InstaKill_F` `down (44 cm lower at +0.65 s)`; every one `dead 0->1`, the ragdoll from the ground pose).
+  One half did not play on a fighting orc in a hit recoil (F4 after `AI_Bip_L100_L2R_F`, 141650): the stall rule kills
+  it now at 0.6 s.
+- **An unaware orc still does not play its half**: with the AI hold (140609: Sneak_IK_B 67 -> 59 cm, F4 61 -> 61 in 5 s)
+  and with its awareness meter set as a noticing orc's first (`SOMVR_KILLS_UNAWARE=wake`, 141650: Sneak_IK_B, B_3, F4 -
+  heads 63 -> 56, 65 -> 60, 62 -> 58). Not the AI then: its animation state. `SOMVR_KILLS_UNAWARE` stays off: the
+  stealth kill from behind is the silent kill.
+- **The stealth stab by a hand, end to end** (143438): Talion put 112 cm behind an unaware orc (`verbs behind 112`,
+  ducked, the blade at rest until then), a real stab - the hand from 5 cm behind the eyes to 62 cm out in 250 ms, the
+  blade pitched up 10 deg -> `STEALTH t=17679.130 kill by a thrust: the point 19.4 cm in at its spine ... along 1.64 m/s
+  cos 0.72` (44 deg off the blade: a touch under build 30's 30 deg) -> `KILLS ... not taken (unaware ...)` -> the
+  silent kill `dead=0->1`, the blade left in the wound.
+- **The held orc** (helper 135's `h31_held_kill` -> `kl_held_kill`): its grab's sync ended first (KL_SYNC_END =
+  FUN_028060a0, the game's own end of a sync), then the held rows; wired and built, not booted (the headless grab found
+  no head in reach in 143438).
+- **Helper 134's blade**: released at the death (`swp_blade_in` -> `swp_release`); and when the orc its state names is
+  gone or another orc now has that Combat (the practice's respawns reuse them: 140609 had 150 contacts with no hit after
+  one), `swp_release` - which now also clears a landed hit the arms frame has not taken (somvr_swordphys_game.c).
+
+### 133.8 Round 3: the unaware orc's half - what the sync does to its target, tried (2026-11-02)
+- **The sync start, read** (Combat_StartAttack's Sync branch, 0x26eb881..0x26ed0c0): it only runs with a node
+  (`param_2 != 0`: our node-0 start never makes a sync). For an NPC target it then (1) reads the NPC's current attack's
+  AnimationData.Sync (FUN_00a91280 -> FUN_00a90ef0) and, when it has none, calls **FUN_0296b0d0(npc)**: its brain's
+  (npc+0xc78) byte +0x402 = 1 (the re-plan of FUN_029ac890 is +0x401); (2) clears the target Combat's aim (+0x150/+0x158/
+  +0x170, +0x178 = -1) and **Combat_StartAttack(target, 0, TargetAttack, Talion, 0)** - the same as KL_START; (3) only
+  then sets both Combats' +0x190 to the sync. FUN_028081a0 -> **FUN_02254290** (the paired action's start on its +8) looks up
+  each side's animation index (FUN_0224c420(attack, hobj), the model interface 0x46a9230 vtbl+0x148), keeps two blend
+  nodes (+0x70 / +0x90, CBaseBlendNode +0x9c the rate), the indices (+0x98 / +0x9c) and their length ratio (+0xa0), and
+  FUN_022532c0 -> FUN_0224cc40 computes the alignment (the attach sockets' transforms at the animation's time,
+  "SyncActionInterp"). The two animations' times are driven together by the paired action's blend nodes.
+- **Tried on an unaware orc, each headless** (`kills play`, `kills kill`, the stealth stab by hand with
+  `kills unaware on`): readying as a sync target (KL_PREP, 131221), the AI hold (140609), its awareness meter set as a
+  noticing orc's (`=wake`, 141650), its brain's ambient action let go (FUN_0296b0d0's write, `SOMVR_KILLS_BRAIN`,
+  144518: Sneak_IK_B head 54 -> 52 cm, B_2 71 -> 58, in 5 s; the stealth kill by hand taken with `unaware on` stood
+  5 s). **None plays the half**: what drives it is the paired action's own blend nodes in the animation tree, which need
+  the sync action (and so its alignment of Talion). Building that without the sync is a larger job than this round:
+  `SOMVR_KILLS_UNAWARE` stays off (the stealth kill from behind is the silent kill), `SOMVR_KILLS_BRAIN` off (no effect).
+- The pose rules, made robust (145246 showed two false reads: a "not playing" from 102 cm of the root's own motion, a
+  "down" 0.15 s in from the half's first blended frames): the head is read as its height over the ground the orc stood
+  on at the blow (not over its moving root); **not playing** = the head not 8 cm lower by 0.8 s (`SOMVR_KILLS_STALL_MS`
+  800, `_STALL_DROP_CM` 8; 144518's unaware orc swayed its head 12+ cm with none of it down); **down** not before 0.4 s;
+  **settled** = 8 cm or more down and the head still (3 cm) for 0.6 s - a kneeling end under the down rule's 25 cm.
+  150627 (the final build): the stunned kill `down (82 cm lower at +0.35 s)`, the counter kill `(63 cm at +0.90 s)`, a
+  front cut F3 `(71 cm at +0.60 s)`, a stab F5 `(73 cm at +0.65 s)` - every one `dead 0->1`; 0 WARN, the save UNCHANGED.
+- Not covered: the brutal kill's victim (`AI_Bip_PC_StealthBrand*`) and the drop kill's (`AI_Bip_PC_InstaKill_FromAbove_*`)
+  - both are syncs the game starts with Talion's half (abil3's brutalize, SOMVR_ABOVE's plunge); with no way to play an
+  unaware orc's half alone they stay the game's.
+
+### 133.9 Build 31b: the unaware orc's half by the game's own sync, Talion held: `SOMVR_KILLS_UNAWARE=sync`
+- **How**: an unaware orc's half plays only through the sync's blend nodes (133.8), so the stealth kill by hand starts
+  the game's own: the game's selection for that orc on the stealth node (`vb_pick`: behind, unaware, in reach), then
+  `FUN_00a8c700(pc, its KBM node, the attack, the orc)` - as SOMVR_FINISH / SOMVR_ABOVE start the game's kills: the client
+  side and Combat_StartAttack, the sync, both halves; FUN_00a8e120's camera step is never asked. Talion stays the
+  player's: SOMVR_COMBAT_HOLD_TALION's hold runs for it (`kl_sync_hold`): every LOCO tick ours (the game's combatmove,
+  sync **and fallback** reasons dropped - 173839: the fallback took 70 of 71 ticks), the sync's moves of his root pulled
+  back each tick (up to 130 cm a tick: its alignment and teleport), the view on the pin; after the kill the body pulled
+  back under the view and held while his sync's record lingers (its tail moved him 48 cm after an early end, 190706; a
+  0.5 s return gave up 128 cm off and the view stepped 120 cm, 185818) - 5 s at most. The body moments stay first person
+  through it (`somvr_bm_in.our_kill`: its sync, presentation and cinematic conditions; their own hold eased the view 35
+  cm at its release, 181649) and a presentation the kill's animation starts is "in the world" (the captain module's
+  choice; 184052's B row opened the window). His half plays underneath (only our hands are drawn). The death is the
+  game's own (his half's APPLYDAMAGE, the sync's ragdoll keys); safety: 8 s, or the sync over with the orc alive -> the
+  sync ended (KL_SYNC_END) and our DealHit. Lines: `KILLS sync start|end`, `HOLD talion start|end`, `EXECUTE f=` (the eye
+  path, from the kill for 8 s).
+- **Proof** (logs/boot-check-20261102-191456, the final build; the stealth stab by hand at 112 cm behind an unaware orc,
+  three rounds): **3 of 3** - `'PC_Bip_SneakInstaKill_Silent_B_3' / 'AI_Bip_PC_Sneak_IK_B_3': the orc dead (the game's
+  kill) after 2.35 s`, `_B` 2.20 s, `_B_4` 1.85 s; the holds `131 / 126 / 115 ticks, all ours, the view on that point every
+  frame (the root off it up to 130 / 55 / 106 cm before a tick), back under the view, the view's step to the root 0.4 /
+  0.2 / 0.0 cm`; 422 eye frames, the largest step 2.76 cm (the test head's own drift: it goes on after the kills), no
+  window, 0 WARN, the save UNCHANGED. Earlier: 173839 (the first: the orc's half played, frames `stealth2-a..e`: it stands
+  close, goes down, collapses to the left; the wall and the horizon still), 181649, 182739, 184052, 184927, 185818, 190706
+  (the fixes above, one by one).
+- Not covered: the brutal kill (SOMVR_ABIL_BRUTAL's game torment) and the drop kill (SOMVR_ABOVE: Talion drops by
+  design, its view blink) keep their own paths.
+- The suite's execution / downed "no KILLS start" (152211): the driver, not the kill path - a scripted cut under helper
+  134's weighted sword reads light (the heavy tier wants the contact point at 12 m/s: 11.2 at 200 ms, 12.0 at 140 ms,
+  light), and the downed orc was placed while it still slid into a wall (the tip 73 cm off). On this branch: the
+  execution by the hard blow `tier heavy at 13.61 m/s, the trigger 0.00` -> `KILLS start ... InstaKill_F3` (183248); the
+  downed stab -> `KD_InstaKill_F2 ... dead` (184052; a downed orc's half now ends with its head still 0.8 s, 2.5 s at most).
+
+### 134.7 Build 31b: the hit's tier by the hand's own swing, a cut needs the arm in it: `SOMVR_COMBAT_TIER_HAND`, `SOMVR_COMBAT_CUT_ARM_CM`
+SOMVR_COMBAT_SWING=stroke's tier (sc_tier_swing: a cut = the stroke's reach 50 cm, the contact point at 12 m/s, the edge
+leading) read the drawn blade. The kills helper's scripted cuts read light with the weighted blade (11.2-12.6 m/s).
+- **The user's own swings** (the 11-02 session's .swordrec, 34577 frames; tests/replay_tiers.c: each blade through
+  combat's own tracker and tier, a contact at 70 % along the blade; strokes by the hand's; committed = the fist travels 30+
+  cm, a flick = the fist under 12 cm with the hand's own blade at 12 m/s):
+
+| | committed (165 strokes) | wrist flicks (89) |
+|---|---|---|
+| the hand's blade 1:1, 12 m/s | heavy 55 | heavy 27 |
+| build 30's heavy trail, 12 m/s | heavy 58 | heavy 28 |
+| build 31's body, 12 m/s | heavy 51 | heavy 26 |
+| build 31's body, 10 m/s, the fist 25 cm | heavy 59 | heavy 18 |
+| **the hand's swing, 11 m/s, the fist 25 cm (31b)** | **heavy 63** | **heavy 6** |
+
+  The weighted blade does not stop a flick reading heavy: it lags, then the joint swings it through to the hand fast (its
+  contact speed's peak 12.4 m/s on flicks). What tells a committed cut from a flick is the arm: the fist's travel in the
+  stroke (build 31's fist: committed p10 35 cm, median 67; flicks median 10). Measured on the drawn blade's own stroke the
+  fist rule still lets ~18 flicks through (that stroke spans the arm's motion before the flick); on the hand's own stroke it
+  is clean.
+- **The rule (on the merits)**: how hard a blow is = how the player swung (the hand's speed, reach and the arm in it); where
+  it lands and with which edge = the drawn blade (the contact sweep and the edge are unchanged). `SOMVR_COMBAT_TIER_HAND=on`:
+  a second tracker fed by the controller's blade with its own history (g_cb.hand has none: no velocity) gives the stroke's
+  tier and the cut's damage factor; `SOMVR_COMBAT_CUT_ARM_CM=25`: a cut also needs the blade's base (the fist) 25 cm from
+  where the stroke began (sc_speed.base_reach); `SOMVR_COMBAT_SWING_MPS=11,20` (was 12,20). The stroke's "entered" rule,
+  build 16's tier (stealth, verbs) and the contact stay the drawn blade's. Code defaults off / 0 / 12,20 (build 31).
+- Tests: test_combat (a 105 deg wrist flick at ~17 m/s at the tip: light with the fist rule, heavy without; the 2 m arm cut
+  heavy with it), tests/replay_tiers.c (offline, not in --check: `replay_tiers FILE [CUT [ALONG [blade|hand [ARM]]]]`).
+- Lines: `COMBAT config tier=...`; `COMBAT hit ... stroke=N contact=V hand=V k=K (by the hand's swing) arm=N`.
+- Run boot-check-20261102-193025 (scripts/sword31-drive.sh `tier exec`, build 26's env with the 31b block; Monado 20 Hz;
+  0 WARN, the save UNCHANGED): four committed 300 ms cuts (the fist 90 cm on its arc) into a fighting infantry - hits heavy
+  2, light 1 (`contact=11.1 ... arm=60`, `14.6 ... arm=61` heavy; `10.8 ... arm=35` light: under 11 m/s at the 20 Hz
+  sampling); four 150 ms wrist flicks - hits light 3 (`arm=11`, `22`, `12`; one at `contact=16.1`: heavy by build 31's
+  rule); the charge full (`verbs brand charge`) and one committed 300 ms cut: `KILLS start ... the execution on orc ...
+  'AI_Bip_PC_Standing_InstaKill_F3'`, `EXECUTE kill ... forceKill=1 ... tier heavy at 23.35 m/s`. Headset only: whether
+  11 m/s and the fist's 25 cm feel right in a real fight (the replay says committed swings cut a little more often than in
+  build 30, flicks a fifth as often).

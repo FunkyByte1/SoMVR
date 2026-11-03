@@ -647,6 +647,14 @@ static void og_probe(const struct th_track *tr, double t)
  *                        default 0 = off; build 24's env 0.25 - the game's own low-health overlay, a screen-fixed red
  *                        and blood drops in each eye, is out of the eyes with SOMVR_FLATFX's overlay) a faint steady red
  *                        on both edge bands, SOMVR_HURT_LOW_EDGE (0.3) of full; a blow's flash on top of it.
+ *   SOMVR_HURT_LOW_STYLE=ring|edge  build 31 (re-xr-pipeline.md 136; the 11-02 session saw nothing at 20 of 120: the
+ *                        faint edge sits on the outer 30 % of each eye's outer half, where a Quest 2's lens shows little):
+ *                        ring (the code default) = a red ring around the whole view (SOMVR_THREAT's layer, a VIEW-space
+ *                        quad: the middle clear), from SOMVR_HURT_LOW of the most health seen down to 5 % it closes in and
+ *                        darkens (somvr_th_low_*), and it throbs with a heartbeat (60 bpm at the line .. 110 bpm at 5 %:
+ *                        a lub, a softer dub 0.25 s later); edge = build 24's faint steady edges.
+ *   SOMVR_HURT_BEAT=F    build 31: under F of the most health seen (default 0.2; 0 = off) the heartbeat in both hands
+ *                        too (a 0.45 / 50 ms pulse on the lub, 0.3 / 40 ms on the dub), with the ring's throb.
  * The game's own hit sound and Talion's grunt come from its Combat_DealHit, which DF_IMPACT passes on for a landed
  * hit (untouched). `FIGHT hurt ...` */
 static struct {
@@ -667,7 +675,14 @@ static struct {
 	float low, low_edge;
 	int low_on;
 	uint64_t lows;
-} g_hu = { .ms = 300, .flash = 0.8f, .low_edge = 0.3f };
+	/* build 31: SOMVR_HURT_LOW_STYLE=ring (1) | edge (0), SOMVR_HURT_BEAT; the ring's amount now, its start (the
+	 * heartbeat's clock), the last beat's index and phase (the haptic's), counts */
+	int ring;
+	float beat_below, amt, throb;
+	double low_t0;
+	int beat_i, beat_ph;
+	uint64_t ring_frames, beats_felt;
+} g_hu = { .ms = 300, .flash = 0.8f, .low_edge = 0.3f, .ring = 1, .beat_below = 0.2f, .beat_i = -1 };
 
 /* df_drain: a landed blow at Talion from the weapon hand at `from` (world cm) */
 static void hu_blow(const float from[3], double t)
@@ -684,11 +699,23 @@ static void hu_blow(const float from[3], double t)
 static void hu_flash(uint8_t out[2], double t)
 {
 	out[0] = out[1] = 0;
-	float low = g_hu.on && g_hu.low_on ? g_hu.low_edge : 0; /* build 24, SOMVR_HURT_LOW: the faint steady edge */
+	float low = g_hu.on && g_hu.low_on && !g_hu.ring ? g_hu.low_edge : 0; /* build 24, SOMVR_HURT_LOW: the faint steady
+										   * edge (build 31: unless the ring) */
 	float u = g_hu.flash_t > 0 && g_hu.ms > 0 ? (float)((t - g_hu.flash_t) * 1e3 / g_hu.ms) : 2;
 	float k = g_hu.on && u >= 0 && u < 1 ? (1 - u) * (1 - u) : 0; /* quick in, eased out */
 	for (int s = 0; s < 2; s++)
 		out[s] = (uint8_t)lrintf(255.0f * fminf(1.0f, fmaxf(low, g_hu.flash * g_hu.side[s] * k)));
+}
+
+/* build 31, th_frame before its put (SOMVR_HURT_LOW_STYLE=ring): low health's ring and its throb for the layer */
+static void hu_low(uint8_t *low, uint8_t *beat)
+{
+	*low = *beat = 0;
+	if (!g_hu.on || !g_hu.ring || !g_hu.low_on)
+		return;
+	*low = (uint8_t)lrintf(1.0f + 254.0f * fminf(1.0f, fmaxf(0.0f, g_hu.amt))); /* at least 1: on */
+	*beat = (uint8_t)lrintf(255.0f * fminf(1.0f, fmaxf(0.0f, g_hu.throb)));
+	g_hu.ring_frames++;
 }
 
 static void hu_frame(uintptr_t pl, int stereo, double t)
@@ -731,12 +758,35 @@ static void hu_frame(uintptr_t pl, int stereo, double t)
 		g_hu.last_t = t;
 	}
 	g_hu.hp = hp;
-	/* build 24, SOMVR_HURT_LOW: under the share of the most seen (alive), the faint edge; above it (or dead), none */
-	int low = g_hu.low > 0 && g_hu.hp_max > 0 && hp > 0 && hp < g_hu.low * g_hu.hp_max;
+	/* build 24, SOMVR_HURT_LOW: under the share of the most seen (alive), the faint edge; above it (or dead), none.
+	 * Build 31 (SOMVR_HURT_LOW_STYLE=ring): the ring by how low, its heartbeat, the hands' beat under SOMVR_HURT_BEAT */
+	int low = 0;
+	float amt = somvr_th_low_amount(hp, g_hu.hp_max, g_hu.low, &low);
 	if (low != g_hu.low_on) {
 		g_hu.low_on = low, g_hu.lows += low;
+		if (low)
+			g_hu.low_t0 = t, g_hu.beat_i = -1;
 		logf_("FIGHT low t=%.3f: Talion's health %.1f of %.1f: %s", t, hp, g_hu.hp_max,
-		      low ? "under SOMVR_HURT_LOW - the faint red edge on" : "the faint red edge off");
+		      !g_hu.ring ? (low ? "under SOMVR_HURT_LOW - the faint red edge on" : "the faint red edge off")
+		      : low ? "under SOMVR_HURT_LOW - the red ring on" : "the red ring off");
+		if (low && g_hu.ring)
+			logf_("FIGHT low t=%.3f: the ring: how low %.2f, the heartbeat %.0f bpm, the hands' beat %s", t, amt,
+			      somvr_th_beat_bpm(amt), hp < g_hu.beat_below * g_hu.hp_max ? "on (under SOMVR_HURT_BEAT)" : "not yet");
+	}
+	g_hu.amt = low ? amt : 0, g_hu.throb = 0;
+	if (low && g_hu.ring) {
+		int i = 0, ph = 0;
+		g_hu.throb = somvr_th_beat(amt, t - g_hu.low_t0, &i, &ph);
+		int feel = g_hu.on && stereo && g_hu.beat_below > 0 && hp < g_hu.beat_below * g_hu.hp_max;
+		if (i != g_hu.beat_i || ph != g_hu.beat_ph) { /* a lub or a dub begins */
+			if (feel && (i != g_hu.beat_i || ph == 2)) {
+				float a = ph == 1 ? 0.45f : 0.3f, d = ph == 1 ? 0.05f : 0.04f;
+				for (int h = 0; h < 2; h++)
+					in_haptic_event(h, a, d, SOMVR_HAP_COMBAT);
+				g_hu.beats_felt += ph == 1;
+			}
+			g_hu.beat_i = i, g_hu.beat_ph = ph;
+		}
 	}
 }
 
@@ -923,12 +973,12 @@ static int tg_blade_h(double t, float hb[3], float ht[3], float head[3], float *
 /* every frame: the blade in the right grip while its test pose is still (3 frames, no swing) */
 static void tg_calib(double t)
 {
-	if (!g_bd.test || !g_bd.t_on[1] || g_bd_sw.on[1]) {
+	if (!g_bd.test || !g_bd.t_on[IN_SIDE(1)] || g_bd_sw.on[IN_SIDE(1)]) { /* build 30: the sword hand's controller */
 		g_tg.still = 0;
 		return;
 	}
-	if (memcmp(g_tg.last_v, g_bd.t_v[1], sizeof g_tg.last_v))
-		memcpy(g_tg.last_v, g_bd.t_v[1], sizeof g_tg.last_v), g_tg.still = 0;
+	if (memcmp(g_tg.last_v, g_bd.t_v[IN_SIDE(1)], sizeof g_tg.last_v))
+		memcpy(g_tg.last_v, g_bd.t_v[IN_SIDE(1)], sizeof g_tg.last_v), g_tg.still = 0;
 	float hb[3], ht[3], head[3], yaw;
 	if (++g_tg.still < 3 || !tg_blade_h(t, hb, ht, head, &yaw))
 		return;
@@ -1057,7 +1107,7 @@ static void tg_track(struct df_track *d, const somvr_df_in *in, sv_quat hq, doub
 		}
 		g_tg.frozen = 1;
 		struct tg_learn *l = tg_find(d->attack);
-		if (g_tg.mode >= TG_PATH && l && g_tg.have_blade && g_bd.t_on[1]) {
+		if (g_tg.mode >= TG_PATH && l && g_tg.have_blade && g_bd.t_on[IN_SIDE(1)]) {
 			sv_vec3 hp;
 			sv_quat hq2;
 			somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq2);
@@ -1228,6 +1278,8 @@ static const char *fight_word(const char *w)
 	}
 	if (!strcmp(a, "bite") || !strcmp(a, "hitfx")) /* build 17: "fight bite on|off|hold ...|dumps N", "fight hitfx on|off" */
 		return hf_word(w);
+	if (!strcmp(a, "phys") || !strcmp(a, "flesh")) /* build 31: "fight phys on|off", "fight flesh on|off" */
+		return swp_word(w);
 	if (!strcmp(a, "swing")) { /* build 20: "fight swing on|off" - SOMVR_COMBAT_SWING=stroke live (the proof's both rules) */
 		if (!g_bd.test)
 			return "fight swing (SOMVR_HANDS_TEST is off: ignored)";
@@ -1284,10 +1336,22 @@ static const char *fight_word(const char *w)
 		return fr_range_set(b, lo, hi, "the word") ? "fight range" : "fight range (not set: see the FIGHT range line)";
 	}
 	if (!strcmp(a, "health")) { /* build 16's tests: "fight health N": the nearest orc at Talion (within 8 m) gets N health;
-				    * build 27b: "fight health N not 0xPTR" - that AI skipped (an ally: Lithariel in "The Rescue") */
-		float hv = (float)atof(b);
+				    * build 27b: "fight health N not 0xPTR" - that AI skipped (an ally: Lithariel in "The Rescue");
+				    * build 30 (som-b30-story5, re-xr-pipeline.md 131): `not` read at last (w starts at "health": build
+				    * 27b's "%*s %*s %*s not" never matched, the aid hit her), and "all CM": every live AI within CM
+				    * (up to 800) gets N, the `not` one never */
+		float hv = (float)atof(b), rad = 800.0f;
 		unsigned long skip = 0;
-		(void)sscanf(w, "%*s %*s %*s not %lx", &skip);
+		int all = 0;
+		char t1[8] = "", t2[24] = "", t3[8] = "", t4[24] = "";
+		int nt = sscanf(w, "%*s %*s %7s %23s %7s %23s", t1, t2, t3, t4);
+		for (int q = 0; q + 1 < nt; q += 2) {
+			const char *kw = q ? t3 : t1, *vv = q ? t4 : t2;
+			if (!strcmp(kw, "not"))
+				skip = strtoul(vv, NULL, 16);
+			else if (!strcmp(kw, "all") && atof(vv) > 0)
+				all = 1, rad = fminf((float)atof(vv), 800.0f);
+		}
 		uintptr_t pm = 0, obj = 0, pl = g_ft_pl;
 		float root[3];
 		struct cb_orc o[CB_ORCS];
@@ -1296,17 +1360,24 @@ static const char *fight_word(const char *w)
 			uintptr_t pcomb = peek_ptr(pl + P_COMBAT), pc = pcomb ? peek_ptr(pcomb + PC_SERVER) : 0;
 			if (pc && vptr_of((void *)pc) != g_cbg.vt_combat)
 				pc = 0;
-			m = pcomb ? cb_orcs_r(pcomb, pc, root, 800.0f, o, CB_ORCS) : 0;
+			m = pcomb ? cb_orcs_r(pcomb, pc, root, rad, o, CB_ORCS) : 0;
 		}
-		int k = 0;
-		while (k < m && skip && o[k].c == (uintptr_t)skip)
-			k++;
-		uintptr_t own = k < m ? peek_ptr(o[k].c + C_OWNER) : 0;
-		float h0 = k < m ? cb_health(o[k].c) : NAN;
-		if (!own || !isfinite(h0) || cb_dead(o[k].c) || !arm_poke(own + CH_HEALTH, &hv, sizeof hv))
+		int done = 0, skipped = 0;
+		for (int k = 0; k < m && (all || !done); k++) {
+			if (skip && o[k].c == (uintptr_t)skip) {
+				skipped = 1;
+				continue;
+			}
+			uintptr_t own = peek_ptr(o[k].c + C_OWNER);
+			float h0 = cb_health(o[k].c);
+			if (!own || !isfinite(h0) || cb_dead(o[k].c) || !arm_poke(own + CH_HEALTH, &hv, sizeof hv))
+				continue;
+			done++;
+			logf_("FIGHT health orc=%#lx %.1f -> %.1f (the word; %.0f cm from Talion%s%s)", (unsigned long)o[k].c, h0, hv, o[k].dist,
+			      skipped ? "; skipped: `not`" : "", all ? "; `all`" : "");
+		}
+		if (!done)
 			return "fight health (SOMVR_HANDS_TEST off, no live orc within 8 m, or not N in 0..10000: ignored)";
-		logf_("FIGHT health orc=%#lx %.1f -> %.1f (the word; %.0f cm from Talion%s)", (unsigned long)o[k].c, h0, hv, o[k].dist,
-		      k ? "; the nearest skipped: `not`" : "");
 		return "fight health";
 	}
 	if (!strcmp(a, "shield") || !strcmp(a, "class")) { /* build 16's tests: "fight shield game|glance", "fight class speed|cut" */
@@ -2063,7 +2134,8 @@ static void rl_hold(uintptr_t mv, const float was[3], float *xf)
 	memcpy(a, g_fs.ra[k], sizeof a), memcpy(root, g_fs.root, sizeof root);
 	int hr = g_fs.have_root, i = g_fs.ri[k];
 	uint32_t gen = g_fs.rgen[k];
-	float cap = g_fs.rcapk[k] > 0 && g_fs.rcapk[k] < g_fs.rcap ? g_fs.rcapk[k] : g_fs.rcap;
+	/* build 31 (som-b31-hands): a negative per-reel cap = measured only (the far shove's reel, py_reel_free) */
+	float ck = g_fs.rcapk[k], cap = ck < 0 ? 0 : ck > 0 && ck < g_fs.rcap ? ck : g_fs.rcap;
 	if (atomic_load(&g_fs.seq) != s0 || i < 0 || i >= RL_N)
 		return;
 	struct rl_e *e = &g_rl.e[i];
@@ -2084,6 +2156,8 @@ __attribute__((used)) void somvr_w_aimove(void *mv, float *xf)
 	if (have)
 		memcpy(was, (char *)mv + FS_MV_POS, sizeof was);
 	((fs_move_fn)g_fs.orig)(mv, xf);
+	if (have && kl_aim((uintptr_t)mv, was, xf))
+		return; /* build 31, SOMVR_KILLS: its kill plays - placed to the player, never held off by the space or the body */
 	if (have) {
 		rl_hold((uintptr_t)mv, was, xf); /* the reel's cap first, the space after it (it has the last word) */
 		if (g_fs.space > 0)
@@ -2409,6 +2483,8 @@ static void fight_start(int *bad)
 	g_hu.flash = env_float("SOMVR_HURT_FLASH", g_hu.flash, 0, 1, bad);
 	g_hu.low = env_float("SOMVR_HURT_LOW", 0, 0, 0.9f, bad);
 	g_hu.low_edge = env_float("SOMVR_HURT_LOW_EDGE", g_hu.low_edge, 0, 1, bad);
+	g_hu.ring = env_word("SOMVR_HURT_LOW_STYLE", (const char *const[]){ "edge", "ring" }, 2, 1); /* build 31 */
+	g_hu.beat_below = env_float("SOMVR_HURT_BEAT", g_hu.beat_below, 0, 0.9f, bad);
 	g_kx.mode = env_word("SOMVR_COMBAT_KNOCKBACK", g_kx_mode_w, 4, KX_OFF);
 	g_kx.sliver = env_float("SOMVR_COMBAT_SLIVER", 0, 0, 1000, bad);
 	if (g_kx.sliver > 0)
@@ -2429,11 +2505,17 @@ static void fight_start(int *bad)
 	      : "logged only", g_hu.ms, g_hu.flash, g_th.on ? "on" : "SOMVR_THREAT is off: no flash, the pulse only",
 	      g_hu.low > 0 && g_hu.on ? "a faint steady red on both edges under that share of the most health seen" : "off");
 	if (g_hu.low > 0 && g_hu.on)
-		logf_("CONFIG hurt low=%.2f edge=%.2f", g_hu.low, g_hu.low_edge);
+		logf_("CONFIG hurt low=%.2f edge=%.2f style=%s beat=%.2f%s", g_hu.low, g_hu.low_edge, g_hu.ring ? "ring" : "edge",
+		      g_hu.beat_below, g_hu.ring ? " (build 31: a red ring around the view under that share, closing in and "
+		      "darkening down to 5 %, throbbing with a heartbeat of 60..110 bpm; the hands feel the beat under the beat share)"
+		      : "");
 }
 
 static void fight_end_log(void)
 {
+	if (g_hu.on && g_hu.low > 0 && g_hu.ring) /* build 31 */
+		logf_("FIGHT END low health: %llu turns under SOMVR_HURT_LOW, the ring's frames %llu, heartbeats felt %llu",
+		      (unsigned long long)g_hu.lows, (unsigned long long)g_hu.ring_frames, (unsigned long long)g_hu.beats_felt);
 	if (g_fs.ok)
 		logf_("FIGHT END space %.0f cm: NPC moves %llu, near Talion %llu (an orc at him) + %llu (another), held %llu",
 		      g_fs.space, (unsigned long long)atomic_load(&g_fs.calls), (unsigned long long)atomic_load(&g_fs.near),

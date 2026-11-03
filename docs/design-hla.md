@@ -531,7 +531,7 @@ This is where SoM differs most from HL:A, and where the most honest compromises 
 
 - **Built:** haptics % (`SOMVR_HAPTICS`), move direction head/hand.
 - **Gap:**
-  - left-handed mirroring (design 8) is not built;
+  - left-handed mirroring (design 8): built in build 30 (re-xr-pipeline.md 132: Handedness, at the next start);
   - subtitles ride the HUD quad or the menu quad;
   - the button counter (D8 b) is not built;
   - there is no one-handed mode.
@@ -573,7 +573,7 @@ Numbers are re-xr-pipeline.md sections.
 | HG-1 | **Done:** the root anchor and the 1:1 core (17), the head out of the view (25, 26), no game move of the player in a fight (64), the head tether at an edge (69), the body under the held view after a finisher (93) | staggers and knockdowns judged in the headset |
 | HG-2 | **Done for the moments met so far:** body moments (20), syncs in place (64), the interrogation's end (77), death in first person (90), the beasts' takedown (92), the drop kill's held view (102), Seat mode on a caragor (105, 109) | moments not met yet in the story; the window stays the fallback |
 | HG-3 | **Done:** the warnings (18), block / parry / dodge judged at the blade (22, 62, 65), the red unblockable warning (62), the vault over an orc and its riposte (108) | block bars / ground arrows (not needed so far) |
-| HG-4 | **Done:** the wrist panel (15), live and saved rows (34, 56), the Fight page and the 64-bit word (73), a steady panel and a pointer that locks (80), the Test page (82); build 27 (112): **Walk toward** (head / hand), the honest **Pointer hand**, the settings masks 64 bits | a true dominant hand (SH-7); turning "off"; per-trigger vignette levels |
+| HG-4 | **Done:** the wrist panel (15), live and saved rows (34, 56), the Fight page and the 64-bit word (73), a steady panel and a pointer that locks (80), the Test page (82); build 27 (112): **Walk toward** (head / hand), the honest **Pointer hand**, the settings masks 64 bits; build 30 (132): **Handedness** (the true dominant hand, at the next start) | turning "off"; per-trigger vignette levels |
 | HG-5 | **Part:** the warnings (18), the attacker choice mapped (42), the crowd's pace (70), the turn cue for an orc that left the view (108) | the 1 s veto and damage x0.5 as tuning (42.9 built, judged in the headset) |
 | HG-6 | **Done** (38) | - |
 | HG-7 | **Done:** the slots (21), the sword over the shoulder and the bow at the left shoulder (46), the blade kept in the fist (66), its sounds from the hand (75) | slot ticks' feel |
@@ -587,7 +587,7 @@ Numbers are re-xr-pipeline.md sections.
 | SH-4 | **Part:** the theatre (36), captains' introductions in the world (88, 104), the card at the gaze (95) | scripted level cameras |
 | SH-5 | **Part:** B at every pick and mission start (43, 103) | touch-to-use by the hand |
 | SH-6 | **Open** | the hand-held wheel |
-| SH-7 | **Part:** subtitles at the gaze (87, 89); build 27: the Main hand row renamed Pointer hand (it only moves the panel and the pointer) | the left-handed mirror (the sword slot, the bow hand, the left hand's verbs), subtitle sizes |
+| SH-7 | **Part:** subtitles at the gaze (87, 89); build 27: the Main hand row renamed Pointer hand (it only moves the panel and the pointer); build 30 (132): **the left-handed mirror** - Handedness in Pointer hand's place, the controllers swapped at the source from the next start (the sword, its slot and A/B on the left; the bow, the wraith hand's verbs and the move stick on the right), the Controls page mirrored | subtitle sizes; the game's own button icons under the mirror |
 | SH-8 | **Done:** the stealth kill by the thrust (67, 72, 81, 84), the brand and drain by the left hand (39, 97, 98), the drop kill by the plunge (102) | - |
 | SH-9 | **Part:** the turn cue (108); the spawner mapped (42.6) | a cue for arrivals from behind |
 | SH-10 | **Open** | - |

@@ -749,6 +749,412 @@ static void replay(const char *path) {
     free(t), free(q), free(ang), free(off), free(two), free(lvl), free(o), free(os);
 }
 
+
+/* ---- build 31: the sword as a weighted body (swp_*; docs/re-xr-pipeline.md 134) ---------------------------------------
+ * The hand's motions as the arms see them (m, the grips' space; the blade along the grip's +Z, SOMVR_SWORD_ANGLE 0): a
+ * turn of the wrist about the fist (no travel), an arm's cut about the shoulder 55 cm behind (the fist on the arc, the
+ * blade along the arm), wiggles, a guard raise; the weight's numbers against build 16-30's heavy (swg) on the same
+ * motion. The flesh: a capsule body ahead, cuts and stabs into it. */
+static const float SWP_AX[3] = {0, 0, 1};
+typedef struct {
+    int kind;          /* 0 wrist turn about the fist, 1 the arm's cut about the shoulder, 2 a wiggle, 3 guard raise,
+                        * 4 a straight move (thrust / pull) */
+    float amp_deg, T_s, t0, R, dist_m; /* the turn, its time, its start, the arm's length; kind 4: the move's length */
+    float axis[3];     /* the turn's axis (world) */
+    float dir[3];      /* kind 4: the move's direction */
+    float a0_deg;      /* the turn's start (deg about axis) */
+} smot;
+static float smj(float u) { u = u < 0 ? 0 : u > 1 ? 1 : u; return 10 * u * u * u - 15 * u * u * u * u + 6 * u * u * u * u * u; }
+static void smot_at(const smot *M, float t, const float p0[3], float p[3], float q[4]) {
+    float x = t - M->t0, u = x / M->T_s, a = 0;
+    memcpy(p, p0, 12);
+    if (M->kind == 2) a = x < 0 || x > M->T_s * 4 ? 0 : M->amp_deg * DEG * sinf(6.2831853f * x / M->T_s);
+    else if (M->kind != 4) a = M->amp_deg * DEG * smj(u);
+    a += M->a0_deg * DEG;
+    float r[3] = {M->axis[0] * a, M->axis[1] * a, M->axis[2] * a};
+    swg_qexp(r, q);
+    if (M->kind == 1) { /* the fist on the arc about the shoulder R behind it (along -blade) */
+        float sh[3] = {p0[0], p0[1], p0[2] - M->R}, arm[3] = {0, 0, M->R}, ra[3];
+        qrot(q, arm, ra);
+        for (int i = 0; i < 3; i++) p[i] = sh[i] + ra[i];
+    } else if (M->kind == 3) { /* the guard: up 35 cm and the blade turned across (the axis) */
+        float k = smj(u);
+        p[1] += 0.35f * k, p[2] -= 0.10f * k;
+    } else if (M->kind == 4) {
+        float k = smj(u);
+        for (int i = 0; i < 3; i++) p[i] += M->dir[i] * M->dist_m * k;
+    }
+}
+typedef struct {
+    float lag;        /* deg: the blade's largest angle off the hand's */
+    float tip_peak;   /* m/s: the sword's tip, its peak; hand_tip: the hand's own (the controller blade) */
+    float hand_tip;
+    float settle_ms;  /* after the motion's end until the blade stays within 1 deg of the hand */
+    float over;       /* deg: past the hand's end along the turn (the follow-through) */
+    float stretch_cm; /* the grip's largest offset */
+    float arrive_ms;  /* the guard: after the hand reached its end until the blade is within 10 deg of it (0 = before) */
+    float w_peak;     /* rad/s: the sword's peak swing speed */
+    int resets;
+} sres;
+static sres srun(int level, int two, int guard, const smot *M, int fps, float total_s, int old) {
+    swp_cfg c;
+    swp_defaults(&c, level);
+    swp_state s;
+    swp_reset(&s);
+    swg_cfg gc;
+    swg_defaults(&gc, level);
+    swg_state gs;
+    swg_reset(&gs);
+    sres R;
+    memset(&R, 0, sizeof R);
+    float p0[3] = {0.1f, -0.25f, -0.4f}, dt = 1.0f / (float)fps, end = M->t0 + (M->kind == 2 ? 4 * M->T_s : M->T_s);
+    float last_big = end, prev_tip[3] = {0, 0, 0}, arrived = -1;
+    int nf = (int)(total_s * (float)fps);
+    for (int f = 0; f <= nf; f++) {
+        float t = (float)f * dt, p[3], q[4], op[3], oq[4], hb[3], sb[3];
+        smot_at(M, t, p0, p, q);
+        if (old) { /* build 16-30's heavy on the same motion: the blade turned about the fist, the fist 1:1 */
+            float rot[3], e[4];
+            if (!swg_step(&gs, &gc, q, SWP_AX, f ? dt : 0.0111f, two, rot)) memset(rot, 0, 12);
+            swg_qexp(rot, e), qmul(e, q, oq), memcpy(op, p, 12);
+        } else {
+            swp_step(&s, &c, t, p, q, SWP_AX, f ? dt : 0, two, guard, NULL, op, oq);
+        }
+        qrot(q, SWP_AX, hb), qrot(oq, SWP_AX, sb);
+        float d = hb[0] * sb[0] + hb[1] * sb[1] + hb[2] * sb[2], ang = acosf(d > 1 ? 1 : d < -1 ? -1 : d) / DEG;
+        float tip[3], htip[3];
+        for (int i = 0; i < 3; i++) tip[i] = op[i] + sb[i] * c.s_tip, htip[i] = p[i] + hb[i] * c.s_tip;
+        if (f) {
+            float v = pdist(tip, prev_tip) / dt;
+            if (v > R.tip_peak) R.tip_peak = v;
+        }
+        static float prev_htip[3];
+        if (f) {
+            float v = pdist(htip, prev_htip) / dt;
+            if (v > R.hand_tip) R.hand_tip = v;
+        }
+        memcpy(prev_tip, tip, 12), memcpy(prev_htip, htip, 12);
+        if (ang > R.lag) R.lag = ang;
+        float st = pdist(op, p) * 100;
+        if (st > R.stretch_cm) R.stretch_cm = st;
+        if (t >= end) {
+            if (ang > 1.0f) last_big = t;
+            /* past the hand along the turn: the blade's turn off the hand's, along the motion's axis */
+            float cr[3] = {hb[1] * sb[2] - hb[2] * sb[1], hb[2] * sb[0] - hb[0] * sb[2], hb[0] * sb[1] - hb[1] * sb[0]};
+            float past = (cr[0] * M->axis[0] + cr[1] * M->axis[1] + cr[2] * M->axis[2]) / DEG;
+            past = M->amp_deg >= 0 ? past : -past;
+            if (past > R.over) R.over = past;
+            if (arrived < 0 && ang < 10.0f) arrived = t;
+        }
+    }
+    R.settle_ms = (last_big - end) * 1000.0f;
+    R.arrive_ms = arrived < 0 ? 999 : (arrived - end) * 1000.0f;
+    R.w_peak = s.peak_w, R.resets = (int)s.resets;
+    return R;
+}
+
+static void test_swp_weight(void) {
+    printf("swp weight (heavy one hand | two hands | build 30's heavy, one hand): lag deg, the tip's peak m/s (the hand's), "
+           "settled ms, past the hand deg, the grip off cm\n");
+    smot ms[] = {
+        {0, 60, 0.8f, 0.2f, 0, 0, {0, 1, 0}, {0}, 0},   /* a slow wrist turn 60 deg in 0.8 s (~2.4 rad/s) */
+        {1, 100, 0.40f, 0.2f, 0.55f, 0, {0, 1, 0}, {0}, 0}, /* a committed arm cut: 100 deg about the shoulder in 0.4 s */
+        {1, 120, 0.28f, 0.2f, 0.55f, 0, {0, 1, 0}, {0}, 0}, /* a fast arm cut 120 deg in 0.28 s */
+        {0, 90, 0.15f, 0.2f, 0, 0, {0, 1, 0}, {0}, 0},  /* a flick of the wrist 90 deg in 0.15 s (~19 rad/s peak) */
+        {0, 60, 0.08f, 0.2f, 0, 0, {1, 0, 0}, {0}, 0},  /* a snap 60 deg in 80 ms (~24 rad/s) */
+        {2, 15, 0.25f, 0.2f, 0, 0, {0, 1, 0}, {0}, 0},  /* a wiggle +-15 deg at 4 Hz */
+    };
+    const char *nm[] = {"slow turn 60/0.8s", "arm cut 100/0.40s", "arm cut 120/0.28s", "flick 90/0.15s", "snap 60/0.08s",
+                        "wiggle 15@4Hz"};
+    sres r[6][3];
+    for (int k = 0; k < 6; k++) {
+        r[k][0] = srun(SWG_HEAVY, 0, 0, &ms[k], 90, 1.8f, 0);
+        r[k][1] = srun(SWG_HEAVY, 1, 0, &ms[k], 90, 1.8f, 0);
+        r[k][2] = srun(SWG_HEAVY, 0, 0, &ms[k], 90, 1.8f, 1);
+        printf("  %-18s %5.1f %5.1f (%5.1f) %4.0f %4.1f %4.1f | %5.1f %5.1f %4.0f %4.1f | %5.1f %5.1f %4.0f %4.1f\n", nm[k],
+               r[k][0].lag, r[k][0].tip_peak, r[k][0].hand_tip, r[k][0].settle_ms, r[k][0].over, r[k][0].stretch_cm,
+               r[k][1].lag, r[k][1].tip_peak, r[k][1].settle_ms, r[k][1].over, r[k][2].lag, r[k][2].tip_peak,
+               r[k][2].settle_ms, r[k][2].over);
+    }
+    /* the slow turn is 1:1 to the eye; the committed cut carries fully (back on the hand soon, little past it) */
+    CHECK(r[0][0].lag < 3.0f, "slow turn: lag %.2f deg", r[0][0].lag);
+    CHECK(r[1][0].settle_ms < 250 && r[1][0].over < 14.0f && r[1][0].lag < 16.0f, "the committed cut: lag %.1f, settled "
+          "%.0f ms, past %.1f deg", r[1][0].lag, r[1][0].settle_ms, r[1][0].over);
+    /* weight: the fast motions trail far more than build 30's heavy, and a flick's tip is held well under the hand's */
+    for (int k = 2; k < 5; k++)
+        CHECK(r[k][0].lag > r[k][2].lag * 1.8f, "%s: lag %.1f vs build 30's %.1f", nm[k], r[k][0].lag, r[k][2].lag);
+    CHECK(r[3][0].tip_peak < 0.8f * r[3][0].hand_tip, "the flick's tip %.1f m/s vs the hand's %.1f", r[3][0].tip_peak,
+          r[3][0].hand_tip);
+    CHECK(r[4][0].tip_peak < 0.6f * r[4][0].hand_tip, "the snap's tip %.1f vs %.1f", r[4][0].tip_peak, r[4][0].hand_tip);
+    CHECK(r[3][2].tip_peak > 0.85f * r[3][2].hand_tip, "build 30's heavy let the flick's tip go %.1f of %.1f (why the user "
+          "felt no weight)", r[3][2].tip_peak, r[3][2].hand_tip);
+    /* a committed cut's tip speed in a real sword's range, and two hands follow closer than one */
+    CHECK(r[1][0].tip_peak > 8.0f && r[1][0].tip_peak < 20.0f, "the committed cut's tip %.1f m/s", r[1][0].tip_peak);
+    for (int k = 1; k < 5; k++)
+        CHECK(r[k][1].lag < 0.7f * r[k][0].lag, "%s: two hands %.1f vs one %.1f", nm[k], r[k][1].lag, r[k][0].lag);
+    CHECK(r[5][0].lag < 25.0f, "the wiggle stays within %.1f deg", r[5][0].lag);
+    for (int k = 0; k < 6; k++) CHECK(r[k][0].resets == 0 && r[k][1].resets == 0, "%s: no reset", nm[k]);
+    /* 20 Hz (the headless runtime) the same within a few degrees */
+    sres r20 = srun(SWG_HEAVY, 0, 0, &ms[1], 20, 1.8f, 0);
+    CHECK(fabsf(r20.lag - r[1][0].lag) < 6.0f, "20 Hz: the arm cut lags %.1f (90 Hz %.1f)", r20.lag, r[1][0].lag);
+    printf("  20 Hz arm cut 100/0.40s: lag %.1f tip %.1f settled %.0f past %.1f\n", r20.lag, r20.tip_peak, r20.settle_ms, r20.over);
+    /* light: less lag than heavy */
+    sres rl = srun(SWG_LIGHT, 0, 0, &ms[3], 90, 1.8f, 0);
+    CHECK(rl.lag < r[3][0].lag, "light's flick %.1f vs heavy %.1f", rl.lag, r[3][0].lag);
+    printf("  light flick 90/0.15s: lag %.1f tip %.1f\n", rl.lag, rl.tip_peak);
+    /* the guard: a raise (up 35 cm, the blade turned 80 deg across in 0.25 s): the blade there in time */
+    smot g = {3, 80, 0.25f, 0.2f, 0, 0, {1, 0, 0}, {0}, 0};
+    sres g0 = srun(SWG_HEAVY, 0, 0, &g, 90, 1.2f, 0), g1 = srun(SWG_HEAVY, 0, 1, &g, 90, 1.2f, 0),
+         g2 = srun(SWG_HEAVY, 1, 0, &g, 90, 1.2f, 0), gold = srun(SWG_HEAVY, 0, 0, &g, 90, 1.2f, 1);
+    printf("  guard raise 80 deg + 35 cm in 0.25 s: within 10 deg of the hand %.0f ms after it (a blow coming: %.0f, two hands "
+           "%.0f, build 30's heavy %.0f); lag %.1f / %.1f / %.1f / %.1f deg\n", g0.arrive_ms, g1.arrive_ms, g2.arrive_ms,
+           gold.arrive_ms, g0.lag, g1.lag, g2.lag, gold.lag);
+    CHECK(g1.arrive_ms <= gold.arrive_ms + 15.0f, "a blow coming: the guard there %.0f ms (build 30: %.0f)", g1.arrive_ms,
+          gold.arrive_ms);
+    /* no motion: nothing moves (no drift, no droop) */
+    smot still = {0, 0, 1, 10, 0, 0, {0, 1, 0}, {0}, 0};
+    sres rs = srun(SWG_HEAVY, 0, 0, &still, 90, 2.0f, 0);
+    CHECK(rs.lag < 0.01f && rs.stretch_cm < 0.01f, "still: %.4f deg %.4f cm", rs.lag, rs.stretch_cm);
+}
+
+/* the flesh: an orc's body (pelvis, torso, neck, head) ahead of the fist, the blade into it; the combat's hit is taken
+ * when the blade comes within 30 cm of the torso's axis (its hit capsule is wider than the body) */
+typedef struct {
+    int started, end, two;
+    float in_ms, in_v, exit_tip_v, enter_tip_v, peak_stretch, peak_depth, stretch_at_slide, wound_off_max, pend_ms;
+    float end_t, start_t, depth_end;
+    int open_at_end;
+} fres;
+static float g_fdz; /* the body's distance ahead: 0 = its axis 65 cm along the blade */
+static void fbody(swp_body *b, const float p0[3], float dx, float dz) {
+    dz += g_fdz;
+    memset(b, 0, sizeof *b);
+    b->n = 4;
+    float y[4] = {-0.30f, 0.15f, 0.38f, 0.52f};
+    for (int k = 0; k < 4; k++) b->node[k][0] = p0[0] + dx, b->node[k][1] = p0[1] + y[k], b->node[k][2] = p0[2] + 0.65f + dz;
+    b->r[0] = 0.17f, b->r[1] = 0.16f, b->r[2] = 0.09f;
+    memcpy(b->o, b->node[1], 12);
+    b->q[3] = 1;
+}
+/* M: the hand; M2 (optional) after it; body_dx(t): the body's sideways move */
+static fres frun(const smot *M, const smot *M2, int kind, int two, float total_s, float bdx, float bdx_t0, float bdx_T,
+                 int fps, int hit_r_cm) {
+    swp_cfg c;
+    swp_defaults(&c, SWG_HEAVY);
+    swp_state s;
+    swp_reset(&s);
+    fres R;
+    memset(&R, 0, sizeof R);
+    float p0[3] = {0.1f, -0.25f, -0.4f}, dt = 1.0f / (float)fps, ptip[3] = {0}, stretch_prev = 0;
+    int hit = 0, nf = (int)(total_s * (float)fps);
+    float hr = hit_r_cm > 0 ? (float)hit_r_cm * 0.01f : 0.30f;
+    for (int f = 0; f <= nf; f++) {
+        float t = (float)f * dt, p[3], q[4], op[3], oq[4], sb[3];
+        if (M2 && t >= M2->t0) {
+            float pe[3], qe[4], p2[3], q2[4];
+            smot_at(M, M->t0 + M->T_s + 10, p0, pe, qe); /* the first motion's end pose, then the second from there */
+            smot_at(M2, t, p0, p2, q2);
+            qmul(q2, qe, q);
+            for (int i = 0; i < 3; i++) p[i] = pe[i] + (p2[i] - p0[i]);
+        } else {
+            smot_at(M, t, p0, p, q);
+        }
+        float k = bdx_T > 0 ? smj((t - bdx_t0) / bdx_T) : 0;
+        swp_body b;
+        fbody(&b, p0, bdx * k, 0);
+        int ev0 = s.wound;
+        swp_step(&s, &c, t, p, q, SWP_AX, f ? dt : 0, two, 0, (hit || s.pend || s.wound) ? &b : NULL, op, oq);
+        qrot(oq, SWP_AX, sb);
+        float tip[3];
+        for (int i = 0; i < 3; i++) tip[i] = op[i] + sb[i] * c.s_tip;
+        float tv = f ? pdist(tip, ptip) / dt : 0;
+        memcpy(ptip, tip, 12);
+        if (!hit) { /* combat's hit: the blade within hr of the torso's axis */
+            float b0[3], b1[3];
+            for (int i = 0; i < 3; i++) b0[i] = op[i] + sb[i] * c.s_guard, b1[i] = tip[i];
+            float d = swp_seg_seg(b0, b1, b.node[0], b.node[2], NULL, NULL);
+            if (d < hr) {
+                hit = swp_wound_hit(&s, &c, kind, &b);
+                R.enter_tip_v = tv;
+                R.pend_ms = t;
+            }
+        }
+        if (s.ev & SWP_EV_START) R.started = 1, R.in_v = s.in_v, R.start_t = t, R.pend_ms = (t - R.pend_ms) * 1000;
+        if (s.wound) {
+            R.in_ms = (t - R.start_t) * 1000;
+            if (s.stretch > R.peak_stretch) R.peak_stretch = s.stretch;
+            if (s.depth > R.peak_depth) R.peak_depth = s.depth;
+            if (kind == SWP_W_STAB && s.slide_v > 0.05f && R.stretch_at_slide == 0) R.stretch_at_slide = stretch_prev;
+            /* the blade at the wound: the wound's point off the blade's line (it is held on it) */
+            float d[3], wa;
+            for (int i = 0; i < 3; i++) d[i] = s.Wt[i] - op[i];
+            wa = d[0] * sb[0] + d[1] * sb[1] + d[2] * sb[2];
+            for (int i = 0; i < 3; i++) d[i] -= wa * sb[i];
+            float wo = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            if (wo > R.wound_off_max) R.wound_off_max = wo;
+        }
+        stretch_prev = s.stretch;
+        if (getenv("SWP_DEBUG") && (atoi(getenv("SWP_DEBUG")) > 1 || s.wound || s.pend) && f % 3 == 0)
+            printf("    t=%.3f w%d p%d s=%.3f depth %.1f stretch %.1f off %.1f deg fw %.0f slide %.2f flow %.2f cut %d tip %.1f\n", t,
+                   s.wound, s.pend, s.s, s.depth * 100, s.stretch * 100, s.off_rad / DEG, s.f_wound, s.slide_v, s.flow_v,
+                   s.cutting, tv);
+        if (ev0 && !s.wound && (s.ev & SWP_EV_END)) R.exit_tip_v = tv, R.end_t = t;
+        if ((s.ev & SWP_EV_END) && !R.end) R.end = s.end;
+    }
+    R.open_at_end = s.wound != 0, R.depth_end = s.depth, R.two = two;
+    if (!R.end && s.wound) R.end = -1;
+    return R;
+}
+static void fprint(const char *nm, const fres *r) {
+    printf("  %-34s %s; in at %.1f m/s (the tip %.1f), %.0f ms in the body, out with the tip at %.1f m/s; the hand drawn off "
+           "the controller up to %.1f cm; deepest %.1f cm%s\n", nm, r->started ? r->end > 0 ? swp_end_name(r->end) : "still in"
+           : r->end == SWP_END_MISS ? "missed (never in the body)" : "no wound", r->in_v, r->enter_tip_v, r->in_ms,
+           r->exit_tip_v, r->peak_stretch * 100, r->peak_depth * 100, r->open_at_end ? " (open at the end)" : "");
+}
+static void test_swp_flesh(void) {
+    printf("swp flesh (Urfael heavy into an orc's body):\n");
+    /* cuts across the torso: the arm's cut about the shoulder from 70 deg right to 70 deg left */
+    smot fast = {1, 140, 0.35f, 0.2f, 0.55f, 0, {0, 1, 0}, {0}, -70};
+    smot slow = {1, 85, 1.2f, 0.2f, 0.55f, 0, {0, 1, 0}, {0}, -70};
+    smot back = {1, -60, 0.8f, 2.0f, 0.55f, 0, {0, 1, 0}, {0}, 0};
+    fres a = frun(&fast, NULL, SWP_W_CUT, 0, 1.5f, 0, 0, 0, 90, 0);
+    fres a2 = frun(&fast, NULL, SWP_W_CUT, 1, 1.5f, 0, 0, 0, 90, 0);
+    fres b = frun(&slow, &back, SWP_W_CUT, 0, 3.2f, 0, 0, 0, 90, 0);
+    fres b2 = frun(&slow, NULL, SWP_W_CUT, 1, 2.0f, 0, 0, 0, 90, 0);
+    fres a20 = frun(&fast, NULL, SWP_W_CUT, 0, 1.5f, 0, 0, 0, 20, 0);
+    fprint("committed cut 140 deg / 0.35 s", &a);
+    fprint("... with both hands", &a2);
+    fprint("... at 20 Hz", &a20);
+    fprint("weak cut 85 deg / 1.2 s, then back", &b);
+    fprint("weak cut with both hands", &b2);
+    /* the committed cut bites deep, is held a while (seen), and leaves the body - through, or ripped free by the hand
+     * going on - its tip slowed to under half */
+    CHECK(a.started && (a.end == SWP_END_THROUGH || a.end == SWP_END_TEAR) && a.in_ms >= 40 && a.peak_depth > 0.08f &&
+          a.exit_tip_v < 0.5f * a.enter_tip_v, "the committed cut bites and passes: %d %s %.0f ms %.1f cm, the tip %.1f -> %.1f",
+          a.started, swp_end_name(a.end), a.in_ms, a.peak_depth * 100, a.enter_tip_v, a.exit_tip_v);
+    CHECK(b.started && b.end == SWP_END_BACK && b.peak_depth > 0.03f, "the weak cut stops in the body and comes back out: %s, "
+          "deepest %.1f cm", swp_end_name(b.end), b.peak_depth * 100);
+    CHECK(a2.in_ms <= a.in_ms && b2.peak_depth > b.peak_depth, "both hands cut harder: %.0f vs %.0f ms, the weak cut %.1f vs "
+          "%.1f cm deep", a2.in_ms, a.in_ms, b2.peak_depth * 100, b.peak_depth * 100);
+    /* 20 Hz (the headless runtime): a 16 m/s cut crosses the body between two frames - the hit comes after it: no wound
+     * (the headless boots cut slower); the headset's 80-120 Hz sees it (above) */
+    CHECK(a20.end == SWP_END_MISS || a20.started, "20 Hz: %s", swp_end_name(a20.end));
+    /* a stab: the blade at the body (the tip 10 cm short of its front), the hand 35 cm in along the blade in 0.25 s; the
+     * body steps 20 cm aside (0.6 s), then the hand draws back 45 cm in 0.6 s */
+    smot st = {4, 0, 0.25f, 0.2f, 0, 0.35f, {0, 1, 0}, {0, 0, 1}, 0};
+    smot pull = {4, 0, 0.6f, 1.8f, 0, 0.45f, {0, 1, 0}, {0, 0, -1}, 0};
+    smot yank = {4, 0, 0.12f, 1.0f, 0, 0.6f, {0, 1, 0}, {1, 0, 0}, 0};
+    g_fdz = 0.55f; /* the body's front 3 cm past the tip */
+    fres c1 = frun(&st, &pull, SWP_W_STAB, 0, 3.0f, 0.20f, 0.8f, 0.6f, 90, 12);
+    fres c0 = frun(&st, NULL, SWP_W_STAB, 0, 1.6f, 0.20f, 0.8f, 0.6f, 90, 12);
+    fres c2 = frun(&st, &yank, SWP_W_STAB, 0, 1.8f, 0, 0, 0, 90, 12);
+    fres c20 = frun(&st, &pull, SWP_W_STAB, 0, 3.0f, 0.20f, 0.8f, 0.6f, 20, 12);
+    fprint("stab 35 cm / 0.25 s, the body aside", &c0);
+    fprint("... then drawn back 45 cm / 0.6 s", &c1);
+    fprint("... at 20 Hz", &c20);
+    fprint("stab, then yanked aside 60 cm / 0.12 s", &c2);
+    printf("    the pull: the blade began to slide out with the hand %.1f cm behind it; the wound kept on the blade within "
+           "%.2f cm while the body moved\n", c1.stretch_at_slide * 100, c0.wound_off_max * 100);
+    CHECK(c0.started && c0.open_at_end && c0.peak_depth > 0.15f, "the stab sticks: open %d, deepest %.1f cm", c0.open_at_end,
+          c0.peak_depth * 100);
+    CHECK(c0.wound_off_max < 0.02f, "the stuck blade goes with the body: the wound %.2f cm off it", c0.wound_off_max * 100);
+    CHECK(c1.end == SWP_END_OUT && c1.stretch_at_slide > 0.03f, "drawn out with a pull: %s, slid with the hand %.1f cm "
+          "behind", swp_end_name(c1.end), c1.stretch_at_slide * 100);
+    CHECK(c2.end == SWP_END_TEAR, "yanked: %s", swp_end_name(c2.end));
+    /* a player's thrust is not along the blade: 20 deg off it (boot 20261102-130907's scripted arc tore at once) */
+    smot sl = {4, 0, 0.25f, 0.2f, 0, 0.35f, {0, 1, 0}, {0.342f, 0, 0.940f}, 0};
+    fres c3 = frun(&sl, NULL, SWP_W_STAB, 0, 1.6f, 0, 0, 0, 90, 12);
+    fres c320 = frun(&sl, NULL, SWP_W_STAB, 0, 1.6f, 0, 0, 0, 20, 12);
+    fprint("stab 20 deg off the blade's line", &c3);
+    CHECK(c3.started && c3.open_at_end && c320.open_at_end, "a sloppy thrust stays in: %d %s (20 Hz %s)", c3.started,
+          c3.open_at_end ? "in" : swp_end_name(c3.end), c320.open_at_end ? "in" : swp_end_name(c320.end));
+    CHECK(c20.end == SWP_END_OUT, "20 Hz: %s", swp_end_name(c20.end));
+    g_fdz = 0;
+    /* a hit whose blade never reaches the body (the capsule's edge): no wound */
+    smot graze = {1, 40, 0.3f, 0.2f, 0.55f, 0, {0, 1, 0}, {0}, -70};
+    fres g = frun(&graze, NULL, SWP_W_CUT, 0, 1.0f, 0, 0, 0, 90, 60);
+    fprint("graze (the hit's capsule only)", &g);
+    CHECK(!g.started && g.end == SWP_END_MISS, "a graze opens no wound: %d %s", g.started, swp_end_name(g.end));
+}
+
+/* SWP_REPLAY=FILE (a <log>.swordrec, v2 with the grip's place): build 31's weight on the user's own motion - the
+ * blade's angle off the hand, the tip's speed against the hand's (while swinging), the grip off; the hand's turn rates */
+static void swp_replay(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { printf("SWP_REPLAY: %s not opened\n", path); return; }
+    char line[512];
+    int n = 0, cap = 1 << 16;
+    double *T = malloc(sizeof(double) * cap);
+    float (*Q)[4] = malloc(sizeof(float[4]) * cap), (*P)[3] = malloc(sizeof(float[3]) * cap), *ang = malloc(sizeof(float) * cap);
+    int *TW = malloc(sizeof(int) * cap);
+    while (fgets(line, sizeof line, f) && n < cap) {
+        if (line[0] == '#') continue;
+        double t;
+        float q[4], a, off, p[3];
+        int two, lv;
+        if (sscanf(line, "%lf %f %f %f %f %d %d %f %f %f %f %f", &t, &q[0], &q[1], &q[2], &q[3], &two, &lv, &a, &off, &p[0], &p[1],
+                   &p[2]) != 12) continue;
+        T[n] = t, memcpy(Q[n], q, 16), P[n][0] = p[0] * 0.01f, P[n][1] = p[1] * 0.01f, P[n][2] = p[2] * 0.01f;
+        ang[n] = a, TW[n] = two, n++;
+    }
+    fclose(f);
+    printf("SWP_REPLAY %s: %d frames\n", path, n);
+    for (int pass = 0; pass < 3; pass++) {
+        int lv = pass == 2 ? SWG_LIGHT : SWG_HEAVY, old = pass == 1;
+        swp_cfg c;
+        swp_defaults(&c, lv);
+        swp_state s;
+        swp_reset(&s);
+        swg_cfg gc;
+        swg_defaults(&gc, SWG_HEAVY);
+        swg_state gs;
+        swg_reset(&gs);
+        float *o = malloc(sizeof(float) * n), *ws = malloc(sizeof(float) * n), *rt = malloc(sizeof(float) * n);
+        int k = 0, kw = 0, kr = 0;
+        float ptip[3] = {0}, phtip[3] = {0}, hmax = 0, tmax = 0, tipmax = 0, htipmax = 0, smax = 0;
+        int have = 0;
+        for (int i = 0; i < n; i++) {
+            float dt = i ? (float)(T[i] - T[i - 1]) : 0, a = ang[i] * DEG, ax[3] = {0, sinf(a), cosf(a)}, op[3], oq[4];
+            if (old) {
+                float rot[3], e[4];
+                if (!swg_step(&gs, &gc, Q[i], ax, dt > 0 ? dt : 0.0111f, TW[i], rot)) memset(rot, 0, 12);
+                swg_qexp(rot, e), qmul(e, Q[i], oq), memcpy(op, P[i], 12);
+            } else {
+                swp_step(&s, &c, T[i], P[i], Q[i], ax, dt, TW[i], 0, NULL, op, oq);
+            }
+            float hb[3], sb[3], tip[3], htip[3];
+            qrot(Q[i], ax, hb), qrot(oq, ax, sb);
+            float d = hb[0] * sb[0] + hb[1] * sb[1] + hb[2] * sb[2], off = acosf(d > 1 ? 1 : d < -1 ? -1 : d) / DEG;
+            for (int j = 0; j < 3; j++) tip[j] = op[j] + sb[j], htip[j] = P[i][j] + hb[j];
+            if (have && dt > 0.004f && dt < 0.05f) {
+                float vt = pdist(tip, ptip) / dt, vh = pdist(htip, phtip) / dt;
+                if (vh > 3.0f && vh < 40.0f) { /* while the hand's tip moves 3+ m/s */
+                    ws[kw++] = off;
+                    rt[kr++] = vt / vh;
+                    if (vh > htipmax) htipmax = vh;
+                    if (vt > tipmax) tipmax = vt;
+                }
+                if (vh > hmax && vh < 40.0f) hmax = vh;
+                if (vt > tmax && vh < 40.0f) tmax = vt;
+            }
+            o[k++] = off;
+            float st = pdist(op, P[i]) * 100;
+            if (st > smax) smax = st;
+            memcpy(ptip, tip, 12), memcpy(phtip, htip, 12), have = 1;
+        }
+        qsort(o, (size_t)k, sizeof *o, cmpf), qsort(ws, (size_t)kw, sizeof *ws, cmpf), qsort(rt, (size_t)kr, sizeof *rt, cmpf);
+        printf("  %-22s off the hand p50 %.1f p95 %.1f max %.1f deg; swinging (the hand's tip 3+ m/s, %d frames) p50 %.1f p95 "
+               "%.1f deg, the tip's speed / the hand's p50 %.2f p10 %.2f p90 %.2f; the tip's peak %.1f m/s (the hand's %.1f); the "
+               "grip off up to %.1f cm; resets %llu\n",
+               old ? "build 30 heavy" : lv == SWG_HEAVY ? "build 31 heavy" : "build 31 light", k ? o[k / 2] : 0,
+               k ? o[k * 95 / 100] : 0, k ? o[k - 1] : 0, kw, kw ? ws[kw / 2] : 0, kw ? ws[kw * 95 / 100] : 0,
+               kr ? rt[kr / 2] : 0, kr ? rt[kr / 10] : 0, kr ? rt[kr * 9 / 10] : 0, tipmax, htipmax, smax,
+               (unsigned long long)s.resets);
+        free(o), free(ws), free(rt);
+    }
+    free(T), free(Q), free(P), free(ang), free(TW);
+}
+
 int main(void) {
     /* the grip 30 cm ahead, 20 cm down, turned and tilted; the swing about a tilted axis */
     float r0[3] = {0.4f, -0.3f, 0.2f};
@@ -763,8 +1169,12 @@ int main(void) {
     test_follow();
     test_bite();
     test_bite_drag();
+    test_swp_weight();
+    test_swp_flesh();
     const char *rp = getenv("SWG_REPLAY");
     if (rp && rp[0]) replay(rp);
+    const char *sp = getenv("SWP_REPLAY");
+    if (sp && sp[0]) swp_replay(sp);
     printf("test_smooth: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

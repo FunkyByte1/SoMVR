@@ -124,6 +124,7 @@ _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK ==
 		       (int)SOMVR_PRA_REMOVE == (int)SOMVR_VMPR_REMOVE && (int)SOMVR_PRA_ARROWS == (int)SOMVR_VMPR_ARROWS &&
 		       (int)SOMVR_PRA_HEALTH == (int)SOMVR_VMPR_HEALTH && (int)SOMVR_PRA_FAR == (int)SOMVR_VMPR_FAR &&
 		       (int)SOMVR_PRA_GROUP == (int)SOMVR_VMPR_GROUP && (int)SOMVR_PRA_CAPTAIN == (int)SOMVR_VMPR_CAPTAIN &&
+		       (int)SOMVR_PRA_PLACE == (int)SOMVR_VMPR_PLACE && /* build 31 */
 		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 6 /* the menu's six labels (build 22) */,
 	       "the menu's practice requests = the practice module's");
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
@@ -622,6 +623,8 @@ static int pr_far_spot(const struct pr_me *m, const float fwd[3], float at[3], f
 	return 0;
 }
 
+/* build 31 (re-xr-pipeline.md 136): Place orc's spot for pr_spawn_at(.., far = 2) */
+static float g_pr_place_at[3];
 static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *who, int far)
 {
 	const char *fail = NULL;
@@ -650,17 +653,21 @@ static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *w
 		fb_rec_name(tmpl, tn, sizeof tn);
 	sv_vec3 f = sv_qrot(sv_qnormalize(sv_quat_of(m->rot)), (sv_vec3){ 0, 0, 1 });
 	float fwd[3] = { f.x, f.y, f.z }, at[3], hit[3] = { 0, 0, 0 }, q[4], hp[3] = { 0, 0, 0 }, dist = g_pr.ahead_cm;
-	uintptr_t ground = 0, ctx, ret = 0, h = 0, npc = 0, c = 0, zone = 0;
+	uintptr_t ground = 0, ctx = 0, ret = 0, h = 0, npc = 0, c = 0, zone = 0;
 	uint32_t lvl = 0;
 	somvr_pr_ahead(m->pos, fwd, g_pr.ahead_cm, at);
 	if (!tmpl)
 		fail = "no such AI/Templates record (by name)";
-	else if (far ? !pr_far_spot(m, fwd, at, hit, &ground, &dist) : !pr_ground(at, hit, &ground))
-		fail = far ? "no ground ahead at SOMVR_PRACTICE_FAR_CM -6..+2 m (the ray down from 2 m over Talion's root to 6 m "
+	else if (far == 2 ? !pr_ground(g_pr_place_at, hit, &ground)
+		 : far ? !pr_far_spot(m, fwd, at, hit, &ground, &dist) : !pr_ground(at, hit, &ground))
+		fail = far == 2 ? "the ray down at the placed spot hit nothing"
+		       : far ? "no ground ahead at SOMVR_PRACTICE_FAR_CM -6..+2 m (the ray down from 2 m over Talion's root to 6 m "
 			     "under it, 3 directions)"
 			   : "the ray down hit nothing (no ground within 6 m below the spot ahead)";
 	else if (!(ctx = ground ? ground : m->pc ? peek_ptr(m->pc + C_HOBJ) : 0))
 		fail = "no context object (neither the ground's nor Talion's)";
+	if (far == 2 && !fail) /* build 31: Place orc - its distance (the line's "ahead") */
+		dist = dist3(hit, m->pos);
 	if (!fail) {
 		/* the far orc turns its back to Talion: it faces the point as far beyond it (its eyes away from him) */
 		float away[3] = { 2 * hit[0] - m->pos[0], hit[1], 2 * hit[2] - m->pos[2] };
@@ -698,7 +705,8 @@ static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *w
 	}
 	if (pr_log_ok(t))
 		logf_("PRACTICE t=%.3f spawn%s %s (%s) template %s ('%s') %s: %s; at (%.1f %.1f %.1f) %.0f cm ahead, ground object %#lx, "
-		      "%s; hobj=%#lx npc=%#lx Combat=%#lx zone=%#lx level %u", t, far ? " far" : "", somvr_pr_orc_label(type), who,
+		      "%s; hobj=%#lx npc=%#lx Combat=%#lx zone=%#lx level %u", t, far == 2 ? " placed" : far ? " far" : "",
+		      somvr_pr_orc_label(type), who,
 		      name, tmpl ? tn : "-", fail ? "FAILED" : "ok", fail ? fail : "one orc out", hit[0], hit[1], hit[2],
 		      (double)dist, (unsigned long)ground, far ? "its back to Talion (unaware: it sees him only as the game's "
 		      "senses would)" : "facing Talion", (unsigned long)h, (unsigned long)npc, (unsigned long)c, (unsigned long)zone,
@@ -1530,6 +1538,128 @@ static void pr_aid_tick(const struct pr_me *m, int have, double t)
 	      kind == 1 ? "Talion's health" : "the Focus", (double)was, (double)now, (double)mx);
 }
 
+/* ---- build 31 (re-xr-pipeline.md 136; the 11-02 session's mark 21: "point where I want it in kind of like a circle
+ * guide and then just place the orc unaware"): Practice > Place orc. The sword hand's aim (its laser's line) to the
+ * world within 40 m: the ground there (the ray down from 30 cm back along the aim, so a wall's face puts it at the
+ * wall's foot) gets the gold ring and its post (the objective layer, as the wraith step's); with the panel closed a
+ * fresh trigger press there puts an orc of the page's type on it, its back to Talion (unaware, as Spawn far orc's);
+ * B, the button again or 30 s cancel. In the practice area only (pr_spawn_at's rules). ---------------------------- */
+#define PR_PLACE_RANGE_CM 4000.0f
+#define PR_PLACE_TIMEOUT_S 30.0
+static struct {
+	int on, type, armed, b_was, have, logs;
+	double t0;
+	float spot[3], dist;
+	uint64_t starts, placed, cancels, timeouts, frames, frames_spot;
+} g_ppl;
+static int pr_place_on(void) { return g_ppl.on; }
+static void pr_place_end(double t, const char *why)
+{
+	if (!g_ppl.on)
+		return;
+	g_ppl.on = 0;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f place: %s (%.1f s; frames %llu, with a spot %llu)", t, why, t - g_ppl.t0,
+		      (unsigned long long)g_ppl.frames, (unsigned long long)g_ppl.frames_spot);
+}
+static void pr_place_start(int type, double t, const char *who)
+{
+	if (g_ppl.on) { /* the button again: off */
+		g_ppl.cancels++;
+		pr_place_end(t, "cancelled (the button again)");
+		return;
+	}
+	memset(&g_ppl.spot, 0, sizeof g_ppl.spot);
+	g_ppl.on = 1, g_ppl.type = type >= 0 && type < SOMVR_PRO_N ? type : g_pr.cur_orc, g_ppl.armed = 0, g_ppl.b_was = 1;
+	g_ppl.t0 = t, g_ppl.have = 0, g_ppl.logs = 0, g_ppl.frames = g_ppl.frames_spot = 0, g_ppl.starts++;
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f place (%s): aim the sword hand at the ground - the gold ring; close the panel, the trigger "
+		      "puts an unaware %s there (its back to Talion); B, the button again or %.0f s cancel", t, who,
+		      somvr_pr_orc_label(g_ppl.type), PR_PLACE_TIMEOUT_S);
+}
+/* the sword hand's aim in the world (cm): its origin and direction; 0 = not tracked */
+static int pr_place_aim(sv_vec3 *o, sv_vec3 *d)
+{
+	const somvr_hand *hd = &g_inp.hands[SOMVR_HAND_R];
+	const somvr_hand_in *hi = &g_inp.st.hand[SOMVR_HAND_R];
+	if (!hd->valid)
+		return 0;
+	sv_vec3 p;
+	sv_quat q;
+	somvr_hand_game(hd, &p, &q, NULL, NULL);
+	if ((hi->aim_flags & 3u) == 3u) /* the aim pose's turn (the laser's: OpenXR -Z = the game's +Z), mirrored as the grip's */
+		q = sv_qnormalize((sv_quat){ -hi->aim.q[0], -hi->aim.q[1], hi->aim.q[2], hi->aim.q[3] });
+	sv_vec3 f = somvr_rig_vec(&g_rig, g_fr.base, sv_qrot(q, (sv_vec3){ 0, 0, 1 }));
+	float n = sqrtf(f.x * f.x + f.y * f.y + f.z * f.z);
+	if (!(n > 1e-4f))
+		return 0;
+	*o = somvr_rig_point(&g_rig, g_fr.base, p), *d = (sv_vec3){ f.x / n, f.y / n, f.z / n };
+	return 1;
+}
+static void pr_place_tick(const struct pr_me *m, int have, double t)
+{
+	if (!g_ppl.on)
+		return;
+	g_ppl.frames++;
+	if (t - g_ppl.t0 > PR_PLACE_TIMEOUT_S) {
+		g_ppl.timeouts++;
+		pr_place_end(t, "timed out (nothing placed)");
+		return;
+	}
+	const somvr_hand_in *hi = &g_inp.st.hand[SOMVR_HAND_R];
+	int b = (hi->buttons & SOMVR_BTN_UPPER) != 0, panel = vm_open();
+	if (b && !g_ppl.b_was && !panel) {
+		g_ppl.cancels++;
+		pr_place_end(t, "cancelled (B)");
+		return;
+	}
+	g_ppl.b_was = b;
+	sv_vec3 o, d;
+	somvr_climb_hit h;
+	memset(&h, 0, sizeof h);
+	g_ppl.have = 0;
+	if (have && pr_place_aim(&o, &d) && cl_ray(NULL, -1, o, d, PR_PLACE_RANGE_CM, &h) && h.hit) {
+		float back[3] = { h.point.x - 30.0f * d.x, h.point.y - 30.0f * d.y, h.point.z - 30.0f * d.z }, g[3];
+		uintptr_t gobj = 0;
+		if (pr_ground(back, g, &gobj))
+			memcpy(g_ppl.spot, g, sizeof g), g_ppl.have = 1, g_ppl.dist = dist3(g, m->pos), g_ppl.frames_spot++;
+	}
+	if (g_ppl.logs < 6 && t - g_ppl.t0 >= 0.5 * g_ppl.logs) {
+		g_ppl.logs++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f place: the aim %s", t, g_ppl.have ? "on the ground (the spot below)" : "on nothing (no "
+			      "ground within 40 m along the sword hand's aim)");
+		if (g_ppl.have && pr_log_ok(t))
+			logf_("PRACTICE t=%.3f place: the spot (%.0f %.0f %.0f), %.1f m from Talion, %.1f m below him", t,
+			      g_ppl.spot[0], g_ppl.spot[1], g_ppl.spot[2], g_ppl.dist / 100.0f, (m->pos[1] - g_ppl.spot[1]) / 100.0f);
+	}
+	float tr = hi->trigger;
+	if (panel || tr < 0.3f)
+		g_ppl.armed = !panel;
+	else if (g_ppl.armed && tr > 0.8f && g_ppl.have) {
+		memcpy(g_pr_place_at, g_ppl.spot, sizeof g_pr_place_at);
+		uint64_t n0 = g_pr.spawns;
+		pr_spawn_at(m, g_ppl.type, t, "Place orc", 2);
+		g_ppl.placed += g_pr.spawns > n0;
+		pr_place_end(t, g_pr.spawns > n0 ? "placed" : "the spawn failed (its line above)");
+	}
+}
+/* ob_frame (H4): the spot's gold ring and its post, as the wraith step's */
+static int pr_place_entry(somvr_objective_frame *e)
+{
+	if (!g_ppl.on || !g_ppl.have || game_paused())
+		return 0;
+	somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
+			    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
+	float w[3] = { g_ppl.spot[0], g_ppl.spot[1], g_ppl.spot[2] }, w2[3] = { w[0] + 45.0f, w[1], w[2] }, x2[3],
+	      wt[3] = { w[0], w[1] + 170.0f, w[2] };
+	somvr_th_to_xr(&mp, w, e->pos), somvr_th_to_xr(&mp, w2, x2), somvr_th_to_xr(&mp, wt, e->top);
+	e->n = 1, e->flags = SOMVR_OBF_LAND | SOMVR_OBF_LINE, e->id = 0;
+	e->dist_m = sqrtf((x2[0] - e->pos[0]) * (x2[0] - e->pos[0]) + (x2[1] - e->pos[1]) * (x2[1] - e->pos[1]) +
+			  (x2[2] - e->pos[2]) * (x2[2] - e->pos[2])); /* an orc's footprint: 45 cm */
+	return 1;
+}
+
 static void pr_request(const struct pr_me *m, int have, int action, int orc, double t, const char *who)
 {
 	switch (action) {
@@ -1540,6 +1670,7 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 	case SOMVR_PRA_SPAWN: pr_spawn(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who); break;
 	case SOMVR_PRA_GROUP: pr_group(m, orc >= 3 && orc <= SOMVR_PR_GROUP_MAX ? orc : g_pr.group_n, t, who); break; /* build 19; 27: 3..8 */
 	case SOMVR_PRA_CAPTAIN: kp_spawn(m, t, who); break; /* build 22: SOMVR_CAPTAIN (somvr_captain_game.c) */
+	case SOMVR_PRA_PLACE: pr_place_start(orc, t, who); break; /* build 31 */
 	case SOMVR_PRA_FAR: /* build 18 */
 		pr_spawn_at(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who, 1);
 		break;
@@ -1712,6 +1843,7 @@ static void pr_frame(uintptr_t pl)
 	kp_frame(&m, have, t); /* build 22: SOMVR_CAPTAIN - our captain's fate, the test words */
 	pr_group_tick(t); /* build 19 */
 	pr_far_tick(&m, t); /* build 18 */
+	pr_place_tick(&m, have, t); /* build 31: Place orc */
 	if (g_pr.here && have && t >= g_pr.next_clear) {
 		g_pr.next_clear = t + 1.0;
 		if (!(gate & ~(uint32_t)SOMVR_PRG_TRIP)) /* the clear's gate: never in a scripted moment */

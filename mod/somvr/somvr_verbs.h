@@ -37,6 +37,12 @@ typedef struct {
     float ask_s;       /* ... this long (0.25 s) */
     float hold_max_s;  /* B let go after this even with the trigger still held (6 s: the drain takes ~3) */
     float cool_s;      /* no new grab or wraith press this long after one ended (0.4 s) */
+    /* build 31 (som-b31-hands, docs/re-xr-pipeline.md 135): */
+    float fist_s;      /* a trigger press this soon after the grab is the fist closing, not the wraith hand (0 = build 30;
+                        * the session's grabs: the trigger 11 ms after the grip, the drain ended the hold in 3 s) */
+    float grab_max_s;  /* the hold let go after this long (0 = never: the game's own end or the open hand) */
+    float ask_low_cm;  /* the pull counts with the palm at most this far under the eyes (0 = anywhere in ask_cm): the
+                        * hand drawn back to the chest for a push is no pull to the face (boot 20261102-112615) */
 } somvr_vb_cfg;
 
 void somvr_vb_cfg_default(somvr_vb_cfg *c);
@@ -60,6 +66,8 @@ typedef struct {
     float body[SOMVR_VB_ORCS][3];
     float body_cm[SOMVR_VB_ORCS];
     int game_done;     /* the game's hold ended on its own (completed or out: Talion's record) */
+    int let_go;        /* build 31: let the held orc go now (the hand's push: the shove follows) */
+    int no_ask;        /* build 31: no pull to the face now (the blade swings or just met the held orc) */
 } somvr_vb_hand_in;
 
 enum { SOMVR_VBH_IDLE = 0, SOMVR_VBH_GRAB, SOMVR_VBH_WRAITH };
@@ -105,7 +113,10 @@ typedef struct {
     float back_deg;    /* ... the reach line's angle off that back (-1 = no eyes, not out, or too far) */
     int edge;          /* a new squeeze this step while idle (whatever came of it; dist_cm then the nearest head's) */
     float held_s;      /* RELEASE / LOST / WRAITH_END / DONE: how long it was held */
+    int why;           /* build 31, RELEASE: SOMVR_VBR_* */
+    int fist;          /* build 31: this step's trigger press was the fist closing (no B) */
 } somvr_vb_hand_out;
+enum { SOMVR_VBR_OPEN = 0, SOMVR_VBR_PUSH = 1, SOMVR_VBR_MAX = 2 }; /* why a hold was let go */
 
 void somvr_vb_hand_reset(somvr_vb_hand *s);
 void somvr_vb_hand_step(somvr_vb_hand *s, const somvr_vb_cfg *c, const somvr_vb_hand_in *in, somvr_vb_hand_out *o);

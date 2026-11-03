@@ -693,6 +693,12 @@ static void ff_judge(uintptr_t e, uintptr_t tgt, uintptr_t slot)
 		pthread_mutex_unlock(&g_ff_mu);
 		return;
 	}
+	if (kl_hobj_busy(id)) { /* build 31, SOMVR_KILLS: its kill plays - the fight circle grants it no attack */
+		float veto = g_ff.cfg.veto_score;
+		memcpy((void *)(e + FF_E_SCORE), &veto, sizeof veto);
+		pthread_mutex_unlock(&g_ff_mu);
+		return;
+	}
 	if (!g_ff.head_ok || !(t - g_ff.head_t < FF_FRESH_S)) { /* no fresh head: the game's own choice */
 		g_ff.n.stale++;
 		pthread_mutex_unlock(&g_ff_mu);

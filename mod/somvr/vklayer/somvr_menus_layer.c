@@ -371,6 +371,9 @@ static int mn_hud_menu(void) { return MN.hud_menu; }
 
 /* the off hand (the watch's, the wrist panel's): the right one when the menu's main hand is the left */
 static int mn_off_hand(void) { return VM.on && VM.main_hand == SOMVR_HAND_L ? SOMVR_HAND_R : SOMVR_HAND_L; }
+/* build 30 (re-xr-pipeline.md 132): the controller whose lower button is the game's A this session - the right one,
+ * the left one with the preload's left-handed mirror (the card says "X button" then) */
+static int mn_a_hand(void) { return VM.on && VM.set.handed_on ? SOMVR_HAND_L : SOMVR_HAND_R; }
 /* this frame's layout of the tiles for a w x h HUD image (the watch's column on the off hand's elbow side); 0 = none */
 static int mn_layout(uint32_t w, uint32_t h) {
     if (MN.lay_w != w || MN.lay_h != h) { /* the rects in this image's pixels */
@@ -770,6 +773,8 @@ static void xl_cap(xr_comp *c) {
         c->l[XL_OBJL] = NULL, n--;
     if (n > max + nb && c->l[XL_OBJ]) /* build 15: then the objective's marker */
         c->l[XL_OBJ] = NULL, n--;
+    if (n > max + nb && c->l[XL_LOW]) /* build 31: then low health's ring */
+        c->l[XL_LOW] = NULL, n--;
     if (n <= max || !nb) return;
     for (int i = XL_BAND; i <= XL_BAND4; i++) c->l[i] = NULL;
     if (MN.n_capped++ < 3 || MN.n_capped % 600 == 0)
@@ -892,7 +897,7 @@ static int mn_card(int ev, const somvr_vm_gin *gi, somvr_posef *panel, int *have
         somvr_posef eye[2] = {gi->head, gi->head}; /* (vm_head: the views' midpoint, view 0's orientation) */
         somvr_mn_board_pose(eye, MN_CARD_DIST_M, MN_CARD_DROP_M, &MN.card_pose);
         MN.card_state = 1;
-        MN.a_presses = I.st.hand[SOMVR_HAND_R].presses[0];
+        MN.a_presses = I.st.hand[mn_a_hand()].presses[0];
         MN.sq_low = 0;
         mn_log_pose("the controls card (the arrival in the practice area)", &MN.card_pose, MN_CARD_W_M,
                     MN_CARD_W_M * SOMVR_VM_H_M / SOMVR_VM_W_M);
@@ -902,8 +907,8 @@ static int mn_card(int ev, const somvr_vm_gin *gi, somvr_posef *panel, int *have
         mn_card_close("the wrist menu opened");
         return 0;
     }
-    if (I.on && I.st.hand[SOMVR_HAND_R].presses[0] != MN.a_presses) {
-        mn_card_close("A");
+    if (I.on && I.st.hand[mn_a_hand()].presses[0] != MN.a_presses) {
+        mn_card_close(mn_a_hand() == SOMVR_HAND_L ? "X: the left-handed mirror's A" : "A");
         return 0;
     }
     /* a grip squeezed (let go first): the player draws the sword or grabs; the card holds the blade off (vm_open) */
@@ -1030,6 +1035,7 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
                            : i == XL_FADE ? "fade"
                            : i == XL_MBD ? "menu dim" : i == XL_MBK ? "menu backdrop" /* SOMVR_XR_MENU_BACK */
                            : i == XL_THE0 || i == XL_THE1 ? "threat edge" /* build 10: the bands (a VIEW space) */
+                           : i == XL_LOW ? "threat low" /* build 31: low health's ring (a VIEW space) */
                            : i == XL_OBJ || i == XL_OBJL ? "objective" /* build 15: the marker (the edge arrow: a VIEW
                                                                          * space); build 17: the drop's line */
                                          : "threat cue";

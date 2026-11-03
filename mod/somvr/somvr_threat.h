@@ -45,7 +45,8 @@ enum { SOMVR_THF_WINDOW = 1u, /* the nearest attacker's parry window is open thi
        SOMVR_THF_NEAR = 4u,   /* an engaged orc is close behind (the edge's low level) */
        SOMVR_THF_HURT = 8u,   /* build 10: Talion was hit: the hurt flash (hurt[]) */
        SOMVR_THF_RED_L = 16u, /* build 17: the left / right edge band is an unblockable blow's: the red row */
-       SOMVR_THF_RED_R = 32u };
+       SOMVR_THF_RED_R = 32u,
+       SOMVR_THF_LOW = 64u };  /* build 31 (SOMVR_HURT_LOW_STYLE=ring): low health's red ring (low, beat) */
 
 typedef struct {
     float pos[3];  /* its centre in the layer's reference space (metres), this frame's rig */
@@ -63,7 +64,9 @@ typedef struct {
     uint32_t threats;     /* attacks at Talion tracked this frame (logs) */
     uint8_t hurt[2];      /* build 10 (SOMVR_HURT): the red hurt flash on the left / right edge, 0..255 (0 = none); it
                            * takes that side's edge band while it is the stronger (the band's slot, the red row) */
-    uint16_t pad;
+    uint8_t low;          /* build 31 (SOMVR_HURT_LOW_STYLE=ring, re-xr-pipeline.md 136): low health's red ring, 0..255 = how
+                           * low (0 = none); was pad[0] (0): an older layer ignores it */
+    uint8_t beat;         /* ... the heartbeat's throb this frame, 0..255 (the ring tightens and darkens on it); was pad[1] */
 } somvr_threat_frame;
 
 typedef struct somvr_threat_shared {
@@ -103,7 +106,7 @@ static inline void somvr_threat_put(somvr_threat_shared *t, uint64_t frame, cons
     e->edge[0] = in->edge[0], e->edge[1] = in->edge[1];
     e->threats = in->threats;
     e->hurt[0] = in->hurt[0], e->hurt[1] = in->hurt[1];
-    e->pad = 0;
+    e->low = in->low, e->beat = in->beat;
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&t->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&t->n_frames, 1, memory_order_relaxed);
@@ -119,6 +122,7 @@ static inline int somvr_threat_get(somvr_threat_shared *t, uint64_t frame, somvr
     out->edge[0] = e->edge[0], out->edge[1] = e->edge[1];
     out->threats = e->threats;
     out->hurt[0] = e->hurt[0], out->hurt[1] = e->hurt[1];
+    out->low = e->low, out->beat = e->beat;
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);
@@ -271,7 +275,7 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_CELL 32
 #define SOMVR_TH_STRIDE (SOMVR_TH_CELL + 2)
 #define SOMVR_TH_IMG_W (SOMVR_TH_LEVELS * SOMVR_TH_STRIDE)
-#define SOMVR_TH_IMG_H (5 * SOMVR_TH_STRIDE)
+#define SOMVR_TH_IMG_H (6 * SOMVR_TH_STRIDE)
 #define SOMVR_TH_ALPHA 0.35f
 #define SOMVR_TH_R 1.00f /* the warm colour (linear weights; the swapchain is sRGB when the runtime has one) */
 #define SOMVR_TH_G 0.55f
@@ -290,7 +294,14 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_BLUE_G 0.75f
 #define SOMVR_TH_BLUE_B 1.00f
 #define SOMVR_TH_BLUE_ALPHA 0.30f
-enum { SOMVR_TH_ROW_GLOW = 0, SOMVR_TH_ROW_EDGE = 1, SOMVR_TH_ROW_HURT = 2, SOMVR_TH_ROW_RED = 3, SOMVR_TH_ROW_BLUE = 4 };
+/* build 31: row 5 low health's ring (SOMVR_THF_LOW): a square cell, clear inside SOMVR_TH_LOW_R0 of its half-size,
+ * rising (smoothstep) to full at SOMVR_TH_LOW_R1 and full out to its corners, in the hurt red; cell k = alpha k/LEVELS of
+ * SOMVR_TH_LOW_ALPHA (premultiplied: the world stays seen through it) */
+#define SOMVR_TH_LOW_R0 0.38f
+#define SOMVR_TH_LOW_R1 0.95f
+#define SOMVR_TH_LOW_ALPHA 1.0f
+enum { SOMVR_TH_ROW_GLOW = 0, SOMVR_TH_ROW_EDGE = 1, SOMVR_TH_ROW_HURT = 2, SOMVR_TH_ROW_RED = 3, SOMVR_TH_ROW_BLUE = 4,
+       SOMVR_TH_ROW_LOW = 5 };
 int somvr_th_glow_row(uint32_t kind); /* SOMVR_TH_ROW_BLUE / _RED for a blue / red kind, else SOMVR_TH_ROW_GLOW */
 /* build 17: an unblockable blow's glow level at t s from its start: in over 0.12 s from the wind-up (no wait for the
  * window), then a pulse between 0.7 and 1 at hz (the warm glow is steady: told apart at a glance) up to the impact, out
@@ -300,9 +311,26 @@ float somvr_th_red_level(const somvr_th_cfg *c, const somvr_th_keys *k, float t,
  * 0 = the band (its own cell), as before */
 int somvr_th_hurt_side(uint8_t hurt, float edge, int *cell);
 float somvr_th_glow_profile(float r);          /* r = distance from the centre / half-size: 1 at 0, 0 from 1 on */
+float somvr_th_low_profile(float r);           /* build 31: the ring's: 0 inside LOW_R0, 1 from LOW_R1 out (r to the corners) */
 float somvr_th_edge_profile(float u, float v); /* u, v in 0..1 across the cell */
 void somvr_th_image(uint8_t *px, int bgra);    /* SOMVR_TH_IMG_W x _H x 4 bytes, rows top to bottom */
 int somvr_th_cell(float level);                /* 0..LEVELS: round(level x LEVELS), 0 below half a step / NaN */
 void somvr_th_rect(int row, int cell, int32_t rc[4]); /* offset x y, extent w h of cell `cell` (1..LEVELS) */
+
+/* ---- build 31: low health (SOMVR_HURT_LOW_STYLE=ring; docs/re-xr-pipeline.md 136) ---------------------------------- */
+/* the game side: how low, 0..1 - 0 at `below` of the most health seen (the ring's start: already visible), 1 at
+ * SOMVR_TH_LOW_FLOOR; NaN / dead / no max: 0 (and *on 0). *on = under `below` (alive) */
+#define SOMVR_TH_LOW_FLOOR 0.05f
+float somvr_th_low_amount(float hp, float hp_max, float below, int *on);
+/* the heartbeat: its rate for the amount (60 bpm at 0 .. 110 at 1) and its throb s seconds after the low state began
+ * (a lub at each beat's start, a softer dub 0.25 s later; each up at once and down over 90 ms): 0..1; *index = the
+ * beat's number since the start, *phase = 1 in its lub, 2 from its dub on (the haptic pulses where they change) */
+float somvr_th_beat_bpm(float amount);
+float somvr_th_beat(float amount, double s, int *index, int *phase);
+/* the layer: the ring's quad for the amount and the throb (0..1): its half-size in tangent units at least cover_tan (the
+ * view must stay covered), from 1.7 at 0 to 1.1 at 1, 5 % tighter at a full throb; its cell (alpha 0.35 .. 0.65, +0.15
+ * on the throb; boot 115228's first look at 0.45 .. 0.75 + 0.2 reddened half the view at a moderate low) - 0 = none */
+float somvr_th_low_half(float amount, float beat, float cover_tan);
+int somvr_th_low_cell(float amount, float beat);
 
 #endif

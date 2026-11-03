@@ -70,6 +70,10 @@ enum {                                /* somvr_slots_out.ev[k]: what happened to
 
 typedef struct {
     int main_hand;          /* the sword's hand (SOMVR_HAND_R = 1); the dagger is the other's. A left main hand mirrors x */
+    int mirror;             /* build 30 (SOMVR_HANDED=left, re-xr-pipeline.md 132): x mirrored again, the hands' indices
+                             * kept - the left-handed mirror swaps the controllers at the source (SOMVR_HAND_R is the
+                             * physical left one), so its sword slot is over the left shoulder, the dagger at the right
+                             * hip (0 = build 29) */
     float sword_ofs[3];     /* the shoulder slot from the head in the torso's frame for a right main hand, cm: x right,
                              * y up, z ahead (10, -10, -15: behind the head over the right shoulder, design-vr.md 3) */
     float sword_r_cm;       /* 20 */
@@ -105,6 +109,10 @@ typedef struct {
     int drawn[SOMVR_NSLOT]; /* weapon k is in its hand now (the game's state) */
     int busy[2];            /* hand h presses nothing here (the bow out, a climb on) */
     int away[2];            /* hand h must not hold a weapon now (the bow, a climb hold) */
+    int climb_free[2];      /* build 31 (somvr.c, SOMVR_CLIMB_SWORD): hand h is free while a climb is on (not busy):
+                             * its slot's press draws and puts back as ever; no quick draw (a double grip on the wall is
+                             * a regrab) and no restore of what the climb put back until the climb ends (the hand comes
+                             * free at each let-go of a hold) */
     int head_ok;
     sv_vec3 head;           /* the head, tracking space (game convention, cm) */
     sv_quat head_q;

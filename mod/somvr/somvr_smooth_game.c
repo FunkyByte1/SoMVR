@@ -270,6 +270,7 @@ static void hsm_inp(somvr_hand h[2], int64_t T)
 }
 
 #define SWG_DRAG_GAP_S 0.3
+static float g_swp_off_rad; /* build 31: the weighted body's turn off the hand this frame (SOMVR_SWORD_REC's column) */
 #define SWG_REC_MAX (48u << 20) /* SOMVR_SWORD_REC's file: about 2.5 h of a drawn sword at 90 Hz */
 
 /* the weight's level now (SOMVR_SWORD_WEIGHT, the VR menu): its constants, the spring from the hand */
@@ -326,10 +327,12 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 		 g_arm.weight[SA_R] >= 1;
 	if (!ok) {
 		g_hsm.ws.have = 0, g_hsm.w_none++, g_hsm.whoosh_armed = 0;
+		swp_none("no sword in the solved hand"); /* build 31 */
 		return;
 	}
 	if (g_sf.ghost_a[SA_R] > 0) { /* SOMVR_HANDS_SURFACE holds the hand: the blade stays where the surface stopped it */
 		g_hsm.ws.have = 0, g_hsm.w_surface++;
+		swp_none("a surface holds the hand"); /* build 31 */
 		return;
 	}
 	sa_xf g = gg[SA_R];
@@ -344,16 +347,22 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 	/* the blade in the grip: along +Z after the mirror, tilted up by SOMVR_SWORD_ANGLE (the twist is about it) */
 	float a = g_bd.angle_deg * 0.01745329f, axis[3] = { 0, sinf(a), cosf(a) };
 	float pdt = dt;
-	int stepped = swg_step(&g_hsm.ws, &g_hsm.wcfg, q, axis, dt, two, rot);
+	/* build 31, SOMVR_SWORD_PHYS: the sword a weighted body (somvr_swordphys_game.c) instead of the trail below */
+	int phys = swp_arm(&g, q, axis, dt, two, X, shift, T);
+	int stepped = phys ? 0 : swg_step(&g_hsm.ws, &g_hsm.wcfg, q, axis, dt, two, rot);
+	if (phys)
+		g_hsm.ws.have = 0, g_hsm.ws.off = g_swp_off_rad;
 	if (g_hsm.rec && g_hsm.rec_bytes < SWG_REC_MAX) { /* SOMVR_SWORD_REC: the input as the step had it */
 		int nb = fprintf(g_hsm.rec, "%.6f %.6f %.6f %.6f %.6f %d %d %.2f %.3f %.2f %.2f %.2f\n", T > 0 ? (double)T * 1e-9 : cb_now(),
 				 (double)q[0], (double)q[1], (double)q[2], (double)q[3], two, g_hsm.weight, (double)g_bd.angle_deg,
-				 stepped ? (double)g_hsm.ws.off / 0.01745329 : 0.0, (double)g.p.x, (double)g.p.y, (double)g.p.z);
+				 stepped || phys ? (double)g_hsm.ws.off / 0.01745329 : 0.0, (double)g.p.x, (double)g.p.y, (double)g.p.z);
 		g_hsm.rec_n++, g_hsm.rec_bytes += nb > 0 ? (uint64_t)nb : 0;
 		if (g_hsm.rec_bytes >= SWG_REC_MAX)
 			logf_("SWORDREC full (%llu frames, %llu bytes): no more recorded", (unsigned long long)g_hsm.rec_n,
 			      (unsigned long long)g_hsm.rec_bytes);
 	}
+	if (phys) /* (its own lines, haptics and node: somvr_swordphys_game.c) */
+		return;
 	if (!stepped) {
 		memset(g_hsm.w_prev_rot, 0, 12);
 		return;

@@ -50,13 +50,13 @@ static void test_abi(void) {
     somvr_threat_frame in, out;
     memset(&in, 0, sizeof in);
     in.nglow = 2, in.flags = SOMVR_THF_WINDOW, in.edge[0] = 0.25f, in.edge[1] = 0.5f, in.threats = 3;
-    in.hurt[0] = 200, in.hurt[1] = 90;
+    in.hurt[0] = 200, in.hurt[1] = 90, in.low = 140, in.beat = 33;
     in.g[0] = (somvr_th_glow){{1, 2, 3}, 0.3f, 0.9f, SOMVR_THK_MELEE};
     in.g[1] = (somvr_th_glow){{-1, 1.5f, -2}, 0.2f, 0.4f, SOMVR_THK_PROJ};
     somvr_threat_put(&g_obj, 77, &in);
     CHECK(somvr_threat_get(&g_obj, 77, &out) && out.nglow == 2 && out.flags == SOMVR_THF_WINDOW && out.edge[0] == 0.25f &&
               out.edge[1] == 0.5f && out.threats == 3 && out.g[0].pos[2] == 3 && out.g[1].kind == SOMVR_THK_PROJ &&
-              out.hurt[0] == 200 && out.hurt[1] == 90 &&
+              out.hurt[0] == 200 && out.hurt[1] == 90 && out.low == 140 && out.beat == 33 &&
               atomic_load(&out.seq) == 77 && atomic_load(&g_obj.last) == 77 && atomic_load(&g_obj.n_frames) == 1,
           "put/get");
     CHECK(!somvr_threat_get(&g_obj, 78, &out) && !somvr_threat_get(&g_obj, 0, &out) &&
@@ -561,8 +561,49 @@ static void test_image(void) {
 #undef PX
 }
 
+/* build 31 (re-xr-pipeline.md 136): low health's ring - the amount, the heartbeat, the quad, the texture row */
+static void test_low(void) {
+    int on = 0;
+    float a30 = somvr_th_low_amount(36, 120, 0.30f, &on);
+    CHECK(on == 0 && a30 == 0, "30 %% of 120 at the 0.30 line: not under it (%.3f)", a30);
+    float a = somvr_th_low_amount(20, 120, 0.30f, &on);
+    CHECK(on == 1 && NEAR(a, (0.30 - 20.0 / 120) / 0.25, 1e-4), "the session's 20 of 120: on, amount %.3f", a);
+    CHECK(somvr_th_low_amount(6, 120, 0.30f, &on) == 1 && on, "5 %% and under: the full ring");
+    CHECK(somvr_th_low_amount(0, 120, 0.30f, &on) == 0 && !on && somvr_th_low_amount(NAN, 120, 0.3f, &on) == 0 && !on &&
+              somvr_th_low_amount(10, 0, 0.3f, &on) == 0 && !on && somvr_th_low_amount(10, 120, 0, &on) == 0 && !on,
+          "dead, unknown, no max, off: none");
+    CHECK(NEAR(somvr_th_beat_bpm(0), 60, 1e-3) && NEAR(somvr_th_beat_bpm(1), 110, 1e-3), "60 .. 110 bpm");
+    int idx = -1, ph = 0;
+    float b0 = somvr_th_beat(0, 0, &idx, &ph);
+    CHECK(NEAR(b0, 1, 1e-4) && idx == 0 && ph == 1, "the first lub at once: %.3f %d %d", b0, idx, ph);
+    float b1 = somvr_th_beat(0, 0.2, &idx, &ph), b2 = somvr_th_beat(0, 0.25, &idx, &ph);
+    CHECK(b1 < 0.15f && NEAR(b2, 0.6, 1e-3) && ph == 2 && idx == 0, "the lub fades, the dub at 0.25 s: %.3f %.3f", b1, b2);
+    float b3 = somvr_th_beat(0, 1.0, &idx, &ph);
+    CHECK(NEAR(b3, 1, 1e-4) && idx == 1 && ph == 1, "the next beat at 1 s (60 bpm): %.3f %d", b3, idx);
+    somvr_th_beat(1, 60.0 / 110 + 1e-3, &idx, &ph);
+    CHECK(idx == 1, "110 bpm at the full ring");
+    float h0 = somvr_th_low_half(0, 0, 1.07f), h1 = somvr_th_low_half(1, 0, 1.07f), hb = somvr_th_low_half(0, 1, 1.07f);
+    CHECK(NEAR(h0, 1.7, 1e-4) && NEAR(h1, 1.1, 1e-4) && NEAR(hb, 1.7 * 0.95, 1e-4) && somvr_th_low_half(1, 1, 1.07f) >= 1.07f,
+          "the quad: 1.7 .. 1.1, tighter on the throb, never smaller than the view (%.3f %.3f %.3f)", h0, h1, hb);
+    /* where it shows: the view's edge (tan 1.0 = 45 deg) at the onset vs the clear middle (tan 0.5) */
+    float edge0 = somvr_th_low_profile(1.0f / h0), mid0 = somvr_th_low_profile(0.5f / h0), edge1 = somvr_th_low_profile(1.0f / h1);
+    CHECK(edge0 > 0.2f && edge0 < 0.45f && mid0 == 0 && edge1 > 0.95f,
+          "the profile: the onset's edge %.2f, its middle %.2f clear; the full ring's edge %.2f", edge0, mid0, edge1);
+    int c0 = somvr_th_low_cell(0, 0), c1 = somvr_th_low_cell(1, 0), cb = somvr_th_low_cell(0, 1), cm = somvr_th_low_cell(1, 1);
+    CHECK(c0 == 6 && c1 == 10 && cb == 8 && cm == 13, "cells %d %d (throb %d, full %d)", c0, c1, cb, cm);
+    static uint8_t px[SOMVR_TH_IMG_W * SOMVR_TH_IMG_H * 4];
+    somvr_th_image(px, 0);
+    int32_t rc[4];
+    somvr_th_rect(SOMVR_TH_ROW_LOW, SOMVR_TH_LEVELS, rc);
+    const uint8_t *ctr = &px[4 * ((size_t)(rc[1] + 16) * SOMVR_TH_IMG_W + (size_t)(rc[0] + 16))],
+                  *cor = &px[4 * ((size_t)(rc[1]) * SOMVR_TH_IMG_W + (size_t)(rc[0]))];
+    CHECK(rc[1] + rc[3] <= SOMVR_TH_IMG_H - 1 && ctr[3] == 0 && cor[3] == 255 && cor[0] == 255 && cor[1] < 15 && cor[2] < 10,
+          "the ring's cell: clear middle (a %u), opaque red corner %u %u %u %u", ctr[3], cor[0], cor[1], cor[2], cor[3]);
+}
+
 int main(void) {
     test_abi();
+    test_low();
     test_direction();
     test_keys();
     test_levels();

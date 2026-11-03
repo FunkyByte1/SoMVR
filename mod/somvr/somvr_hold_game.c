@@ -34,6 +34,7 @@ static struct {
 	/* the hold under way */
 	int active;
 	uintptr_t s0, s1, rec1, atk;   /* Talion's Combat +0x188 / +0x190 at the start, the target sync's record, his attack */
+	int by_kls;                    /* build 31b: started for SOMVR_KILLS' sync kill (its end returns the body, then ends) */
 	uintptr_t refused, ref_rec, ref_atk; /* a hold's sync slot, record and his attack once it ended: not held again (the
 					      * record outlives the halves) until the slot clears, the record changes or his
 					      * attack leaves and comes back (a new paired attack of the same kind) */
@@ -111,7 +112,8 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 		rec1 = s[1] ? peek_ptr(s[1] + FB_SYNC_REC) : 0;
 		atk = peek_ptr(sc + VB_C_ATTACK);
 	}
-	int mine = sk_lift(t) || fi_holds() || fa_lift(t), enemy = s[1] && !rec0 && !mine;
+	int kls = kl_sync_hold(t); /* build 31b (SOMVR_KILLS_UNAWARE=sync): the game's own stealth kill - his root held */
+	int mine = sk_lift(t) || fi_holds() || fa_lift(t), enemy = (s[1] && !rec0 && !mine) || kls;
 	if (!g_tk.active) {
 		if (g_tk.refused && (!s[1] || rec1 != g_tk.ref_rec || (g_tk.ref_gone && atk && atk == g_tk.ref_atk)))
 			g_tk.refused = 0;
@@ -123,6 +125,7 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 		g_tk.active = 1, g_tk.t0 = g_tk.atk_t = t, g_tk.ret_t = 0, g_tk.ret_why = NULL;
 		g_tk.s0 = s[0], g_tk.s1 = s[1], g_tk.rec1 = rec1, g_tk.atk = atk;
 		g_tk.beast = bz_hold_beast(rec1);
+		g_tk.by_kls = kls;
 		g_tk.ticks = g_tk.owned = g_tk.pulls = g_tk.after = g_tk.rebased = g_tk.view_frames = g_tk.ret_ticks = 0;
 		g_tk.held = g_tk.left = 0, g_tk.dev = g_tk.dev_max = g_tk.asked_cm = g_tk.pulled_cm = g_tk.view_max = 0;
 		g_tk.dev_y = g_tk.dev_y_max = 0;
@@ -159,16 +162,27 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 			g_tk.atk = atk; /* his half: the first attack of the hold */
 		if (atk && atk == g_tk.atk)
 			g_tk.atk_t = t;
-		if (mine || rec0) { /* the player's own move (the Shadow Strike, a finisher, a sync of his own) takes over */
+		if (g_tk.by_kls && !kls) { /* build 31b: our stealth kill's sync over - his body back under the view (the return),
+					    * not left where the sync's end put it (boot 182739: 130.8 cm off at the end) */
+			if (!g_tk.ret_t)
+				g_tk.ret_t = t, g_tk.ret_why = "the kill's sync over (SOMVR_KILLS)";
+		} else if ((mine || rec0) && !kls) { /* the player's own move (the Shadow Strike, a finisher, a sync of his own) takes over */
 			tk_finish(t, mine ? "the Shadow Strike or a finisher" : "a sync of his own");
 			return;
 		}
-		const char *why = t - g_tk.t0 > (g_tk.beast ? SOMVR_BZ_HOLD_MAX_S : TK_MAX_S) ? "the longest hold" : !s[1] && atk != g_tk.atk ? "the sync and his half ended"
+		const char *why = t - g_tk.t0 > (g_tk.beast ? SOMVR_BZ_HOLD_MAX_S : TK_MAX_S) ? "the longest hold" : kls ? NULL
+				: !s[1] && atk != g_tk.atk ? "the sync and his half ended"
 				: t - (g_tk.atk ? g_tk.atk_t : g_tk.t0) > TK_ATK_S ? "his half ended" : NULL;
 		if (why && !g_tk.ret_t)
 			g_tk.ret_t = t, g_tk.ret_why = why;
-		if (g_tk.ret_t && (g_tk.nopin || !g_tk.have_pin || (g_tk.dev <= TK_BACK_CM && g_tk.dev_y <= TK_BACK_Y_CM) ||
-				   t - g_tk.ret_t > TK_RET_S)) {
+		/* build 31b: our kill's return pulls on while his sync's record lingers (its tail kept putting him on the orc's
+		 * spot: boot 185818 gave up after 0.5 s 128 cm off and the view stepped 120 cm) - 5 s with it, 2 s after it */
+		double ret_max = g_tk.by_kls ? (rec0 ? 5.0 : 2.0) : TK_RET_S;
+		int back = g_tk.dev <= TK_BACK_CM && g_tk.dev_y <= TK_BACK_Y_CM;
+		if (g_tk.by_kls && rec0) /* his sync's record still on: its tail still moves him (boot 190706: 48 cm in 0.5 s after
+					  * an early end) - held until it clears */
+			back = 0;
+		if (g_tk.ret_t && (g_tk.nopin || !g_tk.have_pin || back || t - g_tk.ret_t > ret_max)) {
 			tk_finish(t, g_tk.ret_why);
 			return;
 		}
@@ -179,7 +193,8 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 	}
 	g_tk.ticks++, g_tk.held_ticks++, g_tk.after += !enemy, g_tk.ret_ticks += g_tk.ret_t > 0;
 	/* build 22: a beast's takedown pins him in its struggle (the game's struggle and the fallback's reasons held too) */
-	uint32_t bits = TK_BITS | (g_tk.beast ? SOMVR_LOCO_W_STRUGGLE | SOMVR_LOCO_W_FALLBACK : 0u);
+	uint32_t bits = TK_BITS | (g_tk.beast || kls || g_tk.by_kls ? SOMVR_LOCO_W_STRUGGLE | SOMVR_LOCO_W_FALLBACK : 0u); /* (build 31b: the
+	 * game's stealth kill raised the fallback's reason on 70 of 71 ticks - boot 20261102-173839) */
 	g_tk.held |= in->why & bits, g_tk.left |= in->why & ~bits;
 	in->why &= ~bits;
 	if (!in->why)

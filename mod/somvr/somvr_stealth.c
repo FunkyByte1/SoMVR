@@ -26,6 +26,7 @@ void somvr_stl_defaults(somvr_stl_cfg *c)
     c->grace_s = 0.3f;
     c->carried = 0;
     c->own_cm = 4.0f;
+    c->slash = 0;
 }
 
 const char *somvr_stl_why(int v)
@@ -84,6 +85,7 @@ static int judge_thrust(const somvr_stl_cfg *c, const somvr_stl_hit *h)
     if (!(fabsf(h->contact_off_deg) >= c->side_deg)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_SIDE;
     if (!(h->contact_up_cm >= c->low_cm && h->contact_up_cm <= c->high_cm)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_LOW;
     if (point && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm) return SOMVR_STL_KILL;
+    if (c->slash && h->tier_cut == SC_TIER_HEAVY_) return SOMVR_STL_KILL; /* build 31: a full cut into its back */
     return carried ? SOMVR_STL_CARRIED : SOMVR_STL_TOUCH;
 }
 
@@ -108,12 +110,14 @@ int somvr_stl_kill_by(const somvr_stl_cfg *c, const somvr_stl_hit *h)
     if (!c->thrust) return SOMVR_STL_BY_HIT;
     if (h->held) return SOMVR_STL_BY_GRAB;
     int thrust = h->cos_axis >= c->thrust_cos && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm;
-    return !thrust && h->neck && h->tier_cut == SC_TIER_HEAVY_ ? SOMVR_STL_BY_NECK : SOMVR_STL_BY_THRUST;
+    if (!thrust && h->neck && h->tier_cut == SC_TIER_HEAVY_) return SOMVR_STL_BY_NECK;
+    return !thrust && c->slash && h->tier_cut == SC_TIER_HEAVY_ ? SOMVR_STL_BY_SLASH : SOMVR_STL_BY_THRUST;
 }
 
 const char *somvr_stl_by_name(int by)
 {
     return by == SOMVR_STL_BY_THRUST ? "a thrust" : by == SOMVR_STL_BY_NECK ? "a cut to the neck"
+           : by == SOMVR_STL_BY_SLASH ? "a cut into its back"
            : by == SOMVR_STL_BY_GRAB ? "a stab into the held orc" : "a hit or a stab (build 20c)";
 }
 

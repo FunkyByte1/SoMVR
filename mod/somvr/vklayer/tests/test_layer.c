@@ -4167,9 +4167,37 @@ static int sc_threat(void) { /* nothing, a glow, three glows and both edges, a r
     th_stereo(&r, f++, &bl, &v);
     check_proj_n(&v, 3, RECT_B, "the grab cue", 3);
     th_check_glow(1, &v, &bl.g[0], "the grab cue");
+    /* 10. build 31 (re-xr-pipeline.md 136): low health's ring - one VIEW-space square over the whole view (row 5), its
+     * cell by how low and the throb, its half-size never under the view's cover; over the glows, under the edge bands */
+    somvr_threat_frame lw = th_frame_of(0, 0, 0, 0);
+    lw.low = 136, lw.beat = 255, lw.flags |= SOMVR_THF_LOW;
+    th_stereo(&r, f++, &lw, &v);
+    check_proj_n(&v, 3, RECT_B, "low health's ring", 2);
+    {
+        const mockxr_end *le = MOCK(mockxr_last_end)();
+        int lk = MOCK(mockxr_sc_find)(SOMVR_TH_IMG_W, SOMVR_TH_IMG_H);
+        int32_t rc[4];
+        somvr_th_rect(SOMVR_TH_ROW_LOW, somvr_th_low_cell(136.0f / 255, 1), rc);
+        float cov = 0;
+        for (int j = 0; j < 2; j++) {
+            float t4[4] = {fabsf(tanf(v.fov[j].l)), fabsf(tanf(v.fov[j].r)), fabsf(tanf(v.fov[j].u)), fabsf(tanf(v.fov[j].d))};
+            for (int q = 0; q < 4; q++) cov = t4[q] > cov ? t4[q] : cov;
+        }
+        float h = somvr_th_low_half(136.0f / 255, 1, cov * 1.05f);
+        CHECK(le->layer_count == 2 && le->q[1].type == XR_TYPE_COMPOSITION_LAYER_QUAD && le->q[1].sc == lk && le->q[1].space == 2 &&
+                  !memcmp(le->q[1].rect, rc, sizeof rc) && fabsf(le->q[1].size[0] - 2 * h) < 1e-5f &&
+                  fabsf(le->q[1].size[1] - 2 * h) < 1e-5f && fabsf(le->q[1].pose[6] + 1) < 1e-6f && h >= cov &&
+                  log_has("low health's ring on (how low 136, throb 255"),
+              "low health's ring: type %d sc %d space %d rect %d,%d size %g (want %g)", le->q[1].type, le->q[1].sc,
+              le->q[1].space, le->q[1].rect[0], le->q[1].rect[1], le->q[1].size[0], 2 * h);
+    }
+    lw.low = 0, lw.beat = 0, lw.flags = 0;
+    th_stereo(&r, f++, &lw, &v);
+    check_proj_n(&v, 3, RECT_B, "low health's ring gone", 1);
+    CHECK(log_has("low health's ring off"), "the ring's off line");
     app_teardown(&r.a);
     CHECK(MOCK(mockxr_live)() == 0 && !MOCK(mockxr_view_live)(), "threat objects outlived the session");
-    CHECK(log_has("xr: threat: image 544x170 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
+    CHECK(log_has("xr: threat: image 544x204 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
                   "cells") &&
               log_has("xr: threat frame") && log_has("(newest entry)") && log_has("L hurt red, R hurt red") &&
               !log_has("threat: off"),
@@ -4449,7 +4477,7 @@ static int sc_threat_absent(void) { return th_none(0, 0, "xr: threat: no threat 
 static int sc_threat_inactive(void) { return th_none(1, 0, "xr: threat: no threat cues (somvr_threat inactive"); }
 static int sc_threat_off(void) { return th_none(1, 1, "xr: threat: no threat cues (SOMVR_XR_THREAT=off)"); }
 
-/* MOCKXR_REJECT_SC=544x170: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
+/* MOCKXR_REJECT_SC=544x204: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
  * once), that frame is ended again without them, the frames go on with the projection (and comfort's ring) */
 static int sc_threat_reject(void) {
     hudrig r;
@@ -6455,15 +6483,17 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     CHECK(atomic_load(&g_vm->open) == 1 && MOCK(mockxr_last_end)()->layer_count == 1, "the hand lost: closed early");
     vm_mono(&a, &lost, 40);
     CHECK(!atomic_load(&g_vm->open) && log_has("xr: vrmenu: closed: the hand lost"), "the hand lost: still open");
-    /* the main hand: a click on Main hand moves the panel to the right wrist; the left hand points */
+    /* the main hand (build 30: the Handedness row in Pointer hand's place): a click moves the panel to the right wrist
+     * at once, the left hand points; the controls' mirror is saved for the next start (handed 1, handed_on 0) */
     atomic_fetch_add(&g_vm->toggles, 1);
     aim = palm, aim.right_ok = 1;
-    vm_uv(SOMVR_VMI_HAND, SOMVR_VMP_MORE, aim.uv);
+    vm_uv(SOMVR_VMI_HANDED, SOMVR_VMP_MORE, aim.uv);
     vm_mono(&a, &aim, 3);
     aim.trig = 0.9f, vm_mono(&a, &aim, 3);
     vm_mono(&a, &aim, 2);
-    CHECK(vm_set().hand == 1 && log_has("xr: vrmenu: the left hand points now, the panel is on the right wrist"),
-          "Main hand: %u", vm_set().hand);
+    CHECK(vm_set().hand == 1 && vm_set().handed == 1 && vm_set().handed_on == 0 &&
+              log_has("xr: vrmenu: the left hand points now, the panel is on the right wrist"),
+          "Handedness: hand %u handed %u (on %u)", vm_set().hand, vm_set().handed, vm_set().handed_on);
     CHECK(V.viol == 0, "%d Vulkan violations, first: %s", V.viol, V.first);
     app_teardown(&a);
     CHECK(MOCK(mockxr_live)() == 0 && MOCK(mockxr_sc_find)(SOMVR_VM_TEX_W, SOMVR_VM_TEX_H) < 0,
@@ -7839,7 +7869,7 @@ static const struct {
     {"threat-absent", sc_threat_absent, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-inactive", sc_threat_inactive, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-off", sc_threat_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_THREAT=off", 1},
-    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x170", 1},
+    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x204", 1},
     {"allon", sc_allon, "SOMVR_XR_LOADER=@MOCK MOCKXR_RECENTER_AT=80", 1},
     {"reject-hud-only", sc_reject_hud_only, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=1920x1080", 1},
     /* SoM loading env */

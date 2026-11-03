@@ -23,9 +23,10 @@ const char *somvr_climb_bl_name(int why) {
     return why >= 0 && why < 8 ? n[why] : "?";
 }
 const char *somvr_climb_fl_name(int why) {
-    static const char *const n[8] = { "-", "the arc's top", "blocked above", "out of time", "a catch", "over",
-                                      "blocked at the edge", "the wall under the chest" };
-    return why >= 0 && why < 8 ? n[why] : "?";
+    static const char *const n[11] = { "-", "the arc's top", "blocked above", "out of time", "a catch", "over",
+                                       "blocked at the edge", "the wall under the chest", "landed", "at rest",
+                                       "water under the feet" };
+    return why >= 0 && why < 11 ? n[why] : "?";
 }
 const char *somvr_climb_dn_name(int why) {
     static const char *const n[6] = { "ok", "the hand too high over the floor (or not under the eyes)",
@@ -77,6 +78,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->dm_timer = 0, c->unstuck = 0, c->fl_reach_cm = 120, c->round_lip = 0;
     c->down_over = 0, c->dn_low_cm = 40, c->dn_high_cm = 90, c->dn_reach_cm = 45, c->dn_under_cm = 25, c->dn_gap_cm = 45;
     c->retop_edge_cm = 0, c->am_keep = 0, c->fl_reach_hold = 0, c->land_above = 0, c->dn_near = 0;
+    c->fling_down = 0, c->fd_min = 250, c->fd_max = 650, c->fd_g = 981, c->fd_net_cm = 15, c->fd_land_cm = 25;
 }
 
 void somvr_climb_init(somvr_climb *s) {
@@ -150,8 +152,8 @@ static sv_vec3 unit3(sv_vec3 v) {
  * to drive and at a jump) */
 static double pose_t(const somvr_climb_in *in) { return in->pose_t > 0 ? in->pose_t : in->t; }
 static void vh_reset(somvr_climb_hold *k, double t, sv_vec3 p, int valid) {
-    k->vh_n = 0, k->vh_i = 0;
-    if (valid && fin3(p)) k->vh_p[0] = p, k->vh_t[0] = t, k->vh_n = 1, k->vh_i = 1;
+    k->vh_n = 0, k->vh_i = 0, k->dv_ok = 0;
+    if (valid && fin3(p)) k->vh_p[0] = p, k->vh_t[0] = t, k->vh_n = 1, k->vh_i = 1, k->dv_y0 = p.y, k->dv_ok = 1;
 }
 static void vh_push(somvr_climb_hold *k, double t, sv_vec3 p) {
     if (!fin3(p)) return;
@@ -210,6 +212,30 @@ int somvr_climb_fling_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw,
     if (len3(v) > c->fling_max && c->fling_max > 0) v = somvr_climb_clamp(v, c->fling_max), s->fl_capped = 1;
     s->fl_side = len3(side);
     *v0 = v;
+    return 1;
+}
+
+/* build 31: the fling down's rule (see the header's fling) */
+int somvr_climb_fling_down_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw, sv_vec3 toward, float net_cm,
+                                sv_vec3 *v0) {
+    sv_vec3 tw = { toward.x, 0, toward.z };
+    if (len3(tw) < 0.5f) tw = (sv_vec3){ 0, 0, 0 }; else tw = unit3(tw);
+    if (!fin3(vw)) vw = (sv_vec3){ 0, 0, 0 };
+    float down = -vw.y, into = vw.x * tw.x + vw.z * tw.z;
+    sv_vec3 side = { vw.x - into * tw.x, 0, vw.z - into * tw.z };
+    if (len3(tw) < 0.5f) side = (sv_vec3){ 0, 0, 0 }, into = 0; /* no wall direction: only the downward part */
+    s->fd_down = down, s->fd_net = isfinite(net_cm) ? net_cm : 0, s->fd_why = SOMVR_CLIMB_FD_NONE, s->fl_capped = 0;
+    s->fl_out = into < 0 ? -into : 0, s->fl_into = 0, s->fl_side = 0;
+    *v0 = (sv_vec3){ 0, 0, 0 };
+    if (!c->fling_down) return s->fd_why = SOMVR_CLIMB_FD_OFF, 0;
+    if (!(down >= c->fd_min) || !(down > 0)) return s->fd_why = SOMVR_CLIMB_FD_SLOW, 0;
+    if (!(net_cm >= c->fd_net_cm)) return s->fd_why = SOMVR_CLIMB_FD_NET, 0; /* the end of a pull up: no fling down */
+    float d = down;
+    if (c->fd_max > 0 && d > c->fd_max) d = c->fd_max, s->fl_capped = 1;
+    side = somvr_climb_clamp(mul3(side, c->fling_side), c->fling_side_max * d);
+    float keep = into > 0 ? fminf(into, c->fling_tw * d) : 0; /* toward the wall: a little (the face holds it) */
+    *v0 = (sv_vec3){ side.x + keep * tw.x, -d, side.z + keep * tw.z };
+    s->fl_side = len3(side), s->fl_into = keep;
     return 1;
 }
 
@@ -653,7 +679,14 @@ static int fl_release(somvr_climb *s, const somvr_climb_cfg *c, const somvr_clim
     s->fl_hand = h, s->fl_hand_v = vh, s->fl_span = span, s->fl_n = n;
     s->fl_toward = k->toward;
     s->fl_edge = k->edge && k->top_found, s->fl_top_y = k->top_y, s->fl_hit = k->hit;
-    return somvr_climb_fling_rule(s, c, vw, k->toward, &s->fl_v0);
+    s->fl_down = 0, s->fd_why = SOMVR_CLIMB_FD_NONE, s->fd_down = -vw.y, s->fd_net = 0;
+    int r = somvr_climb_fling_rule(s, c, vw, k->toward, &s->fl_v0);
+    if (r == 0 && vw.y < 0) { /* build 31: the hand rising at the let-go: the fling down? */
+        sv_vec3 pn = now_ok ? hd->p : k->vh_p[last];
+        float net = k->dv_ok ? (pn.y - k->dv_y0) * ks : 0; /* the hand higher = the body lower (cm) */
+        if (somvr_climb_fling_down_rule(s, c, vw, k->toward, net, &s->fl_v0)) return s->fl_down = 1, 2;
+    }
+    return r;
 }
 
 /* fling: the launch (no hand holds): the phase fling; the head's ray along toward measures the wall for the top in
@@ -667,6 +700,10 @@ static void fl_launch(somvr_climb *s, const somvr_climb_cfg *c, const somvr_clim
     s->carry = (sv_vec3){ 0, 0, 0 }, s->driver = -1;
     s->flings++;
     o->events |= SOMVR_CLIMB_E_FLING;
+    if (s->fl_down) { /* build 31: down - no top to look for */
+        s->fd_flings++, s->fd_v0 = -s->fl_v0.y, s->fd_feet = -1;
+        return;
+    }
     somvr_climb_hit r;
     sv_vec3 head = { in->head_x, in->head_y, in->head_z }, tw = s->fl_toward;
     if (!s->topped && !s->fl_edge && c->top_mode == SOMVR_CLIMB_TOP_PUSH && in->head_ok && len3(tw) > 0.5f &&
@@ -743,8 +780,118 @@ static int fl_reach_lost(somvr_climb *s, const somvr_climb_cfg *c, const somvr_c
 #define FL_GLIDE_LIFT_MAX_CM 80.0f /* the lift's cap when the capsule's foot is further under the top */
 /* the glide's time is the part not blocked by the edge (a slow frame's lift used up the 0.5 s: the integration's runs
  * 034000, 030713: the foot level with the top at the end, out of time), at most 3 x FL_GLIDE_S in all */
+/* build 31 (fling down): the wall gone from the chest's reach: no wall within fl_reach_cm level or 20 deg up along
+ * toward (nor level toward the hold let go) = the wall ended under him */
+static int fd_reach_lost(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray,
+                         void *ctx, somvr_climb_out *o) {
+    sv_vec3 tw = { s->fl_toward.x, 0, s->fl_toward.z };
+    if (!in->head_ok || len3(tw) < 0.5f || !(c->fl_reach_cm > 0)) return 0;
+    tw = unit3(tw);
+    sv_vec3 ch = { in->head_x, in->head_y - 40.0f, in->head_z }, up = unit3((sv_vec3){ tw.x, 0.364f, tw.z });
+    somvr_climb_hit r;
+    if (!cast(s, o, ray, ctx, s->fl_hand, ch, tw, c->fl_reach_cm, &r) || r.hit) return 0;
+    if (!cast(s, o, ray, ctx, s->fl_hand, ch, up, c->fl_reach_cm, &r) || r.hit) return 0;
+    sv_vec3 th = { s->fl_hit.x - ch.x, 0, s->fl_hit.z - ch.z };
+    if (len3(th) >= 10.0f && (!cast(s, o, ray, ctx, s->fl_hand, ch, unit3(th), c->fl_reach_cm, &r) || r.hit)) return 0;
+    return 1;
+}
+#define FD_BLOCK_N 2
+#define FD_LAND_NEAR_CM 5.0f /* the flight goes on down to the feet this far over a floor, then lands */
+/* build 31 (fling down): one frame of the flight down (no hand holds): the last frame's piece against the root (the
+ * downward part blocked FD_BLOCK_N frames = the hang; sideways blocked = that part stops; into the face held = dropped),
+ * the floor under the feet (the flight on down to FD_LAND_NEAR_CM over it, then landed - the end, gravity back: the
+ * game's landing; stopped within fd_land_cm of it: landed too; water within reach: the hang), this frame's piece of the even slowing (fd_g on the downward part, the rest
+ * in proportion: along the throw), at rest = the hang, the wall's reach (unstuck), fling_s */
+static void fd_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray,
+                    void *ctx, somvr_climb_out *o, double dt) {
+    int stop = SOMVR_CLIMB_FL_NONE, land = 0;
+    sv_vec3 tw = s->fl_toward;
+    float into = s->fl_v.x * tw.x + s->fl_v.z * tw.z;
+    if (s->fl_frames++ > 0 && in->root_ok && s->have_root) {
+        sv_vec3 ap = sub3(in->root, s->last_root), rq = s->last_req;
+        if (rq.y < -0.5f && ap.y > 0.5f * rq.y) { /* the downward part not half applied */
+            if (++s->fl_blocked >= FD_BLOCK_N) stop = SOMVR_CLIMB_FL_BLOCKED;
+        } else {
+            s->fl_blocked = 0;
+        }
+        if (into > 0) { /* the face takes the push into it: down along it alone */
+            float aq = rq.x * tw.x + rq.z * tw.z, ga = ap.x * tw.x + ap.z * tw.z;
+            if (aq > 0.5f && ga < 0.5f * aq) s->fl_v.x -= into * tw.x, s->fl_v.z -= into * tw.z, into = 0, s->fl_into_cut++;
+        }
+        sv_vec3 sd = { s->fl_v.x - into * tw.x, 0, s->fl_v.z - into * tw.z };
+        float sl = len3(sd);
+        if (sl > 1.0f) {
+            sd = mul3(sd, 1.0f / sl);
+            float asd = rq.x * sd.x + rq.z * sd.z, gsd = ap.x * sd.x + ap.z * sd.z;
+            if (asd > 0.5f && gsd < 0.5f * asd) s->fl_v.x = into * tw.x, s->fl_v.z = into * tw.z; /* a side wall */
+        }
+    }
+    float a = c->fd_g > 0 ? c->fd_g : 981.0f, d = (float)(dt < 0 ? 0 : dt > 0.1 ? 0.1 : dt);
+    float vd = -s->fl_v.y, vd1 = vd - a * d;
+    sv_vec3 m = { 0, 0, 0 };
+    if (stop == SOMVR_CLIMB_FL_NONE) {
+        if (!(vd > 0) || vd1 <= 0) { /* at rest inside this frame: on to it (every part slows to 0 together) */
+            float ta = vd > 0 ? vd / a : 0;
+            m = mul3(s->fl_v, 0.5f * ta);
+            s->fl_v = (sv_vec3){ 0, 0, 0 };
+            stop = SOMVR_CLIMB_FL_REST;
+        } else {
+            float k1 = vd1 / vd;
+            m = mul3(s->fl_v, 0.5f * (1.0f + k1) * d);
+            s->fl_v = mul3(s->fl_v, k1);
+        }
+        if (stop == SOMVR_CLIMB_FL_NONE && in->t - s->fl_t0 > c->fling_s) stop = SOMVR_CLIMB_FL_TIME;
+    }
+    /* the floor under the feet (a ray down from the root past them by fd_land_cm and this frame's step) */
+    somvr_climb_hit g;
+    float step_dn = m.y < 0 ? -m.y : 0;
+    if (in->root_ok && cast(s, o, ray, ctx, s->fl_hand, in->root, (sv_vec3){ 0, -1, 0 },
+                            c->foot_cm + c->fd_land_cm + step_dn + 5.0f, &g) && g.hit) {
+        float feet = g.dist - c->foot_cm;
+        if (g.wet && feet <= c->fd_land_cm + step_dn) {
+            stop = SOMVR_CLIMB_FL_WET, m = (sv_vec3){ 0, 0, 0 };
+        } else if (!g.wet && (feet <= FD_LAND_NEAR_CM || (stop != SOMVR_CLIMB_FL_NONE && feet <= c->fd_land_cm))) {
+            /* at the floor, or stopped (at rest, blocked, out of time) just over it: landed */
+            land = 1, s->fd_feet = feet, s->fd_floor = g.point, m = (sv_vec3){ 0, 0, 0 };
+        } else if (!g.wet && feet - step_dn < FD_LAND_NEAR_CM && step_dn > 0) {
+            m = mul3(m, fmaxf(feet - FD_LAND_NEAR_CM, 0.0f) / step_dn); /* down to it: the landing next frame */
+        }
+    } /* (blocked below with no floor under the feet: the hang - a slope, a ledge's lip under him) */
+    if (land) stop = SOMVR_CLIMB_FL_NONE;
+    if (!land && c->unstuck && stop == SOMVR_CLIMB_FL_NONE && fd_reach_lost(s, c, in, ray, ctx, o))
+        stop = SOMVR_CLIMB_FL_REACH, m = (sv_vec3){ 0, 0, 0 }; /* the wall ended under him: the hang, within reach */
+    float cap = (c->fd_max > 0 ? c->fd_max : 650.0f) * 0.1f;
+    if (!land && stop != SOMVR_CLIMB_FL_BLOCKED) {
+        m = somvr_climb_clamp(m, fmaxf(cap, c->step_cm));
+        request(s, o, m);
+        s->fd_cm += len3(m);
+    }
+    if (land) {
+        s->fl_why = SOMVR_CLIMB_FL_LAND, s->fd_lands++;
+        s->fl_v = (sv_vec3){ 0, 0, 0 };
+        o->events |= SOMVR_CLIMB_E_APEX; /* the flight's end without a hold (fl_why: landed) */
+        end_climb(s, SOMVR_CLIMB_END_RELEASED, 0, o);
+        o->active = 0, o->driver = -1;
+        return;
+    }
+    if (stop != SOMVR_CLIMB_FL_NONE) {
+        s->fl_why = stop, s->apexes++;
+        if (stop == SOMVR_CLIMB_FL_BLOCKED) s->fl_blocks++, s->fd_blocks++;
+        else if (stop == SOMVR_CLIMB_FL_REST || stop == SOMVR_CLIMB_FL_TIME) s->fd_rests++;
+        else if (stop == SOMVR_CLIMB_FL_WET) s->fd_wets++;
+        else if (stop == SOMVR_CLIMB_FL_REACH) s->fd_reaches++, s->fl_reaches++;
+        s->fl_v = (sv_vec3){ 0, 0, 0 };
+        hang(s, in, 0, o);
+        o->events |= SOMVR_CLIMB_E_APEX;
+    }
+}
+
 static void fl_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray,
                     void *ctx, somvr_climb_out *o, double dt) {
+    if (s->fl_down) { /* build 31 */
+        fd_step(s, c, in, ray, ctx, o, dt);
+        return;
+    }
     int stop = SOMVR_CLIMB_FL_NONE, glide_blocked = 0;
     sv_vec3 tw = s->fl_toward;
     float into = s->fl_v.x * tw.x + s->fl_v.z * tw.z;
@@ -2310,8 +2457,10 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
         somvr_climb_hold *k = &s->h[h];
         const somvr_climb_hand *hd = &in->hand[h];
         if (k->holding || !k->down || !k->armed) continue;
-        if (in->nograb) { /* the press is someone else's (the bow): spent, open the grip to try again */
+        if (in->nograb || in->nograb_h[h]) { /* the press is someone else's (the bow; build 31: a slot's, the sword's):
+                                              * spent, open the grip to try again */
             k->looking = 0, k->armed = 0;
+            if (!in->nograb) s->nograb_h_n++;
             continue;
         }
         if (!was_down[h]) k->looking = 1, k->press_t = in->t, k->near_past = -1, k->near_via = 0;
@@ -2402,6 +2551,8 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
         } else {
             if (fl == 0 && (s->fl_up > 50 || s->fl_out > 50 || s->fl_side > 50))
                 s->fl_nones++; /* moving, not fast up enough (or only away, down, sideways): the hang */
+            if (fl == 0 && c->fling_down && s->fd_down > 50) /* build 31: the hand rising, no fling down: why */
+                s->fd_slows += s->fd_why == SOMVR_CLIMB_FD_SLOW, s->fd_nets += s->fd_why == SOMVR_CLIMB_FD_NET;
             if (fl > -3) { /* the log's line: why no fling (s->fl_none) */
                 s->fl_none = fl;
                 o->events |= SOMVR_CLIMB_E_FLING_NONE;
@@ -2428,7 +2579,7 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
         } else if (s->phase == SOMVR_CLIMB_PH_FLING) { /* a hold in flight: the flight stops at once, the hold drives */
             s->phase = SOMVR_CLIMB_PH_HOLD;
             s->fl_why = SOMVR_CLIMB_FL_CATCH, s->fl_v = (sv_vec3){ 0, 0, 0 };
-            s->catches++;
+            s->catches++, s->fd_catches += s->fl_down != 0;
             o->events |= SOMVR_CLIMB_E_CATCH;
         }
         /* the newest hold drives */

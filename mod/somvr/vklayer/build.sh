@@ -62,6 +62,8 @@ gcc "${CF[@]}" -o "$B/tests/test_env" "$D/tests/test_env.c" "$D/somvr_env.c" -lm
 "$B/tests/test_env"
 gcc "${CF[@]}" -o "$B/tests/test_void" "$D/tests/test_void.c" "$D/somvr_void.c" -lm # never a void: the floor, the lights
 "$B/tests/test_void"
+gcc "${CF[@]}" -o "$B/tests/test_fogpatch" "$D/tests/test_fogpatch.c" # build 31: the fog by the distance (somvr_fogpatch.h)
+"$B/tests/test_fogpatch"
 # build 10: the VR hands' shaders are the committed SPIR-V; the hands drawn for real on lavapipe (Mesa's CPU Vulkan)
 "$D/shaders/build_spv.sh" --check
 gcc "${CF[@]}" -o "$B/tests/hands_lvp" "$D/tests/hands_lvp.c" "$D/somvr_handdraw.c" "$D/../somvr_vrhands.c" -ldl -lm

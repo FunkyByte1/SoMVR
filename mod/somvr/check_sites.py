@@ -429,13 +429,14 @@ def main():
             r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
             r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("RENDER_SITES_END", 1)[0])]
         if [m[1] for m in rd] != ["K_VSLOT", "K_CALL", "K_CALL"] + ["K_VSLOT"] * 6 + ["K_ENTRY"] * 2 + \
-                ["K_CALL", "K_CALL", "K_ENTRY"] + ["K_ENTRY", "K_CALL"] + ["K_VSLOT", "K_VSLOT"]:
-            sys.exit("expected 18 SITE lines in somvr_render_game.c's RENDER_SITES block (the patched RD_LENSFLARE K_VSLOT, "
+                ["K_CALL", "K_CALL", "K_ENTRY"] + ["K_ENTRY", "K_CALL"] + ["K_VSLOT", "K_VSLOT"] + ["K_CALL"]:
+            sys.exit("expected 19 SITE lines in somvr_render_game.c's RENDER_SITES block (the patched RD_LENSFLARE K_VSLOT, "
                      "RD_SHAFTS and RD_RAIN K_CALLs, SOMVR_FX_TEST's RD_PSYS, RD_GPUPSYS, RD_SPRITE, RD_FLARESPR, "
                      "RD_PSYS_UPD, RD_PSYS_PREP K_VSLOTs, the read-only RD_VIS_INIT and RD_VIS_REQ K_ENTRYs; build 22: "
                      "SOMVR_FX_TEST's RD_BRT_A and RD_BRT_B K_CALLs, SOMVR_CURFRAME's RD_CF_MAKE K_ENTRY; build 23: "
                      "SOMVR_KTIME's called RD_KT_UPLOAD K_ENTRY and read-only RD_KT_LATE K_CALL; build 24: the overlay "
-                     "part's RD_OVERLAY and RD_OVERLAY_IF K_VSLOTs), found %d" % len(rd))
+                     "part's RD_OVERLAY and RD_OVERLAY_IF K_VSLOTs; build 31: SOMVR_FX_TEST's RD_FOG K_CALL), found %d"
+                     % len(rd))
         sites = sites + rd
         # build 23: SOMVR_FX_TEST's D3D11 capture, the threaded context's 20 patched slots (re-xr-pipeline.md 96)
         dc = [m for b in text.split("D3DCAP_SITES_BEGIN")[1:] for m in re.findall(
@@ -491,6 +492,16 @@ def main():
             sys.exit("expected 1 SITE line in somvr_story_game.c's STORY_SITES block (the SY_INVIS K_ENTRY), found %d"
                      % len(sty))
         sites = sites + sty
+    # build 31's SOMVR_KILLS: its block lives in somvr_kills_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_kills_game\.c"', text, re.M):
+        kls = [m for b in text.split("KILLS_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("KILLS_SITES_END", 1)[0])]
+        if [m[1] for m in kls] != ["K_ENTRY"] * 6 + ["K_CALL"] * 4:
+            sys.exit("expected 10 SITE lines in somvr_kills_game.c's KILLS_SITES block (the read-only KL_START, KL_NAV, "
+                     "KL_PREP_A, KL_PREP_B, KL_PREP_C, KL_SYNC_END K_ENTRYs, the patched KL_AI_NPC, KL_AI_ACT1, KL_AI_ACT2, "
+                     "KL_AI_MISC K_CALLs), found %d" % len(kls))
+        sites = sites + kls
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

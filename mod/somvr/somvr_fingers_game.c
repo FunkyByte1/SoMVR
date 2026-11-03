@@ -95,10 +95,10 @@ static void bf_input(int h, fg_in *in)
 	in->trigger_touch = live && (hi->buttons & SOMVR_BTN_TRIGGER_TOUCH);
 	in->thumb_touch = live && (hi->buttons & SOMVR_BTN_THUMB_TOUCH);
 	in->touch_ok = live && (prof == SOMVR_PROF_TOUCH || prof == SOMVR_PROF_INDEX);
-	if (g_bd.test && g_bf.t_trig[h] >= 0)
-		in->trigger = g_bf.t_trig[h], in->trigger_touch = g_bf.t_trig[h] > 0;
-	if (g_bd.test && g_bf.t_thumb[h] >= 0)
-		in->thumb_touch = g_bf.t_thumb[h] > 0.5f, in->touch_ok = 1;
+	if (g_bd.test && g_bf.t_trig[IN_SIDE(h)] >= 0) /* build 30: the test words name controllers */
+		in->trigger = g_bf.t_trig[IN_SIDE(h)], in->trigger_touch = g_bf.t_trig[IN_SIDE(h)] > 0;
+	if (g_bd.test && g_bf.t_thumb[IN_SIDE(h)] >= 0)
+		in->thumb_touch = g_bf.t_thumb[IN_SIDE(h)] > 0.5f, in->touch_ok = 1;
 	in->hold = bf_hold(h);
 }
 
