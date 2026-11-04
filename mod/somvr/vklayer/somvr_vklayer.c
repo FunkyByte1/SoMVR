@@ -187,6 +187,7 @@
 #include <openxr/openxr_platform.h>
 #include <openxr/openxr_reflection.h>
 
+#include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <math.h>
@@ -211,10 +212,19 @@
 #include "../somvr_session.h" /* SOMVR_MARK: a mark's eyes; SOMVR_MARK / SOMVR_QUIT: the menu's Report and Quit game */
 #include "../somvr_menus.h" /* build 6: the menu boards, the wrist minimap, touch (./somvr_menus_layer.c) */
 #include "../somvr_vrhands.h" /* build 10: our own VR hands, the watch, the panel (./somvr_vrhands_layer.c) */
+#include "../somvr_haptics.h" /* build 34: the one haptics language (the VR menu's words) */
 
 _Static_assert(sizeof(somvr_posef) == sizeof(XrPosef) && sizeof(somvr_fovf) == sizeof(XrFovf), "ABI pose/fov types");
 
+#ifdef _WIN32 /* W1 (docs/re-winport.md 3.2): the layer as a Windows DLL under the Khronos loader */
+#define EXPORT __declspec(dllexport)
+#define SOMVR_XR_LOADER_DEFAULT "openxr_loader.dll" /* the mod folder's (next to the exe), then the system's */
+#define SOMVR_VULKAN_LOADER "vulkan-1.dll"
+#else
 #define EXPORT __attribute__((visibility("default")))
+#define SOMVR_XR_LOADER_DEFAULT "/usr/lib64/libopenxr_loader.so.1"
+#define SOMVR_VULKAN_LOADER "libvulkan.so.1"
+#endif
 #define FENCE_TIMEOUT_NS 1000000000ull
 #define XR_IMAGE_TIMEOUT_NS 1000000000ll
 #define QUAD_DIST_M 2.0f
@@ -314,8 +324,8 @@ __attribute__((format(printf, 1, 2))) static void lg(const char *fmt, ...) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     pthread_mutex_lock(&g_log_mx);
-    fprintf(g_log, "%ld.%03ld [%d/%ld] ", (long)ts.tv_sec, ts.tv_nsec / 1000000, (int)getpid(),
-            (long)syscall(SYS_gettid));
+    fprintf(g_log, "%lld.%03lld [%d/%lld] ", (long long)ts.tv_sec, (long long)(ts.tv_nsec / 1000000), (int)getpid(),
+            (long long)syscall(SYS_gettid));
     va_list ap;
     va_start(ap, fmt);
     vfprintf(g_log, fmt, ap);
@@ -359,7 +369,7 @@ static void once_init(void) {
     cfg.space = somvr_parse_space(getenv("SOMVR_XR_SPACE"));
     cfg.input = somvr_parse_input(getenv("SOMVR_XR_INPUT"));
     p = getenv("SOMVR_XR_LOADER");
-    cfg.loader = p && *p ? p : "/usr/lib64/libopenxr_loader.so.1";
+    cfg.loader = p && *p ? p : SOMVR_XR_LOADER_DEFAULT;
     p = getenv("SOMVR_XR_FLOOR");
     cfg.floor_frames = p && *p ? atoi(p) : 300;
     if (cfg.floor_frames < 0 || cfg.floor_frames > 1000000) cfg.floor_frames = 300;
@@ -374,6 +384,18 @@ static void once_init(void) {
        cfg.mode == SOMVR_MODE_OFF ? "pass-through" : cfg.mode == SOMVR_MODE_FORCE ? "force" : "auto (Feral3D only)",
        cfg.layer == SOMVR_LAYER_PROJ ? "proj" : "quad", cfg.space ? "stage" : "local", cfg.loader, cfg.timeout_ms,
        cfg.input == SOMVR_INPUT_OFF ? "off" : cfg.input == SOMVR_INPUT_LOG ? "log" : "on");
+#ifdef _WIN32
+    /* W1: the Khronos loader FreeLibrary's a layer at vkDestroyInstance, and DXVK makes and drops instances (the
+     * factory's, the device probes'): the XR instance this layer keeps across Vulkan instances (phase ready) would
+     * leak with the DLL and the next xrCreateInstance fail (XR_ERROR_LIMIT_REACHED: one per process). Pinned for the
+     * process's life (GET_MODULE_HANDLE_EX_FLAG_PIN | _FROM_ADDRESS) */
+    {
+        __declspec(dllimport) int __stdcall GetModuleHandleExA(unsigned long, const char *, void **);
+        void *hm = NULL;
+        int pin = GetModuleHandleExA(0x1 | 0x4, (const char *)(uintptr_t)once_init, &hm);
+        lg("vk: the layer DLL %p %s for the process", hm, pin ? "pinned" : "NOT pinned");
+    }
+#endif
     cfg.predict_bad = bad_predict;
     int b0 = 0, b1 = 0, b2 = 0;
     cfg.hud = somvr_parse_hud(getenv("SOMVR_XR_HUD"), &b0);
@@ -438,7 +460,7 @@ typedef struct inst_st {
     X(DestroyDevice) X(GetDeviceQueue) X(GetDeviceQueue2) X(CreateSwapchainKHR) X(DestroySwapchainKHR)                 \
     X(GetSwapchainImagesKHR) X(QueuePresentKHR) X(QueueSubmit) X(CreateCommandPool) X(DestroyCommandPool)            \
     X(AllocateCommandBuffers) X(FreeCommandBuffers) X(ResetCommandBuffer) X(BeginCommandBuffer) X(EndCommandBuffer)   \
-    X(CmdPipelineBarrier) X(CmdCopyImage) X(CmdBlitImage) X(CreateFence) X(DestroyFence) X(WaitForFences)            \
+    X(CmdPipelineBarrier) X(CmdCopyImage) X(CmdCopyImage2) X(CmdCopyImage2KHR) X(CmdBlitImage) X(CmdBlitImage2) X(CmdBlitImage2KHR) X(CmdResolveImage) X(CmdResolveImage2) X(CmdResolveImage2KHR) X(CmdBeginRendering) X(CmdBeginRenderingKHR) X(CreateImageView) X(DestroyImageView) X(CreateFence) X(DestroyFence) X(WaitForFences)            \
     X(ResetFences) X(CreateSemaphore) X(DestroySemaphore) X(CreateImage) X(DestroyImage)                             \
     X(GetFenceStatus) /* SOMVR_XR_COVER: a reading's submit done (polled, never waited for) */                     \
     X(CreateBuffer) X(DestroyBuffer) X(GetBufferMemoryRequirements) X(AllocateMemory) X(FreeMemory)                  \
@@ -836,6 +858,33 @@ static void env_config(const XrExtensionProperties *props, uint32_t n) {
 
 /* Runs on the helper thread: loader, instance, system, extension lists. Writes only fields nobody else reads before
  * init_done. Returns 0 on success. */
+#ifdef _WIN32
+static int wine_xr(void);
+/* W1 under Proton: wineopenxr hands the app the HOST runtime's device extensions (VK_KHR_external_memory_fd and the
+ * semaphore/fence _fd ones); winevulkan offers their _win32 twins to Windows code and maps them onto the host's _fd
+ * ones. Under wineopenxr only. */
+static void wine_dev_exts(char *s, size_t cap) {
+    if (!wine_xr()) return;
+    static const char *const fd[][2] = {{"VK_KHR_external_memory_fd", "VK_KHR_external_memory_win32"},
+                                        {"VK_KHR_external_semaphore_fd", "VK_KHR_external_semaphore_win32"},
+                                        {"VK_KHR_external_fence_fd", "VK_KHR_external_fence_win32"}};
+    char out[sizeof X.dev_exts] = "", w[VK_MAX_EXTENSION_NAME_SIZE];
+    size_t o = 0;
+    int n = 0;
+    for (const char *p = s; *p;) {
+        while (*p == ' ') p++;
+        size_t k = strcspn(p, " ");
+        if (!k) break;
+        snprintf(w, sizeof w, "%.*s", (int)k, p);
+        p += k;
+        for (int i = 0; i < 3; i++)
+            if (!strcmp(w, fd[i][0])) snprintf(w, sizeof w, "%s", fd[i][1]), n++;
+        o += snprintf(out + o, o < sizeof out ? sizeof out - o : 0, "%s%s", o ? " " : "", w);
+    }
+    if (o < sizeof out && o < cap) memcpy(s, out, o + 1);
+    lg("xr: wineopenxr: %d host-only device extension(s) as their _win32 twins: %s", n, s);
+}
+#endif
 static int xr_init_work(void) {
     X.lib = dlopen(cfg.loader, RTLD_NOW | RTLD_LOCAL);
     if (!X.lib) {
@@ -930,6 +979,9 @@ static int xr_init_work(void) {
         lg("xr: Vulkan extension lists: %s", xr_str(r));
         return -1;
     }
+#ifdef _WIN32
+    wine_dev_exts(X.dev_exts, sizeof X.dev_exts);
+#endif
     XrViewConfigurationView vv[2] = {{.type = XR_TYPE_VIEW_CONFIGURATION_VIEW},
                                      {.type = XR_TYPE_VIEW_CONFIGURATION_VIEW}};
     n = 0;
@@ -1697,7 +1749,7 @@ static void xr_fail(const char *what, XrResult r) {
 /* Is the runtime's VkPhysicalDevice (a loader trampoline handle) the GPU the game created its device on (a handle
  * one level down)? Uses the loader's exported entry points; never runs inside vkCreate* (loader lock). */
 static int same_gpu(dev_st *ds, VkPhysicalDevice t) {
-    void *h = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_NOLOAD);
+    void *h = dlopen(SOMVR_VULKAN_LOADER, RTLD_NOW | RTLD_NOLOAD);
     PFN_vkGetInstanceProcAddr tg = h ? (PFN_vkGetInstanceProcAddr)dlsym(h, "vkGetInstanceProcAddr") : NULL;
     PFN_vkEnumeratePhysicalDevices tenum =
         tg ? (PFN_vkEnumeratePhysicalDevices)tg(ds->is->inst, "vkEnumeratePhysicalDevices") : NULL;
@@ -1727,13 +1779,84 @@ static int same_gpu(dev_st *ds, VkPhysicalDevice t) {
     return ok;
 }
 
+#ifdef _WIN32
+static int wine_xr(void);
+/* W1 under Proton: wineopenxr (openxr.c: vulkan_instance_from_handle and its siblings) takes the VkInstance,
+ * VkPhysicalDevice and VkDevice as winevulkan's client objects {ICD loader magic, unix handle} and reads the second
+ * qword. Under the Khronos loader (the package's vulkan-1.dll) the layer's VkDevice is winevulkan's (the loader writes
+ * its dispatch over the first qword only), but the VkInstance is the loader's and the VkPhysicalDevice the loader's
+ * terminator {dispatch, its ICD term, ..., the ICD's VkPhysicalDevice}, whose ICD term holds the ICD's VkInstance.
+ * Both found by winevulkan's magic, then checked through winevulkan's own exports (the instance lists the device, the
+ * device is the game's GPU). Native Windows runtimes take the loader's handles as they are. */
+#define WV_MAGIC 0x01CDC0DEull
+static int wv_obj(uint64_t p) {
+    uint64_t m = 0;
+    return p && !(p & 7) && somvr_safe_read(&m, (uintptr_t)p, 8) && m == WV_MAGIC;
+}
+static int wine_icd_handles(dev_st *ds, VkInstance *oi, VkPhysicalDevice *op) {
+    void *h = dlopen("winevulkan.dll", RTLD_NOW | RTLD_NOLOAD);
+    PFN_vkEnumeratePhysicalDevices wenum = h ? (PFN_vkEnumeratePhysicalDevices)dlsym(h, "vkEnumeratePhysicalDevices") : NULL;
+    PFN_vkGetPhysicalDeviceProperties wprops =
+        h ? (PFN_vkGetPhysicalDeviceProperties)dlsym(h, "vkGetPhysicalDeviceProperties") : NULL;
+    if (!wenum || !wprops) return lg("xr: wineopenxr: winevulkan.dll or its exports not found"), -1;
+    uint64_t term[6] = {0}, pd = 0;
+    int kp = -1;
+    if (!somvr_safe_read(term, (uintptr_t)ds->pd, sizeof term))
+        return lg("xr: wineopenxr: the physical device %p is not readable", (void *)ds->pd), -1;
+    for (int i = 1; i < 6 && !pd; i++)
+        if (wv_obj(term[i])) pd = term[i], kp = i;
+    if (!pd)
+        return lg("xr: wineopenxr: the physical device %p holds no winevulkan object (not the Khronos loader's "
+                  "terminator?)", (void *)ds->pd), -1;
+    for (int i = 1; i < kp; i++) {
+        uint64_t it[8] = {0};
+        if (!term[i] || !somvr_safe_read(it, (uintptr_t)term[i], sizeof it)) continue;
+        for (int j = 0; j < 8; j++) {
+            if (!wv_obj(it[j])) continue;
+            VkPhysicalDevice list[16];
+            uint32_t n = 16;
+            VkResult r = wenum((VkInstance)(uintptr_t)it[j], &n, list);
+            for (uint32_t e = 0; (r == VK_SUCCESS || r == VK_INCOMPLETE) && e < n && e < 16; e++) {
+                if ((uint64_t)(uintptr_t)list[e] != pd) continue;
+                VkPhysicalDeviceProperties a, b;
+                wprops(list[e], &a);
+                ds->is->GetPhysicalDeviceProperties(ds->pd, &b);
+                int same = a.vendorID == b.vendorID && a.deviceID == b.deviceID && !strcmp(a.deviceName, b.deviceName);
+                lg("xr: wineopenxr: winevulkan's VkInstance %p / VkPhysicalDevice %p (\"%s\") under the Khronos "
+                   "loader's %p / %p (terminator word %d, ICD term word %d): %s", (void *)(uintptr_t)it[j],
+                   (void *)list[e], a.deviceName, (void *)ds->is->inst, (void *)ds->pd, kp, j,
+                   same ? "the game's GPU" : "NOT the game's GPU");
+                if (!same) return -1;
+                *oi = (VkInstance)(uintptr_t)it[j];
+                *op = list[e];
+                return 0;
+            }
+        }
+    }
+    return lg("xr: wineopenxr: no winevulkan VkInstance lists the device %#llx", (unsigned long long)pd), -1;
+}
+#endif
+
 static int xr_session_setup(dev_st *ds, q_st *qi) {
     VkPhysicalDevice t = VK_NULL_HANDLE;
-    XrResult r = X.xrGetVulkanGraphicsDeviceKHR(X.inst, X.sys, ds->is->inst, &t);
+    VkInstance xi = ds->is->inst;
+#ifdef _WIN32
+    VkPhysicalDevice wpd = VK_NULL_HANDLE;
+    int wv = wine_xr();
+    if (wv && wine_icd_handles(ds, &xi, &wpd))
+        return xr_fail("wineopenxr's Vulkan handles", XR_ERROR_RUNTIME_FAILURE), -1;
+#endif
+    XrResult r = X.xrGetVulkanGraphicsDeviceKHR(X.inst, X.sys, xi, &t);
     if (XR_FAILED(r)) return xr_fail("xrGetVulkanGraphicsDeviceKHR", r), -1;
+#ifdef _WIN32
+    if (wv) {
+        lg("xr: wineopenxr's GPU %p %s winevulkan's %p", (void *)t, t == wpd ? "=" : "!=", (void *)wpd);
+        if (t != wpd) return xr_fail("runtime GPU check", XR_ERROR_RUNTIME_FAILURE), -1;
+    } else
+#endif
     if (!same_gpu(ds, t)) return xr_fail("runtime GPU check", XR_ERROR_RUNTIME_FAILURE), -1;
     XrGraphicsBindingVulkanKHR b = {.type = XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR,
-                                    .instance = ds->is->inst,
+                                    .instance = xi,
                                     .physicalDevice = t,
                                     .device = ds->dev,
                                     .queueFamilyIndex = qi->family,
@@ -4693,6 +4816,7 @@ static struct {
     somvr_ptr_state ptr;
     somvr_vm_hit hover;
     int page;                    /* SOMVR_VMPG_*: the settings or the practice page (its tab; v3) */
+    int last_grp;                /* build 34: the Settings tab's group last shown (its tab opens it again) */
     /* build 21 (SOMVR_XR_VM_TEST): the Test page's text (read at the setup), its page shown */
     somvr_vm_text test;
     int test_page;
@@ -4834,8 +4958,8 @@ static void vm_test_load(void) {
         lg("xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): '%s' - %d lines, %d page%s from %s (%zu bytes%s)", VM.test.line[0],
            VM.test.n, VM.test.pages, VM.test.pages == 1 ? "" : "s", path, n, VM.test.truncated ? ", cut to fit" : "");
     else
-        lg("xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): no notes - %s %s (the page says so)", path[0] ? path : "no path",
-           !got ? (err ? strerror(err) : "unreadable") : "has nothing but comments");
+        lg("xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): no notes - %s %s (build 34: the Test tab is left out)",
+           path[0] ? path : "no path", !got ? (err ? strerror(err) : "unreadable") : "has nothing but comments");
 }
 
 static void vm_setup(void) {
@@ -4864,7 +4988,7 @@ static void vm_setup(void) {
     VM.gen_seen = atomic_load_explicit(&m->gen, memory_order_acquire);
     VM.toggles_seen = atomic_load_explicit(&m->toggles, memory_order_acquire); /* earlier presses toggle nothing */
     vm_publish_closed();
-    char line[512];
+    char line[1280]; /* build 34: 49 keys */
     vm_set_line(&VM.set, line, sizeof line);
     const char *off = !cfg.vm ? "SOMVR_XR_VRMENU=off" : cfg.input == SOMVR_INPUT_OFF ? "SOMVR_XR_INPUT=off" : NULL;
     int bad = off ? 0 : somvr_font_init(&VM.font);
@@ -4955,7 +5079,8 @@ static float vm_vignette(float obj) {
 /* what the menu can change in this session: the preload's, the HUD only with its quad, the seat height with a floor */
 static uint64_t vm_avail(void) { /* v7: 64 bits (a ~ of a 32-bit mask would clear bits 32..63: ~(uint64_t)) */
     uint64_t a = VM.obj->avail & ~(uint64_t)(SOMVR_VMA_FLOOR | SOMVR_VMA_PR_LIVE | SOMVR_VMA_TESTPAGE);
-    if (cfg.vm_test) a |= SOMVR_VMA_TESTPAGE; /* build 21: the layer's own bit */
+    /* build 21: the layer's own bit; build 34: only with notes to show (a player's package ships none: no empty tab) */
+    if (cfg.vm_test && VM.test.have) a |= SOMVR_VMA_TESTPAGE;
     if (a & SOMVR_VMA_PRACTICE) /* the practice area's live state (the preload, every input tick) */
         a |= atomic_load_explicit(&VM.obj->pstate, memory_order_acquire) & SOMVR_VMA_PR_LIVE;
     if (!X.hud || !X.hud_on) a &= ~(uint64_t)SOMVR_VMA_HUD;
@@ -4988,18 +5113,23 @@ static int vm_head(somvr_posef *out) {
     return 1;
 }
 
-/* a tick on hand h (the menu's haptics strength applied), straight to the runtime */
-static void vm_haptic(int h, float amp, float sec) {
+/* a word of the haptics language (somvr_haptics.h, build 34) on hand h - the menu's own words are one pulse (the quit
+ * word in both hands) - at the menu's strength (somvr_hx_scale, as the game's mixer), straight to the runtime */
+static void vm_haptic(int h, int w) {
     if (!I.on || !I.act[SOMVR_ACT_HAPTIC]) return;
-    amp *= VM.set.haptics;
-    if (!(amp > 0.005f)) return;
-    XrHapticActionInfo hi = {.type = XR_TYPE_HAPTIC_ACTION_INFO, .action = I.act[SOMVR_ACT_HAPTIC],
-                             .subactionPath = I.hand[h & 1]};
-    XrHapticVibration v = {.type = XR_TYPE_HAPTIC_VIBRATION, .duration = (XrDuration)(sec * 1e9f),
-                           .frequency = XR_FREQUENCY_UNSPECIFIED, .amplitude = amp < 1 ? amp : 1};
-    XrResult r = X.xrApplyHapticFeedback(X.session, &hi, (const XrHapticBaseHeader *)&v);
-    if (XR_FAILED(r)) in_warn(IW_HAPTIC, "xrApplyHapticFeedback (VR menu)", r);
-    else VM.n_haptics++;
+    somvr_hx_shot s[SOMVR_HX_SHOTS];
+    int n = somvr_hx_shots(w, 1, 1, h & 1, 0, s);
+    for (int i = 0; i < n; i++) {
+        float amp = somvr_hx_scale(s[i].amp, VM.set.haptics);
+        if (s[i].t > 0 || !(amp > 0.005f)) continue; /* the menu's words have no later pulse */
+        XrHapticActionInfo hi = {.type = XR_TYPE_HAPTIC_ACTION_INFO, .action = I.act[SOMVR_ACT_HAPTIC],
+                                 .subactionPath = I.hand[s[i].hand & 1]};
+        XrHapticVibration v = {.type = XR_TYPE_HAPTIC_VIBRATION, .duration = (XrDuration)(s[i].dur * 1e9f),
+                               .frequency = XR_FREQUENCY_UNSPECIFIED, .amplitude = amp};
+        XrResult r = X.xrApplyHapticFeedback(X.session, &hi, (const XrHapticBaseHeader *)&v);
+        if (XR_FAILED(r)) in_warn(IW_HAPTIC, "xrApplyHapticFeedback (VR menu)", r);
+        else VM.n_haptics++;
+    }
 }
 
 /* The panel's swapchain (an ordinary one: its picture changes), the staging buffer (mapped), the upload's command
@@ -5180,42 +5310,43 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
         somvr_vrmenu_publish(VM.obj, &VM.set);
         VM.gen_seen = atomic_load_explicit(&VM.obj->gen, memory_order_acquire);
         if (hit->item == SOMVR_VMI_HUD_DIST || hit->item == SOMVR_VMI_HUD) X.hud_latched = 0; /* placed again */
-        what = "changed", vm_haptic(VM.main_hand, 0.35f, 0.015f);
+        what = "changed", vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     } else if (r == SOMVR_VMR_RECENTER) {
         atomic_fetch_add_explicit(&VM.obj->recenters, 1, memory_order_release);
         X.hud_latched = 0; /* the world-locked HUD quad is placed again ahead of the new forward */
-        what = "recentre", vm_haptic(VM.main_hand, 0.3f, 0.012f);
+        what = "recentre", vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     } else if (r == SOMVR_VMR_CLOSE) {
         VM.gs.open = 0, VM.gs.why = SOMVR_VMW_CLOSE_BOX, VM.gs.closes++, VM.gs.armed = 0;
-        what = "close", vm_haptic(VM.main_hand, 0.3f, 0.012f);
+        what = "close", vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     } else if (r == SOMVR_VMR_PAGE) { /* a tab: its page (build 6: Settings, Practice, Controls) */
         VM.page = somvr_vm_tab_page(hit->item);
+        /* build 34 (re-xr-pipeline.md 150): the Settings tab opens the group it was on (as the Test page its page) */
+        if (hit->item == SOMVR_VMI_TAB_SET && somvr_vm_settings_page(VM.last_grp)) VM.page = VM.last_grp;
+        if (somvr_vm_settings_page(VM.page)) VM.last_grp = VM.page;
         VM.hover = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
         /* build 31 (the 11-02 session: "remember which page I'm on"): the Test page opens where it was left (build 21:
          * from its first page at every tab click) */
         if (VM.page == SOMVR_VMPG_CONTROLS) VM.ctl_page = 0; /* build 27: from its first page */
-        what = VM.page == SOMVR_VMPG_PRACTICE   ? "the practice page"
-               : VM.page == SOMVR_VMPG_CONTROLS ? "the controls page"
-               : VM.page == SOMVR_VMPG_FIGHT    ? "the fight page" /* build 19: the Settings tab's second page */
-               : VM.page == SOMVR_VMPG_TEST     ? vm_test_what() /* build 21; build 31: its page */
-                                                : "the settings page";
-        vm_haptic(VM.main_hand, 0.3f, 0.012f);
+        /* build 34 (re-xr-pipeline.md 150): the Settings tab's six groups too (somvr_vm_page_name) */
+        what = VM.page == SOMVR_VMPG_TEST ? vm_test_what() /* build 21; build 31: its page */
+                                          : somvr_vm_page_name(VM.page);
+        vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     } else if (r == SOMVR_VMR_SCROLL && (hit->item == SOMVR_VMI_CTL_PREV || hit->item == SOMVR_VMI_CTL_NEXT)) {
         /* build 27 (re-xr-pipeline.md 112): the Controls page's Prev / Next */
         int was = VM.ctl_page, dir = hit->item == SOMVR_VMI_CTL_NEXT ? 1 : -1;
-        uint64_t ca = somvr_vm_ctl_avail(&VM.set, avail);
+        uint64_t ca = somvr_vm_ctl_avail_f(&VM.set, avail, VM.obj->ctl_feat); /* build 34: + the herbs' line */
         VM.ctl_page = somvr_vm_ctl_turn(ca, VM.ctl_page, dir);
         static char cw[64];
         snprintf(cw, sizeof cw, "the controls page %d of %d", VM.ctl_page + 1, somvr_vm_ctl_pages(ca));
         what = VM.ctl_page != was ? cw : "nothing (the controls page's end)";
-        if (VM.ctl_page != was) vm_haptic(VM.main_hand, 0.3f, 0.012f);
+        if (VM.ctl_page != was) vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     } else if (r == SOMVR_VMR_SCROLL) { /* build 21: the Test page's Prev / Next */
         int was = VM.test_page;
         VM.test_page = somvr_vm_test_turn(&VM.test, VM.test_page, hit->item == SOMVR_VMI_TEST_NEXT ? 1 : -1);
         what = VM.test_page != was ? (hit->item == SOMVR_VMI_TEST_NEXT ? "the next test page" : "the last test page")
                                    : "nothing (the test page's end)";
         if (VM.test_page != was) {
-            vm_haptic(VM.main_hand, 0.3f, 0.012f);
+            vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
             /* build 31: kept in the settings (TEST_PAGE): the next session's menu opens it there, for the same text */
             VM.set.test_page = (uint8_t)(VM.test_page < 255 ? VM.test_page : 255), VM.set.test_key = VM.test_key;
             somvr_vrmenu_publish(VM.obj, &VM.set);
@@ -5225,17 +5356,17 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
         uint32_t w = atomic_load_explicit(&VM.obj->practice, memory_order_relaxed);
         w = somvr_vm_pr_pack(somvr_vm_pr_seq(w) + 1, somvr_vm_practice_action(hit->item), (int)VM.set.orc);
         atomic_store_explicit(&VM.obj->practice, w, memory_order_release);
-        what = "practice request", vm_haptic(VM.main_hand, 0.35f, 0.015f);
+        what = "practice request", vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     } else if (r == SOMVR_VMR_REPORT) { /* a bug mark: the preload's game thread makes it (its buzzes confirm) */
         atomic_fetch_add_explicit(&SSN.obj->report_req, 1, memory_order_release);
-        what = "report (a bug mark)", vm_haptic(VM.main_hand, 0.3f, 0.012f);
+        what = "report (a bug mark)", vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     } else if (r == SOMVR_VMR_QUIT && SSN.quit_armed && ss_now() - SSN.quit_t <= 5.0) { /* the second press: confirmed */
         SSN.quit_armed = 0;
         atomic_fetch_add_explicit(&SSN.obj->quit_req, 1, memory_order_release);
-        what = "quit game (confirmed)", vm_haptic(VM.main_hand, 0.6f, 0.08f);
+        what = "quit game (confirmed)", vm_haptic(VM.main_hand, SOMVR_HX_QUIT);
     } else if (r == SOMVR_VMR_QUIT) { /* the first press: the button reads Confirm for 5 s */
         SSN.quit_armed = 1, SSN.quit_t = ss_now();
-        what = "quit game armed (press Confirm within 5 s)", vm_haptic(VM.main_hand, 0.35f, 0.015f);
+        what = "quit game armed (press Confirm within 5 s)", vm_haptic(VM.main_hand, SOMVR_HX_CLICK);
     }
     if (r != SOMVR_VMR_QUIT) SSN.quit_armed = 0; /* any other click: Quit is back to normal */
     if (r != SOMVR_VMR_NONE) {
@@ -5454,11 +5585,11 @@ static void vm_frame(dev_st *ds) {
                o.uv[1]);
         }
         if (hit.item >= 0 && hit.item != VM.hover.item && somvr_vm_enabled(&VM.set, avail, hit.item))
-            vm_haptic(MN.vtouch ? MN.tvo.hand : main, 0.12f, 0.008f); /* a light tick on a new row */
+            vm_haptic(MN.vtouch ? MN.tvo.hand : main, SOMVR_HX_HOVER); /* a light tick on a new row */
         VM.hover = hit;
         if ((o.edges & SOMVR_PTRE_PRESS) && hit.item >= 0 && card) { /* the card's X: put away */
             mn_card_close(MN.vtouch ? "its X box, touched" : "its X box");
-            vm_haptic(MN.vtouch ? MN.tvo.hand : main, 0.3f, 0.012f);
+            vm_haptic(MN.vtouch ? MN.tvo.hand : main, SOMVR_HX_CLICK);
             card = have = 0, VM.hover = (somvr_vm_hit){-1, SOMVR_VMP_NONE};
         } else if ((o.edges & SOMVR_PTRE_PRESS) && hit.item >= 0) {
             vm_click(&hit, avail);
@@ -5486,6 +5617,7 @@ static void vm_frame(dev_st *ds) {
         v.quit_armed = card ? 0 : SSN.quit_armed;
         v.lock = VM.snap && !MN.vtouch && VM.hover.item >= 0; /* build 20: the locked part outlined */
         v.test = &VM.test, v.test_page = VM.test_page; /* build 21: the Test page */
+        v.ctl_feat = VM.obj->ctl_feat;                  /* build 34: the Controls lines without an avail bit */
         v.ctl_page = VM.ctl_page;                      /* build 27: the Controls page's page */
         if ((!VM.released || memcmp(&v, &VM.drawn, sizeof v)) && vm_upload(ds, &v)) return; /* off now (logged) */
         float dotp[3]; /* the ray's end and the dot: the pointer's point, or (build 20) the lock's on the locked part */
@@ -5638,12 +5770,52 @@ static int layer_rejected(XrResult r) {
     return r == XR_ERROR_LAYER_INVALID || r == XR_ERROR_LAYER_LIMIT_EXCEEDED || r == XR_ERROR_SWAPCHAIN_RECT_INVALID ||
            r == XR_ERROR_POSE_INVALID || r == XR_ERROR_VALIDATION_FAILURE;
 }
+#ifdef _WIN32
+/* W1 under Proton: wineopenxr (Proton 11, openxr_thunks.c) converts xrEndFrame's layer array with ONE element size
+ * for every layer, taken from layers[0]'s type: quads after the projection are cut to the projection's size and the
+ * runtime refuses the frame (XR_ERROR_POSE_INVALID). Dishonored's port's workaround (openxr_runtime.cpp): a 1 mm quad
+ * first, so every slot is quad-sized; the projection drawn over hides it. Layers bigger than a quad (the environment's
+ * equirect) are left out under wineopenxr. Decided once: the registry's active runtime names wineopenxr. */
+static int g_wine_xr = -1;
+static int wine_xr(void) {
+    if (g_wine_xr >= 0) return g_wine_xr;
+    char v[512] = "";
+    unsigned long n = sizeof v;
+    __declspec(dllimport) long __stdcall RegGetValueA(void *, const char *, const char *, unsigned long, unsigned long *,
+                                                       void *, unsigned long *);
+    long r = RegGetValueA((void *)(uintptr_t)0x80000002 /* HKLM */, "SOFTWARE\\Khronos\\OpenXR\\1", "ActiveRuntime",
+                          0x2 /* RRF_RT_REG_SZ */, NULL, v, &n);
+    g_wine_xr = r == 0 && (strstr(v, "wineopenxr") || strstr(v, "WINEOPENXR"));
+    lg("xr: runtime (registry) '%s': %s", r == 0 ? v : "?", g_wine_xr ? "wineopenxr: the 1 mm lead quad opens every frame"
+                                                                       : "not wineopenxr");
+    return g_wine_xr;
+}
+static XrCompositionLayerQuad g_wine_lead;
+#endif
 /* the composition without the parts in `skip` (XG_*), in its order; *n = how many layers went */
 static XrResult xr_end_try(const xr_comp *c, uint32_t skip, uint32_t *n) {
-    const XrCompositionLayerBaseHeader *ls[XL_N];
+    const XrCompositionLayerBaseHeader *ls[XL_N + 1];
     *n = 0;
+#ifdef _WIN32
+    if (c->l[XL_OWN] && wine_xr() && X.sc) {
+        g_wine_lead = (XrCompositionLayerQuad){.type = XR_TYPE_COMPOSITION_LAYER_QUAD,
+                                               .space = X.space,
+                                               .eyeVisibility = XR_EYE_VISIBILITY_BOTH,
+                                               .subImage = {.swapchain = X.sc, .imageRect = {{0, 0}, {4, 4}}},
+                                               .pose = {{0, 0, 0, 1}, {0, -50.0f, 0}},
+                                               .size = {0.001f, 0.001f}};
+        ls[(*n)++] = (const XrCompositionLayerBaseHeader *)&g_wine_lead;
+    }
+#endif
     for (int i = 0; c->l[XL_OWN] && i < XL_N; i++) /* no frame layer: no extras either (an empty frame) */
-        if (c->l[i] && !(xl_group(i) & skip)) ls[(*n)++] = c->l[i];
+        if (c->l[i] && !(xl_group(i) & skip)) {
+#ifdef _WIN32
+            if (wine_xr() && c->l[i]->type != XR_TYPE_COMPOSITION_LAYER_QUAD &&
+                c->l[i]->type != XR_TYPE_COMPOSITION_LAYER_PROJECTION)
+                continue; /* bigger than the lead quad's slot */
+#endif
+            ls[(*n)++] = c->l[i];
+        }
     XrFrameEndInfo ei = {.type = XR_TYPE_FRAME_END_INFO,
                          .displayTime = X.fs.predictedDisplayTime,
                          .environmentBlendMode = X.blend,

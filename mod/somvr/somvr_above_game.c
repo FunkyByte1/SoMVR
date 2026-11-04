@@ -203,7 +203,7 @@ static void fa_said(int kind, uintptr_t c, int ok, const struct cb_orc *o, const
 	g_fa.offers[kind] += ok != 0;
 	char geo[200];
 	if (fa_log_ok(t))
-		logf_("ABOVE t=%.3f orc %#lx (%s): %s%s%s%s%s", t, (unsigned long)c, fa_geom(o, root, geo, sizeof geo),
+		logf_("ABOVE t=%.3f orc %#llx (%s): %s%s%s%s%s", t, (unsigned long long)c, fa_geom(o, root, geo, sizeof geo),
 		      ok ? "the game offers " : "no ", g_fak_w[kind], ok ? " ('" : " (", ok ? g_fa.off[kind].atk_name : why,
 		      ok ? "')" : ")");
 }
@@ -227,14 +227,14 @@ static void fa_probe(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		all[m++] = o[i], have_pr |= o[i].c == g_pr.orc_c;
 	if (g_pr.orc_c && !have_pr && cb_orc_get(g_pr.orc_c, &all[m])) { /* the practice orc, not in the targeting bands */
 		all[m].dist = dist3(all[m].pos, root);
-		logf_("ABOVE probe t=%.3f the practice orc %#lx at %.0f,%.0f,%.0f (%.0f cm) is NOT in the targeting bands", t,
-		      (unsigned long)g_pr.orc_c, all[m].pos[0], all[m].pos[1], all[m].pos[2], all[m].dist);
+		logf_("ABOVE probe t=%.3f the practice orc %#llx at %.0f,%.0f,%.0f (%.0f cm) is NOT in the targeting bands", t,
+		      (unsigned long long)g_pr.orc_c, all[m].pos[0], all[m].pos[1], all[m].pos[2], all[m].dist);
 		m++;
 	}
 	o = all, n = m;
 	for (int i = 0; i < n; i++) {
 		char line[1600], a[96], s[96];
-		int k0 = snprintf(line, sizeof line, "ABOVE probe t=%.3f orc %#lx at %.0f,%.0f,%.0f (%s):", t, (unsigned long)o[i].c,
+		int k0 = snprintf(line, sizeof line, "ABOVE probe t=%.3f orc %#llx at %.0f,%.0f,%.0f (%s):", t, (unsigned long long)o[i].c,
 				  o[i].pos[0], o[i].pos[1], o[i].pos[2], fa_geom(&o[i], root, geo, sizeof geo));
 		for (size_t j = 0; j < sizeof nodes / sizeof nodes[0] && k0 < (int)sizeof line - 1; j++) {
 			const char *why = "";
@@ -289,8 +289,8 @@ static void fa_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 			g_fa.atk_offer = atk;
 		}
 		if (atk && n2)
-			logf_("ABOVE t=%.3f start: FUN_00a8c700(pc=%#lx, node '%s', attack '%s', the orc's hobj %#lx) %.2f s after the press", t,
-			      (unsigned long)pcomb, g_fa.off[g_fa.kind].node, vb_name(atk, an, sizeof an), (unsigned long)oc.hobj,
+			logf_("ABOVE t=%.3f start: FUN_00a8c700(pc=%#llx, node '%s', attack '%s', the orc's hobj %#llx) %.2f s after the press", t,
+			      (unsigned long long)pcomb, g_fa.off[g_fa.kind].node, vb_name(atk, an, sizeof an), (unsigned long long)oc.hobj,
 			      t - g_fa.press_t);
 		else
 			logf_("ABOVE t=%.3f start: NOT started - the game offers it no more (%s): nothing started (no black)", t, why);
@@ -357,10 +357,10 @@ static void fa_press(int kind, double t)
 			g_vb.pcmd[0] = kind == FAK_BRAND ? VB_CMD_B : VB_CMD_X, g_vb.pcmd[1] = 0, g_vb.press_until = t + g_fa.press_s;
 		somvr_fa_blink_press(&g_fa.bl, t, kind != FAK_LEDGE);
 		if (g_vb.haptic > 0)
-			in_haptic_event(kind == FAK_BRAND ? SOMVR_HAND_L : SOMVR_HAND_R, 0.7f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
+			haptic_play(kind == FAK_BRAND ? SOMVR_HAND_L : SOMVR_HAND_R, SOMVR_HX_POWER, 1, g_vb.haptic);
 	}
-	logf_("ABOVE t=%.3f press: %s on orc %#lx (the game offers '%s' by '%s', asked %.2f s ago; Talion at %.0f,%.0f,%.0f "
-	      "attack '%s'; the view's base %+.0f,%+.0f,%+.0f over his root): %s", t, g_fak_w[kind], (unsigned long)of->c,
+	logf_("ABOVE t=%.3f press: %s on orc %#llx (the game offers '%s' by '%s', asked %.2f s ago; Talion at %.0f,%.0f,%.0f "
+	      "attack '%s'; the view's base %+.0f,%+.0f,%+.0f over his root): %s", t, g_fak_w[kind], (unsigned long long)of->c,
 	      of->atk_name, of->node, t - of->t, g_fa.root0[0], g_fa.root0[1], g_fa.root0[2], g_fa.atk0_name, g_fa.seat_off[0],
 	      g_fa.seat_off[1], g_fa.seat_off[2], g_fa.mode != FA_ON ? "logged only (SOMVR_ABOVE=log)" : g_fa.start_game ?
 	      "the game's attack started on him, the blink" : kind == FAK_BRAND ? "B (120) tapped for 150 ms, the blink"
@@ -457,7 +457,7 @@ static int fa_bm(int act, int *hc, int *w, double t)
 		return act;
 	uintptr_t at;
 	char an[96];
-	float r[3];
+	float r[3] = { 0, 0, 0 }; /* (b34, the analyzer: logged below even when fa_talion read no root) */
 	int have = fa_talion(&at, an, sizeof an, r);
 	int kill = at && at != g_fa.atk0 && (at == g_fa.atk_offer || strstr(an, "Above") || strstr(an, "Ledge") ||
 					    (g_fa.kind == FAK_BRAND && strstr(an, "Brand")));

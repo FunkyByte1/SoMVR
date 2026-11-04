@@ -52,6 +52,13 @@ int main(int argc, char **argv) {
     const char *why = NULL;
     uint32_t *o = somvr_fogpatch(mod, n, 20, &no, &why);
     EXPECT(o && no == n + 22 && !why, "the edit: %p, %zu words (want %zu), %s", (void *)o, no, n + 22, why ? why : "-");
+    { /* build 33: the synthetic module has no density chain: the ray edit refuses it, nothing written */
+        size_t nr = 0;
+        const char *wr = NULL;
+        uint32_t *r = o ? somvr_fogpatch_ray(o, no, &nr, &wr) : NULL;
+        EXPECT(o && !r && wr, "the ray edit on a module without the densities: %p (%s)", (void *)r, wr ? wr : "-");
+        free(r);
+    }
     if (o) {
         size_t at = 0;
         for (size_t i = 5; i < n; i += mod[i] >> 16)
@@ -89,6 +96,13 @@ int main(int argc, char **argv) {
         o = somvr_fogpatch(a, na, (uint32_t)atoi(argv[2]), &no, &why);
         EXPECT(o && no == nb && !memcmp(o, b, nb * 4), "%s: the C edit (%zu words, %s) against the Python (%zu)", argv[1], no,
                why ? why : "-", nb);
+        if (o) { /* build 33: the density along the ray on top: 236 words (6 constants, 18 + 2 x 89) */
+            size_t nr = 0;
+            const char *wr = NULL;
+            uint32_t *r = somvr_fogpatch_ray(o, no, &nr, &wr);
+            EXPECT(r && nr == no + 236 && r[3] > o[3], "%s: the ray edit (%zu -> %zu words, %s)", argv[1], no, nr, wr ? wr : "-");
+            free(r);
+        }
         free(o);
     }
     printf("test_fogpatch: %s\n", fails ? "FAILED" : "ok");

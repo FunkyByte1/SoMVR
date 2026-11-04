@@ -186,15 +186,15 @@ static void ws_aim(double t)
 	int vchg = a.vault != g_ws.was_vault;
 	g_ws.was_vault = a.vault;
 	if (vchg && a.vault && a.kind == SOMVR_WSA_OK && !(ev & SOMVR_WSE_TURN_OK)) /* the ring jumped behind an orc: a tick */
-		in_haptic_event(SOMVR_HAND_R, 0.15f, 0.02f, SOMVR_HAP_UI);
+		haptic(SOMVR_HAND_R, SOMVR_HX_TICK);
 	if (ev & SOMVR_WSE_TURN_NO) /* the pullover's soft "no" (re-xr-pipeline.md 55.1) */
-		in_haptic_double(SOMVR_HAND_R, 0.2f, 0.02f, 0.07f, SOMVR_HAP_UI);
+		haptic(SOMVR_HAND_R, SOMVR_HX_NO);
 	else if (ev & SOMVR_WSE_TURN_OK)
-		in_haptic_event(SOMVR_HAND_R, 0.15f, 0.02f, SOMVR_HAP_UI);
+		haptic(SOMVR_HAND_R, SOMVR_HX_TICK);
 	if ((a.kind != g_ws.last_kind || a.why != g_ws.last_why || vchg || t >= g_ws.next_aim_line) && ws_log_ok()) {
 		char vx[96] = "";
 		if (a.vault && a.orc >= 0 && a.orc < n)
-			snprintf(vx, sizeof vx, "; the vault over orc %#lx (its root %.0f cm away)", (unsigned long)near[a.orc].c,
+			snprintf(vx, sizeof vx, "; the vault over orc %#llx (its root %.0f cm away)", (unsigned long long)near[a.orc].c,
 				 a.orc_cm);
 		float pit = asinf(fmaxf(-1, fminf(1, g_ws.gaze.y))) * 57.29578f;
 		logf_("WSTEP t=%.3f frame=%llu aim: %s%s%s at (%.0f %.0f %.0f), %.0f cm from Talion along the floor, %+.0f cm over "
@@ -249,13 +249,13 @@ static void ws_arrival(double t)
 			if (over)
 				py_vault(near[i].c, t); /* SOMVR_PARRY_VAULT_MS: its opening (logged as PARRY open ... by a vault over it) */
 			if (ws_log_ok())
-				logf_("WSTEP t=%.3f vault: the orc %#lx now %.0f cm from Talion at %+.0f deg from the head's heading (%s); "
-				      "%s", t, (unsigned long)g_ws.go_orc, hypotf(dx, dz), b, fabsf(b) > 120 ? "behind him" : fabsf(b) > 60 ?
+				logf_("WSTEP t=%.3f vault: the orc %#llx now %.0f cm from Talion at %+.0f deg from the head's heading (%s); "
+				      "%s", t, (unsigned long long)g_ws.go_orc, hypotf(dx, dz), b, fabsf(b) > 120 ? "behind him" : fabsf(b) > 60 ?
 				      "beside him" : "in front", over ? "it stands between the start and the landing: over it" :
 				      "NOT between the start and the landing");
 		}
 		if (!found && ws_log_ok())
-			logf_("WSTEP t=%.3f vault: the orc %#lx not among the orcs within 6 m now", t, (unsigned long)g_ws.go_orc);
+			logf_("WSTEP t=%.3f vault: the orc %#llx not among the orcs within 6 m now", t, (unsigned long long)g_ws.go_orc);
 		g_ws.vault_arrived++, g_ws.go_orc = 0;
 	}
 }
@@ -302,7 +302,7 @@ static void ws_frame(uintptr_t pl, int stereo)
 			      "%.0f)", t, (unsigned long long)g_fr.frame, in.rx, in.ry, g_ws.me.x, g_ws.me.y, g_ws.me.z, g_ws.floor_y);
 	}
 	if (ev & SOMVR_WSE_REFUSED) {
-		in_haptic_double(SOMVR_HAND_R, 0.2f, 0.02f, 0.07f, SOMVR_HAP_UI);
+		haptic(SOMVR_HAND_R, SOMVR_HX_NO);
 		if (ws_log_ok())
 			logf_("WSTEP t=%.3f frame=%llu the right stick forward: refused: %s (a soft double buzz; nothing until the stick "
 			      "rests)", t, (unsigned long long)g_fr.frame, g_ws.s.refused == 1 ? "the cooldown" : g_ws.cannot ? g_ws.cannot : "?");
@@ -323,7 +323,7 @@ static void ws_frame(uintptr_t pl, int stereo)
 		sv_vec3 to = { l.x, l.y + foot + 5.0f, l.z };
 		if (!pr_down_start(to, t, 3)) {
 			g_ws.blink_refused++;
-			in_haptic_double(SOMVR_HAND_R, 0.2f, 0.02f, 0.07f, SOMVR_HAP_UI);
+			haptic(SOMVR_HAND_R, SOMVR_HX_NO);
 			if (ws_log_ok())
 				logf_("WSTEP t=%.3f frame=%llu let go after %.2f s: the blink refused (the practice's trip): nothing moves", t,
 				      (unsigned long long)g_fr.frame, g_ws.s.held_s);
@@ -332,7 +332,7 @@ static void ws_frame(uintptr_t pl, int stereo)
 			const somvr_ws_aim *va = &g_ws.s.aim; /* build 27: the vault's orc */
 			g_ws.go_orc = va->vault && va->orc >= 0 && va->orc < 8 ? g_ws.aim_c[va->orc] : 0;
 			g_ws.vault_goes += g_ws.go_orc != 0;
-			in_haptic_event(SOMVR_HAND_L, 0.3f, 0.05f, SOMVR_HAP_COMBAT), in_haptic_event(SOMVR_HAND_R, 0.3f, 0.05f, SOMVR_HAP_COMBAT);
+			haptic(SOMVR_HAND_L, SOMVR_HX_GO), haptic(SOMVR_HAND_R, SOMVR_HX_GO);
 			if (ws_log_ok())
 				logf_("WSTEP t=%.3f frame=%llu let go after %.2f s: the blink onto the gold ring at (%.0f %.0f %.0f), %.0f cm from "
 				      "Talion along the floor, %+.0f cm over his floor, under the quick fade (the target %.0f %.0f %.0f)%s", t,

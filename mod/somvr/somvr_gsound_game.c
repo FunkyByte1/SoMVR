@@ -26,7 +26,11 @@
 static int bs_install_log(void); /* somvr_quiver_game.c (included after this file) */
 
 #define GS_CK_SRC 0x18    /* the post's cookie (FUN_008ecd60's WBWeakRef<CSoundEmitter>): the emitter's +0x78 */
-#define GS_CB 0x8c8ba0    /* BS_POST_B's callback: a game object's post (path A, ours and the global ones, has none) */
+/* BS_POST_B's callback: a game object's post (path A, ours and the global ones, has none). Build 36 (som-b36-polish,
+ * re-xr-pipeline.md 167.4): an address of the running exe - Linux 0x8c8ba0, Windows RVA 0xe29b30 (offsets-combat.tsv
+ * GS_POST_CB, set by hooks_win_globals). Build 35's Windows DLL compared the Linux constant: no post was ever the game's
+ * ("the game objects' posts 0" in the 11-03 Windows session), so Talion's own draw sound played at every game draw */
+static struct { uintptr_t cb; } g_gsg = { 0x8c8ba0 };
 #define GS_FRESH_MS 1000  /* a slots step this recently = the slots own the sword (SL_GAP_S) */
 #define GS_NAMES_MAX 8
 #define GS_NAME_LEN 48
@@ -98,7 +102,7 @@ static int gs_pre(struct gs_post *p, const char *name, uint64_t obj, void *cb, v
 {
 	p->log = 0, p->listed = 0, p->obj = obj, p->src = 0, p->name[0] = 0;
 	int mode = atomic_load_explicit(&g_gs.mode, memory_order_relaxed);
-	if (mode == GS_GAME || (uintptr_t)cb != GS_CB)
+	if (mode == GS_GAME || !cb || (uintptr_t)cb != g_gsg.cb)
 		return 0;
 	atomic_fetch_add_explicit(&g_gs.posts, 1, memory_order_relaxed);
 	gs_name(name, p->name);
@@ -133,8 +137,8 @@ static void gs_after(const struct gs_post *p, uint32_t playing)
 	const char *what = p->listed == 3 ? "DROPPED (the game's own sword sound: no hand drew or put back)"
 			 : p->listed == 2 ? "passed (no slots step within 1 s)"
 			 : p->listed == 1 ? "passed (SOMVR_SLOTS_GAMESOUND=log)" : "passed (not listed)";
-	logf_("SLSND t=%.3f '%s' obj %llu (source %#lx): %s -> playing %u", mono(), p->name, (unsigned long long)p->obj,
-	      (unsigned long)p->src, what, playing);
+	logf_("SLSND t=%.3f '%s' obj %llu (source %#llx): %s -> playing %u", mono(), p->name, (unsigned long long)p->obj,
+	      (unsigned long long)p->src, what, playing);
 }
 
 /* sl_frame (the game thread): a slots step with the player read (g) or without (NULL) */

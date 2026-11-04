@@ -1,0 +1,3 @@
+name	kind	linux	windows	confidence	evidence	notes
+# winport-drivers: rows found by the Linux regression drivers on the GOG build (docs/re-winport.md 7.11); RVAs on the Steam-Win exe
+FI_TM_NUM	off	0x20	0x28	confirmed	the game timer's scale num/den/rate: L FUN_02824cd0 +0x20/+0x24/+0x28 (re-m1m2.md 93) / W FUN_140c38000 (SlowMO.Set 0x140c38060's setter) `[lVar1+0x28]`, `+0x2c`, `+0x30` with lVar1 = *(DAT_14198ddd0+8)	+8: the finisher's and the execution's slow motion read num/den here

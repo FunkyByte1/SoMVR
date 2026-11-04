@@ -81,8 +81,9 @@ static struct { uintptr_t var; const char *name; } g_kp_dbg[] = { /* (Windows: k
 	{ 0x4c44ee0, "Combat.Debug.ApplyDamage" },
 };
 #define KP_DBG_VALUE 0x38
-#ifdef _WIN32 /* the four console bools are not found on Windows (the cvar objects of Linux: +0x38 the value): 0 = the
-	       * gamelog test aid stays off there instead of reading Linux addresses (docs/re-winport.md 7.8) */
+#ifdef _WIN32 /* the Windows build has no console objects: each var is the plain bool itself, the byte its paired readers
+	       * test (offsets-hooks.tsv KP_DBG_*, docs/re-winport.md 7.13); kp_gamelog writes it directly there. The stat
+	       * lines go to Combat_LogPrintf, an empty stub on Windows (BR_LOGPRINTF): nothing is printed there */
 static void kp_dbg_win(void)
 {
 	g_kp_dbg[0].var = GADDR(KP_DBG_STATS, 0x4c44ca0), g_kp_dbg[1].var = GADDR(KP_DBG_XP, 0x4c44d60);
@@ -154,7 +155,8 @@ static int kp_log_ok(void) { return g_kp.lines++ < 900 || log_late_ok(&g_kp_late
 static uintptr_t kp_faction(void)
 {
 	uintptr_t gs = g_kp.on ? peek_ptr(g_prg.gsvc_pp) : 0, vt = gs ? vptr_of((void *)gs) : 0;
-	if (!vt || vt + 0x78 != g_kp_sites[KPS_FMGR].addr || peek_ptr(vt + 0x78) != g_kp_sites[KPS_FMGR].target)
+	uintptr_t so = 8u * (uintptr_t)OFS(KP_GS_FMGR_SLOT, 15); /* CGameServices' faction-manager getter (Windows slot 14) */
+	if (!vt || vt + so != g_kp_sites[KPS_FMGR].addr || peek_ptr(vt + so) != g_kp_sites[KPS_FMGR].target)
 		return 0;
 	uintptr_t fmgr = peek_ptr(gs + KP_GS_FMGR), rec = fmgr ? peek_ptr(fmgr + KP_FMGR_FACREC) : 0;
 	return rec ? KP_FN(KPS_FACTION, kp_faction_fn)(fmgr, rec) : 0;
@@ -205,7 +207,7 @@ static void kp_who(uintptr_t fm, char *out, size_t cap)
 	fb_rec_name(peek_ptr(fm + KP_FM_ROLE), role, sizeof role);
 	fb_rec_name(peek_ptr(fm + KP_FM_TREE), tree, sizeof tree);
 	peek(fm + KP_FM_LEVEL, &lvl, sizeof lvl), peek(fm + KP_FM_NAMEHASH, &hash, sizeof hash), peek(fm + KP_FM_COL, &col, 1);
-	snprintf(out, cap, "member %#lx (name hash %u) %s level %u %s column %u", (unsigned long)fm, hash, role, lvl, tree, col);
+	snprintf(out, cap, "member %#llx (name hash %u) %s level %u %s column %u", (unsigned long long)fm, hash, role, lvl, tree, col);
 }
 
 /* the member bound to an NPC (0 = none: no seed, or no member has it) */
@@ -314,8 +316,8 @@ static int kp_no_cheat(uintptr_t c, const char *what)
 	g_kp.rule_skips++;
 	if (g_kp.told_c[SOMVR_CPF_N] != c && kp_log_ok()) {
 		g_kp.told_c[SOMVR_CPF_N] = c;
-		logf_("CAPTAIN orc %#lx is a captain: %s skipped - his hits are the game's own damage (SOMVR_CAPTAIN_RULES)",
-		      (unsigned long)c, what);
+		logf_("CAPTAIN orc %#llx is a captain: %s skipped - his hits are the game's own damage (SOMVR_CAPTAIN_RULES)",
+		      (unsigned long long)c, what);
 	}
 	return 1;
 }
@@ -413,12 +415,17 @@ static void kp_gamelog(double t)
 	char got[200] = "";
 	size_t o = 0;
 	for (size_t i = 0; i < sizeof g_kp_dbg / sizeof g_kp_dbg[0]; i++) {
+#ifdef _WIN32 /* the bool itself (kp_dbg_win; 0 = not found) */
+		uintptr_t v = g_kp_dbg[i].var;
+		int named = v != 0;
+#else
 		char nm[48] = "";
 		uintptr_t np = peek_ptr(g_kp_dbg[i].var + 8), v = g_kp_dbg[i].var + KP_DBG_VALUE;
+		int named = np && peek(np, nm, sizeof nm - 1) && !strcmp(nm, g_kp_dbg[i].name);
+#endif
 		uint8_t was = 9, one = 1;
-		int p = page_prot(v);
-		int ok = np && peek(np, nm, sizeof nm - 1) && !strcmp(nm, g_kp_dbg[i].name) && peek(v, &was, 1) && was <= 1 &&
-			 p >= 0 && (p & PROT_WRITE);
+		int p = v ? page_prot(v) : -1;
+		int ok = named && peek(v, &was, 1) && was <= 1 && p >= 0 && (p & PROT_WRITE);
 		if (ok)
 			memcpy((void *)v, &one, 1);
 		o += (size_t)snprintf(got + o, sizeof got - o, "%s%s %s", o ? ", " : "", g_kp_dbg[i].name, ok ? "1" : "NOT set");
@@ -571,14 +578,14 @@ static void kp_spawn(const struct pr_me *m, double t, const char *who)
 	char names[400] = "";
 	if (fm)
 		kp_traits(fm, &g_kp.tr, names, sizeof names);
-	logf_("CAPTAIN t=%.3f spawn (%s) %s: %s%s%s; template %#lx at (%.1f %.1f %.1f) %.0f cm ahead facing Talion, hobj=%#lx "
-	      "npc=%#lx Combat=%#lx zone=%#lx level %u health %.1f; the member's flags %#x -> %#x, its NPC %#lx, the NPC's seed "
-	      "%#lx; traits %s; %d members read, the pick %d (last %d)", t, who, fail ? "REFUSED" : "ok", fail ? fail : g_kp.who,
+	logf_("CAPTAIN t=%.3f spawn (%s) %s: %s%s%s; template %#llx at (%.1f %.1f %.1f) %.0f cm ahead facing Talion, hobj=%#llx "
+	      "npc=%#llx Combat=%#llx zone=%#llx level %u health %.1f; the member's flags %#x -> %#x, its NPC %#llx, the NPC's seed "
+	      "%#llx; traits %s; %d members read, the pick %d (last %d)", t, who, fail ? "REFUSED" : "ok", fail ? fail : g_kp.who,
 	      fail ? "" : " - the save's own: his fate is for good", !fail && g_kp.stakes ? " (Talion can die while he is out: "
-	      "SOMVR_PRACTICE_CAPTAIN_STAKES)" : "", (unsigned long)tmpl, hit[0], hit[1], hit[2], (double)dist, (unsigned long)h,
-	      (unsigned long)npc, (unsigned long)c, (unsigned long)zone, lvl, c ? (double)cb_health(c) : -1.0, g_kp.flags0,
-	      fm ? (uint32_t)peek_ptr(fm + KP_FM_FLAGS) : 0u, (unsigned long)(fm ? peek_ptr(fm + KP_FM_NPC) : 0),
-	      (unsigned long)(npc ? peek_ptr(npc + KP_NPC_SEED) : 0), names[0] ? names : "-", n, pick, g_kp.last);
+	      "SOMVR_PRACTICE_CAPTAIN_STAKES)" : "", (unsigned long long)tmpl, hit[0], hit[1], hit[2], (double)dist, (unsigned long long)h,
+	      (unsigned long long)npc, (unsigned long long)c, (unsigned long long)zone, lvl, c ? (double)cb_health(c) : -1.0, g_kp.flags0,
+	      fm ? (uint32_t)peek_ptr(fm + KP_FM_FLAGS) : 0u, (unsigned long long)(fm ? peek_ptr(fm + KP_FM_NPC) : 0),
+	      (unsigned long long)(npc ? peek_ptr(npc + KP_NPC_SEED) : 0), names[0] ? names : "-", n, pick, g_kp.last);
 }
 
 /* `captain status`: the hierarchy as the practice sees it */
@@ -785,8 +792,8 @@ static void kw_frame(const struct pr_me *m, int have, double t)
 		char ld[300];
 		kp_death_desc(g_kw.fm, ld, sizeof ld);
 		logf_("CAPTAIN t=%.3f the world's captain 2 s on (%s): flags %#x (in the world %u, IsDead %u, IsMockDead %u, "
-		      "IsSevered %u), its NPC %#lx, level %u; %s", t, g_kw.who, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 23 & 1,
-		      fl >> 17 & 1, (unsigned long)peek_ptr(g_kw.fm + KP_FM_NPC), lv, ld);
+		      "IsSevered %u), its NPC %#llx, level %u; %s", t, g_kw.who, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 23 & 1,
+		      fl >> 17 & 1, (unsigned long long)peek_ptr(g_kw.fm + KP_FM_NPC), lv, ld);
 		if (g_kw.talion_dead && !g_kw.dead_seen) /* Talion died near him: his level next (the promotion) */
 			g_kw.dead_seen = g_kw.gone_seen = 0, g_kw.npc = g_kw.c = 0;
 		else
@@ -881,7 +888,7 @@ static void kw_frame(const struct pr_me *m, int have, double t)
 	if (out) {
 		g_kw.gone_seen = 1, g_kw.gone++, g_kw.next_watch = t + 2.0;
 		logf_("CAPTAIN t=%.3f the world's captain left the world alive %.1f s after the meeting (%s): the member's flags "
-		      "%#x, its NPC %#lx", t, t - g_kw.t0, g_kw.who, fl, (unsigned long)peek_ptr(g_kw.fm + KP_FM_NPC));
+		      "%#x, its NPC %#llx", t, t - g_kw.t0, g_kw.who, fl, (unsigned long long)peek_ptr(g_kw.fm + KP_FM_NPC));
 		return;
 	}
 	if (atomic_exchange(&g_kw.req_where, 0)) {
@@ -967,9 +974,9 @@ static void kpt_tick(double t)
 		g_kpt.phase = 1, g_kpt.iters = 0, g_kpt.next = t, g_kpt.t0 = t, g_kpt.aims++;
 		g_kpt.c = g_kp.c && pr_orc_alive() && g_pr.orc_c == g_kp.c ? g_kp.c : g_kw.c;
 		g_kpt.v[0] = g_kpt.v[1] = g_kpt.v[2] = g_kpt.v[3] = g_kpt.v[4] = g_kpt.v[5] = NAN;
-		logf_("CAPTAIN t=%.3f thrust: aiming at %s %#lx (the point %.0f cm short of his body, then %.1f m/s)", t,
+		logf_("CAPTAIN t=%.3f thrust: aiming at %s %#llx (the point %.0f cm short of his body, then %.1f m/s)", t,
 		      g_kpt.c == g_kp.c && g_kpt.c ? "the practice's captain" : g_kpt.c ? "the world's captain" : "no captain",
-		      (unsigned long)g_kpt.c, (double)g_kpt.gap_cm, (double)g_kpt.mps);
+		      (unsigned long long)g_kpt.c, (double)g_kpt.gap_cm, (double)g_kpt.mps);
 	}
 	if (!g_kpt.phase || t < g_kpt.next)
 		return;
@@ -1075,8 +1082,8 @@ static void kp_status(double t)
 {
 	uintptr_t mm[KP_MAX];
 	int n = kp_members(mm, KP_MAX);
-	logf_("CAPTAIN t=%.3f status: %d members (the faction %#lx); ours %#lx (%s)", t, n, (unsigned long)kp_faction(),
-	      (unsigned long)g_kp.fm, g_kp.fm ? g_kp.who : "none");
+	logf_("CAPTAIN t=%.3f status: %d members (the faction %#llx); ours %#llx (%s)", t, n, (unsigned long long)kp_faction(),
+	      (unsigned long long)g_kp.fm, g_kp.fm ? g_kp.who : "none");
 	somvr_cp_member cm[KP_MAX];
 	for (int i = 0; i < n; i++) {
 		somvr_cp_traits tr;
@@ -1196,9 +1203,9 @@ static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t)
 		char who[160] = "-";
 		if (bfm)
 			kp_who(bfm, who, sizeof who);
-		logf_("CAPTAIN t=%.3f a presentation starts: %s%s; the captain %s (orc %#lx%s) %.1f m from the head, %.0f deg off "
+		logf_("CAPTAIN t=%.3f a presentation starts: %s%s; the captain %s (orc %#llx%s) %.1f m from the head, %.0f deg off "
 		      "the view (the rule: within %.0f m and %.0f deg)", t, g_kp.pres_world ? "in the world - the player's own view, "
-		      "the presentation camera ignored" : "the window: ", why ? why : "", who, (unsigned long)best,
+		      "the presentation camera ignored" : "the window: ", why ? why : "", who, (unsigned long long)best,
 		      best && best == g_kp.c ? ", the practice's" : best ? ", the world's" : "", bd / 100.0, bo,
 		      bc->range_cm / 100.0, bc->half_deg);
 	}
@@ -1267,15 +1274,15 @@ static void kp_frame(const struct pr_me *m, int have, double t)
 	} else if (!g_kp.dead_seen && !g_kp.gone_seen && !alive) {
 		g_kp.gone_seen = 1, g_kp.next_watch = t + 2.0;
 		logf_("CAPTAIN t=%.3f he left the world alive %.1f s after the spawn (%s; removed by the practice, or an escape): "
-		      "the member's flags %#x (in the world %u, IsDead %u), its NPC %#lx", t, t - g_kp.t0, g_kp.who, fl, fl >> 1 & 1,
-		      fl >> 2 & 1, (unsigned long)peek_ptr(g_kp.fm + KP_FM_NPC));
+		      "the member's flags %#x (in the world %u, IsDead %u), its NPC %#llx", t, t - g_kp.t0, g_kp.who, fl, fl >> 1 & 1,
+		      fl >> 2 & 1, (unsigned long long)peek_ptr(g_kp.fm + KP_FM_NPC));
 	}
 	if ((g_kp.dead_seen || g_kp.gone_seen) && t >= g_kp.next_watch) { /* the member 2 s later: the save's record of it */
 		char ld[300];
 		kp_death_desc(g_kp.fm, ld, sizeof ld);
 		logf_("CAPTAIN t=%.3f the member 2 s on: flags %#x (in the world %u, IsDead %u, KilledByPlayer %u, IsMockDead %u), "
-		      "its NPC %#lx, level %u; %s", t, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 3 & 1, fl >> 23 & 1,
-		      (unsigned long)peek_ptr(g_kp.fm + KP_FM_NPC), (uint32_t)peek_ptr(g_kp.fm + KP_FM_LEVEL), ld);
+		      "its NPC %#llx, level %u; %s", t, fl, fl >> 1 & 1, fl >> 2 & 1, fl >> 3 & 1, fl >> 23 & 1,
+		      (unsigned long long)peek_ptr(g_kp.fm + KP_FM_NPC), (uint32_t)peek_ptr(g_kp.fm + KP_FM_LEVEL), ld);
 		g_kp.fm = g_kp.npc = g_kp.c = g_kp.h = 0;
 		return;
 	}
@@ -1431,8 +1438,8 @@ static void kp_start(int *bad)
 	for (int i = 0; i < KPS_N && g_kp.want; i++) {
 		int k = check_site(&g_kp_sites[i], why, sizeof why) == 0;
 		ok &= k;
-		logf_("CAPTAIN site %s %s %#lx -> %#lx: %s", g_kp_sites[i].name, k ? "ok" : "MISMATCH",
-		      (unsigned long)g_kp_sites[i].addr, (unsigned long)g_kp_sites[i].target, why);
+		logf_("CAPTAIN site %s %s %#llx -> %#llx: %s", g_kp_sites[i].name, k ? "ok" : "MISMATCH",
+		      (unsigned long long)g_kp_sites[i].addr, (unsigned long long)g_kp_sites[i].target, why);
 	}
 	g_kp.on = ok;
 	g_kp.ok_mh = ok && check_site(&g_pr_sites[PRS_MINHEALTH], why, sizeof why) == 0;

@@ -195,6 +195,7 @@ typedef struct {
     float speed;           /* the body's horizontal speed (cm/s) */
     int can;               /* on the ground and free to jump (no blink, no dodge, no sync, not crouched ...) */
     int descent;           /* the climb's A on foot (the descent's edge) is on */
+    int pinned;            /* build 36: the game holds the walk (LOCO's asked, not done): the edge first, even moving */
 } somvr_jp_a_in;
 /* the vault with its ring shown; else moving = the jump at once; else standing = the climb's edge first (a drop's ring
  * there), the jump when it finds no edge (SOMVR_JPA_CLIMB_FIRST); a climb = the climb's; the jump off = the climb's */

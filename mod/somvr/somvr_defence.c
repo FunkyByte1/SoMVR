@@ -1,6 +1,7 @@
 /* somvr_defence.c - SOMVR_DEFENCE's pure judge (somvr_defence.h; docs/re-xr-pipeline.md 22). */
 #include "somvr_defence.h"
 #include "somvr_combat.h" /* sc_seg_dist */
+#include "somvr_haptics.h" /* build 34: the outcomes' words */
 
 #include <math.h>
 #include <string.h>
@@ -17,6 +18,7 @@ void somvr_df_cfg_default(somvr_df_cfg *c)
 	c->arrow_cm = 12, c->arrow_step_s = 0.025f, c->arrow_near_cm = 150;
 	c->parry_on = 1, c->block_on = 1, c->red_block = 0;
 	c->contact = 0, c->contact_cm = 10, c->contact_pre_s = 0.25f, c->contact_post_s = 0.08f, c->contact_cross_deg = 15;
+	c->contact_thrust_cm = 0, c->thrust_cos = 0.7f;
 	c->red_types = 1u << SOMVR_DF_TYPE_NOPARRY | 1u << SOMVR_DF_TYPE_NOBLOCK;
 }
 
@@ -170,6 +172,17 @@ float somvr_df_sweep(const float b0[3], const float t0[3], const float b1[3], co
 	return best;
 }
 
+int somvr_df_thrusting(const somvr_df_cfg *c, const float o0[3], const float p0[3], const float o1[3], const float p1[3])
+{
+	if (!fin3(o0) || !fin3(p0) || !fin3(o1) || !fin3(p1))
+		return 0;
+	float mv[3], ax[3];
+	for (int i = 0; i < 3; i++)
+		mv[i] = 0.5f * (o1[i] + p1[i] - o0[i] - p0[i]), ax[i] = p1[i] - o1[i];
+	float lm = len3(mv), la = len3(ax);
+	return lm > 1.0f && la > 1.0f && fabsf(dot3(mv, ax)) / (lm * la) >= c->thrust_cos;
+}
+
 int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const somvr_df_in *in)
 {
 	if (!tr->started) {
@@ -251,6 +264,12 @@ int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const som
 		int hprev = hand && tr->have_hprev && tr->prev_norc == in->norc;
 		for (int k = 0; win && in->blade && k < in->norc && k < 2 && tr->contact_t < 0; k++) {
 			float cross = 0, pt[3] = { 0, 0, 0 };
+			/* build 32: a thrust (the weapon's middle driven along its own line) meets a guard within contact_thrust_cm
+			 * (review b34: decided first - the hand's blade below replaced a drawn one the thrust's reach meets by a
+			 * nearer one that does not cross, and the block was lost) */
+			float reach = c->contact_cm;
+			if (c->contact_thrust_cm > c->contact_cm && prev && somvr_df_thrusting(c, tr->pob[k], tr->pot[k], in->ob[k], in->ot[k]))
+				reach = c->contact_thrust_cm, tr->thrust = 1;
 			float d = somvr_df_sweep(tr->pb, tr->pt, in->base, in->tip, tr->pob[k], tr->pot[k], in->ob[k], in->ot[k], prev,
 						 SOMVR_DF_SWEEP_STEPS, &cross, pt);
 			int by = 1;
@@ -260,12 +279,12 @@ int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const som
 				float hc = 0, hp[3] = { 0, 0, 0 };
 				float hd = somvr_df_sweep(tr->phb, tr->pht, in->hb, in->ht, tr->pob[k], tr->pot[k], in->ob[k], in->ot[k],
 							  hprev && prev, SOMVR_DF_SWEEP_STEPS, &hc, hp);
-				if (hd < d && !(d <= c->contact_cm && cross >= c->contact_cross_deg))
+				if (hd < d && !(d <= reach && cross >= c->contact_cross_deg))
 					d = hd, cross = hc, memcpy(pt, hp, sizeof pt), by = 2;
 			}
 			if (d < tr->best_cm)
 				tr->best_cm = d, tr->best_ts = in->ts, tr->best_cross = cross;
-			int met = d <= c->contact_cm && cross >= c->contact_cross_deg && somvr_df_can_block(c, in->type) && c->block_on;
+			int met = d <= reach && cross >= c->contact_cross_deg && somvr_df_can_block(c, in->type) && c->block_on;
 			if (met && c->contact_move_cm > 0 && tr->blade_cm < c->contact_move_cm) { /* a still guard: through it */
 				if (!tr->still)
 					tr->still = 1, tr->still_cm = d;
@@ -380,23 +399,22 @@ int somvr_df_arrow(const somvr_df_cfg *c, const float pos[3], const float dir[3]
 	return hit;
 }
 
-somvr_df_haptic somvr_df_haptic_of(int outcome, int sword, float scale)
+int somvr_df_haptic_word(int outcome, float *k, int *both)
 {
-	/* {sword amp, sword s, off amp, off s}: the parry a sharp crack in the sword hand and a knock in the other, the
-	 * block a longer clank, the dodge a soft sweep in both, the arrow a short tick */
-	static const float tab[SOMVR_DFO_N][4] = {
-		{ 0, 0, 0, 0 }, { 0.9f, 0.06f, 0.35f, 0.04f }, { 0.75f, 0.09f, 0, 0 }, { 0.75f, 0.09f, 0, 0 },
-		{ 0.25f, 0.12f, 0.25f, 0.12f }, { 0.6f, 0.04f, 0, 0 },
-	};
-	somvr_df_haptic h;
-	memset(&h, 0, sizeof h);
-	if (outcome < 0 || outcome >= SOMVR_DFO_N || !(scale > 0))
-		return h;
-	float k = scale > 1 ? 1 : scale;
-	int s = sword ? 1 : 0;
-	h.amp[s] = tab[outcome][0] * k, h.dur_s[s] = tab[outcome][1];
-	h.amp[1 - s] = tab[outcome][2] * k, h.dur_s[1 - s] = tab[outcome][3];
-	return h;
+	*k = 0, *both = 0;
+	switch (outcome) {
+	case SOMVR_DFO_PARRY:
+		return *k = 1, SOMVR_HX_BLOCK;
+	case SOMVR_DFO_BLOCK:
+	case SOMVR_DFO_PARRY_BLOCK:
+		return SOMVR_HX_BLOCK;
+	case SOMVR_DFO_DODGE:
+		return *both = 1, SOMVR_HX_GO;
+	case SOMVR_DFO_ARROW:
+		return SOMVR_HX_CLANK;
+	default:
+		return -1;
+	}
 }
 
 /* ---- the parry's clank ------------------------------------------------------------------------------------------- */
@@ -480,20 +498,6 @@ int somvr_df_pick_interrupter(const somvr_df_irules *r, const uintptr_t *const *
 		if (cand_cats && cand_n && somvr_df_may_interrupt(r, cand_cats[i], cand_n[i]))
 			return i;
 	return -1;
-}
-
-somvr_df_clank_haptic somvr_df_clank_haptic_of(float scale)
-{
-	somvr_df_clank_haptic h;
-	memset(&h, 0, sizeof h);
-	if (!(scale > 0))
-		return h;
-	float k = scale > 1 ? 1 : scale;
-	/* the sword hand: a full crack for 50 ms, then the blade's ring from 0.6 down to 0 over 0.25 s (the mixer's ramp);
-	 * the other hand a knock (the parry's table gives 0.9 / 60 ms and 0.35 / 40 ms) */
-	h.crack_amp = 1.0f * k, h.crack_s = 0.05f, h.ring_amp = 0.6f * k, h.ring_s = 0.25f;
-	h.knock_amp = 0.45f * k, h.knock_s = 0.06f;
-	return h;
 }
 
 /* ---- build 31: the blade through the body ------------------------------------------------------------------------- */

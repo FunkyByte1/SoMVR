@@ -102,11 +102,11 @@ at the present. What changes:
 |---|---|---|
 | Renderer path | the same as Proton (DXVK -> Vulkan -> our layer): one code path for everyone | a second path: the eye copy is easy (CopyResource into the XR swapchain images), but everything the layer draws (menus 1.2k lines, void/env 2.3k, VR hands 1.7k, objective, perf, fade, pointer, vignette, threat glows) is Vulkan and would be rewritten in D3D11 |
 | Layer changes | the Linux-specific parts listed in 1 (pthreads, dlopen of the OpenXR loader -> LoadLibrary `openxr_loader.dll`, `XR_KHR_convert_timespec_time` -> `XR_KHR_win32_convert_performance_counter_time`, the struct lookup -> GetProcAddress on our DLL) | the layer is dropped; its OpenXR session code moves into the DLL |
-| Installing the layer | no registry, no admin: an explicit layer JSON + DLL in the mod's folder; the proxy DLL sets `VK_ADD_LAYER_PATH` (loader >= 1.3.234; else `VK_LAYER_PATH`) and `VK_INSTANCE_LAYERS` with SetEnvironmentVariable before d3d11.dll (DXVK) creates its instance. An implicit layer in HKCU would load into every Vulkan app - avoid | n/a |
+| Installing the layer | no registry, no admin: an explicit layer JSON + DLL in the mod's folder; the proxy DLL sets `VK_ADD_LAYER_PATH` (loader >= 1.3.234; else `VK_LAYER_PATH`) and `VK_INSTANCE_LAYERS` with SetEnvironmentVariable before d3d11.dll (DXVK) creates its instance. An implicit layer in HKCU would load into every Vulkan app - avoid. The loader ignores the env path at high integrity (run as administrator; Wine's token): 7.1 "W1" | n/a |
 | OpenXR runtimes | needs XR_KHR_vulkan_enable(2): SteamVR and Meta's PC runtime have it; Virtual Desktop's VDXR and others - verify | every Windows runtime has D3D11 |
 | Pitfalls | DXVK is not supported upstream on Windows (works for most D3D11 games; no anti-cheat here); overlays that hook D3D11/DXGI (RTSS, some capture tools) may not show or may crash - Steam's overlay supports Vulkan; first-run shader compiles (mostly hidden on drivers with VK_EXT_graphics_pipeline_library); DXVK needs Vulkan 1.3 drivers; the game's own D3D11 is replaced for that install (an uninstall = delete the two DLLs) | none from DXVK; the cost is the rewrite |
 | Size | ~2-3 helper-days after the Proton port | ~2-3 helper-weeks |
-| Testable here | **no** (no Windows PC with a GPU in this workspace; Wine is not Windows) | no |
+| Testable here | the Windows-side stack under Proton (7.1 "W1": DXVK + the Khronos loader + our Windows layer + openxr_loader.dll -> wineopenxr), not the Windows runtimes | no |
 
 ## 4. Loading, toolchain, test harness
 
@@ -335,6 +335,120 @@ ray's slot (the live IEnginePhysics vptr is 0x141481d30, 2 qwords after the tabl
 -1, not 65 - every practice spawn and climb ray failed), FI_SH_FXMGR 0x80c78 -> 0x80c70 (the -8 shift; checked before
 the ClientFX create calls: 32 Linux / 38 Windows loads).
 
+**Note (11-03 21:40, som-b33-grass, re-xr-pipeline.md 148.6): every Windows headless number above and below until then was taken at Low** - the slots' prefixes (logs/winport/prefix, -slot2, -slot3) hold `VegetationQuality`, `MeshQuality`, `ShadowQuality`, `LightingQuality`, `TextureQuality`, `AmbientOcclusionQuality` 0, and headless_vr.sh did not apply SOMVR_RENDER_SET on Windows (no grass cards in the meadow, the low meshes and shadows), while the user's sessions run the PC's detection with the VR preset (som-win-session.sh). From then on headless_win.sh writes the same render.cfg into the slot's prefix for each game run and puts the old one back on exit (`render.cfg: the PC's detection with the VR preset ..` in summary.txt; RUN/render.cfg.seeded / .before); `HEADLESS_RENDER=asis` keeps the Low file. Re-measure frame costs before comparing them with Linux's.
+
+**Frame cost, fog, climb and bow on Windows** (11-03 01:51-02:39; runs 20261103-015105 / -021548 / -022457 / -023452;
+headless: Monado's null compositor at 20 Hz, the GPU idling at 500 MHz between frames - absolute GPU times are not
+comparable with a paced 80-90 Hz session, the CPU split is). Per stereo frame, p50 (perf27's places):
+
+| Place | Game thread busy | ours in H4 | the game's render thread (CPU) | dxvk-cs | dxvk-submit | dxvk-queue | GPU, the game |
+|---|---|---|---|---|---|---|---|
+| Meadow | 2.03 | 0.23 | 5.89 | 3.48 | 1.40 | 0.54 | 3.99 |
+| Meadow, turning | 1.93 | 0.21 | 5.18 | 3.10 | 1.44 | 0.46 | 3.97 |
+| Crowd of 8 | 2.81 | 0.29 | 6.11 | 3.60 | 1.50 | 0.56 | 4.21 |
+| Campfire | 2.19 | 0.23 | 6.10 | 3.59 | 1.39 | 0.59 | 4.62 |
+
+- **The render thread is no longer the limit**: on Linux it did the game's D3D11 calls and Feral's translation in one
+  thread (10-13 ms a frame, 115.3); under DXVK the game's render thread is 5.2-6.1 ms and the Vulkan recording runs on
+  DXVK's CS thread in parallel (3.1-3.6 ms), its submit thread 1.4 ms: the critical path about half of Linux's. The
+  game thread 1.9-2.8 ms (Linux 3.4-5.4) and our H4 work 0.21-0.29 ms (Linux 1.1-1.9: the peeks are plain copies
+  behind a cached VirtualQuery here, not process_vm_readv calls). The whole process: 18-23 ms of CPU a frame over 74
+  threads. The present path (ours) 0.9-1.0 ms wall.
+- How measured: the per-thread CPU from /proc/self/task/*/schedstat by thread name (the layer; the DLL names the
+  Present caller somvr-render) - under Wine GetThreadTimes ticks 10 ms and a raw syscall from PE code is caught by
+  the syscall user dispatch, so the DLL's own PERF cpu columns are 0/10 ms noise (its wall-based "busy" stands); the
+  GPU from the layer's timestamps around DXVK's vkQueueSubmit2 (8-9 submits a frame). Not yet: the split at the eye
+  copies (no vkCmdCopyImage(2) into the eye images seen: DXVK copies otherwise), the game thread's CPU (somvr-game's
+  name does not stick: the game renames its main thread).
+- **The split at the eye copies and the game thread** (11-03 11:17, run 20261103-111733, win-perf1 again; the same
+  idle-clock caveat): per stereo frame, p50 ms -
+
+  | Place | GPU, the game | eye 0 + the frame's shared work | eye 1 | the rest (HUD, UI, composite) | ours | game thread CPU | render thread CPU |
+  |---|---|---|---|---|---|---|---|
+  | Meadow | 4.24 | 2.12 | 1.90 | 0.22 | 0.25 | 1.97 | 5.40 |
+  | Meadow, turning | 4.25 | 2.23 | 1.81 | 0.22 | 0.25 | 1.99 | 4.57 |
+  | Crowd of 8 | 4.29 | 2.10 | 1.95 | 0.22 | 0.24 | 2.87 | 6.21 |
+  | Campfire | 4.87 | 2.43 | 2.19 | 0.22 | 0.26 | 1.97 | 5.45 |
+
+  Eye 1 costs 85-90 % of eye 0 + shared: the second eye's pass is almost the whole first eye's again (shadows and the
+  other shared work are a small part under DXVK). How: DXVK writes the eye images with vkCmdCopyImage2 (H8's
+  CopyResource; seen from the start - the split was empty because DXVK records frame N+1 on its CS thread while frame N
+  is still submitted and presented, so every mark carried the previous frame's number and fell outside its spans): a
+  mark now takes its frame from its command buffer's submit (92-99 % of the frames split; Feral the same as before).
+  The game thread: `somvr-game` is set at H4's first call (the game names its threads after our start; the render
+  thread's name was already set late, at the first Present).
+- **(2) The fog**: SOMVR_XR_FOG=radial rewrites both fog shaders at CreatePixelShader (`FOG shader 393bfbda...
+  (9048 -> 9096 bytes)`, `e2c07968... (8168 -> 8216)`), both eyes' haze even in the meadow pictures (run -023452 frames
+  404/484).
+- **(3) The climb** (fling31-drive.sh's ladder plan, driven on the Windows run by `headless_win.sh ... driver`): the
+  grab, the glide down over the edge and the hang (`CLIMB ... down ... hang`), PASS the throw = the hang (flingdown
+  off), PASS no draw while hanging (sword off), PASS drawn while hanging (sword on); FAIL the fling down (no landing),
+  FAIL the hanging chop (no hit) - for winport-world (climb) and -combat.
+- **(4) The bow** (bow20-drive.sh auto + aim on Windows): 14 PASS, 1 FAIL - out by the button, nock, full draw 56 cm,
+  the shot, the next arrow, none left; at far orcs the assist's exact line and **HIT on 'Bip_Head'** twice; FAIL: the
+  3.5 deg-beside shot logged no assist line.
+
+**W1, native Windows players (3.2), built and run under Proton** (11-03 03:00-10:40; commits c0511a5 .. this one).
+- **The package** (`scripts/fetch_win_redist.sh` once, `win/build.sh`, `win/package.sh` -> `build/win/package/x64`, 13
+  files, 16 MB, SHA256SUMS): next to ShadowOfMordor.exe `xinput9_1_0.dll` (our proxy = the whole game side),
+  `d3d11.dll` + `dxgi.dll` (DXVK 2.7.1), `vulkan-1.dll` (the Khronos loader 1.4.341), `openxr_loader.dll` (1.1.61), and
+  `somvr\` with `VkLayer_somvr_openxr.dll` + `.json` (our layer, the same sources through win/compat), `somvr.env` (the
+  switches, one a line), `README.txt` (win/README-Windows.txt) and `licenses\`. The proxy reads somvr.env, sets
+  `VK_ADD_LAYER_PATH=<exe dir>\somvr`, `VK_INSTANCE_LAYERS=VK_LAYER_SOMVR_openxr`, `SOMVR_XR=1` before DXVK's instance
+  (natively; under Wine only with `SOMVR_LAYER=win` - the Linux layer stays the default for the user's sessions), and
+  the layer finds the game side through the proxy's `somvr_win_bridge` export (no bridge file).
+- **The test** (`headless_win.sh MOD --game S` with `WIN_W1=1`): the package into the overlay's upper layer only (the GOG
+  folder never sees it), the stack DXVK -> the Khronos loader -> our Windows layer -> openxr_loader.dll -> Proton's
+  wineopenxr -> Monado (null). In its own prefix, `logs/winport/prefix-w1` (a reflink copy, made once). Six things
+  were found by the boots - 1-4 only under Wine (a Windows PC does not have them), 5-6 on Windows too:
+  1. **DXVK prefers winevulkan.dll** (vulkan_loader.cpp tries it before vulkan-1.dll) and so skips the loader and our
+     layer: under Wine + SOMVR_LAYER=win the proxy patches d3d11.dll's and dxgi.dll's LoadLibraryA (their IAT entries)
+     to refuse that one name. Proven: `Found vkGetInstanceProcAddr in vulkan-1.dll` (0xf200 = the Khronos loader's
+     export). Other DXVK instances in the same log are Proton's own DXVK 3.1.1 from system32, loaded by something by
+     full path - not the game's device (its swapchain factory is ours, 2.7.1).
+  2. **Wine's token has a high integrity level** (0x3000, though not elevated) and the loader then ignores
+     VK_ADD_LAYER_PATH and VK_LOADER_DEBUG ("Loader is running with elevated permissions"; its messages go to
+     OutputDebugString only - WINEDEBUG=+debugstr shows them): the harness registers the manifest in the prefix's HKLM
+     `Khronos\Vulkan\ExplicitLayers` (VK_INSTANCE_LAYERS still enables it). A Windows player at medium integrity
+     takes the env path; one who starts the game as administrator gets none (the proxy logs elevation + integrity;
+     README says so). Proven: `VK_LAYER_SOMVR_openxr loaded ... loader openxr_loader.dll`, `bridge: W1: the proxy
+     DLL's somvr_win_bridge`.
+  3. **wineopenxr waits for `HKCU\Software\Wine\VR`**, which Proton's steam.exe fills at a Steam launch
+     (vrclient_init_registry -> wineopenxr's `wineopenxr_init_registry`, then `state`=1); without it the runtime's
+     negotiation fails at once (-6, `RuntimeInterface::LoadRuntime skipping manifest file C:\openxr\wineopenxr64.json`).
+     `d3dtest.exe vrinit` does the same against Monado before the game: the key first (the export opens it and returns
+     with only a WARN if it is missing), the call (a BOOL), state=1 - then `openxr_vulkan_instance_extensions` etc. are
+     there. These wine runs start a wineserver OUTSIDE the game's namespace, and Wine opens files in the server: the
+     harness waits it out (`wineserver -w`) and stops if one still runs, or the game would see the real install.
+  4. **wineopenxr reads Vulkan handles as winevulkan's client objects** (openxr.c: `vulkan_instance_from_handle(h)` =
+     its second qword; the same for the physical device and the device). Under the Khronos loader the layer's VkDevice
+     is winevulkan's (the loader only writes its dispatch over the first qword), but its VkInstance is the loader's and
+     its VkPhysicalDevice the loader's terminator: under wineopenxr only, the layer takes winevulkan's own pair from the
+     terminator (the ICD's object by winevulkan's magic 0x01CDC0DE, its instance from the ICD term), checks them with
+     winevulkan's exports (the instance lists the device; same name/IDs as the game's GPU) and passes them to
+     xrGetVulkanGraphicsDeviceKHR and the session binding. Also wineopenxr passes the host's device extensions
+     unchanged: `VK_KHR_external_{memory,semaphore,fence}_fd` become winevulkan's `_win32` twins. And the 1 mm lead
+     quad of xrEndFrame (Proton's layer-array size bug; Dishonored's workaround) opens every frame under wineopenxr.
+  5. **The Khronos loader unloads a layer at vkDestroyInstance** (FreeLibrary), and DXVK makes and drops instances (its
+     probes): the XR instance the layer keeps across Vulkan instances leaked with the DLL and the next xrCreateInstance
+     failed (XR_ERROR_LIMIT_REACHED, one per process). The layer pins its DLL at load (GetModuleHandleEx PIN) - this
+     one is for Windows too.
+  6. **The CRT's text mode**: the Linux code opens files without "b"; on Windows every 0x0A written got a 0x0D before
+     it, so the first W1 SOMVR_XR_DUMP pictures looked broken (a pink sky, no grass, a band of garbage rows, the card's
+     gold turned green: the bytes shifted at each inserted CR). `somvr_fopen` (win/compat) now always adds "b", as
+     Linux behaves; the run's dumps repaired offline (each CR before an LF removed) show the right pictures.
+- **The stereo boot through the Windows-side stack** (run 20261103-102006, boot 7; scripts/cmds/win-stereo2.cmd, a copy
+  of the user's Linux save): `VK_LAYER_SOMVR_openxr loaded`, `the layer DLL ... pinned`, `bridge: W1: the proxy DLL's
+  somvr_win_bridge`, `system "Monado: Simulated HMD"` through openxr_loader.dll -> wineopenxr, winevulkan's instance /
+  GPU found under the loader's (`wineopenxr's GPU ... = winevulkan's`), `session running`, the 1 mm lead quad, no
+  xrEndFrame error in 260 s; Play -> Continue -> `ctx=world`, the practice meadow; stereo frames 789.. with the HUD
+  quad, the VR menu's card, the popups; the scripted head's 60 deg turn moves both eyes' views (frame 700: the cliffs
+  to the side, the card at the edge). Pictures: the run's compose of the repaired dumps (frames 300 / 700 / 1100).
+  The present path 0.5 ms acquire+copy a frame, like the Linux layer's.
+- None of 1-4 and 6's repair runs differently on Windows (1-4 are gated on Wine or on wineopenxr being the registry's
+  runtime); on Windows the untested parts are the real runtimes (SteamVR, Meta, VDXR: their Vulkan support) - the
+  loader's handles go to them as they are.
+
 ### 7.3 winport-combat: groups C + F (static, 2026-11-02)
 
 Scope: the 126 SITEs of somvr.c's CB/RX/DF/TH/BM/FB/SL/BOW blocks (78) and somvr_kills/finish/execute/front/fight/
@@ -497,6 +611,66 @@ practice-target dump (+0x2f8/+0x55c), ride's struggle fields (+0xfc..+0x58c: the
 **Next:** the first Proton boots with SOMVR_INPUT=1: the pad-mode byte (+0x218), prompts without GLYPHS, the CWBInput
 hooks; then LOCO/CLIMB (the IEnginePhysics holder 0x19d7da0 is one of ten registered for "IEnginePhysics.Default");
 BR_NODELOG and PR_TMPL_BYNAME need DLL code (an entry hook on a stub, a 20-line lookup).
+
+**Live on the GOG build (11-03 03:10-03:22; runs logs/winport/run-20261103-031028 / -032052; `headless_win.sh` with
+WIN_ENV_FILE=scripts/headset-build26.env, the test hands, WIN_CMDS=scripts/cmds/win-climb1.cmd / win-move1.cmd):**
+- **The cause of the climb's failed fling down was Windows-only**: the capsule's position slots CL_SLOT_PC_SETPOS /
+  _GETPOS were decimal `#define`s (5, 9) the static pass did not wrap; on Windows they are 4 and 8 (OFS rows now).
+  With them off the unpin and SOMVR_CLIMB_THROUGH (the vertical part of the glide and of the flings, set on the
+  proxy) did nothing: the glide over the edge stopped at the lip after 0.4 s (15 cm out, 9 cm down: run -022457) and
+  the fling down never launched (the hold had not taken him down).
+- **fling31 after the fix** (`ladder wall swordlow`): 9 PASS, 2 FAIL. The ladder's glide now goes down as on Linux
+  (220 cm in 1.00 s, "the hand holds the lip"), the fling down launches (553 cm/s, the hold took him 91 cm down) and is
+  then held by the ladder wall's own collision ("blocked below") - the same spot fails on Linux too (115645: launched,
+  "blocked above"; Linux dropped the ladder plan after it), and the hanging chop there misses as on Linux. The wall
+  plan, the one Linux passes (211430), passes in full on Windows: the throw = the hang with flingdown off, **the fling
+  down caught by the left hand, to rest, landed at the foot** (`fling down landed ... fell 28.6 cm, the feet 5.0 cm
+  over the floor`), the sword drawn while hanging and **a hit on the orc while hanging** (cut 2).
+- **jump22 `stand run sprint`**: three snap turns (30 deg each) face him along a free heading; the stick's walk moves him
+  1:1 (asked 173.7 cm, the body 175.5 cm in 1 s), the sprint latch 440 cm/s (asked 440.3, body 435.3); the standing
+  jump 60 cm up, landed in 0.60 s; the running jump 160 cm along the floor, the sprint jump 401 cm, both landed; the
+  view's yaw moved 0.00 deg in every jump.
+
+**The Windows suite's group G/H/B failures (build-vr32-win, 11-03; fixed in 1941f19, proven with the suite's own
+boots 72 and 105 on this tree: logs/coord/t3-4712e8f0-suite-win):**
+- **Captains could not spawn** (captain24, polish23, nemesis27's world captain): `kp_faction` compared CGameServices'
+  vtable + 0x78 (Linux slot 15) with KP_GS_FMGR's site - on Windows the getter is slot 14 (+0x70), so no faction was
+  read. Now `OFS(KP_GS_FMGR_SLOT, 15)` (14 on Windows). Boot 72: `PASS measure: the Captain came (Role_Flogger
+  level 9)`, the strikes' own damage on him; boot 105: `PASS struggle: the introduction in the world` and the world
+  captain met (member 17, 48 m away). Both games then exited by themselves in the fight (below).
+- **The brand's "is B enabled" read** called the input mode's vt+0x18 on Windows, where the node predicate calls
+  +0x10 (L 0x22719a8 / W 0x1408c237f): the next virtual was called. Now `OFS(BR_MODE_CMDON_VT, 0x18)` (0x10).
+- **GLYPHS**: the Windows prompts show the pad pictures in pad mode with no pad and without the re-arm (run -031028
+  shots/t30.png: "(A) Select"), so `gl_start` says `GLYPHS off: not needed on Windows` and returns - no WARN
+  (the boots' WARN count 5 -> 4).
+- **The games that exit by themselves** (here in both fights, in the suite's abil27, sword31, render31): `WIN CRASH
+  0xc0000005 at exe+0xd11df9 reading 0xffffffffffffffff` - 0x140d11df0(rcx, rdx = -1) dereferences rdx, called from
+  the FX create 0x140432b00 (at 0x140432ed7) whose caller is the game's 0x1404321d0; the DLL return address on the
+  stack is somvr_w_vbglow's call of the original (dll+0x90040: VG_FXCREATE's entry hook). For winport-hooks/combat.
+- **pcar29 "no mount offer"** (2 of 3 chains): not this group's offsets. In the failing chains the warg's knockdown
+  ('KnockDown' after the countered leap, as in the passing one) ended without its idle phase ('AI_Warg_Knockdown_Idle_C'
+  never came; the warg stood up and attacked 11 s later), and the game offers the mount only in that idle (the third
+  chain: idle 4.7 s after the knockdown, the offer 0.6 s later; Linux 5.3 s / 0.7 s). The beasts' asks were lifted
+  through both failing knockdowns. The struggle vtables (matched by their fields) come into play only after the mount
+  - the third chain mounted, seated and got off by B.
+
+**The nav markers on Windows (11-03 evening; 5ccd092):** PRN_NAV_POS is the same Linux function as winport-ui's OB_POS
+(0xebc700; Linux has an iterative and a recursive copy, Windows only the recursive one): Windows 0x1404e1cf0 (marker,
+float out[3]) -> 1. The list it walks: the sentinel PRN_LIST 0x46b9200 = RVA 0x17fbda0 (the marker walk FUN_00ec4f10
+= 0x1404e6bf0: `mov rbx,[0x1417fbda8]; lea r12,[0x1417fbda0]; cmp`, the walk winport-ui's OB_EACH hooks); the node -> marker
+-0x80, the record +0x298, active/enabled +0x2e0/+0x2e1 unchanged. Everything that walks the markers now runs on
+Windows: the herbs' exact place (somvr_hands31_game.c), the practice's navdump, abil2's props.
+- Boot (final.sh boot 133, H31_STEPS=herb, run boot-check-20261103-221425): `CONFIG herbs ... the herbs' places by
+  PRN_NAV_POS`; `HERB cue: 'Collectible_Flower_O' at 31314 2190 -25167` - the same spot the Linux run 152929 found
+  - the left hand put onto it `in reach` (10 cm), `taken`, `eaten` (2 cm, 0.25 s), the game's pick: **Talion's
+  health 60.0 -> 120.0**, the plant picked; 2 WARN (the late H9/eye images at start, as every Windows boot).
+  The same again with the dumps kept (run -222305): in reach at 11-15 cm, taken; the game's eye image at the reach
+  (frame 711, left eye, looking down) shows the flower at the view's lower edge; the cue's own layer was not composed
+  over it (wound down) - the glow's place is the cue line's point (15 cm over the marker), as on Linux.
+- pcar29 again (boot 106, run -221611): the leap became the caragor's takedown struggle this time (Talion's
+  `'19CStrugglePressCount' (vtable 0x413cded0)` - the struggle classes by their Windows vtables, live), the later
+  counter gave no knockdown idle: no mount offer. Across the Windows runs 1 of 5 chains got the offer (Linux and the
+  02:33 Windows suite 1 of 1); no offset of the offer path is known to differ - left open.
 
 ### 7.6 winport-ui: group I on the Steam-Win exe, and the offset-diff tool (2026-11-02)
 
@@ -1013,3 +1187,494 @@ client, the 30 s check's move); the frame pacing at the Quest's refresh under Wi
 SOMVR_XR_REFRESH=80 from the switches) and the real eye size from WiVRn; the controllers' bug-mark chord and the VR
 menu's Quit button (headless: the trigger words); the voice notes (wivrn.source exists only with the Quest connected);
 the PC window on the real KDE desktop (DISPLAY from WiVRn's application unit or systemd's environment).
+**7.3 live (11-03, runs 20261103-020950 and -022120 on the GOG build, `cmds/win-kills1.cmd` / `win-kills2.cmd`):**
+the kill's half never played in base's run 012944 because the kills' game clock (`kl_gnow`, and front's `ff_clock`)
+read the game timer's total ms at +0x14 - on Windows +0x14 is the frame's seconds (a float); the total ms are at +0x18
+(TM_TOTAL_MS: L 0xa85092 `mov 0x14(%rdi)` = W 0x140454179 `mov 0x18(%rcx)` in FUN_00a84b70 = 0x140453cc0), so the
+elapsed time read 268 s after 0.2 s and the stall rule ended the kill at once. Fixed (OFS TM_TOTAL_MS). 020950: the
+times are real (0.85 s), the edge-cut kill on a mid-attack infantry ends "not playing" exactly as the same blow does on
+Linux (boot-check 013551 / 211847: that row's half does not take on an orc in that state). 022120 (deterministic):
+`kills play AI_Bip_PC_Standing_InstaKill_F` on an infantry - started, the head +38 -> -29 cm at +0.75 s (the belly
+stab's double-over), traced 6 s; `kills kill` with the row - `down (the head 58 cm lower at +0.30 s, its fall over)` ->
+DealHit dead 0->1, the root 57 cm lower, "Kill +15 / +5 Execution"; the AI hold refused 3 of the orc's own starts (the
+KL_AI_* hooks with the float rate). `kills vt` (live vtable pointers = the tables): CWBTimer 0x14147f4e0 (Set/Get/Create
+at slots 8/9/2), CEngineTimer 0x141485598, the object system 0x14148ca00 (the model-handle getter at +0x118), the model
+0x141482210 (GetNode at slot 16), Combat 0x141461880, NPC 0x1414498b0, CPlayerObj 0x141460160 (FR_VF59 at +0x1a8,
+slot 53). The user's save only read (9d97bf3f... before and after).
+
+**7.3 live 2 (11-03 02:51-03:20, runs 20261103-025133, -030808, -031626): base's two Windows FAILs were the tests' staging.**
+- The hanging chop: base's run (022457) used fling31's `ladder` plan, whose sword step hangs at the ladder's top with the
+  far orc ~3.6 m below (`its chest -364 cm from the eyes`) - Linux fails it the same way (114233, 115645); the hit while
+  hanging is `swordlow`'s (Linux 125711, 182258). On Windows `swordlow` (025133): the orc came to 1.1 m and opened with
+  ReactToSurprised (range 1-2 m), out of the chop's reach; its hit ended the hang (SOMVR_CLIMB_HIT=drop) before cut 2.
+  With SOMVR_CLIMB_HIT=hold (030808): cut 2 `COMBAT hit tier=light ... -> Combat_DealHit ... health 95.0->85.0` with the
+  climb on - `PASS sword: a hit on the orc while hanging`. The Windows hit path from a hang works (cmds/win-swordlow.cmd).
+- The bow's beside shot: the headset envs since build 20 set SOMVR_BOW_ASSIST_DEG=0, so `bow aim assist` had no cone and
+  logged no assist line (the code logs it only with a cone or exact) - Linux the same. New test word `bow assist DEG`
+  (somvr_bowaim_game.c); bow20-drive.sh sets 5 for its beside step, then 0. 031626 (cmds/win-bow-assist.cmd): 15 PASS,
+  0 FAIL - the beside line `assist: the nearest orc's head ... 7.6 deg off the ray: straight along the ray
+  (SOMVR_BOW_ASSIST_DEG 5.0)` (outside the cone: no hit), exact through the body `Bip_Torso`, through the head
+  `Bip_Head`. combat11 and parry18 already ran on Windows (winport-drivers: combat11 012418, parry18 in 0124..0229).
+
+### 7.11 winport-drivers: the Linux regression drivers on the Windows build (2026-11-03, branch t3/som-winport-drivers-test)
+
+**The boot** (`scripts/headless_vr.sh --win MOD`): the same switch list as the Linux boot (headless_vr.sh's own + SOMVR_EXTRA;
+the layer/runtime/log ones are headless_win.sh's) through `scripts/headless_win.sh MOD --game HOLD`, with the run folder
+`logs/boot-check-<ts>/` (WIN_RUN) so that every `scripts/*-drive.sh` finds it unchanged (their `ls -dt
+logs/boot-check-2026*` + `launch-cmd.txt` holding their build's name: the MOD path). headless_win.sh grew boot_check's
+interface for a game run: `launch-cmd.txt` (`# game only (--game-env): ...`), the Linux names beside its own (game.log ->
+wine.log, run.log -> summary.txt, xr-layer.log -> vklayer.log), `@RUN@` in WIN_ENV_FILE / SOMVR_EXTRA values
+(final.sh's `SOMVR_XR_TEST=@RUN@/xrtest.txt`), `SOM_BOOTCHECK_RUN=RUN` (the mod's quit.request and marks/ through the
+Z:\ path shim), the command mode (`RUN/cmd`: WIN_CMDS = HEADLESS_CMDS, default `cmds/win-vr6.cmd`, goes in at the launch;
+lines the drivers append later - `quit`, `shot`, `key` - run in order; `cmd.done`), the player's requests served every
+0.5 s (quit.request = a clean stop; marks/<id>/want -> served + flat.png + the log tails, never a voice), the word
+`endlogs` before every stop (the END lines), and the save guard's line `save after: GameData.sav UNCHANGED (the user's
+.../GameData.sav, only read: sha256 ...)` (the source save is copied into the prefix; its sha before/after), a
+`!!! crash (wine.log)` line on an unhandled exception. HEADLESS_SAVE_FROM = the file to copy (default the user's one
+Steam save, `userdata/*/241930/remote/GameData.sav`, as boot_check finds it). Not on Windows yet: HEADLESS_UNIT,
+HEADLESS_HARD (soak), HEADLESS_MONADO_ENV, HEADLESS_LAUNCH=old, the render preset (`SOMVR_RENDER_SET` is noted, the
+prefix's render.cfg stays as it is). WIN_PREFIX passes through (the helper used a reflink copy,
+logs/winport/prefix-drivers). Trap: never edit a running bash script in place (bash reads it by offset as it goes) -
+the harness was patched between boots only.
+
+**The coordinator's mode** (`logs/coord/final.sh`, not in git): `FINAL_WIN=1 final.sh build-vrNN` = the same boot list
+through `headless_vr.sh --win` (the suite folder `...-suite-win`; the frozen build's `build/win/xinput9_1_0.dll` is
+built there once if missing: `win/build.sh --check` > wincheck.txt); `FINAL_TREE=/ABS/ROOT` boots a worktree instead of
+logs/BUILD (BUILD = its folder name), `FINAL_SCRIPTS=DIR` takes the harness and the drivers from DIR. Needs this branch
+merged (headless_vr.sh --win). The helper's own runner: logs/coord/winport/drivers/wboot.sh (the guards, the slot, the
+release only if it names us).
+
+**Found by the drivers and fixed** (rows in `win/offsets-world.tsv` / new `win/offsets-drivers.tsv`):
+1. *The physics cast* (combat11's first boot: every `practice spawn` "the ray down hit nothing", the anchor's SIZE
+   "the ground nan"; the climb's rays and the bow aim use the same cast): the published IEnginePhysics.Default instance
+   0x141868c50 (`*0x141868c48`, given to the interface registry by FUN_1403eecf0+0x1d1) has vtable **0x141481d30**;
+   0x141481d20 is a 1-slot vtable and 0x141481d28 d30's RTTI locator. The cast 0x141481f28 is slot **63** (Linux 64:
+   MSVC's one destructor), not 65: CL_SLOT_RAYCAST 63, PR_SLOT_RAY 0x1f8; CL_PHYS_PP = 0x1868c48 (the instance pointer
+   itself, valid from load) instead of one TU's holder 0x1419d7da0 (filled only if its TU registers after the registry
+   exists). winport-base found the same vtable live (run 20261103-012113); its rows are the ones kept in the merge.
+2. *The game timer* `*(*IN_PAUSE_PP + 8)` (combat11's second boot: a kill "268.44 s in" 0.1 s after its start, the next
+   kill never dealt): its ms clock is at **+0x18** (Linux +0x14: W 0x140ad19c7 / 0x140ad1d79 hand the fight circle's
+   grant `[rcx+0x18]`), the SlowMO scale num/den/rate at **+0x28/+0x2c/+0x30** (Linux +0x20/+0x24/+0x28: SlowMO.Set's
+   setter FUN_140c38000); with the pause byte's +0x34 -> +0x3c (7.1) the struct shifts +4 then +8. The ms: winport-combat's
+   TM_TOTAL_MS (the same field, found at the same time; kept in the merge: the kills' kl_gnow, the front's ff_clock);
+   FI_TM_NUM (win/offsets-drivers.tsv: the finisher's and the execution's slow motion).
+3. A test word `winpeek RVA|@ADDR [N]` (Windows only): N qwords at the image base + RVA and each one's first qword as an
+   RVA - a vtable check at run time without a debugger.
+
+**The drivers on Windows** (one boot each, `wboot.sh` = final.sh FINAL_WIN=1 on this branch's worktree; suites
+logs/coord/t3-4a93142c-suite-win{,-r2,-v2}; the Linux reference = build-vr31b/31c's suites; every boot: the save guard
+UNCHANGED, no crash, 6-7 WARN lines = the known open sites: HIDE_HEAD parts, GLYPHS, CLIMB_UNPIN, H9's late COM tag):
+
+| driver | Windows | Linux reference | note |
+|---|---|---|---|
+| combat11 (2) | PASS: learn 16 hits, path 24 of 25 blocked, hold 16 hits, 2 of 2 kills (20.8 / 20.0 s) | 17-22 hits, 27 of 27 blocked, 14-22 hits, 2 of 2 (18-19 s) | v2 run 024000; the first two runs found fixes 1 and 2 |
+| kills31 (131) | PASS: front, neck, stab, ground start; takes 4 kills 4; stealth/exec no start | 31c: stab, ground; takes 3 kills 3; front/neck/stealth/exec no start | see "open" for the orc's half |
+| parry18 (13) | PASS: every phase runs (opens 0/3/5/5, ripostes 3, a shield broken), infantry 14 parries | opens 1/6/8/6, ripostes 1-2, a shield broken, infantry 19 | fewer infantry contacts: the learnt paths (open 2) |
+| polish31 (134) | PASS 9 of 9 (the ring, the bow draw, place, the palm menu, Test tab, the body judge) | 9 of 9 | identical |
+| sword31 (132) | PASS: two hands, a wound, none from the weak cut; the stab's wound 1 of 2 runs; blood made (fix 3) | all, the stab at once | open 3 |
+| hands31 (133) | PASS: cues 8, grabs 3, the chord's kill; no vault cue | cues 8, grabs 5, the kill; no vault cue | same outcome |
+| hla27 (101) | PASS 23, FAIL 0 | 23 / 0 | gesture bits 0x...fd027 vs 0x...ff027 (bit 13) |
+| pcar29 (106) | PASS 6 of 6 (the leap countered, mounted, off by B) | 6 / 6 | identical |
+| the quit path (1) | PASS: the game exited by itself after 83 s (scripts/cmds/win-quitpath.cmd) | exits by itself (144 s) | the GOG main menu has 5 rows: 4 Downs to Quit (quitpath.cmd's 5 wrap to PLAY and load the game again) |
+| fling31 (136) | PASS 6 of 6 (wall off, the fling down caught / to rest, landed, the sword drawn and a hit while hanging) | 31b: 5 PASS, 1 FAIL (sword: no hit) | the climb's rays: fix 1 |
+| combat11 on the merged build (cee2684, t3/b26-integration in) | PASS: learn 16, path 25 of 27 blocked, hold 17, 2 of 2 kills, both halves played (the head 97 / 99 cm down) | as above | open 1 looks fixed by combat's merged work; recheck with kills31 |
+| kills31 on the merged build | front, neck, stab start: 3 kills, 2 halves played (the head 48 / 78 cm down), 1 not playing; ground: no start this run | as above | ground started in the first Windows run and on Linux 31c: recheck |
+
+**Fixed while running them**: 1 and 2 above; 4: GO_RTPC's context (win/sites-ui.tsv) 24 -> 16 bytes as Linux's - its third
+qword is AUDIO's slot, already patched when go_start checks (no Music row, no SOMVR_LOAD_VOICES; hla27's avail bit 13);
+and 3: `df_fx_check` refused FI_FX_CREATE once VG_FXCREATE's MinHook entry
+had rewritten 0x140432b00's first bytes (its own check of them passed first) - hitfeel's blood, the stealth kill's and the
+defence's FX: "an FX site did not match"; on Windows the create counts as matched while that hook is in.
+
+**Open (recorded, not fixed)**:
+1. *The orc's half of a standing kill* (mostly fixed on the merged build: 4 of 5 played over combat11 + kills31 there) did not play on Windows in the first kills31 (3 of 3: "its half not playing (the head
+   0.0 cm down in 0.85 s)"; the kill then ends by the stall rule's DealHit - the orc dies, without the animation); in
+   combat11 v2 one of two played ("down: the head 102 cm lower"). Linux: 3 of 8 not playing over 31b/31c. Small samples;
+   the start itself takes (VB_C_ATTACK = the row). For winport-combat: KL_START's Windows call and what makes the
+   victim's half advance.
+2. *TGUARD's learnt blow points* differ (Front_1 -56,-19,99 vs Linux -37,-40,108; Front_2 5,-67,28 vs 4,-70,61 cm):
+   1-3 of 25 path guards unblocked, parry18's infantry 14 contacts vs 19. The orc weapon's node or the orc's frame on
+   Windows (combat group's FIGHT orc weapon reads).
+3. *sword31's stab* missed by 1.2 / 9.2 cm in two of three thrusts (the blade never in the body's surface) - the same
+   geometry question as 2 (the body surface or the orc's spot).
+4. hla27's gesture availability differs in bit 13 (no FAIL); the render preset is not applied on Windows (the prefix's
+   render.cfg); the harness serves marks without a voice by design.
+
+**7.3 offline 3 (11-03 04:00, winport-drivers' runs read): the open differences in the combat area.**
+- *The ground kill "did not start" on the merged build*: it never ran - the game had exited during kills31's stealth
+  step (boot-check-20261103-033929: `the game exited by itself after 134 s`, `program exit 5`, no wine exception: the
+  game's own handler ends it quietly; somvr.log stops 0.5 s into the stab at the unaware orc's back). In the first run
+  (013551) the same step logged `blood ... not made: an FX site did not match` and went on; winport-drivers' fix 3 made
+  the FX (world blood, as sword31's that worked) - not proven to be the cause. A class to know: the game's
+  "Critical Error" asserts store the message on Linux (DAT_04b54ad0) but on Windows also write to address 0 (`movl $0,
+  0x0` after storing it at RVA 0x18f5b08): a call Linux survives ends the Windows process. Of the called entries in all
+  sites tables only the active-item getter 0x1407bc970 has one (slot > 7): fi_active_item now checks the slot first.
+  The DLL logs any fault before the game's handler (win/somvr_win_main.c `crash_note`: `WIN ... CRASH code .. at
+  exe+RVA ... the game's error message '...' ... on the stack: exe+...`, at most 8) - the next kills31 boot names it.
+- *The orc's half of a standing kill* (Windows 4 of 5 played on the merged build; Linux 31b/31c 5 of 8): the same
+  spread; the start takes on both (the row on +0x4d0) and the clock is fixed (7.3 live) - nothing Windows-specific.
+- *The learnt blow points / path guards / parries / the stab*: the guard samples the orc's weapon (the active item's
+  entries +0x28/+0x30, 0x48 apart, the object +0x20 - the same on Windows, SL_REATTACH's twin; its `weapon_tip` node
+  through GetNode slot 16 and NODEXF, both live-checked) at the key times (Combat+0xc8, the same: impact 0.800 s on
+  both). Linux's own learnt points vary as much as Windows' differ: AI_Infantry_Melee_Front_1_LL over 34 Linux learns
+  x -61..61, y -34..111, z -56..167 cm; Windows' 8 lie inside. Path guards: Linux 27/27 in two suites, Windows 23-25 of
+  25-27 in three; the unblocked ones' checks look like Linux's (the blade 0.6-2 cm on the predicted point, its weapon
+  20 cm off it at -0.10 s). No Windows offset found in these reads; the remaining gap is timing-sized, not geometric.
+- The execute counter's lapse log read the clock's seconds at +0x18 (Windows +0x20): TM_TOTAL_S now (log only).
+
+**7.3 live 3 (11-03 08:31-11:37): the quiet exits named by the DLL's crash notes and fixed.** "Exit 5" = 0xc0000005 & 0xff
+(an access violation; the game's handler ends the process without a wine message).
+- abil27 (083149, 181 s) and sword31 (083509, 84 s): `CRASH code 0xc0000005 at exe+0xd11df9 reading 0xffffffffffffffff`
+  (a non-canonical pointer) in 0x140d11df0, called from the ClientFX create 0x140432b00 -> 0x1404321d0 with its 6th
+  argument. Our creates (fi_create_fn: hitfeel's blood, the execute glow, the finisher, the clank) declared it `int c`;
+  on Win64 the 6th argument is a stack slot and an int writes only its low half - the create dereferenced the stack's
+  old high half. c is uintptr_t now (0b50fca); the VG_FXCREATE hook forwards uint64 and was right. abil27 reran clean
+  (101559, 192 s, stopped by the harness). A rule for every typedef: an argument from the 5th on that the game reads as
+  64 bits must be declared 64-bit (ints there leave the high half to chance).
+- render31 (084037, 102814, SOMVR_FX_TEST): `at dll+0x68f76 / 0x68f50` = rd_fnv - first in somvr_dc_updsub (the
+  UpdateSubresource source read for the buffer's ByteWidth, now through peek, 0b50fca), then in rd_vr_present: the
+  previous frame's CPU-particle vertex ranges hashed again at the next present - Map pointers DXVK has unmapped by then
+  (D3D11 keeps a mapping only until Unmap; IndirectX kept them readable). rd_fnv_peek for them (de02815). render31
+  reran clean (113204, 296 s, stopped by the harness). winport-hooks reruns 102 132 135 45 13 twice on a tree with both.
+### 7.12 winport-hooks: the quiet exits at exe+0xd11df9 - an `int` in a Win64 stack slot (2026-11-03)
+
+The crash note (`CRASH code 0xc0000005 at exe+0xd11df9 reading 0xffffffffffffffff`, the game thread, right after a
+sword swing) has `somvr_w_vbglow`'s call of the original on its stack, but the hook is innocent: its compiled frame
+(0x4a8) passes the entry's four registers and its arguments 5/6 ([entry+0x28]/[+0x30] -> [rsp+0x20]/[+0x28]) through
+unchanged. The value comes from **our own FX creates** (hitfeel's hit FX - hence the swings -, the finisher's glow, the
+execution, the defence's flash): `fi_create_fn` declared the create's 6th argument `int c`. 0x140432b00 reads it as a
+qword (`mov rax,[rbp+0x7f]`) and hands it to 0x1404321d0, whose 0x140d11df0 dereferences it when non-zero. **Win64
+passes argument 5+ in an 8-byte stack slot and an `int` writes only its low 4 bytes** (clang: `movl $0, 40(%rsp)`,
+with `uintptr_t` `movq`): the high half is whatever the stack held. SysV passes it in r9, where a 32-bit move
+zero-extends - Linux never saw it. Fixed as `uintptr_t c` (winport-combat's 0b50fca, found independently; merged here
+with its UpdateSubresource fix). **Rule for every game-call typedef**: a parameter the game reads as 64 bits must be
+declared 64-bit from position 5 on (an int/bool/float the callee reads as such is fine). The audit of the 23 typedefs
+with a 32-bit type at position 5+ found no other: D3D11 COM methods and Wwise PostEvent take real u32s, the bools are
+read as bytes, the floats positionally, practice's spawn has u8s there and 64-bit p7-p9.
+
+**Proven** on this tree (935e58e: t3/b26-integration + 0b50fca + de02815, combat's render31 fixes) with
+`final.sh FINAL_TREE=<tree> FINAL_WIN=1 FINAL_BOOTS="102 132 135 45 13"`, twice (logs/coord/t3-4eb13695-suite-win-fx1,
+-fx2; runs boot-check-20261103-115459 .. -121613 and -122938 .. -125100): all ten boots ran until the harness stopped
+them (191-477 s), no `exited by itself`, no CRASH note, 0 SIGSEGV lines; our hit FX made in each (2-12 `rc=1 on the
+sword` lines); and the schema checker of 7.9 live for the first time: `SCHEMA done after 1 s: 12 of 12 holders
+confirmed by their fields` in all ten.
+
+### 7.13 tests: the platform-neutral unit tests on the Windows build (2026-11-03, som-b34-win-tests, branch t3/som-windows-tests-b34)
+
+**What runs.** `win/build.sh --check` ends with `win/wintests.py` (win/README.md 7): every C unit test of build.sh and
+vklayer/build.sh except the Linux-only three is built for x86_64-pc-windows-msvc (the DLL's flags + -Werror, win/compat,
+static CRT) and run under Proton's wine in a throwaway reflink copy of logs/winport/prefix (no display, no audio
+driver, HOME in the copy; deleted at the end). 60 tests: the 55 of build.sh (test_pose ... test_objective, test_fogdxbc
+and test_winabi on the two binaries as Z: paths, and test_sha256 - win/tests/test_sha256.c, never run before, now in
+build.sh too: FIPS 180-4 + the Steam-Win exe's f5d72578...) and vklayer's test_logic, test_env, test_void,
+test_fogpatch. **All 60 pass under wine**; 59 print the very same last line as on Linux (the check counts equal);
+test_finish counts 652 checks on Windows, 650 on Linux - its 200 random swings come from the CRT's `rand()` (srand 7),
+another sequence in UCRT, and its per-swing checks are conditional: both pass. Linux-only: test_layer (the .so under a
+fake driver, dlopen), hands_lvp (lavapipe), selftest (dlsym stand-ins patched in place). Time: the test step 11 s
+(build 5-6 s with every source new, run 5 s: 0.1-0.4 s a test, the first wine start ~1 s, the prefix copy 0.1 s); the
+whole `win/build.sh --check` 38 s after a header change (the DLL rebuilt), `build.sh --check` 3 min 13 s as before.
+
+**The Windows-only bug they found: SOMVR_VMA_STRIKE.** test_vrmenu failed 3 checks on Windows only (the Controls page:
+61 lines of 62, the gaze strike's "Wraith: hold Y; A = Strike" missing, and with any one build-27 bit alone the plain
+Wraith line gone). `SOMVR_VMA_STRIKE = 2147483648u` was an enumerator: gcc gives that enum an unsigned type, the MSVC
+ABI keeps every enum `int`, so it was INT_MIN and g_ctl's `uint64_t need, unless` held 0xffffffff80000000 - bits
+31..63. Where: somvr_vrmenu.c in the **W1 Windows layer DLL** (native Windows players): the gaze-strike line never
+shown, the plain Wraith line hidden whenever any of bits 31..63 was set (the dodge, the stealth kill, every build-27
+gesture line). The game DLL's avail word was right by luck (`sg_on() ? SOMVR_VMA_STRIKE : 0u` converts to unsigned),
+and under Proton the layer is the gcc-built .so: build-win2 under Proton is not affected. Fix: a macro
+(`#define SOMVR_VMA_STRIKE 2147483648u` after the enum, same value). The same shape, harmless today (only ever in
+uint32_t fields): SOMVR_CLIMB_E_EDGE and SOMVR_CLIMB_E_DN_END (`1u << 31` in somvr_climb.h's two event enums) - macros
+now too. **win/build.sh's CF has `-Werror=microsoft-enum-value`**: a new enumerator past INT_MAX fails the Windows build
+(clang's scan of every source found exactly these three).
+
+**Two tests that assumed Linux.** test_winabi checked "the build's RA = SysV" unconditionally: on Windows RA1..RA7 are
+the Win64 family by design - the check is per build now (`#ifdef _WIN32`: rcx rdx r9, the stack slots 5 and 7).
+test_smooth's "a 40 deg jump: raw at once" measured `2 acosf(dot) < 1e-4 rad`; one float step under 1 is already 4.9e-4
+rad, and UCRT's sinf/cosf round q2's norm differently from glibc's (0.056 deg "off" = two float steps under 1, with the pose untouched): it compares
+the raw pose component by component (< 1e-6) and counts the reset now, like the 30 cm check above it. Neither was a
+fault of the product code.
+
+**For the owners.** somvr_vrmenu.h (the VMA bits): any bit 31 and up is a macro (`SOMVR_VMA_BIT(n)` for 32..63, a plain
+`2147483648u` for 31). A new unit test: write it in build.sh's two-line form (`gcc ... -o "$D/build/tests/NAME"
+SOURCES`, then `"$D/build/tests/NAME" ARGS`) and it runs on Windows without more; if it cannot (a Linux API with no
+win/compat shim), add it to LINUX_ONLY in win/wintests.py with the reason.
+
+### 7.13 som-b34-win-unknowns: the Windows values still unknown, found statically (2026-11-03, branch t3/som-b34-unknowns-research)
+
+From `wintables.py --check`'s list (26 unknown globals + the unknown offsets of the groups' notes), each read side by
+side on the Steam-Windows exe without Ghidra: the whole-text disassemblies (logs/winport/world/{lin,win}.dis),
+pairs.tsv, the PE/ELF data, the schema registry FUN_140aa4a20. **Globals unknown 26 -> 5; 0 errors; both build checks
+green.** The rows' evidence columns hold the instructions.
+
+- **Console variables do not exist on Windows.** None of the `Combat.Debug.*` / `Combat.Disable*Cost` names is in the
+  exe: each Linux `CConsoleProgramVariable_Bool` value is a plain .bss bool there, a block at 0x1989ea6..0x1989edf
+  (no writer; the two front bools FR_DBG_SEL/AIMGR were already in it). Mapped by the pairs of every Linux reader of
+  the value byte: Combat.DisableEnergyCost **0x1989ed3** (SK_CV_ENERGY; its four Linux cost copies are one folded
+  function on Windows), DisableChargeCost **0x1989ed4** (SK_CV_CHARGE), Debug.Stats **0x1989eaf**, .XP **0x1989eac**,
+  .HitCounter **0x1989ec0**, .ApplyDamage **0x1989ea6** (KP_DBG_*: on Linux the cvar object, on Windows the bool itself -
+  kp_gamelog now writes it directly there, without the name check; the stat lines still go nowhere on Windows:
+  Combat_LogPrintf is an empty stub). The strike's test word writes SK_CV_* on Windows now.
+- **Schema holders by name** (as 7.9; one schema each with Linux's name and field count, the field indices from the
+  Windows field builders - static initialisers that write each field's name, hash and index byte +0x28):
+  GO_VSCHEMA = 'Client.VisionMode' **0x180b6d0** (fields 5/6 = RampInDuration/RampOutDuration, the mod's +0xf8/+0x128),
+  XC_SYNC_SCHEMA = 'Combat.Sync' **0x1844fe0** (1 TargetAttack, 33 EnableDynamicSlowMo), GC_SCH_PRED =
+  'CombatAttackPredicate' **0x1845120**, STL_AI_HOLDER = 'AI.CharacterTypes' **0x184c200** (0x2f
+  CharacterSneakingAudibleStimulus). Not added to 7.9's run-time checker (these are GADDR macros, not variables).
+- **The struggle vtables** (STG_VT_*, = world's MT_VT_*, now confirmed): five 5-slot vtables at 0x13cddf8 (InputDirection),
+  0x13cded0 (PressCount), 0x13cdef8 (QuickTime), 0x13cdf20 (Hold), 0x13cdf48 (Aim), no RTTI; constructed by the factory
+  0x1405ae840 (= FUN_00e15690); slot 1 of Dir and Aim are the pairs of their vf_02; each vtable's functions read its own
+  class's fields at the Linux offsets (+0x2f0..+0x2f6, +0xd0..+0xd5, +0xfc/+0x100, +0x200/+0x204, +0x58c/+0x591/+0x592).
+  The struggle code's inline field reads are the same offsets.
+- **The front's lockout**: FR_REARM = 0x140ac9f60 (an entry row: FUN_028d6ef0 instruction for instruction), FR_LOCK_A
+  **0x18598a0** (0.25 in the file), FR_LOCK_B **0x185989c** (0.75; read by 0x140acf860 = FUN_028d11b0's tail - the
+  Linux disarm FUN_028d6de0 takes it in xmm1 on Windows).
+- **The rest**: PR_SPAWN_LEVEL **0x1988a7c**, CB_NOSTIM **0x1988a80**, VB_CMD_TABLE **0x1901ac0** (the same lazy fill and
+  `count = 0x15d`), SSH_P **0x1995560** (a function-local static: built by 0x140d987f0, rendered by 0x140d98480; the
+  cascade pass's tail block has the same P offsets 0x3809/0x70f0/0x3918..; SOMVR_SHADOW_SHARE is off in build-win2 - turn
+  it on on Windows only after perf27-eyediff.py --alt there), GO_VM_REC **0x28** (same), the Nemesis screen's
+  SCR_UI_SM 0xb0, SCR_SM_MGR 0x10, SCR_MGR_LAYERS 0x198, COUNT 0x1e8, OVERRIDE 0x1ec (all the same: CPlayerUI
+  FUN_00aca7d0 / 0x1404663b0, the menu manager's vf_12 = Windows slot 11 0x1405ce990).
+- **Live effects in the Windows build** (build-win2's headset.env sets them): SOMVR_VISION_RAMP_MS=150,150 now reads and
+  writes the vision ramps there, SOMVR_STRUGGLE=thrust now recognises the struggle kinds and presses their command,
+  SOMVR_POINTER_MOUSE1=nemesis reads checked offsets (they were the Linux values unchecked before), SOMVR_PRACTICE reads
+  the spawn level. The next Windows suite should show `STRUGGLE` lines with a kind (not "unknown"), and the vision ramp's
+  CONFIG/apply line.
+- **Still unknown**: MGR_CHAR (the +0x560 reads are the same offset in the animation code's pairs, but that class is not
+  tied to BODY_MGR's; unused on Windows: player_objs takes bodyObj there), BR_NL_SINK (none on Windows: the empty
+  Combat_LogPrintf), GL_* 5 (GLYPHS is off on Windows, 7.4), PRN_* (winport-world's), TEX_F3D/VKTEX_IMAGE (no Feral
+  textures: DXVK interop), RD_SP_BOXBLUR/VIGNETTE (render's redesign), RD_CF_OFF (CURFRAME, off everywhere), NODE_BOX
+  (a log).
+### 7.13 som-b34-review-win: a correctness review of the DLL, the bridge, the layer's Windows paths and the scripts (2026-11-03, branch t3/som-b34-windows-review)
+
+Read: win/* (the proxy, the exe gate, the entry redirect, the site rewrite, MinHook and the mid stub, the COM fill and
+the late H9, the bridge file and nonce, the D3D/DXGI hooks and the interop, the compat shim, crash_note, the W1 layer
+build and package), the layer's Windows paths (the bridge reader, the 1 ms locate thread, img_barrier's idle layout,
+schedstat perf, W1's wineopenxr handles, the pin), headless_win.sh, som-vr-headset-win.sh and som-win-session.sh.
+
+**Fixed** (each with a test that failed before; `build.sh --check` and `win/build.sh --check` green):
+- **The safe reads were never guarded.** somvr_safe_read / somvr_safe_write (every peek, process_vm_readv, the W1
+  layer's reads) copy under `__try/__except`, but clang without `-fasync-exceptions` catches a fault only inside a call
+  that may unwind, and `memcpy` is a builtin known not to: the `__except` was dropped. The shipped DLL's
+  somvr_safe_read had unwind flags 0 (no handler at all). A region cached readable and freed since - the case the guard
+  exists for (DXVK's unmapped ranges, a freed heap block) - ended the game. Now the copy is an indirect call through a
+  volatile pointer (the unwind entry: ExceptionHandler|TerminateHandler), IN_PAGE_ERROR is caught as well, and
+  crash_note skips the faults a guarded copy handles (`somvr_win_in_guard`: no false CRASH note, the 8 notes kept for
+  real crashes). Rule: under clang an SEH guard needs a call the compiler cannot see into.
+- **The region cache tore.** Its slots were updated lo=0, hi, lo: a reader could take [0, hi), or one region's lo with
+  another's hi, and call an unmapped address readable (then the fault above). Seqlocked slots now
+  (win/somvr_win_rcache.h). win/tests/test_rcache.c (Linux, in build.sh --check: two writers re-caching two regions,
+  two readers asking for the gap): before, 46k-68k false hits in ~35M reads per 1.5 s (3 runs); after, 0.
+- **dlopen(name, RTLD_NOLOAD) took no reference** (GetModuleHandleA), so the dlclose after it released someone
+  else's. On native Windows (W1) the layer's same_gpu does `dlopen("vulkan-1.dll", RTLD_NOLOAD) ... dlclose` at every
+  session setup, so it dropped DXVK's own reference to the Vulkan loader (unloaded at 0 under a running game). xe_pin's
+  pin pinned nothing. Now GetModuleHandleExA(0): one reference, as with glibc.
+- **dladdr's dli_fname was one static buffer.** xe_pin calls dladdr twice and then opens the first name, which by then
+  was the second module's. Now one kept name per module, as with glibc.
+- win/tests/test_compat.c (win/build.sh --check builds build/win/test_compat.exe; `headless_win.sh MOD --test compat`
+  runs it under Proton): before, 3 FAILs (version.dll unloaded by dlopen NOLOAD + dlclose; the first dladdr's name
+  changed to the exe's), then exit 5: the guarded read of a freed page crashed. After: `test_compat: ok`.
+- **headless_win.sh's slot-free `--test xinput` ended other helpers' games.** It needs no slot, but it ran in the
+  shared logs/winport/prefix: its wine joined a running boot's wineserver, and its cleanup's `wineserver -k` ended that
+  boot. Now xinput and compat run in logs/winport/prefix-xinput (a reflink copy made once, like prefix-w1), one at a
+  time (flock).
+- **headless_win.sh's picture loop outlived a TERM.** The player's launcher stops a test run with TERM; the loop kept
+  shooting every 30 s for up to SECS, into whatever gamescope later took the same socket name. cleanup kills it, and
+  the loop also ends with the script.
+- wintables.py (a guard, no row affected): a DIR64 relocation that straddles a row's context/prologue window is an
+  error. somvr_win_sites.c moves only whole qwords, and the exe is DYNAMIC_BASE, so native Windows relocates it while
+  Wine loads it at 0x140000000. Such a row would fail on a player's machine only. 0 of the 327 live rows have one.
+
+**Checked, no bug:** the XInput forwards (InitOnce, loaded outside the loader lock, the 5 exports); the gate (another
+exe: nothing, no log); the entry redirect (bytes restored before the call; rcx = PEB untouched by `mov rax; jmp rax`);
+the site rewrite (kind checked, whole relocated qwords; the GOG exe = the analysed one, so crash_note's RVA 0x18f5b08
+holds); the COM fill (once per interface, 26 rows of the 256 buffers); the late H9 chain (game -> somvr_w_h9 ->
+my_present -> DXVK); the mid stub (0x190 bytes of registers in the 0x1c0 frame, the call 16-aligned with its 32-byte home,
+rbp and the flags restored through the frame, the RIP-relative slots copied with the code); the D3D typedefs
+(D3D11CreateDevice's 10 arguments; slots 8/10/15 = Present / CreateSwapChain / CreatePixelShader); the interop (QI and
+Release balanced; VkImageCreateInfo with pNext NULL, as DXVK requires); img_barrier's idle layout (both directions, the
+first barrier from ALL_COMMANDS with MEMORY_WRITE); the bridge (tmp + MoveFileEx, the nonce, the process_vm_readv
+check); the locate thread (one writer, every call inside somvr_xr_enter, joined in xl_stop; readers copy under the
+seqlock); Win64 typedefs (7.12's rule: the RA5+/RA_STK users cast their 32-bit reads, cb_ltvec goes by pointer,
+ob_range_t's out pointer comes first, the timer members put `this` first; no new case). The scripts: the save is
+seeded only by a copy (.part + mv, sha checked), backed up before each session, and the Steam save's sha and stat are
+compared before and after; the prefix guard refuses Heroic/compatdata/Games; the GOG folder is a bwrap overlay
+(probed); sound is moved, never muted (the session: the game's stream onto WiVRn's sink once; tests: onto their own null
+sink, picked by the app name or our WINEPREFIX).
+
+**Noted, not fixed (latent):**
+- somvr_win_hook_mid flips the whole 64 KB stub page to RW and back at each install. That is safe while every mid
+  detour installs before the game runs (today: one, RES_3D_DESC_MID at the start). A later install would make the
+  running stubs on that page non-executable for a moment: give each stub its own page, or keep the page RWX.
+- somvr_xrloc's 16 image entries are never evicted. More than ~5 eye-texture remakes in one session would leave new
+  images without their idle layout. Not reached: at most 5 images per Windows run, EYES gen <= 3 in every run.
+- nanosleep's per-thread waitable timer is never closed: one handle per exiting thread that slept (W1 layer: the mark
+  and screenshot writers). pft_scan's "all threads" dips when a thread exits (log only). load_env_file: a UTF-8 BOM
+  makes the first line's key junk (harmless: package.sh's first line is a comment).
+- Not run: a Windows game boot on this tree as a regression check of the peek path (the slot was held by other
+  helpers for 100 minutes, until 20:27). The next Windows suite on a tree with these commits covers it: no CRASH note,
+  the HOOK ok/SKIPPED counts as 171313's (96 / 2), PRESENT as before.
+- som-win-session.sh keeps a backup from *before* each session only. If logs/win-play/prefix were lost, seeding from
+  the newest backup would lose that last session's progress. An "-after" copy in save_lines would close this. It is the
+  user's live launcher (main's script is copied at every start), so the change wants a SOMVR_HEADSET_TEST run
+  first.
+### 7.13 som-b33-soak: the long session on the Windows build (2026-11-03, branch t3/som-windows-soak-test)
+
+**Soak 1** (boot-check-20261103-171756, logs/coord/b33/soak/): build-win2 as frozen (the user's next Windows build, its
+headset.env, a copy of the settings and of the Steam save), `scripts/soak33-drive.sh` under `headless_vr.sh --win`:
+77 minutes, two whole passes of 23 items - soak29's cycle (walk, fight, bow, flash, fire, map, menus, drop, captain,
+death, vision, climb, brutal, pcar, tower, struggle, stealth, crowd, trip, death) + build 31's kills (kills31 front /
+neck / stab / ground), the hands (hands31 shove / grab / kill) and a real load (travel: the forge tower top, the map,
+X = Fast Travel: the world after 2 s, the game's cover 0.3 s, the HUD back after 4.2 s). Eye dumps off
+(`SOMVR_XR_DUMP=` empty: none, the drivers' `dump` lines included), flat pictures every 5 min (`WIN_SHOT_S`).
+Result: no crash, no CRASH note, VR the whole run, the save UNCHANGED, WARN 2 (the release suite's two: H9 not
+installed, layout B without H8/H3), every item back in the world.
+
+| | soak 1 (Windows, build-win2, 77 min) | Linux soak 4 (build 29c, 67 min; re-xr-pipeline.md 129.4) |
+|---|---|---|
+| RSS (MB) | 1073 -> 1259, +72 MB/h; pass 2 flat (1229 -> 1259 in 44 min) | 1292 -> 1422, +74 MB/h |
+| the steps | first visits / deaths: flash +51, death +32, struggle +28, trip +23 | the deaths and first visits |
+| the game's own VRAM / GTT (DRM fdinfo) | 1748-1901 / 84-203 MB, no trend | - |
+| threads (Linux / Windows) | 74-78 / 66-67 | 80-83 |
+| fds | 816 -> 931 (= the Windows sync objects: ntsync) | 202-203 |
+| Windows handles | 671 -> 961 (+240/h; below) | - |
+| wineserver RSS | 19 -> 24 MB | - |
+| stereo rate (20 Hz headless) | 19.5 first 10 min, 19.7 last 10; the worst minute 15.0 | 19.7 / 19.2 |
+| the layer's gaps 100+ ms | 12 in 77 min (Linux: 610 in 67) | 610 |
+| game thread busy / ours a frame | 2.0-3.1 ms / 0.23-0.35 ms per item, no creep pass 1 -> 2 | 3.0-4.6 / 0.7-1.2 |
+| somvr.log / layer log | 21.7 MB (16 MB/h) / 1.6 MB | 17 MB/h / 1.9 MB |
+Every module's lines alive at the end (soak33_report.py's liveness: per kind, lines per 10 min by the log's own
+clock; the only kinds without lines in the last 10 minutes are event-driven ones - VAULT, the layer's `menus`).
+
+**The handles (not ours, harmless)**: by type (tools/win_hcount.c --names) the growth is Key +144, Event +41, Mutant
++27 in 51 minutes; 48 of the keys' 3-key sets are the same `\Registry\Machine\System\ControlSet001\Control\
+DeviceClasses\{e6f07b5f-...}\##?#DISPLAY#Default_Monitor...` / `Enum\DISPLAY\Default_Monitor\0000&0000` keys,
+opened and never closed. They come with DXVK's `Setting display mode: 1920x1080@60` (70 in soak 1; 6 in a short boot):
+the game sets its fullscreen mode again at every pause/unpause (4 per transition: the map, menus, each death's
+screens, the Nemesis screens - the release suite's nemesis27 boot had 38) and Wine's display code leaves the monitor's
+device keys open. Nothing in our DLL calls a DXGI mode/fullscreen function; no frame gap at those moments. ~250
+handles an hour = ~1000 in a 4-hour session: no limit is near.
+
+**Found and fixed (Windows-only, both silent in the release suite)**:
+1. *The last chance never answered on Windows* (77c1aef): `STG_VT_*` were `?` (winport-combat: "not separated yet"),
+   so every struggle read as OTHER and the hands' thrusts pressed nothing - soak 1 lost three last chances in ~4.5 s
+   each and knelt **227 s** in the captain's tutorial struggle (the game waits for an answer) until the driver
+   removed the captain. The four 5-slot struggle vtables lie together after the string "Struggle = %s Passed"
+   (0x13cde98): 0x13cded0 (its slots read +0x2f0/+0x2f4/+0x2f5/+0x2f6: PressCount), 0x13cdef8 (+0xd0/+0xd4/+0xd5:
+   QuickTime), 0x13cdf20 (only the base's fields: Hold or InputDirection - Linux has five tables, Windows four),
+   0x13cdf48 (its OnCommandOn W 0x1405ae360 reads +0x57a/+0x57b/+0x58c/+0x591/+0x592: Aim, = MT_VT_STRUGGLE_AIM).
+   Every Linux struggle in soaks 3-4 was a CStruggleAim with the same +84/+88 values the Windows ones had.
+2. *No pointer in the game's menus on Windows after ~1 hour of PC uptime* (b693982): the DLL's
+   `clock_gettime(CLOCK_MONOTONIC)` is QueryPerformanceCounter, which under Wine is Linux's **CLOCK_MONOTONIC_RAW**
+   (measured: a QPC read fell between two RAW reads, 0.305 s behind CLOCK_MONOTONIC at 22.6 h of uptime, ~13 ms an
+   hour); the layer stamps its pointer block with CLOCK_MONOTONIC, and `ptr_tick` wanted `0 <= now - stamp < 250 ms`:
+   never true once the gap passed the block's age. The map's pointer took 0 presses (soak 1, twice) and the trigger
+   went to the game as RT (Sauron's Army); the pause menus' laser never moved the mouse (no `POINTER t=` line in the
+   whole run). Now the age is taken against the clocks' offset when there is one (the smallest now - stamp over the
+   last 64 new blocks, used past 50 ms); one clock (Linux) = the old test, the selftest's stale case unchanged, a new
+   one for stamps 0.3 s ahead. The only other cross-clock use (loco's anchor jitter) takes differences: unaffected.
+   The release suite did not catch it (no POINTER line there either: check `POINTER t=` in a Windows run).
+
+**Also seen, left**: the map's `the selection under the cross is not a travel point` at the tower top (MAP_TYPE_TRAVEL
+on Windows: logging only; X still travels).
+
+**Recheck (soak 2, boot-check-20261103-203514)**: this branch's build (t3/b26-integration b24af4b = build-win2 + 23
+commits, + both fixes), its scripts/headset-build26.env. The pointer fix live: `POINTER clock ... stamped +281.9 ms off
+this clock`, then `POINTER t=` lines every 5 s with `the clocks' offset taken off` counting every tick (soak 1: no
+POINTER line at all). **The game then exited by itself after 566 s (9 minutes: walk, fight, kills, bow, flash, fire
+done), exit code 0**: no CRASH note, no Wine exception, nothing in the kernel log, no quit request, no END lines; the
+last line is the driver's `hands squeeze` as it put the test tools back after `fire`; the handles, RSS and threads
+flat before it. Our code exits only with 3 (ExitProcess(3) / _exit(3)), so 0 is the game's own exit (or a library's).
+Not seen in soak 1's 77 minutes on build-win2.
+
+**The cause (found 11-03 21:50): not the game, not the mod - another helper's test killed it.** At 20:44:35 the
+hot-reload helper's worktree (t3/som-hot-reload ae49276, a pre-slots copy of headless_win.sh) ran `headless_win.sh MOD
+--test xinput` (logs/winport/run-20261103-204435) with the old default prefix **logs/winport/prefix = slot 1's**, where
+this recheck's game ran: its d3dtest joined the game's wineserver, ended at 20:44:39, and that copy's `trap cleanup EXIT`
+ran `wineserver -k` - the game was gone at 20:44:40 ("exited by itself after 566 s"). A wineserver-killed game gives
+exactly this run's signature: `program exit 0`, no END lines (no DLL detach), no CRASH or EXIT note (the VR stops of
+21:02 show the same). The b35 slots harness already runs `--test xinput|compat` in their own prefix-xinput and makes a
+slot >= 2 boot refuse a prefix in use; an OLD copy can still do it to any slot-1 Windows game, so every worktree that
+runs headless_win.sh needs t3/b26-integration (or main) merged first.
+**The control runs** (11-03 21:24-22:1x, slots 2 and 3 at once, WINEDEBUG err+all,warn+seh on A): A4 = this branch
+(b26-integration 379fc8e + the exit note 26fc85b), B3 = build-win2's tree 2c57801 + only 77c1aef/b693982 + the exit
+note (t3/soak-b-win2fix, a throwaway): the soak items with `fire` four times a pass. **Neither quit**: A4 ran 45 min (32
+items, `fire` 5 times, 6 last chances, 4 map presses), B3 46 min (30 items, `fire` 4 times, 3 last chances, 2 map
+presses), both until the harness stopped them at their hold's end; no CRASH note, no EXIT note, the save copies
+unchanged; A4's wine.log with err+all: 4 lines (openxr/vrclient registry keys at start). Both fixes live
+in both: `MAP ... a press ...: the map brought there` then `A (the waypoint)`; `STRUGGLE ... start: CStruggleAim`, and
+in A4 a last chance **won by the hands** (`result(+8c) 1`, Talion up, not dead). The exit note (win/somvr_win_main.c:
+RtlExitUserProcess / TerminateProcess / PostQuitMessage / a top-level DestroyWindow, the caller's RVA and the stack)
+stays in: the next quiet exit names its caller, or - with no EXIT line - a kill from outside.
+Not seen in soak 1's 77 minutes on build-win2. **Open**: rerun the recheck on this branch, and if it repeats, the same
+items on build-win2 + only 77c1aef/b693982 (the two fixes touch only a struggle's class and the pointer's freshness;
+the 23 newer b26-integration commits - build 33's watch, knife, Test page... - are the other candidates). The struggle
+fix and the map's press were not reached in this run (the first death is item 11).
+
+### 7.14 som-b36-winlooks: the Windows build's look against the Linux build's - the same at the same weather; the session starts on a clear day: `SOMVR_PRACTICE_SKY` (2026-11-03, branch t3/som-winlooks-b36)
+The first real Windows session (11-03 21:06, build-win2) was reported smoother than Linux, but its grass looked worse
+and denser, walls and ground flatter (less relief), and the bank under the ruins very hazy - was it another graphics
+setting?
+
+**1. The settings are the same, and mean the same.** The play prefix's render.cfg is the Linux session's (the rating-10
+detection with the VR preset Vegetation 3, Mesh 2, Shadow 2, Lighting 1 over it; tessellation 1, textures 3, filtering
+3, AO 3, OIT 0); the game kept every value and only rewrote AutoDetectedGPURating 10 -> 5 (the top of its 0..5 range on
+both builds). The Windows exe's registration in rendersettings.cpp (RVA 0x13767e0..0x1376bc8: index, default, min 0,
+max, name, help text per setting) against Feral's `TRenderSetting<E, 0, max>` names: the same ranges and help texts -
+Lighting 0..2 ("0=low, 1=medium, 2=high"), Mesh 0..3, MotionBlur 0..3, OIT 0..1, Shadow 0..3, Tessellation 0..1,
+TextureFiltering 0..3, TextureQuality 0..3, Vegetation 0..4 ("0=off, 1=low, 2=medium, 3=high, 4=ultra"). DXVK runs
+feature level 11_0 with tessellationShader (the session's d3d11 log). Both builds carry the vegetation's per-platform
+density fields (DensityScalePC, ...Orbis); their values are not decoded - the pictures below show the same grass.
+
+**2. The same places in both eyes** (scripts/looks36-drive.sh: the meadow, the fort's wall, its paved floor, the dry grass
+on its top, the bank under the ruins; 12 views, a bug mark each; scripts/looks36-cmp.py pairs two runs' views; the
+pictures in logs/winlooks36/):
+- Linux 225858 and Windows 230044 both arrived in `SON_Day02`: **the same picture** - the grass cards' number, size and
+  layout at the feet and on the top, the floor's slabs and gaps, Talion's sun shadow, the lit arches, the bank's distance
+  (cmp-L1-W2). The DXBC fog edit gives the SPIR-V edit's fog.
+- Windows 223609 arrived in `SON_Day01`: a pale green-yellow sky, a low sun, haze in the valleys, the ground darker
+  (cmp-W1-W2); the player's own Linux sessions of 11-02 and 11-03 were `SON_Day01` and show that sky.
+- The reported session arrived in `SON_Day03`, the overcast day: grey even light without sun shadows (the slabs' and
+  walls' relief reads only under a directional light), thick haze, the grass one dark mass. The player's 10-26 Linux
+  session in `SON_Day03` looks the same (linux-day03-sheet.jpg). **The fog, the flatness and the grass's look were the
+  weather**, not the build.
+
+**3. Frame times** (the player's sessions, the real GPU, the same preset): Windows 11-03 21:06 at 120 Hz - the render
+thread's frame work p50 4.74 ms (p95 6.55), GPU total p50 7.36 ms (p95 8.05; the game 6.90 + ours 0.39), ~100 frames/s;
+Linux 11-03 09:32 (120 asked, the display 90) - frame work p50 11.0 ms wall (7.4 CPU): the render thread was the limit;
+GPU p50 7.36-7.76 ms. The same GPU work = the same settings in effect; Windows' smoothness is DXVK's lighter render
+thread. **No richer preset**: at 120 Hz (the VR menu's setting now) the GPU has ~0.9 ms p50 left. At 90 Hz there would
+be ~3.7 ms (Mesh 3, Shadow 3, Lighting 2 fit by 119.4's ratios) - not measured on the headset, not shipped.
+
+**4. ChangeWeather takes a weather definition, not a weather state.** The practice reads the state (`SON_Day01..03`,
+`SON_Day03_Rain`, `BG_Day_02` ...); `GameServerShell.ChangeWeather` takes one of the 79 `Weather/Definition` records
+(runtime-probes.md BW, probe-out/weathers.tsv). `ChangeWeather SON_Day0N` does nothing - no reset pause, the state
+unchanged (boots 225858, 230044, 231242): the drivers' weather pins with it (render31, grass33, looks36's first boots)
+never took. Measured (232408, the test word `practice weather DEF`; the state 10 s later; each a 0.5-1.1 s world reset):
+`DayNoRain` -> SON_Day03 (overcast), the next time SON_Day03_Rain; `AnyTimeNoRain` -> SON_Night_Rain01;
+`TEST_Day_01/02/03` -> BG_Day_01 (red dusk) / BG_Day_02 (clear, cold light; 231852) / BG_Day_03 (golden low sun);
+`GP_BGIntro_Day02` -> IntroDay02 (dark); **`TEST_Day_NoWeather` -> SON_Day02, SON_Day01** (233052: three times, from
+SON_Day03_Rain, SON_Day03 and SON_Day02). So the practice's wet-day target `DayNoRain` (build 6 on) can itself land on the
+overcast or the rainy day.
+
+**5. The change: `SOMVR_PRACTICE_SKY=dry|clear|always`** (somvr_practice.c `somvr_pr_is_overcast`,
+`somvr_pr_sky_change`; somvr_practice_game.c; code default `dry` = the builds before: only rain or storm is changed;
+**the som-b36-winlooks env block: `clear`** with **`SOMVR_PRACTICE_WEATHER=TEST_Day_NoWeather`**). `clear` also
+changes an overcast day of Nurn (`SON_*` with Day03 / overcast / fog in its name) at the practice trip there - the
+ChangeWeather goes with the trip's teleport, its reset under the blink's black (233052: `the game paused 0.06 s after our
+ChangeWeather (under the blink's black)`, over 1.10 s later; `SOMVR_PRACTICE_LOADHOLD` holds the black). `always` (a test
+aid) changes any weather. New lines: `light: ...: an overcast day, a clear one now (SOMVR_PRACTICE_SKY=clear)`, `light
+later (10 s): weather 'S' ... (was 'O': changed|UNCHANGED; asked DEF)`; the test word `practice weather DEF`
+(ChangeWeather on the game thread). Unit: test_practice (the names, the region, the modes).
+
+**Runs** (headless Windows unless named, the VR preset in the slot's render.cfg, each 0 WARN beyond the Windows build's
+two standing ones, the source save UNCHANGED): 223609 (W, SON_Day01), 225858 (Linux, SON_Day02), 230044 (W, SON_Day02),
+231242 (`ChangeWeather SON_Day03` at the trip: no pause, no change), 231852 (`TEST_Day_02` at the trip: BG_Day_02),
+232408 (the definitions in turn), 233052 (the shipped target at every trip, the five places: user-vs-W6.jpg - the
+session's overcast marks beside the same places now).
+
+**Open / for the headset**: the game's weather keeps changing during play (233052: SON_Day03 came back on its own ~30 s
+after a trip) - the start is clear, the session may still turn overcast; holding a clear sky all session would need a
+ChangeWeather in view (a 0.5-1.1 s world freeze) or the weather system's own hold - not done. The trip back's
+console line `ChangeWeather <the old state>; Teleport ...` names a state: a no-op, so the clear day stays (harmless; not
+changed).
+Udûn's weather names are unknown: `clear` acts on Nurn's `SON_*` only.

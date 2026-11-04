@@ -166,7 +166,7 @@ static void sf_seen(uintptr_t obj, uint16_t id, const char *name, int solid, sv_
 		return;
 	g_sf.seen[g_sf.nseen].obj = obj, g_sf.seen[g_sf.nseen].id = id, g_sf.nseen++;
 	if (sf_log_ok(t))
-		logf_("SURF t=%.3f hit obj=%#lx surf='%s' (id %u): %s; normal %.2f,%.2f,%.2f", t, (unsigned long)obj, name,
+		logf_("SURF t=%.3f hit obj=%#llx surf='%s' (id %u): %s; normal %.2f,%.2f,%.2f", t, (unsigned long long)obj, name,
 		      (unsigned)id, obj == g_sf.self ? "Talion (passed)" : solid ? "stops a hand" : "passed (not solid)",
 		      (double)n.x, (double)n.y, (double)n.z);
 }
@@ -446,10 +446,11 @@ static void sf_frame(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp, sv_qu
 	g_sf.n.us_max = fmax(g_sf.n.us_max, us), g_sf.w.us_max = fmax(g_sf.w.us_max, us);
 }
 
-static void sf_hap(int h, float amp, float dur)
+/* a contact's touch word (build 34): the surface module's tick 0.15..0.7 by the speed as its k */
+static void sf_hap(int h, float tick)
 {
-	if (amp > 0)
-		in_haptic_event(h, amp, dur, SOMVR_HAP_COMBAT);
+	if (tick > 0)
+		haptic_k(h, SOMVR_HX_TOUCH, (tick - 0.15f) / 0.55f);
 }
 
 /* arm_eval, after the bow's grips and before SOMVR_TWOHAND: each valid grip (game tracking cm, rig = the frame's)
@@ -519,13 +520,13 @@ static void sf_arm(sa_xf gg[2], const int gv[2], const int bowed[2], sv_vec3 shi
 			g_sf.w.depth_max[h] = o.depth;
 		if (o.ev & SOMVR_SF_EV_CONTACT) {
 			SF_COUNT(contacts[h]);
-			sf_hap(h, o.tick, 0.02f);
+			sf_hap(h, o.tick);
 			if (o.tick > 0)
 				SF_COUNT(ticks);
 			const somvr_sf_plane *p = &in.pl[o.plane >= 0 ? o.plane : 0];
 			if (sf_log_ok(t))
-				logf_("SURF t=%.3f clamp hand=%s depth=%.1f cm surf=%s obj=%#lx n=%.2f,%.2f,%.2f speed=%.0f cm/s tick=%.2f "
-				      "frame=%llu", t, g_sf_side[h], (double)o.depth, pn, (unsigned long)po, (double)p->n.x, (double)p->n.y,
+				logf_("SURF t=%.3f clamp hand=%s depth=%.1f cm surf=%s obj=%#llx n=%.2f,%.2f,%.2f speed=%.0f cm/s tick=%.2f "
+				      "frame=%llu", t, g_sf_side[h], (double)o.depth, pn, (unsigned long long)po, (double)p->n.x, (double)p->n.y,
 				      (double)p->n.z, (double)o.speed, (double)o.tick, (unsigned long long)g_fr.frame);
 			g_sf.hold_next[h] = t + 0.5;
 		} else if (st->contact && t >= g_sf.hold_next[h]) {
@@ -549,18 +550,17 @@ static void sf_arm(sa_xf gg[2], const int gv[2], const int bowed[2], sv_vec3 shi
 			int fx = 0;
 			if (o.clank > 0) {
 				SF_COUNT(clanks);
-				in_haptic_event(SOMVR_HAND_R, 0.9f * o.clank, 0.04f, SOMVR_HAP_COMBAT);
-				in_haptic_ramp(SOMVR_HAND_R, 0.45f * o.clank, 0.15f, SOMVR_HAP_COMBAT);
+				haptic_k(SOMVR_HAND_R, SOMVR_HX_CLANK, (o.clank - 0.25f) / 0.75f); /* clank 0.25..1 */
 				if (o.fx && g_df.ok_fx && g_df.clank_fx[0] && g_df.pcomb)
 					fx = 1, SF_COUNT(fx), df_clank_fx(t);
 			} else if (o.tick > 0) {
 				SF_COUNT(btouches), SF_COUNT(ticks);
-				sf_hap(SOMVR_HAND_R, o.tick, 0.02f);
+				sf_hap(SOMVR_HAND_R, o.tick);
 			}
 			if (sf_log_ok(t))
-				logf_("SURF t=%.3f blade %s depth=%.1f cm surf=%s obj=%#lx speed=%.0f cm/s clank=%.2f fx=%d frame=%llu", t,
+				logf_("SURF t=%.3f blade %s depth=%.1f cm surf=%s obj=%#llx speed=%.0f cm/s clank=%.2f fx=%d frame=%llu", t,
 				      o.clank > 0 ? "clank" : "touch", (double)o.bdepth, bn,
-				      (unsigned long)(o.bplane >= 0 ? f->bobj[o.bplane] : 0), (double)o.bspeed, (double)o.clank, fx,
+				      (unsigned long long)(o.bplane >= 0 ? f->bobj[o.bplane] : 0), (double)o.bspeed, (double)o.clank, fx,
 				      (unsigned long long)g_fr.frame);
 		}
 		if ((o.ev & SOMVR_SF_EV_BLADE_OFF) && sf_log_ok(t))

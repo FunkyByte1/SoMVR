@@ -61,13 +61,15 @@ static void blade_of(const float p[3], const float q[4], const float ax[3], doub
 int main(int argc, char **argv) {
     if (argc < 2) { fprintf(stderr, "replay_tiers FILE [CUT_MPS [ALONG [hand|blade]]]\n"); return 2; }
     float cut = argc > 2 ? (float)atof(argv[2]) : 12.0f, along = argc > 3 ? (float)atof(argv[3]) : 0.7f;
-    int handmode = argc > 4 && !strcmp(argv[4], "hand");
+    int handmode = argc > 4 && !strcmp(argv[4], "hand"), forcemode = argc > 4 && !strcmp(argv[4], "force");
     float arm = argc > 5 ? (float)atof(argv[5]) : 0;
     FILE *f = fopen(argv[1], "r");
     if (!f) { perror(argv[1]); return 1; }
     sc_cfg c;
     sc_cfg_default(&c);
     c.stroke = 1, c.cut_mps = cut, c.tip_max_mps = 30.0f, c.arm_cm = arm; /* (CB_SWING_JUMP_MPS's order) */
+    if (forcemode) /* build 32: CUT = the floor (J), argv[6] = the cut (J) */
+        c.force = 1, c.blow_min_j = cut, c.blow_heavy_j = argc > 6 ? (float)atof(argv[6]) : 40.0f;
     swg_cfg gc;
     swg_defaults(&gc, SWG_HEAVY);
     swg_state gs;
@@ -90,7 +92,11 @@ int main(int argc, char **argv) {
     double tprev = 0;
     float qprev[4] = {0, 0, 0, 1};
     long frames = 0;
-    static float fr[2][4096], fv[2][4096];
+    static float fr[2][4096], fv[2][4096], fe[2][4096], fo[8192];
+    int nfo = 0;
+    float ej_max = 0, fist_v = 0;
+    long touch[B_N][SC_TIER_N], ntouch = 0;
+    memset(touch, 0, sizeof touch);
     int nfr[2] = {0, 0};
     float br_max = 0, bv_max = 0;
     while (fgets(line, sizeof line, f)) {
@@ -122,7 +128,11 @@ int main(int argc, char **argv) {
             float edge = sc_edge_deg(&b);
             /* hand mode: the tier from the hand's tracker (speed, reach), the edge the drawn blade's */
             const sc_speed *s = handmode && k != B_HAND ? &tk[B_HAND].sp : &tk[k].sp;
-            tier[k] = sc_tier_swing(&c, s, edge, along);
+            tier[k] = forcemode ? sc_tier_force(&c, s, edge, along) : sc_tier_swing(&c, s, edge, along);
+            if (k == B_NEW) {
+                float js = s->axis_mps >= c.stab_mps ? sc_stab_j(&c, s) * sc_axis_share(s) : 0, jb = sc_blow_j(&c, s, along);
+                if (fmaxf(js, jb) > ej_max) ej_max = fmaxf(js, jb);
+            }
             cv[k] = sc_contact_mps(s, along);
         }
         (void)qprev;
@@ -130,13 +140,17 @@ int main(int argc, char **argv) {
         unsigned hs = tk[B_HAND].sp.strokes;
         if (hs != hand_strokes0 || (open && t > end_t + 0.6)) {
             if (open) { /* close the last: class it */
-                int cl = fist_cm >= CMT_CM ? 0 : (fist_cm < FLICK_CM && hand_v >= 12.0f) ? 1 : 2;
-                if (cl < 2 && nfr[cl] < 4096) fr[cl][nfr[cl]] = br_max, fv[cl][nfr[cl]++] = bv_max;
+                /* build 32: a blow = the arm swung (the fist 30+ cm at 4+ m/s); a flick = the fist under 2.5 m/s with the
+                 * hand's own blade at 12 m/s at the contact; a touch = the hand's contact under 5 m/s */
+                int cl = fist_cm >= CMT_CM && fist_v >= 4.0f ? 0 : (fist_v < 2.5f && hand_v >= 12.0f) ? 1 : hand_v < 5.0f ? 3 : 2;
+                if (cl == 3) { ntouch++; for (int k = 0; k < B_N; k++) touch[k][cur_best[k]]++; cl = 2; }
+                if (cl < 2 && nfr[cl] < 4096) fr[cl][nfr[cl]] = br_max, fe[cl][nfr[cl]] = ej_max, fv[cl][nfr[cl]++] = bv_max;
+                if (cl == 2 && nfo < 8192) fo[nfo++] = ej_max;
                 nst[cl]++;
                 for (int k = 0; k < B_N; k++) strokes[cl][k][cur_best[k]]++, vsum[cl][k] += cur_v[k];
             }
             open = hs != hand_strokes0;
-            hand_strokes0 = hs, fist_cm = 0, hand_v = 0, br_max = bv_max = 0, memcpy(pp, p, 12);
+            hand_strokes0 = hs, fist_cm = 0, hand_v = 0, br_max = bv_max = ej_max = fist_v = 0, memcpy(pp, p, 12);
             for (int k = 0; k < B_N; k++) cur_best[k] = SC_TIER_NONE, cur_v[k] = 0;
         }
         if (open) {
@@ -145,6 +159,7 @@ int main(int argc, char **argv) {
             memcpy(pp, p, 12);
             if (tk[B_HAND].sp.mean_mps >= c.slash_mps) end_t = t;
             if (cv[B_HAND] > hand_v) hand_v = cv[B_HAND];
+            if (tk[B_HAND].sp.grip_mps > fist_v) fist_v = tk[B_HAND].sp.grip_mps;
             if (tk[B_NEW].sp.base_reach > br_max) br_max = tk[B_NEW].sp.base_reach;
             if (tk[B_NEW].sp.base_mps > bv_max) bv_max = tk[B_NEW].sp.base_mps;
             for (int k = 0; k < B_N; k++) {
@@ -157,8 +172,8 @@ int main(int argc, char **argv) {
         tprev = t, memcpy(qprev, q, 16), frames++;
     }
     fclose(f);
-    static const char *const cn[3] = {"committed (the fist 30+ cm)", "wrist flick (the fist <12 cm, the hand at the cut speed)",
-                                      "other"};
+    static const char *const cn[3] = {"blows (the fist 30+ cm at 4+ m/s)", "wrist flicks (the fist under 2.5 m/s, the hand's "
+                                      "contact 12+ m/s)", "other (touches below too)"};
     printf("replay_tiers %s: %ld frames; cut %.1f m/s at along %.2f, the fist %.0f cm; tier by the %s\n", argv[1], frames,
            (double)cut, (double)along, (double)arm, handmode ? "hand's swing" : "drawn blade");
     for (int cl = 0; cl < 3; cl++) {
@@ -168,6 +183,18 @@ int main(int argc, char **argv) {
             printf("    %-22s heavy %5ld  light %5ld  stab %4ld  none %5ld   (the contact's peak mean %.1f m/s)\n", g_bn[k],
                    s[SC_TIER_HEAVY], s[SC_TIER_LIGHT], s[SC_TIER_STAB], s[SC_TIER_NONE], nst[cl] ? vsum[cl][k] / nst[cl] : 0.0);
         }
+    }
+    printf("  touches (the hand's contact under 5 m/s): %ld strokes\n", ntouch);
+    for (int k = 0; k < B_N; k++)
+        printf("    %-22s heavy %5ld  light %5ld  stab %4ld  none %5ld\n", g_bn[k], touch[k][SC_TIER_HEAVY], touch[k][SC_TIER_LIGHT],
+               touch[k][SC_TIER_STAB], touch[k][SC_TIER_NONE]);
+    for (int cl = 0; cl < 3; cl++) { /* build 32: the blow's energy (build 31's body), each stroke's largest */
+        float *e = cl < 2 ? fe[cl] : fo;
+        int n = cl < 2 ? nfr[cl] : nfo;
+        qsort(e, (size_t)n, sizeof(float), cmpf);
+        printf("  %s: the blow's energy (build 31's body) p10 %.0f p25 %.0f p50 %.0f p75 %.0f p90 %.0f J\n",
+               cl == 0 ? "committed" : cl == 1 ? "flicks" : "other", n ? e[n / 10] : 0, n ? e[n / 4] : 0, n ? e[n / 2] : 0,
+               n ? e[n * 3 / 4] : 0, n ? e[n * 9 / 10] : 0);
     }
     for (int cl = 0; cl < 2; cl++) {
         qsort(fr[cl], (size_t)nfr[cl], sizeof(float), cmpf), qsort(fv[cl], (size_t)nfr[cl], sizeof(float), cmpf);

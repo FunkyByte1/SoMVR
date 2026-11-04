@@ -310,8 +310,8 @@ static void kb_frame(double t)
 		rx_rec_name(ad ? rx_db_rec(ad, g_dfg.sch_ad, DF_AD_RECOIL_HIT) : 0, rh, sizeof rh);
 		g_kb.max_cm = fmaxf(g_kb.max_cm, w->max_cm), g_kb.done++;
 		g_kb.react_max_cm = fmaxf(g_kb.react_max_cm, w->react_cm);
-		logf_("COMBAT reaction orc=%#lx after %s ('%s', its RecoilTypeHit '%s'%s%s): its attacks '%s'%s%s%s%s%s%s; moved %.2f m "
-		      "during the reaction (%.2f s), %.2f m at the end, at most %.2f m in %.1f s%s%s", (unsigned long)w->c, w->what,
+		logf_("COMBAT reaction orc=%#llx after %s ('%s', its RecoilTypeHit '%s'%s%s): its attacks '%s'%s%s%s%s%s%s; moved %.2f m "
+		      "during the reaction (%.2f s), %.2f m at the end, at most %.2f m in %.1f s%s%s", (unsigned long long)w->c, w->what,
 		      rx_rec_name(w->rec, rn, sizeof rn), rh, w->over[0] ? ", for the hit: " : "", w->over, an[0],
 		      w->natk > 1 ? " -> '" : "", an[1], w->natk > 1 ? "'" : "", w->natk > 2 ? " -> '" : "",
 		      w->natk > 2 ? an[2] : "", w->natk > 2 ? "'" : "", w->react_cm * 0.01f, w->react_t, w->end_cm * 0.01f,
@@ -322,12 +322,12 @@ static void kb_frame(double t)
 			for (int k = 0; k < w->ntr && o < sizeof tr - 8; k++)
 				o += (size_t)snprintf(tr + o, sizeof tr - o, "%s%.2f", k ? " " : "", w->tr[k] * 0.01f);
 			g_kd.kills++, g_kd.max_cm = fmaxf(g_kd.max_cm, w->max_cm);
-			logf_("COMBAT death orc=%#lx: the body %.2f m from the hit at the end (at most %.2f m), its root %+.0f cm lower at "
-			      "most; every 0.25 s (m): %s; the killing blow: %s%s", (unsigned long)w->c, w->end_cm * 0.01f,
+			logf_("COMBAT death orc=%#llx: the body %.2f m from the hit at the end (at most %.2f m), its root %+.0f cm lower at "
+			      "most; every 0.25 s (m): %s; the killing blow: %s%s", (unsigned long long)w->c, w->end_cm * 0.01f,
 			      w->max_cm * 0.01f, w->dy, tr, w->death[0] ? w->death : "the game's",
 			      w->pins ? "; pinned" : "");
 			if (w->pins)
-				logf_("COMBAT death orc=%#lx pin: %d writes back to %.0f cm, %d frames it stayed", (unsigned long)w->c,
+				logf_("COMBAT death orc=%#llx pin: %d writes back to %.0f cm, %d frames it stayed", (unsigned long long)w->c,
 				      w->pins, g_kd.pin_cm, w->pin_held);
 		}
 		memset(w, 0, sizeof *w);
@@ -605,15 +605,15 @@ static void og_probe(const struct th_track *tr, double t)
 	float hand[8] = { 0 }, wpn[8] = { 0 };
 	int hh = m && og_node(m, tr->hobj, "R_Hand", hand), hw = m && og_node(m, tr->hobj, "R_Weapon", wpn);
 	char an[96], line[1400];
-	size_t o = (size_t)snprintf(line, sizeof line, "FIGHT orc weapon orc=%#lx attack '%s' at %.3f s (impact %.3f): R_Hand %s "
-				    "%.1f,%.1f,%.1f; R_Weapon %s %.1f,%.1f,%.1f q %.3f,%.3f,%.3f,%.3f", (unsigned long)tr->c,
+	size_t o = (size_t)snprintf(line, sizeof line, "FIGHT orc weapon orc=%#llx attack '%s' at %.3f s (impact %.3f): R_Hand %s "
+				    "%.1f,%.1f,%.1f; R_Weapon %s %.1f,%.1f,%.1f q %.3f,%.3f,%.3f,%.3f", (unsigned long long)tr->c,
 				    rx_rec_name(tr->attack, an, sizeof an), t - tr->t0, tr->k.impact, hh ? "" : "(none)", hand[0],
 				    hand[1], hand[2], hw ? "" : "(none)", wpn[0], wpn[1], wpn[2], wpn[3], wpn[4], wpn[5], wpn[6]);
 	uint32_t slot = 8;
 	uintptr_t item = inv && peek(inv + 0x280, &slot, 4) && slot <= 7 ? peek_ptr(inv + 0x30 + (uintptr_t)slot * 0x38) : 0;
 	uintptr_t b = item ? peek_ptr(item + SL_IT_ENTRIES) : 0, e = item ? peek_ptr(item + SL_IT_ENTRIES + 8) : 0;
 	int ne = b && e > b && (e - b) % SL_IT_ESIZE == 0 ? (int)((e - b) / SL_IT_ESIZE) : 0;
-	o += (size_t)snprintf(line + o, sizeof line - o, "; active slot %u item %#lx entries %d", slot, (unsigned long)item, ne);
+	o += (size_t)snprintf(line + o, sizeof line - o, "; active slot %u item %#llx entries %d", slot, (unsigned long long)item, ne);
 	static const char *const names[] = { "sword_tip", "sword_handle", "weapon_tip", "tip", "Tip", "blade_tip", "Blade_Tip",
 					     "axe_tip", "weapon_end", "end" };
 	for (int k = 0; k < ne && k < 4 && o < sizeof line - 200; k++) {
@@ -624,8 +624,8 @@ static void og_probe(const struct th_track *tr, double t)
 		if (!obj || !peek(obj + OBJ_POS, op, sizeof op) || !peek(obj + OBJ_ROT, oq, sizeof oq))
 			continue;
 		sv_vec3 y = sv_qrot(sv_qnormalize(sv_quat_of(oq)), (sv_vec3){ 0, 1, 0 });
-		o += (size_t)snprintf(line + o, sizeof line - o, "; entry %d obj %#lx at %.1f,%.1f,%.1f (+Y %.2f,%.2f,%.2f; active node "
-				      "%#x inactive %#x)", k, (unsigned long)obj, op[0], op[1], op[2], y.x, y.y, y.z, act, ina);
+		o += (size_t)snprintf(line + o, sizeof line - o, "; entry %d obj %#llx at %.1f,%.1f,%.1f (+Y %.2f,%.2f,%.2f; active node "
+				      "%#x inactive %#x)", k, (unsigned long long)obj, op[0], op[1], op[2], y.x, y.y, y.z, act, ina);
 		for (size_t j = 0; j < sizeof names / sizeof names[0] && o < sizeof line - 120; j++) {
 			float x[8];
 			if (m && og_node(m, obj, names[j], x))
@@ -745,11 +745,7 @@ static void hu_frame(uintptr_t pl, int stereo, double t)
 			from = behind ? "behind (both sides)" : right ? "the right" : "the left";
 		}
 		if (g_hu.on && stereo) {
-			float a = 0.8f + 0.2f * fminf(1.0f, dmg / 30.0f);
-			for (int h = 0; h < 2; h++) {
-				in_haptic_event(h, a, 0.09f, SOMVR_HAP_COMBAT);
-				in_haptic_ramp(h, 0.6f * a, 0.25f, SOMVR_HAP_COMBAT);
-			}
+			haptic_k(SOMVR_HAND_R, SOMVR_HX_HURT, fminf(1.0f, dmg / 30.0f)); /* build 34: both hands, by the damage */
 			g_hu.flash_t = t, g_hu.flashes++;
 		}
 		logf_("FIGHT hurt t=%.3f: Talion's health %.1f -> %.1f (-%.1f, max seen %.1f); the blow from %s%s%.0f deg%s", t,
@@ -779,11 +775,9 @@ static void hu_frame(uintptr_t pl, int stereo, double t)
 		g_hu.throb = somvr_th_beat(amt, t - g_hu.low_t0, &i, &ph);
 		int feel = g_hu.on && stereo && g_hu.beat_below > 0 && hp < g_hu.beat_below * g_hu.hp_max;
 		if (i != g_hu.beat_i || ph != g_hu.beat_ph) { /* a lub or a dub begins */
-			if (feel && (i != g_hu.beat_i || ph == 2)) {
-				float a = ph == 1 ? 0.45f : 0.3f, d = ph == 1 ? 0.05f : 0.04f;
-				for (int h = 0; h < 2; h++)
-					in_haptic_event(h, a, d, SOMVR_HAP_COMBAT);
-				g_hu.beats_felt += ph == 1;
+			if (feel && i != g_hu.beat_i) { /* build 34: the heart word - the lub and its dub, both hands */
+				haptic(SOMVR_HAND_R, SOMVR_HX_HEART);
+				g_hu.beats_felt++;
 			}
 			g_hu.beat_i = i, g_hu.beat_ph = ph;
 		}
@@ -1373,7 +1367,7 @@ static const char *fight_word(const char *w)
 			if (!own || !isfinite(h0) || cb_dead(o[k].c) || !arm_poke(own + CH_HEALTH, &hv, sizeof hv))
 				continue;
 			done++;
-			logf_("FIGHT health orc=%#lx %.1f -> %.1f (the word; %.0f cm from Talion%s%s)", (unsigned long)o[k].c, h0, hv, o[k].dist,
+			logf_("FIGHT health orc=%#llx %.1f -> %.1f (the word; %.0f cm from Talion%s%s)", (unsigned long long)o[k].c, h0, hv, o[k].dist,
 			      skipped ? "; skipped: `not`" : "", all ? "; `all`" : "");
 		}
 		if (!done)
@@ -1722,12 +1716,12 @@ static void nb_flush(struct nb_trk *e, const char *why)
 		char pt[NBP_N][12];
 		for (int k = 0; k < NBP_N; k++)
 			snprintf(pt[k], sizeof pt[k], isfinite(e->part[k]) ? "%.0f" : "-", e->part[k]);
-		logf_("FIGHT body near t=%.3f frame=%llu orc=%#lx '%s' move '%s'%s: its %s %.0f cm from the eyes %.2f s into it "
+		logf_("FIGHT body near t=%.3f frame=%llu orc=%#llx '%s' move '%s'%s: its %s %.0f cm from the eyes %.2f s into it "
 		      "(%.2f s long); its root then %.0f cm from the eyes, %.0f from Talion's root; nearest head %s neck/chest %s "
 		      "shoulders %s hands %s weapon %s cm; %s (%u frames, %u needing a hold, the hook's calls %u, %u steps held "
 		      "%.0f cm; the most it needed %.0f cm from the eyes; held ahead of its lean %u frames; its way out %.0f cm at the most); "
 		      "%s",
-		      e->tmin, (unsigned long long)e->fmin, (unsigned long)e->c, e->kind, nm, e->sync ? " (a sync)" : "",
+		      e->tmin, (unsigned long long)e->fmin, (unsigned long long)e->c, e->kind, nm, e->sync ? " (a sync)" : "",
 		      g_nb_node_w[e->bmin >= 0 && e->bmin <= NB_NODES ? e->bmin : 0], e->dmin, e->tmin - e->t0,
 		      e->seen - e->t0, e->root_eye, e->root_tal, pt[NBP_HEAD], pt[NBP_CHEST], pt[NBP_SHOULDERS], pt[NBP_HANDS],
 		      pt[NBP_WEAPON], g_nb.on ? "held" : "measured only", e->frames, e->needs, e->calls, e->steps, e->pushed,
@@ -2184,25 +2178,25 @@ static void fs_start(int *bad)
 	g_fs.from_head = env_word("SOMVR_FIGHT_SPACE_FROM", from_w, 2, 1);
 	char why[512], err[200] = "";
 	if (check_site(&g_fs_sites[0], why, sizeof why) != 0) {
-		logf_("WARN SOMVR_FIGHT_SPACE_CM / _COMBAT_STAGGER_CM: the site FS_AIMOVE %#lx did not match (%s): off",
-		      (unsigned long)g_fs_sites[0].addr, why);
+		logf_("WARN SOMVR_FIGHT_SPACE_CM / _COMBAT_STAGGER_CM: the site FS_AIMOVE %#llx did not match (%s): off",
+		      (unsigned long long)g_fs_sites[0].addr, why);
 		(*bad)++;
 		return;
 	}
 	void *fn = (void *)somvr_w_aimove;
 	g_fs.orig = g_fs_sites[0].target;
 	if (write_code(g_fs_sites[0].addr, &fn, 8, err, sizeof err) != 0) {
-		logf_("WARN SOMVR_FIGHT_SPACE_CM / _COMBAT_STAGGER_CM: the slot %#lx not written (%s): off",
-		      (unsigned long)g_fs_sites[0].addr, err);
+		logf_("WARN SOMVR_FIGHT_SPACE_CM / _COMBAT_STAGGER_CM: the slot %#llx not written (%s): off",
+		      (unsigned long long)g_fs_sites[0].addr, err);
 		(*bad)++;
 		return;
 	}
 	g_fs.ok = 1;
 	if (g_fs.space > 0)
 		logf_("CONFIG fight space %.0f cm (SOMVR_FIGHT_SPACE_CM): an orc whose attack targets Talion moves no nearer than "
-		      "this to %s (SOMVR_FIGHT_SPACE_FROM; the NPC movement's slot FS_AIMOVE %#lx: orig %#lx, now %p)", g_fs.space,
+		      "this to %s (SOMVR_FIGHT_SPACE_FROM; the NPC movement's slot FS_AIMOVE %#llx: orig %#llx, now %p)", g_fs.space,
 		      g_fs.from_head ? "his root or the player's head, whichever is nearer" : "his root",
-		      (unsigned long)g_fs_sites[0].addr, (unsigned long)g_fs.orig, fn);
+		      (unsigned long long)g_fs_sites[0].addr, (unsigned long long)g_fs.orig, fn);
 }
 
 /* the game thread, every frame: the snapshot (Talion's root, the orcs whose attack target is Talion) and the lines */
@@ -2270,9 +2264,9 @@ static void fs_frame(uintptr_t pl, int stereo, double t)
 	uint64_t held = atomic_load(&g_fs.held);
 	if (held != g_fs.logged && t >= g_fs.next_log) {
 		g_fs.next_log = t + 0.5;
-		logf_("FIGHT space t=%.3f held %llu move%s so far (the last: hobj %#lx, from %u cm of the nearer of Talion's root and "
+		logf_("FIGHT space t=%.3f held %llu move%s so far (the last: hobj %#llx, from %u cm of the nearer of Talion's root and "
 		      "the head its move wanted %u, kept at %u); %d orc%s at him", t, (unsigned long long)held, held == 1 ? "" : "s",
-		      (unsigned long)atomic_load(&g_fs.last_hobj), atomic_load(&g_fs.last_was), atomic_load(&g_fs.last_want),
+		      (unsigned long long)atomic_load(&g_fs.last_hobj), atomic_load(&g_fs.last_was), atomic_load(&g_fs.last_want),
 		      atomic_load(&g_fs.last_got), n, n == 1 ? "" : "s");
 		g_fs.logged = held;
 	}
@@ -2296,11 +2290,11 @@ static void rl_flush(struct rl_e *e, double t, const char *why)
 	g_rl.reels++, g_rl.capped += capped > 0, g_rl.vf_seen += calls > 0;
 	if (e->max_cm > g_rl.longest)
 		g_rl.longest = e->max_cm, g_rl.longest_cap = e->cap;
-	logf_("COMBAT reel orc=%#lx after %s: its attacks '%s'%s%s%s%s%s%s; the reel %.0f cm at most from where the hit found it "
+	logf_("COMBAT reel orc=%#llx after %s: its attacks '%s'%s%s%s%s%s%s; the reel %.0f cm at most from where the hit found it "
 	      "(%.0f cm from Talion's root then) in %.2f s, %.0f cm at its end (%.0f cm from Talion's root, %.0f from the head); "
 	      "the root's path %.0f cm, the NPC movement's steps for it %u (%.0f cm), the cap %.0f cm: %u steps eased (%.0f cm "
 	      "off); every 0.25 s (cm from the hit/from the head): %s; nearest Talion's root %.0f cm, the head %.0f; %s",
-	      (unsigned long)e->c, e->what, an[0], e->natk > 1 ? " -> '" : "", an[1], e->natk > 1 ? "'" : "",
+	      (unsigned long long)e->c, e->what, an[0], e->natk > 1 ? " -> '" : "", an[1], e->natk > 1 ? "'" : "",
 	      e->natk > 2 ? " -> '" : "", an[2], e->natk > 2 ? "'" : "", e->max_cm, e->d0, rs, e->end_cm, e->end_t, e->end_h,
 	      e->path_cm, calls, seen * 0.1f, e->cap, capped, cut * 0.1f, tr, e->dmin, e->hmin, why);
 	atomic_fetch_add(&e->gen, 1);

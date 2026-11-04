@@ -102,8 +102,8 @@ static void xh_start(const struct site_spec *sites, int *bad)
 		return;
 	char why[512];
 	if (check_site(&sites[0], why, sizeof why) != 0)
-		logf_("RETICLE site %s %#lx -> %#lx MISMATCH: %s", sites[0].name, (unsigned long)sites[0].addr,
-		      (unsigned long)sites[0].target, why);
+		logf_("RETICLE site %s %#llx -> %#llx MISMATCH: %s", sites[0].name, (unsigned long long)sites[0].addr,
+		      (unsigned long long)sites[0].target, why);
 	else
 		g_xh.ok = go_slot(&sites[0], (void *)somvr_w_xhset, &g_xh.orig);
 	atomic_store(&g_xh.mode, g_xh.ok ? g_xh.want : XH_GAME);

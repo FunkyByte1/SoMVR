@@ -1041,6 +1041,34 @@ static void test_stroke(void) {
         CHECK(with == SC_TIER_LIGHT && without == SC_TIER_HEAVY, "a wrist flick (the tip %g m/s, reach %g cm, the fist %g cm): "
               "light with the fist rule (%d), heavy without (%d)", f.mean_mps, f.reach, f.base_reach, with, without);
     }
+    /* build 32 (SOMVR_COMBAT_FORCE): the blow's energy - a touch, a wrist flick, an arm's blow (90 Hz samples) */
+    {
+        sc_cfg fc;
+        sc_cfg_default(&fc);
+        fc.stroke = 1, fc.force = 1, fc.arm_cm = 25;
+        CHECK(NEAR(fc.blow_min_j, 35, 0) && NEAR(fc.blow_heavy_j, 50, 0) && NEAR(fc.blow_arm_kg, 3, 0), "the force's defaults");
+        sc_speed ts, ws, as;
+        sc_speed_reset(&ts), sc_speed_reset(&ws), sc_speed_reset(&as);
+        somvr_blade tb = blade(0, 0, 0, 0, 0, 100, 0), ab = tb;
+        tb.flat_n[1] = 1, ab.flat_n[1] = 1;
+        float vt[3] = {300, 0, 0}, va[3] = {800, 0, 0};
+        for (int k = 0; k < 12; k++) tb = moved(&tb, vt, 1 / HZ), sc_speed_push(&ts, &fc, &tb); /* a touch: 3 m/s */
+        for (int k = 0; k < 24; k++) ab = moved(&ab, va, 1 / HZ), ab.vel_tip[0] = 1600, sc_speed_push(&as, &fc, &ab);
+        somvr_blade fb, fp;
+        memset(&fp, 0, sizeof fp);
+        for (int k = 0; k <= 12; k++) { /* a 105 deg wrist flick, the fist still: the tip ~17 m/s */
+            float a = 0.153f * (float)k, q[4] = {0, sinf(0.5f * a), 0, cosf(0.5f * a)};
+            stroke_blade(q, k / HZ, k ? &fp : NULL, &fb), fp = fb;
+            sc_speed_push(&ws, &fc, &fb);
+        }
+        float jt = sc_blow_j(&fc, &ts, 0.7f), jw = sc_blow_j(&fc, &ws, 0.7f), ja = sc_blow_j(&fc, &as, 0.7f);
+        int tt = sc_tier_force(&fc, &ts, 0, 0.7f), tw = sc_tier_force(&fc, &ws, 0, 0.7f), ta = sc_tier_force(&fc, &as, 0, 0.7f);
+        CHECK(tt == SC_TIER_NONE && tw == SC_TIER_NONE && ta == SC_TIER_HEAVY, "a touch %.1f J (%d), a flick %.1f J (%d): no hit; "
+              "the arm's blow %.1f J (the fist %.1f m/s): a cut (%d)", jt, tt, jw, tw, ja, as.grip_mps, ta);
+        CHECK(sc_tier_force(&fc, &as, 75, 0.7f) == SC_TIER_LIGHT, "... the flat leading: light");
+        CHECK(NEAR(sc_blow_k(&fc, 50), 0.6, 1e-5) && NEAR(sc_blow_k(&fc, 120), 1, 1e-6) && NEAR(sc_blow_k(&fc, 85), 0.8, 1e-5),
+              "the cut's damage by the blow: 0.6 at 50 J, 1 at 120");
+    }
     float k1 = sc_cut_k(&c, 12), k2 = sc_cut_k(&c, 16), k3 = sc_cut_k(&c, 30);
     CHECK(NEAR(k1, 0.6, 1e-5) && NEAR(k2, 0.8, 1e-5) && NEAR(k3, 1, 0) && NEAR(sc_cut_k(&c, NAN), 0.6, 1e-6),
           "the damage factor: %g %g %g", k1, k2, k3);

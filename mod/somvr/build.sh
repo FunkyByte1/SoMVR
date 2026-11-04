@@ -25,6 +25,10 @@
 #                         on the game
 #                         binary (read-only), the inert
 #                         tests, selftest.c (the hooks against stand-ins), and vklayer/build.sh --check (layer tests)
+#   ./build.sh --sanitize every test of --check built with ASan + UBSan and run, in a mirror under build/san/ (the normal
+#   The commands run in parallel (buildplan.sh/.py: the plan, the object cache, the log in this file's order; the first
+#                         failure in that order ends the check with its exit code): docs/re-xr-pipeline.md 161
+#                         build untouched): tests/sanitize.sh, docs/re-xr-pipeline.md 151
 # Headers: ShadowOfMordor/third_party (git-ignored), see vklayer/build.sh. Nothing here launches the game or a runtime.
 set -euo pipefail
 D=$(cd "$(dirname "$0")" && pwd)
@@ -32,7 +36,7 @@ TP=$(cd "$D/../../third_party" 2>/dev/null && pwd) || { echo "no ShadowOfMordor/
 XRH=$TP/OpenXR-SDK-1.1.61/include
 [ -f "$XRH/openxr/openxr.h" ] || { echo "OpenXR headers missing in $TP (run scripts/fetch_third_party.sh)"; exit 2; }
 CF=(-std=gnu11 -O2 -g -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Werror -I"$XRH")
-CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c" "$D/somvr_ctl.c" "$D/somvr_hands.c"
+CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_inrec.c" "$D/somvr_views.c" "$D/somvr_combat.c" "$D/somvr_ctl.c" "$D/somvr_hands.c"
       "$D/somvr_arms.c" "$D/somvr_pointer.c" "$D/somvr_headbone.c" "$D/somvr_fallback.c" "$D/somvr_comfort.c"
       "$D/somvr_climb.c" "$D/somvr_bow.c" "$D/somvr_vrmenu.c" "$D/somvr_font.c"
       "$D/somvr_loco.c" "$D/somvr_threat.c" "$D/somvr_bodymoments.c" "$D/somvr_slots.c" "$D/somvr_defence.c"
@@ -41,168 +45,203 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_views.c" "$D/somvr_combat.c"
       "$D/somvr_strike.c" "$D/somvr_gaze.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
       "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c"
       "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c" "$D/somvr_above.c" "$D/somvr_ride.c"
-      "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c")
+      "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c" "$D/somvr_finisher.c")
 mkdir -p "$D/build/tests"
+# the checks of more than one command: planned as `run ... -- build.sh --step NAME` (buildplan.sh)
+step_haptics() { # build 34 (re-xr-pipeline.md 153.4): every pulse a word of somvr_haptics.h - no raw pulse (in_haptic_event)
+  # and no xrApplyHapticFeedback but the layer's two (the game's requests, the VR menu's words)
+  raw=$(grep -n 'in_haptic_event(' "$D"/*.c | grep -v 'static void in_haptic_event' || true)
+  [ -z "$raw" ] || { echo "FAIL: a raw haptic pulse outside the table - give it a word from somvr_haptics.h:"; echo "$raw"; exit 1; }
+  [ "$(grep -c 'xrApplyHapticFeedback(' "$D/vklayer/somvr_vklayer.c")" = 2 ] ||
+      { echo "FAIL: xrApplyHapticFeedback called outside the layer's two places"; exit 1; }
+}
+step_inert() {
+  T=$(mktemp -d)
+  SOMVR_LOG=$T/somvr.log SOMVR_STEREO=A LD_PRELOAD=$D/build/somvr.so /bin/true
+  SOMVR_LOG=$T/somvr.log SOMVR_STEREO=A LD_PRELOAD=$D/build/somvr.so python3 -I -c 'pass'
+  if [ -e "$T/somvr.log" ]; then echo "FAIL: the library wrote a log outside the game"; rm -rf -- "$T"; exit 1; fi
+  rm -rf -- "$T"
+  exp=$(nm -D --defined-only "$D/build/somvr.so" | awk '$2 ~ /[TtBbDd]/ { print $3 }' | sort | tr '\n' ' ')
+  [ "$exp" = "somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu " ] ||
+      { echo "FAIL: somvr.so exports: $exp (want somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu)"; exit 1; }
+  echo "inert: /bin/true and python3 ran with the library preloaded and no log was written; exports: $exp"
+}
+step_selftest() {
+  T=$(mktemp -d)
+  "$D/build/selftest" "$T" || { tail -40 "$T/somvr.log"; rm -rf -- "$T"; exit 1; }
+  awk '/^(HOOK|CONFIG|GUARD|XR)/ { print; if (++n == 20) exit }' "$T/somvr.log" # no pipe: no SIGPIPE under pipefail
+  rm -rf -- "$T"
+}
+if [ "${1:-}" = --step ]; then "step_$2"; exit 0; fi
 CHECK=0
-for a in "$@"; do case $a in --check) CHECK=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done
+for a in "$@"; do case $a in --check) CHECK=1 ;; --sanitize) exec "$D/tests/sanitize.sh" ;; *) echo "unknown option $a"; exit 2 ;; esac; done
+. "$D/buildplan.sh"
+plan_open "$D/build"
 
 if [ -f "$D/somvr.c" ]; then
   gcc "${CF[@]}" -Wno-missing-prototypes -fPIC -shared -fvisibility=hidden -Wl,-z,defs \
       -o "$D/build/somvr.so" "$D/somvr.c" "${CORE[@]}" -lpthread -lm
-  echo "built $D/build/somvr.so ($(sha256sum "$D/build/somvr.so" | cut -c1-16))"
+  built "$D/build/somvr.so"
 fi
 [ -x "$D/vklayer/build.sh" ] && "$D/vklayer/build.sh"
-[ $CHECK = 1 ] || exit 0
+[ $CHECK = 1 ] || plan_go
 
-echo "== unit tests"
+
+say "== unit tests"
 gcc "${CF[@]}" -o "$D/build/tests/test_pose" "$D/tests/test_pose.c" "$D/somvr_pose.c" "$D/somvr_eyes.c" -lm
-"$D/build/tests/test_pose"
+run "$D/build/tests/test_pose"
 gcc "${CF[@]}" -o "$D/build/tests/test_shared" "$D/tests/test_shared.c" -lpthread
-"$D/build/tests/test_shared"
+run "$D/build/tests/test_shared"
 gcc "${CF[@]}" -o "$D/build/tests/test_input" "$D/tests/test_input.c" -lpthread
-"$D/build/tests/test_input"
+run "$D/build/tests/test_input"
 gcc "${CF[@]}" -o "$D/build/tests/test_views" "$D/tests/test_views.c" "$D/somvr_views.c" "$D/somvr_pose.c" -lpthread -lm
-"$D/build/tests/test_views"
+run "$D/build/tests/test_views"
 gcc "${CF[@]}" -o "$D/build/tests/test_combat" "$D/tests/test_combat.c" "$D/somvr_combat.c" -lm
-"$D/build/tests/test_combat"
+run "$D/build/tests/test_combat"
 gcc "${CF[@]}" -o "$D/build/tests/test_ctl" "$D/tests/test_ctl.c" "$D/somvr_ctl.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_ctl"
+run "$D/build/tests/test_ctl"
+gcc "${CF[@]}" -o "$D/build/tests/test_haptics" "$D/tests/test_haptics.c" "$D/somvr_ctl.c" "$D/somvr_pose.c" -lm # build 34: the haptics language
+run "$D/build/tests/test_haptics"
+run -- "$D/build.sh" --step haptics # build 34: every pulse a word of somvr_haptics.h
 gcc "${CF[@]}" -o "$D/build/tests/test_hands" "$D/tests/test_hands.c" "$D/somvr_hands.c" "$D/somvr_pose.c" "$D/somvr_eyes.c" \
     -lpthread -lm
-"$D/build/tests/test_hands"
+run "$D/build/tests/test_hands"
 gcc "${CF[@]}" -o "$D/build/tests/test_smooth" "$D/tests/test_smooth.c" "$D/somvr_smooth.c" -lm
-"$D/build/tests/test_smooth"
+run "$D/build/tests/test_smooth"
+gcc "${CF[@]}" -o "$D/build/tests/test_inrec" "$D/tests/test_inrec.c" "$D/somvr_inrec.c" "$D/somvr_combat.c" "$D/somvr_slots.c" \
+    "$D/somvr_hands.c" "$D/somvr_eyes.c" "$D/somvr_pose.c" -lm # b35: SOMVR_INPUT_REC's format, the replay's remap, offline replays
+run "$D/build/tests/test_inrec"
 gcc "${CF[@]}" -o "$D/build/tests/test_arms" "$D/tests/test_arms.c" "$D/somvr_arms.c" "$D/somvr_combat.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_arms"
+run "$D/build/tests/test_arms"
 gcc "${CF[@]}" -o "$D/build/tests/test_pointer" "$D/tests/test_pointer.c" "$D/somvr_pointer.c" -lm
-"$D/build/tests/test_pointer"
+run "$D/build/tests/test_pointer"
 gcc "${CF[@]}" -o "$D/build/tests/test_body" "$D/tests/test_body.c" "$D/somvr_body.c" "$D/somvr_arms.c" "$D/somvr_combat.c" \
     "$D/somvr_pose.c" -lm
-"$D/build/tests/test_body"
+run "$D/build/tests/test_body"
 gcc "${CF[@]}" -o "$D/build/tests/test_fingers" "$D/tests/test_fingers.c" "$D/somvr_fingers.c" "$D/somvr_arms.c" \
     "$D/somvr_combat.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_fingers"
+run "$D/build/tests/test_fingers"
 gcc "${CF[@]}" -o "$D/build/tests/test_headbone" "$D/tests/test_headbone.c" "$D/somvr_headbone.c" "$D/somvr_arms.c" \
     "$D/somvr_combat.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_headbone"
+run "$D/build/tests/test_headbone"
 gcc "${CF[@]}" -o "$D/build/tests/test_fallback" "$D/tests/test_fallback.c" "$D/somvr_fallback.c" -lm
-"$D/build/tests/test_fallback"
+run "$D/build/tests/test_fallback"
 gcc "${CF[@]}" -o "$D/build/tests/test_comfort" "$D/tests/test_comfort.c" "$D/somvr_comfort.c" "$D/somvr_ctl.c" \
     "$D/somvr_eyes.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_comfort"
+run "$D/build/tests/test_comfort"
 gcc "${CF[@]}" -o "$D/build/tests/test_climb" "$D/tests/test_climb.c" "$D/somvr_climb.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_climb"
+run "$D/build/tests/test_climb"
 gcc "${CF[@]}" -o "$D/build/tests/test_bow" "$D/tests/test_bow.c" "$D/somvr_bow.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_bow"
+run "$D/build/tests/test_bow"
 gcc "${CF[@]}" -o "$D/build/tests/test_vrmenu" "$D/tests/test_vrmenu.c" "$D/somvr_vrmenu.c" "$D/somvr_font.c" -lm
-"$D/build/tests/test_vrmenu"
+run "$D/build/tests/test_vrmenu"
 gcc "${CF[@]}" -o "$D/build/tests/test_captain" "$D/tests/test_captain.c" "$D/somvr_captain.c" -lm
-"$D/build/tests/test_captain"
+run "$D/build/tests/test_captain"
 gcc "${CF[@]}" -o "$D/build/tests/test_loco" "$D/tests/test_loco.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_loco"
+run "$D/build/tests/test_loco"
 gcc "${CF[@]}" -o "$D/build/tests/test_threat" "$D/tests/test_threat.c" "$D/somvr_threat.c" "$D/somvr_eyes.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_threat"
+run "$D/build/tests/test_threat"
 gcc "${CF[@]}" -o "$D/build/tests/test_bodymoments" "$D/tests/test_bodymoments.c" "$D/somvr_bodymoments.c" \
     "$D/somvr_fallback.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_bodymoments"
+run "$D/build/tests/test_bodymoments"
 gcc "${CF[@]}" -o "$D/build/tests/test_screens" "$D/tests/test_screens.c" "$D/somvr_screens.c" \
     "$D/somvr_bodymoments.c" "$D/somvr_fallback.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm # build 22: death, Mouse1
-"$D/build/tests/test_screens"
+run "$D/build/tests/test_screens"
 gcc "${CF[@]}" -o "$D/build/tests/test_map" "$D/tests/test_map.c" "$D/somvr_map.c" -lm # build 27: the map by the pointer
-"$D/build/tests/test_map"
+run "$D/build/tests/test_map"
 gcc "${CF[@]}" -o "$D/build/tests/test_slots" "$D/tests/test_slots.c" "$D/somvr_slots.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_slots"
+run "$D/build/tests/test_slots"
 gcc "${CF[@]}" -o "$D/build/tests/test_defence" "$D/tests/test_defence.c" "$D/somvr_defence.c" "$D/somvr_combat.c" -lm
-"$D/build/tests/test_defence"
+run "$D/build/tests/test_defence"
 gcc "${CF[@]}" -o "$D/build/tests/test_step" "$D/tests/test_step.c" "$D/somvr_step.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_step"
+run "$D/build/tests/test_step"
 gcc "${CF[@]}" -o "$D/build/tests/test_wstep" "$D/tests/test_wstep.c" "$D/somvr_wstep.c" -lm # build 18: the wraith step
-"$D/build/tests/test_wstep"
+run "$D/build/tests/test_wstep"
 gcc "${CF[@]}" -o "$D/build/tests/test_jump" "$D/tests/test_jump.c" "$D/somvr_jump.c" "$D/somvr_pose.c" -lm # build 22: the jump, the vault
-"$D/build/tests/test_jump"
+run "$D/build/tests/test_jump"
 gcc "${CF[@]}" -o "$D/build/tests/test_above" "$D/tests/test_above.c" "$D/somvr_above.c" -lm # build 25: from above
-"$D/build/tests/test_above"
+run "$D/build/tests/test_above"
 gcc "${CF[@]}" -o "$D/build/tests/test_abil" "$D/tests/test_abil.c" "$D/somvr_abil.c" -lm # build 27: the abilities
-"$D/build/tests/test_abil"
+run "$D/build/tests/test_abil"
 gcc "${CF[@]}" -o "$D/build/tests/test_headview" "$D/tests/test_headview.c" "$D/somvr_headview.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_headview"
+run "$D/build/tests/test_headview"
 gcc "${CF[@]}" -o "$D/build/tests/test_headparts" "$D/tests/test_headparts.c" "$D/somvr_headparts.c" -lpthread -lm
-"$D/build/tests/test_headparts"
+run "$D/build/tests/test_headparts"
 gcc "${CF[@]}" -o "$D/build/tests/test_finish" "$D/tests/test_finish.c" "$D/somvr_finish.c" "$D/somvr_combat.c" "$D/somvr_pose.c" -lm
-"$D/build/tests/test_finish"
+run "$D/build/tests/test_finish"
 gcc "${CF[@]}" -o "$D/build/tests/test_practice" "$D/tests/test_practice.c" "$D/somvr_practice.c" -lm
-"$D/build/tests/test_practice"
+run "$D/build/tests/test_practice"
 gcc "${CF[@]}" -o "$D/build/tests/test_session" "$D/tests/test_session.c" "$D/somvr_session.c" -lm
-"$D/build/tests/test_session"
+run "$D/build/tests/test_session"
 gcc "${CF[@]}" -o "$D/build/tests/test_menus" "$D/tests/test_menus.c" "$D/somvr_menus.c" -lm # build 6: the boards, the watch, touch
-"$D/build/tests/test_menus"
+run "$D/build/tests/test_menus"
 gcc "${CF[@]}" -o "$D/build/tests/test_size" "$D/tests/test_size.c" "$D/somvr_size.c" "$D/somvr_comfort.c" "$D/somvr_eyes.c" \
     "$D/somvr_hands.c" "$D/somvr_combat.c" "$D/somvr_arms.c" "$D/somvr_climb.c" "$D/somvr_threat.c" "$D/somvr_pose.c" \
     -lpthread -lm # the player size: the rig, the hands, the blade, the arms, the climb, the glows, the blink
-"$D/build/tests/test_size"
-python3 -I "$D/../../scripts/handmesh_gen.py" --check # build 10: somvr_handmesh.h is the generator's
+run "$D/build/tests/test_size"
+run -- python3 -I "$D/../../scripts/handmesh_gen.py" --check # build 10: somvr_handmesh.h is the generator's
 gcc "${CF[@]}" -o "$D/build/tests/test_vrhands" "$D/tests/test_vrhands.c" "$D/somvr_vrhands.c" -lm # build 10: our VR hands
-"$D/build/tests/test_vrhands"
+run "$D/build/tests/test_vrhands"
 gcc "${CF[@]}" -o "$D/build/tests/test_strike" "$D/tests/test_strike.c" "$D/somvr_strike.c" -lm # build 12: the wraith dash
-"$D/build/tests/test_strike"
+run "$D/build/tests/test_strike"
 gcc "${CF[@]}" -o "$D/build/tests/test_gaze" "$D/tests/test_gaze.c" "$D/somvr_gaze.c" -lm # build 17: the Shadow Strike by gaze
-"$D/build/tests/test_gaze"
+run "$D/build/tests/test_gaze"
 gcc "${CF[@]}" -o "$D/build/tests/test_execute" "$D/tests/test_execute.c" "$D/somvr_execute.c" -lm # build 13: the execution
-"$D/build/tests/test_execute"
+run "$D/build/tests/test_execute"
 gcc "${CF[@]}" -o "$D/build/tests/test_stealth" "$D/tests/test_stealth.c" "$D/somvr_stealth.c" "$D/somvr_combat.c" -lm # build 18: the stealth kill (20c: + the tiers)
-"$D/build/tests/test_stealth"
+run "$D/build/tests/test_stealth"
 gcc "${CF[@]}" -o "$D/build/tests/test_kills" "$D/tests/test_kills.c" "$D/somvr_kills.c" -lm # build 31: kills the game's way
-"$D/build/tests/test_kills"
+run "$D/build/tests/test_kills"
+gcc "${CF[@]}" -o "$D/build/tests/test_finisher" "$D/tests/test_finisher.c" "$D/somvr_finisher.c" -lm # build 33: the finisher
+run "$D/build/tests/test_finisher"
 gcc "${CF[@]}" -o "$D/build/tests/test_beasts" "$D/tests/test_beasts.c" "$D/somvr_beasts.c" -lm # build 22: the beasts
-"$D/build/tests/test_beasts"
+run "$D/build/tests/test_beasts"
 gcc "${CF[@]}" -o "$D/build/tests/test_ride" "$D/tests/test_ride.c" "$D/somvr_ride.c" -lm # build 26: riding, Seat mode
-"$D/build/tests/test_ride"
+run "$D/build/tests/test_ride"
 gcc "${CF[@]}" -o "$D/build/tests/test_surface" "$D/tests/test_surface.c" "$D/somvr_surface.c" "$D/somvr_pose.c" -lm # build 13: hands at surfaces
-"$D/build/tests/test_surface"
+run "$D/build/tests/test_surface"
 gcc "${CF[@]}" -o "$D/build/tests/test_verbs" "$D/tests/test_verbs.c" "$D/somvr_verbs.c" -lm # build 13: the Nemesis verbs
-"$D/build/tests/test_verbs"
+run "$D/build/tests/test_verbs"
 gcc "${CF[@]}" -o "$D/build/tests/test_ovault" "$D/tests/test_ovault.c" "$D/somvr_ovault.c" "$D/somvr_pose.c" -lm # build 31: the vault by the hands
-"$D/build/tests/test_ovault"
+run "$D/build/tests/test_ovault"
 gcc "${CF[@]}" -o "$D/build/tests/test_crouch" "$D/tests/test_crouch.c" "$D/somvr_crouch.c" -lm # build 13: crouch by ducking
-"$D/build/tests/test_crouch"
+run "$D/build/tests/test_crouch"
 gcc "${CF[@]}" -o "$D/build/tests/test_vision" "$D/tests/test_vision.c" "$D/somvr_vision.c" "$D/somvr_session.c" \
     "$D/somvr_ctl.c" "$D/somvr_pose.c" -lm # build 16: SOMVR_VISION's wish and taps
-"$D/build/tests/test_vision"
+run "$D/build/tests/test_vision"
 gcc "${CF[@]}" -o "$D/build/tests/test_front" "$D/tests/test_front.c" "$D/somvr_front.c" -lm # build 14: front-first enemies (SOMVR_FRONT)
-"$D/build/tests/test_front"
+run "$D/build/tests/test_front"
 gcc "${CF[@]}" -o "$D/build/tests/test_objective" "$D/tests/test_objective.c" "$D/somvr_objective.c" "$D/somvr_font.c" -lm # build 15: the objective marker
-"$D/build/tests/test_objective"
-[ -f "$D/somvr.c" ] || exit 0
+run "$D/build/tests/test_objective"
+[ -f "$D/somvr.c" ] || plan_go
 
-echo "== patch sites (read-only, the game binary on disk)"
-python3 -I "$D/check_sites.py" "$D/somvr.c" "${SOM_BIN:-$D/../../reference/bin/linux/ShadowOfMordor}"
-echo "== Windows tables (win/README.md: win/sites-*.tsv and offsets-*.tsv against the Steam-Windows exe, read-only)"
-python3 -I "$D/win/wintables.py" --check --quiet
+say "== patch sites (read-only, the game binary on disk)"
+run -- python3 -I "$D/check_sites.py" "$D/somvr.c" "${SOM_BIN:-$D/../../reference/bin/linux/ShadowOfMordor}"
+say "== Windows tables (win/README.md: win/sites-*.tsv and offsets-*.tsv against the Steam-Windows exe, read-only)"
+run -- python3 -I "$D/win/wintables.py" --check --quiet
 gcc "${CF[@]}" -o "$D/build/tests/test_fogdxbc" "$D/win/tests/test_fogdxbc.c" # winport: the fog edit in DXBC (+ the checksum on the exe's 927 blobs)
-"$D/build/tests/test_fogdxbc" "$D/../../reference/bin/ShadowOfMordor.exe"
+run "$D/build/tests/test_fogdxbc" "$D/../../reference/bin/ShadowOfMordor.exe"
+gcc "${CF[@]}" -o "$D/build/tests/test_grassdxbc" "$D/win/tests/test_grassdxbc.c" # build 33: the scatter grass for VR in DXBC (SOMVR_XR_GRASS, re-xr-pipeline.md 148)
+run "$D/build/tests/test_grassdxbc"
+gcc "${CF[@]}" -o "$D/build/tests/test_bubbledxbc" "$D/win/tests/test_bubbledxbc.c" -lm # build 36: no foliage / bugs in the face, in DXBC (SOMVR_NEAR_FOLIAGE_CM, SOMVR_NEAR_BUGS_CM; re-xr-pipeline.md 166)
+run "$D/build/tests/test_bubbledxbc"
 gcc "${CF[@]}" -o "$D/build/tests/test_winabi" "$D/tests/test_winabi.c" # winport-hooks: the by-name lookup, the Win64 argument slots
-"$D/build/tests/test_winabi" "$D/../../reference/bin/linux/ShadowOfMordor" "$D/../../reference/bin/ShadowOfMordor.exe"
+run "$D/build/tests/test_winabi" "$D/../../reference/bin/linux/ShadowOfMordor" "$D/../../reference/bin/ShadowOfMordor.exe"
+gcc "${CF[@]}" -pthread -o "$D/build/tests/test_rcache" "$D/win/tests/test_rcache.c" # b34 review: the Windows safe reads' region cache (seqlocked slots)
+run "$D/build/tests/test_rcache"
+gcc "${CF[@]}" -o "$D/build/tests/test_sha256" "$D/win/tests/test_sha256.c" "$D/win/sha256.c" # the DLL's exe gate: FIPS 180-4 + the Steam-Win exe
+run "$D/build/tests/test_sha256" "$D/../../reference/bin/ShadowOfMordor.exe" f5d72578f7e5fcf05e6d15d8bd231f763078620c8545f8464bb186e842279455
 
-echo "== inert outside the game"
-T=$(mktemp -d)
-SOMVR_LOG=$T/somvr.log SOMVR_STEREO=A LD_PRELOAD=$D/build/somvr.so /bin/true
-SOMVR_LOG=$T/somvr.log SOMVR_STEREO=A LD_PRELOAD=$D/build/somvr.so python3 -I -c 'pass'
-if [ -e "$T/somvr.log" ]; then echo "FAIL: the library wrote a log outside the game"; rm -rf -- "$T"; exit 1; fi
-rm -rf -- "$T"
-exp=$(nm -D --defined-only "$D/build/somvr.so" | awk '$2 ~ /[TtBbDd]/ { print $3 }' | sort | tr '\n' ' ')
-[ "$exp" = "somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu " ] ||
-    { echo "FAIL: somvr.so exports: $exp (want somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu)"; exit 1; }
-echo "inert: /bin/true and python3 ran with the library preloaded and no log was written; exports: $exp"
+say "== inert outside the game"
+run -d "$D/build/somvr.so" -- "$D/build.sh" --step inert
 
-echo "== selftest (the hooks against stand-in functions)"
+say "== selftest (the hooks against stand-in functions)"
 gcc "${CF[@]}" -Wno-missing-prototypes -O2 -no-pie -fno-pie -rdynamic -o "$D/build/selftest" "$D/selftest.c" \
     "${CORE[@]}" -lpthread -lm
-T=$(mktemp -d)
-"$D/build/selftest" "$T" || { tail -40 "$T/somvr.log"; rm -rf -- "$T"; exit 1; }
-awk '/^(HOOK|CONFIG|GUARD|XR)/ { print; if (++n == 20) exit }' "$T/somvr.log" # no pipe: no SIGPIPE under pipefail
-rm -rf -- "$T"
+run -d "$D/build/selftest" -- "$D/build.sh" --step selftest
 
 if [ -x "$D/vklayer/build.sh" ]; then
-  echo "== vklayer"
+  say "== vklayer"
   "$D/vklayer/build.sh" --check
 fi
+plan_go

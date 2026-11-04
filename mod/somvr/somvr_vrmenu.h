@@ -26,7 +26,10 @@
  *    SEATED, HEIGHT_CM, HAPTICS, STEP, DASH, PHASE, SWORD_ANGLE, MUSIC, PLAYER_SIZE, CROUCH, CLIMB_FLING,
  *    HANDS_SURFACE; build 19: DODGE, WRAITH_STEP, STEALTH_KILL, CROWD_PACE_MS, COUNTER_ICON, BOW_STRING: the
  *    environment variables of the same name; HUD=on|off,
- *    HUD_DIST_M, HAND=right|left, VIEW=first|third: the menu's own). Parse and format are pure and locale-free.
+ *    HUD_DIST_M, HAND=right|left, VIEW=first|third: the menu's own; build 34 (re-xr-pipeline.md 150): XR_WATCH_LOOK,
+ *    SWORD_PHYS_GHOST, KILLS, KILLS_EXEC, VERBS_GRAB_MAX_S, SLOTS_DAGGER_HOLD, HERBS, CLIMB_FLING_DOWN, CLIMB_SWORD = the
+ *    switches; WATCH_SIZE=small|large, LOW_HEALTH=off|edge|ring, HEARTBEAT=on|off, FORCE_NEEDED=low|normal|high,
+ *    SHOVE_PUSH=soft|normal|hard the menu's own). Parse and format are pure and locale-free.
  *
  * 3. The menu: its items, their values and steps, the panel's layout (a 512 x 768 texture since v2), the hit test of a
  *    pointer uv, the panel's picture (with somvr_font.h), the open/close gesture and the panel's pose on the wrist.
@@ -43,14 +46,16 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_VRMENU_SYMBOL "somvr_vrmenu"
 #define SOMVR_VRMENU_MAGIC 0x314e4d56524d4f53ull /* "SOMRVMN1" */
-#define SOMVR_VRMENU_VERSION 7u /* 2: STEP, DASH, PHASE (re-xr-pipeline.md 23): the settings 64 bytes; 3: the practice
+#define SOMVR_VRMENU_VERSION 8u /* 2: STEP, DASH, PHASE (re-xr-pipeline.md 23): the settings 64 bytes; 3: the practice
                                  * page (re-xr-pipeline.md 27): practice, pstate, settings.orc; 168 bytes; 4: the sword
                                  * angle (re-xr-pipeline.md 29): settings.sword_deg, the settings 72 bytes, 176; 5: the
                                  * music volume (re-xr-pipeline.md 34): settings.music, the settings 80 bytes, 184; 6
                                  * (build 17, re-xr-pipeline.md 56): settings.sword_hand, .quiver and 6 spare bytes, the
                                  * settings 88 bytes, 192; 7 (build 19, re-xr-pipeline.md 73; t3/menu18's 56.8): avail
                                  * 64 bits (bits 0..31 kept), everything after it 8 bytes later; the settings 96 bytes
-                                 * (the Fight page's six rows at 88..94; pad6 stays spare), 208 */
+                                 * (the Fight page's six rows at 88..94; pad6 stays spare), 208; 8 (build 34,
+                                 * re-xr-pipeline.md 150): the Settings tab's groups' new rows - the settings 128 bytes
+                                 * (96..111 the rows and av8, 112..127 spare), everything after them 32 bytes later, 240 */
 
 enum {                         /* somvr_vrmenu_shared.block: why the palm gesture opens nothing now */
     SOMVR_VMG_BOW = 1u,        /* SOMVR_BOW: the bow is out (nocked, drawn or held) */
@@ -108,7 +113,7 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
      * page's bow lines follow the row (somvr_vm_ctl_avail: BOWRT and QVGRIP from settings.quiver and BOWTRIG) */
     SOMVR_VMA_ARROWS = 33554432u,
     /* build 17: SOMVR_BOW_STRING=trigger (the string on the right trigger): "Shoot: RT, pull, let go" without the
-     * quiver */
+     * quiver (build 36: "Draw: RT at the string", "Shoot: pull back, let go") */
     SOMVR_VMA_BOWTRIG = 67108864u,
     /* build 17: the quiver with the string on the grip (SOMVR_BOW_STRING=grip): "Arrow: R grip at R shoulder" */
     SOMVR_VMA_QVGRIP = 134217728u,
@@ -119,10 +124,12 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
     /* build 17 (the bite17 helper, re-xr-pipeline.md 59): SOMVR_ARMS and SOMVR_COMBAT: the Blade bite row
      * (SOMVR_COMBAT_BITE live) */
     SOMVR_VMA_BITE = 1073741824u,
-    /* build 17 (the strike17 helper): SOMVR_STRIKE_GAZE=on: the Wraith line says A strikes the orc looked at ("hold Y;
-     * A = Strike"; the same line count: the mark in the world shows the button too) */
-    SOMVR_VMA_STRIKE = 2147483648u, /* 1<<31: the coordinator's (descent 1<<29, bite 1<<30) */
 };
+/* build 17 (the strike17 helper): SOMVR_STRIKE_GAZE=on: the Wraith line says A strikes the orc looked at ("hold Y;
+ * A = Strike"; the same line count: the mark in the world shows the button too). 1<<31: the coordinator's (descent
+ * 1<<29, bite 1<<30). A macro, not an enumerator: on Windows (the MSVC ABI) an enum is always int, so 2147483648u
+ * became INT_MIN and every uint64_t mask made of it (g_ctl's need/unless) bits 31..63 (win/README.md 7) */
+#define SOMVR_VMA_STRIKE 2147483648u
 /* build 18 (re-xr-pipeline.md 56.8): the availability word is 64 bits (somvr_vrmenu v7; every avail parameter and
  * variable is uint64_t). Bits 32..63 are macros (an enum constant is an int): SOMVR_VMA_BIT(n). Clearing bits from a
  * 64-bit avail: ~(uint64_t)(...) - a ~ of the 32-bit constants above would clear bits 32..63 too */
@@ -178,6 +185,11 @@ enum {                         /* somvr_vrmenu_shared.avail: what the game side 
     (SOMVR_VMA_SWORD | SOMVR_VMA_WEIGHT | SOMVR_VMA_SWHAND | SOMVR_VMA_BITE | SOMVR_VMA_ARROWS | SOMVR_VMA_DODGE |     \
      SOMVR_VMA_WSTEP | SOMVR_VMA_STEALTH | SOMVR_VMA_CROWD | SOMVR_VMA_CICON | SOMVR_VMA_STRING)
 /* 38..62: free (the next helpers'; take them in order, from 38) */
+/* build 34: the 64 avail bits are all taken - the Controls page's further features come in somvr_vrmenu_shared.ctl_feat
+ * (SOMVR_VMF_*) and reach its lines through somvr_vm_ctl_avail_f's derived word, where the practice area's live bits
+ * (6..9, SOMVR_VMA_PR_*) mean nothing and carry them instead (SOMVR_VMA_CTL_*; never in a menu avail) */
+enum { SOMVR_VMF_HERBS = 1u }; /* SOMVR_HERBS=on (with SOMVR_USE): "Herb: grip, fist to mouth" */
+#define SOMVR_VMA_CTL_HERBS ((uint64_t)SOMVR_VMA_PR_HERE)
 /* build 21 (re-xr-pipeline.md 82): the layer's own bit (never the preload's; taken from the top): SOMVR_XR_VM_TEST=on -
  * the tab strip is [Settings] [Practice] [Controls] [Test] across the panel (the four fill it: the X box leaves the
  * panel's pages - the card keeps it; the layer clears the bit for the card) and the Test page (SOMVR_VMPG_TEST) */
@@ -194,7 +206,10 @@ enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_S
        SOMVR_VMPR_CAPTAIN = 10,
        /* build 31 (re-xr-pipeline.md 136): Place an orc - aim the hand at the ground (a gold ring), the trigger puts an
         * unaware orc there */
-       SOMVR_VMPR_PLACE = 11 };
+       SOMVR_VMPR_PLACE = 11,
+       /* build 36 (re-xr-pipeline.md 164): Charge execution - the execution's charge filled (the finisher's ready reached
+        * at once; in the area only, as the refills) */
+       SOMVR_VMPR_CHARGE = 12 };
 static inline uint32_t somvr_vm_pr_pack(uint32_t seq, int action, int orc) {
     return seq << 8 | ((uint32_t)orc & 15u) << 4 | ((uint32_t)action & 15u);
 }
@@ -259,10 +274,55 @@ typedef struct {
     uint8_t stealth;           /* 90: the VR stealth kill 0 off, 1 on (SOMVR_STEALTH_KILL) */
     uint8_t counter_icon;      /* 91: the game's counter icon 0 hidden, 1 shown (SOMVR_COUNTER_ICON hide|game) */
     uint16_t crowd_ms;         /* 92: the crowd's pace, ms between blows at Talion, 0 = off (SOMVR_CROWD_PACE_MS) */
-    uint8_t bow_string;        /* 94: the bow's string held by 0 the grip, 1 the trigger (SOMVR_BOW_STRING) */
+    uint8_t bow_string;        /* 94: bit 0 the bow's string held by 0 the grip, 1 the trigger (SOMVR_BOW_STRING); build 33:
+                                * bit 1 the bow taken by the left grip anywhere (SOMVR_BOW_TAKE=grip; 0 = at the shoulder)
+                                * - an older preload never sets it, an older layer flips bit 0 only (=!: the bit cleared) */
     uint8_t test_page;         /* 95: build 31: the Test page's page it was on (0 ..), for that text (test_key): the menu
                                 * opens it there again, this session and the next (TEST_PAGE=P@KK; was pad7 (0)) */
-} somvr_settings;              /* 96 (88 in v6) */
+    /* v8 (build 34, re-xr-pipeline.md 150): the rows of builds 31-33's switches, each live (its feature reads it where
+     * it decides); a row is usable with its SOMVR_VMA8_* bit in av8 (the feature runs in this session); a key not in
+     * the file follows its switch */
+    uint8_t watch_raise;       /*  96: the wrist watch shown 0 at any angle, 1 only while the wrist is turned to read it
+                                * (SOMVR_XR_WATCH_LOOK any|raise; the layer's) */
+    uint8_t watch_big;         /*  97: the watch's face 0 small (6 cm), 1 large (10 cm) (WATCH_SIZE; at the start
+                                * SOMVR_XR_MINIMAP_QUAD's size: under 8 cm small; the layer's) */
+    uint8_t low_health;        /*  98: low health shown 0 not, 1 the faint red edge, 2 the red ring (LOW_HEALTH; at the
+                                * start SOMVR_HURT_LOW 0 = off, SOMVR_HURT_LOW_STYLE edge|ring) */
+    uint8_t heartbeat;         /*  99: the heartbeat in the hands at low health 0 off, 1 on (HEARTBEAT; SOMVR_HURT_BEAT
+                                * 0 = off; with the ring only) */
+    uint8_t force;             /* 100: the blow a hit needs 0 low, 1 normal, 2 high: the force rule's joules x 0.6, 1, 1.5
+                                * (FORCE_NEEDED; SOMVR_COMBAT_FORCE=on's, SOMVR_COMBAT_FORCE_J) */
+    uint8_t ghost;             /* 101: the controller's faint hand while the blade lags it 0 off, 1 on
+                                * (SOMVR_SWORD_PHYS_GHOST) */
+    uint8_t kills;             /* 102: kills the game's way (the orc's half of its kill) 0 off, 1 on (SOMVR_KILLS) */
+    uint8_t exec_blow;         /* 103: the execution 0 by the trigger, 1 by the next heavy blow (SOMVR_KILLS_EXEC) */
+    uint8_t shove;             /* 104: the push a shove needs 0 soft, 1 normal, 2 hard: SOMVR_SHOVE_MPS and _HARD_MPS
+                                * - 0.5, as set, + 0.5 m/s (SHOVE_PUSH) */
+    uint8_t hold_s;            /* 105: an orc held by the collar for at most this many s, 0 = the game's own end
+                                * (SOMVR_VERBS_GRAB_MAX_S) */
+    uint8_t knife_hold;        /* 106: the knife 0 stays in the hand (put back at the hip), 1 held while its grip is
+                                * (SOMVR_SLOTS_DAGGER_HOLD off|on; taken at the next draw) */
+    uint8_t herbs;             /* 107: a herb 0 by B, 1 by the hand (grip it, eat it) (SOMVR_HERBS) */
+    uint8_t fling_down;        /* 108: the climb's fling down 0 off, 1 on (SOMVR_CLIMB_FLING_DOWN; with the fling) */
+    uint8_t climb_sword;       /* 109: the sword in the free hand while climbing 0 off, 1 on (SOMVR_CLIMB_SWORD) */
+    uint16_t av8;              /* 110: the preload's, at its start: SOMVR_VMA8_* - the v8 rows' features run in this
+                                * session (no key, never saved; the 64 avail bits are all taken) */
+    uint8_t pad8[16];          /* 112..127: spare */
+} somvr_settings;              /* 128 (96 in v7, 88 in v6) */
+/* v8: the v8 rows' availability (somvr_settings.av8) */
+enum {
+    SOMVR_VMA8_WATCH = 1u,     /* SOMVR_XR_MINIMAP=wrist: the watch rows */
+    SOMVR_VMA8_HURT = 2u,      /* SOMVR_HURT=1: the Low health and Heartbeat rows */
+    SOMVR_VMA8_FORCE = 4u,     /* SOMVR_COMBAT_FORCE=on with the drawn sword: Force needed */
+    SOMVR_VMA8_GHOST = 8u,     /* SOMVR_SWORD_PHYS=on: Ghost hand */
+    SOMVR_VMA8_KILLS = 16u,    /* SOMVR_KILLS's site matched: Kill moves, Execute */
+    SOMVR_VMA8_SHOVE = 32u,    /* SOMVR_SHOVE=on: Shove push */
+    SOMVR_VMA8_HOLD = 64u,     /* SOMVR_VERBS=on (the grab): Grab time */
+    SOMVR_VMA8_KNIFE = 128u,   /* SOMVR_SLOTS with the knife on the belt: Knife grip */
+    SOMVR_VMA8_HERBS = 256u,   /* SOMVR_USE=on (the herbs' prompt): Herbs */
+    SOMVR_VMA8_CLIMB = 512u,   /* our climb runs: Climb sword; Fling down with the fling too */
+    SOMVR_VMA8_FLINGDN = 1024u /* the fling's hang (Fling down needs the Climb fling row On too) */
+};
 
 typedef struct somvr_vrmenu_shared {
     uint64_t magic;            /*   0 */
@@ -272,31 +332,36 @@ typedef struct somvr_vrmenu_shared {
     uint64_t avail;            /*  24: SOMVR_VMA_* (the preload's; the layer adds FLOOR and drops HUD without its quad);
                                 * v7: 64 bits (was 32) */
     uint32_t blink_on_ms;      /*  32: the blink length "Snap blink: On" selects */
-    uint32_t pad7;             /*  36 */
+    uint32_t ctl_feat;         /*  36: build 34: the Controls page's features with no avail bit left (SOMVR_VMF_*; the
+                                * preload's, at its start; was pad7 (0): a preload that sets none shows none of their
+                                * lines) */
     _Atomic uint64_t seq;      /*  40: seqlock over set */
-    somvr_settings set;        /*  48 */
-    _Atomic uint32_t gen;      /* 136: +1 per change of set (after it) */
-    _Atomic uint32_t toggles;  /* 140: preload: long presses of the left menu button */
-    _Atomic uint32_t recenters;/* 144: layer: the Recentre button */
-    _Atomic uint32_t open;     /* 148: layer: the panel is shown */
-    _Atomic uint32_t consume;  /* 152: layer: bit h = hand h's trigger is the panel's */
-    _Atomic uint32_t block;    /* 156: preload, every input tick: SOMVR_VMG_* (the gesture's gate; was pad0) */
-    /* 160: the layer's counters: frames with the panel, its texture uploads, clicks that changed something, opens */
+    somvr_settings set;        /*  48 (v8: 128 bytes) */
+    _Atomic uint32_t gen;      /* 176: +1 per change of set (after it) */
+    _Atomic uint32_t toggles;  /* 180: preload: long presses of the left menu button */
+    _Atomic uint32_t recenters;/* 184: layer: the Recentre button */
+    _Atomic uint32_t open;     /* 188: layer: the panel is shown */
+    _Atomic uint32_t consume;  /* 192: layer: bit h = hand h's trigger is the panel's */
+    _Atomic uint32_t block;    /* 196: preload, every input tick: SOMVR_VMG_* (the gesture's gate; was pad0) */
+    /* 200: the layer's counters: frames with the panel, its texture uploads, clicks that changed something, opens */
     _Atomic uint64_t n_frames, n_uploads, n_clicks, n_opens;
-    _Atomic uint32_t practice; /* 192: layer: the last practice request (somvr_vm_pr_pack; seq 0 = none yet) */
-    _Atomic uint32_t pstate;   /* 204: preload, every H4 frame: SOMVR_VMA_PR_* (bits 6..9: 32 bits are enough) */
-} somvr_vrmenu_shared;         /* 208 (v7: avail 64 bits, the settings 96; 192 in v6, 184 in v5, 176 in v4, 168 in v3) */
+    _Atomic uint32_t practice; /* 232: layer: the last practice request (somvr_vm_pr_pack; seq 0 = none yet) */
+    _Atomic uint32_t pstate;   /* 236: preload, every H4 frame: SOMVR_VMA_PR_* (bits 6..9: 32 bits are enough) */
+} somvr_vrmenu_shared;         /* 240 (v8: the settings 128; 208 in v7 (avail 64 bits, the settings 96), 192 in v6, 184
+                                * in v5, 176 in v4, 168 in v3) */
 
-_Static_assert(sizeof(somvr_settings) == 96 && offsetof(somvr_settings, dodge) == 88 &&
-                   offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94,
+_Static_assert(sizeof(somvr_settings) == 128 && offsetof(somvr_settings, dodge) == 88 &&
+                   offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94 &&
+                   offsetof(somvr_settings, watch_raise) == 96 && offsetof(somvr_settings, climb_sword) == 109 &&
+                   offsetof(somvr_settings, av8) == 110 && offsetof(somvr_settings, pad8) == 112,
                "somvr_settings size");
 _Static_assert(offsetof(somvr_vrmenu_shared, avail) == 24 && offsetof(somvr_vrmenu_shared, blink_on_ms) == 32 &&
                    offsetof(somvr_vrmenu_shared, seq) == 40 && offsetof(somvr_vrmenu_shared, set) == 48 &&
-                   offsetof(somvr_vrmenu_shared, gen) == 144 && offsetof(somvr_vrmenu_shared, consume) == 160 &&
-                   offsetof(somvr_vrmenu_shared, block) == 164 && offsetof(somvr_vrmenu_shared, n_frames) == 168 &&
-                   offsetof(somvr_vrmenu_shared, practice) == 200 && offsetof(somvr_vrmenu_shared, pstate) == 204,
+                   offsetof(somvr_vrmenu_shared, gen) == 176 && offsetof(somvr_vrmenu_shared, consume) == 192 &&
+                   offsetof(somvr_vrmenu_shared, block) == 196 && offsetof(somvr_vrmenu_shared, n_frames) == 200 &&
+                   offsetof(somvr_vrmenu_shared, practice) == 232 && offsetof(somvr_vrmenu_shared, pstate) == 236,
                "somvr_vrmenu_shared offsets");
-_Static_assert(sizeof(somvr_vrmenu_shared) == 208 && sizeof(((somvr_vrmenu_shared *)0)->avail) == 8,
+_Static_assert(sizeof(somvr_vrmenu_shared) == 240 && sizeof(((somvr_vrmenu_shared *)0)->avail) == 8,
                "somvr_vrmenu_shared size");
 _Static_assert(sizeof(somvr_shared) == 2664 && SOMVR_SHARED_VERSION == 2, "somvr_shared stays v2");
 
@@ -335,7 +400,16 @@ enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, S
        SOMVR_SK_HANDED,
        /* build 31 (re-xr-pipeline.md 136): the Test page's page (TEST_PAGE=P@KK: the page, the text's key in hex; no
         * switch) */
-       SOMVR_SK_TEST_PAGE, SOMVR_SK_N };
+       SOMVR_SK_TEST_PAGE,
+       /* build 33 (re-xr-pipeline.md 142): the bow from the shoulder or by the left grip anywhere (BOW_TAKE=shoulder|grip,
+        * SOMVR_BOW_TAKE; bit 1 of bow_string) */
+       SOMVR_SK_BOW_TAKE,
+       /* build 34 (re-xr-pipeline.md 150): builds 31-33's switches on the Settings tab's groups (v8's fields); WATCH_SIZE,
+        * LOW_HEALTH, HEARTBEAT, FORCE_NEEDED and SHOVE_PUSH are the menu's own words (no switch of that name: their
+        * start values come from the switches they set) */
+       SOMVR_SK_XR_WATCH_LOOK, SOMVR_SK_WATCH_SIZE, SOMVR_SK_LOW_HEALTH, SOMVR_SK_HEARTBEAT, SOMVR_SK_FORCE_NEEDED,
+       SOMVR_SK_SWORD_PHYS_GHOST, SOMVR_SK_KILLS, SOMVR_SK_KILLS_EXEC, SOMVR_SK_SHOVE_PUSH, SOMVR_SK_VERBS_GRAB_MAX_S,
+       SOMVR_SK_SLOTS_DAGGER_HOLD, SOMVR_SK_HERBS, SOMVR_SK_CLIMB_FLING_DOWN, SOMVR_SK_CLIMB_SWORD, SOMVR_SK_N };
 /* build 27: the key masks are 64 bits (parse, format, diff, the file mask; 32 bits held 31 keys) */
 _Static_assert(SOMVR_SK_N <= 63, "the settings keys fit a 64-bit mask");
 #define SOMVR_SK_ALL ((1ull << SOMVR_SK_N) - 1ull)
@@ -377,6 +451,14 @@ enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMV
        /* build 30 (re-xr-pipeline.md 132): Handedness (Right / Left), on the Settings page above Pointer hand (row_slot's
         * order); a change applies at the next start (the label says so meanwhile) and moves the pointer with it */
        SOMVR_VMI_HANDED,
+       /* build 33 (re-xr-pipeline.md 142): Bow from (Shoulder / Grip), on the Fight page under Bow string (row_order) */
+       SOMVR_VMI_BOWTAKE,
+       /* build 34 (re-xr-pipeline.md 150): the v8 rows - Display: Watch, Watch size, Low health, Heartbeat; Sword: Force
+        * needed, Ghost hand, Kill moves, Execute; Fight: Shove push, Grab time, Knife grip, Herbs; Climbing: Fling down,
+        * Climb sword (somvr_vm_row_page; row_slot's order per page) */
+       SOMVR_VMI_WATCH, SOMVR_VMI_WATCH_SIZE, SOMVR_VMI_LOWHP, SOMVR_VMI_BEAT, SOMVR_VMI_FORCE, SOMVR_VMI_GHOST,
+       SOMVR_VMI_KILLS, SOMVR_VMI_EXEC, SOMVR_VMI_SHOVE, SOMVR_VMI_HOLD, SOMVR_VMI_KNIFE, SOMVR_VMI_HERBS,
+       SOMVR_VMI_FLING_DOWN, SOMVR_VMI_CLIMB_SWORD,
        SOMVR_VMI_RECENTER, SOMVR_VMI_CLOSE, SOMVR_VMI_N };
 #define SOMVR_VMI_ROWS SOMVR_VMI_RECENTER /* the value rows; then the Recentre button and the close box */
 /* Build 10: a value row whose feature this build does not have at all is not shown (the rows below close up): the
@@ -415,18 +497,38 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
        SOMVR_VMI_CTL_PREV, SOMVR_VMI_CTL_NEXT,
        /* build 31 (re-xr-pipeline.md 136): the practice page's Place an orc (beside Refill health; in the area only, as
         * Spawn) */
-       SOMVR_VMI_PR_PLACE, SOMVR_VMI_ALL };
+       SOMVR_VMI_PR_PLACE,
+       /* build 34 (re-xr-pipeline.md 150): the Settings tab's six groups - two rows of three buttons under the tab strip
+        * on each of its pages (they replace build 19's Fight settings > / < Settings: PG_FIGHT, PG_BACK keep their
+        * numbers, no rect) */
+       SOMVR_VMI_SUB_COMFORT, SOMVR_VMI_SUB_DISPLAY, SOMVR_VMI_SUB_CLIMB, SOMVR_VMI_SUB_SWORD, SOMVR_VMI_SUB_FIGHT,
+       SOMVR_VMI_SUB_BOW,
+       /* build 36 (re-xr-pipeline.md 164): the practice page's Charge execution (under Refill health / Place orc; in the
+        * area only, as Spawn); the hints below it moved down a row */
+       SOMVR_VMI_PR_CHARGE, SOMVR_VMI_ALL };
+#define SOMVR_VM_SUBS 6 /* the groups (SOMVR_VMI_SUB_COMFORT ..) */
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
 enum { SOMVR_VMPG_SETTINGS = 0, SOMVR_VMPG_PRACTICE = 1, SOMVR_VMPG_CONTROLS = 2, SOMVR_VMPG_FIGHT = 3,
-       SOMVR_VMPG_TEST = 4 /* build 21: what to test in this build (its what-to-test.txt; text only, paged) */ };
+       SOMVR_VMPG_TEST = 4, /* build 21: what to test in this build (its what-to-test.txt; text only, paged) */
+       /* build 34 (re-xr-pipeline.md 150): the Settings tab's groups - SETTINGS is Comfort, FIGHT is Fight (the orcs),
+        * and these four (each the Settings tab's: its tab lit) */
+       SOMVR_VMPG_DISPLAY = 5, SOMVR_VMPG_SWORD = 6, SOMVR_VMPG_BOW = 7, SOMVR_VMPG_CLIMB = 8 };
+/* build 34: 1 = page is one of the Settings tab's groups (its rows, the group buttons, the bottom row) */
+int somvr_vm_settings_page(int page);
+/* build 34: the page's words in the layer's log ("the settings page", "the display page" ...) */
+const char *somvr_vm_page_name(int page);
 /* the page a tab or a page button opens (SOMVR_VMPG_*), -1 = not one */
 int somvr_vm_tab_page(int item);
-/* build 19: the page a value row is on: SOMVR_VMPG_FIGHT for the sword's, the bow's and the fight's rows (Sword angle,
- * Sword weight, Sword hand, Blade bite, Arrows, Bow string, Dodge, Wraith step, Stealth kill, Crowd pace, Counter icon),
- * SOMVR_VMPG_SETTINGS for the rest; -1 = not a value row */
+/* build 19: the page a value row is on; build 34 (re-xr-pipeline.md 150): its group's - SOMVR_VMPG_SETTINGS (Comfort:
+ * the turn, the vignette, the blink, the walk, seated play, the crouch, the size, the hands, the haptics, the moves),
+ * _DISPLAY (the view, the HUD, the watch, low health, the music, the refresh rate), _CLIMB (the flings, the sword on the
+ * wall, the hands at walls), _SWORD (the blade's angle, weight, hand, force, bite, ghost hand, the kills, the
+ * execution), _FIGHT (the dodge, the wraith step, the stealth kill, the crowd, the counter icon, the shove, the grab's
+ * time, the knife, the herbs), _BOW (the arrows, the string); -1 = not a value row */
 int somvr_vm_row_page(int item);
-/* build 19: a Fight page row's two lines of help (shown under the page's rows while the row is hovered); 0 = none */
+/* build 19: a Fight page row's two lines of help (shown under the page's rows while the row is hovered); build 34: the
+ * Sword, Fight, Bow and Climbing groups' rows and the v8 rows (any group's, the room permitting); 0 = none */
 int somvr_vm_help(int item, const char **l1, const char **l2);
 /* The Controls page (build 6; build 27, re-xr-pipeline.md 112: every VR control and gesture this build has, in groups -
  * Moving, Climbing, The sword, Orcs, Bow and wraith, Beasts, Menus and help - each line only where its feature runs
@@ -458,6 +560,9 @@ int somvr_vm_ctl_card(uint64_t avail, int i, const char **key, const char **what
  * Shoot line); build 27: the Dodge, Wraith step and Stealth kill rows Off take their lines away; otherwise avail
  * (somvr_vm_draw draws the page and the card with it) */
 uint64_t somvr_vm_ctl_avail(const somvr_settings *s, uint64_t avail);
+/* build 34: the same with the preload's ctl_feat (SOMVR_VMF_*) carried in (the practice bits dropped) - the word every
+ * Controls page and card call takes */
+uint64_t somvr_vm_ctl_avail_f(const somvr_settings *s, uint64_t avail, uint32_t feat);
 /* build 30 (re-xr-pipeline.md 132): a control's text for the left-handed mirror - the words left/right (Left/Right),
  * the sides L/R, the triggers LT/RT and grips LB/RB, the buttons A/X and B/Y swapped, whole words only (the rest as
  * it was); out may not be in. The Controls page, the card and the Fight page's help draw their text through it while
@@ -548,6 +653,7 @@ typedef struct {
     const somvr_vm_text *test; /* build 21: the Test page's text (NULL: the page says there is none) */
     int test_page;             /* ... the page shown (0 ..) */
     int ctl_page;              /* build 27: the Controls page's page shown (0 ..) */
+    uint32_t ctl_feat;         /* build 34: somvr_vrmenu_shared.ctl_feat (SOMVR_VMF_*) */
 } somvr_vm_view;
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;

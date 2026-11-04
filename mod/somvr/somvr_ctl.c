@@ -1,5 +1,6 @@
 /* somvr_ctl.c - see somvr_ctl.h */
 #include "somvr_ctl.h"
+#include "somvr_haptics.h" /* build 34: somvr_hx_scale, the player's strength */
 
 #include <math.h>
 #include <string.h>
@@ -310,9 +311,7 @@ float sc_hap_level(const sc_hap *h, double t, float scale, uint32_t *src, float 
         if (l > best) best = l, s = h->fx[i].source, rem = (float)(h->fx[i].t0 + h->fx[i].dur - t), cont = h->fx[i].ramp;
     }
     if (h->rumble > best) best = h->rumble, s = SOMVR_HAP_RUMBLE, rem = 0, cont = 1;
-    best *= scale > 0 ? scale : 0;
-    if (!(best >= 0)) best = 0;
-    if (best > 1) best = 1;
+    best = somvr_hx_scale(best, scale); /* build 34: order-kept above 100 % (was best x scale clipped at 1) */
     if (src) *src = s;
     if (remaining) *remaining = rem;
     if (continuous) *continuous = cont;

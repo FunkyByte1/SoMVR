@@ -97,14 +97,8 @@ static sv_vec3 hf_world_to_grip(const float P[3], sv_vec3 shift)
 	return sa_world_to_track(&g_arm.rig, w).p;
 }
 
-/* the haptic of a bite: a full pulse for the hold (at least 50 ms; thud: 80), the left hand too with both on the hilt */
-static void hf_bite_haptic(void)
-{
-	float lo = g_hf.thud ? 0.08f : 0.05f, dur = g_hf.cfg.hold_s > lo ? g_hf.cfg.hold_s : lo;
-	in_haptic_event(SOMVR_HAND_R, 1.0f, dur, SOMVR_HAP_COMBAT);
-	if (g_bd.two.w > 0)
-		in_haptic_event(SOMVR_HAND_L, 0.6f, dur, SOMVR_HAP_COMBAT);
-}
+/* the haptic of a bite: the hit word at its top (build 34; the left hand by its share with both on the hilt) */
+static void hf_bite_haptic(void) { haptic_k(SOMVR_HAND_R, SOMVR_HX_HIT, 1); }
 
 /* arm_eval, right after swg_arm (the weight's offset is on the weapon node): the bite's extra turn on the right weapon
  * node about the grip, and this frame's drawn blade kept for a hit in this frame's combat */
@@ -156,13 +150,7 @@ static void hf_arm(const int done[2], const sa_xf gg[2], const int gv[2], const 
 		ph = swb_step(&g_hf.st, &g_hf.cfg, t, p, q, P, b);
 		g_hf.frames_held += ph == SWB_HOLD, g_hf.frames_eased += ph == SWB_EASE;
 		if (was == SWB_HOLD && ph == SWB_EASE) { /* the blade comes free: a short weaker beat (thud: the tear, apart) */
-			if (g_hf.thud) {
-				in_haptic_after(SOMVR_HAND_R, 0.85f, 0.06f, 0.025f, SOMVR_HAP_COMBAT);
-				if (g_bd.two.w > 0)
-					in_haptic_after(SOMVR_HAND_L, 0.6f, 0.06f, 0.025f, SOMVR_HAP_COMBAT);
-			} else {
-				in_haptic_event(SOMVR_HAND_R, 0.5f, 0.04f, SOMVR_HAP_COMBAT);
-			}
+			haptic_k(SOMVR_HAND_R, SOMVR_HX_TEAR, g_hf.thud ? 1.0f : 0.0f); /* build 34: the tear word */
 			g_hf.bites_frees++;
 			if (hf_log_ok())
 				logf_("BITE t=%.3f free after %.0f ms: %s at %.1f deg off the drawn blade (the hand on, the blade eases "
@@ -232,7 +220,7 @@ static int sfb_spark(const char *name, const float P[3], char *why_out, size_t c
 	memcpy(cs + 0x118, &node, sizeof node), memcpy(cs + 0x11c, off, sizeof off);
 	long rc = FI_FN(FIS_FX_CREATE, fi_create_fn)(mgr + 0x30, NULL, cs, 1, 0, 0);
 	FI_FN(FIS_FX_CSFREE, fi_csfree_fn)(cs);
-	snprintf(why_out, cap, "rc=%ld on the sword's object %#lx at %.1f,%.1f,%.1f from it", rc, (unsigned long)obj,
+	snprintf(why_out, cap, "rc=%lld on the sword's object %#llx at %.1f,%.1f,%.1f from it", (long long)rc, (unsigned long long)obj,
 		 (double)off[0], (double)off[1], (double)off[2]);
 	return 1;
 }
@@ -358,22 +346,19 @@ static void sfb_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 		if (o.clank > 0) {
 			g_sf.pv_clanks++;
 			SF_COUNT(clanks);
-			in_haptic_event(SOMVR_HAND_R, 0.9f * o.clank, 0.04f, SOMVR_HAP_COMBAT); /* the crack and the ring */
-			in_haptic_ramp(SOMVR_HAND_R, 0.45f * o.clank, 0.15f, SOMVR_HAP_COMBAT);
-			if (g_bd.two.w > 0)
-				in_haptic_event(SOMVR_HAND_L, 0.5f * o.clank, 0.04f, SOMVR_HAP_COMBAT);
+			haptic_k(SOMVR_HAND_R, SOMVR_HX_CLANK, (o.clank - 0.25f) / 0.75f); /* the crack and the ring (clank 0.25..1) */
 			/* the sound and the sparks in the next combat frame (sfb_h4), not here inside the game's pose update */
 			g_sf.pv_pend = (g_sf.sound[0] ? 1 : 0) | (o.fx ? 2 : 0), g_sf.pv_pend_t = t;
 			g_sf.pv_P[0] = P.x, g_sf.pv_P[1] = P.y, g_sf.pv_P[2] = P.z;
 			snprintf(g_sf.pv_surf, sizeof g_sf.pv_surf, "%s", bn);
 		} else if (o.tick > 0) {
 			SF_COUNT(btouches), SF_COUNT(ticks);
-			in_haptic_event(SOMVR_HAND_R, o.tick, 0.02f, SOMVR_HAP_COMBAT);
+			haptic_k(SOMVR_HAND_R, SOMVR_HX_TOUCH, (o.tick - 0.15f) / 0.55f);
 		}
 		if (sf_log_ok(t))
-			logf_("SURF t=%.3f blade pivot %s surf=%s obj=%#lx speed=%.0f cm/s clank=%.2f turn=%.1f deg (the tip %.1f cm in) "
+			logf_("SURF t=%.3f blade pivot %s surf=%s obj=%#llx speed=%.0f cm/s clank=%.2f turn=%.1f deg (the tip %.1f cm in) "
 			      "at %.1f,%.1f,%.1f n=%.2f,%.2f,%.2f; sound %s, sparks %s (the next combat frame); frame=%llu", t,
-			      o.clank > 0 ? "clank" : "touch", bn, (unsigned long)f->bobj[0], (double)o.bspeed, (double)o.clank,
+			      o.clank > 0 ? "clank" : "touch", bn, (unsigned long long)f->bobj[0], (double)o.bspeed, (double)o.clank,
 			      (double)(ang / 0.01745329f), (double)depth, (double)P.x, (double)P.y, (double)P.z, (double)n.x,
 			      (double)n.y, (double)n.z, o.clank > 0 && g_sf.sound[0] ? g_sf.sound : "-", o.clank > 0 && o.fx ? "yes" : "no",
 			      (unsigned long long)g_fr.frame);
@@ -529,7 +514,7 @@ static void hf_hit(const struct cb_orc *o, const sc_contact *ct, int kind, int b
 		if (landed)
 			swp_hit(o, kind == SC_KIND_STAB ? SWP_W_STAB : SWP_W_CUT, t);
 		else
-			in_haptic_event(SOMVR_HAND_R, 1.0f, 0.2f, SOMVR_HAP_COMBAT);
+			haptic_k(SOMVR_HAND_R, swg_hit_word(), 1);
 	} else if (bite) {
 		float P[3];
 		for (int i = 0; i < 3; i++)
@@ -542,12 +527,12 @@ static void hf_hit(const struct cb_orc *o, const sc_contact *ct, int kind, int b
 			memcpy(g_hf.P, P, sizeof P), g_hf.orc = o->c, g_hf.chk_n = 0, g_hf.chk_max = 0;
 			hf_bite_haptic();
 		} else {
-			in_haptic_event(SOMVR_HAND_R, 1.0f, 0.2f, SOMVR_HAP_COMBAT); /* the hit's own pulse after all */
+			haptic_k(SOMVR_HAND_R, swg_hit_word(), 1); /* the hit's own pulse after all */
 		}
 		if (hf_log_ok())
-			logf_("BITE t=%.3f %s orc=%#lx: a cut at %.0f %% along the blade (u %.2f), the point %.1f,%.1f,%.1f %.1f cm from "
+			logf_("BITE t=%.3f %s orc=%#llx: a cut at %.0f %% along the blade (u %.2f), the point %.1f,%.1f,%.1f %.1f cm from "
 			      "the grip; hold %.0f ms at most, torn free past %.0f deg, eased over %.0f ms", t,
-			      started ? "start" : landed ? "refused" : "none (the hit did no damage)", (unsigned long)o->c,
+			      started ? "start" : landed ? "refused" : "none (the hit did no damage)", (unsigned long long)o->c,
 			      (double)ct->along * 100, (double)ct->u, (double)P[0], (double)P[1], (double)P[2],
 			      (double)sqrtf((Pa[0] - p[0]) * (Pa[0] - p[0]) + (Pa[1] - p[1]) * (Pa[1] - p[1]) +
 					    (Pa[2] - p[2]) * (Pa[2] - p[2])),
@@ -583,8 +568,8 @@ static void hf_hit(const struct cb_orc *o, const sc_contact *ct, int kind, int b
 		int made = hf_fx_at(g_hf.fxname[kind], o->hobj, P, t, why, sizeof why);
 		g_hf.fx_made[kind] += made, g_hf.fx_fail += !made;
 		if (hf_log_ok())
-			logf_("HITFEEL t=%.3f fx '%s' (a %s) on orc %#lx at %.1f,%.1f,%.1f: %s%s", t, g_hf.fxname[kind],
-			      g_hf_kind_w[kind], (unsigned long)o->hobj, (double)P[0], (double)P[1], (double)P[2],
+			logf_("HITFEEL t=%.3f fx '%s' (a %s) on orc %#llx at %.1f,%.1f,%.1f: %s%s", t, g_hf.fxname[kind],
+			      g_hf_kind_w[kind], (unsigned long long)o->hobj, (double)P[0], (double)P[1], (double)P[2],
 			      made ? "made, " : "not made: ", why);
 	}
 }

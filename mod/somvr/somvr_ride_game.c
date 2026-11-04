@@ -303,8 +303,8 @@ static void mt_bindings(void)
 	size_t o = 0;
 	in_active_fn active = g_inp.on && g_inp.pi ? IN_FN(IS_CMD_ACTIVE, in_active_fn) : NULL;
 	for (int c = MT_CMD_MOUNT; c <= 188 && o < sizeof b - 80; c++) {
-		o += (size_t)snprintf(b + o, sizeof b - o, " %d '%s' rec %#lx first %d active %d pad", c, in_cmd_name(c),
-				      (unsigned long)g_inp.rec[c], g_inp.first[c], active ? (int)(active(g_inp.pi, (unsigned)c) & 0xff) : -1);
+		o += (size_t)snprintf(b + o, sizeof b - o, " %d '%s' rec %#llx first %d active %d pad", c, in_cmd_name(c),
+				      (unsigned long long)g_inp.rec[c], g_inp.first[c], active ? (int)(active(g_inp.pi, (unsigned)c) & 0xff) : -1);
 		int any = 0;
 		for (int i = 0; i < SC_NPAD; i++)
 			for (int k = 0; k < g_inp.nmap[i]; k++)
@@ -367,8 +367,8 @@ static void mt_struggle_seen(int k, uintptr_t o, const char *cn, double t)
 	mt_struggle_fields(o, kind);
 	atomic_fetch_add(&g_mt.sg_serial, 1);
 	if (mt_log_ok())
-		logf_("RIDE t=%.3f the struggle (Talion's %s, %#lx '%s'): %s of %d '%s' (the hold %.2f s; presses needed %d); the "
-		      "answer: %s", t, k ? "sync" : "state", (unsigned long)o, cn, somvr_rd_strug_names[kind], g_mt.sg_cmd,
+		logf_("RIDE t=%.3f the struggle (Talion's %s, %#llx '%s'): %s of %d '%s' (the hold %.2f s; presses needed %d); the "
+		      "answer: %s", t, k ? "sync" : "state", (unsigned long long)o, cn, somvr_rd_strug_names[kind], g_mt.sg_cmd,
 		      g_mt.sg_cmd > 0 && g_mt.sg_cmd < SC_NCMD ? in_cmd_name(g_mt.sg_cmd) : "?", g_mt.sg_dur, g_mt.sg_need,
 		      kind == SOMVR_RDS_HOLD ? "its command held while the left hand stays closed (or B is held)" :
 		      kind == SOMVR_RDS_COUNT || kind == SOMVR_RDS_QT ? "its command pressed at each fresh close of the left hand (or B)" :
@@ -390,7 +390,7 @@ static void mt_struggle_read(const somvr_fb_in *in, double t)
 			int ok = peek_ptr(o) == MT_VT_STRUGGLE_AIM && arm_poke(o + MT_STRUG_DONE, &one, 1);
 			g_mt.sg_forced = o, g_mt.sg_won += ok;
 			if (mt_log_ok())
-				logf_("RIDE t=%.3f the struggle %#lx held on %.1f s by the grip: %s (Talion's '%s')", t, (unsigned long)o,
+				logf_("RIDE t=%.3f the struggle %#llx held on %.1f s by the grip: %s (Talion's '%s')", t, (unsigned long long)o,
 				      g_mt.dom_hold_s, ok ? "completed as the game's own (ICombatStruggle+0xa5: its next update wins)" :
 				      "NOT completed (not the aim's vtable, or the write failed)", atk_name_or_dash(g_mt.atk, nm, sizeof nm));
 		}
@@ -399,8 +399,8 @@ static void mt_struggle_read(const somvr_fb_in *in, double t)
 	g_mt.sg_ends++;
 	char nm[96];
 	if (mt_log_ok())
-		logf_("RIDE t=%.3f the struggle %#lx ended (%s): the game's last result %d, held %d, presses %d of %d; ours: %llu fresh "
-		      "presses; Talion's '%s'", t, (unsigned long)o, somvr_rd_strug_names[g_mt.sg_kind], g_mt.sg_res, g_mt.sg_held,
+		logf_("RIDE t=%.3f the struggle %#llx ended (%s): the game's last result %d, held %d, presses %d of %d; ours: %llu fresh "
+		      "presses; Talion's '%s'", t, (unsigned long long)o, somvr_rd_strug_names[g_mt.sg_kind], g_mt.sg_res, g_mt.sg_held,
 		      g_mt.sg_count, g_mt.sg_need, (unsigned long long)g_mt.sg.presses, atk_name_or_dash(g_mt.atk, nm, sizeof nm));
 	g_mt.sg_obj = 0, g_mt.sg_kind = SOMVR_RDS_NONE, g_mt.sg_cmd = 0;
 	atomic_fetch_add(&g_mt.sg_serial, 1);
@@ -515,8 +515,8 @@ static uint32_t mt_fb(uint32_t fb, const somvr_fb_in *in, uintptr_t atk, double 
 			peek(o + 8, wv, sizeof wv);
 		mt_struggle_seen(k, o, cn, t);
 		if (o && mt_log_ok())
-			logf_("RIDE t=%.3f Talion's %s struggle %#lx: '%s' (vtable %#lx; Talion's '%s'); words %x %x %x %x %x %x %x %x %x %x "
-			      "%x %x %x %x %x %x", t, k ? "sync" : "state", (unsigned long)o, cn, (unsigned long)vt,
+			logf_("RIDE t=%.3f Talion's %s struggle %#llx: '%s' (vtable %#llx; Talion's '%s'); words %x %x %x %x %x %x %x %x %x %x "
+			      "%x %x %x %x %x %x", t, k ? "sync" : "state", (unsigned long long)o, cn, (unsigned long long)vt,
 			      atk ? fb_rec_name(atk, an, sizeof an) : "-", wv[0], wv[1], wv[2], wv[3], wv[4], wv[5], wv[6], wv[7], wv[8],
 			      wv[9], wv[10], wv[11], wv[12], wv[13], wv[14], wv[15]);
 	}
@@ -584,15 +584,15 @@ static void mt_state(uintptr_t mount, double t)
 			float p[3] = { 0, 0, 0 };
 			peek(mount + OBJ_POS, p, sizeof p);
 			if (mt_log_ok())
-				logf_("RIDE t=%.3f mounted: a %s (hobj %#lx, by %s) at %.0f,%.0f,%.0f; Talion's attack '%s' sync '%s'; the view "
-				      "held until he sits", t, somvr_rd_kind_names[k], (unsigned long)mount, src == 1 ? "the beast cache" :
+				logf_("RIDE t=%.3f mounted: a %s (hobj %#llx, by %s) at %.0f,%.0f,%.0f; Talion's attack '%s' sync '%s'; the view "
+				      "held until he sits", t, somvr_rd_kind_names[k], (unsigned long long)mount, src == 1 ? "the beast cache" :
 				      "Talion's record", p[0], p[1], p[2], g_mt.atk ? fb_rec_name(g_mt.atk, nm[0], sizeof nm[0]) : "-",
 				      g_mt.sync ? fb_rec_name(g_mt.sync, nm[1], sizeof nm[1]) : "-");
 			mt_bindings();
 		} else if (t - g_mt.t_change > MT_KIND_WAIT_S) {
 			g_mt.state = MT_OFF, g_mt.not_beast++;
 			if (mt_log_ok())
-				logf_("RIDE t=%.3f the mount %#lx is not a beast (the game's grab of an orc?): left alone", t, (unsigned long)mount);
+				logf_("RIDE t=%.3f the mount %#llx is not a beast (the game's grab of an orc?): left alone", t, (unsigned long long)mount);
 		}
 	}
 	int busy = g_mt.sync || g_mt.struggle;
@@ -926,7 +926,7 @@ static int mt_press_cmd(void)
 	int on = somvr_rd_strug_step(&g_mt.sg, grip, dt) && cmd;
 	if (g_mt.sg.won && !g_mt.sg_won_was) { /* held on: bm_pre completes it; the hand feels the beast give in */
 		atomic_store(&g_mt.sg_win_for, obj), g_mt.sg_won_was = 1;
-		in_haptic_event(SOMVR_HAND_L, 0.9f, 0.15f, SOMVR_HAP_COMBAT);
+		haptic_k(SOMVR_HAND_L, SOMVR_HX_THUMP, 0.78f);
 		if (mt_log_ok())
 			logf_("RIDE t=%.3f the struggle (%s) held on %.2f s by %s: won", t, somvr_rd_strug_names[kind], g_mt.sg.held,
 			      g_mt.sq_dn ? "the left hand" : "B");
@@ -939,9 +939,9 @@ static int mt_press_cmd(void)
 		      kind == SOMVR_RDS_HOLD ? "held" : "pressed", g_mt.sq_dn ? "the left hand closed" : "B", g_mt.sg_held,
 		      g_mt.sg_count, g_mt.sg_need);
 	g_mt.sg_on_was = on;
-	if (grip && !g_mt.sg.won && t >= g_mt.sg_hap_next) /* the beast bucking under the hand that holds it, harder as */
-		in_haptic_event(SOMVR_HAND_L, 0.3f + 0.4f * fminf(1, g_mt.sg.held / fmaxf(0.1f, g_mt.dom_hold_s)), 0.07f, /* it */
-				SOMVR_HAP_COMBAT), g_mt.sg_hap_next = t + 0.2;                                            /* tires */
+	if (grip && !g_mt.sg.won && t >= g_mt.sg_hap_next) /* the beast bucking under the hand that holds it, harder as it tires */
+		haptic_k(SOMVR_HAND_L, SOMVR_HX_STRAIN, 0.5f + 0.5f * fminf(1, g_mt.sg.held / fmaxf(0.1f, g_mt.dom_hold_s))),
+			g_mt.sg_hap_next = t + 0.2;
 	return on ? cmd : 0;
 }
 
@@ -1171,13 +1171,13 @@ static void mt_tick(sc_tick_out *o, double t)
 				      g_mt.spr_pulse_ms && g_mt.spr_n ? mt_ms_str(g_mt.spr_pulse_ms) : "",
 				      isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f);
 			else if (k == 0 && mt_log_ok())
-				logf_("RIDE t=%.3f press A: %s%s (rec %#lx first %d; the beast at %.1f m/s)", t, mt_cmds_str(acmd,
+				logf_("RIDE t=%.3f press A: %s%s (rec %#llx first %d; the beast at %.1f m/s)", t, mt_cmds_str(acmd,
 				      g_mt.a_pad ? 3 : 2), edge ? " after the click's sprint let them go" : "",
-				      (unsigned long)g_inp.rec[MT_CMD_JUMP_A], g_inp.first[MT_CMD_JUMP_A],
+				      (unsigned long long)g_inp.rec[MT_CMD_JUMP_A], g_inp.first[MT_CMD_JUMP_A],
 				      isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f);
 			else if (mt_log_ok())
-				logf_("RIDE t=%.3f press %d '%s' by %s (rec %#lx first %d)", t, cmds[k], in_cmd_name(cmds[k]), by[k],
-				      (unsigned long)g_inp.rec[cmds[k]], g_inp.first[cmds[k]]);
+				logf_("RIDE t=%.3f press %d '%s' by %s (rec %#llx first %d)", t, cmds[k], in_cmd_name(cmds[k]), by[k],
+				      (unsigned long long)g_inp.rec[cmds[k]], g_inp.first[cmds[k]]);
 		}
 	}
 	if (atomic_load(&g_mt.tap_until_ms) && g_bd.test) { /* `ride tap CMDS MS` (a test): the commands held MS */
@@ -1267,8 +1267,8 @@ static const char *mt_word(const char *w)
 		return "ride (SOMVR_RIDE is off: ignored)";
 	if (!strcmp(w, "status")) {
 		atomic_store(&g_mt.req_status, 1);
-		logf_("RIDE status: %s, the mount %#lx (%s), mounts %llu dismounts %llu, seated frames %llu, presses jump %llu bite "
-		      "%llu off %llu run %llu, guards %llu", g_rd_state_names[g_mt.state], (unsigned long)g_mt.mount,
+		logf_("RIDE status: %s, the mount %#llx (%s), mounts %llu dismounts %llu, seated frames %llu, presses jump %llu bite "
+		      "%llu off %llu run %llu, guards %llu", g_rd_state_names[g_mt.state], (unsigned long long)g_mt.mount,
 		      g_mt.beast_ok ? somvr_rd_kind_names[g_mt.kind >= 0 ? g_mt.kind : 0] : "no beast",
 		      (unsigned long long)g_mt.mounts, (unsigned long long)g_mt.dismounts, (unsigned long long)g_mt.seated_frames,
 		      (unsigned long long)g_mt.presses[0], (unsigned long long)g_mt.presses[1], (unsigned long long)g_mt.presses[2],

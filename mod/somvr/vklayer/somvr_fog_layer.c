@@ -15,17 +15,20 @@ static const struct {
     {0x3b25070a5c940c06ULL, 24116, 620, "the fog overlay's OIT pass (the fog on each transparent layer)"},
 };
 static struct {
-    int on;
-    uint64_t patched, failed, other;
+    int on, ray;
+    uint64_t patched, failed, other, ray_failed;
 } FOG;
 static void fog_config(void) {
     const char *v = getenv("SOMVR_XR_FOG");
-    FOG.on = v && !strcmp(v, "radial");
-    if (v && *v && strcmp(v, "radial") && strcmp(v, "game"))
-        lg("WARN xr: fog: SOMVR_XR_FOG=%s is not radial|game: game", v);
-    lg("xr: fog: SOMVR_XR_FOG=%s: %s", FOG.on ? "radial" : "game",
-       FOG.on ? "the fog overlay's shaders by the distance along the eye's ray (the same fog wherever the head points)"
-              : "the game's fog by the view's depth (it thins at the view's edges and turns with the head)");
+    FOG.ray = v && !strcmp(v, "ray"); /* build 33 (re-xr-pipeline.md 146.3): radial + the density along the ray */
+    FOG.on = v && (!strcmp(v, "radial") || FOG.ray);
+    if (v && *v && strcmp(v, "radial") && strcmp(v, "ray") && strcmp(v, "game"))
+        lg("WARN xr: fog: SOMVR_XR_FOG=%s is not ray|radial|game: game", v);
+    lg("xr: fog: SOMVR_XR_FOG=%s: %s", FOG.ray ? "ray" : FOG.on ? "radial" : "game",
+       FOG.ray ? "the fog overlay's shaders by the distance along the eye's ray, their density averaged along that ray "
+                 "(no hard step where a valley's fog starts below a rim)"
+       : FOG.on ? "the fog overlay's shaders by the distance along the eye's ray (the same fog wherever the head points)"
+                : "the game's fog by the view's depth (it thins at the view's edges and turns with the head)");
 }
 /* SOMVR_XR_SPV_DUMP=DIR[,all] (headless tests only; unset = nothing installed): every module whose SPIR-V carries the
  * word "Fog" - or every module with `,all` (the game's carry no names: the DXBC registers r0.., cb0.. only; build 31
@@ -127,14 +130,25 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_CreateShaderModule(VkDevice dev, const V
                    g_fog_sites[s].what, why ? why : "?");
                 break;
             }
+            int ray = 0;
+            if (FOG.ray) { /* the density along the ray on top of the radial edit; its own checks, else the radial one */
+                size_t nr = 0;
+                const char *wr = NULL;
+                uint32_t *pr = somvr_fogpatch_ray(pw, nw, &nr, &wr);
+                if (pr)
+                    free(pw), pw = pr, nw = nr, ray = 1;
+                else
+                    FOG.ray_failed++, lg("xr: fog: module %016llx (%s): the density along the ray NOT added - %s (radial only)",
+                                         (unsigned long long)h, g_fog_sites[s].what, wr ? wr : "?");
+            }
             VkShaderModuleCreateInfo c2 = *ci;
             c2.pCode = pw, c2.codeSize = nw * 4;
             VkResult r = ds->CreateShaderModule(dev, &c2, alloc, out);
             free(pw);
             FOG.patched++;
-            lg("xr: fog: module %016llx (%s, %zu bytes): created with the fog by the distance along the eye's ray (+%zu "
-               "words): %d (%llu so far)", (unsigned long long)h, g_fog_sites[s].what, ci->codeSize, nw - ci->codeSize / 4,
-               r, (unsigned long long)FOG.patched);
+            lg("xr: fog: module %016llx (%s, %zu bytes): created with the fog by the distance along the eye's ray%s (+%zu "
+               "words): %d (%llu so far)", (unsigned long long)h, g_fog_sites[s].what, ci->codeSize,
+               ray ? " and its density averaged along it" : "", nw - ci->codeSize / 4, r, (unsigned long long)FOG.patched);
             return r;
         }
     }

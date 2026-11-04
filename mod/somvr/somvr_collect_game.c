@@ -331,9 +331,9 @@ static void co_post(void)
 	if (!g_co.camhead_logged++) {
 		float f[24];
 		if (peek(c + CO_CAM_POS, f, sizeof f))
-			logf_("GLYPH camhead: the camera %#lx +0x44c..: %.1f %.1f %.1f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f "
+			logf_("GLYPH camhead: the camera %#llx +0x44c..: %.1f %.1f %.1f | %.3f %.3f %.3f %.3f | %.3f %.3f %.3f %.3f "
 			      "| +0x478 %.3f %.3f %.3f | +0x484 %.3f %.3f %.3f %.3f; the game's view %.1f %.1f %.1f q %.3f %.3f %.3f %.3f; "
-			      "eye 0 %.1f %.1f %.1f q %.3f %.3f %.3f %.3f", (unsigned long)c, f[0], f[1], f[2], f[3], f[4], f[5], f[6],
+			      "eye 0 %.1f %.1f %.1f q %.3f %.3f %.3f %.3f", (unsigned long long)c, f[0], f[1], f[2], f[3], f[4], f[5], f[6],
 			      f[7], f[8], f[9], f[10], f[11], f[12], f[13], f[14], f[15], f[16], f[17], g_fr.game.pos[0],
 			      g_fr.game.pos[1], g_fr.game.pos[2], g_fr.game.quat[0], g_fr.game.quat[1], g_fr.game.quat[2],
 			      g_fr.game.quat[3], pos[0], pos[1], pos[2], q[0], q[1], q[2], q[3]);
@@ -393,8 +393,8 @@ __attribute__((used)) uint32_t somvr_w_colat(uintptr_t trig)
 		if (g_co.ok[COS_OBJ_PROPS] && co_log_ok()) { /* its settings: the radii, the threshold, LookAtScript ... */
 			char s[1000];
 			co_props(peek_ptr(o + CO_OBJ_PROPTBL), s, sizeof s, NULL, 0);
-			logf_("GLYPH trigger #%u %#lx object %#lx at (%.0f %.0f %.0f):%s", g_co.tr[k].id, (unsigned long)trig,
-			      (unsigned long)o, pos[0], pos[1], pos[2], s);
+			logf_("GLYPH trigger #%u %#llx object %#llx at (%.0f %.0f %.0f):%s", g_co.tr[k].id, (unsigned long long)trig,
+			      (unsigned long long)o, pos[0], pos[1], pos[2], s);
 		}
 	}
 	int32_t st = -1, mode = -1;
@@ -415,10 +415,10 @@ __attribute__((used)) uint32_t somvr_w_colat(uintptr_t trig)
 	if ((st != r->state || d0 != r->d0 || d2 != r->d2 || see != r->see || view != r->view || t >= r->next) && co_log_ok()) {
 		float cp[3] = { 0, 0, 0 };
 		peek(p + CO_P_VIEW, cp, sizeof cp);
-		logf_("GLYPH t=%.3f trigger #%u %#lx at (%.0f %.0f %.0f) %.1f m from Talion (%.0f %.0f %.0f): state %d dwell %.2f s "
-		      "eye mode %d radius %.0f gates d0=%u d2=%u d3=%u looker %#lx; vision %d; the game's tests: see %d view %d "
-		      "(the camera copy at %.0f %.0f %.0f, %.1f m from it)", t, r->id, (unsigned long)trig, pos[0], pos[1], pos[2],
-		      d * 0.01f, me[0], me[1], me[2], st, dwell, mode, rad, d0, d2, d3, (unsigned long)looker, vis, see, view, cp[0],
+		logf_("GLYPH t=%.3f trigger #%u %#llx at (%.0f %.0f %.0f) %.1f m from Talion (%.0f %.0f %.0f): state %d dwell %.2f s "
+		      "eye mode %d radius %.0f gates d0=%u d2=%u d3=%u looker %#llx; vision %d; the game's tests: see %d view %d "
+		      "(the camera copy at %.0f %.0f %.0f, %.1f m from it)", t, r->id, (unsigned long long)trig, pos[0], pos[1], pos[2],
+		      d * 0.01f, me[0], me[1], me[2], st, dwell, mode, rad, d0, d2, d3, (unsigned long long)looker, vis, see, view, cp[0],
 		      cp[1], cp[2], dist3(cp, pos) * 0.01f);
 		r->next = t + 3.0;
 	}
@@ -456,12 +456,12 @@ __attribute__((used)) void somvr_w_covlook(uintptr_t list, uintptr_t targ)
 				float op[3] = { 0, 0, 0 };
 				if (ob)
 					peek(ob + OBJ_POS, op, sizeof op);
-				o += (size_t)snprintf(s + o, sizeof s - o, " [%d] %#lx at (%.0f %.0f %.0f) %.1f m", i, (unsigned long)ob,
+				o += (size_t)snprintf(s + o, sizeof s - o, " [%d] %#llx at (%.0f %.0f %.0f) %.1f m", i, (unsigned long long)ob,
 						      op[0], op[1], op[2], dist3(op, me) * 0.01f);
 			}
-			logf_("GLYPH t=%.3f vision look-at: on, %d listed:%s; thresholds %.3f / %.3f; the focus %#lx (object %#lx at "
+			logf_("GLYPH t=%.3f vision look-at: on, %d listed:%s; thresholds %.3f / %.3f; the focus %#llx (object %#llx at "
 			      "%.0f %.0f %.0f) measure %.3f flag %u; Talion at (%.0f %.0f %.0f) vision %d", t, n, s, th[0], th[1],
-			      (unsigned long)tgt, (unsigned long)to, tp[0], tp[1], tp[2], meas, flag, me[0], me[1], me[2], co_vision(p));
+			      (unsigned long long)tgt, (unsigned long long)to, tp[0], tp[1], tp[2], meas, flag, me[0], me[1], me[2], co_vision(p));
 			g_co.vl_next = t + 5.0;
 		}
 		g_co.vl_last_target = tgt, g_co.vl_last_n = n;
@@ -516,8 +516,8 @@ static struct co_item *co_item_rec(uintptr_t obj, uintptr_t item)
 	float op[3] = { 0, 0, 0 };
 	peek(obj + OBJ_POS, op, sizeof op);
 	if (g_co.it_lines++ < 300)
-		logf_("GLYPH item #%u: a targeting candidate InventoryItemUI %#lx (object %#lx at %.0f %.0f %.0f), its record '%s'",
-		      r->id, (unsigned long)item, (unsigned long)obj, op[0], op[1], op[2], nm);
+		logf_("GLYPH item #%u: a targeting candidate InventoryItemUI %#llx (object %#llx at %.0f %.0f %.0f), its record '%s'",
+		      r->id, (unsigned long long)item, (unsigned long long)obj, op[0], op[1], op[2], nm);
 	return r;
 }
 
@@ -582,7 +582,7 @@ static void co_collect_tick(void)
 	}
 	if (!ok || !isch) {
 		if (g_co.it_lines++ < 300)
-			logf_("GLYPH collect: item #%u %#lx not collected (%s)", g_co.pend_id, (unsigned long)item,
+			logf_("GLYPH collect: item #%u %#llx not collected (%s)", g_co.pend_id, (unsigned long long)item,
 			      !ok ? "taken, gone, or the vision off" : "the player's object has no CCharacter class");
 		return;
 	}
@@ -591,9 +591,9 @@ static void co_collect_tick(void)
 	g_co.n_collects += taken != 0;
 	char nm[48];
 	rx_rec_name(peek_ptr(item + CO_ITEM_REC), nm, sizeof nm);
-	logf_("GLYPH collect t=%.3f: item #%u %#lx '%s' collected by our look (the trigger fired with our head, the vision "
-	      "on): InventoryItemUI Collect(player %#lx) -> taken %u", mono(), g_co.pend_id, (unsigned long)item, nm,
-	      (unsigned long)p, taken);
+	logf_("GLYPH collect t=%.3f: item #%u %#llx '%s' collected by our look (the trigger fired with our head, the vision "
+	      "on): InventoryItemUI Collect(player %#llx) -> taken %u", mono(), g_co.pend_id, (unsigned long long)item, nm,
+	      (unsigned long long)p, taken);
 }
 
 /* build 29b (som-b29-pcaragor2; re-xr-pipeline.md 130): while SOMVR_VERBS_BRAND_NODELOG's window is open, the
@@ -702,7 +702,7 @@ static void co_props(uintptr_t tbl, char *s, size_t cap, char *key, size_t kcap)
 		} else if (ty == 1)
 			o += (size_t)snprintf(s + o, cap - o, " %08x:b%d", h, (int)((uint32_t)v >> (idx & 31) & 1));
 		else
-			o += (size_t)snprintf(s + o, cap - o, " %08x:t%d=%#lx", h, ty, (unsigned long)v);
+			o += (size_t)snprintf(s + o, cap - o, " %08x:t%d=%#llx", h, ty, (unsigned long long)v);
 	}
 }
 
@@ -720,7 +720,7 @@ static int co_hint_slot(uintptr_t rec)
 	g_co.rec[r] = rec, g_co.key[r][0] = 0;
 	char s[1000];
 	co_props(rec, s, sizeof s, g_co.key[r], sizeof g_co.key[r]);
-	logf_("HINTS record %#lx:%s", (unsigned long)rec, s);
+	logf_("HINTS record %#llx:%s", (unsigned long long)rec, s);
 	return r;
 }
 
@@ -862,8 +862,8 @@ static void co_start(int *bad)
 		g_co.ok[i] = check_site(&g_co_sites[i], why, sizeof why) == 0;
 		snprintf(ln[i], sizeof ln[i], "%s %s", g_co_sites[i].name, g_co.ok[i] ? "ok" : "MISMATCH");
 		if (!g_co.ok[i])
-			logf_("GLYPH site %s %#lx -> %#lx MISMATCH: %s", g_co_sites[i].name, (unsigned long)g_co_sites[i].addr,
-			      (unsigned long)g_co_sites[i].target, why);
+			logf_("GLYPH site %s %#llx -> %#llx MISMATCH: %s", g_co_sites[i].name, (unsigned long long)g_co_sites[i].addr,
+			      (unsigned long long)g_co_sites[i].target, why);
 	}
 	if (g_co.ok[COS_LAT_TICK])
 		g_co.on_tick = go_slot(&g_co_sites[COS_LAT_TICK], (void *)somvr_w_colat, &g_co.tick_orig);

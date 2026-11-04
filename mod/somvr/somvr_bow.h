@@ -302,4 +302,12 @@ const char *somvr_bow_arrow_name(int arrow);
 enum { SOMVR_BOW_SDRAW_OFF = 0, SOMVR_BOW_SDRAW_ON = 1, SOMVR_BOW_SDRAW_DRAWN = 2 };
 int somvr_bow_string_shown(int mode, int phase);
 
+/* ---- build 33 (re-xr-pipeline.md 142; the 11-03 session's marks 28-30: the bow flickered with the hand's twist and
+ * tracking) ---------------------------------------------------------------------------------------------------------- */
+/* a light adaptive filter on a turn (one-euro on the angle): the cutoff min_hz at rest, + beta Hz per rad/s of turning (a
+ * steady hand's tremor smoothed, a real turn followed within a frame or two); the first sample, a gap over 0.1 s or
+ * min_hz <= 0: the raw turn */
+typedef struct { int have; double t; sv_quat q; } somvr_bow_qf;
+sv_quat somvr_bow_qfilter(somvr_bow_qf *f, sv_quat raw, double t, float min_hz, float beta);
+
 #endif

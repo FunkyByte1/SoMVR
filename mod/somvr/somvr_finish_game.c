@@ -71,7 +71,10 @@ typedef uintptr_t (*fi_ptr1_fn)(uintptr_t a);
 typedef uint64_t (*fi_dirangle_fn)(const void *xf, const float *dir, float *angle);
 typedef void (*fi_slowmo_fn)(int argc, const char *const *argv);
 typedef void (*fi_cs_fn)(void *cs, const char *name, uintptr_t mh, unsigned flags, uintptr_t parent);
-typedef long (*fi_create_fn)(uintptr_t mgr, uintptr_t *handle, void *cs, int start, int b, int c);
+/* the ClientFX create (mgr, &handle, cs, start, b, c): c is a pointer the create dereferences when non-zero - declared
+ * 64-bit: on Windows the 6th argument goes on the stack and an `int` writes only its low half, the high half stays what
+ * the stack held (the quiet exits of 11-03: exe+0xd11df9 reading a non-canonical pointer, 0x1404321d0's 6th argument) */
+typedef long (*fi_create_fn)(uintptr_t mgr, uintptr_t *handle, void *cs, int start, int b, uintptr_t c);
 typedef void (*fi_csfree_fn)(void *cs);
 typedef void (*fi_release_fn)(uintptr_t *handle);
 typedef uintptr_t (*fi_mh_fn)(uintptr_t objsys, uintptr_t obj);
@@ -98,7 +101,7 @@ static struct {
 #define FI_IT_ENTRIES 0x28   /* InventoryItem: vector of 0x48-byte model entries, +0x20 the model object */
 #define FI_IE_OBJ 0x20
 #define FI_SH_FXMGR OFS(FI_SH_FXMGR, 0x80c78) /* CGameClientShell: the ClientFX manager (create at +0x30) */
-#define FI_TM_NUM 0x20       /* the game timer (*(0x463e290)+8): num, den (SlowMO.Set writes them) */
+#define FI_TM_NUM OFS(FI_TM_NUM, 0x20) /* the game timer (*(0x463e290)+8): num, den (SlowMO.Set writes them) */
 #define FI_CCR_NODES 1       /* schema 0x4ba0ca0 field 1: Nodes */
 #define FI_ATK_ANIM 0        /* schema 0x4ba23c0 field 0: AnimationData */
 #define FI_ANIM_SYNC 8       /* schema 0x4ba8640 field 8: Sync */
@@ -247,7 +250,7 @@ static void fi_fx_stop(const char *why, double t)
 	uintptr_t h = g_fi.fx_handle;
 	FI_FN(FIS_FX_RELEASE, fi_release_fn)(&g_fi.fx_handle);
 	if (fi_log_ok(t))
-		logf_("FINISH glow fx off (%s): handle %#lx -> %#lx", why, (unsigned long)h, (unsigned long)g_fi.fx_handle);
+		logf_("FINISH glow fx off (%s): handle %#llx -> %#llx", why, (unsigned long long)h, (unsigned long long)g_fi.fx_handle);
 	g_fi.fx_handle = 0, g_fi.fx_item = 0;
 }
 
@@ -255,7 +258,9 @@ static uintptr_t fi_active_item(uintptr_t pcomb)
 {
 	uintptr_t pl = peek_ptr(pcomb + FI_PC_PLAYER), hold = pl ? peek_ptr(pl + FI_P_INVHOLD) : 0;
 	uintptr_t inv = hold ? peek_ptr(hold + FI_INV_OF) : 0;
-	return inv ? FI_FN(FIS_ITEM, fi_ptr1_fn)(inv) : 0;
+	uint32_t slot = 8; /* the active slot first (at most 7): the game's getter asserts it - on Linux a stored message, on
+			    * Windows a write to address 0 (FUN_1407bc970), the process ends */
+	return inv && peek(inv + 0x280, &slot, sizeof slot) && slot <= 7 ? FI_FN(FIS_ITEM, fi_ptr1_fn)(inv) : 0;
 }
 
 static void fi_fx_start(uintptr_t pcomb, double t)
@@ -272,7 +277,7 @@ static void fi_fx_start(uintptr_t pcomb, double t)
 	if (why) {
 		FI_COUNT(fx_fail);
 		if (fi_log_ok(t))
-			logf_("FINISH glow fx not started: %s (item %#lx)", why, (unsigned long)item);
+			logf_("FINISH glow fx not started: %s (item %#llx)", why, (unsigned long long)item);
 		return;
 	}
 	uintptr_t mh = FI_FN(FIS_OBJSYS_MH, fi_mh_fn)(os, obj);
@@ -288,8 +293,8 @@ static void fi_fx_start(uintptr_t pcomb, double t)
 	else
 		g_fi.fx_item = item;
 	if (fi_log_ok(t))
-		logf_("FINISH glow fx '%s' on item %#lx obj %#lx: rc=%ld handle=%#lx clientfx=%u", g_fi.glow_fx,
-		      (unsigned long)item, (unsigned long)obj, rc, (unsigned long)g_fi.fx_handle, on);
+		logf_("FINISH glow fx '%s' on item %#llx obj %#llx: rc=%lld handle=%#llx clientfx=%u", g_fi.glow_fx,
+		      (unsigned long long)item, (unsigned long long)obj, (long long)rc, (unsigned long long)g_fi.fx_handle, on);
 }
 
 /* the ready state of this frame -> the glow (the FX and one pulse on the sword hand) */
@@ -300,7 +305,7 @@ static void fi_glow(uintptr_t pcomb, int ready, int force_off, double t)
 	int e = sf_glow_step(&g_fi.glow, &g_fi.cfg, ready, force_off, t);
 	if (e > 0) {
 		FI_COUNT(glow_on);
-		in_haptic_event(SOMVR_HAND_R, 0.5f, 0.06f, SOMVR_HAP_COMBAT);
+		haptic(SOMVR_HAND_R, SOMVR_HX_READY);
 		if (g_fi.glow_on)
 			fi_fx_start(pcomb, t);
 		if (fi_log_ok(t))
@@ -418,9 +423,9 @@ static int fi_kill_hit(uintptr_t pc, const struct cb_orc *o, const sf_hit *h, co
 	int dead1 = cb_dead(o->c);
 	FI_COUNT(fallbacks);
 	if (fi_log_ok(t))
-		logf_("FINISH fallback kill: Combat_DealHit(pos=%.1f,%.1f,%.1f, pc=%#lx, hobj=%#lx, rec='%s' %#lx, forceKill=1)%s "
-		      "dead=%d->%d", h->point[0], h->point[1], h->point[2], (unsigned long)pc, (unsigned long)o->hobj, name,
-		      (unsigned long)rec, sev ? " with AlwaysSever" : "", dead0, dead1);
+		logf_("FINISH fallback kill: Combat_DealHit(pos=%.1f,%.1f,%.1f, pc=%#llx, hobj=%#llx, rec='%s' %#llx, forceKill=1)%s "
+		      "dead=%d->%d", h->point[0], h->point[1], h->point[2], (unsigned long long)pc, (unsigned long long)o->hobj, name,
+		      (unsigned long long)rec, sev ? " with AlwaysSever" : "", dead0, dead1);
 	return 1;
 }
 
@@ -461,8 +466,8 @@ static int fi_trigger(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 	FI_COUNT(gestures[want]);
 	int lg = fi_log_ok(t);
 	if (lg)
-		logf_("FINISH gesture %s on orc=%#lx hobj=%#lx dist=%.1f zone=%d along=%.2f pos=%.1f,%.1f,%.1f streak=%d%s",
-		      sf_class_name(want), (unsigned long)o->c, (unsigned long)o->hobj, o->dist, h->zone, h->along, h->point[0],
+		logf_("FINISH gesture %s on orc=%#llx hobj=%#llx dist=%.1f zone=%d along=%.2f pos=%.1f,%.1f,%.1f streak=%d%s",
+		      sf_class_name(want), (unsigned long long)o->c, (unsigned long long)o->hobj, o->dist, h->zone, h->along, h->point[0],
 		      h->point[1], h->point[2], g_fi.streak, g_fi.mode == FI_LOG ? " (log only)" : "");
 	if (g_fi.mode != FI_ON || !pcomb || !pc)
 		return 0;
@@ -475,8 +480,8 @@ static int fi_trigger(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		for (int i = 0; i < nc; i++) {
 			cls[i] = cd[i].cls;
 			if (lg)
-				logf_("FINISH candidate %d: node '%s' %#lx attack '%s' %#lx sync %#lx class %s", i, cd[i].nn,
-				      (unsigned long)cd[i].node, cd[i].an, (unsigned long)cd[i].atk, (unsigned long)cd[i].sync,
+				logf_("FINISH candidate %d: node '%s' %#llx attack '%s' %#llx sync %#llx class %s", i, cd[i].nn,
+				      (unsigned long long)cd[i].node, cd[i].an, (unsigned long long)cd[i].atk, (unsigned long long)cd[i].sync,
 				      sf_class_name(cd[i].cls));
 		}
 		pick = nc > 0 ? sf_pick(cls, nc, want, alt) : -1;
@@ -489,8 +494,8 @@ static int fi_trigger(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		FI_FN(FIS_START, fi_start_fn)(pcomb, cd[pick].node, cd[pick].atk, o->hobj);
 		FI_COUNT(starts[cd[pick].cls]);
 		if (lg)
-			logf_("FINISH start %s: FUN_00a8c700(pc=%#lx, node '%s', attack '%s', hobj=%#lx) sync %#lx", sf_class_name(cd[pick].cls),
-			      (unsigned long)pcomb, cd[pick].nn, cd[pick].an, (unsigned long)o->hobj, (unsigned long)cd[pick].sync);
+			logf_("FINISH start %s: FUN_00a8c700(pc=%#llx, node '%s', attack '%s', hobj=%#llx) sync %#llx", sf_class_name(cd[pick].cls),
+			      (unsigned long long)pcomb, cd[pick].nn, cd[pick].an, (unsigned long long)o->hobj, (unsigned long long)cd[pick].sync);
 		sf_moment_start(&g_fi.mo, &g_fi.cfg, o->c, cd[pick].cls, t);
 	} else if (g_fi.fallback && (want == SF_CLS_EXEC || want == SF_CLS_GROUND) && fi_kill_hit(pc, o, h, b, t)) {
 		if (lg)
@@ -504,7 +509,7 @@ static int fi_trigger(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 	}
 	g_fi.claim_sync_seen = 0;
 	st_yield(t); /* SOMVR_STEP: a step of this swing (or a dash) ends: the finisher's sync owns the bodies */
-	in_haptic_event(hand, 1.0f, 0.25f, SOMVR_HAP_COMBAT);
+	haptic(hand, SOMVR_HX_KILL);
 	fi_slowmo(t);
 	fi_glow(pcomb, 0, 1, t);
 	return 1;
@@ -569,7 +574,7 @@ static void fi_claim_tick(double t)
 	else
 		FI_COUNT(claims_time);
 	if (fi_log_ok(t))
-		logf_("FINISH claim on %#lx ends: %s after %.2f s", (unsigned long)k, dead ? "dead" : end ? "its sync ended" :
+		logf_("FINISH claim on %#llx ends: %s after %.2f s", (unsigned long long)k, dead ? "dead" : end ? "its sync ended" :
 		      "the time is up", t - g_fi.mo.t0);
 }
 
@@ -653,7 +658,7 @@ static void fi_frame(uintptr_t pl, double t)
 			if (why != SF_WHY_MISS && why != SF_WHY_INSIDE && why != SF_WHY_FRONT) {
 				FI_COUNT(near_miss);
 				if (fi_log_ok(t))
-					logf_("FINISH dagger near miss on %#lx: %s (speed %.2f along %.2f cos %.2f)", (unsigned long)o[i].c,
+					logf_("FINISH dagger near miss on %#llx: %s (speed %.2f along %.2f cos %.2f)", (unsigned long long)o[i].c,
 					      sf_why_name(why), g_fi.dsp.mean_mps, g_fi.dsp.axis_mps, g_fi.dsp.cos_axis);
 			}
 		}
@@ -682,10 +687,10 @@ static void fi_frame(uintptr_t pl, double t)
 		if (ev) {
 			FI_COUNT(latch_ev[ev]);
 			if (ev == SF_LEV_LATCH)
-				FI_COUNT(latches), in_haptic_event(SOMVR_HAND_L, 0.6f, 0.05f, SOMVR_HAP_COMBAT);
+				FI_COUNT(latches), haptic(SOMVR_HAND_L, SOMVR_HX_TAKE);
 			if (fi_log_ok(t))
-				logf_("FINISH latch %s orc=%#lx (hand %.1f cm from its neck)", sf_lev_name(ev),
-				      (unsigned long)(ev == SF_LEV_LATCH ? li.key : g_fi.latch.key), bi >= 0 ? best : -1.0f);
+				logf_("FINISH latch %s orc=%#llx (hand %.1f cm from its neck)", sf_lev_name(ev),
+				      (unsigned long long)(ev == SF_LEV_LATCH ? li.key : g_fi.latch.key), bi >= 0 ? best : -1.0f);
 		}
 		int ti = ev == SF_LEV_DRAIN || ev == SF_LEV_INTERROGATE ? hi : -1;
 		if (ti >= 0 && !g_fi.mo.key) {
@@ -745,7 +750,7 @@ static void fi_sword(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		if (why == SF_WHY_TIP || why == SF_WHY_UP || why == SF_WHY_NOTSTAB) {
 			FI_COUNT(near_miss);
 			if (fi_log_ok(t))
-				logf_("FINISH ground near miss on %#lx: %s (along-blade %.2f m/s cos %.2f)", (unsigned long)o[i].c,
+				logf_("FINISH ground near miss on %#llx: %s (along-blade %.2f m/s cos %.2f)", (unsigned long long)o[i].c,
 				      sf_why_name(why), g_cb.sp.axis_mps, g_cb.sp.cos_axis);
 		}
 	}
@@ -790,8 +795,8 @@ static int fi_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, con
 	if (ready && why != SF_WHY_NOSWING) {
 		FI_COUNT(near_miss);
 		if (fi_log_ok(t))
-			logf_("FINISH near miss on %#lx (%s, streak %d): %s (contact y %.1f, neck %.1f; speed %.2f travel %.1f cos %.2f)",
-			      (unsigned long)o->c, sf_state_name(e->kind), g_fi.streak, sf_why_name(why), ct->point[1], z.neck[1],
+			logf_("FINISH near miss on %#llx (%s, streak %d): %s (contact y %.1f, neck %.1f; speed %.2f travel %.1f cos %.2f)",
+			      (unsigned long long)o->c, sf_state_name(e->kind), g_fi.streak, sf_why_name(why), ct->point[1], z.neck[1],
 			      g_cb.sp.mean_mps, g_cb.sp.travel, g_cb.sp.cos_axis);
 	}
 	if (!(g_fi.stab & FI_STAB_RIGHT) || fi_engaged(o, pc))
@@ -872,8 +877,8 @@ static void fi_start(const struct site_spec *sites, int *bad)
 	for (int i = 0; i < FIS_N; i++) {
 		ok[i] = check_site(&sites[i], why, sizeof why) == 0;
 		if (!ok[i])
-			logf_("FINISH site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
-			      (unsigned long)sites[i].target, why);
+			logf_("FINISH site %s %#llx -> %#llx MISMATCH: %s", sites[i].name, (unsigned long long)sites[i].addr,
+			      (unsigned long long)sites[i].target, why);
 	}
 	g_fi.ok_streak = ok[FIS_HITCOUNT];
 	g_fi.ok_stock = ok[FIS_CTX] && ok[FIS_CTX_PC] && ok[FIS_WINDOW] && ok[FIS_SELECT] && ok[FIS_TGT_INIT] && ok[FIS_TGT_SET] &&

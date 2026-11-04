@@ -165,6 +165,7 @@ static void h31_frame(const float *root, double t);
 static void h31_end_log(void);
 static int ov_active(void);
 static void ov_end_log(void);
+static int hrb_holding(int h); /* build 33 (somvr_hands31_game.c): a hand holds an herb */
 static struct log_late g_vb_late;
 static int vb_log_ok(void)
 {
@@ -184,7 +185,7 @@ static const char *vb_name(uintptr_t rec, char *out, size_t cap)
 {
 	rx_rec_name(rec, out, cap);
 	if (!out[0])
-		snprintf(out, cap, rec ? "%#lx" : "-", (unsigned long)rec);
+		snprintf(out, cap, rec ? "%#llx" : "-", (unsigned long long)rec);
 	return out;
 }
 
@@ -235,8 +236,8 @@ static void vb_prompt(uintptr_t key, int act, const char *str, int up)
 		go_str(str, p->str, sizeof p->str);
 		char kn[96];
 		if (vb_log_ok())
-			logf_("VERBS t=%.3f prompt up: action %d '%s' '%s' key %#lx '%s'", t, act, in_cmd_name(act), p->str,
-			      (unsigned long)key, vb_name(key, kn, sizeof kn));
+			logf_("VERBS t=%.3f prompt up: action %d '%s' '%s' key %#llx '%s'", t, act, in_cmd_name(act), p->str,
+			      (unsigned long long)key, vb_name(key, kn, sizeof kn));
 		br_prompt_up(act, p->str, t); /* build 23 (somvr_brand_game.c): a test aid's press at the stealth brand's prompt */
 		return;
 	}
@@ -467,8 +468,8 @@ static int vb_grab_freed(double t)
 	if (!g_vb.ask_c || vb_choice(0) || vb_choice(1) || vb_choice_command())
 		return 0;
 	if (vb_log_ok())
-		logf_("VERBS t=%.3f the interrogation of orc %#lx is over (%.1f s after the pull): the game holds Talion no more",
-		      t, (unsigned long)g_vb.ask_c, t - g_vb.ask_t);
+		logf_("VERBS t=%.3f the interrogation of orc %#llx is over (%.1f s after the pull): the game holds Talion no more",
+		      t, (unsigned long long)g_vb.ask_c, t - g_vb.ask_t);
 	g_vb.ask_c = 0, g_vb.ask_freed++;
 	return 1;
 }
@@ -572,7 +573,7 @@ static void vb_kind(uintptr_t pc, double t)
 		if (holding && g_vb.hand.b)
 			g_vb.game_done = 1;
 		if (comp && g_vb.haptic > 0)
-			in_haptic_event(SOMVR_HAND_L, 0.8f * g_vb.haptic, 0.12f, SOMVR_HAP_COMBAT);
+			haptic_play(SOMVR_HAND_L, SOMVR_HX_POWER, 1, g_vb.haptic);
 	}
 	if (vb_log_ok())
 		logf_("VERBS t=%.3f the game: Talion's '%s' (%s)%s", t, an[0] ? an : "-", somvr_vb_kind_name(k),
@@ -602,10 +603,10 @@ static void vb_back_line(const somvr_vb_hand_in *in, const somvr_vb_hand_out *o,
 		float dx = pt[k][0] - in->eye[0], dz = pt[k][2] - in->eye[2];
 		r[k][0] = dx * fx + dz * fz, r[k][1] = pt[k][1] - in->eye[1], r[k][2] = dx * fz - dz * fx; /* (the sign of right: the game's) */
 	}
-	logf_("VERBS t=%.3f squeeze by a stealth target (orc %#lx, its back offered within %.0f cm): the palm %.1f cm from its "
+	logf_("VERBS t=%.3f squeeze by a stealth target (orc %#llx, its back offered within %.0f cm): the palm %.1f cm from its "
 	      "back (the reach %.1f deg off it), %.1f cm from its head; %s; cm ahead/up/side of the eyes toward it: the palm "
 	      "%+.0f %+.0f %+.0f, Talion's root %+.0f %+.0f %+.0f, its root %+.0f %+.0f %+.0f, its head %+.0f %+.0f %+.0f", t,
-	      (unsigned long)g_vb.head_c[i], (double)in->body_cm[i], (double)o->back_cm, (double)o->back_deg,
+	      (unsigned long long)g_vb.head_c[i], (double)in->body_cm[i], (double)o->back_cm, (double)o->back_deg,
 	      dist3(in->palm, in->head[i]), o->event == SOMVR_VBE_GRAB ? (o->by_body ? "taken by its back" : "taken by a head")
 	      : "nothing taken", r[0][0], r[0][1], r[0][2], r[2][0], r[2][1], r[2][2], r[3][0], r[3][1], r[3][2], r[4][0],
 	      r[4][1], r[4][2]);
@@ -699,7 +700,7 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 			if (o.event == SOMVR_VBE_WRAITH)
 				o.event = SOMVR_VBE_NONE;
 			if (g_vb.haptic > 0)
-				in_haptic_event(SOMVR_HAND_L, 0.5f * g_vb.haptic, 0.06f, SOMVR_HAP_COMBAT);
+				haptic_play(SOMVR_HAND_L, SOMVR_HX_TAKE, 1, g_vb.haptic);
 			if (vb_log_ok())
 				logf_("VERBS t=%.3f choice: the trigger while the interrogation asks: %d '%s' tapped (Interrogate)", t, ch,
 				      in_cmd_name(ch));
@@ -715,7 +716,7 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	    in.palm[1] - in.eye[1] >= g_vb.rally_cm) {
 		vb_tap(VB_CMD_RALLY, t), g_vb.rallies++;
 		if (g_vb.haptic > 0)
-			in_haptic_event(SOMVR_HAND_L, 0.6f * g_vb.haptic, 0.10f, SOMVR_HAP_COMBAT);
+			haptic_play(SOMVR_HAND_L, SOMVR_HX_POWER, 1, g_vb.haptic);
 		if (vb_log_ok())
 			logf_("VERBS t=%.3f rally: the left hand %.0f cm over the eyes + the trigger: %d '%s' tapped (the branded "
 			      "orcs commanded; SOMVR_VERBS_RALLY)", t, in.palm[1] - in.eye[1], VB_CMD_RALLY, in_cmd_name(VB_CMD_RALLY));
@@ -767,14 +768,14 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 			g_vb.took_frame = g_fr.frame;
 			g_vb.held_c = oc;
 			if (g_vb.haptic > 0)
-				in_haptic_event(SOMVR_HAND_L, 0.35f * g_vb.haptic, 0.04f, SOMVR_HAP_COMBAT);
+				haptic_play(SOMVR_HAND_L, SOMVR_HX_TAKE, 1, g_vb.haptic);
 		}
 		if (was == SOMVR_VBH_IDLE && o.by_body)
 			g_vb.back_grabs++;
 		if (vb_log_ok())
-			logf_("VERBS t=%.3f %s: the left hand %s orc %#lx%s (%.1f cm, the reach %.1f deg off; health %.1f, attack '%s' "
+			logf_("VERBS t=%.3f %s: the left hand %s orc %#llx%s (%.1f cm, the reach %.1f deg off; health %.1f, attack '%s' "
 			      "state '%s'): %s", t, somvr_vb_event_name(o.event), was != SOMVR_VBH_IDLE ? "holding" : o.by_cone ?
-			      "reached out at" : "on", (unsigned long)(was != SOMVR_VBH_IDLE ? g_vb.held_c : oc),
+			      "reached out at" : "on", (unsigned long long)(was != SOMVR_VBH_IDLE ? g_vb.held_c : oc),
 			      was != SOMVR_VBH_IDLE ? "" : o.by_body ? "'s back (a stealth target: SOMVR_STEALTH_KILL_GRAB_CM)" : "'s head",
 			      o.dist_cm, o.cone_deg, vb_health(g_vb.held_c),
 			      vb_name(peek_ptr(g_vb.held_c + VB_C_ATTACK), an, sizeof an),
@@ -783,17 +784,17 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 		break;
 	case SOMVR_VBE_MISS:
 		if (vb_log_ok())
-			logf_("VERBS t=%.3f near miss: a squeeze %.1f cm from orc %#lx's head (reach %.0f cm): nothing", t, o.dist_cm,
-			      (unsigned long)oc, g_vb.cfg.reach_cm);
+			logf_("VERBS t=%.3f near miss: a squeeze %.1f cm from orc %#llx's head (reach %.0f cm): nothing", t, o.dist_cm,
+			      (unsigned long long)oc, g_vb.cfg.reach_cm);
 		break;
 	case SOMVR_VBE_ASK:
 		vb_tap(VB_CMD_A, t), g_vb.a_taps++;
 		g_vb.ask_c = g_vb.held_c, g_vb.ask_t = t;
 		if (g_vb.haptic > 0)
-			in_haptic_event(SOMVR_HAND_L, 0.5f * g_vb.haptic, 0.06f, SOMVR_HAP_COMBAT);
+			haptic_play(SOMVR_HAND_L, SOMVR_HX_TAKE, 1, g_vb.haptic);
 		if (vb_log_ok())
-			logf_("VERBS t=%.3f ask: orc %#lx pulled to the face (the palm %.0f cm from the eyes): A (121) tapped (the game's "
-			      "interrogation)", t, (unsigned long)g_vb.held_c, dist3(in.palm, in.eye));
+			logf_("VERBS t=%.3f ask: orc %#llx pulled to the face (the palm %.0f cm from the eyes): A (121) tapped (the game's "
+			      "interrogation)", t, (unsigned long long)g_vb.held_c, dist3(in.palm, in.eye));
 		break;
 	case SOMVR_VBE_NONE:
 		if (o.edge && g_vb.ev[0]++ < 40 && vb_log_ok()) /* a squeeze that took nothing: why (the first 40) */
@@ -829,7 +830,7 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	if (o.b && g_vb.saw_hog && g_vb.kind == SOMVR_VBK_HOG && g_vb.haptic > 0 && t >= g_vb.next_buzz) {
 		float k = (float)((t - g_vb.hold_t0) / 3.0);
 		k = k < 0 ? 0 : k > 1 ? 1 : k;
-		in_haptic_event(SOMVR_HAND_L, (0.15f + 0.3f * k) * g_vb.haptic, 0.03f, SOMVR_HAP_COMBAT);
+		haptic_play(SOMVR_HAND_L, SOMVR_HX_STRAIN, k, g_vb.haptic);
 		g_vb.next_buzz = t + 0.2, g_vb.buzzes++;
 	}
 }
@@ -837,7 +838,8 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 /* SOMVR_CLIMB: the left hand's squeeze was the verbs' this frame (or it holds an orc): no wall grab */
 static int vb_nograb(void)
 {
-	return (g_vb.mode == VB_ON && g_fr.frame - g_vb.took_frame <= 1 && g_vb.took_frame) || ov_active(); /* build 31: the vault */
+	return (g_vb.mode == VB_ON && g_fr.frame - g_vb.took_frame <= 1 && g_vb.took_frame) || ov_active() || /* build 31: the vault */
+	       hrb_holding(-1); /* build 33: an herb in a fist */
 }
 
 /* the test word "verbs behind CM" (SOMVR_HANDS_TEST): Talion teleported CM behind the nearest orc within 20 m (the
@@ -856,8 +858,8 @@ static void vb_stalk_stop(const char *why, const struct cb_orc *o, float dist, f
 {
 	atomic_store_explicit(&g_tstick_until_ns, 0, memory_order_release);
 	char a[96];
-	logf_("VERBS stalk t=%.3f end after %.1f s: %s (orc %#lx at %.0f cm, Talion %.0f deg off its facing, its attack '%s')", t,
-	      t - g_vb.stalk_t0, why, (unsigned long)g_vb.stalk_c, dist, off, o ? vb_name(peek_ptr(o->c + VB_C_ATTACK), a, sizeof a) :
+	logf_("VERBS stalk t=%.3f end after %.1f s: %s (orc %#llx at %.0f cm, Talion %.0f deg off its facing, its attack '%s')", t,
+	      t - g_vb.stalk_t0, why, (unsigned long long)g_vb.stalk_c, dist, off, o ? vb_name(peek_ptr(o->c + VB_C_ATTACK), a, sizeof a) :
 	      "-");
 	g_vb.stalk_c = 0;
 }
@@ -873,8 +875,8 @@ static void vb_stalk_frame(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 			char a[96];
 			float yaw, off = vb_off_facing(&o[i], root, &yaw);
 			float dx = root[0] - o[i].pos[0], dz = root[2] - o[i].pos[2];
-			logf_("VERBS orcs t=%.3f %d/%d orc %#lx at %.0f,%.0f,%.0f facing %.1f deg, %.0f cm from Talion (%.0f deg off its "
-			      "facing), attack '%s'", t, i + 1, n, (unsigned long)o[i].c, o[i].pos[0], o[i].pos[1], o[i].pos[2], yaw,
+			logf_("VERBS orcs t=%.3f %d/%d orc %#llx at %.0f,%.0f,%.0f facing %.1f deg, %.0f cm from Talion (%.0f deg off its "
+			      "facing), attack '%s'", t, i + 1, n, (unsigned long long)o[i].c, o[i].pos[0], o[i].pos[1], o[i].pos[2], yaw,
 			      sqrtf(dx * dx + dz * dz), off, vb_name(peek_ptr(o[i].c + VB_C_ATTACK), a, sizeof a));
 		}
 		if (!n)
@@ -891,8 +893,8 @@ static void vb_stalk_frame(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 			g_vb.stalk_best = 1e9f, g_vb.stalk_best_t = t;
 			float yaw, off = vb_off_facing(&o[0], root, &yaw);
 			float dx = root[0] - o[0].pos[0], dz = root[2] - o[0].pos[2];
-			logf_("VERBS stalk t=%.3f start: orc %#lx at %.0f,%.0f facing %.1f deg, %.0f cm away, Talion %.0f deg off its "
-			      "facing; to %d cm", t, (unsigned long)o[0].c, o[0].pos[0], o[0].pos[2], yaw, sqrtf(dx * dx + dz * dz), off, cm);
+			logf_("VERBS stalk t=%.3f start: orc %#llx at %.0f,%.0f facing %.1f deg, %.0f cm away, Talion %.0f deg off its "
+			      "facing; to %d cm", t, (unsigned long long)o[0].c, o[0].pos[0], o[0].pos[2], yaw, sqrtf(dx * dx + dz * dz), off, cm);
 		} else if (cm > 0)
 			logf_("VERBS stalk t=%.3f no orc within 15 m of %.0f,%.0f", t, at[0], at[2]);
 	}
@@ -928,8 +930,8 @@ static void vb_stalk_frame(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 	atomic_store_explicit(&g_tstick_until_ns, (int64_t)((mono() + 0.3) * 1e9), memory_order_release);
 	if (t >= g_vb.stalk_next) {
 		g_vb.stalk_next = t + 0.5;
-		logf_("VERBS stalk t=%.3f orc %#lx at %.0f cm, Talion %.0f deg off its facing, its attack '%s'; the stick %.2f %.2f",
-		      t, (unsigned long)o.c, dist, off, a, v[0], v[1]);
+		logf_("VERBS stalk t=%.3f orc %#llx at %.0f cm, Talion %.0f deg off its facing, its attack '%s'; the stick %.2f %.2f",
+		      t, (unsigned long long)o.c, dist, off, a, v[0], v[1]);
 	}
 }
 
@@ -961,8 +963,8 @@ static void vb_behind(uintptr_t pcomb, uintptr_t pc, const float root[3], float 
 		char cmd[96], why[256] = "";
 		snprintf(cmd, sizeof cmd, "Teleport %ld %ld %ld", x, y, z);
 		int rc = es_run(cmd, why, sizeof why);
-		logf_("VERBS t=%.3f behind: orc %#lx at %.0f,%.0f,%.0f facing %.1f deg (%.0f cm away): %+.0f deg about it, the ground "
-		      "at %.0f: '%s' %s%s", t, (unsigned long)o[0].c, o[0].pos[0], o[0].pos[1], o[0].pos[2], yaw * 57.29578f,
+		logf_("VERBS t=%.3f behind: orc %#llx at %.0f,%.0f,%.0f facing %.1f deg (%.0f cm away): %+.0f deg about it, the ground "
+		      "at %.0f: '%s' %s%s", t, (unsigned long long)o[0].c, o[0].pos[0], o[0].pos[1], o[0].pos[2], yaw * 57.29578f,
 		      o[0].dist, turn_deg[k], hit[1], cmd, rc == 0 ? "run" : "NOT run: ", rc == 0 ? "" : why);
 		return;
 	}
@@ -984,7 +986,7 @@ static struct { uintptr_t chord, input, inrec; } g_vbsch = { 0x4ba8ea0, 0x4bb456
 static void vb_schema(const char *what, uintptr_t holder)
 {
 	char line[900], nm[64];
-	size_t o = (size_t)snprintf(line, sizeof line, "VERBS tree schema %s %#lx:", what, (unsigned long)holder);
+	size_t o = (size_t)snprintf(line, sizeof line, "VERBS tree schema %s %#llx:", what, (unsigned long long)holder);
 	uintptr_t a = peek_ptr(holder);
 	for (int i = 0; a && i < 24 && o + 70 < sizeof line; i++) {
 		rx_str(peek_ptr(a + 0x30u * (unsigned)i), nm, sizeof nm);
@@ -1230,8 +1232,8 @@ static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		int el = g_vb.ask_c && g_vb.ask_kill == VB_ASK_GAME ? vb_choice(1) : 0;
 		if (el) { /* the interrogation asks: the sword = its Eliminate choice (build 19b; build 20's blade: stl_ask_kill) */
 			vb_tap(el, t), g_vb.choices++;
-			logf_("VERBS t=%.3f choice: the blade on the held orc %#lx while the interrogation asks: %d '%s' tapped "
-			      "(Eliminate)", t, (unsigned long)o->c, el, in_cmd_name(el));
+			logf_("VERBS t=%.3f choice: the blade on the held orc %#llx while the interrogation asks: %d '%s' tapped "
+			      "(Eliminate)", t, (unsigned long long)o->c, el, in_cmd_name(el));
 			return 1;
 		}
 		if (g_vb.hand.phase != SOMVR_VBH_GRAB)
@@ -1239,9 +1241,9 @@ static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		g_vb.flurries++;
 		g_vb.pcmd[0] = VB_CMD_X, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.15;
 		if (g_vb.haptic > 0)
-			in_haptic_event(SOMVR_HAND_R, 0.7f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
-		logf_("VERBS t=%.3f kill: the blade on the held orc %#lx (health %.1f): X (118) for 150 ms instead of the hit (the "
-		      "game's move from the grab)", t, (unsigned long)o->c, vb_health(o->c));
+			haptic_play(SOMVR_HAND_R, SOMVR_HX_TAKE, 1, g_vb.haptic);
+		logf_("VERBS t=%.3f kill: the blade on the held orc %#llx (health %.1f): X (118) for 150 ms instead of the hit (the "
+		      "game's move from the grab)", t, (unsigned long long)o->c, vb_health(o->c));
 		return 1;
 	}
 	if (!g_vb.stealth || !g_vb.ok_tree)
@@ -1257,7 +1259,7 @@ static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 	g_vb.stealth_asks++;
 	if (!atk) {
 		if (t - g_vb.stealth_line > 2.0 && vb_log_ok())
-			logf_("VERBS t=%.3f stealth: orc %#lx not offered (%s): the ordinary hit", t, (unsigned long)o->c, why);
+			logf_("VERBS t=%.3f stealth: orc %#llx not offered (%s): the ordinary hit", t, (unsigned long long)o->c, why);
 		g_vb.stealth_line = t;
 		return 0;
 	}
@@ -1268,8 +1270,8 @@ static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 			bax[0] = g_kl_b->tip[0] - g_kl_b->base[0], bax[1] = g_kl_b->tip[1] - g_kl_b->base[1], bax[2] = g_kl_b->tip[2] - g_kl_b->base[2];
 		int took = g_kl_ct && g_kl_b && kl_take(pc, o, atk, atk, 0, g_kl_ct->point, g_kl_b->vel_tip, bax, SOMVR_KL_UNAWARE,
 							"the offered stealth kill", t);
-		logf_("VERBS t=%.3f stealth: the blade on orc %#lx (health %.1f): the game offers '%s' (sync '%s'): %s (no X)", t,
-		      (unsigned long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn),
+		logf_("VERBS t=%.3f stealth: the blade on orc %#llx (health %.1f): the game offers '%s' (sync '%s'): %s (no X)", t,
+		      (unsigned long long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn),
 		      took ? "SOMVR_KILLS plays the orc's half" : "not taken - the ordinary hit");
 		if (took)
 			g_vb.stealth_kills++, g_vb.stealth_t = t, g_vb.stealth_c = o->c;
@@ -1279,9 +1281,9 @@ static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 	g_vb.stealth_t = t, g_vb.stealth_c = o->c;
 	g_vb.pcmd[0] = VB_CMD_X, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.15;
 	if (g_vb.haptic > 0)
-		in_haptic_event(SOMVR_HAND_R, 0.7f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
-	logf_("VERBS t=%.3f stealth: the blade on orc %#lx (health %.1f): the game offers '%s' (sync '%s'): X (118) for 150 ms "
-	      "instead of the hit", t, (unsigned long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn));
+		haptic_play(SOMVR_HAND_R, SOMVR_HX_TAKE, 1, g_vb.haptic);
+	logf_("VERBS t=%.3f stealth: the blade on orc %#llx (health %.1f): the game offers '%s' (sync '%s'): X (118) for 150 ms "
+	      "instead of the hit", t, (unsigned long long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn));
 	return 1;
 }
 
@@ -1337,7 +1339,7 @@ static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int t
 	g_vb.bleed_asks++;
 	if (!atk) {
 		if (t - g_vb.bleed_line > 2.0 && vb_log_ok())
-			logf_("VERBS t=%.3f bleed: graug %#lx not offered (%s): the ordinary hit", t, (unsigned long)o->c, why);
+			logf_("VERBS t=%.3f bleed: graug %#llx not offered (%s): the ordinary hit", t, (unsigned long long)o->c, why);
 		g_vb.bleed_line = t;
 		return 0;
 	}
@@ -1345,9 +1347,9 @@ static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int t
 	g_vb.bleed_t = t, g_vb.bleed_c = o->c;
 	g_vb.pcmd[0] = VB_CMD_X, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.15;
 	if (g_vb.haptic > 0)
-		in_haptic_event(SOMVR_HAND_R, 0.7f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
-	logf_("VERBS t=%.3f bleed: the blade on graug %#lx (health %.1f): the game offers '%s' (sync '%s'): X (118) for 150 ms "
-	      "instead of the hit", t, (unsigned long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn));
+		haptic_play(SOMVR_HAND_R, SOMVR_HX_TAKE, 1, g_vb.haptic);
+	logf_("VERBS t=%.3f bleed: the blade on graug %#llx (health %.1f): the game offers '%s' (sync '%s'): X (118) for 150 ms "
+	      "instead of the hit", t, (unsigned long long)o->c, vb_health(o->c), vb_name(atk, an, sizeof an), vb_name(sy, sn, sizeof sn));
 	return 1;
 }
 
@@ -1446,8 +1448,8 @@ static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	}
 	if (g_cb.sp.mean_mps > 1.5f && g_vb.blade_lines < 60) {
 		g_vb.blade_lines++;
-		logf_("VERBS t=%.3f the held orc %#lx (out of the bands): the blade %.1f cm from its axis (its radius %.0f), %s, tier "
-		      "%s, %.1f m/s (the root %d, PlayerCombat %d, its server Combat %d; read here: %d)", t, (unsigned long)c,
+		logf_("VERBS t=%.3f the held orc %#llx (out of the bands): the blade %.1f cm from its axis (its radius %.0f), %s, tier "
+		      "%s, %.1f m/s (the root %d, PlayerCombat %d, its server Combat %d; read here: %d)", t, (unsigned long long)c,
 		      vb_blade_gap(b, c0, c1), (double)g_cb.orc_r, !sweep ? "no sweep this frame" : hit ? "a contact" : "no contact",
 		      sc_tier_name(tier), (double)g_cb.sp.mean_mps, root != NULL, pcomb != 0, pc != 0, own);
 	}
@@ -1543,7 +1545,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	if (g_vb.ask_c && !vb_choice(0) && !vb_choice(1) && !vb_choice_command() && g_vb.kind != SOMVR_VBK_ASK &&
 	    t - g_vb.ask_t > 6.0) {
 		if (vb_log_ok())
-			logf_("VERBS t=%.3f the interrogation of orc %#lx is over (%.1f s after the pull)", t, (unsigned long)g_vb.ask_c,
+			logf_("VERBS t=%.3f the interrogation of orc %#llx is over (%.1f s after the pull)", t, (unsigned long long)g_vb.ask_c,
 			      t - g_vb.ask_t);
 		g_vb.ask_c = 0;
 	}
@@ -1584,8 +1586,8 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 		/* the angle between the orc's facing and the direction to Talion (180 = Talion right behind it) */
 		float dx = root[0] - o[i].pos[0], dz = root[2] - o[i].pos[2];
 		float off = fabsf(sv_wrap_pi(atan2f(dx, dz) - yaw)) * 57.29578f;
-		logf_("VERBS t=%.3f orc %#lx %s at %.0f cm (Talion %.0f deg off its facing): attack '%s' state '%s' sync '%s' health "
-		      "%.1f", t, (unsigned long)c, was ? "now" : "near", o[i].dist, off, vb_name(nw[i].atk, a, sizeof a),
+		logf_("VERBS t=%.3f orc %#llx %s at %.0f cm (Talion %.0f deg off its facing): attack '%s' state '%s' sync '%s' health "
+		      "%.1f", t, (unsigned long long)c, was ? "now" : "near", o[i].dist, off, vb_name(nw[i].atk, a, sizeof a),
 		      vb_name(nw[i].state, s, sizeof s), vb_name(nw[i].sync, y, sizeof y), vb_health(c));
 	}
 	memcpy(g_vb.orc, nw, (size_t)n * sizeof nw[0]);
@@ -1601,9 +1603,9 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 	if (g_vb.lastwords && g_vb.mode == VB_ON && !g_vb.ask_c && g_vb.hand.phase != SOMVR_VBH_GRAB && g_vb.lw_c &&
 	    t - g_vb.lw_t < 30.0 && vb_lastwords_sync() && (vb_choice(0) || vb_choice(1))) {
 		g_vb.ask_c = g_vb.lw_asked_c = g_vb.lw_c, g_vb.ask_t = t, g_vb.lastwords_n++;
-		logf_("VERBS t=%.3f last words: the captain %#lx held by the game (%.0f cm, %.1f s ago), its choices up (%d '%s', "
+		logf_("VERBS t=%.3f last words: the captain %#llx held by the game (%.0f cm, %.1f s ago), its choices up (%d '%s', "
 		      "%d '%s'): answered as an interrogation - the left trigger = Interrogate, B and the blade = Eliminate "
-		      "(SOMVR_VERBS_LASTWORDS)", t, (unsigned long)g_vb.lw_c, g_vb.lw_cm, t - g_vb.lw_t, vb_choice(1),
+		      "(SOMVR_VERBS_LASTWORDS)", t, (unsigned long long)g_vb.lw_c, g_vb.lw_cm, t - g_vb.lw_t, vb_choice(1),
 		      in_cmd_name(vb_choice(1)), vb_choice(0), in_cmd_name(vb_choice(0)));
 		g_vb.lw_c = 0;
 	}

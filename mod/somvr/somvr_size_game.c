@@ -83,8 +83,8 @@ static void sz_orc_set(float s, const char *who)
 	}
 	*(volatile float *)(npc + SZ_CH_SCALE) = s;
 	g_sz_orc_done = g_pr.orc_h;
-	logf_("SIZE orc %.2f from %s: the %s orc hobj=%#lx npc=%#lx: the AI scale %.3f -> %.2f (the object's %.3f follows at "
-	      "0.1/s)", s, who, somvr_pr_orc_label(g_pr.orc_type), (unsigned long)g_pr.orc_h, (unsigned long)npc, as, s, os);
+	logf_("SIZE orc %.2f from %s: the %s orc hobj=%#llx npc=%#llx: the AI scale %.3f -> %.2f (the object's %.3f follows at "
+	      "0.1/s)", s, who, somvr_pr_orc_label(g_pr.orc_type), (unsigned long long)g_pr.orc_h, (unsigned long long)npc, as, s, os);
 }
 
 /* the size the rig uses this frame (1 = 1:1); the hands' and the menus' code may scale with it */
@@ -191,7 +191,7 @@ static void sz_probe_char(uintptr_t obj, const char *label)
 	uintptr_t f = mv ? peek_ptr(mv + 0x20) : 0;
 	int pr = f ? page_prot(f) : -1;
 	if (!obj || !peek(obj + OBJ_POS, root, sizeof root) || !vec_ok(root, 1e7f)) {
-		logf_("SIZEPROBE %s obj=%#lx: no position", label, (unsigned long)obj);
+		logf_("SIZEPROBE %s obj=%#llx: no position", label, (unsigned long long)obj);
 		return;
 	}
 	if (g_th.ok_node && m && pr >= 0 && (pr & PROT_EXEC))
@@ -208,8 +208,8 @@ static void sz_probe_char(uintptr_t obj, const char *label)
 	 * animations: run 180704 had it at the root's height in the fight's poses) */
 	float gy = sz_ground(root, obj), wg = isfinite(gy) ? gy : ok[SZN_GROUND] ? w[SZN_GROUND][1] : root[1] - g_sz.root_cm;
 	char line[1400];
-	int u = snprintf(line, sizeof line, "SIZEPROBE %s obj=%#lx root %.1f,%.1f,%.1f: the ground under it %.1f (the root "
-			 "%.1f above), World_Ground %s%.1f; %d of %d nodes, cm above the ground:", label, (unsigned long)obj,
+	int u = snprintf(line, sizeof line, "SIZEPROBE %s obj=%#llx root %.1f,%.1f,%.1f: the ground under it %.1f (the root "
+			 "%.1f above), World_Ground %s%.1f; %d of %d nodes, cm above the ground:", label, (unsigned long long)obj,
 			 root[0], root[1], root[2], gy, root[1] - gy, ok[SZN_GROUND] ? "" : "not found ",
 			 ok[SZN_GROUND] ? w[SZN_GROUND][1] - wg : NAN, n, SZN_N);
 	for (int k = 1; k < SZN_N && u < (int)sizeof line - 40; k++)

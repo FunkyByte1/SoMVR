@@ -165,16 +165,16 @@ static int ab3_brutal(uintptr_t pc, const struct cb_orc *o, int hand, int sword,
 	}
 	if (!a) {
 		g_ab3.br_refused++;
-		in_haptic_event(SOMVR_HAND_L, 0.2f, 0.08f, SOMVR_HAP_COMBAT);
-		logf_("ABIL3 t=%.3f brutalize: the thrust with the left trigger held (%.2f) at orc %#lx (%.0f cm) - not offered (%s): "
-		      "the stealth kill", t, lt, (unsigned long)o->c, o->dist, why);
+		haptic(SOMVR_HAND_L, SOMVR_HX_NO);
+		logf_("ABIL3 t=%.3f brutalize: the thrust with the left trigger held (%.2f) at orc %#llx (%.0f cm) - not offered (%s): "
+		      "the stealth kill", t, lt, (unsigned long long)o->c, o->dist, why);
 		return 0;
 	}
 	if (pc != g_ab2.pc && ab3_log_ok(t))
-		logf_("ABIL3 t=%.3f brutalize: the stealth kill's combat %#lx, the abilities' %#lx", t, (unsigned long)pc,
-		      (unsigned long)g_ab2.pc);
-	logf_("ABIL3 t=%.3f brutalize: the thrust with the left trigger held (%.2f) at orc %#lx (%.0f cm): the game offers '%s' "
-	      "(sync '%s')", t, lt, (unsigned long)o->c, o->dist, an, sn[0] ? sn : "-");
+		logf_("ABIL3 t=%.3f brutalize: the stealth kill's combat %#llx, the abilities' %#llx", t, (unsigned long long)pc,
+		      (unsigned long long)g_ab2.pc);
+	logf_("ABIL3 t=%.3f brutalize: the thrust with the left trigger held (%.2f) at orc %#llx (%.0f cm): the game offers '%s' "
+	      "(sync '%s')", t, lt, (unsigned long long)o->c, o->dist, an, sn[0] ? sn : "-");
 	if (!ab2_start_on(pcomb, pc, g_ab3.br_node, o, "brutalize", t)) {
 		g_ab3.br_refused++;
 		return 0;
@@ -194,8 +194,8 @@ static int ab3_brutal(uintptr_t pc, const struct cb_orc *o, int hand, int sword,
 				nr[n++] = near[i];
 	}
 	abl_watch_begin(pc, nr, n, t, g_ab3.watch_s);
-	in_haptic_event(SOMVR_HAND_R, 1.0f, 0.12f, SOMVR_HAP_COMBAT), in_haptic_event(SOMVR_HAND_L, 0.6f, 0.1f, SOMVR_HAP_COMBAT);
-	logf_("ABIL3 t=%.3f brutalize started on orc %#lx; the watch %d orc(s) for %.0f s", t, (unsigned long)o->c, n,
+	haptic(SOMVR_HAND_R, SOMVR_HX_KILL), haptic_k(SOMVR_HAND_L, SOMVR_HX_THUMP, 0.1f);
+	logf_("ABIL3 t=%.3f brutalize started on orc %#llx; the watch %d orc(s) for %.0f s", t, (unsigned long long)o->c, n,
 	      g_ab3.watch_s);
 	return 1;
 }
@@ -210,14 +210,14 @@ static void ab3_taunt_go(uintptr_t pcomb, uintptr_t pc, const float *root, doubl
 	for (int i = 0; i < n; i++) {
 		float d = remainderf(atan2f(nr[i].pos[0] - g_ab3.ta_eye[0], nr[i].pos[2] - g_ab3.ta_eye[2]) - ly, 6.2831853f) * 57.29578f;
 		if (ab3_log_ok(t))
-			logf_("ABIL3 t=%.3f the taunt's line: orc %#lx at %.0f cm, %+.1f deg off it", t, (unsigned long)nr[i].c, nr[i].dist,
+			logf_("ABIL3 t=%.3f the taunt's line: orc %#llx at %.0f cm, %+.1f deg off it", t, (unsigned long long)nr[i].c, nr[i].dist,
 			      d);
 		if (fabsf(d) <= bd)
 			bd = fabsf(d), best = i;
 	}
 	if (best < 0) {
 		g_ab3.ta_refused++;
-		in_haptic_event(g_ab3.ta_hand, 0.2f, 0.08f, SOMVR_HAP_COMBAT);
+		haptic(g_ab3.ta_hand, SOMVR_HX_NO);
 		logf_("ABIL3 t=%.3f the taunt: no orc within %.0f deg of the hand (%d near): nothing", t, g_ab3.cfg.aim_deg, n);
 		return;
 	}
@@ -225,15 +225,15 @@ static void ab3_taunt_go(uintptr_t pcomb, uintptr_t pc, const float *root, doubl
 	char an[96], sn[96];
 	if (!gc_pick(pcomb, pc, &nr[best], g_ab3.ta_node, an, sizeof an, sn, sizeof sn, &why)) {
 		g_ab3.ta_refused++;
-		in_haptic_event(g_ab3.ta_hand, 0.2f, 0.08f, SOMVR_HAP_COMBAT);
+		haptic(g_ab3.ta_hand, SOMVR_HX_NO);
 		char st[96];
-		logf_("ABIL3 t=%.3f the taunt at orc %#lx (%.0f cm, %.1f deg off the hand, state '%s'): not offered (%s): nothing", t,
-		      (unsigned long)nr[best].c, nr[best].dist, bd, vb_name(peek_ptr(nr[best].c + VB_C_STATE), st, sizeof st), why);
+		logf_("ABIL3 t=%.3f the taunt at orc %#llx (%.0f cm, %.1f deg off the hand, state '%s'): not offered (%s): nothing", t,
+		      (unsigned long long)nr[best].c, nr[best].dist, bd, vb_name(peek_ptr(nr[best].c + VB_C_STATE), st, sizeof st), why);
 		return;
 	}
 	if (ab2_start_on(pcomb, pc, g_ab3.ta_node, &nr[best], "the taunt", t)) {
 		g_ab3.ta_started++;
-		in_haptic_event(g_ab3.ta_hand, 0.5f, 0.06f, SOMVR_HAP_COMBAT);
+		haptic(g_ab3.ta_hand, SOMVR_HX_POWER);
 	} else
 		g_ab3.ta_refused++;
 }
@@ -313,9 +313,9 @@ static void ab3_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t
 			dx = l > 1 ? dx / l : 0, dz = l > 1 ? dz / l : 1;
 			g_ab2.aim_pt[0] = nr[0].pos[0] + 80 * dx, g_ab2.aim_pt[1] = nr[0].pos[1] - 95,
 			g_ab2.aim_pt[2] = nr[0].pos[2] + 80 * dz, g_ab2.aim_on = 1; /* (2.1 m off: no reaction, boots 203644, 234411) */
-			logf_("ABIL3 t=%.3f aimnear: the next shots' ray onto the ground at %.0f,%.0f,%.0f - 0.8 m from orc %#lx (%.0f cm "
+			logf_("ABIL3 t=%.3f aimnear: the next shots' ray onto the ground at %.0f,%.0f,%.0f - 0.8 m from orc %#llx (%.0f cm "
 			      "away), toward Talion (a test aid; `abil2 aim off`)", t, g_ab2.aim_pt[0], g_ab2.aim_pt[1],
-			      g_ab2.aim_pt[2], (unsigned long)nr[0].c, nr[0].dist);
+			      g_ab2.aim_pt[2], (unsigned long long)nr[0].c, nr[0].dist);
 		} else
 			logf_("ABIL3 t=%.3f aimnear: no orc within 40 m", t);
 	}
@@ -347,7 +347,7 @@ static void ab3_hands(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp)
 			float sq = bd_squeeze(h, (hi->active & SOMVR_HACT_INPUT) ? hi->squeeze : 0);
 			/* the palm's normal: OpenXR's grip +X points out of the left palm and into the right one */
 			sv_vec3 n = sv_qrot(sv_qnormalize(qw[h]), (sv_vec3){ IN_SIDE(h) == SOMVR_HAND_L ? 1.0f : -1.0f, 0, 0 });
-			int dag = g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g) && somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER) == h;
+			int dag = g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g) && sl_knife_side() == h;
 			int sword = h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD) && bd_sword_in_hand();
 			int bow = bo_out() && (h == g_bow.cfg.bow_hand || g_bow.s.phase == SOMVR_BOW_PH_DRAW);
 			int busy = cl_holds(h) || (h == SOMVR_HAND_L && (vb_grab_held() || g_bd.two.w > 0)) || dag || sword || bow;
@@ -401,7 +401,7 @@ static void ab3_hands(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp)
 			if (ab3_prompt_up(AB3_CMD_Y, "Distraction")) {
 				g_vb.pcmd[0] = AB3_CMD_Y, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.15;
 				g_ab3.di_shots++, g_ab3.di_t = t;
-				in_haptic_event(bh, 0.45f, 0.05f, SOMVR_HAP_COMBAT), in_haptic_event(1 - bh, 0.3f, 0.04f, SOMVR_HAP_COMBAT);
+				haptic(bh, SOMVR_HX_TAKE), haptic(1 - bh, SOMVR_HX_TICK);
 				if (g_ab2.lit) /* (the ignite kindled before: the game's own shot goes, ours stays kindled) */
 					logf_("ABIL3 t=%.3f the distract: the ignite stays kindled on the drawn arrow", t);
 				logf_("ABIL3 t=%.3f the distract: X while drawn (%.0f cm) at the game's prompt 'UI_Wraith_Distraction' - %d "
@@ -413,7 +413,7 @@ static void ab3_hands(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp)
 				}
 			} else {
 				g_ab3.di_denied++;
-				in_haptic_event(bh, 0.2f, 0.08f, SOMVR_HAP_COMBAT);
+				haptic(bh, SOMVR_HX_NO);
 				logf_("ABIL3 t=%.3f X while drawn: no 'UI_Wraith_Distraction' prompt (the game does not offer it now) - nothing", t);
 			}
 		} else if (edge && ph == SOMVR_BOW_PH_DRAW && g_ab3.owned) {
@@ -425,12 +425,12 @@ static void ab3_hands(const sv_vec3 pw[2], const sv_quat qw[2], sv_vec3 hp)
 				g_ab3.lit = 1, g_ab3.lit_t = t, g_ab3.di_lit++;
 				if (g_ab2.lit)
 					g_ab2.lit = 0, g_ab2.ign_out++, logf_("ABIL2 t=%.3f the ignite put out: the distract kindled", t);
-				in_haptic_event(bh, 0.4f, 0.05f, SOMVR_HAP_COMBAT), in_haptic_event(1 - bh, 0.25f, 0.03f, SOMVR_HAP_COMBAT);
+				haptic(bh, SOMVR_HX_TAKE), haptic(1 - bh, SOMVR_HX_TICK);
 				logf_("ABIL3 t=%.3f the distract kindled: X while drawn (%.0f cm), the game offers '%s' (%s)", t,
 				      g_bow.s.draw_cm, g_ab3.di_atk_name, g_ab3.di_how);
 			} else {
 				g_ab3.di_denied++;
-				in_haptic_event(bh, 0.2f, 0.08f, SOMVR_HAP_COMBAT);
+				haptic(bh, SOMVR_HX_NO);
 				logf_("ABIL3 t=%.3f X while drawn: the game does not offer the distract now - nothing kindled", t);
 			}
 		}

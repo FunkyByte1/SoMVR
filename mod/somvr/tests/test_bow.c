@@ -1338,7 +1338,43 @@ static void test_string_mode(void) {
           s2, s3, s4, (unsigned long long)g_s.fired);
 }
 
+/* build 33 (re-xr-pipeline.md 142): the bow's turn filter - a 2 deg tremor at 9 Hz on a still hand mostly gone, a 90 deg
+ * turn in 0.25 s followed within ~2 frames at its end, off = raw */
+static float qang(sv_quat a, sv_quat b) {
+    float d = fabsf(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+    return 2.0f * acosf(d > 1 ? 1 : d) * 57.29578f;
+}
+static sv_quat qroll(float deg) { float h = 0.5f * deg / 57.29578f; return (sv_quat){0, 0, sinf(h), cosf(h)}; }
+static void test_qfilter33(void) {
+    somvr_bow_qf f;
+    memset(&f, 0, sizeof f);
+    float worst_raw = 0, worst_f = 0;
+    for (int i = 0; i < 180; i++) { /* 2 s at 90 Hz, a +-2 deg roll tremor at 9 Hz */
+        double t = i / 90.0;
+        sv_quat raw = qroll(2.0f * sinf(6.2831853f * 9.0f * (float)t));
+        sv_quat q = somvr_bow_qfilter(&f, raw, t, 4.0f, 1.0f);
+        if (i > 45) worst_raw = fmaxf(worst_raw, qang(raw, qroll(0))), worst_f = fmaxf(worst_f, qang(q, qroll(0)));
+    }
+    CHECK(worst_f < 0.6f * worst_raw, "the tremor: raw %.2f deg, filtered %.2f deg", worst_raw, worst_f);
+    memset(&f, 0, sizeof f);
+    float lag_end = 0, lag2 = 0;
+    for (int i = 0; i <= 45; i++) { /* still, then 90 deg in 0.25 s, then still */
+        double t = i / 90.0;
+        float deg = i < 10 ? 0 : i < 32 ? 90.0f * (float)(i - 10) / 22.0f : 90.0f;
+        sv_quat q = somvr_bow_qfilter(&f, qroll(deg), t, 4.0f, 1.0f);
+        if (i == 32) lag_end = qang(q, qroll(90));
+        if (i == 35) lag2 = qang(q, qroll(90));
+    }
+    CHECK(lag_end < 12.0f && lag2 < 4.0f, "a 90 deg turn in 0.25 s: %.1f deg behind at its end, %.1f deg 3 frames later", lag_end,
+          lag2);
+    memset(&f, 0, sizeof f);
+    somvr_bow_qfilter(&f, qroll(0), 0, 0, 1);
+    sv_quat q = somvr_bow_qfilter(&f, qroll(30), 1.0 / 90, 0, 1);
+    CHECK(qang(q, qroll(30)) < 1e-3f, "off: the raw turn");
+}
+
 int main(void) {
+    test_qfilter33();
     test_geometry();
     test_shot();
     test_release_now();

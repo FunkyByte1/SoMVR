@@ -125,6 +125,7 @@ _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK ==
 		       (int)SOMVR_PRA_HEALTH == (int)SOMVR_VMPR_HEALTH && (int)SOMVR_PRA_FAR == (int)SOMVR_VMPR_FAR &&
 		       (int)SOMVR_PRA_GROUP == (int)SOMVR_VMPR_GROUP && (int)SOMVR_PRA_CAPTAIN == (int)SOMVR_VMPR_CAPTAIN &&
 		       (int)SOMVR_PRA_PLACE == (int)SOMVR_VMPR_PLACE && /* build 31 */
+		       (int)SOMVR_PRA_CHARGE == (int)SOMVR_VMPR_CHARGE && /* build 36 */
 		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 6 /* the menu's six labels (build 22) */,
 	       "the menu's practice requests = the practice module's");
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
@@ -145,6 +146,8 @@ static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-
 #define PR_W_TOD OFS(PR_W_TOD, 0x68)           /* ... the TOD byte (FUN_025ccd10's argument) */
 #define PR_BANDS_MAX 48         /* entries read per targeting band */
 #define PR_LIGHT_WEATHER_S 0.6  /* after the arrival: the weather this much after the TOD step (both under the black) */
+#define PR_LIGHT_LATER_S 10.0   /* build 36: the weather's record read again this long after our ChangeWeather (its reset
+				 * comes ~3 s after it; the record read at +1.5 s still names the old weather) */
 #define PR_PAUSE_WAIT_S 3.6     /* SOMVR_PRACTICE_LOADHOLD: our ChangeWeather's pause comes this soon (runs 154417 .. 163004:
 				 * 3.05 s after it, ~1.1 s long, every trip there; none after the trip back's) */
 #define PR_MH_CHECK_S 1.0       /* the min health checked (set again if the game changed it) this often */
@@ -181,7 +184,7 @@ static struct {
 	int ok_mh, ok_spawn, ok_remove, ok_light, ok_gate, ok_mount, ok_life, ok_clear, ok_ray;
 	/* build 17: the refills (PRF_* sites) and their counts; the test aids `practice hurt HP` / `practice focus F` */
 	int ok_tokens, ok_energy, ok_heal;
-	uint64_t fill_arrows, fill_health, fill_refused, aid_hurt, aid_focus;
+	uint64_t fill_arrows, fill_health, fill_refused, aid_hurt, aid_focus, fill_charge; /* (build 36: Charge execution) */
 	/* SOMVR_PRACTICE_QUIET: the ambient AI spawn manager off while in the area */
 	int quiet_mode, ok_quiet;
 	int quiet;           /* we hold it off now */
@@ -204,7 +207,9 @@ static struct {
 	uint64_t pw_waits, pw_pauses, pw_none, pw_open, pw_dry;
 	double pw_after_max, pw_len_max;
 	float spot[3], radius_cm, clear_cm, ahead_cm, auto_s, minhealth;
+	float edge_cm; /* build 36 (SOMVR_PRACTICE_EDGE_M): out only past radius + this; back in within the radius */
 	char weather[64];    /* SOMVR_PRACTICE_WEATHER */
+	int sky;             /* SOMVR_PRACTICE_SKY (build 36): SOMVR_PRSKY_DRY|CLEAR|ALWAYS - which day weathers are changed */
 	int light_tp;        /* the weather went with this trip's teleport (pr_light_teleport) */
 	somvr_pr_tcfg tcfg;
 	somvr_pr_tcfg tcfg_down; /* the climb's blink down: tcfg, a short hold (no light to change) */
@@ -232,7 +237,8 @@ static struct {
 	int advanced;        /* our AdvanceTimeOfDay made the day (the trip back advances again) */
 	int weather_set;     /* our ChangeWeather is on (the trip back restores orig) */
 	char orig_weather[64], orig_tod[32];
-	int light_step;      /* 1: the weather is due at light_t + PR_LIGHT_WEATHER_S; 2: its log line at light_t + 1.5 */
+	int light_step;      /* 1: the weather is due at light_t + PR_LIGHT_WEATHER_S; 2: its log line at light_t + 1.5;
+			      * 3 (build 36): the weather read again at light_t + PR_LIGHT_LATER_S (the game's reset done) */
 	double light_t;
 	/* our orc */
 	uintptr_t orc_h, orc_npc, orc_c;
@@ -262,6 +268,8 @@ static struct {
 } g_pr;
 static _Atomic uint32_t g_pr_trig; /* the trigger word (writer thread): seq << 8 | (orc + 1) << 4 | action */
 static _Atomic uint32_t g_pr_at_req[3]; /* "practice go X Y Z": the spot's floats (published by g_pr_trig's release) */
+static char g_pr_wx[64];                /* build 36's test word "practice weather DEF" (published by g_pr_wx_pend) */
+static _Atomic int g_pr_wx_pend;
 static _Atomic int g_pr_at_has;
 static double g_pr_test_t = -1;    /* selftest: the clock (-1 = CLOCK_MONOTONIC) */
 static double pr_now(void) { return g_pr_test_t >= 0 ? g_pr_test_t : mono(); }
@@ -454,7 +462,7 @@ static void pr_remove_orc(const char *why, double t)
 		int done = pr_remove_obj(g_pr_keep.h[i], g_pr_keep.npc[i]);
 		g_pr.removes += done;
 		if (pr_log_ok(t))
-			logf_("PRACTICE t=%.3f remove kept orc %d (%s) hobj=%#lx: %s", t, i, why, (unsigned long)g_pr_keep.h[i],
+			logf_("PRACTICE t=%.3f remove kept orc %d (%s) hobj=%#llx: %s", t, i, why, (unsigned long long)g_pr_keep.h[i],
 			      done ? "removal queued" : "NOT removed (gone?)");
 	}
 	if (!g_pr_keep.on)
@@ -463,8 +471,8 @@ static void pr_remove_orc(const char *why, double t)
 		int done = !g_pr_grp.gone[i] && pr_remove_obj(g_pr_grp.h[i], g_pr_grp.npc[i]);
 		g_pr.removes += done;
 		if (pr_log_ok(t))
-			logf_("PRACTICE t=%.3f remove the group's %s orc %d (%s) hobj=%#lx after %.1f s: %s", t,
-			      somvr_pr_orc_label(g_pr_grp.type[i]), i, why, (unsigned long)g_pr_grp.h[i], t - g_pr_grp.t,
+			logf_("PRACTICE t=%.3f remove the group's %s orc %d (%s) hobj=%#llx after %.1f s: %s", t,
+			      somvr_pr_orc_label(g_pr_grp.type[i]), i, why, (unsigned long long)g_pr_grp.h[i], t - g_pr_grp.t,
 			      done ? "removal queued" : "already gone");
 	}
 	g_pr_grp.n = g_pr_grp.alive = 0;
@@ -473,8 +481,8 @@ static void pr_remove_orc(const char *why, double t)
 	int alive = pr_orc_alive(), done = alive && pr_remove_obj(g_pr.orc_h, g_pr.orc_npc);
 	g_pr.removes += done;
 	if (pr_log_ok(t))
-		logf_("PRACTICE t=%.3f remove the %s orc (%s) hobj=%#lx after %.1f s: %s", t, somvr_pr_orc_label(g_pr.orc_type), why,
-		      (unsigned long)g_pr.orc_h, t - g_pr.orc_t, done ? "removal queued" : alive ? "NOT removed (the object "
+		logf_("PRACTICE t=%.3f remove the %s orc (%s) hobj=%#llx after %.1f s: %s", t, somvr_pr_orc_label(g_pr.orc_type), why,
+		      (unsigned long long)g_pr.orc_h, t - g_pr.orc_t, done ? "removal queued" : alive ? "NOT removed (the object "
 		      "system's slot or the object did not check out)" : "already gone");
 	g_pr.orc_h = g_pr.orc_npc = g_pr.orc_c = 0, g_pr.orc_dead = 0;
 }
@@ -494,11 +502,11 @@ static int pr_ray_down_r(const float from[3], float len, uintptr_t self, float h
 	static int said; /* winport: why a ray fails, once (the first Windows practice spawn's "the ray down hit nothing") */
 	if (!phys || !pr_slot_ok(phys, PRS_RAY, PR_SLOT_RAY)) {
 		if (!said++)
-			logf_("PRACTICE ray: not cast: IEnginePhysics %#lx (holder %#lx), vtable %#lx + %#lx vs the site %#lx -> %#lx (live %#lx)",
-			      (unsigned long)phys, (unsigned long)g_prg.phys_pp, (unsigned long)(phys ? vptr_of((void *)phys) : 0),
-			      (unsigned long)PR_SLOT_RAY, (unsigned long)g_pr_sites[PRS_RAY].addr,
-			      (unsigned long)g_pr_sites[PRS_RAY].target,
-			      (unsigned long)(phys ? peek_ptr(vptr_of((void *)phys) + PR_SLOT_RAY) : 0));
+			logf_("PRACTICE ray: not cast: IEnginePhysics %#llx (holder %#llx), vtable %#llx + %#llx vs the site %#llx -> %#llx (live %#llx)",
+			      (unsigned long long)phys, (unsigned long long)g_prg.phys_pp, (unsigned long long)(phys ? vptr_of((void *)phys) : 0),
+			      (unsigned long long)PR_SLOT_RAY, (unsigned long long)g_pr_sites[PRS_RAY].addr,
+			      (unsigned long long)g_pr_sites[PRS_RAY].target,
+			      (unsigned long long)(phys ? peek_ptr(vptr_of((void *)phys) + PR_SLOT_RAY) : 0));
 		return 0;
 	}
 	float y0 = from[1];
@@ -570,8 +578,8 @@ static void pr_quiet_tick(double t, const char *why)
 	uintptr_t mgr = 0;
 	if (!prq_state(&on, &n, &mgr)) {
 		if (pr_log_ok(t))
-			logf_("PRACTICE t=%.3f quiet: the spawn manager *%#lx is not readable now (nothing changed)", t,
-			      (unsigned long)g_prg.spawnmgr_pp);
+			logf_("PRACTICE t=%.3f quiet: the spawn manager *%#llx is not readable now (nothing changed)", t,
+			      (unsigned long long)g_prg.spawnmgr_pp);
 		return;
 	}
 	if (g_pr.quiet && (!on || mgr != g_pr.quiet_mgr))
@@ -586,9 +594,9 @@ static void pr_quiet_tick(double t, const char *why)
 	int now = 1;
 	prq_state(&now, NULL, NULL);
 	if (pr_log_ok(t))
-		logf_("PRACTICE t=%.3f quiet (%s): the ambient AI spawn manager %#lx %s (it was %s, now %s); its %u ambient AI "
+		logf_("PRACTICE t=%.3f quiet (%s): the ambient AI spawn manager %#llx %s (it was %s, now %s); its %u ambient AI "
 		      "removed (AISpawnManager.Disable and .RemoveAllAmbientAI's calls): no new patrols, camps or barks here", t,
-		      again ? "the game had turned it on again" : why, (unsigned long)mgr, again ? "off again" : "off",
+		      again ? "the game had turned it on again" : why, (unsigned long long)mgr, again ? "off again" : "off",
 		      on ? "on" : "off", now ? "on (!)" : "off", n);
 }
 
@@ -635,8 +643,10 @@ static int pr_far_spot(const struct pr_me *m, const float fwd[3], float at[3], f
 	return 0;
 }
 
-/* build 31 (re-xr-pipeline.md 136): Place orc's spot for pr_spawn_at(.., far = 2) */
+/* build 31 (re-xr-pipeline.md 136): Place orc's spot for pr_spawn_at(.., far = 2); b35 (160): `practice put`'s
+ * (far = 3: the spot given, the orc facing Talion - a replay's orcs where the recording had them) */
 static float g_pr_place_at[3];
+static _Atomic uint32_t g_pr_put_seq, g_pr_put_at[3], g_pr_put_type; /* b35: the word -> the next pr_frame */
 static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *who, int far)
 {
 	const char *fail = NULL;
@@ -670,20 +680,20 @@ static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *w
 	somvr_pr_ahead(m->pos, fwd, g_pr.ahead_cm, at);
 	if (!tmpl)
 		fail = "no such AI/Templates record (by name)";
-	else if (far == 2 ? !pr_ground(g_pr_place_at, hit, &ground)
+	else if (far >= 2 ? !pr_ground(g_pr_place_at, hit, &ground)
 		 : far ? !pr_far_spot(m, fwd, at, hit, &ground, &dist) : !pr_ground(at, hit, &ground))
-		fail = far == 2 ? "the ray down at the placed spot hit nothing"
+		fail = far >= 2 ? "the ray down at the placed spot hit nothing"
 		       : far ? "no ground ahead at SOMVR_PRACTICE_FAR_CM -6..+2 m (the ray down from 2 m over Talion's root to 6 m "
 			     "under it, 3 directions)"
 			   : "the ray down hit nothing (no ground within 6 m below the spot ahead)";
 	else if (!(ctx = ground ? ground : m->pc ? peek_ptr(m->pc + C_HOBJ) : 0))
 		fail = "no context object (neither the ground's nor Talion's)";
-	if (far == 2 && !fail) /* build 31: Place orc - its distance (the line's "ahead") */
+	if (far >= 2 && !fail) /* build 31: Place orc - its distance (the line's "ahead"); b35: `practice put` */
 		dist = dist3(hit, m->pos);
 	if (!fail) {
 		/* the far orc turns its back to Talion: it faces the point as far beyond it (its eyes away from him) */
 		float away[3] = { 2 * hit[0] - m->pos[0], hit[1], 2 * hit[2] - m->pos[2] };
-		somvr_pr_facing(hit, far ? away : m->pos, q);
+		somvr_pr_facing(hit, far == 1 || far == 2 ? away : m->pos, q); /* b35: `practice put` (3) faces Talion */
 		float xf[7] = { hit[0], hit[1] + 10.0f, hit[2], q[0], q[1], q[2], q[3] };
 		ret = PR_FN(PRS_SPAWN, pr_spawn_fn)(ctx, "SomVR_Practice", xf, tmpl, 1, 1, 0, 0, 0);
 		h = ret ? peek_ptr(ret + 8) : 0;
@@ -716,12 +726,12 @@ static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *w
 		g_pr.spawn_fail++;
 	}
 	if (pr_log_ok(t))
-		logf_("PRACTICE t=%.3f spawn%s %s (%s) template %s ('%s') %s: %s; at (%.1f %.1f %.1f) %.0f cm ahead, ground object %#lx, "
-		      "%s; hobj=%#lx npc=%#lx Combat=%#lx zone=%#lx level %u", t, far == 2 ? " placed" : far ? " far" : "",
+		logf_("PRACTICE t=%.3f spawn%s %s (%s) template %s ('%s') %s: %s; at (%.1f %.1f %.1f) %.0f cm ahead, ground object %#llx, "
+		      "%s; hobj=%#llx npc=%#llx Combat=%#llx zone=%#llx level %u", t, far == 2 ? " placed" : far ? " far" : "",
 		      somvr_pr_orc_label(type), who,
 		      name, tmpl ? tn : "-", fail ? "FAILED" : "ok", fail ? fail : "one orc out", hit[0], hit[1], hit[2],
-		      (double)dist, (unsigned long)ground, far ? "its back to Talion (unaware: it sees him only as the game's "
-		      "senses would)" : "facing Talion", (unsigned long)h, (unsigned long)npc, (unsigned long)c, (unsigned long)zone,
+		      (double)dist, (unsigned long long)ground, far ? "its back to Talion (unaware: it sees him only as the game's "
+		      "senses would)" : "facing Talion", (unsigned long long)h, (unsigned long long)npc, (unsigned long long)c, (unsigned long long)zone,
 		      lvl);
 }
 static void pr_spawn(const struct pr_me *m, int type, double t, const char *who) { pr_spawn_at(m, type, t, who, 0); }
@@ -744,8 +754,8 @@ static void pr_far_tick(const struct pr_me *m, double t)
 	if (at_him && !g_pr.far_aware) {
 		g_pr.far_aware = 1, g_pr.far_aware_t = t, g_pr.far_noticed++;
 		if (pr_log_ok(t))
-			logf_("PRACTICE t=%.3f far orc noticed Talion after %.1f s: its target = Talion (Combat+0x4c0 %#lx), %.1f m "
-			      "from him, moved %.1f m", t, age, (unsigned long)tg, (double)d, (double)mv);
+			logf_("PRACTICE t=%.3f far orc noticed Talion after %.1f s: its target = Talion (Combat+0x4c0 %#llx), %.1f m "
+			      "from him, moved %.1f m", t, age, (unsigned long long)tg, (double)d, (double)mv);
 		return;
 	}
 	if (t < g_pr.far_next || (age > 40.5 && !(g_pr.far_aware && t - g_pr.far_aware_t < 6.5)) || g_pr.far_logs >= 40)
@@ -842,10 +852,10 @@ static void pr_group(const struct pr_me *m, int n, double t, const char *who)
 			g_pr.spawn_fail++;
 		}
 		if (pr_log_ok(t))
-			logf_("PRACTICE t=%.3f group (%s) orc %d: %s '%s' %s%s at %+.0f deg %.1f m (%.1f %.1f %.1f) hobj=%#lx Combat=%#lx "
+			logf_("PRACTICE t=%.3f group (%s) orc %d: %s '%s' %s%s at %+.0f deg %.1f m (%.1f %.1f %.1f) hobj=%#llx Combat=%#llx "
 			      "level %u", t, who, i, somvr_pr_orc_label(plan[i].type), o.tmpl ? o.tn : "-", why ? "FAILED: " : "ok",
 			      why ? why : "", (double)plan[i].yaw_deg, (double)(plan[i].dist_cm / 100.0f), o.hit[0], o.hit[1], o.hit[2],
-			      (unsigned long)o.h, (unsigned long)o.c, o.lvl);
+			      (unsigned long long)o.h, (unsigned long long)o.c, o.lvl);
 	}
 	g_pr_grp.alive = made;
 	g_pr.groups++;
@@ -974,8 +984,8 @@ static void pr_clear(const struct pr_me *m, uint32_t gate, double t)
 			int done = pr_remove_obj(h, owner);
 			n += done;
 			if (pr_log_ok(t))
-				logf_("PRACTICE t=%.3f clear '%s' at %.1f m hobj=%#lx: %s", t, rn[0] ? rn : "?",
-				      (double)(cd.dist_cm / 100.0f), (unsigned long)h, done ? "removal queued" : "NOT removed");
+				logf_("PRACTICE t=%.3f clear '%s' at %.1f m hobj=%#llx: %s", t, rn[0] ? rn : "?",
+				      (double)(cd.dist_cm / 100.0f), (unsigned long long)h, done ? "removal queued" : "NOT removed");
 		}
 	}
 	g_pr.cleared += (uint64_t)n;
@@ -1006,12 +1016,16 @@ static void pr_light_arrived(double t)
 	if (!g_pr.advanced)
 		snprintf(g_pr.orig_tod, sizeof g_pr.orig_tod, "%s", tod);
 	int night = somvr_pr_is_night(tod);
-	int dry = !night && !g_pr.weather_set && !somvr_pr_is_wet(rec); /* a dry day: no change, no pause */
+	/* a dry day: no change, no pause (build 36, SOMVR_PRACTICE_SKY=clear: an overcast one is changed too) */
+	int dry = !night && !g_pr.weather_set && !somvr_pr_sky_change(rec, g_pr.sky, g_pr.weather);
+	int grey = !night && !dry && !somvr_pr_is_wet(rec);
 	if (pr_log_ok(t))
-		logf_("PRACTICE t=%.3f light: weather '%s', time of day '%s'%s", t, rec, tod,
+		logf_("PRACTICE t=%.3f light: weather '%s', time of day '%s'%s%s", t, rec, tod,
 		      night && g_pr.day == PR_DAY_FULL ? ": a night, the day now (GameServerShell.AdvanceTimeOfDay)" :
 		      night ? ": a night, kept (SOMVR_PRACTICE_DAY=weather)" :
-		      dry ? ": a dry day, kept (no ChangeWeather: no pause ~3 s later)" : "");
+		      dry ? ": a dry day, kept (no ChangeWeather: no pause ~3 s later)" : "",
+		      grey && !g_pr.weather_set ? (g_pr.sky == SOMVR_PRSKY_ALWAYS ? ": changed (SOMVR_PRACTICE_SKY=always, a test)" :
+		      ": an overcast day, a clear one now (SOMVR_PRACTICE_SKY=clear)") : "");
 	if (night && g_pr.day == PR_DAY_FULL && !g_pr.advanced && !pr_console("GameServerShell.AdvanceTimeOfDay", t))
 		g_pr.advanced = 1, g_pr.advances++;
 	if (dry) {
@@ -1030,8 +1044,8 @@ static const char *pr_light_teleport(double t)
 	char rec[64], tod[32];
 	g_pr.light_tp = 0;
 	if (g_pr.day == PR_DAY_OFF || !g_pr.ok_light || g_pr.weather_set || !pr_weather(rec, sizeof rec, tod, sizeof tod) ||
-	    somvr_pr_is_night(tod) || !somvr_pr_is_wet(rec))
-		return "";
+	    somvr_pr_is_night(tod) || !somvr_pr_sky_change(rec, g_pr.sky, g_pr.weather))
+		return ""; /* (build 36: SOMVR_PRACTICE_SKY=clear changes an overcast day too) */
 	snprintf(g_pr.orig_weather, sizeof g_pr.orig_weather, "%s", rec);
 	snprintf(g_pr.orig_tod, sizeof g_pr.orig_tod, "%s", tod);
 	snprintf(cmd, sizeof cmd, "GameServerShell.ChangeWeather %s; ", g_pr.weather);
@@ -1075,6 +1089,18 @@ static int pr_pause_busy(double t, int paused)
 
 static void pr_light_tick(double t)
 {
+	if (atomic_load_explicit(&g_pr_wx_pend, memory_order_acquire)) { /* build 36's test word: the weather, read after */
+		char cmd[128], rec[64] = "?", tod[32] = "?";
+		pr_weather(rec, sizeof rec, tod, sizeof tod);
+		snprintf(cmd, sizeof cmd, "GameServerShell.ChangeWeather %s", g_pr_wx);
+		atomic_store(&g_pr_wx_pend, 0);
+		if (!pr_console(cmd, t)) {
+			snprintf(g_pr.orig_weather, sizeof g_pr.orig_weather, "%s", rec);
+			g_pr.pw_t = t, g_pr.pw_seen = 0, g_pr.pw_waits++;
+			g_pr.light_step = 3, g_pr.light_t = t; /* the "light later" line */
+		}
+		return;
+	}
 	if (g_pr.light_step == 1 && t - g_pr.light_t >= PR_LIGHT_WEATHER_S) {
 		char cmd[128];
 		snprintf(cmd, sizeof cmd, "GameServerShell.ChangeWeather %s", g_pr.weather);
@@ -1083,10 +1109,17 @@ static void pr_light_tick(double t)
 		g_pr.light_step = 2;
 	} else if (g_pr.light_step == 2 && t - g_pr.light_t >= 1.5) {
 		char rec[64], tod[32];
-		g_pr.light_step = 0;
+		g_pr.light_step = g_pr.weather_set ? 3 : 0;
 		if (pr_weather(rec, sizeof rec, tod, sizeof tod) && pr_log_ok(t))
 			logf_("PRACTICE t=%.3f light now: weather '%s', time of day '%s' (was '%s', '%s')", t, rec, tod,
 			      g_pr.orig_weather, g_pr.orig_tod);
+	} else if (g_pr.light_step == 3 && t - g_pr.light_t >= PR_LIGHT_LATER_S) {
+		char rec[64], tod[32];
+		g_pr.light_step = 0;
+		if (pr_weather(rec, sizeof rec, tod, sizeof tod) && pr_log_ok(t))
+			logf_("PRACTICE t=%.3f light later (%.0f s): weather '%s', time of day '%s' (was '%s'%s; asked %s)", t,
+			      PR_LIGHT_LATER_S, rec, tod, g_pr.orig_weather, strcmp(rec, g_pr.orig_weather) ? ": changed" :
+			      ": UNCHANGED", g_pr.weather);
 	}
 }
 
@@ -1310,7 +1343,7 @@ static void pr_rtti_parts(uintptr_t obj, char *b, size_t n)
 		if (dup)
 			continue;
 		memcpy(seen[ns++], c, sizeof c);
-		l += (size_t)snprintf(b + l, n - l, " +%#lx '%s'", (unsigned long)off, c);
+		l += (size_t)snprintf(b + l, n - l, " +%#llx '%s'", (unsigned long long)off, c);
 	}
 }
 
@@ -1323,8 +1356,8 @@ static void pr_navdump(const struct pr_me *m, int have, double t)
 	if (ok < 0) {
 		char why[160];
 		ok = check_site(&g_prn_sites[PRN_NAV_POS], why, sizeof why) == 0;
-		logf_("PRACTICE site %s %s %#lx: %s", g_prn_sites[PRN_NAV_POS].name, ok ? "ok" : "MISMATCH (no places)",
-		      (unsigned long)g_prn_sites[PRN_NAV_POS].addr, why);
+		logf_("PRACTICE site %s %s %#llx: %s", g_prn_sites[PRN_NAV_POS].name, ok ? "ok" : "MISMATCH (no places)",
+		      (unsigned long long)g_prn_sites[PRN_NAV_POS].addr, why);
 	}
 	uintptr_t node = 0;
 	peek(PRN_LIST + 8, &node, sizeof node);
@@ -1359,7 +1392,7 @@ static void pr_navdump(const struct pr_me *m, int have, double t)
 						size_t l = strlen(cls);
 						pr_rtti(o[k], c, sizeof c);
 						if (o[k] && l < sizeof cls - 60)
-							snprintf(cls + l, sizeof cls - l, " o%d %#lx '%s'", k, (unsigned long)o[k], c);
+							snprintf(cls + l, sizeof cls - l, " o%d %#llx '%s'", k, (unsigned long long)o[k], c);
 					}
 				logf_("PRACTICE nav %d '%s' at (%.0f %.0f %.0f), %.1f m from Talion%s", n, name, pos[0], pos[1], pos[2],
 				      (double)dm, cls);
@@ -1368,12 +1401,12 @@ static void pr_navdump(const struct pr_me *m, int have, double t)
 				if (dm >= 0 && dm < 20 && ((peek(mk + 0x230, &tg, sizeof tg) && tg) || (peek(mk + 0x210, &tg, sizeof tg) && tg))) {
 					pr_rtti(tg, tc, sizeof tc);
 					pr_rtti_parts(tg, parts, sizeof parts);
-					logf_("PRACTICE nav %d   target %#lx '%s' parts:%s", n, (unsigned long)tg, tc, parts[0] ? parts : " none");
+					logf_("PRACTICE nav %d   target %#llx '%s' parts:%s", n, (unsigned long long)tg, tc, parts[0] ? parts : " none");
 					uintptr_t t2 = 0; /* (an object handle's object: +8, as the probe's) */
 					if (peek(tg + 8, &t2, sizeof t2) && t2) {
 						pr_rtti(t2, tc, sizeof tc);
 						pr_rtti_parts(t2, parts, sizeof parts);
-						logf_("PRACTICE nav %d   target+8 %#lx '%s' parts:%s", n, (unsigned long)t2, tc, parts[0] ? parts : " none");
+						logf_("PRACTICE nav %d   target+8 %#llx '%s' parts:%s", n, (unsigned long long)t2, tc, parts[0] ? parts : " none");
 					}
 				}
 			}
@@ -1403,8 +1436,8 @@ static void pr_floor(const struct pr_me *m, int have, double t)
 	int n = 0;
 	b[0] = 0;
 	while (pr_ray_ok() && n < 6 && from[1] > end && pr_ray_down(from, from[1] - end, self, hit, &obj) && o < sizeof b - 64) {
-		o += (size_t)snprintf(b + o, sizeof b - o, "%s%.0f (%+.1f m, object %#lx)", n ? ", " : " ", hit[1],
-				      (double)(hit[1] - at[1]) / 100.0, (unsigned long)obj);
+		o += (size_t)snprintf(b + o, sizeof b - o, "%s%.0f (%+.1f m, object %#llx)", n ? ", " : " ", hit[1],
+				      (double)(hit[1] - at[1]) / 100.0, (unsigned long long)obj);
 		n++, from[1] = hit[1] - 5.0f;
 	}
 	float dx = have ? m->pos[0] - at[0] : 0, dz = have ? m->pos[2] - at[2] : 0;
@@ -1424,8 +1457,8 @@ static void pr_look(const struct pr_me *m, int have, double t)
 	uintptr_t b = 0, e = 0;
 	peek(PRL_PLAYERS, &b, sizeof b), peek(PRL_PLAYERS + 8, &e, sizeof e);
 	int n = b && e >= b && e - b <= 64 ? (int)((e - b) / 8) : -1;
-	logf_("PRACTICE t=%.3f look: the player list %#lx..%#lx: %d player(s); Talion's Player %#lx (the practice's)", t, (unsigned long)b,
-	      (unsigned long)e, n, (unsigned long)(have ? m->pl : 0));
+	logf_("PRACTICE t=%.3f look: the player list %#llx..%#llx: %d player(s); Talion's Player %#llx (the practice's)", t, (unsigned long long)b,
+	      (unsigned long long)e, n, (unsigned long long)(have ? m->pl : 0));
 	for (int i = 0; i < n && i < 8; i++) {
 		uintptr_t p = 0, o = 0, v = 0;
 		uint8_t f178 = 0, vis = 0;
@@ -1441,9 +1474,9 @@ static void pr_look(const struct pr_me *m, int have, double t)
 		peek(p + 0xbb0, cp, sizeof cp), peek(p + 0xbbc, cq, sizeof cq), peek(p + 0xbcc, fov, sizeof fov);
 		float fx = 2.f * (cq[0] * cq[2] + cq[1] * cq[3]), fy = 2.f * (cq[1] * cq[2] - cq[0] * cq[3]),
 		      fz = 1.f - 2.f * (cq[0] * cq[0] + cq[1] * cq[1]); /* R(q)(0,0,1): somvr_front_cam_dot's forward */
-		logf_("PRACTICE look %d: player %#lx flags+0x178 %#x (bit 0 = the triggers skip him) vision byte %u; its object "
-		      "%#lx at (%.0f %.0f %.0f); the camera copy at (%.0f %.0f %.0f) fwd %+.2f,%+.2f,%+.2f fov %.1f x %.1f deg", i,
-		      (unsigned long)p, f178, vis, (unsigned long)o, op[0], op[1], op[2], cp[0], cp[1], cp[2], fx, fy, fz,
+		logf_("PRACTICE look %d: player %#llx flags+0x178 %#x (bit 0 = the triggers skip him) vision byte %u; its object "
+		      "%#llx at (%.0f %.0f %.0f); the camera copy at (%.0f %.0f %.0f) fwd %+.2f,%+.2f,%+.2f fov %.1f x %.1f deg", i,
+		      (unsigned long long)p, f178, vis, (unsigned long long)o, op[0], op[1], op[2], cp[0], cp[1], cp[2], fx, fy, fz,
 		      fov[0] * 57.29578f, fov[1] * 57.29578f);
 	}
 }
@@ -1687,6 +1720,15 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 	case SOMVR_PRA_GROUP: pr_group(m, orc >= 3 && orc <= SOMVR_PR_GROUP_MAX ? orc : g_pr.group_n, t, who); break; /* build 19; 27: 3..8 */
 	case SOMVR_PRA_CAPTAIN: kp_spawn(m, t, who); break; /* build 22: SOMVR_CAPTAIN (somvr_captain_game.c) */
 	case SOMVR_PRA_PLACE: pr_place_start(orc, t, who); break; /* build 31 */
+	case SOMVR_PRA_CHARGE: /* build 36 (re-xr-pipeline.md 164): Charge execution (in the area only, as the refills) */
+		if (pr_refill_ok(m, have, "the execution's charge", t, who)) {
+			char w[200];
+			int ok = xc_fill(m->pc, w, sizeof w);
+			g_pr.fill_charge += ok;
+			if (pr_log_ok(t))
+				logf_("PRACTICE t=%.3f charge execution (%s): %s; no save", t, who, w);
+		}
+		break;
 	case SOMVR_PRA_FAR: /* build 18 */
 		pr_spawn_at(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who, 1);
 		break;
@@ -1712,8 +1754,8 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 static void pr_new_player(uintptr_t pl, double t)
 {
 	if (g_pr.pl && pr_log_ok(t))
-		logf_("PRACTICE t=%.3f a new player %#lx (was %#lx: a load): our orc, the trip and the area forgotten", t,
-		      (unsigned long)pl, (unsigned long)g_pr.pl);
+		logf_("PRACTICE t=%.3f a new player %#llx (was %#llx: a load): our orc, the trip and the area forgotten", t,
+		      (unsigned long long)pl, (unsigned long long)g_pr.pl);
 	g_pr.pl = pl;
 	pr_quiet_off(t, "a new player (a load)");
 	g_pr.orc_h = g_pr.orc_npc = g_pr.orc_c = 0;
@@ -1829,13 +1871,19 @@ static void pr_frame(uintptr_t pl)
 	int pbusy = pr_pause_busy(t, game_paused()); /* SOMVR_PRACTICE_LOADHOLD (logged with it off too) */
 	if (g_pr.trip.phase != SOMVR_PRT_IDLE)
 		pr_trip_tick(&m, have, t, pbusy);
-	/* the area: in it while within the radius after a trip there (walking out ends the protections, not the area) */
-	int in = g_pr.went && have && hypotf(m.pos[0] - g_pr.spot[0], m.pos[2] - g_pr.spot[2]) <= g_pr.radius_cm;
+	/* the area: in it while within the radius after a trip there (walking out ends the protections, not the area).
+	 * Build 36 (som-b36-polish, re-xr-pipeline.md 167.5; the 11-03 Windows session: Talion stood 100.0-100.2 m from the
+	 * spot and crossed the edge 10 times in 24 s; each walk-out turned the ambient AI spawn manager on and each walk back
+	 * removed what it had spawned - 104 ambient AI, a voice heard with no orc in sight among them): out only past
+	 * radius + SOMVR_PRACTICE_EDGE_M, back in within the radius */
+	float pdist = have ? hypotf(m.pos[0] - g_pr.spot[0], m.pos[2] - g_pr.spot[2]) : 0;
+	int in = g_pr.went && have && pdist <= g_pr.radius_cm + (g_pr.here ? g_pr.edge_cm : 0);
 	if (g_pr.went && have && in != g_pr.here) {
 		g_pr.walked_out += !in;
 		if (pr_log_ok(t))
-			logf_("PRACTICE t=%.3f Talion %s the practice area (%.1f m from the spot)", t, in ? "is back in" : "walked out of",
-			      (double)(hypotf(m.pos[0] - g_pr.spot[0], m.pos[2] - g_pr.spot[2]) / 100.0f));
+			logf_("PRACTICE t=%.3f Talion %s the practice area (%.1f m from the spot; %s %.0f m)", t,
+			      in ? "is back in" : "walked out of", (double)(pdist / 100.0f), in ? "in within" : "out past",
+			      (double)((g_pr.radius_cm + (in ? 0 : g_pr.edge_cm)) / 100.0f));
 		g_pr.here = in;
 		if (!in)
 			pr_quiet_off(t, "walked out of the area");
@@ -1860,6 +1908,17 @@ static void pr_frame(uintptr_t pl)
 	pr_group_tick(t); /* build 19 */
 	pr_far_tick(&m, t); /* build 18 */
 	pr_place_tick(&m, have, t); /* build 31: Place orc */
+	static uint32_t put_seen; /* b35 (re-xr-pipeline.md 160): `practice put X Y Z [TYPE]` */
+	uint32_t ps = atomic_load_explicit(&g_pr_put_seq, memory_order_acquire);
+	if (ps != put_seen) {
+		put_seen = ps;
+		for (int i = 0; i < 3; i++) {
+			uint32_t b = atomic_load_explicit(&g_pr_put_at[i], memory_order_relaxed);
+			memcpy(&g_pr_place_at[i], &b, 4);
+		}
+		int ty = (int)atomic_load_explicit(&g_pr_put_type, memory_order_relaxed);
+		pr_spawn_at(&m, ty >= 0 && ty < SOMVR_PRO_N ? ty : g_pr.cur_orc, t, "practice put", 3);
+	}
 	if (g_pr.here && have && t >= g_pr.next_clear) {
 		g_pr.next_clear = t + 1.0;
 		if (!(gate & ~(uint32_t)SOMVR_PRG_TRIP)) /* the clear's gate: never in a scripted moment */
@@ -1894,6 +1953,18 @@ static const char *pr_word(const char *w)
 		return "practice (SOMVR_PRACTICE is off: ignored)";
 	float av;
 	char ak[8], tail;
+	if (!strncmp(w, "weather ", 8)) { /* build 36 (a test aid): GameServerShell.ChangeWeather DEF now (pr_light_tick) */
+		const char *d = w + 8;
+		size_t n = strcspn(d, " \r\n");
+		int ok = n > 0 && n < sizeof g_pr_wx;
+		for (size_t i = 0; ok && i < n; i++)
+			ok = (d[i] >= 'A' && d[i] <= 'Z') || (d[i] >= 'a' && d[i] <= 'z') || (d[i] >= '0' && d[i] <= '9') || d[i] == '_';
+		if (!ok || atomic_load(&g_pr_wx_pend))
+			return "practice weather DEF (a Weather/Definition name; one at a time: ignored)";
+		memcpy(g_pr_wx, d, n), g_pr_wx[n] = 0;
+		atomic_store_explicit(&g_pr_wx_pend, 1, memory_order_release);
+		return "practice weather (a test aid: ChangeWeather on the game thread)";
+	}
 	if (!strncmp(w, "mortal ", 7)) { /* build 27 (a test aid): the game's own min health back while on (Talion can die) */
 		atomic_store(&g_pr_mortal, !strcmp(w + 7, "on"));
 		return atomic_load(&g_pr_mortal) ? "practice mortal on (the game's own min health: Talion can die)" : "practice mortal off";
@@ -1904,6 +1975,22 @@ static const char *pr_word(const char *w)
 		atomic_store(&g_pr_aid_kind, ak[0] == 'h' ? 1u : 2u), atomic_store(&g_pr_aid_val, b);
 		atomic_fetch_add_explicit(&g_pr_aid_seq, 1, memory_order_release);
 		return ak[0] == 'h' ? "practice hurt" : "practice focus";
+	}
+	float pa[3];
+	char pt[16] = "";
+	int pn = sscanf(w, " put %f %f %f %15s", &pa[0], &pa[1], &pa[2], pt);
+	if (pn >= 3 && isfinite(pa[0]) && isfinite(pa[1]) && isfinite(pa[2])) { /* b35 (160, a test aid): an orc at a spot */
+		int ty = pn == 4 ? somvr_pr_orc_parse(pt) : -1;
+		if (pn == 4 && ty < 0)
+			return "practice put (not a type: ignored)";
+		for (int i = 0; i < 3; i++) {
+			uint32_t b;
+			memcpy(&b, &pa[i], 4);
+			atomic_store_explicit(&g_pr_put_at[i], b, memory_order_relaxed);
+		}
+		atomic_store_explicit(&g_pr_put_type, (uint32_t)ty, memory_order_relaxed);
+		atomic_fetch_add_explicit(&g_pr_put_seq, 1, memory_order_release);
+		return "practice put (an orc at the spot, facing Talion)";
 	}
 	if (!somvr_pr_word(w, &r))
 		return "practice (not go|back|spawn [infantry|shield|berserker|caragor|ghul|graug]|far [TYPE]|remove|status|"
@@ -1929,7 +2016,8 @@ static uint32_t pr_avail(void) { return g_pr.on ? SOMVR_VMA_PRACTICE : 0u; }
 /* somvr_start, before the menu: the switch, the sites, the parts, the CONFIG line */
 static void pr_start(const struct site_spec *sites, int *bad)
 {
-	static const char *const clear_w[] = { "0", "armed", "all" }, *const day_w[] = { "0", "weather", "day" };
+	static const char *const clear_w[] = { "0", "armed", "all" }, *const day_w[] = { "0", "weather", "day" },
+			  *const sky_w[] = { "dry", "clear", "always" };
 	memset(&g_pr, 0, sizeof g_pr);
 	const char *v = getenv("SOMVR_PRACTICE");
 	if (v && v[0] && !somvr_pr_mode_parse(v, &g_pr.mode)) {
@@ -1943,9 +2031,11 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	g_pr.spot[0] = 40400, g_pr.spot[1] = 3900, g_pr.spot[2] = -21600; /* re-combat-spawn.md 3's recipe (RT: quiet) */
 	env_vec("SOMVR_PRACTICE_AT", g_pr.spot, 3, -1e6f, 1e6f, bad);
 	g_pr.radius_cm = 100 * env_float("SOMVR_PRACTICE_RADIUS_M", 100, 10, 1000, bad);
+	g_pr.edge_cm = 100 * env_float("SOMVR_PRACTICE_EDGE_M", 10, 0, 100, bad); /* build 36 (0 = build 35's one edge) */
 	g_pr.clear = env_word("SOMVR_PRACTICE_CLEAR", clear_w, 3, SOMVR_PRC_ARMED);
 	g_pr.clear_cm = 100 * env_float("SOMVR_PRACTICE_CLEAR_M", 60, 5, 200, bad);
 	g_pr.day = env_word("SOMVR_PRACTICE_DAY", day_w, 3, PR_DAY_FULL);
+	g_pr.sky = env_word("SOMVR_PRACTICE_SKY", sky_w, 3, SOMVR_PRSKY_DRY); /* build 36 (som-b36-winlooks) */
 	copy_env("SOMVR_PRACTICE_WEATHER", g_pr.weather, sizeof g_pr.weather);
 	int wok = g_pr.weather[0] != 0;
 	for (const char *c = g_pr.weather; *c && wok; c++)
@@ -1981,23 +2071,23 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	for (int i = 0; i < PRS_N; i++) {
 		int k = check_site(&sites[i], why, sizeof why) == 0;
 		ok |= (uint32_t)k << i;
-		logf_("PRACTICE site %s %s %#lx -> %#lx: %s", sites[i].name, k ? "ok" : "MISMATCH", (unsigned long)sites[i].addr,
-		      (unsigned long)sites[i].target, why);
+		logf_("PRACTICE site %s %s %#llx -> %#llx: %s", sites[i].name, k ? "ok" : "MISMATCH", (unsigned long long)sites[i].addr,
+		      (unsigned long long)sites[i].target, why);
 	}
 	uint32_t okq = 0;
 	for (int i = 0; i < PRQ_N && g_pr.quiet_mode; i++) {
 		int k = check_site(&g_prq_sites[i], why, sizeof why) == 0;
 		okq |= (uint32_t)k << i;
-		logf_("PRACTICE site %s %s %#lx -> %#lx: %s", g_prq_sites[i].name, k ? "ok" : "MISMATCH",
-		      (unsigned long)g_prq_sites[i].addr, (unsigned long)g_prq_sites[i].target, why);
+		logf_("PRACTICE site %s %s %#llx -> %#llx: %s", g_prq_sites[i].name, k ? "ok" : "MISMATCH",
+		      (unsigned long long)g_prq_sites[i].addr, (unsigned long long)g_prq_sites[i].target, why);
 	}
 	g_pr.ok_quiet = okq == (1u << PRQ_N) - 1;
 	uint32_t okf = 0; /* build 17: the refills' calls */
 	for (int i = 0; i < PRF_N; i++) {
 		int k = check_site(&g_prf_sites[i], why, sizeof why) == 0;
 		okf |= (uint32_t)k << i;
-		logf_("PRACTICE site %s %s %#lx -> %#lx: %s", g_prf_sites[i].name, k ? "ok" : "MISMATCH",
-		      (unsigned long)g_prf_sites[i].addr, (unsigned long)g_prf_sites[i].target, why);
+		logf_("PRACTICE site %s %s %#llx -> %#llx: %s", g_prf_sites[i].name, k ? "ok" : "MISMATCH",
+		      (unsigned long long)g_prf_sites[i].addr, (unsigned long long)g_prf_sites[i].target, why);
 	}
 	g_pr.ok_tokens = okf >> PRF_TOKENS_ADD & 1, g_pr.ok_energy = okf >> PRF_ENERGY_FULL & 1;
 	g_pr.ok_heal = okf >> PRF_HEAL & 1;
@@ -2042,21 +2132,22 @@ static void pr_start(const struct site_spec *sites, int *bad)
 		      "(the keep-clear pass removes them)");
 	g_pr.on = 1;
 	logf_("CONFIG practice: %s; the spot (%.0f %.0f %.0f) cm (RT: re-combat-spawn.md 3's slave-group ground, P9's teleport), "
-	      "the area %.0f m; a blink there and back (fade %.2f/%.2f s, settle %.2f s, hold %.2f s, %d teleports at most); "
+	      "the area %.0f m (out past %.0f m: SOMVR_PRACTICE_EDGE_M); a blink there and back (fade %.2f/%.2f s, settle %.2f s, hold %.2f s, %d teleports at most); "
 	      "min health %g%s; clear %s within %.0f m every 1 s%s (never in a presentation, a cinematic or scripted camera, a "
-	      "sync, the pause); quiet %s; wait %s; light %s (%s; a dry day kept; a wet day's weather with the teleport)%s; load hold %s; "
+	      "sync, the pause); quiet %s; wait %s; light %s (%s; sky %s: %s; the weather with the teleport)%s; load hold %s; "
 	      "orcs %.0f cm ahead (the far orc %.0f cm, its back to Talion), the type %s (%s), spawn %s; auto after %.1f s; "
 	      "the menu's practice page and the trigger words \"practice go|back|spawn [TYPE]|far [TYPE]|remove|status\"",
 	      somvr_pr_mode_name(g_pr.mode), g_pr.spot[0], g_pr.spot[1], g_pr.spot[2], (double)(g_pr.radius_cm / 100),
-	      (double)g_pr.tcfg.fade_out_s, (double)g_pr.tcfg.fade_in_s, (double)g_pr.tcfg.settle_s, (double)g_pr.tcfg.hold_s,
+	      (double)((g_pr.radius_cm + g_pr.edge_cm) / 100), (double)g_pr.tcfg.fade_out_s, (double)g_pr.tcfg.fade_in_s, (double)g_pr.tcfg.settle_s, (double)g_pr.tcfg.hold_s,
 	      g_pr.tcfg.tries, (double)g_pr.minhealth, g_pr.ok_mh ? "" : " (OFF: its site)", clear_w[g_pr.clear],
 	      (double)(g_pr.clear_cm / 100), g_pr.ok_clear ? "" : " (OFF: its sites)",
 	      !g_pr.quiet_mode ? "off (SOMVR_PRACTICE_QUIET=0)" : g_pr.ok_quiet ? "on (the ambient AI spawn manager off and its "
 	      "AI removed while Talion is in the area; given back when he leaves)" : "OFF (its sites)",
 	      g_pr.wait_mode ? "on (SOMVR_PRACTICE_WAIT: go and back asked for in the pause, a death or a scripted moment wait "
 	      "until the game is back 1 s)" : "off (a trip starts at once, its black even over the pause menu)",
-	      day_w[g_pr.day], g_pr.weather,
-	      g_pr.ok_light ? "" : " (OFF: its sites)",
+	      day_w[g_pr.day], g_pr.weather, sky_w[g_pr.sky], g_pr.sky == SOMVR_PRSKY_ALWAYS ? "every other day weather "
+	      "changed (a test)" : g_pr.sky == SOMVR_PRSKY_CLEAR ? "a wet or overcast day changed, a clear one kept" :
+	      "a wet day changed, a dry one kept", g_pr.ok_light ? "" : " (OFF: its sites)",
 	      g_pr.load_mode ? "on (the black holds for the game's pause after our ChangeWeather: up to 3.6 s for it to come, "
 	      "until it ends, at most 5.5 s after the arrival)" : "off (SOMVR_PRACTICE_LOADHOLD=0: logged only)",
 	      (double)g_pr.ahead_cm, (double)g_pr.far_cm, somvr_pr_orc_label(g_pr.def_orc),

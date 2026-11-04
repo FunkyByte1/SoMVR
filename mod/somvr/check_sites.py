@@ -385,6 +385,14 @@ def main():
             sys.exit("expected 3 SITE lines in somvr_objective_game.c's OBJECTIVE_SITES block (the patched OB_EACH K_CALL, "
                      "the called OB_POS, OB_RANGE K_ENTRY), found %d" % len(ob))
         sites = sites + ob
+        # build 36 (SOMVR_GAME_PROMPTS=off): the patched OB_PLACE in the same file's OBPLACE_SITES block
+        op = [m for b in text.split("OBPLACE_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("OBPLACE_SITES_END", 1)[0])]
+        if [m[1] for m in op] != ["K_CALL"]:
+            sys.exit("expected 1 SITE line in somvr_objective_game.c's OBPLACE_SITES block (the patched OB_PLACE K_CALL), "
+                     "found %d" % len(op))
+        sites = sites + op
     # SOMVR_FIGHT_SPACE_CM (build 16): its block lives in somvr_fight_game.c (read with SOURCE.c above)
     if re.search(r'^#include "somvr_fight_game\.c"', text, re.M):
         sp = [m for b in text.split("SPACE_SITES_BEGIN")[1:] for m in re.findall(

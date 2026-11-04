@@ -476,9 +476,10 @@ static void test_haptics(void) {
     h.rumble = 0;
     CHECK(sc_hap_tick(&h, t + 31 * P, 1, P, &r) && r.amplitude == 0 && r.duration_ns == -1, "rumble off: a stop");
     CHECK(!sc_hap_tick(&h, t + 32 * P, 1, P, &r), "a second stop");
-    /* the option: 150 % clamps to 1, 0 = never a post; a ramp is continuous (refreshed) */
+    /* the option: 150 % lifts 0.8 to 0.857 (build 34, somvr_hx_scale: order-kept, no flat clip), 0 = never a post; a
+     * ramp is continuous (refreshed) */
     sc_hap_add(&h, t + 40 * P, 0.8f, 0.5f, 0, SOMVR_HAP_TEST);
-    CHECK(sc_hap_tick(&h, t + 40 * P, 1.5f, P, &r) && r.amplitude == 1.0f, "scale 1.5: %g", r.amplitude);
+    CHECK(sc_hap_tick(&h, t + 40 * P, 1.5f, P, &r) && NEAR(r.amplitude, 1.2 / 1.4, 1e-5), "scale 1.5: %g", r.amplitude);
     sc_hap_reset(&h);
     sc_hap_add(&h, t, 0.8f, 0.5f, 0, SOMVR_HAP_TEST);
     CHECK(!sc_hap_tick(&h, t, 0, P, &r), "scale 0 posted");
@@ -501,7 +502,7 @@ static void test_haptics(void) {
               NEAR(sc_hap_level(&h, t + 0.22, 1, NULL, NULL, NULL), 0.7, 1e-6),
           "three pulses scheduled at once: all three play");
     printf("haptics: a flat hit = 1 post (amp 1, 200 ms), the rumble a 6-period pulse every 4th tick, 0.02 threshold, "
-           "hit over rumble, stop, scale clamp, scale 0, ramp refreshed\n");
+           "hit over rumble, stop, scale 150 %% order-kept, scale 0, ramp refreshed\n");
 }
 
 /* ---- build 27, SOMVR_ARMY: the right stick's click held = the game's "Hold [>]" (re-xr-pipeline.md 110) ------------- */

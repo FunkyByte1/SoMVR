@@ -22,7 +22,8 @@
  *   record at +8}), GO_PROMPT = BehaviorStatePromptParams (CB_OnBehaviorPrompt 0xb3ccd0: {show byte, record at +8}).
  *   log: every event logged with its record's name (DBRecord_GetName, GO_RECNAME), passed on; off: a combat hint's or
  *   a tutorial's "show" is dropped at that point - what the game does with Display Combat Hints off, at the source, no
- *   picture cut - its "hide" passed on; behaviour prompts pass (logged: the HUD band's prompts are another element).
+ *   picture cut - its "hide" passed on; behaviour prompts pass (logged: the HUD band's prompts are another element) -
+ *   build 36: with SOMVR_GAME_PROMPTS=off (somvr_gprompts_game.c) their show is dropped too.
  *
  * SOMVR_VISION=hold|tap (default unset = build 9's: Y held sends VisionModeToggle 243) - the wraith vision on Y. Run
  *   181931: Y held 6 s sent 243 every tick (`VIN press cmd=243 VisionModeToggle ... event=1`) and the vision never came
@@ -253,8 +254,8 @@ static void go_ramp_tick(double t, int force)
 	if (!known && g_go.ramp_nrec < 4)
 		g_go.ramp_rec[g_go.ramp_nrec++] = rec;
 	if (!known || wrote || force)
-		logf_("VISION t=%.3f the vision record %#lx: RampInDuration %.3f s, RampOutDuration %.3f s (the game's at the "
-		      "next switch)%s", t, (unsigned long)rec, (double)v[0], (double)v[1],
+		logf_("VISION t=%.3f the vision record %#llx: RampInDuration %.3f s, RampOutDuration %.3f s (the game's at the "
+		      "next switch)%s", t, (unsigned long long)rec, (double)v[0], (double)v[1],
 		      wrote ? "; SOMVR_VISION_RAMP_MS written" : want ? "; as wished already" : "");
 }
 
@@ -286,8 +287,8 @@ __attribute__((used)) uint64_t somvr_w_gortpc(void *snd, const char *name, float
 {
 	atomic_fetch_add_explicit(&g_go.n_rtpc, 1, memory_order_relaxed);
 	/* the name read as the original reads it (a literal of the caller's): no syscall on this busy path */
-	int opt = name && name[0] == 'o' && !strncmp(name, "options_", 8), music = opt && !strcmp(name + 8, GO_MUSIC + 8);
-	if (opt && g_go.lv_on && !strcmp(name + 8, GO_DIALOG + 8)) { /* SOMVR_LOAD_VOICES: its value kept, held during a load */
+	int opt = name && name[0] == 'o' && !strncmp(name, "options_", 8), music = opt && !strcmp(name + 8, &GO_MUSIC[8]);
+	if (opt && g_go.lv_on && !strcmp(name + 8, &GO_DIALOG[8])) { /* SOMVR_LOAD_VOICES: its value kept, held during a load */
 		go_setf(&g_go.lv_game, v);
 		atomic_store_explicit(&g_go.lv_snd, (uintptr_t)snd, memory_order_relaxed);
 		atomic_store_explicit(&g_go.lv_have, 1, memory_order_release);
@@ -343,7 +344,7 @@ static void go_tut_props(uintptr_t rec, const char *why)
 	g_go.tut_seen[n] = rec, atomic_store(&g_go.ntut_seen, n + 1);
 	go_rec_name(rec, nm, sizeof nm);
 	co_props(rec, s, sizeof s, NULL, 0);
-	logf_("HINTS tutorial record %#lx '%s' (%s):%s", (unsigned long)rec, nm, why, s);
+	logf_("HINTS tutorial record %#llx '%s' (%s):%s", (unsigned long long)rec, nm, why, s);
 }
 /* build 24, SOMVR_HINTS_KEEP_TUT: 1 = this tutorial passes (its record's name starts with a prefix); its properties
  * logged at its first pass */
@@ -395,8 +396,8 @@ static int go_tut_pauses(uintptr_t rec, uintptr_t *page)
 	}
 	if (!g_go.pause_logged) /* the game thread only */
 		g_go.pause_logged = 1,
-		logf_("HINTS the pausing tutorial's page field: hash %08x (schema %#lx, +0x78 %d: %s, index %u) - a tutorial "
-		      "with it set pauses the game (SOMVR_HINTS_PAUSING)", h, (unsigned long)sch, fast,
+		logf_("HINTS the pausing tutorial's page field: hash %08x (schema %#llx, +0x78 %d: %s, index %u) - a tutorial "
+		      "with it set pauses the game (SOMVR_HINTS_PAUSING)", h, (unsigned long long)sch, fast,
 		      fast > 1 ? "by index" : "by hash", idx);
 	return a && peek(a, page, 8) && *page ? 1 : 0;
 }
@@ -414,6 +415,7 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 	}
 	int mode = atomic_load_explicit(&g_go.hint_mode, memory_order_relaxed);
 	int drop = ok && show && mode == GO_HINTS_OFF && ev != GO_EV_PROMPT;
+	int gp = ok && show && ev == GO_EV_PROMPT && atomic_load_explicit(&g_gp_off, memory_order_relaxed); /* build 36 */
 	/* somvr_collect_game.c: SOMVR_HINTS_KEEP's hints pass (the collectibles' wraith-vision tutorial) */
 	int kept = drop && ev == GO_EV_HINT && co_hint_keep(rec);
 	/* build 27c: SOMVR_HINTS_PAUSING - a tutorial the game pauses for passes (its page, its text) */
@@ -423,7 +425,9 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 		kept = 2, atomic_fetch_add(&g_go.n_tut_paused, 1), go_tut_props(rec, "pauses the game");
 	if (drop && ev == GO_EV_TUTORIAL && !kept && g_go.ntut_keep) /* build 24: SOMVR_HINTS_KEEP_TUT */
 		kept = go_tut_keep(rec);
-	drop = drop && !kept;
+	drop = (drop && !kept) || gp;
+	if (gp)
+		gp_count(GP_PART_BEHAVIOUR);
 	if (drop && ev == GO_EV_TUTORIAL) /* build 27: a pause right after it = this tutorial's (somvr_session_game.c) */
 		go_rec_name(rec, g_ss_tut_nm, sizeof g_ss_tut_nm), g_ss_tut_t = mono(), go_tut_props(rec, "dropped");
 	if (pauses) /* build 27c: and its pause seen (or not) after it */
@@ -439,10 +443,11 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 			snprintf(nm, sizeof nm, "%s", co_hint_key(rec));
 		char pg[96] = "";
 		if (pauses)
-			snprintf(pg, sizeof pg, ": kept (it pauses the game: SOMVR_HINTS_PAUSING; its page %#lx)", (unsigned long)page);
-		logf_("HINTS %s #%llu t=%.3f: %s '%s' (record %#lx)%s", g_go_ev_name[ev], (unsigned long long)n, mono(),
-		      !ok ? "unreadable" : show ? "show" : "hide", nm, (unsigned long)rec,
-		      drop ? ": dropped (SOMVR_HINTS=off: what the game's Display Combat Hints off does)"
+			snprintf(pg, sizeof pg, ": kept (it pauses the game: SOMVR_HINTS_PAUSING; its page %#llx)", (unsigned long long)page);
+		logf_("HINTS %s #%llu t=%.3f: %s '%s' (record %#llx)%s", g_go_ev_name[ev], (unsigned long long)n, mono(),
+		      !ok ? "unreadable" : show ? "show" : "hide", nm, (unsigned long long)rec,
+		      gp ? ": dropped (SOMVR_GAME_PROMPTS=off)"
+		      : drop ? ": dropped (SOMVR_HINTS=off: what the game's Display Combat Hints off does)"
 		      : kept == 2 ? pg
 		      : kept ? (ev == GO_EV_TUTORIAL ? ": kept (SOMVR_HINTS_KEEP_TUT)" : ": kept (SOMVR_HINTS_KEEP)") : ": passed on");
 	}
@@ -778,10 +783,10 @@ static int go_slot(const struct site_spec *s, void *fn, uintptr_t *orig)
 	char err[200] = "";
 	*orig = s->target;
 	if (write_code(s->addr, &fn, 8, err, sizeof err) != 0) {
-		logf_("HOOK %s SKIPPED %#lx: write failed: %s", s->name, (unsigned long)s->addr, err);
+		logf_("HOOK %s SKIPPED %#llx: write failed: %s", s->name, (unsigned long long)s->addr, err);
 		return 0;
 	}
-	logf_("HOOK %s ok slot %#lx orig=%#lx now=%p", s->name, (unsigned long)s->addr, (unsigned long)s->target, fn);
+	logf_("HOOK %s ok slot %#llx orig=%#llx now=%p", s->name, (unsigned long long)s->addr, (unsigned long long)s->target, fn);
 	return 1;
 }
 
@@ -849,8 +854,8 @@ static void go_start(const struct site_spec *sites, int *bad)
 	for (int i = 0; i < GOS_N; i++) {
 		ok[i] = check_site(&sites[i], why, sizeof why) == 0;
 		if (!ok[i])
-			logf_("GAMEOPTS site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
-			      (unsigned long)sites[i].target, why);
+			logf_("GAMEOPTS site %s %#llx -> %#llx MISMATCH: %s", sites[i].name, (unsigned long long)sites[i].addr,
+			      (unsigned long long)sites[i].target, why);
 	}
 	g_go.ok_apply = ok[GOS_APPLY], g_go.ok_opts = ok[GOS_OPTIONS], g_go.ok_name = ok[GOS_RECNAME];
 	if ((g_go.mu_want || g_go.lv_want) && ok[GOS_RTPC])

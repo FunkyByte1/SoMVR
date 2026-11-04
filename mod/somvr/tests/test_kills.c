@@ -19,12 +19,12 @@ static int g_fail, g_n;
     } while (0)
 
 static const somvr_kl_row g_rows[] = {
-    {"AI_F_cut", NULL, SOMVR_KL_FRONT, SOMVR_KL_CUT | SOMVR_KL_OVER | SOMVR_KL_RISE, SOMVR_KL_BODY, SOMVR_KL_FIGHT, 0, 0, 2.0f},
-    {"AI_F_stab", NULL, SOMVR_KL_FRONT, SOMVR_KL_STAB, SOMVR_KL_BODY, SOMVR_KL_FIGHT, 0, 1.2f, 0},
-    {"AI_F_sever", NULL, SOMVR_KL_FRONT, SOMVR_KL_CUT, SOMVR_KL_NECK, SOMVR_KL_FIGHT, 1, 0, 0},
-    {"AI_B_any", NULL, SOMVR_KL_BACK, SOMVR_KL_ANYKIND, SOMVR_KL_ANYPART, SOMVR_KL_FIGHT, 0, 0, 0},
-    {"AI_B_sneak", NULL, SOMVR_KL_BACK, SOMVR_KL_ANYKIND, SOMVR_KL_ANYPART, SOMVR_KL_UNAWARE, 0, 0, 0},
-    {"AI_B_sneak2", NULL, SOMVR_KL_BACK, SOMVR_KL_ANYKIND, SOMVR_KL_ANYPART, SOMVR_KL_UNAWARE, 0, 0, 0},
+    {"AI_F_cut", NULL, SOMVR_KL_FRONT, SOMVR_KL_CUT | SOMVR_KL_OVER | SOMVR_KL_RISE, SOMVR_KL_BODY, SOMVR_KL_FIGHT, 0, 0, 2.0f, 0},
+    {"AI_F_stab", NULL, SOMVR_KL_FRONT, SOMVR_KL_STAB, SOMVR_KL_BODY, SOMVR_KL_FIGHT, 0, 1.2f, 0, 0},
+    {"AI_F_sever", NULL, SOMVR_KL_FRONT, SOMVR_KL_CUT, SOMVR_KL_NECK, SOMVR_KL_FIGHT, 1, 0, 0, 0},
+    {"AI_B_any", NULL, SOMVR_KL_BACK, SOMVR_KL_ANYKIND, SOMVR_KL_ANYPART, SOMVR_KL_FIGHT, 0, 0, 0, 0},
+    {"AI_B_sneak", NULL, SOMVR_KL_BACK, SOMVR_KL_ANYKIND, SOMVR_KL_ANYPART, SOMVR_KL_UNAWARE, 0, 0, 0, 0},
+    {"AI_B_sneak2", NULL, SOMVR_KL_BACK, SOMVR_KL_ANYKIND, SOMVR_KL_ANYPART, SOMVR_KL_UNAWARE, 0, 0, 0, 0},
 };
 #define NR ((int)(sizeof g_rows / sizeof g_rows[0]))
 
@@ -99,11 +99,45 @@ static void test_align(void)
               isnan(somvr_kl_death_at(&g_rows[3], 0.1f)), "the death's moment");
 }
 
+/* build 36 (SOMVR_KILLS_QUICK): the session's three late deaths (11-03): 'F' and 'F5' did not play (the head 6.1 and 0.0 cm
+ * down in 0.8 s: dead at 0.81 / 0.80 s - build 31's stall rule), 'B4' walked 5 s (its moment at 5.01 s); 'F9' fell at once
+ * (50 cm by 0.14 s) and plays on */
+static void test_quick(void)
+{
+    somvr_kl_quick q = {0.15f, 3.0f, 0.6f, 10.0f, 1.5f, 8.0f};
+    CHECK(somvr_kl_quick_why(&q, 0.10, 1, 0.0f, 0.0f, 0.0f) == SOMVR_KLQ_GO, "0.10 s, still: not yet");
+    CHECK(somvr_kl_quick_why(&q, 0.15, 1, 0.4f, 0.0f, 0.0f) == SOMVR_KLQ_STILL, "0.15 s, the pose still (F5's): the death now");
+    CHECK(somvr_kl_quick_why(&q, 0.15, 0, 0.0f, 0.0f, 0.0f) == SOMVR_KLQ_UNSEEN, "0.15 s, no skeleton: the death now");
+    CHECK(somvr_kl_quick_why(&q, 0.15, 1, 8.0f, 2.0f, 0.0f) == SOMVR_KLQ_GO, "0.15 s, the pose moving: on");
+    CHECK(somvr_kl_quick_why(&q, 0.60, 1, 20.0f, 4.0f, 0.0f) == SOMVR_KLQ_NOFALL, "0.6 s, moving but the head up (B4's walk): the death");
+    CHECK(somvr_kl_quick_why(&q, 0.60, 1, 30.0f, 22.0f, 0.0f) == SOMVR_KLQ_GO, "0.6 s, falling: on");
+    CHECK(somvr_kl_quick_why(&q, 1.50, 1, 60.0f, 50.0f, 0.0f) == SOMVR_KLQ_LATE, "1.5 s: the death whatever it shows");
+    CHECK(somvr_kl_quick_why(&q, 0.14, 1, 50.0f, 50.0f, 0.0f) == SOMVR_KLQ_GO, "F9: 50 cm down by 0.14 s - on");
+    somvr_kl_quick off = {0, 0, 0, 0, 0, 0};
+    CHECK(somvr_kl_quick_why(&off, 9.0, 0, 0, 0, 0.0f) == SOMVR_KLQ_GO, "every check off: on");
+    /* boot 20261103-230240: F6 on an orc in a recoil - the pose moving but its head 10 cm up by 0.15 s (its recoil
+     * straightening): not the half; F3's playing half rose 3 cm first, then fell */
+    CHECK(somvr_kl_quick_why(&q, 0.15, 1, 10.0f, 0.0f, 10.0f) == SOMVR_KLQ_RISING, "F6: its head 10 cm up - the death");
+    CHECK(somvr_kl_quick_why(&q, 0.15, 1, 6.4f, 0.0f, 3.0f) == SOMVR_KLQ_GO, "F3: 3 cm up, moving - on");
+    CHECK(somvr_kl_quick_why(&q, 0.70, 1, 104.0f, 72.0f, 3.0f) == SOMVR_KLQ_GO && somvr_kl_quick_why(&q, 0.70, 1, 104.0f, 72.0f, 20.0f) == SOMVR_KLQ_GO,
+          "fallen: a rise after it is the old rules' (pose rising)");
+    /* the pose against the root in the orc's own frame: a turn of the whole orc is no motion, a head dropping is */
+    float a[2][3] = {{0, 0, 10}, {0, 60, 20}}, b[2][3], c[2][3] = {{0, 0, 10}, {0, 45, 30}};
+    float y = 1.0f, s = sinf(y), co = cosf(y);
+    for (int i = 0; i < 2; i++) /* the same pose turned by y: world = R(y) local */
+        b[i][0] = a[i][0] * co + a[i][2] * s, b[i][1] = a[i][1], b[i][2] = -a[i][0] * s + a[i][2] * co;
+    CHECK(somvr_kl_pose_moved(a, 0, b, y, 2) < 1e-3f, "turned whole: 0 (%f)", somvr_kl_pose_moved(a, 0, b, y, 2));
+    CHECK(fabsf(somvr_kl_pose_moved(a, 0, c, 0, 2) - sqrtf(15 * 15 + 10 * 10)) < 1e-3f, "the head 15 down 10 ahead: %f",
+          somvr_kl_pose_moved(a, 0, c, 0, 2));
+    CHECK(!strcmp(somvr_kl_quick_name(SOMVR_KLQ_STILL), "its half not started (the pose still)"), "the names");
+}
+
 int main(void)
 {
     test_side_kind_part();
     test_pick();
     test_align();
+    test_quick();
     printf("test_kills: %d checks, %d failed\n", g_n, g_fail);
     return g_fail != 0;
 }

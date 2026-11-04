@@ -467,3 +467,29 @@ int somvr_bow_string_shown(int mode, int phase) {
     if (phase == SOMVR_BOW_PH_IDLE) return 0; /* the bow away */
     return mode == SOMVR_BOW_SDRAW_ON || (mode == SOMVR_BOW_SDRAW_DRAWN && phase == SOMVR_BOW_PH_DRAW);
 }
+
+/* ---- build 33: the bow's turn, filtered ----------------------------------------------------------------------- */
+sv_quat somvr_bow_qfilter(somvr_bow_qf *f, sv_quat raw, double t, float min_hz, float beta) {
+    if (!finq(raw)) return f->have ? f->q : (sv_quat){0, 0, 0, 1};
+    raw = sv_qnormalize(raw);
+    double dt = t - f->t;
+    if (!f->have || !(min_hz > 0) || !(dt > 0) || dt > 0.1) {
+        f->have = 1, f->t = t, f->q = raw;
+        return raw;
+    }
+    sv_quat a = f->q;
+    float d = a.x * raw.x + a.y * raw.y + a.z * raw.z + a.w * raw.w;
+    if (d < 0) raw = (sv_quat){-raw.x, -raw.y, -raw.z, -raw.w}, d = -d;
+    float ang = 2.0f * acosf(d > 1 ? 1 : d), speed = ang / (float)dt;
+    float fc = min_hz + (beta > 0 ? beta : 0) * speed, k = 1.0f - expf(-6.2831853f * fc * (float)dt);
+    k = k < 0 ? 0 : k > 1 ? 1 : k;
+    sv_quat q;
+    if (d > 0.9995f) { /* nlerp */
+        q = (sv_quat){a.x + k * (raw.x - a.x), a.y + k * (raw.y - a.y), a.z + k * (raw.z - a.z), a.w + k * (raw.w - a.w)};
+    } else {
+        float th = acosf(d), sn = sinf(th), wa = sinf((1 - k) * th) / sn, wb = sinf(k * th) / sn;
+        q = (sv_quat){wa * a.x + wb * raw.x, wa * a.y + wb * raw.y, wa * a.z + wb * raw.z, wa * a.w + wb * raw.w};
+    }
+    f->q = sv_qnormalize(q), f->t = t;
+    return f->q;
+}

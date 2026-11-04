@@ -53,6 +53,8 @@ static struct {
     int lum_slot[HD_NSLOT]; /* that slot's submit read the scene */
     somvr_vh_cfg vc;
     int watch, watch_bad;   /* SOMVR_XR_WATCH=wrist */
+    int watch_raise;        /* build 33: SOMVR_XR_WATCH_LOOK=raise */
+    somvr_vh_face_cfg fc_any, fc_raise; /* build 34 (re-xr-pipeline.md 150): the VR menu's Watch row picks one live */
     somvr_vh_watch_cfg wc;
     somvr_vh_face_cfg fc;
     somvr_vh_face fs;
@@ -94,6 +96,8 @@ static struct {
     int have_e;
     uint64_t n_frames, n_drawn, n_noentry, n_shown_game, n_occ;
     uint64_t n_ghost;       /* build 13: frames drawn with a ghost (SOMVR_HANDS_SURFACE) */
+    uint64_t n_wraith;      /* build 36: frames drawn as wraith hands (the entry's wraith > 0, SOMVR_HANDS_WRAITH) */
+    int wraith_was;         /* the last frame's: 0 plain, 1 turning, 2 full (the lines) */
     int ghost_was;          /* the last frame's ghosts (bit per hand: the on/off lines) */
     uint64_t n_arrow;       /* build 16: frames drawn with the bow's arrow (vrhands v4) */
     int arrow_was;
@@ -165,6 +169,11 @@ static void vh_config(void) {
     VH.watch_bad = p && *p && !VH.watch && strcmp(p, "old");
     somvr_vh_watch_cfg_default(&VH.wc);
     somvr_vh_face_cfg_default(&VH.fc);
+    p = getenv("SOMVR_XR_WATCH_LOOK"); /* build 33 (re-xr-pipeline.md 146): raise = shown only while turned to read it */
+    VH.watch_raise = p && !strcmp(p, "raise");
+    if (p && *p && !VH.watch_raise && strcmp(p, "any")) VH.watch_bad = 1;
+    if (VH.watch_raise) somvr_vh_face_cfg_raise(&VH.fc);
+    somvr_vh_face_cfg_default(&VH.fc_any), somvr_vh_face_cfg_raise(&VH.fc_raise); /* build 34 */
     p = getenv("SOMVR_XR_WATCH_AT");
     float a, b;
     if (p && *p) {
@@ -279,7 +288,7 @@ static void vh_setup(void) {
     vh_destroy();
     vh_config();
     VH.n_frames = VH.n_drawn = VH.n_noentry = VH.n_shown_game = VH.n_occ = 0, VH.lines = 0, VH.have_e = 0;
-    VH.n_ghost = 0, VH.ghost_was = 0, VH.n_arrow = 0, VH.arrow_was = 0, VH.n_string = 0, VH.string_was = 0;
+    VH.n_ghost = 0, VH.ghost_was = 0, VH.n_wraith = 0, VH.wraith_was = 0, VH.n_arrow = 0, VH.arrow_was = 0, VH.n_string = 0, VH.string_was = 0;
     VH.n_dused = VH.n_dnone = VH.n_dnext = 0, VH.dlines = 0;
     memset(&VH.fs, 0, sizeof VH.fs);
     if (VH.bad) lg("xr: hands: SOMVR_XR_HANDS=%s is not on or off: on", getenv("SOMVR_XR_HANDS"));
@@ -296,8 +305,8 @@ static void vh_setup(void) {
     if (!VH.model_ok) VH.watch = VH.panel = 0;
     if (VH.watch)
         lg("xr: hands: the watch on the back of the wrist (%.1f cm toward the elbow from the wrist joint, %.1f cm above "
-           "the skin; shown after %d frames within %.0f deg, hidden after %d beyond %.0f deg)", 100 * VH.wc.back_m,
-           100 * VH.wc.gap_m, VH.fc.hold_on, acosf(VH.fc.face_on) * 57.29578f, VH.fc.hold_off,
+           "the skin; SOMVR_XR_WATCH_LOOK=%s: shown after %d frames within %.0f deg, hidden after %d beyond %.0f deg)",
+           100 * VH.wc.back_m, 100 * VH.wc.gap_m, VH.watch_raise ? "raise" : "any", VH.fc.hold_on, acosf(VH.fc.face_on) * 57.29578f, VH.fc.hold_off,
            acosf(VH.fc.face_off) * 57.29578f);
     if (VH.panel)
         lg("xr: hands: the wrist panel %.1f cm off the palm's grip (the hand reaches %.1f cm out of it, + %.1f cm), its "
@@ -340,7 +349,9 @@ static int vh_watch_pose(int h, const somvr_posef *grip, somvr_posef *face) {
 }
 /* ... shown this frame (the debounced facing); was = 0 after a frame without a pose */
 static int vh_watch_facing(const somvr_posef *face, const float eye[3]) {
-    return somvr_vh_face_step(&VH.fs, &VH.fc, face, eye);
+    /* build 34 (re-xr-pipeline.md 150): with the VR menu its Watch row (XR_WATCH_LOOK: Always / Raised) decides, live */
+    const somvr_vh_face_cfg *c = VM.obj ? (VM.set.watch_raise ? &VH.fc_raise : &VH.fc_any) : &VH.fc;
+    return somvr_vh_face_step(&VH.fs, c, face, eye);
 }
 static void vh_watch_reset(void) { memset(&VH.fs, 0, sizeof VH.fs); }
 static int vh_watch_on(void) { return VH.watch; }
@@ -971,20 +982,26 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     VH.ghost_was = ghosts;
     VH.n_ghost += ghosts != 0;
     int arrow = !own && e.arrow_len > 0.05f; /* build 16 (v4): the bow's arrow in the string hand or on the string */
+    int outline = arrow && e.arrow_glow >= 2.0f; /* build 33: SOMVR_FINISHER's sword outline in the arrow's slot */
     if (arrow) { /* (its nock and vanes at the cheek when drawn: faded within 6..16 cm of the eyes) */
         somvr_vh_vert *av = (somvr_vh_vert *)(void *)hd_slot_arrow(&VH.hc, s);
-        somvr_vh_arrow(&e.arrow, e.arrow_len, av);
+        if (outline)
+            somvr_vh_outline(&e.arrow, e.arrow_len, av);
+        else
+            somvr_vh_arrow(&e.arrow, e.arrow_len, av);
         somvr_vh_arrow_fade(av, SOMVR_VH_ARROW_NV, rec->eye[0].pose.p, rec->eye[1].pose.p, 0.06f, 0.16f);
     }
     if (!own && arrow != VH.arrow_was && VH.lines++ < 200) /* (the loading space's own frames have none: not counted) */
-        lg("xr: hands: frame %llu: the arrow %s", (unsigned long long)rec->frame, arrow ? "drawn" : "gone");
+        lg("xr: hands: frame %llu: the %s %s", (unsigned long long)rec->frame, outline ? "sword outline" : "arrow",
+           arrow ? "drawn" : "gone");
     if (!own) VH.arrow_was = arrow;
     VH.n_arrow += arrow;
     int string = !own && e.string_r > 0.0002f; /* build 18 (v5): the bow's string, our own (seen from both sides) */
     if (string) { /* (drawn back to the cheek: faded near the eyes as the arrow) */
         somvr_vh_vert *sv = (somvr_vh_vert *)(void *)hd_slot_string(&VH.hc, s);
         somvr_vh_string((const float(*)[3])e.string, e.string_r, sv);
-        somvr_vh_arrow_fade(sv, SOMVR_VH_STRING_NV, rec->eye[0].pose.p, rec->eye[1].pose.p, 0.06f, 0.16f);
+        /* build 33 (the 11-03 mark 15: the string too close to the face): gone within 10 cm of an eye, full from 22 cm */
+        somvr_vh_arrow_fade(sv, SOMVR_VH_STRING_NV, rec->eye[0].pose.p, rec->eye[1].pose.p, 0.10f, 0.22f);
     }
     if (!own && string != VH.string_was && VH.lines++ < 200)
         lg("xr: hands: frame %llu: the string %s (%.1f mm)", (unsigned long long)rec->frame, string ? "drawn" : "gone",
@@ -1010,7 +1027,13 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     fr.opacity = 1;
     fr.ghost_a[0] = ghost_a[0], fr.ghost_a[1] = ghost_a[1];
     fr.ghost_base[0] = 0.30f, fr.ghost_base[1] = 0.58f, fr.ghost_base[2] = 1.0f; /* the wraith's blue */
-    if (arrow) { /* the wraith bow's arrow: a pale blue light, brighter on the string */
+    if (outline) { /* build 33: the finisher's sword outline - the wraith's blue, translucent (arrow_glow 2 + its level) */
+        float g = e.arrow_glow - 2.0f;
+        g = g > 1 ? 1 : g < 0 ? 0 : g;
+        /* (a deeper blue and fainter than the wraith's: boot 122204's 0.30 .. 0.55 at 0.30/0.58/1.0 read as a white,
+         * solid blade - the outline is a guide, the sword the player's) */
+        fr.arrow_a = 0.22f + 0.20f * g, fr.arrow_base[0] = 0.14f, fr.arrow_base[1] = 0.36f, fr.arrow_base[2] = 1.0f;
+    } else if (arrow) { /* the wraith bow's arrow: a pale blue light, brighter on the string */
         float g = e.arrow_glow > 1 ? 1 : e.arrow_glow < 0 ? 0 : e.arrow_glow, k = 0.7f + 0.3f * g;
         fr.arrow_a = 1, fr.arrow_base[0] = 0.62f * k, fr.arrow_base[1] = 0.82f * k, fr.arrow_base[2] = 1.0f * k;
     }
@@ -1022,6 +1045,23 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         fr.base[0] = 0.13f, fr.base[1] = 0.085f, fr.base[2] = 0.06f, fr.spec = 0.10f;
     float light = own ? VH_SPACE_LIGHT : VH.auto_light && VH.lum_have ? VH.lum_light : VH.light;
     fr.key = 0.9f * light, fr.ambient = 0.45f * light, fr.rim = 0.25f;
+    /* build 36 (som-b36-polish, re-xr-pipeline.md 167.3; SOMVR_HANDS_WRAITH): the wraith vision's hands, by the entry's
+     * amount (eased in the preload): the wraith world's pale blue, see-through (the opacity down to 0.5), the key light
+     * low and an even glow, the edge bright (a strong rim: hands.frag adds base x rim in colour only, so the edge glows
+     * while the middle stays faint), no sheen. The arrow, the string and the surface ghosts keep their own looks */
+    float wr = !own && e.wraith > 0.002f ? (e.wraith > 1 ? 1 : e.wraith) : 0;
+    if (wr > 0) {
+        somvr_vh_look lk = {{fr.base[0], fr.base[1], fr.base[2]}, fr.opacity, fr.key, fr.ambient, fr.rim, fr.spec};
+        somvr_vh_wraith_look(&lk, wr);
+        memcpy(fr.base, lk.base, sizeof fr.base);
+        fr.opacity = lk.opacity, fr.key = lk.key, fr.ambient = lk.ambient, fr.rim = lk.rim, fr.spec = lk.spec;
+    }
+    int wst = wr <= 0 ? 0 : wr < 0.999f ? 1 : 2;
+    if (!own && wst != VH.wraith_was && (wst != 1 || VH.wraith_was == 0) && VH.lines++ < 200)
+        lg("xr: hands: frame %llu: wraith hands %s (amount %.2f: opacity %.2f, rim %.2f)", (unsigned long long)rec->frame,
+           wst == 0 ? "gone" : wst == 1 ? "fading" : "full", (double)wr, (double)fr.opacity, (double)fr.rim);
+    if (!own) VH.wraith_was = wst;
+    VH.n_wraith += wr > 0;
     /* the image: acquire, draw, submit, release */
     XrSwapchainImageAcquireInfo ai = {.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     XrSwapchainImageWaitInfo wi = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
@@ -1144,6 +1184,8 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
            e.curl[1][4], e.flags, (unsigned long long)VH.n_drawn, (unsigned long long)VH.n_frames,
            (unsigned long long)VH.n_noentry, (unsigned long long)VH.n_shown_game, (unsigned long long)VH.n_ghost,
            (unsigned long long)VH.n_arrow, (unsigned long long)VH.n_string);
+    if (VH.n_wraith && VH.n_drawn % 1800 == 0)
+        lg("xr: hands: wraith hands in %llu frames (build 36)", (unsigned long long)VH.n_wraith);
 }
 
 static void vh_frame(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2], xr_comp *c,

@@ -182,6 +182,27 @@ static void test_trip(void)
     CHECK(somvr_pr_is_wet("SON_Day03_Rain") && somvr_pr_is_wet("Storm_02") && !somvr_pr_is_wet("SON_Day03") &&
               !somvr_pr_is_wet("DayNoRain") && !somvr_pr_is_wet("") && !somvr_pr_is_wet(NULL),
           "wet weather names");
+    /* build 36 (som-b36-winlooks): SOMVR_PRACTICE_SKY - the overcast day changed only with clear, in the target's region */
+    CHECK(somvr_pr_is_overcast("SON_Day03") && somvr_pr_is_overcast("son_day03") && somvr_pr_is_overcast("Overcast_A") &&
+              somvr_pr_is_overcast("Fog01") && !somvr_pr_is_overcast("SON_Day03_Rain") && !somvr_pr_is_overcast("SON_Day01") &&
+              !somvr_pr_is_overcast("SON_Day02") && !somvr_pr_is_overcast("") && !somvr_pr_is_overcast(NULL),
+          "overcast weather names");
+    CHECK(!somvr_pr_sky_change("SON_Day03", SOMVR_PRSKY_DRY, "SON_Day02") &&
+              somvr_pr_sky_change("SON_Day03", SOMVR_PRSKY_CLEAR, "TEST_Day_02") &&
+              somvr_pr_sky_change("son_day03", SOMVR_PRSKY_CLEAR, "DayNoRain") &&
+              !somvr_pr_sky_change("UDN_Day03", SOMVR_PRSKY_CLEAR, "TEST_Day_02") &&
+              !somvr_pr_sky_change("Fog01", SOMVR_PRSKY_CLEAR, "TEST_Day_02") &&
+              !somvr_pr_sky_change("SON_", SOMVR_PRSKY_CLEAR, "TEST_Day_02") &&
+              !somvr_pr_sky_change("SON_Day01", SOMVR_PRSKY_CLEAR, "SON_Day02") &&
+              !somvr_pr_sky_change("SON_Day02", SOMVR_PRSKY_CLEAR, "SON_Day02") &&
+              somvr_pr_sky_change("SON_Day03_Rain", SOMVR_PRSKY_DRY, "SON_Day02") &&
+              somvr_pr_sky_change("SON_Day03_Rain", SOMVR_PRSKY_CLEAR, "DayNoRain") &&
+              !somvr_pr_sky_change("son_day02", SOMVR_PRSKY_ALWAYS, "SON_Day02") &&
+              somvr_pr_sky_change("SON_Day01", SOMVR_PRSKY_ALWAYS, "SON_Day03") &&
+              !somvr_pr_sky_change("", SOMVR_PRSKY_ALWAYS, "SON_Day03") &&
+              !somvr_pr_sky_change(NULL, SOMVR_PRSKY_ALWAYS, "SON_Day03") &&
+              !somvr_pr_sky_change("SON_Day03", SOMVR_PRSKY_CLEAR, ""),
+          "the sky's change by SOMVR_PRACTICE_SKY");
     /* 2. the settle is broken by a step away: it starts again */
     g_tp = g_arrived = g_done = g_failed = 0;
     memcpy(pos, g_far, sizeof pos);
@@ -301,18 +322,22 @@ static void test_group(void)
               !somvr_pr_word("group 2", &r) && !somvr_pr_word("group 34", &r) && !somvr_pr_word("group 3 x", &r) &&
               !somvr_pr_word("refill group", &r) && somvr_pr_word("spawn shield", &r) && r.action == SOMVR_PRA_SPAWN &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_GROUP), "group") && !strcmp(somvr_pr_action_name(8), "far") &&
-              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 12,
+              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 13,
           "the group's words");
     /* build 22: the Captain */
     CHECK(somvr_pr_word(" Captain ", &r) && r.action == SOMVR_PRA_CAPTAIN && r.orc == -1 && !r.have_at &&
               !somvr_pr_word("captain shield", &r) && !somvr_pr_word("captain 3", &r) && SOMVR_PRA_CAPTAIN == 10 &&
-              !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(12), "?"),
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(13), "?"),
           "the captain's word");
     /* build 31: "place [TYPE]" (the page's Place orc) */
     CHECK(somvr_pr_word("place", &r) && r.action == SOMVR_PRA_PLACE && r.orc == -1 && somvr_pr_word("place berserker", &r) &&
               r.action == SOMVR_PRA_PLACE && r.orc >= 0 && !somvr_pr_word("place far", &r) && SOMVR_PRA_PLACE == 11 &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_PLACE), "place"),
           "the place word");
+    /* build 36: "charge" (the page's Charge execution) */
+    CHECK(somvr_pr_word("charge", &r) && r.action == SOMVR_PRA_CHARGE && SOMVR_PRA_CHARGE == 12 &&
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_CHARGE), "charge") && !somvr_pr_word("refill charge", &r),
+          "the charge word");
     for (int n = 3; n <= 8; n++) { /* build 27: to 8 */
         somvr_pr_group_orc g[SOMVR_PR_GROUP_MAX];
         int k = somvr_pr_group_plan(n, g), types = 0, front = 0, behind = 0, apart = 1, far_ok = 1;

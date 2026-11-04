@@ -133,10 +133,10 @@ static void tk_pm_own(uintptr_t sc, somvr_loco_in *in, const float root[3], int 
 		if (have_root)
 			memcpy(g_tk.pin, root, sizeof g_tk.pin);
 		if (tk_log_ok())
-			logf_("HOLD talion start t=%.3f frame=%llu: his Combat +0x188 %#lx (record '%s') +0x190 %#lx (record '%s'), "
+			logf_("HOLD talion start t=%.3f frame=%llu: his Combat +0x188 %#llx (record '%s') +0x190 %#llx (record '%s'), "
 			      "his attack '%s'; the game's reasons now %s -> the root held at %.1f,%.1f,%.1f%s", t,
-			      (unsigned long long)rend_frame(), (unsigned long)s[0], rx_rec_name(rec0, n0, sizeof n0),
-			      (unsigned long)s[1], rx_rec_name(rec1, n1, sizeof n1), rx_rec_name(atk, na, sizeof na),
+			      (unsigned long long)rend_frame(), (unsigned long long)s[0], rx_rec_name(rec0, n0, sizeof n0),
+			      (unsigned long long)s[1], rx_rec_name(rec1, n1, sizeof n1), rx_rec_name(atk, na, sizeof na),
 			      somvr_loco_why_str(in->why, w, sizeof w), g_tk.pin[0], g_tk.pin[1], g_tk.pin[2],
 			      g_tk.beast ? " (a beast's: held through its struggle, at most 20 s)" : "");
 	} else {

@@ -103,8 +103,8 @@ static void ss_splash_start(void)
 	char why[512] = "", err[200] = "", nb[64];
 	int ok = check_site(&g_ssp_sites_game[1], why, sizeof why) == 0;
 	if (!ok)
-		logf_("SESSION splash site %s MISMATCH %#lx: %s", g_ssp_sites_game[1].name,
-		      (unsigned long)g_ssp_sites_game[1].addr, why);
+		logf_("SESSION splash site %s MISMATCH %#llx: %s", g_ssp_sites_game[1].name,
+		      (unsigned long long)g_ssp_sites_game[1].addr, why);
 	ok = ok && s->kind == K_CALL && check_site(s, why, sizeof why) == 0;
 	unsigned char *pg = ok ? stub_alloc(s->addr, s->addr, 0x3b0000) : NULL; /* its own page (as MM_CAMQ) */
 	if (ok && !pg)
@@ -120,7 +120,7 @@ static void ss_splash_start(void)
 	g_ssp.orig = s->target; /* (before the write: the call can come any time after it) */
 	int32_t rel = ok ? (int32_t)((int64_t)(uintptr_t)pg - (int64_t)(s->addr + 5)) : 0;
 	if (!ok || write_code(s->addr + 1, &rel, 4, err, sizeof err) != 0) {
-		logf_("HOOK %s SKIPPED %#lx: %s%s", s->name, (unsigned long)s->addr, ok ? "write failed: " : "", ok ? err : why);
+		logf_("HOOK %s SKIPPED %#llx: %s%s", s->name, (unsigned long long)s->addr, ok ? "write failed: " : "", ok ? err : why);
 		logf_("WARN SOMVR_SKIP_SPLASH=1: not hooked: the boot movies play");
 		if (pg)
 			munmap(pg, 4096);
@@ -128,10 +128,10 @@ static void ss_splash_start(void)
 	}
 	g_ssp.installed = 1;
 	hex_of((const unsigned char *)s->addr, 5, nb, sizeof nb);
-	logf_("HOOK %s ok call %#lx target=%#lx now=[%s] via=%#lx (the menu's init without the boot movies)", s->name,
-	      (unsigned long)s->addr, (unsigned long)s->target, nb, (unsigned long)pg);
-	logf_("CONFIG skip_splash=1 (the boot movies are not queued: the no-splash byte %#lx for the menu's init)",
-	      (unsigned long)SS_SPLASH_BYTE);
+	logf_("HOOK %s ok call %#llx target=%#llx now=[%s] via=%#llx (the menu's init without the boot movies)", s->name,
+	      (unsigned long long)(uintptr_t)s->addr, (unsigned long long)(uintptr_t)s->target, nb, (unsigned long long)(uintptr_t)pg);
+	logf_("CONFIG skip_splash=1 (the boot movies are not queued: the no-splash byte %#llx for the menu's init)",
+	      (unsigned long long)(uintptr_t)SS_SPLASH_BYTE);
 }
 
 static const char *ss_ctx_name(int c)
@@ -298,10 +298,10 @@ static size_t ss_state(char *b, size_t cap, uint32_t n, const char *why, const c
 	return u < cap ? u : cap - 1;
 }
 
-static void ss_buzz(float amp, float dur)
+static void ss_buzz(int w) /* build 34: a word in both hands (a both-hands word once) */
 {
-	for (int h = 0; h < 2; h++)
-		in_haptic_event(h, amp, dur, SOMVR_HAP_UI);
+	for (int h = 0; h < (somvr_hx_word_of(w)->both > 0 ? 1 : 2); h++)
+		haptic(h ? SOMVR_HAND_L : SOMVR_HAND_R, w);
 }
 
 /* one mark: the folder, the eyes asked from the layer, state.txt, `want` for the harness, the first buzz */
@@ -344,12 +344,13 @@ static void ss_mark(const char *why, const char *note, double t)
 	size_t n = ss_state(sb, sizeof sb, g_ss.n, why, note, t);
 	snprintf(f, sizeof f, "%s/state.txt", d);
 	int e1 = ss_write_file(f, sb, n);
+	ir_mark(d, name, g_ss.n, t); /* b35, SOMVR_INPUT_REC: the last 30 s of the recording into the folder too */
 	char w[160];
 	int wn = snprintf(w, sizeof w, "%s%s%s\n", why, note && note[0] ? ": " : "", note ? note : "");
 	snprintf(f, sizeof f, "%s/want", d); /* last: the harness serves the folder from here on */
 	int e2 = ss_write_file(f, w, (size_t)(wn > 0 && (size_t)wn < sizeof w ? wn : 0));
 	atomic_store_explicit(&g_ssn.marks, g_ss.n, memory_order_release);
-	ss_buzz(0.6f, 0.06f);
+	ss_buzz(SOMVR_HX_MARK);
 	g_ss.buzz2 = 1, g_ss.buzz1_t = t, g_ss.buzz2_at = t + 2.0;
 	logf_("MARK #%u (%s%s%s) -> %s: state.txt %zu bytes%s%s; the eyes %s; the harness adds the flat picture, the log "
 	      "tails and %.0f s of the headset's microphone",
@@ -379,7 +380,7 @@ static void ss_quit(const char *why, double t)
 	}
 	g_ss.quit_sent = 1;
 	atomic_store_explicit(&g_ssn.quitting, 1, memory_order_release);
-	ss_buzz(0.5f, 0.15f);
+	ss_buzz(SOMVR_HX_QUIT);
 	logf_("QUIT the player asked (%s): %s written; the harness stops the game (its cleanup checks the save)", why,
 	      g_ss.quitf);
 	somvr_end_logs("the player's Quit game"); /* the harness's SIGTERM skips the destructor */
@@ -474,7 +475,7 @@ static void ss_tick(double t)
 		int eyes = g_ss.want_dump && atomic_load_explicit(&g_ssn.dump_done, memory_order_acquire) == g_ss.want_dump;
 		if (eyes || !g_ss.want_dump || t >= g_ss.buzz2_at) {
 			g_ss.buzz2 = 0;
-			ss_buzz(0.6f, 0.06f);
+			ss_buzz(SOMVR_HX_MARK);
 			logf_("MARK #%u: the second buzz %.2f s after the first; the eyes %s", g_ss.n, t - g_ss.buzz1_t,
 			      !g_ss.want_dump ? "were not asked"
 			      : eyes	       ? (atomic_load(&g_ssn.dump_fail) ? "given up by the layer (see xr-layer.log)" : "written")
@@ -507,7 +508,7 @@ static const somvr_input_state *ss_input(const somvr_input_state *raw, int live,
 		ho->presses[1] = co.presses[b];
 	}
 	if (co.ev == SOMVR_CHE_ARMED) {
-		ss_buzz(0.35f, 0.025f);
+		ss_buzz(SOMVR_HX_CLICK);
 	} else if (co.ev == SOMVR_CHE_MARK) {
 		ss_mark("the chord B + Y", "", t);
 	} else if (co.ev == SOMVR_CHE_SHORT || co.ev == SOMVR_CHE_LONG) {

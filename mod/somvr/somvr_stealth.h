@@ -35,7 +35,10 @@ typedef struct {
     int carried;         /* 1: the rule; 0: build 21's (any blade in its body that is no kill is a touch) */
     float own_cm;        /* ... the hand's own push into the body under this since the blade went in = carried (4 cm) */
     /* build 31 (SOMVR_STEALTH_KILL_SLASH; docs/re-xr-pipeline.md 133.6): a full cut (the stroke's heavy tier) into its
-     * back from behind kills too, not only at the neck - the game's silent kill either way */
+     * back from behind kills too, not only at the neck - the game's silent kill either way. Build 36 (=hit, 2; docs 164):
+     * a full cut into an unaware orc that is no thrust is the ordinary hit - it starts the fight (the user's 11-03 mark:
+     * "I didn't actually do the kill ... shouldn't it at least start a combat sequence?"); the thrust and the neck cut
+     * stay the kills */
     int slash;
 } somvr_stl_cfg;
 
@@ -78,6 +81,7 @@ enum {
     SOMVR_STL_AIR,        /* build 21: combat's hit capsule, not the body: nothing */
     SOMVR_STL_CARRIED,    /* build 22 (cfg.carried): in the body, carried in by the walk, the hand not pushing it in: no
                            * damage, no alert (a touch is the hand's own motion) */
+    SOMVR_STL_CUT,        /* build 36 (cfg.slash 2): a full cut into it, no thrust: the ordinary hit (the fight starts) */
     SOMVR_STL_N
 };
 

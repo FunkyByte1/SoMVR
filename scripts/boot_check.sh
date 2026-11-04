@@ -294,6 +294,13 @@ PROBE_LOGF=$(genv SOMVR_PROBE_LOG) || PROBE_LOGF=$RUN/probe.log   # where it loo
 # ---- guards ---------------------------------------------------------------------------------------------------
 user_in_vr() {
   [ "$(cat /proc/1/comm 2>/dev/null)" = systemd ] || { echo "cannot see the host's processes (sandboxed shell?)"; return 0; }
+  # build 35 (the 21:05 race): a user's launcher that is starting holds the slots' solo request as user-session with its
+  # pid (scripts/game_slot.sh gs_user_why): no test game starts, a running one stops
+  local up; up=$(cat /tmp/somvr-slots-solo.lock/pid 2>/dev/null)
+  case $(head -1 /tmp/somvr-slots-solo.lock/owner 2>/dev/null) in user-session|"user-session "*)
+    [ -n "$up" ] && kill -0 "$up" 2>/dev/null &&
+      { echo "the user's VR session is starting or running (the slots' solo request user-session, launcher pid $up)"; return 0; } ;;
+  esac
   ss -xH state established 2>/dev/null | grep -q '/wivrn/comp_ipc' && { echo "a VR app is connected to WiVRn"; return 0; }
   pgrep -x vr-session > /dev/null 2>&1 && { echo "vr-session runs (the user is in VR)"; return 0; }
   local j

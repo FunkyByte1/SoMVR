@@ -164,6 +164,17 @@ static void test_arc(void)
 {
     somvr_jp_cfg c;
     somvr_jp_cfg_default(&c);
+    { /* build 36 (SOMVR_WALK_GROUND): the fall from rest 151 cm over the floor (the session's sky): down, landed, braked */
+        wreset(), ground();
+        somvr_jp s;
+        somvr_jp_init(&s);
+        somvr_jp_start(&s, SOMVR_JPK_JUMP, (sv_vec3){ 0, 151 + 102, 0 }, 0, 0, 2000, (sv_vec3){ 0, 0, 0 }, (sv_vec3){ 0, 0, 0 }, 0);
+        run_out r = run(&c, &s, (sv_vec3){ 0, 151, 0 }, 90, (sv_vec3){ 0, 0, 0 }, 400, NULL);
+        CHECK(r.end == SOMVR_JPE_LANDED && NEAR(r.feet_end, 0, 0.01) && r.apex <= 0.01f && r.min_feet >= -0.01f &&
+                  r.air_s > 0.3f && r.air_s < 0.8f,
+              "b36 the fall from rest, 151 cm: landed (%s) on the floor (%.2f) after %.2f s, never up (%.2f)",
+              somvr_jp_end_name(r.end), r.feet_end, r.air_s, r.apex);
+    }
     CHECK(NEAR(somvr_jp_takeoff(60, 2000), 489.9, 0.1), "take-off for 60 cm at 2000: %.1f", somvr_jp_takeoff(60, 2000));
     CHECK(NEAR(somvr_jp_arc_dy(490, 2000, 0.1f), 39.0, 0.01), "arc piece");
     float hz[2] = { 90, 20 };
@@ -455,6 +466,14 @@ static void test_a(void)
     CHECK(somvr_jp_a_pick(&c, &in) == SOMVR_JPA_CLIMB, "the jump off: the climb's as before");
     c.jump = 0, in.jump = 1, in.ring = 1;
     CHECK(somvr_jp_a_pick(&c, &in) == SOMVR_JPA_VAULT, "the vault alone");
+    /* build 36 (SOMVR_CLIMB_EDGE_LOW): the walk held by the game: the edge first even moving; without descent the jump */
+    somvr_jp_a_in p = { .jump = 1, .vault = 1, .can = 1, .descent = 1, .speed = 230, .pinned = 1 };
+    c.jump = 1;
+    CHECK(somvr_jp_a_pick(&c, &p) == SOMVR_JPA_CLIMB_FIRST, "b36: moving, the walk held: the edge first");
+    p.descent = 0;
+    CHECK(somvr_jp_a_pick(&c, &p) == SOMVR_JPA_JUMP, "b36: the walk held, no descent: the jump");
+    p.descent = 1, p.ring = 1;
+    CHECK(somvr_jp_a_pick(&c, &p) == SOMVR_JPA_VAULT, "b36: the walk held, the vault's ring: the vault");
 }
 
 int main(void)

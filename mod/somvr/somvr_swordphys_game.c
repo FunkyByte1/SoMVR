@@ -106,6 +106,33 @@ static uintptr_t swp_held_orc(uintptr_t *hobj)
 	*hobj = g_swp.hobj;
 	return g_swp.on && (g_swp.st.wound || g_swp.st.pend || g_swp.hit_kind) ? g_swp.c : 0;
 }
+/* build 32 (SOMVR_COMBAT_FORCE; re-xr-pipeline.md 141): the blade's sweep (prev -> b, world cm) across the orc's body -
+ * the flesh's capsules about its skeleton (belly, chest, neck, the head above its node, the legs below the pelvis) - and
+ * not only combat's 35 cm capsule: ct <- where it crossed. 1 = it crossed (or nothing to test: a beast's own bone
+ * capsules, a skeleton not read - combat's capsule stands) */
+static int swp_body_hit(const struct cb_orc *o, const somvr_blade *prev, const somvr_blade *b, sc_contact *ct)
+{
+	somvr_bz_cap cs[SOMVR_BZ_CAPS_ALL];
+	float nd[4][3];
+	if (bz_capsules(o, cs, cb_now()) > 0 || !stl_body(o, nd))
+		return 1;
+	float c0[6][3], c1[6][3], r[6] = { g_swp_bn_r[0], g_swp_bn_r[1], g_swp_bn_r[2], 12.0f, 20.0f };
+	for (int k = 0; k < 3; k++)
+		memcpy(c0[k], nd[k], sizeof c0[k]), memcpy(c1[k], nd[k + 1], sizeof c1[k]);
+	memcpy(c0[3], nd[3], sizeof c0[3]), memcpy(c1[3], nd[3], sizeof c1[3]), c1[3][1] += 15.0f; /* the head */
+	memcpy(c0[4], nd[0], sizeof c0[4]), memcpy(c1[4], nd[0], sizeof c1[4]), c1[4][1] -= 85.0f; /* the legs */
+	sc_contact best;
+	int hit = 0;
+	for (int k = 0; k < 5; k++) {
+		sc_contact c;
+		if (sc_sweep_capsule(prev && prev->valid ? prev : NULL, b, g_cb.cfg.blade_r, c0[k], c1[k], r[k], g_cb.cfg.steps, &c) &&
+		    (!hit || c.u < best.u))
+			best = c, hit = 1;
+	}
+	if (hit)
+		*ct = best;
+	return hit;
+}
 /* swg_arm: no sword in the solved hand, or a surface holds it - the body starts again on the hand */
 static void swp_none(const char *why)
 {
@@ -152,15 +179,12 @@ static int swp_body_now(sv_vec3 shift, swp_body *b)
 	return 1;
 }
 
-/* the haptics of a wound's end */
-static void swp_end_haptic(int why, int two)
+/* the haptics of a wound's end: the tear word (build 34; through 0, drawn out / back 0.17, torn free 1) */
+static void swp_end_haptic(int why)
 {
-	float amp = why == SWP_END_TEAR ? 0.85f : why == SWP_END_THROUGH ? 0.55f : why == SWP_END_OUT || why == SWP_END_BACK ? 0.6f : 0;
-	if (!(amp > 0))
-		return;
-	in_haptic_event(SOMVR_HAND_R, amp, 0.06f, SOMVR_HAP_COMBAT);
-	if (two)
-		in_haptic_event(SOMVR_HAND_L, 0.6f * amp, 0.06f, SOMVR_HAP_COMBAT);
+	float k = why == SWP_END_TEAR ? 1.0f : why == SWP_END_THROUGH ? 0.0f : why == SWP_END_OUT || why == SWP_END_BACK ? 0.17f : -1;
+	if (k >= 0)
+		haptic_k(SOMVR_HAND_R, SOMVR_HX_TEAR, k);
 }
 
 /* swg_arm (SOMVR_SWORD_WEIGHT on, the sword in the solved right hand, no surface holding it): this frame's sword on the
@@ -203,10 +227,10 @@ static int swp_arm(const sa_xf *g, const float q[4], const float axis[3], float 
 		int ok = hb && swp_wound_hit(&g_swp.st, &g_swp.cfg, g_swp.hit_kind, &b);
 		if (!ok) {
 			g_swp.refused++;
-			in_haptic_event(SOMVR_HAND_R, 1.0f, 0.2f, SOMVR_HAP_COMBAT); /* the hit's own pulse after all */
+			haptic_k(SOMVR_HAND_R, swg_hit_word(), 1); /* the hit's own pulse after all */
 		}
 		if (swp_log_ok())
-			logf_("SWORDPHYS t=%.3f hit (%s) orc=%#lx: %s", cb_now(), g_swp_kind_w[g_swp.hit_kind], (unsigned long)g_swp.c,
+			logf_("SWORDPHYS t=%.3f hit (%s) orc=%#llx: %s", cb_now(), g_swp_kind_w[g_swp.hit_kind], (unsigned long long)g_swp.c,
 			      ok ? "waiting for the blade in its body" : !hb ? "refused: its body not read" : "refused");
 		g_swp.hit_kind = 0;
 	}
@@ -225,28 +249,26 @@ static int swp_arm(const sa_xf *g, const float q[4], const float axis[3], float 
 	g_swp_off_rad = stepped ? s->off_rad : 0;
 	if (s->ev & SWP_EV_START) {
 		g_swp.opened++, g_swp.open_t = t, g_swp.open_v = s->in_v, g_swp.open_s = s->s;
-		in_haptic_event(SOMVR_HAND_R, 1.0f, 0.09f, SOMVR_HAP_COMBAT); /* the thud going in */
+		haptic_k(SOMVR_HAND_R, SOMVR_HX_HIT, 1); /* the thud going in (build 34: the left hand by its share) */
 		if (g_swp.dumps > 0) /* tests: the eyes as it goes in and 0.25 s into it */
 			g_swp.dumps--, g_swp.dump_pend = 1, g_swp.dump_t2 = t + 0.25;
-		if (two)
-			in_haptic_event(SOMVR_HAND_L, 0.6f, 0.09f, SOMVR_HAP_COMBAT);
 		if (swp_log_ok())
-			logf_("SWORDPHYS t=%.3f wound open (%s) orc=%#lx: the blade %.0f cm from the grip into its %s at %.1f m/s",
-			      t, g_swp_kind_w[s->wound], (unsigned long)g_swp.c, (double)s->s * 100,
+			logf_("SWORDPHYS t=%.3f wound open (%s) orc=%#llx: the blade %.0f cm from the grip into its %s at %.1f m/s",
+			      t, g_swp_kind_w[s->wound], (unsigned long long)g_swp.c, (double)s->s * 100,
 			      s->link == 0 ? "belly" : s->link == 1 ? "chest" : "neck", (double)s->in_v);
 	}
 	if (s->ev & SWP_EV_END) {
 		if (s->end >= 0 && s->end < SWP_END_N)
 			g_swp.ends[s->end]++;
 		if (had)
-			swp_end_haptic(s->end, two);
+			swp_end_haptic(s->end);
 		if (had && s->end != SWP_END_CANCEL && s->end != SWP_END_MISS) { /* the blood where it came out */
 			float P[3] = { s->end_P[0] * 100, s->end_P[1] * 100, s->end_P[2] * 100 };
 			swp_grip_to_world(P, shift, g_swp.fx_P);
 			g_swp.fx_pend = 1, g_swp.fx_t = t, g_swp.fx_kind = s->end_kind;
 		}
 		if (!had && s->end == SWP_END_MISS) {
-			in_haptic_event(SOMVR_HAND_R, 1.0f, 0.2f, SOMVR_HAP_COMBAT); /* the hit's own pulse after all */
+			haptic_k(SOMVR_HAND_R, swg_hit_word(), 1); /* the hit's own pulse after all */
 			if (swp_log_ok())
 				logf_("SWORDPHYS t=%.3f the blade came within %.1f cm of its body's surface while the hit waited (%s)", t,
 				      (double)-s->pend_pen * 100, s->pend_pen > -1 ? "never" : "-");
@@ -276,10 +298,7 @@ static int swp_arm(const sa_xf *g, const float q[4], const float axis[3], float 
 		g_swp.w_peak_depth = fmaxf(g_swp.w_peak_depth, s->depth), g_swp.w_peak_stretch = fmaxf(g_swp.w_peak_stretch, s->stretch);
 		float v = fabsf(s->slide_v) + s->flow_v;
 		if (t >= g_swp.rum_t) {
-			float amp = v > 0.04f ? 0.25f + 0.5f * fminf(1.0f, v / 1.0f) : 0.12f;
-			in_haptic_event(SOMVR_HAND_R, amp, 0.04f, SOMVR_HAP_COMBAT);
-			if (two)
-				in_haptic_event(SOMVR_HAND_L, 0.6f * amp, 0.04f, SOMVR_HAP_COMBAT);
+			haptic_k(SOMVR_HAND_R, SOMVR_HX_FLESH, v > 0.04f ? 0.34f + 0.66f * fminf(1.0f, v) : 0.0f); /* build 34 */
 			g_swp.rum_t = t + (v > 0.04f ? 0.035 : 0.12);
 		}
 		if (t >= g_swp.hold_line_t && swp_log_ok()) {
@@ -302,6 +321,7 @@ static int swp_arm(const sa_xf *g, const float q[4], const float axis[3], float 
 		return 1; /* (a reset: the sword on the controller this frame) */
 	/* the weapon node as if the grip were the sword's: W' = gm2 (x) gm^-1 (x) W */
 	float qc[4], dq[4], qs[4] = { oq[0], oq[1], oq[2], oq[3] };
+	int fn_over = fn_sword(op, qs); /* build 33, SOMVR_FINISHER: the snapped sword rides the stab's path */
 	memcpy(qc, q, sizeof qc);
 	sv_quat d = sv_qnormalize(sv_qmul(sv_quat_of(qs), sv_qconj(sv_quat_of(qc))));
 	sv_quat_to(d, dq);
@@ -328,6 +348,8 @@ static int swp_arm(const sa_xf *g, const float q[4], const float axis[3], float 
 		/* (free, the turn's lag is the weight itself: no ghost for it - only a held blade's, or a stretch) */
 		float a = s->wound ? fmaxf((st - 6.0f) / 9.0f, (off - 25.0f) / 20.0f) : (st - 6.0f) / 9.0f;
 		g_swp.ghost_a = a > 0 ? 0.35f * fminf(1.0f, a) : 0;
+		if (fn_over) /* build 33: the controller's own hand shown while the finisher guides the sword */
+			g_swp.ghost_a = 0.40f;
 		g_swp.ghosts += g_swp.ghost_a > 0;
 	}
 	return 1;
@@ -337,16 +359,16 @@ static int swp_arm(const sa_xf *g, const float q[4], const float axis[3], float 
 static void swp_hit(const struct cb_orc *o, int kind, double t)
 {
 	if (g_swp.st.wound || g_swp.st.pend || g_swp.hit_kind) {
-		in_haptic_event(SOMVR_HAND_R, 1.0f, 0.2f, SOMVR_HAP_COMBAT);
+		haptic_k(SOMVR_HAND_R, swg_hit_word(), 1);
 		return;
 	}
 	float nd[4][3], rq[4] = { 0, 0, 0, 1 };
 	int skel = stl_body(o, nd) && peek(o->hobj + OBJ_ROT, rq, sizeof rq) && vec_ok(rq, 2.0f);
 	if (!skel) { /* no skeleton (a beast, an unreadable body): the hit as before */
 		g_swp.refused++;
-		in_haptic_event(SOMVR_HAND_R, 1.0f, 0.2f, SOMVR_HAP_COMBAT);
+		haptic_k(SOMVR_HAND_R, swg_hit_word(), 1);
 		if (swp_log_ok())
-			logf_("SWORDPHYS t=%.3f hit (%s) orc=%#lx: no wound (its skeleton not read)", t, g_swp_kind_w[kind], (unsigned long)o->c);
+			logf_("SWORDPHYS t=%.3f hit (%s) orc=%#llx: no wound (its skeleton not read)", t, g_swp_kind_w[kind], (unsigned long long)o->c);
 		return;
 	}
 	memcpy(g_swp.nd, nd, sizeof nd), memcpy(g_swp.bq, rq, sizeof rq);

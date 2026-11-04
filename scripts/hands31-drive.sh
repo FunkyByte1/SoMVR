@@ -165,6 +165,66 @@ if has chord; then
   fi
   endr
 fi
+# build 33 (som-b33-knife): the knife from the left hip by the left hand (held while the grip is; let go = back on the
+# belt), with the sword out too; the shove from 30 cm further; a sword-out reach for a grab that is no shove
+KHIP="hands test L -18 -62 -5 0 0 0"   # the left hand at the left hip (the slot: -18,-62,-5 from the head)
+KUP="hands test L -20 -25 40 -60 0 0"  # the knife held up in front, the blade forward
+if has knife; then
+  echo "== knife"; w "$LREST" 0.8
+  for pass in alone sword; do
+    if [ "$pass" = alone ]; then w "$SLOT" 0.7; w "hands squeeze R 1" 0.6; w "hands squeeze R 0" 0.6; w "$REST" 0.6   # the sword away
+    else echo "== knife with the sword out"; draw_slot; w "$REST" 0.6; fi
+    k0=$(cnt '^SLOTS t=.*dagger'); w "$KHIP" 1.0; w "hands squeeze L 1" 1.2
+    last '^SLOTS t=.*dagger' 3 260
+    w "$KUP" 1.2; dp "knife-$pass-held"; sleep 0.8; dp "knife-$pass-held2"
+    w "hands squeeze L 0" 1.2; last '^SLOTS t=.*dagger' 2 260   # let go away from the belt: back on it
+    dp "knife-$pass-back"
+    w "$KHIP" 1.0; w "hands squeeze L 1" 1.2; w "$KUP" 1.0; w "$KHIP" 1.0; w "hands squeeze L 0" 1.2  # drawn, carried back, let go there
+    last '^SLOTS t=.*dagger' 2 260
+    echo "$(date +%T) KNIFE $pass: dagger lines +$(( $(cnt '^SLOTS t=.*dagger') - k0 ))"
+    w "$LREST" 0.8
+  done
+fi
+if has srange; then   # the shove from the stand-off with the arm out 62 cm (the palm ~60 cm from its axis: past build 31's 50)
+  round srange; sneak_to; w "execute face" 0.6; w "$LBACK" 0.4
+  n0=$(cnt '^PARRY shove orc='); w "hands swing L 0 -25 62 0 0 0 130" 0.6
+  [ "$(cnt '^PARRY shove orc=')" -gt "$n0" ] && { last '^PARRY shove orc=' 1 330; dp srange-a; sleep 0.6; dp srange-b; reel 8; } || { echo "$(date +%T) the push met nothing"; last '^PARRY push' 2 330; }
+  endr
+fi
+if has sgrab; then    # the sword out, the left hand reaches for the orc at ~2.4 m/s and closes: a grab, no shove
+  round sgrab; sneak_to; w "execute face" 0.6; w "$LBACK" 0.4
+  n0=$(cnt '^PARRY shove orc='); g0=$(cnt '^VERBS t=.* grab: the left hand')
+  w "hands swing L 0 -20 60 0 0 0 230" 0.7; w "hands squeeze L 1" 1.0   # (0.7 s: one word at a time)
+  echo "$(date +%T) SGRAB: shoves +$(( $(cnt '^PARRY shove orc=') - n0 )), grabs +$(( $(cnt '^VERBS t=.* grab: the left hand') - g0 ))"
+  last '^PARRY push t=.*grab cue' 1 260; last '^VERBS t=.* grab: the left hand' 1 260; dp sgrab-held
+  endr
+fi
+# build 33 (som-b33-herbs): the herb near the practice meadow ('Collectible_Flower_O' at 31314 2190 -25167): Talion hurt,
+# taken there, crouched, the left hand onto the herb (the cue line's herb and palm: the eye's correction), gripped, to the
+# mouth (the whistle's pose) - eaten: the game's pick; the health before/after
+HERB_AT=${H31_HERB_AT:-31314 2190 -25117}
+if has herb; then
+  echo "== herb"; w "practice hurt 50" 1.5; w "practice go $HERB_AT" 1; waitfor '^PRACTICE t=.*(arrived|there)' 15; sleep 2
+  x "head 0 -60 0 pitch -60 s 0.5" 1.5; w "$LREST" 1.5   # crouched, looking down at the herb
+  waitfor '^HERB t=.* cue: ' 4; c=$(last '^HERB t=.* cue: ' 1 400); echo "$c"
+  if [ -z "$c" ]; then echo "$(date +%T) no herb cue"; last '^USE t=.*pick prompt' 2 200
+  else
+    for k in 1 2 3; do
+      H=$(echo "$c" | sed -E 's/.*the herb ([-+][0-9.]+) right ([-+][0-9.]+) up ([-+][0-9.]+) ahead.*/\1 \2 \3/' | tr -d +)
+      P=$(echo "$c" | sed -E 's/.*the palm ([-+][0-9.]+) ([-+][0-9.]+) ([-+][0-9.]+).*/\1 \2 \3/' | tr -d +)
+      echo "$c" | grep -q 'in reach' && break
+      set -- $H $P; [ $k = 1 ] && { X=$1; Y=$2; Z=$3; } || { X=$(printf '%.0f' "$(echo "$X + $1 - $4" | bc)"); Y=$(printf '%.0f' "$(echo "$Y + $2 - $5" | bc)"); Z=$(printf '%.0f' "$(echo "$Z + $3 - $6" | bc)"); }
+      X=$(printf '%.0f' "$X"); Y=$(printf '%.0f' "$Y"); Z=$(printf '%.0f' "$Z")
+      w "hands test L $X $Y $Z 0 0 0" 1.5; waitfor '^HERB t=.* cue: ' 3; c=$(last '^HERB t=.* cue: ' 1 400); echo "$c"
+    done
+    dp herb-reach; t0=$(cnt '^HERB t=.* taken'); w "hands squeeze L 1" 0.8
+    [ "$(cnt '^HERB t=.* taken')" -gt "$t0" ] && last '^HERB t=.* taken' 1 220 || echo "$(date +%T) not taken"
+    dp herb-held; x "head 0 0 0 s 0.5" 1.0; w "hands test L 0 -9 9 0 0 0" 0.4
+    for k in 1 2 3; do echo dump > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"; sleep 0.35; done
+    waitfor "^HERB t=.* after the game's pick" 9; grep -E "^HERB t=.* (eaten|after the game's pick|dropped)" "$R/somvr.log" | tail -3 | cut -c1-260
+    last '^USE t=.*pick prompt down' 1 200; w "hands squeeze L 0" 0.5; w "$LREST" 0.5; dp herb-after
+  fi
+fi
 if has phase; then   # (build 31, item 4's test: does the wraith phase's way - the stock evade, Combat+0x56c 0 - pass an orc?)
   w "practice spawn infantry" 3
   for N in 1 2 3; do

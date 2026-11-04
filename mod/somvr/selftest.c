@@ -143,6 +143,8 @@
  */
 #define SOMVR_SELFTEST
 #include "somvr.c"
+#include "tests/inrec_replay.h" /* b35: the recordings read back */
+#define HXL(w, k) somvr_hx_level((w), (k), 1) /* build 34: a word's level (somvr_haptics.h) */
 #include <openxr/openxr.h>
 #include <sys/wait.h>
 
@@ -858,6 +860,45 @@ static int frame(void)
 	return g_h4_calls;
 }
 
+/* The trigger file's handshake with the writer thread (docs/re-xr-pipeline.md 161). writer_main polls the file after each
+ * 250 ms nanosleep; set_trigger used to sleep 600 ms (two polls) per word, 24 s of the run. This program's nanosleep
+ * (it is the one the selftest's somvr.c calls: an executable's definition binds before libc's) lets that one wait - the
+ * thread named somvr-log, 250 ms - end at set_trigger's kick, and counts the polls: set_trigger returns when a whole
+ * poll has run after its write (the word acted on, as before; under load it waits for it, where 600 ms was a guess).
+ * Every other sleep, and the writer's wait when nobody kicks, is the libc one's. */
+static pthread_mutex_t g_trg_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_trg_cv = PTHREAD_COND_INITIALIZER;
+static uint64_t g_trg_began, g_trg_ended; /* writer polls begun / finished (the poll began n is finished at ended = n) */
+static int g_trg_kick;
+
+static int st_sleep(const struct timespec *req, struct timespec *rem)
+{
+	int e = clock_nanosleep(CLOCK_MONOTONIC, 0, req, rem);
+	return e ? (errno = e, -1) : 0;
+}
+
+int nanosleep(const struct timespec *req, struct timespec *rem)
+{
+	char name[17] = "";
+	if (!req || req->tv_sec != 0 || req->tv_nsec != 250 * 1000 * 1000 || prctl(PR_GET_NAME, name, 0, 0, 0) ||
+	    strcmp(name, "somvr-log"))
+		return st_sleep(req, rem);
+	struct timespec end;
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	end.tv_nsec += req->tv_nsec;
+	if (end.tv_nsec >= 1000000000L)
+		end.tv_sec++, end.tv_nsec -= 1000000000L;
+	pthread_mutex_lock(&g_trg_mu);
+	g_trg_ended = g_trg_began; /* the poll before this wait is done */
+	pthread_cond_broadcast(&g_trg_cv);
+	while (!g_trg_kick && pthread_cond_clockwait(&g_trg_cv, &g_trg_mu, CLOCK_MONOTONIC, &end) != ETIMEDOUT) {
+	}
+	g_trg_kick = 0;
+	g_trg_began++; /* the next poll begins */
+	pthread_mutex_unlock(&g_trg_mu);
+	return 0;
+}
+
 static void set_trigger(const char *path, const char *word)
 {
 	if (!word) {
@@ -867,8 +908,17 @@ static void set_trigger(const char *path, const char *word)
 		fputs(word, f);
 		fclose(f);
 	}
-	struct timespec ts = { 0, 600 * 1000 * 1000 };
-	nanosleep(&ts, NULL);
+	struct timespec end;
+	clock_gettime(CLOCK_MONOTONIC, &end);
+	end.tv_sec += 5; /* no writer thread would never answer: then 5 s, and the checks after it say what's wrong */
+	pthread_mutex_lock(&g_trg_mu);
+	uint64_t want = g_trg_began + 1; /* a poll that begins after the write */
+	g_trg_kick = 1;
+	pthread_cond_broadcast(&g_trg_cv);
+	int r = 0;
+	while (g_trg_ended < want && r != ETIMEDOUT)
+		r = pthread_cond_clockwait(&g_trg_cv, &g_trg_mu, CLOCK_MONOTONIC, &end);
+	pthread_mutex_unlock(&g_trg_mu);
 }
 
 static void check_mono(const char *what)
@@ -1584,7 +1634,8 @@ typedef struct {
 	int deleted;
 } st_timer_t;
 typedef struct { uintptr_t vt; float pos[3], rot[4]; char pad[OBJ_TIMER - OBJ_ROT - 16]; st_timer_t *timer; } st_hobj_t;
-typedef struct { uintptr_t vt; char pad[CH_FLAGS - 8]; uint8_t flags; } st_char_t;
+typedef struct { uintptr_t vt; char pad[CH_FLAGS - 8]; uint8_t flags; char pad2[PR_CH_MINHEALTH - CH_FLAGS - 1]; float minhealth; } st_char_t;
+_Static_assert(offsetof(st_char_t, minhealth) == PR_CH_MINHEALTH, "the stand-in's min health (build 36)");
 typedef struct {
 	uintptr_t vt;
 	char p0[C_OWNER - 8];
@@ -1660,6 +1711,8 @@ __attribute__((noipa)) void st_dealhit(cb_ltvec pos, uintptr_t attacker, uintptr
 		if ((uintptr_t)g_oc[i].hobj == target && !(i == 0 && g_rx_block && !g_dh.atype)) {
 			float *hp = (float *)((char *)&g_och[i] + CH_HEALTH);
 			*hp -= 10;
+			if (!kill && g_och[i].minhealth > 0 && *hp < g_och[i].minhealth)
+				*hp = g_och[i].minhealth; /* (build 36: the game's min health, PR_SETMINHEALTH's) */
 		}
 	for (int i = 0; i < 4 && g_dh.kill_next; i++)
 		if ((uintptr_t)g_oc[i].hobj == target)
@@ -2973,7 +3026,7 @@ static void input_tests(void)
 	EXPECT(lj_a == 0 && lj_x == 1 && lfw > 0.5f, "mirror: the physical A jumps %d (0), X %d (1); the right stick walks %g",
 	       lj_a, lj_x, lfw);
 	while (hap_take(0, &q) || hap_take(1, &q)) {}
-	in_haptic_event(SOMVR_HAND_R, 0.4f, 0.05f, SOMVR_HAP_COMBAT);
+	haptic(SOMVR_HAND_R, SOMVR_HX_TAKE);
 	iframe();
 	int lhs = hap_take(0, &q), rhs = hap_take(1, &q);
 	EXPECT(lhs && !rhs, "mirror: the sword hand's pulse on the left controller (%d), not the right (%d)", lhs, rhs);
@@ -3243,6 +3296,16 @@ static void ptr_tests(void)
 	lp_pub(SOMVR_PTRQ_MENU, LP_ON, 0.5f, 0.5f, 3, 3, 2, 0); /* the layer's up arrives late: not sent again */
 	iframe();
 	EXPECT(lp_n('U', e0) == u0 + 1, "a late up was sent again");
+	/* build 33 (docs/re-winport.md 7.13): the layer's stamps on another clock (the Windows build under Wine: its
+	 * CLOCK_MONOTONIC = CLOCK_MONOTONIC_RAW, behind the layer's - the stamps look 0.3 s ahead): fresh once the offset
+	 * is seen (the plain test: never); the offsets' ring emptied after */
+	m0 = lp_n('M', e0);
+	lp_pub(SOMVR_PTRQ_MENU, LP_ON, 0.75f, 0.75f, 3, 3, 2, -300000000);
+	iframe();
+	EXPECT(lp_n('M', e0) == m0 + 1 && g_ptr.skewed >= 1 && log_has("POINTER clock t=") &&
+		       log_has("stamped +300."),
+	       "another clock: moves %d, offset taken off %llu", lp_n('M', e0) - m0, (unsigned long long)g_ptr.skewed);
+	g_ptr.n_lat = 0;
 	/* the world (not a menu): no mouse */
 	g_sm_menus.sc = 0, g_menu_set = 0;
 	m0 = lp_n('M', e0);
@@ -7912,7 +7975,7 @@ static void vm_tests(const char *base)
 	vm_put_file(path, "# my settings\nSNAP_DEG=45\nTURN_DPS = 90 \r\nVIGNETTE=0,4\nBOGUS=1\nHAPTICS=\"50\"\nVIEW=third\n");
 	vm_restart();
 	somvr_settings s = vm_cur();
-	EXPECT(g_vm.on && somvr_vrmenu_ok(&g_vmo) && g_vmo.size == 208 && g_vmo.version == SOMVR_VRMENU_VERSION &&
+	EXPECT(g_vm.on && somvr_vrmenu_ok(&g_vmo) && g_vmo.size == 240 && g_vmo.version == SOMVR_VRMENU_VERSION &&
 		       g_vmo.pid == (int32_t)getpid() &&
 		       g_vmo.avail == (SOMVR_VMA_VIEW | SOMVR_VMA_HUD | SOMVR_VMA_COMFORT | sz_vm_avail() | hla_vm_avail()) &&
 		       g_vmo.blink_on_ms == 90 && atomic_load(&g_vmo.gen) == 1,
@@ -9506,7 +9569,7 @@ static void threat_tests(void)
 	th_attack(0, T, (uintptr_t)g_recs[0], TH_KT_INF);
 	iframe();
 	somvr_haptic_req q;
-	int tick = hap_take(SOMVR_HAND_R, &q) && NEAR(q.amplitude, 0.15, 1e-3), tick_l = hap_take(SOMVR_HAND_L, &q);
+	int tick = hap_take(SOMVR_HAND_R, &q) && NEAR(q.amplitude, HXL(SOMVR_HX_TICK, 1), 1e-3), tick_l = hap_take(SOMVR_HAND_L, &q);
 	EXPECT(th_log_count("THREAT start orc=") == starts0 + 1 &&
 		       log_has("kind=melee impact=0.800 s window=0.000..0.761 s bcol=0.266 s (table EAL 65535 BCOL 266 APPLYDAMAGE 800 "
 			       "BPW 0 EPW 761 SHOOT 65535)") &&
@@ -9578,8 +9641,8 @@ static void threat_tests(void)
 	e = th_entry("B start");
 	int lp = hap_take(SOMVR_HAND_L, &q);
 	float lamp = q.amplitude;
-	int rt = hap_take(SOMVR_HAND_R, &q) && NEAR(q.amplitude, 0.15, 1e-3);
-	EXPECT(e.nglow == 0 && e.edge[1] == 0 && e.threats == 1 && lp && NEAR(lamp, 0.45, 1e-3) && rt &&
+	int rt = hap_take(SOMVR_HAND_R, &q) && NEAR(q.amplitude, HXL(SOMVR_HX_TICK, 1), 1e-3);
+	EXPECT(e.nglow == 0 && e.edge[1] == 0 && e.threats == 1 && lp && NEAR(lamp, HXL(SOMVR_HX_ANNOUNCE, 1), 1e-3) && rt &&
 		       log_has("cue=edge side=L yaw=-153 pitch=") && log_has("lead=0.800 s level=0.00") && /* the body's direction */
 		       log_has("haptic=announce sound LATE") &&
 		       g_thsnd.reg == reg0 + 1 && g_thsnd.post == post0 + 1 && g_thsnd.wrap == (uintptr_t)g_snd_wrap &&
@@ -9598,8 +9661,8 @@ static void threat_tests(void)
 		if (hap_take(SOMVR_HAND_L, &q)) {
 			float lead = 0.8f - (float)th_ts(1);
 			urgent++;
-			EXPECT(NEAR(q.amplitude, 0.8, 1e-3) && lead <= 0.35f && lead > 0.33f, "threat B urgent: amp %g lead %g",
-			       q.amplitude, lead);
+			EXPECT(NEAR(q.amplitude, HXL(SOMVR_HX_URGENT, 1), 1e-3) && (urgent > 1 || (lead <= 0.35f && lead > 0.33f)),
+			       "threat B urgent: amp %g lead %g (pulse %d)", q.amplitude, lead, urgent);
 		}
 		if (i == 20) { /* 3. turning around (the head 180 deg): B is in view now - the glow, no new announcement */
 			g_rt_q = (sv_quat){ 0, 1, 0, 0 };
@@ -9615,7 +9678,8 @@ static void threat_tests(void)
 			       e.edge[0]);
 		}
 	}
-	EXPECT(urgent == 1 && edge_peak && emax <= 0.8f + 1e-4f && g_thsnd.post == post0 + 1 && g_th.n.late >= 1 &&
+	EXPECT(urgent == somvr_hx_word_of(SOMVR_HX_URGENT)->n && edge_peak && emax <= 0.8f + 1e-4f && g_thsnd.post == post0 + 1 &&
+		       g_th.n.late >= 1 &&
 		       log_has("haptic=urgent"),
 	       "threat B: urgent pulses %d, edge peak %d (max %g), sounds %d", urgent, edge_peak, emax, g_thsnd.post - post0);
 	/* 4. B engaged (Talion its target) without an attack, close behind: the left edge's low level, no pulse */
@@ -9644,7 +9708,7 @@ static void threat_tests(void)
 	e = th_entry("projectile");
 	int rp = hap_take(SOMVR_HAND_R, &q);
 	EXPECT(g_pjv_calls == pj0 + 1 && (e.flags & SOMVR_THF_PROJ) && e.edge[1] > 0.6f * 0.8f && e.edge[0] == 0 &&
-		       e.nglow == 0 && rp && NEAR(q.amplitude, 0.45, 1e-3) && !hap_take(SOMVR_HAND_L, &q) &&
+		       e.nglow == 0 && rp && NEAR(q.amplitude, HXL(SOMVR_HX_ANNOUNCE, 1), 1e-3) && !hap_take(SOMVR_HAND_L, &q) &&
 		       log_has("THREAT proj p=") && log_has("(at Talion) cue=proj-edge side=R yaw=+150") && log_has("(head)"),
 	       "threat projectile: calls %d flags %#x edges %g %g pulse %d", g_pjv_calls - pj0, e.flags, e.edge[0], e.edge[1], rp);
 	g_rt_q = (sv_quat){ 0, sinf(-75 * 0.01745329f), 0, cosf(-75 * 0.01745329f) }; /* the head turned 150 deg right */
@@ -10709,7 +10773,8 @@ static void slots_tests(void)
 	g_cr.mode = crm0, g_cr.held = crh0, g_cr.h = crhold0, g_cr.held_t = crt0, g_sl.stealth = 0;
 	/* 10. Acharn: the left hand at the hip, a squeeze: its entries' InactiveNode -> L_Weapon and the re-attach; again:
 	 * the saved hashes back and the re-attach */
-	int ra0 = g_slt.reattaches;
+	int ra0 = g_slt.reattaches, hd0 = g_sl.cfg.hold_dagger;
+	g_sl.cfg.hold_dagger = 0; /* build 33: the toggle's sequence (the knife's hold mode: tests/test_slots.c) */
 	sl_at_hip(), bframe(0), sl_grip(SOMVR_HAND_L, 1), bframe(0);
 	EXPECT(g_slt.reattaches == ra0 + 1 && g_slt.item == dagger && g_slt.reatt_node == SA_H_L_WEAPON &&
 		       sl_inact(1, 0) == SA_H_L_WEAPON && sl_inact(1, 1) == SA_H_L_WEAPON && g_sl.dag_on &&
@@ -10733,6 +10798,7 @@ static void slots_tests(void)
 		       log_has("our move forgotten"),
 	       "slots: the load: on %d lost %llu old %#x", g_sl.dag_on, (unsigned long long)g_sl.dag_lost, sl_inact(1, 0));
 	memcpy(g_bwinv + BO_INV_ITEMS + 1 * BO_INV_STRIDE, &dagger, 8);
+	g_sl.cfg.hold_dagger = hd0;
 	sl_item(1, SL_T_DSHEATH);
 	sl_away(SOMVR_HAND_L), bframes(3, 0);
 	/* 11. the bow (the real step: the right grip at the left hand's nock): both hands busy and away: Urfael back; after
@@ -11004,8 +11070,9 @@ static void df_tests(void)
 		       NEAR(df_tr_of(0)->s.parry_t - th_tr_of(0)->t0, 42 * (double)g_orc_timer.frame_s, 1e-6) &&
 		       th_log_count("DEFENCE parry orc=") == parry0 + 1 &&
 		       log_has("(normal) at 0.462 s (window 0.000..0.761 s, byte 1, impact 0.800 s): blade 0.0 cm from the blow") &&
-		       log_has("-> the stock counter pressed cmd=CombatPrimary02") && rp && NEAR(ramp, 0.9, 1e-3) && lp &&
-		       NEAR(q.amplitude, 0.35, 1e-3) && g_df.press.presses == 1,
+		       log_has("-> the stock counter pressed cmd=CombatPrimary02") && rp && NEAR(ramp, HXL(SOMVR_HX_BLOCK, 1), 1e-3) &&
+		       lp && NEAR(q.amplitude, somvr_hx_word_of(SOMVR_HX_BLOCK)->both * HXL(SOMVR_HX_BLOCK, 1), 1e-3) &&
+		       g_df.press.presses == 1,
 	       "parry fired: parried %d at %g s, lines %d, pulses R %d (%g) L %d (%g)", df_tr_of(0) ? df_tr_of(0)->s.parried : -1,
 	       df_tr_of(0) ? df_tr_of(0)->s.parry_t - th_tr_of(0)->t0 : -1, th_log_count("DEFENCE parry orc=") - parry0, rp, ramp,
 	       lp, q.amplitude);
@@ -11200,7 +11267,7 @@ static void df_tests(void)
 	rp = hap_take(SOMVR_HAND_R, &q);
 	lp = hap_take(SOMVR_HAND_L, &q);
 	EXPECT(g_dfdh.n == dh0 && df_tr_of(0)->outcome == SOMVR_DFO_DODGE && NEAR(df_tr_of(0)->s.lateral_cm, 35, 0.05) && rp &&
-		       lp && NEAR(q.amplitude, 0.25, 1e-3) && log_has("DEFENCE dodge orc=") && log_has("head 35.0 cm aside"),
+		       lp && NEAR(q.amplitude, HXL(SOMVR_HX_GO, 1), 1e-3) && log_has("DEFENCE dodge orc=") && log_has("head 35.0 cm aside"),
 	       "dodge: DealHit %d outcome %d lateral %g pulses %d %d", g_dfdh.n - dh0, df_tr_of(0) ? df_tr_of(0)->outcome : -9,
 	       df_tr_of(0) ? df_tr_of(0)->s.lateral_cm : -1, rp, lp);
 	g_rt_head[0] = 0;
@@ -11293,7 +11360,7 @@ static void df_tests(void)
 	df_blade(1, 100, 340);
 	iframe();
 	rp = hap_take(SOMVR_HAND_R, &q);
-	EXPECT(g_proj[TH_PJ_DONE] == 1 && zdone > 340 && g_df.n.arrows == ar0 + 1 && rp && NEAR(q.amplitude, 0.6, 1e-3) &&
+	EXPECT(g_proj[TH_PJ_DONE] == 1 && zdone > 340 && g_df.n.arrows == ar0 + 1 && rp && NEAR(q.amplitude, HXL(SOMVR_HX_CLANK, 0), 1e-3) &&
 		       log_has("DEFENCE arrow p=") && log_has("(at Talion) blocked") && log_has("28 m/s -> removed (+0x228)"),
 	       "arrow: done %d at z %g, arrows %llu, pulse %d", g_proj[TH_PJ_DONE], zdone,
 	       (unsigned long long)(g_df.n.arrows - ar0), rp);
@@ -12997,8 +13064,8 @@ static void hp_tests(const char *trig)
 	hp_frame_run();
 	hp_frame_run();
 	char want[96], want2[96];
-	snprintf(want, sizeof want, "HEADPARTS near: node %#lx (vtable", (unsigned long)&g_orc_chandle.node);
-	snprintf(want2, sizeof want2, "HEADPARTS near: node %#lx (vtable", (unsigned long)&g_orc_handle.node);
+	snprintf(want, sizeof want, "HEADPARTS near: node %#llx (vtable", (unsigned long long)&g_orc_chandle.node);
+	snprintf(want2, sizeof want2, "HEADPARTS near: node %#llx (vtable", (unsigned long long)&g_orc_handle.node);
 	int nl = g_hp_near_cm == 60 && log_has("CONFIG head parts near-log: every node an eye pass still draws") && log_has(want) &&
 		 log_has(want2) && log_has("0.0 cm from the head point") && atomic_load(&g_hp_near_n) == 2 &&
 		 atomic_load(&g_hp_near_hits) > 2;
@@ -13917,18 +13984,15 @@ static void bf_tests(void)
 	       "the row: light live (%d, %s)", g_hsm.weight, note);
 	vs.sword_weight = 2;
 	vm_apply_key(SOMVR_SK_SWORD_WEIGHT, &vs, "the selftest");
-	float wamp = 0.8f, wdur = 0.2f;
-	swg_hit_haptic(&wamp, &wdur);
+	int hw = swg_hit_word(); /* build 34: the hit's word */
 	EXPECT(g_hsm.weight == SWG_HEAVY && log_has("VRMENU apply SWORD_WEIGHT=heavy from the selftest (the drawn sword") &&
-		       NEAR(wamp, 1.0, 1e-6) && NEAR(wdur, 0.4, 1e-6),
-	       "vm_apply_key: heavy; the hit haptic %g x %g s", wamp, wdur);
+		       hw == SOMVR_HX_HIT_WEIGHT,
+	       "vm_apply_key: heavy; the hit's word %s", somvr_hx_name(hw));
 	vs.sword_weight = 0;
 	swg_vm_set(&vs);
-	wamp = 0.8f, wdur = 0.2f;
-	swg_hit_haptic(&wamp, &wdur);
-	EXPECT(g_hsm.weight == SWG_OFF && log_has("weight heavy -> off (the VR menu)") && NEAR(wamp, 0.8, 1e-6) &&
-		       NEAR(wdur, 0.2, 1e-6),
-	       "the row: off (no haptic change)");
+	hw = swg_hit_word();
+	EXPECT(g_hsm.weight == SWG_OFF && log_has("weight heavy -> off (the VR menu)") && hw == SOMVR_HX_HIT,
+	       "the row: off (the plain hit word: %s)", somvr_hx_name(hw));
 	/* SOMVR_SWORD_WEIGHT_HAND=follow (swg_vh_follow): the layer's hands turned with the blade about their grips, the
 	 * positions kept; the left only with both hands on the hilt */
 	setenv("SOMVR_SWORD_WEIGHT_HAND", "follow", 1);
@@ -14526,12 +14590,23 @@ static void pr_tests(const char *trig)
 	pr_step(100);
 	EXPECT(pr_mh_now() == 20 && g_pr.mh_reasserts == 1, "reasserted: %g (%llu)", (double)pr_mh_now(),
 	       (unsigned long long)g_pr.mh_reasserts);
+	/* build 36 (SOMVR_PRACTICE_EDGE_M 10): 105 m out is still in the area (build 35 walked out at 100.0 m) */
+	EXPECT(g_pr.edge_cm == 1000, "the edge's margin %g cm (SOMVR_PRACTICE_EDGE_M's default 10 m)", (double)g_pr.edge_cm);
+	g_pobj.pos[0] = 40400 + 10500;
+	pr_step(50);
+	EXPECT(g_pr.here && g_pr.walked_out == 0 && pr_mh_now() == 20, "105 m: still in (here %d, walked out %llu)", g_pr.here,
+	       (unsigned long long)g_pr.walked_out);
 	g_pobj.pos[0] = 40400 + 15000;
 	g_prband[1][5].c = &g_prc[7]; /* a warg near the spot, Talion away */
 	pr_step(200);
 	EXPECT(!g_pr.here && pr_mh_now() == 0 && !pr_removed(7) && g_pr.walked_out == 1 &&
-		       log_has("Talion walked out of the practice area (150.0 m from the spot)"),
+		       log_has("Talion walked out of the practice area (150.0 m from the spot; out past 110 m)"),
 	       "walked out: here %d min %g", g_pr.here, (double)pr_mh_now());
+	g_pobj.pos[0] = 40400 + 10500; /* build 36: 105 m on the way back - not in yet (in within 100 m) */
+	pr_step(20);
+	EXPECT(!g_pr.here && g_pr.walked_out == 1 && !g_pr.quiet, "105 m back: still out (here %d)", g_pr.here);
+	g_pobj.pos[0] = 40400 + 15000;
+	pr_step(1);
 	EXPECT(!g_pr.quiet && g_prq_mgr.flag == 1 && g_prq_en == 1 &&
 		       log_has("quiet ends (walked out of the area): the spawn manager on again"),
 	       "walked out: quiet %d flag %u enable %d", g_pr.quiet, g_prq_mgr.flag, g_prq_en);
@@ -14901,6 +14976,7 @@ static void go_tests(void)
 	go_vm_set(SOMVR_SK_MUSIC, &s), go_tick(104.0);
 	EXPECT(NEAR(g_go_last_v, 1.0, 1e-6), "100 %%: the game's own %g", g_go_last_v);
 	/* the hints: a combat hint's and a tutorial's show dropped, their hide passed, a prompt passed; names logged */
+	atomic_store(&g_gp_off, 0); /* build 36: SOMVR_GAME_PROMPTS on here (the selftest's own start set its default) */
 	struct { uintptr_t rec; uint8_t show; } hp = { 0, 1 };
 	struct { uint8_t show; uint8_t pad[7]; uintptr_t rec; } tp = { 1, { 0 }, 0 };
 	static char rec[0x40];
@@ -14918,6 +14994,17 @@ static void go_tests(void)
 	EXPECT(g_go_dlg_n[1] == 0 && g_go_dlg_n[2] == 1 && atomic_load(&g_go.n_drop[GO_EV_TUTORIAL]) == 1 &&
 		       atomic_load(&g_go.n_drop[GO_EV_PROMPT]) == 0 && log_has("HINTS behaviour prompt #1"),
 	       "tutorial %d prompt %d", g_go_dlg_n[1], g_go_dlg_n[2]);
+	/* build 36, SOMVR_GAME_PROMPTS=off: the behaviour prompt's show dropped, its hide passed */
+	atomic_store(&g_gp_off, 1);
+	((st_go_dlg_fn)g_go_vt_dlg[2][2])((void *)1, (void *)2, &tp);
+	EXPECT(g_go_dlg_n[2] == 1 && atomic_load(&g_go.n_drop[GO_EV_PROMPT]) == 1 && log_has(": dropped (SOMVR_GAME_PROMPTS=off)") &&
+		       atomic_load(&g_gpr.n[GP_PART_BEHAVIOUR]) == 1,
+	       "game prompts off: the behaviour prompt's show passed (%d calls)", g_go_dlg_n[2]);
+	tp.show = 0;
+	((st_go_dlg_fn)g_go_vt_dlg[2][2])((void *)1, (void *)2, &tp);
+	EXPECT(g_go_dlg_n[2] == 2, "game prompts off: the behaviour prompt's hide not passed (%d calls)", g_go_dlg_n[2]);
+	tp.show = 1;
+	atomic_store(&g_gp_off, 0), atomic_store(&g_gpr.n[GP_PART_BEHAVIOUR], 0);
 	((st_go_dlg_fn)g_go_vt_dlg[0][2])((void *)1, (void *)2, NULL); /* unreadable params: passed on as they are */
 	EXPECT(g_go_dlg_n[0] == 2, "NULL params passed: %d", g_go_dlg_n[0]);
 	/* the words: "hints log" passes every show (logged), "gameopts" a state line */
@@ -15140,6 +15227,43 @@ static void pp_stand_ins(void)
 		g_pps[i] = (struct site_spec){ names[i], K_VSLOT, a, a, g_pphex[i], (uintptr_t)fns[i], g_pphex[i] + 128 };
 	}
 }
+/* build 36 (SOMVR_BOW_A_JUMP=draw, som-b36-polish): A while the string hand is on the string (at the nock's zone, the
+ * trigger held, drawing) is no jump - the press is ours and does nothing; the bow out with the hand away, or =always,
+ * leave A as it was */
+static void bow_a_tests(void)
+{
+	int on = g_bow.on, tid = g_bow.tid, ph = g_bow.s.phase, hv = g_bow.hover, ar = g_bow.s.arrow, aj = g_bow.a_jump_draw,
+	    st = g_bow.string_trigger, jw = g_jp.cfg.jump, ao = g_jp.a_owned, pr = g_jp.press;
+	int S = 1 - g_bow.cfg.bow_hand;
+	somvr_hand_in hi = g_inp.st.hand[S];
+	g_bow.on = 1, g_bow.tid = my_tid(), g_bow.s.phase = SOMVR_BOW_PH_AIM, g_bow.hover = 0;
+	g_bow.s.arrow = SOMVR_BOW_ARROW_REST, g_bow.a_jump_draw = 1, g_bow.string_trigger = 1;
+	g_inp.st.hand[S].active = SOMVR_HACT_INPUT, g_inp.st.hand[S].trigger = 0, g_inp.st.hand[S].squeeze = 0.9f;
+	EXPECT(!bo_a_holds(), "bow A: the bow out, the string hand away and its trigger up: A may jump (%s)", bo_a_holds());
+	g_bow.hover = 1;
+	const char *w = bo_a_holds();
+	EXPECT(w && strstr(w, "at the string"), "bow A: the hand at the string: %s", w ? w : "(may jump)");
+	g_bow.hover = 0, g_inp.st.hand[S].trigger = 0.8f;
+	w = bo_a_holds();
+	EXPECT(w && strstr(w, "trigger held"), "bow A: the string's trigger held: %s", w ? w : "(may jump)");
+	g_bow.string_trigger = 0, g_inp.st.hand[S].trigger = 0.8f, g_inp.st.hand[S].squeeze = 0;
+	EXPECT(!bo_a_holds(), "bow A: Bow string Grip - the trigger is not the string's button");
+	g_inp.st.hand[S].trigger = 0, g_bow.string_trigger = 1, g_bow.s.phase = SOMVR_BOW_PH_DRAW;
+	w = bo_a_holds();
+	EXPECT(w && strstr(w, "drawn"), "bow A: drawing: %s", w ? w : "(may jump)");
+	g_bow.a_jump_draw = 0;
+	EXPECT(!bo_a_holds(), "bow A: SOMVR_BOW_A_JUMP=always: A may jump while drawing");
+	g_bow.a_jump_draw = 1, g_jp.cfg.jump = 1, g_jp.press = 0;
+	uint64_t n0 = g_jp.bow_held;
+	jp_a_press(1, 1.0);
+	EXPECT(jp_owns_a() && !g_jp.press && g_jp.bow_held == n0 + 1 &&
+		       log_has("press while drawing the bow: nothing (the bow drawn; SOMVR_BOW_A_JUMP=draw"),
+	       "bow A: the press while drawing: owned %d, a take-off %d", jp_owns_a(), g_jp.press);
+	jp_a_release();
+	g_bow.on = on, g_bow.tid = tid, g_bow.s.phase = ph, g_bow.hover = hv, g_bow.s.arrow = ar, g_bow.a_jump_draw = aj;
+	g_bow.string_trigger = st, g_jp.cfg.jump = jw, g_jp.a_owned = ao, g_jp.press = pr, g_inp.st.hand[S] = hi;
+}
+
 /* build 20, SOMVR_SLOTS_GAMESOUND (somvr_gsound_game.c): gs_pre's choice on stand-in posts - Talion's listed sword
  * sounds posted by the game (BS_POST_B's callback) dropped while the slots step runs; ours (path A), an orc's draw, a
  * footstep, a stale or missing step, log and game passed; the cookie's source in the line */
@@ -15149,7 +15273,7 @@ static void gs_tests(void)
 		    twirl[] = "fol_ply_cbt_swd_twirl", step[] = "fol_ply_step_dirt";
 	static uintptr_t ck[5];
 	struct gs_post p;
-	void *cb = (void *)(uintptr_t)GS_CB;
+	void *cb = (void *)g_gsg.cb;
 	EXPECT(!g_gs.patched && atomic_load(&g_gs.mode) == GS_GAME, "gamesound at start without the switch: %d", g_gs.patched);
 	EXPECT(gs_pre(&p, un, 73, cb, NULL) == 0 && !p.log && !p.name[0], "gamesound game: not passed untouched");
 	EXPECT(gs_parse_names(" a_b, c,") == 2 && !strcmp(g_gs.names[0], "a_b") && !strcmp(g_gs.names[1], "c"),
@@ -15189,6 +15313,13 @@ static void gs_tests(void)
 	EXPECT(!strncmp(gs_word("slsnd log"), "slsnd (the post is not patched", 30), "the word without the patch");
 }
 
+static int g_st_ob_place; /* build 36: OB_PLACE's stand-in placement, its calls */
+__attribute__((noipa)) uint8_t st_ob_place(uintptr_t m, uintptr_t pl, float *pos, float *uv, float d)
+{
+	(void)m, (void)pl, (void)pos, (void)uv, (void)d;
+	g_st_ob_place++;
+	return 1;
+}
 static void pp_tests(void)
 {
 	typedef void (*dlg_fn)(void *, void *, void *);
@@ -15434,6 +15565,76 @@ static void pp_tests(void)
 	EXPECT(o.ncmd == 1 && o.cmd[0] == 34 && !o.pad_on && o.pad[SC_PAD_A] == 0 && log_has("strike guard: pad A taken out"),
 	       "the guard with the bow out: %d %u", o.ncmd, o.pad_on);
 	g_inp.cfg.game_moves = gm, g_bow.on = bon, g_bow.s.phase = bph;
+	/* build 36, SOMVR_GAME_PROMPTS (somvr_gprompts_game.c): default off = no prompt shown - the delegates hooked without
+	 * SOMVR_PAD_PROMPTS, every show dropped (Activate too, kept by vr), its hide passed, a hold's fill not; on = the game's */
+	unsetenv("SOMVR_PAD_PROMPTS"), unsetenv("SOMVR_GAME_PROMPTS"), unsetenv("SOMVR_GAME_PROMPTS_KEEP");
+	gp_start(&bad);
+	EXPECT(atomic_load(&g_gp_off) == 1 && log_has("CONFIG game_prompts=off") && gp_nav_keep("TrollHealthBar") &&
+		       !gp_nav_keep("Firepit") && !gp_nav_keep("InfantryNormal"),
+	       "gp_start's default: off %d, keep '%s'", atomic_load(&g_gp_off), g_gpr.keep);
+	pp_stand_ins();
+	pp_start(g_pps, &bad);
+	EXPECT(g_pp.ok[PPS_SHOW] && g_pp.ok[PPS_HIDE] && g_pp.gp_hooked && atomic_load(&g_pp.mode) == PP_GAME &&
+		       log_has("hooked for SOMVR_GAME_PROMPTS=off only"),
+	       "game prompts off without SOMVR_PAD_PROMPTS: show %d hooked %d", g_pp.ok[PPS_SHOW], g_pp.gp_hooked);
+	memset(g_pp_n, 0, sizeof g_pp_n);
+	sp.act = 34, hp.act = 34;
+	((dlg_fn)g_pp_vt[PPS_SHOW][2])((void *)1, (void *)2, &sp); /* Activate: dropped (vr would keep it) */
+	sp.act = 120;
+	((dlg_fn)g_pp_vt[PPS_SHOW][2])((void *)1, (void *)2, &sp); /* the left trigger's drain */
+	((dlg_fn)g_pp_vt[PPS_HOLD][2])((void *)1, (void *)2, &hp);
+	((dlg_fn)g_pp_vt[PPS_HIDE][2])((void *)1, (void *)2, &sp);
+	EXPECT(g_pp_n[PPS_SHOW] == 0 && g_pp_n[PPS_HOLD] == 0 && g_pp_n[PPS_HIDE] == 1 && g_pp_act[PPS_HIDE] == 120 &&
+		       atomic_load(&g_gpr.n[GP_PART_DIAMOND]) == 2 && atomic_load(&g_gpr.n[GP_PART_HOLD]) == 1 &&
+		       log_has("dropped (SOMVR_GAME_PROMPTS=off)"),
+	       "game prompts off: shows %d holds %d hides %d (diamond %llu)", g_pp_n[PPS_SHOW], g_pp_n[PPS_HOLD], g_pp_n[PPS_HIDE],
+	       (unsigned long long)atomic_load(&g_gpr.n[GP_PART_DIAMOND]));
+	EXPECT(!strcmp(gp_word(" on"), "gprompts on") && atomic_load(&g_gp_off) == 0, "the word gprompts on");
+	sp.act = 34;
+	((dlg_fn)g_pp_vt[PPS_SHOW][2])((void *)1, (void *)2, &sp);
+	((dlg_fn)g_pp_vt[PPS_HOLD][2])((void *)1, (void *)2, &hp);
+	EXPECT(g_pp_n[PPS_SHOW] == 1 && g_pp_act[PPS_SHOW] == 34 && g_pp_n[PPS_HOLD] == 1,
+	       "game prompts on: the show %d (action %d), the hold %d passed as the game's", g_pp_n[PPS_SHOW], g_pp_act[PPS_SHOW],
+	       g_pp_n[PPS_HOLD]);
+	EXPECT(!strcmp(gp_word(" off"), "gprompts off") && atomic_load(&g_gp_off) == 1 && !strcmp(gp_word(""), "gprompts") &&
+		       log_has("GPROMPTS state t=") && log_has("diamond shows 2"),
+	       "the words gprompts off / state");
+	/* OB_PLACE (somvr_objective_game.c): off = a world icon is not placed (the stand-in never called: the game's own
+	 * hide follows), the kept health bar and an objective are; on = every one placed */
+	{
+		static __typeof__(g_ob) save;
+		static unsigned char rf[0x40], rh[0x40], ro[0x40], mk[3][0x300];
+		save = g_ob;
+		memset(g_ob.rc, 0, sizeof g_ob.rc), g_ob.nrc = 0;
+		snprintf(g_ob.pats, sizeof g_ob.pats, "Objective*"), g_ob.wpats[0] = 0;
+		rf[1] = rh[1] = ro[1] = 2;
+		static const char *const nf = "Firepit", *const nh = "TrollHealthBar", *const no = "Objective_Squiller";
+		memcpy(rf + 0x20, &nf, 8), memcpy(rh + 0x20, &nh, 8), memcpy(ro + 0x20, &no, 8); /* rx_rec_name: a pointer */
+		uintptr_t recs[3] = { (uintptr_t)rf, (uintptr_t)rh, (uintptr_t)ro };
+		for (int i = 0; i < 3; i++)
+			memcpy(mk[i] + OB_REC, &recs[i], 8);
+		g_ob.place_orig = (uintptr_t)st_ob_place, g_ob.tid = ob_tid();
+		int fon = g_fr.on;
+		g_fr.on = 1, g_st_ob_place = 0;
+		float pos[3] = { 0 }, uv[2] = { 0 };
+		uint8_t r0 = somvr_w_obplace((uintptr_t)mk[0], 1, pos, uv, 1.0f);
+		uint8_t r1 = somvr_w_obplace((uintptr_t)mk[1], 1, pos, uv, 1.0f);
+		uint8_t r2 = somvr_w_obplace((uintptr_t)mk[2], 1, pos, uv, 1.0f);
+		EXPECT(r0 == 0 && r1 == 1 && r2 == 1 && g_st_ob_place == 2 && g_ob.place_refused == 1 &&
+			       log_has("world icon 'Firepit' hidden"),
+		       "OB_PLACE off: fire pit %d, health bar %d, objective %d, placed %d", r0, r1, r2, g_st_ob_place);
+		g_fr.on = 0;
+		EXPECT(somvr_w_obplace((uintptr_t)mk[0], 1, pos, uv, 1.0f) == 1 && g_st_ob_place == 3,
+		       "OB_PLACE: a flat frame placed as the game's");
+		g_fr.on = 1, atomic_store(&g_gp_off, 0);
+		EXPECT(somvr_w_obplace((uintptr_t)mk[0], 1, pos, uv, 1.0f) == 1 && g_st_ob_place == 4,
+		       "OB_PLACE on: the fire pit placed as the game's");
+		g_fr.on = fon, g_ob = save;
+	}
+	setenv("SOMVR_GAME_PROMPTS", "on", 1), setenv("SOMVR_GAME_PROMPTS_KEEP", "none", 1);
+	gp_start(&bad);
+	EXPECT(atomic_load(&g_gp_off) == 0 && !gp_nav_keep("TrollHealthBar"), "SOMVR_GAME_PROMPTS=on, _KEEP=none");
+	unsetenv("SOMVR_GAME_PROMPTS"), unsetenv("SOMVR_GAME_PROMPTS_KEEP");
 	unsetenv("SOMVR_PAD_PROMPTS");
 	pp_stand_ins();
 	pp_start(g_pps, &bad);
@@ -16387,6 +16588,574 @@ static void soak29_tests(void)
 	}
 }
 
+/* build 34 (som-b34-settings, docs/re-xr-pipeline.md 150): the VR menu's v8 rows on the game side - the start values
+ * from the features' configs, av8 from the features running, each key applied by vm_apply_key into its feature's own
+ * config (live) with its apply line; the features' configs restored after */
+static void s34_tests(void)
+{
+	__typeof__(g_hu) hu0 = g_hu;
+	__typeof__(g_cb.cfg) cbc0 = g_cb.cfg;
+	int cbm0 = g_cb.mode, arm0 = g_arm.on;
+	__typeof__(g_swp) swp0 = g_swp;
+	__typeof__(g_kl) kl0 = g_kl;
+	__typeof__(g_py) py0 = g_py;
+	__typeof__(g_vb.cfg) vbc0 = g_vb.cfg;
+	int vbm0 = g_vb.mode;
+	__typeof__(g_sl.cfg) slc0 = g_sl.cfg;
+	int slo0 = g_sl.on, sld0 = g_sl.ok_dagger;
+	__typeof__(g_hrb) hrb0 = g_hrb;
+	int us0 = g_us.on;
+	__typeof__(g_cl.cfg) clc0 = g_cl.cfg;
+	int cls0 = g_cl.sword, clo0 = g_cl.on, clf0 = g_cl.fling_menu;
+	g_hu.on = 1, g_hu.low = 0.30f, g_hu.ring = 1, g_hu.beat_below = 0.20f;
+	g_cb.cfg.blow_min_j = 35, g_cb.cfg.blow_heavy_j = 50, g_cb.cfg.blow_full_j = 120, g_cb.cfg.blow_stab_j = 40;
+	g_cb.cfg.force = 1;
+	g_swp.on = 1, g_swp.ghost = 1, g_swp.ghost_a = 0.3f;
+	g_kl.ok = 1, g_kl.on = 0, g_kl.exec_blow = 1;
+	g_py.shove = 1, g_py.shove_mps = 2.5f, g_py.hard_mps = 3.5f;
+	g_vb.mode = VB_ON, g_vb.cfg.grab_max_s = 10;
+	g_sl.on = 1, g_sl.ok_dagger = 1, g_sl.cfg.hold_dagger = 1, g_sl.cfg.hold = 0;
+	atomic_store(&g_us.on, 1); /* (atomic) */
+	g_hrb.on = 1, g_hrb.hold_h = 1;
+	g_cl.on = 1, g_cl.cfg.fling = 1, g_cl.cfg.fling_down = 1, g_cl.sword = 0, g_cl.fling_menu = 1;
+	/* 1. the start values: the switches as build 33's env sets them (the watch: raise, 6 cm) */
+	setenv("SOMVR_XR_WATCH_LOOK", "raise", 1), setenv("SOMVR_XR_MINIMAP_QUAD", "0.06,0.08,0.045", 1);
+	setenv("SOMVR_XR_MINIMAP", "wrist", 1);
+	somvr_settings s;
+	somvr_set_default(&s);
+	s34_vm_settings(&s);
+	EXPECT(s.watch_raise == 1 && s.watch_big == 0 && s.low_health == 2 && s.heartbeat == 1 && s.force == 1 && s.ghost == 1 &&
+		       s.kills == 0 && s.exec_blow == 1 && s.shove == 1 && s.hold_s == 10 && s.knife_hold == 1 && s.herbs == 1 &&
+		       s.fling_down == 1 && s.climb_sword == 0,
+	       "s34: the start values from the switches (%u %u %u %u %u %u %u %u %u %u %u %u %u %u)", s.watch_raise, s.watch_big,
+	       s.low_health, s.heartbeat, s.force, s.ghost, s.kills, s.exec_blow, s.shove, s.hold_s, s.knife_hold, s.herbs,
+	       s.fling_down, s.climb_sword);
+	unsetenv("SOMVR_XR_WATCH_LOOK"), unsetenv("SOMVR_XR_MINIMAP_QUAD");
+	somvr_settings u;
+	somvr_set_default(&u);
+	s34_vm_settings(&u);
+	EXPECT(u.watch_raise == 0 && u.watch_big == 1, "s34: the watch unset: any angle, 10 cm (%u %u)", u.watch_raise,
+	       u.watch_big);
+	g_arm.on = 0;
+	uint16_t a8 = s34_vm_av8();
+	const uint16_t want8 = SOMVR_VMA8_WATCH | SOMVR_VMA8_HURT | SOMVR_VMA8_GHOST | SOMVR_VMA8_KILLS | SOMVR_VMA8_SHOVE |
+			       SOMVR_VMA8_HOLD | SOMVR_VMA8_KNIFE | SOMVR_VMA8_HERBS | SOMVR_VMA8_CLIMB;
+	g_arm.on = 1, g_cb.mode = CB_OFF + 1;
+	uint16_t a8f = s34_vm_av8();
+	unsetenv("SOMVR_XR_MINIMAP");
+	uint16_t a8w = s34_vm_av8();
+	EXPECT((a8 & ~SOMVR_VMA8_FLINGDN) == want8 && (a8f & SOMVR_VMA8_FORCE) && !(a8w & SOMVR_VMA8_WATCH),
+	       "s34: av8 %#x (want %#x), with the drawn sword %#x, no wrist minimap %#x", a8, want8, a8f, a8w);
+	/* 2. each key live, its apply line */
+	s.low_health = 1, vm_apply_key(SOMVR_SK_LOW_HEALTH, &s, "the selftest");
+	int lo1 = NEAR(g_hu.low, 0.30, 1e-6) && !g_hu.ring;
+	s.low_health = 0, vm_apply_key(SOMVR_SK_LOW_HEALTH, &s, "the selftest");
+	int lo0 = g_hu.low == 0;
+	s.low_health = 2, vm_apply_key(SOMVR_SK_LOW_HEALTH, &s, "the selftest");
+	EXPECT(lo1 && lo0 && NEAR(g_hu.low, 0.30, 1e-6) && g_hu.ring &&
+		       log_has("VRMENU apply LOW_HEALTH=edge from the selftest (under 30 % of the most health: the faint red edge)") &&
+		       log_has("VRMENU apply LOW_HEALTH=off from the selftest (no low-health cue)"),
+	       "s34: Low health edge %d, off %d, ring (%.2f %d)", lo1, lo0, g_hu.low, g_hu.ring);
+	s.heartbeat = 0, vm_apply_key(SOMVR_SK_HEARTBEAT, &s, "the selftest");
+	int hb0 = g_hu.beat_below == 0;
+	s.heartbeat = 1, vm_apply_key(SOMVR_SK_HEARTBEAT, &s, "the selftest");
+	EXPECT(hb0 && NEAR(g_hu.beat_below, 0.20, 1e-6), "s34: Heartbeat off / on (%.2f)", g_hu.beat_below);
+	s.force = 0, vm_apply_key(SOMVR_SK_FORCE_NEEDED, &s, "the selftest");
+	int fl = NEAR(g_cb.cfg.blow_min_j, 21, 1e-4) && NEAR(g_cb.cfg.blow_heavy_j, 30, 1e-4) &&
+		 NEAR(g_cb.cfg.blow_full_j, 72, 1e-4) && NEAR(g_cb.cfg.blow_stab_j, 24, 1e-4);
+	s.force = 2, vm_apply_key(SOMVR_SK_FORCE_NEEDED, &s, "the selftest");
+	int fh = NEAR(g_cb.cfg.blow_min_j, 52.5, 1e-4) && NEAR(g_cb.cfg.blow_full_j, 180, 1e-4);
+	s.force = 1, vm_apply_key(SOMVR_SK_FORCE_NEEDED, &s, "the selftest");
+	EXPECT(fl && fh && NEAR(g_cb.cfg.blow_min_j, 35, 1e-4) && NEAR(g_cb.cfg.blow_heavy_j, 50, 1e-4) &&
+		       log_has("VRMENU apply FORCE_NEEDED=high from the selftest (a hit from 52 J, a cut from 75 J, full at 180 J"),
+	       "s34: Force needed low %d, high %d, normal back (%.1f J)", fl, fh, g_cb.cfg.blow_min_j);
+	s.ghost = 0, vm_apply_key(SOMVR_SK_SWORD_PHYS_GHOST, &s, "the selftest");
+	EXPECT(!g_swp.ghost && g_swp.ghost_a == 0, "s34: Ghost hand off (the faint hand gone at once)");
+	s.kills = 1, vm_apply_key(SOMVR_SK_KILLS, &s, "the selftest");
+	s.exec_blow = 0, vm_apply_key(SOMVR_SK_KILLS_EXEC, &s, "the selftest");
+	EXPECT(g_kl.on && !g_kl.exec_blow && kl_on() && !kl_exec_blow() &&
+		       log_has("VRMENU apply KILLS=on from the selftest (the next kill: the orc's half of the game's own)"),
+	       "s34: Kill moves on, Execute by the trigger");
+	s.shove = 0, vm_apply_key(SOMVR_SK_SHOVE_PUSH, &s, "the selftest");
+	int sv0 = NEAR(g_py.shove_mps, 2.0, 1e-5) && NEAR(g_py.hard_mps, 3.0, 1e-5);
+	s.shove = 2, vm_apply_key(SOMVR_SK_SHOVE_PUSH, &s, "the selftest");
+	EXPECT(sv0 && NEAR(g_py.shove_mps, 3.0, 1e-5) && NEAR(g_py.hard_mps, 4.0, 1e-5) &&
+		       log_has("VRMENU apply SHOVE_PUSH=hard from the selftest (a shove from 3.0 m/s, at the grab's orc 4.0 m/s)"),
+	       "s34: Shove push soft %d, hard (%.1f %.1f)", sv0, g_py.shove_mps, g_py.hard_mps);
+	s.hold_s = 20, vm_apply_key(SOMVR_SK_VERBS_GRAB_MAX_S, &s, "the selftest");
+	s.knife_hold = 0, vm_apply_key(SOMVR_SK_SLOTS_DAGGER_HOLD, &s, "the selftest");
+	EXPECT(NEAR(g_vb.cfg.grab_max_s, 20, 1e-6) && g_sl.cfg.hold_dagger == 0 &&
+		       log_has("VRMENU apply SLOTS_DAGGER_HOLD=off from the selftest (at the next draw: it stays in the hand"),
+	       "s34: Hold orcs 20 s (%.0f), Knife grip toggle (%d)", g_vb.cfg.grab_max_s, g_sl.cfg.hold_dagger);
+	s.herbs = 0, vm_apply_key(SOMVR_SK_HERBS, &s, "the selftest");
+	int hr0 = !g_hrb.on && g_hrb.hold_h == -1;
+	s.herbs = 1, vm_apply_key(SOMVR_SK_HERBS, &s, "the selftest");
+	EXPECT(hr0 && g_hrb.on, "s34: Herbs by B (the held one dropped), by the hand again");
+	s.fling_down = 0, vm_apply_key(SOMVR_SK_CLIMB_FLING_DOWN, &s, "the selftest");
+	int fd0 = !g_cl.cfg.fling_down;
+	s.fling_down = 1, vm_apply_key(SOMVR_SK_CLIMB_FLING_DOWN, &s, "the selftest");
+	int fd1 = g_cl.cfg.fling_down;
+	s.fling = 0, vm_apply_key(SOMVR_SK_CLIMB_FLING, &s, "the selftest");
+	int fdf = !g_cl.cfg.fling && !g_cl.cfg.fling_down;
+	s.fling = 1, vm_apply_key(SOMVR_SK_CLIMB_FLING, &s, "the selftest");
+	s.climb_sword = 1, vm_apply_key(SOMVR_SK_CLIMB_SWORD, &s, "the selftest");
+	EXPECT(fd0 && fd1 && fdf && g_cl.cfg.fling && g_cl.cfg.fling_down && g_cl.sword,
+	       "s34: Fling down off %d, on %d, with the Climb fling off %d, back; Climb sword on", fd0, fd1, fdf);
+	s.watch_raise = 0, vm_apply_key(SOMVR_SK_XR_WATCH_LOOK, &s, "the selftest");
+	EXPECT(log_has("VRMENU apply XR_WATCH_LOOK=any from the selftest (the layer's watch: its next frame)"),
+	       "s34: the watch's row: the layer's");
+	g_hu = hu0, g_cb.cfg = cbc0, g_cb.mode = cbm0, g_arm.on = arm0, g_swp = swp0, g_kl = kl0, g_py = py0;
+	g_vb.cfg = vbc0, g_vb.mode = vbm0, g_sl.cfg = slc0, g_sl.on = slo0, g_sl.ok_dagger = sld0, g_hrb = hrb0;
+	atomic_store(&g_us.on, us0);
+	g_cl.cfg = clc0, g_cl.sword = cls0, g_cl.on = clo0, g_cl.fling_menu = clf0;
+}
+
+/* ---- review b34 for build 33's SOMVR_FINISHER (som-b33-finisher, docs/re-xr-pipeline.md 140.4) ---------------------
+ * 1. a finisher whose frames stop (the game paused: combat_frame skips the blade) ends within FN_LOST_S - the world's
+ *    speed put back, the orc let go (build 33: slow and held until the sword hand came back);
+ * 2. the slow motion put back even when the game timer cannot be read at that moment (build 33: left slow);
+ * 3. a finisher whose Combat is another orc's now (the practice's respawn) ends with no hit and no kill counted. */
+static void finisher_tests(void)
+{
+	static typeof(g_fin) fin0;
+	memcpy(&fin0, &g_fin, sizeof g_fin);
+	const struct site_spec *fis0 = g_fi_sites;
+	int okslow0 = g_xc.ok_slowmo;
+	double tt = g_cb_test_t;
+	fi_world();
+	g_fi_sites = g_fis, g_xc.ok_slowmo = 1;
+	memset(&g_fin, 0, sizeof g_fin);
+	g_fin.on = 1, g_fin.ok = 1, g_fin.slowmo = 0.15f;
+	/* 1. ready on A, the world slowed; then the game paused 0.6 s */
+	g_fi_tm[8] = g_fi_tm[9] = 1000;
+	double t = g_cb_test_t;
+	g_fin.phase = FN_READY, g_fin.c = (uintptr_t)&g_oc[0], g_fin.hobj = (uintptr_t)&g_oobj[0], g_fin.t0 = t;
+	atomic_store(&g_fin.hold_c, g_fin.c), atomic_store(&g_fin.hold_h, g_fin.hobj), atomic_store(&g_fin.show, 1);
+	fn_slowmo(1, t);
+	g_fin.seen_t = t;
+	int slowed = g_fin.smo && g_fi_tm[9] == 65535;
+	uintptr_t pause0 = g_ing.pause_pp, pz0 = 0;
+	memcpy(&pz0, g_timerobj + 8, 8);
+	uintptr_t pzv = (uintptr_t)g_pz;
+	g_pause_pp_val = (uintptr_t)g_timerobj, memcpy(g_timerobj + 8, &pzv, 8), g_ing.pause_pp = (uintptr_t)&g_pause_pp_val;
+	g_pz[0x34] = 1;
+	for (int i = 0; i < 60; i++) {
+		g_cb_test_t += 0.6 / 60;
+		combat_frame((uintptr_t)&g_player, 0);
+	}
+	g_pz[0x34] = 0;
+	EXPECT(slowed && g_fin.phase == FN_IDLE && !g_fin.smo && g_fi_tm[8] == 1000 && g_fi_tm[9] == 1000 &&
+		       !atomic_load(&g_fin.hold_c) && !atomic_load(&g_fin.show) && log_has("the sword hand away"),
+	       "finisher: paused 0.6 s ends it (slowed %d, phase %d, slow motion ours %d, the timer %u/%u, held %#llx, the outline %d; "
+	       "build 33: the world slow and the orc held while the frames skipped it)", slowed, g_fin.phase, g_fin.smo, g_fi_tm[8],
+	       g_fi_tm[9], (unsigned long long)atomic_load(&g_fin.hold_c), atomic_load(&g_fin.show));
+	g_ing.pause_pp = pause0, memcpy(g_timerobj + 8, &pz0, 8);
+	/* 2. ours, then the timer unreadable at the restore: put back what was found anyway */
+	g_fin.smo = 1, g_fin.smo_num = 1000, g_fin.smo_den = 1000, g_fin.smo_set[0] = 9830, g_fin.smo_set[1] = 65535;
+	g_fi_tm[8] = 9830, g_fi_tm[9] = 65535;
+	uintptr_t tp0 = g_fig.timer_pp;
+	g_fig.timer_pp = 0;
+	int n0 = g_fic.slowmo;
+	fn_slowmo(0, g_cb_test_t);
+	g_fig.timer_pp = tp0;
+	EXPECT(g_fic.slowmo == n0 + 1 && !strcmp(g_fic.slowmo_arg[0], "1000") && !strcmp(g_fic.slowmo_arg[1], "1000") && !g_fin.smo &&
+		       g_fi_tm[8] == 1000 && g_fi_tm[9] == 1000,
+	       "finisher: the slow motion put back with the timer unreadable (SlowMO.Set calls %d, args '%s' '%s', ours %d; build 33: "
+	       "none - the world left slow)", g_fic.slowmo - n0, g_fic.slowmo_arg[0], g_fic.slowmo_arg[1], g_fin.smo);
+	/* 3. in the stab on B, the blade in; B's Combat now C's object */
+	g_fin.phase = FN_STAB, g_fin.in_done = 1, g_fin.c = (uintptr_t)&g_oc[1], g_fin.hobj = (uintptr_t)&g_oobj[1];
+	g_fin.seen_t = g_cb_test_t;
+	g_oc[1].hobj = &g_oobj[2];
+	int dh0 = g_dh.n;
+	uint64_t k0 = g_fin.kills;
+	struct cb_orc oc;
+	int go = fn_orc(&oc, g_cb_test_t);
+	g_oc[1].hobj = &g_oobj[1];
+	EXPECT(!go && g_fin.phase == FN_IDLE && g_fin.kills == k0 && g_dh.n == dh0 && log_has("its Combat reused"),
+	       "finisher: a reused Combat ends it with no hit (go on %d, phase %d, kills +%llu, DealHits +%d; build 33: the new orc "
+	       "taken for the old one)", go, g_fin.phase, (unsigned long long)(g_fin.kills - k0), g_dh.n - dh0);
+	memcpy(&g_fin, &fin0, sizeof g_fin);
+	g_fi_sites = fis0, g_xc.ok_slowmo = okslow0, g_cb_test_t = tt;
+	cb_world();
+	printf("finisher review b34: paused 0.6 s ends it (the world's speed back, the orc let go), the slow motion put back "
+	       "with the timer unreadable, a reused Combat ends it with no hit\n");
+}
+
+/* ---- review b34 (som-b34-review-combat): SOMVR_KILLS on combat's stand-in orcs (white box) -------------------------
+ * 1. the AI hold's wrapper forwards the caller's rate (the AI actions pass their own; build 31's Linux one sent 1.0);
+ * 2. a kill that ends with its orc alive (3 DealHits that do not kill) gives its navigation back (KL_NAV on);
+ * 3. a kill whose Combat is another orc's now (the practice's respawn reuses the address) ends at once - no DealHit
+ *    on it, its navigation left alone;
+ * 4. SOMVR_ABIL's ground finisher on an orc whose kill plays deals nothing (build 33: the second kill, the charge). */
+static struct { int n; uintptr_t c, node, attack, target; float rate; int flag; } g_kls_start;
+static struct { int n; uintptr_t ai; int on, bit; } g_kls_nav;
+__attribute__((noipa)) void st_klstart(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, float rate, int flag)
+{
+	g_kls_start.n++, g_kls_start.c = c, g_kls_start.node = node, g_kls_start.attack = attack, g_kls_start.target = target;
+	g_kls_start.rate = rate, g_kls_start.flag = flag;
+	for (int i = 0; i < 4; i++) /* (build 36: the start takes on the stand-in orcs) */
+		if (c == (uintptr_t)&g_oc[i])
+			g_oc[i].attack = attack;
+}
+__attribute__((noipa)) void st_klnav(uintptr_t ai, int on, int bit)
+{
+	g_kls_nav.n++, g_kls_nav.ai = ai, g_kls_nav.on = on, g_kls_nav.bit = bit;
+}
+static void kl_tests(void)
+{
+	static struct site_spec kls[KLS_N];
+	static typeof(g_kl) kl0;
+	static typeof(g_abl) abl0;
+	const struct site_spec *sites0 = g_kl_sites;
+	memcpy(kls, g_kl_sites_game, sizeof kls);
+	kls[KLS_START].target = (uintptr_t)st_klstart, kls[KLS_NAV].target = (uintptr_t)st_klnav;
+	g_kl_sites = kls;
+	memcpy(&kl0, &g_kl, sizeof g_kl), memcpy(&abl0, &g_abl, sizeof g_abl);
+	int kd0 = g_kd.mode;
+	double tt = g_cb_test_t;
+	cb_world();
+	g_kd.mode = KD_GAME;
+	memset(g_kl.k, 0, sizeof g_kl.k), memset(&g_kl.pl, 0, sizeof g_kl.pl), memset(&g_kl.sy, 0, sizeof g_kl.sy);
+	g_kl.ok = 1, g_kl.ok_nav = 1, g_kl.on = 1, g_kl.ai_hold = 1;
+	g_kl.default_s = 5, g_kl.timeout_s = 6, g_kl.lead_s = 0.1f, g_kl.align_s = 0.15f;
+	/* 1. the rate through the game's own prototype (xmm0 on Linux, the 5th argument on Windows) */
+	memset(&g_kls_start, 0, sizeof g_kls_start);
+	kl_start_fn game_call = (kl_start_fn)(uintptr_t)somvr_w_klai;
+	game_call(0x1230, 0x40, 0x50, 0x60, 1.37f, 1);
+	EXPECT(g_kls_start.n == 1 && g_kls_start.c == 0x1230 && g_kls_start.node == 0x40 && g_kls_start.attack == 0x50 &&
+		       g_kls_start.target == 0x60 && g_kls_start.rate == 1.37f && g_kls_start.flag == 1,
+	       "kills: the AI hold's wrapper forwards (n %d c %#lx node %#lx attack %#lx target %#lx rate %g flag %d; the rate 1.37 "
+	       "asked - build 31's Linux wrapper sent 1.0)", g_kls_start.n, (unsigned long)g_kls_start.c,
+	       (unsigned long)g_kls_start.node, (unsigned long)g_kls_start.attack, (unsigned long)g_kls_start.target,
+	       (double)g_kls_start.rate, g_kls_start.flag);
+	/* 2. a kill on A that its DealHits do not kill (st_dealhit kills only with kill_next): 3 tries, then its navigation */
+	float root[3] = { g_pobj.pos[0], g_pobj.pos[1], g_pobj.pos[2] };
+	struct kl_one *k = &g_kl.k[0];
+	uintptr_t pcomb = (uintptr_t)&g_pcomb, pc = (uintptr_t)&g_pcs;
+	memset(&g_kls_nav, 0, sizeof g_kls_nav);
+	k->on = 1, k->c = (uintptr_t)&g_oc[0], k->hobj = (uintptr_t)&g_oobj[0], k->row = -1, k->nav = 1;
+	k->ai = (uintptr_t)g_oc[0].ai, k->gt0 = kl_gnow() - 10, k->head0 = k->head_min = k->head_still = NAN, k->fk = 1;
+	k->drec = (uintptr_t)g_recs[2];
+	snprintf(k->vname, sizeof k->vname, "ST_VICTIM"), snprintf(k->who, sizeof k->who, "a test");
+	g_dh.kill_next = 0;
+	int dh0 = g_dh.n;
+	for (int i = 0; i < 4 && k->on; i++)
+		kl_frame(pcomb, pc, root, g_cb_test_t += 1.0 / 90);
+	EXPECT(!k->on && g_dh.n == dh0 + 3 && g_kls_nav.n == 1 && g_kls_nav.ai == (uintptr_t)g_oc[0].ai && g_kls_nav.on == 1 &&
+		       g_kls_nav.bit == KL_NAV_BIT && !g_oc[0].dead && log_has("its navigation given back (KL_NAV)"),
+	       "kills: a kill over with its orc alive gives its navigation back (on %d, DealHits %d, KL_NAV calls %d: ai %#lx on %d "
+	       "bit %d; build 31: none - the orc held for good)", k->on, g_dh.n - dh0, g_kls_nav.n, (unsigned long)g_kls_nav.ai,
+	       g_kls_nav.on, g_kls_nav.bit);
+	/* ... a kill that ends in the orc's death: nothing given back (the dead orc's AI is the game's) */
+	memset(&g_kls_nav, 0, sizeof g_kls_nav);
+	k->on = 1, k->tries = 0, k->nav = 1, k->gt0 = kl_gnow() - 10;
+	g_dh.kill_next = 1, dh0 = g_dh.n;
+	kl_frame(pcomb, pc, root, g_cb_test_t += 1.0 / 90);
+	EXPECT(!k->on && g_dh.n == dh0 + 1 && g_oc[0].dead && g_kls_nav.n == 0, "kills: the death - no KL_NAV (on %d, DealHits %d, "
+	       "dead %d, KL_NAV calls %d)", k->on, g_dh.n - dh0, g_oc[0].dead, g_kls_nav.n);
+	g_oc[0].dead = 0, g_dh.kill_next = 0;
+	/* 3. B's kill, then B's Combat another orc's (its HOBJECT C's object): over at once, no DealHit, no KL_NAV */
+	memset(&g_kls_nav, 0, sizeof g_kls_nav);
+	memset(k, 0, sizeof *k);
+	k->on = 1, k->c = (uintptr_t)&g_oc[1], k->hobj = (uintptr_t)&g_oobj[1], k->row = -1, k->nav = 1;
+	k->ai = (uintptr_t)g_oc[1].ai, k->gt0 = kl_gnow() - 10, k->head0 = k->head_min = k->head_still = NAN, k->fk = 1;
+	k->drec = (uintptr_t)g_recs[2];
+	g_oc[1].hobj = &g_oobj[2];
+	dh0 = g_dh.n;
+	uint64_t ru0 = g_kl.reused;
+	kl_frame(pcomb, pc, root, g_cb_test_t += 1.0 / 90);
+	EXPECT(!k->on && g_dh.n == dh0 && g_kls_nav.n == 0 && g_kl.reused == ru0 + 1 &&
+		       log_has("gone (its Combat another orc's now)"),
+	       "kills: a reused Combat ends the kill (on %d, DealHits %d on it, KL_NAV calls %d; build 31: the new orc dealt the old "
+	       "one's death)", k->on, g_dh.n - dh0, g_kls_nav.n);
+	g_oc[1].hobj = &g_oobj[1];
+	/* 4. the ground finisher's stab into A while A's kill plays */
+	memset(k, 0, sizeof *k);
+	k->on = 1, k->c = (uintptr_t)&g_oc[0], k->hobj = (uintptr_t)&g_oobj[0], k->row = -1;
+	g_abl.mode = AB_ON, g_abl.pc = pc;
+	struct abl_offer *of = &g_abl.off[ABK_GROUND];
+	memset(of, 0, sizeof *of);
+	of->c = (uintptr_t)&g_oc[0], of->atk = (uintptr_t)g_recs[2], of->t = g_cb_test_t;
+	snprintf(of->atk_name, sizeof of->atk_name, "ST_H1"), snprintf(of->node, sizeof of->node, "ST_NODE");
+	float tip[3] = { g_oobj[0].pos[0], g_oobj[0].pos[1] - 60, g_oobj[0].pos[2] };
+	dh0 = g_dh.n;
+	abl_ground_kill(pc, tip, g_cb_test_t);
+	EXPECT(g_dh.n == dh0 && !g_oc[0].dead && log_has("its kill plays already (SOMVR_KILLS) - nothing"),
+	       "kills: the ground finisher on an orc whose kill plays deals nothing (DealHits %d, dead %d; build 33: a forceKill "
+	       "and the charge)", g_dh.n - dh0, g_oc[0].dead);
+	memset(k, 0, sizeof *k);
+	memcpy(&g_kl, &kl0, sizeof g_kl), memcpy(&g_abl, &abl0, sizeof g_abl);
+	g_kl_sites = sites0, g_kd.mode = kd0, g_cb_test_t = tt;
+	cb_world();
+	printf("kills  review b34: the AI hold forwards the rate, the navigation back when a kill ends alive (not at a death), a "
+	       "reused Combat ends the kill, no ground finisher on an orc whose kill plays\n");
+}
+
+/* b35 (re-xr-pipeline.md 160): SOMVR_INPUT_REC's game side - the ring, the writer's drain, the file, a mark's last 30 s
+ * copied, the CFG record; SOMVR_INPUT_REPLAY's load, the views', grips' and controls' override, the press counters */
+static void ir_tests(const char *dir)
+{
+	char lp[1024], rp[1100], f[1200];
+	snprintf(lp, sizeof lp, "%s/irtest.log", dir);
+	snprintf(rp, sizeof rp, "%s.inrec", lp);
+	char *old_log = getenv("SOMVR_LOG") ? strdup(getenv("SOMVR_LOG")) : NULL;
+	setenv("SOMVR_LOG", lp, 1);
+	setenv("SOMVR_INPUT_REC", "on", 1);
+	int bad = 0, was_test = g_bd.test;
+	ir_config(&bad);
+	EXPECT(g_ir.on && !bad && g_ir.f, "input rec on (%d, bad %d)", g_ir.on, bad);
+	memset(&g_fr, 0, sizeof g_fr);
+	somvr_rig rig_was = g_rig;
+	g_rig.p0 = (sv_vec3){ 0, 160, 0 }, g_rig.yaw0 = 0; /* the recording's rig = the replay's below: the remap is none */
+	somvr_hand h[2];
+	memset(h, 0, sizeof h);
+	for (int i = 0; i < 300; i++) { /* 3.3 s at 90 Hz: the right grip moves 1 cm a frame */
+		g_fr.frame = (uint64_t)(1000 + i), g_fr.views.time = 5000000000LL + (int64_t)i * 11111111;
+		g_fr.views.pose[0].q[3] = g_fr.views.pose[1].q[3] = 1, g_fr.views.pose[0].p[1] = g_fr.views.pose[1].p[1] = 1.6f;
+		h[1].valid = 1, h[1].tracked = 1, h[1].pose.q[3] = 1, h[1].pose.p[0] = 0.01f * (float)i, h[1].pose.p[1] = 1.2f;
+		g_inp.st.hand[1].presses[0] = (uint8_t)(i / 30), g_inp.have_st = 1, g_inp.st.hand[1].active = SOMVR_HACT_INPUT;
+		ir_frame(h, 1);
+		if (i == 280)
+			ir_mark(dir, "irmark", 1, cb_now());
+	}
+	ir_drain();
+	snprintf(f, sizeof f, "%s/input.inrec", dir);
+	irr_rec r;
+	memset(&r, 0, sizeof r);
+	int rc = irr_load_file(&r, rp) == 0 ? 0 : -1;
+	EXPECT(rc == 0 && r.nf == 300 && r.has_cfg && r.counts[SOMVR_IR_STATE] >= 1,
+	       "the session's file: %d frames (300), cfg %d, states %d", r.nf, r.has_cfg, r.counts[SOMVR_IR_STATE]);
+	EXPECT(rc == 0 && r.nf == 300 && fabsf(r.f[299].hand[1].p[0] - 2.99f) < 1e-5f && r.f[299].hand[1].presses[0] == 9,
+	       "... the last frame's grip and press counter as given");
+	irr_rec m;
+	memset(&m, 0, sizeof m);
+	int mrc = irr_load_file(&m, f);
+	EXPECT(mrc == 0 && m.nf >= 200 && m.has_cfg && (m.hdr.flags & 1), "the mark's copy %s: %d frames, cfg %d (rc %d)", f,
+	       mrc ? 0 : m.nf, mrc ? 0 : m.has_cfg, mrc);
+	if (!mrc)
+		irr_free(&m);
+	/* the replay: the file back into the views, the grips and the controls at the live XrTime */
+	g_bd.test = 1;
+	setenv("SOMVR_INPUT_REPLAY", rp, 1);
+	unsetenv("SOMVR_INPUT_REC");
+	ir_end_log();
+	g_ir.on = 0;
+	ir_config(&bad);
+	EXPECT(g_irp.want, "replay wanted with the hands test");
+	EXPECT(strstr(ir_word("start"), "300 frames") != NULL, "replay start loads the 300 frames");
+	g_rig.p0 = (sv_vec3){ 0, 160, 0 }, g_rig.yaw0 = 0, g_ir.last_psi = 0, g_ir.have_psi = 1;
+	g_inp.st_raw.hand[1].presses[0] = 40;
+	g_fr.views.time = 900000000000LL; /* the live clock: anything */
+	ir_views();
+	EXPECT(g_irp.on && g_irp.T0 == 900000000000LL, "the replay starts at the next stereo frame");
+	g_fr.views.time += 1000 * 11111111LL / 10; /* 100 frames later */
+	ir_views();
+	somvr_hand hh[2];
+	memset(hh, 0, sizeof hh);
+	ir_hands(hh, g_fr.views.time);
+	EXPECT(hh[1].valid && fabsf(hh[1].pose.p[0] - 1.00f) < 0.02f && fabsf(hh[1].pose.p[1] - 1.2f) < 1e-4f,
+	       "the grip 100 frames in: x %.3f (1.00)", (double)hh[1].pose.p[0]);
+	somvr_input_state st;
+	memset(&st, 0, sizeof st);
+	st.time = g_fr.views.time;
+	EXPECT(ir_snap(&st, 1) && st.hand[1].presses[0] == 43, "the press counter rebased: %u (40 + 3)", st.hand[1].presses[0]);
+	g_fr.views.time += 400 * 11111111LL; /* past the end + 0.5 s */
+	ir_views();
+	EXPECT(!g_irp.on && g_irp.ends == 1, "the end of the source ends the replay");
+	memset(&st, 0, sizeof st);
+	st.hand[1].presses[0] = 41;
+	ir_snap(&st, 1);
+	EXPECT(st.hand[1].presses[0] == (uint8_t)(41 + (g_irp.last_out[1][0] - 40)), "after it the counter goes on from it");
+	if (!rc)
+		irr_free(&r);
+	unsetenv("SOMVR_INPUT_REPLAY");
+	free(g_irp.f), g_irp.f = NULL, g_irp.n = 0, g_irp.want = 0, g_irp.have_ofs = 0;
+	g_bd.test = was_test, g_rig = rig_was;
+	memset(&g_fr, 0, sizeof g_fr);
+	memset(&g_inp.st, 0, sizeof g_inp.st), memset(&g_inp.st_raw, 0, sizeof g_inp.st_raw);
+	if (old_log)
+		setenv("SOMVR_LOG", old_log, 1), free(old_log);
+}
+
+/* ---- build 36 (som-b36-deaths, docs/re-xr-pipeline.md 164): every death readable as the blow's, at once -------------
+ * 1. cb_hit's killing blow that SOMVR_KILLS does not take: its death now with this blow's direction (review b34's open
+ *    item - build 33 dealt it after the direction was put back: the previous hit's, 7,8,9 here) and forceKill;
+ * 2. SOMVR_KILLS_QUICK: a half unseen 0.15 s in dies then (build 33: at 5 s); 0.10 s in it waits;
+ * 3. SOMVR_KILLS_QUICK: a downed orc's killing blow is not taken - the death at the blow (build 33: a KD row, 2.5 s);
+ *    3b. nor (SOMVR_KILLS_QUICK_RECOIL) one on an orc in a hit recoil (build 33: its half, the death 0.8 s later);
+ * 4. a blade on an orc whose kill plays shows the hit - the blood and sound, a pulse (build 33: nothing). */
+static void kl36_tests(void)
+{
+	static typeof(g_kl) kl0;
+	static typeof(g_cb) cb0;
+	static struct site_spec kls[KLS_N], prs[PRS_N];
+	const struct site_spec *sites0 = g_kl_sites, *prs0 = g_pr_sites;
+	memcpy(&kl0, &g_kl, sizeof g_kl), memcpy(&cb0, &g_cb, sizeof g_cb);
+	int kd0 = g_kd.mode, okmh0 = g_pr.ok_mh;
+	double tt = g_cb_test_t;
+	memcpy(kls, g_kl_sites_game, sizeof kls);
+	kls[KLS_START].target = (uintptr_t)st_klstart, kls[KLS_NAV].target = (uintptr_t)st_klnav;
+	g_kl_sites = kls;
+	memcpy(prs, g_pr_sites, sizeof prs);
+	prs[PRS_MINHEALTH].target = (uintptr_t)st_pr_minhealth;
+	g_pr_sites = prs, g_pr.ok_mh = 1;
+	cb_world();
+	g_kd.mode = KD_GAME;
+	memset(g_kl.k, 0, sizeof g_kl.k), memset(&g_kl.pl, 0, sizeof g_kl.pl), memset(&g_kl.sy, 0, sizeof g_kl.sy);
+	g_kl.ok = 1, g_kl.ok_nav = 1, g_kl.on = 1, g_kl.ai_hold = 1, g_kl.default_s = 5, g_kl.timeout_s = 6, g_kl.lead_s = 0.1f;
+	g_kl.quick = 1, g_kl.q = (somvr_kl_quick){ 0.15f, 3.0f, 0.6f, 10.0f, 1.5f, 8.0f }, g_kl.neck_sever = 1, g_kl.dying_fx = 1;
+	g_cb.mode = CB_FULL, g_cb.ok_hit = 1;
+	uintptr_t pc = (uintptr_t)&g_pcs, pcomb = (uintptr_t)&g_pcomb;
+	float root[3] = { g_pobj.pos[0], g_pobj.pos[1], g_pobj.pos[2] };
+	float *ahp = (float *)((char *)&g_och[0] + CH_HEALTH), hp_was = *ahp;
+	struct cb_orc oa;
+	/* 1. A at 12: the hit (10) is floored at 2 - the killing blow; no Combat/Attack database here: not taken */
+	*ahp = 12, g_och[0].minhealth = 0, g_oc[0].dead = 0, g_oc[0].attack = 0;
+	g_cat.count = 6; /* (the stand-in database: combat's records by name; no victim row among them - not taken) */
+	int got = cb_orc_get((uintptr_t)&g_oc[0], &oa);
+	somvr_blade b;
+	memset(&b, 0, sizeof b);
+	b.valid = 1, b.t = g_cb_test_t;
+	b.base[0] = oa.pos[0] - 60, b.base[1] = oa.pos[1] + 110, b.base[2] = oa.pos[2] - 40;
+	b.tip[0] = oa.pos[0] + 20, b.tip[1] = oa.pos[1] + 110, b.tip[2] = oa.pos[2] - 40;
+	b.vel_tip[2] = 600; /* the blow straight along +z */
+	sc_contact ct;
+	memset(&ct, 0, sizeof ct);
+	ct.u = 1, ct.along = 0.7f, ct.point[0] = oa.pos[0], ct.point[1] = oa.pos[1] + 110, ct.point[2] = oa.pos[2] - 35;
+	int dh0 = g_dh.n;
+	g_pcs.hitdir[0] = 7, g_pcs.hitdir[1] = 8, g_pcs.hitdir[2] = 9;
+	cb_hit(pc, &oa, &ct, SC_TIER_LIGHT, &b, g_cb_test_t);
+	const typeof(g_dh) *dk = &g_dh; /* (the last call: the death) */
+	if (g_dh.n != dh0 + 2)
+		logf_("SELFTEST kills 36 case 1: %d calls", g_dh.n - dh0);
+	EXPECT(got && g_dh.n == dh0 + 2 && dk->kill == 1 && NEAR(dk->dir[2], 1, 1e-4) && NEAR(dk->dir[0], 0, 1e-4) &&
+		       g_pcs.hitdir[0] == 7 && g_och[0].minhealth == 0,
+	       "kills 36: the killing blow not taken dies with its own direction (calls %d, kill %d, dir %g %g %g, the floor back %g; "
+	       "build 33: the previous hit's 7,8,9)", g_dh.n - dh0, dk->kill, dk->dir[0], dk->dir[1], dk->dir[2],
+	       (double)g_och[0].minhealth);
+	*ahp = hp_was, g_oc[0].dead = 0;
+	/* 2. a kill on B whose half is unseen (no skeleton on the stand-ins): 0.10 s in it waits, 0.16 s in it dies */
+	struct kl_one *k = &g_kl.k[0];
+	memset(k, 0, sizeof *k);
+	k->on = 1, k->c = (uintptr_t)&g_oc[1], k->hobj = (uintptr_t)&g_oobj[1], k->row = -1, k->fk = 1, k->quick = 1;
+	k->vrec = (uintptr_t)g_recs[4], g_oc[1].attack = k->vrec, k->drec = (uintptr_t)g_recs[2];
+	k->head0 = k->head_min = k->head_still = NAN, k->gt0 = k->qt0 = kl_gnow() - 0.10;
+	snprintf(k->vname, sizeof k->vname, "ST_VICTIM"), snprintf(k->who, sizeof k->who, "the killing blow");
+	g_dh.kill_next = 0, dh0 = g_dh.n;
+	kl_frame(pcomb, pc, root, g_cb_test_t += 1.0 / 90);
+	int waited = k->on && g_dh.n == dh0;
+	k->gt0 = k->qt0 = kl_gnow() - 0.16;
+	g_dh.kill_next = 1;
+	kl_frame(pcomb, pc, root, g_cb_test_t += 1.0 / 90);
+	EXPECT(waited && !k->on && g_dh.n == dh0 + 1 && g_oc[1].dead && g_dh.kill == 1 && log_has("its half unseen"),
+	       "kills 36: an unseen half dies 0.15 s in (waited at 0.10 %d, on %d, DealHits %d, dead %d; build 33: at 5 s)", waited,
+	       k->on, g_dh.n - dh0, g_oc[1].dead);
+	g_oc[1].dead = 0, g_oc[1].attack = 0, g_dh.kill_next = 0;
+	/* 3. a downed orc's killing blow (A, the hint): quick on - not taken; off - taken (build 33's KD row) */
+	memset(g_kl.k, 0, sizeof g_kl.k);
+	g_cat.count = 6; /* (the database "loaded": kl_db_ready) */
+	for (int i = 0; i < KL_ROWS; i++)
+		g_kl.vstate[i] = 1, g_kl.vrec[i] = (uintptr_t)g_recs[4], g_kl.sstate[i] = -1, g_kl.off[i] = 0;
+	got = cb_orc_get((uintptr_t)&g_oc[0], &oa);
+	float ax[3] = { 0, -1, 0.2f }, vel[3] = { 0, -500, 50 };
+	int st0 = g_kls_start.n;
+	int took_q = kl_take(pc, &oa, 0, 0, 0, ct.point, vel, ax, SOMVR_KL_DOWNED, "the killing blow", g_cb_test_t);
+	int nq = g_kls_start.n - st0;
+	g_kl.quick = 0;
+	int took_old = kl_take(pc, &oa, 0, 0, 0, ct.point, vel, ax, SOMVR_KL_DOWNED, "the killing blow", g_cb_test_t);
+	int row_old = g_kl.k[0].on ? g_kl.k[0].row : -9;
+	EXPECT(got && !took_q && nq == 0 && log_has("downed: its half seldom plays") && took_old && row_old >= 0 &&
+		       g_kl_rows[row_old].slow && g_kl_rows[row_old].states == SOMVR_KL_DOWNED,
+	       "kills 36: a downed orc's killing blow not taken with QUICK (taken %d, starts %d; off: taken %d row %d '%s')", took_q, nq,
+	       took_old, row_old, row_old >= 0 ? g_kl_rows[row_old].name : "-");
+	g_kl.quick = 1;
+	/* 3b. a killing blow on B in a hit recoil (its attack 'AI_Bip_L100_R2L_F', the session's first): with
+	 * SOMVR_KILLS_QUICK_RECOIL not taken (the death at the blow); off: taken (build 33: the half, 0.81 s to its death) */
+	static st_dbrec_t recoil_rec = { .flags = 2, .name = "AI_Bip_L100_R2L_F" };
+	memset(g_kl.k, 0, sizeof g_kl.k);
+	g_oc[1].attack = (uintptr_t)&recoil_rec;
+	struct cb_orc ob;
+	got = cb_orc_get((uintptr_t)&g_oc[1], &ob);
+	float pb[3] = { ob.pos[0], ob.pos[1] + 100, ob.pos[2] + 35 }, vb[3] = { 600, 0, 0 }, axb[3] = { 1, 0, 0 };
+	g_kl.quick_recoil = 1, st0 = g_kls_start.n;
+	int took_r = kl_take(pc, &ob, 0, 0, 0, pb, vb, axb, 0, "the killing blow", g_cb_test_t);
+	int nr = g_kls_start.n - st0;
+	g_oc[1].attack = (uintptr_t)&recoil_rec, g_kl.quick_recoil = 0;
+	int took_r0 = kl_take(pc, &ob, 0, 0, 0, pb, vb, axb, 0, "the killing blow", g_cb_test_t);
+	EXPECT(got && !took_r && nr == 0 && log_has("in a hit recoil: its half seldom plays") && took_r0 && g_kl.k[0].on,
+	       "kills 36: a killing blow on an orc in a hit recoil not taken with QUICK_RECOIL (taken %d, starts %d; off: taken %d)",
+	       took_r, nr, took_r0);
+	memset(g_kl.k, 0, sizeof g_kl.k);
+	g_oc[1].attack = 0;
+	/* 3c. the test words (boot 20261103-230240: build 36's first `kills quick on` set it off - w[6] read, 'o' for both) */
+	int qw[3];
+	kl_word("quick on"), qw[0] = g_kl.quick, kl_word("quick log"), qw[1] = g_kl.quick, kl_word("quick off"), qw[2] = g_kl.quick;
+	kl_word("recoil off");
+	int rw0 = g_kl.quick_recoil;
+	kl_word("recoil on");
+	EXPECT(qw[0] == 1 && qw[1] == 2 && qw[2] == 0 && !rw0 && g_kl.quick_recoil == 1,
+	       "kills 36: the words (quick on/log/off %d %d %d, recoil off/on %d %d)", qw[0], qw[1], qw[2], rw0, g_kl.quick_recoil);
+	g_kl.quick = 1;
+	/* 4. a blade on A while its kill plays: the hit shown (the touch's start, the blade moving), once per cooldown */
+	uint64_t dy0 = g_kl.dying_hits, hf0 = g_hf.hits[SC_KIND_CUT] + g_hf.hits[SC_KIND_STAB] + g_hf.hits[SC_KIND_SLAP] +
+					  g_hf.hits[SC_KIND_TAP];
+	g_cb.sp.mean_mps = 6.0f;
+	memset(&g_cb.touch, 0, sizeof g_cb.touch), memset(&g_cb.cool, 0, sizeof g_cb.cool);
+	k = &g_kl.k[0];
+	k->on = 1, k->c = (uintptr_t)&g_oc[0], k->hobj = (uintptr_t)&g_oobj[0], k->row = -1;
+	snprintf(k->vname, sizeof k->vname, "ST_VICTIM");
+	kl_dying_contact(&oa, &ct, &b, g_cb_test_t += 0.3);
+	kl_dying_contact(&oa, &ct, &b, g_cb_test_t += 1.0 / 90); /* (the same touch: no second) */
+	uint64_t hf1 = g_hf.hits[SC_KIND_CUT] + g_hf.hits[SC_KIND_STAB] + g_hf.hits[SC_KIND_SLAP] + g_hf.hits[SC_KIND_TAP];
+	EXPECT(kl_busy(oa.c) && g_kl.dying_hits == dy0 + 1 && hf1 == hf0 + 1 && log_has("while its kill plays"),
+	       "kills 36: a blade on a dying orc shows the hit once (shown %llu, the hit feel %llu; build 33: nothing)",
+	       (unsigned long long)(g_kl.dying_hits - dy0), (unsigned long long)(hf1 - hf0));
+	memset(g_kl.k, 0, sizeof g_kl.k);
+	/* 5. the finisher owns the charged kill: A at 12 health facing Talion 140 cm ahead, the charge ready, the finisher idle
+	 * - the killing blow leaves A at the floor (one DealHit, no death), the finisher's ready next (build 33: the death) */
+	{
+		static typeof(g_fin) fin0;
+		memcpy(&fin0, &g_fin, sizeof g_fin);
+		float pobj0[3], q0[4], ry0 = g_arm.rig.yaw;
+		memcpy(pobj0, g_pobj.pos, sizeof pobj0), memcpy(q0, g_fr.views.pose[0].q, sizeof q0);
+		uintptr_t hc0 = 0, hc = (uintptr_t)g_fihc;
+		memcpy(&hc0, (char *)&g_pcs + FI_C_HITCTR, 8), memcpy((char *)&g_pcs + FI_C_HITCTR, &hc, 8);
+		int16_t need = 8, chg = 8;
+		memcpy(g_fihc + XC_HC_NEED, &need, 2), memcpy(g_fihc + XC_HC_CHARGE, &chg, 2), g_fihc[XC_HC_ENABLED] = 1;
+		g_fihc[XC_HC_CHARGED] = 0;
+		g_pobj.pos[0] = g_oobj[0].pos[0], g_pobj.pos[1] = g_oobj[0].pos[1], g_pobj.pos[2] = g_oobj[0].pos[2] + 140;
+		g_fr.views.pose[0].q[0] = 0, g_fr.views.pose[0].q[1] = 1, g_fr.views.pose[0].q[2] = 0, g_fr.views.pose[0].q[3] = 0;
+		g_arm.rig.yaw = 0; /* (the head looking down -z at A; A's yaw 0 faces +z: Talion) */
+		g_fin.on = 1, g_fin.ok = 1, g_fin.phase = FN_IDLE, g_fin.cool_t = 0;
+		g_xc.ok_hc = 1;
+		*ahp = 12, g_och[0].minhealth = 0, g_oc[0].dead = 0, g_oc[0].attack = 0;
+		got = cb_orc_get((uintptr_t)&g_oc[0], &oa);
+		dh0 = g_dh.n;
+		uint64_t sp0 = g_kl.spared;
+		cb_hit(pc, &oa, &ct, SC_TIER_LIGHT, &b, g_cb_test_t += 6.0);
+		int calls = g_dh.n - dh0, dead = g_oc[0].dead;
+		float hp = *ahp;
+		/* ... not twice in 5 s (a ready that does not come never keeps it from dying) */
+		int again = fn_spares(pc, &oa, g_cb_test_t + 1.0);
+		chg = 7, memcpy(g_fihc + XC_HC_CHARGE, &chg, 2);
+		int unready = fn_spares(pc, &oa, g_cb_test_t + 9.0);
+		EXPECT(got && calls == 1 && !dead && NEAR(hp, 2, 0.01) && g_kl.spared == sp0 + 1 && log_has("spared") && !again && !unready,
+		       "kills 36: the finisher's orc spared at the killing blow (calls %d, dead %d, health %g, spared %llu; again in 1 s %d, "
+		       "the charge not ready %d; build 33: the death)", calls, dead, (double)hp, (unsigned long long)(g_kl.spared - sp0),
+		       again, unready);
+		memcpy(&g_fin, &fin0, sizeof g_fin);
+		memcpy(g_pobj.pos, pobj0, sizeof pobj0), memcpy(g_fr.views.pose[0].q, q0, sizeof q0), g_arm.rig.yaw = ry0;
+		memcpy((char *)&g_pcs + FI_C_HITCTR, &hc0, 8);
+		*ahp = hp_was, g_oc[0].dead = 0;
+	}
+	g_oc[0].attack = 0, g_cat.count = 0;
+	memcpy(&g_kl, &kl0, sizeof g_kl), memcpy(&g_cb, &cb0, sizeof g_cb);
+	g_kl_sites = sites0, g_pr_sites = prs0, g_pr.ok_mh = okmh0, g_kd.mode = kd0, g_cb_test_t = tt;
+	cb_world();
+	printf("kills  build 36: the killing blow not taken dies with its own direction, an unseen half dies 0.15 s in, a downed "
+	       "orc's and a recoiling orc's killing blows not taken, a blade on a dying orc shows the hit, the finisher's orc spared\n");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
@@ -16969,6 +17738,7 @@ int main(int argc, char **argv)
 	sf_tests();     /* SOMVR_HANDS_SURFACE: on the climb's stand-ins (build 13) */
 	go_tests();     /* SOMVR_MUSIC / SOMVR_HINTS: their own stand-ins (build 10) */
 	gs_tests();     /* build 20, SOMVR_SLOTS_GAMESOUND: stand-in objects and posts */
+	bow_a_tests();  /* build 36, SOMVR_BOW_A_JUMP=draw: A while drawing the bow is no jump */
 	pp_tests();     /* SOMVR_PAD_PROMPTS, SOMVR_BOW_STRIKE: their own stand-ins (the bow's round 2) */
 	bh_tests();     /* SOMVR_BOW_HITLOG: a stand-in call (the bow's round 2) */
 	uf_tests();     /* SOMVR_HUD_FX: a stand-in thunk (the build 12 HUD round) */
@@ -16979,6 +17749,11 @@ int main(int argc, char **argv)
 	py_tests();     /* SOMVR_PARRY / SOMVR_SHOVE: the window, the opening, the riposte (build 18) */
 	soak_tests();   /* build 27: the long session's tables (SOMVR_GLYPH's triggers and items) */
 	soak29_tests(); /* build 29: the root nodes' cache, the late lines */
+	s34_tests();    /* build 34: the VR menu's v8 rows on the game side (somvr_settings34_game.c) */
+	kl_tests();     /* review b34: SOMVR_KILLS' AI hold rate, the navigation back, a reused Combat, the ground finisher */
+	kl36_tests();   /* build 36: the deaths at once - the fallback's direction, the quick rule, the downed, a dying orc's hit */
+	finisher_tests(); /* review b34 for build 33: the finisher's every way out, the timer-blind restore, a reused Combat */
+	ir_tests(argv[1]); /* b35: SOMVR_INPUT_REC, SOMVR_INPUT_REPLAY */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",
 	       (unsigned long long)atomic_load(&g_st_stereo), (unsigned long long)atomic_load(&g_st_mono),

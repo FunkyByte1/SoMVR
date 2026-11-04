@@ -206,9 +206,9 @@ static void br_gate_line(const char *what, uintptr_t node, uintptr_t atk, uintpt
 	if (!g_brnl.on || g_brnl.logged >= BR_NL_MAXLINES)
 		return;
 	g_brnl.logged++;
-	logf_("VERBS brand gate t=%.3f f+%llu root '%s': %s -> %ld (the attack '%s', the target %#lx)", cb_now(),
-	      (unsigned long long)(g_fr.frame - g_brnl.frame0), vb_name(node, nn, sizeof nn), what, ans, vb_name(atk, an, sizeof an),
-	      (unsigned long)target);
+	logf_("VERBS brand gate t=%.3f f+%llu root '%s': %s -> %lld (the attack '%s', the target %#llx)", cb_now(),
+	      (unsigned long long)(g_fr.frame - g_brnl.frame0), vb_name(node, nn, sizeof nn), what, (long long)ans, vb_name(atk, an, sizeof an),
+	      (unsigned long long)target);
 }
 __attribute__((used)) uintptr_t somvr_w_brsel(uintptr_t a, uintptr_t node, uintptr_t c, uintptr_t d, uintptr_t e, uintptr_t f)
 {
@@ -248,7 +248,7 @@ static void br_nl_frame(double t)
 	uintptr_t *sink = (uintptr_t *)g_brnl.sink_a;
 	if (want) {
 		if (sink && *sink && *sink != (uintptr_t)g_brnl.dummy) { /* the game's own sink (a log file named): leave it */
-			logf_("VERBS brand node log t=%.3f: the game's sink is set (%#lx): not opened", t, (unsigned long)*sink);
+			logf_("VERBS brand node log t=%.3f: the game's sink is set (%#llx): not opened", t, (unsigned long long)*sink);
 			g_brnl.until = 0;
 			return;
 		}
@@ -308,8 +308,8 @@ static void br_nl_start(const struct site_spec *sites, uintptr_t flag_a, uintptr
 #else
 	if (!peek(flag_a, &fl, 1) || !peek(sink_a, &sk, sizeof sk) || fl > 1 || sk) {
 #endif
-		logf_("WARN SOMVR_VERBS_BRAND_NODELOG=on: the node log's byte (%#x) or sink (%#lx) is not the shipped game's 0: off",
-		      fl, (unsigned long)sk);
+		logf_("WARN SOMVR_VERBS_BRAND_NODELOG=on: the node log's byte (%#x) or sink (%#llx) is not the shipped game's 0: off",
+		      fl, (unsigned long long)sk);
 		*bad = 1;
 		return;
 	}
@@ -524,13 +524,13 @@ static int br_press(uintptr_t c, double t)
 	int k = fresh ? g_br.ask_kind : BRK_NONE;
 	if (g_br.b_on == 0) { /* build 24: the game's own lock (its input mode): the press does nothing */
 		g_br.lock_presses++;
-		logf_("VERBS brand t=%.3f press: orc %#lx - the game has its combat commands off now (B 120 not enabled for %.1f s: "
+		logf_("VERBS brand t=%.3f press: orc %#llx - the game has its combat commands off now (B 120 not enabled for %.1f s: "
 		      "its input mode - a mission's scripted intro, a video, a menu): the game takes no press until it is back", t,
-		      (unsigned long)c, t - g_br.b_off_t);
+		      (unsigned long long)c, t - g_br.b_off_t);
 	}
 	if (k == BRK_COMBAT && g_br.talion_recoil) { /* hit meanwhile: the game takes no attack now (boot 20261029-072843) */
-		logf_("VERBS brand t=%.3f press: orc %#lx - the combat brand offered %.2f s ago, but Talion is in a recoil now: B as "
-		      "before (no chord)", t, (unsigned long)c, t - g_br.ask_t);
+		logf_("VERBS brand t=%.3f press: orc %#llx - the combat brand offered %.2f s ago, but Talion is in a recoil now: B as "
+		      "before (no chord)", t, (unsigned long long)c, t - g_br.ask_t);
 		k = BRK_NONE;
 	}
 	if (g_br.mode != BR_ON || k == BRK_NONE || (k == BRK_STEALTH && !g_br.stealth_tap)) {
@@ -554,9 +554,9 @@ static int br_press(uintptr_t c, double t)
 	g_vb.press_b = 0;
 	k == BRK_COMBAT ? g_br.chords++ : g_br.taps++;
 	if (g_vb.haptic > 0)
-		in_haptic_event(SOMVR_HAND_L, 0.6f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
-	logf_("VERBS brand t=%.3f press: orc %#lx - the game offers '%s' (%s, asked %.2f s ago): %s for %.0f ms instead of B "
-	      "held", t, (unsigned long)c, g_br.ask_atk, g_brk_w[k], t - g_br.ask_t, k == BRK_COMBAT ?
+		haptic_play(SOMVR_HAND_L, SOMVR_HX_POWER, 1, g_vb.haptic);
+	logf_("VERBS brand t=%.3f press: orc %#llx - the game offers '%s' (%s, asked %.2f s ago): %s for %.0f ms instead of B "
+	      "held", t, (unsigned long long)c, g_br.ask_atk, g_brk_w[k], t - g_br.ask_t, k == BRK_COMBAT ?
 	      "the chord B + A (120 + 121)" : "B (120) tapped", g_br.press_s * 1e3);
 	return 1;
 }
@@ -565,16 +565,16 @@ static int br_press(uintptr_t c, double t)
 typedef uint8_t (*br_cmd_on_fn)(uintptr_t mode, uint32_t cmd);
 static void br_b_on_frame(uintptr_t pcomb, double t)
 {
-	uintptr_t mo = pcomb ? peek_ptr(pcomb + BR_PC_TRACK) : 0, vt = mo ? peek_ptr(mo) : 0, fn = vt ? peek_ptr(vt + 0x18) : 0;
+	uintptr_t mo = pcomb ? peek_ptr(pcomb + BR_PC_TRACK) : 0, vt = mo ? peek_ptr(mo) : 0, fn = vt ? peek_ptr(vt + OFS(BR_MODE_CMDON_VT, 0x18)) : 0;
 	int on = fn >= g_br.text_lo && fn < g_br.text_hi ? ((br_cmd_on_fn)fn)(mo, VB_CMD_B) != 0 : -1;
 	if (on == g_br.b_on)
 		return;
 	if (on == 0)
 		g_br.b_off_t = t, g_br.locks++;
 	if (g_br.b_on >= 0 || on == 0)
-		logf_("VERBS brand t=%.3f the game's combat commands %s (B 120 %s by the input mode %#lx's slot 3 %#lx)%s", t,
+		logf_("VERBS brand t=%.3f the game's combat commands %s (B 120 %s by the input mode %#llx's slot 3 %#llx)%s", t,
 		      on == 1 ? "on again" : on == 0 ? "OFF" : "not readable", on == 1 ? "enabled" : on == 0 ? "not enabled" : "-",
-		      (unsigned long)mo, (unsigned long)fn, on == 1 && g_br.b_on == 0 ? "" : on == 0 ?
+		      (unsigned long long)mo, (unsigned long long)fn, on == 1 && g_br.b_on == 0 ? "" : on == 0 ?
 		      ": the game takes no attack press now (its input mode: a mission's scripted intro, a video, a menu)" : "");
 	if (on == 1 && g_br.b_on == 0)
 		logf_("VERBS brand t=%.3f ... off for %.1f s", t, t - g_br.b_off_t);
@@ -608,10 +608,10 @@ static void br_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		uint8_t blk = 0;
 		uint32_t bcmd = 0;
 		peek(pc + BR_C_BLOCKING, &blk, 1), peek(pcomb + BR_PC_TRACK + BR_TR_BLOCK, &bcmd, sizeof bcmd);
-		int k0 = snprintf(line, sizeof line, "VERBS brand t=%.3f %s: orc %#lx at %.0f cm (attack '%s' state '%s', health "
+		int k0 = snprintf(line, sizeof line, "VERBS brand t=%.3f %s: orc %#llx at %.0f cm (attack '%s' state '%s', health "
 				  "%.1f; Talion's attack '%s' state '%s' blocking %d, pending %d; the crouch 125 %s, B 120 %s, A 121 "
 				  "%s, the hand %s; the game's tracker: the blocking command %u '%s' %s, 120 %s, 125 %s):", t,
-				  probe ? "probe" : "the press", (unsigned long)o[i].c, o[i].dist,
+				  probe ? "probe" : "the press", (unsigned long long)o[i].c, o[i].dist,
 				  vb_name(peek_ptr(o[i].c + VB_C_ATTACK), an, sizeof an),
 				  vb_name(peek_ptr(o[i].c + VB_C_STATE), sn, sizeof sn), vb_health(o[i].c),
 				  vb_name(peek_ptr(pc + VB_C_ATTACK), ta, sizeof ta), vb_name(peek_ptr(pc + VB_C_STATE), ts, sizeof ts),
@@ -689,7 +689,7 @@ static void br_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	if ((c != g_br.said_c || kind != g_br.said_kind) && vb_log_ok()) {
 		g_br.said_c = c, g_br.said_kind = kind;
 		char geo[96];
-		logf_("VERBS brand t=%.3f orc %#lx (%s, attack '%s'): %s%s%s (%s)", t, (unsigned long)c, g_br.reach_held ? "held" :
+		logf_("VERBS brand t=%.3f orc %#llx (%s, attack '%s'): %s%s%s (%s)", t, (unsigned long long)c, g_br.reach_held ? "held" :
 		      br_stunned(c) ? "stunned" : "on its head", vb_name(peek_ptr(c + VB_C_ATTACK), an, sizeof an),
 		      kind ? "the game offers " : "no brand offered", kind ? g_brk_w[kind] : "", kind ? "" : "",
 		      br_geom(oc, geo, sizeof geo));

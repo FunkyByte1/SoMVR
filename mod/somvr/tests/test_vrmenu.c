@@ -358,47 +358,72 @@ static void test_layout(void) {
     CHECK(inside && back && contained, "rects inside the texture %d, centres hit back %d, boxes in their rows %d", inside,
           back, contained);
     int r0[4], r1[4], rb[4];
-    /* build 19 (re-xr-pipeline.md 73): the rows on two pages - the Settings page (the view, the comfort, the body) and
-     * the Fight page (the sword, the bow, the fight: somvr_vm_row_page), each with its page button in the slot under its
-     * rows (Fight settings > / < Settings), the bottom row under both. Every row of every build: apart, the button under
-     * them, the bottom row below; a page's rows as close as its count makes them (row_h) */
+    /* build 34 (re-xr-pipeline.md 150): the rows in six groups (somvr_vm_row_page), each the Settings tab's page with the
+     * six group buttons in two rows under the tab strip, its rows from 152 down, the bottom row under them. Every row of
+     * every build: apart, under the buttons, above the bottom row; a group's rows as close as its count makes them */
     const uint64_t ALLR = SOMVR_VMA_MOVES | SOMVR_VMA_MUSIC | SOMVR_VMA_SIZE | SOMVR_VMA_CROUCH | SOMVR_VMA_FLING |
                           SOMVR_VMA_SURFACE | SOMVR_VMA_FIGHT_ROWS;
-    int overlap = 0, below = 1, minh = 999, n_on[2] = {0, 0};
-    for (int pg = 0; pg < 2; pg++) {
-        int want = pg ? SOMVR_VMPG_FIGHT : SOMVR_VMPG_SETTINGS, prev[4] = {0, 0, 0, 0}, have = 0;
-        /* the rows top to bottom (build 27-30: Walk toward and Handedness are shown out of their item order) */
-        for (int y = 0; y < SOMVR_VM_TEX_H; y++)
+    static const int groups[6] = {SOMVR_VMPG_SETTINGS, SOMVR_VMPG_DISPLAY, SOMVR_VMPG_CLIMB, SOMVR_VMPG_SWORD,
+                                  SOMVR_VMPG_FIGHT, SOMVR_VMPG_BOW};
+    int overlap = 0, below = 1, under = 1, minh = 999, n_on[6] = {0};
+    somvr_vm_rect_av(ALLR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rb);
+    for (int pg = 0; pg < 6; pg++) {
+        int prev[4] = {0, 0, 0, 0}, have = 0;
+        for (int y = 0; y < SOMVR_VM_TEX_H; y++) /* the rows top to bottom (the group's order, not the items') */
             for (int i = 0; i < SOMVR_VMI_ROWS; i++) {
                 int a[4];
-                if (somvr_vm_row_page(i) != want || !somvr_vm_rect_av(ALLR, i, SOMVR_VMP_ROW, a) || a[1] != y) continue;
+                if (somvr_vm_row_page(i) != groups[pg] || !somvr_vm_rect_av(ALLR, i, SOMVR_VMP_ROW, a) || a[1] != y) continue;
                 if (have) overlap |= prev[1] + prev[3] > a[1];
+                under &= a[1] >= 150;
                 memcpy(prev, a, sizeof a), have = 1, n_on[pg]++;
                 minh = a[3] < minh ? a[3] : minh;
             }
-        somvr_vm_rect_av(ALLR, pg ? SOMVR_VMI_PG_BACK : SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, r1);
-        overlap |= prev[1] + prev[3] > r1[1];
-        somvr_vm_rect_av(ALLR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rb);
-        below &= r1[1] + r1[3] <= rb[1];
+        below &= prev[1] + prev[3] <= rb[1];
+
     }
-    /* all rows (the moves only with SOMVR_VMA_MOVES, which no build since 6 has): the Settings page 20 + its button =
-     * 28 px, the Fight page 11 + its button = 38 px */
-    CHECK(!overlap && below && rb[3] >= 48 && minh == 28 && n_on[0] == 20 && n_on[1] == 11,
-          "rows apart, the page buttons below them, the bottom row below (min %d px, %d + %d rows)", minh, n_on[0], n_on[1]);
-    /* build 19's own set (build 18's 21 rows: no moves, no Sword hand - SOMVR_SWORD_HAND_LOCK - + the six): the Settings
-     * page 17 rows + its button = 33 px (over the font's 32-pixel cell; build 18's one page: 21 rows of 28), the Fight
-     * page 10 + its button = 38 */
+    int in_group = 1; /* every value row is in a group */
+    for (int i = 0; i < SOMVR_VMI_ROWS; i++) in_group &= somvr_vm_settings_page(somvr_vm_row_page(i));
+    /* all rows (the moves only with SOMVR_VMA_MOVES, which no build since 6 has): Comfort 14 (35 px: 13 fit), Display 8,
+     * Climbing 4, Sword 8, Fight 9, Bow 3 (Walk toward and Refresh rate need their bits, Pointer hand is never shown) */
+    CHECK(!overlap && below && under && in_group && rb[3] >= 48 && minh == 35 && n_on[0] == 14 && n_on[1] == 8 &&
+              n_on[2] == 4 && n_on[3] == 8 && n_on[4] == 9 && n_on[5] == 3 /* build 33: Bow from */,
+          "rows apart, under the groups' buttons, the bottom row below (min %d px, %d %d %d %d %d %d rows)", minh, n_on[0],
+          n_on[1], n_on[2], n_on[3], n_on[4], n_on[5]);
+    /* build 19's own set (no moves, no Sword hand): Comfort 10 rows, Sword 7, 38 px each, from 152 */
     const uint64_t B19 = ALLR & ~(uint64_t)(SOMVR_VMA_MOVES | SOMVR_VMA_SWHAND);
     somvr_vm_rect_av(B19, SOMVR_VMI_TURN, SOMVR_VMP_ROW, r0), somvr_vm_rect_av(B19, SOMVR_VMI_SWORD, SOMVR_VMP_ROW, r1);
-    CHECK(r0[3] == 33 && r0[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE && r1[3] == 38 && r0[1] == r1[1] && r0[1] == 64,
-          "build 19: the Settings page's rows %d px, the Fight page's %d px, both from %d", r0[3], r1[3], r0[1]);
-    somvr_vm_rect_av(B19, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW, r0), somvr_vm_rect_av(B19, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, r1);
-    CHECK(r0[1] == 64 + 16 * 33 && r1[1] == 64 + 17 * 33 + 2 && r1[3] == 29 && r1[0] == 16 && r1[2] == 480,
-          "build 19: Hands at walls the Settings page's last row (%d), Fight settings > under it (%d, %d px)", r0[1], r1[1],
-          r1[3]);
-    somvr_vm_rect_av(B19, SOMVR_VMI_CICON, SOMVR_VMP_ROW, r0), somvr_vm_rect_av(B19, SOMVR_VMI_PG_BACK, SOMVR_VMP_BUTTON, r1);
-    CHECK(r0[1] == 64 + 9 * 38 && r1[1] == 64 + 10 * 38 + 2 && r1[3] == 34,
-          "build 19: Counter icon the Fight page's last row (%d), < Settings under it (%d)", r0[1], r1[1]);
+    CHECK(r0[3] == 38 && r1[3] == 38 && r0[1] == r1[1] && r0[1] == 152,
+          "build 34: Comfort's rows %d px, Sword's %d px, both from %d", r0[3], r1[3], r0[1]);
+    somvr_vm_rect_av(B19, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW, r0), somvr_vm_rect_av(B19, SOMVR_VMI_CICON, SOMVR_VMP_ROW, r1);
+    CHECK(r0[1] == 152 + 3 * 38 && r1[1] == 152 + 4 * 38 && !somvr_vm_rect_av(B19, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rb) &&
+              !somvr_vm_rect_av(B19, SOMVR_VMI_PG_BACK, SOMVR_VMP_BUTTON, rb),
+          "build 34: Hands at walls Climbing's last row (%d), Counter icon Fight's fifth (%d); no page buttons", r0[1], r1[1]);
+    /* the six group buttons: two rows of three under the tab strip, above the rows, apart; each hits back on every group
+     * page (not on the Practice, Controls or Test page), a press opens its page */
+    int sub_ok = 1, hit_ok = 1;
+    for (int i = 0; i < SOMVR_VM_SUBS; i++) {
+        int a[4], it = SOMVR_VMI_SUB_COMFORT + i;
+        sub_ok &= somvr_vm_rect_av(ALLR, it, SOMVR_VMP_BUTTON, a) && a[1] >= 60 && a[1] + a[3] <= 150 && a[0] >= 16 &&
+                  a[0] + a[2] <= SOMVR_VM_TEX_W - 16 && a[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE &&
+                  somvr_font_text_w(somvr_vm_label(it), SOMVR_VM_SCALE) <= a[2] - 16 && somvr_vm_tab_page(it) == groups[i];
+        for (int j = 0; j < i; j++) {
+            int c[4];
+            somvr_vm_rect_av(ALLR, SOMVR_VMI_SUB_COMFORT + j, SOMVR_VMP_BUTTON, c);
+            sub_ok &= a[0] + a[2] <= c[0] || c[0] + c[2] <= a[0] || a[1] + a[3] <= c[1] || c[1] + c[3] <= a[1];
+        }
+        float u = (a[0] + 0.5f * a[2]) / SOMVR_VM_TEX_W, v = (a[1] + 0.5f * a[3]) / SOMVR_VM_TEX_H;
+        for (int pg = 0; pg < 6; pg++) hit_ok &= somvr_vm_hit_test_av(ALLR, groups[pg], u, v).item == it;
+        hit_ok &= somvr_vm_hit_test_av(ALLR, SOMVR_VMPG_PRACTICE, u, v).item != it &&
+                  somvr_vm_hit_test_av(ALLR, SOMVR_VMPG_CONTROLS, u, v).item != it;
+        somvr_settings z;
+        somvr_set_default(&z);
+        hit_ok &= somvr_vm_apply(&z, ALLR, 0, it, SOMVR_VMP_BUTTON) == SOMVR_VMR_PAGE &&
+                  somvr_vm_apply(&z, ALLR, 0, it, SOMVR_VMP_ROW) == SOMVR_VMR_NONE;
+    }
+    CHECK(sub_ok && hit_ok && somvr_vm_settings_page(SOMVR_VMPG_FIGHT) && !somvr_vm_settings_page(SOMVR_VMPG_TEST) &&
+              !somvr_vm_settings_page(SOMVR_VMPG_PRACTICE) && !strcmp(somvr_vm_page_name(SOMVR_VMPG_SETTINGS), "the settings page") &&
+              !strcmp(somvr_vm_page_name(SOMVR_VMPG_CLIMB), "the climbing page"),
+          "the six group buttons: rects %d, hits and presses %d", sub_ok, hit_ok);
     somvr_vm_rect(0, SOMVR_VMP_ROW, r0);
     CHECK(r0[3] == 38, "the rows every build shows: 38 px");
     /* a box is at least 2 degrees wide seen from 40 cm (the pointer's target) */
@@ -793,10 +818,10 @@ static void test_moves(void) {
 
 /* ---- v4: the sword angle (re-xr-pipeline.md 29): the key, the row, its steps, the 16-row layout ------------------- */
 static void test_sword(void) {
-    CHECK(SOMVR_VRMENU_VERSION == 7 && sizeof(somvr_settings) == 96 && offsetof(somvr_settings, sword_deg) == 64 &&
-              sizeof(somvr_vrmenu_shared) == 208 && offsetof(somvr_vrmenu_shared, gen) == 144 &&
-              offsetof(somvr_vrmenu_shared, block) == 164 && offsetof(somvr_vrmenu_shared, n_frames) == 168,
-          "the v4 fields in the v7 ABI");
+    CHECK(SOMVR_VRMENU_VERSION == 8 && sizeof(somvr_settings) == 128 /* v8 */ && offsetof(somvr_settings, sword_deg) == 64 &&
+              sizeof(somvr_vrmenu_shared) == 240 && offsetof(somvr_vrmenu_shared, gen) == 176 &&
+              offsetof(somvr_vrmenu_shared, block) == 196 && offsetof(somvr_vrmenu_shared, n_frames) == 200,
+          "the v4 fields in the v8 ABI");
     somvr_settings s;
     somvr_set_default(&s);
     char v[32], file[2048];
@@ -861,23 +886,23 @@ static void test_sword(void) {
     int rp[4], rs[4], rr[4], rq[4], lb[4], mb[4];
     memset(rp, 0, sizeof rp), memset(rs, 0, sizeof rs), memset(rr, 0, sizeof rr), memset(rq, 0, sizeof rq);
     memset(lb, 0, sizeof lb), memset(mb, 0, sizeof mb);
-    CHECK(SOMVR_VMI_ROWS == 34 && SOMVR_VMI_MOVE == 31 && SOMVR_VMI_REFRESH == 32 && SOMVR_VMI_HANDED == 33 && /* build 30 */ SOMVR_VMI_SWORD == SOMVR_VMI_MOVE - 16 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
+    CHECK(SOMVR_VMI_ROWS == 49 /* build 34 (33: Bow from) */ && SOMVR_VMI_MOVE == 31 && SOMVR_VMI_REFRESH == 32 && SOMVR_VMI_HANDED == 33 && /* build 30 */ SOMVR_VMI_SWORD == SOMVR_VMI_MOVE - 16 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_ROW, rs) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_QUIT, SOMVR_VMP_BUTTON, rq) && somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_LESS, lb) &&
-              somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_MORE, mb) && rs[1] == 64 && rp[1] + rp[3] <= rr[1] &&
+              somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_MORE, mb) && rs[1] == 152 && rp[1] + rp[3] <= rr[1] &&
               rs[1] + rs[3] <= rr[1] &&
               rq[1] + rq[3] <= SOMVR_VM_TEX_H - 28 && lb[3] == (rs[3] - 2 < 34 ? rs[3] - 2 : 34) && mb[3] == lb[3] &&
               lb[1] >= rs[1] &&
               lb[1] + lb[3] <= rs[1] + rs[3],
           "the layout: phase %d..%d, sword %d..%d, the buttons %d..%d of %d", rp[1], rp[1] + rp[3], rs[1], rs[1] + rs[3],
           rr[1], rr[1] + rr[3], SOMVR_VM_TEX_H);
-    somvr_vm_hit h = somvr_vm_hit_test_av(ALLR, SOMVR_VMPG_FIGHT, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
+    somvr_vm_hit h = somvr_vm_hit_test_av(ALLR, SOMVR_VMPG_SWORD, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
                                           (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H),
                  hs = somvr_vm_hit_test_av(ALLR, SOMVR_VMPG_SETTINGS, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
                                            (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_SWORD && h.part == SOMVR_VMP_MORE && hs.item == SOMVR_VMI_TURN,
-          "its > box hits back on the Fight page (%d %d), the Settings page's Turn there (%d)", h.item, h.part, hs.item);
+          "its > box hits back on the Sword page (%d %d), the Comfort page's Turn there (%d)", h.item, h.part, hs.item);
 }
 
 /* ---- the player size (re-xr-pipeline.md 35): the key in %, the row at the end of the settings, 100 .. 140 by 5 ---- */
@@ -885,7 +910,7 @@ static void test_size(void) {
     somvr_settings s, b;
     char v[32], file[512];
     somvr_set_default(&s);
-    CHECK(s.size == 1.0f && offsetof(somvr_settings, size) == 68 && sizeof(somvr_settings) == 96 &&
+    CHECK(s.size == 1.0f && offsetof(somvr_settings, size) == 68 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_PLAYER_SIZE), "PLAYER_SIZE") &&
               !strcmp(somvr_set_env(SOMVR_SK_PLAYER_SIZE), "SOMVR_PLAYER_SIZE") &&
               somvr_set_find("SOMVR_PLAYER_SIZE") == SOMVR_SK_PLAYER_SIZE && SOMVR_SK_PLAYER_SIZE == SOMVR_SK_MOVE - 14,
@@ -951,7 +976,7 @@ static void test_feel(void) {
     int bad = 0;
     somvr_set_default(&s);
     CHECK(s.fling == 0 && s.surface == 0 && offsetof(somvr_settings, fling) == 77 &&
-              offsetof(somvr_settings, surface) == 78 && sizeof(somvr_settings) == 96 &&
+              offsetof(somvr_settings, surface) == 78 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_CLIMB_FLING), "CLIMB_FLING") &&
               !strcmp(somvr_set_env(SOMVR_SK_CLIMB_FLING), "SOMVR_CLIMB_FLING") &&
               !strcmp(somvr_set_key(SOMVR_SK_HANDS_SURFACE), "HANDS_SURFACE") &&
@@ -994,10 +1019,11 @@ static void test_feel(void) {
     memset(rc, 0, sizeof rc), memset(rf, 0, sizeof rf), memset(rh, 0, sizeof rh), memset(rr, 0, sizeof rr);
     CHECK(somvr_vm_rect_av(B13, SOMVR_VMI_CROUCH, SOMVR_VMP_ROW, rc) && somvr_vm_rect_av(B13, SOMVR_VMI_FLING, SOMVR_VMP_ROW, rf) &&
               somvr_vm_rect_av(B13, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW, rh) &&
-              somvr_vm_rect_av(B13, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rc[1] + rc[3] <= rf[1] &&
-              rf[1] + rf[3] <= rh[1] && rh[1] + rh[3] <= rr[1] && rh[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE,
+              somvr_vm_rect_av(B13, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rc[1] + rc[3] <= rr[1] &&
+              rf[1] == 152 && rf[1] + rf[3] <= rh[1] && rh[1] + rh[3] <= rr[1] && rh[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE &&
+              somvr_vm_row_page(SOMVR_VMI_CROUCH) == SOMVR_VMPG_SETTINGS && somvr_vm_row_page(SOMVR_VMI_FLING) == SOMVR_VMPG_CLIMB,
           "build 13's page: crouch %d, fling %d, hands %d (%d px), Recentre %d", rc[1], rf[1], rh[1], rh[3], rr[1]);
-    somvr_vm_hit h = somvr_vm_hit_test_av(B13, SOMVR_VMPG_SETTINGS, (rh[0] + 20.0f) / SOMVR_VM_TEX_W,
+    somvr_vm_hit h = somvr_vm_hit_test_av(B13, SOMVR_VMPG_CLIMB, (rh[0] + 20.0f) / SOMVR_VM_TEX_W, /* build 34 */
                                           (rh[1] + 0.5f * rh[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_SURFACE && h.part == SOMVR_VMP_ROW, "the hands row hits back (%d %d)", h.item, h.part);
 }
@@ -1009,7 +1035,7 @@ static void test_weight_row(void) {
     char v[32], file[512], note[64];
     int bad = 0;
     somvr_set_default(&s);
-    CHECK(s.sword_weight == 0 && offsetof(somvr_settings, sword_weight) == 79 && sizeof(somvr_settings) == 96 &&
+    CHECK(s.sword_weight == 0 && offsetof(somvr_settings, sword_weight) == 79 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_SWORD_WEIGHT), "SWORD_WEIGHT") &&
               !strcmp(somvr_set_env(SOMVR_SK_SWORD_WEIGHT), "SOMVR_SWORD_WEIGHT") &&
               somvr_set_find("SOMVR_SWORD_WEIGHT") == SOMVR_SK_SWORD_WEIGHT && SOMVR_SK_SWORD_WEIGHT == SOMVR_SK_MOVE - 10,
@@ -1062,11 +1088,11 @@ static void test_weight_row(void) {
     memset(ra, 0, sizeof ra), memset(rw, 0, sizeof rw), memset(rm, 0, sizeof rm), memset(mb, 0, sizeof mb);
     CHECK(somvr_vm_rect_av(B16, SOMVR_VMI_SWORD, SOMVR_VMP_ROW, ra) && somvr_vm_rect_av(B16, SOMVR_VMI_WEIGHT, SOMVR_VMP_ROW, rw) &&
               somvr_vm_rect_av(B16, SOMVR_VMI_MUSIC, SOMVR_VMP_ROW, rm) &&
-              somvr_vm_rect_av(B16, SOMVR_VMI_WEIGHT, SOMVR_VMP_MORE, mb) && ra[1] + ra[3] == rw[1] && ra[1] == 64 &&
+              somvr_vm_rect_av(B16, SOMVR_VMI_WEIGHT, SOMVR_VMP_MORE, mb) && ra[1] + ra[3] == rw[1] && ra[1] == 152 &&
               rw[3] >= SOMVR_FONT_H * SOMVR_VM_SCALE && mb[1] >= rw[1] && mb[1] + mb[3] <= rw[1] + rw[3] &&
-              rm[1] == 64 + 12 * rm[3],
+              rm[1] == 152 + 7 * rm[3], /* build 34: Display's eighth (View, HUD, HUD distance, the four v8 rows) */
           "build 16's page: angle %d, weight %d (%d px), music %d", ra[1], rw[1], rw[3], rm[1]);
-    somvr_vm_hit h = somvr_vm_hit_test_av(B16, SOMVR_VMPG_FIGHT, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
+    somvr_vm_hit h = somvr_vm_hit_test_av(B16, SOMVR_VMPG_SWORD, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
                                           (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_WEIGHT && h.part == SOMVR_VMP_MORE, "its > box hits back (%d %d)", h.item, h.part);
     /* without the bit the rows close up: the Fight page's back button right below the angle */
@@ -1083,7 +1109,7 @@ static void test_bite_row(void) {
     char v[32], file[512], note[64];
     int bad = 0;
     somvr_set_default(&s);
-    CHECK(s.bite == 0 && offsetof(somvr_settings, bite) == 82 && sizeof(somvr_settings) == 96 &&
+    CHECK(s.bite == 0 && offsetof(somvr_settings, bite) == 82 && sizeof(somvr_settings) == 128 /* v8 */ &&
               SOMVR_VMA_BITE == 1u << 30 && !strcmp(somvr_set_key(SOMVR_SK_COMBAT_BITE), "COMBAT_BITE") &&
               !strcmp(somvr_set_env(SOMVR_SK_COMBAT_BITE), "SOMVR_COMBAT_BITE") &&
               somvr_set_find("SOMVR_COMBAT_BITE") == SOMVR_SK_COMBAT_BITE && SOMVR_SK_COMBAT_BITE == SOMVR_SK_MOVE - 7,
@@ -1125,10 +1151,11 @@ static void test_bite_row(void) {
     memset(rw, 0, sizeof rw), memset(rb, 0, sizeof rb), memset(ra, 0, sizeof ra), memset(mb, 0, sizeof mb);
     CHECK(somvr_vm_rect_av(B17, SOMVR_VMI_SWHAND, SOMVR_VMP_ROW, rw) && somvr_vm_rect_av(B17, SOMVR_VMI_BITE, SOMVR_VMP_ROW, rb) &&
               somvr_vm_rect_av(B17, SOMVR_VMI_ARROWS, SOMVR_VMP_ROW, ra) &&
-              somvr_vm_rect_av(B17, SOMVR_VMI_BITE, SOMVR_VMP_MORE, mb) && rw[1] + rw[3] <= rb[1] && rb[1] + rb[3] <= ra[1] &&
+              somvr_vm_rect_av(B17, SOMVR_VMI_BITE, SOMVR_VMP_MORE, mb) && rw[1] + rw[3] <= rb[1] && ra[1] == 152 &&
+              somvr_vm_row_page(SOMVR_VMI_ARROWS) == SOMVR_VMPG_BOW && /* build 34: the arrows the Bow group's */
               rb[3] == 38 && mb[1] >= rb[1] && mb[1] + mb[3] <= rb[1] + rb[3],
           "build 17's set: sword hand %d, bite %d (%d px), arrows %d", rw[1], rb[1], rb[3], ra[1]);
-    somvr_vm_hit h = somvr_vm_hit_test_av(B17, SOMVR_VMPG_FIGHT, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
+    somvr_vm_hit h = somvr_vm_hit_test_av(B17, SOMVR_VMPG_SWORD, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
                                           (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_BITE && h.part == SOMVR_VMP_MORE, "its > box hits back (%d %d)", h.item, h.part);
 }
@@ -1138,7 +1165,7 @@ static void test_crouch(void) {
     somvr_settings s, b;
     char v[32], file[512];
     somvr_set_default(&s);
-    CHECK(s.crouch == 0 && offsetof(somvr_settings, crouch) == 76 && sizeof(somvr_settings) == 96 &&
+    CHECK(s.crouch == 0 && offsetof(somvr_settings, crouch) == 76 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_CROUCH), "CROUCH") && !strcmp(somvr_set_env(SOMVR_SK_CROUCH), "SOMVR_CROUCH") &&
               somvr_set_find("CROUCH") == SOMVR_SK_CROUCH && SOMVR_SK_CROUCH == SOMVR_SK_MOVE - 13,
           "the default button, the old pad's place, the key and its switch");
@@ -1179,8 +1206,8 @@ static void test_crouch(void) {
     int rz[4], rc[4], rr[4], mb[4];
     CHECK(somvr_vm_rect_av(AV, SOMVR_VMI_SIZE, SOMVR_VMP_ROW, rz) && somvr_vm_rect_av(AV, SOMVR_VMI_CROUCH, SOMVR_VMP_ROW, rc) &&
               somvr_vm_rect_av(AV, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) &&
-              somvr_vm_rect_av(AV, SOMVR_VMI_CROUCH, SOMVR_VMP_MORE, mb) && rz[1] + rz[3] <= rc[1] &&
-              rc[1] + rc[3] <= rr[1] && rc[3] >= 36,
+              somvr_vm_rect_av(AV, SOMVR_VMI_CROUCH, SOMVR_VMP_MORE, mb) && rc[1] + rc[3] <= rz[1] && /* build 34: above */
+              rz[1] + rz[3] <= rr[1] && rc[3] >= 36,
           "the layout: size %d..%d, crouch %d..%d, the buttons from %d", rz[1], rz[1] + rz[3], rc[1], rc[1] + rc[3], rr[1]);
     somvr_vm_hit h = somvr_vm_hit_test_av(AV, SOMVR_VMPG_SETTINGS, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
                                           (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H);
@@ -1189,10 +1216,10 @@ static void test_crouch(void) {
 
 /* ---- v3: the practice page (re-xr-pipeline.md 27): the tab, its buttons and the orc type, the request word -------- */
 static void test_practice(void) {
-    CHECK(SOMVR_VRMENU_VERSION == 7 && sizeof(somvr_vrmenu_shared) == 208 &&
-              offsetof(somvr_vrmenu_shared, practice) == 200 && offsetof(somvr_vrmenu_shared, pstate) == 204 &&
+    CHECK(SOMVR_VRMENU_VERSION == 8 && sizeof(somvr_vrmenu_shared) == 240 &&
+              offsetof(somvr_vrmenu_shared, practice) == 232 && offsetof(somvr_vrmenu_shared, pstate) == 236 &&
               offsetof(somvr_settings, orc) == 60,
-          "the v3 ABI's fields (v4, v5, v6, v7: 8 bytes later each)");
+          "the v3 ABI's fields (v4, v5, v6, v7: 8 bytes later each; v8 32)");
     uint32_t w = somvr_vm_pr_pack(5, SOMVR_VMPR_SPAWN, 2);
     CHECK(somvr_vm_pr_seq(w) == 5 && somvr_vm_pr_action(w) == SOMVR_VMPR_SPAWN && somvr_vm_pr_orc(w) == 2 &&
               somvr_vm_pr_seq(somvr_vm_pr_pack(0xffffff, SOMVR_VMPR_GO, 0)) == 0xffffff,
@@ -1267,8 +1294,7 @@ static void test_practice(void) {
     CHECK(inside && back && other && ht.item == SOMVR_VMI_TAB, "practice rects inside %d, hit back %d, not on the "
                                                                "settings page %d, the tab on it %d", inside, back, other,
           ht.item);
-    somvr_vm_rect(SOMVR_VMI_TURN, SOMVR_VMP_ROW, rc);
-    CHECK(somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, 0.1f, (rc[1] + 20.0f) / SOMVR_VM_TEX_H).item == -1 &&
+    CHECK(somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, 0.1f, (64 + 20.0f) / SOMVR_VM_TEX_H).item == -1 && /* (the state line) */
               somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, 6.0f / SOMVR_VM_TEX_W, 20.0f / SOMVR_VM_TEX_H).item == -1,
           "the practice page: its state line and the title are no target");
     int a[4], b[4];
@@ -1593,14 +1619,14 @@ static void test_controls(void) {
         {"Climb", "grip; fling up/down"}, {"Ledge", "pull at the ring"}, {"Onto top", "A at the gold ring"}, {"Overhang", "A at its gold ring"},
         {"Down", "grip over the edge"}, {"Sword", "free hand: shoulder"}, {"Drop", "hold A, let go"}, /* build 31 */
         {"Sword", "grip at R shoulder"}, {"Sheathe", "grip there again"}, {"2 hands", "L grip/LT on hilt"},
-        {"Block", "sword across a blow"}, {"Dodge", "A in a fight"}, {"Dagger", "L grip at L hip"}, {"Shove", "L hand push an orc"},
+        {"Block", "sword across a blow"}, {"Dodge", "A in a fight"}, {"Knife", "hip, hold grip"}, {"Shove", "push hard at an orc"},
         {"Stealth", "stab his back hard"}, {"Above", "stab down from ledge"}, {"Over orc", "blink aimed at him"},
         {"Struggle", "hand to ring, stab"}, {"Downed", "stab down into him"},
         {"Grab", "L grip at blue glow"}, {"Stun", "held: tap L trigger"}, {"Drain", "held: LT again"},
         {"Question", "held: pull to face"}, {"Kill", "held: any sword hit"}, {"Let go", "open hand or push"}, /* build 31 */
         {"Execute", "glowing: hard hit"}, {"Brand", "L palm on head + LT"},
         {"Rally", "L hand high + LT"}, {"Whistle", "duck, hand at mouth"}, {"Dominate", "B dismiss, Y command"},
-        {"Bow", "L grip at L shoulder"}, {"Shoot", "RT, pull, let go"}, {"Wraith", "hold Y; A = Strike"}, {"Glyph", "hold Y, look at it"},
+        {"Bow", "L grip at L shoulder"}, {"Draw", "RT at the string"}, {"Shoot", "pull back, let go"}, {"Wraith", "hold Y; A = Strike"}, {"Glyph", "hold Y, look at it"},
         {"Flash", "RT + L palm push out"}, {"Ignite", "B while drawn"},
         {"Brutal", "stealth stab + LT"}, {"Distract", "X while drawn"}, /* 27d */
         {"Caragor", "sword across a leap"}, {"Mount", "L grip stunned beast"}, {"Hold on", "keep the grip closed"},
@@ -1653,12 +1679,24 @@ static void test_controls(void) {
     /* build 6's base without any switch: the walk, the sword, the menu with pause, quit, the report, the minimap, the
      * wall's drop, the bow on the trigger; no grab, no A in a fight, no dash */
     CHECK(ctl_has(0, "Walk", NULL) && ctl_has(0, "Sword", NULL) && ctl_has(0, "Menu", "look at left palm") &&
-              ctl_has(0, "Pause", "tap menu, hold=Menu") && ctl_has(0, "Quit", NULL) && ctl_has(0, "Report", NULL) &&
+              ctl_has(0, "Pause", "tap menu, hold=Menu") && !ctl_has(0, "Quit", NULL) && ctl_has(0, "Report", NULL) &&
               ctl_has(0, "Minimap", NULL) && ctl_has(0, "Drop", "A (on a wall)") && ctl_has(0, "Bow", "hold left trigger") &&
-              ctl_has(0, "Shoot", "R grip, pull, let go") && ctl_has(0, "Turn", "R stick, down=crouch") &&
+              ctl_has(0, "Draw", "R grip at string") && ctl_has(0, "Shoot", "pull back, let go") && ctl_has(0, "Turn", "R stick, down=crouch") &&
               !ctl_has(0, "Grab", NULL) && !ctl_has(0, "Dodge", NULL) && !ctl_has(0, "Stealth", NULL) &&
               !ctl_has(0, "Blink", NULL) && !ctl_has(0, "Execute", NULL),
           "no switch: build 6's lines (%d)", n0);
+    /* build 34: the Quit line only where quitting works (SOMVR_VMA_QUIT: SOMVR_QUIT with a harness; the Windows package
+     * has none); the Herb line by ctl_feat (no avail bit left), carried in the derived word's practice bits - which
+     * never reach a Controls line from the menu's own avail */
+    somvr_settings z0;
+    memset(&z0, 0, sizeof z0);
+    uint64_t ch = somvr_vm_ctl_avail_f(&z0, 0, SOMVR_VMF_HERBS);
+    CHECK(ctl_has(SOMVR_VMA_QUIT, "Quit", "Settings > Quit x2") && (ch & SOMVR_VMA_CTL_HERBS) &&
+              ctl_has(ch, "Herb", "grip, fist to mouth") && !ctl_has(0, "Herb", NULL) &&
+              !(somvr_vm_ctl_avail_f(&z0, SOMVR_VMA_PR_LIVE, 0) & SOMVR_VMA_PR_LIVE) &&
+              !ctl_has(somvr_vm_ctl_avail_f(&z0, SOMVR_VMA_PR_HERE, 0), "Herb", NULL) &&
+              somvr_vm_controls_av(ch, 0, &k, &w) == n0 + 1 && strlen("grip, fist to mouth") <= 20,
+          "build 34: Quit with SOMVR_VMA_QUIT only; Herb with SOMVR_VMF_HERBS only (not from the practice bits)");
     /* a Fight row Off takes its line (the dodge, the wraith step, the stealth kill) */
     somvr_settings off = hs;
     off.dodge = off.wstep = off.stealth = 0;
@@ -1804,8 +1842,8 @@ static void test_music_rows(void) {
     const uint32_t B10 = SOMVR_VMA_SWORD | M;
     CHECK(somvr_vm_rect_av(B10, SOMVR_VMI_HAPTICS, SOMVR_VMP_ROW, rh) && somvr_vm_rect_av(B10, SOMVR_VMI_SWORD, SOMVR_VMP_ROW, rs) &&
               somvr_vm_rect_av(B10, SOMVR_VMI_MUSIC, SOMVR_VMP_ROW, rm) &&
-              somvr_vm_rect_av(B10, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rh[3] == 38 && rs[1] == 64 &&
-              rm[1] == rh[1] + 38 && rm[1] + rm[3] <= rr[1] && rm[1] == 64 + 12 * 38,
+              somvr_vm_rect_av(B10, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rh[3] == 38 && rs[1] == 152 &&
+              rh[1] == 152 + 8 * 38 && rm[1] + rm[3] <= rr[1] && rm[1] == 152 + 7 * 38, /* build 34: Comfort / Display */
           "build 10's rows: haptics %d, sword %d, music %d..%d, buttons %d", rh[1], rs[1], rm[1], rm[1] + rm[3], rr[1]);
     /* the bottom row stays put whatever is shown */
     int r0[4];
@@ -1815,8 +1853,8 @@ static void test_music_rows(void) {
      * closes up into its slot (Fight settings >: build 19) */
     somvr_vm_rect_av(B10, SOMVR_VMI_MUSIC, SOMVR_VMP_MORE, rc);
     float u = (rc[0] + 0.5f * rc[2]) / SOMVR_VM_TEX_W, vv = (rc[1] + 0.5f * rc[3]) / SOMVR_VM_TEX_H;
-    somvr_vm_hit h1 = somvr_vm_hit_test_av(B10, SOMVR_VMPG_SETTINGS, u, vv), h0 = somvr_vm_hit_test_av(0, SOMVR_VMPG_SETTINGS, u, vv);
-    CHECK(h1.item == SOMVR_VMI_MUSIC && h1.part == SOMVR_VMP_MORE && h0.item == SOMVR_VMI_PG_FIGHT, "hits: %d/%d, without %d", h1.item,
+    somvr_vm_hit h1 = somvr_vm_hit_test_av(B10, SOMVR_VMPG_DISPLAY, u, vv), h0 = somvr_vm_hit_test_av(0, SOMVR_VMPG_DISPLAY, u, vv);
+    CHECK(h1.item == SOMVR_VMI_MUSIC && h1.part == SOMVR_VMP_MORE && h0.item == -1, "hits: %d/%d, without %d", h1.item,
           h1.part, h0.item);
     /* the pictures: build 10's draws no phase row, the MOVES one does; Music's row drawn only with MUSIC */
     somvr_vm_view vw;
@@ -1845,7 +1883,7 @@ static void test_build17(void) {
     somvr_settings s, b;
     char v[32], file[1024];
     somvr_set_default(&s);
-    CHECK(SOMVR_VRMENU_VERSION == 7 && sizeof(somvr_settings) == 96 && offsetof(somvr_settings, sword_hand) == 80 &&
+    CHECK(SOMVR_VRMENU_VERSION == 8 && sizeof(somvr_settings) == 128 /* v8 */ && offsetof(somvr_settings, sword_hand) == 80 &&
               offsetof(somvr_settings, quiver) == 81 && offsetof(somvr_settings, bite) == 82 &&
               offsetof(somvr_settings, test_key) == 87 && s.sword_hand == 0 && s.quiver == 0 && !s.bite && !s.test_key &&
               !s.handed && !s.handed_on && /* build 30: HANDED and the session's mirror took pad6[0..1] */
@@ -1921,22 +1959,23 @@ static void test_build17(void) {
               somvr_vm_rect_av(B17, SOMVR_VMI_ARROWS, SOMVR_VMP_MORE, mb) &&
               somvr_vm_rect_av(B17, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW, rl) &&
               somvr_vm_rect_av(B17, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rb) && rw[1] + rw[3] == rh[1] &&
-              rh[1] + rh[3] == ra[1] && rm[1] == 64 + 12 * rm[3] && rh[3] == 38 && mb[1] >= ra[1] &&
+              ra[1] == 152 && rm[1] == 152 + 7 * rm[3] && rh[3] == 38 && mb[1] >= ra[1] && /* build 34: Bow's first */
               mb[1] + mb[3] <= ra[1] + ra[3] && rl[1] + rl[3] <= rb[1],
           "build 17's set: weight %d, hand %d, arrows %d (%d px), music %d; the last row ends %d, the buttons %d", rw[1],
           rh[1], ra[1], ra[3], rm[1], rl[1] + rl[3], rb[1]);
-    somvr_vm_hit h = somvr_vm_hit_test_av(B17, SOMVR_VMPG_FIGHT, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
+    somvr_vm_hit h = somvr_vm_hit_test_av(B17, SOMVR_VMPG_BOW, (mb[0] + 0.5f * mb[2]) / SOMVR_VM_TEX_W,
                                           (mb[1] + 0.5f * mb[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_ARROWS && h.part == SOMVR_VMP_MORE, "the Arrows > box hits back (%d %d)", h.item, h.part);
     /* the Controls page with build 17's switches: the quiver's lines follow the row */
     const uint32_t C17 = SOMVR_VMA_FLING | SOMVR_VMA_VERBS | SOMVR_VMA_DESCENT | SOMVR_VMA_MARK | SOMVR_VMA_QUIT |
                          SOMVR_VMA_CROUCH | SOMVR_VMA_USE | SOMVR_VMA_BOWSLOT | SOMVR_VMA_BOWRT | SOMVR_VMA_ARROWS |
                          SOMVR_VMA_BOWTRIG | SOMVR_VMA_PULLOVER;
-    struct { int quiver; uint32_t base; const char *arrow, *shoot; int dagger; } cs[] = {
-        {1, C17, "RT at R shoulder", "nock, pull, let go", 0},
-        {0, C17, NULL, "RT, pull, let go", 1},
-        {1, C17 & ~(uint32_t)(SOMVR_VMA_BOWTRIG | SOMVR_VMA_BOWRT), "R grip at R shoulder", "nock, pull, let go", 0},
-        {0, C17 & ~(uint32_t)(SOMVR_VMA_BOWTRIG | SOMVR_VMA_BOWRT), NULL, "R grip, pull, let go", 1},
+    /* (build 36: the draw's button on a line of its own - "Draw" - with the arrow on the string; the quiver's nock) */
+    struct { int quiver; uint32_t base; const char *arrow, *shoot, *draw; int dagger; } cs[] = {
+        {1, C17, "RT at R shoulder", "nock, pull, let go", NULL, 0},
+        {0, C17, NULL, "pull back, let go", "RT at the string", 1},
+        {1, C17 & ~(uint32_t)(SOMVR_VMA_BOWTRIG | SOMVR_VMA_BOWRT), "R grip at R shoulder", "nock, pull, let go", NULL, 0},
+        {0, C17 & ~(uint32_t)(SOMVR_VMA_BOWTRIG | SOMVR_VMA_BOWRT), NULL, "pull back, let go", "R grip at string", 1},
     };
     for (size_t c = 0; c < sizeof cs / sizeof cs[0]; c++) {
         somvr_set_default(&s);
@@ -1944,25 +1983,28 @@ static void test_build17(void) {
         uint64_t ca = somvr_vm_ctl_avail(&s, cs[c].base);
         const char *k, *w;
         int n = somvr_vm_controls_av(ca, 0, &k, &w), fit = 1, arrows = 0, arrow_ok = !cs[c].arrow, shoots = 0, shoot_ok = 0;
+        int draws = 0, draw_ok = !cs[c].draw;
         int block = 0, two = 0, dagger = 0, ledge = 0, sprint = 0, sheathe = 0, quit = 0, parry = 0;
         for (int i = 0; i < n; i++) {
             somvr_vm_controls_av(ca, i, &k, &w);
             fit &= k && w && strlen(k) <= SOMVR_VM_CTL_KEY_W && strlen(w) <= SOMVR_VM_CTL_WHAT_W && *w;
             if (!strcmp(k, "Arrow")) arrows++, arrow_ok = cs[c].arrow && !strcmp(w, cs[c].arrow);
             if (!strcmp(k, "Shoot")) shoots++, shoot_ok = !strcmp(w, cs[c].shoot);
+            if (!strcmp(k, "Draw")) draws++, draw_ok = cs[c].draw && !strcmp(w, cs[c].draw);
             block |= !strcmp(k, "Block") && !strcmp(w, "sword across a blow");
             two |= !strcmp(k, "2 hands") && strstr(w, "L grip") == w && strstr(w, "hilt");
-            dagger |= !strcmp(k, "Dagger") && !strcmp(w, "L grip at L hip");
+            dagger |= !strcmp(k, "Knife") && !strcmp(w, "hip, hold grip");
             ledge |= !strcmp(k, "Ledge") && strstr(w, "ring");
             sprint |= !strcmp(k, "Sprint"), sheathe |= !strcmp(k, "Sheathe"), quit |= !strcmp(k, "Quit");
             parry |= !strcmp(k, "Parry");
         }
         /* (build 27: every line on its group's page - nothing dropped for room, the dagger, Sheathe and Quit too) */
-        CHECK(fit && arrows == (cs[c].arrow != NULL) && arrow_ok && shoots == 1 && shoot_ok && block && two && ledge &&
+        CHECK(fit && arrows == (cs[c].arrow != NULL) && arrow_ok && shoots == 1 && shoot_ok &&
+                  draws == (cs[c].draw != NULL) && draw_ok && block && two && ledge &&
                   sprint && dagger && sheathe && quit && !parry,
-              "build 17's controls, quiver %d %s: %d lines, arrow %d shoot %d block %d two %d ledge %d sprint %d "
+              "build 17's controls, quiver %d %s: %d lines, arrow %d shoot %d draw %d block %d two %d ledge %d sprint %d "
               "dagger %d sheathe %d quit %d",
-              cs[c].quiver, (cs[c].base & SOMVR_VMA_BOWTRIG) ? "RT" : "grip", n, arrow_ok, shoot_ok, block, two, ledge,
+              cs[c].quiver, (cs[c].base & SOMVR_VMA_BOWTRIG) ? "RT" : "grip", n, arrow_ok, shoot_ok, draw_ok, block, two, ledge,
               sprint, dagger, sheathe, quit);
     }
     { /* build 17, the strike17 helper: SOMVR_STRIKE_GAZE's Wraith line instead of the plain one, the count unchanged */
@@ -2001,7 +2043,7 @@ static void test_build17(void) {
     somvr_vm_draw(&F, g_px, 0, &vw);
     int lit[2] = {0, 0};
     for (int l = 0; l < 2; l++)
-        for (int y = 646 + 32 * l; y < 646 + 32 * l + 32; y++) /* (build 18: 574 + 72, + 104) */
+        for (int y = 700 + 32 * l; y < 700 + 32 * l + 32; y++) /* (build 18: 574 + 72, + 104; build 36: 628 + ...) */
             for (int x = 24; x < SOMVR_VM_TEX_W - 16; x++) {
                 const uint8_t *p = pxa(g_px, x, y);
                 lit[l] += p[0] == 208 && p[1] == 213 && p[2] == 222;
@@ -2179,17 +2221,17 @@ static void test_build22_captain(void) {
  * keys, values, steps; the page buttons; the Controls page as build 18's (no new line); a v6 menu's settings file read
  * by v7 unchanged --------------------------------------------------------------------------------------------------- */
 static void test_fight19(void) {
-    CHECK(SOMVR_VRMENU_VERSION == 7 && sizeof(((somvr_vrmenu_shared *)0)->avail) == 8 &&
+    CHECK(SOMVR_VRMENU_VERSION == 8 && sizeof(((somvr_vrmenu_shared *)0)->avail) == 8 &&
               offsetof(somvr_vrmenu_shared, avail) == 24 && offsetof(somvr_vrmenu_shared, blink_on_ms) == 32 &&
-              offsetof(somvr_vrmenu_shared, set) == 48 && sizeof(somvr_vrmenu_shared) == 208 &&
-              sizeof(somvr_settings) == 96 && offsetof(somvr_settings, test_key) == 87 && /* build 31 (was pad6) */
+              offsetof(somvr_vrmenu_shared, set) == 48 && sizeof(somvr_vrmenu_shared) == 240 &&
+              sizeof(somvr_settings) == 128 /* v8 */ && offsetof(somvr_settings, test_key) == 87 && /* build 31 (was pad6) */
               offsetof(somvr_settings, test_page) == 95 && /* build 31 (was pad7) */
               offsetof(somvr_settings, dodge) == 88 && offsetof(somvr_settings, wstep) == 89 &&
               offsetof(somvr_settings, stealth) == 90 && offsetof(somvr_settings, counter_icon) == 91 &&
               offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94 &&
               SOMVR_VMA_DODGE == (1ull << 32) && SOMVR_VMA_WSTEP == (1ull << 33) && SOMVR_VMA_STEALTH == (1ull << 34) &&
               SOMVR_VMA_CROWD == (1ull << 35) && SOMVR_VMA_CICON == (1ull << 36) && SOMVR_VMA_STRING == (1ull << 37) &&
-              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 35 && SOMVR_SK_ALL == 0x7ffffffffull /* build 31 */,
+              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 50 && SOMVR_SK_ALL == 0x3ffffffffffffull /* build 34 */,
           "v7: avail 64 bits at 24, the settings 96 (the six rows at 88..94, pad6 spare), 208; bits 32..37; 33 keys (build 27)");
     /* build 17b's preload avail (the session 174757: 0xf7fff027) with the layer's Report / Quit; build 18 hides the
      * Sword hand (SOMVR_SWORD_HAND_LOCK) */
@@ -2295,13 +2337,14 @@ static void test_fight19(void) {
         {SOMVR_VMI_CROWD, SOMVR_VMA_CROWD, "Crowd pace"}, {SOMVR_VMI_CICON, SOMVR_VMA_CICON, "Counter icon"}};
     int rows = 1;
     for (size_t i = 0; i < sizeof R / sizeof R[0]; i++) {
-        rows &= somvr_vm_row_page(R[i].item) == SOMVR_VMPG_FIGHT && !strcmp(somvr_vm_label(R[i].item), R[i].label) &&
+        rows &= somvr_vm_row_page(R[i].item) == (R[i].item == SOMVR_VMI_STRING ? SOMVR_VMPG_BOW : SOMVR_VMPG_FIGHT) &&
+                !strcmp(somvr_vm_label(R[i].item), R[i].label) && /* build 34: the string the Bow group's */
                 !somvr_vm_shown(B18, R[i].item) && somvr_vm_shown(R[i].bit, R[i].item) &&
                 !somvr_vm_enabled(&d, NEW & ~R[i].bit, R[i].item) && somvr_vm_enabled(&d, R[i].bit, R[i].item) &&
                 somvr_font_text_w(R[i].label, SOMVR_VM_SCALE) <= 256 - 20;
         if (!rows) printf("    row %d (%s)\n", R[i].item, R[i].label);
     }
-    CHECK(rows, "the six rows: the Fight page's, shown and enabled with their bits only, the labels fit");
+    CHECK(rows, "the six rows: the Fight page's (build 34: the string Bow's), shown and enabled with their bits only, the labels fit");
     somvr_settings t = d;
     char v[32], v2[32];
     int ok = 1;
@@ -2341,24 +2384,16 @@ static void test_fight19(void) {
             t.crowd_ms == 1000 && (t.crowd_ms = 800, somvr_vm_apply(&t, NEW, 0, SOMVR_VMI_CROWD, SOMVR_VMP_LESS)) &&
             t.crowd_ms == 700 && (t.crowd_ms = 725, somvr_vm_value(&t, SOMVR_VMI_CROWD, v, sizeof v), !strcmp(v, "0.725 s"));
     CHECK(pace, "the pace's steps, held, wrapped; from 800: up 1000, down 700; 725 shown '%s'", v);
-    /* the page buttons: Fight settings > under the Settings page's rows, < Settings under the Fight page's; they open
-     * their page (the layer's PAGE), every page's the other's rect is no hit */
+    /* build 34 (re-xr-pipeline.md 150): build 19's page buttons are gone (the groups' six instead: test_layout) - no
+     * rect, no hit; their page numbers kept */
     int rf[4], rk[4];
-    somvr_vm_rect_av(B19, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rf), somvr_vm_rect_av(B19, SOMVR_VMI_PG_BACK, SOMVR_VMP_BUTTON, rk);
-    float fu = (rf[0] + 0.5f * rf[2]) / SOMVR_VM_TEX_W, fv = (rf[1] + 0.5f * rf[3]) / SOMVR_VM_TEX_H;
-    float ku = (rk[0] + 0.5f * rk[2]) / SOMVR_VM_TEX_W, kv = (rk[1] + 0.5f * rk[3]) / SOMVR_VM_TEX_H;
-    somvr_vm_hit hf = somvr_vm_hit_test_av(B19, SOMVR_VMPG_SETTINGS, fu, fv),
-                 hk = somvr_vm_hit_test_av(B19, SOMVR_VMPG_FIGHT, ku, kv),
-                 hx = somvr_vm_hit_test_av(B19, SOMVR_VMPG_FIGHT, fu, fv),
-                 hc = somvr_vm_hit_test_av(B19, SOMVR_VMPG_CONTROLS, fu, fv);
     t = d;
-    CHECK(hf.item == SOMVR_VMI_PG_FIGHT && hk.item == SOMVR_VMI_PG_BACK && hx.item != SOMVR_VMI_PG_FIGHT && hc.item == -1 &&
+    CHECK(!somvr_vm_rect_av(B19, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rf) &&
+              !somvr_vm_rect_av(B19, SOMVR_VMI_PG_BACK, SOMVR_VMP_BUTTON, rk) &&
               somvr_vm_tab_page(SOMVR_VMI_PG_FIGHT) == SOMVR_VMPG_FIGHT &&
-              somvr_vm_tab_page(SOMVR_VMI_PG_BACK) == SOMVR_VMPG_SETTINGS &&
-              somvr_vm_apply(&t, 0, 0, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON) == SOMVR_VMR_PAGE &&
-              somvr_vm_apply(&t, 0, 0, SOMVR_VMI_PG_BACK, SOMVR_VMP_BUTTON) == SOMVR_VMR_PAGE && rf[1] > rk[1],
-          "the page buttons: at %d / %d, hit on their pages only (%d %d %d %d), PAGE", rf[1], rk[1], hf.item, hk.item, hx.item,
-          hc.item);
+              somvr_vm_tab_page(SOMVR_VMI_SUB_FIGHT) == SOMVR_VMPG_FIGHT &&
+              somvr_vm_apply(&t, 0, 0, SOMVR_VMI_SUB_FIGHT, SOMVR_VMP_BUTTON) == SOMVR_VMR_PAGE,
+          "the page buttons: none (the groups' Fight opens the page)");
     /* every Fight row's boxes hit back on the Fight page, no Fight row is hit on the Settings page */
     int back = 1;
     for (int item = 0; item < SOMVR_VMI_ROWS; item++) {
@@ -2375,11 +2410,13 @@ static void test_fight19(void) {
     for (int item = 0; item < SOMVR_VMI_ALL; item++) {
         const char *h1, *h2;
         int has = somvr_vm_help(item, &h1, &h2);
-        help &= has == (somvr_vm_row_page(item) == SOMVR_VMPG_FIGHT);
+        int pg = somvr_vm_row_page(item); /* build 34: the Sword, Fight, Bow and Climbing groups' rows, the v8 rows */
+        help &= has == (pg == SOMVR_VMPG_FIGHT || pg == SOMVR_VMPG_SWORD || pg == SOMVR_VMPG_BOW ||
+                        pg == SOMVR_VMPG_CLIMB || (item >= SOMVR_VMI_WATCH && item <= SOMVR_VMI_CLIMB_SWORD));
         if (has) help &= somvr_font_text_w(h1, SOMVR_VM_SCALE) <= 29 * 16 && somvr_font_text_w(h2, SOMVR_VM_SCALE) <= 29 * 16;
         if (!help) { printf("    help %d\n", item); break; }
     }
-    CHECK(help, "the Fight rows' help: two lines each that fit, none elsewhere");
+    CHECK(help, "the help: two lines each that fit (the Sword, Fight, Bow, Climbing rows, the v8 rows), none elsewhere");
     /* the pictures: the Settings page the same with and without the new bits (its rows; the page button under them);
      * the Fight page differs (its six rows); the Settings tab lit on both */
     somvr_vm_view vw;
@@ -2849,9 +2886,9 @@ static void test_walk_toward(void) {
     char v[32], file[1024], note[64];
     int bad = 0;
     somvr_set_default(&s);
-    CHECK(s.move == 0 && offsetof(somvr_settings, move) == 83 && sizeof(somvr_settings) == 96 &&
+    CHECK(s.move == 0 && offsetof(somvr_settings, move) == 83 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_MOVE), "MOVE") && !strcmp(somvr_set_env(SOMVR_SK_MOVE), "SOMVR_MOVE") &&
-              somvr_set_find("SOMVR_MOVE") == SOMVR_SK_MOVE && SOMVR_SK_MOVE == 31 && SOMVR_SK_N == 35 /* build 31 */,
+              somvr_set_find("SOMVR_MOVE") == SOMVR_SK_MOVE && SOMVR_SK_MOVE == 31 && SOMVR_SK_N == 50 /* build 34 */,
           "MOVE: the default head, the old pad's byte 83, the key and its switch; the 32nd key");
     CHECK(somvr_set_put(&s, SOMVR_SK_MOVE, " hand ") && s.move == 1 && (somvr_set_get(&s, SOMVR_SK_MOVE, v, sizeof v), !strcmp(v, "hand")) &&
               somvr_set_put(&s, SOMVR_SK_MOVE, "head") && s.move == 0 && !somvr_set_put(&s, SOMVR_SK_MOVE, "1") &&
@@ -2896,11 +2933,11 @@ static void test_walk_toward(void) {
     const uint64_t AW = A | SOMVR_VMA_WALKDIR;
     CHECK(somvr_vm_rect_av(AW, SOMVR_VMI_BLINK, SOMVR_VMP_ROW, rb) && somvr_vm_rect_av(AW, SOMVR_VMI_MOVE, SOMVR_VMP_ROW, rm) &&
               somvr_vm_rect_av(AW, SOMVR_VMI_SEATED, SOMVR_VMP_ROW, rs) &&
-              somvr_vm_rect_av(AW, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rq) &&
+              !somvr_vm_rect_av(AW, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rq) && /* build 34: no page button */
               somvr_vm_rect_av(AW, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rm[1] == rb[1] + rb[3] &&
-              rs[1] == rm[1] + rm[3] && rq[1] + rq[3] <= rr[1] && rm[3] >= 28,
-          "under Snap blink (%d) at %d, Seated after (%d); rows %d px; the page button ends %d, the buttons at %d", rb[1],
-          rm[1], rs[1], rm[3], rq[1] + rq[3], rr[1]);
+              rs[1] == rm[1] + rm[3] && rs[1] + rs[3] <= rr[1] && rm[3] >= 28,
+          "under Snap blink (%d) at %d, Seated after (%d); rows %d px; the buttons at %d", rb[1], rm[1], rs[1], rm[3],
+          rr[1]);
     somvr_vm_hit h = somvr_vm_hit_test_av(AW, SOMVR_VMPG_SETTINGS, (rm[0] + 40.5f) / SOMVR_VM_TEX_W,
                                           (rm[1] + 0.5f * rm[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_MOVE && h.part == SOMVR_VMP_ROW, "its row hits (%d %d)", h.item, h.part);
@@ -2916,7 +2953,7 @@ static void test_refresh27(void) {
     char v[32], file[1024], note[64];
     int bad = 0;
     somvr_set_default(&s);
-    CHECK(s.refresh == 0 && offsetof(somvr_settings, refresh) == 84 && sizeof(somvr_settings) == 96 &&
+    CHECK(s.refresh == 0 && offsetof(somvr_settings, refresh) == 84 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_XR_REFRESH), "XR_REFRESH") &&
               !strcmp(somvr_set_env(SOMVR_SK_XR_REFRESH), "SOMVR_XR_REFRESH") &&
               somvr_set_find("SOMVR_XR_REFRESH") == SOMVR_SK_XR_REFRESH && SOMVR_SK_XR_REFRESH == 32 &&
@@ -2950,7 +2987,7 @@ static void test_refresh27(void) {
                 somvr_vm_enabled(&s, AR, SOMVR_VMI_REFRESH) && !somvr_vm_enabled(&s, A, SOMVR_VMI_REFRESH) &&
                 !somvr_vm_rect_av(A, SOMVR_VMI_REFRESH, SOMVR_VMP_ROW, r0);
     CHECK(shown && !strcmp(v, "80 Hz") && !strcmp(somvr_vm_label(SOMVR_VMI_REFRESH), "Refresh rate") &&
-              somvr_vm_row_page(SOMVR_VMI_REFRESH) == SOMVR_VMPG_SETTINGS,
+              somvr_vm_row_page(SOMVR_VMI_REFRESH) == SOMVR_VMPG_DISPLAY, /* build 34: the Display group's */
           "Refresh rate: with its bit only, \"80 Hz\" (%s)", v);
     int seq = somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.refresh == 90 &&
               somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.refresh == 120 &&
@@ -2966,22 +3003,182 @@ static void test_refresh27(void) {
     s.refresh = 0;
     seq &= somvr_vm_apply(&s, AR, 0, SOMVR_VMI_REFRESH, SOMVR_VMP_LESS) == SOMVR_VMR_CHANGED && s.refresh == 120;
     CHECK(seq, "the steps: 80 > 90 > 120 > held, the row wraps to 72, < held at 72; from Headset > 72, < 120");
-    /* its place: the Settings page's last row (after Hands at walls), the page button and the bottom buttons below */
-    int rf[4], rl[4], rq[4], rr[4];
-    CHECK(somvr_vm_rect_av(AR, SOMVR_VMI_SURFACE, SOMVR_VMP_ROW, rl) &&
+    /* its place (build 34): the Display group's last row (after Heartbeat, Music), the bottom buttons below */
+    int rf[4], rl[4], rr[4];
+    CHECK(somvr_vm_rect_av(AR, SOMVR_VMI_BEAT, SOMVR_VMP_ROW, rl) &&
               somvr_vm_rect_av(AR, SOMVR_VMI_REFRESH, SOMVR_VMP_ROW, rf) &&
-              somvr_vm_rect_av(AR, SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, rq) &&
-              somvr_vm_rect_av(AR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rf[1] == rl[1] + rl[3] &&
-              rq[1] >= rf[1] + rf[3] && rq[1] + rq[3] <= rr[1] && rf[3] >= 28,
-          "after Hands at walls (%d) at %d, %d px; the page button %d..%d; the buttons at %d", rl[1], rf[1], rf[3], rq[1],
-          rq[1] + rq[3], rr[1]);
-    somvr_vm_hit h = somvr_vm_hit_test_av(AR, SOMVR_VMPG_SETTINGS, (rf[0] + 40.5f) / SOMVR_VM_TEX_W,
+              somvr_vm_rect_av(AR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) && rf[1] >= rl[1] + rl[3] &&
+              rf[1] + rf[3] <= rr[1] && rf[3] >= 28,
+          "after Heartbeat (%d) at %d, %d px; the buttons at %d", rl[1], rf[1], rf[3], rr[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_av(AR, SOMVR_VMPG_DISPLAY, (rf[0] + 40.5f) / SOMVR_VM_TEX_W,
                                           (rf[1] + 0.5f * rf[3]) / SOMVR_VM_TEX_H);
     CHECK(h.item == SOMVR_VMI_REFRESH && h.part == SOMVR_VMP_ROW, "its row hits (%d %d)", h.item, h.part);
 }
 
 /* ---- build 30 (re-xr-pipeline.md 132): the left-handed mirror - HANDED, the Handedness row in Pointer hand's place,
  * the Controls page's words mirrored for the session's mirror ------------------------------------------------------ */
+/* ---- build 34 (re-xr-pipeline.md 150): builds 31-33's switches as rows of the Settings tab's groups (v8) ----------
+ * each row: its key (the switch's name or the menu's own word), the code default, the words both ways and bad ones
+ * refused, the file round trip; its group, enabled with its av8 bit only (and the row it depends on), its values and
+ * steps; the user's own v7 file read by v8 unchanged */
+static void test_settings34(void) {
+    CHECK(SOMVR_VRMENU_VERSION == 8 && sizeof(somvr_settings) == 128 && offsetof(somvr_settings, watch_raise) == 96 &&
+              offsetof(somvr_settings, hold_s) == 105 && offsetof(somvr_settings, av8) == 110 &&
+              sizeof(somvr_vrmenu_shared) == 240 && offsetof(somvr_vrmenu_shared, gen) == 176 &&
+              SOMVR_SK_N == 50 && SOMVR_SK_XR_WATCH_LOOK == SOMVR_SK_BOW_TAKE + 1 && SOMVR_VMI_ROWS == 49 &&
+              SOMVR_VMI_WATCH == SOMVR_VMI_BOWTAKE + 1 && SOMVR_VMI_CLIMB_SWORD + 1 == SOMVR_VMI_RECENTER,
+          "the v8 ABI: the rows at 96..109, av8 at 110, the settings 128, 240; 50 keys; 14 rows before Recentre");
+    static const struct {
+        int key, item, page;
+        const char *name, *env, *dflt, *other, *bad, *val_dflt, *val_other;
+        uint16_t bit;
+    } R[] = {
+        {SOMVR_SK_XR_WATCH_LOOK, SOMVR_VMI_WATCH, SOMVR_VMPG_DISPLAY, "XR_WATCH_LOOK", "SOMVR_XR_WATCH_LOOK", "any", "raise",
+         "on", "Always", "Raised", SOMVR_VMA8_WATCH},
+        {SOMVR_SK_WATCH_SIZE, SOMVR_VMI_WATCH_SIZE, SOMVR_VMPG_DISPLAY, "WATCH_SIZE", NULL, "large", "small", "big",
+         "Large", "Small", SOMVR_VMA8_WATCH},
+        {SOMVR_SK_LOW_HEALTH, SOMVR_VMI_LOWHP, SOMVR_VMPG_DISPLAY, "LOW_HEALTH", NULL, "off", "ring", "on", "Off", "Ring",
+         SOMVR_VMA8_HURT},
+        {SOMVR_SK_HEARTBEAT, SOMVR_VMI_BEAT, SOMVR_VMPG_DISPLAY, "HEARTBEAT", NULL, "on", "off", "loud", "On", "Off",
+         SOMVR_VMA8_HURT},
+        {SOMVR_SK_FORCE_NEEDED, SOMVR_VMI_FORCE, SOMVR_VMPG_SWORD, "FORCE_NEEDED", NULL, "normal", "low", "1", "Normal",
+         "Low", SOMVR_VMA8_FORCE},
+        {SOMVR_SK_SWORD_PHYS_GHOST, SOMVR_VMI_GHOST, SOMVR_VMPG_SWORD, "SWORD_PHYS_GHOST", "SOMVR_SWORD_PHYS_GHOST", "on",
+         "off", "faint", "On", "Off", SOMVR_VMA8_GHOST},
+        {SOMVR_SK_KILLS, SOMVR_VMI_KILLS, SOMVR_VMPG_SWORD, "KILLS", "SOMVR_KILLS", "off", "on", "game", "Off", "On",
+         SOMVR_VMA8_KILLS},
+        {SOMVR_SK_KILLS_EXEC, SOMVR_VMI_EXEC, SOMVR_VMPG_SWORD, "KILLS_EXEC", "SOMVR_KILLS_EXEC", "blow", "trigger", "on",
+         "Swing", "Trigger", SOMVR_VMA8_KILLS},
+        {SOMVR_SK_SHOVE_PUSH, SOMVR_VMI_SHOVE, SOMVR_VMPG_FIGHT, "SHOVE_PUSH", NULL, "normal", "hard", "2.5", "Normal",
+         "Hard", SOMVR_VMA8_SHOVE},
+        {SOMVR_SK_VERBS_GRAB_MAX_S, SOMVR_VMI_HOLD, SOMVR_VMPG_FIGHT, "VERBS_GRAB_MAX_S", "SOMVR_VERBS_GRAB_MAX_S", "10",
+         "20", "long", "10 s", "20 s", SOMVR_VMA8_HOLD},
+        {SOMVR_SK_SLOTS_DAGGER_HOLD, SOMVR_VMI_KNIFE, SOMVR_VMPG_FIGHT, "SLOTS_DAGGER_HOLD", "SOMVR_SLOTS_DAGGER_HOLD", "on",
+         "off", "grip", "Hold", "Toggle", SOMVR_VMA8_KNIFE},
+        {SOMVR_SK_HERBS, SOMVR_VMI_HERBS, SOMVR_VMPG_FIGHT, "HERBS", "SOMVR_HERBS", "on", "off", "hand", "Hand", "Button",
+         SOMVR_VMA8_HERBS},
+        {SOMVR_SK_CLIMB_FLING_DOWN, SOMVR_VMI_FLING_DOWN, SOMVR_VMPG_CLIMB, "CLIMB_FLING_DOWN", "SOMVR_CLIMB_FLING_DOWN", "off",
+         "on", "down", "Off", "On", SOMVR_VMA8_FLINGDN},
+        {SOMVR_SK_CLIMB_SWORD, SOMVR_VMI_CLIMB_SWORD, SOMVR_VMPG_CLIMB, "CLIMB_SWORD", "SOMVR_CLIMB_SWORD", "off", "on",
+         "draw", "Off", "On", SOMVR_VMA8_CLIMB}};
+    const int n = (int)(sizeof R / sizeof R[0]);
+    somvr_settings d, o;
+    somvr_set_default(&d);
+    char v[48], file[4096], note[96];
+    int keys = 1, rows = 1, steps = 1;
+    uint64_t mask = 0;
+    o = d;
+    for (int i = 0; i < n; i++) {
+        somvr_settings t = d;
+        const char *env = somvr_set_env(R[i].key);
+        somvr_set_get(&d, R[i].key, v, sizeof v);
+        int k_ok = !strcmp(somvr_set_key(R[i].key), R[i].name) && (R[i].env ? env && !strcmp(env, R[i].env) : !env) &&
+                   somvr_set_find(R[i].name) == R[i].key && !strcmp(v, R[i].dflt) &&
+                   somvr_set_put(&t, R[i].key, R[i].other) && (somvr_set_get(&t, R[i].key, v, sizeof v), !strcmp(v, R[i].other)) &&
+                   !somvr_set_put(&t, R[i].key, R[i].bad) && somvr_set_diff(&d, &t) == 1ull << R[i].key &&
+                   (!R[i].env || somvr_set_find(R[i].env) == R[i].key);
+        if (!k_ok) printf("    key %s: '%s'\n", R[i].name, v);
+        keys &= k_ok;
+        somvr_set_put(&o, R[i].key, R[i].other), mask |= 1ull << R[i].key;
+        /* the row: its group's, shown in every build, enabled with its bit only; the values both ways fit */
+        somvr_settings e = d;
+        e.av8 = R[i].bit, e.low_health = 2, e.kills = 1, e.fling = 1; /* (the rows three rows depend on) */
+        somvr_settings z = e;
+        z.av8 = (uint16_t)(0x7ff & ~R[i].bit);
+        char a[32], b[32];
+        somvr_vm_value(&d, R[i].item, a, sizeof a), somvr_vm_value(&t, R[i].item, b, sizeof b);
+        int r_ok = somvr_vm_row_page(R[i].item) == R[i].page && somvr_vm_shown(0, R[i].item) &&
+                   somvr_vm_enabled(&e, 0, R[i].item) && !somvr_vm_enabled(&z, ~0ull, R[i].item) && !strcmp(a, R[i].val_dflt) &&
+                   !strcmp(b, R[i].val_other) && somvr_font_text_w(a, SOMVR_VM_SCALE) <= 448 - 304 &&
+                   somvr_font_text_w(b, SOMVR_VM_SCALE) <= 448 - 304 &&
+                   somvr_font_text_w(somvr_vm_label(R[i].item), SOMVR_VM_SCALE) <= 256 - 20 &&
+                   somvr_vm_apply(&z, ~0ull, 0, R[i].item, SOMVR_VMP_ROW) == SOMVR_VMR_NONE;
+        if (!r_ok) printf("    row %s: '%s' / '%s'\n", somvr_vm_label(R[i].item), a, b);
+        rows &= r_ok;
+        /* a press changes it, the file says so (the apply's value is the key's) */
+        somvr_settings c = e;
+        int st = somvr_vm_apply(&c, 0, 0, R[i].item, SOMVR_VMP_ROW) == SOMVR_VMR_CHANGED &&
+                 somvr_set_diff(&e, &c) == 1ull << R[i].key;
+        if (!st) printf("    press %s\n", somvr_vm_label(R[i].item));
+        steps &= st;
+    }
+    CHECK(keys, "the 14 keys: names, switches, the code defaults, the words both ways, bad words refused");
+    CHECK(rows, "the 14 rows: their groups, enabled with their av8 bits only, the values fit, no press without the bit");
+    CHECK(steps, "a press changes each row's key alone");
+    /* the dependent rows: Heartbeat with the ring only, Execute with the kills, Fling down with the Climb fling */
+    somvr_settings e = d;
+    e.av8 = 0x7ff;
+    e.low_health = 1, e.kills = 0, e.fling = 0;
+    int dep = !somvr_vm_enabled(&e, 0, SOMVR_VMI_BEAT) && !somvr_vm_enabled(&e, 0, SOMVR_VMI_EXEC) &&
+              !somvr_vm_enabled(&e, 0, SOMVR_VMI_FLING_DOWN) && somvr_vm_enabled(&e, 0, SOMVR_VMI_LOWHP) &&
+              somvr_vm_enabled(&e, 0, SOMVR_VMI_KILLS) && somvr_vm_enabled(&e, 0, SOMVR_VMI_CLIMB_SWORD);
+    e.low_health = 2, e.kills = 1, e.fling = 1;
+    dep &= somvr_vm_enabled(&e, 0, SOMVR_VMI_BEAT) && somvr_vm_enabled(&e, 0, SOMVR_VMI_EXEC) &&
+           somvr_vm_enabled(&e, 0, SOMVR_VMI_FLING_DOWN);
+    CHECK(dep, "Heartbeat with the ring, Execute with the kills, Fling down with the fling");
+    /* the three-way rows: > up, held at the top; the row wraps; < held at the bottom; Grab time 5 / 10 / 20 / 30 s */
+    e = d, e.av8 = 0x7ff;
+    int three = 1;
+    static const int I3[3] = {SOMVR_VMI_LOWHP, SOMVR_VMI_FORCE, SOMVR_VMI_SHOVE};
+    for (int i = 0; i < 3; i++) {
+        somvr_settings t = e;
+        uint8_t *f = I3[i] == SOMVR_VMI_LOWHP ? &t.low_health : I3[i] == SOMVR_VMI_FORCE ? &t.force : &t.shove;
+        *f = 0;
+        three &= somvr_vm_apply(&t, 0, 0, I3[i], SOMVR_VMP_LESS) == SOMVR_VMR_NONE && *f == 0 &&
+                 somvr_vm_apply(&t, 0, 0, I3[i], SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && *f == 1 &&
+                 somvr_vm_apply(&t, 0, 0, I3[i], SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && *f == 2 &&
+                 somvr_vm_apply(&t, 0, 0, I3[i], SOMVR_VMP_MORE) == SOMVR_VMR_NONE && *f == 2 &&
+                 somvr_vm_apply(&t, 0, 0, I3[i], SOMVR_VMP_ROW) == SOMVR_VMR_CHANGED && *f == 0;
+    }
+    somvr_settings h = e;
+    char hv[4][16];
+    int hold = 1;
+    for (int i = 0; i < 4; i++) {
+        somvr_vm_value(&h, SOMVR_VMI_HOLD, hv[i], sizeof hv[i]);
+        hold &= somvr_vm_apply(&h, 0, 0, SOMVR_VMI_HOLD, SOMVR_VMP_MORE) == (i < 2 ? SOMVR_VMR_CHANGED : SOMVR_VMR_NONE);
+    }
+    hold &= !strcmp(hv[0], "10 s") && !strcmp(hv[1], "20 s") && !strcmp(hv[2], "30 s") && h.hold_s == 30 &&
+            somvr_vm_apply(&h, 0, 0, SOMVR_VMI_HOLD, SOMVR_VMP_ROW) == SOMVR_VMR_CHANGED && h.hold_s == 5 &&
+            somvr_vm_apply(&h, 0, 0, SOMVR_VMI_HOLD, SOMVR_VMP_LESS) == SOMVR_VMR_NONE && h.hold_s == 5;
+    h.hold_s = 0; /* the switch's 0 = the game's own end: shown, > goes to 5 */
+    somvr_vm_value(&h, SOMVR_VMI_HOLD, hv[3], sizeof hv[3]);
+    hold &= !strcmp(hv[3], "Game") && somvr_vm_apply(&h, 0, 0, SOMVR_VMI_HOLD, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED &&
+            h.hold_s == 5 && somvr_set_put(&h, SOMVR_SK_VERBS_GRAB_MAX_S, "99") && h.hold_s == 60 &&
+            somvr_set_put(&h, SOMVR_SK_VERBS_GRAB_MAX_S, "7.4") && h.hold_s == 7;
+    CHECK(three && hold, "the three-way rows step and wrap (%d); Grab time %s > %s > %s, held, wraps to 5, 'Game' for 0, "
+          "the key clamped to 0..60 (%d)", three, hv[0], hv[1], hv[2], hold);
+    /* save and load: every v8 key changed, written, read back the same; the av8 bits never in the file */
+    o.av8 = 0x7ff;
+    size_t len = somvr_set_format(&o, mask, file, sizeof file);
+    somvr_settings r = d;
+    int bad = 0;
+    uint64_t m = somvr_set_parse(&r, file, &bad, note, sizeof note);
+    r.av8 = o.av8;
+    CHECK(len < sizeof file && m == mask && !bad && somvr_set_diff(&o, &r) == 0 && !memcmp(&o.watch_raise, &r.watch_raise, 14) &&
+              strstr(file, "XR_WATCH_LOOK=raise\n") && strstr(file, "LOW_HEALTH=ring\n") && strstr(file, "SHOVE_PUSH=hard\n") &&
+              strstr(file, "VERBS_GRAB_MAX_S=20\n") && strstr(file, "SLOTS_DAGGER_HOLD=off\n") && !strstr(file, "AV8"),
+          "the file round trip of the 14 keys (%zu bytes, mask %#llx, bad %d)", len, (unsigned long long)m, bad);
+    /* the switches' own spellings are keys too: SOMVR_KILLS=on in a file is the KILLS key; 1/0 for on/off */
+    r = d;
+    m = somvr_set_parse(&r, "SOMVR_KILLS=on\nHERBS=0\nCLIMB_SWORD=1\nKILLS_EXEC=trigger\n", &bad, note, sizeof note);
+    CHECK(!bad && r.kills == 1 && r.herbs == 0 && r.climb_sword == 1 && r.exec_blow == 0 &&
+              m == (1ull << SOMVR_SK_KILLS | 1ull << SOMVR_SK_HERBS | 1ull << SOMVR_SK_CLIMB_SWORD | 1ull << SOMVR_SK_KILLS_EXEC),
+          "the switches' names and 1/0");
+    /* the user's own file (v7's keys, as the menu wrote it) read by v8: every line taken, the v8 keys not in it (they
+     * follow their switches), written back the same lines */
+    static const char user[] =
+        "# Shadow of Mordor VR settings (SOMVR_SETTINGS), written by the in-game VR menu (SOMVR_VRMENU=1).\n"
+        "# KEY=VALUE; a key here wins over its SOMVR_* switch, a key not here follows the switch.\n"
+        "TURN=smooth\nTURN_DPS=90\nVIGNETTE=0.5\nSNAP_BLINK_MS=140\nVIEW=first\nHAPTICS=100\nPHASE=on\nCROUCH=duck\n"
+        "COMBAT_BITE=on\nXR_REFRESH=120\nTEST_PAGE=4@e0\n";
+    r = d;
+    m = somvr_set_parse(&r, user, &bad, note, sizeof note);
+    char back[2048];
+    somvr_set_format(&r, m, back, sizeof back);
+    CHECK(!bad && !(m & mask) && !strcmp(back, user) && r.watch_big == d.watch_big && r.hold_s == 10,
+          "the user's v7 file: taken whole (bad %d), no v8 key in it, written back the same", bad);
+}
+
 static void test_handed(void) {
     somvr_settings s, b;
     char v[64], file[1024], note[64];
@@ -3007,12 +3204,12 @@ static void test_handed(void) {
     int rd[4], rh[4], rv[4], rp[4];
     CHECK(somvr_vm_shown(A, SOMVR_VMI_HANDED) && somvr_vm_shown(0, SOMVR_VMI_HANDED) && !somvr_vm_shown(A, SOMVR_VMI_HAND) &&
               somvr_vm_row_page(SOMVR_VMI_HANDED) == SOMVR_VMPG_SETTINGS &&
-              somvr_vm_rect_av(A, SOMVR_VMI_HUD_DIST, SOMVR_VMP_ROW, rd) &&
-              somvr_vm_rect_av(A, SOMVR_VMI_HANDED, SOMVR_VMP_ROW, rh) && somvr_vm_rect_av(A, SOMVR_VMI_VIEW, SOMVR_VMP_ROW, rv) &&
+              somvr_vm_rect_av(A, SOMVR_VMI_SIZE, SOMVR_VMP_ROW, rd) &&
+              somvr_vm_rect_av(A, SOMVR_VMI_HANDED, SOMVR_VMP_ROW, rh) && somvr_vm_rect_av(A, SOMVR_VMI_HAPTICS, SOMVR_VMP_ROW, rv) &&
               !somvr_vm_rect_av(A, SOMVR_VMI_HAND, SOMVR_VMP_ROW, rp) && rh[1] == rd[1] + rd[3] && rv[1] == rh[1] + rh[3] &&
               !strcmp(somvr_vm_label(SOMVR_VMI_HANDED), "Handedness"),
-          "Handedness between HUD distance (%d) and View (%d) at %d, where Pointer hand was (not shown now)", rd[1], rv[1],
-          rh[1]);
+          "Handedness between Player size (%d) and Haptics (%d) at %d, Pointer hand next to it (not shown now)", rd[1],
+          rv[1], rh[1]); /* build 34: the Comfort group's */
     somvr_set_default(&s);
     b = s;
     int r1 = somvr_vm_apply(&s, A, 0, SOMVR_VMI_HANDED, SOMVR_VMP_ROW);
@@ -3122,8 +3319,81 @@ static void test_place31(void) {
     CHECK(h.item == SOMVR_VMI_PR_PLACE && h.part == SOMVR_VMP_BUTTON, "its centre hits it (%d)", h.item);
 }
 
+/* build 36 (re-xr-pipeline.md 164): the practice page's Charge execution - a row of its own under Refill health / Place
+ * orc, in the area only, request 12; the hints a row lower, still on the page; no button over another */
+static void test_charge36(void) {
+    somvr_settings s;
+    somvr_set_default(&s);
+    const uint32_t P = SOMVR_VMA_PRACTICE, HERE = P | SOMVR_VMA_PR_HERE;
+    int rc[4], rh[4], rp[4];
+    CHECK(!somvr_vm_enabled(&s, P, SOMVR_VMI_PR_CHARGE) && somvr_vm_enabled(&s, HERE, SOMVR_VMI_PR_CHARGE) &&
+              !somvr_vm_enabled(&s, HERE | SOMVR_VMA_PR_BUSY, SOMVR_VMI_PR_CHARGE) &&
+              somvr_vm_apply(&s, HERE, 0, SOMVR_VMI_PR_CHARGE, SOMVR_VMP_BUTTON) == SOMVR_VMR_PRACTICE &&
+              somvr_vm_practice_action(SOMVR_VMI_PR_CHARGE) == SOMVR_VMPR_CHARGE && SOMVR_VMPR_CHARGE == 12 &&
+              !strcmp(somvr_vm_label(SOMVR_VMI_PR_CHARGE), "Charge execution"),
+          "Charge execution: in the area only, request %d", somvr_vm_practice_action(SOMVR_VMI_PR_CHARGE));
+    CHECK(somvr_vm_rect(SOMVR_VMI_PR_CHARGE, SOMVR_VMP_BUTTON, rc) && somvr_vm_rect(SOMVR_VMI_PR_HEALTH, SOMVR_VMP_BUTTON, rh) &&
+              somvr_vm_rect(SOMVR_VMI_PR_PLACE, SOMVR_VMP_BUTTON, rp) && rc[1] >= rh[1] + rh[3] + 4 &&
+              rc[1] >= rp[1] + rp[3] + 4 && rc[0] == rh[0] && rc[0] + rc[2] == rp[0] + rp[2] &&
+              somvr_font_text_w("Charge execution", SOMVR_VM_SCALE) <= rc[2] - 16 && rc[1] + rc[3] <= 628 - 8 &&
+              628 + 104 + 32 <= SOMVR_VM_TEX_H,
+          "Charge execution under the refills: %d,%d %dx%d (Refill health at %d)", rc[0], rc[1], rc[2], rc[3], rh[1]);
+    somvr_vm_hit h = somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, (rc[0] + 0.5f * rc[2]) / SOMVR_VM_TEX_W,
+                                            (rc[1] + 0.5f * rc[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == SOMVR_VMI_PR_CHARGE && h.part == SOMVR_VMP_BUTTON, "its centre hits it (%d)", h.item);
+    static const int others[] = {SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VMI_PR_SPAWN, SOMVR_VMI_PR_GROUP, SOMVR_VMI_PR_FAR,
+                                 SOMVR_VMI_PR_REMOVE, SOMVR_VMI_PR_CAPTAIN, SOMVR_VMI_PR_ARROWS, SOMVR_VMI_PR_HEALTH,
+                                 SOMVR_VMI_PR_PLACE};
+    int apart = 1;
+    for (size_t i = 0; i < sizeof others / sizeof others[0]; i++) {
+        int ro[4];
+        if (somvr_vm_rect(others[i], SOMVR_VMP_BUTTON, ro) && ro[0] < rc[0] + rc[2] && rc[0] < ro[0] + ro[2] &&
+            ro[1] < rc[1] + rc[3] && rc[1] < ro[1] + ro[3])
+            apart = 0;
+    }
+    CHECK(apart, "Charge execution over no other button");
+}
+
+/* build 33 (re-xr-pipeline.md 142): Bow from (Shoulder / Grip) - bit 1 of bow_string, under Bow string on the Fight
+ * page (build 34: the Bow group's), its key BOW_TAKE; Bow string's bit 0 untouched by it and it by Bow string */
+static void test_bowtake33(void) {
+    somvr_settings s;
+    somvr_set_default(&s);
+    char v[32], buf[1024];
+    int bad = 0;
+    const uint64_t A = SOMVR_VMA_STRING;
+    CHECK(somvr_vm_shown(A, SOMVR_VMI_BOWTAKE) && !somvr_vm_shown(0, SOMVR_VMI_BOWTAKE) &&
+              somvr_vm_row_page(SOMVR_VMI_BOWTAKE) == SOMVR_VMPG_BOW && !strcmp(somvr_vm_label(SOMVR_VMI_BOWTAKE), "Bow from"),
+          "the row: with the bow, on the Bow page (build 34's group)");
+    somvr_vm_value(&s, SOMVR_VMI_BOWTAKE, v, sizeof v);
+    CHECK(!strcmp(v, "Shoulder") && s.bow_string == 0, "the default: Shoulder (%s)", v);
+    CHECK(somvr_vm_apply(&s, A, 0, SOMVR_VMI_BOWTAKE, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.bow_string == 2 &&
+              (somvr_vm_value(&s, SOMVR_VMI_BOWTAKE, v, sizeof v), !strcmp(v, "Grip")) &&
+              somvr_vm_apply(&s, A, 0, SOMVR_VMI_STRING, SOMVR_VMP_MORE) == SOMVR_VMR_CHANGED && s.bow_string == 3 &&
+              (somvr_vm_value(&s, SOMVR_VMI_STRING, v, sizeof v), !strcmp(v, "Trigger")),
+          "Grip, then the trigger string: bits 2 + 1 (%u)", s.bow_string);
+    int rs[4], rt[4];
+    CHECK(somvr_vm_rect_av(A, SOMVR_VMI_STRING, SOMVR_VMP_ROW, rs) && somvr_vm_rect_av(A, SOMVR_VMI_BOWTAKE, SOMVR_VMP_ROW, rt) &&
+              rt[1] == rs[1] + rs[3], "under Bow string (%d after %d)", rt[1], rs[1]);
+    somvr_settings d;
+    somvr_set_default(&d);
+    uint64_t diff = somvr_set_diff(&d, &s);
+    somvr_set_format(&s, diff, buf, sizeof buf);
+    CHECK(strstr(buf, "BOW_TAKE=grip\n") && strstr(buf, "BOW_STRING=trigger\n"), "the file: %s", buf);
+    somvr_settings r;
+    somvr_set_default(&r);
+    uint64_t m = somvr_set_parse(&r, "BOW_STRING=trigger\nBOW_TAKE=grip\n", &bad, NULL, 0);
+    CHECK(!bad && r.bow_string == 3 && m == (1ull << SOMVR_SK_BOW_STRING | 1ull << SOMVR_SK_BOW_TAKE), "read back: %u",
+          r.bow_string);
+    somvr_set_default(&r);
+    somvr_set_parse(&r, "BOW_TAKE=grip\nBOW_STRING=grip\n", &bad, NULL, 0);
+    CHECK(r.bow_string == 2, "BOW_STRING=grip keeps the take bit (%u)", r.bow_string);
+}
+
 int main(void) {
+    test_bowtake33();
     test_place31();
+    test_charge36();
     test_testpage31();
     test_font();
     test_handed();
@@ -3155,6 +3425,7 @@ int main(void) {
     test_steady20();
     test_snap20();
     test_test21();
+    test_settings34(); /* build 34 */
     printf("test_vrmenu: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

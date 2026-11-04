@@ -266,6 +266,24 @@ static uint64_t rd_fnv(const unsigned char *p, uint32_t n)
 		h = (h ^ p[i]) * 1099511628211ull;
 	return h;
 }
+/* rd_fnv over game memory read through peek: the same hash while readable, 0 when not. For the checks that read a mapped
+ * block again later (rd_vr_present's ranges at the next present, a block's re-check): D3D11 keeps a mapping valid only
+ * until its Unmap, and DXVK does unmap - the Windows run 102814 (render31, SOMVR_FX_TEST) read the previous frame's
+ * vertex range in an unmapped page and the game ended (winport-combat, 11-03). Linux's IndirectX kept them readable */
+static uint64_t rd_fnv_peek(const unsigned char *p, uint32_t n)
+{
+	uint64_t h = 1469598103934665603ull ^ n;
+	unsigned char buf[2048];
+	for (uint32_t o = 0; o < n;) {
+		uint32_t k = n - o < (uint32_t)sizeof buf ? n - o : (uint32_t)sizeof buf;
+		if (!peek((uintptr_t)(p + o), buf, k))
+			return 0;
+		for (uint32_t i = 0; i < k; i++)
+			h = (h ^ buf[i]) * 1099511628211ull;
+		o += k;
+	}
+	return h;
+}
 
 /* a bound "frame" image by name: 0, CF0 / CF1 (rt3D's, "x" while ours are swapped in), another target's */
 static const char *rd_cfname(uintptr_t v, char *b, size_t n)
@@ -280,7 +298,7 @@ static const char *rd_cfname(uintptr_t v, char *b, size_t n)
 	else if (rt && v == rt + 0x190)
 		snprintf(b, n, "LAST");
 	else
-		snprintf(b, n, "%#lx", (unsigned long)v);
+		snprintf(b, n, "%#llx", (unsigned long long)v);
 	return b;
 }
 
@@ -555,8 +573,11 @@ __attribute__((used)) void somvr_dc_updsub(void *ctx, void *dst, uint32_t sub, c
 {
 	if (dc_rt && g_dc.state && dst && src && !box && !sub) {
 		uint32_t sz = dc_cb_size(dst);
-		if (sz)
-			dc_buf_set(dst, src, sz), g_dc.upds++;
+		static unsigned char tmp[65536]; /* (the immediate context's thread; sz <= 65536) */
+		/* read through peek: the game's source block can end before the buffer's ByteWidth - the Windows run 084037
+		 * (render31) read past it into an unmapped page in rd_fnv and the game ended (winport-combat, 11-03) */
+		if (sz && peek((uintptr_t)src, tmp, sz))
+			dc_buf_set(dst, tmp, sz), g_dc.upds++;
 	}
 	((dc_upd_fn)g_dc.orig[DCS_UPDSUB])(ctx, dst, sub, box, src, rp, dp);
 }
@@ -781,8 +802,8 @@ static void dc_install(void)
 	char why[512];
 	for (int i = 0; i < DCS_N; i++)
 		if (check_site(&g_dc_sites[i], why, sizeof why) != 0) {
-			logf_("DCAP site %s %#lx MISMATCH: %s (no D3D11 capture)", g_dc_sites[i].name,
-			      (unsigned long)g_dc_sites[i].addr, why);
+			logf_("DCAP site %s %#llx MISMATCH: %s (no D3D11 capture)", g_dc_sites[i].name,
+			      (unsigned long long)g_dc_sites[i].addr, why);
 			return;
 		}
 	void *fn[DCS_N] = { (void *)somvr_dc_vscb, (void *)somvr_dc_pssrv, (void *)somvr_dc_pssh, (void *)somvr_dc_pssmp,
@@ -946,8 +967,8 @@ static int rcf_make(uintptr_t rt)
 		void *ctex = *(void **)(c + 0x18);
 		int w = *(int *)(c + 4), h = *(int *)(c + 8);
 		if (!ctex || vptr_of(ctex) != g_d3d.vt_tex || w < 16 || h < 16 || w > 16384 || h > 16384)
-			return rcf_off("target %#lx image %d: texture %p (vtable %#lx) %dx%d is not a made image", (unsigned long)rt, k,
-				      ctex, (unsigned long)vptr_of(ctex), w, h);
+			return rcf_off("target %#llx image %d: texture %p (vtable %#llx) %dx%d is not a made image", (unsigned long long)rt, k,
+				      ctex, (unsigned long long)vptr_of(ctex), w, h);
 		if (g_rcf.state == 1)
 			for (int i = 0; i < 3; i++)
 				rcf_release(x + 0x18 + 8 * i);
@@ -961,8 +982,8 @@ static int rcf_make(uintptr_t rt)
 		s.copy(s.ctx, xt, ctex); /* eye 1's first frame reads the game's last pixels, not an empty image */
 	}
 	g_rcf.state = 1, g_rcf.rt = rt, g_rcf.makes++;
-	logf_("CURFRAME t=%.3f made %llu: eye 1's two images for target %#lx (%dx%d formats %d/%d and %d/%d; textures %p %p)",
-	      mono(), (unsigned long long)g_rcf.makes, (unsigned long)rt, *(int *)(rt + RD_CF_OFF + 4),
+	logf_("CURFRAME t=%.3f made %llu: eye 1's two images for target %#llx (%dx%d formats %d/%d and %d/%d; textures %p %p)",
+	      mono(), (unsigned long long)g_rcf.makes, (unsigned long long)rt, *(int *)(rt + RD_CF_OFF + 4),
 	      *(int *)(rt + RD_CF_OFF + 8), *(int *)(rt + RD_CF_OFF + 0xc), *(int *)(rt + RD_CF_OFF + 0x10),
 	      *(int *)(rt + RD_CF_OFF + RD_CF_SZ + 0xc), *(int *)(rt + RD_CF_OFF + RD_CF_SZ + 0x10), *(void **)(g_rcf.x[0] + 0x18),
 	      *(void **)(g_rcf.x[1] + 0x18));
@@ -989,7 +1010,7 @@ static void rd_rt_end_pre(uintptr_t rt, uint32_t flags)
 	if (g_rcf.tracing) {
 		char b[160];
 		rd_tr_bound(b, sizeof b);
-		rd_tr("end rt=%#lx%s flags=%u mode=%d rtflags=%#x; %s", (unsigned long)rt, is3d ? " (3D)" : "", flags,
+		rd_tr("end rt=%#llx%s flags=%u mode=%d rtflags=%#x; %s", (unsigned long long)rt, is3d ? " (3D)" : "", flags,
 		      *(volatile int *)(rt + RD_RT_MODE), *(volatile uint32_t *)(rt + RT_FLAGS), b);
 	}
 }
@@ -1005,8 +1026,8 @@ static void rd_rt_eye_end(int e, uintptr_t rt, uint64_t fr)
 			uint32_t rf = *(volatile uint32_t *)(rt + RT_FLAGS);
 			if (!(rf & RD_RTF_CF)) {
 				if (!g_rcf.nocf++)
-					logf_("CURFRAME t=%.3f target %#lx (flags %#x) has no current-frame images: nothing to swap",
-					      mono(), (unsigned long)rt, rf);
+					logf_("CURFRAME t=%.3f target %#llx (flags %#x) has no current-frame images: nothing to swap",
+					      mono(), (unsigned long long)rt, rf);
 			} else if ((g_rcf.state == 1 && g_rcf.rt == rt && rcf_same(rt)) || rcf_make(rt)) {
 				rcf_swap(rt);
 				g_rcf.swaps++;
@@ -1018,7 +1039,7 @@ static void rd_rt_eye_end(int e, uintptr_t rt, uint64_t fr)
 		g_rcf.phase = 2;
 		atomic_store_explicit(&g_rcf.e1_frame, fr, memory_order_release);
 	}
-	rd_tr("eye %d end (target %#lx)%s", e, (unsigned long)rt, e == 0 && g_rcf.swapped ? ": eye 1's images in" : "");
+	rd_tr("eye %d end (target %#llx)%s", e, (unsigned long long)rt, e == 0 && g_rcf.swapped ? ": eye 1's images in" : "");
 }
 
 static void rd_vr_present(void);
@@ -1056,7 +1077,7 @@ __attribute__((used)) uint64_t somvr_w_rdbrt(uintptr_t rt)
 	if (g_rcf.tracing) {
 		char b[160];
 		rd_tr_bound(b, sizeof b);
-		rd_tr("begin rt=%#lx%s mode=%d rtflags=%#x; %s", (unsigned long)rt, is3d ? " (3D)" : "",
+		rd_tr("begin rt=%#llx%s mode=%d rtflags=%#x; %s", (unsigned long long)rt, is3d ? " (3D)" : "",
 		      *(volatile int *)(rt + RD_RT_MODE), *(volatile uint32_t *)(rt + RT_FLAGS), b);
 	}
 	return r;
@@ -1110,7 +1131,7 @@ static int rd_draw0_probe(void **a, uintptr_t *fx_out)
 			      "later frame before its draw", mono(), e, (const void *)blk, (unsigned long long)g_rt_frame, fr);
 		return -1;
 	}
-	uint64_t h = rd_fnv(blk, len);
+	uint64_t h = rd_fnv_peek(blk, len);
 	int same = h == h0;
 	atomic_fetch_add_explicit(same ? &g_rcf.b_same[e] : &g_rcf.b_diff[e], 1, memory_order_relaxed);
 	if (!same && atomic_fetch_add(&g_rcf.b_lines, 1) < 12)
@@ -1250,7 +1271,7 @@ static void rd_vr_present(void)
 	for (int k = 0; k < g_vr.npr; k++) { /* the frame before: handed out again while this frame was recorded? */
 		int e = g_vr.pr[k].eye;
 		g_vr.pranges[e]++;
-		if (rd_fnv(g_vr.pr[k].p, g_vr.pr[k].len) != g_vr.pr[k].h)
+		if (rd_fnv_peek(g_vr.pr[k].p, g_vr.pr[k].len) != g_vr.pr[k].h)
 			g_vr.pchanged[e]++, pc[e]++;
 	}
 	if ((pc[0] || pc[1]) && g_vr.lines++ < 16)
@@ -1265,7 +1286,7 @@ static void rd_vr_present(void)
 	for (int k = 0; k < g_vr.n; k++) {
 		int e = g_vr.r[k].eye;
 		g_vr.ranges[e]++;
-		if (rd_fnv(g_vr.r[k].p, g_vr.r[k].len) != g_vr.r[k].h) {
+		if (rd_fnv_peek(g_vr.r[k].p, g_vr.r[k].len) != g_vr.r[k].h) {
 			g_vr.changed[e]++, ch[e]++;
 			if (first < 0)
 				first = k;
@@ -1732,10 +1753,10 @@ static void rd_vprobe_log(void **a, uintptr_t fx, int e)
 			mean += r, mx = r > mx ? r : mx;
 		}
 	}
-	logf_("FXVPROBE t=%.3f eye %d emitter %#lx: a0 %.1f,%.1f,%.1f q %.3f %.3f %.3f %.3f; a1 %.1f,%.1f,%.1f q %.3f %.3f %.3f %.3f; "
+	logf_("FXVPROBE t=%.3f eye %d emitter %#llx: a0 %.1f,%.1f,%.1f q %.3f %.3f %.3f %.3f; a1 %.1f,%.1f,%.1f q %.3f %.3f %.3f %.3f; "
 	      "map(%lld %lld %lld %lld %lld) granted %u; draw(%lld %lld %lld %lld %lld nv %lld %lld); slots %s; block n %u, floats "
 	      "1..15: %s; 60-byte vertices %s: the first quad %s; |p| over %d vertices mean %.2f max %.2f", mono(), e,
-	      (unsigned long)fx, cam[0], cam[1], cam[2], cam[3], cam[4], cam[5], cam[6], eye[0], eye[1], eye[2], eye[3], eye[4],
+	      (unsigned long long)fx, cam[0], cam[1], cam[2], cam[3], cam[4], cam[5], cam[6], eye[0], eye[1], eye[2], eye[3], eye[4],
 	      eye[5], eye[6], (long long)g_px.marg[0], (long long)g_px.marg[1], (long long)g_px.marg[2], (long long)g_px.marg[3],
 	      (long long)g_px.marg[4], g_px.granted, (long long)g_px.darg[0], (long long)g_px.darg[1],
 	      (long long)g_px.darg[2], (long long)g_px.darg[3], (long long)g_px.darg[4], (long long)g_px.darg[5],
@@ -1811,9 +1832,9 @@ static void rd_draw0_full(void *self, void **a)
 	if ((dv || dn || de || dp || (atomic_load(&g_rd.eyesame) && dc)) && g_px.nv >= 16 &&
 	    atomic_fetch_add(&g_rcf.d_lines, 1) < 24) {
 		const float *m = (const float *)a[1];
-		logf_("FLATFX draw t=%.3f frame %llu emitter %#lx: eye 1's draw against eye 0's: camera %s, emitter transform %s "
+		logf_("FLATFX draw t=%.3f frame %llu emitter %#llx: eye 1's draw against eye 0's: camera %s, emitter transform %s "
 		      "(%p vs %p; now %.2f %.2f %.2f q %.4f %.4f %.4f %.4f), props %s, vertices %s (%lld vs %u drawn; map asked %u "
-		      "got %u vs %u/%u)", mono(), (unsigned long long)g_rt_frame, (unsigned long)fx, dc ? "DIFFERENT" : "the same",
+		      "got %u vs %u/%u)", mono(), (unsigned long long)g_rt_frame, (unsigned long long)fx, dc ? "DIFFERENT" : "the same",
 		      de ? "DIFFERENT" : "the same", a[1], (void *)g_rcf.dr[i].empp, m[0], m[1], m[2], m[3], m[4], m[5], m[6],
 		      dp ? "DIFFERENT" : "the same", dv ? "DIFFERENT" : "the same", (long long)g_px.nv, g_rcf.dr[i].nv, g_px.req,
 		      g_px.granted, g_rcf.dr[i].req, g_rcf.dr[i].granted);
@@ -1858,11 +1879,11 @@ static void rd_fs_probe(void **a)
 	float dl = sqrtf(rd_dot(d, d));
 	rd_qrot(cam + 3, Z, 0, f), rd_qrot(sp + 3, Z, 0, g);
 	float cv = dl > 0 ? rd_dot(f, d) / dl : 0, cs = dl > 0 ? rd_dot(g, d) / dl : 0;
-	logf_("FXFSPROBE t=%.3f eye %d props %#lx: the sprite at %.0f,%.0f,%.0f q %.3f %.3f %.3f %.3f, %.1f m from the camera "
+	logf_("FXFSPROBE t=%.3f eye %d props %#llx: the sprite at %.0f,%.0f,%.0f q %.3f %.3f %.3f %.3f, %.1f m from the camera "
 	      "(%.0f,%.0f,%.0f), %.1f deg off the view's axis (cos %.3f; the sprite's own facing: cos %.3f); props +0xb0 %u (the "
 	      "view's axes) +0xb1 %u (an axis) +0xaf %u (two-sided) +0xb5 %u (near fade) +0xdc %u (fade by the view's axis) "
 	      "+0xde %u; floats +0x98 %.3g +0x9c %.3g +0xb8 %.3g +0xbc %.3g +0xc0 %.3g +0xd0 %.3g +0xd4 %.3g; instance %.3g %.3g "
-	      "%.3g %.3g", mono(), g_rt_eye, (unsigned long)pr, sp[0], sp[1], sp[2], sp[3], sp[4], sp[5], sp[6], dl * 0.01f,
+	      "%.3g %.3g", mono(), g_rt_eye, (unsigned long long)pr, sp[0], sp[1], sp[2], sp[3], sp[4], sp[5], sp[6], dl * 0.01f,
 	      cam[0], cam[1], cam[2], acosf(cv > 1 ? 1 : cv < -1 ? -1 : cv) * 57.29578f, cv, cs, p[0xb0], p[0xb1], p[0xaf],
 	      p[0xb5], p[0xdc], p[0xde], *(const float *)(p + 0x98), *(const float *)(p + 0x9c), *(const float *)(p + 0xb8),
 	      *(const float *)(p + 0xbc), *(const float *)(p + 0xc0), *(const float *)(p + 0xd0), *(const float *)(p + 0xd4),
@@ -2038,9 +2059,9 @@ __attribute__((used)) void somvr_w_rdprep(void *self, void **a)
 			int same = g_rd.probe[k].h == h && g_rd.probe[k].n == n;
 			atomic_fetch_add_explicit(same ? &g_rd.p_same : &g_rd.p_diff, 1, memory_order_relaxed);
 			if (n >= 4 && atomic_fetch_add(&g_rd.p_lines, 1) < 16)
-				logf_("FLATFX probe t=%.3f frame %u emitter %#lx: eye 0 copied %u particles (thread %ld), eye 1 %u "
-				      "(thread %ld): %s; updates so far outside the eyes %llu, in eye 0's call %llu, in eye 1's %llu",
-				      cb_now(), fr, (unsigned long)fx, g_rd.probe[k].n, g_rd.probe[k].tid, n, tid,
+				logf_("FLATFX probe t=%.3f frame %u emitter %#llx: eye 0 copied %u particles (thread %lld), eye 1 %u "
+				      "(thread %lld): %s; updates so far outside the eyes %llu, in eye 0's call %llu, in eye 1's %llu",
+				      cb_now(), fr, (unsigned long long)fx, g_rd.probe[k].n, (long long)g_rd.probe[k].tid, n, (long long)tid,
 				      same ? "the same particles" : "DIFFERENT particles (changed between the eyes' calls)",
 				      (unsigned long long)somvr_rd_upd[0], (unsigned long long)somvr_rd_upd[1],
 				      (unsigned long long)somvr_rd_upd[2]);
@@ -2051,9 +2072,9 @@ __attribute__((used)) void somvr_w_rdprep(void *self, void **a)
 		if (cb->over != o0) {
 			atomic_fetch_add_explicit(&g_rd.p_over[e], 1, memory_order_relaxed);
 			if (atomic_fetch_add(&g_rd.p_over_lines, 1) < 12)
-				logf_("FLATFX probe t=%.3f frame %u eye %d emitter %#lx: NO ROOM for its %d bytes (the writer %u of %u "
+				logf_("FLATFX probe t=%.3f frame %u eye %d emitter %#llx: NO ROOM for its %d bytes (the writer %u of %u "
 				      "used, %d refused so far this view): this eye draws nothing of it", cb_now(), (unsigned)g_fr.frame, e,
-				      (unsigned long)fx, cb->over - o0, cb->used, cb->cap, cb->over);
+				      (unsigned long long)fx, cb->over - o0, cb->used, cb->cap, cb->over);
 		} else if (cb->used > u0)
 			atomic_fetch_add_explicit(&g_rd.p_wrote[e], 1, memory_order_relaxed);
 		else
@@ -2612,7 +2633,7 @@ static const char *rd_word(const char *w0)
 
 static void rcf_state_line(const char *head)
 {
-	logf_("%s t=%.3f: SOMVR_CURFRAME %s (start %s; RD_CF_MAKE %s; images %s for target %#lx), eye 1 passes with its own images "
+	logf_("%s t=%.3f: SOMVR_CURFRAME %s (start %s; RD_CF_MAKE %s; images %s for target %#llx), eye 1 passes with its own images "
 	      "%llu, made %llu, swapped back at a present %llu, a target without images %llu; per phase (eye 0 / eye 1 / after): "
 	      "EndRenderTarget of rt3D %llu / %llu / %llu (flags 1: %llu / %llu / %llu), of others %llu / %llu / %llu; "
 	      "BeginRenderTarget of rt3D %llu / %llu / %llu, of others %llu / %llu / %llu; CPU particle draws %llu / %llu / %llu, "
@@ -2624,7 +2645,7 @@ static void rcf_state_line(const char *head)
 	      "buffer turns %llu (the most in a frame %llu, ranges not kept %llu); fx sync: %llu "
 	      "waits (%.2f ms on average), %llu given up", head, cb_now(),
 	      atomic_load(&g_rcf.on) ? "eye" : "game", g_rcf.want ? "eye" : "game", g_rcf.ok ? "matched" : "NOT matched",
-	      g_rcf.state == 1 ? "made" : g_rcf.state < 0 ? "OFF" : "not made yet", (unsigned long)g_rcf.rt,
+	      g_rcf.state == 1 ? "made" : g_rcf.state < 0 ? "OFF" : "not made yet", (unsigned long long)g_rcf.rt,
 	      (unsigned long long)g_rcf.swaps, (unsigned long long)g_rcf.makes, (unsigned long long)g_rcf.late,
 	      (unsigned long long)g_rcf.nocf, (unsigned long long)g_rcf.ends[0][1], (unsigned long long)g_rcf.ends[1][1],
 	      (unsigned long long)g_rcf.ends[2][1], (unsigned long long)g_rcf.ends1[0][1], (unsigned long long)g_rcf.ends1[1][1],
@@ -2657,8 +2678,8 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		g_rcf.want = env_word("SOMVR_CURFRAME", (const char *const[]){ "game", "eye" }, 2, 0);
 		g_rcf.ok = check_site(&sites[RDS_CF_MAKE], cwhy, sizeof cwhy) == 0;
 		if (!g_rcf.ok)
-			logf_("FLATFX site %s %#lx MISMATCH: %s (SOMVR_CURFRAME stays the game's)", sites[RDS_CF_MAKE].name,
-			      (unsigned long)sites[RDS_CF_MAKE].addr, cwhy);
+			logf_("FLATFX site %s %#llx MISMATCH: %s (SOMVR_CURFRAME stays the game's)", sites[RDS_CF_MAKE].name,
+			      (unsigned long long)sites[RDS_CF_MAKE].addr, cwhy);
 		atomic_store(&g_rcf.on, g_rcf.want);
 		logf_("CONFIG curframe=%s (SOMVR_CURFRAME: %s)%s", g_rcf.want ? "eye" : "game",
 		      g_rcf.want ? "each eye its own current-frame images - eye 1's pass gets two of ours" :
@@ -2673,8 +2694,8 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		for (int i = RDS_KT_UPLOAD; i <= RDS_KT_LATE; i++)
 			if (check_site(&sites[i], kwhy, sizeof kwhy) != 0) {
 				g_kt.ok = 0;
-				logf_("FLATFX site %s %#lx MISMATCH: %s (SOMVR_KTIME stays the game's)", sites[i].name,
-				      (unsigned long)sites[i].addr, kwhy);
+				logf_("FLATFX site %s %#llx MISMATCH: %s (SOMVR_KTIME stays the game's)", sites[i].name,
+				      (unsigned long long)sites[i].addr, kwhy);
 			}
 		atomic_store(&g_kt.on, g_kt.want);
 		logf_("CONFIG ktime=%s (SOMVR_KTIME: %s)%s", g_kt.want ? "frame" : "game",
@@ -2707,8 +2728,8 @@ static void rd_start(const struct site_spec *sites, int *bad)
 	for (int i = RDS_VIS_INIT; i <= RDS_VIS_REQ; i++)
 		if (check_site(&sites[i], vwhy, sizeof vwhy) != 0) {
 			g_rd.vis_ok = 0;
-			logf_("FLATFX site %s %#lx MISMATCH: %s (no request-buffer probe)", sites[i].name,
-			      (unsigned long)sites[i].addr, vwhy);
+			logf_("FLATFX site %s %#llx MISMATCH: %s (no request-buffer probe)", sites[i].name,
+			      (unsigned long long)sites[i].addr, vwhy);
 		}
 	/* build 27: SOMVR_FX_NEAR (the CPU particles' draw hooked for it too) */
 	int near = env_word("SOMVR_FX_NEAR", (const char *const[]){ "off", "on" }, 2, 0);
@@ -2739,8 +2760,8 @@ static void rd_start(const struct site_spec *sites, int *bad)
 						     (i == RDS_FLARESPR && (bill || (g_rd.want & RDF_STARS)))))
 			continue;
 		if (check_site(&sites[i], why, sizeof why) != 0) {
-			logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
-			      (unsigned long)sites[i].target, why);
+			logf_("FLATFX site %s %#llx -> %#llx MISMATCH: %s", sites[i].name, (unsigned long long)sites[i].addr,
+			      (unsigned long long)sites[i].target, why);
 			continue;
 		}
 		if (i == RDS_SHAFTS)
@@ -2763,8 +2784,8 @@ static void rd_start(const struct site_spec *sites, int *bad)
 				continue;
 #endif
 			if (check_site(&sites[i], why, sizeof why) != 0) {
-				logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
-				      (unsigned long)sites[i].target, why);
+				logf_("FLATFX site %s %#llx -> %#llx MISMATCH: %s", sites[i].name, (unsigned long long)sites[i].addr,
+				      (unsigned long long)sites[i].target, why);
 				continue;
 			}
 			g_rd.ok[i] = go_slot(&sites[i], i == RDS_OVERLAY ? (void *)somvr_w_rdov18 : (void *)somvr_w_rdovif,
@@ -2780,8 +2801,8 @@ static void rd_start(const struct site_spec *sites, int *bad)
 		dc_install();
 	if (g_rd.test) { /* build 31: `fx nofog` (a measurement) */
 		if (check_site(&sites[RDS_FOG], why, sizeof why) != 0)
-			logf_("FLATFX site %s %#lx -> %#lx MISMATCH: %s", sites[RDS_FOG].name, (unsigned long)sites[RDS_FOG].addr,
-			      (unsigned long)sites[RDS_FOG].target, why);
+			logf_("FLATFX site %s %#llx -> %#llx MISMATCH: %s", sites[RDS_FOG].name, (unsigned long long)sites[RDS_FOG].addr,
+			      (unsigned long long)sites[RDS_FOG].target, why);
 		else
 			g_rd.ok[RDS_FOG] = bo_patch_call(&sites[RDS_FOG], (void *)somvr_w_rdfog);
 	}

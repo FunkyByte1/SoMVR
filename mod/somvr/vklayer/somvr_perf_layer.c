@@ -24,6 +24,10 @@
 #define PF_BUDGET_MS 11.111 /* 90 Hz; build 27 (som-b27-perf2): the line counts against the runtime's display period */
 
 enum { PF_GAME = 1, PF_EYE0, PF_EYE1, PF_OURS };
+/* how the game's eye images get written (H8's CopyResource): Feral = vkCmdCopyImage; DXVK = vkCmdCopyImage2, or a draw
+ * into the image (DXVK's framebuffer copy: vkCmdBeginRendering with a view of it), a blit or a resolve */
+enum { PF_EW_COPY, PF_EW_RENDER, PF_EW_BLIT, PF_EW_RESOLVE, PF_EW_N };
+static const char *const pf_ew_name[PF_EW_N] = {"copy", "draw (a rendering into it)", "blit", "resolve"};
 
 typedef struct {
     uint8_t kind;
@@ -72,6 +76,8 @@ static struct {
     double xc0;          /* this present's thread CPU at the start */
     uint64_t waits_game; /* the game's timed batches that wait on a semaphore */
     uint64_t subs, sub_rt, untimed, lost, eyes_odd, frames, nsub_w;
+    uint64_t ew[PF_EW_N]; /* the eye images' writes seen, by kind (the window's) */
+    int ew_seen;          /* kinds logged once */
     char sclk_path[96], busy_path[96];
     char label[40]; /* SOMVR_XR_TEST `perf NAME`: the window's name */
 } PF = {.mx = PTHREAD_MUTEX_INITIALIZER, .ours_pair = PF_PAIRS};
@@ -241,6 +247,63 @@ static void pf_push(uint8_t kind, uint32_t pair) { /* PF.mx held */
     PF.head = (PF.head + 1) % PF_EVS;
 }
 
+/* An eye mark waits for its command buffer's submit, which gives it its frame: DXVK records frame N+1 on its CS
+ * thread while its submit thread still submits and presents frame N, so the frame counted when the mark is recorded
+ * is not the one that runs it (11-03: every mark fell outside its frame's spans - "eye times outside" one a frame). */
+#define PF_PEND 32u
+static struct {
+    VkCommandBuffer cb;
+    uint32_t pair;
+    uint8_t kind;
+    uint64_t frame;
+} pf_pend[PF_PEND];
+static uint32_t pf_npend;
+static void pf_hold(uint32_t pair) { /* PF.mx held: a query pair whose command buffer may still run */
+    PF.used[pair] = 2, PF.back_until[pair] = PF.frame + 4 * PF_LATE, PF.nback++;
+}
+static void pf_pend_add(VkCommandBuffer cb, uint32_t pair, uint8_t kind) { /* PF.mx held */
+    if (pf_npend == PF_PEND) {
+        pf_hold(pf_pend[0].pair), PF.lost++;
+        memmove(pf_pend, pf_pend + 1, (PF_PEND - 1) * sizeof pf_pend[0]);
+        pf_npend--;
+    }
+    pf_pend[pf_npend].cb = cb, pf_pend[pf_npend].pair = pair, pf_pend[pf_npend].kind = kind;
+    pf_pend[pf_npend++].frame = PF.frame;
+}
+static void pf_pend_cb(VkCommandBuffer cb) { /* PF.mx held: cb was submitted now */
+    for (uint32_t i = 0; i < pf_npend;)
+        if (pf_pend[i].cb == cb) {
+            pf_push(pf_pend[i].kind, pf_pend[i].pair);
+            memmove(pf_pend + i, pf_pend + i + 1, (pf_npend - i - 1) * sizeof pf_pend[0]);
+            pf_npend--;
+        } else
+            i++;
+}
+static void pf_pend_age(void) { /* PF.mx held: recorded but never submitted (dropped or re-recorded) */
+    for (uint32_t i = 0; i < pf_npend;)
+        if (pf_pend[i].frame + PF_LATE < PF.frame) {
+            pf_hold(pf_pend[i].pair), PF.lost++;
+            memmove(pf_pend + i, pf_pend + i + 1, (pf_npend - i - 1) * sizeof pf_pend[0]);
+            pf_npend--;
+        } else
+            i++;
+}
+static void pf_pend_submit(const VkSubmitInfo *si, uint32_t n) {
+    if (!pf_npend || !si) return;
+    pthread_mutex_lock(&PF.mx);
+    for (uint32_t i = 0; i < n && pf_npend; i++)
+        for (uint32_t k = 0; k < si[i].commandBufferCount && pf_npend; k++) pf_pend_cb(si[i].pCommandBuffers[k]);
+    pthread_mutex_unlock(&PF.mx);
+}
+static void pf_pend_submit2(const VkSubmitInfo2 *si, uint32_t n) {
+    if (!pf_npend || !si) return;
+    pthread_mutex_lock(&PF.mx);
+    for (uint32_t i = 0; i < n && pf_npend; i++)
+        for (uint32_t k = 0; k < si[i].commandBufferInfoCount && pf_npend; k++)
+            pf_pend_cb(si[i].pCommandBufferInfos[k].commandBuffer);
+    pthread_mutex_unlock(&PF.mx);
+}
+
 static int pf_batch_plain(const VkSubmitInfo *s) { /* no device-group or protected submit (their counts follow ours) */
     for (const VkBaseInStructure *p = s->pNext; p; p = p->pNext)
         if (p->sType == VK_STRUCTURE_TYPE_DEVICE_GROUP_SUBMIT_INFO || p->sType == VK_STRUCTURE_TYPE_PROTECTED_SUBMIT_INFO)
@@ -256,14 +319,18 @@ static VkResult pf_submit(dev_st *ds, VkQueue q, uint32_t n, const VkSubmitInfo 
     }
     if (!PF.ready || q != PF.q || !n || n > 16 || !si || !pf_batch_plain(&si[0]) || !pf_batch_plain(&si[n - 1])) {
         if (PF.ready && q == PF.q) PF.untimed++;
-        return ds->QueueSubmit(q, n, si, f);
+        VkResult r0 = ds->QueueSubmit(q, n, si, f);
+        if (PF.ready && r0 == VK_SUCCESS) pf_pend_submit(si, n);
+        return r0;
     }
     pthread_mutex_lock(&PF.mx);
     uint32_t p = pf_take();
     pthread_mutex_unlock(&PF.mx);
     if (p == PF_PAIRS) {
         PF.untimed++;
-        return ds->QueueSubmit(q, n, si, f);
+        VkResult r0 = ds->QueueSubmit(q, n, si, f);
+        if (r0 == VK_SUCCESS) pf_pend_submit(si, n);
+        return r0;
     }
     VkSubmitInfo m[16];
     memcpy(m, si, n * sizeof *si);
@@ -289,34 +356,246 @@ static VkResult pf_submit(dev_st *ds, VkQueue q, uint32_t n, const VkSubmitInfo 
     else
         PF.used[p] = 0;
     pthread_mutex_unlock(&PF.mx);
+    if (r == VK_SUCCESS) pf_pend_submit(si, n);
     return r;
+}
+
+/* winport: DXVK submits with vkQueueSubmit2 (synchronization2) and copies with vkCmdCopyImage2: the same timing for
+ * them (ours first and last in the call; the copy into an eye image = eye e's pass done) */
+static int pf_batch2_plain(const VkSubmitInfo2 *s) {
+    for (const VkBaseInStructure *p = s->pNext; p; p = p->pNext)
+        if (p->sType == VK_STRUCTURE_TYPE_DEVICE_GROUP_SUBMIT_INFO || p->sType == VK_STRUCTURE_TYPE_PROTECTED_SUBMIT_INFO)
+            return 0;
+    return !(s->flags & VK_SUBMIT_PROTECTED_BIT) && s->commandBufferInfoCount <= PF_MAXCB;
+}
+static VkResult pf_submit2(dev_st *ds, VkQueue q, uint32_t n, const VkSubmitInfo2 *si, VkFence f, int khr) {
+    PFN_vkQueueSubmit2 sub = khr ? ds->QueueSubmit2KHR : ds->QueueSubmit2;
+    if (PF.ready && q == PF.q && pf_in_ours) {
+        PF.sub_rt++;
+        return sub(q, n, si, f);
+    }
+    if (!PF.ready || q != PF.q || !n || n > 16 || !si || !pf_batch2_plain(&si[0]) || !pf_batch2_plain(&si[n - 1])) {
+        if (PF.ready && q == PF.q) PF.untimed++;
+        VkResult r0 = sub(q, n, si, f);
+        if (PF.ready && r0 == VK_SUCCESS) pf_pend_submit2(si, n);
+        return r0;
+    }
+    pthread_mutex_lock(&PF.mx);
+    uint32_t p = pf_take();
+    pthread_mutex_unlock(&PF.mx);
+    if (p == PF_PAIRS) {
+        PF.untimed++;
+        VkResult r0 = sub(q, n, si, f);
+        if (r0 == VK_SUCCESS) pf_pend_submit2(si, n);
+        return r0;
+    }
+    VkSubmitInfo2 m[16];
+    memcpy(m, si, n * sizeof *si);
+    VkCommandBufferSubmitInfo a[PF_MAXCB + 2], z[PF_MAXCB + 1];
+    const VkCommandBufferSubmitInfo cb0 = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = PF.cb_b[p]},
+                                    cb1 = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = PF.cb_e[p]};
+    a[0] = cb0;
+    if (si[0].commandBufferInfoCount) memcpy(a + 1, si[0].pCommandBufferInfos, si[0].commandBufferInfoCount * sizeof *a);
+    m[0].pCommandBufferInfos = a;
+    m[0].commandBufferInfoCount = si[0].commandBufferInfoCount + 1;
+    if (n == 1) {
+        a[m[0].commandBufferInfoCount++] = cb1;
+    } else {
+        if (si[n - 1].commandBufferInfoCount)
+            memcpy(z, si[n - 1].pCommandBufferInfos, si[n - 1].commandBufferInfoCount * sizeof *z);
+        z[si[n - 1].commandBufferInfoCount] = cb1;
+        m[n - 1].pCommandBufferInfos = z;
+        m[n - 1].commandBufferInfoCount = si[n - 1].commandBufferInfoCount + 1;
+    }
+    VkResult r = sub(q, n, m, f);
+    pthread_mutex_lock(&PF.mx);
+    if (r == VK_SUCCESS) {
+        pf_push(PF_GAME, p), PF.subs++;
+        for (uint32_t i = 0; i < n; i++) PF.waits_game += si[i].waitSemaphoreInfoCount > 0;
+    } else
+        PF.used[p] = 0;
+    pthread_mutex_unlock(&PF.mx);
+    if (r == VK_SUCCESS) pf_pend_submit2(si, n);
+    return r;
+}
+/* the eye of an eye image (H8's targets, the preload's published VkImages), else -1 */
+static int pf_eye_of(dev_st *ds, VkImage dst) {
+    somvr_eyes_info in;
+    if (!PF.ready || ds != PF.ds || !X.sh || !dst || !somvr_eyes_read(X.sh, &in)) return -1;
+    return in.image[0] && dst == (VkImage)(uintptr_t)in.image[0] ? 0 : in.image[1] && dst == (VkImage)(uintptr_t)in.image[1] ? 1 : -1;
+}
+/* a write into eye e's image (outside a render pass): its timestamp first = "eye e's pass is done" */
+static void pf_eye_mark(VkCommandBuffer cmd, int e, int kind) {
+    if (e < 0) return;
+    pthread_mutex_lock(&PF.mx);
+    PF.ew[kind]++;
+    int first = !(PF.ew_seen & 1 << kind);
+    PF.ew_seen |= 1 << kind;
+    uint32_t p = pf_take();
+    if (p != PF_PAIRS) {
+        PF.CmdResetQueryPool(cmd, PF.qp, 2 * p, 2);
+        PF.CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, PF.qp, 2 * p);
+        pf_pend_add(cmd, p, e ? PF_EYE1 : PF_EYE0); /* its frame comes with its command buffer's submit */
+    }
+    pthread_mutex_unlock(&PF.mx);
+    if (first) lg("xr: perf: the game writes eye %d's image by a %s: the eye's GPU time ends there", e, pf_ew_name[kind]);
+}
+static dev_st *pf_dev(VkCommandBuffer cmd) {
+    return PF.ds && dkey(cmd) == PF.ds->key ? PF.ds : LIST_FIND(g_devs, key, dkey(cmd));
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdCopyImage2(VkCommandBuffer cmd, const VkCopyImageInfo2 *ci) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdCopyImage2) return;
+    if (ci) pf_eye_mark(cmd, pf_eye_of(ds, ci->dstImage), PF_EW_COPY);
+    ds->CmdCopyImage2(cmd, ci);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdCopyImage2KHR(VkCommandBuffer cmd, const VkCopyImageInfo2 *ci) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdCopyImage2KHR) return;
+    if (ci) pf_eye_mark(cmd, pf_eye_of(ds, ci->dstImage), PF_EW_COPY);
+    ds->CmdCopyImage2KHR(cmd, ci);
 }
 
 /* H8's copy into an eye image (the game's command buffer, outside a render pass): "eye e's pass is done" */
 static VKAPI_ATTR void VKAPI_CALL L_PfCmdCopyImage(VkCommandBuffer cmd, VkImage src, VkImageLayout sl, VkImage dst,
                                                     VkImageLayout dl, uint32_t nr, const VkImageCopy *rg) {
-    dev_st *ds = PF.ds && dkey(cmd) == PF.ds->key ? PF.ds : LIST_FIND(g_devs, key, dkey(cmd));
+    dev_st *ds = pf_dev(cmd);
     if (!ds) return;
-    somvr_eyes_info in;
-    int e = -1;
-    if (PF.ready && ds == PF.ds && X.sh && somvr_eyes_read(X.sh, &in))
-        e = in.image[0] && dst == (VkImage)(uintptr_t)in.image[0] ? 0 : in.image[1] && dst == (VkImage)(uintptr_t)in.image[1] ? 1 : -1;
-    if (e >= 0) {
+    pf_eye_mark(cmd, pf_eye_of(ds, dst), PF_EW_COPY);
+    ds->CmdCopyImage(cmd, src, sl, dst, dl, nr, rg);
+}
+
+/* winport: the other ways an eye image can be written. A blit or a resolve names the image; a rendering names views:
+ * the views of the eye image candidates (vkCreateImageView of an image in g_cand) are kept in a small table */
+#define PF_VIEWS 64u
+static struct {
+    VkImageView v;
+    VkImage img;
+} pf_view[PF_VIEWS];
+static uint32_t pf_view_next;
+static VKAPI_ATTR VkResult VKAPI_CALL L_PfCreateImageView(VkDevice dev, const VkImageViewCreateInfo *ci,
+                                                          const VkAllocationCallbacks *a, VkImageView *out) {
+    dev_st *ds = LIST_FIND(g_devs, key, dkey(dev));
+    if (!ds || !ds->CreateImageView) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult r = ds->CreateImageView(dev, ci, a, out);
+    if (r != VK_SUCCESS || !ci || !out) return r;
+    int cand = 0;
+    pthread_mutex_lock(&g_cand_mx);
+    for (int i = 0; i < MAX_EYE_CAND && !cand; i++) cand = g_cand[i].img == ci->image && g_cand[i].dev == dev;
+    pthread_mutex_unlock(&g_cand_mx);
+    if (cand) {
         pthread_mutex_lock(&PF.mx);
-        uint32_t p = pf_take();
-        if (p != PF_PAIRS) {
-            PF.CmdResetQueryPool(cmd, PF.qp, 2 * p, 2);
-            PF.CmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, PF.qp, 2 * p);
-            pf_push(e ? PF_EYE1 : PF_EYE0, p);
-        }
+        uint32_t k = pf_view_next++ % PF_VIEWS;
+        pf_view[k].v = *out, pf_view[k].img = ci->image;
         pthread_mutex_unlock(&PF.mx);
     }
-    ds->CmdCopyImage(cmd, src, sl, dst, dl, nr, rg);
+    return r;
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfDestroyImageView(VkDevice dev, VkImageView v, const VkAllocationCallbacks *a) {
+    dev_st *ds = LIST_FIND(g_devs, key, dkey(dev));
+    if (!ds || !ds->DestroyImageView) return;
+    if (v) {
+        pthread_mutex_lock(&PF.mx);
+        for (uint32_t k = 0; k < PF_VIEWS; k++)
+            if (pf_view[k].v == v) pf_view[k].v = VK_NULL_HANDLE, pf_view[k].img = VK_NULL_HANDLE;
+        pthread_mutex_unlock(&PF.mx);
+    }
+    ds->DestroyImageView(dev, v, a);
+}
+static VkImage pf_view_image(VkImageView v) {
+    VkImage img = VK_NULL_HANDLE;
+    if (!v) return img;
+    pthread_mutex_lock(&PF.mx);
+    for (uint32_t k = 0; k < PF_VIEWS && !img; k++)
+        if (pf_view[k].v == v) img = pf_view[k].img;
+    pthread_mutex_unlock(&PF.mx);
+    return img;
+}
+static void pf_rendering_mark(dev_st *ds, VkCommandBuffer cmd, const VkRenderingInfo *ri) {
+    if (!ri || !PF.ready || ds != PF.ds || !pf_view_next) return;
+    for (uint32_t i = 0; i < ri->colorAttachmentCount; i++) {
+        const VkRenderingAttachmentInfo *at = &ri->pColorAttachments[i];
+        int e = pf_eye_of(ds, pf_view_image(at->imageView));
+        if (e < 0) e = pf_eye_of(ds, pf_view_image(at->resolveImageView));
+        if (e >= 0) {
+            pf_eye_mark(cmd, e, PF_EW_RENDER);
+            return;
+        }
+    }
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdBeginRendering(VkCommandBuffer cmd, const VkRenderingInfo *ri) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdBeginRendering) return;
+    pf_rendering_mark(ds, cmd, ri);
+    ds->CmdBeginRendering(cmd, ri);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdBeginRenderingKHR(VkCommandBuffer cmd, const VkRenderingInfo *ri) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdBeginRenderingKHR) return;
+    pf_rendering_mark(ds, cmd, ri);
+    ds->CmdBeginRenderingKHR(cmd, ri);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdBlitImage(VkCommandBuffer cmd, VkImage src, VkImageLayout sl, VkImage dst,
+                                                    VkImageLayout dl, uint32_t nr, const VkImageBlit *rg, VkFilter f) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdBlitImage) return;
+    pf_eye_mark(cmd, pf_eye_of(ds, dst), PF_EW_BLIT);
+    ds->CmdBlitImage(cmd, src, sl, dst, dl, nr, rg, f);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdBlitImage2(VkCommandBuffer cmd, const VkBlitImageInfo2 *bi) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdBlitImage2) return;
+    if (bi) pf_eye_mark(cmd, pf_eye_of(ds, bi->dstImage), PF_EW_BLIT);
+    ds->CmdBlitImage2(cmd, bi);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdBlitImage2KHR(VkCommandBuffer cmd, const VkBlitImageInfo2 *bi) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdBlitImage2KHR) return;
+    if (bi) pf_eye_mark(cmd, pf_eye_of(ds, bi->dstImage), PF_EW_BLIT);
+    ds->CmdBlitImage2KHR(cmd, bi);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdResolveImage(VkCommandBuffer cmd, VkImage src, VkImageLayout sl, VkImage dst,
+                                                       VkImageLayout dl, uint32_t nr, const VkImageResolve *rg) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdResolveImage) return;
+    pf_eye_mark(cmd, pf_eye_of(ds, dst), PF_EW_RESOLVE);
+    ds->CmdResolveImage(cmd, src, sl, dst, dl, nr, rg);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdResolveImage2(VkCommandBuffer cmd, const VkResolveImageInfo2 *ri) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdResolveImage2) return;
+    if (ri) pf_eye_mark(cmd, pf_eye_of(ds, ri->dstImage), PF_EW_RESOLVE);
+    ds->CmdResolveImage2(cmd, ri);
+}
+static VKAPI_ATTR void VKAPI_CALL L_PfCmdResolveImage2KHR(VkCommandBuffer cmd, const VkResolveImageInfo2 *ri) {
+    dev_st *ds = pf_dev(cmd);
+    if (!ds || !ds->CmdResolveImage2KHR) return;
+    if (ri) pf_eye_mark(cmd, pf_eye_of(ds, ri->dstImage), PF_EW_RESOLVE);
+    ds->CmdResolveImage2KHR(cmd, ri);
 }
 
 static PFN_vkVoidFunction pf_dev_hook(const char *n) {
     if (!PF.on) return NULL;
     if (!strcmp(n, "vkCmdCopyImage")) return (PFN_vkVoidFunction)L_PfCmdCopyImage;
+    if (!strcmp(n, "vkCmdCopyImage2")) return (PFN_vkVoidFunction)L_PfCmdCopyImage2;
+    if (!strcmp(n, "vkCmdCopyImage2KHR")) return (PFN_vkVoidFunction)L_PfCmdCopyImage2KHR;
+    static const struct {
+        const char *n;
+        PFN_vkVoidFunction f;
+    } ew[] = {
+        {"vkCreateImageView", (PFN_vkVoidFunction)L_PfCreateImageView},
+        {"vkDestroyImageView", (PFN_vkVoidFunction)L_PfDestroyImageView},
+        {"vkCmdBeginRendering", (PFN_vkVoidFunction)L_PfCmdBeginRendering},
+        {"vkCmdBeginRenderingKHR", (PFN_vkVoidFunction)L_PfCmdBeginRenderingKHR},
+        {"vkCmdBlitImage", (PFN_vkVoidFunction)L_PfCmdBlitImage},
+        {"vkCmdBlitImage2", (PFN_vkVoidFunction)L_PfCmdBlitImage2},
+        {"vkCmdBlitImage2KHR", (PFN_vkVoidFunction)L_PfCmdBlitImage2KHR},
+        {"vkCmdResolveImage", (PFN_vkVoidFunction)L_PfCmdResolveImage},
+        {"vkCmdResolveImage2", (PFN_vkVoidFunction)L_PfCmdResolveImage2},
+        {"vkCmdResolveImage2KHR", (PFN_vkVoidFunction)L_PfCmdResolveImage2KHR},
+    };
+    for (size_t i = 0; i < sizeof ew / sizeof ew[0]; i++)
+        if (!strcmp(n, ew[i].n)) return ew[i].f;
     if (!strcmp(n, "vkQueueSubmit")) return (PFN_vkVoidFunction)L_QueueSubmit; /* calls pf_submit */
     return NULL;
 }
@@ -342,6 +621,68 @@ static uint32_t pf_over(const float *v, uint32_t n, double ms) {
     return c;
 }
 
+/* winport (docs/re-winport.md 7.1): every thread's CPU time from /proc/self/task/<tid>/schedstat (ns on the CPU), by
+ * its name. Under Wine the Windows side has no usable per-thread CPU clock (GetThreadTimes ticks 10 ms; a raw Linux
+ * syscall from PE code is caught by the syscall user dispatch), so the layer measures the threads the DLL names
+ * (somvr-game = the game's main thread, somvr-render = the thread calling Present) and DXVK's own (dxvk-cs records
+ * the Vulkan commands, dxvk-submit, dxvk-queue, the rest dxvk-*). One scan a window: the per-frame CPU per group. */
+enum { PFT_GAME, PFT_RENDER, PFT_CS, PFT_SUBMIT, PFT_QUEUE, PFT_DXVK, PFT_ALL, PFT_N };
+static const char *const pft_name[PFT_N] = {"somvr-game", "somvr-render", "dxvk-cs", "dxvk-submit", "dxvk-queue",
+                                            "other dxvk-*", "all threads"};
+static struct {
+    double ns[PFT_N]; /* the last scan's sums */
+    int have, nthreads;
+} PT;
+static void pft_scan(double out[PFT_N], int *nthreads) {
+    memset(out, 0, sizeof(double) * PFT_N);
+    *nthreads = 0;
+    DIR *d = opendir("/proc/self/task");
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char p[300], comm[32] = "", st[96] = "";
+        snprintf(p, sizeof p, "/proc/self/task/%s/comm", e->d_name);
+        FILE *f = fopen(p, "re");
+        if (f) {
+            if (!fgets(comm, sizeof comm, f)) comm[0] = 0;
+            fclose(f);
+        }
+        comm[strcspn(comm, "\n")] = 0;
+        snprintf(p, sizeof p, "/proc/self/task/%s/schedstat", e->d_name);
+        if (!(f = fopen(p, "re"))) continue;
+        double ns = fgets(st, sizeof st, f) ? strtod(st, NULL) : 0;
+        fclose(f);
+        int g = !strcmp(comm, "somvr-game")     ? PFT_GAME
+                : !strcmp(comm, "somvr-render") ? PFT_RENDER
+                : !strcmp(comm, "dxvk-cs")      ? PFT_CS
+                : !strcmp(comm, "dxvk-submit")  ? PFT_SUBMIT
+                : !strcmp(comm, "dxvk-queue")   ? PFT_QUEUE
+                : !strncmp(comm, "dxvk-", 5)    ? PFT_DXVK
+                                                : -1;
+        if (g >= 0) out[g] += ns;
+        out[PFT_ALL] += ns;
+        (*nthreads)++;
+    }
+    closedir(d);
+}
+static void pft_log(uint32_t frames) { /* PF.mx held: the window's per-frame CPU of each thread group */
+    double now_ns[PFT_N];
+    int nt;
+    pft_scan(now_ns, &nt);
+    if (PT.have && frames) {
+        char o[512];
+        size_t k = 0;
+        for (int g = 0; g < PFT_N && k < sizeof o; g++)
+            k += (size_t)snprintf(o + k, sizeof o - k, "%s%s %.2f", g ? ", " : "", pft_name[g],
+                                  (now_ns[g] - PT.ns[g]) * 1e-6 / frames);
+        lg("xr: perf%s%s: the threads' CPU per frame (ms; /proc schedstat, %u frames, %d threads): %s", PF.label[0] ? " " : "",
+           PF.label, frames, nt, o);
+    }
+    memcpy(PT.ns, now_ns, sizeof PT.ns);
+    PT.have = 1, PT.nthreads = nt;
+}
+
 static void pf_log(double now) {
     char g[64], o[64], t[64], a[64], b[64], c[64], sp[64], x[64], w[64], xc[64], pw[64], pc[64], ac[64];
     double bud = X.fs.predictedDisplayPeriod > 0 ? (double)X.fs.predictedDisplayPeriod * 1e-6 : PF_BUDGET_MS; /* 80 Hz: 12.5 */
@@ -365,11 +706,15 @@ static void pf_log(double now) {
     lg("xr: perf%s%s: %.1f s, %u frames (mean/p50/p95/max ms): GPU total %s (over %.1f ms: %u; the game alone: %u) = the game "
        "%s + ours %s; the game split at the eye copies (%u frames): eye 0 + shared %s, eye 1 %s, the rest %s; the game's "
        "first submit to its last end %s; submits %.1f a frame (with a semaphore wait %llu, the runtime's %llu, untimed "
-       "%llu, lost %llu, eye times outside %llu); the render thread's present path: ours (xr_frame) wall %s cpu %s, the "
+       "%llu, lost %llu, eye times outside %llu; the eye images written by copy %llu, draw %llu, blit %llu, resolve %llu); "
+       "the render thread's present path: ours (xr_frame) wall %s cpu %s, the "
        "driver's present wall %s cpu %s, xrWaitFrame wall %s, after it (the input sync) cpu %s; the shader clock %d MHz, "
        "busy %d%%",
        PF.label[0] ? " " : "", PF.label, now - PF.t0, n, t, bud, over, over_g, g, o, ns, a, b, c, sp, n ? (double)PF.nsub_w / n : 0.0,
-       (unsigned long long)PF.waits_game, (unsigned long long)PF.sub_rt, (unsigned long long)PF.untimed, (unsigned long long)PF.lost, (unsigned long long)PF.eyes_odd, x, xc, pw, pc, w, ac, mhz, busy);
+       (unsigned long long)PF.waits_game, (unsigned long long)PF.sub_rt, (unsigned long long)PF.untimed, (unsigned long long)PF.lost, (unsigned long long)PF.eyes_odd,
+       (unsigned long long)PF.ew[PF_EW_COPY], (unsigned long long)PF.ew[PF_EW_RENDER], (unsigned long long)PF.ew[PF_EW_BLIT],
+       (unsigned long long)PF.ew[PF_EW_RESOLVE], x, xc, pw, pc, w, ac, mhz, busy);
+    memset(PF.ew, 0, sizeof PF.ew);
     if (PS.n) { /* the stereo present path by part */
         char pb[1024];
         size_t po = 0;
@@ -379,6 +724,7 @@ static void pf_log(double now) {
         lg("xr: perf%s%s: the stereo present path by part (%u frames; wall mean / CPU mean / wall max ms): %s",
            PF.label[0] ? " " : "", PF.label, PS.n, pb);
     }
+    pft_log(n); /* winport: the threads' CPU (the only per-thread CPU clock under Wine) */
     memset(&PS.sw, 0, sizeof PS.sw), memset(&PS.su, 0, sizeof PS.su), memset(&PS.mx, 0, sizeof PS.mx), PS.n = 0;
     PF.n = PF.nsplit = PF.ncpu = 0;
     PF.nsub_w = 0;
@@ -464,6 +810,7 @@ static void pf_harvest(dev_st *ds) {
         PF.used[v->pair] = 0;
         PF.tail = (PF.tail + 1) % PF_EVS;
     }
+    pf_pend_age();
     for (uint32_t p = 0; PF.nback && p < PF_PAIRS; p++) /* the held-back pairs of dropped events */
         if (PF.used[p] == 2 && PF.back_until[p] <= PF.frame) PF.used[p] = 0, PF.nback--;
 }

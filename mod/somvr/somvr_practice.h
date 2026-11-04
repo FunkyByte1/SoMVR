@@ -57,7 +57,10 @@ enum { SOMVR_PRA_NONE = 0, SOMVR_PRA_GO = 1, SOMVR_PRA_BACK = 2, SOMVR_PRA_SPAWN
        SOMVR_PRA_CAPTAIN = 10,
        /* build 31 (re-xr-pipeline.md 136, the 11-02 session's mark 21): Place an orc - the hand's aim on the ground (a
         * gold ring), the trigger puts an unaware orc of the type there (B cancels) */
-       SOMVR_PRA_PLACE = 11, SOMVR_PRA_N = 12 };
+       SOMVR_PRA_PLACE = 11,
+       /* build 36 (re-xr-pipeline.md 164): Charge execution - Talion's hit counter filled to its need (the execution's charge
+        * ready at once: the finisher's ready state can be reached for a test) */
+       SOMVR_PRA_CHARGE = 12, SOMVR_PRA_N = 13 };
 /* "go", "back", "spawn", "remove", "status", "arrows", "health", "far", "group", "captain" ("none"; "?" outside) */
 const char *somvr_pr_action_name(int a);
 typedef struct {
@@ -179,5 +182,15 @@ void somvr_pr_group_spot(const float pos[3], const float fwd[3], float yaw_deg, 
 int somvr_pr_is_night(const char *tod_name);
 /* a weather record name with rain or a storm (SON_Day03_Rain; "DayNoRain" is dry): the practice changes only these */
 int somvr_pr_is_wet(const char *weather);
+/* build 36 (som-b36-winlooks): a dry day under an overcast, hazy sky - Nurn's SON_Day03 (flat grey light, no sun shadow,
+ * thick haze), or a name with "overcast" / "fog" in it */
+int somvr_pr_is_overcast(const char *weather);
+/* SOMVR_PRACTICE_SKY: which day weathers the practice trip changes to SOMVR_PRACTICE_WEATHER (a night is the TOD's) */
+enum { SOMVR_PRSKY_DRY = 0, SOMVR_PRSKY_CLEAR = 1, SOMVR_PRSKY_ALWAYS = 2 };
+/* 1 = change the weather state WEATHER (the record the game's weather has now, e.g. SON_Day03) by ChangeWeather TARGET (a
+ * Weather/Definition record, e.g. DayNoRain, TEST_Day_02): never when WEATHER is unknown or named TARGET; dry (the
+ * builds before 36): a wet one; clear: also an overcast day of Nurn (SON_*, the practice area's map); always (a test
+ * aid): any */
+int somvr_pr_sky_change(const char *weather, int sky, const char *target);
 
 #endif

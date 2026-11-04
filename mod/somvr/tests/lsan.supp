@@ -1,0 +1,2 @@
+# LeakSanitizer suppressions for tests/sanitize.sh: one line each, with why. None needed (b34: the leaks it found were the
+# tests' own - vklayer/tests/hands_lvp.c never freed its target image and readback buffer - and are fixed).

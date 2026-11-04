@@ -83,9 +83,14 @@ static struct {
 	uint32_t held;                                      /* buttons held since before the window opened or closed */
 	int map_lines, lines;
 	uint64_t kept, picks, pick_ticks, quest_presses, quest_ticks, refused_full, skips, deaths, grabs;
+	double hand_until;          /* build 33 (som-b33-herbs): the hand's pick - 123 held until then while a pick prompt is up */
+	uint64_t hand_picks;
 } g_us;
 
 static int us_log_ok(void) { return g_us.lines++ < 300; }
+
+/* build 33 (som-b33-herbs, somvr_hands31_game.c): the herb eaten by the hand - the game's pick, as B's (123 for 0.25 s) */
+static void us_hand_pick(double t) { g_us.hand_until = t + 0.25, g_us.hand_picks++; }
 
 /* a pick prompt: 123 with 'Combat_Activate_*', not '*_Full' (str = the PromptShow's StringId, a C string) */
 static int us_pick(int act, const char *str, int *full)
@@ -257,7 +262,7 @@ static int us_press_cmds(const sc_tick_out *o, int out[12])
 	if (!b)
 		g_us.latch = 0;
 	g_us.b_prev = b;
-	if (g_us.latch)
+	if (g_us.latch || (t < g_us.hand_until && g_us.nup)) /* (build 33: or the herb eaten by the hand) */
 		out[n++] = US_PICK_CMD, g_us.pick_ticks++;
 	int win = g_bm.last_win;
 	int dwin = !win && g_us.death && g_bm.last_act == SOMVR_BMA_GREY && /* build 25: the death's failed screen */

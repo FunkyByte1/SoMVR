@@ -25,6 +25,10 @@
  *   so the diamond finds its entry again; the text stays the game's. A hide is always passed (on its own command when
  *   no map applies), so a dropped show leaves nothing behind.
  *
+ * Build 36 (SOMVR_GAME_PROMPTS=off, somvr_gprompts_game.c): the delegates are hooked with it too, and every show is
+ *   dropped after the VR side's reads (us_prompt, sk_prompt, vb_prompt: the verbs, the pick prompts and the strike still
+ *   know what the game offers), a hold's fill read and not passed (no ring); the hides as before.
+ *
  * Trigger words: "padprompts game|log|vr" (live; prompts already up stay until the game hides them), "padprompts map
  * A:B,..." (the relabel table, tests), "padprompts" (a state line). Fail soft: a site mismatch = that part off. */
 
@@ -50,6 +54,7 @@ typedef void (*pp_dlg_fn)(void *dlg, void *sender, void *params);
 
 static struct {
 	int want;                  /* SOMVR_PAD_PROMPTS at start (PP_*) */
+	int gp_hooked;             /* build 36: hooked for SOMVR_GAME_PROMPTS=off (with or without SOMVR_PAD_PROMPTS) */
 	_Atomic int mode;          /* now (the word changes it) */
 	int ok[PPS_N];             /* that slot installed */
 	uintptr_t orig[PPS_N];
@@ -141,7 +146,8 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 {
 	unsigned char p[0x28];
 	int ok = params && peek((uintptr_t)params, p, sizeof p), mode = atomic_load_explicit(&g_pp.mode, memory_order_relaxed);
-	if (!ok || mode == PP_GAME) {
+	int all = atomic_load_explicit(&g_gp_off, memory_order_relaxed); /* build 36: SOMVR_GAME_PROMPTS=off */
+	if (!ok || (mode == PP_GAME && !all)) {
 		((pp_dlg_fn)g_pp.orig[PPS_SHOW])(dlg, sender, params);
 		return;
 	}
@@ -154,6 +160,7 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 							    !pp_vr_keep(act, g_inp.cfg.game_moves, g_bow.on, bow_out) &&
 							    !vb_keep(act, key) && /* SOMVR_VERBS: the grab's own prompts */
 							    !us_keep(act, (const char *)str); /* SOMVR_USE: the pick prompts (B) */
+	drop = drop || all; /* build 36: none at all (after the VR side's reads below) */
 	int to = drop ? act : us_keep(act, (const char *)str) ? US_GLYPH : pp_mapped(act);
 	us_prompt(key, act, (const char *)str, 1); /* SOMVR_USE: the pick prompts up */
 	sk_prompt(act, 1); /* SOMVR_BOW_STRIKE: the Shadow Strike's prompt is up (kept or dropped) */
@@ -162,7 +169,10 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 		to = PP_X_CMD;
 	if (drop) {
 		atomic_fetch_add_explicit(&g_pp.n_drop, 1, memory_order_relaxed);
-		atomic_fetch_add_explicit(&g_pp.drop_by[act], 1, memory_order_relaxed);
+		if (act >= 0 && act <= PP_NONE)
+			atomic_fetch_add_explicit(&g_pp.drop_by[act], 1, memory_order_relaxed);
+		if (all)
+			gp_count(GP_PART_DIAMOND);
 	} else {
 		atomic_fetch_add_explicit(&g_pp.n_kept, 1, memory_order_relaxed);
 		atomic_fetch_add_explicit(&g_pp.n_relab, (uint64_t)(to != act), memory_order_relaxed);
@@ -171,14 +181,16 @@ __attribute__((used)) void somvr_w_ppshow(void *dlg, void *sender, void *params)
 		char sb[64], ib[64];
 		go_str((const char *)str, sb, sizeof sb), go_str((const char *)icon, ib, sizeof ib);
 		char how[96];
-		if (drop)
+		if (drop && all)
+			snprintf(how, sizeof how, "dropped (SOMVR_GAME_PROMPTS=off)");
+		else if (drop)
 			snprintf(how, sizeof how, "dropped (no VR control sends it%s)", act == 121 && bow_out ? "; the bow is out" : "");
 		else if (to != act)
 			snprintf(how, sizeof how, "shown as %d '%s' (the Touch's button)", to, in_cmd_name(to));
 		else
 			snprintf(how, sizeof how, "passed on");
-		logf_("PROMPTS show #%llu t=%.3f: action %d '%s' '%s' icon '%s' category %u key %#lx%s: %s", (unsigned long long)n,
-		      mono(), act, in_cmd_name(act), sb, ib, cat, (unsigned long)key, bow_out ? " (the bow out)" : "", how);
+		logf_("PROMPTS show #%llu t=%.3f: action %d '%s' '%s' icon '%s' category %u key %#llx%s: %s", (unsigned long long)n,
+		      mono(), act, in_cmd_name(act), sb, ib, cat, (unsigned long long)key, bow_out ? " (the bow out)" : "", how);
 	}
 	if (drop)
 		return;
@@ -198,7 +210,7 @@ __attribute__((used)) void somvr_w_pphide(void *dlg, void *sender, void *params)
 {
 	unsigned char p[0x10];
 	int ok = params && peek((uintptr_t)params, p, sizeof p), mode = atomic_load_explicit(&g_pp.mode, memory_order_relaxed);
-	if (!ok || mode == PP_GAME) {
+	if (!ok || (mode == PP_GAME && !g_pp.gp_hooked)) {
 		((pp_dlg_fn)g_pp.orig[PPS_HIDE])(dlg, sender, params);
 		return;
 	}
@@ -213,8 +225,8 @@ __attribute__((used)) void somvr_w_pphide(void *dlg, void *sender, void *params)
 		to = PP_X_CMD;
 	uint64_t n = atomic_fetch_add_explicit(&g_pp.n_hide, 1, memory_order_relaxed) + 1;
 	if (atomic_fetch_add_explicit(&g_pp.lines, 1, memory_order_relaxed) < 400 || log_late_ok(&g_pp_late, 100, mono()))
-		logf_("PROMPTS hide #%llu t=%.3f: action %d '%s' key %#lx: passed on%s", (unsigned long long)n, mono(), act,
-		      in_cmd_name(act), (unsigned long)key, to != act ? " as the shown command" : "");
+		logf_("PROMPTS hide #%llu t=%.3f: action %d '%s' key %#llx: passed on%s", (unsigned long long)n, mono(), act,
+		      in_cmd_name(act), (unsigned long long)key, to != act ? " as the shown command" : "");
 	if (to != act) {
 		memcpy(p + 8, &to, 4);
 		((pp_dlg_fn)g_pp.orig[PPS_HIDE])(dlg, sender, p);
@@ -228,7 +240,8 @@ __attribute__((used)) void somvr_w_pphold(void *dlg, void *sender, void *params)
 {
 	unsigned char p[0x10];
 	int ok = params && peek((uintptr_t)params, p, sizeof p), mode = atomic_load_explicit(&g_pp.mode, memory_order_relaxed);
-	if (!ok || mode == PP_GAME) {
+	int all = atomic_load_explicit(&g_gp_off, memory_order_relaxed); /* build 36: SOMVR_GAME_PROMPTS=off */
+	if (!ok || (mode == PP_GAME && !all)) {
 		((pp_dlg_fn)g_pp.orig[PPS_HOLD])(dlg, sender, params);
 		return;
 	}
@@ -238,6 +251,10 @@ __attribute__((used)) void somvr_w_pphold(void *dlg, void *sender, void *params)
 	to = pp_mapped(act);
 	atomic_fetch_add_explicit(&g_pp.n_hold, 1, memory_order_relaxed);
 	vb_prompt_hold(act, fill); /* SOMVR_VERBS */
+	if (all) { /* build 36: its show was dropped - no ring to fill (the VR side read the fill above) */
+		gp_count(GP_PART_HOLD);
+		return;
+	}
 	if (atomic_fetch_add_explicit(&g_pp.hold_lines, 1, memory_order_relaxed) < 20)
 		logf_("PROMPTS hold t=%.3f: action %d '%s' fill %.2f: passed on%s", mono(), act, in_cmd_name(act), fill,
 		      to != act ? " as the shown command" : "");
@@ -276,7 +293,7 @@ static const char *pp_word(const char *w)
 		return "padprompts";
 	}
 	if (!(g_pp.ok[PPS_SHOW] && g_pp.ok[PPS_HIDE]))
-		return "padprompts (no SOMVR_PAD_PROMPTS=log|vr at start: the delegates are not hooked)";
+		return "padprompts (no SOMVR_PAD_PROMPTS=log|vr or SOMVR_GAME_PROMPTS=off at start: the delegates are not hooked)";
 	if (!strncmp(w, "map ", 4)) {
 		int f[PP_MAP_MAX], t[PP_MAP_MAX], n;
 		if (!pp_parse_map(w + 4, f, t, &n))
@@ -301,7 +318,8 @@ static void pp_start(const struct site_spec *sites, int *bad)
 	memset(&g_pp, 0, sizeof g_pp);
 	g_pp_sites = sites;
 	g_pp.want = env_word("SOMVR_PAD_PROMPTS", g_pp_mode_w, 3, PP_GAME);
-	if (g_pp.want == PP_GAME)
+	g_pp.gp_hooked = atomic_load(&g_gp_off) != 0; /* build 36: SOMVR_GAME_PROMPTS=off needs the show and its hide */
+	if (g_pp.want == PP_GAME && !g_pp.gp_hooked)
 		return;
 	const char *mv = getenv("SOMVR_PAD_PROMPTS_MAP");
 	int n = 0;
@@ -314,8 +332,8 @@ static void pp_start(const struct site_spec *sites, int *bad)
 	char why[512];
 	for (int i = 0; i < PPS_N; i++) {
 		if (check_site(&sites[i], why, sizeof why) != 0) {
-			logf_("PROMPTS site %s %#lx -> %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr,
-			      (unsigned long)sites[i].target, why);
+			logf_("PROMPTS site %s %#llx -> %#llx MISMATCH: %s", sites[i].name, (unsigned long long)sites[i].addr,
+			      (unsigned long long)sites[i].target, why);
 			continue;
 		}
 		g_pp.ok[i] = go_slot(&sites[i], fns[i], &g_pp.orig[i]);
@@ -331,6 +349,7 @@ static void pp_start(const struct site_spec *sites, int *bad)
 		      g_pp.ok[k] ? "the slot could not be put back" : "put back, the prompts are the game's");
 	}
 	atomic_store(&g_pp.mode, g_pp.ok[PPS_SHOW] ? g_pp.want : PP_GAME);
+	g_pp.gp_hooked &= g_pp.ok[PPS_SHOW];
 	char mp[96] = "";
 	for (int i = 0, o = 0; i < n && o + 12 < (int)sizeof mp; i++)
 		o += snprintf(mp + o, sizeof mp - (size_t)o, "%s%d->%d", i ? "," : "", g_pp.map_from[i], g_pp.map_to[i]);
@@ -338,7 +357,8 @@ static void pp_start(const struct site_spec *sites, int *bad)
 	      g_pp_mode_w[g_pp.want],
 	      g_pp.want == PP_VR ? "the flat pad's button prompts for commands no VR control sends are dropped where the HUD "
 				   "takes them (Distract, Focus, Shadow Strike, strike/counter/stun, Drop To Hang)"
-				 : "every prompt logged and passed on",
+				 : g_pp.want == PP_LOG ? "every prompt logged and passed on"
+				 : "the game's, the delegates hooked for SOMVR_GAME_PROMPTS=off only",
 	      g_pp.ok[PPS_SHOW] ? "hooked" : "NOT hooked", g_pp.ok[PPS_HIDE] ? "hooked" : "NOT hooked",
 	      g_pp.ok[PPS_HOLD] ? "hooked" : "NOT hooked", n ? mp : "none");
 }

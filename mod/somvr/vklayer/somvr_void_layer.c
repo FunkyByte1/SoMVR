@@ -243,7 +243,7 @@ static void *vd_thread(void *arg) {
         }
         pthread_mutex_unlock(&X.mx);
         if (took >= 0) /* the next frame at once (the wait paced it), or the period's rest */
-            sleep_ns = period > 0 && took < period / 2 ? (long)(period - took) : 500000;
+            sleep_ns = period > 0 && took < period / 2 && period - took < 500000000 ? (long)(int32_t)(period - took) : 500000;
     }
     atomic_store(&VD.th_done, 1);
     return NULL;
@@ -463,7 +463,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_QueueSubmit2(VkQueue q, uint32_t n, cons
     dev_st *ds = ka_qdev(q);
     if (!ds || !ds->QueueSubmit2) return VK_ERROR_DEVICE_LOST;
     int l = ka_qlock(q);
-    VkResult r = ds->QueueSubmit2(q, n, si, f);
+    VkResult r = PF.on ? pf_submit2(ds, q, n, si, f, 0) : ds->QueueSubmit2(q, n, si, f); /* SOMVR_XR_PERF (DXVK) */
     ka_qunlock(l);
     return r;
 }
@@ -471,7 +471,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL L_QueueSubmit2KHR(VkQueue q, uint32_t n, c
     dev_st *ds = ka_qdev(q);
     if (!ds || !ds->QueueSubmit2KHR) return VK_ERROR_DEVICE_LOST;
     int l = ka_qlock(q);
-    VkResult r = ds->QueueSubmit2KHR(q, n, si, f);
+    VkResult r = PF.on ? pf_submit2(ds, q, n, si, f, 1) : ds->QueueSubmit2KHR(q, n, si, f);
     ka_qunlock(l);
     return r;
 }

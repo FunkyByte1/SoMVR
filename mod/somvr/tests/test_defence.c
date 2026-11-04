@@ -11,6 +11,7 @@
  * the haptics per outcome. */
 #include "../somvr_combat.h"
 #include "../somvr_defence.h"
+#include "../somvr_haptics.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -545,23 +546,28 @@ static void test_arrow(void)
 
 static void test_haptic(void)
 {
-    somvr_df_haptic h = somvr_df_haptic_of(SOMVR_DFO_PARRY, 1, 1);
-    CHECK(NEAR(h.amp[1], 0.9, 1e-6) && NEAR(h.dur_s[1], 0.06, 1e-6) && NEAR(h.amp[0], 0.35, 1e-6) && NEAR(h.dur_s[0], 0.04, 1e-6),
-          "parry: the sword hand (right) 0.9, the other 0.35");
-    h = somvr_df_haptic_of(SOMVR_DFO_PARRY, 0, 0.5f);
-    CHECK(NEAR(h.amp[0], 0.45, 1e-6) && NEAR(h.amp[1], 0.175, 1e-6), "left-handed, half strength");
-    h = somvr_df_haptic_of(SOMVR_DFO_BLOCK, 1, 1);
-    CHECK(NEAR(h.amp[1], 0.75, 1e-6) && NEAR(h.dur_s[1], 0.09, 1e-6) && h.amp[0] == 0, "block: a clank in the sword hand");
-    somvr_df_haptic pb = somvr_df_haptic_of(SOMVR_DFO_PARRY_BLOCK, 1, 1);
-    CHECK(!memcmp(&pb, &h, sizeof h), "parry-block feels like a block");
-    h = somvr_df_haptic_of(SOMVR_DFO_DODGE, 1, 1);
-    CHECK(NEAR(h.amp[0], 0.25, 1e-6) && NEAR(h.amp[1], 0.25, 1e-6) && NEAR(h.dur_s[0], 0.12, 1e-6), "dodge: both hands");
-    h = somvr_df_haptic_of(SOMVR_DFO_ARROW, 1, 2);
-    CHECK(NEAR(h.amp[1], 0.6, 1e-6) && h.amp[0] == 0, "arrow: scale clamped to 1");
-    h = somvr_df_haptic_of(SOMVR_DFO_HIT, 1, 1);
-    somvr_df_haptic z = somvr_df_haptic_of(SOMVR_DFO_BLOCK, 1, 0), bad = somvr_df_haptic_of(99, 1, 1),
-                    nn = somvr_df_haptic_of(SOMVR_DFO_BLOCK, 1, NAN);
-    CHECK(h.amp[0] == 0 && h.amp[1] == 0 && z.amp[1] == 0 && bad.amp[1] == 0 && nn.amp[1] == 0, "none: hit, scale 0, bad, NaN");
+    /* build 34: the outcomes speak the haptics language (somvr_haptics.h): a parry the block word at its top, a block at
+     * its bottom, the dodge the go word in both hands, an arrow on the blade the clank; a hit, a bad outcome nothing */
+    float k = -1;
+    int both = -1;
+    int w = somvr_df_haptic_word(SOMVR_DFO_PARRY, &k, &both);
+    CHECK(w == SOMVR_HX_BLOCK && k == 1 && both == 0, "parry: the block word at its top (%s, %g)", somvr_hx_name(w), k);
+    w = somvr_df_haptic_word(SOMVR_DFO_BLOCK, &k, &both);
+    int pb = somvr_df_haptic_word(SOMVR_DFO_PARRY_BLOCK, &k, &both);
+    CHECK(w == SOMVR_HX_BLOCK && pb == SOMVR_HX_BLOCK && k == 0 && both == 0, "block, parry-block: the block word (%g)", k);
+    w = somvr_df_haptic_word(SOMVR_DFO_DODGE, &k, &both);
+    CHECK(w == SOMVR_HX_GO && both == 1, "dodge: go, both hands");
+    w = somvr_df_haptic_word(SOMVR_DFO_ARROW, &k, &both);
+    CHECK(w == SOMVR_HX_CLANK && both == 0, "arrow: the clank");
+    CHECK(somvr_df_haptic_word(SOMVR_DFO_HIT, &k, &both) == -1 && somvr_df_haptic_word(99, &k, &both) == -1 &&
+              somvr_df_haptic_word(-1, &k, &both) == -1 && k == 0 && both == 0,
+          "none: a hit, out of range");
+    /* the block word: the crack in the sword hand, its ring, the free hand's brace - one-handed too */
+    somvr_hx_shot s[SOMVR_HX_SHOTS];
+    int n = somvr_hx_shots(SOMVR_HX_BLOCK, 1, 1, 1, 0, s);
+    CHECK(n == 3 && s[0].hand == 1 && NEAR(s[0].amp, 1.0, 1e-6) && s[1].hand == 1 && s[1].ramp && NEAR(s[1].amp, 0.6, 1e-6) &&
+              NEAR(s[1].dur, 0.25, 1e-6) && s[2].hand == 0 && NEAR(s[2].amp, 0.45, 1e-6) && !s[2].ramp,
+          "the clank's pulses (the block word at its top): a crack 1.0, a ring 0.6 over 250 ms, a knock 0.45 (%d)", n);
 }
 
 /* SOMVR_DEFENCE_CLANK: the switch's words, the recoil's permission (FUN_0280fe60's two lists) and the interrupter, the
@@ -610,14 +616,9 @@ static void test_clank(void)
     r.can = 0, r.nexc = 1, r.exc[0] = 0;
     CHECK(!somvr_df_may_interrupt(&r, zero, 1), "a 0 category never matches");
 
-    somvr_df_clank_haptic h = somvr_df_clank_haptic_of(1);
-    CHECK(NEAR(h.crack_amp, 1, 1e-6) && NEAR(h.crack_s, 0.05, 1e-6) && NEAR(h.ring_amp, 0.6, 1e-6) && NEAR(h.ring_s, 0.25, 1e-6) &&
-              NEAR(h.knock_amp, 0.45, 1e-6) && NEAR(h.knock_s, 0.06, 1e-6),
-          "the clank: a crack 1.0 / 50 ms and a ring 0.6 over 250 ms in the sword hand, a knock 0.45 / 60 ms");
-    somvr_df_clank_haptic hh = somvr_df_clank_haptic_of(0.5f), z = somvr_df_clank_haptic_of(0), n = somvr_df_clank_haptic_of(NAN),
-                          big = somvr_df_clank_haptic_of(3);
-    CHECK(NEAR(hh.crack_amp, 0.5, 1e-6) && NEAR(hh.ring_amp, 0.3, 1e-6) && NEAR(hh.crack_s, 0.05, 1e-6) && z.crack_amp == 0 &&
-              n.ring_amp == 0 && NEAR(big.crack_amp, 1, 1e-6),
+    /* build 34: the clank plays the block word at its top at SOMVR_DEFENCE_HAPTIC (its gain; test_haptic: the pulses) */
+    CHECK(NEAR(somvr_hx_level(SOMVR_HX_BLOCK, 1, 0.5f), 0.5, 1e-6) && somvr_hx_level(SOMVR_HX_BLOCK, 1, 0) == 0 &&
+              somvr_hx_level(SOMVR_HX_BLOCK, 1, NAN) == 0 && NEAR(somvr_hx_level(SOMVR_HX_BLOCK, 1, 3), 1, 1e-6),
           "the clank scaled: half, 0, NaN, clamped at 1");
     printf("clank: the parts' words; the recoil's permission by the orc's attack (CanInterrupt and its exception lists), "
            "the interrupter; a crack, a ring and a knock\n");
@@ -693,6 +694,14 @@ static void test_contact(void)
     CHECK(!c.contact && c.contact_cm == 10 && NEAR(c.contact_pre_s, 0.25, 1e-6) && NEAR(c.contact_post_s, 0.08, 1e-6) &&
               c.contact_cross_deg == 15 && c.contact_move_cm == 0,
           "contact defaults (off)");
+    /* build 32: a thrust - the weapon driven along its own line - against a slash (across it) */
+    {
+        float h0[3] = {0, 0, 200}, t0w[3] = {0, 0, 120}, h1[3] = {0, 0, 120}, t1w[3] = {0, 0, 40}; /* along -z, its axis -z */
+        float s0[3] = {-40, 0, 80}, s1[3] = {40, 0, 80}, u0[3] = {-40, 0, 60}, u1[3] = {40, 0, 60}; /* across: x -> moves z */
+        CHECK(somvr_df_thrusting(&c, h0, t0w, h1, t1w) && !somvr_df_thrusting(&c, s0, s1, u0, u1) &&
+                  !somvr_df_thrusting(&c, h1, t1w, h1, t1w), "a thrust along its line yes, a slash across no, still no");
+        CHECK(c.contact_thrust_cm == 0 && NEAR(c.thrust_cos, 0.7, 1e-6), "the thrust's reach off by default (cos 0.7)");
+    }
     c.contact = 1;
     CHECK(!somvr_df_contact_window(&c, 0.7f, 0.44f) && somvr_df_contact_window(&c, 0.7f, 0.46f) &&
               somvr_df_contact_window(&c, 0.7f, 0.78f) && !somvr_df_contact_window(&c, 0.7f, 0.79f) &&
@@ -850,6 +859,54 @@ static void test_build17(void)
     CHECK(r.fires == 0 && tr.still, "move from the blade: a still tip (5 cm) is still");
 }
 
+/* review b34: a thrust (SOMVR_DEFENCE_CONTACT_THRUST_CM 30) with both blades read (contact_hand): the drawn blade crosses
+ * the thrust's line 20 cm from it (a block by the thrust's reach), the hand's lies 15 cm along it, not crossing - the
+ * nearer one may not take the drawn one's block (build 32: the hand's replaced it by the 10 cm rule, no block) */
+static void test_thrust_b34(void)
+{
+    somvr_df_cfg c;
+    somvr_df_cfg_default(&c);
+    c.contact = 1, c.contact_hand = 1, c.contact_thrust_cm = 30;
+    somvr_df_track tr;
+    somvr_df_track_init(&tr);
+    int fire[2] = { 0, 0 };
+    for (int f = 0; f < 2; f++) {
+        somvr_df_in in;
+        memset(&in, 0, sizeof in);
+        in.ts = 0.60f + 0.011f * (float)f, in.bpw = 0, in.epw = 0.66f, in.window = 1, in.type = 0, in.impact = 0.70f;
+        in.blade = 1;
+        float b[3] = { -40, 120, 60 }, t[3] = { 40, 120, 60 }, hb[3] = { 0, 115, 140 }, ht[3] = { 0, 115, 60 };
+        memcpy(in.base, b, sizeof b), memcpy(in.tip, t, sizeof t), memcpy(in.hb, hb, sizeof hb), memcpy(in.ht, ht, sizeof ht);
+        in.have_hand_blade = 1;
+        float oh[2][3] = { { 0, 100, 200 }, { 0, 100, 120 } }, ot[2][3] = { { 0, 100, 120 }, { 0, 100, 40 } }; /* the thrust: -z */
+        memcpy(in.ob[0], oh[f], sizeof oh[f]), memcpy(in.ot[0], ot[f], sizeof ot[f]);
+        in.norc = 1;
+        memcpy(in.hand, in.ob[0], sizeof in.hand), memcpy(in.orc, ORC, sizeof in.orc), memcpy(in.head, HEAD, sizeof in.head);
+        fire[f] = somvr_df_step(&c, &tr, 50 + in.ts, &in);
+    }
+    CHECK(fire[0] == 0 && fire[1] == 2 && tr.thrust && tr.met_by == 1 && NEAR(tr.contact_cm, 20, 0.5) && tr.contact_cross > 80 &&
+              somvr_df_verdict(&c, &tr, 50.7, 0) == SOMVR_DFO_BLOCK,
+          "b34 thrust, both blades: the drawn one's block by the thrust's reach (fire %d/%d, thrust %d, by %d, %.1f cm, %.0f deg, "
+          "%s; build 32: the hand's nearer, parallel blade took it - no block)", fire[0], fire[1], tr.thrust, tr.met_by,
+          tr.contact_cm, tr.contact_cross, somvr_df_outcome_name(somvr_df_verdict(&c, &tr, 50.7, 0)));
+    c.contact_thrust_cm = 0; /* no thrust reach: neither meets (20 cm, and 15 cm not crossing) */
+    somvr_df_track_init(&tr);
+    for (int f = 0; f < 2; f++) {
+        somvr_df_in in;
+        memset(&in, 0, sizeof in);
+        in.ts = 0.60f + 0.011f * (float)f, in.epw = 0.66f, in.window = 1, in.impact = 0.70f, in.blade = 1;
+        float b[3] = { -40, 120, 60 }, t[3] = { 40, 120, 60 }, hb[3] = { 0, 115, 140 }, ht[3] = { 0, 115, 60 };
+        memcpy(in.base, b, sizeof b), memcpy(in.tip, t, sizeof t), memcpy(in.hb, hb, sizeof hb), memcpy(in.ht, ht, sizeof ht);
+        in.have_hand_blade = 1;
+        float oh[2][3] = { { 0, 100, 200 }, { 0, 100, 120 } }, ot[2][3] = { { 0, 100, 120 }, { 0, 100, 40 } };
+        memcpy(in.ob[0], oh[f], sizeof oh[f]), memcpy(in.ot[0], ot[f], sizeof ot[f]);
+        in.norc = 1;
+        memcpy(in.hand, in.ob[0], sizeof in.hand), memcpy(in.orc, ORC, sizeof in.orc), memcpy(in.head, HEAD, sizeof in.head);
+        fire[f] = somvr_df_step(&c, &tr, 50 + in.ts, &in);
+    }
+    CHECK(fire[0] == 0 && fire[1] == 0 && !tr.thrust, "b34 no thrust reach: no block (fire %d/%d)", fire[0], fire[1]);
+}
+
 /* build 31 (re-xr-pipeline.md 136): the orc's blade through the tracked body */
 static void test_body31(void)
 {
@@ -902,6 +959,7 @@ int main(void)
     test_clank();
     test_contact();
     test_build17();
+    test_thrust_b34();
     printf("test_defence: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

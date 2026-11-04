@@ -108,7 +108,9 @@ static const struct site_spec *g_hp_sites = g_hp_sites_game; /* selftest: stand-
 #define SK_POSE OFS(SK_POSE, 0x0f0)          /* ... the CSkeletalTransforms that animate it (also at +0xf8; run 034707's "who" lines) */
 #define HP_SKT_VT GADDR(HP_SKT_VT, 0x33606d8)    /* CSkeletalTransforms' vtable (classes.tsv; non-PIE: fixed) */
 #define HP_POSE_LINES 8        /* SOMVR_HP_POSE: distinct nodes logged at their first skip */
-enum { HPC_SLOT_CLOTH = 3, HPC_SLOT_VIS = 1, HPC_SLOT_CHANDLE = 1, HPC_SLOT_CNODE = 1, HPC_SLOT_CREATE = 5 };
+enum { HPC_SLOT_CLOTH = OFS(HPC_SLOT_CLOTH, 3), HPC_SLOT_VIS = OFS(HPC_SLOT_VIS, 1), HPC_SLOT_CHANDLE = OFS(HPC_SLOT_CHANDLE, 1),
+       HPC_SLOT_CNODE = OFS(HPC_SLOT_CNODE, 1), HPC_SLOT_CREATE = 5 };
+#define HP_SLOT_SET_SLOT OFS(HP_SLOT_SET_SLOT, 20) /* CSimpleModel::vf_20 (Windows 19: the slots shift unevenly there) */
 #define HP_NEAR_LINES 128      /* SOMVR_HP_NEARLOG: distinct nodes logged at most */
 #define HP_NEAR_BIG_CM 500.0f  /* ... a box wider than this on any axis is the world's (terrain, sky, water): not logged */
 #define HP_XSKIP 4             /* the trigger word "hpskip ADDR": extra nodes not drawn in the eye passes (a test) */
@@ -334,16 +336,16 @@ static void hp_near(const somvr_hp_set *s, const char *site, int pass, uintptr_t
 	char what[200];
 	if (skel) {
 		uintptr_t mesh = *(const uintptr_t *)(node + SK_MESH), bmesh = body ? *(const uintptr_t *)(body + SK_MESH) : 0;
-		snprintf(what, sizeof what, "position (%.1f %.1f %.1f), mesh +0xc8 %#lx (%s), material overrides %d", c[0], c[1],
-			 c[2], (unsigned long)mesh, !body ? "no body node" : mesh == bmesh ? "THE BODY'S" : "not the body's",
+		snprintf(what, sizeof what, "position (%.1f %.1f %.1f), mesh +0xc8 %#llx (%s), material overrides %d", c[0], c[1],
+			 c[2], (unsigned long long)mesh, !body ? "no body node" : mesh == bmesh ? "THE BODY'S" : "not the body's",
 			 *(const int *)(node + SK_OVR_N));
 	} else {
 		snprintf(what, sizeof what, "box (%.1f %.1f %.1f)-(%.1f %.1f %.1f) size %.0f x %.0f x %.0f", lo[0], lo[1], lo[2],
 			 hi[0], hi[1], hi[2], hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
 	}
-	logf_("HEADPARTS near: node %#lx (vtable %#lx, kind %u, category %u, flags +0x40 %02x %02x %02x) drawn in the %s pass "
-	      "(%s) %.1f cm from the head point, %s, frame %llu eye %d t=%.3f", (unsigned long)node,
-	      (unsigned long)*(const uintptr_t *)node, f[NODE_KIND], f[NODE_CAT], f[0x40], f[0x41], f[0x42],
+	logf_("HEADPARTS near: node %#llx (vtable %#llx, kind %u, category %u, flags +0x40 %02x %02x %02x) drawn in the %s pass "
+	      "(%s) %.1f cm from the head point, %s, frame %llu eye %d t=%.3f", (unsigned long long)node,
+	      (unsigned long long)*(const uintptr_t *)node, f[NODE_KIND], f[NODE_CAT], f[0x40], f[0x41], f[0x42],
 	      somvr_hp_pass_name(pass), site, d, what, (unsigned long long)s->frame, eye, mono());
 }
 
@@ -357,7 +359,7 @@ static void hp_scan(uintptr_t model, const char *why)
 {
 	uintptr_t q[HP_SCAN / 8];
 	if (!peek(model, q, sizeof q)) {
-		logf_("HEADPARTS scan (%s): the model %#lx is not readable", why, (unsigned long)model);
+		logf_("HEADPARTS scan (%s): the model %#llx is not readable", why, (unsigned long long)model);
 		return;
 	}
 	int n = 0;
@@ -367,8 +369,8 @@ static void hp_scan(uintptr_t model, const char *why)
 			continue;
 		if (vptr_of((void *)r) == g_hh.vt_rend) {
 			uintptr_t nd = hp_node_of(r);
-			logf_("HEADPARTS scan: model+%#x = renderable %#lx, node %#lx, mesh %#lx", i * 8, (unsigned long)r,
-			      (unsigned long)nd, (unsigned long)(nd ? peek_ptr(nd + SK_MESH) : 0));
+			logf_("HEADPARTS scan: model+%#x = renderable %#llx, node %#llx, mesh %#llx", i * 8, (unsigned long long)r,
+			      (unsigned long long)nd, (unsigned long long)(nd ? peek_ptr(nd + SK_MESH) : 0));
 			n++;
 			continue;
 		}
@@ -377,13 +379,13 @@ static void hp_scan(uintptr_t model, const char *why)
 		for (int k = 0; k < 8; k++)
 			if (a[k] >= 0x10000 && !(a[k] & 7) && vptr_of((void *)a[k]) == g_hh.vt_rend) {
 				uintptr_t nd = hp_node_of(a[k]);
-				logf_("HEADPARTS scan: model+%#x -> [%d] = renderable %#lx, node %#lx, mesh %#lx", i * 8, k,
-				      (unsigned long)a[k], (unsigned long)nd, (unsigned long)(nd ? peek_ptr(nd + SK_MESH) : 0));
+				logf_("HEADPARTS scan: model+%#x -> [%d] = renderable %#llx, node %#llx, mesh %#llx", i * 8, k,
+				      (unsigned long long)a[k], (unsigned long long)nd, (unsigned long long)(nd ? peek_ptr(nd + SK_MESH) : 0));
 				n++;
 			}
 	}
-	logf_("HEADPARTS scan (%s): model %#lx: %d renderable(s) in its first %#x bytes (main +0xb0 %#lx)", why,
-	      (unsigned long)model, n, HP_SCAN, (unsigned long)peek_ptr(model + SM_MAIN));
+	logf_("HEADPARTS scan (%s): model %#llx: %d renderable(s) in its first %#x bytes (main +0xb0 %#llx)", why,
+	      (unsigned long long)model, n, HP_SCAN, (unsigned long long)peek_ptr(model + SM_MAIN));
 }
 
 /* the trigger word "hpskip ADDR" (render thread reads): this node is drawn in no eye pass; 1 = one of them */
@@ -403,7 +405,7 @@ static void hp_who(uintptr_t node)
 {
 	uintptr_t q[(0x400 + 0x10) / 8];
 	if (!peek(node - 0x10, q, sizeof q)) {
-		logf_("HEADPARTS who %#lx: not readable", (unsigned long)node);
+		logf_("HEADPARTS who %#llx: not readable", (unsigned long long)node);
 		return;
 	}
 	int n = 0;
@@ -412,9 +414,9 @@ static void hp_who(uintptr_t node)
 	for (int i = 0; i < (int)(sizeof q / 8) && n < 32; i++) {
 		uintptr_t v = q[i] >= 0x10000 && !(q[i] & 7) ? vptr_of((void *)q[i]) : 0;
 		if (i == 0 || (v >= rlo && v < rhi)) {
-			logf_("HEADPARTS who %#lx: %s%#x = %#lx%s (vtable %#lx)", (unsigned long)node, i < 2 ? "-" : "+",
-			      i < 2 ? 0x10 - i * 8 : i * 8 - 0x10, (unsigned long)q[i], i == 0 ? " = the handle's vtable" : "",
-			      (unsigned long)(i == 0 ? q[0] : v));
+			logf_("HEADPARTS who %#llx: %s%#x = %#llx%s (vtable %#llx)", (unsigned long long)node, i < 2 ? "-" : "+",
+			      i < 2 ? 0x10 - i * 8 : i * 8 - 0x10, (unsigned long long)q[i], i == 0 ? " = the handle's vtable" : "",
+			      (unsigned long long)(i == 0 ? q[0] : v));
 			n++;
 		}
 	}
@@ -463,9 +465,9 @@ static void hp_pose_first(int pass, uintptr_t node, uint64_t fr, int eye)
 		atomic_store_explicit(&g_hp_own_mesh[nm], mesh, memory_order_relaxed);
 		atomic_store_explicit(&g_hp_own_n, nm + 1, memory_order_release);
 	}
-	logf_("HEADPARTS pose: node %#lx (mesh %#lx, category %u) shares the hidden body's skeletal transforms %#lx: not drawn "
-	      "in the %s pass (frame %llu eye %d; the first skip of this node)", (unsigned long)node,
-	      (unsigned long)*(const uintptr_t *)(node + SK_MESH), f[NODE_CAT], (unsigned long)*(const uintptr_t *)(node + SK_POSE),
+	logf_("HEADPARTS pose: node %#llx (mesh %#llx, category %u) shares the hidden body's skeletal transforms %#llx: not drawn "
+	      "in the %s pass (frame %llu eye %d; the first skip of this node)", (unsigned long long)node,
+	      (unsigned long long)*(const uintptr_t *)(node + SK_MESH), f[NODE_CAT], (unsigned long long)*(const uintptr_t *)(node + SK_POSE),
 	      somvr_hp_pass_name(pass), (unsigned long long)fr, eye);
 }
 
@@ -495,9 +497,9 @@ static void hp_mesh_first(int pass, uintptr_t node, uint64_t fr, int eye)
 	g_hp_mesh_seen[n] = node;
 	atomic_store_explicit(&g_hp_mesh_n, n + 1, memory_order_relaxed);
 	const uint8_t *f = (const uint8_t *)node;
-	logf_("HEADPARTS away: node %#lx (mesh %#lx, category %u, its own transforms %#lx) is one of Talion's meshes: not drawn in "
-	      "the %s pass of a held-away frame (frame %llu eye %d; the first skip of this node)", (unsigned long)node,
-	      (unsigned long)*(const uintptr_t *)(node + SK_MESH), f[NODE_CAT], (unsigned long)*(const uintptr_t *)(node + SK_POSE),
+	logf_("HEADPARTS away: node %#llx (mesh %#llx, category %u, its own transforms %#llx) is one of Talion's meshes: not drawn in "
+	      "the %s pass of a held-away frame (frame %llu eye %d; the first skip of this node)", (unsigned long long)node,
+	      (unsigned long long)*(const uintptr_t *)(node + SK_MESH), f[NODE_CAT], (unsigned long long)*(const uintptr_t *)(node + SK_POSE),
 	      somvr_hp_pass_name(pass), (unsigned long long)fr, eye);
 }
 
@@ -536,13 +538,13 @@ static void hp_copy_first(int pass, uintptr_t node, const somvr_hp_set *s, int w
 	memcpy(c, (const void *)(node + SK_POS), sizeof c);
 	memcpy(oc, (const void *)(own + SK_POS), sizeof oc);
 	float d = sqrtf((c[0] - oc[0]) * (c[0] - oc[0]) + (c[1] - oc[1]) * (c[1] - oc[1]) + (c[2] - oc[2]) * (c[2] - oc[2]));
-	logf_("HEADPARTS copy: node %#lx (vtable %#lx, kind %u, category %u) draws mesh %#lx of the weapon node %#lx (entry %d of "
-	      "%u, %s) in the %s pass: its transforms %#lx (the weapon's %#lx, the body's pose %#lx), at %.1f %.1f %.1f, %.1f cm "
-	      "from the weapon's, material overrides %d (the weapon's %d): %s (frame %llu eye %d)", (unsigned long)node,
-	      (unsigned long)*(const uintptr_t *)node, f[NODE_KIND], f[NODE_CAT], (unsigned long)s->wmesh[w], (unsigned long)own,
+	logf_("HEADPARTS copy: node %#llx (vtable %#llx, kind %u, category %u) draws mesh %#llx of the weapon node %#llx (entry %d of "
+	      "%u, %s) in the %s pass: its transforms %#llx (the weapon's %#llx, the body's pose %#llx), at %.1f %.1f %.1f, %.1f cm "
+	      "from the weapon's, material overrides %d (the weapon's %d): %s (frame %llu eye %d)", (unsigned long long)node,
+	      (unsigned long long)*(const uintptr_t *)node, f[NODE_KIND], f[NODE_CAT], (unsigned long long)s->wmesh[w], (unsigned long long)own,
 	      w, s->nweap, somvr_hp_match(s, own) >= 0 ? "hidden in the eyes this frame" : "shown (held)", somvr_hp_pass_name(pass),
-	      (unsigned long)*(const uintptr_t *)(node + SK_POSE),
-	      (unsigned long)*(const uintptr_t *)(own + SK_POSE), (unsigned long)s->pose, c[0], c[1], c[2], d,
+	      (unsigned long long)*(const uintptr_t *)(node + SK_POSE),
+	      (unsigned long long)*(const uintptr_t *)(own + SK_POSE), (unsigned long long)s->pose, c[0], c[1], c[2], d,
 	      *(const int *)(node + SK_OVR_N), *(const int *)(own + SK_OVR_N), skip ? "not drawn in the eyes" : "drawn (log)",
 	      (unsigned long long)fr, eye);
 }
@@ -638,8 +640,8 @@ static void hp_draw(struct regs *r, int pass)
 			atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 			if (!atomic_exchange(&g_hp_first[pass], 1)) {
 				int i = somvr_hp_match(set, (uintptr_t)RA2(r));
-				logf_("HEADPARTS first skip in the %s pass (%s): node %#lx = slot %d (%s), frame %llu eye %d: not drawn",
-				      somvr_hp_pass_name(pass), h->name, (unsigned long)RA2(r), set->slot[i],
+				logf_("HEADPARTS first skip in the %s pass (%s): node %#llx = slot %d (%s), frame %llu eye %d: not drawn",
+				      somvr_hp_pass_name(pass), h->name, (unsigned long long)RA2(r), set->slot[i],
 				      somvr_hp_slot_name(set->slot[i]), (unsigned long long)fr, eye);
 			}
 			r->rax = 0;
@@ -683,9 +685,9 @@ static void hpc_draw(struct regs *r, int site)
 				int i = somvr_hp_match(set, (uintptr_t)RA3(r));
 				float lo[3], hi[3];
 				int box = hp_node_box((uintptr_t)RA3(r), lo, hi);
-				logf_("HEADPARTS first skip in the %s pass (%s): node %#lx = %s (kind %u, category %u, box %.0f x %.0f x "
+				logf_("HEADPARTS first skip in the %s pass (%s): node %#llx = %s (kind %u, category %u, box %.0f x %.0f x "
 				      "%.0f, %.1f cm from the head point), frame %llu eye %d: not drawn", somvr_hp_pass_name(pass), h->name,
-				      (unsigned long)RA3(r), somvr_hp_slot_name(set->slot[i]), *(const uint8_t *)(RA3(r) + NODE_KIND),
+				      (unsigned long long)RA3(r), somvr_hp_slot_name(set->slot[i]), *(const uint8_t *)(RA3(r) + NODE_KIND),
 				      *(const uint8_t *)(RA3(r) + NODE_CAT), box ? hi[0] - lo[0] : -1.0f, box ? hi[1] - lo[1] : -1.0f,
 				      box ? hi[2] - lo[2] : -1.0f, box ? somvr_hp_box_dist(lo, hi, set->at) : -1.0f,
 				      (unsigned long long)fr, eye);
@@ -791,11 +793,11 @@ static void hp_log_line(double t, uint64_t frame, const somvr_hp_set *s)
 	char ns[256] = "";
 	size_t o = 0;
 	for (uint32_t i = 0; i < s->n && o + 40 < sizeof ns; i++)
-		o += (size_t)snprintf(ns + o, sizeof ns - o, "%s%s=%#lx", i ? " " : "", somvr_hp_slot_name(s->slot[i]),
-				      (unsigned long)s->node[i]);
-	logf_("HEADPARTS t=%.3f frame=%llu model=%#lx nodes %s; skipped/calls deep=%llu/%llu forward=%llu/%llu late=%llu/%llu "
+		o += (size_t)snprintf(ns + o, sizeof ns - o, "%s%s=%#llx", i ? " " : "", somvr_hp_slot_name(s->slot[i]),
+				      (unsigned long long)s->node[i]);
+	logf_("HEADPARTS t=%.3f frame=%llu model=%#llx nodes %s; skipped/calls deep=%llu/%llu forward=%llu/%llu late=%llu/%llu "
 	      "gbuffer=%llu/%llu velocity=%llu/%llu; frames published %llu flat %llu no-model %llu empty %llu bad-vtable %llu; %s",
-	      t, (unsigned long long)frame, (unsigned long)g_hp.model, s->n ? ns : "none",
+	      t, (unsigned long long)frame, (unsigned long long)g_hp.model, s->n ? ns : "none",
 	      (unsigned long long)atomic_load(&g_hp_h[0].mods), (unsigned long long)atomic_load(&g_hp_h[0].calls),
 	      (unsigned long long)atomic_load(&g_hp_h[1].mods), (unsigned long long)atomic_load(&g_hp_h[1].calls),
 	      (unsigned long long)atomic_load(&g_hp_h[2].mods), (unsigned long long)atomic_load(&g_hp_h[2].calls),
@@ -854,12 +856,12 @@ static int hp_add_weapons(somvr_hp_set *s, double t, int body_hidden)
 			if (!seen) {
 				g_hp.weap_bad[g_hp.weap_why++] = wo[i];
 				uintptr_t mi = peek_ptr(wo[i] + OBJ_MODEL);
-				logf_("HEADPARTS put-away weapon object %#lx (vtable %#lx, model interface %#lx vtable %#lx): model %#lx "
-				      "(vtable %#lx, the player's %#lx), main renderable %#lx (vtable %#lx, the part vtable %#lx, handle "
-				      "%#lx): not hidden", (unsigned long)wo[i], (unsigned long)vptr_of((void *)wo[i]), (unsigned long)mi,
-				      (unsigned long)vptr_of((void *)mi), (unsigned long)wm, (unsigned long)(wm ? vptr_of((void *)wm) : 0),
-				      (unsigned long)g_hh.vt_model, (unsigned long)mr, (unsigned long)(mr ? vptr_of((void *)mr) : 0),
-				      (unsigned long)g_hh.vt_rend, (unsigned long)(mr ? peek_ptr(mr + REND_HANDLE) : 0));
+				logf_("HEADPARTS put-away weapon object %#llx (vtable %#llx, model interface %#llx vtable %#llx): model %#llx "
+				      "(vtable %#llx, the player's %#llx), main renderable %#llx (vtable %#llx, the part vtable %#llx, handle "
+				      "%#llx): not hidden", (unsigned long long)wo[i], (unsigned long long)vptr_of((void *)wo[i]), (unsigned long long)mi,
+				      (unsigned long long)vptr_of((void *)mi), (unsigned long long)wm, (unsigned long long)(wm ? vptr_of((void *)wm) : 0),
+				      (unsigned long long)g_hh.vt_model, (unsigned long long)mr, (unsigned long long)(mr ? vptr_of((void *)mr) : 0),
+				      (unsigned long long)g_hh.vt_rend, (unsigned long long)(mr ? peek_ptr(mr + REND_HANDLE) : 0));
 			}
 		}
 		nw += got;
@@ -904,20 +906,20 @@ static int hp_add_cloth(somvr_hp_set *s, uintptr_t model, uint64_t frame, double
 		return added;
 	g_hpc.lines++;
 	if (!cn) {
-		logf_("HEADPARTS t=%.3f frame=%llu the player's model %#lx has no cloth node (+0x88): no cloth to hide", t,
-		      (unsigned long long)frame, (unsigned long)model);
+		logf_("HEADPARTS t=%.3f frame=%llu the player's model %#llx has no cloth node (+0x88): no cloth to hide", t,
+		      (unsigned long long)frame, (unsigned long long)model);
 		return added;
 	}
 	if (!is_cn) {
-		logf_("HEADPARTS t=%.3f frame=%llu the player's model %#lx: +0x88 %#lx is not a CSimpleModelClothNode (vtable %#lx, "
-		      "want %#lx): no cloth hidden", t, (unsigned long long)frame, (unsigned long)model, (unsigned long)cn,
-		      (unsigned long)vptr_of((void *)cn), (unsigned long)g_hpc.vt_cloth);
+		logf_("HEADPARTS t=%.3f frame=%llu the player's model %#llx: +0x88 %#llx is not a CSimpleModelClothNode (vtable %#llx, "
+		      "want %#llx): no cloth hidden", t, (unsigned long long)frame, (unsigned long long)model, (unsigned long long)cn,
+		      (unsigned long long)vptr_of((void *)cn), (unsigned long long)g_hpc.vt_cloth);
 		return added;
 	}
 	char ns[200] = "", names[400] = "";
 	size_t o = 0;
 	for (int i = 0; i < n && o + 24 < sizeof ns; i++)
-		o += (size_t)snprintf(ns + o, sizeof ns - o, "%s%#lx", i ? " " : "", (unsigned long)node[i]);
+		o += (size_t)snprintf(ns + o, sizeof ns - o, "%s%#llx", i ? " " : "", (unsigned long long)node[i]);
 	uintptr_t d[2] = { 0, 0 };
 	int nd = peek(cn + CN_DESC, d, sizeof d) ? somvr_hp_vec_n(d[0], d[1], CN_DESC_SIZE, HPC_MESHES) : -1;
 	o = 0;
@@ -931,8 +933,8 @@ static int hp_add_cloth(somvr_hp_set *s, uintptr_t model, uint64_t frame, double
 				*c = '?';
 		o += (size_t)snprintf(names + o, sizeof names - o, "%s'%s'", i ? " " : "", nm);
 	}
-	logf_("HEADPARTS t=%.3f frame=%llu the player's cloth node %#lx: %d display mesh entr%s (%s), %d node(s) not drawn in "
-	      "the eyes%s%s%s; descriptors %d%s%s", t, (unsigned long long)frame, (unsigned long)cn, nv < 0 ? 0 : nv,
+	logf_("HEADPARTS t=%.3f frame=%llu the player's cloth node %#llx: %d display mesh entr%s (%s), %d node(s) not drawn in "
+	      "the eyes%s%s%s; descriptors %d%s%s", t, (unsigned long long)frame, (unsigned long long)cn, nv < 0 ? 0 : nv,
 	      nv == 1 ? "y" : "ies", nv < 0 ? "the set not read" : "the set read", n, n ? ": " : "", ns,
 	      bad ? " (entries without a custom node: drawn while so)" : "", nd < 0 ? 0 : nd, nd > 0 ? " " : "", names);
 	return added;
@@ -945,16 +947,16 @@ static uintptr_t hp_pose_of(uintptr_t main_node)
 	if (vt != HP_SKT_VT || peek_ptr(main_node + SK_POSE + 8) != pose) {
 		if (g_hp_pose_bad_lines < 4 && pose != g_hp_pose_last) {
 			g_hp_pose_bad_lines++;
-			logf_("HEADPARTS pose: the body node %#lx's +0xf0 %#lx (vtable %#lx, +0xf8 %#lx) is not its CSkeletalTransforms "
-			      "(vtable %#lx): SOMVR_HP_POSE hides nothing more while so", (unsigned long)main_node, (unsigned long)pose,
-			      (unsigned long)vt, (unsigned long)peek_ptr(main_node + SK_POSE + 8), (unsigned long)HP_SKT_VT);
+			logf_("HEADPARTS pose: the body node %#llx's +0xf0 %#llx (vtable %#llx, +0xf8 %#llx) is not its CSkeletalTransforms "
+			      "(vtable %#llx): SOMVR_HP_POSE hides nothing more while so", (unsigned long long)main_node, (unsigned long long)pose,
+			      (unsigned long long)vt, (unsigned long long)peek_ptr(main_node + SK_POSE + 8), (unsigned long long)HP_SKT_VT);
 		}
 		g_hp_pose_last = pose;
 		return 0;
 	}
 	if (pose != g_hp_pose_last)
-		logf_("HEADPARTS pose: the body node %#lx is animated by the skeletal transforms %#lx: every skeletal node they "
-		      "animate is hidden in the eyes with it (SOMVR_HP_POSE)", (unsigned long)main_node, (unsigned long)pose);
+		logf_("HEADPARTS pose: the body node %#llx is animated by the skeletal transforms %#llx: every skeletal node they "
+		      "animate is hidden in the eyes with it (SOMVR_HP_POSE)", (unsigned long long)main_node, (unsigned long long)pose);
 	g_hp_pose_last = pose;
 	return pose;
 }
@@ -1078,8 +1080,8 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 	if (occ != g_hp.occ || model != g_hp.occ_model) { /* run 12: slots 1, 3, 4 were empty on Talion's model */
 		char a[96], b[96];
 		somvr_hp_slots_str(occ, a, sizeof a), somvr_hp_slots_str(g_hp.slots, b, sizeof b);
-		logf_("HEADPARTS frame=%llu model %#lx: renderables in slots %s (wanted %s); main renderable +0xb0 %#lx",
-		      (unsigned long long)frame, (unsigned long)model, occ ? a : "none", b, (unsigned long)peek_ptr(model + SM_MAIN));
+		logf_("HEADPARTS frame=%llu model %#llx: renderables in slots %s (wanted %s); main renderable +0xb0 %#llx",
+		      (unsigned long long)frame, (unsigned long long)model, occ ? a : "none", b, (unsigned long long)peek_ptr(model + SM_MAIN));
 		g_hp.occ = occ, g_hp.occ_model = model;
 	}
 	somvr_hp_set s;
@@ -1095,9 +1097,9 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 			g_hp.badvt++;
 			if (g_hp.bad_rend[k] != rend[k]) {
 				g_hp.bad_rend[k] = rend[k];
-				logf_("HEADPARTS model %#lx slot %d (%s): renderable %#lx (vtable %#lx) has no skeletal node yet (handle "
-				      "%#lx): not hidden while so", (unsigned long)model, k, somvr_hp_slot_name(k), (unsigned long)rend[k],
-				      (unsigned long)vptr_of((void *)rend[k]), (unsigned long)peek_ptr(rend[k] + REND_HANDLE));
+				logf_("HEADPARTS model %#llx slot %d (%s): renderable %#llx (vtable %#llx) has no skeletal node yet (handle "
+				      "%#llx): not hidden while so", (unsigned long long)model, k, somvr_hp_slot_name(k), (unsigned long long)rend[k],
+				      (unsigned long long)vptr_of((void *)rend[k]), (unsigned long long)peek_ptr(rend[k] + REND_HANDLE));
 			}
 			continue;
 		}
@@ -1119,10 +1121,10 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 			g_hp.badvt++;
 			if (g_hp.bad_main != main_rend) {
 				g_hp.bad_main = main_rend;
-				logf_("HEADPARTS model %#lx main renderable %#lx (vtable %#lx, the part vtable %#lx) has no skeletal node "
-				      "(handle %#lx): the body is drawn while so", (unsigned long)model, (unsigned long)main_rend,
-				      (unsigned long)vptr_of((void *)main_rend), (unsigned long)g_hh.vt_rend,
-				      (unsigned long)peek_ptr(main_rend + REND_HANDLE));
+				logf_("HEADPARTS model %#llx main renderable %#llx (vtable %#llx, the part vtable %#llx) has no skeletal node "
+				      "(handle %#llx): the body is drawn while so", (unsigned long long)model, (unsigned long long)main_rend,
+				      (unsigned long long)vptr_of((void *)main_rend), (unsigned long long)g_hh.vt_rend,
+				      (unsigned long long)peek_ptr(main_rend + REND_HANDLE));
 			}
 		}
 	}
@@ -1148,7 +1150,7 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 			size_t o = 0;
 			wl[0] = 0;
 			for (uint32_t i = 0; i < s.nweap && o + 40 < sizeof wl; i++)
-				o += (size_t)snprintf(wl + o, sizeof wl - o, " %#lx/%#lx", (unsigned long)s.wnode[i], (unsigned long)s.wmesh[i]);
+				o += (size_t)snprintf(wl + o, sizeof wl - o, " %#llx/%#llx", (unsigned long long)s.wnode[i], (unsigned long long)s.wmesh[i]);
 			logf_("HEADPARTS t=%.3f frame=%llu copies %s: the weapons' own nodes/meshes %u (was %u):%s", t,
 			      (unsigned long long)frame, g_hp_copies_w[cm], nw, g_hp_copy_nweap, nw ? wl : " none");
 			g_hp_copy_nweap = nw;
@@ -1179,13 +1181,13 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 			size_t o = 0;
 			for (int k = 0; k < SOMVR_HP_SLOTS && o + 60 < sizeof d; k++)
 				if ((node[k] || g_hp.node[k]) && (node[k] != g_hp.node[k] || model != g_hp.model))
-					o += (size_t)snprintf(d + o, sizeof d - o, "%s slot %d (%s) %#lx -> %#lx", o ? ";" : "", k,
-							      somvr_hp_slot_name(k), (unsigned long)g_hp.node[k], (unsigned long)node[k]);
+					o += (size_t)snprintf(d + o, sizeof d - o, "%s slot %d (%s) %#llx -> %#llx", o ? ";" : "", k,
+							      somvr_hp_slot_name(k), (unsigned long long)g_hp.node[k], (unsigned long long)node[k]);
 			if (main_node != g_hp.main_node && o + 60 < sizeof d)
-				o += (size_t)snprintf(d + o, sizeof d - o, "%s main %#lx -> %#lx", o ? ";" : "",
-						      (unsigned long)g_hp.main_node, (unsigned long)main_node);
-			logf_("HEADPARTS t=%.3f frame=%llu the player's model %#lx%s:%s (%u nodes hidden in the eye passes)", t,
-			      (unsigned long long)frame, (unsigned long)model, model != g_hp.model ? " (new)" : "", o ? d : " -",
+				o += (size_t)snprintf(d + o, sizeof d - o, "%s main %#llx -> %#llx", o ? ";" : "",
+						      (unsigned long long)g_hp.main_node, (unsigned long long)main_node);
+			logf_("HEADPARTS t=%.3f frame=%llu the player's model %#llx%s:%s (%u nodes hidden in the eye passes)", t,
+			      (unsigned long long)frame, (unsigned long long)model, model != g_hp.model ? " (new)" : "", o ? d : " -",
 			      s.n);
 		}
 		g_hp.model = model, g_hp.main_node = main_node;
@@ -1198,8 +1200,8 @@ static void hp_frame(uintptr_t pl, int live, uint64_t frame, int away)
 	if ((g_hp.slots >> SOMVR_HP_HEAD & 1) && !node[SOMVR_HP_HEAD]) {
 		if (++g_hp.empty_run == HP_EMPTY_FRAMES) {
 			char why[160];
-			snprintf(why, sizeof why, "the player's model %#lx had no head node (slot 1) for %d stereo frames running",
-				 (unsigned long)model, HP_EMPTY_FRAMES);
+			snprintf(why, sizeof why, "the player's model %#llx had no head node (slot 1) for %d stereo frames running",
+				 (unsigned long long)model, HP_EMPTY_FRAMES);
 			hp_fall_back(why);
 			return;
 		}
@@ -1260,17 +1262,17 @@ static int hp_install_group(int first, int n, struct hook *hk, void (*const *wr)
 		char err[200] = "", nb[64];
 		if (in != n) {
 			if (ok[i])
-				logf_("HOOK %s SKIPPED %#lx: another %s site did not match (all %s or none)", s->name, (unsigned long)s->addr,
+				logf_("HOOK %s SKIPPED %#llx: another %s site did not match (all %s or none)", s->name, (unsigned long long)s->addr,
 				      grp, nword);
 			else
-				logf_("HOOK %s SKIPPED %#lx: %s", s->name, (unsigned long)s->addr, why[i]);
+				logf_("HOOK %s SKIPPED %#llx: %s", s->name, (unsigned long long)s->addr, why[i]);
 			all = 0;
 			continue;
 		}
 		uintptr_t st = (uintptr_t)(pg + 16 * i);
 		int32_t rel = (int32_t)((int64_t)st - (int64_t)(s->addr + 5));
 		if (write_code(s->addr + 1, &rel, 4, err, sizeof err) != 0) {
-			logf_("HOOK %s SKIPPED %#lx: write failed: %s", s->name, (unsigned long)s->addr, err);
+			logf_("HOOK %s SKIPPED %#llx: write failed: %s", s->name, (unsigned long long)s->addr, err);
 			all = 0;
 			continue;
 		}
@@ -1278,8 +1280,8 @@ static int hp_install_group(int first, int n, struct hook *hk, void (*const *wr)
 		hk[i].installed = 1;
 		any = 1;
 		hex_of((const unsigned char *)s->addr, 5, nb, sizeof nb);
-		logf_("HOOK %s ok call %#lx orig=[%s] target=%#lx now=[%s] via=%#lx (the %s pass)", s->name,
-		      (unsigned long)s->addr, why[i], (unsigned long)s->target, nb, (unsigned long)st,
+		logf_("HOOK %s ok call %#llx orig=[%s] target=%#llx now=[%s] via=%#llx (the %s pass)", s->name,
+		      (unsigned long long)s->addr, why[i], (unsigned long long)s->target, nb, (unsigned long long)st,
 		      somvr_hp_pass_name(pass ? pass[i] : i));
 	}
 	if (!all && pg && !any)
@@ -1312,11 +1314,11 @@ static int hp_check(void)
 	for (int i = SOMVR_HP_PASSES; i < HPS_C_DEEP; i++) {
 		int ok = check_site(&g_hp_sites[i], why, sizeof why) == 0;
 		bad += !ok;
-		logf_("HEADPARTS site %s %s %#lx -> %#lx: %s", g_hp_sites[i].name, ok ? "ok" : "MISMATCH",
-		      (unsigned long)g_hp_sites[i].addr, (unsigned long)g_hp_sites[i].target, why);
+		logf_("HEADPARTS site %s %s %#llx -> %#llx: %s", g_hp_sites[i].name, ok ? "ok" : "MISMATCH",
+		      (unsigned long long)g_hp_sites[i].addr, (unsigned long long)g_hp_sites[i].target, why);
 	}
 	bad += hh_check("HEADPARTS");
-	if (g_hp_sites[HPS_SLOT_SET].addr - 8 * 20 != g_hh.vt_model) {
+	if (g_hp_sites[HPS_SLOT_SET].addr - 8 * HP_SLOT_SET_SLOT != g_hh.vt_model) {
 		logf_("HEADPARTS HP_SLOT_SET is not in HEAD_MODEL_VT's vtable");
 		bad++;
 	}
@@ -1331,8 +1333,8 @@ static int hpc_check(void)
 	for (int i = HPS_CLOTH_STORE; i < HPS_N; i++) {
 		int ok = check_site(&g_hp_sites[i], why, sizeof why) == 0;
 		bad += !ok;
-		logf_("HEADPARTS site %s %s %#lx -> %#lx: %s", g_hp_sites[i].name, ok ? "ok" : "MISMATCH",
-		      (unsigned long)g_hp_sites[i].addr, (unsigned long)g_hp_sites[i].target, why);
+		logf_("HEADPARTS site %s %s %#llx -> %#llx: %s", g_hp_sites[i].name, ok ? "ok" : "MISMATCH",
+		      (unsigned long long)g_hp_sites[i].addr, (unsigned long long)g_hp_sites[i].target, why);
 	}
 	g_hpc.vt_cloth = g_hp_sites[HPS_CLOTH_VT].addr - 8 * HPC_SLOT_CLOTH;
 	g_hpc.vt_vis = g_hp_sites[HPS_VIS_VT].addr - 8 * HPC_SLOT_VIS;

@@ -4,6 +4,11 @@
  *   d3dtest.exe xinput             XInputGetState(0) once, then exit (the DLL's load, gate, entry and bridge)
  *   d3dtest.exe d3d SECONDS [W H]  a window, CreateDXGIFactory -> D3D11CreateDevice -> CreateSwapChain, a colour
  *                                  cycle presented at the display's rate for SECONDS, then exit
+ *   d3dtest.exe vrinit             Proton's steam.exe's VR setup for wineopenxr (vrclient's vrclient_init_registry
+ *                                  does this at a Steam launch; the harness runs wine directly): wineopenxr.dll's
+ *                                  wineopenxr_init_registry() (the host runtime's Vulkan extensions into
+ *                                  HKCU\Software\Wine\VR), then its "state" = 1 (ready), which wineopenxr's
+ *                                  xrCreateInstance waits for. Only for the W1 test's own prefix (headless_win.sh)
  * Exit code 0 = every call succeeded. Writes nothing but its stdout. */
 #define COBJMACROS
 #define INITGUID
@@ -94,8 +99,37 @@ __declspec(dllexport) __declspec(noinline) int d3dtest_f1(int a, int b) { return
 __declspec(dllexport) __declspec(noinline) int d3dtest_f2(int a, int b) { return a * 10 + b; }
 static int (*volatile f1p)(int, int) = d3dtest_f1, (*volatile f2p)(int, int) = d3dtest_f2;
 
+static int run_vrinit(void)
+{
+	HMODULE m = LoadLibraryA("wineopenxr.dll");
+	FARPROC f = m ? GetProcAddress(m, "wineopenxr_init_registry") : NULL;
+	if (!f) {
+		printf("d3dtest: vrinit: no wineopenxr.dll / wineopenxr_init_registry (%lu)\n", GetLastError());
+		return 1;
+	}
+	/* the key first (wineopenxr_init_registry opens it, as steam.exe's VR setup made it), state 0 = not ready */
+	HKEY k;
+	DWORD zero = 0, one = 1;
+	LONG c = RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\VR", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &k, NULL);
+	if (c == ERROR_SUCCESS)
+		RegSetValueExA(k, "state", 0, REG_DWORD, (const BYTE *)&zero, sizeof zero);
+	BOOL r = ((BOOL(WINAPI *)(void))f)();
+	LONG v = c == ERROR_SUCCESS ? RegSetValueExA(k, "state", 0, REG_DWORD, (const BYTE *)&one, sizeof one) : c;
+	char ie[1024] = "";
+	DWORD n = sizeof ie;
+	if (c == ERROR_SUCCESS) {
+		RegQueryValueExA(k, "openxr_vulkan_instance_extensions", NULL, NULL, (BYTE *)ie, &n);
+		RegCloseKey(k);
+	}
+	printf("d3dtest: vrinit: wineopenxr_init_registry = %d, state=1 %s; openxr_vulkan_instance_extensions '%s'\n",
+	       (int)r, v == ERROR_SUCCESS ? "set" : "NOT set", ie);
+	return r && v == ERROR_SUCCESS && ie[0] ? 0 : 1; /* (a BOOL: TRUE = the entries written) */
+}
+
 int main(int argc, char **argv)
 {
+	if (argc >= 2 && !strcmp(argv[1], "vrinit"))
+		return run_vrinit();
 	XINPUT_STATE st;
 	DWORD xr = XInputGetState(0, &st);
 	printf("d3dtest: XInputGetState(0) = %lu\n", xr);

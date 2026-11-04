@@ -1,0 +1,161 @@
+# finishers.txt - the VR finishers: the game's own paired kills as 1-3 guided motions of the player's sword
+# (docs/re-xr-pipeline.md 140 the framework, 149 this table). Build 34 data: SOMVR_FINISHER (140) does not read it yet -
+# its loader is the next round's; [neck] is the neck stab exactly as 140 built it, the others drop in beside it.
+#
+# Every time is ms in Talion's half's animation (its keys at 30 fps, read from the game's .anix sets by tools/anix.py);
+# lengths are the animations' own. The records are the game database's (logs/boot-check-20261020-001117/probe-out/
+# attacks-full.tsv). One block per finisher: [id], then `key = value` lines:
+#   source    Talion's record (PC_*): the sync's source and the death's DealHit record
+#   target    the orc's record (AI_*): its half, played on the orc (SOMVR_KILLS' start; 140's SOMVR_FINISHER_ROW)
+#   sync      the Combat/Sync record pairing them
+#   talion    Talion's half: animation, length ms, set - never played in VR (no body or view move): its path is the
+#             player's to follow
+#   orc       the orc's half: animation, length ms, set
+#   ready     state (fighting | stunned | downed | captain) and side (front | back: the orc's front or back to Talion
+#             within 70 deg), the game's pick for it (the selection's node, or the record when the pick is ours)
+#   orc_root  the orc's half moves its root this far over the whole animation (cm) and turns it (deg) [med: the
+#             animation record's end transform; 140's boot 164142 saw F6's orc moved ~1 m - here 122 cm]
+#   orc_keys  the orc's half: ALLOWRAGDOLL / RESUMERAGDOLL (ms in its own animation), its wound (the game's blood on it)
+#   slowmo    the game's own slow-motion window(s) (BSLOWMO..ESLOWMO, Instakill_01_SM)
+#   kill      APPLYDAMAGE (or AD) times; sever = SEVER times (the head comes off)
+#   motion    one guided motion, in order (1-3), `key=value` tokens:
+#             kind   stab (in and out on one line: 140's p 0..2) | in (in only: the blade stays in for the next) |
+#                    cut (along a path through the node)
+#             node   the orc's node it goes into or through (Pelvis | Torso | Neck | Head: stl_body's four)
+#             at     the game's contact moment (the blood key's time)
+#             rec    the window to cut the recorded path from (a first cut from the keys around `at`)
+#             hit    - | hit (an APPLYDAMAGE that does not kill: blood, haptic) | kill (the death blow: 140's way in) |
+#                    sever (the head off where the blade crosses the node; with kill when it also kills)
+#             blood  the game's MeleeFX names at the contact (in,out for a stab): BloodSA_<size>_Weapon<Mid|Tip>_
+#                    <Inward | Outward | Trail | TrailRev | Tangent | TangentRev> = the spray along the blade's way
+#             path   line (140's geometric line fitted to the grip: start_cm, depth_cm) | the recorded tip path
+#                    `x,y,z;x,y,z;...` (cm, 16 points by arc length, in the node's frame at the motion's start: the
+#                    orc's right, up, ahead) | empty = to be recorded (re-xr-pipeline.md 149.4)
+
+[neck]
+# the neck stab as built (140): one stab, the orc's half from its way in. The game's own F6 goes on to a belly stab
+# (Inward + Trail at 2000 = its APPLYDAMAGE) - a possible second motion, off while 140 kills at the neck.
+source = PC_Bip_Standing_InstaKill_F6
+target = AI_Bip_PC_Standing_InstaKill_F6
+sync = PC_Bip_Standing_InstaKill_F6
+talion = PL_Bip_Sync_InstaKill_F_NeckBellyStab 2900 pl_syncaction_chordkill_stand.anix
+orc = Bip_PL_Sync_InstaKill_F_NeckBellyStab 3833 orc_syncaction_chordkill_stand.anix
+ready = fighting front execution
+orc_root = 122 cm, turn 216 deg
+orc_keys = ragdoll 2800 3133, wound blood01_Head_Left at 266
+slowmo = 1500-1800
+kill = 2000
+sever =
+motion = kind=stab node=Neck at=1400 rec=1233-1566 hit=kill blood=BloodSA_01_WeaponMid_Inward,BloodSA_01_WeaponMid_Outward path=line start_cm=15 depth_cm=22
+
+[behead]
+# the beheading cut from the front: one cut through the neck, the head off at the crossing. In the game Talion turns
+# the orc's blow aside (333, a spark), steps past it and cuts; in VR the player only cuts. The orc's half stumbles
+# ~1.75 m ahead after the cut: its death at the sever ragdolls it (the ragdoll is allowed from 1500).
+source = PC_Bip_Standing_InstaKill_F2_Sever
+target = AI_Bip_PC_Standing_InstaKill_F2_Sever
+sync = PC_Bip_Standing_InstaKill_F2_Sever
+talion = PL_Bip_Sync_Instakill_F_SideStepSever 2366 pl_syncaction_chordkill_stand.anix
+orc = Bip_PL_Sync_Instakill_F_SideStepSever 3133 orc_syncaction_chordkill_stand.anix
+ready = fighting front execution
+orc_root = 175 cm, turn 0 deg
+orc_keys = ragdoll 1500 1800, wound blood02_Neck_Top at 933, blood00_Neck_Top at 1100
+slowmo = 933-1200
+kill = 933
+sever = 933
+motion = kind=cut node=Neck at=933 rec=700-1100 hit=sever,kill blood=BloodSA_01_WeaponMid_Trail path=
+
+[face]
+# the face stab: two stabs into the head from the front, the second kills (its APPLYDAMAGE 1533, a TrailRev spray
+# as the blade comes out). The game's opening cut (199, Tangent + Trail) knocks the orc's weapon away (its DROPITEM
+# 0/1 at 299): the orc's half does that itself, so VR leaves it out.
+source = PC_Bip_Standing_InstaKill_F5
+target = AI_Bip_PC_Standing_InstaKill_F5
+sync = PC_Bip_Standing_InstaKill_F5
+talion = PL_Bip_Sync_InstaKill_F_2_StabHead 3200 pl_syncaction_chordkill_stand.anix
+orc = Bip_PL_Sync_InstaKill_F_2_StabHead 4466 orc_syncaction_chordkill_stand.anix
+ready = fighting front execution
+orc_root = 182 cm, turn 13 deg
+orc_keys = ragdoll 2366 2966, wound blood01_Head_Front at 1566
+slowmo = 933-1099
+kill = 1533
+sever =
+motion = kind=stab node=Head at=999 rec=850-1150 hit=- blood=BloodSA_01_WeaponMid_Inward,BloodSA_01_WeaponMid_Outward path=line start_cm=15 depth_cm=12
+motion = kind=stab node=Head at=1499 rec=1350-1750 hit=kill blood=BloodSA_01_WeaponMid_Inward,BloodSA_02_WeaponMid_TrailRev path=line start_cm=15 depth_cm=14
+
+[backneck]
+# the two-stab back kill, from behind: a stab into the back of the neck and out, a second stab that stays in, and the
+# cut out of it sideways that takes the head (AD + SEVER at 2333, Trail + Tangent). The game opens with a cut behind
+# the knee (233; the orc's blood00_KneeR at 266): the orc's half kneels on its own before the first stab.
+source = PC_Bip_Standing_InstaKill_B4_Sever
+target = AI_Bip_PC_Standing_InstaKill_B4_Sever
+sync = PC_Bip_Standing_InstaKill_B4_Sever
+talion = PL_Bip_Sync_InstaKill_B_NeckStabSever 3866 pl_syncaction_chordkill_stand.anix
+orc = Bip_PL_Sync_InstaKill_B_NeckStabSever 4400 orc_syncaction_chordkill_stand.anix
+ready = fighting back execution
+orc_root = 134 cm, turn 84 deg
+orc_keys = ragdoll 2700 3200, wound blood01_Neck_Top at 2333, blood01_UpperTorso_Top at 3100
+slowmo = 900-1100
+kill = 2333
+sever = 2333
+motion = kind=stab node=Neck at=900 rec=700-1100 hit=- blood=BloodSA_01_WeaponMid_Inward,BloodSA_01_WeaponMid_Outward path=line start_cm=15 depth_cm=18
+motion = kind=in node=Neck at=1700 rec=1450-1800 hit=- blood=BloodSA_00_WeaponMid_Inward,BloodSA_01_WeaponMid_Inward path=line start_cm=15 depth_cm=18
+motion = kind=cut node=Neck at=2333 rec=1800-2450 hit=sever,kill blood=BloodSA_01_WeaponMid_Trail,BloodSA_01_WeaponMid_Tangent path=
+
+[downed]
+# the downed orc's two stabs (lying on its right): down into its chest and out, then down into its face - the kill
+# (the game's APPLYDAMAGE after each: 1766, 2133). The game's stomp on its head (733, Talion's foot) is left out.
+# Its mirror for an orc lying on its left: PC_Bip_KD_InstaKill_L2 / AI_Bip_PC_KD_InstaKill_L2 -> Gr_L_Stab (by its name,
+# not yet read from a run): stabs at 1233 (chest, in and out) and 1666 (in), APPLYDAMAGE 1766, 3466 ms long.
+source = PC_Bip_KD_InstaKill_R2
+target = AI_Bip_PC_KD_InstaKill_R2
+sync = PC_Bip_KD_InstaKill_R2
+talion = PL_Bip_Sync_Instakill_Gr_R_Stab 3266 pl_syncaction_chordkill_onground.anix
+orc = Bip_PL_Sync_Instakill_Gr_R_Stab 3233 orc_syncaction_chordkill_onground.anix
+ready = downed any ground execution
+orc_root = 148 cm, turn 80 deg
+orc_keys = ragdoll 2500 3033, wound blood02_Head_Front at 733, blood01_Torso_Front at 1366, blood02_Head_Front at 2100
+slowmo = 1500-1733
+kill = 1766,2133
+sever =
+motion = kind=stab node=Torso at=1400 rec=1200-1650 hit=hit blood=BloodSA_01_WeaponMid_Inward,BloodSA_02_WeaponMid_Outward path=line start_cm=15 depth_cm=25
+motion = kind=stab node=Head at=1966 rec=1800-2250 hit=kill blood=BloodSA_01_WeaponMid_Inward,BloodSA_02_WeaponTip_TrailRev path=line start_cm=15 depth_cm=12
+
+[stunned]
+# the stunned orc's beheading from behind: one chop through the neck (APPLYDAMAGE + SEVER at 899, Trail + Tangent).
+# The game's first cut (433, a Trail; the orc drops its weapon and shield at 433/500) is left out. The smallest
+# travel of any pick - the orc's half moves 32 cm, Talion's 46 cm - so it reads well with Talion held.
+source = PC_Bip_StunnedInstaKill_B2
+target = AI_Bip_PC_Stunned_InstaKill_B2
+sync = PC_Bip_Stunned_InstaKill_B2
+talion = PL_Bip_Sync_InstaKill_HeadChopB2 2500 pl_syncaction_chordkill_stand.anix
+orc = Bip_PL_Sync_InstaKill_HeadChopB2 2333 orc_syncaction_chordkill_stand.anix
+ready = stunned back execution
+orc_root = 32 cm, turn 0 deg
+orc_keys = ragdoll 1233 1433, wound blood02_UpperTorso_Top at 1133
+slowmo = 899-1133
+kill = 899
+sever = 899
+motion = kind=cut node=Neck at=899 rec=550-1050 hit=sever,kill blood=BloodSA_01_WeaponMid_Trail,BloodSA_00_WeaponMid_Tangent path=
+
+[captain]
+# the captain's execution from the front (the game's 8.7 s one, cut to three motions): a stab into his belly and out
+# (the game pulls out three times, 666-899), a second stab and out (3733-4133), and the cut that takes his head
+# (Trail 6133, SEVER + APPLYDAMAGE 6266). Only where the game's own selection picks this record for him (not
+# immune or resistant to executions: those get the game's Resist/Immune rows, no kill); his Last Words first.
+# The orc's half for a captain (AI_Warlord_PC_InstaKill_F_Sever -> Bip_PL_Sync_Instakill_Warlord_F) is by its name,
+# not yet read from a run.
+source = PC_Bip_Standing_InstaKill_Warlord_F_Sever
+target = AI_Warlord_PC_InstaKill_F_Sever
+sync = PC_Bip_Standing_InstaKill_Warlord_F_Sever
+talion = PL_Bip_Sync_Instakill_Warlord_F 8700 pl_syncaction_chordkill_stand.anix
+orc = Bip_PL_Sync_Instakill_Warlord_F 8800 orc_syncaction_chordkill_stand.anix
+ready = captain front execution
+orc_root = 99 cm, turn 86 deg
+orc_keys = ragdoll 7099 7133, wound blood00_Head_WorldUp at 4633, blood01_Head_Left at 6266
+slowmo = 899-1166 3299-3466 3833-4399 5899-6066
+kill = 6266
+sever = 6266
+motion = kind=stab node=Torso at=899 rec=500-1166 hit=hit blood=BloodSA_02_WeaponMid_Outward,BloodSA_01_WeaponMid_Outward path=line start_cm=15 depth_cm=25
+motion = kind=stab node=Torso at=3933 rec=3600-4300 hit=hit blood=BloodSA_02_WeaponMid_Outward,BloodSA_01_WeaponMid_Outward path=line start_cm=15 depth_cm=25
+motion = kind=cut node=Neck at=6266 rec=5900-6400 hit=sever,kill blood=BloodSA_01_WeaponMid_Trail path=

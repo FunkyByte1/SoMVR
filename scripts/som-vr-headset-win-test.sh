@@ -7,6 +7,9 @@
 # The game slot as logs/coord/winport/common.md: the guards, mkdir /tmp/somvr-boot.lock, the owner, released here
 # (only if it names OWNER). Run it OUTSIDE the Bash sandbox, at most one at a time; about 6 minutes.
 #   som-vr-headset-win-test.sh [OWNER] [HARD_SECONDS]   (defaults winport-launch, 480)
+# SOMVR_TEST_HAVE_LOCK=1 (build 35): the caller holds slot 1 already as OWNER (game_slot.sh take OWNER solo): no mkdir
+#   here and no release (the caller's). SOMVR_HEADSET_TEST_STOPALL=1 passes to the launcher: its solo request and the
+#   stop of every slot's test run run in the test too (a test run on another slot is stopped first).
 set -uo pipefail
 SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)
@@ -17,14 +20,22 @@ LOGF=$SOM/logs/som-vr-headset-win.log
 say() { echo "[$(date +%T)] $*"; }
 systemctl --user is-active -q somvr-headset && { say "STOP: the user's headset session runs"; exit 1; }
 grep -q '"user": false' "$RT/vr-session/status.json" 2>/dev/null || { say "STOP: the user is in VR (status.json)"; exit 1; }
-pgrep -x monado-service > /dev/null && { say "STOP: a monado-service runs"; exit 1; }
+for mp in $(pgrep -x monado-service); do   # (build 35: only one on slot 1's runtime folder: other slots' have their own)
+  me=$(tr '\0' '\n' < /proc/$mp/environ 2>/dev/null | sed -n 's/^XDG_RUNTIME_DIR=//p'); [ -n "$me" ] || me=$RT
+  [ "${me%/}" = "$RT" ] && { say "STOP: a monado-service runs on $RT (pid $mp)"; exit 1; }
+done
 pgrep -f '[H]and of Fate 2\.' > /dev/null && { say "STOP: Hand of Fate 2 runs"; exit 1; }
 journalctl -k -b --no-pager 2>/dev/null | grep -qi 'amdgpu.*\(GPU reset\|VRAM is lost\)' && { say "STOP: an amdgpu reset in the kernel log"; exit 1; }
-mkdir "$LOCK" 2>/dev/null || { say "STOP: the game slot is taken ($(cat "$LOCK/owner" 2>/dev/null))"; exit 1; }
-echo "$OWNER" > "$LOCK/owner"
-release() { [ "$(cat "$LOCK/owner" 2>/dev/null)" = "$OWNER" ] && rm -rf "$LOCK" && say "the game slot released"; }
-trap release EXIT
-say "the game slot taken ($OWNER)"
+if [ "${SOMVR_TEST_HAVE_LOCK:-0}" = 1 ]; then   # (the caller's slot: checked, never released here)
+  case $(head -1 "$LOCK/owner" 2>/dev/null) in "$OWNER"|"$OWNER "*) say "the game slot is the caller's ($OWNER): kept" ;;
+    *) say "STOP: SOMVR_TEST_HAVE_LOCK=1 but slot 1 is not $OWNER's ($(head -1 "$LOCK/owner" 2>/dev/null))"; exit 1 ;; esac
+else
+  mkdir "$LOCK" 2>/dev/null || { say "STOP: the game slot is taken ($(cat "$LOCK/owner" 2>/dev/null))"; exit 1; }
+  echo "$OWNER" > "$LOCK/owner"
+  release() { [ "$(cat "$LOCK/owner" 2>/dev/null)" = "$OWNER" ] && rm -rf "$LOCK" && say "the game slot released"; }
+  trap release EXIT
+  say "the game slot taken ($OWNER)"
+fi
 case $TPFX in /home/bara/Projects/flat2vr/ShadowOfMordor/logs/win-launch/*) rm -rf "$TPFX" ;; esac
 L0=$(wc -l < "$LOGF" 2>/dev/null || echo 0)
 SOMVR_HEADSET_TEST=1 SOMVR_HEADSET_TEST_HARD=$HARD "$SCR/som-vr-headset-win.sh" > "$SOM/logs/win-launch/last-test.out" 2>&1 &

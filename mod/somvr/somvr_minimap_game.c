@@ -170,7 +170,7 @@ static int mm_install(const struct site_spec *s)
 	}
 	int32_t rel = ok ? (int32_t)((int64_t)(uintptr_t)pg - (int64_t)(s->addr + 5)) : 0;
 	if (!ok || write_code(s->addr + 1, &rel, 4, err, sizeof err) != 0) {
-		logf_("HOOK %s SKIPPED %#lx: %s%s", s->name, (unsigned long)s->addr, ok ? "write failed: " : "", ok ? err : why);
+		logf_("HOOK %s SKIPPED %#llx: %s%s", s->name, (unsigned long long)s->addr, ok ? "write failed: " : "", ok ? err : why);
 		if (pg)
 			munmap(pg, 4096);
 		return 0;
@@ -178,8 +178,8 @@ static int mm_install(const struct site_spec *s)
 	g_mm_h.orig = s->target;
 	g_mm_h.installed = 1;
 	hex_of((const unsigned char *)s->addr, 5, nb, sizeof nb);
-	logf_("HOOK %s ok call %#lx target=%#lx now=[%s] via=%#lx (the minimap's camera rotation: the head's yaw)", s->name,
-	      (unsigned long)s->addr, (unsigned long)s->target, nb, (unsigned long)pg);
+	logf_("HOOK %s ok call %#llx target=%#llx now=[%s] via=%#llx (the minimap's camera rotation: the head's yaw)", s->name,
+	      (unsigned long long)(uintptr_t)s->addr, (unsigned long long)(uintptr_t)s->target, nb, (unsigned long long)(uintptr_t)pg);
 	return 1;
 }
 
@@ -195,8 +195,8 @@ static void mm_start(const struct site_spec *sites, int *bad)
 	int ok = 1;
 	for (int i = MMS_OPT; i < MMS_N; i++) { /* read only first: a mismatch patches nothing */
 		int k = check_site(&sites[i], why, sizeof why) == 0;
-		logf_("MINIMAP site %s %s %#lx -> %#lx: %s", sites[i].name, k ? "ok" : "MISMATCH", (unsigned long)sites[i].addr,
-		      (unsigned long)sites[i].target, why);
+		logf_("MINIMAP site %s %s %#llx -> %#llx: %s", sites[i].name, k ? "ok" : "MISMATCH", (unsigned long long)(uintptr_t)sites[i].addr,
+		      (unsigned long long)(uintptr_t)sites[i].target, why);
 		ok &= k;
 	}
 	if (!ok || !mm_install(&sites[MMS_CAMQ])) {

@@ -302,6 +302,23 @@ static void test_thrust(void) {
     CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_LOW, "slash: at its legs, no");
     n.contact_up_cm = 70.0f, n.neck = 1;
     CHECK(somvr_stl_kill_by(&c, &n) == SOMVR_STL_BY_NECK, "slash: at the neck it is the neck cut");
+    /* build 36 (slash=hit, 2): the user's 11-03 mark 7 (session 20261103-210626 t=91636.035): a full cut into an unaware
+     * orc's back, 67.6 cm in at its spine, -178 deg off its facing, -1 cm up, along -2.44 m/s cos -0.03 - build 31 killed it
+     * (the user: "I didn't actually do the kill"); now the ordinary hit, the fight starts. The neck cut and a thrust kill */
+    somvr_stl_hit m7 = { -178.0f, -1.0f, SC_TIER_HEAVY, -2.44f, -0.03f, 67.6f, 0, SC_TIER_HEAVY, 0, 0 };
+    CHECK(somvr_stl_judge(&c, &w, &m7) == SOMVR_STL_KILL, "mark 7 under build 31's slash: the kill (the complaint)");
+    c.slash = 2;
+    CHECK(somvr_stl_judge(&c, &w, &m7) == SOMVR_STL_CUT, "mark 7 under slash=hit: the ordinary hit (%d)", somvr_stl_judge(&c, &w, &m7));
+    m7.contact_off_deg = 40.0f;
+    CHECK(somvr_stl_judge(&c, &w, &m7) == SOMVR_STL_CUT, "slash=hit: a full cut into its front half is a hit too (no touch)");
+    n.neck = 1;
+    CHECK(somvr_stl_judge(&c, &w, &n) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &n) == SOMVR_STL_BY_NECK, "slash=hit: the neck cut kills");
+    somvr_stl_hit th = { -170.0f, 20.0f, SC_TIER_HEAVY, 3.0f, 0.95f, 20.0f, 0, SC_TIER_HEAVY, 0, 0 };
+    CHECK(somvr_stl_judge(&c, &w, &th) == SOMVR_STL_KILL && somvr_stl_kill_by(&c, &th) == SOMVR_STL_BY_THRUST,
+          "slash=hit: a heavy thrust into its back kills");
+    th.tier_cut = SC_TIER_LIGHT, th.cos_axis = 0.2f;
+    CHECK(somvr_stl_judge(&c, &w, &th) == SOMVR_STL_TOUCH, "slash=hit: a light cut is still a touch");
+    CHECK(!strcmp(somvr_stl_why(SOMVR_STL_CUT), "a full cut, no thrust: the ordinary hit (the fight starts)"), "the name");
     c.slash = 0, n.neck = 0;
     /* the user's real stab of 11-02 (mark 18, boot 20261102-101318 t=2828.409): the point 8.6 cm in at its spine, -133
      * deg off its facing, 21 cm up, 8.68 m/s at cos 0.55 (4.8 m/s along the blade), the stroke's tier heavy: build 30's
@@ -329,8 +346,8 @@ static void test_thrust(void) {
     CHECK(somvr_stl_judge(&c, &a, &k) == SOMVR_STL_AWARE, "aware: the ordinary hit");
     a = w, a.player_off_deg = 60.0f;
     CHECK(somvr_stl_judge(&c, &a, &k) == SOMVR_STL_FRONT, "in front: the ordinary hit");
-    CHECK(SOMVR_STL_CARRIED + 1 == SOMVR_STL_N && strcmp(somvr_stl_why(SOMVR_STL_AIR), "?") &&
-          strcmp(somvr_stl_why(SOMVR_STL_CARRIED), "?"), "the verdicts' names");
+    CHECK(SOMVR_STL_CUT + 1 == SOMVR_STL_N && strcmp(somvr_stl_why(SOMVR_STL_AIR), "?") &&
+          strcmp(somvr_stl_why(SOMVR_STL_CARRIED), "?") && strcmp(somvr_stl_why(SOMVR_STL_CUT), "?"), "the verdicts' names");
 }
 
 /* build 22 (SOMVR_STEALTH_KILL_CARRIED, docs 93.4): a blade held forward on the walk up reaches past the stand-off into

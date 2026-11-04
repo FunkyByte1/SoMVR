@@ -219,17 +219,17 @@ static void stg_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 			int at = c >= g_stg.fin_cos && ld < 400.0f;
 			g_stg.fin_stab = at, g_stg.n_fin_stabs += (uint64_t)at;
 			if (at)
-				in_haptic_event(hnd, 1.0f, 0.12f, SOMVR_HAP_COMBAT);
+				haptic_k(hnd, SOMVR_HX_HIT, 1);
 			if (stg_log_ok())
 				logf_("STRUGGLE t=%.3f the finisher: a thrust of the sword hand at %.1f m/s, %.0f deg off the line to the "
-				      "captain %#lx (%.0f cm away): %s", t, sp * 0.01f, acosf(fmaxf(-1.0f, fminf(1.0f, c))) * 57.29578f,
-				      (unsigned long)g_stg.fin_c, ld, at ? "the stab - the kill asked (completed as the game's own)"
+				      "captain %#llx (%.0f cm away): %s", t, sp * 0.01f, acosf(fmaxf(-1.0f, fminf(1.0f, c))) * 57.29578f,
+				      (unsigned long long)g_stg.fin_c, ld, at ? "the stab - the kill asked (completed as the game's own)"
 				      : "not at him");
 		}
 		int counts = g_stg.on && g_stg.death && g_stg.cmd > 0;
 		if (counts)
 			g_stg.pending += g_stg.pending < 4, g_stg.n_thrusts_in++,
-				in_haptic_event(hnd, 0.7f, 0.05f, SOMVR_HAP_COMBAT);
+				haptic_k(hnd, SOMVR_HX_THUMP, 0.33f);
 		if (stg_log_ok())
 			logf_("STRUGGLE t=%.3f a thrust of the %s hand at %.1f m/s%s", t, hnd ? "right" : "left", sp * 0.01f,
 			      counts ? ": one press of the struggle's command queued" : !g_stg.on ? " (SOMVR_STRUGGLE=off: nothing)"
@@ -252,8 +252,8 @@ static void stg_tick(sc_tick_out *o)
 		if (g_stg.obj && stg_log_ok()) {
 			char fl[260], an[96];
 			stg_fields(g_stg.kind, g_stg.f, fl, sizeof fl);
-			logf_("STRUGGLE t=%.3f over after %.2f s: %s at %#lx; its last read: %s; presses of ours %llu so far; "
-			      "Talion's attack now '%s'", t, t - g_stg.t0, g_stg_kind[g_stg.kind], (unsigned long)g_stg.obj, fl,
+			logf_("STRUGGLE t=%.3f over after %.2f s: %s at %#llx; its last read: %s; presses of ours %llu so far; "
+			      "Talion's attack now '%s'", t, t - g_stg.t0, g_stg_kind[g_stg.kind], (unsigned long long)g_stg.obj, fl,
 			      (unsigned long long)g_stg.n_presses, stg_talion_attack(an, sizeof an));
 		}
 		g_stg.obj = obj, g_stg.kind = stg_kind_of(obj), g_stg.slot = slot, g_stg.t0 = t, g_stg.have_f = 0;
@@ -281,8 +281,8 @@ static void stg_tick(sc_tick_out *o)
 			for (int i = 0; i < 48; i++)
 				snprintf(hx2 + 3 * i, 4, "%02x ", f[base2 + i]);
 			if (stg_log_ok())
-				logf_("STRUGGLE t=%.3f start: %s at %#lx (PlayerCombat+%#x: the %s's) - its command %d '%s'%s; %s; "
-				      "+0x80: %s; +%#x: %s; Talion's attack '%s'", t, g_stg_kind[g_stg.kind], (unsigned long)obj,
+				logf_("STRUGGLE t=%.3f start: %s at %#llx (PlayerCombat+%#x: the %s's) - its command %d '%s'%s; %s; "
+				      "+0x80: %s; +%#x: %s; Talion's attack '%s'", t, g_stg_kind[g_stg.kind], (unsigned long long)obj,
 				      0x8d8 + 8 * slot, slot ? "sync action" : "combat state", g_stg.cmd, g_stg.cmd > 0 ?
 				      bo_cmd_name(g_stg.cmd) : "-", !g_stg.on ? " (SOMVR_STRUGGLE=off)" : !g_stg.death ?
 				      " - not Talion's last chance (no PreDeath attack): left alone" : g_stg.fin_now ? (g_stg.kind ==
@@ -294,8 +294,7 @@ static void stg_tick(sc_tick_out *o)
 				      "answer of ours (its class's command not known)", fl, hx, base2, hx2,
 				      stg_talion_attack(an, sizeof an));
 			if (g_stg.on && g_stg.death && (g_stg.cmd > 0 || g_stg.kind == STG_AIM))
-				for (int h = 0; h < 2; h++)
-					in_haptic_double(h, 0.8f, 0.06f, 0.08f, SOMVR_HAP_COMBAT);
+				haptic(SOMVR_HAND_R, SOMVR_HX_STRUGGLE); /* both hands */
 		}
 	}
 	if (obj && obj == g_stg.obj && g_stg.fin_stab == 1 && g_stg.kind == STG_AIM && peek_ptr(obj) == MT_VT_STRUGGLE_AIM) {

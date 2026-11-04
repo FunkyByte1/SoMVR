@@ -127,7 +127,7 @@ static int bd_keep_ready(uint32_t cnt)
 	g_bd.keep_ok = !bad && sb_keep_build(&g_bd.keep, g_arm.ch, parent, (int)n, why, sizeof why) == 0;
 	if (g_bd.keep_logged < 8) {
 		g_bd.keep_logged++;
-		logf_("BODY keep skel=%#lx nodes=%u: %s", (unsigned long)g_arm.skel, cnt, bad ? bad : why);
+		logf_("BODY keep skel=%#llx nodes=%u: %s", (unsigned long long)g_arm.skel, cnt, bad ? bad : why);
 	}
 	return g_bd.keep_ok;
 }
@@ -136,7 +136,7 @@ static int bd_keep_ready(uint32_t cnt)
 static int bd_poke(uintptr_t a, const void *in, size_t n)
 {
 	struct iovec l = { (void *)in, n }, rm = { (void *)a, n };
-	return a && syscall(SYS_process_vm_writev, (long)getpid(), &l, 1L, &rm, 1L, 0L) == (long)n;
+	return a && (size_t)syscall(SYS_process_vm_writev, (long)getpid(), &l, 1L, &rm, 1L, 0L) == n;
 }
 
 /* vf_02's path for this renderable: 1 = it draws the owner's shared skin buffer (an empty bone map +0x1e8 == +0x1f0;
@@ -150,10 +150,10 @@ static int bd_path(uintptr_t self, uint64_t a8)
 	uintptr_t own = peek_ptr(self + BD_R_OWNER), buf = peek_ptr(self + BD_R_BUF), shb = own ? peek_ptr(own + BD_O_SHARED) : 0;
 	if ((p != last || self != last_self || buf != last_buf) && lines < 12) {
 		lines++;
-		logf_("BODY path t=%.3f the player's renderable %#lx: bone map %#lx..%#lx (%s), its skin buffer %#lx, its owner %#lx's "
-		      "shared buffer %#lx (%s); the copy flag %llu; SOMVR_BODY_EDIT=%s", mono(), (unsigned long)self,
-		      (unsigned long)m[0], (unsigned long)m[1], p == 1 ? "empty: it draws the shared buffer, no copy" : p == 0 ?
-		      "a bone map: it copies the skin" : "unread", (unsigned long)buf, (unsigned long)own, (unsigned long)shb,
+		logf_("BODY path t=%.3f the player's renderable %#llx: bone map %#llx..%#llx (%s), its skin buffer %#llx, its owner %#llx's "
+		      "shared buffer %#llx (%s); the copy flag %llu; SOMVR_BODY_EDIT=%s", mono(), (unsigned long long)self,
+		      (unsigned long long)m[0], (unsigned long long)m[1], p == 1 ? "empty: it draws the shared buffer, no copy" : p == 0 ?
+		      "a bone map: it copies the skin" : "unread", (unsigned long long)buf, (unsigned long long)own, (unsigned long long)shb,
 		      buf && buf == shb ? "the same" : "another", (unsigned long long)(a8 & 0xff), bd_edit_name(g_bd.edit));
 	}
 	last = p, last_self = self, last_buf = buf;
@@ -733,12 +733,12 @@ static void bd_sword_probe(void)
 				ext[a] = fmaxf(ext[a], fabsf(d[a]));
 		}
 	}
-	logf_("BODY sword t=%.3f: its object %#lx in R_Weapon's frame pos %.1f,%.1f,%.1f cm q %.3f,%.3f,%.3f,%.3f (its x -> "
-	      "%.2f,%.2f,%.2f y -> %.2f,%.2f,%.2f z -> %.2f,%.2f,%.2f); render node %#lx box %s centre %.1f,%.1f,%.1f half-extents "
+	logf_("BODY sword t=%.3f: its object %#llx in R_Weapon's frame pos %.1f,%.1f,%.1f cm q %.3f,%.3f,%.3f,%.3f (its x -> "
+	      "%.2f,%.2f,%.2f y -> %.2f,%.2f,%.2f z -> %.2f,%.2f,%.2f); render node %#llx box %s centre %.1f,%.1f,%.1f half-extents "
 	      "%.1f,%.1f,%.1f cm (R_Weapon's axes; a world box); raw lo %.1f,%.1f,%.1f hi %.1f,%.1f,%.1f; R_Weapon at %.1f,%.1f,"
-	      "%.1f (world)", t, (unsigned long)ho, rel.p.x, rel.p.y, rel.p.z, rel.q.x,
+	      "%.1f (world)", t, (unsigned long long)ho, rel.p.x, rel.p.y, rel.p.z, rel.q.x,
 	      rel.q.y, rel.q.z, rel.q.w, ax[0].x, ax[0].y, ax[0].z, ax[1].x, ax[1].y, ax[1].z, ax[2].x, ax[2].y, ax[2].z,
-	      (unsigned long)nd, box ? "ok" : "unread", cw.x, cw.y, cw.z, ext[0], ext[1], ext[2], lo[0], lo[1], lo[2], hi[0],
+	      (unsigned long long)nd, box ? "ok" : "unread", cw.x, cw.y, cw.z, ext[0], ext[1], ext[2], lo[0], lo[1], lo[2], hi[0],
 	      hi[1], hi[2], W.p.x, W.p.y, W.p.z);
 }
 
@@ -832,8 +832,8 @@ static void bd_start(void)
 		int ok = 1;
 		for (int i = 0; i < BDS_N; i++) {
 			int o = check_site(&sites[i], why[i], sizeof why[i]) == 0;
-			logf_("BODY site %s %s %#lx -> %#lx: %s", sites[i].name, o ? "ok" : "MISMATCH", (unsigned long)sites[i].addr,
-			      (unsigned long)sites[i].target, why[i]);
+			logf_("BODY site %s %s %#llx -> %#llx: %s", sites[i].name, o ? "ok" : "MISMATCH", (unsigned long long)sites[i].addr,
+			      (unsigned long long)sites[i].target, why[i]);
 			ok &= o;
 		}
 		if (!off && !ok)
@@ -844,11 +844,11 @@ static void bd_start(void)
 			g_bd.orig = sites[BDS_COPY].target;
 			g_bd.vt_rend = sites[BDS_COPY].addr - 8 * BD_REND_SLOT;
 			if (write_code(sites[BDS_COPY].addr, &fn, 8, err, sizeof err) != 0) {
-				logf_("HOOK BD_REND_COPY SKIPPED %#lx: write failed: %s", (unsigned long)sites[BDS_COPY].addr, err);
+				logf_("HOOK BD_REND_COPY SKIPPED %#llx: write failed: %s", (unsigned long long)sites[BDS_COPY].addr, err);
 				off = "the slot could not be written";
 			} else {
-				logf_("HOOK BD_REND_COPY ok slot %#lx orig=%#lx now=%p (CSimpleModelRenderable::vf_02: every renderable's "
-				      "skin copy, game thread, phase 7)", (unsigned long)sites[BDS_COPY].addr, (unsigned long)g_bd.orig, fn);
+				logf_("HOOK BD_REND_COPY ok slot %#llx orig=%#llx now=%p (CSimpleModelRenderable::vf_02: every renderable's "
+				      "skin copy, game thread, phase 7)", (unsigned long long)sites[BDS_COPY].addr, (unsigned long long)g_bd.orig, fn);
 				g_bd.on = 1;
 			}
 		}

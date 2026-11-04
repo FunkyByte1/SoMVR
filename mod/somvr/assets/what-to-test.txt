@@ -3,35 +3,67 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 31c - what to test
-- New since build 30 first, then what you didn't reach. Menu > Controls lists every move.
+Build 34 (Windows) - what to test
+- New since your 11-03 Windows session first, then what you didn't reach. Menu > Controls lists every move.
 
-- KILLS. Finish a fighting orc with a full cut or a stab: he plays the game's own death all the way to the ground. A hard cut across his neck takes his head off.
+- KILLS. Every kill shows at once: a hard cut or stab kills him on the spot or he visibly starts falling right away - never a collapse later or a walk-off. A hard cut across his neck takes his head off.
+- Hit an orc while he is dying: blood and a hit buzz. Cut an unaware orc's back: he fights you (a stab from behind still kills silently).
+- Practice > Charge execution, then face an orc: the finisher's blue outline.
 - Block his blow, then kill him on the counter: the game's counter-kill fall. A stunned orc has its own.
-- Execution: when the sword glows, swing a full committed cut - no trigger. Quick wrist flicks only land light hits now.
-- No gold Y floating in front of you when an orc winds up.
+- FINISHER. When the sword glows, face an orc up close: the world slows and a blue sword outline points into his neck. Lay your sword on it until it snaps, then thrust in and pull out at a firm, steady pace.
+- Wait or turn away: the outline goes and the world speeds up again.
+- NO PROMPTS. No gold Y when an orc winds up, no triangles over orcs, no button prompts at the bottom, no icons over fire pits or herbs (our own glows stay). Mark any you still see.
 - Stealth: crouch behind an unaware orc and stab his back: the game's own stealth kill plays on him - he's pulled onto your blade and dies. Your view and hands stay yours, no screen.
+
+- HITS BY FORCE. Rest or tap the blade on an orc, or flick your wrist at him: nothing. A full arm swing lands; a hard one lands heavy.
+- Block his low lunge at your belly: his blow stalls at your blade for a moment.
+- Crouch over a knocked-down orc and cut him - he can be hurt while down.
+
+- THE KNIFE. Reach either hand to its own hip until it ticks, then grip: the knife is in that hand while you hold the grip; open the hand and it is back on the belt. (Right hand: when it holds nothing.)
 
 - THE SWORD has weight now. A quick flick leaves the blade behind; a full committed swing carries it.
 - Cut an orc across the chest: the blade bites in and drags out. A slow cut stops in him.
 - Stab his chest and hold: the blade stays in him and moves with him. Pull straight back to draw it out.
 
-- YOUR FREE HAND. Shove an orc hard: he staggers 2-3 m back.
+- YOUR FREE HAND. Shove an orc hard (a hard push, from a little further away now): he staggers 2-3 m back. With the sword out, reach and close your hand: a grab, not a shove.
 - Grab: a faint blue glow on an orc's collar shows where - reach for it and make a fist. Hold him up to 10 s.
 - Holding him: any sword hit kills him, a push lets him go, pull him to your face to question him. B + Y (a note) never kills him.
 
+- THE WATCH. Look at your left wrist as if reading a watch: the map shows on your forearm and your whole hand stays visible. Turn the wrist away and it's gone.
+- HERBS. Walk up to a blue healing flower until its prompt shows, reach down and grip it, then bring your fist to your mouth: you eat it and heal. (B still works.)
 - LOW HEALTH: a red, pulsing ring around your view and a heartbeat in your hands. Try Practice > Refill health after taking hits.
 - Left palm menu opens mid-fight now (just after a swing).
-- Bow: draw far past your ear - the arrow stays in front of your face.
+- BOW. Draw to the cheek: the string near your face fades away, and the bow no longer flickers when you twist your wrist.
+- With the bow drawn, tap X: nothing. Hold X half a second: the Shadow Strike.
+- Fight page > 'Bow from: Grip': squeeze the left grip anywhere to take the bow out; let go to put it away.
 
 - CLIMBING. Pull a hold up hard and let go: you slide on down the wall. Grab to stop, or land at the bottom.
 - Hanging by one hand, reach over your free shoulder for the sword and cut an orc.
+- At a ledge, reach your open hand out over the edge at chest height (a light tick), then squeeze: you swing down and hang from the lip.
+- Walk along the long wall's top: small sloped lips step you over by themselves. One spot just past the first lip still stops you - jump with A.
+- Walk off any edge: you fall within half a second - never walk on air. At a low ledge that holds you: push toward it until A double-pulses, then A takes you down.
+- Climbing, the pull-up ring shown: A takes you up, even right after letting go.
 
+- NOTHING IN YOUR FACE. Walk or crouch into a bush and lean in: leaves within about a foot of your eyes melt away and come back as you pull out. Small flies and mosquitoes stay about an arm's length away.
+
+- GRASS. In the meadow's tall grass, look at the tufts near you: rounder, the front blades nearer than the back. Look down and tilt your head: the grass keeps its shape.
+
+- WEATHER. The meadow opens on a clear day (sun shadows): walls, paving and grass show their relief. If it turns grey and foggy later, that is the game's weather cycle - say if it bothers you.
 - LOOKS. On the cliff over the misty valley, turn and tilt your head: the fog and mist should stay put, no wall following you.
 - Look at the sun and tilt your head: its rays stay still, no dimming as you look around.
 
 - PRACTICE > Place orc: aim your sword hand at the ground (a gold ring, even below a ledge), close the panel, pull the trigger: an unaware orc there. Try the drop kill.
 - The Test page remembers its page.
+
+- BUZZES. A light cut, a heavy blow and a kill should feel clearly different; a block cracks and rings. Every "no" is the same two soft clicks. A herb gives three bites.
+
+- GRAUG (Torvin's hunt). At "Shoot it in the head!", draw the bow fully, hold about a second, aim at its head and let go: it is stunned.
+
+- WRAITH HANDS. Hold Y for the wraith vision and look at your hands: pale blue, see-through, glowing edges.
+- BOW. Squeeze the trigger and A together while drawing: no jump.
+- Look along the bow at rest and drawn: the string starts and ends where each limb meets its glowing spike.
+
+- SETTINGS. Menu > Settings now has groups (Comfort, Display, Climbing, Sword, Fight, Bow) under the tabs. Try Force needed Low if you play seated, and the Watch and Shove push rows.
 
 - NOT REACHED IN BUILD 30. Last chance: when an orc is about to kill you, steer the red ring's cursor in with your hand, then stab.
 - Wraith flash: when the sword glows blue, hold the right trigger and push your open left palm at an orc.

@@ -191,6 +191,21 @@ static void test_watch(void) {
     for (int k = 0; k < 20 && hidden_at < 0; k++)
         if (!somvr_vh_face_step(&st, &fc, &face, eye_off)) hidden_at = k;
     CHECK(hidden_at == fc.hold_off - 1, "hidden after %d frames away (at %d)", fc.hold_off, hidden_at);
+    /* build 33: SOMVR_XR_WATCH_LOOK=raise - a wrist turned 60 deg from the eyes (cos 0.5) shows the old face, not the
+     * raised one; 30 deg (cos 0.87) shows both; once shown, 63 deg (cos 0.45) keeps it, 70 deg (cos 0.34) drops it */
+    somvr_vh_face_cfg rc;
+    somvr_vh_face_cfg_raise(&rc);
+    float e60[3] = {0.866f, 0, 0.5f}, e30[3] = {0.5f, 0, 0.866f}, e63[3] = {0.891f, 0, 0.454f}, e70[3] = {0.94f, 0, 0.342f};
+    somvr_vh_face so = {0, 0}, sr = {0, 0};
+    int old60 = 0, new60 = 0, new30 = 0, keep63 = 1, drop70 = 0;
+    for (int k = 0; k < 6; k++) old60 = somvr_vh_face_step(&so, &fc, &face, e60), new60 |= somvr_vh_face_step(&sr, &rc, &face, e60);
+    CHECK(old60 && !new60, "60 deg off: the old face %d (want 1), the raised one %d (want 0)", old60, new60);
+    for (int k = 0; k < 6; k++) new30 = somvr_vh_face_step(&sr, &rc, &face, e30);
+    CHECK(new30, "30 deg off: the raised face shown");
+    for (int k = 0; k < 6; k++) keep63 &= somvr_vh_face_step(&sr, &rc, &face, e63);
+    CHECK(keep63, "63 deg off after it was shown: kept (the hysteresis)");
+    for (int k = 0; k < 6; k++) drop70 = !somvr_vh_face_step(&sr, &rc, &face, e70);
+    CHECK(drop70, "70 deg off: hidden");
 }
 
 /* the watch read as a player reads one: the left forearm across the chest (the elbow left, the fingers right), the
@@ -256,6 +271,7 @@ static void test_abi(void) {
     e.ghost[1].p[2] = -0.45f, e.ghost[1].q[3] = 1, e.ghost_a[1] = 0.3f; /* v3 */
     e.arrow.p[0] = 0.12f, e.arrow.q[3] = 1, e.arrow_len = 0.72f, e.arrow_glow = 0.6f; /* v4 */
     e.string[2][1] = 0.31f, e.string_r = 0.002f;                                   /* v5 */
+    e.wraith = 0.4f;                                                               /* build 36: was pad5 */
     CHECK(!somvr_vrhands_ok(&sh), "inactive");
     sh.magic = SOMVR_VRHANDS_MAGIC, sh.version = SOMVR_VRHANDS_VERSION, sh.size = sizeof sh;
     atomic_store(&sh.active, 1);
@@ -265,8 +281,8 @@ static void test_abi(void) {
               o.curl[1][4] == 0.75f && o.depth_k == 0.06f && atomic_load(&o.seq) == 77 && o.ghost[1].p[2] == -0.45f &&
               o.ghost[1].q[3] == 1 && o.ghost_a[1] == 0.3f && o.ghost_a[0] == 0 && o.arrow.p[0] == 0.12f &&
               o.arrow.q[3] == 1 && o.arrow_len == 0.72f && o.arrow_glow == 0.6f && o.string[2][1] == 0.31f &&
-              o.string_r == 0.002f,
-          "round trip (v2: depth_k, v3: the ghost, v4: the arrow, v5: the string)");
+              o.string_r == 0.002f && o.wraith == 0.4f,
+          "round trip (v2: depth_k, v3: the ghost, v4: the arrow, v5: the string, build 36: the wraith amount)");
     CHECK(!somvr_vrhands_get(&sh, 77 + SOMVR_NREC, &o) && !somvr_vrhands_get(&sh, 0, &o), "another frame's slot");
     somvr_vrhands_put(&sh, 77 + SOMVR_NREC, &e);
     CHECK(!somvr_vrhands_get(&sh, 77, &o), "overwritten");
@@ -285,8 +301,26 @@ static void test_abi(void) {
     CHECK(sh.version == 5 && offsetof(somvr_vrhands_shared, dinfo) == offsetof(somvr_vrhands_shared, dseq) + 8 &&
               offsetof(somvr_vrhands_frame, ghost) == 120 && offsetof(somvr_vrhands_frame, ghost_a) == 176 &&
               offsetof(somvr_vrhands_frame, arrow) == 184 && offsetof(somvr_vrhands_frame, arrow_glow) == 216 &&
-              offsetof(somvr_vrhands_frame, string) == 220 && offsetof(somvr_vrhands_frame, string_r) == 256,
-          "v5 layout (v4 + the string)");
+              offsetof(somvr_vrhands_frame, string) == 220 && offsetof(somvr_vrhands_frame, string_r) == 256 &&
+              offsetof(somvr_vrhands_frame, wraith) == 260,
+          "v5 layout (v4 + the string; build 36: the wraith amount in pad5's place)");
+}
+
+/* build 36 (SOMVR_HANDS_WRAITH): the wraith look's blend - none at 0, halfway at 0.5, the full look at 1 (and past it) */
+static void test_wraith_look(void) {
+    const somvr_vh_look plain = {{0.13f, 0.085f, 0.06f}, 1, 0.9f, 0.45f, 0.25f, 0.10f};
+    somvr_vh_look a = plain, h = plain, f = plain, x = plain;
+    somvr_vh_wraith_look(&a, 0);
+    somvr_vh_wraith_look(&h, 0.5f);
+    somvr_vh_wraith_look(&f, 1);
+    somvr_vh_wraith_look(&x, 3);
+    CHECK(!memcmp(&a, &plain, sizeof a), "wraith 0: the plain look");
+    CHECK(f.opacity == 0.5f && f.spec == 0 && f.rim > 1.8f && fabsf(f.base[2] - 1) < 1e-6f && f.base[2] > f.base[1] &&
+              f.base[1] > f.base[0] && fabsf(f.key - 0.36f) < 1e-5f && !memcmp(&f, &x, sizeof f),
+          "wraith 1: pale blue, half see-through, the rim strong, no sheen (opacity %.2f rim %.2f); past 1 = 1", f.opacity, f.rim);
+    CHECK(fabsf(h.opacity - 0.75f) < 1e-6f && fabsf(h.base[2] - 0.5f * (plain.base[2] + 1)) < 1e-6f &&
+              fabsf(h.rim - 0.5f * (plain.rim + 1.9f)) < 1e-6f,
+          "wraith 0.5: halfway (opacity %.2f)", h.opacity);
 }
 
 /* build 16: the arrow's mesh (vrhands v4): along the pose's -Z from its nock end, its length, both windings */
@@ -466,7 +500,7 @@ static void test_string(void) {
     somvr_vh_string(pts, 0.002f, sv);
     int bad = 0;
     for (int v = 0; v < SOMVR_VH_STRING_NV; v++) {
-        const float *a = pts[v < 24 ? 0 : 1], *b = pts[v < 24 ? 1 : 2];
+        const float *a = pts[v < 24 * SOMVR_VH_STRING_SUB ? 0 : 1], *b = pts[v < 24 * SOMVR_VH_STRING_SUB ? 1 : 2];
         float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, q[3] = {sv[v].p[0] - a[0], sv[v].p[1] - a[1], sv[v].p[2] - a[2]};
         float l = len3(d), k = (q[0] * d[0] + q[1] * d[1] + q[2] * d[2]) / (l * l), off[3];
         for (int i = 0; i < 3; i++) off[i] = q[i] - k * d[i];
@@ -477,6 +511,23 @@ static void test_string(void) {
     for (int i = 0; i < SOMVR_VH_STRING_NI; i++) ibad += ix[i] >= SOMVR_VH_STRING_NV;
     CHECK(!bad && !ibad && ix[0] == 0 && ix[3] == 0 && ix[4] == 2, "string: %d vertices off its segments, %d bad indices", bad,
           ibad);
+    /* build 33 (the 11-03 mark 15): drawn to the cheek (the middle 8 cm from the eye), the string's last 10-20 cm by
+     * the face fade out and the rest stays: the pieces are short near the middle, so the per-vertex fade (10..22 cm, the
+     * layer's) acts there - build 18's two pieces ramped over the whole half (still 57 % alpha 10 cm from the middle) */
+    const float dr[3][3] = {{0.05f, -0.45f, -0.55f}, {0.05f, -0.08f, -0.02f}, {0.05f, 0.25f, -0.55f}}, eye[3] = {0, 0, 0};
+    somvr_vh_string(dr, 0.002f, sv);
+    somvr_vh_arrow_fade(sv, SOMVR_VH_STRING_NV, eye, eye, 0.10f, 0.22f);
+    float a_mid = 1, a_far = 0, a_10 = 0;
+    for (int v = 0; v < SOMVR_VH_STRING_NV; v++) {
+        float dm = 0;
+        for (int i = 0; i < 3; i++) dm += (sv[v].p[i] - dr[1][i]) * (sv[v].p[i] - dr[1][i]);
+        dm = sqrtf(dm);
+        if (dm < 0.005f && sv[v].a < a_mid) a_mid = sv[v].a;
+        if (dm > 0.30f && sv[v].a > a_far) a_far = sv[v].a;
+        if (dm > 0.08f && dm < 0.14f && sv[v].a > a_10) a_10 = sv[v].a;
+    }
+    CHECK(a_mid == 0 && a_far > 0.99f && a_10 < 0.5f && SOMVR_VH_STRING_NV == 192,
+          "the string by the face: alpha %.2f at the middle, %.2f 8-14 cm along, %.2f beyond 30 cm", a_mid, a_10, a_far);
     /* the pinch: by the thumb's tip and the index, out of the fist's tube, up it (the thumb's side: XR -Z) */
     float p[3];
     CHECK(somvr_vh_pinch(&m, &c, p), "pinch");
@@ -499,6 +550,7 @@ int main(void) {
     test_size();
     test_string();
     test_grip();
+    test_wraith_look();
     printf("test_vrhands: %d checks, %d failures\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

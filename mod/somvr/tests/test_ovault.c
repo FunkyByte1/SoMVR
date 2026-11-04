@@ -137,7 +137,30 @@ static void test_rules(void)
     in_at(&in, 4.05, 0.9f, (sv_vec3){ 0, 195, 76 }, root);
     in.orc_root.z += 45;
     somvr_ov_step(&s, &C, &in, &o);
-    CHECK((o.events & SOMVR_OVE_LETGO) && o.why == SOMVR_OVW_MOVED && o.move.z == 0, "he walked away: let go, no drag");
+    CHECK(s.phase == SOMVR_OV_HOLD && !(o.events & SOMVR_OVE_LETGO), "build 33: he moved 45 cm within the plant: still held");
+    in_at(&in, 4.60, 0.9f, (sv_vec3){ 0, 195, 76 }, root);
+    in.orc_root.z += 45;
+    somvr_ov_step(&s, &C, &in, &o);
+    CHECK((o.events & SOMVR_OVE_LETGO) && o.why == SOMVR_OVW_MOVED && o.move.z == 0, "he walked away after the plant: let go, no drag");
+    /* build 33 (re-xr-pipeline.md 139.7): a fighting orc's lunge toward Talion - 60 cm in 0.1 s right after the grip (boot
+     * 20261102-193325's holds ended so) and 80 cm later on - never ends the hold; 45 cm sideways after the plant does */
+    somvr_ov_reset(&s);
+    in_at(&in, 7.0, 0, (sv_vec3){ 0, 195, 76 }, root), somvr_ov_step(&s, &C, &in, &o);
+    in_at(&in, 7.01, 0.9f, (sv_vec3){ 0, 195, 76 }, root), somvr_ov_step(&s, &C, &in, &o);
+    in_at(&in, 7.11, 0.9f, (sv_vec3){ 0, 195, 76 }, root);
+    in.orc_root.z -= 60;
+    somvr_ov_step(&s, &C, &in, &o);
+    CHECK(s.phase == SOMVR_OV_HOLD && !(o.events & SOMVR_OVE_LETGO), "his lunge toward Talion 0.1 s in: held (%s)",
+          somvr_ov_why_name(o.why));
+    in_at(&in, 7.6, 0.9f, (sv_vec3){ 0, 195, 76 }, root);
+    in.orc_root.z -= 80;
+    somvr_ov_step(&s, &C, &in, &o);
+    CHECK(s.phase == SOMVR_OV_HOLD && !(o.events & SOMVR_OVE_LETGO), "his lunge toward Talion after the plant: held (%s)",
+          somvr_ov_why_name(o.why));
+    in_at(&in, 7.7, 0.9f, (sv_vec3){ 0, 195, 76 }, root);
+    in.orc_root.z -= 80, in.orc_root.x += 45;
+    somvr_ov_step(&s, &C, &in, &o);
+    CHECK((o.events & SOMVR_OVE_LETGO) && o.why == SOMVR_OVW_MOVED, "45 cm sideways after the plant: let go");
     /* the collar is no vault: nothing */
     somvr_ov_reset(&s);
     in_at(&in, 5.0, 0, (sv_vec3){ 0, 178, 72 }, root), somvr_ov_step(&s, &C, &in, &o);

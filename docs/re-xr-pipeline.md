@@ -22261,6 +22261,41 @@ leading) read the drawn blade. The kills helper's scripted cuts read light with 
   'AI_Bip_PC_Standing_InstaKill_F3'`, `EXECUTE kill ... forceKill=1 ... tier heavy at 23.35 m/s`. Headset only: whether
   11 m/s and the fist's 25 cm feel right in a real fight (the replay says committed swings cut a little more often than in
   build 30, flicks a fifth as often).
+
+### 133.10 Review b34 (som-b34-review-combat, 2026-11-03): four fixes, each with a selftest case that fails on build 33
+- **The AI hold changed the AI's attack rates on Linux.** Combat_StartAttack's start wrapper is (c, node, attack, target,
+  float rate, bool flag). Build 31's Linux `somvr_w_klai` took five ints and forwarded 1.0 as the rate, on the reading
+  that every caller passes 1.0. Two of the four hooked callers do not: KL_AI_ACT2 (FUN_02a88710+0x101d) passes the AI
+  action's own rate (`movss 0x9c(%rdi),%xmm0` at 0x2a88aca), and KL_AI_ACT1 (+0xfdd) passes a value from the action's range
+  (0x2a88dfb, FUN_00c73440). KL_AI_NPC and KL_AI_MISC load 1.0 from 0x3344770. win/sites-combat.tsv already reads xmm0 /
+  xmm6 for ACT1 / ACT2, and the Windows wrapper forwards them. So on Linux every AI action attack ran at 1.0 whenever the
+  kills' sites were installed, which is any run with KL_START matched, even with `SOMVR_KILLS=off`. Now there is one
+  prototype for both ABIs: SysV passes the float in xmm0 wherever it sits, the ints in rdi rsi rdx rcx r8, and the stub is a
+  bare `jmp [rip]`. Selftest: called through the game's own prototype with 1.37, the stand-in KL_START gets 1.37 (build 33
+  passed 1.0).
+- **An orc whose kill ended alive was held for good.** The take holds the orc's navigation (KL_NAV(ai, 0, 2)), but
+  `kl_end` never gave it back. Most kills end in a death and then this does not matter. A kill whose three DealHits do not
+  kill (`WARN KILLS ... not dead after 3 DealHits`), though, left a living orc that never walked again. Now `kl_end` calls
+  KL_NAV(ai, 1, 2), the sync end's own call, when the orc is alive, is the same orc and has the same AI. A death gives back
+  nothing. Selftest: a stand-in orc that DealHit does not kill: 3 DealHits, then KL_NAV(1, 1, 2). A death: no call.
+- **A reused Combat.** The kills knew their orc only by its Combat address, and the practice's respawns reuse it.
+  Boot 20261103-171756: Combat 0x471daf8 died at t=79980.1 and was a new orc at t=80000.6. With a kill still playing,
+  that new orc would have been dealt the old one's death, through the old HOBJECT. Now `kl_same` checks that the Combat's
+  HOBJECT is still the one taken, in `kl_frame`, `kl_deal`, the sync kill's watch, the catalogue's play and `kills still`.
+  An orc that fails the check ends its kill: no DealHit, nothing given back. The line reads `gone (its Combat another orc's
+  now)` and `KILLS END detail` counts these cases. Selftest: B's Combat given C's object ends B's kill with no DealHit.
+- **The ground finisher on an orc whose kill plays.** SOMVR_ABIL's stab into a downed orc whose SOMVR_KILLS half was
+  already playing went to kl_take, was not taken ("its kill already plays"), then dealt its own forceKill and spent the
+  execution charge. Boot 171756 at t=80001.404: the killing blow had taken that downed orc 0.8 s before. Now
+  `abl_ground_kill` does nothing there, with the line `ABIL ... its kill plays already (SOMVR_KILLS) - nothing (no charge
+  spent)`. Selftest: no DealHit.
+- Noted, not changed: (1) cb_hit's fallback when kl_take refuses the killing blow (unaware, four kills playing, no row, a
+  start that fails) makes its DealHit after the hit direction and the hit-once byte are already restored. That kill's
+  ragdoll gets the previous hit's direction. The selftest stand-in has no min-health field, so no failing test was
+  possible here. In 150 runs of 11-02/03 kl_take refused only twice. (2) A start that fails turns its row off for the
+  whole run (`off[row]`). None was logged in those runs. (3) The orc's own timer is frozen or slowed by a hit-stop or the
+  clank's slow (144). A kill taken inside those 120 + 250 ms plays its first moments slowed, and the stall rule (0.8 s of
+  game time) could then read it as "not playing". Unmeasured.
 ## 139. Build 31b: bug marks that keep what the headset showed; the Y glyph a player saw while blocking found on the HUD quad (the game's counter glyph) and hidden; the vault by the hands in a fight: `SOMVR_XR_MARK_LAYERS`, `SOMVR_COUNTER_ICON_SETUP`, `SOMVR_VAULT_HANDS` (2026-11-02, som-b31-marks-vault)
 
 Handoffs: handoff/HANDOFF-hla.md "build 31b marks", handoff/HANDOFF-combat.md "build 31b vault". Driver:
@@ -22392,3 +22427,2305 @@ runs real-time.
 - With SETUP=skip no gold Y over an attacking orc any more; the cues are THREAT's glows and the red warning (build 18's
   intent). The 3D flare stays off as before.
 - A mark's GPU copy (one frame) at 120 Hz: no hitch the player feels (the CPU path's 12 ms are gone).
+
+## 140. Build 33: the finisher as the player's own guided motion - first the neck stab: a blue sword outline, the world in slow motion, the snap, the stab in and out at the speed the hand earns: `SOMVR_FINISHER` (2026-11-03, som-b33-finisher)
+
+Why: in the 11-03 session (logs/boot-check-20261103-093210, marks 1, 2, 12) the execution by the blow (133, build 31's
+SOMVR_KILLS_EXEC=blow) killed with its own hit at once (a ragdoll), the orc's half was too short to read, and a stray
+touch counted as the killing blow. The user's design replaces it: when a finisher is ready a blue outline of the sword
+appears where the sword should start (for the neck stab: in front of the orc's neck, pointing into it), the game goes very
+slow, the drawn sword lined up roughly with the outline snaps onto it, and the player then moves the sword through the
+finisher's motion - into the neck and out - at a capped speed set by how close the hand's speed and line are to the
+motion; blood on each movement in the blade's direction; the orc falls dead. Handoff: handoff/HANDOFF-combat.md "build 33
+finisher". Code: somvr_finisher.c/.h (pure, tests/test_finisher.c), somvr_finisher_game.c (included by somvr.c after
+the sword physics), the layer's outline mesh somvr_vh_outline (somvr_vrhands.c); driver scripts/fin33-drive.sh.
+
+### 140.1 The design as built
+- **Ready** = SOMVR_EXECUTE's ready (the hit counter's charge: the stock game's execution condition) and an orc that is
+  within 230 cm of Talion's root, within 40 deg of the head's forward, facing Talion within 70 deg, not dead, not in a
+  sync, not a captain, a beast or in a kill (SOMVR_KILLS). The nearest such orc.
+- **The line** (no one moved: neither the player nor the orc): a 95 cm blade needs ~110 cm from the guard to the neck,
+  and a fighting orc stands ~95 cm from Talion with its Neck node ~85 cm under the eyes (boots 112913, 115139: a hunched
+  infantry). The outline's guard goes on that 110 cm sphere around the neck at the point nearest a natural grip (15 cm
+  right, 30 cm under, 35 cm ahead of the eyes): an orc at the fight's distance gets a stab down from by the shoulder, one
+  farther a thrust forward and down. Ready needs that guard in an arm's reach (70 cm out from the eyes, from 10 cm behind
+  them to anywhere ahead, 25 cm over them to 85 cm under; 25 cm more before a cancel). (A first cut slid the orc to a
+  stab distance through 133's placement hook; the practice orc walked back to its fight distance within a second, boots
+  122204-152601.) From ready to the way in the orc is held: its own attack starts refused (SOMVR_KILLS' AI hold sites,
+  the fight circle grants it none) and its steps undone where kl_aim sees them. An attack already under way is not a
+  cancel: it is slowed with the world and lands only if the player is slow - its hit clears the charge (the game's
+  rule), which cancels; the orc's half at the way in replaces it (boot 151121: a practice orc's attack in flight at the
+  ready cancelled 2 of 3 tries under the first rule).
+- **The slow motion** is the world's: the game timer's SlowMO.Set (0.15, SOMVR_FINISHER_SLOWMO) - the world and Talion's
+  body; the tracked view, the hands and the drawn sword stay real time. Set only when the game's own slow motion is not
+  running; restored only if it is still ours.
+- **The outline** (re-xr-pipeline's layer, the arrow's slot: glow >= 2 means the outline): a flattened hex-prism blade,
+  a four-face point, the cross-guard and the grip, blue (0.14, 0.36, 1.0), translucent (a deeper blue than the wraith's, alpha 0.26-0.38 in a slow 1.25 Hz pulse),
+  in both eyes at its world depth: its point 15 cm (start_cm) short of the orc's Neck node on the line above, its guard
+  95 cm back along the blade, the grip behind it. It stays where it appeared in the world (boot 153522: the held orc's
+  neck swayed 20-40 cm through its slowed attack in 4 s, and an outline that followed it ran from the hand); its pose is
+  re-placed each frame from that world line, so a turn of the rig keeps it on the neck (boot 154546).
+- **The snap**: the drawn sword's point within 12 cm of the outline's and its blade within 25 deg (SOMVR_FINISHER_ALIGN_CM,
+  _ALIGN_DEG). The drawn sword (SOMVR_SWORD_PHYS's weapon node, only the sword) is laid on the outline's line with its
+  point there; the controller's own hand shows as the sword helper's ghost hand (alpha 0.40) - the hand stays the
+  controller's, the view is never moved. A light tick on the snap.
+- **The hand's motion**: the controller's own blade (g_cb.hand, before the sword's weight) has no history of its own
+  (boot 122204: the stab never moved), so its hilt (not its point: a wrist's flick does not drive it) is tracked against
+  the rig's base and its velocity smoothed over ~40 ms (Talion's own move does not count). The path rides the orc's
+  neck where it is now - its sway, its half's reel once the blade is in - by at most 35 cm (boot 164142: the path left
+  where it was laid stood ~1 m from the orc its half had moved).
+- **The stab**: progress p runs 0..1 in (the point from 15 cm short to 22 cm into the neck, SOMVR_FINISHER_DEPTH_CM),
+  1..2 out. Each frame the controller's own blade velocity (the hand, not the snapped sword) is read along the way
+  (in on the way in, back on the way out): the blade's speed = v_max (100 cm/s, SOMVR_FINISHER_VMAX) x the speed's
+  match (the hand's own share of v_ref = 100 cm/s below it - the blade 1:1 with the hand - full from 1 to 1.6 m/s (a
+  real thrust), 1.6 v_ref over the hand's speed past that, no less than 0.4: a flick is slower, not faster) x the line's accuracy (the cosine of the hand's motion to the
+  way, 1 on it, 0 at acc_min = cos 78 deg). The deepest point is never skipped (the way turns there).
+- **The way in** (the point passes the neck): the game's blood at the wound along the blade (the stealth kill's
+  stl_blood), a strong haptic, the charge spent as the stock execution spends it, and the orc's half starts: SOMVR_KILLS'
+  row SOMVR_FINISHER_ROW (default AI_Bip_PC_Standing_InstaKill_F6, the neck-and-belly stab's victim; its AI held, the
+  death at its moment, 133's rules - except the stall rule: boot 154546's F6 read "not playing" at 0.81 s, 4.4 cm down,
+  and the death came as a plain fall). The half runs in the world's slow motion while the stab goes on, at full speed
+  after; the outline's neck is re-read for the blood when the orc swayed (within 40 cm).
+- **The way out**: the blood again from the wound, a haptic.
+- **The end** (p = 2): the slow motion off, the sword the hand's again (the weighted sword picks up from the hand); the
+  orc's half runs on to the ground and the game's DealHit with Talion's Combat kills it (XP, credit, Nemesis - 133's
+  death). If the half did not start, the game's kill at the end.
+- **Cancels** (nothing spent, the slow motion off, the orc let go; no new ready for 2 s): the orc gone or dead, out of
+  reach (the arm's reach + 25 cm, or 260 cm), the charge gone (a hit on Talion), SOMVR_FINISHER_TIMEOUT_S (6 s) without a snap; a stab stalled 4 s before
+  the neck. After the way in a stall of 4 s ends it as done (the half and the death go on).
+- **What it replaces**: while on, SOMVR_EXECUTE's contact (the execution by the blow, SOMVR_KILLS_EXEC=blow, and the
+  trigger's) does not fire; the contact loop skips the finisher's orc while it is ready or in the stab (no stray touch
+  kills it). The kills by the hand (133) stay as they are.
+- Switches: `SOMVR_FINISHER=on|off` (default off; build 33's env on), `_SLOWMO` 0.15, `_TIMEOUT_S` 6, `_ALIGN_CM` 12,
+  `_ALIGN_DEG` 25, `_DEPTH_CM` 22, `_VMAX` 100, `_VREF` 100, `_ROW`. Needs SOMVR_KILLS' sites, SOMVR_EXECUTE and
+  SOMVR_SWORD_PHYS (else CONFIG says OFF). Test words: `finisher status|on|off|pose` (pose: the outline's grip as a
+  `hands test R` pose with the way in, logged - the drivers' real-hand line-up). Lines: `CONFIG finisher`, `FINISHER t=...
+  ready|snap|in|deepest|out|end|cancelled`, `FINISHER pose`, `FINISHER status`, `FINISHER END`.
+- The path is geometric (a straight thrust along the line into the neck and back), not recorded from the game's paired
+  action: the game's neck stab is Talion's half of a sync (PC_Bip_..._F6) whose weapon path the mod has not sampled;
+  the orc's half is the game's. A recorded path table is the next step for finishers with a curved motion (140.3).
+
+### 140.2 Runs (logs/boot-check-20261103-; headless, scripts/fin33-drive.sh, Linux unless named)
+| run | what | result |
+|---|---|---|
+| 112913 | the first boot | CONFIG said OFF: fn_start ran before swp_config (SOMVR_SWORD_PHYS unread) - moved after it; the execution by the blow fired meanwhile |
+| 115139 | readies on a practice infantry | the outline drawn (the layer: `the sword outline drawn` x14); the Neck node 85 cm under the eyes put a level line's grip at the hip; readies cancelled by its attack and out of reach |
+| 122204 | the snap and the stab | the snap at 5.9 cm / 4.4 deg; the stab never moved: the driver's swings went to the layer's test file, and g_cb.hand has no velocity of its own |
+| 125724, 151121, 152602 | the line-up | the driver's latency against the 6 s window (headless boots take SOMVR_FINISHER_TIMEOUT_S=10); the line-up from the mod's own `FINISHER lineup` line; a practice orc's attack in flight at the ready cancelled 2 of 3 (no longer a cancel); a slid orc walked back to its fight distance within a second (no slide now) |
+| 153523 | the held orc | its neck swayed 20-40 cm through its slowed attack in 4 s: the outline now stays where it appeared |
+| 154325 (Windows, GOG) | the same on the Windows build | ready, line-up, snap at 8.4 cm / 1.4 deg; the game crashed at the way in: `WIN CRASH 0xc0000005 at exe+0xd11df9` - the known FX-create crash (7757ecf: VG_FXCREATE's hook; the stack has somvr_w_vbglow) on the blood's FX create. Linux proof meanwhile |
+| 154546 | end to end | snap 10.1 cm / 2.0 deg -> in (blood made rc=1, F6 started on the orc alone, the charge 9 -> 0) -> deepest -> out (blood rc=1) -> end (the slow motion off) -> `KILLS kill ... rec='PC_Bip_Standing_InstaKill_F6', forceKill=1: dead 0->1`, COMBAT death; the HUD: Kill +15 (+10 Uruk Warrior, +5 Execution). But the stab took 7.85 s (the driver's way stale after a turn), the half ended by the stall rule at 0.81 s (a plain fall) |
+| 164142 | end to end, the fixes | snap 11.7 cm / 0.5 deg -> in (blood: black spray at the point in both eyes; F6 started, the charge 8 -> 0) -> deepest -> out (blood) -> end -> the half to its end pose: `settled (the head 22 cm down, still for 0.6 s)` at 3.87 s -> DealHit F6 forceKill `dead 0->1`; the poor stab (1.4 s, 35 deg off): in at match 0.42, stalled 4 s after it -> ended, the half `down (the head 27 cm lower at +2.32 s)` -> `dead 0->1`; the timeout: `cancelled (the timeout) ... after 10.05 s`, the slow motion off, the orc's steps undone 531 times while held. 0 WARN, the install unchanged, the save UNCHANGED. Pictures: the outline over the hunched orc, the snapped blade with the black spray at its point, the orc down with the XP |
+| 204813 | the merged branch with the review's fixes (140.4) | snap 7.0 cm / 5.4 deg -> in at the hand's match 0.91 (the blade 91 cm/s) -> deepest -> out -> end (match 0.46 while moving; the neck moved 100 cm under the path, followed 35) -> the half `down (the head 38 cm lower at +0.94 s)` -> `dead 0->1`; the poor stab: in at match 0.38 (38 cm/s), out, `end: the orc dead in its half` (fn_orc's way out); the timeout cancel. Pictures: the blade in the hunched orc's neck from behind its head, the blue glow at the wound, through at the deepest; the black blood at the way out. 0 WARN, install unchanged, the save UNCHANGED |
+| 210251, 212418 (Windows, GOG, game slots 2 and 3) | the finisher on build-win's tree (0b50fca's FX-create fix: the 6th argument 64-bit) | no CRASH note in either; 4 blood FX creates made (`made, rc=...`): the way in x3, the way out x1. The good stab: snap 11.8 cm -> in at match 0.88 -> deepest -> the half `down` -> `dead 0->1`; the slow stab: in, deepest, out (blood), end -> `dead 0->1`; the timeout: `cancelled (the timeout) ... after 10.05 s`, the slow motion off. The Windows build reads the trigger file only every ~2-4 s: the driver's swing words wait for their TRIGGER line (`wa`), and 212418's good stab stalled 4 s between two swings after the way in (the half then took the orc down). 210251 was stopped by a SIGTERM from outside during the timeout step (no crash note; 212418 did it). 2 WARN in both = the Windows environment's (H9, layout B: in every Windows run of the day); the user's save read only, its hash unchanged |
+
+### 140.3 Open, and for the headset
+- The path is a straight thrust, not the game's own recorded weapon path: a finisher with a curved motion (a slash, the
+  sever rows) needs the path table (Talion's weapon node per frame against the victim's Neck through the game's own
+  paired start - with the camera untouched: the sync's presentation is what moved the view in 11-03's session).
+- The orc's half starts at the way in under the slow motion and runs at full speed after the end; in the headset: does
+  its reel read with the hand, is the blade riding the neck (35 cm at most) right or odd.
+- The outline: a deeper blue than the wraith's, translucent, pulsing; with an orc at the fight's distance its guard sits
+  by the right shoulder (a stab down) - near the face but beside it; judge in the headset.
+- The speed band (1-1.6 m/s full) and the slow motion 0.15: the headset tells whether players stab slower in it.
+- Windows: 154325's crash at the way in (exe+0xd11df9) was the FX create's 6th argument declared `int` (re-winport.md
+  7.12, 0b50fca); with it the finisher plays on the GOG build (210251, 212418). The finisher adds no game call with a
+  32-bit type at argument 5+ (its calls: SlowMO.Set (2 arguments), the charge (2), SOMVR_KILLS' start and DealHit, the
+  stealth kill's blood through hf_fx_at's FX create, the node reads - all audited in 7.12).
+- Not done: a stealth finisher with the knife (the user's next design), more finisher kinds.
+
+### 140.4 The combat review's fixes (review b34)
+- **Every way out restores the world.** fn_watch, at the top of combat_frame (before anything can skip the blade:
+  paused, climbing, the VR menu, the sword hand lost), ends a finisher with no full frame for 0.5 s; every end goes
+  through fn_stop (the outline and the sword's ride off, the orc let go, the slow motion put back). Build 33's first
+  cut restored them only on frames where the sword hand was tracked.
+- **The slow motion is put back blind.** The scale found at the start (or 1/1) is set back even when the game timer
+  cannot be read at that moment; only a scale the game set since (its own slow motion, read) is left to it.
+- **The same orc.** fn_orc takes SOMVR_KILLS' kl_same (the Combat and its object): a finisher whose Combat became
+  another orc's (the practice's respawn) ends with no hit and no kill counted.
+- The pulses are words of somvr_haptics.h: READY at the outline, TAKE at the snap, KILL at the way in, HIT (0.5) at the
+  deepest, TEAR (0.2) at the way out. Addresses logged as `%llx`.
+- Selftests (selftest.c finisher_tests, each failing on build 33's code: checked by reverting the three fixes - 3 FAIL):
+  the game paused 0.6 s ends a ready finisher (the timer back to 1000/1000, the orc let go); the timer unreadable at the
+  restore still calls SlowMO.Set with the found scale; a reused Combat ends the stab with no DealHit.
+- The data for the next finishers (assets/finishers.txt, section 149): its [neck] block is this stab's numbers (F6 rows,
+  path=line start 15 depth 22): the format needs no change from this side; 140 does not read the file yet (the next
+  round's loader).
+
+### 139.7 Build 33: the vault against a fighting orc - the plant (`SOMVR_VAULT_HANDS_PLANT_MS`, code default 350)
+- **The decision.** In a fight an orc is almost always in an attack (the practice infantry chains one every 1.85 s;
+  Talion's FSM is 7 during them, 6 between - boot 20261102-203639), and the vault is for that moment: the game's own A
+  in a fight vaults over an attacker. A vault by the hands is a plant: the grip on his crown, the push down and the
+  throw are one motion of about 0.3 s. So his own motion ends no hold within `plant_s` (0.35 s) of the grip, and his
+  move **toward Talion** never does (his lunge brings him under the hold); after the plant, 40 cm sideways or away from
+  where he stood still ends it (no holding air). Nothing else changed: the hold point is the hand's (fixed in the
+  world: his motion never moves Talion), the body moves 1:1 against the hand, the only flight is the arc the player
+  threw (the fling's rule, at least 80 cm past him or a plain let-go), the stock evade's attack runs under it with its
+  collision held off until Talion is past him (135.5b).
+- **Code**: somvr_ovault.c (`plant_s`; the break's toward-Talion part dropped), the switch in somvr_hands31_game.c.
+  tests/test_ovault.c: a 60 cm lunge toward Talion 0.1 s after the grip and an 80 cm one after the plant keep the hold,
+  45 cm sideways after the plant ends it, a walk-off within the plant does not (19 checks; the old rule fails 5).
+- **The test** (`ovault auto N`, 139.3): the grab at the first frame of his attack (its wind-up), the hold's push 30 cm
+  down in 200 ms, the throw at 0.22 s (50 down and 50 back in 150 ms, the grip opened at 80 %).
+- **Windows**: the counter glyph's two sites (139.2) mapped for the Windows exe (win/sites-ui.tsv `CP_REC` 0xc1f83e ->
+  0x4e39e0, `CP_SHOW` 0xc1f862 -> 0x4deab0, read side by side with the Linux calls); before this the Windows build
+  showed the glyph (the sites failed soft).
+
+- **Boots (Windows build, `headless_vr.sh --win`; each: the Windows build's two standing WARN lines (H9, layout B) as
+  in every Windows run, the user's save UNCHANGED):** 20261103-184409: the counter glyph by mode on Windows - the
+  game's icon 2547 / 3249 gold px, build 30's hide 3278, SETUP=skip **0 / 0** (CP_REC/CP_SHOW hooked); 4 crown grabs in
+  a fight, each read by the shove as a hard push (6.5 m/s "into its chest") that sent him 1.5 m off and ended the hold.
+  Fixed: a palm over his crown is the vault's plant, no shove (`ov_plant_at` in PARRY's push; the plant 0.35 -> 0.5 s).
+  20261103-221839: **the plant holds** (4 pushes spared, 3 throws out of 3 holds: up 429-461, over 331-361 cm/s) - but
+  the flight is **not clean**: (1) the evade's A tap in a fight starts the game's **paired jump-over sync**
+  (`PC_Bip_Sync_JumpOver_F`, the orc's `AI_Bip_PC_Sync_JumpOver_F`), which moved Talion over him by itself (try 1:
+  `blocked` at 0.3 s, then 165 cm along the floor in 0.6 s - the "past the orc, its opening" landing was the game's
+  vault, not the thrown arc; LOCO's ownership of an attack's ticks does not hold a sync's alignment); (2) the other two
+  flights were `blocked` by his body (no attack with its collision off under them); (3) Talion was in a hit's recoil
+  (`PC_Recoil_Light_*`) at every grab (the scripted Talion does not block), whose root motion moved him during holds.
+- **Not shipped**: `SOMVR_VAULT_HANDS` stays off (the env's line); the plant rule and the shove's plant exception act
+  only with it on.
+- **Next steps** (built in thought, not in code): (a) at the throw, start Talion's own **dash over an orc** instead of
+  tapping A - the `PC_DashOver` pool's `PC_Bip_DashOver_F`, a non-sync attack (ABIL probe lines: `sync -`), started on
+  the held orc as SOMVR_ABIL starts its attacks (`vb_node_named(pcomb, "PC_DashOver")`, `vb_pick`,
+  `FI_FN(FIS_KBMNODE)`, `FI_FN(FIS_START)(pcomb, kbm, atk, hobj)`; pcomb = `peek_ptr(g_fr.pl + P_COMBAT)`, pc =
+  `peek_ptr(pcomb + PC_SERVER)`), its root motion LOCO's (`ov_pm_own`), its `+0x56c` held 0 over him (`ov_collision`);
+  never the A tap in a fight. (b) `ovault auto`: arm only while Talion runs no attack (no recoil), and fix
+  `g_ov.atk_name` (taken once per flight: it showed a stale recoil name). (c) Then one Windows boot with
+  `MV_STEPS=vault`, the flight's frames (`OVAULT ... flight`, the dumps through the first flight, `/tmp/mkv`-style
+  flight table: the arc's steps smooth, no `blocked`, `the view's yaw +0.0`), and only then `SOMVR_VAULT_HANDS=on`.
+## 141. Build 33: the knife from the belt, held while gripped; the shove from a bit further, the grab's reach no shove: `SOMVR_SLOTS_DAGGER_HOLD`, `SOMVR_SHOVE_CUE_HARD` (2026-11-03, som-b33-knife)
+
+The user's 11-03 session (logs/boot-check-20261103-093210): stealth kills should be the knife's, as in the game - first
+the knife itself, drawn from the belt and held; the shove worked well but wanted the hand to touch the orc (mark 11, game
+t 50132); with the sword out a reach for a grab read as a shove (mark 13, t 50200). Code: somvr_slots.c/.h (the knife's
+own hold rule), somvr.c (its switch, the belt's tick), somvr_parry_game.c and somvr_combat21_game.c (`gc_offers`);
+tests/test_slots.c `test_hold_dagger`, selftest.c (the toggle sequence with the hold off). Driver scripts/hands31-drive.sh
+steps `knife`, `srange`, `sgrab`.
+
+### 141.1 What the knife did in the headset
+SOMVR_SLOTS' Acharn slot (build 17, 21: the left hip, -18,-62,-5 cm from the head in the torso's yaw, radius 15; drawn by
+the left hand's squeeze there: its entries' InactiveNode set to `L_Weapon` and the game's own re-attach `FUN_0231e2e0`)
+was on in both of the user's last sessions (`CONFIG slots=1 ... Acharn hip`) and never used: 0 `SLOTS ... dagger` lines
+in either. Its press toggled (a squeeze in the slot drew it, the next put it back, and it stayed in the hand otherwise),
+and the only sign of the slot was a 12 ms 0.18 tick on entering it.
+
+### 141.2 The knife, as built
+- **Where:** one spot, the left hip, for the left hand (the off hand's: with the sword in the right, both can be held). Not
+  built: the right hand's cross draw - the knife would need the sword's own socket (`R_Weapon`); it belongs with the
+  stealth kill by the knife (next round), when the right hand is the knife's.
+- **Held while gripped** (`SOMVR_SLOTS_DAGGER_HOLD=on|off`, code default on; HL:A's items): the squeeze at the hip draws
+  it, it stays while the grip is closed, the grip opened anywhere puts it back on the belt (`put-back asked (hold: the
+  grip opened)`), and so does the grip opened at the hip (`dropped in`). off = build 17's toggle.
+- **The belt's tick:** the hand entering the knife's slot - 0.4 for 30 ms (the sword's slot keeps its faint 0.18).
+- No kill wiring beyond what exists (the stealth kill by the left grip's dagger, SOMVR_STEALTH_KILL's).
+
+### 141.3 The shove and the grab
+- **Range:** `SOMVR_SHOVE_ANY_CM` 15 -> 30 (env): the palm within the orc's radius + 30 cm of its axis (about 30 cm short
+  of his chest) - the session's pushes refused at 75-96 cm.
+- **The grab's reach is no shove:** the session's two "shoves" at mark 13 were reaches for a grab, 1.62 and 2.40 m/s;
+  the user's real shoves were 4.31-4.55 m/s. `SOMVR_SHOVE_MPS` 1.5 -> 2.5 and `SOMVR_SHOVE_HARD_MPS` 2.5 -> 3.5 (env), and
+  `SOMVR_SHOVE_CUE_HARD=on|off` (code default on): at an orc the grab cue offers (its glow, the faint one before the
+  reach, or the game's yes a moment ago: `gc_offers`) only a hard push shoves - `PARRY push t=.. at orc ..: N m/s, the grab
+  cue on it - only a hard push (3.5 m/s) shoves: the grab's reach`. A slow reach that closes is the grab.
+
+### 141.4 Runs (headless, scripts/headset-build26.env with the som-b33-knife block, `SOMVR_HANDS_TEST=1`; scripts/hands31-drive.sh; each 0 WARN except where said, the install unchanged, GameData.sav UNCHANGED)
+| Run (logs/boot-check-20261103-) | Steps | What it shows |
+|---|---|---|
+| 111029 | knife srange sgrab | **the knife**, the sword away and then with the sword out: the left hand at the hip (0.7-3.4 cm from the slot) and the squeeze - `dagger: drawn by the game's own re-attach FUN_0231e2e0 (InactiveNode L_Weapon)`, held up in front (both eyes, frames 565 and 921: Acharn in the left fist, the hand closed on its handle, the guard over it), the grip opened 56-61 cm from the slot - `put-back asked (hold: the grip opened)`; drawn, carried back, let go at the hip - `dropped in`. 1 WARN: the switch read `on` with words 0/1 (fixed: off/on). Void: the push 69 cm from its axis (the scripted arm short), the grab's swing word lost to the squeeze's (the one-word mailbox) |
+| 113713 | srange sgrab knife | **the shove at the new range**: the palm 55 cm from its root (past build 31's 50) at 3.95 m/s - `Heavy_Straight`, 389 cm; **the sword out, a reach at 2.90 m/s at an orc the grab cue offers**: `the grab's reach` (no shove), then the squeeze: `grab: the left hand reached out at orc ..'s back`; the knife again as in 111029 |
+
+### 141.5 Switches, lines, the Controls page
+- The som-b33-knife block: `SOMVR_SLOTS_DAGGER_HOLD=on`, `SOMVR_SHOVE_CUE_HARD=on`, `SOMVR_SHOVE_MPS=2.5`,
+  `SOMVR_SHOVE_HARD_MPS=3.5`, `SOMVR_SHOVE_ANY_CM=30` (none of them a key of the user's settings file).
+- Lines: `SLOTS t=.. dagger: put-back asked (hold: the grip opened)`, `PARRY push t=.. the grab cue on it - only a hard
+  push ...`, `PARRY END build 33: pushes left to the grab N`.
+- The Controls page (the coordinator's): Dagger "L grip at L hip" -> Knife "L hip, hold the grip"; Shove "L hand push an
+  orc" -> "push hard at an orc".
+- For the headset: whether the hip spot is where a hand finds a knife (the tick helps; the slot's radius is 15 cm), and
+  whether 2.5 m/s still reads every real shove (the user's were 4.3-4.6 m/s).
+
+### 141.6 Review b34 (som-b34-review-combat, 2026-11-03): the knife stays "held while gripped" through the rest of the game
+Build 33 left a knife that was held by its grip in the open hand for good in three cases. (1) Any frame with no
+gestures cleared the hold: a menu, a struggle, input not live, third person. The release that came after it then did
+nothing. (2) The hold's end fired only on the release's own frame, and a release while the hand was busy (the bow's
+tail, a climb with the other hand) or not tracked was lost. (3) A climb or the bow puts the knife back on the belt
+(suspended), and its restore brought it back to the hand with no hold, even into an open hand. Now (somvr_slots.c):
+the hold survives those frames and is cleared only when the knife is neither in the hand nor going there (so a draw the
+game makes after its own put-away is still no hold). The hold ends whenever the grip is open on a frame with gestures. A
+held weapon comes back after a climb or the bow only into a closed hand, which then holds it; an open hand leaves it on
+the belt. Thrown and recalled (27c), the knife returns the same way. tests/test_slots.c `test_hold_dagger_b34`: 7 checks,
+each failing on build 33. With hold mode off (the sword, `SOMVR_SLOTS_HOLD=0`) nothing changes, and the old test_slots
+cases pass unchanged.
+## 144. Build 32: hits by force, blocks that read, the downed orc hurt: `SOMVR_COMBAT_FORCE`, `SOMVR_DEFENCE_CONTACT_THRUST_CM`, `SOMVR_DEFENCE_CLANK_SLOW`, `SOMVR_STEALTH_DOWNED_FIGHT` (2026-11-03, som-b32-sword)
+
+The 11-03 session (build 31c, boot-check-20261103-093210): touching or tapping an orc with the blade dealt a full hit, a
+quick wrist flick a light one, a backswing near a dying orc started the killing blow; one kind of the infantry's blow
+could not be blocked reliably and the blades seemed to meet without a block; blows on a knocked-down orc did nothing.
+
+### 144.1 The hit by force (`SOMVR_COMBAT_FORCE=on`; somvr_combat.c `sc_blow_j`, `sc_tier_force`)
+- **Why**: the session's light hits at a 3.2-3.4 m/s contact with the fist at 0.6-1.6 m/s (touches) took 10 health each;
+  the killing blow of t=50148.9 came from a contact at combat's 35 cm capsule's edge with the orc 159 cm away (`u=0.25`) -
+  the blade never reached his body. The tier read speed thresholds only, at the wide capsule.
+- **The body**: our hit needs the drawn blade's sweep to cross the orc's body - the flesh's capsules about its skeleton
+  (stl_body's Pelvis/Torso/Neck/Head; 21/23/11 cm, the head 15 cm above its node r 12, the legs 85 cm below the pelvis r 20);
+  a beast keeps its own bone capsules, an unread skeleton combat's capsule. A capsule contact that never crossed the body:
+  `COMBAT brush ... no hit`. The hit is placed where the blade crossed the body.
+- **The force**: the blow's kinetic energy at the contact, on the drawn (weighted) blade: 0.5 m(s) v^2 (m(s) the sword's
+  effective mass at the contact point: 1 / (1/1.3 kg + r^2 / 0.055 kg m^2), r its distance from the balance; v the contact
+  point's 80 ms mean speed) + 0.5 x 3 kg x v_fist^2 (the arm behind the fist; v_fist the grip's own velocity - the base's and
+  the tip's vectors at the grip: sc_speed.grip_mps, not the pommel's swing about the wrist). No hit under 35 J; a cut (the
+  heavy tier) from 50 J with the edge leading and the fist 25 cm into the stroke (31b); the cut's damage 0.6 at 50 J to
+  full at 120 J; a stab from 12 J along the blade. The stroke's entered rule, the stealth's and the verbs' tiers stay.
+- **The user's swings** (tests/replay_tiers.c `force` mode, both sessions' .swordrec; strokes by the hand's: a blow = the
+  fist 30+ cm at 4+ m/s, a flick = the fist under 2.5 m/s with the hand's own contact at 12+ m/s, a touch = the hand's
+  contact under 5 m/s; build 31b's rule for comparison):
+
+| | 11-02 blows (49) | flicks (84) | touches (1193) | 11-03 blows (63) | flicks (24) | touches (1036) |
+|---|---|---|---|---|---|---|
+| build 31b (the hand's swing, 11 m/s) | heavy 40, light 9 | heavy 4, light 78 | - | heavy 44, light 19 | light 24 | - |
+| **build 32 (35 / 50 J)** | heavy 34, light 10, none 4 | light 6, **none 78** | **none all** | heavy 43, light 12, none 4 | light 3, **none 21** | none 1035 |
+
+  The energy: blows p10 35 / median 78-81 J, flicks median 16-18 / p90 35 J, touches ~0.
+- Mark 2's "second hit" (t=49840.9) was the kill path's killing blow starting with a hit 1.8 s after the one before (not a
+  double hit); with the body and the force a brush or a backswing past the orc no longer starts it.
+- Tests: test_combat (a touch and a 105 deg wrist flick no hit, an arm's blow a cut, the flat leading light, the damage
+  factor), tests/replay_tiers.c (`replay_tiers FILE MIN 0.7 force ARM HEAVY`).
+
+### 144.2 Blocks (`SOMVR_DEFENCE_CONTACT_THRUST_CM=30`, `SOMVR_DEFENCE_CLANK_SLOW=250,0.3`)
+- **Which blow**: of the session's 27 judged infantry blows, Front_1_LL/RR and Front_3_LL were stopped at the blade 15 of 17
+  times; **Front_2_LL** 2 of 10 (3 hits, 1 dodge, 4 near misses at 20-37 cm). Its weapon (DEFENCE path lines) is still ~2 m
+  out at -0.1 s and lies along Talion's hip line at the impact (its hand 77-80 cm below the head): it turns and is driven
+  in along its own line - a lunging thrust. A slash sweeps a plane, so a guard anywhere across it meets it; a thrust sweeps
+  a line, so the 15 cm meeting needs the guard almost on it. The contact test already sweeps both blades between frames.
+- **The fix**: a blow whose weapon's middle moves within 45 deg of its own axis (somvr_df_thrusting) meets the guard within
+  30 cm (`DEFENCE contact ... a thrust (build 32's reach)`); slashes keep 15. The session's near misses (20.0, 23.3, 23.4 cm)
+  would have been blocks.
+- **The blow read**: at a block the orc is held 120 ms (build 18's clank stop) and then runs on at 30 % for 250 ms - its own
+  clock (the hit-stop's timer, which has no parent: the engine never moves it) advanced each combat frame by the frame's time
+  x 0.3 (cb_hs_tick), then given back.
+- Tests: test_defence (a thrust along its line yes, a slash across no, a still weapon no; the reach off by default).
+
+### 144.3 The downed orc (`SOMVR_STEALTH_DOWNED_FIGHT=on`)
+- **Why**: mark 19's knocked-down orc (t=50296-50300, `AI_Bip_KDLoop`): the player crouched to reach it, and the game's
+  awareness had it unaware - every contact went to the stealth kill's touch (`STEALTH ... touch ... no damage, alerted
+  already`), 70+ contacts, no hit. The game does not make it invulnerable: the second downed orc (t=50397-50403, the player
+  standing) took a heavy and three light hits through KDLoop and KDRecover.
+- **The fix**: an orc whose current attack is `AI_Bip_KD...` (knocked down, getting up) is no stealth target (stl_who: aware),
+  so the crouched player's blows are ordinary hits. The kill paths are not touched.
+
+### 144.4 Switches (block "som-b32-sword" at the end of scripts/headset-build26.env; code defaults off)
+| Switch | Default | Build 32's env |
+|---|---|---|
+| `SOMVR_COMBAT_FORCE=off\|on` (`SOMVR_COMBAT_FORCE_J=MIN,HEAVY,FULL`) | off (35,50,120) | on |
+| `SOMVR_DEFENCE_CONTACT_THRUST_CM` | 0 (= SOMVR_DEFENCE_CONTACT_CM) | 30 |
+| `SOMVR_DEFENCE_CLANK_SLOW=MS,K` | none | 250,0.3 |
+| `SOMVR_STEALTH_DOWNED_FIGHT=off\|on` | off | on |
+Lines: `COMBAT config force=on ...`, `COMBAT hit ... blow=NJ fist=V (the body crossed)`, `COMBAT brush ...`, `DEFENCE
+contact ... a thrust (build 32's reach)`. Portable: no new sites; `win/build.sh --check` green.
+
+### 144.5 The headless proof (scripts/sword31-drive.sh; build 26's env with the 32 block, the test hands; Monado 20 Hz; 0 WARN, the save UNCHANGED)
+- Run boot-check-20261103-114648 (`force32 down32 parry`): a held blade the orc was pressed into - 0 hits; four 150 ms
+  wrist flicks into a fighting infantry - **0 hits** (build 31b: light hits); four committed 300 ms cuts - 4 hits (heavy at
+  93, 113, 115 J with the fist at 6.3-6.4 m/s; light at 37 J, fist 4.7) and 2 `COMBAT brush` (combat's capsule met before
+  the body; the body crossed a frame later: the hit there); cuts staged at 165 cm (the orc closed in) - heavy 106, 114 J,
+  light 40 J, 1 brush. parry18's `inf` (the test guard): 15 contacts, 15 parries; at each block the orc's clock held 120 ms
+  and given back after 400 ms (the 250 ms slow part on 20 Hz frames: `COMBAT hitstop off ... after 399.6 ms`); 6 of the
+  run's 19 blocks met as thrusts (`a thrust (build 32's reach)`). The downed orc's step did not stage (`abil kd` dealt its
+  blow, no knockdown loop; the crouch late).
+- Runs 20261103-122701, -130039, -130943 (`down32`, kills31's staging: `abil kd`, 2.4 s, `abil goto 70`, `crouch hold`):
+  the orc in its knockdown loop (`AI_Bip_KDLoop`); standing (122701) a cut on it landed heavy (61 J) - the game does not
+  make a downed orc invulnerable; crouched (130943, the stealth command held) the cuts down went to combat's hit - one light
+  (42 J) where the blade crossed the lying body, three `COMBAT brush` where it met only combat's capsule - no stealth touch.
+  These orcs had fought before the knockdown (the game had them aware), so the downed rule itself did not fire there: the
+  session's case (a downed orc the game reads unaware, the crouched player's blows stealth touches) is shown by its log
+  only (141.3). The stab down of 122701 read 25 J by the tip alone (cos 0.33 at 10 m/s along the blade): a thrust's energy
+  (the sword and the arm along the blade, weighed by the motion's share along it) now counts - the replays unchanged.
+
+### 144.6 Review b34 (som-b34-review-combat, 2026-11-03): the thrust's reach with both blades read
+With `SOMVR_DEFENCE_CONTACT_BLADE=both` (the build's env: the blade where the hand holds it, as well as the drawn one),
+the hand's blade replaces the drawn one when it is nearer, unless the drawn one already meets. That "already meets"
+test used the plain reach (`SOMVR_DEFENCE_CONTACT_CM`, 15 cm in the env), not the thrust's 30 cm. So when a drawn blade
+crossed a thrust 20 cm from it (a block by the thrust's reach) and the hand's blade lay nearer, along the thrust, without
+crossing it, the hand's blade won and the block was lost. The thrust
+is now decided first and the test uses its reach (somvr_defence.c). tests/test_defence.c `test_thrust_b34` fails on
+build 32/33 (no block) and passes now; with no thrust reach, neither blade meets, as before. The rest of 144 was read
+for stuck states, NaNs and units: the force tiers (sc_blow_j and sc_tier_force: their inputs come from the config, every
+value finite and positive), the body's capsules (swp_body_hit), the clank's slow (cb_hs_tick: its own timer advanced only
+between the stop's end and the slow's end, restored at the time, a death, a sync or a lost orc; the next slow cleared
+after each clank) - no other bug found.
+
+## 146. Build 33: the watch on the forearm, read by raising the wrist; the fog's hard edge is the game's own: `SOMVR_XR_WATCH_LOOK` (2026-11-03, som-b33-watch)
+The user's 11-03 session (logs/boot-check-20261103-093210): the watch on the off wrist hid the whole hand and read as a
+flat sticker (mark 23); the fog now stays in the world, but its onset looked abrupt - no fog, then fog (mark 21).
+
+### 146.1 The watch
+| What | Before (build 10..32) | Now (the som-b33-watch env block) |
+|---|---|---|
+| The face | 10 cm wide (`SOMVR_XR_MINIMAP_QUAD`'s size), the streak/target column beside it scaled alike (~23 x 10 cm in all) | 6 cm (`SOMVR_XR_MINIMAP_QUAD=0.06,0.08,0.045`); the column shrinks with it |
+| Where | its centre 1.5 cm up the forearm from the model's wrist joint: the face spread over the back of the hand | 5 cm up (`SOMVR_XR_WATCH_AT=5,0.8`): on the forearm, the back of the hand and the fingers clear |
+| When | whenever its face turned toward the eyes at all (cos 0.15 / 0.08: from 81 deg, edge-on) | `SOMVR_XR_WATCH_LOOK=raise`: only while the wrist is turned to read it - within ~57 deg of the eyes for 3 frames, gone past ~66 deg for 3 (somvr_vh_face_cfg_raise; code default `any` = the old threshold) |
+- Why not a fade: the face is an OpenXR quad layer over the eye images (no per-layer alpha without an extension WiVRn may
+  not have); a raise-to-read watch with a 9-degree hysteresis comes and goes deliberately instead, like a real
+  smartwatch's raise-to-wake. Not done: the 3D bezel (a mesh pass in the hands layer); the quad still composites over
+  the other hand when that hand passes in front of the watch (the compositor has no depth for it).
+- tests/test_vrhands.c: 60 deg off the old face shows, the raised one not; 30 deg both; the hysteresis (63 deg kept once
+  shown, 70 deg dropped).
+- Boot logs/boot-check-20261103-152345 (scripts/watch33-drive.sh, the watch step; both-eye pictures composed with the
+  layer's quads: logs/winport/render/b33/A2/watch.jpg): the read pose (`hand L head -5 -22 30 -140 0 90`: the forearm
+  across the chest, the back of the wrist tilted to the eyes) shows the 6 cm face on the forearm with the whole hand and
+  every finger clear in both eyes; turned 60 deg away about the forearm it is gone (`watch face away`), back at the read
+  pose it returns (`seen`). 0 WARN, the install and the save unchanged. The cost: the same quad, smaller and shown less.
+
+### 146.2 The fog's onset
+The fog overlay's transmittance is `exp(-L * sigma)`, with `sigma = Rayleigh(h) + Mie(h)` evaluated at the **pixel's own
+height** h (`exp(-max(h, 0) / H)`, the DXBC's instructions 39 and 52-57 of the opaque shader; the same in the OIT one) and
+L the path length. Build 31's edit changes only L (the depth along the view's axis -> the distance along the eye's
+ray: `length(rN.xyz)` = z * sqrt(1 + x^2 + y^2), continuous, at most ~1.3x at a 100-degree view's corners). A hard band
+can only come from sigma or L jumping between neighbouring pixels: at a cliff's rim over a misty valley the next pixel
+is tens of metres lower, sigma jumps by e^(dh/H) (H small in misty weather), and the valley floor below the rim gets
+its full fog at once - "no fog, then fog". That is the game's own height-fog model (density at the end point, not
+integrated along the ray) and the same in its own path length; the edit neither makes nor sharpens it, so both edits
+(SPIR-V somvr_fogpatch.h, DXBC win/somvr_fogdxbc.h) stay as they are. Pictures: the mark-21 spot in today's clear
+weather, radial vs `fx nofog 1` (logs/winport/render/b33/A/fog21.png): a soft haze, no band; the misty-weather step at
+the rim is visible in build 31's radial runs and is the height term's. A real softening would integrate the density
+along the ray (`H (e^-h0/H - e^-h1/H) / (h1 - h0)` from the eye's height to the pixel's) - a larger edit of both
+shaders in both forms, for a later round.
+
+### 146.3 `SOMVR_XR_FOG=ray`: the density averaged along the eye's ray (som-b33-fogray)
+The fix 146.2 named, in both forms, on top of build 31's radial edit (ray = radial + this; any mismatch = radial only):
+- **The maths.** For an exponential height falloff the mean density along a straight ray from the eye's height h0 to the
+  pixel's h1 is `H (e^-h0/H - e^-h1/H) / (h1 - h0)` = `e1 * (e^x - 1) / x` with `e1 = e^-h1/H` (the game's own value) and
+  `x = (h1 - h0) / H` (1 + x/2 for |x| <= 0.01; x clamped to +-80). Applied to both densities with their own scale
+  heights (Rayleigh cb12[14].w, Mie cb12[15].x), the heights clamped at 0 as the game does; h0 is the shader's own sum
+  cb0[11].y + cb12[18].w (the eye's height it already uses for the atmosphere's edge). The sky keeps the game's
+  midpoint density (dh = 0 there). Looking down over a rim, the valley floor's density now counts only for the low part
+  of the ray: the fog thickens with depth into the valley instead of starting at full strength at its floor; looking up
+  at a slope, the ray's lower (denser) air counts too.
+- **DXBC** (win/somvr_fogdxbc.h `somvr_fogdxbc_ray`, the DLL's CreatePixelShader hook): after the height's movc
+  (`movc rH.., rC.., <sky arm>, rP..`) 5 instructions (dh, 0 in the sky), after each density's exp 11 (f(x), the
+  product); one new temp; the container rebuilt, its checksum recomputed. On the real shaders exactly these lines are
+  added (opaque: dcl_temps 6 -> 8 with the radial edit, +808 bytes; OIT 10 -> 12); everything else word for word.
+- **SPIR-V** (vklayer/somvr_fogpatch.h `somvr_fogpatch_ray`, the layer's vkCreateShaderModule): the same steps on
+  IndirectX's translation - the anchors found as stores (`rH.c = max(rH.c, 0)`, the two `-rH.c / H` divisions, their
+  `exp2` stores, the height's movc call and its parameters' last stores, the eye-height sum), 6 float constants added
+  before the first function, new ids from the bound, +236 words; spv_dec.py reads the result as the DXBC's (one line
+  per store), every id defined before its use.
+- tests: test_fogpatch / test_fogdxbc - the synthetic shaders (no density chain) refused; given the real ones (not in the
+  repository), the edit's sizes and checksums.
+- **Proven so far (wound down 11-03 22:30, the week's budget):** offline in both forms (above); on Windows boot
+  20261103-170636 (SOMVR_XR_FOG=ray, weather SON_Day03 = the misty overcast): DXVK created both edited shaders
+  (`FOG shader ... created with the fog by the distance and its density along the ray (9048 -> 9904 / 8168 -> 9024 bytes)
+  -> 0`, no `NOT added`), the mark-21 rim seen level and 25 deg down into the valley (logs/winport/render/b33/WB/): the
+  valley's mist thickens with depth below the rim, no band where the rim meets the valley floor; the wet sheen on the
+  near grass is the weather's (also with `fx nofog 1`). The save UNCHANGED, the 2 WARNs of every Windows boot only.
+- **Not proven:** (1) the SPIR-V form live (no Linux boot: RADV's acceptance of the edited module, the layer's
+  `xr: fog: ... density averaged along it` line, no `NOT added`); (2) the same spot with radial in SON_Day03 for a
+  side-by-side (the start weather is random per boot - SON_Day01/02/03/03_Rain - and `ChangeWeather` by console did not
+  take at the practice spot; watch33-drive.sh's W33_NEED_WEATHER quits a boot in another weather at once); (3) the frame
+  time: the preload's windows (20 Hz pacing, different weathers) are radial 2.10 ms game busy / ray 2.49 ms - weather,
+  not the shader (the edit adds 40 + 2 x 81 instruction slots to one full-screen pass, < 0.1 ms on this GPU by count);
+  no GPU window was captured. So the env keeps SOMVR_XR_FOG=radial (build 31's block); ray is only by name.
+- **Next (in this order):** one solo Linux boot pair at the spot - ray then radial, both with
+  `HEADLESS_MONADO_ENV=U_PACING_APP_IMMEDIATE_WAIT_FRAME_RETURN=1`, SOMVR_PERF/XR_PERF windows `perf fog21` and
+  `perf nofog21` (watch33-drive.sh W33_PERF=1 does both; logs/winport/render/b33/c7.sh + boot2.sh are the scripts, game
+  slots ready); then Windows radial in SON_Day03 (W33_NEED_WEATHER=SON_Day03, slot auto, retry) beside WB; if all
+  three hold, SOMVR_XR_FOG=ray in the som-b33-watch block (comment out build 31's radial line).
+
+## 148. Build 33: what it would take to make the grass 3D in VR - how the game draws it, the options and their cost, the cheap knob tried: `SOMVR_XR_GRASS` (2026-11-03, som-b33-grass)
+The player's report (11-03): the meadow's grass reads as flat pictures stood in the ground, sometimes two crossed - fine on
+a monitor, plainly flat in the headset; is real 3D grass an easy fix, weeks of hand work, or between? Evidence below is
+read from the game's own data (the GOG install's archives, read-only: tools/ltar.py and a BNDL v4 reader), the shaders'
+DXBC (scripts/winport_dxbc.py `dis`), the game database's names, the Linux binary's class names (Ghidra, read-only), and
+headless Windows boots (scripts/grass33-drive.sh, scripts/grass33-depth.py).
+
+### 148.1 How the game draws the grass
+- **The system.** The grass is the engine's procedural vegetation (VegMgr.cpp, VegPatch.cpp, VegRenderBundle.cpp; the
+  classes `CGridPointPicker` and `CGridPointQuadRenderer`; the console's `Clutter.RenderQuads`, `VegSys.QuadMaxDensity`,
+  `VegSys.MaxDistOverride`). Nothing is placed by hand: Nurn's `models\scatter\distributionmesh\nurn\nurnbase.veg`
+  (VEGD v6, 2.8 MB: a painted density map from -560 m / -480 m in 20 m cells with four layers named `SoN_Dense`,
+  `SoN_River`, `SoN_Rocks`, `SoN_RocksRoads`) says where, and the game database's `Vegetation/Set` and
+  `Vegetation/BillboardType` records say what (for Nurn `SoN_Grass02a/b/c`, `SoN_Clump01a/b`; their fields
+  `VegBillboardMaterial`, `VegQuadPlacement`, `VegQuadSize`, `VegQuadStyle` = `WorldFacing | CameraFacing |
+  SurfaceParallel`, `VegScaleIn`, `VegPlatformDensity`). The patches are built on the CPU from that and drawn per view:
+  `CGridPointQuadRenderer::vf_03` culls the patches against the view's camera and its maximum distance, `vf_04` sets the
+  fade (`k_vFadeRange` = (max - range, range), overriding the material's 15 m / 5 m). `Vegetation/ModelType` scatters
+  real meshes the same way (rocks, `ferngroup01a`), but there is **no 3D grass mesh in the game's data**: the only plant
+  meshes are the collectible herbs, one fern group and hand-placed prefabs; the stealth "hide grass" is a card too
+  (`BG_HideGrassCCard`).
+- **The cards.** Nurn's grass material `models\scatter\textures\son_grass01bb.mat` uses
+  `shaders\shadertrees\solid\scattergrass_parallaxfixed.fxo` (one VS of 9836 bytes, one PS of 4048) on a 2048 x 512 DXT5
+  atlas of four 512 x 512 slots: two side views of a tuft of some 30 blades, each followed by its own "parallax
+  billboard" (the material: `k_fNumBillboards` 4, "the total number of billboards laid out in the texture horizontally
+  (including parallax billboards)"). The VS builds each card from its vertex's tuft root (`POSITION`), a horizontal axis
+  (`TANGENT`) and an up axis (`BINORMAL`), unpacked from the patch's vertex buffer: **the cards are fixed in the world**
+  (`WorldFacing`; no camera-facing term in the shader - the engine has the style but Nurn's grass is not it). The ground
+  clumps (`son_clump01.mat`, `scattergrassclump.fxo`, a 4096 x 1024 atlas of four top views) lie flat on the ground
+  (`SurfaceParallel`) and fill the ground between the tufts when looking down.
+- **The shading.** The PS writes the G-buffer (three targets: the normal with the material id 0.506, the albedo with the
+  world tint map's colour, the specular) - the grass is lit by the deferred lights, shadows and fog like everything else.
+  Alpha test at 96/255 times the distance fade (a dissolve, no blending). Wind and the player's push are in the VS
+  (`k_vWindDirection`, `k_fTime`, `k_vVegetationForce1/2`, `k_vVegetationRadius`).
+- **Depth inside a card - the game already has two layers.** The PS samples two slots: the front picture at the card's
+  uv and its parallax billboard shifted by the eye's direction in the card's tangent space (from the tuft root to
+  `k_vObjectSpaceEyePos`) times `k_vParallaxDepth` - x = the back plane (the material: 0.3), y = the front plane,
+  "parallax out" (the material: 0) - scaled by sin(pi u) x h (none at the card's edges and foot, most at its top middle):
+  `mad r0.xy, -rV.xyxx, cb0[27].xxxx, v1.zwzz` (back), `mad r0.zw, rV.zzzw, cb0[27].yyyy, v1.xxxy` (front). Where the
+  front picture is opaque it wins. So each card shows the front tuft exactly on its plane and the back tuft up to 0.3
+  card widths behind it at the top middle. 0.3 is the ceiling: u + d sin(pi u) stays inside its slot only for d <= 1/pi.
+- **What follows the head (not the eye's position) in the VS.** (1) The "triangle bend" (`k_fTriangleBend` 50, "bends
+  the triangles of the quad to remove them disappearing when viewed edge-on"): each corner moves along the card's normal
+  by 50 x (`k_vWorldSpaceCameraDir` . the card's up)^2 x x x (0.5 - v) cm - up to +-12 cm with the head pitched 45 deg
+  down, +-25 cm looking straight down, nothing looking level: the grass's shape changes as the head pitches. (2) The
+  camera's clearance: grass within 2 m of the view's axis, within 5 m and above the eye - 20 cm is pushed down by up to
+  1 m (`min r1.x, r1.x, l(100)`): built for the third-person camera; in VR it parts whatever tall grass the player looks
+  at while crouched (standing, the meadow's ~0.8-1 m grass is under the threshold). Both use the view's forward axis,
+  the same in both eyes - consistent in stereo, but the world deforms with the head's turn, as the sun's star and the
+  fog did (137).
+- **Per eye.** Each eye's pass is a whole RenderScene with its own camera: the patches are culled per eye (96.2: the
+  foliage draws part between the passes), `k_mObjectToClip` and `k_vObjectSpaceEyePos` are set per draw from the
+  pass's camera (the clip matrix must be, or the grass would not sit right in stereo - 7427's depth check found it
+  right; that the eye position is too is what makes the parallax layers per eye: 148.6). 100.5's three draws whose c25
+  differed between the eyes (3000, 12000 / 3000, 8250) fit this shader's `k_vFadeRange` register (c25.xyz; .w is
+  outside the variable): if they are the grass's, its far fade starts at 30 m in both eyes and ends at 150 m in one,
+  112 m in the other (a per-view maximum) - far beyond where it reads as grass; not chased this round.
+
+### 148.2 Why it reads flat in the headset
+A tuft is one 512-pixel picture of ~30 blades on one plane (the front layer), with a second picture up to 0.3 card widths
+behind it only near the top middle. In stereo every blade of the front picture has the card's depth - two eyes see a
+flat plane, and a step sideways slides the whole picture as one. On a monitor nothing gives that away; in the headset the
+eyes measure it. Large cards (a whole tuft each) are the worst case for this: many small cards at many depths would read
+as volume even if each is flat. The head-pitch bend adds a second tell: looking down, the cards fold.
+
+### 148.3 The options and their real cost (the budget: re-winport.md 7.1 - Windows, per stereo frame p50: the render thread 5.4 ms, the GPU 4.2 ms at the null compositor's idle clock, eye 1 = 85-90 % of eye 0; at 90 Hz 11.1 ms. On Linux the vegetation is the render thread's biggest lever: 119.4, quality 4 -> 3 = -2.6 ms)
+| Option | What it is | Look in the headset | Frame cost | Work |
+|---|---|---|---|---|
+| (a) cards turned to each eye | not applicable as such: Nurn's cards are fixed in the world already; a card turned to face the eye is the flattest possible look. What does follow the head is the VS's bend and push (148.1): set them by the eye's position | the grass no longer folds when looking down, tall grass no longer parts where a crouched player looks; no more depth | ~0 (4 VS instructions) | hours (done: `SOMVR_XR_GRASS` bend, push) |
+| (b) more cards per tuft | 3 cards at 60 deg instead of the game's 1-2: either the database's `VegQuadPlacement` in memory (the record's binary layout not decoded: GADB v17, no reader yet), or each grass draw drawn twice more with the VS turning the cards +-60 deg about their roots | denser, never edge-on; still flat pictures, now three crossing planes per tuft | GPU: the grass's vertices x3 and its alpha-tested G-buffer fill x2-3 near the player; on Linux each extra draw costs the render thread (Feral's translation) | 2-4 days (+ the database decode for the first route) |
+| (c) depth inside a card | (c1) the game's own front plane: `k_vParallaxDepth.y` from 0 to 0.3 (the PS's operand made a literal): the front picture pushed toward the eye as the back one is pushed away - 0.6 card widths of depth at the top middle, per eye. (c2) the same depth written to the depth buffer (SV_Depth) so hands, blades and orcs' legs cut it where it appears | (c1) rounded tufts, the front blades nearer than the back ones; the base and edges stay on the card's plane | (c1) 0; (c2) the grass's early depth test lost (alpha-tested, much overdraw): a GPU risk | (c1) hours (done: `SOMVR_XR_GRASS` front); (c2) a day |
+| (d) real 3D blades | our own instanced blade mesh at the game's tuft roots (the patch's vertex buffer: root, axes, size, tint) within ~6-8 m, drawn into the game's G-buffer with its three outputs, its wind and push and tint; the cards kept beyond with a crossfade ring | real grass at the feet: blades at their own depths, the hands among them | GPU ~1-2 ms per eye for ~10-20 k tufts x 20-30 blades (estimate); the render thread +1 draw per patch | 2-4 weeks: an HLSL -> DXBC toolchain for our shaders (none in the build), draws injected into the game's G-buffer pass in both eyes' passes (the D3D11 context's sites exist only as test captures), the look matched to the game's lighting and colours, the ring, the density by the vegetation quality, perf at 90 Hz; Linux needs the same in IndirectX's SPIR-V |
+| (e) the vegetation quality | the VR preset's `VegetationQuality:3` (119.4, chosen for Linux's render thread); 4 = Ultra adds density and distance (`VegSys.QuadMaxDensity`, `VegSys.MaxDistOverride`) | a little denser at the feet (119.4's pictures); the cards' form unchanged: not 3D | Linux +2.6 ms render thread; Windows' render thread now has room (5.4 of 11.1 ms) - unmeasured | minutes (a preset value), a perf check |
+
+### 148.4 The cheap knob, built: `SOMVR_XR_GRASS=vr|front,bend,push|game` (Windows DLL; code default game = the game's grass; `SOMVR_XR_GRASS_FRONT` 0..0.31, default 0.3)
+win/somvr_grassdxbc.h, hooked in win/somvr_win_d3d.c at `ID3D11Device::CreateVertexShader` (COM slot 12) and
+`CreatePixelShader` (15, shared with the fog's edit: the fog first, then the grass). Matched by the reflection's names
+(`$Globals` holds `k_vWindPhase` and `k_vObjectSpaceEyePos`: the scatter grass's family only) and by structure; any
+mismatch = the game's blob and a `GRASS .. stays the game's: why` line. The container is rebuilt (the program's length,
+the chunk, the later chunks' offsets, the total size, the checksum).
+- **front** (PS with `k_vParallaxDepth`): `mad rA.zw, rV.zzzw, cb0[27].yyyy, v1.xxxy` -> `.., l(F,F,F,F), ..`: the front
+  picture shifted the other way from the back one - the tuft's front blades nearer the eye, its back ones farther, each
+  eye by its own direction; at the card's edges and foot nothing moves (the game's sin profile). +8 bytes.
+- **bend** (VS with `k_fTriangleBend`): before `dp3 r0.x, cb12[26].xyzx, r3.xyzx` four instructions make
+  r8 = normalize(v0.xyz - cb0[12].xyz) (the eye to the tuft's root, object space like the card's up r3) and the dp3 takes
+  r8.xyzx; `dcl_temps` 8 -> 9. The cards bend by where the eye is, as much as before for the same place, not by where
+  it looks. +108 bytes.
+- **push** (any of the family's VS): `min r1.x, r1.x, l(100)` -> `l(0)`: no grass pushed down near the view's axis.
+- Proven offline (test_grassdxbc, in `build.sh --check`): synthetic programs in a container with a real reflection -
+  each part's words, the refusals (not the grass's; a clump-like VS without the bend: push only; two pushes: push
+  refused; another register than the front plane's: refused), the rebuilt container's size, chunk offsets, length and
+  checksum. On the game's real blobs (extracted from son.arch05; given as files, not in the repository): the grass VS
+  -> bend + push (9836 -> 9944 bytes), its PS -> front (4048 -> 4056), the clump's VS -> push, the clump's PS untouched;
+  `winport_dxbc.py dis` of each against the game's: exactly the instructions above differ.
+- Not on Linux: IndirectX's SPIR-V of the same shaders would need the same three edits in the layer (as 137.3's fog).
+
+### 148.5 The answer and the recommendation
+- **Not a super easy fix, not weeks of hand-work either - but real 3D grass is weeks of engineering.** The game has no 3D
+  grass to switch to; every blade the player sees is painted on large cards. What is cheap (hours, built here) is using
+  the depth the shader already has: the front picture pushed out as the back one goes in (0.6 card widths of depth at a
+  tuft's top), and taking the head's turn out of the cards' shape. That rounds each tuft; it cannot give single blades
+  their own depth (the picture is one layer per side), and the base and edges of each card stay flat.
+- **Recommended order:** (1) `SOMVR_XR_GRASS=vr` in the headset now (zero frame cost) - the user judges whether the tufts
+  read as round; (2) if the hands or orcs' feet visibly cut the grass at the wrong depth, (c2) SV_Depth (a day, a GPU
+  check); (3) only if that is still flat, (d) real blades in a ring around the player (2-4 weeks of one helper, ~1-2 ms GPU
+  per eye; the risks: matching the game's look and lighting, the card-to-blade ring, 90 Hz on the user's GPU). (b) more
+  cards is not worth its cost: it multiplies flat planes. (e) raising the vegetation quality on Windows (its render thread
+  now has room) is a cheap separate win for density, not depth.
+
+### 148.6 Runs (logs/boot-check-20261103-; Windows, the practice meadow, scripts/grass33-drive.sh)
+| Run | What | Proves |
+|---|---|---|
+| 205332 (=game, slot 3) | the nine poses; `GRASS SOMVR_XR_GRASS=game: parts none` | the baseline; 2 WARN = every Windows run's two (H9, layout B); the save UNCHANGED |
+| 205416 (=vr, slot 1) | the nine poses; `GRASS VS 7bce2cf0..: (9836 -> 9944 bytes): the bend .. no push`, `GRASS PS 8252b150..: (4048 -> 4056): the front plane out`, `GRASS VS 900e192a..: (9572 -> 9572): no push` (the clump) | **DXVK takes the edited shaders**: the game ran its whole boot on them, no refusal line, no crash; 2 WARN (the same two); the save UNCHANGED |
+| 210413 / 210252 (=game / =vr with the VR preset) | stopped by the harness at 21:06 when the user's VR session started (exit 143, before the poses) | - |
+
+**The headless Windows slots draw no grass cards**: every slot's prefix (logs/winport/prefix, -slot2, -slot3) has
+`VegetationQuality 0` (with Mesh, Shadow, Lighting 0) and headless_vr.sh does not apply SOMVR_RENDER_SET on Windows (its
+own note). At Low the meadow shows the terrain's grass texture only - the first pair's pictures (frames 662 / 706) have
+not one card, so their depth comparison (grass33-depth.py --ab: stereo depth against the depth buffer, p50 within
+0.3 cm in both) measured the ground. The user's launcher writes the preset (3) into its own play prefix. The same holds
+for every Windows headless measurement so far (re-winport.md 7.1's frame costs were taken at Low). The second pair wrote
+the preset into the slot's render.cfg for the boot (restored after, checked equal to the original). Still unproven: that
+the grass's eye position is per eye, and the look - the next boots: the second pair again (/tmp/claude-1000 wrapper
+recipe in the handoff: take the slot by hand, the preset into its render.cfg, `HEADLESS_SLOT=N`, restore, release).
+
+**The pair with the VR preset (11-03 22:36 / 22:58; headless_win.sh now writes it, re-winport.md 7.11's note):**
+| Run | What | Proves |
+|---|---|---|
+| 225856 (=game, slot 3) | the nine poses, weather SON_Day01 (`perf console`), render.cfg = the PC's detection + the preset (put back) | the baseline with the meadow's tufts drawn; 2 WARN (the usual two), the save UNCHANGED |
+| 223607 (=vr, slot 2) | the same; `GRASS VS ..: the bend .. no push`, `GRASS PS ..: the front plane out` | the pictures clean in both eyes (the tufts at the feet, ahead, crouched: no slot bleed, no broken card; compose/ in each run); 2 WARN, the save UNCHANGED |
+
+- **Each eye has its own eye position: the front picture comes out in stereo.** grass33-depth.py, the eyes' disparity
+  against the depth buffer (the card's plane) within 4 m, A -> B: the median moves nearer in all six poses (-2.5 -> -4.0,
+  0.2 -> -0.1, 0.3 -> -0.3, -1.0 -> -2.8, -0.9 -> -3.4, 0.7 -> -0.4 cm), the share of blocks more than 5 cm in front of
+  their card grows in all six (the cleanest pose, p45 with ~2000 blocks: 7.7 -> 15.9 %, p10 -2.8 -> -10.1 cm). With one
+  eye position for both eyes the front picture would shift alike in both and nothing would change. The size: a few cm
+  to ~10 cm at 1-2 m - a rounder tuft, not single blades.
+- **The grass no longer changes shape with the head's pitch.** render31-yaw.py, pitch -20 against -45 re-projected (a
+  pure turn), share of pixels off by > 12: game 41.5 % (the same pose twice: the wind) -> 53.0 / 54.7 % (+12-13 points);
+  vr 23.2 % -> 25.2 / 25.9 % (+2-3).
+- Not judged headless: the hands among the blades - the depth buffer stays the card's plane, so a hand pushed into a tuft
+  is cut at the plane while its front blades now show up to ~10 cm nearer (148.3 (c2) if it shows); no orc was in the
+  pictures. Shipped on: `SOMVR_XR_GRASS=vr` in the env block (Windows; Linux keeps the game's grass).
+
+### 148.7 For the headset (not provable headless)
+- Whether the tufts read as round with `SOMVR_XR_GRASS=vr`, or as two layers (a "cut-out on a cut-out"); whether the
+  front layer's slide when the head moves sideways reads as depth or as swimming. `SOMVR_XR_GRASS_FRONT` 0.15 is the
+  milder setting.
+- Looking down at the feet: the grass should no longer fold or lean as the head pitches; crouched in tall grass, it no
+  longer parts where the player looks.
+
+## 145. Build 33: healing herbs picked by the hand - the glow at the game's herb prompt, the grip takes it, the fist at the mouth eats it: `SOMVR_HERBS` (2026-11-03, som-b33-herbs)
+
+The user's 11-03 session (logs/boot-check-20261103-093210, mark 18, game t 50351): health came back by B at the blue
+flowers - they would like a physical way. What the game does (43.4, the session's log): an herb is a nav marker
+`Collectible_Flower_*` (17 on the save; the session's at 31314 2190 -25167, `_O`, by the practice meadow); within ~0.7 m
+the game raises the pick prompt 'Combat_Activate_Flower' on 123, and 123 is then its own pick (`Activate_HealthCollectable`:
+the heal, the plant gone, its respawn - the game's rules); SOMVR_USE's B holds 123 at such a prompt (`USE t=50345.026 B at
+'Combat_Activate_Flower': 123 ... held`). Code: somvr_hands31_game.c (`hrb_*`), one call each in somvr_use_game.c
+(`us_hand_pick`: 123 for 0.25 s while a pick prompt is up, as B's), somvr_combat21_game.c (the glow), somvr_verbs_game.c
+(`vb_nograb`: no wall grab with an herb in a fist), somvr_abil2_game.c (the whistle leaves such a fist alone).
+
+### 145.1 The design: eat it
+- **Why eating**: it is the readable VR idiom for food (the hand brings it to the mouth; the moment of the heal is the
+  player's), it needs no button and no new grip state; a crush in the fist was the other choice, but the user grips with
+  the whole fist anyway (11-03 mark 20), so a crush would not be told from the hold.
+- **The cue**: while the game's herb prompt is up (the game says the herb can be picked now), the grab cue's glow at the
+  herb (15 cm over its marker, faint); an open, free hand (not on the sword, the bow, a wall, an orc) within
+  `SOMVR_HERBS_REACH_CM` (40) of it: the full glow and a tick.
+- **The take**: the grip there takes it - the glow moves into the fist, a light pulse; nothing is picked yet (the plant
+  stays in the ground until it is eaten).
+- **The eat**: the fist within `SOMVR_HERBS_MOUTH_CM` (16) of the mouth (the whistle's mouth point) for
+  `SOMVR_HERBS_MOUTH_MS` (250) - SOMVR_USE presses 123: the game's own pick, its sound, its heal; three short pulses (the
+  bites). The grip opened before, or the prompt gone (Talion moved off it), drops it: nothing picked.
+- B at the prompt stays the fallback (SOMVR_USE, unchanged).
+
+### 145.2 The herb's place: Linux exact, Windows at the feet
+- Linux: the nav markers' walk (the practice's navdump: `PRN_LIST`, `PRN_NAV_POS`) gives each herb's place; the cue sits
+  15 cm over its marker and the reach is the palm within 40 cm of that.
+- Windows (the GOG build): `PRN_NAV_POS` is not ported (win/sites-world.tsv: notfound), so the walk never runs there (it
+  would call an unported address); the game's prompt already says the herb is within ~0.7 m of Talion's feet, so an open
+  free hand within 1 m of him along the ground and within 40 cm of the ground (`HERB ... 'the herb at the feet'`) takes
+  it - the cue glow then sits on the ground under the hand. When the nav site is ported, the exact place comes back by itself.
+
+### 145.3 Runs (headless; scripts/headset-build26.env with the som-b33-herbs block, `SOMVR_HANDS_TEST=1`; hands31-drive.sh `herb`)
+| Run (logs/boot-check-20261103-) | Build | What it shows |
+|---|---|---|
+| 152929 | Linux | `practice hurt 50`, a trip to the meadow's herb ('Collectible_Flower_O' at 31314 2190 -25167), crouched: `HERB cue` (the herb 113 cm from Talion's root), the left hand put onto it by the cue line's herb and palm - `in reach` at 16 cm, the grip: `taken`, the fist to the mouth (the whistle's pose): `eaten` after 0.30 s at 2 cm - the game's own pick ran (`Talion attack 'Activate_HealthCollectable'` 3.7 s, `pick prompt down`, the plant gone). The heal was read 1 s after the eat (60.2 -> 60.2): before the game's 3.7 s pick ended (fixed: read at its end). 0 WARN, the install unchanged, GameData.sav UNCHANGED |
+| 154208 | Windows | the herb prompt up, no hand pick: the herb's place unknown there (PRN_NAV_POS not ported) - the ground mode above is the fix. 2 WARN of the Windows render (`H9 not installed` at start: another helper's Windows run has the same) |
+| 164016 | Windows | the ground mode: `taken` - `eaten` (the fist 2 cm from the mouth for 0.25 s) - the game's pick: **Talion's health 60.1 -> 120.0** (read when its 3.7 s pick ended), the prompt gone (the plant picked). Its "ground" was Talion's root (mid-body: the hand at rest counted as at the ground) - fixed: his feet, the root less 102 cm (`g_cl.cfg.foot_cm`) |
+| 171313 | Windows | **the whole chain**: the hand at rest 76 cm from the ground point (no reach), reached down: `in reach` (6 cm), `taken`, `eaten` (2 cm from the mouth, 0.30 s), the game's pick - **Talion's health 60.0 -> 120.0**, the plant picked. Both eyes, looking down (frames 713, 753): the blue cue on the ground at the reaching hand, then in the fist. 2 WARN of the Windows render (as 154208), the install unchanged, GameData.sav UNCHANGED |
+
+### 145.4 Switches, lines, the Controls page
+- The som-b33-herbs block: `SOMVR_HERBS=on` (code default on; needs SOMVR_USE). More: `SOMVR_HERBS_REACH_CM` (40),
+  `SOMVR_HERBS_MOUTH_CM` (16), `SOMVR_HERBS_MOUTH_MS` (250). No key of the user's settings file.
+- Lines: `CONFIG herbs=...`, `HERB t=.. cue: ...`, `HERB t=.. taken`, `HERB t=.. eaten ... Talion's health N before`,
+  `HERB t=.. after the game's pick (S s after the eat): Talion's health A -> B`, `HERB t=.. dropped ...`, `HERB END`.
+- The Controls page (the coordinator's): a new row "Herb: grip it, eat it (hand to mouth)".
+- For the headset: whether the glow under the hand is enough on the Windows build (no exact herb spot there yet), and
+  whether 16 cm / 0.25 s at the mouth reads as eating; the game's pick plays its own 3.7 s pick while Talion stands.
+
+## 149. Build 34: the next VR finishers from the game's own paired kills - their keys read from the game's animation sets offline, six picks as 1-3 guided motions, a data file for 140's framework (2026-11-03, som-b34-finishers-next)
+
+Why: 140 built the neck stab (F6) as the player's own guided motion with a straight geometric path. The next
+finishers need the game's own facts per kill - how long it is, when it hits and severs, where the blood goes, how far
+the orc's half moves - and a path where the motion curves. No game slot was needed: the facts are in the game's
+animation sets, read offline. Data: mod/somvr/assets/finishers.txt (not read by the mod yet). Tools: tools/anix.py
+(the sets' keys), tools/finishers_check.py (the data file against the sets and attacks-full.tsv), tests
+tools/tests/test_anix.py. All 39 kill rows' keys: docs/re-kills-keys.tsv. Handoff: handoff/HANDOFF-finishers.md.
+
+### 149.1 Where the keys are (static, read-only)
+- The paired kills' animations are in corecharacter.arch05's charactercommon.embb (`tools/ltar.py get`; 80 MB
+  unpacked): Talion's halves in `animation\player\elfmisc\pl_syncaction_chordkill_stand.anix` (the standing and
+  stunned executions, the captain's), `..._chordkill_onground` (the downed), `..._stealthkill`, `..._counter`; the
+  orcs' halves in `animation\shared\orc\orc_syncaction_*` with the same suffixes; the captains' resist/immune and duel
+  finishers in player_talion.embb (`pl_syncaction_chordkill_st_resimm`, `pl_syncaction_warlordfinisher`).
+- **The names pair by prefix**: Talion's `PL_Bip_Sync_X` <-> the orc's `Bip_PL_Sync_X` (also `PL_Orc_` <-> `Orc_PL_`,
+  `Elf_OrcInf_` <-> `OrcInf_Elf_`, `Elf_Sync_InstaKill_St_F` <-> `Orc_Sync_InstaKill_St_F`); the orc's name is its
+  record's AnimationData.Name (133's `kills play` lines of boots 1102-113313..144518: all 39 rows).
+- **ANIX v42** (enough for the keys): a 0x20-byte header (`ANIX`, 42, the size, 0x20, two section offsets, the tail's
+  size), the compressed tracks (formats SQ03/AQ03/STRI/UATR/SV01 named per record - not decoded), one record per
+  animation (a 0x30-byte name, the track formats, the track-to-bone map, the key strings inline; two transforms: the
+  root at the start and at the end), the string pool (the asset's path, 'bind', the animation names, 'Null', the key
+  strings) and one key table per animation in the records' order: a box (3 floats), the name's offset in the pool,
+  16 zero bytes, frames (30 fps), K, u32[K] key frames, u32[K] packed `ms | string << 24` (0xff = none) - the same
+  layout as the in-memory AnimData (re-combat-vr.md 3.3: +0x10 frames, +0x14 count, +0x20 frames, +0x30 packed).
+- **Checked against runs and itself**: F6's orc half is 3833 ms - boot 164142 (140.2) saw it settle at 3.87 s; F4's
+  half is 4433 ms - 133.1 saw that orc stand up again from 4.5 s; F6's orc root moves 122 cm - 164142 saw the path left
+  ~1 m from the orc its half had moved. And the two halves' keys, stored apart, meet on one clock: Talion's SEVER and
+  the orc's neck blood at 933 (F2_Sever) and 2333 (B4_Sever) and 6266 (the captain's), Talion's stomp and the orc's
+  head blood at 733 (KD_R2), Talion's kill 1533 and the orc's face blood 1566 (F5).
+- What a key says: `APPLYDAMAGE`/`AD` = the hit (the death blow when it is the last), `SEVER` = the head off,
+  `BSLOWMO Instakill_01_SM`..`ESLOWMO` = the game's own slow motion, `STOP_ALIGN` = the pairing's alignment ends,
+  `BCAM`..`ECAM` = the game's sync camera (the presentation VR never plays), `MeleeFX BloodSA_<size>_Weapon<Mid|Tip>_
+  <Inward|Outward|Trail|TrailRev|Tangent|TangentRev>` = the blood at the blade's mid or tip: Inward = a stab going in,
+  Outward = coming out, Trail = a cut (the spray along the blade's travel), Tangent = across it. On the orc:
+  `DELAYRAGDOLL`/`ALLOWRAGDOLL`/`RESUMERAGDOLL` (the ragdoll held, allowed, back on: its death), `DROPITEM 0|1` (its
+  weapon, its shield), `BloodSA_<n>_<Node>_<Face>` (the wound: Neck_Top, Head_Front, Torso_Front, ...).
+- The records' end transforms are the root's whole motion [med]: Talion's halves travel 0.5-2.7 m (the sidestep 1.7 m
+  and a half turn; the stealth kills 0.4-1 m; the drops from above 4.2 m) - why a paired half may never move Talion in
+  VR; the orcs' halves move 0.3-1.8 m (below).
+
+### 149.2 The six picks (and the neck stab as built): mod/somvr/assets/finishers.txt
+Times: ms in Talion's half (the orc's half on the same clock). Motions: the player's, in order.
+
+| id | source -> target (sync = source) | Talion's / the orc's half | kill / sever (ms) | the game's slow motion | the orc's half: ragdoll, travel | VR motions (contact ms: blood) | path |
+|---|---|---|---|---|---|---|---|
+| neck (140) | PC_Bip_Standing_InstaKill_F6 -> AI_..._F6 | NeckBellyStab 2900 / 3833 | 2000 (the belly) / - | 1500-1800 | 2800, 122 cm + 216 deg | stab Neck (1400: Inward, Outward) - the kill at its way in (140); the game's own goes on to a belly stab (2000) | line 15/22 cm (built) |
+| behead | PC_Bip_Standing_InstaKill_F2_Sever -> AI_..._F2_Sever | SideStepSever 2366 / 3133 | 933 / 933 | 933-1200 | 1500, 175 cm | one cut through the neck (933: Trail; the orc's Neck_Top blood) | record |
+| face | PC_Bip_Standing_InstaKill_F5 -> AI_..._F5 | F_2_StabHead 3200 / 4466 | 1533 / - | 933-1099 | 2366, 182 cm | stab Head (999: Inward, Outward); stab Head - the kill (1499-1533: Inward, TrailRev; the orc's Head_Front 1566) | line 15/12, 15/14 |
+| backneck | PC_Bip_Standing_InstaKill_B4_Sever -> AI_..._B4_Sever | B_NeckStabSever 3866 / 4400 | 2333 (AD) / 2333 | 900-1100 | 2700, 134 cm + 84 deg | from behind: stab Neck (900: Inward, Outward); stab in, stays (1700: Inward); the cut out sideways - the head (2333: Trail, Tangent) | line 15/18, line, record |
+| downed | PC_Bip_KD_InstaKill_R2 -> AI_..._KD_InstaKill_R2 | Gr_R_Stab 3266 / 3233 | 1766, 2133 / - | 1500-1733 | 2500, 148 cm + 80 deg | down into the chest (1400: Inward, Outward; a hit); down into the face - the kill (1966: Inward, TipTrailRev; the orc's Head_Front 2100) | line 15/25, 15/12 |
+| stunned | PC_Bip_StunnedInstaKill_B2 -> AI_Bip_PC_Stunned_InstaKill_B2 | HeadChopB2 2500 / 2333 | 899 / 899 | 899-1133 | 1233, 32 cm | from behind: one chop through the neck (899: Trail, Tangent) | record |
+| captain | PC_Bip_Standing_InstaKill_Warlord_F_Sever -> AI_Warlord_PC_InstaKill_F_Sever | Instakill_Warlord_F 8700 / 8800 | 6266 / 6266 | 899-1166, 3299-3466, 3833-4399, 5899-6066 | 7099, 99 cm + 86 deg | stab the belly, out (666-899: Outward x3; a hit); stab again, out (3733-4133; a hit); the cut - his head (6133 Trail, 6266 SEVER) | line 15/25 x2, record |
+
+Why these (the decisions mine, on the merits: 1-3 clear motions, the body the blade goes into named by the game's own
+blood keys, the orc's half short and close where possible): the beheading cut is the single cleanest _Sever (one
+Trail cut, the kill and the head at one key) - F7_Sever (SplitHeadDecap) splits the head first, B3_Sever cuts a leg
+first; the face stab is F5's two stabs into the head's front (F7_Sever wounds the head too, but by cuts: Head_Top,
+then the sever); the back kill is the one B row with two stabs and the head (B2 cuts both knees and stabs the upper
+back twice - a second back kill without the head; B4 cuts a leg and stabs once; B jumps over the orc); the downed R2 is the two-stab ground kill
+(R1/L1/R2_Sever are head chops, R is the belly, L a kick-up); the stunned chop from behind moves least of all (32 cm,
+Talion's 46 cm) and rewards walking behind a dazed orc; the captain's is the game's own captain execution (the Resist /
+Immune rows do not kill). Left out: the game's openers done by Talion's body (F2's parry and sidestep, F5's disarming
+cut, B4_Sever's knee cut, R2's stomp) - the orc's half plays its side of them.
+Mirrors and alternatives (data in docs/re-kills-keys.tsv): KD_L2 -> Gr_L_Stab for an orc on its other side (by its
+name, not yet read in a run: stabs at 1233 and 1666, AD 1766); the stunned orc from the front St_F (stabs 633 and
+2000, the kill 2000); the stealth kills for the knife design (SkullStab: stabs 666 and 1866, AD 2033; StabNeckBreak:
+499, AD 2233; TakeDownStab: 1366, AD 1866).
+
+### 149.3 The kill rows' own lengths and moments (docs/re-kills-keys.tsv)
+SOMVR_KILLS' table (somvr_kills_game.c g_kl_rows, 39 rows) has `death_s` and `len_s` all 0 (not measured): the TSV has
+each row's orc half's length and its ALLOWRAGDOLL / RESUMERAGDOLL, Talion's half's length, APPLYDAMAGE, SEVER, slow
+motion and STOP_ALIGN - e.g. F2_Sever's orc 3133 ms, ragdoll allowed 1500; KD_R2_Sever's 3133, 1400. Unread: F9's
+Talion half (not in the stand set) and the interrogation kills (another set).
+
+### 149.4 The recording step (the paths marked `path=` empty: every cut)
+140's line is fitted at the ready; a cut needs the game's own path. The recording, for the next round, per finisher:
+1. **A headless recording boot** (the Windows build; never the player's game): a test word `finisher rec ID` puts a
+   practice orc in the row's state (fighting; stunned by its combat state, 2.2 of re-combat.md; downed; a captain) on
+   the row's side and starts the game's own pairing the way 133.9 did for the stealth kill: `FUN_00a8c700(pc, node,
+   source, orc)` with the source's node (the execution chord's `PC_InstaKill`, the ground kill's), so the sync aligns
+   both bodies and both halves play. Nobody wears it: the sync may move Talion and the camera there; the layer's
+   theatre stays off so the logged frames are the world's.
+2. **The world at SlowMO 0.25** for the recording (the sync runs on the world's clock): about four game frames per
+   animation frame.
+3. **Each frame** while Talion's attack is the source: his half's time (FindTrackerPlaying + GetCurAnimTime, re-combat-
+   vr.md 3.2), the drawn sword's tip and mid (the weapon object's transform and the blade's axis at 140's FN_BLADE_CM
+   - the game's blood keys name the same two points, WeaponTip and WeaponMid), the orc's node of the motion (stl_body:
+   Pelvis, Torso, Neck, Head) and its root's yaw; a `FINREC id ms tip mid node yaw` line.
+4. **Offline**: cut each motion's `rec` window, put the tip in the node's frame at the window's start (the orc's right,
+   up, ahead), resample to 16 points by arc length and write `path=` (finishers_check.py checks the form). The guided
+   blade then rides the path the way 140's rides its line: progress by the hand's speed along the path's local way.
+5. Without any playback (lighter, not yet tried): SampleNode (+0x168) on Talion's model with his half's animation index
+   (GetAnimIndex of the name in the file) and on the orc's with its half, every 33 ms - both in model space with no
+   root motion [med]; their placement against each other still needs one real start's roots. Decoding the tracks
+   offline (149.1's formats) would make the whole step offline - not attempted.
+
+### 149.5 Decisions for the next round (mine, on 140's rules)
+- One snap per finisher; the sword stays on the guided path through every motion; after a motion the outline moves on
+  to the next motion's start, the blade glides there under the hand at the same speed rule; a cut's way is its path's
+  local direction, and it must cross the node (the sever at the crossing, 133's XC_SEVER with the blade's velocity).
+- The orc's half starts at the snap (not at the way in): its clock runs at the world's slow rate to each motion's `at`
+  and waits there (its time held) until the player's blade reaches that contact; after the last it runs on at full
+  speed (140's end). So its own openers (the kneel, the dropped weapon) play while the player lines up, and the wound
+  is where the blade is. Its travel (0.3-1.8 m) is held by 133's 55 cm keep-off and ends at the death's ragdoll.
+- The outline of a motion goes where its node will be at `at`: the orc's half sampled there (SampleNode on the orc's
+  model at `at`, times the orc's transform), not where the node is at the ready.
+- Which finisher: by the orc's state and side (ready), in turn among the fits like 133's table; the captain's only when
+  the game's own selection picks its record for him (his strengths; Last Words first).
+- Switches: none this round (no mod code). The data file is the build-34 table; the next round's loader reads it under
+  SOMVR_FINISHER.
+
+### 149.6 Open
+- The cuts' paths (behead, backneck's last, stunned, captain's last): the recording boot (149.4).
+- The captain's orc half and KD_L2's pairing are by their names, not yet read from a run.
+- The orc halves' travel is the root's total; its course over time (does it step in before the hit or after) needs the
+  recording or the tracks.
+## 142. Build 33: the bow's feel from the 11-03 session - the strike held, the string by the face, the bow's turn filtered and held, Bow from Grip (2026-11-03, som-b33-bow)
+
+The 11-03 session (boot 20261103-093210) on the bow: the arrow now stays in front of the face (136.6), but the string
+came too close to it; an aimed shot turned into the Shadow Strike's teleport; the string's ends did not meet the bow's
+tips; the player wanted to try the bow by the left grip without the reach to the shoulder; and the drawn bow flickered
+when the hand twisted or the tracking dropped, which made the aim feel unpredictable.
+
+### 142.1 The Shadow Strike by X held (`SOMVR_BOW_STRIKE_PRESS_MS`)
+- **Cause** (somvr.log at 50291.480): `STRIKE t=50291.480 press 2: X with the bow out (draw): CombatPrimary04 121 for 150
+  ms; the game's Shadow Strike prompt up` - the left X while the bow was drawn at an orc: the game's Shadow Strike (the
+  dash to it). The session's three X presses with the bow out (50253.3, 50291.5, 50681.0) each came within 0.6 s of a
+  bug mark (50253.9, 50292.0, 50681.4): the left thumb, on its way to the mark's Y, crossing X.
+- **Now**: X must be held `SOMVR_BOW_STRIKE_PRESS_MS` (build 33 env 400; code default 0 = build 32's press) with the bow
+  out; a light tick in the left hand at its start; let go sooner, or B / Y pressed meanwhile (the mark's chord): nothing,
+  logged `STRIKE t=.. X let go | with B or Y (the mark's chord) after N ms with the bow out: no Shadow Strike`.
+
+### 142.2 The string by the face (the layer's fade)
+- The string the player sees is the layer's (vrhands v5); its near-eye fade (build 18: 6..16 cm, per vertex) acted on two
+  long pieces, so 10 cm from the drawn middle it was still at more than half. Each half is now 4 pieces, short toward the
+  middle (at 0, 0.55, 0.78, 0.92 of the way: `SOMVR_VH_STRING_SUB`, 192 vertices), and the fade is 10..22 cm: the
+  string's last 10-20 cm by the face are gone, the rest as before. tests/test_vrhands.c (`the string by the face`).
+
+### 142.3 The bow's turn filtered, inferred poses held (`SOMVR_BOW_TWIST_HZ`, `_BETA`, `SOMVR_BOW_LOST_HOLD_MS`)
+- While drawn the bow's model turns onto the line from the string hand to the nock (build 16's alignment), so the string
+  hand's tracking near the headset (the controller hidden by the face) and the bow hand's tremor both turned the bow and
+  the aim frame to frame.
+- `somvr_bow_qfilter` (one-euro on the angle: `SOMVR_BOW_TWIST_HZ` 4 Hz at rest + `_BETA` 1 Hz per rad/s; tests/test_bow.c
+  `test_qfilter33`: a 2-degree 9 Hz tremor mostly gone, a 90-degree turn in 0.25 s followed within ~3 frames) on the
+  drawn bow's final turn (the arm path, after the alignment) and on the bow hand's turn into the step (the nock, the
+  aim); nothing on positions.
+- `SOMVR_BOW_LOST_HOLD_MS` (500): while a hand's position (or turn) is only inferred (its TRACKED bit off), its last
+  tracked one is used, up to 0.5 s - the step's, the arm's and the alignment's string hand.
+- The aim follows the arrow: the shot is the line from the string hand through the nock, and the bow and the arrow are
+  turned onto that line while drawn - what the player sees is what flies (both hands moved together keep it). The
+  session's "unexpected" turns were the frame-to-frame flicker above. Line `BOW t=.. aim steps: the drawn ray's turn
+  frame to frame X deg rms, Y at most (.. held: positions N, turns M)` each second while drawn; the word `bow twist HZ`.
+
+### 142.4 Bow from: Shoulder | Grip (`SOMVR_BOW_TAKE`, the Fight page's row)
+- `SOMVR_BOW_TAKE=grip` (the VR menu's Fight page, "Bow from" under "Bow string"; the settings file's `BOW_TAKE`, bit 1
+  of `somvr_settings.bow_string` - no spare byte was left): the left grip closed anywhere takes the bow once it has
+  stayed closed 120 ms with nobody else taking it (a climb hold, an orc's grab, the hilt, the dagger, the wrist panel);
+  let go while not drawing puts it away; at the shoulder as before. Code default and build 33 env: shoulder (the
+  player's test option). tests/test_vrmenu.c `test_bowtake33`; the word `bow take grip|shoulder`.
+
+### 142.5 Runs (headless; scripts/headset-build26.env + the som-b33-bow block + SOMVR_HANDS_TEST=1; scripts/bow33-drive.sh with the layer's test hands holding the bow as abil27c's real-hand poses; the install unchanged, GameData.sav UNCHANGED each)
+
+| Run (logs/boot-check-) | Build | What it showed |
+|---|---|---|
+| 20261103-111407 | Linux | X with Y: `X with B or Y (the mark's chord) after 150 ms ...: no Shadow Strike`; X held: the strike (the prompt up, the dash) - the rest lost to the driver (the grip never pressed again after the dash) |
+| 20261103-153155 | Linux | a 249 ms tap: `X let go after 249 ms ...: no Shadow Strike`; the chord: none; held 0.6 s: the strike; Bow from Grip: `the left grip closed away from the shoulder (SOMVR_BOW_TAKE=grip): the bow out (the hand 53.0 cm from the slot)`, let go: put away, Shoulder again: the grip ahead takes nothing; the cheek draw (frame 1262): the string's part by the face gone, the rest drawn; 0 WARN |
+| 20261103-160335 | Windows | the same strike and take results; the held bow under the test hands' tremor (0.6-9.7 Hz, 3 deg): `bow steps` 0.649 deg rms shown with the filter off, 0.499 with 4 Hz (raw 0.68 / 0.58) - at the headless 20 Hz most of the tremor's steps are its slow parts, which a 4 Hz filter rightly follows (test_qfilter33 at 90 Hz: a 9 Hz tremor more than halved); the aim's steps 0.06 deg either way (the aim hardly turns with the bow hand: the nock is 4 cm from the grip - the flicker the player saw is the held bow's own turn); 4 WARN, all the Windows build's own (H9, layout B without H8/H3, SOMVR_HIDE_HEAD=parts' sites; the build-win2 suite has the same) |
+
+### 142.6 Switches (the som-b33-bow block at the end of scripts/headset-build26.env)
+
+| Switch | Code default | Build 33 env | What |
+|---|---|---|---|
+| `SOMVR_BOW_STRIKE_PRESS_MS` | 0 (a press) | **400** | X held this long with the bow out strikes; B / Y meanwhile: none |
+| `SOMVR_BOW_TWIST_HZ` / `_BETA` | 0 (off) / 1 | **4** / 1 | the held bow's and the aim's bow-hand turn filtered |
+| `SOMVR_BOW_LOST_HOLD_MS` | 0 (off) | **500** | an inferred hand pose held from its last tracked one |
+| `SOMVR_BOW_TAKE` | shoulder | shoulder | the bow from the shoulder slot, or (grip) the left grip anywhere; the Fight page's Bow from |
+
+Words: `bow twist HZ`, `bow take grip|shoulder`. Lines: `CONFIG strike press=..`, `CONFIG bow take=..`, `STRIKE t=.. X let go |
+with B or Y ..`, `BOW t=.. aim steps ..`, `BOW t=.. bow steps ..`, `BOW t=.. slot: the left grip closed away from the shoulder
+(SOMVR_BOW_TAKE=grip) ..`, `BOW t=.. take: the left grip is another's (..): no bow`, `BOW t=.. take shoulder -> grip`. The
+user's saved settings pin none of these keys (BOW_STRING is not pinned either; BOW_TAKE is new).
+
+### 142.7 For the headset, unproven
+- The string by the face: gone within ~10 cm of the eyes, back from ~22 cm - whether that reads as "the string reaches
+  the hand" from a cheek anchor.
+- The bow's steadiness with a real tremor at 90 Hz (4 Hz + 1 per rad/s), and whether a turn feels late; the inferred hold
+  (the controller near the face) is not reproducible headless.
+- Bow from Grip in a real fight: the climb, the grab and the dagger take the grip first by the 120 ms wait.
+- X held 0.4 s for the Shadow Strike with the bow drawn.
+
+### 142.8 The string's ends at the tips (mark 17): measured, not changed
+- The string's ends are build 19's estimate (`SOMVR_BOW_STRING_TIPS_CM` 27 along the limbs' last bones past the tip nodes,
+  `_BACK_CM` 28 back; the lower `_LOW_CM` 21,23): the bow's 7 nodes stop at the riser's ends (node 6 at 23.8 cm up, the
+  visible limb runs on another ~25 cm, curling back). Windows boots 20261103-170900 and -184705 (the bow turned 60 deg,
+  its upper tip at eye level against the night sky; `bow stips` swept 27/28, 35/33, 41/38, 47/43; the lower with
+  `bow stipslo`): in each the string passes behind the limb about a third of the way down from its tip and the layer's
+  depth test hides the rest - so where it ends cannot be read from that side. Left unchanged rather than guessed; the
+  next look is from the string's side (the bow turned the other way, the string in front of the limb), one boot with
+  the same sweep.
+- Boots 20261103-170900 and -184705: 4 WARN each, the Windows build's own (as 160335); the save UNCHANGED.
+
+## 150. Build 34: every feel and comfort switch of builds 31-33 on the VR menu, the Settings tab in six groups (2026-11-03, som-b34-settings)
+
+The HL:A standard has every setting a player may want to tune adjustable in the game. Builds 31-33 added switches only
+`scripts/headset-build26.env` sets (the sword's physics, the force rule, the kills, the knife, the shove, the grab, the
+herbs, low health, the watch, the climb's fling down and sword). The ones that are a player's feel or comfort are rows
+of the VR menu now, saved in the settings file (`SOMVR_SETTINGS`) like the older rows, live; the Settings tab grew from
+two pages (build 19's Settings + Fight) to six groups. No new switch: a key not in the settings file follows its switch
+as before, so a build with this branch behaves as build 33 until a row is changed.
+
+### 150.1 The groups
+
+Under the tab strip two rows of three buttons (152 x 36 px, 8 apart, `SOMVR_VMI_SUB_*`) pick the group; the group shown
+is lit and underlined as a tab, its rows run from y 152 (13 rows at 38 px fit; more close up as before), the help of the
+hovered row (two dim lines) under the last row where there is room, the bottom row (Recentre, Report, Quit) unchanged.
+The Settings tab opens the group it was on last (the layer's `VM.last_grp`; as the Test page keeps its page). Build 19's
+"Fight settings >" / "< Settings" buttons are gone (`SOMVR_VMI_PG_FIGHT` / `_PG_BACK` keep their numbers, no rect).
+
+| group (page) | rows, top to bottom |
+| --- | --- |
+| Comfort (`SOMVR_VMPG_SETTINGS`) | Turn, Snap angle, Turn speed, Vignette, Snap blink, Walk toward, Seated, Seat height, Crouch, Player size, Handedness, Haptics (+ Assisted step, Dash, Wraith phase with `SOMVR_VMA_MOVES`) |
+| Display (`_DISPLAY` 5) | View, HUD, HUD distance, **Watch**, **Watch size**, **Low health**, **Heartbeat**, Music, Refresh rate |
+| Climbing (`_CLIMB` 8) | Climb fling, **Fling down**, **Climb sword**, Hands at walls |
+| Sword (`_SWORD` 6) | Sword angle, Sword weight, Sword hand, **Force needed**, Blade bite, **Ghost hand**, **Kill moves**, **Execute** |
+| Fight (`_FIGHT` 3) | Dodge (A), Wraith step, Stealth kill, Crowd pace, Counter icon, **Shove push**, **Grab time**, **Knife grip**, **Herbs** |
+| Bow (`_BOW` 7) | Arrows, Bow string, Bow from (build 33) |
+
+`somvr_vm_row_page` reads the table `g_group_rows` (somvr_vrmenu.c); `somvr_vm_settings_page(page)` says a page is a
+group; `somvr_vm_page_name(page)` is the layer's log word ("the display page" ...). tools/vm_uv.c names the groups.
+
+### 150.2 The new rows (bold above)
+
+| row | values | key in the file | from the switch | applied |
+| --- | --- | --- | --- | --- |
+| Watch | Always / Raised | `XR_WATCH_LOOK=any\|raise` | `SOMVR_XR_WATCH_LOOK` | the layer, its next frame (`vh_watch_facing` picks the any / raise facing) |
+| Watch size | Small / Large | `WATCH_SIZE=small\|large` | `SOMVR_XR_MINIMAP_QUAD`'s size (under 8 cm: small) | the layer, its next frame (`MN.mmc.size_m`: the switch's size when it is that kind, else 6 / 10 cm) |
+| Low health | Off / Edge / Ring | `LOW_HEALTH=off\|edge\|ring` | `SOMVR_HURT_LOW` (0 = off), `_STYLE` | `g_hu.low` (the share as set, else 0.30), `g_hu.ring` |
+| Heartbeat | On / Off (with Ring) | `HEARTBEAT=on\|off` | `SOMVR_HURT_BEAT` (0 = off) | `g_hu.beat_below` (as set, else 0.20) |
+| Force needed | Low / Normal / High | `FORCE_NEEDED=low\|normal\|high` | `SOMVR_COMBAT_FORCE=on`'s joules | `g_cb.cfg.blow_min_j`, `_heavy_j`, `_full_j`, `_stab_j` x 0.6 / 1 / 1.5 of the start's |
+| Ghost hand | On / Off | `SWORD_PHYS_GHOST` | `SOMVR_SWORD_PHYS_GHOST` | `g_swp.ghost` (off: the faint hand gone at once) |
+| Kill moves | On / Off | `KILLS` | `SOMVR_KILLS` | `g_kl.on` (the next kill; as the test word `kills on/off`) |
+| Execute | Swing / Trigger (with Kill moves) | `KILLS_EXEC=blow\|trigger` | `SOMVR_KILLS_EXEC` | `g_kl.exec_blow` |
+| Shove push | Soft / Normal / Hard | `SHOVE_PUSH=soft\|normal\|hard` | `SOMVR_SHOVE_MPS`, `_HARD_MPS` | both - 0.5 / as set / + 0.5 m/s |
+| Grab time | 5 / 10 / 20 / 30 s ("Game" for 0) | `VERBS_GRAB_MAX_S` | `SOMVR_VERBS_GRAB_MAX_S` | `g_vb.cfg.grab_max_s` (the hold's next tick) |
+| Knife grip | Hold / Toggle | `SLOTS_DAGGER_HOLD=on\|off` | `SOMVR_SLOTS_DAGGER_HOLD` | `g_sl.cfg.hold_dagger` - at the next draw |
+| Herbs | Hand / Button | `HERBS` | `SOMVR_HERBS` | `g_hrb.on` (off: a herb in the fist dropped; B always picks) |
+| Fling down | On / Off (with Climb fling) | `CLIMB_FLING_DOWN` | `SOMVR_CLIMB_FLING_DOWN` | `g_cl.cfg.fling_down` (and the Climb fling row Off takes it off) |
+| Climb sword | On / Off | `CLIMB_SWORD` | `SOMVR_CLIMB_SWORD` | `g_cl.sword` |
+
+The switch's own name is a key too (`SOMVR_KILLS=on` in the file is `KILLS`), on/off also 1/0, as every key. The game
+side is `somvr_settings34_game.c` (`s34_vm_settings`: the start values from the features' configs at `vm_start`, after
+every feature's start; `s34_vm_set`: one key into its feature, with the apply line's note, e.g. `VRMENU apply
+SHOVE_PUSH=hard from the menu (a shove from 3.0 m/s, at the grab's orc 4.0 m/s)`).
+
+A row is usable when its feature runs in this session. The 64 avail bits are all taken (32..63 since build 27), so the
+v8 rows carry their own: `somvr_settings.av8` (`SOMVR_VMA8_*`, the preload's at its start, no key, never saved; the
+layer keeps the preload's value). Without its bit a row is dimmed (shown: the feature exists in every build; it only does
+not run in this session - the wrist minimap off, `SOMVR_COMBAT_FORCE` off, the kills' site not matched ...).
+
+### 150.3 The ABI: somvr_vrmenu v8
+
+`somvr_settings` 96 -> 128 bytes: the 14 rows' bytes at 96..109, `av8` at 110, 16 spare (112..127); everything after
+`set` in `somvr_vrmenu_shared` 32 bytes later (gen 176, block 196, n_frames 200, practice 232, pstate 236), 240 bytes.
+An older layer with a v8 preload (or the other way) sees another version: no menu (`somvr_vrmenu_ok`), as every bump.
+The preload's log line `VRMENU config on: ...` adds `av8 0x...`; its buffers hold the 50 keys.
+
+### 150.4 What stays a switch only, and why
+
+- The tuning behind each row (`SOMVR_COMBAT_FORCE_J`'s three numbers, `SOMVR_COMBAT_EDGE_DEG`, `_CUT_ARM_CM`,
+  `_SWING_MPS`, `SOMVR_DEFENCE_CONTACT_THRUST_CM`, `_CLANK_SLOW`, `SOMVR_SHOVE_ANY_CM`, `SOMVR_VERBS_FIST_S`, `_ASK_S`,
+  `SOMVR_CLIMB_FLING_DOWN_MIN/_MAX/_G/...`, `SOMVR_STEALTH_KILL_THRUST_DEG`, `_DEPTH_CM`, `_GRAB_CM`): the rows scale or
+  switch them as a whole; a player picks a feel, not a number.
+- The grab's reach (`SOMVR_VERBS_REACH_CM` 55, `_CONE_DEG`, `SOMVR_STEALTH_KILL_GRAB_CM`): three keys that must agree,
+  clamped at 60 cm by the verbs' own config; the late cue (`SOMVR_VERBS_CUE_NEAR`) already shows where to reach.
+- Fixes, not preferences: `SOMVR_XR_FOG=radial` (the game's fog turned with the head; its shaders are made at the
+  start), `SOMVR_FX_BILLBOARD=eye`, `SOMVR_DEFENCE_BODY`, `SOMVR_STEALTH_DOWNED_FIGHT`, `SOMVR_SWORD_FLESH` (the Blade
+  bite row turns the wound on and off), `SOMVR_SWORD_PHYS` (the Sword weight row's Heavy), `SOMVR_HOLD31`,
+  `SOMVR_VERBS_CHORD_SAFE`, `SOMVR_VRMENU_GATE`, `SOMVR_COUNTER_ICON_SETUP`, `SOMVR_XR_MARK_LAYERS`.
+- Off for comfort, never a row: `SOMVR_KILLS_UNAWARE=sync` (it moved Talion and the view), `SOMVR_VAULT_HANDS`.
+- The bow's string by the face (`SOMVR_BOW_DRAW_MAX_CM`, `SOMVR_BOW_FACE_CM`): build 33's bow round made the string fade
+  near the face; a row waits for that to settle (a draw length by arm length is the candidate).
+- The finisher (`SOMVR_FINISH*`): not in this build's set yet; when it lands, its on/off belongs on the Sword group.
+
+### 150.5 Tests
+
+- tests/test_vrmenu.c: test_layout (the six groups: every value row in one, the rows apart under the buttons and above
+  the bottom row, the counts per group, the buttons' rects / hits / presses on every group page, none on the Practice /
+  Controls page), test_settings34 (each of the 14 keys: name, switch, code default, words both ways, bad words refused,
+  a press changes its key alone; the rows' groups, av8, the dependent rows, the three-way steps, Grab time's steps and
+  "Game", the file round trip of all 14, the switches' own names, the user's v7 file read and written back unchanged),
+  the older tests moved to the groups (rows' places, hits per page).
+- selftest.c s34_tests: the start values from the switches (build 33's env: raise, 6 cm, ring ...), av8, every key
+  through `vm_apply_key` into its feature's config and its apply line, Fling down following Climb fling.
+- vklayer/tests/test_layer.c: the Sword / Comfort buttons and the Settings tab reopening the Sword group (vrmenu), the
+  Display button before the Refresh rate and HUD rows (refresh-menu, vrmenu-stereo), wrist-menu (the watch 6 cm with
+  Small, 10 cm after the menu's change, live).
+- scripts/settings34-drive.sh: a headless boot's panel - each group's button, a click on each v8 row, its apply line.
+## 143. Build 33: a walk that stalls at a small lip, the way down from a ledge from standing, a climb move into the rock: `SOMVR_WALK_LIP`, `SOMVR_CLIMB_DOWN_REACH`, `SOMVR_CLIMB_ROCK_GUARD` (2026-11-03, som-b33-move)
+The 11-03 session (logs/boot-check-20261103-093210, marks 22, 24-26): on the long wall's narrow coping the walk stuck
+at a tiny lip (A's jump got through) and sometimes on top of one; a pull in an archway left Talion in the wall; and no
+way was found to start climbing down from a ledge (only A's blink). Code: somvr_climb.c/.h (`somvr_lip_find`,
+`somvr_lip_lift`; `dn_find`'s reach rule, `dn_cue`), somvr.c's UNPIN region (`un_lip_watch`) and the climb's PM hook
+(`cl_rock_guard`), somvr_jump_game.c (`jp_hop_req`: the jump's low take-off). Tests: test_climb `test_b33`,
+`test_b33_lip`. Driver: scripts/move33-drive.sh. Handoff: HANDOFF-climb.md "build 33".
+
+### 143.1 What the logs say
+- **Marks 24, 25 (the coping's lips)**: the walk at 31236 4816 -30685 asked 196.6 cm in a second and the body moved 2.3
+  - LOCO's `between ticks 196.2 cm`: the game undid it between our ticks; UNPIN `not in a surface ... contacts 2`. The
+  jump's per-tick floor showed the floor 4715 on both sides: a lip, not a step up. Investigation boot 112305 (the same
+  spot, `climb trace`): the capsule's foot met a contact `h-94 n-0.70,0.70,0.09` - a lip only ~6-8 cm high, its edge
+  bevelled at 45 deg, just past what the proxy walks (n.y 0.70); its 40 cm step-up is for steps, not slopes: `asked
+  11.5 moved 0.0` every tick. Walking west on the coping (mark 25's): the same with `n0.62,0.69,-0.36`. Proof boot
+  114101 from another angle: the proxy crept up the bevel (2-3 cm a tick) and on its top was shoved back each tick
+  (`moved +3.2 ... -3.5`, one floor contact, LOCO `between ticks 229 cm` a second) - the session's "stuck in the middle
+  of the lip". The game's ledge rail is not it (`ledges off`, its finds blocked).
+- **Mark 22 (the way down)**: on the same wall's top the user pressed grips with the hands at the chest (126-141 cm over
+  the floor) about 60 cm short of the edge (`press R: nothing climbable within reach`); the way down over an edge
+  (SOMVR_CLIMB_DOWN_OVER, 83.4) wants a hand bent down within 90 cm of the floor and the edge within 45 cm of it. The
+  game holds Talion 45-80 cm back from an edge (boot 114101: a chest-high hand 60 cm ahead was still 21 cm short of the
+  lip), so a hand at the chest cannot get past it.
+- **Mark 26 (the archway)**: hanging after a fling whose head ray had taken the arch's opening for a top, the right hand
+  took the far wall 75 cm off and its pull moved the root 99 cm up and across; UNPIN then `pinned ... the deepest -30.2
+  cm`, HEADROCK faded the view, every later grip was `inside: the hand 18-28 cm in the wall`. The pull's moves put the
+  capsule 30 cm into the arch's geometry.
+
+### 143.2 The lip: `SOMVR_WALK_LIP=on` (needs SOMVR_CLIMB_UNPIN; default off in the code, on in the block)
+Each tick on foot (UNPIN's): the contact at the feet that blocks the walk - steeper than walkable (n.y < 0.8), turned
+against the walk, 5 cm under to `SOMVR_WALK_LIP_CM` (30) over the feet - with its height by rays (the lip's top at it,
+the floor 45 cm ahead; a drop ahead = an edge, nothing); over 0.3 s windows the root's net way along the walk against
+what was asked; **under 30 % with such a lip seen within 2 s and 80 cm (on its top the proxy shows only the floor while
+the game shoves the walk back) = the jump module's low take-off over it**: the lip's height + 10 cm, at least 18 cm
+(about 0.28 s in the air, most of it over the lip, the walk going on in the air), its own collision-clipped arc and
+landing - what A did for the user, without A and without its tick; at most once a second. (First tries: the capsule
+set onto the lip - undone between ticks; an 11 cm hop - 0.25 s in the air, the bevel held the walk: 7 cm along.) Not on a climb, in the air, crouched, or where the
+jump is refused. Logs `WALK lip t=... the walk stalled at a lip (N % of M cm asked in 0.3 s; a contact ...): the step
+over it - the jump's take-off, N cm`, `JUMP ... go: the step over a lip`; CLIMB END build 33.
+
+### 143.2b Held back from an edge: `SOMVR_WALK_EDGE_SLIDE` (with WALK_LIP; default off; **ships off**: it steered, the game undid the slid walk too - 143.5's 193548)
+Mark 24's lip has the coping's edge 60-140 cm beyond it (probe boot 155018); the game holds Talion back from it and
+refuses a walk aimed partly at the drop whole - no contact, every level move refused, even 20 cm up in the step's arc.
+The same 0.3 s stall with nothing but the floor touching (or the lip refused as an edge: a drop ahead, or the last step
+gave no way) and the floor ending within 100 cm along the walk: of the two ways 45 deg aside, the one whose floor runs
+on (80 cm or more, the farther) = the walk turned that way at 0.75 of its speed for 0.6 s at a time (renewed while it
+stalls) - a wall's slide along the edge, never over it (the turned way has floor); both short = a corner or a beam's
+end: nothing. Logs `WALK edge t=... the walk held back from a drop (the floor runs N cm ahead, L / R at 45 deg ...):
+steered left|right along the edge`; CLIMB END build 33's `edge slides N`.
+
+### 143.3 The way down from standing: `SOMVR_CLIMB_DOWN_REACH=on` (with DOWN_OVER; default off, on in the block)
+Besides the hand bent down (as ever), a grip with the hand **reached out** - 35 cm or more ahead of him, the edge within
+45 cm of it, up to the chest (150 cm over the floor, at least 25 under the eyes) - is the same glide out and down to
+hang from the lip (83.4: the glide, the lip held, hand over hand down or A). A hand at the chest not reached out (a
+squeeze by the body, a quick draw) does nothing. **The cue**: an open hand where a grip would take him down gets the
+grab cue's light tick (as a hold within reach does) - the gesture announces itself at every edge.
+
+### 143.4 Never into the rock by a climb move: `SOMVR_CLIMB_ROCK_GUARD=on` (default off, on in the block)
+In the climb's PM hook: the proxy's position before our move; after the integrate, the deepest wall or ceiling contact
+(n.y < 0.7); deeper than `SOMVR_CLIMB_ROCK_GUARD_CM` (10) and deeper than before the move = the move undone (the proxy
+set back where it was): `CLIMB ... rock guard: the climb's move took the capsule N cm into a wall or a ceiling ...:
+undone`. The through moves (SOMVR_CLIMB_THROUGH / TOPOUT, which pass rock on purpose) are not guarded.
+
+### 143.5 Runs (headless, Monado 20 Hz, the env block + the test hands, scripts/move33-drive.sh; each 0 WARN, the install unchanged, the real save UNCHANGED)
+| Run (logs/boot-check-20261103-) | What it showed |
+|---|---|
+| 112305 (the code before 143) | the investigation (143.1): the coping's bevelled lip refusing the walk (`h-94 n-0.70,0.70,0.09`, `asked 11.5 moved 0.0`), the same walking west on it; the trip cannot reach the archway (it lands under it); the chest-high press at the wall's top: `nothing climbable within reach` |
+| 114101 (the first fix: the capsule set onto the lip) | from another angle the proxy crept up the bevel and was shoved back between ticks on its top (`moved +3.2 / -3.5`, LOCO `between ticks 229 cm`): the set never came (no tick stalled outright) - hence the 0.3 s window and the jump's arc. Ledge: the chest-high hand 60 cm ahead still 21 cm short of the lip (the game holds him back): `not out past the edge` - hence the reached-out rule. Six pulls up the archway's face: no penetration, the rock guard quiet |
+| 130337 | **the way down from standing**: at a plumb 11 m face (the lip 30852 4707 -31394), the right hand at the chest (137 cm over the floor) reached out over it: `down: the R hand's grip ... the glide out and down to hang there ... reached out: SOMVR_CLIMB_DOWN_REACH`, `the glide's end after 0.85 s: the hand holds the lip`, the eyes 24 cm under the top (both eyes: the courtyard 11 m below, the open hand over the edge, then the hang facing out with the fist on the lip; the down cue ticked once). The lip: an 11 cm hop carried no walk (`the stick's 2 cm/s`): 7 cm along |
+| 150416 | **the lip**: `WALK lip ... the walk stalled at a lip (0 % of 80 cm asked in 0.3 s; a contact 8 cm over the feet, its normal -0.70,0.70,0.09 ...): the step over it - the jump's take-off, 20 cm`; `JUMP ... landed after 0.351 s ... 19 cm along the floor, +6.8 cm`: over the bevel onto the lip's top. Past it at 31244 the walk is refused **with only the floor touching**, even 20 cm up in the hop (`moved 0.0,6.6,0.0 asked 11.4,6.6`): an invisible stop (as 40.1's 'Air' walls), which only the user's 60 cm jump passed - not a lip; the second step there went 0 cm (since then no step again where the last one gave no way: no bobbing into it). The coping (mark 25's way west): `the step over it ... 18 cm`, the walk on 229 of 241 cm |
+
+| 155018 (the Windows build: the GOG game under Proton) | `climb probe edge` at the stop (143.7): the coping's floor 140 cm ahead at heading 91, 60-70 at 44, then 11-12 m down; no wall on any collision layer |
+| 193548 (Windows) | the edge slide at mark 24's coping: `WALK edge ... the walk held back from a drop (the floor runs 60 cm ahead, 20 / 120 at 45 deg left / right): steered right along the edge` - and the game undid the slid walk between ticks as well (LOCO `asked 230.0 cm, the body 17.0 cm, between ticks 190.4 cm`): there the game takes back any walk, not one toward the drop; only A's jump (in the air) passes. The slide ships off. The coping's other lip (mark 25's way): the step, the walk on |
+| 171442 (Windows) | **the way down from standing** again (PASS); the lip: the bevel still in view kept the edge slide from running (the lip refused as `the last step here did not get him on`, the north walk as `a drop ahead`) - since then those refusals hand over to the slide |
+
+### 143.6 Unit evidence (test_climb; each also with the switch off)
+- The lip judge on boot 112305's contacts (the floor, the bevel 6 cm up, a wall 50 cm up): the bevel found walking +x;
+  walking away, the wall at the chest, a face 40 cm up: none. The lift: the top 7 -> 9 cm; a drop ahead -> none; over
+  30 -> none.
+- The way down: the chest-high hand 25 cm past the edge: the cue and the glide to hang from the lip; off: nothing (build
+  31's `too high`); the hand at the chest only 20 cm ahead of him: nothing (`not reached out`); held 70 cm back from the
+  edge, the hand reached out 50 cm (20 short of the edge): the glide; the hand bent down: as build 21.
+
+### 143.7 Open
+- **Unsolved: mark 24's spot past the bevel.** The stop on the coping past mark 24's lip (31235-31244 4716 -30685): no contact, every level move refused at the
+  feet and 20 cm up; the 60 cm jump passes. Probe boot 155018 (the Windows build, `climb probe edge` there): the
+  coping's floor runs 140 cm ahead at heading 91 and only 60-70 cm at heading 44, then 11-12 m down; no wall at the
+  edge on any collision layer. So it is the game keeping Talion back from the coping's edge (40.1: 45-80 cm), the walk
+  at heading 60-70 aimed partly at the drop and refused whole (the game does not slide him along it); A's jump passes
+  it in the air. Next (not built: the disk-full stop): a walk refused there with no contact and a drop within 1 m along
+  it = the walk steered along the edge - built (143.2b) and tried: the game undid the steered walk too (boot 193548),
+  so it is not the edge's direction but the place: the game takes back every walk there between our ticks (as build
+  15b's pin, without rock). What it guards is not found; A's jump stays the way past it.
+- The archway (mark 26) is not reproduced headless; the rock guard is quiet in every climb run (0 undos) and its proof is
+  the headset's.
+- The hop's feel (18-30 cm, about 0.3 s in the air) and the down cue's tick are the headset's call.
+
+### 143.8 Build 36: the first Windows session's movement notes (som-b36-move, 2026-11-03; branch t3/som-b36-move)
+The user's first session on the Windows build (logs/win-session-20261103-210626, built 13:01: none of build 33's move
+switches in its launch - no SOMVR_WALK_LIP, ROCK_GUARD or DOWN_REACH). Four movement notes (marks 3, 29, 31, 32).
+- **Mark 32, walking on the sky (top priority).** On the meadow's low bank (34500-34520 3652 -25900; the meadow 114-122
+  cm under its top) the walk was held (mark 31 below). At 92319.8-92320.7 the stick at sprint speed broke out (LOCO 77 %
+  of 640 cm/s) and from there Talion ran 7 m west at the bank's height over the meadow: at 92320.708 `JUMP refused: not
+  on the ground (the feet 151 cm over the floor 3502.6)`, and for 3 s+ LOCO `asked 479 / the body 479 (100 %), between
+  ticks 0.1 cm`, FSM 6 (supported). The game applied our walk whole and never started its own fall: LOCO owns the PM
+  ticks, and the fall's start (FSM 6 -> 8) is the game's movement's, which our tick does not run. Not WALK_LIP, not the
+  rock guard (not in that build), no climb.
+  **`SOMVR_WALK_GROUND=on`** (somvr.c un_ground_guard, UNPIN's tick; needs SOMVR_CLIMB_UNPIN and SOMVR_JUMP): on foot
+  (LOCO ours, FSM 6, no climb, jump or vault) with no ground under the capsule's footprint (9 rays down from 30 cm over
+  the feet to 60 cm under them: the centre, 20 cm round, the 32 cm rim - a capsule on an edge by its rim is the game's
+  own stand; 'Air'/Invisible*/PlayerBlocker* stepped past as the climb's rays do) for 0.3 s = the fall from there: the
+  proxy's gravity flag on if it was off, and the jump module's arc from rest (jp_fall_req: LOCO's delta - the moves the
+  game applied on the sky - the stick's speed carried, its braked landing on the floor it finds; no tick, no buzz). Three
+  falls that do not take him down 10 cm = the game's own collision holds him there (its rule): left, logged once. Lines:
+  `WALK ground t=.. no ground under him for 0.3 s on foot (FSM 6, the proxy's gravity flag F): the fall from here ...
+  (straight down (invisible blockers counted): 'NAME' N cm under the feet; the proxy's contacts ...)`, `JUMP t=.. go: the
+  fall from here (SOMVR_WALK_GROUND) ...`, `CLIMB END build 36 walk ground=...`. A first version pushed the proxy 15 cm
+  down by SETPOS each 0.15 s - dropped: a push through a floor our rays miss could put him under the world.
+- **Mark 31, a low ledge he could not leave.** The game's edge keeper (40.1, 143.7): every walk toward the bank's edge
+  taken back between our ticks (LOCO 1-19 %, `between ticks` = the asked), and here also A's jump: ten presses, each `a
+  ceiling over the head after 0.020 s (the rise blocked)` - the jump's SETPOS rise undone as well (the ray up found
+  nothing; the feet -15..+4 cm about the bank's floor). A standing went to the descent's edge first, which found the
+  edge 95 cm ahead and `a short drop: the fall` (114-122 cm, under SOMVR_CLIMB_BLINK_CM 400) and handed A to the jump;
+  moving, A was the jump at once. Only the trip's teleport passes such a keeper (143.7: the coping's).
+  **`SOMVR_CLIMB_EDGE_LOW=on`** (50 cm; `=CM`): on foot while the game holds the walk (lo_walk_blocked: 40 cm+ asked in
+  0.5 s, under a fifth done) a drop of 50 cm+ ahead is A's way down as a high one's - the edge cue (the double pulse in
+  A's hand), A held = the drop's ring on the ground below, let go = the blink (the practice trip's fade; a tap does
+  nothing; the stick held at the press is no cancel) - and A goes to the edge first even while the stick pushes
+  (somvr_jp_a_pick: `pinned`). Not held (the walk free), A at a low edge is the jump as before. Lines: `JUMP t=.. press:
+  the climb, then the jump (...; the walk held by the game: the descent's edge first (SOMVR_CLIMB_EDGE_LOW))`, `CLIMB
+  t=.. drop mark: A held at a low edge on foot, the walk held by the game (SOMVR_CLIMB_EDGE_LOW) ...`, `edge cue: ...
+  (a low edge: SOMVR_CLIMB_EDGE_LOW)`.
+- **Mark 3, stuck on a wall ~10 s - ours.** Under the meadow ladder's bulge (31866 2164 -29011): at 91458.619 our
+  through move (SOMVR_CLIMB_THROUGH: the pull blocked under a hold 15 cm over the eyes) lifted the capsule 14.7 cm up
+  through a lower lip of the bulge (`through over: out of the rock after 14.7 cm ... deepest contact 5.6 cm`); 25 cm
+  higher the capsule stuck: every move refused - the 1:1 pulls (`moves 74 asked 190.2 ... the root 0.0 cm`), flings up
+  (`blocked above ... rose 0.0`) and down (`fling down hang (blocked below: the game's collision holds him) ... fell
+  -0.0`), UNPIN's level steps - from 91459.5 to 91464.9, when A's drop mark let him fall (gravity back: he fell, 113
+  cm). Meanwhile the pullover's ring showed twice (a top 45 cm over the eyes with a landing), and each hand-over-hand
+  stroke let go of it after 9 and 1 cm (25 needed); A then was the drop.
+  **`SOMVR_CLIMB_FLING_DOWN_FALL=on`**: a fling down the game's collision holds (blocked below) over ground within
+  SOMVR_CLIMB_BLINK_CM under the feet (not water) = released: gravity back, the game's own fall (the build 31 hang
+  otherwise) - the user's down throw at 91459.479 would have dropped him there. **`SOMVR_CLIMB_PULLOVER_A=on`** (2 s;
+  `=S`): A's press while the pullover's ring shows - or up to 2 s after its hand let go, the root within 15 cm (the ring
+  stays shown then) - is the pull done: the blink onto it (`pullover: A pressed on the ring kept after the let-go ...`).
+  The user's A at 91462.83 (1.2 s after the last let-go) would have taken it. The through move itself is unchanged: the
+  wedge came after it, the contacts never showed the capsule in the rock (5 cm off), and build 33's rock guard (10 cm)
+  would not have fired.
+- **Mark 29, the tower's dome: allowed, no change.** The dome's faces are not CanWallClimb (the game's own climb would
+  not take them; ours holds any wall: SOMVR_CLIMB_SURF=walls). Up the tower by flings and grabs, a through of 114 cm
+  under the dome's overhanging rim (92247: 1:1 with the pull) and A's mantle onto the top (92256.8: the landing
+  35045.6 6010.8 -21889.5); he stood there 19 s - no death, no kill volume, no 'Air' wall, no game event - and left by
+  the drop mark's blink. Nothing in the game forbids standing there; nothing new added.
+
+#### 143.8.1 Runs (headless Windows, the build-36 env block, scripts/move33-drive.sh PLAN_B33=b36)
+| Run (logs/boot-check-20261103-) | What it showed |
+|---|---|
+| 225855 (Windows, slot 2; 3 WARN: H9, layout B, the sky spot's trip) | **mark 31 PASS**: at the bank facing its edge (heading -150) the stick held the walk (LOCO `asked 218, the body 0`) - `edge cue: the walk stopped at an edge 110 cm over the ground ... (a low edge: SOMVR_CLIMB_EDGE_LOW)`; A held with the stick still pushing: `drop mark: A held at a low edge on foot, the walk held by the game ... the ring at 34468.0,3528.9,-25977.8`, armed at 0.65 s, let go at 1.0 s = `the blink down`, `arrived at (34444.5 3630.3 -26016.6)` (the root 3754.5 -> 3630.9; both eyes: the meadow beside the bank's face). **Mark 32's spot**: set there by the trip he fell at once to 1936 (the game's own fall: nothing holds him there - the sky was the missing fall, not a floor). **The sky walk reproduced and caught**: from the bank walking north-east (heading ~127) over its edge, the proxy at the bank's height with `contacts 0`, `grav 0`, FSM 6 - `WALK ground t=98335.454 no ground under him for 0.4 s on foot (FSM 6, the proxy's gravity flag 0 -> 1): the fall from here ... 'Grass' 196 cm under the feet; the proxy's contacts 0`, `JUMP ... go: the fall from here`, `end: landed after 0.300 s ... the landing braked` on the rock 36 cm lower 69 cm on, then the walk on down the slope with gravity on (the root 3776 -> 3562); `CLIMB END build 36 walk ground=on: episodes 1 (tests 1445): falls 1`. The save UNCHANGED. |
+
+Not run in the game: SOMVR_CLIMB_PULLOVER_A and SOMVR_CLIMB_FLING_DOWN_FALL (the wedge under the bulge is not
+reproducible headless; no run of the last 400 armed a pullover) - their proof is the unit tests below and the headset.
+
+#### 143.8.2 Unit evidence
+- test_climb `test_b36`: a fling down held at once over a floor 60 cm down = released (the feet 63 cm over it, 2
+  frames); held over water or ground 50 m down, or the switch off = the hang as build 31; a free flight down still lands.
+  The pullover's ring: armed, a 9 cm pull, the hand let go = the ring kept; A 1.2 s later = the blink to the landing
+  (300 + 102 + 5); A while holding = the blink; not after 2 s, not after a 20 cm move, not without a blink now; off = as
+  build 33. `test_b36_edge`: at a 1.5 m ledge with the walk held, A = the blink down (and the mark's ring, held, let
+  go); not with the walk free, not off; the cue once. test_jump: the walk held and moving = the edge first (without
+  descent the jump); the fall from rest 151 cm over the floor lands on it, braked, never up.
+
+## 151. Static analysis and sanitizers over the mod: LLP64 log casts, the schema's string read, `build.sh --sanitize`, `tests/analyze.sh`, `win/llp64.py` (2026-11-03, som-b34-analyze)
+
+Three tools over mod/somvr (the preload with its `*_game.c`, the CORE files, the layer, win/), each rerunnable; no game
+boot, no switch (nothing here changes what the mod does in the game except the fixes below, all on by nature).
+
+### 151.1 The tools
+- `build.sh --sanitize` (= `tests/sanitize.sh`): every test of `build.sh --check` - the 55 unit test programs, selftest.c,
+  vklayer/build.sh --check's 14 test programs with the 176 layer scenarios and lavapipe's hands - built with
+  AddressSanitizer (+ LeakSanitizer) and UndefinedBehaviorSanitizer and run. `build.sh --check` runs unchanged in a mirror
+  under build/san/ (real directories, symlinked files: the normal build and its outputs untouched) with a `gcc` first on
+  PATH that compiles each source with the same gcc and flags plus `-fsanitize=address,undefined,float-cast-overflow
+  -fno-sanitize-recover=all` (gcc's `undefined` leaves the float-to-int overflow out) and links with clang (its runtime: Fedora's gcc ships none; gcc's instrumentation and
+  compiler-rt's runtime share one ABI). Kept as built: somvr.so (the inert check preloads it into /bin/true). selftest.c's
+  stand-ins (the game's functions, all `noipa`) stay uninstrumented - the hooks are checked against their machine code
+  - and the program is linked at 0x20000000: instrumented it is ~10x bigger and at 0x400000 its own globals' redzones
+  covered the game binary's addresses the mod probes at sites with no stand-in. Any report fails the run (exit 86
+  ASan/LSan, 87 UBSan); `SAN_KEEP=1` keeps build/san/ to rerun one program. ~5 min.
+- `tests/analyze.sh [-j N] [-v]`: clang's static analyzer (`clang --analyze`, default checkers) over 68 translation
+  units - Linux: somvr.c, the CORE files, somvr_menus.c, somvr_vklayer.c (with its `*_layer.c`) and the files the layer
+  links; Windows (win/build.sh's flags): somvr.c, win/*.c, somvr_vklayer.c. Each warning once, a count; ~2 min.
+- `win/llp64.py`: Linux is LP64, Windows LLP64 - `long` is 32 bits there. `--check CLANG-ARGS -- FILES` reads clang's
+  AST for the Windows target and lists every explicit cast of a 64-bit value (pointer, uintptr_t, uint64_t, size_t) to
+  `long`/`unsigned long`; `win/build.sh --check` runs it over the DLL's and the W1 layer's sources (15 s) and fails on
+  any. `--fix FILES` is the mechanical fix of the log calls (151.2). A narrowing that is meant goes through an exact
+  32-bit type, `(long)(int32_t)x`: it cuts the same on both systems.
+- win/build.sh now compiles with `-Wall -Wextra` as the Linux build (its `-Wno-sign-compare -Wno-unused-parameter
+  -Wno-missing-field-initializers -Wno-ignored-attributes` hid nothing: 0 such warnings) and `-Werror=format`: on Windows
+  a format mismatch is the LLP64 class (`%lx` with a 64-bit value). The Windows build's output is warning-free now
+  (but lld-link's note on xinput9_1_0.lib and the layer's dllexport redeclaration, 151.4).
+
+### 151.2 Findings fixed
+- **Windows logs cut every 64-bit value to 32 bits** (848 casts): the code was written for Linux, where
+  `(unsigned long)ptr` with `%lx` is exact; on Windows the cast truncates, silently (no compiler warns on an explicit cast,
+  and `%lx` matches `unsigned long` on both). Build-win2's logs printed the hook sites as `0x40dd50a1` for `0x140dd50a1`
+  (the image base is 0x140000000), the trampolines below the image as `0x3fff0000`, every heap address over 4 GB cut -
+  the logs any Windows bug report is read from. Fix (`llp64.py --fix`, commit "analyze 1"): in each printf-family call
+  (every function declared `format(printf, ...)` in the tree and the C library's) that casts to `(unsigned long)` /
+  `(long)`, those casts became `(unsigned long long)` / `(long long)` and its `%l` conversions `%ll`; the Linux output is
+  byte for byte the same. Where a rewritten call also printed an uncast `long`, gcc's `-Wformat -Werror` named it and it
+  got a `(long long)` (the FX-create lines' `rc`, the brand gate's answer, FLATFX's thread ids, the layer log's
+  tv_nsec). The 14 casts left outside logs (analyze 2): the compat shim's Win32 waits took `(DWORD)ms` of a long long -
+  a long wait could land on 0xffffffff, INFINITE - now clamped (`ms_dw`); `peek`/`arm_poke`/`bd_poke` compare
+  `(size_t)syscall() == n`; the provably small ones (tv_nsec, the thread id in pthread_t's low half, a count <= 64, the
+  keep-alive's sleep, a read length, a path buffer's size) cast through an exact 32-bit type.
+  **Merging**: commit "analyze 1" is the tool's output only - on a conflict take the other side, rerun
+  `python3 -I mod/somvr/win/llp64.py --fix FILE...` on the merged files, then `build.sh --check` (gcc flags a `%ll` left
+  with a `long`) and `win/build.sh --check` (llp64 must say 0). A branch that adds `(unsigned long)x` + `%lx` log lines
+  fails win/build.sh --check until the tool has run over it.
+- **The Windows schema check read a name short at a page's end** (somvr_schema.h `somvr_sch_str`, re-winport.md 7.9):
+  where an 8-byte read failed (the name within 7 bytes of an unreadable page) the byte path read one byte and the zeroed
+  rest ended the string there - 'Combat.Tree' became 'Combat.Tr' and the schema "differed". ASan pointed at it (the
+  test's stand-in read its string literals in the same 8-byte steps); now one byte at a time to the string's end, and a
+  name that runs into the unreadable page is no name. test_winabi.c: the stand-in's strings in an arena with an
+  unreadable page after it, two new checks (both fail on the old code). Also `somvr_sch_check` printed its name buffer
+  unset when the count read failed before the name's.
+- **Uninitialised values in log lines** (the analyzer): somvr_above_game.c logged Talion's root `r[]` when `fa_talion`
+  read none; win/somvr_win_d3d.c `vk_image_of` returned the back buffer's VkImageCreateInfo unset without DXVK's interop
+  - native Windows D3D11, the W1 players - and the INTEROP line printed it.
+- Tests: vklayer/tests/hands_lvp.c never freed its target image and readback buffer (LeakSanitizer).
+- The Windows build's `-Wstring-plus-int` on somvr_gameopts_game.c's `GO_MUSIC + 8` (meant: the name after "options_")
+  is `&GO_MUSIC[8]`.
+
+### 151.3 What the sanitizers proved
+With the fixes, every program of `build.sh --check` runs clean under ASan + LSan + UBSan with
+`halt_on_error`, `detect_leaks`, `detect_stack_use_after_return`, `check_initialization_order`, `strict_string_checks`:
+no out-of-bounds access, use after free, leak, signed overflow, misaligned access, bad shift, float-to-int overflow or
+out-of-range enum load in the unit tests' paths, the selftest's hooks (all of somvr.c's hook bodies against stand-ins)
+or the layer's 176 scenarios. What they cannot see: the code paths only the game drives (game memory is read through
+`peek`/process_vm_readv, which no sanitizer checks), and the threads' timing (no ThreadSanitizer run: the mod's hooks
+run on the game's threads with lock-free atomics by design; a TSan run needs the game).
+
+### 151.4 The analyzer's 56 remaining warnings: false positives (one line each, why)
+- somvr.c:12351, 12358 (bm_pm_pull, `root` garbage): read only under `in.have_root`, which is set only when peek filled
+  `root`; the analyzer drops `in` across `tk_pm_own(&in)` (a non-const pointer).
+- somvr.c:13686, 13689 (x2), 13725 (bo_fire, `sc`/`pl` null): the shot gets past `somvr_bow_shot_check` only with
+  `in.combat` = `a.combat`, which needs pl, pc and sc non-zero (the check is in somvr_bow.c: another translation unit).
+- somvr.c:4418 (cb_hit, `pc` a fixed address): pc is written only when `why == NULL`, and the ternary gives `why` a
+  reason whenever `!pc`.
+- somvr.c:3516 (cb_hs_tick, `m`): `hs.on` is set only with the timer made (`mine` non-zero), never reset while on.
+- somvr.c:20574 (df_recoil_call, `c`): the flag is written only after the peek of the same address succeeded.
+- somvr.c:6701 (es_run, a null call): `fn` must equal the matched site's target; with no vtable `vt + 256 != addr`.
+- somvr.c:9411 (cl_cast1, CLS_RAYCAST's target null): climbing needs CLS_RAYCAST matched at start (the `must` mask) and
+  cl_ray checks the physics object's vtable slot is that target.
+- somvr.c:7539 (write_code, memcpy to 0): dst 0 is "page not mapped" before.
+- somvr_render_game.c:335, 340 (x2 each), 347, 349, 352, 353, 920, 2251 (fixed address / null): the game's own globals
+  (GADDR: the Linux binary's address; on Windows the image base + the confirmed RVA of win/offsets-*.tsv, 0 only for a
+  blank row - every one used here has its row), each path gated by its sites' check at start.
+- somvr.c:14720, 17971 (`getenv(X) && getenv(X)[0]`): the analyzer lets the second call return NULL; nothing changes
+  the environment between the two.
+- somvr.c:8375 (`read` under `g_save_mu`), vklayer/somvr_bridge_layer.c:56, somvr_perf_layer.c:149, 158, 648, 654
+  (`fgets` under a lock): by design - the save file's reads serialised; small /proc and sysfs files (their cost: 152).
+- somvr_combat.c:29 (lerp3 of a null `prev`): without prev the sweep starts at k = steps (no lerp); the analyzer's path
+  needs k to overflow past INT_MAX.
+- somvr_gameopts_game.c:470 (a null call): the game's vtable slot (constant .rdata) is read twice, checked then called.
+- somvr_jump.c:327 (`ys[0]` garbage): `top >= v_min_cm` (45, a constant) needs a stored sample, which sets ys[0].
+- somvr_size_game.c:373, 409 (obj null): `player_objs` returns 1 only with `*obj` non-zero.
+- somvr_vrmenu.c:1178 (`by[]` unset): the items left there are PR_GO..PR_REMOVE, contiguous, by[0..4].
+- vklayer/somvr_menus_layer.c:547-549, somvr_void_layer.c:1055-1057 (null calls): the map is set only after the
+  readback was made with every function present.
+- vklayer/somvr_vklayer.c:424 (x2, strlen of a null `logp`): `g_log` is non-null only when opened from that
+  non-empty SOMVR_XR_LOG.
+- win/somvr_win_compat.c:92, 230 (`now` unset): clock_gettime fails only on its CPU clocks (GetThreadTimes of the
+  current thread, which does not fail); these callers pass the monotonic and realtime clocks.
+- Dead stores (a length after the last write, a loop's exit value, a solver's unused branch): somvr.c:22001,
+  somvr_abil_game.c:755, somvr_bowaim_game.c:67, 69, somvr_brand_game.c:680, 683, somvr_gaze.c:100,
+  somvr_quiver_game.c:143, somvr_stealth_game.c:250, vklayer/somvr_vklayer.c:5976.
+- Windows `-Wshorten-64-to-32` (not in the build's flags; looked at once): `read`/`write` take an `unsigned` count in the
+  UCRT - every length here is bounded (the 1 MB log buffer, the VR menu's file, a save under 2 GB); `return ++lines`
+  counters and a 32-bit frame number wrap after 2^31 lines / 2^32 frames, the same on Linux. `-Wmissing-format-attribute`
+  on br_win_logprintf: the game's own log printf, hooked - our code never calls it. The layer's
+  `vkNegotiateLoaderLayerInterfaceVersion` dllexport redeclaration: the W1 layer's exports are its .def file's.
+## 153. Build 34: one haptics language - every pulse a word of one table: `somvr_haptics.h` (2026-11-03, som-b34-haptics)
+
+Builds 1-33 added their pulses feature by feature: 184 raw `in_haptic_*` calls in 29 files, the defence module's two
+tables, the threat's own table, the VR menu's ticks in the layer. Each was tuned alone, so the same meaning felt
+different from feature to feature (seven different "no"s: a 0.2 double, a 0.3 double, a 0.5 double, a 0.65 double, a
+0.25 x 80 ms buzz, a 0.6 x 120 ms buzz, a 0.7 triple), some cues were as strong as hits (the bow's "no arrow" double 0.65,
+its "none left" triple 0.7), hits ran 200-400 ms (a buzz, not a thump), the two-handed sword's share of an impact was 0.5,
+0.6 or 0.7 by feature, and one call was wrong outright (the herb's "three bites": `in_haptic_after`'s amplitude,
+duration and delay mixed up - one 0.29 s buzz). Frequency was never set (XR_FREQUENCY_UNSPECIFIED everywhere).
+
+### 153.1 The vocabulary (Half-Life: Alyx's and Blade & Sorcery's)
+What a pulse means is in its shape; how much, in its class. Levels at HAPTICS 100 %; the class bands are the rules.
+
+| class | band | shape | meaning | words |
+|---|---|---|---|---|
+| tick | 0.10-0.25, 8-25 ms | one light tick | something is here | `hover` 0.12/10 ms (the pointer on a row), `tick` 0.20/16 ms (in reach, a slot, the quiver, the string, a ring shown, a cue, crouched) |
+| click | 0.30-0.50, 15-45 ms | one firm click (or three) | it took | `click` 0.32/18 ms (a press, a put-back), `take` 0.45/30 ms (the hand took hold: a climb hold, an orc, an arrow, a herb, the sword out, a latch), `eat` 3 x 0.45/0.40/0.35 40 ms, 120 ms apart (the herb's bites), `mark` 0.45/40 ms both hands (a bug mark) |
+| no | 0.20-0.35, 15-35 ms | two (three) soft clicks | no / refused / not here | `no` 2 x 0.28/25 ms, 60 ms gap; `empty` 3 x 0.32/25 ms, 50 ms gap (none left) |
+| nudge | 0.25-0.45, 40-130 ms | one soft long push | ready / going | `ready` 0.38/60 ms (an action waits for the hand: a finisher's glow, a stealth kill, the knife at the belt, A = the way down, the throw offered), `go` 0.30/45 ms (a move asked for starts: a dash, a dodge, a phase, a fling, a jump), `quit` 0.45/120 ms both hands |
+| thump | 0.55-1.00, 30-120 ms (+ a tail <= 0.6 x, <= 330 ms in all) | one strong short thump, graded by force (k) | an impact | `hit` 0.8-1.0/90 ms (the blade into a body: light, stab, heavy), `hit-weight` 1.0/90 ms + a tail 0.5 -> 0 over 160 ms (SOMVR_SWORD_WEIGHT), `tear` 0.55-0.85/60 ms (the blade comes out), `clank` 0.55-0.9/40 ms + its ring 0.5 x over 150 ms (the blade on metal or stone), `block` 0.75-1.0/50 ms + its ring 0.6 x over 250 ms + the free hand's brace 0.45 x (an orc's blow on the blade; a parry at its top), `parry` 0.9/90 ms (a parry's own beat in the free hand), `thump` 0.55-1.0/80 ms (a body impact by the hand: a shove, a throw, a catch, a press, the bow's kick), `power` 0.7/90 ms (an ability or a verb fires), `hurt` 0.8-1.0/90 ms + a tail 0.5 x over 200 ms, both hands (Talion is hit) |
+| kill | 0.90-1.00, 80-120 ms + a tail | the strongest, a long tail | a kill lands | `kill` 0.9-1.0/100 ms + a tail 0.5 x over 250 ms (a finisher, an execution, a stealth kill, the held kill; 0.9 = a kill's own end) |
+| rumble | 0.08-0.50, <= 120 ms | a soft steady buzz, re-sent while it lasts | continuous contact | `flesh` 0.12-0.5/40 ms (the blade moving in flesh), `rub` 0.12/100 ms (the blade rubs a body), `touch` 0.15-0.5/25 ms (a hand or the blade touches a surface or a body), `strain` 0.12-0.45/60 ms (a held effort: the string's tension, the heavy blade's drag, a bucking beast, a hold that grows), `game` 0.5 x (the game's own rumble) |
+| alert | 0.30-1.00, 30-80 ms, patterns | patterns of their own | danger, Talion's state | `announce` 0.5/80 ms (an attack coming on that side), `urgent` 2 x 0.8/35 ms, 40 ms gap (it lands soon), `red` 3 x 1.0/70 ms 130 ms apart both hands (an unblockable), `red-last` 2 x 1.0/60 ms both hands, `struggle` 2 x 0.8/60 ms both hands (the last chance), `heart` 0.45/50 ms + its dub 0.30 0.25 s later both hands (low health) |
+
+The rules, each a check in tests/test_haptics.c: every word inside its class's band; no word but an alert reaches the
+weakest impact (0.55) - at any k, any feature gain (a feature's own strength switch is capped at its class's top), any
+player strength 10-150 %; a kill gives at least the strongest thump's energy (amplitude x time); no two words the same
+pulse, and no alert felt like a non-alert (same pulses, length within 15 ms, level within 0.1); a weapon's words reach
+the other hand only with the sword in both (one share, 0.6, for every weapon word: hit, hit-weight, tear, clank, kill,
+flesh, rub, touch, strain), the body's words always (hurt, mark, quit, red, red-last, struggle, heart; the block's free
+hand brace 0.45); the cues never.
+
+### 153.2 The player's strength (HAPTICS, the VR menu's row; the saved settings pin it)
+`somvr_hx_scale(a, s)`: up to 100 % plainly a x s (unchanged at the pinned 100); above it a s / (1 + (s - 1) a) - the
+weak words gain the most, 1 stays 1, and no two levels meet at the top. Build 33's a x s clipped at 1 made every pulse
+from 0.67 up the same 1.0 at 150 %: a light hit, a heavy hit and a kill felt alike. The game's mixer (`sc_hap_level`,
+somvr_ctl.c) and the layer's VR menu (`vm_haptic`) both use it.
+
+### 153.3 Per feature: what each pulse was and which word it is now
+(old values: amplitude/duration; L/R the hands; "two" = only with the sword in both hands)
+
+| feature | build 33 | build 34 word |
+|---|---|---|
+| the sword's hit on an orc (`cb_hit`) | light 0.8/200 ms, stab 0.9/150, heavy 1.0/200; SOMVR_SWORD_WEIGHT 1.0 for 300/400 ms, L 0.6 two | `hit` k 0 / 0.5 / 1 (0.8 / 0.9 / 1.0 for 90 ms); `hit-weight` (1.0 + its tail, 250 ms in all) |
+| the hit's own pulse after all (a bite or a wound refused, a miss) | 1.0/200 | `hit` / `hit-weight` at the top |
+| his guard stops the blade (`rx_blocking`) | 0.8/150 | `clank` top |
+| the bite (SOMVR_COMBAT_BITE): in / comes free | 1.0 for the hold (>= 50/80 ms), L 0.6 two / 0.85/60 after 25 ms (thud), else 0.5/40 | `hit` top / `tear` top (thud) or bottom |
+| the blade's clank on metal or stone (hitfeel, the surfaces) | 0.9 x c/40 + ring 0.45 x c/150, L 0.5 x c two | `clank` k = (c - 0.25) / 0.75 |
+| a touch (the hands' surfaces, the blade's tick, a glance, the stealth touch) | 0.15-0.7/20; 0.3/40 | `touch` (0.15-0.5/25) |
+| the rub | 0.1/120 | `rub` |
+| the blade in flesh (SOMVR_SWORDPHYS, the stealth stick): in / sliding / out / torn | 1.0/90, L 0.6 two / 0.25-0.75 (still 0.12)/40 / out 0.6, through 0.55/60 / torn 0.85/60 | `hit` top / `flesh` / `tear` 0.17 / 0 / `tear` top |
+| the heavy blade's drag | 0.25-0.7/70; two: R 0.7 x, L 0.5 x | `strain` |
+| a parry / a block (SOMVR_DEFENCE) | R 0.9/60 + L 0.35/40 / R 0.75/90 | `block` top / bottom (the crack, the ring, the free hand's brace) |
+| the clank (SOMVR_DEFENCE_CLANK=haptic) | R 1.0/50 + ring 0.6/250, L 0.45/60 | `block` top (the same shape) |
+| SOMVR_PARRY's own beat / the shove | L 0.9/90 / L 1.0/120 | `parry` / `thump` top |
+| a dodge (defence) / an arrow on the blade | both 0.25/120 / 0.6/40 | `go` both hands / `clank` bottom |
+| the threat: announce, urgent, the parry window's tick | 0.45/70, 0.8/50, 0.15/12 | `announce` 0.5/80, `urgent` (a quick double), `tick` |
+| the unblockable (red): its three, its last | 3 x 1.0/70 both (one call each), 2 x 1.0/60 both | `red`, `red-last` (one word each) |
+| hurt / low health | 0.8-1.0/90 + ramp 0.6 x/250, both / lub 0.45/50 + dub 0.3/40, both | `hurt` / `heart` |
+| the held kill (hands 31), brutalize | R 0.9/250 + L 0.6/150; R 1.0/120 + L 0.6/100 | `kill` + `thump` 0.1 in the holding hand |
+| a kill's end (SOMVR_KILLS), the downed orc's stab | 0.6/120, 0.9/250 | `kill` bottom, `kill` |
+| the execution: ready / the moment | 0.5/60 / 1.0/300 | `ready` / `kill` |
+| the finisher: its glow / it lands / the latch | 0.5/60 / 1.0/250 / L 0.6/50 | `ready` / `kill` / `take` |
+| the stealth kill: the cue / the stick / the ask's kill / immune (the thrust turned) | 0.25/30 / 1.0/100 + 0.55/120 (else 0.9/250) / 0.9/250 / 1.0/60 + 0.45/180 | `ready` / `kill` / `kill` / `clank` |
+| the struggle: it starts / the finisher's stab / a thrust's press | 2 x 0.8/60 both / 1.0/120 / 0.7/50 | `struggle` / `hit` top / `thump` 0.33 |
+| the abilities and verbs fire (the throw, the flash, the press, from above, the brand, the taunt, dominate done, rally) | 0.5-0.8 for 60-120 | `power` |
+| the verbs' takes (the orc taken, the ask, the wraith, flurry/stealth/bleed by the gesture), lit arrows | 0.35-0.7 for 40-80 | `take` (+ `tick` in the other hand for a lit arrow) |
+| the hog hold | 0.15-0.45/30 | `strain` |
+| refused / denied (abilities, verbs, the throw) | 0.2-0.25/80 | `no` |
+| offered (the throw, the flash) / the dagger back / the whistle hold | 0.3-0.35/30-40 / 0.55/50 / 0.3/40 | `ready` / `thump` bottom / `click` |
+| the grab cue, the vault's cue, the herb's cue (SOMVR_VERBS_CUE_TICK) | 0.25/25 | `tick` |
+| the vault: the grab / the throw | L 0.5/50 / L 0.8/80 | `take` / `thump` 0.55 |
+| the herb: taken / dropped / eaten | 0.4/40 / 0.15/30 / "three bites" (in fact one 0.29 s buzz) | `take` / `tick` / `eat` |
+| the climb: a hold / in reach / a miss / a ring shown / the descent timer armed / a soft no / A = the way down / the fling | 0.5/30 / 0.15/12 / 2 x 0.3 / 0.25/15 / 0.45/20 / 2 x 0.2 / 2 x 0.4/30 / 0.3/20 | `take` / `tick` / `no` / `tick` / `ready` / `no` / `ready` (a double read as "no") / `go` |
+| the bow: the shoulder slot, the string in reach, the quiver, a let-down, an arrow let go | 0.1-0.18/12-20 | `tick` |
+| the bow: back on the shoulder, out by the button / nocked / full draw / an arrow taken | 0.25-0.35/25 / S 0.35 + B 0.2 / 0.5/30 / 0.4/30 | `click` / `take` + `tick` / `take` / `take` |
+| the bow: the string's creak / the release | 0.08-0.4/15 / B 0.85/60 + S 0.4/30 | `strain` / `thump` 0.67 (0.85) + `take` |
+| the bow: no arrow / the quiver empty / refused, denied, dropped | 2 x 0.65/60 + B 0.3 (or 0.25/50) / 3 x 0.7/45 (or 0.6/120) / 0.25/80 | `no` / `empty` / `no` |
+| the dash, the dodge's dash, the phase and its sweep, the wraith step's go, the jump's take-off | 0.15-0.35 for 20-100 | `go` (both hands for the body's: the dodge, the wraith step) |
+| refusals of the dodge, the jump, the wraith step and dash | doubles 0.2-0.5, 0.25/80 | `no` |
+| the wraith dash committed / the rings of the jump and the wraith step | 0.35/30 / 0.15/12-20 | `click` / `tick` |
+| crouched / up (both hands; SOMVR_CROUCH_HAPTIC) | 0.3/40 / 0.15/40 | `tick` / `hover` |
+| riding: the beast gives in / bucking | L 0.9/150 / 0.3-0.7/70 | `thump` 0.78 (0.9) / `strain` |
+| the slots: in a slot (the sword / the knife) / denied / drawn / put back | 0.18/12 / 0.4/30 / 0.25/80 / 0.55/35 / 0.35/25 | `tick` / `ready` / `no` / `take` / `click` |
+| the pointer: on the quad / a press / a row hover; the menu toggle; the army/map command | 0.12/8 / 0.3/14 / 0.18/10; 0.3/20; 0.3/20 | `hover` / `click` / `hover`; `click`; `click` |
+| the VR menu (the layer): a new row / a press, a change / quit confirmed | 0.12/8 / 0.3-0.35/12-15 / 0.6/80 | `hover` / `click` / `quit` |
+| the bug mark: taken, its pictures saved / quit / armed | both 0.6/60 / both 0.5/150 / both 0.35/25 | `mark` / `quit` / `click` both |
+| the game's own rumble (SOMVR_RUMBLE) | 0.5 x, both | `game` (the same) |
+| the trigger word `haptic L|R AMP MS` | raw | raw on purpose (SOMVR_HAP_TEST: tests) |
+
+### 153.4 The code
+- `somvr_haptics.h` (header-only, pure): the classes' bands, THE TABLE (`somvr_hx_word_of`), `somvr_hx_level(w, k,
+  gain)`, `somvr_hx_shots(w, k, gain, hand, two, out)` (the word as the mixer's pulses on both hands),
+  `somvr_hx_scale`, `somvr_hx_total`, `somvr_hx_name`.
+- The game thread (somvr.c, after `in_hap_post`): `haptic(h, w)`, `haptic_k(h, w, k)`, `haptic_play(h, w, k, gain)` -
+  the word's pulses into the hands' mixers (`sc_hap_add_at`), `two` = the sword hand with SOMVR_TWOHAND's hold
+  (`bd_two_held`). `in_haptic_event` stays as a marked legacy raw pulse (`__attribute__((unused))`, counted as `raw=`)
+  so a branch made before build 34 still compiles - but `build.sh --check` fails on any call of it: give each pulse a
+  word. The double/after/triple/ramp helpers are gone (the words carry their patterns).
+- Feature gains stay as they were (default 1 = the table): SOMVR_VERBS_HAPTIC, SOMVR_THREAT_HAPTIC,
+  SOMVR_DEFENCE_HAPTIC; the absolute ones are now gains against their old defaults - SOMVR_CROUCH_HAPTIC 0.3,
+  SOMVR_STEALTH_KILL_CUE 0.25, SOMVR_VERBS_CUE_TICK's amplitude 0.25 (its duration: the tick's own), SOMVR_COMBAT_RUB
+  0.1 = the word. No gain lifts a word out of its class.
+- The defence module: `somvr_df_haptic_word(outcome, &k, &both)` replaces `somvr_df_haptic_of` and
+  `somvr_df_clank_haptic_of`.
+- Lines: `HAP L|R n=.. amp=.. dur=..ms src=.. word=<the word>` (as before, rate-limited, + the word), and with the
+  INPUT line `HAPTICS t=.. last N s words (now/total): hit=2/14 take=1/6 ... raw=0/0`.
+- No new switch: the vocabulary replaces the raw values (two tables would be the opposite of one language); the old
+  values are in 153.3. HAPTICS (the player's strength, 0 = off) is unchanged at 100 %.
+
+### 153.5 Proof
+- tests/test_haptics.c (47 checks): the table (32 words, 8 classes) in its bands, names unique, no two the same pulse;
+  the loudest cue (a click's top 0.5 at any gain) under the weakest impact (0.55) at 10-150 %; a kill the most an
+  impact gives; the alerts their own; one two-hand share; the scale (monotone, order-kept; 150 %: 0.8 -> 0.857, 1.0 ->
+  1, 0.2 -> 0.273 - build 33: 0.8 and 1.0 both 1.0); the shots (no 2, empty 3, eat 3 apart with silence between in the
+  mixer - build 33's call: one buzz, checked too; the hit's left share only with two; the clank's ring; the block's
+  brace one-handed; the hurt in both); the mixer at 150 % and 50 %.
+- test_ctl (the mixer's 150 %), test_defence (the outcomes' words, the clank's pulses), the selftest (the pointer's
+  hover under its click, the threat's tick/announce/urgent (now a double: both pulses counted), the parry's crack and
+  brace, the block, the dodge, the arrow, the clank, the mirror (SOMVR_HANDED) with a word, the sword weight's word),
+  the layer's VR menu (its hover and click words). build.sh --check: 176/176, selftest 0 failures; win/build.sh --check ok.
+## 158. Game slots: 2-3 headless Windows games at once - `scripts/game_slot.sh`, `HEADLESS_SLOT`, `WIN_SLOT` (2026-11-03, som-b35-slots)
+About 19 helpers shared one game slot (`/tmp/somvr-boot.lock`) with boots of 4-5 minutes: the wait for the slot was the
+largest cost of a round (one helper counted ~4 h of waiting on 11-03). The one-at-a-time rule came from the Linux build,
+which needs the Steam client; the GOG build under Proton runs in our own prefix with its own Monado, so the shared
+state was found and split per slot, then measured (158.4).
+
+### 158.1 What two games would share, and what each slot has now
+| Shared before | Per slot now (slot 1 = exactly as before; N >= 2) |
+|---|---|
+| The lock `/tmp/somvr-boot.lock` | slot 1 the same; `/tmp/somvr-slot2.lock`, `/tmp/somvr-slot3.lock` (Windows boots only); `/tmp/somvr-slots-solo.lock` = a solo request |
+| The Proton prefix `logs/winport/prefix` (the registry files, the save copy in Documents/WB Games, render.cfg / settings.cfg / Game.ini) | `logs/winport/prefix-slotN`, a reflink copy of the base prefix made once (`game_slot.sh prefix N`, only while no wineserver of the base runs: whole registry files); WIN_W1 stays slot 1 (prefix-w1) |
+| The wineserver | one per prefix already (its socket is keyed by the prefix's inode): separate by the prefix; `wineserver -k` at the end kills only the slot's own |
+| Monado's socket `$XDG_RUNTIME_DIR/monado_comp_ipc` (+ `monado.pid`); the guard "no monado-service at all" | `$XDG_RUNTIME_DIR/somvr-slotN/` (0700) is Monado's XDG_RUNTIME_DIR and the game's: the layer's OpenXR client (libopenxr_monado) connects to `$XDG_RUNTIME_DIR/monado_comp_ipc`; the guard is now "no monado-service on this slot's folder" (by its environment; an unreadable one counts as slot 1's) |
+| gamescope's `gamescope-N` socket and its limiter file in `$XDG_RUNTIME_DIR` (two would pick -0 / -1 by lock files, but share the folder) | the slot's runtime folder (gamescopectl's screenshots too); Xwayland's display number is picked free by Xwayland itself |
+| "The game is alive" = `pgrep -f 'ShadowOfMordor\.exe'` (any game: a slot would wait on another slot's game) | this run's game: a ShadowOfMordor.exe process whose environment carries this run's `SOMVR_LOG` |
+| The run folder name (the second) | `mkdir` without -p (atomic; a second boot of the same second STOPs instead of sharing), a retry with the next second |
+| The bridge file, the trigger, xrtest, the layer's and the mod's logs, the dumps, quit.request, marks, asound.conf (null), the overlay's upper layer | already per run (RUN/...) - nothing to do |
+| The save: the user's Steam save | only read, copied into the slot's own prefix (as before) |
+| Mesa's shader cache (~/.cache/mesa_shader_cache_db), fontconfig's cache | shared on purpose: both are made for many processes at once (Mesa's single-file cache locks) |
+| DXVK's state cache, vkd3d's cache | none written (the summary's "the game wrote into its folder" is empty; DXVK 2.7 has no state cache; vkd3d unused) |
+
+Not shared and not split: the Linux build (boot_check.sh: Steam's client, its own Monado on `$XDG_RUNTIME_DIR`) stays
+slot 1. Drivers that keep a fixed `/tmp` folder (hla27, menu19/20, leftie30, rehearsal28, soak29, nemesis25/27,
+captain24, render21/24, fire22/23, screens22, story14) must not run twice at once; two boots from one worktree at once
+must pin each driver to its run (its `*_RUN=` variable, e.g. `PC_RUN`, `PIN_RUN`, `P31_RUN`, `NM_RUN`) - a driver
+that looks for "the newest run of my worktree" can take the other slot's.
+
+### 158.2 The lock protocol (backwards compatible)
+- Slot 1 = `/tmp/somvr-boot.lock` exactly as before: every older brief's `mkdir` + owner file + release-if-it-names-you
+  is still right, and slot 1 is the only slot of a Linux boot. Slots 2..N (`GAME_SLOTS`, default 3) =
+  `/tmp/somvr-slotN.lock`, the same rules, Windows boots only.
+- `scripts/game_slot.sh take OWNER [N|auto|solo] [WAIT_S]`: auto = the first free slot, **the extra slots first and
+  slot 1 last** (slot 1 is the only one Linux boots and helpers on the old rule can use); it waits up to WAIT_S for a
+  slot, the owner's fair gap (3 minutes after its last release, enforced here) and the VR gate. `release OWNER [N|all]`
+  removes only locks whose owner file's first line is OWNER or starts with "OWNER " (a prefix of a name is not the
+  name). `status` shows each slot's owner, age, run and game pid.
+- Solo (perf tests, the coordinator's suites): `take OWNER solo` makes `/tmp/somvr-slots-solo.lock` first (from then
+  on nobody else's take of any slot succeeds), then takes slot 1 when free, then waits for the others to drain; a
+  failed try leaves nothing half-held (and starts no gap).
+- Stale: a slot >= 2 whose game is gone (the pid file headless_win.sh writes into the lock folder) and whose lock is
+  over 90 minutes old is removed by `take`; slot 1's stale rule stays the old one, by hand.
+- `headless_vr.sh --win`: `HEADLESS_SLOT` unset or 1 = the caller holds slot 1 (as before); 2..3 = the caller holds
+  that slot; `auto` / `solo` + `HEADLESS_OWNER` (+ `HEADLESS_SLOT_WAIT`) = the script takes it and gives it back at its
+  end. headless_win.sh: `WIN_SLOT=N`; a slot >= 2 boot refuses slot 1's base prefix and any prefix with a running
+  wineserver (that also catches boots by older copies of the scripts, which write no pid file).
+- Self-test: `bash scripts/game_slot_test.sh` (28 checks in its own folder: the take order, busy, release by name
+  only, the gap, solo blocking others and draining, stale / not stale, GAME_SLOTS=1, the gate test file, the
+  environment check under `set -o pipefail`).
+
+### 158.3 The VR gate in every slot
+Each slot's headless_win.sh starts a watcher with the game: every 2 s the gate (the `somvr-headset` unit, status.json
+"user": true, a WiVRn client, a vr-session process - boot_check's user_in_vr plus the unit), every 10 s the kernel log
+since the launch (amdgpu reset, "VRAM is lost", a ring timeout, GPU hang/recovery). On either: RUN/ABORT, `wineserver
+-k` of the slot's own prefix at once (no endlogs wait), "STOPPED AT ONCE (slot N)" in the summary. It also runs while
+a `driver` command blocks the command loop. The user's launcher (som-vr-headset-win.sh) already stops every
+headless_win.sh `--game` it finds, so both paths cover all slots. `GAME_SLOT_GATE_TEST=FILE` (tests only) makes FILE's
+existence one more stop reason - it can add a stop, never hide the user's session.
+Proven: the measurement's gate wave (two games, slots 1 and 2, both in the world): the file made, both games' processes
+gone 0.5 s and 0.8 s later (logs/coord/b35/measure2/gate-9.txt).
+
+### 158.4 The measurement (11-03 19:48-20:35, slot 1 held throughout, every slot = solo)
+Build: logs/build-win2 (frozen; its headset.env, 376 switches) + SOMVR_PERF_S=60 SOMVR_XR_PERF_S=60 in every boot.
+Drivers from the build-win2 Windows suite, pinned to their runs: A polish31 (final.sh 134), B fling31 `wall swordlow`
+(136), C pcar29 chain 3 spawns (106) - the practice meadow; M nemesis27 `struggle` (the Beast Hunt mission's start: the
+card, accept, the captain's introduction, back in the world). `scripts/slots35-measure.sh`, `scripts/slots35_report.py`;
+folders logs/coord/b35/measure2 (9 waves: A B C M | A,B C,M | A,B,C M,C,A | the gate test) and measure3 (C,A,B C,M C).
+"Frame work" = the render thread's eye 0 start to the present; "GPU" = the layer's timestamp total a frame; both from
+the 60-s perf windows wholly in the world. The null compositor paces every game at 20 Hz (so fps checks pacing, the ms
+check the load).
+
+| Games at once | Boots | Boot to the world | fps | Frame work ms (mean; worst p95) | GPU ms a frame (mean; worst p95) | VRAM peak (16 GB) | RAM used peak (62 GB) | CPU mean (peak) | GPU busy mean (peak) |
+|---|---|---|---|---|---|---|---|---|---|
+| none | - | - | - | - | - | 2.3-2.4 GB | 16.3-17.4 GB | 8-15 % | - |
+| 1 (solo) | 5 | 43-44 s | 19.5-19.9 | 3.9-6.2; 7.7 | 4.4-6.0; 5.6 | 4.3-4.5 GB | 18.2-19.7 GB | 8-27 % (69) | 6-9 % (45) |
+| 2 | 6 | 44 s | 19.5-19.9 | 4.0-6.2; 8.1 | 3.1-5.7; 5.7 | 6.3-6.4 GB | 20.0-20.9 GB | 13-22 % (63) | 13-14 % (65) |
+| 3 | 9 | 44 s | 19.5-20.0 | 3.9-6.7; 7.8 | 3.1-8.2; 10.3 | 8.3-8.5 GB | 20.7-22.0 GB | 13-21 % (60) | 16-22 % (73) |
+
+Each game: ~0.5-0.65 CPU cores, 1.07-1.10 GiB RSS, +2.0 GB VRAM, +0.25 GB GTT. The kernel log: 0 amdgpu/drm lines
+in all 25 boots (and none in the boot's journal since 19:45). Every boot: the save UNCHANGED, the game wrote nothing
+into its folder, 2 WARN (the Windows build's own two - "H9 not installed", "layout B without H8/H3" - as in solo).
+
+The drivers against their solo boots (the verdicts' text without numbers, clock stamps or addresses):
+- A: 18/0 in all 6 parallel boots, the same verdicts; its numbers within 0.4 cm / 5 frames of solo.
+- M: 2/0 in all 3 parallel boots, the same verdicts (the captain 37.5-39.3 m vs 37.7 m solo).
+- C: 6/0 in 4 of 5 parallel boots (one of them on the driver's second spawn - its retry, the first mount press
+  missed); one (2 at once) had no leap in 3 spawns (only light bites: the caragor's own choice). Solo it passed twice
+  here, and the build-vr32 Windows suite's solo boot failed it the same way ("no mount offer"): the caragor's AI, not
+  the slots - judge it over two boots wherever it runs.
+- B: its last step (a chop while hanging) varies run to run solo too - solo "the hit came after the hang had ended"
+  here, "no hit" in 3 of 6 earlier solo suites; parallel: "no hit", a hit, a hit (12/0). One parallel boot's wall
+  throw landed elsewhere (no "landed at the foot"): the fling's physics. Not the slots.
+- The first measurement (logs/coord/b35/measure1, stopped) had one quiet exit of the game at 145 s in a SOLO boot
+  (slot 1, nothing beside it; no exception in wine.log, the logs just stop at the fight step's start) - the game's own;
+  the exit message now lists the processes pgrep saw, so a harness misjudgement could be told apart next time.
+
+**The decision: 3 slots** (GAME_SLOTS default 3). Two or three games at once change nothing a driver checks: the
+same boot time, the same 20 Hz, the same verdicts within each driver's own solo spread, VRAM at half, RAM at a third,
+CPU at a fifth; no GPU trouble. The only number that moves is the GPU's time a frame at 3 at once (worst p95 5.6 ->
+10.3 ms): the GPU is time-shared. So **solo** stays for every measurement of frame or GPU time - perf27 (and anything
+reading the PERF / `xr: perf` lines as its result), soak27/29, cost13, the coordinator's suites (their numbers are
+compared with the last suite's), the launcher's test (som-vr-headset-win-test.sh refuses any Monado) - and for a
+Linux boot that measures anything. Frame-count drivers are fine in parallel (the pacing held 19.5-20 fps in all).
+Not measured: 4 or more at once; a Linux boot in slot 1 beside Windows boots in 2-3 (allowed by the rules - separate
+runtime folders - but unmeasured).
+
+## 147. Build 33: the story ahead on the Windows build - Torvin's Graug mission past the lure; "Stun the Graug" asks for a charged shot: `SOMVR_GRAUG_STUN` (2026-11-03, som-b33-story6)
+Headless boots on the **Windows build** (the GOG game under Proton: `scripts/headless_vr.sh --win`, re-winport.md 7.11),
+each from a copy of logs/boot-check-20261030-234922/saves/GameData.sav (131.8's furthest: Big Game done, Torvin's Graug
+mission open), with scripts/headset-build26.env + the story's practice settings, the test hands, the layer's test file,
+SOMVR_BOW_HITLOG=1; story22-drive.sh's `ctl` mode and the directors in scripts/story33-steps.txt. The Windows harness
+keeps the save in its prefix (`logs/winport/prefix/.../Saves/GameData.sav`): the boot wrapper copies it to RUN/saves/
+after each boot. handoff/HANDOFF-story.md "build 33". Every run: the install unchanged (an overlay), the source save
+UNCHANGED.
+
+### 147.1 Torvin's Graug mission on the Windows build, in order
+| Step | What the player does | VR state (Windows) |
+|---|---|---|
+| the marker, the card, the video, the follow | B, A, the trips | as on Linux (131.3): works (boots 160558, 164538) |
+| "Tutorial: Graug Bleed" (pausing) and "Bleed the Graug" | A; crouch, behind the eating graug, the blade's low thrust | **works**: `bleed: the blade on graug .. the game offers 'PC_Hamstring_CaveTroll_Sitting_RightLeg'` (160558 at 140 cm, 164538 at 150 cm; 120/130 cm "not offered" - the game's own reach and angle, a player moves) |
+| "Step Two, Cap'n, the blood'll attract Caragors" / "Mount a Caragor" | counter a leap or find a beast the graug knocked down; reach out, close the grip | **works** - but the game's offer lasts only while the beast lies stunned: `prompt up .. 'UI_MountWarg_Dominate'` -> `prompt down (up 1.90 s)` (160558): the drill's grip 2 s late missed twice; the hand already out and closed at the offer mounted at once (`the mount: the left hand reached out and closed at the game's offer`, the palm 39 cm out, 40 deg off the view; 160558 and 164538) |
+| **"Lure the Graug to Torvin"** ("Get 'er to chase you. I'll be waiting.") | ride (the stick) toward Torvin's marker (22100 2350 -26650) with the graug behind | **works**: ridden from 98 m to Torvin in ~15 s, the graug following; 164538: round Torvin at ~15 m until it came -> "Step three! Shoot it in the head!" and the lesson 'GP_Torvin02_Tut_TrollStun'. 160558: the caragor stood at Torvin, the graug knocked it down before it arrived -> Talion off, "New Objective: Mount a Caragor" (the step starts again): a player keeps riding |
+| **"Stun the Graug"** - the lesson's card: **"Headshot the Graug with a Charged Shot."** | the VR bow at its head while Torvin taunts it | **blocked before build 33** (147.2); the charged shot now (147.3) |
+
+### 147.2 Why a VR player could not stun it
+- Our arrows hit the graug's head - `BOW hit .. the hit node record 'Troll_Head', the attack
+  'PC_Ranged_Normal_Hit_Light_HeadTroll' (an AttackOverrides match), ranged 'PC_Bow_NormalArrow_Light', crit 0` - and the
+  game took **10 of its health each, no stun: 26 of 26** in boot 164538 (on foot at 5 m, at 15 m and at 20 m, during its
+  roar 'Troll_Yell_Single' and not; the graug 943 -> 843 and on); the objective stayed "Stun the Graug".
+- The game's own fire command (`bow fire 125`: the stock shot, a flat player's) carries the same record,
+  'PC_Ranged_Ground_Normal_Shoot_Light' with 'PC_Bow_NormalArrow_Light' (164538 t=76924): the VR shot is the stock one.
+- The lesson (the HUD quad, frame 13285 of 164538): **"Headshot the Graug with a Charged Shot."** The database has
+  'PC_Ranged_Troll_Stun' and heavy ranged records ('PC_Ranged_Damage_Heavy_Shoot', 'PC_Ranged_Normal_Hit_Heavy_HeadOrc' -
+  the one-arrow orc headshot 124 swapped in); the VR bow has no charged shot: every arrow is the light one.
+- The bow from the saddle had no arrow either in the drill (`hands squeeze L 0` from the mount's grip held the left grip
+  shut over the layer's test controller): a harness fault, not the game's (122.5 proved the saddle's bow).
+
+### 147.3 The fix: `SOMVR_GRAUG_STUN=on|off` (somvr_bowhit_game.c; code default on; the som-b33-story6 block: on)
+- **A charged shot** = the bow drawn to full (SOMVR_BOW's full draw) and held there at least `SOMVR_GRAUG_STUN_HOLD_S`
+  (0.75 s) before the release - what a person does who aims at a head; a snap shot released at once is not charged
+  (somvr.c's bo_frame: the full draw's time, `g_bow.rel_held` at the release).
+- When the game itself picks `SOMVR_GRAUG_STUN_FROM` ('PC_Ranged_Normal_Hit_Light_HeadTroll': its impact at the graug's
+  'Troll_Head') for a charged arrow of ours, Combat_ApplyProjectileHit gets `SOMVR_GRAUG_STUN_ATTACK`
+  ('PC_Ranged_Troll_Stun') instead - the same hook and the same rule as 124's orc headshot. Body hits, quick shots and
+  every other character keep the game's.
+- Lines: `CONFIG graug_stun=on (SOMVR_GRAUG_STUN, build 33; unset: on) ..`, `BOW graugstun records: .. found`, `BOW
+  graugstun t=.. a charged shot (the draw held full N s) - the game's own head hit .. on a graug: 'PC_Ranged_Troll_Stun'
+  instead`, `BOW graugstun t=.. no - a quick shot (the draw held full N s, under 0.75)`, `BOW HIT END .. graug stuns N
+  (quick shots kept N; SOMVR_GRAUG_STUN on)`. The word `bow graugstun on|off` (headless A/B).
+- Why held, not every head hit: the game's own lesson names a charged shot, and the stun is its reward for a careful
+  aim; the full draw already has its haptic (the string's last tick), so the hold needs no new cue.
+
+### 147.4 Runs (headless, the Windows build, Monado 20 Hz; each from 234922's save copy; the install an overlay, the source save UNCHANGED each time)
+| Run (logs/boot-check-) | WARN | What | Proves |
+|---|---|---|---|
+| 20261103-154902 | - | stopped at 33 s (the disk-full stop) | - |
+| 20261103-160558 | 2 (Windows' known startup pair) | start, follow, bleed (140 cm), the mount missed twice (the drill's grip 2 s after the 1.9 s offer), then mounted at the offer; the lure; thrown off at Torvin (the beast standing): "Mount a Caragor" | the mission on Windows to the lure; the offer's window |
+| 20261103-164538 | 3 (+ a probe's teleport) | start, follow, bleed (150 cm), mounted, the lure round Torvin -> "Step three! Shoot it in the head!" / 'GP_Torvin02_Tut_TrollStun' / "Stun the Graug"; 26 head hits by the VR bow (on foot, 5-20 m), `bow fire 125` x3 | **the blocker** (147.2): light head hits only, no stun; the stock shot the same |
+| 20261103-184834 | - | build 33's code: start, follow, bleed (150 cm), no mount in 30 min (caragors pounced, two presses during Talion's recoil mounted nothing); **killed by the harness's 2-hour job limit** (it counted the long wait for the slot) | - (harness) |
+| 20261103-214036 | 3 (the startup pair + a probe's teleport) | slot 1 (b35 slots). The practice A/B (`practice far graug`): its picker took a caragor fighting the graug ('Warg_Head' hits) - no graug result; the `bow attack` word: 'PC_Ranged_Damage_Heavy_Shoot' carries ranged 'PC_Bow_HeldDamage'. The mission: start, follow, bleed (150 cm), mounted three times, thrown off near the graug each time (the drill rode at it). Then the bled mission graug from 15-17 m: **a charged shot (the draw held full 1.54 s) -> `BOW graugstun .. 'PC_Ranged_Troll_Stun'` on 'Troll_Head' -> the graug 'AI_TrlCave_WraithStunned_Loop'** at once, still stunned 50 s later. With `bow graugstun off` + `bow attack PC_Ranged_Damage_Heavy_Shoot`: the head hits carry the heavy record itself (no override), the stunned graug only recoils ('AI_TrlCave_Recoil_WraithStunned_Recoil_F1/F2'), health unchanged | **SOMVR_GRAUG_STUN stuns the graug in the game**; the heavy record is not the stun |
+| 20261103-210625 | - | the practice graug A/B (`practice far graug`, quick vs charged shots): **stopped by a headset session's start** (7 s in) | - |
+Pictures (both eyes, composed): 160558/composed/f5356.jpg (the blade at the eating graug's legs from behind, the bleed),
+f16346.jpg (seated, the red ring of low health); 164538/composed/f4975.jpg (the bleed), f13285.jpg (the lesson's card
+"Headshot the Graug with a Charged Shot." on the HUD quad, the graug at arm's length), hud12225-stun-the-graug.jpg (the
+objective).
+
+### 147.5 The furthest save, the switches, what is unproven
+- **The furthest save is still logs/boot-check-20261030-234922/saves/GameData.sav** (131.8: Torvin's Graug mission open,
+  The Rescue open): no mission ended this round and a mission keeps no mid-mission state. Windows: `HEADLESS_SAVE_FROM=
+  <that path> scripts/headless_vr.sh --win MOD` (a copy into the prefix; copy the prefix's save out after the boot).
+- `SOMVR_GRAUG_STUN` (code default on; the som-b33-story6 block: on), `SOMVR_GRAUG_STUN_HOLD_S` (0.75),
+  `SOMVR_GRAUG_STUN_FROM` ('PC_Ranged_Normal_Hit_Light_HeadTroll'), `SOMVR_GRAUG_STUN_ATTACK` ('PC_Ranged_Troll_Stun').
+- **Proven** (214036): the charged shot's head hit stuns the mission's graug - 'PC_Ranged_Troll_Stun' -> its
+  'AI_TrlCave_WraithStunned_Loop' (50 s and more). The heavy record ('PC_Ranged_Damage_Heavy_Shoot', ranged
+  'PC_Bow_HeldDamage') is not the stun: the head hit keeps it, the graug only recoils.
+- **Unproven**: that the stun at Torvin's place completes "Stun the Graug" and what comes after (the drill's lure from a
+  fresh mount did not reach Torvin in that boot: its rides went at the graug and lost the caragor three times; 164538's
+  lure reached Step Three). The next helper: graug6.sh from 234922's save (the lure round Torvin, then charged shots).
+- After "Stun the Graug" the mission's end is not reached; the missions after it are not reached (147.1).
+
+
+## 161. The two build checks in parallel: `buildplan.sh`/`buildplan.py` (the plan, the object cache, the log in order), the selftest's trigger handshake, test_layer's scenarios at once, llp64's cache (2026-11-03, som-b35-fastcheck)
+
+Every helper runs `./build.sh --check` and `win/build.sh --check` at every commit, the coordinator after every merge
+(logs/coord/train.sh). On 11-03 the pair took 3 min 59 s at 85 % of one CPU on the 16-thread PC: everything ran one
+command after another. Now the same commands run in parallel with the same log, the same exit codes, and the same
+outputs; no game boot, no switch (nothing here changes the mod in the game).
+
+### 161.1 Where the time went (before, 11-03, cold, one check alone)
+Measured 11-03 20:35 in a worktree of 645dae8, the PC otherwise quiet (one check at a time, `bash -x` timestamps):
+**build.sh --check 188 s, win/build.sh --check 60 s** (the coordinator's pair: 3 min 59 s at 85 % CPU).
+- build.sh: somvr.so in one gcc command - somvr.c (one translation unit with its 58 `*_game.c`: 24 s alone) and the 52
+  CORE files one after another: 34 s; the selftest: selftest.c (it includes somvr.c: 31 s alone) and the CORE files
+  again (-fno-pie): 40 s, then its run 28 s (24 s of it set_trigger's 600 ms x 40 words); 58 unit test programs, each
+  gcc line compiling its CORE files again (somvr_pose.c 20 times): 38 s of compiles, 3 s of runs; check_sites,
+  wintables, handmesh, the inert check: 2 s.
+- vklayer/build.sh --check (called by build.sh): its library twice (the build, then --check: 8.9 s each), test_layer's
+  compile 6.6 s, the 177 scenarios one at a time 15.6 s.
+- win/build.sh: somvr.obj 17.4 s and every other object, **every run**: wintables.py --out rewrites
+  somvr_wintables.inc, and the old rule rebuilt an object older than it - the mtime check never skipped one (warm =
+  cold); llp64.py's 73 ASTs one after another 16.7 s; wintests.py 10 s (already parallel: build 4 s, run 5 s at 4 at
+  a time). On the integration branch it ended `FAIL: wintests: build.sh: test_winabi: no run line` (161.2).
+
+### 161.2 How it runs now
+- **The plan.** build.sh, vklayer/build.sh and win/build.sh source `buildplan.sh`, whose functions turn their commands
+  into records of a plan file (a mktemp in TMPDIR) instead of running them: `gcc ARGS` / `clang ARGS` (a compiler line
+  as written), `run [-k] [-d PATH]... [-o PATH]... -- ARGV` (a command), `say TEXT` (a log line), `built PATH [SUFFIX]`
+  ("built PATH (sha16)"); `plan_go` hands the plan to `buildplan.py`. build.sh calls vklayer/build.sh as before: it
+  appends to build.sh's plan (SOMVR_PLAN), so the layer's checks run beside everything else. A check of more than one
+  command (the inert check, the selftest with its log, the layer's manifest/NEEDED/exports, hands_lvp, test_layer,
+  vulkaninfo, the haptics greps, the DLL's exports/imports, d3dtest's import) is a function `step_NAME` of its script,
+  planned as `run -d WHAT_IT_READS -- SCRIPT --step NAME`.
+- **The runner** (`buildplan.py`) runs SOMVR_JOBS commands at a time (default: the CPU count; **1 while the user is in VR**,
+  /run/user/UID/vr-session/status.json - as wintests.py did), the longest chain first (each command's last time in
+  build/.plan-times.json), and prints every record's output **in the plan's order**, as the serial script did. Each
+  command's stdout and stderr are one stream, in its place (before, a test's stderr went to the terminal's stderr: with
+  `> log 2>&1`, as train.sh and som-win-freeze.sh run it, the same text). A record waits for the records that make its
+  program, its -d paths and any file its arguments name (also inside `LD_PRELOAD=PATH`, `/out:PATH`). **The first
+  failing record in that order ends the check with its exit code** (set -e's; 128+N for a signal): its output is
+  printed, the commands still running are stopped, nothing after it is printed - the log of a failure reads as before.
+  One check at a time per worktree build folder (an flock; a second waits and says so). SIGTERM/SIGHUP stop every
+  command (they run in their own sessions).
+- **A compiler line, split.** `gcc ... -o OUT a.c b.c -lm` (the tests' lines, somvr.so's, the selftest's) is compiled
+  per source - the line's arguments with the other sources and `-o OUT` left out, `-c -o OBJ` added - and linked with the
+  line's arguments, each source replaced by its object in its place. Keeping the line's link arguments on the compile
+  matters: gcc turns `-lm` into `-foffload-options=-l_GCC_m` for the compile, which DW_AT_producer records - a plain
+  `-c` gives a different somvr.so. OBJ is under OUT's folder, `.obj/<hash of the arguments>/`, so a source compiled
+  with the same arguments for many tests is compiled once (somvr_pose.c: 20 tests). `-c` lines (win/build.sh) are one
+  cached object each; `-fsyntax-only`/`-E`/`-S` run as written. The depfile: gcc gets `-MD -MF` on its compile (its
+  output is the same with it); clang gets none - with `-gcodeview` it writes its own command line into each object
+  (LF_BUILDINFO), so a `-MD` there changed every Windows object and the DLL's PDB GUID - its depfile comes from a second,
+  preprocessor-only `-M` run after the compile.
+- **The object cache.** An object is rebuilt when its command, the compiler (path, size, time), the working directory, an
+  output-changing environment variable (SOURCE_DATE_EPOCH, CPATH, ...) or **the content of any file its last compile read**
+  changed: the compiler's `-MD` depfile lists the source and every header (system headers too), each kept with its
+  sha256; a stat shortcut (size, mtime, ctime, inode) skips hashing a file nothing touched. Links and `run -k` commands
+  (lld-link) are skipped when their command and inputs are those of their last success and their outputs unchanged. The
+  old win/build.sh's rule (an object older than its .c, somvr.c, somvr_compat.h or the tables) never skipped an object -
+  the tables are rewritten every run (161.1) - and would have missed any other header; now every header counts.
+- **Isolation.** Every cache file is under the worktree's own build folders (build/.obj, build/tests/.obj, vklayer/build,
+  build/win/obj, build/win/llp64, build/win/tests); temp files are mktemps; wintests' wine run folder is
+  logs/winport/tests-TIME-PID as before. Two worktrees share nothing but the read-only sources of the prefix copy.
+- **The selftest** (28 s -> 4 s): `set_trigger` slept 600 ms per word (40 words: 24 s) so the writer thread's 250 ms poll
+  would have seen the file. Now a handshake: selftest.c defines `nanosleep` (the executable's binds before libc's, for
+  the somvr.c it includes), and only the writer thread's 250 ms wait (the thread named somvr-log) goes through it: it
+  ends at set_trigger's kick, and counts the polls; set_trigger returns when a whole poll has begun after its write and
+  ended (the word acted on - under load it now waits for that, where 600 ms was a guess). somvr.c is untouched. The same
+  38 TRIGGER lines as before in the selftest's log, 0 failures.
+- **test_layer** (15.6 s -> 3.9 s): its 177 scenarios each run in a forked child as before, now SOMVR_JOBS at a time
+  (the runner passes its count; unset: one); a child's stdout and stderr go to TMPDIR/NAME.out and are printed with its
+  PASS/FAIL line in the table's order - the same output as the serial run (checked line by line).
+- **llp64** (16.7 s -> 1 s unchanged, 5.6 s after a change in somvr.c's unit): the ASTs SOMVR_JOBS at a time, the
+  answer kept per file (`--cache build/win/llp64`) while its clang command and every file its translation unit read
+  (clang's depfile) are unchanged. Same lines, same exit.
+- **wintests**: its runs SOMVR_JOBS at a time (was 4); the throwaway prefix copy stays - it takes 89 ms with btrfs reflinks
+  (2,199 files) and 47 ms to delete: a kept copy would save nothing and could carry state from run to run. Its parser
+  reads `run PROGRAM ARGS` lines and looks past another test's gcc line: build.sh's test_rcache line (b34 review) stood
+  between test_winabi's gcc and run lines, so `win/build.sh --check` failed on the integration branch ("test_winabi:
+  no run line") - test_winabi runs under wine again (62 of 62).
+- **Stress tests under load.** test_shared's seqlock reader and test_input's snapshot reader and haptics taker check that
+  they got at least one copy while a writer makes 200,000; under the parallel check the reader got 1 (2,941 alone) - a
+  machine a little busier and it is 0, a failed check. The writers now wait at the halfway mark (2 s at most) for the
+  reader's first copy: `> 0` tests the read, not the scheduler; torn == 0 and the exact final values are unchanged.
+- **The layer's two teardown scenarios under load.** provider-teardown and input-teardown start a game thread, play 8
+  frames and tear the device down; the check is that the thread located at least once (and never after the destroy).
+  Under the parallel check the thread was first scheduled after the 8 frames (880,154 calls, 0 located, all after the
+  teardown): 4 of 8 warm checks failed provider-teardown. Both now wait (2 s at most) for the thread's first located
+  views/hands before the teardown; the teardown's own checks are unchanged. 0 failures since.
+- **test_env's "the fills are slow"** compared wall time with 400/800 ms: with two checks and a game on the PC the cube
+  fill's wall time was 811 ms (its own CPU 58 ms). The same limits on the thread's CPU time (CLOCK_THREAD_CPUTIME_ID;
+  win/compat has it). sc_hang's 1 s stays wall time: it is the layer's own time limit for a hung runtime.
+- **wintests' object cache** compared mtimes (a file in the .d newer than the object): a source restored with its old
+  mtime (`cp -p`, `touch -r`, an archive) kept the old object - a deliberately broken test, undone with `cp -p`, still
+  failed under wine. It now keeps each file's stat and sha256 like buildplan.py.
+- **wintests stopped mid-run cleans up.** It runs beside the DLL build now, so an earlier failure stops it (SIGTERM),
+  which skipped its finally and left its run folder (400 MB) and the copy's wineserver: SIGTERM/SIGHUP now skip the
+  tests not started and exit through the finally (wineserver -k, the folder deleted); the runner gives a stopped command
+  10 s before SIGKILL.
+- **A failure names its command.** set -e ended the old scripts silently - a test that died without output left a log
+  ending after the last good step. Now the failing record's output, then `FAIL: exit N: COMMAND` (train.sh's
+  `grep FAIL` shows it); a failed compile is reported without waiting for the line's other sources.
+- **tests/sanitize.sh** runs the plan with SOMVR_PLAN_DIRECT=1 (every gcc line as written, no cache: its gcc wrapper
+  sees the lines it was written for), still in parallel: all clean under ASan + LSan + UBSan in 143 s (was ~5 min).
+
+### 161.3 What stays the same
+The commands, flags and order of the log; every summary line scripts and helpers grep (`177/177 scenarios passed` last,
+`win tests: N of N passed ...` last, `llp64: ...`, `inert: ...`, `selftest ok (0 failures)`, `built PATH (sha16)`); the
+exit codes; the `CORE=(` block (win/build.sh, tests/analyze.sh read it); each test's two lines (`gcc ... -o .../tests/NAME
+...` then `run .../tests/NAME ARGS`, which wintests.py reads). **Adding a test: the same two lines, the second starting
+with `run`.** A run line without `run` would run at plan time, before its build (or the last build's program):
+`plan_open` refuses a script with one. Any other plain command in a check script runs at plan time too: only for what
+needs no build (wintables.py --out, the layer's .def and .json).
+
+### 161.4 The outputs (proof)
+- **Byte-identical outputs.** From clean build folders with one SOURCE_DATE_EPOCH (1793750000: gcc's `__DATE__`/
+  `__TIME__` in somvr.so's START line, lld-link's PE stamp), the old scripts (645dae8, in the same folder) and the new
+  ones give the same sha256: build/somvr.so `b6a5716709b75a12`, vklayer/build/libVkLayer_somvr_openxr.so
+  `126d69c34d0ebfa0`, build/win/xinput9_1_0.dll `686b77abb50f28cb`, build/win/layer/VkLayer_somvr_openxr.dll
+  `65ea904d24e9aab2`. The 77 Windows objects differ only in the COFF header's time stamp (bytes 4-7: clang writes the
+  compile time and ignores SOURCE_DATE_EPOCH there; the linker does not carry it). Without SOURCE_DATE_EPOCH no two
+  builds of either script are equal (somvr.so's build time; lld-link's stamp and PDB GUID).
+- **The same checks pass.** Linux: the 58 unit test programs, the haptics greps, handmesh, check_sites, wintables,
+  fogdxbc/winabi/rcache/sha256, inert, the selftest (0 failures, the same 38 TRIGGER lines in its log), 177/177
+  scenarios. Windows: exports/imports, the tables, llp64 (0 casts), d3dtest, test_compat, 62 of 62 under wine (61 +
+  test_winabi). Line by line (numbers, paths and hashes masked) the logs are the old ones but for the stress tests'
+  race counts, test_rcache's place (after test_winabi now), the stderr lines now in the log, and test_winabi.
+- **A broken test fails the check, one per stage** (each edit undone afterwards; the exit code; the log's last line):
+  | stage | the break | exit | the log ends |
+  |---|---|---|---|
+  | a test's compile | `#error` in tests/test_kills.c | 1 | gcc's error, `FAIL: exit 1: gcc ...` |
+  | a test's run | test_kills exits 3 (a destructor) | 3 | `FAIL: exit 3: .../build/tests/test_kills` |
+  | a CORE file's compile | `#error` in somvr_pose.c | 1 | gcc's error (0.3 s: not waiting for somvr.c) |
+  | the selftest | selftest exits 3 | 1 | its log's last 40 lines, `FAIL: exit 1: build.sh --step selftest` |
+  | a layer scenario | sc_noloader returns 1 | 1 | `176/177 scenarios passed`, `FAIL: ... --step test_layer` |
+  | check_sites | SOM_BIN=/bin/true | 1 | its mismatches, `FAIL: exit 1: python3 -I .../check_sites.py ...` |
+  | a bare run line | `"$D/build/tests/test_kills"` without `run` | 1 | `a test's run line without run (buildplan.sh)` + the line |
+  | a Windows compile | `#error` under `_WIN32` in somvr_pose.c | 1 | clang's error (Linux green) |
+  | LLP64 | `(unsigned long)p` in somvr_pose.c | 1 | llp64's line for it |
+  | a test under wine | test_kills exits 3 under `_WIN32` only | 1 | `win tests: 61 of 62 passed`, its last lines |
+- **Two worktrees at once** (this one and a second worktree at the same commit, both cold, started together, beside
+  another helper's game soak): both green in ~105 s each, their logs identical (paths and numbers masked). Nothing is
+  shared: the caches are in each worktree's build folders, the plan files and test folders are mktemps, wintests' run
+  folder has its PID in the name. SIGTERM to the runner mid-check (as `timeout` does) leaves no wine run folder or
+  wineserver (161.2).
+- **Load.** Under the parallel load three tests showed scheduling races (the stress readers' first copy, the layer's
+  two teardown scenarios, test_env's wall-time limit), fixed in 161.2: provider-teardown failed 4 of 8 warm checks
+  before, 0 of the ~20 checks since.
+
+### 161.5 Times (after)
+The same PC beside another helper's headless game soak (load 10-18) - the old scripts measured the same way (a
+second worktree of 645dae8, 21:55-22:09):
+
+| the pair (build.sh --check, then win/build.sh --check) | before | after |
+|---|---|---|
+| cold (no build folders) | 301 s (215 + 87) | **76 s** (48 + 28) |
+| warm (nothing changed) | 294 s (224 + 69) | **12 s** (6 + 6) |
+| one CORE file changed (somvr_combat.c) | ~290 s (no Linux cache; Windows 68 s) | **12-16 s** |
+| one `*_game.c` changed (somvr.c's unit: somvr.so, the selftest, somvr.obj) | ~289 s (Windows 65 s) | **60-63 s** (41 + 22) |
+
+Quiet, the old pair was 248 s (188 + 60). A change in somvr.c's unit is the slowest: selftest.c's translation unit
+(somvr.c included, -O2 -g) takes 31-38 s on its own and its run follows - it cannot be split without changing what is
+built. Two checks in two worktrees at once, cold: ~105 s each. The runner's own `SOMVR_PLAN_TIMES=1` lists the slowest
+commands. The selftest's run 28 -> 4 s, the layer's scenarios 15.6 -> 3.9 s, llp64 16.7 -> 1-6 s.
+## 160. Every session's input recorded, and replayed: into a headless game to reproduce a bug mark, and offline into the logic's tests - `SOMVR_INPUT_REC`, `SOMVR_INPUT_REPLAY`, `scripts/replay-drive.sh`, `tests/replay_input` (2026-11-03, som-b35-replay)
+A bug mark (re-xr-pipeline.md 28, 139) keeps what the player saw and said at a moment, but not what the player did: a
+helper reproducing one wrote scripted hand moves that guessed it, and a guess that passed in a test could fail in the
+headset (the bow twice: the grip's real orientation was not the one the test assumed). Only the right grip was
+recorded so far (`SOMVR_SWORD_REC`, 52 / 79: the input of the sword's weight, offline in `tests/test_smooth`).
+Now every stereo frame's head and both controllers, every control, the hits' blade and each landed hit, and a 4 Hz
+state are recorded beside somvr.log in the user's builds, and a recorded moment can be replayed into a headless game
+(the player's motion into the game's own input path) or offline into the pure logic.
+
+### 160.1 What is recorded (`SOMVR_INPUT_REC=on`, mod/somvr/somvr_inrec.h, somvr_inrec_game.c)
+`<SOMVR_LOG>.inrec`: a 64-byte header (`SOMVRIN1`, version 1, the frame record's size) and typed records (`uint16
+type, uint16 size`, 8-byte aligned; a reader skips a type it does not know by its size):
+
+| Record | When | What |
+|---|---|---|
+| FRAME (368 B) | every stereo frame (H4's in_frame, after the grips are located and the test words put; physical controllers, before the left-handed mirror) | the renderer's frame, the game clock `t` (somvr.log's `t=`), the views' XrTime, both eye poses (XR space); the rig: P0, yaw0, the base B and its heading psi, the player size; per controller: the grip as the logic got it (pose, linear and angular velocity, valid / tracked / velocity bits, its source), the snapshot's aim pose, trigger, squeeze, stick, buttons, the 8 press counters, the action and flag bytes, the profile; with `SOMVR_HANDS_TEST` the test words' squeeze and trigger over the controller's (so a driver's run replays too) |
+| STATE (248 B) | 4 Hz | Talion's root, heading, health (and the most seen), flags (crouched, sword / bow / knife out, a climb hold per hand, the grab, a finisher, the practice area, paused, the VR menu), the controls' context; the nearest 6 orcs of combat's list: place, heading, distance, health, dead / in a paired move / a practice orc, an id (the HOBJECT's low 32 bits) |
+| BLADE (80 B) | each combat frame with a blade, and the first frame without one | the hits' blade as combat fed its swing tracker (base, tip, their velocities, the flat's normal, its time; whether `sc_speed_push` got it: not while biting, stuck or in flesh) - the absence = the tracker's reset |
+| HIT (48 B) | each landed hit (before `cb_hit` / the execution's) | the orc, the tier dealt, where along the blade, the edge's angle, the blow's energy, the contact point's speed, the damage factor |
+| MARK (48 B) | each bug mark | its number, time, folder |
+| CFG | at the start (and each mark's copy) | combat's `sc_cfg` as a blob (its size checked by the reader): the offline tiers use the session's own rules |
+| NOTE | the start, a replay's start and end | text |
+| REPLAY (64 B) | each replayed frame | the source's XrTime it showed, the remap's turn and origins (for the compare) |
+
+The game thread only fills a record and copies it into a 1 MB ring (`ir_push`: a memcpy and a release store); the
+writer thread (the log's, every 250 ms) writes the ring to the file, keeps a (time, offset) index of the frames, and
+copies a bug mark's last 30 s (from the file: the frames from 30 s before the mark to then, after a header and the CFG
+record) to `marks/<id>/input.inrec` at its next turn. `SOMVR_INPUT_REC_MB` (default 200) caps the file: past it the
+session's recording stops (logged once). Lines: `CONFIG input rec`, `INREC t=... last 60 s` (frames, MB, drops, the
+game thread's cost), `INREC mark #N`, `INREC END` (the totals, MB an hour, the cost).
+
+### 160.2 The cost
+Measured in boot 20261103-213609 (the GOG build under Proton, headless at Monado's 20 Hz, 79 s, 873 frames): the game
+thread's whole part (the FRAME record built, the 4 Hz STATE, the copy into the ring) 1.87 us a frame on average, 17.6 us
+at most (the budget: 50 us); 0 records dropped; the writer thread's 250 ms turns write ~6 KB each. Size: 368 B a frame
++ 80 B of BLADE while the sword is out + 248 B of STATE 4 times a second: at the headset's 90 Hz 119 MB an hour with
+the sword away, 145 MB with it out the whole hour (the cap of 200 MB = 1.4-1.7 h of play; the user's sessions run 20-60
+minutes); headless at 20 Hz 20 MB an hour. A mark's copy is 0.3 MB headless, ~1.3 MB at 90 Hz.
+
+### 160.3 The replay into a headless game (`SOMVR_INPUT_REPLAY=FILE`, `scripts/replay-drive.sh`)
+Headless tests only (it needs `SOMVR_HANDS_TEST=1`; off in a player's build). The word `replay start` loads FILE (the
+writer thread reads it; a session's file, a cut of it, a mark's copy) and from the next stereo frame the game gets the
+source's motion at the source's XrTime = its first + the live XrTime since the start (real time, interpolated between
+the two source frames: positions linear, orientations nlerp'd, analog values linear, buttons and counters of the
+earlier frame), at the game's own input points - the same ones the drivers' `hands test` words use:
+- the views (H4, right after `somvr_views_locate`): both eye poses - the rig, the eyes' render, the audio listener all
+  follow from them;
+- the grips (in_frame's locate and the arms' at phase 2, after the test hands, physical): pose, velocities, flags;
+- the controls (in_tick, after the snapshot's read, before the left-handed mirror): trigger, squeeze, stick, buttons,
+  the action bits, the profile; the press counters rebased on the live ones (live at the start + the source's since
+  its start), and after the replay the live ones go on from where it left them (no phantom presses either way).
+Each pose is remapped so that it keeps its place to the rig that mapped it in the recording: in the game's convention
+g' = P0_live + R(rot) (g - P0_src), q' = Y(rot) q, rot = (yaw0_live - yaw0_src) + kappa, kappa = psi_src - psi_live
+latched at the start; the live rig then maps g' to exactly the place the recorded rig mapped g, relative to the base
+(Talion), and to the same world heading while psi changes alike in both (`tests/test_inrec`: 200 random rigs, the
+place within 0.01 cm and 0.01 deg; without the remap 50+ cm off). The source's snap turns and recentres replay through
+its controls and its own P0 / yaw0, frame by frame. The end of the source ends the replay (its last frame held 0.5 s).
+Lines: `CONFIG replay`, `REPLAY t=... start` (the source, kappa, both rigs), `REPLAY ... s in` (every 5 s),
+`REPLAY ... end` (frames, interpolated, held, the largest turn).
+
+`scripts/replay-drive.sh SESSION_RUN MARK_ID|N|T0-T1` (a driver beside a boot with `SOMVR_INPUT_REPLAY=@RUN@/replay.inrec`):
+the window from REPLAY_BEFORE (15) s before the mark to REPLAY_AFTER (3) s after (a mark's own copy when the session's
+file is gone), cut by `scripts/inrec.py cut` into the run; the setup from the recording's state at T0 - Talion to his
+root (`practice go X Y Z`, the practice trip), each live orc of the nearest 6 where it stood (the new test word
+`practice put X Y Z [TYPE]`: facing Talion, `front keep 1` keeps them all), the sword drawn if it was - or
+`REPLAY_SETUP=FILE`'s `setup` (a scripted test's exact words); then `replay start`, a `mark` at each source mark's
+moment, the compare and the pictures side by side (RUN/replay/mark-*.jpg: the session's mark | the replay's).
+What matches: the player's motion - the head, both hands, every control - to the frame. What cannot: the orcs (their
+AI is not deterministic; the practice spawns are infantry at the recorded spots), the world's own state, the game's
+frame times (a headless game runs at Monado's 20 Hz: a 90 Hz source is sampled, not stepped), the layer's own input (the
+laser pointer and the VR menu's panel read the controllers in the layer: not replayed).
+
+### 160.4 The replay offline (`tests/inrec_replay.h`, `tests/replay_input`)
+A header-only library: a recording in memory (its frames, the combat config, the records in order) and the player's
+recorded motion fed into the pure logic with no game:
+- `irr_replay_tiers`: the BLADE stream through `sc_speed_push` in the game's order (the resets too), each HIT's tier
+  again from the tracker at that point by the recorded config (force, stroke or build 16's rule) - against the tier the
+  game dealt; a what-if config (`--cfg FROM.inrec`: another build's rules) on the same motion;
+- `irr_replay_slots`: the head and the grips in tracking space and the squeezes into `somvr_slots_step`: the sword's
+  and the knife's draws and put-backs the hands asked for;
+- `irr_hand_world`: a frame's grip in the world as its rig mapped it (the bow's, the verbs', any test's own).
+`tests/replay_input FILE info|tiers|slots|grip [T0 T1] [--cfg F] [--along A]` (`grip`: the right grip through build 31's
+weighted body into the tracker - for a recording without BLADE records, e.g. an older session's SWORDREC converted by
+`scripts/inrec.py from-swordrec`). `scripts/inrec.py info|marks|cut|state|compare|from-swordrec` reads the format.
+
+### 160.5 Bug marks
+A mark (the chord, the menu's Report, the word) gets `marks/<id>/input.inrec`: the last 30 s, self-contained (header,
+the combat config, the frames, the states, the blades, the hits, the mark itself). `replay-drive.sh` uses it when the
+session's file is not there.
+
+### 160.6 The proof
+Done (boot 20261103-213609, the GOG build under Proton; scripts/replay35-drive.sh): the scripted grab and held kill
+recorded - 873 frames, 161 states, 874 blades, 2 marks, both marks' last 30 s copied (0.3 MB each), 0 dropped, 0 new
+WARN (the two of every Windows boot: H9, layout B). Offline on that recording (`tests/replay_input FILE slots`): the
+recorded hands drew the sword from its shoulder slot at t=93209.271 - the frame the game drew it (`SLOTS t=93209.271
+frame=948 sword: drawn`). `build.sh --check` (test_inrec 25 checks: the format, the sampler, the remap against the rig,
+a synthetic cut's tier again from its blade - the same tier, the energy within 1e-4 J -, a knife drawn from the hip by
+the recorded hand; selftest `ir_tests`: the ring, the drain, the file, a mark's copy, the replay's load, the views',
+grips' and controls' override, the press counters, the end) and `win/build.sh --check` (64/64 under wine) green.
+The user's 11-03 session (boot 20261103-093210, read only; its SWORDREC has the right grip only, no blade and no hit
+times): the window of mark 6 (49918-49934, 1116 frames) converted (`inrec.py from-swordrec`) and replayed through the
+weighted body into the force rule with this build's config (`replay_input ... grip --cfg <boot A's recording>`): 18
+strokes, 5 cuts, 2 light, 11 nothing; the game (then build 31b's rule, the hand's swing) dealt a light hit just before
+t=49930.0 at a contact of 11 m/s - the strokes there are 71 J (49928.16: a cut by the force rule) and 21 J (49929.61:
+no hit); the log's hit line has no time, so which stroke it was is not certain (the new HIT records carry it).
+Not done (the wind-down came while the replay boot waited for a game slot): the replay into a second game (the same
+setup, `replay start`, the compare's numbers, the hits/grabs on both sides, the pictures side by side), the offline
+force tier against a game's own HIT records (boot A dealt its kill by the hold's path; the HIT kind CONTACT, added
+after it, records those), one Linux boot. The next steps: handoff/HANDOFF-hla.md "replay".
+
+### 160.7 Files and switches
+- `SOMVR_INPUT_REC=off|on` (default off; the env file: on), `SOMVR_INPUT_REC_MB=N` (200); `SOMVR_INPUT_REPLAY=FILE`
+  (tests only, with `SOMVR_HANDS_TEST=1`), the words `replay start|stop|status`, `practice put X Y Z [TYPE]`.
+- mod/somvr/somvr_inrec.h / .c (the format, the sampler, the remap; CORE), somvr_inrec_game.c (the game side, included
+  last by somvr.c), the hooks in somvr.c (H4 after the views, in_tick's snapshot, in_frame's and the arms' grips,
+  combat_frame's blade / orcs / hit, the writer thread's drain, the config, the end) and somvr_session_game.c (ss_mark);
+  somvr_practice_game.c (`practice put`: pr_spawn_at's far = 3); tests/test_inrec.c (in `build.sh --check`),
+  tests/inrec_replay.h, tests/replay_input.c; selftest.c `ir_tests`; scripts/inrec.py, replay-drive.sh,
+  replay35-drive.sh (the proof's scripted source).
+## 165. Build 36: no flat-game button prompts in VR - `SOMVR_GAME_PROMPTS` (2026-11-03, som-b36-prompts)
+
+Handoff: handoff/HANDOFF-hla.md "build 36 prompts". Driver: scripts/prompts36-drive.sh (steps `fight`, `vision`,
+`icons`, `gate`). Env block "som-b36-prompts" at the end of scripts/headset-build26.env.
+
+The first Windows headset session (11-03) still showed the flat game's button prompts: a Y glyph over an attacking orc,
+small coloured triangles over orcs, a "Stealth Drain" line with the left trigger's glyph, and icons in the wraith
+vision with no meaning in VR. Every one of them is now off by default; where a prompt told the player that something
+was possible, our own cue does that job if one exists (the list in 165.3).
+
+### 165.1 What draws a prompt, and the switch (`SOMVR_GAME_PROMPTS=off|on`, code default off, the block: off)
+somvr_gprompts_game.c holds the switch, its counts and the word `gprompts on|off|state` (live); each part is the hook of
+the module that already owned that path:
+- **The prompt diamond** (the HUD's StandardPrompts / QuicktimePrompts / KeyboardPrompts, re-hud.md 4.2): every
+  PromptShow reaches `PP_SHOW` (somvr_prompts_game.c). With off every show is dropped there, after the VR side has read
+  it (`us_prompt`, `sk_prompt`, `vb_prompt`: the verbs, the pick prompts and the bow's strike still know what the game
+  offers); a PromptHoldUpdate's fill is read (`vb_prompt_hold`) and not passed (no ring); PromptHide is passed as before.
+  The delegates are hooked with off even under `SOMVR_PAD_PROMPTS=game`. This is the prompt band's "Stealth Drain"
+  (mark 10: 'UI_Stealth_Torment' on CombatPrimary03, kept by build 23's `SOMVR_VERBS_BRAND_PROMPT` and shown with the
+  left trigger's glyph).
+- **The behaviour-state prompts** (`GO_PROMPT`, somvr_gameopts_game.c; hooked with `SOMVR_HINTS=log|off`): the show
+  dropped. None came up in the 11-03 session.
+- **The world icons** (the nav markers, re-hud.md 3): `FUN_00ec4a50` places each on-screen icon through
+  `FUN_00ec2660`; its answer 0 makes `FUN_00ec4a50` hide the marker as one out of its range (`LAB_00ec4bb9`: the shown
+  bytes 0, the clip's `vf_0x208(0)`). New K_CALL `OB_PLACE` (Linux `0xec4e01`, Windows RVA `0x4e6b50` -> `0x4e5740`;
+  patched with `OB_EACH`, also when `SOMVR_OBJECTIVE=off`): with off, in our stereo frames, a marker whose record is no
+  objective (`SOMVR_OBJECTIVE_RECS`) and not in `SOMVR_GAME_PROMPTS_KEEP` (default `TrollHealthBar`: the Graug's health
+  bar is no prompt; `none` = keep none) is not placed. An edge arrow (`FUN_00ec3900`, `RenderOffScreen` records) is
+  hidden after `OB_EACH`'s original by the same hide when its shown bytes are set.
+  Why not the shown bytes alone (the first version): `FUN_00ec2660` sets `+0x45` only for a marker with an object at
+  `+0x260` (or `+0x268` with `+0x2e9`); a clip-only icon (an `IconMovieClip` marker) is drawn with `+0x45 = 0`, so the
+  11-03 session's `OBJECTIVE` lines listed only 'Firepit' and the objective as shown.
+- **The counter glyph** stays `SOMVR_COUNTER_ICON`'s (its own VR menu row, 62.8, 139.2). The Windows build had no
+  site for its set-up (`HOOK CP_REC SKIPPED 0: no Windows site`; `CONFIG counter icon=hide (... the glyph's set-up NOT
+  hooked ...)` in the 11-03 session): CP_REC (`0xc1f83e` -> `0x4e39e0`) and CP_SHOW (`0xc1f862` -> `0x4deab0`), found
+  here side by side with Linux `0x26e63db` / `0x26e63fd` (the same `+0x480` marker and `+0x4a0` record; Windows sets it
+  up without the CombatPrompts `+0x1f4 == 2` test) - the same rows som-b31-marks-vault put into win/sites-ui.tsv
+  (85c33ae, merged here; its boot 221839: 0 gold pixels).
+- **Kept**: the death struggle's ring and cursor (`SOMVR_STRUGGLE` steers them by the hand), the objective (ours),
+  health and focus, the wrist's minimap and target panel (its "Hold" line is the game's text; not a world prompt).
+
+### 165.2 The 11-03 Windows session's marks (logs/win-session-20261103-210626, read only)
+- **Mark 8 (t=91661.4, a red marker and a Y glyph over an orc)**: the Y is the counter glyph - `CPROMPT ... marker 0x4743d70: switched
+  off` at 91662.593 while `CP_REC/CP_SHOW not hooked` (165.1). The red marker: a small red triangle over the orc's head
+  on the HUD quad (seen/hud.png) and in the flat window. No `OBJECTIVE` line named it: a clip-only nav marker (165.1).
+  Every world-anchored HUD element goes through `FUN_00a60920`, whose UI callers are the nav markers (`FUN_00ec4a50`,
+  `FUN_00ec1e80`) and the struggle sequence's three (re-ui-effects.md 2.2), and the game has a `NavMarkerAwareness`
+  category (`FUN_02486b70` reads AwarenessGlimpsed / Perceived / Recognized and their `*Visible` flags;
+  `AwarenessNavMarkers` in `FUN_024b79a0`; `AllowAIAwarenessIndicators`): it is most likely the orc's awareness marker
+  at its "recognized" level (it has seen Talion). OB_PLACE refuses it with the rest. **Not seen in a run** (165.4).
+- **Mark 9 (t=91683.8, a yellow triangle over an orc)**: in the wraith vision with the bow drawn, a small yellow-orange triangle at
+  an orc's waist on the HUD quad. The same kind: most likely the awareness marker one level lower ("perceived": the orc
+  is searching). Same hide, same caveat.
+- **Mark 10 (t=91714.8, a drain prompt with the left trigger's glyph)**: the prompt band's line 'UI_Stealth_Torment' (CombatPrimary03, the
+  stealth key; "Stealth Drain" before the Brand is unlocked), kept by `SOMVR_VERBS_BRAND_PROMPT` with the left trigger's
+  glyph (`PROMPTS show #52-54 ... shown as 124`). Dropped now (165.1). The VR way exists: the open left hand on the
+  unaware orc's head + the left trigger (`SOMVR_VERBS_BRAND`); at 91719.8 the hand was 143 cm from the head (`VERBS brand
+  ... no brand offered (143 cm ...)`), then the grab took the orc - the drain was never reached by the hand.
+- **Mark 15 (t=91853.1, an unexplained icon in the wraith vision)**: the game's 'Firepit' marker (flame.tex),
+  `OBJECTIVE t=91846.703 marker 1 ... 'Firepit': shown by the game at (30781 3857 -32314)`, 6.2 m from Talion, the frame
+  after the wraith vision came on (`VISION t=91846.711`). In the flat game a fire pit is an environmental kill: an
+  arrow (the bow's ignite) makes it flare and burns the orcs around it. In VR the bow already reaches it (build 27c's
+  ignite shot, 118); the icon is gone with OB_PLACE. Design line (not built): the fire pit needs no icon - in the wraith
+  vision its own fire glows; the bow's aim ring on it is the "you can" cue.
+- **Mark 16 (t=91910.8, an object that might be usable)**: a wooden frame over a cliff edge with a large cog and a
+  winding drum whose chain runs down to a pole - by its look a gate or lift winch. The game offered nothing there: no
+  PromptShow, no marker, no hint in the log from 91880 to 91925 (the vision off). In the flat game it shows no prompt
+  either, so it is scenery to Talion. Design line (not built): if a later mission makes such a winch usable, it should
+  be a grab-and-turn of the drum's handle with the hands (HL:A's valve), never a button.
+
+### 165.3 Each prompt and the VR cue that replaces it
+| The game's prompt | Its command | Our cue (or none yet) |
+|---|---|---|
+| Counter (the gold Y / white flare over an attacker) | - (a marker) | THREAT's warm glow and red warning (`SOMVR_COUNTER_ICON=hide`) |
+| Stealth kill silent / loud (X / Y behind an unaware orc) | 118 / 119 | the stealth standoff's soft tick at arm's reach (`SOMVR_STEALTH_KILL_STANDOFF_CM`) |
+| Stealth Drain / Brand (B, shown as LT) | 120 | the grab cue's collar glow and tick (`SOMVR_VERBS_CUE`); the hand on the head + LT does it |
+| Grab, its Drain, Grab Flurry, Interrogate (while holding) | 123 / 120 / 118 | the grab cue; while holding: none yet (the hold itself) |
+| Subdue (A, domination) | 121 | none yet |
+| Shadow Strike (bow aimed, X) | 121 / 118 | the strike's mark (`SOMVR_STRIKE_GAZE`, the objective layer's ring) |
+| Execution (the charged streak) | - | the sword's execution glow (`SOMVR_EXECUTE`), the finisher's blue outline (`SOMVR_FINISHER`) |
+| Pick a herb ("Restore Health") | 123 | the herb's glow (`SOMVR_HERBS`) |
+| Pick up (artifacts, arrows; B) | 34 / 123 | none yet (B still picks) |
+| Drop To Hang (B on a ledge) | 120 | the climb's descent ring (`SOMVR_CLIMB_DESCENT_MARK`) |
+| Hold rings (a held prompt's fill) | - | none (the action's own haptics where one exists) |
+| Behaviour prompts | - | none yet (none seen) |
+| Awareness triangles over orcs (red / yellow) | - | none yet (the orcs' own barks) |
+| World icons: fire pit, explosive, ammo, locked gate, caragor bait, collectibles, quest givers | - | none yet (the game's 3D wraith-vision highlight stays; the wrist minimap shows the quest icons) |
+| The objective | - | ours (`SOMVR_OBJECTIVE`, 44) |
+
+### 165.4 Proof
+- **selftest** (`build.sh --check`): the diamond with `SOMVR_GAME_PROMPTS` at its default and no `SOMVR_PAD_PROMPTS`: the
+  delegates hooked, Activate (34, kept by `vr`) and the drain's 120 dropped, the hold not passed, the hide passed, `on`
+  passes the show and the hold as the game's, the words; the behaviour prompt's show dropped and its hide passed;
+  OB_PLACE: 'Firepit' refused (the stand-in placement never called), 'TrollHealthBar' and 'Objective_Squiller' placed,
+  a flat frame placed, `on` places all. Each fails on the code before this section (the old vr keeps 34; no OB_PLACE).
+- **Sites**: check_sites.py `OB_PLACE K_CALL 0xec4e01 -> 0xec2660: ok` (Linux binary); the Windows row read side by side
+  (165.1), wintables 0 errors (331 live sites).
+- **Boot 20261103-230426** (Windows, slot 1, scripts/prompts36-drive.sh `fight vision icons gate`, 0 WARN beyond the
+  Windows build's two baseline lines, the install unchanged, the real save UNCHANGED): `GPROMPTS parts`: the diamond,
+  the behaviour prompts, OB_PLACE + OB_EACH and the counter glyph's set-up all hooked on Windows (`HOOK OB_PLACE ok call
+  0x1404e6b50`). Off: 5736 placements refused - the herbs' icons ('Collectible_Flower_G/I/J/K/N', 5168) and 'Firepit'
+  (568: the mark-16 place has one 28 m west, refused at 98623.3; placed by the game at 98627.2 in the `on` half); the
+  counter glyph's set-up skipped 29/29 (no Y). The off half's both-eye pictures (pm-composed/, 16 frames, both halves):
+  no glyph, no triangle, no prompt line, no icon; the HUD image's 1920x1080 area empty in every dump of both halves (the
+  wrist column alone) - so no dump caught an icon in the `on` half either: the A/B is the log's, not a picture's.
+- **Not reproduced**: the triangles over orcs. The practice infantry is hostile from its spawn and fights at once (no
+  awareness step), and the game placed no marker over it in the `on` half - its record is still unnamed. No diamond
+  prompt came up (no stealth, no grab: `PROMPTS END ... shows 0`): that part is the selftest's. The mark-15 fire pit
+  showed no icon with the vision on 3.6 m from it (the practice area's orcs cleared: the game shows a fire pit's icon
+  with orcs near it, as in the session).
+
+### 165.5 Switches, words, lines
+- The som-b36-prompts block: `SOMVR_GAME_PROMPTS=off` (code default off). `SOMVR_GAME_PROMPTS_KEEP` (default
+  `TrollHealthBar`; `none`). No key of the user's settings file; not on the VR menu (the counter icon keeps its row).
+- Word `gprompts on|off|state` (live). Lines: `CONFIG game_prompts=...`, `GPROMPTS parts ...` (which parts are hooked),
+  `GPROMPTS t=... the game's world icon '...' hidden`, `... places the world icon '...' on screen (SOMVR_GAME_PROMPTS=on)`,
+  `GPROMPTS END ...` (counts by part and by record), `OBJECTIVE site OB_PLACE ...`, `OBJECTIVE END ... placements
+  refused N (OB_PLACE hooked)`, `PROMPTS show ...: dropped (SOMVR_GAME_PROMPTS=off)`, `HINTS behaviour prompt ...:
+  dropped (SOMVR_GAME_PROMPTS=off)`.
+## 166. Build 36: nothing in the face - foliage dissolves near each eye, the floating bugs keep their distance: `SOMVR_NEAR_FOLIAGE_CM`, `SOMVR_NEAR_BUGS_CM` (2026-11-03, som-b36-bubble)
+The player's report (the 11-03 Windows session, marks 19 and 23): walking into a bush puts its leaf cards against the
+eyes - in VR that needs a clear space of about a foot around the head where the foliage simply is not; and the little
+flying insects drift into the face - they should keep out of a bubble of about two and a half feet. Built on the Windows
+build as DXBC edits (the grass helper's patcher, 148.4: the same CreateVertexShader / CreatePixelShader hooks, one more
+for CreateGeometryShader); Linux (IndirectX's SPIR-V) not done (166.6).
+
+### 166.1 What draws the foliage and the bugs (the game's data: son.arch05 seaofnurnen.embb, read-only; 172 .fxo, 1001 .mat)
+- **Foliage** = every shader whose `$Globals` holds `k_fBendability` (the wind's bend): `veg_bush_alphatest` (ferns,
+  the leaf atlas - the big leaves of mark 19 -, clutter grass and stems, the scattered fern groups), `veg_bushclump_alphatest`
+  and `_prlx` (the stealth hide shrubs), `veg_billboard_alphatest` (billboard bushes), `veg_treealphatest` (the trees'
+  leaves), `scattergrass_parallaxfixed` and `scattergrassclump` (the meadow's grass cards and ground clumps, 148.1);
+  `veg_tree_detail` / `disp_veg_tree_detail` = the trunks (opaque; no alpha test). The herbs (`veg_*_collectible`: their
+  `$Globals` hold `k_fWraith`, the glow that finds them) stay whole - the hand has to see what it picks.
+- Each family draws the G-buffer with one pixel shader (3 targets, an alpha test: `mad rA.w, v1.z, rA.w, l(-0.376)` /
+  `lt` / `discard` - 96/255 times the game's own distance fade, which the vertex shader puts in TEXCOORD0.z) and three
+  vertex shaders (static, instanced, skinned) that all output SV_Position, TEXCOORD0.xyz, **TEXCOORD2/3/4.xyz** (the
+  tangent frame: `.w` free) and COLOR0; the shadow pass has its own 2-output VS and a one-target PS (z/w as colour) -
+  not touched, the foliage keeps its shadow.
+- **The bugs** are GPU particles: compute shaders simulate (`particlesim_motes` for the mosquitoes - a box wrapped
+  around the camera -, `particlesim_swarm` / `_vortex` / `_basic` for flies, gnats, moths), and one VS -> GS -> PS
+  draws them: the VS reads the particle from its buffer and outputs `WORLDPOS0` = **k_mObjectToView x the particle =
+  its centre in view space** (the name notwithstanding); the GS builds the camera-facing quad (view centre + offset ->
+  k_mViewToWorld -> k_mWorldToClip) and sets COLOR0.w = the particle's alpha (its age fades x k_vObjectColor.w); both
+  pixel shaders multiply by COLOR0.w (the translucent ones the alpha, the additive one the colour). By material:
+  `gpupart_transvelalignanim` = flies (gpu_flyrend, 05, 06), moths, **mosquitoes**; its `hdr` twin = night fireflies;
+  `gpupart_translucentstreak` = fly streaks (gpu_flyrend02-04); `gpupart_additive` = the floating dust motes
+  (com_dustmoteclr); `gpupart_additivestreak` = sparks (the surfaces' hit sparks, fire) and embers (on fire). The
+  translucent ones' `$Globals` hold `k_fAlphaAmount`, the motes' `k_fRotationRate`, the streaks' `k_fStreakLength` +
+  `k_fHDRScale` only.
+
+### 166.2 The foliage: dissolved by the distance from the eye that draws it (`SOMVR_NEAR_FOLIAGE_CM=IN,OUT`, default 20,35)
+- **VS** (every foliage VS with TEXCOORD2/3/4 .xyz alone on their registers and SV_Position written by exactly four
+  consecutive `dp4 o0.c, cb0[k_mObjectToClip + c].xyzw, rP.xyzw`): three more after them,
+  `dp4 o2.w/o3.w/o4.w, cb0[k_mObjectToView + 0/1/2].xyzw, rP.xyzw` - the vertex's view-space position (the eye at the
+  origin; each eye's pass sets k_mObjectToView with its k_mObjectToClip, 148.1); `dcl_output` and OSGN masks xyz ->
+  xyzw; the `$Globals` declaration widened if it ended before k_mObjectToView. +96 bytes.
+- **PS** (every foliage G-buffer PS with an alpha test): before its first instruction, with one new temp:
+  1. r = |(v2.w, v3.w, v4.w)| - the interpolated view-space position (exact: it is linear across the triangle; a whole
+     leaf card 10 cm from the eye is 10 cm at its middle, not the 30 cm of its corners) = the **radial** distance, so
+     turning the head inside a bush changes nothing - only where the head is does;
+  2. checked against SV_Position.w (the clip w = the view depth, declared `dcl_input_ps_siv linear noperspective v0.xyzw,
+     position` when the shader did not): if | |z| - w | > 2 % of w + 2 cm (a vertex shader the edit did not take: its .w
+     undefined / zero) the depth w is used instead - never a hole where none belongs;
+  3. s = saturate((r - IN) / (OUT - IN)): 0 inside IN, 1 from OUT;
+  4. the fragment is discarded when n >= s, n = a smooth value noise of the leaf's texture position (TEXCOORD0.xy x 48;
+     the cell's four corners hashed by frac(sin(dot(corner, (12.99, 78.23))) x 43758.5), blended by smoothstep; in
+     [0, 1)): holes open as round blobs where the noise is high and grow as the eye comes closer - a dissolve fixed to
+     the leaf's surface: both eyes lose the same spots, nothing swims with the head; beyond OUT nothing changes.
+  Then the game's own alpha test runs as before. +884 bytes (208 words + the SV_Position declaration), 2 temps.
+- Why a dissolve and not the alpha threshold: the leaves' alpha is near binary, so raising the threshold pops whole
+  leaves at one distance; the noise thins them over the 15 cm band. The first version hashed each texture cell
+  ("interleaved gradient noise", 256 cells per uv): in the pictures (boot 225520) it read as a fine net on the leaves,
+  and close up as squares - a digital artefact; the value noise's blobs read as holes in the leaves.
+- Why 20-35 cm: the leaves are gone where they would fill the eye (20 cm is about where a leaf card blocks most of the
+  view), whole again at a forearm's length - the player still walks *into* the bush and sees it around them.
+
+### 166.3 The bugs: faded out near the eye (`SOMVR_NEAR_BUGS_CM=IN,OUT`, default 75,100)
+- **GS** (a GPU particle GS whose `$Globals` hold `k_vParticleScale` and `k_fAlphaAmount` or `k_fRotationRate`: the
+  flies, mosquitoes, moths, fireflies, fly streaks and dust motes - not the sparks or embers, which are hit feedback
+  and fire): `dp3 / sqrt / mad_sat rT.x` = saturate((|WORLDPOS0| - IN) / (OUT - IN)) before the first instruction, and
+  its one `mov oC.w, rA.c` (COLOR0.w) becomes `mul oC.w, rA.c, rT.x`. Checked first: the corners are
+  `add rX.xyz, rY.xyzx, v0[WORLDPOS].xyzx` taken to the world by `dp4 .., cb12[k_mViewToWorld]` (the input is the
+  view-space centre). +100 bytes.
+- None inside 75 cm of the eye, whole from 100 cm: the bugs still fly around the player at arm's length and beyond;
+  they no longer cross the face. Per eye (each eye's own view): a bug in the band can be slightly brighter in one eye
+  (at most 6.4 cm of the 25 cm band) - not visible on specks this size.
+- Not a push: moving the bugs out to the sphere's surface would pile them up on it, and a push from each eye's own
+  origin would put a bug in different places in the two eyes.
+
+### 166.4 The code and the proofs offline
+win/somvr_bubbledxbc.h (`somvr_bubble_vs`, `_ps`, `_gs`; on somvr_grassdxbc.h's reflection reader and somvr_fogdxbc.h's
+checksum), hooked in win/somvr_win_d3d.c: CreateVertexShader / CreatePixelShader run the grass edit first, then this one
+on its result (the two compose: the grass VS's bend + push + these three dp4, the grass PS's front plane + this
+dissolve); CreateGeometryShader (COM slot 13) is new. Log lines `BUBBLE VS/PS/GS <hash>.. (n -> m bytes): ..` per edit,
+`BUBBLE .. stays the game's: <why>` for a foliage / particle shader not taken, and the switches' line at the device.
+- **Every real shader** (the 172 .fxo of the Nurn bundle, scratch tools, not in the repository): 7 foliage G-buffer PS
+  (bush, hide shrub, its prlx, billboard, tree leaves, grass cards, ground clumps) and their 17 VS edited, + the trunks'
+  3 VS (harmless: 3 dp4 a vertex, their PS is refused - no alpha test); the tessellated trunk's VS refused (no
+  SV_Position: a hull/domain path); 4 GS (transvelalignanim = its hdr twin,
+  translucentstreak, additive) edited, additivestreak not ours. **Microsoft's disassembler** (the game's own
+  d3dcompiler_46.dll's D3DDisassemble, under Proton's wine) takes all 30 edited blobs, and its diff against the game's
+  is exactly the lines above; with the grass edit first, the 4 composed grass blobs too.
+- **test_bubbledxbc** (build.sh --check, and under wine in win/build.sh --check): synthetic shaders from the game's own
+  instruction words in containers with a reflection and signatures; the edits word for word, the containers (sizes,
+  chunk offsets, the length word, the checksum), the signature bytes, every refusal (not foliage, the herbs, a packed
+  register, SV_Position not by dp4, no alpha test, not the G-buffer, sparks, two alpha writes); and a small DXBC
+  interpreter **runs** the edited programs: the VS's view position; the PS keeps 0 % of the leaf inside 20 cm, 9 % at
+  23, 51 % at 27.5, 85 % at 31, 100 % from 35, on a ray 37 deg off the axis, the depth decides with a zero .w (no VS edit), the
+  same cells along two eyes' rays, the game's own alpha test still discards; the GS's alpha x 0 / 0 / 0.2 / 0.5 / 0.96 / 1
+  at 10 / 74 / 80 / 87.5 / 99 / 150 cm. Mutations of the edit (a wrong input register, discard_z, no saturate, the
+  check never failing, no code, a missing signature byte, a wrong blend swizzle, the comparison swapped) each fail it.
+
+### 166.5 Runs (headless, the Windows build, Monado 20 Hz, the VR graphics preset (VegetationQuality 3: 76e1a55's harness), the env block + the test hands, scripts/bubble36-drive.sh: the practice meadow crouched, mark 19's bush (six yaws, the head 25 cm in, standing and crouched 60 cm, 25 s held twice), mark 23's meadow (four yaws x 2); each 0 new WARN (the 2 every Windows run carries: H9, layout B), the install unchanged, the save UNCHANGED)
+| Run | What | Proves |
+|---|---|---|
+| 225145 / 225520 (off / on, one solo hold) | the first pattern (a per-cell dither) | **DXVK takes the edits in the running game**: `BUBBLE` 30 VS, 11 PS, 4 GS edited (4 of the PS from other bundles than the one scanned offline: more foliage families, the same rule), 0 refused by D3D/DXVK, no crash; mark 19's bush: the leaves at the eyes gone in both eyes (c0, c60: the ground under the bush shows); the pattern read as a net, close up squares -> the value noise |
+| 230911 / 231542 (off / on, normal slots) | the value noise (5ede351) | the same 45 edits; the bush cleared, the leaves in the band with round holes (no grid), the same holes in both eyes; the meadow grass at a 110 cm crouch and the far bugs and birds unchanged; GPU in the bush (indicative: other boots ran beside it) the game's stereo frame p50 9.0-9.4 ms off / 9.2-9.6 on (+~0.2 ms with leaves over the whole view), the game thread the same |
+Pictures (both eyes, off over on, per pose): the runs' `bubble-pairs/` folders.
+
+### 166.6 Open
+- No bug came inside 75 cm in the four headless runs (the swarms move by themselves): the fade near the eye is proven by
+  the interpreter on the edited GS (166.4) and by DXVK taking it; the headset shows it.
+- Linux: not built. IndirectX's SPIR-V of the same shaders needs the same three edits in the layer's SPIR-V patcher (as
+  137.3's fog), with new interface components (the VS's TEXCOORD2-4.w, the PS's FragCoord): a day or two.
+- The switches are read once at D3D11CreateDevice; a VR-menu row would need both shader versions kept and swapped at bind
+  time (not built).
+- Foliage drawn by other shader families (anything without k_fBendability) is not dissolved; none was seen in the bush
+  pictures, but the rest of the map is unchecked.
+## 167. Build 36: five things from the first Windows session - A no jump while drawing, the knife at either hip, wraith hands, Talion's draw sound dropped on Windows, the listener and the practice area's edge: `SOMVR_BOW_A_JUMP`, `SOMVR_SLOTS_KNIFE_HIPS`, `SOMVR_HANDS_WRAITH`, `SOMVR_PRACTICE_EDGE_M` (2026-11-03, som-b36-polish)
+
+The first real session on the Windows build (logs/win-session-20261103-210626, build-win2 = build 32's features, 16
+minutes, 32 marks) left five small things beside the big ones (the grass, the combat): Talion jumped as the player drew
+an arrow; the knife came out of the left hip only, odd for a right-handed player; ghostly hands in the wraith vision were
+asked for; the sound of a sword being drawn came with every practice orc's spawn though the player drew nothing; a voice
+was heard with no orc anywhere. Code: somvr.c (the bow's `bo_a_holds`, the slots' knife node and hand, the knife's fit
+`kc_probe` / `kc_cal_r` - called in the shared arm_eval beside bo_arm_grip -, the globals),
+somvr_jump_game.c, somvr_slots.c/.h, somvr_vrhands.c/.h, somvr_vrhands_game.c, vklayer/somvr_vrhands_layer.c,
+somvr_gsound_game.c, somvr_practice_game.c, somvr_vrmenu.c (the Controls lines), win/offsets-combat.tsv (GS_POST_CB);
+the knife's hand followed in somvr_fingers_game.c, somvr_stealth_game.c, somvr_abil2_game.c, somvr_abil3_game.c,
+somvr_hands31_game.c (shared: `sl_held_objs` now by hand, the new `sl_weapon_objs` by weapon, `sl_knife_side`,
+`sl_knife_hand`, `sl_dagger_move(g, to_hand, h)`, `sl_call(k, want, h, ...)`). Tests: tests/test_slots.c
+`test_knife_hips`, tests/test_vrhands.c `test_wraith_look` and the v5 layout's `wraith`, tests/test_vrmenu.c (the bow's
+and the knife's lines), selftest.c `bow_a_tests` and the practice edge (105 m: in; 150 m: out; 105 m back: still out),
+vklayer/tests/hands_lvp.c (the wraith cases). Driver scripts/polish36-drive.sh (steps bowjump knife wraith spawn listen).
+
+### 167.1 A while drawing the bow
+**Cause** (the session's marks 12-13): `BOW t=91786.769 nock: the string hand 24.1 cm from the nock` then 19 ms later
+`JUMP t=91786.788 press: the jump` and `go: the jump: 490 cm/s up`. The string is drawn by the right trigger (the user's
+Bow string: Trigger); A sits under the same thumb, and the player squeezed the whole hand to draw. A with the bow out
+went to the jump whenever the strike and the dodge did not take it (the dodge already refuses A with the bow out,
+SOMVR_BOW_A=quiet).
+**Now** (`SOMVR_BOW_A_JUMP=draw|always`, code default draw): A is no jump while the string hand is at the string (the
+hover's zone with its 5 cm hysteresis), drawing or holding the arrow on the string, or holding its string button (the
+trigger, or the grip with Bow string: Grip) past 0.25; the press is the jump's and does nothing (the climb sees A up, so
+no descent's ring either): `JUMP t=.. press while drawing the bow: nothing (the bow drawn; SOMVR_BOW_A_JUMP=draw; N so
+far)`; `JUMP END ... while drawing the bow N`. A with the bow out and the hand away from the string jumps as ever.
+**The Controls page** says which button draws: the arrow on the string with the trigger: "Draw: RT at the string",
+"Shoot: pull back, let go" (Bow string: Grip: "Draw: R grip at string"); the quiver's lines unchanged ("Arrow: RT at R
+shoulder", "Shoot: nock, pull, let go"). Mirrored for a left-handed player as every line.
+
+### 167.2 The knife at either hip
+**Before:** Acharn's slot was the off hand's hip only (`somvr_slots_hand(c, SOMVR_SLOT_DAGGER)`), the knife always on
+`L_Weapon` (141.2: "the right hand's cross draw - the knife would need the sword's own socket").
+**Now** (`SOMVR_SLOTS_KNIFE_HIPS=both|off`, code default both): with the hip slot the knife is at both hips, each for the
+hand on its side (the main hand's slot = the off hand's mirrored across the body: 18,-62,-5 cm from the head for a
+right-handed player). The main hand's slot is live only while that hand holds nothing (the sword neither in it nor
+going there, not busy or away); the knife goes to the hand that drew it (`out.dagger_hand`), back to the belt from it
+(the grip opened with SOMVR_SLOTS_DAGGER_HOLD, a press at its hip, dropped in). One knife: the other hip does nothing
+while it is out. While the knife is in the main hand the sword's slot and the quick draw wait; the Shadow Strike's sword
+(SOMVR_STRIKE_SWORD's take) puts the knife back first; the bow and a climb suspend and restore it into the same hand.
+**The game side:** the right hand's knife is our move with `R_Weapon` - its entries' InactiveNode **and** ActiveNode (the
+stealth crouch makes Acharn the active item, whose ActiveNode is the left hand's: written too so it stays in the right),
+both saved and put back; `sl_dagger_drawn` checks the node our move wrote. A draw into the right hand while the sword is
+held is refused at the call (`the right hand holds the sword`). The game's draw of the sword while the knife is in the
+right hand stays on the back (the slots' keep is 0 for the sword: SOMVR_SLOTS_GAMEDRAW's re-attach). The fist, the
+stealth kill's knife blade (by role: the knife's blade from the hand it is in), the herbs' free hand and abil2/abil3's
+dagger hand follow the knife. Lines: `SLOTS t=.. dagger: drawn by the game's own re-attach FUN_0231e2e0 (InactiveNode
+R_Weapon: the right hand)`, `SLOTS dagger entries: N, the first's ActiveNode .. InactiveNode ..` (once),
+`SLOTS END build 36: the knife drawn at the right hip into the right hand N times`.
+**The fit in the right fist** (`SOMVR_SLOTS_KNIFE_FIT=on|off`, code default on): the first boot's pictures (230417,
+frames 1052/1107) showed the right-hand knife with its handle out under the fist and the guard on the knuckles, while
+the left fist held it by the handle. Not the attachment: `SLOTS knife fit` measured the knife's object in its node's
+frame as exactly identity on both L_Weapon and R_Weapon (231717). The right hand's weapon target carries the *sword's*
+calibration - SOMVR_SWORD_GRIP_CM 8 (Urfael slid 8 cm ahead in the fist) and the sword angle. While the knife is in the
+right hand the arms now use the left hand's calibration for that hand (times the measured per-node offsets, identity
+today); 232753's frames 737 and 942 show the handle in the right fist and the guard over the thumb, both eyes, as the left.
+**The Controls page:** "Knife: hip, hold grip".
+
+### 167.3 Wraith hands
+`SOMVR_HANDS_WRAITH=on|off` (code default on), `SOMVR_HANDS_WRAITH_MS` (350): the vrhands entry carries the hands'
+wraith amount 0..1 (`wraith`, the v5 entry's former pad5: an old preload's entries read 0, an old layer ignores it; the
+version stays 5), eased in the preload toward the game's vision flag (`st_vision`, Y held or the game's own) at 1 / 350 ms
+a second, a live first-person frame only. The layer blends the hands' look by it (`somvr_vh_wraith_look`, shared with
+hands_lvp): the wraith world's pale blue (0.42, 0.66, 1.0 linear), the opacity halved, the key light down 60 %, an even
+ambient, a strong rim (1.9: hands.frag adds base x rim to the colour, not the alpha, so the edge glows while the middle
+stays faint), no sheen. Overlapping parts (the fingers over the palm) add up as a ghost's would. The arrow, the string,
+the surface ghosts keep their own looks; the game's sword and knife are the game's. Lines: `VRHANDS t=.. the wraith
+vision on: the hands turn to wraith hands over 350 ms`, the layer's `xr: hands: frame N: wraith hands fading|full|gone`,
+`VRHANDS END build 36: wraith hands in N frames`. The word `hands wraith 0..1|auto` pins the amount (tests).
+
+### 167.4 The sword's draw sound at an orc's spawn
+**Cause:** the game draws Talion's sword when an orc appears near him (`PRACTICE t=92178.034 spawn placed Infantry`, then
+`SLOTS t=92178.605 sword: the game drew it: kept on the back`); the slots keep the sword on the back, but the draw
+animation's sound key `fol_ply_cbt_swd_unsheath` is Talion's own and SOMVR_SLOTS_GAMESOUND=drop (build 20, 75) should
+drop it. On Windows it never did: `SLSND END ... the game objects' posts 0` - gs_pre told a game object's post by its
+callback, compared with Linux's 0x8c8ba0; the Windows callback is 0x140e29b30 (the `lea -0xb8(%rip),%r9` before the
+PostEvent call 0x140e29beb).
+**Now:** the callback is a global of the running exe (`GADDR(GS_POST_CB, 0x8c8ba0)`, win/offsets-combat.tsv: RVA
+0xe29b30, both sides read in the binaries), so on Windows too the game's own sword draw, sheathe and twirl sounds are
+dropped while the slots run (ours at the hand stay). No switch (SOMVR_SLOTS_GAMESOUND=drop as before).
+
+### 167.5 A voice with no orc: the listener and the practice area's edge
+**The listener follows the head on Windows:** the AUDIO hook (SOMVR_AUDIO=head) gives listener 0 the head every frame,
+100 a second (`RATE ... AUDIO=100`); at the session's mark 17 (t 91926.856) the head was 23175.7, 2789.8, -28502.3 and
+the AUDIO line 0.5 s before gave the listener 23175.76, 2789.92, -28501.05, its front the eyes' forward (the FRONT
+camcopy's head `fwd` is the same vector at the same time). The voice itself is not in the log (the game's own posts are
+not logged).
+**The likely voice:** the minutes before the mark Talion stood 100.0-100.2 m from the practice spot - the area's edge -
+and crossed it 10 times in 24 s (t 91903.8 - 91928.1). Each walk-out turned the ambient AI spawn manager back on
+(`quiet ends (walked out of the area): the spawn manager on again`), each walk back removed what it had spawned
+(`its 27 / 42 / 27 / 8 ambient AI removed`: 104 orcs). The mark at 91926.856 falls between the walk-out at 91924.267 and
+the 8 removed at 91928.059: orcs spawned out of sight (patrols, camps, their barks) and gone 4 s later.
+**Now** (`SOMVR_PRACTICE_EDGE_M`, 10 m, 0 = build 35's one edge): out of the area only past radius + 10 m, back in
+within the radius - standing or walking along the edge no longer flips the spawn manager. `PRACTICE t=.. Talion walked
+out of the practice area (N m from the spot; out past 110 m)`.
+
+### 167.6 Runs (headless, the Windows build under Proton, Monado 20 Hz, scripts/headset-build26.env with the som-b36-polish block, `SOMVR_HANDS_TEST=1`, scripts/polish36-drive.sh; each 2 WARN - Windows' known startup pair - the install an overlay with nothing written, the test save UNCHANGED)
+| Run (logs/boot-check-20261103-) | Steps | What it shows |
+|---|---|---|
+| 230417 | bowjump knife wraith spawn listen | **A at the string**: the bow out by the shoulder, the right hand at the string (`hover: the string hand 3.8 cm from the nock`), the trigger and A together: `JUMP t=98518.202 press while drawing the bow: nothing (the bow drawn ...)`, no take-off; A while drawn: nothing; let down, the hand away: `press: the jump` and its take-off. **The knife**: the right hip's squeeze `drawn ... (InactiveNode R_Weapon: the right hand)`, let go: back on the belt; the left hip as ever; with the sword in the right hand its hip draws nothing - the fit off (the handle under the fist, 167.2). **Wraith hands**: Y held, `xr: hands: frame 2432: wraith hands full (amount 1.00: opacity 0.50, rim 1.90)`, Y let go `gone`; pictures frames 1577 (plain), 1661/1716 (full), 1771 (`hands wraith 0.5`), 1936 (after). **The spawn**: `slsnd log`, a practice orc 3.5 m ahead: `SLSND 'fol_ply_cbt_swd_unsheath' obj 73 ... passed` 0.6 s after the spawn (the game's draw of Talion's sword, kept on the back); `slsnd drop` and again: `... DROPPED (the game's own sword sound: no hand drew or put back) -> playing 0`; the game objects' posts 3289 (build 35's session: 0). **The listener**: the numbers right, the driver's parser wrong (signed vectors) |
+| 231717 | knife listen | `SLOTS knife fit`: the knife's object on L_Weapon and on R_Weapon at identity (the cause in the calibration); **the listener**: AUDIO's front turned 87 deg with the eyes' (a 90 deg head turn), within 0.1 deg of the eyes' forward, moved 42.1 cm with the eyes' 42.2 cm |
+| 232753 | knife | the right hand on the left's calibration: frames 737 and 942 (both eyes) the handle in the right fist, the guard over the thumb, as the left's frame 538; draws, let-gos and the sword-hand check as in 230417 |
+Offline: tests/test_slots.c 180 checks (`test_knife_hips` 22), tests/test_vrhands.c 120 (`test_wraith_look`, the v5
+layout's wraith), tests/test_vrmenu.c 700, selftest (`bow_a_tests`, the practice edge), vklayer/tests/hands_lvp.c 126
+(the wraith cases' see-through and blue checks; pictures hands-23-wraith-half, hands-24-wraith).
+
+### 167.7 Switches, defaults, the settings file, what is unproven
+- The som-b36-polish block (all code default on): `SOMVR_BOW_A_JUMP=draw` (always = build 35), `SOMVR_SLOTS_KNIFE_HIPS=both`
+  (off = the left hip only), `SOMVR_SLOTS_KNIFE_FIT` (code default on, not in the block), `SOMVR_HANDS_WRAITH=on`,
+  `SOMVR_HANDS_WRAITH_MS=350`, `SOMVR_PRACTICE_EDGE_M=10`. None is a key of the user's settings file; the gamesound fix
+  has no switch.
+- **Unproven, the headset's to judge:** whether the wraith hands' look and their 350 ms fade sit well with the game's
+  own wraith blend; whether the right hip's spot (18 cm out, 62 down, 5 back from the head) is where a right hand finds
+  the knife; whether the trigger-and-A habit now draws cleanly; whether the voice heard with no orc was the edge's
+  ambient spawns (the log does not name voices - if one is heard again with no orc, a mark with the practice line will
+  say where Talion stood). The listener's left/right is the Linux build's code path (SOMVR_AUDIO=head); the Windows audio
+  stream itself was not captured (the harness gives the game ALSA's null plugin).
+### 142.9 The string's ends on the model's own string ends (mark 17, build 33b, branch t3/som-b33-bow2)
+- Read from the model, not from a side picture: `bow slog N` logs, for N frames, our string's two ends and the bow's
+  axes (the limbs, the shot) in the layer's XR space, both from the 7 nodes the game skins the bow with (the tip nodes
+  5/6 plus `SOMVR_BOW_STRING_TIPS_CM` along the limbs' last bones 3->5 / 4->6, minus `_BACK_CM` along the shot; the
+  grip frame from `hold_q`). scripts/bow33-drive.sh's `tips` step holds the bow ahead with the real-hand pose and looks
+  up at the upper limb, down at the lower one, and from 45 cm back at the whole bow, at rest and drawn, a dump each.
+  scripts/bow_tips.py projects the logged end into both eyes (the dump's eye poses and fov), takes a model point in both
+  eyes (the brightest extreme along the limb, or `--pick`), closes the two rays (their gap printed: a check that both
+  picks are the same point) and prints the end -> point offset along the limbs, along the shot and across, with the
+  `stips` / `stipslo` / `SOMVR_BOW_STRING_SIDE_CM` change that removes it.
+- The target: the bow mesh carries its own string (a thin strip) whose ends sit where each limb meets the base of its
+  glowing spike ornament - not the spike's point, which runs on another ~8 cm. First aimed at the points (d3d8743: 31/29,
+  32,28, run 20261103-212311), then re-read at the strip's ends with `--pick` (run -222131 frames 542/617: the upper end
+  -8.1 along / +6.8 shot, the lower +9.6 / +7.3: K, B 22.7, 23.9 and 22.1, 23.3; the rays 0.1-0.3 cm apart).
+- Across: in -222131 both ends sat 1.0-1.2 cm beside the strip. The first fix (-1.1) had the sign wrong - bow_tips.py's
+  "across" is the model's -X (the XR mirror), `SIDE_CM` moves along +X: run -232108 read 1.6 (upper) and 2.0 cm (lower).
+  From the four reads the strip lies 0.5-1.2 cm along the model's +X: `SOMVR_BOW_STRING_SIDE_CM=0.9`; bow_tips.py now
+  prints the side change with its sign. The upper's back value from the two reads' mean (24 -> 23).
+- The pick's depth is the weak axis (looking along the shot, a pixel of disparity is ~0.5 cm): the two upper reads
+  differ 1.8 cm along the shot, 0.8 cm along the limbs. The drawn frames give no clean pick (the drawing arm and hand
+  in front of the tips); the ends follow the limbs' bones while drawn, as at rest.
+- Run 20261103-234446 (Windows, slot 1, the tips step with 23/23, 22,23 and SIDE 0.9): the upper end 0.4 cm from the
+  strip's end (-0.2 along, -0.2 shot, -0.3 across; the rays 0.0 cm apart), the lower 0.7 cm (+0.5, -0.4, -0.2; 0.1) -
+  inside the pick's spread. The front pictures (the head 45 cm back, both eyes; logs/coord/b33/bow-pictures/234446-*):
+  at rest our string runs spike base to spike base over the game's own; drawn, both ends stay on the spike bases and
+  the string comes back to the hand. 2 WARN (the Windows build's own, as 160335), the save UNCHANGED.
+- Runs: 20261103-212311 (the spike points), -222131 (the strip's ends read), -224001 (23/24, 22,23: on height, 1 cm
+  beside), -232108 (SIDE -1.1: the sign), -234446 (the fix). Each 2 WARN (the Windows build's own), the save UNCHANGED.
+
+| Switch | Code default | Build 33b env | What |
+|---|---|---|---|
+| `SOMVR_BOW_STRING_TIPS_CM` | 0 | **23** | the upper end along the upper limb's last bone past node 6 (build 19: 27) |
+| `SOMVR_BOW_STRING_BACK_CM` | 0 | **23** | ... and back along the shot (build 19: 28) |
+| `SOMVR_BOW_STRING_LOW_CM` | the upper's | **22,23** | the lower end's along, back (build 19: 21,23) |
+| `SOMVR_BOW_STRING_SIDE_CM` | 0 | **0.9** | both ends across the bow (the model's +X), -10..10 |
+
+Words: `bow slog N` (N <= 600 frames: `BOW slog frame=..` lines), `bow stips K B` / `bow stipslo K B` (build 19's, live).
+Tools: scripts/bow_tips.py (`--burst K` = the K-th `bow slog` burst: the game's frame ids are not the layer's dump ids;
+`--pick LX,LY RX,RY`), scripts/bow33-drive.sh `tips` (B33_UP / B33_LO: `bow stips` values before the dumps). This
+replaces 142.8's "not changed".
+## 164. Build 36: every orc death the player's blow's, at once - the quick death, the slow rows out, the death at the blow with that blow's direction, a dying orc still hit, the finisher's charged kill, Practice > Charge execution: `SOMVR_KILLS_QUICK`, `SOMVR_KILLS_NECK`, `SOMVR_KILLS_DYING_FX`, `SOMVR_KILLS_HITSTOP`, `SOMVR_STEALTH_KILL_SLASH=hit` (2026-11-03, som-b36-deaths)
+
+The first real Windows session (build-win2, 11-03 21:06-21:23) had orcs that seemed to die by themselves after a hit:
+a swing that killed at once though the player did not mean a kill, a hit that seemed to do nothing with the death a
+moment later, an orc that wandered about unhittable and then collapsed, an orc that seemed to attack, could not be blocked and
+then dropped, and a downed orc that the first few stabs passed through. Code: somvr_kills.c/.h (the pure rule,
+tests/test_kills.c), somvr_kills_game.c, cb_hit and combat_frame (somvr.c), fn_spares (somvr_finisher_game.c), xc_fill
+(somvr_execute_game.c), the practice page's row (somvr_vrmenu.c, somvr_practice*.c), the stealth judge
+(somvr_stealth.c/_game.c); driver scripts/deaths36-drive.sh; checker tools/deaths_check.py. Handoff:
+handoff/HANDOFF-kills.md "build 36".
+
+### 164.1 The causes (the session's somvr.log; `tools/deaths_check.py` on it: 6 killing blows, 0 dead within 0.15 s)
+| Kill (t=) | The orc at the blow | Row | Death after | Why (build 31's rules) | What it read as |
+|---|---|---|---|---|---|
+| 91669.8 | in a hit recoil (`AI_Bip_L100_R2L_F`) | F | 0.81 s | "not playing" (the head 6.1 cm down) | the hit, nothing, then the death |
+| 91731.4 | in a hit recoil (`_R2L_B`) | B4 | 5.01 s | the row's moment (the 5 s cap) | the orc walking about, no hit landing (a playing kill skips every hit), then the death |
+| 91774.2 | knocked down (`AI_Bip_KDLoop`) | KD_L | 2.51 s | the downed cap | lying 2.5 s, then dead |
+| 92039.3 | in its melee attack | F9 | 0.40 s | down at +0.14 s | the blow, then what looked like a second hit (the death's ragdoll) |
+| 92064.3 | 0.1 s into its melee attack | F3 | 1.12 s | down at +0.95 s | the attack seemed to go on (no block possible: the row had replaced it), then a collapse |
+| 92215.4 | in a hit recoil (`_L2R_F`) | F5 | 0.80 s | "not playing" (0.0 cm) | as the first |
+- **Whether an orc's half plays at all is a coin toss** (every player kill of the 11-02/03 runs, `KILLS kill` lines): F3
+  29 of 50 seen down (median 0.90 s), F4 11/16, F5 15/21, F6 12/17; on an orc in its own melee attack 54 of 73 played
+  (down within 1.6 s), in a hit recoil 13 of 51, idle 5 of 14, knocked down 6 of 49 (the KD rows: 34 ran to the 2.5 s
+  cap, 8 seen down). Build 31's rules then
+  waited 0.8 s ("not playing") or the cap (2.5 / 5 s) - a death far from its blow.
+- **The orcs' own halves fall late** (the game's keys, `tools/anix.py keys` on orc_syncaction_chordkill_stand /
+  _onground / _counter.anix: the first `snd_ground bodyfall` key): the front executions 2.3-3.5 s (F 2.3, F3 3.3, F4 2.5,
+  F5 2.5, F6 2.3, F9 3.5, F7_Sever 2.8), F8 0.9, F2_Sever / CntrKill_F 1.6, F10_Sever / CntrKill_B 2.0; the back ones B
+  0.8, B2 0.4 (the knees) / 1.4, B3_Sever 1.0, B4 1.3, B4_Sever 3.3; stunned B / B2 1.0, B3 0.4, F 2.3; the ground ones
+  1.1-2.6 s. What the orc shows alone (no sync) is its first second: the doubling over, the knees, the head down
+  (133.2) - where it does play.
+- **The downed orc's stabs that passed through** (mark at t=91584): the wraith dash's knockdown left that orc unaware to
+  the game (`STEALTH aware ... 1 -> 0`), so every contact went to the stealth judge - "air" (combat's capsule, 20 cm off
+  its skeleton) and "touch" (12.8 cm in at its spine, a stab tier: no damage) - until SOMVR_ABIL's ground stab at
+  91585.074. Build 32's `SOMVR_STEALTH_DOWNED_FIGHT=on` (144.3: an orc in `AI_Bip_KD*` is in the fight) fixes exactly
+  this, but the session's build-win2 environment had no build 32 block (no `SOMVR_STEALTH_DOWNED_FIGHT`, no
+  `SOMVR_COMBAT_FORCE` in its launch-cmd.txt); headset-build26.env has it on.
+- **The swing that killed though no kill was meant** (t=91636.035): an unaware placed orc, the player standing behind
+  it, a full cut into its back - build 31's `SOMVR_STEALTH_KILL_SLASH=on` makes that the silent kill (the blade stuck in
+  it, the body falling off it 0.5 s later). The player expected the fight to start.
+- **Review b34's open item**: cb_hit's death for a killing blow SOMVR_KILLS does not take was dealt after the hit
+  direction was put back (the previous hit's) and with the record's own death reaction, not SOMVR_COMBAT_DEATH's.
+
+### 164.2 The rules (SOMVR_KILLS_QUICK=on)
+- **The killing blow shows at once.** cb_hit finds the killing blow as before (the hit floored at 2 health); it gets its
+  blood, its sound and its pulse in that frame (hf_hit), and either its death at the blow or the orc's half started in
+  that frame (KL_START). The death at the blow (`kl_instant`) is SOMVR_KILLS' kl_deal: Combat_DealHit(forceKill) with
+  SOMVR_COMBAT_DEATH's type (the ragdoll from the pose it is in) and **this blow's direction** (Talion's C_HITDIR set for
+  the call: review b34's open item - build 31 dealt it after cb_hit had put the direction back) - XP, the Nemesis line,
+  the loot, the kill's pulse as any kill.
+- **Which blows die at the blow**: a blow SOMVR_KILLS does not take (refused, no row, a start that fails); a downed orc's
+  (any caller: its half lies on the ground - the KD rows ran to the cap 34 of 49 times); an orc in a hit recoil's
+  (`SOMVR_KILLS_QUICK_RECOIL`: its attack `*_L100_*`, a recoil, a stagger - 13 of 51 halves played there); a cut through
+  the neck (`SOMVR_KILLS_NECK=sever`: within 12 cm of its Neck or Head node, not a stab - the head comes off at the blow
+  with the game's sever, the blade's velocity); a pairing whose row is slow.
+- **Short rows only**: 16 rows are `slow` (the table's last column): B4 (the session's walk; its body falls at 1.3 s
+  but the orc stood and walked), B4_Sever (3.3 s), F7_Sever (2.8), F10_Sever and CntrKill_B (2.0), F2_Sever and
+  CntrKill_F (1.6; never seen down in the runs), F8 (boot 232418: down, up again to standing, down at 1.35 s) and the 8
+  KD rows. The pick leaves them out (the test kill and the
+  finisher may still name one).
+- **A half that does start must show it, on the orc's own clock** (from the start; a hit-stop's freeze is not counted -
+  `SOMVR_KILLS_HITSTOP`): by 150 ms its pose has moved 3 cm against its root in its own frame (`somvr_kl_pose_moved`:
+  the pelvis, torso, neck and head nodes less the root, turned by its heading - our placement's turn and slide are no
+  motion); its head never 12 cm over the blow's before it falls (an orc straightening up out of its recoil plays no
+  half); by 650 ms its head is 10 cm lower; and it dies within 1 s of the blow at the latest; else it dies then - "its
+  half not started (the pose still)", "its head rising", "its fall not started", "the half's time is up"; with no
+  skeleton read it dies at 150 ms. The numbers are the traces' (164.4): a playing half's pose jumps 13-46 cm in its
+  first 50-100 ms; the halves that did not play stood still (F6: 0.0 cm at 0.2 s) or rose 11-15 cm by 0.15-0.2 s (F3,
+  F9, B2 on orcs in a recoil); the playing F4 and F5 rose 8-10 cm first and fell from 0.45-0.65 s.
+  Build 31's own end rules (the half cut, down, settled) still end it earlier where they come first. The finisher's half
+  (SOMVR_FINISHER: the guided stab in the game's slow motion) keeps build 33's rules.
+- **A dying orc is still hit** (`SOMVR_KILLS_DYING_FX=on`): combat_frame's contact on an orc whose kill plays (no damage:
+  its death comes with its half) shows the hit - the blood and the sound at the contact (hf_hit), a HIT pulse - once at
+  a contact's start with the blade moving 1.5 m/s or more, at most once per the re-hit cooldown.
+- **The finisher owns the charged kill** (`fn_spares`): a killing blow on the orc the finisher would take now (its phase
+  idle, the charge ready - this blow's own hit counted - and that orc fn_pick's: in reach, ahead, facing Talion) leaves
+  it at 2 health; the finisher's ready comes on it next frame (the outline, the world slow). Once per orc in 5 s, so a
+  ready that does not come never keeps an orc from dying. With the ready on, the finisher's own fn_busy already keeps
+  the blade's contacts off its orc (build 33).
+- **Practice > Charge execution** (a button of its own under Refill health / Place orc; in the practice area only, as
+  the refills; the hints a row lower): Talion's hit counter set to its need (`xc_fill`: XC_CHARGE, as `verbs brand
+  charge`) - the execution ready at once, the finisher's ready on the orc ahead. Its word: `practice charge`.
+- **A full cut into an unaware orc is a hit** (`SOMVR_STEALTH_KILL_SLASH=hit`): the stealth judge's new verdict
+  SOMVR_STL_CUT - a heavy-tier cut that is no thrust, anywhere on its body - goes to the ordinary hit (damage, the hit's
+  reaction, the orc alerted: the fight starts). The thrust from behind (point first, 6 cm in) and the full cut to the
+  neck stay the silent kill; a light stroke stays a touch.
+
+### 164.3 Switches (block "som-b36-deaths" at the end of scripts/headset-build26.env)
+| Switch | Code default | Build 36's env | What |
+|---|---|---|---|
+| `SOMVR_KILLS_QUICK=off\|on\|log` | off | on | 164.2's rules (`log`: the checks logged, build 31's rules kill) |
+| `SOMVR_KILLS_QUICK_START_MS` / `_START_CM` | 150 / 3 | - | the half seen moving by then, by that much |
+| `SOMVR_KILLS_QUICK_RISE_CM` | 12 | - | its head that far up before a fall: no half |
+| `SOMVR_KILLS_QUICK_FALL_MS` / `_FALL_CM` | 650 / 10 | - | its head that much lower by then |
+| `SOMVR_KILLS_QUICK_MAX_MS` | 1000 | - | the death by then at the latest |
+| `SOMVR_KILLS_QUICK_RECOIL=off\|on` | off | on | an orc in a hit recoil dies at the blow |
+| `SOMVR_KILLS_NECK=row\|sever` | row | sever | a cut through the neck: the head off at the blow |
+| `SOMVR_KILLS_DYING_FX=off\|on` | off | on | a blade on a dying orc shows the hit |
+| `SOMVR_KILLS_HITSTOP=off\|on` | off | (off) | a heavy killing blow's hit-stop before its half (its own clock) - not proven, left off |
+| `SOMVR_KILLS_TRACE=off\|on` | off | (off) | each half's pose at +0.05..1.2 s (`KILLS trace`; a test aid) |
+| `SOMVR_STEALTH_KILL_SLASH=off\|on\|hit` | off | hit (was on) | `hit`: a full cut into an unaware orc is the ordinary hit |
+Words (SOMVR_HANDS_TEST): `kills quick on|off|log`, `kills trace on|off`, `kills hitstop on|off`, `kills recoil on|off`,
+`kills dying on|off`, `kills charge N` (the hit counter N short of its need), `practice charge`. Lines: `CONFIG kills
+quick=...`, `KILLS trace ...`, `KILLS quick ... (log only): would die now ...`, `KILLS t=... not taken (downed | in a hit
+recoil | a cut through the neck ...)`, `KILLS kill ... '(the death at the blow)' 0.00 s in (at the blow, its direction
+...)`, `KILLS t=... a blade on orc ... while its kill plays ...`, `FINISHER t=... the killing blow on orc ... spared`,
+`PRACTICE t=... charge execution ...`, `KILLS END quick ...`. The user's settings.conf pins none of these. Portable: no
+new sites; `win/build.sh --check` green.
+
+### 164.4 Runs (headless, the Windows build under Proton in game slots, scripts/deaths36-drive.sh; logs/boot-check-20261103-; each: the two start WARN lines every Windows boot logs and no other, the install an overlay, the real save UNCHANGED)
+| Run | What | What it shows |
+|---|---|---|
+| 230240 | the first proof (its `kills quick on` set the rule off: the word read the wrong letter - fixed, a selftest case) | a blade through a dying orc: the blood and the sound at the contact, a HIT pulse (`KILLS t=... a blade on orc ... while its kill plays`); Practice > Charge execution: `charge execution: Talion's hit counter 2 -> 8 of 8`, `EXECUTE ready`, `FINISHER ... ready` on the orc ahead; a downed orc's stab landed as combat's hit (`COMBAT hit tier=stab ... (the body crossed)`, no stealth touch) |
+| 232418 | `kills quick log` + `kills trace on`: 11 rows by `kills kill` on fresh fighting orcs; then `kills quick on` the same | the traces of 164.2 (11 halves, +0.05..1.2 s); with the rule: every death 0.10-1.50 s after its blow, the halves that did not play dead at 0.10-0.20 s; **an orc in a hit recoil killed at the blow** (`not taken (in a hit recoil ...)` -> `'(the death at the blow)' 0.00 s in (at the blow, its direction 0.99,-0.06,-0.09)` - the blow's own `dir=0.994,-0.060,-0.091`); a killing stab -> B, down at 0.55 s, dead 0.71 s, a contact on it while dying shown |
+| 234220 | the tuned rule (rise 12 cm, fall by 650 ms, dead within 1 s, F8 slow): the 11 rows again; killing blows by the hand | `tools/deaths_check.py`: 11 + 5 killing blows, every death 0.05-1.00 s after its blow, 0 deaths without a blow in the 1 s before; the hand's blows: F3, F5, F6 seen dying at +0.15 s (the pose 12-19 cm moved) and dead at 0.65-0.70 s (the head 68-76 cm down by 0.50-0.55 s), F4 and F at 0.05 / 0.10 s (their heads rising: no half); `KILLS END quick on: ... rising 7, no fall 1, the time up 1` |
+| 235402 | killing blows by the hand with pictures (SOMVR_COMBAT_HIT_MARKS: the eyes at the blow; the layer's dumps after) | F3 on an orc 0.1 s into its attack: the head 54 cm down by +0.15 s, dead at 0.45 s; F5 dead at 0.65 s; 0 deaths without a blow in the 1 s before. Pictures (marks/235524_1/eyes.jpg, pics36/frame930, 940): at the blow the orc leaning into its swing, the blade at its shoulder; at +0.5 s its body thrown up close in front of the eyes; at +1 s down out of sight, "Kill +10" |
+- Every quick-rule death in these runs came by its rules; a test kill (`kills kill`) skips the at-the-blow cases (it
+  names its row), so the halves on orcs in a recoil played on in the row tests and died by the checks at 0.15-1.0 s.
+- The scripted cuts are unreliable under build 32's force rule (a 140 ms cut reads as a glance; kills31's 110 ms
+  execution cut and the thrust land); the pictures came 2 s late in 230240-234220 (the dumps waited for the kill's line).
+- Not staged in a boot (each tried; the selftest proves the logic): the finisher's spare (the guard's clanks or a hit
+  completed the charge before the blow: the finisher's ready came from the charge itself, 234220/235402), the full cut
+  into an unaware orc (`verbs behind 110` standing: the orc noticed the teleport), the downed orc's killing stab (the
+  scripted stabs into a lying orc read no tier). Selftest (somvr kl36_tests, each failing on build 33's code): the
+  killing blow not taken dies with its own direction; an unseen half dies at 0.15 s; a downed orc's and a recoiling
+  orc's killing blows are not taken; the words; a blade on a dying orc shows the hit once; the finisher's orc spared at
+  the killing blow (one DealHit, 2 health), not again within 5 s, not without the charge. Unit: tests/test_kills.c (the
+  quick verdicts with the runs' numbers, the pose motion), test_stealth.c (mark 7's cut: build 31 kill, now the ordinary
+  hit; the thrust and the neck cut still kill), test_vrmenu.c / test_practice.c (Charge execution).
+
+### 164.5 For the headset, unproven
+- How the death at the blow reads in VR: the ragdoll from the pose the orc is in, pushed by the blow (no animation).
+  Most killing blows now end that way (any orc in a hit recoil, downed, a neck cut); the game's paired-kill halves remain
+  for orcs killed in their own attack or standing, and only when they visibly play.
+- Whether a half's death (its DealHit at "down", 0.45-1.0 s) reads as its own fall or as a second hit (the session's F9
+  at 0.40 s read as a second hit). If it does, the next step is the death at the blow always (`SOMVR_KILLS=off` gives
+  exactly that today, with this blow's direction) - the game's own kill animations then only through the finisher.
+- The head off at a neck cut (`SOMVR_KILLS_NECK=sever`): its two parts are proven apart (the neck rule picked the _Sever
+  rows in build 31; kl_deal's sever at the death, 133.5), the combination not staged headless.
+- The full cut into an unaware orc as a hit (SOMVR_STEALTH_KILL_SLASH=hit): the judge's unit cases (mark 7's own
+  numbers); the boot's staging below.
+- `SOMVR_KILLS_HITSTOP` (a heavy killing blow's freeze before its half): built, not booted; off.
+- A half can bring the orc's body close to the eyes as it falls (235402 at +0.5 s: its torso ~40 cm in front) - the
+  placement keeps the roots 55 cm apart, not the upper body.
+- The downed orc of mark 5 needs build 32's `SOMVR_STEALTH_DOWNED_FIGHT=on` in the package's env (it was missing from
+  build-win2's).

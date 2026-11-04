@@ -110,8 +110,8 @@ static void h31_hands(const somvr_vb_hand_in *in, double t, int *let_go, int *no
 		return;
 	*let_go = 1, g_h31.pushes++;
 	if (h31_log_ok())
-		logf_("HOLD31 t=%.3f the push: the holding hand at %.2f m/s toward orc %#lx (%.0f deg off it, the palm %.0f cm from "
-		      "its head): let go, the shove follows", t, *sp * 0.01, (unsigned long)g_vb.held_c,
+		logf_("HOLD31 t=%.3f the push: the holding hand at %.2f m/s toward orc %#llx (%.0f deg off it, the palm %.0f cm from "
+		      "its head): let go, the shove follows", t, *sp * 0.01, (unsigned long long)g_vb.held_c,
 		      acosf(fminf(1, fmaxf(-1, cs))) * 57.29578f, dh);
 }
 
@@ -154,10 +154,9 @@ static int h31_held_kill(uintptr_t pc, const struct cb_orc *o, const sc_contact 
 	float kax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
 	if (fk > 0 && kl_held_kill(pc, o, rec, ct->point, b->vel_tip, kax, t)) {
 		g_h31.kills++, g_h31.kill_c = o->c, g_h31.kill_t = t;
-		in_haptic_event(SOMVR_HAND_R, 0.9f, 0.25f, SOMVR_HAP_COMBAT);
-		in_haptic_event(SOMVR_HAND_L, 0.6f, 0.15f, SOMVR_HAP_COMBAT);
-		logf_("HOLD31 kill t=%.3f orc %#lx held by the left hand: the blade (tier %s, %.1f m/s) -> SOMVR_KILLS plays its half "
-		      "(the death at its moment)", t, (unsigned long)o->c, sc_tier_name(tier), (double)g_cb.sp.mean_mps);
+		haptic(SOMVR_HAND_R, SOMVR_HX_KILL), haptic_k(SOMVR_HAND_L, SOMVR_HX_THUMP, 0.1f); /* the holding hand feels him go */
+		logf_("HOLD31 kill t=%.3f orc %#llx held by the left hand: the blade (tier %s, %.1f m/s) -> SOMVR_KILLS plays its half "
+		      "(the death at its moment)", t, (unsigned long long)o->c, sc_tier_name(tier), (double)g_cb.sp.mean_mps);
 		return 1;
 	}
 	char death[160], rn[96] = "?";
@@ -172,10 +171,9 @@ static int h31_held_kill(uintptr_t pc, const struct cb_orc *o, const sc_contact 
 	if (dead1 && !dead0)
 		g_h31.kills++, CB_COUNT(kills);
 	CB_COUNT(calls);
-	in_haptic_event(SOMVR_HAND_R, 0.9f, 0.25f, SOMVR_HAP_COMBAT);
-	in_haptic_event(SOMVR_HAND_L, 0.6f, 0.15f, SOMVR_HAP_COMBAT);
-	logf_("HOLD31 kill t=%.3f orc %#lx held by the left hand: the blade (tier %s, %.1f m/s, along %.2f m/s cos %.2f) -> "
-	      "Combat_DealHit(rec '%s', forceKill=%d) dead %d->%d health %.1f->%.1f; the death: %s", t, (unsigned long)o->c,
+	haptic(SOMVR_HAND_R, SOMVR_HX_KILL), haptic_k(SOMVR_HAND_L, SOMVR_HX_THUMP, 0.1f);
+	logf_("HOLD31 kill t=%.3f orc %#llx held by the left hand: the blade (tier %s, %.1f m/s, along %.2f m/s cos %.2f) -> "
+	      "Combat_DealHit(rec '%s', forceKill=%d) dead %d->%d health %.1f->%.1f; the death: %s", t, (unsigned long long)o->c,
 	      sc_tier_name(tier), (double)g_cb.sp.mean_mps, (double)g_cb.sp.axis_mps, (double)g_cb.sp.cos_axis, rn, fk, dead0,
 	      dead1, hp0, cb_health(o->c), death);
 	kb_note(o->c, o->hobj, rec, "the held kill", t);
@@ -199,8 +197,8 @@ static int h31_held_blow(uintptr_t pc, const struct cb_orc *o, const sc_contact 
 	if (tier == SC_TIER_NONE && !stab) {
 		g_h31.touches++;
 		if (t - g_h31.touch_line > 0.5 && h31_log_ok())
-			g_h31.touch_line = t, logf_("HOLD31 t=%.3f the blade touches the held orc %#lx (%.1f m/s, along %.2f m/s cos "
-						    "%.2f): below a blow - held on", t, (unsigned long)o->c,
+			g_h31.touch_line = t, logf_("HOLD31 t=%.3f the blade touches the held orc %#llx (%.1f m/s, along %.2f m/s cos "
+						    "%.2f): below a blow - held on", t, (unsigned long long)o->c,
 						    (double)sp->mean_mps, (double)sp->axis_mps, (double)sp->cos_axis);
 		return 2;
 	}
@@ -208,8 +206,8 @@ static int h31_held_blow(uintptr_t pc, const struct cb_orc *o, const sc_contact 
 		return 1;
 	g_h31.kill_old++;
 	if (h31_log_ok())
-		logf_("HOLD31 t=%.3f the blow on the held orc %#lx did not kill it (no PlayerCombat/root/record, or a captain): build "
-		      "30's way", t, (unsigned long)o->c);
+		logf_("HOLD31 t=%.3f the blow on the held orc %#llx did not kill it (no PlayerCombat/root/record, or a captain): build "
+		      "30's way", t, (unsigned long long)o->c);
 	return 0;
 }
 
@@ -261,8 +259,10 @@ static struct {
 static int ov_log_ok(void) { return g_ov.lines++ < 800; }
 static int ov_active(void) { return g_ov.on && g_ov.s.phase != SOMVR_OV_IDLE; }
 
+static void hrb_start(int *bad);
 static void ov_start(int *bad)
 {
+	hrb_start(bad); /* build 33: the herbs (their own switch) */
 	memset(&g_ov, 0, sizeof g_ov);
 	somvr_ov_cfg_default(&g_ov.cfg);
 	somvr_ov_reset(&g_ov.s);
@@ -272,6 +272,9 @@ static void ov_start(int *bad)
 	g_ov.cue_k = env_float("SOMVR_VAULT_HANDS_CUE_K", 0.45f, 0, 1, bad);
 	g_ov.cfg.over_gain = env_float("SOMVR_VAULT_HANDS_GAIN", g_ov.cfg.over_gain, 0.5f, 3, bad);
 	g_ov.cfg.top_cm = env_float("SOMVR_VAULT_HANDS_TOP_CM", g_ov.cfg.top_cm, 10, 40, bad);
+	/* build 33 (re-xr-pipeline.md 139.7): the plant - his own motion (a fighting orc's lunge: 40 cm in 0.1 s) ends no hold
+	 * this soon after the grip, and his move toward Talion never does */
+	g_ov.cfg.plant_s = env_float("SOMVR_VAULT_HANDS_PLANT_MS", 500, 0, 1000, bad) * 1e-3f;
 	/* his body blocks the flight (boot 20261102-142210: `blocked` 87 cm from him, Talion's feet 117 cm up): over him the
 	 * proxy is put on the arc (the climb's own position calls), the game's collision only there */
 	g_ov.through = env_word("SOMVR_VAULT_HANDS_THROUGH", (const char *const[]){ "off", "on" }, 2, 1);
@@ -287,9 +290,12 @@ static void ov_start(int *bad)
 	      "on a facing orc's crown (within %.0f cm of its head point, not %.0f under it; the orc within %.0f cm and %.0f deg) "
 	      "holds: the body moves 1:1 against the hand (up to %.0f cm up); let go fast = the throw (up at least %.0f cm/s, "
 	      "over him at least %.0f cm/s after x%.2f, at most %.0f cm/s; it must land %.0f cm past him), the flight under %.0f "
-	      "cm/s^2; his opening at the landing (SOMVR_PARRY_VAULT_MS); the cue on his crown at %.2f of the grab cue's level",
+	      "cm/s^2; his opening at the landing (SOMVR_PARRY_VAULT_MS); the cue on his crown at %.2f of the grab cue's level; "
+	      "build 33: his motion ends no hold within %.0f ms of the grip (the plant), his move toward Talion never, a palm "
+	      "over his crown is no shove",
 	      g_ov.on ? "on" : "off", g_ov.cfg.top_cm, g_ov.cfg.below_cm, g_ov.near_cm, g_ov.deg, g_ov.cfg.rise_max_cm,
-	      g_ov.cfg.min_up, g_ov.cfg.min_over, g_ov.cfg.over_gain, g_ov.cfg.max_cms, g_ov.cfg.past_cm, g_ov.cfg.g, g_ov.cue_k);
+	      g_ov.cfg.min_up, g_ov.cfg.min_over, g_ov.cfg.over_gain, g_ov.cfg.max_cms, g_ov.cfg.past_cm, g_ov.cfg.g, g_ov.cue_k,
+	      g_ov.cfg.plant_s * 1e3f);
 }
 
 /* the proxy's gravity flag (the climb's CL_PC_GRAV) on the vault's own PlayerMovement: -1 = not written */
@@ -391,9 +397,9 @@ static void ova_frame(double t, const somvr_ov_in *in, uintptr_t oc, sv_vec3 hp,
 		char an[96];
 		g_ova.tries++, g_ova.step = 2, g_ova.t = t;
 		if (ov_log_ok())
-			logf_("OVAULT t=%.3f auto: try %llu at orc %#lx's attack start (its head %.1f cm in the last frame; attack '%s', Talion's "
+			logf_("OVAULT t=%.3f auto: try %llu at orc %#llx's attack start (its head %.1f cm in the last frame; attack '%s', Talion's "
 			      "FSM %d): the left hand from %.0f,%.0f,%.0f to %.0f,%.0f,%.0f cm (its palm 8 cm over the crown) and the "
-			      "squeeze", t, (unsigned long long)g_ova.tries, (unsigned long)oc, sqrtf(hv.x * hv.x + hv.y * hv.y + hv.z * hv.z),
+			      "squeeze", t, (unsigned long long)g_ova.tries, (unsigned long long)oc, sqrtf(hv.x * hv.x + hv.y * hv.y + hv.z * hv.z),
 			      vb_name(peek_ptr(oc + VB_C_ATTACK), an, sizeof an), g_ov.fsm, cur[0], cur[1], cur[2], g_ova.pose[0],
 			      g_ova.pose[1], g_ova.pose[2]);
 		ova_hand("test L %.1f %.1f %.1f 0 0 0", g_ova.pose[0], g_ova.pose[1], g_ova.pose[2]);
@@ -436,9 +442,31 @@ static void ova_frame(double t, const somvr_ov_in *in, uintptr_t oc, sv_vec3 hp,
 	}
 }
 
+/* build 33 (re-xr-pipeline.md 139.7; the shove's check, any thread's view of the game thread's state): a palm over orc c's
+ * crown - the crown's rule, or above his head point less below_cm and within top_cm of it along the floor - or the vault
+ * holding or flying over him: the vault's plant, which the shove does not take */
+static int ov_plant_at(uintptr_t c, const float palm[3])
+{
+	if (!g_ov.on || !c || !palm)
+		return 0;
+	if (g_ov.s.phase != SOMVR_OV_IDLE && g_ov.orc_c == c)
+		return 1;
+	for (int k = 0; k < g_vb.nheads; k++) {
+		if (g_vb.head_c[k] != c)
+			continue;
+		const float *hd = g_vb.heads[k];
+		if (somvr_ov_on_crown(&g_ov.cfg, (sv_vec3){ palm[0], palm[1], palm[2] }, (sv_vec3){ hd[0], hd[1], hd[2] }))
+			return 1;
+		return palm[1] >= hd[1] - g_ov.cfg.below_cm && hypotf(palm[0] - hd[0], palm[2] - hd[2]) <= g_ov.cfg.top_cm;
+	}
+	return 0;
+}
+
 /* in_frame (the game thread, a stereo frame), before the verbs' hands: the vault's step */
+static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq);
 static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 {
+	hrb_hands(pw, hp, hq); /* build 33: the herbs by the hand (SOMVR_HERBS) */
 	if (!g_ov.on)
 		return;
 	if (!g_ov.tid)
@@ -510,19 +538,19 @@ static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qua
 	somvr_ov_step(&g_ov.s, &g_ov.cfg, &in, &o);
 	if (ph0 == SOMVR_OV_IDLE && g_ov.s.phase == SOMVR_OV_IDLE && !cl0 && g_ov.s.closed[SOMVR_HAND_L] && in.orc_ok &&
 	    ov_log_ok()) /* a squeeze the vault did not take: why */
-		logf_("OVAULT t=%.3f squeeze: not the vault's - live %d, root %d, the hand free %d; the palm %.1f cm from orc %#lx's "
+		logf_("OVAULT t=%.3f squeeze: not the vault's - live %d, root %d, the hand free %d; the palm %.1f cm from orc %#llx's "
 		      "head point (%+.1f over it; the rule: within %.0f, not %.0f under)", t, in.live, in.root_ok, in.free[SOMVR_HAND_L],
 		      dist3((float[3]){ pw[0].x, pw[0].y, pw[0].z }, (float[3]){ in.head.x, in.head.y, in.head.z }),
-		      (unsigned long)oc, pw[0].y - in.head.y, g_ov.cfg.top_cm, g_ov.cfg.below_cm);
+		      (unsigned long long)oc, pw[0].y - in.head.y, g_ov.cfg.top_cm, g_ov.cfg.below_cm);
 	char an[96];
 	if (o.events & SOMVR_OVE_GRAB) {
 		g_ov.grabs++, g_ov.orc_c = oc, g_ov.act_pm = g_cl.pm, g_ov.act_pc = g_cl.pc, g_ov.path_n = 0;
 		g_ov.yaw_grab = in.rig_yaw;
 		memcpy(g_ov.start, rt, sizeof g_ov.start), g_ov.path_max_y = rt[1];
-		in_haptic_event(SOMVR_HAND_L, 0.5f, 0.05f, SOMVR_HAP_COMBAT);
+		haptic(SOMVR_HAND_L, SOMVR_HX_TAKE);
 		if (ov_log_ok())
-			logf_("OVAULT t=%.3f grab: the left hand on orc %#lx's crown (the palm %.1f cm from its head point, %+.1f over it; "
-			      "the orc %.0f cm away, attack '%s'): the hold - the body follows the hand", t, (unsigned long)oc,
+			logf_("OVAULT t=%.3f grab: the left hand on orc %#llx's crown (the palm %.1f cm from its head point, %+.1f over it; "
+			      "the orc %.0f cm away, attack '%s'): the hold - the body follows the hand", t, (unsigned long long)oc,
 			      dist3((float[3]){ pw[0].x, pw[0].y, pw[0].z }, (float[3]){ in.head.x, in.head.y, in.head.z }),
 			      pw[0].y - in.head.y, best, vb_name(peek_ptr(oc + VB_C_ATTACK), an, sizeof an));
 	}
@@ -530,7 +558,7 @@ static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qua
 		g_ov.throws++;
 		if (g_ov.evade) /* the stock evade under the flight (in a fight: the orc was only vaultable there) */
 			vb_tap(g_ov.evade_cmd, t), g_ov.evade_taps++, g_ov.atk_name[0] = 0;
-		in_haptic_event(SOMVR_HAND_L, 0.8f, 0.08f, SOMVR_HAP_COMBAT);
+		haptic_k(SOMVR_HAND_L, SOMVR_HX_THUMP, 0.55f);
 		if (ov_log_ok())
 			logf_("OVAULT t=%.3f throw: the hand's throw up %.0f over %.0f side %.0f cm/s -> the body's %.0f,%.0f,%.0f cm/s "
 			      "(risen %.1f cm): it lands %.0f cm along (needs %.0f)", t, o.throw_up, o.throw_over, o.throw_side, o.v0.x,
@@ -606,12 +634,12 @@ static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qua
 		g_ov.cue_level = (on ? 1.0f : g_ov.cue_k) * g_gc.level, g_ov.cue_frame = g_fr.frame;
 		g_ov.cue_dist = dist3(g_ov.cue_pos, (float[3]){ hp.x, hp.y, hp.z });
 		if (on && !g_ov.cue_on)
-			in_haptic_event(SOMVR_HAND_L, g_gc.tick_amp, g_gc.tick_s, SOMVR_HAP_COMBAT);
+			haptic_play(SOMVR_HAND_L, SOMVR_HX_TICK, 1, g_gc.tick_amp / 0.25f);
 		if ((oc != g_ov.cue_c || t - g_ov.cue_line_t > 1) && ov_log_ok()) { /* where his crown is, for a hand (the test's pose) */
 			float dx = g_ov.cue_pos[0] - hp.x, dy = g_ov.cue_pos[1] - hp.y, dz = g_ov.cue_pos[2] - hp.z;
 			float px = pw[0].x - hp.x, py = pw[0].y - hp.y, pz = pw[0].z - hp.z;
-			logf_("OVAULT t=%.3f cue: orc %#lx vaultable, %.0f cm away; its crown %+.1f right %+.1f up %+.1f ahead of the eyes "
-			      "(the head's yaw frame); the palm %+.1f %+.1f %+.1f%s", t, (unsigned long)oc, best, dx * fz - dz * fx, dy,
+			logf_("OVAULT t=%.3f cue: orc %#llx vaultable, %.0f cm away; its crown %+.1f right %+.1f up %+.1f ahead of the eyes "
+			      "(the head's yaw frame); the palm %+.1f %+.1f %+.1f%s", t, (unsigned long long)oc, best, dx * fz - dz * fx, dy,
 			      dx * fx + dz * fz, px * fz - pz * fx, py, px * fx + pz * fz, on ? "; the palm on it" : "");
 			g_ov.cue_line_t = t;
 		}
@@ -722,8 +750,10 @@ static int ov_pm(struct hook *h, struct regs *r)
 	return 1;
 }
 
+static void hrb_end_log(void);
 static void ov_end_log(void)
 {
+	hrb_end_log();
 	if (!g_ov.on)
 		return;
 	logf_("OVAULT END grabs %llu, throws %llu, let-gos %llu, landings %llu (blocked %llu), openings %llu; PM moves %llu (busy "
@@ -736,4 +766,248 @@ static void ov_end_log(void)
 	      (unsigned long long)g_ov.pm_notcons, (unsigned long long)g_ov.ticks_held, (unsigned long long)g_ov.through_ticks,
 	      (unsigned long long)g_ov.evade_taps, (unsigned long long)g_ov.col_ticks, (unsigned long long)g_ov.col_restored,
 	      (unsigned long long)g_ov.own_ticks, (unsigned long long)g_ov.not_fight);
+}
+
+/* ---- build 33 (som-b33-herbs, re-xr-pipeline.md 145): healing herbs picked by hand - SOMVR_HERBS=on|off (code default on)
+ * The game's herbs are nav markers 'Collectible_Flower_*' (their place: PRN_NAV_POS, the practice's navdump); within ~0.7 m
+ * the game raises the pick prompt 'Combat_Activate_Flower' on 123, and 123 then is its own pick ('Activate_HealthCollectable':
+ * the health, the plant gone, its respawn - the game's rules; SOMVR_USE's B holds 123 for it). By the hand:
+ *   - the cue: while the prompt is up, the grab cue's glow at the herb (faint), full with a tick when an open, free hand is
+ *     within SOMVR_HERBS_REACH_CM (40) of it;
+ *   - the grip there takes it: the glow moves into the fist (nothing is picked yet: the plant stays until it is eaten);
+ *   - the fist at the mouth (SOMVR_HERBS_MOUTH_CM 16, SOMVR_HERBS_MOUTH_MS 250) eats it: SOMVR_USE presses 123 for the game's
+ *     pick - its heal, its sound - with a crunch in the hand; the grip opened before, or the prompt gone, drops it (unpicked).
+ * B at the prompt stays the fallback. `HERB` lines; `HERB END`. */
+#define HRB_N 8
+static struct {
+	int on, tid, ok_pos, hold_h;
+	float reach_cm, mouth_cm, mouth_s;
+	double scan_t, mouth_t0, eat_t, held_t0, cue_line_t;
+	int n;
+	struct { uintptr_t mk; float pos[3]; char name[40]; } h[HRB_N];
+	int cue_i, cue_full, cue_was, held_i, closed[2];
+	float cue_pos[3], cue_level, cue_dist, held_pos[3];
+	uint64_t cue_frame;
+	float hp_before;
+	int hp_pending;
+	uint64_t scans, takes, eats, drops, cues, lines;
+} g_hrb;
+
+static int hrb_log_ok(void) { return g_hrb.lines++ < 300; }
+static int hrb_holding(int h) { return g_hrb.on && g_hrb.hold_h >= 0 && (h < 0 || g_hrb.hold_h == h); }
+
+static uint32_t hrb_vm_feat(void) { return g_hrb.on ? SOMVR_VMF_HERBS : 0u; } /* build 34: the Controls page's Herb line */
+
+static void hrb_start(int *bad)
+{
+	memset(&g_hrb, 0, sizeof g_hrb);
+	g_hrb.hold_h = -1, g_hrb.cue_i = g_hrb.held_i = -1;
+	g_hrb.on = env_word("SOMVR_HERBS", (const char *const[]){ "off", "on" }, 2, 1);
+	g_hrb.reach_cm = env_float("SOMVR_HERBS_REACH_CM", 40, 10, 100, bad);
+	g_hrb.mouth_cm = env_float("SOMVR_HERBS_MOUTH_CM", 16, 5, 40, bad);
+	g_hrb.mouth_s = 0.001f * env_float("SOMVR_HERBS_MOUTH_MS", 250, 0, 2000, bad);
+	if (!g_us.on)
+		g_hrb.on = 0;
+	char why[160];
+	g_hrb.ok_pos = check_site(&g_prn_sites[PRN_NAV_POS], why, sizeof why) == 0;
+	logf_("CONFIG herbs=%s (SOMVR_HERBS, som-b33-herbs; needs SOMVR_USE): at the game's 'Combat_Activate_Flower' prompt the "
+	      "herb glows; an open hand within %.0f cm grips it, the fist at the mouth (%.0f cm, %.0f ms) eats it - the game's own "
+	      "pick (123); B stays; the herbs' places %s", g_hrb.on ? "on" : "off", g_hrb.reach_cm, g_hrb.mouth_cm, g_hrb.mouth_s * 1e3,
+	      g_hrb.ok_pos ? "by PRN_NAV_POS" : "unknown (PRN_NAV_POS not matched - the Windows build): the herb is at Talion's "
+	      "feet (the game's prompt within ~0.7 m) - an open hand reached down near the ground there takes it");
+}
+
+/* Talion's attack is the game's pick ('Activate_HealthCollectable') */
+static int hrb_pick_runs(void)
+{
+	uintptr_t tc = vb_talion_combat();
+	char an[64] = "";
+	return tc && strstr(rx_rec_name(peek_ptr(tc + VB_C_ATTACK), an, sizeof an), "HealthCollect") != NULL;
+}
+
+/* the game's herb prompt up now (SOMVR_USE's pick prompts) */
+static int hrb_prompt(void)
+{
+	for (int i = 0; i < g_us.nup; i++)
+		if (!strncmp(g_us.up[i].str, "Combat_Activate_Flower", 22))
+			return 1;
+	return 0;
+}
+
+/* the herbs within 4 m of Talion (the nav markers' walk, as the practice's navdump) */
+static void hrb_scan(const float root[3])
+{
+	uintptr_t node = 0;
+	int n = 0, k = 0;
+	peek(PRN_LIST + 8, &node, sizeof node);
+	g_hrb.n = 0, g_hrb.scans++;
+	while (node && node != PRN_LIST && n++ < 1024) {
+		uintptr_t mk = node - PRN_NODE, rec = 0, nx = 0, np = 0;
+		uint8_t ae[2] = { 0, 0 }, rf = 0;
+		char name[40] = "";
+		peek(mk + PRN_REC, &rec, sizeof rec), peek(mk + PRN_ACTIVE, ae, sizeof ae);
+		if (rec && ae[0] && ae[1] && peek(rec + 1, &rf, 1) && (rf & 2) && peek(rec + 0x20, &np, sizeof np) && np)
+			for (int i = 0; i + 1 < (int)sizeof name; i++) {
+				char c = 0;
+				if (!peek(np + (uintptr_t)i, &c, 1) || !c)
+					break;
+				name[i] = c, name[i + 1] = 0;
+			}
+		if (!strncmp(name, "Collectible_Flower", 18) && k < HRB_N) {
+			float pos[3] = { 0, 0, 0 };
+			((prn_pos_fn)g_prn_sites[PRN_NAV_POS].target)(mk, pos);
+			if (vec_ok(pos, 1e7f) && dist3(pos, root) < 400) {
+				g_hrb.h[k].mk = mk, memcpy(g_hrb.h[k].pos, pos, sizeof pos);
+				snprintf(g_hrb.h[k].name, sizeof g_hrb.h[k].name, "%s", name);
+				k++;
+			}
+		}
+		peek(node + 8, &nx, sizeof nx);
+		node = nx;
+	}
+	g_hrb.n = k;
+}
+
+/* in_frame (the game thread, a stereo frame): the cue, the take, the eat */
+static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
+{
+	if (!g_hrb.on)
+		return;
+	if (!g_hrb.tid)
+		g_hrb.tid = my_tid();
+	if (g_hrb.tid != my_tid())
+		return;
+	double t = cb_now();
+	float rt[3];
+	int root_ok = g_cl.obj && peek(g_cl.obj + OBJ_POS, rt, sizeof rt) && vec_ok(rt, 1e7f);
+	if (g_hrb.ok_pos && root_ok && t >= g_hrb.scan_t) /* (only with the matched site: the Windows build has none yet) */
+		g_hrb.scan_t = t + 0.25, hrb_scan(rt);
+	int prompt = hrb_prompt(), live = g_inp.ctx == SC_CTX_WORLD && !game_paused() && !vm_open();
+	float hd = sv_heading(hq), eye[3] = { hp.x, hp.y, hp.z }, fwd[3] = { sinf(hd), 0, cosf(hd) };
+	int sq_closed[2];
+	for (int h = 0; h < 2; h++) {
+		int act = (g_inp.st.hand[h].active & SOMVR_HACT_INPUT) != 0;
+		float sq = bd_squeeze(h, act ? g_inp.st.hand[h].squeeze : 0);
+		sq_closed[h] = g_hrb.closed[h] ? sq > 0.4f : sq >= 0.6f;
+	}
+	/* holding: the eat at the mouth, or the drop */
+	if (g_hrb.hold_h >= 0) {
+		int h = g_hrb.hold_h;
+		float pa[3] = { pw[h].x, pw[h].y, pw[h].z }, dm = somvr_ab_mouth_dist(eye, fwd, pa);
+		memcpy(g_hrb.held_pos, pa, sizeof pa);
+		if (!sq_closed[h] || !prompt || !live) {
+			g_hrb.drops++;
+			if (hrb_log_ok())
+				logf_("HERB t=%.3f dropped after %.2f s: %s - nothing picked (the plant stays)", t, t - g_hrb.held_t0,
+				      !sq_closed[h] ? "the hand opened" : !prompt ? "the game's prompt went (Talion moved off)" : "not live");
+			haptic(h, SOMVR_HX_TICK);
+			g_hrb.hold_h = -1, g_hrb.mouth_t0 = 0;
+		} else if (dm <= g_hrb.mouth_cm) {
+			if (!(g_hrb.mouth_t0 > 0))
+				g_hrb.mouth_t0 = t;
+			if (t - g_hrb.mouth_t0 >= g_hrb.mouth_s) { /* eaten: the game's own pick */
+				g_hrb.eats++, g_hrb.eat_t = t;
+				uintptr_t tc = vb_talion_combat();
+				g_hrb.hp_before = tc ? cb_health(tc) : NAN, g_hrb.hp_pending = 1;
+				us_hand_pick(t);
+				haptic(h, SOMVR_HX_EAT); /* the crunch: three bites (build 33's call ran them together into one 0.29 s buzz) */
+				if (hrb_log_ok())
+					logf_("HERB t=%.3f eaten: the fist %.0f cm from the mouth for %.2f s - the game's pick (123 by SOMVR_USE); "
+					      "Talion's health %.1f before", t, dm, t - g_hrb.mouth_t0, (double)g_hrb.hp_before);
+				g_hrb.hold_h = -1, g_hrb.mouth_t0 = 0;
+			}
+		} else {
+			g_hrb.mouth_t0 = 0;
+		}
+	}
+	/* the game's pick runs ~3.7 s ('Activate_HealthCollectable', boot 20261103-152929): the health after its end */
+	if (g_hrb.hp_pending && t - g_hrb.eat_t > 0.5 && 1 &&
+	    (t - g_hrb.eat_t > 6.0 || !hrb_pick_runs())) {
+		uintptr_t tc = vb_talion_combat();
+		g_hrb.hp_pending = 0;
+		if (hrb_log_ok())
+			logf_("HERB t=%.3f after the game's pick (%.1f s after the eat): Talion's health %.1f -> %.1f; the prompt %s", t,
+			      t - g_hrb.eat_t, (double)g_hrb.hp_before, tc ? (double)cb_health(tc) : -1.0,
+			      hrb_prompt() ? "still up" : "gone (the plant picked)");
+	}
+	/* the cue and the take: the nearest herb to a free, open hand while the game offers the pick */
+	g_hrb.cue_level = 0;
+	int best_i = -1, best_h = -1;
+	float best = INFINITY;
+	if (prompt && live && g_hrb.hold_h < 0)
+		for (int i = 0; i < g_hrb.n; i++)
+			for (int h = 0; h < 2; h++) {
+				int free = g_inp.hands[h].valid && !cl_holds(h) && !(h == SOMVR_HAND_L && (vb_grab_held() || bo_out())) &&
+					   !(h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD) && bd_sword_in_hand()) && !bo_out() && sl_knife_side() != h;
+				float pa[3] = { pw[h].x, pw[h].y, pw[h].z }, top[3] = { g_hrb.h[i].pos[0], g_hrb.h[i].pos[1] + 15, g_hrb.h[i].pos[2] };
+				float d = dist3(pa, top);
+				if (free && d < best)
+					best = d, best_i = i, best_h = h;
+			}
+	if (!g_hrb.ok_pos && prompt && live && g_hrb.hold_h < 0 && root_ok) { /* the ground mode: the herb at Talion's feet */
+		g_hrb.n = 1, snprintf(g_hrb.h[0].name, sizeof g_hrb.h[0].name, "the herb at the feet");
+		for (int h = 0; h < 2; h++) {
+			int free = g_inp.hands[h].valid && !cl_holds(h) && !(h == SOMVR_HAND_L && (vb_grab_held() || bo_out())) &&
+				   !(h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD) && bd_sword_in_hand()) && !bo_out() && sl_knife_side() != h;
+			float feet = rt[1] - (g_cl.cfg.foot_cm > 0 ? g_cl.cfg.foot_cm : 102); /* (his root sits 102 cm over his feet) */
+			float up = pw[h].y - feet, dh = hypotf(pw[h].x - rt[0], pw[h].z - rt[2]);
+			float d = up > 0 ? up : 0; /* (how far above the ground; within 1 m of him along it) */
+			if (free && dh <= 100 && d < best)
+				best = d, best_i = 0, best_h = h;
+		}
+		if (best_i == 0) /* the point the hand reaches for: on the ground under it (in reach: the palm within reach_cm of it) */
+			g_hrb.h[0].pos[0] = pw[best_h].x, g_hrb.h[0].pos[1] = rt[1] - (g_cl.cfg.foot_cm > 0 ? g_cl.cfg.foot_cm : 102),
+			g_hrb.h[0].pos[2] = pw[best_h].z;
+	}
+	if (best_i >= 0) {
+		int in = best <= g_hrb.reach_cm && !g_hrb.closed[best_h];
+		g_hrb.cue_pos[0] = g_hrb.h[best_i].pos[0], g_hrb.cue_pos[1] = g_hrb.h[best_i].pos[1] + 15, g_hrb.cue_pos[2] = g_hrb.h[best_i].pos[2];
+		g_hrb.cue_level = (in ? 1.0f : 0.45f) * g_gc.level, g_hrb.cue_frame = g_fr.frame;
+		g_hrb.cue_dist = dist3(g_hrb.cue_pos, eye);
+		if (in && !g_hrb.cue_was)
+			haptic_play(best_h, SOMVR_HX_TICK, 1, g_gc.tick_amp / 0.25f), g_hrb.cues++;
+		if ((best_i != g_hrb.cue_i || t - g_hrb.cue_line_t > 1) && hrb_log_ok()) {
+			float dx = g_hrb.cue_pos[0] - hp.x, dy = g_hrb.cue_pos[1] - hp.y, dz = g_hrb.cue_pos[2] - hp.z;
+			float px = pw[best_h].x - hp.x, py = pw[best_h].y - hp.y, pz = pw[best_h].z - hp.z;
+			logf_("HERB t=%.3f cue: '%s' at %.0f %.0f %.0f (Talion's root %.0f cm off); the herb %+.1f right %+.1f up %+.1f ahead "
+			      "of the eyes (the head's yaw frame), the %s hand %.0f cm from it; the palm %+.1f %+.1f %+.1f%s", t,
+			      g_hrb.h[best_i].name, g_hrb.h[best_i].pos[0], g_hrb.h[best_i].pos[1], g_hrb.h[best_i].pos[2],
+			      root_ok ? dist3(rt, g_hrb.h[best_i].pos) : -1.0f, dx * cosf(hd) - dz * sinf(hd), dy,
+			      dx * sinf(hd) + dz * cosf(hd), best_h ? "right" : "left", best, px * cosf(hd) - pz * sinf(hd), py,
+			      px * sinf(hd) + pz * cosf(hd), in ? ": in reach" : "");
+			g_hrb.cue_line_t = t;
+		}
+		g_hrb.cue_i = best_i, g_hrb.cue_was = in;
+		int sq_edge = sq_closed[best_h] && !g_hrb.closed[best_h];
+		if (in && sq_edge) { /* the take */
+			g_hrb.takes++, g_hrb.hold_h = best_h, g_hrb.held_i = best_i, g_hrb.held_t0 = t, g_hrb.mouth_t0 = 0;
+			haptic(best_h, SOMVR_HX_TAKE);
+			if (hrb_log_ok())
+				logf_("HERB t=%.3f taken: the %s hand gripped '%s' (%.0f cm from it) - to the mouth to eat it", t,
+				      best_h ? "right" : "left", g_hrb.h[best_i].name, best);
+		}
+	} else {
+		g_hrb.cue_i = -1, g_hrb.cue_was = 0;
+	}
+	if (g_hrb.hold_h >= 0) /* the herb in the fist */
+		memcpy(g_hrb.cue_pos, g_hrb.held_pos, sizeof g_hrb.cue_pos), g_hrb.cue_level = g_gc.level, g_hrb.cue_frame = g_fr.frame,
+			g_hrb.cue_dist = dist3(g_hrb.held_pos, eye);
+	for (int h = 0; h < 2; h++)
+		g_hrb.closed[h] = sq_closed[h];
+}
+
+/* th_frame (via gc_glow_add): the herb's glow */
+static void hrb_glow_add(struct th_glow *gl, int *ng)
+{
+	if (!g_hrb.on || g_gc.mode != GC_ON || !(g_hrb.cue_level > 0.01f) || g_fr.frame - g_hrb.cue_frame > 2)
+		return;
+	th_glow_add(gl, ng, g_hrb.cue_pos, g_hrb.cue_level, g_hrb.cue_dist, SOMVR_THK_MELEE | SOMVR_THK_BLUE);
+}
+
+static void hrb_end_log(void)
+{
+	if (g_hrb.on)
+		logf_("HERB END takes %llu, eaten %llu, dropped %llu, cue ticks %llu, scans %llu", (unsigned long long)g_hrb.takes,
+		      (unsigned long long)g_hrb.eats, (unsigned long long)g_hrb.drops, (unsigned long long)g_hrb.cues,
+		      (unsigned long long)g_hrb.scans);
 }

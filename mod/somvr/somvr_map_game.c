@@ -164,11 +164,11 @@ static void map_start(int *bad)
 	}
 	if (g_map.cfg.on || v)
 		logf_("CONFIG map pointer %s (SOMVR_MAP_POINT): %s; the pan %.0f px/s, lag %.0f ms, steer %.0f px, steering after "
-		      "%.0f ms held; CUIPDAZoneMapLayer's vtable %#lx %s", g_map.cfg.on ? "on" : "off", g_map.cfg.on ?
+		      "%.0f ms held; CUIPDAZoneMapLayer's vtable %#llx %s", g_map.cfg.on ? "on" : "off", g_map.cfg.on ?
 		      "the laser's or the fingertip's click on the map brings that place to the cross, on the cross = A (the "
 		      "waypoint), on the tower's popup = X (Fast Travel) / Y (Advance Time); still held, it steers the map" :
 		      "the map by the pad's buttons only", g_map.cfg.pan_pxs, g_map.cfg.lag_s * 1000, g_map.cfg.steer_px,
-		      g_map.cfg.click_s * 1000, MAP_VT_ZONE, g_map.vt_ok ? "checked" : "NOT matched");
+		      g_map.cfg.click_s * 1000, (unsigned long long)MAP_VT_ZONE, g_map.vt_ok ? "checked" : "NOT matched");
 }
 
 /* the trigger word "map ..." (the writer thread) */

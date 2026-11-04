@@ -52,7 +52,7 @@ static int bo_quiver_in(int h, const sv_vec3 *p)
 	g_bow.qv_dist = d;
 	g_bow.quiver_in = g_inp.hands[h].valid && d < (was ? g_bow.qv_r + 4 : g_bow.qv_r);
 	if (g_bow.quiver_in && !was && g_bow.s.phase != SOMVR_BOW_PH_IDLE && g_bow.s.arrow == SOMVR_BOW_ARROW_NONE)
-		in_haptic_event(h, 0.18f, 0.012f, SOMVR_HAP_UI), g_bow.qv_ticks++;
+		haptic(h, SOMVR_HX_TICK), g_bow.qv_ticks++;
 	return g_bow.quiver_in;
 }
 
@@ -79,9 +79,10 @@ static void bo_nock_skel(const sa_node *nd, uint32_t cnt)
 		float nl = sqrtf(dl[0] * dl[0] + dl[1] * dl[1] + dl[2] * dl[2]), nh = sqrtf(dh[0] * dh[0] + dh[1] * dh[1] + dh[2] * dh[2]);
 		float kl = nl > 1 ? bo_tips_lo(0) / nl : 0, kh = nh > 1 ? g_bow.string_tips_cm / nh : 0;
 		float bk = g_bow.string_back_cm; /* (the limbs sweep back: the tips toward the string's side, the model's -Z) */
-		sv_vec3 ta = sv_qrot(g_bow.hold_q, (sv_vec3){ l0[0] + kl * dl[0], l0[1] + kl * dl[1] - BO_GRIP_NODE_Y,
+		float sd = g_bow.string_side_cm; /* build 33b: across the bow (the model's +X), onto the model's own string */
+		sv_vec3 ta = sv_qrot(g_bow.hold_q, (sv_vec3){ l0[0] + kl * dl[0] + sd, l0[1] + kl * dl[1] - BO_GRIP_NODE_Y,
 							      l0[2] + kl * dl[2] - bo_tips_lo(1) }),
-			tb = sv_qrot(g_bow.hold_q, (sv_vec3){ h0[0] + kh * dh[0], h0[1] + kh * dh[1] - BO_GRIP_NODE_Y,
+			tb = sv_qrot(g_bow.hold_q, (sv_vec3){ h0[0] + kh * dh[0] + sd, h0[1] + kh * dh[1] - BO_GRIP_NODE_Y,
 							      h0[2] + kh * dh[2] - bk });
 		float va[3] = { ta.x, ta.y, ta.z }, vb[3] = { tb.x, tb.y, tb.z };
 		/* (build 19: within 100 cm - build 18's 60 dropped every end past 60 cm along the tube, so SOMVR_BOW_STRING_TIPS_CM
@@ -257,8 +258,8 @@ static uint32_t bs_post(const char *name, uint64_t obj, uint32_t flags, void *cb
 	if (hit) {
 		static _Atomic int hit_lines;
 		if (atomic_fetch_add(&hit_lines, 1) < 400)
-			logf_("HITSND t=%.3f '%s' obj %#lx flags %#x -> playing %u (%.0f ms after our %s hit)", now * 1e-3, n,
-			      (unsigned long)obj, flags, id, since * 1e3, g_hf_kind_w[hk >= 0 && hk < SC_KIND_N ? hk : 0]);
+			logf_("HITSND t=%.3f '%s' obj %#llx flags %#x -> playing %u (%.0f ms after our %s hit)", now * 1e-3, n,
+			      (unsigned long long)obj, flags, id, since * 1e3, g_hf_kind_w[hk >= 0 && hk < SC_KIND_N ? hk : 0]);
 		return id;
 	}
 	int shot = now < atomic_load_explicit(&g_bs_shot_ms, memory_order_relaxed), fresh = 1;
@@ -271,7 +272,7 @@ static uint32_t bs_post(const char *name, uint64_t obj, uint32_t flags, void *cb
 	atomic_flag_clear_explicit(&g_bs_mu, memory_order_release);
 	if (fresh || shot) {
 		atomic_fetch_add_explicit(&g_bs_logged, 1, memory_order_relaxed);
-		logf_("BOWSND t=%.3f '%s' obj %#lx flags %#x -> playing %u (bow %s%s%s)", now * 1e-3, n, (unsigned long)obj, flags,
+		logf_("BOWSND t=%.3f '%s' obj %#llx flags %#x -> playing %u (bow %s%s%s)", now * 1e-3, n, (unsigned long long)obj, flags,
 		      id, somvr_bow_phase_name(g_bow.s.phase), shot ? ", after a release" : "", fresh ? ", new" : "");
 	}
 	return id;
@@ -413,13 +414,13 @@ static void bo_inv_log(double t)
 				dl = sqrtf((op[0] - pl.x) * (op[0] - pl.x) + (op[1] - pl.y) * (op[1] - pl.y) + (op[2] - pl.z) * (op[2] - pl.z));
 				dr = sqrtf((op[0] - pr.x) * (op[0] - pr.x) + (op[1] - pr.y) * (op[1] - pr.y) + (op[2] - pr.z) * (op[2] - pr.z));
 			}
-			o += (size_t)snprintf(buf + o, sizeof buf - o, " [%d] obj %#lx act %#x%s inact %#x%s at %.0f,%.0f,%.0f (L %.0f cm, R %.0f cm);",
-					      k, (unsigned long)obj, act, act == SA_H_L_WEAPON ? "(L_Weapon)" : act == SA_H_R_WEAPON ?
+			o += (size_t)snprintf(buf + o, sizeof buf - o, " [%d] obj %#llx act %#x%s inact %#x%s at %.0f,%.0f,%.0f (L %.0f cm, R %.0f cm);",
+					      k, (unsigned long long)obj, act, act == SA_H_L_WEAPON ? "(L_Weapon)" : act == SA_H_R_WEAPON ?
 					      "(R_Weapon)" : "", ina, ina == SA_H_L_WEAPON ? "(L_Weapon)" : ina == SA_H_R_WEAPON ?
 					      "(R_Weapon)" : "", op[0], op[1], op[2], got ? dl : -1.0f, got ? dr : -1.0f);
 		}
-		logf_("BOW inv t=%.3f slot %u%s: item %#lx record %#lx (ranged %s), %d model entries:%s", t, slot,
-		      slot == a.slot ? " (active)" : "", (unsigned long)it, (unsigned long)rec,
+		logf_("BOW inv t=%.3f slot %u%s: item %#llx record %#llx (ranged %s), %d model entries:%s", t, slot,
+		      slot == a.slot ? " (active)" : "", (unsigned long long)it, (unsigned long long)rec,
 		      rec && rx_db_rec(rec, g_bog.sch_item, BO_ITEM_RANGED) ? "yes" : "no", ne, buf);
 	}
 }
@@ -634,5 +635,15 @@ static void bo_vh_string(const sa_xf g[2], const int valid[2], somvr_vrhands_fra
 	}
 	e->string_r = 0.0005f * g_bow.string_mm;
 	g_bow.string_frames++;
+	if (atomic_load_explicit(&g_bo_slog, memory_order_relaxed) > 0) { /* build 33b (`bow slog N`): the ends and the bow's
+		* axes in the layer's XR space (m), for scripts/bow_tips.py against the limbs' tips in the eye pictures */
+		atomic_fetch_sub_explicit(&g_bo_slog, 1, memory_order_relaxed);
+		sv_quat qb = sv_qmul(g[B].q, g_bow.hold_q);
+		sv_vec3 ay = sv_qrot(qb, (sv_vec3){ 0, 1, 0 }), az = sv_qrot(qb, (sv_vec3){ 0, 0, 1 });
+		logf_("BOW slog frame=%llu: lo %.4f,%.4f,%.4f hi %.4f,%.4f,%.4f (XR m); the bow's limbs %.4f,%.4f,%.4f shot %.4f,%.4f,%.4f "
+		      "(XR); stips %.1f %.1f lo %.1f %.1f", (unsigned long long)g_fr.frame, e->string[0][0], e->string[0][1],
+		      e->string[0][2], e->string[2][0], e->string[2][1], e->string[2][2], ay.x, ay.y, -ay.z, az.x, az.y, -az.z,
+		      g_bow.string_tips_cm, g_bow.string_back_cm, bo_tips_lo(0), bo_tips_lo(1));
+	}
 }
 

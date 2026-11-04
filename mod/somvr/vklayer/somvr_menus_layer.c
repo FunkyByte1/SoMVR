@@ -50,6 +50,7 @@ static struct {
     int mm, mm_bad;
     int mm_rect[4];         /* SOMVR_XR_MINIMAP_RECT (1920x1080 pixels) */
     somvr_mm_cfg mmc;
+    float mm_size_env; /* build 34: SOMVR_XR_MINIMAP_QUAD's size (the VR menu's Watch size row: Small 6 cm / Large 10 cm) */
     int card, card_bad;
     int touch, touch_bad;
     somvr_tc_cfg tcc;
@@ -157,6 +158,7 @@ static void mn_config(void) {
     somvr_mm_cfg_default(&MN.mmc);
     b = 0;
     somvr_mm_parse_quad(getenv("SOMVR_XR_MINIMAP_QUAD"), &MN.mmc, &b);
+    MN.mm_size_env = MN.mmc.size_m;
     MN.mm_bad |= b << 2;
     const char *p = getenv("SOMVR_XR_CARD");
     MN.card = p && (!strcmp(p, "on") || !strcmp(p, "1"));
@@ -434,6 +436,11 @@ static void mn_qrot(const float q[4], const float v[3], float out[3]) { /* v rot
  * faces the eyes; NULL = none this frame */
 static const XrCompositionLayerBaseHeader *mn_mm_layer(const somvr_rec *rec) {
     if (!MN.split || !MN.lay.watch[2] || !X.hud_sc || !I.on) return NULL;
+    /* build 34 (re-xr-pipeline.md 150): with the VR menu its Watch size row (Small / Large) is the face's width, live -
+     * the switch's own size when it is that kind (under 8 cm small), else 6 cm / 10 cm (build 33's / build 10's) */
+    if (VM.obj)
+        MN.mmc.size_m = VM.set.watch_big ? (MN.mm_size_env >= 0.08f ? MN.mm_size_env : 0.10f)
+                                         : (MN.mm_size_env < 0.08f ? MN.mm_size_env : 0.06f);
     int h = mn_off_hand(); /* (the panel's) */
     const somvr_hand_in *hp = &I.st.hand[h];
     somvr_posef face;
@@ -1212,8 +1219,13 @@ static void xt_poll(void) {
     if (XT.n_sync++ % 5) return;
     struct stat st;
     if (stat(XT.path, &st)) return;
-    if (st.st_mtim.tv_sec == XT.mt.tv_sec && st.st_mtim.tv_nsec == XT.mt.tv_nsec && st.st_size == XT.size) return;
-    XT.mt = st.st_mtim, XT.size = st.st_size;
+#ifdef _WIN32 /* the UCRT's stat: whole seconds (the harness writes test files 1 s apart) */
+    struct timespec mt = {st.st_mtime, 0};
+#else
+    struct timespec mt = st.st_mtim;
+#endif
+    if (mt.tv_sec == XT.mt.tv_sec && mt.tv_nsec == XT.mt.tv_nsec && st.st_size == XT.size) return;
+    XT.mt = mt, XT.size = st.st_size;
     FILE *f = fopen(XT.path, "re");
     if (!f) return;
     char line[256];

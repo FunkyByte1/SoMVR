@@ -18,6 +18,9 @@ void sc_cfg_default(sc_cfg *c) {
     c->steps = 4;
     c->cut_cm = 50.0f, c->edge_max_deg = 60.0f;
     c->stroke = 0, c->rev_cos = -0.3f, c->cut_mps = 12.0f, c->full_mps = 20.0f, c->cut_min_k = 0.6f, c->tip_max_mps = 0;
+    /* build 32: Urfael (somvr_smooth.c swp_defaults' body), a forearm and hand behind the fist */
+    c->force = 0, c->blow_kg = 1.3f, c->blow_com_cm = 15.0f, c->blow_icm = 0.055f, c->blow_len_cm = 100.0f, c->blow_back_cm = 8.0f;
+    c->blow_arm_kg = 3.0f, c->blow_min_j = 35.0f, c->blow_heavy_j = 50.0f, c->blow_full_j = 120.0f, c->blow_stab_j = 12.0f;
 }
 
 static float dot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
@@ -98,7 +101,7 @@ void sc_speed_reset(sc_speed *s) { memset(s, 0, sizeof *s); }
 
 /* time-weighted mean of field f (0 speed, 1 axis, 2 base) over [t_now - w, t_now]: each sample covers the time since
  * the one before it (the oldest sample in the ring: nothing before it) */
-#define WF(x) (f == 2 ? (x).base : f ? (x).axis : (x).speed)
+#define WF(x) (f == 3 ? (x).grip : f == 2 ? (x).base : f ? (x).axis : (x).speed)
 static float window_mean(const sc_speed *s, float w, int f) {
     if (s->n == 0) return 0;
     int i = (s->head + SC_RING - 1) % SC_RING;
@@ -155,13 +158,19 @@ int sc_speed_push(sc_speed *s, const sc_cfg *c, const somvr_blade *b) {
         return 0;
     }
     double dt = s->n ? b->t - s->last_t : 0;
+    /* build 32: the fist's velocity (the grip, blow_back_cm from the base along the blade): the vectors, not the speeds */
+    float ug = c->blow_len_cm + c->blow_back_cm > 0 ? c->blow_back_cm / (c->blow_len_cm + c->blow_back_cm) : 0, vg[3];
+    for (int i = 0; i < 3; i++) vg[i] = b->vel_base[i] + ug * (v[i] - b->vel_base[i]);
+    float sg = sqrtf(dot3(vg, vg));
     s->s[s->head].t = b->t, s->s[s->head].speed = sp, s->s[s->head].axis = along, s->s[s->head].base = sb;
+    s->s[s->head].grip = isfinite(sg) ? sg : 0;
     s->head = (s->head + 1) % SC_RING;
     if (s->n < SC_RING) s->n++;
     s->last_t = b->t;
     s->mean_mps = window_mean(s, c->window_s, 0) * 0.01f;
     s->axis_mps = window_mean(s, c->window_s, 1) * 0.01f;
     s->base_mps = window_mean(s, c->window_s, 2) * 0.01f;
+    s->grip_mps = window_mean(s, c->window_s, 3) * 0.01f;
     s->cos_axis = sp > 1e-3f && la > 1e-3f ? along / sp : 0;
     stroke_step(s, c, v, b->vel_base, sp, dt > 0 && dt <= 0.25 ? dt : 0, b->t);
     if (!s->above && s->mean_mps >= c->slash_mps) {
@@ -233,6 +242,42 @@ int sc_tier_swing(const sc_cfg *c, const sc_speed *s, float edge_deg, float alon
         return SC_TIER_HEAVY;
     if (s->reach >= c->slash_cm && v >= c->slash_mps) return SC_TIER_LIGHT;
     return SC_TIER_NONE;
+}
+
+float sc_blow_j(const sc_cfg *c, const sc_speed *s, float along) {
+    float u = isfinite(along) ? clamp01(along) : 1, x = (u * (c->blow_len_cm + c->blow_back_cm) - c->blow_back_cm) * 0.01f;
+    float r = x - c->blow_com_cm * 0.01f, ms = 1.0f / (1.0f / c->blow_kg + r * r / c->blow_icm), v = sc_contact_mps(s, along);
+    return 0.5f * ms * v * v + 0.5f * c->blow_arm_kg * s->grip_mps * s->grip_mps;
+}
+
+float sc_stab_j(const sc_cfg *c, const sc_speed *s) {
+    float v = s->axis_mps > 0 ? s->axis_mps : 0;
+    return 0.5f * (c->blow_kg + c->blow_arm_kg) * v * v;
+}
+
+float sc_axis_share(const sc_speed *s) {
+    float k = s->mean_mps > 1e-3f && s->axis_mps > 0 ? s->axis_mps / s->mean_mps : 0;
+    return k > 1 ? 1 : k;
+}
+
+int sc_tier_force(const sc_cfg *c, const sc_speed *s, float edge_deg, float along) {
+    if (s->axis_mps >= c->stab_mps && s->cos_axis >= c->stab_cos)
+        return sc_stab_j(c, s) >= c->blow_stab_j ? SC_TIER_STAB : SC_TIER_NONE;
+    /* a thrust not quite tip-first (a stab down, a lunge) drives the whole sword and the arm along the blade: its energy
+     * too (build 32's boot 20261103-122701: a stab down at 10 m/s along the blade, cos 0.33, read 25 J by the tip alone) */
+    float j = sc_blow_j(c, s, along), js = s->axis_mps >= c->stab_mps ? sc_stab_j(c, s) * sc_axis_share(s) : 0;
+    j = js > j ? js : j;
+    if (!(j >= c->blow_min_j)) return SC_TIER_NONE;
+    if (j >= c->blow_heavy_j && !(edge_deg > c->edge_max_deg) && !(s->base_reach < c->arm_cm)) return SC_TIER_HEAVY;
+    return SC_TIER_LIGHT;
+}
+
+float sc_blow_k(const sc_cfg *c, float j) {
+    float lo = c->cut_min_k;
+    if (!(c->blow_full_j > c->blow_heavy_j)) return 1.0f;
+    if (!isfinite(j)) return lo;
+    float k = lo + (1.0f - lo) * (j - c->blow_heavy_j) / (c->blow_full_j - c->blow_heavy_j);
+    return k < lo ? lo : k > 1 ? 1 : k;
 }
 
 int sc_stroke_entered(const sc_speed *s, float touch_age, double now) {

@@ -31,8 +31,8 @@ GO_TUT_SCHEMA	global	0x4b66420	0x183bcf0	confirmed	L 0xb0c370 (inline) / W 0x140
 GO_TS_HASH	off	0x68	0x68	same	W 0x140466d30: FUN_1403f3800(rec, sch+0x68) (the hash lookup)	-
 GO_TS_FAST	off	0x78	0x78	same	W 0x140466d30: *(int *)(sch+0x78) < 2	-
 GO_TS_INDEX	off	0x88	0x88	same	W 0x140466d30: sch[0x88] * 0x10 + *(rec+8)	the record's entries (+8, 16 bytes: kind +0xa, set +0xc, slot +0xe) and values (+0x10) unchanged
-GO_VSCHEMA	global	0x4c25d20	?	unknown	L 0x266a8d0 reads *(DAT_04c25d20 + 0xf8/0x128); W 0x140c3c6b0 (its pair) has the ramp reads out of line; the Windows schema is filled field by field (RampInDuration 0x1409a85c0, RampOutDuration 0x1409a8630: descriptor constructors) - the global not traced	0 on Windows: SOMVR_VISION_RAMP_MS reads nothing and writes nothing
-GO_VM_REC	off	0x28	?	unknown	PlayerVisionMode's record; the tool aligned 0x30 in W 0x140c3c6b0 (weak, conflicting)	only with GO_VSCHEMA
+GO_VSCHEMA	global	0x4c25d20	0x180b6d0	confirmed	b34 (7.13): the registry's one 'Client.VisionMode' (12 fields, as Linux's holder [H+0x20]); its field array 0x14190b170 is built by 0x1409a88d0 (static init 0x141310660): field 5 (+0xf0) = RampInDuration (0x1409a85c0, index byte 5), field 6 (+0x120) = RampOutDuration (0x1409a8630, 6) - the hashes the mod reads at +0xf8 / +0x128	SOMVR_VISION_RAMP_MS (build-win2 sets 150,150): reads and writes the vision record's two ramps (0..10 s only)
+GO_VM_REC	off	0x28	0x28	same	b34 (7.13): FUN_00ad3330 / 0x1404e8f90 (nbr): 'cmp [vm+0x28],0', then the record [vm+0x28] passed to FUN_009e62d0 / 0x140406660 (nbr: its record argument -> FUN_0266a8d0 / 0x140c3c6b0); PlayerVisionMode's ctor 0x1404e9590 and the Linux dtor both own +0x28/+0x30	-
 OB_SHOWN1	off	0x45	0x45	same	L 0xec4a50 / W 0x1404e6770 (OB_EACH's target): *(marker+0x45) = 0	written by the mod
 OB_SHOWN2	off	0x6d	0x6d	same	L 0xec4a50 / W 0x1404e6770: *(marker+0x6d) = 0	written by the mod
 OB_CLIP	off	0xb0	0xb0	same	W 0x1404e6770: plVar1 = *(marker+0xb0); (*plVar1 + 0x200)(plVar1, 0)	-
@@ -50,11 +50,11 @@ SCR_VT_HIER	global	0x35b8da8	0x13d72d0	confirmed	CUIHierarchyLayer's vtable: LEA
 SCR_VT_HIER_VF10	global	0xedf470	0x684660	confirmed	L CUIHierarchyLayer::vf_10 0xedf470 <-> W 0x140684660 (pairs.tsv) at 0x1413d7310 = the vtable's slot 8	-
 SCR_HIER_VF10_AT	vt	0x50	0x40	confirmed	the slot of vf_10 in the vtable: W 0x1413d7310 - 0x1413d72d0; MSVC's order differs from slot -1 here (L vf_02 -> W 1, vf_10 -> 8, vf_24..28 -> 19..23)	per-slot, no fixed rule in this class
 SCR_P_UI	off	0x2e0	0x2e0	same	L 0xec4a50 / W 0x1404e6770: FUN_00ac11e0(*(player+0x2e0)) = FUN_1404634d0(*(player+0x2e0))	the CPlayerUI pointer
-SCR_UI_SM	off	0xb0	?	unknown	CPlayerUI's state machine (L 0xacbca0: no Windows pair found)	-
-SCR_SM_STATE	off	0xc	0xc	plausible	the interface manager's state machine in L 0xa0f760 / W 0x140412440 (LP_IM_DOWN): +0xc, -1 -> +0x8 unchanged (a sibling state machine class)	-
-SCR_SM_STATE0	off	0x8	0x8	plausible	as SCR_SM_STATE	-
-SCR_SM_MGR	off	0x10	?	unknown	the menu manager embedded in the CPlayerUI state machine (L 0xacbd10, inside another function) - not traced	-
-SCR_MGR_LAYERS	off	0x198	?	unknown	CUIMenuManagerBase's layer stack - not traced (it holds std:: members: may shift)	-
-SCR_MGR_COUNT	off	0x1e8	?	unknown	as SCR_MGR_LAYERS	-
-SCR_MGR_OVERRIDE	off	0x1ec	?	unknown	as SCR_MGR_LAYERS	-
+SCR_UI_SM	off	0xb0	0xb0	same	b34 (7.13): CPlayerUI FUN_00aca7d0 / 0x1404663b0 (str): sm = [ui+0xb0]; FUN_00ba5af0 / 0x1405d9900 (nbr) on sm+0x10; byte sm+0x15f9; the state sm+0xc (-1: +0x8) == 5; FUN_00b70d00 / 0x1405cd5f0 (nbr) on sm+0x10	-
+SCR_SM_STATE	off	0xc	0xc	same	b34 (7.13): CPlayerUI FUN_00aca7d0 / 0x1404663b0 (str): [[ui+0xb0]+0xc], -1 -> +0x8, == 5 on both (and the interface manager's L 0xa0f760 / W 0x140412440)	-
+SCR_SM_STATE0	off	0x8	0x8	same	as SCR_SM_STATE (b34)	-
+SCR_SM_MGR	off	0x10	0x10	same	b34 (7.13): as SCR_UI_SM: the menu manager is sm+0x10 in both (lea rcx,[sm+0x10] before the paired manager calls 0x1405d9900 / 0x1405d9bc0 / 0x1405cd5f0)	-
+SCR_MGR_LAYERS	off	0x198	0x198	same	b34 (7.13): CUIMenuManagerBase::vf_12 0xb712f0 = W slot 11 0x1405ce990 of the manager vtables (0x1413cb4f0 ...; winport_vtfind: vf_13 -> slot 12 0x1405cea50, 11 votes): override byte +0x1ec, count +0x1e8, the stack [+0x198 + 8*(n-1)] (n-1 < 8) on both	-
+SCR_MGR_COUNT	off	0x1e8	0x1e8	same	as SCR_MGR_LAYERS (b34)	-
+SCR_MGR_OVERRIDE	off	0x1ec	0x1ec	same	as SCR_MGR_LAYERS (b34)	-
 UF_DESC_GROUP	off	0x18	0x18	same	L 0xcbbe60 / W 0x14052b690 (UF_CREATE's target): the log "CreateUIFXGroup: GROUPID %d" with *(desc+0x18)	-

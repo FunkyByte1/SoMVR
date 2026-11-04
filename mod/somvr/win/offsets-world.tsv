@@ -55,7 +55,7 @@ IN_ALLOW_KBM	global	0x46b0d61	0x17fa770	confirmed	the auto switch to KBM: L 0xa1
 GL_NAMES_TAB	global	0x355eb20	?	unknown	the 22 pad textures' name table of Feral's skip	GLYPHS off on Windows
 GL_MGR_GUARD	global	0x4b4c420	?	unknown	Feral's controller manager guard	Linux only
 GL_MGR_OBJ	global	0x4b4c440	?	unknown	Feral's controller manager	Linux only
-CL_PHYS_PP	global	0x466c758	0x19d7da0	plausible	an IEnginePhysics.Default holder: each TU registers its own (10 on each side; Linux 0x56b0f7, Windows e.g. 0x14137d180: lea "IEnginePhysics.Default", the holder 0x1419d7da0 zeroed and registered with 0x140745270); the interface manager fills all of them	any of the 10 Windows holders is the same pointer once registered
+CL_PHYS_PP	global	0x466c758	0x1868c48	confirmed	the IEnginePhysics.Default instance pointer itself (static: 0x141868c48 -> 0x141868c50, vtable 0x141481d30; FUN_1403eecf0+0x1d1 publishes it); the TU holders (e.g. 0x1419d7da0, zeroed by FUN_14137d180) are filled only if their TU registers after the registry exists (winport-drivers 11-03)	any of the 10 Windows holders is the same pointer once registered
 CL_SURF_TAB0	global	0x4c5cb50	0x198de18	confirmed	CL_SURF_BYID / CL_SURF_FROM_RAY: the table's begin (2 aligned)	-
 CL_SURF_TAB1	global	0x4c5cb58	0x198de20	confirmed	the table's end (2 aligned)	-
 ST_VT_VM	global	0x3503bc0	0x13c66c0	confirmed	PlayerVisionMode's ctor 0x1404e9590 (lea 0x1413c66c0; mov [rcx],rax; 0x50 bytes), called by the Player ctor that stores it at P+0x2f0 (0x140402193)	a vtable address: compare vptrs with image base + it
@@ -98,7 +98,7 @@ SY_IM_SUB	off	0x27b0	0x27a0	confirmed	4 aligned: FUN_00a10670 L 0xa106cf / W 0x1
 SY_SUB_TEXT	off	0xc0	0xc0	plausible	not read side by side (CUIHUDSubtitle's channel text)	a story drill read
 SY_SUB_STRIDE	size	0x210	0x210	plausible	the Windows subtitle code still indexes 0x210-byte channels (imul 0x210 at 0x14053445c)	-
 BR_NL_FLAG	global	0x4c445d8	0x1989eca	confirmed	5 aligned; the root node path W 0x1404596d0: cmp byte [0x141989eca],0 before "Root node validated"	-
-BR_NL_SINK	global	0x4c459a0	?	unknown	Combat_LogPrintf is an empty stub on Windows: no sink	BR_NODELOG is a redesign
+BR_NL_SINK	global	0x4c459a0	?	unknown	b34 (7.13): none on Windows - Combat_LogPrintf is the empty stub 0x140e90860 (BR_LOGPRINTF), so there is no FILE * holder to find	BR_NODELOG is a redesign
 BR_C_BLOCKING	off	0xdc	0xdc	plausible	11 aligned keep 0xdc	-
 BR_PC_TRACK	off	0x80	0x80	same	the root loop L 0xa8e121 / W 0x140459e1d and L 0xa8ddbc / W 0x140459774: lea [pc+0x80]	-
 BR_TR_VEC	off	0x08	0x08	plausible	the predicate test FUN_02271890 = 0x1408c2310 (str) reads its +0x08 vector (unaligned)	-
@@ -126,10 +126,10 @@ PR_SLOT_RAY	vt	0x200	0x1f8	confirmed	= CL_SLOT_RAYCAST: slot 63 of the live vptr
 PR_SLOT_SETZONE	vt	0x288	0x258	confirmed	NPC 0x1414498b0 slot 75 (PR_NPC_SETZONE)	-6 slots in the NPC vtable
 PR_SLOT_REMOVE	vt	0x58	0x50	confirmed	CObjectSystemInterface 0x14148ca00 slot 10 (PR_OBJSYS_REMOVE)	-
 PR_SLOT_WEATHER	vt	0xa8	0xa0	confirmed	CGameServices 0x1413ba940 slot 20 (PR_WEATHER)	-
-PRN_LIST	global	0x46b9200	?	unknown	PRN_NAV_POS not found	a test word's diagnostic
-PRN_NODE	off	0x80	?	unknown	as PRN_LIST	-
-PRN_REC	off	0x298	?	unknown	as PRN_LIST	-
-PRN_ACTIVE	off	0x2e0	?	unknown	as PRN_LIST (a Windows caller reads +0x2e0 at 0x1404e2656, not proven the same object)	-
+PRN_LIST	global	0x46b9200	0x17fbda0	confirmed	the nav-marker walk FUN_00ec4f10 (L 0xec4f57 mov rbx,[0x46b9208]; cmp rbx,0x46b9200) = W 0x1404e6bf0 (mov rbx,[0x1417fbda8]; lea r12,[0x1417fbda0]; cmp rbx,r12), the walk OB_EACH sits in	the sentinel; first = +8, next = node+8 on both
+PRN_NODE	off	0x80	0x80	same	W 0x1404e6c10: lea rdi,[rbx-0x80] (the marker from the node; = winport-ui's OB_EACH)	-
+PRN_REC	off	0x298	0x298	same	= winport-ui's OB_REC (the marker update 0x1404e6770: rec = *(m+0x298))	-
+PRN_ACTIVE	off	0x2e0	0x2e0	same	= winport-ui's OB_ACTIVE (+0x2e0 active, +0x2e1 enabled)	-
 MAP_VT_ZONE	global	0x353e120	0x13cfba0	confirmed	CUIPDAZoneMapLayer's Windows vtable 0x1413cfba0 (25 slots; Linux 31): its slot 8 = the command handler below (paired Linux slots 1/2/10/11/14/15 = Windows 0/1/8/9/12/13)	a vtable address: compare vptrs with the image base + it
 MAP_VT_ZONE_VF10	global	0xc03fc0	0x5f1190	confirmed	L FUN_00c03fc0 / W 0x1405f1190 (tier 1): the same switch on the command (0x52, 0x57 Fast Travel, 0x58 Advance Time)	a function address
 MAP_ZONE_CMD_SLOT	const	10	8	confirmed	the handler is slot 8 of 0x1413cfba0 (Linux slot 10): -2 here, not -1	-
@@ -141,11 +141,15 @@ MT_P_MOUNT	off	0x1d8	0x1d8	same	= CL_P_MOUNT	-
 MT_C_ATTACK	off	0x4d0	0x4d0	same	= BZ_C_ATTACK	-
 MT_P_RIDER_CMDS	off	0x2b0	0x2b0	plausible	40 aligned uses keep 0x2b0 (none in a rider function checked)	-
 MT_P_RIDER_NCMD	off	0x2c0	0x2c0	plausible	21 aligned keep 0x2c0, 11 -> 0x2b8 (other objects?): check at the first ride boot	-
-MT_VT_STRUGGLE_AIM	global	0x3592bb8	0x13cdf48	plausible	the 5-slot struggle vtable whose functions read +0x588..+0x592 (the aim's fields; Linux's aim command +0x58c) - no RTTI on Windows to prove the name	-
-MT_VT_STRUG_HOLD	global	0x3592b38	0x13cdf20	plausible	its functions read +0xfc/+0xfe/+0x100/+0x118 (the hold's command, result, seconds, held)	new on Windows: the class by vtable
-MT_VT_STRUG_COUNT	global	0x3592ab8	0x13cded0	plausible	its functions read +0x2f0/+0x2f4/+0x2f5/+0x2f6 (the press count's)	-
-MT_VT_STRUG_QT	global	0x3592af8	0x13cdef8	plausible	its functions read +0xd0/+0xd4/+0xd5 (the quick time's command)	-
-MT_VT_STRUG_DIR	global	0x3592b78	0x13cddf8	plausible	the remaining 5-slot vtable of the group (+0x200..+0x204)	-
+MT_VT_STRUGGLE_AIM	global	0x3592bb8	0x13cdf48	confirmed	the 5-slot struggle vtable whose functions read +0x588..+0x592 (the aim's fields; Linux's aim command +0x58c) - no RTTI on Windows to prove the name	b34: confirmed with the factory, slot 1's pair and the fields (offsets-combat.tsv STG_VT_AIM)
+MT_VT_STRUG_HOLD	global	0x3592b38	0x13cdf20	confirmed	its functions read +0xfc/+0xfe/+0x100/+0x118 (the hold's command, result, seconds, held)	b34: confirmed as STG_VT_HOLD (offsets-combat.tsv)
+MT_VT_STRUG_COUNT	global	0x3592ab8	0x13cded0	confirmed	its functions read +0x2f0/+0x2f4/+0x2f5/+0x2f6 (the press count's)	b34: confirmed as STG_VT_PRESS (offsets-combat.tsv)
+MT_VT_STRUG_QT	global	0x3592af8	0x13cdef8	confirmed	its functions read +0xd0/+0xd4/+0xd5 (the quick time's command)	b34: confirmed as STG_VT_QT (offsets-combat.tsv)
+MT_VT_STRUG_DIR	global	0x3592b78	0x13cddf8	confirmed	the remaining 5-slot vtable of the group (+0x200..+0x204)	b34: confirmed as STG_VT_DIR (offsets-combat.tsv)
 MT_STRUG_DONE	off	0xa5	0xa5	plausible	every struggle vtable's functions read +0xa5 on Windows; 5 aligned uses keep it	-
 SF_CAST_FLAGS	const	0xf8	0xf8	plausible	= CL_CAST_FLAGS or CL_CAST_MATERIAL or 0x20 (the same query layout)	-
 JP_PC_GRAVITY	off	0x58	0x58	plausible	the proxy's gravity float (Linux CPhysicsCharacter vf_08 reads it after the +0x60 flag); 460 aligned uses keep 0x58, the Windows twin not read side by side	the jump checks the value (-60 < g < -5) and falls back to its default
+CL_SLOT_PC_SETPOS	const	5	4	confirmed	CPhysicsCharacter 0x1414868f0 (the live proxy vptr: cl_grav's check passes on Windows) slot 4 = CL_PC_SETPOS 0x140e21d50 (17 paired slots vote -1)	the unpin and SOMVR_CLIMB_THROUGH (the glide down, the flings) read the proxy through these two: off on Windows until this row (the run 20261103-022457: "proxy position slots did not match", the glide held at the lip)
+CL_SLOT_PC_GETPOS	const	9	8	confirmed	slot 8 = CL_PC_GETPOS 0x140e21560	-
+KP_GS_FMGR_SLOT	const	15	14	confirmed	CGameServices 0x1413ba940 slot 14 = KP_GS_FMGR 0x1403ef410 (mov rax,[rcx+0x6c58]; ret; 26 paired slots vote -1)	kp_faction compared vt + 0x78 with the site (0x70 on Windows): no faction members readable, no captain spawn (suite build-vr32-win: captain24, polish23, nemesis27)
+BR_MODE_CMDON_VT	vt	0x18	0x10	confirmed	the node predicate FUN_02271890 = 0x1408c2310: L 0x22719a8 call [rax+0x18] / W 0x1408c237f call [rax+0x10] on (*(pc+0x80)), cmd in esi/edx	br_b_on_frame called the next virtual on Windows

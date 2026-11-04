@@ -180,8 +180,10 @@ static int ba_exact_point(sv_vec3 o, sv_vec3 d, float out[3], const char **what,
 }
 
 /* the test words (writer thread; headless A/B in one boot): "bow auto on|off" = SOMVR_BOW_AUTO_ARROW, "bow aim
- * assist|exact" = SOMVR_BOW_AIM - taken by ba_frame (the game thread) for the next step */
-static _Atomic int g_ba_req_auto = -1, g_ba_req_aim = -1;
+ * assist|exact" = SOMVR_BOW_AIM, "bow assist DEG" = SOMVR_BOW_ASSIST_DEG (0..90: the assist's cone; the headset envs
+ * since build 20 set 0, so `bow aim assist` alone has no cone and logs no assist line - bow20-drive.sh's beside step) -
+ * taken by ba_frame (the game thread) for the next step */
+static _Atomic int g_ba_req_auto = -1, g_ba_req_aim = -1, g_ba_req_cone = -1;
 static const char *ba_word(const char *a, const char *v, int nw)
 {
 	if (nw == 2 && !strcmp(a, "auto")) {
@@ -190,6 +192,14 @@ static const char *ba_word(const char *a, const char *v, int nw)
 			return "bow auto (not on|off: ignored)";
 		atomic_store(&g_ba_req_auto, m);
 		return "bow auto (SOMVR_BOW_AUTO_ARROW from the next step)";
+	}
+	if (nw == 2 && !strcmp(a, "assist")) {
+		char *e = NULL;
+		double d = strtod(v, &e);
+		if (!e || *e || !(d >= 0 && d <= 90))
+			return "bow assist (not 0..90 deg: ignored)";
+		atomic_store(&g_ba_req_cone, (int)lround(d * 10));
+		return "bow assist (SOMVR_BOW_ASSIST_DEG from the next shot)";
 	}
 	if (nw == 2 && !strcmp(a, "aim")) {
 		int m = !strcmp(v, "exact") ? 1 : !strcmp(v, "assist") ? 0 : -1;
@@ -204,7 +214,10 @@ static const char *ba_word(const char *a, const char *v, int nw)
 /* bo_frame, after the step: while the bow is drawn and the ring is on, this frame's trace (for ob_frame's entry) */
 static void ba_frame(const somvr_bow_out *o, double t)
 {
-	int ra = atomic_exchange(&g_ba_req_auto, -1), rm = atomic_exchange(&g_ba_req_aim, -1);
+	int ra = atomic_exchange(&g_ba_req_auto, -1), rm = atomic_exchange(&g_ba_req_aim, -1), rc = atomic_exchange(&g_ba_req_cone, -1);
+	if (rc >= 0)
+		g_bow.assist_deg = rc * 0.1f, logf_("BOW t=%.3f assist cone %.1f deg (the test word: SOMVR_BOW_ASSIST_DEG)", t,
+						     (double)g_bow.assist_deg);
 	if (ra >= 0)
 		g_bow.cfg.auto_arrow = ra, logf_("BOW t=%.3f auto_arrow %s (the test word)", t, ra ? "on" : "off");
 	if (rm >= 0)

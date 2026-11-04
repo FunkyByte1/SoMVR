@@ -61,6 +61,7 @@ static struct {
 	int stock;             /* `jump stock on`: the game's own A and free-run (game moves on, LOCO's latch the game's) */
 	int stock_gm, stock_latch, stock_descent, stock_mark;
 	uint32_t lines, tick_lines;
+	uint64_t bow_held; /* build 36: A presses while drawing the bow (SOMVR_BOW_A_JUMP=draw): nothing */
 	uint64_t presses, refused, climb_firsts, climb_passes, climb_kept, takeoffs, vault_fallbacks, ticks, grav_writes,
 		grav_resets, other_tid;
 	float land_off_max;
@@ -71,9 +72,16 @@ static struct {
 	_Atomic int req_via;
 	_Atomic int req_jump, req_vault, req_state, req_stock, req_scan, req_cm;
 	_Atomic int req_trace_ms;
+	int hop;               /* build 33 (SOMVR_WALK_LIP): the take-off waiting is a step over a lip, hop_cm high */
+	int fall;              /* build 36 (SOMVR_WALK_GROUND): the take-off waiting is the fall from here (from rest, off the
+				* ground: no "not on the ground") */
+	uint64_t falls;
+	float hop_cm;
+	uint64_t hops;
 } g_jp = { .req_jump = -1, .req_vault = -1, .req_stock = -1, .req_cm = -1, .req_via = -1 };
 static _Atomic int g_sv_req, g_sv_req_r, g_sv_req_step; /* build 24: `vault grid|edges` (sv_frame) */
 
+static const char *jp_why_not(double t);
 static int jp_log_ok(void) { return g_jp.lines++ < 800; }
 static int jp_tick_ok(void) { return g_jp.tick_lines++ < JP_TICK_LINES; }
 static int jp_owns_a(void) { return g_jp.a_owned; }
@@ -82,6 +90,26 @@ static int jp_air(void) { return g_jp.s.kind != SOMVR_JPK_NONE; }
 static int jp_exact(void) { return g_jp.s.kind != SOMVR_JPK_NONE; }
 static int jv_wanted(void) { return g_jp.want_vault; }
 static int jp_extra_pending(void) { return g_jp.extra_pending; }
+/* build 33 (SOMVR_WALK_LIP, the walk's lip watch in somvr.c's UNPIN): a low take-off at the next PM tick; 0 = not now (in
+ * the air, a take-off waiting, the jump off, or jp_why_not's) */
+static int jp_hop_req(float cm, double t)
+{
+	if (!g_jp.cfg.jump || g_jp.s.kind != SOMVR_JPK_NONE || g_jp.press || jp_why_not(t))
+		return 0;
+	g_jp.press = SOMVR_JPK_JUMP, g_jp.press_t = t, g_jp.hop = 1, g_jp.hop_cm = cm;
+	return 1;
+}
+
+/* build 36 (SOMVR_WALK_GROUND, somvr.c's un_ground_guard): on foot with no ground under the capsule - the fall from here:
+ * the jump's arc from rest at the next PM tick (LOCO's delta, the stick's speed carried, its braked landing); 0 = not
+ * now (in the air, a take-off waiting, the jump off, or jp_why_not's) */
+static int jp_fall_req(double t)
+{
+	if (!g_jp.cfg.jump || g_jp.s.kind != SOMVR_JPK_NONE || g_jp.press || jp_why_not(t))
+		return 0;
+	g_jp.press = SOMVR_JPK_JUMP, g_jp.press_t = t, g_jp.fall = 1, g_jp.hop = 0;
+	return 1;
+}
 
 static void jp_config(int *bad)
 {
@@ -218,12 +246,24 @@ static void jp_a_press(int world, double t)
 			logf_("JUMP t=%.3f press in the air (%s, %.2f s): nothing", t, somvr_jp_kind_name(g_jp.s.kind), g_jp.s.t);
 		return;
 	}
+	/* build 36 (SOMVR_BOW_A_JUMP=draw): A while the string hand is on the string is ours and does nothing (the climb sees
+	 * A up: no descent either) - the trigger and A pressed together to draw were a jump */
+	const char *bow = bo_a_holds();
+	if (bow) {
+		g_jp.a_owned = 1, g_jp.bow_held++;
+		if (jp_log_ok())
+			logf_("JUMP t=%.3f press while drawing the bow: nothing (%s; SOMVR_BOW_A_JUMP=draw; %llu so far)", t, bow,
+			      (unsigned long long)g_jp.bow_held);
+		return;
+	}
 	const char *why = jp_why_not(t);
 	somvr_jp_a_in in = { .jump = g_jp.cfg.jump, .vault = g_jp.cfg.vault, .ring = g_jp.ring, .speed = jp_speed(),
 			     .can = !why, .climbing = g_cl.on && (g_cl.s.active || g_cl.s.phase != SOMVR_CLIMB_PH_NONE) };
 	/* the climb's A on foot (the descent's edge look) can take this press: on, allowed, no hand taken */
 	in.descent = g_cl.on && g_cl.cfg.descent && !g_cl.why_not &&
 		     !(bo_out() || sl_nograb() || vb_nograb() || df_keep_sword(t));
+	/* build 36 (SOMVR_CLIMB_EDGE_LOW): the game holds the walk (a low edge's keeper): the edge first, even moving */
+	in.pinned = g_cl.cfg.edge_low_cm > 0 && lo_walk_blocked(t);
 	int a = somvr_jp_a_pick(&g_jp.cfg, &in);
 	g_jp.presses++, g_jp.press_why = a, g_jp.press_speed = in.speed, g_jp.press_t = t;
 	if (a == SOMVR_JPA_VAULT || a == SOMVR_JPA_JUMP) {
@@ -234,7 +274,9 @@ static void jp_a_press(int world, double t)
 	if (jp_log_ok())
 		logf_("JUMP t=%.3f press: %s (the body %.0f cm/s%s%s%s%s)", t, somvr_jp_a_name(a), in.speed,
 		      g_jp.ring ? ", the vault's ring shown" : "", why ? "; cannot: " : "", why ? why : "",
-		      a == SOMVR_JPA_CLIMB_FIRST ? "; standing: the descent's edge first" : "");
+		      a == SOMVR_JPA_CLIMB_FIRST ? (in.pinned && in.speed >= g_jp.cfg.moving_cms
+						    ? "; the walk held by the game: the descent's edge first (SOMVR_CLIMB_EDGE_LOW)"
+						    : "; standing: the descent's edge first") : "");
 	if (why && a == SOMVR_JPA_CLIMB && in.jump && !in.climbing)
 		g_jp.refused++;
 }
@@ -369,14 +411,14 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 			why = "LOCO does not own this tick";
 		if (!why && !fok)
 			why = "no floor under him";
-		if (!why && root[1] - g_jp.cfg.foot_cm - fy > g_jp.cfg.ground_cm)
+		if (!why && root[1] - g_jp.cfg.foot_cm - fy > g_jp.cfg.ground_cm && !g_jp.fall)
 			why = "not on the ground";
 		if (!why && t - g_jp.press_t > 0.3)
 			why = "the press is old";
 		if (why) {
 			g_jp.refused++;
-			if (t - g_jp.press_t <= 0.3) /* the soft "no" (not for a press long gone) */
-				in_haptic_double(SOMVR_HAND_R, 0.2f, 0.02f, 0.07f, SOMVR_HAP_UI);
+			if (t - g_jp.press_t <= 0.3 && !g_jp.hop && !g_jp.fall) /* the soft "no" (not for a press long gone, nor ours) */
+				haptic(SOMVR_HAND_R, SOMVR_HX_NO);
 			if (jp_log_ok())
 				logf_("JUMP t=%.3f refused: %s (the feet %.0f cm over the floor %.1f): a soft double buzz, nothing moves", t,
 				      why, fok ? root[1] - g_jp.cfg.foot_cm - fy : -1.0f, fy);
@@ -397,11 +439,25 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 				somvr_jp_start(&g_jp.s, SOMVR_JPK_VAULT, r, fy, p.vy0, g, p.vh, p.land, p.t_hold);
 				g_jp.plan = p;
 			} else {
-				somvr_jp_start(&g_jp.s, SOMVR_JPK_JUMP, r, fy, somvr_jp_takeoff(g_jp.cfg.jump_cm, g), g, (sv_vec3){ 0, 0, 0 },
-					       (sv_vec3){ 0, 0, 0 }, 0);
+				somvr_jp_start(&g_jp.s, SOMVR_JPK_JUMP, r, fy,
+					       g_jp.fall ? 0.0f : somvr_jp_takeoff(g_jp.hop ? g_jp.hop_cm : g_jp.cfg.jump_cm, g), g,
+					       (sv_vec3){ 0, 0, 0 }, (sv_vec3){ 0, 0, 0 }, 0);
 			}
 			g_jp.takeoffs++, g_jp.ring = 0;
-			in_haptic_event(SOMVR_HAND_R, 0.15f, 0.02f, SOMVR_HAP_UI);
+			if (g_jp.fall) { /* build 36: the fall from here - no tick, its own line */
+				g_jp.falls++, g_jp.fall = 0;
+				if (jp_log_ok())
+					logf_("JUMP t=%.3f go: the fall from here (SOMVR_WALK_GROUND): from rest at %.0f cm/s^2, the stick's %.0f "
+					      "cm/s carried; the root %.1f,%.1f,%.1f, the feet %.1f cm over the floor %.1f", t, g, jp_speed(), r.x,
+					      r.y, r.z, r.y - g_jp.cfg.foot_cm - fy, fy);
+			} else if (g_jp.hop) { /* build 33: the step over a lip - no tick (not A's), its own line */
+				g_jp.hops++, g_jp.hop = 0;
+				if (jp_log_ok())
+					logf_("JUMP t=%.3f go: the step over a lip (SOMVR_WALK_LIP): %.0f cm/s up (%.0f cm at %.0f cm/s^2), the "
+					      "stick's %.0f cm/s carried; the root %.1f,%.1f,%.1f", t, somvr_jp_takeoff(g_jp.hop_cm, g),
+					      g_jp.hop_cm, g, jp_speed(), r.x, r.y, r.z);
+			} else {
+			haptic(SOMVR_HAND_R, SOMVR_HX_GO);
 			if (jp_log_ok()) {
 				if (vault)
 					logf_("JUMP t=%.3f go: the vault %s the %.0f cm top (%.0f cm deep, its face %.0f cm ahead) at %.0f cm/s: up "
@@ -419,7 +475,10 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 				if (kind == SOMVR_JPK_VAULT && !vault)
 					logf_("JUMP t=%.3f (the vault at the press: %s)", t, somvr_jp_vwhy_name(p.why));
 			}
+			}
 		}
+		if (why)
+			g_jp.hop = 0, g_jp.fall = 0;
 	}
 	if (g_jp.s.kind == SOMVR_JPK_NONE)
 		return;
@@ -556,7 +615,7 @@ static void jv_find(double t, uintptr_t pl)
 		g_jp.ring = 1, g_jp.ring_t = t, g_jp.plan = p, g_jp.ring_dir = d;
 		if (!was) {
 			g_jp.ring_shows++, g_jp.ring_first_t = t;
-			in_haptic_event(SOMVR_HAND_R, 0.15f, 0.012f, SOMVR_HAP_UI); /* the mantle's light tick */
+			haptic(SOMVR_HAND_R, SOMVR_HX_TICK); /* the mantle's light tick */
 			if (jp_log_ok())
 				logf_("VAULT t=%.3f ring: %s the %.0f cm top %.0f cm ahead (%.0f cm deep) %s: the ring at %.0f,%.0f,%.0f, %.0f cm "
 				      "along the floor (%+.0f cm); A = %.0f cm/s, the feet %.0f cm over the floor, %.2f s; %d casts", t,
@@ -897,14 +956,16 @@ static void jp_end_log(void)
 	if (!g_jp.want_jump && !g_jp.want_vault)
 		return;
 	const somvr_jp *s = &g_jp.s;
-	logf_("JUMP END build 22: presses %llu (the climb first %llu: passed %llu, kept %llu), refused %llu, take-offs %llu "
+	logf_("JUMP END build 22: presses %llu (the climb first %llu: passed %llu, kept %llu; build 36: while drawing the bow "
+	      "%llu), refused %llu, take-offs %llu "
 	      "(jumps %llu, vaults %llu; the vault's plan gone at the press %llu; stopped at the ring's distance %llu); ends: landed %llu, lost %llu, caught by the "
 	      "climb %llu, the game's fall %llu, stopped %llu; ceilings %llu, brakes %llu (settle misses %llu); the highest rise "
 	      "%.1f cm, the longest %.2f s, the fastest landing %.0f cm/s; the vault's rings %llu (%llu frames; %llu finds, %llu "
 	      "casts), the farthest from its ring %.1f cm; ticks %llu; gravity writes %llu (the game set it again %llu); the rise "
 	      "via %s (extra moves taken %llu, not %llu; the proxy set up %llu, by a ceiling %llu); other thread %llu",
 	      (unsigned long long)g_jp.presses, (unsigned long long)g_jp.climb_firsts, (unsigned long long)g_jp.climb_passes,
-	      (unsigned long long)g_jp.climb_kept, (unsigned long long)g_jp.refused, (unsigned long long)g_jp.takeoffs,
+	      (unsigned long long)g_jp.climb_kept, (unsigned long long)g_jp.bow_held, (unsigned long long)g_jp.refused,
+	      (unsigned long long)g_jp.takeoffs,
 	      (unsigned long long)s->n_jump, (unsigned long long)s->n_vault, (unsigned long long)g_jp.vault_fallbacks,
 	      (unsigned long long)s->n_ring_stop,
 	      (unsigned long long)s->n_landed, (unsigned long long)s->n_lost, (unsigned long long)s->n_climb,

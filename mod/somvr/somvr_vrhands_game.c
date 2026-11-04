@@ -34,7 +34,15 @@ static struct {
 	uint32_t state_seen;   /* the layer's state last logged */
 	uint64_t frames, hidden, pub, nogrips;
 	double next_log;
-} g_vh;
+	/* build 36 (som-b36-polish, re-xr-pipeline.md 167.3; the 11-03 Windows session asked for ghostly hands in the
+	 * wraith vision): SOMVR_HANDS_WRAITH=on - the hands' wraith amount, eased toward the vision's flag (st_vision: the
+	 * game's own, Y held or a phase) over SOMVR_HANDS_WRAITH_MS; the word `hands wraith 0..1|auto` pins it (tests) */
+	int wr_on, wr_was;
+	float wr, wr_ms;
+	_Atomic int wr_pin;    /* the word's amount x 1000; < 0: none */
+	double wr_t;
+	uint64_t wr_frames, wr_ups, wr_downs;
+} g_vh = { .wr_pin = -1 };
 
 /* SOMVR_XR_HANDS_DEPTH=world (build 11): the eyes' depth */
 #define RT_DEPTH 0x200 /* the eye target's depth-stencil wrapper (FUN_0074df10: FUN_0074ecb0's pooled texture, flag 1) */
@@ -87,7 +95,7 @@ static void *vd_surface(uintptr_t rt, const struct d3d_src *s, d3d_tex_desc *out
 {
 	uintptr_t wrap = peek_ptr(rt + RT_DEPTH);
 	if (!wrap)
-		return vd_off("the eye target %#lx has no depth-stencil at +0x%x", (unsigned long)rt, RT_DEPTH), NULL;
+		return vd_off("the eye target %#llx has no depth-stencil at +0x%x", (unsigned long long)rt, RT_DEPTH), NULL;
 	if (wrap == g_vd.wrap && g_vd.surf && peek_ptr(wrap + g_vd.off) == g_vd.surf && g_vd.desc.w == g_et.desc.w &&
 	    g_vd.desc.h == g_et.desc.h) {
 		*out = g_vd.desc;
@@ -104,8 +112,8 @@ static void *vd_surface(uintptr_t rt, const struct d3d_src *s, d3d_tex_desc *out
 		if (!(d.bind & BIND_DS))
 			continue;
 		if (d.samples != 1 || d.mips != 1 || d.array != 1)
-			return vd_off("the depth-stencil texture %#lx (wrapper %#lx +0x%lx) is %ux%u samples %u mips %u array %u",
-				      (unsigned long)t, (unsigned long)wrap, (unsigned long)offs[i], d.w, d.h, d.samples, d.mips,
+			return vd_off("the depth-stencil texture %#llx (wrapper %#llx +0x%llx) is %ux%u samples %u mips %u array %u",
+				      (unsigned long long)t, (unsigned long long)wrap, (unsigned long long)offs[i], d.w, d.h, d.samples, d.mips,
 				      d.array), NULL;
 		if (d.w != g_et.desc.w || d.h != g_et.desc.h) { /* a resolution change under way (SOMVR_EYE_SIZE's switch):
 								 * no copy this frame, the next frames look again */
@@ -117,8 +125,8 @@ static void *vd_surface(uintptr_t rt, const struct d3d_src *s, d3d_tex_desc *out
 			return NULL;
 		}
 		g_vd.mis_w = g_vd.mis_h = 0;
-		logf_("VRHANDS depth: the eye target %#lx's depth-stencil: wrapper %#lx +0x%lx = texture %#lx %ux%u format %u "
-		      "bind %#x", (unsigned long)rt, (unsigned long)wrap, (unsigned long)offs[i], (unsigned long)t, d.w, d.h,
+		logf_("VRHANDS depth: the eye target %#llx's depth-stencil: wrapper %#llx +0x%llx = texture %#llx %ux%u format %u "
+		      "bind %#x", (unsigned long long)rt, (unsigned long long)wrap, (unsigned long long)offs[i], (unsigned long long)t, d.w, d.h,
 		      d.format, d.bind);
 		g_vd.wrap = wrap, g_vd.surf = t, g_vd.off = offs[i];
 		*out = d;
@@ -127,8 +135,8 @@ static void *vd_surface(uintptr_t rt, const struct d3d_src *s, d3d_tex_desc *out
 	uint64_t q[12];
 	memset(q, 0, sizeof q);
 	peek(wrap, q, sizeof q);
-	return vd_off("no DEPTH_STENCIL texture in the wrapper %#lx (+0..0x58: %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx "
-		      "%llx %llx)", (unsigned long)wrap, (unsigned long long)q[0], (unsigned long long)q[1],
+	return vd_off("no DEPTH_STENCIL texture in the wrapper %#llx (+0..0x58: %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx "
+		      "%llx %llx)", (unsigned long long)wrap, (unsigned long long)q[0], (unsigned long long)q[1],
 		      (unsigned long long)q[2], (unsigned long long)q[3], (unsigned long long)q[4], (unsigned long long)q[5],
 		      (unsigned long long)q[6], (unsigned long long)q[7], (unsigned long long)q[8], (unsigned long long)q[9],
 		      (unsigned long long)q[10], (unsigned long long)q[11]), NULL;
@@ -251,6 +259,7 @@ static void vh_arm(const sa_xf g[2], const int valid[2], int64_t T, float dt)
 		e->flags |= SOMVR_VHF_TWO;
 	sf_ghost(e); /* SOMVR_HANDS_SURFACE: the real hands where a surface stopped these (v3) */
 	bo_vh_arrow(g, valid, e); /* SOMVR_BOW: the arrow in the string hand or on the string (v4) */
+	fn_vh(e); /* build 33, SOMVR_FINISHER: the sword's outline in the arrow's slot */
 	bo_vh_string(g, valid, e); /* build 18, SOMVR_BOW_STRING_DRAW: the bow's string (v5) */
 	g_vh.have = 1;
 }
@@ -271,6 +280,47 @@ static void vh_mirror(somvr_vrhands_frame *e)
 	e->flags = f;
 }
 
+/* build 36 (SOMVR_HANDS_WRAITH): the hands' wraith amount this frame - toward 1 while the wraith vision is on (the game's
+ * flag; a live first-person frame), toward 0 otherwise, at 1 / SOMVR_HANDS_WRAITH_MS a second (the vision's own blend is
+ * about as quick); `hands wraith A` pins it (A < 0: auto again) */
+static float vh_wraith(int live, double t)
+{
+	float dt = g_vh.wr_t > 0 ? (float)(t - g_vh.wr_t) : 0;
+	g_vh.wr_t = t;
+	if (!g_vh.wr_on)
+		return 0;
+	if (!(dt >= 0 && dt < 0.25f))
+		dt = 0;
+	int target = live && st_vision() == 1;
+	float rate = g_vh.wr_ms > 0 ? 1000.0f / g_vh.wr_ms : 1e9f;
+	g_vh.wr += (target ? 1 : -1) * rate * dt;
+	g_vh.wr = g_vh.wr < 0 ? 0 : g_vh.wr > 1 ? 1 : g_vh.wr;
+	if (g_vh.wr_ms <= 0)
+		g_vh.wr = (float)target;
+	int pin = atomic_load_explicit(&g_vh.wr_pin, memory_order_relaxed);
+	float w = pin >= 0 ? (float)pin * 1e-3f : g_vh.wr;
+	g_vh.wr_frames += w > 0;
+	if (target != g_vh.wr_was) {
+		g_vh.wr_ups += target, g_vh.wr_downs += !target;
+		logf_("VRHANDS t=%.3f the wraith vision %s: the hands %s over %.0f ms (now %.2f%s)", t, target ? "on" : "off",
+		      target ? "turn to wraith hands" : "back to plain hands", (double)g_vh.wr_ms, (double)w,
+		      pin >= 0 ? ", pinned by the word" : "");
+		g_vh.wr_was = target;
+	}
+	return w;
+}
+
+/* "hands wraith A|auto" (the writer thread; tests: a fixed amount for pictures) */
+static const char *vh_wraith_word(const char *a)
+{
+	float v = -1;
+	if (strncmp(a, "auto", 4) && sscanf(a, "%f", &v) != 1)
+		return "hands wraith 0..1|auto (ignored)";
+	atomic_store(&g_vh.wr_pin, v < 0 ? -1 : (int)((v > 1 ? 1 : v) * 1000 + 0.5f));
+	logf_("VRHANDS t=%.3f the word: the wraith amount %s", mono(), v >= 0 ? a : "auto (the vision's)");
+	return "hands wraith";
+}
+
 /* H4, after hp_frame: this frame's entry (live: a first-person stereo frame) */
 static void vh_h4(int live)
 {
@@ -287,6 +337,7 @@ static void vh_h4(int live)
 	if (live && vh_hides() && g_hp_main_hid == g_fr.frame) /* SOMVR_HEAD_PARTS hid the body node: ours are drawn */
 		e.flags |= SOMVR_VHF_HIDE, g_vh.hidden++, atomic_fetch_add_explicit(&g_vho.n_hidden, 1, memory_order_relaxed);
 	e.depth_k = 0; /* SOMVR_XR_HANDS_DEPTH=world: set by the eyes' H1 (vh_eye_near), which run after this */
+	e.wraith = vh_wraith(live, mono());
 	vh_mirror(&e); /* build 30: the hands' roles -> the controllers */
 	somvr_vrhands_put(&g_vho, g_fr.frame, &e);
 	g_vh.pub++;
@@ -324,6 +375,10 @@ static void vh_config(int *bad)
 	}
 	fg_cfg_default(&g_vh.fc);
 	g_vh.fc.tau_s = g_bf.cfg.tau_s > 0 ? g_bf.cfg.tau_s : g_vh.fc.tau_s; /* SOMVR_FINGERS_MS */
+	g_vh.wr_on = env_word("SOMVR_HANDS_WRAITH", (const char *const[]){ "off", "on" }, 2, 1); /* build 36 */
+	int wbad = 0;
+	g_vh.wr_ms = env_float("SOMVR_HANDS_WRAITH_MS", 350, 0, 3000, &wbad);
+	*bad += wbad;
 }
 
 /* bd_start (after arm_start): the object published */
@@ -347,8 +402,10 @@ static void vh_start(void)
 	memset(g_vd.tex, 0, sizeof g_vd.tex);
 	g_vd.state = 0;
 	logf_("CONFIG vrhands=%d (the layer's own hands on the controllers, the game's hidden in the eyes while it draws them; "
-	      "fingers eased %.0f ms) depth=%s", g_vh.on, g_vh.fc.tau_s * 1e3,
-	      g_vd.want > 0 ? "world (each eye's depth copied at its end for the layer)" : "off");
+	      "fingers eased %.0f ms) depth=%s; wraith=%s (SOMVR_HANDS_WRAITH, build 36: the hands pale blue, translucent, the "
+	      "edge glowing while the wraith vision is on, faded over %.0f ms)", g_vh.on, g_vh.fc.tau_s * 1e3,
+	      g_vd.want > 0 ? "world (each eye's depth copied at its end for the layer)" : "off", g_vh.wr_on ? "on" : "off",
+	      (double)g_vh.wr_ms);
 }
 
 static void vh_end_log(void)
@@ -362,4 +419,7 @@ static void vh_end_log(void)
 	      g_vd.want <= 0 ? "off" : g_vd.state < 0 ? "failed" : "world", (unsigned long long)g_vd.nok,
 	      (unsigned long long)g_vd.copies, (unsigned long long)g_vd.skipped, (unsigned long long)g_vd.makes,
 	      (unsigned long long)g_vd.mismatch, (unsigned long long)atomic_load(&g_vho.n_dused));
+	if (g_vh.wr_on)
+		logf_("VRHANDS END build 36: wraith hands in %llu frames (the vision on %llu times, off %llu)",
+		      (unsigned long long)g_vh.wr_frames, (unsigned long long)g_vh.wr_ups, (unsigned long long)g_vh.wr_downs);
 }

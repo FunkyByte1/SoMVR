@@ -24,6 +24,13 @@ static struct {
 	somvr_sk s;
 	somvr_sk_out o;
 	int x_was;
+	/* build 33 (re-xr-pipeline.md 142; the 11-03 session's mark 16: the left thumb on X while reaching for the mark's Y
+	 * struck at the aimed orc): SOMVR_BOW_STRIKE_PRESS_MS - X held this long with the bow out strikes (0 = build 32's
+	 * press); its hold now (its start, B or Y pressed meanwhile = the mark's chord: nothing); counts */
+	float x_hold_s;
+	int xh_on, xh_chord;
+	double xh_t0;
+	uint64_t xh_short, xh_chords, xh_struck;
 	double send_until, trace_until, lift_until;
 	_Atomic int prompt;            /* the Shadow Strike's prompt (121) is up (somvr_prompts_game.c) */
 	int prompt_at_press, denied_at_press, arrows_at_press;
@@ -83,8 +90,8 @@ static void sk_hc_check(double t)
 		struct cb_orc now;
 		int there = cb_orc_get(h->c, &now) && now.hobj == h->hobj, dead = there ? cb_dead(h->c) : 1;
 		float hp = there ? cb_health(h->c) : NAN;
-		o += (size_t)snprintf(buf + o, sizeof buf - o, "%s hobj %#lx at %.1f m: health %.1f -> %.1f%s", i ? ";" : " ",
-				      (unsigned long)h->hobj, h->dist / 100.0f, h->hp0, hp, !there ? " (gone)" : dead ? " DEAD" : "");
+		o += (size_t)snprintf(buf + o, sizeof buf - o, "%s hobj %#llx at %.1f m: health %.1f -> %.1f%s", i ? ";" : " ",
+				      (unsigned long long)h->hobj, h->dist / 100.0f, h->hp0, hp, !there ? " (gone)" : dead ? " DEAD" : "");
 	}
 	if (sk_log_ok())
 		logf_("STRIKE t=%.3f the orcs %.1f s after the press: %d within 30 m%s%s; arrows %d -> %d", t, SK_HC_S, g_sk.nhc,
@@ -102,6 +109,7 @@ static void sk_config(int *bad)
 	g_sk.cfg.tunnel = env_float("SOMVR_BOW_STRIKE_TUNNEL", g_sk.cfg.tunnel, 0, 1, bad);
 	g_sk.cfg.window_s = 0.001f * env_float("SOMVR_BOW_STRIKE_WINDOW_MS", 1000 * g_sk.cfg.window_s, 200, 5000, bad);
 	g_sk.cfg.hold_max_s = 0.001f * env_float("SOMVR_BOW_STRIKE_HOLD_MS", 1000 * g_sk.cfg.hold_max_s, 100, 3000, bad);
+	g_sk.x_hold_s = 0.001f * env_float("SOMVR_BOW_STRIKE_PRESS_MS", 0, 0, 2000, bad); /* build 33 */
 	g_sk.on = g_bow.on && (g_sk.cfg.mode == SOMVR_BSK_DASH || g_sk.cfg.mode == SOMVR_BSK_BLINK);
 	atomic_store(&g_bow.strike_block, g_sk.cfg.mode != SOMVR_BSK_GAME);
 	const char *dm = getenv("SOMVR_XR_DUMP_MARKED");
@@ -120,6 +128,10 @@ static void sk_config(int *bad)
 							 "under a white blink; pad A cut",
 		      g_sk.cfg.dash_s * 1e3, g_sk.cfg.ease_s * 1e3, g_sk.cfg.tunnel, g_sk.cfg.window_s * 1e3, g_sk.cfg.start_cms,
 		      g_sk.cfg.hold_max_s * 1e3, g_sk.cfg.start_cm, g_sk.on && !g_lo.anchor ? " (WARN: no SOMVR_ANCHOR=root: the view is not ours)" : "");
+	if (g_sk.on)
+		logf_("CONFIG strike press=%.0f ms (SOMVR_BOW_STRIKE_PRESS_MS, build 33): %s", g_sk.x_hold_s * 1e3, g_sk.x_hold_s > 0
+		      ? "X held this long with the bow out strikes; let go sooner, or B / Y pressed meanwhile (the bug mark's "
+		      "chord): nothing" : "a press strikes (build 32)");
 	if (g_sk.on && !g_lo.anchor)
 		logf_("WARN SOMVR_BOW_STRIKE=%s without SOMVR_ANCHOR=root: X sends the strike, the view does what the base does",
 		      somvr_sk_mode_name(g_sk.cfg.mode));
@@ -217,6 +229,30 @@ static void sk_tick(sc_tick_out *o, double t)
 	g_sk.x_was = x;
 	if (edge && ab3_x_taken()) /* build 27d (SOMVR_ABIL_DISTRACT, the skill owned): X while drawn is the distract's */
 		edge = 0;
+	if (g_sk.x_hold_s > 0 && g_bow.s.phase != SOMVR_BOW_PH_IDLE) { /* build 33: SOMVR_BOW_STRIKE_PRESS_MS - a hold */
+		int chord = (g_inp.ctl.down[SOMVR_HAND_L] & SOMVR_BTN_UPPER) || (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_UPPER);
+		if (edge) {
+			g_sk.xh_on = 1, g_sk.xh_chord = chord, g_sk.xh_t0 = t;
+			haptic(SOMVR_HAND_L, SOMVR_HX_TICK); /* a light tick: held, it strikes */
+		} else if (g_sk.xh_on && chord) {
+			g_sk.xh_chord = 1;
+		}
+		edge = 0;
+		if (g_sk.xh_on && (!x || g_sk.xh_chord)) {
+			int chorded = g_sk.xh_chord;
+			g_sk.xh_on = 0;
+			g_sk.xh_short += !chorded, g_sk.xh_chords += chorded;
+			if (sk_log_ok())
+				logf_("STRIKE t=%.3f X %s after %.0f ms with the bow out: no Shadow Strike (it takes X held %.0f ms; "
+				      "short %llu, chords %llu)", t, chorded ? "with B or Y (the mark's chord)" : "let go",
+				      (t - g_sk.xh_t0) * 1e3, g_sk.x_hold_s * 1e3, (unsigned long long)g_sk.xh_short,
+				      (unsigned long long)g_sk.xh_chords);
+		} else if (g_sk.xh_on && t - g_sk.xh_t0 >= g_sk.x_hold_s) {
+			g_sk.xh_on = 0, edge = 1, g_sk.xh_struck++; /* held: the strike below, as a press was */
+		}
+	} else if (!x) {
+		g_sk.xh_on = 0;
+	}
 	sg_tick(o, t); /* build 17, SOMVR_STRIKE_GAZE: A at the orc looked at in the wraith vision (arms the dash below) */
 	if (edge) {
 		int out = g_bow.s.phase != SOMVR_BOW_PH_IDLE;
@@ -231,7 +267,7 @@ static void sk_tick(sc_tick_out *o, double t)
 			 * "denied" buzz now, not 2 s later at the window's end (121 is still sent: the game decides) */
 			g_sk.denied_at_press = !g_sk.prompt_at_press || (g_sk.arrows_at_press >= 0 && g_sk.arrows_at_press < 2);
 			if (g_sk.denied_at_press)
-				in_haptic_event(SOMVR_HAND_L, 0.25f, 0.08f, SOMVR_HAP_COMBAT);
+				haptic(SOMVR_HAND_L, SOMVR_HX_NO);
 			sk_arm(t);
 			if (sk_log_ok())
 				logf_("STRIKE t=%.3f press %llu: X with the bow out (%s): CombatPrimary04 121 for %.0f ms; the game's "
@@ -324,7 +360,7 @@ static void sk_anchor(double t, const float r[3], float pos[3])
 	if (o->timed_out) {
 		g_sk.timeouts++;
 		if (!g_sk.denied_at_press) /* the prompt was up and still nothing: "denied" in the X hand (as the bow's) */
-			in_haptic_event(SOMVR_HAND_L, 0.25f, 0.08f, SOMVR_HAP_COMBAT);
+			haptic(SOMVR_HAND_L, SOMVR_HX_NO);
 		if (sk_log_ok())
 			logf_("STRIKE t=%.3f no move within %.0f ms of the press (the prompt was %s at the press): the game did not "
 			      "strike", t, g_sk.cfg.window_s * 1e3, g_sk.prompt_at_press ? "up" : "not up");
@@ -624,8 +660,8 @@ static void sg_frame(uintptr_t pl, int stereo)
 					near[i].pos[2] - g_sg.head[2] }, d;
 			float h = sqrtf(to[0] * to[0] + to[2] * to[2]), by = remainderf(atan2f(to[0], to[2]) - yaw, 6.2831853f);
 			float deg = somvr_gz_angle(&g_sg.cfg, g_sg.head, g_sg.fwd, near[i].pos, &d);
-			logf_("STRIKE gaze orc %d: hobj %#lx at %.1f m: its chest %+.1f deg right %+.1f deg up of the head's ray (%.1f "
-			      "deg off its body); Y %d vision %d on %d", i, (unsigned long)near[i].hobj, d / 100, by * 57.29578f,
+			logf_("STRIKE gaze orc %d: hobj %#llx at %.1f m: its chest %+.1f deg right %+.1f deg up of the head's ray (%.1f "
+			      "deg off its body); Y %d vision %d on %d", i, (unsigned long long)near[i].hobj, d / 100, by * 57.29578f,
 			      (atan2f(to[1], h) - pit) * 57.29578f, deg, y, vis, on);
 		}
 		if (!n)
@@ -723,9 +759,9 @@ static void sg_tick(sc_tick_out *o, double t)
 		uint32_t r = somvr_gz_press(&g_sg.g, &g_sg.cfg, t, g_sg.arrows);
 		if (r == SOMVR_GZE_PRESS) {
 			g_sg.shows_at_press = atomic_load_explicit(&g_sk_shows, memory_order_relaxed), g_sg.moved = 0;
-			in_haptic_event(SOMVR_HAND_R, 0.35f, 0.03f, SOMVR_HAP_COMBAT); /* a click: committed */
+			haptic(SOMVR_HAND_R, SOMVR_HX_CLICK); /* a click: committed */
 		} else if (r == SOMVR_GZE_NOARROWS) {
-			in_haptic_event(SOMVR_HAND_R, 0.25f, 0.08f, SOMVR_HAP_COMBAT); /* the denied buzz */
+			haptic(SOMVR_HAND_R, SOMVR_HX_NO); /* the denied no */
 		}
 		if (r && sg_log_ok())
 			logf_("STRIKE t=%.3f gaze: A at orc %u (%.1f m, %.1f deg off the head's ray): %s; arrows %d", t,
@@ -768,7 +804,7 @@ static void sg_tick(sc_tick_out *o, double t)
 			      g_sk.cfg.press_s * 1e3, g_bow.obj_pos[0], g_bow.obj_pos[1], g_bow.obj_pos[2], g_sg.arrows);
 	}
 	if (to.ev & SOMVR_GZE_REFUSED) {
-		in_haptic_event(SOMVR_HAND_R, 0.25f, 0.08f, SOMVR_HAP_COMBAT);
+		haptic(SOMVR_HAND_R, SOMVR_HX_NO);
 		if (sg_log_ok())
 			logf_("STRIKE t=%.3f gaze: no Shadow Strike prompt within %.0f ms of A: the game refuses (the denied buzz; "
 			      "nothing moves); the aim let go", t, g_sg.cfg.aim_max_s * 1e3);

@@ -137,8 +137,8 @@ static void cr_tick(sc_tick_out *o, double t)
 	int cue = g_cr.mode == CR_OFF || !(g_cr.haptic > 0) || !world ? 0
 		  : g_cr.held && g_cr.game > 0 && !g_cr.cued ? 1 : !g_cr.held && g_cr.game == 0 && g_cr.cued ? -1 : 0;
 	if (cue) {
-		float a = cue > 0 ? g_cr.haptic : 0.5f * g_cr.haptic;
-		in_haptic_event(SOMVR_HAND_L, a, 0.04f, SOMVR_HAP_UI), in_haptic_event(SOMVR_HAND_R, a, 0.04f, SOMVR_HAP_UI);
+		int w = cue > 0 ? SOMVR_HX_TICK : SOMVR_HX_HOVER; /* build 34: down a tick, up a lighter one, both hands */
+		haptic_play(SOMVR_HAND_L, w, 1, g_cr.haptic / 0.3f), haptic_play(SOMVR_HAND_R, w, 1, g_cr.haptic / 0.3f);
 		g_cr.cued = cue > 0, g_cr.cues++;
 	}
 	if (g_cr.game >= 0 && g_cr.game_last >= 0 && g_cr.game != g_cr.game_last) {

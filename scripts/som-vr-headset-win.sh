@@ -42,7 +42,7 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-WIN_BUILD=build-win1                      # the Windows build the user plays (logs/WIN_BUILD); changed only between sessions
+WIN_BUILD=build-win3                      # the Windows build the user plays (logs/WIN_BUILD); changed only between sessions
 BLD=$SOM/logs/$WIN_BUILD
 ENVF=$BLD/headset.env
 CMDS=$SCR/cmds/somvr-vr6.cmd              # the start sequence: the main menu's Continue, the story (the Windows build's
@@ -156,7 +156,47 @@ start_gate() {   # a session running: refuse (playing or starting) or wait for i
   note "the last session closed after $i s: starting"
 }
 start_gate
-if [ "$TEST" != 1 ]; then   # the player first: a developer's test of the game stops (a test run holds the slot itself)
+# build 35 (the 21:05 race: helpers took game slots in the seconds between this launcher stopping their test runs and
+# the session's own gate closing): first the slots' solo request as user-session with this launcher's pid
+# (scripts/game_slot.sh: no slot is taken, no test game starts and a running one stops - gs_vr_why, boot_check's
+# user_in_vr), then every slot's test run stopped and every game waited out, then the session; the request is released
+# when this launcher ends (the session's end, a failed start, a signal). A suite's request is taken over (noted).
+SOLO=/tmp/somvr-slots-solo.lock; SOLO_HELD=0
+solo_now() { [ -d "$SOLO" ] && echo "$(head -1 "$SOLO/owner" 2>/dev/null), pid $(cat "$SOLO/pid" 2>/dev/null || echo -)" || echo free; }
+solo_take() {
+  local prev="" p
+  if ! mkdir "$SOLO" 2>/dev/null; then
+    prev=$(head -1 "$SOLO/owner" 2>/dev/null); p=$(cat "$SOLO/pid" 2>/dev/null)
+    case $prev in user-session|"user-session "*)
+      [ -n "$p" ] && kill -0 "$p" 2>/dev/null && { note "the slots' solo request is another user launcher's (pid $p): left to it"; return 0; } ;;
+    esac
+  fi
+  if echo "user-session $(date +%T) (the user's Windows VR session)" > "$SOLO/owner" && echo $$ > "$SOLO/pid"; then
+    SOLO_HELD=1; note "the slots' solo request taken as user-session$([ -n "$prev" ] && echo " (it was: $prev)"): no test game starts now"
+  else note "!!! the slots' solo request could not be taken ($SOLO): going on without it"; fi
+}
+solo_release() {
+  [ "$SOLO_HELD" = 1 ] || return 0
+  SOLO_HELD=0
+  case $(head -1 "$SOLO/owner" 2>/dev/null) in "user-session "*)
+    [ "$(cat "$SOLO/pid" 2>/dev/null)" = "$$" ] && rm -rf "$SOLO" && note "the slots' solo request released" ;;
+  esac
+}
+games() { { pgrep -x ShadowOfMordor; win_game; } 2>/dev/null | tr -s ' \n' ' ' | sed 's/^ //; s/ $//'; }
+# (SOMVR_HEADSET_TEST_STOPALL=1: a test of this path - the solo request and the stop of every slot's test run in a test)
+STOPALL=0; [ "$TEST" != 1 ] || [ "${SOMVR_HEADSET_TEST_STOPALL:-0}" = 1 ] && STOPALL=1
+[ "$TEST" = 1 ] && [ $STOPALL = 1 ] && note "test: the start's solo request and stop of every slot's test run too (SOMVR_HEADSET_TEST_STOPALL)"
+if [ $STOPALL = 1 ]; then
+  if [ "$DRY" = 1 ]; then
+    note "dry run: 1. the slots' solo request would be taken as user-session (now: $(solo_now))"
+  else
+    trap solo_release EXIT
+    trap 'exit 143' TERM INT HUP   # (the EXIT trap releases; the session's own handler replaces this at its start)
+    solo_take
+  fi
+fi
+if [ $STOPALL = 1 ]; then   # the player first: a developer's test of the game stops (a test run holds the slot itself)
+  [ "$DRY" = 1 ] && note "dry run: 2. every slot's test run would be stopped: Linux $(bc_main | awk '{print $1}' | tr '\n' ' ')- Windows $(hw_main | tr '\n' ' ')- (left alone)"
   while read -r pid kind; do
     [ -n "${pid:-}" ] || continue
     [ "$kind" = headset ] && fail "Another VR session of the game is already running (pid $pid). Tell Claude."
@@ -174,6 +214,13 @@ if [ "$TEST" != 1 ]; then   # the player first: a developer's test of the game s
     for i in $(seq 1 45); do kill -0 "$pid" 2>/dev/null || [ -n "$(win_game)" ] || break; sleep 2; done
     note "the Windows test run $pid: $(kill -0 "$pid" 2>/dev/null && echo 'still there' || echo ended)"
   done
+  if [ "$DRY" = 1 ]; then   # 3. every game waited out (any slot's, Linux or Windows; up to 90 s)
+    note "dry run: 3. then every game waited out, up to 90 s (now running: $(games || true))"
+    note "dry run: 4. the session; the solo request released when this launcher ends"
+  elif [ -n "$(games)" ]; then
+    for i in $(seq 1 45); do [ -z "$(games)" ] && break; sleep 2; done
+    note "the games after the test runs' stop: $([ -z "$(games)" ] && echo "all gone after $((i * 2)) s" || echo "still running: $(games)")"
+  fi
 fi
 if pgrep -x ShadowOfMordor > /dev/null || [ -n "$(win_game)" ]; then
   [ "$DRY" = 1 ] && note "dry run: the game is running (a test's, or outside VR): a real start would refuse" ||

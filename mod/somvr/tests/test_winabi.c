@@ -133,9 +133,26 @@ static void test_recdb(void)
 }
 
 /* ---- the schema checker over a stand-in registry (somvr_schema.h) ---- */
+/* the stand-in's strings live in one arena with an unreadable "page" after it (rd_mem fails a read running past its end),
+ * each 8-byte padded: the checker reads strings in 8-byte steps, as game memory allows (b34: ASan, the literals over-read) */
+static struct {
+	char str[512];
+	char page[64]; /* "unreadable" */
+} g_mem;
+#define g_str g_mem.str
+static size_t g_nstr;
+static const char *S(const char *lit)
+{
+	size_t n = strlen(lit) + 1;
+	char *p = g_str + g_nstr;
+	memcpy(p, lit, n);
+	g_nstr += (n + 7) & ~(size_t)7;
+	return p;
+}
 static int rd_mem(uintptr_t at, void *out, size_t n)
 {
-	if (!at)
+	uintptr_t p0 = (uintptr_t)g_mem.page, p1 = p0 + sizeof g_mem.page;
+	if (!at || (at < p1 && at + n > p0))
 		return 0;
 	memcpy(out, (const void *)at, n);
 	return 1;
@@ -166,6 +183,7 @@ static size_t code_pair(size_t i, const void *target, uint32_t off)
 }
 static void set_field(int s, int k, const char *name)
 {
+	name = S(name);
 	memcpy(g_ffields[s][k], &name, sizeof name);
 }
 static void test_schema(void)
@@ -173,7 +191,7 @@ static void test_schema(void)
 	static const char *const names[5] = { "Combat.Tree", "Combat.Node", "Inventory.Item", "Dup.Name", "Dup.Name" };
 	static const uint32_t counts[5] = { 3, 2, 4, 1, 1 };
 	for (int k = 0; k < 5; k++)
-		g_fs[k] = (struct fake_sch){ 0, counts[k], 0, "short", "desc", names[k], { 0 } };
+		g_fs[k] = (struct fake_sch){ 0, counts[k], 0, "short", "desc", S(names[k]), { 0 } };
 	_Static_assert(offsetof(struct fake_sch, name) == SOMVR_SCH_NAME && offsetof(struct fake_sch, count) == SOMVR_SCH_COUNT,
 		       "the stand-in's layout");
 	/* the registry: slots 0, 1, 0x30 (disp8), 0x100 (disp32), 2 (the duplicate); slot 3.. unfilled */
@@ -225,6 +243,15 @@ static void test_schema(void)
 	memset(longname, 'a', sizeof longname - 1), longname[sizeof longname - 1] = 0;
 	char got[SOMVR_SCH_NAMELEN];
 	CHECK(somvr_sch_str(rd_mem, (uintptr_t)longname, got, sizeof got) && strlen(got) == sizeof got - 1, "a long name cut");
+	/* b34: a name ending within 7 bytes of an unreadable page reads to its end (the old byte path kept one byte of the
+	 * last 8 and ended the string there: 'Combat.Tr'); one running into the unreadable page is no name */
+	char *edge = g_str + sizeof g_str - 12;
+	CHECK(g_nstr + 12 <= sizeof g_str, "the arena (%zu bytes used)", g_nstr);
+	memcpy(edge, "Combat.Tree", 12);
+	CHECK(somvr_sch_str(rd_mem, (uintptr_t)edge, got, sizeof got) && !strcmp(got, "Combat.Tree"), "a name at a page's end: '%s'",
+	      got);
+	memcpy(edge, "Combat.Treee", 12);
+	CHECK(!somvr_sch_str(rd_mem, (uintptr_t)edge, got, sizeof got), "a name into an unreadable page: none ('%s')", got);
 }
 
 /* a WRAPPER frame: struct regs, then the entry rsp at +0x150 (COFF), pointing at the caller's stack */
@@ -252,8 +279,12 @@ static void test_regs(void)
 	/* DF_IMPACT's Windows read: the bool kill is argument 5's low byte (MSVC stores a byte: the rest is stale) */
 	stack[5] = 0xdeadbe01ull;
 	CHECK((int)(RA_WIN5(&f.r) & 0xff) == 1, "a bool argument's low byte");
-	/* Linux's RA1..RA6 are the SysV family */
+#ifdef _WIN32 /* the Windows build's RA1..RA7 are the Win64 family (somvr_regs.h; win/wintests.py runs this under wine) */
+	CHECK(RA1(&f.r) == 4 && RA2(&f.r) == 3 && RA4(&f.r) == 6 && RA5(&f.r) == 0xdeadbe01ull && RA7(&f.r) == 0x77,
+	      "the build's RA = Win64 on Windows");
+#else /* Linux's RA1..RA6 are the SysV family */
 	CHECK(RA1(&f.r) == 1 && RA2(&f.r) == 2 && RA5(&f.r) == 5, "the build's RA = SysV on Linux");
+#endif
 }
 
 static unsigned char *readall(const char *p, size_t *n)

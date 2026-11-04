@@ -431,7 +431,7 @@ int somvr_jp_a_pick(const somvr_jp_cfg *c, const somvr_jp_a_in *in)
         return SOMVR_JPA_VAULT;
     if (!in->jump || !c->jump || !in->can)
         return SOMVR_JPA_CLIMB;
-    if (in->speed >= c->moving_cms)
+    if (in->speed >= c->moving_cms && !(in->pinned && in->descent))
         return SOMVR_JPA_JUMP;
     return in->descent ? SOMVR_JPA_CLIMB_FIRST : SOMVR_JPA_JUMP;
 }

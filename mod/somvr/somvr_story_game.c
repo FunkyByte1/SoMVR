@@ -62,8 +62,8 @@ static void sy_start(void)
 	if (g_sy.test) { /* build 25: the test aid's one function */
 		char why[400];
 		g_sy.invis_ok = check_site(&g_sy_sites_game[SYS_INVIS], why, sizeof why) == 0;
-		logf_("STORY site SY_INVIS %s %#lx: %s (the test word `story invisible on|off`)", g_sy.invis_ok ? "ok" : "MISMATCH",
-		      (unsigned long)g_sy_sites_game[SYS_INVIS].addr, why);
+		logf_("STORY site SY_INVIS %s %#llx: %s (the test word `story invisible on|off`)", g_sy.invis_ok ? "ok" : "MISMATCH",
+		      (unsigned long long)g_sy_sites_game[SYS_INVIS].addr, why);
 	}
 }
 
@@ -87,8 +87,8 @@ static void sy_invis_tick(double t)
 		((sy_invis_fn)g_sy_sites_game[SYS_INVIS].target)(pl, on);
 		peek(pl + SY_PL_INVIS, &now, 1);
 		g_sy.invis_calls++;
-		logf_("STORY t=%.3f invisible to the AI: %s - player %#lx +0xd10 %u -> %u (a test aid: the game's "
-		      "SetAISpectatorInvisible FUN_027acae0; the word)", t, on ? "on" : "off", (unsigned long)pl, was, now);
+		logf_("STORY t=%.3f invisible to the AI: %s - player %#llx +0xd10 %u -> %u (a test aid: the game's "
+		      "SetAISpectatorInvisible FUN_027acae0; the word)", t, on ? "on" : "off", (unsigned long long)pl, was, now);
 	}
 }
 
@@ -180,8 +180,8 @@ static const char *sy_word(const char *w)
 	}
 	logf_("STORY status: the first player's invisible-to-the-AI flag %u (255: no player); test aid calls %d", inv,
 	      g_sy.invis_calls);
-	logf_("STORY status: log %s, im %#lx, the channels: '%s' | '%s' | '%s'; changes %llu, polls %llu", g_sy.log ? "on" : "off",
-	      (unsigned long)g_inp.im, g_sy.text[0], g_sy.text[1], g_sy.text[2], (unsigned long long)g_sy.changes,
+	logf_("STORY status: log %s, im %#llx, the channels: '%s' | '%s' | '%s'; changes %llu, polls %llu", g_sy.log ? "on" : "off",
+	      (unsigned long long)g_inp.im, g_sy.text[0], g_sy.text[1], g_sy.text[2], (unsigned long long)g_sy.changes,
 	      (unsigned long long)g_sy.polls);
 	return "story";
 }

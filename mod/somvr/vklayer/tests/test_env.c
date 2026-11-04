@@ -27,9 +27,10 @@ static int fails, checks;
 
 static float lum(const float c[3]) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; }
 static void ea_dir(float e, float a, float d[3]) { d[0] = cosf(e) * sinf(a), d[1] = sinf(e), d[2] = -cosf(e) * cosf(a); }
-static double now_ms(void) {
+static double now_ms(void) { /* this thread's CPU time: the fills' cost, not the machine's load (docs/re-xr-pipeline.md
+                               * 161: two checks at once and a game made the cube's wall time 811 ms, its own 58 ms) */
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return (double)ts.tv_sec * 1e3 + (double)ts.tv_nsec / 1e6;
 }
 static uint32_t rng = 12345;
@@ -283,7 +284,7 @@ static void test_image(void) {
     CHECK(rc[1] == (int32_t)(2 * T) + 2, "the cube's dim rect row %d", rc[1]);
     free(cb);
     printf("  image fills: equirect %.1f ms, cube %.1f ms\n", t_eq, t_cube);
-    CHECK(t_eq < 400 && t_cube < 800, "the fills are slow: %.1f / %.1f ms", t_eq, t_cube);
+    CHECK(t_eq < 400 && t_cube < 800, "the fills are slow: %.1f / %.1f ms of CPU", t_eq, t_cube);
 }
 
 static void test_box(void) {

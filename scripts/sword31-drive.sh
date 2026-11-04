@@ -13,11 +13,13 @@
 #          slowly along the blade (900 ms): out
 #   tier   (build 31b) 4 committed 300 ms cuts, then 4 wrist flicks (150 ms, the fist still) into a fighting orc: the tiers
 #   exec   (build 31b) the charge full (`verbs brand charge`), one committed 300 ms cut: the execution (SOMVR_KILLS_EXEC)
+#   force32 (build 32) a held blade the orc is pressed into, wrist flicks, committed cuts, cuts at 165 cm (a brush)
+#   down32 (build 32) `abil kd`, the head 45 cm down (crouched), cuts down at the downed orc: hits, not stealth touches
 #   parry  parry18-drive.sh's `inf` step on this boot (P18_RUN): the test guard's parries with the weighted sword
 # Dumps: RUN/s31-steps.txt. Quits at the end, at once if the user goes into VR.
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${S31_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
-STEPS=${S31_STEPS:-air two cut weak stab tier exec parry}
+STEPS=${S31_STEPS:-air two cut weak stab tier exec force32 down32 parry}
 CUT_MS=${S31_CUT_MS:-500}
 HERE=$(cd "$(dirname "$0")" && pwd)
 T0=$(date +%s)
@@ -169,6 +171,41 @@ if has exec; then
   w "verbs brand charge" 0.6; w "abil goto 110" 0.5; w "execute face" 0.4
   n0=$(wc -l < "$L"); w "hands test R 55 -8 30 0 -90 90" 0.4; w "hands swing R -35 -18 62 0 90 90 300" 0.1; sleep 4; w "$REST" 0.4
   lines "$n0" '^(COMBAT hit tier|EXECUTE (kill|t=)|KILLS (start|play|end|exec)|SWORDPHYS t=.* wound (open|end))' 300 | head -14
+fi
+hits() { lines "$1" '^COMBAT (hit tier|brush)' 400 | grep -oE '^COMBAT (hit tier=[a-z]+|brush)|blow=[0-9.na-]+J|fist=[0-9.]+|health [0-9.]+->[0-9.]+' | paste -sd' ' | sed 's/COMBAT /\n  /g'; }
+if has force32; then
+  echo "== build 32: hits by force - a held blade the orc walks into, wrist flicks, committed cuts, a brush at the capsule's edge"
+  w "practice remove" 2; w "practice spawn infantry" 4; w "execute face" 1
+  n0=$(wc -l < "$L"); w "hands test R 20 -35 30 0 0 90" 0.6
+  for k in 1 2 3; do face; w "abil goto 120" 0.4; w "stick 0 1 0 0.6" 1.4; done
+  echo "held blade (the orc pressed into it): hits $(lines "$n0" '^COMBAT hit tier=' 400 | wc -l), brushes $(lines "$n0" '^COMBAT brush' 400 | wc -l)"; hits "$n0"
+  n0=$(wc -l < "$L")
+  for k in 1 2 3 4; do face; w "fight health 125" 0.3; w "abil goto 110" 0.5; w "execute face" 0.4
+    w "hands test R 20 -35 25 0 -55 90" 0.6; w "hands swing R 20 -35 25 0 55 90 150" 1.0; w "$BEHIND" 0.6; done
+  echo "wrist flicks: hits $(lines "$n0" '^COMBAT hit tier=' 400 | wc -l)"; hits "$n0"
+  n0=$(wc -l < "$L")
+  for k in 1 2 3 4; do face; w "fight health 125" 0.3; w "abil goto 110" 0.5; w "execute face" 0.4
+    w "hands test R 55 -35 30 0 -90 90" 0.4; w "hands swing R -35 -42 62 0 90 90 300" 1.0; w "$BEHIND" 0.6; done
+  echo "committed cuts: hits $(lines "$n0" '^COMBAT hit tier=' 400 | wc -l)"; hits "$n0"
+  n0=$(wc -l < "$L")
+  for k in 1 2 3; do face; w "fight health 125" 0.3; w "abil goto 165" 0.5; w "execute face" 0.4
+    w "hands test R 55 -35 30 0 -90 90" 0.4; w "hands swing R -35 -42 62 0 90 90 300" 1.0; w "$BEHIND" 0.6; done
+  echo "cuts at 165 cm (the tip at combat's capsule, short of the body): hits $(lines "$n0" '^COMBAT hit tier=' 400 | wc -l), brushes $(lines "$n0" '^COMBAT brush' 400 | wc -l)"; hits "$n0"
+fi
+if has down32; then
+  echo "== build 32: a knocked-down orc, the player crouched over it (the head 45 cm down), cuts down at it"
+  # (kills31's ground staging: the knockdown's slide over after 2.4 s, Talion 70 cm from it, the head down; crouched)
+  w "practice remove" 2; w "practice spawn infantry" 4; w "fight guard path" 0.4; w "execute face" 1; w "abil kd" 0.4; sleep 2.4
+  n1=$(wc -l < "$L"); w "abil goto 70" 0.8
+  by=$(lines "$n1" '^ABIL t=.* goto:' 400 | tail -1 | sed -nE 's/.* ([-+]?[0-9]+) deg right of the head.*/\1/p')
+  t "head 0 0 0 yaw ${by:-0} pitch -35 s 0.3"; w "crouch hold 9000" 1.0; echo "the orc ${by:-?} deg right of the head"
+  n0=$(wc -l < "$L")
+  for k in 1 2 3; do w "hands test R 12 -30 55 -90 0 0" 0.5; w "hands swing R 12 -85 58 -90 0 0 220" 1.0; done
+  for k in 1 2; do w "hands test R 40 -35 40 -40 -60 90" 0.5; w "hands swing R -20 -95 50 40 60 90 300" 1.0; done
+  w "crouch stand" 0.5
+  echo "on the downed orc: hits $(lines "$n0" '^COMBAT hit tier=' 400 | wc -l), stealth touches $(lines "$n0" '^STEALTH t=.* touch' 400 | wc -l)"; hits "$n0"
+  lines "$n0" "^(ABIL t=.*KD|STEALTH t=.* (touch|air|downed))|^CROUCH" 300 | head -5
+  t "head 0 0 0 s 0.4"; sleep 1
 fi
 if has parry; then
   echo "== parry18's inf step with the weighted sword"

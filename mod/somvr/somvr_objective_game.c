@@ -16,7 +16,10 @@
  * layer through `somvr_objective` (its place mapped with the frame's own rig, its distance from Talion); the layer
  * draws a small diamond world-locked over it with the distance, or at the view's edge an arrow (somvr_objective.h).
  * Nothing moves, nothing is pressed. SOMVR_OBJECTIVE=log: the hook logs every marker the game shows (record names,
- * places), nothing changed, nothing published. Fail soft: a site mismatch = nothing patched. */
+ * places), nothing changed, nothing published. Fail soft: a site mismatch = nothing patched.
+ * Build 36 (SOMVR_GAME_PROMPTS=off, somvr_gprompts_game.c): OB_EACH is hooked with it even with SOMVR_OBJECTIVE=off,
+ * and every other marker the game placed (the fire pits', the nests', the baits', the gates', the collectibles', the
+ * quest givers' icons) gets the same hide in our stereo frames, but SOMVR_GAME_PROMPTS_KEEP's records (the health bars). */
 
 /* OBJECTIVE_SITES_BEGIN (check_sites.py counts this block on its own: the patched OB_EACH = the call 0xec4f83 of
  * FUN_00ec4a50(marker %rdi = node - 0x80, player %rsi) in FUN_00ec4f10's walk of the list 0x46b9200 (the context from
@@ -32,6 +35,17 @@ SITE("OB_RANGE", K_ENTRY, 0xebced0, 0xebced0, "55 53 48 83 ec 28 48 8b 1d 43 a0 
 enum { OBS_EACH, OBS_POS, OBS_RANGE, OBS_N };
 _Static_assert(sizeof g_ob_sites_game / sizeof g_ob_sites_game[0] == OBS_N, "objective sites");
 static const struct site_spec *g_ob_sites = g_ob_sites_game; /* selftest: stand-ins */
+/* OBPLACE_SITES_BEGIN (build 36, SOMVR_GAME_PROMPTS=off; check_sites.py counts this block on its own: the patched
+ * OB_PLACE = FUN_00ec4a50's call 0xec4e01 of FUN_00ec2660(marker %rdi, player %rsi, pos %rdx, uv %rcx, a float in xmm0)
+ * -> al: placed on screen; 0 = FUN_00ec4a50's own hide (LAB_00ec4bb9: the shown bytes 0, the clip's vf_0x208(0)), what
+ * it does for a marker out of its range. Patched with OB_EACH only. Order = OBPS_*) */
+static SITE_TABLE struct site_spec g_obp_sites_game[] = {
+SITE("OB_PLACE", K_CALL, 0xec4e01, 0xec4dee, "0f 28 c2 48 8d 4c 24 44 48 8d 54 24 38 48 89 de 4c 89 e7 e8 5a d8 ff ff", 0xec2660, "41 57 49 89 ff 41 56 49 89 f6 41 55 49 89 d5"),
+};
+/* OBPLACE_SITES_END */
+enum { OBPS_PLACE, OBPS_N };
+_Static_assert(sizeof g_obp_sites_game / sizeof g_obp_sites_game[0] == OBPS_N, "objective place sites");
+static const struct site_spec *g_obp_sites = g_obp_sites_game; /* selftest: stand-ins */
 #define OB_SHOWN1 OFS(OB_SHOWN1, 0x45)   /* CNavMarkerInstance: byte, the primary icon shown this view (re-hud.md 3.2) */
 #define OB_SHOWN2 OFS(OB_SHOWN2, 0x6d)   /* ... the secondary */
 #define OB_CLIP OFS(OB_CLIP, 0xb0)     /* ... the icon's Scaleform clip (vf_0x208 = set visible) */
@@ -105,6 +119,9 @@ static struct {
 	uint64_t calls, shown_calls, match_calls, hides, frames, published, other_tid;
 	uint32_t lines;
 	int range_ok, pos_ok;
+	int place_on;        /* build 36: OB_PLACE installed (SOMVR_GAME_PROMPTS) */
+	uintptr_t place_orig;
+	uint64_t place_refused;
 	int land, land_was;  /* build 16: the climb's landing ring published (SOMVR_CLIMB_PULLOVER), shown last frame */
 	int ws, ws_was;      /* build 18: the wraith step's ring published (SOMVR_WRAITH_STEP), shown last frame (1 gold, 2 red) */
 	int vault, vault_was; /* build 22: the vault's ring published (SOMVR_VAULT), shown last frame */
@@ -194,6 +211,34 @@ static struct ob_mark *ob_mark_of(uintptr_t m, uintptr_t rec, const char *name, 
 }
 
 /* OB_EACH (the game thread, per view): the game's placement, then ours */
+/* build 36, OB_PLACE (the game thread, inside OB_EACH's original): with SOMVR_GAME_PROMPTS=off in our stereo frames a
+ * world icon that is no objective and not kept is not placed - FUN_00ec4a50 then hides it as one out of its range. The
+ * shown bytes miss the clip-only icons (FUN_00ec2660 sets +0x45 only with an object at +0x260/+0x268): this catches
+ * every on-screen icon before it is drawn. */
+typedef uint8_t (*ob_place_fn)(uintptr_t m, uintptr_t pl, float *pos, float *uv, float d);
+__attribute__((used)) uint8_t somvr_w_obplace(uintptr_t m, uintptr_t pl, float *pos, float *uv, float d)
+{
+	if (m && atomic_load_explicit(&g_gp_off, memory_order_relaxed) && g_fr.on && g_ob.tid == ob_tid()) {
+		uintptr_t rec = *(volatile uintptr_t *)(m + OB_REC);
+		const char *name = "";
+		if (rec && !ob_rec(rec, &name) && !gp_nav_keep(name)) {
+			g_ob.place_refused++;
+			gp_nav_hid(name, mono());
+			return 0;
+		}
+	}
+	uint8_t r = ((ob_place_fn)g_ob.place_orig)(m, pl, pos, uv, d);
+	if (r && m && g_fr.on && g_ob.tid == ob_tid()) { /* the names of what the game draws (on, the kept, objectives) */
+		uintptr_t rec = *(volatile uintptr_t *)(m + OB_REC);
+		const char *name = "";
+		if (rec) {
+			ob_rec(rec, &name);
+			gp_nav_placed(name, mono());
+		}
+	}
+	return r;
+}
+
 __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 {
 	((ob_each_fn)g_ob.orig)(m, pl);
@@ -242,7 +287,7 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 		}
 	}
 	if (first && ob_log_ok()) {
-		logf_("OBJECTIVE t=%.3f marker %u m=%#lx '%s'%s: %s at (%.0f %.0f %.0f), offscreen %d", t, k->id, (unsigned long)m,
+		logf_("OBJECTIVE t=%.3f marker %u m=%#llx '%s'%s: %s at (%.0f %.0f %.0f), offscreen %d", t, k->id, (unsigned long long)m,
 		      name, match == 2 ? " (the player's waypoint)" : match ? " (an objective)" : "", shown ? "shown by the game" : "not shown", k->pos[0], k->pos[1],
 		      k->pos[2], ob_offscreen(rec));
 	}
@@ -255,6 +300,16 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 			((ob_vis_fn) * (volatile uintptr_t *)(vt + OB_CLIP_VIS))(clip, 0);
 		}
 		k->hidden = 1, g_ob.hides++;
+	} else if (!match && shown && g_fr.on && atomic_load_explicit(&g_gp_off, memory_order_relaxed) && !gp_nav_keep(name)) {
+		/* build 36, SOMVR_GAME_PROMPTS=off: every other world icon the game placed - the same hide */
+		*(volatile uint8_t *)(m + OB_SHOWN1) = 0, *(volatile uint8_t *)(m + OB_SHOWN2) = 0;
+		uintptr_t clip = *(volatile uintptr_t *)(m + OB_CLIP);
+		if (clip) {
+			uintptr_t vt = *(volatile uintptr_t *)clip;
+			((ob_vis_fn) * (volatile uintptr_t *)(vt + OB_CLIP_VIS))(clip, 0);
+		}
+		k->hidden = 1;
+		gp_nav_hid(name, t);
 	}
 }
 
@@ -421,8 +476,8 @@ static const char *ob_word(const char *w)
 		const struct ob_mark *k = &g_ob.mk[i];
 		if (t - k->t_seen > 5.0)
 			continue;
-		logf_("OBJECTIVE status marker %u m=%#lx '%s'%s at (%.0f %.0f %.0f): seen %.1f s ago, shown %.1f s ago%s%s", k->id,
-		      (unsigned long)k->m, k->name, k->match ? " (an objective)" : "", k->pos[0], k->pos[1], k->pos[2],
+		logf_("OBJECTIVE status marker %u m=%#llx '%s'%s at (%.0f %.0f %.0f): seen %.1f s ago, shown %.1f s ago%s%s", k->id,
+		      (unsigned long long)k->m, k->name, k->match ? " (an objective)" : "", k->pos[0], k->pos[1], k->pos[2],
 		      t - k->t_seen, k->t_shown > 0 ? t - k->t_shown : -1.0, k->match ? (k->elig ? ", eligible" : ", not eligible") : "",
 		      k->hidden ? ", hidden by us" : "");
 	}
@@ -456,7 +511,8 @@ static void ob_start(int *bad)
 	if (!g_ob.mode) {
 		if (g_ob.land || g_ob.strike || g_ob.ws || g_ob.aim || g_ob.vault)
 			ob_publish(&c0, "the climb's landing and the strike's mark only (SOMVR_OBJECTIVE off)");
-		return;
+		if (!atomic_load(&g_gp_off)) /* build 36: OB_EACH still, for SOMVR_GAME_PROMPTS=off's world icons */
+			return;
 	}
 	const char *p = getenv("SOMVR_OBJECTIVE_RECS");
 	snprintf(g_ob.pats, sizeof g_ob.pats, "%s", p && *p ? p : "Objective*");
@@ -473,7 +529,7 @@ static void ob_start(int *bad)
 	int ok = 1;
 	for (int i = OBS_POS; i < OBS_N; i++) {
 		int k = check_site(&g_ob_sites[i], why, sizeof why) == 0;
-		logf_("OBJECTIVE site %s %s %#lx: %s", g_ob_sites[i].name, k ? "ok" : "MISMATCH", (unsigned long)g_ob_sites[i].addr, why);
+		logf_("OBJECTIVE site %s %s %#llx: %s", g_ob_sites[i].name, k ? "ok" : "MISMATCH", (unsigned long long)g_ob_sites[i].addr, why);
 		ok &= k || i == OBS_RANGE;
 		if (i == OBS_RANGE)
 			g_ob.range_ok = k;
@@ -493,19 +549,28 @@ static void ob_start(int *bad)
 	if (!ok || !(g_ob.on = bo_patch_call(&g_ob_sites[OBS_EACH], (void *)somvr_w_obeach))) {
 		logf_("WARN SOMVR_OBJECTIVE=%s: %s: the game's markers as they are", w[g_ob.mode],
 		      ok ? "OB_EACH not hooked" : "OB_POS differs");
-		if (g_ob.land || g_ob.strike)
+		if (g_ob.mode && (g_ob.land || g_ob.strike))
 			ob_publish(&c0, "the climb's landing and the strike's mark only (OB_EACH not hooked)");
 		return;
 	}
 	g_ob.live = g_ob.mode == 1 ? 0 : g_ob.mode;
-	if (g_ob.mode >= 2 || g_ob.land || g_ob.strike) {
+	if (atomic_load(&g_gp_off)) { /* build 36: SOMVR_GAME_PROMPTS=off - the on-screen placement too */
+		char pw[512];
+		g_ob.place_orig = g_obp_sites[OBPS_PLACE].target;
+		int k = check_site(&g_obp_sites[OBPS_PLACE], pw, sizeof pw) == 0;
+		g_ob.place_on = k && bo_patch_call(&g_obp_sites[OBPS_PLACE], (void *)somvr_w_obplace);
+		logf_("OBJECTIVE site OB_PLACE %s %#llx: %s%s", k ? "ok" : "MISMATCH", (unsigned long long)g_obp_sites[OBPS_PLACE].addr,
+		      pw, k && !g_ob.place_on ? " (not patched)" : "");
+	}
+	if (g_ob.mode >= 2 || (g_ob.mode && (g_ob.land || g_ob.strike))) { /* (mode 0: published above) */
 		c.size_deg = size, c.dist_m = dist, c.faint_deg = faint, c.edge_deg = edge;
 		ob_publish(&c, g_ob.mode >= 2 ? NULL : "the climb's landing and the strike's mark only (SOMVR_OBJECTIVE=log)");
 	}
 	logf_("CONFIG objective=%s (SOMVR_OBJECTIVE: %s), records '%s', the player's waypoint %s%s%s (SOMVR_OBJECTIVE_WAYPOINT: "
 	      "%s); the marker %.1f deg, at most %.0f m away, faint within "
 	      "%.0f deg of the view's centre, the edge arrow %.1f deg; range test %s", w[g_ob.mode],
-	      g_ob.mode == 1 ? "the markers the game shows logged, nothing changed"
+	      !g_ob.mode ? "off: OB_EACH hooked for SOMVR_GAME_PROMPTS=off's world icons only, the objective the game's"
+	      : g_ob.mode == 1 ? "the markers the game shows logged, nothing changed"
 	      : g_ob.mode == 2 ? "our marker in the world, the game's icon hidden in our stereo frames"
 			       : "our marker in the world and the game's icon", g_ob.pats, g_ob.wpats[0] ? "'" : "off",
 	      g_ob.wpats, g_ob.wpats[0] ? "'" : "", g_ob.wpats[0] ? "the map's waypoint is our marker, before the nearest "
@@ -521,8 +586,10 @@ static void ob_end_log(void)
 	if (!g_ob.on)
 		return;
 	logf_("OBJECTIVE END calls %llu (shown %llu, objectives %llu), hides %llu, frames %llu, published %llu, other threads "
-	      "%llu; layer: marker frames %llu, edge frames %llu", (unsigned long long)g_ob.calls,
+	      "%llu; layer: marker frames %llu, edge frames %llu; build 36: placements refused %llu (OB_PLACE %s)",
+	      (unsigned long long)g_ob.calls,
 	      (unsigned long long)g_ob.shown_calls, (unsigned long long)g_ob.match_calls, (unsigned long long)g_ob.hides,
 	      (unsigned long long)g_ob.frames, (unsigned long long)g_ob.published, (unsigned long long)g_ob.other_tid,
-	      (unsigned long long)atomic_load(&g_obj.n_marker), (unsigned long long)atomic_load(&g_obj.n_edge));
+	      (unsigned long long)atomic_load(&g_obj.n_marker), (unsigned long long)atomic_load(&g_obj.n_edge),
+	      (unsigned long long)g_ob.place_refused, g_ob.place_on ? "hooked" : "not hooked");
 }

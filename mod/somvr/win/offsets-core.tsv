@@ -8,7 +8,7 @@ P_PM	off	0x2c8	0x2c8	same	L 0x9ee39a mov rax,[rbx+0x2c8] / W 0x14050c28e mov rcx
 P_BODY	off	0x2d8	0x2d8	same	L 0x9ee18d mov rax,[rcx+0x2d8] / W 0x14050c00d mov rax,[r9+0x2d8]	-
 BODY_OBJ	off	0x1b8	0x1b8	same	L 0x9ee1a7 mov rax,[rax+0x1b8] / W 0x14050c04e mov rcx,[rax+0x1b8] (after P_BODY)	-
 BODY_MGR	off	0x3b8	0x3b8	plausible	L 0xab61b6..bd [pl+0x2d8]->[+0x3b8] (PM vf_11) / W: 64 places load [x+0x2d8] then [+0x3b8] (e.g. 0x1403f0fa0)	-
-MGR_CHAR	off	0x560	?	unknown	no Windows read found	player_objs falls back to BODY_OBJ only when this reads 0; on Windows read BODY_OBJ directly (equal in run 3) until found
+MGR_CHAR	off	0x560	?	unknown	no Windows read found; b34 (7.13): +0x560 read as an engine object (+0x48 its class chain, +0x38) at the same offset in L FUN_0208cf60 / W 0x1407856c0 and L FUN_0208d170 / W 0x1407858f0 (nbr pairs, the animation code) - not tied to BODY_MGR's class (no load of [body+0x3b8] followed by +0x560 on either build), so not taken	player_objs falls back to BODY_OBJ only when this reads 0; on Windows read BODY_OBJ directly (equal in run 3) until found
 PM_OWNER	off	0x218	0x218	same	PM vf_11: L 0xab5e80 mov rax,[rdi+0x218] / W 0x14046ee9e mov rcx,[rcx+0x218]	-
 PM_XPOS	off	0x428	0x428	same	PM vf_11 W 0x14046eefe mov eax,[rbx+0x428] (+0x42c/0x430), cleared 0x14046ef9d	-
 PM_XROT	off	0x434	0x434	same	PM vf_11 W 0x14046ef04 movss xmm0,[rbx+0x434] (..0x440 = 1.0 at 0x14046efb2)	-

@@ -49,6 +49,7 @@ static void test_header(void) {
 
 /* ---- seqlock: the writer fills a record with values derived from the frame id; the reader must never see a mix ---- */
 static _Atomic int g_stop;
+static _Atomic uint64_t g_got; /* the seqlock reader's copies so far */
 static void fill(somvr_rec *r, uint64_t f) {
     r->frame = f;
     r->display_time = (int64_t)f * 1000;
@@ -76,6 +77,9 @@ static void *writer(void *a) {
         somvr_seq_wbegin(&r->seq);
         fill(r, f);
         somvr_seq_wend(&r->seq);
+        if (f == 100000) /* halfway: under a loaded machine (the parallel check, docs/re-xr-pipeline.md 161) the reader may
+                          * not have run yet - wait for its first copy (2 s at most), so reads > 0 tests the read */
+            for (int i = 0; i < 2000 && !atomic_load(&g_got); i++) usleep(1000);
     }
     atomic_store(&g_stop, 1);
     return NULL;
@@ -93,6 +97,7 @@ static void test_seqlock(void) {
         }
         if (!c.frame) continue; /* the writer has not written yet */
         reads++;
+        atomic_store(&g_got, reads);
         torn += !consistent(&c);
     }
     pthread_join(t, NULL);

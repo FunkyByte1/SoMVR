@@ -61,6 +61,10 @@ typedef struct {
     float contact_pre_s;  /* 0.25: the window opens this long before the impact (the swing's last arc, after its wind-up) */
     float contact_post_s; /* 0.08: ... and closes this long after it */
     float contact_cross_deg; /* 15: the blades at least this far from parallel (a blade lying along the orc's slides) */
+    float contact_thrust_cm; /* build 32 (SOMVR_DEFENCE_CONTACT_THRUST_CM): the meeting's reach for a blow driven along its
+                              * own weapon (a thrust sweeps a line, a slash a plane: a guard near its line meets it);
+                              * 0 = contact_cm (build 31) */
+    float thrust_cos;        /* ... a thrust: the weapon's middle moves within this cos of its axis (0.7) */
     /* build 11 (SOMVR_DEFENCE_CONTACT_MOVE_CM, 0 = off): a contact blocks only when our blade's middle moved at least
      * this far (against the head) since the attack began: a guard moved into the blow; a sword just held still in its
      * path lets it through (headless boot-check-20261025-003131: a still guard across the chest met 11 of 13 strikes) */
@@ -159,6 +163,7 @@ typedef struct {
     float pb[3], pt[3], pob[2][3], pot[2][3];
     double contact_t;  /* < 0: none */
     float contact_cm, contact_cross, contact_ts, contact_pt[3];
+    int thrust;        /* build 32: a frame of the window saw the weapon thrust (its reach was contact_thrust_cm) */
     int windowed;      /* frames judged inside the window */
     float best_cm, best_ts, best_cross; /* the closest approach in the window (a near miss), its time and angle */
     /* build 11 (contact_move_cm): our blade's middle against the head at the attack's first frame, how far it moved
@@ -176,6 +181,9 @@ void somvr_df_track_init(somvr_df_track *tr);
 int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const somvr_df_in *in);
 /* contact: the impact window at ts (1 = inside; no impact: never) */
 int somvr_df_contact_window(const somvr_df_cfg *c, float impact, float ts);
+/* build 32: the orc's weapon (handle o, tip p) from one frame to the next is thrust: its middle moved more than 1 cm,
+ * within c->thrust_cos of its own axis */
+int somvr_df_thrusting(const somvr_df_cfg *c, const float o0[3], const float p0[3], const float o1[3], const float p1[3]);
 /* contact: two moving segments (our blade b0-t0 -> b1-t1, the orc's o0-p0 -> o1-p1 over one frame; have_prev 0 = only
  * the current poses), their closest approach over `steps` linear sub-steps: the distance (cm), the angle between them
  * there (deg, 0..90) and the point on our blade; returns the distance */
@@ -201,11 +209,10 @@ int somvr_df_arrow(const somvr_df_cfg *c, const float pos[3], const float dir[3]
                    const float b1[3], const float t1[3], const float b0[3], const float t0[3], int have_prev,
                    float *dist_cm, float point[3]);
 
-/* the pulse for an outcome on each hand (sword = the main hand's index, 0 or 1), amplitudes scaled by scale (0..1) */
-typedef struct {
-    float amp[2], dur_s[2];
-} somvr_df_haptic;
-somvr_df_haptic somvr_df_haptic_of(int outcome, int sword, float scale);
+/* build 34: the outcome's haptics word (somvr_haptics.h): -1 none (a hit, or not an outcome); *k its grade, *both 1 =
+ * play it on each hand (the dodge). A parry and a block are the block word (the crack, the ring, the free hand's
+ * brace; a parry at its top), the dodge the go word in both hands, an arrow on the blade the clank. */
+int somvr_df_haptic_word(int outcome, float *k, int *both);
 
 /* ---- the parry's clank: SOMVR_DEFENCE_CLANK (build 8 candidate, docs/re-xr-pipeline.md 30.5) -------------------------
  * Build 7's recoil parry only skipped the hit: the game refused the orc's recoil during its strike, so the orc swung
@@ -242,13 +249,7 @@ int somvr_df_may_interrupt(const somvr_df_irules *r, const uintptr_t *cats, int 
  * light record (index 0 by convention) first. -1 = none may */
 int somvr_df_pick_interrupter(const somvr_df_irules *r, const uintptr_t *const *cand_cats, const int *cand_n, int n);
 
-/* the clank's pulses, scaled (0..1): the sword hand's crack (flat) and its ring (a ramp down to 0), the other hand's
- * knock */
-typedef struct {
-    float crack_amp, crack_s, ring_amp, ring_s; /* the sword hand */
-    float knock_amp, knock_s;                   /* the other hand */
-} somvr_df_clank_haptic;
-somvr_df_clank_haptic somvr_df_clank_haptic_of(float scale);
+/* the clank's pulses: since build 34 the block word at its top (somvr_haptics.h: the crack, the ring, the knock) */
 
 /* ---- build 31 (re-xr-pipeline.md 136; the 11-02 session's mark 9): an orc's blade through the tracked body ------------
  * The game lands an orc's blow by Talion's root (ApplyDamageRange and its half angle at the APPLYDAMAGE key); the VR

@@ -133,6 +133,24 @@ static int xc_read_hc(uintptr_t pc, somvr_ex_hc *h)
 	return h->valid = 1;
 }
 
+/* build 36 (re-xr-pipeline.md 164): Practice > Charge execution - Talion's hit counter charged to its need (XC_CHARGE, as
+ * `verbs brand charge`): the execution's charge ready at once, so the finisher's ready state is reached for a test. 1 = set */
+static int xc_fill(uintptr_t pc, char *out, size_t cap)
+{
+	somvr_ex_hc h0, h1;
+	uintptr_t hc = pc ? peek_ptr(pc + FI_C_HITCTR) : 0;
+	if (!g_xc.ok_hc || !hc || !xc_read_hc(pc, &h0) || !(h0.need > 0 && h0.need < 100)) {
+		snprintf(out, cap, "nothing - %s", !g_xc.ok_hc ? "the XC_CHARGE site did not match" : !hc ? "no hit counter"
+			 : "its need unread");
+		return 0;
+	}
+	XC_FN(XCS_CHARGE, xc_charge_fn)(hc, h0.need);
+	xc_read_hc(pc, &h1);
+	snprintf(out, cap, "Talion's hit counter %d -> %d of %d (XC_CHARGE), the execution %s", h0.charge, h1.charge, h1.need,
+		 somvr_ex_ready(&h1) ? "ready" : "NOT ready (the game's counter disabled)");
+	return 1;
+}
+
 /* ---- the glow: a looping ClientFX on the active weapon's model object (fi_fx_start's recipe) ---------------------- */
 static void xc_fx_stop(const char *why)
 {
@@ -140,7 +158,7 @@ static void xc_fx_stop(const char *why)
 		return;
 	uintptr_t h = g_xc.fx_handle;
 	FI_FN(FIS_FX_RELEASE, fi_release_fn)(&g_xc.fx_handle);
-	logf_("EXECUTE glow fx off (%s): handle %#lx -> %#lx", why, (unsigned long)h, (unsigned long)g_xc.fx_handle);
+	logf_("EXECUTE glow fx off (%s): handle %#llx -> %#llx", why, (unsigned long long)h, (unsigned long long)g_xc.fx_handle);
 	g_xc.fx_handle = 0, g_xc.fx_item = 0;
 }
 static void xc_fx_start(uintptr_t pcomb)
@@ -157,7 +175,7 @@ static void xc_fx_start(uintptr_t pcomb)
 	if (why) {
 		g_xc.fx_fail++;
 		if (g_xc.fx_fail <= 8)
-			logf_("EXECUTE glow fx not started: %s (item %#lx)", why, (unsigned long)item);
+			logf_("EXECUTE glow fx not started: %s (item %#llx)", why, (unsigned long long)item);
 		return;
 	}
 	uintptr_t mh = FI_FN(FIS_OBJSYS_MH, fi_mh_fn)(os, obj);
@@ -172,8 +190,8 @@ static void xc_fx_start(uintptr_t pcomb)
 		g_xc.fx_item = item, g_xc.fx_on++;
 	else
 		g_xc.fx_fail++;
-	logf_("EXECUTE glow fx '%s' on item %#lx obj %#lx: rc=%ld handle=%#lx clientfx=%u", g_xc.glow_fx, (unsigned long)item,
-	      (unsigned long)obj, rc, (unsigned long)g_xc.fx_handle, on);
+	logf_("EXECUTE glow fx '%s' on item %#llx obj %#llx: rc=%lld handle=%#llx clientfx=%u", g_xc.glow_fx, (unsigned long long)item,
+	      (unsigned long long)obj, (long long)rc, (unsigned long long)g_xc.fx_handle, on);
 }
 
 /* ---- the slow motion: SlowMO.Set on the game timer, its own values back after the time (fi_slowmo's way) --------- */
@@ -266,9 +284,9 @@ static struct xc_rec *xc_rec_of(const char *name)
 	if (sync)
 		rx_rec_name(sync, syn, sizeof syn);
 	int smo = sync ? rx_db_bool(sync, XC_SYNC_SCHEMA, XC_SYNC_SLOWMO) : -1;
-	logf_("EXECUTE record '%s' -> %#lx: ConsumeHitCounterCharge %d ResetHitCounterOnStart %d RecoilTypeHit '%s' "
+	logf_("EXECUTE record '%s' -> %#llx: ConsumeHitCounterCharge %d ResetHitCounterOnStart %d RecoilTypeHit '%s' "
 	      "SeverTarget %d ('%s') SeverTargetOnKill %d (type %d) SeverTargetChance %.2f; its sync '%s' EnableDynamicSlowMo %d",
-	      e->name, (unsigned long)e->rec, e->consume, e->reset, rn, ns, sn, nk, tks, (double)chance, syn, smo);
+	      e->name, (unsigned long long)e->rec, e->consume, e->reset, rn, ns, sn, nk, tks, (double)chance, syn, smo);
 	return e;
 }
 
@@ -290,7 +308,7 @@ static double xc_lapse(uintptr_t pc, const somvr_ex_hc *h, double t)
 	if (!running)
 		return 0;
 	if (clk)
-		peek(clk + 0x18, &now, 8);
+		peek(clk + TM_TOTAL_S, &now, 8); /* the clock's total seconds (Windows +0x20: XC_LAPSE's `movsd 0x20(%rax)`) */
 	if (delay > 0 && fabs(delay - g_xc.lapse_s) > 1e-3 && fabs(delay - g_xc.ready_s) > 1e-3)
 		g_xc.delay_game = delay; /* not ours: the game's own (written at its last restart) */
 	double want = g_xc.mode == XC_ON && g_xc.ok_lapse ? somvr_ex_lapse(h, running, delay, g_xc.lapse_s, g_xc.ready_s) : 0;
@@ -362,7 +380,7 @@ static void xc_frame(uintptr_t pl, const float root[3], int blade, double t)
 	int ready = okh && somvr_ex_ready(&h);
 	if (ready && !g_xc.ready) {
 		g_xc.ready_on++, g_xc.ready_t = t;
-		in_haptic_event(SOMVR_HAND_R, 0.5f, 0.06f, SOMVR_HAP_COMBAT);
+		haptic(SOMVR_HAND_R, SOMVR_HX_READY);
 		logf_("EXECUTE ready t=%.3f: the streak %d, the charge %d of %d (the game's: charged %u, uses %u); one pulse, the "
 		      "glow %s", t, h.streak, h.charge, h.need, h.charged, h.uses, g_xc_glow_w[g_xc.glow]);
 	} else if (!ready && g_xc.ready) {
@@ -423,17 +441,17 @@ static void xc_frame(uintptr_t pl, const float root[3], int blade, double t)
 			atomic_store_explicit(&g_tstick_until_ns, fw > 0 ? (int64_t)((mono() + 0.2) * 1e9) : 0, memory_order_release);
 			g_xc.chase_walks += fw > 0;
 		} else {
-			logf_("EXECUTE where t=%.3f: %d orcs within 15 m; the nearest %#lx dist %.0f cm bearing %+.0f deg (from the head, "
-			      "+ = right); snap steps %d", t, no, no ? (unsigned long)oo[0].c : 0ul, no ? oo[0].dist : 0.0f, br, steps);
+			logf_("EXECUTE where t=%.3f: %d orcs within 15 m; the nearest %#llx dist %.0f cm bearing %+.0f deg (from the head, "
+			      "+ = right); snap steps %d", t, no, no ? (unsigned long long)oo[0].c : 0ul, no ? oo[0].dist : 0.0f, br, steps);
 		}
 		g_xc.req_where = 0;
 	}
 	if (g_xc.req_status) {
 		g_xc.req_status = 0;
 		logf_("EXECUTE status t=%.3f: mode %d, the streak %d, charge %d of %d, enabled %u, charged %u, uses %u, ready %d, "
-		      "trigger %d (%.2f), glow %s (handle %#lx), executions %llu", t, g_xc.mode, h.streak, h.charge, h.need,
+		      "trigger %d (%.2f), glow %s (handle %#llx), executions %llu", t, g_xc.mode, h.streak, h.charge, h.need,
 		      h.enabled, h.charged, h.uses, ready, g_xc.trig, (double)hi->trigger, g_xc_glow_w[g_xc.glow],
-		      (unsigned long)g_xc.fx_handle, (unsigned long long)g_xc.executions);
+		      (unsigned long long)g_xc.fx_handle, (unsigned long long)g_xc.executions);
 	}
 }
 
@@ -442,6 +460,8 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 {
 	if (!g_xc.mode)
 		return 0;
+	if (fn_on())
+		return 0; /* build 33, SOMVR_FINISHER: the execution is the finisher's (the outline, the guided stab) */
 	int trig = g_xc.trig;
 	if (kl_exec_blow()) /* build 31 (SOMVR_KILLS_EXEC=blow): the next heavy blow while charged, no button (mark 20) */
 		trig = g_xc.ready && tier == SC_TIER_HEAVY;
@@ -451,8 +471,8 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	if (j != SOMVR_EXJ_EXECUTE) {
 		g_xc.refused[j]++;
 		if (t - g_xc.refuse_t > 0.5)
-			logf_("EXECUTE refused t=%.3f on orc %#lx: %s (tier %s, the streak %d, the charge %d of %d): the ordinary hit",
-			      t, (unsigned long)o->c, somvr_ex_judge_name(j), sc_tier_name(tier), g_xc.hc.streak, g_xc.hc.charge,
+			logf_("EXECUTE refused t=%.3f on orc %#llx: %s (tier %s, the streak %d, the charge %d of %d): the ordinary hit",
+			      t, (unsigned long long)o->c, somvr_ex_judge_name(j), sc_tier_name(tier), g_xc.hc.streak, g_xc.hc.charge,
 			      g_xc.hc.need);
 		g_xc.refuse_t = t;
 		return 0;
@@ -470,7 +490,7 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	if (g_xc.mode == XC_LOG || !g_cb.ok_hit || g_cb.mode != CB_FULL || !pc || !e || e->state <= 0) {
 		if (!e || e->state <= 0)
 			g_xc.norec++;
-		logf_("EXECUTE t=%.3f on orc %#lx from %s (%+.0f deg): %s - the ordinary hit", t, (unsigned long)o->c,
+		logf_("EXECUTE t=%.3f on orc %#llx from %s (%+.0f deg): %s - the ordinary hit", t, (unsigned long long)o->c,
 		      behind ? "behind" : "the front", off, g_xc.mode == XC_LOG ? "log only" : !e || e->state <= 0 ?
 		      "no execution record in the database" : "combat cannot deal hits (see its CONFIG)");
 		return 0;
@@ -568,12 +588,12 @@ static int xc_contact(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 	CB_COUNT(calls);
 	/* 3. the moment: the slow motion, a strong pulse, the death's trace, the eye trace, the marks */
 	xc_slowmo(t);
-	in_haptic_event(SOMVR_HAND_R, 1.0f, 0.3f, SOMVR_HAP_COMBAT);
-	logf_("EXECUTE kill t=%.3f: Combat_DealHit(pos=%.1f,%.1f,%.1f, pc=%#lx, hobj=%#lx, rec='%s' %#lx, forceKill=%d) %.3f ms "
+	haptic(SOMVR_HAND_R, SOMVR_HX_KILL);
+	logf_("EXECUTE kill t=%.3f: Combat_DealHit(pos=%.1f,%.1f,%.1f, pc=%#llx, hobj=%#llx, rec='%s' %#llx, forceKill=%d) %.3f ms "
 	      "dead=%d->%d health %.1f->%.1f; from %s (%+.0f deg off its facing), tier heavy at %.2f m/s, the trigger %.2f; the "
 	      "streak %d charge %d/%d uses %u -> spent (%s%s) -> %d charge %d/%d -> after the hit %d charge %d/%d charged %u; "
-	      "the death: %s%s", t, ct->point[0], ct->point[1], ct->point[2], (unsigned long)pc, (unsigned long)o->hobj, e->name,
-	      (unsigned long)e->rec, fk, (t1 - t0) * 1e3, dead0, dead1, hp0, hp1, behind ? "behind" : "the front", off,
+	      "the death: %s%s", t, ct->point[0], ct->point[1], ct->point[2], (unsigned long long)pc, (unsigned long long)o->hobj, e->name,
+	      (unsigned long long)e->rec, fk, (t1 - t0) * 1e3, dead0, dead1, hp0, hp1, behind ? "behind" : "the front", off,
 	      g_cb.sp.mean_mps, (double)g_inp.st.hand[SOMVR_HAND_R].trigger, h0.streak, h0.charge, h0.need, h0.uses,
 	      sp == 1 ? "a use" : sp == 2 ? "the charge" : "nothing to spend", e->reset == 1 ? ", the counter cleared" : "",
 	      h1.streak, h1.charge, h1.need, h2.streak, h2.charge, h2.need, h2.charged, death, sev);
@@ -689,7 +709,7 @@ static void xc_start(const struct site_spec *sites, int *bad)
 	for (int i = 0; i < XCS_N; i++) {
 		ok[i] = check_site(&sites[i], why, sizeof why) == 0;
 		if (!ok[i])
-			logf_("EXECUTE site %s %#lx MISMATCH: %s", sites[i].name, (unsigned long)sites[i].addr, why);
+			logf_("EXECUTE site %s %#llx MISMATCH: %s", sites[i].name, (unsigned long long)sites[i].addr, why);
 	}
 	static const int fx_need[] = { FIS_FX_CSINIT, FIS_FX_CREATE, FIS_FX_CSFREE, FIS_FX_RELEASE, FIS_OBJSYS_MH, FIS_ITEM };
 	g_xc.ok_fx = 1;

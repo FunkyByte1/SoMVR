@@ -39,19 +39,22 @@ typedef unsigned long long sigset_t;
 #define CLOCK_BOOTTIME CLOCK_MONOTONIC
 int clock_gettime(clockid_t c, struct timespec *ts);
 int nanosleep(const struct timespec *req, struct timespec *rem);
+#define TIMER_ABSTIME 1
+int clock_nanosleep(clockid_t c, int flags, const struct timespec *t, struct timespec *rem);
 int usleep(unsigned us);
 unsigned sleep(unsigned s);
 
 /* ---- threads ---------------------------------------------------------------------------------------------- */
 typedef uintptr_t pthread_t;
-typedef struct { void *p; } pthread_mutex_t; /* an SRWLOCK (exclusive) */
-typedef struct { void *p; } pthread_cond_t;  /* a CONDITION_VARIABLE */
+typedef struct { void *p; unsigned long owner; int count, recursive; } pthread_mutex_t; /* an SRWLOCK (+ recursion) */
+typedef struct { void *p; int clock; } pthread_cond_t;  /* a CONDITION_VARIABLE + its timedwait clock */
 typedef struct { void *p; } pthread_once_t;  /* an INIT_ONCE */
 typedef struct { int detached; size_t stack; } pthread_attr_t;
 typedef int pthread_mutexattr_t;
-typedef int pthread_condattr_t;
+typedef struct { int clock; } pthread_condattr_t;
 #define PTHREAD_MUTEX_INITIALIZER {0}
-#define PTHREAD_COND_INITIALIZER {0}
+#define PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP {0, 0, 0, 1}
+#define PTHREAD_COND_INITIALIZER {0, 0}
 #define PTHREAD_ONCE_INIT {0}
 #define PTHREAD_CREATE_DETACHED 1
 #define PTHREAD_CREATE_JOINABLE 0
@@ -70,6 +73,11 @@ int pthread_mutex_lock(pthread_mutex_t *m);
 int pthread_mutex_trylock(pthread_mutex_t *m);
 int pthread_mutex_unlock(pthread_mutex_t *m);
 int pthread_cond_init(pthread_cond_t *c, const pthread_condattr_t *a);
+static inline int pthread_condattr_init(pthread_condattr_t *a) { a->clock = 0; return 0; }
+static inline int pthread_condattr_setclock(pthread_condattr_t *a, clockid_t c) { a->clock = c; return 0; }
+static inline int pthread_condattr_destroy(pthread_condattr_t *a) { (void)a; return 0; }
+int pthread_mutex_timedlock(pthread_mutex_t *m, const struct timespec *abs_realtime);
+int pthread_timedjoin_np(pthread_t t, void **ret, const struct timespec *abs_realtime);
 int pthread_cond_destroy(pthread_cond_t *c);
 int pthread_cond_wait(pthread_cond_t *c, pthread_mutex_t *m);
 int pthread_cond_timedwait(pthread_cond_t *c, pthread_mutex_t *m, const struct timespec *abs_realtime);
@@ -98,6 +106,14 @@ pid_t gettid(void);
 #define PR_GET_NAME 16
 int prctl(int op, ...);
 struct iovec { void *iov_base; size_t iov_len; };
+ssize_t process_vm_readv(pid_t pid, const struct iovec *l, unsigned long nl, const struct iovec *r, unsigned long nr,
+			 unsigned long flags); /* ourselves only: somvr_safe_read */
+/* dirent: no /proc on Windows - opendir fails (callers skip) */
+typedef struct somvr_dir DIR;
+struct dirent { char d_name[260]; };
+static inline DIR *opendir(const char *p) { (void)p; errno = ENOENT; return NULL; }
+static inline struct dirent *readdir(DIR *d) { (void)d; return NULL; }
+static inline int closedir(DIR *d) { (void)d; return 0; }
 
 /* ---- memory ----------------------------------------------------------------------------------------------- */
 #define PROT_NONE 0

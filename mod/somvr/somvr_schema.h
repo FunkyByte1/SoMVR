@@ -68,7 +68,9 @@ static inline int somvr_sch_reg_decode(const unsigned char *code, size_t n, uint
 	return -1;
 }
 
-/* a C string at `at` (up to cap - 1 bytes, read in 8-byte steps so a string near the end of a page still reads) */
+/* a C string at `at` (up to cap - 1 bytes, read in 8-byte steps; where 8 bytes do not read - the string's end is
+ * within 7 bytes of an unreadable page - one byte at a time from there, so the string is read to its end or the page's;
+ * b34: the old byte-path took one byte and ended the string there) */
 static inline int somvr_sch_str(somvr_sch_read_fn rd, uintptr_t at, char *s, size_t cap)
 {
 	size_t k = 0;
@@ -77,12 +79,15 @@ static inline int somvr_sch_str(somvr_sch_read_fn rd, uintptr_t at, char *s, siz
 		return 0;
 	while (k + 1 < cap) {
 		char b[8];
+		int nb = 8;
 		if (!rd(at + k, b, 8)) {
-			if (!rd(at + k, b, 1))
+			if (!rd(at + k, b, 1)) {
+				s[k] = 0; /* the page ended before the string did: not a string */
 				return 0;
-			memset(b + 1, 0, 7); /* the last byte of a page: one at a time from here */
+			}
+			nb = 1;
 		}
-		for (int j = 0; j < 8 && k + 1 < cap; j++, k++) {
+		for (int j = 0; j < nb && k + 1 < cap; j++, k++) {
 			s[k] = b[j];
 			if (!b[j])
 				return 1;
@@ -129,7 +134,7 @@ enum { SOMVR_SCH_UNLOADED = -1, SOMVR_SCH_DIFFERS = 0, SOMVR_SCH_OK = 1 };
  * SOMVR_SCH_DIFFERS: a readable name or count that is not s's, or a fingerprint field named otherwise (why: what) */
 static inline int somvr_sch_check(somvr_sch_read_fn rd, uintptr_t obj, const struct somvr_sch_spec *s, char *why, size_t cap)
 {
-	char nm[SOMVR_SCH_NAMELEN];
+	char nm[SOMVR_SCH_NAMELEN] = ""; /* (b34: printed below even when the count read failed before the name's) */
 	uint32_t c = 0;
 	uintptr_t arr = 0;
 	if (why && cap)

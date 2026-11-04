@@ -263,14 +263,14 @@ static void bz_nodes(struct bz_one *e, const float root[3], double t)
 	int pr = f ? page_prot(f) : -1;
 	if (!g_th.ok_node || !m || pr < 0 || !(pr & PROT_EXEC)) {
 		if (bz_log_ok())
-			logf_("BEASTS t=%.3f %s '%s' Combat=%#lx: no node calls (THREAT's GetNode %s, the model %#lx): the facing's "
-			      "capsule", t, somvr_bz_kind_name(e->kind), e->rec, (unsigned long)e->c, g_th.ok_node ? "ok" : "off",
-			      (unsigned long)mi);
+			logf_("BEASTS t=%.3f %s '%s' Combat=%#llx: no node calls (THREAT's GetNode %s, the model %#llx): the facing's "
+			      "capsule", t, somvr_bz_kind_name(e->kind), e->rec, (unsigned long long)e->c, g_th.ok_node ? "ok" : "off",
+			      (unsigned long long)mi);
 		return;
 	}
 	char line[1500];
-	size_t o = (size_t)snprintf(line, sizeof line, "BEASTS t=%.3f nodes of the %s '%s' Combat=%#lx hobj=%#lx (root %.1f,%.1f,%.1f):",
-				    t, somvr_bz_kind_name(e->kind), e->rec, (unsigned long)e->c, (unsigned long)e->hobj, root[0],
+	size_t o = (size_t)snprintf(line, sizeof line, "BEASTS t=%.3f nodes of the %s '%s' Combat=%#llx hobj=%#llx (root %.1f,%.1f,%.1f):",
+				    t, somvr_bz_kind_name(e->kind), e->rec, (unsigned long long)e->c, (unsigned long long)e->hobj, root[0],
 				    root[1], root[2]);
 	for (int p = 0; p < SOMVR_BZP_N; p++)
 		for (int j = 0; j < 5 && g_bz_part_names[p][j] && !e->have[p]; j++) {
@@ -702,10 +702,10 @@ static void bzt_diag(uintptr_t pcomb, double t)
 	uintptr_t ctype = peek_ptr(g_pr.orc_c + 0x4d0); /* FUN_026d4510: the type is this record, or one of its list */
 	uint8_t cnt = 0;
 	peek(g_pr.orc_c + 0x55c, &cnt, 1);
-	size_t o = (size_t)snprintf(line, sizeof line, "BEASTS t=%.3f practice caragor tg: its target struct %#lx (obj %#lx %s, "
-				    "type '%s' %#lx flags %#x; its Combat's +0x4d0 '%s', +0x55c %u) +0x78.. %.1f %.1f %.1f %.1f %.1f %.1f "
-				    "%.1f %.1f;", t, (unsigned long)cand, (unsigned long)obj, obj == g_pr.orc_h ? "= the caragor" :
-				    "NOT the caragor", ty ? fb_rec_name(ty, tn, sizeof tn) : "-", (unsigned long)ty, ty1, ctype ?
+	size_t o = (size_t)snprintf(line, sizeof line, "BEASTS t=%.3f practice caragor tg: its target struct %#llx (obj %#llx %s, "
+				    "type '%s' %#llx flags %#x; its Combat's +0x4d0 '%s', +0x55c %u) +0x78.. %.1f %.1f %.1f %.1f %.1f %.1f "
+				    "%.1f %.1f;", t, (unsigned long long)cand, (unsigned long long)obj, obj == g_pr.orc_h ? "= the caragor" :
+				    "NOT the caragor", ty ? fb_rec_name(ty, tn, sizeof tn) : "-", (unsigned long long)ty, ty1, ctype ?
 				    fb_rec_name(ctype, cn, sizeof cn) : "-", cnt, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
 	for (int set = 0; set < 2 && own; set++) {
 		uintptr_t lists = peek_ptr(tg + (set ? 0xa8 : 0x48)), base = peek_ptr(own + ((ty1 & 2) ? 0x38 : 0x48));
@@ -717,8 +717,8 @@ static void bzt_diag(uintptr_t pcomb, double t)
 			o += (size_t)snprintf(line + o, sizeof line - o, " list %c[%llu of %u]: none;", set ? 'B' : 'A', (unsigned long long)idx, nl);
 			continue;
 		}
-		o += (size_t)snprintf(line + o, sizeof line - o, " list %c[%llu of %u] %s, %lu entries:", set ? 'B' : 'A',
-				      (unsigned long long)idx, nl, b[0] == ty ? "its type" : "ANOTHER type", (unsigned long)((b[2] - b[1]) / 8));
+		o += (size_t)snprintf(line + o, sizeof line - o, " list %c[%llu of %u] %s, %llu entries:", set ? 'B' : 'A',
+				      (unsigned long long)idx, nl, b[0] == ty ? "its type" : "ANOTHER type", (unsigned long long)((b[2] - b[1]) / 8));
 		for (uintptr_t q = b[1]; q && q < b[2] && q < b[1] + 8 * 48 && o < sizeof line - 90; q += 8) {
 			uintptr_t en = peek_ptr(q), rec = en ? peek_ptr(en + BZT_E_REC) : 0, et = en ? peek_ptr(en + 0x68) : 0;
 			float mx = 0, best = 0;
@@ -902,8 +902,8 @@ static void bz_frame(uintptr_t pl, const float root[3], const struct cb_orc *o, 
 		if (mnt)
 			peek(mnt + OBJ_POS, mp, sizeof mp);
 		if (bz_log_ok())
-			logf_("BEASTS t=%.3f Talion's mount %#lx -> %#lx%s (at %.0f,%.0f,%.0f)", t, (unsigned long)g_bz.mount,
-			      (unsigned long)mnt, mnt ? ": MOUNTED" : ": off", mp[0], mp[1], mp[2]);
+			logf_("BEASTS t=%.3f Talion's mount %#llx -> %#llx%s (at %.0f,%.0f,%.0f)", t, (unsigned long long)g_bz.mount,
+			      (unsigned long long)mnt, mnt ? ": MOUNTED" : ": off", mp[0], mp[1], mp[2]);
 		g_bz.mount = mnt;
 	}
 	struct cb_orc own[CB_ORCS];
@@ -947,8 +947,8 @@ static void bz_frame(uintptr_t pl, const float root[3], const struct cb_orc *o, 
 			somvr_th_local(hd, hqv, o[i].pos, l);
 			somvr_th_dir dir = somvr_th_direction(l);
 			if (bz_log_ok())
-				logf_("BEASTS t=%.3f %s '%s' Combat=%#lx attack '%s'%s at %.2f m bearing %+.0f deg (health %.0f%s%s%s)",
-				      t, somvr_bz_kind_name(e->kind), e->rec, (unsigned long)o[i].c, an,
+				logf_("BEASTS t=%.3f %s '%s' Combat=%#llx attack '%s'%s at %.2f m bearing %+.0f deg (health %.0f%s%s%s)",
+				      t, somvr_bz_kind_name(e->kind), e->rec, (unsigned long long)o[i].c, an,
 				      !atk ? "" : tgt == th ? " at Talion" : tgt ? " at another" : " (no target)", o[i].dist / 100.0f,
 				      (double)dir.yaw_deg, (double)hp, s[0] ? ", its sync '" : "", sn, s[0] ? "'" : "");
 			e->atk = atk;
@@ -969,9 +969,9 @@ static void bz_frame(uintptr_t pl, const float root[3], const struct cb_orc *o, 
 			if (s[1])
 				fb_rec_name(peek_ptr(s[1] + 0x10), s1, sizeof s1);
 			if (bz_log_ok())
-				logf_("BEASTS t=%.3f Talion: attack '%s', sync %#lx '%s' / target sync %#lx '%s', struggle %#lx/%#lx "
-				      "(the %s at %.2f m)", t, an, (unsigned long)s[0], s0, (unsigned long)s[1], s1,
-				      (unsigned long)st[0], (unsigned long)st[1], somvr_bz_kind_name(nb_kind), nb->dist / 100.0f);
+				logf_("BEASTS t=%.3f Talion: attack '%s', sync %#llx '%s' / target sync %#llx '%s', struggle %#llx/%#llx "
+				      "(the %s at %.2f m)", t, an, (unsigned long long)s[0], s0, (unsigned long long)s[1], s1,
+				      (unsigned long long)st[0], (unsigned long long)st[1], somvr_bz_kind_name(nb_kind), nb->dist / 100.0f);
 			g_bz.t_sync[0] = s[0], g_bz.t_sync[1] = s[1], g_bz.t_atk = a, g_bz.t_strug[0] = st[0], g_bz.t_strug[1] = st[1];
 			if (s[0] || s[1] || st[0] || st[1])
 				near_atk = 1;
@@ -1002,9 +1002,9 @@ static void bz_skills(uintptr_t pc, double t)
 	uintptr_t ch = pc ? peek_ptr(pc + C_OWNER) : 0, inv = ch ? peek_ptr(ch + BZ_CH_INV) : 0;
 	uintptr_t vb = inv ? peek_ptr(inv + BZ_INV_SKILLS) : 0, ve = inv ? peek_ptr(inv + BZ_INV_SKILLS + 8) : 0;
 	if (!cat || !base || !peek(cat + CAT_COUNT, &n, sizeof n) || n > 4000 || !inv || !vb || ve < vb) {
-		logf_("BEASTS t=%.3f skills: not read (sites %s, category %#lx count %u, Talion's Combat %#lx inventory %#lx bits "
-		      "%#lx..%#lx)", t, g_bz.ok_skill ? "ok" : "MISMATCH", (unsigned long)cat, n, (unsigned long)pc,
-		      (unsigned long)inv, (unsigned long)vb, (unsigned long)ve);
+		logf_("BEASTS t=%.3f skills: not read (sites %s, category %#llx count %u, Talion's Combat %#llx inventory %#llx bits "
+		      "%#llx..%#llx)", t, g_bz.ok_skill ? "ok" : "MISMATCH", (unsigned long long)cat, n, (unsigned long long)pc,
+		      (unsigned long long)inv, (unsigned long long)vb, (unsigned long long)ve);
 		return;
 	}
 	uint32_t words = (uint32_t)((ve - vb) / 4), owned = 0, shown = 0;
@@ -1048,8 +1048,8 @@ static void bz_skills(uintptr_t pc, double t)
 	}
 	if (o)
 		logf_("BEASTS skills:%s", line);
-	logf_("BEASTS t=%.3f skills: %u records, %u owned, %u shown ('%s'); Talion's inventory %#lx, %u bit words", t, n, owned,
-	      shown, g_bz.skill_sub, (unsigned long)inv, words);
+	logf_("BEASTS t=%.3f skills: %u records, %u owned, %u shown ('%s'); Talion's inventory %#llx, %u bit words", t, n, owned,
+	      shown, g_bz.skill_sub, (unsigned long long)inv, words);
 }
 
 /* "beasts skills [SUBSTR]|status" (the writer thread: the game thread acts) */

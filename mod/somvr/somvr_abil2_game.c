@@ -206,14 +206,14 @@ static int ab2_start_on(uintptr_t pcomb, uintptr_t pc, const char *node_name, co
 			why = "no KBM node";
 	}
 	if (!n2 || g_abl.mode != AB_ON || !g_abl.start_game) {
-		logf_("ABIL2 t=%.3f %s on orc %#lx (%.0f cm): NOT started - %s", t, what, (unsigned long)oc->c, oc->dist,
+		logf_("ABIL2 t=%.3f %s on orc %#llx (%.0f cm): NOT started - %s", t, what, (unsigned long long)oc->c, oc->dist,
 		      !n2 ? why : g_abl.mode != AB_ON ? "logged only (SOMVR_ABIL=log)" : "no start site");
 		return 0;
 	}
 	abl_watch_begin(pc, oc, 1, t, 3.0);
 	FI_FN(FIS_START, fi_start_fn)(pcomb, n2, atk, oc->hobj);
-	logf_("ABIL2 t=%.3f start: %s - FUN_00a8c700(pc=%#lx, node '%s', attack '%s', orc %#lx hobj %#lx at %.0f cm)", t, what,
-	      (unsigned long)pcomb, node_name, vb_name(atk, an, sizeof an), (unsigned long)oc->c, (unsigned long)oc->hobj,
+	logf_("ABIL2 t=%.3f start: %s - FUN_00a8c700(pc=%#llx, node '%s', attack '%s', orc %#llx hobj %#llx at %.0f cm)", t, what,
+	      (unsigned long long)pcomb, node_name, vb_name(atk, an, sizeof an), (unsigned long long)oc->c, (unsigned long long)oc->hobj,
 	      oc->dist);
 	return 1;
 }
@@ -290,8 +290,8 @@ static void ab2_throw_go(uintptr_t pcomb, uintptr_t pc, double t)
 		float l, p, d;
 		int in = somvr_ab_throw_aim(&g_ab2.cfg, g_ab2.thr_hand, g_ab2.thr_v, chest, &l, &p, &d);
 		if (ab2_log_ok(t))
-			logf_("ABIL2 t=%.3f the throw's line: orc %#lx at %.0f cm, %+.1f deg level, %+.1f deg pitch off it%s", t,
-			      (unsigned long)nr[i].c, d, l, p, in ? "" : " - outside");
+			logf_("ABIL2 t=%.3f the throw's line: orc %#llx at %.0f cm, %+.1f deg level, %+.1f deg pitch off it%s", t,
+			      (unsigned long long)nr[i].c, d, l, p, in ? "" : " - outside");
 		if (!in)
 			continue;
 		int at = m++;
@@ -303,14 +303,14 @@ static void ab2_throw_go(uintptr_t pcomb, uintptr_t pc, double t)
 		const char *why = "";
 		char an[96], sn[96];
 		if (!gc_pick(pcomb, pc, cand[i], g_ab2.thr_node, an, sizeof an, sn, sizeof sn, &why)) {
-			logf_("ABIL2 t=%.3f the quick throw at orc %#lx (%.1f deg off the line): not offered (%s)", t,
-			      (unsigned long)cand[i]->c, lv[i], why);
+			logf_("ABIL2 t=%.3f the quick throw at orc %#llx (%.1f deg off the line): not offered (%s)", t,
+			      (unsigned long long)cand[i]->c, lv[i], why);
 			continue;
 		}
 		if (ab2_start_on(pcomb, pc, g_ab2.thr_node, cand[i], "the quick throw", t)) {
 			g_ab2.thr_started++;
 			if (g_vb.haptic > 0)
-				in_haptic_event(somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER), 0.7f * g_vb.haptic, 0.06f, SOMVR_HAP_COMBAT);
+				haptic_play(sl_knife_hand(), SOMVR_HX_POWER, 1, g_vb.haptic);
 		} else
 			g_ab2.thr_refused++;
 		return;
@@ -319,7 +319,7 @@ static void ab2_throw_go(uintptr_t pcomb, uintptr_t pc, double t)
 	logf_("ABIL2 t=%.3f the quick throw: no orc on the line the game offers it for (%d near, %d in the cone): nothing", t, n, m);
 	g_ab2.away_until = 0; /* no flight: the dagger stays in the hand */
 	if (g_vb.haptic > 0)
-		in_haptic_event(somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER), 0.25f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
+		haptic_play(sl_knife_hand(), SOMVR_HX_NO, 1, g_vb.haptic);
 }
 
 /* the whistle: the nearest orc the game offers it for, started */
@@ -332,7 +332,7 @@ static void ab2_whistle_go(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 		char an[96], sn[96];
 		if (!gc_pick(pcomb, pc, &nr[i], g_ab2.wh_node, an, sizeof an, sn, sizeof sn, &why)) {
 			if (ab2_log_ok(t))
-				logf_("ABIL2 t=%.3f the whistle for orc %#lx at %.0f cm: not offered (%s)", t, (unsigned long)nr[i].c,
+				logf_("ABIL2 t=%.3f the whistle for orc %#llx at %.0f cm: not offered (%s)", t, (unsigned long long)nr[i].c,
 				      nr[i].dist, why);
 			continue;
 		}
@@ -388,12 +388,12 @@ static void ab2_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t
 		if (!strncmp(an, "PC_QckThr", 9) || strstr(an, "uickthrow") || strstr(an, "uickThrow")) {
 			g_ab2.thr_started++;
 			if (g_vb.haptic > 0)
-				in_haptic_event(somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER), 0.7f * g_vb.haptic, 0.06f, SOMVR_HAP_COMBAT);
+				haptic_play(sl_knife_hand(), SOMVR_HX_POWER, 1, g_vb.haptic);
 			logf_("ABIL2 t=%.3f the quick throw: the game threw - Talion's attack '%s'", t, an);
 		} else {
 			g_ab2.thr_none++, g_ab2.away_until = 0; /* nothing thrown: the dagger stays in the hand */
 			if (g_vb.haptic > 0)
-				in_haptic_event(somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER), 0.25f * g_vb.haptic, 0.08f, SOMVR_HAP_COMBAT);
+				haptic_play(sl_knife_hand(), SOMVR_HX_NO, 1, g_vb.haptic);
 			logf_("ABIL2 t=%.3f the quick throw: the game did not throw (Talion's attack '%s'): the dagger stays", t, an);
 		}
 	}
@@ -428,7 +428,7 @@ static void ab2_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t
 				      "head, state '%s', health %.1f)%s%s", t, k ? "the game offers it - '" : "not offered", k ? an : "",
 				      k ? "'" : "", n, fd, k ? by : 0.0f, st, key ? vb_health(key) : 0.0f, k ? "" : ": ", k ? "" : why);
 			if (k && !g_ab2.thr_offers && g_vb.haptic > 0)
-				in_haptic_event(somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER), 0.3f * g_vb.haptic, 0.03f, SOMVR_HAP_COMBAT);
+				haptic_play(sl_knife_hand(), SOMVR_HX_READY, 1, g_vb.haptic);
 		}
 		g_ab2.thr_offers = k, g_ab2.thr_said_c = key;
 	}
@@ -469,12 +469,12 @@ static void ab2_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 				logf_("ABIL2 t=%.3f the ignite put out (B again)", t);
 			} else if (g_ab2.ign_off && g_ab2.ign_atk) {
 				g_ab2.lit = 1, g_ab2.lit_t = t, g_ab2.ign_lit++;
-				in_haptic_event(sh, 0.45f, 0.05f, SOMVR_HAP_COMBAT), in_haptic_event(1 - sh, 0.25f, 0.03f, SOMVR_HAP_COMBAT);
+				haptic(sh, SOMVR_HX_TAKE), haptic(1 - sh, SOMVR_HX_TICK);
 				logf_("ABIL2 t=%.3f the ignite kindled: B while drawn (%.0f cm), the game offers '%s' (%s)", t,
 				      g_bow.s.draw_cm, g_ab2.ign_atk_name, g_ab2.ign_how);
 			} else {
 				g_ab2.ign_denied++;
-				in_haptic_event(sh, 0.2f, 0.08f, SOMVR_HAP_COMBAT);
+				haptic(sh, SOMVR_HX_NO);
 				logf_("ABIL2 t=%.3f B while drawn: the game does not offer the ignite now - nothing kindled", t);
 			}
 		} else if (edge && ab2_log_ok(t))
@@ -484,7 +484,7 @@ static void ab2_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 			g_ab2.tip[2] = g_bow.s.origin.z + g_bow.s.dir.z * 6;
 	}
 	/* ---- the quick throw: the dagger in its hand, an overhand throw ahead, the grip let go */
-	int dh = somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER);
+	int dh = sl_knife_hand();
 	int dag = g_ab2.thr && g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g) && g_inp.hands[dh].valid;
 	g_ab2.dhand_ok = dag;
 	if (dag)
@@ -561,7 +561,7 @@ static void ab2_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 	if (g_ab2.away_until > 0 && t >= g_ab2.away_until) {
 		g_ab2.away_until = 0, g_ab2.recalls++;
 		if (g_vb.haptic > 0)
-			in_haptic_event(dh, 0.55f * g_vb.haptic, 0.05f, SOMVR_HAP_COMBAT); /* the dagger back: a thunk */
+			haptic_play(dh, SOMVR_HX_THUMP, 0, g_vb.haptic); /* the dagger back: a thunk */
 		if (ab2_log_ok(t))
 			logf_("ABIL2 t=%.3f the dagger's recall: back to the hand (the slots' restore)", t);
 	}
@@ -574,7 +574,8 @@ static void ab2_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 		for (int h = 0; h < 2; h++) {
 			if (!g_inp.hands[h].valid || cl_holds(h) || (h == SOMVR_HAND_L && vb_grab_held()) ||
 			    (h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD) && bd_sword_in_hand()) ||
-			    (h == dh && g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g))) /* two fingers to the lips: an empty hand */
+			    (h == dh && g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g)) || hrb_holding(h)) /* two fingers to the lips:
+												       * an empty hand (build 33: an herb's fist eats) */
 				continue;
 			float hw[3] = { pw[h].x, pw[h].y, pw[h].z }, d = somvr_ab_mouth_dist(g_ab2.eye, g_ab2.fwd, hw);
 			if (d < dmin)
@@ -585,7 +586,7 @@ static void ab2_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 				g_ab2.mouth_h = at, g_ab2.mouth_t0 = t;
 			if (g_ab2.mouth_armed && t - g_ab2.mouth_t0 >= g_ab2.cfg.mouth_s && t - g_ab2.wh_t > 2.0) {
 				g_ab2.mouth_armed = 0, g_ab2.wh_t = t, g_ab2.wh_req = 1, g_ab2.wh_holds++;
-				in_haptic_event(at, 0.3f, 0.04f, SOMVR_HAP_COMBAT);
+				haptic(at, SOMVR_HX_CLICK);
 				logf_("ABIL2 t=%.3f whistle: the %s hand at the mouth (%.0f cm) for %.2f s", t, at ? "right" : "left", dmin,
 				      t - g_ab2.mouth_t0);
 			}
@@ -600,7 +601,7 @@ static void ab2_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 /* sl_frame: the dagger's hand must not hold it while the dagger flies (the slots put it back, then restore it) */
 static int ab2_dagger_away(int h)
 {
-	return g_ab2.away_until > 0 && h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_DAGGER);
+	return g_ab2.away_until > 0 && h == sl_knife_hand();
 }
 
 /* bo_shoot: the shot's attack - the ignite's record when kindled (the projectile takes its RangedWeaponOverride) */
@@ -671,7 +672,7 @@ static void ab2_probe(uintptr_t pcomb, uintptr_t pc, const float *root, double t
 	g_vb_pick_nowin = 1;
 	for (int i = 0; i < n; i++) {
 		char line[1600], a[96], s[96], sn[96];
-		int k0 = snprintf(line, sizeof line, "ABIL2 probe t=%.3f orc %#lx at %.0f cm (state '%s'):", t, (unsigned long)nr[i].c,
+		int k0 = snprintf(line, sizeof line, "ABIL2 probe t=%.3f orc %#llx at %.0f cm (state '%s'):", t, (unsigned long long)nr[i].c,
 				  nr[i].dist, vb_name(peek_ptr(nr[i].c + VB_C_STATE), sn, sizeof sn));
 		for (size_t j = 0; j < sizeof nodes / sizeof nodes[0] && k0 < (int)sizeof line - 1; j++) {
 			const char *why = "";

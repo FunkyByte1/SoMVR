@@ -565,6 +565,10 @@ int somvr_vh_watch_pose(const somvr_vh_model *m, const somvr_vh_watch_cfg *c, co
 /* a face on the wrist is seen whenever it turns toward the eye at all (a real watch): it comes and goes edge-on, where
  * it covers next to nothing (the old 66 deg rule popped a 10 cm face in at a third of its size) */
 void somvr_vh_face_cfg_default(somvr_vh_face_cfg *c) { c->face_on = 0.15f, c->face_off = 0.08f, c->hold_on = 2, c->hold_off = 3; }
+/* build 33 (re-xr-pipeline.md 146), SOMVR_XR_WATCH_LOOK=raise: the face shown only while the wrist is turned to read it -
+ * within ~57 deg of the eyes (cos 0.55) for 3 frames, gone past ~66 deg (cos 0.40) for 3: a raise-to-read watch that
+ * leaves the hand and the forearm clear the rest of the time */
+void somvr_vh_face_cfg_raise(somvr_vh_face_cfg *c) { c->face_on = 0.55f, c->face_off = 0.40f, c->hold_on = 3, c->hold_off = 3; }
 
 int somvr_vh_face_step(somvr_vh_face *s, const somvr_vh_face_cfg *c, const somvr_posef *face, const float eye[3]) {
     static const float ez[3] = {0, 0, 1};
@@ -615,6 +619,54 @@ static void ar_put(somvr_vh_vert *v, const float q[4], const float o[3], float x
     for (int i = 0; i < 3; i++) v->p[i] = o[i] + w[i];
     qrot(q, ln, v->n);
     v->a = 1;
+}
+
+/* build 33: the sword outline in the arrow's topology (somvr_vrhands.h) */
+#define OL_W 0.024f   /* the blade's half width (m) */
+#define OL_T 0.0035f  /* its half thickness */
+#define OL_TIP 0.09f  /* the point's length */
+#define OL_ROOT 0.035f /* the blade's root past the grip */
+void somvr_vh_outline(const somvr_posef *pose, float len_m, somvr_vh_vert *out) {
+    float q[4] = {pose->q[0], pose->q[1], pose->q[2], pose->q[3]}, o[3] = {pose->p[0], pose->p[1], pose->p[2]};
+    qnorm(q);
+    if (!(len_m >= 0.3f)) len_m = 0.3f;
+    if (len_m > 1.6f) len_m = 1.6f;
+    float ls = len_m - OL_TIP;
+    somvr_vh_vert *v = out;
+    for (int k = 0; k < 6; k++) { /* the blade: a flattened hexagonal prism from its root to the point's back */
+        float a0 = (float)k * 1.0471976f, a1 = (float)(k + 1) * 1.0471976f, am = 0.5f * (a0 + a1);
+        float c0 = cosf(a0) * OL_W, s0 = sinf(a0) * OL_T, c1 = cosf(a1) * OL_W, s1 = sinf(a1) * OL_T;
+        ar_put(v++, q, o, c0, s0, -OL_ROOT, cosf(am), sinf(am), 0);
+        ar_put(v++, q, o, c0, s0, -ls, cosf(am), sinf(am), 0);
+        ar_put(v++, q, o, c1, s1, -ls, cosf(am), sinf(am), 0);
+        ar_put(v++, q, o, c1, s1, -OL_ROOT, cosf(am), sinf(am), 0);
+    }
+    ar_put(v++, q, o, 0, 0, -OL_ROOT, 0, 0, 1); /* the blade's root: a cap */
+    for (int k = 0; k < 6; k++) {
+        float a = (float)k * 1.0471976f;
+        ar_put(v++, q, o, cosf(a) * OL_W, sinf(a) * OL_T, -OL_ROOT, 0, 0, 1);
+    }
+    float b[4][3] = {{OL_W, 0, -ls}, {0, OL_T, -ls}, {-OL_W, 0, -ls}, {0, -OL_T, -ls}}, tip[3] = {0, 0, -len_m};
+    for (int k = 0; k < 4; k++) { /* the point */
+        const float *p0 = b[k], *p1 = b[(k + 1) & 3];
+        float e1[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]}, e2[3] = {tip[0] - p0[0], tip[1] - p0[1], tip[2] - p0[2]};
+        float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+        float l = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        if (!(l > 1e-9f)) l = 1;
+        if (n[0] * (p0[0] + p1[0]) + n[1] * (p0[1] + p1[1]) < 0) l = -l;
+        ar_put(v++, q, o, p0[0], p0[1], p0[2], n[0] / l, n[1] / l, n[2] / l);
+        ar_put(v++, q, o, p1[0], p1[1], p1[2], n[0] / l, n[1] / l, n[2] / l);
+        ar_put(v++, q, o, tip[0], tip[1], tip[2], n[0] / l, n[1] / l, n[2] / l);
+    }
+    for (int k = 0; k < 4; k++) ar_put(v++, q, o, b[k][0], b[k][1], b[k][2], 0, 0, 1);
+    /* the cross-guard: two faces of a bar across the blade's flat; the grip: a strip back from it */
+    float gx = 0.095f, gz0 = -0.012f, gz1 = -OL_ROOT;
+    ar_put(v++, q, o, -gx, 0.008f, gz0, 0, 1, 0), ar_put(v++, q, o, gx, 0.008f, gz0, 0, 1, 0);
+    ar_put(v++, q, o, gx, 0.008f, gz1, 0, 1, 0), ar_put(v++, q, o, -gx, 0.008f, gz1, 0, 1, 0);
+    ar_put(v++, q, o, -gx, -0.008f, gz0, 0, -1, 0), ar_put(v++, q, o, gx, -0.008f, gz0, 0, -1, 0);
+    ar_put(v++, q, o, gx, -0.008f, gz1, 0, -1, 0), ar_put(v++, q, o, -gx, -0.008f, gz1, 0, -1, 0);
+    ar_put(v++, q, o, -0.012f, 0, 0.13f, 0, 1, 0), ar_put(v++, q, o, 0.012f, 0, 0.13f, 0, 1, 0);
+    ar_put(v++, q, o, 0.012f, 0, gz0, 0, 1, 0), ar_put(v++, q, o, -0.012f, 0, gz0, 0, 1, 0);
 }
 
 void somvr_vh_arrow(const somvr_posef *pose, float len_m, somvr_vh_vert *out) {
@@ -679,7 +731,7 @@ static uint16_t g_string_idx[SOMVR_VH_STRING_NI];
 const uint16_t *somvr_vh_string_indices(void) {
     if (g_string_idx[1] == 0) { /* per segment 6 flat sides of 4 vertices: two triangles each, then the same reversed */
         int n = 0;
-        for (int sg = 0; sg < 2; sg++)
+        for (int sg = 0; sg < 2 * SOMVR_VH_STRING_SUB; sg++)
             for (int k = 0; k < 6; k++) {
                 uint16_t b = (uint16_t)(24 * sg + 4 * k);
                 const uint16_t t[6] = {b, (uint16_t)(b + 1), (uint16_t)(b + 2), b, (uint16_t)(b + 2), (uint16_t)(b + 3)};
@@ -695,8 +747,18 @@ const uint16_t *somvr_vh_string_indices(void) {
 void somvr_vh_string(const float pts[3][3], float r_m, somvr_vh_vert *out) {
     if (!(r_m > 0.0005f)) r_m = 0.0005f;
     if (r_m > 0.02f) r_m = 0.02f;
-    for (int sg = 0; sg < 2; sg++) {
-        const float *a = pts[sg], *b = pts[sg + 1];
+    static const float cut[SOMVR_VH_STRING_SUB + 1] = {0, 0.55f, 0.78f, 0.92f, 1}; /* from a tip toward the middle */
+    for (int sg = 0; sg < 2 * SOMVR_VH_STRING_SUB; sg++) {
+        int half = sg / SOMVR_VH_STRING_SUB, pc = sg % SOMVR_VH_STRING_SUB;
+        const float *tip = pts[half ? 2 : 0], *mid = pts[1];
+        float ka = half ? 1 - cut[SOMVR_VH_STRING_SUB - pc] : cut[pc],
+              kb = half ? 1 - cut[SOMVR_VH_STRING_SUB - pc - 1] : cut[pc + 1];
+        /* (the lower half from its tip up to the middle, the upper from the middle up to its tip: pieces in order) */
+        float A[3], B[3];
+        for (int i = 0; i < 3; i++)
+            A[i] = half ? mid[i] + ka * (tip[i] - mid[i]) : tip[i] + ka * (mid[i] - tip[i]),
+            B[i] = half ? mid[i] + kb * (tip[i] - mid[i]) : tip[i] + kb * (mid[i] - tip[i]);
+        const float *a = A, *b = B;
         float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]};
         if (norm3(d) < 1e-6f) d[0] = 0, d[1] = 1, d[2] = 0;
         float h[3] = {fabsf(d[0]) < 0.9f ? 1.0f : 0.0f, fabsf(d[0]) < 0.9f ? 0.0f : 1.0f, 0}, u[3], w[3];
@@ -726,4 +788,16 @@ int somvr_vh_pinch(const somvr_vh_model *m, const somvr_vh_cfg *c, float out[3])
     somvr_vh_joint_g(m, (const float(*)[12])skin, SOMVR_VHJ_INDEX + 2, ix);
     for (int i = 0; i < 3; i++) out[i] = 0.5f * (th[i] + ix[i]);
     return 1;
+}
+
+void somvr_vh_wraith_look(somvr_vh_look *l, float w) {
+    if (!(w > 0)) return;
+    if (w > 1) w = 1;
+    static const float wb[3] = {0.42f, 0.66f, 1.0f};
+    for (int k = 0; k < 3; k++) l->base[k] += (wb[k] - l->base[k]) * w;
+    l->opacity *= 1 - 0.5f * w;
+    l->key *= 1 - 0.6f * w;
+    l->ambient += (0.7f - l->ambient) * w;
+    l->rim += (1.9f - l->rim) * w;
+    l->spec *= 1 - w;
 }

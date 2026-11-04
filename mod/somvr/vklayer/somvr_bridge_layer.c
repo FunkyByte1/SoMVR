@@ -9,6 +9,18 @@
  * locate thread (somvr_xrloc_layer.c), so no PE code ever calls a Linux function. */
 #include "../somvr_xrloc.h"
 #include <sys/uio.h>
+#ifdef _WIN32
+#ifndef _WINDOWS_ /* (the kernel32 two, without windows.h in the layer's one big file) */
+__declspec(dllimport) void *__stdcall GetModuleHandleA(const char *name);
+__declspec(dllimport) void *__stdcall GetProcAddress(void *module, const char *name);
+typedef void *HMODULE;
+#endif
+/* W1: the layer is a Windows DLL in the game's process: the proxy DLL's somvr_win_bridge(name) answers (no file) */
+static const void *(*br_win_fn(void))(const char *) {
+    HMODULE m = GetModuleHandleA("xinput9_1_0.dll");
+    return m ? (const void *(*)(const char *))(void *)GetProcAddress(m, "somvr_win_bridge") : NULL;
+}
+#endif
 
 static void xl_start(void); /* somvr_xrloc_layer.c: the locate thread (session running, a PE bridge) */
 static void xl_stop(void);
@@ -74,6 +86,11 @@ static void br_read_locked(void) {
 }
 
 static int br_pe(void) {
+#ifdef _WIN32 /* W1: the bridge is the proxy's export */
+    const void *(*f)(const char *) = br_win_fn();
+    if (!BR.logged++) lg("bridge: %s", f ? "W1: the proxy DLL's somvr_win_bridge" : "W1: no xinput9_1_0.dll with somvr_win_bridge");
+    return f && somvr_xrloc_ok((const somvr_xrloc *)f(SOMVR_XRLOC_SYMBOL));
+#endif
     pthread_mutex_lock(&BR.mx);
     if (BR.state <= 0) br_read_locked();
     int ok = BR.state == 1;
@@ -86,6 +103,10 @@ static int br_pe(void) {
 }
 
 static void *br_get(const char *name) {
+#ifdef _WIN32
+    const void *(*f)(const char *) = br_win_fn();
+    return f ? (void *)f(name) : NULL;
+#endif
     void *r = NULL;
     pthread_mutex_lock(&BR.mx);
     if (BR.state == 1)
@@ -102,12 +123,21 @@ static int64_t xl_idle_layout(uint64_t img) {
     return x ? somvr_xrloc_layout(x, img) : -1;
 }
 
+
 /* the game-side object `name`: the PE bridge's, else the LD_PRELOAD library's */
 static void *somvr_obj(const char *name) {
+#ifdef _WIN32
+    const void *(*f)(const char *) = br_win_fn();
+    if (!f) return NULL;
+    somvr_xrloc *x = (somvr_xrloc *)f(SOMVR_XRLOC_SYMBOL);
+    if (somvr_xrloc_ok(x)) atomic_store_explicit(&g_xl_img, x, memory_order_release);
+    return (void *)f(name);
+#else
     if (getenv(SOMVR_BRIDGE_ENV) && br_pe()) {
         somvr_xrloc *x = (somvr_xrloc *)br_get(SOMVR_XRLOC_SYMBOL);
         if (somvr_xrloc_ok(x)) atomic_store_explicit(&g_xl_img, x, memory_order_release);
         return br_get(name);
     }
     return dlsym(RTLD_DEFAULT, name);
+#endif
 }

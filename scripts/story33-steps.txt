@@ -1,0 +1,373 @@
+# story33-steps.txt - som-b33-story6 (build 33, docs/re-xr-pipeline.md 147): how the story was driven headless, on the
+# WINDOWS build (headless_vr.sh --win). The loops were in /tmp/b33s6 (paths as run). t2.sh = story30-steps.txt's with
+# /tmp/b30s5 -> /tmp/b33s6; mission3.sh = story26-steps.txt's (/tmp/b26s -> /tmp/b33s6, grep -a). Boots (logs/boot-check-),
+# each SAVE_FROM=logs/boot-check-20261030-234922/saves/GameData.sav (131.8's furthest save, a copy into the prefix):
+#   20261103-154902 boot.sh 1, graug.sh - stopped at 33 s (the coordinator's disk-full stop)
+#   20261103-160558 boot.sh 2, graug.sh: start, follow, bleed (B140), the mount missed (the grip 2 s after the 1.9 s offer);
+#                   cont.sh by hand (the grip AT the offer: mounted), lure3.sh's early Step Three, cont2.sh: thrown off at
+#                   Torvin, "Mount a Caragor"; its last line's quit ended the boot
+#   20261103-164538 boot.sh 3, graug2.sh: start, follow, bleed (B150), mounted at the 2nd offer, the lure round Torvin ->
+#                   "Step three! Shoot it in the head!"; the saddle's bow never out (the grip word); shoot.sh, probe.sh by
+#                   hand: 26 head hits, light, no stun; `bow fire 125` = the same light shot
+#   20261103-184834 boot.sh 4 (85 min at the gate), graug3.sh then graug4.sh (SKIP_START SKIP_BLEED): no mount in 30 min;
+#                   killed at 19:23 by the 2-hour background-job limit
+#   20261103-210625 boot.sh 5, stunprobe.sh (the practice graug A/B): stopped at 7 s by the user's session start
+#   20261103-214036 boot6.sh 6 (the b35 slots), combo.sh = stunprobe2.sh + graug5.sh, then graug6.sh (SKIP_START SKIP_BLEED)
+#                   and probe2.sh by hand (NOGO=1 for the heavy record): the stun proven on the mission's graug
+#   (204001, 210004: a boot.sh whose gate was killed went on without the lock - headless_win.sh refused; fixed below)
+# Harness traps: handoff/HANDOFF-story.md "build 33".
+
+
+### lib.sh
+    # lib.sh - sourced by the som-b33-story6 loops (story26-steps.txt's lib.sh, /tmp/b33s6): TAG, R set by the caller
+    Q=/tmp/b33s6/q.sh
+    userin() { [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
+      grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0; return 1; }
+    sync() { local c0 k; c0=$(grep -ac '^STORY status:' $R/somvr.log); $Q $TAG "$@" "word story"
+      for k in $(seq 1 ${SYNC_S:-180}); do sleep 1; userin && { echo "USER IN VR: stop"; echo quit >> $R/cmd; exit 3; }
+        [ "$(grep -ac '^STORY status:' $R/somvr.log)" -gt "$c0" ] && return 0; done; echo "no sync"; return 1; }
+    markers() { local l0; l0=$(wc -l < $R/somvr.log); sync "word practice status nav" >/dev/null || return 1
+      tail -n +$l0 $R/somvr.log | grep -aE "^PRACTICE nav [0-9]+ '$1'" | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\), [0-9.]+ m' | sed -E 's/at \(//; s/\),//; s/ m$//' | sort -k4 -n; }
+    state() { grep -aE '^SESSION ui ' $R/somvr.log | tail -1 | cut -c12-80; }
+    wd() { userin && { echo "USER IN VR: stop"; echo quit >> $R/cmd; exit 3; }; printf '%s' "$1" > $R/somvr.trigger; sleep ${2:-0.45}; }
+    xt() { local x; { echo "# s6 $1"; shift; for x in "$@"; do echo "$x"; done; } > $R/xrtest.tmp && mv $R/xrtest.tmp $R/xrtest.txt; sleep 0.3; }
+    dump() { xt dump "dump"; sleep 1.2; echo "DUMP $1 $(grep -ao 'dump layers frame [0-9]*' $R/xr-layer.log 2>/dev/null | tail -1 | grep -o '[0-9]*$')" | tee -a /tmp/b33s6/dumps-$TAG.txt; }
+    win() { local a b; a=$(grep -an 'window 0 -> 1' $R/somvr.log | tail -1 | cut -d: -f1); b=$(grep -an 'window 1 -> 0' $R/somvr.log | tail -1 | cut -d: -f1); [ "${a:-0}" -gt "${b:-0}" ]; }
+    tpos() { local l0; l0=$(wc -l < $R/somvr.log); wd "practice status" 1.2; tail -n +$l0 $R/somvr.log | grep -aoE 'Talion known at \(-?[0-9.]+ -?[0-9.]+ -?[0-9.]+\)' | tail -1 | grep -oE -- '-?[0-9.]+' | awk 'NR==1{x=$1} NR==2{y=$1} NR==3{printf "%d %d %d\n",x,y,$1}'; }
+    news() { tail -n +$1 $R/somvr.log | grep -aE "^STORY t=.*subtitle ch=[01] '|^HINTS tutorial #.*show|^USE t=|Mission|SUCCESS|^OBJECTIVE t=.*marker [0-9]+ m=.*shown by the game|^RIDE t=.*(offers|mounted|seated on|dismounted)|^WARN|^BOW (headkill|hit check)|QuestFailed|first sight" | cut -c1-170 | awk '!s[substr($0,index($0," ")+18)]++' | head -${2:-8}; }
+
+### gate.sh
+    #!/bin/bash
+    # gate.sh - som-b33-story6: wait for the boot lock (fair turns: 3 min after our last release), then the VR gate; exit 0 = ours
+    ME=som-b33-story6
+    while :; do
+      last=$(stat -c %Y /tmp/b33s6/released 2>/dev/null || echo 0); while [ $(( $(date +%s) - last )) -lt 180 ]; do sleep 5; done
+      until mkdir /tmp/somvr-boot.lock 2>/dev/null; do sleep 1; done
+      echo "$ME $(date +%T)" > /tmp/somvr-boot.lock/owner
+      ok=1
+      [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && { echo "gate: user in VR"; ok=0; }
+      grep -q '"user": false' /run/user/$(id -u)/vr-session/status.json 2>/dev/null || { echo "gate: status.json user not false"; ok=0; }
+      for i in $(seq 1 240); do pgrep -x monado-service >/dev/null || break; sleep 0.5; done
+      pgrep -x monado-service >/dev/null && { echo "gate: monado-service running"; ok=0; }
+      pgrep -f '[H]and of Fate 2\.' >/dev/null && { echo "gate: HoF2 running"; ok=0; }
+      journalctl -k -b --no-pager 2>/dev/null | grep -qiE 'amdgpu.*(reset|VRAM is lost)' && { echo "gate: amdgpu reset"; grep -q $ME /tmp/somvr-boot.lock/owner && rm -rf /tmp/somvr-boot.lock; exit 4; }
+      [ $ok = 1 ] && { echo "gate: ok $(date +%T)"; exit 0; }
+      grep -q $ME /tmp/somvr-boot.lock/owner && rm -rf /tmp/somvr-boot.lock; sleep 20
+    done
+
+### boot.sh
+    #!/bin/bash
+    # boot.sh N - som-b33-story6: the gate + the lock, then the WINDOWS boot (headless_vr.sh --win) from a copy of $SAVE_FROM,
+    # the director ($DIRECTOR, by environment) beside it (run.sh); after the boot the prefix's save copied to RUN/saves/; release
+    N=$1; WT=/home/bara/.t3/worktrees/flat2vr/t3-10c686d6/ShadowOfMordor; ME=som-b33-story6
+    PS="/home/bara/Projects/flat2vr/ShadowOfMordor/logs/winport/prefix/pfx/drive_c/users/steamuser/Documents/WB Games/Shadow of Mordor/Saves/GameData.sav"
+    if [ "${GATE_DONE:-0}" = 1 ]; then grep -q $ME /tmp/somvr-boot.lock/owner || { echo "STOP: the lock is not ours"; exit 1; }; else /tmp/b33s6/gate.sh; rc=$?; [ $rc = 0 ] || { echo "no gate (rc $rc): stop - never boot without the lock"; exit $rc; }; fi
+    cd $WT
+    ( sleep 8; /tmp/b33s6/run.sh q$N "$DIRECTOR" > /tmp/b33s6/dir-q$N.log 2>&1 ) &
+    HEADLESS_SAVE_FROM=${SAVE_FROM:?} HEADLESS_HOLD=${HOLD:-2400} SOMVR_EXTRA="$(grep -E '^SOMVR_[A-Z0-9_]+=' scripts/headset-build26.env | tr '\n' ' ') SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0 SOMVR_HANDS_TEST=1 SOMVR_XR_TEST=@RUN@/xrtest.txt SOMVR_EYE_SIZE=2015x2217 SOMVR_BOW_HITLOG=1 ${BOOT_EXTRA:-}" setsid -w scripts/headless_vr.sh --win $WT/mod/somvr > /tmp/b33s6/boot$N.log 2>&1
+    echo "boot exit $?"
+    RUN=$(grep -o '^windows: [^ ]*' /tmp/b33s6/boot$N.log | head -1 | cut -c10-)
+    [ -n "$RUN" ] && [ -f "$PS" ] && { mkdir -p "$RUN/saves"; cp --no-preserve=mode "$PS" "$RUN/saves/GameData.sav"; echo "save kept: $RUN/saves/GameData.sav $(sha256sum "$RUN/saves/GameData.sav" | cut -c1-16)"; }
+    grep -q $ME /tmp/somvr-boot.lock/owner 2>/dev/null && rm -rf /tmp/somvr-boot.lock; touch /tmp/b33s6/released; echo "released $(date +%T)"
+    wait
+
+### run.sh
+    #!/bin/bash
+    # run.sh TAG DIRECTOR - after the boot: the driver (story22-drive.sh ctl, queue /tmp/b33s6/ctl-TAG) + the director
+    TAG=$1; DIR=$2; shift 2; WT=/home/bara/.t3/worktrees/flat2vr/t3-10c686d6/ShadowOfMordor
+    rm -rf /tmp/b33s6/ctl-$TAG; mkdir -p /tmp/b33s6/ctl-$TAG
+    cd $WT/scripts && ST_PLAN=ctl ST_CTL_DIR=/tmp/b33s6/ctl-$TAG ./story22-drive.sh > /tmp/b33s6/drv-$TAG.log 2>&1 &
+    for i in $(seq 1 200); do grep -q '^run ' /tmp/b33s6/drv-$TAG.log && break; sleep 3; done
+    R=$(grep '^run ' /tmp/b33s6/drv-$TAG.log | head -1 | cut -c5-); [ -n "$R" ] || { echo "no run"; exit 1; }
+    echo "$R" > /tmp/b33s6/R-$TAG; echo "R=$R"
+    for i in $(seq 1 300); do grep -q 'waiting for' /tmp/b33s6/drv-$TAG.log && break; grep -q 'STOP' /tmp/b33s6/drv-$TAG.log && exit 1; sleep 2; done
+    ( while sleep 240; do [ -d /proc/$$ ] || exit 0; /tmp/b33s6/q.sh $TAG "wait 1"; done ) & KA=$!
+    "$DIR" $TAG "$@"; kill $KA 2>/dev/null
+
+### graug4.sh
+    #!/bin/bash
+    # graug2.sh TAG - som-b33-story6 boot 3 (Windows): Torvin's Graug mission start to end. The start, the follow (t2.sh), the
+    # bleed (the blade's low thrust crouched behind the eating graug: SOMVR_GRAUG_BLEED), the caragor (the left hand out, the
+    # grip closed AT the game's ~1.9 s offer beside a stunned beast - cont.sh's way), "Lure the Graug to Torvin" (lead it with
+    # the graug 0-25 m behind, then round Torvin at ~15 m while it comes, never standing), Step Three (the VR bow at the graug's
+    # head from the saddle, `bow aimhead` = the test's aim), thrown off = mount again; the end's windows; next.sh.
+    TAG=$1; R=$(cat /tmp/b33s6/R-$TAG); . /tmp/b33s6/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b33s6/pid-g4-$TAG
+    cnt() { grep -acE "$1" "$L"; }
+    d2() { awk -v a=$1 -v b=$2 -v x=$3 -v z=$4 'BEGIN{print int(sqrt((a-x)^2+(b-z)^2))}'; }
+    PRE_L="hands test R 20 -45 -18 -30 0 0"; THRUST_L="hands swing R 10 -85 50 -30 0 0 180"
+    draw_sword() { wd "hands test R 10 -10 -15 0 0 0" 0.7; wd "hands squeeze R 1" 0.6; wd "hands test R 30 -25 40 0 -90 0" 0.6; wd "hands squeeze R 0" 0.5; }
+    touch /tmp/b33s6/hold-$TAG; wd "story invisible off" 0.4
+    if [ "${SKIP_START:-0}" = 0 ]; then echo "PHASE start $(date +%T)"
+      SYNC_S=200 sync "go 23266 3500 -19020" "wait 3" "pics s6-marker" "tap R b 0.4" "wait 3" "pics s6-card" "tap R a 0.4" "wait 4" >/dev/null
+      echo "PHASE follow $(date +%T)"; STOP_RE="show 'GP_Torvin02_Tut_TrollBleed'" /tmp/b33s6/t2.sh $TAG ${MIN1:-12}
+    fi
+    # ---------------- the bleed ----------------
+    wd "story invisible on" 0.5; draw_sword
+    graug() { local l0 TM mx my mz; l0=$(wc -l < $L); wd "objective status" 1.2
+      TM=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'Troll'" | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      read mx my mz <<< "${TM:-32281 2209 -27717}"; l0=$(wc -l < $L); wd "verbs orcs $mx $mz 3500" 1.6; wd "verbs orcs 32281 -27717 3500" 1.6
+      tail -n +$l0 $L | grep -aE "^VERBS orcs t=.*attack '(Trl|AI_Trl|AI_Troll|Troll)" | sort -t"'" -k2 | grep -a Eating | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.* attack .(.*)./\1 \2 \3 \4 \5 \6/'; }
+    round() { local nm=$1 D=$2 k G gc gx gy gz gf ga tx tz B0
+      for k in $(seq 1 40); do G=$(graug); echo "$G" | grep -q 'Eating' && break; sleep 4; done
+      [ -n "$G" ] || { echo "$(date +%T) $nm: no graug"; return 1; }; read gc gx gy gz gf ga <<< "$G"
+      read tx tz < <(python3 -c "import math;f=math.radians($gf);print(round($gx-$D*math.sin(f)),round($gz-$D*math.cos(f)))")
+      B0=$(wc -l < $L); wd "practice go $tx $((gy - 150)) $tz" 3.0; wd "ride face graug" 2.5; wd "ride face off" 0.3
+      wd "crouch hold 9000" 1.0; draw_sword; wd "$PRE_L" 0.8; dump s6-$nm-ready; sleep 0.5
+      wd "$THRUST_L" 1.0; dump s6-$nm-in; sleep 2.5; wd "$PRE_L" 0.6; sleep 2; dump s6-$nm-after
+      echo "$(date +%T) $nm: graug $gc ($ga) at $gx $gz facing $gf, Talion $D cm behind: $(tail -n +$B0 $L | grep -aE 'VERBS t=.*bleed' | head -1 | cut -c1-200)"
+      tail -n +$B0 $L | grep -aqE "Talion attack 'PC_Hamstring"; }
+    [ "${SKIP_BLEED:-0}" = 1 ] || { echo "PHASE bleed $(date +%T)"; HS=1
+    for D in 140 130 150 135 125; do round B$D $D && { HS=0; break; }; sleep 8; done; echo "bleed: hamstring $([ $HS = 0 ] && echo yes || echo no) $(date +%T)"
+    }; wd "crouch stand" 0.3; wd "story invisible off" 0.4
+    # ---------------- the mount: the hand out, the grip closed at the offer ----------------
+    mount() { local T B0 B1 K kd C P cx cy cz lastgo=0 got=0
+      wd "ride steer off" 0.2; xt off; draw_sword
+      wd "hands test R 30 -10 45 0 -35 0" 0.4; wd "fight guard learn" 0.4; wd "ride guard on" 0.3; wd "ride face on" 0.3
+      wd "hands test L -25 -35 30 0 0 0" 0.5; wd "hands squeeze L 0" 0.5
+      T=$((SECONDS + ${1:-8} * 60)); B0=$(stat -c %s $L)
+      while [ $SECONDS -lt $T ]; do
+        if tail -c +$B0 $L | grep -aq 'the game offers the mount'; then
+          printf '%s' "hands squeeze L 1" > $R/somvr.trigger; B1=$(stat -c %s $L); echo "$(date +%T) the offer: the grip closed"
+          for i in $(seq 1 40); do tail -c +$B1 $L | grep -aqE "^RIDE t=.* mounted:" && break; sleep 0.1; done
+          tail -c +$B1 $L | grep -aqE "^RIDE t=.* mounted:" && { got=1; break; }
+          tail -c +$B1 $L | grep -aqE "^RIDE t=.* the mount:" && echo "$(date +%T) the press taken, no mount (Talion's recoil?): again at the next offer"
+          sleep 1; wd "hands squeeze L 0" 0.4; B0=$(stat -c %s $L); continue; fi
+        win && { sleep 1.5; dump m-w; xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2; xt off; B0=$(stat -c %s $L); }
+        if state | grep -q 'ctx=struggle'; then echo "$(date +%T) a struggle: hard thrusts"
+          for k in $(seq 1 10); do wd "hands test R 20 -27 -18 12 0 0" 0.25; wd "hands swing R 5 -11 54 12 0 0 150" 0.35; state | grep -q 'ctx=struggle' || break; done
+          wd "hands test R 30 -10 45 0 -35 0" 0.3; fi
+        K=$(tail -c 60000 $L | grep -aE "^BEASTS t=.*caragor '[A-Za-z_]+' Combat=0x[0-9a-f]+ attack 'AI_Warg_Knockdown_Idle" | tail -1)
+        if [ -n "$K" ] && [ $((SECONDS - lastgo)) -gt 6 ]; then kd=$(echo "$K" | grep -oE 'at [0-9.]+ m' | grep -oE '[0-9.]+'); C=$(echo "$K" | grep -oE 'Combat=0x[0-9a-f]+' | cut -c8-)
+          if awk -v d=${kd:-9} 'BEGIN{exit !(d > 2.2)}'; then read px py pz <<< "$(tpos)"; l1=$(wc -l < $L); wd "verbs orcs $px $pz 4000" 1.0
+            P=$(tail -n +$l1 $L | grep -a "orc $C at" | tail -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.*/\1 \2 \3/')
+            [ -n "$P" ] && { read cx cy cz <<< "$P"; echo "$(date +%T) the stunned $C ${kd} m off: beside it"; B0=$(stat -c %s $L); wd "practice go $(( cx + 130 )) $(( cy + 60 )) $cz" 0.3; lastgo=$SECONDS; }
+          fi; fi
+        sleep 0.1
+      done
+      wd "ride face off" 0.2; wd "ride guard off" 0.2
+      for i in $(seq 1 40); do tail -c +${B1:-1} $L | grep -aq "^RIDE t=.* seated on" && break; sleep 0.25; done; sleep 1.5
+      wd "hands squeeze L 0" 0.3; wd "hands test L off" 0.3; wd "hands test R off" 0.3; xt h "head 0 0 0 yaw 0 pitch -10 s 0.3"; echo "mounted $got $(date +%T)"; [ $got = 1 ]; }
+    echo "PHASE mount $(date +%T)"; mount 9; dump s6-seated
+    # ---------------- the lure, round Torvin, the bow ----------------
+    BOW_SLOT="hand L head -12 -10 -15 90 0 0"; BOW_STRAIGHT="hand L head -8 -15 55 90 0 0"
+    AT_STRING="hand R head -5 -13 30 90 0 0"; DRAWN="hand R head 3 -10 -3 90 0 0"; R_REST="hand R head 22 -40 15 0 0 0"
+    xl() { userin && { echo "USER IN VR"; echo quit >> $R/cmd; exit 3; }; { echo "# $(date +%s%N)"; echo "head 0 0 0 yaw ${HY:-0} pitch ${HP:-0}"; for l in "$@"; do echo "$l"; done; } > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"; sleep "${TS:-0.8}"; }
+    bow_out() { wd "hands squeeze L -1" 0.3; wd "hands squeeze R -1" 0.3; wd "hands test off" 0.4; xl "$BOW_SLOT" "$R_REST"; sleep 0.3; xl "$BOW_SLOT" "$R_REST" "btn L squeeze 1"; sleep 0.8; xl "$BOW_STRAIGHT" "$R_REST" "btn L squeeze 1"; sleep 1; }
+    bow_ok() { grep -aE '^BOW t=.* (enter |exit: )' "$L" | tail -1 | grep -q ' enter '; }
+    bow_draw() { bow_ok || { xl "$BOW_SLOT" "$R_REST" "btn L squeeze 0"; sleep 0.6; bow_out; }
+      xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1"; sleep 0.4; xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1" "btn R trigger 1"; sleep 0.5
+      if [ "${QUICK:-0}" = 1 ]; then TS=0.3 xl "$BOW_STRAIGHT" "$DRAWN s 0.2" "btn L squeeze 1" "btn R trigger 1"; else xl "$BOW_STRAIGHT" "$DRAWN s 0.8" "btn L squeeze 1" "btn R trigger 1"; sleep 1.3; fi; }
+    bow_loose() { TS=0.1 xl "$BOW_STRAIGHT" "$DRAWN" "btn L squeeze 1" "btn R trigger 0"; }
+    seated() { grep -aE "^RIDE t=.*(seated on|dismounted)" $L | tail -1 | grep -q 'seated on'; }
+    GC=""; TV="22100 2350 -26650"; LB=$(wc -l < $L); MODE=lead; ANG=0; SHOTS=0; STEP3=0; AB=0; STUNS0=$(cnt "^BOW graugstun t="); T=$((SECONDS + ${MIN_LURE:-16} * 60)); n=0; THROWN=0
+    echo "PHASE lure $(date +%T)"
+    while [ $SECONDS -lt $T ]; do n=$((n + 1)); l0=$(wc -l < $L)
+      if win || state | grep -qE 'paused=1|video=1'; then sleep 2; dump lu-w$n; printf 'shot st-lu-w%s\n' $n >> $R/cmd; sleep 1.5; xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2.5
+        if win || state | grep -q 'paused=1'; then xt b1 "btn R b 1"; sleep 0.3; xt b0 "btn R b 0"; sleep 2.5; fi; news $l0 6; continue; fi
+      tail -n +$LB $L | grep -aqE "SUCCESS|Mission Complete" && { echo "$(date +%T) success"; break; }
+      if ! seated && [ "$MODE" != foot ] && [ "$MODE" != after ]; then
+        if [ "$MODE" = round ] || [ "$STEP3" = 1 ]; then echo "$(date +%T) #$n on foot at Torvin: the bow from the ground"; MODE=foot
+        else THROWN=$((THROWN + 1)); echo "$(date +%T) #$n off the beast ($THROWN): mount again"; xl; [ $THROWN -gt 3 ] && break; mount 6 || continue; MODE=lead; fi; fi
+      tail -n +$LB $L | grep -aqE "TrollStun|Shoot it in the head" && [ "$STEP3" = 0 ] && { STEP3=1; echo "$(date +%T) #$n Step Three said"; }
+      wd "objective status" 1.0; read px py pz <<< "$(tpos)"
+      OB=$(tail -n +$l0 $L | grep -aE "^OBJECTIVE status marker .*'Objective' " | tail -1 | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | tr -d '()' | cut -c4-)
+      [ -n "$OB" ] && TV=$OB; read ox oy oz <<< "$TV"
+      GC=$(grep -aE "^BEASTS t=.*graug '[A-Za-z_]+' Combat=0x[0-9a-f]+ .*\(health [0-9]+\)" $L | awk -F'health ' '{h=$2+0; if (h < 1700) print}' | tail -1 | grep -oE 'Combat=0x[0-9a-f]+' | cut -c8-)
+      l1=$(wc -l < $L); wd "verbs orcs ${px:-0} ${pz:-0} 5000" 1.0
+      G=$(tail -n +$l1 $L | grep -a "orc ${GC:-none} at" | head -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.* ([0-9]+) cm from Talion.*attack .(.*)./\1 \2 \3 \4 \5/')
+      gx=; gd=99999; ga=-; [ -n "$G" ] && read gx gy gz gd ga <<< "$G"
+      od=$(d2 $ox $oz ${px:-0} ${pz:-0}); gt=99999; [ -n "$gx" ] && gt=$(d2 $ox $oz $gx $gz)
+      case $MODE in
+        lead) if [ "$od" -lt 2000 ]; then MODE=round; echo "$(date +%T) #$n at Torvin ($od cm), the graug $gd cm behind ($gt cm from him): round him"
+              elif [ -n "$gx" ] && [ "$gd" -gt 2500 ]; then wd "ride steer $gx $gz" 0.8; MODE=seek
+              else wd "ride steer $ox $oz" 0.8; fi ;;
+        seek) if [ -z "$gx" ] || [ "$gd" -lt 1200 ]; then MODE=lead; wd "ride steer $ox $oz" 0.8; else wd "ride steer $gx $gz" 0.8; fi ;;
+        foot) if [ -n "$gx" ] && [ "$gd" -lt 4500 ]; then
+                [ $((SHOTS % 6)) = 0 ] && wd "bow arrows 8" 0.3
+                if [ "$STEP3" = 1 ] && [ "$AB" = 0 ]; then AB=1; QUICK=1; echo "$(date +%T) A: quick shots (the draw held under 0.75 s)"; fi
+                if [ "$AB" = 1 ] && [ "$(tail -n +$LB $L | grep -ac "Troll_Head', the attack 'PC_Ranged_Normal_Hit_Light_HeadTroll'")" -ge 2 ]; then AB=2; QUICK=0; echo "$(date +%T) B: charged shots (the draw held full ~1.5 s)"; fi
+                bow_draw; n1=$(wc -l < $L); wd "bow aimhead $gx $gy $gz" 0.2; bow_loose; SHOTS=$((SHOTS + 1)); sleep 2.5
+                echo "$(date +%T) shot $SHOTS (foot) at the graug ($gd cm; $ga): $(tail -n +$n1 $L | grep -aE '^BOW (hit t=|graugstun t=)' | grep -oE "the attack '[^']+'|record '[^']+'|graugstun" | tr '\n' ' ')"
+                [ $((SHOTS % 2)) = 1 ] && { dump lu-fshot$SHOTS; printf 'shot st-lu-fshot%s\n' $SHOTS >> $R/cmd; }
+              else sleep 2; fi ;;
+        after) if [ -n "$gx" ]; then wd "practice go $((gx + 180)) $((gy + 50)) $gz" 1.5; wd "ride face graug" 1.5; wd "ride face off" 0.3
+                draw_sword; wd "hands test R 30 -10 45 0 -35 0" 0.4; wd "hands swing R 10 -40 70 0 0 0 200" 1.0; wd "hands test R 30 -10 45 0 -35 0" 0.6
+                echo "$(date +%T) after the stun: the blade at the graug ($gd cm, $ga): $(tail -n +$l0 $L | grep -aE 'prompt up|Talion attack|VERBS t=.*(bleed|offers)' | cut -c1-120 | head -3 | tr '\n' '|')"
+              else sleep 2; fi ;;
+        round) cx=$(python3 -c "import math;print(round($ox+1500*math.sin(math.radians($ANG))), round($oz+1500*math.cos(math.radians($ANG))))")
+              read cx cz <<< "$cx"; [ "$(d2 $cx $cz ${px:-0} ${pz:-0})" -lt 700 ] && ANG=$(( (ANG + 60) % 360 ))
+              wd "ride steer $cx $cz" 0.5
+              if [ -n "$gx" ] && [ "$gt" -lt 2500 ] && [ "$gd" -lt 4000 ]; then
+                [ $((SHOTS % 6)) = 0 ] && wd "bow arrows 8" 0.3
+                if [ "$STEP3" = 1 ] && [ "$AB" = 0 ]; then AB=1; QUICK=1; echo "$(date +%T) A: quick shots (the draw held under 0.75 s)"; fi
+                if [ "$AB" = 1 ] && [ "$(tail -n +$LB $L | grep -ac "Troll_Head', the attack 'PC_Ranged_Normal_Hit_Light_HeadTroll'")" -ge 2 ]; then AB=2; QUICK=0; echo "$(date +%T) B: charged shots (the draw held full ~1.5 s)"; fi
+                bow_draw; n1=$(wc -l < $L); wd "bow aimhead $gx $gy $gz" 0.2; bow_loose; SHOTS=$((SHOTS + 1)); sleep 2.5
+                echo "$(date +%T) shot $SHOTS at the graug ($gd cm; $gt from Torvin; $ga): $(tail -n +$n1 $L | grep -aE '^BOW (hit t=|headkill|t=.*(test: the shot|dropped))' | sed -E 's/.*(the hit node record [^,]*|the attack [^ ]*|turned [0-9.]+ deg|dropped)/\1/' | cut -c1-90 | head -3 | tr '\n' '|')"
+                [ $((SHOTS % 3)) = 1 ] && { dump lu-shot$SHOTS; printf 'shot st-lu-shot%s\n' $SHOTS >> $R/cmd; }
+              fi ;;
+      esac
+      if [ "$(cnt '^BOW graugstun t=')" -gt "$STUNS0" ] && [ "$MODE" != after ]; then STUNS0=$(cnt '^BOW graugstun t='); echo "$(date +%T) #$n a stun hit: the graug $(grep -aE "^BEASTS t=.*graug" $L | tail -2 | grep -oE "attack '[^']*'" | tr '\n' ' ')"; dump lu-stun$n; printf 'shot st-lu-stun%s\n' $n >> $R/cmd
+        sleep 2; tail -n +$LB $L | grep -aE "^BEASTS t=.*graug.*attack '[^']*Stun|^STORY t=.*subtitle ch=1|^HINTS|^OBJECTIVE t=.*shown" | grep -avE "Over here|Look here|Hey|beard|morsel|so close|filthy|Spiders|ugly|Come and get" | tail -4 | cut -c1-160; fi
+      [ $((n % 4)) = 1 ] && echo "$(date +%T) #$n $MODE Talion ${px:-?} ${pz:-?} | graug ${GC:-?} ${gx:-?} ${gz:-?} ${gd} cm ($ga) | Torvin $ox $oz ($od cm; the graug $gt cm from him)"
+      [ $((n % 15)) = 0 ] && { dump lu-$n; printf 'shot st-lu-n%s\n' $n >> $R/cmd; }
+      news $l0 6 | grep -avE "Over here|Look here|Hey|beard|morsel|so close|filthy|Spiders|ugly|Come and get"
+    done
+    wd "ride steer off" 0.3; xl; echo "LURE END $(date +%T) shots $SHOTS"
+    echo "PHASE end $(date +%T)"; LE=$(wc -l < $L)
+    for k in $(seq 1 30); do
+      if win || state | grep -qE 'paused=1|video=1'; then echo "$(date +%T) end #$k: $(state)"; sleep 2; dump s6-end$k; printf 'shot st-s6-end%s\n' $k >> $R/cmd; sleep 1.5
+        xt a1 "btn R a 1"; sleep 0.3; xt a0 "btn R a 0"; sleep 2.5
+        if win || state | grep -q 'paused=1'; then printf 'shot st-s6-end%s-b\n' $k >> $R/cmd; sleep 1.5; xt b1 "btn R b 1"; sleep 0.3; xt b0 "btn R b 0"; sleep 2.5; fi
+      else sleep 3; fi
+      news $LE 6; LE=$(wc -l < $L)
+      grep -aqE "Mission Complete|SUCCESS" $L && [ $k -gt 4 ] && ! win && break
+    done
+    SYNC_S=60 sync "status" "word practice status nav" >/dev/null
+    echo "MARKERS after:"; markers '(golden[A-Z]|powerStruggle|confrontation[A-Za-z]*)' | head -8
+    grep -aqE "Mission Complete|SUCCESS" $L && [ "${NEXT:-1}" = 1 ] && /tmp/b33s6/next.sh $TAG
+    rm -f /tmp/b33s6/hold-$TAG; echo "DIRECTOR END $(date +%T)"; echo quit >> $R/cmd
+
+### probe.sh
+    #!/bin/bash
+    # probe.sh TAG DIST ANGLE N - som-b33-story6: Talion DIST cm from the graug on the bearing ANGLE (deg, 0 = away from Torvin),
+    # then N bow shots at its head (`bow aimhead` = the test's aim), each shot's hit attack printed
+    TAG=$1; D=${2:-2000}; A=${3:-0}; N=${4:-4}; R=$(cat /tmp/b33s6/R-$TAG); . /tmp/b33s6/lib.sh; L=$R/somvr.log
+    BOW_SLOT="hand L head -12 -10 -15 90 0 0"; BOW_STRAIGHT="hand L head -8 -15 55 90 0 0"
+    AT_STRING="hand R head -5 -13 30 90 0 0"; DRAWN="hand R head 3 -10 -3 90 0 0"; R_REST="hand R head 22 -40 15 0 0 0"
+    xl() { { echo "# $(date +%s%N)"; echo "head 0 0 0 yaw 0 pitch 0"; for l in "$@"; do echo "$l"; done; } > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"; sleep "${TS:-0.8}"; }
+    bow_ok() { grep -aE '^BOW t=.* (enter |exit: )' "$L" | tail -1 | grep -q ' enter '; }
+    bow_out() { wd "hands squeeze L -1" 0.3; wd "hands squeeze R -1" 0.3; wd "hands test off" 0.4; xl "$BOW_SLOT" "$R_REST"; sleep 0.3; xl "$BOW_SLOT" "$R_REST" "btn L squeeze 1"; sleep 0.8; xl "$BOW_STRAIGHT" "$R_REST" "btn L squeeze 1"; sleep 1; }
+    bow_draw() { bow_ok || { xl "$BOW_SLOT" "$R_REST" "btn L squeeze 0"; sleep 0.6; bow_out; }
+      xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1"; sleep 0.4; xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1" "btn R trigger 1"; sleep 0.5
+      xl "$BOW_STRAIGHT" "$DRAWN s 0.8" "btn L squeeze 1" "btn R trigger 1"; sleep 1.3; }
+    bow_loose() { TS=0.1 xl "$BOW_STRAIGHT" "$DRAWN" "btn L squeeze 1" "btn R trigger 0"; }
+    GC=$(grep -aE "^BEASTS t=.*graug '[A-Za-z_]+' Combat=0x[0-9a-f]+ .*\(health [0-9]+\)" $L | awk -F'health ' '{h=$2+0; if (h < 1700) print}' | tail -1 | grep -oE 'Combat=0x[0-9a-f]+' | cut -c8-)
+    gpos() { local l1; read px py pz <<< "$(tpos)"; l1=$(wc -l < $L); wd "verbs orcs ${px:-0} ${pz:-0} 5000" 1.0
+      tail -n +$l1 $L | grep -a "orc $GC at" | head -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.* ([0-9]+) cm from Talion.*attack .(.*)./\1 \2 \3 \4 \5 \6/'; }
+    read gx gy gz gf gd ga <<< "$(gpos)"; echo "$(date +%T) the graug $GC at $gx $gz facing $gf, $gd cm, $ga"
+    read tx tz < <(python3 -c "
+    import math; ox,oz=22100,-26650; vx,vz=$gx-ox,$gz-oz; b=math.atan2(vx,vz)+math.radians($A); print(round($gx+$D*math.sin(b)), round($gz+$D*math.cos(b)))")
+    wd "practice go $tx $((gy + 100)) $tz" 3.0; echo "$(date +%T) Talion to $tx $tz: $(grep -a 'arrived at\|did not arrive' $L | tail -1 | cut -c1-100)"
+    wd "bow arrows 8" 0.4
+    for k in $(seq 1 $N); do read gx gy gz gf gd ga <<< "$(gpos)"; bow_draw; n1=$(wc -l < $L); wd "bow aimhead $gx $gy $gz" 0.2; bow_loose; sleep 2.5
+      echo "$(date +%T) shot $k: the graug $gd cm ($ga, facing $gf): $(tail -n +$n1 $L | grep -aE '^BOW hit t=' | grep -oE "the attack '[^']+'|record '[^']+'" | tr '\n' ' ') $(tail -n +$n1 $L | grep -aE '^BOW hit check' | grep -oE "health [0-9.]+ -> [0-9.]+" | head -1)"
+    done
+    news $(( $(wc -l < $L) - 3000 )) 8 | grep -avE "Over here|Look here|Hey|beard|morsel|so close|filthy|Spiders|ugly|Come and get"
+
+### stunprobe.sh
+    #!/bin/bash
+    # stunprobe.sh TAG - som-b33-story6: SOMVR_GRAUG_STUN in the practice meadow: a graug spawned 18 m ahead (`practice far
+    # graug`: unaware, its back to Talion), the VR bow (the layer's test hands; `bow aimhead` = the test's aim at its head):
+    # A = two quick shots (the draw released ~0.3 s after full: not charged), B = two charged shots (held ~1.5 s); after each
+    # the hit's attack, our swap's line and the graug's own attack/recoil for 4 s
+    TAG=$1; R=$(cat /tmp/b33s6/R-$TAG); . /tmp/b33s6/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b33s6/pid-sp-$TAG
+    BOW_SLOT="hand L head -12 -10 -15 90 0 0"; BOW_STRAIGHT="hand L head -8 -15 55 90 0 0"
+    AT_STRING="hand R head -5 -13 30 90 0 0"; DRAWN="hand R head 3 -10 -3 90 0 0"; R_REST="hand R head 22 -40 15 0 0 0"
+    xl() { { echo "# $(date +%s%N)"; echo "head 0 0 0 yaw 0 pitch 0"; for l in "$@"; do echo "$l"; done; } > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"; sleep "${TS:-0.8}"; }
+    bow_ok() { grep -aE '^BOW t=.* (enter |exit: )' "$L" | tail -1 | grep -q ' enter '; }
+    bow_out() { wd "hands squeeze L -1" 0.3; wd "hands squeeze R -1" 0.3; wd "hands test off" 0.4; xl "$BOW_SLOT" "$R_REST"; sleep 0.3; xl "$BOW_SLOT" "$R_REST" "btn L squeeze 1"; sleep 0.8; xl "$BOW_STRAIGHT" "$R_REST" "btn L squeeze 1"; sleep 1; }
+    bow_draw() { bow_ok || { xl "$BOW_SLOT" "$R_REST" "btn L squeeze 0"; sleep 0.6; bow_out; }
+      xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1"; sleep 0.4; xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1" "btn R trigger 1"; sleep 0.5
+      if [ "${QUICK:-0}" = 1 ]; then TS=0.3 xl "$BOW_STRAIGHT" "$DRAWN s 0.2" "btn L squeeze 1" "btn R trigger 1"; else xl "$BOW_STRAIGHT" "$DRAWN s 0.8" "btn L squeeze 1" "btn R trigger 1"; sleep 1.3; fi; }
+    bow_loose() { TS=0.1 xl "$BOW_STRAIGHT" "$DRAWN" "btn L squeeze 1" "btn R trigger 0"; }
+    gfind() { local l1; read px py pz <<< "$(tpos)"; l1=$(wc -l < $L); wd "verbs orcs ${px:-0} ${pz:-0} 4000" 1.2
+      tail -n +$l1 $L | grep -aE "^VERBS orcs t=.*attack '(Trl|AI_Trl|AI_Troll|Troll|-)" | grep -a "${GC:-0x}" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.* ([0-9]+) cm from Talion.*attack .(.*)./\1 \2 \3 \4 \5 \6/'; }
+    for i in $(seq 1 60); do state | grep -q 'ctx=world' && break; sleep 3; done; sleep 5
+    wd "story invisible on" 0.5; SYNC_S=150 sync "word practice go" "wait 4" >/dev/null; wd "practice remove" 0.6
+    echo "$(date +%T) $(grep -a 'arrived at\|did not arrive' $L | tail -1 | cut -c1-100)"
+    l0=$(wc -l < $L); wd "practice far graug" 4.0; tail -n +$l0 $L | grep -aE "^PRACTICE t=.*(spawn|far|graug)" | head -3 | cut -c1-160
+    G=$(gfind); read GC gx gy gz gd ga <<< "$G"; echo "$(date +%T) the graug: ${G:-none}"
+    [ -n "$GC" ] || { G=$(gfind); read GC gx gy gz gd ga <<< "$G"; echo "retry: ${G:-none}"; }
+    wd "bow arrows 8" 0.4; bow_out
+    shot() { local nm=$1 n1; QUICK=$2; read GC2 gx gy gz gd ga <<< "$(gfind)"; bow_draw; n1=$(wc -l < $L); wd "bow aimhead $gx $gy $gz" 0.2; bow_loose
+      sleep 0.6; dump sp-$nm-a; sleep 0.8; dump sp-$nm-b; sleep 2.5
+      echo "$(date +%T) $nm (QUICK=$2, the graug $gd cm, $ga):"; tail -n +$n1 $L | grep -aE "^BOW (t=.*release|hit t=|graugstun|headkill)|^BEASTS t=.*graug|^VERBS t=.*orc $GC" | sed -E 's/^(BOW t=[0-9.]+ frame=[0-9]+ release: draw [0-9.]+ cm).*/\1/; s/our arrow at [-0-9.,]+ hit object 0x[0-9a-f]+ node -?[0-9]+, //' | cut -c1-200 | head -8; }
+    shot A1 1; shot A2 1; shot B1 0; shot B2 0; shot B3 0
+    grep -aE "^BOW graugstun records|^CONFIG graug_stun" $L | head -2 | cut -c1-200
+    echo "STUNPROBE END $(date +%T)"; echo quit >> $R/cmd
+
+### boot6.sh
+    #!/bin/bash
+    # boot6.sh N - som-b33-story6: the b35 slots (HEADLESS_SLOT=auto: headless_vr.sh waits for a slot itself, the gate, the
+    # release); the director beside it once the run is named (`windows: RUN (headless_win.sh, slot S)`): the driver pinned to
+    # that run (ST_RUN), the slot's prefix for the save copy
+    N=$1; WT=/home/bara/.t3/worktrees/flat2vr/t3-10c686d6/ShadowOfMordor; SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+    cd $WT; LOG=/tmp/b33s6/boot$N.log; : > $LOG
+    ( for i in $(seq 1 1500); do grep -q '^windows: ' $LOG && break; sleep 3; done
+      R=$(grep -o '^windows: [^ ]*' $LOG | head -1 | cut -c10-); S=$(grep -o 'slot [0-9]' $LOG | head -1 | cut -c6-)
+      [ -n "$R" ] || exit 0; P=$SOM/logs/winport/prefix; [ "${S:-1}" -ge 2 ] && P=$SOM/logs/winport/prefix-slot$S
+      T=q$N; echo "$P" > /tmp/b33s6/PFX-$T; echo "$R" > /tmp/b33s6/R-$T; rm -rf /tmp/b33s6/ctl-$T; mkdir -p /tmp/b33s6/ctl-$T
+      cd $WT/scripts && ST_RUN=$R ST_PLAN=ctl ST_CTL_DIR=/tmp/b33s6/ctl-$T ./story22-drive.sh > /tmp/b33s6/drv-$T.log 2>&1 &
+      for i in $(seq 1 300); do grep -q 'waiting for' /tmp/b33s6/drv-$T.log && break; grep -q 'STOP' /tmp/b33s6/drv-$T.log && exit 1; sleep 2; done
+      touch /tmp/b33s6/ka-$T; ( while sleep 200; do [ -e /tmp/b33s6/ka-$T ] || exit 0; /tmp/b33s6/q.sh $T "wait 1"; done ) &
+      "$DIRECTOR" $T > /tmp/b33s6/dir-$T.log 2>&1; rm -f /tmp/b33s6/ka-$T ) &
+    HEADLESS_SLOT=auto HEADLESS_OWNER=som-b33-story6 HEADLESS_SLOT_WAIT=2400 HEADLESS_SAVE_FROM=${SAVE_FROM:?} HEADLESS_HOLD=${HOLD:-3600} SOMVR_EXTRA="$(grep -E '^SOMVR_[A-Z0-9_]+=' scripts/headset-build26.env | tr '\n' ' ') SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0 SOMVR_HANDS_TEST=1 SOMVR_XR_TEST=@RUN@/xrtest.txt SOMVR_EYE_SIZE=2015x2217 SOMVR_BOW_HITLOG=1" setsid -w scripts/headless_vr.sh --win $WT/mod/somvr >> $LOG 2>&1
+    echo "boot exit $?"; rm -f /tmp/b33s6/ka-q$N; wait
+
+### stunprobe2.sh
+    #!/bin/bash
+    # stunprobe.sh TAG - som-b33-story6: SOMVR_GRAUG_STUN in the practice meadow: a graug spawned 18 m ahead (`practice far
+    # graug`: unaware, its back to Talion), the VR bow (the layer's test hands; `bow aimhead` = the test's aim at its head):
+    # A = two quick shots (the draw released ~0.3 s after full: not charged), B = two charged shots (held ~1.5 s); after each
+    # the hit's attack, our swap's line and the graug's own attack/recoil for 4 s
+    TAG=$1; R=$(cat /tmp/b33s6/R-$TAG); . /tmp/b33s6/lib.sh; L=$R/somvr.log; echo $$ > /tmp/b33s6/pid-sp-$TAG; GCSAVE=$GC
+    BOW_SLOT="hand L head -12 -10 -15 90 0 0"; BOW_STRAIGHT="hand L head -8 -15 55 90 0 0"
+    AT_STRING="hand R head -5 -13 30 90 0 0"; DRAWN="hand R head 3 -10 -3 90 0 0"; R_REST="hand R head 22 -40 15 0 0 0"
+    xl() { { echo "# $(date +%s%N)"; echo "head 0 0 0 yaw 0 pitch 0"; for l in "$@"; do echo "$l"; done; } > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"; sleep "${TS:-0.8}"; }
+    bow_ok() { grep -aE '^BOW t=.* (enter |exit: )' "$L" | tail -1 | grep -q ' enter '; }
+    bow_out() { wd "hands squeeze L -1" 0.3; wd "hands squeeze R -1" 0.3; wd "hands test off" 0.4; xl "$BOW_SLOT" "$R_REST"; sleep 0.3; xl "$BOW_SLOT" "$R_REST" "btn L squeeze 1"; sleep 0.8; xl "$BOW_STRAIGHT" "$R_REST" "btn L squeeze 1"; sleep 1; }
+    bow_draw() { bow_ok || { xl "$BOW_SLOT" "$R_REST" "btn L squeeze 0"; sleep 0.6; bow_out; }
+      xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1"; sleep 0.4; xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1" "btn R trigger 1"; sleep 0.5
+      if [ "${QUICK:-0}" = 1 ]; then TS=0.3 xl "$BOW_STRAIGHT" "$DRAWN s 0.2" "btn L squeeze 1" "btn R trigger 1"; else xl "$BOW_STRAIGHT" "$DRAWN s 0.8" "btn L squeeze 1" "btn R trigger 1"; sleep 1.3; fi; }
+    bow_loose() { TS=0.1 xl "$BOW_STRAIGHT" "$DRAWN" "btn L squeeze 1" "btn R trigger 0"; }
+    gfind() { local l1; read px py pz <<< "$(tpos)"; l1=$(wc -l < $L); wd "verbs orcs ${px:-0} ${pz:-0} 4000" 1.2
+      tail -n +$l1 $L | grep -aE "^VERBS orcs t=.*attack '(Trl|AI_Trl|AI_Troll|Troll|-)" | grep -a "${GC:-0x}" | head -1 | sed -E 's/.* orc (0x[0-9a-f]+) at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing.* ([0-9]+) cm from Talion.*attack .(.*)./\1 \2 \3 \4 \5 \6/'; }
+    for i in $(seq 1 60); do state | grep -q 'ctx=world' && break; sleep 3; done; sleep 5
+    wd "story invisible on" 0.5; SYNC_S=150 sync "word practice go" "wait 4" >/dev/null; wd "practice remove" 0.6
+    echo "$(date +%T) $(grep -a 'arrived at\|did not arrive' $L | tail -1 | cut -c1-100)"
+    l0=$(wc -l < $L); wd "practice far graug" 4.0; tail -n +$l0 $L | grep -aE "^PRACTICE t=.*(spawn|far|graug)" | head -3 | cut -c1-160
+    G=$(gfind); read GC gx gy gz gd ga <<< "$G"; echo "$(date +%T) the graug: ${G:-none}"
+    [ -n "$GC" ] || { G=$(gfind); read GC gx gy gz gd ga <<< "$G"; echo "retry: ${G:-none}"; }
+    wd "bow arrows 8" 0.4; bow_out
+    shot() { local nm=$1 n1; QUICK=$2; read GC2 gx gy gz gd ga <<< "$(gfind)"; bow_draw; n1=$(wc -l < $L); wd "bow aimhead $gx $gy $gz" 0.2; bow_loose
+      sleep 0.6; dump sp-$nm-a; sleep 0.8; dump sp-$nm-b; sleep 2.5
+      echo "$(date +%T) $nm (QUICK=$2, the graug $gd cm, $ga):"; tail -n +$n1 $L | grep -aE "^BOW (t=.*release|hit t=|graugstun|headkill)|^BEASTS t=.*graug|^VERBS t=.*orc $GC" | sed -E 's/^(BOW t=[0-9.]+ frame=[0-9]+ release: draw [0-9.]+ cm).*/\1/; s/our arrow at [-0-9.,]+ hit object 0x[0-9a-f]+ node -?[0-9]+, //' | cut -c1-200 | head -8; }
+    shot A1 1; shot A2 1; shot B1 0; shot B2 0; shot B3 0
+    wd "bow graugstun off" 0.4; wd "bow attack PC_Ranged_Damage_Heavy_Shoot" 0.4; shot C1 0; shot C2 0
+    wd "bow attack default" 0.4; wd "bow graugstun on" 0.4
+    grep -aE "^BOW graugstun records|^CONFIG graug_stun" $L | head -2 | cut -c1-200
+    grep -aE "^BOW the shot's attack" $L | tail -3 | cut -c1-160
+    echo "STUNPROBE END $(date +%T)"; wd "practice remove" 0.6; TS=0.5 xl; wd "hands squeeze L -1" 0.3; wd "hands squeeze R -1" 0.3
+
+### probe2.sh
+    #!/bin/bash
+    # probe.sh TAG DIST ANGLE N - som-b33-story6: Talion DIST cm from the graug on the bearing ANGLE (deg, 0 = away from Torvin),
+    # then N bow shots at its head (`bow aimhead` = the test's aim), each shot's hit attack printed
+    TAG=$1; D=${2:-2000}; A=${3:-0}; N=${4:-4}; R=$(cat /tmp/b33s6/R-$TAG); . /tmp/b33s6/lib.sh; L=$R/somvr.log
+    BOW_SLOT="hand L head -12 -10 -15 90 0 0"; BOW_STRAIGHT="hand L head -8 -15 55 90 0 0"
+    AT_STRING="hand R head -5 -13 30 90 0 0"; DRAWN="hand R head 3 -10 -3 90 0 0"; R_REST="hand R head 22 -40 15 0 0 0"
+    xl() { { echo "# $(date +%s%N)"; echo "head 0 0 0 yaw 0 pitch 0"; for l in "$@"; do echo "$l"; done; } > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"; sleep "${TS:-0.8}"; }
+    bow_ok() { grep -aE '^BOW t=.* (enter |exit: )' "$L" | tail -1 | grep -q ' enter '; }
+    bow_out() { wd "hands squeeze L -1" 0.3; wd "hands squeeze R -1" 0.3; wd "hands test off" 0.4; xl "$BOW_SLOT" "$R_REST"; sleep 0.3; xl "$BOW_SLOT" "$R_REST" "btn L squeeze 1"; sleep 0.8; xl "$BOW_STRAIGHT" "$R_REST" "btn L squeeze 1"; sleep 1; }
+    bow_draw() { bow_ok || { xl "$BOW_SLOT" "$R_REST" "btn L squeeze 0"; sleep 0.6; bow_out; }
+      xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1"; sleep 0.4; xl "$BOW_STRAIGHT" "$AT_STRING" "btn L squeeze 1" "btn R trigger 1"; sleep 0.5
+      xl "$BOW_STRAIGHT" "$DRAWN s 0.8" "btn L squeeze 1" "btn R trigger 1"; sleep 1.3; }
+    bow_loose() { TS=0.1 xl "$BOW_STRAIGHT" "$DRAWN" "btn L squeeze 1" "btn R trigger 0"; }
+    GC=$(grep -aE "^BEASTS t=.*graug '[A-Za-z_]+' Combat=0x[0-9a-f]+ .*\(health [0-9]+\)" $L | awk -F'health ' '{h=$2+0; if (h < 1700) print}' | tail -1 | grep -oE 'Combat=0x[0-9a-f]+' | cut -c8-)
+    gpos() { local l1; read px py pz <<< "$(tpos)"; l1=$(wc -l < $L); wd "verbs orcs ${px:-0} ${pz:-0} 5000" 1.0
+      tail -n +$l1 $L | grep -a "orc $GC at" | head -1 | sed -E 's/.* at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+) facing (-?[0-9.]+) deg.* ([0-9]+) cm from Talion.*attack .(.*)./\1 \2 \3 \4 \5 \6/'; }
+    read gx gy gz gf gd ga <<< "$(gpos)"; echo "$(date +%T) the graug $GC at $gx $gz facing $gf, $gd cm, $ga"
+    read tx tz < <(python3 -c "
+    import math; ox,oz=22100,-26650; vx,vz=$gx-ox,$gz-oz; b=math.atan2(vx,vz)+math.radians($A); print(round($gx+$D*math.sin(b)), round($gz+$D*math.cos(b)))")
+    [ "${NOGO:-0}" = 1 ] || wd "practice go $tx $((gy + 100)) $tz" 3.0; echo "$(date +%T) Talion to $tx $tz: $(grep -a 'arrived at\|did not arrive' $L | tail -1 | cut -c1-100)"
+    wd "bow arrows 8" 0.4
+    for k in $(seq 1 $N); do read gx gy gz gf gd ga <<< "$(gpos)"; bow_draw; n1=$(wc -l < $L); wd "bow aimhead $gx $gy $gz" 0.2; bow_loose; sleep 2.5
+      sleep 1.5; echo "$(date +%T) shot $k: the graug $gd cm ($ga): $(tail -n +$n1 $L | grep -aE '^BOW (hit t=|graugstun t=)' | grep -oE "the attack '[^']+'|record '[^']+'|graugstun t=[0-9.]+: [a-z -]+|held full [0-9.]+ s" | tr '\n' ' ')"
+      tail -n +$n1 $L | grep -aE "^BEASTS t=.*graug .*Combat=$GC|^VERBS t=.*orc $GC" | grep -oE "^[A-Z]+ t=[0-9.]+|attack '[^']*'|state '[^']*'|health [0-9.]+" | paste -sd' ' | cut -c1-400
+    done
+    news $(( $(wc -l < $L) - 3000 )) 8 | grep -avE "Over here|Look here|Hey|beard|morsel|so close|filthy|Spiders|ugly|Come and get"
+
+### graug6.sh
+    graug4.sh with: charged shots only (QUICK=0), after a stun hit MODE=after (the blade beside it, the bow again after 40 s),
+    the mount counted by `mounted:` within 9 s and left at `seated on`, the save copied from the slot's prefix (PFX-TAG) before
+    the quit.

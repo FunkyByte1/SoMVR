@@ -102,7 +102,7 @@ int somvr_pr_orc_parse(const char *w)
 const char *somvr_pr_action_name(int a)
 {
     static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status", "arrows", "health",
-                                                "far", "group", "captain", "place" };
+                                                "far", "group", "captain", "place", "charge" };
     return a >= 0 && a < SOMVR_PRA_N ? n[a] : "?";
 }
 
@@ -115,6 +115,7 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         { "health", SOMVR_PRA_HEALTH }, { "far", SOMVR_PRA_FAR }, { "group", SOMVR_PRA_GROUP }, { "crowd", SOMVR_PRA_GROUP },
         { "captain", SOMVR_PRA_CAPTAIN }, /* build 22 */
         { "place", SOMVR_PRA_PLACE }, /* build 31 */
+        { "charge", SOMVR_PRA_CHARGE }, /* build 36: Charge execution */
     };
     const char *tok, *s = w ? w : "", *arg, *rest;
     size_t n = token(&s, &tok);
@@ -334,6 +335,22 @@ int somvr_pr_is_night(const char *tod_name) { return ci_has(tod_name, "night"); 
 int somvr_pr_is_wet(const char *weather)
 {
     return !ci_has(weather, "norain") && (ci_has(weather, "rain") || ci_has(weather, "storm"));
+}
+
+int somvr_pr_is_overcast(const char *weather)
+{
+    return !somvr_pr_is_wet(weather) && (ci_has(weather, "day03") || ci_has(weather, "overcast") || ci_has(weather, "fog"));
+}
+
+int somvr_pr_sky_change(const char *weather, int sky, const char *target)
+{
+    if (!weather || !weather[0] || !target || !target[0] ||
+        (strlen(weather) == strlen(target) && ci_eq(weather, strlen(target), target)))
+        return 0;
+    if (somvr_pr_is_wet(weather) || sky == SOMVR_PRSKY_ALWAYS)
+        return 1;
+    /* clear: an overcast day of Nurn (the practice area's map: its weathers are SON_*) */
+    return sky == SOMVR_PRSKY_CLEAR && somvr_pr_is_overcast(weather) && strlen(weather) > 4 && ci_eq(weather, 4, "son_");
 }
 
 /* ---- build 19: the group ---- */

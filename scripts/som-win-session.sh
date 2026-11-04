@@ -20,8 +20,8 @@
 #   - the save: the prefix's own Documents\WB Games\Shadow of Mordor\Saves\GameData.sav, the session plays on it (the
 #     progress stays). None there: seeded from the newest backup (backups/win-save/*/GameData.sav) if one exists, else
 #     from a COPY of the user's Linux/Steam save (userdata/*/241930/remote/GameData.sav, only read). A backup before each
-#     session (backups/win-save/<ts>/, SHA256SUMS), its sha after; the Steam save's sha before and after ("SAVE OK" =
-#     unchanged). Not the play prefix (a test's): the backup goes to DIR/save-backup and no backup seeds it.
+#     session (backups/win-save/<ts>-before/, SHA256SUMS) and after it (<ts>-after/, build 34: the newest seeds a lost
+#     prefix), its sha after; the Steam save's sha before and after ("SAVE OK" = unchanged). Not the play prefix (a test's): the backup goes to DIR/save-backup and no backup seeds it.
 #   - render.cfg in the prefix's Documents\WB Games\Shadow of Mordor: the PC's detected settings (boot_check's set,
 #     rating 10) with --render-set over them (the VR graphics preset), written before each session; the old file kept
 #     as DIR/render.cfg.before
@@ -227,7 +227,7 @@ if [ $DRY = 0 ]; then   # the backup before the session
   SAVE_SHA0=$(sha "$SAVEF")
   log "save backup $BK (sha256 ${SAVE_SHA0:0:16})"
 else
-  log "dry run: a backup of the save would go to $BK_ROOT/<ts>-before"
+  log "dry run: a backup of the save would go to $BK_ROOT/<ts>-before, and one after the session to $BK_ROOT/<ts>-after"
 fi
 
 # ---- render.cfg: the PC's detection with the VR preset over it --------------------------------------------------
@@ -326,6 +326,15 @@ save_lines() {
     s1=$(sha "$SAVEF")
     log "save (Windows, the prefix's): ${SAVE_SHA0:0:16} -> ${s1:0:16} ($([ "$s1" = "$SAVE_SHA0" ] && echo unchanged || echo 'the game saved its progress')); backup before: $BK"
     sha256sum "$SAVEF" > "$RUN/save-after.sha256"
+    # build 34 (the Windows review): a copy after the session too (the save only read), kept like the ones before - the
+    # newest backup seeds a lost prefix, so a lost play prefix never loses the last session's progress
+    if [ $DRY = 0 ] && [ -n "$BK" ] && [ -n "$GAME_PID" ]; then
+      BKA=$BK_ROOT/$(date +%Y%m%d-%H%M%S)-after
+      if mkdir -p "$BKA" && cp -p "$SAVEF" "$BKA/GameData.sav" && ( cd "$BKA" && sha256sum GameData.sav > SHA256SUMS ) &&
+           echo "$RUN" > "$BKA/session.txt" && [ "$(sha "$BKA/GameData.sav")" = "$s1" ]; then
+        log "save backup after the session: $BKA (sha256 ${s1:0:16})"
+      else log "!!! the save backup after the session failed ($BKA)"; fi
+    fi
   else log "!!! save (Windows): no GameData.sav in the prefix after the session (the backup: $BK)"; fi
   st1=$(stat -c '%s %Y' "$SSAVE" 2>/dev/null)
   if [ "$(sha "$SSAVE")" = "$SSAVE_SHA0" ] && [ "$st1" = "$SSAVE_STAT0" ]; then log "SAVE OK: the Steam save is unchanged (${SSAVE_SHA0:0:16})"

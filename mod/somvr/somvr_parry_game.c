@@ -81,8 +81,10 @@ static struct {
 	float vault_s;       /* build 27: SOMVR_PARRY_VAULT_MS - the orc the wraith step's vault went over is open this long */
 	uint64_t vault_opens;
 	/* build 31 (som-b31-hands): SOMVR_SHOVE_FAR / _ANY; the hold's push (h31: the held orc let go, then shoved) */
-	int far, any;
+	int far, any, cue_hard;
 	float hard_mps, any_cm;
+	uint64_t plant_spared; /* build 33: pushes that were the vault's plant (a palm over his crown) */
+	uint64_t cue_spared;
 	char recoil_far[96], recoil_hard[96];
 	uintptr_t pend_c;    /* the orc the hold's push let go: shoved once the game has let it go (h31_frame) */
 	float pend_v[3], pend_sp;
@@ -131,6 +133,9 @@ static void py_config(void)
 	g_py.any = env_word("SOMVR_SHOVE_ANY", (const char *const[]){ "off", "on" }, 2, 1);
 	g_py.hard_mps = env_float("SOMVR_SHOVE_HARD_MPS", 2.5f, 1, 8, &bad);
 	g_py.any_cm = env_float("SOMVR_SHOVE_ANY_CM", 15, 0, 40, &bad);
+	/* build 33 (som-b33-knife): the user's reach for a grab with the sword out read as a shove (11-03 mark 13: 1.62 and
+	 * 2.40 m/s; their shoves 4.3-4.6): at an orc the grab cue offers, only a hard push (SOMVR_SHOVE_HARD_MPS) shoves */
+	g_py.cue_hard = env_word("SOMVR_SHOVE_CUE_HARD", (const char *const[]){ "off", "on" }, 2, 1);
 	const char *rf = getenv("SOMVR_SHOVE_RECOIL_FAR"), *rh = getenv("SOMVR_SHOVE_RECOIL_HARD");
 	/* boot 20261102-112615 (re-xr-pipeline.md 135.2): Knockback_Straight - the shield orc 1.8 m, the infantry 3.1 m;
 	 * Heavy_Straight - both 3.1-3.3 m (a stagger, 'AI_Bip_H300_ST_F'); Block_Breaker 0.5 / 1.4 m */
@@ -149,8 +154,8 @@ static void py_config(void)
 	char why[160];
 	g_py.ok_streak = check_site(&g_pys[PYS_STREAK], why, sizeof why) == 0;
 	if (!g_py.ok_streak && g_py.streak)
-		logf_("WARN PARRY site PY_STREAK at %#lx did not match (%s): a parry adds nothing to the streak",
-		      (unsigned long)g_pys[PYS_STREAK].addr, why);
+		logf_("WARN PARRY site PY_STREAK at %#llx did not match (%s): a parry adds nothing to the streak",
+		      (unsigned long long)g_pys[PYS_STREAK].addr, why);
 	logf_("CONFIG parry=%s shove=%s: a contact block at most %.0f ms before the blow's impact is a parry (the clang '%s', "
 	      "a pulse in the free hand, the streak +1 %s); a parry or a shove opens the orc for %.0f ms: its own block stops "
 	      "no hit of ours then (REACT skips it; Talion's attack type %d for the call), a committed cut or a stab is the "
@@ -229,8 +234,8 @@ static void py_open_for(uintptr_t c, int why, const float at[3], double t, float
 		g_py.auto_t = t + g_py.auto_ms * 1e-3, g_py.auto_step = 1;
 	char an[96];
 	if (py_log_ok())
-		logf_("PARRY open orc=%#lx hobj=%#lx t=%.3f by %s for %.0f ms (its attack now '%s', health %.1f, shield %.1f) at "
-		      "%.1f,%.1f,%.1f", (unsigned long)c, (unsigned long)p->hobj, t, g_py_why[why], dur * 1e3f,
+		logf_("PARRY open orc=%#llx hobj=%#llx t=%.3f by %s for %.0f ms (its attack now '%s', health %.1f, shield %.1f) at "
+		      "%.1f,%.1f,%.1f", (unsigned long long)c, (unsigned long long)p->hobj, t, g_py_why[why], dur * 1e3f,
 		      rx_rec_name(peek_ptr(c + RX_C_ATTACK), an, sizeof an), cb_health(c), cb_shield_hp(c), at[0], at[1], at[2]);
 	if (g_py.marks > 0) {
 		g_py.marks--;
@@ -262,7 +267,7 @@ static void py_dodge(uintptr_t c, uintptr_t attack, int applied, float dash_ms, 
 	char an[96];
 	g_py.dodge_opens++;
 	if (py_log_ok())
-		logf_("PARRY dodge orc=%#lx attack '%s' t=%.3f: dodged (%s) -> its opening", (unsigned long)c,
+		logf_("PARRY dodge orc=%#llx attack '%s' t=%.3f: dodged (%s) -> its opening", (unsigned long long)c,
 		      rx_rec_name(attack, an, sizeof an), t, dash_ms >= 0 ? "the A dodge" : "the head out of the blow");
 	py_open_for(c, 3, at, t, g_py.dodge_s);
 }
@@ -290,8 +295,8 @@ static void py_parry(uintptr_t c, uintptr_t attack, const somvr_df_in *in, const
 	if (in->impact >= 0 && in->ts < in->impact - g_py.window_s - 1e-4f) { /* a block early in the judge's window */
 		g_py.early++;
 		if (py_log_ok())
-			logf_("PARRY none orc=%#lx: the blades met %.0f ms before the impact (SOMVR_PARRY_WINDOW_MS %.0f): a block",
-			      (unsigned long)c, (in->impact - in->ts) * 1e3f, g_py.window_s * 1e3f);
+			logf_("PARRY none orc=%#llx: the blades met %.0f ms before the impact (SOMVR_PARRY_WINDOW_MS %.0f): a block",
+			      (unsigned long long)c, (in->impact - in->ts) * 1e3f, g_py.window_s * 1e3f);
 		return;
 	}
 	g_py.parries++;
@@ -305,12 +310,12 @@ static void py_parry(uintptr_t c, uintptr_t attack, const somvr_df_in *in, const
 		g_py.streaks += pend1 != pend0, g_py.streak_fail += pend1 == pend0;
 	} else if (g_py.streak)
 		g_py.streak_fail++;
-	in_haptic_event(SOMVR_HAND_L, 0.9f, 0.09f, SOMVR_HAP_COMBAT); /* the parry's own pulse: the free hand, once */
+	haptic(SOMVR_HAND_L, SOMVR_HX_PARRY); /* the parry's own beat: the free hand, once */
 	py_sound(g_py.sound, point, in->head, t, "the parry's clang");
 	char an[96];
 	if (py_log_ok())
-		logf_("PARRY parry orc=%#lx attack '%s' t=%.3f: the blades met %.0f ms %s its impact (the window %.0f ms before "
-		      "it) -> the streak %d, pending %u -> %u (the game applies it), the free hand's pulse", (unsigned long)c,
+		logf_("PARRY parry orc=%#llx attack '%s' t=%.3f: the blades met %.0f ms %s its impact (the window %.0f ms before "
+		      "it) -> the streak %d, pending %u -> %u (the game applies it), the free hand's pulse", (unsigned long long)c,
 		      rx_rec_name(attack, an, sizeof an), t, fabsf(in->impact - in->ts) * 1e3f,
 		      in->ts <= in->impact ? "before" : "after", g_py.window_s * 1e3f, s0, pend0, pend1);
 	py_open(c, 1, point, t);
@@ -352,8 +357,8 @@ static void py_break_post(uintptr_t c, int set, float was, float hp0, float hp1,
 		arm_poke(sh + 0xa8, &was, sizeof was);
 	g_py.breaks += got && now < 1.0f, g_py.break_miss += !(got && now < 1.0f);
 	if (py_log_ok())
-		logf_("PARRY riposte orc=%#lx t=%.3f into its raised shield: the shield %.1f (1 for the call) -> %.1f%s, health "
-		      "%.1f -> %.1f", (unsigned long)c, t, was, got ? now : NAN, got && now < 1.0f ? " BROKEN (the game's break)"
+		logf_("PARRY riposte orc=%#llx t=%.3f into its raised shield: the shield %.1f (1 for the call) -> %.1f%s, health "
+		      "%.1f -> %.1f", (unsigned long long)c, t, was, got ? now : NAN, got && now < 1.0f ? " BROKEN (the game's break)"
 		      : " not taken (the shield given back)", hp0, hp1);
 	if (got && now < 1.0f && g_py.marks > 0) {
 		g_py.marks--;
@@ -433,6 +438,7 @@ static int py_shove_recoil(const struct cb_orc *o, const float v[3], const float
 	return 0;
 }
 
+static int gc_offers(uintptr_t c); /* build 33 (somvr_combat21_game.c): the grab cue on that orc */
 /* build 31: the far shove's reel - not eased under the stagger's cap (rl_hold: a negative cap measures only) */
 static void py_reel_free(uintptr_t c)
 {
@@ -454,7 +460,7 @@ static int py_shove_orc(const struct cb_orc *o, const float v[3], float sp, cons
 	int took = py_shove_recoil(o, v, at, types, used, sizeof used);
 	g_py.shoves++, g_py.shove_took += took, g_py.shove_refused += !took;
 	g_py.far_shoves += g_py.far && took, g_py.hard_shoves += hard && took;
-	in_haptic_event(SOMVR_HAND_L, 1.0f, 0.12f, SOMVR_HAP_COMBAT); /* the thump in the shoving hand */
+	haptic_k(SOMVR_HAND_L, SOMVR_HX_THUMP, 1); /* the thump in the shoving hand */
 	float head[3] = { at[0], at[1] + 30, at[2] };
 	if (root)
 		head[0] = root[0], head[1] = root[1] + 160, head[2] = root[2];
@@ -463,8 +469,8 @@ static int py_shove_orc(const struct cb_orc *o, const float v[3], float sp, cons
 	if (g_py.far)
 		py_reel_free(o->c);
 	if (py_log_ok())
-		logf_("PARRY shove orc=%#lx hobj=%#lx t=%.3f: the left hand into %s at %.2f m/s (%.0f cm from its root) -> "
-		      "its recoil: %s; its attack '%s' -> '%s'%s", (unsigned long)o->c, (unsigned long)o->hobj, t, into,
+		logf_("PARRY shove orc=%#llx hobj=%#llx t=%.3f: the left hand into %s at %.2f m/s (%.0f cm from its root) -> "
+		      "its recoil: %s; its attack '%s' -> '%s'%s", (unsigned long long)o->c, (unsigned long long)o->hobj, t, into,
 		      sp * 0.01f, dh, used[0] ? used : "none known", rx_rec_name(before, an, sizeof an),
 		      rx_rec_name(peek_ptr(o->c + RX_C_ATTACK), bn, sizeof bn),
 		      !g_py.far ? "" : hard ? " (far, a hard push: its reel free)" : " (far: its reel free)");
@@ -493,7 +499,7 @@ static void py_hold_push_frame(int released, const float *root, double t)
 	if (t > g_py.pend_until || cb_dead(c) || !cb_orc_get(c, &o)) {
 		g_py.hold_shove_miss++, g_py.pend_c = 0;
 		if (py_log_ok())
-			logf_("PARRY shove t=%.3f: the hold's push on orc %#lx not made (%s)", t, (unsigned long)c,
+			logf_("PARRY shove t=%.3f: the hold's push on orc %#llx not made (%s)", t, (unsigned long long)c,
 			      t > g_py.pend_until ? "the game held it 1.5 s past the push" : "dead or gone");
 		return;
 	}
@@ -583,6 +589,22 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 			into = "its chest", g_py.any_shoves++;
 		if (!into)
 			continue;
+		if (ov_plant_at(o[i].c, g_py.palm)) { /* build 33 (re-xr-pipeline.md 139.7): a palm over his crown is the vault's
+						      * plant - a fast plant read as a hard shove and sent him 1.5 m off
+						      * (boot 20261103-184409) */
+			g_py.plant_spared++;
+			if (py_log_ok())
+				logf_("PARRY push t=%.3f at orc %#llx: %.2f m/s, the palm over his crown - the vault's plant, no shove", t,
+				      (unsigned long long)o[i].c, sp * 0.01f);
+			continue;
+		}
+		if (g_py.cue_hard && sp < g_py.hard_mps * 100.0f && gc_offers(o[i].c)) {
+			g_py.cue_spared++; /* the grab's reach, not a push */
+			if (py_log_ok())
+				logf_("PARRY push t=%.3f at orc %#llx: %.2f m/s, the grab cue on it - only a hard push (%.1f m/s) shoves: the "
+				      "grab's reach", t, (unsigned long long)o[i].c, sp * 0.01f, g_py.hard_mps);
+			continue;
+		}
 		py_shove_orc(&o[i], v, sp, g_py.palm, root, into, dh, NULL, t);
 		g_py.nh = 0; /* one push, one shove */
 		return;
@@ -592,10 +614,10 @@ static void py_frame(uintptr_t pc, const struct cb_orc *o, int n, const float ro
 		g_py.refused_next = t + 0.4, g_py.pushes_refused++;
 		if (py_log_ok()) {
 			if (near_i >= 0)
-				logf_("PARRY push refused t=%.3f: %.2f m/s; the nearest orc ahead %#lx: the palm %.0f cm from its axis (a shield "
+				logf_("PARRY push refused t=%.3f: %.2f m/s; the nearest orc ahead %#llx: the palm %.0f cm from its axis (a shield "
 				      "orc: <= %.0f, a blocking one: <= %.0f), %.0f cm above its feet (60..175), %.0f deg off the push "
 				      "(<= 53), its shield's origin %.0f cm away (<= %.0f), shield %.0f, blocking %d", t, sp * 0.01f,
-				      (unsigned long)o[near_i].c, near_d, g_cb.orc_r + g_py.shove_reach, g_cb.orc_r + PY_HAND_CM, near_ht,
+				      (unsigned long long)o[near_i].c, near_d, g_cb.orc_r + g_py.shove_reach, g_cb.orc_r + PY_HAND_CM, near_ht,
 				      acosf(fminf(1, fmaxf(-1, near_cos))) * 57.29578f, near_sh, g_cb.shield_cm + PY_HAND_CM,
 				      cb_shield_hp(o[near_i].c), g_rx.ok ? RX_FN(RS_BLOCKING, rx_blocking_fn)(o[near_i].c) & 1 : -1);
 			else
@@ -661,4 +683,7 @@ static void py_end_log(void)
 	      "(not made %llu)", (unsigned long long)g_py.far_shoves, (unsigned long long)g_py.hard_shoves,
 	      (unsigned long long)g_py.any_shoves, (unsigned long long)g_py.word_shoves, (unsigned long long)g_py.hold_shoves,
 	      (unsigned long long)g_py.hold_shove_miss);
+	logf_("PARRY END build 33: pushes left to the grab (the cue on the orc, under the hard speed) %llu, pushes that were the "
+	      "vault's plant (a palm over his crown) %llu", (unsigned long long)g_py.cue_spared,
+	      (unsigned long long)g_py.plant_spared);
 }

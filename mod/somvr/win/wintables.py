@@ -200,7 +200,15 @@ def check_site(pe, r, where, lsites, errs):
     prob = take_bytes(pe, tgt, r['prologue'] if r['prologue'] != '-' else '15', 'prologue', where, errs)
     if prob is None:
         return None
+    if len(prob) > 32:  # check_site's pro[32] (somvr.c): a longer prologue is a "bad site spec" at run time
+        errs.append('%s: prologue %d bytes > 32 (the DLL checks at most 32)' % (where, len(prob)))
+        return None
     rc, rp = pe.relocs(ctx, len(ctxb)), pe.relocs(tgt, len(prob))
+    for what, at, nb in (('context', ctx, len(ctxb)), ('prologue', tgt, len(prob))):  # (b34 review)
+        part = [x for x in range(at - 7, at + nb) if x in pe.dir64 and not (at <= x and x + 8 <= at + nb)]
+        if part:  # somvr_win_sites.c moves only whole relocated qwords: an ASLR load (native Windows) would mismatch
+            errs.append('%s: a relocation at %#x straddles the %s bytes at %#x' % (where, part[0], what, at))
+            return None
     if kind in ('call', 'jmp') and any(rva + i in pe.dir64 for i in range(-7, 5)):
         errs.append('%s: a relocation overlaps the patched bytes at %#x' % (where, rva))
         return None

@@ -25,6 +25,8 @@ typedef struct {
     unsigned char sever; /* 1 = the head comes off (a _Sever row: the game's sever by the cut) */
     float death_s;       /* the death's moment after the start (s; <= 0: the animation's end) */
     float len_s;         /* the animation's length as measured (s; <= 0: not measured) */
+    unsigned char slow;  /* build 36: 1 = its fall comes late or the orc stands or walks in it (the game's keys, the runs:
+                          * docs 164) - SOMVR_KILLS_QUICK leaves it out */
 } somvr_kl_row;
 
 typedef struct {
@@ -71,6 +73,24 @@ float somvr_kl_ease(double elapsed, double dur);
 /* the death's moment for a row: death_s when > 0; else the measured length less lead_s (when measured); else NAN (the
  * animation's end decides) */
 float somvr_kl_death_at(const somvr_kl_row *r, float lead_s);
+
+/* build 36 (SOMVR_KILLS_QUICK, docs/re-xr-pipeline.md 164): a playing half's checks, on the orc's own clock (el, s from
+ * its start; a hit-stop's freeze not counted) - by start_s its pose moved start_cm against its root in its own frame, by
+ * fall_s its head fall_cm lower, the death by max_s at the latest; seen = its skeleton read. 0 (GO) = it plays on, else
+ * why its death is now. A value <= 0 turns that check off */
+typedef struct {
+    float start_s, start_cm, fall_s, fall_cm, max_s;
+    float rise_cm; /* its head this much over the blow's before its fall: the orc straightening up, no half (boots
+                    * 20261103-230240/232418: F3, F9, B2 on orcs in a recoil +11..15 cm by 0.15-0.2 s, none played; the
+                    * playing F4 and F5 rose 8-10 cm first) */
+} somvr_kl_quick;
+enum { SOMVR_KLQ_GO = 0, SOMVR_KLQ_UNSEEN, SOMVR_KLQ_STILL, SOMVR_KLQ_NOFALL, SOMVR_KLQ_LATE, SOMVR_KLQ_RISING, SOMVR_KLQ_N };
+/* rise_cm = the most its head has been over the blow's height so far */
+int somvr_kl_quick_why(const somvr_kl_quick *q, double el, int seen, float moved_cm, float drop_cm, float rise_cm);
+const char *somvr_kl_quick_name(int v);
+/* the most any of n nodes moved against the root in the orc's own frame between two poses (each node less the root,
+ * world cm; the frame turned by its heading yaw, atan2(x, z)) - a turn or a slide of the whole orc is no motion */
+float somvr_kl_pose_moved(const float (*a)[3], float yaw_a, const float (*b)[3], float yaw_b, int n);
 
 const char *somvr_kl_kind_name(int kind);
 const char *somvr_kl_state_name(int state);

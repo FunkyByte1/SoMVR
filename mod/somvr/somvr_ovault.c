@@ -10,6 +10,7 @@ void somvr_ov_cfg_default(somvr_ov_cfg *c)
     c->hold_max_s = 5, c->break_cm = 40, c->rise_max_cm = 90, c->win_s = 0.1f;
     c->over_gain = 1.6f, c->min_up = 100, c->min_over = 120, c->max_cms = 550, c->side = 0.5f, c->g = 981;
     c->past_cm = 50, c->flight_max_s = 1.5f;
+    c->plant_s = 0.5f;
 }
 
 const char *somvr_ov_why_name(int w)
@@ -149,9 +150,14 @@ void somvr_ov_step(somvr_ov *s, const somvr_ov_cfg *c, const somvr_ov_in *in, so
         return;
     }
     if (s->phase == SOMVR_OV_HOLD) {
+        /* his move since the grip: none within the plant; his move toward Talion never (he comes under the hold) */
+        float mx = in->orc_root.x - s->orc0.x, mz = in->orc_root.z - s->orc0.z;
+        float toward = -(mx * s->over.x + mz * s->over.z); /* (over: Talion -> him at the grip) */
+        if (toward > 0)
+            mx += toward * s->over.x, mz += toward * s->over.z;
+        int gone = in->t - s->t0 > c->plant_s && hypotf(mx, mz) > c->break_cm;
         int why = !in->live ? SOMVR_OVW_LIVE : in->hurt ? SOMVR_OVW_HIT : in->t - s->t0 > c->hold_max_s ? SOMVR_OVW_MAX
-                : !in->orc_ok || hypotf(in->orc_root.x - s->orc0.x, in->orc_root.z - s->orc0.z) > c->break_cm ? SOMVR_OVW_MOVED
-                                                                                                         : 0;
+                : !in->orc_ok || gone ? SOMVR_OVW_MOVED : 0;
         if (why) {
             o->events |= SOMVR_OVE_LETGO, o->why = why, s->letgos++;
             to_idle(s);

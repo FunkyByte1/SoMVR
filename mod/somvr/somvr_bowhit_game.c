@@ -27,7 +27,20 @@
  *   an orc who is not a Nemesis captain (kp_hobj_captain: the members in the world, at any distance; SOMVR_CAPTAIN off =
  *   no way to tell: kept), the call gets the heavy one; a captain keeps the game's (his Nemesis traits decide). With it on, SOMVR_BOW_HEADSHOT_BODY / _ATTACK default to the light / heavy head records and no ray test is
  *   made (SOMVR_BOW_HEADSHOT_CM is the off case's). Lines: `BOW headkill t=..`, `BOW HIT END ... headkills N (captains
- *   kept N)`. Off: build 27b (the light head hit, five arrows an orc). */
+ *   kept N)`. Off: build 27b (the light head hit, five arrows an orc).
+ *
+ * SOMVR_GRAUG_STUN=on|off (build 33, som-b33-story6; docs/re-xr-pipeline.md 147; code default on) - an arrow in a graug's
+ *   head stuns it, as the game's own lesson says ('GP_Torvin02_Tut_TrollStun': Torvin's "Step three! Shoot it in the
+ *   head!", the objective "Stun the Graug"). Our arrows' head hits on a graug came with the game's own
+ *   'PC_Ranged_Normal_Hit_Light_HeadTroll' (the hit node record 'Troll_Head', ranged 'PC_Bow_NormalArrow_Light': 10 of
+ *   its health, no stun) - 26 of 26 over boot 20261103-164538, during its roar, from 5 and 20 m, the game's own fire
+ *   command 125 the same 'Shoot_Light' arrow: the mission stopped at "Stun the Graug". The database holds
+ *   'PC_Ranged_Troll_Stun', and the lesson's card reads "Headshot the Graug with a Charged Shot." So: our shot is a
+ *   charged one when the full draw was held SOMVR_GRAUG_STUN_HOLD_S (default 0.75 s) before the release (a quick snap
+ *   shot is not); when the game picks SOMVR_GRAUG_STUN_FROM ('PC_Ranged_Normal_Hit_Light_HeadTroll') for a charged
+ *   arrow of ours, the call gets SOMVR_GRAUG_STUN_ATTACK ('PC_Ranged_Troll_Stun'); body hits, uncharged shots and every
+ *   other character keep the game's. The word `bow graugstun on|off` (headless A/B). Lines: `BOW graugstun t=..`, `BOW HIT END ... graug
+ *   stuns N`. Off: build 32 (the light head hit). */
 
 /* BOWHIT_SITES_BEGIN (check_sites.py counts this block on its own: the patched K_CALL in FUN_027be5d0) */
 static SITE_TABLE struct site_spec g_bh_sites_game[] = {
@@ -48,6 +61,12 @@ static struct {
 	uintptr_t head_atk, body_atk;
 	uint64_t calls, ours, overrides, heads, head_miss, headkills, hk_captains;
 	int headkill;               /* build 27b: SOMVR_BOW_HEADKILL */
+	_Atomic int graug_stun;     /* build 33: SOMVR_GRAUG_STUN (the word "bow graugstun on|off") */
+	int stun_state;             /* 0 not looked up, 1 found, -1 not in the database */
+	char stun_from_name[96], stun_name[96];
+	uintptr_t stun_from, stun_atk;
+	uint64_t graug_stuns, stun_quick;
+	float stun_hold_s;
 	uint32_t lines;
 } g_bh;
 
@@ -65,9 +84,28 @@ static int bh_head_records(void)
 	g_bh.head_atk = CB_FN(CS_ATK_BYNAME, cb_byname_fn)(g_bh.head_name);
 	g_bh.body_atk = CB_FN(CS_ATK_BYNAME, cb_byname_fn)(g_bh.body_name);
 	g_bh.head_state = g_bh.head_atk && g_bh.body_atk ? 1 : -1;
-	logf_("BOW headshot records: '%s' %#lx, '%s' %#lx: %s", g_bh.head_name, (unsigned long)g_bh.head_atk, g_bh.body_name,
-	      (unsigned long)g_bh.body_atk, g_bh.head_state > 0 ? "found" : "NOT both in the database: no headshot");
+	logf_("BOW headshot records: '%s' %#llx, '%s' %#llx: %s", g_bh.head_name, (unsigned long long)g_bh.head_atk, g_bh.body_name,
+	      (unsigned long long)g_bh.body_atk, g_bh.head_state > 0 ? "found" : "NOT both in the database: no headshot");
 	return g_bh.head_state > 0;
+}
+
+/* build 33: the graug's light head hit and the stun, by name, once (the game thread, at a hit) */
+static int bh_stun_records(void)
+{
+	if (g_bh.stun_state)
+		return g_bh.stun_state > 0;
+	if (!g_cb.ok_hit)
+		return 0;
+	uintptr_t cat = peek_ptr(g_cbg.atkcat_pp);
+	uint32_t cnt = 0;
+	if (!cat || !peek(cat + CAT_COUNT, &cnt, sizeof cnt) || !cnt)
+		return 0;
+	g_bh.stun_from = CB_FN(CS_ATK_BYNAME, cb_byname_fn)(g_bh.stun_from_name);
+	g_bh.stun_atk = CB_FN(CS_ATK_BYNAME, cb_byname_fn)(g_bh.stun_name);
+	g_bh.stun_state = g_bh.stun_from && g_bh.stun_atk ? 1 : -1;
+	logf_("BOW graugstun records: '%s' %#llx, '%s' %#llx: %s", g_bh.stun_from_name, (unsigned long long)g_bh.stun_from,
+	      g_bh.stun_name, (unsigned long long)g_bh.stun_atk, g_bh.stun_state > 0 ? "found" : "NOT both in the database: no stun");
+	return g_bh.stun_state > 0;
 }
 
 /* our ray's distance to a point (cm; -1 behind the nock) */
@@ -90,6 +128,9 @@ __attribute__((used)) uint64_t somvr_w_bowhit(uintptr_t shooter, uintptr_t hit, 
 	int rq = atomic_exchange(&g_bh_head_crit_req, -1);
 	if (rq >= 0)
 		atomic_store(&g_bh.head_crit, rq), logf_("BOW headshot isCrit now %d (the word)", rq);
+	int sq = atomic_exchange(&g_bh_graug_stun_req, -1);
+	if (sq >= 0)
+		atomic_store(&g_bh.graug_stun, sq), logf_("BOW graugstun now %s (the word)", sq ? "on" : "off");
 	if (g_bow.fire_sc && shooter == g_bow.fire_sc) {
 		g_bh.ours++;
 		float pos[3] = { 0, 0, 0 };
@@ -129,10 +170,25 @@ __attribute__((used)) uint64_t somvr_w_bowhit(uintptr_t shooter, uintptr_t hit, 
 					      hd, g_bh.head_cm);
 			}
 		}
+		if (atomic_load_explicit(&g_bh.graug_stun, memory_order_relaxed) && obj && attack && bh_stun_records() &&
+		    attack == g_bh.stun_from && g_bow.rel_held < g_bh.stun_hold_s) {
+			g_bh.stun_quick++;
+			if (g_bh.lines++ < 200)
+				logf_("BOW graugstun t=%.3f: no - a quick shot (the draw held full %.2f s, under %.2f): the game's '%s'",
+				      cb_now(), g_bow.rel_held, g_bh.stun_hold_s, g_bh.stun_from_name);
+		} else if (atomic_load_explicit(&g_bh.graug_stun, memory_order_relaxed) && obj && attack && bh_stun_records() &&
+		    attack == g_bh.stun_from) {
+			g_bh.graug_stuns++;
+			if (g_bh.lines++ < 200)
+				logf_("BOW graugstun t=%.3f: a charged shot (the draw held full %.2f s) - the game's own head hit '%s' on a "
+				      "graug: '%s' instead (SOMVR_GRAUG_STUN; %llu)", cb_now(), g_bow.rel_held, g_bh.stun_from_name,
+				      g_bh.stun_name, (unsigned long long)g_bh.graug_stuns);
+			attack = g_bh.stun_atk;
+		}
 		if (g_bh.log && g_bh.lines++ < 200)
-			logf_("BOW hit t=%.3f: our arrow at %.1f,%.1f,%.1f hit object %#lx node %d, the hit node record '%s', the attack "
+			logf_("BOW hit t=%.3f: our arrow at %.1f,%.1f,%.1f hit object %#llx node %d, the hit node record '%s', the attack "
 			      "'%s' (%s), ranged '%s', crit %d, %.2f s after the shot", cb_now(), pos[0], pos[1], pos[2],
-			      (unsigned long)obj, nd == 0xffff ? -1 : (int)nd, rx_rec_name(node, nn, sizeof nn),
+			      (unsigned long long)obj, nd == 0xffff ? -1 : (int)nd, rx_rec_name(node, nn, sizeof nn),
 			      rx_rec_name(attack, an, sizeof an), !attack ? "none" : ovr ? "an AttackOverrides match: not the "
 			      "shot's own" : own ? "the shot's own" : "the shot's attack unknown", rx_rec_name(ranged, rn, sizeof rn),
 			      (int)(crit & 0xff), g_bow.fire_t > 0 ? cb_now() - g_bow.fire_t : -1.0);
@@ -158,7 +214,18 @@ static void bh_start(int *bad)
 		      getenv("SOMVR_BOW_HEADKILL") ? "" : "; unset: on", g_bh.headkill ? "an arrow in an orc's head kills him - the "
 		      "game's own light head hit on an orc (not a Nemesis captain) becomes its heavy one, the flat game's one-arrow "
 		      "headshot" : "the game's light head hit (20 of 95: five arrows an orc; build 27b)");
-	if (!g_bh.log && !(g_bh.head_cm > 0) && !g_bh.headkill)
+	atomic_store(&g_bh.graug_stun, env_word("SOMVR_GRAUG_STUN", (const char *const[]){ "off", "on" }, 2, 1));
+	const char *sf = getenv("SOMVR_GRAUG_STUN_FROM"), *sa = getenv("SOMVR_GRAUG_STUN_ATTACK");
+	snprintf(g_bh.stun_from_name, sizeof g_bh.stun_from_name, "%s", sf && *sf ? sf : "PC_Ranged_Normal_Hit_Light_HeadTroll");
+	snprintf(g_bh.stun_name, sizeof g_bh.stun_name, "%s", sa && *sa ? sa : "PC_Ranged_Troll_Stun");
+	g_bh.stun_hold_s = env_float("SOMVR_GRAUG_STUN_HOLD_S", 0.75f, 0, 10, bad);
+	if (g_bow.on)
+		logf_("CONFIG graug_stun=%s (SOMVR_GRAUG_STUN, build 33%s): %s", atomic_load(&g_bh.graug_stun) ? "on" : "off",
+		      getenv("SOMVR_GRAUG_STUN") ? "" : "; unset: on", atomic_load(&g_bh.graug_stun) ? "an arrow in a graug's "
+		      "head from a charged shot (the draw held full SOMVR_GRAUG_STUN_HOLD_S) stuns it - the game's light head hit on a "
+		      "graug becomes its stun" : "the game's light head hit on a "
+		      "graug (10 of its health, no stun; build 32)");
+	if (!g_bh.log && !(g_bh.head_cm > 0) && !g_bh.headkill && !atomic_load(&g_bh.graug_stun))
 		return;
 	if (!g_bow.on) {
 		logf_("CONFIG bow_hitlog / bow_headshot need SOMVR_BOW=1: not patched");
@@ -175,8 +242,10 @@ static void bh_end_log(void)
 {
 	if (g_bh.on)
 		logf_("BOW HIT END calls %llu, ours %llu, with an override attack %llu; headshots %llu (rays too far from the head %llu); "
-		      "headkills %llu (captains kept %llu; SOMVR_BOW_HEADKILL %s)", (unsigned long long)g_bh.calls,
+		      "headkills %llu (captains kept %llu; SOMVR_BOW_HEADKILL %s); graug stuns %llu (quick shots kept %llu; SOMVR_GRAUG_STUN %s)",
+		      (unsigned long long)g_bh.calls,
 		      (unsigned long long)g_bh.ours, (unsigned long long)g_bh.overrides, (unsigned long long)g_bh.heads,
 		      (unsigned long long)g_bh.head_miss, (unsigned long long)g_bh.headkills, (unsigned long long)g_bh.hk_captains,
-		      g_bh.headkill ? "on" : "off");
+		      g_bh.headkill ? "on" : "off", (unsigned long long)g_bh.graug_stuns,
+		      (unsigned long long)g_bh.stun_quick, atomic_load(&g_bh.graug_stun) ? "on" : "off");
 }

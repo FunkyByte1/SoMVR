@@ -213,7 +213,7 @@ static int ff_veto_log_ok(double t) /* the vetoes: the first 50, then 2 a second
 static int ff_clock(uint32_t *now)
 {
 	uintptr_t m = peek_ptr(g_ffg.clock_pp), q = m ? peek_ptr(m + 8) : 0;
-	return q && peek(q + 0x14, now, sizeof *now);
+	return q && peek(q + TM_TOTAL_MS, now, sizeof *now); /* the game timer's total ms (Windows +0x18: see kl_gnow) */
 }
 
 static struct ff_orc *ff_rec(uint64_t id, int make, double t) /* g_ff_mu held */
@@ -255,8 +255,8 @@ static void ff_started(uint64_t id, uint32_t now, double t) /* g_ff_mu held */
 		r->grant_warned = 0, r->summed = 0, r->edge_t0 = r->edge_t1 = 0;
 	}
 	if (ff_ev_log_ok(t))
-		logf_("FRONT warn t=%.3f orc=%#lx clock=%u off=%.0f deg dist=%.1f m score=%.2f%s (warnings now %d)", t,
-		      (unsigned long)id, now, p ? p->off_deg : NAN, p ? p->dist_cm * 0.01f : NAN, p ? p->score : NAN,
+		logf_("FRONT warn t=%.3f orc=%#llx clock=%u off=%.0f deg dist=%.1f m score=%.2f%s (warnings now %d)", t,
+		      (unsigned long long)id, now, p ? p->off_deg : NAN, p ? p->dist_cm * 0.01f : NAN, p ? p->score : NAN,
 		      r && r->prio ? " prio (the game sorts it first)" : "", somvr_front_warnings(&g_ff.f, &g_ff.cfg, now));
 }
 
@@ -374,8 +374,8 @@ static void ff_ans_hit(uintptr_t c, uintptr_t hobj, uintptr_t pc, double t)
 										   * logs' answers: 0.05-2.73 s after its hit) */
 				ff_ans_warn(id, c, t, 1);
 			if (ff_ev_log_ok(t))
-				logf_("CROWD provoked t=%.3f orc=%#lx '%s': our hit %.2f s after its blow hit Talion (his attack '%s'): "
-				      "its answer (a headbutt or a bash, no grant) is likely - %s", t, (unsigned long)id, ty, t - a->landed_t,
+				logf_("CROWD provoked t=%.3f orc=%#llx '%s': our hit %.2f s after its blow hit Talion (his attack '%s'): "
+				      "its answer (a headbutt or a bash, no grant) is likely - %s", t, (unsigned long long)id, ty, t - a->landed_t,
 				      a->rec, g_ff.pcfg.answer_s <= 0 ? "no hold (SOMVR_CROWD_ANSWER_MS=0)" : t - a->landed_t >= 2.9 ?
 				      "past the answers' 2.9 s: not warned" : hold == 2 ?
 				      "its turn holds (the answer hold): warned now" : own ?
@@ -412,13 +412,13 @@ static void ff_ans_verdict(uintptr_t c, uintptr_t hobj, int hit, double t)
 		ok = ff_pace_where(c, &d, &seen);
 	}
 	if (hit && ff_ans_type(ty) && ff_ev_log_ok(t)) /* the source's first half (also with the hold off) */
-		logf_("CROWD landed t=%.3f orc=%#lx '%s': its blow hit Talion (yaw=%+.0f off=%.0f deg dist=%.1f m %s): a cut of "
-		      "his on it while he recoils draws its answer -> %s", t, (unsigned long)id, ty, ok ? d.yaw_deg : NAN,
+		logf_("CROWD landed t=%.3f orc=%#llx '%s': its blow hit Talion (yaw=%+.0f off=%.0f deg dist=%.1f m %s): a cut of "
+		      "his on it while he recoils draws its answer -> %s", t, (unsigned long long)id, ty, ok ? d.yaw_deg : NAN,
 		      ok ? d.off_deg : NAN, ok ? d.dist_cm * 0.01f : NAN, !ok ? "not readable" : seen ? "in view" : "out of view",
 		      k > 0 ? "its turn holds while he recoils (the answer hold)" : g_ff.pcfg.answer_s > 0 ?
 		      "NO hold (not its turn)" : "no hold (SOMVR_CROWD_ANSWER_MS=0)");
 	else if (k >= 0 && ff_ev_log_ok(t))
-		logf_("CROWD answer-hold t=%.3f orc=%#lx: its blow %s -> %s", t, (unsigned long)id, hit ? "hit Talion" :
+		logf_("CROWD answer-hold t=%.3f orc=%#llx: its blow %s -> %s", t, (unsigned long long)id, hit ? "hit Talion" :
 		      still ? "did not land, but Talion still recoils from its last one" : "did not land (blocked, parried or dodged)",
 		      k ? "its turn holds while he recoils (its answer to a cut of his starts in its own turn)" :
 		      "no answer to fear: the turn is free");
@@ -439,7 +439,7 @@ static int ff_pace_judge(uintptr_t e, uintptr_t slot, uint32_t now, uint64_t id,
 			if (g_ff.pace.turn[i].id && g_ff.pace.turn[i].id != id)
 				u = &g_ff.pace.turn[i];
 		if (ff_veto_log_ok(t))
-			logf_("CROWD wait t=%.3f orc=%#lx score=%.2f -> %.0f%s: %s (free in %.2f s)", t, (unsigned long)id,
+			logf_("CROWD wait t=%.3f orc=%#llx score=%.2f -> %.0f%s: %s (free in %.2f s)", t, (unsigned long long)id,
 			      (double)*sc, (double)veto, act ? "" : " (log only)",
 			      !u ? "the gap after the last blow" : u->start_t > 0 ? "another orc winds up" :
 			      "another orc's grant holds", ft - t);
@@ -452,9 +452,9 @@ static int ff_pace_judge(uintptr_t e, uintptr_t slot, uint32_t now, uint64_t id,
 		if (!somvr_pace_pass_wins(prio, *sc, g_ff.pk.prio, g_ff.pk.score)) {
 			g_ff.pn.pass_vetoes++;
 			if (ff_ev_log_ok(t))
-				logf_("CROWD pass t=%.3f orc=%#lx score=%.2f%s -> %.0f: orc %#lx (%.2f%s) kept in this pass (one grant a "
-				      "pass)", t, (unsigned long)id, (double)*sc, prio ? " prio" : "", (double)veto,
-				      (unsigned long)g_ff.pk.id, (double)g_ff.pk.score, g_ff.pk.prio ? " prio" : "");
+				logf_("CROWD pass t=%.3f orc=%#llx score=%.2f%s -> %.0f: orc %#llx (%.2f%s) kept in this pass (one grant a "
+				      "pass)", t, (unsigned long long)id, (double)*sc, prio ? " prio" : "", (double)veto,
+				      (unsigned long long)g_ff.pk.id, (double)g_ff.pk.score, g_ff.pk.prio ? " prio" : "");
 			if (!act)
 				return v;
 			*sc = veto;
@@ -470,8 +470,8 @@ static int ff_pace_judge(uintptr_t e, uintptr_t slot, uint32_t now, uint64_t id,
 		if (r && wrote)
 			r->verdict = SOMVR_FR_PASS;
 		if (ff_ev_log_ok(t))
-			logf_("CROWD pass t=%.3f orc=%#lx score=%.2f%s kept: orc %#lx (%.2f%s) -> %.0f %s", t, (unsigned long)id,
-			      (double)*sc, prio ? " prio" : "", (unsigned long)g_ff.pk.id, (double)g_ff.pk.score,
+			logf_("CROWD pass t=%.3f orc=%#llx score=%.2f%s kept: orc %#llx (%.2f%s) -> %.0f %s", t, (unsigned long long)id,
+			      (double)*sc, prio ? " prio" : "", (unsigned long long)g_ff.pk.id, (double)g_ff.pk.score,
 			      g_ff.pk.prio ? " prio" : "", (double)veto, wrote ? "(written back)" : !same ?
 			      "NOT written (its score changed since)" : "(log only)");
 	}
@@ -488,8 +488,8 @@ static void ff_pace_grant(uint64_t id, const struct ff_orc *r, double t)
 	if (ff_ans_type(ty))
 		somvr_pace_may_answer(&g_ff.pace, &g_ff.pcfg, id); /* build 19: its turn holds after a blow that hits */
 	if (ff_ev_log_ok(t))
-		logf_("CROWD grant t=%.3f orc=%#lx '%s' off=%.0f deg dist=%.1f m verdict=%s%s; the turn is its until its blow "
-		      "lands (turns held %d)", t, (unsigned long)id, ty, r ? r->off : NAN, r ? r->dist * 0.01f : NAN,
+		logf_("CROWD grant t=%.3f orc=%#llx '%s' off=%.0f deg dist=%.1f m verdict=%s%s; the turn is its until its blow "
+		      "lands (turns held %d)", t, (unsigned long long)id, ty, r ? r->off : NAN, r ? r->dist * 0.01f : NAN,
 		      r ? somvr_front_verdict_name(r->verdict) : "unseen",
 		      over ? " - OVERLAP: another orc's turn held already (granted past the pace)" : "", ff_pace_held());
 }
@@ -506,8 +506,8 @@ static void ff_pace_landed(uint64_t id, uintptr_t c, double at, double gap, doub
 	g_ff.pn.impacts_view += ok && seen, g_ff.pn.impacts_out += ok && !seen;
 	g_ff.pn.lulls += gap > 4.0;
 	if (ff_ev_log_ok(t))
-		logf_("CROWD impact t=%.3f orc=%#lx '%s' at %.3f (%s) gap=%.2f s%s yaw=%+.0f off=%.0f deg dist=%.1f m %s", t,
-		      (unsigned long)id, ty, at, how, gap, gap < 0 ? " (the first)" :
+		logf_("CROWD impact t=%.3f orc=%#llx '%s' at %.3f (%s) gap=%.2f s%s yaw=%+.0f off=%.0f deg dist=%.1f m %s", t,
+		      (unsigned long long)id, ty, at, how, gap, gap < 0 ? " (the first)" :
 		      gap < g_ff.pcfg.gap_s - 1e-6 ? " UNDER THE PACE" : gap > 4.0 ? " (a lull)" : "",
 		      ok ? d.yaw_deg : NAN, ok ? d.off_deg : NAN, ok ? d.dist_cm * 0.01f : NAN,
 		      !ok ? "(not readable)" : seen ? "in view" : warned ? "out of view (warned before its grant)" :
@@ -533,8 +533,8 @@ static void ff_pace_frame(double t, uintptr_t pc)
 			if (k == 1)
 				ff_pace_landed(w->id, w->c, t, g, t, "its track ended just before the impact: met");
 			else if (k == 0 && ff_ev_log_ok(t))
-				logf_("CROWD cancelled t=%.3f orc=%#lx: its blow ended before the impact (a hit, a stagger): its turn "
-				      "ends", t, (unsigned long)w->id);
+				logf_("CROWD cancelled t=%.3f orc=%#llx: its blow ended before the impact (a hit, a stagger): its turn "
+				      "ends", t, (unsigned long long)w->id);
 		}
 		memset(w, 0, sizeof *w);
 	}
@@ -596,8 +596,8 @@ static void ff_pace_frame(double t, uintptr_t pc)
 			g_ff.an.unwarned++;
 		}
 		if (ff_ev_log_ok(t))
-			logf_("CROWD start t=%.3f orc=%#lx '%s' %s blow, its impact in %.2f s%s%s%s%s; yaw=%+.0f off=%.0f deg dist=%.1f "
-			      "m %s; winding up now %d", t, (unsigned long)id, ty, tr->k.ranged ? "a ranged" : "a melee",
+			logf_("CROWD start t=%.3f orc=%#llx '%s' %s blow, its impact in %.2f s%s%s%s%s; yaw=%+.0f off=%.0f deg dist=%.1f "
+			      "m %s; winding up now %d", t, (unsigned long long)id, ty, tr->k.ranged ? "a ranged" : "a melee",
 			      tr->k.impact, "",
 			      fl & SOMVR_PACE_GRANTED ? ", its grant's" : fl & SOMVR_PACE_ANSWER ?
 			      ", ITS ANSWER in its own held turn (no grant)" : ", NO GRANT seen (unannounced)",
@@ -605,7 +605,7 @@ static void ff_pace_frame(double t, uintptr_t pc)
 			      ok ? d.off_deg : NAN, ok ? d.dist_cm * 0.01f : NAN, !ok ? "(not readable)" : seen ? "in view" :
 			      r && r->grant_warned ? "out of view (warned)" : "out of view", wind);
 		if (aw[0] && ff_ev_log_ok(t))
-			logf_("CROWD answer t=%.3f orc=%#lx%s", t, (unsigned long)id, aw);
+			logf_("CROWD answer t=%.3f orc=%#llx%s", t, (unsigned long long)id, aw);
 	}
 	somvr_pace_turn out[SOMVR_PACE_TURNS];
 	double gaps[SOMVR_PACE_TURNS];
@@ -635,9 +635,9 @@ static void ff_pace_frame(double t, uintptr_t pc)
 		if (h == 1 && g_ff.tal_recoil && a && a->landed_t > 0 && t - a->landed_t < 3.5) {
 			somvr_pace_verdict(&g_ff.pace, &g_ff.pcfg, id, t, 1);
 			if (ff_ev_log_ok(t))
-				logf_("CROWD answer-hold t=%.3f orc=%#lx: its blow over (cut short or missed) while Talion still recoils "
+				logf_("CROWD answer-hold t=%.3f orc=%#llx: its blow over (cut short or missed) while Talion still recoils "
 				      "from its last blow that hit (%.2f s ago, his attack '%s') -> its turn holds while he recoils", t,
-				      (unsigned long)id, t - a->landed_t, an);
+				      (unsigned long long)id, t - a->landed_t, an);
 			continue;
 		}
 		if (h != 2 || t - since < 0.3)
@@ -653,8 +653,8 @@ static void ff_pace_frame(double t, uintptr_t pc)
 			continue;
 		somvr_pace_release(&g_ff.pace, id);
 		if (ff_ev_log_ok(t))
-			logf_("CROWD answer-hold t=%.3f orc=%#lx released: Talion's recoil over (0.35 s ago) after %.2f s (his attack "
-			      "'%s'): no answer; the turn is free", t, (unsigned long)id, t - since, an[0] ? an : "-");
+			logf_("CROWD answer-hold t=%.3f orc=%#llx released: Talion's recoil over (0.35 s ago) after %.2f s (his attack "
+			      "'%s'): no answer; the turn is free", t, (unsigned long long)id, t - since, an[0] ? an : "-");
 		if (a)
 			a->calm_t = 0;
 	}
@@ -742,7 +742,7 @@ static void ff_judge(uintptr_t e, uintptr_t tgt, uintptr_t slot)
 		if (v == SOMVR_FR_READY && r->warned && !(r->ready_t > 0)) {
 			r->ready_t = t;
 			if (ff_ev_log_ok(t))
-				logf_("FRONT ready t=%.3f orc=%#lx after %.3f s of warning (clock %u)", t, (unsigned long)id, t - r->warn_t,
+				logf_("FRONT ready t=%.3f orc=%#llx after %.3f s of warning (clock %u)", t, (unsigned long long)id, t - r->warn_t,
 				      now);
 		}
 	}
@@ -750,14 +750,14 @@ static void ff_judge(uintptr_t e, uintptr_t tgt, uintptr_t slot)
 		/* the CROWD line said it */
 	} else if (v == SOMVR_FR_WAIT || v == SOMVR_FR_VETO) {
 		if (ff_veto_log_ok(t))
-			logf_("FRONT veto t=%.3f orc=%#lx score=%.2f -> %.0f%s off=%.0f deg yaw=%+.0f dist=%.1f m ring=%d%s verdict=%s "
-			      "clock=%u slot=%#lx", t, (unsigned long)id, sc0, (double)g_ff.cfg.veto_score, wrote ? "" : " (log only)",
+			logf_("FRONT veto t=%.3f orc=%#llx score=%.2f -> %.0f%s off=%.0f deg yaw=%+.0f dist=%.1f m ring=%d%s verdict=%s "
+			      "clock=%u slot=%#llx", t, (unsigned long long)id, sc0, (double)g_ff.cfg.veto_score, wrote ? "" : " (log only)",
 			      d.off_deg, d.yaw_deg, d.dist_cm * 0.01f, ring, prio ? " prio" : "", somvr_front_verdict_name(v), now,
-			      (unsigned long)slot);
+			      (unsigned long long)slot);
 	} else if (ff_log_ok(t)) {
-		logf_("FRONT score t=%.3f orc=%#lx total=%.2f game_dist=%.1f m off=%.0f deg yaw=%+.0f dist=%.1f m ring=%d%s "
-		      "verdict=%s clock=%u slot=%#lx", t, (unsigned long)id, sc0, gd * 0.01f, d.off_deg, d.yaw_deg,
-		      d.dist_cm * 0.01f, ring, prio ? " prio" : "", somvr_front_verdict_name(v), now, (unsigned long)slot);
+		logf_("FRONT score t=%.3f orc=%#llx total=%.2f game_dist=%.1f m off=%.0f deg yaw=%+.0f dist=%.1f m ring=%d%s "
+		      "verdict=%s clock=%u slot=%#llx", t, (unsigned long long)id, sc0, gd * 0.01f, d.off_deg, d.yaw_deg,
+		      d.dist_cm * 0.01f, ring, prio ? " prio" : "", somvr_front_verdict_name(v), now, (unsigned long long)slot);
 	}
 	pthread_mutex_unlock(&g_ff_mu);
 }
@@ -789,13 +789,13 @@ __attribute__((used)) uint64_t somvr_w_ffgrant(uintptr_t e, uintptr_t now)
 		int v = r ? r->verdict : SOMVR_FR_GAME;
 		g_ff.n.grant_verdict[v]++;
 		if (ff_ev_log_ok(t))
-			logf_("FRONT grant t=%.3f orc=%#lx verdict=%s attacks=%u off=%.0f deg dist=%.1f m score=%.2f grant_ms=%u now=%u "
-			      "clock=%u%s", t, (unsigned long)id, r ? somvr_front_verdict_name(v) : "unseen", left,
+			logf_("FRONT grant t=%.3f orc=%#llx verdict=%s attacks=%u off=%.0f deg dist=%.1f m score=%.2f grant_ms=%u now=%u "
+			      "clock=%u%s", t, (unsigned long long)id, r ? somvr_front_verdict_name(v) : "unseen", left,
 			      r ? r->off : NAN, r ? r->dist * 0.01f : NAN, r ? r->score : NAN, gt, (uint32_t)now,
 			      clk_ok ? clk : 0, p && p->warning ? ", its warning used up" : "");
 		if (r) {
 			if (r->warned && ff_ev_log_ok(t))
-				logf_("FRONT grant t=%.3f orc=%#lx came %.3f s after its warning started", t, (unsigned long)id,
+				logf_("FRONT grant t=%.3f orc=%#llx came %.3f s after its warning started", t, (unsigned long long)id,
 				      t - r->warn_t);
 			if (r->grant_warned && r->start_seen && !r->summed)
 				ff_summary(r, t);
@@ -885,7 +885,7 @@ __attribute__((used)) uint64_t somvr_w_ffdmg(uintptr_t ds, uintptr_t hobj)
 					 k->k.ranged ? ", ranged" : ""), g_ff.n.dmg_keyed++;
 		}
 		if (ff_ev_log_ok(t))
-			logf_("FRONT damage at Talion t=%.3f %.2f -> %.2f from %#lx (%s); its track: %s", t, a, b, (unsigned long)from,
+			logf_("FRONT damage at Talion t=%.3f %.2f -> %.2f from %#llx (%s); its track: %s", t, a, b, (unsigned long long)from,
 			      r ? "a fight-circle orc" : "not a fight-circle candidate: an arrow? a prop?", tk);
 	}
 	pthread_mutex_unlock(&g_ff_mu);
@@ -987,8 +987,8 @@ static void ff_watch(uintptr_t pcomb, uintptr_t pc, const float head[3], const f
 			float oh = ff_off_deg(head, hq, o.pos), orr = half ? ff_off_deg(g_ff.game_pos, rq, o.pos) : NAN;
 			g_ffwn.arrivals++, g_ffwn.in_head += oh <= g_ff.cfg.view_deg * 0.5f, g_ffwn.in_rig += orr <= g_ff.cfg.view_deg * 0.5f;
 			if (ff_log_ok(t))
-				logf_("FRONT arrival t=%.3f orc=%#lx hobj=%#lx dist=%.1f m off the head %.0f deg (%s), off the game's copy "
-				      "%.0f deg (%s)%s", t, (unsigned long)c, (unsigned long)o.hobj, dist3(o.pos, head) * 0.01f, oh,
+				logf_("FRONT arrival t=%.3f orc=%#llx hobj=%#llx dist=%.1f m off the head %.0f deg (%s), off the game's copy "
+				      "%.0f deg (%s)%s", t, (unsigned long long)c, (unsigned long long)o.hobj, dist3(o.pos, head) * 0.01f, oh,
 				      oh <= g_ff.cfg.view_deg * 0.5f ? "IN VIEW" : "out of view", orr,
 				      orr <= g_ff.cfg.view_deg * 0.5f ? "in" : "out", cb_dead(c) ? " dead" : "");
 		}
@@ -1000,8 +1000,8 @@ static void ff_watch(uintptr_t pcomb, uintptr_t pc, const float head[3], const f
 			float oh = ff_off_deg(head, hq, g_ffw[i].pos), orr = half ? ff_off_deg(g_ff.game_pos, rq, g_ffw[i].pos) : NAN;
 			g_ffwn.departures++;
 			if (ff_log_ok(t))
-				logf_("FRONT departure t=%.3f orc=%#lx dist=%.1f m off the head %.0f deg (%s), off the game's copy %.0f deg "
-				      "after %.1f s in the bands", t, (unsigned long)g_ffw[i].c, dist3(g_ffw[i].pos, head) * 0.01f, oh,
+				logf_("FRONT departure t=%.3f orc=%#llx dist=%.1f m off the head %.0f deg (%s), off the game's copy %.0f deg "
+				      "after %.1f s in the bands", t, (unsigned long long)g_ffw[i].c, dist3(g_ffw[i].pos, head) * 0.01f, oh,
 				      oh <= g_ff.cfg.view_deg * 0.5f ? "IN VIEW" : "out of view", orr, g_ffw[i].t1 - g_ffw[i].t0);
 		}
 		memset(&g_ffw[i], 0, sizeof g_ffw[i]);
@@ -1028,10 +1028,10 @@ static void ff_summary(struct ff_orc *r, double t)
 	g_ff.n.warned_atk++, g_ff.n.warned_pulses += (uint64_t)pulses, g_ff.n.warned_sounds += (uint64_t)sounds;
 	if ((uint64_t)pulses > g_ff.n.warned_max_pulses)
 		g_ff.n.warned_max_pulses = (uint64_t)pulses;
-	logf_("FRONT cues t=%.3f orc=%#lx (THREAT orc=%#lx): a warned attack, its warning %.2f s before the start and %.2f "
+	logf_("FRONT cues t=%.3f orc=%#llx (THREAT orc=%#llx): a warned attack, its warning %.2f s before the start and %.2f "
 		      "s before the impact: pulses %d (the warning's %d + THREAT's %d), sounds %d (%d + %d), THREAT's skipped %d "
 		      "(one warning); the edge %.2f..%.2f s after the warning's start (the warning's %d frames, held %d)", t,
-		      (unsigned long)r->id, (unsigned long)r->atk_c, r->atk_t0 - r->warn_t, r->impact_t - r->warn_t, pulses,
+		      (unsigned long long)r->id, (unsigned long long)r->atk_c, r->atk_t0 - r->warn_t, r->impact_t - r->warn_t, pulses,
 		      r->pre_pulse, r->th_pulses, sounds, r->pre_sound, r->th_sounds, r->th_quiet,
 		      r->edge_t0 > 0 ? r->edge_t0 - r->warn_t : -1.0, r->edge_t1 > 0 ? r->edge_t1 - r->warn_t : -1.0,
 		      r->cue_frames, r->hold_frames);
@@ -1064,8 +1064,8 @@ static void ff_ans_cue(const float head[3], const float hq[4], double t, somvr_t
 			haps[s] = SOMVR_THH_URGENT;
 	th_sound(p, head, t, (uintptr_t)g_ff.ans.id);
 	if (ff_ev_log_ok(t))
-		logf_("THREAT answer orc=%#lx (a berserker's answer to our cut%s) cue=%s side=%s yaw=%+.0f off=%.0f deg dist=%.1f m "
-		      "haptic=urgent sound", (unsigned long)g_ff.ans.id, g_ff.ans.at_hit ? ", warned at our hit" : ", at its start",
+		logf_("THREAT answer orc=%#llx (a berserker's answer to our cut%s) cue=%s side=%s yaw=%+.0f off=%.0f deg dist=%.1f m "
+		      "haptic=urgent sound", (unsigned long long)g_ff.ans.id, g_ff.ans.at_hit ? ", warned at our hit" : ", at its start",
 		      seen ? "in view (the sound, the pulse)" : "red edge", somvr_th_side_name(side), d.yaw_deg, d.off_deg,
 		      d.dist_cm * 0.01f);
 }
@@ -1097,7 +1097,7 @@ static void ff_cues(const float head[3], const float hq[4], double t, somvr_thre
 		uint8_t d = 0;
 		if (peek(g_ff.pl + FF_PL_D12, &d, 1) && d != g_ff.d12) {
 			if (ff_log_ok(t))
-				logf_("FRONT d12 t=%.3f CPlayerObj %#lx +0xd12 %d -> %d", t, (unsigned long)g_ff.pl, g_ff.d12, d);
+				logf_("FRONT d12 t=%.3f CPlayerObj %#llx +0xd12 %d -> %d", t, (unsigned long long)g_ff.pl, g_ff.d12, d);
 			g_ff.d12 = d;
 		}
 	}
@@ -1141,9 +1141,9 @@ static void ff_cues(const float head[3], const float hq[4], double t, somvr_thre
 					g_ff.turn_cues++, g_ff.n.warn_cues++;
 					d = rd, seen = 0; /* the hold below: this frame's edge at its live place */
 					if (ff_ev_log_ok(t))
-						logf_("FRONT turn-cue t=%.3f orc=%#lx: granted %.2f s ago at off=%.0f deg (in view), its blow not "
+						logf_("FRONT turn-cue t=%.3f orc=%#llx: granted %.2f s ago at off=%.0f deg (in view), its blow not "
 						      "started, now off=%.0f deg yaw=%+.0f dist=%.1f m (out of view): the warning's cue now (the "
-						      "sound at it, a tick on the %s side, the edge held to its impact)", t, (unsigned long)r->id,
+						      "sound at it, a tick on the %s side, the edge held to its impact)", t, (unsigned long long)r->id,
 						      t - r->grant_t, r->off, rd.off_deg, rd.yaw_deg, rd.dist_cm * 0.01f, somvr_th_side_name(side));
 				}
 			}
@@ -1176,8 +1176,8 @@ static void ff_cues(const float head[3], const float hq[4], double t, somvr_thre
 				th_sound(p, head, t, (uintptr_t)r->id);
 				r->pre_pulse = 1, r->pre_sound = g_th.sound[0] != 0;
 				if (th_log_ok(t))
-					logf_("THREAT pre orc=%#lx (FRONT warning) cue=edge side=%s yaw=%+.0f pitch=%+.0f off=%.0f deg dist=%.1f "
-					      "m level=%.2f haptic=announce sound", (unsigned long)r->id, somvr_th_side_name(side), d.yaw_deg,
+					logf_("THREAT pre orc=%#llx (FRONT warning) cue=edge side=%s yaw=%+.0f pitch=%+.0f off=%.0f deg dist=%.1f "
+					      "m level=%.2f haptic=announce sound", (unsigned long long)r->id, somvr_th_side_name(side), d.yaw_deg,
 					      d.pitch_deg, d.off_deg, d.dist_cm * 0.01f, edge);
 			}
 		} else if (r->cue_due && lv < 0) {
@@ -1187,7 +1187,7 @@ static void ff_cues(const float head[3], const float hq[4], double t, somvr_thre
 		if (r->warned && (!p0 || (!p0->warning && p0->quiet))) {
 			r->warned = 0;
 			if (ff_ev_log_ok(t))
-				logf_("FRONT expired t=%.3f orc=%#lx: its warning ran %.2f s unused (quiet %.1f s)", t, (unsigned long)r->id,
+				logf_("FRONT expired t=%.3f orc=%#llx: its warning ran %.2f s unused (quiet %.1f s)", t, (unsigned long long)r->id,
 				      t - r->warn_t, (double)g_ff.cfg.quiet_s);
 		}
 		if (r->grant_t > 0 && !r->start_seen) { /* the grant -> the attack's start (THREAT's track of that orc) */
@@ -1204,16 +1204,16 @@ static void ff_cues(const float head[3], const float hq[4], double t, somvr_thre
 				g_ff.n.starts++, g_ff.n.start_lat_sum += lat;
 				g_ff.n.start_lat_max = lat > g_ff.n.start_lat_max ? lat : g_ff.n.start_lat_max;
 				if (ff_ev_log_ok(t))
-					logf_("FRONT attack t=%.3f orc=%#lx (THREAT orc=%#lx) started %.3f s after its grant%s, impact %.3f s "
-					      "after the start; the warning started %.3f s before the start", t, (unsigned long)r->id,
-					      (unsigned long)tr->c, lat, r->warn_t > 0 && r->warn_t <= r->grant_t ? " (warned)" : "",
+					logf_("FRONT attack t=%.3f orc=%#llx (THREAT orc=%#llx) started %.3f s after its grant%s, impact %.3f s "
+					      "after the start; the warning started %.3f s before the start", t, (unsigned long long)r->id,
+					      (unsigned long long)tr->c, lat, r->warn_t > 0 && r->warn_t <= r->grant_t ? " (warned)" : "",
 					      tr->k.impact, r->warn_t > 0 && r->warn_t <= r->grant_t ? tr->t0 - r->warn_t : -1.0);
 			}
 			if (!r->start_seen && t - r->grant_t > 6.0) {
 				r->start_seen = 1;
 				g_ff.n.no_start++;
 				if (ff_ev_log_ok(t))
-					logf_("FRONT attack t=%.3f orc=%#lx: no attack start within 6 s of its grant", t, (unsigned long)r->id);
+					logf_("FRONT attack t=%.3f orc=%#llx: no attack start within 6 s of its grant", t, (unsigned long long)r->id);
 			}
 		}
 		if (r->grant_warned && r->start_seen && !r->summed && (!r->atk_c || t > r->atk_end + 0.3))
@@ -1247,7 +1247,7 @@ static void ff_prewarned(uintptr_t c, uintptr_t hobj, double t0, double t, somvr
 		if (k->late || qh || qs) {
 			g_ff.n.quiet_pulses += qh, g_ff.n.quiet_sounds += qs;
 			if (th_log_ok(t))
-				logf_("THREAT quiet orc=%#lx: its answer warned %.3f s ago%s%s%s", (unsigned long)c, t - g_ff.ans.t0,
+				logf_("THREAT quiet orc=%#llx: its answer warned %.3f s ago%s%s%s", (unsigned long long)c, t - g_ff.ans.t0,
 				      k->late ? " (not LATE)" : "", qh ? ", its pulse skipped" : "", qs ? ", its sound skipped" : "");
 			k->late = 0;
 			if (qh)
@@ -1262,15 +1262,15 @@ static void ff_prewarned(uintptr_t c, uintptr_t hobj, double t0, double t, somvr
 			k->late = 0;
 			g_ff.n.prewarned++;
 			if (ff_ev_log_ok(t))
-				logf_("FRONT prewarned t=%.3f THREAT orc=%#lx: not LATE, its FRONT warning started %.3f s ago", t,
-				      (unsigned long)c, a);
+				logf_("FRONT prewarned t=%.3f THREAT orc=%#llx: not LATE, its FRONT warning started %.3f s ago", t,
+				      (unsigned long long)c, a);
 		}
 		int qh = g_ff.onecue && k->haptic && w->pre_pulse, qs = g_ff.onecue && k->sound && w->pre_sound;
 		if (qh || qs) {
 			w->th_quiet += qh + qs, g_ff.n.quiet_pulses += qh, g_ff.n.quiet_sounds += qs;
 			if (th_log_ok(t))
-				logf_("THREAT quiet orc=%#lx%s%s%s skipped: FRONT warned it %.3f s ago (one warning per attack), lead "
-				      "%.3f s", (unsigned long)c, qh ? " haptic=" : "", qh ? somvr_th_haptic_name(k->haptic) : "",
+				logf_("THREAT quiet orc=%#llx%s%s%s skipped: FRONT warned it %.3f s ago (one warning per attack), lead "
+				      "%.3f s", (unsigned long long)c, qh ? " haptic=" : "", qh ? somvr_th_haptic_name(k->haptic) : "",
 				      qs ? " sound" : "", a, k->lead);
 			if (qh)
 				k->haptic = 0;
@@ -1302,8 +1302,8 @@ static void ff_status(const char *why)
 	for (int i = 0; i < SOMVR_FRONT_ORCS; i++) {
 		const struct ff_orc *r = &g_ff.o[i];
 		if (r->id)
-			logf_("FRONT status orc=%#lx verdict=%s score=%.2f off=%.0f deg dist=%.1f m ring=%d%s grants=%u seen %.2f s ago",
-			      (unsigned long)r->id, somvr_front_verdict_name(r->verdict), r->score, r->off, r->dist * 0.01f, r->ring,
+			logf_("FRONT status orc=%#llx verdict=%s score=%.2f off=%.0f deg dist=%.1f m ring=%d%s grants=%u seen %.2f s ago",
+			      (unsigned long long)r->id, somvr_front_verdict_name(r->verdict), r->score, r->off, r->dist * 0.01f, r->ring,
 			      r->prio ? " prio" : "", r->grants, t - r->seen_t);
 	}
 	pthread_mutex_unlock(&g_ff_mu);
@@ -1404,8 +1404,8 @@ static void ff_start(int *bad)
 		g_ff.ok[i] = check_site(&g_ff_sites[i], why, sizeof why) == 0;
 		snprintf(ln[i], sizeof ln[i], "%s %s", g_ff_sites[i].name, g_ff.ok[i] ? "ok" : "MISMATCH");
 		if (!g_ff.ok[i])
-			logf_("FRONT site %s %#lx -> %#lx MISMATCH: %s", g_ff_sites[i].name, (unsigned long)g_ff_sites[i].addr,
-			      (unsigned long)g_ff_sites[i].target, why);
+			logf_("FRONT site %s %#llx -> %#llx MISMATCH: %s", g_ff_sites[i].name, (unsigned long long)g_ff_sites[i].addr,
+			      (unsigned long long)g_ff_sites[i].target, why);
 	}
 	if (!g_ff.ok[FFS_CAMTERM] || !g_ff.ok[FFS_VF59]) {
 		logf_("WARN SOMVR_FRONT: the read-only proofs FR_CAMTERM/FR_VF59 did not match (the entry's layout unproven): "

@@ -109,3 +109,48 @@ const char *somvr_kl_state_name(int s)
     return s == SOMVR_KL_UNAWARE ? "unaware" : s == SOMVR_KL_STUNNED ? "stunned" : s == SOMVR_KL_DOWNED ? "downed"
            : s == SOMVR_KL_COUNTER ? "countered mid-attack" : s == SOMVR_KL_HELD ? "held" : "fighting";
 }
+
+int somvr_kl_quick_why(const somvr_kl_quick *q, double el, int seen, float moved, float drop, float rise)
+{
+    el += 1e-6; /* (the times are floats: 0.15 s reached at 0.15) */
+    if (q->max_s > 0 && el >= q->max_s)
+        return SOMVR_KLQ_LATE;
+    if (q->start_s > 0 && el >= q->start_s) {
+        if (!seen)
+            return SOMVR_KLQ_UNSEEN;
+        if (!(moved >= q->start_cm))
+            return SOMVR_KLQ_STILL;
+    }
+    if (q->rise_cm > 0 && seen && rise >= q->rise_cm && !(drop >= q->fall_cm))
+        return SOMVR_KLQ_RISING; /* (straightening up before any fall: its own animation, not the half) */
+    if (q->fall_s > 0 && el >= q->fall_s && seen && !(drop >= q->fall_cm))
+        return SOMVR_KLQ_NOFALL;
+    return SOMVR_KLQ_GO;
+}
+
+const char *somvr_kl_quick_name(int v)
+{
+    static const char *const n[SOMVR_KLQ_N] = { "it plays", "its half unseen (no skeleton read)",
+                                                "its half not started (the pose still)", "its fall not started",
+                                                "the half's time is up", "its head rising (no half: the orc straightening up)" };
+    return v >= 0 && v < SOMVR_KLQ_N ? n[v] : "?";
+}
+
+static void kl_local(const float d[3], float yaw, float out[3])
+{
+    float s = sinf(yaw), c = cosf(yaw); /* its forward (s, 0, c), its right (c, 0, -s) */
+    out[0] = d[0] * c - d[2] * s, out[1] = d[1], out[2] = d[0] * s + d[2] * c;
+}
+
+float somvr_kl_pose_moved(const float (*a)[3], float ya, const float (*b)[3], float yb, int n)
+{
+    float m = 0;
+    for (int i = 0; i < n; i++) {
+        float p[3], q[3];
+        kl_local(a[i], ya, p), kl_local(b[i], yb, q);
+        float d = sqrtf((p[0] - q[0]) * (p[0] - q[0]) + (p[1] - q[1]) * (p[1] - q[1]) + (p[2] - q[2]) * (p[2] - q[2]));
+        if (d > m)
+            m = d;
+    }
+    return m;
+}

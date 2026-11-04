@@ -69,11 +69,18 @@ static void check_out(const unsigned char *o, size_t m, size_t n, const char *wh
 
 int main(int argc, char **argv)
 {
+	int nray = 0;
 	prog[1] = NP;
 	size_t n, m;
 	const char *why;
 	unsigned char *b = wrap(prog, NP, &n), *o = somvr_fogdxbc(b, n, &m, &why);
 	CHECK(o, "synthetic: not edited: %s", why ? why : "?");
+	{ /* build 33: the synthetic program has no density chain: the ray edit refuses it */
+		size_t mr = 0;
+		unsigned char *r = o ? somvr_fogdxbc_ray(o, m, &mr, &why) : NULL;
+		CHECK(o && !r, "synthetic: the ray edit took a program without the densities");
+		free(r);
+	}
 	if (o) {
 		check_out(o, m, n, "synthetic");
 		/* the words: dcl_temps 7; before the movc dp3 r6.x, r3.xyzx, r3.xyzx; sqrt r6.x, r6.x; the movc's src2 = r6.x */
@@ -136,6 +143,17 @@ int main(int argc, char **argv)
 		o = somvr_fogdxbc(f, fn, &m, &why);
 		CHECK(o, "%s: not edited: %s", argv[a], why ? why : "?");
 		if (o) check_out(o, m, fn, argv[a]);
+		if (o) { /* build 33: the density along the ray on top (+202 words: 40 + 2 x 81), its checksum valid */
+			size_t mr = 0;
+			unsigned char *r = somvr_fogdxbc_ray(o, m, &mr, &why), ck[16];
+			CHECK(r && mr == m + 808, "%s: the ray edit: %s (%zu -> %zu)", argv[a], why ? why : "ok", m, mr);
+			if (r) {
+				somvr_dxbc_checksum(r, mr, ck);
+				CHECK(!memcmp(ck, r + 4, 16), "%s: the ray edit's checksum", argv[a]);
+				nray++;
+			}
+			free(r);
+		}
 		if (o && argc > 2) {
 			char out[4096];
 			snprintf(out, sizeof out, "%s.radial", argv[a]);
@@ -144,7 +162,7 @@ int main(int argc, char **argv)
 		}
 		free(o), free(f);
 	}
-	printf("test_fogdxbc: %s (synthetic + %d refusals%s; checksums %d/%d; real shaders %d)\n", fails ? "FAIL" : "ok", 8,
-	       "", ok, nblob, argc > 2 ? argc - 2 : 0);
+	printf("test_fogdxbc: %s (synthetic + %d refusals; checksums %d/%d; real shaders %d, the ray edit on %d)\n",
+	       fails ? "FAIL" : "ok", 8, ok, nblob, argc > 2 ? argc - 2 : 0, nray);
 	return fails != 0;
 }

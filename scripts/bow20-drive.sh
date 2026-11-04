@@ -194,7 +194,8 @@ shot() { local nm=$1 wh=$2 dy=$3 kind=${4:-} n0 nh
 if has aim; then
   echo "== aim: an unaware orc 10 m ahead; 3.5 deg right of its head (the assist, then exact), its head, its chest"
   out_again; w "bow arrows 30" 0.6
-  w "bow aim assist" 0.5; shot beside-assist head 3.5
+  w "bow assist 5" 0.5; w "bow aim assist" 0.5; shot beside-assist head 3.5 # (the 5 deg cone set here: the headset envs since build 20 have SOMVR_BOW_ASSIST_DEG=0 - no cone, no assist line)
+  w "bow assist 0" 0.5
   w "bow aim exact" 0.5; shot beside-exact head 3.5
   shot head head 0 head
   shot chest chest 0 body

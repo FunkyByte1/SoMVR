@@ -3973,7 +3973,269 @@ static void test_b31(void) {
     }
 }
 
+/* build 33 (dn_reach, re-xr-pipeline.md 143): the way down from a ledge with the hand at the chest - reached out past
+ * the edge it takes him down (the glide, then the hold on the lip), short of the edge it does not; the cue's tick where
+ * a grip would; off = build 31's (only a hand bent down within 90 cm of the floor) */
+static void test_b33(void) {
+    for (int on = 0; on < 2; on++) {
+        rig_t r;
+        desc_setup(&r, 900); /* the top at 900, the edge at z 100, the root 40 cm back from it */
+        r.c.down_over = 1, r.c.dn_reach = on, r.c.cue = 1;
+        r.in.hand[1].p = (sv_vec3){ 20, 130, -15 }; /* the chest (130 over the floor, 40 under the eyes), 25 cm past */
+        uint32_t ev = 0, ev2 = 0;
+        for (int i = 0; i < 20; i++) rig_frame(&r), ev |= r.o.events;
+        int cue = (ev & SOMVR_CLIMB_E_NEAR_R) != 0;
+        grip(&r, 1, 1);
+        for (int n = 0; n < 200 && !(ev2 & SOMVR_CLIMB_E_DN_END); n++) rig_frame(&r), ev2 |= r.o.events2;
+        if (on)
+            CHECK(cue && (ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_end == 1 && r.s.h[1].holding && NEAR(r.in.head_y, 900 - 25, 2) &&
+                      r.s.dn_reach_goes == 1 && r.s.dn_cues >= 1,
+                  "b33 reach on: the cue (%d), the glide to hang from the lip (eyes %.0f, end %d)", cue, r.in.head_y, r.s.dn_end);
+        else
+            CHECK(!cue && !(ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_why == SOMVR_CLIMB_DN_HIGH,
+                  "b33 reach off (build 31): the chest-high grip does nothing (%s)", somvr_climb_dn_name(r.s.dn_why));
+    }
+    { /* the chest-high hand short of the edge: no cue, no glide */
+        rig_t r;
+        desc_setup(&r, 900);
+        r.c.down_over = 1, r.c.dn_reach = 1, r.c.cue = 1;
+        r.in.hand[1].p = (sv_vec3){ 20, 130, 30 }; /* 10 cm before the edge */
+        uint32_t ev = 0, ev2 = 0;
+        for (int i = 0; i < 20; i++) rig_frame(&r), ev |= r.o.events;
+        grip(&r, 1, 1);
+        for (int n = 0; n < 60; n++) rig_frame(&r), ev2 |= r.o.events2;
+        CHECK(!(ev & SOMVR_CLIMB_E_NEAR_R) && !(ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_why == SOMVR_CLIMB_DN_NOTOUT && !r.s.active,
+              "b33: the chest-high grip not reached out (20 cm ahead of him): nothing (%s)", somvr_climb_dn_name(r.s.dn_why));
+    }
+    { /* the game holds him 70 cm back from the edge: the hand reached out 50 cm (20 short of the edge): the glide */
+        rig_t r;
+        desc_setup(&r, 900);
+        r.body.z = 120; /* the root at z 170 */
+        r.c.down_over = 1, r.c.dn_reach = 1;
+        r.in.hand[1].p = (sv_vec3){ 20, 130, 0 }; /* world z 120: 50 cm ahead of the root, 20 short of the edge */
+        rig_frame(&r);
+        grip(&r, 1, 1);
+        uint32_t ev2 = 0;
+        for (int n = 0; n < 300 && !(ev2 & SOMVR_CLIMB_E_DN_END); n++) rig_frame(&r), ev2 |= r.o.events2;
+        CHECK((ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_end == 1 && r.s.dn_reach_goes == 1,
+              "b33: held back from the edge, the hand reached out short of it: the glide (%s)", somvr_climb_dn_name(r.s.dn_why));
+    }
+    { /* the hand bent down (build 21's) with reach on: as ever */
+        rig_t r;
+        desc_setup(&r, 900);
+        r.c.down_over = 1, r.c.dn_reach = 1;
+        r.in.hand[1].p = (sv_vec3){ 20, 50, 20 }; /* 50 over the floor, 20 cm before the edge */
+        rig_frame(&r);
+        grip(&r, 1, 1);
+        uint32_t ev2 = 0;
+        for (int n = 0; n < 200 && !(ev2 & SOMVR_CLIMB_E_DN_END); n++) rig_frame(&r), ev2 |= r.o.events2;
+        CHECK((ev2 & SOMVR_CLIMB_E_DN_GO) && r.s.dn_end == 1 && r.s.dn_reach_goes == 0, "b33: the low hand as build 21 (%s)",
+              somvr_climb_dn_name(r.s.dn_why));
+    }
+    g_wall_top = WALL_TOP, g_ground_on = 0;
+}
+
+/* build 33 (SOMVR_WALK_LIP): the lip judge on the session's contacts (boot 112305 at mark 24: the floor and a 45 deg
+ * bevel 6 cm over the feet, walking +x) and the lift */
+static void test_b33_lip(void) {
+    somvr_unpin_contact c[3] = { { { 0, 1, 0 }, 5.0f }, { { -0.70f, 0.70f, 0.09f }, 4.9f }, { { 0, 0, 1 }, 5 } };
+    float py[3] = { 4710, 4716, 4760 }, h = 0;
+    int k = -1;
+    CHECK(somvr_lip_find(c, py, 3, (sv_vec3){ 1, 0, 0 }, 4710, 30, &h, &k) == 1 && k == 1 && NEAR(h, 6, 1e-3),
+          "b33 lip: the bevel against the walk found (%d, %g cm)", k, h);
+    CHECK(somvr_lip_find(c, py, 3, (sv_vec3){ -1, 0, 0 }, 4710, 30, &h, &k) == 0, "b33 lip: walking away from it: none");
+    CHECK(somvr_lip_find(c, py, 3, (sv_vec3){ 0.08f, 0, 1 }, 4710, 30, &h, &k) == 1 && k == 1,
+          "b33 lip: walking along the bevel (boot 151958's 0.08,1.00, held): found");
+    CHECK(somvr_lip_find(c, py, 3, (sv_vec3){ 0, 0, -1 }, 4710, 30, &h, &k) == 1 && k == 1,
+          "b33 lip: walking into the wall at the chest (50 cm up): never the lip - the bevel beside the walk is (%d)", k);
+    py[1] = 4750;
+    CHECK(somvr_lip_find(c, py, 3, (sv_vec3){ 1, 0, 0 }, 4710, 30, &h, &k) == 0, "b33 lip: a face 40 cm up: no lip");
+    CHECK(NEAR(somvr_lip_lift(6, 7, 6, 30), 9, 1e-3) && NEAR(somvr_lip_lift(6, -1000, -1000, 30), 8, 1e-3) &&
+              somvr_lip_lift(6, 7, -50, 30) == 0 && somvr_lip_lift(6, 35, 6, 30) == 0,
+          "b33 lip lift: top 7 -> 9 cm; contact only -> 8; a drop ahead -> none; over 30 -> none");
+}
+
+/* build 36 (re-xr-pipeline.md 143, the user's 11-03 Windows session, mark 3: wedged under a bulge ~6 s): (1) a fling down
+ * the game's collision holds at once over a short drop = released (the game's fall), not the hang; (2) A on the
+ * pullover's ring - shown, or kept po_a_keep_s after its hand let go - is the pull done (the blink onto it) */
+static void b36_arm(rig_t *r, float keep_s, int can_blink) {
+    rig_init(r);
+    r->c.pullover = 1, r->in.can_blink = can_blink, r->c.letgo = SOMVR_CLIMB_LETGO_HANG, r->c.po_a_keep_s = keep_s;
+    r->body.y = 60, r->ceil_y = 232;
+    r->in.hand[1].p = (sv_vec3){ 20, 235, 85 }; /* the hold 5 cm under the top (test_pullover's) */
+    grip(r, 1, 1);
+    rig_frame(r);
+    for (int f = 0; f < 80 && !(r->o.events2 & SOMVR_CLIMB_E_PO_ARM); f++) hand_move(r, 1, 0, -1, 0), rig_frame(r);
+}
+static void b36_a(rig_t *r) { /* A's press (one frame), then let go of A */
+    r->in.drop = 1;
+    rig_frame(r);
+    r->in.drop = 0;
+}
+static void test_b36(void) {
+    somvr_climb_cfg dc;
+    somvr_climb_cfg_default(&dc);
+    CHECK(dc.po_a_keep_s == 0 && dc.fd_fall == 0, "b36: the defaults (off, off)");
+    /* (1) the fling down held by the collision at once (nothing applied: the wedge), the floor 60 cm under the feet */
+    for (int on = 0; on < 2; on++) {
+        for (int where = 0; where < 3; where++) { /* 0 the floor near, 1 water, 2 the ground 50 m down */
+            rig_t r;
+            g_ground_on = where < 2, g_wet = where == 1, g_deep = where == 2;
+            fd_setup(&r, 110, 1);
+            r.c.fd_fall = on;
+            fl_throw(&r, 1, 0, 5, 0, 9);
+            int launched = r.s.fl_down && r.s.fd_flings == 1;
+            r.apply = 0; /* wedged: no move applied */
+            fd_go(&r, 60);
+            int fell = on && where == 0;
+            if (fell)
+                CHECK(launched && !r.s.active && r.s.last_end == SOMVR_CLIMB_END_RELEASED && r.s.fd_fell && r.s.fd_falls == 1 &&
+                          r.s.fl_why == SOMVR_CLIMB_FL_BLOCKED && NEAR(r.s.fd_fall_h, r.body.y - 2, 1) && g_b31_frames <= 4,
+                      "b36 fall: held below after %d frames: released (the feet %g over the floor)", g_b31_frames, r.s.fd_fall_h);
+            else
+                CHECK(launched && r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.fl_why == SOMVR_CLIMB_FL_BLOCKED &&
+                          !r.s.fd_fell && r.s.fd_falls == 0,
+                      "b36 fall %s, %s: held below = the hang (as build 31)", on ? "on" : "off",
+                      where == 0 ? "the floor near" : where == 1 ? "water" : "the ground 50 m down");
+            g_ground_on = 0, g_wet = 0, g_deep = 0;
+        }
+    }
+    { /* a flight that goes down freely is untouched (the floor 60 cm down: landed as ever) */
+        rig_t r;
+        g_ground_on = 1;
+        fd_setup(&r, 110, 1);
+        r.c.fd_fall = 1;
+        fl_throw(&r, 1, 0, 5, 0, 9);
+        fd_go(&r, 300);
+        frames(&r, 2);
+        CHECK(r.s.fl_why == SOMVR_CLIMB_FL_LAND && r.s.fd_lands == 1 && r.s.fd_falls == 0 && !r.s.fd_fell,
+              "b36 fall on: a free flight down lands as ever");
+        g_ground_on = 0;
+    }
+    /* (2) A on the pullover's ring */
+    for (int on = 0; on < 2; on++) { /* the session: armed, a 9 cm pull, the hand let go; A 1.2 s later */
+        rig_t r;
+        b36_arm(&r, on ? 2.0f : 0.0f, 1);
+        int armed = r.s.po_arms == 1 && r.o.po_show;
+        for (int i = 0; i < 9; i++) hand_move(&r, 1, 0, -1, 0), rig_frame(&r);
+        grip(&r, 1, 0);
+        rig_frame(&r);
+        int cancelled = r.s.po_cancels == 1;
+        rig_frame(&r);
+        int kept = r.o.po_show && r.s.po_kept;
+        frames(&r, 108); /* 1.2 s */
+        int still = r.o.po_show;
+        b36_a(&r);
+        if (on)
+            CHECK(armed && cancelled && kept && still && r.s.po_keeps == 1 && r.o.blink &&
+                      (r.o.events2 & SOMVR_CLIMB_E_PO_GO) && r.s.po_a_goes == 1 && r.s.po_by_a == 2 && r.s.po_goes == 1 &&
+                      r.s.phase == SOMVR_CLIMB_PH_BLINK && NEAR(r.o.blink_to.y, 300 + 102 + 5, 1e-3) &&
+                      NEAR(r.o.blink_to.z, 140, 1e-3) && !r.o.po_show,
+                  "b36 A: the ring kept after the let-go (shown %d, %d), A 1.2 s later = the blink to %g %g %g (keeps %llu, "
+                  "goes %llu/%llu, by %d, phase %d, show %d)", kept, still, r.o.blink_to.x, r.o.blink_to.y, r.o.blink_to.z,
+                  (unsigned long long)r.s.po_keeps, (unsigned long long)r.s.po_a_goes, (unsigned long long)r.s.po_goes,
+                  r.s.po_by_a, r.s.phase, r.o.po_show);
+        else
+            CHECK(armed && cancelled && !kept && !still && r.s.po_a_goes == 0 && !(r.o.events2 & SOMVR_CLIMB_E_PO_GO) &&
+                      r.s.po_goes == 0, "b36 A off: no ring after the let-go, A is not the pullover (as build 33)");
+    }
+    { /* A while armed (still holding): the go at once */
+        rig_t r;
+        b36_arm(&r, 2.0f, 1);
+        b36_a(&r);
+        CHECK(r.o.blink && (r.o.events2 & SOMVR_CLIMB_E_PO_GO) && r.s.po_by_a == 1 && r.s.po_a_goes == 1 &&
+                  !r.s.h[1].holding && r.s.phase == SOMVR_CLIMB_PH_BLINK && NEAR(r.o.blink_to.y, 300 + 102 + 5, 1e-3),
+              "b36 A: on the ring shown while holding = the blink");
+    }
+    { /* the kept ring ends after 2 s: A then is not the pullover */
+        rig_t r;
+        b36_arm(&r, 2.0f, 1);
+        grip(&r, 1, 0);
+        frames(&r, 2);
+        int kept = r.o.po_show;
+        frames(&r, 185);
+        int gone = !r.o.po_show;
+        b36_a(&r);
+        CHECK(kept && gone && r.s.po_a_goes == 0 && !(r.o.events2 & SOMVR_CLIMB_E_PO_GO),
+              "b36 A: the kept ring gone after 2 s (%d %d): A is not the pullover", kept, gone);
+    }
+    { /* moved 20 cm since: the kept ring gone */
+        rig_t r;
+        b36_arm(&r, 2.0f, 1);
+        grip(&r, 1, 0);
+        frames(&r, 2);
+        int kept = r.o.po_show;
+        r.body.y -= 20;
+        frames(&r, 2);
+        b36_a(&r);
+        CHECK(kept && r.s.po_a_goes == 0 && !(r.o.events2 & SOMVR_CLIMB_E_PO_GO), "b36 A: moved 20 cm: the kept ring gone");
+    }
+    { /* no blink now: no ring kept, A not the pullover */
+        rig_t r;
+        b36_arm(&r, 2.0f, 0);
+        int armed = r.s.po_arms == 1;
+        grip(&r, 1, 0);
+        frames(&r, 2);
+        int kept = r.o.po_show;
+        b36_a(&r);
+        CHECK(armed && !kept && r.s.po_a_goes == 0 && !(r.o.events2 & SOMVR_CLIMB_E_PO_GO),
+              "b36 A: no blink now: no ring kept, A not the pullover");
+    }
+}
+
+/* build 36 (SOMVR_CLIMB_EDGE_LOW): on foot at a 1.5 m ledge the game holds the walk at (in.walk_blocked) - A's press is
+ * the blink down (edge_blink; the mark: the ring, held, let go), the cue tells it; not without the hold, not when off */
+static void test_b36_edge(void) {
+    for (int on = 0; on < 2; on++)
+        for (int held = 0; held < 2; held++) {
+            rig_t r;
+            desc_setup(&r, 150);
+            r.c.edge_low_cm = on ? 50.0f : 0.0f;
+            r.in.head_fwd = (sv_vec3){ 0, 0, -1 }, r.in.walk_blocked = held;
+            press_a(&r);
+            if (on && held)
+                CHECK(r.o.blink && (r.o.events & SOMVR_CLIMB_E_EDGE) && r.s.bl_low && r.s.edge_lows == 1 &&
+                          NEAR(r.s.bl_h, 150, 0.5) && NEAR3(r.o.blink_to, 0, 105, 140 - 60 - 40, 0.5),
+                      "b36 edge low: the walk held at a 1.5 m ledge: A = the blink down (%g cm, to %g %g %g)", r.s.bl_h,
+                      r.o.blink_to.x, r.o.blink_to.y, r.o.blink_to.z);
+            else
+                CHECK(!r.o.blink && r.s.bl_why == SOMVR_CLIMB_BL_SHORT && r.s.edge_lows == 0,
+                      "b36 edge low %s, the walk %s: a 1.5 m ledge is short: nothing (as build 33)", on ? "on" : "off",
+                      held ? "held" : "free");
+        }
+    for (int on = 0; on < 2; on++) { /* the mark: A held = the ring on the ground below; let go = the blink */
+        rig_t r;
+        dm_acc k;
+        dm_setup(&r, 150);
+        r.c.edge_low_cm = on ? 50.0f : 0.0f, r.in.walk_blocked = 1;
+        memset(&k, 0, sizeof k);
+        dm_run(&r, 1, 45, &k);
+        int shown = (k.ev2 & SOMVR_CLIMB_E_DM_SHOW) && k.shows > 40 && r.s.dm_kind == SOMVR_CLIMB_DM_BLINK && r.s.bl_low;
+        dm_run(&r, 0, 1, &k);
+        if (on)
+            CHECK(shown && k.blink == 1 && NEAR3(k.to, 0, 105, 40, 0.5) && r.s.edge_lows == 1,
+                  "b36 edge low, the mark: the ring, held, let go = the blink to %g %g %g", k.to.x, k.to.y, k.to.z);
+        else
+            CHECK(!shown && !k.blink && r.s.edge_lows == 0, "b36 edge low off, the mark: a 1.5 m ledge: nothing");
+    }
+    for (int on = 0; on < 2; on++) { /* the cue: the walk held at the low edge = the double pulse once (on) */
+        rig_t r;
+        desc_setup(&r, 150);
+        r.c.cue = 1, r.c.edge_low_cm = on ? 50.0f : 0.0f;
+        r.in.head_fwd = (sv_vec3){ 0, 0, -1 }, r.in.walk_blocked = 1;
+        int cues = 0;
+        for (int i = 0; i < 90; i++) rig_frame(&r), cues += (r.o.events2 & SOMVR_CLIMB_E_EDGE_CUE) != 0;
+        CHECK(cues == on && r.s.edge_lows == 0 && !r.o.blink, "b36 edge low %s: the cue %d (the probe counts nothing)",
+              on ? "on" : "off", cues);
+    }
+    g_wall_top = WALL_TOP, g_ground_on = 0;
+}
+
 int main(void) {
+    test_b36_edge();
+    test_b36();
+    test_b33();
+    test_b33_lip();
     test_b31();
     test_b21();
     test_b27();

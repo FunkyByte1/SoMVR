@@ -186,18 +186,18 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 	if (hf_log_window(&hs, &hk)) { /* build 17: SOMVR_COMBAT_HITLOG - every FX made after our hit */
 		static _Atomic int hit_lines;
 		if (atomic_fetch_add(&hit_lines, 1) < 400)
-			logf_("HITFX t=%.3f fx '%s' on %s %#lx node %d off %.1f,%.1f,%.1f flags %#x (caller %#lx; %.0f ms after our %s "
-			      "hit): %s", t, name, !parent ? "nothing" : parent == me ? "Talion" : "an object", (unsigned long)parent,
+			logf_("HITFX t=%.3f fx '%s' on %s %#llx node %d off %.1f,%.1f,%.1f flags %#x (caller %#llx; %.0f ms after our %s "
+			      "hit): %s", t, name, !parent ? "nothing" : parent == me ? "Talion" : "an object", (unsigned long long)parent,
 			      node, (double)off[0], (double)off[1], (double)off[2], flags,
-			      (unsigned long)(uintptr_t)__builtin_return_address(0), hs * 1e3,
+			      (unsigned long long)(uintptr_t)__builtin_return_address(0), hs * 1e3,
 			      g_hf_kind_w[hk >= 0 && hk < SC_KIND_N ? hk : 0], hit ? "not made (our eyes: hide)" : r ? "made" : "the game's 0");
 	}
 	if (all || ((hit || face || (moment && ours && mode != VG_GAME) || !seen) && g_vg.lines < VG_LINES)) {
 		g_vg.lines += !all;
-		logf_("VBGLOW t=%.3f fx '%s' on %s %#lx node %d off %.1f,%.1f,%.1f flags %#x start %d (caller %#lx)%s%s: %s", t,
+		logf_("VBGLOW t=%.3f fx '%s' on %s %#llx node %d off %.1f,%.1f,%.1f flags %#x start %d (caller %#llx)%s%s: %s", t,
 		      name, !parent ? "nothing" : parent == me ? "Talion" : parent == held ? "the held orc" : "an object",
-		      (unsigned long)parent, node, (double)off[0], (double)off[1], (double)off[2], flags, (int)(start & 0xff),
-		      (unsigned long)(uintptr_t)__builtin_return_address(0), moment ? " in the verbs' moment" : "",
+		      (unsigned long long)parent, node, (double)off[0], (double)off[1], (double)off[2], flags, (int)(start & 0xff),
+		      (unsigned long long)(uintptr_t)__builtin_return_address(0), moment ? " in the verbs' moment" : "",
 		      all ? " (all)" : "", hit ? "not made (our eyes: hide)" : face ? "not made (our eyes: the face)"
 		      : r ? "made" : "the game's own 0");
 	}
@@ -215,6 +215,8 @@ __attribute__((used)) uint64_t somvr_w_vbglow(uintptr_t mgr, uintptr_t out, uint
 static SITE_TABLE struct site_spec g_vgw_sites_game[] = {
 SITE("VG_FXCREATE", K_ENTRY, 0, 0, "", 0, ""),
 };
+/* the create's entry hook is in (its bytes were checked before MinHook rewrote them): df_fx_check's FI_FX_CREATE */
+static int vg_win_hooked(uintptr_t fn) { return fn && g_vg.orig && fn == g_vgw_sites_game[0].target; }
 static int vg_install_win(void)
 {
 	char why[512] = "";
@@ -264,13 +266,13 @@ static int vg_install(const struct site_spec *s, int n)
 	for (int i = 0; i < n; i++) {
 		int32_t rel = (int32_t)((int64_t)(uintptr_t)pg - (int64_t)(s[i].addr + 5));
 		if (write_code(s[i].addr + 1, &rel, 4, err, sizeof err) != 0) {
-			logf_("HOOK %s SKIPPED %#lx: write failed: %s", s[i].name, (unsigned long)s[i].addr, err);
+			logf_("HOOK %s SKIPPED %#llx: write failed: %s", s[i].name, (unsigned long long)s[i].addr, err);
 			continue;
 		}
 		done++;
 		hex_of((const unsigned char *)s[i].addr, 5, nb, sizeof nb);
-		logf_("HOOK %s ok jmp %#lx target=%#lx now=[%s] via=%#lx (ClientFX's create: the verbs' glow)", s[i].name,
-		      (unsigned long)s[i].addr, (unsigned long)s[i].target, nb, (unsigned long)pg);
+		logf_("HOOK %s ok jmp %#llx target=%#llx now=[%s] via=%#llx (ClientFX's create: the verbs' glow)", s[i].name,
+		      (unsigned long long)(uintptr_t)s[i].addr, (unsigned long long)(uintptr_t)s[i].target, nb, (unsigned long long)(uintptr_t)pg);
 	}
 	return done;
 }

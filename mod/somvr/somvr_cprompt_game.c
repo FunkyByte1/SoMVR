@@ -69,8 +69,8 @@ __attribute__((used)) void somvr_w_cpmark(uintptr_t marker, int on)
 		on = 0;
 		atomic_fetch_add(&g_cp.n_mark_hid, 1);
 		if (atomic_fetch_add(&g_cp.lines, 1) < 8)
-			logf_("CPROMPT t=%.3f the counter icon's marker %#lx: switched off (SOMVR_COUNTER_ICON=hide)", cb_now(),
-			      (unsigned long)marker);
+			logf_("CPROMPT t=%.3f the counter icon's marker %#llx: switched off (SOMVR_COUNTER_ICON=hide)", cb_now(),
+			      (unsigned long long)marker);
 	}
 	((cp_mark_fn)g_cp_sites[1].target)(marker, on);
 	if (atomic_load(&g_cp.dumps) > 0) { /* a test: the next frame in a picture (the glyph's window is ~0.25 s) */
@@ -94,8 +94,8 @@ __attribute__((used)) void somvr_w_cpshow(uintptr_t marker, int ms, int a, int b
 	atomic_fetch_add(&g_cp.n_show, 1);
 	if (cp_setup_skip()) {
 		if (atomic_fetch_add(&g_cp.n_show_skip, 1) < 4)
-			logf_("CPROMPT t=%.3f the counter glyph's set-up skipped (marker %#lx, its record and its %d ms show: "
-			      "SOMVR_COUNTER_ICON_SETUP=skip)", cb_now(), (unsigned long)marker, ms);
+			logf_("CPROMPT t=%.3f the counter glyph's set-up skipped (marker %#llx, its record and its %d ms show: "
+			      "SOMVR_COUNTER_ICON_SETUP=skip)", cb_now(), (unsigned long long)marker, ms);
 		return;
 	}
 	((cp_show_fn)g_cp_sites[3].target)(marker, ms, a, b);

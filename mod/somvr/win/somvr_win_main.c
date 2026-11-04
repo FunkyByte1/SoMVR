@@ -140,6 +140,167 @@ static int write_bytes(uintptr_t at, const void *src, size_t n)
 	return 0;
 }
 
+/* ---- the crash note (winport-combat, 11-03): a fault in the game's process logged before the game's own handler
+ * ends it (kills31's merged boot 033929 exited with 5 and nothing in wine.log: the game's handler exits quietly, and its
+ * "Critical Error" asserts write to address 0 on Windows where Linux only stores the message). Read only: the code, the
+ * place (exe/DLL RVA), the access, the game's error message (RVA 0x18f5b08, the asserts' store), the exe return
+ * addresses on the stack; then the search goes on (the game's handlers decide). At most 8 notes. */
+static volatile LONG g_crash_notes;
+extern __declspec(thread) int somvr_win_in_guard; /* somvr_win_compat.c: inside a guarded copy (its fault is handled) */
+static const char *crash_where(uintptr_t a, char *buf, size_t cap)
+{
+	uintptr_t dll = (uintptr_t)somvr_win_module;
+	const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(somvr_img + (uintptr_t)((const IMAGE_DOS_HEADER *)somvr_img)->e_lfanew);
+	const IMAGE_NT_HEADERS64 *dn = dll ? (const IMAGE_NT_HEADERS64 *)(dll + (uintptr_t)((const IMAGE_DOS_HEADER *)dll)->e_lfanew) : NULL;
+	if (a >= somvr_img && a < somvr_img + nt->OptionalHeader.SizeOfImage)
+		snprintf(buf, cap, "exe+%#llx", (unsigned long long)(a - somvr_img));
+	else if (dn && a >= dll && a < dll + dn->OptionalHeader.SizeOfImage)
+		snprintf(buf, cap, "dll+%#llx", (unsigned long long)(a - dll));
+	else
+		snprintf(buf, cap, "%#llx", (unsigned long long)a);
+	return buf;
+}
+static LONG CALLBACK crash_note(EXCEPTION_POINTERS *ep)
+{
+	DWORD code = ep->ExceptionRecord->ExceptionCode;
+	if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION && code != EXCEPTION_INT_DIVIDE_BY_ZERO &&
+	    code != EXCEPTION_STACK_OVERFLOW && code != EXCEPTION_PRIV_INSTRUCTION && code != EXCEPTION_IN_PAGE_ERROR)
+		return EXCEPTION_CONTINUE_SEARCH;
+	if (somvr_win_in_guard && (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR))
+		return EXCEPTION_CONTINUE_SEARCH; /* a safe read's or write's: its own handler takes it (no crash, no note) */
+	if (InterlockedIncrement(&g_crash_notes) > 8)
+		return EXCEPTION_CONTINUE_SEARCH;
+	char w[48], acc[96] = "", msg[120] = "-", st[400] = "";
+	uintptr_t pc = (uintptr_t)ep->ExceptionRecord->ExceptionAddress;
+	if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2)
+		snprintf(acc, sizeof acc, " %s %#llx", ep->ExceptionRecord->ExceptionInformation[0] == 1 ? "writing" :
+			 ep->ExceptionRecord->ExceptionInformation[0] == 8 ? "executing" : "reading",
+			 (unsigned long long)ep->ExceptionRecord->ExceptionInformation[1]);
+	uintptr_t m = 0;
+	MEMORY_BASIC_INFORMATION mb;
+	if (VirtualQuery((const void *)(somvr_img + 0x18f5b08), &mb, sizeof mb) && mb.State == MEM_COMMIT)
+		m = *(const uintptr_t *)(somvr_img + 0x18f5b08);
+	if (m && VirtualQuery((const void *)m, &mb, sizeof mb) && mb.State == MEM_COMMIT && !(mb.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+		snprintf(msg, sizeof msg, "'%.100s'", (const char *)m);
+	const uintptr_t *sp = (const uintptr_t *)ep->ContextRecord->Rsp;
+	size_t o = 0;
+	for (int i = 0, n = 0; i < 96 && n < 10 && VirtualQuery(sp + i, &mb, sizeof mb) && mb.State == MEM_COMMIT; i++) {
+		char b[48];
+		crash_where(sp[i], b, sizeof b);
+		if (!strncmp(b, "exe+", 4) || !strncmp(b, "dll+", 4))
+			o += (size_t)snprintf(st + o, o < sizeof st ? sizeof st - o : 0, " %s", b), n++;
+		if (o >= sizeof st)
+			break;
+	}
+	somvr_win_log("CRASH code %#lx at %s%s; the game's error message %s; rsp %#llx; on the stack:%s (logged; the game's "
+		      "handlers decide)", code, crash_where(pc, w, sizeof w), acc, msg, (unsigned long long)ep->ContextRecord->Rsp, st);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+/* ---- the exit note (som-b33-soak, 11-03; docs/re-winport.md 7.13): who ends the process. The recheck's game exited
+ * with 0 after 9 minutes - no fault, no CRASH note, no quit request: an exit by a call. Entry hooks (MinHook) log the
+ * caller and the stack before the original runs: ntdll's RtlExitUserProcess (every ExitProcess / CRT exit / a return
+ * from WinMain), kernelbase's TerminateProcess on this process, user32's PostQuitMessage and DestroyWindow (a main
+ * loop that ends on WM_QUIT; the game's window destroyed). Read only; SOMVR_WIN_EXITLOG=0 = none. */
+static void exit_stack(char *st, size_t cap)
+{
+	void *fr[28];
+	USHORT n = RtlCaptureStackBackTrace(2, 28, fr, NULL);
+	size_t o = 0;
+	st[0] = 0;
+	for (USHORT i = 0; i < n && o + 64 < cap; i++) {
+		char b[48];
+		HMODULE m = NULL;
+		crash_where((uintptr_t)fr[i], b, sizeof b);
+		if (strncmp(b, "exe+", 4) && strncmp(b, "dll+", 4) &&
+		    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				       (LPCSTR)fr[i], &m) && m) {
+			char path[MAX_PATH], *base;
+			if (GetModuleFileNameA(m, path, sizeof path)) {
+				base = strrchr(path, '\\');
+				snprintf(b, sizeof b, "%.24s+%#llx", base ? base + 1 : path, (unsigned long long)((uintptr_t)fr[i] - (uintptr_t)m));
+			}
+		}
+		o += (size_t)snprintf(st + o, cap - o, " %s", b);
+	}
+}
+static volatile LONG g_exit_notes;
+typedef void(NTAPI *rtl_exit_t)(DWORD);
+typedef BOOL(WINAPI *term_t)(HANDLE, UINT);
+typedef void(WINAPI *pqm_t)(int);
+typedef BOOL(WINAPI *dw_t)(HWND);
+static rtl_exit_t g_rtl_exit;
+static term_t g_term;
+static pqm_t g_pqm;
+static dw_t g_dw;
+static void exit_note(const char *what, unsigned long long code, uintptr_t caller)
+{
+	if (InterlockedIncrement(&g_exit_notes) > 12)
+		return;
+	char w[48], st[1400];
+	exit_stack(st, sizeof st);
+	somvr_win_log("EXIT %s %llu (%#llx) called from %s; thread %lu; the stack:%s", what, code, code,
+		      crash_where(caller, w, sizeof w), GetCurrentThreadId(), st);
+}
+static void NTAPI exit_rtl(DWORD code)
+{
+	exit_note("RtlExitUserProcess", code, (uintptr_t)__builtin_return_address(0));
+	g_rtl_exit(code);
+}
+static BOOL WINAPI exit_term(HANDLE h, UINT code)
+{
+	if (h == GetCurrentProcess() || GetProcessId(h) == GetCurrentProcessId())
+		exit_note("TerminateProcess(this process)", code, (uintptr_t)__builtin_return_address(0));
+	return g_term(h, code);
+}
+static void WINAPI exit_pqm(int code)
+{
+	exit_note("PostQuitMessage", (unsigned)code, (uintptr_t)__builtin_return_address(0));
+	g_pqm(code);
+}
+static BOOL WINAPI exit_dw(HWND h)
+{
+	char cls[64] = "";
+	GetClassNameA(h, cls, sizeof cls);
+	if (!GetParent(h) && IsWindowVisible(h)) { /* a top-level visible window: the game's (not a hidden helper's) */
+		char what[120];
+		snprintf(what, sizeof what, "DestroyWindow(top-level '%.40s' %#llx)", cls, (unsigned long long)(uintptr_t)h);
+		exit_note(what, 0, (uintptr_t)__builtin_return_address(0));
+	}
+	return g_dw(h);
+}
+static void exit_hooks(void)
+{
+	const char *e = getenv("SOMVR_WIN_EXITLOG");
+	if (e && !strcmp(e, "0")) {
+		somvr_win_log("EXIT notes off (SOMVR_WIN_EXITLOG=0)");
+		return;
+	}
+	static const struct {
+		const char *mod, *fn;
+		void *hook, **orig;
+	} h[] = {
+		{ "ntdll.dll", "RtlExitUserProcess", (void *)exit_rtl, (void **)&g_rtl_exit },
+		{ "kernelbase.dll", "TerminateProcess", (void *)exit_term, (void **)&g_term },
+		{ "user32.dll", "PostQuitMessage", (void *)exit_pqm, (void **)&g_pqm },
+		{ "user32.dll", "DestroyWindow", (void *)exit_dw, (void **)&g_dw },
+	};
+	char ok[200] = "";
+	size_t o = 0;
+	for (size_t i = 0; i < sizeof h / sizeof h[0]; i++) {
+		HMODULE m = GetModuleHandleA(h[i].mod);
+		if (!m)
+			m = LoadLibraryA(h[i].mod);
+		FARPROC f = m ? GetProcAddress(m, h[i].fn) : NULL;
+		char why[160] = "no export";
+		int r = f ? somvr_win_hook_entry((uintptr_t)f, h[i].hook, h[i].orig, why, sizeof why) : -1;
+		o += (size_t)snprintf(ok + o, o < sizeof ok ? sizeof ok - o : 0, " %s %s", h[i].fn, r == 0 ? "ok" : why);
+		if (o >= sizeof ok)
+			break;
+	}
+	somvr_win_log("EXIT notes (who ends the process; SOMVR_WIN_EXITLOG=0 = none):%s", ok);
+}
+
 static void hook_test(void);
 static void win_start(void)
 {
@@ -147,6 +308,10 @@ static void win_start(void)
 	snprintf(who, sizeof who, "exe sha256 %.16s (%s)", g_sha, g_tag);
 	LARGE_INTEGER a, b, f;
 	QueryPerformanceCounter(&a);
+	if (!g_test) {
+		AddVectoredExceptionHandler(1, crash_note); /* first: before the game's own (it ends the process quietly) */
+		exit_hooks(); /* who ends the process (7.13) */
+	}
 	int rc = somvr_win_start(who, !g_test);
 	QueryPerformanceCounter(&b), QueryPerformanceFrequency(&f);
 	somvr_win_log("START somvr_start rc=%d in %.1f ms", rc, 1e3 * (double)(b.QuadPart - a.QuadPart) / (double)f.QuadPart);
@@ -186,12 +351,190 @@ static int WINAPI win_entry(void *peb)
 		ExitProcess(3);
 	}
 	somvr_win_log("ENTRY main thread before the game's entry %#llx", (unsigned long long)(g_entry - somvr_img));
+	/* the game's main thread (the game thread) named for the layer's per-thread CPU (Wine copies a thread's description
+	 * into its Linux comm; /proc/self/task/<tid>/schedstat is the only fine CPU clock under Wine) */
+	pthread_setname_np(pthread_self(), "somvr-game");
 	win_start();
 	return ((entry_t)g_entry)(peb);
 }
 
+/* the folder of this DLL + "\\somvr" (a native Windows player's package: win/package.sh) */
+static void mod_dir(char *out, size_t cap)
+{
+	char me[MAX_PATH] = "";
+	GetModuleFileNameA((HMODULE)somvr_win_module, me, sizeof me);
+	char *sl = strrchr(me, '\\');
+	if (sl)
+		*sl = 0;
+	snprintf(out, cap, "%s\\somvr", me);
+}
+
+/* W1, a native player: somvr\somvr.env's K=V lines into the process environment (a variable already set wins:
+ * tests), SOMVR_LOG defaulting to somvr\somvr.log; returns the lines taken */
+static int load_env_file(const char *dir)
+{
+	char path[MAX_PATH + 32], line[1024];
+	snprintf(path, sizeof path, "%s\\somvr.env", dir);
+	FILE *f = fopen(path, "rb");
+	if (!f)
+		return -1;
+	int n = 0;
+	while (fgets(line, sizeof line, f)) {
+		line[strcspn(line, "\r\n")] = 0;
+		char *eq = strchr(line, '=');
+		if (line[0] == '#' || !eq || eq == line)
+			continue;
+		*eq = 0;
+		if (getenv(line))
+			continue;
+		_putenv_s(line, eq + 1);           /* the CRT's copy (getenv) */
+		SetEnvironmentVariableA(line, eq + 1); /* the process's (the layer's CRT, the loaders) */
+		n++;
+	}
+	fclose(f);
+	if (!getenv("SOMVR_LOG")) {
+		char lp[MAX_PATH + 32];
+		snprintf(lp, sizeof lp, "%s\\somvr.log", dir);
+		_putenv_s("SOMVR_LOG", lp), SetEnvironmentVariableA("SOMVR_LOG", lp);
+	}
+	/* build 34: the VR menu's settings kept between starts (Handedness takes effect at the next start): the package's
+	 * own file; a SOMVR_SETTINGS already set (the user's launcher, somvr.env) wins */
+	if (!getenv("SOMVR_SETTINGS")) {
+		char sp[MAX_PATH + 32];
+		snprintf(sp, sizeof sp, "%s\\settings.conf", dir);
+		_putenv_s("SOMVR_SETTINGS", sp), SetEnvironmentVariableA("SOMVR_SETTINGS", sp);
+	}
+	return n;
+}
+
+/* W1: our Windows Vulkan layer under the Khronos loader (the package's vulkan-1.dll), before d3d11.dll (DXVK) makes
+ * its instance: native Windows, or SOMVR_LAYER=win under Wine (the test); under Wine the Linux layer is the default */
+static char g_w1[700];
+
+/* The W1 test under Wine: DXVK (vulkan_loader.cpp) tries LoadLibraryA("winevulkan.dll") before "vulkan-1.dll", so
+ * under Wine it skips the Khronos loader and our layer. d3d11.dll's and dxgi.dll's LoadLibraryA (their IAT entries)
+ * refuse that name, as on Windows where it does not exist; the Khronos loader loads winevulkan.dll as its ICD itself
+ * (its own LoadLibraryExW, untouched). Nothing of this on Windows. */
+typedef HMODULE(WINAPI *lla_t)(LPCSTR);
+static lla_t g_lla;
+static HMODULE WINAPI w1_load_library(LPCSTR name)
+{
+	const char *b = name, *q;
+	for (q = name; q && *q; q++)
+		if (*q == '\\' || *q == '/')
+			b = q + 1;
+	if (b && !_stricmp(b, "winevulkan.dll")) {
+		SetLastError(ERROR_MOD_NOT_FOUND);
+		return NULL;
+	}
+	return g_lla(name);
+}
+
+/* The Khronos loader ignores VK_ADD_LAYER_PATH (and VK_LOADER_DEBUG) in an elevated process ("Loader is running with
+ * elevated permissions"): the token's elevation and integrity level, for the log */
+static void w1_token(char *out, size_t cap)
+{
+	HANDLE t;
+	TOKEN_ELEVATION e = { 0 };
+	DWORD n = 0, rid = 0;
+	unsigned char il[64];
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t)) {
+		snprintf(out, cap, "token ?");
+		return;
+	}
+	GetTokenInformation(t, TokenElevation, &e, sizeof e, &n);
+	if (GetTokenInformation(t, TokenIntegrityLevel, il, sizeof il, &n)) {
+		PSID sid = ((TOKEN_MANDATORY_LABEL *)il)->Label.Sid;
+		rid = *GetSidSubAuthority(sid, *GetSidSubAuthorityCount(sid) - 1);
+	}
+	CloseHandle(t);
+	snprintf(out, cap, "elevated %llu, integrity %#llx%s", (unsigned long long)e.TokenIsElevated, (unsigned long long)rid,
+		 rid < 0x3000 ? "" : somvr_under_wine() ? " (high, Wine's token: the Vulkan loader ignores VK_ADD_LAYER_PATH; the layer must be registered, HKLM ExplicitLayers)"
+		 : " (high: the Vulkan loader ignores VK_ADD_LAYER_PATH; start the game normally, not as administrator)");
+}
+
+static void w1_wine_dxvk(char *out, size_t cap)
+{
+	const char *dll[] = { "d3d11.dll", "dxgi.dll" };
+	size_t o = 0;
+	for (int i = 0; i < 2; i++) {
+		HMODULE m = GetModuleHandleA(dll[i]);
+		void **at = m ? somvr_win_iat_slot((uintptr_t)m, "KERNEL32.dll", "LoadLibraryA") : NULL;
+		const char *st = !m ? "not loaded" : !at ? "no LoadLibraryA import" : "refused";
+		if (at) {
+			if (!g_lla)
+				g_lla = (lla_t)*at;
+			if (*at != (void *)w1_load_library && somvr_win_put_ptr(at, (void *)w1_load_library) != 0)
+				st = "NOT patched";
+		}
+		o += snprintf(out + o, o < cap ? cap - o : 0, "%s%s %s", i ? ", " : "", dll[i], st);
+	}
+}
+static void w1_layer(const char *dir)
+{
+	const char *m = getenv("SOMVR_LAYER");
+	int want = m ? !strcmp(m, "win") : !somvr_under_wine();
+	char json[MAX_PATH + 64];
+	snprintf(json, sizeof json, "%s\\VkLayer_somvr_openxr.json", dir);
+	if (!want) {
+		snprintf(g_w1, sizeof g_w1, "off (%s)", m ? "SOMVR_LAYER" : "under Wine: the Linux layer");
+		return;
+	}
+	char tk[200];
+	w1_token(tk, sizeof tk);
+	if (GetFileAttributesA(json) == INVALID_FILE_ATTRIBUTES) {
+		snprintf(g_w1, sizeof g_w1, "wanted but no %s (%s)", json, tk);
+		return;
+	}
+	char v[2048] = "";
+	DWORD k = GetEnvironmentVariableA("VK_ADD_LAYER_PATH", v, sizeof v);
+	char nv[2400];
+	snprintf(nv, sizeof nv, "%s%s%s", dir, k && k < sizeof v ? ";" : "", k && k < sizeof v ? v : "");
+	SetEnvironmentVariableA("VK_ADD_LAYER_PATH", nv);
+	k = GetEnvironmentVariableA("VK_INSTANCE_LAYERS", v, sizeof v);
+	snprintf(nv, sizeof nv, "VK_LAYER_SOMVR_openxr%s%s", k && k < sizeof v ? ";" : "", k && k < sizeof v ? v : "");
+	SetEnvironmentVariableA("VK_INSTANCE_LAYERS", nv);
+	if (!GetEnvironmentVariableA("SOMVR_XR", v, sizeof v))
+		SetEnvironmentVariableA("SOMVR_XR", "1");
+	char wd[260] = "";
+	if (somvr_under_wine()) {
+		w1_wine_dxvk(wd, sizeof wd);
+		/* XR_RUNTIME_JSON with a Unix path is the host's (wineopenxr's libopenxr_loader.so reads it from the Unix
+		 * environment, which this does not change); openxr_loader.dll would take it before the registry's runtime */
+		DWORD xk = GetEnvironmentVariableA("XR_RUNTIME_JSON", v, sizeof v);
+		if (xk && xk < sizeof v && v[0] == '/') {
+			SetEnvironmentVariableA("XR_RUNTIME_JSON", NULL);
+			size_t o = strlen(wd);
+			snprintf(wd + o, sizeof wd - o, "; XR_RUNTIME_JSON (the host's) hidden from openxr_loader.dll");
+		}
+	}
+	snprintf(g_w1, sizeof g_w1, "on: VK_ADD_LAYER_PATH=%s, VK_INSTANCE_LAYERS=VK_LAYER_SOMVR_openxr; %s%s%s%s", dir, tk,
+		 wd[0] ? "; under Wine DXVK's LoadLibraryA(\"winevulkan.dll\"): " : "", wd,
+		 wd[0] ? " (it takes vulkan-1.dll as on Windows)" : "");
+}
+
+/* H4's first call (the game thread, after the game's start named its threads): the layer's per-thread CPU finds the
+ * game thread by its Linux name (/proc/self/task/N/comm); Wine copies a thread's description there when the thread
+ * sets its own. The name the game gave it goes into the log. */
+void somvr_win_name_game_thread(void)
+{
+	typedef HRESULT(WINAPI * get_t)(HANDLE, PWSTR *);
+	get_t get = (get_t)(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetThreadDescription");
+	PWSTR w = NULL;
+	char old[64] = "?";
+	if (get && SUCCEEDED(get(GetCurrentThread(), &w)) && w) {
+		WideCharToMultiByte(CP_UTF8, 0, w, -1, old, sizeof old, NULL, NULL);
+		LocalFree(w);
+	}
+	pthread_setname_np(pthread_self(), "somvr-game");
+	somvr_win_log("THREAD the game thread (H4, Windows id %lu): '%s' -> somvr-game", GetCurrentThreadId(), old);
+}
+
 static void win_attach(void)
 {
+	char mdir[MAX_PATH + 16];
+	mod_dir(mdir, sizeof mdir);
+	int env_lines = load_env_file(mdir);
 	const char *lp = getenv("SOMVR_LOG");
 	g_test = getenv("SOMVR_WIN_TEST") && !strcmp(getenv("SOMVR_WIN_TEST"), "1");
 	if (!lp || !lp[0])
@@ -210,6 +553,9 @@ static void win_attach(void)
 	GetModuleFileNameA((HMODULE)somvr_win_module, me, sizeof me);
 	somvr_win_log("ATTACH dll=%s exe=%s sha256=%s tag=%s base=%#llx wine=%d", me, g_exe, g_sha, g_tag,
 		      (unsigned long long)somvr_img, somvr_under_wine());
+	w1_layer(mdir);
+	somvr_win_log("W1 %s; settings %s (%d lines)", g_w1, env_lines >= 0 ? "somvr\\somvr.env" : "the environment only",
+		      env_lines);
 	/* the stand-in and SOMVR_WIN_SITES=0 (the inert first boot): every SITE blank, nothing patched */
 	const char *ws = getenv("SOMVR_WIN_SITES");
 	int none = !tag || (ws && !strcmp(ws, "0"));

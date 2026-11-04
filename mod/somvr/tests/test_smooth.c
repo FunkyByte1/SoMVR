@@ -234,7 +234,12 @@ static void test_resets(void) {
     truth_at(&T0, 40 * DEG, 0.3f, q2, p3);
     noisy(&h, q2, p3, 0, 0, z, z, 3, 1000000000LL + 11 * DT_NS);
     hsm_step(&st, &c, 1, 1, &h);
-    CHECK(hsm_qangle(h.pose.q, q2) < 1e-4f, "a 40 deg jump: raw at once (%.3f deg)", hsm_qangle(h.pose.q, q2) / DEG);
+    /* (the raw pose itself, component by component: 2 acosf(dot) cannot resolve below ~0.03 deg - one float step under
+     * 1 is 4.9e-4 rad - and the Windows CRT's sinf/cosf round q2's norm a step differently from glibc's) */
+    float dq = 0;
+    for (int i = 0; i < 4; i++) dq = fmaxf(dq, fabsf(h.pose.q[i] - q2[i]));
+    CHECK(dq < 1e-6f && (int)st.resets == r0 + 2, "a 40 deg jump: raw at once (%.2g off, %.3f deg)", dq,
+          hsm_qangle(h.pose.q, q2) / DEG);
     /* a 20 Hz swing at 15 rad/s (43 deg a frame, the runtime's velocity says so): filtered, not reset */
     hsm_reset(&st);
     for (int f = 0; f < 12; f++) {

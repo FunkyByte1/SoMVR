@@ -263,8 +263,8 @@ static void gc_rules_node(const char *tag, uintptr_t node, uintptr_t pcomb, uint
 		g_vb_pick_nowin = 1;
 		uintptr_t a = vb_pick(pcomb, pc, o, node, &sy, &why);
 		g_vb_pick_nowin = 0;
-		logf_("VERBS rules %s '%s': the game's pick for orc %#lx (health %.1f), the window not asked: %s%s%s%s", tag,
-		      vb_name(node, rn, sizeof rn), (unsigned long)o->c, vb_health(o->c), a ? "'" : "none (", a ? vb_name(a, an, sizeof an) : why,
+		logf_("VERBS rules %s '%s': the game's pick for orc %#llx (health %.1f), the window not asked: %s%s%s%s", tag,
+		      vb_name(node, rn, sizeof rn), (unsigned long long)o->c, vb_health(o->c), a ? "'" : "none (", a ? vb_name(a, an, sizeof an) : why,
 		      a ? "' sync '" : ")", a ? vb_name(sy, sn, sizeof sn) : "");
 		if (a)
 			logf_("VERBS rules %s: the pick's sync '%s'", tag, sn);
@@ -315,7 +315,7 @@ static void gc_rules(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	}
 	for (int i = 0; i < n && i < 2; i++) {
 		uintptr_t fm = kp_of_combat(o[i].c), kind = gc_kind(o[i].c);
-		logf_("VERBS rules orc %#lx at %.0f cm: health %.1f, %s, its character record '%s'", (unsigned long)o[i].c, o[i].dist,
+		logf_("VERBS rules orc %#llx at %.0f cm: health %.1f, %s, its character record '%s'", (unsigned long long)o[i].c, o[i].dist,
 		      vb_health(o[i].c), fm ? "a captain" : "not a captain", vb_name(kind, rn, sizeof rn));
 		if (kind) {
 			nn = rx_db_list(kind, g_fig.sch_ccr, 12, nodes, 24, &ty, &cnt);
@@ -428,7 +428,7 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		uint8_t cw[2] = { 0, 0 };
 		peek(o[0].c + RX_C_CANCEL, cw, 2);
 		if (own && npc && brain && peek_ptr(npc + RX_GB_HOBJ) == o[0].hobj && !sc_in_own_attack(at, cw[0], cw[1])) {
-			logf_("REACT21 t=%.3f notify (the test word) orc %#lx at %.0f cm, out of its own attack:", t, (unsigned long)o[0].c,
+			logf_("REACT21 t=%.3f notify (the test word) orc %#llx at %.0f cm, out of its own attack:", t, (unsigned long long)o[0].c,
 			      o[0].dist);
 			rx_notify(own, npc, brain, &o[0], t);
 			g_gc.notify_until = 0;
@@ -451,8 +451,8 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		g_gc.probes++;
 		for (int i = 0; i < n && i < 4; i++) {
 			char line[900];
-			int k0 = snprintf(line, sizeof line, "VERBS cue probe t=%.3f orc %#lx at %.0f cm (attack '%s', health %.1f):", t,
-					  (unsigned long)o[i].c, o[i].dist, vb_name(peek_ptr(o[i].c + VB_C_ATTACK), an, sizeof an),
+			int k0 = snprintf(line, sizeof line, "VERBS cue probe t=%.3f orc %#llx at %.0f cm (attack '%s', health %.1f):", t,
+					  (unsigned long long)o[i].c, o[i].dist, vb_name(peek_ptr(o[i].c + VB_C_ATTACK), an, sizeof an),
 					  vb_health(o[i].c));
 			for (size_t j = 0; j < sizeof nodes / sizeof nodes[0] && k0 < (int)sizeof line - 1; j++) {
 				uintptr_t at = gc_pick(pcomb, pc, &o[i], nodes[j], a, sizeof a, s, sizeof s, &why);
@@ -483,8 +483,8 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 			snprintf(g_gc.counter[k].atk, sizeof g_gc.counter[k].atk, "%s", an);
 			g_gc.seen_counter_c = g_vb.held_c;
 			char kn[96];
-			logf_("VERBS cue t=%.3f orc %#lx ('%s') answered the grab with '%s' (a counter) from its %s half: no cue for its "
-			      "kind from there again", t, (unsigned long)g_vb.held_c, rx_rec_name(kind, kn, sizeof kn), an,
+			logf_("VERBS cue t=%.3f orc %#llx ('%s') answered the grab with '%s' (a counter) from its %s half: no cue for its "
+			      "kind from there again", t, (unsigned long long)g_vb.held_c, rx_rec_name(kind, kn, sizeof kn), an,
 			      g_gc.counter[k].front ? "front" : "back");
 		}
 	}
@@ -542,12 +542,12 @@ static void gc_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	snprintf(g_gc.ask_atk, sizeof g_gc.ask_atk, "%s", a), snprintf(g_gc.ask_sync, sizeof g_gc.ask_sync, "%s", s);
 	snprintf(g_gc.ask_node, sizeof g_gc.ask_node, "%s", nn);
 	if ((c != g_gc.said_c || ok != g_gc.said_ok) && g_gc.lines++ < 400 && vb_log_ok())
-		logf_("VERBS cue t=%.3f orc %#lx %s (%s, %.0f cm from Talion; health %.1f, attack '%s'): the game %s '%s'%s%s%s%s",
-		      t, (unsigned long)c, c == g_gc.reach_c ? "in reach" : "faced (the faint glow's)", cbody ? "its back" : "its head", oc->dist, vb_health(c),
+		logf_("VERBS cue t=%.3f orc %#llx %s (%s, %.0f cm from Talion; health %.1f, attack '%s'): the game %s '%s'%s%s%s%s",
+		      t, (unsigned long long)c, c == g_gc.reach_c ? "in reach" : "faced (the faint glow's)", cbody ? "its back" : "its head", oc->dist, vb_health(c),
 		      vb_name(peek_ptr(c + VB_C_ATTACK), an, sizeof an), ok ? "would grab it:" : "would not grab it:", nn,
 		      ok ? " -> '" : " -> ", ok ? a : at && !capwhy ? a : g_gc.ask_why, ok ? "'" : "", ok && s[0] && strcmp(s, "-") ? " (a sync)" : "");
 	if (e > -2 && (c != g_gc.said_c || ok != g_gc.said_ok) && g_gc.lines < 400 && vb_log_ok())
-		logf_("VERBS cue t=%.3f captain %#lx (health %.1f): the grab's end by the game: %s%s%s", t, (unsigned long)c, vb_health(c),
+		logf_("VERBS cue t=%.3f captain %#llx (health %.1f): the grab's end by the game: %s%s%s", t, (unsigned long long)c, vb_health(c),
 		      e >= 0 ? "'" : "", e >= 0 ? g_gc.end_atk : "no answer: no cue",
 		      e > 0 ? "' - it holds: the cue" : e == 0 ? "' - he throws it off: no cue" : "");
 	g_gc.said_c = c, g_gc.said_ok = ok;
@@ -582,8 +582,8 @@ static void gc_near(const somvr_vb_hand_in *in, uintptr_t reach, int reach_on, d
 		g_gc.near_level = 0, g_gc.near_shown = best, g_gc.near_ons++;
 	g_gc.near_level = yes ? fminf(1, g_gc.near_level + k) : fmaxf(0, g_gc.near_level - k);
 	if (fresh && g_gc.lines < 400 && vb_log_ok())
-		g_gc.lines++, logf_("VERBS cue t=%.3f near: orc %#lx faced, its collar %.0f cm from the eyes: the faint glow (the hand "
-				    "not in reach yet; the palm %.0f cm from its head point)", t, (unsigned long)best,
+		g_gc.lines++, logf_("VERBS cue t=%.3f near: orc %#llx faced, its collar %.0f cm from the eyes: the faint glow (the hand "
+				    "not in reach yet; the palm %.0f cm from its head point)", t, (unsigned long long)best,
 				    dist3((float[3]){ in->head[bk][0], in->head[bk][1] - g_gc.down_cm, in->head[bk][2] }, in->eye),
 				    in->have_palm ? dist3(in->palm, in->head[bk]) : -1.0f);
 	if (!(g_gc.glow > 0) && g_gc.near_level > 0.01f && g_gc.near_shown) {
@@ -597,6 +597,16 @@ static void gc_near(const somvr_vb_hand_in *in, uintptr_t reach, int reach_on, d
 	}
 	if (!yes && !(g_gc.near_level > 0))
 		g_gc.near_shown = 0;
+}
+
+/* build 33 (som-b33-knife): the grab cue offers orc c now - its glow (in reach or the faint one before it), or the game's
+ * yes for it a moment ago: a push at it under the hard speed is the grab's reach, not a shove (somvr_parry_game.c) */
+static int gc_offers(uintptr_t c)
+{
+	if (!c || g_gc.mode == GC_OFF || g_vb.mode != VB_ON)
+		return 0;
+	return (g_gc.st.on && (uintptr_t)g_gc.st.id == c) || (g_gc.near_shown == c && g_gc.near_level > 0.01f) ||
+	       (g_gc.ask_c == c && g_gc.ask_ok && cb_now() - g_gc.ask_t < 0.5);
 }
 
 /* vb_hands (after the hand's step): the reach, the cue's state, the tick, the glow's place */
@@ -621,7 +631,7 @@ static void gc_hands(const somvr_vb_hand_in *in, double t)
 	if (o.tick) {
 		g_gc.ticks++;
 		if (g_gc.mode == GC_ON && g_vb.haptic > 0 && g_gc.tick_amp > 0)
-			in_haptic_event(SOMVR_HAND_L, g_gc.tick_amp * g_vb.haptic, g_gc.tick_s, SOMVR_HAP_COMBAT);
+			haptic_play(SOMVR_HAND_L, SOMVR_HX_TICK, 1, g_vb.haptic * g_gc.tick_amp / 0.25f); /* SOMVR_VERBS_CUE_TICK 0.25 = the word */
 	}
 	g_gc.glow = 0;
 	for (int k = 0; o.id && k < g_vb.nheads; k++)
@@ -635,8 +645,8 @@ static void gc_hands(const somvr_vb_hand_in *in, double t)
 		if (o.on)
 			g_gc.ons++, g_gc.on_t = t;
 		if (g_gc.lines++ < 400 && vb_log_ok())
-			logf_("VERBS cue t=%.3f %s orc %#lx%s%s%s (the palm %.0f cm from its head point)%s", t, o.on ? "on:" : "off:",
-			      (unsigned long)(o.on ? (uintptr_t)o.id : wid), o.on ? (g_gc.reach_body ? " by its back" : " by its head") : "",
+			logf_("VERBS cue t=%.3f %s orc %#llx%s%s%s (the palm %.0f cm from its head point)%s", t, o.on ? "on:" : "off:",
+			      (unsigned long long)(o.on ? (uintptr_t)o.id : wid), o.on ? (g_gc.reach_body ? " by its back" : " by its head") : "",
 			      o.on ? ", the game's '" : "", o.on ? g_gc.ask_atk : "",
 			      i >= 0 ? dist3(in->palm, in->head[i]) : -1.0f,
 			      o.on ? (o.tick ? "': the glow at its collar, a tick" : "': the glow (no tick: back within the re-arm)")
@@ -648,9 +658,11 @@ static void gc_hands(const somvr_vb_hand_in *in, double t)
 
 /* th_frame: the cue's glow among the frame's (the blue row) */
 static void ov_glow_add(struct th_glow *gl, int *ng); /* build 31 (somvr_hands31_game.c): the vault's cue on a crown */
+static void hrb_glow_add(struct th_glow *gl, int *ng); /* build 33: the herb's glow */
 static void gc_glow_add(struct th_glow *gl, int *ng)
 {
 	ov_glow_add(gl, ng);
+	hrb_glow_add(gl, ng);
 	if (g_gc.mode != GC_ON || !(g_gc.glow > 0.01f) || g_fr.frame - g_gc.glow_frame > 2 || !vec_ok(g_gc.pos, 1e7f))
 		return;
 	th_glow_add(gl, ng, g_gc.pos, g_gc.glow, g_gc.dist_cm, SOMVR_THK_MELEE | SOMVR_THK_BLUE);
@@ -781,10 +793,10 @@ static const char *gc_word(const char *w)
 	}
 	if (!strncmp(w, "status", 6)) {
 		logf_("VERBS cue status: mode %s, on %d orc %#llx level %.2f; asks %llu (yes %llu no %llu), ons %llu, ticks %llu, glow "
-		      "frames %llu; the last answer: orc %#lx %s '%s' (%s)", g_gc_w[g_gc.mode], g_gc.st.on,
+		      "frames %llu; the last answer: orc %#llx %s '%s' (%s)", g_gc_w[g_gc.mode], g_gc.st.on,
 		      (unsigned long long)g_gc.st.id, g_gc.st.level, (unsigned long long)g_gc.asks, (unsigned long long)g_gc.yes,
 		      (unsigned long long)g_gc.no, (unsigned long long)g_gc.ons, (unsigned long long)g_gc.ticks,
-		      (unsigned long long)g_gc.glow_frames, (unsigned long)g_gc.ask_c, g_gc.ask_ok ? "yes" : "no", g_gc.ask_atk,
+		      (unsigned long long)g_gc.glow_frames, (unsigned long long)g_gc.ask_c, g_gc.ask_ok ? "yes" : "no", g_gc.ask_atk,
 		      g_gc.ask_why ? g_gc.ask_why : "");
 		return "cue status";
 	}

@@ -63,7 +63,7 @@ static int bf_ready(void)
 	memset(g_bf.st, 0, sizeof g_bf.st);
 	if (g_bf.logged < 8) {
 		g_bf.logged++;
-		logf_("FINGERS hands skel=%#lx nodes=%u: %s; %s; %s%s", (unsigned long)g_arm.skel, g_arm.nodes, bad ? bad : "read",
+		logf_("FINGERS hands skel=%#llx nodes=%u: %s; %s; %s%s", (unsigned long long)g_arm.skel, g_arm.nodes, bad ? bad : "read",
 		      why[0], why[1], g_bf.ok ? "" : " (the fingers stay the game's for this skeleton)");
 	}
 	return g_bf.ok;
@@ -79,7 +79,7 @@ static int bf_hold(int h)
 		return FG_HOLD_FIST; /* build 16: the arrow (or the string) in the string hand */
 	if (h == SA_R && bd_sword_in_hand())
 		return FG_HOLD_FIST;
-	if (h == SA_L && (g_bd.two.w > 0 || (g_sl.on && g_sl.have_g && sl_dagger_drawn(&g_sl.g))))
+	if ((h == SA_L && g_bd.two.w > 0) || sl_knife_side() == h) /* build 36: the knife in either hand */
 		return FG_HOLD_FIST;
 	return FG_HOLD_NONE;
 }

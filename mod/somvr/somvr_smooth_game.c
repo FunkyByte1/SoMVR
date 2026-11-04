@@ -390,12 +390,10 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 	float k2 = two ? g_hsm.wcfg.two_k : 1.0f, drag = 0.6f * g_hsm.wcfg.rope0 / k2;
 	double now = cb_now();
 	if (g_hsm.ws.off >= drag && wh >= 3.0f && g_hsm.whoosh_armed && now - g_hsm.drag_t >= SWG_DRAG_GAP_S) {
-		float f = (wh - 4.0f) / 8.0f, amp = g_hsm.weight == SWG_HEAVY ? 0.4f : 0.25f;
+		float f = (wh - 4.0f) / 8.0f, hk = g_hsm.weight == SWG_HEAVY ? 0.6f : 0.35f;
 		f = f < 0 ? 0 : f > 1 ? 1 : f;
-		amp += (g_hsm.weight == SWG_HEAVY ? 0.3f : 0.15f) * f * f * (3 - 2 * f);
-		in_haptic_event(SOMVR_HAND_R, two ? 0.7f * amp : amp, 0.07f, SOMVR_HAP_COMBAT);
-		if (two)
-			in_haptic_event(SOMVR_HAND_L, 0.5f * amp, 0.07f, SOMVR_HAP_COMBAT);
+		hk += (g_hsm.weight == SWG_HEAVY ? 0.4f : 0.3f) * f * f * (3 - 2 * f);
+		haptic_k(SOMVR_HAND_R, SOMVR_HX_STRAIN, hk); /* build 34: the strain word (the left hand by its share with two) */
 		g_hsm.whoosh_armed = 0, g_hsm.whooshes++, g_hsm.drag_t = now;
 	} else if (g_hsm.ws.off < 0.5f * drag) {
 		g_hsm.whoosh_armed = 1;
@@ -419,16 +417,14 @@ static void swg_arm(const int done[2], const sa_xf gg[2], const int gv[2], const
 	memcpy(g_hsm.w_rot_now, rot, 12), g_hsm.w_now = 1;
 }
 
-/* the controller blade's hit haptic with the weight: full strength, longer (heavy 2 x, light 1.5 x); both hands on the
- * hilt: the left hand feels it too */
-static void swg_hit_haptic(float *amp, float *dur)
+/* the controller blade's hit word (build 34): with the weight the hit-weight (full, the weight's tail), else the hit;
+ * both hands on the hilt: the left hand by the word's share */
+static int swg_hit_word(void)
 {
 	if (!g_hsm.weight)
-		return;
-	*amp = 1.0f, *dur *= g_hsm.weight == SWG_HEAVY ? 2.0f : 1.5f;
-	if (g_bd.two.w > 0)
-		in_haptic_event(SOMVR_HAND_L, 0.6f, *dur, SOMVR_HAP_COMBAT);
+		return SOMVR_HX_HIT;
 	g_hsm.hits++;
+	return SOMVR_HX_HIT_WEIGHT;
 }
 
 /* the VR menu's Sword weight row (vm_apply_key, vm_start): settings' sword_weight 0 off, 1 light, 2 heavy, live */

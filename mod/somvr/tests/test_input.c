@@ -66,6 +66,7 @@ static void test_header(void) {
 
 /* ---- the snapshot: the layer writes values derived from sync_seq; the game thread must never see a mix ---------- */
 static _Atomic int g_stop;
+static _Atomic long g_got; /* the stress readers' copies so far (the writers wait for the first, halfway) */
 static void fill(somvr_input_state *st, uint64_t n) {
     st->sync_seq = n;
     st->time = (int64_t)n * 11111111;
@@ -96,6 +97,9 @@ static void *snap_writer(void *a) {
     for (uint64_t n = 1; n <= 200000; n++) {
         fill(&st, n);
         somvr_input_publish(&IN, &st);
+        if (n == 100000) /* halfway: under a loaded machine (the parallel check, docs/re-xr-pipeline.md 161) the reader may
+                          * not have run yet - wait for its first copy (2 s at most), so reads > 0 tests the read */
+            for (int i = 0; i < 2000 && !atomic_load(&g_got); i++) usleep(1000);
     }
     atomic_store(&g_stop, 1);
     return NULL;
@@ -106,6 +110,7 @@ static void test_snapshot(void) {
     fill(&st, 0);
     somvr_input_publish(&IN, &st);
     atomic_store(&g_stop, 0);
+    atomic_store(&g_got, 0);
     pthread_t t;
     pthread_create(&t, NULL, snap_writer, NULL);
     long reads = 0, torn = 0, failed = 0, backwards = 0;
@@ -116,6 +121,7 @@ static void test_snapshot(void) {
             continue;
         }
         reads++;
+        atomic_store(&g_got, reads);
         torn += !consistent(&st);
         backwards += st.sync_seq < last;
         last = st.sync_seq;
@@ -135,6 +141,9 @@ static void *hap_poster(void *a) {
         somvr_haptic_req r = {.source = n % 5u, .amplitude = (float)(n % 1000u) / 1000.0f,
                               .frequency = (float)n, .duration_ns = (int64_t)n * 1000};
         somvr_haptic_post(&IN, SOMVR_HAND_R, &r);
+        if (i == 100000) /* halfway: under a loaded machine (the parallel check, docs/re-xr-pipeline.md 161) the taker may
+                          * not have run yet - wait for its first request (2 s at most), so taken > 0 tests the take */
+            for (int k = 0; k < 2000 && !atomic_load(&g_got); k++) usleep(1000);
     }
     atomic_store(&g_stop, 1);
     return NULL;
@@ -144,6 +153,7 @@ static void test_haptics(void) {
     atomic_store(&IN.n_hap_posts, 0);
     atomic_store(&g_stop, 0);
     pthread_t t;
+    atomic_store(&g_got, 0);
     pthread_create(&t, NULL, hap_poster, NULL);
     uint32_t last = 0;
     long taken = 0, torn = 0, repeats = 0;
@@ -153,6 +163,7 @@ static void test_haptics(void) {
         uint32_t before = last;
         if (!somvr_haptic_take(&IN, SOMVR_HAND_R, &last, &q)) continue;
         taken++;
+        atomic_store(&g_got, taken);
         repeats += q.n <= before;
         torn += q.source != q.n % 5u || q.amplitude != (float)(q.n % 1000u) / 1000.0f || q.frequency != (float)q.n ||
                 q.duration_ns != (int64_t)q.n * 1000;

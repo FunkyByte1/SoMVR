@@ -57,6 +57,15 @@ typedef struct {
     float arm_cm;              /* build 31b (SOMVR_COMBAT_CUT_ARM_CM): a cut (the heavy tier) also needs the fist - the
                                 * blade's base - this far from where the stroke began: the arm in it, not the wrist
                                 * alone (0 = no such rule: build 20-31) */
+    /* build 32 (SOMVR_COMBAT_FORCE, docs/re-xr-pipeline.md 141): the blow's force - its kinetic energy at the contact: the
+     * sword's (its effective mass at the contact point, the contact point's speed) and the arm's behind it (blow_arm_kg at
+     * the fist's speed) - decides the tier: under blow_min_j no hit at all, from blow_heavy_j a cut (the edge leading) */
+    int force;                 /* 1: sc_tier_force's rule */
+    float blow_kg, blow_com_cm, blow_icm; /* the sword: kg, its balance from the grip (cm), kg m^2 across about it */
+    float blow_len_cm, blow_back_cm;      /* the hits' blade: the grip to the tip, the base behind the grip (cm) */
+    float blow_arm_kg;         /* the arm behind the fist */
+    float blow_min_j, blow_heavy_j, blow_full_j; /* J: a hit at all; a cut; the cut's full damage */
+    float blow_stab_j;         /* J: a stab (its speed along the blade; the sword and the arm behind it) */
 } sc_cfg;
 
 void sc_cfg_default(sc_cfg *c);
@@ -88,7 +97,7 @@ int sc_heading_at(const sc_cfg *c, const somvr_blade *b, const float c0[3], cons
 #define SC_RING 64
 typedef struct {
     int n, head;
-    struct { double t; float speed, axis, base; } s[SC_RING]; /* cm/s: |v_tip|, v_tip along the blade (base -> tip),
+    struct { double t; float speed, axis, base, grip; } s[SC_RING]; /* cm/s: |v_tip|, v_tip along the blade (base -> tip),
                                                                 * |v_base| */
     int above;        /* the swing: since the mean crossed slash_mps, until it drops below end_frac x slash_mps */
     float travel;     /* cm the tip travelled since the crossing */
@@ -99,6 +108,8 @@ typedef struct {
     /* build 20 (SOMVR_COMBAT_SWING=stroke): the stroke - the tip's motion in one direction, from where it began (the
      * swing's start, a turn back of the tip, or a rest) - measured on every sample whatever c->stroke */
     float base_mps;   /* the time-weighted mean of |v_base| over the window, m/s */
+    float grip_mps;   /* build 32: the same of the fist's (the grip's) velocity - the base's and the tip's vectors at
+                       * blow_back_cm along: the arm's own speed, not the pommel's swing about the wrist (m/s) */
     float reach;      /* cm: the farthest the tip got from where the stroke began (its velocity integrated: the
                        * tracking-space motion, so walking and turning add nothing) */
     float stroke_cm;  /* cm: the tip's path in the stroke */
@@ -138,6 +149,19 @@ int sc_tier_swing(const sc_cfg *c, const sc_speed *s, float edge_deg, float alon
 /* the blade came into the orc during this stroke: its touch (sc_touch_age: how long it has touched) began at or after
  * the stroke's start - a blade wiggled inside a body touches from before each new stroke; stab tiers pass */
 int sc_stroke_entered(const sc_speed *s, float touch_age, double now);
+/* build 32: the blow's energy (J) at a contact `along` the blade (0 base .. 1 tip) of a stroke s: 0.5 m(s) v^2 for the
+ * sword - m(s) its effective mass at that point (1 / (1/M + r^2/I), r the point's distance from the balance), v the
+ * contact point's speed (sc_contact_mps) - plus 0.5 blow_arm_kg v_fist^2 for the arm (the base's speed) */
+float sc_blow_j(const sc_cfg *c, const sc_speed *s, float along);
+/* ... a stab's: 0.5 (M + blow_arm_kg) v_axis^2 (the speed along the blade toward the tip) */
+float sc_stab_j(const sc_cfg *c, const sc_speed *s);
+/* build 32's tier: a stab (stab_mps along, cos stab_cos) with sc_stab_j >= blow_stab_j; else none under blow_min_j; a cut
+ * (heavy) from blow_heavy_j with the edge leading (edge_deg <= edge_max_deg) and the arm in it (arm_cm); else light */
+int sc_tier_force(const sc_cfg *c, const sc_speed *s, float edge_deg, float along);
+/* the share of the tip's 80 ms mean speed along the blade (0..1): a thrust's energy is weighed by it in sc_tier_force */
+float sc_axis_share(const sc_speed *s);
+/* the cut's damage factor by the blow's energy: cut_min_k at blow_heavy_j to 1 at blow_full_j */
+float sc_blow_k(const sc_cfg *c, float j);
 /* the cut's damage factor by the contact point's speed: cut_min_k at cut_mps rising linearly to 1 at full_mps (1 when
  * full_mps <= cut_mps; NaN = cut_min_k) */
 float sc_cut_k(const sc_cfg *c, float contact_mps);

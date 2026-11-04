@@ -99,7 +99,7 @@ static const char *scr_stack_str(char *out, size_t cap)
 	if (g_scr.ui_state == 5) {
 		o += (size_t)snprintf(out + o, cap - o, ", %d layer(s):", g_scr.ui_n);
 		for (int i = 0; i < g_scr.ui_n && o + 24 < cap; i++)
-			o += (size_t)snprintf(out + o, cap - o, " %#lx%s", (unsigned long)g_scr.ui_vt[i],
+			o += (size_t)snprintf(out + o, cap - o, " %#llx%s", (unsigned long long)g_scr.ui_vt[i],
 					      g_scr.ui_vt[i] == SCR_VT_HIER ? " (CUIHierarchyLayer)" : "");
 	}
 	return out;
@@ -193,8 +193,8 @@ static int scr_bm(uint32_t conds, int paused, int *w, int *wc, uintptr_t pres, d
 	if (g_scr.sd.phase != SOMVR_SD_IDLE && pres != g_scr.pres_last) {
 		char nm[SOMVR_FB_TAGLEN + 16];
 		if (scr_log_ok())
-			logf_("SCREENS t=%.3f the death: the presentation %#lx -> %#lx ('%s') paused=%d; the window %s", t,
-			      (unsigned long)g_scr.pres_last, (unsigned long)pres, fb_rec_name(pres, nm, sizeof nm), paused,
+			logf_("SCREENS t=%.3f the death: the presentation %#llx -> %#llx ('%s') paused=%d; the window %s", t,
+			      (unsigned long long)g_scr.pres_last, (unsigned long long)pres, fb_rec_name(pres, nm, sizeof nm), paused,
 			      w0 && !so.win ? "asked for and dropped (first person)" : so.win ? "on" : "off");
 		g_scr.pres_last = pres;
 	} else if (g_scr.sd.phase == SOMVR_SD_IDLE) {
@@ -248,13 +248,13 @@ static int scr_install(const struct site_spec *s)
 	g_scr_h.orig = s->target; /* before the call can reach somvr_scrpad_c */
 	int32_t rel = ok ? (int32_t)((int64_t)(uintptr_t)pg - (int64_t)(s->addr + 5)) : 0;
 	if (!ok || write_code(s->addr + 1, &rel, 4, err, sizeof err) != 0) {
-		logf_("HOOK %s SKIPPED %#lx: %s%s", s->name, (unsigned long)s->addr, ok ? "write failed: " : "", ok ? err : why);
+		logf_("HOOK %s SKIPPED %#llx: %s%s", s->name, (unsigned long long)s->addr, ok ? "write failed: " : "", ok ? err : why);
 		return 0;
 	}
 	g_scr_h.installed = 1;
 	hex_of((const unsigned char *)s->addr, 5, nb, sizeof nb);
-	logf_("HOOK %s ok call %#lx orig=[%s] target=%#lx now=[%s] via=%#lx", s->name, (unsigned long)s->addr, why,
-	      (unsigned long)s->target, nb, (unsigned long)pg);
+	logf_("HOOK %s ok call %#llx orig=[%s] target=%#llx now=[%s] via=%#llx", s->name, (unsigned long long)(uintptr_t)s->addr, why,
+	      (unsigned long long)(uintptr_t)s->target, nb, (unsigned long long)(uintptr_t)pg);
 	return 1;
 }
 
@@ -316,12 +316,12 @@ static void scr_start(int *bad)
 		      "(the theatre), the respawn back through the fade" : "the game's death presentation in the window (build "
 		      "21)", g_scr.sd_cfg.blink_out_s * 1000, g_scr.sd_cfg.blink_black_s * 1000, g_scr.sd_cfg.blink_in_s * 1000);
 	if (g_scr.pm1 || mv)
-		logf_("CONFIG screens pointer Mouse1 %s (SOMVR_POINTER_MOUSE1): %s; CUIHierarchyLayer's vtable %#lx %s",
+		logf_("CONFIG screens pointer Mouse1 %s (SOMVR_POINTER_MOUSE1): %s; CUIHierarchyLayer's vtable %#llx %s",
 		      somvr_pm1_names[g_scr.pm1], g_scr.pm1 == SOMVR_PM1_ALL ? "every pointer click in a game menu also holds the "
 		      "command Mouse1" : g_scr.pm1 ? "a pointer click on the Nemesis screens (the top menu layer the hierarchy) "
 		      "also holds the command Mouse1 (the selected captain's card), its point over the hierarchy selects the "
 		      "captain under it (SCR_NEM_PAD, MouseAxisX/Y)" : "the pointer drives the mouse only",
-		      (unsigned long)SCR_VT_HIER, g_scr.hier_ok ? "checked" : "NOT matched");
+		      (unsigned long long)SCR_VT_HIER, g_scr.hier_ok ? "checked" : "NOT matched");
 }
 
 /* the trigger word "screens ..." (the writer thread) */

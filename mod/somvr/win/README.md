@@ -150,3 +150,33 @@ toolchain; it runs `wintables.py --check` (python only) so a Linux change that b
   Present (IDXGISwapChain, ID3D11Texture2D from the back buffer), then calls `somvr_core_win_com()` and installs H9
   (`somvr_win_late_h9`, as install_all patches a K_VSLOT). The other COM hooks need their late install the same way.
 - `SOMVR_WIN_SITES=0`: every SITE blank and no COM fill - the inert boot.
+
+## 7. The unit tests on Windows (`wintests.py`, in `win/build.sh --check`)
+
+- **The list is the Linux one**: every `gcc ... -o .../tests/NAME SOURCES` in `../build.sh` and `../vklayer/build.sh`
+  with its run line (`run "$D/build/tests/NAME" ARGS`: buildplan.sh, docs/re-xr-pipeline.md 161; the first such line
+  after it, even past another test's gcc line). Add a test there in that form and it runs on Windows too; a test
+  line the parser cannot read (no run line, a pipe or `||` in it, a variable left) fails the Windows check - never a
+  silent skip. `python3 -I win/wintests.py --xwin X --list` prints what it found.
+- **Built** for x86_64-pc-windows-msvc with the DLL's flags (`CF` of win/build.sh, `-include somvr_compat.h`) +
+  `-Werror`, each source once into `build/win/tests/obj/` (clang's `.d` files: only changed ones again), one exe per
+  test with `somvr_win_compat.c` and the static CRT.
+- **Run** under Proton's wine (WIN_PROTON, as headless_win.sh) in a throwaway reflink copy of the harness prefix
+  (`logs/winport/prefix` -> `logs/winport/tests-<ts>-<pid>/pfx`, deleted at the end; never a play prefix): no display,
+  no audio driver (winepulse/winealsa/wineoss disabled, an empty XDG_RUNTIME_DIR), HOME in the copy. Absolute paths among
+  the arguments become `Z:` paths. A canary (`tests/exitcode.c`, exit 7) runs first: wine must hand the code back or
+  no verdict would be seen. The verdict is the exit code, as on Linux; all tests run, then any failure fails the check
+  with its last 25 lines (the whole output in `build/win/tests/logs/NAME.log`). One job when the user is in VR
+  (status.json), else SOMVR_JOBS compiles and runs at once (win/build.sh's runner passes its count; alone: 8).
+  `SOMVR_WIN_TESTS=build` builds only (no Proton). The prefix copy takes ~0.1 s (reflinks, 2,199 files): it stays a
+  fresh copy per run.
+- **Linux-only** (and why): `test_layer` (the Linux layer .so under a fake Vulkan driver: dlopen of the .so files,
+  -rdynamic), `hands_lvp` (lavapipe, a Linux ICD), `selftest` (an ELF -no-pie program whose stand-ins the hooks find by
+  dlsym and patch; Windows hooks = MinHook + the tables, proven by the boots), the inert LD_PRELOAD check, the .so's
+  manifest/NEEDED/exports and vulkaninfo. The python checks (check_sites, handmesh_gen, wintables, build_spv) are the
+  same on any host.
+- **What only Windows can catch** (docs/re-winport.md 7.13): an enum is always `int` on the MSVC ABI - an enumerator
+  of `1u << 31` / `2147483648u` is INT_MIN there and sign-extends in a uint64_t (gcc gives such an enum an unsigned
+  type). win/build.sh now has `-Werror=microsoft-enum-value`: put bit 31 (and up) in a macro. Also `long` is 32 bits;
+  the CRT's `rand()` is another sequence (RAND_MAX 32767); `sinf`/`cosf` may round a step differently from glibc's -
+  a test tolerance under float precision fails here first.

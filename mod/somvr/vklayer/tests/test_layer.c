@@ -32,6 +32,7 @@
 
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
@@ -56,6 +57,7 @@
 #include "../../somvr_vrmenu.h" /* the VR menu's ABI; its functions (and the font's) are linked: the expected pictures */
 #include "../../somvr_menus.h" /* build 8: linked here (the expected tiles, split and watch pose) */
 #include "../../somvr_vrhands.h" /* build 10: our VR hands' ABI (its functions are not linked here) */
+#include "../../somvr_haptics.h" /* build 34: the haptics language (the VR menu's words; header-only) */
 #include "../../somvr_session.h" /* never a void: the theatre's word (the session object: tests/session_obj.c) */
 #include "../somvr_logic.h" /* SOMVR_GUARD_COLS (the layer's own constants; its functions are not linked here) */
 #include "mock_common.h"
@@ -2118,6 +2120,9 @@ static int sc_provider_teardown(void) {
         tagged_present(&a, f, 0, TAG_SYNC);
         check_proj(&v, 3, RECT_A, "with a concurrent game thread");
     }
+    /* the game thread's first located views before the teardown (2 s at most): on a loaded machine (the parallel
+     * check, docs/re-xr-pipeline.md 161) it was first scheduled after the 8 frames - "never located" tests the locate */
+    for (int i = 0; i < 2000 && !atomic_load(&g_gt_ok); i++) usleep(1000);
     app_teardown(&a); /* vkDestroyDevice: unpublish, wait for the provider, destroy */
     usleep(20000);
     atomic_store(&g_gt_stop, 1);
@@ -2663,6 +2668,7 @@ static int sc_input_teardown(void) {
     pthread_create(&t, NULL, hand_thread, NULL);
     for (uint64_t f = 1; f <= 8; f++) stereo_frame(&a, f, "with a game thread locating the hands");
     usleep(5000);
+    for (int i = 0; i < 2000 && !atomic_load(&g_ht_ok); i++) usleep(1000); /* its first located hands (as provider-teardown) */
     app_teardown(&a); /* xr.state = DEAD, wait for the users, ready = 0, the action spaces, the session */
     usleep(20000);
     atomic_store(&g_ht_stop, 1);
@@ -6282,13 +6288,14 @@ static int vm_layer(const char *what) {
 }
 /* the last upload is the picture of (s, avail, hover) exactly (somvr_vm_draw into RGBA: the format is R8G8B8A8_SRGB) */
 static uint8_t g_vm_px[SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4];
+static int g_vm_pic_page; /* build 34: the page vm_picture_is draws (SOMVR_VMPG_*; the Settings tab's Comfort: 0) */
 static int vm_picture_is(const somvr_settings *s, uint64_t avail, int item, int part) {
     static somvr_font f;
     static int init;
     if (!init) init = 1, somvr_font_init(&f);
     somvr_vm_view v;
     memset(&v, 0, sizeof v);
-    v.set = *s, v.avail = avail, v.hover = (somvr_vm_hit){item, part};
+    v.set = *s, v.avail = avail, v.hover = (somvr_vm_hit){item, part}, v.page = g_vm_pic_page;
     somvr_vm_draw(&f, g_vm_px, 0, &v);
     return V.up_w == SOMVR_VM_TEX_W && V.up_h == SOMVR_VM_TEX_H && !memcmp(V.up_px, g_vm_px, sizeof g_vm_px);
 }
@@ -6357,7 +6364,7 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
           "hover: %u layers (the panel, the ray, the dot): sc %d rect %d,%d", e->layer_count, e->q[2].sc, e->q[2].rect[0],
           e->q[3].rect[0]);
     CHECK(atomic_load(&g_vm->consume) == 2u && MOCK(mockxr_haptic_get)(1)->applies == hap0 + 1 &&
-              MOCK(mockxr_haptic_get)(1)->amplitude > 0.11f && MOCK(mockxr_haptic_get)(1)->amplitude < 0.13f,
+              fabsf(MOCK(mockxr_haptic_get)(1)->amplitude - somvr_hx_level(SOMVR_HX_HOVER, 1, 1)) < 1e-3f,
           "hover: consume 0x%x, haptics %d -> %d amp %.2f", atomic_load(&g_vm->consume), hap0,
           MOCK(mockxr_haptic_get)(1)->applies, MOCK(mockxr_haptic_get)(1)->amplitude);
     int ups = V.buf2img;
@@ -6371,14 +6378,16 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
               fabsf(e->q[3].pose[6] - wd[6]) < 6e-3f,
           "the dot at %.4f,%.4f,%.4f, want about %.4f,%.4f,%.4f", e->q[3].pose[4], e->q[3].pose[5], e->q[3].pose[6], wd[4],
           wd[5], wd[6]);
-    /* a click: 30 -> 45 deg, published (gen + 1), a stronger tick, a new picture; held: no second click */
+    /* a click: 30 -> 45 deg, published (gen + 1), the click word (stronger than the hover), a new picture; held: no
+     * second click */
     uint32_t gen0 = atomic_load(&g_vm->gen);
     aim.trig = 0.9f;
     vm_mono(&a, &aim, 4);
     somvr_settings s1 = vm_set();
     CHECK(s1.snap_deg == 45 && atomic_load(&g_vm->gen) == gen0 + 1 && atomic_load(&g_vm->n_clicks) == 1 &&
               log_has("xr: vrmenu: click Snap angle >: changed 30\x7f -> 45\x7f (gen") &&
-              MOCK(mockxr_haptic_get)(1)->amplitude > 0.34f && V.buf2img > ups,
+              fabsf(MOCK(mockxr_haptic_get)(1)->amplitude - somvr_hx_level(SOMVR_HX_CLICK, 1, 1)) < 1e-3f &&
+              MOCK(mockxr_haptic_get)(1)->amplitude > somvr_hx_level(SOMVR_HX_HOVER, 1, 1) + 0.1f && V.buf2img > ups,
           "the click: snap %g, gen %u -> %u, clicks %llu, amp %.2f", s1.snap_deg, gen0, atomic_load(&g_vm->gen),
           (unsigned long long)atomic_load(&g_vm->n_clicks), MOCK(mockxr_haptic_get)(1)->amplitude);
     CHECK(vm_picture_is(&s1, VMA_MONO, SOMVR_VMI_SNAP, SOMVR_VMP_MORE), "the picture after the click");
@@ -6440,13 +6449,13 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     aim.trig = 0, vm_mono(&a, &aim, 3);
     CHECK(log_has("xr: vrmenu: click Settings button: the settings page") && atomic_load(&g_vm->practice) == pw,
           "the tab back");
-    /* build 19 (re-xr-pipeline.md 73): the Settings page's last row "Fight settings >" opens the Fight page (the
-     * sword's, the bow's, the fight's rows) */
-    vm_uv(SOMVR_VMI_PG_FIGHT, SOMVR_VMP_BUTTON, aim.uv);
+    /* build 34 (re-xr-pipeline.md 150): the Settings tab's groups - their Sword button opens the Sword page (build 19's
+     * "Fight settings >" row gone) */
+    vm_uv(SOMVR_VMI_SUB_SWORD, SOMVR_VMP_BUTTON, aim.uv);
     vm_mono(&a, &aim, 3);
     aim.trig = 0.9f, vm_mono(&a, &aim, 3);
     aim.trig = 0, vm_mono(&a, &aim, 3);
-    CHECK(log_has("xr: vrmenu: click Fight settings button: the fight page"), "the Fight page's button");
+    CHECK(log_has("xr: vrmenu: click Sword button: the sword page"), "the Sword group's button");
     /* v4 (re-xr-pipeline.md 29): the Sword angle row (build 19: the Fight page's first), dimmed without
      * SOMVR_VMA_SWORD; with it its > box turns the blade 5 deg up, published for the game side (SOMVR_SWORD_ANGLE live) */
     vm_uv(SOMVR_VMI_SWORD, SOMVR_VMP_MORE, aim.uv);
@@ -6462,13 +6471,23 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
               log_has("xr: vrmenu: click Sword angle >: changed 0\x7f -> +5\x7f (gen"),
           "the sword row: %g deg, gen %u -> %u", vm_set().sword_deg, gs, atomic_load(&g_vm->gen));
     g_vm->avail = avail0;
-    /* build 19: "< Settings" under the Fight page's rows: back to the Settings page */
-    int nback = log_count("xr: vrmenu: click Settings button: the settings page");
-    vm_uv(SOMVR_VMI_PG_BACK, SOMVR_VMP_BUTTON, aim.uv);
+    /* build 34: the Controls tab, then the Settings tab: back on the Sword group (the group it was on); its Comfort
+     * button: the first group (build 19's Settings page) */
+    vm_uv(SOMVR_VMI_TAB_CTL, SOMVR_VMP_BUTTON, aim.uv);
     vm_mono(&a, &aim, 3);
     aim.trig = 0.9f, vm_mono(&a, &aim, 3);
     aim.trig = 0, vm_mono(&a, &aim, 3);
-    CHECK(log_count("xr: vrmenu: click Settings button: the settings page") == nback + 1, "the Fight page's back button");
+    vm_uv(SOMVR_VMI_TAB_SET, SOMVR_VMP_BUTTON, aim.uv);
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(log_has("xr: vrmenu: click Settings button: the sword page"), "the Settings tab: the group it was on");
+    int nback = log_count("xr: vrmenu: click Comfort button: the settings page");
+    vm_uv(SOMVR_VMI_SUB_COMFORT, SOMVR_VMP_BUTTON, aim.uv);
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(log_count("xr: vrmenu: click Comfort button: the settings page") == nback + 1, "the Comfort group's button");
     atomic_store(&g_vm->pstate, 0);
     atomic_store(&g_vm->n_clicks, 3);
     /* its close box: closed, the palm still up does not open it again until it has been turned away */
@@ -6578,7 +6597,7 @@ static int vm_test_run(int none) {
     char want[900];
     if (none)
         snprintf(want, sizeof want, "xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): no notes - %s No such file or directory "
-                 "(the page says so)", path);
+                 "(build 34: the Test tab is left out)", path);
     else
         snprintf(want, sizeof want, "xr: vrmenu: the Test page (SOMVR_XR_VM_TEST): 'Build 21t - what to test' - %d lines, 2 "
                  "pages from %s (%zu bytes)", t.n, path, tn);
@@ -6588,6 +6607,18 @@ static int vm_test_run(int none) {
     while (!atomic_load(&g_vm->open) && n++ < 80) vm_mono(&a, &palm, 1);
     vm_mono(&a, &palm, 2);
     somvr_settings s0 = vm_set();
+    if (none) { /* build 34: no notes (a player's package) - no Test tab: the three tabs and build 20's X box */
+        int rt[4], p3 = vm_picture_is(&s0, VMA_MONO, -1, SOMVR_VMP_NONE);
+        int tab = somvr_vm_rect_av(VMA_MONO, SOMVR_VMI_TAB_TEST, SOMVR_VMP_BUTTON, rt);
+        CHECK(atomic_load(&g_vm->open) == 1 && p3 && !tab,
+              "no notes: the panel without the Test tab (open %u, the three tabs' picture %d, a Test tab to point at %d)",
+              atomic_load(&g_vm->open), p3, tab);
+        CHECK(V.viol == 0, "%d Vulkan violations, first: %s", V.viol, V.first);
+        app_teardown(&a);
+        CHECK(V.sems_live == 0 && V.fences_live == 0 && V.buffers_live == 0 && V.mems_live == 0, "layer objects leaked");
+        check_mock_clean();
+        return 0;
+    }
     CHECK(atomic_load(&g_vm->open) == 1 && vm_picture_is(&s0, VMA_MONO | SOMVR_VMA_TESTPAGE, -1, SOMVR_VMP_NONE),
           "open: the panel with the four tabs (open %u)", atomic_load(&g_vm->open));
     vmpose aim = palm;
@@ -6729,17 +6760,25 @@ static int sc_refresh_menu(void) {
           "the row: shown with SOMVR_VMA_REFRESH only");
     vmpose aim = palm;
     aim.right_ok = 1;
+    /* build 34 (re-xr-pipeline.md 150): the row is the Display group's - its button first */
+    vm_uv(SOMVR_VMI_SUB_DISPLAY, SOMVR_VMP_BUTTON, aim.uv);
+    vm_mono(&a, &aim, 3);
+    aim.trig = 0.9f, vm_mono(&a, &aim, 3);
+    aim.trig = 0, vm_mono(&a, &aim, 3);
+    CHECK(log_has("xr: vrmenu: click Display button: the display page"), "the Display group");
     aim.uv[0] = (rc[0] + 0.5f * rc[2]) / SOMVR_VM_TEX_W, aim.uv[1] = (rc[1] + 0.5f * rc[3]) / SOMVR_VM_TEX_H;
     vm_mono(&a, &aim, 3);
     aim.trig = 0.9f, vm_mono(&a, &aim, 3);
     aim.trig = 0, vm_mono(&a, &aim, 3);
     somvr_settings s1 = vm_set();
+    g_vm_pic_page = SOMVR_VMPG_DISPLAY;
     CHECK(s1.refresh == 90 && r->requests == 2 && r->last == 90.0f && r->now == 90.0f && r->events == 2 &&
               log_has("xr: refresh: 90 Hz asked (the VR menu): 90.0 Hz requested") &&
               log_has("xr: refresh: the display's rate changed 80.0 -> 90.0 Hz (event 2)") &&
               vm_picture_is(&s1, av, SOMVR_VMI_REFRESH, SOMVR_VMP_MORE),
           "the click: refresh %u, requests %d, last %.1f now %.1f, events %d", s1.refresh, r->requests, (double)r->last,
           (double)r->now, r->events);
+    g_vm_pic_page = SOMVR_VMPG_SETTINGS;
     vm_mono(&a, &aim, 4);
     CHECK(r->requests == 2, "asked once per change: %d", r->requests);
     app_teardown(&a);
@@ -6819,7 +6858,16 @@ static int sc_vrmenu_stereo(void) { /* layout B with the HUD quad and comfort: t
               e->layer_count == 6 && cf_quad(0, "after the panel") == 1,
           "stereo layers: %u, the HUD's swapchain at 2 %d, the panel at %d, the ring at %d", e->layer_count, e->q[2].sc,
           pl, cf_quad(0, "x"));
-    /* a click on HUD >: off; the next frames have no HUD quad (layer 1 the ring, 2 the panel) */
+    /* a click on HUD >: off; the next frames have no HUD quad (layer 1 the ring, 2 the panel). Build 34: the HUD row
+     * is the Display group's - its button first */
+    vm_uv(SOMVR_VMI_SUB_DISPLAY, SOMVR_VMP_BUTTON, aim.uv);
+    for (int i = 0; i < 3; i++, f++) vm_hands(&aim), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
+    aim.trig = 0.9f;
+    for (int i = 0; i < 3; i++, f++) vm_hands(&aim), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
+    aim.trig = 0;
+    for (int i = 0; i < 3; i++, f++) vm_hands(&aim), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
+    vm_uv(SOMVR_VMI_HUD, SOMVR_VMP_MORE, aim.uv);
+    for (int i = 0; i < 3; i++, f++) vm_hands(&aim), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
     aim.trig = 0.9f;
     for (int i = 0; i < 3; i++, f++) vm_hands(&aim), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
     aim.trig = 0;
@@ -7163,6 +7211,42 @@ static int wrist_run(int gauntlet) {
     return 0;
 }
 static int sc_wrist(void) { return wrist_run(0); }
+/* build 34 (re-xr-pipeline.md 150): with the VR menu its Watch size row is the watch face's width, live - Small 6 cm
+ * (from the preload's settings at the start), Large 10 cm after a change (SOMVR_XR_MINIMAP_QUAD unset: 10 cm) */
+static int sc_wrist_menu(void) {
+    hudrig r;
+    somvr_settings s;
+    somvr_set_default(&s);
+    s.watch_big = 0;
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (input_obj(INW_ALL, 1, SOMVR_INPUT_V2_SIZE) || vrmenu_obj(1, VMA_ALL, &s)) return 1;
+    wr_hands(1);
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    int mm[4] = SOMVR_MM_RECT_DEFAULT;
+    somvr_ht_set ct;
+    somvr_ht_parse(NULL, SOMVR_WH_CLEAR_DEFAULT, &ct, NULL);
+    somvr_hud_layout l;
+    CHECK(somvr_hud_layout_make(1920, 1080, mm, NULL, 0, &ct, NULL, &l), "the expected layout");
+    somvr_views v;
+    for (uint64_t f = 1; f <= 3; f++) wr_hands(1), hud_stereo(&r, f, 2, SOMVR_HUDK_WORLD, &v);
+    int hsc = MOCK(mockxr_sc_find)(1920 + 300, 1080), wq = layer_with(hsc, l.watch[0], l.watch[1], l.watch[2], l.watch[3]);
+    const mockxr_end *e = MOCK(mockxr_last_end)();
+    float w_small = e->layer_count == 3 && wq == 2 ? e->q[2].size[0] : -1;
+    s.watch_big = 1;
+    somvr_vrmenu_publish(g_vm, &s);
+    for (uint64_t f = 4; f <= 5; f++) wr_hands(1), hud_stereo(&r, f, 2, SOMVR_HUDK_WORLD, &v);
+    e = MOCK(mockxr_last_end)();
+    wq = layer_with(hsc, l.watch[0], l.watch[1], l.watch[2], l.watch[3]);
+    float w_big = e->layer_count == 3 && wq == 2 ? e->q[2].size[0] : -1;
+    CHECK(hsc >= 0 && fabsf(w_small - 0.06f / 300 * (float)l.watch[2]) < 1e-5f &&
+              fabsf(w_big - 0.10f / 300 * (float)l.watch[2]) < 1e-5f,
+          "the watch: %.4f m wide with Small, %.4f with Large (the column %d px)", w_small, w_big, l.watch[2]);
+    app_teardown(&r.a);
+    CHECK(MOCK(mockxr_live)() == 0, "XR objects alive after vkDestroyDevice");
+    check_mock_clean();
+    return 0;
+}
 static int sc_wrist_hud(void) { return wrist_run(1); }
 
 /* the band's expected pose from a record's eyes (yaw about +Y only, as the mock's): its middle d cos a ahead of the eyes'
@@ -8052,6 +8136,7 @@ static const struct {
     {"vrmenu-stereo", sc_vrmenu_stereo, "SOMVR_XR_LOADER=@MOCK", 1},
     {"card", sc_card, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_CARD=on", 1},
     {"wrist", sc_wrist, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MINIMAP=wrist", 1},
+    {"wrist-menu", sc_wrist_menu, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MINIMAP=wrist", 1}, /* build 34 */
     {"vrhands", sc_vrhands, "SOMVR_XR_LOADER=@MOCK", 1},
     {"vrhands-off", sc_vrhands_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS=off", 1},
     {"vrhands-nofuncs", sc_vrhands_nofuncs, "SOMVR_XR_LOADER=@MOCK", 1},
@@ -8104,6 +8189,46 @@ static void set_env(const char *spec) {
     }
 }
 
+/* a scenario in its own child (main): the environment cleared of our switches, its own, its function */
+static int run_child(size_t i) {
+    unsetenv("SOMVR_XR");
+    unsetenv("SOMVR_XR_LAYER");
+    unsetenv("SOMVR_XR_LOADER");
+    unsetenv("XR_RUNTIME_JSON");
+    unsetenv("SOMVR_XR_SPACE");
+    unsetenv("SOMVR_XR_DUMP");
+    unsetenv("SOMVR_XR_MARK_LAYERS"); /* build 31b */
+    unsetenv("SOMVR_XR_INPUT");
+    unsetenv("SOMVR_XR_PREDICT");
+    unsetenv("SOMVR_XR_HUD");
+    unsetenv("SOMVR_XR_HUD_ALPHA");
+    unsetenv("SOMVR_XR_HUD_QUAD");
+    unsetenv("SOMVR_XR_POINTER");
+    unsetenv("SOMVR_XR_FADE");
+    unsetenv("SOMVR_XR_ENV");
+    unsetenv("SOMVR_XR_ENV_DIM");
+    unsetenv("SOMVR_XR_VRMENU");
+    unsetenv("SOMVR_XR_HANDS"); /* build 10 */
+    unsetenv("SOMVR_XR_WATCH");
+    unsetenv("SOMVR_XR_PANEL");
+    unsetenv("SOMVR_XR_HANDS_DEPTH"); /* build 11 */
+    unsetenv("SOMVR_XR_HANDS_DEPTH_SOFT");
+    unsetenv("SOMVR_XR_HANDS_DEPTH_BIAS");
+    unsetenv("SOMVR_XR_HANDS_DEPTH_HELD");
+    unsetenv("SOMVR_XR_HANDS_DEPTH_DEBUG");
+    unsetenv("SOMVR_XR_EXIT"); /* build 16 */
+    unsetenv("SOMVR_XR_VM_TEST"); /* build 21 */
+    unsetenv("SOMVR_XR_VM_TEST_FILE");
+    setenv("SOMVR_XR_LOG", g_log, 1);
+    set_env(g_scen[i].env);
+    alarm(30);
+    if (g_scen[i].mock && !(g_mh = dlopen(g_mock, RTLD_NOW | RTLD_LOCAL)))
+        fprintf(stderr, "    dlopen mock: %s\n", dlerror()), _exit(1);
+    int r = g_scen[i].fn();
+    fflush(stderr);
+    _exit(r || g_fail ? 1 : 0);
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) return fprintf(stderr, "usage: test_layer LAYER.so MOCK.so TMPDIR [scenario]\n"), 2;
     g_layer = argv[1], g_mock = argv[2], g_tmp = argv[3];
@@ -8111,64 +8236,77 @@ int main(int argc, char **argv) {
     static char lay[4096], mock[4096]; /* absolute: dump-nolog runs in TMPDIR */
     if (realpath(g_layer, lay)) g_layer = lay;
     if (realpath(g_mock, mock)) g_mock = mock;
-    int failed = 0, run = 0;
-    for (size_t i = 0; i < sizeof g_scen / sizeof g_scen[0]; i++) {
-        if (argc > 4 && strcmp(argv[4], g_scen[i].name)) continue;
-        run++;
-        snprintf(g_log, sizeof g_log, "%s/%s.log", g_tmp, g_scen[i].name);
-        unlink(g_log);
-        pid_t pid = fork();
-        if (pid == 0) {
-            unsetenv("SOMVR_XR");
-            unsetenv("SOMVR_XR_LAYER");
-            unsetenv("SOMVR_XR_LOADER");
-            unsetenv("XR_RUNTIME_JSON");
-            unsetenv("SOMVR_XR_SPACE");
-            unsetenv("SOMVR_XR_DUMP");
-            unsetenv("SOMVR_XR_MARK_LAYERS"); /* build 31b */
-            unsetenv("SOMVR_XR_INPUT");
-            unsetenv("SOMVR_XR_PREDICT");
-            unsetenv("SOMVR_XR_HUD");
-            unsetenv("SOMVR_XR_HUD_ALPHA");
-            unsetenv("SOMVR_XR_HUD_QUAD");
-            unsetenv("SOMVR_XR_POINTER");
-            unsetenv("SOMVR_XR_FADE");
-            unsetenv("SOMVR_XR_ENV");
-            unsetenv("SOMVR_XR_ENV_DIM");
-            unsetenv("SOMVR_XR_VRMENU");
-            unsetenv("SOMVR_XR_HANDS"); /* build 10 */
-            unsetenv("SOMVR_XR_WATCH");
-            unsetenv("SOMVR_XR_PANEL");
-            unsetenv("SOMVR_XR_HANDS_DEPTH"); /* build 11 */
-            unsetenv("SOMVR_XR_HANDS_DEPTH_SOFT");
-            unsetenv("SOMVR_XR_HANDS_DEPTH_BIAS");
-            unsetenv("SOMVR_XR_HANDS_DEPTH_HELD");
-            unsetenv("SOMVR_XR_HANDS_DEPTH_DEBUG");
-            unsetenv("SOMVR_XR_EXIT"); /* build 16 */
-            unsetenv("SOMVR_XR_VM_TEST"); /* build 21 */
-            unsetenv("SOMVR_XR_VM_TEST_FILE");
-            setenv("SOMVR_XR_LOG", g_log, 1);
-            set_env(g_scen[i].env);
-            alarm(30);
-            if (g_scen[i].mock && !(g_mh = dlopen(g_mock, RTLD_NOW | RTLD_LOCAL)))
-                fprintf(stderr, "    dlopen mock: %s\n", dlerror()), _exit(1);
-            int r = g_scen[i].fn();
+    /* the scenarios run SOMVR_JOBS at a time (docs/re-xr-pipeline.md 161; unset: one, as before), each in its own child
+     * with its own log as before; a child's stdout and stderr go to TMPDIR/NAME.out, printed with its PASS/FAIL line in
+     * the table's order - the output is the serial run's */
+    const char *jv = getenv("SOMVR_JOBS");
+    int jobs = jv && atoi(jv) > 0 ? atoi(jv) : 1;
+    enum { NSC = sizeof g_scen / sizeof g_scen[0] };
+    static pid_t pids[NSC];
+    static int stat_of[NSC];
+    static char want[NSC], done[NSC];
+    int failed = 0, run = 0, running = 0;
+    for (size_t i = 0; i < NSC; i++)
+        want[i] = !(argc > 4 && strcmp(argv[4], g_scen[i].name));
+    size_t next = 0, shown = 0;
+    while (shown < NSC) {
+        while (running < jobs && next < NSC) {
+            size_t i = next++;
+            if (!want[i]) continue;
+            snprintf(g_log, sizeof g_log, "%s/%s.log", g_tmp, g_scen[i].name);
+            unlink(g_log);
+            char outp[700];
+            snprintf(outp, sizeof outp, "%s/%s.out", g_tmp, g_scen[i].name);
+            fflush(stdout), fflush(stderr);
+            pid_t pid = fork();
+            if (pid == 0) {
+                int fd = open(outp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+                if (fd >= 0) dup2(fd, 1), dup2(fd, 2), close(fd);
+                _exit(run_child(i));
+            }
+            pids[i] = pid, running++;
+        }
+        while (shown < NSC && (!want[shown] || done[shown])) {
+            size_t i = shown++;
+            if (!want[i]) continue;
+            run++;
+            char outp[700];
+            snprintf(outp, sizeof outp, "%s/%s.out", g_tmp, g_scen[i].name);
+            FILE *of = fopen(outp, "rb");
+            if (of) {
+                char buf[8192];
+                size_t k;
+                while ((k = fread(buf, 1, sizeof buf, of)) > 0) fwrite(buf, 1, k, stderr);
+                fclose(of);
+            }
             fflush(stderr);
-            _exit(r || g_fail ? 1 : 0);
+            int st = stat_of[i];
+            int ok = WIFEXITED(st) && WEXITSTATUS(st) == 0;
+            printf("%-24s %s", g_scen[i].name, ok ? "PASS" : "FAIL");
+            if (!WIFEXITED(st)) printf(" (signal %d)", WTERMSIG(st));
+            printf("\n");
+            fflush(stdout);
+            if (!ok) {
+                failed++;
+                snprintf(g_log, sizeof g_log, "%s/%s.log", g_tmp, g_scen[i].name);
+                char cmd[1024];
+                snprintf(cmd, sizeof cmd, "sed 's/^/    log: /' '%s' 2>/dev/null | tail -25", g_log);
+                if (system(cmd)) {}
+            }
         }
+        if (shown >= NSC) break;
         int st = 0;
-        waitpid(pid, &st, 0);
-        int ok = WIFEXITED(st) && WEXITSTATUS(st) == 0;
-        printf("%-24s %s", g_scen[i].name, ok ? "PASS" : "FAIL");
-        if (!WIFEXITED(st)) printf(" (signal %d)", WTERMSIG(st));
-        printf("\n");
-        fflush(stdout);
-        if (!ok) {
-            failed++;
-            char cmd[1024];
-            snprintf(cmd, sizeof cmd, "sed 's/^/    log: /' '%s' 2>/dev/null | tail -25", g_log);
-            if (system(cmd)) {}
+        pid_t p = waitpid(-1, &st, 0);
+        if (p < 0) {
+            if (errno == EINTR) continue;
+            perror("test_layer: waitpid");
+            return 1;
         }
+        for (size_t i = 0; i < NSC; i++)
+            if (want[i] && !done[i] && pids[i] == p) {
+                stat_of[i] = st, done[i] = 1, running--;
+                break;
+            }
     }
     printf("%d/%d scenarios passed\n", run - failed, run);
     return failed ? 1 : 0;

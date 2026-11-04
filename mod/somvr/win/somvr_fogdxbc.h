@@ -234,4 +234,209 @@ fail:
 	free(w);
 	return NULL;
 }
+
+/* ==== build 33 (docs/re-xr-pipeline.md 146.3): SOMVR_XR_FOG=ray - the fog's density averaged along the eye's ray =====
+ * The overlay takes each density (Rayleigh exp(-h/Hr), Mie exp(-h/Hm)) at the pixel's own height h1 (clamped at 0):
+ *     max  rH.c, rH.c, l(0)                       (rH.c = the movc's pick: the pixel's height, or the sky ray's midpoint)
+ *     div  rA.a, -rH.c, cb12[14].w ... exp rA.a   (Rayleigh: e1)        div rB.b, -rH.c, cb12[15].x ... exp rB.b (Mie)
+ * so at a cliff's rim over a misty valley the valley floor's full density starts at once. The average along a straight
+ * ray from the eye's height h0 is e1 * f(x), x = (h1 - h0) / H, f(x) = (e^x - 1) / x (1 + x/2 for |x| <= 0.01; x within
+ * +-80). After the height's movc (`movc rH.., rC.., <sky arm>, rP..`: rC.c the sky test, rP.p the pixel's height):
+ *     add  T.x, cb0[11].y, cb12[18].w   (the eye's height: the shader's own sum, its words copied)
+ *     max  T.x, T.x, l(0);  max T.y, rP.p, l(0);  add T.y, T.y, -T.x;  movc T.y, rC.c, l(0), T.y   (dh; 0 in the sky)
+ * and after each density's exp (H = that div's own constant):
+ *     div T.x, T.y, H; max T.x, T.x, l(-80); min T.x, T.x, l(80); mul T.z, T.x, l(1.4427); exp T.z, T.z;
+ *     add T.z, T.z, l(-1); div T.z, T.z, T.x; mad T.w, T.x, l(0.5), l(1); lt T.x, l(0.01), |T.x|;
+ *     movc T.z, T.x, T.z, T.w; mul rA.a, rA.a, T.z
+ * The sky (dh = 0 -> f = 1) keeps the game's own midpoint density. T = a new temp. Every link is checked; any mismatch
+ * leaves the blob as it is (the caller keeps the radial one). */
+#define FDX_MAXINS 16
+struct fdx_ins { uint32_t after; uint32_t n; uint32_t w[128]; };
+
+/* the container rebuilt with insertions (each after the instruction starting at word `after` of the program) and
+ * dcl_temps set to `temps`; NULL on no memory */
+static unsigned char *fdx_rebuild(const unsigned char *blob, size_t n, uint32_t shex, const uint32_t *w, uint32_t nw,
+                                  const struct fdx_ins *ins, int nins, uint32_t temps_at, uint32_t temps, size_t *n_out)
+{
+    uint32_t add = 0;
+    for (int k = 0; k < nins; k++) add += ins[k].n;
+    size_t m = n + 4 * (size_t)add;
+    unsigned char *o = malloc(m);
+    if (!o) return NULL;
+    size_t pb = shex + 8, j = pb;
+    memcpy(o, blob, pb);
+    for (uint32_t i = 0; i < nw;) {
+        uint32_t ln = i < 2 ? 1 : fdx_len(w, i, nw);
+        for (uint32_t k = 0; k < ln; k++, j += 4)
+            fdx_wr(o + j, i == 1 ? nw + add : (i + k == temps_at + 1 ? temps : w[i + k]));
+        for (int q = 0; q < nins; q++)
+            if (ins[q].after == i)
+                for (uint32_t k = 0; k < ins[q].n; k++, j += 4) fdx_wr(o + j, ins[q].w[k]);
+        i += ln;
+    }
+    memcpy(o + j, blob + pb + 4 * (size_t)nw, n - (pb + 4 * (size_t)nw));
+    fdx_wr(o + shex + 4, fdx_rd(blob + shex + 4) + 4 * add);
+    fdx_wr(o + 24, (uint32_t)m);
+    uint32_t nch = fdx_rd(blob + 28);
+    for (uint32_t c = 0; c < nch; c++) {
+        uint32_t co = fdx_rd(blob + 32 + 4 * c);
+        if (co > shex) fdx_wr(o + 32 + 4 * c, co + 4 * add);
+    }
+    somvr_dxbc_checksum(o, m, o + 4);
+    *n_out = m;
+    return o;
+}
+
+/* operand helpers: a temp's dest (one component c), a temp's select-1 source (component c, mods 0/0x41 neg/0x81 abs) */
+#define FDX_DST(c) (0x00100002u | (1u << (4 + (c))))
+#define FDX_SRC(c) (0x0010000au | ((uint32_t)(c) << 4))
+#define FDX_IMM 0x00004001u
+#define FDX_OPC(op, len) ((uint32_t)(op) | ((uint32_t)(len) << 24))
+static uint32_t *fdx_put(uint32_t *p, int nw, const uint32_t *v) { memcpy(p, v, 4 * (size_t)nw); return p + nw; }
+
+/* the component a 4-component source selects for dest component c (swizzle or select-1) */
+static int fdx_src_comp(uint32_t tok, int c)
+{
+    int mode = (tok >> 2) & 3;
+    return mode == 1 ? (int)((tok >> (4 + 2 * c)) & 3) : mode == 2 ? (int)((tok >> 4) & 3) : -1;
+}
+
+__attribute__((unused)) /* (somvr_grassdxbc.h includes this header for its helpers) */
+static unsigned char *somvr_fogdxbc_ray(const unsigned char *blob, size_t n, size_t *n_out, const char **why)
+{
+    *n_out = 0;
+    *why = "not DXBC";
+    if (n < 32 || memcmp(blob, "DXBC", 4) || fdx_rd(blob + 20) != 1 || fdx_rd(blob + 24) != n) return NULL;
+    uint32_t nch = fdx_rd(blob + 28), shex = 0;
+    if (!nch || nch > 32 || 32 + 4 * (size_t)nch > n) return NULL;
+    for (uint32_t c = 0; c < nch; c++) {
+        uint32_t o = fdx_rd(blob + 32 + 4 * c);
+        if ((size_t)o + 8 > n || (size_t)o + 8 + fdx_rd(blob + o + 4) > n) return NULL;
+        if (!memcmp(blob + o, "SHEX", 4) || !memcmp(blob + o, "SHDR", 4)) shex = o;
+    }
+    *why = "no SHEX/SHDR chunk";
+    if (!shex) return NULL;
+    uint32_t nw = fdx_rd(blob + shex + 4) / 4;
+    const unsigned char *pb = blob + shex + 8;
+    *why = "not a pixel shader";
+    if (nw < 2 || (fdx_rd(pb) >> 16) != 0 || fdx_rd(pb + 4) != nw) return NULL;
+    uint32_t *w = malloc(nw * sizeof *w), at[4096], nat = 0;
+    *why = "no memory";
+    if (!w) return NULL;
+    for (uint32_t i = 0; i < nw; i++) w[i] = fdx_rd(pb + 4 * i);
+    *why = "a broken instruction stream";
+    for (uint32_t i = 2; i < nw && nat < 4096;) {
+        uint32_t ln = fdx_len(w, i, nw);
+        if (!ln) goto fail;
+        at[nat++] = i, i += ln;
+    }
+    /* the fog shader, dcl_temps, the eye's height sum (add T, cb0[a].b, cb12[c].d: two constant-buffer sources) */
+    int planet = 0, eyeh = -1, temps = -1;
+    for (uint32_t k = 0; k < nat; k++) {
+        uint32_t i = at[k], op = w[i] & 0x7ff, ln = fdx_len(w, i, nw);
+        for (uint32_t q = i + 1; q + 1 < i + ln && op != 53; q++)
+            if (w[q] == FDX_IMM && w[q + 1] == 0x4e17e580u) planet = 1;
+        if (op == 104 && ln == 2) temps = (int)k;
+        if (eyeh < 0 && op == 0 && ln == 9 && !(w[i] & 0x80000000u) && FDX_OP_TYPE(w[i + 3]) == 8 && FDX_OP_TYPE(w[i + 6]) == 8 &&
+            ((w[i + 3] >> 20) & 3) == 2 && ((w[i + 6] >> 20) & 3) == 2 && !(w[i + 3] & 0x80000000u) && !(w[i + 6] & 0x80000000u) &&
+            w[i + 4] == 0 && w[i + 5] == 11 && w[i + 7] == 12 && w[i + 8] == 18)
+            eyeh = (int)k;
+    }
+    *why = "no l(6.371e8), dcl_temps or the eye's height (add cb0[11].y, cb12[18].w): not the fog overlay";
+    if (!planet || temps < 0 || eyeh < 0) goto fail;
+    /* max rH.c, rH.c, l(0) followed by the two densities' divs of -rH.c */
+    int mx = -1, dv[2] = {-1, -1}, ex[2] = {-1, -1}, mv = -1;
+    uint32_t H = 0, hc = 0;
+    for (uint32_t k = 0; k < nat && mx < 0; k++) {
+        uint32_t i = at[k], reg, mask;
+        if ((w[i] & 0x7ff) == 0x34 && fdx_len(w, i, nw) == 7 && !(w[i] & 0x80000000u) && fdx_dst_temp(w, i + 1, &reg, &mask) &&
+            (mask == 1 || mask == 2 || mask == 4 || mask == 8) && w[i + 3] == FDX_SRC(mask == 1 ? 0 : mask == 2 ? 1 : mask == 4 ? 2 : 3) &&
+            w[i + 4] == reg && w[i + 5] == FDX_IMM && w[i + 6] == 0) {
+            uint32_t c = mask == 1 ? 0 : mask == 2 ? 1 : mask == 4 ? 2 : 3, nd = 0;
+            for (uint32_t q = k + 1; q < nat && q < k + 12 && nd < 2; q++) {
+                uint32_t j = at[q];
+                if ((w[j] & 0x7ff) == 0x0e && fdx_len(w, j, nw) == 9 && w[j + 3] == (FDX_SRC(c) | 0x80000000u) && w[j + 4] == 0x41 &&
+                    w[j + 5] == reg && FDX_OP_TYPE(w[j + 6]) == 8 && w[j + 7] == 12)
+                    dv[nd++] = (int)q;
+            }
+            if (nd == 2) mx = (int)k, H = reg, hc = c;
+        }
+    }
+    *why = "no `max rH.c, rH.c, l(0)` with the two densities' `div rX, -rH.c, cb12[..]` after it";
+    if (mx < 0) goto fail;
+    for (int d = 0; d < 2; d++) { /* each density's exp: the first `exp rA.a, rA.a` after its div, rA.a its dest */
+        uint32_t j = at[dv[d]], reg, mask;
+        if (!fdx_dst_temp(w, j + 1, &reg, &mask)) goto fail;
+        for (uint32_t q = (uint32_t)dv[d] + 1; q < nat && q < (uint32_t)dv[d] + 6 && ex[d] < 0; q++) {
+            uint32_t i = at[q], r2, m2;
+            if ((w[i] & 0x7ff) == 0x19 && fdx_len(w, i, nw) == 5 && fdx_dst_temp(w, i + 1, &r2, &m2) && r2 == reg && m2 == mask)
+                ex[d] = (int)q;
+        }
+    }
+    *why = "a density's exp not found after its div";
+    if (ex[0] < 0 || ex[1] < 0) goto fail;
+    /* the height's movc: the last movc before the max writing rH.c */
+    uint32_t cr = 0, cc = 0, pr = 0, pc = 0;
+    for (int k = mx - 1; k >= 0 && k > mx - 12 && mv < 0; k--) {
+        uint32_t i = at[k], reg, mask;
+        if ((w[i] & 0x7ff) == 0x37 && fdx_len(w, i, nw) == 9 && !(w[i] & 0x80000000u) && fdx_dst_temp(w, i + 1, &reg, &mask) &&
+            reg == H && (mask >> hc & 1)) {
+            int c0 = fdx_src_comp(w[i + 3], (int)hc), c2 = fdx_src_comp(w[i + 7], (int)hc);
+            if (c0 < 0 || c2 < 0 || FDX_OP_TYPE(w[i + 3]) || FDX_OP_TYPE(w[i + 7]) || !FDX_OP_PLAIN_1D(w[i + 3]) ||
+                !FDX_OP_PLAIN_1D(w[i + 7]))
+                break;
+            mv = k, cr = w[i + 4], cc = (uint32_t)c0, pr = w[i + 8], pc = (uint32_t)c2;
+        }
+    }
+    *why = "no movc picking the height before the max";
+    if (mv < 0) goto fail;
+    for (int k = mv + 1; k < mx; k++) { /* nothing between the movc and the max writes rH.c */
+        uint32_t i = at[k], reg, mask;
+        if ((w[i] & 0x7ff) < 88 && !(w[i] & 0x80000000u) && fdx_len(w, i, nw) >= 3 && fdx_dst_temp(w, i + 1, &reg, &mask) &&
+            reg == H && (mask >> hc & 1)) {
+            *why = "the height rewritten between its movc and its max";
+            goto fail;
+        }
+    }
+    /* the new code */
+    uint32_t T = w[at[temps] + 1];
+    struct fdx_ins ins[3];
+    memset(ins, 0, sizeof ins);
+    uint32_t *p = ins[0].w, ie = at[eyeh];
+    ins[0].after = at[mv];
+    { uint32_t a[] = {FDX_OPC(0, 9), FDX_DST(0), T}; p = fdx_put(p, 3, a); p = fdx_put(p, 6, w + ie + 3); }
+    { uint32_t a[] = {FDX_OPC(0x34, 7), FDX_DST(0), T, FDX_SRC(0), T, FDX_IMM, 0,
+                      FDX_OPC(0x34, 7), FDX_DST(1), T, FDX_SRC(pc), pr, FDX_IMM, 0,
+                      FDX_OPC(0, 8), FDX_DST(1), T, FDX_SRC(1), T, FDX_SRC(0) | 0x80000000u, 0x41, T,
+                      FDX_OPC(0x37, 9), FDX_DST(1), T, FDX_SRC(cc), cr, FDX_IMM, 0, FDX_SRC(1), T};
+      p = fdx_put(p, (int)(sizeof a / 4), a); }
+    ins[0].n = (uint32_t)(p - ins[0].w);
+    for (int d = 0; d < 2; d++) {
+        uint32_t j = at[dv[d]], *h3 = w + j + 6, reg, mask, a_c;
+        fdx_dst_temp(w, j + 1, &reg, &mask);
+        a_c = mask == 1 ? 0 : mask == 2 ? 1 : mask == 4 ? 2 : 3;
+        p = ins[1 + d].w;
+        ins[1 + d].after = at[ex[d]];
+        { uint32_t a[] = {FDX_OPC(0x0e, 8), FDX_DST(0), T, FDX_SRC(1), T}; p = fdx_put(p, 5, a); p = fdx_put(p, 3, h3); }
+        { uint32_t a[] = {FDX_OPC(0x34, 7), FDX_DST(0), T, FDX_SRC(0), T, FDX_IMM, 0xc2a00000u /* -80 */,
+                          FDX_OPC(0x33, 7), FDX_DST(0), T, FDX_SRC(0), T, FDX_IMM, 0x42a00000u /* 80 */,
+                          FDX_OPC(0x38, 7), FDX_DST(2), T, FDX_SRC(0), T, FDX_IMM, 0x3fb8aa3bu /* log2 e */,
+                          FDX_OPC(0x19, 5), FDX_DST(2), T, FDX_SRC(2), T,
+                          FDX_OPC(0, 7), FDX_DST(2), T, FDX_SRC(2), T, FDX_IMM, 0xbf800000u /* -1 */,
+                          FDX_OPC(0x0e, 7), FDX_DST(2), T, FDX_SRC(2), T, FDX_SRC(0), T,
+                          FDX_OPC(0x32, 9), FDX_DST(3), T, FDX_SRC(0), T, FDX_IMM, 0x3f000000u /* 0.5 */, FDX_IMM, 0x3f800000u,
+                          FDX_OPC(0x31, 8), FDX_DST(0), T, FDX_IMM, 0x3c23d70au /* 0.01 */, FDX_SRC(0) | 0x80000000u, 0x81, T,
+                          FDX_OPC(0x37, 9), FDX_DST(2), T, FDX_SRC(0), T, FDX_SRC(2), T, FDX_SRC(3), T,
+                          FDX_OPC(0x38, 7), FDX_DST(a_c), reg, FDX_SRC(a_c), reg, FDX_SRC(2), T};
+          p = fdx_put(p, (int)(sizeof a / 4), a); }
+        ins[1 + d].n = (uint32_t)(p - ins[1 + d].w);
+    }
+    unsigned char *o = fdx_rebuild(blob, n, shex, w, nw, ins, 3, at[temps], T + 1, n_out);
+    free(w);
+    *why = o ? NULL : "no memory";
+    return o;
+fail:
+    free(w);
+    return NULL;
+}
 #endif

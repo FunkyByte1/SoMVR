@@ -73,7 +73,12 @@ typedef void (*kl_flag_fn)(uintptr_t p, int on);
 #define KL_NAV_BIT 2
 
 /* The table: the victim's half by what it shows (docs 133.2: each played on a practice orc headless, both eyes; the
- * length and the death's moment from those runs). side, kinds, parts, states, sever, death_s, len_s */
+ * length and the death's moment from those runs). side, kinds, parts, states, sever, death_s, len_s, slow. Build 36
+ * (docs 164): slow = its fall comes late or the orc stands or walks in it - the orc's own half in the game's keys
+ * (orc_syncaction_chordkill_*.anix: its first `bodyfall` past 1.5 s - B4_Sever 3.3, F7_Sever 2.8, F10_Sever and CntrKill_B
+ * 2.0, F2_Sever and CntrKill_F 1.6 s) and the 11-02/03 runs' deaths (B4: the session's 5 s walk; F7_Sever 2.25 s; F2_Sever
+ * cut at 0.9-1.6 s, never down; the downed rows 8 of 49 seen down - 34 ran to the 2.5 s cap) - SOMVR_KILLS_QUICK leaves
+ * them out (those blows' deaths come at once) */
 #define F SOMVR_KL_FRONT
 #define B SOMVR_KL_BACK
 #define ST SOMVR_KL_STAB
@@ -85,50 +90,50 @@ typedef void (*kl_flag_fn)(uintptr_t p, int on);
 #define FI (SOMVR_KL_FIGHT | SOMVR_KL_COUNTER)
 static const somvr_kl_row g_kl_rows[] = {
 	/* standing, fighting: the executions' victims (the ordinary killing blow and the execution) */
-	{ "AI_Bip_PC_Standing_InstaKill_F", "PC_Bip_Standing_InstaKill_F", F, ST, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F3", "PC_Bip_Standing_InstaKill_F3", F, CU, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F4", "PC_Bip_Standing_InstaKill_F4", F, ST, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F5", "PC_Bip_Standing_InstaKill_F5", F, CU, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F6", "PC_Bip_Standing_InstaKill_F6", F, CU, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F8", "PC_Bip_Standing_InstaKill_F8", F, ST, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F9", "PC_Bip_Standing_InstaKill_F9", F, CU, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F2_Sever", "PC_Bip_Standing_InstaKill_F2_Sever", F, CU, NK, FI, 1, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F7_Sever", "PC_Bip_Standing_InstaKill_F7_Sever", F, CU, NK, FI, 1, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_F10_Sever", "PC_Bip_Standing_InstaKill_F10_Sever", F, CU, NK, FI, 1, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_B", "PC_Bip_Standing_InstaKill_B", B, ST, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_B2", "PC_Bip_Standing_InstaKill_B2", B, CU, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_B4", "PC_Bip_Standing_InstaKill_B4", B, AK, BO, FI, 0, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_B3_Sever", "PC_Bip_Standing_InstaKill_B3", B, CU, NK, FI, 1, 0, 0 },
-	{ "AI_Bip_PC_Standing_InstaKill_B4_Sever", "PC_Bip_Standing_InstaKill_B4_Sever", B, CU, NK, FI, 1, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_F", "PC_Bip_Standing_InstaKill_F", F, ST, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_F3", "PC_Bip_Standing_InstaKill_F3", F, CU, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_F4", "PC_Bip_Standing_InstaKill_F4", F, ST, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_F5", "PC_Bip_Standing_InstaKill_F5", F, CU, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_F6", "PC_Bip_Standing_InstaKill_F6", F, CU, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_F8", "PC_Bip_Standing_InstaKill_F8", F, ST, BO, FI, 0, 0, 0, 1 }, /* (36: down, up again, down at 1.35 s) */
+	{ "AI_Bip_PC_Standing_InstaKill_F9", "PC_Bip_Standing_InstaKill_F9", F, CU, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_F2_Sever", "PC_Bip_Standing_InstaKill_F2_Sever", F, CU, NK, FI, 1, 0, 0, 1 },
+	{ "AI_Bip_PC_Standing_InstaKill_F7_Sever", "PC_Bip_Standing_InstaKill_F7_Sever", F, CU, NK, FI, 1, 0, 0, 1 },
+	{ "AI_Bip_PC_Standing_InstaKill_F10_Sever", "PC_Bip_Standing_InstaKill_F10_Sever", F, CU, NK, FI, 1, 0, 0, 1 },
+	{ "AI_Bip_PC_Standing_InstaKill_B", "PC_Bip_Standing_InstaKill_B", B, ST, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_B2", "PC_Bip_Standing_InstaKill_B2", B, CU, BO, FI, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_B4", "PC_Bip_Standing_InstaKill_B4", B, AK, BO, FI, 0, 0, 0, 1 },
+	{ "AI_Bip_PC_Standing_InstaKill_B3_Sever", "PC_Bip_Standing_InstaKill_B3", B, CU, NK, FI, 1, 0, 0, 0 },
+	{ "AI_Bip_PC_Standing_InstaKill_B4_Sever", "PC_Bip_Standing_InstaKill_B4_Sever", B, CU, NK, FI, 1, 0, 0, 1 },
 	/* the counter that kills (the riposte into an attack) */
-	{ "AI_Bip_PC_Sync_CntrKill_F", "PC_Bip_Sync_CntrKill_F", F, AK, AP, SOMVR_KL_COUNTER, 0, 0, 0 },
-	{ "AI_Bip_PC_Sync_CntrKill_B", "PC_Bip_Sync_CntrKill_B", B, AK, AP, SOMVR_KL_COUNTER, 0, 0, 0 },
+	{ "AI_Bip_PC_Sync_CntrKill_F", "PC_Bip_Sync_CntrKill_F", F, AK, AP, SOMVR_KL_COUNTER, 0, 0, 0, 1 },
+	{ "AI_Bip_PC_Sync_CntrKill_B", "PC_Bip_Sync_CntrKill_B", B, AK, AP, SOMVR_KL_COUNTER, 0, 0, 0, 1 },
 	/* stunned */
-	{ "AI_Bip_PC_Stunned_InstaKill_F", "PC_Bip_Stunned_InstaKill_F", F, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0 },
-	{ "AI_Bip_PC_Stunned_InstaKill_B", "PC_Bip_Stunned_InstaKill_B", B, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0 },
-	{ "AI_Bip_PC_Stunned_InstaKill_B2", "PC_Bip_Stunned_InstaKill_B2", B, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0 },
-	{ "AI_Bip_PC_Stunned_InstaKill_B3", "PC_Bip_Stunned_InstaKill_B3", B, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0 },
+	{ "AI_Bip_PC_Stunned_InstaKill_F", "PC_Bip_Stunned_InstaKill_F", F, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Stunned_InstaKill_B", "PC_Bip_Stunned_InstaKill_B", B, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Stunned_InstaKill_B2", "PC_Bip_Stunned_InstaKill_B2", B, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Stunned_InstaKill_B3", "PC_Bip_Stunned_InstaKill_B3", B, AK, AP, SOMVR_KL_STUNNED, 0, 0, 0, 0 },
 	/* unaware: the stealth kill (the silent family; from the front the F rows the game offers) */
-	{ "AI_Bip_PC_Sneak_IK_B", "PC_Bip_SneakInstaKill_Silent_B", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0 },
-	{ "AI_Bip_PC_Sneak_IK_B_2", "PC_Bip_SneakInstaKill_Silent_B_2", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0 },
-	{ "AI_Bip_PC_Sneak_IK_B_3", "PC_Bip_SneakInstaKill_Silent_B_3", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0 },
-	{ "AI_Bip_PC_Sneak_IK_B_4", "PC_Bip_SneakInstaKill_Silent_B_4", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0 },
-	{ "AI_Bip_PC_Sneak_IK_F_1", "PC_Bip_SneakInstaKill_Silent_F_1", F, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0 },
-	{ "AI_Bip_PC_Sneak_IK_F_2", "PC_Bip_SneakInstaKill_Silent_F_2", F, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0 },
+	{ "AI_Bip_PC_Sneak_IK_B", "PC_Bip_SneakInstaKill_Silent_B", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sneak_IK_B_2", "PC_Bip_SneakInstaKill_Silent_B_2", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sneak_IK_B_3", "PC_Bip_SneakInstaKill_Silent_B_3", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sneak_IK_B_4", "PC_Bip_SneakInstaKill_Silent_B_4", B, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sneak_IK_F_1", "PC_Bip_SneakInstaKill_Silent_F_1", F, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sneak_IK_F_2", "PC_Bip_SneakInstaKill_Silent_F_2", F, AK, AP, SOMVR_KL_UNAWARE, 0, 0, 0, 0 },
 	/* held by the grab (the interrogation's kills: helper 135's h31_held_kill calls kl_held_kill) */
-	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_F_Kill_Silent", "PC_Bip_Sync_Intrgtn_Stnd_F_Kill_Silent", F, AK, AP, SOMVR_KL_HELD, 0, 0, 0 },
-	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_F_Kill_Loud", "PC_Bip_Sync_Intrgtn_Stnd_F_Kill_Loud", F, AK, AP, SOMVR_KL_HELD, 0, 0, 0 },
-	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_B_Kill_Silent", "PC_Bip_Sync_Intrgtn_Stnd_B_Kill_Silent", B, AK, AP, SOMVR_KL_HELD, 0, 0, 0 },
-	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_B_Kill_Loud", "PC_Bip_Sync_Intrgtn_Stnd_B_Kill_Loud", B, AK, AP, SOMVR_KL_HELD, 0, 0, 0 },
+	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_F_Kill_Silent", "PC_Bip_Sync_Intrgtn_Stnd_F_Kill_Silent", F, AK, AP, SOMVR_KL_HELD, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_F_Kill_Loud", "PC_Bip_Sync_Intrgtn_Stnd_F_Kill_Loud", F, AK, AP, SOMVR_KL_HELD, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_B_Kill_Silent", "PC_Bip_Sync_Intrgtn_Stnd_B_Kill_Silent", B, AK, AP, SOMVR_KL_HELD, 0, 0, 0, 0 },
+	{ "AI_Bip_PC_Sync_Intrgtn_Stnd_B_Kill_Loud", "PC_Bip_Sync_Intrgtn_Stnd_B_Kill_Loud", B, AK, AP, SOMVR_KL_HELD, 0, 0, 0, 0 },
 	/* downed: the ground finish (the stab down; the neck rows sever) */
-	{ "AI_Bip_PC_KD_InstaKill_F", "PC_Bip_KD_InstaKill_F_Sever", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0 },
-	{ "AI_Bip_PC_KD_InstaKill_B", "PC_Bip_KD_InstaKill_B", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0 },
-	{ "AI_Bip_PC_KD_InstaKill_L", "PC_Bip_KD_InstaKill_L", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0 },
-	{ "AI_Bip_PC_KD_InstaKill_R", "PC_Bip_KD_InstaKill_R", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0 },
-	{ "AI_Bip_PC_KD_InstaKill_R2", "PC_Bip_KD_InstaKill_R2", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0 },
-	{ "AI_Bip_PC_KD_InstaKill_R1_Sever", "PC_Bip_KD_InstaKill_R1_Sever", F | B, AK, NK, SOMVR_KL_DOWNED, 1, 0, 0 },
-	{ "AI_Bip_PC_KD_InstaKill_R2_Sever", "PC_Bip_KD_InstaKill_R2_Sever", F | B, AK, NK, SOMVR_KL_DOWNED, 1, 0, 0 },
-	{ "AI_Bip_PC_KD_InstaKill_L1_Sever", "PC_Bip_KD_InstaKill_L1_Sever", F | B, AK, NK, SOMVR_KL_DOWNED, 1, 0, 0 },
+	{ "AI_Bip_PC_KD_InstaKill_F", "PC_Bip_KD_InstaKill_F_Sever", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0, 1 },
+	{ "AI_Bip_PC_KD_InstaKill_B", "PC_Bip_KD_InstaKill_B", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0, 1 },
+	{ "AI_Bip_PC_KD_InstaKill_L", "PC_Bip_KD_InstaKill_L", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0, 1 },
+	{ "AI_Bip_PC_KD_InstaKill_R", "PC_Bip_KD_InstaKill_R", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0, 1 },
+	{ "AI_Bip_PC_KD_InstaKill_R2", "PC_Bip_KD_InstaKill_R2", F | B, AK, BO, SOMVR_KL_DOWNED, 0, 0, 0, 1 },
+	{ "AI_Bip_PC_KD_InstaKill_R1_Sever", "PC_Bip_KD_InstaKill_R1_Sever", F | B, AK, NK, SOMVR_KL_DOWNED, 1, 0, 0, 1 },
+	{ "AI_Bip_PC_KD_InstaKill_R2_Sever", "PC_Bip_KD_InstaKill_R2_Sever", F | B, AK, NK, SOMVR_KL_DOWNED, 1, 0, 0, 1 },
+	{ "AI_Bip_PC_KD_InstaKill_L1_Sever", "PC_Bip_KD_InstaKill_L1_Sever", F | B, AK, NK, SOMVR_KL_DOWNED, 1, 0, 0, 1 },
 };
 #undef F
 #undef B
@@ -158,6 +163,11 @@ struct kl_one {
 	double al_t0;
 	uintptr_t free_at;
 	uint32_t free_was;
+	/* build 36, SOMVR_KILLS_QUICK (docs 164): the half's checks on the orc's own clock (from qt0: a hit-stop's freeze not
+	 * counted) - its pose at the start (each node less the root, world cm) and its heading, the most it moved since */
+	int quick, qseen, qlogged, trace_i;
+	double qt0;
+	float qn0[4][3], qyaw0, qmoved, qrise;
 };
 static struct {
 	int on, exec_blow, sever_blow, ok, ok_nav, start_mode, free, prep, ok_prep, unaware, ai_hold, ok_ai, ok_sync_end, abort_ok, brain;
@@ -187,24 +197,44 @@ static struct {
 	_Atomic uint64_t held, vetoes;
 	double cat_next;
 	/* requests from the words' thread */
-	_Atomic int req_play, req_cat, req_kill, req_sever, req_status, req_mode;
+	_Atomic int req_play, req_cat, req_kill, req_sever, req_status, req_mode, req_vt;
+	_Atomic int req_charge; /* build 36: `kills charge N` - the hit counter to N short of its need (1 + N; a test aid) */
 	char req_name[96];
 	float req_s;
 	/* counts */
-	uint64_t by_stall, by_down, refused_unaware, swp_gone;
+	uint64_t by_stall, by_down, refused_unaware, swp_gone, nav_back, reused;
 	uint64_t takes, kills, by_moment, by_end, by_cut, by_fall, by_timeout, by_dead, fails, refused, start_fail, severs,
 		no_row, floors, skipped_hits, aligned, align_far, plays;
 	uint64_t by_who[6];
+	/* build 36 (SOMVR_KILLS_QUICK, docs 164): every death readable as the blow's, at once */
+	int quick;            /* 0 off, 1 on, 2 log only (the checks logged, the old rules kill) */
+	int trace;            /* SOMVR_KILLS_TRACE: each half's pose at its first moments (a test aid) */
+	int hs_kill;          /* SOMVR_KILLS_HITSTOP: a heavy killing blow's hit-stop before its half (the orc's own clock) */
+	int neck_sever;       /* SOMVR_KILLS_NECK=sever: a cut through the neck takes the head off at the blow */
+	int dying_fx;         /* SOMVR_KILLS_DYING_FX: a blade on an orc whose kill plays shows the hit (no damage) */
+	int quick_recoil;     /* SOMVR_KILLS_QUICK_RECOIL: an orc in a hit recoil dies at the blow (its half seldom plays) */
+	somvr_kl_quick q;
+	uint64_t by_quick[SOMVR_KLQ_N], quick_logged, instant, instant_neck, instant_downed, instant_slow, dying_hits, spared,
+		 instant_recoil;
 } g_kl;
 
 static int swp_blade_in(uintptr_t c);        /* somvr_swordphys_game.c (helper 134) */
 static void swp_release(const char *why);
 static uintptr_t swp_held_orc(uintptr_t *hobj);
+/* review b34: the orc a kill was taken on is still there - its Combat a live orc's and its HOBJECT the one taken (the
+ * practice's respawns reuse a Combat's address for a new orc: boot 20261103-171756's 0x471daf8 died at 79980.1 and was a
+ * new orc by 80000.6). 1 = *o read */
+static int kl_same(uintptr_t c, uintptr_t hobj, struct cb_orc *o)
+{
+	return cb_orc_get(c, o) && o->hobj == hobj;
+}
 static double kl_gnow(void) /* the game's clock (s; slowed with the world: SlowMO), real time if unread */
 {
 	uintptr_t tm = peek_ptr(g_ffg.clock_pp), p = tm ? peek_ptr(tm + 8) : 0;
-	int32_t ms = 0;
-	if (p && peek(p + 0x14, &ms, sizeof ms) && ms > 0)
+	int32_t ms = 0; /* the game timer (CEngineTimer) behind the pause holder +8: its total ms, TM_TOTAL_MS (Linux +0x14,
+			 * Windows +0x18: L 0xa85092 `mov 0x14(%rdi)` = W 0x140454179 `mov 0x18(%rcx)` in FUN_00a84b70 = 0x140453cc0;
+			 * +0x14 on Windows is the frame's seconds, a float - boot 012944's 268 s "not playing" after 0.2 s) */
+	if (p && peek(p + TM_TOTAL_MS, &ms, sizeof ms) && ms > 0)
 		return ms * 1e-3;
 	return mono();
 }
@@ -265,7 +295,7 @@ static uintptr_t kl_sever_type(void)
 	char sn[96] = "-";
 	if (g_kl.sever_head)
 		rx_rec_name(g_kl.sever_head, sn, sizeof sn);
-	logf_("KILLS the sever type: '%s' %#lx (the _Sever executions' SeverTarget)", sn, (unsigned long)g_kl.sever_head);
+	logf_("KILLS the sever type: '%s' %#llx (the _Sever executions' SeverTarget)", sn, (unsigned long long)g_kl.sever_head);
 	return g_kl.sever_head;
 }
 
@@ -293,8 +323,8 @@ static void kl_anim_desc(uintptr_t rec, char *out, size_t cap)
 		else if (ty == 1)
 			snprintf(val, sizeof val, "bool %d", rx_db_bool(ad, g_fig.sch_anim, f[k]));
 		else if (ty == 0xa && n > 0)
-			rx_rec_name((uintptr_t)v[0], val, sizeof val), val[0] ? (void)0 : (void)snprintf(val, sizeof val, "rec %#lx",
-													(unsigned long)v[0]);
+			rx_rec_name((uintptr_t)v[0], val, sizeof val), val[0] ? (void)0 : (void)snprintf(val, sizeof val, "rec %#llx",
+													(unsigned long long)v[0]);
 		else if (ty == 2 && n > 0) {
 			float x;
 			uint32_t u = (uint32_t)v[0];
@@ -422,8 +452,8 @@ static int kl_sync_take(uintptr_t pc, const struct cb_orc *o, const char *who, d
 	char an[96] = "-";
 	if (!atk || !n2) {
 		g_kl.sync_fail++;
-		logf_("KILLS sync t=%.3f %s on unaware orc %#lx: the game offers no stealth kill on it (%s) - the silent kill", t, who,
-		      (unsigned long)o->c, why);
+		logf_("KILLS sync t=%.3f %s on unaware orc %#llx: the game offers no stealth kill on it (%s) - the silent kill", t, who,
+		      (unsigned long long)o->c, why);
 		return 0;
 	}
 	memset(&g_kl.sy, 0, sizeof g_kl.sy);
@@ -440,10 +470,10 @@ static int kl_sync_take(uintptr_t pc, const struct cb_orc *o, const char *who, d
 	g_kl.sy.vic = vic;
 	g_kl.sync_starts++;
 	g_xc.trace_until = t + 8.0; /* SOMVR_EXECUTE's eye trace (`EXECUTE f=`): the view and the root tick by tick */
-	logf_("KILLS sync start t=%.3f %s on unaware orc %#lx: the game's own '%s' (sync '%s') by FUN_00a8c700 (node '%s', no "
-	      "camera step) -> Talion's attack '%s', his +0x188 %#lx, the orc's half '%s'; Talion held (HOLD talion), his root "
-	      "at %.1f,%.1f,%.1f", t, who, (unsigned long)o->c, g_kl.sy.an, vb_name(sy, an, sizeof an), g_vb.stealth_node,
-	      vb_name(ta, tn, sizeof tn), (unsigned long)s0, vn, g_kl.sy.root0[0], g_kl.sy.root0[1], g_kl.sy.root0[2]);
+	logf_("KILLS sync start t=%.3f %s on unaware orc %#llx: the game's own '%s' (sync '%s') by FUN_00a8c700 (node '%s', no "
+	      "camera step) -> Talion's attack '%s', his +0x188 %#llx, the orc's half '%s'; Talion held (HOLD talion), his root "
+	      "at %.1f,%.1f,%.1f", t, who, (unsigned long long)o->c, g_kl.sy.an, vb_name(sy, an, sizeof an), g_vb.stealth_node,
+	      vb_name(ta, tn, sizeof tn), (unsigned long long)s0, vn, g_kl.sy.root0[0], g_kl.sy.root0[1], g_kl.sy.root0[2]);
 	(void)sn;
 	return 1;
 }
@@ -458,9 +488,9 @@ static void kl_sync_frame(uintptr_t pc, double t)
 		g_kl.sy.root_max = fmaxf(g_kl.sy.root_max, hypotf(r[0] - g_kl.sy.root0[0], r[2] - g_kl.sy.root0[2]));
 	g_kl.sy.seen_sync |= rec0 != 0, g_kl.sy.frames++;
 	struct cb_orc o;
-	int alive = cb_orc_get(g_kl.sy.c, &o) && !cb_dead(g_kl.sy.c);
+	int alive = kl_same(g_kl.sy.c, g_kl.sy.hobj, &o) && !cb_dead(g_kl.sy.c); /* (review b34: the same orc) */
 	double el = t - g_kl.sy.t0;
-	const char *why = !alive ? (cb_orc_get(g_kl.sy.c, &o) ? "the orc dead (the game's kill)" : "the orc gone")
+	const char *why = !alive ? (kl_same(g_kl.sy.c, g_kl.sy.hobj, &o) ? "the orc dead (the game's kill)" : "the orc gone")
 			  : g_kl.sy.seen_sync && !rec0 && el > 0.3 ? "the sync over, the orc alive" : el > 8.0 ? "8 s" : NULL;
 	if (!why)
 		return;
@@ -474,8 +504,8 @@ static void kl_sync_frame(uintptr_t pc, double t)
 		g_kl.sync_forced++;
 	} else if (strstr(why, "dead"))
 		g_kl.sync_kills++, CB_COUNT(kills);
-	logf_("KILLS sync end t=%.3f orc %#lx '%s' / '%s': %s after %.2f s%s; Talion's root moved up to %.1f cm from where he "
-	      "stood (%d frames; his sync seen %d)", t, (unsigned long)g_kl.sy.c, g_kl.sy.an, g_kl.sy.vn, why, el,
+	logf_("KILLS sync end t=%.3f orc %#llx '%s' / '%s': %s after %.2f s%s; Talion's root moved up to %.1f cm from where he "
+	      "stood (%d frames; his sync seen %d)", t, (unsigned long long)g_kl.sy.c, g_kl.sy.an, g_kl.sy.vn, why, el,
 	      forced ? (cb_dead(g_kl.sy.c) ? " - ended, our kill: dead" : " - ended, our kill: NOT dead") : "", g_kl.sy.root_max,
 	      g_kl.sy.frames, g_kl.sy.seen_sync);
 	if (!forced)
@@ -504,19 +534,21 @@ static struct {
 	uint64_t holds;
 } g_kst;
 
-/* the AI hold: an NPC's own attack or reaction start on an orc whose kill plays is refused (any thread) */
-#ifdef _WIN32
+/* the AI hold: an NPC's own attack or reaction start on an orc whose kill plays is refused (any thread). The start
+ * wrapper's own prototype on both ABIs: the caller's rate goes through - SysV passes the float in xmm0 whatever its place
+ * (the ints in rdi rsi rdx rcx r8), Win64 as the 5th argument. Review b34: build 31's Linux wrapper took 5 ints and
+ * forwarded 1.0f, but the AI actions' starts pass their own rate (KL_AI_ACT2 = FUN_02a88710+0x101d: xmm0 = the
+ * action's +0x9c (`movss 0x9c(%rdi),%xmm0` at 0x2a88aca); KL_AI_ACT1 +0xfdd: a value from the action's range (0x2a88dfb,
+ * FUN_00c73440); KL_AI_NPC and KL_AI_MISC 1.0 from 0x3344770; win/sites-combat.tsv: ACT1 xmm0, ACT2 xmm6) - on Linux
+ * every AI action attack ran at 1.0 while SOMVR_KILLS' sites were in */
 __attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, float rate, int flag)
-#else
-__attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t attack, uintptr_t target, int flag)
-#endif
 {
 	if (c && c == atomic_load(&g_kst.c)) { /* build 31b: the test's still orc */
 		atomic_fetch_add(&g_kst.refused, 1);
 		return;
 	}
 	if (g_kl.on && g_kl.ai_hold && c && !atomic_load(&g_kl.dealing)) {
-		int held = g_kl.pl.on && g_kl.pl.c == c;
+		int held = (g_kl.pl.on && g_kl.pl.c == c) || fn_held(c, 0); /* (build 33: the finisher's orc too) */
 		for (int i = 0; i < KL_N && !held; i++)
 			held = g_kl.k[i].on && g_kl.k[i].c == c;
 		if (held) {
@@ -525,11 +557,7 @@ __attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t a
 		}
 	}
 	atomic_fetch_add(&g_kl.ai_passed, 1);
-#ifdef _WIN32
 	KL_FN(KLS_START, kl_start_fn)(c, node, attack, target, rate, flag);
-#else
-	KL_FN(KLS_START, kl_start_fn)(c, node, attack, target, 1.0f, flag);
-#endif
 }
 
 /* the fight circle's score hook (SOMVR_FRONT's ff_judge, its thread): this orc's kill plays - no attack granted */
@@ -539,6 +567,8 @@ static int kl_hobj_busy(uintptr_t hobj)
 		return atomic_fetch_add(&g_kst.vetoed, 1), 1;
 	if (hobj && g_kl.pl.on && g_kl.pl.hobj == hobj)
 		return 1; /* (the catalogue's play) */
+	if (fn_held(0, hobj))
+		return 1; /* (build 33: the finisher's orc) */
 	for (int i = 0; hobj && i < KL_N; i++)
 		if (g_kl.k[i].on && g_kl.k[i].hobj == hobj) {
 			atomic_fetch_add(&g_kl.vetoes, 1);
@@ -587,7 +617,7 @@ static int kl_state_of(uintptr_t c, int hint, char *why, size_t cap)
 static int kl_deal(uintptr_t pc, struct kl_one *k, const char *why, double t)
 {
 	struct cb_orc o;
-	if (!cb_orc_get(k->c, &o))
+	if (!kl_same(k->c, k->hobj, &o))
 		return 0;
 	float nd[4][3], at[3] = { o.pos[0], o.pos[1] + 100.0f, o.pos[2] };
 	if (stl_body(&o, nd))
@@ -629,17 +659,17 @@ static int kl_deal(uintptr_t pc, struct kl_one *k, const char *why, double t)
 		snprintf(sev, sizeof sev, "; the head severed at the death (XC_SEVER, velocity %.0f,%.0f,%.0f)", vel[0], vel[1], vel[2]);
 	}
 	double el = kl_gnow() - k->gt0;
-	logf_("KILLS kill t=%.3f orc %#lx (%s): '%s' %.2f s in (%s) -> Combat_DealHit(the %s at %.0f,%.0f,%.0f, pc=%#lx, rec='%s', "
+	logf_("KILLS kill t=%.3f orc %#llx (%s): '%s' %.2f s in (%s) -> Combat_DealHit(the %s at %.0f,%.0f,%.0f, pc=%#llx, rec='%s', "
 	      "forceKill=%d): dead %d->%d health %.1f->%.1f (at the blow %.1f); the death %s%s; the head %+.0f cm over the root "
-	      "at the start, lowest %+.0f", t, (unsigned long)k->c, k->who, k->vname, el, why, at[1] > o.pos[1] + 99.5f &&
-	      at[1] < o.pos[1] + 100.5f ? "root + 1 m" : "torso", at[0], at[1], at[2], (unsigned long)pc, k->dname, k->fk, dead0,
+	      "at the start, lowest %+.0f", t, (unsigned long long)k->c, k->who, k->vname, el, why, at[1] > o.pos[1] + 99.5f &&
+	      at[1] < o.pos[1] + 100.5f ? "root + 1 m" : "torso", at[0], at[1], at[2], (unsigned long long)pc, k->dname, k->fk, dead0,
 	      dead1, hp0, hp1, k->hp0, death, sev, k->head0, k->head_min);
 	if (dead1 && swp_blade_in(k->c)) /* helper 134: the blade held in it while its half played - out at the death */
 		swp_release("the kill's death (SOMVR_KILLS)"), strncat(sev, "; the blade in it released", sizeof sev - strlen(sev) - 1);
 	if (dead1 && !dead0) {
 		g_kl.kills++, CB_COUNT(kills);
 		kb_note(k->c, k->hobj, k->drec, "a kill's end (SOMVR_KILLS)", t); /* COMBAT death: where the body goes */
-		in_haptic_event(SOMVR_HAND_R, 0.6f, 0.12f, SOMVR_HAP_COMBAT);
+		haptic_k(SOMVR_HAND_R, SOMVR_HX_KILL, 0); /* the kill's own end */
 	}
 	return dead1;
 }
@@ -647,8 +677,92 @@ static int kl_deal(uintptr_t pc, struct kl_one *k, const char *why, double t)
 static void kl_end(struct kl_one *k)
 {
 	atomic_store(&k->al_on, 0);
+	/* review b34: its navigation back (KL_NAV on, as the sync's end gives it back) when the kill ends with the orc alive -
+	 * 3 DealHits that did not kill it left it held for good, standing; never on another orc at its address (its AI not
+	 * the one held) nor on a dead one */
+	struct cb_orc o;
+	if (k->nav && g_kl.ok_nav && k->ai && kl_same(k->c, k->hobj, &o) && peek_ptr(k->c + C_AI) == k->ai && !cb_dead(k->c)) {
+		KL_FN(KLS_NAV, kl_nav_fn)(k->ai, 1, KL_NAV_BIT);
+		g_kl.nav_back++;
+		logf_("KILLS t=%.3f orc %#llx: its kill over with it alive - its navigation given back (KL_NAV)", cb_now(),
+		      (unsigned long long)k->c);
+	}
+	k->nav = 0;
 	kl_free_back(k->free_at, k->free_was), k->free_at = 0;
 	k->on = 0;
+}
+
+/* build 36 (docs 164): the part a contact is at - within 12 cm of its Neck or Head node (the skeleton's; without it, the
+ * height over its root) - as kl_take_row reads the blow */
+static int kl_part_at(const struct cb_orc *o, const float point[3])
+{
+	float nd[4][3];
+	int skel = stl_body(o, nd);
+	return somvr_kl_part(point[1] - o->pos[1], skel ? 1e9f : g_kl.neck_up_cm,
+			     skel ? fminf(dist3(point, nd[2]), dist3(point, nd[3])) : NAN, 12.0f);
+}
+/* build 36: the killing blow's death now - cb_hit's when SOMVR_KILLS does not take the blow (refused, no row, a start that
+ * fails, SOMVR_KILLS_QUICK's downed orc and neck cut): kl_deal's DealHit (forceKill, SOMVR_COMBAT_DEATH's type: the
+ * ragdoll from the pose it is in) with this blow's direction - review b34's open item: build 31's fallback dealt after
+ * cb_hit had put the direction back (the previous hit's) and with the record's own death reaction - and the head off for a
+ * cut through the neck (SOMVR_KILLS_NECK=sever: the game's sever at the death, the blade's velocity). 1 = dead */
+static int kl_instant(uintptr_t pc, const struct cb_orc *o, uintptr_t rec, const float point[3], const float vel[3],
+		      const float axis[3], const char *who, double t)
+{
+	struct kl_one k;
+	memset(&k, 0, sizeof k);
+	k.c = o->c, k.hobj = o->hobj, k.fk = 1, k.row = -1, k.drec = rec ? rec : stl_rec();
+	float vl = sqrtf(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+	for (int j = 0; j < 3; j++)
+		k.dir[j] = vl > 1.0f ? vel[j] / vl : 0, k.vel[j] = vl > 1.0f ? vel[j] / vl * fminf(vl, 600.0f) : 0;
+	if (!(vl > 1.0f)) { /* (no motion: toward the orc from the blade) */
+		float dx = o->pos[0] - point[0], dz = o->pos[2] - point[2], l = hypotf(dx, dz);
+		k.dir[0] = l > 1e-3f ? dx / l : 0, k.dir[2] = l > 1e-3f ? dz / l : 1;
+	}
+	int neck = g_kl.neck_sever && kl_part_at(o, point) == SOMVR_KL_NECK &&
+		   somvr_kl_kind(vel, axis, g_kl.stab_cos) != SOMVR_KL_STAB;
+	k.sever = neck;
+	snprintf(k.vname, sizeof k.vname, "%s", neck ? "(the head off at the blow)" : "(the death at the blow)");
+	snprintf(k.who, sizeof k.who, "%s", who);
+	vb_name(k.drec, k.dname, sizeof k.dname);
+	k.gt0 = k.qt0 = kl_gnow(), k.t0 = t, k.hp0 = cb_health(o->c), k.head0 = k.head_min = NAN;
+	memcpy(k.pos0, o->pos, sizeof k.pos0);
+	char why[96];
+	snprintf(why, sizeof why, "at the blow, its direction %.2f,%.2f,%.2f%s", k.dir[0], k.dir[1], k.dir[2],
+		 neck ? ", a cut through the neck" : "");
+	g_kl.instant++;
+	return kl_deal(pc, &k, why, t);
+}
+/* build 36: a heavy killing blow's hit-stop on an orc whose half just started - its own clock (the quick checks') from
+ * the freeze's end (SOMVR_KILLS_HITSTOP) */
+static void kl_hs_note(uintptr_t c, float dur)
+{
+	struct kl_one *k = kl_of(c);
+	if (k)
+		k->qt0 += dur;
+}
+/* build 36 (SOMVR_KILLS_DYING_FX, docs 164): combat_frame's contact on an orc whose kill plays (no hit on it: its death
+ * comes with its half) still shows - the hit's blood and sound where the blade met it, a HIT pulse; once at a contact's
+ * start with the blade moving, at most once per the re-hit cooldown (the user's "no collision" on a dying orc) */
+static void kl_dying_contact(const struct cb_orc *o, const sc_contact *ct, const somvr_blade *b, double t)
+{
+	if (!g_kl.dying_fx || !kl_of(o->c))
+		return;
+	int touch = sc_touch_step(&g_cb.touch, o->c, t, g_cb.sp.mean_mps, SC_TOUCH_GAP_S, SC_TOUCH_RUB_S, SC_TOUCH_RUB_MPS);
+	if (touch != SC_TOUCH_START || !(g_cb.sp.mean_mps >= 1.5f) || !sc_cool_ready(&g_cb.cool, o->c, t, g_cb.cfg.cool_s))
+		return;
+	sc_cool_mark(&g_cb.cool, o->c, t);
+	float ax[3] = { b->tip[0] - b->base[0], b->tip[1] - b->base[1], b->tip[2] - b->base[2] };
+	int stab = somvr_kl_kind(b->vel_tip, ax, g_kl.stab_cos) == SOMVR_KL_STAB;
+	int kind = sc_hit_kind(stab ? SC_TIER_STAB : SC_TIER_HEAVY, sc_edge_deg(b), g_cb.cfg.edge_max_deg);
+	hf_hit(o, ct, kind, 0, 0, 0, 1, 1, b, t);
+	if (g_cb.blade == CB_BLADE_CONTROLLER)
+		haptic_k(SOMVR_HAND_R, swg_hit_word(), 0.5f);
+	g_kl.dying_hits++;
+	if (g_kl.dying_hits <= 40 || cb_log_ok(t))
+		logf_("KILLS t=%.3f a blade on orc %#llx while its kill plays ('%s'): the hit shown - the blood and the sound at "
+		      "%.0f,%.0f,%.0f, a HIT pulse (no damage: its death comes with its half) at %.1f m/s", t, (unsigned long long)o->c,
+		      kl_of(o->c)->vname, ct->point[0], ct->point[1], ct->point[2], (double)g_cb.sp.mean_mps);
 }
 
 /* SOMVR_ABIL, SOMVR_EXECUTE, SOMVR_STEALTH_KILL, SOMVR_VERBS and cb_hit: a kill by the player's hand, before the game's
@@ -698,7 +812,7 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 		no = "4 kills already play";
 	if (no) {
 		g_kl.refused++;
-		logf_("KILLS t=%.3f %s on orc %#lx: not taken (%s): the old path", t, who, (unsigned long)o->c, no);
+		logf_("KILLS t=%.3f %s on orc %#llx: not taken (%s): the old path", t, who, (unsigned long long)o->c, no);
 		return 0;
 	}
 	float yaw = kl_yaw(o->hobj), off = 0, nd[4][3];
@@ -712,6 +826,34 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 	bl.part = somvr_kl_part(point[1] - o->pos[1], skel ? 1e9f : g_kl.neck_up_cm,
 				skel ? fminf(dist3(point, nd[2]), dist3(point, nd[3])) : NAN, 12.0f);
 	bl.state = kl_state_of(o->c, hint, sw, sizeof sw);
+	/* build 36 (SOMVR_KILLS_QUICK, docs 164): a death readable as the blow's - the downed orc's half seldom plays (the
+	 * 11-02/03 runs: 8 of 49 seen down, 34 lay 2.5 s first) and a cut through the neck takes the head off at once: both the
+	 * caller's death at the blow (cb_hit's kl_instant: this blow's direction, the head off). Not the finisher's, not a test */
+	int fin = !strcmp(who, "the finisher"), quick = g_kl.quick == 1 && force_row < 0 && !fin;
+	if (quick) { /* (the downed orc whoever deals it - SOMVR_ABIL's stab too, its pairing's KD half would lie 0.6 s; the
+		      * neck for cb_hit's blow, whose death at the blow takes the head) */
+		char an[96] = "";
+		vb_name(peek_ptr(o->c + VB_C_ATTACK), an, sizeof an);
+		int recoil = g_kl.quick_recoil && (strstr(an, "_L100_") || strstr(an, "Recoil") || strstr(an, "Stagger"));
+		const char *qn = bl.state == SOMVR_KL_DOWNED ? "downed: its half seldom plays on the ground - the death at the blow"
+				 : recoil ? "in a hit recoil: its half seldom plays there (13 of 51 in the 11-02/03 runs) - the death at "
+				 "the blow (SOMVR_KILLS_QUICK_RECOIL)"
+				 : g_kl.neck_sever && bl.part == SOMVR_KL_NECK && bl.kind != SOMVR_KL_STAB && !strcmp(who, "the killing blow")
+				 ? "a cut through the neck: the head off at the blow (SOMVR_KILLS_NECK=sever)" : NULL;
+		if (qn) {
+			g_kl.refused++;
+			if (bl.state == SOMVR_KL_DOWNED)
+				g_kl.instant_downed++;
+			else if (recoil)
+				g_kl.instant_recoil++;
+			else
+				g_kl.instant_neck++;
+			logf_("KILLS t=%.3f %s on orc %#llx: not taken (%s; %s, %s from its %s, %s) (SOMVR_KILLS_QUICK)", t, who,
+			      (unsigned long long)o->c, qn, sw, somvr_kl_kind_name(bl.kind), bl.side == SOMVR_KL_BACK ? "back" : "front",
+			      bl.part == SOMVR_KL_NECK ? "the neck" : "the body");
+			return 0;
+		}
+	}
 	/* the victim: the caller's record's own pairing, else the table by the blow */
 	uintptr_t vr = force_row >= 0 ? kl_vrec(force_row) : kl_target_of(pair);
 	int row = force_row;
@@ -721,10 +863,18 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 		rx_rec_name(vr, vn, sizeof vn);
 		if (row < 0)
 			row = somvr_kl_find(g_kl_rows, KL_ROWS, vn);
+		if (quick && row >= 0 && g_kl_rows[row].slow) { /* build 36: the record's own pairing is a slow row */
+			g_kl.refused++, g_kl.instant_slow++;
+			logf_("KILLS t=%.3f %s on orc %#llx: not taken (its pairing '%s' is a slow row - its fall late, the orc standing "
+			      "in it: SOMVR_KILLS_QUICK): the old path", t, who, (unsigned long long)o->c, vn);
+			return 0;
+		}
 	} else {
+		unsigned char offq[KL_ROWS];
 		for (int i = 0; i < KL_ROWS; i++)
-			kl_vrec(i); /* the rows the database lacks are off */
-		row = somvr_kl_pick(g_kl_rows, KL_ROWS, &bl, g_kl.turn++, g_kl.off);
+			kl_vrec(i), offq[i] = g_kl.off[i] || (quick && g_kl_rows[i].slow); /* the rows the database lacks are off;
+												   * build 36: the slow ones too */
+		row = somvr_kl_pick(g_kl_rows, KL_ROWS, &bl, g_kl.turn++, offq);
 		vr = row >= 0 ? kl_vrec(row) : 0;
 		how = "the table by the blow";
 		if (vr)
@@ -732,8 +882,8 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 	}
 	if (!vr) {
 		g_kl.no_row++;
-		logf_("KILLS t=%.3f %s on orc %#lx: no victim row for %s from its %s (%+.0f deg), %s, %s (%s): the old path", t, who,
-		      (unsigned long)o->c, somvr_kl_kind_name(bl.kind), bl.side == SOMVR_KL_BACK ? "back" : "front", off,
+		logf_("KILLS t=%.3f %s on orc %#llx: no victim row for %s from its %s (%+.0f deg), %s, %s (%s): the old path", t, who,
+		      (unsigned long long)o->c, somvr_kl_kind_name(bl.kind), bl.side == SOMVR_KL_BACK ? "back" : "front", off,
 		      bl.part == SOMVR_KL_NECK ? "the neck" : "the body", somvr_kl_state_name(bl.state), sw);
 		return 0;
 	}
@@ -750,8 +900,8 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 		g_kl.start_fail++;
 		if (row >= 0)
 			g_kl.off[row] = 1;
-		logf_("KILLS t=%.3f %s on orc %#lx: '%s' (%s) did not start (its attack now '%s'): the old path%s", t, who,
-		      (unsigned long)o->c, vn, how, vb_name(now, an, sizeof an), row >= 0 ? "; the row off" : "");
+		logf_("KILLS t=%.3f %s on orc %#llx: '%s' (%s) did not start (its attack now '%s'): the old path%s", t, who,
+		      (unsigned long long)o->c, vn, how, vb_name(now, an, sizeof an), row >= 0 ? "; the row off" : "");
 		return 0;
 	}
 	memset(k, 0, sizeof *k);
@@ -780,6 +930,11 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 	k->head0 = k->head_min = k->head_still = skel ? nd[3][1] - o->pos[1] : NAN;
 	for (int j = 0; j < 3; j++)
 		k->hv0[j] = skel ? nd[3][j] - o->pos[j] : NAN;
+	/* build 36 (SOMVR_KILLS_QUICK): the pose its half must be seen to leave, its own clock from now */
+	k->quick = g_kl.quick && !fin, k->qt0 = k->gt0, k->qseen = skel, k->qyaw0 = yaw, k->qmoved = 0;
+	for (int j = 0; skel && j < 4; j++)
+		for (int d = 0; d < 3; d++)
+			k->qn0[j][d] = nd[j][d] - o->pos[d];
 	k->ai = peek_ptr(o->c + C_AI);
 	if (g_kl.ok_nav && k->ai) {
 		KL_FN(KLS_NAV, kl_nav_fn)(k->ai, 0, KL_NAV_BIT); /* its navigation held, as a sync's start holds it */
@@ -811,22 +966,22 @@ static int kl_take_row(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uin
 	float da = row >= 0 ? somvr_kl_death_at(&g_kl_rows[row], g_kl.lead_s) : NAN;
 	char ds[48];
 	snprintf(ds, sizeof ds, isfinite(da) ? "at +%.2f s" : "at its end", (double)da);
-	logf_("KILLS start t=%.3f %s on orc %#lx (health %.1f): %s from its %s (%+.0f deg off its facing), %s, %s (%s) -> '%s' "
+	logf_("KILLS start t=%.3f %s on orc %#llx (health %.1f): %s from its %s (%+.0f deg off its facing), %s, %s (%s) -> '%s' "
 	      "(%s; row %d) on the orc alone (KL_START, Talion's half not started; its navigation %s); the death %s with '%s'; "
-	      "%s; placement %s (turn %+.1f deg, slide %.0f,%.0f cm over %.0f ms)%s", t, who, (unsigned long)o->c, hp0,
+	      "%s; placement %s (turn %+.1f deg, slide %.0f,%.0f cm over %.0f ms)%s", t, who, (unsigned long long)o->c, hp0,
 	      somvr_kl_kind_name(bl.kind), bl.side == SOMVR_KL_BACK ? "back" : "front", off, bl.part == SOMVR_KL_NECK ? "the neck"
 	      : "the body", somvr_kl_state_name(bl.state), sw, vn, how, row, k->nav ? "held" : "free", ds, k->dname,
 	      k->sever ? (k->severed ? "the head severed at the blow" : "the head off at the death") : "no sever",
 	      al ? "on" : have_root ? "too far off: none" : "no root", dyaw * 57.29578f, dp[0], dp[1], (double)g_kl.align_s * 1e3,
 	      freed ? "; its SyncToAnim off while it plays (SOMVR_KILLS_FREE)" : prepped ? "; readied as a sync target (SOMVR_KILLS_PREP)" : "");
 	if (ended[0])
-		logf_("KILLS t=%.3f orc %#lx%s", t, (unsigned long)o->c, ended);
+		logf_("KILLS t=%.3f orc %#llx%s", t, (unsigned long long)o->c, ended);
 	if (braked && bl.state == SOMVR_KL_UNAWARE)
-		logf_("KILLS t=%.3f orc %#lx unaware: its brain's ambient action let go first (SOMVR_KILLS_BRAIN, FUN_0296b0d0's write)", t,
-		      (unsigned long)o->c);
+		logf_("KILLS t=%.3f orc %#llx unaware: its brain's ambient action let go first (SOMVR_KILLS_BRAIN, FUN_0296b0d0's write)", t,
+		      (unsigned long long)o->c);
 	if (woke)
-		logf_("KILLS t=%.3f orc %#lx was unaware: its awareness set as a noticing orc's before its half (SOMVR_KILLS_UNAWARE="
-		      "wake)", t, (unsigned long)o->c);
+		logf_("KILLS t=%.3f orc %#llx was unaware: its awareness set as a noticing orc's before its half (SOMVR_KILLS_UNAWARE="
+		      "wake)", t, (unsigned long long)o->c);
 	return 1;
 }
 static int kl_take(uintptr_t pc, const struct cb_orc *o, uintptr_t pair, uintptr_t deal, int src_first, const float point[3],
@@ -858,6 +1013,8 @@ static int kl_aim(uintptr_t mv, const float was[3], float *xf)
 	uintptr_t ch = *(uintptr_t *)(mv + FS_MV_CHAR), h = ch ? *(uintptr_t *)(ch + 8) : 0;
 	if (!h)
 		return 0;
+	if (fn_aim(h, was, xf)) /* build 33: the finisher's orc slid to the stab's distance and held there */
+		return 1;
 	for (int i = 0; i < KL_N; i++) {
 		struct kl_one *k = &g_kl.k[i];
 		if (!k->on || k->hobj != h)
@@ -897,19 +1054,59 @@ static int kl_aim(uintptr_t mv, const float was[3], float *xf)
 	return 0;
 }
 
+/* `kills vt`: the live vtable pointers of the objects whose vtables and slots the combat code uses, with the slot each
+ * checked site sits at (the Windows port: a table's vtable start can be off by entries - winport-base's physics object;
+ * docs/re-winport.md 7.3). Read only. %llx: `long` is 32 bits on Windows */
+static unsigned long long kl_q(uintptr_t a) { return (unsigned long long)a; }
+static long long kl_slot(uintptr_t vt, uintptr_t want)
+{
+	for (int i = 0; vt && want && i < 120; i++)
+		if (peek_ptr(vt + 8 * (uintptr_t)i) == want)
+			return i;
+	return -1;
+}
+static void kl_log_vt(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
+{
+	uintptr_t T = peek_ptr(g_cbg.timer_pp), Tv = vptr_of((void *)T), tm = peek_ptr(g_ffg.clock_pp);
+	uintptr_t gt = tm ? peek_ptr(tm + 8) : 0, gtv = vptr_of((void *)gt), os = peek_ptr(g_fig.objsys_pp);
+	uintptr_t osv = vptr_of((void *)os), m = peek_ptr(g_som.model_pp), mv = vptr_of((void *)m);
+	uintptr_t me = pc ? peek_ptr(pc + C_HOBJ) : 0, po = me ? peek_ptr(me + STL_HOBJ_NPC) : 0, pov = vptr_of((void *)po);
+	logf_("KILLS vt t=%.3f timer %#llx vptr %#llx (CWBTimer %#llx; SetObjectTimer at slot %lld, GetObjectTimer %lld, "
+	      "CreateTimer %lld) | game timer %#llx vptr %#llx (CEngineTimer %#llx) | objsys %#llx vptr %#llx (expected %#llx; "
+	      "the model-handle getter at +%#llx, FI_OBJSYS_MH's slot +%#llx) | model %#llx vptr %#llx (GetNode at slot %lld) | "
+	      "player Combat %#llx vptr %#llx (Combat %#llx), its object %#llx vptr %#llx (CPlayerObj %#llx; FR_VF59's slot +%#llx, "
+	      "the copy at slot %lld)", t, kl_q(T), kl_q(Tv), kl_q(g_cbg.vt_timer),
+	      kl_slot(Tv, g_cb_sites[CS_OBJTIMER_SET].target), kl_slot(Tv, g_cb_sites[CS_OBJTIMER_GET].target),
+	      kl_slot(Tv, g_cb_sites[CS_TIMER_CREATE].target), kl_q(gt), kl_q(gtv), kl_q(g_cbg.vt_etimer), kl_q(os), kl_q(osv),
+	      kl_q(g_fig.vt_objsys), (unsigned long long)(kl_slot(osv, g_fi_sites[FIS_OBJSYS_MH].target) * 8),
+	      kl_q(osv && g_fi_sites[FIS_OBJSYS_MH].addr ? g_fi_sites[FIS_OBJSYS_MH].addr - osv : 0), kl_q(m), kl_q(mv),
+	      kl_slot(mv, g_th_sites[THS_GETNODE].target), kl_q(pc), kl_q(vptr_of((void *)pc)), kl_q(g_cbg.vt_combat), kl_q(po),
+	      kl_q(pov), kl_q(STL_CPLAYER_VT), kl_q(pov && g_ff_sites[FFS_VF59].addr ? g_ff_sites[FFS_VF59].addr - pov : 0),
+	      kl_slot(pov, g_ff_sites[FFS_VF59].target));
+	struct cb_orc o[4];
+	int n = root ? cb_orcs_r(pcomb, pc, root, 3000, o, 4) : 0;
+	for (int i = 0; i < n; i++) {
+		uintptr_t ow = peek_ptr(o[i].c + C_OWNER), ai = peek_ptr(o[i].c + C_AI);
+		logf_("KILLS vt t=%.3f orc %d: Combat %#llx vptr %#llx (expected %#llx), owner vptr %#llx (NPC %#llx), AI %#llx "
+		      "vptr %#llx", t, i, kl_q(o[i].c), kl_q(vptr_of((void *)o[i].c)), kl_q(g_cbg.vt_combat), kl_q(vptr_of((void *)ow)),
+		      kl_q(g_cbg.vt_npc), kl_q(ai), kl_q(vptr_of((void *)ai)));
+	}
+	if (!n)
+		logf_("KILLS vt t=%.3f no orc within 30 m", t);
+}
+
 /* every combat frame (combat_frame, after xc_frame): each kill's moment; the catalogue's play */
 static void kl_play_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t);
 /* build 31b: the still orc (g_kst; the game thread) - taken, held, its state, let go */
 static void kl_still_end(const char *why, double t)
 {
-	uintptr_t c = atomic_exchange(&g_kst.c, 0);
-	atomic_store(&g_kst.hobj, 0);
+	uintptr_t c = atomic_exchange(&g_kst.c, 0), h = atomic_exchange(&g_kst.hobj, 0);
 	struct cb_orc o;
-	if (g_kst.ai && c && cb_orc_get(c, &o) && g_kl.ok_nav)
+	if (g_kst.ai && c && kl_same(c, h, &o) && peek_ptr(c + C_AI) == g_kst.ai && g_kl.ok_nav)
 		KL_FN(KLS_NAV, kl_nav_fn)(g_kst.ai, 1, KL_NAV_BIT);
 	if (c)
-		logf_("KILLS still t=%.3f off (%s): orc %#lx after %.1f s, moved up to %.0f cm; its starts refused %llu, attacks "
-		      "vetoed %llu", t, why, (unsigned long)c, t - g_kst.t0, g_kst.moved, (unsigned long long)atomic_load(&g_kst.refused),
+		logf_("KILLS still t=%.3f off (%s): orc %#llx after %.1f s, moved up to %.0f cm; its starts refused %llu, attacks "
+		      "vetoed %llu", t, why, (unsigned long long)c, t - g_kst.t0, g_kst.moved, (unsigned long long)atomic_load(&g_kst.refused),
 		      (unsigned long long)atomic_load(&g_kst.vetoed));
 	g_kst.ai = 0;
 }
@@ -935,8 +1132,8 @@ static void kl_still_frame(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 			struct stl_aw aw;
 			memset(&aw, 0, sizeof aw);
 			stl_aware(&o[0], peek_ptr(pc + C_HOBJ), &aw);
-			logf_("KILLS still t=%.3f on: orc %#lx at %.0f cm (aware %d): its own starts refused (the AI hold's sites: %d), "
-			      "no attack granted, its navigation %s", t, (unsigned long)o[0].c, o[0].dist, aw.game, g_kl.ok_ai,
+			logf_("KILLS still t=%.3f on: orc %#llx at %.0f cm (aware %d): its own starts refused (the AI hold's sites: %d), "
+			      "no attack granted, its navigation %s", t, (unsigned long long)o[0].c, o[0].dist, aw.game, g_kl.ok_ai,
 			      g_kst.ai ? "held" : "NOT held (KL_NAV)");
 		}
 	}
@@ -944,7 +1141,7 @@ static void kl_still_frame(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 	struct cb_orc o;
 	if (!c)
 		return;
-	if (!cb_orc_get(c, &o) || cb_dead(c)) {
+	if (!kl_same(c, atomic_load(&g_kst.hobj), &o) || cb_dead(c)) {
 		kl_still_end("the orc dead or gone", t);
 		return;
 	}
@@ -955,8 +1152,8 @@ static void kl_still_frame(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 		if (g_fr.pl)
 			peek(g_fr.pl + LO_P_FSM, &fsm, 1);
 		char an[96];
-		logf_("KILLS still t=%.3f orc %#lx: %.0f cm from Talion, moved %.0f cm (most %.0f), attack '%s', health %.1f; "
-		      "Talion's FSM %d; refused %llu, vetoed %llu", t, (unsigned long)c, root ? hypotf(o.pos[0] - root[0], o.pos[2] - root[2]) : -1.0f,
+		logf_("KILLS still t=%.3f orc %#llx: %.0f cm from Talion, moved %.0f cm (most %.0f), attack '%s', health %.1f; "
+		      "Talion's FSM %d; refused %llu, vetoed %llu", t, (unsigned long long)c, root ? hypotf(o.pos[0] - root[0], o.pos[2] - root[2]) : -1.0f,
 		      hypotf(o.pos[0] - g_kst.pos0[0], o.pos[2] - g_kst.pos0[2]), g_kst.moved,
 		      vb_name(peek_ptr(c + VB_C_ATTACK), an, sizeof an), cb_health(c), fsm,
 		      (unsigned long long)atomic_load(&g_kst.refused), (unsigned long long)atomic_load(&g_kst.vetoed));
@@ -969,6 +1166,19 @@ static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 	int m = atomic_exchange(&g_kl.req_mode, 0);
 	if (m)
 		g_kl.on = m == 2, logf_("KILLS t=%.3f %s (the word)", t, g_kl.on ? "on" : "off");
+	if (atomic_exchange(&g_kl.req_vt, 0))
+		kl_log_vt(pcomb, pc, root, t);
+	int rc = atomic_exchange(&g_kl.req_charge, 0);
+	if (rc && g_xc.ok_hc) { /* build 36: `kills charge N` (the finisher's spare: the killing blow completes the charge) */
+		somvr_ex_hc h;
+		uintptr_t hc = pc ? peek_ptr(pc + FI_C_HITCTR) : 0;
+		if (hc && xc_read_hc(pc, &h) && h.need > 0 && h.need < 100) {
+			int16_t v = (int16_t)(h.need - (rc - 1) > 0 ? h.need - (rc - 1) : 0);
+			XC_FN(XCS_CHARGE, xc_charge_fn)(hc, v);
+			logf_("KILLS t=%.3f charge: Talion's hit counter %d -> %d of %d (`kills charge %d`, a test aid)", t, h.charge, v, h.need,
+			      rc - 1);
+		}
+	}
 	if (atomic_exchange(&g_kl.req_status, 0))
 		logf_("KILLS status t=%.3f detail: down %llu, not playing %llu, unaware refused %llu; AI starts held %llu", t,
 		      (unsigned long long)g_kl.by_down, (unsigned long long)g_kl.by_stall, (unsigned long long)g_kl.refused_unaware,
@@ -1004,17 +1214,30 @@ static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 		if (!k->on)
 			continue;
 		struct cb_orc o;
-		if (!cb_orc_get(k->c, &o) || cb_dead(k->c)) {
-			g_kl.by_dead++;
-			logf_("KILLS t=%.3f orc %#lx: %s %.2f s into '%s' - its kill over", t, (unsigned long)k->c,
-			      cb_orc_get(k->c, &o) ? "dead by another" : "gone", kl_gnow() - k->gt0, k->vname);
+		int same = kl_same(k->c, k->hobj, &o);
+		if (!same || cb_dead(k->c)) {
+			int other = !same && cb_orc_get(k->c, &o); /* (its Combat another orc's now: nothing more on it) */
+			g_kl.by_dead++, g_kl.reused += other;
+			logf_("KILLS t=%.3f orc %#llx: %s %.2f s into '%s' - its kill over", t, (unsigned long long)k->c,
+			      same ? "dead by another" : other ? "gone (its Combat another orc's now)" : "gone", kl_gnow() - k->gt0,
+			      k->vname);
 			kl_end(k);
 			continue;
 		}
 		double el = kl_gnow() - k->gt0;
 		float nd[4][3], head = NAN;
 		double el0 = kl_gnow() - k->gt0;
-		if (stl_body(&o, nd) && isfinite(k->head_min)) {
+		int sk = stl_body(&o, nd);
+		if (sk && k->quick && k->qseen) { /* build 36: how far its pose has left the blow's (its own frame) */
+			float rel[4][3];
+			for (int j = 0; j < 4; j++)
+				for (int d = 0; d < 3; d++)
+					rel[j][d] = nd[j][d] - o.pos[d];
+			float pm = somvr_kl_pose_moved((const float(*)[3])k->qn0, k->qyaw0, (const float(*)[3])rel, kl_yaw(o.hobj), 4);
+			if (pm > k->qmoved)
+				k->qmoved = pm;
+		}
+		if (sk && isfinite(k->head_min)) {
 			head = nd[3][1] - k->pos0[1];
 			if (!(fabsf(head - k->head_still) <= 3.0f))
 				k->head_still = head, k->still_t = el0; /* the last time the head moved 3 cm */
@@ -1025,9 +1248,9 @@ static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 		}
 		if (atomic_load(&k->al_on) && mono() - k->al_t0 > g_kl.align_s + 0.05) {
 			atomic_store(&k->al_on, 0);
-			logf_("KILLS place t=%.3f orc %#lx: the turn %+.1f deg and slide %.0f,%.0f cm done (%u movement calls, the "
+			logf_("KILLS place t=%.3f orc %#llx: the turn %+.1f deg and slide %.0f,%.0f cm done (%u movement calls, the "
 			      "rotation %s: %u checked, %u not the object's); now %.0f deg off Talion, %.0f cm from him", t,
-			      (unsigned long)k->c, k->al_dyaw * 57.29578f, k->al_dpos[0], k->al_dpos[1], atomic_load(&k->al_calls),
+			      (unsigned long long)k->c, k->al_dyaw * 57.29578f, k->al_dpos[0], k->al_dpos[1], atomic_load(&k->al_calls),
 			      atomic_load(&k->al_rot_bad) ? "NOT always" : "the object's", atomic_load(&k->al_rot_ok),
 			      atomic_load(&k->al_rot_bad), root ? fabsf(sv_wrap_pi(atan2f(root[0] - o.pos[0], root[2] - o.pos[2]) -
 			      kl_yaw(o.hobj))) * 57.29578f : -1.0f, root ? hypotf(root[0] - o.pos[0], root[2] - o.pos[2]) : -1.0f);
@@ -1053,8 +1276,9 @@ static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 			why = "its half over (a downed orc: the head still for 0.8 s)"; /* (its head is on the ground already: no drop -
 										   * boot 182739 read that as "not playing") */
 			g_kl.by_down++;
-		} else if (isfinite(head) && k->blow_state != SOMVR_KL_DOWNED && el >= g_kl.stall_s &&
-			   k->head0 - k->head_min < g_kl.stall_drop_cm) {
+		} else if (isfinite(head) && k->blow_state != SOMVR_KL_DOWNED && el >= g_kl.stall_s && strcmp(k->who, "the finisher") &&
+			   k->head0 - k->head_min < g_kl.stall_drop_cm) { /* (not the finisher's: its half plays on a held fighting
+			   * orc - boot 154546's F6 read 'not playing' at 0.81 s, 4.4 cm down, and the death came as a plain fall) */
 			snprintf(cutw, sizeof cutw, "its half not playing (the head %.1f cm down in %.2f s)", k->head0 - k->head_min, el);
 			why = cutw; /* (an orc whose animation state takes no attack: no wait) */
 			g_kl.by_stall++;
@@ -1079,11 +1303,41 @@ static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 			why = "the timeout";
 			g_kl.by_timeout++;
 		}
+		/* build 36 (SOMVR_KILLS_QUICK, docs 164): on its own clock - its half seen moving by 0.15 s, its head lower by 0.6 s,
+		 * the death by 1.5 s; else its death now (=log: logged, the rules above kill) */
+		double elq = kl_gnow() - k->qt0;
+		float drop = isfinite(k->head0) && isfinite(k->head_min) ? k->head0 - k->head_min : 0;
+		static const float trace_at[] = { 0.05f, 0.10f, 0.15f, 0.20f, 0.30f, 0.45f, 0.60f, 0.90f, 1.20f };
+		if (g_kl.trace && k->trace_i < 9 && elq + 1e-6 >= trace_at[k->trace_i]) {
+			while (k->trace_i < 9 && elq + 1e-6 >= trace_at[k->trace_i])
+				k->trace_i++;
+			char an[96];
+			logf_("KILLS trace t=%.3f orc %#llx '%s' +%.2f s (its own; +%.2f from the blow): the pose moved %.1f cm, the head %+.0f cm "
+			      "over its ground (%+.0f at the blow, lowest %+.0f), the root %.0f cm from the blow's; attack '%s'%s", t,
+			      (unsigned long long)k->c, k->vname, elq, el, k->qmoved, head, k->head0, k->head_min,
+			      hypotf(o.pos[0] - k->pos0[0], o.pos[2] - k->pos0[2]), vb_name(cur, an, sizeof an), sk ? "" : " (no skeleton)");
+		}
+		if (!why && k->quick) {
+			if (isfinite(head) && isfinite(k->head0) && head - k->head0 > k->qrise)
+				k->qrise = head - k->head0;
+			int v = somvr_kl_quick_why(&g_kl.q, elq, k->qseen && sk, k->qmoved, drop, k->qrise);
+			if (v != SOMVR_KLQ_GO && g_kl.quick == 1) {
+				snprintf(cutw, sizeof cutw, "%s (SOMVR_KILLS_QUICK: %.2f s on its own clock, the pose moved %.1f cm, the head "
+					 "%.0f cm lower, up to %.0f cm higher)", somvr_kl_quick_name(v), elq, k->qmoved, drop, k->qrise);
+				why = cutw;
+				g_kl.by_quick[v]++;
+			} else if (v != SOMVR_KLQ_GO && !(k->qlogged & (1 << v))) {
+				k->qlogged |= 1 << v, g_kl.quick_logged++;
+				logf_("KILLS quick t=%.3f orc %#llx '%s' (log only): would die now - %s (%.2f s on its own clock, the pose moved "
+				      "%.1f cm, the head %.0f cm lower)", t, (unsigned long long)k->c, k->vname, somvr_kl_quick_name(v), elq,
+				      k->qmoved, drop);
+			}
+		}
 		if (!why)
 			continue;
 		if (kl_deal(pc, k, why, t) || ++k->tries >= 3) {
 			if (k->tries >= 3 && !cb_dead(k->c))
-				logf_("WARN KILLS t=%.3f orc %#lx: not dead after 3 DealHits ('%s')", t, (unsigned long)k->c, k->dname);
+				logf_("WARN KILLS t=%.3f orc %#llx: not dead after 3 DealHits ('%s')", t, (unsigned long long)k->c, k->dname);
 			kl_end(k);
 		}
 	}
@@ -1130,8 +1384,8 @@ static void kl_play_start(uintptr_t pcomb, uintptr_t pc, const float *root, cons
 	memset(&aw, 0, sizeof aw);
 	stl_aware(&o[0], peek_ptr(pc + C_HOBJ), &aw);
 	kl_state_of(o[0].c, 0, sw, sizeof sw);
-	logf_("KILLS play t=%.3f '%s' on orc %#lx at %.0f cm (%s, aware %d): %s (its attack '%s'); the head %+.0f cm over its root; "
-	      "its AnimationData: %s%s%s", t, name, (unsigned long)o[0].c, o[0].dist, sw, aw.game,
+	logf_("KILLS play t=%.3f '%s' on orc %#llx at %.0f cm (%s, aware %d): %s (its attack '%s'); the head %+.0f cm over its root; "
+	      "its AnimationData: %s%s%s", t, name, (unsigned long long)o[0].c, o[0].dist, sw, aw.game,
 	      now == rec ? "started" : "NOT started", vb_name(now, an, sizeof an), g_kl.pl.head0, ad,
 	      freed ? "; SyncToAnim off for it (SOMVR_KILLS_FREE)" : "", prepped ? "; readied as a sync target" : "");
 }
@@ -1149,7 +1403,7 @@ static void kl_play_frame(uintptr_t pcomb, uintptr_t pc, const float *root, doub
 		if (root && cb_orcs_r(pcomb, pc, root, 500, o, 1) == 1 && kl_sever_type() && g_xc.ok_sever && peek_ptr(o[0].c + 0x90)) {
 			float vel[3] = { 0, 150, 300 }, rot[3] = { 0, 0, 0 };
 			XC_FN(XCS_SEVER, xc_sever_fn)(o[0].c, g_kl.sever_head, vel, rot, peek_ptr(pc + C_HOBJ));
-			logf_("KILLS sever t=%.3f orc %#lx (alive, health %.1f, dead %d): severed (XC_SEVER)", t, (unsigned long)o[0].c,
+			logf_("KILLS sever t=%.3f orc %#llx (alive, health %.1f, dead %d): severed (XC_SEVER)", t, (unsigned long long)o[0].c,
 			      cb_health(o[0].c), cb_dead(o[0].c));
 		} else
 			logf_("KILLS sever t=%.3f: no orc within 5 m / no sever type", t);
@@ -1168,7 +1422,7 @@ static void kl_play_frame(uintptr_t pcomb, uintptr_t pc, const float *root, doub
 	}
 	if (g_kl.pl.on) {
 		struct cb_orc o;
-		uintptr_t cur = cb_orc_get(g_kl.pl.c, &o) ? peek_ptr(g_kl.pl.c + VB_C_ATTACK) : 0;
+		uintptr_t cur = kl_same(g_kl.pl.c, g_kl.pl.hobj, &o) ? peek_ptr(g_kl.pl.c + VB_C_ATTACK) : 0;
 		double el = kl_gnow() - g_kl.pl.gt0;
 		float nd[4][3];
 		int sk = cur && stl_body(&o, nd);
@@ -1214,6 +1468,8 @@ static const char *kl_word(const char *w)
 {
 	if (!strcmp(w, "status"))
 		return atomic_store(&g_kl.req_status, 1), "kills status";
+	if (!strcmp(w, "vt"))
+		return atomic_store(&g_kl.req_vt, 1), "kills vt (the live vtable pointers)";
 	if (!strcmp(w, "on") || !strcmp(w, "off"))
 		return atomic_store(&g_kl.req_mode, w[1] == 'n' ? 2 : 1), w[1] == 'n' ? "kills on" : "kills off";
 	if (!strcmp(w, "free on") || !strcmp(w, "free off"))
@@ -1232,6 +1488,23 @@ static const char *kl_word(const char *w)
 		return g_kl.prep = w[6] == 'n', g_kl.prep ? "kills prep on (readied as a sync target)" : "kills prep off";
 	if (!strcmp(w, "sever"))
 		return atomic_store(&g_kl.req_sever, 1), "kills sever (a test: the nearest orc's head, alive)";
+	/* build 36 (docs 164): the quick death's switches as words (tests) */
+	if (!strcmp(w, "quick on") || !strcmp(w, "quick off") || !strcmp(w, "quick log"))
+		return g_kl.quick = w[7] == 'n' ? 1 : w[6] == 'l' ? 2 : 0, g_kl.quick == 1 ? "kills quick on" : g_kl.quick == 2 ?
+		       "kills quick log (the checks logged, the old rules kill)" : "kills quick off";
+	if (!strncmp(w, "charge ", 7)) { /* build 36: the hit counter N short of its need (a test aid) */
+		int nshort = atoi(w + 7);
+		atomic_store(&g_kl.req_charge, (nshort >= 0 && nshort < 50 ? nshort : 0) + 1);
+		return "kills charge N (Talion's hit counter N short of its need)";
+	}
+	if (!strcmp(w, "trace on") || !strcmp(w, "trace off"))
+		return g_kl.trace = w[7] == 'n', g_kl.trace ? "kills trace on" : "kills trace off";
+	if (!strcmp(w, "hitstop on") || !strcmp(w, "hitstop off"))
+		return g_kl.hs_kill = w[9] == 'n', g_kl.hs_kill ? "kills hitstop on" : "kills hitstop off";
+	if (!strcmp(w, "recoil on") || !strcmp(w, "recoil off"))
+		return g_kl.quick_recoil = w[8] == 'n', g_kl.quick_recoil ? "kills recoil on" : "kills recoil off";
+	if (!strcmp(w, "dying on") || !strcmp(w, "dying off"))
+		return g_kl.dying_fx = w[7] == 'n', g_kl.dying_fx ? "kills dying on" : "kills dying off";
 	if (!strncmp(w, "cat", 3)) {
 		int from = atoi(w + 3);
 		atomic_store(&g_kl.req_cat, (from > 0 && from < KL_ROWS ? from : 0) + 1);
@@ -1280,6 +1553,21 @@ static void kl_start(int *bad)
 	g_kl.stab_cos = cosf(env_float("SOMVR_KILLS_STAB_DEG", 60, 10, 85, bad) * 0.01745329f);
 	g_kl.neck_up_cm = 140;
 	g_kl.start_mode = g_kl.on;
+	/* build 36 (docs 164): every death readable as the blow's, at once */
+	static const char *const quick_w[] = { "off", "on", "log" };
+	g_kl.quick = env_word("SOMVR_KILLS_QUICK", quick_w, 3, 0);
+	g_kl.q.start_s = env_float("SOMVR_KILLS_QUICK_START_MS", 150, 0, 1000, bad) * 1e-3f;
+	g_kl.q.start_cm = env_float("SOMVR_KILLS_QUICK_START_CM", 3, 0, 50, bad);
+	g_kl.q.fall_s = env_float("SOMVR_KILLS_QUICK_FALL_MS", 650, 0, 3000, bad) * 1e-3f; /* (F4 fell from 0.55-0.65 s) */
+	g_kl.q.fall_cm = env_float("SOMVR_KILLS_QUICK_FALL_CM", 10, 0, 100, bad);
+	g_kl.q.max_s = env_float("SOMVR_KILLS_QUICK_MAX_MS", 1000, 0, 10000, bad) * 1e-3f; /* (every death within 1 s of its blow) */
+	g_kl.q.rise_cm = env_float("SOMVR_KILLS_QUICK_RISE_CM", 12, 0, 100, bad); /* (boot 232418: F4 and F5 rose 8-10 cm, then fell) */
+	g_kl.trace = env_word("SOMVR_KILLS_TRACE", mode_w, 2, 0);
+	g_kl.hs_kill = env_word("SOMVR_KILLS_HITSTOP", mode_w, 2, 0);
+	static const char *const neck_w[] = { "row", "sever" };
+	g_kl.neck_sever = env_word("SOMVR_KILLS_NECK", neck_w, 2, 0);
+	g_kl.dying_fx = env_word("SOMVR_KILLS_DYING_FX", mode_w, 2, 0);
+	g_kl.quick_recoil = env_word("SOMVR_KILLS_QUICK_RECOIL", mode_w, 2, 0);
 	char why[256];
 	int ok_start = check_site(&g_kl_sites[KLS_START], why, sizeof why) == 0;
 	if (!ok_start)
@@ -1311,17 +1599,41 @@ static void kl_start(int *bad)
 	      g_kl.sever_blow ? "blow" : "death", (double)g_kl.align_s * 1e3, (double)g_kl.align_deg, (double)g_kl.align_cm,
 	      (double)g_kl.min_cm, (double)g_kl.timeout_s, (double)g_kl.lead_s, acosf(g_kl.stab_cos) * 57.29578f,
 	      g_kl.ok ? "" : " - OFF (a site)");
+	int nslow = 0;
+	for (int i = 0; i < KL_ROWS; i++)
+		nslow += g_kl_rows[i].slow;
+	logf_("CONFIG kills quick=%s (SOMVR_KILLS_QUICK, build 36): a playing half seen moving %.0f cm by %.0f ms of its own clock, "
+	      "its head never %.0f cm over the blow's before it falls, %.0f cm lower by %.0f ms, its death by %.0f ms at the latest - else its death then; %d slow rows left out; "
+	      "a downed orc's and a neck cut's death at the blow, an orc in a hit recoil's %s (SOMVR_KILLS_QUICK_RECOIL); the neck %s "
+	      "(SOMVR_KILLS_NECK); the hit-stop on a heavy killing "
+	      "blow %s (SOMVR_KILLS_HITSTOP); a blade on a dying orc %s (SOMVR_KILLS_DYING_FX); the trace %s",
+	      g_kl.quick == 1 ? "on" : g_kl.quick == 2 ? "log" : "off", (double)g_kl.q.start_cm, (double)g_kl.q.start_s * 1e3,
+	      (double)g_kl.q.rise_cm, (double)g_kl.q.fall_cm, (double)g_kl.q.fall_s * 1e3, (double)g_kl.q.max_s * 1e3, nslow,
+	      g_kl.quick_recoil ? "too" : "not (the half tried)", g_kl.neck_sever ? "= the head off at the blow" : "= a _Sever row", g_kl.hs_kill ? "on" : "off",
+	      g_kl.dying_fx ? "shows the hit (blood, sound, a HIT pulse)" : "shows nothing", g_kl.trace ? "on" : "off");
 }
 static void kl_end_log(void)
 {
 	if (!g_kl.ok)
 		return;
+	logf_("KILLS END quick %s: deaths by its checks - unseen %llu, not started %llu, no fall %llu, the time up %llu, rising %llu (logged only "
+	      "%llu); at the blow %llu (downed %llu, in a recoil %llu, the neck %llu, a slow pairing %llu); the finisher's orc spared "
+	      "%llu; a blade on "
+	      "a dying orc shown %llu", g_kl.quick == 1 ? "on" : g_kl.quick == 2 ? "log" : "off",
+	      (unsigned long long)g_kl.by_quick[SOMVR_KLQ_UNSEEN], (unsigned long long)g_kl.by_quick[SOMVR_KLQ_STILL],
+	      (unsigned long long)g_kl.by_quick[SOMVR_KLQ_NOFALL], (unsigned long long)g_kl.by_quick[SOMVR_KLQ_LATE],
+	      (unsigned long long)g_kl.by_quick[SOMVR_KLQ_RISING],
+	      (unsigned long long)g_kl.quick_logged, (unsigned long long)g_kl.instant, (unsigned long long)g_kl.instant_downed,
+	      (unsigned long long)g_kl.instant_recoil, (unsigned long long)g_kl.instant_neck, (unsigned long long)g_kl.instant_slow, (unsigned long long)g_kl.spared,
+	      (unsigned long long)g_kl.dying_hits);
 	logf_("KILLS END sync: starts %llu, the game's kills %llu, forced %llu, not offered %llu", (unsigned long long)g_kl.sync_starts,
 	      (unsigned long long)g_kl.sync_kills, (unsigned long long)g_kl.sync_forced, (unsigned long long)g_kl.sync_fail);
 	logf_("KILLS END detail: down %llu, not playing %llu, unaware refused %llu; the AI hold (%d sites): %llu starts held, "
-	      "%llu passed", (unsigned long long)g_kl.by_down, (unsigned long long)g_kl.by_stall,
+	      "%llu passed; navigation given back to a live orc %llu, kills ended on a reused Combat %llu",
+	      (unsigned long long)g_kl.by_down, (unsigned long long)g_kl.by_stall,
 	      (unsigned long long)g_kl.refused_unaware, g_kl.ok_ai, (unsigned long long)atomic_load(&g_kl.ai_held),
-	      (unsigned long long)atomic_load(&g_kl.ai_passed));
+	      (unsigned long long)atomic_load(&g_kl.ai_passed), (unsigned long long)g_kl.nav_back,
+	      (unsigned long long)g_kl.reused);
 	logf_("KILLS END %s: takes %llu kills %llu (the moment %llu, the end %llu, cut %llu, fall %llu, timeout %llu, dead by "
 	      "another %llu), refused %llu, no row %llu, start failed %llu, severs %llu, hits skipped %llu, placed %llu (too far "
 	      "%llu), plays %llu, held off the body %llu, attacks vetoed %llu; by who: blow %llu execution %llu stealth %llu offered %llu downed %llu "
@@ -1340,6 +1652,7 @@ static void kl_end_log(void)
 /* SOMVR_EXECUTE (xc_contact): the execution is the next heavy blow while charged (no button: the player always holds
  * the trigger with the grip, the user's mark 20) */
 static int kl_exec_blow(void) { return g_kl.on && g_kl.ok && g_kl.exec_blow; }
+static int kl_hitstop_kill(void) { return g_kl.on && g_kl.ok && g_kl.hs_kill; } /* build 36: SOMVR_KILLS_HITSTOP */
 static int kl_on(void) { return g_kl.on && g_kl.ok; }
 
 /* cb_hit's ordinary killing blow: the hit dealt with the orc's min health at 1 (the game's own clamp, PR_SETMINHEALTH:

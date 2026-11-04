@@ -89,6 +89,8 @@ typedef struct {
     float grip_on, grip_off; /* the squeeze's hysteresis (0.6 / 0.4, as the climb's and the bow's) */
     float quick_s;          /* the quick draw's double squeeze, at most this apart (0.35; 0 = no quick draw) */
     int hold;               /* D14: 0 = a drawn weapon stays in the hand (a), 1 = only while its grip is held (b) */
+    int hold_dagger;        /* build 33 (som-b33-knife): the knife's own (1: held while its grip is, let go = back on the
+                             * belt - HL:A's items); -1 = as `hold` */
     int restore;            /* a weapon put back for the bow or a climb comes back to the hand after it (1) */
     float ask_s;            /* an ask the game's state does not reach in this long is DENIED (0.5) */
     int reassert;           /* the game putting away the sword the player keeps in the hand gets it drawn again (1) ...
@@ -98,6 +100,12 @@ typedef struct {
     int undraw;             /* build 10 (SOMVR_SLOTS_GAMEDRAW=refuse): the game drawing the sword the player keeps away
                              * (a combat start's stance, headset session 3) gets it put back, on the same budget
                              * (reassert_max per reassert_s, then INSIST); 0 = the game's draw is kept (the default) */
+    int knife_hips;         /* build 36 (som-b36-polish, re-xr-pipeline.md 167.2; SOMVR_SLOTS_KNIFE_HIPS=both): with the
+                             * hip slot, the knife is at both hips - the off hand's (hip_ofs) and the main hand's (hip_ofs
+                             * mirrored), each for the hand on its side; the main hand's only while that hand holds
+                             * nothing (the sword neither in it nor going there, not busy or away). The knife goes to the
+                             * hand that drew it (out.dagger_hand) and back to the belt from either. 0 = the off hand's
+                             * hip only (builds 17-35) */
 } somvr_slots_cfg;
 void somvr_slots_cfg_default(somvr_slots_cfg *c);
 
@@ -142,6 +150,11 @@ typedef struct {
     double ra_t0[SOMVR_NSLOT];
     float torso;            /* rad, tracking space */
     int torso_ok;
+    /* build 36 (cfg.knife_hips): the knife's hand - the one that drew it (its draw asked, in it, suspended from it);
+     * -1 = at the belt (the off hand's by default). dinside / dentered: each hand at its own hip's knife slot (the off
+     * hand's = inside / entered_closed[SOMVR_SLOT_DAGGER]) */
+    int dhand;
+    int dinside[2], dentered[2];
     /* totals */
     uint64_t frames, enters[SOMVR_NSLOT], draws[SOMVR_NSLOT], puts[SOMVR_NSLOT], quick, dropins[SOMVR_NSLOT],
         holdends[SOMVR_NSLOT], suspends[SOMVR_NSLOT], restores[SOMVR_NSLOT], done[SOMVR_NSLOT], denied[SOMVR_NSLOT],
@@ -159,6 +172,11 @@ typedef struct {
     sv_vec3 slot[SOMVR_NSLOT]; /* the slots, tracking space */
     float head_yaw, torso_yaw; /* rad */
     int torso_held;            /* the approach rule kept the torso's yaw this frame */
+    int hand[SOMVR_NSLOT];     /* build 36: the hand slot k's events are for this frame (the sword's: the main hand; the
+                                * knife's: the hand that entered its hip, drew or holds it, else the off hand) */
+    int dagger_hand;           /* build 36: the knife's hand (in it or going there), -1 at the belt */
+    int dinside[2];            /* build 36: each hand at its own hip's knife slot (0 for a hand without one now) */
+    float ddist[2];            /* ... its distance, cm (-1: none or unknown) */
 } somvr_slots_out;
 
 void somvr_slots_init(somvr_slots *s);
@@ -180,5 +198,9 @@ int somvr_slots_ofs(const somvr_slots_cfg *c, int k, sv_vec3 *ofs);
 float somvr_slots_radius(const somvr_slots_cfg *c, int k);
 /* slot k in tracking space: head + R(yaw) ofs */
 sv_vec3 somvr_slots_pos(const somvr_slots_cfg *c, int k, sv_vec3 head, float torso_yaw);
+/* build 36: hand h's knife slot (cfg.knife_hips: the off hand's hip, or the main hand's = it mirrored): its offset from
+ * the head in the torso's frame (as somvr_slots_ofs); 0 = hand h has none (knife_hips off and h the main hand, the back
+ * slot, the knife off) */
+int somvr_slots_knife_ofs(const somvr_slots_cfg *c, int h, sv_vec3 *ofs);
 
 #endif

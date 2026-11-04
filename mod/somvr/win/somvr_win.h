@@ -53,6 +53,11 @@ const char *somvr_win_exe_tag(const char *sha);
 int somvr_win_bridge_write(const char *exe_sha, char *why, size_t cap);
 void somvr_win_bridge_log(void (*logf)(const char *fmt, ...));
 
+/* a module's IAT entry of dll!fn (by name; NULL if not imported) and a pointer written through VirtualProtect
+ * (somvr_win_d3d.c) */
+void **somvr_win_iat_slot(uintptr_t base, const char *dll, const char *fn);
+int somvr_win_put_ptr(void **at, void *v);
+
 /* the DLL's own log before / without somvr_start's (somvr.log format: "WIN ..." lines), and the module */
 void somvr_win_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern void *somvr_win_module;

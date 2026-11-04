@@ -350,6 +350,98 @@ static void test_hold(void) {
     CHECK(S.holdends[0] == 1 && O.keep[0] == 1 && I.drawn[0], "no hold end for the game's draw");
 }
 
+/* build 33 (som-b33-knife): the knife held only while its grip is (hold_dagger), the sword as `hold` says (0: it stays) */
+static void test_hold_dagger(void) {
+    rig();
+    C.hold = 0, C.hold_dagger = 1;
+    step();
+    hand_to_slot(0, SOMVR_SLOT_DAGGER);
+    step();
+    press(0);
+    gsteps(2);
+    CHECK(I.drawn[1], "the knife drawn at the hip by the off hand");
+    I.p[0] = (sv_vec3){ -20, 120, 40 };
+    gsteps(30);
+    CHECK(I.drawn[1], "the knife held while the grip is");
+    open_(0);
+    step();
+    CHECK((O.ev[1] & SOMVR_SL_E_PUT) && (O.ev[1] & SOMVR_SL_E_HOLDEND), "the knife's grip opened anywhere: back on the belt");
+    game_follows();
+    step();
+    CHECK(!I.drawn[1], "the knife back");
+    /* the sword stays in the hand when its grip opens (hold 0) */
+    hand_to_slot(1, SOMVR_SLOT_SWORD);
+    step();
+    press(1);
+    gsteps(2);
+    I.p[1] = (sv_vec3){ 30, 120, 50 };
+    gsteps(3);
+    open_(1);
+    gsteps(3);
+    CHECK(I.drawn[0] && !(O.ev[0] & SOMVR_SL_E_HOLDEND), "the sword stays (hold 0)");
+    C.hold_dagger = -1;
+}
+
+/* review b34: the knife held by its grip stays a held one through a menu, a lost hand, a climb and the bow - let go, it
+ * goes back on the belt; it comes back from a climb only into a closed hand (build 33: a knife let go in or after any
+ * of them stayed in the open hand for good) */
+static void knife_drawn_held(void) {
+    rig();
+    C.hold = 0, C.hold_dagger = 1;
+    step();
+    hand_to_slot(0, SOMVR_SLOT_DAGGER);
+    step();
+    press(0);
+    gsteps(2);
+    I.p[0] = (sv_vec3){ -20, 120, 40 };
+    gsteps(5);
+}
+static void test_hold_dagger_b34(void) {
+    /* a menu (no allow) while the grip stays closed: let go after it - back on the belt */
+    knife_drawn_held();
+    int drawn = I.drawn[1];
+    I.allow = 0, gsteps(10), I.allow = 1, gsteps(3);
+    open_(0), gsteps(3);
+    CHECK(drawn && !I.drawn[1] && S.holdends[1] == 1, "b34: a menu while held, let go after it: back on the belt (drawn %d "
+          "-> %d, hold ends %llu; build 33: kept in the open hand)", drawn, I.drawn[1], (unsigned long long)S.holdends[1]);
+    /* let go during the menu (no live input): back on the belt when it ends */
+    knife_drawn_held();
+    I.live = 0, gsteps(3), open_(0), gsteps(5), I.live = 1, gsteps(3);
+    CHECK(!I.drawn[1] && S.holdends[1] == 1, "b34: let go during a menu: back on the belt after it (drawn %d, hold ends %llu)",
+          I.drawn[1], (unsigned long long)S.holdends[1]);
+    /* let go while the hand is not tracked: back when it is */
+    knife_drawn_held();
+    I.valid[0] = 0, gsteps(2), open_(0), gsteps(3), I.valid[0] = 1, gsteps(3);
+    CHECK(!I.drawn[1] && S.holdends[1] == 1, "b34: let go while the hand is lost: back on the belt when it is found (drawn %d, "
+          "hold ends %llu)", I.drawn[1], (unsigned long long)S.holdends[1]);
+    /* the knife hand on a wall (busy, away): it goes to the belt; the wall let go with the hand open: it stays there */
+    knife_drawn_held();
+    I.busy[0] = I.busy[1] = 1, I.away[0] = 1, gsteps(3);
+    int away = !I.drawn[1] && S.suspended[1];
+    open_(0), I.busy[0] = I.busy[1] = I.away[0] = 0, gsteps(5);
+    CHECK(away && !I.drawn[1] && !(O.ev[1] & SOMVR_SL_E_RESTORE) && S.restores[1] == 0 && !S.suspended[1],
+          "b34: after a climb with the hand open the knife stays on the belt (away %d, drawn %d, restores %llu; build 33: put back "
+          "into the open hand)", away, I.drawn[1], (unsigned long long)S.restores[1]);
+    open_(0), gsteps(30);
+    CHECK(!I.drawn[1], "b34: ... and stays there");
+    /* ... the hand still closed as the climb ends: back in it, held by it - let go, back on the belt */
+    knife_drawn_held();
+    I.busy[0] = I.busy[1] = 1, I.away[0] = 1, gsteps(3);
+    I.busy[0] = I.busy[1] = I.away[0] = 0, gsteps(3);
+    int back = I.drawn[1] && S.restores[1] == 1;
+    open_(0), gsteps(3);
+    CHECK(back && !I.drawn[1] && S.holdends[1] == 1, "b34: restored into the closed hand (%d), held by it: let go, back on the "
+          "belt (drawn %d, hold ends %llu; build 33: kept)", back, I.drawn[1], (unsigned long long)S.holdends[1]);
+    /* the game puts the held knife away, later draws it itself: the game's draw is no hold (the grip open: it stays) */
+    knife_drawn_held();
+    I.drawn[1] = 0, step();
+    open_(0), step();
+    I.drawn[1] = 1, gsteps(5);
+    CHECK(I.drawn[1] && S.holdends[1] == 0 && !S.by_hold[1], "b34: the game's own draw after its put-away is no hold (drawn %d, "
+          "hold ends %llu)", I.drawn[1], (unsigned long long)S.holdends[1]);
+    C.hold_dagger = -1;
+}
+
 static void test_asks(void) {
     rig();
     step();
@@ -725,6 +817,145 @@ static void test_dagger(void) {
     CHECK(O.inside[1] && (O.ev[1] & SOMVR_SL_E_ENTER), "left-handed: the right hip");
 }
 
+/* build 36 (som-b36-polish, cfg.knife_hips; the 11-03 Windows session: a right-handed player found the knife only on the
+ * left): the knife at either hip, each for the hand on its side - the main hand's only while it holds nothing; the
+ * knife goes to the hand that drew it, back from it; one knife; the sword's draws wait while the knife is in the main
+ * hand; the Shadow Strike's sword takes the main hand back; the bow's suspend and restore keep the knife's hand */
+static sv_vec3 main_hip(void) {
+    sv_vec3 o;
+    somvr_slots_knife_ofs(&C, somvr_slots_hand(&C, SOMVR_SLOT_SWORD), &o);
+    sv_vec3 r = sv_qrot(sv_qyaw(S.torso), o);
+    return (sv_vec3){ I.head.x + r.x, I.head.y + r.y, I.head.z + r.z };
+}
+static void test_knife_hips(void) {
+    sv_vec3 o;
+    rig();
+    C.knife_hips = 1, C.hold_dagger = 1;
+    CHECK(somvr_slots_knife_ofs(&C, 1, &o) && NEAR3(o, 18, -62, -5, 1e-4) && somvr_slots_knife_ofs(&C, 0, &o) &&
+              NEAR3(o, -18, -62, -5, 1e-4),
+          "knife hips: the right hand's at the right hip (%.0f %.0f %.0f), the left's at the left", o.x, o.y, o.z);
+    step();
+    I.p[1] = main_hip();
+    step();
+    CHECK((O.ev[1] & SOMVR_SL_E_ENTER) && O.hand[1] == 1 && O.dinside[1] && !O.dinside[0] && O.dagger_hand == -1,
+          "knife hips: the right hand at the right hip - the tick on it (hand %d)", O.hand[1]);
+    press(1);
+    step();
+    CHECK((O.ev[1] & SOMVR_SL_E_DRAW) && O.want[1] == 1 && O.hand[1] == 1 && O.dagger_hand == 1 && O.nograb && !O.ev[0],
+          "knife hips: the right hand's squeeze there draws the knife into it (hand %d, the knife's %d)", O.hand[1],
+          O.dagger_hand);
+    game_follows();
+    I.p[1] = (sv_vec3){ 25, 120, 40 };
+    gsteps(10);
+    CHECK(I.drawn[1] && O.dagger_hand == 1 && O.keep[1] == 1 && !O.blade, "knife hips: held in the right hand");
+    /* the sword's slot and the quick draw with the knife in that hand: nothing */
+    uint32_t ev0 = EV[0];
+    EV[0] = 0;
+    hand_to_slot(1, SOMVR_SLOT_SWORD);
+    gsteps(3);
+    CHECK(I.drawn[1] && !I.drawn[0] && !(EV[0] & SOMVR_SL_E_DRAW), "knife hips: the shoulder with the knife held: no sword");
+    I.p[1] = (sv_vec3){ 25, 120, 40 };
+    open_(1);
+    step();
+    CHECK((O.ev[1] & SOMVR_SL_E_HOLDEND) && O.hand[1] == 1, "knife hips: the grip opened: back on the belt from the right hand (ev %#x want %d hold %d hand %d)", O.ev[1], O.want[1], S.by_hold[1], O.hand[1]);
+    game_follows();
+    gsteps(2);
+    CHECK(!I.drawn[1] && O.dagger_hand == -1, "knife hips: back at the belt (%d)", O.dagger_hand);
+    EV[0] = ev0;
+    /* the sword in the right hand: its hip is no knife slot; the left hip still is */
+    hand_to_slot(1, SOMVR_SLOT_SWORD);
+    step();
+    press(1);
+    gsteps(3);
+    CHECK(I.drawn[0], "knife hips: the sword drawn");
+    open_(1);
+    I.p[1] = main_hip();
+    step();
+    press(1);
+    gsteps(3);
+    CHECK(!I.drawn[1] && !O.dinside[1] && O.ddist[1] < 0, "knife hips: the sword's hand at its hip: no knife");
+    open_(1);
+    I.p[1] = (sv_vec3){ 30, 100, 20 };
+    hand_to_slot(0, SOMVR_SLOT_DAGGER);
+    step();
+    press(0);
+    step();
+    CHECK((O.ev[1] & SOMVR_SL_E_DRAW) && O.hand[1] == 0 && O.dagger_hand == 0, "knife hips: the left hip as ever (hand %d)",
+          O.hand[1]);
+    game_follows();
+    step();
+    /* the knife in the left hand: the right hand at the right hip (the sword put back) is no second knife */
+    hand_to_slot(1, SOMVR_SLOT_SWORD);
+    step();
+    press(1);
+    gsteps(3);
+    open_(1);
+    gsteps(2);
+    CHECK(!I.drawn[0] && I.drawn[1], "knife hips: the sword back, the knife in the left");
+    I.p[1] = main_hip();
+    step();
+    press(1);
+    gsteps(3);
+    CHECK(I.drawn[1] && O.dagger_hand == 0 && !(O.ev[1] & (SOMVR_SL_E_DRAW | SOMVR_SL_E_PUT)), "knife hips: one knife (%d)",
+          O.dagger_hand);
+    open_(1), open_(0);
+    gsteps(3);
+    CHECK(!I.drawn[1], "knife hips: the left let go");
+    /* the Shadow Strike takes the sword while the knife is in the right hand: the knife back first */
+    I.p[1] = main_hip();
+    step();
+    press(1);
+    gsteps(3);
+    I.p[1] = (sv_vec3){ 25, 120, 40 };
+    gsteps(2);
+    CHECK(I.drawn[1] && O.dagger_hand == 1, "knife hips: in the right hand again");
+    I.take[0] = 1;
+    step();
+    CHECK((O.ev[1] & SOMVR_SL_E_PUT) && (O.ev[0] & SOMVR_SL_E_TAKE) && O.want[0] == 1, "knife hips: the strike's sword: the knife back");
+    I.take[0] = 0;
+    game_follows();
+    gsteps(3);
+    CHECK(I.drawn[0] && !I.drawn[1], "knife hips: the sword in the right hand");
+    /* the bow (both hands away) with the knife in the right hand: suspended, back into the closed right hand after */
+    rig();
+    C.knife_hips = 1, C.hold_dagger = 1;
+    step();
+    I.p[1] = main_hip();
+    step();
+    press(1);
+    gsteps(3);
+    I.p[1] = (sv_vec3){ 25, 120, 40 };
+    I.away[0] = I.away[1] = I.busy[0] = I.busy[1] = 1;
+    gsteps(3);
+    CHECK(!I.drawn[1] && S.suspended[1] && O.dagger_hand == 1, "knife hips: the bow - the knife put back, its hand kept");
+    I.away[0] = I.away[1] = I.busy[0] = I.busy[1] = 0;
+    gsteps(3);
+    CHECK(I.drawn[1] && O.dagger_hand == 1, "knife hips: after the bow the knife back in the closed right hand");
+    /* off (builds 17-35): the right hip is nothing */
+    rig();
+    step();
+    I.p[1] = main_hip();
+    CHECK(!somvr_slots_knife_ofs(&C, 1, &o), "knife hips off: the right hand has no knife slot");
+    I.p[1] = (sv_vec3){ 18, 98, -5 };
+    step();
+    press(1);
+    gsteps(3);
+    CHECK(!I.drawn[1] && !O.ev[1], "knife hips off: the right hip does nothing");
+    /* left-handed (the main hand the left): its own hip (the left) and the off hand's (the right) */
+    rig();
+    C.main_hand = 0, C.knife_hips = 1;
+    step();
+    I.p[0] = (sv_vec3){ -18, 98, -5 };
+    step();
+    press(0);
+    step();
+    CHECK((O.ev[1] & SOMVR_SL_E_DRAW) && O.hand[1] == 0, "knife hips, left-handed: the left hand at the left hip (%d)", O.hand[1]);
+    /* the back slot: one place, the off hand's */
+    rig();
+    C.knife_hips = 1, C.dagger_at = SOMVR_SLOTS_DAGGER_BACK;
+    CHECK(!somvr_slots_knife_ofs(&C, 1, &o) && somvr_slots_knife_ofs(&C, 0, &o), "knife hips: the back slot is the off hand's alone");
+}
+
 static void test_robust(void) {
     rig();
     step();
@@ -803,12 +1034,15 @@ int main(void) {
     test_dropin();
     test_quick();
     test_hold();
+    test_hold_dagger();
+    test_hold_dagger_b34();
     test_asks();
     test_reassert();
     test_undraw();
     test_reset();
     test_busy();
     test_dagger();
+    test_knife_hips();
     test_robust();
     test_take();
     printf("test_slots: %d checks, %d failures\n", checks, fails);

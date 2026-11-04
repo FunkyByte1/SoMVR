@@ -62,7 +62,7 @@ __attribute__((used)) uint64_t somvr_w_hudfx(uintptr_t mgr, uintptr_t desc)
 		r = ((uf_create_fn)g_uf.orig)(mgr, desc), (r & 0xff) ? g_uf.made++ : g_uf.refused++;
 	g_uf.last_group = gid;
 	if (g_uf.lines < UF_LINES || n % 50 == 0)
-		g_uf.lines++, logf_("HUDFX group %d (call %llu, manager %#lx): %s", gid, (unsigned long long)n, (unsigned long)mgr,
+		g_uf.lines++, logf_("HUDFX group %d (call %llu, manager %#llx): %s", gid, (unsigned long long)n, (unsigned long long)mgr,
 				    hide ? "not made (our eyes: hide)" : (r & 0xff) ? (eyes ? "made (in our eyes: game)" : "made (a flat frame)")
 								    : "the game's own 0 (UI FX off)");
 	return r;
@@ -89,14 +89,14 @@ static int uf_install(const struct site_spec *s)
 	g_uf.orig = s->target; /* before the jump can reach somvr_w_hudfx */
 	int32_t rel = ok ? (int32_t)((int64_t)(uintptr_t)pg - (int64_t)(s->addr + 5)) : 0;
 	if (!ok || write_code(s->addr + 1, &rel, 4, err, sizeof err) != 0) {
-		logf_("HOOK %s SKIPPED %#lx: %s%s", s->name, (unsigned long)s->addr, ok ? "write failed: " : "", ok ? err : why);
+		logf_("HOOK %s SKIPPED %#llx: %s%s", s->name, (unsigned long long)s->addr, ok ? "write failed: " : "", ok ? err : why);
 		if (pg)
 			munmap(pg, 4096);
 		return 0;
 	}
 	hex_of((const unsigned char *)s->addr, 5, nb, sizeof nb);
-	logf_("HOOK %s ok jmp %#lx target=%#lx now=[%s] via=%#lx (CBaseUI::CreateUIFXGroup: the HUD's 3D flourishes)", s->name,
-	      (unsigned long)s->addr, (unsigned long)s->target, nb, (unsigned long)pg);
+	logf_("HOOK %s ok jmp %#llx target=%#llx now=[%s] via=%#llx (CBaseUI::CreateUIFXGroup: the HUD's 3D flourishes)", s->name,
+	      (unsigned long long)(uintptr_t)s->addr, (unsigned long long)(uintptr_t)s->target, nb, (unsigned long long)(uintptr_t)pg);
 	return 1;
 }
 

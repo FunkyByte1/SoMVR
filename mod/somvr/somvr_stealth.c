@@ -36,7 +36,8 @@ const char *somvr_stl_why(int v)
                                      "the contact not on its back or neck", "a touch (neither a hit nor a stab)",
                                      "in the body but no thrust (no damage; the alert after the grace)",
                                      "combat's capsule but not the body (nothing)",
-                                     "in the body, carried in by the walk (no touch: no damage, no alert)" };
+                                     "in the body, carried in by the walk (no touch: no damage, no alert)",
+                                     "a full cut, no thrust: the ordinary hit (the fight starts)" };
     return v >= 0 && v < SOMVR_STL_N ? n[v] : "?";
 }
 
@@ -82,10 +83,13 @@ static int judge_thrust(const somvr_stl_cfg *c, const somvr_stl_hit *h)
         return point && h->axis_mps >= c->grab_mps && h->depth_cm >= c->grab_depth_cm ? SOMVR_STL_KILL : SOMVR_STL_TOUCH;
     if (h->neck && h->tier_cut == SC_TIER_HEAVY_) return SOMVR_STL_KILL; /* a full-speed cut to the neck from behind */
     int carried = c->carried && h->carried; /* build 22: the walk put it there, the hand did not push it in */
+    if (c->slash == 2 && h->tier_cut == SC_TIER_HEAVY_ && !carried &&
+        !(point && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm))
+        return SOMVR_STL_CUT; /* build 36: a full cut is a hit, not a kill (anywhere on its body) */
     if (!(fabsf(h->contact_off_deg) >= c->side_deg)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_SIDE;
     if (!(h->contact_up_cm >= c->low_cm && h->contact_up_cm <= c->high_cm)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_LOW;
     if (point && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm) return SOMVR_STL_KILL;
-    if (c->slash && h->tier_cut == SC_TIER_HEAVY_) return SOMVR_STL_KILL; /* build 31: a full cut into its back */
+    if (c->slash == 1 && h->tier_cut == SC_TIER_HEAVY_) return SOMVR_STL_KILL; /* build 31: a full cut into its back */
     return carried ? SOMVR_STL_CARRIED : SOMVR_STL_TOUCH;
 }
 
@@ -111,7 +115,7 @@ int somvr_stl_kill_by(const somvr_stl_cfg *c, const somvr_stl_hit *h)
     if (h->held) return SOMVR_STL_BY_GRAB;
     int thrust = h->cos_axis >= c->thrust_cos && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm;
     if (!thrust && h->neck && h->tier_cut == SC_TIER_HEAVY_) return SOMVR_STL_BY_NECK;
-    return !thrust && c->slash && h->tier_cut == SC_TIER_HEAVY_ ? SOMVR_STL_BY_SLASH : SOMVR_STL_BY_THRUST;
+    return !thrust && c->slash == 1 && h->tier_cut == SC_TIER_HEAVY_ ? SOMVR_STL_BY_SLASH : SOMVR_STL_BY_THRUST;
 }
 
 const char *somvr_stl_by_name(int by)

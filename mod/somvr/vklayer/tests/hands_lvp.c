@@ -55,6 +55,7 @@ typedef struct {
     float ghost;                  /* build 13 (SOMVR_HANDS_SURFACE): the right hand's ghost, this opaque, 9 cm ahead */
     int away;                     /* the hand behind the eyes: nothing drawn, the image clear */
     int arrow;                    /* build 16 (vrhands v4): the bow's arrow from the right grip through the left's */
+    float wraith;                 /* build 36 (SOMVR_HANDS_WRAITH): the wraith look's amount (somvr_vh_wraith_look) */
 } lcase;
 
 static void look_at(const float eye[3], const float at[3], const float up[3], float q[4]) {
@@ -282,6 +283,14 @@ int main(int argc, char **argv) {
         *G = *H;
         G->name = "ghost", G->ghost = 0.35f;
     }
+    { /* build 36: the held hands in the wraith vision - halfway through its fade, and full */
+        lcase *Wh = &cs[nc++];
+        *Wh = *H;
+        Wh->name = "wraith-half", Wh->wraith = 0.5f;
+        lcase *Wf = &cs[nc++];
+        *Wf = *H;
+        Wf->name = "wraith", Wf->wraith = 1;
+    }
     { /* build 16: a bow held out ahead with the fist upright (the grips' -Z up: 90 deg about +X), the right hand drawn
        * back under the eye, the arrow from it through the bow hand's nock (4 cm up its tube, 1.2 cm to the left) */
         lcase *W = &cs[nc++];
@@ -357,6 +366,12 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 3; i++) fr.light[i] = l[i] / ll;
         fr.opacity = 1, fr.base[0] = 0.32f, fr.base[1] = 0.2f, fr.base[2] = 0.13f;
         fr.key = 0.9f, fr.ambient = 0.45f, fr.rim = 0.25f, fr.spec = 0.08f;
+        if (L->wraith > 0) { /* build 36: the layer's own blend */
+            somvr_vh_look lk = {{fr.base[0], fr.base[1], fr.base[2]}, fr.opacity, fr.key, fr.ambient, fr.rim, fr.spec};
+            somvr_vh_wraith_look(&lk, L->wraith);
+            memcpy(fr.base, lk.base, sizeof fr.base);
+            fr.opacity = lk.opacity, fr.key = lk.key, fr.ambient = lk.ambient, fr.rim = lk.rim, fr.spec = lk.spec;
+        }
         VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         BeginCommandBuffer(cmd, &bi);
         hd_record(&hc, cmd, (uint32_t)ci_, &fr, dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -369,8 +384,9 @@ int main(int argc, char **argv) {
         const uint8_t *px = rmap;
         /* coverage and the corners */
         long cov[2] = {0, 0}, diff = 0;
+        int cov_a = L->wraith > 0 ? 20 : 128; /* (build 36: the wraith hand is see-through: its coverage at a lower alpha) */
         for (int y = 0; y < EH; y++)
-            for (int x = 0; x < 2 * EW; x++) cov[x >= EW] += px[(y * 2 * EW + x) * 4 + 3] > 128;
+            for (int x = 0; x < 2 * EW; x++) cov[x >= EW] += px[(y * 2 * EW + x) * 4 + 3] > cov_a;
         for (int y = 0; y < EH; y++)
             for (int x = 0; x < EW; x++) diff += px[(y * 2 * EW + x) * 4 + 3] != px[(y * 2 * EW + x + EW) * 4 + 3];
         if (L->away) {
@@ -395,6 +411,18 @@ int main(int argc, char **argv) {
                 pale += px[4 * i + 3] > 200 && px[4 * i + 2] > 150 && px[4 * i + 2] > px[4 * i] + 20;
             CHECK(pale > 200, "arrow: %ld pale blue pixels", pale);
         }
+        if (L->wraith > 0) { /* build 36: see-through (nothing solid; where fingers lie over the palm the layers add up, as
+                              * a ghost's would) and blue */
+            long solid = 0, thin = 0, any = 0, blue = 0;
+            for (long i = 0; i < 2L * EW * EH; i++) {
+                const uint8_t *q = px + 4 * i;
+                any += q[3] > 20, solid += q[3] > 250, thin += q[3] > 20 && q[3] < 200;
+                blue += q[3] > 20 && q[2] > q[0] + 15;
+            }
+            CHECK((L->wraith < 1 ? solid * 20 < any : solid == 0) && thin * 10 > any * (L->wraith < 1 ? 5 : 8) &&
+                      blue * 10 > any * 9,
+                  "%s: %ld of %ld pixels solid (want 0), %ld see-through, %ld blue", L->name, solid, any, thin, blue);
+        }
         if (L->ghost > 0) { /* the ghost: faint blue pixels (premultiplied: blue over red, alpha well under 1) */
             long blue = 0;
             for (long i = 0; i < 2L * EW * EH; i++)
@@ -408,7 +436,10 @@ int main(int argc, char **argv) {
             for (int x = 0; x < EW; x++) {
                 const uint8_t *s = px + (y * 2 * EW + x) * 4;
                 int bg = 70 + (y * 50) / EH;
-                for (int k = 0; k < 3; k++) grid[(y * EW + x) * 3 + k] = (uint8_t)(s[k] + bg * (255 - s[3]) / 255);
+                for (int k = 0; k < 3; k++) { /* (build 36: clamped - a glowing edge's premultiplied colour over the grey) */
+                    int c = s[k] + bg * (255 - s[3]) / 255;
+                    grid[(y * EW + x) * 3 + k] = (uint8_t)(c > 255 ? 255 : c);
+                }
             }
         /* the grip axes as dots (the left eye's matrix): -Z red (the blade), +Y green (the forearm), +X blue; a hilt's
          * outline in yellow (16 rings of 1.6 cm round the axis from 6 cm behind the grip to 6 cm before it) */
@@ -612,6 +643,11 @@ int main(int argc, char **argv) {
     if (!rc) hd_destroy(&hw);
     free(grid);
     hd_destroy(&hc);
+    f.UnmapMemory(dev, rmem); /* b34 (LeakSanitizer): the destination and the readback were never freed */
+    f.DestroyBuffer(dev, rb, NULL);
+    f.FreeMemory(dev, rmem, NULL);
+    f.DestroyImage(dev, dst, NULL);
+    f.FreeMemory(dev, dmem, NULL);
     DestroyCommandPool(dev, pool, NULL);
     DestroyDevice(dev, NULL);
     DestroyInstance(inst, NULL);

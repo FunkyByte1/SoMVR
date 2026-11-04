@@ -72,7 +72,10 @@ typedef struct {
      * upper tip (XR space, metres); string_r its radius (m) */
     float string[3][3];
     float string_r;
-    float pad5;
+    /* build 36 (som-b36-polish, re-xr-pipeline.md 167.3; SOMVR_HANDS_WRAITH): how far the hands have turned to wraith
+     * hands, 0..1 - the wraith vision on, faded in and out with it; the layer draws them pale blue, translucent, the edge
+     * glowing. Was pad5 (zero: an old preload's entries draw the plain hands, an old layer ignores it) */
+    float wraith;
 } somvr_vrhands_frame;
 
 typedef struct somvr_vrhands_shared {
@@ -126,6 +129,7 @@ static inline void somvr_vrhands_put(somvr_vrhands_shared *v, uint64_t frame, co
     for (int k = 0; k < 3; k++)
         for (int i = 0; i < 3; i++) e->string[k][i] = in->string[k][i];
     e->string_r = in->string_r;
+    e->wraith = in->wraith;
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&v->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&v->n_frames, 1, memory_order_relaxed);
@@ -147,6 +151,7 @@ static inline int somvr_vrhands_get(somvr_vrhands_shared *v, uint64_t frame, som
     for (int k = 0; k < 3; k++)
         for (int i = 0; i < 3; i++) out->string[k][i] = e->string[k][i];
     out->string_r = e->string_r;
+    out->wraith = e->wraith;
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);
@@ -263,13 +268,22 @@ const uint16_t *somvr_vh_arrow_indices(void);
 /* the arrow's vertices in XR space: `pose` at its nock end, its -Z along the shaft to the head; len_m long (clamped to
  * 0.2 .. 1.5 m) */
 void somvr_vh_arrow(const somvr_posef *pose, float len_m, somvr_vh_vert *out);
+/* build 33 (SOMVR_FINISHER, docs/re-xr-pipeline.md 140): the finisher's sword outline in the arrow's slot (the same
+ * vertices and indices: the shaft = the blade, flat; the head = its point; the nock's cap = the blade's root; the vanes =
+ * the cross-guard and the grip): `pose` at the grip, its -Z along the blade; len_m from the grip to the point. The frame
+ * asks for it with arrow_glow >= 2 (the bow's glow is 0..1); the layer draws it translucent in the wraith's blue */
+void somvr_vh_outline(const somvr_posef *pose, float len_m, somvr_vh_vert *out);
 /* the arrow's parts near the eyes fade (drawn at full draw the nock and the vanes are at the cheek, a few cm from the
  * eye): each vertex's alpha = smoothstep over near_m .. far_m of its distance to the nearer eye */
 void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const float eye1[3], float near_m, float far_m);
 /* build 18 (vrhands v5): the bow's string - two hexagonal segments (lower tip -> middle -> upper tip), r_m round, both
  * windings (as the arrow) */
-#define SOMVR_VH_STRING_NV 48
-#define SOMVR_VH_STRING_NI 144
+/* build 33 (re-xr-pipeline.md 142): each half in SOMVR_VH_STRING_SUB pieces, shorter toward the middle (the tips' end
+ * of each piece at 0, 0.55, 0.78, 0.92 of the way to the middle), so the near-eye fade (somvr_vh_arrow_fade, per vertex)
+ * takes the string's last 10-20 cm by the face, not a ramp over the whole half (the 11-03 session's mark 15) */
+#define SOMVR_VH_STRING_SUB 4
+#define SOMVR_VH_STRING_NV (2 * SOMVR_VH_STRING_SUB * 24)
+#define SOMVR_VH_STRING_NI (2 * SOMVR_VH_STRING_SUB * 72)
 const uint16_t *somvr_vh_string_indices(void);
 void somvr_vh_string(const float pts[3][3], float r_m, somvr_vh_vert *out);
 /* build 18: where the fist's thumb pinches the index (the arrow held from the quiver): the point between the thumb's
@@ -297,7 +311,15 @@ int somvr_vh_watch_pose(const somvr_vh_model *m, const somvr_vh_watch_cfg *c, co
  * hysteresis (no one-frame flashes at the edge); 1 = show this frame */
 typedef struct { float face_on, face_off; int hold_on, hold_off; } somvr_vh_face_cfg;
 void somvr_vh_face_cfg_default(somvr_vh_face_cfg *c); /* cos 0.15 / 0.08 (81 / 85 deg: edge-on), 2 frames in, 3 out */
+void somvr_vh_face_cfg_raise(somvr_vh_face_cfg *c);   /* build 33: cos 0.55 / 0.40 (57 / 66 deg), 3 frames in, 3 out */
 typedef struct { int shown, run; } somvr_vh_face;
 int somvr_vh_face_step(somvr_vh_face *s, const somvr_vh_face_cfg *c, const somvr_posef *face, const float eye[3]);
+
+/* build 36 (som-b36-polish, re-xr-pipeline.md 167.3; SOMVR_HANDS_WRAITH): the hands' look in the wraith vision, blended
+ * by w (0 = as given, 1 = full): the wraith world's pale blue, see-through (the opacity halved), the key light low and
+ * an even glow, the edge bright (a strong rim: hands.frag adds base x rim to the colour, not the alpha, so the edge
+ * glows while the middle stays faint), no sheen. The layer (somvr_vrhands_layer.c) and vklayer/tests/hands_lvp.c */
+typedef struct { float base[3], opacity, key, ambient, rim, spec; } somvr_vh_look;
+void somvr_vh_wraith_look(somvr_vh_look *l, float w);
 
 #endif

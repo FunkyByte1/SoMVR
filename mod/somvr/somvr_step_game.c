@@ -357,7 +357,7 @@ static void dg_tick(const sc_tick_out *o)
 		int quiet = why == DGR_BOW && g_bow.a_quiet;
 		if (why != DGR_NOFIGHT && why != DGR_YIELD && !quiet) /* in a fight: told (not in a fight A just does nothing, as
 									  * before; another's press is that one's) */
-			in_haptic_double(SOMVR_HAND_R, 0.5f, 0.05f, 0.07f, SOMVR_HAP_COMBAT);
+			haptic(SOMVR_HAND_R, SOMVR_HX_NO);
 		char gw[160] = "";
 		if (why == DGR_GAME)
 			somvr_loco_why_str(g_dg.game_why, gw, sizeof gw);
@@ -376,7 +376,7 @@ static void dg_tick(const sc_tick_out *o)
 		 g_dg.tunnel);
 	st_log_start(t, "DODGE dash", -1, g_dg.cm, g_dg.s, dir, att == 1 ? hypotf(ap[0] - g_step.root.x, ap[2] - g_step.root.z) : 0, ex);
 	for (int h = 0; h < 2; h++)
-		in_haptic_event(h, 0.3f, 0.06f, SOMVR_HAP_COMBAT);
+		haptic(h, SOMVR_HX_GO);
 }
 
 /* cf_frame: the wraith tunnel while the dodge's motion runs (SOMVR_DODGE_TUNNEL; 0 = none) */
@@ -502,8 +502,7 @@ static void st_tick(sc_tick_out *o)
 							 : "");
 			st_log_start(t, e.kind == SOMVR_ST_PHASE ? "wraith phase" : "dash", e.target, e.D, e.T, e.dir, e.dist_cm, ex);
 			/* the haptic: the phase sweeps from the sword hand (here) to the other one (at the orc's axis); the dash a tick */
-			in_haptic_event(SOMVR_HAND_R, e.kind == SOMVR_ST_PHASE ? 0.35f : 0.25f, e.kind == SOMVR_ST_PHASE ? 0.10f : 0.05f,
-					SOMVR_HAP_COMBAT);
+			haptic(SOMVR_HAND_R, SOMVR_HX_GO);
 		}
 	}
 	/* the wraith look: the vision on for the phase's motion (only when it was off: the player's own stays as it is), off
@@ -600,7 +599,7 @@ static void st_collision(int want, double t)
 		g_step.col_on = 1, g_step.col_cmb = cmb, g_step.col_atk = atk, g_step.col_was = v;
 		g_step.n_col++;
 		if (st_log_ok(t))
-			logf_("STEP t=%.3f the orc's collision off: the stock evade's attack %#lx EnableCollision %u%s", t, (unsigned long)atk, v,
+			logf_("STEP t=%.3f the orc's collision off: the stock evade's attack %#llx EnableCollision %u%s", t, (unsigned long long)atk, v,
 			      v ? " -> 0 for the phase (COLLISION_OFF's write)" : " (already 0: the vault's own record)");
 	}
 	if (v && arm_poke(cmb + ST_C_COLLIDE, &zero, 1))
@@ -637,7 +636,7 @@ static void st_pm(const somvr_loco_in *in, somvr_loco_out *o)
 		g_step.n_clamped++;
 	if (so.peak) {
 		g_step.n_peak++;
-		in_haptic_event(SOMVR_HAND_L, 0.35f, 0.10f, SOMVR_HAP_COMBAT); /* the sweep's other end: through the orc */
+		haptic(SOMVR_HAND_L, SOMVR_HX_GO); /* the sweep's other end: through the orc */
 		if (st_log_ok(t))
 			logf_("STEP t=%.3f the phase at the orc's axis (%.1f cm along%s)", t, g_step.run.done_cm,
 			      g_step.cfg.phase == SOMVR_ST_PHASE_REFACE ? "; the re-face" : "");
@@ -789,8 +788,8 @@ static void st_start(const struct site_spec *sites, int menu)
 		char why[512];
 		int good = check_site(&sites[i], why, sizeof why) == 0;
 		ok |= good ? 1u << i : 0;
-		logf_("STSITE %s %s %#lx -> %#lx: %s", sites[i].name, good ? "ok" : "MISMATCH", (unsigned long)sites[i].addr,
-		      (unsigned long)sites[i].target, why);
+		logf_("STSITE %s %s %#llx -> %#llx: %s", sites[i].name, good ? "ok" : "MISMATCH", (unsigned long long)sites[i].addr,
+		      (unsigned long long)sites[i].target, why);
 	}
 	uint32_t col = (1u << STS_COL_SOLVER) | (1u << STS_COL_MOVE7) | (1u << STS_COL_OFF) | (1u << STS_COL_DEFAULT),
 		 vis = (1u << STS_VISION_GET) | (1u << STS_VISION_ON);

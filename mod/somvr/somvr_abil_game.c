@@ -210,13 +210,13 @@ static void abl_said(int k, uintptr_t c, int ok, const struct cb_orc *o, const c
 	g_abl.offers[k] += ok != 0;
 	char an[96], sn[96];
 	if (abl_log_ok(t))
-		logf_("ABIL t=%.3f orc %#lx at %.0f cm (its attack '%s' state '%s' health %.1f): %s%s%s%s%s", t, (unsigned long)c,
+		logf_("ABIL t=%.3f orc %#llx at %.0f cm (its attack '%s' state '%s' health %.1f): %s%s%s%s%s", t, (unsigned long long)c,
 		      o->dist, vb_name(peek_ptr(o->c + VB_C_ATTACK), an, sizeof an), vb_name(peek_ptr(o->c + VB_C_STATE), sn, sizeof sn),
 		      vb_health(o->c), ok ? "the game offers " : "no ", g_abk_w[k], ok ? " ('" : " (", ok ? g_abl.off[k].atk_name : why,
 		      ok ? "')" : ")");
 	if (ok && k == ABK_FLASH && t - g_abl.offer_tick_t > 3.0 && g_abl.mode == AB_ON && g_vb.haptic > 0) {
 		g_abl.offer_tick_t = t, g_abl.ticks++; /* the cue's tick: the flash is there (once in 3 s) */
-		in_haptic_event(SOMVR_HAND_L, 0.35f * g_vb.haptic, 0.04f, SOMVR_HAP_COMBAT);
+		haptic_play(SOMVR_HAND_L, SOMVR_HX_READY, 1, g_vb.haptic);
 	}
 }
 
@@ -258,13 +258,13 @@ static void abl_watch(uintptr_t pc, double t)
 		uintptr_t c = g_abl.w[i].c, at = peek_ptr(c + VB_C_ATTACK), st = peek_ptr(c + VB_C_STATE);
 		float hp = vb_health(c);
 		if (at != g_abl.w[i].atk)
-			logf_("ABIL watch t=%.3f +%.2f s: orc %#lx attack '%s' -> '%s'", t, t - g_abl.watch_t0, (unsigned long)c,
+			logf_("ABIL watch t=%.3f +%.2f s: orc %#llx attack '%s' -> '%s'", t, t - g_abl.watch_t0, (unsigned long long)c,
 			      vb_name(g_abl.w[i].atk, a, sizeof a), vb_name(at, b, sizeof b)), g_abl.w[i].atk = at;
 		if (st != g_abl.w[i].st)
-			logf_("ABIL watch t=%.3f +%.2f s: orc %#lx state '%s' -> '%s'", t, t - g_abl.watch_t0, (unsigned long)c,
+			logf_("ABIL watch t=%.3f +%.2f s: orc %#llx state '%s' -> '%s'", t, t - g_abl.watch_t0, (unsigned long long)c,
 			      vb_name(g_abl.w[i].st, a, sizeof a), vb_name(st, b, sizeof b)), g_abl.w[i].st = st;
 		if (isfinite(hp) && isfinite(g_abl.w[i].hp) && fabsf(hp - g_abl.w[i].hp) >= 0.5f)
-			logf_("ABIL watch t=%.3f +%.2f s: orc %#lx health %.1f -> %.1f%s", t, t - g_abl.watch_t0, (unsigned long)c,
+			logf_("ABIL watch t=%.3f +%.2f s: orc %#llx health %.1f -> %.1f%s", t, t - g_abl.watch_t0, (unsigned long long)c,
 			      g_abl.w[i].hp, hp, cb_dead(c) ? " (dead)" : ""), g_abl.w[i].hp = hp;
 	}
 	if (t >= g_abl.watch_until) {
@@ -355,7 +355,7 @@ static void abl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		int k = rs - 1;
 		if (abl_fresh(k, t))
 			g_abl.want_start = k + 1, g_abl.kind = k, g_abl.c = g_abl.off[k].c, g_abl.press_t = t, g_abl.presses[k]++,
-			logf_("ABIL t=%.3f start %s (a test, no gesture) on orc %#lx", t, g_abk_w[k], (unsigned long)g_abl.c);
+			logf_("ABIL t=%.3f start %s (a test, no gesture) on orc %#llx", t, g_abk_w[k], (unsigned long long)g_abl.c);
 		else
 			logf_("ABIL t=%.3f start %s (a test): the game does not offer it now", t, g_abk_w[k]);
 	}
@@ -368,7 +368,7 @@ static void abl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 		uint8_t pad = 0;
 		char an[96];
 		if (g_abl.mode != AB_ON) {
-			logf_("ABIL t=%.3f %s on orc %#lx: logged only (SOMVR_ABIL=log)", t, g_abk_w[k], (unsigned long)g_abl.c);
+			logf_("ABIL t=%.3f %s on orc %#llx: logged only (SOMVR_ABIL=log)", t, g_abk_w[k], (unsigned long long)g_abl.c);
 		} else if (!g_abl.start_game) {
 			g_vb.pcmd[0] = g_abl.cmds[k][0], g_vb.pcmd[1] = g_abl.cmds[k][1], g_vb.press_until = t + g_abl.press_s;
 			logf_("ABIL t=%.3f %s: %d%s%.0d pressed for %.0f ms", t, g_abk_w[k], g_abl.cmds[k][0], g_abl.cmds[k][1] ? "+" : "",
@@ -382,9 +382,9 @@ static void abl_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 				abl_watch_begin(pc, o, n, t, 3.0);
 				FI_FN(FIS_START, fi_start_fn)(pcomb, n2, atk, oc.hobj);
 				g_abl.started[k]++;
-				logf_("ABIL t=%.3f start: %s - FUN_00a8c700(pc=%#lx, node '%s', attack '%s', the orc's hobj %#lx) %.2f s "
-				      "after the press; the streak %d charge %d", t, g_abk_w[k], (unsigned long)pcomb, g_abl.off[k].node,
-				      vb_name(atk, an, sizeof an), (unsigned long)oc.hobj, t - g_abl.press_t, g_abl.hc0.streak, g_abl.hc0.charge);
+				logf_("ABIL t=%.3f start: %s - FUN_00a8c700(pc=%#llx, node '%s', attack '%s', the orc's hobj %#llx) %.2f s "
+				      "after the press; the streak %d charge %d", t, g_abk_w[k], (unsigned long long)pcomb, g_abl.off[k].node,
+				      vb_name(atk, an, sizeof an), (unsigned long long)oc.hobj, t - g_abl.press_t, g_abl.hc0.streak, g_abl.hc0.charge);
 			} else {
 				g_abl.refused[k]++;
 				logf_("ABIL t=%.3f start: %s NOT started - no KBM node", t, g_abk_w[k]);
@@ -432,9 +432,9 @@ static void abl_press(int k, double t)
 	g_abl.kind = k, g_abl.c = g_abl.off[k].c, g_abl.press_t = t, g_abl.presses[k]++;
 	g_abl.want_start = k + 1;
 	if (g_abl.mode == AB_ON && g_vb.haptic > 0)
-		in_haptic_event(k == ABK_FLASH ? SOMVR_HAND_L : SOMVR_HAND_R, 0.8f * g_vb.haptic, 0.12f, SOMVR_HAP_COMBAT);
-	logf_("ABIL t=%.3f press: %s on orc %#lx (the game offers '%s' by '%s', asked %.2f s ago)", t, g_abk_w[k],
-	      (unsigned long)g_abl.c, g_abl.off[k].atk_name, g_abl.off[k].node, t - g_abl.off[k].t);
+		haptic_play(k == ABK_FLASH ? SOMVR_HAND_L : SOMVR_HAND_R, SOMVR_HX_POWER, 1, g_vb.haptic);
+	logf_("ABIL t=%.3f press: %s on orc %#llx (the game offers '%s' by '%s', asked %.2f s ago)", t, g_abk_w[k],
+	      (unsigned long long)g_abl.c, g_abl.off[k].atk_name, g_abl.off[k].node, t - g_abl.off[k].t);
 }
 
 /* the stab's kill: the offered record by Combat_DealHit with forceKill at the tip (the combat frame) */
@@ -444,8 +444,15 @@ static void abl_ground_kill(uintptr_t pc, const float tip[3], double t)
 	const struct abl_offer *of = &g_abl.off[ABK_GROUND];
 	g_abl.kind = ABK_GROUND, g_abl.c = of->c, g_abl.press_t = t, g_abl.presses[ABK_GROUND]++;
 	if (g_abl.mode != AB_ON || !pc || !cb_orc_get(of->c, &oc) || cb_dead(of->c)) {
-		logf_("ABIL t=%.3f the ground finisher on orc %#lx: %s", t, (unsigned long)of->c, g_abl.mode != AB_ON ?
+		logf_("ABIL t=%.3f the ground finisher on orc %#llx: %s", t, (unsigned long long)of->c, g_abl.mode != AB_ON ?
 		      "logged only (SOMVR_ABIL=log)" : "the orc is gone or dead");
+		return;
+	}
+	if (kl_busy(of->c)) { /* review b34: its SOMVR_KILLS kill plays (a killing blow took the downed orc): its death comes at
+			       * its moment - no second kill cutting its half, no charge spent (boot 20261103-171756 t=80001.404:
+			       * "not taken (its kill already plays)", then this kill and "the charge spent") */
+		logf_("ABIL t=%.3f the ground finisher on orc %#llx: its kill plays already (SOMVR_KILLS) - nothing (no charge spent)",
+		      t, (unsigned long long)of->c);
 		return;
 	}
 	float hp0 = vb_health(of->c);
@@ -488,9 +495,9 @@ static void abl_ground_kill(uintptr_t pc, const float tip[3], double t)
 			 rx_rec_name(sev, snm, sizeof snm));
 	}
 	if (g_vb.haptic > 0)
-		in_haptic_event(SOMVR_HAND_R, 0.9f * g_vb.haptic, 0.25f, SOMVR_HAP_COMBAT);
-	logf_("ABIL t=%.3f the ground finisher: Combat_DealHit(the tip %.0f,%.0f,%.0f, Talion, orc %#lx, '%s' (by '%s'), "
-	      "forceKill 1): health %.1f -> %.1f%s%s%s%s", t, tip[0], tip[1], tip[2], (unsigned long)of->c, of->atk_name, of->node,
+		haptic_play(SOMVR_HAND_R, SOMVR_HX_KILL, 1, g_vb.haptic);
+	logf_("ABIL t=%.3f the ground finisher: Combat_DealHit(the tip %.0f,%.0f,%.0f, Talion, orc %#llx, '%s' (by '%s'), "
+	      "forceKill 1): health %.1f -> %.1f%s%s%s%s", t, tip[0], tip[1], tip[2], (unsigned long long)of->c, of->atk_name, of->node,
 	      hp0, vb_health(of->c), cb_dead(of->c) ? ", dead" : "", spent, sevl,
 	      klt ? " - SOMVR_KILLS: not yet dealt, the orc's half plays (the DealHit at its moment)" : "");
 }
@@ -674,8 +681,8 @@ static void abl_probe(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int
 	g_vb_pick_nowin = g_abl.probe_nowin;
 	for (int i = 0; i < n && i < 3; i++) {
 		char line[2400], a[96], s[96], an[96], sn[96];
-		int k0 = snprintf(line, sizeof line, "ABIL probe t=%.3f orc %#lx at %.0f cm (attack '%s' state '%s' health %.1f%s):", t,
-				  (unsigned long)o[i].c, o[i].dist, vb_name(peek_ptr(o[i].c + VB_C_ATTACK), an, sizeof an),
+		int k0 = snprintf(line, sizeof line, "ABIL probe t=%.3f orc %#llx at %.0f cm (attack '%s' state '%s' health %.1f%s):", t,
+				  (unsigned long long)o[i].c, o[i].dist, vb_name(peek_ptr(o[i].c + VB_C_ATTACK), an, sizeof an),
 				  vb_name(peek_ptr(o[i].c + VB_C_STATE), sn, sizeof sn), vb_health(o[i].c), cb_dead(o[i].c) ? ", dead" : "");
 		for (size_t j = 0; j < sizeof nodes / sizeof nodes[0] && k0 < (int)sizeof line - 1; j++) {
 			const char *why = "";
@@ -738,7 +745,7 @@ static void abl_rec_dump(uintptr_t rec, const char *what, int depth, double t)
 		logf_("ABIL skill t=%.3f %s '%s': no attributes", t, what, rx_rec_name(rec, nm, sizeof nm));
 		return;
 	}
-	logf_("ABIL skill t=%.3f %s '%s' (record %#lx): %u attributes", t, what, rx_rec_name(rec, nm, sizeof nm), (unsigned long)rec,
+	logf_("ABIL skill t=%.3f %s '%s' (record %#llx): %u attributes", t, what, rx_rec_name(rec, nm, sizeof nm), (unsigned long long)rec,
 	      hdr[0]);
 	for (int k = 0; k < hdr[0]; k++) {
 		if (!peek(arr + (uintptr_t)k * 16, e, 16))
@@ -842,7 +849,7 @@ static void abl_refs(const struct cb_orc *o, int n, double t)
 		if (tab[h])
 			continue;
 		tab[h] = r, rec[nr] = r, par[nr] = -1, via[nr] = 0, nr++;
-		logf_("ABIL refs t=%.3f root %d '%s' (record %#lx)", t, k, rx_rec_name(r, nm, sizeof nm), (unsigned long)r);
+		logf_("ABIL refs t=%.3f root %d '%s' (record %#llx)", t, k, rx_rec_name(r, nm, sizeof nm), (unsigned long long)r);
 	}
 	for (int i = 0; i < nr; i++) {
 		unsigned char hdr[2];
@@ -886,7 +893,7 @@ static void abl_refs(const struct cb_orc *o, int n, double t)
 			po += (size_t)snprintf(path + po, sizeof path - po, " <- [%08x] '%s'", via[a], rx_rec_name(rec[par[a]], pn, sizeof pn));
 		maxd = d > maxd ? d : maxd;
 		if (found++ < 60)
-			logf_("ABIL refs   '%s' (record %#lx) depth %d:%s", nm, (unsigned long)rec[i], d, path);
+			logf_("ABIL refs   '%s' (record %#llx) depth %d:%s", nm, (unsigned long long)rec[i], d, path);
 		int dup = par[i] < 0;
 		for (int k = 0; k < nh && !dup; k++)
 			dup = holders[k] == par[i];
@@ -935,7 +942,7 @@ static void abl_kd(uintptr_t pc, const struct cb_orc *o, int n, double t)
 	abl_watch_begin(pc, o, 1, t, 4.0);
 	float hp0 = vb_health(o[0].c);
 	CB_DEALHIT_CALL((cb_ltvec){ at[0], at[1], at[2] }, pc, o[0].hobj, rec, 0);
-	logf_("ABIL kd t=%.3f: orc %#lx at %.0f cm dealt '%s' (a test aid): health %.1f -> %.1f", t, (unsigned long)o[0].c,
+	logf_("ABIL kd t=%.3f: orc %#llx at %.0f cm dealt '%s' (a test aid): health %.1f -> %.1f", t, (unsigned long long)o[0].c,
 	      o[0].dist, rn, hp0, vb_health(o[0].c));
 }
 
@@ -974,15 +981,15 @@ static void abl_goto(const struct cb_orc *o, int n, const float root[3], float c
 	float at[3] = { nr[k].pos[0] - dx / h * cm, nr[k].pos[1], nr[k].pos[2] - dz / h * cm }, hit[3] = { 0, 0, 0 };
 	uintptr_t g = 0;
 	if (!pr_ground(at, hit, &g) || fabsf(hit[1] - nr[k].pos[1]) > 150) {
-		logf_("ABIL t=%.3f goto: no ground %.0f cm short of orc %#lx", t, cm, (unsigned long)nr[k].c);
+		logf_("ABIL t=%.3f goto: no ground %.0f cm short of orc %#llx", t, cm, (unsigned long long)nr[k].c);
 		return;
 	}
 	char cmd[96], why[256] = "";
 	snprintf(cmd, sizeof cmd, "Teleport %ld %ld %ld", lroundf(at[0]), lroundf(hit[1] + 110), lroundf(at[2]));
 	int rc = es_run(cmd, why, sizeof why);
 	float by = remainderf(atan2f(dx, dz) - atan2f(g_abl.fwd[0], g_abl.fwd[2]), 6.2831853f) * 57.29578f;
-	logf_("ABIL t=%.3f goto: orc %#lx (state '%s') at %.0f,%.0f,%.0f, %.0f cm away: '%s' %s%s; the orc %+.0f deg right of the "
-	      "head", t, (unsigned long)nr[k].c, vb_name(peek_ptr(nr[k].c + VB_C_STATE), sn, sizeof sn), nr[k].pos[0], nr[k].pos[1],
+	logf_("ABIL t=%.3f goto: orc %#llx (state '%s') at %.0f,%.0f,%.0f, %.0f cm away: '%s' %s%s; the orc %+.0f deg right of the "
+	      "head", t, (unsigned long long)nr[k].c, vb_name(peek_ptr(nr[k].c + VB_C_STATE), sn, sizeof sn), nr[k].pos[0], nr[k].pos[1],
 	      nr[k].pos[2], nr[k].dist, cmd, rc == 0 ? "run" : "NOT run: ", rc == 0 ? "" : why, by);
 }
 

@@ -20,7 +20,11 @@ typedef struct {
     float grip_on, grip_off;
     float hold_max_s;  /* a hold this long ends (no throw) (5) */
     float break_cm;    /* his body (root) this far along the floor from where it stood at the grip ends the hold (40: he
-                        * walked off; his head's idle sway moves it ~30 cm and drags nothing - the hold is a fixed point) */
+                        * walked off; his head's idle sway moves it ~30 cm and drags nothing - the hold is a fixed point);
+                        * build 33: not within plant_s of the grip, and never his move toward Talion */
+    float plant_s;     /* build 33 (re-xr-pipeline.md 139.7): the plant - his own motion ends no hold this soon after the
+                        * grip (0.5: a vault's grip, push and throw are one motion of ~0.3-0.4 s; a fighting orc's lunge
+                        * carries his root 40 cm in 0.1 s, boot 20261102-193325) */
     float rise_max_cm; /* the body at most this far over where the hold began (90) */
     float win_s;       /* the throw's window (0.1 s) */
     float over_gain;   /* the throw's part over him x this (1.6: Talion's own vault is an acrobat's) */
