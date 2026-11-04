@@ -174,6 +174,7 @@ enum { PR_TRIP_GO = 0, PR_TRIP_BACK = 1, PR_TRIP_DOWN = 2 }; /* DOWN: SOMVR_CLIM
 enum { PR_DAY_OFF = 0, PR_DAY_WEATHER = 1, PR_DAY_FULL = 2 }; /* SOMVR_PRACTICE_DAY=0|weather|day */
 struct pr_me {
 	uintptr_t pl, obj, pcomb, pc, ch, mount;
+	uintptr_t pm;        /* build 37: the PlayerMovement (SOMVR_PRACTICE_GROUND_HOLD=grav's gravity flag) */
 	float pos[3], rot[4];
 	int life;            /* FB_P_LIFE: 2 = alive in the world; -1 = not read */
 };
@@ -222,6 +223,21 @@ static struct {
 	uintptr_t pl;        /* the Player* last seen (another one: a load) */
 	somvr_pr_trip trip;
 	int trip_kind, trip_first_tp;
+	/* build 37 (SOMVR_PRACTICE_GROUND, re-xr-pipeline.md 27.10): the world under Talion during a trip */
+	int ground_on;       /* the trip's ground rules on (default 1) */
+	int ground_last;     /* SOMVR_PRGD_* at the last step */
+	int ground_said;     /* this trip's wait logged (1) and its end (2) */
+	int ground_back;     /* this trip back is the one a trip there without ground started */
+	double ground_y;     /* the last hit's height */
+	double trip_end_t;   /* the last trip's end (pr_settling: the fall rules wait PR_SETTLE_S after it) */
+	double ground_probe_t; /* the wait's next probe of the target and the place he left */
+	uint64_t ground_waits, ground_pins, ground_none, ground_backs;
+	double ground_wait_max;
+	int ground_hold;     /* SOMVR_PRACTICE_GROUND_HOLD: 0 pin (teleports keep him at the target), 1 grav (his gravity off) */
+	int grav_off;        /* ... we turned it off (on the PlayerMovement grav_pm) */
+	uintptr_t grav_pm;
+	double grav_t;
+	uint64_t grav_holds, grav_frames;
 	int went;            /* a trip there arrived, and no trip back since */
 	int here;            /* ... and Talion within the area's radius now */
 	int have_back;
@@ -303,6 +319,7 @@ static int pr_me(uintptr_t pl, struct pr_me *m)
 	if (!pl || !player_objs(pl, &pm, &m->obj) || !peek(m->obj + OBJ_POS, m->pos, sizeof m->pos) ||
 	    !peek(m->obj + OBJ_ROT, m->rot, sizeof m->rot) || !vec_ok(m->pos, 1e7f))
 		return 0;
+	m->pm = pm;
 	m->pcomb = peek_ptr(pl + P_COMBAT);
 	m->pc = m->pcomb ? peek_ptr(m->pcomb + PC_SERVER) : 0;
 	if (m->pc && vptr_of((void *)m->pc) != g_cbg.vt_combat)
@@ -547,6 +564,35 @@ static int pr_ground(const float at[3], float hit[3], uintptr_t *hobj)
 {
 	float from[3] = { at[0], at[1] + 200.0f, at[2] };
 	return pr_ray_down(from, 800.0f, 0, hit, hobj);
+}
+
+/* build 37 (SOMVR_PRACTICE_GROUND): the world under Talion during a trip (SOMVR_PRGD_*): a ray straight down from 40 cm
+ * over his root (his own body stepped past, as the eye line's ray) for PR_GROUND_RAY_CM; ON = the root at most
+ * PR_GROUND_ON_CM over the hit (he stands about 103 cm over it). Nothing within the ray = the world's collision has not
+ * streamed in there yet (a 461 m trip: boot win-session-20261104-160647 fell through the world after 3 teleports) or he
+ * is under it. UNKNOWN: the rules off, no ray, no Talion */
+#define PR_GROUND_RAY_CM 4000.0f
+#define PR_GROUND_ON_CM 250.0f
+#define PR_SETTLE_S 2.0 /* the fall rules (SOMVR_WALK_GROUND) wait this long after a trip ends */
+static int pr_trip_ground(const struct pr_me *m, int have)
+{
+	if (!g_pr.ground_on || !have || !pr_ray_ok())
+		return SOMVR_PRGD_UNKNOWN;
+	float from[3] = { m->pos[0], m->pos[1] + 40.0f, m->pos[2] }, hit[3];
+	uintptr_t ho = 0;
+	if (!pr_ray_down(from, PR_GROUND_RAY_CM + 40.0f, m->obj, hit, &ho))
+		return SOMVR_PRGD_NONE;
+	g_pr.ground_y = hit[1];
+	return m->pos[1] - hit[1] <= PR_GROUND_ON_CM ? SOMVR_PRGD_ON : SOMVR_PRGD_OVER;
+}
+
+/* build 37: a trip runs, or one ended under PR_SETTLE_S ago: the world may still be streaming in under Talion - the fall
+ * rules (somvr.c's un_ground_guard, SOMVR_WALK_GROUND) leave him to the trip */
+static int pr_settling(void)
+{
+	if (!g_pr.on)
+		return 0;
+	return g_pr.trip.phase != SOMVR_PRT_IDLE || (g_pr.trip_end_t > 0 && pr_now() - g_pr.trip_end_t < PR_SETTLE_S);
 }
 
 /* ---- SOMVR_PRACTICE_QUIET: the ambient AI spawn manager off while Talion is in the area ------------------------ */
@@ -1139,6 +1185,7 @@ static void pr_trip_begin(int kind, const float target[3], double t, const char 
 {
 	g_pr.trips[kind]++;
 	g_pr.trip_kind = kind, g_pr.trip_first_tp = 1;
+	g_pr.ground_last = SOMVR_PRGD_UNKNOWN, g_pr.ground_said = 0, g_pr.ground_back = 0;
 	somvr_pr_trip_start(&g_pr.trip, pr_tc(), target, t);
 	if (pr_log_ok(t))
 		logf_("PRACTICE t=%.3f %s (%s): the blink to (%.0f %.0f %.0f) starts", t, pr_kind_word(kind, 0), who, target[0],
@@ -1221,11 +1268,27 @@ static void pr_back(double t, const char *who)
 	pr_trip_begin(PR_TRIP_BACK, g_pr.back, t, who);
 }
 
-/* the trip's teleport now (the view black): the trip back first gives the light back (the TOD, the weather) */
-static void pr_teleport(double t)
+/* the trip's teleport now (the view black): the trip back first gives the light back (the TOD, the weather). Build 37:
+ * pin = a teleport while no ground is under him (the world streams in): the same Teleport, not a try, logged sparsely */
+static void pr_teleport(double t, int pin)
 {
 	char cmd[320];
 	size_t o = 0;
+	if (pin) {
+		const float *q = g_pr.trip.target;
+		snprintf(cmd, sizeof cmd, "Teleport %ld %ld %ld", lroundf(q[0]), lroundf(q[1]), lroundf(q[2]));
+		g_pr.ground_pins++;
+		if (g_pr.trip_kind == PR_TRIP_DOWN)
+			g_pr.down_tp = 1;
+		else
+			g_pr.trip_tp = 1;
+		char why[256] = "";
+		int rc = es_run(cmd, why, sizeof why), n = g_pr.trip.pins;
+		if ((rc || n <= 2 || n % 20 == 0) && pr_log_ok(t))
+			logf_("PRACTICE t=%.3f console '%s' (pin %d: no ground under him yet, kept at the target)%s%s", t, cmd, n,
+			      rc ? ": not run: " : "", rc ? why : "");
+		return;
+	}
 	if (g_pr.trip_kind == PR_TRIP_BACK && g_pr.trip_first_tp) {
 		if (g_pr.advanced)
 			o += (size_t)snprintf(cmd + o, sizeof cmd - o, "GameServerShell.AdvanceTimeOfDay; ");
@@ -1247,11 +1310,78 @@ static void pr_teleport(double t)
 	pr_console(cmd, t);
 }
 
+/* build 37 (SOMVR_PRACTICE_GROUND_HOLD=grav): with no ground under Talion his proxy's gravity off (the jump module's
+ * jp_grav, its vtable checked; written again each frame: the game may set it back) - he hangs at the target with no
+ * teleport after the first; pm 0 = give it back now (once). The pins stay as the backstop */
+static int jp_grav(uintptr_t pm, int on); /* somvr_jump_game.c */
+static void pr_grav_hold(uintptr_t pm, double t, const char *why)
+{
+	if (pm) {
+		int v = jp_grav(pm, 0);
+		if (v < 0)
+			return;
+		g_pr.grav_frames++;
+		if (!g_pr.grav_off) {
+			g_pr.grav_off = 1, g_pr.grav_pm = pm, g_pr.grav_t = t, g_pr.grav_holds++;
+			if (pr_log_ok(t))
+				logf_("PRACTICE t=%.3f no ground under Talion: his gravity held off (SOMVR_PRACTICE_GROUND_HOLD=grav; the "
+				      "flag was %d): he hangs at the target while the world streams in", t, v);
+		}
+		return;
+	}
+	if (!g_pr.grav_off)
+		return;
+	g_pr.grav_off = 0;
+	int v = jp_grav(g_pr.grav_pm, 1);
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f his gravity back on after %.2f s (%s; the flag was %d)", t, t - g_pr.grav_t, why, v);
+}
+
 static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 {
-	int held = g_pr.trip.held_busy, ph = g_pr.trip.phase;
+	int held = g_pr.trip.held_busy, ph = g_pr.trip.phase, pins0 = g_pr.trip.pins;
 	double hold_t0 = g_pr.trip.t0;
-	int x = somvr_pr_trip_step_busy(&g_pr.trip, pr_tc(), t, m->pos, have, game_paused(), busy);
+	/* build 37 (SOMVR_PRACTICE_GROUND): the world under him, while he is moved and held in the black */
+	int gnd = ph == SOMVR_PRT_MOVE || ph == SOMVR_PRT_HOLD ? pr_trip_ground(m, have) : SOMVR_PRGD_UNKNOWN;
+	int x = somvr_pr_trip_step_ground(&g_pr.trip, pr_tc(), t, m->pos, have, game_paused(), busy, gnd);
+	if (gnd == SOMVR_PRGD_NONE && !(g_pr.ground_said & 1)) {
+		g_pr.ground_said |= 1, g_pr.ground_waits++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f no ground under Talion %.1f s after the teleport (a ray down %.0f m from his root at "
+			      "%.0f %.0f %.0f: nothing - the world streams in there): the black holds, he is kept at the target, at "
+			      "most %.0f s (SOMVR_PRACTICE_GROUND)", t, t - g_pr.trip.t_first, (double)(PR_GROUND_RAY_CM / 100),
+			      m->pos[0], m->pos[1], m->pos[2], (double)pr_tc()->ground_wait_s);
+	}
+	if (g_pr.trip.ground_t > 0 && (g_pr.ground_said & 3) == 1) {
+		double w = g_pr.trip.ground_t - g_pr.trip.t_first;
+		g_pr.ground_said |= 2;
+		if (w > g_pr.ground_wait_max)
+			g_pr.ground_wait_max = w;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f the ground came under Talion %.2f s after the first teleport (%d pins; the ground at "
+			      "%.1f, the root %.1f: %s)", t, w, g_pr.trip.pins, g_pr.ground_y, m->pos[1],
+			      gnd == SOMVR_PRGD_ON ? "on it" : "over it, landing");
+	}
+	g_pr.ground_last = gnd;
+	/* build 37: while no ground is under him, every 5 s the ground at the target and at the start (the streaming's
+	 * progress: is the place he left still loaded, has anything come at the spot) */
+	if (gnd == SOMVR_PRGD_NONE && g_pr.trip.wait_t > 0 && t >= g_pr.ground_probe_t && pr_log_ok(t)) {
+		float a[3] = { g_pr.trip.target[0], g_pr.trip.target[1] + 3000.0f, g_pr.trip.target[2] }, h[3], b[3];
+		float o[3] = { g_pr.back[0], g_pr.back[1] + 3000.0f, g_pr.back[2] }, hb[3];
+		uintptr_t ho = 0, hob = 0;
+		int ta = pr_ray_down(a, 9000.0f, m->obj, h, &ho), tb = g_pr.have_back && pr_ray_down(o, 9000.0f, m->obj, hb, &hob);
+		memcpy(b, g_pr.back, sizeof b);
+		g_pr.ground_probe_t = t + 5.0;
+		logf_("PRACTICE t=%.3f the wait for the ground, %.0f s in: at the target %s; where he left (%.0f %.0f %.0f) %s; the "
+		      "root %.0f %.0f %.0f", t, t - g_pr.trip.t_first, ta ? "ground" : "nothing (30 m over it to 60 m under)",
+		      b[0], b[1], b[2], !g_pr.have_back ? "-" : tb ? "ground (still loaded)" : "nothing (unloaded)", m->pos[0],
+		      m->pos[1], m->pos[2]);
+	}
+	/* SOMVR_PRACTICE_GROUND_HOLD=grav: held while nothing is under him in the move or the hold (after the step) */
+	int ph1 = g_pr.trip.phase;
+	pr_grav_hold(g_pr.ground_hold && have && m->pm && gnd == SOMVR_PRGD_NONE &&
+			     (ph1 == SOMVR_PRT_MOVE || ph1 == SOMVR_PRT_HOLD) ? m->pm : 0, t,
+		     gnd != SOMVR_PRGD_NONE ? "the ground came" : "the trip moved on");
 	if (g_pr.trip.held_busy && !held && pr_log_ok(t))
 		logf_("PRACTICE t=%.3f the black held past its %.2f s for the game's pause after our ChangeWeather (at most %.1f s "
 		      "after the arrival)", t, (double)pr_tc()->hold_s, (double)pr_tc()->hold_max_s);
@@ -1259,7 +1389,7 @@ static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 		logf_("PRACTICE t=%.3f the black held %.2f s longer (%s): fading in", t, t - hold_t0 - (double)pr_tc()->hold_s,
 		      busy ? "the cap: the game still paused" : "the game's pause over");
 	if (x == SOMVR_PRX_TELEPORT) {
-		pr_teleport(t);
+		pr_teleport(t, g_pr.trip.pins > pins0);
 	} else if (x == SOMVR_PRX_ARRIVED) {
 		g_pr.arrived++;
 		if (pr_log_ok(t))
@@ -1274,14 +1404,30 @@ static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 		}
 	} else if (x == SOMVR_PRX_FAILED) {
 		g_pr.failed++;
+		g_pr.ground_none += g_pr.trip.noground;
+		/* build 37: a trip there whose spot never had ground under it: back where Talion was (that trip waits for its
+		 * ground too), never a fade-in over nothing */
+		int back = g_pr.trip.noground && g_pr.trip_kind == PR_TRIP_GO && g_pr.have_back && !g_pr.ground_back;
 		if (pr_log_ok(t))
-			logf_("WARN PRACTICE t=%.3f the trip %s did not arrive after %d teleports (Talion at %.1f %.1f %.1f, the target "
-			      "%.0f %.0f %.0f): fading in where he is", t, pr_kind_word(g_pr.trip_kind, 1),
-			      g_pr.trip.tries, m->pos[0], m->pos[1], m->pos[2], g_pr.trip.target[0], g_pr.trip.target[1],
-			      g_pr.trip.target[2]);
+			logf_("WARN PRACTICE t=%.3f the trip %s did not arrive after %d teleports%s (Talion at %.1f %.1f %.1f, the "
+			      "target %.0f %.0f %.0f): %s", t, pr_kind_word(g_pr.trip_kind, 1), g_pr.trip.tries,
+			      g_pr.trip.noground ? " and the ground never came under him" : "", m->pos[0], m->pos[1], m->pos[2],
+			      g_pr.trip.target[0], g_pr.trip.target[1], g_pr.trip.target[2],
+			      back ? "back where he was, in the black" : "fading in where he is");
+		if (back) {
+			g_pr.ground_backs++;
+			pr_remove_orc("no ground at the spot", t);
+			pr_quiet_off(t, "no ground at the spot");
+			g_pr.went = 0, g_pr.here = 0, g_pr.light_step = 0, g_pr.light_tp = 0, g_pr.pw_t = 0;
+			pr_trip_begin(PR_TRIP_BACK, g_pr.back, t, "no ground at the practice spot");
+			g_pr.ground_back = 1;
+			return;
+		}
 	} else if (x == SOMVR_PRX_DONE && pr_log_ok(t)) {
 		logf_("PRACTICE t=%.3f the blink %s ended (faded in)", t, pr_kind_word(g_pr.trip_kind, 1));
 	}
+	if (g_pr.trip.phase == SOMVR_PRT_IDLE)
+		g_pr.trip_end_t = t;
 	if (x == SOMVR_PRX_DONE && g_pr.trip_kind == PR_TRIP_BACK)
 		g_pr.have_back = 0; /* back home: nothing to go back to */
 }
@@ -1757,6 +1903,7 @@ static void pr_new_player(uintptr_t pl, double t)
 		logf_("PRACTICE t=%.3f a new player %#llx (was %#llx: a load): our orc, the trip and the area forgotten", t,
 		      (unsigned long long)pl, (unsigned long long)g_pr.pl);
 	g_pr.pl = pl;
+	g_pr.grav_off = 0; /* (build 37: the old PlayerMovement's flag is gone with it) */
 	pr_quiet_off(t, "a new player (a load)");
 	g_pr.orc_h = g_pr.orc_npc = g_pr.orc_c = 0;
 	g_pr_keep.n = 0;
@@ -2065,6 +2212,14 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	g_pr.tcfg_down = g_pr.tcfg, g_pr.tcfg_down.hold_s = 0.2f;
 	g_pr.tcfg_quick = g_pr.tcfg_down, g_pr.tcfg_quick.fade_out_s = 0.12f, g_pr.tcfg_quick.settle_s = 0.1f;
 	g_pr.tcfg_quick.hold_s = 0.0f, g_pr.tcfg_quick.fade_in_s = 0.2f;
+	/* build 37 (som-b37-practrip, re-xr-pipeline.md 27.10): a trip lands only on ground; the climb's blinks to a ledge
+	 * need ground under him, not the stand on it (a narrow top: the ray may pass it) */
+	g_pr.ground_on = env_word("SOMVR_PRACTICE_GROUND", onoff_w, 2, 1);
+	static const char *const hold_w[] = { "pin", "grav" };
+	g_pr.ground_hold = env_word("SOMVR_PRACTICE_GROUND_HOLD", hold_w, 2, 0);
+	g_pr.tcfg_down.need_on = 0, g_pr.tcfg_quick.need_on = 0;
+	g_pr.tcfg.ground_wait_s = env_float("SOMVR_PRACTICE_GROUND_WAIT_S", 5, 2, 600, bad); /* (a trip there or back) */
+	g_pr.ground_last = SOMVR_PRGD_UNKNOWN;
 	/* the sites: ours, the console's, the fallback's reads of the gate */
 	char why[512];
 	uint32_t ok = 0;
@@ -2152,6 +2307,17 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	      "until it ends, at most 5.5 s after the arrival)" : "off (SOMVR_PRACTICE_LOADHOLD=0: logged only)",
 	      (double)g_pr.ahead_cm, (double)g_pr.far_cm, somvr_pr_orc_label(g_pr.def_orc),
 	      somvr_pr_orc_template(g_pr.def_orc), g_pr.ok_spawn ? "on" : "OFF (its sites)", (double)g_pr.auto_s);
+	logf_("CONFIG practice ground=%s hold=%s wait=%.1f s (SOMVR_PRACTICE_GROUND, _HOLD=pin|grav, _WAIT_S; build 37): %s",
+	      g_pr.ground_on ? "on" : "off",
+	      g_pr.ground_hold ? "grav (his gravity off while nothing is under him; the pins the backstop)" : "pin",
+	      (double)g_pr.tcfg.ground_wait_s,
+	      !g_pr.ground_on ? "the trips' rules before build 37 (3 teleports, then the fade-in where Talion is)"
+	      : !g_pr.ok_ray ? "OFF (the ray's site): the rules before build 37"
+	      : "a trip lands only on ground - a ray down 40 m from his root each frame in the black; nothing there (the world "
+		"not streamed in yet: a far Teleport never streams it in) = the black holds and he is kept at the target (no "
+		"try counted), at most SOMVR_PRACTICE_GROUND_WAIT_S, then a trip there goes back where he was; the arrival "
+		"standing on it (the climb's blinks: ground under him); the fall rules (SOMVR_WALK_GROUND) wait during a trip "
+		"and 2 s after it");
 }
 
 /* somvr_fini */
@@ -2180,6 +2346,11 @@ static void pr_end_log(void)
 	      (unsigned long long)g_pr.restores, (unsigned long long)g_pr.pw_dry, (unsigned long long)g_pr.pw_waits,
 	      (unsigned long long)g_pr.pw_pauses, (unsigned long long)g_pr.pw_open, g_pr.pw_after_max, g_pr.pw_len_max,
 	      (unsigned long long)g_pr.pw_none, (unsigned long long)g_pr.suppressed);
+	logf_("PRACTICE END ground (build 37): trips that waited for the ground %llu (the longest %.2f s), pins %llu, never "
+	      "came %llu (back where he was %llu); the hold %s: gravity held off %llu times (%llu frames)%s",
+	      (unsigned long long)g_pr.ground_waits, g_pr.ground_wait_max, (unsigned long long)g_pr.ground_pins,
+	      (unsigned long long)g_pr.ground_none, (unsigned long long)g_pr.ground_backs, g_pr.ground_hold ? "grav" : "pin",
+	      (unsigned long long)g_pr.grav_holds, (unsigned long long)g_pr.grav_frames, g_pr.grav_off ? ", STILL OFF" : "");
 	logf_("PRACTICE END refills: arrows + focus %llu, health %llu, refused %llu (not in the area, no player, a trip); test "
 	      "aids hurt %llu focus %llu; far orcs %llu (noticed Talion %llu); groups %llu (of %d)",
 	      (unsigned long long)g_pr.fill_arrows, (unsigned long long)g_pr.fill_health, (unsigned long long)g_pr.fill_refused,

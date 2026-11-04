@@ -3,8 +3,14 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 34 (Windows) - what to test
-- New since your 11-03 Windows session first, then what you didn't reach. Menu > Controls lists every move.
+Build 37 (Windows) - what to test
+- New: live notes and patches, just below - try them first. Then build 34's list (new since your 11-03 session). Menu > Controls lists every move.
+
+- LIVE NOTES. Press B + Y and say what you see; we get the note about a second after you stop. Keep playing.
+- Our answer comes when things are calm: a buzz, a short spoken line and a dot on your left palm. Palm up (as for the menu) to read it; tap it away.
+- A fix comes as "Patch N ready": Menu > Test tab > Apply patch swaps it in within seconds, no restart, at a calm moment (not mid-fight or mid-climb). Your view should not move at all. Undo patch puts the one before back.
+- Play as usual while a fix is being built in the background; it should feel exactly the same. If you notice any stutter, say 'stutter' in a mark.
+- PRACTICE TRIP: it always lands you on solid ground now. From far away the screen stays black a few seconds and you are back where you were: get closer and try again.
 
 - KILLS. Every kill shows at once: a hard cut or stab kills him on the spot or he visibly starts falling right away - never a collapse later or a walk-off. A hard cut across his neck takes his head off.
 - Hit an orc while he is dying: blood and a hit buzz. Cut an unaware orc's back: he fights you (a stab from behind still kills silently).
@@ -13,7 +19,7 @@ Build 34 (Windows) - what to test
 - FINISHER. When the sword glows, face an orc up close: the world slows and a blue sword outline points into his neck. Lay your sword on it until it snaps, then thrust in and pull out at a firm, steady pace.
 - Wait or turn away: the outline goes and the world speeds up again.
 - NO PROMPTS. No gold Y when an orc winds up, no triangles over orcs, no button prompts at the bottom, no icons over fire pits or herbs (our own glows stay). Mark any you still see.
-- Stealth: crouch behind an unaware orc and stab his back: the game's own stealth kill plays on him - he's pulled onto your blade and dies. Your view and hands stay yours, no screen.
+- Stealth: crouch behind an unaware orc and stab his back hard: he dies silently on your blade. Nothing moves you or your view.
 
 - HITS BY FORCE. Rest or tap the blade on an orc, or flick your wrist at him: nothing. A full arm swing lands; a hard one lands heavy.
 - Block his low lunge at your belly: his blow stalls at your blade for a moment.

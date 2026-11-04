@@ -330,7 +330,7 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
  *   hand L|R head X Y Z [RX RY RZ] [s SEC] the grip and the aim at X right, Y up, Z ahead (cm) of the head (its yaw
  *                                          frame at this line), turned RX, RY, RZ deg about the grip's X, Y, Z (0 0 0 =
  *                                          pointing ahead); moved there in SEC seconds (default 0: at once)
- *   hand L|R touch board|panel|watch U V D [s SEC]  the fingertip (the aim + reach) at the point U, V (0..1, from the
+ *   hand L|R touch board|panel|watch|live U V D [s SEC]  the fingertip (the aim + reach) at the point U, V (0..1, from the
  *                                          top left) of that quad, D cm in front of it (negative: behind), the aim
  *                                          into it; the quad's pose at this line; moved there in SEC seconds
  *   hand L|R aim board|panel|watch U V D [s SEC]    build 20: the aim (the ray's origin, no reach) D cm in front of
@@ -342,7 +342,8 @@ void somvr_tc_update(somvr_tc_state *s, const somvr_tc_cfg *c, const somvr_tc_in
  * '#' and blank lines are skipped. */
 enum { SOMVR_XT_NONE = 0, SOMVR_XT_DUMP, SOMVR_XT_OFF, SOMVR_XT_HEAD, SOMVR_XT_TOUCH, SOMVR_XT_BTN, SOMVR_XT_STICK,
        SOMVR_XT_SIZE, SOMVR_XT_LUMLOG, SOMVR_XT_AIM, SOMVR_XT_SHAKE, SOMVR_XT_POPUPS }; /* (build 20: AIM, SHAKE; 21: POPUPS) */
-enum { SOMVR_XTS_BOARD = 0, SOMVR_XTS_PANEL = 1, SOMVR_XTS_WATCH = 2 };
+enum { SOMVR_XTS_BOARD = 0, SOMVR_XTS_PANEL = 1, SOMVR_XTS_WATCH = 2,
+       SOMVR_XTS_LIVE = 3 /* build 35: SOMVR_LIVE's card on the palm (`touch live U V D`) */ };
 enum { SOMVR_XTB_MENU = 0, SOMVR_XTB_A, SOMVR_XTB_B, SOMVR_XTB_STICK, SOMVR_XTB_TRIGGER, SOMVR_XTB_SQUEEZE };
 typedef struct {
     int op;        /* SOMVR_XT_* */

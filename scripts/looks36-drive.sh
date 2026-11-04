@@ -18,6 +18,11 @@
 #            game's ChangeWeather on the game thread; its reset pause in view), 12 s, then the meadow ahead and back
 # LK_PLACES picks (default all, in that order); LK_PERF_S (20) s of PERF window at the meadow (frame times; meaningful
 # only in a solo slot); BG_RUN=RUN drives a running boot; LK_NOQUIT=1 leaves the game running.
+# b37 looks (som-b37-looks): LK_SKY=DEF forces a weather for every place: the test word `practice weather DEF` at the
+# arrival, again until its `light later` line names LK_SKY_WANT (default SON_Day03, DayNoRain's overcast; at most
+# LK_SKY_TRIES 5); after each later trip the arrival's `light` line is read and the weather forced again if it drifted
+# (the place's views are taken after it). Boot with SOMVR_PRACTICE_SKY=dry (a `clear` trip would undo an overcast).
+# The weather per place in RUN/looks-weather.txt; a place not in LK_SKY_WANT after the tries is marked there (OFF).
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${BG_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
 T0=$(date +%s)
@@ -31,6 +36,7 @@ for i in $(seq 1 120); do
   sleep 5
 done
 [ -n "$R" ] || { echo "no run"; exit 1; }
+bash "$(dirname "$0")/render_need.sh" "$R" looks36-drive.sh || exit 1   # b37: a Windows run at WIN_RENDER=vr (re-xr-pipeline.md 158.5)
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
@@ -72,30 +78,60 @@ mk() {   # mk NAME: a bug mark; LAST = its folder (state.txt there)
 headyaw() { grep -m1 '^head ' "$1/state.txt" | grep -oE 'yaw [-0-9.]+' | head -1 | cut -d' ' -f2; }
 wrap() { python3 -c "import sys; a=float(sys.argv[1]); print(round((a+180)%360-180,1))" "$1"; }
 SIGN=1; CHECKED=0
+# b37 looks: LK_AIM_TOL=DEG - a view whose head yaw is more than DEG off the asked one is aimed again (the test yaw
+# corrected by the miss; Talion's body turns in steps behind the head) and marked again, up to LK_AIM_TRIES (2) times;
+# the sheets take a name's last mark
 view() {   # view NAME TARGET_YAW PITCH (W0 = the place's head yaw at the test yaw 0)
-  local y a off
+  local y a off k
   y=$(wrap "$(python3 -c "print(($2) - ($W0))")")
   [ "$SIGN" = -1 ] && y=$(wrap "$(python3 -c "print(-($y))")")
-  x "head 0 0 0 yaw $y pitch $3 roll 0" 2.5
-  mk "$1" || return
-  a=$(headyaw "$LAST")
-  off=$(wrap "$(python3 -c "print(($a) - ($2))")")
-  if [ $CHECKED = 0 ]; then
-    CHECKED=1
-    if python3 -c "import sys; sys.exit(0 if abs(float('$off')) > 25 else 1)"; then
-      SIGN=-1; echo "$(date +%T) the test yaw's sign is the other way (off $off deg): flipped, again"
-      view "$@"; return
+  for k in $(seq 0 "${LK_AIM_TRIES:-2}"); do
+    x "head 0 0 0 yaw $y pitch $3 roll 0" 2.5
+    mk "$1" || return
+    a=$(headyaw "$LAST")
+    off=$(wrap "$(python3 -c "print(($a) - ($2))")")
+    if [ $CHECKED = 0 ]; then
+      CHECKED=1
+      if python3 -c "import sys; sys.exit(0 if abs(float('$off')) > 25 else 1)"; then
+        SIGN=-1; echo "$(date +%T) the test yaw's sign is the other way (off $off deg): flipped, again"
+        view "$@"; return
+      fi
     fi
-  fi
+    [ -n "${LK_AIM_TOL:-}" ] && [ "$k" -lt "${LK_AIM_TRIES:-2}" ] &&
+      python3 -c "import sys; sys.exit(0 if abs(float('$off')) > float('$LK_AIM_TOL') else 1)" || break
+    echo "$(date +%T) $1: head yaw $a (asked $2, off $off deg): aimed again"
+    y=$(wrap "$(python3 -c "print(($y) - ($SIGN) * ($off))")")
+  done
   echo "$(date +%T) $1: head yaw $a (asked $2, off $off deg)"
 }
+SKYW=${LK_SKY_WANT:-SON_Day03}
+skyline() { grep -E "^PRACTICE t=.* light( now| later \([0-9]+ s\))?: weather '" "$R/somvr.log" 2>/dev/null; }
+sky_of() { sed -nE "s/.* weather '([^']*)'.*/\1/p" | tail -1; }
+sky_force() {   # sky_force WHERE: LK_SKY until the state is SKYW; 0 = there
+  local i j n0 s
+  for i in $(seq 1 "${LK_SKY_TRIES:-5}"); do
+    n0=$(grep -cE '^PRACTICE t=.* light later' "$R/somvr.log")
+    w "practice weather $LK_SKY" 1
+    for j in $(seq 1 50); do [ "$(grep -cE '^PRACTICE t=.* light later' "$R/somvr.log")" -gt "$n0" ] && break; sleep 0.5; done
+    s=$(grep -E '^PRACTICE t=.* light later' "$R/somvr.log" | sky_of)
+    echo "$(date +%T) $1: practice weather $LK_SKY, try $i: '$s'" | tee -a "$R/looks-weather.txt"
+    [ "$s" = "$SKYW" ] && { sleep 3; return 0; }
+  done
+  echo "$(date +%T) $1: OFF - not $SKYW after ${LK_SKY_TRIES:-5} tries" | tee -a "$R/looks-weather.txt"; return 1
+}
 place() {   # place NAME [X Y Z]: there (practice go), the streaming's wait, the reference mark
-  local n=$1; shift
+  local n=$1 l0 s; shift
   if [ $# = 3 ]; then
+    l0=$(skyline | wc -l)
     w "practice go $1 $2 $3" 1
     waitfor "^PRACTICE t=.*(arrived at \\($1|did not arrive)" 40 || waitfor '^PRACTICE t=.*(arrived at|did not arrive)' 5
     grep -E '^(WARN )?PRACTICE t=.*(arrived at|did not arrive)' "$R/somvr.log" | tail -1 | cut -c1-200
     sleep "${LK_SETTLE_S:-14}"
+    if [ -n "${LK_SKY:-}" ]; then
+      s=$(skyline | tail -n +$((l0 + 1)) | sky_of)
+      echo "$(date +%T) $n: the trip's weather '${s:-(no line)}'" | tee -a "$R/looks-weather.txt"
+      [ "$s" = "$SKYW" ] || [ -z "$s" ] || sky_force "$n"
+    fi
   fi
   x "head 0 0 0 yaw 0 pitch 0" 2
   mk "$n-ref" || bail "no reference mark"
@@ -110,6 +146,10 @@ w "front keep 0" 0.3
 w "hands test R 25 -75 0 0 180 0" 0.6; w "hands test L -25 -75 0 0 0 0" 0.6
 [ -n "${LK_WEATHER:-}" ] && { w "perf console GameServerShell.ChangeWeather $LK_WEATHER" 14; }
 grep -E "^PRACTICE t=.* light:|FLATFX t=.*console" "$R/somvr.log" | tail -2 | cut -c1-200
+if [ -n "${LK_SKY:-}" ]; then
+  echo "$(date +%T) arrival: weather '$(skyline | sky_of)'" | tee -a "$R/looks-weather.txt"
+  [ "$(skyline | sky_of)" = "$SKYW" ] || sky_force arrival
+fi
 for p in ${LK_PLACES:-meadow wall ground dry fog}; do
   case $p in
   meadow) place meadow

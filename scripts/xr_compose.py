@@ -157,6 +157,8 @@ def texture(base, n, qd):
         rgb, a = read_pnm(f"{base}.objective{n}.ppm"), read_pnm(f"{base}.objective{n}.alpha.pgm")
     elif w in ("vrmenu panel", "vrmenu card"):
         rgb, a = read_pnm(f"{base}.vrmenu{n}.ppm"), read_pnm(f"{base}.vrmenu{n}.alpha.pgm")
+    elif w in ("live card", "live dot"):  # build 35: SOMVR_LIVE's card on the palm, or its dot (one picture, two rects)
+        rgb, a = read_pnm(f"{base}.live{n}.ppm"), read_pnm(f"{base}.live{n}.alpha.pgm")
     else:
         return None
     if rgb is None or a is None:
@@ -303,7 +305,7 @@ def report(fr, qd, eyes, ppd=0):
             f"{wdeg:5.1f} x {hdeg:5.1f} deg; texture {tw}x{th} = {tppd:5.1f} px/deg (eye image {eye_ppd_mid:4.1f} "
             f"px/deg mid, Quest 2 ~{Q2_PPD:.0f})")
     k = hdeg / th if th else 0
-    if qd["what"] in ("vrmenu panel", "vrmenu card"):
+    if qd["what"] in ("vrmenu panel", "vrmenu card", "live card"):  # (build 35's card: the menu's font, scale 2)
         line += f"\n{'':24}text: a 32-px cell {32 * k:4.2f} deg, ~22-px capitals {22 * k:4.2f} deg = {22 * k * Q2_PPD:4.1f} " \
                 f"Quest 2 px"
     elif qd["what"].startswith("hud") or qd["what"] == "minimap":  # the texture's pixels = the UI's (1080 lines)

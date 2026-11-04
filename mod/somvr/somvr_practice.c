@@ -183,6 +183,8 @@ void somvr_pr_tcfg_default(somvr_pr_tcfg *c)
 {
     c->fade_out_s = 0.25f, c->fade_in_s = 0.35f, c->settle_s = 0.5f, c->hold_s = 1.0f, c->hold_max_s = 5.5f;
     c->arrive_cm = 500, c->fall_cm = 300, c->timeout_s = 3.0f, c->tries = 3;
+    c->ground_wait_s = 5.0f, c->pin_cm = 50.0f, c->need_on = 1; /* (5 s: boot 20261104-171135 - the world never
+                                                                  * streams in after a far Teleport, 150 s held) */
 }
 
 const char *somvr_pr_phase_name(int phase)
@@ -221,6 +223,7 @@ int somvr_pr_at(const float pos[3], const float target[3], float arrive_cm, floa
 }
 
 #define PR_RETRY_MIN_S 0.5 /* a fall below the target asks for the teleport again at most this often */
+#define PR_PIN_MIN_S 0.25  /* build 37: no ground under him - the pin's teleport at most this often */
 
 int somvr_pr_trip_step(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, const float pos[3], int have, int paused)
 {
@@ -230,14 +233,26 @@ int somvr_pr_trip_step(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, cons
 int somvr_pr_trip_step_busy(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, const float pos[3], int have, int paused,
                             int busy)
 {
+    return somvr_pr_trip_step_ground(tr, c, t, pos, have, paused, busy, SOMVR_PRGD_UNKNOWN);
+}
+
+int somvr_pr_trip_step_ground(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, const float pos[3], int have, int paused,
+                              int busy, int ground)
+{
+    /* build 37: not known (or not read now) = the rules before; NONE = the world's collision not here (yet) */
+    int world = !have || ground != SOMVR_PRGD_NONE;
+    int on = !have || ground == SOMVR_PRGD_UNKNOWN || ground == SOMVR_PRGD_ON || (!c->need_on && ground == SOMVR_PRGD_OVER);
     switch (tr->phase) {
     case SOMVR_PRT_OUT:
         if (t - tr->t0 < c->fade_out_s || paused)
             return SOMVR_PRX_NONE;
-        tr->phase = SOMVR_PRT_MOVE, tr->t0 = tr->t_tp = t, tr->tries = 1, tr->settle_t = -1;
+        tr->phase = SOMVR_PRT_MOVE, tr->t0 = tr->t_tp = tr->t_first = t, tr->tries = 1, tr->settle_t = -1;
         return SOMVR_PRX_TELEPORT;
     case SOMVR_PRT_MOVE: {
-        if (have && somvr_pr_at(pos, tr->target, c->arrive_cm, c->fall_cm)) {
+        if (have && world && on && somvr_pr_at(pos, tr->target, c->arrive_cm, c->fall_cm)) {
+            if (tr->wait_t > 0 && tr->ground_t <= 0)
+                tr->ground_t = t;
+            tr->wait_t = 0;
             if (tr->settle_t < 0)
                 tr->settle_t = t;
             if (t - tr->settle_t < c->settle_s)
@@ -246,6 +261,21 @@ int somvr_pr_trip_step_busy(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t,
             return SOMVR_PRX_ARRIVED;
         }
         tr->settle_t = -1;
+        if (!world) { /* build 37: the world streams in under him: hold the black, keep him at the target */
+            if (tr->wait_t <= 0)
+                tr->wait_t = t;
+            if (t - tr->t_first >= c->ground_wait_s) {
+                tr->phase = SOMVR_PRT_IN, tr->t0 = t, tr->fade_from = 1, tr->failed = 1, tr->noground = 1;
+                return SOMVR_PRX_FAILED;
+            }
+            if (paused || pos[1] >= tr->target[1] - c->pin_cm || t - tr->t_tp < PR_PIN_MIN_S)
+                return SOMVR_PRX_NONE;
+            tr->pins++, tr->t_tp = t;
+            return SOMVR_PRX_TELEPORT;
+        }
+        if (tr->wait_t > 0 && tr->ground_t <= 0)
+            tr->ground_t = t;
+        tr->wait_t = 0;
         float dx = have ? pos[0] - tr->target[0] : 0, dz = have ? pos[2] - tr->target[2] : 0;
         int fell = have && sqrtf(dx * dx + dz * dz) <= c->arrive_cm && pos[1] < tr->target[1] - c->fall_cm &&
                    t - tr->t_tp >= PR_RETRY_MIN_S;
@@ -255,12 +285,23 @@ int somvr_pr_trip_step_busy(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t,
             tr->tries++, tr->t_tp = t;
             return SOMVR_PRX_TELEPORT;
         }
+        if (have && c->need_on && ground == SOMVR_PRGD_OVER && t - tr->t_first < c->ground_wait_s)
+            return SOMVR_PRX_NONE; /* build 37: over the ground, not on it yet: the black until he lands */
         tr->phase = SOMVR_PRT_IN, tr->t0 = t, tr->fade_from = 1, tr->failed = 1;
         return SOMVR_PRX_FAILED;
     }
     case SOMVR_PRT_HOLD:
+        if (have && !world && t - tr->t_first < c->ground_wait_s) { /* build 37: the ground went from under him in the
+                                                                       * black: kept at the target, no fade-in yet */
+            if (paused || pos[1] >= tr->target[1] - c->pin_cm || t - tr->t_tp < PR_PIN_MIN_S)
+                return SOMVR_PRX_NONE;
+            tr->pins++, tr->t_tp = t;
+            return SOMVR_PRX_TELEPORT;
+        }
         if (t - tr->t0 < c->hold_s)
             return SOMVR_PRX_NONE;
+        if (have && !on && t - tr->t_first < c->ground_wait_s)
+            return SOMVR_PRX_NONE; /* build 37: the fade-in only with him on the ground */
         if (busy && t - tr->t0 < (c->hold_max_s > c->hold_s ? c->hold_max_s : c->hold_s)) {
             tr->held_busy = 1;
             return SOMVR_PRX_NONE;

@@ -83,6 +83,55 @@ G release quinn all > /dev/null
 mkdir "$T/somvr-slots-solo.lock"; echo "coordinator final 21:07:00" > "$T/somvr-slots-solo.lock/owner"; touch -d '3 hours ago' "$T/somvr-slots-solo.lock/owner"
 ok "another owner's solo request is never removed as stale" '! G take ruth auto 2>/dev/null && [ -d "$T/somvr-slots-solo.lock" ]'
 rm -rf "${T:?}"/somvr-*.lock
+# b37 (som-b37-slotsvram, docs 158.5): the render mode and take's VRAM gate on a fake card (GAME_SLOT_CARD: its
+# mem_info_* files; a lock's test_mem = its game's "resident_vram total_vram resident_gtt total_gtt" MiB; none = starting)
+mkdir -p "$T/card"; echo $((16368 * 1048576)) > "$T/card/mem_info_vram_total"
+card() { echo $(($1 * 1048576)) > "$T/card/mem_info_vram_used"; echo $(($2 * 1048576)) > "$T/card/mem_info_gtt_used"; }
+export GAME_SLOT_CARD=$T/card
+card 15000 1500
+ok "vram: a game alone always runs, even on a full card; slot 2's mode light" \
+  '[ "$(G take va auto 2>/dev/null)" = 2 ] && [ "$(cat "$T/somvr-slot2.lock/render")" = light ]'
+card 3000 1500
+ok "vram: a light boot beside a starting light one (its 2816 reserved) fits" '[ "$(G take vb auto 2>/dev/null)" = 3 ]'
+card 4000 1500
+ok "vram: vr in slot 1 beside two starting light boots: refused, said why" \
+  '! G take vc auto 2> "$T/vc.err" && grep -q "VRAM: slot 1 at vr needs 6656 + 1024 MiB; free 6736 " "$T/vc.err"'
+echo "2700 2800 200 200" > "$T/somvr-slot2.lock/test_mem"; echo "2700 2800 200 200" > "$T/somvr-slot3.lock/test_mem"; card 8400 2000
+ok "vram: ... fits once both are in the world (their memory counted once); slot 1's mode vr" \
+  '[ "$(G take vc auto 2> "$T/vc.err")" = 1 ] && [ "$(cat "$T/somvr-boot.lock/render")" = vr ] && grep -q "slot 1 at vr fits" "$T/vc.err"'
+G release vc 1 > /dev/null; card 8400 8000
+ok "vram: a spill in progress (GTT far above its idle level) refuses" \
+  '! G take vd 1 2> "$T/vd.err" && grep -q "a spill in progress - GTT 8000 MiB" "$T/vd.err"'
+card 8400 4000
+ok "vram: the spilled GTT counts as VRAM wanted: vr refused, light fits" \
+  '! G take vd 1 2>/dev/null && [ "$(WIN_RENDER=light G take vd 1 2>/dev/null)" = 1 ] && [ "$(cat "$T/somvr-boot.lock/render")" = light ]'
+G release vd 1 > /dev/null; card 8400 1500; rm -f "$T/somvr-slot3.lock/test_mem"
+ok "vram: a vr boot waits for room with a line saying why" \
+  '! WIN_RENDER=vr G take ve 1 3 2> "$T/ve.err" && grep -q "ve waits - VRAM: slot 1 at vr needs" "$T/ve.err"'
+ok "vram: WIN_RENDER=bad refused" '! WIN_RENDER=ultra G take vf auto 2>/dev/null'
+G release va all > /dev/null; G release vb all > /dev/null; card 1500 1500
+ok "vram: WIN_RENDER=vr takes slot 1 first" '[ "$(WIN_RENDER=vr G take vg auto 2>/dev/null)" = 1 ] && [ "$(cat "$T/somvr-boot.lock/render")" = vr ]'
+ok "vram: ... and then another slot when vr fits (beside the starting vr: 16368-1500-6656 >= 7680)" \
+  '[ "$(WIN_RENDER=vr G take vh auto 2>/dev/null)" = 2 ] && [ "$(cat "$T/somvr-slot2.lock/render")" = vr ]'
+ok "vram: a third vr does not fit beside two starting vr boots" '! WIN_RENDER=vr G take vi auto 2>/dev/null'
+ok "vram: status shows each slot's mode and what a new boot gets" \
+  'G status | grep -q "slot 2: vr (needs 6656); its game: not running" && G status | grep -q "a light boot in slot 3 now: NO - slot 3 at light needs"'
+G release vg all > /dev/null; G release vh all > /dev/null; card 16000 1500
+ok "vram: solo is not gated (it holds every slot)" '[ "$(G take vj solo 2>/dev/null)" = solo ]'
+G release vj all > /dev/null; unset GAME_SLOT_CARD
+# b37: render_need.sh - the looks/perf drivers' check of their run's mode
+RN() { bash "$HERE/render_need.sh" "$@" > "$T/rn.out" 2>&1; }
+mkdir -p "$T/rl" "$T/rw" "$T/rv" "$T/ro"; echo "boot_check.sh --mod X" > "$T/rl/launch-cmd.txt"
+for r in rw rv ro; do echo "# headless_win.sh 1 (the Windows build; MOD /m; slot 2; render light)" > "$T/$r/launch-cmd.txt"; : > "$T/$r/cmd"; done
+echo "light (slot 2's default) X,TextureQuality:1" > "$T/rw/render.mode"; echo "vr (WIN_RENDER) X" > "$T/rv/render.mode"
+echo "[1] render.cfg: the PC's detection with the VR preset X (put back after the run)" > "$T/ro/summary.txt"
+ok "render_need: a Linux run passes" 'RN "$T/rl" x'
+ok "render_need: a vr run passes" 'RN "$T/rv" x'
+ok "render_need: an older harness's VR-preset run passes" 'RN "$T/ro" x'
+ok "render_need: a light run fails, says why, asks the run to quit" \
+  '! RN "$T/rw" looks36 && grep -q "FAIL render: looks36 judges" "$T/rn.out" && [ "$(cat "$T/rw/cmd")" = quit ]'
+ok "render_need: RENDER_ANY=1 lets a light run through" 'RENDER_ANY=1 RN "$T/rw" x'
+rm -rf "${T:?}"/somvr-*.lock
 ok "the real locks untouched" '[ "$(G lock 1)" != /tmp/somvr-boot.lock ]'
 echo "game_slot_test: $P passed, $F failed"
 [ $F = 0 ]

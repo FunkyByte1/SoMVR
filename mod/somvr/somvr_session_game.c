@@ -15,7 +15,7 @@
  * Logs: `SESSION config ...`, `SESSION ui ...`, `MARK #N (why) -> DIR ...`, `MARK #N: the eyes ...`, `MARK chord ...`,
  * `QUIT ...`, `SESSION END ...`. */
 
-__attribute__((visibility("default"), used)) somvr_session_shared g_ssn __asm__(SOMVR_SESSION_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_session_shared, g_ssn, SOMVR_SESSION_SYMBOL);
 
 static struct {
 	int mark, quit;                    /* the switches as they run */

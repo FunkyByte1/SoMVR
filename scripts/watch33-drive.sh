@@ -16,6 +16,7 @@ for i in $(seq 1 120); do
   [ -n "$R" ] && break; sleep 5
 done
 [ -n "$R" ] || { echo "no run"; exit 1; }
+bash "$(dirname "$0")/render_need.sh" "$R" watch33-drive.sh || exit 1   # b37: a Windows run at WIN_RENDER=vr (re-xr-pipeline.md 158.5)
 echo "run $R"
 userin() { [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
            grep -q '"user": true' /run/user/$(id -u)/vr-session/status.json 2>/dev/null && return 0; return 1; }

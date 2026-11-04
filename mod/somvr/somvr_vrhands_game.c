@@ -23,7 +23,7 @@
  *                     hands stay (unhidden by the world).
  * Lines: `CONFIG vrhands ...`, `VRHANDS ...` (the layer's state changes, a summary every 10 s), `VRHANDS END ...`. */
 
-__attribute__((visibility("default"), used)) somvr_vrhands_shared g_vho __asm__(SOMVR_VRHANDS_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_vrhands_shared, g_vho, SOMVR_VRHANDS_SYMBOL);
 static struct {
 	int want, on;
 	/* phase 2 -> H4 */
@@ -48,7 +48,7 @@ static struct {
 #define RT_DEPTH 0x200 /* the eye target's depth-stencil wrapper (FUN_0074df10: FUN_0074ecb0's pooled texture, flag 1) */
 #define BIND_SR 0x8u   /* D3D11_BIND_SHADER_RESOURCE */
 #define BIND_DS 0x40u  /* D3D11_BIND_DEPTH_STENCIL */
-static struct {
+struct vd_state { /* Windows: the host's persistent area (as g_et: docs/re-xr-pipeline.md 156) */
 	int want, state;          /* SOMVR_XR_HANDS_DEPTH: 1 world; state 0 not made, 1 made, -1 off for this run */
 	void *tex[2];             /* ours (IdxD3D11Texture2D) */
 	d3d_tex_desc desc;        /* the depth surface's, as made */
@@ -59,7 +59,9 @@ static struct {
 	float last_k;             /* the last frame's (logs) */
 	uint64_t copies, skipped, makes, nok, mismatch;
 	uint32_t mis_w, mis_h;    /* the last depth size that did not match the eye image (logged once) */
-} g_vd;
+};
+static struct vd_state g_vd_own, *g_vd_p = &g_vd_own;
+#define g_vd (*g_vd_p)
 
 __attribute__((format(printf, 1, 2))) static void vd_off(const char *fmt, ...)
 {

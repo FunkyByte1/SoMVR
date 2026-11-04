@@ -39,6 +39,9 @@ echo "win/build.sh --check exit $wrc: $(tail -1 "$B/win-check.txt")"
 DLL=$B/ShadowOfMordor/mod/somvr/build/win/xinput9_1_0.dll
 SO=$B/ShadowOfMordor/mod/somvr/vklayer/build/libVkLayer_somvr_openxr.so
 [ -f "$DLL" ] && [ -f "$SO" ] || { echo "STOP: no DLL or layer after the builds (see check.txt, win-check.txt)"; exit 1; }
+LDLL=$(dirname "$DLL")/somvr_logic.dll # a split build (docs/re-xr-pipeline.md 156): the host and its logic module
+[ -f "$B/ShadowOfMordor/mod/somvr/win/somvr_win_host.c" ] && [ ! -f "$LDLL" ] &&
+  { echo "STOP: a split build without its somvr_logic.dll (see win-check.txt)"; exit 1; }
 if cp -a --reflink=always "$PROTON_FILES" "$B/proton" 2> "$B/proton-copy.err"; then
   cp "$(dirname "$PROTON_FILES")/version" "$B/proton.version" 2>/dev/null
   echo "Proton frozen: $(cat "$B/proton.version" 2>/dev/null) (reflink copy of $PROTON_FILES)"
@@ -50,6 +53,7 @@ fi
 { cat "$B/HEAD.txt"
   echo "build.sh --check exit $rc; win/build.sh --check exit $wrc"
   echo "dll $(sha256sum < "$DLL" | cut -c1-64)"
+  [ -f "$LDLL" ] && echo "logic $(sha256sum < "$LDLL" | cut -c1-64)"
   echo "layer $(sha256sum < "$SO" | cut -c1-64)"
   echo "env $(sha256sum < "$B/headset.env" | cut -c1-64) ($(grep -cE '^SOMVR_' "$B/headset.env") switches, from $ENVF)"
   echo "proton $(cat "$B/proton.version" 2>/dev/null || echo "Steam's, not frozen")"

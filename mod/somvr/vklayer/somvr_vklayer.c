@@ -1645,6 +1645,13 @@ static void ob_setup(void);   /* build 15: the objective marker (./somvr_objecti
 static void ob_destroy(void);
 __attribute__((format(printf, 1, 2))) static void ob_off(const char *fmt, ...);
 static void ob_dump(uint64_t frame); /* ... a dumped frame's marker picture (mn_dump_layers) */
+/* build 35 (re-xr-pipeline.md 162): SOMVR_LIVE's card on the palm, the Test page's patch box (somvr_live_layer.c) */
+static void lv_setup(void);
+static void lv_destroy(void);
+static int lv_click(int item);
+static int lv_kind(void);
+static void lv_dump(uint64_t frame);
+static int lv_card_pose(somvr_posef *pose, float size[2]); /* (the test hands' `touch live`) */
 static void ob_mark(void); /* build 31b: ... a mark's (copied for MK's writer) */
 static void env_setup(void);  /* SoM loading env: the sky behind mono frames (its region follows comfort's) */
 static void vd_start(void);   /* never a void (./somvr_void_layer.c): the present gaps, the watcher */
@@ -1711,6 +1718,7 @@ static void xr_teardown_session(void) {
     cf_destroy(); /* comfort: the alpha texture's swapchain and its VIEW space (ours alone): before the session */
     th_destroy(); /* the threat cues: their texture's swapchain and VIEW space (ours alone): before the session */
     ob_destroy(); /* build 15: the objective marker's swapchain, staging buffer and VIEW space: before the session */
+    lv_destroy(); /* build 35: the live card's swapchain and staging buffer: before the session */
     env_destroy(); /* SoM loading env: the sky's and the kept frame's swapchains (ours alone): before the session */
     vm_destroy(); /* the VR menu: the panel's swapchain, staging buffer, command buffer, fence: before the session */
     vh_destroy(); /* build 10: our hands' swapchain, drawing, command buffers, fences: before the session */
@@ -1921,6 +1929,7 @@ static int xr_session_setup(dev_st *ds, q_st *qi) {
     fade_setup(); /* the comfort fade: an active somvr_shared */
     ss_setup();   /* SOMVR_MARK / SOMVR_QUIT: the preload's somvr_session (before the menu: its buttons) */
     vh_setup();   /* build 10: our own VR hands (SOMVR_VRHANDS=1), the watch's and the panel's places (before the menu) */
+    lv_setup();   /* build 35: SOMVR_LIVE (before the menu: the Test page's text laid out above the patch box) */
     vm_setup();   /* the VR menu: the preload's somvr_vrmenu (SOMVR_VRMENU=1; before comfort, which follows it) */
     cf_setup();   /* comfort: the preload's somvr_comfort (SOMVR_VIGNETTE, SOMVR_SNAP_BLINK_MS) */
     th_setup();   /* the threat cues: the preload's somvr_threat (SOMVR_THREAT=1) */
@@ -5303,6 +5312,7 @@ static const char *vm_test_what(void) {
 /* a click on the hovered part (the pointing hand's trigger press): the value changes (published: gen + 1), the
  * Recentre button (the game side recentres), the close box */
 static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
+    if (lv_click(hit->item)) return; /* build 35: the Test page's Apply patch / Undo patch (SOMVR_LIVE) */
     somvr_settings before = VM.set;
     int r = somvr_vm_apply(&VM.set, avail, VM.obj->blink_on_ms, hit->item, hit->part);
     const char *what = "nothing";
@@ -5386,6 +5396,7 @@ static void vm_click(const somvr_vm_hit *hit, uint64_t avail) {
 }
 
 #include "somvr_menus_layer.c" /* build 6: the menu boards, the wrist minimap, the arrival card, touch */
+#include "somvr_live_layer.c" /* build 35: SOMVR_LIVE - the card on the palm, the patch box (re-xr-pipeline.md 162) */
 #include "somvr_vrhands_layer.c" /* build 10: our own VR hands, the watch on the wrist, the panel off the palm */
 #include "somvr_refresh_layer.c" /* build 27: SOMVR_XR_REFRESH, the headset's refresh rate for the session */
 #include "somvr_perf_layer.c" /* build 27: SOMVR_XR_PERF, the frame's GPU time, the game's and ours (before the keep-alive's submit hook) */
@@ -5481,6 +5492,7 @@ static void vm_frame(dev_st *ds) {
     somvr_posef panel;
     int have = 0;
     uint64_t held0 = VM.gs.held_off, waits0 = VM.gs.soft_waits;
+    int lv_hold = lv_pre(&gi); /* build 35: a live card waits at a calm moment - the palm shows it, not the menu */
     int ev = somvr_vm_gesture(&VM.gs, &VM.gc, &gi, &panel, &have);
     if (VM.gs.soft_waits != waits0 && VM.gs.soft_waits <= 50) /* build 31: the sword hand's swing only delays it */
         lg("xr: vrmenu: the palm gesture waits for the sword hand's swing (%llu so far; it opens 0.3 s after the swing)",
@@ -5619,6 +5631,7 @@ static void vm_frame(dev_st *ds) {
         v.test = &VM.test, v.test_page = VM.test_page; /* build 21: the Test page */
         v.ctl_feat = VM.obj->ctl_feat;                  /* build 34: the Controls lines without an avail bit */
         v.ctl_page = VM.ctl_page;                      /* build 27: the Controls page's page */
+        v.live_gen = somvr_vm_live_get()->gen;         /* build 35: the Test page's patch box */
         if ((!VM.released || memcmp(&v, &VM.drawn, sizeof v)) && vm_upload(ds, &v)) return; /* off now (logged) */
         float dotp[3]; /* the ray's end and the dot: the pointer's point, or (build 20) the lock's on the locked part */
         memcpy(dotp, o.hit, sizeof dotp);
@@ -5662,6 +5675,7 @@ static void vm_frame(dev_st *ds) {
         }
     }
     VM.nq = nq;
+    consume |= lv_post(ds, &gi, lv_hold, main); /* build 35: the live card or its dot (VM.q[0] when the menu shows none) */
     atomic_store_explicit(&m->consume, consume, memory_order_release);
     atomic_store_explicit(&m->open, VM.gs.open || card ? 1u : 0u, memory_order_release); /* (the card: its trigger) */
 }

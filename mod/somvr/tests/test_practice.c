@@ -368,10 +368,166 @@ static void test_group(void)
     CHECK(fabsf(o[0] - 500.f) < 0.01f && fabsf(o[2]) < 0.01f, "no heading: +Z; +90 deg = +X (%.1f %.1f)", o[0], o[2]);
 }
 
+/* build 37 (som-b37-practrip, SOMVR_PRACTICE_GROUND): the trip with the world's collision streaming in under the target.
+ * A 90 Hz world: gravity 2000 cm/s^2 (win-session-20261104-160647: 331 cm in 0.55 s from rest), the ground at gy from
+ * ground_t on (NaN: never; gone between gone0 and gone1), Talion's root 103 cm over it when he stands; the ray's view
+ * as pr_trip_ground: nothing under root + 40 = NONE, the root within 250 cm over it = ON, else OVER. rules = 0: the
+ * rules before build 37 (somvr_pr_trip_step_busy, the ground not passed) */
+struct gsim {
+    double ground_t, gone0, gone1;
+    float gy, v, low;      /* low: the lowest root while the ground was there and he was under its top (a fall through) */
+    int tp, pins, arrived, done, failed, fade_in_air, below_ground;
+    double arrived_t, done_t, failed_t;
+    float pos_at_fade[3];
+};
+static int gs_present(const struct gsim *g, double t)
+{
+    return !isnan(g->ground_t) && t >= g->ground_t && !(t >= g->gone0 && t < g->gone1);
+}
+static int gs_ray(const struct gsim *g, double t, const float pos[3])
+{
+    if (!gs_present(g, t) || pos[1] + 40.0f < g->gy)
+        return SOMVR_PRGD_NONE;
+    return pos[1] - g->gy <= 250.0f ? SOMVR_PRGD_ON : SOMVR_PRGD_OVER;
+}
+static double gs_run(struct gsim *g, somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, float pos[3], int rules, int n)
+{
+    const double dt = 1.0 / 90;
+    int ph0 = tr->phase;
+    for (int i = 0; i < n && tr->phase != SOMVR_PRT_IDLE; i++, t += dt) {
+        /* the game's physics this frame */
+        if (gs_present(g, t) && pos[1] >= g->gy + 103.0f - 1.0f && pos[1] - g->v * (float)dt <= g->gy + 103.0f) {
+            pos[1] = g->gy + 103.0f, g->v = 0; /* lands / stands */
+        } else if (gs_present(g, t) && pos[1] < g->gy + 103.0f - 1.0f && pos[1] + 40.0f >= g->gy) {
+            pos[1] = g->gy + 103.0f, g->v = 0; /* a capsule partly in the ground: pushed up on it */
+        } else {
+            g->v += 2000.0f * (float)dt, pos[1] -= g->v * (float)dt;
+        }
+        if (gs_present(g, t) && pos[1] + 40.0f < g->gy)
+            g->below_ground = 1;
+        int gnd = gs_ray(g, t, pos);
+        int x = rules ? somvr_pr_trip_step_ground(tr, c, t, pos, 1, 0, 0, gnd) : somvr_pr_trip_step_busy(tr, c, t, pos, 1, 0, 0);
+        if (x == SOMVR_PRX_TELEPORT) {
+            g->tp++;
+            CHECK(somvr_pr_trip_fade(tr, c, t) == 1.0f, "ground: a teleport at full black (%g)", somvr_pr_trip_fade(tr, c, t));
+            memcpy(pos, tr->target, 3 * sizeof *pos), g->v = 0;
+        }
+        if (ph0 != SOMVR_PRT_IN && tr->phase == SOMVR_PRT_IN) { /* the fade-in starts: where is he? */
+            memcpy(g->pos_at_fade, pos, sizeof g->pos_at_fade);
+            g->fade_in_air = gs_ray(g, t, pos) != SOMVR_PRGD_ON;
+        }
+        ph0 = tr->phase;
+        if (x == SOMVR_PRX_ARRIVED)
+            g->arrived++, g->arrived_t = t;
+        if (x == SOMVR_PRX_DONE)
+            g->done++, g->done_t = t;
+        if (x == SOMVR_PRX_FAILED)
+            g->failed++, g->failed_t = t;
+    }
+    return t;
+}
+
+static void test_trip_ground(void)
+{
+    static const float spot[3] = { 32500, 2100, -24800 }, start[3] = { -3501, 2712, 4001 };
+    const float gy = 1775.0f; /* the meadow's ground: the root stands at 1878 (every arrival there in the logs) */
+    somvr_pr_tcfg c;
+    somvr_pr_tcfg_default(&c);
+    CHECK(c.ground_wait_s == 5.0f && c.pin_cm == 50.0f && c.need_on == 1, "ground: the defaults");
+    somvr_pr_trip tr;
+    float pos[3];
+    struct gsim g;
+    /* 1. the bug (win-session-20261104-160647): the ground streams in 4 s after the first teleport. The rules before
+     * build 37: three teleports in ~1.2 s, the give-up, the fade-in with no ground under him - and through the world */
+    memset(&g, 0, sizeof g), g.ground_t = 10.25 + 4.0, g.gone0 = g.gone1 = 1e9, g.gy = gy;
+    memcpy(pos, start, sizeof pos);
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, spot, 10.0);
+    gs_run(&g, &tr, &c, 10.0, pos, 0, 3000);
+    CHECK(g.failed + g.arrived == 1 && g.fade_in_air && pos[1] < gy - 1000.0f,
+          "ground 1 (the rules before): failed %d / arrived %d in the air after %d teleports, faded in over nothing %d, the "
+          "root %.0f", g.failed, g.arrived, g.tp, g.fade_in_air, pos[1]);
+    /* ... build 37: the black holds, pins keep him at the target, the arrival on the ground after it came */
+    memset(&g, 0, sizeof g), g.ground_t = 10.25 + 4.0, g.gone0 = g.gone1 = 1e9, g.gy = gy;
+    memcpy(pos, start, sizeof pos);
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, spot, 10.0);
+    gs_run(&g, &tr, &c, 10.0, pos, 1, 3000);
+    CHECK(!g.failed && g.arrived == 1 && g.done == 1 && !g.fade_in_air && !g.below_ground && tr.tries == 1 && tr.pins >= 8 &&
+              g.arrived_t >= g.ground_t + c.settle_s && g.arrived_t < g.ground_t + 1.5 && NEAR(pos[1], gy + 103.0f, 1.0) &&
+              tr.ground_t >= g.ground_t && tr.ground_t < g.ground_t + 0.1,
+          "ground 1 (build 37): failed %d arrived %d (+%.2f s after the ground) done %d, faded in on the ground %d, under "
+          "it %d, tries %d pins %d, the root %.1f, the ground seen at +%.2f",
+          g.failed, g.arrived, g.arrived_t - g.ground_t, g.done, !g.fade_in_air, g.below_ground, tr.tries, tr.pins, pos[1],
+          tr.ground_t - g.ground_t);
+    /* 2. the ground there at once (the trips from 38 m: every arrival in the logs): one teleport, no pin, as quick */
+    memset(&g, 0, sizeof g), g.ground_t = 0, g.gone0 = g.gone1 = 1e9, g.gy = gy;
+    memcpy(pos, start, sizeof pos);
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, spot, 20.0);
+    double t = gs_run(&g, &tr, &c, 20.0, pos, 1, 3000);
+    CHECK(g.arrived == 1 && g.done == 1 && !g.failed && g.tp == 1 && !tr.pins && !g.fade_in_air && t - 20.0 < 0.25 + 1.2 + 1.0 + 0.35 + 0.1,
+          "ground 2: arrived %d done %d, %d teleports, %d pins, %.2f s", g.arrived, g.done, g.tp, tr.pins, t - 20.0);
+    /* 3. the ground never comes: the black for ground_wait_s, then FAILED with noground (the game side goes back) */
+    memset(&g, 0, sizeof g), g.ground_t = NAN, g.gone0 = g.gone1 = 1e9, g.gy = gy;
+    memcpy(pos, start, sizeof pos);
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, spot, 30.0);
+    gs_run(&g, &tr, &c, 30.0, pos, 1, 90 * 40);
+    CHECK(g.failed == 1 && tr.noground && !g.arrived && NEAR(g.failed_t - 30.25, c.ground_wait_s, 0.05) && tr.tries == 1 &&
+              tr.pins > 10 && g.pos_at_fade[1] > spot[1] - 100.0f,
+          "ground 3: failed %d noground %d at +%.2f s, tries %d pins %d, the root %.0f at the give-up (kept near the "
+          "target)", g.failed, tr.noground, g.failed_t - 30.25, tr.tries, tr.pins, g.pos_at_fade[1]);
+    /* 4. the ground goes in the hold (after the arrival): no fade-in until it is back, he is kept at the target */
+    memset(&g, 0, sizeof g), g.ground_t = 0, g.gone0 = 40.25 + 1.5, g.gone1 = 40.25 + 4.5, g.gy = gy;
+    memcpy(pos, start, sizeof pos);
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, spot, 40.0);
+    gs_run(&g, &tr, &c, 40.0, pos, 1, 3000);
+    CHECK(g.arrived == 1 && g.done == 1 && !g.failed && !g.fade_in_air && !g.below_ground && tr.pins >= 4 &&
+              g.done_t > g.gone1 && NEAR(pos[1], gy + 103.0f, 1.0),
+          "ground 4: arrived %d done %d at +%.2f s (the ground back at +%.2f), pins %d, in the air at the fade %d",
+          g.arrived, g.done, g.done_t - 40.0, g.gone1 - 40.0, tr.pins, g.fade_in_air);
+    /* 5. a target 10 m over the ground (a mid-air place): he lands, the tries run out on the ground, the fade-in there */
+    static const float high[3] = { 32500, 2100 + 1000, -24800 };
+    memset(&g, 0, sizeof g), g.ground_t = 0, g.gone0 = g.gone1 = 1e9, g.gy = gy;
+    memcpy(pos, start, sizeof pos);
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, high, 50.0);
+    t = gs_run(&g, &tr, &c, 50.0, pos, 1, 90 * 40);
+    CHECK(g.failed == 1 && !tr.noground && g.tp == 3 && !g.fade_in_air && tr.phase == SOMVR_PRT_IDLE && t - 50.0 < 12.0,
+          "ground 5: failed %d noground %d, %d teleports, in the air at the fade %d, %.2f s", g.failed, tr.noground, g.tp,
+          g.fade_in_air, t - 50.0);
+    /* 6. the climb's blinks (need_on 0): ground under him is enough (OVER: a ledge the centre's ray passes) */
+    somvr_pr_tcfg q = c;
+    q.need_on = 0, q.settle_s = 0.1f, q.hold_s = 0;
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &q, spot, 60.0);
+    pos[0] = spot[0], pos[1] = spot[1], pos[2] = spot[2];
+    CHECK(somvr_pr_trip_step_ground(&tr, &q, 60.3, pos, 1, 0, 0, SOMVR_PRGD_UNKNOWN) == SOMVR_PRX_TELEPORT &&
+              somvr_pr_trip_step_ground(&tr, &q, 60.31, pos, 1, 0, 0, SOMVR_PRGD_OVER) == SOMVR_PRX_NONE &&
+              somvr_pr_trip_step_ground(&tr, &q, 60.42, pos, 1, 0, 0, SOMVR_PRGD_OVER) == SOMVR_PRX_ARRIVED,
+          "ground 6: the climb's blink arrives over ground");
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, spot, 70.0);
+    CHECK(somvr_pr_trip_step_ground(&tr, &c, 70.3, pos, 1, 0, 0, SOMVR_PRGD_UNKNOWN) == SOMVR_PRX_TELEPORT &&
+              somvr_pr_trip_step_ground(&tr, &c, 70.31, pos, 1, 0, 0, SOMVR_PRGD_OVER) == SOMVR_PRX_NONE &&
+              somvr_pr_trip_step_ground(&tr, &c, 70.9, pos, 1, 0, 0, SOMVR_PRGD_OVER) == SOMVR_PRX_NONE &&
+              tr.phase == SOMVR_PRT_MOVE,
+          "ground 6: a trip there does not arrive in the air over ground (phase %d)", tr.phase);
+    /* 7. no position (have 0) while no ground: nothing (no pin from an unknown height) */
+    memset(&tr, 0, sizeof tr);
+    somvr_pr_trip_start(&tr, &c, spot, 80.0);
+    CHECK(somvr_pr_trip_step_ground(&tr, &c, 80.3, pos, 1, 0, 0, SOMVR_PRGD_UNKNOWN) == SOMVR_PRX_TELEPORT &&
+              somvr_pr_trip_step_ground(&tr, &c, 80.9, pos, 0, 0, 0, SOMVR_PRGD_UNKNOWN) == SOMVR_PRX_NONE && !tr.pins,
+          "ground 7: no position, no pin");
+}
+
 int main(void)
 {
     test_words();
     test_trip();
+    test_trip_ground();
     test_clear();
     test_spawn();
     test_group();

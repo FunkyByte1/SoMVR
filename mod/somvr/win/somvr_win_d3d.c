@@ -12,7 +12,12 @@
  * somvr_shared.eyes.expect_w/h announce them (the layer remembers VkImages of that size), the back buffer is copied
  * into both every Present, their VkImages are published in somvr_shared.eyes (as H8 does) - the layer's log must
  * name the same handles (VkImages reach the layer unwrapped) - and a thread asks the PE locate stand-ins as the game
- * thread would (somvr_views_locate every 11 ms, the grips through somvr_input's pointer): WIN XRLOC lines. */
+ * thread would (somvr_views_locate every 11 ms, the grips through somvr_input's pointer): WIN XRLOC lines.
+ *
+ * The host's (docs/re-xr-pipeline.md 156): these objects are met once per run, so the host keeps them and tells each
+ * logic module (somvr_logic_com: the COM rows; somvr_logic_present: the first Present's work) - the boot's as they are
+ * met, a reloaded one at its swap (d3d_replay). */
+#define SOMVR_HOST 1
 #define COBJMACROS
 #include <initguid.h>
 #include <windows.h>
@@ -27,15 +32,17 @@
 #include "../somvr_views.h"
 #include "../somvr_xrloc.h"
 #include "somvr_win.h"
+#include "somvr_win_hostint.h"
 #include "somvr_fogdxbc.h" /* winport-render: the fog by the distance, in DXBC */
 #include "somvr_grassdxbc.h" /* build 33 (som-b33-grass): the scatter grass for VR, in DXBC (re-xr-pipeline.md 148) */
 #include "somvr_bubbledxbc.h" /* build 36 (som-b36-bubble): no foliage / bugs in the face, in DXBC (re-xr-pipeline.md 166) */
 
-extern somvr_shared g_sh_obj __asm__(SOMVR_SHARED_SYMBOL);
-extern somvr_input_shared g_in_obj __asm__(SOMVR_INPUT_SYMBOL);
-extern somvr_xrloc g_xrloc_obj __asm__(SOMVR_XRLOC_SYMBOL);
-void somvr_core_win_com(void); /* somvr.c (winport-core): H8's vtables from the D3D_* COM rows */
-void somvr_win_late_h9(void); /* somvr.c: H9 on the filled IDXGISwapChain row */
+extern somvr_shared g_sh;   /* somvr_win_bridge.c: the objects the layer reads */
+extern somvr_input_shared g_in;
+extern somvr_xrloc g_xrloc;
+#define g_sh_obj g_sh
+#define g_in_obj g_in
+#define g_xrloc_obj g_xrloc
 
 /* DXVK's interop interface (dxgi_interfaces.h): IUnknown, GetDevice, GetVulkanImageInfo */
 static const GUID IID_VkInteropSurface = { 0x5546cf8c, 0x77e7, 0x4341, { 0xb0, 0x5d, 0x8d, 0x4d, 0x50, 0x00, 0xe7, 0x7d } };
@@ -90,7 +97,12 @@ static struct {
 	ID3D11Texture2D *eye[2];
 	VkImage eye_img[2];
 	int eye_state; /* 0 = not yet, 1 = made, -1 = failed */
+	/* for a reloaded logic module: the vtables met (the COM rows' interfaces) and whether the first Present ran */
+	void **vt[4];
+	int presented;
+	double swap_max; /* the longest frame interval since d3d_present_stats */
 } D;
+static const char *const g_iface[4] = { "ID3D11Device", "ID3D11DeviceContext", "IDXGISwapChain", "ID3D11Texture2D" };
 
 /* a module's IAT entry of dll!fn (by name), NULL if not imported */
 void **somvr_win_iat_slot(uintptr_t base, const char *dll, const char *fn)
@@ -127,14 +139,27 @@ int somvr_win_put_ptr(void **at, void *v)
 
 static void fill_rows(const char *iface, void **vtbl)
 {
-	int n, done = 0, tried = 0;
-	const struct somvr_win_com *r = somvr_win_com_rows(&n);
-	for (int i = 0; i < n; i++)
-		if (!strcmp(r[i].iface, iface)) {
-			tried++;
-			done += somvr_win_com_fill(r[i].name, vtbl) == 0;
-		}
-	somvr_win_log("COM %s vtable %p: %d of %d rows filled", iface, (void *)vtbl, done, tried);
+	for (int i = 0; i < 4; i++)
+		if (!strcmp(g_iface[i], iface))
+			D.vt[i] = vtbl;
+	if (host_live)
+		host_live->com(iface, vtbl); /* the logic's COM rows (somvr_win_sites.c); it logs the COM line */
+}
+
+/* a reloaded module (somvr_win_host.c, before its swap): the vtables met so far, then the first Present's work */
+void d3d_replay(const struct host_logic *L)
+{
+	for (int i = 0; i < 4; i++)
+		if (D.vt[i])
+			L->com(g_iface[i], D.vt[i]);
+	if (D.presented)
+		L->present();
+}
+
+void d3d_present_stats(double *max_ms, uint64_t *n)
+{
+	*max_ms = D.swap_max, *n = D.n;
+	D.swap_max = 0;
 }
 
 static VkImage vk_image_of(ID3D11Texture2D *t, VkImageLayout *lay, VkImageCreateInfo *ci)
@@ -155,8 +180,8 @@ static void xl_note_image(uint64_t img, VkImageLayout lay);
 
 /* winport-stereo: the VkImage behind a D3D11 texture of the mod's own (the eye textures H8 copies into, SOMVR_HUD's
  * HUD texture, the hands' depth) for the layer - somvr.c's tex_vkimage on Windows; 0 = none (not DXVK) */
-uint64_t somvr_win_tex_vkimage(const void *tex);
-uint64_t somvr_win_tex_vkimage(const void *tex)
+SOMVR_HOST_API uint64_t somvr_win_tex_vkimage(const void *tex);
+SOMVR_HOST_API uint64_t somvr_win_tex_vkimage(const void *tex)
 {
 	VkImageLayout lay = 0;
 	VkImageCreateInfo ci;
@@ -225,6 +250,8 @@ static void pacing(void)
 		D.hist[b]++, D.sum += ms, D.n_win++;
 		if (ms > D.max)
 			D.max = ms;
+		if (ms > D.swap_max)
+			D.swap_max = ms;
 	} else {
 		D.t_log = t;
 	}
@@ -252,8 +279,9 @@ static HRESULT STDMETHODCALLTYPE my_present(IDXGISwapChain *sc, UINT sync, UINT 
 			somvr_win_log("INTEROP the back buffer: VkImage %#llx %ux%u vkformat %d layout %d (%s)",
 				      (unsigned long long)img, ci.extent.width, ci.extent.height, ci.format, lay,
 				      img ? "IDXGIVkInteropSurface::GetVulkanImageInfo" : "no DXVK interop: not DXVK?");
-			somvr_core_win_com();
-			somvr_win_late_h9();
+			D.presented = 1;
+			if (host_live)
+				host_live->present(); /* somvr.c: somvr_core_win_com (H8's vtables), somvr_win_late_h9 */
 			ID3D11Texture2D_Release(bb);
 		}
 	}

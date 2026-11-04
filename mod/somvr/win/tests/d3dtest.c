@@ -98,6 +98,17 @@ done:
 __declspec(dllexport) __declspec(noinline) int d3dtest_f1(int a, int b) { return a * 10 + b; }
 __declspec(dllexport) __declspec(noinline) int d3dtest_f2(int a, int b) { return a * 10 + b; }
 static int (*volatile f1p)(int, int) = d3dtest_f1, (*volatile f2p)(int, int) = d3dtest_f2;
+/* the reload test (SOMVR_WIN_TEST_RELOAD, docs/re-xr-pipeline.md 156): the LOGIC module hooks these - f3's entry,
+ * f4's call of g (its rel32), the table's slot (f5), a mid detour on f6 - and the host swaps it N times */
+__declspec(dllexport) __declspec(noinline) int d3dtest_g(int a, int b) { return a * 10 + b; }
+__declspec(dllexport) __declspec(noinline) int d3dtest_f3(int a, int b) { return a * 10 + b; }
+__declspec(dllexport) __declspec(noinline) int d3dtest_f4(int a, int b) { return d3dtest_g(a, b) + 0 * a; }
+__declspec(dllexport) __declspec(noinline) int d3dtest_f5(int a, int b) { return a * 10 + b; }
+__declspec(dllexport) __declspec(noinline) int d3dtest_f6(int a, int b) { return a * 10 + b; }
+__declspec(dllexport) int (*const d3dtest_tab[2])(int, int) = { d3dtest_f5, d3dtest_f5 };
+static int (*volatile f3p)(int, int) = d3dtest_f3, (*volatile f4p)(int, int) = d3dtest_f4,
+	   (*volatile f6p)(int, int) = d3dtest_f6;
+static int (*const *volatile tabp)(int, int) = d3dtest_tab;
 
 static int run_vrinit(void)
 {
@@ -134,6 +145,9 @@ int main(int argc, char **argv)
 	DWORD xr = XInputGetState(0, &st);
 	printf("d3dtest: XInputGetState(0) = %lu\n", xr);
 	printf("d3dtest: hooks f1(1,2) = %d (hooked 1012, plain 12), f2(3,4) = %d (hooked 84, plain 34)\n", f1p(1, 2), f2p(3, 4));
+	if (getenv("SOMVR_WIN_TEST_RELOAD"))
+		printf("d3dtest: reload hooks f3(1,2) = %d (entry), f4(1,2) = %d (call), tab(1,2) = %d (slot), f6(3,4) = %d (mid)\n",
+		       f3p(1, 2), f4p(1, 2), tabp[0](1, 2), f6p(3, 4));
 	if (argc >= 3 && !strcmp(argv[1], "d3d"))
 		return run_d3d(atof(argv[2]), argc >= 5 ? atoi(argv[3]) : 1280, argc >= 5 ? atoi(argv[4]) : 720);
 	return xr == ERROR_SUCCESS || xr == ERROR_DEVICE_NOT_CONNECTED ? 0 : 1;

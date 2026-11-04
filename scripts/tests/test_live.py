@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""test_live.py - the live loop's scripts offline (docs/re-xr-pipeline.md 162): a session folder of our own, no game,
+no microphone, no sound out (the note is made by espeak-ng into a WAV FILE - never played).
+
+  python3 -I scripts/tests/test_live.py        (about 25 s; the speech-to-text worker on one core, base.en)
+
+  1. live_session.sh start: the folder, the daemon, DIR/on, the lane's line in live.log, build.txt (fingerprint)
+  2. a mark with a recorded note (voice.wav, then voice.txt as voice_rec.py leaves it): inbox/1.json within 5 s of
+     the note's end with the words said; live_wait.sh started before it wakes on it
+  3. a mark without a voice: inbox/2.json after the 3 s grace, no transcript
+  4. live_say.sh: say/1.txt; live_status.sh: on, 2 notes, 1 message
+  5. live_patch.sh stage: refused without the logic ABI / without the checks; a tree whose layer changed -> restart;
+     the same tree -> live; ready = the newest; list
+  5b. b37 (162.8), the spoken answer with stand-ins for pactl and paplay (nothing reaches a sound device): a card's
+     line (say/say-1.line, as the layer writes it) synthesised by Kokoro in the lane, NOT played before its calm
+     moment; say/say-1.calm -> played on the test's sink at the game's stream volume, the game ducked and put back;
+     a quiet message never synthesised; a sink not listed and the default (wivrn.sink, not in the list) never played
+  6. live_session.sh stop: the daemon ends, DIR/on gone, live_wait.sh says the session is off (exit 3)
+  b37 (lane2, 163.7): the lane job names live-stt / live-tts / live-build (and, with the lane's lane.conf in the tree,
+  the speech workers in its LANE_VR_GUARDED and the build in its LANE_VR_JOBS); the two models loaded one at a time
+  (the speech-to-text's ready before Kokoro's load starts), each load's time logged, 1 thread each
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MOD = os.path.join(os.path.dirname(HERE), "mod", "somvr")
+fails = checks = 0
+
+
+def check(c, msg):
+    global fails, checks
+    checks += 1
+    if not c:
+        fails += 1
+    print(("ok   " if c else "FAIL ") + msg)
+
+
+def run(*a, env=None, timeout=60):
+    return subprocess.run(list(a), capture_output=True, text=True, env=env, timeout=timeout)
+
+
+def main():
+    if not shutil.which("espeak-ng"):
+        print("SKIP: no espeak-ng (the note is made with it)")
+        return 0
+    tmp = tempfile.mkdtemp(prefix="live-test-")
+    env = dict(os.environ, LIVE_ROOT=os.path.join(tmp, "live"))
+    run_dir = os.path.join(tmp, "run-test")
+    os.makedirs(os.path.join(run_dir, "marks"))
+    os.makedirs(env["LIVE_ROOT"])
+    sess = os.path.join(HERE, "live_session.sh")
+    # b37: the spoken answer's stand-ins (the daemon plays through them: nothing reaches a sound device)
+    fb = os.path.join(tmp, "bin")
+    os.makedirs(fb)
+    calls = os.path.join(tmp, "calls.log")
+    with open(os.path.join(fb, "pactl"), "w") as f:
+        f.write(f"""#!/bin/sh
+echo "pactl $*" >> {calls}
+case "$*" in
+  "-f json list short sinks") echo '[{{"index":7,"name":"somvr_live_test_null"}}]' ;;
+  "-f json list sink-inputs") echo '[{{"index":31,"sink":7,"volume":{{"front-left":{{"value_percent":"80%"}}}},"properties":{{"application.name":"ShadowOfMordor.exe"}}}},{{"index":32,"sink":7,"volume":{{}},"properties":{{"application.name":"other"}}}}]' ;;
+esac
+""")
+    with open(os.path.join(fb, "paplay"), "w") as f:
+        f.write(f"#!/bin/sh\necho \"paplay $*\" >> {calls}\n")
+    for b in ("pactl", "paplay"):
+        os.chmod(os.path.join(fb, b), 0o755)
+    env.update(SOMVR_LIVE_TTS="on", LIVE_TTS_BIN=fb, LIVE_TTS_SINK="somvr_live_test_null")
+    d = run(sess, "dir", run_dir, env=env).stdout.strip()
+    check(os.path.isdir(os.path.join(d, "inbox")) and os.path.isdir(os.path.join(d, "patches")), f"dir makes {d}")
+    pid = int(run(sess, "start", run_dir, str(os.getpid()), MOD, env=env).stdout.strip())
+    check(os.path.exists(os.path.join(d, "on")), f"start: the daemon {pid}, DIR/on")
+    bt = open(os.path.join(d, "build.txt")).read()
+    check("layer=" in bt and "host=" in bt, "build.txt: the layer's and the host's hashes")
+    # wait for the worker's model
+    t0 = time.time()
+    while time.time() - t0 < 30:
+        try:
+            if json.load(open(os.path.join(d, "daemon.json"))).get("stt") == "ready":
+                break
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.2)
+    check(json.load(open(os.path.join(d, "daemon.json"))).get("stt") == "ready", f"the worker ready in {time.time() - t0:.1f} s")
+    log = open(os.path.join(d, "live.log")).read()
+    check("the lane:" in log, "live.log names the lane")
+    # b37: the lane job names, and the lane's rules for them when its conf is in this tree
+    names = [run(os.path.join(HERE, "live_lane.sh"), "name", k).stdout.strip() for k in ("stt", "tts", "build")]
+    check(names == ["live-stt", "live-tts", "live-build"], f"the lane job names: {names}")
+    conf = os.path.join(HERE, "lane", "lane.conf")
+    if os.path.exists(conf):
+        import fnmatch
+        kv = {}
+        for ln in open(conf):
+            k, _, v = ln.strip().partition("=")
+            if k.startswith("LANE_") and v:
+                kv[k] = v.strip('"')
+        guarded, free = kv.get("LANE_VR_GUARDED", "").split(), kv.get("LANE_VR_JOBS", "").split()
+        check("live-stt" in guarded and "live-tts" in guarded and any(fnmatch.fnmatch("live-build", p) for p in free),
+              f"lane.conf: the speech workers guarded in VR ({guarded}), the build free ({free})")
+    else:
+        print("skip the lane.conf names (no scripts/lane/lane.conf in this tree: the stub lane)")
+    # b37: one model load at a time - the TTS model's starts only after the STT's is ready; both timed, 1 thread
+    t0 = time.time()
+    while time.time() - t0 < 60:
+        try:
+            if json.load(open(os.path.join(d, "daemon.json"))).get("tts") == "ready":
+                break
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.2)
+    log = open(os.path.join(d, "live.log")).read()
+    i_stt, i_go, i_tts = log.find("stt: ready"), log.find("tts: its model loads now"), log.find("tts: ready")
+    check(0 <= i_stt < i_go < i_tts and "the load took" in log[i_stt:i_go] and "the load took" in log[i_tts:]
+          and "(1 thread)" in log[i_stt:i_go] and log.count("worker started in the lane") == 2
+          and all("threads 1)" in ln for ln in log.splitlines() if "worker started in the lane" in ln),
+          f"the loads one at a time: stt ready -> tts starts -> tts ready, each timed, 1 thread "
+          f"({[ln[20:110] for ln in log.splitlines() if 'the load took' in ln]})")
+    # 2. a mark with a recorded note
+    waiter = subprocess.Popen([os.path.join(HERE, "live_wait.sh"), "--timeout", "40"], stdout=subprocess.PIPE, text=True,
+                              env=dict(env, LIVE_DIR=d))
+    m1 = os.path.join(run_dir, "marks", "120000_1")
+    os.makedirs(m1)
+    with open(os.path.join(m1, "state.txt"), "w") as f:
+        f.write("bug mark #1 (the chord B + Y) 2026-11-03 12:00:00\nsomvr built test, pid 1, t=1234.500\n"
+                "context world (ifs=3); stereo on\n\n---- the VR menu's settings now\nTURN=smooth\n")
+    open(os.path.join(m1, "served"), "w").write("1\n")
+    said = "The climbing feels much better now but the sword gets stuck in the wall."
+    r = run("espeak-ng", "-v", "en-us", "-s", "150", "-w", os.path.join(m1, "voice.wav"), said)
+    check(r.returncode == 0 and os.path.getsize(os.path.join(m1, "voice.wav")) > 10000, "espeak-ng made the note (a file)")
+    open(os.path.join(m1, "voice.txt"), "w").write("4.2 s from test (talk 0.1 .. 4.0 s; ended: 2 s quiet)\n")
+    t_end = time.time()
+    p1 = os.path.join(d, "inbox", "1.json")
+    while time.time() - t_end < 15 and not os.path.exists(p1):
+        time.sleep(0.05)
+    lat = time.time() - t_end
+    check(os.path.exists(p1) and lat < 5, f"inbox/1.json {lat:.2f} s after the note ended (< 5)")
+    j = json.load(open(p1)) if os.path.exists(p1) else {}
+    words = [w for w in ("climbing", "sword", "wall") if w in (j.get("transcript") or "").lower()]
+    check(len(words) == 3, f"the words said: {j.get('transcript')!r} (stt {j.get('stt_s')} s)")
+    check(j.get("game_t") == 1234.5 and j.get("state", [""])[0].startswith("bug mark #1") and len(j.get("state", [])) == 3,
+          f"game time {j.get('game_t')}, state's head lines {len(j.get('state', []))}")
+    try:
+        out = waiter.communicate(timeout=10)[0]
+    except subprocess.TimeoutExpired:
+        waiter.kill()
+        out = ""
+    check(waiter.returncode == 0 and out.startswith("note 1 - mark 120000_1") and "said: " in out,
+          f"live_wait woke: {out.splitlines()[0] if out else '(nothing)'}")
+    # 3. a mark without a voice
+    m2 = os.path.join(run_dir, "marks", "120100_2")
+    os.makedirs(m2)
+    open(os.path.join(m2, "state.txt"), "w").write("bug mark #2\nsomvr built test, pid 1, t=1300.0\n")
+    open(os.path.join(m2, "served"), "w").write("1\n")
+    open(os.path.join(m2, "voice.txt"), "w").write("no voice: no WiVRn microphone source\n")
+    t2 = time.time()
+    p2 = os.path.join(d, "inbox", "2.json")
+    while time.time() - t2 < 10 and not os.path.exists(p2):
+        time.sleep(0.1)
+    j2 = json.load(open(p2)) if os.path.exists(p2) else {}
+    check(os.path.exists(p2) and 2.5 < time.time() - t2 < 6 and not j2.get("transcript") and "no voice" in j2.get("why", ""),
+          f"no voice: inbox/2.json after the grace, why {j2.get('why')!r}")
+    # 4. say, status
+    r = run(os.path.join(HERE, "live_say.sh"), "Fixed the sword sticking in walls - try a slash at the rock.",
+            env=dict(env, LIVE_DIR=d))
+    check(r.returncode == 0 and os.path.exists(os.path.join(d, "say", "1.txt")), f"say: {r.stdout.strip()[:80]}")
+    r = run(os.path.join(HERE, "live_status.sh"), "--json", env=dict(env, LIVE_DIR=d))
+    st = json.loads(r.stdout) if r.returncode == 0 else {}
+    check(st.get("on") and st.get("notes") == 2 and st.get("messages") == 1, f"status: on {st.get('on')}, notes "
+          f"{st.get('notes')}, messages {st.get('messages')}, lane {st.get('lane', '')[:40]}")
+    # 5. patches
+    lp = os.path.join(HERE, "live_patch.sh")
+    host_dll = os.path.join(MOD, "build", "win", "xinput9_1_0.dll")
+    if os.path.exists(host_dll):
+        r = run(lp, "stage", host_dll, "x", "y", "--dir", d)
+        check(r.returncode == 2 and "somvr_logic_abi" in r.stderr, "stage refuses a DLL without the logic ABI export")
+        r = run(lp, "stage", host_dll, "x", "y", "--dir", d, "--allow-no-abi")
+        check(r.returncode == 2 and "build checks" in r.stderr, "stage refuses a DLL without the passing checks")
+        # a tree whose layer changed: a copy of the layer's sources with one file edited
+        tree = os.path.join(tmp, "tree")
+        shutil.copytree(MOD, tree, ignore=shutil.ignore_patterns("build", "*.o", "*.obj"))
+        os.makedirs(os.path.join(tree, "build", "win"))
+        shutil.copy2(host_dll, os.path.join(tree, "build", "win", "somvr_logic.dll"))
+        r = run(lp, "stage", os.path.join(tree, "build", "win", "somvr_logic.dll"), "the same code", "anything", "--dir",
+                d, "--allow-no-abi", "--force-unchecked")
+        p = open(os.path.join(d, "patches", "1", "patch.txt")).read() if r.returncode == 0 else ""
+        check(r.returncode == 0 and "kind=live" in p and "checked=NO" in p, f"the same tree: patch 1 live ({r.stdout.strip()[:60]})")
+        with open(os.path.join(tree, "somvr_vrmenu.c"), "a") as f:
+            f.write("\n/* a layer change */\n")
+        r = run(lp, "stage", os.path.join(tree, "build", "win", "somvr_logic.dll"), "a menu change", "the menu", "--dir",
+                d, "--allow-no-abi", "--force-unchecked")
+        p = open(os.path.join(d, "patches", "2", "patch.txt")).read() if r.returncode == 0 else ""
+        check("kind=restart" in p and "somvr_vrmenu.c" in p, "a layer source changed: patch 2 restart, the file named")
+        check(open(os.path.join(d, "patches", "ready")).read().strip() == "2", "ready = 2 (the newest)")
+        r = run(lp, "list", "--dir", d)
+        check("patch 1 [live" in r.stdout and "patch 2 [restart" in r.stdout and "staged patch 2" in r.stdout,
+              "list: both, the log")
+    else:
+        print("SKIP the patch checks: no build/win/xinput9_1_0.dll (win/build.sh first)")
+    # 5b. b37: the spoken answer, end to end through the daemon (Kokoro for real, pactl / paplay stand-ins)
+    sd = os.path.join(d, "say")
+    line = "Got it: the climb's wall-top hang. Working on it - try the tower again in a few minutes."
+    with open(os.path.join(sd, "say-1.line"), "w") as f:
+        f.write(line + "\n")
+    t5 = time.time()
+    wav = os.path.join(sd, "say-1.wav")
+    while time.time() - t5 < 90 and not os.path.exists(wav):
+        time.sleep(0.2)
+    secs = 0.0
+    if os.path.exists(wav):
+        import wave
+        with wave.open(wav) as wv:
+            secs = wv.getnframes() / wv.getframerate()
+    check(secs > 2.0, f"tts: say-1.line -> say-1.wav by Kokoro in the lane ({secs:.1f} s of speech, "
+                      f"{time.time() - t5:.1f} s after the line, the model's load included)")
+    time.sleep(1.0)
+    c = open(calls).read() if os.path.exists(calls) else ""
+    check("paplay" not in c and not os.path.exists(os.path.join(sd, "say-1.spoken")),
+          "tts: not played before the card's calm moment")
+    with open(os.path.join(sd, "say-1.calm"), "w") as f:
+        f.write("now\n")
+    t6 = time.time()
+    while time.time() - t6 < 15 and not os.path.exists(os.path.join(sd, "say-1.spoken")):
+        time.sleep(0.1)
+    c = open(calls).read() if os.path.exists(calls) else ""
+    order = [ln for ln in c.splitlines() if "set-sink-input-volume" in ln or ln.startswith("paplay")]
+    check(order == ["pactl set-sink-input-volume 31 40%", "paplay --device=somvr_live_test_null --volume=52428 "
+                    "--client-name=SoM VR live " + wav, "pactl set-sink-input-volume 31 80%"],
+          f"tts: at say-1.calm ({time.time() - t6:.1f} s): the game's stream ducked (80 -> 40 %), the line on the test "
+          f"sink at the game's 80 %, put back: {order}")
+    sp = open(os.path.join(sd, "say-1.spoken")).read() if os.path.exists(os.path.join(sd, "say-1.spoken")) else ""
+    check("spoken: on somvr_live_test_null at 80 %" in sp, f"tts: say-1.spoken: {sp.strip()[:90]}")
+    with open(os.path.join(sd, "2.quiet"), "w") as f:
+        f.write("1\n")
+    with open(os.path.join(sd, "say-2.line"), "w") as f:
+        f.write("not to be said\n")
+    time.sleep(1.5)
+    check(not os.path.exists(os.path.join(sd, "say-2.wav")) and "say-2: quiet" in open(os.path.join(d, "live.log")).read(),
+          "tts: a quiet message is never synthesised")
+    open(calls, "w").close()
+    r = run(sys.executable, "-I", os.path.join(HERE, "live_tts.py"), "--wav", wav, "--out", os.path.join(tmp, "x.spoken"),
+            "--sink", "somvr_gone", env=dict(env, LIVE_TTS_SINK=""))
+    check(r.returncode == 1 and "paplay" not in open(calls).read() and "not listed" in
+          open(os.path.join(tmp, "x.spoken")).read(), "tts: a sink not listed - never played")
+    r = run(sys.executable, "-I", os.path.join(HERE, "live_tts.py"), "--wav", wav, "--out", os.path.join(tmp, "y.spoken"),
+            env=dict(env, LIVE_TTS_SINK=""))
+    check(r.returncode == 1 and "paplay" not in open(calls).read() and "wivrn.sink is not listed" in
+          open(os.path.join(tmp, "y.spoken")).read(), "tts: the default is wivrn.sink by its exact name - not there, never "
+                                                      "played (no other sink tried)")
+    dj = json.load(open(os.path.join(d, "daemon.json")))
+    check(dj.get("tts") == "ready" and dj.get("spoken") == 1, f"daemon.json: tts {dj.get('tts')}, {dj.get('spoken')} spoken")
+    # 6. stop
+    r = run(sess, "stop", run_dir, env=env)
+    alive = os.path.exists(f"/proc/{pid}")
+    check(not alive and not os.path.exists(os.path.join(d, "on")), "stop: the daemon ended, DIR/on gone")
+    r = run(os.path.join(HERE, "live_wait.sh"), "--dir", d)
+    check(r.returncode == 3 and "not on" in r.stdout, f"live_wait after the end: exit {r.returncode}")
+    dj = json.load(open(os.path.join(d, "daemon.json")))
+    check(dj.get("alive") is False and dj.get("notes") == 2, "daemon.json: not alive, 2 notes")
+    shutil.rmtree(tmp)
+    print(f"test_live: {checks} checks, {fails} failed")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

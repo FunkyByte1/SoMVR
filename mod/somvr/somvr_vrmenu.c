@@ -387,13 +387,25 @@ static const char *const g_labels[SOMVR_VMI_ALL] = {"Turn",     "Snap angle", "T
                                                     /* build 34: the Settings tab's groups */
                                                     "Comfort", "Display", "Climbing", "Sword", "Fight", "Bow",
                                                     /* build 36: the practice page's last button */
-                                                    "Charge execution"};
+                                                    "Charge execution",
+                                                    /* build 35: the Test page's patch box (SOMVR_LIVE) */
+                                                    "Apply patch", "Undo patch"};
 const char *somvr_vm_label(int item) { return item >= 0 && item < SOMVR_VMI_ALL ? g_labels[item] : ""; }
 static const char *const g_orc_labels[6] = {"Infantry", "Shield", "Berserker", /* = somvr_pr_orc_label */
                                             "Caragor", "Ghul", "Graug"}; /* build 22: the beasts */
 
+/* build 35 (re-xr-pipeline.md 162): the Test page's patch box, the layer's (off: the page as before) */
+static somvr_vm_live g_vml;
+void somvr_vm_live_set(const somvr_vm_live *l) {
+    if (l) g_vml = *l;
+    else memset(&g_vml, 0, sizeof g_vml);
+}
+const somvr_vm_live *somvr_vm_live_get(void) { return &g_vml; }
+
 int somvr_vm_enabled(const somvr_settings *s, uint64_t avail, int item) {
     switch (item) {
+    case SOMVR_VMI_LIVE_APPLY: return g_vml.on && g_vml.can_apply;
+    case SOMVR_VMI_LIVE_UNDO: return g_vml.on && g_vml.can_undo;
     case SOMVR_VMI_SNAP: return s->turn == 0;
     case SOMVR_VMI_SPEED: return s->turn == 1;
     case SOMVR_VMI_VIGNETTE:
@@ -966,7 +978,8 @@ int somvr_vm_text_parse(somvr_vm_text *t, const char *text, size_t len) {
     }
     /* the pages: the title on each; the rest from under it to above the Prev / Next row, an item kept whole on a page
      * when it fits one */
-    int top = SOMVR_VM_TEST_Y0 + t->n_title * 34 + 8, bottom = SOMVR_VM_TEST_NAV_Y - 8, page = 0, y = top;
+    int top = SOMVR_VM_TEST_Y0 + t->n_title * 34 + 8, page = 0, y = top;
+    int bottom = g_vml.on ? SOMVR_VM_LIVE_Y - 14 : SOMVR_VM_TEST_NAV_Y - 8; /* build 35: above the patch box */
     for (int k = 0; k < t->n_title; k++) t->page[k] = 0, t->y[k] = (int16_t)(SOMVR_VM_TEST_Y0 + 34 * k);
     for (int k = t->n_title; k < t->n;) {
         int g = k + 1;
@@ -1350,6 +1363,11 @@ static int row_h(int n) { return n <= ROW_FIT ? ROW_H : ROW_FIT * ROW_H / n; }
 
 int somvr_vm_rect(int item, int part, int rc[4]) { return somvr_vm_rect_av(0, item, part, rc); }
 int somvr_vm_rect_av(uint64_t avail, int item, int part, int rc[4]) {
+    if (item == SOMVR_VMI_LIVE_APPLY || item == SOMVR_VMI_LIVE_UNDO) { /* build 35: the patch box's (on the Test page) */
+        if (!g_vml.on || part != SOMVR_VMP_BUTTON) return 0;
+        rc[0] = item == SOMVR_VMI_LIVE_APPLY ? 16 : 264, rc[1] = SOMVR_VM_LIVE_BTN_Y, rc[2] = 232, rc[3] = 56;
+        return 1;
+    }
     rc[0] = rc[1] = rc[2] = rc[3] = 0;
     if (item == SOMVR_VMI_PG_FIGHT || item == SOMVR_VMI_PG_BACK) return 0; /* build 34: the groups' buttons instead */
     if (item >= SOMVR_VMI_SUB_COMFORT && item <= SOMVR_VMI_SUB_BOW) { /* build 34: two rows of three */
@@ -1433,7 +1451,7 @@ static const int g_page_buttons[5][17] = { /* (build 36: 17 - the practice page'
     {-1},
     /* build 21: the Test page = the tabs, its Prev / Next (the X: none with SOMVR_VMA_TESTPAGE - its rect is 0) */
     {SOMVR_VMI_TAB, SOMVR_VMI_TAB_SET, SOMVR_VMI_TAB_CTL, SOMVR_VMI_TAB_TEST, SOMVR_VMI_TEST_PREV, SOMVR_VMI_TEST_NEXT,
-     -1}};
+     SOMVR_VMI_LIVE_APPLY, SOMVR_VMI_LIVE_UNDO /* build 35: a rect only with the patch box */, -1}};
 static const int *page_buttons(int page) {
     return g_page_buttons[page == SOMVR_VMPG_PRACTICE   ? 1
                           : page == SOMVR_VMPG_CONTROLS ? 2
@@ -1586,6 +1604,21 @@ static void draw_test(const somvr_font *f, const canvas *c, const somvr_vm_view 
     char num[24];
     snprintf(num, sizeof num, "%d / %d", pg + 1, pages);
     text_mid(f, c, 168, 344, SOMVR_VM_TEST_NAV_Y + (56 - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2, num, C_LABEL);
+    if (!g_vml.on) return;
+    /* build 35 (re-xr-pipeline.md 162): the patch box - a rule, its three lines, Apply patch | Undo patch */
+    fill(c, 16, SOMVR_VM_LIVE_Y - 8, SOMVR_VM_TEX_W - 32, 2, C_TITLE);
+    for (int i = 0; i < 3; i++)
+        if (g_vml.line[i][0])
+            text_at(f, c, 20, SOMVR_VM_LIVE_Y + 30 * i, g_vml.line[i], i == 0 ? C_TITLE : i == 1 ? C_VALUE : C_LABEL);
+    for (int i = 0; i < 2; i++) {
+        int item = i ? SOMVR_VMI_LIVE_UNDO : SOMVR_VMI_LIVE_APPLY, rc[4];
+        if (!somvr_vm_rect_av(v->avail, item, SOMVR_VMP_BUTTON, rc)) continue;
+        int on = i ? g_vml.can_undo : g_vml.can_apply, hov = on && v->hover.item == item;
+        fill_rc(c, rc, !on ? C_BOX_DIM : hov ? C_BOX_HOV : C_BOX);
+        if (v->lock && hov) outline(c, rc, 3, C_LOCK);
+        text_mid(f, c, rc[0], rc[0] + rc[2], rc[1] + (rc[3] - SOMVR_FONT_H * SOMVR_VM_SCALE) / 2, somvr_vm_label(item),
+                 on ? C_VALUE : C_DIM);
+    }
 }
 
 void somvr_vm_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_vm_view *v0) {

@@ -21,6 +21,10 @@
 #   settings the game's render settings stepped down one at a time (PERF_SETTINGS)
 #   look     the head pitched down PERF_PITCH (-20) degrees
 #   pics     a mark in each place (after its window): the both-eye picture
+#   sky      (b37 looks) the test word `practice weather PERF_SKY` (default DayNoRain) until its `light later` line names
+#            PERF_SKY_WANT (default SON_Day03; at most 5 tries); the later windows' names get `-PERF_SKY_TAG` (default
+#            day03) - the same places measured in that weather; the tries in RUN/perf-steps.txt
+#   mgo      (b37 looks) back to the practice meadow's spot (32500 2100 -24800), the head ahead
 # BG_RUN=RUN drives a running boot. PERF_S: each window's seconds (default 30).
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${BG_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
@@ -38,6 +42,7 @@ for i in $(seq 1 120); do
   sleep 5
 done
 [ -n "$R" ] || { echo "no run"; exit 1; }
+bash "$(dirname "$0")/render_need.sh" "$R" perf27-drive.sh || exit 1   # b37: a Windows run at WIN_RENDER=vr (re-xr-pipeline.md 158.5)
 echo "run $R"
 userin() {
   [ "$(systemctl --user is-active somvr-headset 2>/dev/null)" = active ] && return 0
@@ -57,7 +62,8 @@ x() { userin && bail "the user is in VR"; printf '%s\n' "$1" > "$R/xrtest.txt"; 
 cnt() { grep -cE "$1" "$R/somvr.log"; }
 m() { [[ " $STEPS " == *" pics "* ]] || return 0; sleep 0.6; w "mark $1" 3.5; echo "$(date +%T) mark $1 -> $(ls -t "$R/marks" 2>/dev/null | head -1)"; }
 # a named window: both sides' lines of the window before it, then this one runs SEC seconds
-win() { w "perf $1" 0.3; x "perf $1" 0.3; echo "$(date +%T) window $1 (${2:-$WS} s)" | tee -a "$R/perf-steps.txt"; sleep "${2:-$WS}"; }
+SFX=""   # b37 looks: the step `sky` names the later windows NAME-PERF_SKY_TAG
+win() { local n=$1$SFX; [ "$1" = end ] && n=end; w "perf $n" 0.3; x "perf $n" 0.3; echo "$(date +%T) window $n (${2:-$WS} s)" | tee -a "$R/perf-steps.txt"; sleep "${2:-$WS}"; }
 # three consecutive stereo frames dumped losslessly (the layer's <log>.stereoN.ppm); NAME and the last frame noted
 dq() { local n0 i; userin && bail "the user is in VR"; n0=$(grep -c 'dump stereo frame' "$R/xr-layer.log")
   printf 'dump\ndump 2\ndump 3\n' > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"
@@ -124,6 +130,19 @@ for s in $STEPS; do
   look)    # the head pitched down PERF_PITCH (-20) degrees (the ground and its shadows)
     x "head 0 0 0 yaw 0 pitch ${PERF_PITCH:--20}" 2 ;;
   pics) ;;
+  sky)     # b37 looks: the weather forced (the game thread's ChangeWeather; its 0.5-1.1 s reset) until PERF_SKY_WANT
+    ok=0
+    for i in 1 2 3 4 5; do
+      n0=$(cnt 'PRACTICE t=.* light later'); w "practice weather ${PERF_SKY:-DayNoRain}" 1
+      for j in $(seq 1 50); do [ "$(cnt 'PRACTICE t=.* light later')" -gt "$n0" ] && break; sleep 0.5; done
+      st=$(grep -E '^PRACTICE t=.* light later' "$R/somvr.log" | sed -nE "s/.* weather '([^']*)'.*/\1/p" | tail -1)
+      echo "$(date +%T) sky: practice weather ${PERF_SKY:-DayNoRain}, try $i: '$st'" | tee -a "$R/perf-steps.txt"
+      [ "$st" = "${PERF_SKY_WANT:-SON_Day03}" ] && { ok=1; break; }
+    done
+    [ $ok = 1 ] || echo "$(date +%T) sky: OFF - not ${PERF_SKY_WANT:-SON_Day03}" | tee -a "$R/perf-steps.txt"
+    SFX=-${PERF_SKY_TAG:-day03}; sleep 4 ;;
+  mgo)     # b37 looks: back to the meadow's spot
+    goto 32500 2100 -24800; x "head 0 0 0 yaw 0 pitch 0" 2; PERF_PLACE=meadow ;;
   *) echo "unknown step $s" ;;
   esac
 done

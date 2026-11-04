@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "somvr_win.h"
+#include "somvr_win_host.h"
 #include "somvr_winofs.h"
 #include "somvr_wintables.inc"
 
@@ -162,7 +163,10 @@ int somvr_win_com_fill(const char *name, void **vtbl)
 	static int nhex;
 	if (nhex >= 256)
 		return -1;
-	uintptr_t v = (uintptr_t)vtbl[slot];
+	/* the slot as a fresh boot sees it (a reloaded module: the host's view gives the original, not an earlier module's
+	 * hook - docs/re-xr-pipeline.md 156) */
+	uintptr_t v = 0;
+	somvr_host_view((uintptr_t)&vtbl[slot], &v, 8);
 	unsigned char b[8];
 	memcpy(b, &v, 8);
 	char *h = hex[nhex++];
@@ -172,7 +176,9 @@ int somvr_win_com_fill(const char *name, void **vtbl)
 	s->target = v;
 	/* the target's first byte as its prologue: the COM method is DXVK's (or the driver's), not the game's */
 	static char pro[256][4];
-	snprintf(pro[nhex - 1], 4, "%02x", *(const unsigned char *)v);
+	unsigned char b0 = 0;
+	somvr_host_view(v, &b0, 1);
+	snprintf(pro[nhex - 1], 4, "%02x", b0);
 	s->prologue_hex = pro[nhex - 1];
 	return 0;
 }

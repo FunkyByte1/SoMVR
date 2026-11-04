@@ -1,6 +1,10 @@
 /* somvr_win_bridge.c - the DLL's side of the bridge to the Linux Vulkan layer (somvr_xrloc.h, docs/re-winport.md 3.1):
  * the published-locate object, the xrLocateViews / xrLocateSpace stand-ins the game-side code calls through the
- * pointers the layer stores, and the bridge file (SOMVR_BRIDGE) that replaces the layer's dlsym(RTLD_DEFAULT). */
+ * pointers the layer stores, and the bridge file (SOMVR_BRIDGE) that replaces the layer's dlsym(RTLD_DEFAULT).
+ *
+ * The host's (docs/re-xr-pipeline.md 156): every object the layer reads or writes lives here, so a reloaded logic
+ * module (which imports them: somvr.c SOMVR_LAYER_OBJ) finds them where the layer does - the bridge is written once. */
+#define SOMVR_HOST 1
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,19 +19,30 @@
 #include "../somvr_session.h"
 #include "../somvr_vrhands.h"
 #include "somvr_win.h"
+#include "somvr_win_host.h"
 
-/* the shared objects somvr.c defines under their dlsym names (the Linux preload's exports) */
-extern char sym_shared __asm__(SOMVR_SHARED_SYMBOL);
-extern char sym_hud __asm__(SOMVR_HUD_SYMBOL);
-extern char sym_input __asm__(SOMVR_INPUT_SYMBOL);
-extern char sym_comfort __asm__(SOMVR_COMFORT_SYMBOL);
-extern char sym_vrmenu __asm__(SOMVR_VRMENU_SYMBOL);
-extern char sym_threat __asm__(SOMVR_THREAT_SYMBOL);
-extern char sym_objective __asm__(SOMVR_OBJECTIVE_SYMBOL);
-extern char sym_session __asm__(SOMVR_SESSION_SYMBOL);
-extern char sym_vrhands __asm__(SOMVR_VRHANDS_SYMBOL);
+/* the shared objects (the Linux preload's exports under their dlsym names; somvr.c's g_* names): the host's, the
+ * logic imports them (C names; the bridge names them for the layer) */
+SOMVR_HOST_API somvr_shared g_sh;
+SOMVR_HOST_API somvr_input_shared g_in;
+SOMVR_HOST_API somvr_hud_shared g_hud;
+SOMVR_HOST_API somvr_comfort_shared g_cft;
+SOMVR_HOST_API somvr_vrmenu_shared g_vmo;
+SOMVR_HOST_API somvr_threat_shared g_tht;
+SOMVR_HOST_API somvr_objective_shared g_obj;
+SOMVR_HOST_API somvr_session_shared g_ssn;
+SOMVR_HOST_API somvr_vrhands_shared g_vho;
+#define sym_shared g_sh
+#define sym_hud g_hud
+#define sym_input g_in
+#define sym_comfort g_cft
+#define sym_vrmenu g_vmo
+#define sym_threat g_tht
+#define sym_objective g_obj
+#define sym_session g_ssn
+#define sym_vrhands g_vho
 
-somvr_xrloc g_xrloc __asm__(SOMVR_XRLOC_SYMBOL) = { .magic = SOMVR_XRLOC_MAGIC, .version = SOMVR_XRLOC_VERSION,
+somvr_xrloc g_xrloc = { .magic = SOMVR_XRLOC_MAGIC, .version = SOMVR_XRLOC_VERSION,
 						      .size = sizeof(somvr_xrloc) };
 
 #define STALE_NS 5000000 /* an answer whose sample time is more than 5 ms from the time asked */

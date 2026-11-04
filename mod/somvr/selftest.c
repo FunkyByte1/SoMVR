@@ -13153,6 +13153,10 @@ static int g_pr_spawns, g_pr_spawn_slot, g_pr_ray_miss, g_pr_spawn_refuse, g_pr_
 	g_pr_level_calls, g_pr_mh_calls, g_pr_ncmd;
 static uintptr_t g_pr_spawn_ctx, g_pr_spawn_tmpl, g_pr_removed[16], g_pr_zone_npc;
 static float g_pr_spawn_xf[7], g_pr_ground_y = 3900, g_pr_ray_from[3], g_pr_ray_to[3];
+/* build 37 (SOMVR_PRACTICE_GROUND): the stand-in world under a teleport's target - a ray in that column hits 103 cm under
+ * the target (he stands where the Teleport put him), or nothing while g_pr_noground (the world not streamed in yet) */
+static int g_pr_tp_has, g_pr_noground;
+static float g_pr_tp_at[3];
 static uint32_t g_pr_ray_flags[2], g_pr_level_seen;
 static char g_pr_spawn_name[64], g_pr_cmds[24][160];
 
@@ -13217,6 +13221,11 @@ __attribute__((noipa)) uint64_t st_pr_ray(uintptr_t phys, void *q, void *r)
 	if (g_pr_ray_miss)
 		return 0;
 	float hit[3] = { g_pr_ray_from[0], g_pr_ground_y, g_pr_ray_from[2] };
+	if (g_pr_tp_has && fabsf(g_pr_ray_from[0] - g_pr_tp_at[0]) < 1 && fabsf(g_pr_ray_from[2] - g_pr_tp_at[2]) < 1) {
+		if (g_pr_noground)
+			return 0;
+		hit[1] = g_pr_tp_at[1] - 103.0f;
+	}
 	uintptr_t h = (uintptr_t)&g_pr_ground;
 	memcpy(r, hit, 12), memcpy((char *)r + 0x20, &h, 8);
 	return 1;
@@ -13246,8 +13255,10 @@ static void pr_st_console(const char *s)
 			snprintf(g_pr_cmds[g_pr_ncmd++], sizeof g_pr_cmds[0], "%s", c);
 		long x, y, z;
 		char w[64];
-		if (sscanf(c, "Teleport %ld %ld %ld", &x, &y, &z) == 3 && !g_pr_tp_block)
+		if (sscanf(c, "Teleport %ld %ld %ld", &x, &y, &z) == 3 && !g_pr_tp_block) {
 			g_pobj.pos[0] = (float)x, g_pobj.pos[1] = (float)y, g_pobj.pos[2] = (float)z;
+			g_pr_tp_has = 1, g_pr_tp_at[0] = (float)x, g_pr_tp_at[1] = (float)y, g_pr_tp_at[2] = (float)z;
+		}
 		else if (!strcmp(c, "GameServerShell.AdvanceTimeOfDay"))
 			g_prw.tod ^= 1, g_prw.rec = g_prwrec[g_prw.tod ? 0 : 1];
 		else if (sscanf(c, "GameServerShell.ChangeWeather %63s", w) == 1)
@@ -14810,6 +14821,51 @@ static void pr_tests(const char *trig)
 	g_ppm.owner = g_fbP;
 	g_pr_test_t += 0.02;
 	pr_frame((uintptr_t)g_fbP);
+	/* 13b. build 37 (SOMVR_PRACTICE_GROUND; win-session-20261104-160647: a 461 m trip landed before the world's collision
+	 * had streamed in, three teleports gave up, Talion fell through the world): no ground under the target = the black
+	 * holds, no try counted, the fall rules wait; the arrival once it comes. The rules before arrived here at once (the
+	 * stand-in has no gravity) with nothing under him */
+	{
+		static const float far13[3] = { 35400, 5402, -22400 };
+		memcpy(g_pobj.pos, far13, sizeof far13);
+		uint64_t tp13 = g_pr.teleports, ar13 = g_pr.arrived, fa13 = g_pr.failed;
+		g_pr_noground = 1;
+		pr_word("go"), pr_step(90 * 3);
+		EXPECT(g_pr.trip.phase == SOMVR_PRT_MOVE && g_pr.trip.tries == 1 && g_pr.teleports == tp13 + 1 &&
+			       g_pr.arrived == ar13 && g_pr.failed == fa13 && !g_pr.here &&
+			       somvr_pr_trip_fade(&g_pr.trip, pr_tc(), g_pr_test_t) == 1.0f && pr_settling() &&
+			       g_pr.ground_last == SOMVR_PRGD_NONE && log_has("no ground under Talion"),
+		       "13b: no ground: phase %d tries %d teleports %llu arrived %llu ground %d", g_pr.trip.phase, g_pr.trip.tries,
+		       (unsigned long long)(g_pr.teleports - tp13), (unsigned long long)(g_pr.arrived - ar13), g_pr.ground_last);
+		g_pr_noground = 0;
+		pr_step(90 * 1);
+		EXPECT(g_pr.here && g_pr.arrived == ar13 + 1 && g_pr.ground_waits >= 1 && g_pr.ground_wait_max >= 2.7 &&
+			       log_has("the ground came under Talion"),
+		       "13b: the ground came: here %d arrived %llu waits %llu (%.2f s)", g_pr.here,
+		       (unsigned long long)(g_pr.arrived - ar13), (unsigned long long)g_pr.ground_waits, g_pr.ground_wait_max);
+		pr_step(90 * 2);
+		EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && pr_settling(), "13b: faded in; the fall rules still wait");
+		pr_step(90 * 2 + 10);
+		EXPECT(!pr_settling(), "13b: the fall rules back 2 s after the trip");
+		pr_word("back"), pr_step(90 * 4);
+		EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && !g_pr.went && g_pobj.pos[1] == far13[1], "13b: back home");
+		/* ... the ground never comes: 30 s of black, then back where he was (that trip waits for its ground too) */
+		g_pr_noground = 1;
+		uint64_t gb13 = g_pr.ground_backs;
+		pr_word("go");
+		for (int i = 0; i < 90 * 32 && g_pr.ground_backs == gb13; i++)
+			pr_step(1);
+		EXPECT(g_pr.ground_backs == gb13 + 1 && g_pr.trip_kind == 1 && g_pr.trip.phase != SOMVR_PRT_IDLE && !g_pr.went &&
+			       g_pr.ground_none >= 1 && log_has("the ground never came under him") &&
+			       log_has("back where he was, in the black"),
+		       "13b: never: backs %llu kind %d phase %d", (unsigned long long)(g_pr.ground_backs - gb13), g_pr.trip_kind,
+		       g_pr.trip.phase);
+		g_pr_noground = 0;
+		pr_step(90 * 4);
+		EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && !g_pr.went && !g_pr.here && g_pobj.pos[0] == far13[0] &&
+			       g_pobj.pos[1] == far13[1],
+		       "13b: back where he was: phase %d pos %.0f %.0f", g_pr.trip.phase, (double)g_pobj.pos[0], (double)g_pobj.pos[1]);
+	}
 	/* 14. a mismatched site turns its part off (the spawn: no orcs, the rest on); the console's: no practice at all */
 	struct site_spec bad_s[PRS_N];
 	memcpy(bad_s, g_prs, sizeof bad_s);
@@ -14851,12 +14907,14 @@ static void pr_tests(const char *trig)
 	       "fade in), min health 20 and back, the keep-clear pass (armed within 60 m; never ours, slaves, the dead, the "
 	       "mount; held in a presentation), one orc at a time (shield, again, berserker by the menu; down, removed; three "
 	       "failures), walking out and in, back with the light, a teleport that never lands, SOMVR_PRACTICE_WAIT (a trip "
-	       "asked for in the pause, a presentation or a death waits), auto once, a load, the sites; "
+	       "asked for in the pause, a presentation or a death waits), auto once, a load, no ground under the target yet "
+	       "(the black holds, the arrival once it comes) and never (back where he was), the sites; "
 	       "quiet: the spawn manager off and its AI removed in the area (again after a script, held in a presentation), on "
 	       "again walking out, going back; a load's new manager left alone; its sites, SOMVR_PRACTICE_QUIET=0\n");
 	/* back as the earlier tests left it */
 	g_pr.on = 0;
 	g_pr_test_t = -1;
+	g_pr_tp_has = 0, g_pr_noground = 0;
 	g_rs_hook = NULL;
 	g_cbg.vt_npc = vt_npc0, g_pcs.owner = owner0, g_pcs.hobj = hobj0, g_pobj = pobj0;
 	memcpy(g_pcomb.band, bands0, sizeof bands0);

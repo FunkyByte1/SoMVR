@@ -30,11 +30,17 @@
 #   drivers find it, launch-cmd.txt names the mod) and the same channels (RUN/cmd, somvr.trigger, xrtest.txt,
 #   quit.request, marks). HEADLESS_CMDS default cmds/win-vr6.cmd (the main menu's Continue, the meadow);
 #   HEADLESS_SAVE_FROM = the save file to copy (default the user's Steam save, only read); HEADLESS_HOLD as above.
-#   Not on Windows (yet): HEADLESS_UNIT, HEADLESS_HARD, HEADLESS_MONADO_ENV, HEADLESS_LAUNCH=old, the render preset.
+#   Not on Windows (yet): HEADLESS_UNIT, HEADLESS_HARD, HEADLESS_LAUNCH=old, the render preset. HEADLESS_MONADO_ENV: as
+#   WIN_MONADO_ENV (b37 lane2).
 #   b35 slots (som-b35-slots, docs/re-xr-pipeline.md 158, scripts/game_slot.sh): HEADLESS_SLOT = the game slot: unset or
 #   1 = the caller holds /tmp/somvr-boot.lock (as before); 2..3 (--win only) = the caller holds /tmp/somvr-slotN.lock;
 #   auto = this script takes the first free slot for HEADLESS_OWNER (--win: slots 2.. first, then 1; Linux: slot 1),
 #   waiting up to HEADLESS_SLOT_WAIT s (default 0), and releases it at the end; solo = every slot (perf tests).
+#   b37 (som-b37-slotsvram, docs/re-xr-pipeline.md 158.5): WIN_RENDER=vr|light (--win; the environment reaches
+#   game_slot.sh's take and headless_win.sh): vr = the VR preset (must be set by every boot that judges pictures, grass,
+#   foliage, fog, weather, GPU or frame time - perf, soaks, the suites, looks/render drivers), light = the preset with
+#   the VRAM-heavy settings lowered (behaviour drivers). Unset: slot 1 vr, slots 2.. light. auto with WIN_RENDER=vr tries
+#   slot 1 first; take's VRAM gate waits until the boot's need fits (it says why, in this script's output).
 # (From the coordinator's run13/run14 scripts, 2026-10-22.)
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor; RT=/run/user/$(id -u); MSVC=""
 HERE=$(cd "$(dirname "$0")" && pwd); BC=$HERE/boot_check.sh   # (a worktree's copy runs its own boot_check)
@@ -84,6 +90,7 @@ GE+=(--game-env SOMVR_THREAT=1 --game-env SOMVR_BODYMOMENTS=1 --game-env SOMVR_S
     --game-env SOMVR_DEFENCE=1 --game-env SOMVR_GAMEMOVES=off --game-env SOMVR_PRACTICE=auto --game-env SOMVR_LOCO_HOLD=attack --game-env SOMVR_HP_NEARLOG=1)
 GE+=(--game-env SOMVR_MARK=1 --game-env SOMVR_QUIT=1)
 for kv in ${SOMVR_EXTRA:-}; do GE+=(--game-env "$kv"); done
+[ $WIN = 0 ] && [ -n "${WIN_RENDER:-}" ] && echo "note: WIN_RENDER is for --win (a Linux boot runs SOMVR_RENDER_SET / HEADLESS_RENDER)"
 RS=""; for kv in ${SOMVR_EXTRA:-}; do case $kv in SOMVR_RENDER_SET=*) RS=${kv#*=} ;; esac; done # build 27b: the preset
 [ -n "${HEADLESS_RENDER+x}" ] && RS=$HEADLESS_RENDER
 RSWIN=$RS; [ "$RS" = asis ] && RS=""   # som-b33-grass: asis = the game's own (Linux) / the prefix's render.cfg as it is (Windows)
@@ -93,7 +100,9 @@ if [ $WIN = 1 ]; then   # the Windows build: the same switches and channels thro
   for ((i = 1; i < ${#GE[@]}; i += 2)); do
     case ${GE[i]} in VK_LAYER_PATH=*|VK_INSTANCE_LAYERS=*|XR_RUNTIME_JSON=*|SOMVR_XR=*|SOMVR_XR_LOG=*) ;; *) WE+=("${GE[i]}") ;; esac
   done
-  for v in HEADLESS_UNIT HEADLESS_HARD HEADLESS_MONADO_ENV HEADLESS_LAUNCH; do [ -n "${!v:-}" ] && echo "note: $v is not used on Windows"; done
+  for v in HEADLESS_UNIT HEADLESS_HARD HEADLESS_LAUNCH; do [ -n "${!v:-}" ] && echo "note: $v is not used on Windows"; done
+  WRN=${WIN_RENDER:-"unset: the take of slot $SLOT or its default (1 vr, 2.. light)"}
+  echo "render: WIN_RENDER=$WRN (headless_win.sh writes RUN/render.mode)"
   WRS=(); [ -n "${HEADLESS_RENDER+x}" ] && WRS=(WIN_RENDER_SET="$RSWIN")   # else headless_win.sh: the switches' preset
   SAVE=${HEADLESS_SAVE_FROM:-}
   [ -z "$SAVE" ] && [ -f "$PIN" ] && SAVE=$PIN   # 11-03: the pinned test save
@@ -110,7 +119,7 @@ if [ $WIN = 1 ]; then   # the Windows build: the same switches and channels thro
             [ -e "$SOM/logs/$n" ] || [ -e "/tmp/somvr-runnames/$n" ] || { : > "/tmp/somvr-runnames/$n"; echo "$SOM/logs/$n"; exit 0; }
             sleep 1; done; exit 1 ) || { echo "STOP: no free run name (/tmp/somvr-runnames)"; exit 1; }
   echo "windows: $RUNW (headless_win.sh, slot $SLOT)"
-  env "${WRS[@]}" WIN_SLOT=$SLOT WIN_RUN=$RUNW WIN_CMDS=${HEADLESS_CMDS:-$HERE/cmds/win-vr6.cmd} WIN_SAVE_FROM=$SAVE SOMVR_EXTRA="${WE[*]}" \
+  env "${WRS[@]}" WIN_MONADO_ENV="${MONENV[*]:-${WIN_MONADO_ENV:-}}" WIN_SLOT=$SLOT WIN_RUN=$RUNW WIN_CMDS=${HEADLESS_CMDS:-$HERE/cmds/win-vr6.cmd} WIN_SAVE_FROM=$SAVE SOMVR_EXTRA="${WE[*]}" \
     bash "$HERE/headless_win.sh" "$MOD" --game "${HEADLESS_HOLD:-900}"
   rc=$?; echo "headless_win exit $rc"; exit $rc
 fi

@@ -6185,6 +6185,81 @@ What the practice does now (somvr_practice_game.c; the trip in somvr_practice.c)
   `the black held N s longer (...): fading in`, `no game pause within 3.6 s of our ChangeWeather`; the END line counts
   dry kept, awaited, came (in view), the longest.
 
+### 27.10 A trip from far away fell through the world: SOMVR_PRACTICE_GROUND (build 37, som-b37-practrip, 2026-11-04)
+
+**Seen:** the launcher's tests of build-hr37test, build-win3 and build-win4 (win-session-20261104-153611, -153817,
+-160647): `trips there 1, arrived 0, failed 1, teleports 3`, `WARN PRACTICE the trip there did not arrive after 3
+teleports (Talion at 32500.0 1768.8 -24800.0 ...): fading in where he is`, then `WALK ground ... nothing within 4 m`
+and Talion fell to y -11007 and died. 97 headless boots the same day never showed it.
+
+**Cause: the start position, not round 36's code.** A test prefix with no save was seeded from a copy of the live Steam
+save, and the Steam save changed between 11-03 (`9d97bf3f...`) and 11-04 (`f880f8af...`: Steam Cloud after play on
+another device). The new one loads Talion at (-3501, 2712, 4001): **461 m** from the spot (32500 2100 -24800) instead
+of ~38 m (35400, 5402, -22400 - every good run, and the headless boots' pinned save `logs/test-save`). After a 461 m
+teleport the world's collision at the spot has not streamed in yet: each Teleport put the root at 2095 and he fell
+straight through where the meadow's ground is (every arrival stands at 1878.3) with no hit under him. The trip's rules
+(3 teleports, a retry when he is 3 m under the target at most every 0.5 s) used all three in 1.15 s and faded in
+over nothing. Round 36's changes could not act there: the sky / weather / load hold run after an arrival (none came),
+the edge hysteresis after one too, and WALK_GROUND's fall is refused while a trip runs (`jp_why_not`: "a blink runs")
+- it acted only after the failed trip. The same rules also allow a false arrival in the air: a fall that stays within
+the 3 m band for the 0.5 s settle "arrives" (the unit test's world shows it at 2000 cm/s^2).
+
+**The fix (SOMVR_PRACTICE_GROUND=1, the code's default; 0 = the rules before):**
+- In the move and the hold, each frame, a ray straight down from 40 cm over Talion's root (his body stepped past, as
+  the eye line's ray) for 40 m: nothing = **NONE** (the world not streamed in there, or he is under it); the root at
+  most 250 cm over the hit = **ON**; else **OVER** (`pr_trip_ground`, SOMVR_PRGD_*).
+- NONE: the black holds; a **pin** (the same Teleport, not a try) each time he drops 50 cm under the target, at most
+  every 0.25 s (`SOMVR_PRACTICE_GROUND_HOLD=grav` instead holds his proxy's gravity off - the jump module's `jp_grav`,
+  written each frame - and he hangs still; the pins stay the backstop; default pin); at most
+  `SOMVR_PRACTICE_GROUND_WAIT_S` (5 s) after the first teleport, then FAILED with `noground` - a trip there then goes
+  **back where he was**, in the black (that trip waits for its ground too); a trip back or down fades in.
+- The arrival needs ON (the trips there and back) or OVER|ON (the climb's blinks: a ledge the centre's ray may pass);
+  the tries used up while OVER wait for him to land; the hold's end (the fade-in) waits for ON too, and a hold that
+  loses its ground pins him again. With ground at once (a near trip) the timings are as before: one teleport, no pin.
+- The fall rules wait: `un_ground_guard` (SOMVR_WALK_GROUND) does nothing while a trip runs and for 2 s after it
+  (`pr_settling`; counted in `CLIMB END build 36 walk ground ... ticks left to a practice trip's landing`).
+- Logs: `PRACTICE t= no ground under Talion X s after the teleport ...` (once a trip), the pins' console lines (the
+  first two, then every 20th), `PRACTICE t= the ground came under Talion X s after the first teleport (N pins ...)`,
+  the WARN names `and the ground never came under him` and what follows; `PRACTICE END ground (build 37): trips that
+  waited for the ground N (the longest X s), pins N, never came N (back where he was N)`; `CONFIG practice ground=`.
+- Tests: test_practice's ground world (gravity, a ground that streams in late, goes in the hold, never comes, a target
+  10 m up, the climb's blink, no position): the 11-04 case fails under the old rules and lands under the new; the
+  selftest's stand-in puts ground 103 cm under each Teleport's target (as the game: he stands where it puts him) and
+  its case 13b runs the game side (no ground 3 s, then it comes; never, then back).
+
+**Why 5 s, not longer: a far Teleport never streams the world in.** Held at the spot (gravity off, no pins) for 30 s
+(boot 20261104-170426) and 150 s (boot 20261104-171135, a probe every 5 s): never any ground at the spot, and the
+place he left (461 m away) stayed loaded the whole time - the world's streaming did not follow the console Teleport
+(the render camera and the game's camera were at the spot: `H1 pos`, `FRONT camcopy`). So a trip's target is either
+inside what is already loaded (38 m: ground at once) or out of reach; a longer wait only lengthens the black. The
+same cause dropped Talion on a far tower top on 10-28 (boot 20261028-205031, in the build 21 climb round's runs). Reaching a far spot needs the
+game's own load around a teleport (open: the fast travel's in-world load, or the server teleport `NextSpawnPoint`
+uses) - not done here.
+
+**The harness (the tests repeatable):** the launcher's tests start from a fixed save - `SOMVR_HEADSET_TEST_SAVE=pin`
+(default: the pinned `logs/test-save/saves/GameData.sav`), `far` (`logs/test-save/far-461m/GameData.sav`, the 11-04
+Steam save's copy, read only, its README), `steam` (the old seeding), or `/FILE`; som-win-session.sh's `--test-save`
+replaces the test prefix's save by it at every start (never the play prefix). `SOMVR_HEADSET_TEST_BUILD=NAME` runs
+another frozen build through the user's own launcher path (tests and dry runs only). The standing check
+`scripts/launch-far-check.sh [BUILD] [SAVE]` (solo; ~6 min) runs the launcher's test from the far save and judges the
+log: PASS = no fall or death in the whole run and either REACHED (on the meadow's ground, an orc out by `practice
+spawn`, still there at the end) or SAFE-HOME (no ground at the spot, back where he started, on its ground). The
+coordinator's suite runs it as entry 371 (FINAL_WIN=1 on a frozen build; skipped with a note under FINAL_QUEUE /
+FINAL_TREE).
+
+**Proofs (11-04, the launcher's test path; every run SAVE OK, the Steam save unchanged; 2 WARN = the launcher runs'
+usual H9/layout lines, + the WARN of a trip that went home):**
+| run | build, save | what it shows |
+|---|---|---|
+| win-session-20261104-165204 | build-win2, far | the old build falls the same way (3 teleports, the death, the root at -11040): not round 36 |
+| win-session-20261104-165421 | build-practrip37 (6bdad37, 30 s wait), far | no ground for 30 s, 108 pins, home in the black, no fall, no death |
+| win-session-20261104-165743 | build-practrip37, a copy of the player's own save | it loads 38 m away: arrived after 1 teleport on the meadow (1878.3), a dry day kept, the area quiet, an orc 350 cm ahead; PASS |
+| boot-check-20261104-170003 | build-practrip37 headless, polish36, the pinned save | arrived after 1 teleport, 0 waits; the driver as in the earlier suites (its two known flaky steps); the save UNCHANGED |
+| boot-check-20261104-170426 / -171135 | the tree, far, HOLD=grav, 30 / 150 s | he hangs at exactly the target, 0 pins; the ground never comes (above) |
+| win-session-20261104-172112 | build-practrip37b (3201348, the 5 s wait), far | **PASS SAFE-HOME**: 5 s of black (18 pins), home on its ground, no fall, no death |
+| win-session-20261104-172321 | build-practrip37b, the player's save copy | **PASS REACHED**: arrived after 1 teleport, a dry day kept, an orc out |
+
+
 ## 29. The fingers on the controllers: `SOMVR_FINGERS`, and the menu's Sword angle (build 7, hands round 3, 2026-10-24)
 
 The hands of build 6 (`SOMVR_BODY=hands`, `SOMVR_SWORD_ANGLE`, `SOMVR_TWOHAND`; handoff/HANDOFF-hands.md rounds 1-2)
@@ -23840,6 +23915,97 @@ Linux boot that measures anything. Frame-count drivers are fine in parallel (the
 Not measured: 4 or more at once; a Linux boot in slot 1 beside Windows boots in 2-3 (allowed by the rules - separate
 runtime folders - but unmeasured).
 
+### 158.5 The render modes and the VRAM gate (11-04, som-b37-slotsvram)
+158.4 was measured at the game's Low settings (every slot's prefix held Low then: +2.0 GB VRAM a game). Since the
+grass helper's harness change (76e1a55, re-winport.md 7.11) every Windows test game runs the user's VR preset: ~5.9 GB
+of VRAM each in the world. Three at once (11-04 15:40, boot-check-20261104-154039/041/043): VRAM 12.8 of 16 GB, GTT
+11.7 GB, the GPU 99 % busy - about 10 GB the games wanted in VRAM sat in system memory (slower games, drifting driver
+timings); one of those games still held 0.8 GB of its VRAM buffers in GTT a minute after the others had ended (TTM does
+not move them back while nothing presses). No amdgpu error. The standing rule (an October ring timeout with VRAM full):
+keep the boot's need + a margin free when a game starts.
+
+**`WIN_RENDER=vr|light`, per Windows boot** (headless_win.sh; headless_vr.sh --win passes the environment through):
+- `vr` = today's preset (som-win-session.sh's detection table with SOMVR_RENDER_SET over it): the user's look. Every
+  boot that judges pictures, grass, foliage, fog, weather, GPU or frame time runs it.
+- `light` = the same render.cfg with game_slot.sh's `GS_RENDER_LIGHT` written over it: `TextureQuality:1` (WIN_RENDER_LIGHT=SET
+  tries another set). Shadows, vegetation, meshes, lighting, tessellation stay the user's, so the scene a behaviour
+  driver meets is the same - only the textures' resolution drops.
+- Unset: the mode the slot was taken for (the lock's `render` file, written by `take`), else the slot's default -
+  **slot 1 vr, slots 2-3 light**. `WIN_RENDER_SET=asis` still keeps the prefix's own render.cfg (Low; render.mode says
+  asis).
+- The run says which look it had: RUN/render.mode (`light (slot 2's default) <the whole set>`), launch-cmd.txt's first
+  line (`...; slot 2; render light)`), summary.txt's `render.cfg: WIN_RENDER=light (...) - the PC's detection with the
+  VR preset .., then the light set ..`, `vram at the launch: ..` and at the end `vram (render light): the game's peak N
+  MiB resident (M asked), GTT ..; the card's peak ..` (RUN/vram.tsv: every 10 s the game's own memory from
+  /proc/PID/fdinfo and the card's).
+
+**The VRAM gate in `game_slot.sh take`** (the extra slots and slot 1 alike; `solo` is not gated - it holds every slot):
+- free = mem_info_vram_total - mem_info_vram_used - what the other held slots' games will still load (each slot's
+  mode's need less what its game already holds resident, by /proc fdinfo; a slot whose game is not up yet counts its
+  whole need) - the spilled GTT (GTT used above its idle level 1792 MiB + 512 MiB a held slot: memory the games
+  wanted in VRAM). The boot fits when free >= its need + 1024 MiB (`GAME_SLOT_VRAM_MARGIN`). Needs (measured below):
+  vr 6656 MiB, light 2816 MiB (a slot's game + its Monado + Xwayland; `GAME_SLOT_NEED_VR` / `_LIGHT`).
+- A spill in progress - GTT more than 4 GiB above that level - refuses every take but a lone game's.
+- A game alone always runs (no other slot held: slot 1's old rule).
+- The take is serialised (flock on /tmp/somvr-slots.take), so two helpers' takes at the same second cannot both
+  count the same free memory; the slot's mode goes into the lock folder (`render`) at once, so a third taker reserves
+  for a game that has not started yet.
+- `auto` tries slot 1 first for a `WIN_RENDER=vr` boot (then 2-3 where vr fits), the extra slots first otherwise; a
+  waiting take says why every minute (`game_slot HH:MM:SS: OWNER waits - VRAM: slot 1 at vr needs 6656 + 1024 MiB;
+  free 6736 = 16368 - 4000 used - 5632 for the held slots (2 light starting +2816, 3 light starting +2816) - 0 spilled
+  (GTT 1500)`), and a taken one prints its VRAM line to stderr (in the boot's output).
+- `game_slot.sh status` / `vram`: the card, each held slot's mode and its game's memory, and whether a light / vr boot
+  would fit now; `game_slot.sh mem N`: slot N's game's pid and memory.
+- headless_win.sh refuses a `WIN_RENDER=vr` boot in a slot taken for light when vr does not fit then (not under the
+  holder's own solo).
+- Old copies of the scripts (other worktrees until they merge) take without the gate; they only mkdir, and the gate
+  counts their slots like any other (no render file: the slot's default mode).
+
+**The drivers** (`scripts/render_need.sh RUN NAME`, one line after each finds its run): perf27, soak27, soak29, soak33,
+cost13, looks36, grass33, render21, render24, render31, fire22, fire23, fire23b, fx27, fxnear28, bubble36, watch33,
+hudfx, rehearsal28, lane35, lane37 - on a Windows run that is not vr they print `FAIL render: .. needs WIN_RENDER=vr; run .. is light ..`
+and put `quit` into RUN/cmd (the slot frees at once); Linux runs pass (boot_check: their own preset); `RENDER_ANY=1`
+lets a deliberate light look through. (`WIN_MONADO_RATE=90`, lane2's real compositor: its Monado and gamescope hold more than the null one's 0.34 GB - unmeasured; those boots run vr in slot 1 / solo.) logs/coord/final.sh exports `WIN_RENDER=vr` (the suite). Behaviour drivers keep
+the default. The chain27fx-* audits call fx27-drive.sh (checked there).
+
+**The measurement** (11-04 16:19-16:34, one solo window; scripts/slots37-measure.sh + slots37_report.py; the frozen
+build-win3 (main d487eb1, its headset.env) with this branch's scripts; logs/coord/b37/slotsvram/measure, report.md).
+Wave 1 = three light candidates at once, nothing driven (the meadow, 4 minutes); waves 2-4 = polish36 (the suite's 363:
+the bow and A, the knife at either hip, wraith hands, the draw sound, the listener). The card: 16368 MiB VRAM. Each
+game's own memory from /proc/PID/fdinfo (drm-resident/total-vram/gtt, every 2 s); "in the world" = from the last
+game's `PRACTICE .. arrived` + 20 s to the first game's end.
+
+| Games at once (slot 1, 2, 3) | In the world together | Card VRAM used, mean / peak | Free at the peak | Card GTT, mean / peak | GPU busy, mean | Each game's own VRAM (resident = asked) | Each game's GTT |
+|---|---|---|---|---|---|---|---|
+| none (between the waves) | - | 1.97-2.94 GB | - | 1.56-1.71 GB | - | - | - |
+| 1 vr (wave 2) | 110 s | 8.25 / 8.34 GB | 8.0 GB | 1.83 / 1.87 GB | 19 % | 6129 MiB | 271 MiB |
+| 1 vr + 2 light (wave 3) | 104 s | 13.11 / 13.20 GB | 3.2 GB | 2.35 / 2.38 GB | 53 % | vr 6195; light 2353, 2289 | 207-271 MiB |
+| 3 light (wave 4) | 110 s | 9.14 / 9.23 GB | 7.1 GB | 2.29 / 2.30 GB | 55 % | 2289, 2290, 2288 | 207-271 MiB |
+| 3 light candidates (wave 1) | 206 s | 8.44 / 8.54 GB | 7.8 GB | 2.12 / 2.15 GB | 50 % | Texture 1: 2276; Texture 0: 2022; Texture 0 + Shadow 1 + Vegetation 2: 1858 | 128-192 MiB |
+| for comparison: 3 vr (11-04 15:40, not this branch) | - | 12.8 GB | - | **11.7 GB** | 99 % | (spilled: 4.4-4.7 GB resident, 1.5-2.5 GB of it in GTT) | 2.0-3.9 GB |
+
+- Each slot beside the game: its Monado ~271 MiB and gamescope's Xwayland ~65 MiB of VRAM (the needs above include
+  them: vr 6.2 + 0.34 = 6.5 GB, light 2.3 + 0.34 = 2.7 GB).
+- The light set: **TextureQuality 1** (the VR preset's 3 = the top, 1 = the game's medium textures) - 2.29-2.35 GB in the
+  world, under the ~2.5 GB asked; texture 0 saves only 0.25 GB more and texture 0 + shadow 1 + vegetation 2 0.4 GB, and
+  those change what the scene holds (shadows, grass), so the light set lowers the textures only.
+- 1 vr + 2 light: no spill at all (GTT 0.8 GB above idle for three games, their own small upload heaps), 3.2 GB free at
+  the peak; the gate lets exactly this through and refuses a second vr game beside a vr + light pair (free 4.8 < 7.7 GB)
+  and, with an ordinary desktop, a second vr beside one vr (free ~7.6 < 7.7 GB: two vr games leave ~1.1 GB).
+- Every boot: 43-44 s to the meadow, the save UNCHANGED, 2 WARN (the Windows build's two), 0 amdgpu/drm lines in the
+  kernel log during the window; the raw dumps deleted after each wave.
+
+**polish36 at light against vr** (the same 15 verdicts in all 7 boots, as text without numbers): 12 of them PASS in
+every boot of both modes. The other three are the driver's own spread, seen in both modes: `listen` FAILs in both vr
+boots and in 3 of 5 light ones (the listener turned 82-98 deg against the head's 90 - while it follows the eyes' head
+within 0.1-1.7 deg every time: the step's timing, as in the build-win3 suite, which re-ran it to a PASS); the knife's
+`let go` (vr, wave 3) and its second `right hip` (light, wave 3) each failed once, both in the 3-at-once wave. So light
+changes nothing a behaviour driver checks; looks and timing are what it changes, and those boots run vr.
+
+**Rules from here** (for the briefs): behaviour boots `HEADLESS_SLOT=auto` as before - they land in slot 2-3 at light,
+or slot 1 at vr when it is the free one; a looks / grass / fog / weather / render / perf / soak boot sets
+`WIN_RENDER=vr` (with auto it takes slot 1 first, else waits for VRAM room); solo stays for frame / GPU time (158.4).
+
 ## 147. Build 33: the story ahead on the Windows build - Torvin's Graug mission past the lure; "Stun the Graug" asks for a charged shot: `SOMVR_GRAUG_STUN` (2026-11-03, som-b33-story6)
 Headless boots on the **Windows build** (the GOG game under Proton: `scripts/headless_vr.sh --win`, re-winport.md 7.11),
 each from a copy of logs/boot-check-20261030-234922/saves/GameData.sav (131.8's furthest: Big Game done, Torvin's Graug
@@ -24729,3 +24895,753 @@ new sites; `win/build.sh --check` green.
   placement keeps the roots 55 cm apart, not the upper body.
 - The downed orc of mark 5 needs build 32's `SOMVR_STEALTH_DOWNED_FIGHT=on` in the package's env (it was missing from
   build-win2's).
+## 156. Hot reload on Windows: the DLL in two, a game-side change live in seconds without a new game: `SOMVR_DEV_RELOAD` (2026-11-03, som-b35-hotreload)
+
+A headless test boot takes ~250 s (~100 s of it to the world, then the practice trip) and ~19 helpers share one game
+slot, so every change to the mod's game side cost minutes of waiting. Most such changes are logic (combat, kills, the
+climb, the menus, the hands): they now go into a running game. Windows build only (the default test build); the
+layer (stereo, OpenXR, the quads) still needs a restart, and survives a reload.
+
+### 156.1 The split
+- **xinput9_1_0.dll = the host, never reloaded** (win/README.md 8): the XInput proxy, the exe gate (the exes the tables
+  know: wintables.py's `somvr_winexes.inc`), the entry redirect, the crash note, MinHook and the patch engine
+  (win/somvr_win_hook.c), the reload (win/somvr_win_host.c), the bridge to the layer and every object the layer reads or
+  writes (`somvr_shared` and the eight others, `somvr_xrloc`: defined and exported by the host, imported by the logic -
+  the layer's pointers never point into a logic module), D3D's discovery (win/somvr_win_d3d.c: the device, the context,
+  the swap chain, the first Present, the fog edit, the present statistics).
+- **somvr_logic.dll = everything else**: somvr.c with its `*_game.c`, the CORE files, the site tables. The host loads it
+  from its own folder at the game's entry, the same way in every build (the release too; the package ships both DLLs);
+  the reload thread runs only with `SOMVR_DEV_RELOAD=1`.
+- **Every place where the game reaches the logic goes through a host-owned slot.** The logic's `write_code` and its
+  MinHook calls are the host's (`somvr_host_write`, `somvr_win_hook_entry/_mid`); each patch is recorded by its address with
+  its original bytes and installed once:
+
+  | the patch | the game reaches | at a swap the host rewrites |
+  |---|---|---|
+  | a call/jmp's rel32 (install_all, bo_patch_call's 31, the stub pages of 12 hook groups) | a host stub `jmp [rip+4090]` (8 bytes, r-x), its slot in the rw page after it | the stub's slot |
+  | a vtable / IAT / COM slot (K_VSLOT, go_slot, H9, the guard) | the slot itself | the slot (an aligned 8-byte store) |
+  | a MinHook entry hook (VG_FXCREATE, BR_LOGPRINTF) | MinHook's jump -> a host stub | the stub's slot (unclaimed: MinHook's trampoline) |
+  | a mid-function detour (RES_3D_DESC_MID) | the mid stub, which calls a host stub | the stub's slot (unclaimed: a no-op) |
+  | other bytes in an image | the bytes | the bytes (unclaimed: the original ones) |
+  | a write into the game's heap (a record's field) | - | nothing: a plain write, not recorded (the game may free it) |
+
+  Keyed by the patched address: one SITE can be many patches (bo_patch_call), the SITE name stays the logic's log line.
+- **The view** (`somvr_host_view`): the game's bytes as the calling module should see them - where it has not patched
+  yet, the original bytes. check_site, the save guard's read-back and the COM fill read through it, so a reloaded
+  module's checks pass exactly as a fresh boot's do although an earlier module's patches are in place.
+
+### 156.2 The swap
+The trigger word `reload [force] [KEY=VALUE ...]` (the writer thread hands it to the host) or a new stamp of the watched
+file (`SOMVR_DEV_RELOAD_DLL`; the harness sets it to the tree's build/win/somvr_logic.dll; the same stamp twice 250 ms
+apart = a whole file): the switches into the process's environment (the new module's CRT copies it at its load: a switch
+change is a reload with the same code); the DLL copied to %TEMP%\somvr-reload\somvr_logic.gN.PID.dll (Windows locks a
+loaded DLL's file) and loaded; the old module asked whether it is quiet every 10 ms for `SOMVR_DEV_RELOAD_WAIT_S` (10 s;
+not quiet: the swap refused with the reason, the new module unloaded - its init never ran; `force` skips the wait); the
+old module stopped (its writer thread - the only thread a logic module has - joined, the VR menu's pending settings
+saved, its log flushed); the new module's init staged (the host keeps its writes: the game still runs the old module);
+D3D's four vtables and the first Present's work replayed to it; then the swap: MinHook's new hooks enabled, the pages
+to store into made writable, the game's threads held (Toolhelp, suspended, their contexts read), every slot set at
+once - a staged claim to its value, a slot the new module did not claim back to the original (a kept one - the save
+guard's - stays), the threads resumed; the old module retired (no more log lines, no END lines at the exit, its code
+mapped for a thread still inside it: never unloaded). The host's `RELOAD gen N ok` line has the times, the counts, the
+longest frame over the swap, the view's move across it and the memory.
+
+Quiet (`somvr_logic_idle`): no orc's timer frozen by the hit-stop, no kill playing (KILLS' kills, the sync kill, the
+catalogue), no sync holding Talion, no slow motion of ours (the execution's, the finisher's), no hand on a wall, no orc
+in the hand, not riding.
+
+### 156.3 State
+A reloaded module starts fresh, as if the mod had just started with the player in the world: somvr_start again (every
+switch re-read, every SITE checked and claimed). What only the boot or a load would have told it:
+- **kept by the host**: the objects the layer reads (above); D3D's device, context, swap chain, back buffer vtables and
+  the first Present (replayed: the COM rows filled from the original slots, H8's vtables, the D3D sites, H9).
+- **the persistent area** (`somvr_host_persist`: a block by name and size; a new size = a new zeroed block): the eye
+  textures (g_et), the HUD texture (g_ht), the hands' depth textures (g_vd) - the new module copies into the same
+  textures, the layer's images stay (no new eyes generation); the rig (the recentre reference, the snap steps: the view
+  does not jump).
+- **handed over** (written at the old module's stop, read at the new one's init): `struct run_facts` - the practice
+  area's auto trip done (else a reload would take the player there again), the area itself (a trip there arrived, the
+  way back, its orc, the min health and the light it set: without it every `practice spawn` was refused "not in the
+  practice area"), the hit-stop's game timer (one for the run), the eye size's last mode; the block "slots.keep" - what
+  the slots wrote into the game's items and must put back (the sword kept in the hand by its InactiveNodes while the
+  game has it sheathed, kept away, the dagger: each item's saved entries) and the player's slot state (without it:
+  no sword in the hand for the two-hand grab, the entries never restored); the block "arms.lw" - the weapon node's
+  place in the hand (captured only while the sword is sheathed: a module loaded with it drawn had no weight, no bite).
+- **synced from the shared objects**: this module's "seen" copies of the layer's requests - the snap and recentre
+  counts (else the first frame repeats every snap turn of the run: a swap after the drivers turned the view 113 deg),
+  the VR menu's practice request, the Report, the Quit.
+- **the stereo trigger's state** read at the init (no mono frames until the writer's first look).
+- **found again in the world** as after any load: the player, the orcs, Talion's state (each feature's per-frame finds),
+  the schema holders (the writer thread's check once a second), the settings file.
+- **found again from the game's state** where the boot's event never comes back: the eye size's mode (SOMVR_EYE_SIZE
+  learns it only at a mode set - RES_3D_DESC; a reloaded module reads the 3D surface's size at its first eyes and the
+  handover carries the last mode and the game's own size), H9 and the D3D sites (the boot's first Present: the host's
+  replay; so the boot's two WARNs about them are not logged at a reload).
+- Not carried: the old module's counters and END lines (each module logs its own), its log buffer after the retire, a
+  test recording's file (SOMVR_SWORD_REC appends at a reload instead of starting a new one).
+- `struct run_facts` stays 512 bytes (`spare`): a persistent block of a new size is a fresh block, so the facts would be
+  lost for one reload (seen at boot 230725's gen 2: `PERSIST run.facts: 512 bytes now (was 16 ...)`).
+
+### 156.4 What reloads, what needs a new game
+Reloads (a new somvr_logic.dll, or `reload KEY=VALUE` for a switch):
+- all of somvr.c and its `_game.c` files - every hook's C side, the WRAPPER asm, the per-frame logic of the stereo
+  core's game side, combat, kills, the climb, the hands' game side, the bow, the verbs, the practice area, the menus'
+  game side, the input mapping, the prompts, the HUD's game side;
+- the CORE files' game-side copy (somvr_combat.c, somvr_kills.c, somvr_climb.c, ...);
+- the site tables and offsets (win/sites-*.tsv, offsets-*.tsv: wintables.py builds them into the logic);
+- every switch (`reload SOMVR_X=Y`; it stays in the process's environment for later reloads) and the settings file.
+
+Needs a new game:
+- the layer (vklayer/*): stereo, OpenXR, the quads, the VR menu's and the hands' drawing - and the layer's own copy of
+  the CORE files it shares (somvr_vrmenu.c, somvr_menus.c, somvr_pointer.c, somvr_comfort.c, somvr_font.c,
+  somvr_threat.c, somvr_vrhands.c, somvr_objective.c): a reload changes only their game-side half;
+- the host: win/somvr_win_main.c, _hook.c, _host.c, _bridge.c, _d3d.c (the proxy, the gate, the patch engine, the
+  reload, the bridge, D3D's discovery and the fog shader edit), MinHook, somvr_win_host.h;
+- the layout of anything the host or the layer owns: somvr_shared.h, somvr_input.h, somvr_hud.h, somvr_comfort.h,
+  somvr_vrmenu.h, somvr_threat.h, somvr_objective.h, somvr_session.h, somvr_vrhands.h, somvr_xrloc.h;
+- the layout of a persistent block (struct et_state, ht_state, vd_state, somvr_rig, struct run_facts): a reload then gets
+  a fresh block (logged `PERSIST ... the layout changed`) - for the textures that means new ones (the old ones leak);
+- what the game itself does only at its start or a load: a change to the boot's own work (the launcher and movie skip,
+  the save guard's first install) or to a hook on loading-only code shows at the next load / start.
+
+### 156.5 Fast builds
+`mod/somvr/win/build.sh --logic`: only somvr_logic.dll - the objects whose source or any header / included `_game.c`
+changed (clang's `.d` files; a header gone counts as changed), the link to `somvr_logic.dll.tmp` and a rename (a watching
+host copies whole files only); nothing changed = no link (a new file would be a reload). somvr.c - the unity file, ~80 k
+lines with its includes, whose -O2 compile was 16 s alone (8 s optimiser, 8 s code generation) - is optimised once
+into bitcode (`-gline-tables-only`: the code is the same as with -g; the crash note's RVAs still map to lines through
+somvr_logic.pdb), split in 8 by `llvm-split` and its code made by 8 `llc` at once (somvr.c's module asm - the WRAPPERs -
+lands in part 0; every symbol it names is external). The full build and `--check` do the same for somvr.c, so there is
+one code path. Measured: a one-file change of a `_game.c` file 11.5 s (was 18.1 s with `-c`), no change 0.8 s;
+`win/build.sh --check` and `build.sh --check` stay the full gate.
+
+### 156.6 Tests
+- **The stand-in** (`SOMVR_EXTRA="SOMVR_DEV_RELOAD=1 SOMVR_WIN_TEST_RELOAD=3" scripts/headless_win.sh MOD --test xinput`,
+  no slot needed, ~5 s): the logic hooks d3dtest's f3 (an entry hook), f4's call of g (its rel32 through a stub page of
+  its own, as the install paths do), the slot `d3dtest_tab[0]` and f6 (a mid detour), each adding 100 x (gen + 1); the
+  host swaps the module 3 times before the program's main, the third without the f3 hook. The program prints f1 1012,
+  f2 84 (the host's own hook test, kept across the swaps), f3 12 (handed back to the original), f4 412, tab 412, f6 74
+  (generation 3's). Each swap 2.7-2.9 ms with 3 threads held; +0-2 MB private and +6.9 MB image memory per reload.
+- **The game**: scripts/reload35-drive.sh (smoke, switch, drivers, code) - 156.7.
+
+### 156.7 The game (headless, Windows, the practice meadow; scripts/reload35-drive.sh)
+- **Boot 20261103-230725** (slot 3): the first in-game reloads. Found and fixed in it: the quiet check read the hold's
+  switch (`g_tk.on`) for a hold under way (`active`) - every reload refused "a sync holds Talion"; the eye size's mode
+  (WARN ESIZE eyes held - re-read from the 3D surface, then handed over); the practice area (every `practice spawn`
+  refused "not in the practice area" - handed over); the reload's two COM WARNs. Gens 1-4 swapped (65 threads held
+  12.8-14.6 ms, 96 slots claimed, 0 failed, the new module's init ~535 ms); the switch reloads all pass
+  (`SOMVR_SWORD_WEIGHT=light` in the new CONFIG; `SOMVR_HUD_FX=game`: the UI FX tail jump back to the game's, `hide`:
+  claimed again); sword31's air numbers after four reloads equal build-win2's fresh boot exactly.
+- **Boot 20261103-232217** (slot 2, 28 reloads in 25 minutes): **20 of 20 real code changes live** (each the note
+  header rewritten, `win/build.sh --logic`, the swap by the file stamp, the note in the new module's line): the build
+  11.0-12.3 s (mean 11.6), the swap 2.1-2.4 s after the build (the stamp twice 250 ms apart, the swap itself ~0.8 s -
+  stop 240 ms, init 535-565 ms, the threads held 11-15 ms - then the host's 1 s of measuring before its line): **~14 s
+  from the edit to the new code in the game**. No new WARN in all 28 (the boot's two only). Memory: +0.3 MB private
+  and +7.0 MB image (the copy's mapping) per reload, 28 reloads = +8 MB private, +196 MB image. The game's threads
+  held 12.7 ms on average (14.9 at most); the longest frame over a swap 66.7 ms on average, 89.1 at most (the headless
+  game runs ~52 ms frames). The view across a swap (250 ms apart) in the idle code step: 1.3-3.1 cm, 0.1-0.85 deg.
+  Drivers before / after a reload (the distinct verdicts): polish31 the same (6 PASS, 3 FAIL both - the 3 FAILs are the
+  run's order after sword31, the same before the reload); fling31's four climb verdicts the same; sword31's two-hand
+  grab and fling31's sword verdicts failed after the reload -> the slots' keeps handed over (156.3).
+- **Boot 20261103-235031** (slot 2, with the slots' handover): sword31 the same verdicts before and after its reload
+  (two hands PASS both), but its air swings 0 frames after it -> the arms' held weapon node handed over; fling31's
+  climb verdicts the same (the throw's catch flaky: throw 1 vs throw 2 - in the run before the reload too). With the
+  host's control (the view's move over 250 ms just before a swap): the swaps right after a driver turned the view 10-113
+  deg against 0.45-0.62 deg in the 250 ms before -> the layer's snap / recentre counts synced (156.3).
+- **Boot 20261104-022458** (slot 2, every handover in): sword31 the same verdicts after its reload and its air swings
+  back (3 / 9 / 30 frames as before it), but the weighted sword's numbers differ in the first swings after the reload
+  (the flick: the sword 22.4 deg off the hand against 32.6 before it; the committed cut 3.4 against 7.8 deg - the
+  weight's or the hands' filter state is not carried: open); fling31 after one reload 6 of 6 distinct verdicts PASS
+  (the sword's hit while hanging back), after the second its sword hit failed once again (likely the same sword
+  state, not proven). The view across the swaps right after a driver still turned 103 and 158 deg (the 250 ms before:
+  0.5 deg; the idle swap 1.1 deg) - open (156.8).
+
+- **The Windows suite's subset on the split DLL** (logs/coord/t3-58f49649-suite-win-b35, slot 1, no reload): boot 1
+  the quit path - the game exited by itself after 84 s (the game's DestroyWindow, RtlExitUserProcess; the logic
+  module's END lines; no crash note, no SIGSEGV); boot 134 polish31 9 of 9 PASS (build-win2: 9 of 9); boot 136
+  fling31 5 of 6 (the throw's catch failed once - flaky in the runs before too; build-win2 6 of 6). Every boot: the
+  save UNCHANGED, WARN 2 (build-win2's two). The full suite and the W1 package boot on the split DLL: not run yet
+  (the slot went to build-win3's suite).
+
+### 156.8 Open
+- **The view turns at a swap after the drivers' turning** (10-158 deg in the swaps right after a driver run, never in
+  the idle swaps: 0.1-1.1 deg). Ruled out: the rig (kept), the layer's snap / recentre counts (synced), Talion's body
+  yaw and the eyes' position (the EYEOFF and ANCHOR lines unchanged across the swap), whole snap steps (the turns are
+  not multiples of 30). Next: log the base yaw, the game camera's heading and the input's turn state in the new
+  module's first frames. Until then a developer in the headset should reload facing the way the run started (or after
+  a recentre), and the RELOAD line says how far the view moved.
+- **The weighted sword's state after a reload with the sword drawn** (156.7): the verdicts hold, the lag numbers of the
+  first swings do not; candidates: the weight's (swg) body state, the hands' smoothing filter, the arm IK's blend.
+- The audit is per feature: what a feature learns only at a load or an event must be handed over or found again in
+  somvr_reload_game.c. The drivers found five such states in four boots (156.3); the menus, the bow, the climb's
+  hang, the beasts' ride and the captain were not driven after a reload this round (the quiet check refuses the swap
+  while riding, climbing or holding an orc).
+- Linux: not done (the preload would need the same host / logic split with its own patch engine; not cheap this round).
+
+### 156.9 The view across a swap: the cause, every state that points the view, the swap's own check (b37, som-b37-hotreload2)
+- **The cause of 156.8's turn.** SOMVR_BODYMOMENTS (on in the headset builds; its yaw mode `player`) keeps the view from
+  turning with the game camera (its combat, sync and kill cameras): every turn of the camera's heading that is not one of
+  the player's snap steps is absorbed into an offset (`somvr_bm.yaw_off`, somvr_bodymoments.c `somvr_bm_yaw`), and the
+  view's heading is the rig's plus that offset. A reloaded module's `bm_start` zeroed it: the view jumped by everything
+  absorbed so far. Boot 20261104-022458's gen-0 module had absorbed 1374 deg of camera turns (its BODYMOMENTS END line);
+  its swaps after the drivers turned the view 103 and 158 deg, the idle swap 1.1 deg - never whole snap steps, the turn of
+  whatever the camera had done. The same swap moved the view 17.4 cm: the root anchor (SOMVR_ANCHOR=root, somvr_loco.c
+  `somvr_anchor`) re-latched with its filters and hand-off offset at zero. And a reloaded module's
+  `g_bm.recenters` started at 0 against the kept rig's count: its first frame ran `somvr_bm_recenter`.
+- **What decides where the view, Talion and the hands point** (somvr_reload_game.c `vk_*`; each a persistent block of its
+  own, so a patch that edits one struct starts only that part fresh, logged by the host's PERSIST line):
+  | block | what | without it at a swap |
+  |---|---|---|
+  | vk.bodymoments | `g_bm.s` (the yaw offset, the hold, the ease, the blink), `g_bm.o`, the recentre count | the view turns by every absorbed camera turn |
+  | vk.anchor | the root anchor's filters (the eye height, its lag, the hand-off offset, the extrapolation), its out | the eye point re-latches (cm) |
+  | vk.eyeoff | SOMVR_EYE_FWD_CM's push filter | the eye point moves along Talion's facing |
+  | vk.size | SOMVR_PLAYER_SIZE's state, this frame's size and rise | a size change's blink restarts |
+  | vk.input | the layer's snap / recentre requests seen (exactly the old module's: a snap held for its blink is applied, not dropped), the turn not yet given to the rig, the body follow's move in flight (the game took it, the rig not shifted yet) | a lost or doubled snap; a follow step not cancelled (up to SOMVR_FOLLOW_STEP_CM) |
+  | vk.hands | the hands' One Euro filters (SOMVR_HANDS_SMOOTH), the sword's weight and its body (SOMVR_SWORD_PHYS) | the hands and the blade jump to the raw pose |
+  Kept already (156.3): the rig (P0, yaw0, the snap steps, the recentres, the size's scale - shared, the follow's shifts
+  are in it). Re-read exactly each frame: Talion's root and heading, the head node, the game camera, the controllers.
+- **When.** The old module renders on after its stop (phase 0) - through the new module's ~0.5 s init - until the
+  commit: a hand-over at the stop is up to ~0.8 s old. So every module publishes the blocks at the end of each
+  game-thread hook that changes them (H4, PM - the follow - and the input tick - the turn: all three on the game's main
+  thread, one after another; somvr.c wraps them: `vk_enter(h4)` / `vk_leave(h4)`), and a reloaded module takes them at
+  the start of its first such hook - the old module's state after its very last frame. A module publishes only on the
+  thread H4 runs on, and only after it took the old one's (the boot's module: from its first H4); the new module's
+  first H4 may run before its first H1, so the take is at the hook's entry, before any of them. The take is logged:
+  `RELOAD gen N took the old module's view state at its first game-thread hook (frame F): <the parts>` (`NOT <part>`:
+  that part fresh).
+- **The weighted sword's numbers after a reload (156.8's second item) were not a lost state:** boot 022458's flick after
+  the reload ran 17 s after an orc was spawned by the driver before it (fling31, t=110749) - its SWORDPHYS swing line
+  carries `(a blow coming)`: SOMVR_DEFENCE tracked that orc's attack, and SOMVR_SWORD_PHYS holds the sword stronger
+  while a blow comes (the gain that keeps a block in time); the run before the reload had no orc. Driven again with no
+  orc on either side: 156.11.
+- **The swap proves itself.** Each frame's end (H4, a stereo frame) writes `struct somvr_where` (win/somvr_win_host.h,
+  the block "view.where", a seqlock): the mapping from the tracked space into the world (world = O + s R(yaw) m(p): O =
+  B - s R P0, yaw = psi - yaw0 after every stage - body moments, the size, the anchor), the base, Talion's root and
+  heading, the module's generation. The host samples it every 2 ms for 0.2 s before the commit (the old module's frames)
+  and 0.75 s after: the new module's first frame (the first written by the new generation) against the old one's last,
+  carried on by the motion between the two frames before (a walk or a smooth turn under way is no jump); the same
+  measure between two old frames is the control. The mapping, not the rendered eye, so a real head moving in the headset
+  is no jump. `RELOAD gen N ok` keeps its `the view across the swap moved X cm and turned Y deg ... (without a swap just
+  before: ...)` (now that measure) + Talion's; `RELOAD gen N view: the old module's last frame F (gen G): the view yaw /
+  pitch / position (the record's eye 0), the mapping, Talion; the new module's first ...; 0.5 s after: ...`; past 1 deg
+  or 2 cm: `WARN RELOAD view moved at gen N's swap: ...` (a WARN: a run's gate sees it).
+- **Quiet, never half-applied.** The idle check (somvr_logic_idle) also waits for: a body moment holding the view, the
+  sword in a wound (or a hit waiting for it), the bow drawn, a vault holding or flying, a jump's arc, a step / dash /
+  phase, the Shadow Strike holding or moving the view, a snap turn's blink; a climb names its phase (a hand on the wall,
+  hanging, the fling in the air, the descent's blink). Busy again after the check (during the new module's init): the
+  host waits for quiet again (SOMVR_DEV_RELOAD_WAIT_S); not in time - `RELOAD gen N refused: called off at the swap ...`:
+  the staged patches dropped (hk_stage_abort), the new module stopped and retired (its init ran: mapped, never called),
+  the old module resumed (`somvr_logic_stop(2)`: its writer thread again). Nothing of the new module went live.
+
+### 156.10 Who may swap (b37)
+- **A developer's game** (SOMVR_DEV_RELOAD=1, not a user's session): the trigger word `reload ...`, the watched file's new
+  stamp, and the player's swap.
+- **A session the launcher started for the user** (scripts/som-win-session.sh puts `SOMVR_USER_SESSION=1` last into the
+  game's environment - after every --game-env, so nothing takes it off; its SOMVR_HEADSET_TEST too): only the player's
+  own Apply / Undo press. The word is refused (`RELOAD refused: the word ... - a session the launcher started for the
+  user ...`) and the file watch never starts, whatever SOMVR_DEV_RELOAD says.
+- **The player's swap**: `int somvr_host_player_swap(const char *dll, const char *why)` (win/somvr_win_host.h; the live
+  loop's Apply / Undo, somvr_live_game.c): with SOMVR_LIVE=on (or SOMVR_DEV_RELOAD=1); the module at `dll`, at the next
+  quiet moment, never forced, no switch change; 0 = queued (the outcome: the host's RELOAD lines, somvr_host_gen() one
+  up), -1 = refused at once and logged (no SOMVR_LIVE, no path, a swap already queued or running). The reload thread
+  runs when SOMVR_DEV_RELOAD=1 or SOMVR_LIVE=on; the boot's `LOGIC ... loaded` line says which of the two paths is on.
+- A single-DLL build (build-win3 and older: the game side inside xinput9_1_0.dll) has no host: it ignores
+  SOMVR_USER_SESSION and SOMVR_LIVE's swap; som-win-session.sh removes an earlier split build's somvr_logic.dll from the
+  prefix's system32 for it (it is never loaded) and logs `a single-DLL build`.
+- **The module's path** (b37, live2's report: an Undo refused in boot 20261104-090204): `somvr_path()` makes a Linux
+  absolute path the Windows one under Wine and hands ANY other path back unchanged - the host ignored its result, so a
+  Windows path reached CopyFile as an uninitialised buffer. Now `host_path` (win/somvr_win_host.c) for the player's swap,
+  the watched file and the word's reload: a Linux absolute path -> `Z:\...` (refused when not under Wine or too long), a
+  Windows absolute path (`X:\...`, `\\server\...`, '/' taken as '\') as it is, anything else refused, and the file must
+  be there - `RELOAD refused: the player's swap (...) to ... - <why>` at once (-1) or `RELOAD gen N refused: the module's
+  path - <why>`. The stand-in's selftest (SOMVR_WIN_TEST_RELOAD=3) checks seven paths (`RELOADTEST path ok|FAIL ...`,
+  `RELOADTEST path: all ok`) and runs its second swap as the player's by the Linux path, its third by the Windows path.
+
+## 163. The VR-safe CPU lane: background jobs beside the user's VR session - `somvr-lane.slice`, `scripts/lane.sh`, the watcher's per-job gate, measured on a 90 Hz stand-in (2026-11-03/04, som-b35-lane + som-b37-lane2)
+The live loop (162) needs CPU work during the player's session: the speech-to-text of every voice note, a spoken answer
+(Kokoro TTS), the logic DLL's build for a hot reload (156) and the workers' build checks. The rule until now was "no
+heavy job while the player is in VR": on 10-11 a nice-19 speech job made a Hand of Fate 2 session judder (nice does not
+protect a game: SMT siblings, the L3 cache, the memory bandwidth and the CPU's power budget are shared). This section is
+the lane that runs such jobs, the measurement of what they cost a session, and the rule that follows.
+
+### 163.1 The PC
+Ryzen 7 5800X: 8 cores, SMT siblings N and N+8, one 32 MB L3 for all eight; 62 GB; RX 6800 XT. The firmware's CPPC ranks
+cores 3 and 5 highest (196), 0 and 2 lowest (171, 166). The user manager has no cpuset controller (cpu io memory pids
+only) and there is no root here: no AllowedCPUs, no L3/bandwidth partition (resctrl).
+
+### 163.2 The lane (som-b35-lane)
+- `somvr-lane.slice` (`scripts/lane_install.sh install|check|uninstall`; SYSTEM-CHANGES.md): CPUWeight=idle (cpu.idle),
+  CPUQuota=200 % in 10 ms periods (two CPUs' time), IOWeight 10, MemoryHigh 6G / MemoryMax 10G, no swap.
+- `scripts/lane_run.sh CMD...` (and `scripts/lane.sh run NAME -- CMD...`, the live loop's call; `lane.sh status` = one
+  line): one scope per job in the slice, SCHED_IDLE + nice 19 + idle I/O, the lane's whole cores 0 and 2 (CPUs 0,2,8,10)
+  by affinity, the libraries' thread pools and the build runner (`SOMVR_JOBS`) sized to the lane, no GPU. It refuses a
+  real-time caller (exit 3) and waits while the user is in VR unless the job may run then (163.9; `LANE_WAIT=0`: exit 4).
+- `scripts/lane_watch.py` (the unit somvr-lane-watch, started by lane_run.sh, gone 120 s after the lane is empty): keeps
+  every lane thread on the lane's CPUs; pins a protected session's threads to the other CPUs while a lane job runs (the
+  old masks saved and given back); the VR gate; the closed loop (a protected session's `SOMVR_PERF_RAW` frames: the lane
+  frozen within ~1 s when the frames' 0.5 s median rises over the baseline's p90 or late frames rise, thawed after a calm
+  stretch that doubles after each re-pause, up to 60 s); logs in logs/lane/.
+
+### 163.3 The stand-in session (som-b37-lane2)
+A headless Windows game in the practice meadow at the VR preset (the harness's render.cfg per slot, 158), eyes
+2015x2217, with:
+- **90 Hz pacing by Monado's real compositor**: `headless_win.sh WIN_MONADO_RATE=90` runs Monado's own compositor in an
+  X window of a headless gamescope of its own (`XRT_COMPOSITOR_FORCE_XCB=1 XRT_COMPOSITOR_DEFAULT_FRAMERATE=90`): 900
+  presents every 10 s, the compositor's GPU pass included. The null compositor holds every headless game at 20 Hz (1/5 of
+  the session's CPU and GPU work); `U_PACING_APP_IMMEDIATE_WAIT_FRAME_RETURN=1` does not unpace it (115.2) and with the
+  real compositor it broke the pacing (~30 fps, boot 20261104-085718). `WIN_MONADO_ENV` (= headless_vr.sh's
+  `HEADLESS_MONADO_ENV`) passes U_PACING_* / XRT_COMPOSITOR_* to Monado on Windows boots too.
+- **A WiVRn stand-in** (`scripts/lane/lane_wivrn.c`): 90 Hz, each tick the frame's bitstream (100 Mbit/s) copied out of a
+  ring into 1400-byte packets with a checksum, calibrated to 2.5 ms of work, sent as UDP to a socket of its own on
+  127.0.0.1 and drained (~30 % of a core). An estimate of the server's CPU side (the encode itself is on the GPU), not a
+  measurement of WiVRn; its own tick lateness is logged (wivrn-standin.txt). It runs with the game's run in its
+  environment, so the watcher pins it with the game.
+- **The measures**: the game's `SOMVR_PERF_RAW` (every present's interval and render-thread time, `perf NAME` windows);
+  `scripts/lane_sample.py` once a second (PSI cpu/memory/io, the lane's cgroup CPU, throttling, memory and memory.high
+  events, swap, the game's threads' schedstat waits); `scripts/lane_ab.py RUN` = the table and the rule.
+- **Late frames at a fixed 90 Hz**: the present intervals jitter around 11.1 ms, so ~48 % land a hair over 11.1 ms in
+  every window, idle or busy - that share says nothing. A frame the headset misses is a compositor slot without a new
+  frame: an interval over 1.5 x the median (16.6 ms). The rule (163.7) uses the interval p99 and that missed share.
+
+### 163.4 The job mix
+In the lane (two cores' quota), each after a real content change so no cache skips it: **voice** = faster-whisper base.en
+and small.en (int8) each on a 15 s note, then a Kokoro-82M line (5.5 s of speech), back to back, the models loaded once;
+**builds** = the hot reload's logic DLL (`win/build.sh --logic` of t3/som-hot-reload's tree: somvr.c split for 8 llc at
+once), then the full check pair (`build.sh --check` + `win/build.sh --check`). Both streams at once for a whole window
+= more than a live session ever asks (a note every minute or so, a build per fix).
+
+| In the lane (2 cores' quota) | alone | beside the other stream |
+|---|---|---|
+| STT base.en, 15 s note | 0.7 s (2 threads) / 1.1-1.4 s (4) | 1.45 s |
+| STT small.en, 15 s note | 3.1 s (4 threads) | 4.35 s |
+| Kokoro line (5.5 s of speech) | 1.7 s (2 threads) / 4.7 s (4) | 6.8 s |
+| the logic DLL | 15.7 s | 38.9 s |
+| the check pair | 88 s | 182 s |
+
+### 163.5 The A/B (solo, boot 20261104-090521, 11-04 09:05-10:34)
+ABBA order I1 B1 B2 I2 I3 B3, 600 s each (busy = both streams, the closed loop off, the game and the stand-in pinned to
+the other CPUs as in a session), then 180 s knob windows (163.6). Each window ~54,000 frames.
+
+| window | interval p50 / p99 / p99.9 / max (ms) | missed (> 16.6 ms) | render-thread time p50 / p99 (ms) | PSI cpu some | WiVRn stand-in ticks > 12 ms |
+|---|---|---|---|---|---|
+| idle-1 | 11.10 / 12.04 / 13.93 / 46.4 | 0.017 % | 7.00 / 8.56 | 0.8 % | 19 |
+| busy-1 | 11.09 / 13.38 / 14.73 / 20.2 | 0.011 % | 8.18 / 10.51 | 35.6 % | 223 |
+| busy-2 | 11.10 / 13.26 / 14.54 / 16.7 | 0.002 % | 8.07 / 10.27 | 35.8 % | 199 |
+| idle-2 | 11.10 / 11.90 / 12.49 / 14.8 | 0.000 % | 6.78 / 7.84 | 0.7 % | 0 |
+| idle-3 | 11.10 / 11.89 / 12.49 / 15.7 | 0.000 % | 6.77 / 7.92 | 0.7 % | 1 |
+| busy-3 | 11.10 / 13.11 / 14.29 / 17.9 | 0.002 % | 7.81 / 9.87 | 35.9 % | 161 |
+
+The idle windows' noise: p99 11.89-12.04 ms (spread 0.15), missed 0-0.017 %. **The busy windows: p99 +1.2-1.5 ms, out
+of the noise; missed frames not up (0.002-0.011 %)**; the render thread's work +1.1 ms (~16 %); the stand-in's late ticks
+from ~0 to ~0.35 %. Memory: the lane at most 4.3 GB, no memory.high event, no lane swap (MemorySwapMax=0; the PC swapped
+some other processes' pages in busy-3, 62 MB, frames unaffected). PSI cpu "some" ~36 % is the lane's own throttled
+tasks (the quota binds: 2.00 cores). The old way (the same mix at nice 19 on every CPU, 6 STT threads; the 60 s window
+of boot 20261104-084051): p99 37.2 ms, **57 % of the frames missed** - the 10-11 judder, measured.
+
+### 163.6 The knobs (the same boot, 180 s each; limits from the A/B's idle windows: p99 <= 12.19 ms, missed <= 0.033 %)
+| window | p99 | missed | the lane's work in the window | |
+|---|---|---|---|---|
+| builds only (the logic DLL + the check pair) | 11.99 | 0.006 % | 1.70 cores; logic DLL 15.7 s, pair 88 s | **within** |
+| voice only (4 threads, back to back) | 13.88 | 0.000 % | 1.95 cores; 20 rounds | over |
+| the mix at one CPU's quota (cpu.max 10000/10000) | 12.44 | 0.000 % | 1.00 core; base.en 12 s a note, no build done | over (just) |
+| the mix, the game not pinned | 13.43 | 0.081 % | 1.99 cores | over (pins help) |
+| the mix, the closed loop on | 12.01 | 0.000 % | 0.03 cores: frozen ~98 % (re-paused 0.1-0.9 s after each thaw) | within, starved |
+| idle-4 / -5 / -6 | 11.91 / 11.85 / 11.92 | 0.031 / 0 / 0 % | - | |
+
+So the cost is the speech models, not the compilers: whisper's and onnxruntime's dense int8/fp32 kernels on 4 threads
+share the L3, the memory bandwidth and the package's power budget with the game; the builds (clang, llc, lld, the unit
+tests) stay inside the noise at the lane's full two cores. A smaller lane or the closed loop make the mix free only by
+starving it (a note's STT in 12 s, no build in 3 min) - useless for the live loop.
+
+**The voice, made smaller** (boot 20261104-110123, 180 s each; its own idle windows p99 12.19 / 11.92 / 11.94 ms, missed
+0 / 0 / 0.019 %: limits p99 12.46 ms, missed 0.037 %):
+
+| window | p99 | missed | lane cores | |
+|---|---|---|---|---|
+| voice at 2 threads (the live loop's STT default), back to back | 16.62 | 1.001 % | 1.97 | over: all its missed frames 9-11 s into the window, while three models loaded at once (a 2 s hitch burst, max 94 ms) |
+| a note every 20 s (base.en + a Kokoro line, 2 threads) | 13.41 | 0.019 % | 0.25 | over (p99) |
+| voice at 2 threads, one CPU's quota | 13.48 | 0.006 % | 1.00 | over (p99) |
+| a live session: a note every 20 s + the builds back to back | 13.01 | 0.006 % | 1.80 | over (p99) |
+
+No setup of the speech jobs keeps the p99 in the noise: while a model runs (a note's STT 0.7 s, a Kokoro line 1.7 s at 2
+threads) the present intervals spread ~1.3 ms wider, and a note every 20 s keeps ~12 % of the frames inside such a
+burst - more than the 1 % that sets a p99. None of them adds missed frames in steady state; loading the models does (load
+them before the headset session starts).
+
+**The builds again, and the voice at one thread** (boot 20261104-112850, solo; another helper's build checks ran
+11:30:15-11:31:14, over the warm-up and idle-10's first 23 s: idle-10 counted from 30 s in, `lane_ab.py --trim
+idle-10:30`):
+
+| window | p99 | missed | max | |
+|---|---|---|---|---|
+| idle-10 (270 s) / idle-11 / idle-12 | 12.39 / 11.94 / 11.95 | 0.186 / 0.000 / 0.006 % | 97 / 15 / 17 | idle-10 still had outside hitches (11:30:57, 11:35:30) |
+| builds-2 (300 s, 2.9 rounds: logic DLL 15.6 s, the pair 88 s) | 12.26 | 0.026 % | 98 | |
+| builds-3 (300 s) | 12.16 | 0.015 % | 100 | |
+| a note every 20 s at 1 thread (base.en + Kokoro) | 12.86 | 0.000 % | 16 | +0.9 ms: over |
+
+Six frames of 40-100 ms fell in this boot's idle and busy windows alike (none in boot 090521's six busy windows, whose
+builds ran six check pairs): outside load, as far as the logs tell. The builds over all three boots: p99 11.99 / 12.26 /
+12.16 ms against idle 11.89-12.04 (the A/B's limit 12.19: two in, one 0.07 ms over), missed 0.006-0.026 % (limit 0.033):
+**within the noise** - one tenth of the speech models' p99 cost.
+
+### 163.7 The rule (lane.conf; the decision rule of the task: free = the interval p99 and the missed share within the idle windows' noise)
+- **The builds are free: they run during VR.** `LANE_IN_VR=1`, `LANE_VR_JOBS="*build* *check*"`: the live loop's patch
+  build (live_lane.sh's `live-build`: the check pair), the hot reload's logic DLL, a worker's checks through
+  `scripts/lane.sh run check -- ./build.sh --check`. At the lane's two cores: the logic DLL 15.6 s, the pair ~88 s.
+- **The speech models are not free** (p99 +0.9-1.5 ms in every setup; no more missed frames in steady state; a 2 s hitch
+  burst while three models load at once). `LANE_VR_GUARDED="live-stt live-tts"`: in VR they run only under the closed
+  loop, i.e. only while the session writes its frames (`SOMVR_PERF_RAW`); without them their scopes are frozen until the
+  session ends - the rule exactly. The session's env does not carry SOMVR_PERF_RAW today, so in VR the voice waits; the
+  one line that lets it run guarded is `SOMVR_PERF_RAW=@RUN@/perf-raw.txt` in headset-build26.env (a line per present
+  into a buffer written every 50 ms, ~3 KB/s; on in every window measured here).
+- **The closed loop in VR watches late frames only** (`LANE_VR_LOOP=late`): its work mode pauses on the render thread's
+  work rising over the idle p90, which even the free builds do (+0.6 ms) - the lane would starve. Late frames (an
+  interval over 1.5 x the median, 2 in a second) are what the headset shows. Offline: `lane_watch.py test` (a +40 % work
+  rise without late frames: no pause; late frames: paused in 0.36 s).
+- Everything else waits for the session's end (lane_run.sh; LANE_WAIT=0 = exit 4) or is frozen by itself (lane_watch.py).
+- Not used, kept as knobs: `LANE_VR_QUOTA` (the lane's cpu.max while in VR: one CPU starved the jobs), `LANE_VR_NEED_FRAMES=1`
+  (hold every job in VR until the session's frames come). The old way (nice 19, every CPU) stays wrong: 57 % missed.
+- For the live loop's voice, if it runs guarded: 1 thread (+0.9 ms) rather than 2 (+1.5), and its models loaded before
+  the headset session starts (the load is the one moment it made frames late).
+
+### 163.8 Files, switches, install
+- `scripts/lane/lane.conf` (the rule above), `lane_install.sh install --force` copies it to ~/.config/somvr-lane/ (the
+  installed copy wins; SYSTEM-CHANGES.md has the undo). `scripts/lane.sh run NAME -- CMD` / `lane.sh status` and
+  `lane_run.sh CMD` (LANE_NAME=NAME): the same interface as b35; new: LANE_VR_JOBS / LANE_VR_GUARDED gate a job's start
+  by its name, SOMVR_JOBS sized to the lane. `lane_watch.py`: the per-job freeze, LANE_VR_LOOP, LANE_VR_NEED_FRAMES,
+  LANE_VR_QUOTA, `status --line`; test hooks LANE_FAKE_VR=FILE (the file = in VR) and LANE_USER_RAW=FILE (the session's
+  frames). Checked live on the real cgroups with a stand-in session (lane_fakegame): in "VR" the build job runs, the
+  speech jobs freeze, run while frames are watched, freeze when they stop, all thawed after VR.
+- Measurement: `scripts/lane37-drive.sh` (windows I B L Q V U N O T W X P M; LANE_ORDER / LANE_TAIL / LANE_WS / LANE_XS),
+  `scripts/lane_ab.py RUN [--trim NAME:S]`, `scripts/lane_sample.py`, `scripts/lane/lane_wivrn.c`, `lane_loads.py
+  voice|builds|prepare`; the harness's `WIN_MONADO_RATE` / `WIN_MONADO_ENV`.
+
+### 163.8b Whose frames while the user is in VR (b37, at hotreload2's merge)
+With SOMVR_PERF_RAW in the headset env every headless boot writes a perf-raw.txt too, and the watcher's `user_raw()` took
+the newest of logs/boot-check-* and logs/win-session-*: a helper's boot could stand in for the user's session. Now
+(scripts/lane_watch.py): the user in VR also by a user-session solo request (`user_session_req`, game_slot.sh's
+launcher request); the frames are only the user's own run - the somvr-headset unit's (`headset_run`: SOM_BOOTCHECK_RUN
+in its processes' environment; that run only, no frames while it is not fresh), else the freshest logs/win-session-*;
+a boot-check run never. A protect file whose raw= is a boot-check run is not followed while the real user is in VR
+(`protects_for`, logged `PROTECT NAME not followed ...` once); the lane's test mode keeps it (LANE_FAKE_VR tests, or no
+user session). Test: `lane_watch.py test` part 6 (the old rule took the helper's boot; six cases), run by build.sh --check.
+
+### 163.9 Open
+- A heavier scene than the meadow (a fight, the wraith vision) has less headroom: the builds' small p99 cost was measured
+  idle in the meadow only. The late-frame loop is the guard where the session writes its frames.
+- The stand-in is not the headset: WiVRn's real CPU side and the Wi-Fi are estimated, not run. The user's own session
+  with SOMVR_PERF_RAW on would give the real numbers (lane_ab.py reads any run's perf-raw.txt).
+- No cpuset delegation, no L3/bandwidth partition (root): with resctrl's cat_l3/mba the speech models might become free.
+## 162. Build 35: the live loop - a note spoken in the headset reaches the coordinator in seconds; an answer and a patch come back to the palm: `SOMVR_LIVE` (2026-11-03, som-b35-live)
+
+The goal: the player keeps testing while the coordinator works - a bug mark's voice note is read within seconds, a
+helper fixes it, the fix comes back as a patch the player applies in the running game, and a short answer says what
+changed and what to try. Windows build first (the patch needs its host/logic split, 156). Code default off; the env file's
+som-b35-live block: `SOMVR_LIVE=off` until the coordinator turns it on for the player's build.
+
+### 162.1 End to end
+1. **The note.** The mark (B + Y, the menu's Report, the word `mark`) -> the session's voice_rec.py records WiVRn's
+   microphone until the talk ends (82) -> voice.txt written at the note's end -> `scripts/live_daemon.py` (the session
+   starts it with SOMVR_LIVE=on) hands voice.wav to the speech-to-text worker (`scripts/live_stt.py`, faster-whisper
+   base.en int8 from the local Hugging Face cache, loaded once, in the CPU lane) -> `logs/live/<session>/inbox/<n>.json`
+   about 1.2 s after the note ended. `scripts/live_wait.sh` (the coordinator's background command) wakes on it and
+   prints it: the transcript, the game time, state.txt's head, the pictures' paths.
+2. **The fix.** A helper builds the logic DLL, `live_patch.sh check MOD` runs both build checks (and their unit tests) in
+   the lane and stamps the DLL's sha256, `live_patch.sh stage DLL "what changed" "what to try"` puts it in
+   `patches/<id>/` (a layer or host change: kind restart).
+3. **The answer.** `live_say.sh "text"` -> `say/<n>.txt` -> the layer's thread (every 0.5 s) -> a card waits: a small
+   amber dot where the card will open; at a calm moment (3 s without the bow, a climb hold, a swing, an attack incoming
+   or an attack at Talion in the last 6 s) a NUDGE in the off hand, and the palm turned up shows the card instead of
+   the VR menu (24 x 15 cm at the menu panel's place, 4 cm lower); the main hand's fingertip taps it away (CLICK).
+4. **The patch.** "Patch N ready" comes as a card and in the VR menu's Test page patch box; Apply patch -> the layer
+   writes `patches/request.txt` -> the game side (the writer thread, 0.5 s) asks the host's reload
+   (`reload SOMVR_DEV_RELOAD_DLL=<the patch's DLL>`, 156) -> the swap at the old module's quiet moment -> the new module
+   answers in `patches/state.txt` -> the card "Patch N is in - Try: ...". Undo patch swaps back to the module before
+   it. Nothing swaps without the press.
+5. **The record.** Every note, message, press and answer is a line: `live.log` (the daemon), `xr: live:` (the layer),
+   `LIVE request N` (the game side), `patches/log.txt` (each stage / apply / undo with its id).
+
+### 162.2 The live folder (`SOMVR_LIVE_DIR`, made by scripts/live_session.sh)
+| path | written by | what |
+|---|---|---|
+| `on`, `daemon.json`, `session.json`, `live.log` | the daemon | alive (pid), every 2 s: notes, the worker's state, the lane's line |
+| `build.txt` | live_session.sh start | the session's mod tree and the layer's / host's source hashes (`live.py fingerprint`) |
+| `inbox/<n>.json` | the daemon | a finished mark: n, mark, dir, game_t, wall, transcript, stt_model, stt_s, audio_s, latency_s, why, state (the head lines), pictures |
+| `stt/<mark>.json` | the worker | the transcription (segments, seconds) |
+| `say/<n>.txt` (+ `.speak`) | live_say.sh | a message (600 bytes at most, UTF-8 folded to the font's ASCII) |
+| `say/<n>.shown`, `.read` | the layer | the card first shown on the palm, tapped away (the time) |
+| `patches/<id>/somvr_logic.dll`, `patch.txt` | live_patch.sh stage | id, kind=live\|restart, what, try, why, sha, tree, checked |
+| `patches/ready` | live_patch.sh stage | the newest staged id |
+| `patches/request.txt` | the layer | `apply ID SEQ` / `undo ID SEQ` (the menu's press) |
+| `patches/applying.txt` | the game side | the request handed to the host (seq, op, id, to, gen0, dll) |
+| `patches/state.txt`, `stack.txt`, `log.txt` | the game side | seq, current, last=applied\|undone\|refused\|stub\|restart\|bad, id, msg; the applied chain; the record |
+The user's sessions: `logs/live/<win-session-...>` (`logs/live/current` = the newest); tests: `logs/live-test/` (never
+the user's `current`).
+
+### 162.3 Switches (the defaults)
+- `SOMVR_LIVE=on|off` (off; the layer and the DLL read it with `SOMVR_LIVE_DIR`, which som-win-session.sh /
+  headless_win.sh set; the daemon runs only then). Needs the VR menu (`SOMVR_VRMENU=1`, the palm panel's place and
+  gesture); the tap needs `SOMVR_XR_TOUCH=on` (without it the main hand's trigger pointed at the card).
+- `SOMVR_LIVE_CALM_S` (3: the layer's calm gate), `SOMVR_LIVE_TTS=on|off` (off: 162.5), the daemon's
+  `SOMVR_LIVE_STT=on|off` (on) and `SOMVR_LIVE_STT_MODEL` (base.en; small.en, distil-small.en and medium.en are cached
+  too), the lane stub's `LIVE_LANE_CPUS` (7,15) and `LIVE_LANE_THREADS` (2).
+- Live patches need the host/logic split and **`SOMVR_DEV_RELOAD=1` in the player's session** (156 calls it a developer's
+  switch, never in a session: with the live loop it is the session's - the coordinator decides; without it every Apply is
+  answered "refused" by the host's log line, 20 s later).
+- The VR menu: `SOMVR_VMI_LIVE_APPLY`, `SOMVR_VMI_LIVE_UNDO` (rects only while `somvr_vm_live_set`'s box is on; labels
+  "Apply patch", "Undo patch"), `SOMVR_VM_LIVE_Y` 520 / `_BTN_Y` 616; the Test page's text pages end above the box. No ABI
+  change (somvr_vrmenu v8 as it was): the box is the layer's; `SOMVR_VMG_FIGHT` (64) is a new bit in `block`, outside
+  `SOMVR_VMG_ALL` (the gesture ignores it; an older layer too), set only with SOMVR_LIVE on.
+
+### 162.4 Decisions, and why
+- **base.en, one physical core.** The 11-03 session's notes on core 7's two threads (int8): base.en 1.0-1.4 s for 10-18 s
+  notes, small.en 3.2-4.3 s, distil-small.en 2.8-4.1 s, the same words (base.en caught a clipped start small.en lost). The
+  goal is "within ~3 s"; base.en leaves the most room. The big model re-transcribes after the session for the record.
+- **The worker keeps its model** (0.5 s to load; a process per note would add it and a page-in every time).
+- **The card on the palm, not in view.** HL:A's wrist UI: information where the player looks for it, never put in front
+  of the eyes. The VR menu's own place and facing test (the palm toward the eyes, looked at) - one gesture to learn; while
+  a card waits at a calm moment the menu's gesture is held (the menu button still opens the menu), so the palm shows the
+  message first; after the tap a fresh palm opens the menu as before. The dot says "something waits" without text;
+  the NUDGE comes once per card, at the first calm moment, so a fight is never interrupted by a buzz.
+- **Calm = no busy bit for 3 s.** The menu's gate bits (the bow, a climb hold, a swing, an attack incoming) plus
+  `SOMVR_VMG_FIGHT` (an attack at Talion now or in the last 6 s, th_attacker): build 31 made the menu gate ignore attacks
+  (`SOMVR_VRMENU_GATE=hand`), but a message must not appear mid-fight, so the fight comes back as its own bit.
+- **Patches only by the press, in the Test page.** The Test page is where the build's notes are; the box shows what the
+  patch changed and what to try before the player commits. Apply is dimmed for a restart patch (it is still announced);
+  Undo only when a patch is live. The request goes through a file the game side polls - no shared-memory ABI change.
+- **A layer or host change is a restart patch**: `live_patch.sh stage` compares the source closure (every file the
+  layer's / the host's sources include, recursively) with the session's `build.txt`; a logic-only change is live.
+- **The checks are the stamp, not trust**: stage refuses a DLL whose sha256 is not in the tree's `live-checks.txt`
+  (written only after `build.sh --check` and `win/build.sh --check` passed in the lane) - `--force-unchecked` is recorded
+  in patch.txt as "checked=NO (forced)".
+- **The lane: a stub until 163 lands.** `scripts/live_lane.sh exec NAME CMD` uses `scripts/lane.sh run NAME -- CMD`
+  when it exists; the stub pins the job to core 7 (CPUs 7,15), nice 19, idle I/O, 2 worker threads, no GPU. It does not
+  pause a job when frames run late - the lane will.
+- **The spoken line stays off**: espeak-ng is the only TTS on this PC (robotic; piper is not installed - `pip install
+  piper-tts` and a voice .onnx would be the nicer one); `live_tts.py` synthesises in the lane, plays only on WiVRn's sink
+  listed by its exact name (a missing device would fall back to the speakers), the game's streams ducked to 35 % and
+  put back. Turn it on only when the lane's numbers say it costs nothing.
+
+### 162.5 Tests
+- `mod/somvr/tests/test_live.c` (build.sh --check, 44 checks): the wrap (words, breaks, cut words, UTF-8 folding, the
+  "..." cut), the card's picture (premultiplied, opaque, clear corners, the dot, bgra), the calm gate (each busy bit,
+  FIGHT, the card's own bit no cause, the 3 s), patch.txt / state.txt / request lines, the result cards, the VR menu's
+  patch box (off = the Test page as before: no rect, no hit; on = two buttons above Prev / Next, the text above the box,
+  enabled by the state, drawn).
+- `scripts/tests/test_live.py` (by hand, ~25 s, 25 checks): a session folder of its own, a note made by espeak-ng into a
+  WAV file (never played) -> inbox/1.json 1.2 s after the note ended with the words said, live_wait woken; a mark without
+  voice after the 3 s grace; say; status; stage refused without the ABI export / the checks, a layer source changed ->
+  restart (the file named), the same tree -> live; the spoken line with stand-ins for pactl and paplay (ducked 80 -> 28 %,
+  played on the test's sink, put back; a sink not listed: never played); stop.
+- `scripts/live35-drive.sh` (a headless Windows boot, LV_STEPS voice say patch perf): 162.6.
+
+### 162.6 Runs
+- No headless game boot yet: the round was wound down while the first boot (`live35-drive.sh`, LV_STEPS voice say patch)
+  still waited for a slot behind another helper's solo. Proven offline only: 162.5, both build checks green (Linux and
+  Windows) on this branch and on a test merge with hotreload (below).
+- The merge with t3/som-hot-reload (branch **t3/som-b35-live-hrtest**, test only, never for main): it merges with
+  conflicts only in the docs, HANDOFF-winport.md and the env file's last blocks (both kept); builds the host
+  (xinput9_1_0.dll, exporting somvr_host_reload_request / somvr_host_gen - the two the live code looks up) and the logic
+  (somvr_logic.dll, exporting somvr_logic_abi); `live_patch.sh check` on it: build.sh --check ok in 221 s, win/build.sh
+  --check ok in 35 s (one core's worth of CPU: ~4.3 min for a patch's checks), the stamp written.
+- The lane (163) landed meanwhile as `scripts/lane_run.sh CMD...` (LANE_NAME, LANE_IN_VR=1 to run while the player is in
+  VR, the somvr-lane.slice; not `lane.sh` as live_lane.sh expects): live_lane.sh still uses its stub.
+
+### 162.7 Next (in this order)
+1. `scripts/live_lane.sh`: use `lane_run.sh` when it exists and `systemctl --user show -p LoadState --value
+   somvr-lane.slice` is `loaded`: `LANE_NAME=$NAME LANE_IN_VR=1 exec lane_run.sh CMD...` (the speech-to-text must run
+   during VR - the lane's default waits until the session ends); `status` = `python3 -I lane_watch.py status`; the stub
+   otherwise.
+2. Boot 1 (any slot): `live35-drive.sh` with LV_STEPS="voice say patch" (the boot line in its header; WIN_MARK_VOICE = a
+   recorded note, e.g. a copy of an 11-03 session mark's voice.wav in /tmp): the note's latency in the inbox, live_wait
+   woken, the message's dot and card (dumps -> `xr_compose.py RUN -f N`: look at both eyes as a player - readable? placed
+   on the palm, clear of the fingers?), the tap, the stub's "after a restart" answer by Apply patch.
+3. Boot 2 (solo, from the t3/som-b35-live-hrtest tree rebuilt, `SOMVR_DEV_RELOAD=1 SOMVR_PERF=on SOMVR_XR_PERF=on
+   SOMVR_PERF_S=600 SOMVR_XR_PERF_S=600` added): LV_STEPS="patch perf" - Apply patch swaps the stamped somvr_logic.dll in
+   (the RELOAD line, "LIVE request 1: applied ... module gen 1"), Undo patch swaps back ("undone ... gen 2"), the game
+   running on; the frame-time windows idle / stt / after (the worker transcribing in a loop in the lane).
+4. Then: the lane's numbers for the spoken line (SOMVR_LIVE_TTS stays off until they say it costs nothing); the
+   coordinator turns `SOMVR_LIVE=on` (and `SOMVR_DEV_RELOAD=1`) on for the player's build.
+
+### 162.8 Build 37: the loop run in the game, the spoken answer, on for the player's session (2026-11-04, som-b37-live2)
+**On for the player's session.** The env file's som-b37-live2 block: `SOMVR_LIVE=on`, `SOMVR_LIVE_TTS=on` (build 35's
+`SOMVR_LIVE=off` commented out). The VR menu's Test page carries three lines on how to use it (assets/what-to-test.txt).
+Live *patches* also need the host/logic split (156, hotreload's branch, not merged here) - with som-b37-hotreload2's host
+(`somvr_host_player_swap`) `SOMVR_LIVE=on` alone opens the player's swap: **no `SOMVR_DEV_RELOAD`** in the player's session
+(it stays a developer's switch: the raw `reload` word and the file watch). Until the split is merged, Apply patch is
+answered "after a restart" (the stub - proven in the game, 162.8 runs).
+
+**The spoken answer (`SOMVR_LIVE_TTS=on`).** Every card - a message, "Patch N ready", a patch's result - is also said
+once, at its calm moment, in the headset:
+- the layer writes the card's spoken line when the card arrives (`say/<key>.line`; key `say-N`, `patch-N`, `state-N`):
+  `somvr_lv_speech` - the title (not a message's "Message N"), then the whole text (never the card's 6-line cut), each
+  line break a sentence's end;
+- the daemon hands it at once to its text-to-speech worker in the lane: `scripts/live_kokoro.py` - Kokoro-82M (ONNX,
+  onnxruntime CPU) with misaki's English phonemes, from shared/tools/tts (the TTS venv; nothing downloaded), the voice
+  af_heart, loaded once (2.4 s); a line of 6-10 s of speech in 3-5 s on one core; the WAV at -20 dBFS RMS (a dialogue
+  line's level), peak -1 dBFS;
+- the card's nudge (its first calm moment, 162.4) waits until that WAV exists (at most 8 s, `LV_VOICE_WAIT_S`), so the
+  buzz and the voice come together; the layer writes `say/<key>.calm` with the nudge;
+- at `.calm` the daemon plays it (`scripts/live_tts.py`): on **`wivrn.sink` by that exact name** - it must be listed
+  right before (a device that is not there would fall back to the default output, the PC's speakers: not listed = not
+  spoken; no other sink is ever tried); our stream at the game's own stream volume on that sink (100 % when none is
+  there), the game's streams ducked to 50 % while it plays and put back (also on a failure); one line at a time, in
+  the order of their calm moments; a line not ready 30 s after its calm moment is dropped. `say/<key>.spoken` says
+  what happened. `live_say.sh --quiet "..."`: a card only.
+- Tests never reach a device: headless_win.sh gives a run with SOMVR_LIVE_TTS=on a null sink of its own
+  (`somvr_live_tts_<pid>`, `LIVE_TTS_SINK`) and records its monitor to `RUN/live-tts.wav` (the proof of what was said);
+  som-win-session.sh's test mode (`--sink null`) uses its null sink. Kokoro over espeak-ng: the decision was the
+  coordinator's (the voice the player hears for every answer; espeak-ng is robotic); Kokoro is the heavier model, which
+  is why it runs only in the lane and ahead of the calm moment.
+
+**The lane.** `scripts/live_lane.sh exec NAME CMD`: the lane (163) when it is installed - `scripts/lane_run.sh` here, the
+`somvr-lane.slice` file present and loaded - as `LANE_NAME=live-NAME LANE_IN_VR=1 lane_run.sh CMD` (LANE_IN_VR=1 is
+only lane_run.sh's own start gate: the workers start with the session, inside VR). Whether lane jobs may *run* during
+the player's VR is the lane's installed conf (its LANE_IN_VR): 0 = the watcher freezes the lane for the whole session;
+the daemon then posts a note after 20 s without its words ("the transcription waits") and the words follow as a note of
+their own (`update_of`) when the lane thaws; `live_status.sh` says which. Otherwise the stub: core 7 (CPUs 7,15),
+idle I/O, 2 threads; b37: the speech workers (stt, tts) at nice 10, everything else (a patch's build checks) at nice 19 -
+boot 082636 measured a note's transcription at 9.96 s beside a patch check on the same core (0.98 s alone).
+
+**Tests.** tests/test_live.c 50 checks (b37: the spoken line - a message, a patch with breaks/tabs/control bytes, a long
+text cut at a word, a result; a refused Undo's card "Patch N still in", not "not applied"); scripts/tests/test_live.py 30 checks (b37: the spoken path end to end through the daemon
+with stand-in pactl/paplay - Kokoro synthesises at `.line`, nothing plays before `.calm`, at `.calm` the game ducked
+80 -> 40 %, the line on the test's sink at the game's 80 %, put back; a quiet message never synthesised; a sink not
+listed and the default `wivrn.sink` absent from the list: never played).
+
+**Runs (Windows, headless, scripts/live35-drive.sh; the voice note a copy of a session mark's recording - 14.8 s).**
+- **boot-check-20261104-082037** (slot 2, this branch = no host split): the note in the inbox **1.02 s** after it ended
+  (0.98 s to transcribe, base.en, the stub lane), live_wait woke at 1.17 s; message 1 arrived, its card shown on the left
+  palm (picture: live2-pics/frame860 - readable in both eyes, below the hand, nothing in the face); its line synthesised
+  3.3 s after the card arrived and played on the run's null sink (its monitor's recording transcribes to the message's
+  words). The driver's own bugs (it watched for "shown" after the picture's pose had already shown the card; the MOD
+  line of the new launch-cmd.txt) stopped the rest: fixed.
+- **boot-check-20261104-082636** (slot 2): **every step PASS** - the note and live_wait; message 1 shown (the menu's
+  gesture held), tapped, said; patch 1 staged: "Patch 1 ready" shown, tapped, said; the menu by the palm, the Test tab
+  (the patch box: Apply enabled, Undo dimmed), Apply patch -> request 1 -> the game side's `stub` answer ("after a
+  restart") -> its card shown, tapped, said. The note took 9.96 s and a line 18.9 s here: the patch tree's build checks
+  ran on the stub's core at the same time (-> the nice split above). 2 WARNs (H9 not installed, layout B), the same as in
+  other helpers' Windows boots from this main (e.g. 20261103-232217): not this work's.
+- **boot-check-20261104-083629** (solo, slot 1; the test merge t3/som-b37-live2-hrtest = this branch + hotreload2's
+  22d6e6c, `SOMVR_DEV_RELOAD=1`, perf on): the game side found the host (`LIVE config on: ... hot reload: yes`); the note
+  in the inbox **1.15 s** after it ended (0.99 s to transcribe), live_wait woke at 1.43 s. The patch step staged the
+  session's own DLL (the driver was not given the patch's - a driver-side slip) and stage refused it ("has not passed
+  both build checks"): correct, nothing swapped. The frame windows, the stub lane (the null compositor paces this boot at
+  20 Hz, so these are the cost in CPU time, not 90 Hz frame times): `idle` 27 s - the game thread's work 2.20 ms mean,
+  p95 2.56; `stt` 26 s with base.en transcribing the 14.8 s note in a loop on core 7 (28 transcriptions) - 2.99 ms,
+  p95 3.58 (+0.8 ms mean); `after` 2.23 / 2.40; the GPU unchanged (9.41 / 9.32 / 9.48 ms). 2 WARNs (the standard two).
+- **boot-check-20261104-090204** (solo; the same test merge; the patch = the test merge with one logic-only change: its
+  `LIVE config on [the b37 live2 test patch: this module is the patch]` line; `live_patch.sh check` in the stub lane:
+  build.sh --check 132 s, win/build.sh --check 84 s, stamped): **the real Apply works** - patch 1 staged (kind live:
+  the same layer and host sources), "Patch 1 ready" shown, tapped, said; the menu, the Test tab, **Apply patch ->
+  request 1 -> the host swapped the patch in as module gen 1 within the second** (`RELOAD gen 1 ok ... copy+load 6 ms`;
+  the new module's init rc=0, the old one retired) -> "applied ... swapped in as module gen 1 (the patch's)", and the new
+  module's own LIVE config line carries the patch's marker; its card shown, tapped, said. **Undo was refused**: the game
+  side asked the host for the session's own module by its Windows path (C:\windows\system32\somvr_logic.dll) and the
+  host's copy step read garbage (`RELOAD gen 2 refused: copy ??? -> ...: error 2`): `somvr_path()` returns a non-Linux path
+  unchanged *without* writing its buffer, and the host's swap uses the buffer. The refusal reached the player as its
+  card ("Patch 1 not applied" - the wording for a refused Undo should say Undo; open). Fixed on this side (b37): the
+  host is only ever handed Linux paths - before the first Apply the game side keeps a copy of the session's own module
+  in the live folder (`patches/own_somvr_logic.dll`, `LIVE the session's own module ... kept`) and Undo back to the
+  start swaps that in; and the game side now calls hotreload2's `somvr_host_player_swap(dll, why)` when the host
+  exports it (allowed with SOMVR_LIVE=on, without SOMVR_DEV_RELOAD; the only swap in a session the launcher started for
+  the player), build 35's `reload` word otherwise. The host side's own fix belongs to hotreload (156): use
+  somvr_path's return value.
+  Frame windows (20 Hz pacing, as above): pre-apply / post-apply / undo / post-undo - the game thread's work 2.14 / 2.19
+  / 2.33 / 2.52 ms mean; GPU p95 9.57 / 9.82 / 9.91 / 9.91 ms. One 110-130 ms frame of the layer's own GPU time in the
+  windows with a stereo picture dump - one per dump (apply 1, undo 1, post-undo 2; boot 083629's no-swap apply window
+  1 with its dump): the test's frame read-back, not the loop. The swap's own frame is hotreload's measurement (156:
+  65 threads held ~13 ms once, the view 0.0 cm / 0.00 deg).
+- **boot-check-20261104-112544** (solo; the test merge with hotreload2's f6c3384 and this branch's 730d2f1; **the
+  player's session's switches: `SOMVR_USER_SESSION=1`, no `SOMVR_DEV_RELOAD`** - the host: "the word and the file watch
+  off; the player's swap (Apply / Undo) on (SOMVR_LIVE=on)"): **every step PASS, Apply and Undo both real** - patch 1
+  staged, its card shown, tapped, said; Apply patch -> `LIVE the session's own module ... kept` -> `RELOAD the player's
+  swap queued (Apply patch 1)` -> gen 1 ok (copy+load 5 ms, the old module stopped in 246 ms, the new one's init 526 ms,
+  the game's 65 threads held 13.2 ms once) -> "applied ... (the patch's)", the patch's marker in the new module's own
+  line; Undo patch -> the player's swap to `patches/own_somvr_logic.dll` -> gen 2 ok -> "undone ... swapped in as module
+  gen 2 (the session's own)"; both answers' cards shown, tapped, said ("Patch 1 is in", "Patch 1 undone"). The host's own
+  check across both swaps: the world mapping -59.42 deg at the same point before and after, Talion at the same place and
+  yaw (the view's few degrees are the scripted head) - no `view moved`. 2 WARNs (the standard two); the save UNCHANGED
+  (as in all five runs of this round); program exit 0. Pictures: the Test page's box after Apply (Apply dimmed) and after
+  Undo ("Patch 1 ready" again, Apply lit) - readable; the scripted pressing hand covers part of the first.
+
+**Open.** The host's `somvr_path()` use in its swap (hotreload's file: a Windows path reaches it as garbage - the game
+side no longer sends one); the practice area's "in its area" flag read 0 in gen 2's init line after the second swap (1 in
+gen 1's) - hotreload's state hand-over, to check; the spoken line's level in the headset against the game's voices
+(only the player can judge it; `DUCK` 0.5 and -20 dBFS are the first guess); the lane's LANE_IN_VR decision (lane2) - with
+0 the loop has no words during VR; the 20 Hz headless pacing (lane2's WIN_MONADO_ENV gives 90 Hz) for any frame-time claim.
+
+**Lane2's rule applied (163.7; the coordinator's decision: the spoken loop runs during VR under the guard).** The lane
+(lane.conf `LANE_IN_VR=1`) lets builds and checks run free in VR (`LANE_VR_JOBS="*build* *check*"`: the loop's patch
+build is the job `live-build`) and the speech workers only under its late-frame guard (`LANE_VR_GUARDED="live-stt
+live-tts"` - live_lane.sh's `exec stt|tts|build` run as exactly those names; `live_lane.sh name NAME` prints them,
+test_live.py checks them against lane.conf). The guard follows the session's own frames, so the env block now also
+sets `SOMVR_PERF_RAW=@RUN@/perf-raw.txt` (with SOMVR_PERF=on; som-win-session.sh puts the run in). Lane2 measured the
+speech models at +0.9-1.5 ms on the interval p99 without more missed frames, best at 1 thread, and three model loads at
+once made 2 s of hitches (94 ms at most): the daemon now runs each worker at **1 thread** and loads the models **one at a
+time** as the session starts - the speech-to-text's (0.5 s), then Kokoro's once that is ready (2.5 s) - each load's
+time logged with whether the world was already in ("not loaded yet (the game still starting)" expected). The Test page
+has lane2's line: play as usual while a fix builds in the background; a stutter goes in a mark. Tests: test_live.py
+32 checks (the names, the load order and timing, the threads).
+
+### 156.11 The proofs (b37; scripts/hr37-drive.sh, headless Windows, the practice meadow)
+- **Boot 20261104-084050** (cut at 17 swaps by a T3 restart): every swap 0.0 cm / 0.00 deg on the mapping, every part
+  taken; a swap during fling31's wall hold `called off at the swap` (the hold began during the new module's init) and
+  the old module `resumed`; three refused `not quiet for 10 s (a hand holds a wall)`.
+- **Boot 20261104-103436**: 39 swaps ok, all 0.0 cm / 0.00 deg after snap turns (the words, the stick), smooth turns,
+  walking, sword31 (the weighted sword's air swings after a reload with the sword drawn: flick 32.6 / 32.5 deg, committed
+  7.7 / 7.7, slow 0.8 / 0.8 - the same), fling31, bow33, the knife, the VR menu open on its Test tab (the menu stays open
+  across the swap); refused with their reasons (a hand on the wall, hanging, the bow drawn); **the check's own proof**:
+  `SOMVR_TEST_VK_SKIP=bodymoments,anchor` - the view turned 98.91 deg (exactly the yaw offset that swap would have
+  taken) and moved 25.9 cm, `WARN RELOAD view moved` - the old code's loss, seen. Found: the practice area forgotten by a
+  reloaded module (fixed, 156.9) and Talion turned 80 deg at a swap during the bow's aim (the swap now waits while the
+  bow is out).
+- **Boot 20261104-115759**: the double swap's starts both `in its area 1 (the player kept, the ambient AI held off)`
+  (all 33), a spawn after it ok; the trip back after the reloads gave the ambient AI back (`quiet ends (going back): the
+  spawn manager on again`); swaps inside fights moved Talion 5-9 cm -> the calm-moment rule (156.9).
+- **Boot 20261104-123222 (the combined tree: hotreload2 + lane2 + live2)**: 28 swaps ok, every one 0.0 cm / 0.00 deg,
+  Talion never moved; 11 refused with their reasons (a fight at Talion 8, a climb's hold / hang 3), waits of 0.5-5.8 s
+  for a fight's end or a body moment's hold; the practice area kept in every start; the lost-state proof 17.4 cm,
+  66.24 deg -> WARN. Riding: ride26 reached no mount in these boots (its caragor's leaps never offered it); the suite's
+  pcar29 mounts one on Windows (below) - a swap while riding is refused `riding` by the quiet check (not driven).
+- **The stand-in** (`SOMVR_EXTRA="SOMVR_DEV_RELOAD=1 SOMVR_WIN_TEST_RELOAD=3" scripts/headless_win.sh MOD --test
+  xinput`): the seven path cases `RELOADTEST path ... all ok`, the player's swap by a Linux and by a Windows path, d3dtest
+  f1 1012 f2 84 f3 12 f4 412 tab 412 f6 74.
+
+### 156.12 The merge gate (b37, on the frozen combined build logs/build-hr37test = 9c41909)
+- **The Windows suite** (logs/coord/final.sh, its 28 boots, solo, FINAL_SCRIPTS = the combined tree's;
+  logs/coord/build-hr37test-suite-win): no crash, no quiet exit (boot 1 the game exited by itself after 85 s), the save
+  UNCHANGED in all 28, WARN 2 in each (the boot's known two), SIGSEGV 0. Against build-win3's suite: the same FAILs or
+  fewer - 132 `no wound` (known), 101 and 41 the same lines; 136 fling31 10/0 (win3 10/2), 331 bow33 14/0 (win3 12/2: the
+  tremor passes), 363 polish36 `let go` once (the dagger's put-back came 1.4 s after the release, the check reads at 1 s;
+  its second round PASS; win3's `listen` FAIL passes), 106 pcar29 `not off by B` once (the dismount 13 s after the press
+  while the caragor ran) - its re-run (build-hr37test-suite-win-rerun) 6/0.
+- **W1** (run 20261104-153057, `WIN_W1=1 WIN_CMDS=scripts/cmds/win-stereo2.cmd`, the frozen build's package - both DLLs
+  beside the exe): `LOGIC Z:\...\Shadow of Mordor\x64\somvr_logic.dll ... loaded`, the layer loaded and pinned, the
+  Simulated HMD through openxr_loader.dll, `session running`, the game's stereo frames, the world; SIGSEGV 0. Its one
+  new WARN (`SOMVR_PERF_RAW=@RUN@/...: open failed`: the live block's run-folder path in a player's somvr.env) -> package.sh
+  keeps @RUN@ paths and the live loop's switches out (c6e43e8).
+- **The launcher test on the split build** (logs/win-session-20261104-153611; a scripts copy with WIN_BUILD=build-hr37test,
+  SOMVR_HEADSET_ENVFILE = its switches + SOMVR_DEV_RELOAD=1, the lane reinstalled from the combined tree): both DLLs
+  into the test prefix, `SOMVR_USER_SESSION=1` in the game's environment, the host `the word and the file watch REFUSED -
+  a user's session (SOMVR_USER_SESSION=1), whatever SOMVR_DEV_RELOAD says; the player's swap (Apply / Undo) on`, the raw
+  word sent in the world `RELOAD refused: the word 'reload' - a session the launcher started for the user`, no file watch;
+  the mark and the menu's Quit ended it, SAVE OK.
+- **The frozen build-win3 (one DLL) with the combined scripts**: the launcher's dry run exit 0; its launcher test
+  (logs/win-session-20261104-153817): `a single-DLL build: ...somvr_logic.dll of an earlier split build removed`, the
+  game side in xinput9_1_0.dll, the world, SAVE OK, the same WARNs as the split session's (the test prefix's first trip).
+- **live2's final proof on the combined tree** (boot 20261104-155100: scripts/live35-drive.sh LV_STEPS="voice say patch",
+  pinned by LV_RUN; the player's session's switches - SOMVR_USER_SESSION=1, SOMVR_LIVE=on, no SOMVR_DEV_RELOAD; the patch
+  = the combined head + one logic-only marker, `live.py patch check` stamped, logs/build-hr37patch): 28 checks PASS, 0
+  FAIL - the note in the inbox 1.35 s after it ended, the cards shown, read and spoken (the harness's own null sink),
+  Apply -> `RELOAD the player's swap queued (Apply patch 1)` -> `RELOAD gen 1 ok (the player's: Apply patch 1)`, the
+  view 0.0 cm / 0.00 deg, the patch's marker in the LIVE config line; Undo -> gen 2, the session's own module again, the
+  view 0.0 cm / 0.00 deg; WARN 2 (the boot's).
+
+### 156.13 Open (b37)
+- Riding after a swap: not driven (ride26 got no mount in the meadow in these boots; the suite's pcar29 mounts one) -
+  the quiet check refuses a swap while riding.
+- A swap during a fight is refused by design (156.9); what a fight's states would need to survive one is not mapped.
+- The first frame of a reloaded module uses the old module's state after its last hook: a state changed outside H4 / PM
+  / the input tick (another thread, another hook) and read for the view would need its own publish point.
+- Linux: still one module (the preload has no host / logic split).

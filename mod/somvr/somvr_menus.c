@@ -604,7 +604,7 @@ int somvr_xt_parse(const char *line, somvr_xt_cmd *c) {
             c->op = !strcmp(w2, "aim") ? SOMVR_XT_AIM : SOMVR_XT_TOUCH, most = 3;
             if (!xt_word(&p, s)) return -1;
             c->what = !strcmp(s, "board") ? SOMVR_XTS_BOARD : !strcmp(s, "panel") ? SOMVR_XTS_PANEL
-                      : !strcmp(s, "watch") ? SOMVR_XTS_WATCH : -1;
+                      : !strcmp(s, "watch") ? SOMVR_XTS_WATCH : !strcmp(s, "live") ? SOMVR_XTS_LIVE : -1;
             if (c->what < 0) return -1;
         } else {
             return -1;

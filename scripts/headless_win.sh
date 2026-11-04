@@ -15,6 +15,12 @@
 #   (default Steam's Proton - Experimental), WIN_GAME_DIR (default /home/bara/Games/Heroic/Shadow of Mordor),
 #   WIN_NO_XR=1 (no layer, no Monado: the DLL alone), WIN_SIZE (1920x1080), SOMVR_EXTRA ("K=V K=V" for the game),
 #   WIN_SHOT_S (the flat pictures' interval, default 30 s; 0 = none: a long soak's disk).
+#   WIN_MONADO_ENV="K=V ..." (b37 lane2; headless_vr.sh's HEADLESS_MONADO_ENV): more environment for monado-service,
+#   U_PACING_* / XRT_COMPOSITOR_* only - U_PACING_APP_IMMEDIATE_WAIT_FRAME_RETURN=1: xrWaitFrame returns at once, the game
+#   paced by its own frame limit, not the compositor's (the null compositor's 20 Hz still holds it: its images come at 20 Hz).
+#   WIN_MONADO_RATE=HZ (b37 lane2; e.g. 90): Monado's real compositor instead of the null one - its window in a headless
+#   gamescope of its own (-r HZ), XRT_COMPOSITOR_FORCE_XCB=1 and XRT_COMPOSITOR_DEFAULT_FRAMERATE=HZ: the game paced at
+#   HZ as by the headset's runtime (a frame every 11.1 ms at 90), the compositor's GPU pass included. Default unset.
 #   WIN_CMDS=FILE (game mode): commands run from the launch, one per line (boot_check's language, a subset):
 #   shot NAME | key KEY... (xdotool key) | xdo ARGS... | mark LABEL | wait SECS | waitlog SECS TEXT (fixed text in
 #   somvr.log after the last match) | trigger [WORDS] (the SOMVR_TRIGGER file's content) | untrigger | xrtest LINE
@@ -74,9 +80,24 @@ if [ "$SLOT" -ge 2 ]; then
   [ "${WIN_W1:-0}" = 1 ] && { echo "STOP: WIN_W1 runs in slot 1 only (its own prefix-w1)"; exit 1; }
   [ -z "${WIN_PREFIX:-}" ] && PFX=$SOM/logs/winport/prefix-slot$SLOT
 fi
+# b37 (som-b37-slotsvram, docs/re-xr-pipeline.md 158.5): this game run's render mode - WIN_RENDER=vr|light, else what
+# the slot was taken for (its lock's render file, game_slot.sh take), else the slot's default (1 vr, 2.. light);
+# light = the VR preset with game_slot.sh's GS_RENDER_LIGHT over it (WIN_RENDER_LIGHT: another set, for measuring)
+WRM=""; WRM_WHY=""
+if [ "$KIND" = game ]; then
+  if [ -n "${WIN_RENDER:-}" ]; then WRM=$WIN_RENDER; WRM_WHY=WIN_RENDER
+  elif WRM=$(cat "$LOCKD/render" 2>/dev/null) && [ -n "$WRM" ]; then WRM_WHY="slot $SLOT's take"
+  else WRM=$(gs_render_default "$SLOT"); WRM_WHY="slot $SLOT's default"; fi
+  case $WRM in vr|light) ;; *) echo "STOP: WIN_RENDER=$WRM (vr or light)"; exit 1 ;; esac
+fi
 GAME_DIR=${WIN_GAME_DIR:-"/home/bara/Games/Heroic/Shadow of Mordor"}
 case $PFX in *Heroic*|*/compatdata/*|*/Games/*) echo "STOP: $PFX looks like the user's prefix"; exit 1 ;; esac
 XR=1; [ "${WIN_NO_XR:-}" = 1 ] || [ $SLOTFREE = 1 ] && XR=0
+MONENV=()
+for kv in ${WIN_MONADO_ENV:-}; do
+  [[ $kv =~ ^(U_PACING_|XRT_COMPOSITOR_)[A-Z0-9_]*=[A-Za-z0-9._-]*$ ]] || { echo "STOP: WIN_MONADO_ENV: $kv is not U_PACING_*=V or XRT_COMPOSITOR_*=V"; exit 1; }
+  MONENV+=("$kv")
+done
 SIZE=${WIN_SIZE:-1920x1080}; W=${SIZE%x*}; H=${SIZE#*x}
 TS=$(date +%Y%m%d-%H%M%S); RUN=$SOM/logs/winport/run-$TS
 for i in 1 2 3 4 5; do [ -e "$RUN" ] || break; sleep 1; TS=$(date +%Y%m%d-%H%M%S); RUN=$SOM/logs/winport/run-$TS; done  # b35 slots
@@ -89,7 +110,7 @@ fi
 mkdir "$RUN" || { echo "STOP: $RUN exists (another slot's boot of the same second?)"; exit 1; }   # b35 slots: atomic
 # the Linux drivers (scripts/*-drive.sh) find their run as the newest logs/boot-check-* whose launch-cmd.txt names their
 # worktree, and use RUN/somvr.log, somvr.trigger, xrtest.txt, xr-layer.log, cmd: the run looks like one for them
-printf '# headless_win.sh %s (the Windows build; MOD %s)\n' "$TS" "$MOD" > "$RUN/launch-cmd.txt"
+printf '# headless_win.sh %s (the Windows build; MOD %s%s)\n' "$TS" "$MOD" "${WRM:+; slot $SLOT; render $WRM}" > "$RUN/launch-cmd.txt"
 # (WIN_RUN: the run IS logs/boot-check-<ts>, no link; headless_vr.sh --win)
 if [ -n "${WIN_RUN:-}" ]; then BCL=$RUN; else BCL=$SOM/logs/boot-check-$TS-win; ln -sfn "$RUN" "$BCL"; fi; : > "$RUN/cmd"
 echo "RUN=$RUN"
@@ -120,6 +141,14 @@ else
   pgrep -f '[H]and of Fate 2\.' > /dev/null && { echo "STOP: Hand of Fate 2 runs"; exit 1; }
   journalctl -k -b --no-pager 2>/dev/null | grep -qi 'amdgpu.*\(GPU reset\|VRAM is lost\)' &&
     { echo "STOP: an amdgpu reset in this boot's kernel log"; exit 1; }
+  if [ -n "$WRM" ]; then   # b37: the slot's mode for the other takers' VRAM gate (a vr boot in a slot taken for light:
+    tm=$(cat "$LOCKD/render" 2>/dev/null)   # only if vr fits now)
+    lo=$(head -1 "$LOCKD/owner" 2>/dev/null); lo=${lo%% *}   # (not under the holder's own solo: it holds them all)
+    if [ "$WRM" = vr ] && [ "$tm" = light ] && ! { [ -n "$lo" ] && gs_names "$GS_SOLO" "$lo"; } && vw=$(gs_vram_why "$SLOT" vr); then
+      echo "STOP: slot $SLOT was taken for light and this boot asks WIN_RENDER=vr, which does not fit now ($vw): take the slot with WIN_RENDER=vr"; exit 1
+    fi
+    echo "$WRM" > "$LOCKD/render"
+  fi
   echo $$ > "$LOCKD/pid"; echo "$RUN" > "$LOCKD/run"   # b35 slots: whose game the slot runs (status, the stale rule)
   [ "$SLOT" -ge 2 ] && mkdir -p -m 0700 "$SRT"          # b35 slots: the slot's runtime folder (Monado, gamescope)
 fi
@@ -152,12 +181,22 @@ if [ ! -d "$PFX/pfx/drive_c/windows/system32" ]; then
   say "making the prefix $PFX (once, Proton's setup: DXVK and vkd3d into its system32)"
   "${CLEAN[@]}" WINEDEBUG=-all timeout 900 "$PROTON" run cmd.exe /c exit > "$RUN/prefix-init.log" 2>&1 < /dev/null
   "${CLEAN[@]}" "$WSRV" -k 2>/dev/null
+  [ -n "$MGS" ] && kill -TERM "$MGS" 2>/dev/null   # b37 lane2: Monado's own gamescope (after Monado)
+  [ -n "$MGSRT" ] && case $MGSRT in /tmp/somvr-mgs.*) rm -rf "$MGSRT" ;; esac
 fi
 SYS32=$PFX/pfx/drive_c/windows/system32
 [ -d "$SYS32" ] && [ -f "$SYS32/d3d11.dll" ] || { say "STOP: no prefix system32 with DXVK (see prefix-init.log)"; exit 1; }
 install -m 0644 "$DLL" "$SYS32/xinput9_1_0.dll"
 cmp -s "$DLL" "$SYS32/xinput9_1_0.dll" || { say "STOP: the DLL did not land in $SYS32"; exit 1; }
 say "DLL $(sha256sum "$DLL" | cut -c1-16) in $SYS32/xinput9_1_0.dll"
+# the split build (docs/re-xr-pipeline.md 156): the host loads somvr_logic.dll from its own folder; with
+# SOMVR_DEV_RELOAD=1 (SOMVR_EXTRA) it watches the build's own file (SOMVR_DEV_RELOAD_DLL below) and swaps it in
+LDLL=$MOD/build/win/somvr_logic.dll
+if [ -f "$LDLL" ]; then
+  install -m 0644 "$LDLL" "$SYS32/somvr_logic.dll"
+  cmp -s "$LDLL" "$SYS32/somvr_logic.dll" || { say "STOP: the logic DLL did not land in $SYS32"; exit 1; }
+  say "LOGIC $(sha256sum "$LDLL" | cut -c1-16) in $SYS32/somvr_logic.dll (reload watches $LDLL)"
+fi
 
 # ---- the save (game mode): a copy into our prefix; the user's file is only read ---------------------------------
 SAVES="$PFX/pfx/drive_c/users/steamuser/Documents/WB Games/Shadow of Mordor/Saves"
@@ -179,7 +218,7 @@ GENV=(WINEDLLOVERRIDES="xinput9_1_0=n,b;d3d11,d3d10core,dxgi,d3d9=n;winepulse.dr
       ALSA_CONFIG_PATH="$RUN/asound.conf"
       WINEDEBUG="${WINEDEBUG:--all,err+module}" SOMVR_LOG="$RUN/somvr.log" SOMVR_BRIDGE="$RUN/bridge"
       DXVK_LOG_PATH="$RUN" DXVK_LOG_LEVEL=info SDL_AUDIODRIVER=dummy SOMVR_TRIGGER="$RUN/somvr.trigger"
-      SOMVR_XR_TEST="$RUN/xrtest.txt")
+      SOMVR_XR_TEST="$RUN/xrtest.txt" SOMVR_DEV_RELOAD_DLL="$MOD/build/win/somvr_logic.dll")
 [ "$KIND" = game ] || GENV+=(SOMVR_WIN_TEST=1)
 [ "$KIND" = game ] && GENV+=(SOM_BOOTCHECK_RUN="$RUN")   # the mod's quit.request and marks/ (served below)
 [ "$SLOT" -ge 2 ] && GENV+=(XDG_RUNTIME_DIR="$SRT")   # b35 slots: the layer's OpenXR client finds this slot's Monado
@@ -210,6 +249,27 @@ for kv in ${SOMVR_EXTRA:-}; do   # @RUN@ = the run folder (final.sh's SOMVR_XR_T
   case $kv in SOMVR_LOG=*|SOMVR_XR_LOG=*|SOMVR_TRIGGER=*|SOMVR_BRIDGE=*|SOM_BOOTCHECK_RUN=*) continue ;; esac
   GENV+=("${kv//@RUN@/$RUN}")
 done
+# som-b35-live (re-xr-pipeline.md 162): SOMVR_LIVE=on among the game's switches - the live folder (live_session.sh:
+# LIVE_ROOT, default logs/live-test) for the layer and the DLL; its daemon once the game runs; stopped at the end
+LIVE_ON=0
+if [ "$KIND" = game ] && printf '%s\n' "${GENV[@]}" | grep -qx -E 'SOMVR_LIVE=(on|1)' && [ -x "$HERE/live_session.sh" ]; then
+  LIVE_ON=1; GENV+=(SOMVR_LIVE_DIR="$("$HERE/live_session.sh" dir "$RUN")")
+fi
+# b37 (162.8): SOMVR_LIVE_TTS=on - the spoken answers of a test go to a null sink of this run's own (never wivrn.sink,
+# never a real output), its monitor recorded to RUN/live-tts.wav (the proof of what was said); both gone at the end
+LIVE_TTS=off; TTS_SINK=""; TTS_MOD=""; TTS_REC=""
+if [ "$LIVE_ON" = 1 ] && printf '%s\n' "${GENV[@]}" | grep -qx -E 'SOMVR_LIVE_TTS=(on|1)'; then
+  TTS_SINK=somvr_live_tts_$$
+  if TTS_MOD=$(pactl load-module module-null-sink "sink_name=$TTS_SINK" "sink_properties=device.description=$TTS_SINK" 2>/dev/null) &&
+     pactl list short sinks | awk -v n="$TTS_SINK" '$2 == n { f = 1 } END { exit !f }'; then
+    LIVE_TTS=on
+    parec -d "$TTS_SINK.monitor" --file-format=wav --channels=1 --rate=24000 "$RUN/live-tts.wav" > /dev/null 2>&1 &
+    TTS_REC=$!
+    say "live: the spoken answers on the null sink $TTS_SINK (module $TTS_MOD; its monitor recorded to live-tts.wav)"
+  else
+    say "live: no null sink for the spoken answers (pactl): SOMVR_LIVE_TTS off for this run"; TTS_SINK=""
+  fi
+fi
 printf '%s\n' "${GENV[@]}" > "$RUN/env.txt"
 
 # ---- render.cfg (game mode; som-b33-grass, re-winport.md 7.11): the VR graphics preset as the user's session has it -
@@ -219,6 +279,14 @@ printf '%s\n' "${GENV[@]}" > "$RUN/env.txt"
 RCF=""; RCB=""; RSW=${WIN_RENDER_SET-}
 [ -n "${WIN_RENDER_SET+x}" ] || for kv in "${GENV[@]}"; do case $kv in SOMVR_RENDER_SET=*) RSW=${kv#*=} ;; esac; done
 [ -n "$RSW" ] || [ -n "${WIN_RENDER_SET+x}" ] || RSW=$(sed -n 's/^SOMVR_RENDER_SET=//p' "$HERE/headset-build26.env" | tail -1)
+RSV=$RSW   # b37: light = the VR preset, then GS_RENDER_LIGHT over it (asis: the prefix's file, Low - lighter still)
+if [ "$KIND" = game ]; then
+  if [ "$RSW" = asis ]; then printf 'asis (the prefix'"'"'s render.cfg as it is; asked %s by %s)\n' "$WRM" "$WRM_WHY" > "$RUN/render.mode"
+  else
+    [ "$WRM" = light ] && RSW="${RSW:+$RSW,}$GS_RENDER_LIGHT"
+    printf '%s (%s) %s\n' "$WRM" "$WRM_WHY" "$RSW" > "$RUN/render.mode"
+  fi
+fi
 if [ "$KIND" = game ] && [ -n "$RSW" ] && [ "$RSW" != asis ]; then
   for wp in $(pgrep -x wineserver); do
     gs_env_has "$wp" "WINEPREFIX=$PFX/pfx" && { say "STOP: render.cfg: the prefix $PFX is in use (wineserver $wp)"; exit 1; }
@@ -235,10 +303,10 @@ if [ "$KIND" = game ] && [ -n "$RSW" ] && [ "$RSW" != asis ]; then
   if [ -f "$RCF" ]; then RCB=$RUN/render.cfg.before; cp -p "$RCF" "$RCB"; else RCB=none; fi
   mkdir -p "$(dirname "$RCF")" && cp "$RUN/render.cfg.seeded" "$RCF" ||
     { [ "$RCB" = none ] && rm -f "$RCF" || cp -p "$RCB" "$RCF"; say "STOP: render.cfg not written"; exit 1; }
-  say "render.cfg: the PC's detection with the VR preset $RSW (put back after the run)"
+  say "render.cfg: WIN_RENDER=$WRM ($WRM_WHY) - the PC's detection with the VR preset $RSV$([ "$WRM" = light ] && echo ", then the light set $GS_RENDER_LIGHT") (put back after the run)"
 fi
 
-MSVC=""; GS=""; SHOTS=""
+MSVC=""; GS=""; SHOTS=""; MGS=""; MGSRT=""
 cleanup() {   # (every exit, a TERM included - the player's launcher stops a test run so: the picture loop too, or it
               # would go on shooting whatever gamescope later takes the same socket name)
   [ -n "$SHOTS" ] && kill "$SHOTS" 2>/dev/null
@@ -246,7 +314,12 @@ cleanup() {   # (every exit, a TERM included - the player's launcher stops a tes
   if [ -n "$MSVC" ]; then kill -INT "$MSVC" 2>/dev/null; for i in $(seq 1 25); do kill -0 "$MSVC" 2>/dev/null || break; sleep 0.2; done
     kill -0 "$MSVC" 2>/dev/null && kill -TERM "$MSVC"; fi
   "${CLEAN[@]}" "$WSRV" -k 2>/dev/null
+  [ -n "$MGS" ] && kill -TERM "$MGS" 2>/dev/null   # b37 lane2: Monado's own gamescope (after Monado)
+  [ -n "$MGSRT" ] && case $MGSRT in /tmp/somvr-mgs.*) rm -rf "$MGSRT" ;; esac
   [ -L "$BCL" ] && rm -f "$BCL"
+  [ "${LIVE_ON:-0}" = 1 ] && "$HERE/live_session.sh" stop "$RUN"   # som-b35-live: its daemon (its own pid only)
+  [ -n "${TTS_REC:-}" ] && { kill -INT "$TTS_REC" 2>/dev/null; sleep 0.3; }   # b37: the monitor's recorder, then the sink
+  [ -n "${TTS_MOD:-}" ] && pactl unload-module "$TTS_MOD" 2>/dev/null
   [ "$(cat "$LOCKD/pid" 2>/dev/null)" = $$ ] && rm -f "$LOCKD/pid" "$LOCKD/run"   # b35 slots
   if [ -n "$RCF" ]; then   # render.cfg: the prefix's own again (after wineserver -k: the game can no longer write it)
     if [ "$RCB" = none ]; then rm -f "$RCF"; else cp -p "$RCB" "$RCF"; fi; RCF=""
@@ -258,14 +331,29 @@ trap cleanup EXIT
 if [ $XR = 1 ]; then
   M=$RUN/mxdg; mkdir -p "$M/config" "$M/cache" "$M/data"
   [ "$SLOT" -ge 2 ] && { ss -xlH 2>/dev/null | grep -qF "$SRT/monado_comp_ipc" || rm -f "$SRT/monado_comp_ipc" "$SRT/monado.pid"; }
+  MCOMP=(XRT_COMPOSITOR_NULL=1)
+  if [ -n "${WIN_MONADO_RATE:-}" ]; then   # b37 lane2: the real compositor at HZ in a headless gamescope of its own
+    [[ $WIN_MONADO_RATE =~ ^[0-9]{2,3}$ ]] || { say "STOP: WIN_MONADO_RATE=$WIN_MONADO_RATE (whole Hz)"; exit 1; }
+    MGSRT=$(mktemp -d /tmp/somvr-mgs.XXXXXX) && chmod 700 "$MGSRT"
+    setsid "${CLEAN[@]}" XDG_RUNTIME_DIR="$MGSRT" gamescope --backend headless -W 1920 -H 1080 -w 1920 -h 1080 \
+      -r "$WIN_MONADO_RATE" -- sh -c 'env > "$1.tmp" && mv -f "$1.tmp" "$1" && exec tail -f /dev/null' vd "$RUN/monado-gs.env" \
+      > "$RUN/monado-gamescope.log" 2>&1 < /dev/null &
+    MGS=$!
+    for i in $(seq 1 50); do [ -s "$RUN/monado-gs.env" ] && break; sleep 0.2; done
+    MDISP=$(sed -n 's/^DISPLAY=//p' "$RUN/monado-gs.env" 2>/dev/null)
+    [ -n "$MDISP" ] || { say "STOP: Monado's gamescope did not come up"; exit 1; }
+    MCOMP=(XRT_COMPOSITOR_FORCE_XCB=1 XRT_COMPOSITOR_DEFAULT_FRAMERATE="$WIN_MONADO_RATE" DISPLAY="$MDISP")
+    say "Monado's own gamescope pid $MGS $MDISP: the real compositor at $WIN_MONADO_RATE Hz"
+  fi
   setsid chrt -o 0 env -i HOME="$M" PATH=/usr/bin:/bin XDG_RUNTIME_DIR=$SRT XDG_CONFIG_HOME="$M/config" \
-    XDG_CACHE_HOME="$M/cache" XDG_DATA_HOME="$M/data" SIMULATED_ENABLE=1 XRT_COMPOSITOR_NULL=1 XRT_NO_STDIN=1 \
-    XRT_LOG=info VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
+    XDG_CACHE_HOME="$M/cache" XDG_DATA_HOME="$M/data" SIMULATED_ENABLE=1 "${MCOMP[@]}" XRT_NO_STDIN=1 \
+    XRT_LOG=info "${MONENV[@]}" VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
     timeout -s INT -k 10 $((SECS + 300)) /usr/bin/monado-service > "$RUN/monado.log" 2>&1 < /dev/null &
   MSVC=$!
   for i in $(seq 1 50); do [ -S "$SRT/monado_comp_ipc" ] && break; sleep 0.2; done
   [ -S "$SRT/monado_comp_ipc" ] || { say "STOP: monado did not come up"; exit 1; }
-  say "monado null compositor pid $MSVC (slot $SLOT: $SRT/monado_comp_ipc)"
+  MWHAT="null compositor"; [ -n "${WIN_MONADO_RATE:-}" ] && MWHAT="compositor at $WIN_MONADO_RATE Hz (xcb)"
+  say "monado $MWHAT pid $MSVC (slot $SLOT: $SRT/monado_comp_ipc)${MONENV[*]:+ with ${MONENV[*]}}"
 fi
 
 # ---- the window: a headless gamescope (d3d, game) ------------------------------------------------------------
@@ -293,6 +381,7 @@ esac
 say "run ${CMD[*]} (timeout $TMO s)"
 if [ "$KIND" = game ]; then   # the drivers' names (boot_check's): what they read, beside ours
   { echo "$WINE ${CMD[*]}"; echo "# mod (windows, headless_win.sh): $MOD"
+    echo "# render (b37, slot $SLOT): $(cat "$RUN/render.mode" 2>/dev/null)"   # (which look the run's pictures had)
     echo "# game only (--game-env): ${GENV[*]}"; } > "$RUN/launch-cmd.txt"
   ln -s wine.log "$RUN/game.log"; ln -s summary.txt "$RUN/run.log"   # (the layer writes xr-layer.log itself)
   : > "$RUN/cmd"; [ -n "${WIN_CMDS:-}" ] && sed -e '$a\' "$WIN_CMDS" >> "$RUN/cmd"   # command mode (below)
@@ -349,6 +438,7 @@ fi
 ( cd / && setsid "${CLEAN[@]}" "${DISP[@]}" "${GENV[@]}" timeout -s TERM -k 15 "$TMO" \
     "${NS[@]}" --chdir "$(dirname "${CMD[0]}")" -- "$WINE" "${CMD[@]}" > "$RUN/wine.log" 2>&1 < /dev/null ) &
 PP=$!
+[ "$LIVE_ON" = 1 ] && say "live: the daemon $(SOMVR_LIVE_TTS=$LIVE_TTS LIVE_TTS_SINK=$TTS_SINK "$HERE/live_session.sh" start "$RUN" $$ "$MOD") ($("$HERE/live_session.sh" dir "$RUN"))"
 shot_to() {   # FILE.png: the headless gamescope's screen
   GAMESCOPE_WAYLAND_DISPLAY="$GWD" XDG_RUNTIME_DIR="$SRT" timeout 10 gamescopectl screenshot "$1" >> "$RUN/shots.log" 2>&1
   for i in $(seq 1 30); do [ -s "$1" ] && break; sleep 0.2; done
@@ -364,10 +454,15 @@ if [ $SLOTFREE = 0 ] && [ "$SHOT_S" -gt 0 ]; then   # pictures every SHOT_S (30)
       shot "t$((n * SHOT_S))"; kill -0 $PP 2>/dev/null || say "(the launch process $PP has ended; pictures go on)"; done ) &
   SHOTS=$!
 fi
+VCARD=$(gs_card) || VCARD=""
+[ "$KIND" = game ] && [ -n "$VCARD" ] && say "vram at the launch: $(gs_mib "$VCARD/mem_info_vram_used") of $(gs_mib "$VCARD/mem_info_vram_total") MiB used, GTT $(gs_mib "$VCARD/mem_info_gtt_used") MiB (render $WRM)"
 if [ "$KIND" = game ]; then   # b35 slots: the VR gate every 2 s, the kernel log every 10 s, also during a `driver`
   ( n=0; while kill -0 $$ 2>/dev/null; do   # command: the user in VR / an amdgpu reset = this slot's game stops at once
       why=$(gs_vr_why) || why=""
       [ -z "$why" ] && [ $((n % 5)) = 0 ] && { why=$(gs_gpu_why "$T0") && why="GPU: $why" || why=""; }
+      if [ $((n % 5)) = 0 ] && [ -n "$VCARD" ] && gp=$(gs_game_pid "$SLOT"); then   # b37: the game's and the card's memory
+        echo "$(date +%s) $(gs_pid_mem "$gp") $(gs_mib "$VCARD/mem_info_vram_used") $(gs_mib "$VCARD/mem_info_gtt_used")" >> "$RUN/vram.tsv"
+      fi
       if [ -n "$why" ]; then echo "$why" > "$RUN/ABORT"; "${CLEAN[@]}" "$WSRV" -k 2>/dev/null
         say "!!! STOPPED AT ONCE (slot $SLOT): $why"; exit 0; fi
       n=$((n + 1)); sleep 2
@@ -387,7 +482,14 @@ mark_serve() {   # RUN/marks/<id> with a new `want` (the mod's bug mark): the fl
   shot_to "$d/flat.png" || echo "no flat picture (gamescope's screenshot failed)" > "$d/flat.txt"
   tail -n 400 "$RUN/somvr.log" > "$d/somvr_tail.txt" 2>/dev/null
   tail -n 200 "$RUN/xr-layer.log" > "$d/xr_tail.txt" 2>/dev/null
-  echo "no voice: the Windows harness records nothing" > "$d/voice.txt"
+  if [ -n "${WIN_MARK_VOICE:-}" ] && [ -r "$WIN_MARK_VOICE" ]; then   # som-b35-live: a recorded note fed in (no microphone, no
+    ( vs=$(python3 -I -c 'import sys, wave; w = wave.open(sys.argv[1]); print("%.1f" % (w.getnframes() / w.getframerate()))' \
+          "$WIN_MARK_VOICE" 2>/dev/null) || vs=1   # sound out): as voice_rec.py leaves a note - the WAV, then voice.txt at its end
+      sleep "$vs"; cp -f "$WIN_MARK_VOICE" "$d/voice.wav"
+      echo "$vs s from $(basename "$WIN_MARK_VOICE") (a recorded note fed in; ended: its end)" > "$d/voice.txt" ) &
+  else
+    echo "no voice: the Windows harness records nothing" > "$d/voice.txt"
+  fi
   say "bug mark $MARKS_N: $d ($(head -1 "$d/state.txt" 2>/dev/null | cut -c1-120))"
   echo "$(date +%T) ${d##*/} $(head -1 "$d/state.txt" 2>/dev/null | cut -c1-120) | voice: none" >> "$RUN/marks.log"
 }
@@ -470,6 +572,8 @@ if [ "$KIND" = game ]; then
     say "stopping the game at $(gel) s: wineserver -k"
   fi
   "${CLEAN[@]}" "$WSRV" -k 2>/dev/null
+  [ -n "$MGS" ] && kill -TERM "$MGS" 2>/dev/null   # b37 lane2: Monado's own gamescope (after Monado)
+  [ -n "$MGSRT" ] && case $MGSRT in /tmp/somvr-mgs.*) rm -rf "$MGSRT" ;; esac
 fi
 wait $PP; RC=$?
 [ -n "${SHOTS:-}" ] && kill $SHOTS 2>/dev/null
@@ -489,4 +593,6 @@ C=$(grep -a -m1 -E 'Unhandled exception|unhandled page fault|wine: Unhandled' "$
 [ -n "$C" ] && say "!!! crash (wine.log): $C"
 [ -d "$RUN/game-upper" ] && say "the game wrote into its folder (kept in game-upper): $(cd "$RUN/game-upper" && find . -type f | head -20 | tr '\n' ' ')"
 [ -f "$RUN/xr-layer.log" ] && say "xr-layer.log: $(grep -c '' "$RUN/xr-layer.log") lines"
+[ -s "$RUN/vram.tsv" ] && say "vram (render $WRM): $(awk '{ for (i = 2; i <= 7; i++) if ($i > m[i]) m[i] = $i; n++ }
+  END { printf "the game'"'"'s peak %d MiB resident (%d asked), GTT %d (%d asked); the card'"'"'s peak %d MiB used, GTT %d (%d samples, RUN/vram.tsv)", m[2], m[3], m[4], m[5], m[6], m[7], n }' "$RUN/vram.tsv")"
 exit $RC

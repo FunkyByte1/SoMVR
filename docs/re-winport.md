@@ -335,7 +335,7 @@ ray's slot (the live IEnginePhysics vptr is 0x141481d30, 2 qwords after the tabl
 -1, not 65 - every practice spawn and climb ray failed), FI_SH_FXMGR 0x80c78 -> 0x80c70 (the -8 shift; checked before
 the ClientFX create calls: 32 Linux / 38 Windows loads).
 
-**Note (11-03 21:40, som-b33-grass, re-xr-pipeline.md 148.6): every Windows headless number above and below until then was taken at Low** - the slots' prefixes (logs/winport/prefix, -slot2, -slot3) hold `VegetationQuality`, `MeshQuality`, `ShadowQuality`, `LightingQuality`, `TextureQuality`, `AmbientOcclusionQuality` 0, and headless_vr.sh did not apply SOMVR_RENDER_SET on Windows (no grass cards in the meadow, the low meshes and shadows), while the user's sessions run the PC's detection with the VR preset (som-win-session.sh). From then on headless_win.sh writes the same render.cfg into the slot's prefix for each game run and puts the old one back on exit (`render.cfg: the PC's detection with the VR preset ..` in summary.txt; RUN/render.cfg.seeded / .before); `HEADLESS_RENDER=asis` keeps the Low file. Re-measure frame costs before comparing them with Linux's.
+**Note (11-03 21:40, som-b33-grass, re-xr-pipeline.md 148.6): every Windows headless number above and below until then was taken at Low** - the slots' prefixes (logs/winport/prefix, -slot2, -slot3) hold `VegetationQuality`, `MeshQuality`, `ShadowQuality`, `LightingQuality`, `TextureQuality`, `AmbientOcclusionQuality` 0, and headless_vr.sh did not apply SOMVR_RENDER_SET on Windows (no grass cards in the meadow, the low meshes and shadows), while the user's sessions run the PC's detection with the VR preset (som-win-session.sh). From then on headless_win.sh writes the same render.cfg into the slot's prefix for each game run and puts the old one back on exit (`render.cfg: the PC's detection with the VR preset ..` in summary.txt; RUN/render.cfg.seeded / .before); `HEADLESS_RENDER=asis` keeps the Low file. Re-measure frame costs before comparing them with Linux's. **11-04 (som-b37-slotsvram, re-xr-pipeline.md 158.5):** the preset is now a per-boot mode, `WIN_RENDER=vr|light` - vr = this preset (slot 1's default; every looks / render / perf / soak boot), light = the same with TextureQuality 1 (2.3 instead of 6.2 GB of VRAM; slots 2-3's default, the behaviour boots); RUN/render.mode and launch-cmd.txt's `# render` line say which look a run had; game_slot.sh's take waits until the boot's VRAM fits.
 
 **Frame cost, fog, climb and bow on Windows** (11-03 01:51-02:39; runs 20261103-015105 / -021548 / -022457 / -023452;
 headless: Monado's null compositor at 20 Hz, the GPU idling at 500 MHz between frames - absolute GPU times are not
@@ -1678,3 +1678,86 @@ ChangeWeather in view (a 0.5-1.1 s world freeze) or the weather system's own hol
 console line `ChangeWeather <the old state>; Teleport ...` names a state: a no-op, so the clear day stays (harmless; not
 changed).
 Udûn's weather names are unknown: `clear` acts on Nurn's `SON_*` only.
+
+### 7.15 som-b37-looks: no graphics setting lifts the overcast's flat look; the game's own 100 fps cap at 120 Hz; the preset by the refresh rate: `SOMVR_RENDER_BY_HZ`, `SOMVR_RENDER_SET_90`, `SOMVR_RENDER_SET_120` (2026-11-04, branch t3/som-b37-looks)
+The player asked whether more mesh detail would make the walls and the ground less flat in the overcast weather
+(`SON_Day03`, 7.14). Today's VR preset: Vegetation 3, Mesh 2, Shadow 2, Lighting 1 over the PC's detection (textures 3,
+filtering 3, AO 3, tessellation 1).
+
+**1. The look (headless Windows, `SON_Day03` forced at the practice and checked at each place; looks36's places, both
+eyes; logs/looks37/).** Five boots, one preset each: today's; Mesh 3; Shadow 3; Lighting 2; all three at max. Sheets:
+`sheet-today-vs-{mesh3,shadow3,lighting2,max}/` (today left; each view's mark nearest today's in head yaw, the
+difference on the label), `grid5-left.jpg` / `grid5-left-crop.jpg` / `grid5-right-crop.jpg` (fog-ahead, dry-down,
+wall-up, ground-down, meadow-feet x the five), `max-ground-down-botheyes.jpg`. **None of them gives the walls or the
+paving visible relief or less flat light**: the slabs, their gaps and wet sheen, the wall's stones, the dry grass and
+the meadow are the same in every column. Mesh is the level of detail at a distance (up close every preset draws the
+full model); Shadow 3 only sharpens Talion's own soft shadow on the paving (the overcast keeps a faint sky shadow);
+Lighting 2 adds a light shaft in the far mist. The stones' relief is their normal maps, which read only under a
+directional light: the flatness is the weather (7.14), not the settings. Both eyes agree in every preset (no eye-1
+shadow difference).
+
+**2. The cost at a real frame rate (solo, `WIN_MONADO_RATE=90`: Monado's real compositor paces the game; the env file's
+clear day, perf27's meadow / crowd of 8 / fire, then the fire in `SON_Day03`; scripts/looks37-perf.py, logs/looks37/
+perf-table.md).** Each preset held 90.0 frames a second everywhere (frame p95 11.4-11.5 ms), except Mesh 3's first boot:
+render-thread stalls of 29-35 ms in the crowd and at the fire (67 / 72 fps) that the all-max boot (Mesh 3 too) did not
+have - a first-use stall, not a steady cost. GPU ms alone say little here: the tests' GPU profile (Default; the
+player's sessions get LACT's VR profile) moves the shader clock (1600-2435 MHz) to hold ~65 % busy, so every preset
+reads 8.3-9.7 ms. The work is GPU ms x the clock (Mcycles a frame; the layer reads the clock once a line, so a window
+read at an idle moment - 500 MHz - is left out). Today's preset twice: 14.5-16.9 Mcycles, a +-10 % spread; the player's
+11-03 session at 120 Hz (today's preset): 16.0 p50 / 17.1 p95 Mcycles, GPU 7.23 / 7.68 ms at 2235 MHz - the same work.
+p95 work against today's (the heaviest of the four places):
+
+| Preset | Meadow | Crowd 8 | Fire | Fire, overcast | Session p95 estimate | 90 Hz (<= 10.1 ms) | 120 Hz (<= 7.33 ms) |
+|---|---|---|---|---|---|---|---|
+| today's (session) | - | - | - | - | 7.68 ms (7.06 at 2430 MHz) | fits: 3.4 ms to spare (2.3 after WiVRn's ~1.1 ms) | only at a high clock, and WiVRn's ~1.1 ms on top leaves ~0.2 ms |
+| today's again | 0.95 | 1.08 | 0.95 | 1.01 | - | (the spread) | |
+| Mesh 3 | 1.25 (p50 1.11) | stalls (p50 1.12) | stalls (p50 1.31) | 1.53 | over 10 ms | no | no |
+| Shadow 3 | 0.95 | 1.16 | 1.34 | 1.45 | 11.2 (10.3) | no | no |
+| Lighting 2 | 0.93 | 1.08 | 1.00 | 1.29 | 9.9 (9.1) | fits: 1.2-2.0 ms to spare | no |
+| all at max | 1.34 | 1.25 | 1.48 | (clock not read) | 11.4 (10.5) | no | no |
+
+**3. The game caps itself at 100 frames a second.** `Render.Setting.FrameRateLimit` (registered default 2, range 0..3;
+its help text says "0=30 fps, 1=60 fps, 2=Unlimited") sets the engine's `MaxFPS` (clientmgr.cpp) through the table
+at FUN_140d5b3e0: 0 -> `MaxFPS 30`, 1 -> `MaxFPS 60`, **2 -> `MaxFPS 100`**, 3 -> `MaxFPS 0` (none). Every session's
+render.cfg seeds 2 (the detection table), so the player's 120 Hz session (11-03 21:06) ran **exactly 100.0 frames a
+second in 92 of its 95 ten-second windows** with xrWaitFrame returning at once (0.03 ms) - the display at 120, a
+repeated frame every sixth; the GPU had 16 % left. Measured: the 120 Hz boot (174256, `FrameRateLimit:3`, Monado at
+120) ran 120.0 frames a second at the fire (GPU 7.7 ms) - the cap is gone; in the meadow and the crowd the GPU needed
+~10 ms on the tests' clock and Monado's compositor held the game at half rate (60) - WiVRn did not pace the player's
+session so (it let the game run at its own 100). At 90 Hz and below the cap does not bind.
+
+**4. Recommendation.** At 90 Hz or less: **today's preset** - it fits with 2-3 ms to spare and no richer setting looks
+better (Lighting 2 fits but only adds a far light shaft). At 120 Hz: **today's preset with `FrameRateLimit:3`** - the
+cap guarantees a repeated frame six times a second; lifted, the GPU keeps up in most places but no preset tested leaves
+1 ms at p95 there (today's ~0.2 ms with WiVRn's share) - **90 Hz is the steadier rate on this PC**. A cheaper preset for
+120 Hz (~11 % less GPU work; AO 2 or Shadow 1 the candidates) and the eye size (SOMVR_OVERSCAN 0.1 = 21 % more pixels)
+were not measured.
+
+**5. The switch (launcher only; scripts/som-vr-headset-win.sh `render_by_hz`).** `SOMVR_RENDER_BY_HZ=on` (code default
+off): the session's refresh rate = the VR menu's saved `XR_REFRESH` (settings.conf, only read), else `SOMVR_XR_REFRESH`
+(60..144; 0 = unknown: the preset alone); at 90 Hz or less `SOMVR_RENDER_SET_90` over `SOMVR_RENDER_SET`, over 90
+`SOMVR_RENDER_SET_120` (NAME:V,...; a name in both takes the overlay's value). The preset is written at the start: a
+rate changed in the menu during a session counts from the next one. som-win-session.sh takes `FrameRateLimit` in
+`--render-set`. The som-b37-looks env block: `SOMVR_RENDER_BY_HZ=off` (the coordinator turns it on),
+`SOMVR_RENDER_SET_120=FrameRateLimit:3`, no `_90`. The log line: `SOMVR_RENDER_BY_HZ: 120 Hz (the VR menu's saved
+rate): SOMVR_RENDER_SET_120 (FrameRateLimit:3) over SOMVR_RENDER_SET`, then `the VR graphics preset: ...`. Test:
+scripts/tests/test_render_by_hz.sh (20 cases, in build.sh). The Linux launcher is unchanged (its render.cfg also seeds
+`FrameRateLimit 2`).
+
+**Tools.** looks36-drive.sh `LK_SKY` (a weather forced by `practice weather DEF` until `LK_SKY_WANT`, checked after each
+trip; boot with `SOMVR_PRACTICE_SKY=dry`, as `clear` undoes an overcast at the next trip) and `LK_AIM_TOL` (a view
+aimed again when off; Talion's body turns in steps behind the head, so one aim lands within +-15 deg - the sheets pick
+each view's mark nearest the reference: looks36-cmp.py `--match`, `--eye`, `--crop`; looks37-grid.py); perf27-drive.sh
+steps `sky` / `mgo`; looks37-boots.sh (one preset boot: `pics` in a free slot or `LOOKS_SOLO=1`, `perf LABEL PRESET HZ`
+in a solo); looks37-perf.py (each window's first 2048 frames, PF_WIN). `DayNoRain` lands on `SON_Day03` in 1-3 tries
+(`SON_Day03_Rain`, `SON_Day01/02` between).
+
+**Runs** (Windows, each the two standing WARN only, the source save UNCHANGED): pictures 155435 (today), 161349
+(Mesh 3), 155434 (Shadow 3), 164102 (Lighting 2), 161350 (max), with the single-aim first set 154039 / 154043 /
+154742 / 154743 / 154744; 155640 stayed in the main menu (the start sequence's world wait); frame times (solo, 90 Hz)
+164602 + 174702 (today), 172539 (Mesh 3), 173014 (Shadow 3), 173428 (Lighting 2), 173842 (max); 174256 (120 Hz,
+`FrameRateLimit:3`, the live `MaxFPS 100/0` words ran - unreadable at the half rate).
+
+**Open / for the headset:** at 120 Hz with the cap lifted - the frames a second (`PERF` / `xr: perf` lines) and whether
+WiVRn keeps the game near 120 in the meadow and the crowd or it judders more than 100 did; Mesh 3's stalls on first use
+(not chased); a cheaper 120 Hz preset; holding a clear sky (7.14) is the lever for the overcast's look.

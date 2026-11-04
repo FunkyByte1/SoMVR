@@ -1055,6 +1055,7 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
         const char *what = i == XL_HUD ? (MN.hud_menu ? "hud (a menu board)" : "hud") : i == XL_MMAP ? "minimap"
                            : i == XL_BAND && !MN.pp_has ? "hud band"
                            : i >= XL_BAND && i <= XL_BAND4 ? "hud popup" /* build 21: SOMVR_XR_POPUPS=gaze's tiles */
+                           : i == XL_VM0 && lv_kind() ? (lv_kind() == 1 ? "live card" : "live dot") /* build 35 */
                            : i == XL_VM0 ? (MN.card_state == 1 ? "vrmenu card" : "vrmenu panel")
                            : i == XL_VM1 || i == XL_VM2 ? "vrmenu marker" : i == XL_PTR0 || i == XL_PTR1 ? "pointer marker"
                            : i == XL_RING ? (CF.sc_w && ((const XrCompositionLayerQuad *)l)->subImage.swapchain == CF.sc_w
@@ -1072,7 +1073,7 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
         mn_log_quad(what, i, (const XrCompositionLayerQuad *)l);
     }
     if (mn_mark) { /* build 31b: a mark's frame - the VR menu's and the objective's pictures copied (written by MK's writer) */
-        if (c->l[XL_VM0] && VM.on && VM.map && VM.released &&
+        if (c->l[XL_VM0] && !lv_kind() && VM.on && VM.map && VM.released &&
             (MK.vm = malloc((size_t)SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4)) != NULL) {
             memcpy(MK.vm, VM.map, (size_t)SOMVR_VM_TEX_W * SOMVR_VM_TEX_H * 4);
             MK.vm_w = SOMVR_VM_TEX_W, MK.vm_h = SOMVR_VM_TEX_H, MK.vm_bgra = VM.bgra;
@@ -1081,7 +1082,8 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
         MK.cost_ms += (ss_now() - t0) * 1e3;
         return; /* (mk_launch clears mn_dump_frame) */
     }
-    if (c->l[XL_VM0]) mn_dump_vrmenu();
+    if (c->l[XL_VM0] && lv_kind()) lv_dump(mn_dump_frame); /* build 35: the live card's picture */
+    else if (c->l[XL_VM0]) mn_dump_vrmenu();
     if (c->l[XL_OBJ] || c->l[XL_OBJL]) ob_dump(mn_dump_frame); /* build 15: the objective marker's picture */
     mn_dump_frame = 0;
 }
@@ -1138,6 +1140,7 @@ static int xt_quad(int what, somvr_posef *pose, float size[2]) {
         size[0] = MN.panel_sz[0], size[1] = MN.panel_sz[1];
         return 1;
     }
+    if (what == SOMVR_XTS_LIVE && lv_card_pose(pose, size)) return 1; /* build 35: the live card on the palm */
     if (what == SOMVR_XTS_WATCH && MN.shown) {
         memcpy(pose, &MN.q.pose, sizeof *pose);
         size[0] = MN.q.size.width, size[1] = MN.q.size.height;

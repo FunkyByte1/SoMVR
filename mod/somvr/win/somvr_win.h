@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../somvr_site.h"
+#include "somvr_win_host.h" /* SOMVR_HOST_API */
 
 #define SOMVR_WIN_PREFERRED_BASE 0x140000000ull
 
@@ -59,7 +60,9 @@ void **somvr_win_iat_slot(uintptr_t base, const char *dll, const char *fn);
 int somvr_win_put_ptr(void **at, void *v);
 
 /* the DLL's own log before / without somvr_start's (somvr.log format: "WIN ..." lines), and the module */
-void somvr_win_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+SOMVR_HOST_API void somvr_win_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* the game thread named for the layer (H4's first call; somvr_win_main.c) */
+SOMVR_HOST_API void somvr_win_name_game_thread(void);
 extern void *somvr_win_module;
 
 #endif

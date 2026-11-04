@@ -5,7 +5,9 @@
 #
 #   som-win-session.sh --run DIR --build DIR [--prefix DIR] [--runtime wivrn|monado] [--sink default|null]
 #                      [--cmds FILE] [--hold S] [--hard S] [--refresh HZ] [--size WxH] [--ending-file F]
-#                      [--render-set NAME=0..5]... [--game-env K=V]... [--test] [--dry-run]
+#                      [--render-set NAME=0..5]... [--game-env K=V]... [--test [--test-save FILE]] [--dry-run]
+#   --test-save FILE (tests only, never the play prefix; som-b37-practrip): the prefix's save replaced by a copy of
+#     FILE (only read) at every start - each test starts from the same place (the launcher's SOMVR_HEADSET_TEST_SAVE)
 #
 # What it does (each step in DIR/run.log, the same lines somvr_window.py reads):
 #   - the build: DIR/ShadowOfMordor/mod/somvr/build/win/xinput9_1_0.dll (the game side) and .../vklayer (the Linux
@@ -65,7 +67,7 @@ MAIN=$$; T0=$(date +%s)
 HERE=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 
 RUN=""; BUILD=""; PFX=$PLAY_PFX; RUNTIME=wivrn; SINK=default; CMDS=""; HOLD=14200; HARD=14400; REFRESH=90
-SIZE=1920x1080; ENDING=""; TEST=0; DRY=0; RSETS=(); GEXTRA=()
+SIZE=1920x1080; ENDING=""; TEST=0; DRY=0; RSETS=(); GEXTRA=(); TSAVE=""
 bad() { echo "som-win-session: $*" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case $1 in
@@ -83,6 +85,7 @@ while [ $# -gt 0 ]; do
     --render-set) RSETS+=("${2:?}"); shift 2 ;;
     --game-env) GEXTRA+=("${2:?}"); shift 2 ;;
     --test) TEST=1; shift ;;
+    --test-save) TSAVE=${2:?}; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) awk 'NR > 1 && /^set -uo/ { exit } NR > 1' "$0"; exit 0 ;;
     *) bad "unknown argument: $1" ;;
@@ -96,11 +99,18 @@ case $RUNTIME in wivrn) ;; monado) [ $TEST = 1 ] || bad "--runtime monado is for
 case $SINK in default) ;; null) [ $TEST = 1 ] || bad "--sink null is for tests (--test)" ;; *) bad "--sink $SINK" ;; esac
 [ $TEST = 1 ] && [ "$RUNTIME" = monado ] && [ "$SINK" != null ] && bad "a test on Monado needs --sink null (no sound to a real output)"
 [ $TEST = 1 ] && [ "$PFX" = "$PLAY_PFX" ] && bad "a test never runs on the play prefix (--prefix)"
+if [ -n "$TSAVE" ]; then
+  [ $TEST = 1 ] || bad "--test-save is for tests (--test)"
+  [ "$PFX" = "$PLAY_PFX" ] && bad "--test-save never on the play prefix"
+  case $TSAVE in /*) ;; *) bad "--test-save needs an absolute file" ;; esac
+  [ -f "$TSAVE" ] || bad "--test-save $TSAVE: no such file"
+fi
 [[ $HARD =~ ^[0-9]+$ ]] && [ "$HARD" -ge 300 ] && [ "$HARD" -le 14400 ] || bad "--hard $HARD (300..14400)"
 [[ $HOLD =~ ^[0-9]+$ ]] || bad "--hold $HOLD"
 [[ $REFRESH =~ ^[0-9]+$ ]] && [ "$REFRESH" -ge 20 ] && [ "$REFRESH" -le 144 ] || bad "--refresh $REFRESH"
 case $SIZE in [0-9]*x[0-9]*) W=${SIZE%x*}; H=${SIZE#*x} ;; *) bad "--size $SIZE" ;; esac
-RSET_NAMES=" VegetationQuality ShadowQuality MeshQuality LightingQuality AmbientOcclusionQuality TessellationToggle TextureQuality TextureFiltering OITToggle "
+# (b37 looks: FrameRateLimit too - the game's limiter: 0 = 30 fps, 1 = 60, 2 = 100, 3 = none; re-winport.md 7.15)
+RSET_NAMES=" VegetationQuality ShadowQuality MeshQuality LightingQuality AmbientOcclusionQuality TessellationToggle TextureQuality TextureFiltering OITToggle FrameRateLimit "
 for kv in "${RSETS[@]}"; do
   [[ $kv =~ ^([A-Za-z]+)=([0-5])$ && $RSET_NAMES == *" ${BASH_REMATCH[1]} "* ]] || bad "--render-set: $kv"
 done
@@ -207,7 +217,14 @@ if [ ! -f "$SYS32/d3d11.dll" ]; then
     log "the prefix: $(du -sh "$PFX" 2>/dev/null | cut -f1) (shared blocks with the template where the disk allows)"
   fi
 fi
-if [ -f "$SAVEF" ]; then
+if [ -n "$TSAVE" ]; then   # (b37: a test's fixed start - the prefix's save, a test's, replaced by a copy of it)
+  SEED=$TSAVE
+  log "the save: a copy of the test save $TSAVE ($(sha "$TSAVE" | cut -c1-16); only read)$([ -f "$SAVEF" ] && echo " over the prefix's last one ($(sha "$SAVEF" | cut -c1-16))")"
+  if [ $DRY = 0 ]; then
+    mkdir -p "$DOCS/Saves" && cp --no-preserve=mode "$SEED" "$SAVEF.part" && mv -f "$SAVEF.part" "$SAVEF" || die "the test save copy failed"
+    [ "$(sha "$SAVEF")" = "$(sha "$SEED")" ] || die "the test save copy does not match its source"
+  fi
+elif [ -f "$SAVEF" ]; then
   log "the save: the prefix's own GameData.sav, sha256 $(sha "$SAVEF" | cut -c1-16) ($(stat -c '%s B, %y' "$SAVEF" | cut -c1-40))"
   SEED=""
 else
@@ -253,6 +270,14 @@ XRLOG=$(genv SOMVR_XR_LOG) || XRLOG=$RUN/xr-layer.log
 NULLSINK=""; NULLMOD=""
 [ "$SINK" = null ] && { NULLSINK=somvr_win_null_$$; GENV+=(PULSE_SINK="$NULLSINK" PULSE_SOURCE="$NULLSINK.monitor"); }
 GENV+=("${GEXTRA[@]}")
+# som-b35-live (docs/re-xr-pipeline.md 162): SOMVR_LIVE=on - the live folder (logs/live/<this run>) for the layer and the
+# DLL; its daemon (the marks' voices into the coordinator's inbox) once the game runs, stopped at the end
+LIVE_ON=0; LIVE_W=$(genv SOMVR_LIVE) && { [ "$LIVE_W" = on ] || [ "$LIVE_W" = 1 ]; } && [ -x "$HERE/live_session.sh" ] && LIVE_ON=1
+[ $LIVE_ON = 1 ] && [ $DRY = 0 ] && GENV+=(SOMVR_LIVE_DIR="$("$HERE/live_session.sh" dir "$RUN")")
+# b37 (docs/re-xr-pipeline.md 156.10): a session the launcher started for the user (its test too) - the host refuses the
+# raw `reload` word and the file watch here whatever SOMVR_DEV_RELOAD says; only the player's own Apply / Undo swaps
+# (SOMVR_LIVE=on). Last, so no --game-env takes it off; a single-DLL build ignores it
+GENV+=(SOMVR_USER_SESSION=1)
 mkdir -p "$RUN/xdg-config"
 # the game in a mount namespace: the install as an overlay (writes -> RUN/game-upper); a test: no /dev/snd either
 mkdir -p "$RUN/game-upper" "$RUN/game-work"
@@ -373,6 +398,7 @@ cleanup() {
   [ -n "$ENDING" ] && printf 'ending %s %s\n' "$te" "$RUN" > "$ENDING" 2>/dev/null
   [ -n "$WDOG" ] && kill "$WDOG" 2>/dev/null
   stop_game
+  [ "${LIVE_ON:-0}" = 1 ] && "$HERE/live_session.sh" stop "$RUN"   # som-b35-live: its daemon (its own pid only)
   [ -n "$AGUARD" ] && kill "$AGUARD" 2>/dev/null
   stop_gamescope
   if alive "$MSVC"; then kill -INT "$MSVC" 2>/dev/null; for i in $(seq 1 25); do alive "$MSVC" || break; sleep 0.2; done; alive "$MSVC" && kill -TERM "$MSVC"; fi
@@ -408,6 +434,14 @@ WDOG=$!
 # ---- the DLL into the prefix ------------------------------------------------------------------------------------
 install -m 0644 "$DLL" "$SYS32/xinput9_1_0.dll" && cmp -s "$DLL" "$SYS32/xinput9_1_0.dll" || die "the DLL did not land in $SYS32"
 log "DLL $(sha "$DLL" | cut -c1-16) in $SYS32/xinput9_1_0.dll"
+LDLL=$(dirname "$DLL")/somvr_logic.dll # a split build (docs/re-xr-pipeline.md 156): the host loads it from its folder
+if [ -f "$LDLL" ]; then
+  install -m 0644 "$LDLL" "$SYS32/somvr_logic.dll" && cmp -s "$LDLL" "$SYS32/somvr_logic.dll" || die "the logic DLL did not land in $SYS32"
+  log "LOGIC $(sha "$LDLL" | cut -c1-16) in $SYS32/somvr_logic.dll"
+else # a single-DLL build (build-win3 and older): no logic module - an earlier split session's copy goes (never loaded)
+  [ -f "$SYS32/somvr_logic.dll" ] && rm -f -- "$SYS32/somvr_logic.dll" && log "a single-DLL build: $SYS32/somvr_logic.dll of an earlier split build removed"
+  log "a single-DLL build (no $LDLL): the game side in xinput9_1_0.dll"
+fi
 
 # ---- sound ------------------------------------------------------------------------------------------------------
 game_inputs() {   # the game's streams: "INDEX SINKNAME MUTED" per line (SINKNAME "-": on no sink yet - Wine first opens
@@ -519,6 +553,8 @@ done
 [ -n "$GAME_PID" ] || { tail -20 "$RUN/wine.log" >&2; die "the game process did not appear (bwrap $BW_PID)"; }
 GAME_T0=$(date +%s)
 log "game started: bwrap $BW_PID, ShadowOfMordor.exe $GAME_PID (Proton's wine, prefix $PFX)"
+# b37 (162.8): the spoken answers on wivrn.sink by that exact name (live_tts.py); a test (--sink null): its null sink
+[ $LIVE_ON = 1 ] && log "live: the daemon $(SOMVR_LIVE_TTS=$(genv SOMVR_LIVE_TTS || echo off) LIVE_TTS_SINK=$([ "$SINK" = null ] && echo "$NULLSINK") "$HERE/live_session.sh" start "$RUN" $$ "$BUILD/ShadowOfMordor/mod/somvr") ($("$HERE/live_session.sh" dir "$RUN")); spoken answers: $(genv SOMVR_LIVE_TTS || echo off) on $([ "$SINK" = null ] && echo "$NULLSINK" || echo wivrn.sink)"
 
 # ---- the player's requests, the game's end -------------------------------------------------------------------------
 gel() { echo $(( $(date +%s) - GAME_T0 )); }

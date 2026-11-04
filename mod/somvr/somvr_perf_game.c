@@ -14,7 +14,14 @@
  *     commands, the layer's present path; xrWaitFrame blocks without CPU).
  *   The process: all threads' CPU per stereo frame (the job workers too).
  *   Every SOMVR_PERF_S seconds (default 10) one `PERF t=...` line (mean/p50/p95/max ms; frames over 11.1 ms); off = no
- *   clock read at all. */
+ *   clock read at all.
+ *   b35 (som-b35-lane, docs/re-xr-pipeline.md 163): SOMVR_PERF_RAW=FILE (with SOMVR_PERF=on; unset/off = none) - every
+ *   present's render-thread times, one line each, for the lane's closed loop (scripts/lane_watch.py) and its frame-time
+ *   tables (scripts/lane_frames.py): `T INTERVAL WORK` = the present's time (s; mono(): Linux's CLOCK_MONOTONIC, under
+ *   Wine QueryPerformanceCounter = Linux's CLOCK_MONOTONIC_RAW - the header line names it), the wall since the previous
+ *   present (ms), eye 0's start to this present = the render thread's frame work (ms; - = no stereo frame); `# perf NAME
+ *   T` where a `perf NAME` window starts. The render thread writes its batch every >= 50 ms (one write, outside the
+ *   lock). */
 
 #define PFG_WIN 2048u
 #define PFG_BUDGET_MS 11.111
@@ -72,7 +79,13 @@ static struct {
 	atomic_uint sh_skip;
 	char label[40], next_label[40]; /* the word `perf NAME`: the window's name (the trigger thread -> the game thread) */
 	atomic_int relabel;
-} g_pfg = {.mx = PTHREAD_MUTEX_INITIALIZER};
+	/* b35: SOMVR_PERF_RAW (the render thread alone appends and writes raw_buf; label_gen under mx) */
+	int raw_fd;
+	uint32_t label_gen, raw_gen;
+	size_t raw_len;
+	double raw_t;
+	char raw_buf[8192];
+} g_pfg = {.mx = PTHREAD_MUTEX_INITIALIZER, .raw_fd = -1};
 
 static double pfg_clock(clockid_t c)
 {
@@ -100,6 +113,27 @@ static void pfg_config(void)
 	      "CPU a present, the process's CPU a frame)",
 	      g_pfg.on ? "on" : "off", g_pfg.period_s);
 	g_pfg.last_log = mono();
+	p = getenv("SOMVR_PERF_RAW"); /* b35: every present's times, for the lane (scripts/lane_watch.py) */
+	if (p && *p && strcmp(p, "off") && strcmp(p, "0")) {
+		if (!g_pfg.on) {
+			logf_("WARN CONFIG perf raw: SOMVR_PERF_RAW=%s needs SOMVR_PERF=on: none written", p);
+		} else if ((g_pfg.raw_fd = open(p, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644)) < 0) {
+			logf_("WARN CONFIG perf raw: SOMVR_PERF_RAW=%s: open failed (errno %d): none written", p, errno);
+		} else {
+#ifdef _WIN32
+			const char *ck = "monotonic_raw";
+#else
+			const char *ck = "monotonic";
+#endif
+			char h[160];
+			int n = snprintf(h, sizeof h, "# somvr perf raw 1: T INTERVAL_MS WORK_MS (clock %s, the render thread)\n", ck);
+			if (n > 0 && write(g_pfg.raw_fd, h, (size_t)n) < 0)
+				n = 0;
+			g_pfg.raw_t = g_pfg.last_log;
+			logf_("CONFIG perf raw: every present's render-thread times into %s (clock %s; batches every 50 ms)", p,
+			      ck);
+		}
+	}
 }
 
 static int pfg_cmp(const void *a, const void *b)
@@ -226,6 +260,7 @@ static void pfg_h4_entry(void)
 		pfg_log(w);
 		pthread_mutex_lock(&g_pfg.mx);
 		memcpy(g_pfg.label, g_pfg.next_label, sizeof g_pfg.label);
+		g_pfg.label_gen++; /* b35: SOMVR_PERF_RAW's `# perf NAME` */
 		pthread_mutex_unlock(&g_pfg.mx);
 	} else if (w - g_pfg.last_log >= g_pfg.period_s) {
 		pfg_log(w);
@@ -267,18 +302,54 @@ static void pfg_h4_done(void)
 	g_pfg.part_n++;
 	g_pfg.stereo = 1;
 }
+/* b35: SOMVR_PERF_RAW - one present's line into the render thread's batch; the batch written every >= 50 ms */
+static void pfg_raw(double w, double iv, double wk, const char *label)
+{
+	char *b = g_pfg.raw_buf;
+	size_t cap = sizeof g_pfg.raw_buf, o = g_pfg.raw_len;
+	if (label[0] && o + 80 < cap)
+		o += (size_t)snprintf(b + o, cap - o, "# perf %s %.6f\n", label, w);
+	if (o + 48 < cap) {
+		int n = iv < 0 ? snprintf(b + o, cap - o, "%.6f - -\n", w)
+			: wk < 0 ? snprintf(b + o, cap - o, "%.6f %.3f -\n", w, iv)
+				 : snprintf(b + o, cap - o, "%.6f %.3f %.3f\n", w, iv, wk);
+		if (n > 0 && o + (size_t)n < cap)
+			o += (size_t)n;
+	}
+	g_pfg.raw_len = o;
+	if (w - g_pfg.raw_t < 0.05 && o + 256 < cap)
+		return;
+	g_pfg.raw_t = w;
+	const char *p = b;
+	while (o > 0) {
+		ssize_t k = write(g_pfg.raw_fd, p, o);
+		if (k < 0 && errno == EINTR)
+			continue;
+		if (k <= 0)
+			break;
+		p += k;
+		o -= (size_t)k;
+	}
+	g_pfg.raw_len = 0;
+}
 /* every present (H9, the render thread) */
 static void pfg_h9(void)
 {
 	if (!g_pfg.on)
 		return;
 	double w = mono(), c = pfg_clock(CLOCK_THREAD_CPUTIME_ID);
+	double raw_iv = -1, raw_wk = -1;
+	char raw_lb[sizeof g_pfg.label + 1] = "";
 	pthread_mutex_lock(&g_pfg.mx);
-	if (g_pfg.re_have0 && g_pfg.nrs < PFG_WIN) { /* eye 0's start to this present */
+	if (g_pfg.re_have0) /* eye 0's start to this present */
+		raw_wk = (w - g_pfg.re_w0[0]) * 1e3;
+	if (g_pfg.re_have0 && g_pfg.nrs < PFG_WIN) {
 		uint32_t k = g_pfg.nrs++;
 		g_pfg.rs_c[k] = (float)((c - g_pfg.re_c0[0]) * 1e3), g_pfg.rs_w[k] = (float)((w - g_pfg.re_w0[0]) * 1e3);
 	}
 	g_pfg.re_have0 = 0;
+	if (g_pfg.r_have)
+		raw_iv = (w - g_pfg.r_w) * 1e3;
 	if (g_pfg.r_have && g_pfg.nr < PFG_WIN) {
 		uint32_t k = g_pfg.nr++;
 		g_pfg.rc[k] = (float)((c - g_pfg.r_c) * 1e3), g_pfg.rw[k] = (float)((w - g_pfg.r_w) * 1e3);
@@ -286,7 +357,16 @@ static void pfg_h9(void)
 		g_pfg.rpk[k] = (float)(g_peeks - g_pfg.r_pk);
 	}
 	g_pfg.r_have = 1, g_pfg.r_w = w, g_pfg.r_c = c, g_pfg.r_pk = g_peeks;
+	if (g_pfg.raw_fd >= 0 && g_pfg.raw_gen != g_pfg.label_gen) {
+		g_pfg.raw_gen = g_pfg.label_gen;
+		memcpy(raw_lb, g_pfg.label, sizeof g_pfg.label);
+		raw_lb[sizeof g_pfg.label] = 0;
+		if (!raw_lb[0])
+			snprintf(raw_lb, sizeof raw_lb, "-");
+	}
 	pthread_mutex_unlock(&g_pfg.mx);
+	if (g_pfg.raw_fd >= 0)
+		pfg_raw(w, raw_iv, raw_wk, raw_lb);
 }
 /* ---- SOMVR_SHADOW_SHARE (build 27, re-xr-pipeline.md 115.5): eye 1 draws with eye 0's shadow maps ---------------
  * The opaque stage's four shadow passes (HEAD_SHADOW_PRE / _LIGHTS / _CASC / _LIGHTS2, the render thread) ran once per

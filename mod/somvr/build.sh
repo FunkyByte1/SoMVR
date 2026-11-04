@@ -45,7 +45,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_inrec.c" "$D/somvr_views.c" 
       "$D/somvr_strike.c" "$D/somvr_gaze.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
       "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c"
       "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c" "$D/somvr_above.c" "$D/somvr_ride.c"
-      "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c" "$D/somvr_finisher.c")
+      "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c" "$D/somvr_finisher.c" "$D/somvr_live.c")
 mkdir -p "$D/build/tests"
 # the checks of more than one command: planned as `run ... -- build.sh --step NAME` (buildplan.sh)
 step_haptics() { # build 34 (re-xr-pipeline.md 153.4): every pulse a word of somvr_haptics.h - no raw pulse (in_haptic_event)
@@ -135,6 +135,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_bow" "$D/tests/test_bow.c" "$D/somvr_bow.
 run "$D/build/tests/test_bow"
 gcc "${CF[@]}" -o "$D/build/tests/test_vrmenu" "$D/tests/test_vrmenu.c" "$D/somvr_vrmenu.c" "$D/somvr_font.c" -lm
 run "$D/build/tests/test_vrmenu"
+gcc "${CF[@]}" -o "$D/build/tests/test_live" "$D/tests/test_live.c" "$D/somvr_live.c" "$D/somvr_vrmenu.c" "$D/somvr_font.c" -lm
+run "$D/build/tests/test_live" # build 35: SOMVR_LIVE's card, calm gate, folder formats, the Test page's patch box
 gcc "${CF[@]}" -o "$D/build/tests/test_captain" "$D/tests/test_captain.c" "$D/somvr_captain.c" -lm
 run "$D/build/tests/test_captain"
 gcc "${CF[@]}" -o "$D/build/tests/test_loco" "$D/tests/test_loco.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
@@ -180,6 +182,13 @@ gcc "${CF[@]}" -o "$D/build/tests/test_size" "$D/tests/test_size.c" "$D/somvr_si
     -lpthread -lm # the player size: the rig, the hands, the blade, the arms, the climb, the glows, the blink
 run "$D/build/tests/test_size"
 run -- python3 -I "$D/../../scripts/handmesh_gen.py" --check # build 10: somvr_handmesh.h is the generator's
+if [ -f "$D/../../scripts/tests/test_render_by_hz.sh" ]; then # b37 looks: the launcher's preset by the refresh rate
+  run -- bash "$D/../../scripts/tests/test_render_by_hz.sh" # (a frozen build carries mod/ only: the source tree's check)
+fi
+if [ -f "$D/../../scripts/lane_watch.py" ]; then # (a frozen build carries mod/ only: the source tree's check)
+  say "== the lane's watcher offline (scripts/lane_watch.py test: the closed loop; b37 - only the user's own run's frames while in VR)"
+  run -- python3 -I "$D/../../scripts/lane_watch.py" test
+fi
 gcc "${CF[@]}" -o "$D/build/tests/test_vrhands" "$D/tests/test_vrhands.c" "$D/somvr_vrhands.c" -lm # build 10: our VR hands
 run "$D/build/tests/test_vrhands"
 gcc "${CF[@]}" -o "$D/build/tests/test_strike" "$D/tests/test_strike.c" "$D/somvr_strike.c" -lm # build 12: the wraith dash

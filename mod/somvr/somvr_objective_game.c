@@ -85,7 +85,7 @@ static ob_range_t ob_range_win(uintptr_t m)
 typedef void (*ob_vis_fn)(uintptr_t clip, uint64_t on);
 
 /* the ninth exported object (somvr_objective.h): zero unless SOMVR_OBJECTIVE=on|both is on */
-__attribute__((visibility("default"), used)) somvr_objective_shared g_obj __asm__(SOMVR_OBJECTIVE_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_objective_shared, g_obj, SOMVR_OBJECTIVE_SYMBOL);
 
 struct ob_mark {
 	uintptr_t m, rec;

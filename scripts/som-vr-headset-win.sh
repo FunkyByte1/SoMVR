@@ -36,13 +36,20 @@
 #   sound, on a test prefix (SOMVR_HEADSET_TEST_PREFIX, default logs/win-launch/test-prefix; never the play prefix),
 #   SOMVR_HEADSET_TEST_HARD seconds (default 600); no notifications; the PC window on a headless screen of its own
 #   (its pictures in the session folder's window-shots/).
+# Tests only (som-b37-practrip, 11-04; never read in the user's session): SOMVR_HEADSET_TEST_SAVE=pin|far|steam|/FILE -
+#   the save every test starts from (each test's prefix save replaced by a copy of it at the start: tests repeatable):
+#   pin (default) = logs/test-save/saves/GameData.sav (the pinned copy, as headless_vr.sh's; Talion ~38 m from the
+#   practice spot), far = logs/test-save/far-461m/GameData.sav (461 m from it: the trip's ground wait, the standing check
+#   scripts/launch-far-check.sh), steam = the old way (a fresh prefix seeded from a copy of the live Steam save, which
+#   moves after the user's Deck play), /FILE = that file (only read). SOMVR_HEADSET_TEST_BUILD=NAME (dry runs and tests):
+#   logs/NAME instead of WIN_BUILD (an older or a candidate frozen build through the user's own launcher path).
 set -u
 unset LD_PRELOAD LD_LIBRARY_PATH
 export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-WIN_BUILD=build-win3                      # the Windows build the user plays (logs/WIN_BUILD); changed only between sessions
+WIN_BUILD=build-win5                      # the Windows build the user plays (logs/WIN_BUILD); changed only between sessions
 BLD=$SOM/logs/$WIN_BUILD
 ENVF=$BLD/headset.env
 CMDS=$SCR/cmds/somvr-vr6.cmd              # the start sequence: the main menu's Continue, the story (the Windows build's
@@ -58,6 +65,21 @@ DRY=${SOMVR_HEADSET_DRYRUN:-0}
 TEST=${SOMVR_HEADSET_TEST:-0}
 TEST_PREFIX=${SOMVR_HEADSET_TEST_PREFIX:-$SOM/logs/win-launch/test-prefix}
 [ "$TEST" = 1 ] && HARD=${SOMVR_HEADSET_TEST_HARD:-600}
+if { [ "$DRY" = 1 ] || [ "$TEST" = 1 ]; } && [ -n "${SOMVR_HEADSET_TEST_BUILD:-}" ]; then   # (b37: tests only)
+  [[ $SOMVR_HEADSET_TEST_BUILD =~ ^[A-Za-z0-9._-]+$ ]] || { echo "STOP: SOMVR_HEADSET_TEST_BUILD=$SOMVR_HEADSET_TEST_BUILD" >&2; exit 1; }
+  WIN_BUILD=$SOMVR_HEADSET_TEST_BUILD; BLD=$SOM/logs/$WIN_BUILD; ENVF=$BLD/headset.env
+fi
+TSAVE=""
+if [ "$TEST" = 1 ]; then   # (b37: the save each test starts from; the play prefix never gets one - tests use TEST_PREFIX)
+  case ${SOMVR_HEADSET_TEST_SAVE:-pin} in
+    pin) TSAVE=$SOM/logs/test-save/saves/GameData.sav ;;
+    far) TSAVE=$SOM/logs/test-save/far-461m/GameData.sav ;;
+    steam) TSAVE="" ;;
+    /*) TSAVE=$SOMVR_HEADSET_TEST_SAVE ;;
+    *) echo "STOP: SOMVR_HEADSET_TEST_SAVE=$SOMVR_HEADSET_TEST_SAVE (pin|far|steam|/FILE)" >&2; exit 1 ;;
+  esac
+  [ -z "$TSAVE" ] || [ -f "$TSAVE" ] || { echo "STOP: no test save $TSAVE" >&2; exit 1; }
+fi
 { [ "$DRY" = 1 ] || [ "$TEST" = 1 ]; } && [ -n "${SOMVR_HEADSET_ENVFILE:-}" ] && ENVF=$SOMVR_HEADSET_ENVFILE
 APP="Shadow of Mordor VR (Windows)"
 # the launcher's own keys (the file may not set them) and the session's
@@ -129,18 +151,43 @@ note "start (build $WIN_BUILD$([ "$DRY" = 1 ] && echo ', DRY RUN')$([ "$TEST" = 
   fail "The Windows VR build $WIN_BUILD is missing. Tell Claude."
 load_switches "$ENVF" || fail "The build's switches file is not valid ($ENVF: $ENV_BAD). Tell Claude."
 note "switches: ${#SW[@]} from $ENVF; the start sequence $CMDS"
-RSET=()   # SOMVR_RENDER_SET=NAME:V,... = the session's VR graphics preset in the prefix's render.cfg; a bad entry left out
-for kv in "${SW[@]}"; do
-  case $kv in SOMVR_RENDER_SET=*)
-    v=${kv#*=}
-    for p in ${v//,/ }; do
-      if [[ $p =~ ^(VegetationQuality|ShadowQuality|MeshQuality|LightingQuality|AmbientOcclusionQuality|TessellationToggle|TextureQuality|TextureFiltering|OITToggle):[0-5]$ ]]; then
-        RSET+=(--render-set "${p/:/=}")
-      else note "SOMVR_RENDER_SET: '$p' is not NAME:0..5 (left out)"; fi
-    done
-    note "the VR graphics preset: $v" ;;
-  esac
-done
+render_by_hz() {   # som-b37-looks (docs/re-winport.md 7.15): SW + the settings file $1 (only read) -> RSV, RSV_NOTE
+  # SOMVR_RENDER_SET=NAME:V,... is the session's VR graphics preset. SOMVR_RENDER_BY_HZ=on: the session's refresh rate =
+  # the VR menu's saved XR_REFRESH (the file), else the switch SOMVR_XR_REFRESH (60..144); at 90 Hz or less
+  # SOMVR_RENDER_SET_90 over the preset, over 90 Hz SOMVR_RENDER_SET_120 (NAME:V,...: a name in both takes the
+  # overlay's value; empty or off: none). Off (the code default), or the rate unknown: SOMVR_RENDER_SET alone. The
+  # preset is written at the start: the menu's rate changed in a session counts from the next one.
+  local kv p on=off base="" lo="" hi="" sw="" hz="" src="" ov="" key names="," out=""
+  for kv in "${SW[@]}"; do
+    case $kv in
+      SOMVR_RENDER_BY_HZ=*) on=${kv#*=} ;; SOMVR_RENDER_SET=*) base=${kv#*=} ;; SOMVR_XR_REFRESH=*) sw=${kv#*=} ;;
+      SOMVR_RENDER_SET_90=*) lo=${kv#*=} ;; SOMVR_RENDER_SET_120=*) hi=${kv#*=} ;;
+    esac
+  done
+  RSV=$base; RSV_NOTE=""
+  [ "$on" = on ] || return 0
+  hz=$(sed -n 's/^XR_REFRESH=\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$1" 2>/dev/null | tail -1); src="the VR menu's saved rate"
+  [[ $hz =~ ^[0-9]{2,3}$ ]] && [ "$hz" -ge 60 ] && [ "$hz" -le 144 ] || { hz=$sw; src="SOMVR_XR_REFRESH"; }
+  [[ $hz =~ ^[0-9]{2,3}$ ]] && [ "$hz" -ge 60 ] && [ "$hz" -le 144 ] ||
+    { RSV_NOTE="SOMVR_RENDER_BY_HZ: the refresh rate is not known (the runtime's own): SOMVR_RENDER_SET alone"; return 0; }
+  if [ "$hz" -le 90 ]; then ov=$lo key=SOMVR_RENDER_SET_90; else ov=$hi key=SOMVR_RENDER_SET_120; fi
+  if [ -z "$ov" ] || [ "$ov" = off ]; then RSV_NOTE="SOMVR_RENDER_BY_HZ: $hz Hz ($src): $key not set, SOMVR_RENDER_SET alone"; return 0; fi
+  for p in ${ov//,/ }; do names+="${p%%:*},"; done
+  for p in ${base//,/ }; do [[ $names == *",${p%%:*},"* ]] || out+="${out:+,}$p"; done
+  for p in ${ov//,/ }; do out+="${out:+,}$p"; done
+  RSV=$out; RSV_NOTE="SOMVR_RENDER_BY_HZ: $hz Hz ($src): $key ($ov) over SOMVR_RENDER_SET"
+}
+RSET=()   # the session's VR graphics preset (render_by_hz) in the prefix's render.cfg; a bad entry left out
+render_by_hz "$HOME/.local/share/somvr/settings.conf"
+[ -n "$RSV_NOTE" ] && note "$RSV_NOTE"
+if [ -n "$RSV" ]; then
+  for p in ${RSV//,/ }; do
+    if [[ $p =~ ^(VegetationQuality|ShadowQuality|MeshQuality|LightingQuality|AmbientOcclusionQuality|TessellationToggle|TextureQuality|TextureFiltering|OITToggle|FrameRateLimit):[0-5]$ ]]; then
+      RSET+=(--render-set "${p/:/=}")
+    else note "SOMVR_RENDER_SET: '$p' is not NAME:0..5 (left out)"; fi
+  done
+  note "the VR graphics preset: $RSV"
+fi
 [ -f "$CMDS" ] && [ -f "$SCR/som-win-session.sh" ] || fail "A start file is missing ($CMDS or som-win-session.sh). Tell Claude."
 
 session_ending() { [ "$(unit_state)" = deactivating ] || [ -s "$PRIV/ending" ]; }
@@ -228,7 +275,7 @@ if pgrep -x ShadowOfMordor > /dev/null || [ -n "$(win_game)" ]; then
 fi
 
 if [ "$TEST" = 1 ]; then
-  note "test: Monado's null compositor stands in for WiVRn (no headset checks)"
+  note "test: Monado's null compositor stands in for WiVRn (no headset checks); the save: $([ -n "$TSAVE" ] && echo "$TSAVE" || echo 'its own, or a copy of the Steam save (SOMVR_HEADSET_TEST_SAVE=steam)')"
 elif [ "$DRY" = 1 ]; then
   note "dry run: wivrn-server $(pgrep -x wivrn-server > /dev/null && echo running || echo 'not running'); headset check: $(headset; echo $?) (0 connected, 1 not, 2 unknown)"
 else
@@ -265,6 +312,13 @@ rm -f "$PRIV/voice_rec.py"; cp -f "$SCR/voice_rec.py" "$PRIV/voice_rec.py" 2>/de
 rm -f "$PRIV/mark_compose.sh" "$PRIV/xr_compose.py"
 cp -f "$SCR/mark_compose.sh" "$SCR/xr_compose.py" "$PRIV/" 2>/dev/null ||
   note "no mark_compose.sh / xr_compose.py beside the launcher: the marks' pictures without the layer (compose by hand)"
+# b37 (docs/re-xr-pipeline.md 162): the live loop's scripts. som-win-session.sh starts live_session.sh from its own folder
+# (this one), and live_daemon.py / live_lane.sh / lane_run.sh call their siblings by their own folder; copies like the
+# rest, so a merge into main during the session changes nothing. Without them SOMVR_LIVE stays off (no live notes).
+rm -rf "$PRIV/lane"; rm -f "$PRIV"/live.py "$PRIV"/live_*.py "$PRIV"/live_*.sh "$PRIV/lane_run.sh" "$PRIV/lane_watch.py"
+cp -f "$SCR"/live.py "$SCR"/live_*.py "$SCR"/live_*.sh "$SCR/lane_run.sh" "$SCR/lane_watch.py" "$PRIV/" 2>/dev/null &&
+  mkdir -p "$PRIV/lane" && cp -f "$SCR/lane/lane.conf" "$PRIV/lane/" 2>/dev/null ||
+  note "the live loop's scripts are not beside the launcher: no live notes this session"
 
 TS=$(date +%Y%m%d-%H%M%S)
 if [ "$DRY" = 1 ]; then RUN=$SOM/logs/win-session-dryrun-$TS; else RUN=$SOM/logs/win-session-$TS; fi
@@ -274,6 +328,7 @@ for kv in "${SW[@]}"; do GE+=(--game-env "$kv"); done
 ARGS=(--run "$RUN" --build "$BLD" --cmds "$PRIV/start.cmd" --hold $((HARD - 200)) --hard "$HARD" --refresh 90
   --ending-file "$PRIV/ending" "${RSET[@]}")
 [ "$TEST" = 1 ] && ARGS+=(--test --runtime monado --sink null --prefix "$TEST_PREFIX")
+[ -n "$TSAVE" ] && ARGS+=(--test-save "$TSAVE")
 ARGS+=("${GE[@]}")
 WPID=""; WIN_CLOSE=10; WGS=""; WDISP=""; WGWD=""
 start_window() {   # the PC window on the desktop (a test: on a headless gamescope of its own)

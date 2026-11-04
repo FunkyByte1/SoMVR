@@ -537,7 +537,11 @@ static void hsm_config(int *bad)
 	const char *lp = getenv("SOMVR_LOG");
 	if (env_word("SOMVR_SWORD_REC", onoff_w, 2, 0) && !g_hsm.rec && lp && lp[0]) {
 		snprintf(g_hsm.rec_path, sizeof g_hsm.rec_path, "%s.swordrec", lp);
+#ifdef _WIN32
+		g_hsm.rec = fopen(g_hsm.rec_path, g_logic_reason ? "a" : "w"); /* a reload (156) goes on with the boot's file */
+#else
 		g_hsm.rec = fopen(g_hsm.rec_path, "w");
+#endif
 		if (!g_hsm.rec)
 			*bad = 1, logf_("WARN SOMVR_SWORD_REC: %s not opened (%s): not recorded", g_hsm.rec_path, strerror(errno));
 		else {

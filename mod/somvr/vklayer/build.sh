@@ -90,7 +90,7 @@ plan_open "$D/../build" # build.sh's state: the same lock and timing history (th
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -Wl,-Bsymbolic -Wl,-soname,libVkLayer_somvr_openxr.so \
     -o "$LIB" "$D/somvr_vklayer.c" "$D/somvr_logic.c" "$D/../somvr_pointer.c" "$D/../somvr_comfort.c" "$D/../somvr_menus.c" \
     "$D/somvr_env.c" "$D/../somvr_vrmenu.c" "$D/../somvr_font.c" "$D/../somvr_threat.c" "$D/somvr_handdraw.c" \
-    "$D/../somvr_vrhands.c" "$D/somvr_void.c" "$D/../somvr_objective.c" -lpthread -ldl -lm
+    "$D/../somvr_vrhands.c" "$D/somvr_void.c" "$D/../somvr_objective.c" "$D/../somvr_live.c" -lpthread -ldl -lm
 built "$LIB"
 CHECK=0 VI=0
 for a in "$@"; do case $a in --check) CHECK=1 ;; --vulkaninfo) CHECK=1 VI=1 ;; *) echo "unknown option $a"; exit 2 ;; esac; done

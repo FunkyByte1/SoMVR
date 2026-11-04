@@ -88,6 +88,14 @@ typedef struct {
     float fall_cm;      /* ... and not more than this below it (300 cm: below = the ground was not there: again) */
     float timeout_s;    /* no arrival this long after a teleport: again, at most `tries` teleports (3 s) */
     int tries;          /* teleports per trip (3) */
+    /* build 37 (som-b37-practrip, SOMVR_PRACTICE_GROUND; re-xr-pipeline.md 27.10): the world under Talion (the `ground`
+     * of somvr_pr_trip_step_ground). A long trip lands before the world's collision has streamed in there: no ground =
+     * the black holds, Talion kept at the target by more teleports (pins: no try counted) while he drops pin_cm below
+     * it, for at most ground_wait_s after the first teleport; the arrival only on the ground */
+    float ground_wait_s; /* (5 s) */
+    float pin_cm;        /* (50 cm) */
+    int need_on;         /* 1: the arrival only standing on the ground (the root at most 250 cm over it: the trips there
+                          * and back); 0: ground somewhere under him is enough (the climb's quick blinks: a ledge) */
 } somvr_pr_tcfg;
 void somvr_pr_tcfg_default(somvr_pr_tcfg *c);
 
@@ -109,7 +117,19 @@ typedef struct {
     int arrived, failed;  /* the outcome (kept after the trip) */
     float fade_from;      /* the fade-in starts here (a trip started while one was fading in) */
     int held_busy;        /* the hold went on past hold_s for busy (once per trip: the game side logs it) */
+    int pins;             /* build 37: teleports while no ground was under him (not tries) */
+    int noground;         /* build 37: the outcome was no ground (FAILED after ground_wait_s: the world never came) */
+    double wait_t;        /* build 37: no ground since (0 = there was ground at the last step) */
+    double ground_t;      /* build 37: the ground came at (after a wait; 0 = no wait or not yet) */
+    double t_first;       /* build 37: the first teleport (ground_wait_s counts from it) */
 } somvr_pr_trip;
+/* build 37: the world under Talion for somvr_pr_trip_step_ground */
+enum {
+    SOMVR_PRGD_UNKNOWN = -1, /* not known (no ray): the rules before build 37 */
+    SOMVR_PRGD_NONE = 0,     /* nothing under him: the world's collision has not streamed in here (or he fell through) */
+    SOMVR_PRGD_OVER = 1,     /* ground under him, he is not on it (in the air over it) */
+    SOMVR_PRGD_ON = 2,       /* he stands on it */
+};
 /* a trip to target from now on (a trip in progress is replaced: its fade goes on from where it is) */
 void somvr_pr_trip_start(somvr_pr_trip *tr, const somvr_pr_tcfg *c, const float target[3], double t);
 /* one frame at t: Talion's root pos (have = 0: not known now), paused = the game is paused (no teleport is asked while
@@ -119,6 +139,12 @@ int somvr_pr_trip_step(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, cons
  * pause alone never holds it: the pause menu must be seen) */
 int somvr_pr_trip_step_busy(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, const float pos[3], int have, int paused,
                             int busy);
+/* ... the same, ground = SOMVR_PRGD_* under Talion now (UNKNOWN: as step_busy). NONE while moving: no try counted, the
+ * black holds, a pin teleport each time he drops pin_cm under the target (at most every 0.25 s); ground_wait_s after
+ * the first teleport with none = FAILED (noground set). The arrival needs ON (need_on) or OVER|ON; tries used up while
+ * OVER (need_on) wait for him to land (up to ground_wait_s). NONE in the hold = back to moving (a teleport). */
+int somvr_pr_trip_step_ground(somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t, const float pos[3], int have, int paused,
+                              int busy, int ground);
 /* the black over the view now: 0 none .. 1 black */
 float somvr_pr_trip_fade(const somvr_pr_trip *tr, const somvr_pr_tcfg *c, double t);
 const char *somvr_pr_phase_name(int phase);

@@ -180,3 +180,32 @@ toolchain; it runs `wintables.py --check` (python only) so a Linux change that b
   type). win/build.sh now has `-Werror=microsoft-enum-value`: put bit 31 (and up) in a macro. Also `long` is 32 bits;
   the CRT's `rand()` is another sequence (RAND_MAX 32767); `sinf`/`cosf` may round a step differently from glibc's -
   a test tolerance under float precision fails here first.
+
+## 8. The host and the logic: two DLLs, a reload in the world (docs/re-xr-pipeline.md 156)
+
+- **xinput9_1_0.dll = the host**, never reloaded: the XInput proxy, the exe gate (`somvr_winexes.inc`: the exes the tables
+  know), the entry redirect, the crash note, MinHook and the patch engine (`somvr_win_hook.c`), the reload
+  (`somvr_win_host.c`), the bridge and every object the layer reads (`somvr_win_bridge.c`: `g_sh`, `g_in`, `g_hud`, `g_cft`,
+  `g_vmo`, `g_tht`, `g_obj`, `g_ssn`, `g_vho`, `g_xrloc` - exported, the logic imports them), D3D's discovery
+  (`somvr_win_d3d.c`: the IAT hooks, the device / context / swap chain, the first Present, the fog edit). Its API:
+  `somvr_win_host.h`.
+- **somvr_logic.dll = the logic**: somvr.c (+ every `_game.c`), the CORE files, the site tables (`somvr_win_sites.c`), the
+  POSIX shim. The host loads it from its own folder at win_entry - every build, the release too (one code path; the
+  package ships both). Its exports: `somvr_logic_abi/init/com/present/idle/stop/abitest` (somvr_reload_game.c).
+- **Every place the game reaches the logic is a host-owned slot.** The logic's `write_code` and MinHook calls land in the
+  host (`somvr_host_write`, `somvr_win_hook_entry/_mid`), which records each patch by its address with the original bytes:
+  a call/jmp's rel32 points at a host stub (`jmp [rip+4090]`, 8 bytes in an r-x page; its slot in the rw page after it); a
+  vtable / IAT / COM slot is its own slot; an entry hook's detour and a mid detour's C call are host stubs; other bytes in
+  an image are recorded; writes into the game's heap are plain writes (not recorded: the game may free that memory).
+- **`somvr_host_view`**: game bytes as the calling module should see them - a patch it has not made yet shows its original
+  bytes. `check_site`, the save guard's read-back and the COM fill read through it, so a reloaded module's checks see the
+  game as a fresh boot does. **A new read of patched code or a hooked slot that compares it with the original must read
+  through `site_now` / `somvr_host_view`** (a direct read sees an earlier module's patch after a reload).
+- **The swap** (`SOMVR_DEV_RELOAD=1` only; the release never starts the reload thread): the trigger word
+  `reload [force] [KEY=VALUE ...]` or a new stamp of `SOMVR_DEV_RELOAD_DLL` (the harness sets it to the tree's
+  build/win/somvr_logic.dll; `win/build.sh --logic` links to .tmp and renames). See docs 156 for the sequence and numbers.
+- **What a logic module must not do**: keep a pointer it gave the game anywhere but a recorded slot (a heap callback would
+  stay on the old module after a swap); start a thread the stop does not join (only the writer thread exists; a new one
+  needs its join in `somvr_logic_stop`); assume the boot's order (a reloaded init runs in the world, on the host's reload
+  thread). State that must outlive a swap goes into `somvr_host_persist` (the eye / HUD / hands-depth textures, the rig) or
+  the handover (`struct run_facts`).

@@ -69,6 +69,9 @@ enum {                         /* somvr_vrmenu_shared.block: why the palm gestur
                                 * through it opens the panel then; an older layer: an unknown bit, ignored) */
     SOMVR_VMG_HARD = 15u,      /* the bits that disarm the gesture (a fresh one after them) */
     SOMVR_VMG_ALL = 31u,
+    SOMVR_VMG_FIGHT = 64u,     /* build 35 (re-xr-pipeline.md 162, SOMVR_LIVE): an attack at Talion in the last 6 s - not a
+                                * gate (outside SOMVR_VMG_ALL: the gesture ignores it); the live card waits for a calm
+                                * moment by it (an older layer: an unknown bit, ignored) */
 };
 
 enum {                         /* somvr_vrmenu_shared.avail: what the game side can change live */
@@ -505,7 +508,10 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
        SOMVR_VMI_SUB_BOW,
        /* build 36 (re-xr-pipeline.md 164): the practice page's Charge execution (under Refill health / Place orc; in the
         * area only, as Spawn); the hints below it moved down a row */
-       SOMVR_VMI_PR_CHARGE, SOMVR_VMI_ALL };
+       SOMVR_VMI_PR_CHARGE,
+       /* build 35 (re-xr-pipeline.md 162, SOMVR_LIVE=on): the Test page's patch box - Apply patch | Undo patch (a rect
+        * only while somvr_vm_live_set's box is on) */
+       SOMVR_VMI_LIVE_APPLY, SOMVR_VMI_LIVE_UNDO, SOMVR_VMI_ALL };
 #define SOMVR_VM_SUBS 6 /* the groups (SOMVR_VMI_SUB_COMFORT ..) */
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
@@ -640,6 +646,20 @@ typedef struct {
 int somvr_vm_text_parse(somvr_vm_text *t, const char *text, size_t len);
 /* the page after Prev (dir -1) or Next (+1) from page (clamped to 0 .. pages - 1) */
 int somvr_vm_test_turn(const somvr_vm_text *t, int page, int dir);
+/* build 35 (re-xr-pipeline.md 162): SOMVR_LIVE=on - the Test page's patch box above the Prev / Next row: three lines
+ * (the patch waiting or live now, what it changed, what to try) and Apply patch | Undo patch (SOMVR_VMI_LIVE_*; dimmed
+ * unless can_apply / can_undo). The layer's one box for the process (set before the text is parsed: with the box on
+ * the text's pages end above it); off (the default) = the Test page as before. */
+#define SOMVR_VM_LIVE_Y 520       /* the box's first line (its rule 6 above) */
+#define SOMVR_VM_LIVE_BTN_Y 616   /* its buttons (56 high), 12 above the Prev / Next row */
+typedef struct {
+    int on;
+    int can_apply, can_undo;
+    char line[3][SOMVR_VM_TEST_COLS + 1];
+    uint32_t gen;               /* +1 per change (somvr_vm_view.live_gen: the panel redrawn) */
+} somvr_vm_live;
+void somvr_vm_live_set(const somvr_vm_live *l);
+const somvr_vm_live *somvr_vm_live_get(void);
 
 typedef struct {
     somvr_settings set;
@@ -654,6 +674,7 @@ typedef struct {
     int test_page;             /* ... the page shown (0 ..) */
     int ctl_page;              /* build 27: the Controls page's page shown (0 ..) */
     uint32_t ctl_feat;         /* build 34: somvr_vrmenu_shared.ctl_feat (SOMVR_VMF_*) */
+    uint32_t live_gen;         /* build 35: somvr_vm_live's gen (a change redraws the panel) */
 } somvr_vm_view;
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;

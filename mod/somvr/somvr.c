@@ -489,6 +489,7 @@
 #ifdef _WIN32
 #include "win/somvr_win.h"      /* somvr_win_log, the SITE entries by name */
 #include "win/somvr_win_hook.h" /* entry trampolines, mid-function detours (MinHook): RES_3D_DESC_MID, 7.8 */
+#include "win/somvr_win_host.h" /* the host: the patch engine's writes and views, the persistent area, the reload (156) */
 #define SOMVR_MTIM(st) ((struct timespec){ (st).st_mtime, 0 }) /* the UCRT's stat: whole seconds */
 #else
 #define SOMVR_MTIM(st) ((st).st_mtim)
@@ -504,6 +505,7 @@
 #include "somvr_objective.h" /* SOMVR_OBJECTIVE: the objective marker in the world (somvr_objective_game.c, included last) */
 #include "somvr_views.h"
 #include "somvr_vrmenu.h"
+#include "somvr_live.h" /* build 35: SOMVR_LIVE (somvr_live_game.c) */
 
 #define FOLIAGE_LEN OFS(FOLIAGE_LEN, 0x30)
 #define GM_LAST_VIEW OFS(GM_LAST_VIEW, 0x70)     /* FUN_009ee170 copies the SomView to gm+0x70..0x9b (the "last view") */
@@ -805,9 +807,6 @@ void somvr_h1_c(struct regs *r);
 void somvr_h2_c(struct regs *r);
 void somvr_h3_c(struct regs *r);
 void somvr_h4_c(struct regs *r);
-#ifdef _WIN32
-void somvr_win_name_game_thread(void); /* win/somvr_win_main.c */
-#endif
 void somvr_h6_c(struct regs *r);
 void somvr_h9_c(struct regs *r);
 void somvr_h8_c(struct regs *r);
@@ -853,10 +852,17 @@ static struct hook g_h[HK_N] = { { .name = "H1" }, { .name = "H2" }, { .name = "
 				 { .name = "IN_TICK" }, { .name = "IN_VALUE" }, { .name = "IN_VALUE2" }, { .name = "IN_ISON" },
 				 { .name = "RUM1" }, { .name = "RUM2" }, { .name = "ARM_TRK_EVAL" } };
 
-/* the ABI struct, exported under the name the layer looks up (the C name differs: the typedef is somvr_shared) */
-__attribute__((visibility("default"), used)) somvr_shared g_sh __asm__(SOMVR_SHARED_SYMBOL);
+/* the objects the layer reads, exported under the names it looks up (the C names differ: the typedef is somvr_shared).
+ * Windows: the host owns them (win/somvr_win_bridge.c) and the logic imports them, so a reloaded module finds them
+ * where the layer does (docs/re-xr-pipeline.md 156) */
+#ifdef _WIN32
+#define SOMVR_LAYER_OBJ(T, v, sym) extern __declspec(dllimport) T v
+#else
+#define SOMVR_LAYER_OBJ(T, v, sym) __attribute__((visibility("default"), used)) T v __asm__(sym)
+#endif
+SOMVR_LAYER_OBJ(somvr_shared, g_sh, SOMVR_SHARED_SYMBOL);
 /* the motion-controller ABI (somvr_input.h), the second exported object: zero unless SOMVR_INPUT=1 */
-__attribute__((visibility("default"), used)) somvr_input_shared g_in __asm__(SOMVR_INPUT_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_input_shared, g_in, SOMVR_INPUT_SYMBOL);
 /* build 30 (SOMVR_HANDED=left, the Settings page's Handedness; docs/re-xr-pipeline.md 132): the left-handed mirror,
  * decided once at the input's config (lh_decide: the settings file's HANDED over the switch) for the whole session. 1 =
  * the two controllers swapped at the source - the snapshot (sc_mirror_state), the located grips - so every role keyed
@@ -878,7 +884,7 @@ static inline void in_mirror_hands(somvr_hand h[2]) /* the located grips: physic
 	}
 }
 /* the HUD ABI (somvr_hud.h), the third exported object: zero unless SOMVR_HUD=quad (H11) */
-__attribute__((visibility("default"), used)) somvr_hud_shared g_hud __asm__(SOMVR_HUD_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_hud_shared, g_hud, SOMVR_HUD_SYMBOL);
 
 /* config (set once in somvr_start) */
 static const char *const g_layout_names[] = { "off", "A", "B" };
@@ -891,6 +897,11 @@ static uintptr_t g_foliage = 0x46a9de0; /* FUN_009ee170 per-call statics 0x46a9d
 static uintptr_t g_ra_vp = 0x9ef2bc;    /* return address of the player view's vf_37 call (0x9ef2b5); selftest: 0 = any */
 static char g_log_path[1024], g_trig_path[1024];
 static _Atomic int g_trig, g_stop;
+#ifdef _WIN32
+static int g_logic_reason, g_logic_gen; /* the host's boot: 0 the boot, 1 a reload; its generation (somvr_reload_game.c) */
+static pthread_t g_writer_th;
+static int g_writer_on;
+#endif
 static _Atomic uint32_t g_req_recenter; /* trigger word "recenter" (writer thread) */
 static _Atomic int32_t g_req_snap;      /* trigger words "turn+"/"turn-" */
 static _Atomic uintptr_t g_renderer;    /* CRendererHandle* (H2's this): +0x38 = the BeginFrame counter */
@@ -925,7 +936,9 @@ static struct {
 static uint64_t g_rig_epoch;
 static int g_last_base_src = -1; /* the last stereo frame's base source (1 the head node, 0 the camera) */
 static int g_eye = -1;
-static somvr_rig g_rig;
+static somvr_rig g_rig_own, *g_rig_p = &g_rig_own; /* Windows: the host's persistent area (a reload keeps the recentre
+							* reference and the snap steps: the view does not jump; docs 156) */
+#define g_rig (*g_rig_p)
 static somvr_views_state g_vst;
 static uint32_t g_seen_req_recenter, g_seen_xr_recenter;
 static int32_t g_seen_req_snap, g_seen_xr_snap;
@@ -1005,15 +1018,18 @@ static struct {
 	_Atomic uint64_t dropped;
 } g_em = { .pass = 1, .drop_eye = -1 };
 
-/* render thread: layout B's eye textures (H8 makes them, copies into them; H9 publishes their VkImages) */
-static struct {
+/* render thread: layout B's eye textures (H8 makes them, copies into them; H9 publishes their VkImages). Windows: in
+ * the host's persistent area (a reloaded module copies into the same textures: docs/re-xr-pipeline.md 156) */
+struct et_state {
 	int state;                /* 0 not made yet, 1 made, -1 off for the rest of the run (logged once) */
 	void *tex[2];             /* IdxD3D11Texture2D*, one reference each (ours) */
 	d3d_tex_desc desc;        /* the 3D surface desc they were made from */
 	uint64_t copied[2];       /* frame id of eye e's last copy */
 	somvr_eyes_info pub;      /* what somvr_shared.eyes holds */
 	uint64_t copies, makes, misses, other, dups;
-} g_et;
+};
+static struct et_state g_et_own, *g_et_p = &g_et_own;
+#define g_et (*g_et_p)
 static int g_d3d_ok;          /* every g_d3d_sites entry matched at start */
 #ifdef _WIN32
 static int g_d3d_late_done;   /* win_late_d3d has run (the COM sites exist only from the first Present) */
@@ -1346,6 +1362,7 @@ static void tt_measure(void); /* ... the head off the body: the measure and the 
 static int pr_down_start(sv_vec3 to, double t, int quick);
 static int pr_down_teleported(void);
 static int pr_trip_teleported(void);
+static int pr_settling(void); /* build 37 (SOMVR_PRACTICE_GROUND): a trip runs or just ended - the fall rules wait */
 static int lo_walk_blocked(double t);           /* SOMVR_CLIMB_DESCENT's edge cue: LOCO's walk stopped (its region) */
 static int game_paused(void); /* the game timer's pause (the input region) */
 /* SOMVR_BOW=1 (its region follows the climb's) */
@@ -1408,6 +1425,17 @@ static int env_word(const char *k, const char *const *words, int n, int dflt);
 /* comfort: SOMVR_VIGNETTE, SOMVR_SNAP_BLINK_MS, SOMVR_SEATED (its region follows SOMVR_EYE_SIZE's end log) */
 static int cf_snap_gate(int pending);
 static int32_t cf_in_pend_snap(void);
+#if defined(_WIN32) && !defined(SOMVR_SELFTEST)
+/* b37 (somvr_reload_game.c, docs 156.9): a reloaded module takes the old one's view state at its first game-thread hook;
+ * every module publishes it at each such hook's end (H4, PM, the input tick); the frame's mapping for the host's check */
+static void vk_enter(int h4);
+static void vk_leave(int h4);
+static void vk_where(void);
+#else
+#define vk_enter(h4) ((void)0)
+#define vk_leave(h4) ((void)0)
+#define vk_where() ((void)0)
+#endif
 static void cf_seat_frame(int recentred);
 static void cf_frame(int32_t snap, int recentred, int base_jump);
 /* SOMVR_VRMENU (its region follows the comfort one) */
@@ -1442,6 +1470,9 @@ static void th_frame(uintptr_t pl, int stereo);
 /* build 17 (SOMVR_THREAT_RED, SOMVR_THREAT_AT=weapon): DEFENCE's rule for the attack's type; the orc's weapons last frame */
 static int df_red_type(uintptr_t c, int *type);
 static int th_attacker(double t, double within, float pos[3]); /* SOMVR_DODGE: an attack at Talion now / lately */
+static int lvg_fight(double t);      /* build 35, SOMVR_LIVE (somvr_live_game.c): an attack at Talion in the last 6 s */
+static void lv_game_poll(double t);  /* ... the player's patch requests (the writer thread) */
+static void lv_game_start(void);
 /* build 17 (somvr_step_game.c): A's one owner per press - the strike > the dodge > the climb (somvr_step_a_owner) */
 static void ab_tick(const sc_tick_out *o);
 /* build 18 (somvr_wstep_game.c, SOMVR_WRAITH_STEP): the wraith step - the right stick held forward aims, let go blinks */
@@ -2307,7 +2338,14 @@ __attribute__((used)) void somvr_h3_c(struct regs *r)
  * restored between them (docs/re-stereo.md sections 3, 8); afterwards gm+0x70 gets the game's own view back and the
  * frame's record is published for H9. No views / not wanted: one call, the game's flat view. Either way SOMVR_COMBAT's
  * frame runs after the body (the frame's rig and head node are known then). */
+static void h4_main(struct regs *r);
 __attribute__((used)) void somvr_h4_c(struct regs *r)
+{
+	vk_enter(1); /* b37: a reloaded module's first hook takes the old one's view state */
+	h4_main(r);
+	vk_leave(1);
+}
+static void h4_main(struct regs *r)
 {
 	struct hook *h = &g_h[HK_H4];
 	h4_fn f = (h4_fn)h->orig;
@@ -2466,6 +2504,7 @@ __attribute__((used)) void somvr_h4_c(struct regs *r)
 	pfg_part(10);
 	rd_frame(); /* build 21, SOMVR_FX_TEST: `fx console CMD` */
 	sz_after(); /* SOMVR_PLAYER_SIZE: the size probe (this frame's rig) */
+	vk_where(); /* b37: the frame's mapping and Talion for the host's check of a swap */
 	pfg_h4_done(); /* build 27, SOMVR_PERF: our work after eye 1 ends here */
 	if (!should_log(h, n))
 		return;
@@ -3087,7 +3126,14 @@ static int pm_at_rest(uintptr_t pm)
  * Talion's frame (pm+0x428 = R(xf.rot)^-1 d, +0x444 = 1; vf_11 adds R(xf.rot) R(rootmotion.rot) extra and clears it,
  * re-m1m2.md 3.2): only on the player's PlayerMovement, on H4's thread, with the fields at rest (a move is never
  * stacked on another). The game's collision after vf_11 clips the result (run 3); the next H1 measures what it kept. */
+static void pm_main(struct regs *r);
 __attribute__((used)) void somvr_pm_c(struct regs *r)
+{
+	vk_enter(0); /* b37 */
+	pm_main(r);
+	vk_leave(0);
+}
+static void pm_main(struct regs *r)
 {
 	struct hook *h = &g_h[HK_PM];
 	uintptr_t pm = (uintptr_t)RA1(r);
@@ -5961,8 +6007,11 @@ static void in_vf04(void *self)
 	((in_tick_fn)g_h[HK_IN_TICK].orig)(self);
 	atomic_fetch_add_explicit(&g_h[HK_IN_TICK].calls, 1, memory_order_relaxed);
 	es_tick(); /* SOMVR_EYE_SIZE's switch: a mode set here, outside the frame's render building */
-	if (g_inp.on)
+	if (g_inp.on) {
+		vk_enter(0); /* b37 */
 		in_tick();
+		vk_leave(0);
+	}
 }
 static struct in_iv *in_find(void *rec)
 {
@@ -6781,6 +6830,23 @@ static int es_eyes_ok(void)
 		return 1; /* no eye size known (xr before the runtime's): stereo at the game's size, as at a mode set */
 	g_es.tid = my_tid();
 	g_es.last_want = t;
+#ifdef _WIN32
+	/* a reloaded module (docs/re-xr-pipeline.md 156) that saw no mode set: the 3D surface's size now tells (the boot's
+	 * switch already made it the eye size - else this module would hold the eyes for a mode set that never comes) */
+	if (g_logic_reason && atomic_load_explicit(&g_es.cur, memory_order_acquire) < 0 && g_d3d_ok) {
+		struct d3d_src s;
+		d3d_tex_desc sd;
+		memset(&sd, 0, sizeof sd);
+		if (d3d_source(HOLDER_TEX3D, &s)) {
+			s.getdesc(s.surf, &sd);
+			int eye = sd.w == w && sd.h == h;
+			atomic_store(&g_es.cur_w, sd.w), atomic_store(&g_es.cur_h, sd.h), atomic_store(&g_es.target, eye);
+			atomic_store_explicit(&g_es.cur, eye, memory_order_release);
+			logf_("ESIZE t=%.6f a reload: the 3D surface is %ux%u (%s) - the mode the boot's switch left", t, sd.w, sd.h,
+			      eye ? "the eye size" : "the game's size");
+		}
+	}
+#endif
 	if (atomic_load_explicit(&g_es.cur, memory_order_acquire) == 1) {
 		g_es.held_since = 0, g_es.held_out = 0;
 		return 1;
@@ -7336,7 +7402,7 @@ static void head_frame(uintptr_t pl, int stereo, uint64_t frame)
 static struct { int on; uint64_t skips, kept; } g_hudq;
 static _Atomic uint64_t g_hud_frame;
 static _Atomic uint32_t g_hud_kind;
-static struct {
+struct ht_state { /* Windows: the host's persistent area (as g_et) */
 	int state;                /* 0 not made yet, 1 made, -1 off for the rest of the run (logged once) */
 	void *tex;                /* IdxD3D11Texture2D*, one reference (ours) */
 	d3d_tex_desc desc;        /* the UI surface desc it was made from */
@@ -7344,7 +7410,9 @@ static struct {
 	uint32_t kind;            /* SOMVR_HUDK_* of that copy */
 	somvr_hud_info pub;       /* what somvr_hud.info holds */
 	uint64_t copies, makes, shared, nopass, tagged;
-} g_ht;
+};
+static struct ht_state g_ht_own, *g_ht_p = &g_ht_own;
+#define g_ht (*g_ht_p)
 
 static void ht_off(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void ht_off(const char *fmt, ...)
@@ -7631,9 +7699,14 @@ static int range_readable(uintptr_t a, size_t n)
 	return 1;
 }
 
-/* write n bytes at dst: each page made writable (keeping its other bits), then its old protection restored */
+/* write n bytes at dst: each page made writable (keeping its other bits), then its old protection restored. Windows: the
+ * host's patch engine does it (win/somvr_win_host.h): a call/jmp's rel32 then points at a host stub whose slot holds
+ * our target, a slot / bytes are recorded - so a reloaded module (docs/re-xr-pipeline.md 156) rewrites slots only */
 static int write_code(uintptr_t dst, const void *src, size_t n, char *err, size_t errcap)
 {
+#ifdef _WIN32
+	return somvr_host_write(dst, src, n, err, errcap);
+#endif
 	uintptr_t p0 = dst & ~(uintptr_t)4095, p1 = (dst + n - 1) & ~(uintptr_t)4095;
 	int prot[2];
 	prot[0] = page_prot(p0);
@@ -7765,13 +7838,20 @@ static int check_site(const struct site_spec *s, char *why, size_t cap)
 		snprintf(why, cap, "site or target not mapped readable");
 		return -1;
 	}
-	if (memcmp((const void *)s->ctx, exp, (size_t)n) != 0) {
-		hex_of((const unsigned char *)s->ctx, n, live, sizeof live);
+	const unsigned char *cb = (const unsigned char *)s->ctx, *tb = (const unsigned char *)s->target;
+#ifdef _WIN32 /* the bytes as a fresh boot sees them: a patch of ours (an earlier module's too) by its original bytes,
+	       * the module's own ones as it made them (win/somvr_win_host.h; docs/re-xr-pipeline.md 156) */
+	unsigned char cv[128], tv[32];
+	somvr_host_view(s->ctx, cv, (size_t)n), somvr_host_view(s->target, tv, (size_t)np);
+	cb = cv, tb = tv;
+#endif
+	if (memcmp(cb, exp, (size_t)n) != 0) {
+		hex_of(cb, n, live, sizeof live);
 		snprintf(why, cap, "bytes at %#llx differ: live %s", (unsigned long long)s->ctx, live);
 		return -1;
 	}
 	if (rel) {
-		const unsigned char *p = (const unsigned char *)s->addr;
+		const unsigned char *p = cb + off;
 		int32_t r32;
 		memcpy(&r32, p + 1, 4);
 		uintptr_t tgt = s->addr + 5 + (intptr_t)r32;
@@ -7782,22 +7862,32 @@ static int check_site(const struct site_spec *s, char *why, size_t cap)
 		}
 	} else if (s->kind != K_ENTRY) { /* K_ENTRY: the context bytes are the function's own first bytes */
 		uintptr_t v;
-		memcpy(&v, (const void *)s->addr, 8);
+		memcpy(&v, cb + off, 8);
 		if (v != s->target || (s->addr & 7)) {
 			snprintf(why, cap, "slot holds %#llx, want %#llx", (unsigned long long)v, (unsigned long long)s->target);
 			return -1;
 		}
 	}
-	if (memcmp((const void *)s->target, pro, (size_t)np) != 0) {
-		hex_of((const unsigned char *)s->target, np, live, sizeof live);
+	if (memcmp(tb, pro, (size_t)np) != 0) {
+		hex_of(tb, np, live, sizeof live);
 		snprintf(why, cap, "target %#llx prologue differs: live %s", (unsigned long long)s->target, live);
 		return -1;
 	}
-	hex_of((const unsigned char *)s->addr, rel ? 5 : 8, live, sizeof live);
+	hex_of(cb + off, rel ? 5 : 8, live, sizeof live);
 	snprintf(why, cap, "%s", live);
 	return 0;
 }
 #define REL_KIND(k) ((k) == K_CALL || (k) == K_JMP)
+/* a patched place's bytes as this module made them (Windows: the host's view - during a reload's init the game still
+ * has the old module's until the swap) */
+static void site_now(uintptr_t a, void *out, size_t n)
+{
+#ifdef _WIN32
+	somvr_host_view(a, out, n);
+#else
+	memcpy(out, (const void *)a, n);
+#endif
+}
 
 #ifdef _WIN32
 /* Windows: H3_OVR, the second call of H3's target (the fixed-tanHalf override branch, RVA 0xd74db8), gets H3's stub:
@@ -8565,12 +8655,15 @@ static int guard_install(const struct site_spec *sites, const char *dir)
 	for (int i = 0; i < 4; i++) {
 		char err[200] = "";
 		uintptr_t w = (uintptr_t)fn[i], now = 0;
-		if (write_code(sites[i].addr, &w, 8, err, sizeof err) != 0 || (memcpy(&now, (void *)sites[i].addr, 8), now != w)) {
+		if (write_code(sites[i].addr, &w, 8, err, sizeof err) != 0 || (site_now(sites[i].addr, &now, 8), now != w)) {
 			logf_("GUARD FAIL: %s write: %s", sites[i].name, err[0] ? err : "slot does not hold the new value");
 			return -1;
 		}
 		logf_("GUARD %s ok vslot %#llx orig=%#llx now=%#llx", sites[i].name, (unsigned long long)sites[i].addr,
 		      (unsigned long long)sites[i].target, (unsigned long long)w);
+#ifdef _WIN32
+		somvr_host_keep(sites[i].addr); /* a later module without the guard never hands these back to the game's */
+#endif
 	}
 	logf_("GUARD on: save files in %s; the game's remote-storage file calls never reach Steam", g_save_dir);
 	return 0;
@@ -9725,7 +9818,7 @@ static struct {
 	float gr_y0;             /* ... the root's height when it last acted (did he drop since) */
 	float gr_cm;             /* ... this episode's falls tried (at most 3, then he is left: the game's collision) */
 	int gr_left;             /* ... left as he is (logged once) */
-	uint64_t gr_eps, gr_gravs, gr_falls, gr_tests, gr_stays;
+	uint64_t gr_eps, gr_gravs, gr_falls, gr_tests, gr_stays, gr_settle; /* (build 37: gr_settle = ticks left to a trip) */
 	int slide;               /* build 33 (SOMVR_WALK_EDGE_SLIDE): the walk held back from an edge steers along it */
 	float slide_c, slide_s;  /* ... the walk's turn (cos, sin) and its speed factor, until slide_until */
 	double slide_until;
@@ -9862,7 +9955,9 @@ static void un_ground_what(uintptr_t pc, const float r[3], float feet, char *buf
 static int jp_fall_req(double t); /* somvr_jump_game.c */
 static void un_ground_guard(uintptr_t pc, const float r[3], double t)
 {
-	if (!g_un.ground || g_cl.s.active || !lo_ours_now() || jp_air() || ov_active() || g_cl.fsm != CL_FSM_SUPPORTED) {
+	if (!g_un.ground || g_cl.s.active || !lo_ours_now() || jp_air() || ov_active() || g_cl.fsm != CL_FSM_SUPPORTED ||
+	    pr_settling()) { /* build 37: never while a trip's teleport lands and the world streams in under him */
+		g_un.gr_settle += g_un.ground && pr_settling();
 		g_un.gr_t0 = -1;
 		return;
 	}
@@ -12571,9 +12666,11 @@ static void cl_end_log(void)
 		      (unsigned long long)s->edge_lows);
 	if (g_un.ground || g_un.gr_eps)
 		logf_("CLIMB END build 36 walk ground=%s: episodes with no ground under him on foot %llu (tests %llu): falls from "
-		      "there %llu (the gravity flag turned on %llu), left where the game's collision held him %llu",
+		      "there %llu (the gravity flag turned on %llu), left where the game's collision held him %llu; ticks left to a "
+		      "practice trip's landing %llu (build 37)",
 		      g_un.ground ? "on" : "off", (unsigned long long)g_un.gr_eps, (unsigned long long)g_un.gr_tests,
-		      (unsigned long long)g_un.gr_falls, (unsigned long long)g_un.gr_gravs, (unsigned long long)g_un.gr_stays);
+		      (unsigned long long)g_un.gr_falls, (unsigned long long)g_un.gr_gravs, (unsigned long long)g_un.gr_stays,
+		      (unsigned long long)g_un.gr_settle);
 	if (g_cl.cfg.fling_down || s->fd_flings || g_cl.sword || g_cl.sw_draws)
 		logf_("CLIMB END build 31 fling down=%s: flings %llu (caught %llu, landed %llu, at rest %llu, blocked below %llu, "
 		      "water %llu, the wall's end %llu; %.0f cm flown), let-gos with the hand rising and no fling: too slow %llu, "
@@ -16909,6 +17006,12 @@ static void *writer_main(void *arg)
 				} else if (seen && !strncmp(w, "schema", 6)) { /* the schema holders checked now, every line logged */
 					what = sch_word();
 #ifdef _WIN32
+				} else if (seen && !strncmp(w, "reload", 6) && (!w[6] || w[6] == ' ' || w[6] == '\n')) {
+					/* docs/re-xr-pipeline.md 156: "reload [force] [KEY=VALUE ...]" - the host swaps the logic module */
+					somvr_host_reload_request(w);
+					what = "reload (the host's)";
+#endif
+#ifdef _WIN32
 				} else if (seen && !strncmp(w, "winpeek ", 8)) { /* a test (winport-drivers): "winpeek RVA|@ADDR [N]" */
 					what = win_peek_word(w + 8);
 #endif
@@ -17046,6 +17149,7 @@ static void *writer_main(void *arg)
 		}
 		double t = mono();
 		vm_save_tick(t, 0, 1); /* SOMVR_VRMENU: the menu's changes to SOMVR_SETTINGS, 1 s after the last */
+		lv_game_poll(t); /* build 35, SOMVR_LIVE: the player's Apply patch / Undo patch (re-xr-pipeline.md 162) */
 		if (t - last >= 1.0) {
 			uint64_t c[HK_N];
 			for (int i = 0; i < HK_N; i++)
@@ -17782,7 +17886,7 @@ static void ex_end_log(void)
  *                           above the floor (STAGE space) instead of taking it from the head */
 
 /* the comfort ABI (somvr_comfort.h), the fourth exported object: zero unless SOMVR_VIGNETTE or SOMVR_SNAP_BLINK_MS */
-__attribute__((visibility("default"), used)) somvr_comfort_shared g_cft __asm__(SOMVR_COMFORT_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_comfort_shared, g_cft, SOMVR_COMFORT_SYMBOL);
 #define CF_XR_STAGE 3 /* XR_REFERENCE_SPACE_TYPE_STAGE (somvr_shared xr.space_type: the space has a floor at y = 0) */
 #define CF_VIGNETTE_DEFAULT 0.6f /* SOMVR_VIGNETTE unset (headset session 2: "I need some vignetting when moving"; 0.6: on the
 				  * Quest 2's wider view 0.5 darkened the side edges only ~26 % at a walk, 0.6 ~58 %) */
@@ -17970,7 +18074,7 @@ static void cf_end_log(void)
  * object stays zero and the layer shows no menu; a file that cannot be read or written = a WARN, the menu goes on. */
 
 /* the VR menu ABI (somvr_vrmenu.h), the fifth exported object: zero unless SOMVR_VRMENU=1 with SOMVR_INPUT=1 */
-__attribute__((visibility("default"), used)) somvr_vrmenu_shared g_vmo __asm__(SOMVR_VRMENU_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_vrmenu_shared, g_vmo, SOMVR_VRMENU_SYMBOL);
 #define VM_LONG_S 0.6      /* the left menu button held this long: the panel opens or closes (the game never sees it) */
 #define VM_SAVE_S 1.0      /* the file is written once nothing changed for this long */
 #define VM_FILE_MAX 65536  /* the settings file read at start (a longer one: its start) */
@@ -18521,6 +18625,8 @@ static uint32_t vm_gate(double t)
 		b |= g_vm.gate_all || bd_two_held() ? SOMVR_VMG_SWING : SOMVR_VMG_SOFT;
 	if (g_vm.gate_all && th_incoming(t))
 		b |= SOMVR_VMG_THREAT;
+	if (lvg_fight(t)) /* build 35 (SOMVR_LIVE on only): no gate - the live card's calm moment waits for it */
+		b |= SOMVR_VMG_FIGHT;
 	return b;
 }
 
@@ -18769,7 +18875,10 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	g_follow.dead_cm = env_float("SOMVR_FOLLOW_CM", 8, 0, 100, &bad);
 	g_follow.step_cm = env_float("SOMVR_FOLLOW_STEP_CM", 30, 1, 200, &bad);
 	g_follow.measure_old = env_word("SOMVR_FOLLOW_MEASURE", (const char *const[]){ "along", "old" }, 2, 0);
-	somvr_rig_init(&g_rig);
+#ifdef _WIN32
+	if (!g_logic_reason) /* a reload keeps the rig (somvr_reload_game.c) */
+#endif
+		somvr_rig_init(&g_rig);
 
 	/* the ABI struct: header first, active last */
 	g_sh.magic = SOMVR_SHARED_MAGIC;
@@ -18894,6 +19003,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	ssh_config(); /* build 27: SOMVR_SHADOW_SHARE (somvr_perf_game.c; after ex_start's install of the HEAD_SHADOW_* hooks) */
 	vm_start(); /* SOMVR_VRMENU: the settings (the switches, SOMVR_SETTINGS over them), somvr_vrmenu active */
 	ss_start(); /* SOMVR_MARK / SOMVR_QUIT: the folders, somvr_session active (after the menu: its Report/Quit) */
+	lv_game_start(); /* build 35: SOMVR_LIVE - the live folder, the host's hot reload for the player's patches */
 	sy_start(); /* build 22, SOMVR_STORY_LOG: the config line */
 	g_d3d_sites = d3d;
 	g_d3d_ok = 1;
@@ -18911,9 +19021,13 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 			logf_("WARN stereo needs H1, H2 and H4: stereo stays off (the frames render flat)");
 		if (!g_h[HK_H3].installed)
 			logf_("WARN H3 not installed: the eyes render with the covering symmetric fov (fov_cover is submitted)");
-		if (!g_h[HK_H9].installed)
+		int late_com = 0; /* a reload (156): H9 and the D3D sites come with the host's replay right after this init */
+#ifdef _WIN32
+		late_com = g_logic_reason;
+#endif
+		if (!g_h[HK_H9].installed && !late_com)
 			logf_("WARN H9 not installed: presents are not tagged, the layer shows them as mono");
-		if (g_layout == SOMVR_LAYOUT_B && (!g_h[HK_H8].installed || !g_h[HK_H3].installed || !g_d3d_ok))
+		if (g_layout == SOMVR_LAYOUT_B && (!g_h[HK_H8].installed || !g_h[HK_H3].installed || (!g_d3d_ok && !late_com)))
 			logf_("WARN layout B without H8/H3/the D3D sites: no eye images (the layer reuses or monos the frames)");
 		if (!g_h[HK_H1].installed || !g_h[HK_H4].installed || !g_h[HK_H2].installed)
 			g_layout = SOMVR_LAYOUT_MONO;
@@ -18923,12 +19037,22 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	sigset_t all, old;
 	sigfillset(&all);
 	pthread_sigmask(SIG_SETMASK, &all, &old); /* the writer thread gets no signals */
+#ifdef _WIN32
+	if (g_logic_reason && g_trig_path[0]) /* a reload (156): the stereo trigger as it is, not after the writer's first look */
+		atomic_store(&g_trig, access(g_trig_path, F_OK) == 0);
+#endif
 	pthread_t th;
 	int rc = pthread_create(&th, NULL, writer_main, NULL);
 	pthread_sigmask(SIG_SETMASK, &old, NULL);
+#ifdef _WIN32
+	if (rc == 0)
+		g_writer_th = th, g_writer_on = 1; /* joined at a reload's stop (somvr_reload_game.c) */
+	else
+#else
 	if (rc == 0)
 		pthread_detach(th);
 	else
+#endif
 		logf_("WARN writer thread: %s (no trigger, no periodic flush)", strerror(rc));
 	return 0;
 }
@@ -19195,7 +19319,7 @@ typedef uint64_t (*th_six_fn)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, 
 #define TH_FN(i, T) ((T)g_th_sites[i].target)
 
 /* the sixth exported object (somvr_threat.h): zero unless SOMVR_THREAT=1 is on */
-__attribute__((visibility("default"), used)) somvr_threat_shared g_tht __asm__(SOMVR_THREAT_SYMBOL);
+SOMVR_LAYER_OBJ(somvr_threat_shared, g_tht, SOMVR_THREAT_SYMBOL);
 
 struct th_track {
 	uintptr_t c, hobj, attack;
@@ -22889,6 +23013,7 @@ static void df_clank_fx(double t)
 
 #include "somvr_settings34_game.c" /* build 34: the VR menu's v8 rows - builds 31-33's switches (docs 150) */
 #include "somvr_inrec_game.c" /* b35: SOMVR_INPUT_REC / SOMVR_INPUT_REPLAY, the session's input and its replays (docs 160) */
+#include "somvr_live_game.c" /* build 35: SOMVR_LIVE - the player's patches by the host's hot reload (docs 162) */
 static int tk_holding(void) { return g_tk.on && g_tk.active; } /* SOMVR_HEAD_TETHER: not measured while held */
 
 /* ---- the schema checker (docs/re-winport.md 7.9; somvr_schema.h) ------------------------------------------------
@@ -23476,5 +23601,6 @@ int somvr_win_start(const char *who, int game)
 	guard_or_die(g_guard_sites, rc == 0);
 	return rc;
 }
+#include "somvr_reload_game.c" /* docs/re-xr-pipeline.md 156: the logic module's entry points for the host */
 #endif
 #endif

@@ -4,15 +4,18 @@
  * system32 with WINEDLLOVERRIDES=xinput9_1_0=n,b; Windows: next to the exe) and forwards the four XInput functions
  * to the system's xinput1_4.dll (or xinput1_3.dll), loaded on the first call.
  *
- * DllMain (under the loader lock) does only this: the exe's sha256 against the tables' exe (somvr_wintables.inc;
- * another exe = nothing at all, no log), the site tables rewritten to the image (base + RVA), and the exe's entry
- * point redirected to win_entry. win_entry runs on the main thread before any game code, outside the loader lock:
- * it puts the entry's bytes back, runs somvr_win_start (somvr.c's somvr_start: the switches, the checks, the hooks,
- * the threads), writes the bridge file for the Linux layer (SOMVR_BRIDGE) and jumps to the game's entry.
+ * This DLL is the host (somvr_win_host.h, docs/re-xr-pipeline.md 156): the game side proper is somvr_logic.dll in the
+ * same folder. DllMain (under the loader lock) does only this: the exe's sha256 against the known exes
+ * (somvr_winexes.inc; another exe = nothing at all, no log), D3D's two IAT entries, and the exe's entry point
+ * redirected to win_entry. win_entry runs on the main thread before any game code, outside the loader lock: it puts
+ * the entry's bytes back, loads the logic module and runs its init (the site tables rewritten to the image, somvr.c's
+ * somvr_start: the switches, the checks, the hooks, the threads), writes the bridge file for the Linux layer
+ * (SOMVR_BRIDGE), starts the reload thread (SOMVR_DEV_RELOAD=1 only) and jumps to the game's entry.
  *
  * SOMVR_WIN_TEST=1: any exe passes the gate with every site blank (the harness's test program: the bridge, the
  * layer, DXVK's interop without the game). SOMVR_LOG unset: nothing (as on Linux).
  */
+#define SOMVR_HOST 1
 #include <windows.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -21,15 +24,19 @@
 #include "sha256.h"
 #include "somvr_win.h"
 #include "somvr_win_hook.h"
+#include "somvr_win_hostint.h"
+#include "somvr_winexes.inc" /* wintables.py: the exes the tables know (tag, sha256) */
 
 uintptr_t somvr_img;
 void *somvr_win_module;
-int somvr_win_start(const char *who, int game); /* somvr.c */
+int host_boot(const struct somvr_logic_boot *b); /* somvr_win_host.c */
+void host_reload_start(void);
+void host_reload_selftest(int n);
 void somvr_win_d3d_attach(uintptr_t exe, int test); /* somvr_win_d3d.c */
 void somvr_win_d3d_test_start(void);
 
 static char g_sha[65], g_exe[MAX_PATH], g_tag[32];
-static int g_test;
+static int g_test, g_sites_off;
 static FILE *g_wlog;
 static uintptr_t g_entry;
 static unsigned char g_entry_bytes[16];
@@ -46,6 +53,22 @@ void somvr_win_log(const char *fmt, ...)
 	vsnprintf(line, sizeof line, fmt, ap);
 	va_end(ap);
 	fprintf(g_wlog, "WIN t=%.6f tid=%lu %s\n", (double)n.QuadPart / (double)f.QuadPart, GetCurrentThreadId(), line);
+	fflush(g_wlog);
+}
+
+/* b37: a host line the runs' gate counts (`^WARN`, logs/coord/final.sh): "WARN <text> (WIN t=... tid=...)" */
+void somvr_win_log_warn(const char *fmt, ...)
+{
+	if (!g_wlog)
+		return;
+	LARGE_INTEGER n, f;
+	QueryPerformanceCounter(&n), QueryPerformanceFrequency(&f);
+	char line[1024];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(line, sizeof line, fmt, ap);
+	va_end(ap);
+	fprintf(g_wlog, "WARN %s (WIN t=%.6f tid=%lu)\n", line, (double)n.QuadPart / (double)f.QuadPart, GetCurrentThreadId());
 	fflush(g_wlog);
 }
 
@@ -149,13 +172,16 @@ static volatile LONG g_crash_notes;
 extern __declspec(thread) int somvr_win_in_guard; /* somvr_win_compat.c: inside a guarded copy (its fault is handled) */
 static const char *crash_where(uintptr_t a, char *buf, size_t cap)
 {
-	uintptr_t dll = (uintptr_t)somvr_win_module;
+	uintptr_t dll = (uintptr_t)somvr_win_module, lb = 0;
+	int gen;
 	const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(somvr_img + (uintptr_t)((const IMAGE_DOS_HEADER *)somvr_img)->e_lfanew);
 	const IMAGE_NT_HEADERS64 *dn = dll ? (const IMAGE_NT_HEADERS64 *)(dll + (uintptr_t)((const IMAGE_DOS_HEADER *)dll)->e_lfanew) : NULL;
 	if (a >= somvr_img && a < somvr_img + nt->OptionalHeader.SizeOfImage)
 		snprintf(buf, cap, "exe+%#llx", (unsigned long long)(a - somvr_img));
 	else if (dn && a >= dll && a < dll + dn->OptionalHeader.SizeOfImage)
 		snprintf(buf, cap, "dll+%#llx", (unsigned long long)(a - dll));
+	else if ((gen = host_module_of(a, &lb)) >= 0) /* the logic (docs/re-xr-pipeline.md 156): somvr_logic.pdb's RVAs */
+		snprintf(buf, cap, "logic%d+%#llx%s", gen, (unsigned long long)(a - lb), host_live && gen != host_live->gen ? " (retired)" : "");
 	else
 		snprintf(buf, cap, "%#llx", (unsigned long long)a);
 	return buf;
@@ -187,7 +213,7 @@ static LONG CALLBACK crash_note(EXCEPTION_POINTERS *ep)
 	for (int i = 0, n = 0; i < 96 && n < 10 && VirtualQuery(sp + i, &mb, sizeof mb) && mb.State == MEM_COMMIT; i++) {
 		char b[48];
 		crash_where(sp[i], b, sizeof b);
-		if (!strncmp(b, "exe+", 4) || !strncmp(b, "dll+", 4))
+		if (!strncmp(b, "exe+", 4) || !strncmp(b, "dll+", 4) || !strncmp(b, "logic", 5))
 			o += (size_t)snprintf(st + o, o < sizeof st ? sizeof st - o : 0, " %s", b), n++;
 		if (o >= sizeof st)
 			break;
@@ -312,14 +338,20 @@ static void win_start(void)
 		AddVectoredExceptionHandler(1, crash_note); /* first: before the game's own (it ends the process quietly) */
 		exit_hooks(); /* who ends the process (7.13) */
 	}
-	int rc = somvr_win_start(who, !g_test);
+	struct somvr_logic_boot bt = { .size = sizeof bt, .reason = 0, .gen = 0, .test = g_test, .sites_off = g_sites_off,
+				       .img = somvr_img, .sha = g_sha, .tag = g_tag, .who = who };
+	int rc = host_boot(&bt);
 	QueryPerformanceCounter(&b), QueryPerformanceFrequency(&f);
 	somvr_win_log("START somvr_start rc=%d in %.1f ms", rc, 1e3 * (double)(b.QuadPart - a.QuadPart) / (double)f.QuadPart);
 	int br = somvr_win_bridge_write(g_sha, why, sizeof why);
 	somvr_win_log("BRIDGE %s: %s", br == 0 ? "written" : "not written", why);
+	host_reload_start();
 	if (g_test) {
 		somvr_win_d3d_test_start(); /* the stand-in: the game thread's locates through the PE stand-ins */
 		hook_test();
+		const char *rt = getenv("SOMVR_WIN_TEST_RELOAD"); /* docs/re-xr-pipeline.md 156: N swaps of the logic */
+		if (rt && atoi(rt) > 0)
+			host_reload_selftest(atoi(rt));
 	}
 }
 
@@ -327,11 +359,10 @@ static void win_start(void)
 static int (*g_f1)(int, int);
 static int hook_f1(int a, int b) { return g_f1(a, b) + 1000; }
 static void mid_f2(struct somvr_win_regs *r) { r->rcx += 5; }
-int somvr_win_abi_test(char *out, size_t cap); /* somvr.c (winport-stereo): the WRAPPER hooks' Win64 reads */
 static void hook_test(void)
 {
-	char why[200], abi[400];
-	int c = somvr_win_abi_test(abi, sizeof abi);
+	char why[200], abi[400] = "no logic module";
+	int c = host_live && host_live->abitest ? host_live->abitest(abi, sizeof abi) : -1; /* somvr.c (winport-stereo) */
 	somvr_win_log("HOOKTEST wrapper-abi rc=%d %s%s", c, c ? "FAILED: " : "", abi);
 	uintptr_t f1 = (uintptr_t)GetProcAddress(GetModuleHandleA(NULL), "d3dtest_f1");
 	uintptr_t f2 = (uintptr_t)GetProcAddress(GetModuleHandleA(NULL), "d3dtest_f2");
@@ -542,7 +573,10 @@ static void win_attach(void)
 	GetModuleFileNameA(NULL, g_exe, sizeof g_exe);
 	if (exe_sha(g_exe, g_sha) != 0)
 		return;
-	const char *tag = somvr_win_exe_tag(g_sha);
+	const char *tag = NULL;
+	for (int i = 0; i < SOMVR_HOST_NEXES; i++)
+		if (!strcmp(g_sha, g_host_exes[i].sha256))
+			tag = g_host_exes[i].tag;
 	if (!tag && !g_test)
 		return; /* another exe: nothing */
 	snprintf(g_tag, sizeof g_tag, "%s", tag ? tag : "test");
@@ -556,13 +590,9 @@ static void win_attach(void)
 	w1_layer(mdir);
 	somvr_win_log("W1 %s; settings %s (%d lines)", g_w1, env_lines >= 0 ? "somvr\\somvr.env" : "the environment only",
 		      env_lines);
-	/* the stand-in and SOMVR_WIN_SITES=0 (the inert first boot): every SITE blank, nothing patched */
+	/* the stand-in and SOMVR_WIN_SITES=0 (the inert first boot): every SITE blank, nothing patched (the logic's init) */
 	const char *ws = getenv("SOMVR_WIN_SITES");
-	int none = !tag || (ws && !strcmp(ws, "0"));
-	int blank = 0, com = 0, live = somvr_win_sites_apply(none ? 0 : somvr_img, &blank, &com, none);
-	extern int somvr_win_sysv_blanked;
-	somvr_win_log("SITES live=%d blank=%d (%d of them: a live row but a SysV-register WRAPPER hook, not ported) com=%d%s (win/sites-*.tsv; blank = no Windows site: that feature stays off)",
-		      live, blank, somvr_win_sysv_blanked, com, none ? (tag ? " SOMVR_WIN_SITES=0: all blank" : " the stand-in: all blank") : "");
+	g_sites_off = !tag || (ws && !strcmp(ws, "0"));
 	somvr_win_d3d_attach(somvr_img, g_test);
 	const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)somvr_img;
 	const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(somvr_img + (uintptr_t)dos->e_lfanew);
