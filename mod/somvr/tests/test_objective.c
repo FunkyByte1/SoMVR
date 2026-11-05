@@ -411,6 +411,98 @@ static void test_strike_mark(void) {
           "no mark: another cell, at the head, NaN");
 }
 
+/* build 41 (SOMVR_OBF_STRUGGLE, re-xr-pipeline.md 180): a struggle's cue - the timer ring's cell at its node facing the
+ * head, the arrow turned to its way as the eye sees it */
+static void test_struggle_cue(void) {
+    float head[3] = {0, 1.7f, 0}, pos[3] = {0.2f, 1.4f, -0.9f};
+    somvr_ob_place p = somvr_ob_struggle(head, pos, 0.22f, 6, 0);
+    const float *q = p.pose;
+    float zx = 2 * (q[0] * q[2] + q[3] * q[1]), zy = 2 * (q[1] * q[2] - q[3] * q[0]), zz = 1 - 2 * (q[0] * q[0] + q[1] * q[1]);
+    float to[3] = {head[0] - pos[0], head[1] - pos[1], head[2] - pos[2]}, tl = sqrtf(to[0] * to[0] + to[1] * to[1] + to[2] * to[2]);
+    CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == SOMVR_OB_CELL_TIMER0 + 6 && fabsf(p.pose[4] - pos[0]) < 1e-5f &&
+              fabsf(p.pose[6] - pos[2]) < 1e-5f && fabsf(p.size[0] - 0.22f) < 1e-6f && p.size[0] == p.size[1],
+          "the ring with 6 steps left on the node, 0.22 m square (cell %d)", p.cell);
+    CHECK(fabsf(zx - to[0] / tl) < 1e-3f && fabsf(zy - to[1] / tl) < 1e-3f && fabsf(zz - to[2] / tl) < 1e-3f,
+          "facing the head (+z %.3f %.3f %.3f)", zx, zy, zz);
+    CHECK(somvr_ob_struggle(head, pos, 0.22f, SOMVR_OB_TIMER_ARMED, 0).cell == SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED,
+          "the bright ring (done)");
+    /* the arrow straight ahead of a level head: roll 0 = its +x to the right, 90 = up, 180 = left, 270 = down */
+    float ahead[3] = {0, 1.7f, -1.0f};
+    const float rw[4][3] = {{1, 0, 0}, {0, 1, 0}, {-1, 0, 0}, {0, -1, 0}};
+    for (int k = 0; k < 4; k++) {
+        somvr_ob_place a = somvr_ob_struggle(head, ahead, 0.22f, SOMVR_OB_SG_ARROW, 90.0f * (float)k);
+        const float *r = a.pose;
+        float xx = 1 - 2 * (r[1] * r[1] + r[2] * r[2]), xy = 2 * (r[0] * r[1] + r[3] * r[2]), xz = 2 * (r[0] * r[2] - r[3] * r[1]);
+        CHECK(a.kind == SOMVR_OBK_WORLD && a.cell == SOMVR_OB_CELL_ARROW && fabsf(xx - rw[k][0]) < 1e-4f &&
+                  fabsf(xy - rw[k][1]) < 1e-4f && fabsf(xz - rw[k][2]) < 1e-4f,
+              "the arrow at %d deg points %.0f %.0f %.0f (its +x %.3f %.3f %.3f)", 90 * k, rw[k][0], rw[k][1], rw[k][2], xx, xy, xz);
+    }
+    CHECK(somvr_ob_struggle(head, pos, 0.22f, SOMVR_OB_TIMER_ARMED + 1, 0).kind == SOMVR_OBK_NONE &&
+              somvr_ob_struggle(head, head, 0.22f, 3, 0).kind == SOMVR_OBK_NONE &&
+              somvr_ob_struggle(head, pos, NAN, 3, 0).kind == SOMVR_OBK_NONE,
+          "nothing: an id past the bright ring, at the head, NaN");
+}
+
+/* build 40 (SOMVR_OBF_READOUT, re-xr-pipeline.md 171.7): Practice > Finisher test's readout - the lines from an entry,
+ * the cell after build 39's A labels in the third row, the card and its ink in it, standing on its spot facing the head */
+static void test_readout(void) {
+    somvr_objective_frame e;
+    memset(&e, 0, sizeof e);
+    char l1[SOMVR_OB_READOUT_COLS + 1], l2[SOMVR_OB_READOUT_COLS + 1];
+    e.id = 3u | 1u << 8, e.dist_m = 9.6f, e.top[0] = 2.44f, e.top[1] = 22, e.top[2] = 0.35f;
+    somvr_ob_readout_text(&e, l1, l2);
+    CHECK(!strcmp(l1, "Try 3  snap 10 cm  in 2.4 m/s") && !strcmp(l2, "Depth 22 cm  KILL  out 0.35 s"), "readout, a kill: '%s' / '%s'",
+          l1, l2);
+    e.id = 12u | (unsigned)SOMVR_OB_RO_BACK << 9, e.dist_m = 7, e.top[0] = 0.9f, e.top[1] = 4, e.top[2] = -1;
+    somvr_ob_readout_text(&e, l1, l2);
+    CHECK(!strcmp(l2, "Depth 4 cm  no kill (drawn back)") && strlen(l1) <= SOMVR_OB_READOUT_COLS, "readout, drawn back: '%s' / '%s'",
+          l1, l2);
+    e.dist_m = -1;
+    somvr_ob_readout_text(&e, l1, l2);
+    CHECK(!strcmp(l1, "Try 12  no snap"), "readout, no snap: '%s'", l1);
+    /* build 41: the finisher named (bits 12..15), a cut's line - its arc's share and the time to its end */
+    e.id = 2u | 1u << 8 | 2u << 12, e.dist_m = 8.2f, e.top[0] = 3.1f, e.top[1] = 100, e.top[2] = 0.42f;
+    somvr_ob_readout_text(&e, l1, l2);
+    CHECK(!strcmp(l1, "Behead 2  snap 8 cm  in 3.1 m/s") && !strcmp(l2, "Cut 100%  KILL  end 0.42 s"),
+          "readout, a beheading: '%s' / '%s'", l1, l2);
+    e.id = 7u | (unsigned)SOMVR_OB_RO_STOP << 9 | 7u << 12, e.top[1] = 14;
+    somvr_ob_readout_text(&e, l1, l2);
+    CHECK(!strcmp(l1, "Counter 7  snap 8 cm  in 3.1 m/s") && !strcmp(l2, "Depth 14 cm  no kill (stopped)") &&
+              strlen(l1) <= SOMVR_OB_READOUT_COLS, "readout, the counter kill stopped: '%s' / '%s'", l1, l2);
+    int32_t r[4], a[4];
+    somvr_ob_rect(SOMVR_OB_CELL_READOUT, r);
+    somvr_ob_rect(SOMVR_OB_CELL_A_UP, a);
+    CHECK(r[1] == a[1] && r[0] >= a[0] + a[2] + 2 && r[0] + r[2] <= SOMVR_OB_IMG_W - 1 && r[1] + r[3] <= SOMVR_OB_IMG_H - 1 &&
+              r[2] >= SOMVR_OB_READOUT_COLS * 16 + 12,
+          "the readout's cell after the A labels in the third row, inside (%d,%d %dx%d)", r[0], r[1], r[2], r[3]);
+    static uint8_t px[SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4];
+    somvr_font f;
+    CHECK(somvr_font_init(&f) == 0, "the font");
+    somvr_ob_image(px, &f, "5 m", 0);
+    int before = 0;
+    for (int y = r[1]; y < r[1] + r[3]; y++)
+        for (int x = r[0]; x < r[0] + r[2]; x++) before += px[4 * ((size_t)y * SOMVR_OB_IMG_W + (size_t)x) + 3] != 0;
+    somvr_ob_readout_draw(px, &f, "Try 3  snap 10 cm  in 2.4 m/s", "Depth 22 cm  KILL  out 0.35 s", 0);
+    int card = 0, white = 0, outside = 0;
+    for (int y = 0; y < SOMVR_OB_IMG_H; y++)
+        for (int x = 0; x < SOMVR_OB_IMG_W; x++) {
+            const uint8_t *p = px + 4 * ((size_t)y * SOMVR_OB_IMG_W + (size_t)x);
+            int in = x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3];
+            if (in) card += p[3] > 100, white += p[0] == 255 && p[1] == 255 && p[2] == 255;
+        }
+    somvr_ob_readout_draw(px, &f, "", "", 0);
+    for (int y = r[1]; y < r[1] + r[3]; y++)
+        for (int x = r[0]; x < r[0] + r[2]; x++) outside += px[4 * ((size_t)y * SOMVR_OB_IMG_W + (size_t)x) + 3] != 0;
+    CHECK(before == 0 && card > r[2] * r[3] / 2 && white > 300 && outside == 0,
+          "readout drawn: clear before (%d), the card (%d px), the white ink (%d), cleared again (%d)", before, card, white, outside);
+    float head[3] = {0, 1.7f, 0}, pos[3] = {0.2f, 2.1f, -1.4f};
+    somvr_ob_place p = somvr_ob_readout(head, pos);
+    float dd = sqrtf(0.04f + 0.16f + 1.96f), h = 2 * dd * tanf(0.5f * SOMVR_OB_READOUT_DEG * 0.01745329f);
+    CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == SOMVR_OB_CELL_READOUT && fabsf(p.size[1] - h) < 1e-4f &&
+              fabsf(p.size[0] / p.size[1] - (float)r[2] / 128.0f) < 1e-3f && p.pose[4] == pos[0] && p.pose[6] == pos[2],
+          "readout placed on its spot, %.3f x %.3f m (%.1f deg high at %.2f m)", p.size[0], p.size[1], SOMVR_OB_READOUT_DEG, dd);
+}
+
 /* build 37 (SOMVR_OBF_FINISH, re-xr-pipeline.md 171): the finisher's hint - a wide cell in the second row's room after
  * the timer's squares (the texture's size unchanged), the strike's blue ring and the label "FACE TO FACE / IN REACH"
  * (white ink), no A button; placed as the strike's chest ring */
@@ -604,6 +696,8 @@ int main(void) {
     test_aim_sight();
     test_strike_ground();
     test_strike_mark();
+    test_readout();      /* build 40 */
+    test_struggle_cue(); /* build 41 */
     test_finish_cell(); /* build 37 */
     test_match_text();
     test_line();

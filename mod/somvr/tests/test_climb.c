@@ -4307,7 +4307,7 @@ static void test_b39_hang_free(void) {
                   "b37 the bow in the hang, %s: no ease, no release (moved %d, ended %d)", far == 2 ? "150 cm out" : "no face",
                   moved_at, ended_at);
         else if (!far)
-            CHECK(hung && moved_at >= 85 && moved_at <= 100 && ended_at < 0 && r.in.root.z >= 100 - 66 && r.in.root.z <= 100 - 60 &&
+            CHECK(hung && moved_at >= 85 && moved_at <= 100 && ended_at < 0 && r.in.root.z >= 100 - 76 && r.in.root.z <= 100 - 70 &&
                       back == 0 && r.s.hf_frees == 0,
                   "b39 hang free: 150 cm out: eased from frame %d to the face's reach (the root %g from the face), never away (%g)",
                   moved_at, 100 - r.in.root.z, back);
@@ -4317,44 +4317,109 @@ static void test_b39_hang_free(void) {
     }
 }
 
-/* build 39 (foot_a): on a 1.5 m top 40 cm from its edge (the face at z 100, the edge toward -z): A = the step off
- * (out.fa_step along -z); the stick back toward the edge + A = the climb down (the A glide at 70 cm/s, the hang under the
- * lip, fa_turn only when the view faced the drop); the top going on (no edge): as before (the jump's) */
-static void test_b39_foot_a(void) {
-    for (int k = 0; k < 5; k++) { /* 0 step off, 1 climb down facing away, 2 climb down facing the drop, 3 no edge,
-                                   * 4 the stick back at a 1.5 m drop (short: the step off) */
+/* build 40 (SOMVR_BOW_HANG_REACH): a hands-free hang at a top lets go 3 s after the hang (build 39, mark 223841_10) -
+ * unless the bow keeps it: the bow hand reaching for its slot (in.bow_reach) or the bow out (in.bow_hang) holds the
+ * clocks, and the top's 3 s count from the keep's end. 0: no reach (released at 3 s); 1: reaching 10 s, then not
+ * (released 3 s after); 2: the bow out 5 s then put away (released 3 s after the put away, not at once); 3: reach
+ * pulses every 2 s for 12 s (each restarts the clock: never released while they come) */
+static void test_b40_hang_bow(void) {
+    for (int k = 0; k < 4; k++) {
+        rig_t r;
+        rig_init(&r);
+        r.c.letgo = SOMVR_CLIMB_LETGO_HANG;
+        r.c.top_mode = SOMVR_CLIMB_TOP_PUSH;
+        r.in.hand[1].p.y = 290;
+        grip(&r, 1, 1);
+        rig_frame(&r);
+        for (int i = 0; i < 80 && !r.s.topped; i++) hand_move(&r, 1, 0, -3, 0), rig_frame(&r);
+        grip(&r, 1, 0);
+        rig_frame(&r);
+        int hung = r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.topped && r.o.active;
+        int keep_n = k == 1 ? 900 : k == 2 ? 450 : k == 3 ? 1080 : 0, ended_at = -1, why = -1;
+        for (int i = 0; i < 2000 && ended_at < 0; i++) {
+            r.in.bow_reach = k == 1 && i < keep_n ? 2 : k == 3 && i < keep_n && i % 180 < 3 ? 1 : 0; /* (SOMVR_BRCH_TOWARD, _AT) */
+            r.in.bow_hang = k == 2 && i < keep_n;
+            rig_frame(&r);
+            if (r.o.ended) ended_at = i, why = r.o.hang_freed;
+        }
+        int want = keep_n + 270; /* 3 s at 90 Hz after the last keep (k 3: its last pulse at 900..902) */
+        if (k == 3) want = 902 + 270;
+        CHECK(hung && ended_at >= want - 3 && ended_at <= want + 3 && why == 3 && r.s.hf_frees == 1 && (k == 0 || r.s.hf_keeps > 0),
+              "b40 the top's hands-free hang %s: let go at frame %d (want %d; freed %d, keeps %llu)",
+              k == 0 ? "with no reach" : k == 1 ? "reaching 10 s" : k == 2 ? "with the bow out 5 s" : "with reach pulses",
+              ended_at, want, why, (unsigned long long)r.s.hf_keeps);
+    }
+}
+
+/* build 40 (foot_a; notes 3, 8, 15, 18): on a top 40 cm from its edge (the face at z 100, the edge toward -z):
+ * A tapped = the step off; A held 0.5 s = the climb down whatever the facing (the turn only when the view faced the drop),
+ * at 105 cm/s to the hang 10 cm over the eyes; a drop under 1.5 m held = the step off; no edge = the jump's; the stick back
+ * + A = the drop ring; a new grip on a hold within reach during the lowering ends it; A twice on a wall = let go */
+static void a_frames(rig_t *r, int n) { for (int i = 0; i < n; i++) rig_frame(r); }
+static void test_b40_foot_a(void) {
+    for (int k = 0; k < 7; k++) { /* 0 tap, 1 hold facing the face, 2 hold facing the drop, 3 no edge, 4 a 1.5 m drop held,
+                                   * 5 the stick back + A (the ring), 6 a grip during the lowering */
         rig_t r;
         desc_setup(&r, k == 4 ? 150.0f : 400.0f);
         g_top_far = k == 3;
-        r.c.foot_a = 1, r.c.edge_low_cm = 50;
+        r.c.foot_a = 1, r.c.edge_low_cm = 50, r.c.drop_mark = 1;
+        if (k == 3) r.body.z = 560, rig_frame(&r); /* 4.6 m in from the edge, the top on to z 1000: no edge round him */
         r.in.head_fwd = (sv_vec3){ 0, 0, k == 1 || k == 3 ? 1.0f : -1.0f };
-        if (k == 1 || k == 2 || k == 4) r.in.stick_back = 1, r.in.stick = 1, r.in.stick_w = (sv_vec3){ 0, 0, -1 };
+        if (k == 5) r.in.stick_back = 1, r.in.stick = 1, r.in.stick_w = (sv_vec3){ 0, 0, -1 };
         r.in.drop = 1;
         rig_frame(&r);
-        somvr_climb_out o = r.o;
+        int ring = r.o.fa_ring && r.o.dm_show, none = (r.o.events & SOMVR_CLIMB_E_BLINK_NONE) != 0;
+        int step = 0, down = 0, turn = -1;
+        if (k == 0) { r.in.drop = 0, rig_frame(&r); step = r.o.fa_step; }
+        else if (k != 3 && k != 5)
+            for (int i = 0; i < 60 && !step && !down; i++) {
+                rig_frame(&r);
+                step = r.o.fa_step, down = r.o.fa_down;
+                if (down) turn = r.o.fa_turn;
+            }
         float y0 = r.in.root.y;
-        if (k == 0 || k == 4)
-            CHECK(o.fa_step && !o.fa_down && !o.blink && NEAR(o.fa_dir.z, -1, 1e-3) && o.fa_edge_cm > 25 && o.fa_edge_cm < 50,
-                  "b39 foot A: A at the edge = the step off (%d, dir z %g, the edge %g cm)", o.fa_step, o.fa_dir.z, o.fa_edge_cm);
-        if (k == 3)
-            CHECK(!o.fa_step && !o.fa_down && (o.events & SOMVR_CLIMB_E_BLINK_NONE) && r.s.bl_why == SOMVR_CLIMB_BL_NOEDGE,
-                  "b39 foot A: no edge ahead: nothing (the jump's)");
+        if (k == 0) CHECK(step && !r.s.active && r.o.fa_dir.z < -0.9f, "b40 foot A: a tap at the edge = the step off");
+        if (k == 3) CHECK(none && !r.s.fa_on && r.s.bl_why == SOMVR_CLIMB_BL_NOEDGE, "b40 foot A: no edge round him: the jump's");
+        if (k == 4) CHECK(step && !r.s.active, "b40 foot A: A held at a 1.5 m drop = the step off (no hang there)");
+        if (k == 5) CHECK(ring && r.s.dm == 1 && !r.s.fa_on, "b40 foot A: the stick back + A = the drop ring (%d %d)", ring, r.s.dm);
         if (k == 1 || k == 2) {
-            int went = o.fa_down && o.fa_turn == (k == 2) && r.s.dn_by_a && r.s.active;
-            r.in.drop = 0, r.in.stick_back = 0, r.in.stick = 0, r.in.stick_w = (sv_vec3){ 0, 0, 0 };
+            r.in.drop = 0;
             int f = 0;
-            float ymin = y0;
-            for (; f < 600 && r.s.dn; f++) rig_frame(&r), ymin = fminf(ymin, r.in.root.y);
-            CHECK(went && !r.s.dn && r.s.dn_end == 4 && r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.active && f > 150 &&
-                      r.in.root.z < 100 && y0 - r.in.root.y > 80,
-                  "b39 foot A: the stick back + A (%s) = the climb down: %d frames, the hang %g cm lower, %g cm out from the face "
-                  "(end %d, turn %d; fa_down %d nodown %d dn_why %d %g)", k == 2 ? "facing the drop" : "facing away", f,
-                  y0 - r.in.root.y, 100 - r.in.root.z, r.s.dn_end, o.fa_turn, o.fa_down, o.fa_nodown, r.s.dn_why, r.s.dn_why_cm);
+            for (; f < 600 && r.s.dn; f++) rig_frame(&r);
+            CHECK(down && turn == (k == 2) && r.s.dn_end == 4 && r.s.phase == SOMVR_CLIMB_PH_HANG && f > 80 && f < 260 &&
+                      y0 - r.in.root.y > 40 && r.in.head_y > 400 - 2 && r.in.head_y < 400 + 25,
+                  "b40 foot A: held 0.5 s (%s) = the climb down: %d frames, the eyes %g over the top (turn %d)",
+                  k == 2 ? "facing the drop" : "facing the face", f, r.in.head_y - 400, turn);
         }
+        if (k == 6) { /* a grip during the lowering, the right hand on the face under the lip */
+            r.in.drop = 0;
+            a_frames(&r, 20);
+            int going = r.s.dn && r.s.dn_by_a;
+            r.in.hand[1].p = (sv_vec3){ 20, 400 - 40 - r.body.y, 95 - r.body.z }; /* the face at z 100, 40 cm under the top */
+            r.in.hand[1].palm = (sv_vec3){ 0, 0, 1 };
+            grip(&r, 1, 1);
+            a_frames(&r, 3);
+            CHECK(going && !r.s.dn && r.s.dn_end == 5 && r.s.dn_grabs == 1 && r.s.h[1].holding,
+                  "b40 foot A: a grip on the face during the lowering takes over (%d %d %d %d)", going, r.s.dn_end,
+                  (int)r.s.dn_grabs, r.s.h[1].holding);
+        }
+    }
+    { /* A twice on a wall = let go: a hold, A, A 0.2 s later */
+        rig_t r;
+        rig_init(&r);
+        r.c.letgo = SOMVR_CLIMB_LETGO_HANG, r.c.descent = 1, r.c.drop_mark = 1, r.c.a2_s = 0.4f;
+        grip(&r, 1, 1), rig_frame(&r);
+        int held = r.s.h[1].holding;
+        r.in.drop = 1, rig_frame(&r), r.in.drop = 0;
+        a_frames(&r, 18);
+        int still = r.s.active;
+        r.in.drop = 1, rig_frame(&r);
+        CHECK(held && still && !r.s.active && r.o.a2_drop && r.s.a2_drops == 1, "b40 A twice on the wall: let go (%d %d %d)",
+              held, still, r.o.a2_drop);
+        r.in.drop = 0;
     }
     g_top_far = 0, g_wall_top = WALL_TOP, g_ground_on = 0;
 }
-
 static void test_b39_top_a(void) {
     for (int k = 0; k < 4; k++) { /* 0 on, 1 the hand in the air, 2 a low top (30 cm), 3 off */
         rig_t r;
@@ -4599,10 +4664,87 @@ static void test_b39(void) {
     }
 }
 
+/* ---- build 40 (som-b40-climb3): the throw off the wall (SOMVR_CLIMB_FLING_OFF) - the wall at +z: a hand pushed toward
+ * it (+z) moves the body away (-z) ---------------------------------------------------------------------------------- */
+static void test_b40_throw(void) {
+    somvr_climb_cfg dc;
+    somvr_climb_cfg_default(&dc);
+    CHECK(dc.fling_off == 0 && dc.fo_min == 150 && dc.fo_up_frac == 0.25f, "b40 throw: off by default, 150 cm/s, 0.25");
+    /* 1. a hard push toward the wall (300 cm/s) and the grip opened during it: thrown, away and up */
+    for (int on = 0; on < 2; on++) {
+        rig_t r;
+        fl_setup(&r);
+        r.c.fling_off = on;
+        fl_throw(&r, 1, 0, 0, 300.0f / 90, 12);
+        if (on)
+            CHECK(r.o.ended && r.o.end_why == SOMVR_CLIMB_END_THROWN && r.o.thrown && !r.s.active &&
+                      NEAR(r.o.thrown_v.z, -300, 6) && NEAR(r.o.thrown_v.y, 75, 3) && fabsf(r.o.thrown_v.x) < 1 &&
+                      r.s.fo_n == 1 && NEAR(r.s.fo_out, 300, 6),
+                  "b40 throw on: thrown %.0f %.0f %.0f (out %.0f)", r.o.thrown_v.x, r.o.thrown_v.y, r.o.thrown_v.z, r.s.fo_out);
+        else
+            CHECK(!r.o.thrown && r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.fo_n == 0,
+                  "b40 throw off: the hang as before (phase %d)", r.s.phase);
+    }
+    /* 2. a slow push (90 cm/s) or a plain let-go: never thrown */
+    {
+        rig_t r;
+        fl_setup(&r);
+        r.c.fling_off = 1;
+        fl_throw(&r, 1, 0, 0, 1.0f, 12);
+        CHECK(!r.o.thrown && r.s.active && r.s.fo_n == 0 && NEAR(r.s.fo_out, 90, 4), "b40 throw: 90 cm/s away = the hang (%.0f)",
+              r.s.fo_out);
+    }
+    /* 3. the user's own try (session 092046, t=222236.3): away 257, up 145, along 87 - thrown as given */
+    {
+        rig_t r;
+        fl_setup(&r);
+        r.c.fling_off = 1;
+        fl_throw(&r, 1, -87.0f / 90, -145.0f / 90, 257.0f / 90, 12);
+        CHECK(r.o.thrown && NEAR(r.o.thrown_v.z, -257, 6) && NEAR(r.o.thrown_v.y, 145, 4) && NEAR(r.o.thrown_v.x, 87, 4),
+              "b40 throw: the user's try thrown %.0f %.0f %.0f", r.o.thrown_v.x, r.o.thrown_v.y, r.o.thrown_v.z);
+    }
+    /* 4. near the ground (the floor 100 cm under the root: the old release) - still thrown */
+    {
+        g_ground_on = 1;
+        rig_t r;
+        fl_setup(&r);
+        r.c.fling_off = 1;
+        fl_throw(&r, 1, 0, 0, 300.0f / 90, 12);
+        CHECK(r.o.thrown && r.o.end_why == SOMVR_CLIMB_END_THROWN, "b40 throw near the ground: thrown");
+        rig_t q;
+        fl_setup(&q);
+        fl_throw(&q, 1, 0, 0, 300.0f / 90, 12);
+        CHECK(!q.o.thrown && q.o.ended && q.o.end_why == SOMVR_CLIMB_END_RELEASED, "b40 throw off near the ground: released");
+        g_ground_on = 0;
+    }
+    /* 5. at most fling_max (500): a 900 cm/s push */
+    {
+        rig_t r;
+        fl_setup(&r);
+        r.c.fling_off = 1, r.c.jump_cm = 40;
+        fl_throw(&r, 1, 0, 0, 900.0f / 90, 12);
+        float l = sqrtf(r.o.thrown_v.x * r.o.thrown_v.x + r.o.thrown_v.y * r.o.thrown_v.y + r.o.thrown_v.z * r.o.thrown_v.z);
+        CHECK(r.o.thrown && NEAR(l, 500, 1) && r.s.fo_capped && r.o.thrown_v.y > 0, "b40 throw: capped at 500 (%.0f)", l);
+    }
+    /* 6. the other hand still holding: no throw (the last hold's let-go only) */
+    {
+        rig_t r;
+        fl_setup(&r);
+        r.c.fling_off = 1;
+        grip(&r, 0, 1);
+        frames(&r, 2);
+        CHECK(r.s.h[0].holding && r.s.h[1].holding, "b40 throw: both holding");
+        fl_throw(&r, 1, 0, 0, 300.0f / 90, 12);
+        CHECK(!r.o.thrown && r.s.active && r.s.h[0].holding && r.s.fo_n == 0, "b40 throw: the other hand holds: none");
+    }
+}
+
 int main(void) {
+    test_b40_throw();
     test_b39_top_a();
-    test_b39_foot_a();
+    test_b40_foot_a();
     test_b39_hang_free();
+    test_b40_hang_bow();
     test_b39();
     test_b36_edge();
     test_b36();

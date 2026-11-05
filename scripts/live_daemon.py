@@ -37,6 +37,11 @@ Every POLL_S (0.25 s):
     --stream); a message's line is read from say/<n>.txt itself (say/<n>.voice: the whole text of a paged message)
     without waiting for the layer's .line. The engine: SOMVR_LIVE_TTS_ENGINE=piper (the default: Piper lessac, 9 x
     Kokoro's speed) | kokoro.
+  - b40 live4 (162.13): NOBODY ANSWERING - a note acknowledged and no live_say message (any new say/<n>.txt) within
+    LIVE_ABSENT_S (40 s): the daemon says once "Noted - no live answer right now; your notes are saved for later."
+    (DIR/ack/absent.wav), at most once every LIVE_ABSENT_REPEAT_S (300 s) - never one per note - and daemon.json gets
+    coordinator_absent (since, the notes without an answer, when it was said; live_status shows it); the next message
+    clears it. (11-05 09:20: 19 notes acknowledged, nothing else heard for the whole session.)
   - DIR/daemon.json every 2 s: alive, the notes, the worker's state, the lane's line (live_status.sh reads it).
 Ends on SIGTERM / SIGINT, when --parent PID is gone, or when DIR/on is removed; then DIR/on is removed and
 daemon.json says so. Never plays or records sound; reads RUN, writes only DIR and the marks' voice-live.txt.
@@ -59,8 +64,11 @@ TTS_PY = os.environ.get("LIVE_TTS_PY") or os.path.expanduser("~/Projects/flat2vr
 PIPER_PY = os.environ.get("LIVE_PIPER_PY") or os.path.expanduser("~/Projects/flat2vr/shared/tools/tts/piper-venv/bin/python")
 # b37 live3: the acknowledgements (DIR/ack/<name>.wav): the three in turn for a note with talk, `mic` for one without
 ACKS = {"got": "Got it.", "noted": "Noted.", "onit": "On it.",
-        "mic": "I couldn't hear that. Is your mic on? Try restarting Wivern."}
+        "mic": "I couldn't hear that. Is your mic on? Try restarting Wivern.",
+        "absent": "Noted. No live answer right now; your notes are saved for later."}   # b40 live4
 ACK_TURN = ("got", "noted", "onit")
+ABSENT_S = float(os.environ.get("LIVE_ABSENT_S") or 40)                 # b40 live4: no answer this long after an ack
+ABSENT_REPEAT_S = float(os.environ.get("LIVE_ABSENT_REPEAT_S") or 300)  # ... said again at most this often
 BUZZ = "0.35 90"   # the trigger word's amplitude and ms: a NUDGE-class pulse (somvr_haptics.h: 0.25-0.45, 40-130 ms)
 
 
@@ -310,6 +318,8 @@ def main():
     mroot = os.path.join(run, "marks")
     tts_p, tts_k = None, ""  # the spoken line playing (one at a time)
     acks = {}       # b37 live3: ack name -> "synth" | "ready" | "failed"
+    # b40 live4: the notes acknowledged without an answer since (mark, its ack time); the absent state; the messages seen
+    absent = {"pending": [], "since": None, "said": None, "t_said": -1e9, "n_say": None, "notes": 0}
     ack_n = [0]     # the acknowledgements given (the turn's next)
     hand = off_hand()
 
@@ -339,6 +349,7 @@ def main():
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             said = f"'{ACKS[name]}' playing"
         m["ack_s"] = round(time.time() - t_end, 2)
+        absent["pending"].append((mid, time.monotonic()))   # b40 live4: an answer is due
         log(f"ack {mid}: {said}, {'a buzz in the ' + hand + ' hand' if buzz else 'no buzz (no RUN/somvr.trigger)'} - "
             f"{m['ack_s']:.2f} s after the note ended ({why})")
 
@@ -507,7 +518,11 @@ def main():
                         # line was the whole card - what, try, the menu path: six sentences); what to try is on its card
                         kv = dict(ln.split("=", 1) for ln in (read(os.path.join(live, "patches", pm.group(1), "patch.txt"),
                                                                    4000) or "").splitlines() if "=" in ln)
-                        if kv.get("what"):
+                        st = dict(ln.split("=", 1) for ln in (read(os.path.join(live, "patches", "state.txt"), 2000)
+                                                              or "").splitlines() if "=" in ln)
+                        if kv.get("what") and st.get("last") == "start" and st.get("id") == pm.group(1):
+                            text = f"Patch {pm.group(1)} is in since the game started: {kv['what']}"   # b40 live4
+                        elif kv.get("what"):
                             text = (f"Patch {pm.group(1)} ready: " if kv.get("kind") == "live" else
                                     f"Patch {pm.group(1)} needs a game restart: ") + kv["what"]
                 if text and tw.submit(text, os.path.join(sd, f"{k}.wav"), k):
@@ -598,6 +613,44 @@ def main():
                 else:
                     tw.p = None
                     log("tts: the worker ended 4 times: no more spoken lines this session")
+        # b40 live4: nobody answering - a note acknowledged ABSENT_S ago and no message since; a message clears it
+        try:
+            n_say = len([x for x in os.listdir(os.path.join(live, "say")) if x.endswith(".txt") and x[:-4].isdigit()])
+        except OSError:
+            n_say = absent["n_say"] or 0
+        if absent["n_say"] is None:
+            absent["n_say"] = n_say
+        if n_say > absent["n_say"]:
+            absent["n_say"] = n_say
+            if absent["pending"] or absent["since"]:
+                log(f"absent: a message came ({n_say} so far)" + (f" - the coordinator is back (absent since "
+                                                                  f"{absent['since']})" if absent["since"] else ""))
+            absent["pending"], absent["since"], absent["notes"] = [], None, 0
+        elif absent["pending"] and t - absent["pending"][0][1] >= ABSENT_S:
+            if absent["since"] is None:
+                absent["since"] = now_iso()
+            absent["notes"] += len(absent["pending"])
+            wav = os.path.join(live, "ack", "absent.wav")
+            can = a.tts == "on" and acks.get("absent") == "ready" and os.path.exists(wav)
+            if t - absent["t_said"] < ABSENT_REPEAT_S:
+                why = f"said {t - absent['t_said']:.0f} s ago (at most once every {ABSENT_REPEAT_S:.0f} s): quiet"
+                absent["pending"] = []
+            elif not can:
+                why = "its line not made (the spoken lines off or not ready): not said"
+                absent["pending"] = []
+            elif tts_p is not None and tts_p.poll() is None:
+                why = None   # a line playing: said after it
+            else:
+                tts_k = "ack-absent"
+                tts_p = subprocess.Popen(["python3", "-I", os.path.join(HERE, "live_tts.py"), "--wav", wav, "--out",
+                                          os.path.join(live, "ack", "absent.spoken")],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                absent["t_said"], absent["said"] = t, now_iso()
+                why = f"'{ACKS['absent']}' playing"
+                absent["pending"] = []
+            if why:
+                log(f"absent: no answer {ABSENT_S:.0f} s after the note's acknowledgement ({absent['notes']} note"
+                    f"{'s' if absent['notes'] != 1 else ''} waiting since {absent['since']}) - {why}")
         if t - last_beat >= 2.0:
             last_beat = t
             write_json(os.path.join(live, "daemon.json"), {
@@ -607,7 +660,9 @@ def main():
                 "stt": ("ready" if w.ready else "loading") if w.alive() else ("off" if a.stt != "on" else "down"),
                 "model": a.model, "lane": lane,
                 "tts": (("ready" if tw.ready else "loading") if tw.alive() else ("off" if a.tts != "on" else "down")),
-                "spoken": len([1 for e in sp.values() if e["state"] == "played"])})
+                "spoken": len([1 for e in sp.values() if e["state"] == "played"]),
+                "coordinator_absent": ({"since": absent["since"], "notes": absent["notes"], "said": absent["said"]}
+                                       if absent["since"] else None)})
         time.sleep(POLL_S)
     w.stop()
     tw.stop()

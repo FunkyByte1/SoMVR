@@ -36,9 +36,13 @@ static struct {
     XrCompositionLayerQuad ql, last_ql; /* build 17: the drop's line (XL_OBJL) with the landing's ring */
     int has_l, last_has_l, line_was;
     int timer_was;      /* build 21: the drop's timer: 0 none, 1 emptying, 2 armed (its log lines) */
+    int sg_was;         /* build 41: the struggle's cue last logged (1 + its id; the arrow 2000 + its degrees; -1 not placed) */
     uint32_t id_was;
     uint64_t n_frames, n_marker, n_edge, n_faint, n_uploads, n_missing, n_none, n_land, n_line, n_strike, n_aim, n_timer,
-        n_fin; /* build 37: frames with the finisher's hint (SOMVR_OBF_FINISH) */
+        n_fin, /* build 37: frames with the finisher's hint (SOMVR_OBF_FINISH) */
+        n_ro,  /* build 40: frames with the finisher test's readout (SOMVR_OBF_READOUT) */
+        n_sg;  /* build 41: frames with a struggle's cue (SOMVR_OBF_STRUGGLE) */
+    char ro[2][SOMVR_OB_READOUT_COLS + 1]; /* build 40: the readout's lines in the released picture ("" = none) */
     uint32_t lines;
 } OB;
 
@@ -216,6 +220,7 @@ static int ob_upload(dev_st *ds, const char *text) {
     }
     if ((vr = ds->ResetFences(ds->dev, 1, &OB.fence)) != VK_SUCCESS) return ob_off("vkResetFences: %d", vr), -1;
     somvr_ob_image((uint8_t *)OB.map, &OB.font, text, OB.bgra); /* HOST_COHERENT: visible at the submit */
+    somvr_ob_readout_draw((uint8_t *)OB.map, &OB.font, OB.ro[0], OB.ro[1], OB.bgra); /* build 40: the readout's lines */
     uint32_t xi = 0;
     XrSwapchainImageAcquireInfo ai = {.type = XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
     XrSwapchainImageWaitInfo wti = {.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO, .timeout = XR_IMAGE_TIMEOUT_NS};
@@ -280,10 +285,38 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     memset(&p, 0, sizeof p);
     memset(&pl, 0, sizeof pl);
     int land = have && e.n == 1 && (e.flags & (SOMVR_OBF_LAND | SOMVR_OBF_EDGE)); /* build 39: the edge's cue too */
-    int fin = have && e.n == 1 && !land && (e.flags & SOMVR_OBF_FINISH); /* build 37: the finisher's hint */
-    int strike = have && e.n == 1 && !land && !fin && (e.flags & SOMVR_OBF_STRIKE), ground = 0;
-    int aim = have && e.n == 1 && !land && !strike && !fin && (e.flags & SOMVR_OBF_AIM); /* build 20: the bow's aim ring */
-    if (fin) { /* build 37 (SOMVR_FINISHER_HINT): the ring round the orc the execution could finish, "FACE TO FACE / IN
+    int sg = have && e.n == 1 && (e.flags & SOMVR_OBF_STRUGGLE); /* build 41: a struggle's cue (first: nothing else then) */
+    if (sg) land = 0;
+    int ro = have && e.n == 1 && !land && !sg && (e.flags & SOMVR_OBF_READOUT); /* build 40: the finisher test's readout */
+    int fin = have && e.n == 1 && !land && !ro && !sg && (e.flags & SOMVR_OBF_FINISH); /* build 37: the finisher's hint */
+    int strike = have && e.n == 1 && !land && !fin && !sg && (e.flags & SOMVR_OBF_STRIKE), ground = 0;
+    int aim = have && e.n == 1 && !land && !strike && !fin && !sg && (e.flags & SOMVR_OBF_AIM); /* build 20: the bow's aim ring */
+    char rol[2][SOMVR_OB_READOUT_COLS + 1] = {"", ""}; /* build 40: this frame's readout lines */
+    if (sg) { /* build 41 (SOMVR_STRUGGLE_RULE=b41): the struggle's cue at its node, facing the head - the timer ring's
+               * steps (a hold's time, a press count's presses) or the arrow (a direction) */
+        float head[3];
+        for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
+        p = somvr_ob_struggle(head, e.pos, e.dist_m, e.id, e.top[0]);
+        OB.in_view = 0;
+        int sk = p.kind == SOMVR_OBK_NONE ? -1 : (int)(e.id == SOMVR_OB_SG_ARROW ? 2000 + (int)lroundf(e.top[0]) : 1 + (int)e.id);
+        if (sk != OB.sg_was && OB.lines < 400) {
+            OB.lines++;
+            if (sk < 0)
+                lg("xr: objective frame %llu: the struggle's cue: not placed (id %u at %.2f %.2f %.2f)", (unsigned long long)rec->frame,
+                   e.id, e.pos[0], e.pos[1], e.pos[2]);
+            else
+                lg("xr: objective frame %llu: the struggle's cue: %s %.0f deg (cell %d) at xr %+.2f %+.2f %+.2f, %.2f m wide",
+                   (unsigned long long)rec->frame, e.id == SOMVR_OB_SG_ARROW ? "the arrow pointing" : "the timer ring, steps left",
+                   e.id == SOMVR_OB_SG_ARROW ? e.top[0] : (float)e.id, p.cell, e.pos[0], e.pos[1], e.pos[2], e.dist_m);
+        }
+        OB.sg_was = sk;
+    } else if (ro) { /* build 40 (Practice > Finisher test): the last try's readout standing on its spot, facing the head */
+        float head[3];
+        for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
+        somvr_ob_readout_text(&e, rol[0], rol[1]);
+        p = somvr_ob_readout(head, e.pos);
+        OB.in_view = 0;
+    } else if (fin) { /* build 37 (SOMVR_FINISHER_HINT): the ring round the orc the execution could finish, "FACE TO FACE / IN
                 * REACH" beside it, facing the head; out of view the objective's edge arrow toward him */
         float head[3], fov[4];
         for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
@@ -360,8 +393,12 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     }
     if (p.kind != SOMVR_OBK_NONE) {
         char text[16];
-        if (land || strike || aim || fin) snprintf(text, sizeof text, "%s", OB.text); /* the picture as it is: the rings are in every upload */
+        if (land || strike || aim || fin || ro || sg) snprintf(text, sizeof text, "%s", OB.text); /* the picture as it is: the rings are in every upload */
         else somvr_ob_text(e.dist_m, text);
+        if (ro && (strcmp(rol[0], OB.ro[0]) || strcmp(rol[1], OB.ro[1]))) { /* build 40: new lines - the picture again */
+            memcpy(OB.ro, rol, sizeof OB.ro);
+            OB.released = 0;
+        }
         if ((!OB.released || strcmp(text, OB.text)) && ob_upload(ds, text)) return; /* off now (logged) */
         if (p.kind == SOMVR_OBK_EDGE && !OB.view) return;
         int32_t rc[4];
@@ -375,7 +412,7 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
                                         .pose = {{p.pose[0], p.pose[1], p.pose[2], p.pose[3]}, {p.pose[4], p.pose[5], p.pose[6]}},
                                         .size = {p.size[0], p.size[1]}};
         OB.has = 1;
-        OB.n_land += land, OB.n_strike += strike, OB.n_aim += aim, OB.n_fin += fin;
+        OB.n_land += land, OB.n_strike += strike, OB.n_aim += aim, OB.n_fin += fin, OB.n_ro += ro, OB.n_sg += sg;
         if (pl.kind == SOMVR_OBK_WORLD) {
             int32_t rl[4];
             if (ground) somvr_ob_strike_rect(pl.cell, 1, rl); /* build 18: the strike's label */
@@ -386,9 +423,9 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
             OB.ql.size = (XrExtent2Df){pl.size[0], pl.size[1]};
             OB.has_l = 1, OB.n_line++;
         }
-        OB.n_marker += p.kind == SOMVR_OBK_WORLD && !land && !strike && !aim && !fin, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
+        OB.n_marker += p.kind == SOMVR_OBK_WORLD && !land && !strike && !aim && !fin && !ro && !sg, OB.n_edge += p.kind == SOMVR_OBK_EDGE;
         OB.n_faint += p.cell == SOMVR_OB_CELL_FAINT;
-        if (!land && !strike && !aim && !fin)
+        if (!land && !strike && !aim && !fin && !ro && !sg)
             atomic_fetch_add_explicit(p.kind == SOMVR_OBK_WORLD ? &OB.obj->n_marker : &OB.obj->n_edge, 1, memory_order_relaxed);
     } else {
         OB.n_none++;
@@ -409,6 +446,15 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
         kind = p.kind * 4 + SOMVR_OB_CELL_RING; /* the ring's own line as ever */
     } else if (land) {
         OB.timer_was = 0;
+    }
+    if (ro && (kind != OB.kind_was || e.id != OB.id_was) && OB.lines < 400) { /* build 40 */
+        OB.lines++;
+        lg("xr: objective frame %llu: the finisher test's readout '%s' / '%s' at %+.2f,%+.2f,%+.2f m, the quad %.2f x %.2f m "
+           "(frames with it %llu)", (unsigned long long)rec->frame, OB.ro[0], OB.ro[1], (double)e.pos[0], (double)e.pos[1],
+           (double)e.pos[2], (double)p.size[0], (double)p.size[1], (unsigned long long)OB.n_ro);
+        OB.kind_was = kind, OB.id_was = e.id, OB.line_was = 0;
+        if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
+        return;
     }
     if (fin && (kind != OB.kind_was || e.id != OB.id_was) && OB.lines < 400) { /* build 37 */
         OB.lines++;
@@ -453,7 +499,7 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
         if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
         return;
     }
-    if (strike || fin) { /* (build 37: the finisher's hint too) */
+    if (strike || fin || ro || sg) { /* (build 37: the finisher's hint too; build 40: the readout; build 41: a struggle's cue) */
         OB.kind_was = kind, OB.id_was = e.id, OB.line_was = 0;
         if (OB.has) c->l[XL_OBJ] = (const XrCompositionLayerBaseHeader *)&OB.q;
         return;

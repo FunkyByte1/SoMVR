@@ -322,13 +322,17 @@ static void test_group(void)
               !somvr_pr_word("group 2", &r) && !somvr_pr_word("group 34", &r) && !somvr_pr_word("group 3 x", &r) &&
               !somvr_pr_word("refill group", &r) && somvr_pr_word("spawn shield", &r) && r.action == SOMVR_PRA_SPAWN &&
               !strcmp(somvr_pr_action_name(SOMVR_PRA_GROUP), "group") && !strcmp(somvr_pr_action_name(8), "far") &&
-              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 14 && somvr_pr_word("herb", &r) && r.action == SOMVR_PRA_HERB &&
-              !strcmp(somvr_pr_action_name(SOMVR_PRA_HERB), "herb"),
+              SOMVR_PRA_GROUP == 9 && SOMVR_PRA_N == 16 && somvr_pr_word("herb", &r) && r.action == SOMVR_PRA_HERB &&
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_HERB), "herb") && somvr_pr_word("fintest", &r) &&
+              r.action == SOMVR_PRA_FINTEST && somvr_pr_word("Finisher", &r) && r.action == SOMVR_PRA_FINTEST &&
+              SOMVR_PRA_FINTEST == 14 && !strcmp(somvr_pr_action_name(SOMVR_PRA_FINTEST), "fintest") && /* build 40 */
+              somvr_pr_word("fintype", &r) && r.action == SOMVR_PRA_FINTYPE && SOMVR_PRA_FINTYPE == 15 &&
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_FINTYPE), "fintype"), /* build 41 */
           "the group's words");
     /* build 22: the Captain */
     CHECK(somvr_pr_word(" Captain ", &r) && r.action == SOMVR_PRA_CAPTAIN && r.orc == -1 && !r.have_at &&
               !somvr_pr_word("captain shield", &r) && !somvr_pr_word("captain 3", &r) && SOMVR_PRA_CAPTAIN == 10 &&
-              !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(14), "?"),
+              !strcmp(somvr_pr_action_name(SOMVR_PRA_CAPTAIN), "captain") && !strcmp(somvr_pr_action_name(16), "?"),
           "the captain's word");
     /* build 31: "place [TYPE]" (the page's Place orc) */
     CHECK(somvr_pr_word("place", &r) && r.action == SOMVR_PRA_PLACE && r.orc == -1 && somvr_pr_word("place berserker", &r) &&

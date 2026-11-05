@@ -184,4 +184,23 @@ int somvr_stl_standoff(const float p[3], const float c[3], float r, float dt, fl
  * walk only at the very end). Sideways, back, inside: as somvr_stl_standoff. Returns 1 when it cut something */
 int somvr_stl_standoff_brake(const float p[3], const float c[3], float r, float dt, float decel, const float d[3],
                              float out[3]);
+/* build 40 (SOMVR_STEALTH_TOUCH; docs/re-xr-pipeline.md 175): the game's close senses of a sneaking Talion behind an
+ * unaware orc. The game notices any Talion within ~108 cm of an orc, facing away or not: the FOV observer's no-FOV
+ * radius (the perception's NoFOVRadius + the stimulus's own radius, horizontal) and the hearing (HearDistance + the
+ * quiet audible stimulus's Radius, 3D); its personal bubble (50 cm, 3D) besides. While Talion sneaks behind an orc
+ * those three let him through only within `cm` of it (root to root, horizontal; build 40b: 0 = never). */
+typedef struct {
+    int on;             /* SOMVR_STEALTH_TOUCH=on */
+    float cm;           /* the touch: within this of the orc (root to root, horizontal) its senses still notice him (0 =
+                         * never while sneaking: build 40b; build 40's 45) */
+    float behind_deg;   /* the back arc: |Talion's angle off its facing| >= this (110 = 70 deg either side of behind) */
+    float cms;          /* sneaking: crouched and the ground speed known and at most this (170 cm/s: the crouched walk
+                         * tops out at SOMVR_CROUCH_CMS 150; a dash, a blink or a sprint is faster) */
+} somvr_stl_touch_cfg;
+void somvr_stl_touch_defaults(somvr_stl_touch_cfg *c);
+/* the touch zone: 1 = the orc's close senses of Talion are cut beyond c->cm - crouched, slow (speed known), the orc
+ * unaware (aware == 0), Talion in its back arc (off_deg its angle off the orc's facing, deg) */
+int somvr_stl_touch_zone(const somvr_stl_touch_cfg *c, int crouched, float speed_cms, int aware, float off_deg);
+/* 1 = a sense of Talion that the game passed is cut: in the zone (somvr_stl_touch_zone) and farther than c->cm */
+int somvr_stl_touch_cut(const somvr_stl_touch_cfg *c, int zone, float dist_cm);
 #endif

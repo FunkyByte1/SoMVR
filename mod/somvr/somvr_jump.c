@@ -18,8 +18,8 @@ void somvr_jp_cfg_default(somvr_jp_cfg *c)
 
 const char *somvr_jp_kind_name(int k)
 {
-    static const char *const n[] = { "none", "jump", "vault" };
-    return k >= 0 && k <= SOMVR_JPK_VAULT ? n[k] : "?";
+    static const char *const n[] = { "none", "jump", "vault", "fling" };
+    return k >= 0 && k <= SOMVR_JPK_FLING ? n[k] : "?";
 }
 
 const char *somvr_jp_end_name(int e)
@@ -62,13 +62,15 @@ void somvr_jp_start(somvr_jp *s, int kind, sv_vec3 root, float floor_y, float vy
 {
     s->hold_t = kind == SOMVR_JPK_VAULT && hold_t > 0 ? hold_t : 0, s->miss_floor = 1e9f, s->holding = 0;
     s->kind = kind, s->t = 0, s->vy = vy0, s->g = g > 0 ? g : 2000, s->start = root, s->floor0 = floor_y;
-    s->vh = kind == SOMVR_JPK_VAULT ? (sv_vec3){ vh.x, 0, vh.z } : (sv_vec3){ 0, 0, 0 };
+    s->vh = kind == SOMVR_JPK_VAULT || kind == SOMVR_JPK_FLING ? (sv_vec3){ vh.x, 0, vh.z } : (sv_vec3){ 0, 0, 0 };
     s->land = land, s->asked_dy = 0, s->asked_h = (sv_vec3){ 0, 0, 0 }, s->root_last = root, s->have_root = 0;
     s->apex_y = root.y, s->brake_v = 0, s->brake_a = 0, s->settling = 0, s->settle_step = 0, s->ceiling = 0, s->h_blocked = 0;
     s->h_done = 0;
     s->v_land = 0, s->end = SOMVR_JPE_NONE;
     if (kind == SOMVR_JPK_VAULT)
         s->n_vault++;
+    else if (kind == SOMVR_JPK_FLING)
+        s->n_fling++;
     else
         s->n_jump++;
 }
@@ -126,7 +128,9 @@ void somvr_jp_step(somvr_jp *s, const somvr_jp_cfg *c, const somvr_jp_in *in, so
             s->miss_floor = fminf(s->miss_floor, in->floor_ok ? in->floor_y : s->miss_floor); /* ignored from now */
         }
         float ah = hlen(s->asked_h);
-        if (s->kind == SOMVR_JPK_VAULT && ah > 0.5f) { /* the vault's own horizontal step blocked twice: straight down */
+        if ((s->kind == SOMVR_JPK_VAULT || s->kind == SOMVR_JPK_FLING) && ah > 0.5f) { /* the vault's (the throw's) own
+                                                                                         * horizontal step blocked twice:
+                                                                                         * straight down */
             float done = ((in->root.x - s->root_last.x) * s->asked_h.x + (in->root.z - s->root_last.z) * s->asked_h.z) / ah;
             s->h_blocked = done < 0.5f * ah ? s->h_blocked + 1 : 0;
             if (s->h_blocked >= 2)
@@ -175,10 +179,10 @@ void somvr_jp_step(somvr_jp *s, const somvr_jp_cfg *c, const somvr_jp_in *in, so
     }
     s->asked_dy = dy;
     o->active = 1, o->dy = dy, o->vy = s->vy;
-    if (s->kind == SOMVR_JPK_VAULT && (s->vh.x != 0 || s->vh.z != 0)) {
+    if ((s->kind == SOMVR_JPK_VAULT || s->kind == SOMVR_JPK_FLING) && (s->vh.x != 0 || s->vh.z != 0)) {
         sv_vec3 dh = { s->vh.x * dt, 0, s->vh.z * dt };
         float vl = hlen(s->vh);
-        if (c->v_ring_stop && in->have_root && vl > 1.0f) {
+        if (s->kind == SOMVR_JPK_VAULT && c->v_ring_stop && in->have_root && vl > 1.0f) { /* (the throw has no ring) */
             /* build 24 (boot 20261029-141005: the far floor ran downhill, the settle missed it and the fixed horizontal
              * went on 0.25 s - 55 cm past the ring): never past the ring's distance; the rest of the fall straight down */
             float L = hlen(v_sub(s->land, s->start)), st = vl * dt;

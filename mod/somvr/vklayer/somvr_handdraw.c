@@ -564,12 +564,25 @@ void hd_record(hd_ctx *c, VkCommandBuffer cmd, uint32_t slot, hd_frame *fr, VkIm
         }
         /* build 18: the bow's string, the same light (the plain pipeline: seen from both sides, the string hand hides it) */
         if (fr->string_a > 0) {
-            if (c->pipe_w && !(fr->arrow_a > 0) && !(fr->ghost_a[0] > 0 || fr->ghost_a[1] > 0))
-                f->CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, c->pipe);
+            VkPipelineLayout spl = c->pl;
             pc.base[0] = fr->string_base[0], pc.base[1] = fr->string_base[1], pc.base[2] = fr->string_base[2], pc.base[3] = 1;
             pc.params[0] = 0.45f * fr->key, pc.params[1] = 0.9f, pc.params[2] = 0.8f, pc.params[3] = 0.15f;
             pc.light[3] = fr->string_a > 1 ? 1 : fr->string_a;
-            f->CmdPushConstants(cmd, c->pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
+            if (fr->string_world && c->pipe_w) { /* build 40: the pick outline - the world pipeline's outline mode */
+                spl = c->pl_w;
+                f->CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, c->pipe_w);
+                c->wf->CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, spl, 0, 1, &c->dset[slot % HD_NSLOT][e], 0,
+                                             NULL);
+                pc.light[0] = fr->string_c[0], pc.light[1] = fr->string_c[1], pc.light[2] = fr->string_c[2];
+                pc.params[0] = fr->string_look[0], pc.params[1] = fr->string_look[1], pc.params[2] = fr->string_look[2];
+                pc.params[3] = -(fr->string_look[3] > 0.005f ? fr->string_look[3] : 0.005f);
+            } else {
+                if (c->pipe_w && !(fr->arrow_a > 0) && !(fr->ghost_a[0] > 0 || fr->ghost_a[1] > 0))
+                    f->CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, c->pipe);
+                if (fr->string_world) /* (no world pipeline: a faint even glow - where, not what) */
+                    pc.params[0] = 0, pc.params[1] = 1, pc.params[2] = 0, pc.params[3] = 0, pc.light[3] *= 0.18f;
+            }
+            f->CmdPushConstants(cmd, spl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
             f->CmdDrawIndexed(cmd, SOMVR_VH_STRING_NI, 1, HD_STRING_I(c), (int32_t)HD_STRING_V(c), 0);
         }
         f->CmdEndRenderPass(cmd);

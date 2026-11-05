@@ -545,7 +545,57 @@ static void test_stick_resist(void) {
     CHECK(somvr_stl_stick_step(&s, &c0, E, G, Gs) == SOMVR_STL_STK_HOLD && fabsf(s.depth - 3.0f) < 1e-3f, "resist 0: 1:1 (build 21)");
 }
 
+/* build 40 (SOMVR_STEALTH_TOUCH): the game's close senses (docs 72.1, 175.1: the no-FOV radius 5 + 100 flat, the
+ * hearing 100 + 10 3D, the bubble 50 3D) on a Talion walking in from 3 m; the orc notices when one passes uncut */
+static float walk_in(const somvr_stl_touch_cfg *c, int crouched, float cms, int aware0, float off_deg) {
+    float noticed = -1;
+    for (float d = 300.0f; d >= 20.0f; d -= cms / 72.0f) { /* 72 Hz */
+        int zone = somvr_stl_touch_zone(c, crouched, cms, aware0, off_deg);
+        float flat = d, d3 = sqrtf(d * d + 30.0f * 30.0f); /* the sense point ~30 cm over his stimulus */
+        int fov = flat <= 105.0f && !(somvr_stl_touch_cut(c, zone, d));
+        int hear = d3 <= 110.0f && !(somvr_stl_touch_cut(c, zone, d));
+        int bub = d3 <= 50.0f && !(somvr_stl_touch_cut(c, zone, d));
+        if (fov || hear || bub) {
+            noticed = d;
+            break;
+        }
+    }
+    return noticed;
+}
+static void test_touch(void) {
+    somvr_stl_touch_cfg c;
+    somvr_stl_touch_defaults(&c);
+    CHECK(!c.on && c.cm == 0.0f && c.behind_deg == 110.0f && c.cms == 170.0f, "the defaults: off, 0 cm (never), 110 deg, 170 cm/s");
+    float off = walk_in(&c, 1, 150.0f, 0, 180.0f);
+    CHECK(off > 100.0f && off <= 105.5f, "off (build 39): a crouched Talion behind is noticed at the no-FOV radius (%.1f)", off);
+    c.on = 1;
+    CHECK(walk_in(&c, 1, 150.0f, 0, 180.0f) < 0, "on (build 40b, touch 0): crouched behind, never by these senses (to 20 cm)");
+    c.cm = 45.0f;
+    float on = walk_in(&c, 1, 150.0f, 0, 180.0f);
+    CHECK(on > 0 && on <= 45.0f && on > 42.0f, "touch 45 (build 40): noticed only at the touch (%.1f)", on);
+    CHECK(walk_in(&c, 1, 140.0f, 0, -115.0f) <= 45.0f, "behind on its left (-115 deg): the zone");
+    float side = walk_in(&c, 1, 150.0f, 0, 100.0f);
+    CHECK(side > 100.0f, "beside it (100 deg): the game's (%.1f)", side);
+    float front = walk_in(&c, 1, 150.0f, 0, 0.0f);
+    CHECK(front > 100.0f, "in front: the game's (%.1f)", front);
+    float stand = walk_in(&c, 0, 90.0f, 0, 180.0f);
+    CHECK(stand > 100.0f, "standing behind it: the game's (%.1f)", stand);
+    float fast = walk_in(&c, 1, 400.0f, 0, 180.0f);
+    CHECK(fast > 100.0f, "a crouched dash at 400 cm/s: the game's (%.1f)", fast);
+    float aw = walk_in(&c, 1, 150.0f, 1, 180.0f);
+    CHECK(aw > 100.0f, "an orc already aware: the game's (%.1f)", aw);
+    CHECK(!somvr_stl_touch_zone(&c, 1, NAN, 0, 180.0f), "the speed not read: no zone");
+    CHECK(!somvr_stl_touch_zone(&c, 1, 150.0f, -1, 180.0f), "the awareness not readable: no zone");
+    CHECK(somvr_stl_touch_zone(&c, 1, 170.0f, 0, 110.0f) && !somvr_stl_touch_zone(&c, 1, 171.0f, 0, 110.0f) &&
+          !somvr_stl_touch_zone(&c, 1, 170.0f, 0, 109.0f), "the edges: 170 cm/s and 110 deg in, beyond them out");
+    CHECK(!somvr_stl_touch_cut(&c, 1, 45.0f) && somvr_stl_touch_cut(&c, 1, 45.1f) && !somvr_stl_touch_cut(&c, 0, 90.0f) &&
+          !somvr_stl_touch_cut(&c, 1, NAN), "the cut: farther than the touch, in the zone, the distance read");
+    c.on = 0;
+    CHECK(!somvr_stl_touch_zone(&c, 1, 150.0f, 0, 180.0f) && !somvr_stl_touch_cut(&c, 1, 90.0f), "off: never");
+}
+
 int main(void) {
+    test_touch();
     test_standoff();
     test_brake();
     test_angles();

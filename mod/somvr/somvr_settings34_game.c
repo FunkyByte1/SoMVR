@@ -65,6 +65,7 @@ static void s34_vm_settings(somvr_settings *s)
 	s->knife_hold = (uint8_t)((g_sl.cfg.hold_dagger >= 0 ? g_sl.cfg.hold_dagger : g_sl.cfg.hold) != 0);
 	s->herbs = g_hrb.on != 0;
 	s->fling_down = g_cl.cfg.fling_down != 0, s->climb_sword = g_cl.sword != 0;
+	s->climb_down = (uint8_t)lrintf(fminf(250.0f, fmaxf(20.0f, g_cl.cfg.dn_a_cms))); /* build 40 */
 }
 
 static uint16_t s34_vm_av8(void)
@@ -170,6 +171,10 @@ static const char *s34_vm_set(int k, const somvr_settings *s)
 	case SOMVR_SK_CLIMB_SWORD:
 		g_cl.sword = s->climb_sword != 0;
 		return s->climb_sword ? " (the free hand may draw on the wall)" : " (no sword on the wall)";
+	case SOMVR_SK_CLIMB_DOWN_CMS: /* build 40: the climb down's speed */
+		if (s->climb_down >= 20)
+			g_cl.cfg.dn_a_cms = (float)s->climb_down;
+		return " (the climb down's speed, cm/s)";
 	default:
 		return "";
 	}

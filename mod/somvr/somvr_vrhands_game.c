@@ -234,6 +234,52 @@ static int vh_hides(void)
 	return g_vh.on && atomic_load_explicit(&g_vho.layer_state, memory_order_acquire) == SOMVR_VHL_DRAWING;
 }
 
+/* build 40 (som-b40-herb, docs/re-xr-pipeline.md 176; the 11-05 session's note 6: a white outline round the plant, not a
+ * blue ring on it): SOMVR_PICK_LOOK=outline (the default) - the herb's or a pick's place (its foot, world cm), its
+ * cylinder (r_cm round, h_cm high) and how near the open hand is (level 0..1) this frame, from hrb_hands / cu_use_hands;
+ * vh_arm puts it in the string's slot (SOMVR_VHF_PICKGLOW) and the layer outlines what stands in that cylinder by the
+ * game's depth. =glow: build 37's blue glow and reach ring (the threat's slots) instead. */
+static struct {
+	int look; /* 1 = outline, 0 = glow */
+	float pos[3], level, r_cm, h_cm;
+	uint64_t frame, frames, lines;
+} g_pko = { .look = 1 };
+
+static void pko_config(void)
+{
+	g_pko.look = env_word("SOMVR_PICK_LOOK", (const char *const[]){ "glow", "outline" }, 2, 1);
+}
+
+/* this frame's outline (the game thread): the last call of a frame wins */
+static void pko_set(const float foot_cm[3], float level, float r_cm, float h_cm)
+{
+	if (!g_pko.look || !vec_ok(foot_cm, 1e7f))
+		return;
+	memcpy(g_pko.pos, foot_cm, sizeof g_pko.pos);
+	g_pko.level = level < 0 ? 0 : level > 1 ? 1 : level, g_pko.r_cm = r_cm, g_pko.h_cm = h_cm, g_pko.frame = g_fr.frame;
+}
+
+/* vh_arm: the outline into the string's slot (the bow's string first: never both at once) */
+static void pko_vh(somvr_vrhands_frame *e)
+{
+	if (!g_pko.look || e->string_r > 0 || g_fr.frame - g_pko.frame > 1)
+		return;
+	somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
+			    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
+	float side[3] = { g_pko.pos[0] + g_pko.r_cm, g_pko.pos[1], g_pko.pos[2] }, c[3], s[3];
+	float top[3] = { g_pko.pos[0], g_pko.pos[1] + g_pko.h_cm, g_pko.pos[2] }, u[3];
+	somvr_th_to_xr(&mp, g_pko.pos, c), somvr_th_to_xr(&mp, side, s), somvr_th_to_xr(&mp, top, u);
+	float r = sqrtf((s[0] - c[0]) * (s[0] - c[0]) + (s[1] - c[1]) * (s[1] - c[1]) + (s[2] - c[2]) * (s[2] - c[2]));
+	float h = u[1] - c[1];
+	if (!vec_ok(c, 1e5f) || !(r > 0.01f) || !(h > 0.01f))
+		return;
+	memcpy(e->string[0], c, sizeof c); /* the foot; the disc round the cylinder's middle, a little past it */
+	e->string[1][0] = sqrtf(r * r + 0.25f * h * h) + 0.08f, e->string[1][1] = g_pko.level, e->string[1][2] = r;
+	e->string[2][0] = r, e->string[2][1] = h, e->string[2][2] = 0;
+	e->flags |= SOMVR_VHF_PICKGLOW;
+	g_pko.frames++;
+}
+
 /* arm_eval, after SOMVR_TWOHAND: the grips the arms are solved to (valid[h]) at time T, the fingers' curls */
 static void vh_arm(const sa_xf g[2], const int valid[2], int64_t T, float dt)
 {
@@ -262,7 +308,9 @@ static void vh_arm(const sa_xf g[2], const int valid[2], int64_t T, float dt)
 	sf_ghost(e); /* SOMVR_HANDS_SURFACE: the real hands where a surface stopped these (v3) */
 	bo_vh_arrow(g, valid, e); /* SOMVR_BOW: the arrow in the string hand or on the string (v4) */
 	fn_vh(e); /* build 33, SOMVR_FINISHER: the sword's outline in the arrow's slot */
+	stg_vh(e); /* build 41, SOMVR_STRUGGLE_RULE: an aim struggle's outline at its node (the same slot) */
 	bo_vh_string(g, valid, e); /* build 18, SOMVR_BOW_STRING_DRAW: the bow's string (v5) */
+	pko_vh(e); /* build 40, SOMVR_PICK_LOOK=outline: the pick's outline in the string's slot */
 	g_vh.have = 1;
 }
 
@@ -336,6 +384,7 @@ static void vh_h4(int live)
 	else
 		g_vh.nogrips++;
 	g_vh.have = 0;
+	stg_vh(&e); /* build 41: an aim struggle's outline also when no hands of ours were built this frame (the death's hold) */
 	if (live && vh_hides() && g_hp_main_hid == g_fr.frame) /* SOMVR_HEAD_PARTS hid the body node: ours are drawn */
 		e.flags |= SOMVR_VHF_HIDE, g_vh.hidden++, atomic_fetch_add_explicit(&g_vho.n_hidden, 1, memory_order_relaxed);
 	e.depth_k = 0; /* SOMVR_XR_HANDS_DEPTH=world: set by the eyes' H1 (vh_eye_near), which run after this */
@@ -394,6 +443,7 @@ static void vh_start(void)
 	g_vh.on = g_vh.want && g_arm.on;
 	memset(g_vh.st, 0, sizeof g_vh.st);
 	g_vh.next_log = mono() + 10.0;
+	pko_config();
 	if (g_vh.on) {
 		g_vho.magic = SOMVR_VRHANDS_MAGIC;
 		g_vho.version = SOMVR_VRHANDS_VERSION;

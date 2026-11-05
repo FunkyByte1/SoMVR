@@ -257,6 +257,20 @@ fight_one() {
     # a struggle's outcome over the world mid-fight (boot 061841: the Duel's, its winner then took no cut for 4 min):
     # answered as a player would - A = the report, B = Back (SOMVR_USE_REPORT, SOMVR_USE_WORLD_BACK)
     [ -n "${NM_REPORT:-}" ] && [ -z "$MIDT" ] && outcome_up && { MIDT=1; report_try "$TG-mid" "$n0"; drawn || draw_slot; w "$LA" 0.3; w "execute chase captain" 0.3; }
+    # build 40 (som-b40-fixes, re-xr-pipeline.md 175.4): the game's own Nemesis screen over the world mid-fight - a hunted
+    # captain's hunt ends ("Power Increased! ... hunt was a success", "Fled ... abandoned his hunt": A View Battle Report /
+    # B Back). Suite 105 (builds win7, win8): never dismissed, the fight stuck at it to the 1500 s hold. As a player: read
+    # it a moment, B (Back), on with the fight (at most 4 presses a screen; not his Last Words - those break the loop)
+    # (a presentation's window: BODYMOMENT window 0 -> 1 since the fight began or the last B; the Last Words hold no window)
+    if win_since "${NW0:-$n0}" && [ -z "$(lw_since "$n0")" ]; then
+      NB=$(( ${NB:-0} + 1 )); [ "$NB" = 1 ] && { sshot "$TG-nemesis"; eyes "$TG-nemesis"; }
+      grep -E '^CAPTAIN t=.* a presentation starts' "$L" | tail -1 | cut -c1-200
+      tap R b 0.4; sleep 2.5
+      if ! win_since "${NW0:-$n0}"; then note "$TG: the game's Nemesis screen over the fight dismissed by B (Back) after $NB press(es)"; NW0=$(lines); NB=0
+        drawn || draw_slot; w "$LA" 0.3; w "execute chase captain" 0.3
+      elif [ "$NB" -ge 4 ]; then note "$TG: the Nemesis screen still up after 4 B presses"; NW0=$(lines); NB=0; fi
+      continue
+    fi
     ecut
   done
   w "execute chase off" 0.3; w "fight guard off" 0.3

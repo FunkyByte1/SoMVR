@@ -100,6 +100,8 @@ static struct {
     int wraith_was;         /* the last frame's: 0 plain, 1 turning, 2 full (the lines) */
     int ghost_was;          /* the last frame's ghosts (bit per hand: the on/off lines) */
     uint64_t n_arrow;       /* build 16: frames drawn with the bow's arrow (vrhands v4) */
+    uint64_t n_pglow;       /* build 40: frames drawn with the pick glow */
+    int pglow_was;
     int arrow_was;
     uint64_t n_string;      /* build 18: frames drawn with the bow's string (vrhands v5) */
     int string_was;
@@ -289,6 +291,7 @@ static void vh_setup(void) {
     vh_config();
     VH.n_frames = VH.n_drawn = VH.n_noentry = VH.n_shown_game = VH.n_occ = 0, VH.lines = 0, VH.have_e = 0;
     VH.n_ghost = 0, VH.ghost_was = 0, VH.n_wraith = 0, VH.wraith_was = 0, VH.n_arrow = 0, VH.arrow_was = 0, VH.n_string = 0, VH.string_was = 0;
+    VH.n_pglow = 0, VH.pglow_was = 0;
     VH.n_dused = VH.n_dnone = VH.n_dnext = 0, VH.dlines = 0;
     memset(&VH.fs, 0, sizeof VH.fs);
     if (VH.bad) lg("xr: hands: SOMVR_XR_HANDS=%s is not on or off: on", getenv("SOMVR_XR_HANDS"));
@@ -975,7 +978,9 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
             ghost_a[h] = e.ghost_a[h], ghosts |= 1 << h;
         }
     }
-    if (!hands[0] && !hands[1]) return;
+    /* build 41 (som-b41-struggle, re-xr-pipeline.md 180): an outline alone - a struggle's sword outline while the death's
+     * held view has no hands of ours (boots 20261105-151932/173820: the last chance's outline published, never drawn) */
+    if (!hands[0] && !hands[1] && !(!own && e.arrow_len > 0.05f && e.arrow_glow >= 2.0f)) return;
     if (ghosts != VH.ghost_was && VH.lines++ < 200)
         lg("xr: hands: frame %llu: ghost L %s R %s (opacity %.2f %.2f; SOMVR_HANDS_SURFACE)", (unsigned long long)rec->frame,
            ghosts & 1 ? "on" : "off", ghosts & 2 ? "on" : "off", (double)ghost_a[0], (double)ghost_a[1]);
@@ -1000,6 +1005,23 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     if (!own) VH.arrow_was = arrow;
     VH.n_arrow += arrow;
     int string = !own && e.string_r > 0.0002f; /* build 18 (v5): the bow's string, our own (seen from both sides) */
+    /* build 40 (som-b40-herb): or the pick glow in its slot - a soft white disc behind the plant, the world's depth
+     * cutting the plant out of it */
+    int pglow = !own && !string && (e.flags & SOMVR_VHF_PICKGLOW) && e.string[1][0] > 0.01f && e.string[1][1] > 0.005f &&
+                e.string[2][0] > 0.01f && e.string[2][1] > 0.01f;
+    if (pglow) { /* (the disc over the plant's cylinder: its middle half way up) */
+        float em[3], mid[3] = {e.string[0][0], e.string[0][1] + 0.5f * e.string[2][1], e.string[0][2]};
+        for (int k = 0; k < 3; k++) em[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
+        somvr_vh_pickglow(mid, em, e.string[1][0], e.string[1][1], e.string[1][2],
+                          (somvr_vh_vert *)(void *)hd_slot_string(&VH.hc, s));
+    }
+    if (!own && pglow != VH.pglow_was && VH.lines++ < 200)
+        lg("xr: hands: frame %llu: the pick glow %s (the disc %.2f m, level %.2f; the plant's foot %.3f,%.3f,%.3f, its cylinder "
+           "%.2f x %.2f m)", (unsigned long long)rec->frame, pglow ? "drawn" : "gone", (double)e.string[1][0],
+           (double)e.string[1][1], (double)e.string[0][0], (double)e.string[0][1], (double)e.string[0][2],
+           (double)e.string[2][0], (double)e.string[2][1]);
+    if (!own) VH.pglow_was = pglow;
+    VH.n_pglow += pglow;
     if (string) { /* (drawn back to the cheek: faded near the eyes as the arrow) */
         somvr_vh_vert *sv = (somvr_vh_vert *)(void *)hd_slot_string(&VH.hc, s);
         somvr_vh_string((const float(*)[3])e.string, e.string_r, sv);
@@ -1055,6 +1077,14 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     }
     if (string) /* the string: the arrow's wraith light, a little dimmer */
         fr.string_a = 1, fr.string_base[0] = 0.55f, fr.string_base[1] = 0.74f, fr.string_base[2] = 0.92f;
+    else if (pglow) { /* build 40: the pick outline - white, 3 .. 7 px wide as the hand comes in (level), the plant's
+                       * cylinder (its foot, radius, height), an edge = 3 cm farther than the plant beside it */
+        float lv = e.string[1][1] > 1 ? 1 : e.string[1][1];
+        fr.string_a = 1, fr.string_base[0] = 1.0f, fr.string_base[1] = 0.98f, fr.string_base[2] = 0.94f, fr.string_world = 1;
+        memcpy(fr.string_c, e.string[0], sizeof fr.string_c);
+        fr.string_look[0] = (3.0f + 4.0f * lv) * (float)VH.ew / 1832.0f, fr.string_look[1] = e.string[2][0];
+        fr.string_look[2] = e.string[2][1], fr.string_look[3] = 0.03f;
+    }
     if (VH.look == VH_LOOK_SKIN)
         fr.base[0] = 0.50f, fr.base[1] = 0.33f, fr.base[2] = 0.24f, fr.spec = 0.05f;
     else

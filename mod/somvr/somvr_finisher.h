@@ -82,4 +82,54 @@ void somvr_fn_place_defaults(somvr_fn_place_cfg *c);
 int somvr_fn_place(const somvr_fn_place_cfg *c, const float neck[3], float g[3], float dir[3], float *s, float *ext,
                    int *why);
 
+/* ---- build 41 (som-b41-finlib, docs/re-xr-pipeline.md 179; GAME-STUDY 2.1): the finisher library --------------------
+ * The neck stab's framework (the outline, the snap, the guided motion, the death at its end, no player motion) for the
+ * game's other paired kills, each as one guided motion of the player's own sword - chosen by the orc's situation the
+ * way the flat game chooses (its state and side; the front ones in turn). A stab rides a line into its node (140's
+ * line, the kill at full depth or the hand's turn, the way out by the hand); a cut rides an arc about the sword-side
+ * shoulder through its node (the kill - and for a sever the head - where the blade crosses it; then on to the arc's end
+ * with the hand). */
+enum { SOMVR_FNK_NECK = 0, SOMVR_FNK_BEHEAD, SOMVR_FNK_FACE, SOMVR_FNK_BACK, SOMVR_FNK_DOWNED, SOMVR_FNK_STUNNED,
+       SOMVR_FNK_COUNTER, SOMVR_FNK_N /* = auto: the situation picks */ };
+enum { SOMVR_FNM_STAB = 0, SOMVR_FNM_CUT };
+/* the orc's situation (bits): which side of it faces Talion, its state, a parry's opening on it, its awareness */
+enum { SOMVR_FNS_FRONT = 1, SOMVR_FNS_BACK = 2, SOMVR_FNS_DOWNED = 4, SOMVR_FNS_STUNNED = 8, SOMVR_FNS_COUNTER = 16,
+       SOMVR_FNS_AWARE = 32 };
+typedef struct {
+    const char *id, *name;          /* the word ("behead") and the menu's / the readout's name ("Beheading") */
+    int motion, node;               /* SOMVR_FNM_*; the orc's node (stl_body's: 1 torso, 2 neck, 3 head) */
+    float depth_cm;                 /* a stab: the point this far past the node */
+    float cut_up;                   /* a cut's plane: 0 = the level swipe (to the sword side), 1 = the chop (from above) */
+    float cut_from_deg, cut_to_deg; /* a cut: its start and end angle about the shoulder from the line to the node */
+    const char *row;                /* the kill's victim row (SOMVR_KILLS' table: its player record is the death's) */
+    int sever;                      /* the head off at the kill */
+    const char *snd_in, *snd_kill[3], *snd_out; /* the flat kill's own sounds (its Talion half's keys) */
+    const char *rec; /* the death's player record by name when the row's is not found (NULL: the row's) */
+} somvr_fn_kind;
+const somvr_fn_kind *somvr_fn_kind_of(int k); /* NULL outside the table */
+int somvr_fn_kind_word(const char *w);        /* the id or the name (any case) -> SOMVR_FNK_*; "auto" -> SOMVR_FNK_N; -1 */
+/* which finisher the orc's situation gives: downed -> DOWNED, stunned -> STUNNED, a parry's opening with its front to
+ * Talion -> COUNTER, its back to Talion (it fights) -> BACK, its front -> NECK, BEHEAD, FACE in turn (n = the readies so
+ * far). force = a SOMVR_FNK_* (the finisher test's type: that one when the situation allows it - an unaware back too)
+ * or SOMVR_FNK_N. -1 = none */
+int somvr_fn_pick_kind(int situation, unsigned n, int force);
+/* the downed orc's placement: the arm reaching down (somvr_fn_place's, longer and lower) */
+void somvr_fn_place_down(somvr_fn_place_cfg *c);
+
+/* a cut's arc (the head's yaw frame, cm: x right, y up, z ahead): about the pivot (the sword-side shoulder), in the
+ * plane of the line n to the target and the sweep w (unit, n x w = ax); the blade radial (the grip at r_grip, the point
+ * at r_grip + blade), at angle a (rad) u = cos a n + sin a w; from a0 to a1, the target crossed at a = 0 */
+typedef struct {
+    float pivot[3], n[3], w[3], ax[3];
+    float r_grip, r_hit, blade, a0, a1;
+} somvr_fn_arc;
+/* the arc for a target: the grip as far out as puts the target ~2/3 along the blade (somvr_fn_place_cfg's grip_r + 20
+ * at most, 15 at least); 1 = placed; 0 = *why SOMVR_FN_WHY_REACH (the target past the blade: closer) or _NEAR */
+int somvr_fn_arc_place(const somvr_fn_place_cfg *c, const float target[3], float cut_up, float from_deg, float to_deg,
+                       somvr_fn_arc *a, int *why);
+/* at progress p (0 = the start, 1 = the end): the grip, the blade's direction (unit), the mid-blade's way (unit) */
+void somvr_fn_arc_at(const somvr_fn_arc *a, float p, float grip[3], float dir[3], float way[3]);
+float somvr_fn_arc_hit_p(const somvr_fn_arc *a); /* the p where the blade crosses the target */
+float somvr_fn_arc_len(const somvr_fn_arc *a);   /* the mid-blade's path (cm) */
+
 #endif

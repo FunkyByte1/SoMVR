@@ -761,3 +761,142 @@ int dladdr(const void *a, Dl_info *info)
 	info->dli_fname = keep, info->dli_fbase = m;
 	return 1;
 }
+
+/* ---- build 40 (som-b40-fixes, re-xr-pipeline.md 175.5): the write watch by the debug registers (`climb writes`) ---- */
+#define WW_RING 512
+static somvr_wwatch_hit g_ww_ring[WW_RING];
+static volatile LONG g_ww_ready[WW_RING];
+static volatile LONG g_ww_head, g_ww_on;
+static LONG g_ww_tail;
+static volatile LONG64 g_ww_lost;
+static PVOID g_ww_veh;
+static uintptr_t g_ww_addr;
+static volatile LONG g_ww_set, g_ww_fail, g_ww_busy;
+
+static LONG CALLBACK ww_veh(EXCEPTION_POINTERS *ep)
+{
+	if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !g_ww_on)
+		return EXCEPTION_CONTINUE_SEARCH;
+	CONTEXT *c = ep->ContextRecord;
+	c->Dr6 = 0;
+	LONG i = InterlockedIncrement(&g_ww_head) - 1;
+	if (i - g_ww_tail >= WW_RING || g_ww_ready[i % WW_RING]) {
+		InterlockedIncrement64(&g_ww_lost);
+		return EXCEPTION_CONTINUE_EXECUTION;
+	}
+	somvr_wwatch_hit *h = &g_ww_ring[i % WW_RING];
+	h->rip = c->Rip, h->tid = GetCurrentThreadId(), h->nstk = 0;
+	const uint64_t *sp = (const uint64_t *)c->Rsp;
+	MEMORY_BASIC_INFORMATION mb;
+	if (sp && VirtualQuery(sp, &mb, sizeof mb) && mb.State == MEM_COMMIT && !(mb.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+		uintptr_t end = (uintptr_t)mb.BaseAddress + mb.RegionSize;
+		uint32_t n = 0;
+		while (n < 64 && (uintptr_t)(sp + n + 1) <= end)
+			h->stk[n] = sp[n], n++;
+		h->nstk = n;
+	}
+	InterlockedExchange(&g_ww_ready[i % WW_RING], 1);
+	return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+/* one thread's Dr0 / Dr7 (on: a 4-byte write watch at g_ww_addr, local enable 0; off: cleared) - the thread suspended
+ * unless it is this one */
+static int ww_thread(DWORD tid, int on)
+{
+	int self = tid == GetCurrentThreadId();
+	HANDLE h = self ? GetCurrentThread() : OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, tid);
+	if (!h)
+		return 0;
+	int ok = 0;
+	if (self || SuspendThread(h) != (DWORD)-1) {
+		CONTEXT c;
+		memset(&c, 0, sizeof c);
+		c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+		if (GetThreadContext(h, &c)) {
+			if (on)
+				c.Dr0 = g_ww_addr, c.Dr7 = (c.Dr7 & ~0xf0003ull) | 1ull | (1ull << 16) | (3ull << 18); /* L0, RW0 01 write, LEN0 11 */
+			else
+				c.Dr0 = 0, c.Dr7 &= ~0xf0003ull;
+			c.Dr6 = 0;
+			ok = SetThreadContext(h, &c) != 0;
+		}
+		if (!self)
+			ResumeThread(h);
+	}
+	if (!self)
+		CloseHandle(h);
+	return ok;
+}
+
+/* every thread of this process (the list taken first: no heap while one is suspended) */
+static DWORD WINAPI ww_all(void *arg)
+{
+	int on = (int)(intptr_t)arg, set = 0, fail = 0, n = 0;
+	static DWORD tids[2048];
+	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+	if (snap != INVALID_HANDLE_VALUE) {
+		THREADENTRY32 te;
+		te.dwSize = sizeof te;
+		DWORD pid = GetCurrentProcessId();
+		for (BOOL ok = Thread32First(snap, &te); ok && n < 2048; ok = Thread32Next(snap, &te))
+			if (te.th32OwnerProcessID == pid)
+				tids[n++] = te.th32ThreadID;
+		CloseHandle(snap);
+	}
+	for (int i = 0; i < n; i++)
+		ww_thread(tids[i], on) ? set++ : fail++;
+	InterlockedExchange(&g_ww_set, set), InterlockedExchange(&g_ww_fail, fail), InterlockedExchange(&g_ww_busy, 0);
+	return 0;
+}
+
+static int ww_run(int on)
+{
+	InterlockedExchange(&g_ww_busy, 1);
+	HANDLE t = CreateThread(NULL, 0, ww_all, (void *)(intptr_t)on, 0, NULL);
+	if (!t)
+		return InterlockedExchange(&g_ww_busy, 0), -1;
+	WaitForSingleObject(t, 5000); /* (the helper suspends this thread only after this wait: never - it is waiting) */
+	CloseHandle(t);
+	return g_ww_busy ? -1 : g_ww_set;
+}
+
+int somvr_wwatch_start(uintptr_t addr, int *failed)
+{
+	if (g_ww_on || !addr)
+		return -1;
+	g_ww_addr = addr, g_ww_head = g_ww_tail = 0, g_ww_lost = 0;
+	memset((void *)g_ww_ready, 0, sizeof g_ww_ready);
+	g_ww_veh = AddVectoredExceptionHandler(1, ww_veh);
+	if (!g_ww_veh)
+		return -1;
+	InterlockedExchange(&g_ww_on, 1);
+	int n = ww_run(1);
+	if (failed)
+		*failed = g_ww_fail;
+	if (n <= 0)
+		somvr_wwatch_stop();
+	return n;
+}
+
+int somvr_wwatch_take(somvr_wwatch_hit *out, int max, uint64_t *lost)
+{
+	int n = 0;
+	while (n < max && g_ww_tail < g_ww_head && g_ww_ready[g_ww_tail % WW_RING]) {
+		out[n++] = g_ww_ring[g_ww_tail % WW_RING];
+		InterlockedExchange(&g_ww_ready[g_ww_tail % WW_RING], 0);
+		g_ww_tail++;
+	}
+	if (lost)
+		*lost = (uint64_t)g_ww_lost;
+	return n;
+}
+
+void somvr_wwatch_stop(void)
+{
+	if (g_ww_on || g_ww_veh) {
+		ww_run(0);
+		InterlockedExchange(&g_ww_on, 0);
+		if (g_ww_veh)
+			RemoveVectoredExceptionHandler(g_ww_veh), g_ww_veh = NULL;
+	}
+}

@@ -73,6 +73,7 @@ static struct {
 	char uprompt[64];
 	float ucue_pos[3], ucue_level, ucue_dist;
 	int ucue_ring;
+	int uground; /* build 40: the cue's place a guess (at the hand, low; ahead of the chest): no outline, the glow stays */
 	/* the pick's feedback (build 37, the user's herb: "I didn't know how I triggered it"): Talion's attack 'Activate_*'
 	 * begun by any control (B or the hand) - a buzz in both hands; an herb's heal: the green flash on both edges */
 	uintptr_t pk_rec;
@@ -443,10 +444,15 @@ static void cu_use_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 	g_cu.ucue_level = 0;
 	int best_i = -1, best_h = -1, ground = 0;
 	float best = INFINITY, at[3] = { 0, 0, 0 };
+	/* build 40 (the 11-05 note 7, the herbs' rule): a thing low on the ground is also taken by a grip over it */
+	somvr_cu_take_cfg tk;
+	somvr_cu_take_defaults(&tk);
+	tk.reach_cm = g_cu.use_reach_cm, tk.over_cm = g_hrb.take.over_cm, tk.up_cm = g_hrb.take.up_cm, tk.low_cm = g_hrb.take.low_cm,
+	tk.top_cm = 0;
 	if (pr && live)
 		for (int i = 0; i < g_cu.un; i++)
 			for (int h = 0; h < 2; h++) {
-				float pa[3] = { pw[h].x, pw[h].y, pw[h].z }, d = dist3(pa, g_cu.u[i].pos);
+				float pa[3] = { pw[h].x, pw[h].y, pw[h].z }, d = somvr_cu_take_dist(&tk, pa, g_cu.u[i].pos, eye[1], NULL);
 				if (cu_hand_free(h) && d < best)
 					best = d, best_i = i, best_h = h;
 			}
@@ -478,6 +484,10 @@ static void cu_use_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 		memcpy(g_cu.ucue_pos, at, sizeof at);
 		g_cu.ucue_level = somvr_cu_reach_level(best, g_cu.use_reach_cm, in) * g_gc.level, g_cu.ucue_frame = g_fr.frame,
 		g_cu.ucue_dist = dist3(at, eye), g_cu.ucue_ring = somvr_cu_ring_cell(best, g_cu.use_reach_cm, in);
+		if (g_pko.look && g_gc.mode == GC_ON && !ground) { /* build 40: the thing outlined (its known place, never a guess) */
+			float foot[3] = { at[0], at[1] - 15, at[2] };
+			pko_set(foot, somvr_cu_reach_level(best, g_cu.use_reach_cm, in), 30, 60);
+		}
 		if (in && !g_cu.ucue_was)
 			haptic_play(best_h, SOMVR_HX_TICK, 1, g_gc.tick_amp / 0.25f), g_cu.use_ticks++;
 		if ((best_i != g_cu.ucue_i || t - g_cu.uline_t > 1) && cu_log_ok()) {
@@ -490,7 +500,7 @@ static void cu_use_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 			      in ? ": in reach" : "");
 			g_cu.uline_t = t;
 		}
-		g_cu.ucue_i = best_i, g_cu.ucue_was = in;
+		g_cu.ucue_i = best_i, g_cu.ucue_was = in, g_cu.uground = ground != 0;
 		if (in && sq_closed[best_h] && !g_cu.uclosed[best_h]) { /* the grip there: the game's own pick */
 			g_cu.use_takes++;
 			us_hand_pick(t);
@@ -513,6 +523,8 @@ static void cu_use_glow_add(struct th_glow *gl, int *ng)
 	if (!g_cu.use || g_gc.mode != GC_ON || !(g_cu.ucue_level > 0.01f) || g_fr.frame - g_cu.ucue_frame > 2)
 		return;
 	float p[3] = { g_cu.ucue_pos[0], g_cu.ucue_pos[1] + 15, g_cu.ucue_pos[2] };
+	if (g_pko.look && !g_cu.uground) /* build 40: the white outline instead (pko_vh) */
+		return;
 	th_glow_add(gl, ng, p, g_cu.ucue_level, g_cu.ucue_dist, SOMVR_THK_MELEE | SOMVR_THK_BLUE);
 	if (g_cu.ucue_ring > 0)
 		th_glow_add(gl, ng, p, 0.95f, g_cu.ucue_dist, SOMVR_THK_RING | (uint32_t)g_cu.ucue_ring << SOMVR_THK_ARC_SHIFT);

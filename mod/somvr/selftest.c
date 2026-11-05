@@ -410,6 +410,16 @@ __attribute__((noipa)) uint64_t t_pm(void *pmv, float *xf)
 	return 0;
 }
 typedef uint64_t (*t_pm_fn)(void *, float *);
+/* build 40 (SOMVR_WALK_NAVMESH): PlayerMovement's proxy step (vf_10 on Linux) - the stand-in records the gate byte it
+ * saw; the byte itself is ours (g_wk.nav_flag redirected after the start) */
+static volatile unsigned char g_st_navflag = 1, g_st_navseen = 9;
+static volatile int g_st_pm9_calls;
+__attribute__((noipa)) void t_pm9(void *pm, void *xf, void *mp)
+{
+	(void)pm, (void)xf, (void)mp;
+	g_st_navseen = g_st_navflag, g_st_pm9_calls++;
+}
+typedef void (*t_pm9_fn)(void *, void *, void *);
 /* the player update: vf_11 through the vtable, then the collision (a wall at z = g_wall_z) puts the root down */
 static int g_wall;
 static float g_wall_z, g_wall_top = INFINITY; /* SOMVR_CLIMB's tests: the wall blocks only below its top */
@@ -10752,6 +10762,8 @@ static void slots_tests(void)
 	somvr_crouch_hold crhold0 = g_cr.h;
 	double crt0 = g_cr.held_t;
 	g_cr.mode = CR_BUTTON, g_cr.h.latched = 1, g_cr.held = 1;
+	int crk0 = g_cr.draw_keep, slk0 = g_sl.keep_mode;
+	g_cr.draw_keep = 0; /* build 38: SOMVR_CROUCH_DRAW=stand - build 15b's let-go */
 	sl_set_slot(SL_SLOT_DAGGER), sl_at_sword(), bframe(0);
 	act0 = g_slt.activates;
 	sl_grip(SOMVR_HAND_R, 1), bframe(0);
@@ -10762,6 +10774,21 @@ static void slots_tests(void)
 	       g_slt.activates - act0, slot, sl_sheathed(), g_cr.h.latched);
 	sl_grip(SOMVR_HAND_R, 0), bframe(0), sl_grip(SOMVR_HAND_R, 1), bframe(0), sl_grip(SOMVR_HAND_R, 0), bframe(0);
 	EXPECT(sl_sheathed(), "slots stealth: not put back after the draw");
+	/* ... build 38 (SOMVR_CROUCH_DRAW=keep, the 11-04 session's mark 223801_9): with SOMVR_SLOTS_KEEP=attach the crouch
+	 * stays held through the draw (Talion stays down; the game's re-sheathe is attach's) */
+	g_cr.draw_keep = 1, g_sl.keep_mode = SL_KEEP_ATTACH, g_cr.h.latched = 1, g_cr.held = 1, g_cr.held_t = cb_now();
+	uint64_t kept0 = g_cr.draw_kept, ups0 = g_cr.sword_ups;
+	sl_set_slot(SL_SLOT_DAGGER), sl_at_sword(), bframe(0);
+	act0 = g_slt.activates;
+	sl_grip(SOMVR_HAND_R, 1), bframe(0);
+	memcpy(&slot, g_bwinv + BO_INV_SLOT, 4);
+	EXPECT(g_slt.activates == act0 + 1 && slot == 0 && g_cr.h.latched && g_cr.draw_kept == kept0 + 1 &&
+		       g_cr.sword_ups == ups0 && log_has("the stealth crouch kept through the sword's draw"),
+	       "slots stealth keep: drawn (activations %d slot %u), the crouch kept: latched %d kept %llu ups %llu",
+	       g_slt.activates - act0, slot, g_cr.h.latched, (unsigned long long)(g_cr.draw_kept - kept0),
+	       (unsigned long long)(g_cr.sword_ups - ups0));
+	sl_grip(SOMVR_HAND_R, 0), bframe(0), sl_grip(SOMVR_HAND_R, 1), bframe(0), sl_grip(SOMVR_HAND_R, 0), bframe(0);
+	g_cr.draw_keep = crk0, g_sl.keep_mode = slk0, g_cr.h.latched = 0; /* as the let-go above left it */
 	/* ... Acharn's slot without our crouch (a kill): still refused */
 	g_cr.held = 0, g_cr.held_t = 0, g_cr.game = 0;
 	sl_set_slot(SL_SLOT_DAGGER);
@@ -17358,6 +17385,82 @@ static void finisher37_tests(void)
 	printf("finisher 37: full depth kills at once, the killed orc's way out goes on, the end blends back, the snap pulls\n");
 }
 
+/* build 41 (som-b41-finlib, re-xr-pipeline.md 179): a cut rides its arc with the hand's swing and kills where the blade
+ * crosses the node (one DealHit with forceKill), then on to the arc's end, where it lets go (build 40: no cut - the
+ * finisher was a stab alone) */
+static void finisher41_tests(void)
+{
+	static typeof(g_fin) fin0;
+	static typeof(g_kl) kl0;
+	static struct site_spec kls[KLS_N];
+	const struct site_spec *sites0 = g_kl_sites;
+	memcpy(&fin0, &g_fin, sizeof g_fin), memcpy(&kl0, &g_kl, sizeof g_kl);
+	memcpy(kls, g_kl_sites_game, sizeof kls);
+	kls[KLS_START].target = (uintptr_t)st_klstart, kls[KLS_NAV].target = (uintptr_t)st_klnav;
+	g_kl_sites = kls;
+	int kd0 = g_kd.mode;
+	double tt = g_cb_test_t;
+	cb_world();
+	g_kd.mode = KD_GAME;
+	memset(g_kl.k, 0, sizeof g_kl.k), memset(&g_kl.pl, 0, sizeof g_kl.pl), memset(&g_kl.sy, 0, sizeof g_kl.sy);
+	g_kl.ok = 1, g_kl.ok_nav = 1, g_kl.on = 1, g_kl.ai_hold = 1, g_kl.default_s = 5, g_kl.timeout_s = 6;
+	memset(&g_fin, 0, sizeof g_fin);
+	somvr_fn_defaults(&g_fin.cfg);
+	g_fin.on = 1, g_fin.ok = 1, g_fin.feel = 1, g_fin.lib = 1, g_fin.slowmo = 0.15f, g_fin.s_deep = 1, g_fin.cut_vmax = 1500;
+	g_fin.kind = SOMVR_FNK_BEHEAD;
+	snprintf(g_fin.row, sizeof g_fin.row, "%s", somvr_fn_kind_of(SOMVR_FNK_BEHEAD)->row);
+	uintptr_t pc = (uintptr_t)&g_pcs;
+	struct cb_orc oa;
+	int got = cb_orc_get((uintptr_t)&g_oc[0], &oa);
+	g_oc[0].dead = 0;
+	g_fin.phase = FN_STAB, g_fin.c = oa.c, g_fin.hobj = oa.hobj, g_fin.snap_t = g_cb_test_t, g_fin.last_move_t = g_cb_test_t;
+	/* the arc: about a shoulder 120 cm short of the neck, level, from 55 deg to the right to 45 to the left */
+	g_fin.neck[0] = oa.pos[0], g_fin.neck[1] = oa.pos[1] + 130, g_fin.neck[2] = oa.pos[2];
+	g_fin.cpv[0] = g_fin.neck[0], g_fin.cpv[1] = g_fin.neck[1] + 20, g_fin.cpv[2] = g_fin.neck[2] - 120;
+	float d[3] = { 0, -20, 120 }, l = sqrtf(20 * 20 + 120 * 120);
+	g_fin.cn[0] = 0, g_fin.cn[1] = d[1] / l, g_fin.cn[2] = d[2] / l, g_fin.cw[0] = -1, g_fin.cw[1] = g_fin.cw[2] = 0;
+	g_fin.cax[0] = g_fin.cn[1] * g_fin.cw[2] - g_fin.cn[2] * g_fin.cw[1], g_fin.cax[1] = g_fin.cn[2] * g_fin.cw[0] - g_fin.cn[0] * g_fin.cw[2];
+	g_fin.cax[2] = g_fin.cn[0] * g_fin.cw[1] - g_fin.cn[1] * g_fin.cw[0];
+	g_fin.crg = l - 0.65f * 95.0f, g_fin.ca0 = 55 * 0.01745329f, g_fin.ca1 = -45 * 0.01745329f, g_fin.cut = 1;
+	g_fin.chit_p = 0.55f, g_fin.clen = (g_fin.crg + 47.5f) * (100 * 0.01745329f), g_fin.qrot[3] = 1;
+	g_dh.kill_next = 1;
+	int dh0 = g_dh.n, frames = 0, killed_at = -1;
+	float p_kill = -1;
+	for (; frames < 200 && g_fin.phase == FN_STAB; frames++) {
+		float tip[3], dir[3], way[3];
+		fn_cut_at(g_fin.p, tip, dir, way);
+		for (int i = 0; i < 3; i++)
+			g_fin.hm[i] = 300.0f * way[i]; /* (a 3 m/s swing along the arc) */
+		g_cb_test_t += 1.0 / 90;
+		struct cb_orc oc;
+		if (!fn_orc(&oc, g_cb_test_t))
+			break;
+		fn_cut_frame(pc, &oc, 1.0f / 90, g_cb_test_t);
+		if (g_fin.killed && killed_at < 0)
+			killed_at = frames, p_kill = g_fin.p;
+	}
+	EXPECT(got && g_dh.n == dh0 + 1 && g_dh.kill == 1 && killed_at > 0 && p_kill >= 0.55f && p_kill < 0.62f &&
+		       log_has("kill: Beheading") && log_has("the cut through to its end") && g_fin.phase == FN_IDLE,
+	       "finisher 41: the cut kills where it crosses the neck (DealHits %d, forceKill %d, frame %d at p %.2f) and ends at "
+	       "its arc's end (phase %d)", g_dh.n - dh0, g_dh.kill, killed_at, (double)p_kill, g_fin.phase);
+	/* the ride turned along the arc: the last turn about the axis by the angle gone (100 deg) */
+	float ang = 2.0f * acosf(fminf(1.0f, fabsf(g_fin.qrot[3]))) * 57.29578f;
+	EXPECT(ang > 95 && ang < 105, "finisher 41: the sword's ride turned %.0f deg along the arc (100)", (double)ang);
+	/* a swing across the plane moves nothing */
+	g_fin.phase = FN_STAB, g_fin.p = 0.2f, g_fin.killed = 0, g_fin.snap_t = g_fin.last_move_t = g_cb_test_t, g_oc[0].dead = 0;
+	for (int i = 0; i < 3; i++)
+		g_fin.hm[i] = 300.0f * g_fin.cax[i];
+	struct cb_orc ob;
+	cb_orc_get((uintptr_t)&g_oc[0], &ob);
+	fn_cut_frame(pc, &ob, 0.1f, g_cb_test_t + 0.1);
+	EXPECT(g_fin.p == 0.2f && !g_fin.killed, "finisher 41: a swing across the cut's plane moves nothing (p %.2f)", (double)g_fin.p);
+	atomic_store(&g_fin.over, 0);
+	memcpy(&g_fin, &fin0, sizeof g_fin), memcpy(&g_kl, &kl0, sizeof g_kl);
+	g_kl_sites = sites0, g_kd.mode = kd0, g_cb_test_t = tt, g_oc[0].dead = 0, g_dh.kill_next = 0;
+	cb_world();
+	printf("finisher 41: the cut kills at its crossing and lets go at its arc's end, its ride turned along it\n");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
@@ -17380,6 +17483,7 @@ int main(int argc, char **argv)
 	setenv("SOMVR_INPUT", "1", 1); /* the IN_ and RUM hooks go in, somvr_input goes active (input_tests) */
 	setenv("SOMVR_GAMEMOVES", "on", 1); /* the stock A (input_tests' Jump/LedgePullUp; the off path: test_ctl) */
 	setenv("SOMVR_ARMS", "1", 1);  /* ARM_TRK_EVAL goes in (arms_tests) */
+	setenv("SOMVR_WALK_NAVMESH", "on", 1); /* build 40: PM9 goes in (its gate byte redirected below) */
 	unsetenv("SOMVR_ARMS_POLE"), unsetenv("SOMVR_ARMS_POLE_ANIM"), unsetenv("SOMVR_ARMS_CAL_R"), unsetenv("SOMVR_ARMS_CAL_L");
 	unsetenv("SOMVR_HANDS"), unsetenv("SOMVR_TURN"), unsetenv("SOMVR_HAPTICS"), unsetenv("SOMVR_RUMBLE");
 	setenv("SOMVR_COMBAT_LIGHT", "ST_L1,ST_L2", 1);
@@ -17434,6 +17538,7 @@ int main(int argc, char **argv)
 	vslot_site(&st_vt_vktex[11], (void *)st_vkcopy, &d3d[DS_VKCOPY_MT], "VK_TEX_COPY_MT", 13);
 	vslot_site(&g_vta[23], (void *)t_aud, &sites[HK_AUD], "AUDIO", 14);
 	vslot_site(&g_vtpm[11], (void *)t_pm, &sites[HK_PM], "PM", 15);
+	vslot_site(&g_vtpm[10], (void *)t_pm9, &sites[HK_PM9], "PM9", 79); /* build 40 */
 	static struct site_spec nodes[NS_N];
 	vslot_site(&g_vtm[23], (void *)st_nodexf, &nodes[NS_NODEXF], "G12_NODEXF", 16);
 	g_node_sites = nodes;
@@ -17622,6 +17727,30 @@ int main(int argc, char **argv)
 	for (int i = 0; i < HK_N; i++)
 		EXPECT(g_h[i].installed, "%s not installed (see the log)", g_h[i].name);
 	EXPECT(somvr_shared_ok(&g_sh) && g_sh.layout == SOMVR_LAYOUT_A, "the shared struct is not published");
+	{ /* build 40 (SOMVR_WALK_NAVMESH): the gate byte is 0 inside the player's step when this tick decided so, and back
+	   * after it; another tick (no decision) or another mover sees it as it was */
+		g_wk.nav_flag = (uintptr_t)&g_st_navflag;
+		__typeof__(g_inp.tid) tid0 = g_inp.tid;
+		g_inp.tid = my_tid(); /* (the game thread's: this one's for the check) */
+		float x9[7] = { 0, 0, 0, 0, 0, 0, 1 };
+		int c0 = g_st_pm9_calls;
+		g_wk.nav_pm = (uintptr_t)&g_ppm;
+		((t_pm9_fn)g_vtpm[10])(&g_ppm, x9, NULL);
+		int in_off = g_st_navseen;
+		g_wk.nav_pm = 0;
+		((t_pm9_fn)g_vtpm[10])(&g_ppm, x9, NULL);
+		int in_on = g_st_navseen;
+		g_wk.nav_pm = (uintptr_t)&g_ppm;
+		((t_pm9_fn)g_vtpm[10])(&g_ppm2, x9, NULL); /* another PlayerMovement */
+		int other = g_st_navseen;
+		g_wk.nav_pm = 0;
+		EXPECT(g_h[HK_PM9].installed && g_st_pm9_calls == c0 + 3 && in_off == 0 && g_st_navflag == 1 && in_on == 1 &&
+			       other == 1 && g_wk.nav_off >= 1,
+		       "PM9: installed %d calls %d, the gate inside %d (decided) / %d (not) / %d (another mover), after %d, off %llu",
+		       g_h[HK_PM9].installed, g_st_pm9_calls - c0, in_off, in_on, other, g_st_navflag,
+		       (unsigned long long)g_wk.nav_off);
+		g_wk.nav_flag = 0, g_inp.tid = tid0; /* (the rest of the selftest: no gate) */
+	}
 	EXPECT(g_d3d_ok == 1, "the stand-in D3D sites did not match (see the D3D lines)");
 	EXPECT(dlsym(RTLD_DEFAULT, SOMVR_SHARED_SYMBOL) == (void *)&g_sh, "dlsym(RTLD_DEFAULT, \"somvr_shared\") does not find it");
 	EXPECT(g_audio == 1 && g_follow.on == 1 && g_rigcfg.base == SOMVR_BASE_HEAD && g_node_ok == 1 && g_follow.dead_cm == 8 &&
@@ -17956,6 +18085,7 @@ int main(int argc, char **argv)
 	kl36_tests();   /* build 36: the deaths at once - the fallback's direction, the quick rule, the downed, a dying orc's hit */
 	finisher_tests(); /* review b34 for build 33: the finisher's every way out, the timer-blind restore, a reused Combat */
 	finisher37_tests(); /* build 37: the kill at full depth, the killed orc's way out, the release's blend, the snap's pull */
+	finisher41_tests(); /* build 41: the library's cut - the kill at its crossing, the end at its arc's end */
 	ir_tests(argv[1]); /* b35: SOMVR_INPUT_REC, SOMVR_INPUT_REPLAY */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",

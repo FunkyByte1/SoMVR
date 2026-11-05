@@ -438,6 +438,8 @@ LDLL=$(dirname "$DLL")/somvr_logic.dll # a split build (docs/re-xr-pipeline.md 1
 if [ -f "$LDLL" ]; then
   install -m 0644 "$LDLL" "$SYS32/somvr_logic.dll" && cmp -s "$LDLL" "$SYS32/somvr_logic.dll" || die "the logic DLL did not land in $SYS32"
   log "LOGIC $(sha "$LDLL" | cut -c1-16) in $SYS32/somvr_logic.dll"
+  # b40 live4 (re-xr-pipeline.md 162.13): a patch staged for this build before the launch is the session's module
+  [ "${LIVE_ON:-0}" = 1 ] && [ $DRY = 0 ] && log "live: $("$HERE/live_session.sh" preapply "$RUN" "$(dirname "$(dirname "$(dirname "$DLL")")")" "$SYS32/somvr_logic.dll" 2>&1 | tail -1)"
 else # a single-DLL build (build-win3 and older): no logic module - an earlier split session's copy goes (never loaded)
   [ -f "$SYS32/somvr_logic.dll" ] && rm -f -- "$SYS32/somvr_logic.dll" && log "a single-DLL build: $SYS32/somvr_logic.dll of an earlier split build removed"
   log "a single-DLL build (no $LDLL): the game side in xinput9_1_0.dll"

@@ -25,6 +25,7 @@
 #                 NAME completed (`practice quest complete N`, as Quest.CompleteActiveQuest)
 #   chain N [S]   up to N times: wait up to S s (60) for an active quest, complete it, the end, saves/chainK.sav, a look,
 #                 the region's GP_ quests (the story's last missions run one into the next)
+#   qrec NAME     the quest NAME's database record dumped (`practice quest rec N`: its fields and the records named)
 #   qrun NAME     the story quest NAME started by the test aid (state 8, no card) and completed; saves/NAME.sav
 #   board [NAME]  Sauron's Army's warchief board (`verbs press 281 1500`): its picture (shots/st-ladder-NAME), then B
 #   wcbrand K     up to K of the save's warchiefs (`captain status`) brought alone to the practice area (`captain pick N
@@ -172,6 +173,12 @@ for p in $STEPS; do
             echo "$(date +%T) save $1: $(sha256sum "$R/saves/$1.sav" | cut -c1-16), written by the game $(stat -c %y "$PFXSAVE" | cut -c1-19)"; } ;;
         esac
       done ;;
+    qrec) # qrec NAME: the quest NAME's database record dumped (its fields, the records they name: `practice quest rec N`)
+      l0=$(lines); w "practice quest list 2" 3
+      qn=$(tail -n +"$l0" "$R/somvr.log" | grep -E "^PRACTICE quest \(list 2\) [0-9]+ q=0x[0-9a-f]+ state -?[0-9]+: \+0x[0-9a-f]+ '$1'" | head -1 |
+           sed -E 's/^PRACTICE quest \(list 2\) ([0-9]+) .*/\1/')
+      [ -n "$qn" ] && { w "practice quest rec $qn" 3; echo "$(date +%T) the record of '$1' (quest $qn) dumped: PRACTICE rec lines"; } ||
+        echo "$(date +%T) no quest '$1' in the list" ;;
     qstate|qcomplete) # qstate NAME S: the quest NAME (its record, list 2) set to state S (2 = available) | qcomplete NAME:
       # the active quest NAME (list 1) completed - the test words `practice quest list [2]` + `state N S` / `complete N`
       l0=$(lines); [ $c = qstate ] && w "practice quest list 2" 3 || w "practice quest list" 3

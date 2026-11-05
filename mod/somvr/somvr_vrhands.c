@@ -766,6 +766,30 @@ const uint16_t *somvr_vh_string_indices(void) {
     return g_string_idx;
 }
 
+void somvr_vh_pickglow(const float c[3], const float eye[3], float r_m, float level, float push_m, somvr_vh_vert *out) {
+    static const float rr[5] = {0, 0.25f, 0.5f, 0.75f, 1}, aa[5] = {1, 1, 1, 0.9f, 0};
+    float n[3] = {eye[0] - c[0], eye[1] - c[1], eye[2] - c[2]};
+    if (norm3(n) < 1e-6f) n[0] = 0, n[1] = 0, n[2] = 1;
+    float up[3] = {0, 1, 0}, u[3], w[3];
+    cross3(up, n, u);
+    if (norm3(u) < 1e-6f) u[0] = 1, u[1] = 0, u[2] = 0;
+    cross3(n, u, w);
+    float m[3] = {c[0] - push_m * n[0], c[1] - push_m * n[1], c[2] - push_m * n[2]};
+    float lv = level < 0 ? 0 : level > 1 ? 1 : level;
+    if (!(r_m > 0.01f)) r_m = 0.01f;
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 12; j++) {
+            somvr_vh_vert *v = out + 4 * (i * 12 + j);
+            const int ri[4] = {i, i + 1, i + 1, i};
+            const int aj[4] = {j, j, j + 1, j + 1};
+            for (int k = 0; k < 4; k++) {
+                float an = (float)aj[k] * 0.52359878f, r = rr[ri[k]] * r_m;
+                for (int x = 0; x < 3; x++) v[k].p[x] = m[x] + r * (cosf(an) * u[x] + sinf(an) * w[x]), v[k].n[x] = n[x];
+                v[k].a = lv * aa[ri[k]];
+            }
+        }
+}
+
 void somvr_vh_string(const float pts[3][3], float r_m, somvr_vh_vert *out) {
     if (!(r_m > 0.0005f)) r_m = 0.0005f;
     if (r_m > 0.02f) r_m = 0.02f;

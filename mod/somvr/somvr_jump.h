@@ -65,7 +65,9 @@ typedef struct {
 void somvr_jp_cfg_default(somvr_jp_cfg *c);
 
 /* the jump's kinds and its ends */
-enum { SOMVR_JPK_NONE = 0, SOMVR_JPK_JUMP = 1, SOMVR_JPK_VAULT = 2 };
+enum { SOMVR_JPK_NONE = 0, SOMVR_JPK_JUMP = 1, SOMVR_JPK_VAULT = 2,
+       SOMVR_JPK_FLING = 3 /* build 40 (SOMVR_CLIMB_FLING_OFF): thrown off a wall - the vault's fixed horizontal (vh) with no
+                            * ring and no level hold: the arc, its brake onto the floor, a grip in flight = the climb */ };
 enum {
     SOMVR_JPE_NONE = 0,
     SOMVR_JPE_LANDED,      /* the 2 cm step down was blocked: on the floor */
@@ -111,6 +113,7 @@ typedef struct {
     float v_land;          /* the fall's speed when the brake started (or at a hard stop) */
     int end;               /* SOMVR_JPE_* of the last end */
     /* totals */
+    uint64_t n_fling;       /* build 40: throws off a wall */
     uint64_t n_jump, n_vault, n_landed, n_lost, n_climb, n_fall, n_stop, n_ceiling, n_brakes, n_settle_miss, ticks, n_ring_stop;
     float max_rise_cm, max_air_s, max_land_cms;
 } somvr_jp;

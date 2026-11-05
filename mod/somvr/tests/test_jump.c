@@ -476,8 +476,38 @@ static void test_a(void)
     CHECK(somvr_jp_a_pick(&c, &p) == SOMVR_JPA_VAULT, "b36: the walk held, the vault's ring: the vault");
 }
 
+/* build 40 (SOMVR_CLIMB_FLING_OFF): thrown off a wall 3 m over the ground - the hands' level velocity fixed (no ring),
+ * the arc, the brake onto the ground; a wall in the way: straight down at it */
+static void test_fling(void)
+{
+    somvr_jp_cfg c;
+    somvr_jp_cfg_default(&c);
+    CHECK(!strcmp(somvr_jp_kind_name(SOMVR_JPK_FLING), "fling"), "the throw's name");
+    for (int wall = 0; wall < 2; wall++) {
+        wreset(), ground();
+        if (wall)
+            add(80, -50, -300, 140, 600, 300);
+        somvr_jp s;
+        somvr_jp_init(&s);
+        sv_vec3 r0 = { 0, 300 + c.foot_cm, 0 };
+        somvr_jp_start(&s, SOMVR_JPK_FLING, r0, 0, 100, 2000, (sv_vec3){ 300, 0, 0 }, r0, 0);
+        CHECK(s.kind == SOMVR_JPK_FLING && s.n_fling == 1 && s.vh.x == 300 && s.hold_t == 0, "the throw started");
+        run_out r = run(&c, &s, (sv_vec3){ 0, 300, 0 }, 90, (sv_vec3){ 0, 0, 0 }, 600, NULL);
+        printf("  thrown 300 cm/s level, 100 up, from 3 m%s: %s at x %.1f after %.2f s (the feet %.1f, the apex %+.1f, braked %d)\n",
+               wall ? " at a wall 80 cm out" : "", somvr_jp_end_name(r.end), r.land_x, r.air_s, r.feet_end, r.apex, r.braked);
+        if (!wall)
+            CHECK(r.end == SOMVR_JPE_LANDED && r.land_x > 150 && r.land_x < 240 && fabsf(r.feet_end) < 0.5f && r.braked &&
+                      r.apex > 2 && s.n_ring_stop == 0,
+                  "thrown: on along the throw and down onto the ground (x %.1f, the feet %.1f)", r.land_x, r.feet_end);
+        else
+            CHECK(r.end == SOMVR_JPE_LANDED && r.land_x < 80 && fabsf(r.feet_end) < 0.5f,
+                  "thrown at a wall: straight down at it (x %.1f)", r.land_x);
+    }
+}
+
 int main(void)
 {
+    test_fling();
     test_arc();
     test_vault();
     test_ring_stop();

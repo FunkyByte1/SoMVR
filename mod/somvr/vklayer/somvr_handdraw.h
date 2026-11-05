@@ -142,6 +142,12 @@ typedef struct {
     /* build 18 (vrhands v5): string_a > 0 draws hd_slot_string the same way (the bow's string, both sides) */
     float string_a;
     float string_base[3];
+    /* build 40 (som-b40-herb, re-xr-pipeline.md 176): the string's slot is the pick outline's disc - the world pipeline's
+     * outline mode (hands.frag): string_c the plant's foot (XR m), string_look {width px, its cylinder's radius m, height
+     * m, gap m}; the plain pipeline (no world pipeline): a faint glow */
+    int string_world;
+    float string_c[3];
+    float string_look[4];
 } hd_frame;
 /* the screen box (pixels of a w x h eye, padded by pad) of n vertices under the clip matrix vp; 0 = none on the screen,
  * 1 = box, 2 = a vertex behind the eye (the whole eye) */

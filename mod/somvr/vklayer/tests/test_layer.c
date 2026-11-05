@@ -4424,6 +4424,34 @@ static int sc_objective(void) { /* none, ahead (one upload), the same text (none
     CHECK(log_has("the Shadow Strike's mark (ready)") && log_has("the Shadow Strike's mark (no arrows)") &&
               log_has("the Shadow Strike's mark (pressed)"),
           "strike: the three marks logged");
+    /* 5d. build 40 (SOMVR_OBF_READOUT): Practice > Finisher test's readout - its lines new: one upload (the card drawn
+     * into the picture), the readout cell facing the head on its spot; the same lines again: no upload; new lines: one */
+    for (int k2 = 0; k2 < 3; k2++) {
+        CHECK(locate(&v), "readout: locate");
+        write_record(f, SOMVR_LAYOUT_B, &v, 3);
+        somvr_objective_frame re;
+        memset(&re, 0, sizeof re);
+        re.n = 1, re.flags = SOMVR_OBF_READOUT, re.id = (k2 < 2 ? 1u : 2u) | 1u << 8, re.dist_m = 9.6f;
+        re.top[0] = 2.4f, re.top[1] = 22, re.top[2] = k2 < 2 ? 0.35f : 0.5f;
+        float hd[3];
+        for (int q = 0; q < 3; q++) hd[q] = 0.5f * (v.pose[0].p[q] + v.pose[1].p[q]), re.pos[q] = hd[q] + (q == 1 ? 0.3f : q == 2 ? -1.2f : 0.0f);
+        somvr_objective_put(g_obo, f, &re);
+        int up0 = V.buf2img;
+        V.ncp = V.ntr = 0;
+        hud_present(&r.a, f++, 0, SOMVR_HUDK_NONE);
+        e = MOCK(mockxr_last_end)();
+        somvr_ob_place rp = somvr_ob_readout(hd, re.pos);
+        int32_t rc[4];
+        somvr_ob_rect(SOMVR_OB_CELL_READOUT, rc);
+        CHECK(rp.kind == SOMVR_OBK_WORLD && e->layer_count == 2 && e->q[1].sc == k && !memcmp(e->q[1].rect, rc, sizeof rc) &&
+                  pose_near(e->q[1].pose, rp.pose) && fabsf(e->q[1].size[1] - rp.size[1]) < 1e-5f &&
+                  V.buf2img - up0 == (k2 == 1 ? 0 : 1),
+              "readout %d: %u layers, rect %d size %g x %g, uploads +%d (want +%d)", k2, e->layer_count, e->q[1].rect[0],
+              e->q[1].size[0], e->q[1].size[1], V.buf2img - up0, k2 == 1 ? 0 : 1);
+    }
+    CHECK(log_has("the finisher test's readout 'Try 1  snap 10 cm  in 2.4 m/s' / 'Depth 22 cm  KILL  out 0.35 s'") &&
+              log_has("'Try 2  snap 10 cm  in 2.4 m/s' / 'Depth 22 cm  KILL  out 0.50 s'"),
+          "readout: its lines logged");
     /* 6. the objective gone (n = 0), an entry for another frame: nothing */
     ob_stereo(&r, f++, 0, ahead, 0, &v);
     check_no_quad(&v, "the objective gone");

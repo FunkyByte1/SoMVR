@@ -20,6 +20,8 @@ void somvr_df_cfg_default(somvr_df_cfg *c)
 	c->contact = 0, c->contact_cm = 10, c->contact_pre_s = 0.25f, c->contact_post_s = 0.08f, c->contact_cross_deg = 15;
 	c->contact_thrust_cm = 0, c->thrust_cos = 0.7f;
 	c->red_types = 1u << SOMVR_DF_TYPE_NOPARRY | 1u << SOMVR_DF_TYPE_NOBLOCK;
+	c->zone = 0, c->zone_r_cm = 25, c->zone_out_cm = 45, c->zone_body_cm = 20, c->zone_lock_s = 0.35f;
+	c->zone_meet_cm = 40, c->zone_cross_deg = 35, c->zone_follow_s = 0.12f;
 }
 
 int somvr_df_can_parry(int type) { return type == SOMVR_DF_TYPE_NORMAL || type == SOMVR_DF_TYPE_NOBLOCK; }
@@ -135,6 +137,196 @@ void somvr_df_track_init(somvr_df_track *tr)
 	tr->way_t = tr->dodge_t = tr->parry_t = -1;
 	tr->g.align_deg = -1;
 	tr->contact_t = -1, tr->best_cm = INFINITY, tr->best_ts = -1, tr->drawn_best_cm = INFINITY;
+	tr->zone_in_t = -1, tr->zone_cm = INFINITY;
+}
+
+int somvr_df_zone_place(const somvr_df_cfg *c, const float head[3], const float w[3], const float orc[3], float centre[3],
+			float dir[3])
+{
+	if (!fin3(head))
+		return 0;
+	float B[3] = { head[0], head[1] - c->zone_body_cm, head[2] }, u[3] = { 0, 0, 0 }, n = 0;
+	if (w && fin3(w)) {
+		for (int i = 0; i < 3; i++)
+			u[i] = w[i] - B[i];
+		n = len3(u);
+	}
+	if (!(n > c->zone_out_cm) && orc && fin3(orc)) { /* the weapon at the body or unknown: toward the orc's chest */
+		float oc[3] = { orc[0], orc[1] + 100.0f, orc[2] };
+		for (int i = 0; i < 3; i++)
+			u[i] = oc[i] - B[i];
+		n = len3(u);
+	}
+	if (!(n > 1e-3f) || !isfinite(n))
+		return 0;
+	for (int i = 0; i < 3; i++)
+		dir[i] = u[i] / n, centre[i] = B[i] + dir[i] * c->zone_out_cm;
+	return 1;
+}
+
+float somvr_df_zone_blade(const float centre[3], const float dir[3], const float base[3], const float tip[3], float *cross,
+			  float pt[3])
+{
+	*cross = 0;
+	if (!fin3(centre) || !fin3(dir) || !fin3(base) || !fin3(tip))
+		return INFINITY;
+	float d[3] = { tip[0] - base[0], tip[1] - base[1], tip[2] - base[2] }, L = len3(d);
+	if (!(L > 1e-3f))
+		return INFINITY;
+	float w[3] = { centre[0] - base[0], centre[1] - base[1], centre[2] - base[2] };
+	float s = dot3(w, d) / (L * L);
+	s = s < 0 ? 0 : s > 1 ? 1 : s;
+	for (int i = 0; i < 3; i++)
+		pt[i] = base[i] + s * d[i];
+	float e[3] = { centre[0] - pt[0], centre[1] - pt[1], centre[2] - pt[2] };
+	*cross = acosf(clamp1(fabsf(dot3(d, dir)) / L)) / (float)DF_DEG;
+	return len3(e);
+}
+
+int somvr_df_zone_frame(const float head[3], const float orc[3], float f[3], float r[3])
+{
+	if (!fin3(head) || !fin3(orc))
+		return 0;
+	float dx = orc[0] - head[0], dz = orc[2] - head[2], n = sqrtf(dx * dx + dz * dz);
+	if (!(n > 1.0f))
+		return 0;
+	f[0] = dx / n, f[1] = 0, f[2] = dz / n;
+	r[0] = f[2], r[1] = 0, r[2] = -f[0]; /* f x up: (0,0,1) ahead -> (1,0,0) right */
+	return 1;
+}
+
+void somvr_df_zone_spot_clamp(float spot[3])
+{
+	float lo[3] = { -SOMVR_DF_ZSPOT_SIDE, SOMVR_DF_ZSPOT_UP_MIN, SOMVR_DF_ZSPOT_AHEAD_MIN },
+	      hi[3] = { SOMVR_DF_ZSPOT_SIDE, SOMVR_DF_ZSPOT_UP_MAX, SOMVR_DF_ZSPOT_AHEAD_MAX };
+	for (int i = 0; i < 3; i++)
+		spot[i] = !isfinite(spot[i]) ? 0.5f * (lo[i] + hi[i]) : spot[i] < lo[i] ? lo[i] : spot[i] > hi[i] ? hi[i] : spot[i];
+}
+
+int somvr_df_zone_spot_place(const somvr_df_cfg *c, const float head[3], const float orc[3], const float spot[3],
+			     float centre[3], float dir[3])
+{
+	float f[3], r[3], s[3] = { spot[0], spot[1], spot[2] };
+	if (!somvr_df_zone_frame(head, orc, f, r) || !fin3(spot))
+		return 0;
+	somvr_df_zone_spot_clamp(s);
+	float B[3] = { head[0], head[1] - c->zone_body_cm, head[2] }, u[3];
+	for (int i = 0; i < 3; i++)
+		centre[i] = head[i] + r[i] * s[0] + f[i] * s[2] + (i == 1 ? s[1] : 0), u[i] = centre[i] - B[i];
+	float n = len3(u);
+	if (!(n > 1e-3f))
+		return 0;
+	for (int i = 0; i < 3; i++)
+		dir[i] = u[i] / n;
+	return 1;
+}
+
+int somvr_df_zone_spot_of(const float head[3], const float orc[3], const float base[3], const float tip[3], float spot[3])
+{
+	float f[3], r[3];
+	if (!somvr_df_zone_frame(head, orc, f, r) || !fin3(base) || !fin3(tip))
+		return 0;
+	float C[3] = { head[0], head[1] - SOMVR_DF_ZSPOT_CHEST_CM, head[2] }, d[3], w[3];
+	for (int i = 0; i < 3; i++)
+		d[i] = tip[i] - base[i], w[i] = C[i] - base[i];
+	float L2 = dot3(d, d), s = L2 > 1e-6f ? dot3(w, d) / L2 : 0;
+	s = s < 0 ? 0 : s > 1 ? 1 : s;
+	float p[3];
+	for (int i = 0; i < 3; i++)
+		p[i] = base[i] + s * d[i] - head[i];
+	spot[0] = dot3(p, r), spot[1] = p[1], spot[2] = dot3(p, f);
+	return 1;
+}
+
+int somvr_df_zone_holds(const somvr_df_cfg *c, float dist, float cross)
+{
+	return dist <= c->zone_r_cm && cross >= c->zone_cross_deg;
+}
+
+/* build 38 (zone): this frame's place (following the weapon until the lock, then still; carried with the game's own
+ * moves of Talion), the blade in it, the entries */
+static void zone_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const somvr_df_in *in)
+{
+	int show = c->zone && c->block_on && in->impact > 0 && in->ts <= in->impact + c->contact_post_s && in->norc > 0 &&
+		   somvr_df_can_block(c, in->type);
+	if (!show) {
+		tr->zone_ok = 0, tr->zone_in = 0;
+		return;
+	}
+	if (tr->zone_ok && fin3(in->moved) && (in->moved[0] != 0 || in->moved[1] != 0 || in->moved[2] != 0))
+		for (int i = 0; i < 3; i++)
+			tr->zone_c[i] += in->moved[i];
+	if (!tr->zone_locked) {
+		/* the weapon's middle (a berserker's two: the one nearer the head) */
+		float w[3] = { 0, 0, 0 }, best = INFINITY;
+		for (int k = 0; k < in->norc && k < 2; k++) {
+			float m[3] = { 0.5f * (in->ob[k][0] + in->ot[k][0]), 0.5f * (in->ob[k][1] + in->ot[k][1]),
+				       0.5f * (in->ob[k][2] + in->ot[k][2]) };
+			float dd[3] = { m[0] - in->head[0], m[1] - in->head[1], m[2] - in->head[2] }, l = len3(dd);
+			if (fin3(m) && l < best)
+				best = l, memcpy(w, m, sizeof w);
+		}
+		float cn[3], dn[3];
+		int placed = in->have_zone_spot ? somvr_df_zone_spot_place(c, in->head, in->orc, in->zone_spot, cn, dn)
+						: somvr_df_zone_place(c, in->head, isfinite(best) ? w : NULL, in->orc, cn, dn);
+		if (placed && in->have_zone_spot) { /* build 38b: the spot's place itself (eased as its direction would be) */
+			double dt = t - tr->zone_t;
+			float a = !tr->zone_ok || !(dt > 0) || dt > 0.2 || !(c->zone_follow_s > 0) ? 1.0f
+				  : 1.0f - expf(-(float)dt / c->zone_follow_s);
+			for (int i = 0; i < 3; i++)
+				tr->zone_c[i] += a * (cn[i] - tr->zone_c[i]), tr->zone_n[i] = dn[i];
+			if (!tr->zone_ok)
+				memcpy(tr->zone_c, cn, sizeof cn);
+			tr->zone_ok = 1, tr->zone_t = t;
+		} else if (placed) {
+			double dt = t - tr->zone_t;
+			float a = !tr->zone_ok || !(dt > 0) || dt > 0.2 || !(c->zone_follow_s > 0) ? 1.0f
+				  : 1.0f - expf(-(float)dt / c->zone_follow_s);
+			for (int i = 0; i < 3; i++) /* the centre eased along the body's sphere: the direction eased, then out */
+				tr->zone_n[i] += a * (dn[i] - tr->zone_n[i]);
+			float nl = len3(tr->zone_n);
+			if (!(nl > 1e-3f))
+				memcpy(tr->zone_n, dn, sizeof dn), nl = 1;
+			for (int i = 0; i < 3; i++)
+				tr->zone_n[i] /= nl;
+			float B[3] = { in->head[0], in->head[1] - c->zone_body_cm, in->head[2] };
+			for (int i = 0; i < 3; i++)
+				tr->zone_c[i] = B[i] + tr->zone_n[i] * c->zone_out_cm;
+			tr->zone_ok = 1, tr->zone_t = t;
+		} else if (!tr->zone_ok)
+			return;
+		if (in->ts >= in->impact - c->zone_lock_s)
+			tr->zone_locked = 1;
+	}
+	float best = INFINITY, bc = 0, bp[3] = { 0, 0, 0 };
+	if (in->blade) {
+		float cr, p[3], d = somvr_df_zone_blade(tr->zone_c, tr->zone_n, in->base, in->tip, &cr, p);
+		if (somvr_df_zone_holds(c, d, cr) || d < best)
+			best = d, bc = cr, memcpy(bp, p, sizeof bp);
+		if (c->contact_hand && in->have_hand_blade && !somvr_df_zone_holds(c, best, bc)) {
+			float hc, hp[3], hd = somvr_df_zone_blade(tr->zone_c, tr->zone_n, in->hb, in->ht, &hc, hp);
+			if (somvr_df_zone_holds(c, hd, hc))
+				best = hd, bc = hc, memcpy(bp, hp, sizeof bp);
+		}
+	}
+	int was = tr->zone_in;
+	tr->zone_cm = best, tr->zone_cross = bc, memcpy(tr->zone_pt, bp, sizeof bp);
+	tr->zone_in = in->blade && somvr_df_zone_holds(c, best, bc);
+	if (tr->zone_in)
+		tr->zone_in_t = t, tr->zone_entries += !was;
+}
+
+/* build 38 (zone): the blow arrives (the weapon at the zone, or its impact) inside the window with the blade in the zone */
+static int zone_arrived(const somvr_df_cfg *c, const somvr_df_track *tr, const somvr_df_in *in)
+{
+	if (in->ts >= in->impact)
+		return 1;
+	for (int k = 0; k < in->norc && k < 2; k++) {
+		float cr, p[3], d = somvr_df_zone_blade(tr->zone_c, tr->zone_n, in->ob[k], in->ot[k], &cr, p);
+		if (d <= c->zone_meet_cm)
+			return 1;
+	}
+	return 0;
 }
 
 int somvr_df_contact_window(const somvr_df_cfg *c, float impact, float ts)
@@ -262,6 +454,8 @@ int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const som
 		}
 		int hand = c->contact_hand && in->have_hand_blade && fin3(in->hb) && fin3(in->ht);
 		int hprev = hand && tr->have_hprev && tr->prev_norc == in->norc;
+		if (c->zone && tr->contact_t < 0) /* build 38: the block zone's place and the blade in it */
+			zone_step(c, tr, t, in);
 		for (int k = 0; win && in->blade && k < in->norc && k < 2 && tr->contact_t < 0; k++) {
 			float cross = 0, pt[3] = { 0, 0, 0 };
 			/* build 32: a thrust (the weapon's middle driven along its own line) meets a guard within contact_thrust_cm
@@ -294,6 +488,19 @@ int somvr_df_step(const somvr_df_cfg *c, somvr_df_track *tr, double t, const som
 				tr->met_by = by;
 				tr->contact_t = t, tr->contact_cm = d, tr->contact_cross = cross, tr->contact_ts = in->ts;
 				memcpy(tr->contact_pt, pt, sizeof pt);
+				fire = 2;
+			}
+		}
+		/* build 38: the blade in the block zone (or there within grace_s) when the blow arrives = the block */
+		if (c->zone && !fire && win && tr->contact_t < 0 && tr->zone_ok && c->block_on && somvr_df_can_block(c, in->type) &&
+		    (tr->zone_in || (tr->zone_in_t >= 0 && t - tr->zone_in_t <= c->grace_s + 1e-9)) && zone_arrived(c, tr, in)) {
+			if (c->contact_move_cm > 0 && tr->blade_cm < c->contact_move_cm) { /* a still guard: through it */
+				if (!tr->still)
+					tr->still = 1, tr->still_cm = tr->zone_cm;
+			} else {
+				tr->met_by = 3;
+				tr->contact_t = t, tr->contact_cm = tr->zone_cm, tr->contact_cross = tr->zone_cross, tr->contact_ts = in->ts;
+				memcpy(tr->contact_pt, tr->zone_pt, sizeof tr->contact_pt);
 				fire = 2;
 			}
 		}

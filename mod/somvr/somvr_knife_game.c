@@ -56,6 +56,13 @@ static struct {
 	int32_t seen_id;
 	double seen_end;
 	_Atomic int req_mode, req_seen, req_status, req_where;
+	/* build 40 (re-xr-pipeline.md 175.3; a test aid): `knife push D MS [sword]` - the push measured and started in one
+	 * frame (D cm past his back, MS ms; the sword's blade with `sword`): the words' thread sets, in_frame takes */
+	_Atomic int req_push;
+	float push_d, push_ms;
+	int push_sword, push_turn, push_pend;
+	uint64_t push_frame;
+	char push_w[160]; /* the swing, 2 frames after the ready's test pose (a test cancels a swing given in its frame) */
 	uint64_t holds, ends[KN_END_N], misses, kills, lights, light_slow, light_air, seen_n, seen_fail, vb_skips, frames;
 	uint32_t lines;
 } g_kn = { .hand = -1, .end = -1, .hit_hand = -1 };
@@ -174,6 +181,89 @@ static void kn_where(const sv_vec3 pw[2], sv_vec3 eye, double t)
 
 /* in_frame (the game thread, after the slots, before the climb): the free hand's grip on a candidate. pw: the grips,
  * world cm; eye: the head */
+/* build 40 (re-xr-pipeline.md 175.3; a test aid for headless drivers): `knife push D MS [sword]` - the nearest
+ * candidate's back (kn_where's: the torso-neck middle 16 cm toward his back), the judge's blade (the knife's, or the
+ * sword's), both this frame: the right test hand swung by the point's way to his back + D cm on, in MS ms, its turn
+ * kept (`hands swing R`). With `turn`: the hand first turned so the blade lies along that way, the point 10 cm short of
+ * his back (`hands test R`), then 2 frames later swung D cm past it (a straight thrust along the blade) - exact for a
+ * blade rigid on the test hand (offline, 200 poses), but in boot 093501 a turn of 80-90 deg missed: opt-in only. The Windows build reads one word a second: a measure (`knife where`) and a push word
+ * written from it came 2-3 s apart while the orc swayed 10-30 cm (boots 084104, 085331: the push 7-17 cm off his body) */
+static void kn_push(sv_vec3 eye, double t)
+{
+	const somvr_blade *b = &g_stl.bl[g_kn.push_sword ? SOMVR_HAND_R : SOMVR_HAND_L];
+	const struct kn_cand *k = NULL;
+	float bd = 1e9f;
+	for (int i = 0; i < g_kn.ncand; i++) {
+		float d = dist3(g_kn.cand[i].a, (float[3]){ eye.x, eye.y, eye.z });
+		if (d < bd)
+			bd = d, k = &g_kn.cand[i];
+	}
+	if (!k && g_kn.have_near)
+		k = &g_kn.near;
+	if (!k || g_fr.frame - g_kn.cand_frame > 2 || !b->valid || !g_bd.test || !g_bd.t_on[1]) {
+		logf_("KNIFE push t=%.3f: nothing done (%s)", t, !k || g_fr.frame - g_kn.cand_frame > 2 ? "no orc within 3 m"
+		      : !b->valid ? "no blade" : "no right test hand");
+		return;
+	}
+	const float *T = k->a, *N = k->n;
+	float y = k->yaw, B[3] = { 0.5f * (T[0] + N[0]) - 16.0f * sinf(y), 0.5f * (T[1] + N[1]), 0.5f * (T[2] + N[2]) - 16.0f * cosf(y) };
+	float hv = g_inp.hv, cs = cosf(hv), sn = sinf(hv);
+#define KP_HF(P) ((sv_vec3){ ((P)[0] - eye.x) * cs - ((P)[2] - eye.z) * sn, (P)[1] - eye.y, ((P)[0] - eye.x) * sn + ((P)[2] - eye.z) * cs })
+	sv_vec3 bh = KP_HF(B), th = KP_HF(b->tip), sh = KP_HF(b->base); /* (the head's yaw frame: x right, y up, z ahead) */
+#undef KP_HF
+	sv_vec3 dv = { bh.x - th.x, bh.y - th.y, bh.z - th.z };
+	float dl = sqrtf(dv.x * dv.x + dv.y * dv.y + dv.z * dv.z);
+	sv_vec3 ax = { th.x - sh.x, th.y - sh.y, th.z - sh.z };
+	float al = sqrtf(ax.x * ax.x + ax.y * ax.y + ax.z * ax.z);
+	if (!(dl > 1e-3f && al > 1e-3f))
+		return;
+	sv_vec3 u = { dv.x / dl, dv.y / dl, dv.z / dl };
+	float cosax = (ax.x * u.x + ax.y * u.y + ax.z * u.z) / al;
+	const float *v0 = g_bd.t_v[1];
+	if (!g_kn.push_turn) { /* (the default, boot 090833's: the grip moved by the point's way to his back + D cm on, its turn
+	                        * kept - boot 093501: a turn of 80-90 deg onto the way put the hand where the judge's blade did
+	                        * not follow, the grab and the sword missed) */
+		char w0[160];
+		float m = 1.0f + g_kn.push_d / dl;
+		snprintf(w0, sizeof w0, "swing R %.1f %.1f %.1f %.1f %.1f %.1f %.0f", v0[0] + dv.x * m, v0[1] + dv.y * m, v0[2] + dv.z * m,
+			 v0[3], v0[4], v0[5], (double)g_kn.push_ms);
+		bd_word(w0);
+		logf_("KNIFE push t=%.3f: orc %#llx's back %.0f cm from the %s's point (the blade %.2f along that way); the right hand "
+		      "%+.1f %+.1f %+.1f cm in %.0f ms (%.0f cm past his back; a test aid)", t, (unsigned long long)k->c, (double)dl,
+		      g_kn.push_sword ? "sword" : "knife", (double)cosax, (double)(dv.x * m), (double)(dv.y * m), (double)(dv.z * m),
+		      (double)g_kn.push_ms, (double)g_kn.push_d);
+		return;
+	}
+	/* `turn`: the blade turned onto the way (about the grip; `hands test`'s turns are OpenXR's axes: z back), its point then 10
+	 * cm short of his back on that way: the ready; the push from there D cm past it along the way - the grip moved, not
+	 * turned (a straight thrust along the blade) */
+	const float *v = g_bd.t_v[1];
+	sv_quat qh = sa_xf_euler((float[6]){ 0, 0, 0, v[3], v[4], v[5] }).q;
+	sv_quat qa = fn_qalign((sv_vec3){ ax.x / al, ax.y / al, -ax.z / al }, (sv_vec3){ u.x, u.y, -u.z });
+	float ang[3];
+	fn_euler(sv_qmul(qa, qh), ang);
+	sv_vec3 o = sv_qrot(qa, (sv_vec3){ th.x - v[0], th.y - v[1], -(th.z - v[2]) }); /* the point from the grip, turned */
+	o.z = -o.z;
+	float r0 = 10.0f, r1 = g_kn.push_d;
+	char w[160];
+	snprintf(w, sizeof w, "test R %.1f %.1f %.1f %.1f %.1f %.1f", bh.x - r0 * u.x - o.x, bh.y - r0 * u.y - o.y, bh.z - r0 * u.z - o.z,
+		 ang[0], ang[1], ang[2]);
+	bd_word(w);
+	snprintf(g_kn.push_w, sizeof g_kn.push_w, "swing R %.1f %.1f %.1f %.1f %.1f %.1f %.0f", bh.x + r1 * u.x - o.x, bh.y + r1 * u.y - o.y,
+		 bh.z + r1 * u.z - o.z, ang[0], ang[1], ang[2], (double)g_kn.push_ms);
+	g_kn.push_pend = 1, g_kn.push_frame = g_fr.frame;
+	logf_("KNIFE push t=%.3f: orc %#llx's back %.0f cm from the %s's point (the blade %.2f along that way, turned onto it); the "
+	      "ready 10 cm short (%s), then %s (%.0f cm past his back; a test aid)", t, (unsigned long long)k->c, (double)dl,
+	      g_kn.push_sword ? "sword" : "knife", (double)cosax, w, g_kn.push_w, (double)g_kn.push_d);
+}
+
+/* build 40: the push's swing, 2 frames after its ready (kn_hands, every frame) */
+static void kn_push_frame(void)
+{
+	if (g_kn.push_pend && g_fr.frame >= g_kn.push_frame + 2)
+		g_kn.push_pend = 0, bd_word(g_kn.push_w);
+}
+
 static void kn_hands(const sv_vec3 pw[2], sv_vec3 eye)
 {
 	if (!g_kn.on)
@@ -181,6 +271,9 @@ static void kn_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	double t = cb_now();
 	if (atomic_exchange(&g_kn.req_where, 0))
 		kn_where(pw, eye, t);
+	if (atomic_exchange(&g_kn.req_push, 0))
+		kn_push(eye, t);
+	kn_push_frame();
 	if (!g_kn.hold)
 		return;
 	int ks = sl_knife_side(), fh = ks >= 0 ? 1 - ks : -1, edge[2] = { 0, 0 };
@@ -414,6 +507,14 @@ static const char *kn_word(const char *w)
 		return "knife (SOMVR_HANDS_TEST only: ignored)";
 	if (!strcmp(w, "on") || !strcmp(w, "off"))
 		return atomic_store(&g_kn.req_mode, w[1] == 'n' ? 2 : 1), w[1] == 'n' ? "knife on" : "knife off";
+	if (!strncmp(w, "push ", 5)) { /* build 40: a test aid (175.3) */
+		float d = 0, ms = 0;
+		if (sscanf(w + 5, "%f %f", &d, &ms) < 2 || d < -30 || d > 40 || ms < 50 || ms > 3000)
+			return "knife push D MS [sword] [turn] (D -30..40 cm past his back, MS 50..3000: ignored)";
+		g_kn.push_d = d, g_kn.push_ms = ms, g_kn.push_sword = strstr(w + 5, "sword") != NULL;
+		g_kn.push_turn = strstr(w + 5, "turn") != NULL;
+		return atomic_store(&g_kn.req_push, 1), "knife push (a test: the hand's push onto his back, measured this frame)";
+	}
 	if (!strcmp(w, "seen on") || !strcmp(w, "seen off"))
 		return atomic_store(&g_kn.req_seen, w[6] == 'n' ? 2 : 1), w[6] == 'n' ? "knife seen on" : "knife seen off";
 	return "knife (not status|where|on|off|seen on|off: ignored)";

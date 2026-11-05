@@ -129,6 +129,7 @@ dome() { local n0
   climbing && { climbup 6 dome; dd "dome-climb"; }
   reset; }
 
+[ "${CLIMB39_LIB:-0}" = 1 ] && return 0 2>/dev/null   # (build 40: sourced for its functions by climb40-drive.sh)
 card
 for p in $PLAN39; do
   case $p in

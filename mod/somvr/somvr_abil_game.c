@@ -448,6 +448,11 @@ static void abl_ground_kill(uintptr_t pc, const float tip[3], double t)
 		      "logged only (SOMVR_ABIL=log)" : "the orc is gone or dead");
 		return;
 	}
+	if (fn_busy(of->c)) { /* build 41 (som-b41-finlib): the finisher's downed orc (its stab down is the finisher's) */
+		logf_("ABIL t=%.3f the ground finisher on orc %#llx: the finisher has it (SOMVR_FINISHER) - nothing", t,
+		      (unsigned long long)of->c);
+		return;
+	}
 	if (kl_busy(of->c)) { /* review b34: its SOMVR_KILLS kill plays (a killing blow took the downed orc): its death comes at
 			       * its moment - no second kill cutting its half, no charge spent (boot 20261103-171756 t=80001.404:
 			       * "not taken (its kill already plays)", then this kill and "the charge spent") */

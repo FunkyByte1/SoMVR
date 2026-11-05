@@ -1473,7 +1473,59 @@ static void test_side37(void) {
 #undef CANT
 }
 
+/* build 40 (SOMVR_BOW_HANG_REACH): the bow hand on its way to the bow - at the slot, reaching for it (closing, not ahead
+ * of the face), unseen, the grace after a draw intent; a reach up in front and a hand moving away never count */
+static void test_reach40(void) {
+    somvr_bow_reach_cfg c;
+    somvr_bow_reach_defaults(&c, 20);
+    CHECK(c.at_cm == 30 && c.toward_cm == 45 && c.toward_cms == 40 && c.ahead_cm == 10 && c.grace_s == 2 && c.intent_cm == 40,
+          "b40 reach defaults (at %g)", c.at_cm);
+    somvr_bow_reach_st s;
+    double t = 1000;
+    int why[5] = {0}, w = 0;
+    /* a hand at the hip (60 cm off), still: none; then up over the shoulder to the slot at 60 cm/s, behind the face */
+    memset(&s, 0, sizeof s);
+    for (int i = 0; i < 90; i++, t += 1.0 / 90) w = somvr_bow_reach_step(&s, &c, 1, 60, 5, 0, t);
+    CHECK(w == SOMVR_BRCH_NONE, "b40 reach: a still hand 60 cm off: none (%d)", w);
+    float d = 60;
+    int toward_at = -1, at_at = -1;
+    for (int i = 0; i < 90; i++, t += 1.0 / 90) {
+        d -= 60.0f / 90;
+        w = somvr_bow_reach_step(&s, &c, 1, d, -5, 0, t);
+        if (w == SOMVR_BRCH_TOWARD && toward_at < 0) toward_at = i;
+        if (w == SOMVR_BRCH_AT && at_at < 0) at_at = i;
+    }
+    CHECK(toward_at >= 20 && toward_at <= 25 && at_at >= 44 && at_at <= 46,
+          "b40 reach: over the shoulder at 60 cm/s: reaching from %d cm (frame %d), at the slot from frame %d", 60 - (toward_at + 1) * 2 / 3,
+          toward_at, at_at);
+    /* the same closing speed with the hand 20 cm ahead of the face (a reach up the wall): never toward */
+    memset(&s, 0, sizeof s), d = 60;
+    for (int i = 0; i < 40; i++, t += 1.0 / 90) d -= 60.0f / 90, why[somvr_bow_reach_step(&s, &c, 1, d, 20, 0, t)]++;
+    CHECK(why[SOMVR_BRCH_TOWARD] == 0, "b40 reach: closing in front of the face: not a reach (%d)", why[SOMVR_BRCH_TOWARD]);
+    /* moving away from 32 to 40 cm: none past 30 (no grace) */
+    memset(&s, 0, sizeof s), d = 32;
+    for (int i = 0; i < 30; i++, t += 1.0 / 90) d += 0.3f, w = somvr_bow_reach_step(&s, &c, 1, d, -5, 0, t);
+    CHECK(w == SOMVR_BRCH_NONE, "b40 reach: moving away: none (%d)", w);
+    /* unseen: waits; the speed starts again from the next located sample */
+    w = somvr_bow_reach_step(&s, &c, 0, 0, 0, 0, t);
+    CHECK(w == SOMVR_BRCH_UNSEEN && !s.have, "b40 reach: unseen (%d)", w);
+    /* a grip closed 35 cm from the slot: the grace 2 s; 50 cm off: none; the bow put away (2): the grace anywhere */
+    memset(&s, 0, sizeof s);
+    somvr_bow_reach_step(&s, &c, 1, 35, 0, 1, t);
+    int g1 = somvr_bow_reach_step(&s, &c, 1, 55, 0, 0, t + 1.9), g2 = somvr_bow_reach_step(&s, &c, 1, 55, 0, 0, t + 2.1);
+    memset(&s, 0, sizeof s);
+    somvr_bow_reach_step(&s, &c, 1, 50, 0, 1, t);
+    int g3 = somvr_bow_reach_step(&s, &c, 1, 55, 0, 0, t + 0.5);
+    memset(&s, 0, sizeof s);
+    somvr_bow_reach_step(&s, &c, 1, 70, 0, 2, t);
+    int g4 = somvr_bow_reach_step(&s, &c, 1, 70, 0, 0, t + 1.0);
+    CHECK(g1 == SOMVR_BRCH_GRACE && g2 == SOMVR_BRCH_NONE && g3 == SOMVR_BRCH_NONE && g4 == SOMVR_BRCH_GRACE,
+          "b40 reach: the grace after a grip near the slot (%d %d), none after one 50 cm off (%d), after a put away (%d)", g1, g2,
+          g3, g4);
+}
+
 int main(void) {
+    test_reach40();
     test_qfilter33();
     test_fit37();
     test_side37();

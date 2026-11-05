@@ -299,6 +299,7 @@ enum {                                /* why a climb ended (somvr_climb_out.end_
     SOMVR_CLIMB_END_OVER,             /* push: the head over the top (past the edge by over_cm): standing on it */
     SOMVR_CLIMB_END_DROP,             /* the drop button (somvr.c: A) while holding or hanging: let go of the wall */
     SOMVR_CLIMB_END_BLINK,            /* descent: the blink's teleport put him on the ground (somvr_climb_stop) */
+    SOMVR_CLIMB_END_THROWN,           /* build 40 (fling_off): thrown off the wall (out.thrown: the jump's arc from here) */
     SOMVR_CLIMB_NEND
 };
 enum {                                /* somvr_climb_out.events: what happened this frame (bit << 1 per hand where _L/_R) */
@@ -448,7 +449,12 @@ typedef struct {
                               * = the climb down (the down glide at dn_a_cms: out over the edge, down to the hang under
                               * the lip, facing the face - out.fa_down; out.fa_turn: the view faced the drop); else = the
                               * step off (out.fa_step, fa_dir, fa_edge_cm: somvr.c walks him over it). No drop ring on foot */
-    float dn_a_cms;          /* ... the climb down's speed (70) */
+    float dn_a_cms;          /* ... the climb down's speed (build 40: 105; the VR menu's Climb-down speed) */
+    float dn_a_under_cm;     /* build 40: ... its end: the eyes this far under the top (-10: 10 cm over it - the lip at
+                              * the hands, "a little higher"; the grab's dn_under_cm is 25) */
+    float fa_hold_s;         /* build 40: A held this long at an edge = the climb down (0.5); let go sooner = the step off */
+    float a2_s;              /* build 40: on a wall, a second A within this of the first = let go, the fall (0 off;
+                              * somvr.c: SOMVR_CLIMB_A_TWICE_S 0.4) */
     int top_a;               /* build 39 (SOMVR_CLIMB_TOP_A; 0 off): on foot, a hand resting on a top (within top_a_rest_cm
                               * over its floor, top_a_min_cm .. 250 cm over the feet) with a landing on it (the pullover's
                               * search, in from the hand) = out.ta_show (the ring there, A UP); A's press then = the blink
@@ -594,6 +600,16 @@ typedef struct {
                               * the contact +5 cm - and the next bump held him 0.15 s again: 30-110 cm/s of 180-300 asked);
                               * a move down is the game's collision as ever (the feet never through a ledge); a new driving
                               * hold must be the through's kind (over the eyes, thr_low's, thr_top's) or it ends */
+    int fling_off;           /* build 40 (SOMVR_CLIMB_FLING_OFF, with fling; 0 off): the throw off the wall - the last hold
+                              * let go while its hand still pushed hard toward the wall (the body away from it at fo_min
+                              * cm/s or more; the 11-04/05 sessions' let-gos: 234 of 239 under 50, the user's two tries
+                              * 185 and 257) = the climb ends (SOMVR_CLIMB_END_THROWN, gravity back) and out.thrown carries
+                              * the hands' own release velocity: away, along the wall and up 1:1 (x fling_gain as every
+                              * fling), the up part at least fo_up_frac of the level speed (an arc, not a slide off), all
+                              * of it at most fling_max - somvr.c hands it to the jump's arc (its landing, a grip in flight
+                              * = the climb again). Nothing else starts a throw */
+    float fo_min;            /* ... (150 cm/s) */
+    float fo_up_frac;        /* ... (0.25) */
     int liberal;             /* build 39 (SOMVR_CLIMB_LIBERAL; 0 off): a grip anywhere near rough rock holds - the grab's
                               * rays also fan LIB_DEG round the palm's and the fingers' (4 more each) and run level from
                               * the head through the hand (the face the hand is at); the reach is SOMVR_CLIMB_REACH_CM's */
@@ -630,6 +646,9 @@ typedef struct {
     int allow;          /* the game allows a climb now (somvr.c: FSM Supported, not mounted, first person, the objects) */
     int bow_hang;       /* build 37 (somvr.c, SOMVR_BOW_HANG: the bow out in the hang or its view held): hang_free waits -
                            no ease toward the face, no release (the game's aim stance moves him ~30 cm out) */
+    int bow_reach;      /* build 40 (somvr.c, SOMVR_BOW_HANG_REACH; somvr_bow_reach_step's why, 0 none): the bow hand at or
+                         * reaching for its shoulder slot, not seen, or the grace after a draw intent - hang_free waits as
+                         * for bow_hang, and its clocks (the ease's hang_free_s, a top's hang_top_s) count from its end */
     int nograb;         /* no new hold now (somvr.c: the hands are on the bow): a press is spent, the grip must open
                          * before it may grab; holds already taken are kept */
     int nograb_h[2];    /* build 31: the same for hand h alone (somvr.c, SOMVR_CLIMB_SWORD: the press a slot took, the
@@ -809,8 +828,17 @@ typedef struct {
     int po_by_a;        /* the last E_PO_GO was A's press (1: the ring shown, 2: kept after the let-go) */
     uint64_t po_a_goes, po_keeps; /* A's goes; the rings kept after a let-go */
     int dn_by_a, dn_a_held; /* build 39 (foot_a): the down glide started by A (no grip); A still down from its press */
+    int dn_grip0[2];        /* build 40: the grips down at the glide's start (a new grip on a hold ends it) */
+    int fa_on;              /* build 40: A down on foot at an edge, its tap or hold not decided yet */
+    double fa_t0, a2_t;     /* ... since; build 40: the last A on a wall (the double press) */
+    sv_vec3 fa_root, fa_u1, fa_u2; /* ... where; the tap's way (the held edge, the view's, else the nearest) and the hold's
+                                    * (the nearest edge, any way) */
+    float fa_e1, fa_e2;
+    uint64_t fa_holds, fa_rings, a2_drops, dn_grabs;
     uint64_t fa_steps, fa_downs, fa_nodowns, fa_noedges;
     double hf_t, hf_prog_t;  /* build 39 (hang_free): the ease's start, its last progress */
+    double hf_keep_t;        /* build 40: the last frame the bow (bow_hang, bow_reach) kept the hang (-1 none this hang) */
+    uint64_t hf_keeps;       /* ... the frames it kept a hands-free hang (all hangs) */
     float hf_face;          /* ... the face's distance at the last progress (cm) */
     double hf_probe_t;      /* ... the next look round; the nearest face (cm) and its way (level unit) */
     float hf_best;
@@ -957,6 +985,12 @@ typedef struct {
     uint64_t thr_kept, thr_downs;
     /* build 39 (liberal): holds taken by the fan's or the head's level ray only */
     uint64_t lib_holds;
+    /* build 40 (fling_off): throws; the last one's velocity (world cm/s), its away / along / up parts as the hand gave
+     * them (cm/s), capped */
+    uint64_t fo_n;
+    sv_vec3 fo_v;
+    float fo_out, fo_side, fo_up_given;
+    int fo_capped;
 } somvr_climb;
 
 typedef struct {
@@ -992,12 +1026,15 @@ typedef struct {
     float keep_cut;         /* build 39 (head_keep): this frame's move toward the face cut (cm) */
     float keep_push;        /* ... this frame's ease out (cm) */
     float side_step;        /* build 39 (side): this frame's slide (cm, + right) */
+    int thrown;             /* build 40 (fling_off): thrown off the wall this frame (the climb ended): thrown_v, world cm/s */
+    sv_vec3 thrown_v;
     int am_show;            /* A mantle: available: show the landing (am_land: the floor point, world cm) */
     sv_vec3 am_land;
     int dm_show;            /* drop_mark: show the ring at dm_land and the line from dm_top down to it (world cm) */
     sv_vec3 dm_land, dm_top;
     float dm_held;          /* ... A held so far, 0..1 of dm_min_s (1: a let-go goes; 0 for a tap's ring) */
     float dm_armed_s;       /* timer: A held with a landing past dm_min_s: the time since it ran full (s); else -1 */
+    int a2_drop, fa_ring;   /* build 40: a double A on the wall let go; the stick back + A showed the drop ring */
     int fa_step, fa_down, fa_turn, fa_nodown; /* build 39 (foot_a): A on foot at an edge: the step off / the climb down
                                                * (fa_turn: the view faced the drop) / no way down by hand here */
     sv_vec3 fa_dir;         /* ... the edge's way (level unit, out over it) */
@@ -1034,6 +1071,8 @@ sv_vec3 somvr_climb_clamp(sv_vec3 v, float max_len);                /* v shorten
  * horizontal into the wall, or 0): only up (see fling above); 1 = a fling (*v0, the parts in s->fl_up/side/into/out,
  * fl_capped), 0 = under fling_min (the parts filled all the same) */
 int somvr_climb_fling_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw, sv_vec3 toward, sv_vec3 *v0);
+/* build 40 (fling_off): the throw off the wall's rule (see cfg.fling_off): 1 = a throw (*v0, world cm/s) */
+int somvr_climb_throw_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw, sv_vec3 toward, sv_vec3 *v0);
 /* build 31: the fling down's rule (see fling): vw as above, net_cm how far the hold took him down since it began to
  * drive; 1 = a fling down (*v0; s->fd_down, fd_net, fl_side/into/out, fl_capped), 0 = none (s->fd_why) */
 int somvr_climb_fling_down_rule(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 vw, sv_vec3 toward, float net_cm,

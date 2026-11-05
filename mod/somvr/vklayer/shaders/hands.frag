@@ -23,8 +23,67 @@ layout(constant_id = 0) const float SOFT = 0.015;     // the edge's width (m)
 layout(constant_id = 1) const float BIAS = 0.0075;    // its centre behind the surface (m)
 layout(constant_id = 2) const float TEXEL = 1.0;      // the game depth's pixels per pixel of ours
 layout(constant_id = 3) const int DEBUG = 0;          // 1: the hand shows (its distance - the world's): R 0.5 +- 10 cm
+// build 40 (som-b40-herb, docs/re-xr-pipeline.md 176): the pick outline (params.w < 0). The plant is a cylinder: its
+// foot light.xyz (XR m, Y up), params.y round, params.z high; a disc over it marks the pixels to look at. A pixel whose
+// ray passes the cylinder looks at the game's depth round it (16 rays, 4 steps out to params.x of our pixels): each
+// neighbour's depth back into the world along this pixel's ray - a neighbour inside the cylinder (the plant, not the
+// grass beside it) with this pixel more than gap = -params.w farther behind it is the plant's silhouette edge: drawn
+// base.rgb, soft outward, x the disc's alpha x light.w. Never hidden by the world's depth (it is the world's own edge).
+float wz(ivec2 p, ivec2 last) {
+    float d = texelFetch(world, clamp(p, ivec2(0), last), 0).r;
+    return d > 0.0 ? pc.eye.w / d : 1.0e6; // (0: the sky, infinitely far)
+}
+void outline() {
+    float a = clamp(v_a, 0.0, 1.0) * pc.light.w;
+    vec3 foot = pc.light.xyz, dr = normalize(-v_view); // this pixel's ray from the eye
+    float R = pc.params.y, H = pc.params.z, gap = -pc.params.w;
+    // the ray's nearest pass by the plant's axis (in the ground plane) while it is within the plant's height
+    float tlo = 0.0, thi = 1.0e3;
+    if (abs(dr.y) > 1.0e-4) {
+        float t1 = (foot.y - 0.05 - pc.eye.y) / dr.y, t2 = (foot.y + H + 0.05 - pc.eye.y) / dr.y;
+        tlo = max(min(t1, t2), 0.0), thi = max(t1, t2);
+    } else if (pc.eye.y < foot.y - 0.05 || pc.eye.y > foot.y + H + 0.05) {
+        o_col = vec4(0.0);
+        return;
+    }
+    vec2 v = foot.xz - pc.eye.xz, dd = dr.xz;
+    float ll = dot(dd, dd), t = ll > 1.0e-8 ? clamp(dot(v, dd) / ll, tlo, thi) : tlo;
+    if (thi < tlo || length(dd * t - v) > R + 0.06 || a <= 0.0) { // nowhere near the plant: nothing (no depth read)
+        o_col = vec4(0.0);
+        return;
+    }
+    if (pc.eye.w <= 0.0) { // no world depth this frame: a faint glow (where, not what)
+        o_col = vec4(pc.base.rgb, 1.0) * (0.18 * a);
+        return;
+    }
+    vec3 f = vec3(pc.vp[0][3], pc.vp[1][3], pc.vp[2][3]); // clip w = the distance along the eye's forward
+    float w0 = dot(f, pc.eye.xyz) + pc.vp[3][3], fd = max(dot(f, dr), 1.0e-3);
+    ivec2 last = textureSize(world, 0) - ivec2(1);
+    vec2 c = gl_FragCoord.xy * TEXEL;
+    float z0 = wz(ivec2(c), last), w = max(pc.params.x, 1.0) * TEXEL, best = 0.0;
+    for (int i = 0; i < 16; i++) {
+        vec2 dir = vec2(cos(0.39269908 * float(i)), sin(0.39269908 * float(i)));
+        for (int r = 1; r <= 4; r++) {
+            float zn = wz(ivec2(c + dir * (w * float(r) * 0.25)), last);
+            if (!(z0 - zn > gap)) continue;
+            vec3 q = pc.eye.xyz + dr * ((zn - w0) / fd) - foot; // (a few pixels off this ray: < 2 cm at 2 m)
+            if (length(q.xz) < R && q.y > 0.04 && q.y < H) {
+                best = max(best, 1.0 - 0.22 * float(r - 1));
+                break;
+            }
+        }
+    }
+    a *= best;
+    o_col = vec4(pc.base.rgb * a, a);
+}
 #endif
 void main() {
+#ifdef WORLD_DEPTH
+    if (pc.params.w < 0.0) {
+        outline();
+        return;
+    }
+#endif
     if (pc.base.a < 0.5) { // an occluder: nothing drawn, its depth kept (the hands behind it are hidden)
         o_col = vec4(0.0);
         return;

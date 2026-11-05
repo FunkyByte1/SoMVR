@@ -178,6 +178,108 @@ int main(void)
     CHECK(somvr_fn_why(INFINITY, 230, 1, cmin, 10, 70, 1) == SOMVR_FN_WHY_NONE &&
               somvr_fn_why_text(SOMVR_FN_WHY_NONE)[0] == 'n' && somvr_fn_why_text(99)[0] == '?',
           "no orc: its own reason; an unknown one '?'");
+
+    /* ---- build 41 (som-b41-finlib): the library ---- */
+    for (int k = 0; k < SOMVR_FNK_N; k++) {
+        const somvr_fn_kind *kd = somvr_fn_kind_of(k);
+        CHECK(kd && kd->id && kd->name && kd->row && kd->row[0] && kd->node >= 1 && kd->node <= 3 && kd->snd_in &&
+                  kd->snd_kill[0] && kd->snd_kill[0][0] && somvr_fn_kind_word(kd->id) == k &&
+                  somvr_fn_kind_word(kd->name) == k,
+              "kind %d: its table row whole, its word and name read back", k);
+        CHECK(kd->motion == SOMVR_FNM_STAB ? kd->depth_cm > 5 : kd->cut_from_deg > 0 && kd->cut_to_deg < 0,
+              "kind %d: a stab's depth, a cut through its node (from one side to the other)", k);
+    }
+    CHECK(!somvr_fn_kind_of(SOMVR_FNK_N) && somvr_fn_kind_word("AUTO") == SOMVR_FNK_N && somvr_fn_kind_word("Behead") ==
+              SOMVR_FNK_BEHEAD && somvr_fn_kind_word("nope") == -1 && somvr_fn_kind_word(NULL) == -1,
+          "the words: auto, any case, unknown");
+    CHECK(somvr_fn_kind_of(SOMVR_FNK_BEHEAD)->sever && somvr_fn_kind_of(SOMVR_FNK_STUNNED)->sever &&
+              !somvr_fn_kind_of(SOMVR_FNK_NECK)->sever && somvr_fn_kind_of(SOMVR_FNK_STUNNED)->cut_up > 0.5f &&
+              somvr_fn_kind_of(SOMVR_FNK_BEHEAD)->cut_up < 0.5f,
+          "the cuts sever (the swipe level, the chop from above); the stabs do not");
+    /* the pick: the flat game's choice by state and side */
+    int F = SOMVR_FNS_FRONT | SOMVR_FNS_AWARE, B = SOMVR_FNS_BACK | SOMVR_FNS_AWARE;
+    CHECK(somvr_fn_pick_kind(F, 0, SOMVR_FNK_N) == SOMVR_FNK_NECK && somvr_fn_pick_kind(F, 1, SOMVR_FNK_N) == SOMVR_FNK_BEHEAD &&
+              somvr_fn_pick_kind(F, 2, SOMVR_FNK_N) == SOMVR_FNK_FACE && somvr_fn_pick_kind(F, 3, SOMVR_FNK_N) == SOMVR_FNK_NECK,
+          "a fighting orc facing Talion: neck, behead, face in turn");
+    CHECK(somvr_fn_pick_kind(B, 0, SOMVR_FNK_N) == SOMVR_FNK_BACK &&
+              somvr_fn_pick_kind(SOMVR_FNS_BACK, 0, SOMVR_FNK_N) == -1,
+          "its back to Talion: the back stab - not on an unaware back (the stealth kill's)");
+    CHECK(somvr_fn_pick_kind(F | SOMVR_FNS_DOWNED, 1, SOMVR_FNK_N) == SOMVR_FNK_DOWNED &&
+              somvr_fn_pick_kind(B | SOMVR_FNS_DOWNED, 1, SOMVR_FNK_N) == SOMVR_FNK_DOWNED &&
+              somvr_fn_pick_kind(SOMVR_FNS_DOWNED, 1, SOMVR_FNK_N) == SOMVR_FNK_DOWNED,
+          "downed: the stab down, from any side");
+    CHECK(somvr_fn_pick_kind(F | SOMVR_FNS_STUNNED, 0, SOMVR_FNK_N) == SOMVR_FNK_STUNNED &&
+              somvr_fn_pick_kind(B | SOMVR_FNS_STUNNED, 0, SOMVR_FNK_N) == SOMVR_FNK_STUNNED,
+          "stunned: the chop, from either side");
+    CHECK(somvr_fn_pick_kind(F | SOMVR_FNS_COUNTER, 0, SOMVR_FNK_N) == SOMVR_FNK_COUNTER &&
+              somvr_fn_pick_kind(B | SOMVR_FNS_COUNTER, 0, SOMVR_FNK_N) == SOMVR_FNK_BACK,
+          "a parry's opening facing Talion: the counter kill (its back: the back stab)");
+    CHECK(somvr_fn_pick_kind(0, 0, SOMVR_FNK_N) == -1 && somvr_fn_pick_kind(SOMVR_FNS_AWARE, 0, SOMVR_FNK_N) == -1,
+          "side on: none");
+    CHECK(somvr_fn_pick_kind(F, 0, SOMVR_FNK_FACE) == SOMVR_FNK_FACE && somvr_fn_pick_kind(F, 0, SOMVR_FNK_DOWNED) == -1 &&
+              somvr_fn_pick_kind(SOMVR_FNS_BACK, 0, SOMVR_FNK_BACK) == SOMVR_FNK_BACK &&
+              somvr_fn_pick_kind(F, 0, SOMVR_FNK_COUNTER) == -1 &&
+              somvr_fn_pick_kind(F | SOMVR_FNS_DOWNED, 0, SOMVR_FNK_NECK) == -1,
+          "the test's type: that one when the situation allows it (an unaware back too), else none");
+    /* the cut's arc: a hunched fighting orc's neck at the fight's distance (as above: 85 cm under the eyes, ~1 m ahead) */
+    somvr_fn_place_cfg pq;
+    somvr_fn_place_defaults(&pq);
+    float nk1[3] = {0, -70, 115};
+    somvr_fn_arc arc;
+    int wy = -9;
+    CHECK(somvr_fn_arc_place(&pq, nk1, 0, 50, -45, &arc, &wy) && wy == SOMVR_FN_WHY_OK, "the beheading placed at 1.15 m");
+    float gg[3], dd[3], wa[3];
+    somvr_fn_arc_at(&arc, 0, gg, dd, wa);
+    float gr = sqrtf((gg[0] - pq.body[0]) * (gg[0] - pq.body[0]) + (gg[1] - pq.body[1]) * (gg[1] - pq.body[1]) +
+                     (gg[2] - pq.body[2]) * (gg[2] - pq.body[2]));
+    float hz = sqrtf(gg[0] * gg[0] + gg[2] * gg[2]);
+    CHECK(gr <= 50.5f && gg[0] > pq.body[0] && fabsf(dd[1]) < 0.5f && hz < 65,
+          "its start: the grip %.0f cm from the shoulder, to the sword side (x %.0f), %.0f cm out from the eyes (the arm's "
+          "reach 70), the blade near level (%.2f)", gr, gg[0], hz, dd[1]);
+    CHECK(fabsf(dd[0] * wa[0] + dd[1] * wa[1] + dd[2] * wa[2]) < 1e-4f && wa[0] < 0,
+          "the way across the blade, toward the other side (%.2f)", wa[0]);
+    float ph = somvr_fn_arc_hit_p(&arc);
+    somvr_fn_arc_at(&arc, ph, gg, dd, wa);
+    float along = (nk1[0] - gg[0]) * dd[0] + (nk1[1] - gg[1]) * dd[1] + (nk1[2] - gg[2]) * dd[2];
+    float off = sqrtf(powf(nk1[0] - gg[0] - along * dd[0], 2) + powf(nk1[1] - gg[1] - along * dd[1], 2) +
+                      powf(nk1[2] - gg[2] - along * dd[2], 2));
+    CHECK(ph > 0.4f && ph < 0.7f && off < 0.5f && along > 30 && along < 90,
+          "at p %.2f the blade passes through the neck (%.1f cm off its line, %.0f cm along it)", ph, off, along);
+    CHECK(somvr_fn_arc_len(&arc) > 80 && somvr_fn_arc_len(&arc) < 200, "the mid-blade's path %.0f cm",
+          somvr_fn_arc_len(&arc));
+    float far1[3] = {0, -70, 190}, near1[3] = {10, -40, 25};
+    CHECK(!somvr_fn_arc_place(&pq, far1, 0, 50, -45, &arc, &wy) && wy == SOMVR_FN_WHY_REACH, "1.9 m: closer");
+    CHECK(!somvr_fn_arc_place(&pq, near1, 0, 50, -45, &arc, &wy) && wy == SOMVR_FN_WHY_NEAR, "at the chest: step back");
+    /* the chop: a stunned orc hunched, its neck 80 cm under the eyes a metre ahead - from above, through it, down */
+    float nk2[3] = {0, -80, 100};
+    CHECK(somvr_fn_arc_place(&pq, nk2, 1, 65, -35, &arc, &wy), "the chop placed");
+    somvr_fn_arc_at(&arc, 0, gg, dd, wa);
+    CHECK(dd[1] > 0.3f && wa[1] < -0.5f && gg[1] < pq.up_max, "the chop: the blade raised (%.2f), the way down (%.2f)", dd[1],
+          wa[1]);
+    /* a swing along the arc drives the cut (the follow rule on the mid-blade's path); across the plane: nothing */
+    somvr_fn_arc_place(&pq, nk1, 0, 50, -45, &arc, &wy);
+    somvr_fn_cfg cc;
+    somvr_fn_defaults(&cc);
+    cc.follow = 1, cc.back_free = 1, cc.v_max = 1500, cc.start_cm = somvr_fn_arc_len(&arc), cc.depth_cm = 0;
+    float pc2 = 0, tt = 0, rr, mm;
+    while (pc2 < ph && tt < 2) {
+        somvr_fn_arc_at(&arc, pc2, gg, dd, wa);
+        float vm[3] = {wa[0] * 300, wa[1] * 300, wa[2] * 300};
+        pc2 = somvr_fn_step(&cc, vm, wa, pc2, 1.0f / 90, &rr, &mm), tt += 1.0f / 90;
+    }
+    CHECK(pc2 >= ph && tt < 0.4f, "a 3 m/s swing along it crosses the neck in %.2f s", tt);
+    float vax[3] = {arc.ax[0] * 300, arc.ax[1] * 300, arc.ax[2] * 300};
+    somvr_fn_arc_at(&arc, 0.2f, gg, dd, wa);
+    CHECK(somvr_fn_step(&cc, vax, wa, 0.2f, 0.1f, &rr, &mm) == 0.2f, "across the plane: nothing");
+    /* the downed orc: its chest on the ground (145 cm under the eyes) 80 cm ahead - the reach down places it, the
+     * standing stab's does not */
+    somvr_fn_place_cfg pdn;
+    somvr_fn_place_down(&pdn);
+    float ch[3] = {0, -145, 80}, gd[3], dn[3], sd, ed;
+    int wd = 0;
+    CHECK(somvr_fn_place(&pdn, ch, gd, dn, &sd, &ed, &wd) && dn[1] < -0.6f, "the downed orc: placed, the way down (%.2f)",
+          dn[1]);
+    CHECK(!somvr_fn_place(&pq, ch, gd, dn, &sd, &ed, &wd), "the standing stab's reach: not");
     printf("test_finisher: %d checks, %d failed\n", g_n, g_fail);
     return g_fail != 0;
 }

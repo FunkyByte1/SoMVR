@@ -13,6 +13,9 @@
  *                                                     shown bow's cant, its turn onto the draw, where the arrow passes
  *                                                     the riser (the grip's X across the riser's depth) and its angle
  *                                                     off the bow's shot; per cant band and per draw
+ *   build/tests/replay_input FILE hangbow [T0 T1]      build 40 (re-xr-pipeline.md 175.1): the bow hand against its
+ *                                                     shoulder slot through SOMVR_BOW_HANG_REACH's rule - the frames
+ *                                                     and spans it would keep a hands-free hang (and why)
  *   build/tests/replay_input FILE grip [T0 T1]         the right grip through build 31's weighted body (swp) and the
  *                                                     blade into the swing tracker: each stroke's tier and energy by
  *                                                     the config (a recording without BLADE records: a converted
@@ -335,9 +338,62 @@ static void bow(const irr_rec *r, double t0, double t1) {
     free(st), free(sf);
 }
 
+/* build 40 (SOMVR_BOW_HANG_REACH, re-xr-pipeline.md 175.1): the left (bow) hand against its shoulder slot (the game's
+ * slot SOMVR_BOW_SLOT_CM 12,-10,-15 mirrored to its side, on the head's heading - the game's torso yaw when it has one),
+ * frame by frame through somvr_bow_reach_step: how many frames the rule would have kept a hands-free hang and why, the
+ * spans, the nearest the hand came. A stuck player's top-hang (mark 223841_10) must stay unkept: it still lets go. */
+static void hangbow(const irr_rec *r, double t0, double t1, float slot_r) {
+    somvr_bow_reach_cfg c;
+    somvr_bow_reach_defaults(&c, slot_r);
+    somvr_bow_reach_st s;
+    memset(&s, 0, sizeof s);
+    int n = 0, why_n[SOMVR_BRCH_GRACE + 1] = {0}, last = -1, sq = 0, presses = 0;
+    double span0 = 0, tl = 0;
+    float dmin = 1e9f, dmax = 0;
+    for (int i = 0; i < r->nf; i++) {
+        const somvr_ir_frame *f = &r->f[i];
+        if (t1 > t0 && (f->t < t0 || f->t > t1)) continue;
+        somvr_posef e[2];
+        for (int k = 0; k < 2; k++) memcpy(e[k].p, f->eye_p[k], sizeof e[k].p), memcpy(e[k].q, f->eye_q[k], sizeof e[k].q);
+        sv_vec3 hp;
+        sv_quat hq;
+        somvr_head_game(e, &hp, &hq);
+        int lefty = (f->flags & SOMVR_IRF_LEFTY) != 0;
+        const somvr_ir_hand *ph = &f->hand[0 ^ lefty]; /* the bow hand's controller (the left role) */
+        float d = NAN, ahead = 0;
+        if (ph->valid) {
+            somvr_hand hd;
+            sv_vec3 p;
+            somvr_ir_hand_get(ph, f->xr_time, &hd, NULL);
+            somvr_hand_game(&hd, &p, NULL, NULL, NULL);
+            float yaw = somvr_slots_heading(hq);
+            sv_vec3 o = sv_qrot(sv_qyaw(yaw), (sv_vec3){-12, -10, -15});
+            sv_vec3 dv = {p.x - hp.x - o.x, p.y - hp.y - o.y, p.z - hp.z - o.z};
+            d = sqrtf(dv.x * dv.x + dv.y * dv.y + dv.z * dv.z);
+            ahead = sv_qrot(sv_qconj(sv_qyaw(yaw)), dv).z - 15; /* (ahead of the head: the slot is 15 cm behind it) */
+            dmin = fminf(dmin, d), dmax = fmaxf(dmax, d);
+        }
+        float v = (ph->active & SOMVR_HACT_INPUT) ? ph->squeeze : 0;
+        int was = sq;
+        sq = was ? v > 0.4f : v > 0.6f;
+        presses += sq && !was;
+        int w = somvr_bow_reach_step(&s, &c, ph->valid, d, ahead, sq && !was, f->t);
+        why_n[w]++, n++;
+        if (w != last) {
+            if (last > 0) printf("  t=%.3f .. %.3f (%.2f s): %s\n", span0, tl, tl - span0, somvr_bow_reach_name(last));
+            span0 = f->t, last = w;
+        }
+        tl = f->t;
+    }
+    if (last > 0) printf("  t=%.3f .. %.3f (%.2f s): %s\n", span0, tl, tl - span0, somvr_bow_reach_name(last));
+    printf("hangbow: %d frames: none %d, at the slot %d, reaching %d, unseen %d, the grace %d; the bow hand %.0f..%.0f cm from "
+           "its slot, its grip closed %d times\n", n, why_n[0], why_n[SOMVR_BRCH_AT], why_n[SOMVR_BRCH_TOWARD],
+           why_n[SOMVR_BRCH_UNSEEN], why_n[SOMVR_BRCH_GRACE], (double)dmin, (double)dmax, presses);
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "replay_input FILE info|tiers|slots|grip|bow [T0 T1] [--cfg FROM.inrec] [--along A]\n");
+        fprintf(stderr, "replay_input FILE info|tiers|slots|grip|bow|hangbow [T0 T1] [--cfg FROM.inrec] [--along A]\n");
         return 2;
     }
     irr_rec r, rc;
@@ -370,6 +426,8 @@ int main(int argc, char **argv) {
         info(&r);
     } else if (!strcmp(m, "bow")) {
         bow(&r, t0, t1);
+    } else if (!strcmp(m, "hangbow")) {
+        hangbow(&r, t0, t1, 20);
     } else if (!strcmp(m, "tiers")) {
         irr_tiers t;
         if (irr_replay_tiers(&r, cfg, t0, t1, &t, stdout)) {

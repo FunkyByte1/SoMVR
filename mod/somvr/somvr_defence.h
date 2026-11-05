@@ -79,6 +79,17 @@ typedef struct {
      * in the tracking space (a wrist turn that brings the blade across is a guard move) */
     unsigned red_types;
     int contact_hand, move_blade;
+    /* build 38 (SOMVR_DEFENCE_ZONE, the 11-04 session: many blows missed by the blade; the player asked for a large,
+     * clearly coloured mark of where to block): the block zone, contact judge only. A disc zone_r_cm
+     * round, zone_out_cm out from Talion's upper body (zone_body_cm under the head) on the line to the orc's weapon (the
+     * middle of the nearer one), following it (zone_follow_s) from the blow's first frame until zone_lock_s before its
+     * impact, then still. The blade is in it when its nearest point is within zone_r_cm of the centre and it lies at
+     * least zone_cross_deg off the blow's line (across it, not pointed along it); either blade (contact_hand). A blade in
+     * it (or there within grace_s) when the blow arrives - inside the contact window, the weapon within zone_meet_cm of
+     * the centre or the impact itself - blocks the blow as the blades meeting would (met_by 3), the still-guard rule
+     * (contact_move_cm) as for a contact. Never for a blow the judge cannot block (no zone: dodge it). zone 0 = off */
+    int zone;
+    float zone_r_cm, zone_out_cm, zone_body_cm, zone_lock_s, zone_meet_cm, zone_cross_deg, zone_follow_s;
 } somvr_df_cfg;
 void somvr_df_cfg_default(somvr_df_cfg *c);
 #define SOMVR_DF_SWEEP_STEPS 6
@@ -107,6 +118,35 @@ typedef struct {
 /* blade base/tip, the attacker's weapon hand and its velocity (cm/s; NULL = unknown), Talion's head */
 somvr_df_guard somvr_df_guard_eval(const somvr_df_cfg *c, const float base[3], const float tip[3], const float hand[3],
                                    const float hand_v[3], const float head[3]);
+
+/* build 38 (zone): the zone's place for the weapon point w (cm, game space): out of the body point (zone_body_cm under
+ * the head) toward w by zone_out_cm (toward the orc's chest, its root + 100 cm, when w is nearer than that or unknown);
+ * 0 = no place (nothing usable) */
+int somvr_df_zone_place(const somvr_df_cfg *c, const float head[3], const float w[3], const float orc[3], float centre[3],
+                        float dir[3]);
+/* the blade base..tip against the zone: its nearest point's distance from the centre (cm; INFINITY = unusable), *cross
+ * its angle off the blow's direction (deg: 0 along it, 90 across), pt the nearest point */
+float somvr_df_zone_blade(const float centre[3], const float dir[3], const float base[3], const float tip[3], float *cross,
+                          float pt[3]);
+/* build 38b: the frame facing the orc - f the level unit from the head to the orc's root, r its right (f x up); 0 = none
+ * (the orc at the head) */
+int somvr_df_zone_frame(const float head[3], const float orc[3], float f[3], float r[3]);
+/* build 38b: the zone at spot (cm right, up, ahead of the head in that frame; clamped to SOMVR_DF_ZSPOT_*), its
+ * direction from the body point (zone_body_cm under the head) out to it */
+int somvr_df_zone_spot_place(const somvr_df_cfg *c, const float head[3], const float orc[3], const float spot[3],
+                             float centre[3], float dir[3]);
+/* build 38b: where a blow passes - the point of the weapon base..tip nearest the chest (SOMVR_DF_ZSPOT_CHEST_CM under the
+ * head), as a spot in that frame; 0 = unusable */
+int somvr_df_zone_spot_of(const float head[3], const float orc[3], const float base[3], const float tip[3], float spot[3]);
+void somvr_df_zone_spot_clamp(float spot[3]);
+#define SOMVR_DF_ZSPOT_CHEST_CM 30.0f
+#define SOMVR_DF_ZSPOT_AHEAD_MIN 35.0f /* a spot nearer than this is no block's place: out to it */
+#define SOMVR_DF_ZSPOT_AHEAD_MAX 115.0f /* ... farther than the blade reaches with the arm out: in to it */
+#define SOMVR_DF_ZSPOT_UP_MIN (-100.0f)
+#define SOMVR_DF_ZSPOT_UP_MAX 25.0f
+#define SOMVR_DF_ZSPOT_SIDE 75.0f
+/* 1 = the blade (dist, cross from somvr_df_zone_blade) is in the zone */
+int somvr_df_zone_holds(const somvr_df_cfg *c, float dist, float cross);
 
 /* the parry zone at ts s after the start: [max(bpw, epw - parry_s), epw - lead_s]; none without a window */
 int somvr_df_parry_zone(const somvr_df_cfg *c, float bpw, float epw, float ts);
@@ -139,6 +179,10 @@ typedef struct {
     int have_hand_blade;
     float tip_xr[3];
     int have_tip_xr;
+    /* build 38b (zone): where this attack's blow passes, cm right / up / ahead of the head in the frame facing the orc
+     * (somvr_df_zone_spot_place): its record's learnt or seeded spot; have_zone_spot 0 = the line to the weapon (38a) */
+    float zone_spot[3];
+    int have_zone_spot;
 } somvr_df_in;
 
 /* one attack, followed from its first step */
@@ -174,6 +218,12 @@ typedef struct {
      * the hand's) and the drawn blade's own closest approach (logs: what the hand's blade added) */
     int have_hprev, have_t0, met_by;
     float phb[3], pht[3], tip0[3], drawn_best_cm;
+    /* build 38 (zone): the block zone - placed (shown), still, the blade in it now, its entries; the centre and the
+     * blow's direction (unit, from the body out toward the weapon); the blade's distance and angle this frame; the time
+     * of the last frame placed and of the last frame the blade was in it (< 0: never) */
+    int zone_ok, zone_locked, zone_in, zone_entries;
+    float zone_c[3], zone_n[3], zone_cm, zone_cross, zone_pt[3];
+    double zone_t, zone_in_t;
 } somvr_df_track;
 void somvr_df_track_init(somvr_df_track *tr);
 /* one frame at time t: the guard, the hand's velocity, the dodge state; 1 = the parry fires now, 2 (contact) = the

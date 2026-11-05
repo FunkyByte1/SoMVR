@@ -151,7 +151,8 @@ def cmd_status(a):
            "stt": dj.get("stt"), "model": dj.get("model"), "notes": len(notes(d)), "waiting": dj.get("waiting", []),
            "messages": len(says), "shown": sum(s["shown"] for s in says), "read": sum(s["read"] for s in says),
            "patches": patch_ids(d), "ready": ready, "current": st.get("current", "0"), "last": st, "lane": lane,
-           "tts": dj.get("tts"), "spoken": dj.get("spoken", 0)}
+           "tts": dj.get("tts"), "spoken": dj.get("spoken", 0),
+           "coordinator_absent": dj.get("coordinator_absent")}   # b40 live4
     if a.json:
         print(json.dumps(res, indent=1))
         return 0
@@ -172,6 +173,10 @@ def cmd_status(a):
     print(f"  patches: {res['patches'] or 'none'}; ready {ready or '-'}; live now {res['current']}"
           + (f"; last answer {st.get('seq')}: {st.get('last')} {st.get('id')} - {st.get('msg', '')[:80]}" if st else ""))
     print(f"  lane: {lane}")
+    ab = res["coordinator_absent"]   # b40 live4: the player was told nobody is answering
+    print("  coordinator: " + (f"ABSENT since {ab.get('since')} - {ab.get('notes')} note(s) without an answer"
+                               + (f"; the player was told at {ab.get('said')}" if ab.get("said") else "")
+                               + " (a live_say clears it)" if ab else "answering (or no note waits)"))
     return 0
 
 
@@ -387,7 +392,30 @@ def cmd_patch_check(a):
     return 0
 
 
+def next_dir():
+    """b40 live4 (162.13): the patches for the next launch - ROOT/next (logs/live/next; tests: LIVE_ROOT's)"""
+    return os.path.join(os.environ.get("LIVE_ROOT") or f"{SOM}/logs/live", "next")
+
+
+def launcher_build_mod():
+    """the build the user's launcher plays now (som-vr-headset-win.sh's WIN_BUILD=): its mod/somvr, or None"""
+    t = read(os.path.join(SOM, "scripts", "som-vr-headset-win.sh")) or ""
+    m = re.search(r"^WIN_BUILD=(\S+)", t, re.M)
+    return os.path.join(SOM, "logs", m.group(1), "ShadowOfMordor", "mod", "somvr") if m else None
+
+
 def cmd_patch_stage(a):
+    nxt = None
+    if a.next:   # b40 live4: staged for the next launch - loaded as that session's logic module at its start
+        base = os.path.realpath(a.base or launcher_build_mod() or "")
+        blog = os.path.join(base, "build", "win", "somvr_logic.dll")
+        if not os.path.isfile(blog):
+            print(f"live: the base build {base} has no build/win/somvr_logic.dll (--base MOD: the build the launch runs)",
+                  file=sys.stderr)
+            return 2
+        a.dir = next_dir()
+        os.makedirs(os.path.join(a.dir, "patches"), exist_ok=True)
+        nxt = {"base": base, "logic": sha256(blog), "fp": fingerprint(base)}
     d = live_dir(a.dir)
     pd = os.path.join(d, "patches")
     if not os.path.isdir(pd):
@@ -416,6 +444,8 @@ def cmd_patch_stage(a):
         return 2
     kind, why = "live", ""
     bt = kv(read(os.path.join(d, "build.txt")))
+    if nxt:   # b40 live4: against the base build's own fingerprint (the layer and the host must be its)
+        bt = {"mod": nxt["base"], "layer": nxt["fp"]["layer"], "host": nxt["fp"]["host"]}
     if bt.get("mod"):
         fp = fingerprint(mod)
         what = []
@@ -435,13 +465,25 @@ def cmd_patch_stage(a):
     os.makedirs(pdir)
     shutil.copy2(dll, os.path.join(pdir, "somvr_logic.dll"))
     one = lambda s: " ".join(s.split())[:150]
+    if nxt and kind != "live":
+        print(f"live: {why} - a patch for the next launch must keep the base build's layer and host (a new build "
+              f"instead)", file=sys.stderr)
+        shutil.rmtree(pdir, ignore_errors=True)
+        return 2
+    extra = (f"next=1\nbase={nxt['base']}\nbase_logic={nxt['logic']}\nlayer={nxt['fp']['layer']}\n"
+             f"host={nxt['fp']['host']}\n") if nxt else ""
     write_atomic(os.path.join(pdir, "patch.txt"),
                  f"id={pid}\nkind={kind}\nwhat={one(a.what)}\ntry={one(a.try_)}\nwhy={why}\nsha={sha}\nsrc={dll}\n"
-                 f"tree={mod}\nchecked={'yes' if checked else 'NO (forced)'}\nstaged={time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                 f"tree={mod}\nchecked={'yes' if checked else 'NO (forced)'}\nstaged={time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                 + extra)
     write_atomic(os.path.join(pd, "ready"), f"{pid}\n")
     with open(os.path.join(pd, "log.txt"), "a") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} staged patch {pid} ({kind}{', unchecked' if not checked else ''}): "
                 f"{one(a.what)} / try: {one(a.try_)} ({sha[:16]})\n")
+    if nxt:
+        print(f"patch {pid} staged for the NEXT launch of {os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(nxt['base']))))}"
+              f" ({nxt['logic'][:16]}): that session starts with it in (Undo returns to the build's own)")
+        return 0
     print(f"patch {pid} staged ({kind}{': ' + why if why else ''}); the headset shows 'Patch {pid} ready' and the VR "
           f"menu's Test page has Apply patch")
     # b37 live3: build 37's layer cuts a long patch card at its 6th line (the 22:13 session); a layer that pages it
@@ -462,6 +504,63 @@ def cmd_patch_stage(a):
             write_atomic(os.path.join(sd, f"{n + k}.txt"), pg + "\n")
         print(f"  (the session's layer cuts a patch card at 6 lines - this one has {lines}: its whole text follows as "
               f"message{'s' if len(pages) > 1 else ''} {n}{f'..{n + len(pages) - 1}' if len(pages) > 1 else ''}, quiet)")
+    return 0
+
+
+def cmd_preapply(a):
+    """b40 live4 (162.13): at a session's launch, before the game starts - the newest patch staged for the next launch
+    (ROOT/next) becomes the session's logic module when it was staged for exactly this build (its base logic DLL's
+    sha256 and the layer's and host's fingerprint): DLL (the prefix's somvr_logic.dll) replaced by it, the build's own
+    kept as patches/own_somvr_logic.dll (Undo returns to it), the patch in the session's folder as the live one
+    (ready, stack.txt, state.txt seq=1 current=N last=start). Prints one line for the launcher's log; exit 0 either way"""
+    nd, d = next_dir(), live_dir(a.dir)
+    rid = (read(os.path.join(nd, "patches", "ready")) or "").strip()
+    if not rid.isdigit():
+        print("no patch staged for the next launch")
+        return 0
+    src = os.path.join(nd, "patches", rid)
+    p = kv(read(os.path.join(src, "patch.txt")))
+    own = os.path.join(os.path.realpath(a.mod), "build", "win", "somvr_logic.dll")
+    why = None
+    if p.get("kind") != "live" or not os.path.isfile(os.path.join(src, "somvr_logic.dll")):
+        why = "not a live patch (or its DLL is missing)"
+    elif not os.path.isfile(own) or sha256(own) != p.get("base_logic"):
+        why = f"staged for another build (base logic {p.get('base_logic', '?')[:16]}, this session's {sha256(own)[:16] if os.path.isfile(own) else '-'})"
+    else:
+        fp = fingerprint(a.mod)
+        if fp["layer"] != p.get("layer") or fp["host"] != p.get("host"):
+            why = "this session's layer or host is not the one it was staged for"
+    if why:
+        print(f"patch {rid} for the next launch NOT applied at the start: {why}")
+        return 0
+    pd = os.path.join(d, "patches")
+    os.makedirs(pd, exist_ok=True)
+    if os.path.exists(os.path.join(pd, rid)):
+        print(f"patch {rid} for the next launch NOT applied at the start: the session's folder has a patch {rid} already")
+        return 0
+    shutil.copytree(src, os.path.join(pd, rid))
+    shutil.copy2(own, os.path.join(pd, "own_somvr_logic.dll"))
+    tmp = a.dll + ".live-tmp"
+    shutil.copy2(os.path.join(pd, rid, "somvr_logic.dll"), tmp)
+    os.replace(tmp, a.dll)
+    if sha256(a.dll) != p.get("sha"):
+        print(f"patch {rid} for the next launch: the copy into {a.dll} does not match its sha256 - NOT applied")
+        shutil.copy2(own, a.dll)
+        return 0
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with open(os.path.join(pd, rid, "patch.txt"), "a") as f:
+        f.write(f"applied_at_start={stamp}\n")
+    write_atomic(os.path.join(pd, "ready"), f"{rid}\n")
+    write_atomic(os.path.join(pd, "stack.txt"), f"{rid}\n")
+    write_atomic(os.path.join(pd, "state.txt"), f"seq=1\ncurrent={rid}\nlast=start\nid={rid}\nmsg=applied at the session's "
+                                                f"start (staged for this build before the launch)\n")
+    line = (f"{stamp} patch {rid} applied at the session's start ({p.get('what', '')[:80]}; {p.get('sha', '')[:16]}; "
+            f"the build's own kept for Undo)")
+    for f in (os.path.join(pd, "log.txt"), os.path.join(nd, "patches", "log.txt")):
+        with open(f, "a") as fo:
+            fo.write(line + (f" - session {os.path.basename(d)}" if f.startswith(nd) else "") + "\n")
+    print(f"patch {rid} applied at the start: {a.dll} = its logic module ({p.get('sha', '')[:16]}: "
+          f"'{p.get('what', '')[:70]}'); the build's own kept for Undo")
     return 0
 
 
@@ -508,6 +607,12 @@ def main():
     st.add_argument("--tree")
     st.add_argument("--force-unchecked", action="store_true")
     st.add_argument("--allow-no-abi", action="store_true", help="tests only: a DLL without the logic ABI export")
+    st.add_argument("--next", action="store_true", help="b40: for the next launch (ROOT/next): that session starts with it")
+    st.add_argument("--base", help="b40, with --next: the build the launch runs (default the launcher's WIN_BUILD)")
+    pa = pp.add_parser("preapply")
+    pa.add_argument("--mod", required=True)
+    pa.add_argument("--dll", required=True)
+    pa.add_argument("--dir")
     ck = pp.add_parser("check")
     ck.add_argument("mod")
     ls = pp.add_parser("list")
@@ -521,7 +626,8 @@ def main():
         return cmd_say(a)
     if a.cmd == "fingerprint":
         return cmd_fingerprint(a)
-    return {"stage": cmd_patch_stage, "check": cmd_patch_check, "list": cmd_patch_list}[a.pcmd](a)
+    return {"stage": cmd_patch_stage, "check": cmd_patch_check, "list": cmd_patch_list,
+            "preapply": cmd_preapply}[a.pcmd](a)
 
 
 if __name__ == "__main__":

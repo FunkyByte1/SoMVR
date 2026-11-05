@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -127,7 +128,7 @@ def cached_casts(args, path, cache):
         pass
     sigs = [(p, file_sig(p)) for p in deps or []]
     if deps and all(s is not None for p, s in sigs):
-        tmp = '%s.tmp.%d' % (entry, os.getpid())
+        tmp = '%s.tmp.%d.%d' % (entry, os.getpid(), threading.get_ident())  # per thread: two threads caching the same file raced on one tmp (11-05)
         with open(tmp, 'w') as f:
             json.dump({'key': key, 'deps': sigs, 'casts': casts}, f)
         os.replace(tmp, entry)

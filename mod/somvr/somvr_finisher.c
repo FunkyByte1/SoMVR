@@ -166,3 +166,147 @@ int somvr_fn_place(const somvr_fn_place_cfg *c, const float neck[3], float g[3],
         *why = SOMVR_FN_WHY_OK;
     return found;
 }
+
+/* ---- build 41 (som-b41-finlib, re-xr-pipeline.md 179): the finisher library -------------------------------------- */
+/* the sounds: each finisher's Talion half's own keys (pl_syncaction_chordkill_stand / _onground .anix, tools/anix.py) */
+static const somvr_fn_kind g_fn_kinds[SOMVR_FNK_N] = {
+    {"neck", "Neck stab", SOMVR_FNM_STAB, 2, 22.0f, 0, 0, 0, "AI_Bip_PC_Standing_InstaKill_F6", 0, "cbt_insta_stab",
+     {"cbt_instakill_st_f_03", "cbt_insta_slice", "vx_PlayerSyncPre_snd"}, "cbt_sync_stab_dry", 0},
+    /* F2_Sever's cut (933: SEVER), its sounds HeadChopB2's at the same moment (the decap) */
+    {"behead", "Beheading", SOMVR_FNM_CUT, 2, 0, 0.0f, 50.0f, -45.0f, "AI_Bip_PC_Standing_InstaKill_F2_Sever", 1,
+     "cbt_insta_decap_pre", {"cbt_insta_decap", "vx_PlayerSyncImp_snd", "cbt_insta_slice"}, "", 0},
+    /* F5's killing stab into the head's front (1499-1533) */
+    {"face", "Face stab", SOMVR_FNM_STAB, 3, 12.0f, 0, 0, 0, "AI_Bip_PC_Standing_InstaKill_F5", 0, "cbt_insta_skull_stab",
+     {"cbt_insta_slice", "vx_PlayerSyncSlice_snd", ""}, "cbt_sync_stab_dry", 0},
+    /* B4_Sever's stab into the back of the neck (833-900) */
+    {"back", "Back stab", SOMVR_FNM_STAB, 2, 22.0f, 0, 0, 0, "AI_Bip_PC_Standing_InstaKill_B4_Sever", 0, "cbt_insta_neck_stab",
+     {"vx_PlayerSyncImp_snd", "cbt_insta_slice", ""}, "cbt_sync_stab_dry", 0},
+    /* KD_InstaKill_R2's stab down into the chest (Gr_R_Stab: 1266 the stab, 1966-2066 the kill) */
+    {"downed", "Downed stab", SOMVR_FNM_STAB, 1, 20.0f, 0, 0, 0, "AI_Bip_PC_KD_InstaKill_R2", 0, "cbt_insta_stab",
+     {"cbt_insta_slice", "vx_PlayerSyncImp_snd", ""}, "cbt_sync_stab_dry", 0},
+    /* Stunned_InstaKill_B2's chop through the neck (HeadChopB2: 866 the decap, 899 SEVER) */
+    {"stunned", "Stunned chop", SOMVR_FNM_CUT, 2, 0, 1.0f, 65.0f, -35.0f, "AI_Bip_PC_Stunned_InstaKill_B2", 1,
+     "cbt_insta_decap_pre", {"cbt_insta_decap", "vx_PlayerSyncImp_snd", "cbt_insta_slice"}, "",
+     /* (the row's 'PC_Bip_Stunned_InstaKill_B2' is the sync's name: no attack by it - boot 20261105-145743's kill
+      * fell back to the stealth kill's record) */
+     "PC_Bip_StunnedInstaKill_B2"},
+    /* Sync_CntrKill_F: the riposte into the chest */
+    {"counter", "Counter kill", SOMVR_FNM_STAB, 1, 25.0f, 0, 0, 0, "AI_Bip_PC_Sync_CntrKill_F", 0, "cbt_insta_stab",
+     {"cbt_insta_slice", "vx_PlayerSyncImp_snd", ""}, "cbt_sync_stab_dry", 0},
+};
+
+const somvr_fn_kind *somvr_fn_kind_of(int k) { return k >= 0 && k < SOMVR_FNK_N ? &g_fn_kinds[k] : 0; }
+
+static int fn_ieq(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++)
+        if ((*a | 32) != (*b | 32)) return 0;
+    return !*a && !*b;
+}
+int somvr_fn_kind_word(const char *w)
+{
+    if (!w || !*w) return -1;
+    if (fn_ieq(w, "auto")) return SOMVR_FNK_N;
+    for (int k = 0; k < SOMVR_FNK_N; k++)
+        if (fn_ieq(w, g_fn_kinds[k].id) || fn_ieq(w, g_fn_kinds[k].name)) return k;
+    return -1;
+}
+
+static int fn_fits(int k, int s)
+{
+    switch (k) {
+    case SOMVR_FNK_DOWNED: return (s & SOMVR_FNS_DOWNED) != 0;
+    case SOMVR_FNK_STUNNED: return (s & SOMVR_FNS_STUNNED) != 0;
+    case SOMVR_FNK_COUNTER: return (s & SOMVR_FNS_COUNTER) && (s & SOMVR_FNS_FRONT) && !(s & SOMVR_FNS_DOWNED);
+    case SOMVR_FNK_BACK: return (s & SOMVR_FNS_BACK) && !(s & (SOMVR_FNS_DOWNED | SOMVR_FNS_STUNNED));
+    case SOMVR_FNK_NECK:
+    case SOMVR_FNK_BEHEAD:
+    case SOMVR_FNK_FACE: return (s & SOMVR_FNS_FRONT) && !(s & (SOMVR_FNS_DOWNED | SOMVR_FNS_STUNNED));
+    default: return 0;
+    }
+}
+int somvr_fn_pick_kind(int s, unsigned n, int force)
+{
+    if (force >= 0 && force < SOMVR_FNK_N) return fn_fits(force, s) ? force : -1;
+    if (s & SOMVR_FNS_DOWNED) return SOMVR_FNK_DOWNED;
+    if (s & SOMVR_FNS_STUNNED) return SOMVR_FNK_STUNNED;
+    if (fn_fits(SOMVR_FNK_COUNTER, s)) return SOMVR_FNK_COUNTER;
+    if ((s & SOMVR_FNS_BACK) && (s & SOMVR_FNS_AWARE)) return SOMVR_FNK_BACK; /* (an unaware back: the stealth kill's) */
+    if (s & SOMVR_FNS_FRONT) {
+        static const int turn[3] = {SOMVR_FNK_NECK, SOMVR_FNK_BEHEAD, SOMVR_FNK_FACE};
+        return turn[n % 3u];
+    }
+    return -1;
+}
+
+void somvr_fn_place_down(somvr_fn_place_cfg *c)
+{
+    somvr_fn_place_defaults(c);
+    c->depth = 20.0f, c->s_max = 45.0f, c->reach = 85.0f, c->up_min = -85.0f;
+}
+
+static void fn_unit(float v[3])
+{
+    float l = len3(v);
+    if (l > 1e-6f) v[0] /= l, v[1] /= l, v[2] /= l;
+}
+static void fn_cross(const float a[3], const float b[3], float o[3])
+{
+    o[0] = a[1] * b[2] - a[2] * b[1], o[1] = a[2] * b[0] - a[0] * b[2], o[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+int somvr_fn_arc_place(const somvr_fn_place_cfg *c, const float target[3], float cut_up, float from_deg, float to_deg,
+                       somvr_fn_arc *a, int *why)
+{
+    float d[3] = {target[0] - c->body[0], target[1] - c->body[1], target[2] - c->body[2]}, r = len3(d);
+    if (why) *why = SOMVR_FN_WHY_REACH;
+    if (!isfinite(r) || !(r > 1.0f)) return 0;
+    for (int i = 0; i < 3; i++) a->pivot[i] = c->body[i], a->n[i] = d[i] / r;
+    /* the sweep: the level side toward the sword side (up x n: to the right for a right shoulder), or up across n */
+    float up[3] = {0, 1, 0}, wh[3], wv[3], side = c->body[0] >= 0 ? 1.0f : -1.0f, un = a->n[1];
+    fn_cross(up, a->n, wh);
+    fn_unit(wh);
+    for (int i = 0; i < 3; i++) wh[i] *= side, wv[i] = up[i] - un * a->n[i];
+    fn_unit(wv);
+    float s = cut_up < 0 ? 0 : cut_up > 1 ? 1 : cut_up, w[3];
+    for (int i = 0; i < 3; i++) w[i] = (1 - s) * wh[i] + s * wv[i];
+    float wn = w[0] * a->n[0] + w[1] * a->n[1] + w[2] * a->n[2];
+    for (int i = 0; i < 3; i++) w[i] -= wn * a->n[i];
+    fn_unit(w);
+    if (!(len3(w) > 0.5f)) return 0;
+    for (int i = 0; i < 3; i++) a->w[i] = w[i];
+    fn_cross(a->n, a->w, a->ax);
+    a->blade = c->blade, a->r_hit = r;
+    float rg = r - 0.65f * c->blade, hi = c->grip_r + 20.0f, lo = 15.0f; /* (50 cm: the start in an arm's reach) */
+    a->r_grip = rg > hi ? hi : rg < lo ? lo : rg;
+    float along = r - a->r_grip; /* where the target meets the blade (from the grip) */
+    if (along > 0.92f * c->blade) return 0; /* (too far: closer) */
+    if (along < 0.3f * c->blade) {
+        if (why) *why = SOMVR_FN_WHY_NEAR;
+        return 0;
+    }
+    a->a0 = from_deg * 0.01745329f, a->a1 = to_deg * 0.01745329f;
+    float g[3], dir[3], way[3];
+    somvr_fn_arc_at(a, 0, g, dir, way);
+    if (g[1] > c->up_max || g[1] < c->up_min || g[2] < c->ahead_min) return 0;
+    if (why) *why = SOMVR_FN_WHY_OK;
+    return 1;
+}
+
+void somvr_fn_arc_at(const somvr_fn_arc *a, float p, float grip[3], float dir[3], float way[3])
+{
+    float ang = a->a0 + p * (a->a1 - a->a0), cs = cosf(ang), sn = sinf(ang), sg = a->a1 < a->a0 ? -1.0f : 1.0f;
+    for (int i = 0; i < 3; i++) {
+        dir[i] = cs * a->n[i] + sn * a->w[i];
+        grip[i] = a->pivot[i] + a->r_grip * dir[i];
+        way[i] = sg * (-sn * a->n[i] + cs * a->w[i]);
+    }
+}
+
+float somvr_fn_arc_hit_p(const somvr_fn_arc *a)
+{
+    float span = a->a1 - a->a0;
+    return fabsf(span) > 1e-6f ? -a->a0 / span : 0;
+}
+
+float somvr_fn_arc_len(const somvr_fn_arc *a) { return (a->r_grip + 0.5f * a->blade) * fabsf(a->a1 - a->a0); }

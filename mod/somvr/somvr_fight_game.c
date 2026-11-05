@@ -857,8 +857,10 @@ static void kd_pre(uintptr_t c, uintptr_t pc, uintptr_t rec, int tier, int light
 #define TG_LEAD_S 0.6f  /* the reaction: 0.2 s into an infantry's 0.8 s wind-up (boot 1's 0.45 s / 150 ms swing hit the orc) */
 #define TG_SWING_MS 300
 #define TG_N 24
-enum { TG_OFF = 0, TG_LEARN = 1, TG_PATH = 2, TG_MISS = 3 };
-static const char *const g_tg_mode_w[] = { "off", "learn", "path", "miss" };
+/* build 38 (SOMVR_DEFENCE_ZONE): zone = at the zone's lock a point of the blade across the block zone shown (what the
+ * player is shown, nothing learnt); zonemiss = the same off it (the other side, 45 cm higher) */
+enum { TG_OFF = 0, TG_LEARN = 1, TG_PATH = 2, TG_MISS = 3, TG_ZONE = 4, TG_ZMISS = 5, TG_MODES = 6 };
+static const char *const g_tg_mode_w[TG_MODES] = { "off", "learn", "path", "miss", "zone", "zonemiss" };
 static const float g_tg_at[3] = { -0.15f, -0.10f, -0.05f };
 struct tg_learn { uintptr_t atk; int n; float b[3][3], p[3][3]; };
 static struct {
@@ -875,7 +877,7 @@ static struct {
 	uint64_t contacts0, calls0;
 	double seen_t;
 	char an[96];
-	uint64_t guards[4], blocks[4], ourhit[4], unknown, learnt, checks;
+	uint64_t guards[TG_MODES], blocks[TG_MODES], ourhit[TG_MODES], unknown, learnt, checks;
 	float off_sum, pred_sum;
 } g_tg;
 
@@ -1086,6 +1088,51 @@ static void tg_track(struct df_track *d, const somvr_df_in *in, sv_quat hq, doub
 		rx_rec_name(d->attack, g_tg.an, sizeof g_tg.an);
 	}
 	g_tg.seen_t = t, g_tg.impact = in->impact, g_tg.ts = in->ts;
+	if (g_tg.mode >= TG_ZONE) { /* build 38: the blade to the block zone as it stops moving (its lock) */
+		if (!g_tg.placed && d->s.zone_ok && in->ts >= in->impact - g_df.cfg.zone_lock_s - 0.02f && g_tg.have_blade &&
+		    g_bd.t_on[IN_SIDE(1)]) {
+			sv_vec3 hp;
+			sv_quat hq2;
+			somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &hp, &hq2);
+			float head[3] = { hp.x, hp.y, hp.z }, yaw = sv_heading(hq), M[3], N[3], tipw[3], up[3] = { 0, 1, 0 }, D[3];
+			for (int i = 0; i < 3; i++)
+				tipw[i] = head[i] + d->s.zone_n[i] * 100.0f;
+			tg_to(d->s.zone_c, head, yaw, M), tg_to(tipw, head, yaw, N);
+			float hz[3];
+			tg_to(head, head, yaw, hz);
+			for (int i = 0; i < 3; i++)
+				N[i] -= hz[i];
+			tg_norm(N);
+			tg_cross(N, up, D); /* across the blow's line, level */
+			if (tg_norm(D) < 1e-3f)
+				D[0] = 1, D[1] = D[2] = 0;
+			if (g_tg.mode == TG_ZMISS) /* build 38b: off the blow's place - the other side, 45 cm higher */
+				M[0] = -M[0] + (M[0] < 0 ? 40.0f : -40.0f), M[1] += 45.0f;
+			memcpy(g_tg.rest, g_bd.t_v[1], sizeof g_tg.rest);
+			/* build 38b: the blade's point on the zone's centre that keeps the grip nearest the shoulder (the zone is
+			 * where the blow passes: often 90 cm or more ahead), either way round */
+			float ra = 1e9f, lam = 0.45f;
+			for (int li = 0; li < 6; li++)
+				for (int sg = 0; sg < 2; sg++) {
+					float Dk[3] = { sg ? -D[0] : D[0], sg ? -D[1] : D[1], sg ? -D[2] : D[2] }, pk[6], lk = 0.3f + 0.12f * (float)li;
+					float rk = tg_pose(M, Dk, lk, pk);
+					if (rk < ra)
+						ra = rk, lam = lk, memcpy(g_tg.pose, pk, sizeof pk);
+				}
+			memcpy(g_tg.tgt, M, sizeof M), g_tg.lam = lam;
+			tg_swing(g_tg.pose, 150);
+			g_tg.placed = 1, g_tg.guards[g_tg.mode]++;
+			logf_("TGUARD t=%.3f %s guard for '%s' at %.3f s (impact %.3f s): a point of the blade at the zone's centre "
+			      "%.0f,%.0f,%.0f cm (right, up, ahead of the head)%s, across its line; the grip %.0f %.0f %.0f %.0f %.0f %.0f "
+			      "(%.0f cm from the right shoulder, the blade's point at %.0f %% of it) in 150 ms", t, g_tg_mode_w[g_tg.mode],
+			      g_tg.an, in->ts, in->impact, M[0],
+			      M[1], M[2], g_tg.mode == TG_ZMISS ? " (off it: the other side, 45 cm higher)" : "", g_tg.pose[0], g_tg.pose[1], g_tg.pose[2],
+			      g_tg.pose[3], g_tg.pose[4], g_tg.pose[5], ra, lam * 100);
+		}
+		if (in->ts >= in->impact + 0.25f)
+			tg_finish(t, "after its impact");
+		return;
+	}
 	float oq[4] = { 0, 0, 0, 1 };
 	if (!g_tg.frozen && in->ts >= in->impact - TG_LEAD_S) {
 		if (!peek(d->hobj + OBJ_ROT, oq, sizeof oq) || !vec_ok(oq, 2.0f))
@@ -1285,7 +1332,7 @@ static const char *fight_word(const char *w)
 	if (!strcmp(a, "guard")) {
 		if (!g_bd.test)
 			return "fight guard (SOMVR_HANDS_TEST is off: ignored)";
-		for (int m = 0; m < 4; m++)
+		for (int m = 0; m < TG_MODES; m++)
 			if (!strcmp(b, g_tg_mode_w[m])) {
 				if (g_tg.c)
 					tg_finish(cb_now(), "the mode changed");
@@ -1302,7 +1349,7 @@ static const char *fight_word(const char *w)
 			      g_tg.head_frame ? "the head, facing the orc (where the blow comes at the player from)" : "the orc's pose");
 			return "fight guard frame";
 		}
-		return "fight guard (not off|learn|path|miss|frame orc|head: ignored)";
+		return "fight guard (not off|learn|path|miss|zone|zonemiss|frame orc|head: ignored)";
 	}
 	if (!strcmp(a, "death")) {
 		if (!strcmp(b, "dir") && sscanf(w, "%*s %*s %f", &v) == 1 && v >= 0 && v <= 1)
@@ -2533,6 +2580,11 @@ static void fight_end_log(void)
 	      "directions scaled %llu, pin writes %llu", g_kd.mode ? g_kd.type : "game", g_kd.dir, (unsigned long long)g_kd.kills,
 	      g_kd.max_cm * 0.01f, (unsigned long long)g_kd.typed, (unsigned long long)g_kd.missing,
 	      (unsigned long long)g_kd.scaled, (unsigned long long)g_kd.pins);
+	if (g_tg.guards[TG_ZONE] || g_tg.guards[TG_ZMISS]) /* build 38 */
+		logf_("TGUARD END zone: zone guards %llu blocked %llu (our hit first %llu), zonemiss guards %llu blocked %llu (our hit "
+		      "first %llu)", (unsigned long long)g_tg.guards[TG_ZONE], (unsigned long long)g_tg.blocks[TG_ZONE],
+		      (unsigned long long)g_tg.ourhit[TG_ZONE], (unsigned long long)g_tg.guards[TG_ZMISS],
+		      (unsigned long long)g_tg.blocks[TG_ZMISS], (unsigned long long)g_tg.ourhit[TG_ZMISS]);
 	if (g_tg.learnt || g_tg.guards[TG_PATH] || g_tg.guards[TG_MISS])
 		logf_("TGUARD END: learnt %llu strikes of %d records; path guards %llu blocked %llu (our hit first %llu), miss guards "
 		      "%llu blocked %llu (our hit first %llu), no guard (not learnt) %llu; checks %llu: our blade %.1f cm, its weapon "

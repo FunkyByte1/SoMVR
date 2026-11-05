@@ -48,7 +48,11 @@ enum {
     SOMVR_VHF_HIDE = 4u,    /* the game hid its own hands in this frame's eye passes (first person): draw ours */
     SOMVR_VHF_HOLD_L = 8u,  /* the left hand holds something (the dagger, the hilt with both hands): a fist */
     SOMVR_VHF_HOLD_R = 16u, /* the right hand holds the sword: a fist */
-    SOMVR_VHF_TWO = 32u     /* SOMVR_TWOHAND: the left grip is the hilt's, not the controller's */
+    SOMVR_VHF_TWO = 32u,    /* SOMVR_TWOHAND: the left grip is the hilt's, not the controller's */
+    /* build 40 (som-b40-herb, docs/re-xr-pipeline.md 176): the string's slot holds the pick outline instead (string_r 0):
+     * string[0] the plant's foot (XR m), string[1] = the disc's radius m, level 0..1, push m (behind the plant),
+     * string[2] = the plant's cylinder: radius m, height m, 0 */
+    SOMVR_VHF_PICKGLOW = 64u
 };
 enum { SOMVR_VHL_UNKNOWN = 0, SOMVR_VHL_DRAWING = 1, SOMVR_VHL_OFF = 2 }; /* layer_state */
 
@@ -292,6 +296,13 @@ void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const flo
 #define SOMVR_VH_STRING_NI (2 * SOMVR_VH_STRING_SUB * 72)
 const uint16_t *somvr_vh_string_indices(void);
 void somvr_vh_string(const float pts[3][3], float r_m, somvr_vh_vert *out);
+/* build 40 (som-b40-herb, docs/re-xr-pipeline.md 176; note 6 of the 11-05 session: a white outline round the plant,
+ * not a ring): the pick outline's disc in the string's slot (its 48 quads: 4 rings x 12 sectors) - facing the eyes,
+ * pushed push_m behind the plant's middle `c` (a hand in the plant hides it), r_m round; its alpha level x
+ * (1, 1, 1, 0.9, 0) from the middle out. The layer draws it in hands.frag's outline mode: lit only on the silhouette
+ * edges of what stands in the plant's cylinder, in the game's own depth - an outline of the game's plant, brighter and
+ * wider as the hand comes in */
+void somvr_vh_pickglow(const float c[3], const float eye[3], float r_m, float level, float push_m, somvr_vh_vert *out);
 /* build 18: where the fist's thumb pinches the index (the arrow held from the quiver): the point between the thumb's
  * tip and the index's middle joint at curl 1 (the arrow hand's fist), in the right grip's frame (m); 0 = no model */
 int somvr_vh_pinch(const somvr_vh_model *m, const somvr_vh_cfg *c, float out[3]);

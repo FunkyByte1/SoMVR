@@ -102,7 +102,7 @@ int somvr_pr_orc_parse(const char *w)
 const char *somvr_pr_action_name(int a)
 {
     static const char *const n[SOMVR_PRA_N] = { "none", "go", "back", "spawn", "remove", "status", "arrows", "health",
-                                                "far", "group", "captain", "place", "charge", "herb" };
+                                                "far", "group", "captain", "place", "charge", "herb", "fintest", "fintype" };
     return a >= 0 && a < SOMVR_PRA_N ? n[a] : "?";
 }
 
@@ -117,6 +117,8 @@ int somvr_pr_word(const char *w, somvr_pr_req *out)
         { "place", SOMVR_PRA_PLACE }, /* build 31 */
         { "charge", SOMVR_PRA_CHARGE }, /* build 36: Charge execution */
         { "herb", SOMVR_PRA_HERB }, /* build 37: New herb */
+        { "fintest", SOMVR_PRA_FINTEST }, { "finisher", SOMVR_PRA_FINTEST }, /* build 40: Finisher test */
+        { "fintype", SOMVR_PRA_FINTYPE }, /* build 41: its type, the next */
     };
     const char *tok, *s = w ? w : "", *arg, *rest;
     size_t n = token(&s, &tok);

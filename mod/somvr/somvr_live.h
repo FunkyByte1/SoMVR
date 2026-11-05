@@ -101,7 +101,8 @@ int somvr_lv_patch_parse(const char *txt, size_t n, somvr_lv_patch *p);
 typedef struct {
     uint32_t seq;                   /* the request answered */
     int current;                    /* the patch live now (0 = the session's own module) */
-    char last[16];                  /* applied, undone, refused, stub, restart, bad */
+    char last[16];                  /* applied, undone, refused, stub, restart, bad; b40 live4: start (the launcher put it
+                                     * in before the game started: live_session.sh preapply) */
     int id;                         /* the request's patch */
     char msg[160];
 } somvr_lv_state;

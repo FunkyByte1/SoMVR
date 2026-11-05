@@ -88,6 +88,8 @@ static struct {
 	float grass_front; /* SOMVR_XR_GRASS_FRONT */
 	uint64_t grass_edits, grass_fail;
 	float fol_in, fol_out, bug_in, bug_out; /* SOMVR_NEAR_FOLIAGE_CM / SOMVR_NEAR_BUGS_CM (cm; 0 = the game's) */
+	int fol_shape;                          /* build 40, SOMVR_NEAR_FOLIAGE_SHAPE: 0 sphere, 1 cylinder */
+	float fol_below, fol_above;             /* ... SOMVR_NEAR_FOLIAGE_Y_CM: the cylinder's height window (cm) */
 	uint64_t bubble_edits, bubble_fail;
 	ID3D11Device *dev;
 	ID3D11DeviceContext *ctx;
@@ -351,9 +353,9 @@ static unsigned char *bubble_edit(const void *bc, SIZE_T n, char kind, size_t *n
 	if (!bc || n <= 32)
 		return NULL;
 	if (kind == 'V' && D.fol_in > 0)
-		ed = somvr_bubble_vs(bc, n, nn, &why);
+		ed = somvr_bubble_vs2(bc, n, D.fol_shape, nn, &why);
 	else if (kind == 'P' && D.fol_in > 0)
-		ed = somvr_bubble_ps(bc, n, D.fol_in, D.fol_out, nn, &why);
+		ed = somvr_bubble_ps2(bc, n, D.fol_in, D.fol_out, D.fol_shape, D.fol_below, D.fol_above, nn, &why);
 	else if (kind == 'G' && D.bug_in > 0)
 		ed = somvr_bubble_gs(bc, n, D.bug_in, D.bug_out, nn, &why);
 	else
@@ -363,7 +365,8 @@ static unsigned char *bubble_edit(const void *bc, SIZE_T n, char kind, size_t *n
 		D.bubble_edits++;
 		somvr_win_log("BUBBLE %cS %02x%02x%02x%02x%02x%02x%02x%02x... (%u -> %u bytes): %s", kind, c[0], c[1], c[2], c[3],
 			      c[4], c[5], c[6], c[7], (unsigned)n, (unsigned)*nn,
-			      kind == 'V'   ? "the view-space position to the pixel shader (TEXCOORD2/3/4.w)"
+			      kind == 'V' && D.fol_shape ? "the offset from the eye in the world's axes to the pixel shader (TEXCOORD2/3/4.w)"
+			      : kind == 'V' ? "the view-space position to the pixel shader (TEXCOORD2/3/4.w)"
 			      : kind == 'P' ? "the foliage dissolved near the eye"
 					    : "the particle faded near the eye");
 	} else if (why && strncmp(why, "not ", 4)) {
@@ -582,9 +585,27 @@ static HRESULT WINAPI my_create_device(IDXGIAdapter *a, D3D_DRIVER_TYPE t, HMODU
 		/* build 36 (re-xr-pipeline.md 166): the bubble around the eyes - foliage dissolved, bugs faded */
 		near_cm("SOMVR_NEAR_FOLIAGE_CM", 15.0f, &D.fol_in, &D.fol_out);
 		near_cm("SOMVR_NEAR_BUGS_CM", 25.0f, &D.bug_in, &D.bug_out);
-		somvr_win_log("BUBBLE foliage %s %.0f..%.0f cm, bugs %s %.0f..%.0f cm (gone inside the first, whole from the second; "
-			      "from each eye)", D.fol_in > 0 ? "dissolved" : "the game's (off)", (double)D.fol_in, (double)D.fol_out,
+		/* build 40 (re-xr-pipeline.md 177): the foliage's measure - sphere (the distance from each eye, build 36) or
+		 * cylinder (the distance from the eyes' vertical line, from BELOW cm under the eyes to ABOVE over them) */
+		const char *fsh = getenv("SOMVR_NEAR_FOLIAGE_SHAPE"), *fyc = getenv("SOMVR_NEAR_FOLIAGE_Y_CM");
+		D.fol_shape = fsh && !strcmp(fsh, "cylinder");
+		if (fsh && fsh[0] && strcmp(fsh, "cylinder") && strcmp(fsh, "sphere"))
+			somvr_win_log("BUBBLE SOMVR_NEAR_FOLIAGE_SHAPE=%s not understood (sphere|cylinder): sphere", fsh);
+		D.fol_below = 200.0f, D.fol_above = 30.0f;
+		if (fyc && fyc[0]) {
+			float ya = 0, yb = 0;
+			if (sscanf(fyc, "%f,%f", &ya, &yb) == 2 && ya >= 0 && ya <= 1000 && yb >= 0 && yb <= 300)
+				D.fol_below = ya, D.fol_above = yb;
+			else
+				somvr_win_log("BUBBLE SOMVR_NEAR_FOLIAGE_Y_CM=%s not understood (BELOW,ABOVE cm): 200,30", fyc);
+		}
+		somvr_win_log("BUBBLE foliage %s %.0f..%.0f cm (%s), bugs %s %.0f..%.0f cm (gone inside the first, whole from the "
+			      "second; from each eye)", D.fol_in > 0 ? "dissolved" : "the game's (off)", (double)D.fol_in,
+			      (double)D.fol_out, D.fol_shape ? "cylinder: across from the eyes' vertical line" : "sphere: from each eye",
 			      D.bug_in > 0 ? "faded" : "the game's (off)", (double)D.bug_in, (double)D.bug_out);
+		if (D.fol_shape)
+			somvr_win_log("BUBBLE the foliage's cylinder: from %.0f cm under the eyes to %.0f cm over them (20 cm fades beyond)",
+				      (double)D.fol_below, (double)D.fol_above);
 		if ((D.fog_on || (D.grass & SOMVR_GRASS_FRONT) || D.fol_in > 0 || D.rain_scale != 1.0f) && vt[15] != (void *)my_create_ps) {
 			D.create_ps = (create_ps_t)vt[15];
 			somvr_win_log("%s: ID3D11Device::CreatePixelShader (slot 15) %s",

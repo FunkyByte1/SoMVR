@@ -209,8 +209,12 @@ static void lv_game_start(void)
 	char b[512];
 	somvr_lv_state s;
 	int n = lvg_read("patches/state.txt", b, sizeof b);
-	if (n > 0 && somvr_lv_state_parse(b, (size_t)n, &s))
+	if (n > 0 && somvr_lv_state_parse(b, (size_t)n, &s)) {
 		g_lvg.seq_done = s.seq, g_lvg.current = s.current;
+		if (!strcmp(s.last, "start") && lvg_gen_now() == 0) /* b40 live4: live_session.sh preapply */
+			logf_("LIVE patch %d applied at the session's start: this module is that patch (staged for this build "
+			      "before the launch); Undo returns to the build's own (patches/own_somvr_logic.dll)", s.id);
+	}
 	char boot[600] = "";
 	int host = lvg_host(), have_boot = lvg_boot_dll(boot, sizeof boot);
 	logf_("LIVE config on: the folder %s; the patches by the host's hot reload: %s (module gen %d; the session's own "

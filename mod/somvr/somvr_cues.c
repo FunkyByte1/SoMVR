@@ -107,6 +107,24 @@ int somvr_cu_ring_cell(float d_cm, float reach_cm, int in) {
     return 1 + (int)lrintf(14.0f * p);
 }
 
+void somvr_cu_take_defaults(somvr_cu_take_cfg *c) {
+    c->reach_cm = 40, c->over_cm = 25, c->up_cm = 110, c->low_cm = 45, c->top_cm = 15;
+}
+
+float somvr_cu_take_dist(const somvr_cu_take_cfg *c, const float palm[3], const float foot[3], float eye_y, int *in) {
+    float top[3] = {foot[0], foot[1] + c->top_cm, foot[2]};
+    float d3 = sqrtf((palm[0] - top[0]) * (palm[0] - top[0]) + (palm[1] - top[1]) * (palm[1] - top[1]) +
+                     (palm[2] - top[2]) * (palm[2] - top[2]));
+    float hz = hypotf(palm[0] - foot[0], palm[2] - foot[2]), up = palm[1] - foot[1];
+    float d = d3;
+    if (up >= -10 && up <= c->up_cm && eye_y - palm[1] >= c->low_cm && c->over_cm > 0) {
+        float dc = hz * c->reach_cm / c->over_cm; /* (the column's edge = the ball's reach) */
+        d = dc < d ? dc : d;
+    }
+    if (in) *in = d <= c->reach_cm;
+    return d;
+}
+
 int somvr_cu_match(const char *pats, const char *name) {
     if (!pats || !name || !*name) return 0;
     const char *p = pats;

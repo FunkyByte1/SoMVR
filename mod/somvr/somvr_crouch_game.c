@@ -48,6 +48,11 @@ static struct {
 	uint32_t lines;
 	double held_t;            /* build 15b: the last tick with the stealth command held (cr_sword_draw) */
 	uint64_t sword_ups;       /* ... the stealth crouch stood up for the sword's draw */
+	/* build 38 (SOMVR_CROUCH_DRAW, the 11-04 session's mark 223801_9: every draw from a crouch stood Talion up, the stick
+	 * then walked or ran him): keep = the crouch held through the draw (the game's own re-sheathe into PC_Stealth is
+	 * SOMVR_SLOTS_KEEP=attach's to hold in the hand); stand = build 15b's let-go */
+	int draw_keep;
+	uint64_t draw_kept;
 } g_cr;
 static _Atomic uint32_t g_cr_status_seq, g_cr_press_seq, g_cr_press_ticks, g_cr_hold_seq, g_cr_hold_ms, g_cr_stand_seq,
 	g_cr_try_seq, g_cr_try_cmd, g_cr_try_ms;
@@ -217,7 +222,12 @@ static int cr_sword_draw(double t, int release)
 		return 0;
 	int want = g_cr.mode != CR_OFF && (g_cr.h.latched || (g_cr.ducked && !g_cr.h.duck_off));
 	int ours = g_cr.held || want || (g_cr.held_t > 0 && t - g_cr.held_t < CR_SWORD_S) || (g_cr.game > 0 && g_cr.held_t > 0);
-	if (ours && release && (want || g_cr.held)) {
+	if (ours && release && (want || g_cr.held) && g_cr.draw_keep && g_sl.keep_mode == SL_KEEP_ATTACH) { /* build 38 */
+		g_cr.draw_kept++;
+		if (g_cr.lines++ < 200)
+			logf_("CROUCH sword t=%.3f: the stealth crouch kept through the sword's draw (SOMVR_CROUCH_DRAW=keep: the game's "
+			      "re-sheathe into PC_Stealth is SOMVR_SLOTS_KEEP=attach's; %llu so far)", t, (unsigned long long)g_cr.draw_kept);
+	} else if (ours && release && (want || g_cr.held)) {
 		somvr_crouch_hold_release(&g_cr.h, g_cr.ducked);
 		g_cr.press_ticks = 0, g_cr.hold_until = 0;
 		g_cr.sword_ups++;
@@ -299,6 +309,12 @@ static void cr_config(int *bad)
 	c->hold_s = 1e-3f * env_float("SOMVR_CROUCH_HOLD_MS", c->hold_s * 1e3f, 0, 5000, bad);
 	g_cr.cap_cms = env_float("SOMVR_CROUCH_CMS", 150, 0, 1000, bad);
 	g_cr.haptic = env_float("SOMVR_CROUCH_HAPTIC", 0.3f, 0, 1, bad);
+	static const char *const draw_w[] = { "stand", "keep" };
+	g_cr.draw_keep = env_word("SOMVR_CROUCH_DRAW", draw_w, 2, 1); /* build 38: code default keep */
+	if (g_cr.mode != CR_OFF)
+		logf_("CONFIG crouch draw=%s (SOMVR_CROUCH_DRAW, build 38): the sword drawn from the stealth crouch %s", draw_w[g_cr.draw_keep],
+		      g_cr.draw_keep ? "keeps the crouch held (Talion stays down; the game's re-sheathe into stealth held off by "
+		      "SOMVR_SLOTS_KEEP=attach - without it: as stand)" : "lets the crouch go (build 15b: Talion stands)");
 	int can = g_inp.on && g_rigcfg.base == SOMVR_BASE_HEAD;
 	if (g_cr.mode == CR_DUCK && !can) {
 		logf_("WARN SOMVR_CROUCH=duck needs SOMVR_INPUT=1 and SOMVR_BASE=head: the button only");
@@ -321,10 +337,12 @@ static void cr_end_log(void)
 {
 	logf_("CROUCH END mode=%s frames %llu (seated %llu) ticks %llu; the standing height %.1f (measured %llu, rose %llu); "
 	      "ducks on %llu off %llu, tracking jumps %llu; held ticks %llu, the button %llu; Talion down %llu up %llu; cues "
-	      "%llu; speed caps %llu; stood up for the sword %llu", g_cr_mode_w[g_cr.mode], (unsigned long long)g_cr.frames,
+	      "%llu; speed caps %llu; stood up for the sword %llu (kept down through it %llu)", g_cr_mode_w[g_cr.mode],
+	      (unsigned long long)g_cr.frames,
 	      (unsigned long long)g_cr.seated_frames, (unsigned long long)g_cr.ticks, g_cr.s.stand,
 	      (unsigned long long)g_cr.s.stands, (unsigned long long)g_cr.s.rises, (unsigned long long)g_cr.s.ons,
 	      (unsigned long long)g_cr.s.offs, (unsigned long long)g_cr.s.jumps, (unsigned long long)g_cr.held_ticks,
 	      (unsigned long long)g_cr.buttons, (unsigned long long)g_cr.game_downs, (unsigned long long)g_cr.game_ups,
-	      (unsigned long long)g_cr.cues, (unsigned long long)g_cr.caps, (unsigned long long)g_cr.sword_ups);
+	      (unsigned long long)g_cr.cues, (unsigned long long)g_cr.caps, (unsigned long long)g_cr.sword_ups,
+	      (unsigned long long)g_cr.draw_kept);
 }

@@ -41,6 +41,15 @@ userin() {
 }
 bail() { echo "$(date +%T) STOP: $1"; echo quit >> "$R/cmd"; exit 1; }
 w() { userin && bail "the user is in VR"; printf '%s' "$1" > "$R/somvr.trigger"; echo "$(date +%T) word: $1"; sleep "${2:-0.8}"; }
+# build 40 (som-b40-fixes, re-xr-pipeline.md 175.3): a hands word taken for sure - the Windows build reads the trigger file
+# every 1-2 s and a word written sooner after the last is lost: written, then its TRIGGER line waited for (3 s at most)
+wa() { local a0 i; a0=$(grep -c '^TRIGGER cmd=hands' "$L"); w "$1" 0.02; for i in $(seq 1 30); do
+  [ "$(grep -c '^TRIGGER cmd=hands' "$L")" -gt "$a0" ] && break; sleep 0.1; done; sleep "${2:-0.2}"; }
+# build 40: the push measured and started in one frame (the mod's `knife push D MS [sword]`, a test aid: the hand by the
+# point's way onto his back + D cm on; a measure and a word built from it came 2-3 s apart and the orc swayed 10-30 cm)
+wk() { local a0 i; a0=$(grep -c '^TRIGGER cmd=knife push' "$L"); w "$1" 0.02; for i in $(seq 1 30); do
+  [ "$(grep -c '^TRIGGER cmd=knife push' "$L")" -gt "$a0" ] && break; sleep 0.1; done; sleep "${2:-0.2}"
+  grep -E '^KNIFE push t=' "$L" | tail -1 | cut -c1-220; }
 x() { userin && bail "the user is in VR"; { echo "# $(date +%s%N)"; for l in "$@"; do echo "$l"; done; } > "$R/xrtest.tmp" &&
       mv "$R/xrtest.tmp" "$R/xrtest.txt"; echo "$(date +%T) xrtest: $*"; sleep "${TS:-0.8}"; }
 cnt() { grep -cE "$1" "${2:-$L}" 2>/dev/null; }
@@ -94,6 +103,8 @@ poses() { # (after aim) from `knife where`: the orc's torso-to-neck middle in th
   [ -n "$l" ] || { echo "$(date +%T) no knife where line"; l="torso 0 -45 130 neck 0 -15 140"; }
   echo "$(date +%T) $(echo "$l" | grep -oE 'torso [-0-9 ]+neck [-0-9 ]+head [-0-9 ]+' ; echo "$l" | grep -oE 'it faces [-+0-9]+ deg')"
   WHERE=$(echo "$l" | grep -oE 'torso [-0-9]+ [-0-9]+ [-0-9]+ neck [-0-9]+ [-0-9]+ [-0-9]+' | tr -d 'a-z' | tr -s ' ')
+  BACK=$(echo "$l" | grep -oE 'back [-0-9]+ [-0-9]+ [-0-9]+' | cut -d' ' -f2-) # (build 40: the judge's own back point - the
+  # torso-neck middle 16 cm toward its back along its facing; boot 084104's bent orc put the eye line's S 15 cm inside him)
   geo='n = split(W, v, " "); mx = (v[1] + v[4]) / 2; my = (v[2] + v[5]) / 2; mz = (v[3] + v[6]) / 2
     h = sqrt(mx * mx + mz * mz); dx = mx / h; dz = mz / h; px = dz; pz = -dx; P = 3.14159265
     sx = mx - 15 * dx; sz = mz - 15 * dz; a = atan2(dx, dz) * 180 / P'
@@ -116,7 +127,23 @@ poses() { # (after aim) from `knife where`: the orc's torso-to-neck middle in th
   KSTAB0=$(pk test R -30 0 0 0); KSTAB1=$(pk swing R 15 0 0 0 250) # the fight: quick stabs
   # the sword (1 m, its grip 100 cm behind its point): from 40 cm short to 30 cm in, 0.45 s - the weighted sword
   # (SOMVR_SWORD_WEIGHT) lags a 0.25 s thrust into the body after the hand stopped: "carried" (boots 154041/155214)
-  READY2=$(ph test R -140 0 0 0); THRUST=$(ph swing R -70 0 0 0 450)
+  # build 40: the thrust along the line from the right shoulder (the `hands swing` pivot, 18 -25 -8 of the head) through
+  # S at its height: `hands swing` arcs about that shoulder, so a thrust whose two ends lie on one ray from it is straight
+  # and the blade moves along itself (suite 372: the thrust from behind the head swept 108 deg round the shoulder - "in the
+  # body but no thrust", cos 0.65). The grip at G cm along that ray (never under 3: both ends ahead of the shoulder, the
+  # ray's own side), the point SWL cm further along the blade; READY2 the point 15 cm short of S, THRUST 30 cm in, 0.4 s
+  # (1.6 m/s as the point goes in, 2.1 at the middle); SWL_GAP = how far the ready's point is from S (cm; under 5: too
+  # close for the sword - the step backs off first)
+  sw() { awk -v W="$WHERE" -v BK="$BACK" -v D="$1" -v k="$2" -v ms="${3:-}" -v SWL="${SWL:-108}" "BEGIN { $geo
+    if (split(BK, bk, \" \") == 3) { sx = bk[1]; my = bk[2]; sz = bk[3] }
+    ox = 18; oy = -25; oz = -8; tx = sx - ox; ty = my - oy; tz = sz - oz; l = sqrt(tx * tx + ty * ty + tz * tz)
+    ux = tx / l; uy = ty / l; uz = tz / l; g = l + D - SWL; if (g < 3) g = 3
+    printf \"hands %s R %.1f %.1f %.1f %.1f %.1f 0%s\", k, ox + g * ux, oy + g * uy, oz + g * uz, atan2(uy, uz) * 180 / P,
+      -atan2(ux, sqrt(1 - ux * ux)) * 180 / P, ms != \"\" ? \" \" ms : \"\" }"; } # (q = Rx Ry: the blade (sin b', cos b' sin a, cos b' cos a))
+  SWL_GAP=$(awk -v W="$WHERE" -v BK="$BACK" -v SWL="${SWL:-108}" "BEGIN { $geo
+    if (split(BK, bk, \" \") == 3) { sx = bk[1]; my = bk[2]; sz = bk[3] }
+    tx = sx - 18; ty = my + 25; tz = sz + 8; printf \"%.0f\", sqrt(tx * tx + ty * ty + tz * tz) - SWL - 3 }")
+  READY2=$(sw -15 test); THRUST=$(sw 30 swing 400)
   echo "$(date +%T) poses: ready $KREADY | push $KPUSH | grab $LGRAB"
 }
 # after a draw, the knife at KREADY: the judge's blade against the grip -> KL, KO*, KE; the poses again
@@ -203,7 +230,9 @@ for s in $STEPS; do
     w "front keep 1" 0.3; far; WIT=$(grep -E '^PRACTICE t=.*spawn ' "$L" | tail -1 | cut -c1-200); echo "the witness: $WIT"
     chase_to 0.6 60; noticed && echo "$(date +%T) noticed before the knife"
     aim; poses; knife_draw || fail "grab: the knife not drawn"
-    kcal; n0=$(lines)
+    # (build 40: the crouch hold is 9 s - boot 083134's draw and calibration outlasted it, Talion stood and the orc
+    # turned on him before the grab: renewed before each step that needs him unaware)
+    hold; kcal; hold; n0=$(lines)
     for g in "$LGRAB" "$LGRAB2" "$LGRAB3"; do w "$g" 0.8; w "hands squeeze L 1" 1.2
       since "$n0" '^KNIFE t=.* hold: ' | grep -q . && break; w "hands squeeze L 0" 0.5; done
     since "$n0" '^KNIFE t=.* hold: ' | grep -q . && pass "grab: the hold ($(since "$n0" '^KNIFE t=.* hold: ' | head -1 | cut -c14-160))" \
@@ -215,9 +244,17 @@ for s in $STEPS; do
     elif [ "$bi" -lt 1 ]; then fail "brush: the point never in its body ($(since "$nb" '^STEALTH t=.* air \(the dagger\)' | tail -1 | grep -oE 'the blade [0-9.]+ cm off'))"
     else pass "brush: the point dragged slowly across his back, no kill ($(since "$nb" '^STEALTH t=.* (touch|carried|air) \(the dagger\)' | grep -oE ' (touch|carried|air) ' | sort | uniq -c | tr -s ' \n' ' '); $(since "$nb" '^STEALTH t=.* touch \(the dagger\)' | grep -oE 'along [0-9.-]+ m/s cos [0-9.-]+' | head -2 | tr '\n' ';'))"; fi
     since "$nb" '^STEALTH t=.* alert: ' | grep -q . && fail "brush: the held orc alerted" || pass "brush: held, no alert"
-    w "$KREADY" 0.5
-    n0=$(lines); w "$KPUSH" 0.35; dp grab-stab; sleep 0.2; dp grab-in
-    w "$KPULL" 1.2; dp grab-after; kill_checks "$n0" grab; stick_checks "$n0" grab
+    # build 40: the push from a fresh measure of the held orc (boot 084104: the poses measured before the hold and the
+    # brushes, the push 3.4 cm short of his body: no kill), the same tries as nograb's
+    for k in 1 2 3; do
+      hold; poses; wa "$KREADY" 0.6
+      n0=$(lines); k0=$(cnt '^KNIFE t=.* kill: '); wk "knife push 14 600" 0.1; dp grab-stab; sleep 0.2; dp grab-in
+      waitfor_n '^KNIFE t=.* kill: ' "$k0" 2 && break
+      if since "$n0" '^STEALTH t=.* (touch|contact) \(the dagger\)' | grep -q .; then echo "$(date +%T) grab try $k: a touch, no kill"; break; fi
+      echo "$(date +%T) grab try $k: the push met the air ($(since "$n0" '^STEALTH t=.* air \(the dagger\)' | tail -1 | grep -oE 'the blade [0-9.]+ cm off')): again"
+      wa "$KPULL" 1.0
+    done
+    wa "$KPULL" 1.2; dp grab-after; kill_checks "$n0" grab; stick_checks "$n0" grab
     w "hands squeeze L 0" 0.5; w "$LREST" 0.5
     sleep 1.5
     a3=$(since "$n0" '^STEALTH t=.* after the kill \+3 s' | head -1); echo "$a3" | cut -c1-300
@@ -230,26 +267,58 @@ for s in $STEPS; do
   nograb)
     round nograb; chase_to 0.6 60; noticed && echo "$(date +%T) noticed before the knife"
     aim; poses; knife_draw || fail "nograb: the knife not drawn"
-    kcal; n0=$(lines); w "$KPUSH" 0.35; dp nograb-stab
-    w "$KPULL" 1.2; kill_checks "$n0" nograb
+    hold; kcal
+    # build 40: the orc (not held) sways and turns as it stands - suite 372's push came 1.5 s after the measure, 23 cm off
+    # its body. Each try: a fresh measure, the ready, the point checked outside him, the push at once; a push that met
+    # only the air (no touch: he never felt it) is tried again from a fresh measure, up to 3 times
+    for k in 1 2 3; do
+      hold; poses; nb=$(lines); wa "$KREADY" 0.6
+      if since "$nb" '^STEALTH t=.* (touch|carried|contact) \(the dagger\)' | tail -1 | grep -q .; then
+        echo "$(date +%T) nograb try $k: the point in his body at the ready: back 15 cm"; wa "$(pk test R -25 0 0 0)" 0.5; continue; fi
+      # (the unheld orc: the fresh poses' push - 6/6 in boots 083134, 084104, 085331; the push aid met the air beside a
+      # turned orc in 090833 and its turn in 093501)
+      n0=$(lines); k0=$(cnt '^KNIFE t=.* kill: '); wa "$KPUSH" 0.1; dp nograb-stab
+      waitfor_n '^KNIFE t=.* kill: ' "$k0" 2 && break
+      if since "$n0" '^STEALTH t=.* (touch|contact) \(the dagger\)' | grep -q .; then echo "$(date +%T) nograb try $k: a touch, no kill"; break; fi
+      echo "$(date +%T) nograb try $k: the push met the air ($(since "$n0" '^STEALTH t=.* air \(the dagger\)' | tail -1 | grep -oE 'the blade [0-9.]+ cm off')): again"
+      wa "$KPULL" 1.0
+    done
+    wa "$KPULL" 1.2; kill_checks "$n0" nograb
     since "$n0" '^KNIFE t=.* kill: .*not held' | grep -q . && pass "nograb: killed without the hold" || fail "nograb: held?"
     stick_checks "$n0" nograb
     knife_away; endr ;;
   sword)
-    round sword; sword_draw; chase_to 0.6 60; aim; poses; w "$READY2" 0.5
-    n0=$(lines); w "$THRUST" 0.3; dp sword-kill; sleep 2
+    round sword; sword_draw; chase_to 0.6 60; aim
+    # build 40: the blade outside his body before the thrust (a blade already in him is a touch, never a thrust): a fresh
+    # measure, the ready on the shoulder's ray, the judge's lines since it read - in him: 15 cm further back, again
+    for k in 1 2 3; do
+      hold; poses; echo "$(date +%T) sword try $k: the closest ready's point ${SWL_GAP:-?} cm short of his back: $READY2"
+      # (under 8 cm: too close for a 1 m blade - half a step back, crouched, as a player would make room)
+      if [ "${SWL_GAP:-99}" -lt 8 ]; then echo "$(date +%T) sword try $k: too close for the sword: half a step back"; w "stick 0 -0.6 0 0.4" 1.2; continue; fi
+      nb=$(lines); wa "$READY2" 0.5; sleep 0.5
+      if since "$nb" '^STEALTH (kill )?t=.* kill by ' | grep -q .; then fail "sword: the kill came at the ready's placement, not the thrust"; break; fi
+      if since "$nb" '^STEALTH t=.* (touch|carried|contact) \(the sword\)' | grep -q .; then
+        echo "$(date +%T) sword try $k: the blade in his body at the ready: $(since "$nb" '^STEALTH t=.* (touch|carried|contact) \(the sword\)' | tail -1 | cut -c1-160)"
+        READY2=$(sw -30 test); THRUST=$(sw 30 swing 450); wa "$READY2" 0.6; continue; fi
+      break; done
+    echo "$(date +%T) sword: at the ready $(since "$nb" '^STEALTH t=.* air \(the sword\)' | tail -1 | grep -oE 'the blade [0-9.]+ cm off its body' || echo '(no air line: out of the judge's reach)')"
+    n0=$(lines); wk "knife push 30 400 sword" 0.1; dp sword-kill; sleep 2
     since "$n0" '^STEALTH kill t=.* by the sword' | grep -q . && pass "sword: the stealth kill by the sword as build 36 ($(since "$n0" '^STEALTH t=.* kill by ' | head -1 | grep -oE 'kill by [a-z ]+:' ))" \
       || fail "sword: $(since "$n0" '^STEALTH (kill )?t=.* (contact|touch|kill)' | head -2 | cut -c1-220)"
     since "$n0" '^KNIFE t=.* kill: ' | grep -q . && fail "sword: a knife kill line" || pass "sword: no knife line"
-    w "$REST" 0.5; sword_away; endr ;;
+    wa "$REST" 0.5; sword_away; endr ;;
   fight)
     echo "== fight"; reset; w "crouch stand" 0.4; w "verbs ahead 400" 0.3; w "practice spawn infantry" 4; w "verbs ahead 300" 0.3
-    knife_draw || fail "fight: the knife not drawn"; aim; poses; kcal
+    knife_draw || fail "fight: the knife not drawn"
+    # build 40: the fighting orc dodged, fell and circled through the stabs (suite 372: his torso 116 cm under the eyes,
+    # then 95, 67 ...; each pose a second old) - `kills still on` (a test aid, build 31b: in his fight, his own attacks and
+    # reactions refused, his walk held) keeps him where the hand can reach him; the knife's judge unchanged
+    w "kills still on" 0.8; aim; poses; kcal
     n0=$(lines)
     for j in 1 2 3 4 5 6; do
       d=$(w "execute where" 0.5 >/dev/null; grep -E '^EXECUTE where ' "$L" | tail -1 | grep -oE 'dist [0-9]+' | head -1 | cut -d' ' -f2)
       echo "$(date +%T) the orc at ${d:-?} cm"; aim; poses
-      w "$KSTAB0" 0.5; w "$KSTAB1" 0.6
+      wa "$KSTAB0" 0.4; wa "$KSTAB1" 0.5
       [ "$(since "$n0" '^KNIFE t=.* light: ' | wc -l)" -ge 2 ] && break
     done
     dp fight-stab
@@ -257,7 +326,7 @@ for s in $STEPS; do
     [ -n "$lt" ] && ! since "$n0" '^KNIFE t=.* kill: ' | grep -q . && echo "$lt" | grep -q 'dead 0 -> 0' \
       && pass "fight: the knife on a fighting orc - $(echo "$lt" | wc -l) light hit(s), no kill ($(echo "$lt" | head -1 | grep -oE 'health [0-9.]+ -> [0-9.]+'))" \
       || fail "fight: $(since "$n0" '^KNIFE' | head -3 | cut -c1-220)"
-    knife_away; w "practice remove" 2 ;;
+    w "kills still off" 0.5; knife_away; w "practice remove" 2 ;;
   esac
 done
 w "stealth watch off" 0.3; w "knife status" 0.8; w "stealth status" 1; w "endlogs" 2; sleep 2

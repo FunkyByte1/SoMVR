@@ -1,0 +1,4 @@
+name	kind	linux	windows	confidence	evidence	notes
+# som-b40-stealth (build 40, docs/re-xr-pipeline.md 175): SOMVR_STEALTH_TOUCH
+TC_TYPE_R	off	0xb0	0xac	confirmed	the stimulus type's radius term: L CAIObserverFOV::vf_03 0x2ab9360 `fVar21 = *(float *)(lVar7 + 0xb0)` (lVar7 = *stimulus) = W 0x140b890f0 `*(float *)(lVar8 + 0xac)` (lVar8 = *param_2), both added to the range and the no-FOV radius	read for the TOUCH lines only (the rule does not use it)
+TC_OWNER_MOTION	off	0x15c	0x160	confirmed	hkpEntity's motion type (5 = fixed): L MyCharacterListener::processConstraintsCallback 0x98edd0 `*(char *)(lVar2 + 0x15c) != 5` = W 0x140e21750 `cmp byte [rax+0x160],5`	SOMVR_STEALTH_CLOSE (build 40b): only a non-fixed body's planes are cleared

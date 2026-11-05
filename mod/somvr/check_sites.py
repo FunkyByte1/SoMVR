@@ -123,9 +123,9 @@ def main():
     sites = [m for b in blocks for m in re.findall(
         r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
         r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b)]
-    if len(sites) != 74:
-        sys.exit("expected 74 SITE lines (16 hooks H1 H2 H3 H4 H6 H9 H8 AUDIO PM IN_TICK IN_VALUE IN_VALUE2 IN_ISON RUM1 "
-                 "RUM2 ARM_TRK_EVAL, 4 save-guard slots, 7 read-only D3D/Vulkan slots, the read-only G12_NODEXF slot, 10 "
+    if len(sites) != 75:
+        sys.exit("expected 75 SITE lines (17 hooks H1 H2 H3 H4 H6 H9 H8 AUDIO PM IN_TICK IN_VALUE IN_VALUE2 IN_ISON RUM1 "
+                 "RUM2 ARM_TRK_EVAL PM9 (build 40), 4 save-guard slots, 7 read-only D3D/Vulkan slots, the read-only G12_NODEXF slot, 10 "
                  "read-only CB_* combat sites, 5 read-only IN_* input sites, the 10 read-only GL_* pad-glyph sites, the "
                  "10 EX hooks RES_*, HEAD_SHADOW_*, HUD_PASS_EYE, HUD_PASS_COVER and UI_PRESENT_COMPOSITE, the read-only "
                  "ES_RUNSTRING, the 9 read-only head-hiding sites G12_HIDEPIECE..HEAD_NODE_SETMASK, the read-only "
@@ -535,6 +535,22 @@ def main():
             sys.exit("expected 1 SITE line in somvr_cues_game.c's CUES_SITES block (the patched CU_TIMER K_CALL), found %d"
                      % len(cus))
         sites = sites + cus
+    # build 40's SOMVR_STEALTH_TOUCH: its block lives in somvr_touch_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_touch_game\.c"', text, re.M):
+        tcs = [m for b in text.split("TOUCH_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("TOUCH_SITES_END", 1)[0])]
+        if [m[1] for m in tcs] != ["K_VSLOT"] * 3:
+            sys.exit("expected 3 SITE lines in somvr_touch_game.c's TOUCH_SITES block (the patched TC_FOV, TC_HEAR, "
+                     "TC_BUBBLE K_VSLOTs), found %d" % len(tcs))
+        sites = sites + tcs
+        cls = [m for b in text.split("CLOSE_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("CLOSE_SITES_END", 1)[0])]
+        if [m[1] for m in cls] != ["K_VSLOT"]:
+            sys.exit("expected 1 SITE line in somvr_touch_game.c's CLOSE_SITES block (the patched TC_PCB K_VSLOT), found %d"
+                     % len(cls))
+        sites = sites + cls
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

@@ -63,7 +63,14 @@ enum { SOMVR_PRA_NONE = 0, SOMVR_PRA_GO = 1, SOMVR_PRA_BACK = 2, SOMVR_PRA_SPAWN
        SOMVR_PRA_CHARGE = 12,
        /* build 37 (som-b37-cues, the user 11-04: "add like a respawn herb or something to the dev menu so that I can at
         * least try that again"): New herb - the blink to the nearest herb the game offers within SOMVR_PRACTICE_HERB_M */
-       SOMVR_PRA_HERB = 13, SOMVR_PRA_N = 14 };
+       SOMVR_PRA_HERB = 13,
+       /* build 40 (som-b40-fin3, re-xr-pipeline.md 171.7; the user's 11-05 note 4): Finisher test - an orc facing Talion
+        * at the finisher's reach, the execution charged, the finisher armed; after each try the orc again; B or the
+        * button again ends it */
+       SOMVR_PRA_FINTEST = 14,
+       /* build 41 (som-b41-finlib, re-xr-pipeline.md 179): the Finisher test's type - the next (Auto, then each of the
+        * library's finishers) */
+       SOMVR_PRA_FINTYPE = 15, SOMVR_PRA_N = 16 };
 /* "go", "back", "spawn", "remove", "status", "arrows", "health", "far", "group", "captain" ("none"; "?" outside) */
 const char *somvr_pr_action_name(int a);
 typedef struct {

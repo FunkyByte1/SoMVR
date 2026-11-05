@@ -206,6 +206,33 @@ somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ri
     return p;
 }
 
+somvr_ob_place somvr_ob_struggle(const float head[3], const float pos[3], float size_m, uint32_t id, float roll_deg) {
+    somvr_ob_place p;
+    memset(&p, 0, sizeof p);
+    p.pose[3] = 1;
+    float d[3] = {pos[0] - head[0], pos[1] - head[1], pos[2] - head[2]};
+    float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    int arrow = id == SOMVR_OB_SG_ARROW;
+    if (!isfinite(dist + size_m + roll_deg) || !(dist > 0.2f) || !(size_m > 0.02f) || !(size_m < 5.0f) ||
+        (!arrow && id > SOMVR_OB_TIMER_ARMED))
+        return p;
+    float q[4];
+    ob_face(pos, head, q);
+    if (arrow) { /* turned about its own normal (the line of sight): q x (0 0 sin cos)(roll/2) */
+        float h = 0.5f * roll_deg * 0.01745329252f, s = sinf(h), c = cosf(h);
+        float r[4] = {q[0] * c + q[1] * s, q[1] * c - q[0] * s, q[2] * c + q[3] * s, q[3] * c - q[2] * s};
+        memcpy(q, r, sizeof r);
+    }
+    p.kind = SOMVR_OBK_WORLD;
+    p.cell = arrow ? SOMVR_OB_CELL_ARROW : SOMVR_OB_CELL_TIMER0 + (int)id;
+    p.roll_deg = arrow ? roll_deg : 0;
+    memcpy(p.pose, q, sizeof q);
+    memcpy(p.pose + 4, pos, 3 * sizeof(float));
+    p.size[0] = p.size[1] = size_m;
+    p.yaw_deg = atan2f(d[0], -d[2]) * 57.29578f; /* logs: its bearing in the reference space */
+    return p;
+}
+
 somvr_ob_place somvr_ob_aim(const float head[3], const float pos[3], float deg, int hit, int sight) {
     somvr_ob_place p;
     memset(&p, 0, sizeof p);
@@ -329,6 +356,11 @@ somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], fl
 void somvr_ob_rect(int cell, int32_t r[4]) {
     if (cell < 0) cell = 0;
     if (cell >= SOMVR_OB_CELLS) cell = SOMVR_OB_CELLS - 1;
+    if (cell == SOMVR_OB_CELL_READOUT) { /* build 40: the third row after the A labels */
+        r[0] = (1 + 2 * SOMVR_OB_WIDE) * SOMVR_OB_STRIDE + 1, r[1] = 2 * SOMVR_OB_STRIDE + 1;
+        r[2] = SOMVR_OB_READOUT_STRIDES * SOMVR_OB_STRIDE - 2, r[3] = SOMVR_OB_CELL;
+        return;
+    }
     if (cell >= SOMVR_OB_CELL_GLOW) { /* build 39: the third row - the glow's square, then the A labels (wide) */
         int k = cell == SOMVR_OB_CELL_GLOW ? 0 : 1 + (cell - SOMVR_OB_CELL_A_DOWN) * SOMVR_OB_WIDE;
         r[0] = k * SOMVR_OB_STRIDE + 1, r[1] = 2 * SOMVR_OB_STRIDE + 1;
@@ -611,4 +643,71 @@ void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra
     /* cells 9 and 10 (build 21): the bow's sight, soft white / wraith-blue */
     ob_sight_cell(px, SOMVR_OB_CELL_AIM, bgra);
     ob_sight_cell(px, SOMVR_OB_CELL_AIM_HIT, bgra);
+}
+
+/* ---- build 40 (SOMVR_OBF_READOUT): Practice > Finisher test's readout ------------------------------------------- */
+void somvr_ob_readout_text(const somvr_objective_frame *e, char l1[SOMVR_OB_READOUT_COLS + 1],
+                           char l2[SOMVR_OB_READOUT_COLS + 1]) {
+    int n = (int)(e->id & 255u), kill = (e->id >> 8) & 1u, why = (int)(e->id >> 9 & 7u), kind = (int)(e->id >> 12 & 15u);
+    /* build 41 (som-b41-finlib): which finisher (bits 12..15: the kind + 1; 0 = build 40's text); a cut's line: how far
+     * along its arc and the time to its end */
+    static const char *const kn[8] = {"", "Neck", "Behead", "Face", "Back", "Downed", "Stunned", "Counter"};
+    int cut = kind == 2 || kind == 6;
+    const char *tn = kind >= 1 && kind <= 7 ? kn[kind] : "Try";
+    char a[64], b[64];
+    if (e->dist_m >= 0 && isfinite(e->dist_m))
+        snprintf(a, sizeof a, "%s %d  snap %.0f cm  in %.1f m/s", tn, n, (double)e->dist_m,
+                 (double)(isfinite(e->top[0]) && e->top[0] > 0 ? e->top[0] : 0));
+    else
+        snprintf(a, sizeof a, "%s %d  no snap", tn, n);
+    float depth = isfinite(e->top[1]) && e->top[1] > 0 ? e->top[1] : 0;
+    const char *dw = cut ? "Cut" : "Depth", *du = cut ? "%" : " cm";
+    if (kill && e->top[2] >= 0 && isfinite(e->top[2]))
+        snprintf(b, sizeof b, "%s %.0f%s  KILL  %s %.2f s", dw, (double)depth, du, cut ? "end" : "out", (double)e->top[2]);
+    else if (kill)
+        snprintf(b, sizeof b, "%s %.0f%s  KILL", dw, (double)depth, du);
+    else
+        snprintf(b, sizeof b, "%s %.0f%s  no kill%s", dw, (double)depth, du,
+                 why == SOMVR_OB_RO_BACK ? " (drawn back)" : why == SOMVR_OB_RO_STOP ? " (stopped)" : "");
+    size_t la = strlen(a), lb = strlen(b); /* (cut to the card's width) */
+    la = la > SOMVR_OB_READOUT_COLS ? SOMVR_OB_READOUT_COLS : la, lb = lb > SOMVR_OB_READOUT_COLS ? SOMVR_OB_READOUT_COLS : lb;
+    memcpy(l1, a, la), l1[la] = 0, memcpy(l2, b, lb), l2[lb] = 0;
+}
+
+void somvr_ob_readout_draw(uint8_t *px, const somvr_font *f, const char *l1, const char *l2, int bgra) {
+    static const float dark[3] = {0.02f, 0.03f, 0.06f}, edge[3] = {0.62f, 0.85f, 1.00f};
+    int32_t r[4];
+    somvr_ob_rect(SOMVR_OB_CELL_READOUT, r);
+    for (int y = r[1]; y < r[1] + r[3]; y++) /* clear the cell (its previous text) */
+        memset(px + 4 * ((size_t)y * SOMVR_OB_IMG_W + (size_t)r[0]), 0, 4 * (size_t)r[2]);
+    if (!l1 || !l2 || (!l1[0] && !l2[0])) return;
+    for (int y = 0; y < r[3]; y++) /* a dark translucent card, a thin wraith-blue edge */
+        for (int x = 0; x < r[2]; x++) {
+            int e = x < 2 || y < 2 || x >= r[2] - 2 || y >= r[3] - 2;
+            ob_px(px, r[0] + x, r[1] + y, e ? edge : dark, e ? 0.8f : 0.62f, bgra);
+        }
+    if (!f) return;
+    const uint8_t white[4] = {255, 255, 255, 255}, blue[4] = {170, 220, 255, 255};
+    int y0 = r[1] + (SOMVR_OB_CELL - 2 * 2 * SOMVR_FONT_H) / 2 - 4;
+    ob_text_rim(px, f, r[0] + 12, y0, l1, 2, blue, bgra);
+    ob_text_rim(px, f, r[0] + 12, y0 + 2 * SOMVR_FONT_H + 8, l2, 2, white, bgra);
+}
+
+somvr_ob_place somvr_ob_readout(const float head[3], const float pos[3]) {
+    somvr_ob_place p;
+    memset(&p, 0, sizeof p);
+    p.pose[3] = 1;
+    float d[3] = {pos[0] - head[0], pos[1] - head[1], pos[2] - head[2]};
+    float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!isfinite(dist) || !(dist > 0.2f)) return p;
+    float h = 2 * dist * tanf(0.5f * SOMVR_OB_READOUT_DEG * 0.01745329252f);
+    if (h < SOMVR_OB_READOUT_MIN_M) h = SOMVR_OB_READOUT_MIN_M;
+    float q[4];
+    ob_face(pos, head, q);
+    p.kind = SOMVR_OBK_WORLD, p.cell = SOMVR_OB_CELL_READOUT;
+    memcpy(p.pose, q, sizeof q);
+    p.pose[4] = pos[0], p.pose[5] = pos[1], p.pose[6] = pos[2];
+    p.size[1] = h, p.size[0] = h * (float)(SOMVR_OB_READOUT_STRIDES * SOMVR_OB_STRIDE - 2) / (float)SOMVR_OB_CELL;
+    p.off_deg = 0, p.yaw_deg = atan2f(d[0], -d[2]) * 57.29578f;
+    return p;
 }

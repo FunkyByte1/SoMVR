@@ -130,6 +130,7 @@ static const struct site_spec *g_prql_sites = g_prql_sites_game; /* selftest: st
 #define PRQL_STATE OFS(PRQL_STATE, 0x34)     /* the state (-1: +0x30's) */
 #define PRQL_STATE0 OFS(PRQL_STATE0, 0x30)
 #define PRQL_SM OFS(PRQL_SM, 0x28)           /* the state machine (an object: its vtable first) */
+#define PRQL_REC OFS(PRQL_REC, 0xd0)         /* the quest's database record (GP_Queen_2 ...; b37 lists, boot 20261105-021212) */
 #define PRQL_SM_VF OFS(PRQL_SM_VF, 0x10)     /* ... the slot CompleteActiveQuest calls with 0 after the completion */
 #define PRQL_MAX 512
 static uintptr_t g_prql_q[PRQL_MAX];  /* the last list's quests, by number */
@@ -157,6 +158,8 @@ _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK ==
 		       (int)SOMVR_PRA_GROUP == (int)SOMVR_VMPR_GROUP && (int)SOMVR_PRA_CAPTAIN == (int)SOMVR_VMPR_CAPTAIN &&
 		       (int)SOMVR_PRA_PLACE == (int)SOMVR_VMPR_PLACE && /* build 31 */
 		       (int)SOMVR_PRA_CHARGE == (int)SOMVR_VMPR_CHARGE && /* build 36 */
+		       (int)SOMVR_PRA_FINTEST == (int)SOMVR_VMPR_FINTEST && /* build 40 */
+		       (int)SOMVR_PRA_FINTYPE == (int)SOMVR_VMPR_FINTYPE && /* build 41 */
 		       (int)SOMVR_PRA_HERB == (int)SOMVR_VMPR_HERB && /* build 37 */
 		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 6 /* the menu's six labels (build 22) */,
 	       "the menu's practice requests = the practice module's");
@@ -264,6 +267,7 @@ static struct {
 	int ground_back;     /* this trip back is the one a trip there without ground started */
 	double ground_y;     /* the last hit's height */
 	double trip_end_t;   /* the last trip's end (pr_settling: the fall rules wait PR_SETTLE_S after it) */
+	int trip_end_kind;   /* build 40: its kind (the climb's blinks - PR_TRIP_DOWN - land where our rays found ground: no wait) */
 	double ground_probe_t; /* the wait's next probe of the target and the place he left */
 	uint64_t ground_waits, ground_pins, ground_none, ground_backs;
 	double ground_wait_max;
@@ -642,7 +646,8 @@ static int pr_settling(void)
 {
 	if (!g_pr.on)
 		return 0;
-	return g_pr.trip.phase != SOMVR_PRT_IDLE || (g_pr.trip_end_t > 0 && pr_now() - g_pr.trip_end_t < PR_SETTLE_S);
+	return g_pr.trip.phase != SOMVR_PRT_IDLE || (g_pr.trip_end_t > 0 && g_pr.trip_end_kind != PR_TRIP_DOWN &&
+						     pr_now() - g_pr.trip_end_t < PR_SETTLE_S); /* build 40: after a trip, not a climb's blink */
 }
 
 /* ---- SOMVR_PRACTICE_QUIET: the ambient AI spawn manager off while Talion is in the area ------------------------ */
@@ -1259,6 +1264,62 @@ static int prql_state(uintptr_t q)
 	return s == -1 ? s0 : s;
 }
 
+/* b41 ladder: a database record's fields (read only): its key table (rec[0] = count, rec[1] bit 0 = keys in order, the
+ * 16-byte entries at rec+8: the hash at +0 or +4, then the entry +9's index; an entry's type +0xa & 0x3f, count +0xc, the
+ * value index +0xe into rec+0x10's 8-byte values; type 0xa = record references) - each field's hash, type, count and its
+ * first values (record names for references; depth > 0: their own fields too) */
+static void prql_recdump(uintptr_t rec, int depth, const char *pre)
+{
+	unsigned char hdr[2], ents[64 * 16];
+	uintptr_t arr = rec ? peek_ptr(rec + 8) : 0, vals = rec ? peek_ptr(rec + 0x10) : 0;
+	char nm[80];
+	fb_rec_name(rec, nm, sizeof nm);
+	if (!arr || !peek(rec, hdr, 2) || !hdr[0] || hdr[0] > 64 || !peek(arr, ents, (size_t)hdr[0] * 16)) {
+		logf_("PRACTICE rec %s'%s' %#llx: no fields read", pre, nm, (unsigned long long)rec);
+		return;
+	}
+	int n = hdr[0], keyoff = (hdr[1] & 1) ? 0 : 4;
+	logf_("PRACTICE rec %s'%s' %#llx: %d fields", pre, nm, (unsigned long long)rec, n);
+	for (int k = 0; k < n; k++) {
+		uint32_t h;
+		memcpy(&h, ents + (size_t)k * 16 + (size_t)keyoff, 4);
+		int idx = keyoff ? ents[(size_t)k * 16 + 9] : k;
+		if (idx >= n)
+			continue;
+		const unsigned char *e = ents + (size_t)idx * 16;
+		uint16_t cnt, vi;
+		memcpy(&cnt, e + 0xc, 2), memcpy(&vi, e + 0xe, 2);
+		int type = e[0xa] & 0x3f;
+		char line[600];
+		size_t l = (size_t)snprintf(line, sizeof line, "%s  field %08x type %d count %u:", pre, h, type, cnt);
+		uint64_t v[6] = { 0 };
+		int m = cnt < 6 ? cnt : 6;
+		if (type == 1) {
+			uint32_t wv = 0;
+			if (vals && peek(vals + (uintptr_t)(vi >> 5) * 8, &wv, 4))
+				l += (size_t)snprintf(line + l, sizeof line - l, " %u", (wv >> (vi & 31)) & 1u);
+		} else if (vals && m > 0 && peek(vals + (uintptr_t)vi * 8, v, (size_t)m * 8)) {
+			for (int j = 0; j < m && l < sizeof line - 90; j++) {
+				if (type == 0xa) {
+					char rn[64];
+					fb_rec_name((uintptr_t)v[j], rn, sizeof rn);
+					l += (size_t)snprintf(line + l, sizeof line - l, " '%s'", rn[0] ? rn : "?");
+				} else {
+					float f;
+					memcpy(&f, &v[j], 4);
+					l += (size_t)snprintf(line + l, sizeof line - l, " %#llx(%d,%g)", (unsigned long long)v[j], (int)(uint32_t)v[j],
+							      (double)f);
+				}
+			}
+		}
+		logf_("PRACTICE rec %s", line);
+		if (type == 0xa && depth > 0)
+			for (int j = 0; j < m; j++)
+				if (v[j])
+					prql_recdump((uintptr_t)v[j], depth - 1, "    ");
+	}
+}
+
 /* b37 ladder: "practice quest list|complete N" on the game thread */
 static void prql_tick(double t)
 {
@@ -1293,6 +1354,16 @@ static void prql_tick(double t)
 		}
 		logf_("PRACTICE t=%.3f quest list%s: %d %s (a test aid; the list %#llx)", t, req == 3 ? " 2" : "", g_prql_n,
 		      req == 3 ? "objects" : "quests", (unsigned long long)head);
+		return;
+	}
+	if (req == 5) { /* b41 ladder: list 2's quest N - its record (+0xd0) and the records it names */
+		int k5 = atomic_load(&g_prql_pick);
+		uintptr_t q5 = k5 >= 0 && k5 < g_prql_n2 ? g_prql_q2[k5] : 0;
+		uintptr_t r5 = q5 ? peek_ptr(q5 + PRQL_REC) : 0;
+		logf_("PRACTICE t=%.3f quest rec %d q=%#llx record %#llx (a test aid, read only)", t, k5, (unsigned long long)q5,
+		      (unsigned long long)r5);
+		if (r5)
+			prql_recdump(r5, 1, "");
 		return;
 	}
 	int k = atomic_load(&g_prql_pick), two = req == 4;
@@ -1639,7 +1710,7 @@ static void pr_trip_tick(const struct pr_me *m, int have, double t, int busy)
 		logf_("PRACTICE t=%.3f the blink %s ended (faded in)", t, pr_kind_word(g_pr.trip_kind, 1));
 	}
 	if (g_pr.trip.phase == SOMVR_PRT_IDLE)
-		g_pr.trip_end_t = t;
+		g_pr.trip_end_t = t, g_pr.trip_end_kind = g_pr.trip_kind;
 	if (x == SOMVR_PRX_DONE && g_pr.trip_kind == PR_TRIP_BACK)
 		g_pr.have_back = 0; /* back home: nothing to go back to */
 }
@@ -2138,6 +2209,13 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 	case SOMVR_PRA_GROUP: pr_group(m, orc >= 3 && orc <= SOMVR_PR_GROUP_MAX ? orc : g_pr.group_n, t, who); break; /* build 19; 27: 3..8 */
 	case SOMVR_PRA_CAPTAIN: kp_spawn(m, t, who); break; /* build 22: SOMVR_CAPTAIN (somvr_captain_game.c) */
 	case SOMVR_PRA_PLACE: pr_place_start(orc, t, who); break; /* build 31 */
+	case SOMVR_PRA_FINTEST: /* build 40 (re-xr-pipeline.md 171.7): Finisher test - on (in the area only) or off */
+		if (fn_test_on() || pr_refill_ok(m, have, "the finisher test", t, who))
+			fn_test_toggle(m, t, who);
+		break;
+	case SOMVR_PRA_FINTYPE: /* build 41 (re-xr-pipeline.md 179): the Finisher test's type, the next (anywhere: a setting) */
+		fn_test_type(-1, t, who);
+		break;
 	case SOMVR_PRA_CHARGE: /* build 36 (re-xr-pipeline.md 164): Charge execution (in the area only, as the refills) */
 		if (pr_refill_ok(m, have, "the execution's charge", t, who)) {
 			char w[200];
@@ -2351,6 +2429,7 @@ static void pr_frame(uintptr_t pl)
 	pr_group_tick(t); /* build 19 */
 	pr_far_tick(&m, t); /* build 18 */
 	pr_place_tick(&m, have, t); /* build 31: Place orc */
+	fn_test_tick(&m, have, t);  /* build 40: Finisher test (somvr_finisher_game.c) */
 	static uint32_t put_seen; /* b35 (re-xr-pipeline.md 160): `practice put X Y Z [TYPE]` */
 	uint32_t ps = atomic_load_explicit(&g_pr_put_seq, memory_order_acquire);
 	if (ps != put_seen) {
@@ -2373,7 +2452,8 @@ static void pr_frame(uintptr_t pl)
 		atomic_store_explicit(&g_vmo.pstate,
 				      (g_pr.here ? SOMVR_VMA_PR_HERE : 0u) | (g_pr.have_back ? SOMVR_VMA_PR_BACK : 0u) |
 					      (g_pr.orc_h || pr_group_out() ? SOMVR_VMA_PR_ORC : 0u) |
-					      (g_pr.trip.phase != SOMVR_PRT_IDLE || g_pr.pend_act ? SOMVR_VMA_PR_BUSY : 0u),
+					      (g_pr.trip.phase != SOMVR_PRT_IDLE || g_pr.pend_act ? SOMVR_VMA_PR_BUSY : 0u) |
+					      fn_test_kind_bits() /* build 41: the Finisher test's type (bits 12..15) */,
 				      memory_order_release);
 }
 
@@ -2426,6 +2506,11 @@ static const char *pr_word(const char *w)
 			return two ? "practice quest list 2 (a test aid: the second list's objects, their records)"
 				   : "practice quest list (a test aid: every quest, its state and records)";
 		}
+		if (sscanf(w + 6, "rec %d", &nq) == 1 && nq >= 0 && nq < PRQL_MAX) {
+			atomic_store(&g_prql_pick, nq);
+			atomic_store(&g_prql_req, 5);
+			return "practice quest rec (a test aid: list 2's quest N - its record's fields, the records they name)";
+		}
 		int ns = -1;
 		if (sscanf(w + 6, "state %d %d", &nq, &ns) == 2 && nq >= 0 && nq < PRQL_MAX && ns >= 0 && ns <= 16) {
 			atomic_store(&g_prql_pick, nq);
@@ -2438,7 +2523,7 @@ static const char *pr_word(const char *w)
 			atomic_store(&g_prql_req, 2);
 			return "practice quest complete (a test aid: the quest the last list numbered N, as CompleteActiveQuest)";
 		}
-		return "practice quest list [2]|complete N|state N S (ignored)";
+		return "practice quest list [2]|complete N|state N S|rec N (ignored)";
 	}
 	if (!strncmp(w, "console ", 8)) { /* b37 ladder (a test aid, SOMVR_HANDS_TEST=1): one console line (pr_light_tick) */
 		const char *d = w + 8;

@@ -118,6 +118,37 @@ static void test_reach(void) {
           somvr_cu_ring_cell(41, 40, 0));
 }
 
+/* build 40: the reach to an herb on the ground - the user's 11-05 grips (mark 7) are takes now */
+static void test_take(void) {
+    somvr_cu_take_cfg c;
+    somvr_cu_take_defaults(&c);
+    const float foot[3] = {31314, 2190, -25167};
+    int in = 0;
+    /* 222129.05: 8 cm beside the stem, 79 cm over the foot, 72 cm under the eyes */
+    float p1[3] = {31314 + 8, 2190 + 79, -25167}, d1 = somvr_cu_take_dist(&c, p1, foot, 2190 + 79 + 72, &in);
+    CHECK(in && d1 < 15, "the user's first grip over the herb is a take now (%.1f)", (double)d1);
+    float p2[3] = {31314, 2190 + 84, -25167 + 9}, d2 = somvr_cu_take_dist(&c, p2, foot, 2190 + 84 + 71, &in);
+    CHECK(in && d2 < 16, "... and the second (%.1f)", (double)d2);
+    /* the old rule (the ball alone) refused both */
+    somvr_cu_take_cfg old = c;
+    old.over_cm = 0;
+    somvr_cu_take_dist(&old, p1, foot, 2190 + 151, &in);
+    CHECK(!in, "the ball alone (build 33's rule) refuses it");
+    /* the grips that were not over it stay misses: 34 cm beside (108 over), 56 cm beside */
+    float p3[3] = {31314 + 34, 2190 + 108, -25167}, p4[3] = {31314 + 56, 2190 + 119, -25167};
+    somvr_cu_take_dist(&c, p3, foot, 2190 + 171, &in);
+    CHECK(!in, "34 cm beside the stem: no take");
+    somvr_cu_take_dist(&c, p4, foot, 2190 + 169, &in);
+    CHECK(!in, "56 cm beside: no take");
+    /* the hand at the eyes' height (not reached down) over it: no take; the ball still works */
+    float p5[3] = {31314 + 5, 2190 + 100, -25167};
+    somvr_cu_take_dist(&c, p5, foot, 2190 + 130, &in);
+    CHECK(!in, "the hand not reached down (30 cm under the eyes): no take");
+    float p6[3] = {31314 + 10, 2190 + 30, -25167};
+    somvr_cu_take_dist(&c, p6, foot, 2190 + 170, &in);
+    CHECK(in, "the hand at the plant (the ball): a take");
+}
+
 static void test_use(void) {
     CHECK(somvr_cu_match(somvr_cu_use_recs("Combat_Activate_SpiritStone"), "FT_BG") &&
               somvr_cu_match(somvr_cu_use_recs("Combat_Activate_SpiritStone"), "RessurrectionStone"),
@@ -232,6 +263,7 @@ int main(void) {
     test_timer();
     test_use();
     test_reach();
+    test_take();
     test_rows();
     printf("test_cues: %d checks, %d failures\n", g_n, g_fail);
     return g_fail ? 1 : 0;

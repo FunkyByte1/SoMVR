@@ -78,6 +78,11 @@ static struct {
 	uint64_t falls;
 	float hop_cm;
 	uint64_t hops;
+	int fling;             /* build 40 (SOMVR_CLIMB_FLING_OFF): the take-off waiting is a throw off a wall (fling_v, world
+				* cm/s): off the ground, no floor needed (the rays find it on the way down) */
+	sv_vec3 fling_v;
+	uint64_t flings, fling_refused;
+	const char *fling_why;  /* why the last throw was not taken (the climb's line) */
 } g_jp = { .req_jump = -1, .req_vault = -1, .req_stock = -1, .req_cm = -1, .req_via = -1 };
 static _Atomic int g_sv_req, g_sv_req_r, g_sv_req_step; /* build 24: `vault grid|edges` (sv_frame) */
 
@@ -110,6 +115,26 @@ static int jp_fall_req(double t)
 	g_jp.press = SOMVR_JPK_JUMP, g_jp.press_t = t, g_jp.fall = 1, g_jp.hop = 0;
 	return 1;
 }
+
+/* build 40 (SOMVR_CLIMB_FLING_OFF, somvr.c's climb end): thrown off a wall - the jump's arc with this velocity (world
+ * cm/s) at the next PM tick: its up part the rise, its level part fixed as the vault's; 0 = not now (the jump off, in
+ * the air, a take-off waiting or jp_why_not's) */
+static int jp_fling_req(sv_vec3 v, double t)
+{
+	/* (the climb owned this tick: LOCO takes the next - the take-off checks that tick's owner itself; boot 102325's
+	 * throw was refused by "LOCO does not own Talion's ticks" at the climb's end) */
+	const char *why = jp_why_not(t);
+	if (why && !strncmp(why, "LOCO does not own", 17))
+		why = NULL;
+	if (!g_jp.cfg.jump || g_jp.s.kind != SOMVR_JPK_NONE || g_jp.press || why) {
+		g_jp.fling_why = why ? why : !g_jp.cfg.jump ? "the jump is off" : "in the air or a take-off waiting";
+		return 0;
+	}
+	g_jp.press = SOMVR_JPK_FLING, g_jp.press_t = t, g_jp.fling = 1, g_jp.fling_v = v, g_jp.hop = 0, g_jp.fall = 0;
+	return 1;
+}
+
+static const char *jp_fling_why(void) { return g_jp.fling_why ? g_jp.fling_why : "?"; }
 
 static void jp_config(int *bad)
 {
@@ -413,19 +438,25 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 		int kind = g_jp.press;
 		g_jp.press = 0;
 		const char *why = jp_why_not(t);
+		if (why && kind == SOMVR_JPK_FLING && !strncmp(why, "LOCO does not own", 17))
+			why = NULL; /* build 40: the throw's tick follows the climb's (lo_ours_now still has the climb's last tick):
+				     * this tick's own owner is checked just below (boot 104036) */
 		float fy = 0;
 		int fok = have_root && jp_floor(root, &fy);
 		if (!why && !o->owned)
 			why = "LOCO does not own this tick";
+		if (!why && !fok && kind == SOMVR_JPK_FLING) /* build 40: thrown off a high wall - the floor found on the way */
+			fy = root[1] - g_jp.cfg.foot_cm - 3000.0f, fok = 1;
 		if (!why && !fok)
 			why = "no floor under him";
-		if (!why && root[1] - g_jp.cfg.foot_cm - fy > g_jp.cfg.ground_cm && !g_jp.fall)
+		if (!why && root[1] - g_jp.cfg.foot_cm - fy > g_jp.cfg.ground_cm && !g_jp.fall && kind != SOMVR_JPK_FLING)
 			why = "not on the ground";
 		if (!why && t - g_jp.press_t > 0.3)
 			why = "the press is old";
 		if (why) {
 			g_jp.refused++;
-			if (t - g_jp.press_t <= 0.3 && !g_jp.hop && !g_jp.fall) /* the soft "no" (not for a press long gone, nor ours) */
+			if (t - g_jp.press_t <= 0.3 && !g_jp.hop && !g_jp.fall && !g_jp.fling) /* the soft "no" (not for a press long
+												 * gone, nor ours) */
 				haptic(SOMVR_HAND_R, SOMVR_HX_NO);
 			if (jp_log_ok())
 				logf_("JUMP t=%.3f refused: %s (the feet %.0f cm over the floor %.1f): a soft double buzz, nothing moves", t,
@@ -443,7 +474,10 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 			}
 			g_jp.g = g, g_jp.t0 = t, g_jp.root0 = r, g_jp.step_max_cm = 0, g_jp.eye_step_max_cm = 0;
 			g_jp.yaw0 = g_fr.base.yaw, g_jp.yaw_dev_max = 0, g_jp.have_eye = 0, g_jp.pm = pm, g_jp.grav_off = 0;
-			if (vault) {
+			if (kind == SOMVR_JPK_FLING) { /* build 40: thrown off the wall */
+				sv_vec3 v = g_jp.fling_v;
+				somvr_jp_start(&g_jp.s, SOMVR_JPK_FLING, r, fy, v.y, g, (sv_vec3){ v.x, 0, v.z }, r, 0);
+			} else if (vault) {
 				somvr_jp_start(&g_jp.s, SOMVR_JPK_VAULT, r, fy, p.vy0, g, p.vh, p.land, p.t_hold);
 				g_jp.plan = p;
 			} else {
@@ -452,7 +486,15 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 					       (sv_vec3){ 0, 0, 0 }, (sv_vec3){ 0, 0, 0 }, 0);
 			}
 			g_jp.takeoffs++, g_jp.ring = 0;
-			if (g_jp.fall) { /* build 36: the fall from here - no tick, its own line */
+			if (kind == SOMVR_JPK_FLING) { /* build 40: its own line */
+				sv_vec3 v = g_jp.fling_v;
+				g_jp.flings++, g_jp.fling = 0;
+				if (jp_log_ok())
+					logf_("JUMP t=%.3f go: thrown off the wall (SOMVR_CLIMB_FLING_OFF): %.0f cm/s level (%.0f,%.0f), %.0f cm/s up "
+					      "at %.0f cm/s^2; the root %.1f,%.1f,%.1f, the floor %s %.1f", t, hypotf(v.x, v.z), v.x, v.z, v.y,
+					      g, r.x, r.y, r.z, fy < r.y - g_jp.cfg.foot_cm - 2000.0f ? "not found yet (over 6 m down)"
+					      : "under him at", fy);
+			} else if (g_jp.fall) { /* build 36: the fall from here - no tick, its own line */
 				g_jp.falls++, g_jp.fall = 0;
 				if (jp_log_ok())
 					logf_("JUMP t=%.3f go: the fall from here (SOMVR_WALK_GROUND): from rest at %.0f cm/s^2, the stick's %.0f "
@@ -485,8 +527,13 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 			}
 			}
 		}
+		if (why && kind == SOMVR_JPK_FLING) {
+			g_jp.fling_refused++;
+			if (jp_log_ok())
+				logf_("JUMP t=%.3f the throw off the wall refused: %s - the game's own fall from there", t, why);
+		}
 		if (why)
-			g_jp.hop = 0, g_jp.fall = 0;
+			g_jp.hop = 0, g_jp.fall = 0, g_jp.fling = 0;
 	}
 	if (g_jp.s.kind == SOMVR_JPK_NONE)
 		return;
@@ -497,7 +544,7 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 		/* moving: also the floor where this tick and the next take him (uphill the capsule meets the rising ground
 		 * ahead before the rays under him see it: run 003247's running jump stopped hard at 230 cm/s) */
 		float ax = o->delta.x * 2.0f, az = o->delta.z * 2.0f, fa;
-		if (g_jp.s.kind == SOMVR_JPK_VAULT)
+		if (g_jp.s.kind == SOMVR_JPK_VAULT || g_jp.s.kind == SOMVR_JPK_FLING)
 			ax = g_jp.s.vh.x * ji.dt * 2.0f, az = g_jp.s.vh.z * ji.dt * 2.0f;
 		if (ax * ax + az * az > 4.0f) {
 			float ra[3] = { root[0] + ax, root[1], root[2] + az };
@@ -984,4 +1031,7 @@ static void jp_end_log(void)
 	      (unsigned long long)g_jp.grav_writes, (unsigned long long)g_jp.grav_resets, g_jp_via_w[g_jp.via],
 	      (unsigned long long)g_jp.extra_taken, (unsigned long long)g_jp.extra_missed, (unsigned long long)g_jp.setpos_n,
 	      (unsigned long long)g_jp.setpos_ceil, (unsigned long long)g_jp.other_tid);
+	if (g_jp.flings || g_jp.fling_refused || s->n_fling)
+		logf_("JUMP END build 40: throws off a wall (SOMVR_CLIMB_FLING_OFF) %llu taken off, %llu refused, %llu flown",
+		      (unsigned long long)g_jp.flings, (unsigned long long)g_jp.fling_refused, (unsigned long long)s->n_fling);
 }

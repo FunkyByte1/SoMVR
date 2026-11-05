@@ -963,8 +963,189 @@ static void test_clank_hold(void)
     CHECK(st == 0 && sl == 0, "negative: none");
 }
 
+/* build 38 (SOMVR_DEFENCE_ZONE): the block zone. Head at 0,170,0, the orc 180 cm ahead (+z); its weapon raised
+ * high to the right until 0.45 s, then swung down to the left low (the impact at 0.80 s). mode 0: our blade moved
+ * across the zone at 0.30 s; 1: moved but 60 cm off it; 2: across it from the start (never moved); 3: as 0, the blow
+ * unblockable (cannot block); 4: as 0, the blade along the blow's line (pointed at the orc) */
+struct zrun { int fires, met_by, zone_frames, in_frames; float fire_ts, c_lock[3], c_end[3]; };
+static struct zrun zone_attack(const somvr_df_cfg *c, somvr_df_track *tr, int mode)
+{
+    struct zrun r = { 0 };
+    somvr_df_track_init(tr);
+    const float dt = 1.0f / 90;
+    float rest_b[3] = { 25, 100, 20 }, rest_t[3] = { 25, 40, 30 };
+    float zb[3] = { 0 }, zt[3] = { 0 };
+    int placed = 0;
+    for (int f = 0; f <= 90; f++) {
+        float ts = f * dt, ob[3], ot[3];
+        float w0b[3] = { 50, 210, 140 }, w0t[3] = { 70, 260, 120 }, w1b[3] = { -60, 110, 40 }, w1t[3] = { -90, 90, 0 };
+        float a = ts < 0.45f ? 0 : (ts - 0.45f) / 0.35f;
+        a = a > 1 ? 1 : a;
+        for (int i = 0; i < 3; i++)
+            ob[i] = w0b[i] + a * (w1b[i] - w0b[i]), ot[i] = w0t[i] + a * (w1t[i] - w0t[i]);
+        somvr_df_in in;
+        memset(&in, 0, sizeof in);
+        in.ts = ts, in.bpw = in.epw = -1, in.window = -1, in.type = mode == 3 ? SOMVR_DF_TYPE_NOBLOCK : 0, in.blade = 1;
+        in.head[1] = 170, in.orc[2] = 180, in.hand[0] = ob[0], in.hand[1] = ob[1], in.hand[2] = ob[2];
+        in.impact = 0.8f, in.norc = 1;
+        memcpy(in.ob[0], ob, 12), memcpy(in.ot[0], ot, 12);
+        if (!placed && tr->zone_ok && ts >= 0.3f) { /* the blade to the zone: across it (horizontal, square to its line) */
+            float n[3] = { tr->zone_n[0], tr->zone_n[1], tr->zone_n[2] }, up[3] = { 0, 1, 0 }, x[3];
+            x[0] = n[1] * up[2] - n[2] * up[1], x[1] = n[2] * up[0] - n[0] * up[2], x[2] = n[0] * up[1] - n[1] * up[0];
+            float l = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+            for (int i = 0; i < 3; i++) {
+                float cc = tr->zone_c[i] + (mode == 1 ? (i == 1 ? -60.0f : 0) : 0);
+                if (mode == 4)
+                    zb[i] = cc - 40 * n[i], zt[i] = cc + 60 * n[i];
+                else
+                    zb[i] = cc - 40 * x[i] / l, zt[i] = cc + 60 * x[i] / l;
+            }
+            placed = 1;
+        }
+        if (mode == 2 && f == 0) { /* across the place the zone will take, held from the start */
+            float cn[3], dn[3], w[3] = { 60, 235, 130 };
+            somvr_df_zone_place(c, in.head, w, in.orc, cn, dn);
+            for (int i = 0; i < 3; i++)
+                zb[i] = cn[i] + (i == 0 ? -40.0f : 0), zt[i] = cn[i] + (i == 0 ? 60.0f : 0);
+            placed = 1;
+        }
+        const float *bb = placed ? zb : rest_b, *bt = placed ? zt : rest_t;
+        memcpy(in.base, bb, 12), memcpy(in.tip, bt, 12);
+        int fire = somvr_df_step(c, tr, ts, &in);
+        r.zone_frames += tr->zone_ok, r.in_frames += tr->zone_in;
+        if (fire == 2 && !r.fires)
+            r.fire_ts = ts, r.met_by = tr->met_by;
+        r.fires += fire == 2;
+        if (f == 41) /* 0.456 s: just past the lock (0.45 s) */
+            memcpy(r.c_lock, tr->zone_c, 12);
+    }
+    memcpy(r.c_end, tr->zone_c, 12);
+    return r;
+}
+
+static void test_zone38(void)
+{
+    somvr_df_cfg c;
+    somvr_df_cfg_default(&c);
+    CHECK(!c.zone && c.zone_r_cm == 25 && c.zone_out_cm == 45 && c.zone_body_cm == 20 && NEAR(c.zone_lock_s, 0.35, 1e-6) &&
+              c.zone_meet_cm == 40 && c.zone_cross_deg == 35, "zone defaults (off; 50 cm across, 45 cm out)");
+    float head[3] = { 0, 170, 0 }, w[3] = { 60, 190, 150 }, orc[3] = { 0, 0, 200 }, cn[3], dn[3];
+    CHECK(somvr_df_zone_place(&c, head, w, orc, cn, dn) && NEAR(sqrtf(cn[0] * cn[0] + (cn[1] - 150) * (cn[1] - 150) + cn[2] * cn[2]), 45, 0.01) &&
+              cn[0] > 10 && cn[1] > 150 && cn[2] > 30, "the place: 45 cm out of the chest toward the weapon (%.1f,%.1f,%.1f)",
+          cn[0], cn[1], cn[2]);
+    float wnear[3] = { 5, 150, 10 };
+    CHECK(somvr_df_zone_place(&c, head, wnear, orc, cn, dn) && fabsf(cn[0]) < 0.01f && cn[2] > 40,
+          "the weapon at the body: toward the orc's chest (%.1f,%.1f,%.1f)", cn[0], cn[1], cn[2]);
+    float nanv[3] = { NAN, 0, 0 };
+    CHECK(!somvr_df_zone_place(&c, nanv, w, orc, cn, dn) && somvr_df_zone_place(&c, head, NULL, orc, cn, dn),
+          "no head: none; no weapon: the orc");
+    float zc[3] = { 0, 150, 45 }, zn[3] = { 0, 0, 1 }, cr, pt[3];
+    float b0[3] = { -50, 150, 45 }, b1[3] = { 50, 150, 45 }, a0[3] = { 0, 150, 0 }, a1[3] = { 0, 150, 100 };
+    float d0 = somvr_df_zone_blade(zc, zn, b0, b1, &cr, pt);
+    CHECK(d0 < 0.01f && NEAR(cr, 90, 0.01) && somvr_df_zone_holds(&c, d0, cr), "across the centre: in (%.1f cm %.0f deg)", d0, cr);
+    float d1 = somvr_df_zone_blade(zc, zn, a0, a1, &cr, pt);
+    CHECK(d1 < 0.01f && cr < 0.1f && !somvr_df_zone_holds(&c, d1, cr), "along the blow's line: not in (%.0f deg)", cr);
+    float c0[3] = { -50, 174, 45 }, c1[3] = { 50, 174, 45 }, e0[3] = { -50, 176, 45 }, e1[3] = { 50, 176, 45 };
+    float dc = somvr_df_zone_blade(zc, zn, c0, c1, &cr, pt);
+    int hin = somvr_df_zone_holds(&c, dc, cr);
+    float de = somvr_df_zone_blade(zc, zn, e0, e1, &cr, pt);
+    CHECK(hin && !somvr_df_zone_holds(&c, de, cr), "24 cm off in, 26 cm off out");
+    CHECK(isinf(somvr_df_zone_blade(zc, zn, nanv, b1, &cr, pt)), "NaN: unusable");
+
+    c.contact = 1, c.contact_move_cm = 15, c.contact_cm = 0.01f; /* the weapon never meets: the zone's own rule */
+    somvr_df_track tr;
+    struct zrun r = zone_attack(&c, &tr, 0);
+    CHECK(r.fires == 0 && r.zone_frames == 0 && somvr_df_verdict(&c, &tr, 0.9, 0) == SOMVR_DFO_HIT,
+          "zone off: no zone, the hit lands (the old judge)");
+    c.zone = 1;
+    r = zone_attack(&c, &tr, 0);
+    CHECK(r.fires == 1 && r.met_by == 3 && r.fire_ts >= 0.55f && r.fire_ts <= 0.81f && r.zone_frames > 60 && r.in_frames > 20 &&
+              tr.zone_entries == 1 && somvr_df_verdict(&c, &tr, 0.9, 0) == SOMVR_DFO_BLOCK,
+          "the blade across the zone: blocked as the blow reached it, %.3f s (by %d; %d frames shown, %d in, entries %d)", r.fire_ts,
+          r.met_by, r.zone_frames, r.in_frames, tr.zone_entries);
+    CHECK(NEAR(r.c_lock[0], r.c_end[0], 0.01) && NEAR(r.c_lock[1], r.c_end[1], 0.01) && NEAR(r.c_lock[2], r.c_end[2], 0.01) &&
+              r.c_lock[0] > 5 && r.c_lock[1] > 160, "locked from 0.45 s: still while the blow swings (%.0f,%.0f,%.0f), high right",
+          r.c_lock[0], r.c_lock[1], r.c_lock[2]);
+    c.zone_meet_cm = 0; /* never near: the impact itself is the arrival */
+    r = zone_attack(&c, &tr, 0);
+    CHECK(r.fires == 1 && r.met_by == 3 && r.fire_ts >= 0.79f && r.fire_ts <= 0.81f, "no meeting: blocked at the impact %.3f s",
+          r.fire_ts);
+    c.zone_meet_cm = 40;
+    r = zone_attack(&c, &tr, 1);
+    CHECK(r.fires == 0 && r.in_frames == 0 && somvr_df_verdict(&c, &tr, 0.9, 0) == SOMVR_DFO_HIT, "60 cm under it: the hit lands");
+    r = zone_attack(&c, &tr, 2);
+    CHECK(r.fires == 0 && r.in_frames > 0 && tr.still && somvr_df_verdict(&c, &tr, 0.9, 0) == SOMVR_DFO_HIT,
+          "held there from the start (a still guard): the hit lands (in %d frames)", r.in_frames);
+    r = zone_attack(&c, &tr, 3);
+    CHECK(r.fires == 0 && r.zone_frames == 0, "an unblockable blow: no zone");
+    r = zone_attack(&c, &tr, 4);
+    CHECK(r.fires == 0 && r.in_frames == 0, "the blade along the blow's line: not in, not blocked");
+    c.contact_cm = 10; /* the blades meeting first still block as before (met_by 1) */
+    r = zone_attack(&c, &tr, 0);
+    CHECK(r.fires == 1 && (r.met_by == 1 || r.met_by == 3), "the real contact as well: one block (by %d at %.3f s)", r.met_by,
+          r.fire_ts);
+}
+
+/* build 38b: the zone at the blow's own place (a spot right / up / ahead in the frame facing the orc) */
+static void test_zone38b(void)
+{
+    somvr_df_cfg c;
+    somvr_df_cfg_default(&c);
+    float head[3] = { 100, 170, 50 }, orc[3] = { 100 + 120, 0, 50 + 120 }, f[3], r[3]; /* the orc ahead-right at 45 deg */
+    CHECK(somvr_df_zone_frame(head, orc, f, r) && NEAR(f[0], 0.7071, 1e-3) && NEAR(f[2], 0.7071, 1e-3) && NEAR(r[0], 0.7071, 1e-3) &&
+              NEAR(r[2], -0.7071, 1e-3), "the frame facing the orc: f %.2f,%.2f r %.2f,%.2f", f[0], f[2], r[0], r[2]);
+    float same[3] = { 100, 0, 50 };
+    CHECK(!somvr_df_zone_frame(head, same, f, r), "the orc at the head: no frame");
+    float spot[3] = { -10, -50, 90 }, cn[3], dn[3], back[3];
+    CHECK(somvr_df_zone_spot_place(&c, head, orc, spot, cn, dn) && NEAR(cn[1], 120, 1e-3) &&
+              NEAR(hypotf(cn[0] - head[0], cn[2] - head[2]), hypotf(10, 90), 1e-2),
+          "the spot's place: %.1f,%.1f,%.1f", cn[0], cn[1], cn[2]);
+    /* a weapon lying through that place, across: its nearest point to the chest is the spot again (it passes there) */
+    float wb[3] = { cn[0] - 40 * r[0], cn[1], cn[2] - 40 * r[2] }, wt[3] = { cn[0] + 40 * r[0], cn[1], cn[2] + 40 * r[2] };
+    CHECK(somvr_df_zone_spot_of(head, orc, wb, wt, back) && NEAR(back[1], -50, 0.5) && NEAR(back[2], 90, 0.5),
+          "the spot of a weapon across it: %.1f,%.1f,%.1f", back[0], back[1], back[2]);
+    float wild[3] = { 300, -400, 5 }, nanv[3] = { NAN, 1, 1 };
+    somvr_df_zone_spot_clamp(wild);
+    CHECK(wild[0] == SOMVR_DF_ZSPOT_SIDE && wild[1] == SOMVR_DF_ZSPOT_UP_MIN && wild[2] == SOMVR_DF_ZSPOT_AHEAD_MIN,
+          "the clamp: %.0f,%.0f,%.0f", wild[0], wild[1], wild[2]);
+    somvr_df_zone_spot_clamp(nanv);
+    CHECK(nanv[0] == 0 && nanv[1] == 1 && nanv[2] == SOMVR_DF_ZSPOT_AHEAD_MIN, "NaN: the side's middle; 1 cm ahead: out to the minimum");
+    /* an attack placed by a spot: the zone there from its first frame, still after the lock; the blade there blocks */
+    c.contact = 1, c.zone = 1, c.contact_move_cm = 15, c.contact_cm = 0.01f, c.zone_meet_cm = 0;
+    somvr_df_track tr;
+    somvr_df_track_init(&tr);
+    float h0[3] = { 0, 170, 0 }, o0[3] = { 0, 0, 180 }, want[3], wd[3], sp[3] = { -1, -44, 92 };
+    somvr_df_zone_spot_place(&c, h0, o0, sp, want, wd);
+    int fired = 0, met = 0;
+    float c_first[3] = { 0, 0, 0 };
+    for (int k = 0; k <= 90; k++) {
+        float ts = k / 90.0f;
+        somvr_df_in in;
+        memset(&in, 0, sizeof in);
+        in.ts = ts, in.bpw = in.epw = -1, in.window = -1, in.blade = 1, in.impact = 0.8f, in.norc = 1;
+        memcpy(in.head, h0, 12), memcpy(in.orc, o0, 12);
+        float ob[3] = { 60, 200, 140 }, ot[3] = { 90, 240, 120 };
+        memcpy(in.ob[0], ob, 12), memcpy(in.ot[0], ot, 12), memcpy(in.hand, ob, 12);
+        memcpy(in.zone_spot, sp, 12), in.have_zone_spot = 1;
+        float bb[3] = { 25, 100, 20 }, bt[3] = { 25, 40, 30 };
+        if (ts >= 0.5f) /* across it, level and square to the frame's ahead */
+            bb[0] = want[0] - 40, bb[1] = want[1], bb[2] = want[2], bt[0] = want[0] + 60, bt[1] = want[1], bt[2] = want[2];
+        memcpy(in.base, bb, 12), memcpy(in.tip, bt, 12);
+        int fire = somvr_df_step(&c, &tr, ts, &in);
+        if (k == 0)
+            memcpy(c_first, tr.zone_c, 12);
+        if (fire == 2 && !fired)
+            fired = 1, met = tr.met_by;
+    }
+    CHECK(NEAR(c_first[0], want[0], 0.01) && NEAR(c_first[1], want[1], 0.01) && NEAR(c_first[2], want[2], 0.01) && fired &&
+              met == 3, "placed by the spot from the first frame (%.0f,%.0f,%.0f); the blade there: blocked (by %d)",
+          c_first[0], c_first[1], c_first[2], met);
+}
+
 int main(void)
 {
+    test_zone38();
+    test_zone38b();
     test_clank_hold();
     test_body31();
     test_types();

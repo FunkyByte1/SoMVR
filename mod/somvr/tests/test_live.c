@@ -331,9 +331,24 @@ static void test_patch_pages(void) {
           "the session's patch card: cut as one card (%d lines), whole in two pages (%d + %d lines)", one.n, p1.n, p2.n);
 }
 
+/* b40 live4: the patch the launcher applied at the session's start (state.txt last=start) - its card */
+static void test_start_card(void) {
+    const char *st = "seq=1\ncurrent=4\nlast=start\nid=4\nmsg=applied at the session's start\n";
+    somvr_lv_state s;
+    somvr_lv_patch p;
+    somvr_lv_card c;
+    const char *pt = "id=4\nkind=live\nwhat=Ledges stop you\ntry=Walk to a ledge\n";
+    int ok = somvr_lv_state_parse(st, strlen(st), &s) && somvr_lv_patch_parse(pt, strlen(pt), &p) &&
+             somvr_lv_result_card(&s, &p, &c);
+    CHECK(ok && !strcmp(c.title, "Patch 4 applied at start") && !strcmp(c.line[0], "Try: Walk to a ledge") &&
+              s.current == 4 && c.kind == SOMVR_LVK_RESULT,
+          "last=start: the card 'Patch 4 applied at start' / 'Try: ...' (%s / %s)", c.title, c.line[0]);
+}
+
 int main(void) {
     CHECK(somvr_font_init(&F) == 0, "the font");
     test_patch_pages();
+    test_start_card();
     test_place();
     test_wrap();
     test_card();

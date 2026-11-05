@@ -562,3 +562,39 @@ sv_quat somvr_bow_qfilter(somvr_bow_qf *f, sv_quat raw, double t, float min_hz, 
     f->q = sv_qnormalize(q), f->t = t;
     return f->q;
 }
+
+/* ---- build 40 (SOMVR_BOW_HANG_REACH): the bow hand on its way to the bow (the climb's hands-free hang waits) ---- */
+const char *somvr_bow_reach_name(int why)
+{
+    static const char *const n[] = {"no reach", "the bow hand at its shoulder slot", "the bow hand reaching for its slot",
+                                    "the bow hand not seen", "the grace after a draw intent"};
+    return why >= 0 && why <= SOMVR_BRCH_GRACE ? n[why] : "?";
+}
+
+void somvr_bow_reach_defaults(somvr_bow_reach_cfg *c, float slot_r_cm)
+{
+    c->at_cm = (slot_r_cm > 0 ? slot_r_cm : 20.0f) + 10.0f;
+    c->toward_cm = 45.0f, c->toward_cms = 40.0f, c->ahead_cm = 10.0f;
+    c->grace_s = 2.0f, c->intent_cm = 40.0f, c->tau_s = 0.1f;
+}
+
+int somvr_bow_reach_step(somvr_bow_reach_st *s, const somvr_bow_reach_cfg *c, int valid, float dist_cm, float ahead_cm,
+                         int intent, double t)
+{
+    if (!valid || !isfinite(dist_cm)) { /* unseen: no speed across the gap */
+        s->have = 0;
+        return SOMVR_BRCH_UNSEEN;
+    }
+    double dt = s->have ? t - s->t : 0;
+    if (s->have && dt > 1e-4 && dt < 0.25) {
+        float raw = (s->d - dist_cm) / (float)dt, k = 1.0f - expf(-(float)dt / (c->tau_s > 1e-3f ? c->tau_s : 1e-3f));
+        s->v += k * (raw - s->v);
+    } else if (!s->have || dt >= 0.25)
+        s->v = 0;
+    s->have = 1, s->t = t, s->d = dist_cm;
+    if (intent == 2 || (intent && dist_cm <= c->intent_cm)) s->intent_t = t; /* 2: the bow out or put away */
+    if (dist_cm <= c->at_cm) return SOMVR_BRCH_AT;
+    if (dist_cm <= c->toward_cm && s->v >= c->toward_cms && ahead_cm <= c->ahead_cm) return SOMVR_BRCH_TOWARD;
+    if (s->intent_t > 0 && t - s->intent_t < c->grace_s) return SOMVR_BRCH_GRACE;
+    return SOMVR_BRCH_NONE;
+}

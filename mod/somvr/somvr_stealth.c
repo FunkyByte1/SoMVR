@@ -335,3 +335,19 @@ int somvr_stl_standoff_brake(const float p[3], const float c[3], float r, float 
     out[0] = cut * nx, out[2] = cut * nz;
     return 1;
 }
+
+void somvr_stl_touch_defaults(somvr_stl_touch_cfg *c)
+{
+    c->on = 0, c->cm = 0.0f, c->behind_deg = 110.0f, c->cms = 170.0f;
+}
+
+int somvr_stl_touch_zone(const somvr_stl_touch_cfg *c, int crouched, float speed_cms, int aware, float off_deg)
+{
+    return c && c->on && crouched && isfinite(speed_cms) && speed_cms >= 0 && speed_cms <= c->cms && aware == 0 &&
+           isfinite(off_deg) && fabsf(off_deg) >= c->behind_deg;
+}
+
+int somvr_stl_touch_cut(const somvr_stl_touch_cfg *c, int zone, float dist_cm)
+{
+    return c && c->on && zone && isfinite(dist_cm) && dist_cm > c->cm;
+}

@@ -213,7 +213,9 @@ enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_S
        /* build 36 (re-xr-pipeline.md 164): Charge execution - the execution's charge filled (the finisher's ready reached
         * at once; in the area only, as the refills) */
        SOMVR_VMPR_CHARGE = 12,
-       SOMVR_VMPR_HERB = 13 /* build 37: New herb */ };
+       SOMVR_VMPR_HERB = 13 /* build 37: New herb */,
+       SOMVR_VMPR_FINTEST = 14 /* build 40: Finisher test - an orc in front, the finisher armed, again after each try */,
+       SOMVR_VMPR_FINTYPE = 15 /* build 41: the Finisher test's type, the next (the label: pstate's bits 12..15) */ };
 static inline uint32_t somvr_vm_pr_pack(uint32_t seq, int action, int orc) {
     return seq << 8 | ((uint32_t)orc & 15u) << 4 | ((uint32_t)action & 15u);
 }
@@ -314,7 +316,8 @@ typedef struct {
     uint8_t menu_pin;          /* 112: b37 live3 (re-xr-pipeline.md 162.12): the panel 0 on the wrist, 1 pinned in front -
                                 * how it opens (MENU_PIN; the long press of the menu button pins it; Pin / Back to the
                                 * wrist on the panel; remembered) */
-    uint8_t pad8[15];          /* 113..127: spare */
+    uint8_t climb_down;        /* 113: build 40: the climb down's speed, cm/s (CLIMB_DOWN_CMS, SOMVR_CLIMB_DOWN_A_CMS) */
+    uint8_t pad8[14];          /* 114..127: spare */
 } somvr_settings;              /* 128 (96 in v7, 88 in v6) */
 /* v8: the v8 rows' availability (somvr_settings.av8) */
 enum {
@@ -361,7 +364,7 @@ _Static_assert(sizeof(somvr_settings) == 128 && offsetof(somvr_settings, dodge) 
                    offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94 &&
                    offsetof(somvr_settings, watch_raise) == 96 && offsetof(somvr_settings, climb_sword) == 109 &&
                    offsetof(somvr_settings, av8) == 110 && offsetof(somvr_settings, menu_pin) == 112 &&
-                   offsetof(somvr_settings, pad8) == 113,
+                   offsetof(somvr_settings, climb_down) == 113 && offsetof(somvr_settings, pad8) == 114,
                "somvr_settings size");
 _Static_assert(offsetof(somvr_vrmenu_shared, avail) == 24 && offsetof(somvr_vrmenu_shared, blink_on_ms) == 32 &&
                    offsetof(somvr_vrmenu_shared, seq) == 40 && offsetof(somvr_vrmenu_shared, set) == 48 &&
@@ -418,7 +421,7 @@ enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, S
        SOMVR_SK_XR_WATCH_LOOK, SOMVR_SK_WATCH_SIZE, SOMVR_SK_LOW_HEALTH, SOMVR_SK_HEARTBEAT, SOMVR_SK_FORCE_NEEDED,
        SOMVR_SK_SWORD_PHYS_GHOST, SOMVR_SK_KILLS, SOMVR_SK_KILLS_EXEC, SOMVR_SK_SHOVE_PUSH, SOMVR_SK_VERBS_GRAB_MAX_S,
        SOMVR_SK_SLOTS_DAGGER_HOLD, SOMVR_SK_HERBS, SOMVR_SK_CLIMB_FLING_DOWN, SOMVR_SK_CLIMB_SWORD,
-       SOMVR_SK_MENU_PIN /* b37 live3 */, SOMVR_SK_N };
+       SOMVR_SK_MENU_PIN /* b37 live3 */, SOMVR_SK_CLIMB_DOWN_CMS /* build 40 */, SOMVR_SK_N };
 /* build 27: the key masks are 64 bits (parse, format, diff, the file mask; 32 bits held 31 keys) */
 _Static_assert(SOMVR_SK_N <= 63, "the settings keys fit a 64-bit mask");
 #define SOMVR_SK_ALL ((1ull << SOMVR_SK_N) - 1ull)
@@ -468,6 +471,7 @@ enum { SOMVR_VMI_TURN, SOMVR_VMI_SNAP, SOMVR_VMI_SPEED, SOMVR_VMI_VIGNETTE, SOMV
        SOMVR_VMI_WATCH, SOMVR_VMI_WATCH_SIZE, SOMVR_VMI_LOWHP, SOMVR_VMI_BEAT, SOMVR_VMI_FORCE, SOMVR_VMI_GHOST,
        SOMVR_VMI_KILLS, SOMVR_VMI_EXEC, SOMVR_VMI_SHOVE, SOMVR_VMI_HOLD, SOMVR_VMI_KNIFE, SOMVR_VMI_HERBS,
        SOMVR_VMI_FLING_DOWN, SOMVR_VMI_CLIMB_SWORD,
+       SOMVR_VMI_CLIMB_DOWN, /* build 40: the climb down's speed (Climbing) */
        SOMVR_VMI_RECENTER, SOMVR_VMI_CLOSE, SOMVR_VMI_N };
 #define SOMVR_VMI_ROWS SOMVR_VMI_RECENTER /* the value rows; then the Recentre button and the close box */
 /* Build 10: a value row whose feature this build does not have at all is not shown (the rows below close up): the
@@ -522,7 +526,13 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
        SOMVR_VMI_LIVE_APPLY, SOMVR_VMI_LIVE_UNDO,
        /* b37 live3 (re-xr-pipeline.md 162.12): the panel's bottom bar on every page - Pin in front | Back to the wrist
         * (settings.menu_pin toggled: SOMVR_VMR_CHANGED, the layer moves the panel) and Close (SOMVR_VMR_CLOSE) */
-       SOMVR_VMI_PIN, SOMVR_VMI_PINX, SOMVR_VMI_ALL };
+       SOMVR_VMI_PIN, SOMVR_VMI_PINX,
+       /* build 40 (som-b40-fin3, re-xr-pipeline.md 171.7): the practice page's Finisher test (a row of its own under
+        * the Charge row; in the area only, as Spawn; pressed again: the test ends) */
+       SOMVR_VMI_PR_FINTEST,
+       /* build 41 (som-b41-finlib, re-xr-pipeline.md 179): beside it, the test's type (pressed: the next - Auto, then
+        * each finisher of the library; its label the game's, pstate's bits 12..15) */
+       SOMVR_VMI_PR_FINTYPE, SOMVR_VMI_ALL };
 #define SOMVR_VM_SUBS 6 /* the groups (SOMVR_VMI_SUB_COMFORT ..) */
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
@@ -689,7 +699,10 @@ typedef struct {
     uint32_t ctl_feat;         /* build 34: somvr_vrmenu_shared.ctl_feat (SOMVR_VMF_*) */
     uint32_t live_gen;         /* build 35: somvr_vm_live's gen (a change redraws the panel) */
     int pinned;                /* b37 live3: the panel is pinned in front (its Pin button reads "Back to the wrist") */
+    int fin_kind;              /* build 41: the Finisher test's type - pstate's bits 12..15 (0 or 8: Auto, k + 1: kind k) */
 } somvr_vm_view;
+/* build 41: the practice page's type button's label for view.fin_kind */
+const char *somvr_vm_fin_kind_label(int fin_kind);
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;
  * disabled items dimmed, the hovered row and part lit. The practice page (v->page): its state (avail's SOMVR_VMA_PR_*),

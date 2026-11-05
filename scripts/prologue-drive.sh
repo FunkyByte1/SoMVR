@@ -39,8 +39,11 @@ near_orc() { # "x y z" of the orc nearest Talion within R cm (`verbs orcs`; Tali
   l0=$(lines); w "verbs orcs $MX $MZ $rad" 1.2
   tail -n +"$l0" "$R/somvr.log" | grep -E '^VERBS orcs t=.* at -?[0-9]+,-?[0-9]+,-?[0-9]+' |
     awk -v X=$MX -v Z=$MZ '{match($0,/at (-?[0-9]+),(-?[0-9]+),(-?[0-9]+)/,m); d=(m[1]-X)^2+(m[3]-Z)^2; if(best==""||d<bd){bd=d;best=m[1]" "m[2]" "m[3]}} END{print best}'; }
-objective_far() { # the newest objective marker the game showed, if farther than FAR m from Talion: "x y z"
-  local l o; l=$(grep -E "^OBJECTIVE t=.* shown by the game at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)" "$R/somvr.log" | tail -1)
+objective_far() { # the newest objective marker the game showed (or the nav list's objective / quest marker), if farther
+  # than FAR m from Talion: "x y z"
+  local l o l0; l=$(grep -E "^OBJECTIVE t=.* shown by the game at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)" "$R/somvr.log" | tail -1)
+  if [ -z "$l" ]; then l0=$(lines); w "practice status nav" 2.5
+    l=$(tail -n +"$l0" "$R/somvr.log" | grep -E "^PRACTICE nav [0-9]+ '(Objective|Obj_|GP_|golden|quest|Quest)[^']*' at \(" | head -1); fi
   o=$(echo "$l" | grep -oE 'at \(-?[0-9]+ -?[0-9]+ -?[0-9]+\)' | grep -oE '\-?[0-9]+' | tr '\n' ' '); [ -n "$o" ] || return 1
   set -- $o; local d; d=$(python3 -c "import math;print(int(math.hypot($1-${MX:-0},$3-${MZ:-0})/100))")
   [ "$d" -gt "$FAR" ] && echo "$1 $2 $3"; }

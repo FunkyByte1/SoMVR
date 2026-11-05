@@ -63,6 +63,7 @@ static struct {
     int nq;
     somvr_vm_live box;   /* the Test page's patch box (the frame copies it when its gen moves) */
     int ready_id, ready_live, current, last_req_id;
+    int start_id;        /* b40 live4: the patch the launcher applied at the session's start (state.txt last=start) */
     uint32_t state_seq, req_seq, req_written;
     char req[64];        /* the request to write ("" = none) */
     int say_next;        /* the next say/<n> to look for */
@@ -153,7 +154,9 @@ static void lv_box_patch(const somvr_lv_patch *p) { /* LV.mx held: the box from 
     somvr_vm_live b = LV.box;
     b.on = 1;
     if (p && p->id) {
-        if (LV.current == p->id) snprintf(b.line[0], sizeof b.line[0], "Patch %d is in", p->id);
+        if (LV.current == p->id && LV.start_id == p->id) /* b40 live4 */
+            snprintf(b.line[0], sizeof b.line[0], "Patch %d (applied at start)", p->id);
+        else if (LV.current == p->id) snprintf(b.line[0], sizeof b.line[0], "Patch %d is in", p->id);
         else if (p->live) snprintf(b.line[0], sizeof b.line[0], "Patch %d ready", p->id);
         else snprintf(b.line[0], sizeof b.line[0], "Patch %d: restart", p->id);
         char w[2][SOMVR_LV_COLS + 1];
@@ -205,8 +208,19 @@ static void lv_poll(void) {
         int n = lv_read(path, buf, sizeof buf);
         if (n <= 0 || !somvr_lv_patch_parse(buf, (size_t)n, &p) || p.id != rid) rid = 0, memset(&p, 0, sizeof p);
     }
-    pthread_mutex_lock(&LV.mx);
+    int at_start = 0; /* b40 live4: the launcher applied it at the session's start - no "Patch N ready" card */
     if (rid > 0 && rid != LV.ready_id) {
+        char sb[512];
+        somvr_lv_state ss;
+        snprintf(path, sizeof path, "%s/patches/state.txt", LV.dir);
+        int sn = lv_read(path, sb, sizeof sb);
+        at_start = sn > 0 && somvr_lv_state_parse(sb, (size_t)sn, &ss) && !strcmp(ss.last, "start") && ss.id == rid;
+    }
+    pthread_mutex_lock(&LV.mx);
+    if (rid > 0 && rid != LV.ready_id && at_start) {
+        LV.ready_id = rid, LV.ready_live = p.live;
+        lg("xr: live: patch %d staged before the launch and applied at its start (no 'ready' card: its own says so)", rid);
+    } else if (rid > 0 && rid != LV.ready_id) {
         LV.ready_id = rid, LV.ready_live = p.live;
         char title[40], text[500], key[24];
         if (p.live) {
@@ -249,6 +263,8 @@ static void lv_poll(void) {
     if (n > 0 && somvr_lv_state_parse(buf, (size_t)n, &s) && s.seq != LV.state_seq) {
         pthread_mutex_lock(&LV.mx);
         LV.state_seq = s.seq, LV.current = s.current;
+        if (!strcmp(s.last, "start")) LV.start_id = s.id; /* b40 live4 */
+        else if (s.current != LV.start_id) LV.start_id = 0;
         somvr_lv_card c;
         char key[24];
         snprintf(key, sizeof key, "state:%u", s.seq);

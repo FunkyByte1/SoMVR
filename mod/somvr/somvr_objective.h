@@ -57,7 +57,19 @@ enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIV
                                   * reference space), id = the reason (somvr_finisher.h's SOMVR_FN_WHY_*, logs): the
                                   * finisher cell (the wraith-blue ring, "FACE TO FACE / IN REACH") round it facing the
                                   * head; out of view the edge arrow toward it */
-       SOMVR_OBF_EDGE = 16384u }; /* build 39 (SOMVR_WALK_EDGE_STOP, SOMVR_CLIMB_TOP_A, re-xr-pipeline.md 170): alone = the
+       SOMVR_OBF_EDGE = 16384u ,
+       SOMVR_OBF_READOUT = 32768u, /* build 40 (som-b40-fin3, re-xr-pipeline.md 171.7): not the objective but Practice >
+                                   * Finisher test's readout after a try, standing at pos facing the head: id = the
+                                   * try's number (bits 0-7), killed (bit 8), the reason (bits 9-11: SOMVR_OB_RO_*);
+                                   * dist_m = the snap's distance (cm; < 0 none), top[0] the hand's speed in (m/s), top[1]
+                                   * the depth reached (cm), top[2] the pull out (s; < 0 none) */
+       SOMVR_OBF_STRUGGLE = 65536u /* build 41 (som-b41-struggle, re-xr-pipeline.md 180): not the objective but a
+                                    * struggle's cue at its node, a quad facing the head at pos, dist_m wide (metres):
+                                    * id 0..SOMVR_OB_TIMER_ARMED the timer ring's steps left (a hold's time, a press
+                                    * count's presses), SOMVR_OB_SG_ARROW the arrow pointing top[0] degrees (0 right,
+                                    * 90 up, as seen) */
+};
+#define SOMVR_OB_SG_ARROW 100u /* SOMVR_OBF_STRUGGLE's id: the arrow */ /* build 39 (SOMVR_WALK_EDGE_STOP, SOMVR_CLIMB_TOP_A, re-xr-pipeline.md 170): alone = the
                                    * edge's glow - a bright line from edge0 to edge1 (reference space, metres; the lip he
                                    * stands at, ~60 cm of it) - and, a_word != 0, the A label standing over its middle
                                    * facing the head (the A button and "DOWN" / "UP"); with LAND: the ring and the label
@@ -170,6 +182,7 @@ enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2,
        SOMVR_OB_CELL_FINISH = SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED + 1,
        SOMVR_OB_CELL_GLOW, /* build 39: the edge's glow (a square, the third row's first) */
        SOMVR_OB_CELL_A_DOWN, SOMVR_OB_CELL_A_UP, /* build 39: the A labels, SOMVR_OB_WIDE strides wide each (the third row) */
+       SOMVR_OB_CELL_READOUT, /* build 40: the finisher test's readout, SOMVR_OB_READOUT_STRIDES wide after them (row 3) */
        SOMVR_OB_CELLS };
 #define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each; 8..10
                                  * squares (9 and 10: their SOMVR_OB_AIM_PX corner alone); TIMER0.. the second row */
@@ -198,6 +211,10 @@ somvr_ob_place somvr_ob_line(const float top[3], const float bot[3], const float
 /* build 17, the Shadow Strike's mark (SOMVR_OBF_STRIKE): a quad facing the head at pos (the orc's chest, reference
  * space) with the ring's centre on pos, the ring ring_m across (its outer edge), cell one of the strike cells */
 somvr_ob_place somvr_ob_strike(const float head[3], const float pos[3], float ring_m, int cell);
+/* build 41 (SOMVR_OBF_STRUGGLE): a struggle's cue - a square size_m wide facing the head centred on pos: the timer ring's
+ * cell (id 0..SOMVR_OB_TIMER_ARMED: SOMVR_OB_CELL_TIMER0 + id) or the arrow (id SOMVR_OB_SG_ARROW: the edge arrow's
+ * cell turned roll_deg about the line of sight, 0 = right, 90 = up as the eye sees it); kind NONE for anything else */
+somvr_ob_place somvr_ob_struggle(const float head[3], const float pos[3], float size_m, uint32_t id, float roll_deg);
 /* build 20, the bow's aim (SOMVR_OBF_AIM): a square quad facing the head with the ring's centre on pos, deg of the view
  * across (its outer edge) at that distance; the landing ring's cell (gold, a dot in it), hit: the strike's ring (its
  * cell's left square - somvr_ob_strike_rect(cell, 0)); build 21, sight (SOMVR_OBF_AIM_SIGHT): the sight's cell
@@ -258,5 +275,18 @@ somvr_ob_place somvr_ob_a_label(const float head[3], const float at[3], uint32_t
 #define SOMVR_OB_FAINT 0.40f
 void somvr_ob_rect(int cell, int32_t r[4]); /* x, y, w, h */
 void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra);
+/* build 40 (SOMVR_OBF_READOUT, re-xr-pipeline.md 171.7): Practice > Finisher test's readout - two lines of white text on
+ * a dark translucent card in SOMVR_OB_CELL_READOUT (drawn into an image somvr_ob_image made; "" both: the cell left
+ * clear); the lines from an entry (SOMVR_OB_READOUT_COLS characters at most each); its place: standing on pos facing the
+ * head, SOMVR_OB_READOUT_DEG high as the head sees it (at least SOMVR_OB_READOUT_MIN_M) */
+#define SOMVR_OB_READOUT_STRIDES 5
+#define SOMVR_OB_READOUT_COLS 38
+#define SOMVR_OB_READOUT_DEG 6.0f /* (boot 095313: 4.5 read small - letters ~0.9 deg) */
+#define SOMVR_OB_READOUT_MIN_M 0.08f
+enum { SOMVR_OB_RO_KILL = 0, SOMVR_OB_RO_NOSNAP = 1, SOMVR_OB_RO_BACK = 2, SOMVR_OB_RO_STOP = 3 };
+void somvr_ob_readout_text(const somvr_objective_frame *e, char l1[SOMVR_OB_READOUT_COLS + 1],
+                           char l2[SOMVR_OB_READOUT_COLS + 1]);
+void somvr_ob_readout_draw(uint8_t *px, const somvr_font *f, const char *l1, const char *l2, int bgra);
+somvr_ob_place somvr_ob_readout(const float head[3], const float pos[3]);
 
 #endif

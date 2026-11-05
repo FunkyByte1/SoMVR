@@ -8,6 +8,10 @@
 #                                          layer's and the host's source hashes, live.py fingerprint), starts
 #                                          live_daemon.py (its own session, nohup; PARENT = the session's pid: the
 #                                          daemon ends when it is gone); prints the daemon's pid
+#   live_session.sh preapply RUN MOD DLL   b40 live4 (162.13): before the game starts - the patch staged for the next
+#                                          launch (ROOT/next, live_patch.sh stage --next) for exactly this build (MOD's
+#                                          logic DLL and fingerprint) becomes the session's logic module: DLL (the
+#                                          prefix's somvr_logic.dll) replaced, the build's own kept for Undo; one line out
 #   live_session.sh stop RUN               SIGTERM to that daemon only (its pid file, its command line checked), then
 #                                          at most 5 s for it to end; DIR/on removed
 # SOMVR_LIVE_TTS=on in its environment (the session's switch): the daemon also speaks messages asked to (off by default).
@@ -37,6 +41,9 @@ case $cmd in
     echo "$pid" > "$DIR/daemon.pid"
     for i in $(seq 1 20); do [ -e "$DIR/on" ] && break; sleep 0.1; done
     echo "$pid" ;;
+  preapply)
+    mkdir -p "$DIR"/inbox "$DIR"/say "$DIR"/patches "$DIR"/stt || exit 1
+    LIVE_ROOT=$ROOT python3 -I "$HERE/live.py" patch preapply --mod "${3:?MOD}" --dll "${4:?DLL}" --dir "$DIR" ;;
   stop)
     pid=$(cat "$DIR/daemon.pid" 2>/dev/null)
     if [ -n "$pid" ] && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -F -- "live_daemon.py --run $RUN --live $DIR"; then
@@ -45,5 +52,5 @@ case $cmd in
       kill -0 "$pid" 2>/dev/null && echo "live: the daemon $pid still runs 5 s after SIGTERM" >&2
     fi
     rm -f "$DIR/on" ;;
-  *) echo "usage: live_session.sh dir|start|stop RUN [PARENT]" >&2; exit 2 ;;
+  *) echo "usage: live_session.sh dir|start|preapply|stop RUN [PARENT | MOD DLL]" >&2; exit 2 ;;
 esac

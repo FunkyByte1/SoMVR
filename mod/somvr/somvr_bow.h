@@ -334,4 +334,33 @@ int somvr_bow_side_pick(const somvr_bow_cfg *c, sv_quat q, sv_vec3 dir, int side
 typedef struct { int have; double t; sv_quat q; } somvr_bow_qf;
 sv_quat somvr_bow_qfilter(somvr_bow_qf *f, sv_quat raw, double t, float min_hz, float beta);
 
+/* ---- build 40 (SOMVR_BOW_HANG_REACH, re-xr-pipeline.md 175.1): the bow hand on its way to the bow, for the climb's
+ * hands-free hang (build 39's SOMVR_CLIMB_HANG_FREE lets a hang with no hold at a top fall after 3 s - the suite's 378:
+ * a player reaching for the bow at the shoulder fell first). While this says "reaching", the hang's clocks wait. ------ */
+typedef struct {
+    float at_cm;      /* the bow hand within this of its shoulder slot = at the bow (the slot's radius + 10) */
+    float toward_cm;  /* ... within this, */
+    float toward_cms; /* ... closing on it at this or faster, */
+    float ahead_cm;   /* ... and no more than this ahead of the face (the slot is behind the shoulder: a reach up the
+                       * wall in front never counts) = reaching for it */
+    float grace_s;    /* a draw intent (the bow hand's grip closed near the slot, the bow out or put away) holds this */
+    float intent_cm;  /* ... the grip closed within this of the slot */
+    float tau_s;      /* the closing speed's smoothing */
+} somvr_bow_reach_cfg;
+typedef struct {
+    int have;         /* a located sample before */
+    double t, intent_t;
+    float d, v;       /* the last distance (cm), the closing speed (cm/s, + = toward the slot) */
+} somvr_bow_reach_st;
+enum { SOMVR_BRCH_NONE = 0, SOMVR_BRCH_AT, SOMVR_BRCH_TOWARD, SOMVR_BRCH_UNSEEN, SOMVR_BRCH_GRACE };
+const char *somvr_bow_reach_name(int why);
+void somvr_bow_reach_defaults(somvr_bow_reach_cfg *c, float slot_r_cm);
+/* one frame: valid = the bow hand located; dist_cm its distance from its slot, ahead_cm its offset ahead of the head
+ * (the slots' torso yaw); intent = a draw intent this frame (1 the bow hand's grip closed: counts within intent_cm of the
+ * slot; 2 the bow came out or was put away: always). Returns why the hang waits (SOMVR_BRCH_*; NONE = no reach).
+ * An unseen bow hand waits: a hand reaching behind the shoulder is where inside-out tracking loses it, and a fall is not
+ * started on a hand the game cannot see */
+int somvr_bow_reach_step(somvr_bow_reach_st *s, const somvr_bow_reach_cfg *c, int valid, float dist_cm, float ahead_cm,
+                         int intent, double t);
+
 #endif

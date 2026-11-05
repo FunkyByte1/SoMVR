@@ -563,6 +563,39 @@ static void test_string(void) {
     CHECK(r > m.tube_r_m - 0.01f && r < 0.07f && p[2] < 0, "pinch %.3f,%.3f,%.3f off the axis %.3f", p[0], p[1], p[2], r);
 }
 
+/* build 40 (som-b40-herb, docs/re-xr-pipeline.md 176): the pick outline's disc in the string's slot - all 192 vertices on
+ * a disc facing the eyes, pushed behind the plant's middle, r round; its alpha the level in the middle, 0 at the rim;
+ * flags SOMVR_VHF_PICKGLOW apart from the others */
+static void test_pickglow(void) {
+    static somvr_vh_vert sv[SOMVR_VH_STRING_NV];
+    const float pc[3] = {0.2f, 0.1f, -0.6f}, eye[3] = {0, 1.6f, 0};
+    somvr_vh_pickglow(pc, eye, 0.3f, 0.8f, 0.12f, sv);
+    float n[3] = {eye[0] - pc[0], eye[1] - pc[1], eye[2] - pc[2]}, l = len3(n);
+    for (int i = 0; i < 3; i++) n[i] /= l;
+    float mid[3] = {pc[0] - 0.12f * n[0], pc[1] - 0.12f * n[1], pc[2] - 0.12f * n[2]}, rmax = 0, amid = 0, arim = 1;
+    int off = 0, nbad = 0;
+    for (int v = 0; v < SOMVR_VH_STRING_NV; v++) {
+        float q[3] = {sv[v].p[0] - mid[0], sv[v].p[1] - mid[1], sv[v].p[2] - mid[2]}, r = len3(q);
+        off += fabsf(q[0] * n[0] + q[1] * n[1] + q[2] * n[2]) > 1e-4f || r > 0.3f + 1e-4f;
+        nbad += fabsf(sv[v].n[0] * n[0] + sv[v].n[1] * n[1] + sv[v].n[2] * n[2] - 1) > 1e-3f;
+        rmax = r > rmax ? r : rmax;
+        if (r < 1e-4f) amid = sv[v].a;
+        if (r > 0.3f - 1e-4f && sv[v].a < arim) arim = sv[v].a;
+    }
+    CHECK(!off && !nbad && fabsf(rmax - 0.3f) < 1e-3f && fabsf(amid - 0.8f) < 1e-4f && arim == 0,
+          "pick glow: %d vertices off the disc, %d normals not to the eyes, radius %.3f, alpha %.2f in the middle, %.2f at the rim",
+          off, nbad, rmax, amid, arim);
+    somvr_vh_pickglow(pc, eye, 0.3f, 1.7f, 0.12f, sv);
+    CHECK(sv[0].a == 1, "pick glow: the level clamped to 1 (%.2f)", sv[0].a);
+    const float over[3] = {pc[0], pc[1] + 1.5f, pc[2]}; /* the eyes straight over it: still a disc (another axis) */
+    somvr_vh_pickglow(pc, over, 0.3f, 1, 0, sv);
+    float ymin = 1e9f, ymax = -1e9f;
+    for (int v = 0; v < SOMVR_VH_STRING_NV; v++) ymin = fminf(ymin, sv[v].p[1]), ymax = fmaxf(ymax, sv[v].p[1]);
+    CHECK(isfinite(sv[5].p[0]) && ymax - ymin < 1e-4f, "pick glow from above: flat (%.4f)", ymax - ymin);
+    CHECK((SOMVR_VHF_PICKGLOW & (SOMVR_VHF_L | SOMVR_VHF_R | SOMVR_VHF_HIDE | SOMVR_VHF_HOLD_L | SOMVR_VHF_HOLD_R | SOMVR_VHF_TWO)) == 0,
+          "SOMVR_VHF_PICKGLOW its own bit");
+}
+
 int main(void) {
     test_model();
     test_fist();
@@ -577,6 +610,7 @@ int main(void) {
     test_depth();
     test_size();
     test_string();
+    test_pickglow(); /* build 40 */
     test_grip();
     test_wraith_look();
     printf("test_vrhands: %d checks, %d failures\n", g_n, g_fail);

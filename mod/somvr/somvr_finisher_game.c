@@ -60,6 +60,9 @@
 #define FN_TURN_CM 6.0f     /* the hand turning back with the point this deep in the neck: the kill there */
 #define FN_BACK_S 2.0       /* drawn back out with no kill: this long to go in again, else it ends (the world at speed) */
 #define FN_STAB_S 8.0       /* no kill this long after the snap: it ends (a resting hand drifts: the stall alone never came) */
+/* build 41: a parried orc is the counter kill's this long after the parry (boot 20261105-145743: its reel carried it from
+ * 111 to 170 cm within the 1 s opening - out of the stab's reach; the player steps in) */
+#define FN_COUNTER_S 3.0
 #define FN_SND_LOCK "cbt_sync_block_sword" /* the game's sword-on-sword clank of its paired kills (165 keys in the sets) */
 enum { FN_IDLE = 0, FN_READY, FN_STAB, FN_END };
 static const char *const g_fn_ph_w[] = { "idle", "ready", "stab", "end" };
@@ -92,7 +95,7 @@ static struct {
 	/* the outline for the layer */
 	_Atomic int show;
 	float ogrip_g[3], oq_g[4];
-	_Atomic int req_mode, req_status, req_pose;
+	_Atomic int req_mode, req_status, req_pose, req_type /* build 41: the test's type + 1 */;
 	_Atomic uintptr_t hold_c, hold_h; /* the orc held from ready to the way in (its own attack starts, its steps) */
 	_Atomic uint64_t aimed;           /* its steps undone (kl_aim's calls) */
 	uint64_t readies, snaps, stabs, kills, cancels, frames_ready, frames_stab, ins, outs;
@@ -114,8 +117,12 @@ static struct {
 	int killed;                       /* the orc killed at full depth (the way out on its body) */
 	double kill_t, dead_t;
 	float hdeep[3];                   /* the hand (its hilt against the rig) at the deepest: the way out's zero */
+	float hprev[3];                   /* build 40: the hand a frame before (where it turned, at the turn's kill) */
 	float s_deep;                     /* the share of the line where the way out starts (1 = full depth; less: the turn) */
 	int place_why;                    /* build 37: somvr_fn_place's reason when no start was found (the hint) */
+	float try_snap_cm, try_in_v, try_depth, try_out_s; /* build 40: this try's numbers (Practice > Finisher test) */
+	float try_pmax;                   /* ... its furthest point along the way in (p) */
+	double try_back_t;                /* ... since when the blade is back at its start (the test's quick end) */
 	float place_ext, place_g[3];      /* ... its hand's end from the body, its grip (the head's frame, cm) */
 	double back_t;                    /* drawn back out before the kill (FN_BACK_S) */
 	int hdeep_ok;
@@ -130,6 +137,21 @@ static struct {
 	float near_cm;                    /* the nearest live orc this frame (Practice > Charge execution's spawn) */
 	double near_t;
 	uint64_t hints, hint_frames, pulls, releases, snd_ok, snd_fail;
+	/* build 41 (som-b41-finlib, re-xr-pipeline.md 179): the finisher library */
+	int kind;                         /* SOMVR_FNK_*: this finisher's (fn_pick's, at the ready) */
+	unsigned kind_n;                  /* the front ones in turn: the readies of a front kind so far */
+	int sit;                          /* the orc's situation at the ready (SOMVR_FNS_*) */
+	float depth_env;                  /* SOMVR_FINISHER_DEPTH_CM: the neck stab's (each kind has its own) */
+	char row_env[96];                 /* SOMVR_FINISHER_ROW: the neck stab's row (each kind has its own) */
+	int cut;                          /* a cut: its arc (world cm) - the pivot, n, w, ax; the grip's radius; a0..a1 */
+	float cpv[3], cn[3], cw[3], cax[3], crg, ca0, ca1, chit_p, clen;
+	float oway[3];                    /* a cut's way at its start (world): the outline's edge leads along it */
+	float qrot[4];                    /* the ride's turn since the snap (the grips' space; the arms thread reads it) */
+	float hm[3], hmlast[3];           /* the hand's own blade's middle: its velocity against the rig (cm/s), smoothed */
+	int hm_ok, cut_moved;
+	int lib;                          /* SOMVR_FINISHER_LIB=on|off (code default off: the neck stab alone) */
+	float cut_vmax;                   /* SOMVR_FINISHER_CUT_VMAX: a cut's cap with the hand (the mid-blade, cm/s) */
+	uint64_t by_kind[SOMVR_FNK_N], kills_kind[SOMVR_FNK_N], severs;
 } g_fin;
 
 /* the world <-> the grips' space (cm; SOMVR_ARMS' rig: world = base + R(yaw) k (p - p0)) */
@@ -185,32 +207,70 @@ static void fn_slowmo(int on, double t)
 
 static int fn_busy(uintptr_t c) { return g_fin.on && g_fin.phase >= FN_READY && c && c == g_fin.c; }
 static int fn_on(void) { return g_fin.on && g_fin.ok; }
-static int fn_hint_on(void) { return g_fin.on && g_fin.ok && g_fin.hint; } /* build 37 (ob_frame) */
+static int fn_hint_on(void) { return (g_fin.on && g_fin.ok && g_fin.hint) || fn_test_on(); } /* build 37 (ob_frame); 40: the test's readout */
 static float fn_near_cm(double t) { return g_fin.on && g_fin.ok && t - g_fin.near_t < 1.0 ? g_fin.near_cm : 1e9f; }
 
-/* the candidate orc: in reach, in front of the head, facing Talion */
-static int fn_pick(const struct cb_orc *o, int n, const float root[3], const float head_fwd[3], struct cb_orc *out)
+/* build 41 (som-b41-finlib): the orc's situation for the library's pick - which side of it faces Talion (its facing
+ * within FN_FACE_DEG of him: its front; past 180 - FN_FACE_DEG: its back), its state (the game's: knocked down,
+ * stunned - SOMVR_KILLS' kl_state_of), a parry's opening on it (SOMVR_PARRY), whether it is aware of Talion */
+static int fn_force(void);
+/* the orc's state: SOMVR_FNS_DOWNED (SOMVR_KILLS' read: '*KnockDown*' state, '*_KD*' attack), SOMVR_FNS_STUNNED (its
+ * state or attack '*Stun*': the recoil into it 'AI_Bip_Recoil_F_ToStun_STR', 'AI_Bip_StunLoop', 'Quick_Stunned' - the
+ * brand's rule; kl_state_of reads only '*Stunned*' in the attack), else 0 */
+static int fn_state(uintptr_t c, char *why, size_t cap)
+{
+	char w[200], sn[96] = "", an[96] = "";
+	int st = kl_state_of(c, 0, why ? why : w, why ? cap : sizeof w);
+	if (st == SOMVR_KL_DOWNED)
+		return SOMVR_FNS_DOWNED;
+	uintptr_t sr = peek_ptr(c + VB_C_STATE), ar = peek_ptr(c + VB_C_ATTACK);
+	if (sr)
+		rx_rec_name(sr, sn, sizeof sn);
+	if (ar)
+		rx_rec_name(ar, an, sizeof an);
+	return st == SOMVR_KL_STUNNED || strstr(sn, "Stun") || strstr(an, "Stun") ? SOMVR_FNS_STUNNED : 0;
+}
+static int fn_situation(const struct cb_orc *o, const float root[3], uintptr_t me, double t)
+{
+	float dx = o->pos[0] - root[0], dz = o->pos[2] - root[2];
+	float off = fabsf(sv_wrap_pi(atan2f(-dx, -dz) - kl_yaw(o->hobj))) * 57.29578f;
+	int s = off <= FN_FACE_DEG ? SOMVR_FNS_FRONT : off >= 180.0f - FN_FACE_DEG ? SOMVR_FNS_BACK : 0;
+	s |= fn_state(o->c, NULL, 0);
+	struct py_open *po = (g_py.on || g_py.shove) ? py_find(o->c) : NULL;
+	if (po && po->why == 1 && t >= po->t0 && t - po->t0 <= FN_COUNTER_S) /* (a parry's, not a shove's) */
+		s |= SOMVR_FNS_COUNTER;
+	struct stl_aw aw;
+	if (stl_aware(o, me, &aw) == 1)
+		s |= SOMVR_FNS_AWARE;
+	return s;
+}
+
+/* the candidate orc: in reach, in front of the head, and one of the library's finishers for its situation (build 33:
+ * facing Talion - the neck stab); *kind its finisher, *sit its situation */
+static int fn_pick(const struct cb_orc *o, int n, const float root[3], const float head_fwd[3], uintptr_t me, double t,
+		   struct cb_orc *out, int *kind, int *sit)
 {
 	float best = 1e9f;
-	int k = -1;
+	int k = -1, bk = -1, bs = 0;
 	for (int i = 0; i < n; i++) {
 		float dx = o[i].pos[0] - root[0], dz = o[i].pos[2] - root[2], d = hypotf(dx, dz);
 		if (!(d < FN_REACH_CM) || cb_dead(o[i].c) || cb_sync(o[i].c) || kp_of_combat(o[i].c) || kl_is_beast(o[i].c, o[i].hobj) ||
-		    kl_of(o[i].c))
+		    kl_of(o[i].c) || !(d < best))
 			continue;
 		float fl = hypotf(head_fwd[0], head_fwd[2]);
 		float cv = fl > 1e-3f && d > 1 ? (dx * head_fwd[0] + dz * head_fwd[2]) / (d * fl) : -1;
 		if (cv < cosf(FN_VIEW_DEG * 0.01745329f))
 			continue;
-		float yaw = kl_yaw(o[i].hobj), off = fabsf(sv_wrap_pi(atan2f(-dx, -dz) - yaw)) * 57.29578f;
-		if (off > FN_FACE_DEG)
+		int si = fn_situation(&o[i], root, me, t), ki = somvr_fn_pick_kind(si, g_fin.kind_n, fn_force());
+		if (!g_fin.lib) /* (SOMVR_FINISHER_LIB=off: build 37's neck stab alone, on an orc facing Talion) */
+			ki = (si & SOMVR_FNS_FRONT) ? SOMVR_FNK_NECK : -1;
+		if (ki < 0)
 			continue;
-		if (d < best)
-			best = d, k = i;
+		best = d, k = i, bk = ki, bs = si;
 	}
 	if (k < 0)
 		return 0;
-	*out = o[k];
+	*out = o[k], *kind = bk, *sit = bs;
 	return 1;
 }
 
@@ -237,14 +297,15 @@ static int fn_spares(uintptr_t pc, const struct cb_orc *o, double t)
 	sv_vec3 hw = sv_qrot(sv_qyaw(g_arm.rig.yaw), (sv_vec3){ fx.x, fx.y, -fx.z });
 	float hfwd[3] = { hw.x, hw.y, hw.z };
 	struct cb_orc oc;
-	if (!fn_pick(o, 1, root, hfwd, &oc) || (last_h == o->hobj && t - last_t < 5.0))
+	int kd, si;
+	if (!fn_pick(o, 1, root, hfwd, th, t, &oc, &kd, &si) || (last_h == o->hobj && t - last_t < 5.0))
 		return 0;
 	last_h = o->hobj, last_t = t;
 	g_kl.spared++;
 	logf_("FINISHER t=%.3f the killing blow on orc %#llx spared: the charge ready (the streak %d, the charge %d of %d) and the "
-	      "orc the finisher's (%.0f cm, in front, facing Talion) - left at %.1f health, its ready next (the finisher owns the "
+	      "orc the finisher's (%.0f cm, in front, its %s) - left at %.1f health, its ready next (the finisher owns the "
 	      "charged kill)", t, (unsigned long long)o->c, h.streak, h.charge, h.need, hypotf(o->pos[0] - root[0], o->pos[2] - root[2]),
-	      cb_health(o->c));
+	      somvr_fn_kind_of(kd)->name, cb_health(o->c));
 	return 1;
 }
 
@@ -319,16 +380,29 @@ static void fn_w2h(const float w[3], float h[3])
 
 /* the outline from the neck: the point start_cm short of it on the line from the player's shoulder height, into the neck */
 static void fn_outline_pose(void);
+static int fn_outline_cut(const somvr_fn_kind *kd);
 static int fn_outline(const struct cb_orc *o, const float root[3])
 {
 	float nd[4][3];
 	if (!stl_body(o, nd))
 		return 0;
-	memcpy(g_fin.neck, nd[2], sizeof g_fin.neck);
+	const somvr_fn_kind *kd = somvr_fn_kind_of(g_fin.kind);
+	if (!kd)
+		kd = somvr_fn_kind_of(SOMVR_FNK_NECK);
+	/* build 41: the kind's node (the neck, the head, the torso) is "the neck" of the code below - the target point */
+	memcpy(g_fin.neck, nd[kd->node], sizeof g_fin.neck);
+	g_fin.cut = 0, g_fin.oway[0] = g_fin.oway[1] = g_fin.oway[2] = 0;
+	g_fin.cfg.depth_cm = g_fin.kind == SOMVR_FNK_NECK ? g_fin.depth_env : kd->depth_cm;
+	snprintf(g_fin.row, sizeof g_fin.row, "%s", g_fin.kind == SOMVR_FNK_NECK ? g_fin.row_env : kd->row);
+	if (g_fin.feel && kd->motion == SOMVR_FNM_CUT)
+		return fn_outline_cut(kd);
 	if (g_fin.feel) { /* build 37 (171.6; the user's 22:37 marks): the hand starts within a foot of the body, the stab the
 			   * arm's full extension (somvr_fn_place); none: the hint says why (closer / step back) */
 		somvr_fn_place_cfg pc;
-		somvr_fn_place_defaults(&pc);
+		if (g_fin.kind == SOMVR_FNK_DOWNED)
+			somvr_fn_place_down(&pc); /* (build 41: the arm reaching down to a body on the ground) */
+		else
+			somvr_fn_place_defaults(&pc);
 		pc.blade = FN_BLADE_CM, pc.depth = g_fin.cfg.depth_cm;
 		float nh[3], gh[3], dh[3], gap, ext, gw[3];
 		fn_w2h(g_fin.neck, nh);
@@ -360,6 +434,69 @@ static int fn_outline(const struct cb_orc *o, const float root[3])
 	fn_outline_pose();
 	return 1;
 }
+/* build 41: a cut's arc at progress p (world cm): the point, the blade's direction, the mid-blade's way */
+static void fn_cut_at(float p, float tip[3], float dir[3], float way[3])
+{
+	float a = g_fin.ca0 + p * (g_fin.ca1 - g_fin.ca0), cs = cosf(a), sn = sinf(a), sg = g_fin.ca1 < g_fin.ca0 ? -1.0f : 1.0f;
+	for (int i = 0; i < 3; i++) {
+		dir[i] = cs * g_fin.cn[i] + sn * g_fin.cw[i];
+		tip[i] = g_fin.cpv[i] + (g_fin.crg + FN_BLADE_CM) * dir[i];
+		way[i] = sg * (-sn * g_fin.cn[i] + cs * g_fin.cw[i]);
+	}
+}
+/* build 41: a cut's outline - its arc about the sword-side shoulder through the node (somvr_fn_arc_place in the head's
+ * frame, then kept in the world: the outline stays where it appeared); the outline at the arc's start, its edge along
+ * the way; none: the hint's reason (closer / step back) */
+static int fn_outline_cut(const somvr_fn_kind *kd)
+{
+	somvr_fn_place_cfg pc;
+	somvr_fn_place_defaults(&pc);
+	pc.blade = FN_BLADE_CM;
+	float nh[3];
+	somvr_fn_arc a;
+	fn_w2h(g_fin.neck, nh);
+	if (!somvr_fn_arc_place(&pc, nh, kd->cut_up, kd->cut_from_deg, kd->cut_to_deg, &a, &g_fin.place_why))
+		return 0;
+	float pv[3], pw[3], pn[3], hw[3], hn[3];
+	for (int i = 0; i < 3; i++)
+		hw[i] = a.pivot[i] + 10.0f * a.w[i], hn[i] = a.pivot[i] + 10.0f * a.n[i];
+	fn_h2w(a.pivot, pv), fn_h2w(hw, pw), fn_h2w(hn, pn);
+	float d[3] = { g_fin.neck[0] - pv[0], g_fin.neck[1] - pv[1], g_fin.neck[2] - pv[2] }, r = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+	if (!(r > 5.0f))
+		return 0;
+	float w[3] = { pw[0] - pv[0], pw[1] - pv[1], pw[2] - pv[2] }, wn = 0, wl = 0;
+	for (int i = 0; i < 3; i++)
+		g_fin.cn[i] = d[i] / r, g_fin.cpv[i] = pv[i];
+	for (int i = 0; i < 3; i++)
+		wn += w[i] * g_fin.cn[i];
+	for (int i = 0; i < 3; i++)
+		w[i] -= wn * g_fin.cn[i], wl += w[i] * w[i];
+	wl = sqrtf(wl);
+	if (!(wl > 1e-3f))
+		return 0;
+	for (int i = 0; i < 3; i++)
+		g_fin.cw[i] = w[i] / wl;
+	g_fin.cax[0] = g_fin.cn[1] * g_fin.cw[2] - g_fin.cn[2] * g_fin.cw[1];
+	g_fin.cax[1] = g_fin.cn[2] * g_fin.cw[0] - g_fin.cn[0] * g_fin.cw[2];
+	g_fin.cax[2] = g_fin.cn[0] * g_fin.cw[1] - g_fin.cn[1] * g_fin.cw[0];
+	(void)pn;
+	/* the grip's radius in the world (the rig's scale), the node never past the blade's 92 % */
+	g_fin.crg = fmaxf(a.r_grip * (r / a.r_hit), r - 0.92f * FN_BLADE_CM);
+	g_fin.ca0 = a.a0, g_fin.ca1 = a.a1, g_fin.chit_p = somvr_fn_arc_hit_p(&a);
+	g_fin.clen = (g_fin.crg + 0.5f * FN_BLADE_CM) * fabsf(a.a1 - a.a0), g_fin.cut = 1;
+	/* the stab's fields as the cut's start: the point there, the blade's way; the "travel" the mid-blade's path */
+	float tip[3], dir[3], way[3];
+	fn_cut_at(0, tip, dir, way);
+	memcpy(g_fin.start, tip, sizeof tip), memcpy(g_fin.dir, dir, sizeof dir), memcpy(g_fin.oway, way, sizeof way);
+	g_fin.cfg.start_cm = g_fin.clen, g_fin.cfg.depth_cm = 0;
+	g_fin.place_ext = g_fin.crg;
+	float gh[3], dh[3], wh2[3];
+	somvr_fn_arc_at(&a, 0, gh, dh, wh2);
+	memcpy(g_fin.place_g, gh, sizeof gh);
+	fn_outline_pose();
+	return 1;
+}
+
 /* the layer's pose of the outline (the grips' space) from its line in the world - every frame while it shows: the line
  * stays put in the world when the rig turns (boot 154546: a turn after the ready swung the outline off the neck) */
 static void fn_outline_pose(void)
@@ -369,6 +506,21 @@ static void fn_outline_pose(void)
 			g_fin.start[2] - g_fin.dir[2] * FN_BLADE_CM }, dg[3];
 	fn_w2g(gw, g_fin.ogrip_g), fn_w2g_dir(g_fin.dir, dg);
 	sv_quat q = somvr_bow_look((sv_vec3){ dg[0], dg[1], dg[2] }, 0);
+	if (g_fin.cut) { /* build 41: a cut's blade turned on its axis so that its edge (the mesh's width, +X) leads */
+		float wg[3];
+		fn_w2g_dir(g_fin.oway, wg);
+		sv_vec3 d = { dg[0], dg[1], dg[2] }, x = sv_qrot(q, (sv_vec3){ 1, 0, 0 });
+		float dl = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+		if (dl > 1e-4f) {
+			d.x /= dl, d.y /= dl, d.z /= dl;
+			float wd = wg[0] * d.x + wg[1] * d.y + wg[2] * d.z;
+			sv_vec3 e = { wg[0] - wd * d.x, wg[1] - wd * d.y, wg[2] - wd * d.z };
+			sv_vec3 cr = { x.y * e.z - x.z * e.y, x.z * e.x - x.x * e.z, x.x * e.y - x.y * e.x };
+			float ang = atan2f(cr.x * d.x + cr.y * d.y + cr.z * d.z, x.x * e.x + x.y * e.y + x.z * e.z);
+			sv_quat r = { d.x * sinf(0.5f * ang), d.y * sinf(0.5f * ang), d.z * sinf(0.5f * ang), cosf(0.5f * ang) };
+			q = sv_qnormalize(sv_qmul(r, q));
+		}
+	}
 	g_fin.oq_g[0] = q.x, g_fin.oq_g[1] = q.y, g_fin.oq_g[2] = q.z, g_fin.oq_g[3] = q.w;
 }
 
@@ -438,13 +590,51 @@ static int fn_lineup(const somvr_blade *b, float out[6])
 	if (!(la > 1e-3f && ld > 1e-3f))
 		return 0;
 	ax.x /= la, ax.y /= la, ax.z /= la, dw.x /= ld, dw.y /= ld, dw.z /= ld;
+	/* build 40 (som-b40-fixes, re-xr-pipeline.md 175.2): the grip where the hand is this frame (the test pose moved by a
+	 * running swing - the test guard's block holds the hand at its own end pose, `fight guard path`), not the last
+	 * `hands test` words: suite 377's stall line-up came from the guard's pose against the rest's words, 10 cm short */
 	const float *v = g_bd.t_v[1];
+	const somvr_hand *hd = &g_inp.hands[1];
 	sv_vec3 gp = { 0.01f * v[0], 0.01f * v[1], -0.01f * v[2] };
-	sv_quat qa = fn_qalign(ax, dw), qn = sv_qmul(qa, sa_xf_euler((float[6]){ 0, 0, 0, v[3], v[4], v[5] }).q);
+	sv_quat hy = sa_xf_euler((float[6]){ 0, 0, 0, v[3], v[4], v[5] }).q;
+	if (hd->valid)
+		gp = sv_qrot(qyi, (sv_vec3){ hd->pose.p[0] - hp[0], hd->pose.p[1] - hp[1], hd->pose.p[2] - hp[2] }),
+		hy = sv_qnormalize(sv_qmul(qyi, sv_quat_of(hd->pose.q)));
+	sv_quat qa = fn_qalign(ax, dw), qn = sv_qmul(qa, hy);
 	sv_vec3 r = sv_qrot(qa, (sv_vec3){ tip.x - gp.x, tip.y - gp.y, tip.z - gp.z });
 	out[0] = (st.x - r.x) * 100, out[1] = (st.y - r.y) * 100, out[2] = -(st.z - r.z) * 100;
 	fn_euler(qn, out + 3);
 	return 1;
+}
+
+/* build 41 (SOMVR_HANDS_TEST): the drivers' cut - the line-up's hand (lu: `hands test` cm and deg) turned about the
+ * arc's axis through the shoulder to p = 0.5, 1.0 and 1.1 of the arc (the head's frame for the place; the angles are
+ * the XR frame's, its z the other way: there the turn is about the mirrored axis by the opposite angle); logged as
+ * `FINISHER cutpath` */
+static void fn_cutpath(const float lu[6], double t)
+{
+	float pv[3], pa[3], aw[3] = { g_fin.cpv[0] + 10.0f * g_fin.cax[0], g_fin.cpv[1] + 10.0f * g_fin.cax[1],
+				      g_fin.cpv[2] + 10.0f * g_fin.cax[2] };
+	fn_w2h(g_fin.cpv, pv), fn_w2h(aw, pa);
+	sv_vec3 ax = { pa[0] - pv[0], pa[1] - pv[1], pa[2] - pv[2] };
+	float al = sqrtf(ax.x * ax.x + ax.y * ax.y + ax.z * ax.z);
+	if (!(al > 1e-3f))
+		return;
+	ax.x /= al, ax.y /= al, ax.z /= al;
+	static const float ps[3] = { 0.5f, 1.0f, 1.1f };
+	char out[400] = "";
+	sv_quat q0 = sa_xf_euler((float[6]){ 0, 0, 0, lu[3], lu[4], lu[5] }).q;
+	for (int i = 0; i < 3; i++) {
+		float da = (g_fin.ca1 - g_fin.ca0) * ps[i], sn = sinf(0.5f * da), cs = cosf(0.5f * da);
+		sv_quat r = { ax.x * sn, ax.y * sn, ax.z * sn, cs }, rx = { ax.x * -sn, ax.y * -sn, -ax.z * -sn, cs };
+		sv_vec3 d = sv_qrot(r, (sv_vec3){ lu[0] - pv[0], lu[1] - pv[1], lu[2] - pv[2] });
+		float ang[3];
+		fn_euler(sv_qmul(rx, q0), ang);
+		size_t l = strlen(out);
+		snprintf(out + l, sizeof out - l, "%s%.1f %.1f %.1f %.1f %.1f %.1f", i ? " | " : "", pv[0] + d.x, pv[1] + d.y, pv[2] + d.z,
+			 ang[0], ang[1], ang[2]);
+	}
+	logf_("FINISHER cutpath t=%.3f the line-up's hand along the arc (p 0.5 | 1.0 | 1.1): %s", t, out);
 }
 
 /* the outline's grip in an arm's reach of the eyes (a real arm: FN_ARM_CM out, from 10 cm behind the eyes (a hand by the
@@ -549,6 +739,9 @@ static int fn_sword(float op[3], float qs[4])
 		return 1;
 	}
 	sv_quat qn = { g_fin.qnew[0], g_fin.qnew[1], g_fin.qnew[2], g_fin.qnew[3] };
+	sv_quat qr = { g_fin.qrot[0], g_fin.qrot[1], g_fin.qrot[2], g_fin.qrot[3] }; /* build 41: a cut's turn along its arc */
+	if (isfinite(qr.x + qr.y + qr.z + qr.w) && qr.x * qr.x + qr.y * qr.y + qr.z * qr.z + qr.w * qr.w > 0.5f)
+		qn = sv_qnormalize(sv_qmul(qr, qn));
 	sv_vec3 off = sv_qrot(qn, (sv_vec3){ g_fin.off_tip[0], g_fin.off_tip[1], g_fin.off_tip[2] });
 	float top[3] = { (g_fin.tip_g[0] - off.x) * 0.01f, (g_fin.tip_g[1] - off.y) * 0.01f, (g_fin.tip_g[2] - off.z) * 0.01f };
 	/* build 37: the snap pulls the blade onto the line over FN_PULL_S (from the hand's sword to the line), not a jump */
@@ -562,22 +755,78 @@ static int fn_sword(float op[3], float qs[4])
 		atomic_store(&g_fin.pull_log, 1);
 	for (int i = 0; i < 3; i++)
 		op[i] = (1 - s) * op[i] + s * top[i];
-	fn_nlerp(qs, g_fin.qnew, s, q);
+	float qnw[4] = { qn.x, qn.y, qn.z, qn.w };
+	fn_nlerp(qs, qnw, s, q);
 	memcpy(qs, q, sizeof q);
 	memcpy(g_fin.ride_op, op, sizeof g_fin.ride_op), memcpy(g_fin.ride_q, q, sizeof g_fin.ride_q), g_fin.ride_have = 1;
 	return 1;
 }
 
+/* ---- build 40 (som-b40-fin3, re-xr-pipeline.md 171.7; the user's 11-05 note 4): Practice > Finisher test ----------
+ * One button: an orc facing Talion FT_AHEAD_CM ahead of the eyes (the stab's reach: somvr_fn_place), the execution
+ * charged and kept charged, the finisher armed with no timeout; after each try its numbers stand over the orc (the
+ * snap's distance, the hand's speed in, the depth, kill or not, the pull out: SOMVR_OBF_READOUT) until the next snap,
+ * and the finisher is armed again - on a new orc after a kill (FT_AGAIN_KILL_S: the body falls), on the same one after
+ * FT_AGAIN_S otherwise. B, the button again or leaving the practice area ends it. Lines: `FINTEST t=...` */
+#define FT_AHEAD_CM 125.0f
+#define FT_AGAIN_KILL_S 2.0
+#define FT_AGAIN_S 0.8
+#define FT_READOUT_S 30.0
+enum { FT_OFF = 0, FT_SPAWN, FT_ARMED, FT_AFTER };
+static const char *const g_ft_ph_w[] = { "off", "spawn", "armed", "after a try" };
+static struct {
+	int on, phase, tries, kills, b_was;
+	double t0, after_t, fill_t;
+	/* the last try's readout (fn_entry) */
+	int r_have, r_try, r_kill, r_why;
+	float r_snap_cm, r_in_mps, r_depth_cm, r_out_s, r_pos[3];
+	double r_t;
+	uint64_t spawns, fills;
+	/* build 41 (som-b41-finlib): the test's type - SOMVR_FNK_* or SOMVR_FNK_N (auto: the situation picks); kept between
+	 * tests (the practice page's type button, `finisher type NAME`); the downed and stunned orc's set-up */
+	int kind, r_kind, kind_set;
+	double setup_t;
+	uint64_t setups;
+} g_ft;
+static int fn_test_on(void) { return g_ft.on; }
+static int fn_force(void) { return g_ft.on && g_ft.kind_set && g_ft.kind >= 0 && g_ft.kind < SOMVR_FNK_N ? g_ft.kind : SOMVR_FNK_N; }
+/* build 41: the practice page's type button's label (the preload's pstate bits 12..15: the type + 1; 0 = Auto - and an
+ * old preload's) */
+static uint32_t fn_test_kind_bits(void)
+{
+	return g_ft.kind_set && g_ft.kind >= 0 && g_ft.kind < SOMVR_FNK_N ? ((uint32_t)(g_ft.kind + 1) & 15u) << 12 : 0u;
+}
+/* fn_stop with a finisher running in the test: the try's numbers into the readout, the next arming timed */
+static void fn_test_try_end(double t)
+{
+	g_ft.tries++, g_ft.kills += g_fin.killed;
+	g_ft.r_have = 1, g_ft.r_try = g_ft.tries, g_ft.r_kill = g_fin.killed, g_ft.r_t = mono(), g_ft.r_kind = g_fin.kind;
+	g_ft.r_why = g_fin.killed ? SOMVR_OB_RO_KILL : !(g_fin.try_snap_cm >= 0) ? SOMVR_OB_RO_NOSNAP
+		     : g_fin.back_t > 0 ? SOMVR_OB_RO_BACK : SOMVR_OB_RO_STOP;
+	g_ft.r_snap_cm = g_fin.try_snap_cm, g_ft.r_in_mps = g_fin.try_in_v * 0.01f, g_ft.r_depth_cm = g_fin.try_depth;
+	g_ft.r_out_s = g_fin.try_out_s;
+	g_ft.r_pos[0] = g_fin.neck[0], g_ft.r_pos[1] = g_fin.neck[1] + 60.0f, g_ft.r_pos[2] = g_fin.neck[2]; /* (over his head) */
+	g_ft.phase = FT_AFTER, g_ft.after_t = mono() + (g_fin.killed ? FT_AGAIN_KILL_S : FT_AGAIN_S);
+	logf_("FINTEST t=%.3f try %d (%s): %s; the snap %.1f cm, the hand's speed in %.2f m/s (its peak along the way), %.1f %s, "
+	      "the pull out %.2f s; the next armed in %.1f s", t, g_ft.tries, somvr_fn_kind_of(g_fin.kind)->name,
+	      g_fin.killed ? "KILL" : g_ft.r_why == SOMVR_OB_RO_NOSNAP ? "no snap" : g_ft.r_why == SOMVR_OB_RO_BACK ? "no kill (drawn back)"
+	      : "no kill (stopped)", (double)g_ft.r_snap_cm, (double)g_ft.r_in_mps, (double)g_ft.r_depth_cm,
+	      g_fin.cut ? "% of the arc" : "cm deep", (double)g_ft.r_out_s,
+	      g_fin.killed ? FT_AGAIN_KILL_S : FT_AGAIN_S);
+}
+
 /* every way out of a finisher: the outline and the sword's ride off, the orc let go, the slow motion put back */
 static void fn_stop(double t)
 {
+	if (g_ft.on && g_fin.phase != FN_IDLE)
+		fn_test_try_end(t); /* (build 40: the finisher test's try) */
 	atomic_store(&g_fin.show, 0), fn_unhold();
 	if (g_fin.feel && atomic_load(&g_fin.over) && g_fin.ride_have) /* build 37: the blade blended back to the hand */
 		g_fin.rel_t0 = mono(), atomic_store(&g_fin.rel, 1), g_fin.releases++;
 	else
 		atomic_store(&g_fin.over, 0);
 	fn_slowmo(0, t);
-	g_fin.phase = FN_IDLE, g_fin.c = 0, g_fin.cool_t = t + 2.0, g_fin.flash_until = 0;
+	g_fin.phase = FN_IDLE, g_fin.c = 0, g_fin.cool_t = t + (g_ft.on ? 0.3 : 2.0), g_fin.flash_until = 0;
 }
 static void fn_cancel(const char *why, double t)
 {
@@ -641,6 +890,10 @@ static void fn_spend(uintptr_t pc)
 static void fn_kill(uintptr_t pc, const struct cb_orc *oc, double t)
 {
 	g_fin.killed = 1, g_fin.kill_t = t, g_fin.dead_t = 0;
+	if (g_fin.hlast_ok) /* build 40: the way out from where the hand was at the kill - at the turn's kill a frame back,
+			     * where it turned (boot 095313: set a frame late, a fast pull's first 20 cm went uncounted) */
+		memcpy(g_fin.hdeep, g_fin.s_deep < 1.0f ? g_fin.hprev : g_fin.hlast, sizeof g_fin.hdeep), g_fin.hdeep_ok = 1,
+		g_fin.out_move_t = t;
 	fn_unhold();
 	float nd[4][3], nk[3];
 	memcpy(nk, g_fin.neck, sizeof nk);
@@ -650,25 +903,51 @@ static void fn_kill(uintptr_t pc, const struct cb_orc *oc, double t)
 	fn_spend(pc);
 	int row = somvr_kl_find(g_kl_rows, KL_ROWS, g_fin.row);
 	uintptr_t rec = row >= 0 ? kl_srec(row) : 0;
-	float vel[3] = { g_fin.dir[0] * 250, g_fin.dir[1] * 250, g_fin.dir[2] * 250 };
-	int dealt = kl_instant(pc, oc, rec, nk, vel, g_fin.dir, "the finisher", t);
-	float in_at[3] = { nk[0] - g_fin.dir[0] * 2, nk[1] - g_fin.dir[1] * 2, nk[2] - g_fin.dir[2] * 2 };
-	stl_blood_dir(oc->hobj, in_at, g_fin.dir, "the finisher's kill at full depth", t);
+	const somvr_fn_kind *kd = somvr_fn_kind_of(g_fin.kind);
+	if (!rec && kd && kd->rec && kl_db_ready()) /* (build 41: the kind's own name for its record) */
+		rec = kl_byname(kd->rec);
+	/* build 41: a cut kills across the blade (its way: the game's sever for a cut through the neck - SOMVR_KILLS'
+	 * kl_instant reads a motion across the blade at the neck as a cut, and the kind's sever puts it on for the call) */
+	float mv[3], ax[3], tip_now[3];
+	memcpy(mv, g_fin.dir, sizeof mv), memcpy(ax, g_fin.dir, sizeof ax);
+	if (g_fin.cut)
+		fn_cut_at(g_fin.p, tip_now, ax, mv);
+	float vel[3] = { mv[0] * 250, mv[1] * 250, mv[2] * 250 };
+	int ns0 = g_kl.neck_sever, sev = kd && kd->sever && g_fin.lib;
+	if (sev)
+		g_kl.neck_sever = 1;
+	uint64_t sv0 = g_kl.severs;
+	int dealt = kl_instant(pc, oc, rec, nk, vel, ax, "the finisher", t);
+	g_kl.neck_sever = ns0;
+	int severed = g_kl.severs > sv0;
+	g_fin.severs += severed;
+	float in_at[3] = { nk[0] - mv[0] * 2, nk[1] - mv[1] * 2, nk[2] - mv[2] * 2 };
+	stl_blood_dir(oc->hobj, in_at, mv, g_fin.cut ? "the finisher's cut through" : "the finisher's kill at full depth", t);
 	haptic_k(SOMVR_HAND_R, SOMVR_HX_KILL, 1.0f);
-	fn_snd("cbt_instakill_st_f_03", nk, "the kill: the flat F6's killing stab", t);
-	fn_snd("cbt_insta_slice", nk, "the kill: the blade through", t);
-	fn_snd("vx_PlayerSyncPre_snd", nk, "the kill: Talion's effort", t);
+	for (int i = 0; kd && i < 3; i++)
+		if (kd->snd_kill[i] && kd->snd_kill[i][0])
+			fn_snd(kd->snd_kill[i], nk, i == 0 ? "the kill: the flat kill's own" : "the kill", t);
 	fn_snd("vx_EnemyDeath", nk, "the kill: the orc's death cry", t);
+	if (kd)
+		g_fin.kills_kind[g_fin.kind]++;
 	int dead = cb_dead(oc->c);
 	if (dead)
 		g_fin.dead_t = t;
 	g_fin.kills++;
-	logf_("FINISHER t=%.3f kill: the point %s (%.0f cm into the neck) after %.2f s of the stab - the death at once "
-	      "(%s; record '%s'): dead %d now, health %.1f -> %.1f; the charge spent; the blood along the stab; the slow motion on "
-	      "until the blade is out", t, g_fin.s_deep >= 1.0f ? "full depth" : "at the hand's turn",
-	      (double)somvr_fn_depth(&g_fin.cfg, g_fin.p), t - g_fin.snap_t,
-	      dealt ? "kl_instant: DealHit forceKill, the ragdoll from the blade" : "kl_instant FAILED", row >= 0 ? g_fin.row : "-",
-	      dead, hp0, cb_health(oc->c));
+	if (g_fin.cut)
+		logf_("FINISHER t=%.3f kill: %s - the blade through the %s at p %.2f of the arc after %.2f s of the cut - the death at "
+		      "once (%s; record '%s'): dead %d now, health %.1f -> %.1f%s; the charge spent; the blood along the cut; on to the "
+		      "arc's end with the hand", t, kd ? kd->name : "?", kd && kd->node == 3 ? "head" : kd && kd->node == 1 ? "torso" : "neck",
+		      (double)g_fin.p, t - g_fin.snap_t,
+		      dealt ? "kl_instant: DealHit forceKill, the ragdoll from the blade" : "kl_instant FAILED", row >= 0 ? g_fin.row : "-",
+		      dead, hp0, cb_health(oc->c), severed ? ", the head severed" : sev ? ", the sever NOT taken" : "");
+	else
+		logf_("FINISHER t=%.3f kill: %s - the point %s (%.0f cm into the %s) after %.2f s of the stab - the death at once "
+		      "(%s; record '%s'): dead %d now, health %.1f -> %.1f; the charge spent; the blood along the stab; the slow motion on "
+		      "until the blade is out", t, kd ? kd->name : "?", g_fin.s_deep >= 1.0f ? "full depth" : "at the hand's turn",
+		      (double)somvr_fn_depth(&g_fin.cfg, g_fin.p), kd && kd->node == 3 ? "head" : kd && kd->node == 1 ? "torso" : "neck",
+		      t - g_fin.snap_t, dealt ? "kl_instant: DealHit forceKill, the ragdoll from the blade" : "kl_instant FAILED",
+		      row >= 0 ? g_fin.row : "-", dead, hp0, cb_health(oc->c));
 }
 
 /* build 37 (SOMVR_FINISHER_HINT): the execution ready FN_HINT_AFTER_S with no orc to finish - the nearest that could be
@@ -731,6 +1010,17 @@ static void fn_hint(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n
 /* ob_frame (H4, the game thread): the hint's ring into this frame's objective entry; 1 = published */
 static int fn_entry(somvr_objective_frame *e)
 {
+	if (g_ft.on && g_ft.r_have && mono() - g_ft.r_t < FT_READOUT_S && vec_ok(g_ft.r_pos, 1e7f)) {
+		/* build 40: Practice > Finisher test - the last try's numbers over the orc (SOMVR_OBF_READOUT) */
+		somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
+				    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
+		somvr_th_to_xr(&mp, g_ft.r_pos, e->pos);
+		e->n = 1, e->flags = SOMVR_OBF_READOUT;
+		e->id = ((uint32_t)g_ft.r_try & 255u) | (uint32_t)(g_ft.r_kill != 0) << 8 | ((uint32_t)g_ft.r_why & 7u) << 9 |
+			((uint32_t)(g_ft.r_kind + 1) & 15u) << 12; /* (build 41: which finisher - the readout names it) */
+		e->dist_m = g_ft.r_snap_cm, e->top[0] = g_ft.r_in_mps, e->top[1] = g_ft.r_depth_cm, e->top[2] = g_ft.r_out_s;
+		return 1;
+	}
 	if (!atomic_load(&g_fin.hint_show) || mono() - g_fin.hint_t > 0.25 || !vec_ok(g_fin.hint_pos, 1e7f))
 		return 0;
 	somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
@@ -747,9 +1037,104 @@ static int fn_entry(somvr_objective_frame *e)
 	return 1;
 }
 
+/* build 41 (som-b41-finlib): a cut's frame (FN_STAB with g_fin.cut) - the blade along its arc about the shoulder with
+ * the hand (the follow rule on the mid-blade's path: the hand's own blade's middle along the arc's way at the blade's
+ * angle now, 1:1 up to SOMVR_FINISHER_CUT_VMAX, its accuracy kept, nothing under 15 cm/s; a pull back draws it back
+ * before the kill), the path riding the node by FN_FOLLOW_CM at most; the kill (and for a sever the head) where the
+ * blade crosses the node; then on to the arc's end with the hand, or let go when the hand rests FN_OUT_WAIT_S */
+static void fn_cut_frame(uintptr_t pc, struct cb_orc *oc, float dt, double t)
+{
+	const somvr_fn_kind *kd = somvr_fn_kind_of(g_fin.kind);
+	float tip[3], dir[3], way[3], p0 = g_fin.p, rate = 0, match = 0;
+	fn_cut_at(g_fin.p, tip, dir, way);
+	float along = g_fin.hm[0] * way[0] + g_fin.hm[1] * way[1] + g_fin.hm[2] * way[2];
+	g_fin.try_in_v = fmaxf(g_fin.try_in_v, along); /* (the test's "speed in": the mid-blade's along the arc) */
+	somvr_fn_cfg sc = g_fin.cfg;
+	sc.follow = 1, sc.back_free = !g_fin.killed, sc.v_max = g_fin.cut_vmax, sc.start_cm = g_fin.clen, sc.depth_cm = 0;
+	g_fin.p = somvr_fn_step(&sc, g_fin.hm, way, g_fin.p, dt, &rate, &match);
+	if (g_fin.p > 1.0f)
+		g_fin.p = 1.0f;
+	if (g_fin.killed && g_fin.p < p0)
+		g_fin.p = p0; /* (through: never back into it) */
+	if (sqrtf(g_fin.hm[0] * g_fin.hm[0] + g_fin.hm[1] * g_fin.hm[1] + g_fin.hm[2] * g_fin.hm[2]) > 15.0f)
+		g_fin.match_sum += match, g_fin.match_n++;
+	if (fabsf(g_fin.p - p0) * g_fin.clen > 0.05f)
+		g_fin.last_move_t = t, g_fin.out_move_t = t;
+	if (!g_fin.cut_moved && g_fin.p > 0.05f) { /* the swing begins: its sound (the flat kill's own before the blow) */
+		g_fin.cut_moved = 1;
+		if (kd && kd->snd_in && kd->snd_in[0])
+			fn_snd(kd->snd_in, tip, "the cut's swing", t);
+		logf_("FINISHER t=%.3f swing: the cut under way %.2f s after the snap (the hand's middle %.0f cm/s along the arc, its "
+		      "match %.2f)", t, t - g_fin.snap_t, (double)along, (double)match);
+	}
+	/* the path rides the node where it is now (its sway), by FN_FOLLOW_CM at most */
+	float ndn[4][3], sh[3] = { 0, 0, 0 };
+	if (kd && stl_body(oc, ndn)) {
+		float off[3] = { ndn[kd->node][0] - g_fin.neck[0], ndn[kd->node][1] - g_fin.neck[1], ndn[kd->node][2] - g_fin.neck[2] };
+		float ol = sqrtf(off[0] * off[0] + off[1] * off[1] + off[2] * off[2]), k = ol > FN_FOLLOW_CM ? FN_FOLLOW_CM / ol : 1.0f;
+		for (int i = 0; i < 3 && !g_fin.killed; i++)
+			sh[i] = off[i] * k;
+		g_fin.follow_cm = fmaxf(g_fin.follow_cm, ol);
+	}
+	fn_cut_at(g_fin.p, tip, dir, way);
+	for (int i = 0; i < 3; i++)
+		tip[i] += sh[i];
+	fn_w2g(tip, g_fin.tip_g);
+	/* the ride's turn: about the arc's axis by the angle gone (the grips' space) */
+	float ang = (g_fin.ca1 - g_fin.ca0) * g_fin.p, axg[3];
+	fn_w2g_dir(g_fin.cax, axg);
+	float al = sqrtf(axg[0] * axg[0] + axg[1] * axg[1] + axg[2] * axg[2]);
+	if (al > 1e-4f) {
+		float sn = sinf(0.5f * ang) / al;
+		g_fin.qrot[0] = axg[0] * sn, g_fin.qrot[1] = axg[1] * sn, g_fin.qrot[2] = axg[2] * sn, g_fin.qrot[3] = cosf(0.5f * ang);
+	}
+	g_fin.try_pmax = fmaxf(g_fin.try_pmax, g_fin.p), g_fin.try_depth = 100.0f * g_fin.try_pmax; /* (the readout: the arc's share) */
+	if (!g_fin.killed && fabsf(g_fin.p - g_fin.chit_p) < 0.12f && rate > 5.0f) /* (the blade meeting him: the drag) */
+		haptic_k(SOMVR_HAND_R, SOMVR_HX_FLESH, fminf(1.0f, fmaxf(0.3f, rate / 300.0f)));
+	if (!g_fin.killed && p0 < g_fin.chit_p && g_fin.p >= g_fin.chit_p) { /* the crossing: the kill */
+		g_fin.in_done = 1, g_fin.ins++, g_fin.deep_done = 1, g_fin.s_deep = 1;
+		haptic_k(SOMVR_HAND_R, SOMVR_HX_HIT, 0.7f);
+		logf_("FINISHER t=%.3f in: %s - the blade through the %s at p %.2f, %.2f s into the cut (the hand's match %.2f, the "
+		      "blade's middle %.0f cm/s)", t, kd ? kd->name : "?", kd && kd->node == 3 ? "head" : "neck", (double)g_fin.p,
+		      t - g_fin.snap_t, (double)match, (double)rate);
+		fn_kill(pc, oc, t);
+		return;
+	}
+	if (g_fin.killed) {
+		const char *why = g_fin.p >= 1.0f ? "the cut through to its end" : t - g_fin.out_move_t > FN_OUT_WAIT_S ? "the hand at rest after the cut" : NULL;
+		if (why) {
+			g_fin.stabs++, g_fin.outs++, g_fin.out_done = 1, g_fin.try_out_s = (float)(t - g_fin.kill_t);
+			if (kd && kd->snd_out && kd->snd_out[0])
+				fn_snd(kd->snd_out, tip, "the cut's end", t);
+			logf_("FINISHER t=%.3f end: %s, %.2f s after the kill (p %.2f); the slow motion off, the sword the hand's again "
+			      "(blended over %.2f s); the orc %s", t, why, t - g_fin.kill_t, (double)g_fin.p, (double)FN_PULL_S,
+			      cb_dead(g_fin.c) ? "dead" : "alive (!)");
+			fn_stop(t);
+		}
+		return;
+	}
+	const char *why = t - g_fin.snap_t > FN_STAB_S ? "no cut through within 8 s of the snap"
+			  : t - g_fin.last_move_t > 4.0 ? "the cut stalled 4 s: no kill without the blade through" : NULL;
+	if (!why && g_ft.on) { /* (the finisher test: a swing drawn back to its start for 1.5 s ends the try) */
+		if (g_fin.try_pmax > 0.15f && g_fin.p < 0.03f) {
+			if (!(g_fin.try_back_t > 0))
+				g_fin.try_back_t = t;
+			else if (t - g_fin.try_back_t > 1.5)
+				why = "drawn back to its start (the finisher test)", g_fin.back_t = t;
+		} else
+			g_fin.try_back_t = 0;
+	}
+	if (why)
+		fn_cancel(why, t);
+}
+
 /* combat_frame, with the drawn blade b: the whole finisher */
+static void fn_test_type(int k, double t, const char *who);
 static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, const float *root, double t)
 {
+	int ty = atomic_exchange(&g_fin.req_type, 0);
+	if (ty) /* build 41: `finisher type NAME` */
+		fn_test_type(ty - 1, t, "the word");
 	int m = atomic_exchange(&g_fin.req_mode, 0);
 	if (m) {
 		g_fin.on = m == 2, logf_("FINISHER t=%.3f %s (the word)", t, g_fin.on ? "on" : "off");
@@ -779,9 +1164,24 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 				g_fin.hv[i] += a * ((rel[i] - g_fin.hlast[i]) / (float)hdt - g_fin.hv[i]);
 		} else
 			memset(g_fin.hv, 0, sizeof g_fin.hv);
+		if (g_fin.hlast_ok)
+			memcpy(g_fin.hprev, g_fin.hlast, sizeof g_fin.hprev);
+		else
+			memcpy(g_fin.hprev, rel, sizeof rel);
 		memcpy(g_fin.hlast, rel, sizeof rel), g_fin.hlast_t = t, g_fin.hlast_ok = 1;
+		/* build 41: the blade's middle too (a cut's swing: the arm and the wrist both turn it) */
+		float mid[3] = { 0.5f * (g_cb.hand.base[0] + g_cb.hand.tip[0]) - g_cb.hand_rx.base[0],
+				 0.5f * (g_cb.hand.base[1] + g_cb.hand.tip[1]) - g_cb.hand_rx.base[1],
+				 0.5f * (g_cb.hand.base[2] + g_cb.hand.tip[2]) - g_cb.hand_rx.base[2] };
+		if (g_fin.hm_ok && hdt > 1e-4 && hdt < 0.25) {
+			float a = 1.0f - expf(-(float)hdt / 0.04f);
+			for (int i = 0; i < 3; i++)
+				g_fin.hm[i] += a * ((mid[i] - g_fin.hmlast[i]) / (float)hdt - g_fin.hm[i]);
+		} else
+			memset(g_fin.hm, 0, sizeof g_fin.hm);
+		memcpy(g_fin.hmlast, mid, sizeof mid), g_fin.hm_ok = 1;
 	} else
-		g_fin.hlast_ok = 0, memset(g_fin.hv, 0, sizeof g_fin.hv);
+		g_fin.hlast_ok = 0, g_fin.hm_ok = 0, memset(g_fin.hv, 0, sizeof g_fin.hv), memset(g_fin.hm, 0, sizeof g_fin.hm);
 	struct cb_orc oc;
 	const somvr_posef *e = g_fr.views.pose;
 	sv_quat hq = sv_qnormalize(sv_quat_of(e[0].q));
@@ -801,17 +1201,36 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 			g_fin.ready_t0 = 0;
 		else if (!(g_fin.ready_t0 > 0))
 			g_fin.ready_t0 = t;
-		int pk = g_xc.ready && t >= g_fin.cool_t && fn_pick(o, n, root, hfwd, &oc);
+		int kd_pick = SOMVR_FNK_NECK, sit = 0;
+		/* build 41: the candidates from the targeting bands' own search (cb_orcs_r, as the hint's): combat's list holds
+		 * no unaware orc (boot 20261105-145743: the back stab's orc never picked) and a downed one leaves it */
+		static struct cb_orc cand[16];
+		const struct cb_orc *po = o;
+		int pn = n;
+		if (g_fin.lib && g_xc.ready && t >= g_fin.cool_t && pcomb) {
+			int k = cb_orcs_r(pcomb, pc, root, FN_REACH_CM + 30.0f, cand, 16);
+			if (k > 0)
+				po = cand, pn = k;
+		}
+		int pk = g_xc.ready && t >= g_fin.cool_t && fn_pick(po, pn, root, hfwd, peek_ptr(pc + C_HOBJ), t, &oc, &kd_pick, &sit);
+		if (pk)
+			g_fin.kind = kd_pick, g_fin.sit = sit; /* (build 41: the library's finisher for this orc - its outline below) */
 		int rc = pk && fn_outline(&oc, root) && fn_reachable(0);
 		fn_hint(pcomb, pc, o, n, root, hfwd, pk ? &oc : NULL, rc, t); /* build 37: why not, and where one that could be is */
 		if (!rc)
 			return;
 		atomic_store(&g_fin.hold_c, oc.c), atomic_store(&g_fin.hold_h, oc.hobj);
 		g_fin.phase = FN_READY, g_fin.c = oc.c, g_fin.hobj = oc.hobj, g_fin.t0 = t, g_fin.readies++;
+		g_fin.by_kind[g_fin.kind]++, g_fin.cut_moved = 0;
+		g_fin.qrot[0] = g_fin.qrot[1] = g_fin.qrot[2] = 0, g_fin.qrot[3] = 1;
+		if (g_fin.kind == SOMVR_FNK_NECK || g_fin.kind == SOMVR_FNK_BEHEAD || g_fin.kind == SOMVR_FNK_FACE)
+			g_fin.kind_n++; /* (the front ones in turn) */
 		g_fin.p = 0, g_fin.in_done = g_fin.out_done = g_fin.deep_done = g_fin.pose_done = 0, g_fin.have_off = 0;
 		g_fin.follow_cm = 0, g_fin.match_sum = 0, g_fin.match_n = 0;
 		g_fin.killed = 0, g_fin.kill_t = g_fin.dead_t = 0, g_fin.hdeep_ok = 0, g_fin.flash_until = 0, g_fin.out_v = 0;
 		g_fin.s_deep = 1, g_fin.back_t = 0;
+		g_fin.try_snap_cm = -1, g_fin.try_in_v = 0, g_fin.try_depth = 0, g_fin.try_out_s = -1;
+		g_fin.try_pmax = 0, g_fin.try_back_t = 0;
 		atomic_store(&g_fin.rel, 0);
 		atomic_store(&g_fin.show, 1);
 		fn_slowmo(1, t);
@@ -828,13 +1247,35 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		      hypotf(oc.pos[0] - root[0], oc.pos[2] - root[2]), cb_health(oc.c), g_fin.neck[0], g_fin.neck[1], g_fin.neck[2],
 		      (double)g_fin.cfg.start_cm, g_fin.dir[0], g_fin.dir[1], g_fin.dir[2], (double)g_fin.slowmo,
 		      g_fin.smo ? "" : " (not set: the game's own runs)");
+		{ /* build 41: which finisher, and why (the orc's situation) */
+			const somvr_fn_kind *kd = somvr_fn_kind_of(g_fin.kind);
+			logf_("FINISHER t=%.3f kind: %s (%s; row '%s') - the orc %s%s%s%s%s%s; %s", t, kd->name, kd->id, g_fin.row,
+			      sit & SOMVR_FNS_FRONT ? "facing Talion" : sit & SOMVR_FNS_BACK ? "its back to Talion" : "side on",
+			      sit & SOMVR_FNS_DOWNED ? ", downed" : "", sit & SOMVR_FNS_STUNNED ? ", stunned" : "",
+			      sit & SOMVR_FNS_COUNTER ? ", in a parry's opening" : "", sit & SOMVR_FNS_AWARE ? ", aware" : ", unaware",
+			      fn_force() < SOMVR_FNK_N ? " (the finisher test's type)" : "",
+			      g_fin.cut ? "a cut along its arc about the shoulder" : "a stab along its line");
+			if (g_fin.cut)
+				logf_("FINISHER t=%.3f arc: about the shoulder %.0f,%.0f,%.0f, the grip %.0f cm out, the node %.0f cm along the "
+				      "blade at p %.2f, from %.0f to %.0f deg (the mid-blade's path %.0f cm); its plane's axis %.2f,%.2f,%.2f",
+				      t, g_fin.cpv[0], g_fin.cpv[1], g_fin.cpv[2], (double)g_fin.crg,
+				      (double)(sqrtf((g_fin.neck[0] - g_fin.cpv[0]) * (g_fin.neck[0] - g_fin.cpv[0]) +
+						     (g_fin.neck[1] - g_fin.cpv[1]) * (g_fin.neck[1] - g_fin.cpv[1]) +
+						     (g_fin.neck[2] - g_fin.cpv[2]) * (g_fin.neck[2] - g_fin.cpv[2])) - g_fin.crg),
+				      (double)g_fin.chit_p, (double)(g_fin.ca0 * 57.29578f), (double)(g_fin.ca1 * 57.29578f), (double)g_fin.clen,
+				      g_fin.cax[0], g_fin.cax[1], g_fin.cax[2]);
+		}
 	}
 	if (!fn_orc(&oc, t))
 		return;
 	float dist = hypotf(oc.pos[0] - root[0], oc.pos[2] - root[2]);
 	if (g_fin.phase == FN_READY) {
 		g_fin.frames_ready++;
-		if (!g_xc.ready) {
+		if (!g_xc.ready && g_ft.on) { /* build 40: the test keeps the execution charged (the charge's own lapse) */
+			char w[200];
+			if (mono() >= g_ft.fill_t)
+				g_ft.fills += xc_fill(pc, w, sizeof w), g_ft.fill_t = mono() + 0.5;
+		} else if (!g_xc.ready) {
 			fn_cancel("the charge gone", t);
 			return;
 		}
@@ -842,7 +1283,7 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		 * slowed attack in 4 s and the outline that followed it ran from the hand) */
 		fn_outline_pose();
 		int far = dist > FN_REACH_CM + 30 || !fn_reachable(25.0f);
-		if (far || t - g_fin.t0 > g_fin.timeout_s) {
+		if (far || (t - g_fin.t0 > g_fin.timeout_s && !g_ft.on)) { /* (build 40: no timeout in the test) */
 			fn_cancel(far ? "out of reach" : "the timeout", t);
 			return;
 		}
@@ -857,14 +1298,18 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 			      "eyes; deg); the way in %.3f %.3f %.3f (right, up, ahead); the drawn point %.1f cm and %.1f deg off it", t,
 			      rel[0], rel[1], rel[2], ang[0], ang[1], ang[2], way[0], way[1], way[2], dcm, adeg);
 			float lu[6];
-			if (fn_lineup(b, lu))
+			if (fn_lineup(b, lu)) {
 				logf_("FINISHER lineup t=%.3f the test hand that lays the drawn sword on it: hands test R %.1f %.1f %.1f %.1f "
 				      "%.1f %.1f", t, lu[0], lu[1], lu[2], lu[3], lu[4], lu[5]);
+				if (g_fin.cut) /* build 41: the drivers' swing - that hand turned along the arc about the shoulder */
+					fn_cutpath(lu, t);
+			}
 		}
 		if (!al)
 			return;
 		/* the snap */
 		g_fin.phase = FN_STAB, g_fin.snap_t = g_fin.last_move_t = t, g_fin.snaps++;
+		g_fin.try_snap_cm = dcm, g_ft.r_have = 0; /* (build 40: the test's numbers; its last readout gone at a snap) */
 		fn_w2g(g_fin.start, g_fin.tip_g), fn_w2g_dir(g_fin.dir, g_fin.dir_g);
 		g_fin.snap_req = 1, g_fin.pull_t0 = mono(), g_fin.ride_have = 0;
 		atomic_store(&g_fin.rel, 0);
@@ -905,6 +1350,10 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		dt = 0.011f;
 	if (dt > 0.1f)
 		dt = 0.1f; /* (a slow frame counts, capped: headless runs ~20 fps) */
+	if (g_fin.cut) { /* build 41: a cut rides its arc */
+		fn_cut_frame(pc, &oc, dt, t);
+		return;
+	}
 	float hv[3];
 	memcpy(hv, g_fin.hv, sizeof hv); /* the controller's blade: the hand's own motion */
 	float rate = 0, match = 0, p0 = g_fin.p;
@@ -944,6 +1393,8 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		 * no drift under 15 cm/s) and a pull back draws the blade back with it - the 22:09 session's own thrust (mark
 		 * 221801_7: ~60 cm in 0.3 s, a 3 m/s peak) left build 33's 1 m/s blade at the neck: "I can't move the thing fast
 		 * enough" */
+		float along = hv[0] * g_fin.dir[0] + hv[1] * g_fin.dir[1] + hv[2] * g_fin.dir[2];
+		g_fin.try_in_v = fmaxf(g_fin.try_in_v, along); /* (build 40: the test's "speed in") */
 		somvr_fn_cfg sc = g_fin.cfg;
 		sc.back_free = sc.follow = g_fin.feel;
 		if (g_fin.feel)
@@ -981,6 +1432,7 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	somvr_fn_point(&g_fin.cfg, st, g_fin.dir, g_fin.p, tip_w);
 	fn_w2g(tip_w, g_fin.tip_g);
 	float d0 = somvr_fn_depth(&g_fin.cfg, p0), d1 = somvr_fn_depth(&g_fin.cfg, g_fin.p);
+	g_fin.try_depth = fmaxf(g_fin.try_depth, d1); /* (build 40: the test's depth reached) */
 	if (g_fin.killed && !(g_fin.dead_t > 0) && cb_dead(g_fin.c)) {
 		g_fin.dead_t = t;
 		logf_("FINISHER t=%.3f dead: the orc dead %.3f s after the kill's moment", t, t - g_fin.kill_t);
@@ -994,7 +1446,10 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		if (g_fin.feel) { /* build 37: the blood along the stab, the stab's sound, a stab's thump; the orc still held */
 			stl_blood_dir(oc.hobj, blood_at, g_fin.dir, "the finisher's stab going in", t);
 			haptic_k(SOMVR_HAND_R, SOMVR_HX_HIT, 0.5f);
-			fn_snd("cbt_insta_stab", blood_at, "the way in", t);
+			{
+				const somvr_fn_kind *kd = somvr_fn_kind_of(g_fin.kind);
+				fn_snd(kd && kd->snd_in ? kd->snd_in : "cbt_insta_stab", blood_at, "the way in", t);
+			}
 			logf_("FINISHER t=%.3f in: the point at the neck after %.2f s of the stab (the hand's match %.2f, the blade %.0f cm/s): "
 			      "blood along the stab; the kill at full depth (%.0f cm) or where the hand turns back past %.0f cm", t,
 			      t - g_fin.snap_t, match, rate, (double)g_fin.cfg.depth_cm, (double)FN_TURN_CM);
@@ -1040,7 +1495,10 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		if (g_fin.feel) {
 			float back[3] = { -g_fin.dir[0], -g_fin.dir[1], -g_fin.dir[2] };
 			stl_blood_dir(oc.hobj, blood_at, back, "the finisher's blade coming out", t);
-			fn_snd("cbt_sync_stab_dry", blood_at, "the way out", t);
+			{
+				const somvr_fn_kind *kd = somvr_fn_kind_of(g_fin.kind);
+				fn_snd(kd && kd->snd_out && kd->snd_out[0] ? kd->snd_out : "cbt_sync_stab_dry", blood_at, "the way out", t);
+			}
 		} else {
 			stl_blood(oc.hobj, blood_at, "the finisher's blade coming out", t);
 		}
@@ -1048,7 +1506,7 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		logf_("FINISHER t=%.3f out: the blade out of the neck after %.2f s of the stab%s", t, t - g_fin.snap_t,
 		      g_fin.killed ? "" : " (no kill)");
 		if (g_fin.feel && g_fin.killed) { /* build 37: out = done - the blade the hand's again, the world at speed */
-			g_fin.stabs++;
+			g_fin.stabs++, g_fin.try_out_s = (float)(t - g_fin.kill_t);
 			logf_("FINISHER t=%.3f end: the blade out %.2f s after the kill (the pull %.0f cm/s); the slow motion off, the sword "
 			      "the hand's again (blended over %.2f s); the orc %s", t, t - g_fin.kill_t, (double)g_fin.out_v,
 			      (double)FN_PULL_S, cb_dead(g_fin.c) ? "dead" : "alive (!)");
@@ -1061,6 +1519,18 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 		const char *why = g_fin.back_t > 0 && !g_fin.in_done && t - g_fin.back_t > FN_BACK_S
 					  ? "drawn back out and not in again within 2 s"
 				  : t - g_fin.snap_t > FN_STAB_S ? "no kill within 8 s of the snap" : NULL;
+		g_fin.try_pmax = fmaxf(g_fin.try_pmax, g_fin.p);
+		if (!why && g_ft.on) { /* build 40: the test - a stab drawn back to its start for 1.5 s ends the try (the next
+					* at once: boot 095750's shallow try waited for the 8 s cap) */
+			if (g_fin.try_pmax > 0.15f && g_fin.p < 0.03f) {
+				if (!(g_fin.try_back_t > 0))
+					g_fin.try_back_t = t;
+				else if (t - g_fin.try_back_t > 1.5)
+					why = "drawn back to its start (the finisher test)", g_fin.back_t = t;
+			} else {
+				g_fin.try_back_t = 0;
+			}
+		}
 		if (why) {
 			fn_cancel(why, t);
 			return;
@@ -1102,6 +1572,145 @@ static void fn_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	}
 }
 
+/* build 40: Practice > Finisher test - its end (B, the button again, out of the area); the orc stays */
+static void fn_test_stop(const char *why, double t)
+{
+	if (!g_ft.on)
+		return;
+	g_ft.on = 0, g_ft.r_have = 0; /* (first: the finisher's own end below is no try) */
+	if (g_fin.phase != FN_IDLE)
+		fn_cancel("the finisher test ended", t);
+	logf_("FINTEST t=%.3f ended (%s) after %.1f s: tries %d, kills %d; orcs spawned %llu, charges filled %llu", t, why,
+	      mono() - g_ft.t0, g_ft.tries, g_ft.kills, (unsigned long long)g_ft.spawns, (unsigned long long)g_ft.fills);
+}
+/* build 40: the practice page's Finisher test (and `practice fintest`): on - or off when it is on */
+static void fn_test_toggle(const struct pr_me *m, double t, const char *who)
+{
+	(void)m;
+	if (g_ft.on) {
+		fn_test_stop("the button again", t);
+		return;
+	}
+	if (!fn_on()) {
+		logf_("FINTEST t=%.3f (%s) refused: the finisher is off (SOMVR_FINISHER, its sites)", t, who);
+		return;
+	}
+	int kind = g_ft.kind, kind_set = g_ft.kind_set; /* (build 41: the type is kept) */
+	memset(&g_ft, 0, sizeof g_ft);
+	g_ft.kind = kind, g_ft.kind_set = kind_set;
+	g_ft.on = 1, g_ft.phase = FT_SPAWN, g_ft.t0 = mono();
+	g_ft.b_was = (g_inp.st.hand[SOMVR_HAND_R].buttons & SOMVR_BTN_UPPER) != 0;
+	if (g_fin.phase != FN_IDLE)
+		fn_cancel("the finisher test starts", t);
+	logf_("FINTEST t=%.3f on (%s): an orc %.0f cm ahead facing Talion, the execution charged, the finisher armed with no "
+	      "timeout; after each try the readout and again (%.1f s after a kill, %.1f s otherwise); B or the button again ends "
+	      "it; the type %s", t, who, (double)FT_AHEAD_CM, FT_AGAIN_KILL_S, FT_AGAIN_S,
+	      fn_force() < SOMVR_FNK_N ? somvr_fn_kind_of(fn_force())->name : "Auto (the orc's situation picks)");
+}
+/* build 41: the finisher test's downed or stunned orc - while armed and no finisher runs, an orc out of that state is
+ * put into it (every 3 s at most): the game's own reaction to a hit of ours dealt with no kill (as `abil kd`): the heavy
+ * record knocks it down, the stab's stuns it (the RecoilTypeHit of each: boots 20261024-173938's 'AI_Bip_Recoil_F_KD_STR',
+ * '_ToStun_STR'), its direction from Talion */
+static void fn_test_setup(const struct pr_me *m, double t)
+{
+	int k = fn_force();
+	if ((k != SOMVR_FNK_DOWNED && k != SOMVR_FNK_STUNNED) || g_fin.phase != FN_IDLE || mono() < g_ft.setup_t || !m->pc)
+		return;
+	struct cb_orc o;
+	if (!g_pr.orc_c || !cb_orc_get(g_pr.orc_c, &o) || cb_dead(o.c))
+		return;
+	char why[200];
+	if (fn_state(o.c, why, sizeof why) == (k == SOMVR_FNK_DOWNED ? SOMVR_FNS_DOWNED : SOMVR_FNS_STUNNED))
+		return;
+	const char *rn = "-";
+	uintptr_t rec = cb_record(k == SOMVR_FNK_DOWNED ? SC_TIER_HEAVY : SC_TIER_STAB, 0, &rn);
+	g_ft.setup_t = mono() + 3.0;
+	if (!rec) {
+		logf_("FINTEST t=%.3f set-up for the %s: no %s record", t, somvr_fn_kind_of(k)->name, k == SOMVR_FNK_DOWNED ? "heavy" : "stab");
+		return;
+	}
+	float dx = o.pos[0] - m->pos[0], dz = o.pos[2] - m->pos[2], l = hypotf(dx, dz), hd0[3];
+	float dir[3] = { l > 1 ? dx / l : 0, 0, l > 1 ? dz / l : 1 }, at[3] = { o.pos[0], o.pos[1] + 100.0f, o.pos[2] };
+	unsigned char once = 0;
+	peek(m->pc + C_HITDIR, hd0, sizeof hd0), peek(m->pc + C_HITONCE, &once, 1);
+	memcpy((void *)(m->pc + C_HITDIR), dir, sizeof dir);
+	*(volatile unsigned char *)(m->pc + C_HITONCE) = 0;
+	float hp0 = cb_health(o.c);
+	CB_DEALHIT_CALL((cb_ltvec){ at[0], at[1], at[2] }, m->pc, o.hobj, rec, 0);
+	memcpy((void *)(m->pc + C_HITDIR), hd0, sizeof hd0);
+	*(volatile unsigned char *)(m->pc + C_HITONCE) = once;
+	g_ft.setups++;
+	logf_("FINTEST t=%.3f set-up %llu for the %s: orc %#llx %.0f cm off (%s) dealt '%s' (no kill, a test's own hit): health "
+	      "%.1f -> %.1f", t, (unsigned long long)g_ft.setups, somvr_fn_kind_of(k)->name, (unsigned long long)o.c, (double)l, why,
+	      rn, hp0, cb_health(o.c));
+}
+/* build 41: the practice page's type button (and `finisher type NAME`): the test's next type (Auto, then each in the
+ * library's order) or the named one; a test on re-arms with it (its orc anew: the back stab's stands otherwise) */
+static void fn_test_type(int k, double t, const char *who)
+{
+	int was = fn_force();
+	if (k < 0) /* (the button: the next) */
+		k = !g_ft.kind_set || g_ft.kind >= SOMVR_FNK_N ? 0 : g_ft.kind + 1;
+	g_ft.kind = k > SOMVR_FNK_N ? SOMVR_FNK_N : k, g_ft.kind_set = 1;
+	logf_("FINTEST t=%.3f type (%s): %s%s", t, who, g_ft.kind < SOMVR_FNK_N ? somvr_fn_kind_of(g_ft.kind)->name : "Auto",
+	      g_ft.on ? " - the test re-armed with it" : " (for the next test)");
+	if (!g_ft.on || fn_force() == was)
+		return;
+	if (g_fin.phase != FN_IDLE) { /* (no try: the test's numbers untouched) */
+		g_ft.on = 0;
+		fn_cancel("the finisher test's type changed", t);
+		g_ft.on = 1;
+	}
+	g_ft.phase = FT_SPAWN, g_ft.r_have = 0;
+}
+
+/* build 40: the practice frame (every frame in the area): B, the next orc, the charge */
+static void fn_test_tick(const struct pr_me *m, int have, double t)
+{
+	if (!g_ft.on)
+		return;
+	if (!g_pr.here) {
+		fn_test_stop("left the practice area", t);
+		return;
+	}
+	int b = (g_inp.st.hand[SOMVR_HAND_R].buttons & SOMVR_BTN_UPPER) != 0;
+	if (b && !g_ft.b_was && !vm_open()) {
+		g_ft.b_was = b;
+		fn_test_stop("B", t);
+		return;
+	}
+	g_ft.b_was = b;
+	if (!have || !m->pc)
+		return;
+	double now = mono();
+	int alive = g_pr.orc_h && pr_orc_alive();
+	if (g_ft.phase == FT_AFTER && now >= g_ft.after_t)
+		g_ft.phase = g_ft.r_kill || !alive ? FT_SPAWN : FT_ARMED;
+	if (g_ft.phase == FT_ARMED && !alive && g_fin.phase == FN_IDLE)
+		g_ft.phase = FT_SPAWN; /* (gone or dead some other way) */
+	if (g_ft.phase == FT_SPAWN) {
+		float at[3];
+		if (!fn_spot_ahead(FT_AHEAD_CM, at))
+			return;
+		memcpy(g_pr_place_at, at, sizeof at);
+		/* build 41: the back stab's orc stands with its back to Talion (Place orc's: unaware, the test's type allows it) */
+		pr_spawn_at(m, g_pr.cur_orc, t, "Finisher test", fn_force() == SOMVR_FNK_BACK ? 2 : 4);
+		g_ft.spawns++, g_ft.setup_t = mono() + 0.8; /* (the downed / stunned set-up once it stands) */
+		if (g_pr.orc_h)
+			g_ft.phase = FT_ARMED;
+		else
+			g_ft.phase = FT_AFTER, g_ft.after_t = now + 2.0, g_ft.r_kill = 1; /* (the spawn refused: again in 2 s) */
+		logf_("FINTEST t=%.3f orc %llu %s at %.0f,%.0f,%.0f (%.0f cm ahead of the eyes)", t, (unsigned long long)g_ft.spawns,
+		      g_pr.orc_h ? "out" : "NOT spawned", (double)at[0], (double)at[1], (double)at[2], (double)FT_AHEAD_CM);
+	}
+	if (g_ft.phase == FT_ARMED && !g_xc.ready && now >= g_ft.fill_t) {
+		char w[200];
+		g_ft.fills += xc_fill(m->pc, w, sizeof w), g_ft.fill_t = now + 0.5;
+	}
+	if (g_ft.phase == FT_ARMED)
+		fn_test_setup(m, t);
+}
+
 static const char *fn_word(const char *w)
 {
 	if (!strcmp(w, "status"))
@@ -1110,6 +1719,12 @@ static const char *fn_word(const char *w)
 		return atomic_store(&g_fin.req_mode, w[1] == 'n' ? 2 : 1), w[1] == 'n' ? "finisher on" : "finisher off";
 	if (!strcmp(w, "pose"))
 		return atomic_store(&g_fin.req_pose, 1), "finisher pose (the outline's grip as a hands-test pose)";
+	if (!strncmp(w, "type ", 5)) { /* build 41: the finisher test's type (auto, neck, behead, face, back, downed, stunned, counter) */
+		int k = somvr_fn_kind_word(w + 5);
+		if (k < 0)
+			return "finisher type: auto, neck, behead, face, back, downed, stunned or counter";
+		return atomic_store(&g_fin.req_type, k + 1), "finisher type (the finisher test's)";
+	}
 	return NULL;
 }
 
@@ -1128,6 +1743,12 @@ static void fn_start(int *bad)
 	g_fin.cfg.v_ref = env_float("SOMVR_FINISHER_VREF", g_fin.cfg.v_ref, 20, 500, bad);
 	const char *r = getenv("SOMVR_FINISHER_ROW");
 	snprintf(g_fin.row, sizeof g_fin.row, "%s", r && *r ? r : "AI_Bip_PC_Standing_InstaKill_F6");
+	/* build 41 (som-b41-finlib, re-xr-pipeline.md 179) */
+	memcpy(g_fin.row_env, g_fin.row, sizeof g_fin.row_env);
+	g_fin.depth_env = g_fin.cfg.depth_cm;
+	g_fin.lib = env_word("SOMVR_FINISHER_LIB", w2, 2, 0);
+	g_fin.cut_vmax = env_float("SOMVR_FINISHER_CUT_VMAX", 1500, 200, 4000, bad);
+	g_fin.qrot[3] = 1;
 	/* build 37 (re-xr-pipeline.md 171) */
 	g_fin.feel = env_word("SOMVR_FINISHER_FEEL", (const char *const[]){ "b33", "b37" }, 2, 0);
 	g_fin.sound = env_word("SOMVR_FINISHER_SOUND", w2, 2, 0);
@@ -1154,9 +1775,25 @@ static void fn_start(int *bad)
 			   "half); the way out the hand's, 0.9 of its pull past 1.5 cm"
 			 : "build 33's: a tick at the snap, the half from the way in, the guided way out",
 	      g_fin.sound ? "on" : "off", g_fin.snd_lock, g_fin.hint ? "on" : "off", FN_HINT_AFTER_S, (double)FN_HINT_CM / 100);
+	logf_("CONFIG finisher build 41: lib=%s (SOMVR_FINISHER_LIB: %s), cut_vmax=%.0f cm/s (SOMVR_FINISHER_CUT_VMAX)",
+	      g_fin.lib ? "on" : "off",
+	      g_fin.lib ? "the library - by the orc's situation: downed the stab down, stunned the chop, a parry's opening the "
+			  "counter kill, its back (aware) the back stab, its front the neck stab, the beheading and the face stab in "
+			  "turn; Practice > Finisher test's type picks one"
+			: "the neck stab alone", (double)g_fin.cut_vmax);
+	if (g_fin.lib && !g_fin.feel)
+		logf_("WARN SOMVR_FINISHER_LIB=on needs SOMVR_FINISHER_FEEL=b37: the neck stab alone"), g_fin.lib = 0;
 }
 static void fn_end_log(void)
 {
+	char bk[400] = "";
+	for (int k = 0; k < SOMVR_FNK_N; k++) {
+		size_t l = strlen(bk);
+		snprintf(bk + l, sizeof bk - l, "%s%s %llu/%llu", k ? ", " : "", somvr_fn_kind_of(k)->id,
+			 (unsigned long long)g_fin.by_kind[k], (unsigned long long)g_fin.kills_kind[k]);
+	}
+	logf_("FINISHER END build 41: the library %s - readies/kills by kind: %s; heads severed %llu; the test's set-ups %llu",
+	      g_fin.lib ? "on" : "off", bk, (unsigned long long)g_fin.severs, (unsigned long long)g_ft.setups);
 	logf_("FINISHER END %s: readies %llu, snaps %llu, stabs %llu (in %llu, out %llu), kills %llu, cancels %llu; frames ready "
 	      "%llu, stabbing %llu", g_fin.on ? "on" : "off", (unsigned long long)g_fin.readies, (unsigned long long)g_fin.snaps,
 	      (unsigned long long)g_fin.stabs, (unsigned long long)g_fin.ins, (unsigned long long)g_fin.outs,

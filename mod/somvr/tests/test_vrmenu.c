@@ -386,7 +386,7 @@ static void test_layout(void) {
     /* all rows (the moves only with SOMVR_VMA_MOVES, which no build since 6 has): Comfort 14 (35 px: 13 fit), Display 8,
      * Climbing 4, Sword 8, Fight 9, Bow 3 (Walk toward and Refresh rate need their bits, Pointer hand is never shown) */
     CHECK(!overlap && below && under && in_group && rb[3] >= 48 && minh == 35 && n_on[0] == 14 && n_on[1] == 8 &&
-              n_on[2] == 4 && n_on[3] == 8 && n_on[4] == 9 && n_on[5] == 3 /* build 33: Bow from */,
+              n_on[2] == 5 /* build 40: Climb down */ && n_on[3] == 8 && n_on[4] == 9 && n_on[5] == 3 /* build 33: Bow from */,
           "rows apart, under the groups' buttons, the bottom row below (min %d px, %d %d %d %d %d %d rows)", minh, n_on[0],
           n_on[1], n_on[2], n_on[3], n_on[4], n_on[5]);
     /* build 19's own set (no moves, no Sword hand): Comfort 10 rows, Sword 7, 38 px each, from 152 */
@@ -919,7 +919,7 @@ static void test_sword(void) {
     int rp[4], rs[4], rr[4], rq[4], lb[4], mb[4];
     memset(rp, 0, sizeof rp), memset(rs, 0, sizeof rs), memset(rr, 0, sizeof rr), memset(rq, 0, sizeof rq);
     memset(lb, 0, sizeof lb), memset(mb, 0, sizeof mb);
-    CHECK(SOMVR_VMI_ROWS == 49 /* build 34 (33: Bow from) */ && SOMVR_VMI_MOVE == 31 && SOMVR_VMI_REFRESH == 32 && SOMVR_VMI_HANDED == 33 && /* build 30 */ SOMVR_VMI_SWORD == SOMVR_VMI_MOVE - 16 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
+    CHECK(SOMVR_VMI_ROWS == 50 /* build 34 (33: Bow from); build 40: Climb down */ && SOMVR_VMI_MOVE == 31 && SOMVR_VMI_REFRESH == 32 && SOMVR_VMI_HANDED == 33 && /* build 30 */ SOMVR_VMI_SWORD == SOMVR_VMI_MOVE - 16 && somvr_vm_rect_av(ALLR, SOMVR_VMI_PHASE, SOMVR_VMP_ROW, rp) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_ROW, rs) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_RECENTER, SOMVR_VMP_BUTTON, rr) &&
               somvr_vm_rect_av(ALLR, SOMVR_VMI_QUIT, SOMVR_VMP_BUTTON, rq) && somvr_vm_rect_av(ALLR, SOMVR_VMI_SWORD, SOMVR_VMP_LESS, lb) &&
@@ -2264,7 +2264,7 @@ static void test_fight19(void) {
               offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94 &&
               SOMVR_VMA_DODGE == (1ull << 32) && SOMVR_VMA_WSTEP == (1ull << 33) && SOMVR_VMA_STEALTH == (1ull << 34) &&
               SOMVR_VMA_CROWD == (1ull << 35) && SOMVR_VMA_CICON == (1ull << 36) && SOMVR_VMA_STRING == (1ull << 37) &&
-              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 51 && SOMVR_SK_ALL == 0x7ffffffffffffull /* build 34; b37 live3: MENU_PIN */,
+              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 52 && SOMVR_SK_ALL == 0xfffffffffffffull /* build 34; b37 live3: MENU_PIN */,
           "v7: avail 64 bits at 24, the settings 96 (the six rows at 88..94, pad6 spare), 208; bits 32..37; 33 keys (build 27)");
     /* build 17b's preload avail (the session 174757: 0xf7fff027) with the layer's Report / Quit; build 18 hides the
      * Sword hand (SOMVR_SWORD_HAND_LOCK) */
@@ -2922,7 +2922,7 @@ static void test_walk_toward(void) {
     somvr_set_default(&s);
     CHECK(s.move == 0 && offsetof(somvr_settings, move) == 83 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_MOVE), "MOVE") && !strcmp(somvr_set_env(SOMVR_SK_MOVE), "SOMVR_MOVE") &&
-              somvr_set_find("SOMVR_MOVE") == SOMVR_SK_MOVE && SOMVR_SK_MOVE == 31 && SOMVR_SK_N == 51 /* build 34; b37 live3 */,
+              somvr_set_find("SOMVR_MOVE") == SOMVR_SK_MOVE && SOMVR_SK_MOVE == 31 && SOMVR_SK_N == 52 /* build 34; b37 live3 */,
           "MOVE: the default head, the old pad's byte 83, the key and its switch; the 32nd key");
     CHECK(somvr_set_put(&s, SOMVR_SK_MOVE, " hand ") && s.move == 1 && (somvr_set_get(&s, SOMVR_SK_MOVE, v, sizeof v), !strcmp(v, "hand")) &&
               somvr_set_put(&s, SOMVR_SK_MOVE, "head") && s.move == 0 && !somvr_set_put(&s, SOMVR_SK_MOVE, "1") &&
@@ -3059,8 +3059,8 @@ static void test_settings34(void) {
     CHECK(SOMVR_VRMENU_VERSION == 8 && sizeof(somvr_settings) == 128 && offsetof(somvr_settings, watch_raise) == 96 &&
               offsetof(somvr_settings, hold_s) == 105 && offsetof(somvr_settings, av8) == 110 &&
               sizeof(somvr_vrmenu_shared) == 240 && offsetof(somvr_vrmenu_shared, gen) == 176 &&
-              SOMVR_SK_N == 51 && SOMVR_SK_XR_WATCH_LOOK == SOMVR_SK_BOW_TAKE + 1 && SOMVR_VMI_ROWS == 49 &&
-              SOMVR_VMI_WATCH == SOMVR_VMI_BOWTAKE + 1 && SOMVR_VMI_CLIMB_SWORD + 1 == SOMVR_VMI_RECENTER,
+              SOMVR_SK_N == 52 && SOMVR_SK_XR_WATCH_LOOK == SOMVR_SK_BOW_TAKE + 1 && SOMVR_VMI_ROWS == 50 &&
+              SOMVR_VMI_WATCH == SOMVR_VMI_BOWTAKE + 1 && SOMVR_VMI_CLIMB_SWORD + 2 == SOMVR_VMI_RECENTER /* build 40 */,
           "the v8 ABI: the rows at 96..109, av8 at 110, the settings 128, 240; 50 keys; 14 rows before Recentre");
     static const struct {
         int key, item, page;

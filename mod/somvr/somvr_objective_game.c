@@ -319,13 +319,18 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 static void ob_frame(uintptr_t pl, int stereo)
 {
 	int pub = g_ob.mode >= 2 && g_ob.on;
-	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim && !g_ob.vault && !pr_place_on() && !fn_hint_on()) ||
-	    !stereo)
+	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim && !g_ob.vault && !pr_place_on() && !fn_hint_on() &&
+	     !stg_cue_on()) || !stereo)
 		return;
 	if (g_ob.tid && g_ob.tid != ob_tid())
 		return;
 	somvr_objective_frame e;
 	memset(&e, 0, sizeof e);
+	if (stg_entry(&e)) { /* build 41 (SOMVR_STRUGGLE_RULE=b41): a struggle's cue at its node - first, nothing else then */
+		somvr_objective_put(&g_obj, g_fr.frame, &e);
+		g_ob.cur = 0;
+		return;
+	}
 	int dm = g_cl.dm_show; /* the drop's choice over the pullover's ring (A is the newer act) */
 	int ta = !dm && !g_cl.po_show && g_cl.ta_show; /* build 39 (SOMVR_CLIMB_TOP_A): a top under a resting hand: A UP */
 	int we = !dm && !g_cl.po_show && !ta && g_we.on && g_we.show; /* live 11-04 (SOMVR_WALK_EDGE_STOP): held at a drop */

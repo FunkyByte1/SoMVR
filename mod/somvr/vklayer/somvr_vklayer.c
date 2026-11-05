@@ -5763,6 +5763,8 @@ static void vm_frame(dev_st *ds) {
         v.ctl_page = VM.ctl_page;                      /* build 27: the Controls page's page */
         v.live_gen = somvr_vm_live_get()->gen;         /* build 35: the Test page's patch box */
         v.pinned = VP.on;                              /* b37 live3: "Back to the wrist" */
+        if (avail & SOMVR_VMA_PRACTICE) /* build 41: the Finisher test's type (the preload's pstate, bits 12..15) */
+            v.fin_kind = (int)(atomic_load_explicit(&VM.obj->pstate, memory_order_acquire) >> 12 & 15u);
         if ((!VM.released || memcmp(&v, &VM.drawn, sizeof v)) && vm_upload(ds, &v)) return; /* off now (logged) */
         float dotp[3]; /* the ray's end and the dot: the pointer's point, or (build 20) the lock's on the locked part */
         memcpy(dotp, o.hit, sizeof dotp);

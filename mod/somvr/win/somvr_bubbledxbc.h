@@ -171,9 +171,12 @@ static int bdx_frame3(const unsigned char *blob, size_t n, const char *tag, uint
 }
 
 /* FOLIAGE, the vertex shader: TEXCOORD2/3/4.w = the vertex's view-space position. NULL + *why when not edited */
-static unsigned char *somvr_bubble_vs(const unsigned char *blob, size_t n, size_t *n_out, const char **why)
+/* shape 0 (sphere): the view-space position; 1 (cylinder, build 40): the offset from the eye in the world's axes
+ * (k_mObjectToWorld's rotation x (the position - k_vObjectSpaceEyePos), the same object space as the clip matrix's) -
+ * its .y is the world's up, so the pixel shader can measure the distance from the eye's vertical line */
+static unsigned char *somvr_bubble_vs2(const unsigned char *blob, size_t n, int shape, size_t *n_out, const char **why)
 {
-	uint32_t *w = NULL, nw, shex, kind, rc, cc, rv, cv, gs, e[3], reg[3], pos_e, pos_r;
+	uint32_t *w = NULL, nw, shex, kind, rc, cc, rv, cv, gs, e[3], reg[3], pos_e, pos_r, rw = 0, cw = 0, re = 0, ce = 0;
 	*n_out = 0;
 	if (!bdx_load(blob, n, &w, &nw, &shex, &kind, why))
 		return NULL;
@@ -191,6 +194,10 @@ static unsigned char *somvr_bubble_vs(const unsigned char *blob, size_t n, size_
 	if (!gdx_rdef_var(blob, n, "$Globals", "k_mObjectToClip", &rc, &cc, &gs) || cc ||
 	    !gdx_rdef_var(blob, n, "$Globals", "k_mObjectToView", &rv, &cv, NULL) || cv)
 		goto out;
+	*why = "no k_mObjectToWorld / k_vObjectSpaceEyePos in $Globals (the cylinder)";
+	if (shape && (!gdx_rdef_var(blob, n, "$Globals", "k_mObjectToWorld", &rw, &cw, NULL) || cw ||
+		      !gdx_rdef_var(blob, n, "$Globals", "k_vObjectSpaceEyePos", &re, &ce, NULL) || ce))
+		goto out;
 	pos_e = bdx_sig(blob, n, "OSGN", NULL, 0, 1 /* SV_Position */, NULL);
 	*why = "no SV_Position output";
 	if (!pos_e)
@@ -200,7 +207,7 @@ static unsigned char *somvr_bubble_vs(const unsigned char *blob, size_t n, size_
 		reg[k] = fdx_rd(blob + e[k] + 16);
 	/* the declarations of the three outputs; the four dp4 that write SV_Position */
 	uint32_t dcl_at[3] = { 0, 0, 0 }, ndcl[3] = { 0, 0, 0 }, dp_at[4] = { 0, 0, 0, 0 }, ndp[4] = { 0, 0, 0, 0 }, P = 0, P_ok = 1;
-	uint32_t nposw = 0, cbdcl_at = 0, ncbdcl = 0;
+	uint32_t nposw = 0, cbdcl_at = 0, ncbdcl = 0, temps_at = 0, ntemps = 0;
 	*why = "a broken instruction stream";
 	for (uint32_t i = 2; i < nw;) {
 		uint32_t ln = fdx_len(w, i, nw), op = w[i] & 0x7ff;
@@ -208,6 +215,8 @@ static unsigned char *somvr_bubble_vs(const unsigned char *blob, size_t n, size_
 			goto out;
 		if (op == 89 /* dcl_constantbuffer */ && ln == 4 && (w[i + 1] & 0xfffff00fu) == 0x00208006u && w[i + 2] == gs)
 			cbdcl_at = i, ncbdcl++;
+		if (op == 104 /* dcl_temps */ && ln == 2)
+			temps_at = i, ntemps = w[i + 1];
 		if (op == 101 /* dcl_output */ && ln == 3)
 			for (int k = 0; k < 3; k++)
 				if (w[i + 2] == reg[k] && w[i + 1] == BDX_O_MASK(7))
@@ -242,27 +251,42 @@ static unsigned char *somvr_bubble_vs(const unsigned char *blob, size_t n, size_
 	*why = "the four dp4 of SV_Position are not consecutive";
 	if (hi - lo != 3 * 8)
 		goto out;
-	uint32_t after = hi + 8, mw = nw + 24, j = 0;
+	uint32_t after = hi + 8, mw = nw + (shape ? 33 : 24), j = 0, X = ntemps;
 	*why = "no ret after SV_Position / the $Globals buffer not declared once";
 	if (after >= nw || ncbdcl != 1)
 		goto out;
+	*why = "no dcl_temps (the cylinder's offset needs a temp)";
+	if (shape && (!temps_at || ntemps > 4094))
+		goto out;
+	uint32_t need = shape ? (rw + 3 > re + 1 ? rw + 3 : re + 1) : rv + 3; /* the registers the buffer must declare */
 	uint32_t *o = malloc(mw * sizeof *o);
 	*why = "no memory";
 	if (!o)
 		goto out;
 	for (uint32_t i = 0; i < nw;) {
 		uint32_t ln = i < 2 ? 1 : fdx_len(w, i, nw);
-		if (i == after)
+		if (i == after && !shape)
 			for (uint32_t k = 0; k < 3; k++) { /* dp4 o<reg k>.w, cb<gs>[k_mObjectToView + k].xyzw, rP.xyzw */
 				const uint32_t ins[8] = { BDX_T1(17, 8), BDX_O_MASK(8), reg[k], 0x00208e46u, gs, rv + k, 0x00100e46u, P };
 				memcpy(o + j, ins, sizeof ins), j += 8;
 			}
+		if (i == after && shape) {
+			/* add rX.xyz, rP.xyzx, -cb<gs>[k_vObjectSpaceEyePos].xyzx: the eye to the vertex, object space */
+			const uint32_t add[9] = { BDX_T1(0, 9), BDX_R_MASK(7), X, BDX_R_SWZ(BDX_XYZX), P, 0x00208246u | 0x80000000u, 0x41u, gs, re };
+			memcpy(o + j, add, sizeof add), j += 9;
+			for (uint32_t k = 0; k < 3; k++) { /* dp3 o<reg k>.w, cb<gs>[k_mObjectToWorld + k].xyzx, rX.xyzx: world x, y, z */
+				const uint32_t ins[8] = { BDX_T1(16, 8), BDX_O_MASK(8), reg[k], 0x00208246u, gs, rw + k, BDX_R_SWZ(BDX_XYZX), X };
+				memcpy(o + j, ins, sizeof ins), j += 8;
+			}
+		}
 		memcpy(o + j, w + i, ln * 4);
 		for (int k = 0; k < 3; k++)
 			if (i == dcl_at[k])
 				o[j + 1] = BDX_O_MASK(0xf);
-		if (i == cbdcl_at && o[j + 3] < rv + 3)
-			o[j + 3] = rv + 3; /* the declared size covers k_mObjectToView */
+		if (i == cbdcl_at && o[j + 3] < need)
+			o[j + 3] = need; /* the declared size covers what the edit reads */
+		if (shape && i == temps_at)
+			o[j + 1] = ntemps + 1;
 		j += ln, i += ln;
 	}
 	*why = "the new program's length (a bug)";
@@ -283,9 +307,17 @@ out:
 	return b;
 }
 
+static unsigned char *somvr_bubble_vs(const unsigned char *blob, size_t n, size_t *n_out, const char **why)
+{
+	return somvr_bubble_vs2(blob, n, 0, n_out, why);
+}
+
 /* FOLIAGE, the pixel shader: the dissolve within in_cm..out_cm of the eye. NULL + *why when not edited */
-static unsigned char *somvr_bubble_ps(const unsigned char *blob, size_t n, float in_cm, float out_cm, size_t *n_out,
-				      const char **why)
+/* shape 0 (sphere): r = the fragment's distance from the eye. shape 1 (cylinder, build 40): r = its distance from the
+ * eye's vertical line (the VS's world offset: x, z), and only from below_cm under the eye to above_cm over it (20 cm
+ * fades back to whole beyond either) - the grass round the feet and the leaves at the face alike, not the canopy */
+static unsigned char *somvr_bubble_ps2(const unsigned char *blob, size_t n, float in_cm, float out_cm, int shape,
+				       float below_cm, float above_cm, size_t *n_out, const char **why)
 {
 	uint32_t *w = NULL, nw, shex, kind, e[3], reg[3];
 	*n_out = 0;
@@ -372,6 +404,8 @@ static unsigned char *somvr_bubble_ps(const unsigned char *blob, size_t n, float
 		BDX_T1(50, 9), BDX_R_MASK(5), U, BDX_R_SWZ(0xf5), U, BDX_R_SWZ(0x00), T, BDX_R_SWZ(0x20), U, /* mad rU.xz, rU.yyww, rT.xxxx, rU.xxzx */
 		BDX_T1(0, 8), BDX_R_MASK(4), U, BDX_R_SEL(2), U, BDX_R_SEL(0) | 0x80000000u, 0x41u, U,     /* add rU.z, rU.z, -rU.x */
 		BDX_T1(50, 9), BDX_R_MASK(1), U, BDX_R_SEL(2), U, BDX_R_SEL(1), T, BDX_R_SEL(0), U,        /* mad rU.x, rU.z, rT.y, rU.x (n) */
+		};
+	const uint32_t sph[] = {
 		/* r = the fragment's distance from the eye */
 		BDX_T1(54, 5), BDX_R_MASK(1), T, BDX_V_SEL(3), reg[0],                                      /* mov rT.x, vA.w */
 		BDX_T1(54, 5), BDX_R_MASK(2), T, BDX_V_SEL(3), reg[1],                                      /* mov rT.y, vB.w */
@@ -385,7 +419,40 @@ static unsigned char *somvr_bubble_ps(const unsigned char *blob, size_t n, float
 		BDX_T1(50, 9) | 0x2000u, BDX_R_MASK(8), T, BDX_R_SEL(3), T, BDX_L1, bdx_f(k), BDX_L1, bdx_f(m), /* mad_sat rT.w: s */
 		BDX_T1(29, 7), BDX_R_MASK(1), T, BDX_R_SEL(0), U, BDX_R_SEL(3), T,                          /* ge rT.x, rU.x, rT.w */
 		0x0304000du, BDX_R_SEL(0), T };                                                             /* discard_nz rT.x */
-	const uint32_t ncode = (uint32_t)(sizeof code / sizeof code[0]);
+	const float F2 = 20.0f; /* the height window's fades */
+	const uint32_t cyl[] = {
+		/* the offset from the eye in the world's axes (the VS's cylinder edit) */
+		BDX_T1(54, 5), BDX_R_MASK(1), T, BDX_V_SEL(3), reg[0],                                      /* mov rT.x, vA.w */
+		BDX_T1(54, 5), BDX_R_MASK(2), T, BDX_V_SEL(3), reg[1],                                      /* mov rT.y, vB.w (up) */
+		BDX_T1(54, 5), BDX_R_MASK(4), T, BDX_V_SEL(3), reg[2],                                      /* mov rT.z, vC.w */
+		BDX_T1(16, 7), BDX_R_MASK(8), T, BDX_R_SWZ(BDX_XYZX), T, BDX_R_SWZ(BDX_XYZX), T,          /* dp3 rT.w: d^2 */
+		BDX_T1(75, 5), BDX_R_MASK(8), T, BDX_R_SEL(3), T,                                           /* sqrt rT.w: d */
+		/* plausible (d between the depth and twice it, 2 % + 2 cm slack), else a VS without the edit */
+		BDX_T1(50, 9), BDX_R_MASK(2), U, BDX_V_SEL(3), p, BDX_L1, bdx_f(0.98f), BDX_L1, bdx_f(-2.0f), /* mad rU.y, vP.w, .98, -2 */
+		BDX_T1(50, 9), BDX_R_MASK(4), U, BDX_V_SEL(3), p, BDX_L1, bdx_f(2.0f), BDX_L1, bdx_f(2.0f), /* mad rU.z, vP.w, 2, 2 */
+		BDX_T1(29, 7), BDX_R_MASK(2), U, BDX_R_SEL(3), T, BDX_R_SEL(1), U,                          /* ge rU.y, rT.w, rU.y */
+		BDX_T1(29, 7), BDX_R_MASK(4), U, BDX_R_SEL(2), U, BDX_R_SEL(3), T,                          /* ge rU.z, rU.z, rT.w */
+		BDX_T1(1, 7), BDX_R_MASK(2), U, BDX_R_SEL(1), U, BDX_R_SEL(2), U,                           /* and rU.y: valid */
+		/* h = the distance from the eye's vertical line */
+		BDX_T1(56, 7), BDX_R_MASK(4), U, BDX_R_SEL(0), T, BDX_R_SEL(0), T,                          /* mul rU.z, rT.x, rT.x */
+		BDX_T1(50, 9), BDX_R_MASK(4), U, BDX_R_SEL(2), T, BDX_R_SEL(2), T, BDX_R_SEL(2), U,        /* mad rU.z, rT.z, rT.z, rU.z */
+		BDX_T1(75, 5), BDX_R_MASK(4), U, BDX_R_SEL(2), U,                                           /* sqrt rU.z: h */
+		BDX_T1(55, 9), BDX_R_MASK(4), U, BDX_R_SEL(1), U, BDX_R_SEL(2), U, BDX_V_SEL(3), p,         /* movc rU.z, valid, h, vP.w */
+		BDX_T1(55, 9), BDX_R_MASK(2), T, BDX_R_SEL(1), U, BDX_R_SEL(1), T, BDX_L1, 0,               /* movc rT.y, valid, up, 0 */
+		BDX_T1(50, 9) | 0x2000u, BDX_R_MASK(4), U, BDX_R_SEL(2), U, BDX_L1, bdx_f(k), BDX_L1, bdx_f(m), /* mad_sat rU.z: s */
+		/* the height window: whole again above above_cm (+F2) and below below_cm (+F2) */
+		BDX_T1(50, 9) | 0x2000u, BDX_R_MASK(8), U, BDX_R_SEL(1), T, BDX_L1, bdx_f(1.0f / F2), BDX_L1,
+		bdx_f(-above_cm / F2),                                                                      /* mad_sat rU.w, up, 1/F, -A/F */
+		BDX_T1(52, 7), BDX_R_MASK(4), U, BDX_R_SEL(2), U, BDX_R_SEL(3), U,                          /* max rU.z, rU.z, rU.w */
+		BDX_T1(50, 9) | 0x2000u, BDX_R_MASK(8), U, BDX_R_SEL(1), T, BDX_L1, bdx_f(-1.0f / F2), BDX_L1,
+		bdx_f(-below_cm / F2),                                                                      /* mad_sat rU.w, up, -1/F, -B/F */
+		BDX_T1(52, 7), BDX_R_MASK(4), U, BDX_R_SEL(2), U, BDX_R_SEL(3), U,                          /* max rU.z, rU.z, rU.w */
+		BDX_T1(29, 7), BDX_R_MASK(1), T, BDX_R_SEL(0), U, BDX_R_SEL(2), U,                          /* ge rT.x, rU.x (n), rU.z */
+		0x0304000du, BDX_R_SEL(0), T };                                                             /* discard_nz rT.x */
+	const uint32_t *dist = shape ? cyl : sph;
+	const uint32_t ndist = shape ? (uint32_t)(sizeof cyl / sizeof cyl[0]) : (uint32_t)(sizeof sph / sizeof sph[0]);
+	const uint32_t ncode = (uint32_t)(sizeof code / sizeof code[0]) + ndist; /* the noise, then the distance */
+
 	const uint32_t posdcl[4] = { BDX_T1(100, 4) | 4u << 11, 0x001010f2u, p, 1 }; /* dcl_input_ps_siv linear noperspective vP.xyzw, position */
 	uint32_t mw = nw + ncode + (npos ? 0 : 4), j = 0;
 	uint32_t *o = malloc(mw * sizeof *o);
@@ -396,8 +463,10 @@ static unsigned char *somvr_bubble_ps(const unsigned char *blob, size_t n, float
 		uint32_t ln = i < 2 ? 1 : fdx_len(w, i, nw);
 		if (i == first_in && !npos)
 			memcpy(o + j, posdcl, sizeof posdcl), j += 4;
-		if (i == code_at)
-			memcpy(o + j, code, sizeof code), j += ncode;
+		if (i == code_at) {
+			memcpy(o + j, code, sizeof code), j += (uint32_t)(sizeof code / sizeof code[0]);
+			memcpy(o + j, dist, ndist * sizeof dist[0]), j += ndist;
+		}
 		memcpy(o + j, w + i, ln * 4);
 		for (int c = 0; c < 3; c++)
 			if (i == dcl_at[c])
@@ -425,6 +494,12 @@ static unsigned char *somvr_bubble_ps(const unsigned char *blob, size_t n, float
 out:
 	free(w);
 	return b;
+}
+
+static unsigned char *somvr_bubble_ps(const unsigned char *blob, size_t n, float in_cm, float out_cm, size_t *n_out,
+				      const char **why)
+{
+	return somvr_bubble_ps2(blob, n, in_cm, out_cm, 0, 0, 0, n_out, why);
 }
 
 /* BUGS, the geometry shader: COLOR0.w x the fade by the particle's distance from the eye. NULL + *why when not edited */

@@ -8,3 +8,4 @@ PRQL_SM	off	0x28	0x28	same	W 0x140c5b38b: mov rax,[rbx+0x28]; lea rcx,[rbx+0x28]
 PRQL_SM_VF	vt	0x10	0x8	confirmed	L 0x27dd645 jmp [rax+0x10] / W 0x140c5b395 call [rax+0x8]	slot -1 (one dtor on MSVC)
 PRQL_LIST2	global	0x4c477b0	0x185fce8	confirmed	Quest.PrintQuestAreas FUN_027cc4d0 (L walks 0x4c477b8 / 0x4c477b0) = W 0x140c56c70: mov rbx,[0x14185fcf0]; lea r12,[0x14185fce8]	the second list
 PRQL_NODE2	off	0x38	0x38	same	W 0x140c56d00: lea rdi,[rbx-0x38]	node -> object
+PRQL_REC	off	0xd0	0xd0	same	boot 20261105-021212 (Windows): the quests of both lists name their GP_ record at +0xd0 (practice quest list)	the quest record

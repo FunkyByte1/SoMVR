@@ -255,6 +255,8 @@ done
 LIVE_ON=0
 if [ "$KIND" = game ] && printf '%s\n' "${GENV[@]}" | grep -qx -E 'SOMVR_LIVE=(on|1)' && [ -x "$HERE/live_session.sh" ]; then
   LIVE_ON=1; GENV+=(SOMVR_LIVE_DIR="$("$HERE/live_session.sh" dir "$RUN")")
+  # b40 live4 (re-xr-pipeline.md 162.13): a patch staged for this build before the launch is the session's module
+  [ -f "$SYS32/somvr_logic.dll" ] && say "live: $("$HERE/live_session.sh" preapply "$RUN" "$MOD" "$SYS32/somvr_logic.dll" 2>&1 | tail -1)"
 fi
 # b37 (162.8): SOMVR_LIVE_TTS=on - the spoken answers of a test go to a null sink of this run's own (never wivrn.sink,
 # never a real output), its monitor recorded to RUN/live-tts.wav (the proof of what was said); both gone at the end

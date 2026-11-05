@@ -81,7 +81,8 @@ esac
         os.chmod(os.path.join(fb, b), 0o755)
     trig = os.path.join(run_dir, "somvr.trigger")   # b37 live3: the session's stereo switch (the buzz's word goes in)
     open(trig, "w").close()
-    env.update(SOMVR_LIVE_TTS="on", LIVE_TTS_BIN=fb, LIVE_TTS_SINK="somvr_live_test_null")
+    env.update(SOMVR_LIVE_TTS="on", LIVE_TTS_BIN=fb, LIVE_TTS_SINK="somvr_live_test_null",
+               LIVE_ABSENT_S="8")   # b40 live4: "nobody answering" 8 s after an ack here (40 in a session)
     d = run(sess, "dir", run_dir, env=env).stdout.strip()
     check(os.path.isdir(os.path.join(d, "inbox")) and os.path.isdir(os.path.join(d, "patches")), f"dir makes {d}")
     pid = int(run(sess, "start", run_dir, str(os.getpid()), MOD, env=env).stdout.strip())
@@ -136,7 +137,7 @@ esac
     while time.time() - t0 < 30 and "the acknowledgements made" not in open(os.path.join(d, "live.log")).read():
         time.sleep(0.2)
     acks = sorted(x for x in os.listdir(os.path.join(d, "ack")) if x.endswith(".wav"))
-    check(acks == ["got.wav", "mic.wav", "noted.wav", "onit.wav"],
+    check(acks == ["absent.wav", "got.wav", "mic.wav", "noted.wav", "onit.wav"],  # (b40 live4: absent)
           f"b37 live3: the acknowledgements made after the model's load: {acks} "
           f"({[ln[20:100] for ln in open(os.path.join(d, 'live.log')).read().splitlines() if 'acknowledgements' in ln]})")
     # 2. a mark with a recorded note
@@ -215,11 +216,33 @@ esac
     while time.time() - t3 < 15 and not os.path.exists(os.path.join(d, "inbox", "3.json")):
         time.sleep(0.1)
     open(trig, "w").close()
+    # b40 live4: nobody answers the notes - 8 s after the first ack the absent line, once; daemon.json and live_status say so
+    t4 = time.time()
+    while time.time() - t4 < 15:
+        try:
+            if json.load(open(os.path.join(d, "daemon.json"))).get("coordinator_absent"):
+                break
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.2)
+    ab = json.load(open(os.path.join(d, "daemon.json"))).get("coordinator_absent") or {}
+    c = open(calls).read()
+    r = run(os.path.join(HERE, "live_status.sh"), env=dict(env, LIVE_DIR=d))
+    check(ab.get("since") and ab.get("notes", 0) >= 1 and os.path.join(d, "ack", "absent.wav") in c
+          and "coordinator: ABSENT since" in r.stdout,
+          f"b40 live4: no answer 8 s after the ack - the absent line said, daemon.json {ab}, live_status: "
+          f"{[ln.strip()[:60] for ln in r.stdout.splitlines() if 'coordinator' in ln]}")
     # 4. say, status
     t_say = time.time()
     r = run(os.path.join(HERE, "live_say.sh"), "Fixed the sword sticking in walls. Try a slash at the rock, then a "
             "thrust at the tree.", env=dict(env, LIVE_DIR=d))
     check(r.returncode == 0 and os.path.exists(os.path.join(d, "say", "1.txt")), f"say: {r.stdout.strip()[:80]}")
+    t4 = time.time()
+    while time.time() - t4 < 5 and json.load(open(os.path.join(d, "daemon.json"))).get("coordinator_absent"):
+        time.sleep(0.2)
+    check(json.load(open(os.path.join(d, "daemon.json"))).get("coordinator_absent") is None
+          and "the coordinator is back" in open(os.path.join(d, "live.log")).read(),
+          "b40 live4: a message clears the absent mark")
     r = run(os.path.join(HERE, "live_status.sh"), "--json", env=dict(env, LIVE_DIR=d))
     st = json.loads(r.stdout) if r.returncode == 0 else {}
     check(st.get("on") and st.get("notes") == 3 and st.get("messages") == 1, f"status: on {st.get('on')}, notes "
@@ -274,6 +297,54 @@ esac
                 "--allow-no-abi", "--force-unchecked")
         check(r.returncode == 2 and "150 or less" in r.stderr and not os.path.exists(os.path.join(d, "patches", "5")),
               "a 151-character 'what': refused before anything is staged (never cut)")
+        # b40 live4 (162.13): a patch staged for the next launch of this build is the session's module from its start
+        own_dll = os.path.join(MOD, "build", "win", "somvr_logic.dll")
+        if os.path.exists(own_dll):
+            pn = os.path.join(tmp, "pnext")
+            os.makedirs(pn)
+            shutil.copy2(host_dll, os.path.join(pn, "somvr_logic.dll"))
+            r = run(lp, "stage", os.path.join(pn, "somvr_logic.dll"), "Ledges stop you", "Walk to a ledge", "--next",
+                    "--base", MOD, "--tree", MOD, "--allow-no-abi", "--force-unchecked", env=env)
+            nd = os.path.join(env["LIVE_ROOT"], "next")
+            pt = open(os.path.join(nd, "patches", "1", "patch.txt")).read() if r.returncode == 0 else ""
+            check(r.returncode == 0 and "NEXT launch" in r.stdout and "next=1" in pt and "base_logic=" in pt,
+                  f"stage --next: for the next launch ({r.stdout.strip()[:90]})")
+            r = run(lp, "stage", os.path.join(tree, "build", "win", "somvr_logic.dll"), "x", "y", "--next", "--base", MOD,
+                    "--allow-no-abi", "--force-unchecked", env=env)
+            check(r.returncode == 2 and "next launch must keep" in r.stderr and
+                  open(os.path.join(nd, "patches", "ready")).read().strip() == "1",
+                  "stage --next: a patch that changes the layer is refused (a new build instead)")
+            run2 = os.path.join(tmp, "run-next")
+            os.makedirs(run2)
+            sysd = os.path.join(tmp, "sys32")
+            os.makedirs(sysd)
+            sdll = os.path.join(sysd, "somvr_logic.dll")
+            shutil.copy2(own_dll, sdll)
+            r = run(sess, "preapply", run2, MOD, sdll, env=env)
+            d2 = os.path.join(env["LIVE_ROOT"], "run-next")
+            import hashlib
+            h = lambda f: hashlib.sha256(open(f, "rb").read()).hexdigest()
+            stt = open(os.path.join(d2, "patches", "state.txt")).read() if os.path.exists(os.path.join(d2, "patches", "state.txt")) else ""
+            check("applied at the start" in r.stdout and h(sdll) == h(host_dll)
+                  and h(os.path.join(d2, "patches", "own_somvr_logic.dll")) == h(own_dll)
+                  and "last=start" in stt and "current=1" in stt and "seq=1" in stt
+                  and open(os.path.join(d2, "patches", "stack.txt")).read().strip() == "1"
+                  and open(os.path.join(d2, "patches", "ready")).read().strip() == "1"
+                  and "run-next" in open(os.path.join(nd, "patches", "log.txt")).read(),
+                  f"preapply: the session's module is the patch, the build's own kept, state/stack/ready say patch 1 "
+                  f"live since the start ({r.stdout.strip()[:100]})")
+            run3 = os.path.join(tmp, "run-other")
+            os.makedirs(run3)
+            sd3 = os.path.join(tmp, "sys32b")
+            os.makedirs(sd3)
+            shutil.copy2(os.path.join(tree, "build", "win", "somvr_logic.dll"), os.path.join(sd3, "somvr_logic.dll"))
+            before = h(os.path.join(sd3, "somvr_logic.dll"))
+            r = run(sess, "preapply", run3, tree, os.path.join(sd3, "somvr_logic.dll"), env=env)
+            check("NOT applied" in r.stdout and "another build" in r.stdout and h(os.path.join(sd3, "somvr_logic.dll")) == before
+                  and not os.path.exists(os.path.join(env["LIVE_ROOT"], "run-other", "patches", "state.txt")),
+                  f"preapply on another build: not applied, its module untouched ({r.stdout.strip()[:90]})")
+        else:
+            print("SKIP the next-launch checks: no build/win/somvr_logic.dll (win/build.sh first)")
     else:
         print("SKIP the patch checks: no build/win/xinput9_1_0.dll (win/build.sh first)")
     # 5b. b37: the spoken answer, end to end through the daemon (live3: Piper by default, streamed; stand-ins play)
@@ -371,6 +442,9 @@ esac
     check(r.returncode == 3 and "not on" in r.stdout, f"live_wait after the end: exit {r.returncode}")
     dj = json.load(open(os.path.join(d, "daemon.json")))
     check(dj.get("alive") is False and dj.get("notes") == 3, "daemon.json: not alive, 3 notes")
+    lg = open(os.path.join(d, "live.log")).read()
+    check(lg.count("No live answer right now; your notes are saved for later.' playing") == 1,
+          f"b40 live4: the absent line said once in the session ({lg.count('No live answer')} lines name it)")
     shutil.rmtree(tmp)
     print(f"test_live: {checks} checks, {fails} failed")
     return 1 if fails else 0

@@ -46,7 +46,7 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_inrec.c" "$D/somvr_views.c" 
       "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c"
       "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c" "$D/somvr_above.c" "$D/somvr_ride.c"
       "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c" "$D/somvr_finisher.c" "$D/somvr_live.c"
-      "$D/somvr_cues.c")
+      "$D/somvr_cues.c" "$D/somvr_struggle.c")
 mkdir -p "$D/build/tests"
 # the checks of more than one command: planned as `run ... -- build.sh --step NAME` (buildplan.sh)
 step_haptics() { # build 34 (re-xr-pipeline.md 153.4): every pulse a word of somvr_haptics.h - no raw pulse (in_haptic_event)
@@ -208,6 +208,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_kills" "$D/tests/test_kills.c" "$D/somvr_
 run "$D/build/tests/test_kills"
 gcc "${CF[@]}" -o "$D/build/tests/test_finisher" "$D/tests/test_finisher.c" "$D/somvr_finisher.c" -lm # build 33: the finisher
 run "$D/build/tests/test_finisher"
+gcc "${CF[@]}" -o "$D/build/tests/test_struggle" "$D/tests/test_struggle.c" "$D/somvr_struggle.c" -lm # build 41: one rule for every struggle
+run "$D/build/tests/test_struggle"
 gcc "${CF[@]}" -o "$D/build/tests/test_beasts" "$D/tests/test_beasts.c" "$D/somvr_beasts.c" -lm # build 22: the beasts
 run "$D/build/tests/test_beasts"
 gcc "${CF[@]}" -o "$D/build/tests/test_ride" "$D/tests/test_ride.c" "$D/somvr_ride.c" -lm # build 26: riding, Seat mode

@@ -1160,6 +1160,13 @@ static void kl_still_frame(uintptr_t pcomb, uintptr_t pc, const float *root, dou
 		      (unsigned long long)atomic_load(&g_kst.refused), (unsigned long long)atomic_load(&g_kst.vetoed));
 	}
 }
+/* build 40 (re-xr-pipeline.md 175.3): combat_frame's no-blade frames (the knife out, the sword sheathed): the test aid's
+ * still orc alone (kl_frame runs only with the sword's blade) */
+static void kl_still_noblade(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
+{
+	if (g_kl.ok)
+		kl_still_frame(pcomb, pc, root, t);
+}
 static void kl_frame(uintptr_t pcomb, uintptr_t pc, const float *root, double t)
 {
 	if (!g_kl.ok)

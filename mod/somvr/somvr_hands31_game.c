@@ -790,6 +790,11 @@ static struct {
 	int cue_i, cue_full, cue_was, held_i, closed[2];
 	float cue_pos[3], cue_level, cue_dist, held_pos[3];
 	int cue_ring; /* build 37: the reach ring's cell (somvr_cu_ring_cell; 0 = none) */
+	/* build 40 (som-b40-herb, docs/re-xr-pipeline.md 176; the 11-05 session's note 7: the user's grips over the plant,
+	 * 8-9 cm beside its stem but 79-84 cm over its foot, never took it): the take's rule - the ball round its top or the
+	 * column over its stem (somvr_cu_take_dist) */
+	somvr_cu_take_cfg take;
+	float cue_reach; /* the outline's level: somvr_cu_reach_level (0.3 .. 1) */
 	uint64_t cue_frame;
 	float hp_before;
 	int hp_pending;
@@ -809,15 +814,24 @@ static void hrb_start(int *bad)
 	g_hrb.reach_cm = env_float("SOMVR_HERBS_REACH_CM", 40, 10, 100, bad);
 	g_hrb.mouth_cm = env_float("SOMVR_HERBS_MOUTH_CM", 16, 5, 40, bad);
 	g_hrb.mouth_s = 0.001f * env_float("SOMVR_HERBS_MOUTH_MS", 250, 0, 2000, bad);
+	somvr_cu_take_defaults(&g_hrb.take);
+	g_hrb.take.reach_cm = g_hrb.reach_cm;
+	g_hrb.take.over_cm = env_float("SOMVR_HERBS_OVER_CM", 25, 0, 60, bad); /* (0: build 37's ball only) */
+	g_hrb.take.up_cm = env_float("SOMVR_HERBS_UP_CM", 110, 20, 200, bad);
+	g_hrb.take.low_cm = env_float("SOMVR_HERBS_LOW_CM", 45, 0, 150, bad);
 	if (!g_us.on)
 		g_hrb.on = 0;
 	char why[160];
 	g_hrb.ok_pos = check_site(&g_prn_sites[PRN_NAV_POS], why, sizeof why) == 0;
 	logf_("CONFIG herbs=%s (SOMVR_HERBS, som-b33-herbs; needs SOMVR_USE): at the game's 'Combat_Activate_Flower' prompt the "
 	      "herb glows; an open hand within %.0f cm grips it, the fist at the mouth (%.0f cm, %.0f ms) eats it - the game's own "
-	      "pick (123); B stays; the herbs' places %s", g_hrb.on ? "on" : "off", g_hrb.reach_cm, g_hrb.mouth_cm, g_hrb.mouth_s * 1e3,
+	      "pick (123); B stays; the herbs' places %s; build 40: or over its stem (within %.0f cm of it, up to %.0f cm over its "
+	      "foot, %.0f cm under the eyes: SOMVR_HERBS_OVER_CM, _UP_CM, _LOW_CM); its look %s (SOMVR_PICK_LOOK)",
+	      g_hrb.on ? "on" : "off", g_hrb.reach_cm, g_hrb.mouth_cm, g_hrb.mouth_s * 1e3,
 	      g_hrb.ok_pos ? "by PRN_NAV_POS" : "unknown (PRN_NAV_POS not matched - the Windows build): the herb is at Talion's "
-	      "feet (the game's prompt within ~0.7 m) - an open hand reached down near the ground there takes it");
+	      "feet (the game's prompt within ~0.7 m) - an open hand reached down near the ground there takes it",
+	      g_hrb.take.over_cm, g_hrb.take.up_cm, g_hrb.take.low_cm,
+	      g_pko.look ? "a white outline round the plant, brighter as the hand comes in" : "the blue glow and the reach ring");
 }
 
 /* Talion's attack is the game's pick ('Activate_HealthCollectable') */
@@ -942,8 +956,8 @@ static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 			for (int h = 0; h < 2; h++) {
 				int free = g_inp.hands[h].valid && !cl_holds(h) && !(h == SOMVR_HAND_L && (vb_grab_held() || bo_out())) &&
 					   !(h == somvr_slots_hand(&g_sl.cfg, SOMVR_SLOT_SWORD) && bd_sword_in_hand()) && !bo_out() && sl_knife_side() != h;
-				float pa[3] = { pw[h].x, pw[h].y, pw[h].z }, top[3] = { g_hrb.h[i].pos[0], g_hrb.h[i].pos[1] + 15, g_hrb.h[i].pos[2] };
-				float d = dist3(pa, top);
+				float pa[3] = { pw[h].x, pw[h].y, pw[h].z };
+				float d = somvr_cu_take_dist(&g_hrb.take, pa, g_hrb.h[i].pos, eye[1], NULL); /* build 40: or over its stem */
 				if (free && d < best)
 					best = d, best_i = i, best_h = h;
 			}
@@ -966,7 +980,11 @@ static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 		int in = best <= g_hrb.reach_cm && !g_hrb.closed[best_h];
 		g_hrb.cue_pos[0] = g_hrb.h[best_i].pos[0], g_hrb.cue_pos[1] = g_hrb.h[best_i].pos[1] + 15, g_hrb.cue_pos[2] = g_hrb.h[best_i].pos[2];
 		/* build 37 (the user's herb, 11-04): the glow brightens and the reach ring tightens as the open hand comes in */
-		g_hrb.cue_level = somvr_cu_reach_level(best, g_hrb.reach_cm, in) * g_gc.level, g_hrb.cue_frame = g_fr.frame;
+		g_hrb.cue_reach = somvr_cu_reach_level(best, g_hrb.reach_cm, in);
+		g_hrb.cue_level = g_hrb.cue_reach * g_gc.level, g_hrb.cue_frame = g_fr.frame;
+		if (g_pko.look && g_gc.mode == GC_ON) /* build 40: the outline round the plant (25 cm round, 110 cm high: the user's
+							 * blue herb's flowers stand 55-87 cm over its foot, boot 20261105-103309's depth) */
+			pko_set(g_hrb.h[best_i].pos, g_hrb.cue_reach, 25, 110);
 		g_hrb.cue_ring = somvr_cu_ring_cell(best, g_hrb.reach_cm, in);
 		g_hrb.cue_dist = dist3(g_hrb.cue_pos, eye);
 		if (in && !g_hrb.cue_was)
@@ -975,7 +993,7 @@ static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 			float dx = g_hrb.cue_pos[0] - hp.x, dy = g_hrb.cue_pos[1] - hp.y, dz = g_hrb.cue_pos[2] - hp.z;
 			float px = pw[best_h].x - hp.x, py = pw[best_h].y - hp.y, pz = pw[best_h].z - hp.z;
 			logf_("HERB t=%.3f cue: '%s' at %.0f %.0f %.0f (Talion's root %.0f cm off); the herb %+.1f right %+.1f up %+.1f ahead "
-			      "of the eyes (the head's yaw frame), the %s hand %.0f cm from it; the palm %+.1f %+.1f %+.1f%s", t,
+			      "of the eyes (the head's yaw frame), the %s hand %.0f cm from it (the take's rule); the palm %+.1f %+.1f %+.1f%s", t,
 			      g_hrb.h[best_i].name, g_hrb.h[best_i].pos[0], g_hrb.h[best_i].pos[1], g_hrb.h[best_i].pos[2],
 			      root_ok ? dist3(rt, g_hrb.h[best_i].pos) : -1.0f, dx * cosf(hd) - dz * sinf(hd), dy,
 			      dx * sinf(hd) + dz * cosf(hd), best_h ? "right" : "left", best, px * cosf(hd) - pz * sinf(hd), py,
@@ -987,9 +1005,14 @@ static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 		if (in && sq_edge) { /* the take */
 			g_hrb.takes++, g_hrb.hold_h = best_h, g_hrb.held_i = best_i, g_hrb.held_t0 = t, g_hrb.mouth_t0 = 0;
 			haptic(best_h, SOMVR_HX_TAKE);
-			if (hrb_log_ok())
-				logf_("HERB t=%.3f taken: the %s hand gripped '%s' (%.0f cm from it) - to the mouth to eat it", t,
-				      best_h ? "right" : "left", g_hrb.h[best_i].name, best);
+			if (hrb_log_ok()) {
+				const float *f = g_hrb.h[best_i].pos;
+				float pa[3] = { pw[best_h].x, pw[best_h].y, pw[best_h].z }, top[3] = { f[0], f[1] + 15, f[2] };
+				logf_("HERB t=%.3f taken: the %s hand gripped '%s' (%.0f cm by the take's rule%s: %.0f cm beside its stem, %.0f cm "
+				      "over its foot, %.0f cm under the eyes; %.0f cm from its top) - to the mouth to eat it", t,
+				      best_h ? "right" : "left", g_hrb.h[best_i].name, best, dist3(pa, top) > g_hrb.reach_cm ? ", over the stem" : "",
+				      hypotf(pa[0] - f[0], pa[2] - f[2]), pa[1] - f[1], eye[1] - pa[1], dist3(pa, top));
+			}
 		}
 	} else {
 		g_hrb.cue_i = -1, g_hrb.cue_was = 0;
@@ -1005,6 +1028,8 @@ static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 static void hrb_glow_add(struct th_glow *gl, int *ng)
 {
 	if (!g_hrb.on || g_gc.mode != GC_ON || !(g_hrb.cue_level > 0.01f) || g_fr.frame - g_hrb.cue_frame > 2)
+		return;
+	if (g_pko.look) /* build 40 (the 11-05 note 6): the white outline instead (pko_vh), no glow, no ring */
 		return;
 	th_glow_add(gl, ng, g_hrb.cue_pos, g_hrb.cue_level, g_hrb.cue_dist, SOMVR_THK_MELEE | SOMVR_THK_BLUE);
 	if (g_hrb.cue_ring > 0) /* build 37: the reach ring round it (kept over the weaker glows: 0.95) */

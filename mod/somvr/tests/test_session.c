@@ -34,6 +34,7 @@ static void up(int b) { g_in.held[b] = 0; }
 static void fresh(void) {
     somvr_chord_reset(&g_c);
     somvr_chord_cfg_default(&g_cfg);
+    g_cfg.window_s = 0.12f, g_cfg.hold_s = 0.50f; /* (builds 4-37's hold-and-let-go: SOMVR_MARK_HOLD_S=0.5) */
     memset(&g_in, 0, sizeof g_in);
     g_in.act[0] = g_in.act[1] = 1;
     g_in.presses[0] = 7, g_in.presses[1] = 250; /* any start values: the first tick is the baseline */
@@ -197,7 +198,52 @@ static void test_text(void) {
     CHECK(!somvr_ss_path_ok(lng, SOMVR_SS_DIR_MAX), "too long");
 }
 
+/* b40 live4 (re-xr-pipeline.md 162.14): the code default - B and Y pressed together (within 0.15 s) mark at once, no
+ * hold; a lone B or Y is the game's after 0.15 s; one mark per press, the rest swallowed until both are up */
+static void test_press(void) {
+    somvr_chord_reset(&g_c);
+    somvr_chord_cfg_default(&g_cfg);
+    memset(&g_in, 0, sizeof g_in);
+    g_in.act[0] = g_in.act[1] = 1;
+    g_t = 200;
+    tick(0.011);
+    CHECK(g_cfg.hold_s == 0 && g_cfg.window_s > 0.149f && g_cfg.window_s < 0.151f, "the default: no hold, 0.15 s window");
+    down(SOMVR_CHB_B);
+    somvr_chord_out o = tick(0.011);
+    int ev1 = o.ev;
+    o = tick(0.1); /* Y 0.11 s after B: one chord */
+    down(SOMVR_CHB_Y);
+    o = tick(0.011);
+    int ev2 = o.ev, games = o.presses[0] + o.presses[1];
+    o = tick(1.0); /* held on: nothing more */
+    int ev3 = o.ev;
+    up(SOMVR_CHB_B), up(SOMVR_CHB_Y);
+    o = tick(0.011);
+    CHECK(ev1 == 0 && ev2 == SOMVR_CHE_MARK && ev3 == 0 && o.ev == 0 && g_c.n_marks == 1 && o.presses[0] == 0 &&
+              o.presses[1] == 0 && games == 0,
+          "B then Y 0.11 s later: the mark at the press (%d %d %d), the game saw neither", ev1, ev2, ev3);
+    tick(0.5);
+    down(SOMVR_CHB_Y), down(SOMVR_CHB_B); /* a quick tap of both within one tick */
+    o = tick(0.011);
+    int ev4 = o.ev;
+    up(SOMVR_CHB_Y), up(SOMVR_CHB_B);
+    tick(0.011);
+    CHECK(ev4 == SOMVR_CHE_MARK && g_c.n_marks == 2, "a quick tap of both: a mark (%d)", ev4);
+    tick(0.5);
+    down(SOMVR_CHB_Y); /* a lone Y: the game's after the window, no mark */
+    int pass = 0, mk = 0;
+    for (int i = 0; i < 20; i++) {
+        o = tick(0.011);
+        mk |= o.ev == SOMVR_CHE_MARK;
+        pass |= o.held[SOMVR_CHB_Y];
+    }
+    up(SOMVR_CHB_Y);
+    tick(0.011);
+    CHECK(pass && !mk && g_c.n_marks == 2, "a lone Y: the game's, no mark");
+}
+
 int main(void) {
+    test_press();
     test_lone();
     test_mark();
     test_short_long();

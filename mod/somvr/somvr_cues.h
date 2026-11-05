@@ -67,6 +67,24 @@ int somvr_cu_tm_frame(somvr_cu_tm *s, double t, double stale_s, int *pop);
 float somvr_cu_reach_level(float d_cm, float reach_cm, int in);
 int somvr_cu_ring_cell(float d_cm, float reach_cm, int in);
 
+/* ---- 2c. the reach to a thing on the ground (build 40, som-b40-herb, docs/re-xr-pipeline.md 176; the 11-05 session's
+ * mark 7: the herb taken by B, never by the hand). The two grips were 8 and 9 cm beside the herb's stem,
+ * 79 and 84 cm over its foot, 72 cm under the eyes: the hand reached down over it, not into the grass - and the rule was
+ * a 40 cm ball round the plant's top (15 cm over the foot). Now a hand reached down over a thing on the ground counts:
+ * within over_cm (25) of its stem, at most up_cm (110) over its foot and at least low_cm (45) under the eyes - the
+ * reach of a player who bends a little, not to the floor (HL:A never asks for the floor either). The ball stays. */
+typedef struct {
+    float reach_cm;  /* the ball round the top (40) */
+    float over_cm;   /* the column round the stem (25) */
+    float up_cm;     /* ... its height over the foot (110) */
+    float low_cm;    /* ... the hand at least this far under the eyes (45) */
+    float top_cm;    /* the top over the foot (15) */
+} somvr_cu_take_cfg;
+void somvr_cu_take_defaults(somvr_cu_take_cfg *c);
+/* the hand's distance for the cue and the take (cm): the ball's, or within the column the stem's (horizontal) one
+ * scaled so the column's edge = the ball's reach; *in = in reach. palm, foot: world cm (Y up); eye_y: the eyes' height */
+float somvr_cu_take_dist(const somvr_cu_take_cfg *c, const float palm[3], const float foot[3], float eye_y, int *in);
+
 /* ---- 3. the use cue's things ---------------------------------------------------------------------------------------- */
 /* a pick prompt's string id ('Combat_Activate_*') -> the nav-marker record patterns of its things ("A*,B" as
  * somvr_ob_match; "" = none known: the cue sits where the hand reaches near Talion) */

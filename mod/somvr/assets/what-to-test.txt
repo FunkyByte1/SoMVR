@@ -3,13 +3,28 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 39 (Windows) - what to test
-- New in 39 first (from your 11-04 notes), then the rest. Menu > Controls lists every move.
+Build 40 (Windows) - what to test
+- New in 40 first (from your 11-05 notes), then 39's list. Menu > Controls lists every move.
+- STRUGGLES (41): a caragor pins you - shove or stab at it again and again, a thump for each that counts; the white ring runs down to free you.
+- ON YOUR KNEES or at a captain's finisher: a blue blade shows on him. Lay your sword on it, then thrust.
+- Story moments: a ring = keep a hand closed until it runs out; an arrow = swipe or lean that way.
+- SNEAK UP: duck and walk slowly behind an orc that hasn't seen you: he never hears you, and you get to about half a metre. Grab his shoulder, push the knife in. Walking or standing he hears you as before.
+- BLOCK ZONE: an orange zone shows where each blow will land. Put your blade in it: it turns blue and you block.
+- B + Y: just press both, no hold. If no answer comes within 40 s you hear "No live answer right now".
+- CLIMB DOWN faster (Settings > Climbing > Climb down sets the speed). Grab during the lowering to take over. Hold A at an edge climbs down whichever way you face; stick back + A = the ring to drop all the way.
+- ON A WALL: shove hard away and let go to throw yourself off. Double-tap A to let go. Walk onto beams and copings.
+- FINISHER TEST: Practice > Finisher test: an orc ready in front, numbers after each try, re-armed by itself.
+- HERBS: a white outline around the plant; reach over it and grip, even high up.
+- GRASS AND LEAVES vanish within about 75 cm around you, feet included.
+- Patches made before you launch are already in at the start (Undo on the Test tab).
+
+Build 39 - new then:
 - PINNED MENU: hold the left menu button ~half a second: the menu floats in front of you; point with either hand. "Back to the wrist" or "X Close" at the bottom.
 - CLIMB DOWN: at an edge, face away and hold the stick back + A: you are lowered onto the wall under the lip. A alone steps you off. The lip glows with "A DOWN".
 - CLIMB UP: on foot, rest a hand on a ledge top: a ring with "A UP"; press A to get up.
 - ON A WALL: stick left/right slides you along it and round corners. No more floating stuck, no clipping into rock at corners, rough walls and longer reach.
 - FINISHER: a glowing blue blade, starting within a foot of your body. Lay your sword on it (clank + buzz), thrust in at your speed: he dies at once. Pull out freely.
+- FINISHER TEST: Practice > Finisher test - an orc stands in front, the blade ready. Try a grip; the numbers over him show the snap, your speed in, the depth and the kill. It re-arms by itself; B ends it.
 - BLOCKS: a blocked orc reels back at once (no freeze).
 - THE GAME'S OWN triangles over orcs are back, on the orc as he notices, searches and attacks.
 - HERBS: Practice > New herb takes you to one. Reach: a ring tightens; grip and bring it to your mouth: buzz + green flash.

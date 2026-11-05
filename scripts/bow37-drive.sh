@@ -11,6 +11,13 @@
 #          view snap-turned from the wall, the bow out and drawn, then an orc put 11 m ahead; aimed by
 #          bo_target's line (bow20-drive.sh's aim), released: the hit, Talion's root and gravity unchanged; put away at
 #          the shoulder = the hang again; a grip on the wall climbs on
+#   hangstuck  build 40 (SOMVR_BOW_HANG_REACH, re-xr-pipeline.md 175.1): the same climb; both let go with the hands seen
+#          and at rest in front (no reach for the bow): at a top the hands-free hang still lets go 3 s after (the user's
+#          stuck top, mark 223841_10); mid-wall it holds (noted)
+#   hangreach  build 40: the same climb; both let go, the bow hand at its slot as the hands come back from the test poses
+#          (the reach), held there 8 s without the grip: the hang kept ("the bow keeps the hang") with no
+#          release; the grip there = the bow out in the hang; put away; the hand back to rest: a top's hang lets go 3 s
+#          after (no reach, no hold)
 # B37_RUN=RUN drives a running boot. Stops at once (quit) when the user goes into VR.
 CLIMB2_LIB=1 PIN_RUN=${B37_RUN:-} . "$(dirname "$0")/climb2-drive.sh"
 STEPS=${B37_STEPS:-riser roll hang}
@@ -192,6 +199,72 @@ if has hang; then
   grabat R -25 40; l=$(sincel "$n0" '^CLIMB t=.* resume:')
   [ -n "$l" ] && pass "a grip climbs on: $(echo "$l" | sed -E 's/^CLIMB t=[0-9.]+ frame=[0-9]+ //' | cut -c1-120)" || fail "no resume: $(sincel "$n0" '^CLIMB t=' | tail -2 | cut -c1-200)"
   w "hands squeeze R 0" 0.4; w "hands test off" 0.3; w "practice remove" 1
+fi
+# ---- build 40 (SOMVR_BOW_HANG_REACH): the top-hang with the hands seen - no reach = the fall at 3 s; the reach = kept ----
+SEEN_L="hand L head -25 -45 25 0 0 0"; SEEN_R="hand R head 25 -45 25 0 0 0"
+# climb3 TAG: the hang step's climb (its wall, 3 holds up), both let go with the hands seen at rest; HANG0 = the line count
+# before the let-go, TOPPED=1 when the hang line says a top
+climb3() { local tag=$1 k h
+  isout && bow_away
+  xx "hand L off" "hand R off" "btn L squeeze 0" "btn R squeeze 0" "btn R trigger 0"
+  # (a hang left from the step before ends at the trip's teleport: somvr.c, pr_trip_teleported)
+  WALL=${B37_WALL:-"31757.2 2054.4 -28935.9@-161"}
+  go "${WALL%@*}"; faceyaw "${WALL#*@}"; tothewall || echo "$(date +%T) no face within 45 cm"
+  w "hands test L -20 -60 20 0 0 0" 0.3
+  grabat R -25 40 || { fail "$tag: no first hold"; return 1; }
+  HOLD=R; y0=$(ry)
+  for k in 1 2 3; do
+    [ "$HOLD" = L ] && { HX=-20; O=R; } || { HX=20; O=L; }
+    w "hands swing $HOLD $HX -80 ${GZ:-40} 0 0 0 1000" 1.4
+    grabat $O -25 "${GZ:-40}" || grabat $O -25 30 || { echo "$(date +%T) move $k: no hold for $O"; break; }
+    w "hands squeeze $HOLD 0" 0.3; w "hands test $HOLD $HX -60 15 0 0 0" 0.2; HOLD=$O
+  done
+  echo "$(date +%T) $tag: climbed $(( $(ry) - ${y0:-0} )) cm: $(croot)"
+  # (seen: the scripted controllers at rest; REACH_NOW=1: the bow hand's controller already at its slot, so it is there
+  # the moment `hands test off` hands the hands back - a player whose hand went to the bow as he let go. The Windows build
+  # reads one word a second: boots 081847 / 082924 - the off came 2 s after the hang, a reach after it ended past 3 s)
+  xx "$([ -n "${REACH_NOW:-}" ] && echo "$BOW_SLOT" || echo "$SEEN_L")" "$SEEN_R" "btn L squeeze 0" "btn R squeeze 0" "btn R trigger 0"
+  HANG0=$(lines); w "hands squeeze L 0" 0.3; w "hands squeeze R 0" 0.3; w "hands test off" 0.1
+  w "hands squeeze L -1" 0.2; w "hands squeeze R -1" 0.2
+  h=$(sincel "$HANG0" '^CLIMB t=.* hang: no hand holds' | tail -1)
+  [ -n "$h" ] && pass "$tag: the hang: $(echo "$h" | sed -E 's/^CLIMB t=[0-9.]+ frame=[0-9]+ //' | cut -c1-120)" || { fail "$tag: no hang: $(sincel "$HANG0" '^CLIMB t=' | tail -2 | cut -c1-200)"; return 1; }
+  echo "$h" | grep -q 'topped' && TOPPED=1 || TOPPED=0; HT=$(echo "$h" | grep -oE '^CLIMB t=[0-9.]+' | cut -d= -f2); }
+# the hang's release line since $1 and when (s after the hang)
+freed() { sincel "$1" '^CLIMB t=.* hang free: .*released' | head -1; }
+freed_s() { local l; l=$(freed "$1"); [ -n "$l" ] && awk -v a="$(echo "$l" | grep -oE '^CLIMB t=[0-9.]+' | cut -d= -f2)" -v b="$HT" 'BEGIN { printf "%.2f", a - b }'; }
+if has hangstuck; then
+  echo "== hangstuck: the top-hang with the hands seen at rest (no reach): it lets go at 3 s"
+  if climb3 hangstuck; then
+    sleep 6; l=$(freed "$HANG0"); fs=$(freed_s "$HANG0")
+    if [ "$TOPPED" = 1 ]; then
+      [ -n "$l" ] && awk -v f="${fs:-99}" 'BEGIN { exit !(f >= 2.7 && f <= 4.0) }' && ! sincel "$HANG0" 'the bow keeps the hang' | grep -q . \
+        && pass "hangstuck: at a top with no reach the hang let go after $fs s: $(echo "$l" | sed -E 's/^CLIMB t=[0-9.]+ frame=[0-9]+ //' | cut -c1-140)" \
+        || fail "hangstuck: at a top: ${l:-no release} ($fs s; kept: $(sincel "$HANG0" 'the bow keeps the hang' | head -1 | cut -c1-160))"
+    else echo "$(date +%T) NOTE hangstuck: the hang is mid-wall (not topped): it holds by design - ${l:-no release}"; fi
+  fi
+fi
+if has hangreach; then
+  echo "== hangreach: the top-hang, the bow hand up to its slot and held there: kept; the bow out; then rest = the fall at 3 s"
+  if REACH_NOW=1 climb3 hangreach; then
+    sleep 8
+    k=$(sincel "$HANG0" '^CLIMB t=.* hang free: the bow keeps the hang' | head -1); l=$(freed "$HANG0")
+    [ -n "$k" ] && [ -z "$l" ] && pass "hangreach: the bow hand at its slot kept the hang 9 s: $(echo "$k" | sed -E 's/^CLIMB t=[0-9.]+ frame=[0-9]+ //' | cut -c1-150)" \
+      || fail "hangreach: kept ${k:+yes}${k:-no}, released ${l:+yes ($(freed_s "$HANG0") s)}${l:-no} (topped $TOPPED)"
+    n0=$(lines); xx "$BOW_SLOT" "$SEEN_R" "btn L squeeze 1"; sleep 0.8; xx "$BOW_STRAIGHT" "$SEEN_R" "btn L squeeze 1"; sleep 1.5
+    l2=$(sincel "$n0" 'the bow out in the hang'); [ -n "$l2" ] && pass "hangreach: the bow out in the hang: $(echo "$l2" | cut -c1-140)" || fail "hangreach: no bow in the hang: $(sincel "$n0" '^(BOW|CLIMB) t=' | head -3 | cut -c1-200)"
+    sleep 2; xx "$BOW_SLOT" "$SEEN_R" "btn L squeeze 1"; sleep 0.6; xx "$BOW_SLOT" "$SEEN_R" "btn L squeeze 0"; sleep 1
+    sincel "$n0" 'the bow in the hang ends' | grep -q . && pass "hangreach: put away: $(sincel "$n0" 'the bow in the hang ends' | head -1 | cut -c1-120)" || fail "hangreach: no put away line"
+    n1=$(lines); [ -z "$(freed "$HANG0")" ] && pass "hangreach: still hanging after the put away (the clocks from the bow's end)" || fail "hangreach: released before the rest: $(freed "$HANG0" | cut -c1-160)"
+    xx "$SEEN_L s 0.6" "$SEEN_R" "btn L squeeze 0"; sleep 6
+    l=$(freed "$n1"); e=$(sincel "$n1" "^CLIMB t=.* hang free: the bow's keep ended" | head -1)
+    if [ "$TOPPED" = 1 ]; then
+      fs=$(awk -v a="$(echo "$l" | grep -oE '^CLIMB t=[0-9.]+' | cut -d= -f2)" -v b="$(echo "$e" | grep -oE '^CLIMB t=[0-9.]+' | cut -d= -f2)" 'BEGIN { printf "%.2f", a - b }')
+      [ -n "$l" ] && [ -n "$e" ] && awk -v f="$fs" 'BEGIN { exit !(f >= 2.7 && f <= 4.0) }' \
+        && pass "hangreach: the hand back at rest: the keep ended, the top's hang let go $fs s later" \
+        || fail "hangreach: after the rest: end ${e:+yes}${e:-no}, release ${l:-none} ($fs s)"
+    else echo "$(date +%T) NOTE hangreach: mid-wall (not topped): the hang holds by design - ${l:-no release}"; fi
+  fi
+  xx "hand L off" "hand R off" "btn L squeeze 0" "btn R trigger 0"
 fi
 echo "steps done $(date +%T)"; grep -cE ' (PASS|FAIL) ' "$ST" 2>/dev/null; [ "${NOQUIT:-0}" = 1 ] && exit 0
 sleep 2; w "endlogs" 2; echo quit >> "$R/cmd"; echo "quit $(date +%T)"

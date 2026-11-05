@@ -159,6 +159,7 @@ static void ss_start(void)
 	g_ss.quit = env_word("SOMVR_QUIT", onoff_w, 2, 0);
 	g_ss.voice_s = env_float("SOMVR_MARK_VOICE_S", 9, 1, 30, &bad);
 	somvr_chord_cfg_default(&g_ss.cc);
+	g_ss.cc.hold_s = env_float("SOMVR_MARK_HOLD_S", g_ss.cc.hold_s, 0, 3, &bad); /* b40 live4: 0 = the press marks */
 	const char *run = getenv("SOM_BOOTCHECK_RUN"), *md = getenv("SOMVR_MARKS");
 	char d[SOMVR_SS_DIR_MAX] = "";
 	if (md && md[0])
@@ -194,10 +195,12 @@ static void ss_start(void)
 	g_ssn.avail = (g_ss.mark ? SOMVR_SSA_MARK : 0u) | (g_ss.quit ? SOMVR_SSA_QUIT : 0u);
 	if (g_ss.mark || g_ss.quit)
 		atomic_store_explicit(&g_ssn.active, 1, memory_order_release);
-	logf_("SESSION config mark=%d (the chord B + Y held %.1f s and let go, the VR menu's Report, the word `mark`; -> %s; "
+	logf_("SESSION config mark=%d (the chord B + Y %s%.2f s%s, the VR menu's Report, the word `mark`; -> %s; "
 	      "voice %.0f s by the harness) quit=%d (the VR menu's Quit game, the word `quitgame` -> %s); somvr_session %p "
 	      "(%zu bytes, v%u, %s)",
-	      g_ss.mark, (double)g_ss.cc.hold_s, g_ss.mark ? g_ss.dir : "-", (double)g_ss.voice_s, g_ss.quit,
+	      g_ss.mark, g_ss.cc.hold_s > 0 ? "held " : "pressed together within ",
+	      (double)(g_ss.cc.hold_s > 0 ? g_ss.cc.hold_s : g_ss.cc.window_s), g_ss.cc.hold_s > 0 ? " and let go" : " (b40: no hold)",
+	      g_ss.mark ? g_ss.dir : "-", (double)g_ss.voice_s, g_ss.quit,
 	      g_ss.quit ? g_ss.quitf : "-", (void *)&g_ssn, sizeof g_ssn, g_ssn.version,
 	      g_ss.mark || g_ss.quit ? "active" : "inactive");
 }

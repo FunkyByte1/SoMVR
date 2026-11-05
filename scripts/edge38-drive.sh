@@ -127,6 +127,64 @@ fin() { local h0; echo "== fin: the finisher's hint ring (a far orc, charged)"; 
     grep -E '^FINISHER t=.* hint on' "$L" | tail -1 | cut -c1-220; PASS "fin: the finisher's hint on"
   else FAIL "fin: no hint line"; fi
   grep -E "the finisher's hint" "$R/xr-layer.log" | tail -2 | cut -c1-260; w "finisher off" 0.5; w "practice remove" 1; }
+# ---- build 40 (som-b40-ledge; the 11-05 session's notes 2, 3, 8, 12, 15, 18) -------------------------------------
+# hold40: at the crevice's stop, the view facing the drop, A held 0.8 s (no stick) = the climb down (the snap turn to the
+# face); 0.6 s into the lowering the right hand on the face under the lip, palm on it, gripped = the take-over
+hold40() { local k y0 y1 s n0 g0; echo "== hold40: A held at the crevice (facing the drop), the grip takes over"; x "btn R squeeze 0"
+  go "$M5"; hands; sleep 1; s=$(sdir -145); k=$(nl); w "stick $s 0 6" 0.1
+  if ! waitfor '^WALK edge stop t=.*held at a drop' 6; then FAIL "hold40: no hold"; w "stick 0 0 0 0.1" 0.5; return; fi
+  w "stick 0 0 0 0.1" 0.3; y0=$(ry); n0=$(cnt 'climb down \(A held at the edge\)'); g0=$(cnt 'climb down: a grip on a hold')
+  printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 0.8; printf 'btn R a 0\n' > "$R/xrtest.txt"
+  waitfor 'climb down \(A held at the edge\)' 3; sleep 0.9
+  # the lip behind the drop's way (-u = heading +35), ~1.6 s in: the hand 45 cm that way, 50 cm under the eyes (over the
+  # lip's top as the eyes come down past it), gripped
+  handat R 26 -50 37; w "hands squeeze R 1" 1.5; y1=$(ry); dd hold40-grip; lines "$k" 14
+  [ "$(cnt 'climb down \(A held at the edge\)')" -gt "$n0" ] && PASS "hold40: A held = the climb down (facing the drop: $(grep -cE 'view turned to it' "$L") turns)" || FAIL "hold40: no climb down"
+  [ "$(cnt 'climb down: a grip on a hold')" -gt "$g0" ] && climbing && PASS "hold40: the grip took over ($y0 -> $y1)" || FAIL "hold40: no take-over ($y0 -> $y1)"
+  w "hands squeeze R 0" 0.5; hands; printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 1.2; printf 'btn R a 0\n' > "$R/xrtest.txt"; sleep 3; }
+# ring40: at the bank's west edge, the stick back + A held 1 s = the ring and the blink all the way down
+ring40() { local k y0 y1 s; echo "== ring40: the stick back + A held at the bank"; x "btn R squeeze 0"; go "$BANK"; hands; sleep 1
+  s=$(sdir -84); k=$(nl); w "stick $s 0 9" 0.1
+  if ! waitfor '^WALK edge stop t=.*held at a drop' 9; then FAIL "ring40: no hold"; w "stick 0 0 0 0.1" 0.5; return; fi
+  y0=$(ry); w "stick 0 -1 0 3" 0.4; printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 1.2; printf 'btn R a 0\n' > "$R/xrtest.txt"
+  w "stick 0 0 0 0.1" 3; y1=$(ry); lines "$k" 12
+  grep -qE 'the stick back \+ A at the edge: the drop ring' <(tail -n +$((k + 1)) "$L") && python3 -c "import sys; sys.exit(0 if float('$y0') - float('$y1') > 80 else 1)" &&
+    PASS "ring40: the stick back + A = the ring, held = the blink down ($y0 -> $y1)" || FAIL "ring40: $y0 -> $y1"; }
+# two40: on the bank's face from the meadow, a grip at the chest, then A twice = let go (SOMVR_CLIMB_A_TWICE_S 0.8 here:
+# the test input's two writes need ~0.3 s each)
+two40() { local k n0; echo "== two40: A twice on the wall"; x "btn R squeeze 0"; go "$MEADOW"; hands; sleep 1; k=$(nl)
+  handat R 58 -80 0; w "hands squeeze R 1" 1.0
+  climbing || { FAIL "two40: no hold on the face"; w "hands squeeze R 0" 0.5; return; }
+  n0=$(cnt 'A twice on the wall'); printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 0.3; printf 'btn R a 0\n' > "$R/xrtest.txt"; sleep 0.25
+  printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 0.3; printf 'btn R a 0\n' > "$R/xrtest.txt"; sleep 2; lines "$k" 10
+  [ "$(cnt 'A twice on the wall')" -gt "$n0" ] && ! climbing && PASS "two40: A twice on the wall = let go" || FAIL "two40: still climbing"
+  w "hands squeeze R 0" 0.5; hands; }
+# up40: the A UP blink onto the bank's top, then the walk back west off it at once: the edge stop holds (no air walk)
+up40() { local k n0 s y1; echo "== up40: A UP, then the walk off at once"; x "btn R squeeze 0"; go "$MEADOW"; hands; sleep 1
+  handat R 70 -43 0; waitfor '^CLIMB t=.*top A: the (left|right) hand rests' 3 || { FAIL "up40: no ring"; return; }
+  k=$(nl); a_tap 1.2; hands; s=$(sdir -90); w "stick $s 0 3" 3.2; y1=$(ry); lines "$k" 10
+  grep -qE '^WALK edge stop t=.*held at a drop' <(tail -n +$((k + 1)) "$L") && ! grep -qE '^WALK ground' <(tail -n +$((k + 1)) "$L") &&
+    python3 -c "import sys; sys.exit(0 if float('$y1') > 3700 else 1)" && PASS "up40: on the top the edge stop holds at once ($y1)" || FAIL "up40: $y1"; }
+# hold40b: backing to the crevice's edge facing the face (no turn), A held 0.8 s = the climb down; the right hand already
+# ahead at the face (the head frame: 15 right, 50 under the eyes, 40 ahead), gripped 1.2 s in = the take-over
+hold40b() { local k y0 y1 s g0; echo "== hold40b: backing over, A held, the grip takes over"; x "btn R squeeze 0"; go "$M5"; hands
+  faceyaw 35; sleep 1; s=$(sdir -145); k=$(nl); w "stick $s 0 8" 0.1
+  if ! waitfor '^WALK edge stop t=.*held at a drop' 8; then FAIL "hold40b: no hold"; w "stick 0 0 0 0.1" 0.5; return; fi
+  w "stick 0 0 0 0.1" 0.3; w "hands test R 15 -50 40 0 0 0" 0.3; y0=$(ry); g0=$(cnt 'climb down: a grip on a hold')
+  printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 0.8; printf 'btn R a 0\n' > "$R/xrtest.txt"
+  waitfor 'climb down \(A held at the edge\)' 3; sleep 1.0; w "hands squeeze R 1" 1.5; y1=$(ry); dd hold40b-grip; lines "$k" 14
+  [ "$(cnt 'climb down: a grip on a hold')" -gt "$g0" ] && climbing && PASS "hold40b: the grip took over the lowering ($y0 -> $y1)" || FAIL "hold40b: no take-over ($y0 -> $y1)"
+  [ -n "${hold40b_keep:-}" ] && return 0
+  w "hands squeeze R 0" 0.5; hands; printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 1.2; printf 'btn R a 0\n' > "$R/xrtest.txt"; sleep 3; }
+# two40b: hanging from the crevice's lip (hold40b's take-over), A twice = let go (SOMVR_CLIMB_A_TWICE_S 0.8 in the boot: the
+# test input's writes need ~0.3 s each)
+two40b() { local n0 y0 y1; echo "== two40b: A twice on the wall (the crevice's lip)"; hold40b_keep=1 hold40b
+  climbing || { FAIL "two40b: not on the wall"; return; }
+  y0=$(ry); n0=$(cnt 'A twice on the wall'); printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 0.3; printf 'btn R a 0\n' > "$R/xrtest.txt"
+  sleep 0.25; printf 'btn R a 1\n' > "$R/xrtest.txt"; sleep 0.3; printf 'btn R a 0\n' > "$R/xrtest.txt"; sleep 2.5; y1=$(ry)
+  grep -E '^CLIMB t=.*(A twice|end:)' "$L" | tail -2 | cut -c1-220
+  [ "$(cnt 'A twice on the wall')" -gt "$n0" ] && ! climbing && PASS "two40b: A twice on the wall = let go ($y0 -> $y1)" || FAIL "two40b: $y0 -> $y1"
+  w "hands squeeze R 0" 0.5; hands; }
 card
 for p in ${PLAN_E38:-m5 m8}; do $p; done
 grep -E '^CONFIG walk edge stop' "$L" | head -1 | cut -c1-200

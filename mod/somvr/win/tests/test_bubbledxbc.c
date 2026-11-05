@@ -179,6 +179,8 @@ static int run(st *s, const uint32_t *w, uint32_t nw)
 			uint32_t t1 = 0xffffffffu;
 			switch (op) {
 			case 54: res[q] = x[q]; break;
+			case 1: { uint32_t xa, ya, r1; memcpy(&xa, &x[q], 4), memcpy(&ya, &y[q], 4), r1 = xa & ya; memcpy(&res[q], &r1, 4); } break;
+			case 52: res[q] = x[q] > y[q] ? x[q] : y[q]; break;
 			case 0: res[q] = x[q] + y[q]; break;
 			case 56: res[q] = x[q] * y[q]; break;
 			case 50: res[q] = x[q] * y[q] + z[q]; break;
@@ -217,8 +219,8 @@ static uint32_t *prog_of(const unsigned char *b, size_t n, uint32_t *nw)
 
 /* ---- the shaders ---------------------------------------------------------------------------------------------- */
 #define T1 BDX_T1
-static const var g_veg[] = { { "k_mObjectToClip", 0 }, { "k_mObjectToView", 64 }, { "k_vObjectSpaceEyePos", 176 },
-			     { "k_fBendability", 368 } };
+static const var g_veg[] = { { "k_mObjectToClip", 0 }, { "k_mObjectToView", 64 }, { "k_mObjectToWorld", 112 },
+			     { "k_vObjectSpaceEyePos", 176 }, { "k_fBendability", 368 } }; /* the real layout: cb0[0] [4] [7] [11] */
 static const var g_herb[] = { { "k_mObjectToClip", 0 }, { "k_mObjectToView", 64 }, { "k_fBendability", 368 }, { "k_fWraith", 400 } };
 static const var g_rock[] = { { "k_mObjectToClip", 0 }, { "k_mObjectToView", 64 } };
 static const var g_view[] = { { "k_mWorldToClip", 0 }, { "k_mViewToWorld", 64 }, { "k_vWorldSpaceCameraDir", 416 } };
@@ -282,7 +284,7 @@ static unsigned char *make(int which, int variant, size_t *n)
 	if (which == 'V') {
 		memcpy(p, vs_words, sizeof vs_words);
 		uint32_t nw = (uint32_t)(sizeof vs_words / 4);
-		cbuf cb[1] = { { "$Globals", 0, variant == 1 ? g_rock : variant == 2 ? g_herb : g_veg, variant == 1 ? 2 : 4 } };
+		cbuf cb[1] = { { "$Globals", 0, variant == 1 ? g_rock : variant == 2 ? g_herb : g_veg, variant == 1 ? 2 : variant == 2 ? 4 : 5 } };
 		sel out[5];
 		memcpy(out, vs_out, sizeof out);
 		if (variant == 3) /* TEXCOORD3 shares its register with another element */
@@ -295,7 +297,7 @@ static unsigned char *make(int which, int variant, size_t *n)
 	if (which == 'P') {
 		memcpy(p, ps_words, sizeof ps_words);
 		uint32_t nw = (uint32_t)(sizeof ps_words / 4);
-		cbuf cb[1] = { { "$Globals", 0, variant == 2 ? g_herb : g_veg, 4 } };
+		cbuf cb[1] = { { "$Globals", 0, variant == 2 ? g_herb : g_veg, variant == 2 ? 4 : 5 } };
 		if (variant == 1) { /* no alpha test: the discard a nop */
 			for (uint32_t i = 0; i < nw; i++)
 				if (p[i] == 0x0304000d)
@@ -354,6 +356,19 @@ static double kept(const uint32_t *w, uint32_t nw, float r, int valid)
 	return keep / 4096.0;
 }
 
+/* build 40, the cylinder: the share of 4096 cells kept for a fragment whose world offset from the eye is h across (at
+ * 37 deg round the vertical) and y up; the depth (clip w) a plausible value for that offset; valid 0 = zero .w */
+static double kept_cyl(const uint32_t *w, uint32_t nw, float h, float y, int valid)
+{
+	int keep = 0;
+	float d = sqrtf(h * h + y * y), depth = d * 0.8f > 1 ? d * 0.8f : 1;
+	for (int i = 0; i < 4096; i++) {
+		float u = (float)(i % 64) * 0.0371f + 0.3f, v = (float)(i / 64) * 0.0293f + 0.1f;
+		keep += !ps_frag(w, nw, valid ? h * 0.6f : 0, valid ? y : 0, valid ? h * 0.8f : 0, depth, u, v);
+	}
+	return keep / 4096.0;
+}
+
 int main(int argc, char **argv)
 {
 	size_t n, m;
@@ -395,6 +410,70 @@ int main(int argc, char **argv)
 		CHECK(!e && why && !strncmp(why, vs_no[v - 1], strlen(vs_no[v - 1])), "VS variant %d refused (%s)", v, why ? why : "edited");
 		free(e), free(b);
 	}
+
+	/* ---- build 40, the cylinder: VS - the eye-to-vertex offset in the world's axes ---- */
+	b = make('V', 0, &n);
+	e = somvr_bubble_vs2(b, n, 1, &m, &why);
+	CHECK(e && m == n + 4 * 33, "VS cylinder edited (%s), %zu -> %zu", why ? why : "-", n, m);
+	if (e) {
+		check_container(e, m, "VS cylinder");
+		w = prog_of(e, m, &nw);
+		const uint32_t want[33] = { T1(0, 9), 0x00100072, 4, 0x00100246, 2, 0x80208246, 0x41, 0, 11,
+					    T1(16, 8), 0x00102082, 2, 0x00208246, 0, 7, 0x00100246, 4,
+					    T1(16, 8), 0x00102082, 3, 0x00208246, 0, 8, 0x00100246, 4,
+					    T1(16, 8), 0x00102082, 4, 0x00208246, 0, 9, 0x00100246, 4 };
+		CHECK(!memcmp(w + 56, want, sizeof want), "VS cylinder: add r4.xyz, r2.xyzx, -cb0[11].xyzx; dp3 o2/3/4.w, cb0[7/8/9].xyzx, r4.xyzx");
+		CHECK(w[22] == T1(104, 2) && w[23] == 5, "VS cylinder: dcl_temps 4 -> 5 (%#x %u)", w[22], w[23]);
+		/* run it: r2 = (10, 20, 30, 1); the eye in object space (4, 5, 6); k_mObjectToWorld = a 90 deg turn about up +
+		 * a translation (world x = -z, y = y, z = x): the offset (6, 15, 24) -> (-24, 15, 6) */
+		st s;
+		memset(&s, 0, sizeof s);
+		s.r[2][0] = 10, s.r[2][1] = 20, s.r[2][2] = 30, s.r[2][3] = 1;
+		s.cb[0][11][0] = 4, s.cb[0][11][1] = 5, s.cb[0][11][2] = 6;
+		s.cb[0][7][2] = -1, s.cb[0][7][3] = 1000, s.cb[0][8][1] = 1, s.cb[0][8][3] = 2000, s.cb[0][9][0] = 1, s.cb[0][9][3] = 3000;
+		CHECK(run(&s, w, nw) && s.o[2][3] == -24 && s.o[3][3] == 15 && s.o[4][3] == 6, "VS cylinder run: the offset %g %g %g",
+		      (double)s.o[2][3], (double)s.o[3][3], (double)s.o[4][3]);
+		free(w), free(e);
+	}
+	free(b);
+	b = make('V', 1, &n); /* no k_mObjectToWorld / eye: refused (the rock's $Globals) */
+	e = somvr_bubble_vs2(b, n, 1, &m, &why);
+	CHECK(!e, "VS cylinder: a shader without k_mObjectToWorld edited");
+	free(e), free(b);
+
+	/* ---- build 40, the cylinder: PS - the distance from the eye's vertical line, the height window ---- */
+	b = make('P', 0, &n);
+	e = somvr_bubble_ps2(b, n, 75, 95, 1, 200, 30, &m, &why);
+	CHECK(e, "PS cylinder edited (%s)", why ? why : "-");
+	if (e) {
+		check_container(e, m, "PS cylinder");
+		w = prog_of(e, m, &nw);
+		/* the grass round the feet, 150 cm under the eyes: gone within 75 cm across, whole from 95 - the sphere kept it */
+		double g40 = kept_cyl(w, nw, 40, -150, 1), g74 = kept_cyl(w, nw, 74, -150, 1), g85 = kept_cyl(w, nw, 85, -150, 1),
+		       g96 = kept_cyl(w, nw, 96, -150, 1), g300 = kept_cyl(w, nw, 300, -150, 1);
+		CHECK(g40 == 0 && g74 == 0, "PS cylinder: the grass at the feet gone within 75 cm across (%.3f %.3f)", g40, g74);
+		CHECK(g96 == 1 && g300 == 1, "PS cylinder: whole from 95 cm across (%.3f %.3f)", g96, g300);
+		CHECK(g85 > 0.25 && g85 < 0.75, "PS cylinder: about half at 85 cm (%.3f)", g85);
+		/* the leaves at the face: gone at 60 cm across; the window: +20 gone, +40 half, +55 whole; -190 gone, -230 whole */
+		double l60 = kept_cyl(w, nw, 60, 0, 1), u20 = kept_cyl(w, nw, 30, 20, 1), u40 = kept_cyl(w, nw, 30, 40, 1),
+		       u55 = kept_cyl(w, nw, 30, 55, 1), d190 = kept_cyl(w, nw, 30, -190, 1), d230 = kept_cyl(w, nw, 30, -230, 1);
+		CHECK(l60 == 0 && u20 == 0 && d190 == 0, "PS cylinder: gone at the face and inside the window (%.3f %.3f %.3f)", l60, u20,
+		      d190);
+		CHECK(u55 == 1 && d230 == 1 && u40 > 0.2 && u40 < 0.8, "PS cylinder: the canopy over +50 and under -220 whole, +40 partly "
+		      "(%.3f %.3f %.3f)", u55, d230, u40);
+		printf("PS cylinder (kept): feet 40 cm %.2f, 74 %.2f, 85 %.2f, 96 %.2f; face 60 %.2f; up +20 %.2f +40 %.2f +55 %.2f; "
+		       "down -190 %.2f -230 %.2f\n", g40, g74, g85, g96, l60, u20, u40, u55, d190, d230);
+		/* without the VS edit (zero .w): the depth decides, as the sphere (60 cm deep whole, 22 cm gone at 20..35) */
+		double f60 = kept_cyl(w, nw, 120, 0, 0), f22 = kept_cyl(w, nw, 50, 0, 0);
+		CHECK(f60 == 1 && f22 == 0, "PS cylinder without the VS edit: the depth decides (96 cm deep %.3f, 40 cm deep %.3f)", f60, f22);
+		/* the game's own alpha test still runs */
+		st s;
+		memset(&s, 0, sizeof s);
+		s.v[0][3] = 500, s.v[4][3] = 500, s.v[1][2] = 0.0f;
+		CHECK(run(&s, w, nw) && s.discarded, "PS cylinder: the game's alpha test still discards");
+		free(w), free(e);
+	}
+	free(b);
 
 	/* ---- PS: the dissolve; SV_Position declared; run per fragment ---- */
 	for (int v = 0; v <= 4; v += 4) {
@@ -509,10 +588,21 @@ int main(int argc, char **argv)
 			uint32_t sh = gdx_chunk(bl, sz, "SHEX"), kind = sh ? fdx_rd(bl + sh + 8) >> 16 : 9;
 			e = kind == 1 ? somvr_bubble_vs(bl, sz, &m, &why) : kind == 0 ? somvr_bubble_ps(bl, sz, 20, 35, &m, &why)
 			  : kind == 2 ? somvr_bubble_gs(bl, sz, 75, 100, &m, &why) : NULL;
+			size_t m2 = 0;
+			const char *why2 = NULL;
+			unsigned char *e2 = kind == 1 ? somvr_bubble_vs2(bl, sz, 1, &m2, &why2)
+					  : kind == 0 ? somvr_bubble_ps2(bl, sz, 75, 95, 1, 200, 30, &m2, &why2) : NULL;
+			if (kind <= 1) { /* build 40: the cylinder takes exactly the shaders the sphere takes */
+				CHECK(!e == !e2, "%s: %s %02x%02x%02x%02x sphere %s, cylinder %s (%s)", argv[a], kind ? "VS" : "PS", bl[4], bl[5],
+				      bl[6], bl[7], e ? "edited" : "not", e2 ? "edited" : "not", why2 ? why2 : "-");
+				if (e2)
+					check_container(e2, m2, argv[a]);
+			}
+			free(e2);
 			if (e) {
 				check_container(e, m, argv[a]);
-				printf("%s: %s %02x%02x%02x%02x %u -> %zu\n", strrchr(argv[a], '/') ? strrchr(argv[a], '/') + 1 : argv[a],
-				       kind == 0 ? "PS" : kind == 1 ? "VS" : "GS", bl[4], bl[5], bl[6], bl[7], sz, m);
+				printf("%s: %s %02x%02x%02x%02x %u -> %zu (cylinder %zu)\n", strrchr(argv[a], '/') ? strrchr(argv[a], '/') + 1 : argv[a],
+				       kind == 0 ? "PS" : kind == 1 ? "VS" : "GS", bl[4], bl[5], bl[6], bl[7], sz, m, m2);
 			} else if (why && strncmp(why, "not ", 4))
 				printf("%s: %s %02x%02x%02x%02x stays: %s\n", argv[a], kind == 0 ? "PS" : kind == 1 ? "VS" : "GS", bl[4], bl[5],
 				       bl[6], bl[7], why);

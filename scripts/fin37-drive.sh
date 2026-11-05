@@ -91,14 +91,21 @@ ready() { local tag=$1; S0=$(cnt '^FINISHER t=.* snap'); w "finisher off" 0.3; w
   n0=$(lines); local k ok=0
   for k in 1 2 3; do r0=$(cnt '^FINISHER t=.* ready'); q0=$(cnt '^FINISHER pose'); c0=$(cnt '^FINISHER t=.* cancelled')
     [ $k -gt 1 ] && { echo "  $tag: again ($k)"; w "finisher off" 0.2; w "verbs brand charge" 0.4; }
-    w "abil goto ${FN_GOTO:-150}" 0.2; w "execute face" 0.3; w "finisher on" 0.1 # (faced first: the outline is the world's)
+    # (build 40: the test guard off and the hand at rest just before the ready - boot 082239's stall: the guard's block
+    # had turned the blade 136 deg, and the game's weapon bone (the snap's blade) does not follow the grip rigidly from
+    # there: the line-up from that pose was 23 cm off; from the rest it is the fast step's. The guard comes back with the
+    # next ready's `fight guard path`)
+    w "abil goto ${FN_GOTO:-150}" 0.2; w "execute face" 0.3; w "fight guard off" 0.2; wa "$REST"; sleep 0.3
+    w "finisher on" 0.1 # (faced first: the outline is the world's)
     waitn '^FINISHER t=.* ready' "$r0" 6 || continue
     sleep 0.6; [ "$(cnt '^FINISHER t=.* cancelled')" -gt "$c0" ] && continue; ok=1; break; done
   [ $ok = 1 ] || { echo "  $tag: no FINISHER ready"; fnsay "$n0" 8; since "$n0" '^EXECUTE' | tail -3 | cut -c1-300; return 1; }
   waitn '^FINISHER pose' "$q0" 3; local pl; pl=$(grep -E '^FINISHER pose' "$L" | tail -1)
   P=$(echo "$pl" | sed -nE 's/.*hands test R ([-0-9. ]+) \(cm.*/\1/p'); WAY=$(echo "$pl" | sed -nE 's/.*the way in ([-0-9.]+ [-0-9.]+ [-0-9.]+) .*/\1/p')
   LU=$(grep -E '^FINISHER lineup' "$L" | tail -1 | sed -nE 's/.*hands test R ([-0-9. ]+)$/\1/p')
-  echo "  $tag: the outline's grip $P, the way in $WAY; the line-up $LU"; d "$tag-outline"; [ -n "$P" ] && [ -n "$WAY" ]; }
+  # (build 40: the stall's line-up races the orc's slowed attack - its hit clears the charge ~5 s after the ready: no dump
+  # before it)
+  echo "  $tag: the outline's grip $P, the way in $WAY; the line-up $LU"; [ "$tag" = stall ] || d "$tag-outline"; [ -n "$P" ] && [ -n "$WAY" ]; }
 # the line-up's miss (the generous snap): the grip 1 cm right and 1 cm low, turned 2 deg right (the point ~5 cm off)
 OFS=${FN_OFS:-1 -1 0 2}
 # the pose $P moved along the way by $1 cm, its x/y/z offset by $2 $3 $4 and its yaw (ry) by $5
@@ -106,15 +113,20 @@ pose() { echo "$P" | awk -v L="$1" -v ox="$2" -v oy="$3" -v oz="$4" -v ob="$5" -
   '{ split(W, w, " "); printf "%.1f %.1f %.1f %.1f %.1f %.1f", $1 + w[1]*L + ox, $2 + w[2]*L + oy, $3 + w[3]*L + oz, $4, $5 + ob, $6 }'; }
 # the line-up as a player does it: the hand to the outline's grip, then corrected by what the eye sees (the mod's
 # `FINISHER lineup`: the hand that lays the drawn sword on it) less the generous miss
+# build 40 (som-b40-fixes, re-xr-pipeline.md 175.2): every word of the line-up waited for (the Windows build reads the
+# trigger file every 1-2 s); a fresh `finisher pose` asked for by a waited word and its line given 4 s (suite 377's
+# re-run: its word was read 3.3 s after the swing, past the 2 s wait - the retry never came). The ready's own lineup line
+# is the hand's true grip since build 40 (the test guard's block had held the hand elsewhere: 10 cm short in depth)
+wt() { local a0 i; a0=$(cnt "$2"); w "$1" 0.02; for i in $(seq 1 30); do [ "$(cnt "$2")" -gt "$a0" ] && break; sleep 0.1; done; }
 lineup() { local tag=$1 s0=$2 i lu
   [ -n "$LU" ] && P=$LU # (what the eye sees: the drawn sword laid on the outline, less the generous miss)
-  w "hands test R $(pose -10 $OFS)" 0.3; w "hands swing R $(pose 0 $OFS) 400" 0.3 # (the hand comes in to it)
+  wa "hands test R $(pose -10 $OFS)"; sleep 0.3; wa "hands swing R $(pose 0 $OFS) 400"; sleep 0.3 # (the hand comes in to it)
   for i in 1 2 3; do
     waitn '^FINISHER t=.* snap' "$s0" $([ $i = 1 ] && echo 3 || echo 2) && return 0
-    local l0; l0=$(cnt '^FINISHER lineup'); w "finisher pose" 0.2; waitn '^FINISHER lineup' "$l0" 2 || return 1
+    local l0; l0=$(cnt '^FINISHER lineup'); wt "finisher pose" '^TRIGGER cmd=finisher pose'; waitn '^FINISHER lineup' "$l0" 4 || return 1
     lu=$(grep -E '^FINISHER lineup' "$L" | tail -1 | sed -nE 's/.*hands test R ([-0-9. ]+)$/\1/p')
     grep -E '^FINISHER pose' "$L" | tail -1 | sed -nE 's/.*(the drawn point .*)/    try '"$i"': \1/p'
-    [ -n "$lu" ] || return 1; P=$lu; w "hands swing R $(pose 0 $OFS) 300" 0.5; done
+    [ -n "$lu" ] || return 1; P=$lu; wa "hands swing R $(pose 0 $OFS) 300"; sleep 0.5; done
   waitn '^FINISHER t=.* snap' "$s0" 2; }
 stab() { local tag=$1 ms=$2 off=$3; n0=$(lines); s0=$(cnt '^FINISHER t=.* snap')
   lineup "$tag" "$s0" || { echo "  $tag: no snap"; w "kills still off" 0.1; fnsay "$n0"; return 1; }

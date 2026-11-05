@@ -4,10 +4,14 @@
 #include <stdio.h>
 #include <string.h>
 
+/* b40 live4 (re-xr-pipeline.md 162.14): the mark on the PRESS - B and Y down together (within window_s, 0.15 s) is the
+ * mark at once, no hold (hold_s 0; the player: "it should just need to be pressed"); hold_s > 0 (SOMVR_MARK_HOLD_S) is
+ * builds 4-37's hold-and-let-go. A lone B or Y still goes to the game after window_s. (No header change: the layer and
+ * the host include somvr_session.h - this file and the game side's are the logic module's alone: a live patch.) */
 void somvr_chord_cfg_default(somvr_chord_cfg *c) {
-    c->window_s = 0.12f;
+    c->window_s = 0.15f;
     c->join_s = 0.40f;
-    c->hold_s = 0.50f;
+    c->hold_s = 0.0f;
     c->max_s = 5.0f;
 }
 
@@ -51,7 +55,10 @@ void somvr_chord_tick(somvr_chord *c, const somvr_chord_cfg *cfg, const somvr_ch
         if (ok) {
             for (int b = 0; b < 2; b++) c->n_held += c->st[b] != SOMVR_CHS_PASS; /* (a passed one: the game sees it go up) */
             c->chord = 1, c->ended = 0, c->armed = 0, c->t_chord = t;
-            if (!hd[0] || !hd[1]) { /* both pressed within one tick but one is up already: too short */
+            if (cfg->hold_s <= 0) { /* b40 live4: the press is the mark; the rest is swallowed until both are up */
+                c->ended = 1, o->ev = SOMVR_CHE_MARK, c->n_marks++;
+                if (!hd[0] && !hd[1]) c->chord = 0, c->st[0] = c->st[1] = SOMVR_CHS_UP;
+            } else if (!hd[0] || !hd[1]) { /* both pressed within one tick but one is up already: too short */
                 c->ended = 1, o->ev = SOMVR_CHE_SHORT, c->n_short++;
                 if (!hd[0] && !hd[1]) c->chord = 0, c->st[0] = c->st[1] = SOMVR_CHS_UP;
             }

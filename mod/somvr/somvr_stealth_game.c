@@ -156,6 +156,10 @@ static void kn_killed(uintptr_t pc, const struct cb_orc *o, uintptr_t rec, const
 		      int dead1, int stick, const float E[3], const float ax[3], double t);
 static void stl_b21_frame(const struct cb_orc *o, int n, uintptr_t pc, double t); /* build 21 */
 static struct log_late g_stl_late; /* build 27: then 150 a 10 minutes */
+/* build 40 (somvr_touch_game.c, SOMVR_STEALTH_TOUCH): the PM tick's snapshot for the senses' hooks, its word */
+static void tc_tick(uintptr_t pcomb, uintptr_t sc, const float *root, double t);
+static void tc_close_apply(somvr_loco *s, somvr_loco_out *lo, const float *root, float dt, double t, int follow);
+static const char *tc_word(const char *w);
 static int stl_line(void) { return g_stl.lines < 600 ? (int)++g_stl.lines : log_late_ok(&g_stl_late, 150, mono()); } /* a STEALTH line may go out */
 
 /* the game's awareness of Talion (FUN_0229bbc0 read as memory), and whether it fights him */
@@ -601,6 +605,9 @@ static void stl_standoff(uintptr_t pcomb, uintptr_t sc, const float *root, somvr
 			 double t)
 {
 	g_stl.so_n = 0;
+	tc_tick(pcomb, sc, root, t); /* build 40 (SOMVR_STEALTH_TOUCH): the orcs within 3 m for the senses' hooks */
+	if (root && t > 0)
+		tc_close_apply(s, o, root, dt, t, 0); /* build 40b (SOMVR_STEALTH_CLOSE): the walk stops at 52 cm, not at its body */
 	/* build 21 (SOMVR_STEALTH_KILL_STANDOFF_KEEP_S): an approach begun crouched keeps the stand-off for this long after the
 	 * crouch ends - the sword's draw lets the stealth crouch go (SOMVR_CROUCH: PC_Stealth holds Acharn's slot), and in the
 	 * user's build 20c session the stick still forward then walked Talion in at standing speed to 109 cm: noticed */
@@ -632,6 +639,7 @@ static void stl_standoff(uintptr_t pcomb, uintptr_t sc, const float *root, somvr
 /* the follow's request merged into the same tick's delta (lo_take_follow): the same circles */
 static void stl_standoff_follow(somvr_loco *s, somvr_loco_out *o)
 {
+	tc_close_apply(s, o, NULL, 0, 0, 1); /* build 40b: the follow too */
 	if (g_stl.so_n)
 		stl_so_apply(s, o, g_stl.so_t, 1);
 }
@@ -1236,8 +1244,9 @@ static int stl_strike(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct
 {
 	if (!g_stl.mode || !root || !pc)
 		return 0;
-	if (kl_busy(o->c))
-		return 2; /* build 31, SOMVR_KILLS: its kill plays - nothing more (the sword's and the dagger's) */
+	if (kl_busy(o->c) || fn_busy(o->c))
+		return 2; /* build 31, SOMVR_KILLS: its kill plays - nothing more (the sword's and the dagger's); build 41: the
+			   * finisher's orc (ready or under the blade: an unaware back stab's) */
 	if (g_vb.hand.phase == SOMVR_VBH_GRAB && g_vb.held_c == o->c && g_stl.killed_c == o->c)
 		return 1;
 	if (g_stl.stk.on && o->c == g_stl.stk_c)
@@ -1627,6 +1636,8 @@ static void stl_sweep(int hand, uintptr_t pc, const struct cb_orc *o, int n, con
 
 static const char *stl_word(const char *w)
 {
+	if (!strncmp(w, "touch", 5) && (!w[5] || w[5] == ' '))
+		return tc_word(w + 5); /* build 40 (SOMVR_STEALTH_TOUCH) */
 	if (!strcmp(w, "status")) {
 		g_stl.req_status = 1;
 		return g_stl.mode ? "stealth status (the STEALTH lines)" : "stealth status (SOMVR_STEALTH_KILL is off)";

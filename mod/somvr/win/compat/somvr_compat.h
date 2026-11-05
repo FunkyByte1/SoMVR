@@ -224,4 +224,15 @@ static inline struct tm *gmtime_r(const time_t *t, struct tm *out) { return gmti
 /* 1 under Wine (ntdll exports wine_get_version) */
 int somvr_under_wine(void);
 
+/* build 40 (som-b40-fixes, re-xr-pipeline.md 175.5): `climb writes` on Windows - a hardware write watch by the debug
+ * registers (Linux: perf_event). start: Dr0 on addr (4 bytes, writes) in every thread of the process (a helper thread
+ * sets each one suspended; its own too) and a vectored handler takes each hit (EXCEPTION_SINGLE_STEP): the rip after the
+ * write, the thread, the first 64 qwords of its stack, into a ring. Returns the threads set (< 0: none). take: the hits
+ * since the last take (up to max; *lost the ring's overflow so far). stop: every thread's Dr0/Dr7 cleared, the handler
+ * removed */
+typedef struct { uint64_t rip; uint32_t tid, nstk; uint64_t stk[64]; } somvr_wwatch_hit;
+int somvr_wwatch_start(uintptr_t addr, int *failed);
+int somvr_wwatch_take(somvr_wwatch_hit *out, int max, uint64_t *lost);
+void somvr_wwatch_stop(void);
+
 #endif

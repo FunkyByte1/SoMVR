@@ -383,6 +383,10 @@ int somvr_lv_result_card(const somvr_lv_state *s, const somvr_lv_patch *p, somvr
     if (!strcmp(s->last, "applied")) {
         snprintf(title, sizeof title, "Patch %d is in", s->id);
         snprintf(text, sizeof text, "%s%s%s", try_[0] ? "Try: " : "", try_, s->msg[0] && !try_[0] ? s->msg : "");
+    } else if (!strcmp(s->last, "start")) { /* b40 live4: staged before the launch, the session's module from its start */
+        snprintf(title, sizeof title, "Patch %d applied at start", s->id);
+        snprintf(text, sizeof text, "%s%s%s", try_[0] ? "Try: " : "", try_,
+                 try_[0] ? "" : "It is in since the game started. Undo: menu > Test tab.");
     } else if (!strcmp(s->last, "undone")) {
         snprintf(title, sizeof title, "Patch %d undone", s->id);
         snprintf(text, sizeof text, "%s", s->current ? "Back to the patch before it." : "Back to this session's own build.");
