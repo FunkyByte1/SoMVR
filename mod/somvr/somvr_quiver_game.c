@@ -100,6 +100,8 @@ static void bo_nock_skel(const sa_node *nd, uint32_t cnt)
 		return;
 	float k = (g_bow.rest_cm - a.z) / (b.z - a.z), *c = g_bow.cfg.nock_ofs;
 	float n[3] = { a.x + k * (b.x - a.x) + g_bow.side_cm, a.y + k * (b.y - a.y), g_bow.rest_cm };
+	if (isfinite(n[0]) && fabsf(n[0] - g_bow.side_cm) < 10.0f) /* build 37: the limbs' line, the side kept apart */
+		g_bow.nock_x0 = n[0] - g_bow.side_cm;
 	if (!vec_ok(n, 30.0f))
 		return;
 	float dd = sqrtf((n[0] - c[0]) * (n[0] - c[0]) + (n[1] - c[1]) * (n[1] - c[1]) + (n[2] - c[2]) * (n[2] - c[2]));
@@ -243,6 +245,7 @@ static uint32_t bs_post(const char *name, uint64_t obj, uint32_t flags, void *cb
 	}
 	uint32_t id = ((bs_post_fn)g_bs_orig)(name, obj, flags, cb, cookie, n_ext, ext, playing);
 	gs_after(&gp, id);
+	wsd_post(name, obj, id); /* build 37, SOMVR_AUDIO_LOG: the post with its object's place (somvr_wsound_game.c) */
 	atomic_fetch_add_explicit(&g_bs_posts, 1, memory_order_relaxed);
 	int64_t now = (int64_t)(mono() * 1e3);
 	double since = 0;

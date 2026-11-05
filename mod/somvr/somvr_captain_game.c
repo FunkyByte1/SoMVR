@@ -22,7 +22,9 @@
  * 4. His fate: CAPTAIN lines - the spawn (member, level, role, tree, traits), his health as it changes, the presentations
  *    while he is out (world or window), his death (the member's IsDead / KilledByPlayer), his leaving the world alive
  *    (an escape or a removal), Talion's death while he is out (the promotion follows).
- * Test words (`captain status|pick N|hp V|charge|stakes on|off`; all but status only with SOMVR_HANDS_TEST). Lines: `CAPTAIN ...`. */
+ * Test words (`captain status|pick N [warchief]|hp V|charge|stakes on|off`; all but status only with SOMVR_HANDS_TEST;
+ * b37 ladder: `pick N warchief` lets that pick be a warchief, brought alone - the story ladder's Brand the Warchiefs).
+ * Lines: `CAPTAIN ...`. */
 
 /* CAPTAIN_SITES_BEGIN (read only, never patched). KP_FACTION FUN_023d8930(fmgr, faction record): the faction of a record
  * (its 0x228-byte entry + 8); KP_TARGET FUN_023d3f80 (a proof: its bytes read fmgr+0xe8, the current faction record);
@@ -106,6 +108,7 @@ static struct {
 	somvr_cp_intro_cfg wcfg; /* build 25: SOMVR_CAPTAIN_WORLD_INTRO_GEOM - a captain the game brought */
 	int last;              /* the member index brought last (-1: none yet) */
 	_Atomic int req_pick;  /* `captain pick N`: the next Captain brings member N (-1: none) */
+	_Atomic int req_wc;    /* b37 ladder: `captain pick N warchief` - that pick may be a warchief (alone, no bodyguards) */
 	_Atomic int req_status;
 	_Atomic int req_hp;    /* `captain hp V` x 10 (-1: none) */
 	_Atomic int req_charge; /* `captain charge`: Talion's hit counter charged (a test aid: the execution at once) */
@@ -494,6 +497,7 @@ static void kp_spawn(const struct pr_me *m, double t, const char *who)
 	uintptr_t mm[KP_MAX];
 	somvr_cp_member cm[KP_MAX];
 	int n = fail ? 0 : kp_members(mm, KP_MAX), pick = -1, req = atomic_exchange(&g_kp.req_pick, -1);
+	int wc_ok = atomic_exchange(&g_kp.req_wc, 0) && req >= 0; /* b37 ladder: a warchief by the test aid */
 	if (!fail && !n)
 		fail = "no faction members readable (the faction manager or its current faction)";
 	for (int i = 0; i < n; i++) {
@@ -501,7 +505,7 @@ static void kp_spawn(const struct pr_me *m, double t, const char *who)
 		somvr_cp_traits tr;
 		kp_traits(mm[i], &tr, NULL, 0);
 		peek(mm[i] + KP_FM_FLAGS, &cm[i].flags, sizeof cm[i].flags);
-		cm[i].in_hierarchy = peek_ptr(mm[i] + KP_FM_POS) != 0, cm[i].warchief = tr.warchief;
+		cm[i].in_hierarchy = peek_ptr(mm[i] + KP_FM_POS) != 0, cm[i].warchief = tr.warchief && !(wc_ok && i == req);
 		cm[i].has_template = KP_FN(KPS_TEMPLATE, kp_template_fn)(mm[i]) != 0;
 	}
 	if (!fail) {
@@ -765,6 +769,31 @@ static void kr_frame(const struct pr_me *m, double t)
 		      "of the view; in the world near Talion now: %s", t, i, tr.warchief ? "the warchief, " : "", who, d / 100.0, rd,
 		      ud, ls);
 	}
+}
+
+/* build 39 (som-b37-practrip2; boot 20261104-234727, build-win7's suite boot 105): a Nemesis captain of the save in
+ * the world within radius_cm of `at` - any member (our Practice > Captain too) whose orc is alive and readable. 1 = one
+ * (*dist_cm the nearest's distance); 0 = none, or the captain module's reads are off. Its use: the practice's light
+ * changes no weather beside a captain (a ChangeWeather there started a presentation that never ended) */
+static int kp_captain_near(const float at[3], float radius_cm, float *dist_cm)
+{
+	if (!g_kp.on)
+		return 0;
+	uintptr_t mm[KP_MAX];
+	int k = kp_members(mm, KP_MAX), any = 0;
+	float best = 0;
+	for (int i = 0; i < k; i++) {
+		uintptr_t npc = 0, c = mm[i] ? kw_combat_of(mm[i], &npc) : 0;
+		struct cb_orc o;
+		if (!c || cb_dead(c) || !cb_orc_get(c, &o))
+			continue;
+		float d = dist3(o.pos, at);
+		if (d <= radius_cm && (!any || d < best))
+			best = d, any = 1;
+	}
+	if (any && dist_cm)
+		*dist_cm = best;
+	return any;
 }
 
 /* build 27, `execute chase captain` (a test): the followed captain of the world as the chase's orc */
@@ -1343,8 +1372,13 @@ static const char *kp_word(const char *w)
 		long v = strtol(w + 5, &e, 10);
 		if (e == w + 5 || v < 0 || v >= KP_MAX)
 			return "captain pick (not 0..63: ignored)";
+		while (*e == ' ')
+			e++;
+		int wc = !strncmp(e, "warchief", 8); /* b37 ladder (a test aid): the pick may be a warchief, alone */
+		atomic_store(&g_kp.req_wc, wc);
 		atomic_store(&g_kp.req_pick, (int)v);
-		return "captain pick (the next Captain brings that member)";
+		return wc ? "captain pick warchief (the next Captain brings that member, a warchief too: alone, a test aid)"
+			  : "captain pick (the next Captain brings that member)";
 	}
 	if (!strcmp(w, "away")) { /* build 24: the next Captain comes with his back to Talion (the stealth thrust's test) */
 		atomic_store(&g_kp.req_away, 1);

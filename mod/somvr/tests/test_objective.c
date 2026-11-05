@@ -224,6 +224,49 @@ static void test_image(void) {
     CHECK(r[0] == rx && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_W == 17 * SOMVR_OB_STRIDE, "the ring's rect"); /* 21: 17 */
     /* build 18: cell 8, the refused landing: a square after the strike's three wide cells; its band red, the bar across
      * its middle red, beside the bar faint, the corner empty */
+    /* build 39: the third row - the edge's glow (a square: its core opaque, its sides faint, its ends faded) and the two
+     * A labels (wide: the blue button's middle opaque, the plate's corner empty) */
+    somvr_ob_rect(SOMVR_OB_CELL_GLOW, r);
+    CHECK(r[0] == 1 && r[1] == 2 * SOMVR_OB_STRIDE + 1 && r[2] == SOMVR_OB_CELL && SOMVR_OB_IMG_H == 3 * SOMVR_OB_STRIDE,
+          "the glow's rect %d %d %d", r[0], r[1], r[2]);
+    {
+        const uint8_t *gc = px + 4 * ((r[1] + 64) * SOMVR_OB_IMG_W + r[0] + 64), *gs = px + 4 * ((r[1] + 64) * SOMVR_OB_IMG_W + r[0] + 120),
+                      *ge = px + 4 * ((r[1] + 1) * SOMVR_OB_IMG_W + r[0] + 64);
+        CHECK(gc[3] > 240 && gs[3] < 30 && ge[3] < 40, "the glow's cell: core %d, side %d, end %d", gc[3], gs[3], ge[3]);
+    }
+    for (int c = SOMVR_OB_CELL_A_DOWN; c <= SOMVR_OB_CELL_A_UP; c++) {
+        somvr_ob_rect(c, r);
+        CHECK(r[1] == 2 * SOMVR_OB_STRIDE + 1 && r[2] == SOMVR_OB_WIDE * SOMVR_OB_STRIDE - 2 && r[0] + r[2] < SOMVR_OB_IMG_W,
+              "the A label %d's rect %d %d %d", c, r[0], r[1], r[2]);
+        int on = 0;
+        for (int x = 0; x < r[2] / 2; x++) { /* the blue button somewhere along the middle row of the left half */
+            const uint8_t *q = px + 4 * ((r[1] + 64) * SOMVR_OB_IMG_W + r[0] + x);
+            on += q[3] > 240 && q[2] > 200;
+        }
+        const uint8_t *cn = px + 4 * ((r[1] + 2) * SOMVR_OB_IMG_W + r[0] + 2);
+        CHECK(on > 20 && cn[3] == 0, "the A label %d: button texels %d, corner %d", c, on, cn[3]);
+    }
+    float w_hd[3] = {0, 1.6f, 0}, w_e0[3] = {-0.3f, 0.2f, -1.2f}, w_e1[3] = {0.3f, 0.2f, -1.2f}, w_at[3] = {0, 0.28f, -1.2f};
+    somvr_ob_place gp = somvr_ob_glow(w_e0, w_e1, w_hd), lp = somvr_ob_a_label(w_hd, w_at, SOMVR_OB_A_DOWN);
+    CHECK(gp.kind == SOMVR_OBK_WORLD && gp.cell == SOMVR_OB_CELL_GLOW && fabsf(gp.size[1] - 0.6f) < 0.01f &&
+              fabsf(gp.size[0] - SOMVR_OB_GLOW_M) < 1e-4f && fabsf(gp.pose[4]) < 1e-4f,
+          "the glow's quad: kind %d cell %d size %.3f x %.3f at x %.3f", gp.kind, gp.cell, gp.size[0], gp.size[1], gp.pose[4]);
+    CHECK(lp.kind == SOMVR_OBK_WORLD && lp.cell == SOMVR_OB_CELL_A_DOWN && lp.size[1] >= SOMVR_OB_A_LABEL_MIN_M &&
+              lp.size[0] > 2.5f * lp.size[1] && fabsf(lp.pose[5] - (w_at[1] + 0.5f * lp.size[1])) < 1e-4f &&
+              somvr_ob_a_label(w_hd, w_at, 7).kind == SOMVR_OBK_NONE,
+          "the A label's quad: kind %d cell %d %.3f x %.3f, its middle at y %.3f", lp.kind, lp.cell, lp.size[0], lp.size[1], lp.pose[5]);
+    { /* build 39: the frame's edge fields through the shared ring (put, get): the glow's ends and the A word */
+        static somvr_objective_shared sh;
+        somvr_objective_frame fi, fo;
+        memset(&fi, 0, sizeof fi), memset(&fo, 0, sizeof fo);
+        fi.n = 1, fi.flags = SOMVR_OBF_EDGE, fi.a_word = SOMVR_OB_A_DOWN;
+        fi.edge0[0] = -0.3f, fi.edge0[1] = 0.2f, fi.edge0[2] = -1.2f, fi.edge1[0] = 0.3f, fi.edge1[1] = 0.2f, fi.edge1[2] = -1.2f;
+        somvr_objective_put(&sh, 77, &fi);
+        int got = somvr_objective_get(&sh, 77, &fo);
+        CHECK(got && fo.flags == SOMVR_OBF_EDGE && fo.a_word == SOMVR_OB_A_DOWN && fo.edge0[0] == -0.3f && fo.edge1[0] == 0.3f &&
+                  fo.edge1[2] == -1.2f,
+              "the edge fields through put/get: a_word %u, edge0.x %g, edge1.x %g", fo.a_word, fo.edge0[0], fo.edge1[0]);
+    }
     somvr_ob_rect(SOMVR_OB_CELL_RING_NO, r);
     int nx = 1 + 14 * SOMVR_OB_STRIDE;
     CHECK(r[0] == nx && r[1] == 1 && r[2] == SOMVR_OB_CELL && r[3] == SOMVR_OB_CELL && r[0] + r[2] < SOMVR_OB_IMG_W,

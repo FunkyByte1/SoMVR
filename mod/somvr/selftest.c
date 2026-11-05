@@ -11453,9 +11453,11 @@ static void df_tests(void)
 	 * CanInterrupt 0, CannotInterruptExceptions = ST_CAT_X) refuses its own record (no category; no light record in
 	 * this world); the index (one frame: 6 records) finds PC_ST_INTERRUPTER of ST_CAT_X; the parry's recoil with it
 	 * takes: the clank now (the crack 1.0 on the sword hand, the knock 0.45 on the other, no parry pulse; A frozen
-	 * 120 ms by its own timer) */
+	 * 120 ms by its own timer; live 11-04: SOMVR_DEFENCE_CLANK_MAX_MS 90 cuts it and build 32's 250 ms slow tail to
+	 * 90 ms, no tail) */
 	g_df.mode = DF_ON, g_df.parry = DFP_RECOIL, g_df.block = DFB_RECOIL;
 	g_df.clank = SOMVR_DFC_RECOIL | SOMVR_DFC_LATE | SOMVR_DFC_STOP | SOMVR_DFC_HAPTIC, g_df.clank_s = 0.12f;
+	g_df.clank_slow_s = 0.25f, g_df.clank_slow_k = 0.3f, g_df.clank_max_s = 0.09f;
 	memset(&g_df.ix, 0, sizeof g_df.ix);
 	g_cat.count = 6;
 	g_df_x_e[0] = dbent(H_ACAT, 0xa, 1, 0), g_df_x_v[0] = (uintptr_t)&g_df_cat_x;
@@ -11485,7 +11487,8 @@ static void df_tests(void)
 		       g_cb.hs.c == (uintptr_t)&g_oc[0] && rp && NEAR(ra, 1.0, 1e-3) && lp && NEAR(q.amplitude, 0.45, 1e-3) &&
 		       log_has("(the interrupter: CanInterrupt 0, its category 'ST_CAT_X')") &&
 		       log_has("-> its parry recoil (took)") && log_has("DEFENCE clank orc=") &&
-		       log_has("for 120 ms (the parry's recoil)"),
+		       log_has("for 90 ms (the parry's recoil)") && g_cb.hs.slow_k == 0 && g_cb.hs.slow_end == g_cb.hs.t_end &&
+		       log_has("times: SOMVR_DEFENCE_CLANK_MAX_MS 90)"),
 	       "clank at the parry: recoils %d atk %#lx (want %#lx) attack now %#lx interrupters %llu took %llu clanks %llu "
 	       "stops %llu hitstop %d pulses R %d (%g) L %d (%g)", g_dfr.n - r1, (unsigned long)g_dfr.atk,
 	       (unsigned long)g_recs[4], (unsigned long)g_oc[0].attack, (unsigned long long)g_df.n.interrupters,
@@ -14681,6 +14684,37 @@ static void pr_tests(const char *trig)
 		       "full: nothing called (%d %d %d)", g_prf_calls[0], g_prf_calls[1], g_prf_calls[2]);
 		memcpy((char *)&g_pcs + BO_SC_RES, &rp0, 8);
 	}
+	/* 9c. b37 ladder: the test word "practice console CMD" - one console line on the game thread, only with
+	 * SOMVR_HANDS_TEST=1, one plain command (no ';' chain); the status line's light now */
+	{
+		const char *ht0 = getenv("SOMVR_HANDS_TEST");
+		char ht_keep[16] = "";
+		if (ht0)
+			snprintf(ht_keep, sizeof ht_keep, "%s", ht0);
+		unsetenv("SOMVR_HANDS_TEST");
+		int n0 = g_pr_ncmd;
+		EXPECT(strstr(pr_word("console Quest.CompleteActiveQuest"), "ignored") != NULL, "console: refused without the test");
+		pr_step(1);
+		setenv("SOMVR_HANDS_TEST", "1", 1);
+		EXPECT(strstr(pr_word("console Quest.FailActiveQuest; Teleport 0 0 0"), "ignored") != NULL,
+		       "console: a ';' chain refused");
+		pr_step(1);
+		EXPECT(g_pr_ncmd == n0, "console: nothing run when refused (%d)", g_pr_ncmd - n0);
+		EXPECT(!strcmp(pr_word("console  Quest.CompleteActiveQuest  "), "practice console (a test aid: the command on the "
+										  "game thread)"),
+		       "console: taken");
+		EXPECT(strstr(pr_word("console Character.SetLevel 5"), "one at a time") != NULL, "console: one at a time");
+		pr_step(1);
+		EXPECT(g_pr_ncmd == n0 + 1 && pr_cmd_has("Quest.CompleteActiveQuest") &&
+			       log_has("console (the test word) 'Quest.CompleteActiveQuest': run on the game thread"),
+		       "console: run once (%d)", g_pr_ncmd - n0);
+		pr_word("status"), pr_step(1);
+		EXPECT(log_has("status light now: weather '"), "status: the light now");
+		if (ht0)
+			setenv("SOMVR_HANDS_TEST", ht_keep, 1);
+		else
+			unsetenv("SOMVR_HANDS_TEST");
+	}
 	/* 10. back (the menu): our orc removed, the light given back with the teleport, the min health restored at the end */
 	pr_word("spawn"), pr_step(1);
 	int nc = g_pr_ncmd;
@@ -14745,6 +14779,39 @@ static void pr_tests(const char *trig)
 	       "dry: kept, no wait (phase %d dry %llu weathers %llu)", g_pr.trip.phase, (unsigned long long)g_pr.pw_dry,
 	       (unsigned long long)g_pr.weathers);
 	pr_word("back"), pr_step(90 * 3);
+	/* 11c. build 39 (build-win7's suite boot 105: a ChangeWeather beside a Nemesis captain started a presentation that
+	 * never ended): a wet day, a presentation on from the fade-out - no weather with the teleport, the arrival keeps it */
+	{
+		g_prw.rec = g_prwrec[3], g_prw.tod = 0;
+		int cn0 = g_pr_ncmd;
+		uint64_t lh0 = g_pr.light_holds, w0 = g_pr.weathers;
+		pr_word("go"), pr_step(1);
+		*(uintptr_t *)(g_fbpres + FB_PRES_CUR) = 1;
+		pr_step(30), pr_step(90 * 2);
+		int cw = 0;
+		for (int i = cn0; i < g_pr_ncmd; i++)
+			cw += !strncmp(g_pr_cmds[i], "GameServerShell.ChangeWeather", 29);
+		EXPECT(g_pr.went && !cw && g_pr.weathers == w0 && !g_pr.weather_set && g_prw.rec == g_prwrec[3] &&
+			       g_pr.light_holds == lh0 + 1 && log_has("light: no weather with the teleport - a presentation") &&
+			       log_has("kept - a presentation"),
+		       "11c: a presentation: ChangeWeather %d, weathers %llu, holds %llu", cw, (unsigned long long)(g_pr.weathers - w0),
+		       (unsigned long long)(g_pr.light_holds - lh0));
+		*(uintptr_t *)(g_fbpres + FB_PRES_CUR) = 0;
+		pr_step(90 * 3);
+		pr_word("back"), pr_step(90 * 3);
+		EXPECT(g_pr.trip.phase == SOMVR_PRT_IDLE && !g_pr.went && g_prw.rec == g_prwrec[3], "11c: back, the rain as it was");
+		/* the test word "practice day off": no light step at all on the next trip there */
+		pr_word("day off"), pr_step(1);
+		int cn1 = g_pr_ncmd;
+		pr_word("go"), pr_step(1), pr_step(90 * 3);
+		cw = 0;
+		for (int i = cn1; i < g_pr_ncmd; i++)
+			cw += !strncmp(g_pr_cmds[i], "GameServerShell.ChangeWeather", 29);
+		EXPECT(g_pr.went && !cw && g_pr.day == 0 && log_has("the day rule now SOMVR_PRACTICE_DAY=0"), "11c: day off: %d", cw);
+		pr_word("back"), pr_step(90 * 3);
+		pr_word("day full"), pr_step(1);
+		EXPECT(g_pr.day == 2, "11c: day full again (%d)", g_pr.day);
+	}
 	g_prw.rec = g_prwrec[0], g_prw.tod = 1;
 	/* 11c. SOMVR_PRACTICE_WAIT (the drill): "go" asked for in the pause waits (no black over the pause menu, the menu's
 	 * buttons busy); a presentation after the pause restarts the 1 s; then the trip; "back" when the game is up: at once;

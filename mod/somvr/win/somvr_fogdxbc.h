@@ -111,7 +111,11 @@ static int fdx_dst_temp(const uint32_t *w, uint32_t k, uint32_t *reg, uint32_t *
 }
 
 /* the edit; returns the new blob (malloc'ed, *n_out bytes) or NULL with *why set (nothing changed) */
-static unsigned char *somvr_fogdxbc(const unsigned char *blob, size_t n, size_t *n_out, const char **why)
+/* build 37 (som-b37-audio, re-xr-pipeline.md 173.6): SOMVR_FOG_SCALE - with scale != 1 the distance is also scaled,
+ *     mul  rT.x, rT.x, l(scale)
+ * (7 dwords more): the fog's path length for everything but the sky, so its optical depth - the haze's density - is
+ * scale of the game's (0.5 = half the fog, the sky's own colour untouched). scale 1 = the blob as before */
+static unsigned char *somvr_fogdxbc_s(const unsigned char *blob, size_t n, float scale, size_t *n_out, const char **why)
 {
 	*n_out = 0;
 	*why = "not DXBC";
@@ -202,21 +206,25 @@ static unsigned char *somvr_fogdxbc(const unsigned char *blob, size_t n, size_t 
 	if (!mov_at)
 		goto fail;
 	/* rebuild */
-	size_t add = 12 * 4, m = n + add;
+	uint32_t sb;
+	memcpy(&sb, &scale, 4);
+	int nins = scale != 1.0f ? 19 : 12;
+	size_t add = (size_t)nins * 4, m = n + add;
 	unsigned char *o = malloc(m);
 	*why = "no memory";
 	if (!o)
 		goto fail;
-	uint32_t T = ntemps, ins[12] = {
+	uint32_t T = ntemps, ins[19] = {
 		(16u /* dp3 */) | (7u << 24), 0x00100012u, T, 0x00100246u, rN, 0x00100246u, rN,
-		(75u /* sqrt */) | (5u << 24), 0x00100012u, T, 0x0010000au, T };
+		(75u /* sqrt */) | (5u << 24), 0x00100012u, T, 0x0010000au, T,
+		(56u /* mul */) | (7u << 24), 0x00100012u, T, 0x0010000au, T, 0x00004001u, sb };
 	size_t at = (size_t)(pb - blob) + 4 * (size_t)mov_at;
 	memcpy(o, blob, at);
-	for (int k = 0; k < 12; k++)
+	for (int k = 0; k < nins; k++)
 		fdx_wr(o + at + 4 * k, ins[k]);
 	memcpy(o + at + add, blob + at, n - at);
 	fdx_wr(o + (pb - blob) + 4 * (size_t)(temps_at + 1), ntemps + 1);      /* dcl_temps + 1 */
-	fdx_wr(o + (pb - blob) + 4, nw + 12);                                     /* the program's length */
+	fdx_wr(o + (pb - blob) + 4, nw + (uint32_t)nins);                         /* the program's length */
 	fdx_wr(o + at + add + 4 * (size_t)(src2_at - mov_at), T);                 /* movc src2: rN -> rT */
 	fdx_wr(o + shex + 4, clen + (uint32_t)add);                               /* the chunk's size */
 	fdx_wr(o + 24, (uint32_t)m);                                              /* the container's */
@@ -233,6 +241,11 @@ static unsigned char *somvr_fogdxbc(const unsigned char *blob, size_t n, size_t 
 fail:
 	free(w);
 	return NULL;
+}
+
+static inline unsigned char *somvr_fogdxbc(const unsigned char *blob, size_t n, size_t *n_out, const char **why)
+{
+	return somvr_fogdxbc_s(blob, n, 1.0f, n_out, why);
 }
 
 /* ==== build 33 (docs/re-xr-pipeline.md 146.3): SOMVR_XR_FOG=ray - the fog's density averaged along the eye's ray =====

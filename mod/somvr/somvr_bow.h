@@ -146,6 +146,12 @@ typedef struct {
     float zone_back_cm;      /* build 19 (SOMVR_BOW_STRING_REST=ours: the string's rest line this far behind the nock):
                                 the zone's core reaches back to it - touching the string seen at rest nocks (0: build 17) */
     int auto_arrow;          /* build 20 (SOMVR_BOW_AUTO_ARROW=on, the quiver off): see "auto" above */
+    int fit;                 /* build 37 (SOMVR_BOW_FIT=on): the drawn ray and the drawn bow's turn through the turned
+                                bow's own nock (somvr_bow_fit); 0 = through the bow hand's nock (builds 16-36) */
+    int side_auto;           /* build 37 (SOMVR_BOW_SIDE=roll): the arrow's side of the riser by the bow's cant (see
+                                somvr_bow_side_pick); 0 = always side_default */
+    int side_default;        /* -1 / +1: the arrow on the grip's -X / +X side (the bow hand's back: L -1, R +1) */
+    float side_deg;          /* the default side faces down past this across the arrow: the arrow goes over (20) */
 } somvr_bow_cfg;
 void somvr_bow_cfg_default(somvr_bow_cfg *c);
 
@@ -196,6 +202,8 @@ typedef struct {
     uint64_t takes, empties, drops, noarrows;
     int qheld;               /* build 19: the string held since a press that took nothing (cfg.quiver_held) */
     uint64_t held_takes;     /* ... arrows taken that way (the hand came into the quiver after the press) */
+    int side;                /* build 37: the arrow's side of the riser now (-1 / +1; 0 = the bow away) */
+    uint64_t side_flips;     /* ... times it went over */
 } somvr_bow;
 
 typedef struct {
@@ -212,6 +220,7 @@ typedef struct {
     int end_why;             /* with SOMVR_BOW_E_EXIT */
     double wait_s;           /* with SOMVR_BOW_E_FIRE: how long the shot waited for the game */
     int arrow;               /* SOMVR_BOW_ARROW_* after the step */
+    int side;                /* build 37: the arrow's side for the next frame's nock (-1 / +1: the grip's -X / +X) */
 } somvr_bow_out;
 
 void somvr_bow_init(somvr_bow *s);
@@ -307,6 +316,21 @@ int somvr_bow_string_shown(int mode, int phase);
 /* a light adaptive filter on a turn (one-euro on the angle): the cutoff min_hz at rest, + beta Hz per rad/s of turning (a
  * steady hand's tremor smoothed, a real turn followed within a frame or two); the first sample, a gap over 0.1 s or
  * min_hz <= 0: the raw turn */
+/* build 37 (re-xr-pipeline.md 174): the drawn bow turned onto its own arrow. The bow hand's grip q turned (by the draw's
+ * weight, as builds 16-36) so that its shot axis lies on the line from the string hand through the turned bow's own nock
+ * (cfg.fit: a fixed point, 3 rounds); *nock = that nock, *dir = the ray from the string hand through it (the shot). Builds
+ * 16-36 (cfg.fit 0): the line through the unturned grip's nock - the bow turned up to 90 deg by a real hold put its nock
+ * up to 6 cm off that line, so the arrow crossed the turned riser and flew up to 7 deg off the bow seen. Either may be NULL */
+sv_quat somvr_bow_fit(const somvr_bow_cfg *c, sv_vec3 bow_p, sv_quat bow_q, sv_vec3 string, sv_vec3 *nock, sv_vec3 *dir);
+/* the bow's cant about the arrow dir: its upper limb's angle from up, deg (+ = toward the shot's right as the archer sees
+ * it); NaN = aimed within ~15 deg of straight up or down */
+float somvr_bow_cant_deg(const somvr_bow_cfg *c, sv_quat q, sv_vec3 dir);
+/* the arrow's side of the riser (-1 / +1, the grip's -X / +X) for the bow q aimed along dir, from side (0 = none yet):
+ * cfg.side_default while that side faces up or level across the arrow; the other side once it faces down past
+ * cfg.side_deg (the arrow lies on the upper side of a canted bow), back when it faces down less than a quarter of that;
+ * aimed straight up or down: unchanged. cfg.side_auto 0: always the default */
+int somvr_bow_side_pick(const somvr_bow_cfg *c, sv_quat q, sv_vec3 dir, int side);
+
 typedef struct { int have; double t; sv_quat q; } somvr_bow_qf;
 sv_quat somvr_bow_qfilter(somvr_bow_qf *f, sv_quat raw, double t, float min_hz, float beta);
 

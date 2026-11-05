@@ -945,8 +945,27 @@ static void test_body31(void)
     CHECK(somvr_df_body_sweep(&c, head, NULL, NULL, bad, t1, &part, pt) < -1e8f && part == SOMVR_DF_BODY_NONE, "NaN: none");
 }
 
+/* live 11-04 (som-live-block): the session's four blocks held the orc 378 ms (a 120 ms freeze + 250 ms at 30 %) before
+ * its recoil could start; the cap ends the whole hold by 90 ms */
+static void test_clank_hold(void)
+{
+    float st, sl;
+    somvr_df_clank_hold(0.120f, 0.250f, 0.090f, &st, &sl);
+    CHECK(fabsf(st - 0.090f) < 1e-6f && sl == 0, "the session's 120 ms + 250 ms slow -> %.0f ms + %.0f ms", st * 1e3f, sl * 1e3f);
+    somvr_df_clank_hold(0.060f, 0.250f, 0.090f, &st, &sl);
+    CHECK(fabsf(st - 0.060f) < 1e-6f && fabsf(sl - 0.030f) < 1e-6f, "a 60 ms freeze keeps 30 ms of the tail (%.0f + %.0f ms)",
+          st * 1e3f, sl * 1e3f);
+    somvr_df_clank_hold(0.120f, 0.250f, 0, &st, &sl);
+    CHECK(fabsf(st - 0.120f) < 1e-6f && fabsf(sl - 0.250f) < 1e-6f, "0 = no cap: build 32's hold");
+    somvr_df_clank_hold(0.050f, 0, 0.090f, &st, &sl);
+    CHECK(fabsf(st - 0.050f) < 1e-6f && sl == 0, "under the cap: as set");
+    somvr_df_clank_hold(-1, -1, 0.090f, &st, &sl);
+    CHECK(st == 0 && sl == 0, "negative: none");
+}
+
 int main(void)
 {
+    test_clank_hold();
     test_body31();
     test_types();
     test_guard();

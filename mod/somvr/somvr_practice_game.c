@@ -108,6 +108,37 @@ typedef void (*prf_energy_fn)(uintptr_t res, int unlimited);
 typedef int (*prf_heal_fn)(uintptr_t health, float amount);
 #define PRF_FN(i, T) ((T)g_prf_sites[i].target)
 _Static_assert(sizeof g_prn_sites_game / sizeof g_prn_sites_game[0] == PRN_N, "practice nav sites");
+
+/* PRQUEST_SITES_BEGIN (b37 ladder, som-b37-ladder, docs/re-xr-pipeline.md 172: the test words "practice quest list" and
+ * "practice quest complete N", SOMVR_HANDS_TEST=1 only; read only, never patched; checked at the first such word;
+ * counted on its own by check_sites.py). The quests' list: its sentinel at 0x4c47790 (first = +8, next = node+8, the
+ * quest = node - 0x48), the state +0x34 (or +0x30 when that is -1; 8 = active, 10 = complete), its state machine at
+ * +0x28 - as `Quest.CompleteActiveQuest` (FUN_027dd620) walks it through FUN_027d4f70. PRQL_COMPLETE FUN_027dd550(q):
+ * the quest's completion (the reward, FUN_027dd1c0(q, 0), the state 10); the handler then calls the state machine's
+ * slot 2 (+0x10; Windows slot 1, +0x8) with 0 - the word does both, for the quest the list numbered N. Order = PRQL_* */
+static SITE_TABLE struct site_spec g_prql_sites_game[] = {
+SITE("PRQL_COMPLETE", K_ENTRY, 0x27dd550, 0x27dd550, "55 53 48 89 fb 48 83 ec 08 48 8b 3d b0 9d ed 01", 0x27dd550, "55 53 48 89 fb 48 83 ec 08 48 8b 3d b0 9d ed"),
+};
+/* PRQUEST_SITES_END */
+enum { PRQL_COMPLETE, PRQL_N };
+_Static_assert(sizeof g_prql_sites_game / sizeof g_prql_sites_game[0] == PRQL_N, "practice quest sites");
+static const struct site_spec *g_prql_sites = g_prql_sites_game; /* selftest: stand-ins */
+#define PRQL_LIST GADDR(PRQL_LIST, 0x4c47790) /* the quests' list sentinel (FUN_027d4f70's walk) */
+#define PRQL_NODE OFS(PRQL_NODE, 0x48)       /* node -> quest */
+#define PRQL_LIST2 GADDR(PRQL_LIST2, 0x4c477b0) /* the second list (Quest.PrintQuestAreas' walk FUN_027cc4d0) */
+#define PRQL_NODE2 OFS(PRQL_NODE2, 0x38)     /* its node -> object */
+#define PRQL_STATE OFS(PRQL_STATE, 0x34)     /* the state (-1: +0x30's) */
+#define PRQL_STATE0 OFS(PRQL_STATE0, 0x30)
+#define PRQL_SM OFS(PRQL_SM, 0x28)           /* the state machine (an object: its vtable first) */
+#define PRQL_SM_VF OFS(PRQL_SM_VF, 0x10)     /* ... the slot CompleteActiveQuest calls with 0 after the completion */
+#define PRQL_MAX 512
+static uintptr_t g_prql_q[PRQL_MAX];  /* the last list's quests, by number */
+static int g_prql_n;
+static _Atomic int g_prql_req;        /* 1 = list, 2 = complete g_prql_pick */
+static _Atomic int g_prql_pick;
+static uintptr_t g_prql_q2[PRQL_MAX]; /* the last "list 2": its quests, by number (for "quest state N S") */
+static int g_prql_n2;
+static _Atomic int g_prql_set;        /* "quest state N S": S (0 none-yet, 2 available, 8 active ...) */
 static const struct site_spec *g_prn_sites = g_prn_sites_game; /* selftest: stand-ins */
 #define PRN_LIST GADDR(PRN_LIST, 0x46b9200)
 #define PRN_NODE OFS(PRN_NODE, 0x80)
@@ -274,6 +305,9 @@ static struct {
 	uint32_t trig_seen, menu_seen;
 	double next_clear;
 	uint32_t gate_last;
+	uint32_t gate_now;   /* build 39: this frame's gate (pr_light_held) */
+	float light_captain_cm; /* build 39 (SOMVR_PRACTICE_LIGHT_CAPTAIN_M): no weather or day change with a captain this near */
+	uint64_t light_holds;
 	/* counts */
 	int group_n;         /* build 19: SOMVR_PRACTICE_GROUP_N, the group's size (3, 4) */
 	uint64_t groups;
@@ -289,6 +323,19 @@ static _Atomic uint32_t g_pr_trig; /* the trigger word (writer thread): seq << 8
 static _Atomic uint32_t g_pr_at_req[3]; /* "practice go X Y Z": the spot's floats (published by g_pr_trig's release) */
 static char g_pr_wx[64];                /* build 36's test word "practice weather DEF" (published by g_pr_wx_pend) */
 static _Atomic int g_pr_wx_pend;
+static _Atomic int g_pr_day_word = -1;  /* build 39's test word "practice day off|weather|full" (PR_DAY_*; -1 = none) */
+/* b37 ladder (som-b37-ladder, docs/re-xr-pipeline.md 172): the test word "practice console CMD" - one console line on the
+ * game thread (pr_light_tick), only with SOMVR_HANDS_TEST=1 (never in a build's env): the story ladder's mission skip
+ * `Quest.CompleteActiveQuest` (FUN_027dd620: the active quest's completion, a real body in the release build), its
+ * `Quest.FailActiveQuest`, `Character.SetLevel`, `Character.PurchaseSkill` ... (the server commands of FUN_02aeea50's
+ * callers). Letters, digits, '.', '_', '-' and spaces only: one command, no ';' chain. Published by g_pr_con_pend. */
+static char g_pr_con[160];
+static _Atomic int g_pr_con_pend;
+static int pr_con_test(void)
+{
+	const char *ht = getenv("SOMVR_HANDS_TEST");
+	return ht && !strcmp(ht, "1");
+}
 static _Atomic int g_pr_at_has;
 static double g_pr_test_t = -1;    /* selftest: the clock (-1 = CLOCK_MONOTONIC) */
 static double pr_now(void) { return g_pr_test_t >= 0 ? g_pr_test_t : mono(); }
@@ -1045,6 +1092,28 @@ static void pr_clear(const struct pr_me *m, uint32_t gate, double t)
 
 /* ---- the light ------------------------------------------------------------------------------------------------- */
 /* the trip there arrived (under the black): a night made day (SOMVR_PRACTICE_DAY=day), the weather 0.6 s later */
+/* build 39 (som-b37-practrip2; build-win7's suite boot 105, run 20261104-234727): the light is not changed while a
+ * presentation, a cinematic or scripted camera or a sync runs, nor with a Nemesis captain within
+ * SOMVR_PRACTICE_LIGHT_CAPTAIN_M of the place - a ChangeWeather beside a captain on a wet load started a presentation
+ * (the wraith vision, an objective marker) that never ended and the fight never came. 1 = keep it (*why the reason) */
+static int pr_light_held(const float at[3], char *why, size_t n)
+{
+	uint32_t g = g_pr.gate_now & (SOMVR_PRG_PRES | SOMVR_PRG_CINE | SOMVR_PRG_SCRIPTED | SOMVR_PRG_SYNC);
+	float d = 0;
+	if (g) {
+		char gt[160];
+		somvr_pr_gate_text(g, gt, sizeof gt);
+		snprintf(why, n, "%s now", gt);
+		return 1;
+	}
+	if (g_pr.light_captain_cm > 0 && kp_captain_near(at, g_pr.light_captain_cm, &d)) {
+		snprintf(why, n, "a Nemesis captain %.0f m from the place (SOMVR_PRACTICE_LIGHT_CAPTAIN_M %.0f)", (double)(d / 100),
+			 (double)(g_pr.light_captain_cm / 100));
+		return 1;
+	}
+	return 0;
+}
+
 static void pr_light_arrived(double t)
 {
 	if (g_pr.day == PR_DAY_OFF || !g_pr.ok_light)
@@ -1067,9 +1136,18 @@ static void pr_light_arrived(double t)
 		snprintf(g_pr.orig_weather, sizeof g_pr.orig_weather, "%s", rec);
 	if (!g_pr.advanced)
 		snprintf(g_pr.orig_tod, sizeof g_pr.orig_tod, "%s", tod);
+	char why[200];
+	if (pr_light_held(g_pr.trip.target, why, sizeof why)) { /* build 39: kept as it is here */
+		g_pr.light_holds++;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f light: weather '%s', time of day '%s': kept - %s (no ChangeWeather, no "
+			      "AdvanceTimeOfDay)", t, rec, tod, why);
+		return;
+	}
 	int night = somvr_pr_is_night(tod);
-	/* a dry day: no change, no pause (build 36, SOMVR_PRACTICE_SKY=clear: an overcast one is changed too) */
-	int dry = !night && !g_pr.weather_set && !somvr_pr_sky_change(rec, g_pr.sky, g_pr.weather);
+	/* a dry day: no change, no pause (build 36, SOMVR_PRACTICE_SKY=clear: an overcast one is changed too). Build 39: a
+	 * clear day is kept after an earlier change too (the next spot's own weather; run 20261104-234727 changed SON_Day01) */
+	int dry = !night && !somvr_pr_sky_change(rec, g_pr.sky, g_pr.weather);
 	int grey = !night && !dry && !somvr_pr_is_wet(rec);
 	if (pr_log_ok(t))
 		logf_("PRACTICE t=%.3f light: weather '%s', time of day '%s'%s%s", t, rec, tod,
@@ -1094,10 +1172,16 @@ static const char *pr_light_teleport(double t)
 {
 	static char cmd[96];
 	char rec[64], tod[32];
+	char why[200];
 	g_pr.light_tp = 0;
 	if (g_pr.day == PR_DAY_OFF || !g_pr.ok_light || g_pr.weather_set || !pr_weather(rec, sizeof rec, tod, sizeof tod) ||
 	    somvr_pr_is_night(tod) || !somvr_pr_sky_change(rec, g_pr.sky, g_pr.weather))
 		return ""; /* (build 36: SOMVR_PRACTICE_SKY=clear changes an overcast day too) */
+	if (pr_light_held(g_pr.trip.target, why, sizeof why)) { /* build 39: the arrival decides again (pr_light_arrived) */
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f light: no weather with the teleport - %s", t, why);
+		return "";
+	}
 	snprintf(g_pr.orig_weather, sizeof g_pr.orig_weather, "%s", rec);
 	snprintf(g_pr.orig_tod, sizeof g_pr.orig_tod, "%s", tod);
 	snprintf(cmd, sizeof cmd, "GameServerShell.ChangeWeather %s; ", g_pr.weather);
@@ -1139,8 +1223,124 @@ static int pr_pause_busy(double t, int paused)
 	return 0;
 }
 
+/* b37 ladder: the record names an object holds in its first 0x200 bytes: " +OFF 'name'" each, 6 at most; read only */
+static void prql_recs(uintptr_t obj, char *b, size_t n)
+{
+	char seen[6][64];
+	int ns = 0;
+	size_t l = 0;
+	b[0] = 0;
+	for (uintptr_t off = 0; off < 0x200 && ns < 6 && l + 90 < n; off += 8) {
+		uintptr_t p = 0;
+		char c[64];
+		if (!peek(obj + off, &p, sizeof p) || p < 0x10000 || (p & 7))
+			continue;
+		fb_rec_name(p, c, sizeof c);
+		size_t k = strlen(c), good = k >= 3;
+		for (size_t i = 0; i < k && good; i++)
+			good = (c[i] >= 'A' && c[i] <= 'Z') || (c[i] >= 'a' && c[i] <= 'z') || (c[i] >= '0' && c[i] <= '9') ||
+			       c[i] == '_' || c[i] == '.' || c[i] == '/';
+		if (!good)
+			continue;
+		int dup = 0;
+		for (int i = 0; i < ns && !dup; i++)
+			dup = !strcmp(seen[i], c);
+		if (dup)
+			continue;
+		snprintf(seen[ns++], sizeof seen[0], "%s", c);
+		l += (size_t)snprintf(b + l, n - l, " +%#llx '%s'", (unsigned long long)off, c);
+	}
+}
+
+static int prql_state(uintptr_t q)
+{
+	int32_t s = -1, s0 = -1;
+	peek(q + PRQL_STATE, &s, sizeof s), peek(q + PRQL_STATE0, &s0, sizeof s0);
+	return s == -1 ? s0 : s;
+}
+
+/* b37 ladder: "practice quest list|complete N" on the game thread */
+static void prql_tick(double t)
+{
+	int req = atomic_exchange(&g_prql_req, 0);
+	if (!req)
+		return;
+	static int ok = -1;
+	if (ok < 0) {
+		char why[160];
+		ok = check_site(&g_prql_sites[PRQL_COMPLETE], why, sizeof why) == 0;
+		logf_("PRACTICE site %s %s %#llx: %s", g_prql_sites[PRQL_COMPLETE].name, ok ? "ok" : "MISMATCH (no quest complete)",
+		      (unsigned long long)g_prql_sites[PRQL_COMPLETE].addr, why);
+	}
+	if (req == 1 || req == 3) {
+		uintptr_t node = 0, head = req == 3 ? PRQL_LIST2 : PRQL_LIST, nofs = req == 3 ? PRQL_NODE2 : PRQL_NODE;
+		peek(head + 8, &node, sizeof node);
+		g_prql_n = 0;
+		if (req == 3)
+			g_prql_n2 = 0;
+		while (node && node != head && g_prql_n < PRQL_MAX) {
+			uintptr_t q = node - nofs, nx = 0;
+			char recs[400];
+			prql_recs(q, recs, sizeof recs);
+			logf_("PRACTICE quest%s %d q=%#llx state %d:%s", req == 3 ? " (list 2)" : "", g_prql_n, (unsigned long long)q,
+			      prql_state(q), recs[0] ? recs : " -");
+			if (req == 3)
+				g_prql_q2[g_prql_n2++] = q;
+			g_prql_q[g_prql_n++] = req == 3 ? 0 : q; /* (list 2's objects are listed, never completed) */
+			if (!peek(node + 8, &nx, sizeof nx))
+				break;
+			node = nx;
+		}
+		logf_("PRACTICE t=%.3f quest list%s: %d %s (a test aid; the list %#llx)", t, req == 3 ? " 2" : "", g_prql_n,
+		      req == 3 ? "objects" : "quests", (unsigned long long)head);
+		return;
+	}
+	int k = atomic_load(&g_prql_pick), two = req == 4;
+	uintptr_t q = two ? (k >= 0 && k < g_prql_n2 ? g_prql_q2[k] : 0) : (k >= 0 && k < g_prql_n ? g_prql_q[k] : 0), node = 0,
+		  found = 0, head = two ? PRQL_LIST2 : PRQL_LIST, nofs = two ? PRQL_NODE2 : PRQL_NODE;
+	peek(head + 8, &node, sizeof node);
+	for (int i = 0; q && node && node != head && i < 4096 && !found; i++) { /* still in the list */
+		found = node - nofs == q;
+		uintptr_t nx = 0;
+		if (!peek(node + 8, &nx, sizeof nx))
+			break;
+		node = nx;
+	}
+	uintptr_t sm = q + PRQL_SM, vt = found ? peek_ptr(sm) : 0, fn = vt ? peek_ptr(vt + PRQL_SM_VF) : 0, lo = 0, hi = 0;
+	int in_game = fn && game_range(0, &lo, &hi) && fn >= lo && fn < hi;
+	if (!ok || !found || !in_game) {
+		logf_("PRACTICE t=%.3f quest %s %d: not done (%s)", t, two ? "state" : "complete", k, !ok ? "the site did not check out"
+		      : !found ? "no such quest in the list now: `practice quest list [2]` first" : "its state machine's slot is not the game's");
+		return;
+	}
+	char recs[400];
+	prql_recs(q, recs, sizeof recs);
+	int s0 = prql_state(q);
+	if (two) { /* list 2's quest: its state machine's set (+0x10; Windows +0x8) to S - what FUN_027dd550 does with 10 */
+		int sv = atomic_load(&g_prql_set);
+		((void (*)(uintptr_t, int))fn)(sm, sv);
+		logf_("PRACTICE t=%.3f quest state %d q=%#llx: state %d -> %d (asked %d; a test aid: the quest's state machine):%s", t,
+		      k, (unsigned long long)q, s0, prql_state(q), sv, recs[0] ? recs : " -");
+		return;
+	}
+	((void (*)(uintptr_t))g_prql_sites[PRQL_COMPLETE].target)(q);
+	((void (*)(uintptr_t, int))fn)(sm, 0);
+	logf_("PRACTICE t=%.3f quest complete %d q=%#llx: state %d -> %d (a test aid: FUN_027dd550 and the state machine, as "
+	      "Quest.CompleteActiveQuest does):%s", t, k, (unsigned long long)q, s0, prql_state(q), recs[0] ? recs : " -");
+}
+
 static void pr_light_tick(double t)
 {
+	prql_tick(t);
+	if (atomic_load_explicit(&g_pr_con_pend, memory_order_acquire)) { /* b37 ladder's test word: one console line */
+		char cmd[sizeof g_pr_con], why[256] = "";
+		memcpy(cmd, g_pr_con, sizeof cmd);
+		atomic_store(&g_pr_con_pend, 0);
+		int rc = es_run(cmd, why, sizeof why);
+		logf_("PRACTICE t=%.3f console (the test word) '%s'%s%s", t, cmd, rc ? ": not run: " : ": run on the game thread",
+		      rc ? why : "");
+		return;
+	}
 	if (atomic_load_explicit(&g_pr_wx_pend, memory_order_acquire)) { /* build 36's test word: the weather, read after */
 		char cmd[128], rec[64] = "?", tod[32] = "?";
 		pr_weather(rec, sizeof rec, tod, sizeof tod);
@@ -1154,10 +1354,16 @@ static void pr_light_tick(double t)
 		return;
 	}
 	if (g_pr.light_step == 1 && t - g_pr.light_t >= PR_LIGHT_WEATHER_S) {
-		char cmd[128];
-		snprintf(cmd, sizeof cmd, "GameServerShell.ChangeWeather %s", g_pr.weather);
-		if (!pr_console(cmd, t))
-			g_pr.weather_set = 1, g_pr.weathers++, g_pr.pw_t = t, g_pr.pw_seen = 0, g_pr.pw_waits++;
+		char cmd[128], why[200];
+		if (pr_light_held(g_pr.trip.target, why, sizeof why)) { /* build 39: something came in the 0.6 s */
+			g_pr.light_holds++;
+			if (pr_log_ok(t))
+				logf_("PRACTICE t=%.3f light: the ChangeWeather not sent - %s", t, why);
+		} else {
+			snprintf(cmd, sizeof cmd, "GameServerShell.ChangeWeather %s", g_pr.weather);
+			if (!pr_console(cmd, t))
+				g_pr.weather_set = 1, g_pr.weathers++, g_pr.pw_t = t, g_pr.pw_seen = 0, g_pr.pw_waits++;
+		}
 		g_pr.light_step = 2;
 	} else if (g_pr.light_step == 2 && t - g_pr.light_t >= 1.5) {
 		char rec[64], tod[32];
@@ -1451,6 +1657,9 @@ static void pr_status(const struct pr_me *m, int have, double t)
 	      g_pr.back[1], g_pr.back[2], g_pr.orc_h ? somvr_pr_orc_label(g_pr.orc_type) : "none",
 	      g_pr.orc_h && g_pr.orc_dead ? " (down)" : "", somvr_pr_orc_label(g_pr.cur_orc), (double)hp, (double)mh,
 	      g_pr.advanced, g_pr.weather_set, g_pr.orig_weather, g_pr.orig_tod);
+	char rec[64] = "?", tod[32] = "?"; /* b37 ladder: the light now (a rung's README: the weather, the time of day) */
+	if (pr_weather(rec, sizeof rec, tod, sizeof tod))
+		logf_("PRACTICE t=%.3f status light now: weather '%s', time of day '%s'", t, rec, tod);
 }
 
 /* an object's class by its vtable's typeinfo (the Itanium ABI: *(vptr - 8) = the typeinfo, its +8 = the mangled name,
@@ -1531,10 +1740,13 @@ static void pr_navdump(const struct pr_me *m, int have, double t)
 		if (ok && ae[0] && ae[1] && rec && (o[0] || o[1] || o[2] || o[3])) {
 			((prn_pos_fn)g_prn_sites[PRN_NAV_POS].target)(mk, pos);
 			placed++;
+			/* b37 ladder: the story's markers ('golden*', 'confrontation*') are logged past the 60 (Udûn's 30+
+			 * 'LockedGate' and its flowers crowded them out, boot 20261105-033223) */
+			int story = !strncmp(name, "golden", 6) || !strncmp(name, "confrontation", 13);
 			if (!strcmp(name, "Ammo") || !strcmp(name, "Explosive") || !strcmp(name, "Firepit") ||
 			    !strcmp(name, "HangingBait"))
 				skipped++;
-			else if (logged++ < 60) {
+			else if (logged++ < 60 || story) {
 				char cls[200] = "";
 				float dm = have ? dist3(pos, m->pos) / 100.0f : -1.0f;
 				if (dm >= 0 && dm < 20) /* the objects behind a near marker: their classes (+0x260 +0x268 +0x270 +0xb0:
@@ -2064,6 +2276,14 @@ static void pr_frame(uintptr_t pl)
 	struct pr_me m;
 	int have = pr_me(pl, &m);
 	uint32_t gate = pr_gate(&m);
+	g_pr.gate_now = gate;
+	int dw = atomic_exchange(&g_pr_day_word, -1);
+	if (dw >= PR_DAY_OFF && dw <= PR_DAY_FULL) { /* build 39: the test word (a test made weather-proof by itself) */
+		static const char *const dn[] = { "0 (no weather or day change on the trips)", "weather", "day" };
+		g_pr.day = dw;
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f the day rule now SOMVR_PRACTICE_DAY=%s (the test word)", t, dn[dw]);
+	}
 	/* the requests: the trigger word, the menu's buttons */
 	uint32_t tw = atomic_load_explicit(&g_pr_trig, memory_order_acquire);
 	if (somvr_vm_pr_seq(tw) != g_pr.trig_seen) {
@@ -2188,6 +2408,55 @@ static const char *pr_word(const char *w)
 		atomic_store_explicit(&g_pr_wx_pend, 1, memory_order_release);
 		return "practice weather (a test aid: ChangeWeather on the game thread)";
 	}
+	if (!strncmp(w, "day ", 4)) { /* build 39 (a test aid): SOMVR_PRACTICE_DAY for the rest of the run */
+		int d = !strcmp(w + 4, "off") || !strcmp(w + 4, "0") ? PR_DAY_OFF : !strcmp(w + 4, "weather") ? PR_DAY_WEATHER
+			: !strcmp(w + 4, "full") || !strcmp(w + 4, "day") ? PR_DAY_FULL : -1;
+		if (d < 0)
+			return "practice day (not off|weather|full: ignored)";
+		atomic_store(&g_pr_day_word, d);
+		return "practice day (SOMVR_PRACTICE_DAY on the game thread)";
+	}
+	if (!strncmp(w, "quest ", 6)) { /* b37 ladder (a test aid, SOMVR_HANDS_TEST=1): the quests' list, one completed */
+		int nq = -1;
+		if (!pr_con_test())
+			return "practice quest (SOMVR_HANDS_TEST=1 only: ignored)";
+		if (!strncmp(w + 6, "list", 4)) {
+			int two = !strncmp(w + 10, " 2", 2);
+			atomic_store(&g_prql_req, two ? 3 : 1);
+			return two ? "practice quest list 2 (a test aid: the second list's objects, their records)"
+				   : "practice quest list (a test aid: every quest, its state and records)";
+		}
+		int ns = -1;
+		if (sscanf(w + 6, "state %d %d", &nq, &ns) == 2 && nq >= 0 && nq < PRQL_MAX && ns >= 0 && ns <= 16) {
+			atomic_store(&g_prql_pick, nq);
+			atomic_store(&g_prql_set, ns);
+			atomic_store(&g_prql_req, 4);
+			return "practice quest state (a test aid: list 2's quest N set to state S by its state machine)";
+		}
+		if (sscanf(w + 6, "complete %d", &nq) == 1 && nq >= 0 && nq < PRQL_MAX) {
+			atomic_store(&g_prql_pick, nq);
+			atomic_store(&g_prql_req, 2);
+			return "practice quest complete (a test aid: the quest the last list numbered N, as CompleteActiveQuest)";
+		}
+		return "practice quest list [2]|complete N|state N S (ignored)";
+	}
+	if (!strncmp(w, "console ", 8)) { /* b37 ladder (a test aid, SOMVR_HANDS_TEST=1): one console line (pr_light_tick) */
+		const char *d = w + 8;
+		while (*d == ' ')
+			d++;
+		size_t n = strcspn(d, "\r\n");
+		while (n && d[n - 1] == ' ')
+			n--;
+		int ok = pr_con_test() && n > 0 && n < sizeof g_pr_con;
+		for (size_t i = 0; ok && i < n; i++)
+			ok = (d[i] >= 'A' && d[i] <= 'Z') || (d[i] >= 'a' && d[i] <= 'z') || (d[i] >= '0' && d[i] <= '9') ||
+			     d[i] == '_' || d[i] == '.' || d[i] == '-' || d[i] == ' ';
+		if (!ok || atomic_load(&g_pr_con_pend))
+			return "practice console CMD (SOMVR_HANDS_TEST=1 only; letters, digits, . _ - and spaces; one at a time: ignored)";
+		memcpy(g_pr_con, d, n), g_pr_con[n] = 0;
+		atomic_store_explicit(&g_pr_con_pend, 1, memory_order_release);
+		return "practice console (a test aid: the command on the game thread)";
+	}
 	if (!strncmp(w, "mortal ", 7)) { /* build 27 (a test aid): the game's own min health back while on (Talion can die) */
 		atomic_store(&g_pr_mortal, !strcmp(w + 7, "on"));
 		return atomic_load(&g_pr_mortal) ? "practice mortal on (the game's own min health: Talion can die)" : "practice mortal off";
@@ -2259,6 +2528,7 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	g_pr.clear = env_word("SOMVR_PRACTICE_CLEAR", clear_w, 3, SOMVR_PRC_ARMED);
 	g_pr.clear_cm = 100 * env_float("SOMVR_PRACTICE_CLEAR_M", 60, 5, 200, bad);
 	g_pr.day = env_word("SOMVR_PRACTICE_DAY", day_w, 3, PR_DAY_FULL);
+	g_pr.light_captain_cm = 100 * env_float("SOMVR_PRACTICE_LIGHT_CAPTAIN_M", 40, 0, 200, bad); /* build 39 (0 = off) */
 	g_pr.sky = env_word("SOMVR_PRACTICE_SKY", sky_w, 3, SOMVR_PRSKY_DRY); /* build 36 (som-b36-winlooks) */
 	copy_env("SOMVR_PRACTICE_WEATHER", g_pr.weather, sizeof g_pr.weather);
 	int wok = g_pr.weather[0] != 0;
@@ -2388,6 +2658,10 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	      "until it ends, at most 5.5 s after the arrival)" : "off (SOMVR_PRACTICE_LOADHOLD=0: logged only)",
 	      (double)g_pr.ahead_cm, (double)g_pr.far_cm, somvr_pr_orc_label(g_pr.def_orc),
 	      somvr_pr_orc_template(g_pr.def_orc), g_pr.ok_spawn ? "on" : "OFF (its sites)", (double)g_pr.auto_s);
+	logf_("CONFIG practice light hold (build 39): no ChangeWeather or AdvanceTimeOfDay in a presentation, a cinematic or "
+	      "scripted camera or a sync, %s", g_pr.light_captain_cm > 0 ? "nor with a Nemesis captain within "
+	      "SOMVR_PRACTICE_LIGHT_CAPTAIN_M of the place (the weather kept as it is there); a clear day kept after an earlier "
+	      "change too" : "(SOMVR_PRACTICE_LIGHT_CAPTAIN_M=0: captains not looked for); a clear day kept after an earlier change too");
 	logf_("CONFIG practice ground=%s hold=%s wait=%.1f s (SOMVR_PRACTICE_GROUND, _HOLD=pin|grav, _WAIT_S; build 37): %s",
 	      g_pr.ground_on ? "on" : "off",
 	      g_pr.ground_hold ? "grav (his gravity off while nothing is under him; the pins the backstop)" : "pin",
@@ -2427,6 +2701,7 @@ static void pr_end_log(void)
 	      (unsigned long long)g_pr.restores, (unsigned long long)g_pr.pw_dry, (unsigned long long)g_pr.pw_waits,
 	      (unsigned long long)g_pr.pw_pauses, (unsigned long long)g_pr.pw_open, g_pr.pw_after_max, g_pr.pw_len_max,
 	      (unsigned long long)g_pr.pw_none, (unsigned long long)g_pr.suppressed);
+	logf_("PRACTICE END light (build 39): kept for a presentation or a captain %llu", (unsigned long long)g_pr.light_holds);
 	logf_("PRACTICE END ground (build 37): trips that waited for the ground %llu (the longest %.2f s), pins %llu, never "
 	      "came %llu (back where he was %llu); the hold %s: gravity held off %llu times (%llu frames)%s",
 	      (unsigned long long)g_pr.ground_waits, g_pr.ground_wait_max, (unsigned long long)g_pr.ground_pins,

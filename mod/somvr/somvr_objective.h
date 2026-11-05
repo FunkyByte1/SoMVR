@@ -26,7 +26,7 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_OBJECTIVE_SYMBOL "somvr_objective"
 #define SOMVR_OBJECTIVE_MAGIC 0x314a424f524d4f53ull /* "SOMROBJ1" */
-#define SOMVR_OBJECTIVE_VERSION 2u /* 2: build 17, the frame's top[] (the drop's line) */
+#define SOMVR_OBJECTIVE_VERSION 3u /* 2: build 17, the frame's top[] (the drop's line); 3: build 39, edge0/1, a_word, SOMVR_OBF_EDGE (with build 37's SOMVR_OBF_FINISH) */
 
 enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIVE=on) */
        SOMVR_OBF_SHOWN = 2u,  /* the game placed it this frame (on screen or as its edge arrow) */
@@ -52,13 +52,19 @@ enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIV
        SOMVR_OBF_TIMER = 4096u, /* build 21 (SOMVR_CLIMB_DESCENT_TIMER, with LAND): the drop's hold timer in the ring: id =
                                  * its state, 0..SOMVR_OB_TIMER_STEPS the white ring's steps left (0: empty), or
                                  * SOMVR_OB_TIMER_ARMED (emptied: the full bright ring; the flash alternates it with 0) */
-       SOMVR_OBF_FINISH = 8192u }; /* build 37 (SOMVR_FINISHER_HINT, re-xr-pipeline.md 171): not the objective but the orc
-                                    * the execution could finish: pos = its chest, dist_m = the ring's diameter (metres,
-                                    * reference space), id = the reason (somvr_finisher.h's SOMVR_FN_WHY_*, logs): the
-                                    * finisher cell (the wraith-blue ring, "FACE TO FACE / IN REACH") round it facing the
-                                    * head; out of view the edge arrow toward it */
+       SOMVR_OBF_FINISH = 8192u, /* build 37 (SOMVR_FINISHER_HINT, re-xr-pipeline.md 171): not the objective but the orc
+                                  * the execution could finish: pos = its chest, dist_m = the ring's diameter (metres,
+                                  * reference space), id = the reason (somvr_finisher.h's SOMVR_FN_WHY_*, logs): the
+                                  * finisher cell (the wraith-blue ring, "FACE TO FACE / IN REACH") round it facing the
+                                  * head; out of view the edge arrow toward it */
+       SOMVR_OBF_EDGE = 16384u }; /* build 39 (SOMVR_WALK_EDGE_STOP, SOMVR_CLIMB_TOP_A, re-xr-pipeline.md 170): alone = the
+                                   * edge's glow - a bright line from edge0 to edge1 (reference space, metres; the lip he
+                                   * stands at, ~60 cm of it) - and, a_word != 0, the A label standing over its middle
+                                   * facing the head (the A button and "DOWN" / "UP"); with LAND: the ring and the label
+                                   * just past it */
 #define SOMVR_OB_TIMER_STEPS 12
 #define SOMVR_OB_TIMER_ARMED (SOMVR_OB_TIMER_STEPS + 1)
+enum { SOMVR_OB_A_NONE = 0, SOMVR_OB_A_DOWN = 1, SOMVR_OB_A_UP = 2 }; /* SOMVR_OBF_EDGE's a_word */
 
 typedef struct {
     _Atomic uint64_t seq; /* the frame id this entry is for; 0 while written; stored last (release) */
@@ -68,6 +74,8 @@ typedef struct {
     float dist_m;         /* Talion -> it in the game's world (metres; the text) */
     uint32_t id;          /* the marker's number this session (another marker = another id; logs) */
     float top[3];         /* SOMVR_OBF_LINE: the line's top (reference space, metres; its bottom is pos) */
+    float edge0[3], edge1[3]; /* SOMVR_OBF_EDGE: the glow's ends (reference space, metres) */
+    uint32_t a_word;      /* SOMVR_OBF_EDGE: SOMVR_OB_A_* - the A label's word (0: the glow alone) */
 } somvr_objective_frame;
 
 typedef struct somvr_objective_shared {
@@ -86,11 +94,11 @@ typedef struct somvr_objective_shared {
     _Atomic uint64_t n_edge;   /* layer: frames submitted with the edge arrow */
 } somvr_objective_shared;
 
-_Static_assert(sizeof(somvr_objective_frame) == 48, "somvr_objective_frame size");
+_Static_assert(sizeof(somvr_objective_frame) == 80, "somvr_objective_frame size"); /* build 39: 48 -> 80 (edge0/1, a_word) */
 _Static_assert(offsetof(somvr_objective_shared, size_deg) == 24 && offsetof(somvr_objective_shared, last) == 40 &&
-                   offsetof(somvr_objective_shared, f) == 48 && offsetof(somvr_objective_shared, n_frames) == 432,
+                   offsetof(somvr_objective_shared, f) == 48 && offsetof(somvr_objective_shared, n_frames) == 688,
                "somvr_objective_shared offsets");
-_Static_assert(sizeof(somvr_objective_shared) == 456, "somvr_objective_shared size");
+_Static_assert(sizeof(somvr_objective_shared) == 712, "somvr_objective_shared size");
 
 static inline int somvr_objective_ok(const somvr_objective_shared *o) {
     return o && o->magic == SOMVR_OBJECTIVE_MAGIC && o->version == SOMVR_OBJECTIVE_VERSION &&
@@ -107,6 +115,8 @@ static inline void somvr_objective_put(somvr_objective_shared *o, uint64_t frame
     memcpy(e->pos, in->pos, sizeof e->pos);
     e->dist_m = in->dist_m, e->id = in->id;
     memcpy(e->top, in->top, sizeof e->top);
+    memcpy(e->edge0, in->edge0, sizeof e->edge0), memcpy(e->edge1, in->edge1, sizeof e->edge1); /* build 39 */
+    e->a_word = in->a_word;
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&o->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&o->n_frames, 1, memory_order_relaxed);
@@ -120,6 +130,8 @@ static inline int somvr_objective_get(somvr_objective_shared *o, uint64_t frame,
     memcpy(out->pos, e->pos, sizeof out->pos);
     out->dist_m = e->dist_m, out->id = e->id;
     memcpy(out->top, e->top, sizeof out->top);
+    memcpy(out->edge0, e->edge0, sizeof out->edge0), memcpy(out->edge1, e->edge1, sizeof out->edge1); /* build 39 */
+    out->a_word = e->a_word;
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);
@@ -154,9 +166,11 @@ enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2,
        SOMVR_OB_CELL_AIM = 9, SOMVR_OB_CELL_AIM_HIT = 10, /* build 21: the bow's sight, white / on an orc wraith-blue */
        SOMVR_OB_CELL_TIMER0 = 11, /* build 21: the landing ring with the drop's timer, + state (SOMVR_OBF_TIMER's id) */
        /* build 37 (SOMVR_OBF_FINISH): the finisher's hint, SOMVR_OB_WIDE strides wide in the second row after the timer's
-        * squares (the room the row had left: the texture's size unchanged) - the strike's ring, "FACE TO FACE / IN REACH" */
+        * squares (the room the row had left) - the strike's ring, "FACE TO FACE / IN REACH" */
        SOMVR_OB_CELL_FINISH = SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED + 1,
-       SOMVR_OB_CELLS = SOMVR_OB_CELL_FINISH + 1 };
+       SOMVR_OB_CELL_GLOW, /* build 39: the edge's glow (a square, the third row's first) */
+       SOMVR_OB_CELL_A_DOWN, SOMVR_OB_CELL_A_UP, /* build 39: the A labels, SOMVR_OB_WIDE strides wide each (the third row) */
+       SOMVR_OB_CELLS };
 #define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each; 8..10
                                  * squares (9 and 10: their SOMVR_OB_AIM_PX corner alone); TIMER0.. the second row */
 #define SOMVR_OB_WIDE 3
@@ -202,6 +216,14 @@ somvr_ob_place somvr_ob_strike_floor(const float head[3], const float pos[3], fl
 /* its label standing beside it: a billboard facing the head, its foot 5 cm over the ground, left edge just right of the
  * ring (as the head sees it); SOMVR_OB_STRIKE_LABEL_DEG high (at least SOMVR_OB_STRIKE_LABEL_MIN_M) */
 somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], float r_m, int cell);
+/* build 39 (SOMVR_OBF_EDGE): the edge's glow - a ribbon from e0 to e1 (reference space) facing the head,
+ * SOMVR_OB_GLOW_M wide, the cell SOMVR_OB_CELL_GLOW; and the A label (SOMVR_OB_CELL_A_DOWN / _UP by word) standing with
+ * its bottom at `at`, facing the head, SOMVR_OB_A_LABEL_DEG high as the head sees it (at least SOMVR_OB_A_LABEL_MIN_M) */
+#define SOMVR_OB_GLOW_M 0.05f
+#define SOMVR_OB_A_LABEL_DEG 3.0f
+#define SOMVR_OB_A_LABEL_MIN_M 0.09f
+somvr_ob_place somvr_ob_glow(const float e0[3], const float e1[3], const float head[3]);
+somvr_ob_place somvr_ob_a_label(const float head[3], const float at[3], uint32_t word);
 #define SOMVR_OB_STRIKE_LABEL_DEG 4.0f /* run 192114: at 2.6 deg a text line was ~0.65 deg */
 #define SOMVR_OB_STRIKE_LABEL_MIN_M 0.22f
 #define SOMVR_OB_STRIKE_LABEL_PX 156 /* the label part's width (px) */
@@ -230,7 +252,8 @@ somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], fl
 #define SOMVR_OB_AIM_RING_PX 38 /* ... its ring's outer edge across (the dark edge's; a pixel clear all round) */
 #define SOMVR_OB_AIM_WHITE_A 0.80f
 #define SOMVR_OB_AIM_DARK_A 0.40f
-#define SOMVR_OB_IMG_H (2 * SOMVR_OB_STRIDE) /* build 21: the timer's cells in a second row */
+#define SOMVR_OB_IMG_H (3 * SOMVR_OB_STRIDE) /* build 21: the timer's cells in a second row; build 39: the glow and the A
+                                              * labels in a third (the glow's square, then the two labels) */
 #define SOMVR_OB_DIAMOND_V 0.3125f
 #define SOMVR_OB_FAINT 0.40f
 void somvr_ob_rect(int cell, int32_t r[4]); /* x, y, w, h */

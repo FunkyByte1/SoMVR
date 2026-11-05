@@ -33,7 +33,8 @@
 #include "../somvr_xrloc.h"
 #include "somvr_win.h"
 #include "somvr_win_hostint.h"
-#include "somvr_fogdxbc.h" /* winport-render: the fog by the distance, in DXBC */
+#include "somvr_fogdxbc.h"
+#include "somvr_raindxbc.h" /* build 37: SOMVR_RAIN_SCALE, the rain's sheet in DXBC */
 #include "somvr_grassdxbc.h" /* build 33 (som-b33-grass): the scatter grass for VR, in DXBC (re-xr-pipeline.md 148) */
 #include "somvr_bubbledxbc.h" /* build 36 (som-b36-bubble): no foliage / bugs in the face, in DXBC (re-xr-pipeline.md 166) */
 
@@ -80,6 +81,9 @@ static struct {
 	create_gs_t create_gs;
 	uint64_t fog_edits, fog_fail, ps_n;
 	int fog_on, fog_ray; /* SOMVR_XR_FOG=radial or ray (build 33: ray) */
+	float fog_scale;     /* build 37, SOMVR_FOG_SCALE: the fog's density x this (1 = the game's) */
+	float rain_scale;    /* build 37, SOMVR_RAIN_SCALE: the rain's sheet x this (1 = the game's) */
+	unsigned rain_n;     /* its shaders edited */
 	unsigned grass;    /* SOMVR_XR_GRASS's parts (SOMVR_GRASS_*), 0 = the game's grass */
 	float grass_front; /* SOMVR_XR_GRASS_FRONT */
 	uint64_t grass_edits, grass_fail;
@@ -379,7 +383,7 @@ static HRESULT STDMETHODCALLTYPE my_create_ps(ID3D11Device *dev, const void *bc,
 	D.ps_n++;
 	size_t nn = 0;
 	const char *why = NULL;
-	unsigned char *ed = D.fog_on && bc && n > 32 ? somvr_fogdxbc(bc, n, &nn, &why) : NULL;
+	unsigned char *ed = D.fog_on && bc && n > 32 ? somvr_fogdxbc_s(bc, n, D.fog_scale, &nn, &why) : NULL;
 	int ray = 0;
 	if (ed && D.fog_ray) { /* build 33 (re-xr-pipeline.md 146.3): the density along the ray on top; else radial only */
 		size_t nr = 0;
@@ -390,6 +394,27 @@ static HRESULT STDMETHODCALLTYPE my_create_ps(ID3D11Device *dev, const void *bc,
 		else
 			somvr_win_log("FOG shader %u bytes: the density along the ray NOT added - %s (radial only)", (unsigned)n,
 				      wr ? wr : "?");
+	}
+	if (!ed && D.rain_scale != 1.0f && bc && n > 32) { /* build 37 (re-xr-pipeline.md 173.7): the rain's sheet */
+		size_t rn = 0;
+		const char *rw = NULL;
+		unsigned char *rb = somvr_raindxbc(bc, n, D.rain_scale, &rn, &rw);
+		if (rb) {
+			HRESULT hr = D.create_ps(dev, rb, rn, cl, out);
+			const unsigned char *c = rb + 4;
+			D.rain_n++;
+			somvr_win_log("RAIN shader %02x%02x%02x%02x%02x%02x%02x%02x... created at %.2f of its strength (%u -> %u bytes) "
+				      "-> %#llx", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], (double)D.rain_scale, (unsigned)n,
+				      (unsigned)rn, (unsigned long long)hr);
+			free(rb);
+			if (FAILED(hr)) {
+				somvr_win_log("RAIN edited blob refused: the game's");
+				hr = D.create_ps(dev, bc, n, cl, out);
+			}
+			return hr;
+		}
+		if (rw && strncmp(rw, "not the rain", 12) && strcmp(rw, "not DXBC") && strcmp(rw, "not a pixel shader"))
+			somvr_win_log("RAIN shader %u bytes names the rain but stays the game's: %s", (unsigned)n, rw);
 	}
 	if (!ed) {
 		int fog = 0; /* the planet's radius in it: a fog shader the edit did not take */
@@ -529,6 +554,20 @@ static HRESULT WINAPI my_create_device(IDXGIAdapter *a, D3D_DRIVER_TYPE t, HMODU
 		void **vt = *(void ***)*dev;
 		D.fog_ray = fog && !strcmp(fog, "ray"); /* build 33: ray = radial + the density along the ray */
 		D.fog_on = fog && (!strcmp(fog, "radial") || D.fog_ray);
+		/* build 37 (re-xr-pipeline.md 173.6): SOMVR_FOG_SCALE=0.05..2 - the fog's density x this (its path length, the sky
+		 * untouched); needs SOMVR_XR_FOG=radial|ray (the edit it rides on) */
+		const char *fs = getenv("SOMVR_FOG_SCALE");
+		D.fog_scale = fs && fs[0] ? (float)atof(fs) : 1.0f;
+		if (!(D.fog_scale >= 0.05f && D.fog_scale <= 2.0f))
+			somvr_win_log("WARN SOMVR_FOG_SCALE='%s' (0.05..2): 1", fs), D.fog_scale = 1.0f;
+		somvr_win_log("FOG SOMVR_FOG_SCALE=%.2f: the fog's density x %.2f%s", (double)D.fog_scale, (double)D.fog_scale,
+			      D.fog_on ? "" : " - SOMVR_XR_FOG is not radial|ray: not applied");
+		/* build 37 (re-xr-pipeline.md 173.7): SOMVR_RAIN_SCALE=0..1 - the rain's sheet (streaks and their mist) x this */
+		const char *rs = getenv("SOMVR_RAIN_SCALE");
+		D.rain_scale = rs && rs[0] ? (float)atof(rs) : 1.0f;
+		if (!(D.rain_scale >= 0.0f && D.rain_scale <= 1.0f))
+			somvr_win_log("WARN SOMVR_RAIN_SCALE='%s' (0..1): 1", rs), D.rain_scale = 1.0f;
+		somvr_win_log("RAIN SOMVR_RAIN_SCALE=%.2f: the rain's sheet x %.2f", (double)D.rain_scale, (double)D.rain_scale);
 		/* SOMVR_XR_GRASS: vr = all three parts, or a list of front,bend,push; game / unset = the game's grass */
 		D.grass = !grass ? 0 : !strcmp(grass, "vr") ? SOMVR_GRASS_FRONT | SOMVR_GRASS_BEND | SOMVR_GRASS_PUSH
 			: (strstr(grass, "front") ? SOMVR_GRASS_FRONT : 0) | (strstr(grass, "bend") ? SOMVR_GRASS_BEND : 0) |
@@ -546,7 +585,7 @@ static HRESULT WINAPI my_create_device(IDXGIAdapter *a, D3D_DRIVER_TYPE t, HMODU
 		somvr_win_log("BUBBLE foliage %s %.0f..%.0f cm, bugs %s %.0f..%.0f cm (gone inside the first, whole from the second; "
 			      "from each eye)", D.fol_in > 0 ? "dissolved" : "the game's (off)", (double)D.fol_in, (double)D.fol_out,
 			      D.bug_in > 0 ? "faded" : "the game's (off)", (double)D.bug_in, (double)D.bug_out);
-		if ((D.fog_on || (D.grass & SOMVR_GRASS_FRONT) || D.fol_in > 0) && vt[15] != (void *)my_create_ps) {
+		if ((D.fog_on || (D.grass & SOMVR_GRASS_FRONT) || D.fol_in > 0 || D.rain_scale != 1.0f) && vt[15] != (void *)my_create_ps) {
 			D.create_ps = (create_ps_t)vt[15];
 			somvr_win_log("%s: ID3D11Device::CreatePixelShader (slot 15) %s",
 				      D.fog_on ? (D.fog_ray ? "FOG SOMVR_XR_FOG=ray" : "FOG SOMVR_XR_FOG=radial") : D.grass & SOMVR_GRASS_FRONT ? "GRASS" : "BUBBLE",

@@ -257,6 +257,13 @@ def main():
         if len(prn) != 1 or [m[1] for m in prn] != ["K_ENTRY"]:
             sys.exit("expected 1 K_ENTRY SITE line in somvr_practice_game.c's PRNAV_SITES block (the read-only "
                      "PRN_NAV_POS), found %d" % len(prn))
+        # b37 ladder: "practice quest list|complete N" - the quest's completion FUN_027dd550
+        prql = [m for b in text.split("PRQUEST_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("PRQUEST_SITES_END", 1)[0])]
+        if len(prql) != 1 or [m[1] for m in prql] != ["K_ENTRY"]:
+            sys.exit("expected 1 K_ENTRY SITE line in somvr_practice_game.c's PRQUEST_SITES block (the read-only "
+                     "PRQL_COMPLETE), found %d" % len(prql))
         # build 17: the practice page's refills (the arrows' tokens add, the energy's fill, the heal)
         prf = [m for b in text.split("PRFILL_SITES_BEGIN")[1:] for m in re.findall(
             r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
@@ -264,7 +271,7 @@ def main():
         if len(prf) != 3 or [m[1] for m in prf] != ["K_ENTRY"] * 3:
             sys.exit("expected 3 K_ENTRY SITE lines in somvr_practice_game.c's PRFILL_SITES block (the read-only "
                      "PRF_TOKENS_ADD, PRF_ENERGY_FULL, PRF_HEAL), found %d" % len(prf))
-        pr = pr + prq + prn + prf
+        pr = pr + prq + prn + prql + prf
     bd = []
     if re.search(r'^#include "somvr_body_game\.c"', text, re.M):
         bd = [m for b in text.split("HANDS_SITES_BEGIN")[1:] for m in re.findall(
@@ -357,6 +364,15 @@ def main():
             sys.exit("expected 2 SITE lines in somvr_quiver_game.c's BOWSND_SITES block (the patched BS_POST_A, BS_POST_B "
                      "K_CALLs), found %d" % len(bs))
         sites = sites + bs
+    # SOMVR_AUDIO_NEAR (build 37): its block lives in somvr_wsound_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_wsound_game\.c"', text, re.M):
+        wsn = [m for b in text.split("WSOUND_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("WSOUND_SITES_END", 1)[0])]
+        if len(wsn) != 2 or [m[1] for m in wsn] != ["K_CALL"] * 2:
+            sys.exit("expected 2 SITE lines in somvr_wsound_game.c's WSOUND_SITES block (the patched WSD_REWORK, WSD_SETPOS "
+                     "K_CALLs), found %d" % len(wsn))
+        sites = sites + wsn
     # SOMVR_VERBS_GLOW (build 13): its block lives in somvr_vbglow_game.c (read with SOURCE.c above)
     if re.search(r'^#include "somvr_vbglow_game\.c"', text, re.M):
         vg = [m for b in text.split("VBGLOW_SITES_BEGIN")[1:] for m in re.findall(

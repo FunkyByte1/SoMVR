@@ -17,7 +17,8 @@
 #            bodyguards' coming and introductions, each fought (the bodyguards first; X = Kill and the stab), his rune
 # NM_REPORT=1: after a captain's death, the struggle's outcome answered by A (View Battle Report, SOMVR_USE_REPORT)
 # first, its pictures, then B (Back); the struggles step fights a struggle's second captain too (the Ambush, the Duel).
-# NM_RUN=RUN drives a running boot. nm-steps.txt: PASS/FAIL/NOTE lines.
+# NM_RUN=RUN drives a running boot. nm-steps.txt: PASS/FAIL/NOTE lines. NM_DAY=keep: the build's SOMVR_PRACTICE_DAY
+# (default: the words "practice day off" first - the run weather-proof, build 39).
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 HERE=$(cd "$(dirname "$0")" && pwd)
 WT=${NM_WT:-$(basename "$(cd "$HERE/../.." && pwd -P)")}
@@ -58,6 +59,10 @@ t() { userin && bail "the user is in VR"; { for l in "$@"; do echo "$l"; done; }
       echo "$(date +%T) xrtest: $*"; sleep "${T_S:-0.6}"; }
 x() { userin && bail "the user is in VR"; printf '%s\n' "$1" > "$R/xrtest.txt"; echo "$(date +%T) xrtest: $1"; sleep "${2:-0.8}"; }
 tap() { x "btn $1 $2 1" "${3:-0.3}"; x "btn $1 $2 0" 0.3; }
+# build 39 (som-b37-practrip2): weather-proof - no day or weather step on this run's trips (SOMVR_PRACTICE_DAY=0 by the
+# test word "practice day off"; NM_DAY=keep leaves the build's rule). build-win7's suite boot 105 loaded into rain and
+# each trip's arrival ran ChangeWeather, the third beside the captain: a presentation that never ended, no fight.
+[ "${NM_DAY:-off}" = keep ] || w "practice day off" 1
 cnt() { grep -cE "$1" "$L"; }
 lines() { wc -l < "$L"; }
 since() { tail -n +"$(( $1 + 1 ))" "$L" | grep -E "$2"; }

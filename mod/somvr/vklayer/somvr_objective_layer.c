@@ -279,7 +279,7 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     somvr_ob_place p, pl;
     memset(&p, 0, sizeof p);
     memset(&pl, 0, sizeof pl);
-    int land = have && e.n == 1 && (e.flags & SOMVR_OBF_LAND);
+    int land = have && e.n == 1 && (e.flags & (SOMVR_OBF_LAND | SOMVR_OBF_EDGE)); /* build 39: the edge's cue too */
     int fin = have && e.n == 1 && !land && (e.flags & SOMVR_OBF_FINISH); /* build 37: the finisher's hint */
     int strike = have && e.n == 1 && !land && !fin && (e.flags & SOMVR_OBF_STRIKE), ground = 0;
     int aim = have && e.n == 1 && !land && !strike && !fin && (e.flags & SOMVR_OBF_AIM); /* build 20: the bow's aim ring */
@@ -301,6 +301,16 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
         p = somvr_ob_aim(head, e.pos, e.dist_m, (e.flags & SOMVR_OBF_AIM_HIT) != 0, sight);
         ground = !sight && p.kind != SOMVR_OBK_NONE && (e.flags & SOMVR_OBF_AIM_HIT); /* the strike cell's ring square alone */
         OB.in_view = 0;
+    } else if (land && !(e.flags & SOMVR_OBF_LAND)) { /* build 39 (SOMVR_WALK_EDGE_STOP): stopped at a drop - the lip's glow
+                                                        * (XL_OBJL) and the A label standing over its middle (XL_OBJ) */
+        float head[3], at[3];
+        for (int k = 0; k < 3; k++)
+            head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]), at[k] = 0.5f * (e.edge0[k] + e.edge1[k]);
+        at[1] += 0.08f;
+        p = somvr_ob_a_label(head, at, e.a_word);
+        pl = somvr_ob_glow(e.edge0, e.edge1, head);
+        if (p.kind == SOMVR_OBK_NONE && pl.kind != SOMVR_OBK_NONE) p = pl, memset(&pl, 0, sizeof pl); /* the glow alone */
+        OB.in_view = 0;
     } else if (land) { /* build 16: the climb's landing (SOMVR_CLIMB_PULLOVER): a ring flat on the floor where he will stand */
         p = somvr_ob_floor(e.pos, e.dist_m);
         if (e.flags & SOMVR_OBF_LAND_NO && p.kind != SOMVR_OBK_NONE) /* build 18 (SOMVR_WRAITH_STEP): refused there */
@@ -312,6 +322,13 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
             float head[3], bot[3] = {e.pos[0], e.pos[1] + 0.02f, e.pos[2]};
             for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
             pl = somvr_ob_line(e.top, bot, head, e.dist_m * (5.0f / 35.0f)); /* 5 cm at Talion's size (the ring 35) */
+        } else if ((e.flags & SOMVR_OBF_EDGE) && e.a_word && p.kind != SOMVR_OBK_NONE) { /* build 39 (SOMVR_CLIMB_TOP_A):
+                                         * A up - the label standing just past the ring, as the head sees it */
+            float head[3], at[3] = {e.pos[0], e.pos[1] + 0.03f, e.pos[2]};
+            for (int k = 0; k < 3; k++) head[k] = 0.5f * (rec->eye[0].pose.p[k] + rec->eye[1].pose.p[k]);
+            float dx = e.pos[0] - head[0], dz = e.pos[2] - head[2], dh = sqrtf(dx * dx + dz * dz);
+            if (dh > 1e-3f) at[0] += dx / dh * (e.dist_m + 0.04f), at[2] += dz / dh * (e.dist_m + 0.04f);
+            pl = somvr_ob_a_label(head, at, e.a_word);
         }
     } else if (strike) { /* the Shadow Strike's mark (SOMVR_STRIKE_GAZE); build 18: by default the ring flat on the
                           * ground where Talion will land, its label standing beside it (XL_OBJL); _CHEST: build 17's
@@ -380,7 +397,7 @@ static void ob_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     OB.last_has_l = OB.has_l, OB.last_ql = OB.ql;
     if (OB.has_l) c->l[XL_OBJL] = (const XrCompositionLayerBaseHeader *)&OB.ql;
     int kind = p.kind * 4 + (p.kind ? p.cell : 0);
-    if (land && p.kind != SOMVR_OBK_NONE && p.cell >= SOMVR_OB_CELL_TIMER0) { /* build 21: the timer: one line as it starts and
+    if (land && p.kind != SOMVR_OBK_NONE && p.cell >= SOMVR_OB_CELL_TIMER0 && p.cell <= SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED) { /* build 21: the timer: one line as it starts and
                                                                                 * one as it empties, not a line a step */
         int ts = p.cell == SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED || p.cell == SOMVR_OB_CELL_TIMER0 ? 2 : 1; /* (0 left: the flash's dark beat) */
         if (ts != OB.timer_was && OB.lines < 400) {

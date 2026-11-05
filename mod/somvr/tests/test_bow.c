@@ -1373,8 +1373,110 @@ static void test_qfilter33(void) {
     CHECK(qang(q, qroll(30)) < 1e-3f, "off: the raw turn");
 }
 
+/* ---- build 37: the drawn bow on its own arrow; the arrow's side of the riser by the cant ---------------------------- */
+static float vang(sv_vec3 a, sv_vec3 b) {
+    float c = dot3(unit(a), unit(b));
+    return acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f;
+}
+static void fist_cfg(somvr_bow_cfg *c) { /* SOMVR_BOW_HOLD=fist: the shot along the grip's -Y, the limbs along +Z */
+    somvr_bow_cfg_default(c);
+    c->shot_ax[0] = 0, c->shot_ax[1] = -1, c->shot_ax[2] = 0;
+    c->limb_ax[0] = 0, c->limb_ax[1] = 0, c->limb_ax[2] = 1;
+    c->nock_ofs[0] = -1.1f, c->nock_ofs[1] = 1.7f, c->nock_ofs[2] = 4.0f; /* the 11-04 session's measured nock */
+}
+static void test_fit37(void) {
+    somvr_bow_cfg c;
+    fist_cfg(&c);
+    sv_quat up = qaxis(1, 0, 0, -90); /* the fist upright aimed +Z: the grip's -Y ahead, +Z up */
+    sv_vec3 p = { 0, 140, 40 }, H = { 0, 144, -22 }; /* the string hand 62 cm back at the cheek */
+    CHECK(vang(somvr_bow_fwd(&c, up), (sv_vec3){ 0, 0, 1 }) < 1e-3f, "the upright fist aims +Z");
+    float worst_old = 0;
+    for (int k = 0; k < 6; k++) {
+        /* a real hold: the controller's shot axis 20..70 deg off the draw (the 11-04 session's turns: 25 deg mean, up to
+         * 76), about the limbs and across them */
+        float off = 20.0f + 10.0f * (float)k;
+        sv_quat q = sv_qmul(k & 1 ? qaxis(0, 1, 0, off) : qaxis(1, 0, 0, off), up);
+        sv_vec3 n0, d0, n1, d1;
+        c.fit = 0;
+        sv_quat q0 = somvr_bow_fit(&c, p, q, H, &n0, &d0);
+        c.fit = 1;
+        sv_quat q1 = somvr_bow_fit(&c, p, q, H, &n1, &d1);
+        /* the arrow seen: from the string hand through the turned bow's own nock, against that bow's shot */
+        sv_vec3 a0 = unit((sv_vec3){ somvr_bow_nock(&c, p, q0).x - H.x, somvr_bow_nock(&c, p, q0).y - H.y,
+                                     somvr_bow_nock(&c, p, q0).z - H.z });
+        float tilt0 = vang(a0, somvr_bow_fwd(&c, q0)), shot0 = vang(d0, a0);
+        float tilt1 = vang(d1, somvr_bow_fwd(&c, q1));
+        sv_vec3 nn = somvr_bow_nock(&c, p, q1), hn = { nn.x - H.x, nn.y - H.y, nn.z - H.z };
+        worst_old = fmaxf(worst_old, fmaxf(tilt0, shot0));
+        CHECK(tilt1 < 0.05f && vang(hn, d1) < 0.05f && NEAR3(n1, nn.x, nn.y, nn.z, 1e-4),
+              "fit, the shot %.0f deg off: the arrow %.3f deg off the turned bow's shot, %.3f off the line through its nock",
+              off, tilt1, vang(hn, d1));
+    }
+    CHECK(worst_old > 0.5f, "builds 16-36 (fit off): the arrow or the shot up to %.2f deg off the bow seen", worst_old);
+    /* the step: drawn, its ray is the fit's */
+    reset();
+    fist_cfg(&g_c);
+    g_c.fit = 1;
+    g_in.q[0] = sv_qmul(qaxis(0, 1, 0, 40), up);
+    sv_vec3 nk = somvr_bow_nock(&g_c, g_in.p[0], g_in.q[0]);
+    string_at(nk.x, nk.y, nk.z - 2);
+    step();
+    g_in.string = 1;
+    step();
+    for (int i = 1; i <= 30; i++)
+        string_at(nk.x, nk.y + 4.0f * (float)i / 30, nk.z - 2 - 58.0f * (float)i / 30), step();
+    sv_vec3 n2, d2;
+    somvr_bow_fit(&g_c, g_in.p[0], g_in.q[0], g_in.p[1], &n2, &d2);
+    CHECK(g_s.phase == SOMVR_BOW_PH_DRAW && g_o.ray && NEAR3(g_o.origin, n2.x, n2.y, n2.z, 1e-4) && vang(g_o.dir, d2) < 1e-3f,
+          "the drawn step's ray = the fit's (phase %d)", g_s.phase);
+}
+static void test_side37(void) {
+    somvr_bow_cfg c;
+    fist_cfg(&c);
+    c.side_auto = 1;
+    sv_quat up = qaxis(1, 0, 0, -90);
+    sv_vec3 ahead = { 0, 0, 1 };
+#define CANT(deg) sv_qmul(qaxis(0, 0, 1, (deg)), up) /* + about the shot (+Z): the upper limb to the left (-X) */
+    CHECK(somvr_bow_side_pick(&c, up, ahead, 0) == -1, "upright: the bow hand's back (-X)");
+    CHECK(fabsf(somvr_bow_cant_deg(&c, CANT(30), ahead) + 30.0f) < 0.1f, "the cant's sign: %.1f",
+          somvr_bow_cant_deg(&c, CANT(30), ahead));
+    CHECK(somvr_bow_side_pick(&c, CANT(15), ahead, -1) == -1, "15 deg the wrong way: stays");
+    CHECK(somvr_bow_side_pick(&c, CANT(30), ahead, -1) == 1, "30 deg the wrong way (-X faces down): over to +X");
+    CHECK(somvr_bow_side_pick(&c, CANT(10), ahead, 1) == 1, "back to 10 deg: stays on +X (hysteresis)");
+    CHECK(somvr_bow_side_pick(&c, CANT(3), ahead, 1) == -1, "back to 3 deg: the bow hand's back again");
+    CHECK(somvr_bow_side_pick(&c, CANT(-60), ahead, -1) == -1, "canted 60 deg the other way: -X is up, stays");
+    CHECK(somvr_bow_side_pick(&c, CANT(150), ahead, -1) == 1, "upside down: +X");
+    CHECK(somvr_bow_side_pick(&c, CANT(60), (sv_vec3){ 0, 1, 0 }, -1) == -1, "aimed straight up: unchanged");
+    CHECK(somvr_bow_side_pick(&c, CANT(60), unit((sv_vec3){ 0, 0.8f, 0.6f }), -1) == 1, "aimed 53 deg up, canted: +X");
+    c.side_default = 1; /* a right-hand bow (SOMVR_HANDED=left): its back is +X */
+    CHECK(somvr_bow_side_pick(&c, up, ahead, 0) == 1 && somvr_bow_side_pick(&c, CANT(-30), ahead, 1) == -1 &&
+              somvr_bow_side_pick(&c, CANT(30), ahead, 1) == 1,
+          "the right-hand bow mirrored");
+    c.side_auto = 0, c.side_default = -1;
+    CHECK(somvr_bow_side_pick(&c, CANT(90), ahead, 1) == -1, "fixed: always the bow hand's back");
+    /* the step: settled while not armed, held from the armed draw to the release, picked again after */
+    reset();
+    g_c.side_auto = 1;
+    g_in.q[0] = qaxis(0, 0, 1, 40); /* (the step's default bow: the shot +Z, the limbs +Y) canted 40 deg to the left */
+    nock_and_grip();
+    CHECK(g_s.phase == SOMVR_BOW_PH_DRAW && g_o.side == 1, "nocked canted left: +X (phase %d side %d)", g_s.phase, g_o.side);
+    draw_to(35, 30);
+    g_in.q[0] = qaxis(0, 0, 1, -40); /* armed, then canted to the right */
+    steps(5);
+    CHECK(g_s.armed && g_o.side == 1 && g_s.side_flips == 0, "armed: the side held (side %d flips %llu)", g_o.side,
+          (unsigned long long)g_s.side_flips);
+    g_in.string = 0;
+    step();
+    steps(130); /* (no game aim: the shot dropped at 0.6 s, the follow-through 0.4 s after) */
+    CHECK(g_s.phase == SOMVR_BOW_PH_AIM && g_o.side == -1 && g_s.side_flips == 1, "after the shot: picked again (phase %d "
+          "side %d flips %llu)", g_s.phase, g_o.side, (unsigned long long)g_s.side_flips);
+#undef CANT
+}
+
 int main(void) {
     test_qfilter33();
+    test_fit37();
+    test_side37();
     test_geometry();
     test_shot();
     test_release_now();

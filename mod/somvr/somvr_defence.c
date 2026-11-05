@@ -459,6 +459,20 @@ int somvr_df_clank_parse(const char *v, unsigned *bits)
 	return 1;
 }
 
+/* live 11-04 (som-live-block): the clank's whole hold - the freeze, then build 32's slow tail - ends by max_s
+ * (0 = no cap: build 32's freeze + slow as set) */
+void somvr_df_clank_hold(float stop_s, float slow_s, float max_s, float *stop_out, float *slow_out)
+{
+	stop_s = stop_s > 0 ? stop_s : 0, slow_s = slow_s > 0 ? slow_s : 0;
+	if (max_s > 0) {
+		if (stop_s > max_s)
+			stop_s = max_s;
+		if (stop_s + slow_s > max_s)
+			slow_s = max_s - stop_s;
+	}
+	*stop_out = stop_s, *slow_out = slow_s;
+}
+
 const char *somvr_df_clank_str(unsigned bits, char *out, unsigned cap)
 {
 	unsigned o = 0;

@@ -1,0 +1,3 @@
+name	kind	rva	ctx_rva	ctx	target_rva	prologue	confidence	how	notes
+# b37 ladder (som-b37-ladder, docs/re-xr-pipeline.md 172): the test words "practice quest list|complete N"
+PRQL_COMPLETE	entry	0xc57160	-	16	0xc57160	15	confirmed	nbr	pairs.tsv 0x27dd550 = 0x140c57160 (nbr); its caller Quest.CompleteActiveQuest 0x27dd620 = W 0x140c5b370: call 0x140c57160 then call [rax+0x8] on q+0x28 with edx 0

@@ -30,6 +30,7 @@ void somvr_bow_cfg_default(somvr_bow_cfg *c) {
     c->shot_ax[2] = 1;
     c->zone_r_cm = 25, c->zone_half_cm = 12, c->zone_front_cm = 5;
     c->limb_ax[1] = 1;
+    c->side_default = -1, c->side_deg = 20;
 }
 
 void somvr_bow_init(somvr_bow *s) {
@@ -169,6 +170,56 @@ sv_quat somvr_bow_align_ax(sv_quat q, sv_vec3 ax, sv_vec3 dir, float w) {
     a = mul3(a, 1.0f / s);
     sv_quat r = { a.x * sinf(0.5f * ang), a.y * sinf(0.5f * ang), a.z * sinf(0.5f * ang), cosf(0.5f * ang) };
     return sv_qnormalize(sv_qmul(r, q));
+}
+
+/* ---- build 37: the drawn bow on its own arrow, the arrow's side of the riser -------------------------------------- */
+
+sv_quat somvr_bow_fit(const somvr_bow_cfg *c, sv_vec3 bow_p, sv_quat bow_q, sv_vec3 string, sv_vec3 *nock, sv_vec3 *dir) {
+    sv_vec3 ax = unit3((sv_vec3){ c->shot_ax[0], c->shot_ax[1], c->shot_ax[2] }, (sv_vec3){ 0, 0, 1 });
+    sv_vec3 n = somvr_bow_nock(c, bow_p, bow_q);
+    float w = somvr_bow_dir_weight(c, somvr_bow_back(c, bow_q, n, string));
+    sv_quat q = somvr_bow_align_ax(bow_q, ax, somvr_bow_draw_dir(n, string, NULL), w);
+    /* (fit: the turned bow's own nock is on the line; a contraction by |nock_ofs| / draw - 3 rounds: < 0.01 deg) */
+    for (int k = 0; c->fit && w > 0 && k < 3; k++)
+        n = somvr_bow_nock(c, bow_p, q), q = somvr_bow_align_ax(bow_q, ax, somvr_bow_draw_dir(n, string, NULL), w);
+    if (c->fit) n = somvr_bow_nock(c, bow_p, q);
+    if (nock) *nock = n;
+    if (dir) *dir = somvr_bow_ray_dir(c, c->fit ? q : bow_q, n, string, NULL);
+    return q;
+}
+
+/* the up direction across the arrow (dir): world +Y less its part along dir, unit; 0 = aimed within ~15 deg of straight
+ * up or down (no side is up) */
+static int up_across(sv_vec3 dir, sv_vec3 *u) {
+    sv_vec3 d = unit3(dir, (sv_vec3){ 0, 0, 1 });
+    sv_vec3 a = sub3((sv_vec3){ 0, 1, 0 }, mul3(d, d.y));
+    float l = len3(a);
+    if (!(l > 0.25f)) return 0;
+    *u = mul3(a, 1.0f / l);
+    return 1;
+}
+
+float somvr_bow_cant_deg(const somvr_bow_cfg *c, sv_quat q, sv_vec3 dir) {
+    sv_vec3 u, d = unit3(dir, (sv_vec3){ 0, 0, 1 });
+    if (!up_across(d, &u)) return NAN;
+    sv_vec3 L = unit3(sv_qrot(q, (sv_vec3){ c->limb_ax[0], c->limb_ax[1], c->limb_ax[2] }), (sv_vec3){ 0, 1, 0 });
+    L = sub3(L, mul3(d, dot3(L, d))); /* the limb across the arrow */
+    sv_vec3 r = cross3(u, d);          /* the shot's right as the archer sees it (game convention: +X right, +Z ahead) */
+    return atan2f(dot3(L, r), dot3(L, u)) * 57.29578f;
+}
+
+int somvr_bow_side_pick(const somvr_bow_cfg *c, sv_quat q, sv_vec3 dir, int side) {
+    int def = c->side_default < 0 ? -1 : 1;
+    if (!c->side_auto) return def;
+    if (side != -1 && side != 1) side = def;
+    sv_vec3 u;
+    if (!up_across(dir, &u)) return side; /* aimed up or down: as it was */
+    sv_vec3 x = sv_qrot(q, (sv_vec3){ 1, 0, 0 });
+    float up = (float)def * dot3(x, u); /* the default side's normal up (+) or down (-) across the arrow */
+    float go = sinf(c->side_deg * 0.017453292f), back = sinf(0.25f * c->side_deg * 0.017453292f);
+    if (side == def && up < -go) return -def; /* it faces down past side_deg: over to the other (the upper) side */
+    if (side != def && up > -back) return def; /* back once it faces down less than a quarter of that */
+    return side;
 }
 
 /* ---- our own shot ------------------------------------------------------------------------------------------------ */
@@ -444,7 +495,11 @@ out:
     if (s->phase == SOMVR_BOW_PH_FOLLOW) {
         o->ray = 1, o->origin = s->lat_o, o->dir = s->lat_d;
     } else if (s->phase == SOMVR_BOW_PH_DRAW && s->have[B] && s->have[S]) {
-        o->ray = 1, o->origin = nock, o->dir = somvr_bow_ray_dir(c, s->q[B], nock, s->p[S], NULL);
+        o->ray = 1;
+        if (c->fit) /* build 37: through the turned bow's own nock (the arrow seen on the riser seen) */
+            somvr_bow_fit(c, s->p[B], s->q[B], s->p[S], &o->origin, &o->dir);
+        else
+            o->origin = nock, o->dir = somvr_bow_ray_dir(c, s->q[B], nock, s->p[S], NULL);
     } else if ((s->phase == SOMVR_BOW_PH_AIM || s->phase == SOMVR_BOW_PH_DRAW) && s->have[B] &&
                c->idle_ray == SOMVR_BOW_IDLE_BOW) {
         o->ray = 1, o->origin = nock, o->dir = somvr_bow_fwd(c, s->q[B]);
@@ -461,6 +516,20 @@ out:
     o->draw_cm = s->phase == SOMVR_BOW_PH_DRAW ? s->draw_cm : 0;
     o->tension = s->phase == SOMVR_BOW_PH_DRAW ? s->tension : 0;
     o->arrow = s->arrow;
+    /* build 37: the arrow's side of the riser, picked on the bow as seen (drawn: turned onto its arrow) while it is out,
+     * settled until the draw is armed (min_draw_cm: the turn's ramp is over by then) and held from there to the release
+     * (no jump of a held aim: a side's change moves the ray ~2 deg) */
+    if (s->phase == SOMVR_BOW_PH_IDLE) {
+        s->side = 0;
+    } else if (s->have[B] && s->phase != SOMVR_BOW_PH_FOLLOW && !(s->phase == SOMVR_BOW_PH_DRAW && s->armed)) {
+        sv_quat qs = s->q[B];
+        sv_vec3 d = somvr_bow_fwd(c, qs);
+        if (s->phase == SOMVR_BOW_PH_DRAW && s->have[S]) qs = somvr_bow_fit(c, s->p[B], s->q[B], s->p[S], NULL, &d);
+        int k = somvr_bow_side_pick(c, qs, d, s->side);
+        if (s->side && k != s->side) s->side_flips++;
+        s->side = k;
+    }
+    o->side = s->side ? s->side : c->side_default < 0 ? -1 : 1;
 }
 
 int somvr_bow_string_shown(int mode, int phase) {

@@ -1,0 +1,10 @@
+name	kind	linux	windows	confidence	evidence	notes
+# b37 ladder (som-b37-ladder, docs/re-xr-pipeline.md 172)
+PRQL_LIST	global	0x4c47790	0x185fd00	confirmed	the active-quest getter FUN_027d4f70 = W 0x140c54f60: mov rbx,[0x14185fd08]; lea rsi,[0x14185fd00]; cmp rbx,rsi	the quests list sentinel
+PRQL_NODE	off	0x48	0x48	same	W 0x140c54f82: lea rdi,[rbx-0x48]	node -> quest
+PRQL_STATE	off	0x34	0x34	same	W 0x140c54f9a: mov eax,[rdi+0x34]; cmp eax,-1	-
+PRQL_STATE0	off	0x30	0x30	same	W 0x140c54fa2: mov eax,[rdi+0x30]	-
+PRQL_SM	off	0x28	0x28	same	W 0x140c5b38b: mov rax,[rbx+0x28]; lea rcx,[rbx+0x28]	-
+PRQL_SM_VF	vt	0x10	0x8	confirmed	L 0x27dd645 jmp [rax+0x10] / W 0x140c5b395 call [rax+0x8]	slot -1 (one dtor on MSVC)
+PRQL_LIST2	global	0x4c477b0	0x185fce8	confirmed	Quest.PrintQuestAreas FUN_027cc4d0 (L walks 0x4c477b8 / 0x4c477b0) = W 0x140c56c70: mov rbx,[0x14185fcf0]; lea r12,[0x14185fce8]	the second list
+PRQL_NODE2	off	0x38	0x38	same	W 0x140c56d00: lea rdi,[rbx-0x38]	node -> object

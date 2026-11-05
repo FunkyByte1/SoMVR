@@ -6260,6 +6260,37 @@ usual H9/layout lines, + the WARN of a trip that went home):**
 | win-session-20261104-172321 | build-practrip37b, the player's save copy | **PASS REACHED**: arrived after 1 teleport, a dry day kept, an orc out |
 
 
+### 27.11 No weather change beside a captain: SOMVR_PRACTICE_LIGHT_CAPTAIN_M (build 39, som-b37-practrip2, 2026-11-05)
+
+**Seen:** build-win7's suite, boot 105 (nemesis27 `struggle fight army`, run 20261104-234727 and its re-run): the save
+loaded into rain (`SON_Day03_Rain`), so every practice trip's arrival ran `GameServerShell.ChangeWeather
+TEST_Day_NoWeather` - the first with the teleport (27.9), each later one 0.6 s after the arrival (`weather_set` made
+every later arrival change it again, even onto `SON_Day01`, a clear day). The third trip landed beside a Nemesis
+captain: right after its ChangeWeather the game began a presentation the mod reads as "no captain near (another kind)"
+(the wraith vision, an objective marker), the captain went out of the world, and it never ended - every later
+`practice go` waited for it, the fight never came. Each earlier run of 105 had loaded a dry day (no ChangeWeather).
+
+**The fix:** `pr_light_held` - no ChangeWeather and no AdvanceTimeOfDay while a presentation, a cinematic or scripted
+camera or a sync runs (the gate), nor with a Nemesis captain of the save in the world within
+`SOMVR_PRACTICE_LIGHT_CAPTAIN_M` (40 m; 0 = captains not looked for) of the trip's place (`kp_captain_near`, any
+member alive and readable, our Practice > Captain too); checked with the teleport, at the arrival and again just before
+the delayed ChangeWeather. The weather stays as it is there (`light: ... kept - a Nemesis captain N m from the place`).
+Also: a clear day is kept after an earlier change too (no needless ChangeWeather). The test word `practice day
+off|weather|full` sets SOMVR_PRACTICE_DAY for the rest of a run; nemesis27-drive.sh sends `practice day off` first
+(`NM_DAY=keep` = the build's rule), so its runs do not depend on the save's weather.
+
+**Tests:** selftest 11c (a wet day, a presentation from the fade-out: no ChangeWeather with the teleport or after, the
+rain kept; the day word). The proof boot, boot-check-20261105-030055 (the tree 43625db, headless Windows, nemesis27
+`struggle fight` with `NM_DAY=keep` = the build's day rule, QUIET=0 CLEAR=0 as suite boot 105): rain made first by the
+test word (`practice weather DayNoRain` -> `SON_Day03_Rain`: ChangeWeather takes a Weather/Definition, not a state name -
+re-winport.md finding 4); the suite's exact path - trip 2, far from any captain, changed the weather with its teleport
+(allowed), then trips 3 and 4 landed 3 m and 1 m from the captain: `kept - a Nemesis captain 3 m from the place` (the
+old code changed it there, onto an already clear day, as in 20261104-234727). 7 presentations, all 7 ended; the
+struggle PASS; Talion fought at the captain (0.9-4 m, the chase, the swings). No kill this run: a warg mauled the
+captain (`AI_Bip_MonsterResist_Warg_Mauled_F`) and his promotion screen stood over the world until the driver's B
+(278.8 s; the ambient AI is on in this entry - the suite's own A/B lost k1 to a warg too). 2 WARN (the usual), the
+save UNCHANGED. An earlier dry boot (20261105-025115): the same holds at the captain, all presentations ended, k1 PASS.
+
 ## 29. The fingers on the controllers: `SOMVR_FINGERS`, and the menu's Sword angle (build 7, hands round 3, 2026-10-24)
 
 The hands of build 6 (`SOMVR_BODY=hands`, `SOMVR_SWORD_ANGLE`, `SOMVR_TWOHAND`; handoff/HANDOFF-hands.md rounds 1-2)
@@ -26046,6 +26077,44 @@ climb, tether, teleport or trip line, the root's height steady (the 4 Hz record)
 ground"; likely the grass/the body close to the eyes while looking down, or a moment not logged - open (a replay of mark
 10's 30 s would show the eyes' height frame by frame).
 
+## 170. Build 39: A = "take me over this edge" - the walk stops at drops, the lip glows with A DOWN, a hand on a top shows its ring with A UP: `SOMVR_WALK_EDGE_STOP`, `SOMVR_WALK_EDGE_HOLD`, `SOMVR_CLIMB_TOP_A` (2026-11-04, som-live-ledge)
+
+**Why.** The user's 11-04 session (logs/win-session-20261104-195050): mark 5 "I just walked off a ledge ... it should
+prompt me and I press A to walk off"; mark 8 "stuck at this ledge ... oh, that's a drop" (no cue at all); note 19 (mark
+200153_16) "if I put my hand on top of it you could put a circle there meaning I can press A to get on top of it".
+
+**Causes.** Mark 5: after a mantle onto a climbed rock top (31736 4716 -30559) the stick walked him into the crevice
+beside it at 230 cm/s - LOCO applied the walk whole, no edge keeper there, and SOMVR_CLIMB_EDGE_LOW acts only once the
+game holds the walk; WALK_GROUND then fell him ~10 m. Mark 8: the game's keeper held a short walk (19 cm asked, 12 %
+done) - under lo_walk_blocked's 40 cm per 0.5 s: no edge cue (0 in the whole session).
+
+**What (somvr.c we_*, somvr_climb.c ta_step, somvr_objective.c/.h v3, vklayer/somvr_objective_layer.c).**
+- `SOMVR_WALK_EDGE_STOP` = on (code default; 50 cm) | off | CM: on foot LOCO's level step (the stick's, and the room-scale
+  follow's in lo_take_follow) is zeroed where the floor 40 cm past the step drops more than 50 cm (three rays 12 cm apart,
+  unseen floors counted, a crack the capsule spans - floor 45 cm past it - no edge; the floor under him seen too). Held =
+  "at the edge" until the root is 30 cm away: walks toward it (60 deg) stay held without new rays; the game's own stick and
+  LOCO's speed zeroed too. Never pushed back. At the hold: A's nudge (HX_READY), the lip's glow (60 cm of it) with
+  "A DOWN" standing over it (SOMVR_OBF_EDGE; 3 s after the last held tick), lo_walk_blocked true (A goes to the edge
+  first; EDGE_LOW's way down at every drop over 50 cm, along the held way while the view is within 75 deg of it). A
+  tapped (under the drop mark's hold time) = the light step off (150 cm/s over the edge in LOCO's delta until no floor
+  is under the capsule, then the jump module's fall from rest; the game holding the step = stopped, the soft no); A held
+  = the existing ring, timer and blink.
+- `SOMVR_WALK_EDGE_HOLD` = on (code default with EDGE_STOP): stopped at a drop, the game's own move toward the edge
+  since our last tick (root - post_root) is undone in our delta - at most its own length, never back past the stop point.
+- `SOMVR_CLIMB_TOP_A` = off (code default) | on (build 39's env): on foot, every 0.1 s, a hand not holding with a floor
+  under it within 18 cm (a ray from 15 cm over it), 45 .. 250 cm over the feet, and a landing on that top in from the
+  hand (land_find, the pullover's search) = the ring on the landing with "A UP" beside it and a light tick in that hand
+  (kept 0.6 s after the hand leaves); A's press = the blink up onto it under the quick fade (before the drop mark, the
+  edge's A and the jump: jp_a_press's `pinned`).
+- The layer (SOMVR_OBJECTIVE_VERSION 3, the frame 80 bytes: edge0/edge1, a_word): SOMVR_OBF_EDGE alone = the glow
+  (XL_OBJL, a ribbon edge0..edge1 facing the head, SOMVR_OB_GLOW_M wide) and the A label (XL_OBJ, SOMVR_OB_A_LABEL_DEG
+  high, its bottom 8 cm over the glow's middle); with LAND = the ring and the label just past it. The atlas' third row:
+  the glow's cell (a white-gold core, a soft gold falloff, ends faded) and two wide label cells (a dark plate, the Touch's
+  blue A, "DOWN" / "UP"). tests/test_objective.c 101/0 (rects, texels, the quads), tests/test_climb.c 2742/0 (top A: the
+  ring, A = the blink to the landing + 105; the hand in the air, a 30 cm top, off: nothing).
+
+**Proof** (headless Windows, scripts/edge38-drive.sh: hands at the waist pointing ahead; the stick aimed at the wanted
+heading from the head's yaw, never the turn words): see handoff/HANDOFF-climb.md "Live patch 11-04" and "Build 39".
 ## 171. Build 37: the finisher after its first headset try - a snap that is felt, heard and seen, the death at full depth, the way out by the hand, the flat kill's sounds, the hint when no orc qualifies, Charge execution's orc: `SOMVR_FINISHER_FEEL`, `SOMVR_FINISHER_SOUND`, `SOMVR_FINISHER_HINT`, `SOMVR_PRACTICE_CHARGE_ORC` (2026-11-04, som-b37-finisher2)
 
 Why: the first try of 140's neck stab in the headset (the 11-04 Windows session, logs/win-session-20261104-195050,
@@ -26476,3 +26545,329 @@ reaches a surface), so no grip can hold it. A walk of 4.4 m from the spot (boot 
 deg left of its centre - whether Talion's capsule meets it stays unproven (build 36's helper saw a player stand on a
 dome 19 s). It does not climb now; making it climbable means a shape of our own for it (a sphere cap the climb's rays
 and the body's stand both answer).
+## 173. Build 37: the game's sounds placed for the head; the rain and its haze at half: `SOMVR_AUDIO_NEAR`, `SOMVR_FOG_SCALE`, `SOMVR_RAIN_SCALE` (2026-11-04/05, som-b37-audio)
+
+In the first rainy Windows session the player reported loud sounds that matched nothing they could see and swung
+oddly between the ears. The rain had started (`SON_Day03_Rain`); 20 s before the report the practice menu's "charge
+execution" had lit the wraith's fire on the sword. A second note in the same rain: too much rain and haze to see
+clearly in VR.
+
+### 173.1 What the player heard (boots 011856, 020918, 021700; `SOMVR_AUDIO_LOG=1`, 173.3)
+- **The loud sound with no source in view**: the wraith's fire on the *sheathed* sword on Talion's back -
+  `cbt_weap_blueswrd_cntr_lp`, 18-41 cm from the ears, behind and below (in VR the body is hidden: the sword is not
+  seen), against 3-4 m from the flat game's camera. As the scripted head turned its bearing ran +94..+178/-172 deg:
+  from hard right to the middle and back.
+- **The swings**: Wwise pans a stereo mix by the left-right part of a sound's direction in the head's frame. A sound
+  near the head's own up-down line is panned by a few centimetres: the music's object `mus_sea_sc_wild` sits at the
+  game's own listener point (Talion's root, 77 cm under the eyes; bearings -140, +120, +160, -127, -101 within 5 s), an
+  unnamed object 33 m straight overhead (+86 -> -48 in 5 s), the spirit tower's loop 26 m straight down.
+- The rain's own loops are not near the head: `amb_rain` on object 1 (no position) and `amb_rain_lp_hvy` 300-470 m off.
+- Static, the exe: every position goes through the sound wrapper's SetPosition (the global wrapper `SND_WRAP`,
+  Windows 0x140e29470 = Linux 0x8c9b80), which can rework it for a third-person camera (Windows 0x140e29200, Linux
+  0x8c89a0: a pull toward the listener, then a 250 cm ring at the listener's height; on while wrapper+0x14 is set by
+  CSoundMgr slot 28 / SetPlayerPos), then `AK::SoundEngine::SetPosition` (0x140fc8ea0) and the RTPC `gp_distance`.
+  In the Windows world +0x14 is off: no position reworked (the first boots' logs); the ring's 250 cm is the game's own
+  idea of "near".
+
+### 173.2 `SOMVR_AUDIO_NEAR=game|vr` (somvr_wsound.h, somvr_wsound_game.c; code default game = nothing patched; env vr)
+While the head is the listener (the AUDIO hook gave it within 0.5 s), every *game* sound is placed for the head, in
+the head's own frame (its right U x F, up U, front F - what the panner sees, also with the head pitched):
+- its left-right part is gone near the head's up-down line and comes back smoothly: r = max(`SOMVR_AUDIO_NEAR_CM`
+  (50), 0.5 x its distance); none below 0.6 r (the body's own sounds, the sword on the back), a smoothstep up to all of
+  it at r; its front-back part kept (at least (1 - s) r / 2: never noise), its up-down part kept - over, under or
+  behind the head = centred;
+- a game sound nearer than `SOMVR_AUDIO_MIN_CM` (250, the game's own near ring) is put that far in that direction (the
+  game's ring, where +0x14 is on: at the listener's height); everything else where the game puts it;
+- placed in the rework call (`WSD_REWORK`: Windows 0x140e294c9 calls it for every position, so `gp_distance` follows;
+  our stub passes the object from the caller's rsi (Windows; and keeps rcx, which the wrapper reads after the call) or
+  r12 (Linux)), at the SetPosition call where the rework did not run (`WSD_SETPOS`: Linux with the ring off);
+- the objects it moves (near, or near the line) are kept (32 at most) and placed again at each listener update when
+  the head turned 1 deg or moved 2 cm (one game update a few seconds apart would otherwise leave them where the head
+  was);
+- the mod's own Wwise objects (0x50a7xxxx: SOMVR_THREAT's, the slots' sounds at the hand) are untouched; off the head
+  listener (menus, loads, flat frames) the game's own positions. Live: `sndnear game|vr|state`.
+Lines: `CONFIG audio near=..`, `HOOK WSD_REWORK ok .. (the object passed, rcx kept)`, `SNDNEAR state|END` (reworks,
+placed, placed again, on the axis now).
+
+### 173.3 `SOMVR_AUDIO_LOG=0|1` (test only), `sndcap`
+The posts by name (BS_POST_A/B, shared) and every position: `SNDPOS t=.. 'name' obj ..: the source bearing ..; heard
+bearing ..` (each name once a second), `SNDAXIS t=.. obj .. 'name': raw .. cm, .. across, elev .. -> bearing .. pan
+..; heard bearing .. pan .. at .. cm` (each moved object twice a second; pan = sin of the bearing, -1 left .. +1 right),
+`SNDSUM` every 10 s. `sndcap start NAME|stop` calls Wwise's output capture (0x140fc87d0 / 0x140fc8890): this build's
+sound engine accepts it (AK 1) but writes no file (boot 011856) - the proof is the pan in the log.
+scripts/audio37-drive.sh drives it (the rain forced by `practice weather DayNoRain`, pictures aimed in world yaw,
+`AU_CHARGE=1`: `verbs brand charge`, then the head turned +-90 deg, 60 down, 40 up under each mode);
+scripts/audio37-wav.py reads a capture if one is ever written.
+
+### 173.4 `SOMVR_FOG_SCALE=0.05..2` (win/somvr_fogdxbc.h, Windows; code default 1; env 0.5)
+The radial fog edit (137.3, 7.5) gives the overlay's path length `movc(sky, the atmosphere's edge, distance)` the
+distance from the eye; with a scale also `mul rT.x, rT.x, l(scale)` (7 dwords): the optical depth of everything but
+the sky at scale of the game's (the opaque pass and its OIT twin: 8168 -> 8244, 9048 -> 9124 bytes). The weather's
+fog constants (`k_vFogRayleigh`, `k_vFogMieA/B/C`; fixed globals the atmosphere writes each frame) are not changed:
+materials that apply their own fog keep the game's. Linux's SPIR-V edit has no scale.
+
+### 173.5 `SOMVR_RAIN_SCALE=0..1` (win/somvr_raindxbc.h, Windows; code default 1; env 0.5)
+The Sea of Nurnen's rain weathers fall as one GPU particle system, `weather\udunnight01rain\rainfallinginair\
+rainfallinggpu01a` (son_weather.arch05, e.g. sonday03rain.embb: its .fxp names `_emit.mat` -> particleemit_rain.fxo
+(k_nParticlesToEmit), `_sim.mat` -> particlesim_rain.fxo, `_render.mat` -> **gpupart_rain.fxo**, drawn by this rain
+only: VS 7308, GS 6140, PS 4232 bytes). Its PS: the streak texture x the tint x the object colour x the particle's alpha
+(COLOR0.w from the GS), premultiplied, written `mov o0.xyz, r0.xyzx; mul o0.w, r0.w, cb0[25].w; ret`. A rain sheet
+material (DLC2.arch05, 5328 bytes, k_fRainBrightness / k_fMistBrightness; not made at Nurnen) ends the same way. The
+edit, right before that mov: `mul r0.xyzw, r0.xyzw, l(s, s, s, s)` (10 dwords): each streak at s of its strength.
+Matched by the blob's names (k_fStreakLength + k_fPeakVelocity + k_vSplatInfo - the sparks' streak has neither of
+the last two -, or k_fRainBrightness + k_fMistBrightness) and that tail. The splashes, the drips and the wet ground
+(other materials) untouched; the number of drops unchanged (the emitter's count, the other lever, is a compute
+shader's constant). Line: `RAIN shader 3e54a3f9.. created at 0.50 of its strength (4232 -> 4272 bytes) -> 0`.
+
+### 173.6 Runs (Windows under Proton, headless; scripts/headset-build26.env + `SOMVR_HANDS_TEST=1 SOMVR_AUDIO_LOG=1
+SOMVR_PRACTICE_SKY=dry`; the practice meadow, the weather forced to SON_Day03_Rain; each 2 WARN - Windows' known
+startup pair -, the install an overlay with nothing written, the test save UNCHANGED)
+| run | what it shows |
+|---|---|
+| 20261105-011856 | +0x14 off in the world: no rework; the music under the head and an object 33 m overhead swing as the head turns; the rain's loops far off; `sndcap` writes nothing |
+| 20261105-020918 | the first fix's per-object proof (steep objects: raw bearings +86..-48 / -140..+160, heard within +-12); fog x0.5: the scaled overlay, the far ruins and hills clearer (AB-ahead.jpg, AB-back.jpg in the run against 011856); the rain sheet never made at Nurnen |
+| 20261105-021700 | `verbs brand charge`: the fire on the sword on the back found (cbt_weap_blueswrd_cntr_lp, 18-39 cm, behind-below); the lean-ahead rule still threw it through the side |
+| 20261105-024101 | the before pictures (fog, rain x1; the vr preset); the world-frame rule: the sword's fire centred with the head level (pan mean 0.55 -> 0.11) but full while it looked down |
+| 20261105-024734 | the after pictures (fog, rain x0.5): the GPU rain's PS edited and taken by DXVK; the streaks' high-frequency energy in the sky, both eyes: 1.28 -> 0.75 / 1.28 -> 0.77 (rain-up); the sword's fire in the head's frame, the same sweep: game - 19-41 cm, pan mean 0.42, max 1.00, 22 of 66 beyond 0.5; vr - 250 cm, pan mean 0.01, max 0.17, 0 of 67 |
+
+### 173.7 Tests (offline) and open
+`tests/test_wsound.c` (104, build.sh): the exe's rework replayed; the VR placement - the music under the head centred
+at any yaw, 33 m overhead centred at its distance, the sword's fire within pan 0.3 at 250 cm for the head turned +-60
+and pitched -60..40 (raw over 0.9), 2 m behind-right kept in its direction, far and 15-deg-up sounds untouched, no jump
+walking out from under the head, NaN. `win/tests/test_raindxbc.c` (23; given the real PS: edited, checksum right; its
+GS refused), `win/tests/test_fogdxbc.c`'s scaled case. check_sites.py: WSD_REWORK, WSD_SETPOS ok on Linux.
+Open (the headset judges): whether 250 cm makes Talion's own sounds too quiet or still too loud (`SOMVR_AUDIO_MIN_CM`;
+the fire was at 20-40 cm), whether centred body sounds read as his own; whether half the streaks' strength is enough
+(the drops' number is the next lever: particleemit_rain's k_nParticlesToEmit); vertex fog on transparent materials.
+
+## 174. Build 37: the arrow beside the riser at every cant, and the bow from the climb's hang - `SOMVR_BOW_FIT`, `SOMVR_BOW_SIDE`, `SOMVR_BOW_SIDE_CM`, `SOMVR_BOW_SIDE_DEG`, `SOMVR_BOW_HANG` (2026-11-04, som-b37-bow)
+
+Two bow points from the 11-04 evening Windows session (win-session-20261104-220933): with some ways of holding the bow
+the nocked arrow looked as if it ran through the bow rather than lying beside it (mark 223536_5), and the player wanted
+to draw and shoot while hanging on a wall (mark 223310_2: the bow came out of its slot in the hang, nothing followed - the
+bow's gate refused every climb, the hang too: `climbing (SOMVR_CLIMB)`).
+
+### 174.1 The arrow and the riser in the player's own draws (offline: `replay_input FILE bow`)
+- tests/replay_input.c's new `bow` mode runs a recording's grips through somvr_bow.c as builds 16-36 show the drawn bow
+  (turned onto the draw, the 4 Hz twist filter) and as `SOMVR_BOW_FIT` does, every frame the bow is out (the STATE
+  records' flag) with the string hand 20 cm or more behind the nock. The session: 23 draws, 4533 drawn frames.
+- The bow's cant (its upper limb's angle from up, about the arrow) ran from -150 to +120 deg; held draws at -30..+90,
+  most at 0..60 (the upper limb to the right). The turn onto the draw averaged 25 deg (up to 76).
+- The arrow passed 0.8-1.2 cm from the limbs' line (the nock 1.1 cm beside it): never through the riser's middle, at any
+  cant. So the look of "through the bow" is the riser's own width at 1.2 cm, seen most when the bow is canted with the
+  arrow's side (the bow hand's back) facing down - the arrow then hangs under the riser's edge.
+- The shot vs the arrow seen: builds 16-36 fly the ray through the unturned grip's nock while the bow and its arrow are
+  drawn turned - 0.3 deg apart on average, up to 2.6 deg; with the fit 0.0 / 0.3 (the 4 Hz filter's lag only).
+
+### 174.2 Built
+- `SOMVR_BOW_FIT=off|on` (code default off = builds 16-36; my block on): somvr_bow_fit turns the drawn bow so that the line
+  from the string hand through the turned bow's own nock is its shot (a fixed point, 3 rounds: under 0.01 deg); the
+  drawn ray (the step's origin and direction) is that line, and the arm's drawn bow (bo_arm_grip) turns by it. What is
+  seen is what flies, at every turn of the hold. tests/test_bow.c `test_fit37` (the old line up to 0.9 deg off in its
+  poses, the fit under 0.05).
+- `SOMVR_BOW_SIDE=fixed|roll` (code default fixed; my block roll), `SOMVR_BOW_SIDE_DEG` (20): the arrow on the bow's upper
+  side - the bow hand's back while the bow is upright or canted that way (as builds 16-36), the other side once the
+  back faces down more than 20 deg past level across the arrow, back again once it faces down less than 5 deg; aimed
+  within ~15 deg of straight up or down: unchanged. It is picked on the bow as seen (drawn: turned onto its arrow) while
+  the bow is out, settles until the draw is armed (20 cm: the turn's ramp is over by then) and is held from there to the
+  release - a side's change moves the ray ~2 deg, never in a held aim. somvr_bow_side_pick / somvr_bow_cant_deg, the
+  step's `side` (bo_side_apply puts it into the nock: the limbs' line measured on the live string + the side).
+  tests/test_bow.c `test_side37` (the hysteresis, the right-hand bow mirrored, the step's hold).
+- `SOMVR_BOW_SIDE_CM` (code default 1.2 = builds 16-36; my block **2.0**): the arrow's distance from the limbs' line.
+  The riser is ~2.5 cm wide at the hand (boot 021658's upright eye view: ~60 px at 55 cm); at 1.2 cm the shaft (~0.8 cm
+  thick) ran 0.4 cm into it. 174.3.
+- Lines: `CONFIG bow side=.. fit=..`, `CONFIG bow side_deg=..`, `BOW t=.. the arrow's side: -X -> +X of the riser (the
+  bow canted N deg, PHASE; flips N)`, the per-second `BOW .. last 1 s` line ends with the side and the nock's X. Words:
+  `bow side roll|fixed|CM`, `bow fit on|off`.
+- `SOMVR_BOW_HANG=off|on` (code default off; my block on): in the climb's hands-free hang (the phase hang with no hand
+  holding: Talion still, gravity off, the stick zeroed by the climb) the bow's gate lets the bow out - the same slot,
+  draw, aim and release as on foot, the ray from the nock where Talion hangs. While it is out the climb takes no hold
+  (bo_out, as on foot); put away it is the hang again and a grip on the wall climbs on. A hold, the fling, the blink's
+  wait and the mantle stay "climbing" (no bow). Lines: `BOW t=.. the bow out in the hang (SOMVR_BOW_HANG) ..`, `BOW t=..
+  the bow in the hang ends: put away - the hang again | the climb ended | the climb left the hang (N frames, N shots)`.
+
+### 174.3 The arrow beside the riser at runtime (scripts/bow37-drive.sh `riser`, `roll`; the GOG build under Proton; scripted hands held as a real hand holds the bow - abil27c's upright fist and the player's own recorded draws)
+
+| Run (logs/boot-check-) | What it showed |
+|---|---|
+| 20261105-021658 | `roll`: the player's five held draws from the session (replay_input `--poses`: the bow canted 4, 26, 57, -26, 86 deg), each drawn with fit + side by the cant and again as builds 16-36: at -26 deg the side went over (`the arrow's side: -X -> +X of the riser (the bow canted -28 deg)`), at 86-99 deg back to -X (its upper side then), at 4 / 26 / 57 deg the bow hand's back stays (it is up); pictures roll*-new / roll*-old (pics/). `riser`: the upright eye view at 1.2 cm - the shaft runs across the riser at the hand, its tip out the other side (pics/riser600-zoom.png); the riser measured ~2.5 cm wide there. The head-moved views (above / front / side) were not comparable: the headless head drifted up to 18 cm between dumps |
+| 20261105-022841 | `riser` from the eyes only: the player's -26 deg draw at the same eye pose, 1.2 vs 2.0 cm (pics/riser26-1.2-vs-2.0-zoom.png): at 1.2 the shaft enters the riser's grip, at 2.0 it runs along its edge |
+
+- With the eyes off the bow's plane on the side away from the arrow, the riser hides part of the shaft at any offset
+  (perspective, not a clip). The side by the cant puts the arrow on the eyes' side in 3968 of 4533 of the session's
+  drawn frames (with the eyes more than 3 cm off the plane: 3863 of 4174, 92 %; `replay_input bow`'s last line); a
+  side by the eyes instead would be the next step if the headset still shows a hidden arrow.
+
+### 174.4 The bow from the hang at runtime (scripts/bow37-drive.sh `hang`: the player's wall 1 of the 11-04 19:50 session, 3 holds up hand over hand, both let go = the hang; the view snap-turned from the wall; the bow from the shoulder slot, nocked and drawn; an orc put 11 m ahead; 0 new WARN (2 standing Windows ones), the real save UNCHANGED each)
+
+| Run (logs/boot-check-) | What it showed |
+|---|---|
+| 20261105-021658 | the bow out in the hang (`enter (by the button)`, the game's aim on); an orc put first noticed Talion in 3 s and hit him 10 s later - `SOMVR_CLIMB_HIT=drop` ended the climb, the rest on the ground |
+| 20261105-022841 | out in the hang PASS, the game's aim on, the shot released from the hang (the driver released at a pose off the orc: a miss); Talion's root slid 30 cm from the wall in 2 s with no climb move (the game's aim stance); put away PASS, a grip climbs on PASS |
+| 20261105-023817 | the game swapped the PlayerMovement/proxy 5 frames after the bow came out: the climb ended "outside", Talion fell (-> bo_hang_keep) |
+| 20261105-024534 | the swap kept (`the hang kept ..`); the root slide again to the same spot; the PM-hook hold took back one 23 cm tick and no more (-> the held view) |
+| 20261105-025448 | **all PASS**: the hang; the bow out in the hang; the swap kept; the shot from the nock where Talion hangs hit the orc's head (`BOW hit .. the hit node record 'Bip_Head', the attack 'PC_Ranged_Normal_Hit_Heavy_HeadOrc'`; the ray laid onto its head by the test word `bow aimhead` - an aware orc walks faster than the scripted aim converges); the view's base 0.0 cm off while the game moved his root 30.7 cm; put away = the hang again; Talion back under the view in 2.2 s (`the view's hold ends: Talion back under it`), the view still; a grip on the wall climbs on (`resume: a new hold after 83 s hanging`). Pictures pics/frame2768 (turned from the wall), 3103 (drawn at the orc, both eyes), 3208 (the shot) |
+| 20261105-030430 | the same six PASS on the branch with main merged (build 39's SOMVR_CLIMB_HANG_FREE in: it waits while the bow is out or its view held - `somvr_climb_in.bow_hang`, test_climb's b37 cases): the hit on the head, the view's base 0.0 cm while his root moved 31.1 cm, back under the view, a grip climbs on |
+
+### 174.5 Switches (the som-b37-bow block at the end of scripts/headset-build26.env)
+
+| Switch | Code default | Build 37 env | What |
+|---|---|---|---|
+| `SOMVR_BOW_FIT` | off | **on** | the drawn bow and its shot through the turned bow's own nock |
+| `SOMVR_BOW_SIDE` | fixed | **roll** | the arrow on the bow's upper side by the cant, hysteresis |
+| `SOMVR_BOW_SIDE_CM` | 1.2 | **2.0** | the arrow's distance from the limbs' line |
+| `SOMVR_BOW_SIDE_DEG` | 20 | 20 | the side goes over past this, back under a quarter of it |
+| `SOMVR_BOW_HANG` | off | **on** | the bow in the climb's hands-free hang; the hang kept through the game's swap; the view held |
+
+Words: `bow side roll|fixed|CM`, `bow fit on|off`. None of these keys is in the player's saved settings.
+
+### 174.6 Open, and for the headset
+- The arrow's look at 2.0 cm from a real anchor at 90 Hz in stereo (headless pictures are mono-like at 20 Hz with a
+  drifting head); whether the side's change at the nock reads as natural.
+- The bow from the hang: the game's slow motion and the wraith vision come with its aim there as on foot; Talion's body
+  sits 30 cm off the wall while the view stays (the body is hidden; the hands are ours) - a shadow or a look down may
+  show it. A hit while aiming in the hang drops the climb (`SOMVR_CLIMB_HIT=drop`, as before).
+- The live-ledge helper's stuck-hang rule ("no hang out of reach"): the bow's hang is a hang near the wall (the bow
+  comes out there); while the view is held Talion's root is ~30 cm farther out than the hang began - the rule should
+  measure from the climb's own hang place, or skip while `bo_out()`.
+## 172. Build 37: the story save ladder - a test start save at each golden mission, the mission skip, `scripts/ladder_boot.sh` (2026-11-04, som-b37-ladder)
+
+GAME-STUDY item 1.6. Every story mission should start in a test game at its card without the user's saves. The rungs
+live outside git in the main checkout: `logs/test-save/ladder/<NN-mission-name>/` (GameData.sav mode 0400, its
+.sha256, README.txt; the table in logs/test-save/ladder/README.txt). handoff/HANDOFF-ladder.md has the how-to.
+
+### 172.1 The mission skip: `Quest.CompleteActiveQuest`
+- The release build registers the server console commands through `FUN_02aeea50(handler, argc, argv, name, 1)` (63
+  callers): `Quest.CompleteActiveQuest` -> `FUN_027dd620` = `q = FUN_027d4f70()` (the first quest of the list
+  `0x4c47790` in state 8 that passes a property test, or none), `FUN_027dd550(q)` (the completion: the reward
+  `FUN_0233c4b0(.., q+0x170, 1)`, `FUN_027dd1c0(q, 0)`, `FUN_02341120`, `FUN_027d2710`), then the quest's state machine
+  `(q+0x28)->vf_0x10(10)`. A real body. `Quest.FailActiveQuest` (`FUN_027da550`) too; `Quest.ListActive` is compiled
+  out (a list walk that prints nothing); `Quest.PrintQuestAreas` only touches UI clips.
+- Other server commands of that list: `Character.SetLevel / PurchaseSkill / GiveItem / GiveRunesBySlot /
+  SetPowerLevel / SetPersonality / DumpInventory`, `AI.AddBrand NAME` (`FUN_0297b9f0`: the CCharacter object of that
+  name, its brand `vf_0x1a0` = `FUN_0297b770`, which updates his Nemesis member through `FUN_023d3d40`), `AI.Morale.*`,
+  `SetInvisible`, `Player.CanBeAttacked`, `FakeDeath`, `Quest.PreventQuest`, the weather / time / slow-motion ones.
+- **The test word `practice console CMD`** (somvr_practice_game.c; only with `SOMVR_HANDS_TEST=1`, which no build's env
+  has): one console line on the game thread (`pr_light_tick`, where the practice's Teleport and ChangeWeather run);
+  letters, digits, `. _ -`, spaces (no `;` chain); one at a time. Log `PRACTICE t=.. console (the test word) 'CMD': run
+  on the game thread`. selftest 9c: refused without the test switch, a chain refused, one run, one at a time.
+  `practice status` also logs `status light now: weather '..', time of day '..'` (a rung's README).
+- **On the Windows build it completes the running story mission and the game saves at once** (boot 203305: The
+  Rescue started from its card, the skip 1 s later, the save written 1 s after it, Lithariel's marker gone; boot
+  203826: Hunting Partners -> The Great White Graug's marker at once, its card). It does nothing with no mission
+  running (205339), in the prologue (205946, 212155), and a Nemesis mission's completion ('Beck and Call', Grûblik's
+  call as a branded warchief, 210944) opens no story mission.
+- A skipped mission's own play is skipped: what it gives by play rather than by its completion may be missing on the
+  rungs after it (each README says how it was reached and lists the skills owned).
+
+### 172.2 The tools
+- `scripts/ladder_boot.sh RUNG [DRIVER [K=V ...]]`: headless_vr.sh --win in a game slot (auto, owner
+  som-b37-ladder) with a copy of the rung's save (its sha256 checked before and after), the build 26 env + the test
+  hands + the practice tools; the driver beside it (LADDER_RUN, ST_RUN, BG_RUN, PIN_RUN, P18_RUN, LADDER_RUNG). RUNG = a
+  folder or its number, a save file (a rung to be), or `new`: a new game in `logs/winport/prefix-ladder` (the ladder's
+  own reflink copy of logs/winport/prefix; its save moved aside into old-saves/; HEADLESS_SAVE_FROM=none;
+  cmds/win-ladder-new.cmd stops at the first menu page: a fresh profile shows the Gamma page, then Play -> Story Mode,
+  the opening video skipped by Return + Escape).
+- `scripts/ladder-drive.sh` steps (LADDER_STEPS, '~' = a space): look, card, start, complete, fail, console, save NAME,
+  go, marker NAME X Y Z | marker new, end, wait, shot, word, press CMD~MS~N~GAP (`verbs press`).
+- `scripts/ladder_rung.sh NN-name SAVE README` (never replaces a rung), `scripts/ladder_look.py RUN [N] --readme DIR
+  --checked TEXT` (the README's open / Talion / light / unlocked / checked lines from a look).
+- Harness: headless_win.sh keeps the prefix's save as RUN/saves/GameData.sav at a game run's end (before the slot is
+  released); headless_vr.sh `HEADLESS_SAVE_FROM=none` (with WIN_PREFIX only).
+
+### 172.3 Runs (headless, the Windows build under Proton, Monado 20 Hz; each 2 WARN - every Windows boot's H9 / layout B pair; every rung's file and every outside save UNCHANGED by sha256: logs/coord/b37/ladder-sha-before.txt / -after.txt)
+| Run | What it proves |
+|---|---|
+| 20261104-203305 | rung 18: the card 'The Rescue'; A, the video skipped; the skip -> saved at once, goldenL gone (= rung 16b) |
+| 20261104-203826 | rung 14: the card 'Hunting Partners'; the skip -> the new goldenT -35199 1736 -9388, its card 'The Great White Graug' (that save = rung 16); GWG's skip leaves its marker (its part 2) |
+| 20261104-203908 | rung 13: the card 'Big Game'; QotS's card not at 41500 3900 -22100 (that is PotW's place: the README fixed) |
+| 20261104-204450, -204449 | rung 12: the card 'Queen of the Shore' (42632 3889 -22529); rung 15: the card 'The Power of the Wraith' |
+| 20261104-204912, -204911 | rung 17: the card 'The Cure'; rung 16 booted from its own file: the card 'The Great White Graug' |
+| 20261104-205339 | rung 16b: the world, only Big Game's marker; the skip with no mission: nothing |
+| 20261104-205946 | a new game in prefix-ladder: Gamma, Play, Story Mode, the video skipped, the spar; its save = rung 00; the skip there: nothing |
+| 20261104-210944 | rung 16b: 'confrontationBranded' = 'Beck and Call' (Grûblik the Flogger, Veteran Warchief), started and skipped: no story marker |
+| 20261104-211531 | rung 00 booted: Continue = the spar, 'GP_Intro_MeleeCounter' |
+| 20261104-212155 | rung 00: the stock Y (`verbs press 119`) passes the counter lesson after 4 presses; X (118) brings no next lesson: the prologue's next step not found |
+
+### 172.4 The rungs
+| Rung | Mission | Save | Reached by | Checked |
+|---|---|---|---|---|
+| 00-prologue | Prologue | 92a103b7 | a new game (the ladder's prefix) | 211531 |
+| 12-queen-of-the-shore | Queen of the Shore | 9d97bf3f | the pinned test save (the user's own state) | 204450 |
+| 13-big-game | Big Game | 9d97bf3f | the pinned test save | 203908 |
+| 14-hunting-partners | Hunting Partners | 35f7d0e8 | build 27b/30 drills (boot 234922) | 203826 |
+| 15-the-power-of-the-wraith | The Power of the Wraith | 1bccc072 | build 26 drill played QotS (201557) | 204449 |
+| 16-the-great-white-graug | The Great White Graug | 22b6e2ba | rung 14 + Hunting Partners skipped | 204911 |
+| 16b-brand-the-warchiefs | Brand the Warchiefs (a hunt, no card) | cd82d459 | rung 18 + The Rescue skipped | 205339 |
+| 17-the-cure | The Cure | 67afd284 | build 26 drill played PotW (231219) | 204912 |
+| 18-the-rescue | The Rescue | 5a178b5d | build 27 drill played The Cure (070839) | 203305 |
+| 19-lord-of-mordor | Lord of Mordor (prep: made available) | f5f6c468 | 16b + 4 warchiefs branded (AI.AddBrand) | 20261105-030236 |
+| 20-mordor-in-flames | Mordor in Flames | d1d5c215 | 19 + Lord of Mordor skipped | 20261105-025034 |
+| 01-the-slaver | The Slaver | 49ab477e | 00 + the prologue's quests completed by the aids | 20261105-033223 |
+| 03-an-interested-party | An Interested Party | aa9eaa63 | 01 + The Slaver skipped | 20261105-040526 |
+
+### 172.5 Missing, and why
+- **19 Lord of Mordor, 20 Mordor in Flames** (the user's path): Brand the Warchiefs needs 4 more warchiefs dominated
+  (rung 16b has every other requirement done). It has no card and the skip does not reach it. The next step (item 1.8):
+  each warchief identified (an orc's Gain Intel), drawn out by his own Nemesis mission (the build 27b Olrok drill:
+  scripts/nemesis27-drive.sh), beaten, dominated at his Last Words (LT). A shorter test route to try: once he is in the
+  world, `practice console AI.AddBrand <his object name>` (the brand without the fight; whether the count takes it is
+  unproven), or the game's dead debug spawner (command 242 `Debug_SpawnAIBranded` = server message 0x21: the current
+  faction target, branded - re-combat-spawn.md 1.2) to bring him without his mission.
+- **01-11 (Udûn, The Messenger)**: behind the prologue, which must be played (the skip finds no quest in it). Its
+  lessons wait for the stock commands: the counter lesson passes by the stock Y (CombatPrimary02 119); what the next
+  lesson waits for was not found. Item 1.10's prologue drill (the VR gestures feeding each lesson) makes the rest:
+  each Udûn golden mission is then one skip from the one before, except **Kill the Warchiefs** (4 dead), which gates
+  The Dark Monument the way Brand the Warchiefs gates Lord of Mordor.
+- The optional second half of The Great White Graug (its marker stays after the skip).
+
+### 172.6 Round 2 (11-05 00:00-04:15): rungs 19, 20, 01, 03; the quest list aids
+- **The warchiefs branded by test aids** (boots 20261104-224213, -224747): `captain pick N warchief` (new; SOMVR_HANDS_TEST)
+  lets the practice's next Captain be a warchief, brought alone; `practice captain` spawns him (the save's own member,
+  the object named `SomVR_Practice`); `practice console AI.AddBrand SomVR_Practice` brands him (FUN_0297b9f0 finds the
+  object by its name, FUN_0297b770 brands it and updates his member: flags +0x3a4 bit 0x80). Sauron's Army's board:
+  1/5 -> 3/5 -> all five blue (the hunt's header gone). Two of the first four missed (the name found the previous,
+  removed Captain's object): ladder-drive.sh `wcbrand` removes each Captain after his brand and asks the brand twice.
+- **The quest lists** (`practice quest list [2]`, `practice quest complete N`, `practice quest state N S`; somvr_practice_
+  game.c, SOMVR_HANDS_TEST=1; PRQUEST_SITES block, win/sites-ladder.tsv + offsets-ladder.tsv): list 1 (sentinel
+  0x4c47790 / W 0x14185fd00, node - 0x48) = the active quests (FUN_027d4f70's walk); list 2 (0x4c477b0 / W 0x14185fce8,
+  node - 0x38, Quest.PrintQuestAreas' walk) = the region's quests. A quest: its record at +0xd0 (GP_Queen_2,
+  GP_Outro_P1 ...), the state +0x34 (or +0x30): 0 none / done, 2 available (its marker), 8 active; its state machine at
+  +0x28, slot +0x10 (Windows +0x8) = set the state (FUN_027dd550 sets 10 through it). `complete N` = FUN_027dd550 + the
+  slot with 0 (what Quest.CompleteActiveQuest does), for any active quest (boot 20261105-021212: Big Game's
+  'GP_Torvin_1' completed, Hunting Partners' marker at once). `state N 2` makes an unavailable quest available (its
+  marker and card); 2 -> 8 is refused by the state machine (a mission starts only from its card), unless the quest
+  starts itself (GP_Intro_Two did).
+- **Lord of Mordor (rung 19):** with all five branded, GP_Outro_P1 stayed state 0 (its condition needs more than the
+  brands: the hunt's domination events, or The Rescue played - not proven which). `practice quest state 96 2` -> Marwen's
+  goldenM at the docks, the card 'Lord of Mordor'; the console's `Player.Save` keeps it. The game re-checks it at every
+  load (state 0 again, boot 20261105-025756): the rung's README `prep:` line (ladder-drive.sh runs it first) makes it
+  available after each Continue (boot -030236: the card).
+- **Mordor in Flames (rung 20):** Lord of Mordor started from its card and skipped ("Lord of Mordor SUCCESS! Mission
+  Complete +1000 XP"; its battle, the execution and the Tower not played) -> GP_Outro_P2A available by the game itself,
+  the card 'Mordor in Flames' (boot -024235; the rung's own file, boot -025034). Its skip takes Talion to Udûn.
+- **The prologue:** it is a quest after all - 'Intro_Level_Gates' (state 8, in list 1; Quest.CompleteActiveQuest's
+  property test skips it). `practice quest complete 0` on rung 00 (boot 20261105-031455) -> the game saved; Continue
+  then loads Udûn (boot -032153). GP_Intro_Two (the wraith's lessons, Udûn's world script `Q_Intro_Two`) set to 2
+  started itself (8) and was completed -> The Slaver (GP_Outcast_1, goldenH) and The Spirit of Mordor (GP_Orc_1, state
+  2) open (boot -032628; rung 01). The Slaver skipped -> An Interested Party (GP_Gollum_1, goldenG; rung 03) -> skipped
+  (save logs/boot-check-20261105-033223/saves/m2.sav).
+- **Where Udûn stops:** The Spirit of Mordor is available (state 2) but the game shows **no marker** for it (no
+  'golden*' anywhere in Udûn's nav list, boots -033223, -034329, -035351), and every later Udûn mission waits on it
+  (Shattered Memories, The Outcasts, Climbing the Ranks, The One Truth, The Warchief ... all state 0). `state N 8` is
+  refused. Most likely the skipped prologue left Udûn's region story state ("Inside Story State check for intro",
+  IntroActive in blackgates.embb's script) or the first forge tower (the wraith's lessons climb it) unset. Next: play
+  GP_Intro_Two's lessons by a driver instead of skipping it (or find that state), then the chain runs by skips again;
+  Kill the Warchiefs by `captain pick N warchief` + a kill, as the brand.
+
+| Run | What it proves |
+|---|---|
+| 20261104-224213, -224747 | the four warchiefs branded by AI.AddBrand: the board 1/5 -> 3/5 -> five blue |
+| 20261105-020611 | quest list 1 empty with no mission running (it is the active list) |
+| 20261105-021212 | list 2 = the region's quests with their records and states; Big Game completed by `quest complete 0` |
+| 20261105-021919, -022419 | GP_Outro_P1 0 -> 2: the card 'Lord of Mordor'; Player.Save; LoM skipped |
+| 20261105-023626, -024235 | after LoM: GP_Outro_P2A available by the game, the card 'Mordor in Flames'; skipped -> Udûn |
+| 20261105-025034, -030236 | rungs 20 and 19 booted from their own files to their cards (19 with its prep) |
+| 20261105-030833, -031455, -032153, -032628 | the prologue's quest 'Intro_Level_Gates' completed -> Udûn; GP_Intro_Two -> The Slaver |
+| 20261105-033223, -040526 | The Slaver's and An Interested Party's cards; their skips |
+| 20261105-034329, -035351 | from m2: no golden marker anywhere; `state N 8` refused for Ratbag's and the later missions |

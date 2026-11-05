@@ -64,6 +64,10 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->fling_win_s = 0.1f, c->fling_s = 1.5f;
     c->descent = 0, c->lip_drop_cm = 150, c->lip_find_cm = 60, c->foot_cm = 102, c->lip_ramp = 2;
     c->blink_cm = 400, c->blink_max_cm = 8000, c->blink_out_cm = 40, c->blink_wait_s = 3, c->edge_look_cm = 400, c->edge_low_cm = 0;
+    c->top_a = 0, c->top_a_min_cm = 45, c->top_a_rest_cm = 18, c->top_a_keep_s = 0.6f;
+    c->foot_a = 0, c->dn_a_cms = 70;
+    c->hang_free = 1, c->hang_free_s = 1.0f, c->hang_reach_cm = 65, c->hang_ease_cms = 40, c->hang_wall_cm = 300;
+    c->hang_stall_s = 2.0f, c->hang_top_s = 3.0f;
     c->overhang = 0, c->overhang_cm = 40, c->oh_mantle = 1;
     c->pullover = 0, c->po_pull_cm = 25, c->po_up_cm = 120, c->po_down_cm = 150, c->po_block_s = 0.3f, c->po_a_keep_s = 0;
     c->hang_stick_cm = 0;
@@ -88,7 +92,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
 
 void somvr_climb_init(somvr_climb *s) {
     memset(s, 0, sizeof *s);
-    s->driver = -1, s->po_hand = -1, s->po_keep_t = -1;
+    s->driver = -1, s->po_hand = -1, s->po_keep_t = -1, s->hf_t = -1;
     for (int h = 0; h < 2; h++) s->h[h].armed = 1, s->h[h].lost_t = -1, s->h[h].near_past = -1;
 }
 
@@ -615,7 +619,7 @@ static void hang(somvr_climb *s, const somvr_climb_in *in, int disarm, somvr_cli
     }
     s->carry = (sv_vec3){ 0, 0, 0 }, s->driver = -1;
     if (s->phase != SOMVR_CLIMB_PH_HANG) {
-        s->phase = SOMVR_CLIMB_PH_HANG, s->hang_t = in->t;
+        s->phase = SOMVR_CLIMB_PH_HANG, s->hang_t = in->t, s->hf_t = -1;
         s->hangs++;
         o->events |= SOMVR_CLIMB_E_HANG;
     }
@@ -1334,6 +1338,184 @@ static int pullover(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_
     s->mt_top = k->hit, s->mt_floor = k->po_land;
     s->po_goes++, s->po_hand = -1, s->po_by_a = 0, s->po_keep_t = -1;
     return 1;
+}
+
+/* build 39 (top_a, the user's note 19: "if I put my hand on top of it you could put a circle there meaning I can press A
+ * to get on top of it"): on foot, every 0.1 s, each hand not holding: a ray down from 15 cm over it to top_a_rest_cm
+ * under it meets a floor (not water, not an orc) top_a_min_cm .. 250 cm over the feet; a landing on that top in from
+ * the hand (land_find: the pullover's) = the ring there; kept top_a_keep_s after the hand leaves it */
+static void ta_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
+                    somvr_climb_out *o) {
+    int was = s->ta_ok;
+    if (!c->top_a || s->active || !in->live || !in->allow || in->nograb || !in->root_ok || !ray || !in->can_blink ||
+        s->dm == 1) {
+        s->ta_ok = 0;
+        return;
+    }
+    if (in->t >= s->ta_probe_t) {
+        s->ta_probe_t = in->t + 0.1;
+        float feet = in->root.y - c->foot_cm;
+        int found = 0;
+        for (int h = 0; h < 2 && !found; h++) {
+            const somvr_climb_hand *hd = &in->hand[h];
+            sv_vec3 tw = { hd->pw.x - in->root.x, 0, hd->pw.z - in->root.z };
+            if (!hd->valid || s->h[h].holding || len3(tw) < 10.0f) continue;
+            tw = unit3(tw);
+            somvr_climb_hit r;
+            s->ta_probes++;
+            if (!cast(s, o, ray, ctx, h, add3(hd->pw, (sv_vec3){ 0, 15.0f, 0 }), (sv_vec3){ 0, -1, 0 }, 15.0f + c->top_a_rest_cm,
+                      &r) || !r.hit || r.wet || r.chr || r.point.y < feet + c->top_a_min_cm || r.point.y > feet + 250.0f)
+                continue;
+            float dbg[8] = { 0 };
+            sv_vec3 fl;
+            if (!land_find(s, o, ray, ctx, h, r.point, tw, r.point.y, dbg, &fl)) {
+                s->ta_nolands++;
+                continue;
+            }
+            s->ta_land = fl, s->ta_top = r.point, s->ta_hand = h, s->ta_t = in->t, found = 1;
+        }
+        s->ta_ok = found || (s->ta_ok && in->t - s->ta_t <= c->top_a_keep_s);
+    }
+    if (s->ta_ok) {
+        o->ta_show = 1, o->ta_land = s->ta_land, o->ta_top = s->ta_top;
+        if (!was) s->ta_shows++, o->ta_first = 1;
+    }
+}
+
+/* build 39 (hang_free): the hang with no hold - the face toward the wall (level rays from 40 cm over the root, the
+ * root, 60 cm under it, along the wall's toward or the top's), the nearest; within hang_reach_cm nothing; farther (up to
+ * hang_wall_cm) the ease toward it; none = released; an ease that gains under 1 cm in hang_stall_s = released.
+ * 1 = released (the climb ended) */
+static int hang_free_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray,
+                          void *ctx, somvr_climb_out *o, double dt) {
+    if (!c->hang_free || !in->root_ok || s->dm == 1 || in->bow_hang || in->t - s->hang_t < c->hang_free_s) {
+        s->hf_t = -1;
+        return 0;
+    }
+    for (int h = 0; h < 2; h++)
+        if (s->h[h].holding) return 0;
+    if (s->topped && in->t - s->hang_t >= c->hang_top_s) { /* at a top with no hold (mark 223841_10: a crest the mantle
+                                                            * finds no floor on, the face 62 cm off): let go - onto it, or
+                                                            * the fall; never a float with no way on */
+        s->hf_frees++, o->hang_freed = 3;
+        end_climb(s, SOMVR_CLIMB_END_RELEASED, 0, o);
+        return 1;
+    }
+    if (s->hf_t < 0 || in->t >= s->hf_probe_t) { /* the faces round him (every 0.2 s): the wall's way, then 8 ways */
+        s->hf_probe_t = in->t + 0.2;
+        sv_vec3 ways[9];
+        int n = 0;
+        sv_vec3 tw = { s->wall_tw.x, 0, s->wall_tw.z };
+        if (len3(tw) < 0.3f) tw = (sv_vec3){ s->top_toward.x, 0, s->top_toward.z };
+        if (len3(tw) >= 0.3f) ways[n++] = unit3(tw);
+        for (int j = 0; j < 8; j++) ways[n++] = (sv_vec3){ sinf(j * 0.7853982f), 0, cosf(j * 0.7853982f) };
+        const float ys[3] = { 40.0f, 0.0f, -60.0f };
+        s->hf_best = 1e9f;
+        for (int j = 0; j < n; j++)
+            for (int i = 0; i < 3; i++) {
+                somvr_climb_hit r;
+                if (cast(s, o, ray, ctx, 0, add3(in->root, (sv_vec3){ 0, ys[i], 0 }), ways[j], c->hang_wall_cm, &r) && r.hit &&
+                    !r.chr && r.dist < s->hf_best - 5.0f * (j > 0 && n == 9)) /* (the wall's own way wins a tie) */
+                    s->hf_best = r.dist, s->hf_dir = ways[j];
+            }
+    }
+    float best = s->hf_best;
+    sv_vec3 tw = s->hf_dir;
+    if (best > c->hang_wall_cm) { /* no wall: let go - he falls, the landing as ever */
+        s->hf_frees++, o->hang_freed = 1;
+        end_climb(s, SOMVR_CLIMB_END_RELEASED, 0, o);
+        return 1;
+    }
+    if (best <= c->hang_reach_cm) {
+        s->hf_t = -1;
+        return 0;
+    }
+    if (s->hf_t < 0) s->hf_t = in->t, s->hf_prog_t = in->t, s->hf_face = best, s->hf_eases++;
+    if (best < s->hf_face - 1.0f) s->hf_face = best, s->hf_prog_t = in->t;
+    if (in->t - s->hf_prog_t > c->hang_stall_s) { /* the ease held (a ledge, a lip in the way): let go */
+        s->hf_frees++, s->hf_frees_stall++, o->hang_freed = 2;
+        end_climb(s, SOMVR_CLIMB_END_RELEASED, 0, o);
+        return 1;
+    }
+    float d = (float)(dt > 0 && dt < 0.1 ? dt : 0.0) * c->hang_ease_cms;
+    d = fminf(d, best - c->hang_reach_cm + 1.0f);
+    if (!(d > 0.01f)) return 0;
+    request(s, o, mul3(tw, d));
+    s->hf_cm += d, o->hang_ease = d, s->hf_best -= d;
+    return 0;
+}
+
+/* build 39 (foot_a): where the floor he stands on ends along u (level unit) within 120 cm with more than the larger of
+ * edge_low_cm and 50 under it (rays down every 10 cm from 60 cm over the feet; a wall ahead = none; nothing 20 cm
+ * further either: a crack is no edge): its distance, or -1 */
+static float fa_edge(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, sv_vec3 u, somvr_climb_ray_fn ray,
+                     void *ctx, somvr_climb_out *o) {
+    float fl = in->root.y - c->foot_cm, need = fmaxf(c->edge_low_cm, 50.0f);
+    somvr_climb_hit r;
+    for (float d = 10; d <= 120.5f; d += 10) {
+        sv_vec3 f = add3(in->root, mul3(u, d));
+        f.y = fl + 60.0f;
+        if (!cast(s, o, ray, ctx, 0, f, (sv_vec3){ 0, -1, 0 }, 60.0f + need, &r)) return -1;
+        if (r.hit && r.point.y > fl + 50.0f) return -1; /* a wall ahead */
+        if (!r.hit) {
+            sv_vec3 g = add3(f, mul3(u, 20.0f));
+            if (cast(s, o, ray, ctx, 0, g, (sv_vec3){ 0, -1, 0 }, 60.0f + need, &r) && !r.hit) return d - 5.0f;
+        }
+    }
+    return -1;
+}
+/* build 39 (foot_a): A's press on foot (not at a top's ring): the edge's way - the stick's (held back: behind him), the
+ * held edge's, the view's - then the climb down (the stick back: dn_find from a hand point over the edge, the A glide) or
+ * the step off (out.fa_step for somvr.c); no edge = as before (E_BLINK_NONE, NOEDGE: the jump's) */
+static void fa_press(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray,
+                     void *ctx, somvr_climb_out *o) {
+    sv_vec3 ways[3];
+    int n = 0;
+    sv_vec3 sw = { in->stick_w.x, 0, in->stick_w.z }, hw = { in->head_fwd.x, 0, in->head_fwd.z };
+    if (in->stick_back && len3(sw) > 0.3f) ways[n++] = unit3(sw);
+    if (len3(in->walk_dir) > 0.5f) ways[n++] = unit3((sv_vec3){ in->walk_dir.x, 0, in->walk_dir.z });
+    if (len3(hw) > 0.5f) ways[n++] = unit3(hw);
+    float e = -1;
+    sv_vec3 u = { 0, 0, 0 };
+    for (int i = 0; i < n && e < 0 && in->root_ok; i++)
+        if ((e = fa_edge(s, c, in, ways[i], ray, ctx, o)) >= 0) u = ways[i];
+    o->events |= SOMVR_CLIMB_E_EDGE;
+    if (e < 0) {
+        s->bl_why = SOMVR_CLIMB_BL_NOEDGE, s->bl_noedge++, s->fa_noedges++;
+        o->events |= SOMVR_CLIMB_E_BLINK_NONE;
+        return;
+    }
+    o->fa_dir = u, o->fa_edge_cm = e;
+    if (!in->stick_back) {
+        s->fa_steps++, o->fa_step = 1;
+        return;
+    }
+    float fl = in->root.y - c->foot_cm;
+    somvr_climb_hit g; /* a drop under lip_drop_cm (the ground 30 cm past the edge): no hang there - the step off */
+    sv_vec3 gf = add3(in->root, mul3(u, e + 30.0f));
+    gf.y = fl + 30.0f;
+    if (cast(s, o, ray, ctx, 0, gf, (sv_vec3){ 0, -1, 0 }, 30.0f + c->lip_drop_cm, &g) && g.hit) {
+        s->fa_steps++, o->fa_step = 1;
+        return;
+    }
+    somvr_climb_in in2 = *in; /* the climb down: a hand point just over the edge, 60 cm over the floor */
+    in2.hand[1].pw = add3(in->root, mul3(u, e + 10.0f)), in2.hand[1].pw.y = fl + 60.0f, in2.hand[1].valid = 1;
+    if (!dn_find(s, c, &in2, 1, ray, ctx, o)) {
+        if (s->dn_why == SOMVR_CLIMB_DN_SHORT) { /* a short drop (under lip_drop_cm): no hang there - the step off */
+            s->fa_steps++, o->fa_step = 1;
+            return;
+        }
+        s->fa_nodowns++, o->fa_nodown = 1; /* no face to hang on (or no way): the soft no */
+        return;
+    }
+    for (int j = 0; j < 2; j++) s->h[j].looking = 0, s->h[j].armed = 0;
+    s->active = 1, s->phase = SOMVR_CLIMB_PH_MANTLE, s->phase_t = in->t, s->t0 = in->t, s->carry = (sv_vec3){ 0, 0, 0 };
+    s->driver = -1, s->oh_cm = 0, s->hug_max_d = 0, s->topped = 0, s->descending = 0, s->po_hand = -1;
+    s->dn = 1, s->dn_hand = 1, s->dn_end = 0, s->am_t0 = in->t, s->am_lag_s = 0, s->dn_by_a = 1, s->dn_a_held = 1;
+    s->climbs++, s->dn_goes++, s->fa_downs++;
+    o->events2 |= SOMVR_CLIMB_E_DN_GO;
+    o->fa_down = 1, o->fa_turn = hw.x * u.x + hw.z * u.z > 0.3f;
+    o->started = 1, o->active = 1, o->driver = -1;
 }
 
 /* build 36 (po_a_keep_s): the pullover's ring kept after its hand let go - still on the wall (holding, hanging or in a
@@ -2492,19 +2674,34 @@ static int dn_try(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in
 static void dn_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
                     somvr_climb_out *o, double dt) {
     int h = s->dn_hand;
-    if (!s->h[h].down) {
+    if (s->dn_by_a) { /* build 39 (foot_a): no grip drives it; a new A's press = stop here (the hang) */
+        if (!in->drop) s->dn_a_held = 0;
+        else if (!s->dn_a_held) {
+            s->dn = 0, s->dn_by_a = 0, s->dn_end = 2, s->dn_hangs++;
+            o->events2 |= SOMVR_CLIMB_E_DN_END;
+            hang(s, in, 1, o);
+            return;
+        }
+    } else if (!s->h[h].down) {
         s->dn = 0, s->dn_end = 2, s->dn_hangs++;
         o->events2 |= SOMVR_CLIMB_E_DN_END;
         hang(s, in, 1, o);
         return;
     }
-    float L = s->am_len[SOMVR_CLIMB_AM_N], v = fmaxf(c->am_cms, 50.0f);
+    float L = s->am_len[SOMVR_CLIMB_AM_N], v = s->dn_by_a ? fmaxf(c->dn_a_cms, 20.0f) : fmaxf(c->am_cms, 50.0f);
     float d = fminf((float)(in->t - s->am_t0) * v, L);
     if (!in->root_ok) return;
     sv_vec3 off = sub3(am_at(s, d), in->root);
     float lag = len3(off), dts = dt > 0 && dt < 0.2 ? (float)dt : 0.0f;
     int done = d >= L && (lag < 2.0f || in->t - s->am_t0 > L / v + 0.3);
     s->am_lag_s = lag > fmaxf(AM_LAG_CM, AM_LAG_FRAMES * v * dts) ? s->am_lag_s + dts : 0.0f;
+    if (done && s->dn_by_a) { /* build 39 (foot_a): under the lip, facing the face: the hang - the hands take it from here */
+        s->dn = 0, s->dn_by_a = 0, s->dn_end = 4, s->dn_holds++, s->wall_tw = mul3(s->dn_out, -1.0f);
+        o->events2 |= SOMVR_CLIMB_E_DN_END;
+        hang(s, in, 0, o);
+        o->active = 1, o->driver = -1;
+        return;
+    }
     if (done) { /* that hand holds: the lip is its hold (the top's edge for top / push / the pullover / the mantle) */
         somvr_climb_hold *k = &s->h[h];
         const somvr_climb_hand *hd = &in->hand[h];
@@ -2709,6 +2906,18 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             end_climb(s, SOMVR_CLIMB_END_DROP, 1, o);
         }
     }
+    ta_step(s, c, in, ray, ctx, o); /* build 39 (top_a): the top under a resting hand; A's press there = up, first */
+    if (drop && !s->ta_ok && !s->active && c->foot_a && c->descent && in->allow && !in->nograb) {
+        drop = 0; /* build 39 (foot_a): A on foot is "over this edge" - no drop ring on foot */
+        fa_press(s, c, in, ray, ctx, o);
+        if (s->active) return; /* the climb down began */
+    }
+    if (drop && s->ta_ok && !s->active && in->can_blink) {
+        s->bl_to = (sv_vec3){ s->ta_land.x, s->ta_land.y + c->foot_cm + 5.0f, s->ta_land.z };
+        s->ta_goes++, s->ta_ok = 0, s->blinks++;
+        o->blink = 1, o->blink_to = s->bl_to, o->ta_go = 1, o->ta_show = 0;
+        drop = 0; /* spent: no drop mark, no edge blink, no jump */
+    }
     if (mark && dm_step(s, c, in, ray, ctx, o, drop, s->drop_down)) return; /* the go's blink: still until its teleport */
     if (o->ended) return;
     if (!s->active && drop && !mark && c->descent && in->allow && !in->nograb) { /* A on foot: the edge ahead, down */
@@ -2890,11 +3099,16 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
                 s->stick_h = g.dist - c->foot_cm, s->stick_drops++;
                 o->events2 |= SOMVR_CLIMB_E_STICK_DROP;
                 end_climb(s, SOMVR_CLIMB_END_RELEASED, 0, o);
-            } else if (s->active && !o->move && (c->side || c->head_keep)) { /* build 39: hanging, the slide and the keep */
-                sv_vec3 hm = { 0, 0, 0 };
-                side_step(s, c, in, ray, ctx, o, &hm, (float)dt);
-                keep_step(s, c, in, ray, ctx, o, &hm, (float)dt);
-                request(s, o, hm);
+            } else {
+                if (s->active && !o->move && (c->side || c->head_keep)) { /* build 39 (climb2): hanging, the slide and the keep */
+                    sv_vec3 hm = { 0, 0, 0 };
+                    side_step(s, c, in, ray, ctx, o, &hm, (float)dt);
+                    keep_step(s, c, in, ray, ctx, o, &hm, (float)dt);
+                    request(s, o, hm);
+                }
+                if (s->active && !o->move && !s->side_on) /* build 39 (som-live-ledge): never hung out of reach - only when
+                                                           * nothing else moves him (no slide, no keep) */
+                    hang_free_step(s, c, in, ray, ctx, o, dt);
             }
         }
     } else if (!any) {

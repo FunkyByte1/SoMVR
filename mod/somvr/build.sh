@@ -144,6 +144,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_loco" "$D/tests/test_loco.c" "$D/somvr_lo
 run "$D/build/tests/test_loco"
 gcc "${CF[@]}" -o "$D/build/tests/test_threat" "$D/tests/test_threat.c" "$D/somvr_threat.c" "$D/somvr_eyes.c" "$D/somvr_pose.c" -lm
 run "$D/build/tests/test_threat"
+gcc "${CF[@]}" -o "$D/build/tests/test_wsound" "$D/tests/test_wsound.c" -lm # build 37: SOMVR_AUDIO_NEAR's placement
+run "$D/build/tests/test_wsound"
 gcc "${CF[@]}" -o "$D/build/tests/test_bodymoments" "$D/tests/test_bodymoments.c" "$D/somvr_bodymoments.c" \
     "$D/somvr_fallback.c" "$D/somvr_loco.c" "$D/somvr_pose.c" -lm
 run "$D/build/tests/test_bodymoments"
@@ -233,6 +235,8 @@ say "== Windows tables (win/README.md: win/sites-*.tsv and offsets-*.tsv against
 run -- python3 -I "$D/win/wintables.py" --check --quiet
 gcc "${CF[@]}" -o "$D/build/tests/test_fogdxbc" "$D/win/tests/test_fogdxbc.c" # winport: the fog edit in DXBC (+ the checksum on the exe's 927 blobs)
 run "$D/build/tests/test_fogdxbc" "$D/../../reference/bin/ShadowOfMordor.exe"
+gcc "${CF[@]}" -o "$D/build/tests/test_raindxbc" "$D/win/tests/test_raindxbc.c" # build 37: SOMVR_RAIN_SCALE's edit in DXBC
+run "$D/build/tests/test_raindxbc"
 gcc "${CF[@]}" -o "$D/build/tests/test_grassdxbc" "$D/win/tests/test_grassdxbc.c" # build 33: the scatter grass for VR in DXBC (SOMVR_XR_GRASS, re-xr-pipeline.md 148)
 run "$D/build/tests/test_grassdxbc"
 gcc "${CF[@]}" -o "$D/build/tests/test_bubbledxbc" "$D/win/tests/test_bubbledxbc.c" -lm # build 36: no foliage / bugs in the face, in DXBC (SOMVR_NEAR_FOLIAGE_CM, SOMVR_NEAR_BUGS_CM; re-xr-pipeline.md 166)

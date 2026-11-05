@@ -1383,6 +1383,10 @@ static void bo_moves(const somvr_bow_out *o, int was, double t);
 static int bo_arm_grip(int h, const somvr_hand hands[2], sa_xf *g, sa_xf *cal);
 static int kc_cal_r(int h, sa_xf *cal); /* build 36: the right hand's calibration while the knife is in it */
 static int bo_out(void);
+static const float *bo_hang_body(const float *body); /* build 37 (SOMVR_BOW_HANG): the view held while the game moves him */
+static void bo_hang_back(void); /* build 37: after the climb's frame - Talion back under the held view once the bow is away */
+static int bo_hang_keep(double t);  /* build 37: the game's own PlayerMovement/proxy swap at the bow in the hang - kept */
+static int bo_hang_still(void);      /* build 37: the bow out in the climb or its view held - the climb's hang_free waits */
 static const char *bo_a_holds(void); /* build 36: SOMVR_BOW_A_JUMP=draw */
 static float bo_grab(int h, float squeeze); /* SOMVR_BOW_DRAW=slot: the bow hand's trigger counts as its grab */
 static void bo_skel(uintptr_t trk);
@@ -1538,6 +1542,11 @@ struct sl_game;
 static void gs_frame(const struct sl_game *g); /* build 20, SOMVR_SLOTS_GAMESOUND (somvr_gsound_game.c) */
 static void gs_start(int *bad);
 static void gs_end_log(void);
+/* build 37, SOMVR_AUDIO_NEAR (somvr_wsound_game.c): the listener the AUDIO hook gave Wwise, the start, the end line */
+static void wsd_listener(const float pos[3], const float front[3], const float top[3]);
+static void wsd_start(int *bad);
+static void wsd_end_log(void);
+static const char *wsd_word(const char *w);
 static const char *gs_word(const char *w);
 static const char *vh_wraith_word(const char *a); /* build 36: "hands wraith 0..1|auto" (somvr_vrhands_game.c) */
 /* SOMVR_FINISH (somvr_finish_game.c, included before the gate) */
@@ -1760,6 +1769,7 @@ static void kp_end_log(void);
 static const char *kp_word(const char *w);
 static void kp_spawn(const struct pr_me *m, double t, const char *who);
 static int kp_stakes_now(void);
+static int kp_captain_near(const float at[3], float radius_cm, float *dist_cm); /* build 39: a captain near a place */
 static void kp_frame(const struct pr_me *m, int have, double t);
 static uint32_t kp_fb(uintptr_t pl, uint32_t fb, int dead, double t); /* bm_pre: a captain's presentation in the world */
 static int kp_force_kill(uintptr_t c, int kind, const char *what, double t);
@@ -2137,6 +2147,7 @@ static void eye0_setup(void *cam)
 	body = lo_anchor_body(body); /* SOMVR_ANCHOR=root: Talion's root + the calibrated eye height instead of the head node */
 	body = hv_body(body, player); /* SOMVR_EYE_FWD_CM: the eye ahead of the face in Talion's body frame; SOMVR_TUNE */
 	body = mt_body(body);         /* SOMVR_RIDE: seated, the seat (the beast's root + the rider's eyes, filtered) */
+	body = bo_hang_body(body);    /* build 37, SOMVR_BOW_HANG: the view held where the bow came out in the hang */
 	uint64_t before = g_rig.recenters;
 	g_fr.base = somvr_rig_frame(&g_rig, &g_rigcfg, g_fr.views.pose, &g_fr.game, body, want, snap);
 	bm_base(&g_fr.base); /* SOMVR_BODYMOMENTS: the frozen anchor, the re-seat, the player's yaw */
@@ -3033,8 +3044,10 @@ __attribute__((used)) void somvr_aud_c(struct regs *r)
 	float in[3] = { 0, 0, 0 };
 	int in_ok = lg && peek((uintptr_t)pos, in, sizeof in); /* the manager may not be up (vf_23 then reads nothing) */
 	r->rax = ((aud_fn)h->orig)(self, use ? g_head.pos : pos, use ? g_head.front : front, use ? g_head.top : top, idx);
-	if (use)
+	if (use) {
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
+		wsd_listener(g_head.pos, g_head.front, g_head.top); /* build 37, SOMVR_AUDIO_NEAR: the sounds placed for it */
+	}
 	if (!lg)
 		return;
 	if (idx == 0)
@@ -5994,6 +6007,7 @@ static void in_frame(void)
 	ab2_hands(p, pw, hp, hq); /* build 27c: the ignite's B, the dagger's throw, the hand at the mouth */
 	ab3_hands(pw, qw, hp);    /* build 27d: the taunt's beckon, the distract's X */
 	cl_frame(p, pw, qw);    /* SOMVR_CLIMB: the grips, the holds, the body's move for the next tick */
+	bo_hang_back();         /* build 37, SOMVR_BOW_HANG: the bow put away - Talion back under the held view */
 	hr_frame();             /* SOMVR_HEAD_ROCK: the head's clearance (the climb's rays), the next record's fade */
 	sf_frame(pw, qw, hp, hq); /* SOMVR_HANDS_SURFACE: the rays for the next phase 2 (after the climb's) */
 	fi_hands(p, q, v, w);   /* SOMVR_FINISH: the left grip as the dagger, the left hand's controls */
@@ -9384,6 +9398,9 @@ static struct {
 	int loyaw;                  /* the test word `climb loyaw game`: LOCO leaves the body's yaw to the game (test aid) */
 	float stick_raw;            /* the move stick's tilt as held (cl_tick, before a climb holds it off) and its frame */
 	uint64_t stick_frame;
+	int ta_show;                /* build 39 (SOMVR_CLIMB_TOP_A): a top under a resting hand: its ring and A UP (ob_frame) */
+	sv_vec3 ta_land;
+	uint64_t ta_frames;
 	int po_show;                /* SOMVR_CLIMB_PULLOVER: armed now: the landing (world cm) shown (ob_frame) */
 	sv_vec3 po_land;
 	float po_pull;
@@ -9857,6 +9874,34 @@ static struct {
 	sv_vec3 lip_n;
 } g_un;
 
+/* live 11-04 (SOMVR_WALK_EDGE_STOP, the 11-04 Windows session's marks 5 and 8): the walk (the stick's or the room-scale
+ * follow's, LOCO's delta) never takes Talion off a drop of more than cm: it stops where the floor ahead (lead_cm past the
+ * step) ends; held there = "at an edge" - the cue (A's nudge, the drop's ring and line), lo_walk_blocked for the climb's
+ * A on foot (SOMVR_CLIMB_EDGE_LOW's way down at every height); A tapped there = the light step off (we_step_*) */
+static struct {
+	int on;
+	float cm, lead_cm, step_cms;
+	int at;                  /* held at an edge: until the root is 30 cm from where (we_frame) */
+	int miss;                /* build 39: ticks in a row a new drop was seen (3 = the stop) */
+	int facing;              /* ... the view's heading within 75 deg of the held way (cl_frame) */
+	sv_vec3 at_root, at_dir; /* ... where, the walk's way (level unit) */
+	double held_t, at_t0, buzz_t; /* the last tick held; this stay's first; the last nudge */
+	int show;                /* the cue: the lip's glow and A's label (ob_frame, SOMVR_OBF_EDGE) */
+	sv_vec3 land, top, e0, e1; /* ... the ground past the edge (logs); the glow's ends (60 cm of the lip) */
+	float drop_cm;
+	int need_land;
+	int a_down, a_at;        /* A on foot: down, pressed while at the edge */
+	double a_t0;
+	int hold;                /* build 39 (SOMVR_WALK_EDGE_HOLD): the game's own slide toward the edge countered */
+	uint64_t hold_ticks;
+	double hold_cm, hold_max_cm;
+	int step;                /* the light step off: 1 walking over the edge, 2 the fall asked */
+	sv_vec3 step_dir, step_r0;
+	float step_need, step_asked;
+	double step_t0;
+	uint64_t ticks, holds, follows, buzzes, shows, steps, step_falls, step_stalls, step_noedge, rays;
+} g_we;
+
 static int un_log_ok(double t)
 {
 	if (g_un.lines < 60 || t >= g_un.next_line) {
@@ -10041,6 +10086,173 @@ static void un_ground_guard(uintptr_t pc, const float r[3], double t)
 		      "here - the jump's arc from rest, its landing (SOMVR_WALK_GROUND; try %.0f; the root %.1f,%.1f,%.1f; %s)", t,
 		      t - g_un.gr_t0, v, v == 0 ? " -> 1" : "", g_un.gr_cm, r[0], r[1], r[2], what);
 	}
+}
+
+/* SOMVR_WALK_EDGE_STOP (g_we): the floor at the level point p - a ray down from 60 cm over the feet to cm under them
+ * (unseen surfaces stepped past, as WALK_GROUND's). 1 = a floor (or a wall, an orc, water: the game's), 0 = a drop of
+ * more than cm (or nothing), -1 = no answer */
+static int we_floor_at(float x, float z, float feet, float cm)
+{
+	somvr_climb_hit hit;
+	memset(&hit, 0, sizeof hit);
+	g_we.rays++;
+	/* build 39: unseen surfaces stepped past (as WALK_GROUND's and the climb's rays): an edge keeper's invisible top is no
+	 * floor - the stop comes before the keeper, never a walk into it (the 11-04 22:09 session's ledge: 641 cm asked, 643
+	 * taken back between the ticks - the spasm) */
+	int ok = cl_ray(NULL, -1, (sv_vec3){ x, feet + 60.0f, z }, (sv_vec3){ 0, -1, 0 }, 60.0f + cm, &hit);
+	if (!ok)
+		return -1;
+	return hit.hit ? 1 : 0;
+}
+/* ... the floor lead_cm past a step of l cm along u (level unit): 0 only when the centre and both sides (12 cm aside)
+ * find no floor (a seam between two meshes is no edge) and none 45 cm past it either (a crack the capsule spans) */
+static int we_floor_ahead(const float r[3], sv_vec3 u, float l, float feet)
+{
+	float a = l + g_we.lead_cm, x = r[0] + u.x * a, z = r[2] + u.z * a;
+	int k = we_floor_at(x, z, feet, g_we.cm);
+	if (k != 0)
+		return k;
+	for (int s = -1; s <= 1; s += 2) {
+		k = we_floor_at(x - u.z * 12.0f * s, z + u.x * 12.0f * s, feet, g_we.cm);
+		if (k != 0)
+			return k;
+	}
+	return we_floor_at(x + u.x * 45.0f, z + u.z * 45.0f, feet, g_we.cm) != 0;
+}
+/* where the floor ends along u from the root (cm, 5 cm steps to max_cm; < 0: none) */
+static float we_edge_dist(const float r[3], sv_vec3 u, float feet, float max_cm)
+{
+	for (float d = 0; d <= max_cm + 0.5f; d += 5.0f)
+		if (we_floor_at(r[0] + u.x * d, r[2] + u.z * d, feet, g_we.cm) == 0)
+			return d;
+	return -1;
+}
+/* on foot, the walk's level step d (LOCO's delta; follow: the room-scale follow's part of it) is held where the floor
+ * ahead drops more than cm: d's level part zeroed (he stops; never pushed back) */
+static int we_guard(sv_vec3 *d, sv_vec3 part, const float r[3], double t, int follow)
+{
+	float l = hypotf(part.x, part.z);
+	if (!g_we.on || !(l > 0.01f) || g_we.step || g_cl.s.active || jp_air() || ov_active() || g_cl.fsm != CL_FSM_SUPPORTED ||
+	    pr_settling())
+		return 0;
+	sv_vec3 u = { part.x / l, 0, part.z / l };
+	float feet = r[1] - g_cl.cfg.foot_cm;
+	float ax = r[0] - g_we.at_root.x, az = r[2] - g_we.at_root.z;
+	int keep = g_we.at && ax * ax + az * az <= 30.0f * 30.0f && u.x * g_we.at_dir.x + u.z * g_we.at_dir.z > 0.5f;
+	sv_vec3 n = keep ? g_we.at_dir : u;
+	if (!keep) {
+		if (we_floor_ahead(r, u, l, feet) != 0 || we_floor_at(r[0], r[2], feet, g_we.cm) != 1) {
+			g_we.miss = 0;
+			return 0; /* a floor ahead; or none seen under him either (not an edge the rays see: WALK_GROUND's) */
+		}
+		if (++g_we.miss < 3 && !g_we.at)
+			return 0; /* build 39: a new drop confirmed 3 ticks first (a narrow ledge's flicker is no stop) */
+		/* build 39: the drop's side - the floor 40 cm to the left and right of the walk: one side off = the drop there (a
+		 * ledge's edge beside the walk: only the part toward it stops); both on or both off = the drop ahead */
+		sv_vec3 pl = { -u.z, 0, u.x }, pr = { u.z, 0, -u.x };
+		int fl = we_floor_at(r[0] + pl.x * g_we.lead_cm, r[2] + pl.z * g_we.lead_cm, feet, g_we.cm),
+		    fr = we_floor_at(r[0] + pr.x * g_we.lead_cm, r[2] + pr.z * g_we.lead_cm, feet, g_we.cm);
+		n = fl == 0 && fr != 0 ? pl : fr == 0 && fl != 0 ? pr : u;
+	}
+	/* keep: at the edge and toward it (within 60 deg of the held way) the walk stays held without new rays - boot
+	 * 20261104-205132: the game's own push moved the capsule 7 cm aside, the ray from there met the crevice's far lip.
+	 * build 39: only the part toward the drop (along n) stops; the part along the edge goes on where its floor goes on */
+	float kn = part.x * n.x + part.z * n.z;
+	sv_vec3 tg = { part.x - (kn > 0 ? kn : 0) * n.x, 0, part.z - (kn > 0 ? kn : 0) * n.z };
+	float lt = hypotf(tg.x, tg.z);
+	if (kn > 0)
+		d->x -= kn * n.x, d->z -= kn * n.z;
+	if (lt > 0.01f && we_floor_ahead(r, (sv_vec3){ tg.x / lt, 0, tg.z / lt }, lt, feet) == 0)
+		d->x -= tg.x, d->z -= tg.z, lt = 0; /* along the edge off it too (a corner, a beam's end): stopped */
+	if (!(kn > 0) && lt > 0.01f)
+		return 0; /* nothing toward the drop and the way along it has floor: no stop */
+	u = n;
+	g_we.ticks++, g_we.follows += follow != 0;
+	float dx = r[0] - g_we.at_root.x, dz = r[2] - g_we.at_root.z;
+	int fresh = !g_we.at || dx * dx + dz * dz > 30.0f * 30.0f || t - g_we.held_t > 3.0;
+	g_we.held_t = t;
+	if (!fresh) {
+		if (u.x * g_we.at_dir.x + u.z * g_we.at_dir.z < 0.5f) /* pushed another way off the same edge: that way */
+			g_we.at_dir = u, g_we.need_land = 1;
+		return 1;
+	}
+	g_we.at = 1, g_we.at_root = (sv_vec3){ r[0], r[1], r[2] }, g_we.at_dir = u, g_we.at_t0 = t, g_we.need_land = 1;
+	g_we.holds++;
+	if (t - g_we.buzz_t > 1.5) /* A's nudge: A = down (the climb's own edge cue stays quiet for it) */
+		haptic(SOMVR_HAND_R, SOMVR_HX_READY), g_we.buzz_t = t, g_we.buzzes++;
+	if (un_log_ok(t))
+		logf_("WALK edge stop t=%.3f the %s held at a drop: no floor within %.0f cm under the feet %.0f cm ahead (heading %.0f "
+		      "deg; the root %.1f,%.1f,%.1f): he stops there; A's nudge; A tapped = a light step off, A held = the ring and the "
+		      "blink (SOMVR_WALK_EDGE_STOP; holds %llu)", t, follow ? "room-scale step" : "walk", g_we.cm, l + g_we.lead_cm,
+		      atan2f(u.x, u.z) * 57.29578f, r[0], r[1], r[2], (unsigned long long)g_we.holds);
+	return 1;
+}
+/* the light step off: from root along u (level unit) over the edge e cm ahead - the walk in LOCO's delta (we_step_tick),
+ * the fall as soon as no floor is under the capsule */
+static void we_step_start(sv_vec3 root, sv_vec3 u, float e, double t, const char *why)
+{
+	g_we.step = 1, g_we.step_dir = u, g_we.step_r0 = root, g_we.step_t0 = t, g_we.step_asked = 0;
+	g_we.step_need = e + 70.0f, g_we.steps++, g_we.show = 0;
+	haptic(SOMVR_HAND_R, SOMVR_HX_GO);
+	if (un_log_ok(t))
+		logf_("WALK edge stop t=%.3f %s: the light step off - %.0f cm along heading %.0f deg at %.0f cm/s (the edge %.0f cm "
+		      "ahead), the fall as soon as no floor is under him (SOMVR_WALK_EDGE_STOP)", t, why, g_we.step_need,
+		      atan2f(u.x, u.z) * 57.29578f, g_we.step_cms, e);
+}
+/* at an edge for the climb's A on foot and lo_walk_blocked: held there and the view turned no more than 75 deg off it */
+static int we_at_edge(void) { return g_we.on && g_we.at && g_we.facing; }
+/* cl_frame, after the climb's step: the stay at the edge (cleared 30 cm away, in a climb or a jump); the cue's landing
+ * (the ring on the ground past the edge, the line down to it); A tapped there = the light step off */
+static void we_frame(const somvr_climb_in *in, double t)
+{
+	if (!g_we.on)
+		return;
+	float r[3] = { in->root.x, in->root.y, in->root.z };
+	if (g_we.at && (!in->root_ok || g_cl.s.active || (jp_air() && !g_we.step) || hypotf(r[0] - g_we.at_root.x, r[2] - g_we.at_root.z) > 30.0f ||
+			fabsf(r[1] - g_we.at_root.y) > 40.0f))
+		g_we.at = 0, g_we.show = 0;
+	float feet = r[1] - g_cl.cfg.foot_cm;
+	if (g_we.at && g_we.need_land) { /* the cue: the lip along the held way (its glow, 60 cm of it), the ground past it */
+		g_we.need_land = 0, g_we.show = 0;
+		float e = we_edge_dist(r, g_we.at_dir, feet, g_we.lead_cm + 40.0f);
+		somvr_climb_hit g;
+		memset(&g, 0, sizeof g);
+		g_we.drop_cm = -1;
+		if (e >= 0) {
+			sv_vec3 u = g_we.at_dir, tg = { -u.z, 0, u.x }, m = { r[0] + u.x * e, feet + 2.0f, r[2] + u.z * e };
+			g_we.e0 = (sv_vec3){ m.x - tg.x * 30.0f, m.y, m.z - tg.z * 30.0f };
+			g_we.e1 = (sv_vec3){ m.x + tg.x * 30.0f, m.y, m.z + tg.z * 30.0f };
+			g_we.show = 1, g_we.shows++;
+			sv_vec3 p = { r[0] + u.x * (e + 40.0f), feet + 60.0f, r[2] + u.z * (e + 40.0f) };
+			if (cl_ray(NULL, -1, p, (sv_vec3){ 0, -1, 0 }, 60.0f + 4000.0f, &g) && g.hit)
+				g_we.land = g.point, g_we.top = (sv_vec3){ g.point.x, feet, g.point.z }, g_we.drop_cm = feet - g.point.y;
+		}
+		if (un_log_ok(t))
+			logf_("WALK edge stop t=%.3f the cue: %s; the edge %.0f cm ahead, the ground %.0f cm under the feet past it", t,
+			      g_we.show ? "the lip's glow (60 cm of it) and A DOWN over it" : "no edge found again along the held way (no cue)",
+			      e, g_we.drop_cm);
+	}
+	if (g_we.show && (!g_we.at || t - g_we.held_t > 3.0 || g_cl.dm_show)) /* shown while held and 3 s after; A's own ring wins */
+		g_we.show = 0;
+	/* A on foot: a press at the edge let go under the drop's hold time = the light step off (build 39: with
+	 * SOMVR_CLIMB_FOOT_A the climb's A on foot starts it at the press, at any edge: we_step_start) */
+	int a = in->drop && in->live;
+	if (a && !g_we.a_down)
+		g_we.a_t0 = t, g_we.a_at = we_at_edge() && !g_cl.s.active;
+	if (!g_cl.cfg.foot_a && !a && g_we.a_down && g_we.a_at && g_we.at && !g_cl.s.active && t - g_we.a_t0 < g_cl.cfg.dm_min_s &&
+	    !g_we.step && !jp_air() && in->root_ok) {
+		float e = we_edge_dist(r, g_we.at_dir, feet, g_we.lead_cm + 60.0f);
+		if (e < 0) {
+			g_we.step_noedge++;
+			if (un_log_ok(t))
+				logf_("WALK edge stop t=%.3f A tapped at the edge: no edge within %.0f cm along the held way: nothing", t,
+				      g_we.lead_cm + 60.0f);
+		} else {
+			g_cl.s.dm = 0, g_cl.s.dm_kind = SOMVR_CLIMB_DM_NONE, g_cl.dm_show = 0; /* the tap's ring: gone, he goes */
+			we_step_start(in->root, g_we.at_dir, e, t, "A tapped at the edge");
+		}
+	}
+	g_we.a_down = a;
 }
 
 /* build 33 (SOMVR_WALK_LIP, re-xr-pipeline.md 143): the walk on foot stalls at a small lip - the proxy refuses its
@@ -11018,6 +11230,28 @@ static void cl_mark_events(const somvr_climb_out *o, const somvr_climb_in *in, d
 	static const char *const cw[6] = { "-", "the move stick", "a new hold", "the climb ended or began", "Talion moved",
 					   "the game (a menu, the bow, the input)" };
 	g_cl.dm_show = o->dm_show, g_cl.dm_land = o->dm_land, g_cl.dm_top = o->dm_top;
+	g_cl.ta_show = o->ta_show, g_cl.ta_land = o->ta_land, g_cl.ta_frames += o->ta_show != 0; /* build 39 (SOMVR_CLIMB_TOP_A) */
+	static uint64_t hf_eases0; /* build 39 (SOMVR_CLIMB_HANG_FREE) */
+	if (s->hf_eases != hf_eases0 && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu hang free: hanging 1 s with no hold, the nearest face %.0f cm away (over 65): he eases "
+		      "toward it at 40 cm/s (way %.2f %.2f; SOMVR_CLIMB_HANG_FREE; eases %llu)", t, (unsigned long long)g_fr.frame,
+		      s->hf_best, s->hf_dir.x, s->hf_dir.z, (unsigned long long)s->hf_eases);
+	hf_eases0 = s->hf_eases;
+	if (o->hang_freed && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu hang free: %s: released - he falls, the landing as ever (SOMVR_CLIMB_HANG_FREE; eased "
+		      "%.0f cm in all)", t, (unsigned long long)g_fr.frame, o->hang_freed == 1 ? "no face within 3 m"
+		      : o->hang_freed == 2 ? "the ease toward the face held 2 s" : "at a top 3 s with no hold", s->hf_cm);
+	if (o->ta_first && g_cl.cfg.cue) /* the ring came: a light tick in the resting hand */
+		haptic(s->ta_hand, SOMVR_HX_TICK);
+	if (o->ta_first && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu top A: the %s hand rests on a top %.0f cm over the feet (%.1f,%.1f,%.1f): the ring on it "
+		      "at %.1f,%.1f,%.1f and A UP; A = the blink up (SOMVR_CLIMB_TOP_A; shown %llu)", t, (unsigned long long)g_fr.frame,
+		      s->ta_hand ? "right" : "left", o->ta_top.y - (in->root.y - g_cl.cfg.foot_cm), o->ta_top.x, o->ta_top.y,
+		      o->ta_top.z, o->ta_land.x, o->ta_land.y, o->ta_land.z, (unsigned long long)s->ta_shows);
+	if (o->ta_go && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu top A: A pressed: the blink up onto the top's ring: Talion's root to %.1f,%.1f,%.1f under "
+		      "the quick fade (SOMVR_CLIMB_TOP_A; goes %llu)", t, (unsigned long long)g_fr.frame, o->blink_to.x, o->blink_to.y,
+		      o->blink_to.z, (unsigned long long)s->ta_goes);
 	g_cl.dm_held = s->dm == 1 ? o->dm_held : 0.0f, g_cl.dm_armed_s = o->dm_show ? o->dm_armed_s : -1.0f;
 	if (o->dm_show)
 		g_cl.dm_frames++;
@@ -11257,7 +11491,7 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	g_cl.frame = g_fr.frame;
 	cl_read(g_fr.pl);
 	cl_orcs_now(); /* build 17: the orcs' bodies are no holds (cl_char_hit) */
-	if (g_cl.s.active && (g_cl.pm != g_cl.act_pm || g_cl.pc != g_cl.act_pc))
+	if (g_cl.s.active && (g_cl.pm != g_cl.act_pm || g_cl.pc != g_cl.act_pc) && !bo_hang_keep(t))
 		cl_end(SOMVR_CLIMB_END_OUTSIDE, "the player's PlayerMovement or proxy changed", g_cl.pm, 1);
 	{ /* SOMVR_CLIMB_HIT=drop (build 11): a hit on Talion (his health dropped: somvr_fight_game.c's hu_frame) ends a climb
 	   * or a hang: gravity back, LOCO's ticks again, the game's own fall (boot-check-20261025-022201, =hold: hanging
@@ -11286,6 +11520,7 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 		in.nograb = bo_out() || sl_nograb() || vb_nograb() || df_keep_sword(t); /* SOMVR_BOW: the hands are on the bow; SOMVR_SLOTS: a slot took
 								       * the press; SOMVR_VERBS: an orc's head did */
 	}
+	in.bow_hang = bo_hang_still(); /* build 37 (SOMVR_BOW_HANG): the hang's free rule waits while the bow is out */
 	{ /* the drop button: A (the right controller's lower button; with SOMVR_GAMEMOVES=off it does nothing on foot) */
 		const somvr_hand_in *ra = &g_inp.st.hand[SOMVR_HAND_R];
 		in.drop = (ra->active & SOMVR_HACT_INPUT) && (ra->buttons & SOMVR_BTN_LOWER) &&
@@ -11313,10 +11548,18 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 		in.head_fwd = isfinite(a) ? (sv_vec3){ sinf(a), 0, cosf(a) } : (sv_vec3){ 0, 0, 0 };
 		/* SOMVR_CLIMB_STAND: the move stick in the world (the view's heading: forward = +z rotated, right = +x) */
 		float sl = sqrtf(g_cl.stick_x * g_cl.stick_x + g_cl.stick_y * g_cl.stick_y);
-		if (g_cl.cfg.stand && isfinite(a) && in.stick > 0 && sl > 0.05f) {
+		if ((g_cl.cfg.stand || g_cl.cfg.foot_a) && isfinite(a) && in.stick > 0 && sl > 0.05f) {
 			float k = in.stick / sl, ca = cosf(a), sa = sinf(a);
 			in.stick_w = (sv_vec3){ k * (g_cl.stick_x * ca + g_cl.stick_y * sa), 0, k * (-g_cl.stick_x * sa + g_cl.stick_y * ca) };
 		}
+		/* live 11-04 (SOMVR_WALK_EDGE_STOP): held at an edge and facing it: A on foot looks along the held way, the walk
+		 * counts as held (SOMVR_CLIMB_EDGE_LOW's way down at every drop over its height) */
+		g_we.facing = !g_we.at || in.head_fwd.x * g_we.at_dir.x + in.head_fwd.z * g_we.at_dir.z > 0.26f;
+		if (we_at_edge() && !g_cl.cfg.foot_a)
+			in.head_fwd = g_we.at_dir, in.walk_blocked = g_cl.cfg.descent;
+		if (we_at_edge() && g_cl.cfg.foot_a) /* build 39: A looks along the held way first (the view stays the view's) */
+			in.walk_dir = g_we.at_dir, in.walk_blocked = g_cl.cfg.descent;
+		in.stick_back = g_cl.cfg.foot_a && in.stick >= 0.5f && g_cl.stick_y < -0.5f; /* build 39: the climb down */
 	}
 	if (pr_down_teleported() && g_cl.s.phase == SOMVR_CLIMB_PH_BLINK && g_cl.s.active) { /* the blink put him down */
 		cl_end(SOMVR_CLIMB_END_BLINK, g_cl.am_blink ? "the blink's teleport (SOMVR_CLIMB_MANTLE=blink: A at the top)"
@@ -11444,6 +11687,33 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 			      (unsigned long long)g_cl.pc, (unsigned long long)g_cl.pm, g_cl.fsm, in.head_y);
 	}
 	cl_mark_events(&o, &in, t);
+	if (o.fa_step && !g_we.step && !jp_air()) /* build 39 (SOMVR_CLIMB_FOOT_A): A at an edge = the step off */
+		we_step_start(in.root, o.fa_dir, o.fa_edge_cm, t, "A at the edge (SOMVR_CLIMB_FOOT_A)");
+	if (o.fa_down) { /* the stick back + A = the climb down: lowered over the edge into the hang, facing the face */
+		float a = atan2f(in.head_fwd.x, in.head_fwd.z), want = atan2f(-o.fa_dir.x, -o.fa_dir.z);
+		float dlt = sv_wrap_pi(want - a);
+		int n = o.fa_turn && g_rigcfg.snap_rad > 0.01f ? (int)lroundf(dlt / g_rigcfg.snap_rad) : 0;
+		if (n) /* the view faced the drop: the turn to the face as snap steps behind the snap blink (never a slow yaw) */
+			atomic_fetch_add(&g_req_snap, n);
+		haptic(SOMVR_HAND_R, SOMVR_HX_GO);
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu climb down (the stick back + A): lowered over the edge %.0f cm ahead (heading %.0f deg) "
+			      "at %.0f cm/s to the hang under the lip, facing the face%s (SOMVR_CLIMB_FOOT_A)", t, (unsigned long long)g_fr.frame,
+			      o.fa_edge_cm, atan2f(o.fa_dir.x, o.fa_dir.z) * 57.29578f, g_cl.cfg.dn_a_cms,
+			      n ? "; the view turned to it as snap steps behind the blink" : "");
+	}
+	if (o.fa_nodown) {
+		haptic(SOMVR_HAND_R, SOMVR_HX_NO);
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu climb down (the stick back + A): no way down by hand at this edge (%s): a soft no, "
+			      "nothing moves (SOMVR_CLIMB_FOOT_A)", t, (unsigned long long)g_fr.frame,
+			      g_cl.s.dn_why == SOMVR_CLIMB_DN_NOFACE ? "no face under the lip to hang on" : "the way over is blocked");
+	}
+	we_frame(&in, t); /* live 11-04 (SOMVR_WALK_EDGE_STOP): the stay at an edge, its cue, A tapped = the light step off */
+	if ((o.events2 & SOMVR_CLIMB_E_AM_NO) && g_cl.cfg.hang_free && g_cl.s.active && g_cl.s.topped &&
+	    g_cl.s.phase == SOMVR_CLIMB_PH_HANG && !g_cl.s.h[0].holding && !g_cl.s.h[1].holding) /* build 39 (mark 223841_10) */
+		cl_end(SOMVR_CLIMB_END_RELEASED, "A at a top with no way onto it and no hold: let go - onto what is under him, or "
+		       "the fall (SOMVR_CLIMB_HANG_FREE)", g_cl.pm, 1);
 	if ((o.events & SOMVR_CLIMB_E_BLINK) && (o.events & SOMVR_CLIMB_E_EDGE) && !(o.events2 & SOMVR_CLIMB_E_DM_GO) && cl_log_ok(t))
 		logf_("CLIMB t=%.3f frame=%llu A at the edge (on foot, heading %.0f deg): the blink down: the feet %.0f cm over the "
 		      "ground at %.1f,%.1f,%.1f (the ray down from %.1f,%.1f,%.1f) -> Talion's root to %.1f,%.1f,%.1f under the practice "
@@ -11457,7 +11727,7 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 		      g_cl.s.bl_from.x, g_cl.s.bl_from.y, g_cl.s.bl_from.z, g_cl.s.descending ? ", beyond the lip" : "",
 		      o.blink_to.x, o.blink_to.y, o.blink_to.z);
 	if (o.blink && !pr_down_start(o.blink_to, t, (o.events2 & SOMVR_CLIMB_E_DM_GO) ? 2
-					    : (o.events2 & (SOMVR_CLIMB_E_PO_GO | SOMVR_CLIMB_E_AM_GO)) != 0))
+					    : (o.events2 & (SOMVR_CLIMB_E_PO_GO | SOMVR_CLIMB_E_AM_GO)) != 0 || o.ta_go))
 		g_cl.blink_refused++; /* refused: the hang after blink_wait_s */
 	if ((o.events & SOMVR_CLIMB_E_BLINK_NONE) && (o.events & SOMVR_CLIMB_E_EDGE) && !g_cl.s.active &&
 	    (g_cl.s.bl_why == SOMVR_CLIMB_BL_NOEDGE || g_cl.s.bl_why == SOMVR_CLIMB_BL_SHORT))
@@ -11642,7 +11912,8 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	if ((o.events2 & SOMVR_CLIMB_E_LIP_BLOCKED) && o.driver >= 0 && g_cl.cfg.cue) /* it cannot go over here: a buzz */
 		haptic(o.driver, SOMVR_HX_NO), g_cl.miss_buzzes++;
 	if ((o.events2 & SOMVR_CLIMB_E_EDGE_CUE) && g_cl.cfg.cue) { /* A here = the way down: ready, in A's hand */
-		haptic(SOMVR_HAND_R, SOMVR_HX_READY), g_cl.edge_pulses++;
+		if (!(g_we.on && t - g_we.buzz_t < 2.0)) /* live 11-04: SOMVR_WALK_EDGE_STOP's stop gave this nudge already */
+			haptic(SOMVR_HAND_R, SOMVR_HX_READY), g_cl.edge_pulses++;
 		if (cl_log_ok(t))
 			logf_("CLIMB t=%.3f frame=%llu edge cue: the walk stopped at an edge %.0f cm over the ground (heading %.0f deg): A "
 			      "here = the blink down; a double pulse on the right hand%s", t, (unsigned long long)g_fr.frame, g_cl.s.cue_h,
@@ -12053,6 +12324,39 @@ static int cl_config(int *bad)
 		      "blink - and A goes to that edge first even while the stick pushes" : " (as build 33: under SOMVR_CLIMB_BLINK_CM "
 		      "A is the jump)");
 	}
+	c->hang_free = env_word("SOMVR_CLIMB_HANG_FREE", fling_w, 2, 1); /* build 39: on (code default) | off */
+	logf_("CONFIG climb hang free=%s%s", fling_w[c->hang_free], c->hang_free ? ": a hang with no hold never lasts - after 1 s "
+	      "with no face within 65 cm, he eases toward the nearest face at 40 cm/s (only toward it); no face within 3 m, or the "
+	      "ease held 2 s = released (the fall, its landing as ever)" : " (as build 38: the hang stays where it is)");
+	c->foot_a = env_word("SOMVR_CLIMB_FOOT_A", fling_w, 2, 0); /* build 39: off | on (code default off) */
+	c->dn_a_cms = env_float("SOMVR_CLIMB_DOWN_A_CMS", c->dn_a_cms, 20, 200, bad);
+	logf_("CONFIG climb foot A=%s%s", fling_w[c->foot_a], c->foot_a ? ": A on foot at an edge (along the stick held back, the "
+	      "edge he is stopped at, or the view) = over it - the stick held back + A = the climb down (lowered at "
+	      "SOMVR_CLIMB_DOWN_A_CMS to the hang under the lip, facing the face; a view facing the drop turns to it as snap steps "
+	      "behind the blink; a drop under 1.5 m = the step off), A alone = the light step off; no drop ring on foot"
+	      : " (as build 38: A on foot = the drop ring and its blink)");
+	c->top_a = env_word("SOMVR_CLIMB_TOP_A", fling_w, 2, 0); /* build 39: off | on (code default off) */
+	logf_("CONFIG climb top A=%s%s", fling_w[c->top_a], c->top_a ? ": on foot, a hand resting on a top 45 .. 250 cm over the "
+	      "feet (within 18 cm over its floor) with a landing on it (the pullover's search, in from the hand): the ring there, "
+	      "A UP over it and a light tick in that hand; A's press = the blink up onto it (before the drop mark and the jump)"
+	      : " (as build 38: a top is the climb's, by the grips)");
+	{ /* live 11-04: SOMVR_WALK_EDGE_STOP = on (unset: on, 50 cm) | off | the least drop in cm */
+		const char *v = getenv("SOMVR_WALK_EDGE_STOP");
+		g_we.cm = !v || !*v || !strcmp(v, "on") ? 50.0f : !strcmp(v, "off") || !strcmp(v, "0") ? 0.0f : (float)atof(v);
+		if (!(g_we.cm >= 0 && g_we.cm <= 1000)) g_we.cm = 50.0f;
+		g_we.hold = g_we.cm > 0 && env_word("SOMVR_WALK_EDGE_HOLD", fling_w, 2, 1); /* build 39: code default on */
+		logf_("CONFIG walk edge hold=%s%s", fling_w[g_we.hold], g_we.hold ? ": stopped at a drop, the game's own move toward "
+		      "the edge since our last tick is undone in our delta (at most its own length, never back past the stop point)"
+		      : " (the game's slide over a sloped lip left as it is)");
+		g_we.on = g_we.cm > 0, g_we.lead_cm = 40.0f, g_we.step_cms = 150.0f; /* 40: the capsule (32) short of a lip that slopes in (boot 205614) */
+		if (g_we.on && !(c->edge_low_cm > 0)) /* A's way down at every drop over it needs EDGE_LOW's rule */
+			c->edge_low_cm = g_we.cm;
+		logf_("CONFIG walk edge stop=%s%.0f%s", g_we.on ? "on, " : "off", g_we.cm, g_we.on ? " cm: on foot the walk (the stick's "
+		      "or the room-scale step) stops where the floor 40 cm past its step drops more than this (never pushed back); held "
+		      "there: A's nudge, the drop's ring on the ground past the edge and the line down to it, and A is the way down - "
+		      "tapped = a light step off (150 cm/s over the edge, then the fall), held = the ring and the blink (at every height "
+		      "over it: SOMVR_CLIMB_EDGE_LOW's rule)" : " (as build 37: the walk goes off any edge the game lets it)");
+	}
 	c->fd_fall = env_word("SOMVR_CLIMB_FLING_DOWN_FALL", fling_w, 2, 0);
 	logf_("CONFIG climb fling down fall=%s%s", fling_w[c->fd_fall], c->fd_fall ? ": a fling down the game's collision holds "
 	      "(blocked below) over ground within SOMVR_CLIMB_BLINK_CM under the feet = released: gravity back, the game's own fall"
@@ -12133,7 +12437,9 @@ static int cl_config(int *bad)
 	      "edge test)" : " (a hold's toward is its ray's, as build 16 round 1: a palm along the wall can end it as over)");
 	/* build 17 (re-xr-pipeline.md 60.1): no move away from the wall past hug_cm; a part of a pull beyond it goes in */
 	c->hug = env_word("SOMVR_CLIMB_HUG", fling_w, 2, 0);
-	c->hug_cm = env_float("SOMVR_CLIMB_HUG_CM", c->hug_cm, 36, 120, bad);
+	/* live 11-04 (som-live-block, the session's mark 222043_10: a push out from the wall stopped at 50 cm, "another foot
+	 * away"): the code default 30 cm further out, 80 (SOMVR_CLIMB_HUG_CM=50 = build 37); the grab reach unchanged */
+	c->hug_cm = env_float("SOMVR_CLIMB_HUG_CM", c->hug_cm + 30.0f, 36, 120, bad);
 	c->hug_in = env_float("SOMVR_CLIMB_HUG_IN", c->hug_in, 0, 1, bad);
 	logf_("CONFIG climb hug=%s%s", fling_w[c->hug], c->hug ? "" : " (a hand pushed toward the wall shoves him off it 1:1, as "
 	      "build 16)");
@@ -13752,6 +14058,24 @@ static struct {
 	float qv_off[3], qv_to[3];
 	float pinch_g[3], string_mm, string_tips_cm, string_back_cm;
 	float string_side_cm; /* build 33b: SOMVR_BOW_STRING_SIDE_CM - both ends across the bow (the model's +X) */
+	/* build 37 (re-xr-pipeline.md 174): the arrow's side of the riser - nock_x0 the limbs' line across the bow at the
+	 * arrow's height (bo_nock_skel), side_abs SOMVR_BOW_SIDE_CM, side_now the side in nock_ofs[0] (-1 / +1: the grip's
+	 * -X / +X), side_cm = side_now * side_abs */
+	float nock_x0, side_abs;
+	int side_now, side_logs;
+	uint64_t side_flips;
+	/* build 37 (SOMVR_BOW_HANG=on, re-xr-pipeline.md 174): the bow in the climb's hands-free hang */
+	int hang, hang_out;
+	uint64_t hang_outs, hang_shots, hang_frames, hv_frames, hv_backs;
+	double hang_last_t; /* the last frame the bow was out in the hang (bo_hang_keep's 3 s after) */
+	int hang_keeps;     /* the game's PM/proxy swaps kept this climb */
+	int hv_on;          /* the view held (bo_hang_body): hv_p0 the anchor then, hv_d his move since (cm, world) */
+	float hv_p0[3], hv_d[3], hv_most;
+	double hv_ease;     /* the hold's ease-out start (the climb ended or left the hang) */
+	int hv_bhave;       /* the view's base at the hold's start (hv_b0), its drift since (the hold's proof) */
+	sv_vec3 hv_b0;
+	float hv_bmost;
+	double hv_next;
 	sv_vec3 tip_g[2];
 	uint64_t string_frames;
 	uint64_t ga_frames[5];
@@ -14623,6 +14947,133 @@ static int bo_shoot(double t, int game_aim)
 
 /* in_frame (a stereo frame, the grips located for the eyes' time and in the world): one bow step; the ray for the next
  * free-aim update; while the bow is out the combat blade gets no grip (the string hand is not a sword) */
+/* build 37 (SOMVR_BOW_HANG=on, re-xr-pipeline.md 174): the climb's hands-free hang (no hand holds: Talion stays where he
+ * is, gravity off, the stick his own) allows the bow as on foot - the same draw, aim and release, the arrow from the
+ * hang; while it is out the climb takes no hold (bo_out), put away it is the hang again and a grip climbs on. A hold, the
+ * fling, the blink's wait or the mantle: climbing (no bow) */
+static int bo_hang_bow(void)
+{
+	return g_bow.hang && g_cl.on && g_cl.s.active && g_cl.s.phase == SOMVR_CLIMB_PH_HANG && !g_cl.s.h[0].holding &&
+	       !g_cl.s.h[1].holding && g_cl.tid == my_tid();
+}
+
+/* build 37 (SOMVR_BOW_HANG): the game's bow aim in the hang may swap the player's PlayerMovement or physics proxy as it
+ * starts or ends (boot 023817: 5 frames after the bow came out, with the aim's slow motion; the climb ended "outside",
+ * the new proxy's gravity on: Talion fell). While the bow is out in the hang and 3 s after: the new pair is the climb's
+ * (cl_pm turns its gravity off from its next tick), at most 6 times a climb; else the climb ends as before. 1 = kept */
+static int bo_hang_keep(double t)
+{
+	int recent = g_bow.hang_out || (g_bow.hang_last_t > 0 && t - g_bow.hang_last_t < 3.0);
+	if (!g_bow.hang || !recent || !g_cl.on || !g_cl.s.active || g_cl.s.phase != SOMVR_CLIMB_PH_HANG || g_cl.s.h[0].holding ||
+	    g_cl.s.h[1].holding || g_cl.why_not || !g_cl.pm || !g_cl.pc || g_bow.hang_keeps >= 6)
+		return 0;
+	g_bow.hang_keeps++;
+	logf_("BOW t=%.3f frame=%llu the hang kept: the game's own PlayerMovement/proxy swap with the bow %s (%#llx/%#llx -> "
+	      "%#llx/%#llx): the new pair is the climb's, its gravity off from the next tick (%d this climb)", t,
+	      (unsigned long long)g_fr.frame, g_bow.hang_out ? "out" : "just put away", (unsigned long long)g_cl.act_pm,
+	      (unsigned long long)g_cl.act_pc, (unsigned long long)g_cl.pm, (unsigned long long)g_cl.pc, g_bow.hang_keeps);
+	g_cl.act_pm = g_cl.pm, g_cl.act_pc = g_cl.pc;
+	return 1;
+}
+
+/* the bow out in the climb's hang, or the view still held after it: the climb's hang_free waits (cl_frame's input) */
+static int bo_hang_still(void)
+{
+	return g_bow.hang && ((bo_out() && g_cl.on && g_cl.s.active) || g_bow.hv_on);
+}
+
+/* build 37 (SOMVR_BOW_HANG): the game's bow aim in the hang moves Talion by itself - its stance needs room: boots
+ * 022841 and 024534 slid his root 30 cm out from the wall in ~2 s as the bow came out (18, 8, 3, 1 cm a second; the same
+ * spot both times), the view with it: an unrequested move. Holding the root against it fought the game's collision (one
+ * 23 cm tick taken back, then the same slide). So the view is held instead: from the bow's first frame out in the hang
+ * the eyes' anchor stays where it was (the anchor less his root's move since then: g_bow.hv_d); the arrow flies from the
+ * hands as the eyes see them. Put away (still hanging), the climb moves him back under the held view at most
+ * HV_BACK_CMS (the view never moves: the anchor's offset shrinks as he comes); back within 1 cm, the hold ends. The climb
+ * ends meanwhile (A, a hit, a grip's resume moves him by the hand): the offset eases out in HV_EASE_S */
+#define HV_BACK_CMS 60.0f
+#define HV_EASE_S 0.35
+static const float *bo_hang_body(const float *body)
+{
+	static float out[3];
+	if (!body || !g_bow.hang)
+		return body;
+	double t = cb_now();
+	int keep = g_bow.hang_out || (g_bow.hv_on && g_cl.on && g_cl.s.active && g_cl.s.phase == SOMVR_CLIMB_PH_HANG);
+	if (keep && !g_bow.hv_on) { /* the first frame out in the hang: the anchor's place now */
+		g_bow.hv_on = 1, g_bow.hv_ease = 0, g_bow.hv_most = 0, g_bow.hv_frames = 0;
+		memcpy(g_bow.hv_p0, body, sizeof g_bow.hv_p0);
+		logf_("BOW t=%.3f frame=%llu the view held where the bow came out in the hang (the game's aim may move Talion; the "
+		      "eyes stay)", t, (unsigned long long)g_fr.frame);
+	}
+	if (g_bow.hv_on && keep) {
+		for (int i = 0; i < 3; i++)
+			g_bow.hv_d[i] = body[i] - g_bow.hv_p0[i];
+		float m = sqrtf(g_bow.hv_d[0] * g_bow.hv_d[0] + g_bow.hv_d[1] * g_bow.hv_d[1] + g_bow.hv_d[2] * g_bow.hv_d[2]);
+		g_bow.hv_most = fmaxf(g_bow.hv_most, m), g_bow.hv_frames++;
+		if (!g_bow.hang_out && m < 1.0f) { /* back under the view: done */
+			g_bow.hv_on = 0;
+			logf_("BOW t=%.3f frame=%llu the view's hold ends: Talion back under it (%.1f cm off at most, %llu frames)", t,
+			      (unsigned long long)g_fr.frame, g_bow.hv_most, (unsigned long long)g_bow.hv_frames);
+			return body;
+		}
+	} else if (g_bow.hv_on) { /* the climb ended or left the hang: the offset eases out */
+		if (!(g_bow.hv_ease > 0)) {
+			g_bow.hv_ease = t;
+			logf_("BOW t=%.3f frame=%llu the view's hold eases out over %.2f s (the climb %s; %.1f cm off)", t,
+			      (unsigned long long)g_fr.frame, HV_EASE_S, g_cl.on && g_cl.s.active ? "left the hang" : "ended",
+			      sqrtf(g_bow.hv_d[0] * g_bow.hv_d[0] + g_bow.hv_d[1] * g_bow.hv_d[1] + g_bow.hv_d[2] * g_bow.hv_d[2]));
+		}
+		double k = 1.0 - (t - g_bow.hv_ease) / HV_EASE_S;
+		if (!(k > 0)) {
+			g_bow.hv_on = 0;
+			return body;
+		}
+		k = k * k * (3 - 2 * k);
+		for (int i = 0; i < 3; i++)
+			out[i] = body[i] - (float)k * g_bow.hv_d[i];
+		return out;
+	} else {
+		return body;
+	}
+	for (int i = 0; i < 3; i++)
+		out[i] = body[i] - g_bow.hv_d[i];
+	return out;
+}
+
+/* after cl_frame: the bow away, still hanging with the view held - the climb's move back toward the held place */
+static void bo_hang_back(void)
+{
+	if (!g_bow.hang || !g_bow.hv_on || g_bow.hang_out || !(g_cl.on && g_cl.s.active && g_cl.s.phase == SOMVR_CLIMB_PH_HANG) ||
+	    g_cl.req)
+		return;
+	float m = sqrtf(g_bow.hv_d[0] * g_bow.hv_d[0] + g_bow.hv_d[1] * g_bow.hv_d[1] + g_bow.hv_d[2] * g_bow.hv_d[2]);
+	float step = HV_BACK_CMS / 90.0f, k = m > step ? step / m : 1.0f; /* (a stereo frame: ~1/90 s in the headset) */
+	g_cl.req = 1, g_cl.req_frame = g_fr.frame, g_cl.req_thr = 0;
+	g_cl.req_w = (sv_vec3){ -k * g_bow.hv_d[0], -k * g_bow.hv_d[1], -k * g_bow.hv_d[2] };
+	g_bow.hv_backs++;
+}
+
+/* build 37 (SOMVR_BOW_SIDE=roll, re-xr-pipeline.md 174): the step's side of the riser into the nock (the limbs' line +
+ * the side), from the next frame on; SOMVR_BOW_NOCK_CM and the old holds keep their nock */
+static void bo_side_apply(const somvr_bow_out *o, double t)
+{
+	if (g_bow.nock_set || g_bow.hold_mode != SOMVR_BOW_HOLD_FIST)
+		return;
+	int k = o->side < 0 ? -1 : 1, B = g_bow.cfg.bow_hand;
+	if (k != g_bow.side_now) {
+		g_bow.side_flips++;
+		if (g_bow.side_logs < 80 && bo_log_ok(t)) {
+			g_bow.side_logs++;
+			sv_vec3 d = o->ray ? o->dir : somvr_bow_fwd(&g_bow.cfg, g_bow.s.q[B]);
+			logf_("BOW t=%.3f the arrow's side: %s -> %s of the riser (the bow canted %.0f deg, %s; flips %llu)", t,
+			      g_bow.side_now < 0 ? "-X" : "+X", k < 0 ? "-X" : "+X", somvr_bow_cant_deg(&g_bow.cfg, g_bow.s.q[B], d),
+			      somvr_bow_phase_name(o->phase), (unsigned long long)g_bow.side_flips);
+		}
+	}
+	g_bow.side_now = k, g_bow.side_cm = (float)k * g_bow.side_abs;
+	g_bow.cfg.nock_ofs[0] = g_bow.nock_x0 + g_bow.side_cm;
+}
+
 static void bo_frame(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 pw[2], const sv_quat qw[2])
 {
 	if (!g_bow.on)
@@ -14722,7 +15173,7 @@ static void bo_frame(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 pw[2]
 	const char *why_not = !objs ? "no player objects (H4's Player, its PlayerMovement and object)"
 			      : g_inp.ctx != SC_CTX_WORLD ? (g_inp.ctx == SC_CTX_MENU ? "a menu" : "a struggle")
 			      : g_fb.on && g_fb.tr.shown ? "third person (SOMVR_FALLBACK)"
-			      : g_cl.on && g_cl.s.active ? "climbing (SOMVR_CLIMB)"
+			      : g_cl.on && g_cl.s.active && !bo_hang_bow() ? "climbing (SOMVR_CLIMB)"
 			      : NULL;
 	int B = g_bow.cfg.bow_hand, S = 1 - B;
 	somvr_bow_in in;
@@ -14774,6 +15225,47 @@ static void bo_frame(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 pw[2]
 	int was = g_bow.s.phase;
 	somvr_bow_out o;
 	somvr_bow_step(&g_bow.s, &g_bow.cfg, &in, &o);
+	bo_side_apply(&o, t); /* build 37: the arrow's side of the riser for the next frame's nock */
+	if (g_bow.hang) { /* build 37: the bow in the hang - its lines */
+		int hg = bo_hang_bow(), out = o.phase != SOMVR_BOW_PH_IDLE;
+		g_bow.hang_frames += hg && out;
+		if (hg && out && (o.events & SOMVR_BOW_E_RELEASE))
+			g_bow.hang_shots++;
+		if (out && hg && !g_bow.hang_out) {
+			g_bow.hang_outs++;
+			logf_("BOW t=%.3f frame=%llu the bow out in the hang (SOMVR_BOW_HANG): drawn and shot as on foot, the arrow from "
+			      "here; Talion held at %.1f,%.1f,%.1f (gravity off); no climb hold while it is out", t,
+			      (unsigned long long)g_fr.frame, g_cl.s.last_root.x, g_cl.s.last_root.y, g_cl.s.last_root.z);
+		} else if (g_bow.hang_out && (!out || !hg)) {
+			logf_("BOW t=%.3f frame=%llu the bow in the hang ends: %s (%llu frames, %llu shots from the hang; the view held, "
+			      "Talion moved by the game %.1f cm at most)", t,
+			      (unsigned long long)g_fr.frame, !out ? "put away - the hang again (a grip on the wall climbs on)"
+			      : !(g_cl.on && g_cl.s.active) ? "the climb ended (the bow goes on, on foot or falling)"
+			      : "the climb left the hang", (unsigned long long)g_bow.hang_frames, (unsigned long long)g_bow.hang_shots,
+			      g_bow.hv_most);
+		}
+		g_bow.hang_out = out && hg;
+		if (g_bow.hang_out)
+			g_bow.hang_last_t = t;
+		if (g_bow.hv_on) { /* the view's base while held: where the eyes are anchored in the world (a second's line) */
+			if (!g_bow.hv_bhave)
+				g_bow.hv_bhave = 1, g_bow.hv_b0 = g_fr.base.pos, g_bow.hv_bmost = 0, g_bow.hv_next = t + 1.0;
+			sv_vec3 b = g_fr.base.pos;
+			float db = sqrtf((b.x - g_bow.hv_b0.x) * (b.x - g_bow.hv_b0.x) + (b.y - g_bow.hv_b0.y) * (b.y - g_bow.hv_b0.y) +
+					 (b.z - g_bow.hv_b0.z) * (b.z - g_bow.hv_b0.z));
+			g_bow.hv_bmost = fmaxf(g_bow.hv_bmost, db);
+			if (t >= g_bow.hv_next) {
+				g_bow.hv_next = t + 1.0;
+				logf_("BOW t=%.3f the view's hold: Talion's root %.1f cm from where the bow came out, the view's base %.1f cm "
+				      "(at most %.1f)", t, sqrtf(g_bow.hv_d[0] * g_bow.hv_d[0] + g_bow.hv_d[1] * g_bow.hv_d[1] +
+				      g_bow.hv_d[2] * g_bow.hv_d[2]), db, g_bow.hv_bmost);
+			}
+		} else {
+			g_bow.hv_bhave = 0;
+		}
+		if (!(g_cl.on && g_cl.s.active))
+			g_bow.hang_keeps = 0;
+	}
 	if (g_bow.sl_put) { /* SOMVR_BOW_DRAW=slot: the grip let go at the shoulder: put back now */
 		g_bow.sl_put = 0;
 		if (g_bow.s.phase != SOMVR_BOW_PH_IDLE) {
@@ -14861,11 +15353,13 @@ static void bo_frame(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 pw[2]
 	g_bow.next_log = t + 1.0;
 	int arrows = bo_arrows(g_fr.pl);
 	logf_("BOW t=%.3f frame=%llu last 1 s: %s, draw %.1f cm (tension %.2f), ray %s, the game's aim %s, free-aim calls %llu "
-	      "overrides %llu, the aim command %llu ticks, fire %llu; arrows %d; totals stale %llu jumps %llu", t,
+	      "overrides %llu, the aim command %llu ticks, fire %llu; arrows %d; totals stale %llu jumps %llu; the arrow's side "
+	      "%s (%.1f cm in the grip, flips %llu)", t,
 	      (unsigned long long)g_fr.frame, somvr_bow_phase_name(o.phase), o.draw_cm, o.tension, o.ray ? "ours" : "the game's",
 	      in.game_aim ? "on" : "off", (unsigned long long)g_bow.w_calls, (unsigned long long)g_bow.w_over,
 	      (unsigned long long)g_bow.w_aim, (unsigned long long)g_bow.w_fire, arrows, (unsigned long long)g_bow.stale,
-	      (unsigned long long)g_bow.jumps);
+	      (unsigned long long)g_bow.jumps, g_bow.side_now < 0 ? "-X" : "+X", g_bow.cfg.nock_ofs[0],
+	      (unsigned long long)g_bow.side_flips);
 	if (g_bow.aim_n) /* build 33 */
 		logf_("BOW t=%.3f aim steps: the drawn ray's turn frame to frame %.3f deg rms, %.2f at most (%llu frames; the twist "
 		      "filter %.1f Hz + %.1f per rad/s; held: positions %llu, turns %llu)", t, sqrt(g_bow.aim_ss / (double)g_bow.aim_n),
@@ -15075,12 +15569,10 @@ static int bo_arm_grip(int h, const somvr_hand hands[2], sa_xf *g, sa_xf *cal)
 		sv_quat qs;
 		somvr_hand_game(sh, &ps, &qs, NULL, NULL);
 		bo_hold_pose(1, 1 - h, sh, t, &ps, &qs); /* ... and an inferred string hand (at the face: the headset hides it) */
-		float d;
-		sv_vec3 nock = somvr_bow_nock(&g_bow.cfg, g->p, g->q), dir = somvr_bow_draw_dir(nock, ps, &d);
 		/* build 16: the bow's own shot axis onto the draw (HOLD=fist: the grip's -Y; aligning +Z, the tube, laid the bow
-		 * flat while drawn), weighted by the draw back along it (a hand beside the nock turns nothing) */
-		sv_vec3 ax = { g_bow.cfg.shot_ax[0], g_bow.cfg.shot_ax[1], g_bow.cfg.shot_ax[2] };
-		g->q = somvr_bow_align_ax(g->q, ax, dir, somvr_bow_dir_weight(&g_bow.cfg, somvr_bow_back(&g_bow.cfg, g->q, nock, ps)));
+		 * flat while drawn), weighted by the draw back along it (a hand beside the nock turns nothing); build 37
+		 * (SOMVR_BOW_FIT=on): onto the line through the turned bow's own nock - the arrow's (somvr_bow_fit) */
+		g->q = somvr_bow_fit(&g_bow.cfg, g->p, g->q, ps, NULL, NULL);
 	}
 	sv_quat raw = g->q;
 	if (g_bow.twist_hz > 0) /* build 33: the drawn bow's turn, filtered (the hand's twist and the draw's line) */
@@ -15495,6 +15987,22 @@ static const char *bo_word(const char *w)
 		g_bow.twist_hz = hz; /* (a float the game thread reads: a torn read is one frame's cutoff) */
 		return hz > 0 ? "bow twist (the bow's turn filtered)" : "bow twist 0 (the raw turn)";
 	}
+	if (nw == 2 && !strcmp(a, "side")) { /* build 37 (headless A/B): "bow side CM|roll|fixed" - SOMVR_BOW_SIDE(_CM) live */
+		float cm = (float)atof(v);
+		if (!strcmp(v, "roll") || !strcmp(v, "fixed"))
+			g_bow.cfg.side_auto = v[0] == 'r'; /* (ints the game thread reads at its next step) */
+		else if (cm > 0 && cm <= 6)
+			g_bow.side_abs = cm;
+		else
+			return "bow side (not roll|fixed|0..6 cm: ignored)";
+		return "bow side (the arrow's side of the riser from the next frame)";
+	}
+	if (nw == 2 && !strcmp(a, "fit")) { /* build 37 (headless A/B): SOMVR_BOW_FIT live */
+		if (strcmp(v, "on") && strcmp(v, "off"))
+			return "bow fit (not on|off: ignored)";
+		g_bow.cfg.fit = v[1] == 'n';
+		return "bow fit (the drawn bow on its own arrow, or builds 16-36's line)";
+	}
 	const char *bar = ba_word(a, v, nw); /* build 20: "bow auto on|off", "bow aim assist|exact" (headless A/B) */
 	if (bar)
 		return bar;
@@ -15764,6 +16272,10 @@ static void bo_start(const struct site_spec *sites, int *bad)
 	env_vec("SOMVR_BOW_CAL", g_bow.cal_v, 6, -360, 360, bad);
 	g_bow.cal = sa_xf_euler(g_bow.cal_v);
 	g_bow.align = env_word("SOMVR_BOW_ALIGN", onoff_w, 2, 1);
+	g_bow.hang = env_word("SOMVR_BOW_HANG", (const char *const[]){ "off", "on" }, 2, 0); /* build 37: the bow in the hang */
+	logf_("CONFIG bow hang=%s (SOMVR_BOW_HANG, build 37)%s", g_bow.hang ? "on" : "off", g_bow.hang ? ": in the climb's hang "
+	      "with no hand holding (Talion still, gravity off) the bow comes out, draws and shoots as on foot - the arrow from "
+	      "the hang; put away = the hang again; while it is out no climb hold" : ": climbing (the hang too) keeps the bow away");
 	/* build 16: SOMVR_BOW_HOLD=fist - the bow as a hand holds one (somvr_bow_hold_q; re-xr-pipeline.md 51): the sword's
 	 * calibration already holds it so (boot 023643: its +Z along the grip's -Y, its +Y along +Z), bo_hold makes it exact
 	 * and puts the bow's grip node on the controller's grip. SOMVR_BOW_TILT_DEG / _CANT_DEG lean it */
@@ -15787,8 +16299,25 @@ static void bo_start(const struct site_spec *sites, int *bad)
 	g_bow.noarrow_cue = env_word("SOMVR_BOW_NOARROW_CUE", g_bo_noarrow_w, 3, 0);
 	c->noarrow_take = g_bow.noarrow_cue == 2;
 	g_bow.rest_cm = env_float("SOMVR_BOW_REST_CM", 4, -10, 15, bad); /* the arrow's height over the grip, along the tube */
-	g_bow.side_cm = (IN_SIDE(c->bow_hand) == SOMVR_HAND_L ? -1.0f : 1.0f) * 1.2f; /* beside the riser, on the bow hand's
-										 * side (build 30: its controller's) */
+	/* beside the riser, on the bow hand's side (build 30: its controller's); build 37 (re-xr-pipeline.md 174):
+	 * SOMVR_BOW_SIDE_CM from the limbs' line (1.2 = builds 16-36), SOMVR_BOW_SIDE=roll the side by the bow's cant (the
+	 * upper side; SOMVR_BOW_SIDE_DEG the hysteresis), SOMVR_BOW_FIT=on the drawn bow and its shot through its own nock */
+	c->side_default = IN_SIDE(c->bow_hand) == SOMVR_HAND_L ? -1 : 1;
+	g_bow.side_abs = env_float("SOMVR_BOW_SIDE_CM", 1.2f, 0, 6, bad);
+	g_bow.side_now = c->side_default, g_bow.side_cm = (float)c->side_default * g_bow.side_abs;
+	c->side_auto = env_word("SOMVR_BOW_SIDE", (const char *const[]){ "fixed", "roll" }, 2, 0);
+	c->side_deg = env_float("SOMVR_BOW_SIDE_DEG", 20, 5, 80, bad);
+	c->fit = env_word("SOMVR_BOW_FIT", (const char *const[]){ "off", "on" }, 2, 0);
+	logf_("CONFIG bow side=%s fit=%s (build 37: SOMVR_BOW_SIDE, SOMVR_BOW_SIDE_CM, SOMVR_BOW_SIDE_DEG, SOMVR_BOW_FIT): the "
+	      "arrow %.1f cm beside the limbs' line, %s%s", c->side_auto ? "roll" : "fixed", c->fit ? "on" : "off", g_bow.side_abs,
+	      c->side_auto ? "on the bow's upper side (the bow hand's back while upright or canted that way; over to the other side "
+	      "once that faces down past " : "always on the bow hand's back (", c->side_auto ? "SOMVR_BOW_SIDE_DEG)" : "fixed)");
+	if (c->side_auto)
+		logf_("CONFIG bow side_deg=%.0f: deg past level, back at a quarter of it; settled until the draw is armed, then held "
+		      "to the release", c->side_deg);
+	if (c->fit)
+		logf_("CONFIG bow fit=on: the drawn bow turned so that the line from the string hand through its own nock is its "
+		      "shot, and the shot along that line (builds 16-36: through the unturned grip's nock)");
 	if (g_bow.hold_mode == SOMVR_BOW_HOLD_FIST && !g_bow.nock_set) /* until the live string is measured (bo_nock_skel) */
 		c->nock_ofs[0] = g_bow.side_cm, c->nock_ofs[1] = 1.7f, c->nock_ofs[2] = g_bow.rest_cm;
 	if (g_bow.hold_mode == SOMVR_BOW_HOLD_AUTO) /* boot 023643 measured the bow 90 deg about the grip's X off the sword's
@@ -16185,7 +16714,7 @@ static int lo_walk_blocked(double t)
 		blocked = t0 >= 0 && t - t0 < 1.5 && da >= 40.0 && dp < 0.2 * da;
 		t0 = t, a0 = g_lo.n.asked, p0 = g_lo.n.applied;
 	}
-	return blocked;
+	return blocked || we_at_edge(); /* live 11-04 (SOMVR_WALK_EDGE_STOP): held at a drop, facing it */
 }
 
 /* LOCO event lines: the first 200, then at most 10 per second */
@@ -16220,6 +16749,11 @@ static void lo_tick(sc_tick_out *o)
 	float m = sqrtf(o->move[0] * o->move[0] + o->move[1] * o->move[1]);
 	if (!g_lo.stick_ok || !g_lo.owned_last || !(m > 1e-4f))
 		return;
+	if (g_we.on && g_we.at && !g_we.step && cb_now() - g_we.held_t < 0.15) { /* live 11-04 (SOMVR_WALK_EDGE_STOP): held at
+		o->move[0] = o->move[1] = 0;                                      * a drop: the game's own stick still too (its
+		o->pad[SC_PAD_LX] = o->pad[SC_PAD_LY] = 0;                        * move between our ticks never carries him on) */
+		return;
+	}
 	float leg = somvr_loco_leg_mag(&g_lo.cfg, somvr_loco_band_speed(&g_lo.cfg, m > 1 ? 1 : m, o->sprint), o->sprint);
 	if (fabsf(leg - m) <= 1e-4f)
 		return;
@@ -16244,6 +16778,80 @@ static float lo_dt(uintptr_t obj, double t)
 }
 
 /* the PM hook, right before vf_11 (after the climb's turn): who owns this tick, the core's step, LOCO_ROOTDELTA armed */
+/* build 39 (SOMVR_WALK_EDGE_HOLD, mark 5's crevice: after the stop the capsule slid on over its sloped lip with our walk
+ * at zero - boots 20261104-205614 / 210316): while he stands at the edge, the game's own move since our last tick (sl),
+ * where it carries him toward the edge, is undone in our delta: at most its own length, never back past the stop point */
+static void we_hold_tick(somvr_loco_out *o, const float r[3], sv_vec3 sl, double t)
+{
+	sv_vec3 u = g_we.at_dir;
+	float toward = sl.x * u.x + sl.z * u.z, l = hypotf(sl.x, sl.z);
+	if (!(toward > 0.2f) || !(l < 200.0f) || !o->owned)
+		return;
+	float along = (r[0] - g_we.at_root.x) * u.x + (r[2] - g_we.at_root.z) * u.z; /* past the stop point toward the edge */
+	float k = 1.0f, back = toward; /* the counter -sl: its part along u is -toward */
+	if (along - back < 0)      /* never behind the stop point */
+		k = along > 0 ? along / back : 0.0f;
+	if (!(k > 0))
+		return;
+	o->delta.x -= k * sl.x, o->delta.z -= k * sl.z;
+	g_we.hold_ticks++, g_we.hold_cm += k * l;
+	if (k * l > g_we.hold_max_cm)
+		g_we.hold_max_cm = k * l;
+	if (g_we.hold_ticks == 1 || (g_we.hold_ticks % 50 == 0 && un_log_ok(t)))
+		logf_("WALK edge hold t=%.3f the game moved him %.1f cm toward the edge since our last tick (%.1f cm in all): undone "
+		      "%.0f %% in our delta (SOMVR_WALK_EDGE_HOLD; ticks %llu, %.0f cm in all, the most a tick %.1f cm)", t, toward, l,
+		      k * 100.0f, (unsigned long long)g_we.hold_ticks, g_we.hold_cm, g_we.hold_max_cm);
+}
+
+/* live 11-04 (SOMVR_WALK_EDGE_STOP): A tapped at an edge: the light step off - the held way at step_cms in our delta
+ * until no floor is under the capsule (then the jump module's fall from here at once: its arc, its braked landing) or
+ * step_need is walked; the game's keeper holding the step (under a third of it done in 0.5 s) = stopped there */
+static void we_step_tick(somvr_loco_out *o, const float r[3], float dt, double t)
+{
+	if (g_we.step == 2) { /* the fall asked: the guard waits for the jump's take-off (or 0.4 s) */
+		if (jp_air() || t - g_we.step_t0 > 0.4)
+			g_we.step = 0;
+		return;
+	}
+	float moved = (r[0] - g_we.step_r0.x) * g_we.step_dir.x + (r[2] - g_we.step_r0.z) * g_we.step_dir.z, dy = 0;
+	float feet = r[1] - g_cl.cfg.foot_cm;
+	const char *end = NULL;
+	if (g_cl.s.active || jp_air())
+		end = g_cl.s.active ? "a climb took him" : "in the air";
+	else if (!un_ground_under(r, feet, 60.0f, &dy) || moved >= g_we.step_need) {
+		if (jp_fall_req(t))
+			g_we.step = 2, g_we.step_t0 = t, g_we.step_falls++;
+		else
+			g_we.step = 0;
+		if (un_log_ok(t))
+			logf_("WALK edge stop t=%.3f the step off: %.0f cm out (%s): %s", t, moved,
+			      moved >= g_we.step_need ? "its way walked" : "no floor under the capsule",
+			      g_we.step == 2 ? "the fall from here (the jump's arc from rest, its landing)" : "the fall refused now (WALK_GROUND's then)");
+		return;
+	} else if (t - g_we.step_t0 > 0.5 && moved < 0.33f * g_we.step_asked) {
+		end = "the game holds him at this edge (under a third of the step done)";
+		g_we.step_stalls++;
+		haptic(SOMVR_HAND_R, SOMVR_HX_NO);
+	} else if (t - g_we.step_t0 > 1.5) {
+		end = "1.5 s";
+	}
+	if (end) {
+		g_we.step = 0;
+		if (un_log_ok(t))
+			logf_("WALK edge stop t=%.3f the step off ended: %s (%.0f cm out of %.0f asked); A held there = the ring and the blink",
+			      t, end, moved, g_we.step_asked);
+		return;
+	}
+	if (!o->owned || !(dt > 0))
+		return;
+	float l = fminf(g_we.step_cms * fminf(dt, 0.05f), g_we.step_need + 10.0f - moved);
+	if (!(l > 0))
+		return;
+	sv_vec3 d = { g_we.step_dir.x * l, 0, g_we.step_dir.z * l };
+	if (somvr_loco_take_assist(&g_lo.s, o, d, dt))
+		g_we.step_asked += l;
+}
+
 static void lo_pm_pre(uintptr_t pm, const float *xf)
 {
 	g_lo.armed = g_lo.fired = g_lo.follow_taken = g_lo.rot_ours = 0;
@@ -16317,7 +16925,9 @@ static void lo_pm_pre(uintptr_t pm, const float *xf)
 	memcpy(g_lo.xrot, x7 + 3, sizeof g_lo.xrot);
 	sv_quat xq = sv_qnormalize(sv_quat_of(g_lo.xrot));
 	in.yaw = sv_heading(xq), in.head_yaw = g_inp.hv;
+	sv_vec3 we_slide = { 0, 0, 0 }; /* build 39 (SOMVR_WALK_EDGE_HOLD): the game's own move since our last tick */
 	if (g_lo.have_post && in.have_root && t - g_lo.t_pm <= LO_GAP_S) { /* moved or turned since vf_11's transform */
+		we_slide = (sv_vec3){ root[0] - g_lo.post_root[0], 0, root[2] - g_lo.post_root[2] };
 		in.have_btw = 1, in.btw_yaw = sv_wrap_pi(in.yaw - g_lo.post_yaw);
 		float bc = dist3(root, g_lo.post_root), bd = fabsf(in.btw_yaw) * 57.29578f;
 		g_lo.n.btw_cm += bc, g_lo.w.btw_cm += bc, g_lo.n.btw_deg += bd, g_lo.w.btw_deg += bd;
@@ -16333,6 +16943,14 @@ static void lo_pm_pre(uintptr_t pm, const float *xf)
 	if (g_un.slide && o->owned && t < g_un.slide_until) { /* build 33 (SOMVR_WALK_EDGE_SLIDE): along the edge */
 		float dx = o->delta.x, dz = o->delta.z;
 		o->delta.x = 0.75f * (dx * g_un.slide_c - dz * g_un.slide_s), o->delta.z = 0.75f * (dx * g_un.slide_s + dz * g_un.slide_c);
+	}
+	if (g_we.on && o->owned && in.have_root) { /* live 11-04 (SOMVR_WALK_EDGE_STOP): never off a drop by the walk */
+		if (we_guard(&o->delta, o->delta, root, t, 0) && hypotf(o->delta.x, o->delta.z) < 0.01f)
+			o->v.x = 0, o->v.z = 0; /* held still: no speed for the view's extrapolation either */
+		if (g_we.hold && g_we.at && !g_we.step && !jp_air() && !g_cl.s.active) /* build 39: the game's slide undone */
+			we_hold_tick(o, root, we_slide, t);
+		if (g_we.step)
+			we_step_tick(o, root, in.dt, t);
 	}
 	if (o->guard_start && lo_log_ok(t)) /* SOMVR_LOCO_YAW_GUARD */
 		logf_("LOCO t=%.3f frame=%llu yaw guard: the game turned him back %d ticks in a row (%.1f deg the last; fsm %d, the "
@@ -16399,6 +17017,11 @@ static int lo_take_follow(sv_vec3 d)
 	}
 	if (!somvr_loco_take_follow(&g_lo.s, &g_lo.o, d))
 		return 0;
+	if (g_we.on && g_lo.s.have_root) { /* live 11-04 (SOMVR_WALK_EDGE_STOP): the room-scale step held at a drop too (the
+					     * request taken, its part out: the view leans out, the body stays) */
+		float r[3] = { g_lo.s.root_last.x, g_lo.s.root_last.y, g_lo.s.root_last.z };
+		we_guard(&g_lo.o.delta, g_lo.o.delta, r, cb_now(), 1);
+	}
 	stl_standoff_follow(&g_lo.s, &g_lo.o); /* SOMVR_STEALTH_KILL_STANDOFF_CM: the follow too */
 	sv_vec3 l = sv_qrot(sv_qconj(sv_qnormalize(sv_quat_of(g_lo.xrot))), g_lo.o.delta);
 	g_lo.local[0] = l.x, g_lo.local[1] = l.y, g_lo.local[2] = l.z;
@@ -17268,6 +17891,9 @@ static void *writer_main(void *arg)
 							      build 27: "fxnear on|off|R0,R1|eye E|state"; build 31: "fxbill eye|game|state" */
 				} else if (seen && !strncmp(w, "slsnd", 5) && (!w[5] || w[5] == ' ' || w[5] == '\n')) {
 					what = gs_word(w); /* build 20, SOMVR_SLOTS_GAMESOUND: "slsnd log|drop|state" */
+				} else if (seen && ((!strncmp(w, "sndnear", 7) && (!w[7] || w[7] == ' ' || w[7] == '\n')) ||
+						    (!strncmp(w, "sndcap", 6) && (!w[6] || w[6] == ' ' || w[6] == '\n')))) {
+					what = wsd_word(w); /* build 37: "sndnear game|vr|state", "sndcap start NAME|stop" */
 				} else if (seen && !strncmp(w, "screens ", 8)) { /* build 22: "screens status|death ..|mouse1 .." */
 					what = scr_word(w);
 				} else if (seen && !strncmp(w, "map ", 4)) { /* build 27: "map status|on|off|pan ..|hold .." */
@@ -19118,6 +19744,7 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	fight_start(&bad);              /* build 10's fight: SOMVR_HURT, ... (somvr_fight_game.c; after the threat) */
 	sl_start(g_sl_sites, &bad);     /* SOMVR_SLOTS=1: its sites, the model keys' tail jump, the config line (after input) */
 	gs_start(&bad);                 /* build 20, SOMVR_SLOTS_GAMESOUND: the game's sword sounds on Talion (after slots, bow) */
+	wsd_start(&bad);                 /* build 37, SOMVR_AUDIO_NEAR / SOMVR_AUDIO_LOG: the sounds placed for the head */
 	fi_start(g_fi_sites, &bad);     /* SOMVR_FINISH=1: its read-only sites and the config line (after combat) */
 	xc_start(g_xc_sites, &bad);     /* SOMVR_EXECUTE=1: the execution's sites and the config line (after the finishers') */
 	py_config();                    /* SOMVR_PARRY / SOMVR_SHOVE (build 18, somvr_parry_game.c) */
@@ -19349,6 +19976,7 @@ static void somvr_end_logs(const char *why)
 	df_end_log();  /* SOMVR_DEFENCE */
 	sl_end_log();  /* SOMVR_SLOTS */
 	gs_end_log();  /* build 20, SOMVR_SLOTS_GAMESOUND */
+	wsd_end_log();  /* build 37, SOMVR_AUDIO_NEAR */
 	fi_end_log();  /* SOMVR_FINISH */
 	xc_end_log();  /* SOMVR_EXECUTE */
 	stl_end_log(); /* SOMVR_STEALTH_KILL */
@@ -21601,6 +22229,8 @@ static struct {
 	unsigned clank;
 	float clank_s;
 	float clank_slow_s, clank_slow_k; /* build 32 (SOMVR_DEFENCE_CLANK_SLOW=MS,K): after the stop, the orc on at K x time */
+	float clank_max_s; /* live 11-04 (SOMVR_DEFENCE_CLANK_MAX_MS): the freeze + its slow tail end by this */
+	uint64_t clank_capped;
 	char clank_fx[160];
 	int ok_fx, clank_marks; /* SOMVR_DEFENCE_CLANK_MARKS: headless pictures, a bug mark at each of the first N clanks */
 	uintptr_t pcomb;
@@ -22012,9 +22642,15 @@ static void df_clank(uintptr_t c, double t, const char *what)
 	if ((k & SOMVR_DFC_STOP) && g_df.clank_s > 0) {
 		struct cb_orc o;
 		uint64_t on0 = g_cb.n.hs_on;
-		g_cb.hs_next_slow_s = g_df.clank_slow_s, g_cb.hs_next_slow_k = g_df.clank_slow_k; /* build 32: then slow */
+		/* live 11-04 (som-live-block, the session's mark 221447_4: the orc froze on the blade, then reeled): the
+		 * whole hold within SOMVR_DEFENCE_CLANK_MAX_MS - the recoil picked at the contact starts only when its clock
+		 * runs again (its stagger began 0.39 s after each of the four blocks) */
+		float stop_s, slow_s;
+		somvr_df_clank_hold(g_df.clank_s, g_df.clank_slow_k > 0 ? g_df.clank_slow_s : 0, g_df.clank_max_s, &stop_s, &slow_s);
+		g_df.clank_capped += stop_s + slow_s < g_df.clank_s + (g_df.clank_slow_k > 0 ? g_df.clank_slow_s : 0) - 1e-4f;
+		g_cb.hs_next_slow_s = slow_s, g_cb.hs_next_slow_k = slow_s > 0 ? g_df.clank_slow_k : 0; /* build 32: then slow */
 		if (cb_orc_get(c, &o))
-			cb_hs_start(&o, t, g_df.clank_s, what);
+			cb_hs_start(&o, t, stop_s, what);
 		g_cb.hs_next_slow_s = g_cb.hs_next_slow_k = 0;
 		g_df.n.stops += g_cb.n.hs_on > on0;
 	}
@@ -22029,7 +22665,9 @@ static void df_clank(uintptr_t c, double t, const char *what)
 	}
 	if (df_log_ok(t)) {
 		char pn[64];
-		logf_("DEFENCE clank orc=%#llx (%s): %s", (unsigned long long)c, what, somvr_df_clank_str(k, pn, sizeof pn));
+		logf_("DEFENCE clank orc=%#llx (%s): %s (the hold capped %llu times: SOMVR_DEFENCE_CLANK_MAX_MS %.0f)",
+		      (unsigned long long)c, what, somvr_df_clank_str(k, pn, sizeof pn), (unsigned long long)g_df.clank_capped,
+		      g_df.clank_max_s * 1e3);
 	}
 	if (g_df.clank_marks > 0) { /* headless pictures: the eyes of the next frame, inside the freeze */
 		g_df.clank_marks--;
@@ -22958,6 +23596,8 @@ static void df_start(const struct site_spec *sites, int *bad)
 		else
 			*bad = 1, logf_("WARN SOMVR_DEFENCE_CLANK_SLOW=%s: not MS,K (0..1000 ms, 0 < K < 1): none", csl);
 	}
+	/* live 11-04 (som-live-block): code default 90 ms - the freeze cut to it, build 32's slow tail gone (0 = no cap) */
+	g_df.clank_max_s = env_float("SOMVR_DEFENCE_CLANK_MAX_MS", 90, 0, 1400, bad) * 0.001f;
 	g_df.clank_marks = (int)env_float("SOMVR_DEFENCE_CLANK_MARKS", 0, 0, 20, bad);
 	snprintf(g_df.clank_fx, sizeof g_df.clank_fx, "%s", fxv && fxv[0] ? fxv
 		 : "fx\\weapons\\shared\\impactsa\\impactsa_sparksmall_weapontip.fxp");
@@ -23011,6 +23651,11 @@ static void df_start(const struct site_spec *sites, int *bad)
 		      c->contact_hand ? "both (the drawn blade or where the hand holds it, before the weight's trail)" : "drawn",
 		      somvr_df_can_block(c, SOMVR_DF_TYPE_NOPARRY) ? "" : "cannot-parry, ",
 		      somvr_df_can_block(c, SOMVR_DF_TYPE_NOCOUNTER) ? "" : "cannot-counter, ", "cannot-block");
+	float hold_st = 0, hold_sl = 0;
+	somvr_df_clank_hold(g_df.clank_s, g_df.clank_slow_k > 0 ? g_df.clank_slow_s : 0, g_df.clank_max_s, &hold_st, &hold_sl);
+	logf_("CONFIG defence clank hold (live 11-04, SOMVR_DEFENCE_CLANK_MAX_MS %.0f: the whole hold, 0 = no cap): the orc "
+	      "frozen %.0f ms, then %.0f ms at %.0f %% (set: %.0f + %.0f ms)", g_df.clank_max_s * 1e3, hold_st * 1e3,
+	      hold_sl * 1e3, g_df.clank_slow_k * 100, g_df.clank_s * 1e3, g_df.clank_slow_s * 1e3);
 	logf_("CONFIG defence clank=%s (SOMVR_DEFENCE_CLANK) freeze %.0f ms, fx '%s'%s%s%s", somvr_df_clank_str(g_df.clank, cw, sizeof cw),
 	      g_df.clank_s * 1e3, g_df.clank_fx, (g_df.clank & SOMVR_DFC_FX) && !g_df.ok_fx ? " (no fx: " : fxwhy[0] ? " (" : "",
 	      fxwhy, fxwhy[0] || ((g_df.clank & SOMVR_DFC_FX) && !g_df.ok_fx) ? ")" : "");
@@ -23147,6 +23792,7 @@ static void df_clank_fx(double t)
 #include "somvr_bowhit_game.c" /* SOMVR_BOW_HITLOG: what our arrows hit, with which attack (re-bow.md 13) */
 #include "somvr_strike_game.c" /* SOMVR_BOW_STRIKE=dash|blink: the Shadow Strike on X, the wraith dash (re-bow.md 14) */
 #include "somvr_gsound_game.c" /* build 20, SOMVR_SLOTS_GAMESOUND: the game's sword sounds on Talion (re-xr-pipeline.md 75) */
+#include "somvr_wsound_game.c" /* build 37, SOMVR_AUDIO_NEAR: the game's sounds placed for the head (re-xr-pipeline.md 173) */
 #include "somvr_quiver_game.c" /* build 16: the quiver, the nock on the live string, the arrow on the layer (re-xr-pipeline.md 51) */
 #include "somvr_bowaim_game.c" /* build 20: SOMVR_BOW_AIM=exact, SOMVR_BOW_AIM_RING - where the bow really aims (re-xr-pipeline.md 76) */
 #include "somvr_reticle_game.c" /* build 17: SOMVR_BOW_RETICLE, the game's bow crosshair hidden (re-xr-pipeline.md 61.3) */

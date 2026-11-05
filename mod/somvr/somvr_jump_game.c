@@ -263,7 +263,15 @@ static void jp_a_press(int world, double t)
 	in.descent = g_cl.on && g_cl.cfg.descent && !g_cl.why_not &&
 		     !(bo_out() || sl_nograb() || vb_nograb() || df_keep_sword(t));
 	/* build 36 (SOMVR_CLIMB_EDGE_LOW): the game holds the walk (a low edge's keeper): the edge first, even moving */
-	in.pinned = g_cl.cfg.edge_low_cm > 0 && lo_walk_blocked(t);
+	in.pinned = (g_cl.cfg.edge_low_cm > 0 && lo_walk_blocked(t)) ||
+		    (g_cl.cfg.foot_a && g_cl.stick_y < -0.5f); /* build 39: the stick back + A = the climb's (the climb down) */
+	if (g_cl.on && g_cl.ta_show && !in.climbing) { /* build 39 (SOMVR_CLIMB_TOP_A): A at a top under a resting hand is the
+							  * climb's (the blink up) - never the jump too (the sword hand's descent off) */
+		g_jp.presses++, g_jp.press_t = t;
+		if (jp_log_ok())
+			logf_("JUMP t=%.3f press: the top's ring is up (SOMVR_CLIMB_TOP_A): the climb's A (up), no jump", t);
+		return;
+	}
 	int a = somvr_jp_a_pick(&g_jp.cfg, &in);
 	g_jp.presses++, g_jp.press_why = a, g_jp.press_speed = in.speed, g_jp.press_t = t;
 	if (a == SOMVR_JPA_VAULT || a == SOMVR_JPA_JUMP) {

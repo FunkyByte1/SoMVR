@@ -229,6 +229,9 @@ enum { SOMVR_DFC_RECOIL = 1u, SOMVR_DFC_LATE = 2u, SOMVR_DFC_STOP = 4u, SOMVR_DF
 int somvr_df_clank_parse(const char *v, unsigned *bits);
 /* the parts' words ("recoil,stop,..."; "off" for none) */
 const char *somvr_df_clank_str(unsigned bits, char *out, unsigned cap);
+/* live 11-04 (SOMVR_DEFENCE_CLANK_MAX_MS): the block's hit-stop and its slow tail capped so the whole hold ends by
+ * max_s (0 = no cap); the freeze first, then what is left of the tail */
+void somvr_df_clank_hold(float stop_s, float slow_s, float max_s, float *stop_out, float *slow_out);
 
 /* The recoil's permission, FUN_0280fe60(the orc's Combat, attacker, attack, 0, ...) read from the game (docs/re-xr-
  * pipeline.md 30.5): by the orc's current attack's AttackData. CanInterrupt (field 23) absent or 1: any attack may

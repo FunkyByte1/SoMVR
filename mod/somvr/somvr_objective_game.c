@@ -327,13 +327,31 @@ static void ob_frame(uintptr_t pl, int stereo)
 	somvr_objective_frame e;
 	memset(&e, 0, sizeof e);
 	int dm = g_cl.dm_show; /* the drop's choice over the pullover's ring (A is the newer act) */
-	if (g_ob.land && g_cl.on && (g_cl.po_show || dm) && g_cl.tid == my_tid() && !game_paused()) {
+	int ta = !dm && !g_cl.po_show && g_cl.ta_show; /* build 39 (SOMVR_CLIMB_TOP_A): a top under a resting hand: A UP */
+	int we = !dm && !g_cl.po_show && !ta && g_we.on && g_we.show; /* live 11-04 (SOMVR_WALK_EDGE_STOP): held at a drop */
+	if (g_ob.land && g_cl.on && (g_cl.po_show || dm || we || ta) && g_cl.tid == my_tid() && !game_paused()) {
 		somvr_th_map mp = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
 				    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
-		sv_vec3 l = dm ? g_cl.dm_land : g_cl.po_land;
+		if (we) { /* build 39 (SOMVR_WALK_EDGE_STOP): stopped at a drop - the lip's glow and A's label (SOMVR_OBF_EDGE) */
+			float w0[3] = { g_we.e0.x, g_we.e0.y, g_we.e0.z }, w1[3] = { g_we.e1.x, g_we.e1.y, g_we.e1.z };
+			somvr_th_to_xr(&mp, w0, e.edge0), somvr_th_to_xr(&mp, w1, e.edge1);
+			for (int k = 0; k < 3; k++)
+				e.pos[k] = 0.5f * (e.edge0[k] + e.edge1[k]);
+			e.n = 1, e.flags = SOMVR_OBF_EDGE, e.a_word = SOMVR_OB_A_DOWN, e.dist_m = 0.35f;
+			somvr_objective_put(&g_obj, g_fr.frame, &e);
+			if (g_ob.land_was != 3 && ob_log_ok())
+				logf_("OBJECTIVE t=%.3f frame=%llu: the edge's cue in the eyes: the lip's glow (%.0f %.0f %.0f) .. (%.0f %.0f %.0f) "
+				      "and A DOWN over it, xr (%+.2f %+.2f %+.2f) m (SOMVR_WALK_EDGE_STOP)", mono(), (unsigned long long)g_fr.frame,
+				      w0[0], w0[1], w0[2], w1[0], w1[1], w1[2], e.pos[0], e.pos[1], e.pos[2]);
+			g_ob.land_was = 3, g_ob.land_frames++, g_ob.cur = 0;
+			return;
+		}
+		sv_vec3 l = dm ? g_cl.dm_land : ta ? g_cl.ta_land : g_cl.po_land;
 		float w[3] = { l.x, l.y, l.z }, w2[3] = { w[0] + 35.0f, w[1], w[2] }, x2[3];
 		somvr_th_to_xr(&mp, w, e.pos), somvr_th_to_xr(&mp, w2, x2);
 		e.n = 1, e.flags = SOMVR_OBF_LAND, e.id = 0;
+		if (ta) /* build 39: the ring with A UP beside it */
+			e.flags |= SOMVR_OBF_EDGE, e.a_word = SOMVR_OB_A_UP;
 		e.dist_m = sqrtf((x2[0] - e.pos[0]) * (x2[0] - e.pos[0]) + (x2[1] - e.pos[1]) * (x2[1] - e.pos[1]) +
 				 (x2[2] - e.pos[2]) * (x2[2] - e.pos[2])); /* the ring's radius: Talion's capsule's (35 cm) */
 		if (dm) { /* the line from the edge's (or the feet's) height straight down to the ring */
@@ -356,7 +374,7 @@ static void ob_frame(uintptr_t pl, int stereo)
 			logf_("OBJECTIVE t=%.3f frame=%llu: the climb's landing in the eyes: a ring at (%.0f %.0f %.0f), xr (%+.2f %+.2f "
 			      "%+.2f) m, radius %.2f m%s (%s)", mono(), (unsigned long long)g_fr.frame, w[0], w[1], w[2], e.pos[0],
 			      e.pos[1], e.pos[2], (double)e.dist_m, dm ? ", the line from its top 2 cm over it down to it" : "",
-			      dm ? "SOMVR_CLIMB_DESCENT_MARK" : "SOMVR_CLIMB_PULLOVER");
+			      dm ? "SOMVR_CLIMB_DESCENT_MARK" : ta ? "SOMVR_CLIMB_TOP_A: A UP beside it" : "SOMVR_CLIMB_PULLOVER");
 		g_ob.land_was = 1 + dm, g_ob.land_frames++, g_ob.cur = 0;
 		return;
 	}

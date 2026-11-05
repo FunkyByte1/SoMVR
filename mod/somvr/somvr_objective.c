@@ -275,6 +275,31 @@ somvr_ob_place somvr_ob_strike_floor(const float head[3], const float pos[3], fl
     return p;
 }
 
+somvr_ob_place somvr_ob_glow(const float e0[3], const float e1[3], const float head[3]) {
+    somvr_ob_place p = somvr_ob_line(e0, e1, head, SOMVR_OB_GLOW_M);
+    if (p.kind != SOMVR_OBK_NONE) p.cell = SOMVR_OB_CELL_GLOW;
+    return p;
+}
+
+somvr_ob_place somvr_ob_a_label(const float head[3], const float at[3], uint32_t word) {
+    somvr_ob_place p;
+    memset(&p, 0, sizeof p);
+    p.pose[3] = 1;
+    float d[3] = {at[0] - head[0], at[1] - head[1], at[2] - head[2]};
+    float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!isfinite(dist) || !(dist > 0.2f) || (word != SOMVR_OB_A_DOWN && word != SOMVR_OB_A_UP)) return p;
+    float h = 2 * dist * tanf(0.5f * SOMVR_OB_A_LABEL_DEG * 0.01745329252f);
+    if (h < SOMVR_OB_A_LABEL_MIN_M) h = SOMVR_OB_A_LABEL_MIN_M;
+    float w = h * (float)(SOMVR_OB_WIDE * SOMVR_OB_STRIDE - 2) / (float)SOMVR_OB_CELL;
+    float c[3] = {at[0], at[1] + 0.5f * h, at[2]}, q[4];
+    ob_face(c, head, q);
+    p.kind = SOMVR_OBK_WORLD, p.cell = word == SOMVR_OB_A_UP ? SOMVR_OB_CELL_A_UP : SOMVR_OB_CELL_A_DOWN;
+    memcpy(p.pose, q, sizeof q);
+    memcpy(p.pose + 4, c, sizeof c);
+    p.size[0] = w, p.size[1] = h;
+    return p;
+}
+
 somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], float r_m, int cell) {
     somvr_ob_place p;
     memset(&p, 0, sizeof p);
@@ -304,6 +329,12 @@ somvr_ob_place somvr_ob_strike_label(const float head[3], const float pos[3], fl
 void somvr_ob_rect(int cell, int32_t r[4]) {
     if (cell < 0) cell = 0;
     if (cell >= SOMVR_OB_CELLS) cell = SOMVR_OB_CELLS - 1;
+    if (cell >= SOMVR_OB_CELL_GLOW) { /* build 39: the third row - the glow's square, then the A labels (wide) */
+        int k = cell == SOMVR_OB_CELL_GLOW ? 0 : 1 + (cell - SOMVR_OB_CELL_A_DOWN) * SOMVR_OB_WIDE;
+        r[0] = k * SOMVR_OB_STRIDE + 1, r[1] = 2 * SOMVR_OB_STRIDE + 1;
+        r[2] = cell == SOMVR_OB_CELL_GLOW ? SOMVR_OB_CELL : SOMVR_OB_WIDE * SOMVR_OB_STRIDE - 2, r[3] = SOMVR_OB_CELL;
+        return;
+    }
     if (cell == SOMVR_OB_CELL_FINISH) { /* build 37: wide, in the second row after the timer's squares */
         r[0] = (SOMVR_OB_TIMER_ARMED + 1) * SOMVR_OB_STRIDE + 1, r[1] = SOMVR_OB_STRIDE + 1;
         r[2] = SOMVR_OB_WIDE * SOMVR_OB_STRIDE - 2, r[3] = SOMVR_OB_CELL;
@@ -356,6 +387,50 @@ static void ob_text_rim(uint8_t *px, const somvr_font *f, int x0, int y0, const 
         for (int ox = -2; ox <= 2; ox += 2)
             if (ox || oy) somvr_font_draw(f, px, SOMVR_OB_IMG_W, SOMVR_OB_IMG_H - 1, x0 + ox, y0 + oy, s, sc, rim, bgra);
     somvr_font_draw(f, px, SOMVR_OB_IMG_W, SOMVR_OB_IMG_H - 1, x0, y0, s, sc, ink, bgra);
+}
+
+/* build 39: the edge's glow cell - across, a white-gold core and a soft gold falloff; along, full but for 12 % faded at
+ * each end; and an A label cell: a dark plate, the Touch's A (the strike's blue button) and the word */
+static void ob_glow_cell(uint8_t *px, int bgra) {
+    static const float core[3] = {1.00f, 0.95f, 0.75f}, gold[3] = {1.00f, 0.78f, 0.25f};
+    int32_t r[4];
+    somvr_ob_rect(SOMVR_OB_CELL_GLOW, r);
+    for (int y = 0; y < SOMVR_OB_CELL; y++)
+        for (int x = 0; x < SOMVR_OB_CELL; x++) {
+            float t = fabsf(x + 0.5f - SOMVR_OB_CELL / 2.0f) / (SOMVR_OB_CELL / 2.0f), v = (y + 0.5f) / SOMVR_OB_CELL;
+            float k = v < 0.12f ? v / 0.12f : v > 0.88f ? (1 - v) / 0.12f : 1.0f;
+            float a = t < 0.22f ? 1.0f : (1 - t) * (1 - t) / (0.78f * 0.78f) * 0.85f;
+            ob_px(px, r[0] + x, r[1] + y, t < 0.22f ? core : gold, a * k, bgra);
+        }
+}
+static void ob_a_cell(uint8_t *px, const somvr_font *f, int cell, int bgra) {
+    static const float blue[3] = {0.62f, 0.85f, 1.00f}, dark[3] = {0.03f, 0.04f, 0.07f};
+    int32_t r[4];
+    somvr_ob_rect(cell, r);
+    const char *word = cell == SOMVR_OB_CELL_A_UP ? "UP" : "DOWN";
+    int sc = 3, tw = f ? somvr_font_text_w(word, sc) : 0, bw = 84, pw = bw + 14 + tw + 22;
+    if (pw > r[2]) pw = r[2];
+    int x0 = r[0] + (r[2] - pw) / 2;
+    for (int y = 14; y < SOMVR_OB_CELL - 14; y++) /* the plate: rounded ends */
+        for (int x = 0; x < pw; x++) {
+            float rr = 0.5f * (SOMVR_OB_CELL - 28), cy = 0.5f * SOMVR_OB_CELL, dx = 0;
+            if (x < rr) dx = rr - x - 0.5f;
+            else if (x > pw - rr) dx = x + 0.5f - (pw - rr);
+            float dy = y + 0.5f - cy;
+            if (dx * dx + dy * dy <= rr * rr) ob_px(px, x0 + x, r[1] + y, dark, 0.55f, bgra);
+        }
+    float bx = (float)x0 + 14 + 0.5f * bw - 8, by = (float)r[1] + 0.5f * SOMVR_OB_CELL, br = 30;
+    for (int y = (int)(by - br - 3); y <= (int)(by + br + 3); y++) /* the A button */
+        for (int x = (int)(bx - br - 3); x <= (int)(bx + br + 3); x++) {
+            float dx = (float)x + 0.5f - bx, dy = (float)y + 0.5f - by, d = sqrtf(dx * dx + dy * dy);
+            if (d <= br + 2 && d > br) ob_px(px, x, y, dark, 0.8f, bgra);
+            else if (d <= br) ob_px(px, x, y, blue, 1.0f, bgra);
+        }
+    if (!f) return;
+    const uint8_t ink[4] = {10, 14, 26, 255}, white[4] = {255, 255, 255, 255};
+    somvr_font_draw(f, px, SOMVR_OB_IMG_W, SOMVR_OB_IMG_H - 1, (int)bx - 3 * SOMVR_FONT_W / 2, (int)by - 3 * SOMVR_FONT_H / 2, "A",
+                    3, ink, bgra);
+    ob_text_rim(px, f, x0 + 14 + bw + 4, r[1] + (SOMVR_OB_CELL - sc * SOMVR_FONT_H) / 2, word, sc, white, bgra);
 }
 
 /* build 17: a strike cell (4 ready, 5 no arrows, 6 pressed): the ring in its left square, the label right of it */
@@ -514,6 +589,9 @@ void somvr_ob_image(uint8_t *px, const somvr_font *f, const char *text, int bgra
         }
     for (int c = SOMVR_OB_CELL_STRIKE; c <= SOMVR_OB_CELL_STRIKE_GO; c++) ob_strike_cell(px, f, c, bgra);
     ob_strike_cell(px, f, SOMVR_OB_CELL_FINISH, bgra); /* build 37: the finisher's hint (the ready ring, its own label) */
+    ob_glow_cell(px, bgra); /* build 39: the edge's glow and the A labels (the third row) */
+    ob_a_cell(px, f, SOMVR_OB_CELL_A_DOWN, bgra);
+    ob_a_cell(px, f, SOMVR_OB_CELL_A_UP, bgra);
     /* cell 8 (build 18): the refused landing - the landing ring's shape in red with a bar across it (the "no" sign) */
     static const float red[3] = {0.95f, 0.18f, 0.12f};
     int32_t rn[4];

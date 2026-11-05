@@ -585,6 +585,12 @@ grep -m3 "d3dtest:" "$RUN/wine.log" | sed 's/^/  /' | tee -a "$RUN/summary.txt"
 [ -f "$RUN/somvr.log" ] && say "somvr.log: $(grep -c '' "$RUN/somvr.log") lines, $(grep -c '^WIN ' "$RUN/somvr.log") WIN lines"
 [ -f "$RUN/bridge" ] && say "bridge: $(grep -c '^somvr_' "$RUN/bridge") objects, $(grep '^nonce' "$RUN/bridge")"
 [ -n "${SAVE_SHA0:-}" ] && say "save: the prefix copy $SAVE_SHA0 -> $(sha256sum "$SAVES/GameData.sav" 2>/dev/null | cut -c1-16) (the user's file was only read)"
+# b37 ladder (som-b37-ladder): the run keeps the prefix's save as it is at the end (RUN/saves/GameData.sav, as boot_check's
+# --save-copy does), before the slot is released - the next boot in this slot copies its own save over the prefix's
+if [ "$KIND" = game ] && [ -f "$SAVES/GameData.sav" ]; then
+  mkdir -p "$RUN/saves" && cp --no-preserve=mode "$SAVES/GameData.sav" "$RUN/saves/GameData.sav" &&
+    say "save: kept as RUN/saves/GameData.sav ($(sha256sum "$RUN/saves/GameData.sav" | cut -c1-16), $(stat -c %y "$SAVES/GameData.sav" | cut -c1-19))"
+fi
 if [ -n "${SRC_SHA0:-}" ]; then   # the save guard's line (boot_check's words): the user's file, by its sha256
   SRC_SHA1=$(sha256sum "$WIN_SAVE_FROM" 2>/dev/null | cut -d' ' -f1)
   [ "$SRC_SHA1" = "$SRC_SHA0" ] && say "  save after: GameData.sav UNCHANGED (the user's $WIN_SAVE_FROM, only read: sha256 ${SRC_SHA0:0:16})" ||

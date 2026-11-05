@@ -96,6 +96,33 @@ int main(int argc, char **argv)
 		free(o);
 	}
 	free(b);
+	{ /* build 37, SOMVR_FOG_SCALE 0.5: the distance then scaled - mul r6.x, r6.x, l(0.5) after the sqrt, 7 words more */
+		b = wrap(prog, NP, &n), o = somvr_fogdxbc_s(b, n, 0.5f, &m, &why);
+		CHECK(o && m == n + 76, "scale 0.5: not edited (%s) or size %zu", why ? why : "-", m);
+		if (o) {
+			unsigned char ck[16];
+			somvr_dxbc_checksum(o, m, ck);
+			CHECK(!memcmp(ck, o + 4, 16) && fdx_rd(o + 24) == m, "scale 0.5: checksum / size");
+			const unsigned char *p = o + 32 + 12 + 12 + 8;
+			uint32_t mv = 2 + 2 + 7 + 5 + 7 + 7 + 7;
+			static const uint32_t want[19] = { T1(16, 7), 0x00100012, 6, 0x00100246, 3, 0x00100246, 3, T1(75, 5), 0x00100012, 6,
+							   0x0010000a, 6, T1(56, 7), 0x00100012, 6, 0x0010000a, 6, 0x00004001, 0x3f000000 };
+			CHECK(fdx_rd(p + 4) == NP + 19, "scale 0.5: program length %u", fdx_rd(p + 4));
+			for (int k = 0; k < 19; k++)
+				CHECK(fdx_rd(p + 4 * (mv + k)) == want[k], "scale 0.5: inserted word %d = %#x", k, fdx_rd(p + 4 * (mv + k)));
+			CHECK(fdx_rd(p + 4 * (mv + 19)) == T1(55, 9) && fdx_rd(p + 4 * (mv + 19 + 8)) == 6, "scale 0.5: the movc's src2");
+			CHECK(fdx_rd(o + 40) == fdx_rd(b + 40) + 76, "scale 0.5: STAT's offset not moved");
+			size_t n2;
+			unsigned char *again = somvr_fogdxbc_s(o, m, 0.5f, &n2, &why);
+			CHECK(!again, "scale 0.5: a second edit went in");
+			free(again);
+			size_t m1;
+			unsigned char *o1 = somvr_fogdxbc_s(b, n, 1.0f, &m1, &why), *o0 = somvr_fogdxbc(b, n, &n2, &why);
+			CHECK(o1 && o0 && m1 == n2 && !memcmp(o1, o0, m1), "scale 1: not the radial edit as before");
+			free(o1), free(o0);
+		}
+		free(o), free(b);
+	}
 	/* refusals: each link broken once -> nothing written */
 	struct { uint32_t at, val; const char *what; } bad[] = {
 		{ 8, 0x4e17e581, "no planet radius" }, { 29, 0x4b189681, "another sky depth" }, { 21, 0x00100016, "mul rN.yz from rN.y" },

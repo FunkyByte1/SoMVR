@@ -105,11 +105,16 @@ if [ $WIN = 1 ]; then   # the Windows build: the same switches and channels thro
   echo "render: WIN_RENDER=$WRN (headless_win.sh writes RUN/render.mode)"
   WRS=(); [ -n "${HEADLESS_RENDER+x}" ] && WRS=(WIN_RENDER_SET="$RSWIN")   # else headless_win.sh: the switches' preset
   SAVE=${HEADLESS_SAVE_FROM:-}
+  if [ "$SAVE" = none ]; then   # b37 ladder: no save copied - the prefix's own (a new game), only in a prefix of its own
+    [ -n "${WIN_PREFIX:-}" ] || { echo "STOP: HEADLESS_SAVE_FROM=none needs WIN_PREFIX (a prefix of its own, not a slot's)"; exit 1; }
+    SAVE=""; echo "save: none copied (HEADLESS_SAVE_FROM=none): $WIN_PREFIX's own"
+  else
   [ -z "$SAVE" ] && [ -f "$PIN" ] && SAVE=$PIN   # 11-03: the pinned test save
   if [ -z "$SAVE" ]; then   # the user's Steam save (boot_check's way: exactly one userdata/*/241930), only read (copied)
     SV=(); for f in "$HOME"/.local/share/Steam/userdata/*/241930/remote/GameData.sav; do [ -f "$f" ] && SV+=("$f"); done
     [ ${#SV[@]} = 1 ] || { echo "STOP: ${#SV[@]} Steam saves (userdata/*/241930/remote/GameData.sav); set HEADLESS_SAVE_FROM"; exit 1; }
     SAVE=${SV[0]}
+  fi
   fi
   # b35 slots (11-03 soak: two boots in one second got one name; a driver then drove the other's game): the name is
   # claimed under a lock (/tmp/somvr-runnames/<name>), so two boots never share it

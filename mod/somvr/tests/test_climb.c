@@ -4278,6 +4278,109 @@ static void test_b36_edge(void) {
     g_wall_top = WALL_TOP, g_ground_on = 0;
 }
 
+/* build 39 (top_a): on foot 50 cm before a top (the hand resting 5 cm over it, 20 cm in): the ring on it, A = the blink
+ * up onto it; the hand in the air, a top under top_a_min_cm, or off: nothing */
+/* build 39 (hang_free): hanging with no hold 150 cm out from the face: after 1 s he eases toward it at 40 cm/s (only
+ * toward it) until within 65 cm, then stays; 450 cm out (no face within 300): released after 1 s */
+static void test_b39_hang_free(void) {
+    for (int far = 0; far < 4; far++) { /* build 37: 2, 3 = 0, 1 with the bow out in the hang (in.bow_hang): it waits */
+        rig_t r;
+        rig_init(&r);
+        r.c.letgo = SOMVR_CLIMB_LETGO_HANG;
+        grip(&r, 1, 1), rig_frame(&r);
+        for (int i = 0; i < 10; i++) hand_move(&r, 1, 0, -3, 0), rig_frame(&r);
+        grip(&r, 1, 0), rig_frame(&r);
+        int hung = r.s.phase == SOMVR_CLIMB_PH_HANG;
+        r.body.z = far & 1 ? -400.0f : -100.0f; /* the root 150 (450) cm out from the face */
+        r.in.bow_hang = far >= 2;
+        float z0 = r.body.z, back = 0;
+        int moved_at = -1, ended_at = -1;
+        for (int i = 0; i < 540 && ended_at < 0; i++) {
+            float zb = r.body.z;
+            rig_frame(&r);
+            if (r.body.z < zb - 1e-3f) back += zb - r.body.z;
+            if (moved_at < 0 && r.body.z > z0 + 0.01f) moved_at = i;
+            if (r.o.ended) ended_at = i;
+        }
+        if (far >= 2)
+            CHECK(hung && moved_at < 0 && ended_at < 0 && r.s.hf_frees == 0 && r.s.phase == SOMVR_CLIMB_PH_HANG,
+                  "b37 the bow in the hang, %s: no ease, no release (moved %d, ended %d)", far == 2 ? "150 cm out" : "no face",
+                  moved_at, ended_at);
+        else if (!far)
+            CHECK(hung && moved_at >= 85 && moved_at <= 100 && ended_at < 0 && r.in.root.z >= 100 - 66 && r.in.root.z <= 100 - 60 &&
+                      back == 0 && r.s.hf_frees == 0,
+                  "b39 hang free: 150 cm out: eased from frame %d to the face's reach (the root %g from the face), never away (%g)",
+                  moved_at, 100 - r.in.root.z, back);
+        else
+            CHECK(hung && ended_at >= 85 && ended_at <= 100 && moved_at < 0 && r.s.hf_frees == 1 && r.o.hang_freed == 1,
+                  "b39 hang free: no face within 3 m: released at frame %d (moved %d)", ended_at, moved_at);
+    }
+}
+
+/* build 39 (foot_a): on a 1.5 m top 40 cm from its edge (the face at z 100, the edge toward -z): A = the step off
+ * (out.fa_step along -z); the stick back toward the edge + A = the climb down (the A glide at 70 cm/s, the hang under the
+ * lip, fa_turn only when the view faced the drop); the top going on (no edge): as before (the jump's) */
+static void test_b39_foot_a(void) {
+    for (int k = 0; k < 5; k++) { /* 0 step off, 1 climb down facing away, 2 climb down facing the drop, 3 no edge,
+                                   * 4 the stick back at a 1.5 m drop (short: the step off) */
+        rig_t r;
+        desc_setup(&r, k == 4 ? 150.0f : 400.0f);
+        g_top_far = k == 3;
+        r.c.foot_a = 1, r.c.edge_low_cm = 50;
+        r.in.head_fwd = (sv_vec3){ 0, 0, k == 1 || k == 3 ? 1.0f : -1.0f };
+        if (k == 1 || k == 2 || k == 4) r.in.stick_back = 1, r.in.stick = 1, r.in.stick_w = (sv_vec3){ 0, 0, -1 };
+        r.in.drop = 1;
+        rig_frame(&r);
+        somvr_climb_out o = r.o;
+        float y0 = r.in.root.y;
+        if (k == 0 || k == 4)
+            CHECK(o.fa_step && !o.fa_down && !o.blink && NEAR(o.fa_dir.z, -1, 1e-3) && o.fa_edge_cm > 25 && o.fa_edge_cm < 50,
+                  "b39 foot A: A at the edge = the step off (%d, dir z %g, the edge %g cm)", o.fa_step, o.fa_dir.z, o.fa_edge_cm);
+        if (k == 3)
+            CHECK(!o.fa_step && !o.fa_down && (o.events & SOMVR_CLIMB_E_BLINK_NONE) && r.s.bl_why == SOMVR_CLIMB_BL_NOEDGE,
+                  "b39 foot A: no edge ahead: nothing (the jump's)");
+        if (k == 1 || k == 2) {
+            int went = o.fa_down && o.fa_turn == (k == 2) && r.s.dn_by_a && r.s.active;
+            r.in.drop = 0, r.in.stick_back = 0, r.in.stick = 0, r.in.stick_w = (sv_vec3){ 0, 0, 0 };
+            int f = 0;
+            float ymin = y0;
+            for (; f < 600 && r.s.dn; f++) rig_frame(&r), ymin = fminf(ymin, r.in.root.y);
+            CHECK(went && !r.s.dn && r.s.dn_end == 4 && r.s.phase == SOMVR_CLIMB_PH_HANG && r.s.active && f > 150 &&
+                      r.in.root.z < 100 && y0 - r.in.root.y > 80,
+                  "b39 foot A: the stick back + A (%s) = the climb down: %d frames, the hang %g cm lower, %g cm out from the face "
+                  "(end %d, turn %d; fa_down %d nodown %d dn_why %d %g)", k == 2 ? "facing the drop" : "facing away", f,
+                  y0 - r.in.root.y, 100 - r.in.root.z, r.s.dn_end, o.fa_turn, o.fa_down, o.fa_nodown, r.s.dn_why, r.s.dn_why_cm);
+        }
+    }
+    g_top_far = 0, g_wall_top = WALL_TOP, g_ground_on = 0;
+}
+
+static void test_b39_top_a(void) {
+    for (int k = 0; k < 4; k++) { /* 0 on, 1 the hand in the air, 2 a low top (30 cm), 3 off */
+        rig_t r;
+        g_wall_top = k == 2 ? 30.0f : 120.0f, g_ground_on = 1, g_wet = 0, g_top_far = 0;
+        rig_init(&r);
+        r.c.foot_cm = 100, r.c.top_a = k != 3, r.in.can_blink = 1;
+        r.body = (sv_vec3){ 0, 0, 0 }; /* the root at (0, 100, 50): the face 50 cm ahead */
+        float ty = g_wall_top;
+        r.in.hand[1].p = k == 1 ? (sv_vec3){ 20, 160, 60 } : (sv_vec3){ 20, ty + 5, 120 };
+        r.in.hand[0].p = (sv_vec3){ -25, 90, 40 };
+        int shown = 0, first = 0;
+        for (int i = 0; i < 20; i++) rig_frame(&r), shown += r.o.ta_show, first += r.o.ta_first;
+        sv_vec3 land = r.o.ta_land;
+        press_a(&r);
+        if (k == 0)
+            CHECK(shown >= 10 && first == 1 && NEAR(land.y, 120, 0.5) && land.z > 100 && r.o.blink && r.s.ta_goes == 1 &&
+                      NEAR3(r.o.blink_to, land.x, 225, land.z, 0.5),
+                  "b39 top A: the hand on a 1.2 m top: the ring (%d frames, first %d) at %g %g %g; A = the blink up to %g %g %g",
+                  shown, first, land.x, land.y, land.z, r.o.blink_to.x, r.o.blink_to.y, r.o.blink_to.z);
+        else
+            CHECK(!shown && !r.o.blink && r.s.ta_goes == 0, "b39 top A %s: no ring (%d), A nothing",
+                  k == 1 ? "the hand in the air" : k == 2 ? "a 30 cm top" : "off", shown);
+    }
+    g_wall_top = WALL_TOP, g_ground_on = 0;
+}
+
 /* ---- build 39 (som-b37-climb2): the head's keep, the slide along the face and round its corners, the through kept at
  * a contact, the liberal rays. The worlds: rock boxes (seen from outside), no floor ------------------------------------ */
 static float g_bx[4][6];
@@ -4497,6 +4600,9 @@ static void test_b39(void) {
 }
 
 int main(void) {
+    test_b39_top_a();
+    test_b39_foot_a();
+    test_b39_hang_free();
     test_b39();
     test_b36_edge();
     test_b36();
