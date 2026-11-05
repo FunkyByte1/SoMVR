@@ -30,7 +30,7 @@
 /* ==== 1. the ABI ================================================================================================= */
 #define SOMVR_THREAT_SYMBOL "somvr_threat"
 #define SOMVR_THREAT_MAGIC 0x31524854524d4f53ull /* "SOMRTHR1" */
-#define SOMVR_THREAT_VERSION 1u
+#define SOMVR_THREAT_VERSION 2u /* 2: build 37, the frame's HUD camera quad (hud_q, hud_p, hud_size) */
 #define SOMVR_TH_GLOWS 3 /* world glows per frame (the most urgent ones) */
 
 enum { SOMVR_THK_NONE = 0, SOMVR_THK_MELEE = 1, SOMVR_THK_RANGED = 2, SOMVR_THK_PROJ = 3 }; /* what a glow is on */
@@ -40,13 +40,24 @@ enum { SOMVR_THK_NONE = 0, SOMVR_THK_MELEE = 1, SOMVR_THK_RANGED = 2, SOMVR_THK_
 /* build 21 (SOMVR_VERBS_CUE): not a threat but the grab cue - a faint wraith-blue glow at the collar of an orc the open
  * left hand could grab now: ORed into the kind, the layer draws it from the blue row (an older layer: the warm one) */
 #define SOMVR_THK_BLUE 0x20u
+/* build 37 (SOMVR_CUE_AWARE, som-b37-cues, docs/re-xr-pipeline.md 169): not a threat but an orc's awareness mark - a small
+ * soft triangle over its head, pointing down at it: MARK with the level's colour bits (none = white: it noticed something;
+ * AMBER: it searches; RED: it has seen Talion). ARC (with MARK): a captain's health arc over him in a fight - the cell is
+ * the health in SOMVR_TH_LEVELS steps (bits 16..23 of the kind), not the level. An older layer draws them as the warm glow */
+#define SOMVR_THK_MARK 0x40u
+#define SOMVR_THK_MARK_AMBER 0x80u
+#define SOMVR_THK_MARK_RED 0x100u
+#define SOMVR_THK_ARC 0x200u
+#define SOMVR_THK_ARC_SHIFT 16
 enum { SOMVR_THF_WINDOW = 1u, /* the nearest attacker's parry window is open this frame */
        SOMVR_THF_PROJ = 2u,   /* a projectile is inbound this frame */
        SOMVR_THF_NEAR = 4u,   /* an engaged orc is close behind (the edge's low level) */
        SOMVR_THF_HURT = 8u,   /* build 10: Talion was hit: the hurt flash (hurt[]) */
        SOMVR_THF_RED_L = 16u, /* build 17: the left / right edge band is an unblockable blow's: the red row */
        SOMVR_THF_RED_R = 32u,
-       SOMVR_THF_LOW = 64u };  /* build 31 (SOMVR_HURT_LOW_STYLE=ring): low health's red ring (low, beat) */
+       SOMVR_THF_LOW = 64u,   /* build 31 (SOMVR_HURT_LOW_STYLE=ring): low health's red ring (low, beat) */
+       SOMVR_THF_HUDCAM = 128u }; /* build 37 (som-b37-cues, docs 169.8): hud_q/_p/_size hold the game camera's frustum at
+                                   * 10 m - the frustum the game's HUD projects its world icons with (SOMVR_XR_HUD_EYE=camera) */
 
 typedef struct {
     float pos[3];  /* its centre in the layer's reference space (metres), this frame's rig */
@@ -67,6 +78,10 @@ typedef struct {
     uint8_t low;          /* build 31 (SOMVR_HURT_LOW_STYLE=ring, re-xr-pipeline.md 136): low health's red ring, 0..255 = how
                            * low (0 = none); was pad[0] (0): an older layer ignores it */
     uint8_t beat;         /* ... the heartbeat's throb this frame, 0..255 (the ring tightens and darkens on it); was pad[1] */
+    float hud_q[4];       /* build 37 (SOMVR_THF_HUDCAM): the HUD camera quad's orientation x y z w (reference space; +Z toward
+                           * the camera) */
+    float hud_p[3];       /* ... its centre (metres): the game camera's position + its forward x 10 m */
+    float hud_size[2];    /* ... its width, height (metres): 2 x 10 m x tan of the camera's half FOVs (cam+0x404/0x408) */
 } somvr_threat_frame;
 
 typedef struct somvr_threat_shared {
@@ -82,11 +97,11 @@ typedef struct somvr_threat_shared {
     _Atomic uint64_t n_edge;   /* layer: frames submitted with an edge glow */
 } somvr_threat_shared;
 
-_Static_assert(sizeof(somvr_th_glow) == 24 && sizeof(somvr_threat_frame) == 104, "somvr_threat_frame size");
+_Static_assert(sizeof(somvr_th_glow) == 24 && sizeof(somvr_threat_frame) == 144, "somvr_threat_frame size");
 _Static_assert(offsetof(somvr_threat_shared, glow) == 24 && offsetof(somvr_threat_shared, last) == 32 &&
-                   offsetof(somvr_threat_shared, f) == 40 && offsetof(somvr_threat_shared, n_frames) == 872,
+                   offsetof(somvr_threat_shared, f) == 40 && offsetof(somvr_threat_shared, n_frames) == 1192,
                "somvr_threat_shared offsets");
-_Static_assert(sizeof(somvr_threat_shared) == 896, "somvr_threat_shared size");
+_Static_assert(sizeof(somvr_threat_shared) == 1216, "somvr_threat_shared size");
 _Static_assert(sizeof(somvr_shared) == 2664 && SOMVR_SHARED_VERSION == 2, "somvr_shared stays v2");
 
 static inline int somvr_threat_ok(const somvr_threat_shared *t) {
@@ -107,6 +122,8 @@ static inline void somvr_threat_put(somvr_threat_shared *t, uint64_t frame, cons
     e->threats = in->threats;
     e->hurt[0] = in->hurt[0], e->hurt[1] = in->hurt[1];
     e->low = in->low, e->beat = in->beat;
+    memcpy(e->hud_q, in->hud_q, sizeof e->hud_q), memcpy(e->hud_p, in->hud_p, sizeof e->hud_p);
+    memcpy(e->hud_size, in->hud_size, sizeof e->hud_size);
     atomic_store_explicit(&e->seq, frame, memory_order_release);
     atomic_store_explicit(&t->last, frame, memory_order_release);
     atomic_fetch_add_explicit(&t->n_frames, 1, memory_order_relaxed);
@@ -123,6 +140,8 @@ static inline int somvr_threat_get(somvr_threat_shared *t, uint64_t frame, somvr
     out->threats = e->threats;
     out->hurt[0] = e->hurt[0], out->hurt[1] = e->hurt[1];
     out->low = e->low, out->beat = e->beat;
+    memcpy(out->hud_q, e->hud_q, sizeof out->hud_q), memcpy(out->hud_p, e->hud_p, sizeof out->hud_p);
+    memcpy(out->hud_size, e->hud_size, sizeof out->hud_size);
     atomic_thread_fence(memory_order_acquire);
     if (atomic_load_explicit(&e->seq, memory_order_relaxed) != frame) return 0;
     atomic_store_explicit(&out->seq, frame, memory_order_relaxed);
@@ -275,7 +294,7 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_CELL 32
 #define SOMVR_TH_STRIDE (SOMVR_TH_CELL + 2)
 #define SOMVR_TH_IMG_W (SOMVR_TH_LEVELS * SOMVR_TH_STRIDE)
-#define SOMVR_TH_IMG_H (6 * SOMVR_TH_STRIDE)
+#define SOMVR_TH_IMG_H (12 * SOMVR_TH_STRIDE) /* build 37: rows 6-9 (the awareness marks, the captain's arc), 10-11 (the reach ring, the heal band) */
 #define SOMVR_TH_ALPHA 0.35f
 #define SOMVR_TH_R 1.00f /* the warm colour (linear weights; the swapchain is sRGB when the runtime has one) */
 #define SOMVR_TH_G 0.55f
@@ -300,9 +319,29 @@ void somvr_th_edge_quad(const float fov[2][4], int side, float dist_m, float pos
 #define SOMVR_TH_LOW_R0 0.38f
 #define SOMVR_TH_LOW_R1 0.95f
 #define SOMVR_TH_LOW_ALPHA 1.0f
+/* build 37: rows 6, 7, 8 the awareness mark (a soft triangle, its point down, a dark rim; nearly opaque: cell k = alpha
+ * k/LEVELS of SOMVR_TH_MARK_ALPHA) in white, amber and red; row 9 a captain's health arc (a thin arc over his head: cell k
+ * = k/LEVELS of it lit from the left in the hurt red, the rest a faint dark track) */
+#define SOMVR_TH_MARK_ALPHA 0.92f
+#define SOMVR_TH_AMBER_R 1.00f
+#define SOMVR_TH_AMBER_G 0.62f
+#define SOMVR_TH_AMBER_B 0.08f
 enum { SOMVR_TH_ROW_GLOW = 0, SOMVR_TH_ROW_EDGE = 1, SOMVR_TH_ROW_HURT = 2, SOMVR_TH_ROW_RED = 3, SOMVR_TH_ROW_BLUE = 4,
-       SOMVR_TH_ROW_LOW = 5 };
-int somvr_th_glow_row(uint32_t kind); /* SOMVR_TH_ROW_BLUE / _RED for a blue / red kind, else SOMVR_TH_ROW_GLOW */
+       SOMVR_TH_ROW_LOW = 5, SOMVR_TH_ROW_MARK_W = 6, SOMVR_TH_ROW_MARK_A = 7, SOMVR_TH_ROW_MARK_R = 8, SOMVR_TH_ROW_ARC = 9,
+       SOMVR_TH_ROW_RING = 10, SOMVR_TH_ROW_HEAL = 11 };
+/* build 37 (11-04, the user's herb: "I didn't know how I triggered it"): row 10 the reach ring - a thin wraith-blue ring
+ * round a thing the hand can take, cell k its radius from wide (k 1) to tight (k 16): it tightens as the open hand comes
+ * in (SOMVR_THK_RING, the cell in the kind's bits 16..23 as the arc's); row 11 the edge band in a soft green - the heal
+ * flash on both edges when a pick heals Talion (SOMVR_THF_HEAL: hurt[] then holds the heal's level) */
+#define SOMVR_THK_RING 0x400u
+#define SOMVR_THF_HEAL 256u
+float somvr_th_ring_profile(float u, float v, int cell); /* the reach ring's coverage at u, v (0..1) for cell 1..16 */
+int somvr_th_glow_row(uint32_t kind); /* SOMVR_TH_ROW_BLUE / _RED for a blue / red kind, else SOMVR_TH_ROW_GLOW (build 37:
+                                       * a MARK kind its colour's row, MARK|ARC the arc's, RING the reach ring's) */
+/* build 37: the glow's cell - the level's (somvr_th_cell), a MARK|ARC kind its health steps (bits 16..23, 1..LEVELS) */
+int somvr_th_glow_cell(uint32_t kind, float level);
+float somvr_th_mark_profile(float u, float v); /* the mark's coverage at u, v in 0..1 across its cell (0..1) */
+float somvr_th_arc_profile(float u, float v, float fill, int *lit); /* the arc's coverage; *lit: on its lit part */
 /* build 17: an unblockable blow's glow level at t s from its start: in over 0.12 s from the wind-up (no wait for the
  * window), then a pulse between 0.7 and 1 at hz (the warm glow is steady: told apart at a glance) up to the impact, out
  * over fade_out_s after it; 0 before the start */

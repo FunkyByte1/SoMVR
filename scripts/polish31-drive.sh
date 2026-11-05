@@ -146,8 +146,8 @@ if has test; then
   press() { x "hand R touch panel $1 $2 5"; x "hand R touch panel $1 $2 1.0 s 0.3"; x "hand R touch panel $1 $2 -1.0 s 0.15"
             x "hand R touch panel $1 $2 4 s 0.2"; sleep 0.4; }
   nx=$(lines "$X")
-  press 0.90 0.042; press 0.82 0.927; d test-page2
-  press 0.418 0.042; press 0.90 0.042; d test-again
+  press 0.90 0.0395; press 0.82 0.8725; d test-page2
+  press 0.418 0.0395; press 0.90 0.0395; d test-again
   echo "clicks: $(since "$nx" 'vrmenu: click' "$X" | cut -c1-120 | tr '\n' ' ')"
   since "$nx" 'click Test button: the test page \(page 2 of' "$X" | grep -q . && pass "the Test tab again at page 2" || fail "the Test page went back"
   x "hand R off" "$PALM_AWAY"; sleep 1; x "hand L off"; sleep 1

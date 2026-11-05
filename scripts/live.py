@@ -175,6 +175,56 @@ def cmd_status(a):
     return 0
 
 
+LV_COLS, LV_LINES = 29, 6   # the card (somvr_live.h SOMVR_LV_COLS, SOMVR_LV_LINES)
+SAY_MAX = 1500              # b37 live3: a longer answer is refused (pages, never a cut)
+FOLD = {"\u2018": "'", "\u2019": "'", "\u2032": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-",
+        "\u2212": "-", "\u2026": ".", "\u00a0": " ", "\t": " ", "\r": ""}
+
+
+def lv_fold(text):
+    """the card's ASCII (somvr_live.c fold(): quotes, dashes, the ellipsis; '?' for the rest; the degree sign kept)"""
+    return "".join(FOLD.get(c, c if ord(c) < 0x80 or c == "\u00b0" else "?") for c in text)
+
+
+def lv_wrap(text, cols=LV_COLS):
+    """every line of the card's wrap (somvr_lv_wrap without its line limit): words, line breaks kept, a word longer
+    than a line cut"""
+    lines = []
+    for para in lv_fold(text).split("\n"):
+        cur = ""
+        for w in para.split():
+            while len(w) > cols:   # (the C cuts a long word at the line's end and goes on)
+                if cur:
+                    lines.append(cur)
+                    cur = ""
+                lines.append(w[:cols])
+                w = w[cols:]
+            if not cur:
+                cur = w
+            elif len(cur) + 1 + len(w) <= cols:
+                cur += " " + w
+            else:
+                lines.append(cur)
+                cur = w
+        lines.append(cur)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def say_pages(text):
+    """b37 live3 (162.9): the cards of one answer - one when it fits (6 lines of 29), else pages of 5 lines and
+    "(K of N: tap for the next)" / "(N of N)" - never a cut with "..." (the user's note: a long answer ended in dots)"""
+    lines = lv_wrap(text)
+    if len(lines) <= LV_LINES:
+        return [text]
+    per = LV_LINES - 1
+    chunks = [lines[i:i + per] for i in range(0, len(lines), per)]
+    n = len(chunks)
+    return ["\n".join(c + [f"({k + 1} of {n}: tap for the next)" if k + 1 < n else f"({n} of {n})"])
+            for k, c in enumerate(chunks)]
+
+
 def cmd_say(a):
     d = live_dir(a.dir)
     sd = os.path.join(d, "say")
@@ -185,17 +235,24 @@ def cmd_say(a):
     if not text:
         print("live: say what?", file=sys.stderr)
         return 2
-    raw = text.encode()
-    if len(raw) > 600:
-        text = raw[:597].decode(errors="ignore") + "..."
+    if len(text.encode()) > SAY_MAX:
+        print(f"live: {len(text.encode())} bytes - say it in {SAY_MAX} or less (it would be cut otherwise)", file=sys.stderr)
+        return 2
     have = [s["n"] for s in say_items(d)]
     n = (have[-1] if have else 0) + 1
-    if a.quiet:  # b37: every card is spoken (SOMVR_LIVE_TTS=on) unless it says so
-        write_atomic(os.path.join(sd, f"{n}.quiet"), "1\n")
-    write_atomic(os.path.join(sd, f"{n}.txt"), text + "\n")
+    pages = say_pages(text)
+    # every side file before the cards (the daemon reads <n>.voice / .quiet when <n>.txt appears)
+    if len(pages) > 1 and not a.quiet:   # the whole answer said once, with its first page; the others quiet
+        write_atomic(os.path.join(sd, f"{n}.voice"), text + "\n")
+    for k in range(len(pages)):
+        if a.quiet or k > 0:  # b37: every card is spoken (SOMVR_LIVE_TTS=on) unless it says so
+            write_atomic(os.path.join(sd, f"{n + k}.quiet"), "1\n")
+    for k, pg in enumerate(pages):
+        write_atomic(os.path.join(sd, f"{n + k}.txt"), pg + "\n")
     on = os.path.exists(os.path.join(d, "on"))
-    print(f"say {n}: queued{'' if on else ' (the session is not on: it shows if the game starts with this folder)'} -"
-          f" the headset shows it on the palm at the next calm moment")
+    print(f"say {n}{f'..{n + len(pages) - 1} ({len(pages)} pages)' if len(pages) > 1 else ''}: queued"
+          f"{'' if on else ' (the session is not on: it shows if the game starts with this folder)'} -"
+          f" the headset shows it at the next calm moment")
     return 0
 
 
@@ -336,6 +393,11 @@ def cmd_patch_stage(a):
     if not os.path.isdir(pd):
         print(f"live: no session folder {d}", file=sys.stderr)
         return 2
+    for nm, v in (("what", a.what), ("try", a.try_)):   # b37 live3: never cut silently (the card and the box show them)
+        if len(" ".join(v.split())) > 150:
+            print(f"live: the patch's '{nm}' is {len(' '.join(v.split()))} characters: say it in 150 or less "
+                  f"(details in live_say)", file=sys.stderr)
+            return 2
     dll = os.path.realpath(a.dll)
     ex = pe_exports(dll) if os.path.isfile(dll) else None
     if ex is None:
@@ -382,6 +444,24 @@ def cmd_patch_stage(a):
                 f"{one(a.what)} / try: {one(a.try_)} ({sha[:16]})\n")
     print(f"patch {pid} staged ({kind}{': ' + why if why else ''}); the headset shows 'Patch {pid} ready' and the VR "
           f"menu's Test page has Apply patch")
+    # b37 live3: build 37's layer cuts a long patch card at its 6th line (the 22:13 session); a layer that pages it
+    # says so in DIR/layer.caps ("pages"). Else the whole of it follows as a quiet paged message
+    card = [f"{one(a.what)}", f"Try: {one(a.try_)}" if one(a.try_) else "", "Apply it: menu > Test tab"] if kind == "live" \
+        else [one(a.what), why]
+    lines = sum(len(lv_wrap(x)) for x in card if x)
+    caps = (read(os.path.join(d, "layer.caps")) or "").split()
+    if lines > LV_LINES and "pages" not in caps:
+        full = f"Patch {pid} in full:\n{one(a.what)}" + (f"\nTry: {one(a.try_)}" if one(a.try_) else "")
+        sd = os.path.join(d, "say")
+        have = [s_["n"] for s_ in say_items(d)]
+        n = (have[-1] if have else 0) + 1
+        pages = say_pages(full)
+        for k in range(len(pages)):
+            write_atomic(os.path.join(sd, f"{n + k}.quiet"), "1\n")
+        for k, pg in enumerate(pages):
+            write_atomic(os.path.join(sd, f"{n + k}.txt"), pg + "\n")
+        print(f"  (the session's layer cuts a patch card at 6 lines - this one has {lines}: its whole text follows as "
+              f"message{'s' if len(pages) > 1 else ''} {n}{f'..{n + len(pages) - 1}' if len(pages) > 1 else ''}, quiet)")
     return 0
 
 

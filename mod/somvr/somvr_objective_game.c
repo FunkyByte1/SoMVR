@@ -319,7 +319,8 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 static void ob_frame(uintptr_t pl, int stereo)
 {
 	int pub = g_ob.mode >= 2 && g_ob.on;
-	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim && !g_ob.vault && !pr_place_on()) || !stereo)
+	if ((!pub && !g_ob.land && !g_ob.strike && !g_ob.ws && !g_ob.aim && !g_ob.vault && !pr_place_on() && !fn_hint_on()) ||
+	    !stereo)
 		return;
 	if (g_ob.tid && g_ob.tid != ob_tid())
 		return;
@@ -393,6 +394,11 @@ static void ob_frame(uintptr_t pl, int stereo)
 	if (g_ob.strike && sg_entry(&e)) { /* build 17: the Shadow Strike's mark on the orc looked at (SOMVR_STRIKE_GAZE) */
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
 		g_ob.strike_frames++, g_ob.cur = 0;
+		return;
+	}
+	if (fn_entry(&e)) { /* build 37 (SOMVR_FINISHER_HINT): the execution ready, no orc to finish - the ring on one that could be */
+		somvr_objective_put(&g_obj, g_fr.frame, &e);
+		g_ob.cur = 0;
 		return;
 	}
 	if (!pub) {

@@ -273,6 +273,12 @@ void somvr_vh_arrow(const somvr_posef *pose, float len_m, somvr_vh_vert *out);
  * the cross-guard and the grip): `pose` at the grip, its -Z along the blade; len_m from the grip to the point. The frame
  * asks for it with arrow_glow >= 2 (the bow's glow is 0..1); the layer draws it translucent in the wraith's blue */
 void somvr_vh_outline(const somvr_posef *pose, float len_m, somvr_vh_vert *out);
+/* build 37 (re-xr-pipeline.md 171.5): the blade glow - the outline's blade and point only (no cross-guard, no grip) and a
+ * soft halo in the blade's plane (alpha SOMVR_VH_GLOW_A at its middle line to 0 SOMVR_VH_GLOW_W past its edges), the
+ * same vertices and indices; asked with arrow_glow >= 4 (4..5 its pulse, 5 the snap's flash) */
+#define SOMVR_VH_GLOW_W 0.020f
+#define SOMVR_VH_GLOW_A 0.30f
+void somvr_vh_outline_blade(const somvr_posef *pose, float len_m, somvr_vh_vert *out);
 /* the arrow's parts near the eyes fade (drawn at full draw the nock and the vanes are at the cheek, a few cm from the
  * eye): each vertex's alpha = smoothstep over near_m .. far_m of its distance to the nearer eye */
 void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const float eye1[3], float near_m, float far_m);

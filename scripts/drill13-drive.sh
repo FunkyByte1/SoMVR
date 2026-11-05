@@ -80,11 +80,12 @@ cnt() { grep -cE "$1" "$R/somvr.log"; }
 press() { t "hand R touch panel $1 $2 5"; t "hand R touch panel $1 $2 1.0 s 0.3"; t "hand R touch panel $1 $2 -1.0 s 0.15"
           t "hand R touch panel $1 $2 4 s 0.2"; sleep 0.4; }
 opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 menu_open() { local o=$(opens) k
   for k in 1 2 3 4; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
   [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
   echo "NOT OPEN"; return 1; }
 menu_shut() { t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1.5; }
@@ -109,12 +110,12 @@ for p in $PLAN; do
   case $p in
   back)
     step "back: the wrist menu > Practice > Back to where I was"
-    menu_open; sleep 0.5; press 0.441 0.042; sleep 1; d back-menu 0.5
-    press 0.5 0.305; sleep 1.5
+    menu_open; sleep 0.5; press 0.441 0.0395; sleep 1; d back-menu 0.5
+    press 0.5 0.2871; sleep 1.5
     if ! tail -50 "$R/somvr.log" | grep -q 'PRACTICE .*back'; then   # once more, slower (the drill's first boot: no click)
       echo "no trip back after the press: again, slower"; d back-menu2 0.3
-      t "hand R touch panel 0.5 0.305 5"; t "hand R touch panel 0.5 0.305 1.0 s 0.5"; sleep 0.3
-      t "hand R touch panel 0.5 0.305 -1.5 s 0.4"; sleep 0.3; t "hand R touch panel 0.5 0.305 4 s 0.3"; sleep 1
+      t "hand R touch panel 0.5 0.2871 5"; t "hand R touch panel 0.5 0.2871 1.0 s 0.5"; sleep 0.3
+      t "hand R touch panel 0.5 0.2871 -1.5 s 0.4"; sleep 0.3; t "hand R touch panel 0.5 0.2871 4 s 0.3"; sleep 1
     fi
     menu_shut
     for i in $(seq 1 40); do grep -q 'arrived at .* back where Talion was' "$R/somvr.log" && break; sleep 1; done
@@ -200,7 +201,7 @@ for p in $PLAN; do
       for b in back go; do
         [ $b = back ] && V=0.305 || V=0.219
         M0=$(cnt "^PRACTICE t=.* \\(the menu\\)"); A0=$(cnt 'arrived at'); tries=0
-        menu_open; sleep 0.5; press 0.441 0.042; sleep 1
+        menu_open; sleep 0.5; press 0.441 0.0395; sleep 1
         while [ $tries -lt 3 ]; do
           tries=$((tries + 1)); press 0.5 $V; sleep 3
           [ "$(cnt "^PRACTICE t=.* \\(the menu\\)")" -gt "$M0" ] && break
@@ -256,7 +257,7 @@ for p in $PLAN; do
   pausetrip)
     step "pausetrip: the pause menu, then the wrist menu > Practice > Go (SOMVR_PRACTICE_WAIT: no black over the pause menu)"
     tap L menu; sleep 3; d pt-paused 0.5
-    menu_open; sleep 0.5; press 0.441 0.042; sleep 1; press 0.5 0.219; sleep 1; d pt-pressed 0.3; menu_shut; sleep 2
+    menu_open; sleep 0.5; press 0.441 0.0395; sleep 1; press 0.5 0.2061; sleep 1; d pt-pressed 0.3; menu_shut; sleep 2
     d pt-paused2 0.5; m pausetrip 2
     tail -30 "$R/somvr.log" | grep -E '^PRACTICE' | tail -2 | cut -c1-170
     step "pausetrip: unpaused (the menu button): the trip 1 s later"

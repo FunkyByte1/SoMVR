@@ -36,13 +36,13 @@ const char *somvr_climb_dn_name(int why) {
     return why >= 0 && why < 7 ? n[why] : "?";
 }
 const char *somvr_climb_thr_name(int why) {
-    static const char *const n[6] = { "-", "out of the rock", "no vertical move for 0.5 s", "its most", "the climb's end",
-                                      "no root or head" };
-    return why >= 0 && why < 6 ? n[why] : "?";
+    static const char *const n[7] = { "-", "out of the rock", "no vertical move for 0.5 s", "its most", "the climb's end",
+                                      "no root or head", "a new hold not over the eyes nor mid-face" };
+    return why >= 0 && why < 7 ? n[why] : "?";
 }
 const char *somvr_climb_via_name(int via) {
-    static const char *const n[6] = { "-", "palm", "fingers", "down", "inside", "wall" };
-    return via >= 0 && via < 6 ? n[via] : "?";
+    static const char *const n[8] = { "-", "palm", "fingers", "down", "inside", "wall", "fan", "level from the head" };
+    return via >= 0 && via < 8 ? n[via] : "?";
 }
 
 void somvr_climb_cfg_default(somvr_climb_cfg *c) {
@@ -68,7 +68,7 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->pullover = 0, c->po_pull_cm = 25, c->po_up_cm = 120, c->po_down_cm = 150, c->po_block_s = 0.3f, c->po_a_keep_s = 0;
     c->hang_stick_cm = 0;
     c->face_toward = 1, c->through = 0, c->thr_block_s = 0.15f, c->thr_clear_cm = 15, c->thr_side_cm = 10;
-    c->thr_max_cm = 300, c->thr_look_cm = 60, c->thr_top = 1;
+    c->thr_max_cm = 300, c->thr_look_cm = 60, c->thr_top = 1, c->thr_low = 1;
     c->hug = 0, c->hug_cm = 50, c->hug_in = 0.35f;
     c->stand = 0, c->stand_in_cm = 15, c->stand_up_cm = 15, c->stand_down_cm = 40, c->stand_reach_cm = 35;
     c->stand_walk_cms = 150, c->topout = 0;
@@ -77,6 +77,9 @@ void somvr_climb_cfg_default(somvr_climb_cfg *c) {
     c->dm_enemy_cm = 120;
     c->mantle = 0, c->am_head_cm = 25, c->am_cms = 350, c->am_clear_cm = 10, c->am_overhang = 0;
     c->dm_timer = 0, c->unstuck = 0, c->fl_reach_cm = 120, c->round_lip = 0;
+    c->head_keep = 0, c->keep_cm = 20, c->keep_cms = 150; /* build 39 (som-b37-climb2) */
+    c->side = 0, c->side_cms = 45, c->side_dead = 0.3f, c->side_turn_dps = 120;
+    c->thr_keep = 0, c->liberal = 0;
     c->down_over = 0, c->dn_low_cm = 40, c->dn_high_cm = 90, c->dn_reach_cm = 45, c->dn_under_cm = 25, c->dn_gap_cm = 45;
     c->retop_edge_cm = 0, c->am_keep = 0, c->fl_reach_hold = 0, c->land_above = 0, c->dn_near = 0;
     c->dn_reach = 0, c->dn_reach_high_cm = 150, c->dn_reach_low_cm = 25, c->dn_out_cm = 35;
@@ -255,6 +258,8 @@ static int cast(somvr_climb *s, somvr_climb_out *o, somvr_climb_ray_fn ray, void
     return 1;
 }
 
+#define LIB_DEG 30.0f /* build 39 (liberal): the fan's rays this far off the palm's and the fingers' */
+#define LIB_MAX 10
 /* the rays of hand h (palm, fingers, while climbing down; none within reach: the head to the hand), the nearest hit
  * within reach. 1 = a surface (*bh, its ray in *dir from *from, *blen the ray's length, *via), 0 = none. press: this
  * press's near miss (a surface past the reach) kept in the hold; the out's grab log fields */
@@ -263,8 +268,8 @@ static int find_hold(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb
                      int *via) {
     const somvr_climb_hand *hd = &in->hand[h];
     somvr_climb_hold *k = &s->h[h];
-    sv_vec3 dirs[4];
-    int vias[4], nd = 0;
+    sv_vec3 dirs[4], ldirs[LIB_MAX];
+    int vias[4], lvias[LIB_MAX], nd = 0;
     if (c->rays & SOMVR_CLIMB_RAY_PALM) dirs[nd] = unit3(hd->palm), vias[nd++] = SOMVR_CLIMB_VIA_PALM;
     if (c->rays & SOMVR_CLIMB_RAY_FWD) dirs[nd] = unit3(hd->fwd), vias[nd++] = SOMVR_CLIMB_VIA_FWD;
     /* descent, not climbing: a hand under the root (reaching down at an edge) also down and along the wall; a raised
@@ -279,7 +284,7 @@ static int find_hold(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb
         if (len3(wd) > 0.5f) dirs[nd] = wd, vias[nd++] = SOMVR_CLIMB_VIA_WALL;
     }
     float len = c->back_cm + c->reach_cm, ext = len + fmaxf(c->near_cm, 0.0f);
-    int best = -1, cast_no = 0;
+    int best = -1, cast_no = 0, n0 = nd;
     somvr_climb_hit r;
     memset(bh, 0, sizeof *bh);
     for (int i = 0; i < nd; i++) {
@@ -294,6 +299,36 @@ static int find_hold(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb
         }
         if (best < 0 || r.dist < bh->dist)
             best = i, *bh = r, *from = f, *dir = dirs[i], *blen = len, *via = vias[i], cast_no = o->rays;
+    }
+    if (best < 0 && c->liberal) { /* build 39: the fan round the palm's and the fingers' rays, the head's level ray */
+        nd = 0;
+        for (int i = 0; i < n0; i++) {
+            if (vias[i] != SOMVR_CLIMB_VIA_PALM && vias[i] != SOMVR_CLIMB_VIA_FWD) continue;
+            sv_vec3 v = dirs[i], up = { 0, 1, 0 };
+            sv_vec3 a = { v.y * up.z - v.z * up.y, v.z * up.x - v.x * up.z, v.x * up.y - v.y * up.x }; /* v x up */
+            if (len3(a) < 0.3f) a = (sv_vec3){ 1, 0, 0 };
+            a = unit3(a);
+            sv_vec3 b = unit3((sv_vec3){ a.y * v.z - a.z * v.y, a.z * v.x - a.x * v.z, a.x * v.y - a.y * v.x }); /* a x v */
+            float ca = cosf(LIB_DEG * 0.01745329f), sa = sinf(LIB_DEG * 0.01745329f);
+            sv_vec3 ax[4] = { a, mul3(a, -1.0f), b, mul3(b, -1.0f) };
+            for (int j = 0; j < 4 && nd < LIB_MAX - 1; j++)
+                ldirs[nd] = unit3(add3(mul3(v, ca), mul3(ax[j], sa))), lvias[nd++] = SOMVR_CLIMB_VIA_FAN;
+        }
+        sv_vec3 hh = in->head_ok ? (sv_vec3){ hd->pw.x - in->head_x, 0, hd->pw.z - in->head_z } : (sv_vec3){ 0, 0, 0 };
+        if (len3(hh) > 15.0f) ldirs[nd] = unit3(hh), lvias[nd++] = SOMVR_CLIMB_VIA_LEVEL;
+        for (int i = 0; i < nd; i++) {
+            sv_vec3 f = sub3(hd->pw, mul3(ldirs[i], c->back_cm));
+            if (press) o->grab_rays[h]++;
+            if (!cast(s, o, ray, ctx, h, f, ldirs[i], ext, &r) || !r.hit || r.chr) continue;
+            if (r.dist > len) {
+                if (press && (k->near_past < 0 || r.dist - len < k->near_past))
+                    k->near_past = r.dist - len, k->near_via = lvias[i];
+                continue;
+            }
+            if (best < 0 || r.dist < bh->dist)
+                best = i, *bh = r, *from = f, *dir = ldirs[i], *blen = len, *via = lvias[i], cast_no = o->rays;
+        }
+        if (best >= 0 && press) s->lib_holds++;
     }
     if (best < 0 && c->inside_cm > 0 && in->head_ok) { /* the hand inside a wall: the head's ray meets it first */
         sv_vec3 head = { in->head_x, in->head_y, in->head_z }, hv = sub3(hd->pw, head);
@@ -561,6 +596,7 @@ static void end_climb(somvr_climb *s, int why, int disarm, somvr_climb_out *o) {
     s->to_block = 0;
     if (s->thr_on) s->thr_on = 0, s->thr_why = SOMVR_CLIMB_THR_END, o->events2 |= SOMVR_CLIMB_E_THR_OFF;
     s->thr_block = 0;
+    s->side_on = 0, s->side_v = 0, s->keep_in = 0; /* build 39 */
     if (was) {
         s->last_end = why;
         o->ended = 1, o->end_why = why;
@@ -1201,6 +1237,19 @@ static int po_find(somvr_climb *s, const somvr_climb_in *in, int h, somvr_climb_
     return k->po_why = dbg[1] > 0 ? SOMVR_CLIMB_PO_NOROOM : SOMVR_CLIMB_PO_NOFLOOR, 0;
 }
 
+/* live patch 11-04 (thr_low): the face goes on up over hold k (a level ray toward it from 30 cm out, 40 cm over the
+ * hold, meets rock within 10 cm past the hold's plane): a hold mid-face - the 'top' found under the hand was the ray
+ * from above grazing the face (session 195050: every wall hold's top at the hold's own height) */
+static int po_face_on(somvr_climb *s, int h, const somvr_climb_hold *k, somvr_climb_ray_fn ray, void *ctx,
+                      somvr_climb_out *o) {
+    sv_vec3 tw = { k->toward.x, 0, k->toward.z };
+    if (len3(tw) < 0.3f) return 0;
+    tw = unit3(tw);
+    somvr_climb_hit r;
+    sv_vec3 f = add3(k->hit, (sv_vec3){ -tw.x * 30.0f, 40.0f, -tw.z * 30.0f });
+    return cast(s, o, ray, ctx, h, f, tw, 40.0f, &r) && r.hit && !r.chr;
+}
+
 /* pullover: arm, show, the pull, the cancel; 1 = the pull is done (s->bl_to: the blink onto the landing) */
 static int pullover(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
                     somvr_climb_out *o, float dt) {
@@ -1256,6 +1305,9 @@ static int pullover(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_
         }
         if (s->po_block_s < c->po_block_s) return 0;
         if (!kb->po_ok) { /* blocked, and nowhere to stand up there: say so once */
+            /* live patch 11-04: not on a hold mid-face while the through takes such pulls (no false buzz) */
+            if (!kb->po_noway && c->through && c->thr_low && po_face_on(s, b, kb, ray, ctx, o))
+                kb->po_noway = 2, s->po_midface++;
             if (!kb->po_noway) kb->po_noway = 1, s->po_noways++, o->events2 |= SOMVR_CLIMB_E_PO_NOWAY;
             return 0;
         }
@@ -1387,6 +1439,15 @@ static void stand_note(somvr_climb *s, const somvr_climb_cfg *c, const somvr_cli
 #define STAND_LET_UP_CM 10.0f /* let go: the feet at most this under the floor under his axis */
 /* topout (see the header), the A mantle: the head's way along the move m clear: rays from the head (to_clear_way: this
  * frame's) and c->thr_side_cm round it (across the move), c->thr_clear_cm past it; 1 = clear */
+/* the head's checks (topout's way, the through's, build 39's keep and slide): rock this near past the head's new place
+ * = no way (head_keep: keep_cm, at least thr_clear_cm) */
+static float head_clear_cm(const somvr_climb_cfg *c) { return c->head_keep ? fmaxf(c->thr_clear_cm, c->keep_cm) : c->thr_clear_cm; }
+/* the head the checks start from: with head_keep the player's view (in.view: Talion's eyes + the room's offset - the
+ * 11-04 corner's view 42 cm off the eyes), else Talion's eyes (in.head_*) as before */
+static sv_vec3 check_head(const somvr_climb_cfg *c, const somvr_climb_in *in) {
+    if (c->head_keep && in->view_ok && fin3(in->view)) return in->view;
+    return (sv_vec3){ in->head_x, in->head_y, in->head_z };
+}
 static int way_clear(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 head, sv_vec3 tw, somvr_climb_ray_fn ray,
                      void *ctx, somvr_climb_out *o, sv_vec3 m) {
     float l = len3(m);
@@ -1400,13 +1461,13 @@ static int way_clear(somvr_climb *s, const somvr_climb_cfg *c, sv_vec3 head, sv_
                         mul3(b, -c->thr_side_cm) };
     for (int i = 0; i < 5; i++) {
         somvr_climb_hit r;
-        if (!cast(s, o, ray, ctx, -1, add3(head, offs[i]), d, l + c->thr_clear_cm, &r) || r.hit) return 0;
+        if (!cast(s, o, ray, ctx, -1, add3(head, offs[i]), d, l + head_clear_cm(c), &r) || r.hit) return 0;
     }
     return 1;
 }
 static int to_clear_way(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, sv_vec3 tw,
                         somvr_climb_ray_fn ray, void *ctx, somvr_climb_out *o, sv_vec3 m) {
-    return way_clear(s, c, (sv_vec3){ in->head_x, in->head_y, in->head_z }, tw, ray, ctx, o, m);
+    return way_clear(s, c, check_head(c, in), tw, ray, ctx, o, m);
 }
 static void to_off(somvr_climb *s, somvr_climb_out *o, int why) {
     if (!s->to_on) return;
@@ -1492,10 +1553,10 @@ static int thr_clear(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb
     sv_vec3 tw = { k->toward.x, 0, k->toward.z };
     if (len3(tw) < 0.3f) tw = (sv_vec3){ s->wall_tw.x, 0, s->wall_tw.z };
     tw = len3(tw) > 0.3f ? unit3(tw) : (sv_vec3){ 0, 0, 1 };
-    sv_vec3 sd = { -tw.z, 0, tw.x }, head = { in->head_x, in->head_y, in->head_z }, dir = { 0, v > 0 ? 1.0f : -1.0f, 0 };
+    sv_vec3 sd = { -tw.z, 0, tw.x }, head = check_head(c, in), dir = { 0, v > 0 ? 1.0f : -1.0f, 0 };
     sv_vec3 offs[5] = { { 0, 0, 0 }, mul3(tw, c->thr_side_cm), mul3(tw, -c->thr_side_cm), mul3(sd, c->thr_side_cm),
                         mul3(sd, -c->thr_side_cm) };
-    float len = fabsf(v) + c->thr_clear_cm;
+    float len = fabsf(v) + head_clear_cm(c);
     for (int i = 0; i < 5; i++) {
         somvr_climb_hit r;
         if (!cast(s, o, ray, ctx, -1, add3(head, offs[i]), dir, i ? len : fmaxf(len, look), &r)) return 0; /* no answer */
@@ -1517,7 +1578,9 @@ static void through_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_c
         /* under a hold over the eyes, or (thr_top) at a top with the head over it, the push into it lifting him (the
          * edge step): not rising */
         int top_lift = c->thr_top && s->topped && in->head_y > s->top_y + c->top_cm && s->last_ramp > 0.2f;
-        int blocked = (k->hit.y > in->head_y || top_lift) && rq > pmin && ap < 0.2f * rq;
+        /* live patch 11-04 (thr_low): or a hold at or under the eyes with no landing on it (mid-face) */
+        int low = c->thr_low && !k->po_ok && k->hit.y <= in->head_y;
+        int blocked = (k->hit.y > in->head_y || top_lift || low) && rq > pmin && ap < 0.2f * rq;
         s->thr_block = blocked ? s->thr_block + dts : 0.0f;
         if (s->thr_block < c->thr_block_s) return;
         if (!thr_clear(s, c, in, k, ray, ctx, o, 1.0f, c->thr_look_cm)) { /* rock right over the head: no climb through */
@@ -1526,10 +1589,23 @@ static void through_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_c
             return;
         }
         s->thr_on = 1, s->thr_block = 0, s->thr_idle = 0, s->thr_cm = 0, s->thr_clear = 0, s->thr_refused_once = 0;
-        s->thr_y0 = in->root.y, s->thr_ons++;
+        s->thr_y0 = in->root.y, s->thr_ons++, s->thr_in = 0, s->thr_kept_now = 0;
         o->events2 |= SOMVR_CLIMB_E_THR_ON;
+    } else if (c->thr_keep) { /* build 39: a new driving hold must be the through's kind */
+        int top_lift = c->thr_top && s->topped && in->head_y > s->top_y + c->top_cm;
+        int low = c->thr_low && !k->po_ok && k->hit.y <= in->head_y;
+        if (!(k->hit.y > in->head_y || top_lift || low)) {
+            thr_off(s, o, SOMVR_CLIMB_THR_HOLD);
+            return;
+        }
     }
-    s->thr_clear = in->rock_ok && in->rock_cm > -1.0f ? s->thr_clear + 1 : 0;
+    if (in->rock_ok && in->rock_cm <= -1.0f) s->thr_in = 1;
+    int out = in->rock_ok && in->rock_cm > -1.0f;
+    if (c->thr_keep && !s->thr_in) { /* build 39: out only after being in the rock - held at a contact, it goes on */
+        if (out && s->thr_cm >= 10.0f && !s->thr_kept_now) s->thr_kept_now = 1, s->thr_kept++;
+        out = 0;
+    }
+    s->thr_clear = out ? s->thr_clear + 1 : 0;
     if (s->thr_clear >= 2 && s->thr_cm >= 10.0f) { /* through it and out of the rock */
         thr_off(s, o, SOMVR_CLIMB_THR_CLEAR);
         return;
@@ -1545,6 +1621,10 @@ static void through_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_c
         return;
     }
     s->thr_idle = 0;
+    if (c->thr_keep && v < 0) { /* build 39: a move down is the game's collision as ever (the feet never through a ledge) */
+        s->thr_downs++;
+        return;
+    }
     if (!thr_clear(s, c, in, k, ray, ctx, o, v, 0)) { /* the head would go into the rock: blocked as ever */
         s->thr_refused++;
         if (!s->thr_refused_once) s->thr_refused_once = 1, o->events2 |= SOMVR_CLIMB_E_THR_REFUSED;
@@ -1552,6 +1632,144 @@ static void through_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_c
     }
     o->through_up = v;
     s->thr_cm += fabsf(v), s->thr_all_cm += fabsf(v), s->thr_frames++;
+}
+
+/* ==== build 39 (som-b37-climb2, docs/re-xr-pipeline.md 172): the head's keep, the slide along the face ============= */
+#define KEEP_RAYS 12        /* head_keep: level rays round the head (30 deg apart) */
+#define KEEP_LOOK_CM 25.0f  /* ... this far past keep_cm */
+#define SIDE_RAYS 16        /* side: level rays round the chest (22.5 deg apart) */
+#define SIDE_LOOK_CM 150.0f
+#define SIDE_CHEST_CM 30.0f /* ... the chest: this over the root */
+#define SIDE_EASE_S 0.25f   /* ... the speed's ease in and out */
+#define SIDE_D_MIN 35.0f    /* ... the root's distance from the face kept, at least */
+#define SIDE_D_MAX 70.0f    /* ... at most */
+#define SIDE_D_CMS 30.0f    /* ... its correction at most this fast */
+#define SIDE_BLOCK_S 0.4f   /* ... the slide asked, the root not moving this long = blocked (logs) */
+
+/* the nearest face round p: n level rays (360/n deg apart, len cm; an orc's body is no face). 1 = found: *d the
+ * distance along *nout (level unit, out of the rock toward p), *hit the nearest ray's point. The normal: the line
+ * through the nearest ray's two neighbours' hits (both hit, apart over 2 cm, within 60 deg of the nearest ray's
+ * reverse), else that reverse - a flat face gives its own normal, an edge the way from it */
+static int near_face(somvr_climb *s, somvr_climb_out *o, somvr_climb_ray_fn ray, void *ctx, sv_vec3 p, int n, float len,
+                     float *d, sv_vec3 *nout, sv_vec3 *hit) {
+    somvr_climb_hit r[SIDE_RAYS];
+    int ok[SIDE_RAYS], best = -1;
+    if (n > SIDE_RAYS) n = SIDE_RAYS;
+    for (int i = 0; i < n; i++) {
+        float a = 6.2831853f * (float)i / (float)n;
+        ok[i] = cast(s, o, ray, ctx, -1, p, (sv_vec3){ sinf(a), 0, cosf(a) }, len, &r[i]) && r[i].hit && !r[i].chr;
+        if (ok[i] && (best < 0 || r[i].dist < r[best].dist)) best = i;
+    }
+    if (best < 0) return 0;
+    float a = 6.2831853f * (float)best / (float)n;
+    sv_vec3 nn = { -sinf(a), 0, -cosf(a) };
+    int i0 = (best + n - 1) % n, i1 = (best + 1) % n;
+    if (ok[i0] && ok[i1]) {
+        sv_vec3 t = { r[i1].point.x - r[i0].point.x, 0, r[i1].point.z - r[i0].point.z };
+        float tl = len3(t);
+        if (tl > 2.0f) {
+            sv_vec3 m = { -t.z / tl, 0, t.x / tl };
+            if (m.x * nn.x + m.z * nn.z < 0) m = mul3(m, -1.0f);
+            if (m.x * nn.x + m.z * nn.z > 0.5f) nn = m;
+        }
+    }
+    *nout = nn, *hit = r[best].point;
+    *d = (p.x - hit->x) * nn.x + (p.z - hit->z) * nn.z;
+    return 1;
+}
+
+/* head_keep (see the header): this frame's move *m with its part toward the head's nearest face cut where the head would
+ * come nearer than keep_cm, and the head out to keep_cm at most keep_cms when it is nearer */
+static void keep_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray,
+                      void *ctx, somvr_climb_out *o, sv_vec3 *m, float dt) {
+    s->keep_d = -1;
+    if (!c->head_keep || !in->head_ok) {
+        s->keep_in = 0;
+        return;
+    }
+    sv_vec3 head = check_head(c, in), n, hp;
+    float d;
+    if (!near_face(s, o, ray, ctx, head, KEEP_RAYS, c->keep_cm + KEEP_LOOK_CM, &d, &n, &hp) || !isfinite(d)) {
+        s->keep_in = 0;
+        return;
+    }
+    s->keep_d = d, s->keep_n = n;
+    if (d < c->keep_cm - 0.5f) {
+        if (!s->keep_in) s->keep_in = 1, s->keep_eps++, s->keep_min = d;
+        else if (d < s->keep_min) s->keep_min = d;
+    } else if (d >= c->keep_cm) {
+        s->keep_in = 0;
+    }
+    float dts = dt > 0 && dt < 0.1f ? dt : 0.0f;
+    float into = -(m->x * n.x + m->z * n.z); /* the move's part toward the face (+ nearer) */
+    float room = d - c->keep_cm;             /* how much nearer the head may come (< 0: out by that) */
+    float most = room >= 0 ? room : fmaxf(room, -c->keep_cms * dts);
+    if (!(into > most)) return;
+    float corr = into - most, cut = fminf(corr, fmaxf(into, 0.0f)), push = corr - cut;
+    *m = add3(*m, mul3(n, corr));
+    if (cut > 0.001f) s->keep_cuts++, s->keep_cut_cm += cut, o->keep_cut = cut;
+    if (push > 0.001f) s->keep_pushes++, s->keep_push_cm += push, o->keep_push = push;
+}
+
+static void side_end(somvr_climb *s) {
+    s->side_on = 0, s->side_v = 0;
+}
+/* side (see the header): the stick's slide along the face into *m (holding: the holds' points move with him) */
+static void side_step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray,
+                      void *ctx, somvr_climb_out *o, sv_vec3 *m, float dt) {
+    float dts = dt > 0 && dt < 0.1f ? dt : 0.0f, x = in->stick_x, y = in->stick_y, want = 0;
+    int ok = c->side && in->live && in->root_ok && !s->descending && s->dm != 1 && !s->dm_stick_wait &&
+             isfinite(x) && isfinite(y);
+    if (ok && fabsf(x) > c->side_dead && fabsf(x) >= fabsf(y))
+        want = (x > 0 ? 1.0f : -1.0f) * fminf((fabsf(x) - c->side_dead) / (1.0f - c->side_dead), 1.0f) * c->side_cms;
+    float acc = c->side_cms / SIDE_EASE_S * dts, dv = want - s->side_v;
+    s->side_v += dv > acc ? acc : dv < -acc ? -acc : dv;
+    if (!ok || (want == 0 && fabsf(s->side_v) < 1.0f)) {
+        side_end(s);
+        return;
+    }
+    sv_vec3 chest = { in->root.x, in->root.y + SIDE_CHEST_CM, in->root.z }, n, hp;
+    float d;
+    if (!near_face(s, o, ray, ctx, chest, SIDE_RAYS, SIDE_LOOK_CM, &d, &n, &hp) || !isfinite(d)) {
+        if (s->side_on) s->side_lost++; /* no rock round him: no face to follow */
+        side_end(s);
+        return;
+    }
+    sv_vec3 tw = { -n.x, 0, -n.z }; /* into the face here */
+    if (!s->side_on) {
+        s->side_on = 1, s->side_eps++, s->side_turned = 0, s->side_tw = tw, s->side_block_t = 0, s->side_block_now = 0;
+        s->side_d0 = fminf(fmaxf(d, SIDE_D_MIN), SIDE_D_MAX);
+    } else { /* turn toward the face here, at most side_turn_dps */
+        sv_vec3 a0 = s->side_tw;
+        float cr = a0.z * tw.x - a0.x * tw.z, dt0 = a0.x * tw.x + a0.z * tw.z, ang = atan2f(cr, dt0);
+        float lim = c->side_turn_dps * 0.01745329f * dts;
+        if (ang > lim) ang = lim;
+        if (ang < -lim) ang = -lim;
+        float ca = cosf(ang), sa = sinf(ang);
+        /* (a0 rotated by ang the same way: cross(a0, rot) = sin ang) */
+        sv_vec3 a1 = { a0.x * ca + a0.z * sa, 0, a0.z * ca - a0.x * sa };
+        s->side_tw = unit3(a1);
+        float was = s->side_turned;
+        s->side_turned += fabsf(ang) * 57.29578f;
+        if (floorf(s->side_turned / 45.0f) > floorf(was / 45.0f)) s->side_corners++; /* each 45 deg turned */
+    }
+    sv_vec3 t = s->side_tw, r = { t.z, 0, -t.x }; /* his right facing the face (the game's frame: forward +z, right +x) */
+    if (s->have_root) { /* blocked: the last frame's slide asked, the root did not go (the capsule held; logs) */
+        float rq = s->last_req.x * r.x + s->last_req.z * r.z;
+        float ap = (in->root.x - s->last_root.x) * r.x + (in->root.z - s->last_root.z) * r.z;
+        s->side_block_t = fabsf(rq) > 0.2f && ap / rq < 0.2f ? s->side_block_t + dts : 0.0f;
+        if (s->side_block_t >= SIDE_BLOCK_S && !s->side_block_now) s->side_block_now = 1, s->side_blocked++;
+        if (s->side_block_t == 0) s->side_block_now = 0;
+    }
+    float step = s->side_v * dts;
+    float in_cm = d - s->side_d0, lim_d = SIDE_D_CMS * dts; /* the distance kept: + = toward the face */
+    in_cm = in_cm > lim_d ? lim_d : in_cm < -lim_d ? -lim_d : in_cm;
+    sv_vec3 mv = add3(mul3(r, step), mul3(tw, in_cm));
+    *m = add3(*m, mv);
+    o->side_step = step;
+    s->side_cm += fabsf(step), s->side_frames++, s->side_last_d = d;
+    for (int h = 0; h < 2; h++) /* the holds move with him */
+        if (s->h[h].holding) s->h[h].hit = add3(s->h[h].hit, mv), s->h[h].toward = s->side_tw;
 }
 
 /* descent: the drop button: the ground under him (from blink_out_cm out from the wall; still on a lip's top: from
@@ -2661,14 +2879,22 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             }
             hang(s, in, 0, o); /* both hands open: Talion stays where he is (the grips are armed: open hands may grab) */
             somvr_climb_hit g;
-            if (s->dm != 1 && !s->dm_stick_wait && stand_walk(s, c, in, ray, ctx, o, dt)) {
+            /* build 39 (side): a stick mostly sideways slides him (the forward / back stick's hang moves as before) */
+            int sideways = c->side && (fabsf(in->stick_x) > c->side_dead && fabsf(in->stick_x) >= fabsf(in->stick_y));
+            if (!sideways && s->dm != 1 && !s->dm_stick_wait && stand_walk(s, c, in, ray, ctx, o, dt)) {
                 /* stand: the stick walks him onto the top (or he stands on it now) */
-            } else if (c->hang_stick_cm > 0 && in->stick >= 0.5f && in->root_ok && s->dm != 1 && !s->dm_stick_wait &&
+            } else if (!sideways && c->hang_stick_cm > 0 && in->stick >= 0.5f && in->root_ok && s->dm != 1 &&
+                       !s->dm_stick_wait &&
                 cast(s, o, ray, ctx, 0, in->root, (sv_vec3){ 0, -1, 0 }, c->foot_cm + c->hang_stick_cm, &g) && g.hit &&
                 !g.wet) { /* the stick in a low hang: he stands on what is under him and walks */
                 s->stick_h = g.dist - c->foot_cm, s->stick_drops++;
                 o->events2 |= SOMVR_CLIMB_E_STICK_DROP;
                 end_climb(s, SOMVR_CLIMB_END_RELEASED, 0, o);
+            } else if (s->active && !o->move && (c->side || c->head_keep)) { /* build 39: hanging, the slide and the keep */
+                sv_vec3 hm = { 0, 0, 0 };
+                side_step(s, c, in, ray, ctx, o, &hm, (float)dt);
+                keep_step(s, c, in, ray, ctx, o, &hm, (float)dt);
+                request(s, o, hm);
             }
         }
     } else if (!any) {
@@ -2709,7 +2935,9 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             s->cuts++;
             o->events |= SOMVR_CLIMB_E_CARRY_CUT;
         }
-        hug_step(s, c, in, k, o, &m); /* hug: never away from the wall past hug_cm */
+        side_step(s, c, in, ray, ctx, o, &m, (float)dt); /* build 39 (side): the stick slides him along the face */
+        if (!s->side_on) hug_step(s, c, in, k, o, &m); /* hug: never away from the wall past hug_cm (the slide keeps its
+                                                        * own distance) */
         m.y += edge_step(s, c, in, o, c->step_cm); /* push: a forward push the edge blocks lifts him */
         lip_step(s, c, in, o, &m); /* descent: a push down while on the top goes out over the edge */
         if (c->overhang > 0 && c->oh_mantle && !s->descending && in->root_ok && s->have_root && in->head_ok &&
@@ -2733,6 +2961,7 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             return;
         }
         overhang_step(s, c, in, k, o, &m); /* overhang: a pull blocked under a lip goes out round its edge */
+        keep_step(s, c, in, ray, ctx, o, &m, (float)dt); /* build 39 (head_keep): the head keep_cm from every face */
         topout_step(s, c, in, k, ray, ctx, o, &m, (float)dt); /* topout: a push held at a top goes through 1:1 */
         if (!s->to_on) through_step(s, c, in, k, ray, ctx, o, &m, (float)dt); /* through: a pull blocked under a lip */
         request(s, o, m);

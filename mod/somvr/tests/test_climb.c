@@ -175,7 +175,11 @@ typedef struct {
                           * -10 while the capsule (the head + 20 down to the feet) overlaps it so, else +5 */
     double t;
     double dt;           /* > 0: the frame's time (default 1/90 s) */
+    float head_track_x;  /* build 39: the head's x off the body (the room offset) */
+    int bumps;           /* build 39 (thr_keep): every plain move up held (the capsule caught on a rough face's bumps),
+                          * the capsule never in the rock (in.rock_cm +5) */
 } rig_t;
+static somvr_climb_ray_fn g_ray_fn; /* build 39: the world's rays (NULL: mock_ray) */
 
 static sv_vec3 track_to_world(const rig_t *r, sv_vec3 p) {
     float k = r->scale > 0 ? r->scale : 1.0f;
@@ -228,6 +232,7 @@ static void rig_frame(rig_t *r) {
             p.y = fmaxf(0.0f, g_wall_top - 46 - r->body.y); /* the foot caught under the lip */
         if (r->corner && r->body.z + 50 > WALL_Z - 35 - 0.01f && r->body.y < g_wall_top - 5)
             p = (sv_vec3){ 0, 0, 0 }; /* the corner: nothing moves */
+        if (r->bumps && p.y > 0) p.y = 0; /* build 39: the bumps hold every plain move up */
         p.y += r->pending_thr; /* the through part: past any collision */
         p.x += r->pending_thx, p.z += r->pending_thz;
         r->body.x += p.x, r->body.y += p.y, r->body.z += p.z;
@@ -240,16 +245,19 @@ static void rig_frame(rig_t *r) {
         int in = r->body.z + 50 > g_slab_z - 35 && top > g_slab_y0 + 0.5f && feet < g_slab_y1;
         r->in.rock_ok = 1, r->in.rock_cm = in ? -10.0f : 5.0f;
     }
+    if (r->bumps) r->in.rock_ok = 1, r->in.rock_cm = 5.0f;
     r->in.t = r->t;
     r->in.rig_yaw = r->yaw;
     r->in.rig_scale = r->scale;
     r->in.head_y = r->body.y + r->head_track_y;
-    r->in.head_x = r->body.x, r->in.head_z = r->body.z + r->head_track_z;
+    r->in.head_x = r->body.x, r->in.head_z = r->body.z + r->head_track_z; /* Talion's eyes (the rig's base) */
+    r->in.view_ok = 1, r->in.view = (sv_vec3){ r->body.x + r->head_track_x, r->in.head_y, r->in.head_z }; /* build 39: the
+                                                                         * player's view: the eyes + the room's offset */
     r->in.root_ok = 1, r->in.root = (sv_vec3){ r->body.x, r->body.y + 100, r->body.z + 50 };
     for (int h = 0; h < 2; h++) {
         r->in.hand[h].pw = track_to_world(r, r->in.hand[h].p); /* palm/fwd: world directions as given */
     }
-    somvr_climb_step(&r->s, &r->c, &r->in, mock_ray, NULL, &r->o);
+    somvr_climb_step(&r->s, &r->c, &r->in, g_ray_fn ? g_ray_fn : mock_ray, NULL, &r->o);
     if (r->o.move) {
         r->pending = r->o.move_w, r->pending_thr = r->o.through_up, r->pending.y -= r->o.through_up;
         r->pending_thx = r->o.through_lx, r->pending_thz = r->o.through_lz;
@@ -2474,14 +2482,53 @@ static void test_through(void) {
     CHECK(thr_run(&r, 1, 45, 2, &top) && NEAR(top, 230, 0.6f) && r.s.thr_ons == 0 && r.s.thr_refused >= 1 &&
               r.s.thr_all_cm == 0,
           "through: the slab over the head: refused %llu, the top %g", (unsigned long long)r.s.thr_refused, top);
-    /* the hold under the eyes (a hold at the chest, pulled: the capsule's top held): never through */
+    /* the hold under the eyes (a hold at the chest, pulled: the capsule's top held): never through with thr_low off
+     * (as build 37) */
     rig_init(&r);
-    r.c.through = 1, r.c.cue = 0, r.slab = 1, g_slab_y0 = 170 + 20 + 5, g_slab_y1 = 260, g_slab_z = 60;
+    r.c.through = 1, r.c.thr_low = 0, r.c.cue = 0, r.slab = 1, g_slab_y0 = 170 + 20 + 5, g_slab_y1 = 260, g_slab_z = 60;
     r.in.hand[1].p = (sv_vec3){ 20, 140, 90 };
     grip(&r, 1, 1), rig_frame(&r);
     for (int i = 0; i < 30; i++) hand_move(&r, 1, 0, -2, 0), rig_frame(&r);
-    CHECK(r.s.h[1].holding && r.s.thr_ons == 0 && r.moved.y < 6, "through: a hold under the eyes: never (up %g)", r.moved.y);
+    CHECK(r.s.h[1].holding && r.s.thr_ons == 0 && r.moved.y < 6, "through low off: a hold under the eyes: never (up %g)",
+          r.moved.y);
+    /* live patch 11-04 (thr_low, the default): the same chest hold mid-face (no landing), the capsule's top caught 5 cm
+     * up by rock 15 cm past the head (the head's way clear): blocked 0.15 s, then through 1:1 (session 195050's walls) */
+    rig_init(&r);
+    r.c.through = 1, r.c.cue = 0, r.slab = 1, g_slab_y0 = 170 + 20 + 5, g_slab_y1 = 260, g_slab_z = 65;
+    CHECK(r.c.thr_low == 1, "through low: on by default");
+    r.in.hand[1].p = (sv_vec3){ 20, 140, 90 };
+    grip(&r, 1, 1), rig_frame(&r);
+    for (int i = 0; i < 45; i++) hand_move(&r, 1, 0, -2, 0), rig_frame(&r);
+    CHECK(r.s.h[1].holding && !r.s.h[1].po_ok && r.s.thr_ons == 1 && r.s.thr_refused == 0 && r.moved.y > 40 &&
+              r.s.po_noways == 0,
+          "through low on: a hold under the eyes mid-face: through (up %g, through %llu, %.0f cm)", r.moved.y,
+          (unsigned long long)r.s.thr_ons, r.s.thr_all_cm);
+    /* ... and with rock right over the head (the slab's front 5 cm past it): refused, held as ever */
+    rig_init(&r);
+    r.c.through = 1, r.c.cue = 0, r.slab = 1, g_slab_y0 = 170 + 20 + 5, g_slab_y1 = 260, g_slab_z = 45;
+    r.in.hand[1].p = (sv_vec3){ 20, 140, 90 };
+    grip(&r, 1, 1), rig_frame(&r);
+    for (int i = 0; i < 45; i++) hand_move(&r, 1, 0, -2, 0), rig_frame(&r);
+    CHECK(r.s.thr_ons == 0 && r.moved.y < 6, "through low on: rock over the head: refused (up %g, refused %llu)",
+          r.moved.y, (unsigned long long)r.s.thr_refused);
     g_slab_y0 = g_slab_y1 = g_slab_z = 0, g_wall_top = WALL_TOP;
+    /* live patch 11-04: the pullover's false buzz mid-face - a hold on a 5 cm bump (its top found under the hand, no
+     * landing) with the face going on up 5 cm behind it: blocked 0.3 s (the through held off here), no buzz; a 15 cm
+     * ledge with the face 15 cm behind: the buzz as ever */
+    for (int k = 0; k < 2; k++) {
+        rig_init(&r);
+        r.c.through = 1, r.c.thr_block_s = 100, r.c.pullover = 1, r.c.cue = 0, r.in.can_blink = 1;
+        g_wall_top = 140, g_top_depth = k ? 15 : 5, g_rl_z = k ? 15 : 5, g_rl_y = 300, r.ceil_y = 172;
+        r.in.hand[1].p = (sv_vec3){ 20, 138, 85 };
+        grip(&r, 1, 1), rig_frame(&r);
+        for (int i = 0; i < 40; i++) hand_move(&r, 1, 0, -1, 0), rig_frame(&r);
+        CHECK(r.s.h[1].holding && r.s.h[1].po_has_top && !r.s.h[1].po_ok &&
+                  (k ? r.s.po_noways == 1 && r.s.po_midface == 0 : r.s.po_noways == 0 && r.s.po_midface == 1),
+              "pullover mid-face %d: the face %d cm behind the bump: buzzes %llu, mid-face %llu (top %d at %g)", k,
+              k ? 15 : 5, (unsigned long long)r.s.po_noways, (unsigned long long)r.s.po_midface, r.s.h[1].po_has_top,
+              r.s.h[1].po_top_y);
+    }
+    g_wall_top = WALL_TOP, g_top_depth = 100, g_rl_z = g_rl_y = 0;
     /* thr_top: at a top, the push into it lifts him (the edge step) but the capsule's foot is caught 46 cm under the
      * edge (the user's cliff top): off = stalled there; on = the lift through it, then over 1:1 */
     for (int on = 0; on < 2; on++) {
@@ -4231,7 +4278,226 @@ static void test_b36_edge(void) {
     g_wall_top = WALL_TOP, g_ground_on = 0;
 }
 
+/* ---- build 39 (som-b37-climb2): the head's keep, the slide along the face and round its corners, the through kept at
+ * a contact, the liberal rays. The worlds: rock boxes (seen from outside), no floor ------------------------------------ */
+static float g_bx[4][6];
+static int g_nbx;
+static int boxes_ray(void *ctx, int hand, sv_vec3 from, sv_vec3 dir, float len, somvr_climb_hit *out) {
+    (void)ctx, (void)hand;
+    g_rays++;
+    memset(out, 0, sizeof *out);
+    float best = 1e30f, t;
+    for (int i = 0; i < g_nbx; i++)
+        if (box_ray(g_bx[i], g_bx[i] + 3, from, dir, len, 0, &t) && t < best) best = t;
+    if (best <= len)
+        out->hit = 1, out->climbable = 1, out->dist = best,
+        out->point = (sv_vec3){ from.x + dir.x * best, from.y + dir.y * best, from.z + dir.z * best };
+    return 1;
+}
+static void bx_set(int i, float x0, float z0, float x1, float z1) {
+    float b[6] = { x0, -5000, z0, x1, 5000, z1 };
+    memcpy(g_bx[i], b, sizeof b);
+    if (i >= g_nbx) g_nbx = i + 1;
+}
+/* the level distance from p to the nearest box (cm) */
+static float bx_dist(float x, float z) {
+    float best = 1e30f;
+    for (int i = 0; i < g_nbx; i++) {
+        float dx = fmaxf(fmaxf(g_bx[i][0] - x, x - g_bx[i][3]), 0.0f), dz = fmaxf(fmaxf(g_bx[i][2] - z, z - g_bx[i][5]), 0.0f);
+        best = fminf(best, sqrtf(dx * dx + dz * dz));
+    }
+    return best;
+}
+/* a climb begun with the right hand on the face ahead (palm pal), then let go: the hang at body bx,by,bz */
+static void b39_hang(rig_t *r, float bx, float bz, sv_vec3 pal, sv_vec3 hand) {
+    rig_init(r);
+    r->c.letgo = SOMVR_CLIMB_LETGO_HANG, r->c.cue = 0;
+    r->body = (sv_vec3){ bx, 200, bz };
+    r->in.hand[1].p = hand, r->in.hand[1].palm = pal, r->in.hand[0].p = (sv_vec3){ 0, 100, 0 };
+    grip(r, 1, 1);
+    frames(r, 2);
+    grip(r, 1, 0);
+    frames(r, 2);
+}
+static void test_b39(void) {
+    g_ray_fn = boxes_ray;
+    /* 1. the session's corner (mark 222139_12): the root 57 cm from the second face, the head 42 cm toward it (15 cm
+     * from the rock) - the outside corner's rock: x < 0, z > 100 (its second face the plane x 0, facing +x) */
+    g_nbx = 0, bx_set(0, -1000, 100, 0, 1000);
+    for (int keep = 0; keep < 2; keep++) {
+        rig_t r;
+        b39_hang(&r, 57, 100, (sv_vec3){ -1, 0, 0 }, (sv_vec3){ -45, 150, 50 });
+        r.c.head_keep = keep;
+        r.head_track_x = -42;
+        CHECK(r.s.active && r.s.phase == SOMVR_CLIMB_PH_HANG, "b39 corner %d: hanging", keep);
+        frames(&r, 2);
+        float h0 = r.in.view.x;
+        frames(&r, 60);
+        float h1 = r.in.view.x;
+        if (keep)
+            CHECK(h0 < 17.5f && h1 >= 19.5f && h1 <= 21 && r.s.keep_eps == 1 && r.s.keep_push_cm > 4,
+                  "b39 corner keep: the head %.1f -> %.1f cm from the face (eased out; %llu episodes)", h0, h1,
+                  (unsigned long long)r.s.keep_eps);
+        else
+            CHECK(NEAR(h1, h0, 1e-3) && h1 < 16 && r.s.keep_eps == 0, "b39 corner keep off: the head stays %.1f cm", h1);
+        /* the hug's pull toward the face (the root 57+ cm from a driving hold's face): never the head into the rock */
+        r.c.hug = 1;
+        r.in.hand[1].p = (sv_vec3){ -45 - (r.body.x - 57), 150, 50 };
+        frames(&r, 1);
+        grip(&r, 1, 1);
+        frames(&r, 2);
+        float least = 1e9f;
+        for (int i = 0; i < 40; i++) {
+            hand_move(&r, 1, 0, -2, 0), rig_frame(&r);
+            least = fminf(least, r.in.view.x);
+        }
+        if (keep)
+            CHECK(least >= 19.0f && r.s.keep_cuts > 0 && r.moved.y > 60,
+                  "b39 corner hug + keep: the pull up 80 cm, the head never under %.1f cm (cuts %llu)", least,
+                  (unsigned long long)r.s.keep_cuts);
+        else
+            CHECK(least < 12.0f && r.s.hug_in_cm > 5, "b39 corner hug, keep off: the hug drew the head to %.1f cm", least);
+        printf("b39: corner (keep %d): the head %.1f -> %.1f cm; the hug's pull: the head's least %.1f cm\n", keep, h0, h1, least);
+    }
+    /* 2. the slide on a flat face (rock z > 100): right, left, the stick forward not, off not; y never */
+    g_nbx = 0, bx_set(0, -2000, 100, 2000, 2000);
+    {
+        rig_t r;
+        b39_hang(&r, 0, 0, (sv_vec3){ 0, 0, 1 }, (sv_vec3){ 20, 150, 85 });
+        r.c.side = 1, r.c.head_keep = 1;
+        sv_vec3 b0 = r.body;
+        r.in.stick_x = 1, r.in.stick = 1;
+        frames(&r, 180);
+        float dx = r.body.x - b0.x;
+        CHECK(dx > 78 && dx < 88 && fabsf(r.body.z - b0.z) < 1 && fabsf(r.body.y - b0.y) < 1e-3 && r.s.side_eps == 1,
+              "b39 slide flat: right 2 s = %.1f cm along (z %.2f, y %.3f)", dx, r.body.z - b0.z, r.body.y - b0.y);
+        CHECK(r.s.side_tw.z > 0.99f, "b39 slide flat: the face's way +z (%.2f)", r.s.side_tw.z);
+        r.in.stick_x = 0, r.in.stick = 0;
+        frames(&r, 40);
+        float x1 = r.body.x;
+        frames(&r, 30);
+        CHECK(!r.s.side_on && NEAR(r.body.x, x1, 1e-3) && r.s.phase == SOMVR_CLIMB_PH_HANG,
+              "b39 slide flat: the stick back = still, hanging");
+        r.in.stick_x = -0.65f, r.in.stick = 0.65f;
+        frames(&r, 90);
+        CHECK(r.body.x < x1 - 15, "b39 slide flat: left at 0.65 = %.1f cm", x1 - r.body.x);
+        r.in.stick_x = 0.2f, r.in.stick_y = 0.9f, r.in.stick = 0.92f;
+        float x2 = r.body.x;
+        frames(&r, 60);
+        CHECK(fabsf(r.body.x - x2) < 6 && r.s.side_v == 0, "b39 slide flat: the stick mostly forward: no slide (eased out %.1f)",
+              r.body.x - x2);
+        r.c.side = 0, r.in.stick_x = 1, r.in.stick_y = 0, r.in.stick = 1;
+        x2 = r.body.x;
+        frames(&r, 60);
+        CHECK(NEAR(r.body.x, x2, 1e-3), "b39 slide off: nothing");
+    }
+    /* 3. round an outside corner (rock x < 0, z > 100): right along the first face, round its edge, on along the second;
+     * the root never nearer the rock than 35, the head never nearer than the keep */
+    g_nbx = 0, bx_set(0, -2000, 100, 0, 2000);
+    {
+        rig_t r;
+        b39_hang(&r, -150, 0, (sv_vec3){ 0, 0, 1 }, (sv_vec3){ 20, 150, 85 });
+        r.c.side = 1, r.c.head_keep = 1;
+        r.in.stick_x = 1, r.in.stick = 1;
+        float least = 1e9f, hl = 1e9f;
+        for (int i = 0; i < 900 && fails < 30; i++) {
+            rig_frame(&r);
+            least = fminf(least, bx_dist(r.in.root.x, r.in.root.z));
+            hl = fminf(hl, bx_dist(r.in.view.x, r.in.view.z));
+        }
+        CHECK(r.s.side_tw.x < -0.95f && r.in.root.z > 250 && r.in.root.x > 35 && r.in.root.x < 65 &&
+                  r.s.side_corners >= 2 && r.s.side_lost == 0,
+              "b39 outside corner: round it (into the face now %.2f %.2f, root %.0f %.0f, corners %llu)", r.s.side_tw.x,
+              r.s.side_tw.z, r.in.root.x, r.in.root.z, (unsigned long long)r.s.side_corners);
+        CHECK(least >= 35 && hl >= 19.5f, "b39 outside corner: the root's least %.1f cm, the head's %.1f", least, hl);
+        printf("b39: outside corner: into the face %.2f %.2f, root %.0f %.0f, the root's least %.1f cm, the head's %.1f\n",
+               r.s.side_tw.x, r.s.side_tw.z, r.in.root.x, r.in.root.z, least, hl);
+        CHECK(fabsf(r.moved.y) < 1e-3 && r.yaw == 0, "b39 outside corner: no rise, no turn of the view");
+    }
+    /* 4. into an inside corner (rock z > 100 and x > 100): the face ahead becomes the face; on along it, away */
+    g_nbx = 0, bx_set(0, -2000, 100, 2000, 2000), bx_set(1, 100, -2000, 2000, 2000);
+    {
+        rig_t r;
+        b39_hang(&r, -150, 0, (sv_vec3){ 0, 0, 1 }, (sv_vec3){ 20, 150, 85 });
+        r.c.side = 1, r.c.head_keep = 1;
+        r.in.stick_x = 1, r.in.stick = 1;
+        float least = 1e9f, hl = 1e9f;
+        for (int i = 0; i < 720 && fails < 30; i++) {
+            rig_frame(&r);
+            least = fminf(least, bx_dist(r.in.root.x, r.in.root.z));
+            hl = fminf(hl, bx_dist(r.in.view.x, r.in.view.z));
+        }
+        CHECK(r.s.side_tw.x > 0.95f && r.in.root.z < -50 && r.in.root.x > 35 && r.in.root.x < 65,
+              "b39 inside corner: on along the second face (into it %.2f %.2f, root %.0f %.0f)", r.s.side_tw.x,
+              r.s.side_tw.z, r.in.root.x, r.in.root.z);
+        CHECK(least >= 33 && hl >= 19.5f, "b39 inside corner: the root's least %.1f cm, the head's %.1f", least, hl);
+        printf("b39: inside corner: into the face %.2f %.2f, root %.0f %.0f, the root's least %.1f cm, the head's %.1f\n",
+               r.s.side_tw.x, r.s.side_tw.z, r.in.root.x, r.in.root.z, least, hl);
+    }
+    /* 5. holding: the slide takes the hold along (its point moves with him) */
+    g_nbx = 0, bx_set(0, -2000, 100, 2000, 2000);
+    {
+        rig_t r;
+        b39_hang(&r, 0, 0, (sv_vec3){ 0, 0, 1 }, (sv_vec3){ 20, 150, 85 });
+        r.c.side = 1;
+        grip(&r, 1, 1);
+        frames(&r, 2);
+        CHECK(r.s.h[1].holding && r.s.phase == SOMVR_CLIMB_PH_HOLD, "b39 hold: holding");
+        float hx = r.s.h[1].hit.x, bx0 = r.body.x;
+        r.in.stick_x = 1, r.in.stick = 1;
+        frames(&r, 90);
+        CHECK(r.s.h[1].holding && NEAR(r.s.h[1].hit.x - hx, r.body.x - bx0, 1.0f) && r.body.x - bx0 > 30,
+              "b39 hold: the hold along with him (%.1f / %.1f)", r.s.h[1].hit.x - hx, r.body.x - bx0);
+    }
+    g_ray_fn = NULL, g_nbx = 0;
+    /* 6. the through kept at a contact (the session's mark 222911_23): a chest hold mid-face pulled 100 cm in 1 s, every
+     * plain move up held by the bumps, the capsule never in the rock: off = 10 cm a through and the 0.15 s again */
+    float up[2];
+    for (int keep = 0; keep < 2; keep++) {
+        rig_t r;
+        rig_init(&r);
+        r.c.through = 1, r.c.thr_keep = keep, r.bumps = 1;
+        grip(&r, 1, 1);
+        frames(&r, 2);
+        CHECK(r.s.h[1].holding && r.s.h[1].hit.y < r.in.head_y, "b39 bumps %d: a chest hold", keep);
+        for (int i = 0; i < 90; i++) hand_move(&r, 1, 0, -100.0f / 90, 0), rig_frame(&r);
+        frames(&r, 2);
+        up[keep] = r.moved.y;
+        if (keep) {
+            uint64_t d0 = r.s.thr_downs;
+            for (int i = 0; i < 20; i++) hand_move(&r, 1, 0, 1.0f, 0), rig_frame(&r);
+            CHECK(r.s.thr_kept >= 1 && r.s.thr_downs > d0, "b39 bumps keep: kept %llu, downs to the collision %llu",
+                  (unsigned long long)r.s.thr_kept, (unsigned long long)(r.s.thr_downs - d0));
+        }
+    }
+    CHECK(up[0] < 65 && up[1] > 80, "b39 bumps: off %.1f cm up of 100, on %.1f", up[0], up[1]);
+    printf("b39: bumps: the pull 100 cm in 1 s: through keep off %.1f cm up, on %.1f\n", up[0], up[1]);
+    /* 7. liberal: the palm along the wall, the fingers up - no ray at the face; the head's level ray through the hand */
+    for (int lib = 0; lib < 2; lib++) {
+        rig_t r;
+        rig_init(&r);
+        r.c.liberal = lib;
+        r.in.hand[1].palm = (sv_vec3){ 1, 0, 0 };
+        grip(&r, 1, 1);
+        frames(&r, 30);
+        if (lib)
+            CHECK(r.s.h[1].holding && r.s.h[1].via == SOMVR_CLIMB_VIA_LEVEL && r.s.lib_holds == 1,
+                  "b39 liberal: the level ray holds (via %d)", r.s.h[1].via);
+        else
+            CHECK(!r.s.h[1].holding && r.s.misses == 1, "b39 liberal off: a miss");
+    }
+    {   /* the old rays' hold is the old one with liberal on */
+        rig_t r;
+        rig_init(&r);
+        r.c.liberal = 1;
+        grip(&r, 1, 1);
+        frames(&r, 2);
+        CHECK(r.s.h[1].holding && r.s.h[1].via == SOMVR_CLIMB_VIA_PALM && r.s.lib_holds == 0, "b39 liberal: the palm's as ever");
+    }
+}
+
 int main(void) {
+    test_b39();
     test_b36_edge();
     test_b36();
     test_b33();

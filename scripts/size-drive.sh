@@ -90,6 +90,7 @@ if [ "${SIZE_PLAN:-pics}" = world ]; then
 fi
 # SIZE_PLAN=body (the boot with SOMVR_SIZE_BODY=1): the hands open ahead, the sword in both hands, a fight with swings at
 # the infantry and the wrist menu at 100 / 115 / 130, third person (his own scale again), the sword's tip measure
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 if [ "${SIZE_PLAN:-pics}" = body ]; then
   w "hands test R 20 -25 40 0 -90 0" 0.6; w "hands test L -20 -25 40 0 90 0" 1
   for s in 100 115 130; do size $s; m "b$s-hands" 0.5; dump; done
@@ -105,7 +106,7 @@ if [ "${SIZE_PLAN:-pics}" = body ]; then
   echo "hits at 130 %: $(( $(n 'COMBAT hit') - H0 ))"
   w "practice remove" 2; w "hands test off" 0.5
   opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
-  o=$(opens); t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 2; [ "$(opens)" -gt "$o" ] || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; }
+  o=$(opens); t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 2; [ "$(opens)" -gt "$o" ] || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; press 0.3359 0.9706; }
   dump; m b130-menu 0.3
   t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1
   w "fallback third" 3; m b130-third 0.3; w "fallback auto" 3
@@ -125,7 +126,7 @@ if [ "${SIZE_PLAN:-pics}" = sword ]; then
   opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
   for s in 130 100; do
     size $s; o=$(opens); t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 2
-    [ "$(opens)" -gt "$o" ] || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; }
+    [ "$(opens)" -gt "$o" ] || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; press 0.3359 0.9706; }
     dump; m "c$s-menu" 0.3
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1
   done
@@ -160,13 +161,13 @@ menu_open() { local o=$(opens) k
   for k in 1 2 3 4; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
   [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
   echo "NOT OPEN"; }
 size 100
 menu_open; dump; m s100-menu 0.3
 A0=$(n 'VRMENU apply PLAYER_SIZE=')
-press 0.922 0.857; sleep 1.5; press 0.922 0.857; sleep 1.5; press 0.922 0.857; sleep 2
+press 0.922 0.8066; sleep 1.5; press 0.922 0.8066; sleep 1.5; press 0.922 0.8066; sleep 2
 echo "menu applies: $(( $(n 'VRMENU apply PLAYER_SIZE=') - A0 )); $(grep 'VRMENU apply PLAYER_SIZE=' "$R/somvr.log" | tail -1 | cut -c1-160)"
 t "hand R off"; dump; m s115-menu 0.3
 size 130; dump; m s130-menu 0.3

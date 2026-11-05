@@ -210,6 +210,99 @@ void somvr_lv_draw(const somvr_font *f, uint8_t *px, int bgra, const somvr_lv_ca
         }
 }
 
+/* ---- b37 live3: the card's place and the dot's ------------------------------------------------------------------ */
+static void lv_qrot(const float q[4], const float v[3], float out[3]) { /* v' = v + 2w (u x v) + 2 u x (u x v) */
+    float u[3] = {q[0], q[1], q[2]}, w = q[3];
+    float t[3] = {2 * (u[1] * v[2] - u[2] * v[1]), 2 * (u[2] * v[0] - u[0] * v[2]), 2 * (u[0] * v[1] - u[1] * v[0])};
+    out[0] = v[0] + w * t[0] + (u[1] * t[2] - u[2] * t[1]);
+    out[1] = v[1] + w * t[1] + (u[2] * t[0] - u[0] * t[2]);
+    out[2] = v[2] + w * t[2] + (u[0] * t[1] - u[1] * t[0]);
+}
+static int lv_unit(float v[3]) {
+    float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (!(l > 1e-6f) || !isfinite(l)) return 0;
+    v[0] /= l, v[1] /= l, v[2] /= l;
+    return 1;
+}
+static int lv_qok(const float q[4]) {
+    float n = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+    return isfinite(n) && n > 0.9f && n < 1.1f;
+}
+/* the rotation whose matrix has the orthonormal right-handed columns x, y, z */
+static void lv_qbasis(const float x[3], const float y[3], const float z[3], float q[4]) {
+    float tr = x[0] + y[1] + z[2];
+    if (tr > 0) {
+        float s = sqrtf(tr + 1.0f) * 2;
+        q[3] = 0.25f * s, q[0] = (y[2] - z[1]) / s, q[1] = (z[0] - x[2]) / s, q[2] = (x[1] - y[0]) / s;
+    } else if (x[0] > y[1] && x[0] > z[2]) {
+        float s = sqrtf(1.0f + x[0] - y[1] - z[2]) * 2;
+        q[3] = (y[2] - z[1]) / s, q[0] = 0.25f * s, q[1] = (y[0] + x[1]) / s, q[2] = (z[0] + x[2]) / s;
+    } else if (y[1] > z[2]) {
+        float s = sqrtf(1.0f + y[1] - x[0] - z[2]) * 2;
+        q[3] = (z[0] - x[2]) / s, q[0] = (y[0] + x[1]) / s, q[1] = 0.25f * s, q[2] = (z[1] + y[2]) / s;
+    } else {
+        float s = sqrtf(1.0f + z[2] - x[0] - y[1]) * 2;
+        q[3] = (x[1] - y[0]) / s, q[0] = (z[0] + x[2]) / s, q[1] = (z[1] + y[2]) / s, q[2] = 0.25f * s;
+    }
+    float n = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    for (int i = 0; i < 4; i++) q[i] /= n;
+}
+/* a pose at p facing along z (its +Z toward the viewer), upright as near the world's +Y as z allows (else hint) */
+static void lv_facing(const float p[3], const float zin[3], const float hint[3], somvr_posef *out) {
+    float z[3] = {zin[0], zin[1], zin[2]}, x[3], y[3];
+    lv_unit(z);
+    static const float up[3] = {0, 1, 0};
+    const float *u = fabsf(z[1]) < 0.9f ? up : hint;
+    x[0] = u[1] * z[2] - u[2] * z[1], x[1] = u[2] * z[0] - u[0] * z[2], x[2] = u[0] * z[1] - u[1] * z[0];
+    lv_unit(x);
+    y[0] = z[1] * x[2] - z[2] * x[1], y[1] = z[2] * x[0] - z[0] * x[2], y[2] = z[0] * x[1] - z[1] * x[0];
+    lv_qbasis(x, y, z, out->q);
+    memcpy(out->p, p, sizeof out->p);
+}
+int somvr_lv_card_place(const somvr_posef *head, const somvr_posef *grip, int hand, somvr_posef *out) {
+    if (!lv_qok(head->q) || !isfinite(grip->p[0] + grip->p[1] + grip->p[2] + head->p[0] + head->p[1] + head->p[2]))
+        return 0;
+    static const float f0[3] = {0, 0, -1};
+    float f[3];
+    lv_qrot(head->q, f0, f);
+    f[1] = 0;
+    if (!lv_unit(f)) f[0] = 0, f[1] = 0, f[2] = -1; /* (looking straight up or down: XR's -Z) */
+    float r[3] = {-f[2], 0, f[0]}; /* the head's right on the level */
+    float inner = hand == 0 ? 1.0f : -1.0f;
+    float c[3];
+    for (int i = 0; i < 3; i++) c[i] = grip->p[i] + inner * 0.18f * r[i];
+    float d[2] = {c[0] - head->p[0], c[2] - head->p[2]};
+    float dh = sqrtf(d[0] * d[0] + d[1] * d[1]);
+    float side = d[0] * r[0] + d[1] * r[2], ahead = d[0] * f[0] + d[1] * f[2];
+    float ang = dh > 0.05f ? atan2f(side, ahead) : 0.0f, lim = 45.0f * 3.14159265f / 180.0f;
+    if (ang > lim) ang = lim;
+    if (ang < -lim) ang = -lim;
+    if (dh < 0.45f) dh = 0.45f;
+    if (dh > 0.65f) dh = 0.65f;
+    float dir[3] = {f[0] * cosf(ang) + r[0] * sinf(ang), 0, f[2] * cosf(ang) + r[2] * sinf(ang)};
+    float p[3] = {head->p[0] + dir[0] * dh, grip->p[1] + 0.10f, head->p[2] + dir[2] * dh};
+    if (p[1] > head->p[1] - 0.12f) p[1] = head->p[1] - 0.12f;
+    if (p[1] < head->p[1] - 0.35f) p[1] = head->p[1] - 0.35f;
+    float z[3] = {head->p[0] - p[0], head->p[1] - p[1], head->p[2] - p[2]};
+    lv_facing(p, z, f, out);
+    return 1;
+}
+int somvr_lv_dot_place(const somvr_posef *grip, int hand, const somvr_posef *head, somvr_posef *out) {
+    if (!lv_qok(grip->q)) return 0;
+    static const float x0[3] = {1, 0, 0}, f0[3] = {0, 0, -1};
+    float n[3], zf[3];
+    lv_qrot(grip->q, x0, n); /* out of the left palm, into the right one */
+    lv_qrot(grip->q, f0, zf);
+    float back[3], p[3];
+    for (int i = 0; i < 3; i++) back[i] = (hand == 0 ? -1.0f : 1.0f) * n[i];
+    for (int i = 0; i < 3; i++) p[i] = grip->p[i] + 0.04f * back[i] + 0.01f * zf[i];
+    lv_facing(p, back, zf, out);
+    if (!head || !lv_qok(head->q)) return 0;
+    float v[3] = {head->p[0] - p[0], head->p[1] - p[1], head->p[2] - p[2]};
+    if (!lv_unit(v)) return 0;
+    return back[0] * v[0] + back[1] * v[1] + back[2] * v[2] > 0.15f;
+}
+
 /* ---- the calm gate ---------------------------------------------------------------------------------------------- */
 void somvr_lv_ccfg_default(somvr_lv_ccfg *c) {
     c->calm_s = 3.0;

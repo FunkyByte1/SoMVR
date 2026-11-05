@@ -91,6 +91,7 @@ static int us_log_ok(void) { return g_us.lines++ < 300; }
 
 /* build 33 (som-b33-herbs, somvr_hands31_game.c): the herb eaten by the hand - the game's pick, as B's (123 for 0.25 s) */
 static void us_hand_pick(double t) { g_us.hand_until = t + 0.25, g_us.hand_picks++; }
+static int us_hand_recent(double t) { return t < g_us.hand_until + 1.0; } /* build 37: a pick the hand asked for just now */
 
 /* a pick prompt: 123 with 'Combat_Activate_*', not '*_Full' (str = the PromptShow's StringId, a C string) */
 static int us_pick(int act, const char *str, int *full)

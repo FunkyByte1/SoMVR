@@ -4223,7 +4223,7 @@ static int sc_threat(void) { /* nothing, a glow, three glows and both edges, a r
     CHECK(log_has("low health's ring off"), "the ring's off line");
     app_teardown(&r.a);
     CHECK(MOCK(mockxr_live)() == 0 && !MOCK(mockxr_view_live)(), "threat objects outlived the session");
-    CHECK(log_has("xr: threat: image 544x204 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
+    CHECK(log_has("xr: threat: image 544x408 format 43 (a static swapchain, 1 image(s)) filled once: 16 glow and 16 edge "
                   "cells") &&
               log_has("xr: threat frame") && log_has("(newest entry)") && log_has("L hurt red, R hurt red") &&
               !log_has("threat: off"),
@@ -4503,7 +4503,7 @@ static int sc_threat_absent(void) { return th_none(0, 0, "xr: threat: no threat 
 static int sc_threat_inactive(void) { return th_none(1, 0, "xr: threat: no threat cues (somvr_threat inactive"); }
 static int sc_threat_off(void) { return th_none(1, 1, "xr: threat: no threat cues (SOMVR_XR_THREAT=off)"); }
 
-/* MOCKXR_REJECT_SC=544x204: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
+/* MOCKXR_REJECT_SC=544x408: the runtime never takes a frame with a threat quad. Only the threat cues go off (logged
  * once), that frame is ended again without them, the frames go on with the projection (and comfort's ring) */
 static int sc_threat_reject(void) {
     hudrig r;
@@ -6310,8 +6310,8 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     CHECK(app_setup(&a, "Feral3D") == 0, "setup");
     vmpose rest = {.palm = 0, .left_ok = 1, .right_ok = 0, .uv = {2, 2}};
     vm_mono(&a, &rest, 4);
-    CHECK(log_has("xr: vrmenu: somvr_vrmenu found at") && log_has("the wrist panel on (20 x 30 cm on the left wrist, the "
-                                                                   "right hand points"),
+    CHECK(log_has("xr: vrmenu: somvr_vrmenu found at") && log_has("the wrist panel on (20 x 32 cm on the left wrist, the "
+                                                                   "right hand points"), /* (b37 live3: 816 texels) */
           "log lacks the menu-on line");
     CHECK(MOCK(mockxr_last_end)()->layer_count == 1 && !atomic_load(&g_vm->open) &&
               MOCK(mockxr_sc_find)(SOMVR_VM_TEX_W, SOMVR_VM_TEX_H) < 0 && V.buf2img == 0,
@@ -6349,7 +6349,7 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
           (unsigned long long)atomic_load(&g_vm->n_uploads));
     somvr_settings s0 = vm_set();
     CHECK(vm_picture_is(&s0, VMA_MONO, -1, SOMVR_VMP_NONE), "the panel's first picture is not somvr_vm_draw's");
-    CHECK(V.buffers_live == 1 && V.mems_live == 1 && log_has("xr: vrmenu: panel swapchain 512x768 format 43 (3 images)"),
+    CHECK(V.buffers_live == 1 && V.mems_live == 1 && log_has("xr: vrmenu: panel swapchain 512x816 format 43 (3 images)"),
           "the staging buffer: %d buffers, %d memories", V.buffers_live, V.mems_live);
     /* the right hand on the Snap angle's > box: hovered (a new picture, a tick), the trigger is the panel's */
     int hap0 = MOCK(mockxr_haptic_get)(1)->applies;
@@ -6503,20 +6503,41 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     atomic_fetch_add(&g_vm->toggles, 1);
     vm_mono(&a, &rest, 2);
     CHECK(atomic_load(&g_vm->open) == 1 && log_has("xr: vrmenu: opened by the menu button"), "toggle: not open");
+    /* b37 live3 (re-xr-pipeline.md 162.12): the long press pins the panel in front - remembered (MENU_PIN on); pinned,
+     * looking away and the hand lost close nothing; the long press closes it */
+    CHECK(log_has("xr: vrmenu: pinned in front (the menu button's long press)") && vm_set().menu_pin == 1,
+          "the long press: not pinned (menu_pin %u)", vm_set().menu_pin);
+    vmpose far = rest;
+    far.left_far = 0.6f;
+    vm_mono(&a, &far, 60);
+    vmpose lost = palm;
+    lost.left_ok = 0;
+    vm_mono(&a, &lost, 100);
+    CHECK(atomic_load(&g_vm->open) == 1 && !log_has("xr: vrmenu: closed: looked away") &&
+              !log_has("xr: vrmenu: closed: the hand lost"), "pinned: closed by looking away or the hand lost");
     atomic_fetch_add(&g_vm->toggles, 1);
     vm_mono(&a, &rest, 2);
     CHECK(!atomic_load(&g_vm->open) && log_has("xr: vrmenu: closed: the menu button"), "toggle: not closed");
-    /* looked away: the panel more than 60 deg off the gaze for 0.5 s */
-    atomic_fetch_add(&g_vm->toggles, 1);
-    vmpose far = rest;
+    { /* the wrist panel again for the gesture's closes below (as Back to the wrist does) */
+        somvr_settings sw = vm_set();
+        sw.menu_pin = 0;
+        somvr_vrmenu_publish(g_vm, &sw);
+    }
+    /* looked away: the panel more than 60 deg off the gaze for 0.5 s (the wrist panel: opened by the palm) */
+    vmpose up = palm;
+    vm_mono(&a, &rest, 40);
+    vm_mono(&a, &up, 60);
+    CHECK(atomic_load(&g_vm->open) == 1, "the palm: not open (wrist)");
     far.left_far = 0.6f;
+    far = up, far.left_far = 0.6f;
     vm_mono(&a, &far, 30);
     CHECK(atomic_load(&g_vm->open) == 1, "looked away: closed before 0.5 s");
     vm_mono(&a, &far, 30);
     CHECK(!atomic_load(&g_vm->open) && log_has("xr: vrmenu: closed: looked away"), "looked away: still open");
     /* the hand lost 1 s: closed (nothing drawn meanwhile) */
-    atomic_fetch_add(&g_vm->toggles, 1);
-    vmpose lost = palm;
+    vm_mono(&a, &rest, 40);
+    vm_mono(&a, &up, 60);
+    lost = palm;
     lost.left_ok = 0;
     vm_mono(&a, &lost, 60);
     CHECK(atomic_load(&g_vm->open) == 1 && MOCK(mockxr_last_end)()->layer_count == 1, "the hand lost: closed early");
@@ -6524,7 +6545,8 @@ static int sc_vrmenu(void) { /* mono frames (menus): the gesture, the pointer, t
     CHECK(!atomic_load(&g_vm->open) && log_has("xr: vrmenu: closed: the hand lost"), "the hand lost: still open");
     /* the main hand (build 30: the Handedness row in Pointer hand's place): a click moves the panel to the right wrist
      * at once, the left hand points; the controls' mirror is saved for the next start (handed 1, handed_on 0) */
-    atomic_fetch_add(&g_vm->toggles, 1);
+    vm_mono(&a, &rest, 40);
+    vm_mono(&a, &up, 60);
     aim = palm, aim.right_ok = 1;
     vm_uv(SOMVR_VMI_HANDED, SOMVR_VMP_MORE, aim.uv);
     vm_mono(&a, &aim, 3);
@@ -6847,10 +6869,11 @@ static int sc_vrmenu_stereo(void) { /* layout B with the HUD quad and comfort: t
     /* moving: the ring (the menu's 0.8 strength; the object's is 0), right over the projection, under the HUD */
     for (int i = 0; i < 20; i++, f++) vm_hands(&rest), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
     CHECK(cf_quad(0, "the menu's vignette") == 1, "no ring with the menu's vignette (or not under the HUD)");
-    /* the panel (the menu button): over the HUD quad, comfort's ring under both (docs/re-xr-pipeline.md 16.8) */
-    atomic_fetch_add(&g_vm->toggles, 1);
+    /* the panel (b37 live3: the palm's - the menu button's long press pins it in front now): over the HUD quad,
+     * comfort's ring under both (docs/re-xr-pipeline.md 16.8) */
     vmpose aim = {.palm = 1, .left_ok = 1, .right_ok = 1};
     vm_uv(SOMVR_VMI_HUD, SOMVR_VMP_MORE, aim.uv);
+    for (int i = 0; i < 120 && !atomic_load(&g_vm->open); i++, f++) vm_hands(&aim), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
     for (int i = 0; i < 4; i++, f++) vm_hands(&aim), cf_stereo(&r, f, 3.0f, 0, 0, 2, &v);
     e = MOCK(mockxr_last_end)();
     int pl = vm_layer("stereo");
@@ -6936,7 +6959,7 @@ static int sc_vrmenu_reject(void) {
                    "XR_ERROR_LAYER_INVALID", 1);
 }
 static int sc_vrmenu_swapchain_fail(void) {
-    return vm_fail("xr: vrmenu: off for this session: xrCreateSwapchain(512x768 format 43): XR_ERROR_RUNTIME_FAILURE", 0);
+    return vm_fail("xr: vrmenu: off for this session: xrCreateSwapchain(512x816 format 43): XR_ERROR_RUNTIME_FAILURE", 0);
 }
 
 /* the gesture's gate (docs/re-xr-pipeline.md 15.7): the preload's block bits (the bow, a climb hold, a swing, an attack
@@ -6971,6 +6994,10 @@ static int sc_vrmenu_gate(void) {
     atomic_store(&g_vm->block, SOMVR_VMG_CLIMB | SOMVR_VMG_THREAT);
     vm_mono(&a, &rest, 10);
     CHECK(atomic_load(&g_vm->open) == 1, "the open panel closed by the gate");
+    atomic_fetch_add(&g_vm->toggles, 1); /* b37 live3: the long press pins the open wrist panel; a second closes it */
+    vm_mono(&a, &rest, 30);
+    CHECK(atomic_load(&g_vm->open) && log_has("xr: vrmenu: pinned in front (the menu button's long press)"),
+          "the long press did not pin the open panel");
     atomic_fetch_add(&g_vm->toggles, 1);
     vm_mono(&a, &rest, 30);
     CHECK(!atomic_load(&g_vm->open) && log_has("xr: vrmenu: closed: the menu button"), "the button did not close it");
@@ -7007,11 +7034,11 @@ static int sc_build3(void) {
     vmpose aim = {.palm = 1, .left_ok = 1, .right_ok = 1};
     vm_uv(SOMVR_VMI_SNAP, SOMVR_VMP_MORE, aim.uv);
     uint64_t f = 1;
-    for (int i = 0; i < 24; i++, f++) { /* moving (the ring), the threats, the HUD; the panel by the menu button at 8 */
-        if (i == 8) atomic_fetch_add(&g_vm->toggles, 1);
+    for (int i = 0; i < 80; i++, f++) { /* moving (the ring), the threats, the HUD; the panel by the palm from 8 (b37
+                                          * live3: the menu button's long press pins it in front, off the aim) */
         vm_hands(i < 8 ? &rest : &aim);
         CHECK(locate(&v), "frame %llu: locate", (unsigned long long)f);
-        write_record_fade(f, SOMVR_LAYOUT_B, &v, i < 16 ? 0 : 128); /* the fallback's fade from frame 16 */
+        write_record_fade(f, SOMVR_LAYOUT_B, &v, i < 72 ? 0 : 128); /* the fallback's fade from frame 72 */
         somvr_threat_put(g_tho, f, &e3);
         cf_put(f, 3.0f, 0, 0);
         V.ncp = V.ntr = 0;
@@ -7071,9 +7098,9 @@ static int sc_vrmenu_pointer(void) { /* the game's pointer on the menu quad: no 
     hand_set(1, &R), hand_set(0, &L);
     for (int f = 0; f < 3; f++) app_present(&a);
     CHECK(ptr_pub().quad == SOMVR_PTRQ_MENU && (ptr_pub().flags & SOMVR_PTRF_ON), "the game's pointer on the menu");
-    atomic_fetch_add(&g_vm->toggles, 1);
-    vmpose aim = {.palm = 1, .left_ok = 1, .right_ok = 1};
+    vmpose aim = {.palm = 1, .left_ok = 1, .right_ok = 1}; /* (b37 live3: the palm's panel; the long press pins) */
     vm_uv(SOMVR_VMI_VIGNETTE, SOMVR_VMP_MORE, aim.uv);
+    for (int i = 0; i < 120 && !atomic_load(&g_vm->open); i++) vm_mono(&a, &aim, 1);
     vm_mono(&a, &aim, 4);
     somvr_ptr_pub p = ptr_pub();
     const mockxr_end *e = MOCK(mockxr_last_end)();
@@ -7084,8 +7111,10 @@ static int sc_vrmenu_pointer(void) { /* the game's pointer on the menu quad: no 
     int psc = MOCK(mockxr_sc_find)(64, 32);
     CHECK(psc >= 0 && e->q[2].sc == psc && e->q[3].sc == psc && MOCK(mockxr_swapchain_k)(psc)->acquires == 1,
           "the menu's dot and ray from the pointer's one image: sc %d/%d/%d", psc, e->q[2].sc, e->q[3].sc);
-    atomic_fetch_add(&g_vm->toggles, 1);
+    atomic_fetch_add(&g_vm->toggles, 1); /* b37 live3: the long press pins the open panel, a second one closes it */
     hand_set(1, &R), hand_set(0, &L);
+    for (int f = 0; f < 3; f++) app_present(&a);
+    atomic_fetch_add(&g_vm->toggles, 1);
     for (int f = 0; f < 3; f++) app_present(&a);
     CHECK(!atomic_load(&g_vm->open) && ptr_pub().quad == SOMVR_PTRQ_MENU, "closed: the game's pointer back on the menu");
     app_teardown(&a);
@@ -8079,7 +8108,7 @@ static const struct {
     {"threat-absent", sc_threat_absent, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-inactive", sc_threat_inactive, "SOMVR_XR_LOADER=@MOCK", 1},
     {"threat-off", sc_threat_off, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_THREAT=off", 1},
-    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x204", 1},
+    {"threat-reject", sc_threat_reject, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=544x408", 1},
     {"allon", sc_allon, "SOMVR_XR_LOADER=@MOCK MOCKXR_RECENTER_AT=80", 1},
     {"reject-hud-only", sc_reject_hud_only, "SOMVR_XR_LOADER=@MOCK MOCKXR_REJECT_SC=1920x1080", 1},
     /* SoM loading env */

@@ -368,6 +368,41 @@ static void test_strike_mark(void) {
           "no mark: another cell, at the head, NaN");
 }
 
+/* build 37 (SOMVR_OBF_FINISH, re-xr-pipeline.md 171): the finisher's hint - a wide cell in the second row's room after
+ * the timer's squares (the texture's size unchanged), the strike's blue ring and the label "FACE TO FACE / IN REACH"
+ * (white ink), no A button; placed as the strike's chest ring */
+static void test_finish_cell(void) {
+    int32_t r[4], t[4];
+    somvr_ob_rect(SOMVR_OB_CELL_FINISH, r);
+    somvr_ob_rect(SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED, t);
+    CHECK(r[1] == t[1] && r[0] >= t[0] + t[2] + 2 && r[0] + r[2] <= SOMVR_OB_IMG_W - 1 && r[1] + r[3] <= SOMVR_OB_IMG_H - 1 &&
+              r[2] == SOMVR_OB_WIDE * SOMVR_OB_STRIDE - 2 && r[3] == SOMVR_OB_CELL,
+          "the finisher's cell after the last timer square, inside the texture (%d,%d %dx%d of %dx%d)", r[0], r[1], r[2], r[3],
+          SOMVR_OB_IMG_W, SOMVR_OB_IMG_H);
+    static uint8_t px[SOMVR_OB_IMG_W * SOMVR_OB_IMG_H * 4];
+    somvr_font f;
+    CHECK(somvr_font_init(&f) == 0, "the font");
+    memset(px, 0, sizeof px);
+    somvr_ob_image(px, &f, "5 m", 0);
+    int blue = 0, white = 0, button = 0;
+    for (int y = r[1]; y < r[1] + r[3]; y++)
+        for (int x = r[0]; x < r[0] + r[2]; x++) {
+            const uint8_t *p = px + 4 * ((size_t)y * SOMVR_OB_IMG_W + (size_t)x);
+            if (x < r[0] + SOMVR_OB_CELL && p[3] > 200 && p[2] > 200 && p[0] < 200) blue++;          /* the ring's band */
+            if (x >= r[0] + SOMVR_OB_CELL && p[0] == 255 && p[1] == 255 && p[2] == 255) white++; /* the label's ink */
+            if (x >= r[0] + SOMVR_OB_CELL && x < r[0] + SOMVR_OB_CELL + 50 && p[3] > 200 && p[2] > 200 && p[0] < 200)
+                button++; /* (the strike's A button would be blue here) */
+        }
+    CHECK(blue > 2000 && white > 400 && button == 0, "the ring (%d blue px), the label (%d white px), no A (%d)", blue, white,
+          button);
+    float head[3] = {0, 1.7f, 0}, pos[3] = {0.4f, 1.3f, -1.8f};
+    float ring = somvr_ob_strike_ring(1.85f, 0.7f, 8.0f);
+    somvr_ob_place p = somvr_ob_strike(head, pos, ring, SOMVR_OB_CELL_FINISH);
+    CHECK(p.kind == SOMVR_OBK_WORLD && p.cell == SOMVR_OB_CELL_FINISH && fabsf(p.size[1] - ring * 128 / 108.0f) < 1e-4f,
+          "placed as the strike's chest ring (the ring %.2f m, the quad %.2f x %.2f)", ring, p.size[0], p.size[1]);
+    CHECK(SOMVR_OBF_FINISH > SOMVR_OBF_TIMER && (SOMVR_OBF_FINISH & (SOMVR_OBF_FINISH - 1)) == 0, "its flag a bit of its own");
+}
+
 /* build 18: the strike's ground symbol - the ring square and the label part of a strike cell, the ring flat on the
  * ground point, the label standing beside it facing the head, readable at 20 m */
 static void test_strike_ground(void) {
@@ -526,6 +561,7 @@ int main(void) {
     test_aim_sight();
     test_strike_ground();
     test_strike_mark();
+    test_finish_cell(); /* build 37 */
     test_match_text();
     test_line();
     test_ahead();

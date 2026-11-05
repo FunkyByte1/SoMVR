@@ -27,6 +27,12 @@ void somvr_stl_defaults(somvr_stl_cfg *c)
     c->carried = 0;
     c->own_cm = 4.0f;
     c->slash = 0;
+    c->knife = 0;
+    c->knife_behind_deg = 80.0f;
+    c->knife_mps = 0.3f;
+    c->knife_cos = 0.707f;
+    c->knife_in_cos = 0.5f;
+    c->knife_depth_cm = 5.0f;
 }
 
 const char *somvr_stl_why(int v)
@@ -74,9 +80,26 @@ int somvr_stl_possible(const somvr_stl_cfg *c, const somvr_stl_who *w)
     return ok ? SOMVR_STL_KILL : SOMVR_STL_STANCE;
 }
 
+/* build 37 (cfg.knife, h->knife): the knife's stab - a deliberate push of its point into the neck, the back or the side
+ * (held: anywhere); the point leading, the blade into the body (a brush along it is none), the hand's own push, a few
+ * cm deep, at a walking hand's speed. No cut kills with it. Everything else in its body: a touch (no damage) */
+static int judge_knife(const somvr_stl_cfg *c, const somvr_stl_hit *h)
+{
+    if (!(h->depth_cm >= 0)) return SOMVR_STL_AIR;
+    int carried = c->carried && h->carried;
+    if (!h->held && !(fabsf(h->contact_off_deg) >= c->side_deg)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_SIDE;
+    if (!(h->contact_up_cm >= c->low_cm && h->contact_up_cm <= c->high_cm)) return carried ? SOMVR_STL_CARRIED : SOMVR_STL_LOW;
+    if (carried) return SOMVR_STL_CARRIED;
+    if (h->cos_axis >= c->knife_cos && h->cos_in >= c->knife_in_cos && h->axis_mps >= c->knife_mps &&
+        h->depth_cm >= c->knife_depth_cm)
+        return SOMVR_STL_KILL;
+    return SOMVR_STL_TOUCH;
+}
+
 /* build 21: the thrust's rule (the orc a target: unaware, Talion behind it, crouched or slow) */
 static int judge_thrust(const somvr_stl_cfg *c, const somvr_stl_hit *h)
 {
+    if (c->knife && h->knife) return judge_knife(c, h);
     if (!(h->depth_cm >= 0)) return SOMVR_STL_AIR;
     int point = h->cos_axis >= c->thrust_cos;
     if (h->held)
@@ -95,6 +118,11 @@ static int judge_thrust(const somvr_stl_cfg *c, const somvr_stl_hit *h)
 
 int somvr_stl_judge(const somvr_stl_cfg *c, const somvr_stl_who *w, const somvr_stl_hit *h)
 {
+    somvr_stl_cfg kc;
+    if (c->knife && h->knife) { /* build 37: the knife from behind or beside */
+        kc = *c, kc.behind_deg = c->knife_behind_deg, kc.thrust = 1;
+        c = &kc;
+    }
     int p = somvr_stl_possible(c, w);
     if (p != SOMVR_STL_KILL) return p;
     if (c->thrust) return judge_thrust(c, h);
@@ -111,6 +139,7 @@ int somvr_stl_tier(int tier16, int tier_swing)
 
 int somvr_stl_kill_by(const somvr_stl_cfg *c, const somvr_stl_hit *h)
 {
+    if (c->knife && h->knife) return SOMVR_STL_BY_KNIFE;
     if (!c->thrust) return SOMVR_STL_BY_HIT;
     if (h->held) return SOMVR_STL_BY_GRAB;
     int thrust = h->cos_axis >= c->thrust_cos && h->axis_mps >= c->thrust_mps && h->depth_cm >= c->depth_cm;
@@ -122,7 +151,8 @@ const char *somvr_stl_by_name(int by)
 {
     return by == SOMVR_STL_BY_THRUST ? "a thrust" : by == SOMVR_STL_BY_NECK ? "a cut to the neck"
            : by == SOMVR_STL_BY_SLASH ? "a cut into its back"
-           : by == SOMVR_STL_BY_GRAB ? "a stab into the held orc" : "a hit or a stab (build 20c)";
+           : by == SOMVR_STL_BY_GRAB ? "a stab into the held orc" : by == SOMVR_STL_BY_KNIFE ? "the knife's stab"
+           : "a hit or a stab (build 20c)";
 }
 
 static float seg_d2(const float p[3], const float a[3], const float b[3])
@@ -144,6 +174,22 @@ static float body_in(const float p[3], const float (*node)[3], const float *r, i
         if (in > best) best = in, *link = k;
     }
     return best;
+}
+
+float somvr_stl_in_cos(const float base[3], const float tip[3], const float (*node)[3], int link, const float entry[3])
+{
+    float a[3] = { tip[0] - base[0], tip[1] - base[1], tip[2] - base[2] };
+    float la = sqrtf(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+    if (!(la > 1e-3f) || link < 0) return 1.0f;
+    const float *p = node[link], *q = node[link + 1];
+    float ab[3] = { q[0] - p[0], q[1] - p[1], q[2] - p[2] }, ap[3] = { entry[0] - p[0], entry[1] - p[1], entry[2] - p[2] };
+    float l2 = ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2];
+    float k = l2 > 1e-6f ? (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2 : 0;
+    k = k < 0 ? 0 : k > 1 ? 1 : k;
+    float n[3] = { p[0] + k * ab[0] - entry[0], p[1] + k * ab[1] - entry[1], p[2] + k * ab[2] - entry[2] };
+    float ln = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (!(ln > 0.5f)) return 1.0f; /* on the axis: in */
+    return (a[0] * n[0] + a[1] * n[1] + a[2] * n[2]) / (la * ln);
 }
 
 float somvr_stl_own_push(const float base[3], const float tip[3], const float vb[3], const float vt[3], float dt,
@@ -205,13 +251,23 @@ int somvr_stl_stick_step(somvr_stl_stick *s, const somvr_stl_stick_cfg *c, const
     if (!s->on) return SOMVR_STL_STK_OFF;
     memcpy(s->E, E, sizeof s->E);
     float v[3] = { G[0] - E[0], G[1] - E[1], G[2] - E[2] };
-    float depth = v[0] * s->a[0] + v[1] * s->a[1] + v[2] * s->a[2] + s->len;
+    float depth = v[0] * s->a[0] + v[1] * s->a[1] + v[2] * s->a[2] + s->len; /* the hand's grip's depth */
+    float most = s->len - c->guard_cm;
+    if (c->resist_cm > 0 && s->steps > 0) { /* build 37: drawn back, the blade holds until the pull passes resist_cm */
+        float bd = s->depth;
+        bd = bd < depth ? depth : bd > depth + c->resist_cm ? depth + c->resist_cm : bd;
+        s->lag = bd - depth > 0 ? bd - depth : 0;
+        depth = bd;
+    } else {
+        s->lag = 0;
+    }
+    s->steps++;
     s->depth = depth;
     if (depth <= 0) {
         s->on = 0, s->depth = 0;
         return SOMVR_STL_STK_OUT;
     }
-    float most = s->len - c->guard_cm, dc = depth < most ? depth : most;
+    float dc = depth < most ? depth : most;
     for (int j = 0; j < 3; j++) Gs[j] = E[j] + s->a[j] * (dc - s->len);
     float o[3] = { G[0] - Gs[0], G[1] - Gs[1], G[2] - Gs[2] };
     s->off = sqrtf(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);

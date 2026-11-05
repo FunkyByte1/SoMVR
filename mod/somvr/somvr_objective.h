@@ -49,9 +49,14 @@ enum { SOMVR_OBF_HIDDEN = 1u, /* the game's own marker is hidden (SOMVR_OBJECTIV
        SOMVR_OBF_AIM_HIT = 1024u, /* ... on an orc the arrow would hit: the wraith-blue ring (the strike's) */
        SOMVR_OBF_AIM_SIGHT = 2048u, /* build 21 (SOMVR_BOW_AIM_LOOK=sight, with AIM): the thin sight's cells (soft white,
                                      * with _HIT wraith-blue) instead of build 20's rings */
-       SOMVR_OBF_TIMER = 4096u }; /* build 21 (SOMVR_CLIMB_DESCENT_TIMER, with LAND): the drop's hold timer in the ring: id =
-                                   * its state, 0..SOMVR_OB_TIMER_STEPS the white ring's steps left (0: empty), or
-                                   * SOMVR_OB_TIMER_ARMED (emptied: the full bright ring; the flash alternates it with 0) */
+       SOMVR_OBF_TIMER = 4096u, /* build 21 (SOMVR_CLIMB_DESCENT_TIMER, with LAND): the drop's hold timer in the ring: id =
+                                 * its state, 0..SOMVR_OB_TIMER_STEPS the white ring's steps left (0: empty), or
+                                 * SOMVR_OB_TIMER_ARMED (emptied: the full bright ring; the flash alternates it with 0) */
+       SOMVR_OBF_FINISH = 8192u }; /* build 37 (SOMVR_FINISHER_HINT, re-xr-pipeline.md 171): not the objective but the orc
+                                    * the execution could finish: pos = its chest, dist_m = the ring's diameter (metres,
+                                    * reference space), id = the reason (somvr_finisher.h's SOMVR_FN_WHY_*, logs): the
+                                    * finisher cell (the wraith-blue ring, "FACE TO FACE / IN REACH") round it facing the
+                                    * head; out of view the edge arrow toward it */
 #define SOMVR_OB_TIMER_STEPS 12
 #define SOMVR_OB_TIMER_ARMED (SOMVR_OB_TIMER_STEPS + 1)
 
@@ -148,7 +153,10 @@ enum { SOMVR_OB_CELL_FULL = 0, SOMVR_OB_CELL_FAINT = 1, SOMVR_OB_CELL_ARROW = 2,
        SOMVR_OB_CELL_STRIKE = 5, SOMVR_OB_CELL_STRIKE_NO = 6, SOMVR_OB_CELL_STRIKE_GO = 7, SOMVR_OB_CELL_RING_NO = 8,
        SOMVR_OB_CELL_AIM = 9, SOMVR_OB_CELL_AIM_HIT = 10, /* build 21: the bow's sight, white / on an orc wraith-blue */
        SOMVR_OB_CELL_TIMER0 = 11, /* build 21: the landing ring with the drop's timer, + state (SOMVR_OBF_TIMER's id) */
-       SOMVR_OB_CELLS = SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED + 1 };
+       /* build 37 (SOMVR_OBF_FINISH): the finisher's hint, SOMVR_OB_WIDE strides wide in the second row after the timer's
+        * squares (the room the row had left: the texture's size unchanged) - the strike's ring, "FACE TO FACE / IN REACH" */
+       SOMVR_OB_CELL_FINISH = SOMVR_OB_CELL_TIMER0 + SOMVR_OB_TIMER_ARMED + 1,
+       SOMVR_OB_CELLS = SOMVR_OB_CELL_FINISH + 1 };
 #define SOMVR_OB_SQUARE_CELLS 5 /* cells 0..4 are squares; the strike's (5..7) SOMVR_OB_WIDE strides wide each; 8..10
                                  * squares (9 and 10: their SOMVR_OB_AIM_PX corner alone); TIMER0.. the second row */
 #define SOMVR_OB_WIDE 3

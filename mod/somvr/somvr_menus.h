@@ -155,6 +155,13 @@ int somvr_hud_layout_make(uint32_t w, uint32_t h, const int *mm, const somvr_ht_
  * width, height}; returns how many, 0 if cap is too small (build 6's minimap alone: at most 4 rects and its copy). */
 #define SOMVR_HUD_SPLIT_MAX 160
 int somvr_hud_split(uint32_t w, uint32_t h, const somvr_hud_layout *l, int32_t out[][6], int cap);
+/* build 37 (SOMVR_XR_TIMER_RECT, docs/re-xr-pipeline.md 169): a copy region {src x, y, dst x, y, w, h} less a hole (src
+ * rect x, y, w, h): its 0..4 pieces (above, below, left, right of the hole) into out; returns how many (1 = unchanged:
+ * no overlap) */
+int somvr_rect_cut(const int32_t r[6], const int hole[4], int32_t out[4][6]);
+/* ... the spans of a ring (the watch's rim) inside the square at x, y, size s: its outer radius s/2, thickness t px;
+ * each span {x, y, w}; returns how many (at most cap) */
+int somvr_ring_spans(int x, int y, int s, int t, int32_t out[][3], int cap);
 
 /* ==== 2c. build 21: the popups where the player looks (SOMVR_XR_POPUPS=gaze; docs/re-xr-pipeline.md 87.1) ========== */
 /* With SOMVR_XR_PROMPTS=on the band's tiles (the banners, the hints, the XP gains, the button prompts) were one quad

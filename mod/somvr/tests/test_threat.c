@@ -37,14 +37,14 @@ static const uint16_t KT_NONE[10] = {0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xf
 /* ---- the ABI ---------------------------------------------------------------------------------------------------- */
 static somvr_threat_shared g_obj;
 static void test_abi(void) {
-    CHECK(sizeof g_obj == 896 && sizeof(somvr_threat_frame) == 104 && offsetof(somvr_threat_shared, f) == 40,
+    CHECK(sizeof g_obj == 1216 && sizeof(somvr_threat_frame) == 144 && offsetof(somvr_threat_shared, f) == 40,
           "layout %zu %zu", sizeof g_obj, sizeof(somvr_threat_frame));
     CHECK(!somvr_threat_ok(&g_obj) && !somvr_threat_ok(NULL), "a zero object is not ok");
     g_obj.magic = SOMVR_THREAT_MAGIC, g_obj.version = SOMVR_THREAT_VERSION, g_obj.size = sizeof g_obj;
     CHECK(!somvr_threat_ok(&g_obj), "not active yet");
     atomic_store(&g_obj.active, 1);
     CHECK(somvr_threat_ok(&g_obj), "active");
-    g_obj.version = 2;
+    g_obj.version = SOMVR_THREAT_VERSION + 1;
     CHECK(!somvr_threat_ok(&g_obj), "another version");
     g_obj.version = SOMVR_THREAT_VERSION;
     somvr_threat_frame in, out;
@@ -504,7 +504,8 @@ static void test_image(void) {
         somvr_th_rect(SOMVR_TH_ROW_GLOW, k, rc);
         mono &= PX(px, rc[0] + 16, rc[1] + 16)[0] > PX(px, rc2[0] + 16, rc2[1] + 16)[0];
     }
-    for (size_t i = 0; i < (size_t)SOMVR_TH_IMG_W * SOMVR_TH_IMG_H; i++) prem &= px[4 * i + 3] <= px[4 * i];
+    /* (rows 0-5: build 37's marks and arc below them are opaque with a dark rim - test_cues checks them) */
+    for (size_t i = 0; i < (size_t)SOMVR_TH_IMG_W * SOMVR_TH_ROW_MARK_W * SOMVR_TH_STRIDE; i++) prem &= px[4 * i + 3] <= px[4 * i];
     CHECK(mono && prem, "levels rise %d, alpha below the colour (mostly additive) %d", mono, prem);
     somvr_th_rect(SOMVR_TH_ROW_EDGE, SOMVR_TH_LEVELS, rc);
     CHECK(PX(px, rc[0], rc[1] + 16)[0] > 200 && PX(px, rc[0] + 31, rc[1] + 16)[0] == 0 && PX(px, rc[0], rc[1])[0] < 40 &&

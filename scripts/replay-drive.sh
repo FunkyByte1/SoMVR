@@ -16,6 +16,7 @@
 # What matches: the player's motion (head, hands, controls) to the frame. What cannot: the orcs (their AI is not
 # deterministic; the practice spawns are infantry wherever they stood), the world's state, the game's own timing.
 # Env: REPLAY_RUN=RUN (drive a running boot), REPLAY_BEFORE (15), REPLAY_AFTER (3), REPLAY_SETUP, REPLAY_NO_ORCS=1,
+# REPLAY_NOQUIT=1 (the game left running at the end: a second replay in the same boot),
 # REPLAY_WT. Quits the game at the end; at once when the user goes into VR.
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -114,6 +115,9 @@ DUR=$(awk -v a="$T0" -v b="$T1" 'BEGIN { printf "%d", b - a + 3 }')
 waitfor '^REPLAY t=.* end' "$DUR" || { w "replay stop" 0.5; waitfor '^REPLAY t=.* end' 5; }
 last '^REPLAY t=.* end' 1 400
 sleep 2
+# REPLAY_NOQUIT=1 (som-b37-climb2): the game left running for another replay or driver (no compare here: the next
+# replay's window overwrites replay.inrec; the marks' pictures still come after the game)
+[ "${REPLAY_NOQUIT:-0}" = 1 ] && { echo "replay done $(date +%T) (the game left running: REPLAY_NOQUIT)"; exit 0; }
 echo quit >> "$R/cmd"
 # after the game: the compare and the pictures
 for i in $(seq 1 60); do [ -f "$R/game.exit" ] || [ -f "$R/cmd.done" ] && break; sleep 3; done

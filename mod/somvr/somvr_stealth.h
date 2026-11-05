@@ -40,6 +40,15 @@ typedef struct {
      * "I didn't actually do the kill ... shouldn't it at least start a combat sequence?"); the thrust and the neck cut
      * stay the kills */
     int slash;
+    /* build 37 (SOMVR_KNIFE_KILL; docs/re-xr-pipeline.md 168): the knife's own stab (somvr_stl_hit.knife): a deliberate
+     * push of its point into the neck, the back or the side - the point leading, the blade into the body (not along
+     * it), the hand's own push, a few cm deep; speed matters less than intent. 0 = the knife as any blade (build 36) */
+    int knife;
+    float knife_behind_deg; /* the player within this of the orc's facing's opposite: behind or beside (80) */
+    float knife_mps;        /* the point driven along the blade at least this fast since it went in (0.3 m/s) */
+    float knife_cos;        /* ... the motion within acos(this) of the blade's axis, the point leading (0.707 = 45 deg) */
+    float knife_in_cos;     /* ... the blade within acos(this) of straight into the body at the way in (0.5 = 60 deg) */
+    float knife_depth_cm;   /* ... the point at least this deep (5 cm) */
 } somvr_stl_cfg;
 
 typedef struct {
@@ -64,6 +73,8 @@ typedef struct {
     int held;              /* held from behind by the left hand (SOMVR_VERBS' grab) */
     int carried;           /* build 22: the hand's own push into the body since it went in under cfg.own_cm (the walk
                             * carried it in: somvr_stl_own_push) */
+    int knife;             /* build 37 (cfg.knife): the knife's blade - its own stab rule (judge_knife) */
+    float cos_in;          /* build 37: the blade against straight into the body at the way in (somvr_stl_in_cos; 1 = in) */
 } somvr_stl_hit;
 
 enum {
@@ -103,7 +114,8 @@ int somvr_stl_judge(const somvr_stl_cfg *c, const somvr_stl_who *w, const somvr_
 int somvr_stl_tier(int tier16, int tier_swing);
 
 /* build 21: what killed (a KILL verdict): build 20c's hit or stab, the thrust, the neck cut, the stab into a held orc */
-enum { SOMVR_STL_BY_HIT = 0, SOMVR_STL_BY_THRUST, SOMVR_STL_BY_NECK, SOMVR_STL_BY_GRAB, SOMVR_STL_BY_SLASH };
+enum { SOMVR_STL_BY_HIT = 0, SOMVR_STL_BY_THRUST, SOMVR_STL_BY_NECK, SOMVR_STL_BY_GRAB, SOMVR_STL_BY_SLASH,
+       SOMVR_STL_BY_KNIFE /* build 37: the knife's stab (cfg.knife) */ };
 int somvr_stl_kill_by(const somvr_stl_cfg *c, const somvr_stl_hit *h);
 const char *somvr_stl_by_name(int by);
 
@@ -112,6 +124,11 @@ const char *somvr_stl_by_name(int by);
  * -1 when no point is inside. entry = that point, *link = the link it went in at (either may be NULL) */
 float somvr_stl_body_depth(const float base[3], const float tip[3], const float (*node)[3], const float *r, int n,
                            float entry[3], int *link);
+
+/* build 37 (cfg.knife): how straight the blade goes into the body where it went in - the cosine of the blade's axis
+ * (base -> tip) against the way in (from the entry to the nearest point of that link's axis: the inward normal of the
+ * capsule there). 1 = straight in, 0 = along the body (a brush), < 0 = out of it; 1 when the entry is on the axis */
+float somvr_stl_in_cos(const float base[3], const float tip[3], const float (*node)[3], int link, const float entry[3]);
 
 /* build 22: the depth the hand's own motion added this frame (cm, < 0 drawn out): the body depth of the blade now less
  * that of the blade where the hand alone would have left it - moved back by its own velocity (vb, vt: the base's and
@@ -124,14 +141,19 @@ float somvr_stl_own_push(const float base[3], const float tip[3], const float vb
  * wound); sideways the hand leaves it (the offset is shown: the blade lags the hand) and past tear_cm it tears free;
  * drawn back past the wound it comes out. E follows the body (the caller moves it) */
 typedef struct {
-    float tear_cm;  /* 25 */
-    float guard_cm; /* 12 */
+    float tear_cm;   /* 25 */
+    float guard_cm;  /* 12 */
+    float resist_cm; /* build 37 (the knife: SOMVR_KNIFE_KILL_STICK_CM, 4): drawn back, the blade holds until the hand is
+                      * this much further out than it, then follows that far behind it - it comes out with a pull, not
+                      * with the first mm (0 = 1:1, build 21) */
 } somvr_stl_stick_cfg;
 typedef struct {
     int on;
     float E[3], a[3], len; /* the wound, the axis, the grip to the point */
     float depth, peak;     /* the point's depth now, the deepest */
     float off;             /* the hand's grip off the pinned grip (cm) */
+    float lag;             /* build 37 (resist_cm): the hand's pull past the held blade along the axis now (cm, 0..resist) */
+    int steps;             /* build 37: the steps taken since the start */
 } somvr_stl_stick;
 enum { SOMVR_STL_STK_OFF = 0, SOMVR_STL_STK_HOLD, SOMVR_STL_STK_OUT, SOMVR_STL_STK_TEAR };
 void somvr_stl_stick_start(somvr_stl_stick *s, const float E[3], const float a[3], float len);

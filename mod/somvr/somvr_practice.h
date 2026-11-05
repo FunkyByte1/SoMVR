@@ -60,7 +60,10 @@ enum { SOMVR_PRA_NONE = 0, SOMVR_PRA_GO = 1, SOMVR_PRA_BACK = 2, SOMVR_PRA_SPAWN
        SOMVR_PRA_PLACE = 11,
        /* build 36 (re-xr-pipeline.md 164): Charge execution - Talion's hit counter filled to its need (the execution's charge
         * ready at once: the finisher's ready state can be reached for a test) */
-       SOMVR_PRA_CHARGE = 12, SOMVR_PRA_N = 13 };
+       SOMVR_PRA_CHARGE = 12,
+       /* build 37 (som-b37-cues, the user 11-04: "add like a respawn herb or something to the dev menu so that I can at
+        * least try that again"): New herb - the blink to the nearest herb the game offers within SOMVR_PRACTICE_HERB_M */
+       SOMVR_PRA_HERB = 13, SOMVR_PRA_N = 14 };
 /* "go", "back", "spawn", "remove", "status", "arrows", "health", "far", "group", "captain" ("none"; "?" outside) */
 const char *somvr_pr_action_name(int a);
 typedef struct {

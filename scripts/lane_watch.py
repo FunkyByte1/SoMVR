@@ -55,7 +55,7 @@ def load_conf():
             pass
     for k in list(c) + ["LANE_CPUS", "GAME_CPUS", "LANE_IN_VR", "LANE_CALM_S", "LANE_LATE_X", "LANE_REBASE_S",
                         "LANE_VR_JOBS", "LANE_VR_QUOTA", "LANE_QUOTA", "LANE_VR_LOOP", "LANE_VR_NEED_FRAMES",
-                        "LANE_VR_GUARDED"]:
+                        "LANE_VR_GUARDED", "LANE_ATTRIB", "LANE_ACTIVE_PCT"]:
         if k in os.environ:
             c[k] = os.environ[k]
     return c
@@ -213,9 +213,12 @@ def user_in_vr(fake_ok=True):
 class Raw:
     """Tails one perf-raw.txt: frames (t, interval ms, work ms or None), `# perf NAME` marks, its clock."""
 
+    NOFRAMES_S = 3.0   # b37 live3: no frame read this long = no frames (the session's file stopped or became unreadable)
+
     def __init__(self, path, tail=0):
         self.path, self.off, self.part, self.clock = path, 0, b"", time.CLOCK_MONOTONIC
         self.marks = []
+        self.t_frame, self.stale, self.truncated = time.monotonic(), False, 0   # b37 live3
         try:
             with open(path, "rb") as f:
                 if b"monotonic_raw" in f.readline():   # the header: the game's clock (Wine: MONOTONIC_RAW)
@@ -228,6 +231,10 @@ class Raw:
         out = []
         try:
             with open(self.path, "rb") as f:
+                size = f.seek(0, 2)
+                if size < self.off:   # b37 live3: the file began again (build 37's hot reload reopened it with O_TRUNC:
+                    self.off, self.part = 0, b""   # this reader stayed past its new end and saw no frames)
+                    self.truncated += 1
                 f.seek(self.off)
                 b = f.read()
         except OSError:
@@ -266,15 +273,33 @@ def pct(sorted_v, q):
     return sorted_v[k]
 
 
+def binom_tail(n, k, p):
+    """P(X >= k) for X ~ Binomial(n, p)"""
+    if k <= 0:
+        return 1.0
+    from math import comb
+    return sum(comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k, n + 1))
+
+
 class Loop:
     """The closed loop's decisions for one session (pure: times are the frames' own clock)."""
     WIN_S, WIN_MIN, LATE_S, BASE_N, BASE_MIN, SETTLE_S = 0.5, 12, 1.0, 1200, 100, 0.3
+    # b37 live3 (163.8): whose late frames - the seconds with a burst (>= 2 late frames) while the lane is frozen or
+    # idle (the last ATT_CALM_N such seconds) against the last ATT_BUSY_N seconds the lane worked (within ATT_BUSY_S)
+    ATT_CALM_N, ATT_BUSY_N, ATT_BUSY_S, ATT_P = 300, 4, 30.0, 0.02
 
-    def __init__(self, calm_s=3.0, late_x=1.5, rebase_s=60.0, mode="work"):
+    def __init__(self, calm_s=3.0, late_x=1.5, rebase_s=60.0, mode="work", attrib=True):
         # mode (b37): "work" = pause on the render thread's work rising (the median over the baseline's p90, 3 of 4
         # frames over its p99) or on late frames; "late" = on late frames only (what the headset shows: a compositor
         # slot without a new frame) - the user's session's mode (LANE_VR_LOOP), where the builds' small work rise is free
-        self.mode = mode
+        # attrib (b37 live3, LANE_ATTRIB=1): late frames pause the lane only when the lane plausibly made them - a
+        # session late on its own (GPU-bound at 120 Hz: as often with the lane frozen) never holds it (plausible())
+        self.mode, self.attrib = mode, attrib
+        self.bins = {}               # second -> [calm frames, busy frames, late frames] (the seconds not yet closed)
+        self.hist_calm = deque(maxlen=self.ATT_CALM_N)   # a burst (bool) per closed second, the lane frozen or idle
+        self.hist_busy = deque(maxlen=60)                # (second, burst) per closed second, the lane working
+        self.note_t = None
+        self.n_ignored = 0
         self.calm0, self.calm_s, self.late_x, self.rebase_s = calm_s, calm_s, late_x, rebase_s
         self.base = deque()          # (t, x, iv) calm frames
         self.recent = deque()        # (t, x, iv) the last 3 s
@@ -301,14 +326,37 @@ class Loop:
         a = self.last_calm
         return a is not None and a[0] + self.SETTLE_S <= t <= a[1]
 
+    def _in_calm(self, t):   # inside a calm interval at all (the settle included)
+        if self.calm_from is not None and t >= self.calm_from:
+            return True
+        a = self.last_calm
+        return a is not None and a[0] <= t <= a[1]
+
     def feed(self, frames):
+        iv50 = self.stats["iv50"] if self.stats else None
         for t, iv, wk in frames:
             x = wk if wk is not None else iv
             if x is None:
                 continue
             self.recent.append((t, x, iv))
-            if self._is_calm(t):
+            calm = self._is_calm(t)
+            if calm:
                 self.base.append((t, x, iv))
+            if iv50 and iv is not None:   # b37 live3: the second's frames by the lane's state (the settle in neither)
+                b = self.bins.setdefault(int(t), [0, 0, 0])
+                if calm:
+                    b[0] += 1
+                elif not self._in_calm(t):
+                    b[1] += 1
+                b[2] += iv > self.late_x * iv50
+        if self.bins and self.recent:
+            now_s = int(self.recent[-1][0])
+            for s in sorted(k for k in self.bins if k < now_s):
+                nc, nb, late = self.bins.pop(s)
+                if nc and not nb:
+                    self.hist_calm.append(late >= 2)
+                elif nb and not nc:
+                    self.hist_busy.append((s, late >= 2))
         if self.recent:
             tl = self.recent[-1][0]
             while self.recent and self.recent[0][0] < tl - 3.0:
@@ -369,16 +417,42 @@ class Loop:
             late = sum(1 for f in lw if f[2] > self.late_x * b["iv50"])
             want = max(2, int(2 * b["late_rate"] * len(lw)) + 1)
             if late >= want:
+                ok, att = self.plausible(t)
+                if not ok:   # b37 live3: late as often without the lane: not its doing - the lane goes on
+                    self.n_ignored += 1
+                    if self.note_t is None or t - self.note_t >= 30:
+                        self.note_t = t
+                        return "note", "%d late frames in %.1f s, not the lane's (%s; %d such bursts let through)" % (
+                            late, self.LATE_S, att, self.n_ignored)
+                    return None, ""
                 return self._pause(t, "pause", "%d late frames in %.1f s (an interval over %.1f x %.2f ms; the "
-                                   "baseline's rate %.2f %%)" % (late, self.LATE_S, self.late_x, b["iv50"],
-                                                                  100 * b["late_rate"]))
+                                   "baseline's rate %.2f %%%s)" % (late, self.LATE_S, self.late_x, b["iv50"],
+                                                                   100 * b["late_rate"], "; " + att if att else ""))
         if self.rebase_s and t - self.run_from >= self.rebase_s:
             return self._pause(t, "probe", "%.0f s of lane work: the baseline measured again" % self.rebase_s, 2.0)
         return None, ""
 
+    def plausible(self, t):
+        """(b37 live3) a burst of late frames now, the lane working: could the lane have made it? The seconds with a
+        burst while the lane was frozen or idle give the session's own rate f (smoothed: (bursts + 0.1) / (seconds +
+        20) - 0.5 % with no history, so a clean session pauses at once); this burst and the last ATT_BUSY_N seconds the
+        lane worked (within ATT_BUSY_S) are k bursts in n seconds. Plausible when k or more in n is unlikely at f
+        (P < ATT_P): a GPU-bound session (bursts in 5-7 % of its seconds, frozen or not) needs 3 of 5 working seconds,
+        a clean one 1 of 1 or 2 of 5. -> (bool, the numbers)"""
+        if not self.attrib:
+            return True, ""
+        nc, bc = len(self.hist_calm), sum(self.hist_calm)
+        f = (bc + 0.1) / (nc + 20)
+        rb = [x for s, x in self.hist_busy if s >= t - self.ATT_BUSY_S][-self.ATT_BUSY_N:]
+        n, k = 1 + len(rb), 1 + sum(rb)
+        p = binom_tail(n, k, f)
+        return p < self.ATT_P, "bursts in %d of the lane's last %d working seconds; %d of %d s frozen or idle = %.1f %%: " \
+            "P %.3f" % (k, n, bc, nc, 100 * f, p)
+
     def _pause(self, t, kind, why, calm=None):
         if kind == "pause":
-            if self.resumed_at is not None and t - self.resumed_at < 10:
+            if self.resumed_at is not None and t - self.resumed_at < 10 and \
+                    (not self.attrib or len(self.hist_calm) >= 60):   # (b37 live3: only once the session's own rate is known)
                 self.calm_s = min(60.0, self.calm_s * 2)   # it came back at once: a longer calm next time
             calm = self.calm_s
         self.paused_at, self.pause_calm, self.reason, self.run_from = t, calm, why, None
@@ -595,6 +669,12 @@ def watch(argv):
             return False
     calm_s, late_x = float(conf.get("LANE_CALM_S", 3)), float(conf.get("LANE_LATE_X", 1.5))
     rebase_s = float(conf.get("LANE_REBASE_S", 60))
+    # b37 live3 (163.8): LANE_ATTRIB=1 (the default) - late frames hold the lane only when it plausibly made them
+    # (Loop.plausible); LANE_ACTIVE_PCT (5) - the lane counts as working only while its cgroup used at least this much
+    # of one CPU over the last 0.5 s (an idle speech worker waiting for its next line is not a load: its frames are calm)
+    attrib = conf.get("LANE_ATTRIB", "1") != "0"
+    active_pct = float(conf.get("LANE_ACTIVE_PCT", 5) or 5)
+    use = deque()   # (monotonic, the lane cgroup's usage_usec)
     vr_loop = conf.get("LANE_VR_LOOP", "late")   # b37: the user's session's closed loop: late frames only
     # b37: LANE_VR_NEED_FRAMES=1 = no lane job in VR without the session's frames (SOMVR_PERF_RAW); 0 = the jobs of
     # LANE_VR_JOBS (measured free) run without them, under the closed loop whenever the session writes them
@@ -603,10 +683,12 @@ def watch(argv):
     pins = Pins(log, game_set)
     if pins.saved:
         log("START: %d saved affinities from a watcher before: kept until the lane is idle" % len(pins.saved))
-    log("START lane_watch (pid %d): lane CPUs %s, game CPUs %s, in VR %s, calm %.1f s, late x%.1f, re-measure %.0f s" % (
-        os.getpid(), fmt_cpus(lane_set), fmt_cpus(game_set),
-        ("under the closed loop, jobs %s" % " ".join(pats)) if in_vr_ok else "frozen",
-        calm_s, late_x, rebase_s))
+    log("START lane_watch (pid %d): lane CPUs %s, game CPUs %s, in VR %s, calm %.1f s, late x%.1f, re-measure %.0f s, "
+        "late frames %s, working at %.0f %% of a CPU" % (
+            os.getpid(), fmt_cpus(lane_set), fmt_cpus(game_set),
+            ("under the closed loop, jobs %s" % " ".join(pats)) if in_vr_ok else "frozen",
+            calm_s, late_x, rebase_s, "only when the lane's (LANE_ATTRIB=1)" if attrib else "always (LANE_ATTRIB=0)",
+            active_pct))
     loops, raws = {}, {}
     lane = lane_cgroup()
     frozen, why_frozen = cg_want_frozen(lane), "found frozen at the start"
@@ -659,6 +741,17 @@ def watch(argv):
                 except OSError:
                     pass
         jobs = cg_ids(lane, "cgroup.procs")
+        try:   # b37 live3: is the lane working (its CPU time over the last 0.5 s)?
+            with open(os.path.join(lane, "cpu.stat")) as f:
+                u = int(f.readline().split()[1])
+        except (OSError, ValueError, IndexError):
+            u = None
+        if u is not None:
+            use.append((tick0, u))
+        while len(use) > 1 and use[1][0] <= tick0 - 0.5:
+            use.popleft()
+        active = u is None or len(use) < 2 or \
+            (use[-1][1] - use[0][1]) / max(1e-3, use[-1][0] - use[0][0]) / 1e4 >= active_pct
         # the sessions protected this tick: name -> (raw path, closed loop on, pin targets)
         src = {n: (d["raw"], d.get("loop", "on") != "off", d["pin"]) for n, d in protects.items() if d.get("raw")}
         modes = {n: ("late" if d.get("loop") == "late" else "work") for n, d in protects.items()}
@@ -671,7 +764,7 @@ def watch(argv):
                 del loops[n], raws[n]
         for n, (p, lp, tg) in src.items():
             if n not in loops or raws[n].path != p:
-                raws[n], loops[n] = Raw(p, tail=65536), Loop(calm_s, late_x, rebase_s, modes.get(n, "work"))
+                raws[n], loops[n] = Raw(p, tail=65536), Loop(calm_s, late_x, rebase_s, modes.get(n, "work"), attrib)
                 log("PROTECT %s: frames from %s, closed loop %s, pins %s" % (
                     n, p, ("on (%s)" % loops[n].mode) if lp else "off", tg))
             loops[n].mode = modes.get(n, "work")
@@ -684,15 +777,34 @@ def watch(argv):
         events = []
         for n, (p, lp, _) in src.items():
             L, R = loops[n], raws[n]
+            tr0 = R.truncated
             fr = R.read()
             t = R.now()
-            L.set_calm(frozen or not jobs, t)
+            if R.truncated != tr0:
+                log("FRAMES %s: %s began again (truncated): read from its start" % (n, p))
+            # b37 live3: no frame for NOFRAMES_S = no frames - never "probe forever": this loop holds nothing (the
+            # guarded jobs follow LANE_VR_NEED_FRAMES) until frames come again
+            if fr:
+                R.t_frame = tick0
+            stale = tick0 - R.t_frame > R.NOFRAMES_S
+            if stale != R.stale:
+                R.stale = stale
+                log("FRAMES %s: %s" % (n, ("none for %.0f s from %s (the session's frames stopped or unreadable): no "
+                                           "frames - its loop holds nothing; the guarded jobs follow LANE_VR_NEED_FRAMES"
+                                           % (R.NOFRAMES_S, p)) if stale else "again from %s" % p))
+            L.set_calm(frozen or not jobs or not active, t)
             L.feed(fr)
-            if lp:
-                a, w = L.decide(bool(jobs) and not frozen, t)
+            if stale:
+                L.paused_at = None
+            elif lp:
+                a, w = L.decide(bool(jobs) and not frozen and active, t)
                 if a:
                     events.append("%s %s: %s" % (a, n, w))
-        held = [n for n in loops if src[n][1] and loops[n].paused_at is not None]
+        held = [n for n in loops if src[n][1] and loops[n].paused_at is not None and not raws[n].stale]
+        if "user" in raws and raws["user"].stale:
+            uraw = None   # (the user's frames stopped: the same as none)
+            if vr and in_vr_ok and need_frames and not gate:
+                gate = "the user is in VR and the session's frames stopped (LANE_VR_NEED_FRAMES=1): the lane waits"
         want = bool(jobs) and bool(gate or held)
         if not jobs:
             want = False
@@ -710,7 +822,7 @@ def watch(argv):
                         " - frozen after %.1f ms" % ((time.monotonic() - t0) * 1e3) if want else ""))
                     frozen, why_frozen = want, why
                     for n, L in loops.items():   # the calm intervals in the frames' clock
-                        L.set_calm(frozen or not jobs, raws[n].now())
+                        L.set_calm(frozen or not jobs or not active, raws[n].now())
                 else:
                     log("WARN could not write %s/cgroup.freeze" % lane)
             else:
@@ -727,7 +839,10 @@ def watch(argv):
             for sc in job_scopes(lane):
                 nm = job_name(sc) or "?"
                 free = vr_allowed(nm, pats)
-                guard_ok = bool(guarded) and vr_allowed(nm, guarded) and uraw is not None
+                # b37 live3: no session frames to watch (none, or stopped) -> LANE_VR_NEED_FRAMES decides (0: they
+                # run, as the free jobs; 1: they wait) - build 37 froze them, and a hot reload's lost frames held the
+                # words of the player's notes 20 s and more (11-04 22:12)
+                guard_ok = bool(guarded) and vr_allowed(nm, guarded) and (uraw is not None or not need_frames)
                 hold_it = vr and in_vr_ok and not (free or guard_ok)
                 if cg_want_frozen(sc) != hold_it and cg_freeze(sc, hold_it):
                     log("%s job %s (%s)" % (
@@ -841,23 +956,29 @@ def selftest(argv):
     if "--no-loop" in argv:   # the old way (no closed loop): the test must fail
         Loop.decide = lambda self, lane_busy, t: (None, "")
 
-    def run(hz, seconds, work, lane_jobs_at=0.0, rebase=60.0, mode="work"):
-        """a session at hz frames a second, work(t) -> ms; the lane busy from lane_jobs_at; returns the events"""
-        L = Loop(3.0, 1.5, rebase, mode)
+    attrib = "--no-attrib" not in argv   # (b37 live3: the rule before - test 7 must fail with it)
+
+    def run(hz, seconds, work, lane_jobs_at=0.0, rebase=60.0, mode="work", working=None):
+        """a session at hz frames a second, work(t) -> ms; the lane busy from lane_jobs_at (b37 live3: and only while
+        working(t), the lane's jobs using CPU - the speech workers wait for lines most of the time); returns the events"""
+        L = Loop(3.0, 1.5, rebase, mode, attrib)
         frozen, ev, t, dt = False, [], 0.0, 1.0 / hz
         nxt = TICK
         buf = []
+
+        def idle(t):
+            return t < lane_jobs_at or (working is not None and not working(t))
         while t < seconds:
             t += dt
             # frozen = the lane's effect stops at once (the freezer is immediate)
-            wk = work(t, frozen or t < lane_jobs_at)
+            wk = work(t, frozen or idle(t))
             buf.append((t, dt * 1e3 * (2 if wk > 1000 * dt * 1.6 else 1), wk))
             if t >= nxt:
                 nxt += TICK
-                L.set_calm(frozen or t < lane_jobs_at, t)
+                L.set_calm(frozen or idle(t), t)
                 L.feed(buf)
                 buf = []
-                a, w = L.decide(t >= lane_jobs_at and not frozen, t)
+                a, w = L.decide(not idle(t) and not frozen, t)
                 if a in ("pause", "probe"):
                     frozen = True
                     ev.append((t, a, w))
@@ -865,7 +986,7 @@ def selftest(argv):
                 elif a == "resume":
                     frozen = False
                     ev.append((t, a, w))
-                    L.set_calm(t < lane_jobs_at, t)
+                    L.set_calm(idle(t), t)
         return ev
 
     def base(t):
@@ -932,6 +1053,65 @@ def selftest(argv):
     print("test late mode, late frames: %s" % (("paused %.2f s after" % (p[0][0] - 30)) if p else "no pause"))
     if not p or p[0][0] - 30 > 1.5:
         fails.append("late mode: late frames not paused within 1.5 s")
+    # 7. (b37 live3, 163.8) a GPU-bound 120 Hz session (the user's 11-04 19:50: bursts of 2-4 late frames in 6.5 % of
+    #    its seconds, the lane frozen or not): the lane is held at most 10 % of 10 minutes and never 12 s at once (the
+    #    rule before held it 60 s at a time); the lane's own late frames on top of it (3 a second while it works, from
+    #    300 s) are still paused, within 4 s
+    for extra, job in ((False, "speech"), (False, "build"), (True, "speech")):
+        bad = {}
+
+        def gpu(t, calm):
+            s_ = int(t)
+            if s_ not in bad:
+                r = random.Random(s_ * 7919 + 13)
+                bad[s_] = set(r.sample(range(120), r.randint(2, 4))) if r.random() < 0.065 else set()
+            i = int((t - s_) * 120)
+            if i in bad[s_] or (extra and t >= 300 and not calm and i % 40 == 0):
+                return 20.0
+            return 5.5 + rnd.gauss(0, 0.4)
+        ev = run(120, 600, gpu, lane_jobs_at=5.0, rebase=60.0, mode="late",
+                 working=(lambda t: t % 20 < 6) if job == "speech" else None)   # (a line synthesised every 20 s)
+        held, longest, t_p = 0.0, 0.0, None
+        for e in ev:
+            if e[1] in ("pause", "probe"):
+                t_p = e[0]
+            elif e[1] == "resume" and t_p is not None:
+                held += e[0] - t_p
+                longest = max(longest, e[0] - t_p)
+                t_p = None
+        pz = [e for e in ev if e[1] == "pause"]
+        if not extra:
+            print("test GPU-bound 120 Hz, the lane's %s: the lane held %.1f s of 600 (%.1f %%), the longest %.1f s, "
+                  "%d pauses" % ("speech workers (6 s of work in 20)" if job == "speech" else "build (working all along)",
+                                 held, held / 6, longest, len(pz)))
+            if held > (60 if job == "speech" else 120) or longest >= 12:
+                fails.append("GPU-bound 120 Hz: the lane held %.1f s, the longest %.1f s (%s)" % (
+                    held, longest, pz[-1][2][:90] if pz else "-"))
+        else:
+            p = [e for e in pz if e[0] >= 300]
+            print("test GPU-bound 120 Hz + the lane's own late frames from 300 s: %s" % (
+                ("paused %.2f s after: %s" % (p[0][0] - 300, p[0][2][:110])) if p else "no pause"))
+            if not p or p[0][0] - 300 > 4.0:
+                fails.append("GPU-bound + the lane's late frames: no pause within 4 s")
+    # 8. (b37 live3) a frame file that begins again (a hot reload's module reopened it with O_TRUNC): the reader goes back
+    #    to its start - build 37's stayed past the new end and read nothing (the lane held 20 s+ of a session's notes)
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as d8:
+        pth = os.path.join(d8, "perf-raw.txt")
+        with open(pth, "w") as f:
+            f.write("# somvr perf raw 1: T INTERVAL_MS WORK_MS (clock monotonic_raw, the render thread)\n")
+            for i in range(200):
+                f.write("%.6f 11.111 5.000\n" % (100 + i / 90))
+        R8 = Raw(pth)
+        n1 = len(R8.read())
+        with open(pth, "w") as f:   # truncated, a new module's lines
+            f.write("# somvr perf raw 1: T INTERVAL_MS WORK_MS (clock monotonic_raw, the render thread)\n")
+            for i in range(30):
+                f.write("%.6f 11.111 5.000\n" % (103 + i / 90))
+        n2 = len(R8.read())
+        print("test truncated frame file: %d frames, then %d after it began again (truncated %d)" % (n1, n2, R8.truncated))
+        if n1 != 200 or n2 != 30 or R8.truncated != 1:
+            fails.append("truncated frame file: %d / %d frames, truncated %d" % (n1, n2, R8.truncated))
     # 6. (b37) whose frames, while the user is in VR: only the user's own run - a helper's headless boot (it writes a
     #    perf-raw.txt too, SOMVR_PERF_RAW in the env) never stands in for the session's
     import tempfile

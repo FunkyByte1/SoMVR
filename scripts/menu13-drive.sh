@@ -5,6 +5,7 @@
 # scripts/headset-build13.env (the rows show only with SOMVR_HANDS_SURFACE=on and SOMVR_CLIMB_FLING=on), and this script
 # at the same time (MENU13_WT = a word of the build's path in launch-cmd.txt). The uv: somvr_vm_rect_av with build 13's
 # avail (18 rows of 33 px): Climb fling's < 0.547 0.792, Hands at walls' < 0.547 0.835, the Controls tab 0.723 0.042, the
+# (b37 live3: the panel is 816 texels high, 768 before - the UVs above are the 768 layout's; the calls below use v x 768/816, the same pixel rows)
 # Settings tab 0.160 0.042. Prints PASS/FAIL per step, ends with a quit. Stops at once (quit) when the user goes into VR.
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${MENU13_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
@@ -43,11 +44,12 @@ press() { t "hand R touch panel $1 $2 5"; t "hand R touch panel $1 $2 1.0 s 0.3"
 # the wrist menu: the palm gesture (held off while an attack is incoming: the palm away and back, up to 4 tries), then
 # the left menu button held 1 s (a long press: the panel toggles past the gate); prints how it opened
 opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 menu_open() { local o=$(opens) k
   for k in 1 2 3 4; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
   [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
   echo "NOT OPEN (gesture x4, long press)"; grep 'held off\|vrmenu: opened\|vrmenu: closed' "$R/xr-layer.log" | tail -3 | cut -c1-200; }
 menu_shut() { t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1.5; }
@@ -59,19 +61,19 @@ F0=$(n 'VRMENU apply CLIMB_FLING=off from the menu'); F1=$(n 'VRMENU apply CLIMB
 E0=$(n "except hand=.: the VR menu's Hands at walls: Off")
 # a hand at the stone first? (the meadow arrival has none near): the exception line shows once a hand is evaluated
 menu_open; t "dump"; sleep 1.5
-press 0.547 0.835; sleep 1
+press 0.547 0.7859; sleep 1
 check "Hands at walls: Off by its <" 'VRMENU apply HANDS_SURFACE=off from the menu' "$A0"
 t "dump"; sleep 1.5
 check "the surfaces' exception for the menu's Off" "except hand=.: the VR menu's Hands at walls: Off" "$E0"
-press 0.547 0.835; sleep 1
+press 0.547 0.7859; sleep 1
 check "Hands at walls: On again" 'VRMENU apply HANDS_SURFACE=on from the menu' "$A1"
-press 0.547 0.792; sleep 1
+press 0.547 0.7454; sleep 1
 check "Climb fling: Off by its <" 'VRMENU apply CLIMB_FLING=off from the menu' "$F0"
-press 0.547 0.792; sleep 1
+press 0.547 0.7454; sleep 1
 check "Climb fling: On again" 'VRMENU apply CLIMB_FLING=on from the menu' "$F1"
-press 0.723 0.042; sleep 1.5; t "dump"; sleep 1.5
+press 0.723 0.0395; sleep 1.5; t "dump"; sleep 1.5
 grep -q 'the controls page' "$R/xr-layer.log" && echo "PASS the Controls tab" || echo "FAIL the Controls tab (no 'the controls page')"
-press 0.160 0.042; sleep 1
+press 0.160 0.0395; sleep 1
 menu_shut; m m13-after
 grep -E '^VRMENU apply (HANDS_SURFACE|CLIMB_FLING)' "$R/somvr.log" | cut -c1-200
 grep -c '^WARN' "$R/somvr.log" | sed 's/^/WARN lines: /'

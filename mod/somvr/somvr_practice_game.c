@@ -126,6 +126,7 @@ _Static_assert((int)SOMVR_PRA_GO == (int)SOMVR_VMPR_GO && (int)SOMVR_PRA_BACK ==
 		       (int)SOMVR_PRA_GROUP == (int)SOMVR_VMPR_GROUP && (int)SOMVR_PRA_CAPTAIN == (int)SOMVR_VMPR_CAPTAIN &&
 		       (int)SOMVR_PRA_PLACE == (int)SOMVR_VMPR_PLACE && /* build 31 */
 		       (int)SOMVR_PRA_CHARGE == (int)SOMVR_VMPR_CHARGE && /* build 36 */
+		       (int)SOMVR_PRA_HERB == (int)SOMVR_VMPR_HERB && /* build 37 */
 		       SOMVR_PRA_N <= 16 && SOMVR_PRO_N == 6 /* the menu's six labels (build 22) */,
 	       "the menu's practice requests = the practice module's");
 static const struct site_spec *g_pr_sites = g_pr_sites_game; /* selftest: stand-ins */
@@ -186,6 +187,7 @@ static struct {
 	/* build 17: the refills (PRF_* sites) and their counts; the test aids `practice hurt HP` / `practice focus F` */
 	int ok_tokens, ok_energy, ok_heal;
 	uint64_t fill_arrows, fill_health, fill_refused, aid_hurt, aid_focus, fill_charge; /* (build 36: Charge execution) */
+	int charge_orc; /* build 37: SOMVR_PRACTICE_CHARGE_ORC - Charge execution with no orc near spawns one facing Talion */
 	/* SOMVR_PRACTICE_QUIET: the ambient AI spawn manager off while in the area */
 	int quiet_mode, ok_quiet;
 	int quiet;           /* we hold it off now */
@@ -208,6 +210,7 @@ static struct {
 	uint64_t pw_waits, pw_pauses, pw_none, pw_open, pw_dry;
 	double pw_after_max, pw_len_max;
 	float spot[3], radius_cm, clear_cm, ahead_cm, auto_s, minhealth;
+	float herb_m;        /* build 37: SOMVR_PRACTICE_HERB_M, New herb's reach */
 	float edge_cm; /* build 36 (SOMVR_PRACTICE_EDGE_M): out only past radius + this; back in within the radius */
 	char weather[64];    /* SOMVR_PRACTICE_WEATHER */
 	int sky;             /* SOMVR_PRACTICE_SKY (build 36): SOMVR_PRSKY_DRY|CLEAR|ALWAYS - which day weathers are changed */
@@ -691,6 +694,8 @@ static int pr_far_spot(const struct pr_me *m, const float fwd[3], float at[3], f
 
 /* build 31 (re-xr-pipeline.md 136): Place orc's spot for pr_spawn_at(.., far = 2); b35 (160): `practice put`'s
  * (far = 3: the spot given, the orc facing Talion - a replay's orcs where the recording had them) */
+#define PR_CHARGE_NEAR_CM 400.0f /* build 37: Charge execution's orc - none this near: one */
+#define PR_CHARGE_AT_CM 200.0f   /* ... this far ahead of the eyes, facing Talion */
 static float g_pr_place_at[3];
 static _Atomic uint32_t g_pr_put_seq, g_pr_put_at[3], g_pr_put_type; /* b35: the word -> the next pr_frame */
 static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *who, int far)
@@ -765,19 +770,20 @@ static void pr_spawn_at(const struct pr_me *m, int type, double t, const char *w
 		g_pr.orc_dead = 0, g_pr.orc_checks = 0;
 		g_pr.cur_orc = type;
 		g_pr.spawns++;
-		g_pr.far = far, g_pr.far_aware = 0, g_pr.far_logs = 0, g_pr.far_next = t + 2.0, g_pr.far_aware_t = 0;
+		g_pr.far = far == 4 ? 0 : far, g_pr.far_aware = 0, g_pr.far_logs = 0, g_pr.far_next = t + 2.0, g_pr.far_aware_t = 0;
 		memcpy(g_pr.far_pos0, hp, sizeof hp), g_pr.far_dist0 = dist3(hp, m->pos);
-		g_pr.far_spawns += far != 0;
+		g_pr.far_spawns += far != 0 && far != 4;
 	} else {
 		g_pr.spawn_fail++;
 	}
 	if (pr_log_ok(t))
 		logf_("PRACTICE t=%.3f spawn%s %s (%s) template %s ('%s') %s: %s; at (%.1f %.1f %.1f) %.0f cm ahead, ground object %#llx, "
-		      "%s; hobj=%#llx npc=%#llx Combat=%#llx zone=%#llx level %u", t, far == 2 ? " placed" : far ? " far" : "",
+		      "%s; hobj=%#llx npc=%#llx Combat=%#llx zone=%#llx level %u", t,
+		      far == 4 ? " near (Charge execution)" : far == 3 ? " put" : far == 2 ? " placed" : far ? " far" : "",
 		      somvr_pr_orc_label(type), who,
 		      name, tmpl ? tn : "-", fail ? "FAILED" : "ok", fail ? fail : "one orc out", hit[0], hit[1], hit[2],
-		      (double)dist, (unsigned long long)ground, far ? "its back to Talion (unaware: it sees him only as the game's "
-		      "senses would)" : "facing Talion", (unsigned long long)h, (unsigned long long)npc, (unsigned long long)c, (unsigned long long)zone,
+		      (double)dist, (unsigned long long)ground, far == 1 || far == 2 ? "its back to Talion (unaware: it sees him only "
+		      "as the game's senses would)" : "facing Talion", (unsigned long long)h, (unsigned long long)npc, (unsigned long long)c, (unsigned long long)zone,
 		      lvl);
 }
 static void pr_spawn(const struct pr_me *m, int type, double t, const char *who) { pr_spawn_at(m, type, t, who, 0); }
@@ -1855,6 +1861,60 @@ static int pr_place_entry(somvr_objective_frame *e)
 	return 1;
 }
 
+/* build 37 (som-b37-cues, docs 169.9): New herb - the blink to a spot 70 cm short of the nearest herb the game offers
+ * (an active, enabled 'Collectible_Flower*' nav marker; a picked one is off until the game's own respawn) within
+ * SOMVR_PRACTICE_HERB_M (150) of Talion and not at his feet (1.2 m), on his side of it: the spot moves there (a trip, as
+ * `practice go X Y Z`). Herbs are not respawned: the game's own spawner does that after its delay. */
+static void pr_herb(const struct pr_me *m, int have, double t, const char *who)
+{
+	char why[160];
+	const char *no = !have ? "no player in the world now" : g_pr.trip.phase != SOMVR_PRT_IDLE ? "a trip is on"
+			 : check_site(&g_prn_sites[PRN_NAV_POS], why, sizeof why) ? "PRN_NAV_POS not matched (no herbs' places)" : NULL;
+	float best = INFINITY, hp[3] = { 0, 0, 0 };
+	char bn[40] = "";
+	int n = 0, seen = 0;
+	uintptr_t node = 0;
+	float lim = 100.0f * g_pr.herb_m;
+	if (!no) {
+		peek(PRN_LIST + 8, &node, sizeof node);
+		while (node && node != PRN_LIST && n++ < 1024) {
+			uintptr_t mk = node - PRN_NODE, rec = 0, nx = 0;
+			uint8_t ae[2] = { 0, 0 };
+			char name[40] = "";
+			peek(mk + PRN_REC, &rec, sizeof rec), peek(mk + PRN_ACTIVE, ae, sizeof ae);
+			if (rec && ae[0] && ae[1])
+				rx_rec_name(rec, name, sizeof name);
+			if (!strncmp(name, "Collectible_Flower", 18)) {
+				float pos[3] = { 0, 0, 0 };
+				((prn_pos_fn)g_prn_sites[PRN_NAV_POS].target)(mk, pos);
+				float d = dist3(pos, m->pos);
+				seen++;
+				if (vec_ok(pos, 1e7f) && d > 120 && d < lim && d < best)
+					best = d, memcpy(hp, pos, sizeof hp), snprintf(bn, sizeof bn, "%s", name);
+			}
+			peek(node + 8, &nx, sizeof nx);
+			node = nx;
+		}
+		if (!(best < lim))
+			no = "no herb the game offers within SOMVR_PRACTICE_HERB_M (all picked: they come back after the game's delay)";
+	}
+	if (no) {
+		g_pr.refused++;
+		haptic(SOMVR_HAND_L, SOMVR_HX_NO), haptic(SOMVR_HAND_R, SOMVR_HX_NO);
+		if (pr_log_ok(t))
+			logf_("PRACTICE t=%.3f new herb (%s) refused: %s (%d herbs seen)", t, who, no, seen);
+		return;
+	}
+	float dx = m->pos[0] - hp[0], dz = m->pos[2] - hp[2], dl = hypotf(dx, dz);
+	float at[3] = { hp[0] + (dl > 1 ? 70 * dx / dl : 70), hp[1] + 50, hp[2] + (dl > 1 ? 70 * dz / dl : 0) };
+	if (pr_log_ok(t))
+		logf_("PRACTICE t=%.3f new herb (%s): '%s' at (%.0f %.0f %.0f), %.1f m away (%d herbs seen); the spot 70 cm short of it "
+		      "(%.0f %.0f %.0f)", t, who, bn, hp[0], hp[1], hp[2], best / 100.0f, seen, at[0], at[1], at[2]);
+	memcpy(g_pr.spot, at, sizeof at);
+	g_pr.here = g_pr.went = 0;
+	pr_go(m, have, t, who);
+}
+
 static void pr_request(const struct pr_me *m, int have, int action, int orc, double t, const char *who)
 {
 	switch (action) {
@@ -1873,11 +1933,27 @@ static void pr_request(const struct pr_me *m, int have, int action, int orc, dou
 			g_pr.fill_charge += ok;
 			if (pr_log_ok(t))
 				logf_("PRACTICE t=%.3f charge execution (%s): %s; no save", t, who, w);
+			/* build 37 (SOMVR_PRACTICE_CHARGE_ORC, re-xr-pipeline.md 171): no orc within PR_CHARGE_NEAR_CM - one facing
+			 * Talion PR_CHARGE_AT_CM ahead of the eyes (the finisher's ready comes on it; our far orc goes) */
+			float nc = fn_near_cm(t), op[3];
+			if (nc > 1e8f) /* (no finisher frame lately - the sword away: our own orc's distance) */
+				nc = g_pr.orc_h && pr_orc_alive() && peek(g_pr.orc_h + OBJ_POS, op, sizeof op) && vec_ok(op, 1e7f)
+					     ? hypotf(op[0] - m->pos[0], op[2] - m->pos[2])
+					     : 1e9f;
+			float at[3];
+			if (ok && g_pr.charge_orc && nc > PR_CHARGE_NEAR_CM && fn_spot_ahead(PR_CHARGE_AT_CM, at)) {
+				if (pr_log_ok(t))
+					logf_("PRACTICE t=%.3f charge execution: no orc within %.0f cm (the nearest %.0f) - one facing Talion "
+					      "%.0f cm ahead", t, (double)PR_CHARGE_NEAR_CM, nc > 1e8f ? -1.0 : (double)nc, (double)PR_CHARGE_AT_CM);
+				memcpy(g_pr_place_at, at, sizeof at);
+				pr_spawn_at(m, g_pr.cur_orc, t, "Charge execution: no orc near", 4);
+			}
 		}
 		break;
 	case SOMVR_PRA_FAR: /* build 18 */
 		pr_spawn_at(m, orc >= 0 && orc < SOMVR_PRO_N ? orc : g_pr.cur_orc, t, who, 1);
 		break;
+	case SOMVR_PRA_HERB: pr_herb(m, have, t, who); break; /* build 37: New herb */
 	case SOMVR_PRA_REMOVE:
 		if (!g_pr.orc_h && pr_log_ok(t))
 			logf_("PRACTICE t=%.3f remove (%s): no orc out", t, who);
@@ -2178,6 +2254,7 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	g_pr.spot[0] = 40400, g_pr.spot[1] = 3900, g_pr.spot[2] = -21600; /* re-combat-spawn.md 3's recipe (RT: quiet) */
 	env_vec("SOMVR_PRACTICE_AT", g_pr.spot, 3, -1e6f, 1e6f, bad);
 	g_pr.radius_cm = 100 * env_float("SOMVR_PRACTICE_RADIUS_M", 100, 10, 1000, bad);
+	g_pr.herb_m = env_float("SOMVR_PRACTICE_HERB_M", 150, 10, 1000, bad); /* build 37: New herb's reach */
 	g_pr.edge_cm = 100 * env_float("SOMVR_PRACTICE_EDGE_M", 10, 0, 100, bad); /* build 36 (0 = build 35's one edge) */
 	g_pr.clear = env_word("SOMVR_PRACTICE_CLEAR", clear_w, 3, SOMVR_PRC_ARMED);
 	g_pr.clear_cm = 100 * env_float("SOMVR_PRACTICE_CLEAR_M", 60, 5, 200, bad);
@@ -2194,6 +2271,10 @@ static void pr_start(const struct site_spec *sites, int *bad)
 	}
 	g_pr.minhealth = env_float("SOMVR_PRACTICE_MINHEALTH", 20, 0, 100000, bad);
 	g_pr.ahead_cm = env_float("SOMVR_PRACTICE_AHEAD_CM", 350, 150, 2000, bad);
+	g_pr.charge_orc = env_word("SOMVR_PRACTICE_CHARGE_ORC", (const char *const[]){ "off", "on" }, 2, 0); /* build 37 */
+	logf_("CONFIG practice charge_orc=%s (SOMVR_PRACTICE_CHARGE_ORC, build 37: Practice > Charge execution with no orc within "
+	      "%.0f cm spawns one facing Talion %.0f cm ahead of the eyes)", g_pr.charge_orc ? "on" : "off", (double)PR_CHARGE_NEAR_CM,
+	      (double)PR_CHARGE_AT_CM);
 	g_pr.group_n = (int)env_float("SOMVR_PRACTICE_GROUP_N", 4, 3, SOMVR_PR_GROUP_MAX, bad); /* build 19: "Spawn group"; 27: to 8 */
 	g_pr.far_cm = env_float("SOMVR_PRACTICE_FAR_CM", 1800, 800, 4000, bad); /* build 18: Spawn far orc (unaware) */
 	g_pr.auto_s = env_float("SOMVR_PRACTICE_AUTO_S", 5, 0, 600, bad);

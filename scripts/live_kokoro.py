@@ -3,10 +3,12 @@
 misaki's English phonemes, loaded once from shared/tools/tts/models (nothing downloaded), then one job per stdin line.
 Never plays anything: it only writes WAV files (the daemon plays them, live_tts.py).
 
-  shared/tools/tts/venv/bin/python -I live_kokoro.py [--voice af_heart] [--threads 2] [--speed 1.0]
+  shared/tools/tts/venv/bin/python -I live_kokoro.py [--voice af_heart] [--threads 1] [--speed 1.0]
       stdin:  OUT.wav<TAB>TEXT           one job per line (TEXT: one line, at most ~600 characters)
-      stdout: "ready kokoro VOICE load S" once, then "done OUT SYNTH_S AUDIO_S" (or "fail OUT why") per job
-  ... --bench TEXT...                      each text once: its time (the model's cost, offline)
+      stdout: "ready kokoro VOICE load S" once, then per job "part OUT I SYNTH_S AUDIO_S" per sentence as it is
+              written (b37 live3: the line streamed - piece 0 = OUT.wav, piece I = OUT.I.wav; live_tts_common.py) and
+              "done OUT SYNTH_S AUDIO_S N" (or "fail OUT why")
+  ... --bench TEXT... [--bench-out DIR]   each text once, streamed: the first piece's time and the whole line's
 
 Run only inside the lane (scripts/live_lane.sh exec tts ...: its CPUs, SCHED_IDLE, nice 19) - never on the GPU
 (onnxruntime's CPU provider only). The WAV: 24 kHz mono s16le, the speech's RMS at -20 dBFS (about a game's dialogue
@@ -20,15 +22,15 @@ import os
 import re
 import sys
 import time
-import wave
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # (run with -I: our own folder only)
+import live_tts_common as C  # noqa: E402
 
 TTS = "/home/bara/Projects/flat2vr/shared/tools/tts/models"
 MODEL = os.path.join(TTS, "kokoro-82m-v1.0-onnx-timestamped")
 VOICE_DIRS = [os.path.join(TTS, "kokoro-82m-v1.0-voices-female", "voices"), os.path.join(MODEL, "voices")]
 RATE = 24000
 MAX_IDS = 500          # the model takes 510 tokens; a longer text goes in pieces (by sentences, then by commas)
-TARGET_RMS = 0.1       # -20 dBFS
-PEAK = 0.89            # -1 dBFS
 
 
 def voice_path(name):
@@ -37,13 +39,6 @@ def voice_path(name):
         if os.path.exists(p):
             return p
     raise FileNotFoundError(f"no Kokoro voice {name} in {VOICE_DIRS}")
-
-
-def speakable(text):
-    """the card's text as one spoken line: the menu path's '>' and the list marks read as pauses, the ASCII dots kept"""
-    t = text.replace(">", ", ").replace("|", ", ").replace("_", " ").replace("...", ".")
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
 
 
 class Kokoro:
@@ -63,72 +58,48 @@ class Kokoro:
         except Exception:  # (espeak-ng's library missing: misaki's own lexicon only)
             fb = None
         self.g2p = en.G2P(trf=False, british=False, fallback=fb)
-        self.speed = speed
+        self.speed, self.rate = speed, RATE
 
     def ids(self, text):
         ps, _ = self.g2p(text)
         return [self.vocab[c] for c in ps if c in self.vocab]
 
-    def pieces(self, text):
-        """the text cut where the phonemes would pass MAX_IDS: sentences, then commas, then words"""
-        out = []
-        for sent in re.split(r"(?<=[.!?])\s+", text):
-            if not sent:
-                continue
-            ids = self.ids(sent)
-            if len(ids) <= MAX_IDS:
-                out.append(ids)
-                continue
+    def synth(self, text):
+        """one piece (a sentence) -> float audio; a sentence past MAX_IDS phonemes in parts (commas, then words)"""
+        np = self.np
+        idss = []
+        ids = self.ids(text)
+        if len(ids) <= MAX_IDS:
+            idss = [ids]
+        else:
             cur = ""
-            for part in re.split(r"(?<=[,;:])\s+|\s+", sent):
+            for part in re.split(r"(?<=[,;:])\s+|\s+", text):
                 trial = (cur + " " + part).strip()
                 if cur and len(self.ids(trial)) > MAX_IDS:
-                    out.append(self.ids(cur)[:MAX_IDS])
+                    idss.append(self.ids(cur)[:MAX_IDS])
                     cur = part
                 else:
                     cur = trial
             if cur:
-                out.append(self.ids(cur)[:MAX_IDS])
-        return [i for i in out if i]
-
-    def synth(self, text):
-        np = self.np
-        chunks = []
-        for ids in self.pieces(speakable(text)):
+                idss.append(self.ids(cur)[:MAX_IDS])
+        out = []
+        for ids in (i for i in idss if i):
             style = self.voice[min(len(ids), len(self.voice) - 1)]
             feed = {"input_ids": np.array([[0] + ids + [0]], dtype=np.int64), "style": style.astype(np.float32),
                     "speed": np.array([self.speed], dtype=np.float32)}
-            w = np.asarray(self.s.run(None, feed)[0], dtype=np.float32).reshape(-1)
-            chunks += [w, np.zeros(int(RATE * 0.12), dtype=np.float32)]
-        if not chunks:
+            out.append(np.asarray(self.s.run(None, feed)[0], dtype=np.float32).reshape(-1))
+        if not out:
             raise ValueError("nothing to say")
-        pad = np.zeros(int(RATE * 0.15), dtype=np.float32)
-        a = np.concatenate([pad] + chunks[:-1] + [pad])
-        rms = float(np.sqrt(np.mean(a[np.abs(a) > 1e-4] ** 2))) if np.any(np.abs(a) > 1e-4) else 0.0
-        if rms > 0:
-            a *= TARGET_RMS / rms
-        pk = float(np.max(np.abs(a))) if len(a) else 0.0
-        if pk > PEAK:
-            a *= PEAK / pk
-        return (np.clip(a, -1, 1) * 32767).astype(np.int16), len(a) / RATE
-
-
-def write_wav(path, pcm):
-    tmp = path + ".tmp"
-    with wave.open(tmp, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(RATE)
-        w.writeframes(pcm.tobytes())
-    os.replace(tmp, path)
+        return np.concatenate(out)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--voice", default=os.environ.get("SOMVR_LIVE_TTS_VOICE", "af_heart"))
-    ap.add_argument("--threads", type=int, default=int(os.environ.get("LANE_THREADS", "2") or 2))
+    ap.add_argument("--threads", type=int, default=int(os.environ.get("LANE_THREADS", "1") or 1))
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--bench", nargs="*")
+    ap.add_argument("--bench-out", default=os.environ.get("TMPDIR", "/tmp") + "/live-tts-bench")
     a = ap.parse_args()
     t0 = time.monotonic()
     try:
@@ -137,26 +108,10 @@ def main():
     except Exception as e:
         print(f"fail - Kokoro did not load ({type(e).__name__}: {e})", flush=True)
         return 2
-    print(f"ready kokoro {a.voice} load {time.monotonic() - t0:.2f}", flush=True)
     if a.bench is not None:
-        for text in a.bench:
-            t1 = time.monotonic()
-            _, dur = k.synth(text)
-            print(f"bench {len(text)} chars -> {dur:.2f} s of speech in {time.monotonic() - t1:.2f} s", flush=True)
-        return 0
-    for line in sys.stdin:
-        line = line.rstrip("\n")
-        if not line:
-            continue
-        out, _, text = line.partition("\t")
-        try:
-            t1 = time.monotonic()
-            pcm, dur = k.synth(text)
-            write_wav(out, pcm)
-            print(f"done {out} {time.monotonic() - t1:.2f} {dur:.2f}", flush=True)
-        except Exception as e:
-            print(f"fail {out} {type(e).__name__}: {e}", flush=True)
-    return 0
+        print(f"ready kokoro {a.voice} load {time.monotonic() - t0:.2f}", flush=True)
+        return C.bench(k, k.np, "kokoro", a.bench, a.bench_out)
+    return C.serve(k, k.np, "kokoro", a.voice, t0)
 
 
 if __name__ == "__main__":

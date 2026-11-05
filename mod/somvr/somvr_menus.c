@@ -872,3 +872,40 @@ void somvr_pp_pose(const somvr_pp_tile *tl, float dist, somvr_posef *out) {
     qrot(out->q, fwd0, f), qrot(out->q, x0, r), qrot(out->q, y0, u);
     for (int i = 0; i < 3; i++) out->p[i] = tl->eye[i] + dist * f[i] - tl->off[0] * r[i] - tl->off[1] * u[i];
 }
+
+int somvr_rect_cut(const int32_t r[6], const int hole[4], int32_t out[4][6]) {
+    int x0 = r[0], y0 = r[1], x1 = r[0] + r[4], y1 = r[1] + r[5];
+    int hx0 = hole[0] > x0 ? hole[0] : x0, hy0 = hole[1] > y0 ? hole[1] : y0;
+    int hx1 = hole[0] + hole[2] < x1 ? hole[0] + hole[2] : x1, hy1 = hole[1] + hole[3] < y1 ? hole[1] + hole[3] : y1;
+    if (hx0 >= hx1 || hy0 >= hy1) {
+        memcpy(out[0], r, sizeof out[0]);
+        return 1;
+    }
+    int n = 0, dx = r[2] - r[0], dy = r[3] - r[1];
+    int32_t pc[4][4] = {{x0, y0, x1, hy0}, {x0, hy1, x1, y1}, {x0, hy0, hx0, hy1}, {hx1, hy0, x1, hy1}};
+    for (int i = 0; i < 4; i++)
+        if (pc[i][2] > pc[i][0] && pc[i][3] > pc[i][1]) {
+            out[n][0] = pc[i][0], out[n][1] = pc[i][1], out[n][2] = pc[i][0] + dx, out[n][3] = pc[i][1] + dy;
+            out[n][4] = pc[i][2] - pc[i][0], out[n][5] = pc[i][3] - pc[i][1];
+            n++;
+        }
+    return n;
+}
+
+int somvr_ring_spans(int x, int y, int s, int t, int32_t out[][3], int cap) {
+    int n = 0;
+    float R = 0.5f * (float)s, Ri = R - (float)t, cx = (float)x + R, cy = (float)y + R;
+    for (int j = 0; j < s && n + 2 <= cap; j++) {
+        float dy = (float)(y + j) + 0.5f - cy;
+        if (fabsf(dy) >= R) continue;
+        float xo = sqrtf(R * R - dy * dy), xi = fabsf(dy) < Ri ? sqrtf(Ri * Ri - dy * dy) : 0;
+        int a0 = (int)lrintf(cx - xo), a1 = (int)lrintf(cx - xi), b0 = (int)lrintf(cx + xi), b1 = (int)lrintf(cx + xo);
+        if (xi <= 0) {
+            if (b1 > a0) out[n][0] = a0, out[n][1] = y + j, out[n][2] = b1 - a0, n++;
+            continue;
+        }
+        if (a1 > a0) out[n][0] = a0, out[n][1] = y + j, out[n][2] = a1 - a0, n++;
+        if (b1 > b0) out[n][0] = b0, out[n][1] = y + j, out[n][2] = b1 - b0, n++;
+    }
+    return n;
+}

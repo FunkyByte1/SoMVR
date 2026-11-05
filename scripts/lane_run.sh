@@ -51,9 +51,13 @@ if ! vr_ok; then
   done
 fi
 # 4. the watcher (pauses the lane under a session it protects; keeps every lane thread on the lane's CPUs)
+# b37 live3: the shared watcher runs the MAIN checkout's lane_watch.py (it guards the user's session for every caller) -
+# never a helper worktree's unmerged copy (a helper's boot on 11-04 20:28 started it from its own tree); LANE_WATCH_PY
+# overrides (a test of a new watcher, never while the user may play)
+WPY=${LANE_WATCH_PY:-$HOME/Projects/flat2vr/ShadowOfMordor/scripts/lane_watch.py}; [ -f "$WPY" ] || WPY=$HERE/lane_watch.py
 if [ "${LANE_NO_WATCH:-0}" != 1 ] && ! systemctl --user is-active -q somvr-lane-watch; then
   systemd-run --user --quiet --collect --unit=somvr-lane-watch --description="SoM VR lane watcher (docs/re-xr-pipeline.md 163)" \
-    python3 -I "$HERE/lane_watch.py" watch >/dev/null 2>&1 ||
+    python3 -I "$WPY" watch >/dev/null 2>&1 ||
     systemctl --user is-active -q somvr-lane-watch || say "note: the watcher did not start (systemctl --user status somvr-lane-watch)"
 fi
 # 5. the job

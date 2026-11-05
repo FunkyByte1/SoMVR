@@ -510,6 +510,15 @@ def main():
                      "KL_PREP_A, KL_PREP_B, KL_PREP_C, KL_SYNC_END K_ENTRYs, the patched KL_AI_NPC, KL_AI_ACT1, KL_AI_ACT2, "
                      "KL_AI_MISC K_CALLs), found %d" % len(kls))
         sites = sites + kls
+    # build 37's SOMVR_CUE_TIMER: its block lives in somvr_cues_game.c (read with SOURCE.c above)
+    if re.search(r'^#include "somvr_cues_game\.c"', text, re.M):
+        cus = [m for b in text.split("CUES_SITES_BEGIN")[1:] for m in re.findall(
+            r'SITE\("(\w+)", (K_CALL|K_JMP|K_VSLOT|K_ENTRY), (0x[0-9a-f]+), (0x[0-9a-f]+), "([0-9a-f ]+)", '
+            r'(0x[0-9a-f]+), "([0-9a-f ]+)"\)', b.split("CUES_SITES_END", 1)[0])]
+        if [m[1] for m in cus] != ["K_CALL"]:
+            sys.exit("expected 1 SITE line in somvr_cues_game.c's CUES_SITES block (the patched CU_TIMER K_CALL), found %d"
+                     % len(cus))
+        sites = sites + cus
     data = open(binpath, "rb").read()
     segs = loads(data)
     bid = build_id(data, segs)

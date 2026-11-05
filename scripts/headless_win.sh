@@ -211,10 +211,11 @@ if [ "$KIND" = game ] && [ -n "${WIN_SAVE_FROM:-}" ]; then
 fi
 
 # ---- the environment of the program ----------------------------------------------------------------------------
+# 11-04: winebus.sys=d - no real game controller reaches a test game (the user's Spelunky 2 pad drove suite boots at 18:41)
 # audio: only ALSA's null plugin, inside a namespace without /dev/snd and without the PulseAudio / PipeWire sockets
 # (bwrap below): the game has a sound device (Wwise wants one) and nothing can reach a real output
 printf 'pcm.!default { type null }\nctl.!default { type hw card 0 }\n' > "$RUN/asound.conf"
-GENV=(WINEDLLOVERRIDES="xinput9_1_0=n,b;d3d11,d3d10core,dxgi,d3d9=n;winepulse.drv=d;wineoss.drv=d;winealsa.drv=b"
+GENV=(WINEDLLOVERRIDES="xinput9_1_0=n,b;d3d11,d3d10core,dxgi,d3d9=n;winepulse.drv=d;wineoss.drv=d;winealsa.drv=b;winebus.sys=d"
       ALSA_CONFIG_PATH="$RUN/asound.conf"
       WINEDEBUG="${WINEDEBUG:--all,err+module}" SOMVR_LOG="$RUN/somvr.log" SOMVR_BRIDGE="$RUN/bridge"
       DXVK_LOG_PATH="$RUN" DXVK_LOG_LEVEL=info SDL_AUDIODRIVER=dummy SOMVR_TRIGGER="$RUN/somvr.trigger"
@@ -231,7 +232,7 @@ W1=${WIN_W1:-0}
 if [ "$W1" = 1 ]; then
   [ "$KIND" = game ] || { say "STOP: WIN_W1 is for --game"; exit 1; }
   [ -f "$MOD/build/win/package/x64/vulkan-1.dll" ] || { say "STOP: no $MOD/build/win/package (win/package.sh)"; exit 1; }
-  GENV[0]="WINEDLLOVERRIDES=xinput9_1_0,d3d11,dxgi,d3d10core,vulkan-1,openxr_loader=n,b;d3d9=n;winepulse.drv=d;wineoss.drv=d;winealsa.drv=b"
+  GENV[0]="WINEDLLOVERRIDES=xinput9_1_0,d3d11,dxgi,d3d10core,vulkan-1,openxr_loader=n,b;d3d9=n;winepulse.drv=d;wineoss.drv=d;winealsa.drv=b;winebus.sys=d"
   GENV+=(SOMVR_LAYER=win XR_RUNTIME_JSON=/usr/share/openxr/1/openxr_monado.json SOMVR_XR_LOG="$RUN/xr-layer.log")
 elif [ $XR = 1 ]; then
   GENV+=(VK_LAYER_PATH="$LAYER" VK_INSTANCE_LAYERS=VK_LAYER_SOMVR_openxr

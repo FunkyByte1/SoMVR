@@ -358,6 +358,33 @@ static void test_arrow(void) {
     CHECK(a_nock == 0 && a_head == 1, "arrow fade: nock %.2f head %.2f", a_nock, a_head);
 }
 
+/* build 37 (re-xr-pipeline.md 171.5): the blade glow - the outline's blade and point, no cross-guard and no grip (the
+ * outline's guard reaches 9.5 cm across, its grip 13 cm behind the pose), a halo in the blade's plane that fades out */
+static void test_blade_glow(void) {
+    static somvr_vh_vert v[SOMVR_VH_ARROW_NV], o[SOMVR_VH_ARROW_NV];
+    somvr_posef p = {{0, 0, 0, 1}, {0, 1.5f, -0.5f}}; /* -Z along the blade from the pose */
+    somvr_vh_outline(&p, 1.01f, o);
+    somvr_vh_outline_blade(&p, 1.01f, v);
+    float wide_o = 0, back_o = -1, wide = 0, back = -1, a_mid = 0, a_out = 1, zmin = 0;
+    for (int i = 0; i < SOMVR_VH_ARROW_NV; i++) {
+        wide_o = fmaxf(wide_o, fabsf(o[i].p[0])), back_o = fmaxf(back_o, o[i].p[2] + 0.5f);
+        if (v[i].a > 0) wide = fmaxf(wide, fabsf(v[i].p[0])), back = fmaxf(back, v[i].p[2] + 0.5f);
+        zmin = fminf(zmin, v[i].p[2] + 0.5f);
+    }
+    for (int i = 47; i < 55; i++) {
+        if (fabsf(v[i].p[0]) < 1e-6f) a_mid = fmaxf(a_mid, v[i].a);
+        else a_out = fminf(a_out, 1.0f - v[i].a);
+    }
+    CHECK(wide_o > 0.09f && back_o > 0.12f, "the outline has its guard (%.3f across) and grip (%.3f behind)", wide_o, back_o);
+    CHECK(wide < 0.024f + SOMVR_VH_GLOW_W + 1e-4f && back < 0 && fabsf(zmin + 1.01f) < 1e-4f,
+          "blade glow: nothing behind the blade's root (%.3f), no guard (%.3f across), the point at 1.01 m (%.3f)", back,
+          wide, -zmin);
+    CHECK(fabsf(a_mid - SOMVR_VH_GLOW_A) < 1e-6f && a_out == 1.0f, "blade glow: the halo %.2f at the middle, 0 at its edge",
+          a_mid);
+    somvr_vh_arrow_fade(v, SOMVR_VH_ARROW_NV, (float[3]){0, 1.5f, 5}, (float[3]){0.06f, 1.5f, 5}, 0.06f, 0.16f);
+    CHECK(fabsf(v[47].a - SOMVR_VH_GLOW_A) < 1e-6f && v[0].a == 1, "the fade far from the eyes keeps each vertex's own alpha");
+}
+
 /* build 11: the depth switch's words and the world's fade (the shader's rule) */
 static void test_depth(void) {
     CHECK(somvr_vh_depth_word(NULL) == SOMVR_VH_DEPTH_DEFAULT && somvr_vh_depth_word("") == SOMVR_VH_DEPTH_DEFAULT &&
@@ -546,6 +573,7 @@ int main(void) {
     test_touch();
     test_abi();
     test_arrow();
+    test_blade_glow(); /* build 37 */
     test_depth();
     test_size();
     test_string();

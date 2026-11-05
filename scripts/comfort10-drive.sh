@@ -12,6 +12,7 @@
 # and this script at the same time (C10_WT: the worktree's name in RUN/launch-cmd.txt). The panel's uvs are build 10's
 # layout with the headless avail (14 rows: no MOVES, with MUSIC; somvr_vm_rect_av): Vignette < 0.547 0.2565, > 0.922
 # 0.2565; Music < 0.547 0.7513, > 0.922 0.7513; the Controls tab 0.723 0.042, the Settings tab 0.160 0.042. Prints
+# (b37 live3: the panel is 816 texels high, 768 before - the UVs above are the 768 layout's; the calls below use v x 768/816, the same pixel rows)
 # PASS/FAIL lines from the logs; ends with a quit. Stops at once (quit) when the user goes into VR.
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${C10_WT:-t3-7a4617f8}
@@ -47,11 +48,12 @@ dump() { t "dump"; sleep 1.2; echo "  dump: $1 (frame $(grep -o 'dump layers fra
 press() { t "hand R touch panel $1 $2 5"; t "hand R touch panel $1 $2 1.0 s 0.3"; t "hand R touch panel $1 $2 -1.0 s 0.15"
           t "hand R touch panel $1 $2 4 s 0.2"; sleep 0.4; }
 opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 menu_open() { local o=$(opens) k
   for k in 1 2 3; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
   [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
   echo "NOT OPEN"; }
 menu_shut() { t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1.5; }
@@ -101,23 +103,23 @@ dump "standing (no ring)"
 walkturn "20%"
 # 2. the menu: its rows (a dump), Vignette > x2 = 40 %
 menu_open; t "dump"; sleep 1.5
-press 0.922 0.2565; press 0.922 0.2565
+press 0.922 0.2414; press 0.922 0.2414
 check "vignette 40% from the menu" 'VRMENU apply VIGNETTE=0.4 from the menu' 0
 menu_shut
 walkturn "40%"
 # 3. Vignette > x3 = 70 %
-menu_open; press 0.922 0.2565; press 0.922 0.2565; press 0.922 0.2565
+menu_open; press 0.922 0.2414; press 0.922 0.2414; press 0.922 0.2414
 check "vignette 70% from the menu" 'VRMENU apply VIGNETTE=0.7 from the menu' 0
 menu_shut
 walkturn "70%"
 # 4. Music < (30 -> 20 %), the Controls page (a dump), back; Vignette < x7 = Off
 M0=$(n 'MUSIC the VR menu')
-menu_open; press 0.547 0.7513; sleep 1
+menu_open; press 0.547 0.7071; sleep 1
 check "music 20% from the menu" 'VRMENU apply MUSIC=0.2 from the menu' 0
 check "music sent to the game" 'MUSIC the VR menu' "$M0"
-press 0.723 0.042; t "dump"; sleep 1.5
-press 0.160 0.042
-for k in 1 2 3 4 5 6 7; do press 0.547 0.2565; done
+press 0.723 0.0395; t "dump"; sleep 1.5
+press 0.160 0.0395
+for k in 1 2 3 4 5 6 7; do press 0.547 0.2414; done
 check "vignette off from the menu" 'VRMENU apply VIGNETTE=0 from the menu' 0
 menu_shut
 RB=$(grep -c ': ring (clear' "$R/xr-layer.log")

@@ -548,7 +548,8 @@ __attribute__((used)) void somvr_w_klai(uintptr_t c, uintptr_t node, uintptr_t a
 		return;
 	}
 	if (g_kl.on && g_kl.ai_hold && c && !atomic_load(&g_kl.dealing)) {
-		int held = (g_kl.pl.on && g_kl.pl.c == c) || fn_held(c, 0); /* (build 33: the finisher's orc too) */
+		int held = (g_kl.pl.on && g_kl.pl.c == c) || fn_held(c, 0) || kn_held(c); /* (build 33: the finisher's orc too;
+											   * build 37: the knife's held one) */
 		for (int i = 0; i < KL_N && !held; i++)
 			held = g_kl.k[i].on && g_kl.k[i].c == c;
 		if (held) {

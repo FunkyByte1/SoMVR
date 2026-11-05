@@ -36,6 +36,11 @@ enum { SOMVR_HUDK_NONE = 0, SOMVR_HUDK_WORLD = 1, SOMVR_HUDK_VIDEO = 2 }; /* whi
  * was open over the world at that HUD pass (the pause menu, the map, the skills: the interface's menu state machine not
  * idle, or the game paused): the layer shows that HUD image on the menu board (SOMVR_XR_MENU=front) */
 #define SOMVR_HUDF_MENU 0x100u
+/* build 37 (SOMVR_CUE_TIMER / SOMVR_CUE_ALERT, docs/re-xr-pipeline.md 169): a mission timer runs (its line on the watch;
+ * TIMER_POP: at the gaze now - its start, 30 s and 10 s left); ALARM: the area is on high alert (the watch's rim red) */
+#define SOMVR_HUDF_TIMER 0x200u
+#define SOMVR_HUDF_TIMER_POP 0x400u
+#define SOMVR_HUDF_ALARM 0x800u
 
 typedef struct {
     uint32_t gen;          /* bumped when the texture is (re)made or its VkImage becomes known */

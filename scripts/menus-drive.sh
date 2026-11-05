@@ -34,11 +34,11 @@ k() { echo "key $1" >> "$R/cmd"; echo "$(date +%T) key $1"; }
 d() { t "dump"; sleep "${1:-1.5}"; }
 # 1. the arrival card: as it comes, the fingertip hovering its X, a press on it (a front approach, 0.47 m/s)
 d 2
-t "hand R touch panel 0.93 0.042 6"; sleep 0.6
-t "hand R touch panel 0.93 0.042 1.2 s 0.3"; sleep 0.6
+t "hand R touch panel 0.93 0.0395 6"; sleep 0.6
+t "hand R touch panel 0.93 0.0395 1.2 s 0.3"; sleep 0.6
 d
-t "hand R touch panel 0.93 0.042 -1.0 s 0.15"; sleep 0.8
-t "hand R touch panel 0.93 0.042 4 s 0.2"; sleep 0.6
+t "hand R touch panel 0.93 0.0395 -1.0 s 0.15"; sleep 0.8
+t "hand R touch panel 0.93 0.0395 4 s 0.2"; sleep 0.6
 t "hand R off"; sleep 1
 # 2. the watch: the left forearm across the chest, the back of the wrist toward the eyes
 t "hand L head 5 -16 32 0 -90 -130 s 0.4"; sleep 1.5
@@ -48,23 +48,23 @@ for i in 1 2 3; do t "stick R 1 0"; sleep 0.6; t "stick R 0 0"; sleep 1.2; d; do
 # 4. the wrist menu: the palm toward the eyes 1 s (the gesture), the panel; the right fingertip on its Controls tab
 t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 2
 d
-t "hand R touch panel 0.723 0.042 5"; sleep 0.6
-t "hand R touch panel 0.723 0.042 1.0 s 0.3"; sleep 0.6
-t "hand R touch panel 0.723 0.042 -1.0 s 0.15"; sleep 0.6
-t "hand R touch panel 0.723 0.042 4 s 0.2"; sleep 1
+t "hand R touch panel 0.723 0.0395 5"; sleep 0.6
+t "hand R touch panel 0.723 0.0395 1.0 s 0.3"; sleep 0.6
+t "hand R touch panel 0.723 0.0395 -1.0 s 0.15"; sleep 0.6
+t "hand R touch panel 0.723 0.0395 4 s 0.2"; sleep 1
 d
 # ... the Settings tab back; a swipe across the rows (fast, sideways: no press); then from behind (no press)
-t "hand R touch panel 0.16 0.042 4 s 0.3"; sleep 0.6
-t "hand R touch panel 0.16 0.042 -1.0 s 0.15"; sleep 0.6
-t "hand R touch panel 0.16 0.042 4 s 0.2"; sleep 0.8
-t "hand R touch panel 0.1 0.5 0.8 s 0.3"; sleep 0.6
-t "hand R touch panel 0.9 0.5 -0.8 s 0.12"; sleep 0.6
-t "hand R touch panel 0.5 0.6 -4 s 0.3"; sleep 0.6
-t "hand R touch panel 0.5 0.6 -0.8 s 0.3"; sleep 0.6
-t "hand R touch panel 0.5 0.6 6 s 0.3"; sleep 0.6
+t "hand R touch panel 0.16 0.0395 4 s 0.3"; sleep 0.6
+t "hand R touch panel 0.16 0.0395 -1.0 s 0.15"; sleep 0.6
+t "hand R touch panel 0.16 0.0395 4 s 0.2"; sleep 0.8
+t "hand R touch panel 0.1 0.4706 0.8 s 0.3"; sleep 0.6
+t "hand R touch panel 0.9 0.4706 -0.8 s 0.12"; sleep 0.6
+t "hand R touch panel 0.5 0.5647 -4 s 0.3"; sleep 0.6
+t "hand R touch panel 0.5 0.5647 -0.8 s 0.3"; sleep 0.6
+t "hand R touch panel 0.5 0.5647 6 s 0.3"; sleep 0.6
 d
 # ... the fingertip resting near the Recentre button (the hover marker), then away
-t "hand R touch panel 0.18 0.917 1.5 s 0.3"; sleep 1
+t "hand R touch panel 0.18 0.8631 1.5 s 0.3"; sleep 1
 d
 t "hand R off"; sleep 0.5
 # 5. the watch and the open menu: the wrist turned back over (does the panel go, does the watch come?)

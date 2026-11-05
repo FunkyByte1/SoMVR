@@ -35,6 +35,22 @@
  *                          side of it with more of the tile (build 22: the prompts' 1120,860,800,220 -> 1120,940,800,140;
  *                          build 23's band defaults touch it nowhere). Build 21 cut the line in two: its right part in the
  *                          prompts' popup, the rest in the world HUD quad (../somvr_menus.h 2d). Default off.
+ *   SOMVR_XR_TIMER_RECT=X,Y,W,H  build 37 (with SOMVR_CUE_TIMER, docs/re-xr-pipeline.md 169): the mission timer's rect
+ *                          in the HUD image (1920x1080): while the preload's HUD tag says a timer runs (SOMVR_HUDF_TIMER)
+ *                          and not its popup (SOMVR_HUDF_TIMER_POP), the band's copy leaves it out (it is on the watch:
+ *                          SOMVR_XR_WRIST_RECTS) - so its line comes to the gaze only at its start, 30 s and 10 s left.
+ *                          Unset = off. SOMVR_XR_BAND_CUT=X,Y,W,H[;..] (build 37): rects always left out of the band's
+ *                          copies (the objective line's part right of 440 px: it lives on the watch; unset = none). A
+ *                          tile whose content lies inside the cut rects' box counts as empty (no popup). SOMVR_HUDF_ALARM
+ *                          (SOMVR_CUE_ALERT): the watch's rim red (a ring over the map's edge, SOMVR_XR_RIM_PX thick, 8).
+ *   SOMVR_XR_HUD_EYE=1|0|off  build 37 (som-b37-cues, docs/re-xr-pipeline.md 169.8): the head-level HUD quad (the HUD image
+ *                          less the watch's and the band's tiles: by now the game's own world icons - an orc's awareness
+ *                          triangle, a kept health bar, the struggle's ring) fitted to the frustum the game's HUD pass
+ *                          projects them with - eye 1's (layout B draws the HUD after the last eye) - SOMVR_XR_HUD_EYE_M
+ *                          (10) metres out along that eye's view, posed in the reference space at that frame's eye pose:
+ *                          each icon lies on that eye's ray to its object (the other eye: the parallax of the distance
+ *                          against the object's, ~0.3 deg for an orc at 5..40 m). Not with a game menu (its board).
+ *                          Unset/off = build 8's world-locked HUD quad.
  *   SOMVR_XR_TEST=PATH     headless tests only: test hands, buttons, sticks and on-demand dumps from that file
  *                          (../somvr_menus.h 4; scripts/menus-drive.sh writes it, scripts/xr_compose.py reads the dumps).
  */
@@ -68,6 +84,18 @@ static struct {
     uint32_t extra;         /* the HUD swapchain's extra width (the tiles' area), set with the swapchain */
     int px[4];              /* the minimap's rect in the HUD image */
     int split;              /* this frame's HUD copy put the tiles into the extra area (not a menu frame) */
+    /* build 37: the mission timer's rect (SOMVR_XR_TIMER_RECT), cut out of the band unless the preload pops it; the
+     * watch's red rim at high alert (its red row buffer) */
+    int hud_eye;            /* build 37: SOMVR_XR_HUD_EYE (-1 off, 0 / 1 the eye) */
+    float hud_eye_m;
+    uint64_t n_hud_eye;
+    somvr_ht_set tm_set, cut_set;
+    int tm_on, tm_bad, tm_cut, rim_px, cut_on, cut_bad, cut_box[4];
+    uint64_t n_tm_cut, n_rim;
+    VkBuffer rim_buf;
+    VkDeviceMemory rim_mem;
+    const struct dev_st *rim_ds;
+    int rim_dead, rim_w;
     /* build 8: the wrist HUD and the prompt band (../somvr_menus.h 2b) */
     int wh, wh_bad, pb, pb_bad;
     somvr_ht_set wh_set, wh_clear, pb_set; /* 1920x1080 pixels (the switches) */
@@ -190,6 +218,20 @@ static void mn_config(void) {
     MN.sub_idx = -1, MN.sub_cut = 0;
     if (MN.sub && MN.pb) MN.sub_idx = somvr_sub_add(&MN.pb_set, MN.sub_set.r[0], &MN.sub_cut);
     MN.pp = somvr_pp_parse(getenv("SOMVR_XR_POPUPS"), &MN.pp_bad); /* build 21 */
+    b = 0; /* build 37: the mission timer's rect, the rim's thickness */
+    p = getenv("SOMVR_XR_TIMER_RECT");
+    MN.tm_on = p && *p && strcmp(p, "off") && somvr_ht_parse(p, "0,0,8,8", &MN.tm_set, &b) == 1 && !b;
+    MN.tm_bad = p && *p && strcmp(p, "off") && !MN.tm_on;
+    p = getenv("SOMVR_XR_HUD_EYE");
+    MN.hud_eye = p && !strcmp(p, "camera") ? 2 : p && (!strcmp(p, "0") || !strcmp(p, "1")) ? atoi(p) : -1;
+    p = getenv("SOMVR_XR_HUD_EYE_M");
+    MN.hud_eye_m = p && atof(p) >= 1 && atof(p) <= 100 ? (float)atof(p) : 10.0f;
+    p = getenv("SOMVR_XR_BAND_CUT");
+    b = 0;
+    MN.cut_on = p && *p && strcmp(p, "off") && somvr_ht_parse(p, "0,0,8,8", &MN.cut_set, &b) > 0 && !b;
+    MN.cut_bad = p && *p && strcmp(p, "off") && !MN.cut_on;
+    p = getenv("SOMVR_XR_RIM_PX");
+    MN.rim_px = p && atoi(p) >= 2 && atoi(p) <= 40 ? atoi(p) : 8;
     somvr_pp_cfg_default(&MN.ppc);
     somvr_pp_parse_geom(getenv("SOMVR_XR_POPUPS_GEOM"), &MN.ppc, &MN.ppg_bad);
     mn_xt_config();
@@ -279,6 +321,20 @@ static void mn_setup(void) {
     if (MN.pp_bad) lg("xr: popups: SOMVR_XR_POPUPS=%s is not gaze or band: band", getenv("SOMVR_XR_POPUPS"));
     if (MN.ppg_bad) lg("xr: popups: SOMVR_XR_POPUPS_GEOM=%s is not DOWN_DEG,TURN_DEG,EASE_MS (0..40, 10..120, 0..2000): "
                        "the defaults", getenv("SOMVR_XR_POPUPS_GEOM"));
+    if (MN.hud_eye == 2)
+        lg("xr: hud: the head-level HUD quad in the game camera's frustum 10 m out (SOMVR_XR_HUD_EYE=camera: the preload's "
+           "SOMVR_THF_HUDCAM; the game's world icons on their objects), eye 1's frustum while there is none");
+    else if (MN.hud_eye >= 0)
+        lg("xr: hud: the head-level HUD quad in eye %d's frustum %.1f m out (SOMVR_XR_HUD_EYE: the game's world icons on "
+           "their objects)", MN.hud_eye, MN.hud_eye_m);
+    if (MN.tm_bad) lg("xr: timer: SOMVR_XR_TIMER_RECT=%s is not X,Y,W,H in 1920x1080: off", getenv("SOMVR_XR_TIMER_RECT"));
+    if (MN.cut_bad) lg("xr: band: SOMVR_XR_BAND_CUT=%s is not X,Y,W,H[;..] in 1920x1080: off", getenv("SOMVR_XR_BAND_CUT"));
+    if (MN.cut_on) lg("xr: band: %d rect(s) always left out of its copies, the first %d,%d %dx%d", MN.cut_set.n,
+                      MN.cut_set.r[0][0], MN.cut_set.r[0][1], MN.cut_set.r[0][2], MN.cut_set.r[0][3]);
+    if (MN.tm_on)
+        lg("xr: timer: the mission timer's rect %d,%d %dx%d leaves the band while a timer runs without its popup (the "
+           "preload's SOMVR_CUE_TIMER: its start, 30 s, 10 s); the watch rim %d px at high alert", MN.tm_set.r[0][0],
+           MN.tm_set.r[0][1], MN.tm_set.r[0][2], MN.tm_set.r[0][3], MN.rim_px);
     lg("xr: popups: %s", MN.pp != SOMVR_PP_GAZE ? "band (the prompt band's tiles in one quad, placed with the HUD)"
        : !MN.pb ? "gaze, but no prompt band (SOMVR_XR_PROMPTS): none" : cfg.hud == SOMVR_HUD_HEAD ? "gaze, but the HUD is "
        "head-locked (SOMVR_XR_HUD=head): the band as it is" : "gaze");
@@ -371,6 +427,39 @@ static void mn_hud_quad(XrCompositionLayerQuad *q, const somvr_rec *rec) {
 }
 static int mn_hud_menu(void) { return MN.hud_menu; }
 
+static void mn_qrot(const float q[4], const float v[3], float out[3]);
+/* build 37 (SOMVR_XR_HUD_EYE): the world HUD quad fitted to eye k's frustum at hud_eye_m, at that frame's eye pose */
+static void mn_hud_eye(XrCompositionLayerQuad *q, const somvr_rec *rec) {
+    if (MN.hud_eye < 0 || (MN.menu && (MN.hud_kind & SOMVR_HUDF_MENU)) || cfg.hud == SOMVR_HUD_HEAD) return;
+    if (MN.hud_eye == 2) { /* the game camera's frustum (the preload's, this frame's) */
+        float sz[2];
+        XrPosef pc;
+        static uint64_t ncam, nmiss;
+        if (th_hud_cam(rec->frame, &pc, sz)) {
+            q->pose = pc, q->space = X.space, q->size.width = sz[0], q->size.height = sz[1];
+            if (ncam++ == 0)
+                lg("xr: hud: the game camera's frustum: the HUD quad %.2f x %.2f m at %+.2f,%+.2f,%+.2f (frame %llu)", sz[0],
+                   sz[1], pc.position.x, pc.position.y, pc.position.z, (unsigned long long)rec->frame);
+            return;
+        }
+        if (nmiss++ == 0) lg("xr: hud: no game camera frustum for frame %llu: eye 1's meanwhile", (unsigned long long)rec->frame);
+    }
+    int k = MN.hud_eye == 2 ? 1 : MN.hud_eye;
+    somvr_fovf f = somvr_submit_fov(&rec->eye[k], rec->applied, k);
+    float dm = MN.hud_eye_m, tl = tanf(f.l), tr = tanf(f.r), tu = tanf(f.u), td = tanf(f.d);
+    if (!(tr > tl) || !(tu > td) || !isfinite(tl + tr + tu + td)) return;
+    const somvr_posef *e = &rec->eye[k].pose;
+    float c[3] = {0.5f * dm * (tl + tr), 0.5f * dm * (tu + td), -dm}, w[3];
+    mn_qrot(e->q, c, w);
+    memcpy(&q->pose.orientation, e->q, sizeof(float) * 4);
+    q->pose.position = (XrVector3f){e->p[0] + w[0], e->p[1] + w[1], e->p[2] + w[2]};
+    q->space = X.space;
+    q->size.width = dm * (tr - tl), q->size.height = dm * (tu - td);
+    if (MN.n_hud_eye++ == 0)
+        lg("xr: hud: eye %d's frustum (fov %+.3f %+.3f %+.3f %+.3f rad): the HUD quad %.2f x %.2f m, %.1f m out (frame %llu)", k,
+           f.l, f.r, f.u, f.d, q->size.width, q->size.height, dm, (unsigned long long)rec->frame);
+}
+
 /* the off hand (the watch's, the wrist panel's): the right one when the menu's main hand is the left */
 static int mn_off_hand(void) { return VM.on && VM.main_hand == SOMVR_HAND_L ? SOMVR_HAND_R : SOMVR_HAND_L; }
 /* build 30 (re-xr-pipeline.md 132): the controller whose lower button is the game's A this session - the right one,
@@ -407,6 +496,38 @@ static int mn_hud_regions(const struct dev_st *ds, const hud_st *hd, VkImageCopy
     int32_t r[SOMVR_HUD_SPLIT_MAX][6];
     int n = somvr_hud_split(hd->w, hd->h, &MN.lay, r, cap < SOMVR_HUD_SPLIT_MAX ? cap : SOMVR_HUD_SPLIT_MAX);
     if (!n) return 0;
+    /* build 37: a mission timer runs and its popup is not wanted: the band's copies leave its rect out (on the watch only) */
+    MN.tm_cut = MN.tm_on && MN.lay.band[2] && (hd->kind & SOMVR_HUDF_TIMER) && !(hd->kind & SOMVR_HUDF_TIMER_POP);
+    int holes[1 + SOMVR_HT_MAX][4], nh = 0;
+    somvr_ht_set tp;
+    if (MN.tm_cut && somvr_ht_scale(&MN.tm_set, hd->w, hd->h, &tp) && tp.n == 1) memcpy(holes[nh++], tp.r[0], sizeof holes[0]);
+    if (MN.cut_on && MN.lay.band[2] && somvr_ht_scale(&MN.cut_set, hd->w, hd->h, &tp))
+        for (int i = 0; i < tp.n; i++) memcpy(holes[nh++], tp.r[i], sizeof holes[0]);
+    MN.cut_box[2] = 0;
+    for (int h = 0; h < nh; h++) { /* their box: a tile with content only inside it reads empty (mn_pp_take) */
+        int *bx = MN.cut_box, x1 = holes[h][0] + holes[h][2], y1 = holes[h][1] + holes[h][3];
+        if (!bx[2]) memcpy(bx, holes[h], sizeof MN.cut_box);
+        else {
+            int ox1 = bx[0] + bx[2], oy1 = bx[1] + bx[3];
+            bx[0] = holes[h][0] < bx[0] ? holes[h][0] : bx[0], bx[1] = holes[h][1] < bx[1] ? holes[h][1] : bx[1];
+            bx[2] = (x1 > ox1 ? x1 : ox1) - bx[0], bx[3] = (y1 > oy1 ? y1 : oy1) - bx[1];
+        }
+    }
+    for (int h = 0; h < nh; h++) {
+        int32_t q[SOMVR_HUD_SPLIT_MAX][6];
+        int m = 0, lim = cap < SOMVR_HUD_SPLIT_MAX ? cap : SOMVR_HUD_SPLIT_MAX, ok = 1;
+        for (int i = 0; ok && i < n; i++) {
+            int inband = r[i][2] >= MN.lay.band[0] && r[i][2] < MN.lay.band[0] + MN.lay.band[2] &&
+                         r[i][3] >= MN.lay.band[1] && r[i][3] < MN.lay.band[1] + MN.lay.band[3];
+            int32_t pc[4][6];
+            int k = inband ? somvr_rect_cut(r[i], holes[h], pc) : (memcpy(pc[0], r[i], sizeof pc[0]), 1);
+            if (m + k > lim) ok = 0;
+            for (int j = 0; ok && j < k; j++) memcpy(q[m++], pc[j], sizeof q[0]);
+        }
+        if (!ok) { MN.tm_cut = 0, MN.cut_box[2] = 0; break; }
+        memcpy(r, q, sizeof(q[0]) * (size_t)m), n = m;
+    }
+    if (MN.tm_cut) MN.n_tm_cut++;
     VkImageSubresourceLayers sub = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     for (int i = 0; i < n; i++)
         c[i] = (VkImageCopy){.srcSubresource = sub, .srcOffset = {r[i][0], r[i][1], 0}, .dstSubresource = sub,
@@ -424,6 +545,63 @@ static void mn_hud_clear(struct dev_st *ds, VkCommandBuffer cmd, VkImage img) {
     img_barrier(&b, img, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     ds->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b);
+}
+
+/* build 37 (SOMVR_CUE_ALERT): after the HUD's copy, high alert (the tag's SOMVR_HUDF_ALARM): the watch's rim red - a ring
+ * over the minimap's edge from a row of red texels (a host buffer of ours), the image still TRANSFER_DST_OPTIMAL */
+static int mn_rim_buf(struct dev_st *ds, int w) {
+    if (MN.rim_buf) return MN.rim_ds == ds && w <= MN.rim_w ? 0 : -1;
+    if (MN.rim_dead) return -1;
+    MN.rim_dead = 1;
+    if (!ds->CmdCopyBufferToImage || !ds->CreateBuffer || !ds->GetBufferMemoryRequirements || !ds->AllocateMemory ||
+        !ds->BindBufferMemory || !ds->MapMemory || !ds->is->GetPhysicalDeviceMemoryProperties)
+        return lg("xr: watch rim: the device lacks a function: no rim this session"), -1;
+    int bw = w < 1024 ? 1024 : w;
+    VkBufferCreateInfo bci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = (VkDeviceSize)bw * 4,
+                              .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+    if (ds->CreateBuffer(ds->dev, &bci, NULL, &MN.rim_buf) != VK_SUCCESS) {
+        MN.rim_buf = VK_NULL_HANDLE;
+        return lg("xr: watch rim: vkCreateBuffer failed: no rim this session"), -1;
+    }
+    VkMemoryRequirements mr;
+    VkPhysicalDeviceMemoryProperties mp;
+    ds->GetBufferMemoryRequirements(ds->dev, MN.rim_buf, &mr);
+    ds->is->GetPhysicalDeviceMemoryProperties(ds->pd, &mp);
+    int t = somvr_pick_host_memory(&mp, mr.memoryTypeBits);
+    VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size,
+                               .memoryTypeIndex = (uint32_t)(t < 0 ? 0 : t)};
+    void *m = NULL;
+    if (t < 0 || ds->AllocateMemory(ds->dev, &ai, NULL, &MN.rim_mem) != VK_SUCCESS ||
+        ds->BindBufferMemory(ds->dev, MN.rim_buf, MN.rim_mem, 0) != VK_SUCCESS ||
+        ds->MapMemory(ds->dev, MN.rim_mem, 0, VK_WHOLE_SIZE, 0, &m) != VK_SUCCESS)
+        return lg("xr: watch rim: no host memory for its row: no rim this session"), -1;
+    int bgra = X.hud_fmt == VK_FORMAT_B8G8R8A8_UNORM || X.hud_fmt == VK_FORMAT_B8G8R8A8_SRGB;
+    uint8_t px[4] = {bgra ? 12 : 235, 22, bgra ? 235 : 12, 255}; /* the alarm red, opaque */
+    for (int i = 0; i < bw; i++) memcpy((uint8_t *)m + 4 * i, px, 4);
+    MN.rim_ds = ds, MN.rim_w = bw, MN.rim_dead = 0;
+    lg("xr: watch rim: ready (a row of %d red texels, format %d): red over the map's edge at high alert, %d px", bw,
+       X.hud_fmt, MN.rim_px);
+    return 0;
+}
+static void mn_rim_cmds(struct dev_st *ds, VkCommandBuffer cmd, VkImage img, const hud_st *hd) {
+    static int was;
+    int on = MN.split && MN.lay.mm[2] > 0 && (hd->kind & SOMVR_HUDF_ALARM);
+    if (on != was) lg("xr: watch rim: %s", on ? "red (the preload says high alert)" : "off"), was = on;
+    if (!on || mn_rim_buf(ds, MN.lay.mm[2])) return;
+    static int32_t sp[2048][3];
+    int s = MN.lay.mm[2] < MN.lay.mm[3] ? MN.lay.mm[2] : MN.lay.mm[3];
+    int n = somvr_ring_spans(MN.lay.mm[0] + (MN.lay.mm[2] - s) / 2, MN.lay.mm[1] + (MN.lay.mm[3] - s) / 2, s, MN.rim_px, sp,
+                             2048);
+    static VkBufferImageCopy rg[2048];
+    for (int i = 0; i < n; i++)
+        rg[i] = (VkBufferImageCopy){.bufferOffset = 0, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                    .imageOffset = {sp[i][0], sp[i][1], 0}, .imageExtent = {(uint32_t)sp[i][2], 1, 1}};
+    VkImageMemoryBarrier b;
+    img_barrier(&b, img, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    ds->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b);
+    if (n) ds->CmdCopyBufferToImage(cmd, MN.rim_buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)n, rg);
+    MN.n_rim++;
 }
 
 static void mn_qrot(const float q[4], const float v[3], float out[3]) { /* v rotated by the unit quaternion q */
@@ -557,7 +735,14 @@ static void mn_pp_free(struct dev_st *ds) {
     MN.pp_map = NULL, MN.pp_buf = VK_NULL_HANDLE, MN.pp_mem = VK_NULL_HANDLE, MN.pp_ds = NULL;
     memset(MN.pp_e, 0, sizeof MN.pp_e);
 }
-static void pp_destroy(void) { mn_pp_free(MN.pp_ds); } /* xr_teardown_session, after sc_wait_all */
+static void pp_destroy(void) { /* xr_teardown_session, after sc_wait_all */
+    mn_pp_free(MN.pp_ds);
+    struct dev_st *ds = (struct dev_st *)MN.rim_ds; /* build 37: the watch rim's row */
+    if (ds && MN.rim_mem) ds->UnmapMemory(ds->dev, MN.rim_mem);
+    if (ds && MN.rim_buf) ds->DestroyBuffer(ds->dev, MN.rim_buf, NULL);
+    if (ds && MN.rim_mem) ds->FreeMemory(ds->dev, MN.rim_mem, NULL);
+    MN.rim_buf = VK_NULL_HANDLE, MN.rim_mem = VK_NULL_HANDLE, MN.rim_ds = NULL, MN.rim_dead = 0;
+}
 /* the readback buffer for entries of esz bytes (made at the first reading); 0 = ready */
 static int mn_pp_buf(struct dev_st *ds, VkDeviceSize esz) {
     if (MN.pp_map) return MN.pp_ds == ds && esz <= MN.pp_esz ? 0 : -1;
@@ -661,6 +846,15 @@ static void mn_pp_take(int i) {
         int was = MN.pp_rd[t].present;
         MN.pp_rd[t].present = somvr_pp_measure(MN.pp_map + MN.pp_e[i].off[t], MN.pp_e[i].w[t], MN.pp_e[i].nrow[t],
                                                SOMVR_PP_STEP, MN.pp_rd[t].bb);
+        if (MN.pp_rd[t].present && MN.cut_box[2]) { /* build 37: its content only where the band's copy cuts it: empty */
+            int first = 0;
+            if (mn_pp_tiles(&first) > t) {
+                const int *sr = MN.lay.src[first + t], *bb = MN.pp_rd[t].bb;
+                int x0 = MN.cut_box[0] - sr[0] - 4, y0 = MN.cut_box[1] - sr[1] - 4, x1 = x0 + MN.cut_box[2] + 8,
+                    y1 = y0 + MN.cut_box[3] + 8;
+                if (bb[0] >= x0 && bb[2] <= x1 && bb[1] >= y0 && bb[3] <= y1) MN.pp_rd[t].present = 0;
+            }
+        }
         if (MN.pp_rd[t].present != was && MN.pp_lines++ < 300) {
             if (MN.pp_rd[t].present)
                 lg("xr: popups: tile %d has something (reading %llu: its box %d,%d..%d,%d)", t,
@@ -772,6 +966,8 @@ static void xl_cap(xr_comp *c) {
     uint32_t n = 0, max = X.max_layers ? X.max_layers : XL_MAX, nb = 0;
     for (int i = 0; c->l[XL_OWN] && i < XL_N; i++) n += c->l[i] != NULL;
     for (int i = XL_BAND; i <= XL_BAND4; i++) nb += c->l[i] != NULL; /* build 21: the popups' four; build 22: five */
+    if (n > max + nb && c->l[XL_LDOT]) /* b37 live3: first the live card's waiting dot */
+        c->l[XL_LDOT] = NULL, n--;
     if (n > max + nb && c->l[XL_HANDS]) /* build 10: then our hands (the game's are hidden) */
         c->l[XL_HANDS] = NULL, n--;
     for (int i = XL_MBD; i <= XL_MBK && n > max + nb; i++) /* then the menus' backdrop */
@@ -874,7 +1070,8 @@ static int mn_vm_touch(int card, const somvr_posef *panel, const float size[2], 
     MN.panel = *panel, MN.panel_sz[0] = size[0], MN.panel_sz[1] = size[1], MN.panel_n = X.n_stereo + 1;
     if (!MN.touch) return 0;
     somvr_tc_in ti;
-    mn_tc_in(&ti, card ? 3u : 1u << (VM.main_hand & 1), card ? 2u : 1u, panel, size);
+    mn_tc_in(&ti, card || vm_pinned_now ? 3u : 1u << (VM.main_hand & 1), card ? 2u : 1u, panel, size); /* (b37 live3:
+                                                                                          * either hand, pinned) */
     somvr_tc_update(&MN.tv, &MN.tcc, &ti, &MN.tvo);
     if (MN.tvo.edges & SOMVR_TCE_PRESS) MN.n_press_v++;
     if (!MN.tvo.on && !(MN.tvo.edges & SOMVR_TCE_RELEASE)) return 0;
@@ -1055,6 +1252,7 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
         const char *what = i == XL_HUD ? (MN.hud_menu ? "hud (a menu board)" : "hud") : i == XL_MMAP ? "minimap"
                            : i == XL_BAND && !MN.pp_has ? "hud band"
                            : i >= XL_BAND && i <= XL_BAND4 ? "hud popup" /* build 21: SOMVR_XR_POPUPS=gaze's tiles */
+                           : i == XL_LDOT ? "live dot" /* b37 live3: on the back of the hand, over our hands */
                            : i == XL_VM0 && lv_kind() ? (lv_kind() == 1 ? "live card" : "live dot") /* build 35 */
                            : i == XL_VM0 ? (MN.card_state == 1 ? "vrmenu card" : "vrmenu panel")
                            : i == XL_VM1 || i == XL_VM2 ? "vrmenu marker" : i == XL_PTR0 || i == XL_PTR1 ? "pointer marker"
@@ -1082,7 +1280,7 @@ static void mn_dump_layers(const XrCompositionLayerProjectionView pv[2], const x
         MK.cost_ms += (ss_now() - t0) * 1e3;
         return; /* (mk_launch clears mn_dump_frame) */
     }
-    if (c->l[XL_VM0] && lv_kind()) lv_dump(mn_dump_frame); /* build 35: the live card's picture */
+    if ((c->l[XL_VM0] && lv_kind()) || c->l[XL_LDOT]) lv_dump(mn_dump_frame); /* build 35: the live card's picture */
     else if (c->l[XL_VM0]) mn_dump_vrmenu();
     if (c->l[XL_OBJ] || c->l[XL_OBJL]) ob_dump(mn_dump_frame); /* build 15: the objective marker's picture */
     mn_dump_frame = 0;

@@ -7,14 +7,15 @@
  *     patches/<id>/patch.txt (scripts/live_patch.sh) -> a "Patch N ready" card and the Test page's patch box;
  *     DIR/patches/state.txt (the game side's answer to a request) -> a result card, the box again. It writes the
  *     player's acts: say/<n>.shown and .read, patches/request.txt ("apply ID SEQ" / "undo ID SEQ").
- *   - the frame (vm_frame): a card waits -> while the moment is calm (somvr_lv_calm: 3 s without the bow, a climb
- *     hold, a swing, an attack incoming or an attack at Talion lately - SOMVR_VMG_FIGHT) the palm gesture shows the
- *     card instead of the menu (24 x 15 cm at the panel's place: never in the face, only where the palm is held up);
- *     the menu's gesture is held meanwhile (the menu button still opens it); a NUDGE in the palm's hand when a card
- *     first becomes ready to read. A tap (the main hand's fingertip, SOMVR_XR_TOUCH; without touch the main hand's
- *     trigger while it points at the card) closes it: CLICK, the next card on the next palm. Not calm (a fight) or
- *     the palm not up: a small amber dot at the card's place, nothing else. The menu open: neither (its Test page has
- *     the box). The card and the dot use the menu's quad slots (XL_VM0) - never both with the panel.
+ *   - the frame (vm_frame; b37 live3, re-xr-pipeline.md 162.10): a card waits -> a small amber dot on the BACK of the
+ *     off hand (only while the back faces the eyes); at a calm moment (somvr_lv_calm: 3 s without the bow, a climb hold,
+ *     a swing, an attack incoming or an attack at Talion lately - SOMVR_VMG_FIGHT) with its spoken line ready the card
+ *     goes out BY ITSELF, world-locked beside the off hand (somvr_lv_card_place: placed once, still after), with a NUDGE
+ *     in that hand and the line said; it stays 8 s (and while its line is said; 30 s at most) or until tapped (the main
+ *     hand's fingertip, SOMVR_XR_TOUCH; without touch its trigger pointed at the card): CLICK, the next card 1 s later.
+ *     A fight or the menu puts it away (out again, placed anew, at the next calm moment). The VR menu keeps its palm
+ *     gesture (build 35-37 showed the card on the raised palm and held the menu's gesture meanwhile: the player kept
+ *     opening the menu instead). The card and the dot use the menu's quad slots (XL_VM0) - never both with the panel.
  *   - the patch box's Apply patch / Undo patch (vm_click) -> patches/request.txt; nothing swaps without that press.
  * Logged: "xr: live: ..." (setup, each card's arrival, shown, read; each press). Any failure: no card for the session,
  * logged once; the frames go on. */
@@ -27,6 +28,7 @@ typedef struct {
     int say;             /* say/<n> (0: not a message) */
     somvr_lv_card card;
     int voiced;          /* b37: its spoken line is ready (say/<key>.wav), or none is coming: the nudge may come */
+    int spoken;          /* b37 live3: its line said (say/<key>.spoken) or none coming: the card may go after 8 s */
     double t_in;         /* b37: its arrival (the thread's monotonic clock) */
 } lv_item;
 static double lv_mono(void) {
@@ -79,6 +81,14 @@ static struct {
     int nudged_for;      /* the card nudged for (its q[0] key's hash) */
     double shown_t;
     char shown_key[24];
+    /* b37 live3 (162.10): the card out by itself, world-locked beside the off hand - since out_t (this showing), its
+     * place; the next one not before next_t; the times it was put away for a fight */
+    int out;
+    double out_t, next_t;
+    somvr_posef out_pose;
+    uint64_t n_out, n_timeout, n_away, n_dot_hidden;
+    int dot_on;                   /* this frame's dot (its own slot XL_LDOT, over our hands) */
+    XrCompositionLayerQuad dot_q;
     somvr_tc_state tc;
     somvr_tc_out tco;
     int trig_was;
@@ -125,6 +135,7 @@ static void lv_push(const char *key, int say, const somvr_lv_card *c) { /* LV.mx
     snprintf(it->key, sizeof it->key, "%s", key);
     it->say = say, it->card = *c;
     it->voiced = !LV.tts || !c->speech[0], it->t_in = lv_mono();
+    it->spoken = it->voiced; /* (no line coming: nothing to wait for) */
     LV.n_cards++;
     if (c->speech[0] && LV.nsp < 8) { /* b37: its spoken line for the daemon (say/<key>.line) */
         snprintf(LV.sp_key[LV.nsp], sizeof LV.sp_key[0], "%s", key);
@@ -174,6 +185,10 @@ static void lv_poll(void) {
         snprintf(key, sizeof key, "say:%d", LV.say_next);
         somvr_lv_card c;
         somvr_lv_card_make(&c, SOMVR_LVK_SAY, title, buf, "Tap to close");
+        char qp[1200];
+        struct stat qs;
+        snprintf(qp, sizeof qp, "%s/say/%d.quiet", LV.dir, LV.say_next);
+        if (stat(qp, &qs) == 0) c.speech[0] = 0; /* b37 live3: a quiet card (a page after the first): no line coming */
         pthread_mutex_lock(&LV.mx);
         lv_push(key, LV.say_next, &c);
         pthread_mutex_unlock(&LV.mx);
@@ -204,7 +219,25 @@ static void lv_poll(void) {
         snprintf(key, sizeof key, "patch:%d", rid);
         somvr_lv_card c;
         somvr_lv_card_make(&c, SOMVR_LVK_PATCH, title, text, "Tap to close");
-        lv_push(key, 0, &c);
+        if (c.more && p.live) { /* b37 live3: too long for one card (the 22:13 session: cut at the bottom) - two pages,
+                                  * what changed / what to try; the voice says only "Patch N ready: what changed" */
+            somvr_lv_card c2;
+            char t1[40], t2[40], key2[24], sp[200];
+            snprintf(t1, sizeof t1, "Patch %d ready (1 of 2)", rid);
+            snprintf(t2, sizeof t2, "Patch %d (2 of 2)", rid);
+            somvr_lv_card_make(&c, SOMVR_LVK_PATCH, t1, p.what, "Tap for page 2");
+            snprintf(text, sizeof text, "%s%s", p.try_[0] ? "Try: " : "", p.try_);
+            somvr_lv_card_make(&c2, SOMVR_LVK_PATCH, t2, text, "Apply: menu > Test tab");
+            snprintf(sp, sizeof sp, "Patch %d ready: %s", rid, p.what);
+            somvr_lv_speech(SOMVR_LVK_SAY, NULL, sp, c.speech, sizeof c.speech);
+            c2.speech[0] = 0; /* (quiet: the first page's line is the patch's) */
+            snprintf(key2, sizeof key2, "patch:%d:2", rid);
+            lv_push(key, 0, &c);
+            lv_push(key2, 0, &c2);
+            lg("xr: live: patch %d's card in 2 pages (%d + %d lines)", rid, c.n, c2.n);
+        } else {
+            lv_push(key, 0, &c);
+        }
         lg("xr: live: patch %d staged (%s): '%.80s' / try '%.60s'", rid, p.live ? "live" : "after a restart", p.what, p.try_);
     }
     if (rid > 0 || !LV.box.on || !LV.box.line[0][0]) lv_box_patch(rid > 0 ? &p : NULL);
@@ -239,10 +272,23 @@ static void lv_poll(void) {
             int have = stat(path, &sb) == 0;
             if (have || now - it->t_in > LV_VOICE_WAIT_S) {
                 it->voiced = 1;
+                if (!have) it->spoken = 1; /* b37 live3: no line: nothing to wait for */
                 if (LV.lines++ < 300)
                     lg("xr: live: card %s: %s %.1f s after it arrived", it->key, have ? "its spoken line ready" :
                        "no spoken line yet (the nudge goes without it)", now - it->t_in);
             }
+        }
+        pthread_mutex_unlock(&LV.mx);
+    }
+    /* b37 live3: the front card's line said (say/<key>.spoken): the card may go after its 8 s */
+    if (LV.tts) {
+        pthread_mutex_lock(&LV.mx);
+        if (LV.nq > 0 && !LV.q[0].spoken) {
+            char fk[24];
+            struct stat sb;
+            lv_fkey(LV.q[0].key, fk, sizeof fk);
+            snprintf(path, sizeof path, "%s/say/%s.spoken", LV.dir, fk);
+            if (stat(path, &sb) == 0) LV.q[0].spoken = 1;
         }
         pthread_mutex_unlock(&LV.mx);
     }
@@ -282,7 +328,7 @@ static void *lv_main(void *arg) {
     (void)arg;
     while (!atomic_load(&LV.stop)) {
         lv_poll();
-        struct timespec ts = {0, 500 * 1000 * 1000};
+        struct timespec ts = {0, 200 * 1000 * 1000}; /* b37 live3: 0.5 -> 0.2 s (the voice and the card sooner) */
         nanosleep(&ts, NULL);
     }
     atomic_store(&LV.running, 0);
@@ -500,7 +546,12 @@ static void lv_setup(void) {
     }
     atomic_store(&LV.running, 1);
     LV.on = 1;
-    lg("xr: live: on - the folder %s every 0.5 s; a card on the off palm at a calm moment (%.1f s without the bow, a "
+    { /* b37 live3: what this layer does with the folder (scripts/live.py reads it: a long patch card is paged here) */
+        char cp[600];
+        snprintf(cp, sizeof cp, "%s/layer.caps", LV.dir);
+        lv_write(cp, "pages card-out dot-hand\n");
+    }
+    lg("xr: live: on - the folder %s every 0.2 s; a card out by itself beside the off hand at a calm moment (%.1f s without the bow, a "
        "climb hold, a swing or an attack), the dot meanwhile; the Test page's patch box; spoken lines %s", LV.dir,
        LV.ccfg.calm_s, LV.tts ? "on (the nudge waits up to 8 s for each card's)" : "off");
 }
@@ -526,18 +577,11 @@ static int lv_pre(const somvr_vm_gin *gi) {
     } else {
         waiting = LV.showing != 0;
     }
-    int hold = waiting && calm && !VM.gs.open;
-    if (hold && VM.gs.armed) LV.n_held++;
-    if (hold) VM.gs.armed = 0; /* (the menu button still toggles) */
-    return hold;
+    /* b37 live3: the menu keeps its palm gesture - the card goes out by itself (lv_post), never on the palm */
+    return waiting && calm && !VM.gs.open;
 }
 
-/* the card's and the dot's place: the panel's, 4 cm lower (a smaller card over the raised palm) */
-static int lv_pose(const somvr_vm_gin *gi, somvr_posef *out) {
-    somvr_vm_gcfg c = VM.gc;
-    c.up_m = VM.gc.up_m - 0.04f;
-    return gi->hand_ok && somvr_vm_panel_pose(&gi->grip, gi->hand, gi->head_ok ? &gi->head : NULL, &c, out);
-}
+/* the dot's quad (the dot: SOMVR_LV_DOT_M; the card: its picture) */
 static XrCompositionLayerQuad lv_quad(const somvr_posef *p, int dot) {
     XrCompositionLayerQuad q = {.type = XR_TYPE_COMPOSITION_LAYER_QUAD,
                                 .layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
@@ -552,12 +596,35 @@ static XrCompositionLayerQuad lv_quad(const somvr_posef *p, int dot) {
     return q;
 }
 
-/* vm_frame, after the panel: the card or the dot into VM.q[0] when the menu shows nothing; returns the trigger bits
- * to consume (the main hand's while it points at the card without touch) */
+/* the front card closed (tapped: read; or its time over): the next one after SOMVR_LV_GAP_S */
+static void lv_close(const lv_item *front, double t, int tapped) {
+    pthread_mutex_lock(&LV.mx);
+    if (LV.nq > 0 && !strcmp(LV.q[0].key, front->key)) {
+        memmove(&LV.q[0], &LV.q[1], sizeof LV.q[0] * (size_t)(LV.nq - 1));
+        LV.nq--;
+    }
+    if (front->say && LV.nmarks < 8) snprintf(LV.marks[LV.nmarks++], sizeof LV.marks[0], "%d.read", front->say);
+    pthread_mutex_unlock(&LV.mx);
+    LV.n_read++;
+    if (!tapped) LV.n_timeout++;
+    lg("xr: live: card %s %s (out %.1f s); %llu read in all", front->key, tapped ? (MN.touch ? "tapped" : "the trigger on it")
+       : "gone by itself (its time over)", t - LV.out_t, (unsigned long long)LV.n_read);
+    LV.out = 0, LV.shown_key[0] = 0, LV.nudged_for = 0, LV.next_t = t + SOMVR_LV_GAP_S;
+    somvr_tc_reset(&LV.tc), memset(&LV.tco, 0, sizeof LV.tco);
+}
+
+/* vm_frame, after the panel: (b37 live3, 162.10) a card waiting - the dot on the BACK of the off hand (only while the
+ * back faces the eyes); at a calm moment with its line ready the card goes out by itself, world-locked beside the off
+ * hand (somvr_lv_card_place, placed once), with the nudge and its spoken line; it stays SOMVR_LV_SHOW_S (and while its
+ * line is said; SOMVR_LV_SHOW_MAX_S at most) or until tapped; a fight (not calm) or the menu puts it away (out again,
+ * placed anew, at the next calm moment). Into VM.q[0] when the menu shows nothing; returns the trigger bits to
+ * consume (the main hand's while it points at the card without touch) */
 static uint32_t lv_post(dev_st *ds, const somvr_vm_gin *gi, int hold, int main) {
-    LV.showing = 0, LV.in_vm0 = 0;
+    LV.showing = 0, LV.in_vm0 = 0, LV.dot_on = 0;
     if (!LV.on || VM.nq > 0 || VM.gs.open) {
         if (LV.tco.on) somvr_tc_reset(&LV.tc), memset(&LV.tco, 0, sizeof LV.tco);
+        if (LV.out && LV.on && LV.lines++ < 300) lg("xr: live: the card put away: the menu is open (out again at the next calm moment)");
+        LV.out = 0;
         return 0;
     }
     lv_item front;
@@ -568,45 +635,62 @@ static uint32_t lv_post(dev_st *ds, const somvr_vm_gin *gi, int hold, int main) 
     } else if (LV.drawn_key[0]) { /* the thread busy this frame: the last picture again */
         return 0;
     }
-    if (!have) return 0;
-    somvr_posef pose;
-    if (!lv_pose(gi, &pose)) return 0;
+    if (!have) {
+        LV.out = 0;
+        return 0;
+    }
     if (strcmp(front.key, LV.drawn_key) && lv_upload(ds, &front.card, front.key)) return 0;
     if (!LV.released) return 0;
-    uint32_t h = lv_hash(front.key);
-    if (hold && LV.nudged_for != (int)h && front.voiced) { /* the first calm moment for this card: a nudge in the palm's
-                                                            * hand (b37: with its spoken line, when that is on) */
-        LV.nudged_for = (int)h;
-        vm_haptic(gi->hand, SOMVR_HX_READY);
-        /* b37: and its spoken line now (the daemon plays say/<key>.wav when say/<key>.calm appears) */
-        char fk[24];
-        lv_fkey(front.key, fk, sizeof fk);
-        if (pthread_mutex_lock(&LV.mx) == 0) {
-            if (LV.nmarks < 8) snprintf(LV.marks[LV.nmarks++], sizeof LV.marks[0], "%.24s.calm", fk);
-            pthread_mutex_unlock(&LV.mx);
-        }
-        lg("xr: live: card %s: the first calm moment (nudge; say/%s.calm)", front.key, fk);
+    double t = gi->t;
+    if (LV.out && !hold) { /* a fight (or the calm gone): away now, out again at the next calm moment */
+        LV.out = 0, LV.n_away++;
+        if (LV.lines++ < 300) lg("xr: live: card %s put away: not calm (out again at the next calm moment)", front.key);
     }
-    int card = hold && VM.gs.facing;
-    LV.quad = lv_quad(&pose, !card);
-    VM.q[0] = LV.quad, VM.nq = 1;
-    LV.in_vm0 = 1, LV.showing = card ? 1 : 2;
-    if (!card) {
-        LV.n_dot_frames++;
+    if (!LV.out && hold && front.voiced && t >= LV.next_t && gi->hand_ok && gi->head_ok &&
+        somvr_lv_card_place(&gi->head, &gi->grip, gi->hand, &LV.out_pose)) {
+        LV.out = 1, LV.out_t = t, LV.n_out++;
+        uint32_t h = lv_hash(front.key);
+        if (LV.nudged_for != (int)h) { /* its first time out: the nudge, and its spoken line now (say/<key>.calm) */
+            LV.nudged_for = (int)h;
+            vm_haptic(gi->hand, SOMVR_HX_READY);
+            char fk[24];
+            lv_fkey(front.key, fk, sizeof fk);
+            if (pthread_mutex_lock(&LV.mx) == 0) {
+                if (LV.nmarks < 8) snprintf(LV.marks[LV.nmarks++], sizeof LV.marks[0], "%.24s.calm", fk);
+                if (front.say && LV.nmarks < 8) snprintf(LV.marks[LV.nmarks++], sizeof LV.marks[0], "%d.shown", front.say);
+                pthread_mutex_unlock(&LV.mx);
+            }
+            LV.shown_t = t, LV.n_shown++;
+            snprintf(LV.shown_key, sizeof LV.shown_key, "%s", front.key);
+        }
+        float hd[3];
+        for (int i = 0; i < 3; i++) hd[i] = LV.out_pose.p[i] - gi->head.p[i];
+        lg("xr: live: card %s out by itself beside the %s hand at %+.3f,%+.3f,%+.3f (%.2f m from the head, %.0f cm below "
+           "the eyes; the hand at %+.3f,%+.3f,%+.3f; calm %.1f s; '%s')", front.key, gi->hand == SOMVR_HAND_L ? "left" : "right",
+           LV.out_pose.p[0], LV.out_pose.p[1], LV.out_pose.p[2], sqrtf(hd[0] * hd[0] + hd[1] * hd[1] + hd[2] * hd[2]),
+           -hd[1] * 100.0f, gi->grip.p[0], gi->grip.p[1], gi->grip.p[2], t - LV.calm.busy_t, front.card.title);
+    }
+    if (!LV.out) { /* waiting: the dot on the back of the off hand, only while that faces the eyes */
+        somvr_posef dp;
+        if (gi->hand_ok && somvr_lv_dot_place(&gi->grip, gi->hand, gi->head_ok ? &gi->head : NULL, &dp)) {
+            LV.dot_q = lv_quad(&dp, 1); /* its own slot over our hands (XL_VM0 is under them: hidden on the hand) */
+            LV.dot_on = 1, LV.showing = 2, LV.n_dot_frames++;
+        } else {
+            LV.n_dot_hidden++;
+        }
         if (LV.tco.on) somvr_tc_reset(&LV.tc), memset(&LV.tco, 0, sizeof LV.tco);
         return 0;
     }
-    LV.n_card_frames++, LV.card_pose = pose;
-    if (strcmp(LV.shown_key, front.key)) { /* shown first */
-        snprintf(LV.shown_key, sizeof LV.shown_key, "%s", front.key);
-        LV.shown_t = gi->t, LV.n_shown++;
-        lg("xr: live: card %s shown on the %s palm (calm %.1f s; '%s')", front.key, gi->hand == SOMVR_HAND_L ? "left" : "right",
-           gi->t - LV.calm.busy_t, front.card.title);
-        if (front.say && pthread_mutex_lock(&LV.mx) == 0) {
-            if (LV.nmarks < 8) snprintf(LV.marks[LV.nmarks++], sizeof LV.marks[0], "%d.shown", front.say);
-            pthread_mutex_unlock(&LV.mx);
-        }
+    /* out: the card where it was placed, until tapped or its time is over */
+    double shown = t - LV.out_t;
+    if ((shown >= SOMVR_LV_SHOW_S && front.spoken) || shown >= SOMVR_LV_SHOW_MAX_S) {
+        lv_close(&front, t, 0);
+        return 0;
     }
+    somvr_posef pose = LV.out_pose;
+    LV.quad = lv_quad(&pose, 0);
+    VM.q[0] = LV.quad, VM.nq = 1;
+    LV.in_vm0 = 1, LV.showing = 1, LV.n_card_frames++, LV.card_pose = pose;
     /* the tap: the main hand's fingertip (touch), else its trigger pointed at the card */
     float sz[2] = {SOMVR_LV_CARD_W_M, SOMVR_LV_CARD_H_M};
     int press = 0;
@@ -630,25 +714,16 @@ static uint32_t lv_post(dev_st *ds, const somvr_vm_gin *gi, int hold, int main) 
         if (on) consume = 1u << main;
     }
     if (press) {
-        LV.n_press++, LV.n_read++;
+        LV.n_press++;
         vm_haptic(main, SOMVR_HX_CLICK);
-        pthread_mutex_lock(&LV.mx);
-        if (LV.nq > 0 && !strcmp(LV.q[0].key, front.key)) {
-            memmove(&LV.q[0], &LV.q[1], sizeof LV.q[0] * (size_t)(LV.nq - 1));
-            LV.nq--;
-        }
-        if (front.say && LV.nmarks < 8) snprintf(LV.marks[LV.nmarks++], sizeof LV.marks[0], "%d.read", front.say);
-        pthread_mutex_unlock(&LV.mx);
-        lg("xr: live: card %s read (%s, shown %.1f s); %llu read in all", front.key, MN.touch ? "tapped" : "the trigger on it",
-           gi->t - LV.shown_t, (unsigned long long)LV.n_read);
-        LV.shown_key[0] = 0;
-        LV.nudged_for = 0;
-        somvr_tc_reset(&LV.tc), memset(&LV.tco, 0, sizeof LV.tco);
+        lv_close(&front, t, 1);
+        return consume;
     }
     if (LV.n_card_frames <= 2 || LV.n_card_frames % 600 == 0)
-        lg("xr: live: card frame %llu: %s at %+.3f,%+.3f,%+.3f (dot frames %llu, gestures held %llu)",
+        lg("xr: live: card frame %llu: %s at %+.3f,%+.3f,%+.3f (dot frames %llu, hidden %llu; out %llu, away %llu)",
            (unsigned long long)LV.n_card_frames, front.key, pose.p[0], pose.p[1], pose.p[2],
-           (unsigned long long)LV.n_dot_frames, (unsigned long long)LV.n_held);
+           (unsigned long long)LV.n_dot_frames, (unsigned long long)LV.n_dot_hidden, (unsigned long long)LV.n_out,
+           (unsigned long long)LV.n_away);
     return consume;
 }
 

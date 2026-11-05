@@ -126,7 +126,7 @@ for s in $STEPS; do
       gcc -std=c11 -D_GNU_SOURCE -I "$WTD/mod/somvr" -o "$R/vm_uv" "$WTD/tools/vm_uv.c" "$WTD/mod/somvr/somvr_vrmenu.c" \
           "$WTD/mod/somvr/somvr_font.c" -lm 2>> "$S" && "$R/vm_uv" "$(python3 -c "print(hex(int('${AV:-0}', 16) | 1 << 63))")" > "$R/vm_uv.txt"
       tu=$(awk -F'\t' '$1 == "Test" && $2 == "button" { print $4, $5; exit }' "$R/vm_uv.txt")   # (the layer's Test page bit 63)
-      [ -n "$tu" ] || tu="0.900 0.042"
+      [ -n "$tu" ] || tu="0.900 0.0395"
       n0=$(lines "$X"); press $tu
       since "$n0" 'click Test' "$X" | grep -q . && pass "the Test tab: $(since "$n0" 'click Test' "$X" | tail -1 | cut -c1-120)" || fail "the Test tab ($tu)"
       sleep 1; dq "menu-test-box"
@@ -134,8 +134,8 @@ for s in $STEPS; do
       PW=0; grep -qx 'SOMVR_PERF=on' "$R/env.txt" && PW=1
       pw() { [ $PW = 1 ] || return 0; w "perf $1" 0.3; x "perf $1"; echo "$(date +%T) perf window $1" | tee -a "$S"; }
       pw pre-apply; [ $PW = 1 ] && sleep 10; pw apply
-      # Apply patch: its rect 16,616 232x56 of the 512x768 panel (somvr_vrmenu.h SOMVR_VM_LIVE_BTN_Y)
-      n0=$(lines "$X"); nl=$(lines); press 0.2578 0.8385
+      # Apply patch: its rect 16,616 232x56 of the 512x816 panel (768 before b37 live3) (somvr_vrmenu.h SOMVR_VM_LIVE_BTN_Y)
+      n0=$(lines "$X"); nl=$(lines); press 0.2578 0.7892
       waitfor "$n0" 'xr: live: Apply patch pressed' "$X" 3 && pass "$(since "$n0" 'Apply patch pressed' "$X" | tail -1 | cut -c1-140)" \
         || fail "Apply patch not pressed ($(since "$n0" 'xr: (live|vrmenu)' "$X" | tail -2 | tr '\n' ' ' | cut -c1-200))"
       waitfor "$nl" '^LIVE request [0-9]+: (applied|stub|refused|bad|restart)' "$L" 40 \
@@ -147,7 +147,7 @@ for s in $STEPS; do
       grep -aE '^LIVE config on' "$L" | tail -2 | cut -c1-120 | tee -a "$S"   # (b37: the module's own line - a test patch marks itself)
       ans=$(sed -n 's/^last=//p' "$LD/patches/state.txt")
       if [ "$ans" = applied ]; then
-        sleep 2; pw undo; n0=$(lines "$X"); nl=$(lines); press 0.7422 0.8385   # Undo patch (264,616 232x56)
+        sleep 2; pw undo; n0=$(lines "$X"); nl=$(lines); press 0.7422 0.7892   # Undo patch (264,616 232x56 of 816)
         waitfor "$nl" '^LIVE request [0-9]+: (undone|refused|bad)' "$L" 40 \
           && pass "undo: $(since "$nl" '^LIVE request' | tail -1 | cut -c1-220)" || fail "no answer to Undo"
         sleep 1; dq "menu-test-after-undo"

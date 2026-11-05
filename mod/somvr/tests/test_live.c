@@ -228,8 +228,113 @@ static void test_menu_box(void) {
     somvr_vm_live_set(NULL);
 }
 
+/* b37 live3 (re-xr-pipeline.md 162.10): where the card goes out by itself, and the dot on the back of the hand */
+static void tq(const float q[4], const float v[3], float o[3]) {
+    float u[3] = {q[0], q[1], q[2]}, w = q[3];
+    float t[3] = {2 * (u[1] * v[2] - u[2] * v[1]), 2 * (u[2] * v[0] - u[0] * v[2]), 2 * (u[0] * v[1] - u[1] * v[0])};
+    o[0] = v[0] + w * t[0] + (u[1] * t[2] - u[2] * t[1]);
+    o[1] = v[1] + w * t[1] + (u[2] * t[0] - u[0] * t[2]);
+    o[2] = v[2] + w * t[2] + (u[0] * t[1] - u[1] * t[0]);
+}
+static float faces(const somvr_posef *p, const float eye[3]) { /* cos: the quad's +Z toward eye */
+    static const float z0[3] = {0, 0, 1};
+    float z[3], v[3] = {eye[0] - p->p[0], eye[1] - p->p[1], eye[2] - p->p[2]};
+    tq(p->q, z0, z);
+    float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    return (z[0] * v[0] + z[1] * v[1] + z[2] * v[2]) / l;
+}
+static void test_place(void) {
+    somvr_posef head = {{0, 0, 0, 1}, {0, 1.6f, 0}}, out, dot;
+    /* the off (left) hand down at the side - the calm moment's usual pose */
+    somvr_posef down = {{0, 0, 0, 1}, {-0.25f, 0.85f, -0.05f}};
+    CHECK(somvr_lv_card_place(&head, &down, 0, &out), "a pose for the hand down");
+    float dh = sqrtf(out.p[0] * out.p[0] + out.p[2] * out.p[2]), ang = atan2f(-out.p[0], -out.p[2]) * 57.29578f;
+    CHECK(dh >= 0.449f && dh <= 0.651f && ang > 0 && ang <= 45.1f && out.p[1] <= 1.6f - 0.119f && out.p[1] >= 1.6f - 0.351f &&
+              faces(&out, head.p) > 0.999f, "the hand down: the card %.2f m out, %.0f deg left of the gaze, %.0f cm below the "
+                                           "eyes, facing them (%.4f)", dh, ang, (1.6f - out.p[1]) * 100, faces(&out, head.p));
+    /* the left hand raised in front: the card on its inner (right) side, clear of it */
+    somvr_posef up = {{0, 0, 0, 1}, {-0.15f, 1.30f, -0.35f}};
+    somvr_lv_card_place(&head, &up, 0, &out);
+    float gap = sqrtf((out.p[0] - up.p[0]) * (out.p[0] - up.p[0]) + (out.p[2] - up.p[2]) * (out.p[2] - up.p[2]));
+    CHECK(out.p[0] > up.p[0] + 0.1f && gap >= 0.15f && faces(&out, head.p) > 0.999f,
+          "the hand raised: the card %.0f cm to its inner side (x %+.2f vs the hand's %+.2f)", gap * 100, out.p[0], up.p[0]);
+    somvr_posef upr = {{0, 0, 0, 1}, {0.15f, 1.30f, -0.35f}};
+    somvr_lv_card_place(&head, &upr, 1, &out);
+    CHECK(out.p[0] < upr.p[0] - 0.1f, "the right hand (left-handed player): the card on its inner (left) side");
+    /* the head turned 90 deg left: the card turns with the gaze's heading (world-locked when placed, never behind) */
+    somvr_posef hl = {{0, sinf(0.785398f), 0, cosf(0.785398f)}, {0, 1.6f, 0}};
+    somvr_posef dl = {{0, 0, 0, 1}, {-0.05f, 0.85f, 0.25f}};
+    somvr_lv_card_place(&hl, &dl, 0, &out);
+    CHECK(out.p[0] < -0.3f && faces(&out, hl.p) > 0.999f, "the head turned left: the card ahead-left of it (x %+.2f z %+.2f)",
+          out.p[0], out.p[2]);
+    /* the dot: the back of the left hand toward the eyes -> shown, on the back; the palm toward them -> hidden */
+    float hp[3] = {-0.15f, 1.30f, -0.35f}, v[3] = {head.p[0] - hp[0], head.p[1] - hp[1], head.p[2] - hp[2]};
+    float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    for (int i = 0; i < 3; i++) v[i] /= l;
+    /* a grip whose +X (out of the left palm) points away from the eyes: x = -v, z = the fist's back (+Z), y = z x x */
+    float x[3] = {-v[0], -v[1], -v[2]}, z[3] = {0, 0, 1}, d = z[0] * x[0] + z[1] * x[1] + z[2] * x[2], y[3];
+    for (int i = 0; i < 3; i++) z[i] -= d * x[i];
+    l = sqrtf(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]);
+    for (int i = 0; i < 3; i++) z[i] /= l;
+    y[0] = z[1] * x[2] - z[2] * x[1], y[1] = z[2] * x[0] - z[0] * x[2], y[2] = z[0] * x[1] - z[1] * x[0];
+    somvr_posef g = {{0, 0, 0, 1}, {hp[0], hp[1], hp[2]}};
+    { /* the quaternion of the basis (x, y, z) */
+        float tr = x[0] + y[1] + z[2];
+        if (tr > 0) {
+            float s4 = sqrtf(tr + 1) * 2;
+            g.q[3] = 0.25f * s4, g.q[0] = (y[2] - z[1]) / s4, g.q[1] = (z[0] - x[2]) / s4, g.q[2] = (x[1] - y[0]) / s4;
+        } else {
+            float s4 = sqrtf(1 + x[0] - y[1] - z[2]) * 2;
+            g.q[3] = (y[2] - z[1]) / s4, g.q[0] = 0.25f * s4, g.q[1] = (y[0] + x[1]) / s4, g.q[2] = (z[0] + x[2]) / s4;
+            if (!(x[0] > y[1] && x[0] > z[2])) { /* (not needed for this basis; kept simple) */ }
+        }
+        float n = sqrtf(g.q[0] * g.q[0] + g.q[1] * g.q[1] + g.q[2] * g.q[2] + g.q[3] * g.q[3]);
+        for (int i = 0; i < 4; i++) g.q[i] /= n;
+    }
+    int shown = somvr_lv_dot_place(&g, 0, &head, &dot);
+    float off[3] = {dot.p[0] - hp[0], dot.p[1] - hp[1], dot.p[2] - hp[2]};
+    float toward = off[0] * v[0] + off[1] * v[1] + off[2] * v[2]; /* toward the eyes = out of the back here */
+    CHECK(shown && toward > 0.035f && toward < 0.045f && faces(&dot, head.p) > 0.95f,
+          "the dot on the back of the left hand: shown, %.1f cm out of the back toward the eyes, facing them (%.3f)",
+          toward * 100, faces(&dot, head.p));
+    for (int i = 0; i < 3; i++) x[i] = -x[i], y[i] = -y[i]; /* turned over: the palm toward the eyes (z kept) */
+    g.q[0] = g.q[1] = g.q[2] = 0, g.q[3] = 1;
+    {
+        float tr = x[0] + y[1] + z[2];
+        float s4 = sqrtf(fmaxf(tr + 1, 1e-6f)) * 2;
+        if (tr > 0) g.q[3] = 0.25f * s4, g.q[0] = (y[2] - z[1]) / s4, g.q[1] = (z[0] - x[2]) / s4, g.q[2] = (x[1] - y[0]) / s4;
+        else {
+            s4 = sqrtf(fmaxf(1 + y[1] - x[0] - z[2], 1e-6f)) * 2;
+            g.q[3] = (z[0] - x[2]) / s4, g.q[0] = (y[0] + x[1]) / s4, g.q[1] = 0.25f * s4, g.q[2] = (z[1] + y[2]) / s4;
+        }
+        float n = sqrtf(g.q[0] * g.q[0] + g.q[1] * g.q[1] + g.q[2] * g.q[2] + g.q[3] * g.q[3]);
+        for (int i = 0; i < 4; i++) g.q[i] /= n;
+    }
+    float xn[3];
+    static const float x0[3] = {1, 0, 0};
+    tq(g.q, x0, xn);
+    CHECK(xn[0] * v[0] + xn[1] * v[1] + xn[2] * v[2] > 0.9f && !somvr_lv_dot_place(&g, 0, &head, &dot),
+          "the palm toward the eyes: the dot hidden (never seen through the hand)");
+}
+
+/* b37 live3: the 22:13 session's patch card (cut at the bottom) - one card does not hold it, its two pages do */
+static void test_patch_pages(void) {
+    const char *what = "Walking stops at drops; tap A to step off, hold A to blink down. Plus the wall-climb fix.";
+    const char *try_ = "Try: Walk to a ledge: you stop with a nudge. Tap A to step off. Then climb your stuck wall.";
+    char text[500];
+    snprintf(text, sizeof text, "%s\n%s\nApply it: menu > Test tab", what, try_);
+    somvr_lv_card one, p1, p2;
+    somvr_lv_card_make(&one, SOMVR_LVK_PATCH, "Patch 1 ready", text, "Tap to close");
+    somvr_lv_card_make(&p1, SOMVR_LVK_PATCH, "Patch 1 ready (1 of 2)", what, "Tap for page 2");
+    somvr_lv_card_make(&p2, SOMVR_LVK_PATCH, "Patch 1 (2 of 2)", try_, "Apply: menu > Test tab");
+    CHECK(one.more && !p1.more && !p2.more && p1.title[0] && !strstr(p1.title, "..."),
+          "the session's patch card: cut as one card (%d lines), whole in two pages (%d + %d lines)", one.n, p1.n, p2.n);
+}
+
 int main(void) {
     CHECK(somvr_font_init(&F) == 0, "the font");
+    test_patch_pages();
+    test_place();
     test_wrap();
     test_card();
     test_calm();

@@ -11,6 +11,7 @@
 # the layer's buttons. Dumps: RUN/s16-steps.txt names each (compose with scripts/xr_compose.py RUN). S16_STEPS = any of
 # menu grip wiggle cuts orc (default all, in that order). PASS/FAIL lines; quits at the end, at once if the user goes
 # into VR. The Sword weight row with build 17's avail (22 rows of 27 px, slot 13): < 0.547 0.558, > 0.922 0.558 (build 16's
+# (b37 live3: the panel is 816 texels high, 768 before - the UVs above are the 768 layout's; the calls below use v x 768/816, the same pixel rows)
 # 19 rows of 32 px: 0.6458).
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 WT=${S16_WT:-$(basename "$(cd "$(dirname "$0")/../.." && pwd -P)")}
@@ -76,6 +77,7 @@ t "btn R squeeze 0"; t "btn R squeeze 1"; sleep 1; t "btn R squeeze 0"
 grep -q 'card: put away (the right grip squeezed)' "$R/xr-layer.log" || { t "btn R a 1"; t "btn R a 0"; }
 t "$REST_L" "$REST_R"
 
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 if has menu; then
   echo "== the VR menu's Sword weight row (heavy as booted): < = light, > = heavy again"
   press() { t "hand R touch panel $1 $2 5"; t "hand R touch panel $1 $2 1.0 s 0.3"; t "hand R touch panel $1 $2 -1.0 s 0.15"
@@ -85,16 +87,16 @@ if has menu; then
     for k in 1 2 3 4; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
       [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
       t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-    t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+    t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
     echo "NOT OPEN"; }
   A0=$(cnt 'VRMENU apply SWORD_WEIGHT=light from the menu'); A1=$(cnt 'VRMENU apply SWORD_WEIGHT=heavy from the menu')
   menu_open; d menu-heavy
-  press 0.547 0.558; sleep 1
+  press 0.547 0.5252; sleep 1
   check "Sword weight: Light by its <" 'VRMENU apply SWORD_WEIGHT=light from the menu' "$A0"
   check "the level live" 'SWORDWT t=.* weight heavy -> light \(the VR menu\)' 0
   d menu-light
-  press 0.922 0.558; sleep 1
+  press 0.922 0.5252; sleep 1
   check "Sword weight: Heavy again by its >" 'VRMENU apply SWORD_WEIGHT=heavy from the menu' "$A1"
   t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "$REST_L" "$REST_R"; sleep 1.5
 fi

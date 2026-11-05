@@ -669,6 +669,28 @@ void somvr_vh_outline(const somvr_posef *pose, float len_m, somvr_vh_vert *out) 
     ar_put(v++, q, o, 0.012f, 0, gz0, 0, 1, 0), ar_put(v++, q, o, -0.012f, 0, gz0, 0, 1, 0);
 }
 
+/* build 37 (the user's 22:27 mark: "just the blade ... that outline from the blue that goes around the sword when the
+ * execution is ready"): the outline's blade and point alone, no cross-guard or grip, and a soft halo in the blade's flat
+ * plane where they were (the vanes' 12 vertices: two strips from the blade's middle, SOMVR_VH_GLOW_A there, to 0 at
+ * SOMVR_VH_GLOW_W out from its edge; the third strip collapsed, alpha 0) */
+void somvr_vh_outline_blade(const somvr_posef *pose, float len_m, somvr_vh_vert *out) {
+    somvr_vh_outline(pose, len_m, out);
+    float q[4] = {pose->q[0], pose->q[1], pose->q[2], pose->q[3]}, o[3] = {pose->p[0], pose->p[1], pose->p[2]};
+    qnorm(q);
+    if (!(len_m >= 0.3f)) len_m = 0.3f;
+    if (len_m > 1.6f) len_m = 1.6f;
+    float z0 = -OL_ROOT, z1 = -(len_m - 0.25f * OL_TIP), hw = OL_W + SOMVR_VH_GLOW_W;
+    somvr_vh_vert *v = out + 47;
+    for (int sd = -1; sd <= 1; sd += 2) { /* the halo's two strips: the middle line out to one side */
+        ar_put(v, q, o, 0, 0, z0, 0, 1, 0), v->a = SOMVR_VH_GLOW_A, v++;
+        ar_put(v, q, o, 0, 0, z1, 0, 1, 0), v->a = SOMVR_VH_GLOW_A, v++;
+        ar_put(v, q, o, sd * hw, 0, z1 + 0.5f * OL_TIP, 0, 1, 0), v->a = 0, v++;
+        ar_put(v, q, o, sd * hw, 0, z0 + 0.02f, 0, 1, 0), v->a = 0, v++;
+    }
+    for (int k = 0; k < 4; k++) /* (the third: nothing) */
+        ar_put(v, q, o, 0, 0, z0, 0, 1, 0), v->a = 0, v++;
+}
+
 void somvr_vh_arrow(const somvr_posef *pose, float len_m, somvr_vh_vert *out) {
     float q[4] = {pose->q[0], pose->q[1], pose->q[2], pose->q[3]}, o[3] = {pose->p[0], pose->p[1], pose->p[2]};
     qnorm(q);
@@ -722,7 +744,7 @@ void somvr_vh_arrow_fade(somvr_vh_vert *v, int n, const float eye0[3], const flo
             d0 += (v[i].p[k] - eye0[k]) * (v[i].p[k] - eye0[k]), d1 += (v[i].p[k] - eye1[k]) * (v[i].p[k] - eye1[k]);
         float d = sqrtf(d0 < d1 ? d0 : d1), x = far_m > near_m ? (d - near_m) / (far_m - near_m) : (float)(d >= near_m);
         x = x < 0 ? 0 : x > 1 ? 1 : x; /* (NaN: 0) */
-        v[i].a = x * x * (3 - 2 * x);
+        v[i].a *= x * x * (3 - 2 * x); /* (build 37: times its own - the blade glow's halo fades out by itself) */
     }
 }
 

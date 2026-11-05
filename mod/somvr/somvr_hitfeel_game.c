@@ -468,8 +468,11 @@ static int hf_will_bite(int kind, int glance, int blk, int call)
 	       cb_now() - g_hf.d_t < HF_FRESH_S;
 }
 
-/* a one-shot game FX at the world point P on the struck orc's object (its frame: the offset), SOMVR_FINISH's sites */
-static int hf_fx_at(const char *name, uintptr_t hobj, const float P[3], double t, char *why_out, size_t cap)
+/* a one-shot game FX at the world point P on the struck orc's object (its frame: the offset), SOMVR_FINISH's sites.
+ * Build 37 (SOMVR_KNIFE_KILL's blood): dir (world, unit; NULL = none) turns the FX's +Z onto it - the create struct's
+ * transform after the offset (+0x11c the place, +0x128 the rotation x,y,z,w: LTRigidTransform), written only when the
+ * init left it the identity there (else the FX as ever; the line says which) */
+static int hf_fx_dir(const char *name, uintptr_t hobj, const float P[3], const float *dir, double t, char *why_out, size_t cap)
 {
 	float op[3], oq[4];
 	uintptr_t os = peek_ptr(g_fig.objsys_pp), vt = vptr_of((void *)os), shell = peek_ptr(g_fig.shell_pp);
@@ -495,12 +498,34 @@ static int hf_fx_at(const char *name, uintptr_t hobj, const float P[3], double t
 	int32_t node = -1;
 	float off[3] = { local.x, local.y, local.z };
 	memcpy(cs + 0x118, &node, sizeof node), memcpy(cs + 0x11c, off, sizeof off);
+	char turned[96] = "";
+	if (dir) {
+		float q0[4], q[4];
+		memcpy(q0, cs + 0x128, sizeof q0);
+		sv_vec3 d = { dir[0], dir[1], dir[2] };
+		if (g_hf.fx_orc)
+			d = sv_qrot(sv_qconj(r), d); /* into the orc's frame */
+		float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+		if (fabsf(q0[0]) < 1e-4f && fabsf(q0[1]) < 1e-4f && fabsf(q0[2]) < 1e-4f && fabsf(q0[3] - 1.0f) < 1e-4f && l > 1e-3f) {
+			sv_quat qt = stl_q_from_to((sv_vec3){ 0, 0, 1 }, (sv_vec3){ d.x / l, d.y / l, d.z / l });
+			sv_quat_to(qt, q);
+			memcpy(cs + 0x128, q, sizeof q);
+			snprintf(turned, sizeof turned, ", turned onto %.2f,%.2f,%.2f", (double)(d.x / l), (double)(d.y / l), (double)(d.z / l));
+		} else {
+			snprintf(turned, sizeof turned, ", not turned (the rotation slot read %.3f,%.3f,%.3f,%.3f)", (double)q0[0],
+				 (double)q0[1], (double)q0[2], (double)q0[3]);
+		}
+	}
 	long rc = FI_FN(FIS_FX_CREATE, fi_create_fn)(mgr + 0x30, NULL, cs, 1, 0, 0);
 	FI_FN(FIS_FX_CSFREE, fi_csfree_fn)(cs);
-	snprintf(why_out, cap, "rc=%ld, at %.1f,%.1f,%.1f (%s)", rc, (double)off[0], (double)off[1], (double)off[2],
-		 g_hf.fx_orc ? "the orc's frame" : "the world");
+	snprintf(why_out, cap, "rc=%ld, at %.1f,%.1f,%.1f (%s)%s", rc, (double)off[0], (double)off[1], (double)off[2],
+		 g_hf.fx_orc ? "the orc's frame" : "the world", turned);
 	(void)t;
 	return 1;
+}
+static int hf_fx_at(const char *name, uintptr_t hobj, const float P[3], double t, char *why_out, size_t cap)
+{
+	return hf_fx_dir(name, hobj, P, NULL, t, why_out, cap);
 }
 
 /* cb_hit, after Combat_DealHit (call: the game was called; landed: it did damage or killed): the bite, our sound, the FX,

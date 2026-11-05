@@ -7,6 +7,7 @@
 # pressed by the layer's right test controller's fingertip (menu13-drive.sh's press); the uv are somvr_vm_rect_av's with
 # build 17's avail (21 rows of 28 px): Sword hand's > 0.922 0.612, Arrows' < 0.547 0.648, the tabs Settings 0.160,
 # Practice 0.441, Controls 0.723 (v 0.042), Refill arrows + focus 0.500 0.587, Refill health 0.500 0.663.
+# (b37 live3: the panel is 816 texels high, 768 before - the UVs above are the 768 layout's; the calls below use v x 768/816, the same pixel rows)
 #   1. the Settings page (dump), Sword hand -> Follow (the VR menu's line, SWORDWT's), Arrows -> Auto (BOW quiver on ->
 #      off), the page again, the Controls page with Auto (dump), the Practice page in the area (dump)
 #   2. the refills: arrows spent (`bow arrows -5`), health and Focus lowered (`practice hurt 60`, `practice focus 0`), the
@@ -62,18 +63,19 @@ press() { t "hand R touch panel $1 $2 5"; t "hand R touch panel $1 $2 1.0 s 0.3"
 # pr NAME RE U V: a press that must bring a somvr.log line
 pr() { local n0; n0=$(cnt "$2"); press "$3" "$4"; seen "$1" "$2" 4 "$n0"; }
 opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 menu_open() { local o=$(opens) k
   for k in 1 2 3 4; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
   [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
   echo "NOT OPEN (gesture x4, long press)"; grep 'held off\|vrmenu: opened\|vrmenu: closed' "$R/xr-layer.log" | tail -3 | cut -c1-200; }
 menu_shut() { t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1.5; }
-# the rows: 22 of 27 px since build 17's Blade bite row (after Sword hand): the row's middle (64 + slot x 27 + 13.5) / 768
-SWHAND_MORE="0.922 0.593"; ARROWS_LESS="0.547 0.663"
-TAB_SET="0.160 0.042"; TAB_PR="0.441 0.042"; TAB_CTL="0.723 0.042"
-FILL_ARROWS="0.500 0.587"; FILL_HEALTH="0.500 0.663"
+# the rows: 22 of 27 px since build 17's Blade bite row (after Sword hand): the row's middle (64 + slot x 27 + 13.5) / 768 (b37 live3: / 816 below, the panel 816 high)
+SWHAND_MORE="0.922 0.5581"; ARROWS_LESS="0.547 0.6240"
+TAB_SET="0.160 0.0395"; TAB_PR="0.441 0.0395"; TAB_CTL="0.723 0.0395"
+FILL_ARROWS="0.500 0.5525"; FILL_HEALTH="0.500 0.6240"
 # the bow (bow16-drive.sh's poses: the fist upright)
 REST_L="hand L head -22 -40 15 0 0 0"; REST_R="hand R head 22 -40 15 0 0 0"
 SLOT_L="hand L head -12 -10 -15 90 0 0"; BOW_STRAIGHT="hand L head -8 -15 55 90 0 0"

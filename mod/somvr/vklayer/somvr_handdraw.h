@@ -135,6 +135,10 @@ typedef struct {
      * key, a strong ambient and rim), with the plain pipeline after the hands (our depth: the hand holding it hides it) */
     float arrow_a;
     float arrow_base[3];
+    /* build 37 (re-xr-pipeline.md 171.5): the arrow slot's light when arrow_look[1] > 0 - key, ambient, rim, sheen (the
+     * finisher's blade glow: little key, a strong ambient and rim: the edges bright, the middle a translucent glow);
+     * 0 = the wraith's light above */
+    float arrow_look[4];
     /* build 18 (vrhands v5): string_a > 0 draws hd_slot_string the same way (the bow's string, both sides) */
     float string_a;
     float string_base[3];

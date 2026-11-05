@@ -45,7 +45,8 @@ CORE=("$D/somvr_pose.c" "$D/somvr_eyes.c" "$D/somvr_inrec.c" "$D/somvr_views.c" 
       "$D/somvr_strike.c" "$D/somvr_gaze.c" "$D/somvr_execute.c" "$D/somvr_surface.c" "$D/somvr_verbs.c" "$D/somvr_crouch.c" "$D/somvr_front.c"
       "$D/somvr_objective.c" "$D/somvr_smooth.c" "$D/somvr_vision.c" "$D/somvr_wstep.c" "$D/somvr_stealth.c"
       "$D/somvr_screens.c" "$D/somvr_beasts.c" "$D/somvr_captain.c" "$D/somvr_jump.c" "$D/somvr_above.c" "$D/somvr_ride.c"
-      "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c" "$D/somvr_finisher.c" "$D/somvr_live.c")
+      "$D/somvr_map.c" "$D/somvr_abil.c" "$D/somvr_kills.c" "$D/somvr_ovault.c" "$D/somvr_finisher.c" "$D/somvr_live.c"
+      "$D/somvr_cues.c")
 mkdir -p "$D/build/tests"
 # the checks of more than one command: planned as `run ... -- build.sh --step NAME` (buildplan.sh)
 step_haptics() { # build 34 (re-xr-pipeline.md 153.4): every pulse a word of somvr_haptics.h - no raw pulse (in_haptic_event)
@@ -199,6 +200,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_execute" "$D/tests/test_execute.c" "$D/so
 run "$D/build/tests/test_execute"
 gcc "${CF[@]}" -o "$D/build/tests/test_stealth" "$D/tests/test_stealth.c" "$D/somvr_stealth.c" "$D/somvr_combat.c" -lm # build 18: the stealth kill (20c: + the tiers)
 run "$D/build/tests/test_stealth"
+gcc "${CF[@]}" -o "$D/build/tests/test_cues" "$D/tests/test_cues.c" "$D/somvr_cues.c" "$D/somvr_menus.c" "$D/somvr_threat.c" "$D/somvr_eyes.c" "$D/somvr_pose.c" -lm # build 37: the cues (docs 169)
+run "$D/build/tests/test_cues"
 gcc "${CF[@]}" -o "$D/build/tests/test_kills" "$D/tests/test_kills.c" "$D/somvr_kills.c" -lm # build 31: kills the game's way
 run "$D/build/tests/test_kills"
 gcc "${CF[@]}" -o "$D/build/tests/test_finisher" "$D/tests/test_finisher.c" "$D/somvr_finisher.c" -lm # build 33: the finisher

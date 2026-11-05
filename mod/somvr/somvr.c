@@ -448,6 +448,7 @@
 #include "somvr_gaze.h" /* build 17: SOMVR_STRIKE_GAZE, the Shadow Strike by gaze (somvr_strike_game.c) */
 #include "somvr_execute.h" /* SOMVR_EXECUTE (somvr_execute_game.c, included last) */
 #include "somvr_stealth.h" /* SOMVR_STEALTH_KILL (somvr_stealth_game.c, included last) */
+#include "somvr_cues.h" /* build 37, SOMVR_CUE_*: the cues for what the hidden prompts said (somvr_cues_game.c) */
 #include "somvr_kills.h" /* build 31, SOMVR_KILLS (somvr_kills_game.c, included last) */
 #include "somvr_finisher.h" /* build 33, SOMVR_FINISHER (somvr_finisher_game.c, included last) */
 #include "somvr_screens.h" /* build 22: SOMVR_BM_DEATH, SOMVR_POINTER_MOUSE1 (somvr_screens_game.c, included last) */
@@ -1226,6 +1227,10 @@ static int sk_prompt_up(void);
  * ray while a gaze press runs, A owned by the mark (the descent's A yields) */
 static void sg_frame(uintptr_t pl, int stereo);
 static int sg_entry(somvr_objective_frame *e);
+static int fn_hint_on(void);
+static float fn_near_cm(double t);              /* build 37: the nearest live orc this frame (cm; 1e9 = none / not known) */
+static int fn_spot_ahead(float cm, float out[3]); /* build 37: the point cm ahead of the eyes in the head's yaw (world) */
+static int fn_entry(somvr_objective_frame *e); /* build 37, SOMVR_FINISHER_HINT: the finisher's ring on the orc that could be */
 static int sg_camxf(float *xf);
 static int sg_wants_a(void); /* build 17: an orc marked (or its strike under way): A is the strike's (ab_tick) */
 static int sg_on(void);
@@ -1609,6 +1614,18 @@ static void ssw_start(int *bad);
 static void c21_end_log(void);
 static void gc_glow_add(struct th_glow *gl, int *ng);
 static void mt_glow_add(struct th_glow *gl, int *ng); /* build 29b, SOMVR_RIDE_CUE (somvr_ride_game.c) */
+/* build 37 (somvr_cues_game.c, docs 169): the awareness marks, the runner, the arc, the use cue; the HUD tag's flags */
+static void cu_glow_add(uintptr_t pcomb, uintptr_t pc, const float root[3], const float head[3], const float hq[4], double t,
+			struct th_glow *gl, int *ng);
+static void cu_use_glow_add(struct th_glow *gl, int *ng);
+static void cu_pick_watch(double t);
+static void cu_heal_flash(uint8_t hurt[2], uint32_t *flags, double t);
+static void th_hudcam(uintptr_t pl, const somvr_th_map *m, const float head_fwd_xr[3], somvr_threat_frame *e);
+static float cu_glow_size_m(const struct th_glow *g);
+static uint32_t cu_hud_flags(void);
+static void cu_start(int *bad);
+static void cu_end_log(void);
+static const char *cu_word(const char *w);
 static float gc_glow_size_m(void);
 static int ssw_bow_put(double t);
 /* build 23 (somvr_brand_game.c, included last; docs/re-xr-pipeline.md 97): SOMVR_VERBS_BRAND - the brand by the hand */
@@ -1723,6 +1740,18 @@ static void stl_hands(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 v[2]
 static void stl_stick_arm(const int done[2], const sa_xf gg[2], const int gv[2], const int bowed[2], sa_xf X, sv_vec3 shift);
 static int stl_sticking(void);
 static void stl_set_tier_cut(int t);
+/* build 37 (som-b37-knife, docs/re-xr-pipeline.md 168): SOMVR_KNIFE_KILL, the stealth kill with the knife by hand
+ * (somvr_knife_game.c) */
+static int kn_held(uintptr_t c);       /* the knife's free hand holds this orc (any thread) */
+static int kn_takes(const struct cb_orc *o, uintptr_t pc, const float *root); /* ... its hold takes this orc's grab */
+static int kn_hitting(void);           /* cb_hit: the knife's light hit in progress (its hand), -1 = not */
+static float kn_stick_cm(void);        /* the knife's stick: its pull (cm), -1 = no stick */
+static void kn_hands(const sv_vec3 pw[2], sv_vec3 eye);
+static void kn_frame(uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
+static void kn_start(int *bad);
+static void kn_end_log(void);
+static const char *kn_word(const char *w);
+static sv_quat stl_q_from_to(sv_vec3 u, sv_vec3 v);
 /* build 22, SOMVR_CAPTAIN (somvr_captain_game.c, included last; docs/re-xr-pipeline.md 88): the practice's Captain, the
  * captain's introduction in the world, his traits' rules for our finishers */
 struct pr_me;
@@ -4478,12 +4507,13 @@ static void cb_hit(uintptr_t pc, const struct cb_orc *o, const sc_contact *ct, i
 			  : !pc ? "no player server Combat" : !rec ? "no attack record (see the COMBAT record lines)" : NULL;
 	/* build 17: the hit's kind (its sound, its FX); a landed cut bites (SOMVR_COMBAT_BITE: its own haptic then) */
 	int kind = sc_hit_kind(tier, sc_edge_deg(b), g_cb.cfg.edge_max_deg);
-	int bite = g_cb.blade == CB_BLADE_CONTROLLER && hf_will_bite(kind, glance, blk, why == NULL);
+	int bite = g_cb.blade == CB_BLADE_CONTROLLER && kn_hitting() < 0 && hf_will_bite(kind, glance, blk, why == NULL);
 	if (!why)
 		hf_log_open(kind, t); /* SOMVR_COMBAT_HITLOG (test only): the game's sounds and FX from here */
 	if (g_cb.blade == CB_BLADE_CONTROLLER && !blk && !glance && !bite) { /* the blade hand feels the hit (also in log mode: ours, no game call) */
 		/* build 34: the hit word by the tier (light, stab, heavy); SOMVR_SWORD_WEIGHT's hit-weight: full, the weight's tail */
-		haptic_k(SOMVR_HAND_R, swg_hit_word(), tier == SC_TIER_HEAVY ? 1.0f : tier == SC_TIER_STAB ? 0.5f : 0.0f);
+		haptic_k(kn_hitting() >= 0 ? kn_hitting() : SOMVR_HAND_R, swg_hit_word(), /* (build 37: the knife's hand) */
+			 tier == SC_TIER_HEAVY ? 1.0f : tier == SC_TIER_STAB ? 0.5f : 0.0f);
 	}
 	int lg = cb_log_ok(t);
 	char hd[520];
@@ -5957,6 +5987,7 @@ static void in_frame(void)
 	mt_reach(pw, hp);       /* build 26, SOMVR_RIDE: the left hand reached out at a stunned caragor - its mount */
 	ov_frame(p, pw, hp, hq); /* build 31, SOMVR_VAULT_HANDS: the hand on an orc's crown (before the verbs' grab) */
 	vb_hands(pw, hp);       /* SOMVR_VERBS: the left hand's squeeze on an orc's head (before the climb takes it) */
+	kn_hands(pw, hp);       /* build 37, SOMVR_KNIFE_KILL: the free hand's hold with the knife out (before the climb) */
 	py_hands(p, pw);        /* SOMVR_SHOVE (build 18): the left palm for the shove */
 	stg_hands(p, pw, hp, hq); /* build 27, SOMVR_STRUGGLE: a hard thrust of a hand, an aim struggle's hand */
 	abl_hands(p, pw, hp, hq); /* build 27, SOMVR_ABIL: the wraith hand's push, the right trigger (the wraith charge) */
@@ -7566,8 +7597,8 @@ static void hud_pass(struct regs *r, int x)
 			 * layer shows this HUD on its menu board (SOMVR_XR_MENU=front) */
 			uintptr_t ms = RA1(r) ? peek_ptr((uintptr_t)RA1(r) + 0x10) : 0;
 			uint32_t menu = (ms && in_msm(ms) > 0) || game_paused() ? SOMVR_HUDF_MENU : 0u;
-			atomic_store_explicit(&g_hud_kind, (x == EX_HUD_EYE ? SOMVR_HUDK_WORLD : SOMVR_HUDK_VIDEO) | menu,
-					      memory_order_relaxed);
+			atomic_store_explicit(&g_hud_kind, (x == EX_HUD_EYE ? SOMVR_HUDK_WORLD : SOMVR_HUDK_VIDEO) | menu |
+								   cu_hud_flags() /* build 37: the timer, high alert */, memory_order_relaxed);
 			mm_frame(mono()); /* SOMVR_MINIMAP: the game option (once a second) */
 			atomic_store_explicit(&g_hud_frame, g_fr.frame, memory_order_release);
 		}
@@ -10509,6 +10540,27 @@ static const char *cl_word(const char *w)
 		logf_("CLIMB t=%.3f through %s (the trigger word, a test aid): SOMVR_CLIMB_THROUGH now %s", cb_now(), b, b);
 		return g_cl.cfg.through ? "climb through on" : "climb through off";
 	}
+	if (k == 2 && (!strcmp(a, "side") || !strcmp(a, "headkeep") || !strcmp(a, "thrkeep") || !strcmp(a, "liberal")) &&
+	    (!strcmp(b, "on") || !strcmp(b, "off"))) { /* build 39 (som-b37-climb2): the A/B in one boot (test aids) */
+		int on = b[1] == 'n';
+		static char ret[48];
+		if (a[0] == 's')
+			g_cl.cfg.side = on;
+		else if (a[0] == 'h') /* ("climb keep" is build 27's SOMVR_CLIMB_MANTLE_KEEP) */
+			g_cl.cfg.head_keep = on;
+		else if (a[0] == 't')
+			g_cl.cfg.thr_keep = on;
+		else
+			g_cl.cfg.liberal = on;
+		logf_("CLIMB t=%.3f %s %s (the trigger word, a test aid)", cb_now(), a, b);
+		snprintf(ret, sizeof ret, "climb %s %s", a, b);
+		return ret;
+	}
+	if (k == 2 && !strcmp(a, "throughlow") && (!strcmp(b, "on") || !strcmp(b, "off"))) { /* live patch 11-04: the A/B */
+		g_cl.cfg.thr_low = b[1] == 'n';
+		logf_("CLIMB t=%.3f throughlow %s (the trigger word, a test aid): SOMVR_CLIMB_THROUGH_LOW now %s", cb_now(), b, b);
+		return g_cl.cfg.thr_low ? "climb throughlow on" : "climb throughlow off";
+	}
 	if (k == 2 && !strcmp(a, "dropmark") && atoi(b) >= 100 && atoi(b) <= 2000) { /* a test aid: the hold a let-go needs */
 		g_cl.cfg.dm_min_s = (float)atoi(b) * 1e-3f, g_cl.cfg.dm_show_s = fmaxf(0.6f, g_cl.cfg.dm_min_s + 0.3f);
 		logf_("CLIMB t=%.3f dropmark %s (the trigger word, a test aid): SOMVR_CLIMB_DESCENT_MARK_HOLD_MS now %d (a tap's ring "
@@ -11148,6 +11200,49 @@ static void cl_b21_events(const somvr_climb_out *o, const somvr_climb_in *in, do
 			      cl_hand_name(h), s->h[h].hit.y, s->h[h].top_y);
 }
 
+
+/* build 39 (som-b37-climb2, re-xr-pipeline.md 172): the head's keep, the slide along the face, the through kept */
+static void cl_b39_log(double t, const somvr_climb_in *in, const somvr_climb_out *o, uint64_t kp0, uint64_t se0,
+		       uint64_t sc0, uint64_t sb0, uint64_t sl0, uint64_t tk0, int son0, int kin0, double scm0)
+{
+	const somvr_climb *s = &g_cl.s;
+	static double side_t0, side_cm0;
+	(void)o;
+	if (s->keep_eps != kp0 && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu keep: the head %.1f cm from a face (normal %.2f %.2f; the view %.0f cm off the root, "
+		      "level): moves toward it cut, the head eased out to %.0f cm (SOMVR_CLIMB_HEAD_KEEP; episodes %llu)", t,
+		      (unsigned long long)g_fr.frame, s->keep_d, s->keep_n.x, s->keep_n.z,
+		      in->view_ok ? hypotf(in->view.x - in->root.x, in->view.z - in->root.z)
+				  : hypotf(in->head_x - in->root.x, in->head_z - in->root.z),
+		      g_cl.cfg.keep_cm, (unsigned long long)s->keep_eps);
+	if (kin0 && !s->keep_in && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu keep: clear again (the nearest %.1f cm in that episode; cut %.0f cm, out %.0f cm in "
+		      "all)", t, (unsigned long long)g_fr.frame, s->keep_min, s->keep_cut_cm, s->keep_push_cm);
+	if (s->side_eps != se0) {
+		side_t0 = t, side_cm0 = scm0;
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu side: the stick (%.2f, %.2f) slides him %s along the face (into it %.2f %.2f; "
+			      "the root %.0f cm from it, kept; root %.1f,%.1f,%.1f) (SOMVR_CLIMB_SIDE)", t,
+			      (unsigned long long)g_fr.frame, in->stick_x, in->stick_y, in->stick_x > 0 ? "right" : "left",
+			      s->side_tw.x, s->side_tw.z, s->side_d0, in->root.x, in->root.y, in->root.z);
+	}
+	if (s->side_corners != sc0 && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu side corner: the face turned %.0f deg so far (into it now %.2f %.2f; the face %.0f cm "
+		      "from the root; root %.1f,%.1f,%.1f)", t, (unsigned long long)g_fr.frame, s->side_turned, s->side_tw.x,
+		      s->side_tw.z, s->side_last_d, in->root.x, in->root.y, in->root.z);
+	if (s->side_blocked != sb0 && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu side blocked: the slide asked, the root still 0.4 s (the capsule held; root "
+		      "%.1f,%.1f,%.1f)", t, (unsigned long long)g_fr.frame, in->root.x, in->root.y, in->root.z);
+	if (son0 && !s->side_on && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu side end: %.0f cm in %.2f s, the face turned %.0f deg%s (root %.1f,%.1f,%.1f)", t,
+		      (unsigned long long)g_fr.frame, s->side_cm - side_cm0, t - side_t0, s->side_turned,
+		      s->side_lost != sl0 ? "; no rock round him: the face lost" : "", in->root.x, in->root.y, in->root.z);
+	if (s->thr_kept != tk0 && cl_log_ok(t))
+		logf_("CLIMB t=%.3f frame=%llu through kept: %.1f cm on, the capsule held at a contact %.1f cm (never in the rock): "
+		      "on while the pull goes on (SOMVR_CLIMB_THROUGH_KEEP)", t, (unsigned long long)g_fr.frame, s->thr_cm,
+		      in->rock_cm);
+}
+
 static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2])
 {
 	if (!g_cl.on)
@@ -11201,6 +11296,14 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	in.can_blink = (g_cl.cfg.descent || g_cl.cfg.pullover) && pr_down_ok(); /* the practice's trip free */
 	in.walk_blocked = g_cl.cfg.descent && lo_walk_blocked(t);
 	in.stick = g_fr.frame - g_cl.stick_frame <= 3 ? g_cl.stick_raw : 0; /* SOMVR_CLIMB_HANG_STICK_CM: as the player holds it */
+	in.stick_x = in.stick > 0 ? g_cl.stick_x : 0, in.stick_y = in.stick > 0 ? g_cl.stick_y : 0; /* build 39: SOMVR_CLIMB_SIDE */
+	if (g_cl.cfg.head_keep) { /* build 39: the player's view (Talion's eyes + the room's offset): the head that keeps */
+		sv_vec3 vp;
+		sv_quat vq;
+		somvr_rig_head(&g_rig, g_fr.base, g_fr.views.pose, &vp, &vq);
+		/* (g_fr.head_ok: in.head_ok is set further down - boot 011858 showed the keep never on with in.head_ok here) */
+		in.view_ok = g_fr.head_ok && isfinite(vp.x) && isfinite(vp.y) && isfinite(vp.z), in.view = vp;
+	}
 	in.enemy_near = cl_enemy_near; /* SOMVR_CLIMB_DESCENT_MARK: no landing on an orc */
 	if (g_cl.cfg.descent || g_cl.cfg.stand) { /* A on foot looks for an edge along the view's heading */
 		sv_vec3 hp;
@@ -11255,8 +11358,14 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	}
 	g_cl.nri = 0;
 	int was = g_cl.s.active, ph0 = g_cl.s.phase;
+	/* build 39 (som-b37-climb2): the keep's, the slide's and the through keep's counters before the step (their lines) */
+	uint64_t kp0 = g_cl.s.keep_eps, se0 = g_cl.s.side_eps, sc0 = g_cl.s.side_corners, sb0 = g_cl.s.side_blocked;
+	uint64_t sl0 = g_cl.s.side_lost, tk0 = g_cl.s.thr_kept;
+	int son0 = g_cl.s.side_on, kin0 = g_cl.s.keep_in;
+	double scm0 = g_cl.s.side_cm;
 	somvr_climb_out o;
 	somvr_climb_step(&g_cl.s, &g_cl.cfg, &in, cl_ray, NULL, &o);
+	cl_b39_log(t, &in, &o, kp0, se0, sc0, sb0, sl0, tk0, son0, kin0, scm0);
 	/* the root's motion while a climb is on (the moves the game applied, and anything else) */
 	float rt[3];
 	if (was && g_cl.obj && peek(g_cl.obj + OBJ_POS, rt, sizeof rt) && vec_ok(rt, 1e7f)) {
@@ -11985,6 +12094,38 @@ static int cl_config(int *bad)
 	      "1:1 (the proxy set by it) while the capsule is in the rock; never with rock 60 cm over the head at its start or "
 	      "a ray from the head or 10 cm round it hitting within the move + 15 cm (then blocked as ever)" : " (a lip the "
 	      "capsule cannot pass holds him under it, as build 16 round 1)");
+	/* live patch 11-04 (session 195050 marks 2, 4): through also under a hold at or under the eyes with no landing */
+	c->thr_low = env_word("SOMVR_CLIMB_THROUGH_LOW", fling_w, 2, c->thr_low);
+	if (c->through)
+		logf_("CONFIG climb through low=%s%s", fling_w[c->thr_low], c->thr_low ? ": also a pull blocked under a hold at or "
+		      "under the eyes with no landing on it (mid-face: the capsule caught under the face's bumps)" : " (only under "
+		      "a hold over the eyes, as build 37)");
+	/* build 39 (som-b37-climb2, re-xr-pipeline.md 172): the 11-04 22:09 session's walls - the corners, sideways, the
+	 * rough faces */
+	c->thr_keep = env_word("SOMVR_CLIMB_THROUGH_KEEP", fling_w, 2, c->thr_keep);
+	if (c->through)
+		logf_("CONFIG climb through keep=%s%s", fling_w[c->thr_keep], c->thr_keep ? ": the through ends out of the rock "
+		      "only after the capsule was in it - held at a contact (a rough face's bumps) it goes on 1:1 while the pull "
+		      "goes on; a move down is the game's collision" : " (each through ends 10 cm on at a contact, as build 38)");
+	c->head_keep = env_word("SOMVR_CLIMB_HEAD_KEEP", fling_w, 2, c->head_keep);
+	c->keep_cm = env_float("SOMVR_CLIMB_HEAD_KEEP_CM", c->keep_cm, 5, 60, bad);
+	c->keep_cms = env_float("SOMVR_CLIMB_HEAD_KEEP_CMS", c->keep_cms, 10, 1000, bad);
+	logf_("CONFIG climb head keep=%s%s (%.0f cm, out at most %.0f cm/s)", fling_w[c->head_keep], c->head_keep ? ": on a wall "
+	      "the head keeps its distance from every face (12 level rays round it): a move toward the nearest is cut there, a "
+	      "head nearer eases out; the through's and the slide's head rays look as far" : " (as build 38)", c->keep_cm,
+	      c->keep_cms);
+	c->side = env_word("SOMVR_CLIMB_SIDE", fling_w, 2, c->side);
+	c->side_cms = env_float("SOMVR_CLIMB_SIDE_CMS", c->side_cms, 5, 200, bad);
+	c->side_dead = env_float("SOMVR_CLIMB_SIDE_DEAD", c->side_dead, 0.05f, 0.9f, bad);
+	c->side_turn_dps = env_float("SOMVR_CLIMB_SIDE_TURN_DPS", c->side_turn_dps, 10, 720, bad);
+	logf_("CONFIG climb side=%s%s (%.0f cm/s, past %.2f, the face's turn at most %.0f deg/s)", fling_w[c->side], c->side ?
+	      ": the move stick's x slides him along the face, holding or hanging, round its corners (the view's yaw never "
+	      "turns; up and down stay the hands')" : " (the stick does nothing sideways on a wall, as build 38)", c->side_cms,
+	      c->side_dead, c->side_turn_dps);
+	c->liberal = env_word("SOMVR_CLIMB_LIBERAL", fling_w, 2, c->liberal);
+	logf_("CONFIG climb liberal=%s%s (the reach %.0f cm)", fling_w[c->liberal], c->liberal ? ": a grip whose palm and "
+	      "fingers rays find nothing within reach tries a fan 30 deg round them and the head's level ray through the hand"
+	      : " (the palm's and the fingers' rays, as build 38)", c->reach_cm);
 	/* build 16 round 2 (re-xr-pipeline.md 50.9): a hold's ray at a slant to its face takes the face's normal */
 	c->face_toward = env_word("SOMVR_CLIMB_FACE_TOWARD", fling_w, 2, c->face_toward);
 	logf_("CONFIG climb face toward=%s%s", fling_w[c->face_toward], c->face_toward ? ": a hold found by a ray over 35 deg "
@@ -12608,6 +12749,15 @@ static void cl_end_log(void)
 		      "frames %llu), holds at a slant taking the face's toward %llu", (unsigned long long)s->thr_ons, s->thr_all_cm,
 		      (unsigned long long)s->thr_frames, (unsigned long long)g_cl.thr_sets, (unsigned long long)g_cl.thr_notset,
 		      (unsigned long long)s->thr_refused, (unsigned long long)s->faces);
+	if (g_cl.cfg.head_keep || g_cl.cfg.side || g_cl.cfg.thr_keep || g_cl.cfg.liberal)
+		logf_("CLIMB END build 39: the head's keep: episodes %llu, moves toward a face cut %.0f cm (%llu frames), eased out "
+		      "%.0f cm (%llu frames); the slide: %llu (%.0f cm, %llu frames; turned 45 deg %llu times, blocked %llu, the face "
+		      "lost %llu); throughs kept past a contact %llu, moves down left to the collision %llu; holds by the liberal "
+		      "rays %llu", (unsigned long long)s->keep_eps, s->keep_cut_cm, (unsigned long long)s->keep_cuts,
+		      s->keep_push_cm, (unsigned long long)s->keep_pushes, (unsigned long long)s->side_eps, s->side_cm,
+		      (unsigned long long)s->side_frames, (unsigned long long)s->side_corners,
+		      (unsigned long long)s->side_blocked, (unsigned long long)s->side_lost, (unsigned long long)s->thr_kept,
+		      (unsigned long long)s->thr_downs, (unsigned long long)s->lib_holds);
 	if (g_cl.cfg.hug || g_cl.cfg.stand || g_cl.cfg.topout)
 		logf_("CLIMB END build 17: hug: moves away from the wall cut %.0f cm (%llu frames), pulls redirected toward the face "
 		      "%.0f cm (%llu frames), the farthest from a driving hold's face %.0f cm; stand: %llu (over %llu; the stick's walks "
@@ -12619,12 +12769,12 @@ static void cl_end_log(void)
 		      (unsigned long long)s->to_frames, (unsigned long long)s->to_refused, (unsigned long long)g_cl.chr_hits);
 	if (g_cl.cfg.pullover || g_cl.cfg.hang_stick_cm > 0 || g_un.on)
 		logf_("CLIMB END build 16: pullover arms %llu, goes %llu, cancels %llu, holds on a top without a landing %llu, frames "
-		      "shown %llu, no way up %llu; hang stick drops %llu; unpin ticks %llu, pinned episodes %llu, steps %llu (%.0f cm; "
+		      "shown %llu, no way up %llu (mid-face, no buzz %llu); hang stick drops %llu; unpin ticks %llu, pinned episodes %llu, steps %llu (%.0f cm; "
 		      "the drift out of the rock %.1f cm in all, at most %.1f cm a second), refused into a surface %llu / a wall "
 		      "ahead %llu, blocked not inside %llu, manifold unread %llu",
 		      (unsigned long long)s->po_arms, (unsigned long long)s->po_goes, (unsigned long long)s->po_cancels,
 		      (unsigned long long)s->po_nones, (unsigned long long)g_cl.po_frames, (unsigned long long)s->po_noways,
-		      (unsigned long long)s->stick_drops, (unsigned long long)g_un.ticks, (unsigned long long)g_un.s.episodes,
+		      (unsigned long long)s->po_midface, (unsigned long long)s->stick_drops, (unsigned long long)g_un.ticks, (unsigned long long)g_un.s.episodes,
 		      (unsigned long long)g_un.s.steps, g_un.s.step_cm, g_un.s.drift_cm, (double)g_un.drift_max_s,
 		      (unsigned long long)g_un.s.into, (unsigned long long)g_un.s.walls, (unsigned long long)g_un.s.notin,
 		      (unsigned long long)g_un.man_bad);
@@ -17075,6 +17225,10 @@ static void *writer_main(void *arg)
 					what = sf_word(w + 8);
 				} else if (seen && !strncmp(w, "stealth ", 8)) { /* SOMVR_STEALTH_KILL: "stealth status|on|off|log" */
 					what = stl_word(w + 8);
+				} else if (seen && !strncmp(w, "knife ", 6)) { /* build 37, SOMVR_KNIFE_KILL: "knife status|on|off|seen on|off" */
+					what = kn_word(w + 6);
+				} else if (seen && !strncmp(w, "cues ", 5)) { /* build 37, SOMVR_CUE_*: "cues status|probe [S]|aware|use|timer|arc|alert on|off" */
+					what = cu_word(w + 5);
 				} else if (seen && !strncmp(w, "kills ", 6)) { /* build 31, SOMVR_KILLS: "kills status|play N|cat|kill N|sever" */
 					what = kl_word(w + 6);
 				} else if (seen && !strncmp(w, "finisher ", 9)) { /* build 33, SOMVR_FINISHER: "finisher status|on|off|pose" */
@@ -18985,6 +19139,8 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	vb_start(&bad);                 /* SOMVR_VERBS: the Nemesis verbs (after combat, input and the prompts) */
 	gc_start(&bad);                 /* build 21, SOMVR_VERBS_CUE: the grab cue (after the verbs) */
 	h31_start(&bad);                /* build 31, SOMVR_HOLD31: the held kill, the hold's push (after the verbs) */
+	kn_start(&bad);                 /* build 37, SOMVR_KNIFE_KILL: the knife's stealth kill (after the stealth kill) */
+	cu_start(&bad);                 /* build 37, SOMVR_CUE_*: the cues for the hidden prompts (after SOMVR_USE, the herbs) */
 	ov_start(&bad);                 /* build 31, SOMVR_VAULT_HANDS: the vault by the hands (after the verbs) */
 	br_start(&bad);                 /* build 23, SOMVR_VERBS_BRAND: the brand by the hand (after the cue) */
 	fa_start(&bad);                 /* build 25, SOMVR_ABOVE: kills and brands from above (after the brand) */
@@ -19196,6 +19352,8 @@ static void somvr_end_logs(const char *why)
 	fi_end_log();  /* SOMVR_FINISH */
 	xc_end_log();  /* SOMVR_EXECUTE */
 	stl_end_log(); /* SOMVR_STEALTH_KILL */
+	kn_end_log();  /* build 37, SOMVR_KNIFE_KILL */
+	cu_end_log();  /* build 37, SOMVR_CUE_* */
 	kl_end_log();  /* build 31, SOMVR_KILLS */
 	fn_end_log();  /* build 33, SOMVR_FINISHER */
 	vb_end_log();  /* SOMVR_VERBS */
@@ -19960,23 +20118,40 @@ static void th_frame(uintptr_t pl, int stereo)
 	ab2_glow_add(gl, &ng); /* build 27c: the kindled arrow's tip */
 	ab3_glow_add(gl, &ng); /* build 27d: the distract arrow's tip */
 	mt_glow_add(gl, &ng); /* build 29b, SOMVR_RIDE_CUE: the mount's offer on the stunned caragor */
+	cu_glow_add(pcomb, pc, root, head, hqv, t, gl, &ng); /* build 37, SOMVR_CUE_*: the awareness marks, the arc */
+	cu_use_glow_add(gl, &ng); /* build 37, SOMVR_CUE_USE: the glow on a thing the game offers a pick for */
+	cu_pick_watch(t); /* build 37: the game's pick begun (B or the hand) - a buzz, an herb's heal flash */
 	somvr_th_map m = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
 			   { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
 	for (int i = 0; i < ng; i++) { /* the glow's size for its distance in the room (/ the player size) */
 		somvr_th_to_xr(&m, gl[i].pos, e.g[i].pos);
 		/* (build 25: a blue glow past 2.5 m - SOMVR_ABOVE's cue on an orc below - keeps the angular size it has at 2.5 m;
 		 * the grab cue's reach ends at 1.7 m) */
-		e.g[i].size_m = (gl[i].kind & SOMVR_THK_BLUE) ? gc_glow_size_m() * fmaxf(1.0f, gl[i].dist / 250.0f)
+		e.g[i].size_m = (gl[i].kind & SOMVR_THK_RING) ? 2.4f * gc_glow_size_m() * fmaxf(1.0f, gl[i].dist / 250.0f) /* build 37 */
+			: (gl[i].kind & SOMVR_THK_MARK) ? cu_glow_size_m(&gl[i]) /* build 37: its own angular size */
+			: (gl[i].kind & SOMVR_THK_BLUE) ? gc_glow_size_m() * fmaxf(1.0f, gl[i].dist / 250.0f)
 			: somvr_th_glow_size(&g_th.cfg, gl[i].dist / somvr_rig_scale(&g_rig)), e.g[i].level = gl[i].level,
 		e.g[i].kind = gl[i].kind;
 	}
 	e.nglow = (uint32_t)ng;
+	{ /* build 37 (docs 169.8): the game camera's frustum for the layer's head-level HUD quad (SOMVR_XR_HUD_EYE=camera) */
+		float hf[3] = { 0, 0, -1 }, hx[3];
+		sv_vec3 fw = sv_qrot(sv_qnormalize(hq), (sv_vec3){ 0, 0, 1 });
+		float wf[3] = { head[0] + 100 * fw.x, head[1] + 100 * fw.y, head[2] + 100 * fw.z }, x0[3];
+		somvr_th_to_xr(&m, head, x0), somvr_th_to_xr(&m, wf, hx);
+		float hl = sqrtf((hx[0] - x0[0]) * (hx[0] - x0[0]) + (hx[1] - x0[1]) * (hx[1] - x0[1]) + (hx[2] - x0[2]) * (hx[2] - x0[2]));
+		if (hl > 1e-6f)
+			for (int i = 0; i < 3; i++)
+				hf[i] = (hx[i] - x0[i]) / hl;
+		th_hudcam(pl, &m, hf, &e);
+	}
 	g_th.n.glow += ng > 0, g_th.n.edge += e.edge[0] > 0 || e.edge[1] > 0, g_th.n.near += (e.flags & SOMVR_THF_NEAR) != 0;
 	g_th.n.proj += (e.flags & SOMVR_THF_PROJ) != 0;
 	g_th.incoming = nearest != NULL || (e.flags & SOMVR_THF_PROJ), g_th.inc_t = t; /* SOMVR_VRMENU's gate */
 	if (e.threats)
 		g_th.att_t = t; /* SOMVR_DODGE's fight */
 	hu_flash(e.hurt, t); /* SOMVR_HURT: the red flash on the edge bands */
+	cu_heal_flash(e.hurt, &e.flags, t); /* build 37: a pick's heal - the same bands in green (SOMVR_THF_HEAL) */
 	if (e.hurt[0] || e.hurt[1])
 		e.flags |= SOMVR_THF_HURT;
 	hu_low(&e.low, &e.beat); /* build 31: low health's ring (SOMVR_HURT_LOW_STYLE=ring) */
@@ -23010,6 +23185,8 @@ static void df_clank_fx(double t)
 #include "somvr_perf_game.c" /* build 27: SOMVR_PERF, the CPU time of a stereo frame (docs/re-xr-pipeline.md 115) */
 #include "somvr_swordphys_game.c" /* build 31: SOMVR_SWORD_PHYS, SOMVR_SWORD_FLESH (docs/re-xr-pipeline.md 134) */
 #include "somvr_finisher_game.c" /* build 33: SOMVR_FINISHER, the neck stab as the player's own motion (docs 140) */
+#include "somvr_knife_game.c" /* build 37: SOMVR_KNIFE_KILL, the stealth kill with the knife by hand (docs 168) */
+#include "somvr_cues_game.c" /* build 37: SOMVR_CUE_*, the cues for what the hidden prompts said (docs 169) */
 
 #include "somvr_settings34_game.c" /* build 34: the VR menu's v8 rows - builds 31-33's switches (docs 150) */
 #include "somvr_inrec_game.c" /* b35: SOMVR_INPUT_REC / SOMVR_INPUT_REPLAY, the session's input and its replays (docs 160) */

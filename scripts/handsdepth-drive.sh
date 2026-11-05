@@ -69,6 +69,7 @@ grep -q 'xr: hands: ready' "$R/xr-layer.log" && echo "PASS the layer made our ha
 # the arrival card away (the right grip squeezed)
 t "btn R squeeze 1"; sleep 1; t "btn R squeeze 0"; sleep 0.5
 grep -q 'card: put away' "$R/xr-layer.log" || { t "btn R a 1"; sleep 0.5; t "btn R a 0"; sleep 0.5; }
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 for s in $STEPS; do
   case $s in
   hold)  # the controllers held naturally: the world's depth maps the meadow (nothing near the hands)
@@ -127,9 +128,9 @@ for s in $STEPS; do
     t "btn L squeeze 0"; sleep 1 ;;
   menu)  # the wrist panel (the left palm toward the eyes), the right fingertip on it: unchanged by the world
     t "hand R head 15 -30 35 40 0 0" "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 2
-    grep -q 'vrmenu: opened by' "$R/xr-layer.log" || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; }
+    grep -q 'vrmenu: opened by' "$R/xr-layer.log" || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; t "hand R touch panel 0.3359 0.9706 5"; sleep 0.5; t "hand R touch panel 0.3359 0.9706 -1.0 s 0.3"; sleep 0.5; t "hand R touch panel 0.3359 0.9706 5 s 0.2"; sleep 0.3; }
     d menu-open
-    t "hand R touch panel 0.5 0.45 0.3 s 0.3"; sleep 1; d menu-finger-touch
+    t "hand R touch panel 0.5 0.4235 0.3 s 0.3"; sleep 1; d menu-finger-touch
     t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1.5 ;;
   esac
 done

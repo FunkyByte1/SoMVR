@@ -3,20 +3,22 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 37 (Windows) - what to test
-- New: live notes and patches, just below - try them first. Then build 34's list (new since your 11-03 session). Menu > Controls lists every move.
+Build 38 (Windows) - what to test
+- New: the menu stays open while you point at it, answer cards pop up by themselves, the knife kill, rough walls climbable. Then build 34's list. Menu > Controls lists every move.
 
 - LIVE NOTES. Press B + Y and say what you see; we get the note about a second after you stop. Keep playing.
-- Our answer comes when things are calm: a buzz, a short spoken line and a dot on your left palm. Palm up (as for the menu) to read it; tap it away.
+- You hear "Got it" with a buzz in the left hand when you stop talking. The answer is spoken, and its card pops up by itself beside your left hand at a calm moment (8 s, or tap it away). A long answer comes as cards 1 of 2, 2 of 2. An orange dot on the back of your left hand = a card waits.
+- THE MENU stays open while your other hand points at it. Turn the palm down to close it. Refresh rate: Settings > Display, last row (90 Hz is set).
 - A fix comes as "Patch N ready": Menu > Test tab > Apply patch swaps it in within seconds, no restart, at a calm moment (not mid-fight or mid-climb). Your view should not move at all. Undo patch puts the one before back.
 - Play as usual while a fix is being built in the background; it should feel exactly the same. If you notice any stutter, say 'stutter' in a mark.
 - PRACTICE TRIP: it always lands you on solid ground now. From far away the screen stays black a few seconds and you are back where you were: get closer and try again.
+- ROUGH WALLS: the two rock walls you got stuck on - pull from chest to waist: you go up past the bumps, no false 'no way up' buzz.
 
 - KILLS. Every kill shows at once: a hard cut or stab kills him on the spot or he visibly starts falling right away - never a collapse later or a walk-off. A hard cut across his neck takes his head off.
 - Hit an orc while he is dying: blood and a hit buzz. Cut an unaware orc's back: he fights you (a stab from behind still kills silently).
-- Practice > Charge execution, then face an orc: the finisher's blue outline.
+- Practice > Charge execution: if no orc is near, one appears facing you; face him: the finisher's blue outline. Sword glowing but no outline? A blue ring on the nearest orc says FACE TO FACE / IN REACH.
 - Block his blow, then kill him on the counter: the game's counter-kill fall. A stunned orc has its own.
-- FINISHER. When the sword glows, face an orc up close: the world slows and a blue sword outline points into his neck. Lay your sword on it until it snaps, then thrust in and pull out at a firm, steady pace.
+- FINISHER. When the sword glows, face an orc up close: the world slows and a glowing blue blade points into his neck. Bring your sword onto it: a clank, a buzz and a flash, and your blade pulls onto the line. Thrust in: he dies the moment it is in. Pull back at your own speed: the blade comes out with your hand.
 - Wait or turn away: the outline goes and the world speeds up again.
 - NO PROMPTS. No gold Y when an orc winds up, no triangles over orcs, no button prompts at the bottom, no icons over fire pits or herbs (our own glows stay). Mark any you still see.
 - Stealth: crouch behind an unaware orc and stab his back hard: he dies silently on your blade. Nothing moves you or your view.
@@ -26,6 +28,8 @@ Build 37 (Windows) - what to test
 - Crouch over a knocked-down orc and cut him - he can be hurt while down.
 
 - THE KNIFE. Reach either hand to its own hip until it ticks, then grip: the knife is in that hand while you hold the grip; open the hand and it is back on the belt. (Right hand: when it holds nothing.)
+- KNIFE KILL. Knife out, crouch behind or beside an unaware orc. Your free hand can grip his shoulder or neck: he holds still and quiet. Push the point slowly into his neck or back: he dies at once, silently. The knife sticks - pull it out.
+- The knife on an orc who is fighting you is only a light hit. A brush along his back does nothing.
 
 - THE SWORD has weight now. A quick flick leaves the blade behind; a full committed swing carries it.
 - Cut an orc across the chest: the blade bites in and drags out. A slow cut stops in him.

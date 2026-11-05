@@ -545,6 +545,8 @@ static void vb_heads(const struct cb_orc *o, int n, uintptr_t pc, const float *r
 	for (int i = 0; i < n && k < SOMVR_VB_ORCS; i++) {
 		if (o[i].dist > VB_GRAB_CM)
 			continue;
+		if (kn_takes(&o[i], pc, root))
+			continue; /* build 37 (SOMVR_KNIFE_KILL): with the knife out a stealth target is the knife's hold, not the game's grab */
 		g_vb.head_c[k] = o[i].c;
 		vb_head_of(&o[i], g_vb.heads[k]);
 		g_vb.body_cm[k] = stl_grab_back(&o[i], pc, root, g_vb.body[k]);

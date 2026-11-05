@@ -49,6 +49,7 @@ d() { local n0; n0=$(grep -c 'dump layers frame [0-9]*: hands' "$R/xr-layer.log"
       echo "$1 $f" | tee -a "$R/vrh-steps.txt"; }
 both() { t "hand L head $1" "hand R head $2"; sleep "${3:-0.6}"; }
 grep -q 'xr: hands: ready' "$R/xr-layer.log" && echo "PASS the layer made our hands" || echo "FAIL no 'xr: hands: ready'"
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 for s in $STEPS; do
   case $s in
   hold)  # the controllers held naturally (the grip's -Z 40 deg up), open, relaxed
@@ -81,12 +82,12 @@ for s in $STEPS; do
   menu)  # the wrist panel (the left palm toward the eyes), the right fingertip on it
     o=$(grep -c 'vrmenu: opened by' "$R/xr-layer.log")
     t "hand R head 15 -30 35 40 0 0" "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 2
-    [ "$(grep -c 'vrmenu: opened by' "$R/xr-layer.log")" -gt "$o" ] || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; }
+    [ "$(grep -c 'vrmenu: opened by' "$R/xr-layer.log")" -gt "$o" ] || { t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 1; t "hand R touch panel 0.3359 0.9706 5"; sleep 0.5; t "hand R touch panel 0.3359 0.9706 -1.0 s 0.3"; sleep 0.5; t "hand R touch panel 0.3359 0.9706 5 s 0.2"; sleep 0.3; }
     grep 'vrmenu: opened by' "$R/xr-layer.log" | tail -1 | cut -c1-160
     d menu-open
-    t "hand R touch panel 0.5 0.45 4 s 0.3"; sleep 1; d menu-finger-4cm
-    t "hand R touch panel 0.5 0.45 0.3 s 0.3"; sleep 1; d menu-finger-touch
-    t "hand R touch panel 0.3 0.25 1.5 s 0.3"; sleep 1; d menu-finger-row
+    t "hand R touch panel 0.5 0.4235 4 s 0.3"; sleep 1; d menu-finger-4cm
+    t "hand R touch panel 0.5 0.4235 0.3 s 0.3"; sleep 1; d menu-finger-touch
+    t "hand R touch panel 0.3 0.2353 1.5 s 0.3"; sleep 1; d menu-finger-row
     t "hand L head 2 -12 30 -20 -90 50 s 0.4"; sleep 1; d menu-wrist-tilted
     t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1.5 ;;
   watch)  # the left wrist raised, its back toward the eyes (the watch), from a few angles

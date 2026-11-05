@@ -464,9 +464,11 @@ static int ov_plant_at(uintptr_t c, const float palm[3])
 
 /* in_frame (the game thread, a stereo frame), before the verbs' hands: the vault's step */
 static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq);
+static void cu_use_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq); /* build 37 (somvr_cues_game.c) */
 static void ov_frame(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 {
 	hrb_hands(pw, hp, hq); /* build 33: the herbs by the hand (SOMVR_HERBS) */
+	cu_use_hands(pw, hp, hq); /* build 37: every other pick the game offers, by the hand (SOMVR_CUE_USE) */
 	if (!g_ov.on)
 		return;
 	if (!g_ov.tid)
@@ -787,6 +789,7 @@ static struct {
 	struct { uintptr_t mk; float pos[3]; char name[40]; } h[HRB_N];
 	int cue_i, cue_full, cue_was, held_i, closed[2];
 	float cue_pos[3], cue_level, cue_dist, held_pos[3];
+	int cue_ring; /* build 37: the reach ring's cell (somvr_cu_ring_cell; 0 = none) */
 	uint64_t cue_frame;
 	float hp_before;
 	int hp_pending;
@@ -962,7 +965,9 @@ static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 	if (best_i >= 0) {
 		int in = best <= g_hrb.reach_cm && !g_hrb.closed[best_h];
 		g_hrb.cue_pos[0] = g_hrb.h[best_i].pos[0], g_hrb.cue_pos[1] = g_hrb.h[best_i].pos[1] + 15, g_hrb.cue_pos[2] = g_hrb.h[best_i].pos[2];
-		g_hrb.cue_level = (in ? 1.0f : 0.45f) * g_gc.level, g_hrb.cue_frame = g_fr.frame;
+		/* build 37 (the user's herb, 11-04): the glow brightens and the reach ring tightens as the open hand comes in */
+		g_hrb.cue_level = somvr_cu_reach_level(best, g_hrb.reach_cm, in) * g_gc.level, g_hrb.cue_frame = g_fr.frame;
+		g_hrb.cue_ring = somvr_cu_ring_cell(best, g_hrb.reach_cm, in);
 		g_hrb.cue_dist = dist3(g_hrb.cue_pos, eye);
 		if (in && !g_hrb.cue_was)
 			haptic_play(best_h, SOMVR_HX_TICK, 1, g_gc.tick_amp / 0.25f), g_hrb.cues++;
@@ -991,7 +996,7 @@ static void hrb_hands(const sv_vec3 pw[2], sv_vec3 hp, sv_quat hq)
 	}
 	if (g_hrb.hold_h >= 0) /* the herb in the fist */
 		memcpy(g_hrb.cue_pos, g_hrb.held_pos, sizeof g_hrb.cue_pos), g_hrb.cue_level = g_gc.level, g_hrb.cue_frame = g_fr.frame,
-			g_hrb.cue_dist = dist3(g_hrb.held_pos, eye);
+			g_hrb.cue_dist = dist3(g_hrb.held_pos, eye), g_hrb.cue_ring = 0;
 	for (int h = 0; h < 2; h++)
 		g_hrb.closed[h] = sq_closed[h];
 }
@@ -1002,6 +1007,8 @@ static void hrb_glow_add(struct th_glow *gl, int *ng)
 	if (!g_hrb.on || g_gc.mode != GC_ON || !(g_hrb.cue_level > 0.01f) || g_fr.frame - g_hrb.cue_frame > 2)
 		return;
 	th_glow_add(gl, ng, g_hrb.cue_pos, g_hrb.cue_level, g_hrb.cue_dist, SOMVR_THK_MELEE | SOMVR_THK_BLUE);
+	if (g_hrb.cue_ring > 0) /* build 37: the reach ring round it (kept over the weaker glows: 0.95) */
+		th_glow_add(gl, ng, g_hrb.cue_pos, 0.95f, g_hrb.cue_dist, SOMVR_THK_RING | (uint32_t)g_hrb.cue_ring << SOMVR_THK_ARC_SHIFT);
 }
 
 static void hrb_end_log(void)

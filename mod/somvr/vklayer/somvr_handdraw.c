@@ -555,6 +555,9 @@ void hd_record(hd_ctx *c, VkCommandBuffer cmd, uint32_t slot, hd_frame *fr, VkIm
                 f->CmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, c->pipe);
             pc.base[0] = fr->arrow_base[0], pc.base[1] = fr->arrow_base[1], pc.base[2] = fr->arrow_base[2], pc.base[3] = 1;
             pc.params[0] = 0.45f * fr->key, pc.params[1] = 0.9f, pc.params[2] = 0.8f, pc.params[3] = 0.15f;
+            if (fr->arrow_look[1] > 0) /* build 37: its own light (the finisher's blade glow) */
+                pc.params[0] = fr->arrow_look[0] * fr->key, pc.params[1] = fr->arrow_look[1], pc.params[2] = fr->arrow_look[2],
+                pc.params[3] = fr->arrow_look[3];
             pc.light[3] = fr->arrow_a > 1 ? 1 : fr->arrow_a;
             f->CmdPushConstants(cmd, c->pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
             f->CmdDrawIndexed(cmd, SOMVR_VH_ARROW_NI, 1, HD_ARROW_I(c), (int32_t)HD_ARROW_V(c), 0);

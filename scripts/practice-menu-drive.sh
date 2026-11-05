@@ -6,6 +6,7 @@
 #     SOMVR_XR_TEST=@RUN@/xrtest.txt SOMVR_EYE_SIZE=2015x2217" setsid scripts/headless_vr.sh <build>/ShadowOfMordor/mod/somvr
 # and this script at the same time (PMENU_WT=build-vrN: the newest run of it). The uv of each button is the panel's own
 # layout (somvr_vm_rect, practice page): the tab 0.441 0.042, Spawn 0.5 0.474, the orc type's > 0.922 0.389, Remove
+# (b37 live3: the panel is 816 texels high, 768 before - the UVs above are the 768 layout's; the calls below use v x 768/816, the same pixel rows)
 # 0.5 0.560. Steps: the wrist menu (the left palm toward the eyes; retried, then the menu button's long press), the Practice tab, Spawn (infantry), the menu shut,
 # a mark; again: the type's > (shield), Spawn (it replaces the first), a mark; Remove. Prints PASS/FAIL per step from
 # somvr.log and ends with a quit. Stops at once (quit) when the user goes into VR.
@@ -46,11 +47,12 @@ press() { t "hand R touch panel $1 $2 5"; t "hand R touch panel $1 $2 1.0 s 0.3"
 # the wrist menu: the palm gesture (held off while an attack is incoming: the palm away and back, up to 4 tries), then
 # the left menu button held 1 s (a long press: the panel toggles past the gate); prints how it opened
 opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 menu_open() { local o=$(opens) k
   for k in 1 2 3 4; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
   [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
   echo "NOT OPEN (gesture x4, long press)"; grep 'held off\|vrmenu: opened\|vrmenu: closed' "$R/xr-layer.log" | tail -3 | cut -c1-200; }
 menu_shut() { t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1.5; }
@@ -59,22 +61,22 @@ check() { if [ "$(n "$2")" -gt "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (
 S0=$(n 'spawn [A-Za-z]* (the menu)'); I0=$(n 'spawn Infantry (the menu)'); H0=$(n 'spawn Shield (the menu)')
 # 1. the wrist menu, the Practice tab, Spawn
 menu_open; t "dump"; sleep 1.5
-press 0.441 0.042; t "dump"; sleep 1.5
-press 0.5 0.474; sleep 4
+press 0.441 0.0395; t "dump"; sleep 1.5
+press 0.5 0.4461; sleep 4
 check "spawn from the menu (infantry)" 'spawn Infantry (the menu)' "$I0"
 t "dump"; sleep 1.5
 menu_shut; m p01-infantry
 grep -q 'spawn check 1: the Infantry orc' "$R/somvr.log" && echo "PASS the infantry orc alive" || echo "FAIL no infantry check"
 # 2. the type's > (shield), Spawn: it replaces the infantry
-menu_open; press 0.441 0.042; t "dump"; sleep 1.5
-press 0.922 0.389; t "dump"; sleep 1.5
-press 0.5 0.474; sleep 4
+menu_open; press 0.441 0.0395; t "dump"; sleep 1.5
+press 0.922 0.3661; t "dump"; sleep 1.5
+press 0.5 0.4461; sleep 4
 check "spawn from the menu (shield)" 'spawn Shield (the menu)' "$H0"
 menu_shut; m p02-shield
 # 3. Remove (the shield's spawn removed the infantry: count from here)
 RM0=$(n 'PRACTICE t=.* remove the Shield orc')
-menu_open; press 0.441 0.042
-press 0.5 0.560; sleep 3
+menu_open; press 0.441 0.0395
+press 0.5 0.5271; sleep 3
 check "remove from the menu" 'PRACTICE t=.* remove the Shield orc' "$RM0"
 t "dump"; sleep 1.5
 menu_shut; m p03-removed

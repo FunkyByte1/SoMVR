@@ -212,7 +212,8 @@ enum { SOMVR_VMPR_NONE = 0, SOMVR_VMPR_GO = 1, SOMVR_VMPR_BACK = 2, SOMVR_VMPR_S
        SOMVR_VMPR_PLACE = 11,
        /* build 36 (re-xr-pipeline.md 164): Charge execution - the execution's charge filled (the finisher's ready reached
         * at once; in the area only, as the refills) */
-       SOMVR_VMPR_CHARGE = 12 };
+       SOMVR_VMPR_CHARGE = 12,
+       SOMVR_VMPR_HERB = 13 /* build 37: New herb */ };
 static inline uint32_t somvr_vm_pr_pack(uint32_t seq, int action, int orc) {
     return seq << 8 | ((uint32_t)orc & 15u) << 4 | ((uint32_t)action & 15u);
 }
@@ -310,7 +311,10 @@ typedef struct {
     uint8_t climb_sword;       /* 109: the sword in the free hand while climbing 0 off, 1 on (SOMVR_CLIMB_SWORD) */
     uint16_t av8;              /* 110: the preload's, at its start: SOMVR_VMA8_* - the v8 rows' features run in this
                                 * session (no key, never saved; the 64 avail bits are all taken) */
-    uint8_t pad8[16];          /* 112..127: spare */
+    uint8_t menu_pin;          /* 112: b37 live3 (re-xr-pipeline.md 162.12): the panel 0 on the wrist, 1 pinned in front -
+                                * how it opens (MENU_PIN; the long press of the menu button pins it; Pin / Back to the
+                                * wrist on the panel; remembered) */
+    uint8_t pad8[15];          /* 113..127: spare */
 } somvr_settings;              /* 128 (96 in v7, 88 in v6) */
 /* v8: the v8 rows' availability (somvr_settings.av8) */
 enum {
@@ -356,7 +360,8 @@ typedef struct somvr_vrmenu_shared {
 _Static_assert(sizeof(somvr_settings) == 128 && offsetof(somvr_settings, dodge) == 88 &&
                    offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94 &&
                    offsetof(somvr_settings, watch_raise) == 96 && offsetof(somvr_settings, climb_sword) == 109 &&
-                   offsetof(somvr_settings, av8) == 110 && offsetof(somvr_settings, pad8) == 112,
+                   offsetof(somvr_settings, av8) == 110 && offsetof(somvr_settings, menu_pin) == 112 &&
+                   offsetof(somvr_settings, pad8) == 113,
                "somvr_settings size");
 _Static_assert(offsetof(somvr_vrmenu_shared, avail) == 24 && offsetof(somvr_vrmenu_shared, blink_on_ms) == 32 &&
                    offsetof(somvr_vrmenu_shared, seq) == 40 && offsetof(somvr_vrmenu_shared, set) == 48 &&
@@ -412,7 +417,8 @@ enum { SOMVR_SK_TURN, SOMVR_SK_SNAP_DEG, SOMVR_SK_TURN_DPS, SOMVR_SK_VIGNETTE, S
         * start values come from the switches they set) */
        SOMVR_SK_XR_WATCH_LOOK, SOMVR_SK_WATCH_SIZE, SOMVR_SK_LOW_HEALTH, SOMVR_SK_HEARTBEAT, SOMVR_SK_FORCE_NEEDED,
        SOMVR_SK_SWORD_PHYS_GHOST, SOMVR_SK_KILLS, SOMVR_SK_KILLS_EXEC, SOMVR_SK_SHOVE_PUSH, SOMVR_SK_VERBS_GRAB_MAX_S,
-       SOMVR_SK_SLOTS_DAGGER_HOLD, SOMVR_SK_HERBS, SOMVR_SK_CLIMB_FLING_DOWN, SOMVR_SK_CLIMB_SWORD, SOMVR_SK_N };
+       SOMVR_SK_SLOTS_DAGGER_HOLD, SOMVR_SK_HERBS, SOMVR_SK_CLIMB_FLING_DOWN, SOMVR_SK_CLIMB_SWORD,
+       SOMVR_SK_MENU_PIN /* b37 live3 */, SOMVR_SK_N };
 /* build 27: the key masks are 64 bits (parse, format, diff, the file mask; 32 bits held 31 keys) */
 _Static_assert(SOMVR_SK_N <= 63, "the settings keys fit a 64-bit mask");
 #define SOMVR_SK_ALL ((1ull << SOMVR_SK_N) - 1ull)
@@ -509,9 +515,14 @@ enum { SOMVR_VMI_TAB = SOMVR_VMI_N, SOMVR_VMI_PR_GO, SOMVR_VMI_PR_BACK, SOMVR_VM
        /* build 36 (re-xr-pipeline.md 164): the practice page's Charge execution (under Refill health / Place orc; in the
         * area only, as Spawn); the hints below it moved down a row */
        SOMVR_VMI_PR_CHARGE,
+       /* build 37 (som-b37-cues): New herb, the Charge row's right part (in the area only) */
+       SOMVR_VMI_PR_HERB,
        /* build 35 (re-xr-pipeline.md 162, SOMVR_LIVE=on): the Test page's patch box - Apply patch | Undo patch (a rect
         * only while somvr_vm_live_set's box is on) */
-       SOMVR_VMI_LIVE_APPLY, SOMVR_VMI_LIVE_UNDO, SOMVR_VMI_ALL };
+       SOMVR_VMI_LIVE_APPLY, SOMVR_VMI_LIVE_UNDO,
+       /* b37 live3 (re-xr-pipeline.md 162.12): the panel's bottom bar on every page - Pin in front | Back to the wrist
+        * (settings.menu_pin toggled: SOMVR_VMR_CHANGED, the layer moves the panel) and Close (SOMVR_VMR_CLOSE) */
+       SOMVR_VMI_PIN, SOMVR_VMI_PINX, SOMVR_VMI_ALL };
 #define SOMVR_VM_SUBS 6 /* the groups (SOMVR_VMI_SUB_COMFORT ..) */
 /* the panel's pages; build 19: SOMVR_VMPG_FIGHT = the Settings tab's second page (the sword, the bow, the fight: its
  * tab lit as the Settings page's) */
@@ -598,11 +609,13 @@ int somvr_vm_practice_action(int item);
 
 /* the panel's texture and its rects (pixels: x right, y down = the quad's uv x 512 / x 768) */
 #define SOMVR_VM_TEX_W 512
-#define SOMVR_VM_TEX_H 768   /* 15 rows since v2 (the step, the dash, the phase): 640 before; 16 rows of 38 px since
-                              * v4 (the sword angle), 40 px before; 17 of 36 px with the player size */
+#define SOMVR_VM_TEX_H 816   /* 15 rows since v2 (the step, the dash, the phase): 640 before; 16 rows of 38 px since
+                              * v4 (the sword angle), 40 px before; 17 of 36 px with the player size; b37 live3: 768 ->
+                              * 816, the bottom bar (Pin / Close) under everything that was */
+#define SOMVR_VM_PIN_Y 772   /* b37 live3: the bottom bar's buttons, 40 px high */
 #define SOMVR_VM_SCALE 2     /* the font's scale: 16 x 32 pixel cells */
 #define SOMVR_VM_W_M 0.20f   /* the quad: 20 x 30 cm (2560 texels per metre: about 18 per degree at 40 cm) */
-#define SOMVR_VM_H_M 0.30f
+#define SOMVR_VM_H_M 0.31875f /* (b37 live3: 30 cm for 768 texels; 816 at the same scale) */
 /* {x, y, w, h} of (item, part) with the rows avail shows (somvr_vm_shown: the shown rows from the top, 38 px each, closer
  * when more than 16 are shown; the bottom row of buttons stays where it is); 0 = the part does not exist (the buttons
  * have only BUTTON, the rows ROW/LESS/MORE; a row not shown has none) */
@@ -675,6 +688,7 @@ typedef struct {
     int ctl_page;              /* build 27: the Controls page's page shown (0 ..) */
     uint32_t ctl_feat;         /* build 34: somvr_vrmenu_shared.ctl_feat (SOMVR_VMF_*) */
     uint32_t live_gen;         /* build 35: somvr_vm_live's gen (a change redraws the panel) */
+    int pinned;                /* b37 live3: the panel is pinned in front (its Pin button reads "Back to the wrist") */
 } somvr_vm_view;
 /* The panel's picture: SOMVR_VM_TEX_W x _H RGBA8 (bgra: B and R swapped), premultiplied, the sRGB bytes; opaque inside
  * its rounded corners. A title, one row per item (label, value, the < > buttons), the Recentre button, the close box;
@@ -696,6 +710,12 @@ typedef struct {
     float lost_s;            /* the panel's hand untracked 1 s: closed */
     float up_m, out_m;       /* the panel's centre from the grip: 15 cm along the panel's up, 5 cm off the palm */
     float gate_s;            /* the gate (gin.block) holds this long after its cause ends (0.3 s) */
+    /* b37 live3 (re-xr-pipeline.md 162.10): the panel IN USE - the pointing hand within use_m of the panel's centre, or
+     * its ray / fingertip on it, and use_s after - holds it open: no look-away, no gesture toggle, no watch close; it
+     * closes then by the palm dropped clearly (the palm's normal past drop_cos from the eyes, drop_s long: in use or
+     * not), the menu button, the bow, the hand lost */
+    float use_m, use_s;      /* 0.25 m, 0.5 s */
+    float drop_cos, drop_s;  /* -0.2 (the palm turned ~100 deg from the eyes), 0.5 s */
 } somvr_vm_gcfg;
 void somvr_vm_gcfg_default(somvr_vm_gcfg *c);
 
@@ -707,12 +727,17 @@ void somvr_vm_palm(const somvr_posef *grip, int hand, float n[3]);
  * normal from the grip. 0 = no valid pose (a bad grip quaternion). */
 int somvr_vm_panel_pose(const somvr_posef *grip, int hand, const somvr_posef *head, const somvr_vm_gcfg *c,
                         somvr_posef *out);
+/* b37 live3 (re-xr-pipeline.md 162.12): the pinned panel's place for this head - dist_m ahead on the level of the head's
+ * heading, drop_m below the eyes, facing the eyes (so tilted up toward them); 0 = no valid pose */
+int somvr_vm_pin_pose(const somvr_posef *head, float dist_m, float drop_m, somvr_posef *out);
 
 enum { SOMVR_VMW_NONE, SOMVR_VMW_GESTURE, SOMVR_VMW_BUTTON, SOMVR_VMW_AWAY, SOMVR_VMW_LOST, SOMVR_VMW_CLOSE_BOX,
        /* SOMVR_VMW_OFF, then build 6: the panel's wrist turned over to show the watch (SOMVR_XR_MINIMAP=wrist) */
        SOMVR_VMW_OFF, SOMVR_VMW_TURNED,
        /* build 20 (the layer's SOMVR_XR_VRMENU_BOW=close): the bow came out in the panel's hand */
-       SOMVR_VMW_BOW };
+       SOMVR_VMW_BOW,
+       /* b37 live3: the palm dropped clearly (drop_s) - the deliberate close, in use or not */
+       SOMVR_VMW_DROPPED };
 const char *somvr_vm_why(int why);
 typedef struct {
     int open;
@@ -736,6 +761,11 @@ typedef struct {
     double soft_t;
     int soft_held, soft_wait;
     uint64_t soft_waits;
+    /* b37 live3: in use (gin.using or busy: the last such frame, -1 = never; in_use this frame), the palm dropped since
+     * (-1 = not dropped), the closes the in-use hold refused this open (looked away, the gesture, the watch) */
+    double use_t, drop_t;
+    int in_use;
+    uint64_t use_held;
 } somvr_vm_gstate;
 void somvr_vm_greset(somvr_vm_gstate *g);
 typedef struct {
@@ -748,6 +778,7 @@ typedef struct {
     uint32_t toggles;   /* long presses of the menu button since the last frame */
     int busy;           /* the pointer is on the panel or holds a click: no gesture close, no look-away close */
     uint32_t block;     /* SOMVR_VMG_*: the hands are busy (somvr_vrmenu_shared.block): the gesture opens nothing */
+    int using;          /* b37 live3: the pointing hand at the open panel (within gcfg.use_m of its centre; the layer's) */
 } somvr_vm_gin;
 /* One frame: the menu button's toggles, the palm gesture (palm toward the eyes, the hand within reach, the panel looked
  * at, held hold_s, armed), looking away (away_s, not busy), the hand lost (lost_s). Returns +1 opened, -1 closed, 0

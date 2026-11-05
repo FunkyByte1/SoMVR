@@ -191,7 +191,7 @@ if has menu; then
   [ "$(cnt 'vrmenu: opened by' "$X")" -gt "$o" ] && pass "the menu opened by the palm" || fail "the menu did not open"
   press() { x "hand R touch panel $1 $2 5"; x "hand R touch panel $1 $2 1.0 s 0.3"; x "hand R touch panel $1 $2 -1.0 s 0.15"
             x "hand R touch panel $1 $2 4 s 0.2"; sleep 0.4; }
-  nx=$(wc -l < "$X"); press 0.90 0.042
+  nx=$(wc -l < "$X"); press 0.90 0.0395
   tail -n +"$((nx + 1))" "$X" | grep -E 'vrmenu: click' | head -2 | cut -c1-140 | sed 's/^/  /' | tee -a "$O"
   swap reload "the menu open on the Test tab" && pass "a swap with the menu open"
   tail -n +"$((nx + 1))" "$X" | grep -qE 'vrmenu: closed' && say "  (the menu closed by itself during the swap)" || pass "the menu stayed open across the swap"

@@ -17214,6 +17214,83 @@ static void kl36_tests(void)
 	       "orc's and a recoiling orc's killing blows not taken, a blade on a dying orc shows the hit, the finisher's orc spared\n");
 }
 
+/* ---- build 37 (som-b37-finisher2, docs/re-xr-pipeline.md 171): SOMVR_FINISHER_FEEL=b37 on the stand-in orcs ----------
+ * 1. the point full depth kills at once: fn_kill's DealHit (forceKill) in that frame, the orc dead (build 33: its half
+ *    started at the way in, the death 5 s into it - 10 s in the slowed world, the user's "the execution didn't kill him");
+ * 2. the killed orc keeps the ride going - the way out on its body (build 33's fn_orc ended the finisher at its death);
+ * 3. the end blends the blade back to the hand (the release; build 33: the sword jumped back - over off at once);
+ * 4. the snap pulls the blade onto the line over FN_PULL_S (build 33: put there in one frame). */
+static void finisher37_tests(void)
+{
+	static typeof(g_fin) fin0;
+	static typeof(g_kl) kl0;
+	static struct site_spec kls[KLS_N];
+	const struct site_spec *sites0 = g_kl_sites;
+	memcpy(&fin0, &g_fin, sizeof g_fin), memcpy(&kl0, &g_kl, sizeof g_kl);
+	memcpy(kls, g_kl_sites_game, sizeof kls);
+	kls[KLS_START].target = (uintptr_t)st_klstart, kls[KLS_NAV].target = (uintptr_t)st_klnav;
+	g_kl_sites = kls;
+	int kd0 = g_kd.mode;
+	double tt = g_cb_test_t;
+	cb_world();
+	g_kd.mode = KD_GAME;
+	memset(g_kl.k, 0, sizeof g_kl.k), memset(&g_kl.pl, 0, sizeof g_kl.pl), memset(&g_kl.sy, 0, sizeof g_kl.sy);
+	g_kl.ok = 1, g_kl.ok_nav = 1, g_kl.on = 1, g_kl.ai_hold = 1, g_kl.default_s = 5, g_kl.timeout_s = 6;
+	memset(&g_fin, 0, sizeof g_fin);
+	somvr_fn_defaults(&g_fin.cfg);
+	g_fin.on = 1, g_fin.ok = 1, g_fin.feel = 1, g_fin.slowmo = 0.15f, g_fin.s_deep = 1;
+	snprintf(g_fin.row, sizeof g_fin.row, "AI_Bip_PC_Standing_InstaKill_F6");
+	uintptr_t pc = (uintptr_t)&g_pcs;
+	struct cb_orc oa;
+	int got = cb_orc_get((uintptr_t)&g_oc[0], &oa);
+	g_oc[0].dead = 0;
+	g_fin.phase = FN_STAB, g_fin.c = oa.c, g_fin.hobj = oa.hobj, g_fin.in_done = 1, g_fin.p = 1.0f, g_fin.snap_t = g_cb_test_t;
+	g_fin.dir[2] = 1, g_fin.neck[0] = oa.pos[0], g_fin.neck[1] = oa.pos[1] + 130, g_fin.neck[2] = oa.pos[2];
+	/* 1. the kill at full depth */
+	g_dh.kill_next = 1;
+	int dh0 = g_dh.n;
+	fn_kill(pc, &oa, g_cb_test_t);
+	EXPECT(got && g_dh.n == dh0 + 1 && g_dh.kill == 1 && g_oc[0].dead && g_fin.killed && g_fin.dead_t == g_cb_test_t &&
+		       log_has("the death at once"),
+	       "finisher 37: full depth kills at once (DealHits %d, forceKill %d, dead %d, killed %d; build 33: the half's death "
+	       "seconds later)", g_dh.n - dh0, g_dh.kill, g_oc[0].dead, g_fin.killed);
+	/* 2. the dead orc keeps the way out going */
+	struct cb_orc oc;
+	int go = fn_orc(&oc, g_cb_test_t);
+	EXPECT(go && g_fin.phase == FN_STAB, "finisher 37: the killed orc's ride goes on (go %d, phase %d; build 33: ended at "
+	       "its death, the blade snapped back)", go, g_fin.phase);
+	/* 3. the end: the release's blend, then off */
+	atomic_store(&g_fin.over, 1), g_fin.have_off = 1, g_fin.ride_have = 1, g_fin.qnew[3] = 1;
+	g_fin.ride_op[0] = 0.5f, g_fin.ride_q[3] = 1;
+	fn_stop(g_cb_test_t);
+	int rel = atomic_load(&g_fin.rel), over = atomic_load(&g_fin.over);
+	float op[3] = { 0, 0, 0 }, qs[4] = { 0, 0, 0, 1 };
+	int mid = fn_sword(op, qs); /* (just begun: the ridden pose) */
+	float op_mid = op[0];
+	g_fin.rel_t0 = mono() - 1.0;
+	float op2[3] = { 0, 0, 0 }, qs2[4] = { 0, 0, 0, 1 };
+	int after = fn_sword(op2, qs2);
+	EXPECT(rel && over && mid && op_mid > 0.45f && !after && !atomic_load(&g_fin.over) && op2[0] == 0,
+	       "finisher 37: the end blends back to the hand (release %d, over %d, at its start %d at %.2f m, after it %d; build 33: "
+	       "over off at once)", rel, over, mid, (double)op_mid, after);
+	/* 4. the snap's pull: from the hand's sword to the line over FN_PULL_S */
+	atomic_store(&g_fin.over, 1), atomic_store(&g_fin.rel, 0), g_fin.snap_req = 0, g_fin.have_off = 1;
+	memset(g_fin.off_tip, 0, sizeof g_fin.off_tip), g_fin.tip_g[0] = 100, g_fin.tip_g[1] = g_fin.tip_g[2] = 0;
+	g_fin.pull_t0 = mono();
+	float p0[3] = { 0, 0, 0 }, q0[4] = { 0, 0, 0, 1 };
+	fn_sword(p0, q0);
+	g_fin.pull_t0 = mono() - 1.0;
+	float p1[3] = { 0, 0, 0 }, q1[4] = { 0, 0, 0, 1 };
+	fn_sword(p1, q1);
+	EXPECT(p0[0] < 0.1f && fabsf(p1[0] - 1.0f) < 1e-4f, "finisher 37: the snap pulls the blade onto the line (at once %.2f m, "
+	       "after the pull %.2f m of 1; build 33: 1 at once)", (double)p0[0], (double)p1[0]);
+	atomic_store(&g_fin.over, 0);
+	memcpy(&g_fin, &fin0, sizeof g_fin), memcpy(&g_kl, &kl0, sizeof g_kl);
+	g_kl_sites = sites0, g_kd.mode = kd0, g_cb_test_t = tt, g_oc[0].dead = 0, g_dh.kill_next = 0;
+	cb_world();
+	printf("finisher 37: full depth kills at once, the killed orc's way out goes on, the end blends back, the snap pulls\n");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
@@ -17811,6 +17888,7 @@ int main(int argc, char **argv)
 	kl_tests();     /* review b34: SOMVR_KILLS' AI hold rate, the navigation back, a reused Combat, the ground finisher */
 	kl36_tests();   /* build 36: the deaths at once - the fallback's direction, the quick rule, the downed, a dying orc's hit */
 	finisher_tests(); /* review b34 for build 33: the finisher's every way out, the timer-blind restore, a reused Combat */
+	finisher37_tests(); /* build 37: the kill at full depth, the killed orc's way out, the release's blend, the snap's pull */
 	ir_tests(argv[1]); /* b35: SOMVR_INPUT_REC, SOMVR_INPUT_REPLAY */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",

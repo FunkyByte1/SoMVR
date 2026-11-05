@@ -985,14 +985,17 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     int outline = arrow && e.arrow_glow >= 2.0f; /* build 33: SOMVR_FINISHER's sword outline in the arrow's slot */
     if (arrow) { /* (its nock and vanes at the cheek when drawn: faded within 6..16 cm of the eyes) */
         somvr_vh_vert *av = (somvr_vh_vert *)(void *)hd_slot_arrow(&VH.hc, s);
-        if (outline)
+        if (outline && e.arrow_glow >= 4.0f) /* build 37: the blade glow (the blade alone, its halo) */
+            somvr_vh_outline_blade(&e.arrow, e.arrow_len, av);
+        else if (outline)
             somvr_vh_outline(&e.arrow, e.arrow_len, av);
         else
             somvr_vh_arrow(&e.arrow, e.arrow_len, av);
         somvr_vh_arrow_fade(av, SOMVR_VH_ARROW_NV, rec->eye[0].pose.p, rec->eye[1].pose.p, 0.06f, 0.16f);
     }
     if (!own && arrow != VH.arrow_was && VH.lines++ < 200) /* (the loading space's own frames have none: not counted) */
-        lg("xr: hands: frame %llu: the %s %s", (unsigned long long)rec->frame, outline ? "sword outline" : "arrow",
+        lg("xr: hands: frame %llu: the %s %s", (unsigned long long)rec->frame,
+           outline && e.arrow_glow >= 4.0f ? "blade glow" : outline ? "sword outline" : "arrow",
            arrow ? "drawn" : "gone");
     if (!own) VH.arrow_was = arrow;
     VH.n_arrow += arrow;
@@ -1033,6 +1036,19 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         /* (a deeper blue and fainter than the wraith's: boot 122204's 0.30 .. 0.55 at 0.30/0.58/1.0 read as a white,
          * solid blade - the outline is a guide, the sword the player's) */
         fr.arrow_a = 0.22f + 0.20f * g, fr.arrow_base[0] = 0.14f, fr.arrow_base[1] = 0.36f, fr.arrow_base[2] = 1.0f;
+        if (e.arrow_glow >= 3.0f) /* build 37 (re-xr-pipeline.md 171): the snap's flash - bright, nearly opaque, then gone */
+            fr.arrow_a = 0.85f, fr.arrow_base[0] = 0.70f, fr.arrow_base[1] = 0.88f, fr.arrow_base[2] = 1.0f;
+        if (e.arrow_glow >= 4.0f) { /* build 37 (171.5): the blade glow - the execution-ready glow's cyan, its edges bright
+                                     * (a strong rim), the middle a translucent glow (a strong ambient, little key); 4..5
+                                     * its pulse, 5 the snap's flash: near white, near opaque */
+            float k = e.arrow_glow >= 5.0f ? 1.0f : e.arrow_glow - 4.0f;
+            k = k > 1 ? 1 : k < 0 ? 0 : k;
+            int flash = e.arrow_glow >= 5.0f;
+            fr.arrow_a = flash ? 0.95f : 0.42f + 0.25f * k;
+            fr.arrow_base[0] = flash ? 0.80f : 0.42f, fr.arrow_base[1] = flash ? 0.93f : 0.80f, fr.arrow_base[2] = 1.0f;
+            fr.arrow_look[0] = 0.15f, fr.arrow_look[1] = flash ? 1.9f : 1.25f, fr.arrow_look[2] = flash ? 2.0f : 1.7f;
+            fr.arrow_look[3] = 0.25f;
+        }
     } else if (arrow) { /* the wraith bow's arrow: a pale blue light, brighter on the string */
         float g = e.arrow_glow > 1 ? 1 : e.arrow_glow < 0 ? 0 : e.arrow_glow, k = 0.7f + 0.3f * g;
         fr.arrow_a = 1, fr.arrow_base[0] = 0.62f * k, fr.arrow_base[1] = 0.82f * k, fr.arrow_base[2] = 1.0f * k;

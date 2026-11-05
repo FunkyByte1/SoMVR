@@ -24,7 +24,7 @@
  *   MOCKXR_REJECT_CF=n      likewise the n-th xrEndFrame with a layer showing the 512x528 swapchain (comfort's)
  *   MOCKXR_REJECT_SC=WxH    every xrEndFrame with a layer showing a live W x H swapchain returns XR_ERROR_LAYER_INVALID
  *                           (a runtime that never takes that quad; counted, mockxr_rejects)
- *   MOCKXR_REJECT_VM=n      likewise the n-th xrEndFrame with a layer showing the 512x768 swapchain (the VR menu's, v2)
+ *   MOCKXR_REJECT_VM=n      likewise the n-th xrEndFrame with a layer showing the 512x816 swapchain (the VR menu's; 768 before b37 live3)
  *   MOCKXR_EXTS=a[,b]       SoM loading env: instance extensions offered besides XR_KHR_vulkan_enable (at most 4); an
  *                           enabled one not offered is a violation; an equirect2 layer needs
  *                           XR_KHR_composition_layer_equirect2 enabled
@@ -787,7 +787,7 @@ static XrResult m_xrEndFrame(XrSession s, const XrFrameEndInfo *ei) {
     if (M.reject_ptr_at && shows_ptr(ei) && ++M.ptr_ends == M.reject_ptr_at) return XR_ERROR_LAYER_INVALID;
     if (M.reject_cf_at && shows_sc(ei, 512, 528) && ++M.cf_ends == M.reject_cf_at) return XR_ERROR_LAYER_INVALID;
     if (M.reject_sc_w && shows_sc(ei, M.reject_sc_w, M.reject_sc_h)) return M.reject_sc_n++, XR_ERROR_LAYER_INVALID;
-    if (M.reject_vm_at && shows_sc(ei, 512, 768) && ++M.vm_ends == M.reject_vm_at) return XR_ERROR_LAYER_INVALID;
+    if (M.reject_vm_at && shows_sc(ei, 512, 816) /* (b37 live3: 816 high) */ && ++M.vm_ends == M.reject_vm_at) return XR_ERROR_LAYER_INVALID;
     if (M.reject_env_at && shows_env(ei) && ++M.env_ends == M.reject_env_at) return XR_ERROR_LAYER_INVALID;
     if (!M.frame_begun) viol("xrEndFrame without xrBeginFrame");
     if (sc_any(1)) viol("xrEndFrame with an acquired image");

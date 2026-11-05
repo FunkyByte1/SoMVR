@@ -618,11 +618,14 @@ static void mn_replace(void);
 static void mn_set_kind(uint32_t kind);
 static void mn_mono_quad(XrCompositionLayerQuad *q, uint32_t w, uint32_t h);
 static void mn_hud_quad(XrCompositionLayerQuad *q, const somvr_rec *rec);
+static void mn_hud_eye(XrCompositionLayerQuad *q, const somvr_rec *rec); /* build 37 */
+static int th_hud_cam(uint64_t frame, XrPosef *pose, float size[2]); /* build 37: the threat entry's HUD camera quad */
 static int mn_hud_menu(void);
 static uint32_t mn_hud_extra(uint32_t w, uint32_t h);
 static int mn_hud_regions(const struct dev_st *ds, const hud_st *hd, VkImageCopy *c, int cap);
 static void mn_hud_clear(struct dev_st *ds, VkCommandBuffer cmd, VkImage img);
 static VkImageLayout mn_hud_dump_cmds(struct dev_st *ds, VkCommandBuffer cmd, VkImage img);
+static void mn_rim_cmds(struct dev_st *ds, VkCommandBuffer cmd, VkImage img, const hud_st *hd); /* build 37 */
 static const XrCompositionLayerBaseHeader *mn_mm_layer(const somvr_rec *rec);
 static const XrCompositionLayerBaseHeader *mn_mm_reuse(void);
 static void mn_band_place(const somvr_posef eye[2]);                /* build 8: the prompt band (placed with the HUD) */
@@ -792,13 +795,15 @@ enum { XL_ENV0, XL_OWN = XL_ENV0 + XL_ENV_N, XL_THG0, XL_THG1, XL_THG2, XL_RING,
        XL_MMAP, /* build 6: the wrist minimap (a part of the HUD: off with it) */
        XL_PTR0, XL_PTR1, XL_VM0, XL_VM1, XL_VM2,
        XL_HANDS, /* build 10: our own VR hands (a projection layer over the wrist panel and the watch) */
+       XL_LDOT, /* b37 live3: the live card's waiting dot ON the back of the off hand (over our hands, which hide the
+                 * menu's slots there) */
        XL_BLINK, XL_FADE, XL_N };
 enum { XG_FADE = 1u << 0, XG_CF = 1u << 1, XG_PTR = 1u << 2, XG_HUD = 1u << 3, XG_ENV = 1u << 4, XG_VM = 1u << 5,
        XG_TH = 1u << 6, XG_VH = 1u << 7, XG_MB = 1u << 8, XG_OB = 1u << 9 };
 _Static_assert(XL_ENV_N + 1 + 2 + 3 + 1 <= 16, "a mono frame's worst case: env, quad, pointer, VR menu, fade");
-_Static_assert(XL_N - XL_OWN <= 27, "a stereo frame's worst case: every slot from the projection on, less the band's five, "
-                                    "the hands, the menu backdrop's two, the objective's marker and its line, low health's "
-                                    "ring (xl_cap)");
+_Static_assert(XL_N - XL_OWN <= 28, "a stereo frame's worst case: every slot from the projection on, less the band's five, "
+                                    "the live dot, the hands, the menu backdrop's two, the objective's marker and its line, "
+                                    "low health's ring (xl_cap)");
 #define XL_MAX 16 /* XR_MIN_COMPOSITION_LAYERS_SUPPORTED: a frame with more loses the band (xl_cap) */
 _Static_assert(XL_THG2 - XL_THG0 + 1 == SOMVR_TH_GLOWS && XL_THE1 - XL_THE0 == 1, "the threat slots");
 typedef struct {
@@ -806,7 +811,7 @@ typedef struct {
 } xr_comp;
 static uint32_t xl_group(int i) {
     if (i < XL_OWN) return XG_ENV;
-    if (i >= XL_VM0 && i <= XL_VM2) return XG_VM;
+    if ((i >= XL_VM0 && i <= XL_VM2) || i == XL_LDOT) return XG_VM;
     if (i == XL_HANDS) return XG_VH;
     if (i == XL_MBD || i == XL_MBK) return XG_MB;
     if (i == XL_OBJ || i == XL_OBJL) return XG_OB;
@@ -1630,6 +1635,7 @@ static void hud_quad(XrCompositionLayerQuad *q, const somvr_rec *rec) {
         .subImage = {X.hud_sc, {{0, 0}, {(int32_t)X.hud_w, (int32_t)X.hud_h}}, 0},
         .pose = pose,
         .size = {sz[0], sz[1]}};
+    mn_hud_eye(q, rec);  /* build 37: SOMVR_XR_HUD_EYE - the game's world icons on their objects */
     mn_hud_quad(q, rec); /* build 6: a game menu on the board in front of the head */
 }
 
@@ -1649,6 +1655,7 @@ static void ob_dump(uint64_t frame); /* ... a dumped frame's marker picture (mn_
 static void lv_setup(void);
 static void lv_destroy(void);
 static int lv_click(int item);
+static int vm_pinned_now; /* b37 live3: the VR menu is pinned in front this frame (either hand touches it) */
 static int lv_kind(void);
 static void lv_dump(uint64_t frame);
 static int lv_card_pose(somvr_posef *pose, float size[2]); /* (the test hands' `touch live`) */
@@ -2358,6 +2365,7 @@ static int eyes_submit(dev_st *ds, VkQueue q, sc_st *s, uint32_t idx, VkImage ds
         if (nc) mn_hud_clear(ds, cmd, hud_dst);
         ds->CmdCopyImage(cmd, hd->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hud_dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                          nc ? (uint32_t)nc : 1u, c);
+        mn_rim_cmds(ds, cmd, hud_dst, hd); /* build 37, SOMVR_CUE_ALERT: the watch's rim red at high alert */
         hud_old = mn_hud_dump_cmds(ds, cmd, hud_dst); /* SOMVR_XR_DUMP: the HUD image too (before the host barrier) */
         cv_cmds(ds, cmd, &s->slot[idx], hd); /* SOMVR_XR_COVER: the HUD image's grid -> the readback buffer */
         pp_cmds(ds, cmd, &s->slot[idx], hd); /* build 21: SOMVR_XR_POPUPS: the band tiles' rows -> theirs */
@@ -4061,6 +4069,23 @@ static int th_fill(dev_st *ds) {
     return 0;
 }
 
+/* build 37 (som-b37-cues, docs 169.8): the preload's game camera frustum for this frame (SOMVR_THF_HUDCAM), or the newest
+ * within 4 frames; 0 = none */
+static int th_hud_cam(uint64_t frame, XrPosef *pose, float size[2]) {
+    if (!TH.obj) return 0;
+    somvr_threat_frame e;
+    int have = somvr_threat_get(TH.obj, frame, &e);
+    if (!have) {
+        uint64_t last = atomic_load_explicit(&TH.obj->last, memory_order_acquire);
+        have = last && last + 4 >= frame && frame + 4 >= last && somvr_threat_get(TH.obj, last, &e);
+    }
+    if (!have || !(e.flags & SOMVR_THF_HUDCAM) || !(e.hud_size[0] > 0) || !(e.hud_size[1] > 0)) return 0;
+    pose->orientation = (XrQuaternionf){e.hud_q[0], e.hud_q[1], e.hud_q[2], e.hud_q[3]};
+    pose->position = (XrVector3f){e.hud_p[0], e.hud_p[1], e.hud_p[2]};
+    size[0] = e.hud_size[0], size[1] = e.hud_size[1];
+    return 1;
+}
+
 static int th_space(void) {
     if (TH.view) return 0;
     XrReferenceSpaceCreateInfo rs = {.type = XR_TYPE_REFERENCE_SPACE_CREATE_INFO,
@@ -4102,7 +4127,7 @@ static void th_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
     uint32_t has = 0;
     int gcell[SOMVR_TH_GLOWS] = {0}, ecell[2] = {0}, hurt[2] = {0, 0};
     for (uint32_t i = 0; have && i < e.nglow && i < SOMVR_TH_GLOWS; i++)
-        if ((gcell[i] = somvr_th_cell(e.g[i].level)) > 0 && e.g[i].size_m > 0 && isfinite(e.g[i].pos[0]) &&
+        if ((gcell[i] = somvr_th_glow_cell(e.g[i].kind, e.g[i].level)) > 0 && e.g[i].size_m > 0 && isfinite(e.g[i].pos[0]) &&
             isfinite(e.g[i].pos[1]) && isfinite(e.g[i].pos[2]))
             has |= 1u << i;
     for (int s = 0; have && s < 2; s++) { /* build 10: the hurt flash takes the side's band slot while it is the stronger */
@@ -4133,8 +4158,9 @@ static void th_layers(dev_st *ds, const somvr_rec *rec, xr_comp *c) {
         float pose[7], size[2];
         somvr_th_edge_quad(fov, s ? SOMVR_TH_RIGHT : SOMVR_TH_LEFT, TH_EDGE_DIST_M, pose, size);
         int red = hurt[s] || (e.flags & (s ? SOMVR_THF_RED_R : SOMVR_THF_RED_L)); /* build 17: an unblockable blow */
-        TH.q[SOMVR_TH_GLOWS + s] = th_quad(TH.view, red ? SOMVR_TH_ROW_HURT : SOMVR_TH_ROW_EDGE, ecell[s], pose, size[0],
-                                           size[1]);
+        int heal = hurt[s] && (e.flags & SOMVR_THF_HEAL); /* build 37: a pick's heal - the same flash, green */
+        TH.q[SOMVR_TH_GLOWS + s] = th_quad(TH.view, heal ? SOMVR_TH_ROW_HEAL : red ? SOMVR_TH_ROW_HURT : SOMVR_TH_ROW_EDGE,
+                                           ecell[s], pose, size[0], size[1]);
     }
     float lhalf = 0;
     if (has & 1u << (SOMVR_TH_GLOWS + 2)) { /* the ring: a square over the whole view, its middle clear (row 5) */
@@ -5453,6 +5479,58 @@ static void vm_sst(const somvr_posef *raw, const somvr_posef *shown, const float
 /* One frame (stereo, reuse or mono), before the game's pointer (it has no target while the panel is open) and before
  * the frame's layers are put together: the gesture, the pointer on the panel, the clicks, the picture; VM.q[0 .. nq)
  * = the panel, the ray, the dot. Published: open, consume. */
+/* b37 live3 (re-xr-pipeline.md 162.12): the panel PINNED in front - placed once (somvr_vm_pin_pose: 0.55 m ahead, 30 cm
+ * below the eyes, facing them), world-locked in the tracking space (the room: it stays while the head turns or the
+ * player steps; stick moves carry the room, and it, along); the head 1.5 m from where it was placed (steps) - it glides
+ * 0.6 s to the new place ahead, never a jump. Opened by the menu button's long press (or the palm when pinned is the
+ * saved mode, settings.menu_pin); the palm, the look-away, the watch, the palm's drop and the bow close nothing; it
+ * closes by its Close button or the long press; Back to the wrist hands it to the palm gesture's panel. */
+#define VP_DIST_M 0.55f
+#define VP_DROP_M 0.30f
+#define VP_FOLLOW_M 1.5f
+#define VP_GLIDE_S 0.6
+static struct {
+    int on;
+    somvr_posef pose, from, to;
+    double g0;          /* a glide's start (-1: none) */
+    float head0[3];     /* the head where it was placed */
+    uint64_t pins, follows;
+} VP = {.g0 = -1};
+static int vp_place(const somvr_vm_gin *gi, double t, int glide, const char *why) {
+    somvr_posef np;
+    if (!gi->head_ok || !somvr_vm_pin_pose(&gi->head, VP_DIST_M, VP_DROP_M, &np)) return 0;
+    memcpy(VP.head0, gi->head.p, sizeof VP.head0);
+    if (glide && VP.on) {
+        VP.from = VP.pose, VP.to = np, VP.g0 = t, VP.follows++;
+    } else {
+        VP.pose = np, VP.g0 = -1, VP.pins++;
+    }
+    lg("xr: vrmenu: pinned in front (%s): at %+.3f,%+.3f,%+.3f, %.2f m ahead, %.0f cm below the eyes%s (pins %llu, "
+       "follows %llu)", why, np.p[0], np.p[1], np.p[2], VP_DIST_M, VP_DROP_M * 100, glide && VP.on ? "; gliding there" : "",
+       (unsigned long long)VP.pins, (unsigned long long)VP.follows);
+    return 1;
+}
+static void vp_step(const somvr_vm_gin *gi, double t) { /* the follow and the glide */
+    if (gi->head_ok && VP.g0 < 0) {
+        float dx = gi->head.p[0] - VP.head0[0], dz = gi->head.p[2] - VP.head0[2];
+        if (dx * dx + dz * dz > VP_FOLLOW_M * VP_FOLLOW_M) vp_place(gi, t, 1, "the head 1.5 m from where it was placed");
+    }
+    if (VP.g0 >= 0) {
+        double k = (t - VP.g0) / VP_GLIDE_S;
+        k = k < 0 ? 0 : k > 1 ? 1 : k;
+        float e = (float)(k * k * (3 - 2 * k)); /* smoothstep: no speed step at either end */
+        float d = 0, q[4];
+        for (int i = 0; i < 4; i++) d += VP.from.q[i] * VP.to.q[i];
+        for (int i = 0; i < 4; i++) q[i] = VP.from.q[i] + e * ((d < 0 ? -VP.to.q[i] : VP.to.q[i]) - VP.from.q[i]);
+        float n = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+        for (int i = 0; i < 4; i++) VP.pose.q[i] = q[i] / n;
+        for (int i = 0; i < 3; i++) VP.pose.p[i] = VP.from.p[i] + e * (VP.to.p[i] - VP.from.p[i]);
+        if (k >= 1) VP.g0 = -1;
+    }
+}
+static somvr_posef vm_last_panel; /* b37 live3: the last frame's open panel (gin.using: the pointing hand at it) */
+static int vm_have_last;
+static double vm_watch_t = -1; /* b37 live3: the watch facing since (the panel's watch close, 0.3 s) */
 static void vm_frame(dev_st *ds) {
     VM.nq = 0;
     if (!VM.on) return;
@@ -5489,11 +5567,49 @@ static void vm_frame(dev_st *ds) {
     VM.toggles_seen = tg;
     gi.busy = VM.gs.open && (VM.ptr.on || VM.ptr.down);
     gi.block = atomic_load_explicit(&m->block, memory_order_acquire); /* the hands are busy: no gesture open */
+    if (VM.gs.open && vm_have_last && I.on) { /* b37 live3: the pointing hand at the panel - the grip or the aim */
+        const somvr_hand_in *mp = &I.st.hand[main];
+        for (int k = 0; k < 2 && !gi.using; k++) {
+            const float *p = k ? mp->aim.p : mp->grip.p;
+            float d2 = 0;
+            for (int i = 0; i < 3; i++) d2 += (p[i] - vm_last_panel.p[i]) * (p[i] - vm_last_panel.p[i]);
+            gi.using = ((k ? mp->aim_flags : mp->grip_flags) & 3u) == 3u && d2 < VM.gc.use_m * VM.gc.use_m;
+        }
+    }
     somvr_posef panel;
     int have = 0;
     uint64_t held0 = VM.gs.held_off, waits0 = VM.gs.soft_waits;
     int lv_hold = lv_pre(&gi); /* build 35: a live card waits at a calm moment - the palm shows it, not the menu */
-    int ev = somvr_vm_gesture(&VM.gs, &VM.gc, &gi, &panel, &have);
+    /* b37 live3: pinned in front (VP) - the long press pins / closes, the gesture rests while it is pinned */
+    int ev = 0, pin_now = 0, lp = (gi.toggles & 1u) != 0;
+    if (VP.on && VM.gs.open && !VM.set.menu_pin) { /* Back to the wrist (the button): the palm's panel again */
+        VP.on = 0, VM.gs.drop_t = VM.gs.use_t = VM.gs.away_t = -1, VM.gs.armed = 0;
+        lg("xr: vrmenu: back to the wrist (the panel follows the %s palm again)", ph == SOMVR_HAND_L ? "left" : "right");
+    }
+    if (VP.on && VM.gs.open) {
+        if (lp) { /* the long press closes the pinned panel */
+            VM.gs.open = 0, VM.gs.why = SOMVR_VMW_BUTTON, VM.gs.closes++, VM.gs.armed = 0, ev = -1, VP.on = 0;
+        } else {
+            vp_step(&gi, gi.t);
+            panel = VP.pose, have = 1;
+        }
+    } else {
+        if (lp && VM.gs.open) gi.toggles = 0, pin_now = 1; /* the wrist panel open: the long press pins it */
+        ev = somvr_vm_gesture(&VM.gs, &VM.gc, &gi, &panel, &have);
+        if (ev > 0 && (lp || VM.set.menu_pin)) pin_now = 1; /* the long press, or pinned is the saved mode */
+        if (VM.gs.open && VM.set.menu_pin && !VP.on) pin_now = 1; /* the Pin button */
+        if (pin_now && VM.gs.open && vp_place(&gi, gi.t, 0, lp ? "the menu button's long press"
+                                                         : ev > 0 ? "opened, pinned is the saved mode" : "the Pin button")) {
+            VP.on = 1, panel = VP.pose, have = 1;
+            if (!VM.set.menu_pin) { /* remembered (settings.conf MENU_PIN=on) */
+                VM.set.menu_pin = 1;
+                somvr_vrmenu_publish(VM.obj, &VM.set);
+                VM.gen_seen = atomic_load_explicit(&VM.obj->gen, memory_order_acquire);
+            }
+        }
+    }
+    if (!VM.gs.open) VP.on = 0;
+    vm_pinned_now = VP.on;
     if (VM.gs.soft_waits != waits0 && VM.gs.soft_waits <= 50) /* build 31: the sword hand's swing only delays it */
         lg("xr: vrmenu: the palm gesture waits for the sword hand's swing (%llu so far; it opens 0.3 s after the swing)",
            (unsigned long long)VM.gs.soft_waits);
@@ -5511,10 +5627,12 @@ static void vm_frame(dev_st *ds) {
         lg("xr: vrmenu: opened by %s on the %s wrist (opens %llu)", somvr_vm_why(VM.gs.why),
            ph == SOMVR_HAND_L ? "left" : "right", (unsigned long long)VM.gs.opens);
     } else if (ev < 0) {
-        lg("xr: vrmenu: closed: %s (closes %llu, %llu frames shown, the ray hidden off it in %llu)", somvr_vm_why(VM.gs.why),
-           (unsigned long long)VM.gs.closes, (unsigned long long)VM.n_frames, (unsigned long long)VM.n_ray_hidden);
+        lg("xr: vrmenu: closed: %s (closes %llu, %llu frames shown, the ray hidden off it in %llu; held open in use %llu)",
+           somvr_vm_why(VM.gs.why), (unsigned long long)VM.gs.closes, (unsigned long long)VM.n_frames,
+           (unsigned long long)VM.n_ray_hidden, (unsigned long long)VM.gs.use_held);
     }
-    if (VM.gs.open && cfg.vm_bow && (gi.block & ~VM.blk_was & SOMVR_VMG_BOW)) { /* build 20: the bow out in its hand -
+    if (!VM.gs.open) vm_have_last = 0;
+    if (VM.gs.open && !VP.on && cfg.vm_bow && (gi.block & ~VM.blk_was & SOMVR_VMG_BOW)) { /* (b37 live3: not pinned) */ /* build 20: the bow out in its hand -
         * the build 19b session: the panel opened on the reach to the bow's shoulder and stayed, its ray an unexplained
         * line from the right hand all through the draw */
         VM.gs.open = 0, VM.gs.why = SOMVR_VMW_BOW, VM.gs.closes++, VM.gs.armed = 0, have = 0, ev = -1;
@@ -5523,8 +5641,18 @@ static void vm_frame(dev_st *ds) {
            (unsigned long long)VM.gs.closes, (unsigned long long)VM.n_frames);
     }
     VM.blk_was = gi.block;
-    if (VM.gs.open && mn_watch_over(ph, &gi)) { /* build 6: the panel's wrist turned over: the watch, not its back */
+    /* build 6: the panel's wrist turned over: the watch, not its back. b37 live3: not while the panel is used (the
+     * 19:50 session: 8 of 13 opens closed so as the pointing hand came up - 9 shown under 2 s), and 0.3 s of it */
+    int wo = VM.gs.open && !VP.on && mn_watch_over(ph, &gi); /* (b37 live3: the pinned panel is not the wrist's) */
+    if (!wo) vm_watch_t = -1;
+    else if (vm_watch_t < 0) vm_watch_t = gi.t;
+    if (wo && VM.gs.in_use) {
+        if (VM.gs.use_held++ < 3 || VM.gs.use_held % 200 == 0)
+            lg("xr: vrmenu: the watch turn held off: the panel is in use (the pointing hand at it; %llu)",
+               (unsigned long long)VM.gs.use_held);
+    } else if (wo && gi.t - vm_watch_t >= 0.3) {
         VM.gs.open = 0, VM.gs.why = SOMVR_VMW_TURNED, VM.gs.closes++, VM.gs.armed = 0, have = 0, ev = -1;
+        vm_watch_t = -1;
         lg("xr: vrmenu: closed: %s (closes %llu, %llu frames shown)", somvr_vm_why(VM.gs.why),
            (unsigned long long)VM.gs.closes, (unsigned long long)VM.n_frames);
     }
@@ -5537,7 +5665,8 @@ static void vm_frame(dev_st *ds) {
     float psz[2];
     mn_card_size(card, psz);
     somvr_posef raw_panel = panel; /* build 20: the hand's panel pose (build 19's panel) */
-    if (VM.steady && VM.gs.open && !card && have) { /* build 20: the panel held steady (the gesture used the hand's) */
+    if (VM.steady && VM.gs.open && !card && have && !VP.on) { /* build 20: the panel held steady (the gesture used the
+                                                                * hand's; b37 live3: the pinned one is still already) */
         somvr_vm_steady_step(&VM.st, &VM.stc, &raw_panel, gi.t, &panel);
         vm_sst(&raw_panel, &panel, psz, gi.t);
     } else if (VM.gs.open && !card && have) {
@@ -5553,12 +5682,13 @@ static void vm_frame(dev_st *ds) {
         somvr_ptr_in in;
         memset(&in, 0, sizeof in);
         if (I.on) somvr_ptr_in_from(&I.st, &in);
-        in.ok[ph] = 0, in.trigger[ph] = 0; /* only the main hand points (the panel's own hand cannot) */
+        if (!VP.on) in.ok[ph] = 0, in.trigger[ph] = 0; /* only the main hand points (the panel's own hand cannot;
+                                                       * b37 live3: either hand at the pinned panel) */
         in.time = I.st.time ? I.st.time : X.fs.predictedDisplayTime;
         in.quad = SOMVR_PTRQ_VRMENU;
         memcpy(&in.quad_pose, &panel, sizeof panel);
         in.quad_size[0] = psz[0], in.quad_size[1] = psz[1];
-        VM.ptr.hand = main;
+        if (!VP.on) VM.ptr.hand = main; /* (pinned: the hand that pulled its trigger last points) */
         somvr_ptr_update(&VM.ptr, &VM.pc, &in, &o);
         mn_vm_touch(card, &panel, psz, &o); /* build 6: a fingertip on it wins over the ray */
         somvr_vm_hit hit = {-1, SOMVR_VMP_NONE};
@@ -5632,10 +5762,12 @@ static void vm_frame(dev_st *ds) {
         v.ctl_feat = VM.obj->ctl_feat;                  /* build 34: the Controls lines without an avail bit */
         v.ctl_page = VM.ctl_page;                      /* build 27: the Controls page's page */
         v.live_gen = somvr_vm_live_get()->gen;         /* build 35: the Test page's patch box */
+        v.pinned = VP.on;                              /* b37 live3: "Back to the wrist" */
         if ((!VM.released || memcmp(&v, &VM.drawn, sizeof v)) && vm_upload(ds, &v)) return; /* off now (logged) */
         float dotp[3]; /* the ray's end and the dot: the pointer's point, or (build 20) the lock's on the locked part */
         memcpy(dotp, o.hit, sizeof dotp);
         if (dot_lock && !MN.vtouch && (o.flags & SOMVR_PTRF_ON)) somvr_ptr_quad_point(&panel, psz, dot_uv, 0, dotp);
+        vm_last_panel = panel, vm_have_last = 1; /* b37 live3 */
         VM.q[nq] = vm_quad(&panel);
         VM.q[nq].size.width = psz[0], VM.q[nq++].size.height = psz[1];
         int draw = X.ptr_draw && (o.flags & (SOMVR_PTRF_ON | SOMVR_PTRF_AIM)) && !ptr_fill(ds);
@@ -5683,6 +5815,7 @@ static void vm_frame(dev_st *ds) {
 static int vm_has_hand(void) { return VM.on && VM.gs.open; }
 /* this frame's menu layers into the composition (XL_VM0..: over the pointer's, under the blink); VM.nq of them */
 static void vm_comp(xr_comp *c) {
+    if (LV.dot_on) c->l[XL_LDOT] = (const XrCompositionLayerBaseHeader *)&LV.dot_q; /* b37 live3 */
     for (uint32_t i = 0; i < VM.nq && i <= XL_VM2 - XL_VM0; i++)
         c->l[XL_VM0 + i] = (const XrCompositionLayerBaseHeader *)&VM.q[i];
 }

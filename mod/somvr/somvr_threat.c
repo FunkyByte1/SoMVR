@@ -297,7 +297,7 @@ float somvr_th_low_profile(float r) {
 
 void somvr_th_image(uint8_t *px, int bgra) {
     memset(px, 0, (size_t)SOMVR_TH_IMG_W * SOMVR_TH_IMG_H * 4);
-    for (int row = 0; row <= SOMVR_TH_ROW_LOW; row++)
+    for (int row = 0; row <= SOMVR_TH_ROW_HEAL; row++)
         for (int k = 1; k <= SOMVR_TH_LEVELS; k++) {
             int32_t rc[4];
             somvr_th_rect(row, k, rc);
@@ -305,6 +305,38 @@ void somvr_th_image(uint8_t *px, int bgra) {
             for (int j = 0; j < SOMVR_TH_CELL; j++)
                 for (int i = 0; i < SOMVR_TH_CELL; i++) {
                     float u = ((float)i + 0.5f) / SOMVR_TH_CELL, v = ((float)j + 0.5f) / SOMVR_TH_CELL;
+                    if (row == SOMVR_TH_ROW_RING || row == SOMVR_TH_ROW_HEAL) { /* build 37: the reach ring, the heal band */
+                        uint8_t *q = px + 4 * ((size_t)(rc[1] + j) * SOMVR_TH_IMG_W + (size_t)(rc[0] + i));
+                        float c = row == SOMVR_TH_ROW_RING ? somvr_th_ring_profile(u, v, k) : somvr_th_edge_profile(u, v) * lv;
+                        float R = row == SOMVR_TH_ROW_RING ? 0.55f : 0.25f, G = row == SOMVR_TH_ROW_RING ? 0.85f : 1.0f,
+                              B = row == SOMVR_TH_ROW_RING ? 1.0f : 0.35f, a = c * (row == SOMVR_TH_ROW_RING ? 0.85f : 0.55f);
+                        q[0] = (uint8_t)lrintf(255.0f * a * (bgra ? B : R)), q[1] = (uint8_t)lrintf(255.0f * a * G),
+                        q[2] = (uint8_t)lrintf(255.0f * a * (bgra ? R : B)), q[3] = (uint8_t)lrintf(255.0f * a);
+                        continue;
+                    }
+                    if (row >= SOMVR_TH_ROW_MARK_W) { /* build 37: the marks and the arc (premultiplied, nearly opaque) */
+                        uint8_t *q = px + 4 * ((size_t)(rc[1] + j) * SOMVR_TH_IMG_W + (size_t)(rc[0] + i));
+                        float R, G, B, a;
+                        if (row == SOMVR_TH_ROW_ARC) {
+                            int lit = 0;
+                            float c = somvr_th_arc_profile(u, v, lv, &lit);
+                            R = lit ? SOMVR_TH_HURT_R : 0.10f, G = lit ? 0.12f : 0.08f, B = lit ? 0.06f : 0.07f;
+                            a = c * (lit ? SOMVR_TH_MARK_ALPHA : 0.45f);
+                        } else {
+                            float c = somvr_th_mark_profile(u, v), in = somvr_th_mark_profile(0.5f + (u - 0.5f) * 1.25f,
+                                                                                               0.52f + (v - 0.52f) * 1.25f);
+                            int w = row == SOMVR_TH_ROW_MARK_W, am = row == SOMVR_TH_ROW_MARK_A;
+                            float r0 = w ? 1.0f : am ? SOMVR_TH_AMBER_R : SOMVR_TH_RED_R, g0 = w ? 1.0f : am ? SOMVR_TH_AMBER_G
+                                                                                                         : SOMVR_TH_RED_G,
+                                  b0 = w ? 0.97f : am ? SOMVR_TH_AMBER_B : SOMVR_TH_RED_B;
+                            /* the inside its colour, a dark rim (the outer 20 %) so it reads on a bright sky too */
+                            R = r0 * in + 0.05f * (1 - in), G = g0 * in + 0.04f * (1 - in), B = b0 * in + 0.03f * (1 - in);
+                            a = c * SOMVR_TH_MARK_ALPHA * lv;
+                        }
+                        q[0] = (uint8_t)lrintf(255.0f * a * (bgra ? B : R)), q[1] = (uint8_t)lrintf(255.0f * a * G),
+                        q[2] = (uint8_t)lrintf(255.0f * a * (bgra ? R : B)), q[3] = (uint8_t)lrintf(255.0f * a);
+                        continue;
+                    }
                     float p = row == SOMVR_TH_ROW_GLOW || row == SOMVR_TH_ROW_RED || row == SOMVR_TH_ROW_BLUE
                                   ? somvr_th_glow_profile(hypotf(2 * u - 1, 2 * v - 1))
                               : row == SOMVR_TH_ROW_LOW ? somvr_th_low_profile(hypotf(2 * u - 1, 2 * v - 1))
@@ -331,7 +363,46 @@ void somvr_th_image(uint8_t *px, int bgra) {
 }
 
 int somvr_th_glow_row(uint32_t kind) {
+    if (kind & SOMVR_THK_RING) return SOMVR_TH_ROW_RING;
+    if (kind & SOMVR_THK_MARK)
+        return (kind & SOMVR_THK_ARC) ? SOMVR_TH_ROW_ARC : (kind & SOMVR_THK_MARK_RED) ? SOMVR_TH_ROW_MARK_R
+               : (kind & SOMVR_THK_MARK_AMBER) ? SOMVR_TH_ROW_MARK_A : SOMVR_TH_ROW_MARK_W;
     return (kind & SOMVR_THK_BLUE) ? SOMVR_TH_ROW_BLUE : (kind & SOMVR_THK_RED) ? SOMVR_TH_ROW_RED : SOMVR_TH_ROW_GLOW;
+}
+
+int somvr_th_glow_cell(uint32_t kind, float level) {
+    if ((kind & (SOMVR_THK_MARK | SOMVR_THK_ARC)) == (SOMVR_THK_MARK | SOMVR_THK_ARC) || (kind & SOMVR_THK_RING)) {
+        int k = (int)(kind >> SOMVR_THK_ARC_SHIFT & 0xffu);
+        return k < 1 ? 0 : k > SOMVR_TH_LEVELS ? SOMVR_TH_LEVELS : k;
+    }
+    return somvr_th_cell(level);
+}
+
+/* the mark: a triangle, its point down at v 0.86, its top edge at v 0.18, 0.64 of the cell wide; soft 0.06 at the edges */
+float somvr_th_mark_profile(float u, float v) {
+    float x = fabsf(u - 0.5f), top = 0.18f, tip = 0.86f;
+    if (!(v >= top - 0.06f && v <= tip + 0.06f)) return 0;
+    float half = 0.32f * (tip - v) / (tip - top); /* the half width at this height */
+    float dx = half - x, dy = v - (top - 0.0f);
+    float e = fminf(dx * 0.85f, fminf(dy, (tip - v) * 0.6f + 0.02f));
+    return smooth(-0.03f, 0.03f, e);
+}
+
+/* the reach ring: radius 0.46 (cell 1) .. 0.16 (cell 16) of the cell, 0.035 thick, soft */
+float somvr_th_ring_profile(float u, float v, int cell) {
+    float r = hypotf(u - 0.5f, v - 0.5f), r0 = 0.46f - 0.30f * (float)(cell - 1) / (SOMVR_TH_LEVELS - 1);
+    return 1 - smooth(0.018f, 0.04f, fabsf(r - r0));
+}
+
+/* the arc: a thin band on a circle round (0.5, 1.15), radius 0.85, between 35 and 145 deg (over the head); fill from the
+ * left end */
+float somvr_th_arc_profile(float u, float v, float fill, int *lit) {
+    float dx = u - 0.5f, dy = 1.15f - v, r = hypotf(dx, dy), a = atan2f(dy, dx) * 57.29578f;
+    float band = 1 - smooth(0.035f, 0.06f, fabsf(r - 0.85f));
+    float ends = smooth(33.0f, 37.0f, a) * (1 - smooth(143.0f, 147.0f, a));
+    float k = (145.0f - a) / 110.0f; /* 0 at the left end, 1 at the right */
+    *lit = k <= fill;
+    return band * ends;
 }
 
 float somvr_th_red_level(const somvr_th_cfg *c, const somvr_th_keys *k, float t, float hz) {
@@ -361,7 +432,7 @@ int somvr_th_cell(float level) {
 void somvr_th_rect(int row, int cell, int32_t rc[4]) {
     int k = cell < 1 ? 1 : cell > SOMVR_TH_LEVELS ? SOMVR_TH_LEVELS : cell;
     rc[0] = (k - 1) * SOMVR_TH_STRIDE + 1;
-    rc[1] = (row < 0 ? 0 : row > SOMVR_TH_ROW_LOW ? SOMVR_TH_ROW_LOW : row) * SOMVR_TH_STRIDE + 1;
+    rc[1] = (row < 0 ? 0 : row > SOMVR_TH_ROW_HEAL ? SOMVR_TH_ROW_HEAL : row) * SOMVR_TH_STRIDE + 1; /* (build 37: to the heal band) */
     rc[2] = rc[3] = SOMVR_TH_CELL;
 }
 

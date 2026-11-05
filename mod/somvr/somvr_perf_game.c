@@ -94,6 +94,16 @@ static double pfg_clock(clockid_t c)
 	return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+/* b37 live3: this module came in by a hot reload (the host's boot reason 1) - the session's files go on */
+static int pfg_reload(void)
+{
+#ifdef _WIN32
+	return g_logic_reason != 0;
+#else
+	return 0;
+#endif
+}
+
 static void pfg_config(void)
 {
 	const char *p = getenv("SOMVR_PERF");
@@ -117,7 +127,8 @@ static void pfg_config(void)
 	if (p && *p && strcmp(p, "off") && strcmp(p, "0")) {
 		if (!g_pfg.on) {
 			logf_("WARN CONFIG perf raw: SOMVR_PERF_RAW=%s needs SOMVR_PERF=on: none written", p);
-		} else if ((g_pfg.raw_fd = open(p, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644)) < 0) {
+		} else if ((g_pfg.raw_fd = open(p, O_WRONLY | O_CREAT | O_CLOEXEC | O_APPEND | (pfg_reload() ? 0 : O_TRUNC),
+						0644)) < 0) {
 			logf_("WARN CONFIG perf raw: SOMVR_PERF_RAW=%s: open failed (errno %d): none written", p, errno);
 		} else {
 #ifdef _WIN32
@@ -126,12 +137,18 @@ static void pfg_config(void)
 			const char *ck = "monotonic";
 #endif
 			char h[160];
-			int n = snprintf(h, sizeof h, "# somvr perf raw 1: T INTERVAL_MS WORK_MS (clock %s, the render thread)\n", ck);
+			/* b37 live3: a hot reload's module APPENDS to the session's file (build 37's reopened it with O_TRUNC: the
+			 * lane's reader, at its old offset past the new end, saw no frames - 11-04 22:12, the lane frozen); every
+			 * module's writes go to the end (O_APPEND): the old module's last batch, between the new one's init and its
+			 * retirement, wrote at its own offset over the new one's first bytes (boot 20261104-224227) */
+			int n = pfg_reload() ? snprintf(h, sizeof h, "# somvr perf raw: a hot reload's module appends from here\n")
+					     : snprintf(h, sizeof h, "# somvr perf raw 1: T INTERVAL_MS WORK_MS (clock %s, the render "
+							   "thread)\n", ck);
 			if (n > 0 && write(g_pfg.raw_fd, h, (size_t)n) < 0)
 				n = 0;
 			g_pfg.raw_t = g_pfg.last_log;
-			logf_("CONFIG perf raw: every present's render-thread times into %s (clock %s; batches every 50 ms)", p,
-			      ck);
+			logf_("CONFIG perf raw: every present's render-thread times into %s (clock %s; batches every 50 ms%s)", p,
+			      ck, pfg_reload() ? "; a hot reload's module: appended to the session's file" : "");
 		}
 	}
 }

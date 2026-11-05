@@ -76,22 +76,24 @@ drawn() { local l; l=$(grep -E '^SLOTS .*sword: .*(now in the hand|now sheathed|
 draw_slot() { w "$SLOT" 0.7; w "hands squeeze R 1" 0.6; w "$OUT" 0.6; w "hands squeeze R 0" 0.5; }
 # the wrist menu (practice-menu-drive.sh's): t LINE... = one step of the layer's test file; press U V = the right
 # fingertip through the panel; the Practice tab 0.441 0.042, Spawn group 0.727 0.411 (somvr_vm_rect: 272+100, 292+24)
+# (b37 live3: the panel is 816 texels high, 768 before - the UVs above are the 768 layout's; the calls below use v x 768/816, the same pixel rows)
 t() { userin && bail "the user is in VR"; { for l in "$@"; do echo "$l"; done; } > "$R/xrtest.tmp" && mv "$R/xrtest.tmp" "$R/xrtest.txt"
       echo "$(date +%T) xrtest: $*"; sleep 0.6; }
 press() { t "hand R touch panel $1 $2 5"; t "hand R touch panel $1 $2 1.0 s 0.3"; t "hand R touch panel $1 $2 -1.0 s 0.15"
           t "hand R touch panel $1 $2 4 s 0.2"; sleep 0.4; }
 opens() { grep -c 'vrmenu: opened by' "$R/xr-layer.log" 2>/dev/null; }
+# (b37 live3: the menu button's long press pins the panel in front now - the long-press fallbacks below press its "Back to the wrist" (0.3359 0.9706) so the wrist panel goes on as before)
 menu_open() { local o=$(opens) k
   for k in 1 2 3 4; do t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 1.6
     [ "$(opens)" -gt "$o" ] && { echo "OPEN by the palm gesture, try $k"; return 0; }
     t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 0.8; done
-  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8
+  t "hand L head 5 -16 32 0 -90 50 s 0.4"; sleep 0.8; t "btn L menu 1"; sleep 1; t "btn L menu 0"; sleep 0.8; press 0.3359 0.9706
   [ "$(opens)" -gt "$o" ] && { echo "OPEN by the menu button's long press"; return 0; }
   echo "NOT OPEN (gesture x4, long press)"; return 1; }
 menu_shut() { t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1.5; }
 G0=$(cnt '^PRACTICE t=.* group \(the menu\): [34] of [34] orcs out')
 if [ "${CROWD19_MENU:-1}" = 1 ] && menu_open; then
-  t "dump"; sleep 1.5; press 0.441 0.042; sleep 1.5; press 0.727 0.411; sleep 4
+  t "dump"; sleep 1.5; press 0.441 0.0395; sleep 1.5; press 0.727 0.3868; sleep 4
   m c00-menu 0
   menu_shut
 fi

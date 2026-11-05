@@ -28,7 +28,8 @@
 #define GP_NAV_MAX 32
 static struct {
 	int want_off;                     /* at start */
-	char keep[160];                   /* SOMVR_GAME_PROMPTS_KEEP */
+	char keep[512];                   /* SOMVR_GAME_PROMPTS_KEEP, and build 37's SOMVR_GAME_PROMPTS_ALLOW families */
+	char allow[160];
 	_Atomic uint64_t n[GP_PART_N];    /* dropped by part */
 	struct { char name[48]; uint64_t n; double t_first; } nav[GP_NAV_MAX];
 	int nnav;                         /* the game thread only (OB_EACH) */
@@ -89,11 +90,37 @@ static void gp_start(int *bad)
 	g_gpr.want_off = env_word("SOMVR_GAME_PROMPTS", g_gp_w, 2, 1);
 	const char *k = getenv("SOMVR_GAME_PROMPTS_KEEP");
 	snprintf(g_gpr.keep, sizeof g_gpr.keep, "%s", k ? (strcmp(k, "none") ? k : "") : "TrollHealthBar");
+	/* build 37 (som-b37-cues, docs/re-xr-pipeline.md 169.8): SOMVR_GAME_PROMPTS_ALLOW=FAMILY[,FAMILY..] - whole families of
+	 * the game's world icons back, one word each (their record patterns joined to the keep list):
+	 *   awareness   an orc's awareness and alarm icons ('*Aware*', '*Alarm*': none came through OB_PLACE in builds 36-37 -
+	 *               the triangles over orcs are drawn by another path and were never hidden; the family is here for the
+	 *               day one is)
+	 *   health      the health bars ('TrollHealthBar', 'OrcHealthBar')
+	 *   captains    the Nemesis captains' icons ('Hierarchy*', 'OrcHealthBar')
+	 *   collectibles  'Collectible_*', 'DLC1_Collectible_*', 'RessurrectionStone'
+ *   herbs       'Collectible_Flower*' (the game's herb icon over each herb in reach of its range)
+	 *   world       'Firepit', 'Explosive', 'Ammo', 'LockedGate', 'HangingBait', 'MountTarget*'
+	 *   quests      'goldenM', '*QuestGiver*', 'powerStruggle', 'CharacterpowerStruggle', 'FT_*' */
+	static const struct { const char *fam, *recs; } F[] = {
+		{ "awareness", "*Aware*,*Alarm*" }, { "health", "TrollHealthBar,OrcHealthBar" },
+		{ "captains", "Hierarchy*,OrcHealthBar" }, { "collectibles", "Collectible_*,DLC1_Collectible_*,RessurrectionStone" },
+		{ "herbs", "Collectible_Flower*" },
+		{ "world", "Firepit,Explosive,Ammo,LockedGate,HangingBait,MountTarget*" },
+		{ "quests", "goldenM,*QuestGiver*,powerStruggle,CharacterpowerStruggle,FT_*" },
+	};
+	const char *al = getenv("SOMVR_GAME_PROMPTS_ALLOW");
+	snprintf(g_gpr.allow, sizeof g_gpr.allow, "%s", al && strcmp(al, "none") ? al : "");
+	for (size_t i = 0; i < sizeof F / sizeof F[0]; i++)
+		if (somvr_cu_match(g_gpr.allow, F[i].fam)) { /* (the family's exact word in the list) */
+			size_t l = strlen(g_gpr.keep);
+			snprintf(g_gpr.keep + l, sizeof g_gpr.keep - l, "%s%s", l ? "," : "", F[i].recs);
+		}
 	atomic_store(&g_gp_off, g_gpr.want_off);
-	logf_("CONFIG game_prompts=%s (SOMVR_GAME_PROMPTS: %s); world icons kept: %s (SOMVR_GAME_PROMPTS_KEEP)",
+	logf_("CONFIG game_prompts=%s (SOMVR_GAME_PROMPTS: %s); world icons kept: %s (SOMVR_GAME_PROMPTS_KEEP + the families of "
+	      "SOMVR_GAME_PROMPTS_ALLOW '%s')",
 	      g_gp_w[g_gpr.want_off], g_gpr.want_off ? "none of the flat game's button prompts in VR - the prompt diamond's, "
 	      "the behaviour prompts', the world icons'; the VR side still reads them" : "the game's prompts (build 35)",
-	      g_gpr.keep[0] ? g_gpr.keep : "none");
+	      g_gpr.keep[0] ? g_gpr.keep : "none", g_gpr.allow);
 }
 
 /* after every part's start: which are hooked (a part not hooked = the game's prompts there) */

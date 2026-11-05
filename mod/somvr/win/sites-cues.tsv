@@ -1,0 +1,3 @@
+name	kind	rva	ctx_rva	ctx	target_rva	prologue	confidence	how	notes
+# som-b37-cues (build 37, docs/re-xr-pipeline.md 169): the HUD timer's text update called from its tick (SOMVR_CUE_TIMER)
+CU_TIMER	call	0x640f31	0x640f1e	24	0x640690	15	confirmed	nbr	in 0x140640ea0 (= Linux FUN_00b3fd00, pairs.tsv nbr): `mov rcx,[rbx+0x320]; test; je; call 0x140c96f60; comiss xmm0,[0x1416906bc]; jbe` (the script timer) / the quest timer's `call 0x140c48e60; comiss; ja` both reach LAB_140640f2b: `movaps xmm1,xmm0; mov rcx,rbx; call 0x140640690` = Linux 0xb3fdc1's FUN_00b3f680 (pairs.tsv lone). Linux (float left %xmm0, timer %rdi), Windows (timer %rcx, left %xmm1): the same C signature (uintptr_t timer, float left)

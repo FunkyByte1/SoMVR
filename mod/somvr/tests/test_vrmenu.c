@@ -708,8 +708,41 @@ static void test_gesture(void) {
         in = gin_facing(t), in.head = away;
         if (somvr_vm_gesture(&g, &c, &in, &pan, &have) < 0) closed_at = k;
     }
-    CHECK((closed_at == 45 || closed_at == 46) && g.why == SOMVR_VMW_AWAY, "looked away: closed after %d frames (%s)", closed_at,
-          somvr_vm_why(g.why));
+    /* (b37 live3: the busy frames before it hold the panel use_s more - 45 frames - then the 0.5 s of looking away) */
+    CHECK(closed_at >= 88 && closed_at <= 92 && g.why == SOMVR_VMW_AWAY, "looked away: closed after %d frames (%s; 0.5 s of "
+          "use after the pointing, then 0.5 s away)", closed_at, somvr_vm_why(g.why));
+    /* b37 live3 (re-xr-pipeline.md 162.10): the panel in use - the pointing hand at it (gin.using) - holds it open: a look
+     * away, a re-armed palm gesture (a small wrist turn and back) close nothing; the palm dropped 0.5 s closes it */
+    in = gin_facing(t), in.toggles = 1;
+    somvr_vm_gesture(&g, &c, &in, &pan, &have);
+    t += DT;
+    int closed = 0;
+    for (int k = 0; k < 180; k++, t += DT) { /* 2 s looking away, the pointing hand at the panel (its ray not on it) */
+        in = gin_facing(t), in.head = away, in.using = 1;
+        closed |= somvr_vm_gesture(&g, &c, &in, &pan, &have) < 0;
+    }
+    CHECK(!closed && g.open && g.in_use, "in use (the pointing hand at it): 2 s looking away - still open (build 37 closed "
+                                         "after 0.5 s)");
+    for (int k = 0; k < 40; k++, t += DT) { /* the wrist turned away 0.44 s (re-arms the gesture), then facing 1 s */
+        in = gin_facing(t), in.using = 1;
+        in.grip = grip_facing(SOMVR_HAND_L, in.grip.p, (float[3]){1, 0, 0}, (float[3]){0, 0, -1});
+        closed |= somvr_vm_gesture(&g, &c, &in, &pan, &have) < 0;
+    }
+    uint64_t held0 = g.use_held;
+    for (int k = 0; k < 90; k++, t += DT) {
+        in = gin_facing(t), in.using = 1;
+        closed |= somvr_vm_gesture(&g, &c, &in, &pan, &have) < 0;
+    }
+    CHECK(!closed && g.open && g.use_held > held0, "in use: a re-armed palm gesture closes nothing (held %llu)",
+          (unsigned long long)g.use_held);
+    closed_at = -1;
+    for (int k = 0; k < 90 && closed_at < 0; k++, t += DT) { /* the palm turned down, still pointing: the close */
+        in = gin_facing(t), in.using = 1;
+        in.grip = grip_facing(SOMVR_HAND_L, in.grip.p, (float[3]){0, -1, 0}, (float[3]){0, 0, -1});
+        if (somvr_vm_gesture(&g, &c, &in, &pan, &have) < 0) closed_at = k;
+    }
+    CHECK(closed_at >= 44 && closed_at <= 47 && g.why == SOMVR_VMW_DROPPED, "the palm dropped 0.5 s: closed after %d frames "
+          "(%s), in use or not", closed_at, somvr_vm_why(g.why));
     /* the hand lost 1 s: closed */
     in = gin_facing(t), in.toggles = 1;
     somvr_vm_gesture(&g, &c, &in, &pan, &have);
@@ -1587,7 +1620,7 @@ static void test_controls(void) {
             somvr_vm_hit h = somvr_vm_hit_test_page(SOMVR_VMPG_CONTROLS, (x + 0.5f) / SOMVR_VM_TEX_W, (y + 0.5f) / SOMVR_VM_TEX_H);
             prev |= h.item == SOMVR_VMI_CTL_PREV, next |= h.item == SOMVR_VMI_CTL_NEXT;
             if (h.item >= 0 && h.item != SOMVR_VMI_CLOSE && h.item != SOMVR_VMI_CTL_PREV && h.item != SOMVR_VMI_CTL_NEXT &&
-                somvr_vm_tab_page(h.item) < 0)
+                somvr_vm_tab_page(h.item) < 0 && h.item != SOMVR_VMI_PIN && h.item != SOMVR_VMI_PINX) /* (b37 live3: the bar) */
                 only = 0;
         }
     somvr_vm_rect(SOMVR_VMI_CTL_NEXT, SOMVR_VMP_BUTTON, rc);
@@ -2231,7 +2264,7 @@ static void test_fight19(void) {
               offsetof(somvr_settings, crowd_ms) == 92 && offsetof(somvr_settings, bow_string) == 94 &&
               SOMVR_VMA_DODGE == (1ull << 32) && SOMVR_VMA_WSTEP == (1ull << 33) && SOMVR_VMA_STEALTH == (1ull << 34) &&
               SOMVR_VMA_CROWD == (1ull << 35) && SOMVR_VMA_CICON == (1ull << 36) && SOMVR_VMA_STRING == (1ull << 37) &&
-              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 50 && SOMVR_SK_ALL == 0x3ffffffffffffull /* build 34 */,
+              sizeof(((somvr_vm_view *)0)->avail) == 8 && SOMVR_SK_N == 51 && SOMVR_SK_ALL == 0x7ffffffffffffull /* build 34; b37 live3: MENU_PIN */,
           "v7: avail 64 bits at 24, the settings 96 (the six rows at 88..94, pad6 spare), 208; bits 32..37; 33 keys (build 27)");
     /* build 17b's preload avail (the session 174757: 0xf7fff027) with the layer's Report / Quit; build 18 hides the
      * Sword hand (SOMVR_SWORD_HAND_LOCK) */
@@ -2836,7 +2869,8 @@ static void test_test21(void) {
     for (int yy = 0; yy < SOMVR_VM_TEX_H; yy += 4)
         for (int xx = 0; xx < SOMVR_VM_TEX_W; xx += 4) {
             somvr_vm_hit h = somvr_vm_hit_test_av(T, SOMVR_VMPG_TEST, (xx + 0.5f) / SOMVR_VM_TEX_W, (yy + 0.5f) / SOMVR_VM_TEX_H);
-            if (h.item >= 0 && somvr_vm_tab_page(h.item) < 0 && h.item != SOMVR_VMI_TEST_PREV && h.item != SOMVR_VMI_TEST_NEXT)
+            if (h.item >= 0 && somvr_vm_tab_page(h.item) < 0 && h.item != SOMVR_VMI_TEST_PREV && h.item != SOMVR_VMI_TEST_NEXT &&
+                h.item != SOMVR_VMI_PIN && h.item != SOMVR_VMI_PINX) /* (b37 live3: the bar on every page) */
                 only = 0;
         }
     CHECK(all && only, "every tab on every page (%d); the Test page: only the tabs, Prev and Next (%d)", all, only);
@@ -2888,7 +2922,7 @@ static void test_walk_toward(void) {
     somvr_set_default(&s);
     CHECK(s.move == 0 && offsetof(somvr_settings, move) == 83 && sizeof(somvr_settings) == 128 /* v8 */ &&
               !strcmp(somvr_set_key(SOMVR_SK_MOVE), "MOVE") && !strcmp(somvr_set_env(SOMVR_SK_MOVE), "SOMVR_MOVE") &&
-              somvr_set_find("SOMVR_MOVE") == SOMVR_SK_MOVE && SOMVR_SK_MOVE == 31 && SOMVR_SK_N == 50 /* build 34 */,
+              somvr_set_find("SOMVR_MOVE") == SOMVR_SK_MOVE && SOMVR_SK_MOVE == 31 && SOMVR_SK_N == 51 /* build 34; b37 live3 */,
           "MOVE: the default head, the old pad's byte 83, the key and its switch; the 32nd key");
     CHECK(somvr_set_put(&s, SOMVR_SK_MOVE, " hand ") && s.move == 1 && (somvr_set_get(&s, SOMVR_SK_MOVE, v, sizeof v), !strcmp(v, "hand")) &&
               somvr_set_put(&s, SOMVR_SK_MOVE, "head") && s.move == 0 && !somvr_set_put(&s, SOMVR_SK_MOVE, "1") &&
@@ -3025,7 +3059,7 @@ static void test_settings34(void) {
     CHECK(SOMVR_VRMENU_VERSION == 8 && sizeof(somvr_settings) == 128 && offsetof(somvr_settings, watch_raise) == 96 &&
               offsetof(somvr_settings, hold_s) == 105 && offsetof(somvr_settings, av8) == 110 &&
               sizeof(somvr_vrmenu_shared) == 240 && offsetof(somvr_vrmenu_shared, gen) == 176 &&
-              SOMVR_SK_N == 50 && SOMVR_SK_XR_WATCH_LOOK == SOMVR_SK_BOW_TAKE + 1 && SOMVR_VMI_ROWS == 49 &&
+              SOMVR_SK_N == 51 && SOMVR_SK_XR_WATCH_LOOK == SOMVR_SK_BOW_TAKE + 1 && SOMVR_VMI_ROWS == 49 &&
               SOMVR_VMI_WATCH == SOMVR_VMI_BOWTAKE + 1 && SOMVR_VMI_CLIMB_SWORD + 1 == SOMVR_VMI_RECENTER,
           "the v8 ABI: the rows at 96..109, av8 at 110, the settings 128, 240; 50 keys; 14 rows before Recentre");
     static const struct {
@@ -3334,7 +3368,7 @@ static void test_charge36(void) {
           "Charge execution: in the area only, request %d", somvr_vm_practice_action(SOMVR_VMI_PR_CHARGE));
     CHECK(somvr_vm_rect(SOMVR_VMI_PR_CHARGE, SOMVR_VMP_BUTTON, rc) && somvr_vm_rect(SOMVR_VMI_PR_HEALTH, SOMVR_VMP_BUTTON, rh) &&
               somvr_vm_rect(SOMVR_VMI_PR_PLACE, SOMVR_VMP_BUTTON, rp) && rc[1] >= rh[1] + rh[3] + 4 &&
-              rc[1] >= rp[1] + rp[3] + 4 && rc[0] == rh[0] && rc[0] + rc[2] == rp[0] + rp[2] &&
+              rc[1] >= rp[1] + rp[3] + 4 && rc[0] == rh[0] && rc[0] + rc[2] < rp[0] + rp[2] &&
               somvr_font_text_w("Charge execution", SOMVR_VM_SCALE) <= rc[2] - 16 && rc[1] + rc[3] <= 628 - 8 &&
               628 + 104 + 32 <= SOMVR_VM_TEX_H,
           "Charge execution under the refills: %d,%d %dx%d (Refill health at %d)", rc[0], rc[1], rc[2], rc[3], rh[1]);
@@ -3352,6 +3386,16 @@ static void test_charge36(void) {
             apart = 0;
     }
     CHECK(apart, "Charge execution over no other button");
+    /* build 37: New herb, the Charge row's right part (in the area only, request 13) */
+    int rn[4];
+    CHECK(!somvr_vm_enabled(&s, P, SOMVR_VMI_PR_HERB) && somvr_vm_enabled(&s, HERE, SOMVR_VMI_PR_HERB) &&
+              somvr_vm_practice_action(SOMVR_VMI_PR_HERB) == SOMVR_VMPR_HERB && SOMVR_VMPR_HERB == 13 &&
+              !strcmp(somvr_vm_label(SOMVR_VMI_PR_HERB), "New herb") && somvr_vm_rect(SOMVR_VMI_PR_HERB, SOMVR_VMP_BUTTON, rn) &&
+              rn[1] == rc[1] && rn[0] >= rc[0] + rc[2] + 8 && rn[0] + rn[2] == rp[0] + rp[2] &&
+              somvr_font_text_w("New herb", SOMVR_VM_SCALE) <= rn[2] - 16,
+          "New herb beside Charge execution: %d,%d %dx%d", rn[0], rn[1], rn[2], rn[3]);
+    h = somvr_vm_hit_test_page(SOMVR_VMPG_PRACTICE, (rn[0] + 0.5f * rn[2]) / SOMVR_VM_TEX_W, (rn[1] + 0.5f * rn[3]) / SOMVR_VM_TEX_H);
+    CHECK(h.item == SOMVR_VMI_PR_HERB, "its centre hits it (%d)", h.item);
 }
 
 /* build 33 (re-xr-pipeline.md 142): Bow from (Shoulder / Grip) - bit 1 of bow_string, under Bow string on the Fight
@@ -3390,7 +3434,64 @@ static void test_bowtake33(void) {
     CHECK(r.bow_string == 2, "BOW_STRING=grip keeps the take bit (%u)", r.bow_string);
 }
 
+/* ---- b37 live3 (re-xr-pipeline.md 162.12): the pinned menu - MENU_PIN, the bottom bar on every page, the Pin button's
+ * toggle, the pinned place for a head ------------------------------------------------------------------------------ */
+static void test_pin37(void) {
+    somvr_settings s;
+    char v[16];
+    somvr_set_default(&s);
+    int k = somvr_set_find("MENU_PIN"), ke = somvr_set_find("SOMVR_MENU_PIN");
+    int ok = s.menu_pin == 0 && k == SOMVR_SK_MENU_PIN && ke == k && somvr_set_put(&s, k, "on") && s.menu_pin == 1;
+    somvr_set_get(&s, k, v, sizeof v);
+    ok &= !strcmp(v, "on") && somvr_set_put(&s, k, "off") && s.menu_pin == 0 && !somvr_set_put(&s, k, "sideways");
+    CHECK(ok && offsetof(somvr_settings, menu_pin) == 112, "MENU_PIN: off by default, on/off both ways, a bad word refused, "
+                                                         "byte 112 (pad8's first)");
+    /* the bar on every page, inside the texture; its buttons the hit test's there */
+    static const int pages[] = {SOMVR_VMPG_SETTINGS, SOMVR_VMPG_DISPLAY, SOMVR_VMPG_PRACTICE, SOMVR_VMPG_CONTROLS,
+                                SOMVR_VMPG_TEST};
+    uint64_t av = ~0ull;
+    int rc[4], rx[4], every = 1;
+    somvr_vm_rect_av(av, SOMVR_VMI_PIN, SOMVR_VMP_BUTTON, rc);
+    somvr_vm_rect_av(av, SOMVR_VMI_PINX, SOMVR_VMP_BUTTON, rx);
+    for (size_t i = 0; i < sizeof pages / sizeof pages[0]; i++) {
+        somvr_vm_hit a = somvr_vm_hit_test_av(av, pages[i], (rc[0] + rc[2] / 2.0f) / SOMVR_VM_TEX_W,
+                                              (rc[1] + rc[3] / 2.0f) / SOMVR_VM_TEX_H);
+        somvr_vm_hit b = somvr_vm_hit_test_av(av, pages[i], (rx[0] + rx[2] / 2.0f) / SOMVR_VM_TEX_W,
+                                              (rx[1] + rx[3] / 2.0f) / SOMVR_VM_TEX_H);
+        every &= a.item == SOMVR_VMI_PIN && b.item == SOMVR_VMI_PINX;
+    }
+    CHECK(every && rc[1] + rc[3] <= SOMVR_VM_TEX_H && rc[1] >= 768 && rx[0] > rc[0] + rc[2],
+          "the bottom bar (Pin, Close) on every page, under the 768 texels that were, inside the 816");
+    somvr_set_default(&s);
+    int r1 = somvr_vm_apply(&s, av, 140, SOMVR_VMI_PIN, SOMVR_VMP_BUTTON), p1 = s.menu_pin;
+    int r2 = somvr_vm_apply(&s, av, 140, SOMVR_VMI_PIN, SOMVR_VMP_BUTTON), p2 = s.menu_pin;
+    int r3 = somvr_vm_apply(&s, av, 140, SOMVR_VMI_PINX, SOMVR_VMP_BUTTON);
+    CHECK(r1 == SOMVR_VMR_CHANGED && p1 == 1 && r2 == SOMVR_VMR_CHANGED && p2 == 0 && r3 == SOMVR_VMR_CLOSE,
+          "Pin in front -> MENU_PIN on (a change: saved), Back to the wrist -> off; Close closes");
+    /* the pinned place: 0.55 m ahead on the level, 30 cm below the eyes, facing them (tilted up toward them) */
+    somvr_posef head = {{0, sinf(0.5f * 0.6f), 0, cosf(0.5f * 0.6f)}, {0.2f, 1.65f, -0.1f}}, out; /* turned 34 deg left */
+    CHECK(somvr_vm_pin_pose(&head, 0.55f, 0.30f, &out), "a pinned pose");
+    float dx = out.p[0] - head.p[0], dz = out.p[2] - head.p[2], dh = sqrtf(dx * dx + dz * dz);
+    float hx = -sinf(0.6f), hz = -cosf(0.6f); /* the head's heading */
+    float zq[3], z0[3] = {0, 0, 1};
+    {
+        float u[3] = {out.q[0], out.q[1], out.q[2]}, w = out.q[3];
+        float t[3] = {2 * (u[1] * z0[2] - u[2] * z0[1]), 2 * (u[2] * z0[0] - u[0] * z0[2]), 2 * (u[0] * z0[1] - u[1] * z0[0])};
+        zq[0] = z0[0] + w * t[0] + (u[1] * t[2] - u[2] * t[1]);
+        zq[1] = z0[1] + w * t[1] + (u[2] * t[0] - u[0] * t[2]);
+        zq[2] = z0[2] + w * t[2] + (u[0] * t[1] - u[1] * t[0]);
+    }
+    float to[3] = {head.p[0] - out.p[0], head.p[1] - out.p[1], head.p[2] - out.p[2]};
+    float tl = sqrtf(to[0] * to[0] + to[1] * to[1] + to[2] * to[2]);
+    float face = (zq[0] * to[0] + zq[1] * to[1] + zq[2] * to[2]) / tl, tilt = asinf(zq[1]) * 57.29578f;
+    CHECK(fabsf(dh - 0.55f) < 1e-3f && fabsf(head.p[1] - out.p[1] - 0.30f) < 1e-4f && (dx * hx + dz * hz) / dh > 0.9999f &&
+              face > 0.9999f && tilt > 25 && tilt < 32,
+          "the pinned place: %.2f m ahead on the head's heading, %.0f cm below the eyes, facing them, tilted up %.0f deg",
+          dh, (head.p[1] - out.p[1]) * 100, tilt);
+}
+
 int main(void) {
+    test_pin37();
     test_bowtake33();
     test_place31();
     test_charge36();

@@ -15,6 +15,11 @@ no microphone, no sound out (the note is made by espeak-ng into a WAV FILE - nev
      line (say/say-1.line, as the layer writes it) synthesised by Kokoro in the lane, NOT played before its calm
      moment; say/say-1.calm -> played on the test's sink at the game's stream volume, the game ducked and put back;
      a quiet message never synthesised; a sink not listed and the default (wivrn.sink, not in the list) never played
+  b37 live3 (162.9): the acknowledgements made at the TTS model's load (ack/*.wav); a note's voice ending -> "Got it."
+     on the test sink and the buzz word in RUN/somvr.trigger at once (< 0.6 s, before the words); a note without
+     voice / without talk -> the mic line; no RUN/somvr.trigger -> no buzz and the file NOT made; a message straight
+     from say/<n>.txt (no .line), streamed sentence by sentence (KEY.wav, KEY.1.wav, KEY.parts) into one pacat stream
+     at its calm moment; a long answer in pages (6 lines of 29, "(1 of 2: ...)"), the whole said once with page 1
   6. live_session.sh stop: the daemon ends, DIR/on gone, live_wait.sh says the session is off (exit 3)
   b37 (lane2, 163.7): the lane job names live-stt / live-tts / live-build (and, with the lane's lane.conf in the tree,
   the speech workers in its LANE_VR_GUARDED and the build in its LANE_VR_JOBS); the two models loaded one at a time
@@ -69,8 +74,13 @@ esac
 """)
     with open(os.path.join(fb, "paplay"), "w") as f:
         f.write(f"#!/bin/sh\necho \"paplay $*\" >> {calls}\n")
-    for b in ("pactl", "paplay"):
+    pbytes = os.path.join(tmp, "pacat.bytes")
+    with open(os.path.join(fb, "pacat"), "w") as f:   # b37 live3: the streamed line's stand-in (its stdin counted)
+        f.write(f"#!/bin/sh\necho \"pacat $*\" >> {calls}\ncat >> {pbytes}\n")
+    for b in ("pactl", "paplay", "pacat"):
         os.chmod(os.path.join(fb, b), 0o755)
+    trig = os.path.join(run_dir, "somvr.trigger")   # b37 live3: the session's stereo switch (the buzz's word goes in)
+    open(trig, "w").close()
     env.update(SOMVR_LIVE_TTS="on", LIVE_TTS_BIN=fb, LIVE_TTS_SINK="somvr_live_test_null")
     d = run(sess, "dir", run_dir, env=env).stdout.strip()
     check(os.path.isdir(os.path.join(d, "inbox")) and os.path.isdir(os.path.join(d, "patches")), f"dir makes {d}")
@@ -122,6 +132,13 @@ esac
           and all("threads 1)" in ln for ln in log.splitlines() if "worker started in the lane" in ln),
           f"the loads one at a time: stt ready -> tts starts -> tts ready, each timed, 1 thread "
           f"({[ln[20:110] for ln in log.splitlines() if 'the load took' in ln]})")
+    t0 = time.time()
+    while time.time() - t0 < 30 and "the acknowledgements made" not in open(os.path.join(d, "live.log")).read():
+        time.sleep(0.2)
+    acks = sorted(x for x in os.listdir(os.path.join(d, "ack")) if x.endswith(".wav"))
+    check(acks == ["got.wav", "mic.wav", "noted.wav", "onit.wav"],
+          f"b37 live3: the acknowledgements made after the model's load: {acks} "
+          f"({[ln[20:100] for ln in open(os.path.join(d, 'live.log')).read().splitlines() if 'acknowledgements' in ln]})")
     # 2. a mark with a recorded note
     waiter = subprocess.Popen([os.path.join(HERE, "live_wait.sh"), "--timeout", "40"], stdout=subprocess.PIPE, text=True,
                               env=dict(env, LIVE_DIR=d))
@@ -134,8 +151,17 @@ esac
     said = "The climbing feels much better now but the sword gets stuck in the wall."
     r = run("espeak-ng", "-v", "en-us", "-s", "150", "-w", os.path.join(m1, "voice.wav"), said)
     check(r.returncode == 0 and os.path.getsize(os.path.join(m1, "voice.wav")) > 10000, "espeak-ng made the note (a file)")
+    open(calls, "w").close()
     open(os.path.join(m1, "voice.txt"), "w").write("4.2 s from test (talk 0.1 .. 4.0 s; ended: 2 s quiet)\n")
     t_end = time.time()
+    got = os.path.join(d, "ack", "got.wav")
+    while time.time() - t_end < 3 and "paplay" not in open(calls).read():
+        time.sleep(0.02)
+    t_ack = time.time() - t_end
+    c = open(calls).read()
+    check(f"paplay --device=somvr_live_test_null" in c and got in c and open(trig).read() == "haptic L 0.35 90"
+          and t_ack < 0.6, f"b37 live3: the note's end -> 'Got it.' on the test sink + the buzz word "
+                           f"{open(trig).read()!r} in {t_ack:.2f} s (< 0.6, before the words)")
     p1 = os.path.join(d, "inbox", "1.json")
     while time.time() - t_end < 15 and not os.path.exists(p1):
         time.sleep(0.05)
@@ -166,13 +192,37 @@ esac
     j2 = json.load(open(p2)) if os.path.exists(p2) else {}
     check(os.path.exists(p2) and 2.5 < time.time() - t2 < 6 and not j2.get("transcript") and "no voice" in j2.get("why", ""),
           f"no voice: inbox/2.json after the grace, why {j2.get('why')!r}")
+    lg = open(os.path.join(d, "live.log")).read()
+    check("ack 120100_2: 'I couldn't hear that." in lg and j2.get("ack") == "mic",
+          f"b37 live3: no voice -> the mic line ({[ln[20:120] for ln in lg.splitlines() if 'ack 120100_2' in ln]})")
+    # b37 live3: a note without talk, and no RUN/somvr.trigger: the mic line at once, no buzz, the file not made
+    os.unlink(trig)
+    m3 = os.path.join(run_dir, "marks", "120200_3")
+    os.makedirs(m3)
+    open(os.path.join(m3, "state.txt"), "w").write("bug mark #3\nsomvr built test, pid 1, t=1400.0\n")
+    open(os.path.join(m3, "served"), "w").write("1\n")
+    shutil.copy2(os.path.join(m1, "voice.wav"), os.path.join(m3, "voice.wav"))
+    open(os.path.join(m3, "voice.txt"), "w").write("5.0 s from test (no talk; ended: nothing said in the first 5 s)\n")
+    t3 = time.time()
+    while time.time() - t3 < 3 and "ack 120200_3" not in open(os.path.join(d, "live.log")).read():
+        time.sleep(0.05)
+    lg = open(os.path.join(d, "live.log")).read()
+    a3 = [ln for ln in lg.splitlines() if "ack 120200_3" in ln]
+    check(a3 and "I couldn't hear that" in a3[0] and "no buzz" in a3[0] and not os.path.exists(trig)
+          and time.time() - t3 < 1.0, f"b37 live3: no talk -> the mic line at once, no trigger file: no buzz, none made "
+                                      f"({a3[0][20:150] if a3 else '-'})")
+    t3 = time.time()
+    while time.time() - t3 < 15 and not os.path.exists(os.path.join(d, "inbox", "3.json")):
+        time.sleep(0.1)
+    open(trig, "w").close()
     # 4. say, status
-    r = run(os.path.join(HERE, "live_say.sh"), "Fixed the sword sticking in walls - try a slash at the rock.",
-            env=dict(env, LIVE_DIR=d))
+    t_say = time.time()
+    r = run(os.path.join(HERE, "live_say.sh"), "Fixed the sword sticking in walls. Try a slash at the rock, then a "
+            "thrust at the tree.", env=dict(env, LIVE_DIR=d))
     check(r.returncode == 0 and os.path.exists(os.path.join(d, "say", "1.txt")), f"say: {r.stdout.strip()[:80]}")
     r = run(os.path.join(HERE, "live_status.sh"), "--json", env=dict(env, LIVE_DIR=d))
     st = json.loads(r.stdout) if r.returncode == 0 else {}
-    check(st.get("on") and st.get("notes") == 2 and st.get("messages") == 1, f"status: on {st.get('on')}, notes "
+    check(st.get("on") and st.get("notes") == 3 and st.get("messages") == 1, f"status: on {st.get('on')}, notes "
           f"{st.get('notes')}, messages {st.get('messages')}, lane {st.get('lane', '')[:40]}")
     # 5. patches
     lp = os.path.join(HERE, "live_patch.sh")
@@ -201,48 +251,101 @@ esac
         r = run(lp, "list", "--dir", d)
         check("patch 1 [live" in r.stdout and "patch 2 [restart" in r.stdout and "staged patch 2" in r.stdout,
               "list: both, the log")
+        # b37 live3: a patch card too long for build 37's layer (the 22:13 session's: cut at the bottom) - without the
+        # layer's "pages" its whole text follows as a quiet paged message; with it, nothing more; > 150 refused
+        what = "Walking stops at drops; tap A to step off, hold A to blink down. Plus the wall-climb fix."
+        tr = "Walk to a ledge: you stop with a nudge. Tap A to step off. Then climb your stuck wall."
+        n_say = len([x for x in os.listdir(os.path.join(d, "say")) if x.endswith(".txt")])
+        r = run(lp, "stage", os.path.join(tree, "build", "win", "somvr_logic.dll"), what, tr, "--dir", d, "--allow-no-abi",
+                "--force-unchecked")
+        new = sorted((x for x in os.listdir(os.path.join(d, "say")) if x.endswith(".txt") and x[:-4].isdigit()),
+                     key=lambda x: int(x[:-4]))[n_say:]
+        txt = " ".join(" ".join(open(os.path.join(d, "say", x)).read() for x in new).split())
+        check(r.returncode == 0 and new and "Patch 3 in full" in txt and "climb your stuck wall" in txt and "..." not in txt
+              and all(os.path.exists(os.path.join(d, "say", x[:-4] + ".quiet")) for x in new),
+              f"a long patch, build 37's layer: its whole text as {len(new)} quiet message(s) ({r.stdout.strip()[-90:]})")
+        open(os.path.join(d, "layer.caps"), "w").write("pages card-out dot-hand\n")
+        n_say = len([x for x in os.listdir(os.path.join(d, "say")) if x.endswith(".txt")])
+        r = run(lp, "stage", os.path.join(tree, "build", "win", "somvr_logic.dll"), what, tr, "--dir", d, "--allow-no-abi",
+                "--force-unchecked")
+        check(r.returncode == 0 and len([x for x in os.listdir(os.path.join(d, "say")) if x.endswith(".txt")]) == n_say,
+              "a long patch, a layer that pages it (layer.caps): no extra message")
+        r = run(lp, "stage", os.path.join(tree, "build", "win", "somvr_logic.dll"), "x" * 151, "y", "--dir", d,
+                "--allow-no-abi", "--force-unchecked")
+        check(r.returncode == 2 and "150 or less" in r.stderr and not os.path.exists(os.path.join(d, "patches", "5")),
+              "a 151-character 'what': refused before anything is staged (never cut)")
     else:
         print("SKIP the patch checks: no build/win/xinput9_1_0.dll (win/build.sh first)")
-    # 5b. b37: the spoken answer, end to end through the daemon (Kokoro for real, pactl / paplay stand-ins)
+    # 5b. b37: the spoken answer, end to end through the daemon (live3: Piper by default, streamed; stand-ins play)
     sd = os.path.join(d, "say")
-    line = "Got it: the climb's wall-top hang. Working on it - try the tower again in a few minutes."
-    with open(os.path.join(sd, "say-1.line"), "w") as f:
-        f.write(line + "\n")
-    t5 = time.time()
     wav = os.path.join(sd, "say-1.wav")
-    while time.time() - t5 < 90 and not os.path.exists(wav):
-        time.sleep(0.2)
-    secs = 0.0
-    if os.path.exists(wav):
-        import wave
-        with wave.open(wav) as wv:
-            secs = wv.getnframes() / wv.getframerate()
-    check(secs > 2.0, f"tts: say-1.line -> say-1.wav by Kokoro in the lane ({secs:.1f} s of speech, "
-                      f"{time.time() - t5:.1f} s after the line, the model's load included)")
-    time.sleep(1.0)
+    while time.time() - t_say < 30 and not os.path.exists(os.path.join(sd, "say-1.parts")):
+        time.sleep(0.05)
+    import wave
+    pieces = [wav] + [os.path.join(sd, f"say-1.{i}.wav") for i in range(1, 8) if os.path.exists(os.path.join(sd, f"say-1.{i}.wav"))]
+    secs = nbytes = 0
+    for pc in pieces if os.path.exists(wav) else []:
+        with wave.open(pc) as wv:
+            secs += wv.getnframes() / wv.getframerate()
+            nbytes += wv.getnframes() * 2
+    lg = open(os.path.join(d, "live.log")).read()
+    first = [ln for ln in lg.splitlines() if "say-1: the first sentence" in ln]
+    check(secs > 2.0 and len(pieces) >= 2 and open(os.path.join(sd, "say-1.parts")).read().strip() == str(len(pieces))
+          and not os.path.exists(os.path.join(sd, "say-1.line")) and first,
+          f"tts: say/1.txt (no .line) -> {len(pieces)} sentences, {secs:.1f} s of speech; {first[0][20:130] if first else '-'}")
+    time.sleep(0.5)
     c = open(calls).read() if os.path.exists(calls) else ""
-    check("paplay" not in c and not os.path.exists(os.path.join(sd, "say-1.spoken")),
+    check("pacat" not in c and not os.path.exists(os.path.join(sd, "say-1.spoken")),
           "tts: not played before the card's calm moment")
+    open(calls, "w").close()
     with open(os.path.join(sd, "say-1.calm"), "w") as f:
         f.write("now\n")
     t6 = time.time()
     while time.time() - t6 < 15 and not os.path.exists(os.path.join(sd, "say-1.spoken")):
         time.sleep(0.1)
     c = open(calls).read() if os.path.exists(calls) else ""
-    order = [ln for ln in c.splitlines() if "set-sink-input-volume" in ln or ln.startswith("paplay")]
-    check(order == ["pactl set-sink-input-volume 31 40%", "paplay --device=somvr_live_test_null --volume=52428 "
-                    "--client-name=SoM VR live " + wav, "pactl set-sink-input-volume 31 80%"],
-          f"tts: at say-1.calm ({time.time() - t6:.1f} s): the game's stream ducked (80 -> 40 %), the line on the test "
-          f"sink at the game's 80 %, put back: {order}")
+    order = [ln for ln in c.splitlines() if "set-sink-input-volume" in ln or ln.startswith("pacat")]
+    with wave.open(wav) as wv:
+        rate = wv.getframerate()
+    check(order == ["pactl set-sink-input-volume 31 40%", f"pacat --playback --device=somvr_live_test_null --format=s16le "
+                    f"--rate={rate} --channels=1 --volume=52428 --client-name=SoM VR live --latency-msec=60",
+                    "pactl set-sink-input-volume 31 80%"] and os.path.getsize(pbytes) == nbytes,
+          f"tts: at say-1.calm ({time.time() - t6:.1f} s): ducked 80 -> 40 %, every sentence into one stream on the "
+          f"test sink at the game's 80 % ({os.path.getsize(pbytes) if os.path.exists(pbytes) else 0} of {nbytes} bytes), "
+          f"put back: {order}")
     sp = open(os.path.join(sd, "say-1.spoken")).read() if os.path.exists(os.path.join(sd, "say-1.spoken")) else ""
-    check("spoken: on somvr_live_test_null at 80 %" in sp, f"tts: say-1.spoken: {sp.strip()[:90]}")
-    with open(os.path.join(sd, "2.quiet"), "w") as f:
-        f.write("1\n")
-    with open(os.path.join(sd, "say-2.line"), "w") as f:
-        f.write("not to be said\n")
-    time.sleep(1.5)
-    check(not os.path.exists(os.path.join(sd, "say-2.wav")) and "say-2: quiet" in open(os.path.join(d, "live.log")).read(),
-          "tts: a quiet message is never synthesised")
+    check("spoken: on somvr_live_test_null at 80 %" in sp and f"{len(pieces)} sentences streamed" in sp,
+          f"tts: say-1.spoken: {sp.strip()[:120]}")
+    # the layer's cards still come as .line (a patch's): synthesised as before
+    with open(os.path.join(sd, "patch-1.line"), "w") as f:
+        f.write("Patch 1 ready. The climb's wall-top hang. Apply it: menu, Test tab.\n")
+    t7 = time.time()
+    while time.time() - t7 < 20 and not os.path.exists(os.path.join(sd, "patch-1.parts")):
+        time.sleep(0.1)
+    np1 = open(os.path.join(sd, "patch-1.parts")).read().strip() if os.path.exists(os.path.join(sd, "patch-1.parts")) else "?"
+    check(os.path.exists(os.path.join(sd, "patch-1.wav")) and (np1 == "1" or not os.path.exists(host_dll)),
+          f"tts: a layer card's patch-1.line -> patch-1.wav; b37 live3: said short, 'Patch 1 ready: <what>' from its "
+          f"patch.txt ({np1} sentence; the layer's line had 3)")
+    # b37 live3: a long answer in pages - never a cut with "..."
+    long = ("Your orc was 10 metres away with his back turned, so the finisher never started. Get within 2 metres, "
+            "face him, then hold the trigger to charge it. The blue outline means it is ready.")
+    m1 = 1 + max(int(x[:-4]) for x in os.listdir(sd) if x.endswith(".txt") and x[:-4].isdigit())
+    r = run(os.path.join(HERE, "live_say.sh"), long, env=dict(env, LIVE_DIR=d))
+    sys.path.insert(0, HERE)
+    import live as livepy
+    p2_, p3_ = (open(os.path.join(sd, f"{k}.txt")).read() for k in (m1, m1 + 1))
+    check(r.returncode == 0 and "2 pages" in r.stdout and p2_.rstrip().endswith("(1 of 2: tap for the next)")
+          and p3_.rstrip().endswith("(2 of 2)") and "..." not in p2_ + p3_
+          and all(len(livepy.lv_wrap(x)) <= 6 for x in (p2_, p3_)) and os.path.exists(os.path.join(sd, f"{m1 + 1}.quiet"))
+          and open(os.path.join(sd, f"{m1}.voice")).read().strip() == long,
+          f"say: a long answer in 2 pages of <= 6 lines, no '...', the whole said with page 1 ({r.stdout.strip()[:60]})")
+    t8 = time.time()
+    while time.time() - t8 < 20 and not os.path.exists(os.path.join(sd, f"say-{m1}.parts")):
+        time.sleep(0.1)
+    lg = open(os.path.join(d, "live.log")).read()
+    np2 = int(open(os.path.join(sd, f"say-{m1}.parts")).read()) if os.path.exists(os.path.join(sd, f"say-{m1}.parts")) else 0
+    check(np2 >= 3 and f"say-{m1 + 1}: quiet" in lg and not os.path.exists(os.path.join(sd, f"say-{m1 + 1}.wav")),
+          f"tts: page 1 says the whole answer ({np2} sentences), page 2 quiet")
     open(calls, "w").close()
     r = run(sys.executable, "-I", os.path.join(HERE, "live_tts.py"), "--wav", wav, "--out", os.path.join(tmp, "x.spoken"),
             "--sink", "somvr_gone", env=dict(env, LIVE_TTS_SINK=""))
@@ -253,8 +356,13 @@ esac
     check(r.returncode == 1 and "paplay" not in open(calls).read() and "wivrn.sink is not listed" in
           open(os.path.join(tmp, "y.spoken")).read(), "tts: the default is wivrn.sink by its exact name - not there, never "
                                                       "played (no other sink tried)")
+    t9 = time.time()   # (daemon.json is written every 2 s)
+    while time.time() - t9 < 4 and json.load(open(os.path.join(d, "daemon.json"))).get("spoken") != 1:
+        time.sleep(0.2)
     dj = json.load(open(os.path.join(d, "daemon.json")))
-    check(dj.get("tts") == "ready" and dj.get("spoken") == 1, f"daemon.json: tts {dj.get('tts')}, {dj.get('spoken')} spoken")
+    check(dj.get("tts") == "ready" and dj.get("spoken") == 1, f"daemon.json: tts {dj.get('tts')}, {dj.get('spoken')} spoken"
+          + ("" if dj.get("spoken") == 1 else str(dj) + str([ln[20:140] for ln in open(os.path.join(d, "live.log")).read().splitlines()
+                                                  if "say-1" in ln])))
     # 6. stop
     r = run(sess, "stop", run_dir, env=env)
     alive = os.path.exists(f"/proc/{pid}")
@@ -262,7 +370,7 @@ esac
     r = run(os.path.join(HERE, "live_wait.sh"), "--dir", d)
     check(r.returncode == 3 and "not on" in r.stdout, f"live_wait after the end: exit {r.returncode}")
     dj = json.load(open(os.path.join(d, "daemon.json")))
-    check(dj.get("alive") is False and dj.get("notes") == 2, "daemon.json: not alive, 2 notes")
+    check(dj.get("alive") is False and dj.get("notes") == 3, "daemon.json: not alive, 3 notes")
     shutil.rmtree(tmp)
     print(f"test_live: {checks} checks, {fails} failed")
     return 1 if fails else 0

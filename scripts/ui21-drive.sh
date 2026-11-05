@@ -134,12 +134,12 @@ if has test; then
   n0=$(cnt 'xr: vrmenu: click Test button: the test page' "$X")
   t "hand R aim panel $UT 30"; sleep 1.2; trig
   seen "the Test tab: its page" 'xr: vrmenu: click Test button: the test page' 3 "$n0" "$X"
-  t "hand R aim panel 0.5 0.45 30"; sleep 1.5; d test-1-page
+  t "hand R aim panel 0.5 0.4235 30"; sleep 1.5; d test-1-page
   UN=$(uv Next button)
   n0=$(cnt 'xr: vrmenu: click Next button' "$X")
   t "hand R aim panel $UN 30"; sleep 1.2; trig
   seen "Next on the Test page" 'xr: vrmenu: click Next button' 3 "$n0" "$X"
-  t "hand R aim panel 0.5 0.45 30"; sleep 1.2; d test-2-after-next
+  t "hand R aim panel 0.5 0.4235 30"; sleep 1.2; d test-2-after-next
   t "hand R off"; t "hand L head 5 -16 32 0 -90 -130 s 0.3"; sleep 1; t "hand L off"; sleep 1.5
   t "$REST_L" "$REST_R"; sleep 1
 fi

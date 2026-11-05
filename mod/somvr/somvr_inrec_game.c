@@ -638,6 +638,11 @@ static void ir_config(int *bad)
 		logf_("CONFIG input rec: on, but no SOMVR_LOG to put it beside: not recorded"), g_ir.on = 0;
 	} else if (g_ir.on) {
 		snprintf(g_ir.path, sizeof g_ir.path, "%s.inrec", lp);
+#ifdef _WIN32
+		if (g_logic_reason) /* b37 live3: a hot reload's module records into a file of its own (build 37's reopened the
+				     * session's with "wb": the recording before the swap was lost, 11-04 22:12) */
+			snprintf(g_ir.path, sizeof g_ir.path, "%s.g%d.inrec", lp, g_logic_gen);
+#endif
 		g_ir.ring = malloc(IR_RING);
 		g_ir.f = g_ir.ring ? fopen(g_ir.path, "wb") : NULL;
 		if (!g_ir.f) {

@@ -275,7 +275,10 @@ enum { SOMVR_CLIMB_FD_NONE = 0, SOMVR_CLIMB_FD_SLOW = 1, SOMVR_CLIMB_FD_NET = 2,
  * did not take him down by fd_net_cm (the end of a pull up); the switch off */
 enum { SOMVR_CLIMB_LETGO_FALL = 0, SOMVR_CLIMB_LETGO_HANG = 1 }; /* SOMVR_CLIMB_LETGO= */
 enum { SOMVR_CLIMB_VIA_NONE = 0, SOMVR_CLIMB_VIA_PALM = 1, SOMVR_CLIMB_VIA_FWD = 2, SOMVR_CLIMB_VIA_DOWN = 3,
-       SOMVR_CLIMB_VIA_INSIDE = 4, SOMVR_CLIMB_VIA_WALL = 5 }; /* which ray found a surface (somvr_climb_via_name) */
+       SOMVR_CLIMB_VIA_INSIDE = 4, SOMVR_CLIMB_VIA_WALL = 5,
+       SOMVR_CLIMB_VIA_FAN = 6, SOMVR_CLIMB_VIA_LEVEL = 7 /* build 39 (liberal): the fan round the palm/fingers, the head's
+                                                           * level ray through the hand */ }; /* which ray found a surface
+                                                                                              * (somvr_climb_via_name) */
 enum { SOMVR_CLIMB_BL_NONE = 0, SOMVR_CLIMB_BL_SHORT = 1, SOMVR_CLIMB_BL_NOGROUND = 2, SOMVR_CLIMB_BL_WET = 3,
        SOMVR_CLIMB_BL_CANNOT = 4, SOMVR_CLIMB_BL_NOEDGE = 5,
        SOMVR_CLIMB_BL_ENEMY = 6, SOMVR_CLIMB_BL_NOROOM = 7 }; /* descent: why A was no blink (bl_why); 6, 7: drop_mark's */
@@ -365,7 +368,8 @@ enum { /* somvr_climb_out.events2 */
 #define SOMVR_CLIMB_E_DN_END (1u << 31) /* down: the glide's end (s->dn_end: holding the lip, or the hang); bit 31: a macro */
 /* through's ends (s->thr_why) */
 enum { SOMVR_CLIMB_THR_NONE = 0, SOMVR_CLIMB_THR_CLEAR = 1, SOMVR_CLIMB_THR_IDLE = 2, SOMVR_CLIMB_THR_MAX = 3,
-       SOMVR_CLIMB_THR_END = 4, SOMVR_CLIMB_THR_NOREAD = 5 };
+       SOMVR_CLIMB_THR_END = 4, SOMVR_CLIMB_THR_NOREAD = 5,
+       SOMVR_CLIMB_THR_HOLD = 6 /* build 39 (thr_keep): a new driving hold not the through's kind */ };
 const char *somvr_climb_thr_name(int why);
 enum { SOMVR_CLIMB_PO_OK = 0, SOMVR_CLIMB_PO_NOTOP = 1, SOMVR_CLIMB_PO_NOFLOOR = 2, SOMVR_CLIMB_PO_NOROOM = 3 }; /* po_why */
 
@@ -477,6 +481,11 @@ typedef struct {
     int thr_top;             /* ... also at a top with the head over it: the edge step's lift (the push into the top)
                               * blocked = through, so the top-out goes 1:1 where the capsule's foot is caught under
                               * the edge (the user's cliff top, run 043737: the feet 46 cm under it; 1) */
+    int thr_low;             /* live patch 11-04 (SOMVR_CLIMB_THROUGH_LOW, 0 off): also under a driving hold at or under
+                              * the eyes with no landing on it (a hold mid-face: the user's rock walls, session 195050
+                              * marks 2 and 4 - the capsule's top caught under the face's bumps, every pull at the
+                              * chest blocked, the root held for seconds): through as over the eyes (the head's way kept
+                              * clear as ever); a hold with a landing stays the pullover's (1) */
     int hug;                 /* build 17 (SOMVR_CLIMB_HUG, 0 off): no move away from the wall past hug_cm (see hug) */
     float hug_cm;            /* ... the root's axis this far from the hold's face at most (50: the capsule's 35 + 15) */
     float hug_in;            /* ... beyond it this part of a pull's length goes toward the face (0.35; 0 = the cut only) */
@@ -537,6 +546,38 @@ typedef struct {
                               * under the feet (a ray down from the root; not water) = the release: gravity back, the
                               * game's own fall (else the hang, as build 31). Mark 3: wedged under a bulge, every fling
                               * down held 0 cm; A's drop 5 s later let him fall */
+    int head_keep;           /* build 39 (SOMVR_CLIMB_HEAD_KEEP; 0 off): on a wall (holding or hanging) the head keeps keep_cm
+                              * from every face: KEEP_RAYS level rays round the head find the nearest face (its normal from
+                              * the two neighbouring rays' hits); a move's part toward it is cut where it would take the
+                              * head nearer than keep_cm, and a head already nearer (the player's lean, a corner turned
+                              * with the head off the body) eases out at most keep_cms - the body moves, the view stays
+                              * out of the rock. The 11-04 session's corner: the head 42 cm off the root along the first
+                              * face pointed into the second after the turn, the hug drew the root to 50 cm from it, the
+                              * eyes came to ~15 cm and the rock filled the view */
+    float keep_cm;           /* ... (20) */
+    float keep_cms;          /* ... the ease out's top speed (150 cm/s) */
+    int side;                /* build 39 (SOMVR_CLIMB_SIDE; 0 off): the move stick's x slides him along the face, holding
+                              * or hanging (up and down stay the hands'): + = his right facing the face, side_cms at full
+                              * tilt past side_dead, eased in and out over SIDE_EASE_S. The face: SIDE_RAYS level rays from
+                              * the chest find the nearest rock; its way is the face's (an outside corner: the way to the
+                              * edge turns as he passes it = an arc round it; an inside corner: the face ahead becomes the
+                              * nearest), turned at most side_turn_dps; the distance kept as at the start. The view's yaw
+                              * never turns (the player turns their own head; the right stick's turn as ever). Holds move
+                              * with him (their points along with the slide). A stick mostly forward or back is the
+                              * hang's own (hang_stick_cm, stand's walk) as before; none in the drop mark's choice */
+    float side_cms;          /* ... (45) */
+    float side_dead;         /* ... (0.3) */
+    float side_turn_dps;     /* ... (120) */
+    int thr_keep;            /* build 39 (SOMVR_CLIMB_THROUGH_KEEP, with through; 0 off): the through ends out of the rock
+                              * only after the capsule was in it (in.rock_cm under -1), as topout's: a capsule held at a
+                              * contact (the rough face's bumps, never in the rock) goes on 1:1 while the pull goes on (the
+                              * 11-04 mark 222911_23: every through ended after its 10 cm - `out of the rock after 10.8 cm`,
+                              * the contact +5 cm - and the next bump held him 0.15 s again: 30-110 cm/s of 180-300 asked);
+                              * a move down is the game's collision as ever (the feet never through a ledge); a new driving
+                              * hold must be the through's kind (over the eyes, thr_low's, thr_top's) or it ends */
+    int liberal;             /* build 39 (SOMVR_CLIMB_LIBERAL; 0 off): a grip anywhere near rough rock holds - the grab's
+                              * rays also fan LIB_DEG round the palm's and the fingers' (4 more each) and run level from
+                              * the head through the hand (the face the hand is at); the reach is SOMVR_CLIMB_REACH_CM's */
 } somvr_climb_cfg;
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
@@ -592,6 +633,11 @@ typedef struct {
     int (*enemy_near)(void *ctx, sv_vec3 p, float r_cm);
     void *enemy_ctx;
     somvr_climb_hand hand[2];
+    float stick_x, stick_y; /* build 39 (side): the move stick as the player holds it (-1..1, x right, y forward) */
+    int view_ok;        /* build 39 (head_keep): view is the player's view this frame - the tracked head in the world
+                         * (somvr.c: somvr_rig_head), Talion's eyes (head_x/y/z) plus the room's offset: the head that
+                         * keeps keep_cm, and with head_keep the through's and topout's head rays start there */
+    sv_vec3 view;       /* ... world cm */
 } somvr_climb_in;
 
 #define SOMVR_CLIMB_VH_N 16 /* fling: the ring's samples (0.18 s at 90 Hz) */
@@ -733,6 +779,7 @@ typedef struct {
     float po_block_s;   /* the 1:1 blocked so far under the candidate hold (po_bseq) while pulling */
     uint32_t po_bseq;
     uint64_t po_arms, po_goes, po_cancels, po_nones, po_noways;
+    uint64_t po_midface;  /* live patch 11-04: blocked on a hold mid-face (the face on up over it): no buzz */
     double po_keep_t;   /* build 36 (po_a_keep_s): the ring last shown (armed) at; < 0 none */
     sv_vec3 po_keep_land, po_keep_top, po_keep_root; /* ... its landing, its hold, the root then */
     int po_kept;        /* ... this frame the ring shown kept (its hand let go) */
@@ -850,6 +897,30 @@ typedef struct {
         frames, moves, overs, lows, hangs, resumes, drops, insides, nears, cue_rays, flings, fl_nones, catches, apexes,
         fl_blocks, fl_overs, fl_tops, fl_glides, faces;
     double req_cm;      /* the length of every move asked for */
+    /* build 39 (head_keep): the head's nearest face this frame (cm along keep_n, level, out of the rock; < 0: none) */
+    float keep_d;
+    sv_vec3 keep_n;
+    int keep_in;        /* the head nearer than keep_cm now (an episode); keep_min: the nearest in it (cm) */
+    float keep_min;
+    uint64_t keep_eps, keep_cuts, keep_pushes;
+    double keep_cut_cm, keep_push_cm;
+    /* build 39 (side): the slide's speed now (cm/s, + right), the face it follows (level unit, into it), the root's
+     * distance from it to keep (cm), an episode on, its turn so far (deg) */
+    float side_v;
+    sv_vec3 side_tw;
+    float side_d0;
+    int side_on;
+    float side_turned;
+    uint64_t side_eps, side_corners, side_lost, side_frames, side_blocked;
+    double side_cm;
+    float side_last_d;  /* the face's distance at the last slide frame (logs) */
+    float side_block_t; /* the slide asked and the root not moving, so long (s); side_block_now: counted */
+    int side_block_now;
+    /* build 39 (thr_keep): the capsule has been in the rock in this through; the throughs kept past a contact */
+    int thr_in, thr_kept_now;
+    uint64_t thr_kept, thr_downs;
+    /* build 39 (liberal): holds taken by the fan's or the head's level ray only */
+    uint64_t lib_holds;
 } somvr_climb;
 
 typedef struct {
@@ -882,6 +953,9 @@ typedef struct {
     float hug_in;           /* hug: this frame's pull redirected toward the face (cm) */
     float stand_walk;       /* stand: this frame's walk onto the top (cm) */
     float through_lx, through_lz; /* topout: this request's level part through the rock (cm; with through_up) */
+    float keep_cut;         /* build 39 (head_keep): this frame's move toward the face cut (cm) */
+    float keep_push;        /* ... this frame's ease out (cm) */
+    float side_step;        /* build 39 (side): this frame's slide (cm, + right) */
     int am_show;            /* A mantle: available: show the landing (am_land: the floor point, world cm) */
     sv_vec3 am_land;
     int dm_show;            /* drop_mark: show the ring at dm_land and the line from dm_top down to it (world cm) */

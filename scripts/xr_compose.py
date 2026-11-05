@@ -99,7 +99,7 @@ def threat_tex():
     to the corners, opaque hurt red x the level (premultiplied)"""
     global _TH
     if _TH is None:
-        rgb, a = np.zeros((204, 544, 3), np.uint8), np.zeros((204, 544), np.uint8)
+        rgb, a = np.zeros((408, 544, 3), np.uint8), np.zeros((408, 544), np.uint8)  # build 37: 12 rows
         c = (np.arange(32) + 0.5) / 32
         U, V = np.meshgrid(c, c)
 
@@ -119,6 +119,47 @@ def threat_tex():
                 x, y = (k - 1) * 34 + 1, row * 34 + 1
                 rgb[y:y + 32, x:x + 32] = np.rint(np.stack([w * col[row][0], w * col[row][1], w * col[row][2]], axis=-1) * 255)
                 a[y:y + 32, x:x + 32] = np.rint(w * col[row][3] * 255)
+
+        # build 37 (somvr_threat.c somvr_th_mark_profile / _arc_profile): rows 6-8 the awareness mark (a soft triangle,
+        # its point down, a dark rim) in white, amber, red, alpha 0.92 x the level; row 9 a captain's health arc, cell k
+        # lit k/16 from its left end (opaque hurt red), the rest a faint dark track
+        def mark(uu, vv):
+            x, top, tip = np.abs(uu - 0.5), 0.18, 0.86
+            half = 0.32 * (tip - vv) / (tip - top)
+            e = np.minimum((half - x) * 0.85, np.minimum(vv - top, (tip - vv) * 0.6 + 0.02))
+            return np.where((vv >= top - 0.06) & (vv <= tip + 0.06), smooth(-0.03, 0.03, e), 0)
+        cm = mark(U, V)
+        cin = mark(0.5 + (U - 0.5) * 1.25, 0.52 + (V - 0.52) * 1.25)
+        mcol = [(1.0, 1.0, 0.97), (1.0, 0.62, 0.08), (1.0, 0.06, 0.03)]
+        ang = np.degrees(np.arctan2(1.15 - V, U - 0.5))
+        band = (1 - smooth(0.035, 0.06, np.abs(np.hypot(U - 0.5, 1.15 - V) - 0.85))) * smooth(33, 37, ang) * (1 - smooth(143, 147, ang))
+        kk = (145 - ang) / 110
+        for k in range(1, 17):
+            lv = k / 16
+            x = (k - 1) * 34 + 1
+            for i, (r0, g0, b0) in enumerate(mcol):
+                al = cm * 0.92 * lv
+                y = (6 + i) * 34 + 1
+                rgb[y:y + 32, x:x + 32] = np.rint(np.stack([al * (r0 * cin + 0.05 * (1 - cin)), al * (g0 * cin + 0.04 * (1 - cin)),
+                                                             al * (b0 * cin + 0.03 * (1 - cin))], axis=-1) * 255)
+                a[y:y + 32, x:x + 32] = np.rint(al * 255)
+            lit = kk <= lv
+            al = band * np.where(lit, 0.92, 0.45)
+            y = 9 * 34 + 1
+            rgb[y:y + 32, x:x + 32] = np.rint(np.stack([al * np.where(lit, 1.0, 0.10), al * np.where(lit, 0.12, 0.08),
+                                                         al * np.where(lit, 0.06, 0.07)], axis=-1) * 255)
+            a[y:y + 32, x:x + 32] = np.rint(al * 255)
+            # row 10 the reach ring (radius 0.46 .. 0.16 of the cell), row 11 the heal band (the edge band in green)
+            r0 = 0.46 - 0.30 * (k - 1) / 15
+            ring = 1 - smooth(0.018, 0.04, np.abs(np.hypot(U - 0.5, V - 0.5) - r0))
+            al = ring * 0.85
+            y = 10 * 34 + 1
+            rgb[y:y + 32, x:x + 32] = np.rint(np.stack([al * 0.55, al * 0.85, al * 1.0], axis=-1) * 255)
+            a[y:y + 32, x:x + 32] = np.rint(al * 255)
+            al = edge * lv * 0.55
+            y = 11 * 34 + 1
+            rgb[y:y + 32, x:x + 32] = np.rint(np.stack([al * 0.25, al * 1.0, al * 0.35], axis=-1) * 255)
+            a[y:y + 32, x:x + 32] = np.rint(al * 255)
         _TH = (rgb, a[..., None])
     return _TH
 
