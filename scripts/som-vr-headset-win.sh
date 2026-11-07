@@ -49,7 +49,7 @@ export PATH=/usr/local/bin:/usr/bin:/bin
 
 SOM=$HOME/Projects/flat2vr/ShadowOfMordor
 SCR=$(cd "$(dirname "$0")" && pwd)       # the scripts it copies: the ones next to it (the main checkout's for the user)
-WIN_BUILD=build-win10                     # the Windows build the user plays (logs/WIN_BUILD); changed only between sessions
+WIN_BUILD=build-win11                     # the Windows build the user plays (logs/WIN_BUILD); changed only between sessions
 BLD=$SOM/logs/$WIN_BUILD
 ENVF=$BLD/headset.env
 CMDS=$SCR/cmds/somvr-vr6.cmd              # the start sequence: the main menu's Continue, the story (the Windows build's

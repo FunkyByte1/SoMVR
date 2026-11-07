@@ -3,8 +3,16 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 41 (Windows) - what to test
-- New in 41 first, then 40's and older lists. Menu > Controls lists every move.
+Build 42 (Windows) - what to test
+- New in 42 first, then 41's and older lists. Menu > Controls lists every move.
+- STRUGGLES: no red ring or button glyph from the game any more - only our white ring or blue outline.
+- CARAGOR PIN, last stage: let it pin you and don't quite shove it off. When the white ring shows in front of you, close the left hand and hold it until the ring fills: it is thrown off. Hand open: you lose.
+- BRAND FROM BEHIND: crouch behind a tower or wall archer, open left hand on its head, pull the left trigger. It brands even if you came from the side.
+- ON A CARAGOR: take the bow from the shoulder and draw: no bite, no lunge, and at a run it keeps running (no braking). Shoot Big Game's archers from the saddle.
+- IORETH (the end of Lord of Mordor): close your free hand into a fist and hold it until the ring runs out.
+- THE RESCUE: carry Lithariel as long as you like - she stays on your shoulder until you open the hand.
+
+Build 41 - new then:
 - STRUGGLES: a caragor pins you - shove or stab at it again and again, a thump for each that counts; the white ring runs down to free you.
 - ON YOUR KNEES or at a captain's finisher: a blue blade shows on him. Lay your sword on it, then thrust.
 - Story moments: a ring = keep a hand closed until it runs out; an arrow = swipe or lean that way.

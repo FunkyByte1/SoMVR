@@ -11,7 +11,11 @@
 # way answered by the rule's test hands (`struggle auto on 0.4`: the outline's stab).
 # Each try: Quest.FailActiveQuest -> Retry (the checkpoint after the drains; nurn41's way), invisible, to 4600 1890
 # -8600, the stick ahead until the struggle starts; then the answer:
-#   IO_TRIES (default "b27 b41 b41"): the same act each try - the left hand open at the start, then a fresh fist kept
+#   IO_TRIES (default "lose b41 b41"; build 42): lose = the rule b41 with the test hands' answer off (no fist: the game's
+#   own loss and fail, then the retry), b41 = the rule's hold by the test hands' fresh fist. (build 41: "b27 b41 b41")
+#   The battle (build 42, som-b42-struggle): `practice mortal never` (the min health everywhere: boot 180117's captains
+#   downed Talion past CanBeAttacked 0), CanBeAttacked 0 again every third round, a captain sought and cut every round.
+#   The same act each try - the left hand open at the start, then a fresh fist kept
 #   closed (the left controller's grip pressed 0.4 s after the start and held: the layer's test button); b27 = build
 #   27's rule (no answer: the baseline, lost), b41 = the rule's hold; with
 #   IO_DRAIN=1 (default) the drain's trigger is held from before the start (the drain hand on him: B 120 held by the
@@ -35,14 +39,15 @@ if [ "${IO_FULL:-1}" = 1 ]; then
   LADDER_STEPS=start LADDER_NOQUIT=1 bash "$HERE/ladder-drive.sh" 2>&1 | grep -vE ' (word|tap) ' | tail -12 | tee -a "$ST"
   inworld || { sleep 5; inworld || note "after the start: $(state)"; }
   note "== the battle (aids: mortal off, CanBeAttacked 0, the nemesis' health 5 + a cut)"
-  w "practice mortal off" 0.6; w "practice console Player.CanBeAttacked 0" 2; w "fight guard learn" 0.5; draw
+  w "practice mortal never" 0.6; w "practice console Player.CanBeAttacked 0" 2; w "fight guard learn" 0.5; draw
   B0=$(cnt "'BlackCaptains': shown by the game"); T=$((SECONDS + ${IO_BATTLE_S:-600})); nk=0
   while [ $SECONDS -lt $T ]; do userin && bail "the user is in VR"; gone && bail "the game is gone"
     [ "$(cnt "'BlackCaptains': shown by the game")" -gt "$B0" ] && break
     deaths; ptut
-    nk=$((nk + 1)); C=$(capat)
-    if [ -n "$C" ] && [ $((nk % 2)) = 1 ]; then set -- $C; behind 110 "$1" "$3"; w "execute face" 0.4; w "captain hp 5" 0.6; slash; slash; thrust; fi
-    z 20; done
+    nk=$((nk + 1)); [ $((nk % 3)) = 0 ] && { w "practice console Player.CanBeAttacked 0" 1.5; w "practice health" 0.6; }
+    w "captain follow near" 1 >&2; C=$(capat)
+    if [ -n "$C" ]; then set -- $C; behind 110 "$1" "$3"; w "execute face" 0.4; w "captain hp 5" 0.6; slash; slash; thrust; fi
+    z 10; done
   [ "$(cnt "'BlackCaptains': shown by the game")" -gt "$B0" ] || { note "FAIL the battle: no 'BlackCaptains' marker in ${IO_BATTLE_S:-600} s ($(state))"; obj 0 6 | tee -a "$ST"; saveas io-battle; echo quit >> "$R/cmd"; exit 1; }
   note "the battle won: the Tower's marker"; pics io-battle-won
   go 4592 2045 -7256; z 6; for nn in $(seq 1 20); do state | grep -qE 'video=1|paused=1' && break; win && break; z 1; done; endphase 3; z 3
@@ -57,9 +62,9 @@ if [ "${IO_FULL:-1}" = 1 ]; then
   pics io-drained; obj 0 4 | tee -a "$ST"
 fi
 WON=0; k=0
-for mode in ${IO_TRIES:-b41 b41 b41}; do
+for mode in ${IO_TRIES:-lose b41 b41}; do
   k=$((k + 1)); note "== try $k: rule $mode, the drain's trigger held from before: ${IO_DRAIN:-1}"
-  w "struggle rule $mode" 1
+  case $mode in lose) w "struggle rule b41" 1; w "struggle auto off" 1 ;; *) w "struggle rule $mode" 1; w "struggle auto on 0.4" 1 ;; esac
   if [ $k -gt 1 ] || [ "${IO_FULL:-1}" != 1 ]; then # (a retry: the checkpoint after the drains - nurn41's cmd21)
     w "practice console Quest.FailActiveQuest" 3; for nw in $(seq 1 20); do win && break; sleep 0.5; done
     tap R a 0.4; for nw in $(seq 1 60); do inworld && ! win && break; sleep 1; done; z 4; fi
@@ -76,8 +81,10 @@ for mode in ${IO_TRIES:-b41 b41 b41}; do
   pics io$k-after; release L trigger; w "verbs aim off" 0.2; w "hands squeeze L 0" 0.2; z 3; pics io$k-later
   since $l1 '^STRUGGLE t=.*(b41 (the hold|over|the cue)|over after|its command now|result changed)|^RIDE t=.*struggle' | head -12 | cut -c1-320 | tee -a "$ST"
   since $l1 "Talion attack '[A-Za-z_0-9]*'|attack 'PC_BH2[A-Za-z_]*'|AI_BH2_[A-Za-z_]*(PLLose|PLWin)[A-Za-z_]*|subtitle ch=[01] .[A-Z]" | head -6 | cut -c1-200 | tee -a "$ST"
-  if since $l1 '^STRUGGLE t=.*b41 over: .* WON' | grep -q .; then note "PASS try $k ($mode): the Ioreth hold won"; WON=$((WON + 1))
+  if since $l1 '^STRUGGLE t=.*b41 over: .* WON' | grep -q .; then
+    [ $mode = lose ] && note "FAIL try $k (lose): won with no fist" || { note "PASS try $k ($mode): the Ioreth hold won"; WON=$((WON + 1)); }
     break # (won: the story moves on - no retry from here)
+  elif [ $mode = lose ]; then note "PASS try $k (lose): no fist - lost, the game's own fail"; z 3; pics io$k-fail
   else note "FAIL try $k ($mode): the Ioreth hold lost"; fi
 done
 z 8; pics io-end; endphase 2; obj 0 6 | tee -a "$ST"

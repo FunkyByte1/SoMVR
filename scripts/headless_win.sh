@@ -135,7 +135,11 @@ else
   gw=$(gs_vr_why) && { echo "STOP: $gw"; exit 1; }
   # b35 slots: no Monado on this slot's runtime folder (other slots' Monados have their own; an unreadable one counts)
   for mp in $(pgrep -x monado-service); do
-    me=$(tr '\0' '\n' < /proc/$mp/environ 2>/dev/null | sed -n 's/^XDG_RUNTIME_DIR=//p'); [ -n "$me" ] || me=$RT
+    me=$(tr '\0' '\n' < /proc/$mp/environ 2>/dev/null | sed -n 's/^XDG_RUNTIME_DIR=//p')
+    # (som-b42-nurn: rus runs each boot in a bwrap namespace, where another boot's Monado's environ is unreadable - then
+    # the runtime folder whose monado.pid names it, if any: slot 1 refused every boot while slot 2 ran)
+    [ -n "$me" ] || for pf in "$RT"/somvr-slot*/monado.pid; do [ "$(cat "$pf" 2>/dev/null)" = "$mp" ] && me=${pf%/monado.pid}; done
+    [ -n "$me" ] || me=$RT
     [ "${me%/}" = "$SRT" ] && { echo "STOP: a monado-service runs on $SRT (pid $mp)"; exit 1; }
   done
   gs_alive "$LOCKD" && { echo "STOP: slot $SLOT already runs a game (pid $(cat "$LOCKD/pid"))"; exit 1; }

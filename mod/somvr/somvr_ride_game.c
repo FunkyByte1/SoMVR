@@ -78,6 +78,11 @@ static const char *const g_rd_state_names[] = { "off", "getting on", "seated", "
 static struct {
 	int on, align, guard, trace_max, counter, face, seat_on;
 	int win_rest, in_win;               /* build 27c: SOMVR_RIDE_WIN_REST; a window open last tick */
+	int bow_string;                     /* build 42 (som-b42-saddle): SOMVR_RIDE_BOW_STRING - the bow out: RT is its string */
+	uint64_t bow_rests, bow_rests_a;    /* ... the trigger presses kept from the beast while the bow was out; A's at the string */
+	int bow_slowmo;                     /* build 42 (som-b42-mountview): SOMVR_RIDE_BOW_SLOWMO - 0 off (skipped seated), 1 game */
+	int bow_out_was;                    /* ... the VR bow out last tick (seated) */
+	uint64_t bow_outs;                  /* ... the bow out on the beast */
 	uint32_t raw_prev, win_mask, rest_bits; /* ... the buttons last tick (unmasked), held since before the window, resting */
 	uint64_t win_rests;                 /* windows the mounted buttons rested through */
 	double press_mount_until, mount_wait_until; /* the mount's 123 pressed until; the view held until (the run onto it) */
@@ -96,6 +101,12 @@ static struct {
 	float dom_hold_s;                   /* SOMVR_RIDE_DOM_HOLD_MS: an aim struggle held on this long = won */
 	_Atomic uintptr_t sg_win_for;       /* the struggle the grip won (the input tick's), completed by bm_pre */
 	uintptr_t sg_forced;
+	/* build 42 (som-b42-pin, docs/re-xr-pipeline.md 189): the caragor pin's second stage answered by the grip too */
+	int pin;                            /* SOMVR_STRUGGLE_PIN: 1 grip (the left hand kept closed, or B), 0 the rule's outline */
+	float pin_hold_s;                   /* SOMVR_STRUGGLE_PIN_HOLD_MS: held on this long = won */
+	int grip_kind;                      /* the struggle the grip answers now: SOMVR_RDG_* */
+	uintptr_t sg_wait_for;              /* the won aim whose window was not open yet (said once) */
+	uint64_t pin_won, pin_waits;
 	/* build 27: the rider's command list (what the beast reads) and the beast's own attack record, for the log */
 	int rc_n, rc_id[MT_RIDER_MAX], rc_listed;
 	float rc_v[MT_RIDER_MAX];
@@ -220,7 +231,11 @@ static void mt_config(int *bad)
 	g_mt.cue = g_mt.on && env_word("SOMVR_RIDE_CUE", onoff_w, 2, 1); /* build 29b */
 	g_mt.seat_on = env_word("SOMVR_RIDE_SEAT", onoff_w, 2, 1);
 	g_mt.win_rest = env_word("SOMVR_RIDE_WIN_REST", onoff_w, 2, 1);
+	g_mt.bow_string = env_word("SOMVR_RIDE_BOW_STRING", onoff_w, 2, 1);
+	g_mt.bow_slowmo = env_word("SOMVR_RIDE_BOW_SLOWMO", (const char *const[]){ "off", "game" }, 2, 0);
 	g_mt.dom_hold_s = env_float("SOMVR_RIDE_DOM_HOLD_MS", 1500, 0, 4500, bad) / 1000;
+	g_mt.pin = g_mt.on && env_word("SOMVR_STRUGGLE_PIN", (const char *const[]){ "outline", "grip" }, 2, 1); /* build 42 */
+	g_mt.pin_hold_s = env_float("SOMVR_STRUGGLE_PIN_HOLD_MS", 1000, 200, 3000, bad) / 1000;
 	g_mt.trace_max = (int)env_float("SOMVR_RIDE_TRACE", 0, 0, 100000, bad);
 	{ /* build 27c (som-b27-ride3, re-xr-pipeline.md 122): what the sprint holds */
 		const char *sc = getenv("SOMVR_RIDE_SPRINT_CMDS");
@@ -261,8 +276,28 @@ static void mt_config(int *bad)
 	      "result screen) a press is the screen's (SOMVR_USE: skip, Retry, Back, Abandon), never the beast's - it acts only "
 	      "once let go after it; a button held since before the window goes on (a held run through a banner), never B" :
 	      "the mounted buttons act through a window (build 27: B on a screen got Talion off, A's Retry leapt)");
+	logf_("CONFIG ride bow_string=%s (SOMVR_RIDE_BOW_STRING, build 42%s): %s", g_mt.bow_string ? "on" : "off",
+	      g_mt.bow_string ? ", the default" : "", g_mt.bow_string ? "while the VR bow is out the right trigger is its "
+	      "string only, never the beast's bite (MNT_Attack_2); after the bow is put away a trigger still held bites only once "
+	      "let go and pressed again; A pressed with the string hand on the string is no leap (as on foot)" : "the right trigger bites with the bow out too (build 41: each nock and draw from the "
+	      "saddle made the beast bite and lunge)");
+	logf_("CONFIG ride bow_slowmo=%s (SOMVR_RIDE_BOW_SLOWMO, build 42%s): %s", g_mt.bow_slowmo ? "game" : "off",
+	      g_mt.bow_slowmo ? "" : ", the default", g_mt.bow_slowmo ? "the bow's slow motion (the game's Focus) while seated "
+	      "too: a running beast slows with the world to ~0.7 m/s ~0.4 s after the bow comes out, and is back at its pace in "
+	      "one frame when the bow goes away or the slow motion runs out (build 41)" : g_bo_slow_in ? "while seated on a beast "
+	      "the bow's slow motion (the game's Focus, the SlowMo component at its two calls) is skipped: the beast keeps its "
+	      "pace under the bow - no brake to a crawl, no surge when the bow goes away; on foot the game's (SOMVR_BOW_SLOWMO)" :
+	      "WANTED, but the SlowMo calls are not patched (the bow's WARN): the game's slow motion stays");
 	logf_("CONFIG ride cue=%s (SOMVR_RIDE_CUE, build 29b): %s", g_mt.cue ? "on" : "off", g_mt.cue ? "while the game offers the "
 	      "mount, the stunned caragor glows the grab cue's faint wraith blue (no prompt)" : "the mount's offer not shown");
+	logf_("CONFIG struggle build 42: pin=%s (SOMVR_STRUGGLE_PIN%s): %s", g_mt.pin ? "grip" : "outline",
+	      getenv("SOMVR_STRUGGLE_PIN") ? "" : "; unset: grip", g_mt.pin ? "a caragor pin's second stage (Talion's "
+	      "'PC_Warg_Struggle_StruggleB', the aim after a lost takedown) is answered as a domination: the left hand kept closed "
+	      "(or B held) - held on = won, written as the game's own once its window is open; the white ring at the caragor's "
+	      "head fills as it is held (SOMVR_STRUGGLE_RULE=b41); let go = start again; no grip = the game's own loss" :
+	      "build 41: the pin's second stage is the rule's aim (the outline at the caragor's head, placed only when near)");
+	logf_("CONFIG struggle build 42: pin hold %.0f ms (SOMVR_STRUGGLE_PIN_HOLD_MS%s)", g_mt.pin_hold_s * 1000,
+	      getenv("SOMVR_STRUGGLE_PIN_HOLD_MS") ? "" : "; unset: 1000");
 	char cl[64];
 	size_t n = 0;
 	cl[0] = 0;
@@ -363,6 +398,9 @@ static void mt_struggle_seen(int k, uintptr_t o, const char *cn, double t)
 	int kind = o ? somvr_rd_strug_kind(cn) : SOMVR_RDS_NONE;
 	if (!o || (g_mt.sg_obj && g_mt.sg_obj != o && kind == SOMVR_RDS_NONE))
 		return;
+	if (o != g_mt.sg_obj) /* build 42 (som-b42-pin): a new struggle, even at the last one's address (boot
+			       * 20261107-003351: two pins at 0x43583a10 - the second's grip won, its completion never written) */
+		g_mt.sg_forced = g_mt.sg_wait_for = 0, atomic_store(&g_mt.sg_win_for, 0);
 	g_mt.sg_obj = o, g_mt.sg_kind = kind, g_mt.sg_cmd = 0;
 	mt_struggle_fields(o, kind);
 	atomic_fetch_add(&g_mt.sg_serial, 1);
@@ -384,14 +422,24 @@ static void mt_struggle_read(const somvr_fb_in *in, double t)
 		return;
 	if ((uintptr_t)in->struggle[0] == o || (uintptr_t)in->struggle[1] == o) {
 		mt_struggle_fields(o, g_mt.sg_kind);
-		if (atomic_load(&g_mt.sg_win_for) == o && g_mt.sg_forced != o) { /* held on: the game's own completion */
+		uint8_t wo[2] = { 0, 0 }; /* (build 42: the aim's window +0x592 open, +0x591 not over - +0xa5 set before it opens
+					   * freezes the aim's update, its window never opens: docs 180 / 189) */
+		int open = peek_ptr(o) != MT_VT_STRUGGLE_AIM || (peek(o + 0x591, wo, 2) && wo[1] && !wo[0]);
+		if (atomic_load(&g_mt.sg_win_for) == o && g_mt.sg_forced != o && !open && g_mt.sg_wait_for != o) {
+			g_mt.sg_wait_for = o, g_mt.pin_waits++;
+			if (mt_log_ok())
+				logf_("RIDE t=%.3f the struggle %#llx held on: its window is not open yet (+0x592 %u, +0x591 %u) - the "
+				      "completion waits for it", t, (unsigned long long)o, wo[1], wo[0]);
+		}
+		if (atomic_load(&g_mt.sg_win_for) == o && g_mt.sg_forced != o && open) { /* held on: the game's own completion */
 			static const uint8_t one = 1;
 			char nm[96];
 			int ok = peek_ptr(o) == MT_VT_STRUGGLE_AIM && arm_poke(o + MT_STRUG_DONE, &one, 1);
-			g_mt.sg_forced = o, g_mt.sg_won += ok;
+			g_mt.sg_forced = o, g_mt.sg_won += ok, g_mt.pin_won += ok && g_mt.grip_kind == SOMVR_RDG_PIN;
 			if (mt_log_ok())
 				logf_("RIDE t=%.3f the struggle %#llx held on %.1f s by the grip: %s (Talion's '%s')", t, (unsigned long long)o,
-				      g_mt.dom_hold_s, ok ? "completed as the game's own (ICombatStruggle+0xa5: its next update wins)" :
+				      g_mt.sg.win_s > 0 ? g_mt.sg.win_s : g_mt.dom_hold_s, ok ? "completed as the game's own "
+				      "(ICombatStruggle+0xa5: its next update wins)" :
 				      "NOT completed (not the aim's vtable, or the write failed)", atk_name_or_dash(g_mt.atk, nm, sizeof nm));
 		}
 		return;
@@ -900,12 +948,15 @@ static int mt_press_cmd(void)
 	float dt = g_mt.sg_t_last > 0 && t > g_mt.sg_t_last ? (float)fmin(t - g_mt.sg_t_last, 0.2) : 0;
 	g_mt.sg_t_last = t;
 	char nm[96];
-	int dom = g_mt.atk && strstr(fb_rec_name(g_mt.atk, nm, sizeof nm), "Domination") && !strstr(nm, "Fail") &&
-		  (strstr(nm, "Warg") || strstr(nm, "Troll") || strstr(nm, "Graug")); /* a beast's (a captain's is the brand's) */
+	nm[0] = 0;
+	/* a beast's domination (a captain's is the brand's); build 42: the caragor pin's second stage (SOMVR_STRUGGLE_PIN) */
+	int gk = g_mt.atk ? somvr_rd_grip_strug(fb_rec_name(g_mt.atk, nm, sizeof nm), g_mt.pin) : SOMVR_RDG_NONE, dom = gk != 0;
 	int grip = g_mt.sq_dn || (g_inp.ctl.down[SOMVR_HAND_R] & SOMVR_BTN_UPPER);
 	if (dom && !g_mt.dom_was && mt_log_ok())
-		logf_("RIDE t=%.3f the domination: Talion's '%s' - its struggle answered by the left hand kept closed (or B)", t, nm);
-	g_mt.dom_was = dom;
+		logf_("RIDE t=%.3f %s: Talion's '%s' - its struggle answered by the left hand kept closed (or B)%s", t,
+		      gk == SOMVR_RDG_PIN ? "the caragor's pin, its second stage" : "the domination", nm, gk == SOMVR_RDG_PIN ?
+		      " - held on = won (SOMVR_STRUGGLE_PIN=grip)" : "");
+	g_mt.dom_was = dom, g_mt.grip_kind = gk;
 	uint64_t ser = atomic_load(&g_mt.sg_serial);
 	int kind = g_mt.sg_kind, cmd = g_mt.sg_cmd;
 	uintptr_t obj = g_mt.sg_obj;
@@ -915,8 +966,9 @@ static int mt_press_cmd(void)
 		cmd = 0;
 	else if (kind == SOMVR_RDS_NONE || !(cmd > 0 && cmd < SC_NCMD)) /* a struggle of a class not known: 123 held */
 		kind = SOMVR_RDS_HOLD, cmd = VB_CMD_GRAB;
-	if (ser != g_mt.sg_serial_in) /* a new struggle (or its end): a fresh answer */
-		g_mt.sg_serial_in = ser, somvr_rd_strug_init(&g_mt.sg, kind, g_mt.dom_hold_s), g_mt.sg_won_was = 0;
+	if (ser != g_mt.sg_serial_in) /* a new struggle (or its end): a fresh answer (build 42: the pin's own hold) */
+		g_mt.sg_serial_in = ser, somvr_rd_strug_init(&g_mt.sg, kind, gk == SOMVR_RDG_PIN ? g_mt.pin_hold_s : g_mt.dom_hold_s),
+		g_mt.sg_won_was = 0;
 	if (!dom || kind == SOMVR_RDS_NONE) {
 		g_mt.dom_hold_was = g_mt.sg_on_was = 0;
 		return t < g_mt.press_mount_until ? VB_CMD_GRAB : 0;
@@ -1053,6 +1105,39 @@ static void mt_run(sc_tick_out *o, double t)
 	mt_add_cmds(o, g_mt.run_cmd, g_mt.run_n, g_mt.run_pulse_ms, t - g_mt.run_t0);
 }
 
+/* build 42 (som-b42-mountview, re-xr-pipeline.md 188): SOMVR_RIDE_BOW_SLOWMO (code default off) - the VR bow holds the
+ * game's aim command (124) and the game's bow mode brings its slow motion (Focus: the world at ~10 %). On foot it moves
+ * no view; seated, the view is carried by the beast, so it is a view move: a running caragor (7 m/s) braked to 0.7 m/s
+ * within ~0.3 s, ~0.4 s after the bow came out, and back at 7 m/s in one frame when the bow went away or the slow motion
+ * ran out (~12 s) - boots 20261107-003651, -005410, -012206 (scripts/ride_steps.py). off: bo_slow_c skips the SlowMo
+ * component while seated (SOMVR_BOW_SLOWMO=off's patch, at its two calls) */
+static int mt_bow_noslow(void)
+{
+	return g_mt.on && !g_mt.bow_slowmo && mt_seated() && g_mt.seat_on;
+}
+
+/* bo_start (before mt_config): the patch wanted - SOMVR_RIDE on and SOMVR_RIDE_BOW_SLOWMO off */
+static int mt_bow_noslow_env(void)
+{
+	static const char *const ow[] = { "off", "on" };
+	return env_word("SOMVR_RIDE", ow, 2, 0) && !env_word("SOMVR_RIDE_BOW_SLOWMO", (const char *const[]){ "off", "game" }, 2, 0);
+}
+
+/* the bow out on the beast: one line a bow (its pace, what the slow motion does) */
+static void mt_bow_note(double t)
+{
+	int out = mt_seated() && g_bow.on && g_bow.s.phase != SOMVR_BOW_PH_IDLE;
+	if (out && !g_mt.bow_out_was) {
+		g_mt.bow_outs++;
+		if (mt_log_ok())
+			logf_("RIDE t=%.3f the VR bow out on the beast (%.1f m/s): %s (%llu SlowMo calls skipped seated so far)", t,
+			      isfinite(g_mt.spd.mps) ? g_mt.spd.mps : 0.0f, mt_bow_noslow() && g_bo_slow_in ? "the game's slow motion "
+			      "skipped - the beast keeps its pace (SOMVR_RIDE_BOW_SLOWMO=off)" : "the game's slow motion (the beast slows "
+			      "with the world)", (unsigned long long)atomic_load(&g_bo_slow_ride));
+	}
+	g_mt.bow_out_was = out;
+}
+
 /* the input tick, after sc_tick: while riding the buttons are the beast's */
 static void mt_tick(sc_tick_out *o, double t)
 {
@@ -1126,6 +1211,24 @@ static void mt_tick(sc_tick_out *o, double t)
 				      (dn0 & SOMVR_BTN_STICK) != 0, stick);
 	uint32_t raw = g_mt.held; /* build 27c: SOMVR_RIDE_WIN_REST's masks (above) */
 	g_mt.raw_prev = raw;
+	/* build 42 (som-b42-saddle, re-xr-pipeline.md 186): the VR bow out - RT is the string (SOMVR_BOW_STRING=trigger), as on
+	 * foot; the bite never (boot 20261106-222636-1: the nock pressed MNT_Attack_2, the beast lunged 4 m under the draw).
+	 * Kept at rest (as a window's press): a trigger still held when the bow is put away bites only once let go */
+	if (g_mt.bow_string && g_bow.on && g_bow.s.phase != SOMVR_BOW_PH_IDLE && (raw & SOMVR_RDB_BITE)) {
+		if (!(g_mt.rest_bits & SOMVR_RDB_BITE) && !(was & SOMVR_RDB_BITE) && ++g_mt.bow_rests && mt_log_ok())
+			logf_("RIDE t=%.3f the right trigger is the bow's string (the bow out): no bite (SOMVR_RIDE_BOW_STRING; %llu so "
+			      "far)", t, (unsigned long long)g_mt.bow_rests);
+		g_mt.rest_bits |= SOMVR_RDB_BITE;
+	}
+	/* ... and A as on foot (SOMVR_BOW_A_JUMP=draw, build 36: a thumb on A at the string): a new press while the string hand
+	 * is on the string is no leap (an A held from before - the sprint - goes on) */
+	const char *ah = g_mt.bow_string && g_bow.on ? bo_a_holds() : NULL;
+	if (ah && (raw & SOMVR_RDB_JUMP) && !(was & SOMVR_RDB_JUMP) && !(g_mt.rest_bits & SOMVR_RDB_JUMP)) {
+		g_mt.rest_bits |= SOMVR_RDB_JUMP, g_mt.bow_rests_a++;
+		if (mt_log_ok())
+			logf_("RIDE t=%.3f A with %s: no leap (SOMVR_RIDE_BOW_STRING, as on foot; %llu so far)", t, ah,
+			      (unsigned long long)g_mt.bow_rests_a);
+	}
 	if (win) {
 		g_mt.win_mask &= raw; /* a held button let go in the window is the screen's from then on */
 		g_mt.rest_bits |= raw & ~g_mt.win_mask;
@@ -1195,6 +1298,7 @@ static void mt_tick(sc_tick_out *o, double t)
 	g_mt.spr_was = (g_mt.held & SOMVR_RDB_CHARGE) != 0;
 	g_mt.t_tick = t;
 	mt_run(o, t); /* `ride run` (a test) */
+	mt_bow_note(t);
 }
 
 /* DEFENCE's tracks (df_frame, a caragor's or ghul's line; outside its lock): `ride guard on` - the test right hand holds
@@ -1370,6 +1474,12 @@ static void mt_end_log(void)
 		return;
 	logf_("RIDE END cue: %llu frames the stunned caragor glowed at the mount's offer (SOMVR_RIDE_CUE)",
 	      (unsigned long long)g_mt.cue_frames);
+	logf_("RIDE END pin: %llu caragor pins' second stages won by the grip, %llu completions that waited for the aim's window "
+	      "(SOMVR_STRUGGLE_PIN %s)", (unsigned long long)g_mt.pin_won, (unsigned long long)g_mt.pin_waits,
+	      g_mt.pin ? "grip" : "outline");
+	logf_("RIDE END bow: %llu right-trigger presses kept from the beast while the VR bow was out, %llu A presses at the "
+	      "string (SOMVR_RIDE_BOW_STRING %s)", (unsigned long long)g_mt.bow_rests, (unsigned long long)g_mt.bow_rests_a,
+	      g_mt.bow_string ? "on" : "off");
 	logf_("RIDE END mounts %llu (not a beast %llu) dismounts %llu, seated frames %llu: the view's largest step %.1f cm across, "
 	      "%.1f cm up/down, %.2f deg of yaw a frame (the turn at most %.0f deg/s); the seat's raw span %.1f cm over the root, "
 	      "the view's %.1f; pitch/roll at most %.2f/%.2f deg; facings on the black %llu; presses jump %llu bite %llu off %llu "
@@ -1385,4 +1495,7 @@ static void mt_end_log(void)
 	      (unsigned long long)g_mt.dom_holds, (unsigned long long)g_mt.sg_ends, (unsigned long long)g_mt.sg_won,
 	      (unsigned long long)g_mt.win_rests, g_mt.spd.top, (unsigned long long)g_mt.sprints, g_mt.spr_s,
 	      (unsigned long long)g_mt.suppressed);
+	logf_("RIDE END bow slow motion: the VR bow out on the beast %llu times, the game's SlowMo calls skipped seated %llu "
+	      "(SOMVR_RIDE_BOW_SLOWMO=%s%s)", (unsigned long long)g_mt.bow_outs, (unsigned long long)atomic_load(&g_bo_slow_ride),
+	      g_mt.bow_slowmo ? "game" : "off", g_bo_slow_in ? "" : "; not patched");
 }

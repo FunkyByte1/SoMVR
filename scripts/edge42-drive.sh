@@ -71,6 +71,7 @@ print('%.0f %.0f %.0f' % (lv, dn, deg))")
   [ $bad = 0 ] && [ $steep -gt 0 ] && PASS "hillwalk: all $ok downhill walks unstopped ($steep of 10+ deg; no hold, no fall)" ||
     FAIL "hillwalk: $bad walk(s) held or fell; $steep of 10+ deg (1.5 m+)"
   reset; }
+[ -n "${EDGE42_LIB:-}" ] && return 0 # build 42: sourced by beam42-drive.sh for these functions
 card
 for p in $PLAN42; do
   case $p in lip17ab|lip17|survey|hillwalk|hold40r) $p ;; *) echo "unknown plan word $p" ;; esac

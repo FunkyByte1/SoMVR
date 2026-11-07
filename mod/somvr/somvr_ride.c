@@ -136,6 +136,15 @@ int somvr_rd_strug_kind(const char *rtti)
 	       strstr(rtti, "CStruggleInputDirection") ? SOMVR_RDS_DIR : SOMVR_RDS_NONE;
 }
 
+int somvr_rd_grip_strug(const char *atk, int pin)
+{
+	if (!atk)
+		return SOMVR_RDG_NONE;
+	if (strstr(atk, "Domination") && !strstr(atk, "Fail") && (strstr(atk, "Warg") || strstr(atk, "Troll") || strstr(atk, "Graug")))
+		return SOMVR_RDG_DOM;
+	return pin && strstr(atk, "Warg_Struggle_StruggleB") ? SOMVR_RDG_PIN : SOMVR_RDG_NONE;
+}
+
 void somvr_rd_strug_init(somvr_rd_strug *s, int kind, float win_s)
 {
 	memset(s, 0, sizeof *s), s->kind = kind, s->win_s = win_s;

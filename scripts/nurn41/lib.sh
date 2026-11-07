@@ -63,8 +63,9 @@ UP="hands test R 30 25 0 80 -40 0"; UPCUT="hands swing R -15 -20 55 -20 30 0 160
 hands0() { x "btn R squeeze 0"; x "btn R squeeze 1"; sleep 1; x "btn R squeeze 0"
   grep -q 'card: put away' "$R/xr-layer.log" || { x "btn R a 1"; x "btn R a 0"; }
   w "$LREST" 0.4; w "$REST" 0.4; }
-drawn() { grep -aE '^SLOTS .*sword: .*(now in the hand|now sheathed|now on the back|kept in the hand|kept on the back|our keep undone)' "$L" | tail -1 | grep -qE 'in the hand'; }
+drawn() { grep -aE '^SLOTS .*sword: .*(now in the hand|now sheathed|now on the back|kept in the hand|kept on the back|our keep undone)' "$L" | tail -1 | grep -qE 'in the hand|our keep undone'; }   # (som-b42-nurn: 'our keep undone (the game drew it)' = in the hand: draw() read it as sheathed and reached for the slot - 003146)
 draw() { drawn && return 0; w "$SLOT" 0.7; w "hands squeeze R 1" 0.6; w "$OUT" 0.6; w "hands squeeze R 0" 0.5; w "$REST" 0.3
+  drawn || { sleep 1; w "$SLOT" 0.7; w "hands squeeze R 1" 0.8; w "$OUT" 0.8; w "hands squeeze R 0" 0.5; w "$REST" 0.3; }   # (a second reach)
   echo "$(date +%T) NU act: the sword drawn over the shoulder ($(drawn && echo in the hand || echo NOT drawn))"; }
 slash() { w "hands test R 40 -8 35 0 -90 90" 0.3; w "hands swing R -20 -18 62 0 90 90 300" 0.6; w "hands swing R 40 -8 35 0 -90 90 300" 0.5; w "$REST" 0.3; echo "$(date +%T) NU act: a cut (right to left, 300 ms: a 110 ms swing spans 2 frames at 20 Hz and only glances)"; }
 thrust() { w "$PRE" 0.3; w "$THRUST" 0.5; w "$REST" 0.3; echo "$(date +%T) NU act: a thrust"; }

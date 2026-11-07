@@ -49,7 +49,7 @@ DRV=${1:-ladder-drive.sh}; [ $# -gt 0 ] && shift
 [ -f "$HERE/$DRV" ] || { echo "STOP: no driver $HERE/$DRV"; exit 1; }
 fi
 MOD=${LADDER_MOD:-$(cd "$HERE/../mod/somvr" && pwd -P)}
-ENVF=$HERE/headset-build26.env
+ENVF=${LADDER_ENV:-$HERE/headset-build26.env}   # (som-b42-mountview: LADDER_ENV = a frozen build's own env, e.g. logs/build-win10/headset.env)
 X="$(grep -E '^SOMVR_[A-Z0-9_]+=' "$ENVF" | tr '\n' ' ') SOMVR_HANDS_TEST=1 SOMVR_XR_TEST=@RUN@/xrtest.txt SOMVR_EYE_SIZE=2015x2217"
 X="$X SOMVR_PRACTICE=1 SOMVR_PRACTICE_QUIET=0 SOMVR_PRACTICE_CLEAR=0 SOMVR_PRACTICE_DAY=0 ${LADDER_EXTRA:-}"
 O=$(mktemp /tmp/ladder-boot-XXXXXX.out)

@@ -45,8 +45,11 @@ static const struct site_spec *g_br_sites = g_br_sites_game; /* selftest: stand-
 	       * stub there - no sink, no write to take: its entry is hooked (MinHook) and the lines formatted here */
 static SITE_TABLE struct site_spec g_brw_sites_game[] = {
 SITE("BR_LOGPRINTF", K_ENTRY, 0, 0, "", 0, ""),
+SITE("BR_LOGSEL", K_ENTRY, 0, 0, "", 0, ""),   /* build 42: the shared `xor al,al; ret` the attack log asks */
+SITE("BR_ATKPRED", K_ENTRY, 0, 0, "", 0, ""),  /* build 42: the attack predicates (cache, attack, ctx, target) */
 };
 #endif
+#define BR_NL_AFLAG GADDR(BR_NL_AFLAG, 0)        /* build 42 (Windows): the attack log's byte (the predicates') */
 #define BR_NL_FLAG GADDR(BR_NL_FLAG, 0x4c445d8)  /* the node log's byte */
 #define BR_NL_SINK GADDR(BR_NL_SINK, 0x4c459a0)  /* Combat_LogPrintf's sink (a FILE * holder; null) */
 #define BR_NL_NODES 512
@@ -55,6 +58,10 @@ typedef void (*br_sink_write_fn)(uintptr_t sink, const char *text);
 static struct {
 	int want, ok;                /* the switch; the call patched */
 	uintptr_t flag_a, sink_a;    /* the byte and the sink (selftest: its own) */
+	uintptr_t aflag_a;           /* build 42 (Windows): the attack log's byte, 0 = not hooked */
+	uintptr_t pred_lo, pred_hi;  /* build 42: the selection's and the predicates' code (the log gates answered 1 there) */
+	uintptr_t text_lo, text_hi;  /* build 42: the game's code */
+	uint64_t gates_said, preds;  /* build 42: the log gates answered 1; the brand attacks' predicate calls logged */
 	uintptr_t *dummy;            /* our sink (calloc: the game's shutdown FUN_02751960 frees a sink it finds) */
 	int on;                      /* the byte and our sink set now */
 	double until;                /* the window (the game thread) */
@@ -72,6 +79,16 @@ static void br_nl_key(const char *s, char *key, size_t cap)
 	const char *q = strchr(s, '\''), *v = strstr(s, "validated: ");
 	const char *tr = strstr(s, "' Rejected ("), *tv = strstr(s, "' Validated (");
 	size_t n = 0;
+	/* build 42: the attack log's lines - "SELF: Rejected Attack: ATK - why", "SELF: ATK - Rejected - why" (the pool's),
+	 * our "Predicates 'ATK' ... -> ..." - one key per attack and kind (each attack's why logged once and on change) */
+	const char *ra = strstr(s, ": Rejected Attack: "), *rs = strstr(s, " - Rejected - "), *pr = strstr(s, "Predicates '");
+	const char *pv = strstr(s, "Pool validation failed for ");
+	if (ra || pr || pv || (rs && strchr(s, ':') && strchr(s, ':') < rs)) {
+		const char *b = ra ? ra + 19 : pr ? pr + 12 : pv ? pv + 27 : strchr(s, ':') + 2;
+		size_t m = ra || pv ? strcspn(b, " ") : pr ? strcspn(b, "'") : (size_t)(rs - b);
+		snprintf(key, cap, "%s %.*s", ra ? "RA" : pr ? "PR" : pv ? "PV" : "RS", (int)m, b);
+		return;
+	}
 	if ((tr || tv) && q && q < (tr ? tr : tv)) { /* build 29b: the targeting test's - one key per target and record */
 		const char *e = strchr(tr ? tr : tv, ')');
 		n = e ? (size_t)(e - q + 1) : strlen(q);
@@ -192,6 +209,56 @@ __attribute__((used)) static void br_win_logprintf(const char *prefix, const cha
 	br_nl_line(text, cb_now());
 	atomic_store(&g_brnl.busy, 0);
 }
+
+/* build 42 (som-b42-archers; re-xr-pipeline.md 185): the attack log. The predicates FUN_1408c9930 (cache rcx, attack
+ * rdx, ctx r8, target r9 -> al) and the pool's pick FUN_1408ccdc0 log each rejection ("%s: Rejected Attack: %s - <the
+ * test>", "%s: %s - Rejected - ...") only with the byte BR_NL_AFLAG (0x141989ec9; read nowhere else) set AND the gate
+ * `call 0x140c00cb0 (self+0x4a0); mov rcx,rax; call BR_LOGSEL` answering 1 - BR_LOGSEL is the shipped game's shared
+ * `xor al,al; ret` (0x14100ff70: every folded "return false"). Its entry is hooked: 0 as before for every caller, 1 only
+ * while the window is open, from a return address inside the selection's code whose bytes are that gate exactly. Then
+ * the game formats the line itself (BR_LOGPRINTF) and returns false as it would have; nothing it decides changes. */
+static void *g_brw_sel_orig, *g_brw_pred_orig;
+__attribute__((used, noinline)) static uint8_t br_win_logsel(uintptr_t obj)
+{
+	(void)obj;
+	if (!g_brnl.on || !g_brnl.aflag_a)
+		return 0;
+	uintptr_t ra = (uintptr_t)__builtin_return_address(0);
+	if (ra < g_brnl.pred_lo + 13 || ra + 2 > g_brnl.pred_hi)
+		return 0;
+	const uint8_t *p = (const uint8_t *)ra;
+	int32_t r1;
+	memcpy(&r1, p - 12, 4);
+	const uint8_t *g = p - 8 + r1; /* the first call's target: `mov rax,[rcx+0x4a0]; ret` */
+	static const uint8_t gate[] = { 0x48, 0x8b, 0x81, 0xa0, 0x04, 0x00, 0x00, 0xc3 };
+	if (p[-13] != 0xe8 || p[-8] != 0x48 || p[-7] != 0x8b || p[-6] != 0xc8 || p[-5] != 0xe8 || p[0] != 0x84 || p[1] != 0xc0 ||
+	    (uintptr_t)g < g_brnl.text_lo || (uintptr_t)g + sizeof gate > g_brnl.text_hi || memcmp(g, gate, sizeof gate))
+		return 0;
+	g_brnl.gates_said++;
+	return 1;
+}
+typedef uint8_t (*br_pred_fn)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+__attribute__((used)) static uint8_t br_win_atkpred(uintptr_t cache, uintptr_t atk, uintptr_t ctx, uintptr_t tgt)
+{
+	uint8_t r = ((br_pred_fn)g_brw_pred_orig)(cache, atk, ctx, tgt);
+	if (!g_brnl.on || !atk)
+		return r;
+	char an[96], text[200];
+	vb_name(atk, an, sizeof an);
+	snprintf(text, sizeof text, "Predicates '%s' (%s) -> %s", an, tgt ? "our explicit target" : "the game's own target",
+		 r ? "passed" : "REJECTED");
+	if (g_brnl.filter[0] && !br_nl_match(text))
+		return r;
+	int z = 0;
+	if (!atomic_compare_exchange_strong(&g_brnl.busy, &z, 1)) {
+		g_brnl.busy_drops++;
+		return r;
+	}
+	g_brnl.preds++;
+	br_nl_line(text, cb_now());
+	atomic_store(&g_brnl.busy, 0);
+	return r;
+}
 #endif
 
 /* BR_SELECT, BR_GATE_A, BR_GATE_B, BR_START (with the node log; the player's root node loop FUN_00a8e120, the game
@@ -256,12 +323,16 @@ static void br_nl_frame(double t)
 		if (sink)
 			*sink = (uintptr_t)g_brnl.dummy;
 		*flag = 1, g_brnl.on = 1;
+		if (g_brnl.aflag_a) /* build 42 (Windows): the attack log too */
+			*(uint8_t *)g_brnl.aflag_a = 1;
 		g_co_tgt_debug = 1; /* build 29b: the targeting test's own lines (somvr_w_coscore) */
 		logf_("VERBS brand node log t=%.3f: open for %.1f s (the game's combat node log, lines naming '%s')", t,
 		      g_brnl.until - t, g_brnl.filter);
 		return;
 	}
 	*flag = 0, g_brnl.on = 0, g_co_tgt_debug = 0;
+	if (g_brnl.aflag_a)
+		*(uint8_t *)g_brnl.aflag_a = 0;
 	if (sink) /* (Windows: no sink) */
 		*sink = 0;
 	int z = 0;
@@ -275,11 +346,13 @@ static void br_nl_frame(double t)
 			k += snprintf(runs + k, sizeof runs - (size_t)k, " '%s' %u x since t=%.3f;", g_brnl.node[i].text,
 				      g_brnl.node[i].n, g_brnl.node[i].t0);
 	logf_("VERBS brand node log t=%.3f: closed after %.1f s, %llu frames: %llu lines formatted, %llu naming '%s', %llu "
-	      "logged, %llu not (the cap), %llu busy; the brand nodes' last lines:%s", t, t - g_brnl.t_open,
+	      "logged, %llu not (the cap), %llu busy, %llu attack-log gates opened, %llu brand predicate answers; the brand nodes' "
+	      "last lines:%s", t, t - g_brnl.t_open,
 	      (unsigned long long)(g_fr.frame - g_brnl.frame0), (unsigned long long)g_brnl.lines,
 	      (unsigned long long)g_brnl.kept, g_brnl.filter, (unsigned long long)g_brnl.logged,
-	      (unsigned long long)g_brnl.dropped, (unsigned long long)g_brnl.busy_drops, runs[0] ? runs : " none");
-	g_brnl.lines = g_brnl.kept = g_brnl.dropped = g_brnl.busy_drops = 0;
+	      (unsigned long long)g_brnl.dropped, (unsigned long long)g_brnl.busy_drops, (unsigned long long)g_brnl.gates_said,
+	      (unsigned long long)g_brnl.preds, runs[0] ? runs : " none");
+	g_brnl.lines = g_brnl.kept = g_brnl.dropped = g_brnl.busy_drops = g_brnl.gates_said = g_brnl.preds = 0;
 	atomic_store(&g_brnl.busy, 0);
 }
 
@@ -323,6 +396,23 @@ static void br_nl_start(const struct site_spec *sites, uintptr_t flag_a, uintptr
 			    somvr_win_hook_entry(w->target, (void *)br_win_logprintf, &g_brw_orig, why, sizeof why) == 0;
 		logf_("HOOK %s %s entry %#llx (Combat_LogPrintf, an empty stub on Windows: the node log's lines here)%s%s", w->name,
 		      g_brnl.ok ? "ok" : "SKIPPED", (unsigned long long)w->target, g_brnl.ok ? "" : ": ", g_brnl.ok ? "" : why);
+		/* build 42: the attack log (the predicates' and the pool's rejections, each brand attack's answer) */
+		const struct site_spec *ws = &g_brw_sites_game[1], *wp = &g_brw_sites_game[2];
+		uint8_t af = 0xff;
+		why[0] = 0;
+		int aok = g_brnl.ok && BR_NL_AFLAG && peek(BR_NL_AFLAG, &af, 1) && af == 0 && check_site(ws, why, sizeof why) == 0 &&
+			  check_site(wp, why, sizeof why) == 0 &&
+			  somvr_win_hook_entry(wp->target, (void *)br_win_atkpred, &g_brw_pred_orig, why, sizeof why) == 0;
+		if (aok) {
+			game_range(0, &g_brnl.text_lo, &g_brnl.text_hi);
+			g_brnl.pred_lo = wp->target, g_brnl.pred_hi = wp->target + 0x3ae0; /* FUN_1408c9930 .. FUN_1408ccdc0's end */
+			aok = somvr_win_hook_entry(ws->target, (void *)br_win_logsel, &g_brw_sel_orig, why, sizeof why) == 0;
+		}
+		if (aok)
+			g_brnl.aflag_a = BR_NL_AFLAG;
+		logf_("HOOK BR_LOGSEL/BR_ATKPRED %s entries %#llx %#llx (the attack log: the byte %#llx = %#x)%s%s", aok ? "ok" :
+		      "SKIPPED", (unsigned long long)ws->target, (unsigned long long)wp->target, (unsigned long long)BR_NL_AFLAG, af,
+		      aok ? "" : ": ", aok ? "" : why);
 	}
 #else
 	g_brnl.ok = g_brnl.dummy && bo_patch_call(&sites[0], (void *)somvr_w_brnodelog);
@@ -397,6 +487,15 @@ static struct {
 	double b_off_t;        /* since when off */
 	uintptr_t text_lo, text_hi; /* the game's code (the slot's function must be in it) */
 	uint64_t lock_presses, locks;
+	/* build 42 (som-b42-archers; re-xr-pipeline.md 185): SOMVR_VERBS_BRAND_FACE - the body faces the orc the open hand
+	 * is on (br_face) */
+	int face;              /* SOMVR_VERBS_BRAND_FACE: 1 on (default), 0 off (build 41) */
+	float reach_head[3];   /* br_hands: the head point of the orc the open hand is on (world cm) */
+	uintptr_t face_c;      /* the orc the body is turned to now (0 none) */
+	double face_t0;
+	float face_deg0;       /* how far off it his facing was when the turn began */
+	int face_done;         /* ... and whether it has come within 3 deg since (the ask re-run then) */
+	uint64_t faces, face_ticks, face_dones;
 } g_br;
 
 static void br_start(int *bad)
@@ -412,6 +511,7 @@ static void br_start(int *bad)
 	g_br.unblock = env_word("SOMVR_VERBS_BRAND_UNBLOCK", ow, 2, 0);
 	static const char *const cw[] = { "stunned", "any" };
 	g_br.combat_any = env_word("SOMVR_VERBS_BRAND_COMBAT", cw, 2, 1);
+	g_br.face = env_word("SOMVR_VERBS_BRAND_FACE", ow, 2, 1); /* build 42 */
 	if (!g_br.mode) {
 		memset(&g_brnl, 0, sizeof g_brnl);
 		return;
@@ -427,10 +527,11 @@ static void br_start(int *bad)
 	      "game's selection offers 'PC_InstaHOG' for it (a charged hit streak, PSS_Instant_Brand) = the combat brand's chord "
 	      "B + A (120 + 121) for %.0f ms instead of B (SOMVR_VERBS_BRAND_COMBAT=%s); on an orc it offers 'PC_StealthBrand' for "
 	      "= B %s; asked every %.2f s for the orc the hand is on (the answer counts %.2f s); each wraith press logs the "
-	      "game's offer; our blocking command let go %s (SOMVR_VERBS_BRAND_UNBLOCK)", g_br_w[g_br.mode],
+	      "game's offer; our blocking command let go %s (SOMVR_VERBS_BRAND_UNBLOCK); the body faces the orc the open hand is on "
+	      "in the stealth crouch %s (SOMVR_VERBS_BRAND_FACE)", g_br_w[g_br.mode],
 	      g_br.combat_any ? "an orc's head" : "a stunned orc's head", g_br.press_s * 1e3, g_br.combat_any ? "any" : "stunned",
 	      g_br.stealth_tap ? "as a tap (SOMVR_VERBS_BRAND_STEALTH=tap)" : "held as the trigger is (=hold)", g_gc.recheck_s,
-	      g_br.fresh_s, g_br.unblock ? "on" : "off");
+	      g_br.fresh_s, g_br.unblock ? "on" : "off", g_br.face ? "on" : "off");
 }
 
 /* a command's state in what we hold (in_apply's records): "held N ticks" / "not held" */
@@ -474,8 +575,10 @@ static const char *br_geom(const struct cb_orc *o, char *out, size_t cap)
 	if (peek(o->hobj + OBJ_ROT, q, sizeof q) && vec_ok(q, 2.0f))
 		yaw = sv_heading(sv_qnormalize(sv_quat_of(q)));
 	float dx = g_vb.root[0] - o->pos[0], dz = g_vb.root[2] - o->pos[2];
-	snprintf(out, cap, "%.0f cm, Talion %.0f deg off its facing, %+.0f cm above it", o->dist,
-		 fabsf(sv_wrap_pi(atan2f(dx, dz) - yaw)) * 57.29578f, g_vb.root[1] - o->pos[1]);
+	float my = sv_heading(sv_qnormalize(sv_quat_of(g_lo.xrot))); /* build 42: his own facing (LOCO's last tick) */
+	snprintf(out, cap, "%.0f cm, Talion %.0f deg off its facing, %+.0f cm above it, facing %.0f deg off it", o->dist,
+		 fabsf(sv_wrap_pi(atan2f(dx, dz) - yaw)) * 57.29578f, g_vb.root[1] - o->pos[1],
+		 fabsf(sv_wrap_pi(atan2f(-dx, -dz) - my)) * 57.29578f);
 	return out;
 }
 
@@ -503,6 +606,8 @@ static void br_hands(const somvr_vb_hand_in *in)
 				keep = k;
 		int i = somvr_vb_reach(&g_vb.cfg, &g_vb.hand, in, keep, 8, 5, &bb);
 		c = i >= 0 && i < g_vb.nheads ? g_vb.head_c[i] : 0;
+		if (c)
+			memcpy(g_br.reach_head, g_vb.heads[i], sizeof g_br.reach_head); /* build 42: br_face's bearing */
 	}
 	g_br.reach_c = c, g_br.reach_held = held, g_br.reach_frame = g_fr.frame;
 }
@@ -689,10 +794,10 @@ static void br_frame(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int 
 	if ((c != g_br.said_c || kind != g_br.said_kind) && vb_log_ok()) {
 		g_br.said_c = c, g_br.said_kind = kind;
 		char geo[96];
-		logf_("VERBS brand t=%.3f orc %#llx (%s, attack '%s'): %s%s%s (%s)", t, (unsigned long long)c, g_br.reach_held ? "held" :
+		logf_("VERBS brand t=%.3f orc %#llx (%s, attack '%s'): %s%s%s%s (%s)", t, (unsigned long long)c, g_br.reach_held ? "held" :
 		      br_stunned(c) ? "stunned" : "on its head", vb_name(peek_ptr(c + VB_C_ATTACK), an, sizeof an),
-		      kind ? "the game offers " : "no brand offered", kind ? g_brk_w[kind] : "", kind ? "" : "",
-		      br_geom(oc, geo, sizeof geo));
+		      kind ? "the game offers " : "no brand offered", kind ? g_brk_w[kind] : "", kind ? "" : why && why[0] ? ": " : "",
+		      kind || !why ? "" : why, br_geom(oc, geo, sizeof geo));
 	}
 }
 
@@ -714,6 +819,11 @@ static const char *br_word(const char *w)
 	}
 	if (!g_vb.test)
 		return "verbs brand (probe|charge|stealth need SOMVR_HANDS_TEST: ignored)";
+	if (!strncmp(w, "face ", 5)) { /* build 42 (a test): build 41 against 42 in one boot */
+		g_br.face = !strncmp(w + 5, "on", 2);
+		return g_br.face ? "verbs brand face on (the body faces the orc the open hand is on, stealth crouch)"
+				 : "verbs brand face off (a test: build 41's body yaw, LOCO's own)";
+	}
 	if (!strncmp(w, "probe", 5)) {
 		atomic_store(&g_br.req_probe, 1);
 		return "verbs brand probe (a test: the game's brand offers for the near orcs)";
@@ -743,7 +853,7 @@ static const char *br_word(const char *w)
 		g_br.stealth_tap = !strncmp(w + 8, "tap", 3);
 		return g_br.stealth_tap ? "verbs brand stealth tap" : "verbs brand stealth hold";
 	}
-	return "verbs brand (status|probe|charge|auto on|off|stealth tap|hold|unblock on|off|nodelog S: ignored)";
+	return "verbs brand (status|probe|charge|auto on|off|stealth tap|hold|unblock on|off|nodelog S|face on|off: ignored)";
 }
 
 /* vb_prompt (a prompt shown): the test aid's press at the stealth brand's prompt */
@@ -766,6 +876,58 @@ static int br_unblock_now(double t)
 	return c;
 }
 
+/* build 42 (som-b42-archers; re-xr-pipeline.md 185): SOMVR_VERBS_BRAND_FACE (on | off; code default on). Every stealth
+ * brand of the game ('PC_Archer_StealthBrand_B', 'PC_Bip_StealthBrand_B', their _F, LowRail, ... variants) tests
+ * "Direction (Attacker to Target)": Talion's OWN facing toward the orc within the attack's range (the predicates
+ * FUN_1408c9930; read by the attack log, SOMVR_VERBS_BRAND_NODELOG). In VR his body's yaw is LOCO's rule (3.2: the move
+ * within 100 deg of the head, standing the head with a 50 deg lag), not where the hand reaches: crouched behind a tower
+ * archer with the open hand on its head, his body still along the way he came, the game said no (boot
+ * 20261106-222323: "Rejected Attack: PC_Archer_StealthBrand_B - Direction (Attacker to Target)", 101 cm, 180 deg behind
+ * it). The flat game's player pushes the stick at the archer, which turns Talion to it. So while the open left hand is
+ * on an orc's head in the stealth crouch, the orc within LOCO's head cone (the player looks roughly at it), the body's
+ * yaw target is that orc's head, at LOCO's rate - the stick's turn of the flat game. Only the body turns: the view is the
+ * head's (SOMVR_HIDE_HEAD=parts: no eye offset to swing; LOCO's own standing turn is the same kind of turn). Who the game
+ * lets be branded (captains, the immune, the resisting) and what the hand can reach are unchanged. LOCO's tick, after
+ * somvr_loco_step (game thread). */
+static void br_face(const somvr_loco_in *in, somvr_loco_out *o, const float *root, double t)
+{
+	uintptr_t c = g_fr.frame - g_br.reach_frame <= 2 && !g_br.reach_held ? g_br.reach_c : 0;
+	int on = g_br.mode == BR_ON && g_br.face && o->yaw_ours && c && root && (g_cr.held || g_cr.game > 0);
+	float b = 0, off = 0, off_head = 0;
+	if (on) {
+		float dx = g_br.reach_head[0] - root[0], dz = g_br.reach_head[2] - root[2];
+		b = atan2f(dx, dz), off = sv_wrap_pi(b - in->yaw), off_head = sv_wrap_pi(b - in->head_yaw);
+		on = hypotf(dx, dz) > 20.0f && fabsf(off_head) <= g_lo.cfg.yaw_cone && isfinite(off);
+	}
+	if (!on) {
+		if (g_br.face_c && vb_log_ok())
+			logf_("VERBS brand face t=%.3f orc %#llx: the hand off it after %.2f s - the body's yaw LOCO's own again", t,
+			      (unsigned long long)g_br.face_c, t - g_br.face_t0);
+		g_br.face_c = 0;
+		return;
+	}
+	if (c != g_br.face_c) {
+		g_br.face_c = c, g_br.face_t0 = t, g_br.face_deg0 = off * 57.29578f, g_br.face_done = fabsf(off) <= 3 * 0.01745329f;
+		g_br.faces++;
+		g_br.ask_t = 0; /* the game's offer asked again at once (it was asked with the old facing) */
+		if (vb_log_ok())
+			logf_("VERBS brand face t=%.3f orc %#llx: the open hand on its head in the stealth crouch - the body turns to "
+			      "face it (%.0f deg off it; the head %.0f deg off it; SOMVR_VERBS_BRAND_FACE)", t, (unsigned long long)c,
+			      g_br.face_deg0, off_head * 57.29578f);
+	}
+	float lim = g_lo.cfg.yaw_rate * fminf(fmaxf(in->dt, 0), g_lo.cfg.max_dt);
+	o->yaw_step = fminf(fmaxf(off, -lim), lim), o->yaw_target = b;
+	g_lo.s.last_step = o->yaw_step; /* (LOCO's guard compares the game's turn back with the step applied) */
+	g_br.face_ticks++;
+	if (!g_br.face_done && fabsf(off - o->yaw_step) <= 3 * 0.01745329f) {
+		g_br.face_done = 1, g_br.face_dones++;
+		g_br.ask_t = 0; /* faced: the offer asked again now, before the trigger comes */
+		if (vb_log_ok())
+			logf_("VERBS brand face t=%.3f orc %#llx: faced it after %.2f s (from %.0f deg off)", t, (unsigned long long)c,
+			      t - g_br.face_t0, g_br.face_deg0);
+	}
+}
+
 static void br_end_log(void)
 {
 	if (g_br.mode == BR_OFF)
@@ -774,9 +936,11 @@ static void br_end_log(void)
 		g_brnl.until = 0, br_nl_frame(cb_now());
 	logf_("VERBS brand END: the game's combat commands off %llu time(s) (presses then %llu); asks %llu, the game offered the "
 	      "stealth brand %llu / the combat brand %llu; wraith presses %llu: chords %llu, taps %llu, the stealth brand held "
-	      "%llu; our blocking command let go %llu", (unsigned long long)g_br.locks, (unsigned long long)g_br.lock_presses,
+	      "%llu; our blocking command let go %llu; the body turned to the orc under the hand %llu time(s) (%llu faced, %llu ticks)",
+	      (unsigned long long)g_br.locks, (unsigned long long)g_br.lock_presses,
 	      (unsigned long long)g_br.asks,
 	      (unsigned long long)g_br.stealth_yes, (unsigned long long)g_br.combat_yes, (unsigned long long)g_br.presses,
 	      (unsigned long long)g_br.chords, (unsigned long long)g_br.taps, (unsigned long long)g_br.holds,
-	      (unsigned long long)g_br.unblocks);
+	      (unsigned long long)g_br.unblocks, (unsigned long long)g_br.faces, (unsigned long long)g_br.face_dones,
+	      (unsigned long long)g_br.face_ticks);
 }

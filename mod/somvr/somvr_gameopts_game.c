@@ -147,6 +147,11 @@ static struct {
 	_Atomic uint64_t n_tut_kept;
 	/* build 27c (som-b27-story4, re-xr-pipeline.md 120): SOMVR_HINTS_PAUSING - a tutorial the game pauses for passes */
 	int pause_on;                /* SOMVR_HINTS_PAUSING=on and GO_PAUSETUT matched */
+	/* build 42 (som-b42-bleed2, re-xr-pipeline.md 191.9): SOMVR_HINTS_BUTTONS=hide - a kept line that names a button */
+	int hb_on;                   /* the rule (with SOMVR_HINTS=off and CO_TXT_ICON patched) */
+	uintptr_t hb_rec[32];        /* the records found to name buttons (their later shows dropped) */
+	int hb_n;
+	uint64_t hb_probes, hb_hidden, hb_known, hb_clean;
 	int pause_logged;            /* the pausing field's line written (once) */
 	_Atomic uint64_t n_tut_paused; /* tutorials passed by the rule */
 	double next_tick;
@@ -402,6 +407,7 @@ static int go_tut_pauses(uintptr_t rec, uintptr_t *page)
 	return a && peek(a, page, 8) && *page ? 1 : 0;
 }
 
+static int go_hb_log_ok(void) { return g_go.hb_probes + g_go.hb_known < 200; }
 /* the three delegates' slot 2 (the game thread): log, drop a hint's or a tutorial's show with SOMVR_HINTS=off */
 static void go_dlg(int ev, void *dlg, void *sender, void *params)
 {
@@ -451,8 +457,52 @@ static void go_dlg(int ev, void *dlg, void *sender, void *params)
 		      : kept == 2 ? pg
 		      : kept ? (ev == GO_EV_TUTORIAL ? ": kept (SOMVR_HINTS_KEEP_TUT)" : ": kept (SOMVR_HINTS_KEEP)") : ": passed on");
 	}
-	if (!drop)
+	/* build 42 (som-b42-bleed2): SOMVR_HINTS_BUTTONS=hide - a line kept above (a mission's lesson by SOMVR_HINTS_KEEP_TUT, a
+	 * hint by SOMVR_HINTS_KEEP; not a pausing card) whose text names a button ("Use [RT] + (X) on the Graug from behind to
+	 * Bleed.") is no VR text: one found before is dropped here; a new one is shown as the game asks while its text is built
+	 * (the HUD builds it in this call: its `{Action}` tokens reach CO_TXT_ICON on this thread) and, if a token came, hidden
+	 * in the same call - the game's own hide of that record, before any frame draws it */
+	int hb = !drop && ok && show && kept == 1 && g_go.hb_on && (ev == GO_EV_TUTORIAL || ev == GO_EV_HINT);
+	if (hb) {
+		for (int i = 0; i < g_go.hb_n; i++)
+			if (g_go.hb_rec[i] == rec) {
+				drop = 1, hb = 0, g_go.hb_known++;
+				break;
+			}
+		if (drop && go_hb_log_ok()) {
+			char nm[64];
+			go_rec_name(rec, nm, sizeof nm);
+			logf_("HINTS buttons t=%.3f: '%s' names a button (found before): its show dropped (SOMVR_HINTS_BUTTONS=hide)", mono(), nm);
+		}
+	}
+	if (!drop) {
+		if (hb)
+			atomic_store(&g_hb_probe_tokens, 0), atomic_store(&g_hb_probe_tid, (long)my_tid());
 		((go_dlg_fn)g_go.hi_orig[ev])(dlg, sender, params);
+		if (hb) {
+			atomic_store(&g_hb_probe_tid, 0);
+			uint32_t tok = atomic_load(&g_hb_probe_tokens);
+			char nm[64];
+			go_rec_name(rec, nm, sizeof nm);
+			g_go.hb_probes++;
+			if (tok) {
+				unsigned char hp[32];
+				memset(hp, 0, sizeof hp);
+				peek((uintptr_t)params, hp, sizeof hp); /* (the event's own bytes; only the show byte changed) */
+				hp[ev == GO_EV_HINT ? 8 : 0] = 0;
+				((go_dlg_fn)g_go.hi_orig[ev])(dlg, sender, hp);
+				g_go.hb_hidden++;
+				if (g_go.hb_n < (int)(sizeof g_go.hb_rec / sizeof g_go.hb_rec[0]))
+					g_go.hb_rec[g_go.hb_n++] = rec;
+			} else {
+				g_go.hb_clean++;
+			}
+			if (go_hb_log_ok())
+				logf_("HINTS buttons t=%.3f: '%s' %s (SOMVR_HINTS_BUTTONS=hide)", mono(), nm, tok ? "names a button (its text "
+				      "asked for a button's icon): hidden at once by the game's own hide, before a frame drew it; its later "
+				      "shows dropped" : "names no button: shown as the game shows it");
+		}
+	}
 }
 __attribute__((used)) void somvr_w_gohint(void *d, void *s, void *p) { go_dlg(GO_EV_HINT, d, s, p); }
 __attribute__((used)) void somvr_w_gotut(void *d, void *s, void *p) { go_dlg(GO_EV_TUTORIAL, d, s, p); }
@@ -808,6 +858,12 @@ static void go_start(const struct site_spec *sites, int *bad)
 			p += n + (p[n] == ',');
 		}
 	}
+	g_go.hb_on = g_go.hint_want == GO_HINTS_OFF && hb_want(); /* build 42: SOMVR_HINTS_BUTTONS (CO_TXT_ICON: co_start) */
+	logf_("CONFIG hints buttons=%s (SOMVR_HINTS_BUTTONS%s): %s", hb_want() ? "hide" : "keep",
+	      getenv("SOMVR_HINTS_BUTTONS") ? "" : "; unset: hide", g_go.hb_on ? "a kept line (a mission's lesson, a kept hint; "
+	      "not a pausing card) whose text names a button is hidden as it comes and dropped after - the objective, the "
+	      "subtitles and the awareness marks untouched" : g_go.hint_want != GO_HINTS_OFF ? "off (SOMVR_HINTS is not off)"
+	      : "the kept lines shown with their buttons");
 	/* build 27c: SOMVR_HINTS_PAUSING=off|on (default on) - with SOMVR_HINTS=off a tutorial the game pauses for passes */
 	int pause_want = env_word("SOMVR_HINTS_PAUSING", (const char *const[]){ "off", "on" }, 2, 1);
 	static const char *const vis_w[] = { "off", "hold", "tap" };
@@ -907,6 +963,10 @@ static void go_start(const struct site_spec *sites, int *bad)
 
 static void go_end_log(void)
 {
+	if (g_go.hb_on) /* build 42 */
+		logf_("HINTS END buttons: kept lines probed %llu - named a button and hidden at once %llu, named none %llu; later "
+		      "shows of a known one dropped %llu (SOMVR_HINTS_BUTTONS=hide)", (unsigned long long)g_go.hb_probes,
+		      (unsigned long long)g_go.hb_hidden, (unsigned long long)g_go.hb_clean, (unsigned long long)g_go.hb_known);
 	if (g_go.vis_mode)
 		logf_("VISION END Y presses %llu, taps %llu (again %llu), landed %llu, not answered %llu, given up %llu, blind %llu; "
 		      "the game's own changes %llu; the vision %s at the end", (unsigned long long)g_go.vis.n_press,

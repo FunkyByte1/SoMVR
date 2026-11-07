@@ -117,9 +117,11 @@ poses() { # (after aim) from `knife where`: the orc's torso-to-neck middle in th
     gx = tx - KL * sin(ab) - ox; gy = ty - oy; gz = tz - KL * cos(ab) - oz
     printf \"hands %s %s %.1f %.1f %.1f 0 %.1f 0%s\", k, s, gx, gy, gz, -a + yo + KE, ms != \"\" ? \" \" ms : \"\" }"; }
   KREADY=$(pk test R -10 0 0 0)            # the point 10 cm short of him
+  KREADYF=$(pk test R -32 0 0 0)           # build 42: the point 32 cm short of him, for the mod's `knife push .. turn` (it takes the way from
+  # the point to his back: from 7 cm away that way was the bobbing orc's noise - up the spine, a brush: boot 010636 'touch, no kill' with cos 0.99)
   KPUSH=$(pk swing R 14 0 0 0 600)         # the deliberate push: 24 cm in 0.6 s, the point 14 cm in
   KPULL=$(pk swing R -16 0 0 0 1000)       # drawn back out slowly
-  KBRUSH0=$(pk test R 6 22 0 0)            # the point 6 cm in, 22 cm right of the line ...
+  KBRUSH0=$(pk test R -3 22 0 0)           # the point 3 cm outside him (build 42: 6 cm in made the teleport itself a 2 m/s stab, e1 round 1), 22 cm right of the line ...
   KBRUSH1=$(pk swing R 6 -22 0 0 1200)     # ... dragged across his back to the left (0.37 m/s sideways)
   KFLAT0=$(pk test R 1 -5 0 -90)           # the blade flat across him (its point to the right), 1 cm in, from the left ...
   KFLAT1=$(pk swing R 1 35 0 -90 1000)     # ... slid along itself across his back
@@ -233,27 +235,60 @@ for s in $STEPS; do
     # (build 40: the crouch hold is 9 s - boot 083134's draw and calibration outlasted it, Talion stood and the orc
     # turned on him before the grab: renewed before each step that needs him unaware)
     hold; kcal; hold; n0=$(lines)
-    for g in "$LGRAB" "$LGRAB2" "$LGRAB3"; do w "$g" 0.8; w "hands squeeze L 1" 1.2
+    # (build 42: the hold line is polled for up to 1.5 s instead of a fixed 1.2 s sleep - the hold is 8 s and every second counts)
+    for g in "$LGRAB" "$LGRAB2" "$LGRAB3"; do w "$g" 0.8; w "hands squeeze L 1" 0.1
+      for j in 1 2 3 4 5 6 7 8; do since "$n0" '^KNIFE t=.* hold: ' | grep -q . && break; sleep 0.2; done
       since "$n0" '^KNIFE t=.* hold: ' | grep -q . && break; w "hands squeeze L 0" 0.5; done
     since "$n0" '^KNIFE t=.* hold: ' | grep -q . && pass "grab: the hold ($(since "$n0" '^KNIFE t=.* hold: ' | head -1 | cut -c14-160))" \
       || fail "grab: no hold: $(since "$n0" '^KNIFE' | head -3 | cut -c1-220)"
-    dp grab-held
+    # build 42 (som-b42-knifedrive, handoff/HANDOFF-kills.md). Two faults made the held-orc push a coin flip:
+    # (1) TIME: the hold lasts 8 s (SOMVR_KNIFE_KILL_HOLD_S) and the step spent ~7.4 s of it before the push began (a 2 s
+    #     dump, the brushes, a second measure, the ready): build 40's one pass landed at 8.00 s, build 41's and build 40's
+    #     re-runs let go in the push. Now the dump runs in the background (xrtest and the trigger are separate channels),
+    #     the hold line is polled, and the push follows the brush at once (hold_age logs it; the margin is checked).
+    # (2) PHASE: the held orc is not still - it bobs 9 cm up and down with a 2.2 s period (the paired grab animation;
+    #     the CROUCH watch lines' head node swings 9.5 <-> 25.9 cm over the root) and sways 5-10 cm sideways. A ready posed
+    #     from a measure 1-2.5 s old therefore put the point 10-30 cm off the body (suite 372, d1/d3 of the b42 proof: the
+    #     aid then pushed on an oblique line, 'touch, no kill' - cos 0.72). K37_GRAB_TURN=1 (the default): the mod's own
+    #     `knife push D MS turn` (kn_push, build 40) measures him and does the whole approach in ONE frame: the right
+    #     hand turned so the blade lies along the way to his back, the point 10 cm short, then 2 frames later D cm past
+    #     it along the blade (a straight thrust; the same hand poses a player's wrist makes). K37_GRAB_TURN=0: the old
+    #     measure + ready + push (the aid without `turn`).
+    HT=$(since "$n0" '^KNIFE t=.* hold: ' | head -1 | grep -oE 't=[0-9.]+' | head -1 | cut -d= -f2)
+    hold_age() { tail -n 300 "$L" | grep -oE '^[A-Z]+( kill)? t=[0-9.]+' | tail -1 | grep -oE '[0-9.]+$' \
+      | awk -v h="${HT:-0}" '{ printf "%.1f", $1 - h }'; }
+    HN=$n0; DPS=""; KAGE=""
+    ( dp grab-held ) & DPH=$!
+    poses
     nb=$(lines); w "$KBRUSH0" 0.4; w "$KBRUSH1" 1.4
     bi=$(since "$nb" '^STEALTH t=.* (touch|carried) \(the dagger\)' | wc -l)
     if since "$nb" '^KNIFE t=.* kill: ' | grep -q .; then fail "brush: a brush killed: $(since "$nb" '^KNIFE t=.* kill: ' | head -1 | cut -c1-200)"
     elif [ "$bi" -lt 1 ]; then fail "brush: the point never in its body ($(since "$nb" '^STEALTH t=.* air \(the dagger\)' | tail -1 | grep -oE 'the blade [0-9.]+ cm off'))"
     else pass "brush: the point dragged slowly across his back, no kill ($(since "$nb" '^STEALTH t=.* (touch|carried|air) \(the dagger\)' | grep -oE ' (touch|carried|air) ' | sort | uniq -c | tr -s ' \n' ' '); $(since "$nb" '^STEALTH t=.* touch \(the dagger\)' | grep -oE 'along [0-9.-]+ m/s cos [0-9.-]+' | head -2 | tr '\n' ';'))"; fi
     since "$nb" '^STEALTH t=.* alert: ' | grep -q . && fail "brush: the held orc alerted" || pass "brush: held, no alert"
-    # build 40: the push from a fresh measure of the held orc (boot 084104: the poses measured before the hold and the
-    # brushes, the push 3.4 cm short of his body: no kill), the same tries as nograb's
+    # the push from a fresh measure of the held orc (boot 084104: a measure from before the hold, the push 3.4 cm short of his
+    # body: no kill), the same tries as nograb's - each only while he is still held (a try after the 8 s is a different test)
+    GT=${K37_GRAB_TURN:-1}
     for k in 1 2 3; do
-      hold; poses; wa "$KREADY" 0.6
-      n0=$(lines); k0=$(cnt '^KNIFE t=.* kill: '); wk "knife push 14 600" 0.1; dp grab-stab; sleep 0.2; dp grab-in
-      waitfor_n '^KNIFE t=.* kill: ' "$k0" 2 && break
+      since "$HN" '^KNIFE t=.* let go of ' | grep -q . && { echo "$(date +%T) grab try $k: he is no longer held (hold age $(hold_age) s): no more pushes"; break; }
+      # (turn mode: the ready from the brushes' own measure - at most ~10 cm off the bobbing orc, so the aid's turn is small -
+      # a hand left at the brush's far end would need 50+ deg, and build 40's turns of 70-90 deg missed (boot 093501); a retry
+      # measures again. Without turn: a fresh measure each time)
+      [ "$k" -gt 1 ] || [ "$GT" != 1 ] && { hold; poses; }
+      if [ "$GT" = 1 ]; then wa "$KREADYF" 0.1; else wa "$KREADY" 0.1; fi
+      n0=$(lines); k0=$(cnt '^KNIFE t=.* kill: '); echo "$(date +%T) grab try $k: the push at hold age $(hold_age) s of 8 (turn $GT)"
+      if [ "$GT" = 1 ]; then wk "knife push 14 600 turn" 0.1; else wk "knife push 14 600" 0.1; fi
+      ( dp grab-stab; sleep 0.2; dp grab-in ) & DPS=$!
+      waitfor_n '^KNIFE t=.* kill: ' "$k0" 2 && { KAGE=$(since "$n0" '^KNIFE t=.* kill: ' | head -1 | grep -oE 't=[0-9.]+' | head -1 | cut -d= -f2 | awk -v h="${HT:-0}" '{ printf "%.1f", $1 - h }'); break; }
       if since "$n0" '^STEALTH t=.* (touch|contact) \(the dagger\)' | grep -q .; then echo "$(date +%T) grab try $k: a touch, no kill"; break; fi
       echo "$(date +%T) grab try $k: the push met the air ($(since "$n0" '^STEALTH t=.* air \(the dagger\)' | tail -1 | grep -oE 'the blade [0-9.]+ cm off')): again"
-      wa "$KPULL" 1.0
+      [ "$GT" = 1 ] || wa "$KPULL" 1.0
     done
+    wait $DPH $DPS 2>/dev/null
+    if [ -n "${KAGE:-}" ]; then
+      awk -v a="$KAGE" 'BEGIN { exit !(a + 0 <= 6.5) }' && pass "grab: the kill came $KAGE s into the 8 s hold (a margin of $(awk -v a="$KAGE" 'BEGIN { printf "%.1f", 8 - a }') s)" \
+        || fail "grab: the kill came $KAGE s into the 8 s hold - under 1.5 s of margin (the hold must not be spent on the driver's own waits)"
+    fi
     wa "$KPULL" 1.2; dp grab-after; kill_checks "$n0" grab; stick_checks "$n0" grab
     w "hands squeeze L 0" 0.5; w "$LREST" 0.5
     sleep 1.5

@@ -640,6 +640,9 @@ __attribute__((used)) uintptr_t somvr_w_cotxt(uintptr_t input, uint32_t *cmd)
 {
 	uint32_t c = 0, m;
 	atomic_fetch_add_explicit(&g_co.n_tx, 1, memory_order_relaxed);
+	long pt = atomic_load_explicit(&g_hb_probe_tid, memory_order_relaxed); /* build 42: SOMVR_HINTS_BUTTONS' probe */
+	if (pt && pt == (long)my_tid())
+		atomic_fetch_add_explicit(&g_hb_probe_tokens, 1, memory_order_relaxed);
 	if (!cmd || !peek((uintptr_t)cmd, &c, sizeof c))
 		return ((co_icon_fn)g_co_sites[COS_TXT_ICON].target)(input, cmd);
 	int k = 0;
@@ -843,13 +846,15 @@ static void co_start(int *bad)
 		g_co.tx_from[g_co.tx_n] = a, g_co.tx_to[g_co.tx_n] = b, g_co.tx_n++;
 		q += n;
 	}
-	if (g_co.tx_n) {
+	int hb = hb_want(); /* build 42 (SOMVR_HINTS_BUTTONS=hide): the tokens' call is the probe's - patched with no map too */
+	if (g_co.tx_n || hb) {
 		char why[512];
 		int ok = check_site(&g_co_sites[COS_TXT_ICON], why, sizeof why) == 0;
 		g_co.on_txt = ok && bo_patch_call(&g_co_sites[COS_TXT_ICON], (void *)somvr_w_cotxt);
 		logf_("CONFIG text_buttons=%s (SOMVR_TEXT_BUTTONS): %d map(s), the first %u '%s' -> the icon of %u '%s'; the call "
-		      "CO_TXT_ICON %s%s%s", tb, g_co.tx_n, g_co.tx_from[0], in_cmd_name((int)g_co.tx_from[0]), g_co.tx_to[0],
-		      in_cmd_name((int)g_co.tx_to[0]), g_co.on_txt ? "in" : "OFF", ok ? "" : ": MISMATCH ", ok ? "" : why);
+		      "CO_TXT_ICON %s%s%s%s", tb ? tb : "(unset)", g_co.tx_n, g_co.tx_from[0], in_cmd_name((int)g_co.tx_from[0]), g_co.tx_to[0],
+		      in_cmd_name((int)g_co.tx_to[0]), g_co.on_txt ? "in" : "OFF", ok ? "" : ": MISMATCH ", ok ? "" : why,
+		      hb ? " (build 42: also SOMVR_HINTS_BUTTONS' probe of a kept line's button tokens)" : "");
 	}
 	if (g_co.ins_mode)
 		logf_("CONFIG inspect=%s (SOMVR_INSPECT): a paused menu whose camera is over %.0f m from Talion renders flat%s",

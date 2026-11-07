@@ -21,7 +21,10 @@ echo "$(date +%T) in the world: $(state)"; sleep 4
 hands0
 L0=$(lines)
 if [ "${NU_START:-1}" != 0 ]; then
-  LADDER_STEPS=start LADDER_NOQUIT=1 LADDER_NOPREP=${LADDER_NOPREP:-} bash "$HERE/ladder-drive.sh" 2>&1 | grep -vE ' (word|tap) ' | tail -40
+  for nt in 1 2 3; do   # (som-b42-nurn: a card that did not open at B - boot 221910-1 - is tried again)
+    LADDER_STEPS=start LADDER_NOQUIT=1 LADDER_NOPREP=${LADDER_NOPREP:-} bash "$HERE/ladder-drive.sh" 2>&1 | grep -vE ' (word|tap) ' | tail -40 > "$R/nu-start$nt.txt"
+    cat "$R/nu-start$nt.txt"; grep -q 'did not open' "$R/nu-start$nt.txt" || break; echo "$(date +%T) the card did not open: start again ($nt)"; sleep 5
+  done
   inworld || { sleep 5; inworld || echo "$(date +%T) after the start: $(state)"; }
 fi
 for m in ${NU_MISSION:-}; do

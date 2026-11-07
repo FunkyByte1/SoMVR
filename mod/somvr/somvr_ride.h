@@ -93,6 +93,12 @@ extern const char *const somvr_rd_strug_names[SOMVR_RDS_N];
 #define SOMVR_RD_STRUG_PULSE_S 0.08f
 /* the struggle's class from its RTTI name ('13CStruggleHold', ...); SOMVR_RDS_NONE = not a struggle we know */
 int somvr_rd_strug_kind(const char *rtti);
+/* build 42 (som-b42-pin, docs/re-xr-pipeline.md 189): the struggles the left grip answers (held on = won), by Talion's
+ * attack's name: SOMVR_RDG_DOM a beast's domination ('PC_Warg_Domination_*' / Troll / Graug, not a '*Fail*'; a
+ * captain's is the brand's), SOMVR_RDG_PIN a caragor pin's second stage ('PC_Warg_Struggle_StruggleB', a CStruggleAim
+ * after a lost takedown) when pin is on (SOMVR_STRUGGLE_PIN=grip); 0 none */
+enum { SOMVR_RDG_NONE = 0, SOMVR_RDG_DOM, SOMVR_RDG_PIN };
+int somvr_rd_grip_strug(const char *atk, int pin);
 typedef struct {
     int kind, was;
     float t, pulse;   /* since the struggle began; a press's time left (PressCount, QuickTime) */

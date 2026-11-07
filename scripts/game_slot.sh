@@ -154,6 +154,11 @@ gs_vram_why() {   # N MODE: exit 0 = slot N's boot at MODE does not fit now (the
     others=$((others + 1)); gn=$((gn + GS_GTT_GAME))
     m=$(gs_render_of $k); need=$(gs_need "$m"); g=$(gs_slot_mem $k)
     if [ -n "$g" ]; then cur=${g%% *}; r=$((need - cur - GS_SLOT_EXTRA)); else r=$need; fi   # (no game yet: all of it)
+    # (som-b42-nurn, rus: each boot runs in a bwrap namespace where another boot's game's environ and fdinfo are
+    # unreadable - its game looked "starting" for its whole life and its VRAM counted twice; a live game there over 2
+    # minutes old is already in the card's used)
+    if [ -z "$g" ] && [ "$GS_TESTHOST" = 1 ] && gs_alive "$(gs_lock $k)" && [ "$(gs_age "$(gs_lock $k)")" -gt 120 ] &&
+       ! cat /proc/"$(cat "$(gs_lock $k)/pid")"/environ > /dev/null 2>&1; then r=0; g="? (unreadable here)"; cur="?"; fi
     [ $r -lt 0 ] && r=0; res=$((res + r)); rs+="${rs:+, }$k $m$([ -n "$g" ] && echo " ${cur} in" || echo ' starting') +$r"
   done
   [ $others = 0 ] && { echo "VRAM: alone (no other slot held: it always runs) - $used of $tot MiB used, GTT $gtt"; return 1; }

@@ -205,7 +205,7 @@ void somvr_vb_hand_step(somvr_vb_hand *s, const somvr_vb_cfg *c, const somvr_vb_
         return;
     }
     if (s->phase == SOMVR_VBH_GRAB) {
-        int cap = c->grab_max_s > 0 && in->t - s->t0 >= c->grab_max_s;
+        int cap = c->grab_max_s > 0 && !in->no_cap && in->t - s->t0 >= c->grab_max_s;
         if (!s->closed || in->let_go || cap) {
             o->event = SOMVR_VBE_RELEASE, o->held_s = (float)(in->t - s->t0);
             o->why = !s->closed ? SOMVR_VBR_OPEN : in->let_go ? SOMVR_VBR_PUSH : SOMVR_VBR_MAX;

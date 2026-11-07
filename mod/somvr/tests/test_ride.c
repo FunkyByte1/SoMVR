@@ -215,6 +215,17 @@ static void test_struggle(void)
     CHECK(somvr_rd_strug_kind("12CStruggleAim") == SOMVR_RDS_AIM && somvr_rd_strug_kind("23CStruggleInputDirection") ==
           SOMVR_RDS_DIR, "aim, dir");
     CHECK(somvr_rd_strug_kind("CFoo") == SOMVR_RDS_NONE && somvr_rd_strug_kind(NULL) == SOMVR_RDS_NONE, "none");
+    /* build 42 (som-b42-pin): the struggles the grip answers - a beast's domination; the caragor pin's second stage only
+     * with SOMVR_STRUGGLE_PIN=grip (fails to build on build 41: no somvr_rd_grip_strug) */
+    CHECK(somvr_rd_grip_strug("PC_Warg_Domination_Start", 0) == SOMVR_RDG_DOM &&
+          somvr_rd_grip_strug("PC_Graug_Domination", 1) == SOMVR_RDG_DOM, "grip: a beast's domination");
+    CHECK(somvr_rd_grip_strug("PC_Warg_Domination_Fail", 1) == SOMVR_RDG_NONE &&
+          somvr_rd_grip_strug("PC_Bip_Domination_Start", 1) == SOMVR_RDG_NONE, "grip: a failed one, a captain's - none");
+    CHECK(somvr_rd_grip_strug("PC_Warg_Struggle_StruggleB", 1) == SOMVR_RDG_PIN &&
+          somvr_rd_grip_strug("PC_Warg_Struggle_StruggleB", 0) == SOMVR_RDG_NONE, "grip: the pin's second stage, by the switch");
+    CHECK(somvr_rd_grip_strug("PC_Warg_Struggle_Takedown_F", 1) == SOMVR_RDG_NONE &&
+          somvr_rd_grip_strug("PC_Warg_Struggle_PlayerLose", 1) == SOMVR_RDG_NONE && somvr_rd_grip_strug(NULL, 1) == SOMVR_RDG_NONE,
+          "grip: the takedown (thrusts), the outcome, none");
     somvr_rd_strug s;
     float dt = 0.05f; /* the input tick, 20 Hz */
     /* Hold: the left hand closed since the grab - let go for the gap, then held: exactly one fresh press */

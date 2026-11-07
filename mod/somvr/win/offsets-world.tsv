@@ -99,6 +99,7 @@ SY_SUB_TEXT	off	0xc0	0xc0	plausible	not read side by side (CUIHUDSubtitle's chan
 SY_SUB_STRIDE	size	0x210	0x210	plausible	the Windows subtitle code still indexes 0x210-byte channels (imul 0x210 at 0x14053445c)	-
 BR_NL_FLAG	global	0x4c445d8	0x1989eca	confirmed	5 aligned; the root node path W 0x1404596d0: cmp byte [0x141989eca],0 before "Root node validated"	-
 BR_NL_SINK	global	0x4c459a0	?	unknown	b34 (7.13): none on Windows - Combat_LogPrintf is the empty stub 0x140e90860 (BR_LOGPRINTF), so there is no FILE * holder to find	BR_NODELOG is a redesign
+BR_NL_AFLAG	global	0	0x1989ec9	confirmed	build 42: read only by FUN_1408c9930 (102 x `cmp byte [0x141989ec9],0` before each rejection log) and FUN_1408ccdc0 (5 x before the pool's); 0 in the shipped game, nothing else reads it	Windows only (Linux 0: not used there); SOMVR_VERBS_BRAND_NODELOG sets it inside the window
 BR_C_BLOCKING	off	0xdc	0xdc	plausible	11 aligned keep 0xdc	-
 BR_PC_TRACK	off	0x80	0x80	same	the root loop L 0xa8e121 / W 0x140459e1d and L 0xa8ddbc / W 0x140459774: lea [pc+0x80]	-
 BR_TR_VEC	off	0x08	0x08	plausible	the predicate test FUN_02271890 = 0x1408c2310 (str) reads its +0x08 vector (unaligned)	-

@@ -1,4 +1,6 @@
 #!/bin/bash
+# (build 42, som-b42-beam: up40's ring wait as the suite's edge38u-drive.sh - counted from before the trip, 9 s: the ring
+# logs ~6-7 s after the arrival and the 3 s wait raced it)
 # edge38-drive.sh - live 11-04 (som-live-ledge, SOMVR_WALK_EDGE_STOP): the user's 11-04 Windows session
 # (logs/win-session-20261104-195050) at its two edges, the hands held as a player holds them (both controllers at the
 # waist, pointing ahead: the grip frame's -Z forward), pin16/climb2-drive.sh's functions (sourced). PLAN_E38 (default
@@ -160,8 +162,8 @@ two40() { local k n0; echo "== two40: A twice on the wall"; x "btn R squeeze 0";
   [ "$(cnt 'A twice on the wall')" -gt "$n0" ] && ! climbing && PASS "two40: A twice on the wall = let go" || FAIL "two40: still climbing"
   w "hands squeeze R 0" 0.5; hands; }
 # up40: the A UP blink onto the bank's top, then the walk back west off it at once: the edge stop holds (no air walk)
-up40() { local k n0 s y1; echo "== up40: A UP, then the walk off at once"; x "btn R squeeze 0"; go "$MEADOW"; hands; sleep 1
-  handat R 70 -43 0; waitfor '^CLIMB t=.*top A: the (left|right) hand rests' 3 || { FAIL "up40: no ring"; return; }
+up40() { local k n0 s y1; echo "== up40: A UP, then the walk off at once"; x "btn R squeeze 0"; U0=$(cnt '^CLIMB t=.*top A: the (left|right) hand rests'); go "$MEADOW"; hands; sleep 1
+  handat R 70 -43 0; waitfor '^CLIMB t=.*top A: the (left|right) hand rests' 9 || [ "$(cnt '^CLIMB t=.*top A: the (left|right) hand rests')" -gt "$U0" ] || { FAIL "up40: no ring"; return; }
   k=$(nl); a_tap 1.2; hands; s=$(sdir -90); w "stick $s 0 3" 3.2; y1=$(ry); lines "$k" 10
   grep -qE '^WALK edge stop t=.*held at a drop' <(tail -n +$((k + 1)) "$L") && ! grep -qE '^WALK ground' <(tail -n +$((k + 1)) "$L") &&
     python3 -c "import sys; sys.exit(0 if float('$y1') > 3700 else 1)" && PASS "up40: on the top the edge stop holds at once ($y1)" || FAIL "up40: $y1"; }

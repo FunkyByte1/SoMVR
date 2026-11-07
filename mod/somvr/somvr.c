@@ -1392,6 +1392,10 @@ static void bo_guard(sc_tick_out *o);
 static int bo_node_world(uintptr_t obj, uint32_t node, float out[3]);
 static _Atomic int g_bo_req_aimhead; /* the test word "bow aimhead": the next shot's ray onto the nearest orc's Head node */
 static float g_bo_aim_at[3];          /* build 27b: "bow aimhead X Y Z" - the orc nearest that point (within 4 m) instead */
+static _Atomic int g_bo_tgt_on;       /* build 42 (som-b42-saddle): "bow target X Y Z" - the BOW target lines on the orc */
+static float g_bo_tgt_at[3];          /* nearest that point (within BO_TGT_CM; the point follows it), the shot's miss line */
+static int pr_orc_near(const float at[3], float r_cm, uintptr_t *c, uintptr_t *hobj, float pos[3]); /* build 42: the
+	practice's own orc (`practice put`) - outside the player's targeting bands while it is unaware (somvr_practice_game.c) */
 static _Atomic int g_bh_head_crit_req = -1; /* the word "bow headcrit 0|1" for somvr_bowhit_game.c (-1 none) */
 static _Atomic int g_bh_graug_stun_req = -1; /* build 33: the word "bow graugstun on|off" (SOMVR_GRAUG_STUN live; -1 none) */
 static void bo_moves(const somvr_bow_out *o, int was, double t);
@@ -1642,6 +1646,8 @@ static void ov_pm_own(somvr_loco_in *in, int attack);
 static void ssw_start(int *bad);
 static void c21_end_log(void);
 static void gc_glow_add(struct th_glow *gl, int *ng);
+static void bl_glow_add(struct th_glow *gl, int *ng); /* build 42 (somvr_bleed_game.c): the bleed's glow on the graug's leg */
+static float bl_glow_size_m(float dist_cm);           /* build 42b: its quad's size */
 static void mt_glow_add(struct th_glow *gl, int *ng); /* build 29b, SOMVR_RIDE_CUE (somvr_ride_game.c) */
 /* build 37 (somvr_cues_game.c, docs 169): the awareness marks, the runner, the arc, the use cue; the HUD tag's flags */
 static void cu_glow_add(uintptr_t pcomb, uintptr_t pc, const float root[3], const float head[3], const float hq[4], double t,
@@ -1726,6 +1732,8 @@ static int bz_line_judge(uintptr_t c); /* DEFENCE: a caragor's or ghul's blow ju
  * graug: the seat, the car-style yaw, the holds of getting on and off, the mounted buttons; the test word ride */
 struct df_track;
 static void mt_config(int *bad);
+static int mt_bow_noslow(void);                     /* build 42: SOMVR_RIDE_BOW_SLOWMO=off - seated, the bow's SlowMo skipped */
+static int mt_bow_noslow_env(void);                 /* ... wanted (bo_start, before mt_config) */
 static void mt_end_log(void);
 static void mt_frame(void);                         /* eye0_setup's top: the mount, the yaw's turn, the seat */
 static const float *mt_body(const float *body);     /* eye0_setup: seated, the seat is the body point */
@@ -1746,7 +1754,7 @@ static int mt_steer_heading(float *h);                     /* in_dpsi: seated, t
 static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye); /* in_frame, before the climb: the left hand's grab */
 static int vb_nograb(void);                /* the climb: the left squeeze was the verbs' */
 static int vb_contact(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t); /* the stealth kill */
-static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t); /* build 30: the graug's bleed */
+static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, const sc_contact *ct, double t); /* build 30: the graug's bleed */
 static void vb_blade(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const somvr_blade *b, int sweep,
 		     const float *root, double t);
 /* SOMVR_STEALTH_KILL (somvr_stealth_game.c, included last): the stealth kill by the blade from behind an unaware orc */
@@ -1764,6 +1772,8 @@ static void tc_end_log(void);
 static void stl_standoff(uintptr_t pcomb, uintptr_t sc, const float *root, somvr_loco *s, somvr_loco_out *o, float dt,
 			 double t);
 static void stl_standoff_follow(somvr_loco *s, somvr_loco_out *o);
+/* build 42 (somvr_brand_game.c, SOMVR_VERBS_BRAND_FACE): the body faces the orc the open hand is on (stealth crouch) */
+static void br_face(const somvr_loco_in *in, somvr_loco_out *o, const float *root, double t);
 /* SOMVR_STEALTH_KILL_SILENT: a swing at a stealth kill's target starts no attack stimulus and no block roll (docs 72) */
 static int stl_silent(uintptr_t pc, const struct cb_orc *o, double t, const char *what);
 static void stl_hands(const sv_vec3 p[2], const sv_quat q[2], const sv_vec3 v[2], const sv_vec3 w[2]);
@@ -1908,6 +1918,11 @@ static const char *go_vision_word(const char *w);  /* "vision [y MS|taps N MS]" 
  * game's prompts in VR - read by the prompt diamond's show (PP_SHOW), the behaviour prompts' (GO_PROMPT) and the world
  * icons' hide (OB_EACH); 0 until gp_start (the selftest's stand-ins: the game's) */
 static _Atomic int g_gp_off;
+/* build 42 (som-b42-bleed2, docs/re-xr-pipeline.md 191.9): SOMVR_HINTS_BUTTONS=hide - go_dlg probes a kept line's text while
+ * the HUD builds it: the thread that builds it (0 = no probe) and the `{Action}` tokens CO_TXT_ICON saw on it */
+static _Atomic long g_hb_probe_tid;
+static _Atomic uint32_t g_hb_probe_tokens;
+static int hb_want(void) { return env_word("SOMVR_HINTS_BUTTONS", (const char *const[]){ "keep", "hide" }, 2, 1); }
 static void gp_start(int *bad);
 static void gp_parts_line(void);
 static void gp_end_log(void);
@@ -4941,8 +4956,10 @@ static void combat_frame(uintptr_t pl, int head_ok)
 		 * would deal is no touch to them (runs 20261028-155330/164235/164926: the stab's first contact, cos 0.50 at
 		 * 3.9 m/s, a touch by build 16's rule and a light hit by the stroke's: that hit woke the unaware orc) */
 		int tier_own = somvr_stl_tier(tier16, tier);
-		if (vb_bleed(pcomb, pc, &o[i], tier_own, t)) {
-			sc_cool_mark(&g_cb.cool, o[i].c, t);
+		int bleed = vb_bleed(pcomb, pc, &o[i], tier_own, &ct, t);
+		if (bleed) {
+			if (bleed == 1) /* (build 42: a touch off its legs, 2, leaves the blade free to go on into a leg) */
+				sc_cool_mark(&g_cb.cool, o[i].c, t);
 			continue; /* build 30, SOMVR_GRAUG_BLEED: the game offers its hamstring on this graug: X instead of our hit */
 		}
 		stl_set_tier_cut(tier); /* build 21: the neck cut is the stroke's own heavy tier */
@@ -10763,6 +10780,7 @@ static struct {
 	 * step (SOMVR_WALK_SLOPE_AHEAD): 55 deg on every foot tick let the walk over the bank's bevel after A UP (376's up40) */
 	float far_cm;
 	int slope_ahead;
+	int beam;            /* build 42 (som-b42-beam): SOMVR_WALK_BEAM - the four keys above as the beam walk's set */
 	uint64_t nav_edge;   /* decisions refused: the floor at far_cm gone (an edge within it) */
 } g_wk = { .req_deg = -1, .req_nav = -1, .req_ctx = -1 };
 /* SOMVR_WALK_NAVMESH: a walk on foot whose way 30 cm ahead has a floor within 40 cm of the feet (rays down: no water,
@@ -13253,12 +13271,30 @@ static int cl_config(int *bad)
 	g_wk.nav_flag = GADDR(WK_NAVCLIP_FLAG, 0x4b55b82);
 	g_wk.far_cm = env_float("SOMVR_WALK_CLIP_FAR_CM", 0, 0, 150, bad); /* build 41 (376): 0 = build 40's 30 cm alone */
 	g_wk.slope_ahead = env_word("SOMVR_WALK_SLOPE_AHEAD", fling_w, 2, 0);
+	g_wk.ctx = env_word("SOMVR_WALK_CTXCLIP", fling_w, 2, 0); /* build 41 (som-b41-climb4) */
+	/* build 42 (som-b42-beam, re-xr-pipeline.md 187): SOMVR_WALK_BEAM - the long wall's beam walk (the 11-05 mark 16's
+	 * patch) as one switch, now that SOMVR_WALK_EDGE_RIDE holds mark 17's coping: the context-action clip off
+	 * (SOMVR_WALK_CTXCLIP) and climb3's 55 deg slope (SOMVR_WALK_SLOPE_DEG), both only for a step whose floor goes on 65
+	 * cm ahead too (SOMVR_WALK_CLIP_FAR_CM, SOMVR_WALK_SLOPE_AHEAD) - over the four keys' build-41 "not shipped" values
+	 * (build-win10's env pins CTXCLIP off and SLOPE_DEG 0; a far or a slope set above 0 is kept). Code default on; off =
+	 * the four keys as they are (build 41's walk) */
+	g_wk.beam = env_word("SOMVR_WALK_BEAM", fling_w, 2, 1);
+	if (g_wk.beam) {
+		g_wk.ctx = 1, g_wk.slope_ahead = 1;
+		if (!(g_wk.far_cm > 0))
+			g_wk.far_cm = 65;
+		if (!(g_wk.deg > 0))
+			g_wk.deg = 55;
+	}
+	logf_("CONFIG walk beam=%s%s", fling_w[g_wk.beam], g_wk.beam ? " (build 42): the context-action clip off and the 55 deg "
+	      "slope for a step whose floor goes on 65 cm ahead (the long wall's beam walks; an edge nearer keeps the game's, "
+	      "the edge stop and its edge ride hold him at the lip) - over SOMVR_WALK_CTXCLIP / _SLOPE_DEG / _CLIP_FAR_CM / "
+	      "_SLOPE_AHEAD" : " (the four keys as set: build 41's walk)");
 	logf_("CONFIG walk clip far=%.0f cm, slope ahead=%s%s", (double)g_wk.far_cm, fling_w[g_wk.slope_ahead],
 	      g_wk.far_cm > WK_NAV_AHEAD_CM || g_wk.slope_ahead ? ": the walk's clips off (and the steeper slope) only for a step "
 	      "whose floor goes on that far ahead within 40 cm of the feet - an edge nearer keeps the game's clips and slope "
 	      "(they slide the walk along the lip; our edge stop holds him there)" : " (build 40's: the floor 30 cm ahead, the "
 	      "slope on every foot tick)");
-	g_wk.ctx = env_word("SOMVR_WALK_CTXCLIP", fling_w, 2, 0); /* build 41 (som-b41-climb4) */
 	g_wk.ctx_flag = GADDR(WK_CTXCLIP_FLAG, 0x4b55ca4);
 	logf_("CONFIG walk ctxclip=%s%s (the gate %#llx)", fling_w[g_wk.ctx], g_wk.ctx ? ": on foot the walk's context-action "
 	      "clip (the authored ledge and beam lines the game slides the walk along) is off for the same step as the navmesh "
@@ -14670,6 +14706,7 @@ typedef uint64_t (*bo_activate_fn)(uintptr_t inv, uint32_t slot);
 #define BO_ARROWS 4         /* our arrows followed at once (bo_pj) */
 #define BO_HC 4             /* the orcs whose health a shot watches (bo_watch) */
 #define BO_HC_RANGE_CM 4000.0f
+#define BO_TGT_CM 600.0f /* build 42: `bow target X Y Z` - the orc nearest that point within 6 m */
 #define BO_HC_S 1.5         /* the health check this long after the shot */
 #define BO_PJ_SHOOTER 0x58  /* CProjectile: the shooter's Combat (the probe's PJ_SHOOTER, P7) */
 
@@ -15103,7 +15140,22 @@ static void bo_target(sv_vec3 o, sv_vec3 d, double t)
 	uintptr_t pl = g_fr.pl, pc = pl ? peek_ptr(pl + P_COMBAT) : 0, sc = pc ? peek_ptr(pc + PC_SERVER) : 0;
 	struct cb_orc near[4];
 	float at[3] = { o.x, o.y, o.z };
-	int n = pc ? bo_orcs_r(pc, sc, at, BO_HC_RANGE_CM, near, 4) : 0;
+	int marked = atomic_load(&g_bo_tgt_on), n;
+	if (marked) { /* build 42 (som-b42-saddle): the marked orc (`bow target X Y Z`) instead of the nearest - the drivers'
+		       * aim at one archer while Torvin's party or the beasts are nearer */
+		float mp[3] = { g_bo_tgt_at[0], g_bo_tgt_at[1], g_bo_tgt_at[2] };
+		n = pc ? bo_orcs_r(pc, sc, mp, BO_TGT_CM, near, 1) : 0;
+		struct cb_orc po;
+		if (pr_orc_near(mp, BO_TGT_CM, &po.c, &po.hobj, po.pos) && (n <= 0 || dist3(po.pos, mp) < dist3(near[0].pos, mp)))
+			near[0] = po, n = 1; /* (an unaware orc of `practice put`: not in the bands; the nearer of the two) */
+		if (n > 0) {
+			memcpy(g_bo_tgt_at, near[0].pos, sizeof g_bo_tgt_at);
+			near[0].dist = sqrtf((near[0].pos[0] - o.x) * (near[0].pos[0] - o.x) + (near[0].pos[1] - o.y) *
+					     (near[0].pos[1] - o.y) + (near[0].pos[2] - o.z) * (near[0].pos[2] - o.z));
+		}
+	} else {
+		n = pc ? bo_orcs_r(pc, sc, at, BO_HC_RANGE_CM, near, 4) : 0;
+	}
 	if (n <= 0)
 		return;
 	float dy[2], dp[2];
@@ -15135,11 +15187,45 @@ static void bo_target(sv_vec3 o, sv_vec3 d, double t)
 		hy[k] = hy[k] > 180 ? hy[k] - 360 : hy[k] < -180 ? hy[k] + 360 : hy[k];
 	}
 	g_bow.tgt_lines++;
-	logf_("BOW target t=%.3f: the nearest orc hobj %#llx %.1f m from the nock, its chest %+.1f deg right %+.1f deg up of the "
+	logf_("BOW target t=%.3f: the %s orc hobj %#llx %.1f m from the nock, its chest %+.1f deg right %+.1f deg up of the "
 	      "ray (%.3f %.3f %.3f), its head %+.1f deg right %+.1f deg up; from the %s: the chest at head yaw %+.1f pitch "
-	      "%+.1f, the head at head yaw %+.1f pitch %+.1f; health %.1f%s", t, (unsigned long long)near[0].hobj,
+	      "%+.1f, the head at head yaw %+.1f pitch %+.1f; health %.1f%s", t, marked ? "marked" : "nearest",
+	      (unsigned long long)near[0].hobj,
 	      near[0].dist / 100.0f, dy[0], dp[0], d.x, d.y, d.z, dy[1], dp[1], g_bow.s.phase == SOMVR_BOW_PH_DRAW ?
 	      "string hand" : "nock", hy[0], hpi[0], hy[1], hpi[1], cb_health(near[0].c), hnode ? "; the head = its Head node" : "");
+}
+
+/* build 42 (som-b42-saddle, re-xr-pipeline.md 186): at our shot, with an orc marked (`bow target X Y Z`), how far the
+ * shot's line passes its head and its chest - a miss by the aim or by the bow, told apart (the saddle's drills) */
+static float bo_line_off(sv_vec3 o, sv_vec3 d, const float c[3], float *along)
+{
+	float v[3] = { c[0] - o.x, c[1] - o.y, c[2] - o.z }, tc = v[0] * d.x + v[1] * d.y + v[2] * d.z;
+	float l2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2], q = l2 - tc * tc;
+	*along = tc;
+	return tc < 0 ? sqrtf(l2) : sqrtf(q > 0 ? q : 0);
+}
+
+static void bo_tgt_shot(sv_vec3 o, sv_vec3 d, double t)
+{
+	uintptr_t pl = g_fr.pl, pc = pl ? peek_ptr(pl + P_COMBAT) : 0, sc = pc ? peek_ptr(pc + PC_SERVER) : 0;
+	struct cb_orc nr[1];
+	float mp[3] = { g_bo_tgt_at[0], g_bo_tgt_at[1], g_bo_tgt_at[2] };
+	int nb = pc ? bo_orcs_r(pc, sc, mp, BO_TGT_CM, nr, 1) : 0;
+	struct cb_orc po;
+	if (pr_orc_near(mp, BO_TGT_CM, &po.c, &po.hobj, po.pos) && (nb <= 0 || dist3(po.pos, mp) < dist3(nr[0].pos, mp)))
+		nr[0] = po, nb = 1;
+	if (!pc || nb <= 0) {
+		logf_("BOW t=%.3f shot: the marked orc not found within %.0f m of %.0f,%.0f,%.0f", t, BO_TGT_CM / 100.0f, mp[0], mp[1],
+		      mp[2]);
+		return;
+	}
+	float hn[3] = { nr[0].pos[0], nr[0].pos[1] + BO_HEAD_CM, nr[0].pos[2] };
+	float ch[3] = { nr[0].pos[0], nr[0].pos[1] + BO_CHEST_CM, nr[0].pos[2] }, ah = 0, ac = 0;
+	int hnode = bo_node_world(nr[0].hobj, g_som.head, hn);
+	float oh = bo_line_off(o, d, hn, &ah), oc = bo_line_off(o, d, ch, &ac);
+	logf_("BOW t=%.3f shot at the marked orc hobj %#llx: its head %.1f cm off the shot's line %.1f m out (%s), its chest "
+	      "%.1f cm off; health %.1f; the line from %.1f,%.1f,%.1f dir (%.3f %.3f %.3f)", t, (unsigned long long)nr[0].hobj, oh,
+	      ah / 100.0f, hnode ? "its Head node" : "the root + 80 cm", oc, cb_health(nr[0].c), o.x, o.y, o.z, d.x, d.y, d.z);
 }
 
 /* SOMVR_BOW_ASSIST_DEG (round 2, docs/re-bow.md 13): our shot's aim point. FUN_02332c50 aims at FUN_026c7cf0(sc): for
@@ -15614,6 +15700,8 @@ static int bo_shoot(double t, int game_aim)
 		}
 	}
 	ab2_shot_aim(&in.origin, &in.dir, t); /* build 27c: the test aid `abil2 aim N` (a prop) */
+	if (atomic_load(&g_bo_tgt_on)) /* build 42: the marked orc's miss distance (`bow target`) */
+		bo_tgt_shot(in.origin, in.dir, t);
 	int why = somvr_bow_shot_check(&in);
 	unsigned long long fr = (unsigned long long)g_fr.frame;
 	if (why != SOMVR_BOW_SHOT_OK) {
@@ -16675,11 +16763,19 @@ BO_FX_WRAP(3, 2) /* FXAlt clear */
 /* SOMVR_BOW_SLOWMO=off: the SlowMo component (FUN_00e1cf90(wm)) not run for the player's weapon modes: no slow motion
  * while aiming (world time only; the view never moved with it - a comfort choice) */
 static uintptr_t g_bo_slow_orig;
-static _Atomic uint64_t g_bo_slow_skips;
+static _Atomic uint64_t g_bo_slow_skips, g_bo_slow_ride; /* (build 42: of them, while seated on a beast) */
+static int g_bo_slow_in;                                  /* build 42: the two SlowMo calls patched (bo_start) */
 static uint64_t bo_slow_c(uintptr_t wm)
 {
-	if (g_bow.on && g_bow.slowmo_off) {
+	/* build 42 (som-b42-mountview, re-xr-pipeline.md 188): SOMVR_RIDE_BOW_SLOWMO=off (the default) - also while seated on
+	 * a beast: there the slow motion is a view move (the world at ~10 %, the beast under the view with it: a running
+	 * caragor braked to 0.7 m/s ~0.4 s after the bow came out, back to 7 in one frame when it went away or the slow
+	 * motion ran out; boots 20261107-003651, -005410, -012206) */
+	int ride = !g_bow.slowmo_off && mt_bow_noslow();
+	if (g_bow.on && (g_bow.slowmo_off || ride)) {
 		atomic_fetch_add_explicit(&g_bo_slow_skips, 1, memory_order_relaxed);
+		if (ride)
+			atomic_fetch_add_explicit(&g_bo_slow_ride, 1, memory_order_relaxed);
 		return 0;
 	}
 	return ((bo_mat_fn)g_bo_slow_orig)(wm);
@@ -16961,6 +17057,15 @@ static const char *bo_word(const char *w)
 		return "bow where";
 	}
 	float ap[3];
+	if (nw >= 1 && !strcmp(a, "target") && sscanf(w, "%*s %f %f %f", &ap[0], &ap[1], &ap[2]) == 3) { /* build 42 */
+		memcpy(g_bo_tgt_at, ap, sizeof ap), atomic_store(&g_bo_tgt_on, 1);
+		return "bow target X Y Z (the BOW target lines and the shot's miss line on the orc nearest that point, within 6 m; "
+		       "it follows the orc: headless tests only)";
+	}
+	if (nw >= 1 && !strcmp(a, "target")) {
+		atomic_store(&g_bo_tgt_on, 0);
+		return "bow target off (the BOW target lines on the nearest orc again)";
+	}
 	if (nw >= 1 && !strcmp(a, "aimhead") && sscanf(w, "%*s %f %f %f", &ap[0], &ap[1], &ap[2]) == 3) {
 		memcpy(g_bo_aim_at, ap, sizeof ap), atomic_store(&g_bo_req_aimhead, 1);
 		return "bow aimhead X Y Z (the next shot's ray onto the Head node of the orc nearest that point, within 4 m: headless "
@@ -17223,15 +17328,19 @@ static void bo_start(const struct site_spec *sites, int *bad)
 		g_bow.on = 0;
 		return;
 	}
-	if (g_bow.slowmo_off) { /* both passes or neither */
+	if (g_bow.slowmo_off || mt_bow_noslow_env()) { /* both passes or neither (build 42: also for SOMVR_RIDE_BOW_SLOWMO=off) */
 		uint32_t sb = (1u << BOS_SLOW_APPLY) | (1u << BOS_SLOW_CLEAR);
+		const char *why = g_bow.slowmo_off ? "SOMVR_BOW_SLOWMO=off" : "SOMVR_RIDE_BOW_SLOWMO=off";
 		g_bo_slow_orig = sites[BOS_SLOW_APPLY].target;
 		if ((ok & sb) != sb || sites[BOS_SLOW_CLEAR].target != g_bo_slow_orig ||
 		    !bo_patch_call(&sites[BOS_SLOW_APPLY], (void *)bo_slow_c)) {
-			logf_("WARN SOMVR_BOW_SLOWMO=off: the SlowMo calls did not check out (sites %#x): the game's slow motion stays", ok);
+			logf_("WARN %s: the SlowMo calls did not check out (sites %#x): the game's slow motion stays", why, ok);
 			g_bow.slowmo_off = 0;
 		} else if (!bo_patch_call(&sites[BOS_SLOW_CLEAR], (void *)bo_slow_c)) {
-			logf_("WARN SOMVR_BOW_SLOWMO=off: the second SlowMo call not patched: skipped from the first only");
+			logf_("WARN %s: the second SlowMo call not patched: skipped from the first only", why);
+			g_bo_slow_in = 1;
+		} else {
+			g_bo_slow_in = 1;
 		}
 	}
 	if (g_bow.fx_set) { /* all four or none */
@@ -17769,6 +17878,7 @@ static void lo_pm_pre(uintptr_t pm, const float *xf)
 	tk_pm_own(sc, &in, root, in.have_root, t); /* SOMVR_COMBAT_HOLD_TALION: an enemy's sync on Talion in place */
 	somvr_loco_out *o = &g_lo.o;
 	somvr_loco_step(&g_lo.s, &g_lo.cfg, &in, o);
+	br_face(&in, o, in.have_root ? root : NULL, t); /* build 42, SOMVR_VERBS_BRAND_FACE: the brand's hand turns the body */
 	if (g_un.slide && o->owned && t < g_un.slide_until) { /* build 33 (SOMVR_WALK_EDGE_SLIDE): along the edge */
 		float dx = o->delta.x, dz = o->delta.z;
 		o->delta.x = 0.75f * (dx * g_un.slide_c - dz * g_un.slide_s), o->delta.z = 0.75f * (dx * g_un.slide_s + dz * g_un.slide_c);
@@ -21378,6 +21488,7 @@ static const float *dz_learn(uintptr_t atk, const float sp[3])
  * wraith-blue ring, radius 0.46 of its quad) and its fill the warm glow (orange) - the wraith's blue while the blade is in
  * it. DZ_KIND marks them for their size here and is taken off before the layer sees the kind */
 #define DZ_KIND 0x80000000u
+#define BL_KIND 0x40000000u /* build 42b (somvr_bleed_game.c): the bleed's glow - its own size (bl_glow_size_m); stripped */
 #define DZ_RING_R 0.46f   /* somvr_threat.c somvr_th_ring_profile: cell 1's radius in the quad's side */
 #define DZ_FILL_K 2.4f    /* the radial glow's quad = this x the zone's radius (it fades out at the ring) */
 static void dz_glow_add(struct th_glow *gl, int *ng, double t)
@@ -21657,6 +21768,7 @@ static void th_frame(uintptr_t pl, int stereo)
 	ab2_glow_add(gl, &ng); /* build 27c: the kindled arrow's tip */
 	ab3_glow_add(gl, &ng); /* build 27d: the distract arrow's tip */
 	mt_glow_add(gl, &ng); /* build 29b, SOMVR_RIDE_CUE: the mount's offer on the stunned caragor */
+	bl_glow_add(gl, &ng); /* build 42, SOMVR_GRAUG_BLEED_CUE: the bleed's offer on the graug's leg */
 	cu_glow_add(pcomb, pc, root, head, hqv, t, gl, &ng); /* build 37, SOMVR_CUE_*: the awareness marks, the arc */
 	cu_use_glow_add(gl, &ng); /* build 37, SOMVR_CUE_USE: the glow on a thing the game offers a pick for */
 	cu_pick_watch(t); /* build 37: the game's pick begun (B or the hand) - a buzz, an herb's heal flash */
@@ -21666,13 +21778,14 @@ static void th_frame(uintptr_t pl, int stereo)
 		somvr_th_to_xr(&m, gl[i].pos, e.g[i].pos);
 		/* (build 25: a blue glow past 2.5 m - SOMVR_ABOVE's cue on an orc below - keeps the angular size it has at 2.5 m;
 		 * the grab cue's reach ends at 1.7 m) */
-		e.g[i].size_m = (gl[i].kind & DZ_KIND) /* build 38 (SOMVR_DEFENCE_ZONE): its ring and fill their own size */
+		e.g[i].size_m = (gl[i].kind & BL_KIND) ? bl_glow_size_m(gl[i].dist) /* build 42b: the bleed's, bigger */
+			: (gl[i].kind & DZ_KIND) /* build 38 (SOMVR_DEFENCE_ZONE): its ring and fill their own size */
 			? g_dz.r_cm * ((gl[i].kind & SOMVR_THK_RING) ? 1.0f / DZ_RING_R : DZ_FILL_K) * 0.01f / somvr_rig_scale(&g_rig)
 			: (gl[i].kind & SOMVR_THK_RING) ? 2.4f * gc_glow_size_m() * fmaxf(1.0f, gl[i].dist / 250.0f) /* build 37 */
 			: (gl[i].kind & SOMVR_THK_MARK) ? cu_glow_size_m(&gl[i]) /* build 37: its own angular size */
 			: (gl[i].kind & SOMVR_THK_BLUE) ? gc_glow_size_m() * fmaxf(1.0f, gl[i].dist / 250.0f)
 			: somvr_th_glow_size(&g_th.cfg, gl[i].dist / somvr_rig_scale(&g_rig)), e.g[i].level = gl[i].level,
-		e.g[i].kind = gl[i].kind & ~DZ_KIND;
+		e.g[i].kind = gl[i].kind & ~(DZ_KIND | BL_KIND);
 		e.g[i].level = fminf(e.g[i].level, 1.0f); /* (the zone ring's 1.001 sorted it first) */
 	}
 	e.nglow = (uint32_t)ng;
@@ -22568,6 +22681,38 @@ static void sl_log_events(const somvr_slots_out *o, double t)
 }
 
 /* in_frame (a stereo frame; p = the grips in tracking space, pw = in the world): one slots step */
+/* build 42 (som-b42-bleed, somvr_bleed_game.c, re-xr-pipeline.md 191): SOMVR_GRAUG_BLEED_HANDS - the stealth's hands for
+ * the graug's bleed. The watch (bl_watch, the game thread) asks; the next slots step answers here: the game's drawn,
+ * active sword put away (FUN_023116f0 with 1, as the game's own sheathe) and Acharn's slot made active (PC_Stealth's
+ * item, which the hamstring asks: 'Active Item'), the slots read again at once so the attach keep holds the VR sword in
+ * the hand this same step (no frame on the back). Nothing when the hand does not hold the sword or the keep is not
+ * attach. */
+static _Atomic int g_sl_req_stealth_hands;
+static uint64_t g_sl_stealth_hands;
+static void sl_stealth_hands(struct sl_game *g, double t)
+{
+	const char *no = !g_sl.have_g || !g->item[0] ? "no sword read" : g->slot != SL_SLOT_SWORD ? "the sword not the active item"
+		: g->sheathed ? "the game's sword already sheathed" : g_sl.keep_mode != SL_KEEP_ATTACH || !g_sl.ok_reattach
+		? "no attach keep (SOMVR_SLOTS_KEEP)" : !g_sl.ok_act || !g_sl.ok_sword ? "no activate or sheathe site"
+		: g_sl.s.keep_last[0] != 1 ? "the hand does not hold it" : NULL;
+	if (no) {
+		if (sl_log_ok(t))
+			logf_("SLOTS t=%.3f the bleed's stealth hands: not now (%s)", t, no);
+		return;
+	}
+	uint32_t r = SL_FN(SLS_SHEATHE, sl_sheathe_fn)(g->inv, g->item[0], 1u);
+	SL_FN(SLS_ACTIVATE, sl_activate_fn)(g->inv, SL_SLOT_DAGGER);
+	g_sl_stealth_hands++;
+	const char *why = NULL;
+	g_sl.have_g = g_fr.pl && sl_read(g_fr.pl, g, &why);
+	if (sl_log_ok(t))
+		logf_("SLOTS t=%.3f frame=%llu the bleed's stealth hands: the game's sword put away (FUN_023116f0 -> %u) and Acharn's slot "
+		      "active (now slot %u, the sword sheathed %u) - the VR sword kept in the hand by the attach keep "
+		      "(SOMVR_GRAUG_BLEED_HANDS; %llu so far)", t, (unsigned long long)g_fr.frame, (unsigned)(r & 0xff),
+		      g_sl.have_g ? (unsigned)g->slot : 99u, g_sl.have_g ? (unsigned)g->sheathed : 9u,
+		      (unsigned long long)g_sl_stealth_hands);
+}
+
 static void sl_frame(const sv_vec3 p[2], const sv_vec3 pw[2])
 {
 	if (!g_sl.on)
@@ -22585,6 +22730,8 @@ static void sl_frame(const sv_vec3 p[2], const sv_vec3 pw[2])
 	g_sl.have_g = g_fr.pl && sl_read(g_fr.pl, g, &why);
 	if (!g_sl.have_g)
 		g_sl.noread++;
+	if (g_sl.have_g && atomic_exchange(&g_sl_req_stealth_hands, 0))
+		sl_stealth_hands(g, t); /* build 42, SOMVR_GRAUG_BLEED_HANDS: the bleed's stealth hands (bl_watch asked) */
 	if ((g->inv != old_inv && old_inv) || (g_sl.last_t > 0 && t - g_sl.last_t > SL_GAP_S)) {
 		somvr_slots_reset(&g_sl.s); /* another inventory, or back after a gap: the game's state stands */
 		g_sl.resets++;
@@ -24870,6 +25017,7 @@ static void df_clank_fx(double t)
 #include "somvr_finisher_game.c" /* build 33: SOMVR_FINISHER, the neck stab as the player's own motion (docs 140) */
 #include "somvr_knife_game.c" /* build 37: SOMVR_KNIFE_KILL, the stealth kill with the knife by hand (docs 168) */
 #include "somvr_cues_game.c" /* build 37: SOMVR_CUE_*, the cues for what the hidden prompts said (docs 169) */
+#include "somvr_bleed_game.c" /* build 42: the graug's bleed - the watch, its glow, the cut at its legs (docs 191) */
 
 #include "somvr_settings34_game.c" /* build 34: the VR menu's v8 rows - builds 31-33's switches (docs 150) */
 #include "somvr_inrec_game.c" /* b35: SOMVR_INPUT_REC / SOMVR_INPUT_REPLAY, the session's input and its replays (docs 160) */

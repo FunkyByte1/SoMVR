@@ -27689,6 +27689,47 @@ controller's ghost hand over it, "Kill +15 / +5 Execution", both eyes).
 - Each finisher is one motion (the clearest: the killing one of the game's paired kill); the data's 2-3 motion chains
   (finishers.txt: face's two stabs, the back kill's stab - in - cut, the downed orc's two stabs) are not built.
 
+## 190. Build 42: Núrn's missions 14-18 on build 41, mission by mission - the carry's hold no longer cut (`SOMVR_VERBS_CARRY_NOCAP`), the harness's blocks, the open ones (2026-11-06/07, som-b42-nurn)
+GAME-STUDY item 1.8, continuing 181. Build 41 = logs/build-win10 (main fcf622d), the build the player has next. Each
+mission from its ladder rung in one headless Windows boot (scripts/ladder_boot.sh with `LADDER_MOD` = build-win10's
+mod: its DLLs and its env), driven by scripts/nurn41-drive.sh and a director (scripts/nurn41/m14.sh .. m18.sh, the new
+helpers in scripts/nurn41/lib42.sh). `NU act` = the test hands' poses and buttons; `NU aid` = the harness standing in
+for a person's travel or skill (trips, placements, the game's invisibility, health, `practice console`). Every run: the
+rung's save UNCHANGED, the install an overlay; WARN = the Windows startup pair (+ a trip's "did not arrive").
+
+### 190.1 The table
+| Mission (runs, logs/boot-check-) | Reached | Works by the VR act | Blocks (cause -> what it needs) |
+|---|---|---|---|
+| 14 Hunting Partners (rus 20261106-212409-1 .. 20261107-000002-1, 001900-1; desktop 20261106-234027) | the card -> "Bleed the Graug" | the follow to the eating graug; the crouch, the stick's sneak (stopped by its body at ~150 cm), the blade's low thrust at its legs | (a) **the bleed is not offered where the drill stands**: 8 placements a boot (135-162 cm behind its root, 0 / ±20 / ±35 deg), three boots; the game's own prompt 'Combat_ElfBleedTroll' (X, 'Stealth_ButtonX') came and went (up 9 s once at 140 cm, never in the probe boot), our pick over 'PC_TrlCave_Hamstring' "no attack of its pools passes" at each contact, and **the game's own X at 139 cm behind the eating graug played a front kick** (probe 001900-1): the drill is outside the game's zone, wherever it is (build 33 found it at 140-150 cm, 147). Needs: RE of the hamstring node's pool test (where Talion must stand: by the ankle?) and a cue for the zone (the prompt is hidden). A try that pressed X whenever the prompt was up (reverted) gave an ordinary low attack: the prompt alone is not the offer |
+| 15 The Power of the Wraith (20261107-001844) | **the card -> the end video and the save** | the domination by the left palm + grip and A; **the Command by the left Touch's Y**; the Command screens by A / B; the three groups (the 300 ms cut, Grûblik's health refilled); the vantage; **Grûblik activated by the raised left hand + the trigger** ("Follow my will!"); Târz | none of the mod's. Harness: the director's Y was `btn R y` - no such button (Y is the left Touch's upper, `btn L b`); `captain hp 3000` is capped at his 976 (Grûblik killed once: refilled each round now); the drill's stray thrusts lost Talion's last chance once (`Player.CanBeAttacked 0` in the groups) |
+| 16 The Great White Graug (20261107-003928) | the card -> "Dominate the Dire Caragor" | the follow | (b) harness: the drill's mount loop never countered the Dire Caragor's charge ('AI_WargRare_ChargeAttack' / 'JumpAttack'): no knockdown, no offer; 4 takedown press-counts lost before `struggle auto on`. Needs Big Game's counter director (nurn41/m13b.sh) on this beast. Not a found VR block |
+| 17 The Cure (20261107-003146, 011014, 013339) | the card -> "1 / 3 Clear all 3 search areas", the bonus **5 / 5 Stealth Brand Uruks** | **the five stealth brands by the left palm + the trigger** (from behind, unaware) | (c) harness: a placement teleport next to an orc alerts it ("9058 cm/s"; the alarm ran: Mission Failed "Alarm raised!") - placements now under the game's invisibility; (d) the drill's cut/thrust from 100 cm touched the front half or missed ("no the attack stimulus" x30, 1 kill in 55): the VR stealth kill needs the blade laid into the back as scripts/stealth40-drive.sh aims it (not ported); the game's X stood in. The alarm runners then still lit the beacon (the drill killed at the marker's first place). Build 27 played it to its end with the game's X (110.4) |
+| 18 The Rescue (20261107-012227, 013342, 015122, 020135, 021302) | the card -> "Carry Lithariel to safety" past "Then I will do so in your stead." (the 25 m point) | **6 / 6 brands by the left palm + trigger** (the camp's sentries from the front at 150 cm, 2 from behind); "Find Lithariel"; her 5 captors; **her lift by the left palm + grip** ('PC_GrabLithariel_L'); **the carry by the grip held + the stick** (55-60 m walked) | (e) **fixed: build 31's longest hold (SOMVR_VERBS_GRAB_MAX_S = 10) dropped her 10 s into every lift** ("release after 10.05 s: the longest hold" -> 'PC_GrabLithariel_Release', 013342), and the walk read as the holding hand's push dropped her at 15 s (015122) -> `SOMVR_VERBS_CARRY_NOCAP` (190.2). (f) open: past the 25 m point she is put down when hurt and the hand still closed grabs a near Uruk ('PC_Grab_Attempt_F' -> 'PC_Grab_Into_B', 020135, 021302); the drill's guard (her 9999 health, the Uruks at health 1, the game's invisibility) did not get her further. A person opens the hand when she drops - the headset's to judge whether that reads |
+Not driven: 16b Brand the Warchiefs (no time).
+
+### 190.2 `SOMVR_VERBS_CARRY_NOCAP=on|off` (code default on; the som-b42-nurn block: on)
+somvr_verbs_game.c `vb_hands`: a hold whose Talion sync is Lithariel's grab or a carry (`'GrabLithariel'`, `'Carry'`
+in its name) is latched as a carry while the hand holds; for it the pure step (somvr_verbs.c, `no_cap`) ignores the
+longest hold, and build 31's push (h31_hands' `let_go`) is no let-go - the carry ends only when the grip opens (the
+design: open hand = put her down). Orcs keep the 10 s and the push. Lines: `CONFIG verbs build 42: carry_nocap=..`,
+`VERBS t=.. the hold is a carry (Talion's sync '..')`, `VERBS t=.. the carry: the holding hand's push is no let-go`.
+Test: test_verbs b42 (a carry held 60 s stays held; its grip opened lets go). Proof: 020135 / 021302 - the carry 75 s
+and on, past the old 10 s and the push (`push is no let-go` x5). Build 41 has the old rule: **a player of build 41
+drops Lithariel 10 s into every lift** - a live patch for build-win10 (tree-fcf622d + this) would carry it.
+
+### 190.3 Harness fixes (scripts)
+- rus (scripts/headless_win.sh, scripts/game_slot.sh): in rus.sh's bwrap namespace another boot's processes are
+  unreadable: slot 1 refused every boot while slot 2 ran ("a monado-service runs on /run/user/1000" - now found by the
+  runtime folder whose monado.pid names it) and waited forever for VRAM (the other game "starting", its 2816 MiB counted
+  on top of the card's used - now 0 for a live game over 2 minutes old there).
+- nurn41-drive.sh: a card that did not open at B is started again (221910-1). lib.sh `draw()`: 'our keep undone (the
+  game drew it)' is in the hand. lib42.sh: `objm` falls back to the newest place of a marker the status no longer lists
+  (the 'Troll' marker after the follow); the graug looked up at its marker (the orcs list holds only those near Talion).
+- Traps met: a peer's driver that finds its run by the build's name attached to this boot (som-b42-struggle, 212409-1:
+  results void); a sandboxed `ps` sees no processes (a live driver looked dead: two drivers on one run); stopping
+  rus.sh left its game running in slot 2 (a `quit` into the run's cmd stopped it); rus.sh copied back another helper's
+  run name as a clash (harmless).
+
 ## 181. Build 41: Núrn's story path in VR, mission by mission - what blocks the VR player (2026-11-05, som-b41-nurn)
 GAME-STUDY item 1.8. Each mission from its ladder rung (logs/test-save/ladder, re-xr-pipeline.md 172) in one headless
 Windows boot (scripts/ladder_boot.sh, scripts/headset-build26.env + the test hands), driven by scripts/nurn41-drive.sh:
@@ -27869,7 +27910,7 @@ SOMVR_RIDE's grip (109.2):
 
 ### 180.5 Open
 - **The Ioreth hold (Lord of Mordor's last beat, a CStruggleHold of 120 for 2 s; som-b41-nurn's boot 165235 lost it x4)
-  is not proven live.** The rule's answer is in place: a fresh fist of either hand (the hand open at the start first)
+  is not proven live.** (Build 42, 184.6: proven - and the rule's answer below was wrong: the class listens only from +0xf8.) The rule's answer is in place: a fresh fist of either hand (the hand open at the start first)
   holds 120 (OnCommandOn sets +0x118 in any phase; at the window's open, +0x84 = 6.3 s there, the class starts its 2 s
   timer if held; +0x88 = 9.27 s), and `stg_cmd_block` keeps 120 off until that fist - the drain's trigger (the verbs' B
   120) held through the beat from before the struggle would otherwise leave the class no fresh press (its delegate
@@ -28158,3 +28199,822 @@ test live root (kind=live; not logs/live/next); a copy of that root, the port sc
 - beam17 (mark 17's beam end with build 40's switches, no `climb ctxclip on`) was not re-run this round.
 - `WALK edge guard` lines are in every session's log now (1/s while walking): the next session's slides can be read
   directly.
+
+## 184. Build 42: the game's own struggle widget hidden under the rule (`SOMVR_STRUGGLE_WIDGET`), the Ioreth hold (2026-11-06, som-b42-struggle)
+
+Why: build 41's rule (180) answers every struggle in VR with our own cues - the blue outline at the ring's node, the
+white timer ring - but the game's own widget still sat on the HUD quad beside them: the aim's red ring with its cursor
+and the "L" stick glyph (the last chance, the caragor pin's second stage, a captain's finisher, a beast's domination),
+the press count's fill arc (the caragor's takedown). That is a button prompt, and the prompts policy (165) keeps only
+the awareness triangles. 180.5 also left the Lord of Mordor's last beat - the Ioreth hold - unproven in a boot.
+
+### 184.1 Where the widget lives (static: som-linux with its names, som-win64 side by side)
+StruggleSequenceUIMgr (Source/Game/ClientShellDLL/StruggleSequenceUIMgr.cpp) builds each class's widget **inline in the
+struggle object**, as a UI movie-clip ref (0x68 bytes; its clip pointer at +0x10, an IUIMovieClip whose vf 0x208 L /
+0x200 W is set-visible - the nav markers' hide, 44.1 / 165.1, `OB_CLIP_VIS` in win/offsets-ui.tsv):
+
+| Class | Widget in the struggle | Its init (L) | Its update (W; read from the class's update) | The clips it attaches (from the struggle) |
+|---|---|---|---|---|
+| CStrugglePressCount | +0xd0 | FUN_00ed0a70 (by its place) | W 0x140665fd0 | root 'StruggleTarget' +0xd0+0x10 |
+| CStruggleHold | +0x120 | FUN_00ed0070 | W 0x140665cc0 (L FUN_00ed07d0) | root 'StruggleTarget' +0x120+0x10 (children Anim, Prompt, KeyboardPrompt) |
+| CStruggleInputDirection | +0xb8 | FUN_00ed1570 (by its place) | W 0x140666230 | root 'StruggleTarget' +0xb8+0x10 |
+| CStruggleAim | +0xe8 | FUN_00ed1db0 | W 0x140666970 (L FUN_00ed3390) | two: 'StruggleCursor' +0xe8+0x78 (Arrow, Line, MoveGlyph, EnterGlyph) and 'StruggleTarget' +0xe8+0x2e8 (MajorArea, Countdown, PCKeyboardPrompt) |
+| CStruggleQuickTime | none | - | - | its prompt is the HUD's QuicktimePrompts (165.1: SOMVR_GAME_PROMPTS) |
+
+The Windows updates read the same offsets (hold +0x120, press count +0xd0, direction +0xb8, aim +0xe8; the aim's clips
++0x78 / +0x2e8). The updates set visibility only on children (the pad's glyph vs the keyboard's: e.g. the hold's
+`*(w+0xe0)` / `*(w+0x148)` by vf 0x200 W) or move them; nothing sets a root's own visibility after the init - so the
+root's set-visible(0) hides the whole widget and nothing else of the HUD. The init runs when the struggle's window
+opens (none at the struggle's first tick: boot 20261106-201546-1), so the hide is tried every input tick.
+
+### 184.2 The switch (somvr_struggle_game.c `stg_widget`, `stg_widget_clips`)
+`SOMVR_STRUGGLE_WIDGET=hide|show`, **code default hide** (so build-win10's live patch has it without an env line; the
+som-b42-struggle block in scripts/headset-build26.env says hide). Only while `SOMVR_STRUGGLE_RULE=b41` answers: every
+input tick (the game thread) each of the class's clips that exists gets set-visible(0) - also a beast's domination (a
+CStruggleAim answered by SOMVR_RIDE's grip). Under b27 the game's cursor stays (the hand steers it). A clip whose
+set-visible is not in the exe's image is left alone and said once. Test word `struggle widget hide|show` (show
+mid-struggle sets it visible again once). Lines: `CONFIG struggle build 42: widget=..`, `STRUGGLE t=.. +.. s b42: the
+game's widget hidden - <class>'s N of M clips (..)`, `STRUGGLE END build 42 (..): the game's widget hidden in N
+struggles (M calls), no clip to hide K`.
+**Only in place of a cue of ours.** The hide waits until the struggle shows one of ours: the outline placed (an aim),
+the white ring or the arrow up (`SOMVR_STRUGGLE_CUE`: a press count, a hold, a direction, a beast's domination). A
+struggle the rule shows nothing for keeps the game's widget (`.. b42: <class>'s widget kept - no cue of ours up for
+it`): boot 202621-1 found one - the caragor pin's second stage 'PC_Warg_Struggle_StruggleB', a CStruggleAim that
+SOMVR_RIDE answers by the left grip ("held on = won"), where the rule placed no outline and no ring; hiding its red
+ring there left the player with nothing (184.3).
+
+### 184.3 Runs (headless, Windows; scripts/struggle42-drive.sh; 201546-1 / 202621-1 on the test laptop rus)
+- **boot-check-20261106-201546-1** (the first code): every struggle met - the captain's last chance x4 (CStruggleAim,
+  'R_Hand' node, all won by the outline's stab), the caragor pin x2 (the takedown CStrugglePressCount 'CombatStruggle03',
+  8 needed, then the second stage 'PC_Warg_Struggle_StruggleB', a CStruggleAim) - and the hide never ran: `no clip at
+  +0x160 (0)` at +0.00 s. The game builds the widget as the window opens; the first code gave up at the first tick.
+  The before pictures: the aim's red ring sliding in at +1.65 s, the ring + cursor line + the "L" stick glyph at +1.85 s
+  (the HUD image of frames 1062, 1816); the takedown's "B" glyph in its blue fill ring; the second stage's big red ring,
+  cursor and "L".
+- **boot-check-20261106-202621-1** (retried every tick; 2 WARN = the Windows start's two; the save UNCHANGED): try 1
+  `widget show`, try 2 `widget hide`, then the pin with each. `b42: the game's widget hidden` at +0.74 s (the aim: 2 of 2
+  clips), +0.95 / +1.19 s (the press count's root), +1.20 s (the second stage x2); END: hidden in 5 struggles (193
+  calls). One last chance had no widget to hide: its stab completed as its window opened (+0.65 s), before the game
+  built it. **The pictures (sg42-pics/sheet-pin.png, both eyes)**: the pin at +2.2 s - before: our white ring and the
+  game's "B" glyph with its blue fill (frame 3201), after: our white ring only (5535); the second stage at +3.4 s -
+  before: the red ring, the cursor line, the "L" glyph (3281), after: nothing at all (5612) - the gap that made the
+  gate above. The HUD's wrist column (the minimap, the health arc, "No Target Selected / Hold") the same before the
+  struggles and after (frames 493 and 6060: 88890 / 88835 px, the same box); the pause menu opened after them and the
+  layer placed its board (`menus: a game menu's board (the HUD quad) placed`, `the world dimmed 40 %`) - its dump came
+  too late for a picture.
+- **boot-check-20261106-215153** (the desktop, slot 2, light; **build-win10 with the live patch applied at the start**,
+  184.6; its own env, no SOMVR_STRUGGLE_WIDGET line; 2 WARN; the save UNCHANGED; the driver pinned to its run by
+  scripts/struggle42-boot.sh): `CONFIG struggle build 42: widget=hide (..; unset: hide)`; hidden in 6 struggles (207
+  calls; the last chance +0.65 s, the takedown +0.95 s, the second stage +1.20 s - its outline placed at the caragor's
+  Head this time). **sg42-pics/sheet-last.png**: the last chance at +2.4 s with `widget show` - the red ring, the
+  cursor line and the "L" glyph beside our blue outline (frame 1011); at +2.1 s with hide, the struggle still running
+  (its stab at +2.80 s) - our blue outline alone (1942). The wrist column the same before and after (frames 436 / 4847:
+  88904 / 88846 px); our VR menu drawn after the struggles (4767).
+
+### 184.4 Tests
+- selftest.c `stg42_tests` (fails to build on build 41: no `stg_widget`): the aim's cursor and ring hidden, again every
+  tick and counted once; the word's show mid-struggle shows them again once, then leaves them; the hold's, the press
+  count's and the direction's root each hidden; the quick time none; b27 none; `widget show` none; no clip yet = no
+  call and tried again, the clip built later = hidden then, the aim's ring alone = it hidden; a clip with no set-visible
+  = no call, said once; no cue of ours up = the game's kept, said once; the words; the hold's command kept off while the
+  class does not listen (+0x119 0) even with the fist closed, on with the fist once it does, off with the hand open,
+  free once over (fails on the build 41 code: it let the fist's command through at once).
+
+### 184.5 Switches
+| Key | Code default | Env (scripts/headset-build26.env, the som-b42-struggle block) | What |
+|---|---|---|---|
+| `SOMVR_STRUGGLE_WIDGET` | hide | hide | the game's own struggle widget hidden while the rule b41 answers, once a cue of ours is up |
+
+Test aid (SOMVR_HANDS_TEST=1, never a build's env): `practice mortal never` - the practice's min health everywhere, a
+story fight too (the Lord of Mordor battle: boot 20261105-180117's captains downed Talion past `Player.CanBeAttacked 0`).
+
+### 184.6 The Ioreth hold (Lord of Mordor's last beat): reached, the fist's press made fresh, won
+- **boot-check-20261106-212056** (the desktop; rung 19, scripts/struggle41-ioreth-drive.sh IO_FULL=1 with this
+  branch's aids: `practice mortal never`, CanBeAttacked 0 again every third round, a captain cut every round): the
+  battle won in 3 minutes (the 'BlackCaptains' marker, no death), the Tower, three drains, then the CStruggleHold
+  (Talion 'PC_BH2_Alert_Sync_PCDrained_Kill', command 120, 2 s, window +6.3..+9.27 s) twice. Try 1 (`lose`: the
+  rule with the test hands' answer off, the drain's trigger held from before): lost - 'PC_BH2_Alert_Sync_PCDrained_Kill_PLLose',
+  the game's own fail, Retry. Try 2 (the fist at +0.39 s): **also lost** - the game's held(+118) never set, the same
+  `_PLLose` - while the rule's line said WON (it counted our own hold time).
+- **The cause (static, L CStruggleHold::vf_02 / W 0x1405af470)**: the class registers its command delegates
+  (FUN_00e13ca0) only when its time passes **+0xf8** (+0x119 set then; ~6.0 s here), not at its start. A press before
+  that is no press to it, and a command held from then on gives it no rising edge. (180.5's "its delegate registers at
+  the start" was wrong; som-b41-nurn's four losses and the B held 6-9 s as an aid are the same story.)
+- **The fix** (somvr_struggle_game.c, the hold's act; `stg_cmd_block`): the fist's command waits while +0x119 is 0
+  (kept off, as before the fist) and goes in as a new press the tick the class listens, while the hand stays closed.
+  Lines `b42 the hold: the fist is closed; the class listens only from +N ms` and `.. the class listens (+0x119) - the
+  fist's command 120 sent fresh`. The verdict: a hold counts as won only with the game's held flag seen, and a 'Lose'
+  attack after it is a loss.
+- **boot-check-20261106-215232** (the same way, IO_TRIES "b41 b41"; 2 WARN; the rung save UNCHANGED): the fist at
+  +0.39 s, the class listening at +6.04 s, the fist's command sent fresh, **held(+118) 1** from +6.09 s, the struggle
+  over at 10.24 s (the losses ran 11.99 s), no `_PLLose`; the outro video ("You said we were cursed. You deceived me."
+  / "It was Sauron's doing.") and then the next quest's line "Nurn is in flames. We must return to Queen Marwen." -
+  **Lord of Mordor finished in VR by the hand.** The hold's widget hidden at +6.04 s (when the game built it). The
+  no-fist loss is 212056's try 1.
+
+### 184.7 The live patch for build 41 (build-win10)
+Built from logs/coord/b37/tree-fcf622d plus only the widget's code (`stg_widget`, `stg_widget_clips`, its config/END
+lines and word, the cue gate; the selftest) - **not** the hold fix of 184.6. Both build checks green (`LC_ALL=C
+live_patch.sh check`: tree-fcf622d's win/build.sh sorts the export lists in the locale, fixed on main in c6b21a3),
+logic **826a14e8**, the layer / host fingerprints = build-win10's (kind=live). Staged with `LIVE_ROOT=<root>
+live_patch.sh stage .. --next --base logs/build-win10/ShadowOfMordor/mod/somvr` into the test live root
+**logs/coord/b37/sg42-patch/live-root** (next/patches/1; not logs/live/next); the diff against fcf622d is
+logs/coord/b37/sg42-patch/widget-fcf622d.diff. Proven in boot 215153: the launcher's `live: patch 1 applied at the
+start: .. (826a14e877287285: ..)`, the game's `LIVE patch 1 applied at the session's start`, the hide as above. (Boot
+212408-1 on rus applied it too; its driver went astray - 184.8.)
+
+### 184.8 Open, traps
+- **The caragor pin's second stage** ('PC_Warg_Struggle_StruggleB', a CStruggleAim SOMVR_RIDE answers by the left
+  grip, "held on = won"): the rule's outline is placed for it only sometimes (none in 202621-1; at the caragor's Head
+  ~4 m behind the eyes in 215153), and both test boots lost it. It needs a VR cue of its own (the beast's ring, as a
+  domination) - with none up, the game's ring now stays (the gate). **Done in 189** (SOMVR_RIDE's grip had never
+  answered it; the ring is ahead of the eyes - the beast's head is away from the held view).
+- The hold fix is not in build-win10's patch (the task asked for the widget only): a second patch from tree-fcf622d +
+  696289c would let the user finish Lord of Mordor in build 41.
+- rus fits one game at a time while another helper's runs there (8 GB: a light take reserves 2816 + 1024 MiB); slot 1
+  defaults to vr there - `WIN_RENDER=light` for behaviour drivers. Two takes of slot 1 can race (210824-1 met another
+  helper's Monado on the slot's runtime dir and stopped at its start).
+- scripts/rus.sh: a LIVE_ROOT (or any logs/ path) inside the main checkout is not synced (root_of finds the main
+  checkout first and the harness sync excludes logs/): push it with `rus_sync.sh path ROOT`. TERM to rus.sh does not
+  stop a `setsid -w` boot that ladder_boot.sh started (its own session): stop it on rus by its PIDs.
+- A driver that finds its run by a name matched another helper's build-win10 boot started a second later (212409-1,
+  som-b42-nurn's, told): struggle42-drive.sh now refuses without SG_RUN; scripts/struggle42-boot.sh pins it.
+## 185. Build 42: the stealth brand from behind on the Sea Fort's tower and sentry archers - the body turns to the orc under the open hand: `SOMVR_VERBS_BRAND_FACE` (2026-11-06, som-b42-archers)
+Code: somvr_brand_game.c (br_face, the offer line's reason and facing, the attack log), somvr.c (LOCO's tick calls
+br_face after somvr_loco_step), win/sites-hooks.tsv (BR_LOGSEL, BR_ATKPRED), win/offsets-world.tsv (BR_NL_AFLAG),
+scripts/nurn41/m12x.sh (the director). handoff/HANDOFF-archers42.md.
+
+### 185.1 The report
+181.1 (b): in "Queen of the Shore" the drill's stealth brand on the fort's tower and sentry archers
+('AI_Archer_Tower_Loop_LowAlarm', 'AI_Class_Archer_Sentry_Low_*') from behind at 75-151 cm gave `PC_StealthBrand -> none
+(no attack of its pools passes against this orc)`; from the front it worked (also 106.1).
+
+### 185.2 The tool: the game's own attack log on Windows (`SOMVR_VERBS_BRAND_NODELOG=on`, a test switch)
+- The predicates FUN_1408c9930 (Linux SharedCombat_AttackPredicates; ~100 tests, 107 rejection log sites, `"%s: Rejected
+  Attack: %s - <test>"`) and the pool's pick FUN_1408ccdc0 log a rejection only with the byte 0x141989ec9 set (read by
+  those two functions only, 0 in the shipped game) and the gate `mov rcx,[self]; call 0x140c00cb0 (mov rax,[rcx+0x4a0]);
+  mov rcx,rax; call 0x14100ff70; test al,al; je` - and 0x14100ff70 is the shipped game's shared `xor al,al; ret` (every
+  folded "return false", 164 direct calls).
+- `BR_LOGSEL`: an entry hook on that stub (MinHook: 3 bytes + int3 padding) answers 1 only while the node-log window is
+  open, for a return address inside 0x1408c9930..0x1408cd410 whose bytes are that gate exactly (all 107 sites checked
+  offline); every other caller gets 0 as before. The game then formats its own line (BR_LOGPRINTF) and returns false as
+  it would have. `BR_ATKPRED` (the predicates' entry) logs each brand attack's answer. `BR_NL_AFLAG` = the byte.
+- Lines (filter `SOMVR_VERBS_BRAND_NODELOG_FILTER=StealthBrand`): `VERBS brand node t=.. : Rejected Attack:
+  PC_Archer_StealthBrand_B - Direction (Attacker to Target)`, `... Predicates 'X' (our explicit target|the game's own
+  target) -> passed|REJECTED`, the pool's `... - Rejected - ...` and `Pool validation failed for ...`, each kept per
+  attack (logged once and on change). Also (every build): the no-offer line ends with the selection's reason, and the
+  geometry has `facing N deg off it` (Talion's own facing toward the orc, LOCO's last tick).
+
+### 185.3 The cause: the brand wants Talion's own facing toward the orc; in VR his body yaw is not the hand's
+- Every stealth brand attack (`PC_Archer_StealthBrand_B/F`, `PC_Bip_StealthBrand_B/F`, `PC_LowRail_Archer_*`,
+  `PC_WallCvr_*`, ...) tests "Direction (Attacker to Target)": Talion's own facing toward the orc within the attack's
+  range; the _B ones also "Direction (Target to Attacker)" (the orc's back to him). Boot 20261106-222323: the tower
+  archer 0x4a4c510, 101 cm and 180 deg behind it, the hand on its head: all four `Rejected Attack: ... - Direction
+  (Attacker to Target)`. The range is about his front half: offered at 63-70 deg off, refused at 92-178 deg off, the
+  answer flickering near 90-95 deg (boot 20261106-230338).
+- His body yaw in VR is LOCO's (3.2): moving, the move within 100 deg of the head; standing, the head with a 50 deg lag
+  - not where the hand reaches. The drill's teleport behind the archer plus the stalk's stick (sideways-back in the
+  head's frame, `the stick 0.53 -0.16`) left his body 100+ deg off the archer while the hand was on it. It was never the
+  archer kind: the same tower archer was refused in one round and branded in the next (153213, rounds 5 and 6) as the
+  stalk's direction changed; the "from the front" tries came with his facing toward it. A person meets the same thing
+  whenever the open hand is on an orc that is more than about 90 deg off the way the body faces: an archer beside them
+  while moving, or reached while looking along the wall the body still faces. In the flat game the stick toward the
+  archer turns Talion to it, so the test never bites there.
+
+### 185.4 The fix: `SOMVR_VERBS_BRAND_FACE` (code default on; env on)
+- While the open left hand is on an orc's head (the brand's own reach, not holding it), Talion in the stealth crouch
+  (our 125 hold or the game's crouch read back) and the orc within LOCO's head cone (100 deg of where the head looks),
+  LOCO's body yaw target is that orc's head, at LOCO's rate (720 deg/s: 90-175 deg in 0.10-0.20 s in the runs); the
+  game's offer is asked again when the turn starts and when he faces it (before the trigger comes).
+- Only the body turns: the view is the head's (SOMVR_HIDE_HEAD=parts: no eye offset swings; boot 230338: the head's
+  forward stayed +0.56..+0.63, -0.03, +0.83..+0.78 through a 111 deg body turn). It is the same kind of turn as LOCO's
+  own standing turn.
+- Unchanged: who the game lets be branded (its Immune/Resist variants by `TargetHasInventoryItem`, `TargetHasBrand`,
+  `TargetCategory` - captains included), what the hand can reach (the verbs' reach rule; the game's own tests), the
+  press (B tapped where the game offers the stealth brand, else B held as before).
+- Lines: `VERBS brand face t=.. orc ..: the open hand on its head in the stealth crouch - the body turns to face it (N
+  deg off it; the head N deg off it; SOMVR_VERBS_BRAND_FACE)`, `... faced it after N s (from N deg off)`, `... the hand
+  off it after N s - the body's yaw LOCO's own again`; the CONFIG verbs_brand and END lines count them. Test word
+  (SOMVR_HANDS_TEST): `verbs brand face on|off` (build 41 against 42 in one boot).
+
+### 185.5 Runs (headless Windows, scripts/ladder_boot.sh 12 nurn41-drive.sh NU_MISSION="m12.sh m12x.sh"; the rung's save UNCHANGED, the install an overlay, the 2 Windows startup WARN only)
+| run | build | what | proves |
+|---|---|---|---|
+| 20261106-210823-1 (rus) | this branch, the attack log | the fort, 12 archers x 3 tries | the attack log works (20,000+ lines formatted per window, 4,600-20,700 gates opened); a sentry 99 cm behind: both _B pass, _F `Direction (Target to Attacker)`; the director's own faults (the crouch ran out before the press, the reach poses) |
+| 20261106-221610-1 (rus) | this branch | - | void: rus ran the game at ~5 fps after its own 21:35 reboot; the 1:30 run never reached the fort |
+| 20261106-222323 | this branch, the attack log | the fort, the crouch held | **the cause**: the tower archer at 101 cm behind, every stealth brand `Direction (Attacker to Target)` |
+| 20261106-224914 | **build-win10 + the live patch** | `live: patch 1 applied at the start` (logic 7b6d63a3); the fort | 4 archers branded from behind by the palm + the trigger: sentries 'PC_Bip_StealthBrand_B' (90 cm), 'PC_Archer_StealthBrand_B' (102 cm), towers 'PC_Bip_StealthBrand_B' (75 cm), 'PC_Archer_StealthBrand_B' (100 cm); the patch's face lines |
+| 20261106-230338 | this branch, the attack log | the control, the front, each archer with the hand reached at its side (the head 55 deg away, the body 100+ deg off), `face off` 2 s then `face on` | **the A/B on one orc**: the tower archer 0x4a6c5d0 100 cm behind: refused as the hand arrived (facing 178 deg off; `Direction (Attacker to Target)`) and with `face off` (116 deg off); with `face on` the body turned 175 / 111 deg in 0.20 / 0.10 s, offered, 'PC_Archer_StealthBrand_B' -> 'PC_Bip_StealthBrand_B' started; **the control** (a fight-pit infantry, 'AI_Inf_Cheer_Idle_*', 101 cm behind): refused as the hand arrived at 92 deg off (`Direction (Attacker to Target)`), faced in 0.10 s and offered; with `face off` the answer flickered at 90-95 deg; `face on` again: faced in 0.05 s, branded 'PC_Bip_StealthBrand_B'; **the front**: a sentry 151 cm ahead 'PC_Archer_StealthBrand_F'; 6 brands in all |
+
+### 185.6 The live patch for build 41 (build-win10)
+Built from t3/lp41 (f15cdbc: fcf622d + the struggle-widget patch the user gets at the next launch) plus only this fix
+(`SOMVR_VERBS_BRAND_FACE`, the offer line's reason and facing; not the attack-log tool), both build checks green
+(`live_patch.sh check`; LC_ALL=C for win/build.sh's export sort, as build-win10 itself), logic **7b6d63a3**, layer and
+host fingerprints = build-win10's. Staged with `LIVE_ROOT=logs/coord/b37/archers42-patch/live-root live_patch.sh stage
+... --next --base logs/build-win10/ShadowOfMordor/mod/somvr` (patch 1, kind=live; not logs/live/next); boot 224914 shows
+it applied at the start. The folder logs/coord/b37/archers42-patch/ also has port.py (the fix onto a build-41 tree),
+br_face.c and the diff against f15cdbc. The code default is on: build-win10's env needs no line.
+
+### 185.7 Switches
+| Key | Code default | Env (scripts/headset-build26.env, the som-b42-archers block) | What |
+|---|---|---|---|
+| `SOMVR_VERBS_BRAND_FACE` | on | on | the body faces the orc the open left hand is on, in the stealth crouch (the stealth brand's own facing test) |
+| `SOMVR_VERBS_BRAND_NODELOG` | off | - (tests only) | + build 42 on Windows: the predicates' and the pool's rejections (BR_LOGSEL, BR_ATKPRED, BR_NL_AFLAG) |
+
+### 185.8 Open, and the harness's traps
+- One front try of three was refused after the press by the game's own target pick (`Rejected Attack: ... - Target`,
+  153 cm ahead): not the facing; not followed further.
+- The headset: whether the body's turn under the hand is ever felt (SOMVR_BODY=hands: no body is drawn; the arms' IK
+  follows the turned shoulders).
+- Traps found: a `hands test` pose 26+ cm over the eyes with the trigger is the rally (SOMVR_VERBS_RALLY); lib.sh's `x`
+  writes the whole test state, so a button write alone puts the head back at yaw 0 (m12x.sh's `xh` keeps it);
+  `verbs front` takes the nearest orc (a branded archer standing by), so a front try first goes near its archer; `crouch
+  hold` lasts 10 s at most; a rus run whose files another helper's copy-back took early is not completed by rus.sh's own
+  copy-back (new files only): rsync the run from rus by hand.
+## 186. Build 42: the bow from the saddle - the right trigger is the string, never the beast's bite; Big Game's drill's 0 hits were its aim (`SOMVR_RIDE_BOW_STRING`) (2026-11-06, som-b42-saddle)
+Question (handoff/HANDOFF-nurn.md, 13 Big Game: "the bow from the saddle scored 0 hits on the drill's aim"): the drill's
+aim, or the VR bow mounted? Headless Windows boots of rung 13 (scripts/ladder_boot.sh 13 nurn41-drive.sh, the director
+scripts/nurn41/m13bow.sh / m13bow2.sh after m13a.sh's mount), real hand poses (OpenXR grip: -Z pinky -> thumb, the fist
+upright `90 0 0`; the string hand drawn to the cheek - 3 right, 10 down, 3 back of the eyes - the bow hand 63 cm out
+along the aim, 1.2 cm left), the aim fed back from the target lines into the hands. handoff/HANDOFF-saddle.md.
+
+### 186.1 The drill's 0 hits: its aim (build 41, boot 20261105-161517, re-read)
+- Its three shots met nothing at the release (`assist: exact: nothing ... straight along the ray`): #1 aimed at Torvin's
+  party (health 1000 / 650: allies, no damage) 4-6 deg off; #2 at the Uruks 2.8-12.5 m off after "Care to double down"
+  (the line through none of them); #3 with no orc within 40 m. Its trigger for the bow was the wrong stage line: the
+  archers' stage ("Sure you can ride a Caragor, but can you shoot from one?", "You take 'em up high!") came later and
+  had no shot at all.
+- The archers are marked by the game ('Objective' markers at each one, 22-111 m from where the stage starts).
+
+### 186.2 What was wrong with the VR bow mounted: the string's trigger was also the beast's bite (fixed)
+- **The fault** (boot 20261106-222636-1, rus): on the caragor the right trigger is the bite (MNT_Attack_2 186, build 27)
+  and the VR bow's string is the same trigger (SOMVR_BOW_STRING=trigger). The nock pressed the bite: `RIDE t=4465.037
+  press 186 'MNT_Attack_2' by the right trigger` 0.17 s before `BOW .. nock`; the beast lunged under the draw (`aim
+  over: Talion 408.4 cm from where he stood at the enter`; 0.0 m/s before). Every nock and draw from the saddle bit and
+  moved the aim - an unrequested move in the headset, and no steady aim.
+- **The fix** (somvr_ride_game.c `mt_tick`, `SOMVR_RIDE_BOW_STRING`, code default on): while the VR bow is out (its
+  phase not idle) the right trigger is its string only - the bite is held at rest as a window's press (SOMVR_RIDE_WIN_
+  REST's mechanism): a trigger still held when the bow is put away bites only once let go and pressed again. A pressed
+  while the string hand is on the string (bo_a_holds, SOMVR_BOW_A_JUMP=draw, build 36) is no leap, as on foot; an A held
+  from before (the sprint) goes on. Lines: `CONFIG ride bow_string=on (SOMVR_RIDE_BOW_STRING, build 42, the default)
+  ...`, `RIDE t=.. the right trigger is the bow's string (the bow out): no bite (..; N so far)`, `RIDE t=.. A with <why>:
+  no leap ..`, `RIDE END bow: N right-trigger presses kept from the beast while the VR bow was out, N A presses at the
+  string ..`. selftest (selftest.c, after the window rest): RT bites without the bow; drawn no bite (two ticks); A at the
+  string no leap; RT held past the bow's end no bite; a fresh RT bites; =off bites drawn - **fails on build 41's code**
+  (`FAIL .. no bite (1 1; ..), .. RT held past the bow's end no bite (1)`).
+- Proven (boot 20261106-230319, the desktop): `RIDE t=358030.339 the right trigger is the bow's string (the bow out): no
+  bite`; the beast at 0.0 m/s through every standing draw (the RIDE motion lines), the view's yaw 146.62 frame to frame
+  over the first draw's enter (`ride trace`).
+
+### 186.3 The bow from the saddle hits, and kills (boot 20261106-230319, the desktop, rung 13)
+| Shot (scripts/nurn41/m13bow*.sh) | Target | The aim | Result |
+|---|---|---|---|
+| still3, the beast standing (0.0 m/s) | the orc nearest the mark: Torvin's caragor (an ally, health 650) 16.7 m out | the hands alone (drawn to the cheek, the lines' error fed back 8 times) | the line 14.3 cm off its head: `exact: the line through the orc's head` -> **`BOW hit .. the hit node record 'Warg_Head', the attack 'PC_Ranged_Normal_Hit_Light_HeadWarg'`** (an ally: no damage) |
+| archer1, the beast standing (0.2 m/s), the archers' stage ("You take 'em up high!") | Big Game's archer up high (health 55) 28.9 m out | the hands (2.6 deg off after 8 rounds), then 122's `bow aimhead` at the archer's marker (the ray turned 2.6 deg onto its Head node) | the line 1.0 cm off its head -> **`BOW hit .. 'Bip_Head', 'PC_Ranged_Normal_Hit_Heavy_HeadOrc'`; `health 55.0 -> 0.0 DEAD`** |
+So the VR bow mounted draws, aims and looses as on foot (now that the trigger is the string only): the arrow leaves
+along the bow's own line and hits what that line passes through - the game's own hit and its head override, on the
+Windows build. Pictures: logs/boot-check-20261106-230319/sb42-pics/frame15017.png (both eyes at the archer: the bow
+upright in the fist, the string hand at the cheek, the archer gold-lit on its rock, the small white sight beside the
+riser), frame8241.png (still3).
+- The drill's hands-only aim converges slowly (0.5-s target lines, the fist kept upright while the aim turns, the head
+  turned once): 1.5-3.5 deg after 8 rounds in 3 of 4 shots. That is the drill's, not the bow's: still3's 14 cm hit was
+  by the hands alone, and in the headset the player aims continuously with the sight (SOMVR_BOW_AIM_RING, blue on an
+  orc the line meets).
+- Ridden at a spawned orc (move1/2, the stick full ahead from 40 m): no clean shot - the beast reached the orc before
+  the aim settled (loosed at 7 m: a 4.6 m miss) or the lines were lost at 42 m. **A hit while the beast runs is
+  unproven headless.** The second archer: the beast rode to it (6.9 m/s) and stood under it; the director's position
+  read failed (a lost word) and the boot ended (the hand-started driver quit the game: NU_NOQUIT=0).
+- The arrow starts where the nock was in the last drawn frame (the latched ray, somvr_bow.c): on a moving beast that
+  is one frame behind the bow (13 cm at 90 Hz and 12 m/s; 60-75 cm at the harness's 20 Hz) along the beast's path -
+  for a target standing still, the line the player saw on it. Kept as it is (carrying it with Talion would miss a
+  standing target by the same amount).
+
+### 186.4 Harness findings (for the next drill)
+- **An unaware orc is in none of the player's targeting bands** (cb_orcs_r reads PlayerCombat+0x2f0's three bands): a
+  `practice put` orc with Talion unseen (`story invisible on`) was invisible to `bow target`, `bow aimhead`, the exact
+  aim and the hit check (boot 213611-1). `bow target` now falls back to the practice's own orc (pr_orc_near; the nearer
+  of the two to the mark). Real archers that have seen Talion are in the bands. Whether the exact aim misses an unaware
+  orc in play (a stealth shot: "straight along the ray", the game's own collision then) was not tested.
+- The mounted aim's start moves the view: at the bow's enter the seat stepped 37 cm and turned 7.7 deg in one frame
+  (boot 222636-1, `RIDE motion .. largest step 37.2 cm across .. 7.68 deg of yaw`; 65-74 cm one-frame moves in 213611-1
+  and the nurn run). In 230319 the trace over the first enter showed no yaw step (146.62 throughout; the seat rose ~20
+  cm over 4 s as the rider sat up). **Open for the headset**: whether the bow's start on the beast jolts the view.
+- Big Game's harness is flaky: the card did not open once (222636-1; a driver started by hand after it fixed it), the
+  caragor's leap came only from a distance (Torvin's "Let the bastard charge you!"; m13bow.sh's `mount2` puts Talion 14
+  m back), the follow lost the beast once (213611-1). rus hung hard at 21:34 with two other boots on it (no amdgpu
+  line; mine was waiting for a slot).
+- The run's save at the archers' stage (logs/boot-check-20261106-230319/saves/GameData.sav, 282a0eeb, saved 23:18:30 as
+  the stage began) is a rung-to-be for the moving shots (scripts/ladder_rung.sh), skipping the mount and the ride.
+- Test words: `bow target X Y Z` / `bow target off` (SOMVR_HANDS_TEST: the BOW target lines on the orc nearest that
+  point within 6 m, following it; at our shot `BOW t=.. shot at the marked orc ..: its head N cm off the shot's line D
+  m out .., its chest N cm off; health ..`).
+
+### 186.5 The live patch for build 41 (build-win10)
+Built from t3/lp41 at **048e50e** (fcf622d + the struggle widget + branding from behind: the user's next-launch line)
+plus only this fix (somvr_ride_game.c, its selftest): both build checks green (`LC_ALL=C live_patch.sh check`), logic
+**5da6657c**, the layer / host fingerprints = build-win10's (kind=live). Staged with `LIVE_ROOT=logs/coord/b37/saddle42-
+patch/live-root live.py patch stage .. --next --base logs/build-win10/ShadowOfMordor/mod/somvr` (next/patches/1; not
+logs/live/next); the diff against t3/lp41 is logs/coord/b37/saddle42-patch/ride-bow-string-lp41.diff (2 files, +74; it
+applies to f15cdbc and 048e50e alike). **Proven in boot 20261106-232659** (build-win10, its own env, LIVE_ROOT = that
+root, the desktop slot 2, 2 WARN = build-win10's own two, the save UNCHANGED): `live: patch 1 applied at the start: ..
+(5da6657c3e31d2cb: 'The bow on a caragor ..')`, the game's `LIVE patch 1 applied at the session's start`, `CONFIG ride
+bow_string=on (.., the default)`, `CONFIG struggle build 42: widget=hide` (the line's earlier fixes kept). The first
+staging (on f15cdbc, logic e874e34a, boot 231753) is superseded: moved aside to saddle42-patch/live-root-f15cdbc-stale.
+The code default is on: build-win10's env needs no line.
+
+### 186.6 Runs (logs/boot-check-20261106-; the Windows build under Proton; scripts/headset-build26.env + SOMVR_BOW_HITLOG=1, SOMVR_HANDS_TEST=1; rung 13's save only read - UNCHANGED each time)
+| Run | What | Proves |
+|---|---|---|
+| 205613-1 (rus) | m13bow.sh v1: a function named `head` shadowed head(1) for lib.sh and m13b.sh; stopped | (nothing: the director's bug, fixed) |
+| 213611-1 (rus) | the spawned orcs (Talion unseen) found by no list; the ride's follow lost the beast | the bands' blindness to an unaware orc (186.4) |
+| 222636-1 (rus) | the card did not open; a driver by hand; the mount at round 5; still/move on spawned orcs; the archers' ride never got near | **the fault: the nock pressed the bite, the beast lunged 4 m** (186.2) |
+| **230319** (desktop) | build 42's fix; still x3, move x2 on spawned orcs; the archers' stage (m13bow2.sh by hand: `bow aimhead`) | **no bite while drawing, the beast still; a hit by the hands (14 cm, 16.7 m); an archer killed from the saddle (28.9 m)** |
+| 231753 (desktop) | build-win10 + the first staging (t3/lp41 f15cdbc, superseded) | it applied at the start |
+| **232659** (desktop) | build-win10 + the patch on t3/lp41 048e50e (logic 5da6657c) | **the live patch applies at the start** (186.5) |
+
+### 186.7 Switch
+| Key | Code default | Env (the som-b42-saddle block) | What |
+|---|---|---|---|
+| `SOMVR_RIDE_BOW_STRING` | on | on | the VR bow out on a beast: the right trigger is its string only (no MNT_Attack_2 bite; held past the bow's end, bites only once let go); A pressed at the string is no leap. off = build 41 |
+
+### 186.8 For the headset
+- On a caragor: the bow from the shoulder, nock and draw - the beast stays put (no bite, no lunge); shoot an archer
+  standing, then riding.
+- The bow's start on the beast: any jolt of the view (186.4)?
+- The sight from the saddle: is the small sight enough to hit an archer at 25-30 m while riding?
+
+## 187. Build 42: the long wall's beam walk back on - one switch over the four keys, now that the edge ride holds mark 17 (`SOMVR_WALK_BEAM`) (2026-11-06, som-b42-beam)
+The 11-05 session's mark 16 (the patch past the long wall's beam end out of reach) needs the walk's context-action clip
+off and climb3's 55 deg slope, both only for a step whose floor goes on 65 cm ahead (182.4b: boot 174915, 59 cm on, 376
+passing). Build 41 shipped without it (182.4c): with it, mark 17's walk went on along the coping and slid 11 m off its
+lip. Build 42's edge ride (183) fixed the cause - the capsule rolling over the coping's edge beside the walk - so this
+round turns the set back on and proves both marks together.
+
+### 187.1 The switch (`SOMVR_WALK_BEAM`, code default on; somvr.c's walk config)
+`SOMVR_WALK_BEAM=on` = the beam walk's proven set: `SOMVR_WALK_CTXCLIP` on, `SOMVR_WALK_SLOPE_AHEAD` on,
+`SOMVR_WALK_CLIP_FAR_CM` 65 and `SOMVR_WALK_SLOPE_DEG` 55 (a far or a slope set above 0 is kept) - over those keys'
+build-41 values. Why a switch of its own and not new code defaults: build-win10's frozen env pins
+`SOMVR_WALK_CTXCLIP=off` and `SOMVR_WALK_SLOPE_DEG=0`, and a live patch replaces only the logic DLL - the env stays, so a
+changed default for those keys could never reach the user's build. `off` = the four keys as set (build 41's walk). Log:
+`CONFIG walk beam=on (build 42) ...` before the existing `CONFIG walk clip far / ctxclip / slope` lines, which show the
+values in force. The test words `climb ctxclip on|off` and `climb slope DEG` still override it at runtime.
+scripts/headset-build26.env: the two build-41 lines (`SOMVR_WALK_CTXCLIP=off`, `SOMVR_WALK_SLOPE_DEG=0`) commented where
+they are, `SOMVR_WALK_BEAM=on` in the som-b42-beam block. selftest.c: the PM9 navmesh-alone check now clears the
+context-action gate's address first (the new default turns that clip on; the stand-in world has no byte at the real
+address - the selftest crashed in pm9_vf without it).
+No new walk logic: the edge stop, its edge ride (183) and the walk-clip decision (182.4b) are unchanged.
+
+### 187.2 Proofs (headless, the Windows build under Proton, Monado 20 Hz, slot 3 (light render), SOMVR_LOCO_YAW_DPS=360, SOMVR_HANDS_TEST=1; hands at the waist pointing ahead; 376 first in the fresh game, then scripts/beam42-drive.sh)
+scripts/beam42-drive.sh (new; sources edge42-drive.sh, which now has an EDGE42_LIB guard): `beam16` (climb41's: the
+game's clip, then off), `beam17f` (new: mark 17's beam from 31122.0 4810.1 -30710.6 at heading 50 with the stick's
+heading fixed from the measured head yaw, 6 s - no turn words), `beam17` (climb41's: faceyaw 50, the stick 0.7 forward 5
+s), `lip17` (edge42's: the coping's edge line at heading 64), `m18` (the 11-04 mark 222603_18 on the coping), `hold40r`,
+`hill` (8 meadow walks), `hillwalk` (HILL42's three 14-16 deg open downhills). PASS = no fall (no `JUMP ... the fall from
+here`, no `WALK ground ... no ground under him`) and the root less than 60 cm under the start (beam17: held, under 150 cm).
+| Run (logs/boot-check-) | What | Result |
+|---|---|---|
+| **20261106-234335** | this branch (main + the switch), headset-build26.env | **beam16 13 -> 59 cm** (onto the patch); **beam17f** walked 2.1 m along the beam and held at once riding its edge (31303 4813 -30622, the drop at heading -16, the ground 11 m down; 11.5 cm steps -> 0 in one tick, no counter-move); **beam17** held at the beam's end (4811 -> 4815) after the existing WALK_LIP step over a 1-3 cm lip on the 45 deg bevel (an 18 cm arc - this route's jittery 20 Hz faceyaw only; beam17f met no lip); **lip17** held riding the edge (4820 -> 4817); **m18** 261 cm along the coping, no fall; **hold40r** PASS (4811 -> 4690); **hill** 8 walks 1-8 deg unstopped; **hillwalk** 3 walks 14-16 deg (408-412 cm level, 105-118 cm down) unstopped; 376: hold40 A held = the climb down PASS, ring40 PASS (3755 -> 3624), **up40 PASS** (the edge stop holds at once on the top), hold40 / hold40b take-over FAIL (see below). Totals: the clip off for 572 steps, refused for an edge within 65 cm 260 times; the 55 deg slope set 37 / back 37; edge rides 4; **0 slides, 0 falls**; 2 WARN (H9 / layout B: the light slot's), the save UNCHANGED |
+| **20261106-235750** | **build-win10 + the live patch** (its own env: CTXCLIP=off, SLOPE_DEG=0; LIVE_ROOT = the test root, 187.3) | `live: patch 1 applied at the start` (logic 45fa8c5b), `CONFIG walk beam=on` -> ctxclip on, slope 55, far 65 over the env; the line's earlier fixes kept (`struggle build 42: widget=hide`, `ride bow_string=on`); **beam16 10 -> 59 cm**, **beam17f** held (4811 -> 4814), **beam17** held (4819 -> 4819), **lip17** held riding the edge (4820 -> 4818), **m18** 198 cm no fall, **hold40r** PASS, **hill** 8 unstopped, **hillwalk** 3 unstopped (14-16 deg); 376: hold40 climb down PASS, ring40 PASS, up40 "no ring" (the ring logged 6.05 s after the arrival - past edge38's old 3 s wait: the known race, 183.3; the walk not yet involved), hold40b take-over FAIL; 2 WARN = build-win10's own two, the save UNCHANGED |
+| 20261107-000927 | build-win10 + the live patch again, 376 with edge38's up40 ring wait fixed (the suite's edge38u: counted from before the trip, 9 s - now in scripts/edge38-drive.sh too), then lip17 | patch 1 applied at the start; hold40 climb down PASS, ring40 PASS (3750 -> 3633), **lip17** held riding the edge (4819 -> 4819); **up40 FAIL: no edge stop line, no fall** - A UP landed at 34525 3758 -25888 (boot 234335: 34516 3755.5 -25901, held 35 cm west) and the walk west was blocked by the bank's bevel after ~28 cm (`UNPIN ... blocked`), the root kept on the top (3748): 180118's "heading west, the bevel blocks the walk before the edge stop's probe" (182.5's note). **Not the switch's:** no `WALK navmesh` line in that walk - no step was decided (the floor 65 cm ahead not there), so the clips and the 45 deg slope were the game's on every tick, as build 41; hold40b no take-over (build-win10's own); 2 WARN (build-win10's), the save UNCHANGED |
+
+**376's take-overs** (hold40 / hold40b "no take-over") are build-win10's own known failures (its HEAD.txt: "376 hold40 (M5's
+crevice spot) / hold40b (driver)"); every hold40 here was held and A held lowered him. In 234335 hold40b walked past M5's
+crevice to the coping's far end (30724 4820 -31579, the capsule spans the crevice - 182.4b), was held there, and A held
+lowered him to the hang; the scripted grip found no hold.
+**What changed for the player:** at mark 16 the walk goes on 59 cm onto the patch (10-13 cm before); along the beam and
+the coping at mark 17 he stops at the lip (held at once, riding the edge: 11.5 cm steps to 0 in one tick, no push back,
+the glow and A's cue) - never the 11 m slide; hillsides of 14-16 deg and the meadows' 1-8 deg walk on unstopped.
+
+### 187.3 The live patch for build 41 (build-win10)
+Built from t3/lp41 at **a262acc** (fcf622d + the struggle widget, branding from behind, the bow's string on the beast)
+plus only this change (somvr.c: the switch; selftest.c: the PM9 check's gate address): both build checks green
+(`LC_ALL=C live_patch.sh check`), logic **45fa8c5b**, the layer / host fingerprints = build-win10's (kind=live). Staged
+with `LIVE_ROOT=logs/coord/b37/beam42-patch/live-root live_patch.sh stage DLL WHAT TRY --tree MOD --next --base
+logs/build-win10/ShadowOfMordor/mod/somvr` (next/patches/1; not logs/live/next); the diff against t3/lp41 is
+logs/coord/b37/beam42-patch/walk-beam-lp41.diff (2 files, +21 -1). Proven in boots 235750 and 000927 (above): `live:
+patch 1 applied at the start`, `CONFIG walk beam=on` over build-win10's `SOMVR_WALK_CTXCLIP=off` / `SOMVR_WALK_SLOPE_DEG=0`
+(the lines after it: ctxclip=on, slope=55 deg, clip far=65 cm, slope ahead=on), the line's earlier fixes kept. The code
+default is on: build-win10's env needs no line.
+
+### 187.4 Switches
+| Key | Code default | Env (scripts/headset-build26.env, the som-b42-beam block) | What |
+|---|---|---|---|
+| `SOMVR_WALK_BEAM` | on | on | the beam walk's set over the four keys: `SOMVR_WALK_CTXCLIP` on, `_SLOPE_AHEAD` on, `_CLIP_FAR_CM` 65 and `_SLOPE_DEG` 55 unless set above 0; off = the four keys as set (build 41's walk) |
+`SOMVR_WALK_CTXCLIP=off` and `SOMVR_WALK_SLOPE_DEG=0` (build 41's block) are commented out in the env. Not in the VR menu
+(no setting to pin).
+
+### 187.5 Open, the headset's to judge
+- The 20 Hz headless walk is coarser than the headset's 90 Hz: the edge ride should catch a crossing ~1 cm past the edge
+  there (183.6). Whether stopping while walking ALONG a coping's edge feels right is the headset's to judge.
+- WALK_LIP (build 33) still steps over small lips on the beam's 45 deg bevel with an 18 cm arc (seen once, on beam17's
+  route with the 20 Hz faceyaw's zigzag; the fixed-heading walk met no lip). Unchanged by this switch, but the beam walk
+  reaches such lips more often now.
+- 376's up40 at the bank: with some A UP landings the bank's own bevel blocks the walk west before the edge stop sees the
+  drop (no cue, no fall) - the game's clips and slope there, not this switch (187.2).
+## 189. Build 42: the caragor pin's second stage answered as a domination - a white ring, the left grip held (`SOMVR_STRUGGLE_PIN`) (2026-11-07, som-b42-pin)
+
+Why: a caragor's leap pins Talion; its takedown ('PC_Warg_Struggle_Takedown_F', a CStrugglePressCount, 8 presses) is
+answered by thrusts (180), and when it is lost *narrowly* the game gives a second stage - 'PC_Warg_Struggle_StruggleB',
+a CStruggleAim (the record's tag 'PreDeath_Warg_2': Talion's last chance against the beast). Won =
+'PC_Warg_Struggle_PlayerWin_Normal', lost = 'PC_Warg_Struggle_PlayerLose' (the takedown won = '_PlayerWin_Perfect').
+184.8 left that stage with no reliable cue of ours, so 184's gate kept the game's red ring and "L" stick glyph there:
+a pad prompt with no VR answer.
+
+### 189.1 What answered it before (the logs; boots 20261106-201546-1, 202621-1, 215153, 20261107-001704-1)
+- **Nothing reliable.** SOMVR_RIDE logs `.. '12CStruggleAim'): an aim .. the answer: the left hand kept closed (or B
+  held) - held on = won` for every struggle on Talion, but its answer (`mt_press_cmd`) acts only while Talion's attack
+  is a beast's *Domination*: no boot ever had a `held on .. by` line for the pin. The rule took it as an aim (the
+  outline at the struggle's node, 'Head' on the other = the caragor's), placed only within 4 m of the eyes.
+- **The beast's head is away from the view.** The pin's paired animation plays 4-5 m from the held view: the node was
+  392 cm behind the eyes in 215153, past 4 m in 202621-1 (no outline), and in 001704-1 the ring at the node was drawn at
+  xr -2.4 -0.2 +4.1 and -3.0 0.0 +4.0 (behind-left). In 001704-1's "before" try the outline was "placed" 370 cm behind
+  the eyes, so 184's gate also hid the game's ring: the player saw nothing at all (pin42-pics/frame801, frame831).
+- The stage's window (+0x592) opens 1.1-1.2 s in, its done (+0x591) at ~3.8 s, over at ~4.1 s.
+- **It comes only after a near miss**: the takedown lost at 7 of 8 presses gave it in every boot (8 times); with no
+  presses at all (boot 20261106-234902-1, 16 pins) the takedown just ended - no second stage, no outcome.
+
+### 189.2 The rule (`SOMVR_STRUGGLE_PIN=grip`, code default; somvr_ride.c `somvr_rd_grip_strug`)
+- One predicate for the struggles the grip answers, by Talion's attack: a beast's domination (as before) and, with the
+  switch, the pin's second stage ('Warg_Struggle_StruggleB'). SOMVR_RIDE answers both the domination's way: **the left
+  hand kept closed (or B held)** for the hold time = won, written as the game's own completion (+0xa5); let go = the
+  hold starts again; no grip = nothing written - **the game's own loss**. The pin's hold is its own,
+  `SOMVR_STRUGGLE_PIN_HOLD_MS` (code default 1000: the window is ~2.6 s long; the domination keeps
+  SOMVR_RIDE_DOM_HOLD_MS 1500). A fist already closed as the stage starts counts after its first 0.1 s. The left hand
+  because the right one holds the sword (a closed grip all along); the domination's hand, so one gesture for both.
+- **The cue: the white timer ring ahead of the eyes**, where the takedown's ring just was (70 cm ahead, 20 cm under),
+  its steps by SOMVR_RIDE's hold over the pin's length, the armed look once held on. Not at the beast's head (the
+  brief's first idea, the domination's place): that node was behind or beside the view in every pin (189.1) - a ring
+  there is never seen. With the ring up, 184's gate hides the game's ring, cursor and "L" (`stg_widget`). Haptics: the
+  domination's - the beast's strain on the left hand while it holds, a thump when it gives in.
+- **The write waits for the window** (somvr_ride_game.c `mt_struggle_read`; a domination too): +0xa5 set before +0x592
+  opens freezes the aim's update and its window never opens (180's finding for the stab). A fist held from the start
+  wins at ~1.1 s, on that edge: the completion waits (`.. held on: its window is not open yet .. - the completion waits
+  for it`, once) and is written the first bm_pre with +0x592 set and +0x591 not.
+- **A new struggle at the last one's address starts afresh** (`mt_struggle_seen`; found in boot 20261107-003351): the
+  heap gave two pins in a row the same object, SOMVR_RIDE's "completed" marker still named it and the second pin's won
+  grip was never written - the game's loss. The marker, the won-for and the wait are cleared for every new struggle;
+  this also covered two dominations in a row (never met in a boot).
+- **184's gate latches** (`g_stg.cue_seen`): once a cue of ours was up in a struggle, the game's widget stays hidden.
+  Boot 001704-1 on rus ticked 0.3 s apart; the fresh-only check (0.25 s) read that as no cue and kept the game's ring
+  for a second.
+- `SOMVR_STRUGGLE_PIN=outline` = build 41's aim. Lines: `CONFIG struggle build 42: pin=grip ..`, `.. pin hold 1000 ms
+  ..`, `RIDE t=.. the caragor's pin, its second stage: Talion's 'PC_Warg_Struggle_StruggleB' - its struggle answered by
+  the left hand kept closed (or B) ..`, `STRUGGLE t=.. b41 the cue: the timer ring at .. (ahead of the eyes: the pin's -
+  the beast's head is away from the held view)`, `RIDE t=.. the struggle (an aim) held on 1.0x s by the left hand: won`,
+  `.. completed as the game's own ..`, `STRUGGLE t=.. b42 the pin's second stage over: WON by the grip .. | not answered
+  - the game's own outcome`, `RIDE END pin ..`, `STRUGGLE END build 42 pin ..`. Test word `struggle pin grip|outline`.
+
+### 189.3 Tests
+- tests/test_ride.c: `somvr_rd_grip_strug` - a domination (Warg / Graug) yes; a failed one and a captain's no; the pin's
+  stage only with the switch; the takedown, the outcome, NULL no.
+- selftest.c `pin42_tests` (fails to build on build 41: no somvr_rd_grip_strug, no g_mt.pin): the left hand held - won
+  after the pin's 1.0 s; its window not open - nothing written, the wait said once; open - +0xa5 written; the next pin
+  at the same address - completed again (fails on the first code); no grip 4 s - nothing; the switch off with the hand
+  closed - nothing; a domination keeps its 1.5 s; the rule takes the stage as the grip's (no outline), the white ring
+  ahead of the eyes (its node away) at the hold's step, the game's ring and cursor hidden; the tick 0.3 s late - still
+  hidden (fails on the fresh-only gate); held on = the armed look; `pin outline` = build 41's aim; the words.
+
+### 189.4 Runs (headless, Windows, light; scripts/pin42-boot.sh pins scripts/pin42-drive.sh to its run; Practice > Caragor 10 m off, no guard; the takedown mashed by the test hands' `struggle auto on`)
+- **boot-check-20261106-234902-1** (rus; the first driver, no mash): 16 takedowns, 0 presses, no second stage (189.1).
+- **boot-check-20261107-001704-1** (rus; this branch, first code; 2 WARN = the Windows start's; the save UNCHANGED):
+  - before (`pin outline`): the outline placed 370 cm behind the eyes, the game's ring hidden by it at +1.20 s, no
+    answer -> 'PC_Warg_Struggle_PlayerLose'. pin42-pics/frame801 / frame831 (both eyes, +1.6 / +2.2 s): the greyed
+    meadow, no ring of ours, no game widget - nothing to act on.
+  - lose (`pin grip`, the hand open): `b41 the cue: the timer ring .. (Head)`, the game's ring hidden at +1.20 s, the
+    stage over at 4.05 s `not answered - the game's own outcome` -> 'PC_Warg_Struggle_PlayerLose' (PASS).
+  - grip: the left hand reached ahead (`hands swing L -15 -5 45 0 0 0`: the grip's -Z ahead, a forward reach) and
+    closed at ~+2.5 s (the driver's words are slow on rus), `held on 1.02 s by the left hand: won`, `completed as the
+    game's own` at +3.51 s -> **'PC_Warg_Struggle_PlayerWin_Normal'** (PASS).
+  - Found: the ring at the node was 4-5 m behind-left of the eyes (the layer's `objective frame 2540 .. at xr -2.41
+    -0.15 +4.14`) -> the ring moved ahead of the eyes; the widget kept for a second at +1.25 s (ticks 0.3 s apart) ->
+    the gate latches.
+- **boot-check-20261107-003351** (desktop; **build-win10 + the live patch** b87e923f from a test live root:
+  `live: patch 1 applied at the start`, `LIVE patch 1 applied at the session's start`; 2 WARN; the save UNCHANGED):
+  - fist (the left fist closed as the takedown ended): held 1.05 s, completed -> 'PlayerWin_Normal' (PASS; the hold
+    began late, so it won after the window opened - the wait is the selftest's).
+  - grip: held 1.05 s - won, **no completion written** -> 'PlayerLose': the second pin's object had the first one's
+    address (0x43583a10) - the same-address fix above (the verdict line said WON by the address: now by RIDE's count).
+  - lose: the game's own loss (PASS).
+- **boot-check-20261107-005003** (desktop, slot 1, light; **build-win10 + the final live patch c0fa2041**: `live: patch 1
+  applied at the start`, `LIVE patch 1 applied at the session's start`; its own env - no SOMVR_STRUGGLE_PIN line, the
+  code defaults; 2 WARN; the save UNCHANGED): 6 second stages.
+  - fist: `b41 the cue: the timer ring .. (ahead of the eyes: the pin's ..)`, the game's ring hidden at +1.20 s, `held
+    on 1.05 s by the left hand: won`, `completed as the game's own` -> **'PlayerWin_Normal'** (PASS).
+  - grip (the left hand reaching ahead and closing at ~+1.3 s): held 1.00 s, completed -> **'PlayerWin_Normal'** (PASS).
+  - lose (the hand open): `not answered - the game's own outcome` -> **'PlayerLose'** (PASS); the two pins the caragor
+    made while the driver walked back (no answer) - the same loss.
+  - `RIDE END pin: 2 .. won by the grip`, `STRUGGLE END build 42 pin: .. met 6, won by the grip 2`, the widget hidden in
+    12 struggles, kept 0.
+  - **The pictures** (logs/coord/b37/pin42-patch/sheet-pin42.png, both eyes, brightened): before - 202621-1's frame
+    3281 (the game's red ring, cursor line and "L" glyph; 184's `widget show`) and 001704-1's frame 831 (184's gate with
+    the outline behind the eyes: nothing at all); after - frame 3340 (lose: our ring ahead and a little under the gaze,
+    no game widget) and frame 2065 (grip: the ring's armed look as the grip wins). The view stays greyed (the game's
+    'PreDeath' fade) and the caragor is not in it (189.7).
+
+### 189.5 The live patch for build 41 (build-win10)
+From t3/lp41 (a262acc: the widget, the brand from behind, the bow's string) plus only this change, in the worktree
+.claude/worktrees/pin42-lp (staged in its index, not committed). Both build checks green (`LC_ALL=C live_patch.sh
+check`), logic **c0fa2041**, kind=live (layer 43bf1e58 / host f754b169 = build-win10's). Staged with `LIVE_ROOT=<root>
+live_patch.sh stage .. --next --base logs/build-win10/ShadowOfMordor/mod/somvr` into the test root
+logs/coord/b37/pin42-patch/live-root (next/patches/1; not logs/live/next); the diff against t3/lp41:
+logs/coord/b37/pin42-patch/pin-lp41.diff (the branch's changed lines from 6ed4dfe, identical; lp41 has no hold-fix line
+in one hunk's context). Proven in boot 005003 above. (live-root-b87e923f-stale: boot 003351's, superseded.)
+
+### 189.6 Switches
+| Key | Code default | Env (the som-b42-pin block) | What |
+|---|---|---|---|
+| `SOMVR_STRUGGLE_PIN` | grip | grip | the caragor pin's second stage answered by the left grip held (SOMVR_RIDE), the ring ahead of the eyes; `outline` = build 41's aim |
+| `SOMVR_STRUGGLE_PIN_HOLD_MS` | 1000 | 1000 | how long the grip holds on to win the pin (200-3000) |
+
+Neither is in the user's settings.conf. Test word `struggle pin grip|outline`. Drivers: scripts/pin42-boot.sh MOD
+(PG_TRIES "before lose grip fist", PG_REACH, PG_PIC1/2; HEADLESS_* / WIN_* / LIVE_ROOT as for headless_vr.sh).
+
+### 189.7 Open, traps
+- The headset's to judge: the ring ahead of the eyes in the greyed pin, the 1 s hold, the left hand for a left-handed
+  player (SOMVR_HANDED=left holds the sword in the left: B still answers; the domination is the same).
+- The pin's view: the caragor is 4-5 m away, often behind, while Talion is pinned (the held view vs the paired
+  animation) - the player never sees the beast on top of them. Not this task's; for the beasts' holds.
+- The completion's wait for the window is proven by the selftest only (no live fist landed before +0x592).
+- scripts/rus.sh: another helper's rus run that ends while yours runs copies your half-written run back (its copy-back
+  takes every new file under logs/); your own end copy and `rus.sh pull` never overwrite (`--ignore-existing`) - boot
+  001704-1's somvr.log came back with 668 of 18044 lines. Fetch with rsync from mith@rus:<the same path> into a new
+  folder and copy over.
+## 188. Build 42: the view on a caragor under the bow - the standing take moves nothing; on a running beast the bow's slow motion braked the view (`SOMVR_RIDE_BOW_SLOWMO`, proven) (2026-11-07, som-b42-mountview)
+Question (186.4): in boot 20261106-222636-1 the view stepped 37 cm / 7.7 deg in one frame when the VR bow came out on a
+caragor; 230319's short trace showed none. Real, and from what? And a hit while the beast runs (186.3: unproven).
+Headless Windows boots of rung 13 (Big Game) with every seated frame traced (`SOMVR_RIDE_TRACE=60000`), the director
+scripts/nurn41/m13view.sh after m13a.sh's mount, real hand poses (m13bow3.sh's bow hold). handoff/HANDOFF-mountview.md.
+
+### 188.1 The tool: scripts/ride_steps.py RUN
+Splits each consecutive seated frame's horizontal view move (`RIDE view` lines) into the beast's root, the seat's swing
+about the root (the eyes ~60 cm ahead of it, turned with the beast's heading) and the root anchor (the base minus the
+seat); a frame's jolt = the change of the view's velocity from the frame before (m/s); held/blinked frames left out.
+Prints the worst frames with their causes and the bow's enters/exits with the worst jolt within 1 s of each.
+
+### 188.2 The standing take moves nothing; 222636-1's step was the beast's own run
+- 28 enters/exits of the VR bow on a standing caragor (boots 000135, 003651, 005410, 012206): the worst jolt within 1 s
+  0.03-0.15 m/s, the view's steps 0.1-0.6 cm a frame (the seat's slow mean). (Two more in 005410 fell on a recoil.)
+- 222636-1 (rus, build 41, no trace; its full log is on rus): the beast's root moved 75 cm by frame 13948 and 5.3 m by
+  13968 (t 4460.6-4461.6), starting before the bow's enter (frame 13967) - no stick command and no attack or recoil
+  record logged; it turned ~160 deg. rus ran ~11 fps (PERF: frames 89 ms mean, 284 max): 37 cm = 74 ms of the beast's
+  5 m/s, 7.68 deg = the car-style yaw's 150 deg/s cap over ~51 ms. The beast moving, sampled at a slow frame rate.
+
+### 188.3 The real fault: on a running beast the bow's slow motion brakes the view, and snaps it back
+The VR bow holds the game's aim command (124): the game's bow mode, and with it its slow motion (Focus: the SlowMo
+component, re-bow.md 1.1). On foot it moves no view; seated the view rides the beast, so it does:
+| Run | The take (the beast's speed per 50-ms frame from the enter) | The end |
+|---|---|---|
+| 003651 runbow1 | 6.8 ... 6.8 (+0.40 s) 3.4 2.5 1.7 1.4 1.2 1.0 0.8 0.7 - then 0.7 for 10 s | bow away: 0.7 -> 6.6 in one frame |
+| 003651 runbow2 | 7.6 (+0.40 s) 3.9 2.7 2.2 1.7 1.3 ... 0.7 | bow away: 0.8 -> 7.7 in one frame |
+| 005410 runbow1 | 6.9 (+0.40 s) 3.5 2.3 1.6 1.4 1.1 0.9 ... 0.7 | bow away: 0.3 -> 3.2 -> (0.4 s) 6.8 |
+| 005410 runbow2 | 7.8 (+0.40 s) 4.0 2.7 2.0 1.5 ... 0.8 | +3.35 s, bow still out: 0.8 -> 7.5 in one frame (the stick's push rose 0.3 -> 1.0) |
+| 012206 charge 1 (build-win10) | 7.1 (+0.40 s) 2.3 1.5 1.0 0.9 0.6 ... 0.7 for 12 s | +12.2 s, bow still drawn: 0.7 -> 6.9 in one frame (the slow motion ran out) |
+The brake is ~3 g with a first one-frame drop of 3.5 m/s; the end is a one-frame surge of 6-7 m/s - lurches the player
+never asked for, on every bow taken at a run. Why slow motion, not a gait: the beast's speed (0.7 of 7) and its turn
+rate under the same steering (28 deg/s against ~190) both fall to ~10-15 %; the game raises its own
+'UI_Ranged_SlowMo_Deactivate' prompt (127) at the take; it ends by itself ~12 s later with the bow still out (the game's
+aim then off: `the game's aim NOT on yet` at 012206's third release). Standing, there is nothing to slow: 188.2.
+
+### 188.4 Tried and withdrawn: a fresh stick push at the brake (`SOMVR_RIDE_BOW_PACE`, commit b17a728, reverted in ac59a0c)
+The data first read as "the beast runs on under the aim only after a fresh stick push" (003651's charge ran 7 m/s with the
+bow drawn after the stick was pushed). Built, selftested and run in boot 012206 (build-win10 + its live patch on t3/lp41
+bf10688, logic bc5c3278 - `live: patch 1 applied at the start`, `CONFIG ride bow_pace=on`): 6 pushes (30 ms let go,
+pushed again), the beast stayed at 0.6-0.7 m/s - `RIDE END pace: .. met by a fresh push 6 times, left to the game 2`.
+Wrong model; gone from the branch; its staged root moved aside (mountview42-patch/live-root-pace-withdrawn).
+
+### 188.5 The fix: `SOMVR_RIDE_BOW_SLOWMO` (code default off; env off)
+somvr.c `bo_slow_c` (the SlowMo component's wrapper at its two calls BOW_SLOW_APPLY / BOW_SLOW_CLEAR, Windows sites
+confirmed in win/sites-combat.tsv) skips the component also while seated on a beast (`mt_bow_noslow`: SOMVR_RIDE on,
+Seat mode, seated); the patch, until now only for SOMVR_BOW_SLOWMO=off, is installed for either (bo_start reads
+`mt_bow_noslow_env`). On foot nothing changes (SOMVR_BOW_SLOWMO=game: the game's Focus). Lines: `CONFIG ride
+bow_slowmo=off ..`, `RIDE t=.. the VR bow out on the beast (N m/s): the game's slow motion skipped ..`, `RIDE END bow slow
+motion: the VR bow out on the beast N times, the game's SlowMo calls skipped seated N`. selftest (selftest.c, after the
+bow's string): seated skipped, =game runs, on foot runs - **fails without the skip** (`seated the bow's SlowMo skipped
+(0, seated 1)`). Both build checks green.
+**Proven in boot 20261107-015415** (build-win10 + its live patch a725e3fa applied at the start, 188.8; the desktop's
+slot 3): the bow taken at a run keeps the beast's pace - the three charges' speed per frame over 1.5 s from the enter
+6.6-7.2 m/s (build 41's code: 7 -> 0.7 at +0.4 s, 5 of 5), the worst view jolt within 1 s of those enters 0.41-1.38 m/s
+(the gait's own; build 41's 3.1-4.1), a put-away at a run 7.3-7.9 m/s through it (no surge); `RIDE END bow slow
+motion: the VR bow out on the beast 11 times, the game's SlowMo calls skipped seated 34`; **arrows fire seated without
+the slow motion**: 7 `fire: our shot` lines (3 standing, 1 at 6.8 m/s, the rest on the turns), 0 dropped, `the game's
+aim on` at each release; the bow drawn in the hand in both eyes (logs/boot-check-20261107-015415/mv42-pics/
+frame13190.png). The 8 standing takes/put-aways in it: jolt <= 0.15 m/s as before. The boot (for a rerun):
+```
+cd <the branch's worktree>/ShadowOfMordor/scripts && B=/home/bara/Projects/flat2vr/ShadowOfMordor/logs/build-win10 &&
+LADDER_MOD=$B/ShadowOfMordor/mod/somvr LADDER_ENV=$B/headset.env \
+LIVE_ROOT=/home/bara/Projects/flat2vr/ShadowOfMordor/logs/coord/b37/mountview42-patch/live-root \
+HEADLESS_SLOT=auto HEADLESS_OWNER=<name> HEADLESS_HOLD=2700 LADDER_EXTRA="SOMVR_BOW_HITLOG=1 SOMVR_RIDE_TRACE=60000" \
+./ladder_boot.sh 13 nurn41-drive.sh NU_CTL=0 NU_END=0 NU_MISSION="m13a.sh m13view.sh" MV_STEPS=archers MV_RIDDEN_ONLY=1
+```
+then `python3 -I scripts/ride_steps.py RUN` (the bow's enters/exits at the end).
+
+### 188.6 The beast's own lurches while mounted (unchanged: 1:1 by design)
+Over ~39,000 traced seated frames (5 boots, 20 Hz), every view velocity change over 2 m/s in a frame came from the beast's
+root; the seat's swing stays under ~2 m/s (the beast turns at most ~10 deg a frame: no heading snaps), the anchor only
+at frame hitches. The root's own: the bite's start (running 6.8 -> 1.7 in a frame, then the lunge to 19.5 m/s over 0.2 s),
+recoils when hit (10.7 -> 5.0), collisions (6.8 -> 2.4, deflected 47 deg), the gait's steps (the stick's push 0.3 -> 1.0:
+2.3 -> 6.1 m/s in a frame). 230319's 98-146 cm window maxima were bites and recoils. Kept 1:1 (the comfort rule: fast is
+fine if smooth and 1:1; a horizontal smoothing would leave the view trailing the beast by up to a metre in a lunge). The
+headset judges whether a recoil (the one unrequested of these) is a jolt.
+
+### 188.7 A hit while the beast runs: not proven
+012206 killed an archer while the beast ran 6.9 m/s (`BOW hit .. 'Bip_Head', 'PC_Ranged_Normal_Hit_Heavy_HeadOrc'`;
+`health 55.0 -> 0.0 DEAD`; frame shots/st-mv-archer1-ridden.png: "+20 Archer, +5 Bow Kill"), but `bow aimhead` turned the
+ray 82.4 deg: the director aimed at the objective marker, which is not where the archer stood (the orc hit 17.5 m away,
+the marker 31.6 m) - not a valid proof (the aim assist may settle only the last part). 003651/005410: the target lines
+lost (`bow target` follows only an orc in the player's bands), the beast turning or closing in. With the slow motion
+skipped the beast runs on under the drawn bow, so m13view.sh's charge (`rshot`: ridden straight at it, the bow out and
+drawn at a run, loosed within 33 m at 3 m/s or more) became the test - **015415, with the fix**: archer 2 loosed at
+6.8 m/s from 32.5 m by the hands' own aim (the pitch from where the archer stands, `verbs orcs` near its marker): the
+arrow flew (`fire`) but met the rock 25 m out, no hit; archer 3 drawn only 5.8 m from it (the beast closed in during the
+draw) and killed at 6.6 m/s (`health 17.5 -> 0.0 DEAD`) with a 72.7-deg `bow aimhead` turn - again not valid; archer 1:
+the beast reached it before the draw. **A hit while the beast runs stays unproven**; what is proven is that the beast
+now runs under the drawn bow and the arrow leaves at a run. Next: start the charge farther out (90 m) or slower (the
+stick at half), and aim by the hands with `bow target`'s lines (build 42).
+
+### 188.8 The live patch for build 41 (build-win10)
+Built from t3/lp41 at **bf10688** (the widget, branding from behind, the bow's string, the caragor pin's second stage)
+plus only this fix (somvr.c `bo_slow_c`/bo_start, somvr_ride_game.c, selftest.c; +95 -5):
+`LC_ALL=C live_patch.sh check` green, logic **a725e3fa**, staged with `LIVE_ROOT=logs/coord/b37/mountview42-patch/live-root
+live_patch.sh stage .. --next --base logs/build-win10/ShadowOfMordor/mod/somvr` (next/patches/1; not logs/live/next).
+The diff: logs/coord/b37/mountview42-patch/ride-bow-slowmo-lp41.diff. **Proven in boot 015415**: `live: patch 1
+applied at the start: .. (a725e3fa3b8c360b: 'The bow on a running caragor: ..')`, the game's `LIVE patch 1 applied at the
+session's start`, `CONFIG ride bow_slowmo=off (.., the default): .. is skipped` (the patch installed: no WARN), and the
+line's earlier fixes kept (`widget=hide`, `bow_string=on`, `pin=grip`). The code default is off: build-win10's env needs no line.
+
+### 188.9 Runs (logs/boot-check-; the Windows build under Proton, the desktop's slot 3 (light); the rung's save UNCHANGED each time; 0 WARN but the 2 Windows startup ones and m13a's trip warning)
+| Run | What | Shows |
+|---|---|---|
+| 20261106-235240 | 230319's archers' stage save | it restarts Big Game at the Forge Tower (Talion at 35400,-22400): no use as a rung |
+| 20261107-000135 | rung 13, m13a + m13view stand/run/bite/archers (old code) | 18 standing takes/put-aways: nothing; the beast's lurches (188.6); the collision |
+| 20261107-003651 | rung 13, archers with running bow cycles + charges (old code) | **the slow-motion brake and surge, twice** (188.3) |
+| 20261107-005410 | the same + `ride press 124` tests (the beast took no stick right after the mount: void) | the brake again; the surge when the push rose |
+| 20261107-012206 | build-win10 + the pace patch (bc5c3278), charges | the patch applies at the start; the pace does not work (188.4); the 82-deg "hit" (188.7) |
+| **20261107-015415** | build-win10 + the slow-motion patch (a725e3fa), stand/run/charges | **the patch applies; the beast keeps its pace under the bow; 34 SlowMo calls skipped; 7 arrows fired seated, 0 dropped** (188.5); the ridden hit still not valid (188.7) |
+
+### 188.10 Switch
+| Key | Code default | Env (the som-b42-mountview block) | What |
+|---|---|---|---|
+| `SOMVR_RIDE_BOW_SLOWMO` | off | off | off: seated on a beast the bow's slow motion (the SlowMo component) is skipped - the beast keeps its pace under the bow; game = build 41 (the beast slows with the world, back at its pace in one frame when the bow goes away) |
+
+### 188.11 For the headset
+- On a caragor at a run, take the bow from the shoulder: the beast keeps running (no brake); draw, loose, put the bow
+  away: no lurch forward.
+- Standing on the beast: the bow out and away moves nothing (as before).
+- Bites and being hit: the beast's own lunges and recoils carry the view 1:1 - a jolt?
+
+### 188.12 Traps
+- 230319/saves/GameData.sav restarts the mission at the Forge Tower; use rung 13 + m13a.sh.
+- Right after the mount the beast takes no stick for about a minute (a tutorial hold): 005410's experiments were void.
+- `bow target` is build 42 only (build-win10 has `bow aimhead`); the 'Objective' marker is not where the archer stands.
+- Two writers of somvr.trigger (a background `steer_for` and the main shell's words) lose words; `ride steer` latches,
+  so one word steers until `ride steer off`.
+- The director's `run` step right after the stand: the beast stood still through it in 015415 (as in 005410's
+  experiments); the charges are the reliable running test.
+- Delete a run's raw dumps only after composing its pictures (the both-eye pictures of 012206 are gone; its flat shots
+  remain).
+## 191. Build 42: Hunting Partners' bleed - the game asks the stealth's hands, and a sword drawn while crouched took them away: `SOMVR_GRAUG_BLEED_HANDS`, the leg's glow `SOMVR_GRAUG_BLEED_CUE`, the cut at its legs `SOMVR_GRAUG_BLEED_LEG` (2026-11-07, som-b42-bleed)
+190.1 (a): on build 41 the mission's "Bleed the Graug" was never offered where the drill stood (8 placements a boot,
+135-162 cm behind it, three boots), and the game's own X there played an ordinary attack. Code: somvr_bleed_game.c (new:
+the watch, the glow, the leg rule, the test words), somvr.c (`sl_stealth_hands` in the slots, the glow in th_frame, the
+contact loop's touch), somvr_verbs_game.c (vb_bleed's contact and leg rule, the words), scripts/nurn41/m14p.sh (the
+probe), scripts/nurn41/m14b.sh (the bleed the VR way). handoff/HANDOFF-bleed42.md.
+
+### 191.1 Where and when the game offers it (static, then boot 20261107-030755-1)
+- The node: Talion's root node 'PC_TrlCave_Hamstring' (1 of 105; its Input X 118 with the stealth crouch 125, the
+  lesson's [RT] + (X)). Its pool holds 12 attacks: 'PC_Hamstring_CaveTroll_[Sitting_|Stunned_]Left/RightLeg',
+  'PC_Hamstring_LowHealth_[Sitting_|Stun_]Left/RightLeg'. The eating graug ('AI_Troll_Rare', 'TrlCave_Eating_Loop',
+  state 'Ambient_Sitting') gets 'PC_Hamstring_CaveTroll_Sitting_RightLeg' (its sync 'AI_TrlCave_Hamstring_Kneel_RightLeg').
+- The predicates (FUN_1408c9930, 107 rejection tests) read by the brand's attack log (185.2, `SOMVR_VERBS_BRAND_NODELOG=on`
+  with `_FILTER=Hamstring`) while the watch asked the game 5 times a second (`verbs bleed probe`): standing, every one of
+  the 12 is **"Rejected Attack: PC_Hamstring_* - Active Item"**; the moment Talion crouches (our 125 hold: PC_Stealth makes
+  Acharn the active item and sheathes the sword) the sitting right-leg attack passes. Once the graug notices him it is
+  "Target Combat State".
+- The sweep (m14p.sh, the game's invisibility on, the view turned to it): offered at once at every placement - 80, 100,
+  120, 140, 160, 190 cm straight behind its root, 120 cm at +-30 and +-60 deg, 100 cm at +-90 deg (beside it), 150 cm at
+  +-30 deg; and 220 and 314 cm behind it in the later boots. Talion's own facing did not matter (the head turned 100 deg
+  away: still offered). It ends when the crouch ends. So the zone is wide; distance and angle were never the block.
+- The prompt 'Combat_ElfBleedTroll' (X, 'Stealth_ButtonX') rises with the crouch and lasts while it lasts (190.1's "9 s"
+  was the drill's `crouch hold` length).
+
+### 191.2 The cause: the sword drawn while crouched is the active item
+Build 38's `SOMVR_CROUCH_DRAW=keep` (170.2) keeps the crouch through the sword's draw; the draw itself is the game's
+(the slots' ACTIVATE of the sword's slot and FUN_023116f0's unsheathe), so the sword becomes the active item while 125 is
+still held, and the game does not sheathe again (PC_Stealth's swap happens at the crouch's start). Every bleed drill of
+build 41 crouched first, then drew, then cut: refused, and the game's X was its ordinary combo ('PC_HC_Lowest_*'). Build
+33's drill (147, offered at 140/150 cm) drew first, then crouched. Boot 20261107-033243-1 shows it on one spot (220 cm
+behind, `verbs bleed hands off`): OFFERED from the crouch (t 21901.3), not offered from the draw (21906.7) on.
+A player who draws after crouching - the natural order when sneaking up - could never bleed the graug.
+
+### 191.3 The fix: `SOMVR_GRAUG_BLEED_HANDS=on|off` (code default on; the som-b42-bleed block: on)
+While crouched (our hold or the game's crouch read back) within 320 cm of an unaware graug (not targeting Talion, Talion
+in its back half), with the game's sword drawn and active and the bleed refused, the watch asks the slots once per crouch;
+the next slots step (`sl_stealth_hands`, somvr.c) puts the game's sword away (FUN_023116f0 with 1) and makes Acharn's
+slot active - what PC_Stealth does when Talion crouches with the sword out - and reads the slots again at once, so the
+attach keep (`SOMVR_SLOTS_KEEP=attach`) holds the VR sword in the hand in the same step: no animation, no frame on the
+back. Only with the attach keep and the sword in the hand. Boot 20261107-034817-1: crouch = offered (22892.4), the draw
+(22897.7) = refused, the stealth's hands asked (22897.84) and done (22897.89: "now slot 1, the sword sheathed 1", "the game
+put it away: kept in the hand ... no draw, no animation"), offered again 0.35 s after the draw (22898.04).
+
+### 191.4 The cue: `SOMVR_GRAUG_BLEED_CUE=on|off` (code default on)
+While the game offers the bleed (the watch's ask within 0.5 s said yes), the wraith-blue glow (the grab cue's and the
+mount cue's kind: the game lets you do this here) on the back of the leg the attack names - 65 % from the knee (R_Legl)
+toward the foot (R_Foot), 22 cm out of the shin toward the eyes - at the cues' faint level (0.55), full (0.95) with one
+tick in the sword hand when the blade comes within 45 cm of it. Nothing while it is not offered: no button, no text. Boot
+030755-1: 2658 frames of it in the sweep (the threat line's blue glow, 0.26 m).
+
+### 191.5 The cut at its legs: `SOMVR_GRAUG_BLEED_LEG=on|off` (code default on)
+Build 30's rule (131.5) is kept: a blade contact that would deal a hit, the game asked at that moment, X (118) for 150 ms
+instead of the hit. New: while it is offered the contact must be on a lower leg or a foot (within 60 cm of the shin's
+axis R/L_Legl -> R/L_Foot); a contact elsewhere on the graug is a touch - no hit (the flat game's crouch there has no other
+attack, and an ordinary hit wakes it), and it leaves the hit cooldown alone so the same swing can go on into the leg.
+Off = build 30 (any contact).
+
+### 191.6 Proof in mission 14 (rung 14, nurn41-drive.sh; the rung's save UNCHANGED every run)
+Headless Windows boots on the test laptop rus (`WIN_RENDER=light`), each from the ladder's rung 14 (Hunting Partners at
+its card), scripts/ladder_boot.sh + nurn41-drive.sh; the rung's save UNCHANGED each time; WARN = the Windows startup pair
+and the trips' "did not arrive" only. The attack log on (`SOMVR_VERBS_BRAND_NODELOG=on`, `_FILTER=Hamstring`).
+| Run (logs/boot-check-) | Director | What happened | Proves |
+|---|---|---|---|
+| 20261107-024125-1 | m14p | the graug stayed in its presentation 21 m off: no eating graug | - (harness: the wait now hides Talion 32 m off) |
+| 20261107-025749-1 | m14p | the wait's helper printed a trip's line that was read as the graug; stopped | - (harness) |
+| 20261107-030755-1 | m14p (`abil rec`, the probe, 14 placements) | 557 of 1736 asks offered: every placement offered from the crouch on; standing every hamstring "Active Item" | **the zone and the test** (191.1) |
+| 20261107-033243-1 | m14b, `verbs bleed hands off` | crouch at 220 cm: OFFERED; the draw: refused at the same spot; the drill's put-back then woke it | **the cause** (191.2), the old code failing |
+| 20261107-034817-1 | m14b, hands on | crouch: offered; the draw: refused; the stealth's hands: offered 0.35 s later; the stick's sneak with the invisibility off made it react at 270 cm | **the fix restores the offer** (191.3) |
+| 20261107-040553-1 | m14b (the invisibility kept, BLB_CUTS="0 1") | try 1, the sword drawn before the crouch: offered by the game's own stealth sheathe (no swap needed); try 2, crouch then draw: the swap, offered, the aimed stab through the glow met its thigh capsule first - the shin-axis leg rule said "not on its legs" x2, no bleed | the other way in; the leg rule's bug (fixed: the capsule, 2a842eb) |
+| **20261107-042120-1** | m14b + m14.sh (`M14_SKIP="follow bleed"`) | crouch, then the draw, the stealth's hands, the glow, the stab at it: **`the blade on graug ..'s leg (its capsule -10: a thigh or a shin)` -> `the game offers 'PC_Hamstring_CaveTroll_Sitting_RightLeg' .. X (118)` -> Talion 'PC_Hamstring_CaveTroll_Sitting_RightLeg'**, the tutorial passed, **"Step Two, Cap'n, the blood'll attract Caragors."** at the first try; then m14.sh's mount loop for 9 min: "mounted 0" (the caragors the blood brought were knocked down 30+ m off by the graug; the drill's grip at the offer never met one - the harness's mount, as 190.1's 16), stopped there | **the bleed the VR way and the mission past "Bleed the Graug"** |
+Pictures (both eyes, composed; 040553-1/composed/frame7241.png, frame9741.png): crouched behind the kneeling graug, its
+back over the view, the drawn blade low in the view by its leg, the faint blue glow on the leg beside the blade - the same
+in both eyes; small at ~1.3 m (the grab cue's size and level) - the headset judges whether it is enough. 042120-1/composed/
+frame7222.png (just before the stab: the glow on the calf beside the blade, both eyes), frame7482.png (2.6 s after: the
+risen graug's legs at arm's length, "Step Two" in the subtitles, the view where the head held it - nothing moved it).
+
+### 191.7 Switches, words, lines
+| Key | Code default | Env (the som-b42-bleed block) | What |
+|---|---|---|---|
+| `SOMVR_GRAUG_BLEED_HANDS` | on | on | crouched behind an unaware graug with the game's sword drawn: the stealth's hands (191.3) |
+| `SOMVR_GRAUG_BLEED_CUE` | on | on | the blue glow on the back of its leg while offered (191.4) |
+| `SOMVR_GRAUG_BLEED_LEG` | on | on | the cut at its legs; a touch elsewhere no hit while offered (191.5) |
+| `SOMVR_GRAUG_BLEED_CUE_LEVEL` / `_CM` / `_DEG` | 0.8 / 42 / 9 | - | the glow's brightness while offered (1 with the blade near), its quad (cm), at least this much of the view (191.10) |
+| `SOMVR_HINTS_BUTTONS` | hide | hide (the som-b42-bleed2 block) | a kept lesson or hint line that names a button is hidden (191.9) |
+Test words (SOMVR_HANDS_TEST): `verbs bleed probe S` (every ask logged; with `SOMVR_VERBS_BRAND_NODELOG=on` the attack log's
+window kept open), `verbs bleed where` (the cut's point, knee, foot, root in the head's frame), `verbs bleed hands on|off`.
+Lines: `CONFIG verbs build 42: graug_bleed_cue=.. graug_bleed_leg=..`, `.. graug_bleed_hands=..`, `VERBS bleed watch t=..
+graug ..: OFFERED '..' | not offered (..) - N cm root to root, N deg off its facing, Talion's body N deg off it, crouched
+a/b, its feet R N L N cm` (on a change), `.. the stealth's hands asked`, `SLOTS t=.. the bleed's stealth hands: ..`, `VERBS
+t=.. bleed: the blade on graug .. not on its legs: a touch, no hit`, `VERBS END build 42: the bleed's watch asked N, offered
+N ..; the cue's glow N frames, ticks N; the cut on its legs N, touches elsewhere N; the stealth's hands asked N, done N`.
+
+### 191.8 The harness's traps (scripts/nurn41)
+- `crouch hold` takes at most 10000 ms: lib42.sh's `crouch 12000` (190's bleed) and a 15000 were ignored (boot 030755-1's
+  m14b stood). The directors re-hold every ~10 s.
+- The eating graug: it stays in 'AI_Troll_Presentation_Showdown_Idle' while Talion is within ~25 m and visible; m14p/m14b
+  wait under the game's invisibility, 32 m off it. A helper whose stdout is read with `$(...)` must print nothing else
+  (boot 025749-1 read a trip's line as the graug).
+- With the invisibility off the stick's sneak at 270-290 cm made it react ('AI_TrlCave_ReactToSurprised_B', boot
+  034817-1); the stray blade of the drill's draw / put-back at ~2 m hit its legs and woke it (033243-1). m14b now draws at
+  300 cm and keeps the invisibility through the approach (BLB_INVIS=keep).
+- rus: stopping rus.sh leaves the game running (a `quit` into the run's cmd stops it); a copy-back can fail on
+  game-work's permissions (`rus.sh pull` too): rsync the files by hand.
+
+### 191.9 No button lines: `SOMVR_HINTS_BUTTONS=hide|keep` (code default hide; the som-b42-bleed2 block: hide; somvr_gameopts_game.c go_dlg, somvr_collect_game.c CO_TXT_ICON)
+A player's look at 042120-1's pictures: "Use [RT] + (X) on the Graug from behind to Bleed." in both eyes, mid-left - not
+the prompt band (165), but the mission's lesson line, the tutorial record 'GP_Torvin02_Tut_TrollBleed' that the HUD's
+text manager shows (GO_TUTORIAL) and build 24 let through `SOMVR_HINTS=off` by its name (`SOMVR_HINTS_KEEP_TUT=GP_`: the
+Sea Fort's lesson explained a locked press). The policy is no button prompts, so the class goes: **a line kept that way (a
+mission's lesson, a hint kept by `SOMVR_HINTS_KEEP`) whose text names a button is hidden**; a lesson without a button
+(Hunting Partners' later "Headshot the Graug with a Charged Shot.", 'GP_Torvin02_Tut_TrollStun') stays, and so do the
+objective (ours, 44), the subtitles, the awareness triangles (165, 169.8) and the pausing cards (`SOMVR_HINTS_PAUSING`:
+the game waits on them; their own page). How a line is known to name a button: the HUD builds the line's text inside the
+tutorial event's call, and each `{Action}` token in it asks CO_TXT_ICON (FUN_00a15c20's icon call, already ours for
+`SOMVR_TEXT_BUTTONS`; now patched with no map too) for its icon on that thread - boot 042120-1 shows the pausing card's
+tokens 125, 118, 121 logged right after its show. go_dlg counts them for its own thread while the call runs; any token =
+the line names a button: the game's own hide of that record ({show 0, record}) follows in the same call, before a frame
+draws it, and the record's later shows are dropped. Lines: `CONFIG hints buttons=..`, `HINTS buttons t=.. 'NAME' names a
+button (..): hidden at once ..` / `names no button: shown as the game shows it` / `(found before): its show dropped`,
+`HINTS END buttons: kept lines probed N - ..`.
+Proof (rus, rung 14, m14g.sh + m14b.sh; 044911-1 and 050846-1, each the rung's save UNCHANGED, WARN the startup pair and trips only): `HINTS buttons t=26330.663: 'GP_Torvin02_Tut_TrollBleed' names a button ..: hidden at once`;
+both-eye pictures from then on show no lesson line - 6 m behind it standing (frame5621), crouched at 2.4 m and 1.1 m
+(frame5996, frame6376), the blade at the glow (frame6611, with Talion's subtitle "I've got to pierce its ankle if I want
+to bleed it." still there); 050846-1 the same at the lesson's first show (t 27503.979) and no line in its pictures. No
+other hint came in these runs (TrollStun, a lesson with no button, needs the mount and the lure): the "names no button"
+branch is not yet seen in a game.
+
+### 191.10 The glow brighter and larger (`SOMVR_GRAUG_BLEED_CUE_LEVEL` 0.8, `_CM` 42, `_DEG` 9)
+042120-1's glow was the grab cue's: 26 cm at level 0.55, 22 cm out of the shin's axis - inside the calf (the shin capsule
+38), a pale smudge behind the skin, hidden beside the blade. Now: at the leg's surface (34 cm out of the axis toward the
+eyes), level 0.8 while offered and 1 with the blade within 45 cm (its tick as before), and its own quad (BL_KIND, a private
+kind bit stripped before the layer: th_frame sizes it by bl_glow_size_m) - 42 cm, and never under 9 deg of the view
+(~19 deg at 1.3 m, ~10 deg at 2.5 m; the grab cue: 11 and 6). The same wraith-blue row as the grab and mount cues.
+Proof (044911-1): frame5996 (the glow 244 cm from the eyes, crouched 345 cm behind its root): a clear blue-white spot on
+the back of the right calf, both eyes; frame6376 (109 cm): the same, larger; frame6611 (the blade lined up at it): full
+blue; the END line's ticks 2; the bleed by the blade on its leg ("its capsule -10: a thigh or a shin" -> the game's
+'PC_Hamstring_CaveTroll_Sitting_RightLeg' -> "Step Two") as the drill's blade came back from that pose. 050846-1 with the
+final code: frame6931 (234 cm: a clear wraith-blue spot on the shaded calf), frame7291 (141 cm: blue-white on the calf),
+both eyes; the stealth's hands asked and offered 0.2 s after the crouched draw. Its m14b part did not run: the drill's
+`story invisible off` at m14b's start, 9 m from the graug, made it leave its meal for its presentation, which it never
+left in 20 minutes (as 024125-1's) - a director trap, not the mod's (m14b after m14g needs the invisibility kept).
+Also (191.3's gap): right after a crouched draw, before the watch's next ask, the blade by its leg dealt the ordinary hit
+(044911-1, t 26431.96: "not offered .. the ordinary hit"; the graug went on eating and was bled 7 s later). A contact while
+the stealth's hands are due (or asked within 1 s) is now a touch, no hit (`bl_refused_touch`; the END line's "while the
+swap was due").

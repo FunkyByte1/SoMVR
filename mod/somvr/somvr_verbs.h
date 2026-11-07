@@ -68,6 +68,7 @@ typedef struct {
     int game_done;     /* the game's hold ended on its own (completed or out: Talion's record) */
     int let_go;        /* build 31: let the held orc go now (the hand's push: the shove follows) */
     int no_ask;        /* build 31: no pull to the face now (the blade swings or just met the held orc) */
+    int no_cap;        /* build 42 (SOMVR_VERBS_CARRY_NOCAP): the hold is a carry (Lithariel): no longest hold */
 } somvr_vb_hand_in;
 
 enum { SOMVR_VBH_IDLE = 0, SOMVR_VBH_GRAB, SOMVR_VBH_WRAITH };

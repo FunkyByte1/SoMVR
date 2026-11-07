@@ -38,7 +38,9 @@
  *     thrust along it = completed as the game's own (+0xa5, its next update wins: build 27's write). No node (Linux,
  *     a record without one): the nearest orc's Neck; no orc: build 27's steer.
  *   A beast's domination (Talion's 'PC_Warg_Domination_*' / Troll / Graug) stays SOMVR_RIDE's grip; its ring runs
- *   down over SOMVR_RIDE_DOM_HOLD_MS at the beast's node while the hand holds.
+ *   down over SOMVR_RIDE_DOM_HOLD_MS at the beast's node while the hand holds. Build 42 (som-b42-pin, docs 189): the
+ *   caragor pin's second stage ('PC_Warg_Struggle_StruggleB') the same (SOMVR_STRUGGLE_PIN=grip, its own hold
+ *   SOMVR_STRUGGLE_PIN_HOLD_MS) - the ring at the caragor's head, the left grip held.
  * The cue (SOMVR_STRUGGLE_CUE, objective layer SOMVR_OBF_STRUGGLE): a quad facing the head at the node (or 70 cm ahead
  * of the eyes): the timer ring's steps, or the arrow. Lines: `STRUGGLE t=.. b41 ...`, `STRUGGLE END build 41 ...`. */
 #include "somvr_struggle.h"
@@ -161,6 +163,21 @@ static struct {
 	double auto_t;
 	float lu[6];             /* the right test hand that lays the drawn blade on the outline (`hands test R` numbers) */
 	uint64_t n_auto;
+	/* build 42 (SOMVR_STRUGGLE_WIDGET): the game's own widget hidden under the rule */
+	int widget;              /* 1 hide (code default), 0 show (build 41) */
+	_Atomic int req_widget;  /* the word `struggle widget hide|show`: 2 hide, 1 show */
+	_Atomic int req_pin;     /* build 42, the word `struggle pin grip|outline`: 2 grip, 1 outline (g_mt.pin) */
+	int pin_now;             /* this struggle is the caragor pin's second stage, answered by SOMVR_RIDE's grip */
+	float pin_held;          /* ... the grip's longest hold in it (s) */
+	uint64_t pin_won0;       /* ... SOMVR_RIDE's pins won before it (its verdict: one more = won) */
+	int cue_seen;            /* build 42 (som-b42-pin): a cue of ours was up in this struggle (184's gate: a latch - boot
+				  * 20261107-001704-1 on a slow game ticked 0.3 s apart and read the fresh-only check as none) */
+	uint64_t n_pin, n_pin_won;
+	int wid_hid, wid_bad;    /* this struggle's widget hidden by us; no clip to hide (logged once) */
+	int wid_kept;            /* ... kept: no cue of ours up for it (logged once) */
+	int hold_game, hold_wait_logged, hold_listen_logged; /* build 42: the hold - the game's held(+118) seen; the class
+				  * not listening yet (+0x119) while the fist is closed / listening: the fist's press sent fresh */
+	uint64_t n_wid_hidden, n_wid_calls, n_wid_none, n_wid_kept;
 	uint64_t n_rule[SOMVR_SGA_N], n_won41, n_lost41, n_anc_game, n_anc_orc, n_laid, n_stabs, n_stab_won, n_holds, n_swipes,
 		n_swipe_ok, n_swipe_off, n_leans, n_dir_sent, n_qt_outside, n_counted, n_cue;
 } g_stg = { .armed = { 1, 1 } };
@@ -212,6 +229,7 @@ static void stg_config(void)
 	somvr_sg_stab_defaults(&g_stg.kcfg);
 	g_stg.kcfg.align_cm = env_float("SOMVR_STRUGGLE_AIM_ALIGN_CM", g_stg.kcfg.align_cm, 5.0f, 40.0f, &bad);
 	g_stg.kcfg.align_deg = env_float("SOMVR_STRUGGLE_AIM_ALIGN_DEG", g_stg.kcfg.align_deg, 5.0f, 60.0f, &bad);
+	g_stg.widget = env_word("SOMVR_STRUGGLE_WIDGET", (const char *const[]){ "show", "hide" }, 2, 1); /* build 42 */
 	char sw[200] = "";
 #ifdef _WIN32
 	g_stg.sites_ok = 1;
@@ -237,6 +255,13 @@ static void stg_config(void)
 	      "the blade laid on the outline at the ring's node and a thrust (a beast's domination stays SOMVR_RIDE's grip)"
 	      : "build 27: only Talion's last chance (and a captain's finisher)", g_stg.mash_mps, g_stg.swc.min_mps,
 	      g_stg.swc.min_cm, g_stg.lean_cm, g_stg.cone_deg, g_stg.kcfg.align_cm, g_stg.kcfg.align_deg, g_stg.cue ? "on" : "off", sw);
+	logf_("CONFIG struggle build 42: widget=%s (SOMVR_STRUGGLE_WIDGET%s): %s", g_stg.widget ? "hide" : "show",
+	      getenv("SOMVR_STRUGGLE_WIDGET") ? "" : "; unset: hide", g_stg.widget ? "while the rule b41 answers, the game's own "
+	      "struggle widget (its 'StruggleTarget' clip: the ring and cursor, the button glyph, the hold's fill) is hidden every "
+	      "input tick (its root clip's set-visible(0)) once a cue of ours is up for it (the outline, the white ring or the "
+	      "arrow; none: the game's stays); the quick time has no "
+	      "widget (its prompt: SOMVR_GAME_PROMPTS); under b27 the game's cursor stays (the hand steers it)"
+	      : "build 41: the game's widget shown beside ours");
 }
 
 /* build 41: the struggle's class as somvr_struggle.h's */
@@ -246,12 +271,9 @@ static int stg_sg_kind(int k)
 	       : k == STG_AIM ? SOMVR_SG_AIM : k == STG_NONE ? SOMVR_SG_NONE : SOMVR_SG_OTHER;
 }
 
-/* build 41: a beast's domination (SOMVR_RIDE answers it: the hand that took the beast held) */
-static int stg_beast_dom(const char *atk)
-{
-	return atk && strstr(atk, "Domination") && !strstr(atk, "Fail") &&
-	       (strstr(atk, "Warg") || strstr(atk, "Troll") || strstr(atk, "Graug"));
-}
+/* build 41: a beast's domination (SOMVR_RIDE answers it: the hand that took the beast held); build 42 (som-b42-pin): the
+ * caragor pin's second stage too while SOMVR_STRUGGLE_PIN=grip (SOMVR_RDG_PIN) */
+static int stg_beast_dom(const char *atk) { return somvr_rd_grip_strug(atk, g_mt.pin); }
 
 /* build 41: the ring's node of the struggle's UI data in the world (cm) - the game's own anchor of its widget (W
  * FUN_1405abcd0: the record's UI data, its node on Talion (+0x38) or the other (+0x70) by its position type and +0xa4);
@@ -507,7 +529,8 @@ static void stg_hands(const sv_vec3 p[2], const sv_vec3 pw[2], sv_vec3 hp, sv_qu
 		if (stg_log_ok())
 			logf_("STRUGGLE t=%.3f a thrust of the %s hand at %.1f m/s%s", t, hnd ? "right" : "left", sp * 0.01f,
 			      counts ? ": one press of the struggle's command queued" : !g_stg.on ? " (SOMVR_STRUGGLE=off: nothing)"
-			      : g_stg.rule && !g_stg.ours ? " (b41: a beast's domination - the grip's, not a thrust's)"
+			      : g_stg.rule && !g_stg.ours ? (g_stg.pin_now ? " (b42: the pin's second stage - the left grip's, not a "
+							     "thrust's)" : " (b41: a beast's domination - the grip's, not a thrust's)")
 			      : g_stg.rule && g_stg.ours && !b41p ? " (b41: this class is not answered by a thrust)"
 			      : !g_stg.rule && !g_stg.death ? " (not the last chance: nothing)" : " (no command known for this struggle: nothing)");
 	}
@@ -529,7 +552,8 @@ static void stg_b41_start(uintptr_t obj, const unsigned char *f, const char *atk
 	g_stg.anc_type = -1, g_stg.anc_side = 0, g_stg.o_ok = 0, g_stg.cue_show = 0, g_stg.dir_ticks = 0, g_stg.head0_ok = 0;
 	g_stg.dir_v[0] = g_stg.dir_v[1] = 0, g_stg.made_was = 0, g_stg.res_was = 0, g_stg.won_t = 0, g_stg.held_need = 0;
 	g_stg.o_flash_until = 0, g_stg.hold_t = 0, g_stg.auto_step = 0, g_stg.auto_t = 0, g_stg.lu_ok = 0, g_stg.o_fixed = 0;
-	g_stg.o_line_t = 0, g_stg.blade_ok = 0, g_stg.vh_logged = 0;
+	g_stg.o_line_t = 0, g_stg.blade_ok = 0, g_stg.vh_logged = 0, g_stg.cue_seen = 0;
+	g_stg.hold_game = g_stg.hold_wait_logged = g_stg.hold_listen_logged = 0; /* build 42 */
 	atomic_store(&g_stg.aim_stab, 0);
 	somvr_sg_stab_init(&g_stg.stab);
 	for (int h = 0; h < 2; h++)
@@ -537,7 +561,9 @@ static void stg_b41_start(uintptr_t obj, const unsigned char *f, const char *atk
 	if (!g_stg.rule || !obj || !f)
 		return;
 	int k = stg_sg_kind(g_stg.kind);
-	g_stg.beast = stg_beast_dom(atk);
+	g_stg.beast = stg_beast_dom(atk) != SOMVR_RDG_NONE;
+	g_stg.pin_now = stg_beast_dom(atk) == SOMVR_RDG_PIN, g_stg.n_pin += (uint64_t)g_stg.pin_now, g_stg.pin_held = 0; /* b42 */
+	g_stg.pin_won0 = g_mt.pin_won;
 	g_stg.ours = !g_stg.beast && k > SOMVR_SG_NONE && k < SOMVR_SG_OTHER;
 	g_stg.anc_game = g_stg.kind != STG_OTHER && stg_anchor_game(obj, 1);
 	if (g_stg.anc_game)
@@ -557,7 +583,11 @@ static void stg_b41_end(double t)
 	/* (a won struggle is freed at once: its last live read is often still 0 - boot 173820's won last chance) */
 	int won = g_stg.res_was == 1 || g_stg.res_was == 2 || (g_stg.act == SOMVR_SGA_STAB && atomic_load(&g_stg.aim_stab) == 2) ||
 		  (g_stg.act == SOMVR_SGA_THRUSTS && g_stg.made_need > 0 && g_stg.made_was >= g_stg.made_need) ||
-		  (g_stg.act == SOMVR_SGA_HOLD && g_stg.hold.held >= g_stg.held_need && g_stg.held_need > 0) || strstr(an, "Win");
+		  (g_stg.act == SOMVR_SGA_HOLD && g_stg.hold_game && g_stg.hold.held >= g_stg.held_need && g_stg.held_need > 0) ||
+		  strstr(an, "Win");
+	if (strstr(an, "Lose")) /* build 42: the game's own loss ('PC_BH2_Alert_Sync_PCDrained_Kill_PLLose', boot
+				 * 20261106-212056: our hold timer ran full while the game never saw the press) */
+		won = 0;
 	g_stg.n_won41 += won, g_stg.n_lost41 += !won;
 	if (stg_log_ok())
 		logf_("STRUGGLE t=%.3f b41 over: %s answered by %s - %s (its last result %d); the node %s; thrusts in it %llu, "
@@ -591,8 +621,9 @@ static void stg_cue(const unsigned char *f, double t)
 		memcpy(&need, f + 0x100, 4);
 		id = f[0x8c] == 1 ? SOMVR_OB_TIMER_ARMED : somvr_sg_steps_hold(g_stg.hold.held, need, SOMVR_OB_TIMER_STEPS);
 		break;
-	case SOMVR_SGA_GRIP: /* SOMVR_RIDE's hold on the beast */
-		id = g_mt.sg.won ? SOMVR_OB_TIMER_ARMED : somvr_sg_steps_hold(g_mt.sg.held, g_mt.dom_hold_s, SOMVR_OB_TIMER_STEPS);
+	case SOMVR_SGA_GRIP: /* SOMVR_RIDE's hold on the beast (build 42: its own length - the pin's is shorter) */
+		id = g_mt.sg.won ? SOMVR_OB_TIMER_ARMED : somvr_sg_steps_hold(g_mt.sg.held, g_mt.sg.win_s > 0 ? g_mt.sg.win_s :
+									     g_mt.dom_hold_s, SOMVR_OB_TIMER_STEPS);
 		break;
 	case SOMVR_SGA_SWIPE:
 		memcpy(&roll, f + 0xa8, 4);
@@ -603,7 +634,10 @@ static void stg_cue(const unsigned char *f, double t)
 	}
 	if (!show)
 		return;
-	if (g_stg.anc_ok && cb_now() - g_stg.anc_t < 0.5 && vec_ok(g_stg.anc, 1e7f))
+	/* build 42 (som-b42-pin): the pin's second stage - not at its node: the caragor's head is 4-5 m from the held view,
+	 * behind or beside it in every pin so far (boot 20261107-001704-1: xr -2.4 -0.2 +4.1 and -3.0 0.0 +4.0; 215153:
+	 * 392 cm behind) - its ring where the takedown's just was, ahead of the eyes */
+	if (g_stg.anc_ok && !g_stg.pin_now && cb_now() - g_stg.anc_t < 0.5 && vec_ok(g_stg.anc, 1e7f))
 		memcpy(g_stg.cue_pos, g_stg.anc, sizeof g_stg.cue_pos);
 	else { /* no node: 70 cm ahead of the eyes, 20 cm under them */
 		float h[3] = { 0, -20, 70 };
@@ -612,9 +646,10 @@ static void stg_cue(const unsigned char *f, double t)
 	if (!g_stg.cue_show_was && (g_stg.n_cue++, 1))
 		if (stg_log_ok())
 			logf_("STRUGGLE t=%.3f +%.2f s: b41 the cue: %s at %.0f %.0f %.0f (%s)", t, t - g_stg.t0, id == SOMVR_OB_SG_ARROW ?
-			      "the arrow" : "the timer ring", g_stg.cue_pos[0], g_stg.cue_pos[1], g_stg.cue_pos[2], g_stg.anc_ok ?
+			      "the arrow" : "the timer ring", g_stg.cue_pos[0], g_stg.cue_pos[1], g_stg.cue_pos[2], g_stg.pin_now ?
+			      "ahead of the eyes: the pin's - the beast's head is away from the held view" : g_stg.anc_ok ?
 			      g_stg.anc_node : "ahead of the eyes: no node");
-	g_stg.cue_id = id, g_stg.cue_roll = roll, g_stg.cue_show = 1, g_stg.cue_t = mono();
+	g_stg.cue_id = id, g_stg.cue_roll = roll, g_stg.cue_show = 1, g_stg.cue_t = mono(), g_stg.cue_seen = 1;
 }
 
 /* the input tick, a struggle of the rule's (f just read): 1 = done here, 0 = the thrusts' presses below (press count,
@@ -629,7 +664,7 @@ static int stg_b41_tick(sc_tick_out *o, uintptr_t obj, const unsigned char *f, d
 	if (g_stg.act != SOMVR_SGA_STAB)
 		stg_auto(f, t); /* (`struggle auto on`: the test hands) */
 	if (!g_stg.on || !g_stg.ours) { /* a beast's domination: SOMVR_RIDE answers it; its ring here */
-		g_stg.pending = 0;
+		g_stg.pending = 0, g_stg.pin_held = fmaxf(g_stg.pin_held, g_mt.sg.held);
 		if (g_stg.on)
 			stg_cue(f, t);
 		return 1;
@@ -669,7 +704,25 @@ static int stg_b41_tick(sc_tick_out *o, uintptr_t obj, const unsigned char *f, d
 				      on ? "closed" : "let go", g_stg.cmd, g_stg.cmd > 0 ? bo_cmd_name(g_stg.cmd) : "-", on ? "on" : "off",
 				      f[0x118], f[0xfe], was ? g_stg.hold.held : 0, g_stg.held_need);
 		}
-		if (on && g_stg.cmd > 0 && f[0xfe] < 2) {
+		/* build 42: the class listens for its command only once its time passes +0xf8 (+0x119 set, its delegates
+		 * registered then: L CStruggleHold::vf_02 / W 0x1405af470 -> FUN_00e13ca0) - a press before that is no press to
+		 * it, and a command held from then on gives it no rising edge (boot 20261106-212056: the fist at +0.39 s,
+		 * +0x118 never set, lost). So the fist's command waits (kept off by stg_cmd_block) until +0x119, then goes in
+		 * fresh while the hand stays closed. */
+		int listening = f[0x119] != 0;
+		g_stg.hold_game |= f[0x118] != 0;
+		if (on && !listening && !g_stg.hold_wait_logged && stg_log_ok()) {
+			uint32_t at = 0;
+			memcpy(&at, f + 0xf8, 4);
+			g_stg.hold_wait_logged = 1;
+			logf_("STRUGGLE t=%.3f +%.2f s: b42 the hold: the fist is closed; the class listens only from +%u ms (+0x119 0) - "
+			      "its press waits for it", t, t - g_stg.t0, at);
+		}
+		if (on && listening && !g_stg.hold_listen_logged && stg_log_ok())
+			g_stg.hold_listen_logged = 1, logf_("STRUGGLE t=%.3f +%.2f s: b42 the hold: the class listens (+0x119) - the "
+							     "fist's command %d sent fresh (the game's held(+118) %u, phase %u)", t,
+							     t - g_stg.t0, g_stg.cmd, f[0x118], f[0xfe]);
+		if (on && listening && g_stg.cmd > 0 && f[0xfe] < 2) {
 			if (o->ncmd < SC_OUT_CMDS)
 				o->cmd[o->ncmd++] = g_stg.cmd;
 			if (sc_denied(g_stg.cmd, g_inp.ctx))
@@ -997,7 +1050,7 @@ static void stg_auto(const unsigned char *f, double t)
 	g_stg.auto_step++;
 }
 
-/* the test words (the writer thread): "struggle status|pose|rule b27|b41|auto on [S]|off" */
+/* the test words (the writer thread): "struggle status|pose|rule b27|b41|auto on [S]|off|widget hide|show|pin grip|outline" */
 static const char *stg_word(const char *w)
 {
 	if (!strcmp(w, "status"))
@@ -1015,6 +1068,10 @@ static const char *stg_word(const char *w)
 	}
 	if (!strcmp(w, "auto off"))
 		return atomic_store(&g_stg.req_auto, 1), "struggle auto off";
+	if (!strcmp(w, "widget hide") || !strcmp(w, "widget show")) /* build 42 */
+		return atomic_store(&g_stg.req_widget, w[7] == 'h' ? 2 : 1), w[7] == 'h' ? "struggle widget hide" : "struggle widget show";
+	if (!strcmp(w, "pin grip") || !strcmp(w, "pin outline")) /* build 42 (som-b42-pin) */
+		return atomic_store(&g_stg.req_pin, w[4] == 'g' ? 2 : 1), w[4] == 'g' ? "struggle pin grip" : "struggle pin outline";
 	return NULL;
 }
 
@@ -1034,10 +1091,18 @@ static void stg_requests(double t)
 		      "answer each struggle as a player would" : "off", g_stg.auto_delay, a == 2 && !g_bd.test ?
 		      " (SOMVR_HANDS_TEST is off: no test hands)" : "");
 	}
+	int pw = atomic_exchange(&g_stg.req_pin, 0); /* build 42 */
+	if (pw)
+		g_mt.pin = pw == 2 && g_mt.on, logf_("STRUGGLE t=%.3f pin %s (the word; the next struggle on)%s", t, g_mt.pin ? "grip" :
+						     "outline", pw == 2 && !g_mt.on ? " (SOMVR_RIDE is off: the outline)" : "");
+	int wd = atomic_exchange(&g_stg.req_widget, 0);
+	if (wd)
+		g_stg.widget = wd == 2, logf_("STRUGGLE t=%.3f widget %s (the word: the game's own struggle widget %s)", t,
+					      g_stg.widget ? "hide" : "show", g_stg.widget ? "hidden under the rule b41" : "shown");
 	if (atomic_exchange(&g_stg.req_status, 0))
-		logf_("STRUGGLE t=%.3f status: rule %s, auto %s; now %s%s (act: %s, the node %s); so far won %llu, lost %llu",
-		      t, g_stg.rule ? "b41" : "b27", g_stg.auto_on ? "on" : "off", g_stg.obj ? g_stg_kind[g_stg.kind] : "no struggle",
-		      g_stg.obj && g_stg.beast ? " (a beast's domination)" : "", somvr_sg_act_name(g_stg.act),
+		logf_("STRUGGLE t=%.3f status: rule %s, widget %s, pin %s, auto %s; now %s%s (act: %s, the node %s); so far won %llu, lost %llu",
+		      t, g_stg.rule ? "b41" : "b27", g_stg.widget ? "hide" : "show", g_mt.pin ? "grip" : "outline", g_stg.auto_on ? "on" : "off", g_stg.obj ? g_stg_kind[g_stg.kind] : "no struggle",
+		      g_stg.obj && g_stg.pin_now ? " (the pin's second stage)" : g_stg.obj && g_stg.beast ? " (a beast's domination)" : "", somvr_sg_act_name(g_stg.act),
 		      g_stg.anc_node[0] ? g_stg.anc_node : "-", (unsigned long long)g_stg.n_won41, (unsigned long long)g_stg.n_lost41);
 }
 
@@ -1069,8 +1134,9 @@ static void stg_vh(somvr_vrhands_frame *e)
  * 165235 lost the Ioreth hold so x4); 0 = none */
 static int stg_cmd_block(void)
 {
-	return g_stg.on && g_stg.rule && g_stg.obj && g_stg.ours && g_stg.act == SOMVR_SGA_HOLD && !g_stg.hold.on && g_stg.cmd > 0 &&
-	       (!g_stg.have_f || g_stg.f[0xfe] < 2) ? g_stg.cmd : 0;
+	return g_stg.on && g_stg.rule && g_stg.obj && g_stg.ours && g_stg.act == SOMVR_SGA_HOLD && g_stg.cmd > 0 &&
+	       (!g_stg.hold.on || !(g_stg.have_f && g_stg.f[0x119])) && (!g_stg.have_f || g_stg.f[0xfe] < 2) ? g_stg.cmd : 0;
+	/* (build 42: also while the class does not listen yet (+0x119 0) - its press must be fresh once it does) */
 }
 
 /* ob_frame: the cue in the objective layer (first: during a struggle nothing else) */
@@ -1096,6 +1162,93 @@ static int stg_entry(somvr_objective_frame *e)
 }
 
 /* the input tick: the struggle's object; our press of its command */
+/* build 42 (som-b42-struggle, docs/re-xr-pipeline.md 184): the game's own struggle widget hidden while the rule
+ * answers. StruggleSequenceUIMgr builds each class's widget inline in the struggle - a UI movie-clip ref whose clip
+ * (+0x10) is the 'StruggleTarget' it attaches: the press count's at +0xd0 (L FUN_00ed0a70; its update W 0x140665fd0),
+ * the hold's at +0x120 (L FUN_00ed0070 / W 0x140665cc0), the direction's at +0xb8 (L FUN_00ed1570 / W 0x140666230), the
+ * aim's at +0xe8 (L FUN_00ed1db0 / W 0x140666970: two clips it attaches, the cursor and the ring); the quick time has
+ * none. Their updates set only children's visibility (the pad's or the keyboard's glyph: the hold's clips at +0xe0 /
+ * +0x148, vf 0x200 W) or move them, never a root's: each root's set-visible(0) (OB_CLIP_VIS: L vf 0x208 / W 0x200, the
+ * nav markers' hide, 165.1) every input tick (the game thread) hides the widget and nothing else of the HUD. */
+/* the widget's clips (from the struggle): the press count's root +0xd0+0x10, the hold's +0x120+0x10, the direction's
+ * +0xb8+0x10; the aim's two attached clips: its cursor +0xe8+0x78 ('StruggleCursor': the arrow, the line, the glyphs)
+ * and its ring +0xe8+0x2e8 ('StruggleTarget': the area, the countdown, the keyboard prompt). 0 = none */
+static int stg_widget_clips(int kind, int off[2])
+{
+	off[0] = off[1] = 0;
+	if (kind == STG_PRESS || kind == STG_HOLD || kind == STG_DIR)
+		off[0] = (kind == STG_PRESS ? 0xd0 : kind == STG_HOLD ? 0x120 : 0xb8) + 0x10;
+	else if (kind == STG_AIM)
+		off[0] = 0xe8 + 0x78, off[1] = 0xe8 + 0x2e8;
+	return (off[0] != 0) + (off[1] != 0);
+}
+
+static int stg_code_ok(uintptr_t fn)
+{
+#ifdef _WIN32
+	return fn > somvr_img && fn - somvr_img < 0x3000000; /* (the exe's image: its code under +0x1400000) */
+#else
+	return fn != 0;
+#endif
+}
+
+static void stg_widget(uintptr_t obj, double t)
+{
+	int off[2], n = stg_widget_clips(g_stg.kind, off), want = g_stg.rule && g_stg.widget, done = 0;
+	if (!n || (!want && !g_stg.wid_hid) || g_stg.wid_bad)
+		return;
+	/* only in place of a cue of ours (the outline placed, the white ring or the arrow up): a struggle the rule shows
+	 * nothing for keeps the game's (boot 20261106-202621-1: the caragor pin's second stage 'PC_Warg_Struggle_StruggleB',
+	 * a CStruggleAim SOMVR_RIDE answers by the left grip - no outline, no ring) */
+	if (want && !g_stg.wid_hid && !g_stg.o_ok && !stg_cue_on() && !g_stg.cue_seen) {
+		if (!g_stg.wid_kept && t - g_stg.t0 > 1.0) {
+			g_stg.wid_kept = 1, g_stg.n_wid_kept++;
+			if (stg_log_ok())
+				logf_("STRUGGLE t=%.3f +%.2f s b42: %s's widget kept - no cue of ours up for it (no outline, no ring)", t,
+				      t - g_stg.t0, g_stg_kind[g_stg.kind]);
+		}
+		return;
+	}
+	uintptr_t clip[2] = { 0, 0 }, vt[2] = { 0, 0 };
+	int any = 0;
+	for (int i = 0; i < n; i++) {
+		clip[i] = peek_ptr(obj + (uintptr_t)off[i]), vt[i] = clip[i] ? peek_ptr(clip[i]) : 0;
+		any |= clip[i] != 0;
+		uintptr_t fn = vt[i] ? peek_ptr(vt[i] + OB_CLIP_VIS) : 0;
+		if (!stg_code_ok(fn))
+			continue;
+		((ob_vis_fn)fn)(clip[i], want ? 0 : 1); /* (shown again once if the word turned the hide off mid-struggle) */
+		done++;
+	}
+	if (!done) { /* no clip yet: the game builds the widget as its window opens (boot 20261106-201546-1: none at its
+		      * first tick) - tried again every tick; a clip without a set-visible in the image: left alone */
+		if (any) {
+			g_stg.wid_bad = 1, g_stg.n_wid_none++;
+			if (stg_log_ok())
+				logf_("STRUGGLE t=%.3f +%.2f s b42: %s's widget not hidden: its clip %#llx (+%#x) has no set-visible in "
+				      "the image (vtable %#llx)", t, t - g_stg.t0, g_stg_kind[g_stg.kind],
+				      (unsigned long long)(clip[0] ? clip[0] : clip[1]), clip[0] ? off[0] : off[1],
+				      (unsigned long long)(clip[0] ? vt[0] : vt[1]));
+		}
+		return;
+	}
+	if (!want) {
+		g_stg.wid_hid = 0;
+		if (stg_log_ok())
+			logf_("STRUGGLE t=%.3f +%.2f s b42: %s's widget shown again (the word)", t, t - g_stg.t0, g_stg_kind[g_stg.kind]);
+		return;
+	}
+	g_stg.n_wid_calls++;
+	if (!g_stg.wid_hid) {
+		g_stg.wid_hid = 1, g_stg.n_wid_hidden++;
+		if (stg_log_ok())
+			logf_("STRUGGLE t=%.3f +%.2f s b42: the game's widget hidden - %s's %d of %d clips (+%#x %#llx vtable %#llx%s): "
+			      "set-visible(0) every tick%s", t, t - g_stg.t0, g_stg_kind[g_stg.kind], done, n, off[0],
+			      (unsigned long long)clip[0], (unsigned long long)vt[0], n > 1 ? ", its ring too" : "",
+			      g_stg.beast ? "; a beast's domination" : "");
+	}
+}
+
 static void stg_tick(sc_tick_out *o)
 {
 	double t = cb_now();
@@ -1117,7 +1270,16 @@ static void stg_tick(sc_tick_out *o)
 		}
 		if (g_stg.obj && g_stg.rule && g_stg.ours) /* build 41: the last one's end */
 			stg_b41_end(t);
+		if (g_stg.obj && g_stg.pin_now) { /* build 42: the pin's second stage - the grip's completion written or not */
+			int won = g_mt.pin_won > g_stg.pin_won0; /* (not by its address: the heap gives the next pin the same one) */
+			g_stg.n_pin_won += (uint64_t)won;
+			if (stg_log_ok())
+				logf_("STRUGGLE t=%.3f b42 the pin's second stage over: %s (the grip held at most %.2f s of %.2f)", t, won ?
+				      "WON by the grip (completed as the game's own)" : "not answered - the game's own outcome", g_stg.pin_held,
+				      g_mt.pin_hold_s);
+		}
 		g_stg.obj = obj, g_stg.kind = stg_kind_of(obj), g_stg.slot = slot, g_stg.t0 = t, g_stg.have_f = 0;
+		g_stg.wid_hid = g_stg.wid_bad = g_stg.wid_kept = 0; /* build 42 */
 		char dn[96];
 		g_stg.death = obj && strstr(stg_talion_attack(dn, sizeof dn), "PreDeath") != NULL; /* the last chance only (the
 								 * caragor's domination is a CStruggleAim too: ride2's grip) */
@@ -1160,7 +1322,9 @@ static void stg_tick(sc_tick_out *o)
 				haptic(SOMVR_HAND_R, SOMVR_HX_STRUGGLE); /* both hands */
 			if (g_stg.rule && stg_log_ok())
 				logf_("STRUGGLE t=%.3f b41: %s (Talion's '%s') - %s; the act: %s; its node %s%s%s",
-				      t, g_stg_kind[g_stg.kind], dn, g_stg.beast ? "a beast's domination (SOMVR_RIDE answers: its grip)"
+				      t, g_stg_kind[g_stg.kind], dn, g_stg.pin_now ? "the caragor pin's second stage (build 42, "
+				      "SOMVR_STRUGGLE_PIN=grip: SOMVR_RIDE answers - the left hand kept closed or B, held on = won; the ring "
+				      "at the beast's node)" : g_stg.beast ? "a beast's domination (SOMVR_RIDE answers: its grip)"
 				      : g_stg.ours ? "ours" : "left alone", somvr_sg_act_name(g_stg.act), g_stg.anc_game ? "'" : "",
 				      g_stg.anc_game ? g_stg.anc_node : g_stg.sites_ok ? "none in its UI data (an orc's Neck for an aim)"
 				      : "not read (no sites)", g_stg.anc_game ? (g_stg.anc_side ? "' on the other (+0x70)" :
@@ -1179,6 +1343,7 @@ static void stg_tick(sc_tick_out *o)
 	}
 	if (!obj || !rd)
 		return;
+	stg_widget(obj, t); /* build 42: the game's own widget hidden under the rule */
 	if (!g_stg.rule && !g_stg.death) { /* another struggle (a domination, an interrogation): logged at its start, left alone */
 		g_stg.pending = 0;
 		return;
@@ -1309,4 +1474,9 @@ static void stg_end_log(void)
 	      (unsigned long long)g_stg.n_swipe_ok, (unsigned long long)g_stg.n_swipe_off, (unsigned long long)g_stg.n_dir_sent,
 	      (unsigned long long)g_stg.n_laid, (unsigned long long)g_stg.n_stabs, (unsigned long long)g_stg.n_stab_won,
 	      (unsigned long long)g_stg.n_cue);
+	logf_("STRUGGLE END build 42 (SOMVR_STRUGGLE_WIDGET=%s): the game's widget hidden in %llu struggles (%llu calls), kept "
+	      "(no cue of ours) %llu, no clip to hide %llu", g_stg.widget ? "hide" : "show", (unsigned long long)g_stg.n_wid_hidden,
+	      (unsigned long long)g_stg.n_wid_calls, (unsigned long long)g_stg.n_wid_kept, (unsigned long long)g_stg.n_wid_none);
+	logf_("STRUGGLE END build 42 pin (SOMVR_STRUGGLE_PIN=%s): the caragor pin's second stage met %llu, won by the grip %llu",
+	      g_mt.pin ? "grip" : "outline", (unsigned long long)g_stg.n_pin, (unsigned long long)g_stg.n_pin_won);
 }

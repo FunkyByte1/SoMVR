@@ -72,6 +72,9 @@ static struct {
 	uint64_t stealth_asks, stealth_kills;
 	int bleed;                 /* build 30, SOMVR_GRAUG_BLEED: the blade on a graug = the game's hamstring (X) when it offers it */
 	char bleed_node[64];       /* SOMVR_GRAUG_BLEED_NODE: the root node's name holds this (default 'Hamstring') */
+	int carry_nocap;           /* build 42, SOMVR_VERBS_CARRY_NOCAP: a carry's hold has no longest hold */
+	int hold_carry;            /* this hold is a carry (latched while it lasts) */
+	uint64_t carry_holds, carry_pushes_kept;
 	uintptr_t bleed_c;
 	double bleed_t, bleed_line;
 	uint64_t bleed_asks, bleeds;
@@ -166,6 +169,13 @@ static void h31_end_log(void);
 static int ov_active(void);
 static void ov_end_log(void);
 static int hrb_holding(int h); /* build 33 (somvr_hands31_game.c): a hand holds an herb */
+/* build 42 (som-b42-bleed, somvr_bleed_game.c): the bleed's watch, its cue, the cut at the legs */
+static void bl_start(int *bad);
+static void bl_watch(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int n, const float *root, double t);
+static int bl_contact(const struct cb_orc *o, const sc_contact *ct, double t);
+static int bl_refused_touch(uintptr_t pc, const struct cb_orc *o, double t);
+static const char *bl_word(const char *w);
+static void bl_end_log(void);
 static struct log_late g_vb_late;
 static int vb_log_ok(void)
 {
@@ -671,10 +681,34 @@ static void vb_hands(const sv_vec3 pw[2], sv_vec3 eye)
 	    (pw[0].y - pw[1].y) + (pw[0].z - pw[1].z) * (pw[0].z - pw[1].z)) < VB_BACK_APART_CM)
 		memset(in.body_cm, 0, sizeof in.body_cm);
 	in.game_done = g_vb.game_done;
+	/* build 42 (SOMVR_VERBS_CARRY_NOCAP, som-b42-nurn): The Rescue's carry is a hold of Lithariel ('PC_GrabLithariel_L',
+	 * then the carry walk) that lasts minutes; build 31's longest hold (SOMVR_VERBS_GRAB_MAX_S, 10 s) dropped her 10 s
+	 * into every lift (boot 20261107-013342: "release after 10.05 s: the longest hold", 'PC_GrabLithariel_Release').
+	 * A hold whose sync is a carry or Lithariel's grab keeps going while the grip stays closed */
+	if (g_vb.hand.phase != SOMVR_VBH_GRAB)
+		g_vb.hold_carry = 0;
+	else if (!g_vb.hold_carry && g_vb.carry_nocap && g_vb.t_sync) {
+		char sn[96];
+		rx_rec_name(g_vb.t_sync, sn, sizeof sn);
+		if (strstr(sn, "GrabLithariel") || strstr(sn, "Carry")) {
+			g_vb.hold_carry = 1, g_vb.carry_holds++;
+			if (vb_log_ok())
+				logf_("VERBS t=%.3f the hold is a carry (Talion's sync '%s'): no longest hold while the grip stays closed "
+				      "(SOMVR_VERBS_CARRY_NOCAP)", t, sn);
+		}
+	}
+	in.no_cap = g_vb.hold_carry;
 	int was = g_vb.hand.phase, b_was = g_vb.hand.b;
 	br_hands(&in); /* build 23, SOMVR_VERBS_BRAND: the orc the hand is on or holds (the game's brand offer) */
 	float pv[3] = { 0, 0, 0 }, psp = 0;
 	h31_hands(&in, t, &in.let_go, &in.no_ask, pv, &psp); /* build 31: the hold's push, the pull's guard */
+	if (g_vb.hold_carry && in.let_go) { /* a carry is put down by the open hand only: the walk with her moved the
+					     * holding hand as a push (015122: "the hand pushed him away" 15 s in) */
+		in.let_go = 0, g_vb.carry_pushes_kept++;
+		if (vb_log_ok())
+			logf_("VERBS t=%.3f the carry: the holding hand's push is no let-go (SOMVR_VERBS_CARRY_NOCAP; %llu so far)", t,
+			      (unsigned long long)g_vb.carry_pushes_kept);
+	}
 	uintptr_t held0 = g_vb.held_c;
 	somvr_vb_hand_out o;
 	somvr_vb_hand_step(&g_vb.hand, &g_vb.cfg, &in, &o);
@@ -1324,7 +1358,7 @@ static uintptr_t vb_node_like(uintptr_t pcomb, const char *sub)
 	      g_vb_nc[slot].node ? "taken" : "- none");
 	return g_vb_nc[slot].node;
 }
-static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, double t)
+static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int tier, const sc_contact *ct, double t)
 {
 	if (g_vb.mode != VB_ON || !g_vb.bleed || tier == SC_TIER_NONE || !pcomb || !pc || !g_vb.ok_tree || !bz_is_graug(o->c, o->hobj))
 		return 0;
@@ -1340,11 +1374,15 @@ static int vb_bleed(uintptr_t pcomb, uintptr_t pc, const struct cb_orc *o, int t
 	char an[96], sn[96];
 	g_vb.bleed_asks++;
 	if (!atk) {
+		int touch = bl_refused_touch(pc, o, t); /* build 42b: the stealth's hands due - a touch until the swap lands */
 		if (t - g_vb.bleed_line > 2.0 && vb_log_ok())
-			logf_("VERBS t=%.3f bleed: graug %#llx not offered (%s): the ordinary hit", t, (unsigned long long)o->c, why);
+			logf_("VERBS t=%.3f bleed: graug %#llx not offered (%s): %s", t, (unsigned long long)o->c, why, touch ?
+			      "a touch, no hit (the stealth's hands are due: SOMVR_GRAUG_BLEED_HANDS)" : "the ordinary hit");
 		g_vb.bleed_line = t;
-		return 0;
+		return touch ? 2 : 0;
 	}
+	if (!bl_contact(o, ct, t))
+		return 2; /* build 42 (SOMVR_GRAUG_BLEED_LEG): the blade on its body, not a leg - a touch while offered, no hit */
 	g_vb.bleeds++;
 	g_vb.bleed_t = t, g_vb.bleed_c = o->c;
 	g_vb.pcmd[0] = VB_CMD_X, g_vb.pcmd[1] = 0, g_vb.press_until = t + 0.15;
@@ -1565,6 +1603,7 @@ static void vb_frame(uintptr_t pl, const float root[3], double t)
 		memcpy(g_vb.root, root, sizeof g_vb.root);
 	if (g_vb.mode == VB_ON)
 		vb_heads(o, n, pc, root);
+	bl_watch(pcomb, pc, o, n, root, t); /* build 42 (som-b42-bleed): the graug's bleed asked, for its cue */
 	gc_frame(pcomb, pc, o, n, t); /* build 21, SOMVR_VERBS_CUE: the game's answer for the orc in reach (somvr_combat21_game.c) */
 	fa_frame(pcomb, pc, o, n, root, t); /* build 25, SOMVR_ABOVE: the game's answers for the orc below (somvr_above_game.c) */
 	abl_frame(pcomb, pc, o, n, root, t); /* build 27, SOMVR_ABIL: the abilities' offers (somvr_abil_game.c) */
@@ -1643,6 +1682,8 @@ static const char *vb_word(const char *w)
 		atomic_store(&g_vb.req_status, 1);
 		return "verbs status";
 	}
+	if (!strncmp(w, "bleed probe ", 12) || !strcmp(w, "bleed where") || !strncmp(w, "bleed hands ", 12)) /* build 42: tests */
+		return bl_word(w + 6);
 	if (!strncmp(w, "bleed ", 6)) { /* build 30, a test: the old rule (the blade's hit on a graug) against the new in one boot */
 		if (!g_vb.test || (strcmp(w + 6, "on") && strcmp(w + 6, "off")))
 			return "verbs bleed (SOMVR_HANDS_TEST off, or not on|off: ignored)";
@@ -1801,6 +1842,7 @@ static void vb_start(int *bad)
 		snprintf(g_vb.stealth_node, sizeof g_vb.stealth_node, "%s", sn && sn[0] ? sn : "PC_InstaKill_Sneak_Silent");
 	}
 	g_vb.bleed = env_word("SOMVR_GRAUG_BLEED", (const char *const[]){ "off", "on" }, 2, 1); /* build 30 */
+	g_vb.carry_nocap = env_word("SOMVR_VERBS_CARRY_NOCAP", (const char *const[]){ "off", "on" }, 2, 1); /* build 42 */
 	{
 		const char *bn = getenv("SOMVR_GRAUG_BLEED_NODE");
 		snprintf(g_vb.bleed_node, sizeof g_vb.bleed_node, "%s", bn && bn[0] ? bn : "Hamstring");
@@ -1838,6 +1880,10 @@ static void vb_start(int *bad)
 	      getenv("SOMVR_GRAUG_BLEED") ? "" : "; unset: on", g_vb.bleed && g_vb.mode == VB_ON ? "the blade's stroke or stab on a "
 	      "graug the game offers its hamstring for (crouched, behind, unaware: its own selection) = X (118) for 150 ms instead "
 	      "of the hit - the game's bleed; the first root node named like" : "the blade's ordinary hit on a graug; the node", g_vb.bleed_node);
+	logf_("CONFIG verbs build 42: carry_nocap=%s (SOMVR_VERBS_CARRY_NOCAP%s): %s", g_vb.carry_nocap ? "on" : "off",
+	      getenv("SOMVR_VERBS_CARRY_NOCAP") ? "" : "; unset: on", g_vb.carry_nocap ? "a carry's hold (Lithariel) lasts while "
+	      "the grip stays closed - no longest hold (SOMVR_VERBS_GRAB_MAX_S), no let-go by a push of the holding hand" : "every hold ends at SOMVR_VERBS_GRAB_MAX_S");
+	bl_start(bad); /* build 42 (som-b42-bleed): the bleed's watch, cue and leg rule */
 	logf_("CONFIG verbs build 25: rally=%s (SOMVR_VERBS_RALLY%s): %s %.0f cm (SOMVR_VERBS_RALLY_CM)", g_vb.rally ? "on" : "off",
 	      getenv("SOMVR_VERBS_RALLY") ? "" : "; unset: on", g_vb.rally ? "the left trigger with the left palm raised over the "
 	      "eyes = CombatTertiary03 128 (the pad's D-pad: the branded orcs commanded, 'PC_Branded_Infight'), the palm at least"
@@ -1883,6 +1929,7 @@ static void vb_end_log(void)
 	logf_("VERBS END build 25: rallies %llu (SOMVR_VERBS_RALLY)", (unsigned long long)g_vb.rallies);
 	logf_("VERBS END build 30: graug bleeds by the blade %llu of %llu asks (SOMVR_GRAUG_BLEED)", (unsigned long long)g_vb.bleeds,
 	      (unsigned long long)g_vb.bleed_asks);
+	bl_end_log(); /* build 42 */
 	logf_("VERBS END build 29: the root nodes' cache: %u names of %d, %llu reads, %llu entries reused; the late lines %llu",
 	      g_vb_nc_n, VB_NODE_CACHE, (unsigned long long)g_vb_nc_reads, (unsigned long long)g_vb_nc_reused,
 	      (unsigned long long)g_vb.late);

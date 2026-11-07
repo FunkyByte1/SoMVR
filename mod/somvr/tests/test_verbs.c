@@ -512,6 +512,19 @@ static void test_b31(void)
     somvr_vb_hand_step(&s, &c, &in, &o);
     CHECK(!o.grab && o.event == SOMVR_VBE_RELEASE && o.why == SOMVR_VBR_MAX && s.phase == SOMVR_VBH_IDLE,
           "b31: the hold's longest (10 s): let go (%d %d)", o.event, o.why);
+    somvr_vb_hand_reset(&s); /* build 42: a carry (no_cap) has no longest hold; its grip opened still lets go */
+    in_at(&in, 50.0, 0.9f, 0, 5, 175, 95);
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    for (int k = 1; k <= 12; k++) {
+        in_at(&in, 50.0 + 5.0 * k, 0.9f, 0, 5, 175, 95);
+        in.no_cap = 1;
+        somvr_vb_hand_step(&s, &c, &in, &o);
+    }
+    CHECK(o.grab && o.event == SOMVR_VBE_NONE, "b42: a carry held 60 s: still held (%d %d)", o.event, o.why);
+    in_at(&in, 111.0, 0, 0, 5, 175, 95);
+    in.no_cap = 1;
+    somvr_vb_hand_step(&s, &c, &in, &o);
+    CHECK(o.event == SOMVR_VBE_RELEASE && o.why == SOMVR_VBR_OPEN, "b42: the carry's grip opened: let go (%d)", o.why);
     somvr_vb_hand_reset(&s); /* the push lets go */
     in_at(&in, 20.0, 0.9f, 0, 5, 175, 95);
     somvr_vb_hand_step(&s, &c, &in, &o);

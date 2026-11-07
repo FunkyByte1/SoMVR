@@ -143,6 +143,15 @@
  */
 #define SOMVR_SELFTEST
 #include "somvr.c"
+
+/* build 42 (som-b42-mountview): the SlowMo component's stand-in (bo_slow_c's pass-through counted) */
+static int st_slowmo_calls;
+static uint64_t st_slowmo_stub(uintptr_t wm)
+{
+	(void)wm;
+	st_slowmo_calls++;
+	return 0;
+}
 #include "tests/inrec_replay.h" /* b35: the recordings read back */
 #define HXL(w, k) somvr_hx_level((w), (k), 1) /* build 34: a word's level (somvr_haptics.h) */
 #include <openxr/openxr.h>
@@ -10270,6 +10279,70 @@ static void bm_tests(void)
 		g_inp.ctl.down[SOMVR_HAND_R] = 0, g_bm.last_win = 0, mt_tick(&wo, 50.7);
 		g_inp.ctl.down[SOMVR_HAND_R] = dn_r, g_bm.last_win = lw, g_mt.win_rest = wr, g_mt.in_win = 0;
 	}
+	{ /* build 42 (som-b42-saddle, re-xr-pipeline.md 186): the VR bow out - the right trigger is its string, never the
+	   * beast's bite; A pressed at the string no leap (as on foot, SOMVR_BOW_A_JUMP=draw); the bow put away with the
+	   * trigger still held: no bite until it is let go and pressed again; =off: build 41 (fails on build 41's code: the
+	   * nock pressed MNT_Attack_2 186) */
+		sc_tick_out wo;
+		somvr_hand_in *bhr = &g_inp.st.hand[SOMVR_HAND_R], bh0 = *bhr;
+		uint32_t dn_r = g_inp.ctl.down[SOMVR_HAND_R];
+		int bon = g_bow.on, btid = g_bow.tid, bph = g_bow.s.phase, baj = g_bow.a_jump_draw, bst = g_bow.string_trigger,
+		    bs = g_mt.bow_string, wr = g_mt.win_rest, lw = g_bm.last_win;
+		uint64_t r0 = g_mt.bow_rests, ra0 = g_mt.bow_rests_a;
+#define ST_RIDE_BITE(o) ({ int _b = 0; for (int _k = 0; _k < (o).ncmd; _k++) _b |= (o).cmd[_k] == MT_CMD_BITE; _b; })
+#define ST_RIDE_TICK(tt) (memset(&wo, 0, sizeof wo), wo.live = 1, wo.ctx = SC_CTX_WORLD, mt_tick(&wo, (tt)))
+		g_mt.bow_string = 1, g_mt.win_rest = 0, g_bm.last_win = 0, g_inp.ctl.down[SOMVR_HAND_R] = 0;
+		g_bow.on = 1, g_bow.tid = my_tid(), g_bow.a_jump_draw = 1, g_bow.string_trigger = 1;
+		bhr->active |= SOMVR_HACT_INPUT, bhr->trigger = 0;
+		g_bow.s.phase = SOMVR_BOW_PH_IDLE, ST_RIDE_TICK(51.0); /* every button up */
+		bhr->trigger = 1.0f, ST_RIDE_TICK(51.05);
+		int bite_idle = ST_RIDE_BITE(wo); /* no bow: RT bites (build 27) */
+		bhr->trigger = 0, ST_RIDE_TICK(51.1);
+		g_bow.s.phase = SOMVR_BOW_PH_DRAW, bhr->trigger = 1.0f, ST_RIDE_TICK(51.15); /* the nock / the draw */
+		int bite_draw = ST_RIDE_BITE(wo);
+		ST_RIDE_TICK(51.2);
+		int bite_draw2 = ST_RIDE_BITE(wo);
+		g_inp.ctl.down[SOMVR_HAND_R] = SOMVR_BTN_LOWER, ST_RIDE_TICK(51.25); /* A with the string drawn */
+		int a_draw = (g_mt.held & SOMVR_RDB_JUMP) != 0;
+		g_inp.ctl.down[SOMVR_HAND_R] = 0;
+		g_bow.s.phase = SOMVR_BOW_PH_IDLE, ST_RIDE_TICK(51.3); /* put away, RT still held */
+		int bite_after = ST_RIDE_BITE(wo);
+		bhr->trigger = 0, ST_RIDE_TICK(51.35);
+		bhr->trigger = 1.0f, ST_RIDE_TICK(51.4);
+		int bite_fresh = ST_RIDE_BITE(wo);
+		EXPECT(bite_idle && !bite_draw && !bite_draw2 && !a_draw && !bite_after && bite_fresh &&
+			       g_mt.bow_rests == r0 + 1 && g_mt.bow_rests_a == ra0 + 1 && log_has("is the bow's string (the bow out): no bite"),
+		       "ride: the bow out - RT the string, no bite (%d %d; without the bow %d), A at the string no leap (%d), RT held "
+		       "past the bow's end no bite (%d), a fresh RT bites (%d)", bite_draw, bite_draw2, bite_idle, a_draw, bite_after,
+		       bite_fresh);
+		bhr->trigger = 0, ST_RIDE_TICK(51.45);
+		g_mt.bow_string = 0, g_bow.s.phase = SOMVR_BOW_PH_DRAW, bhr->trigger = 1.0f, ST_RIDE_TICK(51.5);
+		EXPECT(ST_RIDE_BITE(wo), "ride: SOMVR_RIDE_BOW_STRING=off - RT bites with the bow drawn (build 41)");
+		bhr->trigger = 0, g_bow.s.phase = SOMVR_BOW_PH_IDLE, ST_RIDE_TICK(51.55);
+#undef ST_RIDE_BITE
+#undef ST_RIDE_TICK
+		*bhr = bh0, g_inp.ctl.down[SOMVR_HAND_R] = dn_r, g_bow.on = bon, g_bow.tid = btid, g_bow.s.phase = bph;
+		g_bow.a_jump_draw = baj, g_bow.string_trigger = bst, g_mt.bow_string = bs, g_mt.win_rest = wr, g_bm.last_win = lw;
+	}
+	{ /* build 42 (som-b42-mountview, re-xr-pipeline.md 188): SOMVR_RIDE_BOW_SLOWMO=off (the default) - seated on a beast the
+	   * bow's SlowMo component is skipped (the world's slow motion braked the running beast under the view); on foot, and
+	   * with =game, the game's (fails on build 41's code: the SlowMo ran seated - the beast slowed to a crawl) */
+		uintptr_t so = g_bo_slow_orig;
+		int bon = g_bow.on, bso = g_bow.slowmo_off, rbs = g_mt.bow_slowmo, sst = g_mt.state;
+		uint64_t r0 = atomic_load(&g_bo_slow_ride);
+		g_bo_slow_orig = (uintptr_t)st_slowmo_stub, st_slowmo_calls = 0;
+		g_bow.on = 1, g_bow.slowmo_off = 0, g_mt.bow_slowmo = 0;
+		int seated = mt_seated();
+		bo_slow_c(0x1234);
+		int skipped = st_slowmo_calls == 0 && atomic_load(&g_bo_slow_ride) == r0 + 1;
+		g_mt.bow_slowmo = 1, bo_slow_c(0x1234);
+		int game = st_slowmo_calls == 1;
+		g_mt.bow_slowmo = 0, g_mt.state = MT_OFF, bo_slow_c(0x1234);
+		int foot = st_slowmo_calls == 2;
+		EXPECT(seated && skipped && game && foot, "ride: SOMVR_RIDE_BOW_SLOWMO=off - seated the bow's SlowMo skipped (%d, seated "
+		       "%d); =game it runs (%d); on foot the game's (%d)", skipped, seated, game, foot);
+		g_bo_slow_orig = so, g_bow.on = bon, g_bow.slowmo_off = bso, g_mt.bow_slowmo = rbs, g_mt.state = sst;
+	}
 	/* build 27c (som-b27-ride3, re-xr-pipeline.md 122): the beast's speed measured seated (5 m/s above); the left stick's
 	 * click latches the sprint while the stick stays pushed - SOMVR_RIDE_SPRINT_CMDS held, or tapped every
 	 * SOMVR_RIDE_SPRINT_PULSE_MS (fails on build 27's code: MNT_Charge alone, held) */
@@ -17462,6 +17535,200 @@ static void finisher41_tests(void)
 	printf("finisher 41: the cut kills at its crossing and lets go at its arc's end, its ride turned along it\n");
 }
 
+/* build 42 (som-b42-struggle, docs/re-xr-pipeline.md 184): the game's own struggle widget hidden under the rule - each
+ * class's clips (the aim's two) set invisible every tick, none under b27, with the switch off or for the quick time,
+ * shown again once when the word turns the hide off mid-struggle, no call without a clip (fails to build on build 41) */
+static uintptr_t g_s42_clip[8];
+static uint64_t g_s42_on[8];
+static int g_s42_n;
+static void s42_vis(uintptr_t clip, uint64_t on)
+{
+	if (g_s42_n < 8)
+		g_s42_clip[g_s42_n] = clip, g_s42_on[g_s42_n] = on;
+	g_s42_n++;
+}
+static void stg42_tests(void)
+{
+	static unsigned char save[sizeof g_stg], obj[0x600];
+	static uintptr_t vt[0x300 / 8], ca[2], cb[2];
+	memcpy(save, &g_stg, sizeof g_stg);
+	vt[OB_CLIP_VIS / 8] = (uintptr_t)s42_vis, ca[0] = cb[0] = (uintptr_t)vt;
+	uintptr_t a = (uintptr_t)ca, b = (uintptr_t)cb, o = (uintptr_t)obj;
+	memset(obj, 0, sizeof obj), memcpy(obj + 0xe8 + 0x78, &a, 8), memcpy(obj + 0xe8 + 0x2e8, &b, 8);
+	g_stg.rule = 1, g_stg.widget = 1, g_stg.kind = STG_AIM, g_stg.wid_hid = g_stg.wid_bad = g_stg.wid_kept = 0, g_stg.t0 = 0;
+	g_stg.beast = 0, g_stg.o_ok = 0, g_stg.cue_show = 0, g_stg.cue_seen = 0;
+	uint64_t h0 = g_stg.n_wid_hidden, c0 = g_stg.n_wid_calls, z0 = g_stg.n_wid_none, k0 = g_stg.n_wid_kept;
+	g_s42_n = 0, stg_widget(o, 0.5), stg_widget(o, 1.5), stg_widget(o, 1.6);
+	EXPECT(g_s42_n == 0 && !g_stg.wid_hid && g_stg.wid_kept && g_stg.n_wid_kept == k0 + 1, "struggle widget: no cue of ours "
+	       "up (no outline, no ring: the pin's second stage) - the game's kept, said once (%d)", g_s42_n);
+	g_stg.o_ok = 1, g_s42_n = 0, stg_widget(o, 1.0);
+	EXPECT(g_s42_n == 2 && g_s42_clip[0] == a && g_s42_clip[1] == b && !g_s42_on[0] && !g_s42_on[1] && g_stg.wid_hid &&
+	       g_stg.n_wid_hidden == h0 + 1, "struggle widget: the aim's cursor and ring hidden (%d calls)", g_s42_n);
+	stg_widget(o, 1.1);
+	EXPECT(g_s42_n == 4 && !g_s42_on[2] && !g_s42_on[3] && g_stg.n_wid_hidden == h0 + 1 && g_stg.n_wid_calls == c0 + 2,
+	       "struggle widget: hidden again the next tick, counted once (%d)", g_s42_n);
+	g_stg.widget = 0, g_s42_n = 0, stg_widget(o, 1.2);
+	EXPECT(g_s42_n == 2 && g_s42_on[0] == 1 && g_s42_on[1] == 1 && !g_stg.wid_hid, "struggle widget: the word's show "
+	       "mid-struggle = shown again once (%d)", g_s42_n);
+	stg_widget(o, 1.3);
+	EXPECT(g_s42_n == 2, "struggle widget: then left alone (%d)", g_s42_n);
+	static const int kinds[3] = { STG_HOLD, STG_PRESS, STG_DIR }, offs[3] = { 0x130, 0xe0, 0xc8 };
+	for (int i = 0; i < 3; i++) {
+		memset(obj, 0, sizeof obj), memcpy(obj + offs[i], &a, 8);
+		g_stg.kind = kinds[i], g_stg.widget = 1, g_stg.wid_hid = g_stg.wid_bad = 0, g_s42_n = 0, stg_widget(o, 2.0);
+		EXPECT(g_s42_n == 1 && g_s42_clip[0] == a && !g_s42_on[0], "struggle widget: %s's root at +%#x hidden (%d)",
+		       g_stg_kind[kinds[i]], offs[i], g_s42_n);
+	}
+	memcpy(obj + 0xd0 + 0x10, &a, 8), memcpy(obj + 0x120 + 0x10, &a, 8);
+	g_stg.kind = STG_QT, g_stg.wid_hid = 0, g_s42_n = 0, stg_widget(o, 3.0);
+	EXPECT(g_s42_n == 0, "struggle widget: the quick time has none - no call (%d)", g_s42_n);
+	g_stg.kind = STG_HOLD, g_stg.rule = 0, stg_widget(o, 3.1);
+	EXPECT(g_s42_n == 0 && !g_stg.wid_hid, "struggle widget: the rule b27 - left shown (the hand steers its cursor) (%d)", g_s42_n);
+	g_stg.rule = 1, g_stg.widget = 0, stg_widget(o, 3.2);
+	EXPECT(g_s42_n == 0, "struggle widget: SOMVR_STRUGGLE_WIDGET=show - no call (%d)", g_s42_n);
+	memset(obj, 0, sizeof obj), g_stg.widget = 1, g_stg.wid_bad = 0, stg_widget(o, 3.3), stg_widget(o, 3.4);
+	EXPECT(g_s42_n == 0 && !g_stg.wid_bad && !g_stg.wid_hid && g_stg.n_wid_none == z0, "struggle widget: no clip yet (the "
+	       "game builds it as its window opens) - no call, tried again (%d)", g_s42_n);
+	memcpy(obj + 0x130, &a, 8), stg_widget(o, 3.6);
+	EXPECT(g_s42_n == 1 && g_stg.wid_hid && !g_s42_on[0], "struggle widget: the clip built later - hidden then (%d)", g_s42_n);
+	memset(obj, 0, sizeof obj), g_stg.kind = STG_AIM, g_stg.wid_hid = 0, g_s42_n = 0;
+	memcpy(obj + 0xe8 + 0x2e8, &b, 8), stg_widget(o, 3.7);
+	EXPECT(g_s42_n == 1 && g_s42_clip[0] == b && g_stg.wid_hid, "struggle widget: the aim's ring alone built - it hidden (%d)",
+	       g_s42_n);
+	g_stg.kind = STG_HOLD, g_stg.wid_hid = 0, g_s42_n = 0;
+	vt[OB_CLIP_VIS / 8] = 0, memcpy(obj + 0x130, &a, 8), stg_widget(o, 3.8), stg_widget(o, 3.9);
+	EXPECT(g_s42_n == 0 && g_stg.wid_bad && g_stg.n_wid_none == z0 + 1, "struggle widget: a clip with no set-visible - no "
+	       "call, said once (%d)", g_s42_n);
+	EXPECT(stg_word("widget hide") && stg_word("widget show") && !stg_word("widget"), "struggle widget: the words");
+	/* the hold's command kept off until the class listens (+0x119), the fist closed or not (boot 20261106-212056) */
+	g_stg.on = 1, g_stg.rule = 1, g_stg.obj = o, g_stg.ours = 1, g_stg.act = SOMVR_SGA_HOLD, g_stg.cmd = 120, g_stg.have_f = 1;
+	g_stg.f[0xfe] = 0, g_stg.f[0x119] = 0, g_stg.hold.on = 1;
+	int b1 = stg_cmd_block();
+	g_stg.f[0x119] = 1;
+	int b2 = stg_cmd_block();
+	g_stg.hold.on = 0;
+	int b3 = stg_cmd_block();
+	g_stg.hold.on = 1, g_stg.f[0xfe] = 2;
+	int b4 = stg_cmd_block();
+	EXPECT(b1 == 120 && b2 == 0 && b3 == 120 && b4 == 0, "the hold: its command off while the class does not listen (%d), "
+	       "on with the fist once it does (%d), off with the hand open (%d), free once over (%d)", b1, b2, b3, b4);
+	atomic_store(&g_stg.req_widget, 0);
+	memcpy(&g_stg, save, sizeof g_stg);
+}
+
+/* build 42 (som-b42-pin, docs/re-xr-pipeline.md 189): the caragor pin's second stage ('PC_Warg_Struggle_StruggleB', a
+ * CStruggleAim) answered as a domination - the left grip held SOMVR_STRUGGLE_PIN_HOLD_MS = won, the completion (+0xa5)
+ * written only once its window is open (+0x592); no grip = nothing written (the game's own loss); the rule shows the
+ * white ring for it, so the game's widget is hidden there too; SOMVR_STRUGGLE_PIN=outline = build 41's aim (fails to
+ * build on build 41: no somvr_rd_grip_strug, no g_mt.pin) */
+static void pin42_tests(void)
+{
+	static unsigned char ssave[sizeof g_stg], msave[sizeof g_mt], obj[0x600];
+	static _Alignas(16) char rec[0x30];
+	static _Alignas(16) const char pin_nm[32] = "PC_Warg_Struggle_StruggleB";
+	static uintptr_t vt[0x300 / 8], ca[2], cb[2];
+	memcpy(ssave, &g_stg, sizeof g_stg), memcpy(msave, &g_mt, sizeof g_mt);
+	double tt = g_cb_test_t;
+	const char *pn = pin_nm;
+	memset(rec, 0, sizeof rec), rec[1] = 2, memcpy(rec + 0x20, &pn, 8);
+	uintptr_t o = (uintptr_t)obj, vt_aim = MT_VT_STRUGGLE_AIM;
+	memset(obj, 0, sizeof obj), memcpy(obj, &vt_aim, 8);
+	/* the answer (SOMVR_RIDE's): the left hand closed through the stage */
+	g_mt.on = 1, g_mt.pin = 1, g_mt.pin_hold_s = 1.0f, g_mt.dom_hold_s = 1.5f, g_mt.atk = (uintptr_t)rec, g_mt.press_cmd = 0;
+	g_mt.sg_obj = o, g_mt.sg_kind = SOMVR_RDS_AIM, g_mt.sg_cmd = 0, g_mt.sg_forced = 0, g_mt.sg_wait_for = 0;
+	atomic_store(&g_mt.sg_win_for, 0), atomic_fetch_add(&g_mt.sg_serial, 1);
+	uint32_t dn_r = g_inp.ctl.down[SOMVR_HAND_R];
+	g_inp.ctl.down[SOMVR_HAND_R] = 0; /* (no B) */
+	g_mt.sq_dn = 1, g_mt.sg_t_last = 100.0 - 0.05, g_mt.press_mount_until = 0, g_mt.pin_won = g_mt.pin_waits = 0;
+	int won_at = -1;
+	for (int i = 0; i < 40; i++) {
+		g_cb_test_t = 100.0 + 0.05 * i;
+		mt_press_cmd();
+		if (won_at < 0 && atomic_load(&g_mt.sg_win_for) == o)
+			won_at = i;
+	}
+	EXPECT(g_mt.grip_kind == SOMVR_RDG_PIN && won_at >= 19 && won_at <= 22 && g_mt.sg.win_s == 1.0f, "pin 42: the left hand "
+	       "held - won after the pin's own hold (tick %d, its length %.2f s)", won_at, (double)g_mt.sg.win_s);
+	somvr_fb_in in;
+	memset(&in, 0, sizeof in), in.struggle[0] = (uint64_t)o;
+	obj[0x592] = 0, obj[0x591] = 0, mt_struggle_read(&in, 102.0);
+	EXPECT(obj[0xa5] == 0 && g_mt.sg_forced != o && g_mt.pin_waits == 1, "pin 42: its window not open yet - nothing written, "
+	       "the completion waits (%u, waits %llu)", obj[0xa5], (unsigned long long)g_mt.pin_waits);
+	mt_struggle_read(&in, 102.05);
+	EXPECT(obj[0xa5] == 0 && g_mt.pin_waits == 1, "pin 42: still waiting, said once");
+	obj[0x592] = 1, mt_struggle_read(&in, 102.1);
+	EXPECT(obj[0xa5] == 1 && g_mt.sg_forced == o && g_mt.pin_won == 1, "pin 42: the window open - completed as the game's own "
+	       "(+0xa5 %u, pins won %llu)", obj[0xa5], (unsigned long long)g_mt.pin_won);
+	/* the next pin at the same address (the heap's; boot 20261107-003351): its end clears the object, the new sighting
+	 * starts afresh - held on, completed again (fails on the old code: sg_forced kept the address, nothing written) */
+	g_mt.sg_obj = 0, obj[0xa5] = 0, obj[0x592] = 0;
+	mt_struggle_seen(0, o, "12CStruggleAim", 103.0);
+	int fresh = g_mt.sg_forced == 0 && atomic_load(&g_mt.sg_win_for) == 0;
+	g_mt.sg_t_last = 103.0 - 0.05;
+	for (int i = 0; i < 30; i++)
+		g_cb_test_t = 103.0 + 0.05 * i, mt_press_cmd();
+	obj[0x592] = 1, mt_struggle_read(&in, 104.6);
+	EXPECT(fresh && obj[0xa5] == 1 && g_mt.pin_won == 2, "pin 42: the next pin at the same address - held on, completed "
+	       "again (+0xa5 %u, pins won %llu)", obj[0xa5], (unsigned long long)g_mt.pin_won);
+	/* no grip: nothing written (the game's own loss); the switch off: the grip answers nothing there */
+	for (int k = 0; k < 2; k++) {
+		obj[0xa5] = 0, obj[0x592] = 1, g_mt.sg_forced = 0, atomic_store(&g_mt.sg_win_for, 0), atomic_fetch_add(&g_mt.sg_serial, 1);
+		g_mt.sq_dn = k == 1, g_mt.pin = k == 0, g_mt.sg_t_last = 0;
+		for (int i = 0; i < 80; i++)
+			g_cb_test_t = 110.0 + 10 * k + 0.05 * i, mt_press_cmd(), mt_struggle_read(&in, g_cb_test_t);
+		EXPECT(obj[0xa5] == 0 && atomic_load(&g_mt.sg_win_for) != o, "pin 42: %s - nothing written in 4 s (+0xa5 %u)",
+		       k ? "SOMVR_STRUGGLE_PIN=outline, the hand closed" : "no grip", obj[0xa5]);
+	}
+	/* a beast's domination keeps its own hold (1.5 s) */
+	static _Alignas(16) const char dom_nm[32] = "PC_Warg_Domination_Start";
+	pn = dom_nm, memcpy(rec + 0x20, &pn, 8);
+	g_mt.pin = 1, g_mt.sq_dn = 1, g_mt.sg_t_last = 130.0 - 0.05, atomic_store(&g_mt.sg_win_for, 0);
+	atomic_fetch_add(&g_mt.sg_serial, 1);
+	won_at = -1;
+	for (int i = 0; i < 60; i++) {
+		g_cb_test_t = 130.0 + 0.05 * i, mt_press_cmd();
+		if (won_at < 0 && atomic_load(&g_mt.sg_win_for) == o)
+			won_at = i;
+	}
+	EXPECT(g_mt.grip_kind == SOMVR_RDG_DOM && won_at >= 29 && won_at <= 32, "pin 42: a domination keeps SOMVR_RIDE_DOM_HOLD_MS "
+	       "(won at tick %d)", won_at);
+	/* the rule: the pin's stage is the grip's (no outline) with the white ring at its node - then the game's widget hidden */
+	vt[OB_CLIP_VIS / 8] = (uintptr_t)s42_vis, ca[0] = cb[0] = (uintptr_t)vt;
+	uintptr_t a = (uintptr_t)ca, b = (uintptr_t)cb;
+	memset(obj, 0, sizeof obj), memcpy(obj, &vt_aim, 8), memcpy(obj + 0xe8 + 0x78, &a, 8), memcpy(obj + 0xe8 + 0x2e8, &b, 8);
+	g_stg.on = 1, g_stg.rule = 1, g_stg.widget = 1, g_stg.cue = 1, g_stg.kind = STG_AIM, g_stg.obj = o, g_stg.t0 = 200.0;
+	g_stg.wid_hid = g_stg.wid_bad = g_stg.wid_kept = 0, g_stg.cue_show_was = 0;
+	g_mt.pin = 1, g_mt.sg.held = 0.5f, g_mt.sg.win_s = 1.0f, g_mt.sg.won = 0, g_cb_test_t = 200.0;
+	stg_b41_start(o, obj, pin_nm, 200.0);
+	EXPECT(g_stg.beast && g_stg.pin_now && !g_stg.ours && g_stg.act == SOMVR_SGA_GRIP, "pin 42: the rule - the grip's (beast %d, "
+	       "pin %d, ours %d, act %s)", g_stg.beast, g_stg.pin_now, g_stg.ours, somvr_sg_act_name(g_stg.act));
+	g_stg.anc_ok = 1, g_stg.anc_t = g_cb_test_t, g_stg.anc[0] = 1000, g_stg.anc[1] = 50, g_stg.anc[2] = 1000; /* its node away */
+	g_s42_n = 0, stg_cue(obj, 200.1), stg_widget(o, 200.1);
+	float ah[3] = { 0, -20, 70 }, aw[3];
+	fn_h2w(ah, aw);
+	EXPECT(g_stg.cue_show && g_stg.cue_id == somvr_sg_steps_hold(0.5f, 1.0f, SOMVR_OB_TIMER_STEPS) && g_s42_n == 2 &&
+	       g_stg.wid_hid && !g_s42_on[0] && !g_s42_on[1], "pin 42: the white ring up (half held: step %u) - the game's ring and "
+	       "cursor hidden (%d calls)", g_stg.cue_id, g_s42_n);
+	EXPECT(NEAR(g_stg.cue_pos[0], aw[0], 0.01) && NEAR(g_stg.cue_pos[1], aw[1], 0.01) && NEAR(g_stg.cue_pos[2], aw[2], 0.01),
+	       "pin 42: the ring ahead of the eyes (where the takedown's was), not at the beast's node away from the view "
+	       "(%.0f %.0f %.0f)", (double)g_stg.cue_pos[0], (double)g_stg.cue_pos[1], (double)g_stg.cue_pos[2]);
+	g_mt.sg.won = 1, stg_cue(obj, 200.2);
+	EXPECT(g_stg.cue_show && g_stg.cue_id == SOMVR_OB_TIMER_ARMED, "pin 42: held on - the ring's armed look");
+	/* the gate latches: a slow game's next tick 0.3 s later (boot 20261107-001704-1: 5-10 ticks a second on rus) still
+	 * hides it - the fresh-only check read it as no cue and kept the game's ring for a second */
+	g_stg.cue_t = mono() - 0.3, g_stg.wid_hid = 0, g_stg.wid_kept = 0, g_s42_n = 0, stg_widget(o, 201.5);
+	EXPECT(!stg_cue_on() && g_s42_n == 2 && g_stg.wid_hid && !g_stg.wid_kept, "pin 42: our ring shown in this struggle, the "
+	       "tick late - the game's still hidden (%d calls)", g_s42_n);
+	g_mt.pin = 0, stg_b41_start(o, obj, pin_nm, 201.0);
+	EXPECT(!g_stg.beast && !g_stg.pin_now && g_stg.ours && g_stg.act == SOMVR_SGA_STAB, "pin 42: SOMVR_STRUGGLE_PIN=outline - "
+	       "build 41's aim (act %s)", somvr_sg_act_name(g_stg.act));
+	EXPECT(stg_word("pin grip") && stg_word("pin outline") && !stg_word("pin"), "pin 42: the words");
+	atomic_store(&g_stg.req_pin, 0);
+	g_cb_test_t = tt, g_inp.ctl.down[SOMVR_HAND_R] = dn_r;
+	memcpy(&g_stg, ssave, sizeof g_stg), memcpy(&g_mt, msave, sizeof g_mt);
+	printf("pin 42: the caragor pin's second stage - the ring, the left grip held, written once its window is open\n");
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
@@ -17731,6 +17998,7 @@ int main(int argc, char **argv)
 	{ /* build 40 (SOMVR_WALK_NAVMESH): the gate byte is 0 inside the player's step when this tick decided so, and back
 	   * after it; another tick (no decision) or another mover sees it as it was */
 		g_wk.nav_flag = (uintptr_t)&g_st_navflag;
+		g_wk.ctx_flag = 0; /* build 42: SOMVR_WALK_BEAM (code default on) turns the ctx clip on - the navmesh alone here */
 		__typeof__(g_inp.tid) tid0 = g_inp.tid;
 		g_inp.tid = my_tid(); /* (the game thread's: this one's for the check) */
 		float x9[7] = { 0, 0, 0, 0, 0, 0, 1 };
@@ -18110,6 +18378,8 @@ int main(int argc, char **argv)
 	finisher_tests(); /* review b34 for build 33: the finisher's every way out, the timer-blind restore, a reused Combat */
 	finisher37_tests(); /* build 37: the kill at full depth, the killed orc's way out, the release's blend, the snap's pull */
 	finisher41_tests(); /* build 41: the library's cut - the kill at its crossing, the end at its arc's end */
+	stg42_tests();  /* build 42: the game's own struggle widget hidden under the rule (SOMVR_STRUGGLE_WIDGET) */
+	pin42_tests();  /* build 42: the caragor pin's second stage - the ring, the left grip (SOMVR_STRUGGLE_PIN) */
 	ir_tests(argv[1]); /* b35: SOMVR_INPUT_REC, SOMVR_INPUT_REPLAY */
 	flush_log();
 	printf("RATE-like summary: stereo %llu mono %llu h3 %llu+%llu widen %llu stereo tags %llu\n",

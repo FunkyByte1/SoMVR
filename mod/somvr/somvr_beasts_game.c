@@ -88,6 +88,7 @@ static struct {
 	int trace_lines;
 	uint64_t seen, attacks, at_talion, sweeps, contacts, chain_frames, fb_frames, blow_frames, lines, suppressed;
 	int kills[SOMVR_BZ_N];
+	uintptr_t ct_c; int ct_part; /* build 42 (som-b42-bleed): bz_sweep's last contact - its beast and capsule (somvr_bz_cap.part) */
 } g_bz;
 
 /* build 29 (som-b29-pcaragor; docs/re-xr-pipeline.md 128): Practice > Caragor's leap the counterable kind -
@@ -350,6 +351,7 @@ static int bz_sweep(const struct cb_orc *o, const somvr_blade *prev, const somvr
 	int n = bz_capsules(o, cs, t);
 	if (!n) {
 		float c0[3], c1[3];
+		g_bz.ct_c = 0; /* (build 42: no bone capsule named) */
 		cb_capsule(o, c0, c1);
 		return sc_sweep_capsule(prev, b, g_cb.cfg.blade_r, c0, c1, g_cb.orc_r, g_cb.cfg.steps, ct);
 	}
@@ -359,7 +361,7 @@ static int bz_sweep(const struct cb_orc *o, const somvr_blade *prev, const somvr
 		sc_contact c;
 		if (sc_sweep_capsule(prev, b, g_cb.cfg.blade_r, cs[k].c0, cs[k].c1, cs[k].r, g_cb.cfg.steps, &c) &&
 		    (!hit || c.u < ct->u))
-			*ct = c, hit = 1;
+			*ct = c, hit = 1, g_bz.ct_c = o->c, g_bz.ct_part = cs[k].part; /* (build 42: which capsule) */
 	}
 	g_bz.contacts += hit;
 	return hit;
