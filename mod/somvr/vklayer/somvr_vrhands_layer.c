@@ -224,6 +224,7 @@ static void vh_publish(uint32_t state) {
     if (VH.obj) atomic_store_explicit(&VH.obj->layer_state, state, memory_order_release);
 }
 
+static void zp_free(dev_st *ds); /* build 41: the landing probe's buffer (below, with zp_plan) */
 /* the drawing's GPU objects and the swapchain (waits our submits first) */
 static void vh_free(void) {
     dev_st *ds = VH.ds;
@@ -249,6 +250,7 @@ static void vh_free(void) {
         VH.dbuf = VK_NULL_HANDLE, VH.dmem = VK_NULL_HANDLE, VH.dmap = NULL, VH.dsize = 0;
         for (int e = 0; e < 2; e++)
             if (VH.dview[e]) VH.f.DestroyImageView(ds->dev, VH.dview[e], NULL);
+        zp_free(ds); /* build 41 */
         if (VH.zmap) ds->UnmapMemory(ds->dev, VH.zmem);
         if (VH.zbuf) ds->DestroyBuffer(ds->dev, VH.zbuf, NULL);
         if (VH.zmem) ds->FreeMemory(ds->dev, VH.zmem, NULL);
@@ -924,6 +926,141 @@ static void vh_zdump_write(uint64_t n) {
 /* own: never a void's loading space (./somvr_void_layer.c, vd_hands): an entry the layer made from its own input (a
  * mono or keep-alive frame: the game publishes none there), drawn at the swapchain's present size, a fixed light */
 #define VH_SPACE_LIGHT 0.7f
+/* build 41 (som-b41-climb4, ../somvr_zprobe.h; docs/re-xr-pipeline.md 182.2): the eyes' depth round a landing for
+ * the game thread (SOMVR_CLIMB_DRAWN: is anything drawn where the mantle or A UP would land him?). A frame with a
+ * request and both eyes' depth: each point projected into each eye as our hands are drawn (its pose, its fov), a
+ * SOMVR_ZP_PATCH square of the depth round its pixel copied into the slot's part of a small host buffer in the same
+ * submit; once that slot's fence is waited (three frames on) the nearest and farthest drawn view distances answer */
+#define ZP_PTB ((VkDeviceSize)SOMVR_ZP_PATCH * SOMVR_ZP_PATCH * 4) /* a patch's bytes (the depth aspect: 4 a texel) */
+#define ZP_SLOTB ((VkDeviceSize)2 * SOMVR_ZP_NPT * ZP_PTB)
+static struct {
+    somvr_zprobe_shared *obj;
+    uint64_t look_n;               /* frames since the object was last looked for */
+    VkBuffer buf;                  /* HD_NSLOT x ZP_SLOTB, host-visible */
+    VkDeviceMemory mem;
+    const float *map;
+    int bad;
+    int n[HD_NSLOT];               /* the slot's submit copied this many patches (0 none) */
+    somvr_zprobe_ans a[HD_NSLOT];  /* ... its answer to come (the points' distances and states) */
+    float k[HD_NSLOT];             /* ... its depth_k */
+    VkBufferImageCopy rg[2][SOMVR_ZP_NPT]; /* this frame's regions, per eye */
+    uint32_t nrg[2];
+    uint64_t n_req, n_ans, n_out;
+    uint32_t lines, last_id;
+} ZP;
+static void zp_find(void) {
+    if (ZP.obj || ZP.look_n++ % 90) return;
+    somvr_zprobe_shared *o = (somvr_zprobe_shared *)somvr_obj(SOMVR_ZPROBE_SYMBOL);
+    if (!o || !somvr_zprobe_ok(o)) return;
+    ZP.obj = o;
+    lg("xr: hands: somvr_zprobe found at %p (v%u, preload pid %d): the eyes' depth round a landing on request "
+       "(SOMVR_CLIMB_DRAWN; %dx%d texels a point)", (void *)o, o->version, o->pid, SOMVR_ZP_PATCH, SOMVR_ZP_PATCH);
+}
+static int zp_buf(dev_st *ds) {
+    VkBufferCreateInfo bci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = HD_NSLOT * ZP_SLOTB,
+                              .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+    VkMemoryRequirements mr;
+    VkPhysicalDeviceMemoryProperties mp;
+    if (ds->CreateBuffer(ds->dev, &bci, NULL, &ZP.buf) != VK_SUCCESS) return ZP.buf = VK_NULL_HANDLE, -1;
+    ds->GetBufferMemoryRequirements(ds->dev, ZP.buf, &mr);
+    ds->is->GetPhysicalDeviceMemoryProperties(ds->pd, &mp);
+    int type = somvr_pick_host_memory(&mp, mr.memoryTypeBits);
+    VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = mr.size,
+                               .memoryTypeIndex = (uint32_t)type};
+    if (type < 0 || ds->AllocateMemory(ds->dev, &ai, NULL, &ZP.mem) != VK_SUCCESS) return ZP.mem = VK_NULL_HANDLE, -1;
+    void *m = NULL;
+    if (ds->BindBufferMemory(ds->dev, ZP.buf, ZP.mem, 0) != VK_SUCCESS ||
+        ds->MapMemory(ds->dev, ZP.mem, 0, VK_WHOLE_SIZE, 0, &m) != VK_SUCCESS)
+        return -1;
+    ZP.map = m;
+    return 0;
+}
+static void zp_free(dev_st *ds) {
+    if (ds && ZP.map) ds->UnmapMemory(ds->dev, ZP.mem);
+    if (ds && ZP.buf) ds->DestroyBuffer(ds->dev, ZP.buf, NULL);
+    if (ds && ZP.mem) ds->FreeMemory(ds->dev, ZP.mem, NULL);
+    ZP.map = NULL, ZP.buf = VK_NULL_HANDLE, ZP.mem = VK_NULL_HANDLE, ZP.bad = 0;
+    memset(ZP.n, 0, sizeof ZP.n);
+}
+/* this frame's request -> the regions to copy into slot s (ZP.rg, ZP.nrg) and the answer's points; the patches */
+static int zp_plan(dev_st *ds, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2], float k, uint32_t s) {
+    ZP.n[s] = 0, ZP.nrg[0] = ZP.nrg[1] = 0;
+    zp_find();
+    somvr_zprobe_req q;
+    if (!ZP.obj || ZP.bad || !(k > 0) || VH.dw < SOMVR_ZP_PATCH || VH.dh < SOMVR_ZP_PATCH ||
+        (VH.dfmt != VK_FORMAT_D32_SFLOAT && VH.dfmt != VK_FORMAT_D32_SFLOAT_S8_UINT) || !somvr_zprobe_get(ZP.obj, rec->frame, &q))
+        return 0;
+    if (!ZP.buf && zp_buf(ds)) {
+        ZP.bad = 1;
+        lg("xr: hands: the depth probe's buffer could not be made: no landing checks (SOMVR_CLIMB_DRAWN: unknown)");
+        return 0;
+    }
+    somvr_zprobe_ans *a = &ZP.a[s];
+    memset(a, 0, sizeof *a);
+    a->frame = rec->frame, a->id = q.id, a->n = q.n;
+    int n = 0;
+    for (int e = 0; e < 2; e++) {
+        float fov[4] = {pv[e].fov.angleLeft, pv[e].fov.angleRight, pv[e].fov.angleUp, pv[e].fov.angleDown};
+        for (uint32_t i = 0; i < q.n; i++) {
+            float px = 0, py = 0, z = 0;
+            int in = somvr_zp_project(rec->eye[e].pose.q, rec->eye[e].pose.p, fov, VH.dw, VH.dh, q.p[i], &px, &py, &z);
+            a->pt[e][i].z = z;
+            if (!in) {
+                a->pt[e][i].state = SOMVR_ZP_OUT, ZP.n_out++;
+                continue;
+            }
+            int x0 = (int)px - SOMVR_ZP_PATCH / 2, y0 = (int)py - SOMVR_ZP_PATCH / 2;
+            x0 = x0 < 0 ? 0 : x0 > (int)VH.dw - SOMVR_ZP_PATCH ? (int)VH.dw - SOMVR_ZP_PATCH : x0;
+            y0 = y0 < 0 ? 0 : y0 > (int)VH.dh - SOMVR_ZP_PATCH ? (int)VH.dh - SOMVR_ZP_PATCH : y0;
+            a->pt[e][i].state = SOMVR_ZP_READ;
+            ZP.rg[e][ZP.nrg[e]++] = (VkBufferImageCopy){
+                .bufferOffset = (VkDeviceSize)s * ZP_SLOTB + ((VkDeviceSize)e * SOMVR_ZP_NPT + i) * ZP_PTB,
+                .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                .imageOffset = {x0, y0, 0},
+                .imageExtent = {SOMVR_ZP_PATCH, SOMVR_ZP_PATCH, 1}};
+            n++;
+        }
+    }
+    ZP.k[s] = k, ZP.n_req++;
+    atomic_fetch_add_explicit(&ZP.obj->n_read, 1, memory_order_relaxed);
+    if (!n) { /* nothing in the view: the answer now (every point out) */
+        somvr_zprobe_answer(ZP.obj, a), ZP.n_ans++;
+        return 0;
+    }
+    return n;
+}
+/* the copies (the depth textures in TRANSFER_SRC) */
+static void zp_cmds(dev_st *ds, VkCommandBuffer cmd) {
+    for (int e = 0; e < 2; e++)
+        if (ZP.nrg[e]) ds->CmdCopyImageToBuffer(cmd, VH.dimg[e], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ZP.buf, ZP.nrg[e], ZP.rg[e]);
+}
+/* slot s's patches (its fence waited) -> the answer */
+static void zp_read(uint32_t s) {
+    if (!ZP.n[s] || !ZP.map || !ZP.obj) return;
+    ZP.n[s] = 0;
+    somvr_zprobe_ans *a = &ZP.a[s];
+    for (int e = 0; e < 2; e++)
+        for (uint32_t i = 0; i < a->n && i < SOMVR_ZP_NPT; i++) {
+            somvr_zprobe_pt *t = &a->pt[e][i];
+            if (t->state != SOMVR_ZP_READ) continue;
+            const float *d = ZP.map + ((VkDeviceSize)s * ZP_SLOTB + ((VkDeviceSize)e * SOMVR_ZP_NPT + i) * ZP_PTB) / 4;
+            float dmax = 0, dmin = 1e30f;
+            for (int j = 0; j < SOMVR_ZP_PATCH * SOMVR_ZP_PATCH; j++)
+                if (d[j] > 0 && isfinite(d[j])) dmax = d[j] > dmax ? d[j] : dmax, dmin = d[j] < dmin ? d[j] : dmin;
+            t->near_z = dmax > 0 ? ZP.k[s] / dmax : 0; /* reversed Z: the largest value is the nearest */
+            t->far_z = dmin < 1e30f ? ZP.k[s] / dmin : 0;
+        }
+    somvr_zprobe_answer(ZP.obj, a), ZP.n_ans++;
+    if (a->id != ZP.last_id && ZP.lines++ < 60) {
+        ZP.last_id = a->id;
+        lg("xr: hands: the depth probe %u (frame %llu): centre L %s %.2f m, the nearest drawn %.2f m; R %s %.2f m, %.2f m "
+           "(%llu requests, %llu answers)", a->id, (unsigned long long)a->frame,
+           a->pt[0][0].state == SOMVR_ZP_READ ? "read" : "out", (double)a->pt[0][0].z, (double)a->pt[0][0].near_z,
+           a->pt[1][0].state == SOMVR_ZP_READ ? "read" : "out", (double)a->pt[1][0].z, (double)a->pt[1][0].near_z,
+           (unsigned long long)ZP.n_req, (unsigned long long)ZP.n_ans);
+    }
+}
+
 static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrCompositionLayerProjectionView pv[2],
                        xr_comp *c, const eyes_st *ey, const somvr_vrhands_frame *own) {
     VH.last = 0;
@@ -961,6 +1098,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         VH.pending[s] = 0;
     }
     vh_lum_read(s, (double)rec->display_time * 1e-9); /* that slot's scene brightness, three frames old */
+    zp_read(s); /* build 41: that slot's landing probe, three frames old */
     vh_time_read(d, s);
     /* the vertices: the hands, then the occluders */
     hd_vert *v = hd_slot_verts(&VH.hc, s);
@@ -1047,6 +1185,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
     }
     fr.hand[0] = hands[0], fr.hand[1] = hands[1], fr.nocc = nocc;
     int world = own ? 0 : vh_depth_frame(d, rec, &e, &fr); /* build 11: both eyes' depth (else build 10's look) */
+    int zpn = world ? zp_plan(d, rec, pv, fr.depth_k, s) : 0; /* build 41: SOMVR_CLIMB_DRAWN's patches this frame */
     fr.held[0] = e.flags & SOMVR_VHF_HOLD_L ? VH.dheld : 1, fr.held[1] = e.flags & SOMVR_VHF_HOLD_R ? VH.dheld : 1;
     fr.light[0] = 0.27f, fr.light[1] = 0.86f, fr.light[2] = 0.43f; /* from above, a little behind the start's forward */
     fr.opacity = 1;
@@ -1136,9 +1275,10 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         VH.zdump = world && dump && XT.on && VH.daspect && (VH.dfmt == VK_FORMAT_D32_SFLOAT || sten) &&
                    vh_zbuf(d, (VkDeviceSize)2 * VH.dw * VH.dh * 4 + 2 * zs) == 0;
         VH.zsten = VH.zdump && sten;
-        if (world && VH.zdump) {
+        if (world && (VH.zdump || zpn > 0)) { /* (build 41: or the landing probe's patches) */
             vh_depth_barrier(d, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-            for (int k = 0; k < 2; k++) {
+            if (zpn > 0) zp_cmds(d, cmd), ZP.n[s] = zpn;
+            for (int k = 0; k < 2 && VH.zdump; k++) {
                 VkBufferImageCopy bc = {.bufferOffset = (VkDeviceSize)k * VH.dw * VH.dh * 4,
                                         .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
                                         .imageExtent = {VH.dw, VH.dh, 1}};
@@ -1153,7 +1293,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
                                   .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
             d->CmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &hb, 0, NULL, 0, NULL);
             vh_depth_barrier(d, cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            VH.zk = fr.depth_k;
+            if (VH.zdump) VH.zk = fr.depth_k;
         } else if (world)
             vh_depth_barrier(d, cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         hd_record(&VH.hc, cmd, s, &fr, VH.img[VH.xi], VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1192,6 +1332,7 @@ static void vh_frame_e(dev_st *ds, VkQueue q, const somvr_rec *rec, const XrComp
         vh_time_read(d, s);
         vh_time_log("a dump");
         vh_lum_read(s, (double)rec->display_time * 1e-9);
+        zp_read(s);
         lg("xr: hands: the scene's mean linear luminance %.4f (eased %.4f, the meadow's by day %.3f): the light x%.2f%s",
            VH.lum, VH.lum, (double)VH_LUM_REF, (double)light, VH.auto_light ? "" : " (fixed)");
     }

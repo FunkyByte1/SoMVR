@@ -85,7 +85,7 @@ lineup() { local tag=$1 s0=$2 i lu
 TYPES=${FN_TYPES:-neck behead face back downed stunned counter}
 wt() { local a0; a0=$(grep -c '^TRIGGER cmd=' "$L"); w "$1" 0.02; local i; for i in $(seq 1 40); do
   [ "$(grep -c '^TRIGGER cmd=' "$L")" -gt "$a0" ] && break; sleep 0.1; done; sleep "${2:-0.3}"; }
-tready() { local tag=$1 r0=$2 tmo=${3:-14}; waitn '^FINISHER t=.* ready' "$r0" "$tmo" || { echo "  $tag: no ready"; return 1; }
+tready() { local tag=$1 r0=$2 tmo=${3:-14}; waitn '^FINISHER t=[0-9.]+ ready:' "$r0" "$tmo" || { echo "  $tag: no ready"; return 1; }
   sleep 0.8; local pl; pl=$(grep -E '^FINISHER pose' "$L" | tail -1)
   P=$(echo "$pl" | sed -nE 's/.*hands test R ([-0-9. ]+) \(cm.*/\1/p'); WAY=$(echo "$pl" | sed -nE 's/.*the way in ([-0-9.]+ [-0-9.]+ [-0-9.]+) .*/\1/p')
   LU=$(grep -E '^FINISHER lineup' "$L" | tail -1 | sed -nE 's/.*hands test R ([-0-9. ]+)$/\1/p')
@@ -93,8 +93,10 @@ tready() { local tag=$1 r0=$2 tmo=${3:-14}; waitn '^FINISHER t=.* ready' "$r0" "
   echo "  $tag: the outline's grip $P, the way in $WAY; the line-up $LU"; [ -n "$P" ] && [ -n "$WAY" ]; }
 # one try of the current type: the line-up, the snap (a picture), the motion, the kill (a picture), the readout (a picture)
 try41() { local tag=$1 n0 s0 t0 k0; n0=$(lines); s0=$(cnt '^FINISHER t=.* snap'); t0=$(cnt '^FINTEST t=.* try '); k0=$(cnt '^FINISHER t=.* kill:')
-  lineup "$tag" "$s0" || { echo "  $tag: no snap"; fnsay "$n0" 8; return 1; }
+  lineup "$tag" "$s0" || waitn '^FINISHER t=.* snap' "$s0" 6 || { echo "  $tag: no snap"; fnsay "$n0" 8; return 1; }
   d "$tag-snap"; w "kills still off" 0.05
+  local W2; W2=$(grep -E '^FINISHER t=.* snap' "$L" | tail -1 | sed -nE 's/.*the way in ([-0-9.]+ [-0-9.]+ [-0-9.]+) \(right.*/\1/p')
+  [ -n "$W2" ] && WAY=$W2 # (the way of this finisher's snap, not a pose line's of an earlier one)
   local kl; kl=$(grep -E '^FINISHER t=.* kind:' "$L" | tail -1)
   if echo "$kl" | grep -q 'a cut along'; then
     local cp p1 p2; cp=$(grep -E '^FINISHER cutpath' "$L" | tail -1 | sed -nE 's/.*\): (.*)$/\1/p')
@@ -120,7 +122,7 @@ echo "== fintest"; n0=$(lines)
 wt "practice remove" 1.0
 first=1
 for ty in $TYPES; do
-  echo "== $ty $(date +%T)"; n0=$(lines); r0=$(cnt '^FINISHER t=.* ready')
+  echo "== $ty $(date +%T)"; n0=$(lines); r0=$(cnt '^FINISHER t=[0-9.]+ ready:')
   wt "finisher type $ty" 0.4
   [ $first = 1 ] && { wt "practice fintest" 0.5; first=0; }
   since "$n0" '^(FINTEST|PRACTICE t=.* (spawn|refused))' | head -4 | cut -c1-260 | sed 's/^/    /'
@@ -138,7 +140,11 @@ for ty in $TYPES; do
       grep -E '^PARRY open' "$L" | tail -1 | cut -c1-240 | sed 's/^/    /'
       wt "abil goto ${FN_GOTO_CTR:-115}" 0.2; wt "execute face" 0.2 ;;
   esac
-  if tready "$ty" "$r0" 25; then [ $ty = counter ] && wt "fight guard off" 0.3; try41 "$ty"; fi
+  if tready "$ty" "$r0" 25; then [ $ty = counter ] && wt "fight guard off" 0.3
+    # (the downed orc lies under a level head's view: the test head pitched down for the pictures, back after)
+    [ $ty = downed ] && x "head 0 0 0 yaw 0 pitch ${FN_DOWN_PITCH:--45} roll 0 s 0.4"
+    try41 "$ty"
+    [ $ty = downed ] && x "head 0 0 0 yaw 0 pitch 0 roll 0 s 0.4"; fi
   [ $ty = counter ] && wt "fight guard off" 0.3
   sleep 1.5
 done

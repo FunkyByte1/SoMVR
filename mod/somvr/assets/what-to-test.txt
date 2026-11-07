@@ -3,11 +3,17 @@
 # The first line that is not a comment is the title. "- " starts an item; keep items short (a line holds about 27
 # characters, a page about 18 lines; Prev / Next page through more). A line under an item continues it; a blank line
 # ends it. Lines starting with # are not shown.
-Build 40 (Windows) - what to test
-- New in 40 first (from your 11-05 notes), then 39's list. Menu > Controls lists every move.
-- STRUGGLES (41): a caragor pins you - shove or stab at it again and again, a thump for each that counts; the white ring runs down to free you.
+Build 41 (Windows) - what to test
+- New in 41 first, then 40's and older lists. Menu > Controls lists every move.
+- STRUGGLES: a caragor pins you - shove or stab at it again and again, a thump for each that counts; the white ring runs down to free you.
 - ON YOUR KNEES or at a captain's finisher: a blue blade shows on him. Lay your sword on it, then thrust.
 - Story moments: a ring = keep a hand closed until it runs out; an arrow = swipe or lean that way.
+- FINISHERS: Practice > Finisher test has a Type button. Try the Beheading (lay the sword on the level blade to your right, swing through his neck), the Face stab, the Back stab, the Downed stab (walk to him), the Stunned chop (swing down through his neck) and the Counter (block his blow, then stab his chest). Auto picks by how the orc stands.
+- WALL TOPS: walk along a wall top or coping, drifting toward the drop: you stop at the lip with its glow. Tap A to step off, or turn the stick away to walk on.
+- EMPTY LEDGES: a ledge top with nothing really there shows a red crossed ring; A does nothing (a soft double buzz).
+- Step off a wall top's far side with A: you fall to the ground, never stand in the air.
+
+Build 40 - new then:
 - SNEAK UP: duck and walk slowly behind an orc that hasn't seen you: he never hears you, and you get to about half a metre. Grab his shoulder, push the knife in. Walking or standing he hears you as before.
 - BLOCK ZONE: an orange zone shows where each blow will land. Put your blade in it: it turns blue and you block.
 - B + Y: just press both, no hold. If no answer comes within 40 s you hear "No live answer right now".

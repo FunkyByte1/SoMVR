@@ -40,16 +40,16 @@ LIBS=(libcmt.lib libvcruntime.lib libucrt.lib oldnames.lib kernel32.lib user32.l
 LP=(/libpath:"$X/crt/lib/x86_64" /libpath:"$X/sdk/lib/um/x86_64" /libpath:"$X/sdk/lib/ucrt/x86_64")
 # the checks of more than one command: planned as `run ... -- win/build.sh --step NAME` (../buildplan.sh)
 step_exports() {
-  exp=$(llvm-objdump -p "$B/xinput9_1_0.dll" | awk '/^Export Table:/ {e=1} e && /^ +[0-9]+ +0x/ {print $3}' | sort | tr '\n' ' ')
-  want="XInputGetCapabilities XInputGetDSoundAudioDeviceGuids XInputGetState XInputSetState g_cft g_hud g_in g_obj g_sh g_ssn g_tht g_vho g_vmo somvr_host_gen somvr_host_keep somvr_host_persist somvr_host_player_swap somvr_host_reload_request somvr_host_view somvr_host_write somvr_win_bridge somvr_win_hook_entry somvr_win_hook_mid somvr_win_hook_remove somvr_win_log somvr_win_name_game_thread somvr_win_tex_vkimage "
+  exp=$(llvm-objdump -p "$B/xinput9_1_0.dll" | awk '/^Export Table:/ {e=1} e && /^ +[0-9]+ +0x/ {print $3}' | LC_ALL=C sort | tr '\n' ' ')
+  want="XInputGetCapabilities XInputGetDSoundAudioDeviceGuids XInputGetState XInputSetState g_cft g_hud g_in g_obj g_sh g_ssn g_tht g_vho g_vmo g_zpo somvr_host_gen somvr_host_keep somvr_host_persist somvr_host_player_swap somvr_host_reload_request somvr_host_view somvr_host_write somvr_win_bridge somvr_win_hook_entry somvr_win_hook_mid somvr_win_hook_remove somvr_win_log somvr_win_name_game_thread somvr_win_tex_vkimage "
   [ "$exp" = "$want" ] || { echo "FAIL: host exports '$exp', want '$want'"; exit 1; }
-  imp=$(llvm-objdump -p "$B/xinput9_1_0.dll" | awk '/DLL Name:/ {print $3}' | sort -u | tr '\n' ' ')
+  imp=$(llvm-objdump -p "$B/xinput9_1_0.dll" | awk '/DLL Name:/ {print $3}' | LC_ALL=C sort -u | tr '\n' ' ')
   case " $imp " in *" XINPUT"*|*" xinput"*|*" d3d11"*|*" dxgi"*|*" VCRUNTIME"*|*" api-ms-win-crt"*|*" somvr_logic"*)
     echo "FAIL: host imports $imp (xinput/d3d/the logic are loaded at run time, the CRT is static)"; exit 1 ;; esac
-  lexp=$(llvm-objdump -p "$B/somvr_logic.dll" | awk '/^Export Table:/ {e=1} e && /^ +[0-9]+ +0x/ {print $3}' | sort | tr '\n' ' ')
+  lexp=$(llvm-objdump -p "$B/somvr_logic.dll" | awk '/^Export Table:/ {e=1} e && /^ +[0-9]+ +0x/ {print $3}' | LC_ALL=C sort | tr '\n' ' ')
   lwant="somvr_logic_abi somvr_logic_abitest somvr_logic_com somvr_logic_idle somvr_logic_init somvr_logic_present somvr_logic_stop "
   [ "$lexp" = "$lwant" ] || { echo "FAIL: logic exports '$lexp', want '$lwant'"; exit 1; }
-  limp=$(llvm-objdump -p "$B/somvr_logic.dll" | awk '/DLL Name:/ {print $3}' | sort -u | tr '\n' ' ')
+  limp=$(llvm-objdump -p "$B/somvr_logic.dll" | awk '/DLL Name:/ {print $3}' | LC_ALL=C sort -u | tr '\n' ' ')
   case " $limp " in *" xinput9_1_0.dll "*) ;; *) echo "FAIL: the logic imports '$limp': not the host (xinput9_1_0.dll)"; exit 1 ;; esac
   case " $limp " in *" d3d11"*|*" dxgi"*|*" VCRUNTIME"*|*" api-ms-win-crt"*|*" XINPUT1"*|*" xinput1"*)
     echo "FAIL: logic imports $limp"; exit 1 ;; esac

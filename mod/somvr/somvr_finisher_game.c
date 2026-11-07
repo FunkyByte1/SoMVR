@@ -897,8 +897,10 @@ static void fn_kill(uintptr_t pc, const struct cb_orc *oc, double t)
 	fn_unhold();
 	float nd[4][3], nk[3];
 	memcpy(nk, g_fin.neck, sizeof nk);
-	if (stl_body(oc, nd) && dist3(nd[2], g_fin.neck) < 40.0f)
-		memcpy(nk, nd[2], sizeof nk); /* (the neck where it is now) */
+	if (stl_body(oc, nd) && (g_fin.cut || dist3(nd[2], g_fin.neck) < 40.0f))
+		memcpy(nk, nd[g_fin.cut && somvr_fn_kind_of(g_fin.kind) ? somvr_fn_kind_of(g_fin.kind)->node : 2], sizeof nk);
+	/* (the neck where it is now; build 41: a cut's node wherever it went - its blade rode it - so its sever reads the
+	 * neck: boot 20261105-184234's stunned neck had moved over 40 cm since the ready and the sever was not taken) */
 	float hp0 = cb_health(oc->c);
 	fn_spend(pc);
 	int row = somvr_kl_find(g_kl_rows, KL_ROWS, g_fin.row);

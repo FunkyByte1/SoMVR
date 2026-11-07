@@ -63,8 +63,8 @@ step_inert() {
   if [ -e "$T/somvr.log" ]; then echo "FAIL: the library wrote a log outside the game"; rm -rf -- "$T"; exit 1; fi
   rm -rf -- "$T"
   exp=$(nm -D --defined-only "$D/build/somvr.so" | awk '$2 ~ /[TtBbDd]/ { print $3 }' | sort | tr '\n' ' ')
-  [ "$exp" = "somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu " ] ||
-      { echo "FAIL: somvr.so exports: $exp (want somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu)"; exit 1; }
+  [ "$exp" = "somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu somvr_zprobe " ] ||
+      { echo "FAIL: somvr.so exports: $exp (want somvr_comfort somvr_hud somvr_input somvr_objective somvr_session somvr_shared somvr_threat somvr_vrhands somvr_vrmenu somvr_zprobe)"; exit 1; }
   echo "inert: /bin/true and python3 ran with the library preloaded and no log was written; exports: $exp"
 }
 step_selftest() {
@@ -132,6 +132,8 @@ gcc "${CF[@]}" -o "$D/build/tests/test_comfort" "$D/tests/test_comfort.c" "$D/so
 run "$D/build/tests/test_comfort"
 gcc "${CF[@]}" -o "$D/build/tests/test_climb" "$D/tests/test_climb.c" "$D/somvr_climb.c" "$D/somvr_pose.c" -lm
 run "$D/build/tests/test_climb"
+gcc "${CF[@]}" -o "$D/build/tests/test_zprobe" "$D/tests/test_zprobe.c" -lm
+run "$D/build/tests/test_zprobe"
 gcc "${CF[@]}" -o "$D/build/tests/test_bow" "$D/tests/test_bow.c" "$D/somvr_bow.c" "$D/somvr_pose.c" -lm
 run "$D/build/tests/test_bow"
 gcc "${CF[@]}" -o "$D/build/tests/test_vrmenu" "$D/tests/test_vrmenu.c" "$D/somvr_vrmenu.c" "$D/somvr_font.c" -lm

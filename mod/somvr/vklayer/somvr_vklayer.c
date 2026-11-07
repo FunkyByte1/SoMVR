@@ -212,6 +212,7 @@
 #include "../somvr_session.h" /* SOMVR_MARK: a mark's eyes; SOMVR_MARK / SOMVR_QUIT: the menu's Report and Quit game */
 #include "../somvr_menus.h" /* build 6: the menu boards, the wrist minimap, touch (./somvr_menus_layer.c) */
 #include "../somvr_vrhands.h" /* build 10: our own VR hands, the watch, the panel (./somvr_vrhands_layer.c) */
+#include "../somvr_zprobe.h" /* build 41: SOMVR_CLIMB_DRAWN - the eyes' depth at a landing (./somvr_vrhands_layer.c) */
 #include "../somvr_haptics.h" /* build 34: the one haptics language (the VR menu's words) */
 
 _Static_assert(sizeof(somvr_posef) == sizeof(XrPosef) && sizeof(somvr_fovf) == sizeof(XrFovf), "ABI pose/fov types");

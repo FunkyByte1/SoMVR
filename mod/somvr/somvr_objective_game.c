@@ -313,6 +313,71 @@ __attribute__((used)) void somvr_w_obeach(uintptr_t m, uintptr_t pl)
 	}
 }
 
+/* build 41 (som-b41-climb4, SOMVR_CLIMB_DRAWN, somvr_zprobe.h; re-xr-pipeline.md 182.2): the shown landing l (the
+ * mantle's or A UP's ring) - ask the layer for the eyes' depth at it and four points 25 cm round it, 5 cm under the
+ * collision's top (inside a drawn top, in the air over an undrawn one), and take its newest answer for this landing:
+ * the verdict for the climb's A (in.land_vis) and the ring red and crossed when nothing is drawn there */
+#define ZP_ROUND_CM 25.0f
+#define ZP_UNDER_CM 5.0f
+#define ZP_MARGIN_M 0.35f
+#define ZP_MIN_READ 3
+static void zp_landing(const somvr_th_map *mp, sv_vec3 l, somvr_objective_frame *e)
+{
+	if (!g_cl.cfg.drawn || !g_cl.zp_on || !somvr_zprobe_ok(&g_zpo))
+		return;
+	double t = cb_now();
+	float dx = l.x - g_cl.zp_land.x, dy = l.y - g_cl.zp_land.y, dz = l.z - g_cl.zp_land.z;
+	int fresh = !g_cl.zp_frame || g_fr.frame > g_cl.zp_frame + 10; /* a new show of a ring */
+	if (fresh || dx * dx + dy * dy + dz * dz > 100.0f) { /* a new landing: a new request */
+		g_cl.zp_id++, g_cl.zp_land = l, g_cl.zp_asks++;
+		if (fresh) /* (a ring's landing moving a few cm with the hand keeps its last verdict, at the landing it was taken
+			    * for, until this one's answer: boot 151933's A UP was let through in such a gap) */
+			g_cl.zp_vis = SOMVR_ZP_UNKNOWN, g_cl.zp_vis_t = 0, g_cl.zp_nread = g_cl.zp_ndrawn = 0, g_cl.zp_gap = 0,
+			g_cl.zp_was = -1;
+	}
+	g_cl.zp_frame = g_fr.frame;
+	static const float off[SOMVR_ZP_NPT][2] = { { 0, 0 }, { ZP_ROUND_CM, 0 }, { -ZP_ROUND_CM, 0 }, { 0, ZP_ROUND_CM },
+						    { 0, -ZP_ROUND_CM } };
+	float x[SOMVR_ZP_NPT][3];
+	for (int i = 0; i < SOMVR_ZP_NPT; i++) {
+		float w[3] = { l.x + off[i][0], l.y - ZP_UNDER_CM, l.z + off[i][1] };
+		somvr_th_to_xr(mp, w, x[i]);
+	}
+	somvr_zprobe_put(&g_zpo, g_fr.frame, g_cl.zp_id, SOMVR_ZP_NPT, (const float(*)[3])x);
+	somvr_zprobe_ans a;
+	if (somvr_zprobe_read(&g_zpo, &a) && a.id == g_cl.zp_id && a.frame + 60 >= g_fr.frame) {
+		int nr = 0, nd = 0;
+		float gap = 1e9f;
+		int v = somvr_zp_verdict(&a, ZP_MARGIN_M, ZP_MIN_READ, &nr, &nd, &gap);
+		if (g_cl.zp_force) /* the word `climb drawn force undrawn` (a test aid: the refusal's way at any top) */
+			v = SOMVR_ZP_UNDRAWN;
+		g_cl.zp_vis = v, g_cl.zp_vis_t = t, g_cl.zp_nread = nr, g_cl.zp_ndrawn = nd, g_cl.zp_gap = gap;
+		g_cl.zp_vis_at = g_cl.zp_land; /* (the landing this verdict is for) */
+		if (v != g_cl.zp_was) {
+			g_cl.zp_answers++;
+			g_cl.zp_undrawn += v == SOMVR_ZP_UNDRAWN, g_cl.zp_drawn += v == SOMVR_ZP_DRAWN, g_cl.zp_unknown += v == SOMVR_ZP_UNKNOWN;
+			char pts[256];
+			int len = 0;
+			for (int i = 0; i < SOMVR_ZP_NPT && len < (int)sizeof pts - 40; i++) {
+				const somvr_zprobe_pt *p0 = &a.pt[0][i], *p1 = &a.pt[1][i];
+				len += snprintf(pts + len, sizeof pts - (size_t)len, " [%.2f: %.2f/%.2f]",
+						p0->state == SOMVR_ZP_READ ? p0->z : p1->z,
+						p0->state == SOMVR_ZP_READ ? p0->near_z : -1.0f, p1->state == SOMVR_ZP_READ ? p1->near_z : -1.0f);
+			}
+			logf_("CLIMB t=%.3f frame=%llu drawn: the landing %.1f,%.1f,%.1f (request %u, read at frame %llu): %s - %d of %d "
+			      "points read, %d drawn, the nearest drawn %.0f cm past a point; per point [its distance: the nearest "
+			      "drawn L/R, m; 0 = the sky, -1 not read]:%s (SOMVR_CLIMB_DRAWN)", t, (unsigned long long)g_fr.frame, l.x, l.y,
+			      l.z, g_cl.zp_id, (unsigned long long)a.frame,
+			      v == SOMVR_ZP_UNDRAWN ? "NOTHING DRAWN there (an invisible top: the ring red, A refused)"
+			      : v == SOMVR_ZP_DRAWN ? "drawn" : "unknown (out of the eyes' view)", nr, a.n, nd,
+			      gap < 1e8f ? 100.0 * gap : -1.0, pts);
+			g_cl.zp_was = v;
+		}
+	}
+	if (g_cl.zp_vis == SOMVR_ZP_UNDRAWN && t - g_cl.zp_vis_t < 0.6)
+		e->flags |= SOMVR_OBF_LAND_NO;
+}
+
 /* after the frame's body (H4, the game thread): the objective of this frame to the layer; build 16: while the climb's
  * pullover is armed, its landing instead (SOMVR_OBF_LAND: a ring on the floor where he will stand); build 17: while A
  * chooses a drop (SOMVR_CLIMB_DESCENT_MARK), its landing and the line from the edge down to it (SOMVR_OBF_LINE) */
@@ -330,6 +395,19 @@ static void ob_frame(uintptr_t pl, int stereo)
 		somvr_objective_put(&g_obj, g_fr.frame, &e);
 		g_ob.cur = 0;
 		return;
+	}
+	if (g_cl.zp_test_until > 0 && g_cl.on && g_cl.tid == my_tid()) { /* build 41: `climb drawn probe X Y Z` (a test aid) */
+		if (cb_now() > g_cl.zp_test_until) {
+			g_cl.zp_test_until = 0;
+		} else {
+			somvr_th_map tm = { { g_fr.base.pos.x, g_fr.base.pos.y, g_fr.base.pos.z }, g_fr.base.yaw - g_rig.yaw0,
+					    { g_rig.p0.x, g_rig.p0.y, g_rig.p0.z }, somvr_rig_scale(&g_rig) };
+			int was = g_cl.cfg.drawn;
+			g_cl.cfg.drawn = 1; /* (the probe whatever the switch) */
+			zp_landing(&tm, g_cl.zp_test_at, &e);
+			g_cl.cfg.drawn = was;
+			return;
+		}
 	}
 	int dm = g_cl.dm_show; /* the drop's choice over the pullover's ring (A is the newer act) */
 	int ta = !dm && !g_cl.po_show && g_cl.ta_show; /* build 39 (SOMVR_CLIMB_TOP_A): a top under a resting hand: A UP */
@@ -357,6 +435,8 @@ static void ob_frame(uintptr_t pl, int stereo)
 		e.n = 1, e.flags = SOMVR_OBF_LAND, e.id = 0;
 		if (ta) /* build 39: the ring with A UP beside it */
 			e.flags |= SOMVR_OBF_EDGE, e.a_word = SOMVR_OB_A_UP;
+		if (!dm) /* build 41 (SOMVR_CLIMB_DRAWN): the mantle's and A UP's landing - anything drawn there? */
+			zp_landing(&mp, l, &e);
 		e.dist_m = sqrtf((x2[0] - e.pos[0]) * (x2[0] - e.pos[0]) + (x2[1] - e.pos[1]) * (x2[1] - e.pos[1]) +
 				 (x2[2] - e.pos[2]) * (x2[2] - e.pos[2])); /* the ring's radius: Talion's capsule's (35 cm) */
 		if (dm) { /* the line from the edge's (or the feet's) height straight down to the ring */

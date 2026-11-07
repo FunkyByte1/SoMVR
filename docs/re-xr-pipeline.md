@@ -27672,18 +27672,23 @@ type), somvr_vrmenu.c (the type button), somvr_objective.c (the readout's name).
 | run | what | result |
 |---|---|---|
 | 145743 | Practice > Finisher test, each type in turn (`finisher type NAME`), the test hand lined up as a real hand | **neck**: snap 11.6 cm / 1.6 deg, in at match 0.97, full depth -> `kill: Neck stab` (F6, dead 0->1), the readout "Neck 1 snap 12 cm in 3.2 m/s"; **behead**: the arc (the grip 46 cm out, the neck 62 cm along the blade at p 0.53, 50 to -45 deg, the axis vertical), snap 11.8 cm / 0.7 deg, the swing (cbt_insta_decap_pre id 961), `in: Beheading - the blade through the neck at p 0.54` -> F2_Sever forceKill dead 0->1, **the head severed**, cbt_insta_decap id 964, the readout "Behead 3 / Cut 84% KILL end 3.30 s"; **face**: the Head node, snap 11.6 cm, full depth 12 cm -> F5 dead 0->1, cbt_insta_slice; **downed**: the test's heavy hit knocked it down ('KnockDown', 5.4 m off), `abil goto 70`, the way in down (-0.85 up), snap 9.4 cm, full depth 20 cm -> KD_R2 dead 0->1; **stunned**: the stab hit stunned it, `kind: Stunned chop - stunned`, the chop's arc 65 to -35 deg (the axis level), snap 11.9 cm, `in: Stunned chop - the blade through the neck at p 0.67` -> dead 0->1, **the head severed** - its credit the stealth kill's record (the row's player name is the sync's: fixed after, unproven); **back: no ready** - the "placed" orc (unaware, its back turned) was not in combat's orc list, then noticed Talion in 1.1 s and turned (fixed after: the pick from cb_orcs_r, unproven); **counter: no ready** - the parry opened the orc (PARRY open, 1000 ms) at the view's 40 deg edge and its reel carried it from 111 to 170 cm within the opening (fixed after: 3 s from the parry, the driver faces it and steps in, unproven). 2 WARN (the Windows build's standing H9 / layout B), the install an overlay, GameData.sav UNCHANGED |
+| 184234 | `FN_TYPES="back counter stunned downed"` on 52c2b39 (main 8aedda0) | the back stab and the counter kill **readied** (`kind: Back stab - its back to Talion, unaware`; `kind: Counter kill - in a parry's opening`); the stunned chop's kill on its own record `PC_Bip_StunnedInstaKill_B2` (dead 0->1) - but "the sever NOT taken" (its neck had moved over 40 cm since the ready: the kill now reads a cut's node where it is); the driver's faults: the hint's "the execution not ready" matched its ready line (the back try ran before its ready), the counter's thrust along an earlier pose's way (11 of 25 cm), the downed snap 7.75 s after its ready (after the line-up gave up) - all fixed (6024d39) |
+| 184759 | the same, the one re-run (6024d39) | **back**: ready on the unaware back, snap 11.8 cm, full depth -> `kill: Back stab` (B4_Sever, dead 0->1), the blade out 1.70 s later, "Back 1 / Depth 22 cm KILL out 1.70 s"; **counter**: the guard's parry (`PARRY open ... 1000 ms`), Talion stepped in, `kind: Counter kill`, snap 8.3 cm, full depth 25 cm -> CntrKill_F dead 0->1; **stunned**: snap 9.1 cm, the chop through the neck at p 0.68 -> `rec='PC_Bip_StunnedInstaKill_B2'`, dead 0->1, **the head severed**; **downed**: the head pitched -45, snap 11.6 cm, the way down (-0.89), full depth -> KD_R2 dead 0->1. 2 WARN (standing), the install an overlay, GameData.sav UNCHANGED |
 Pictures (both eyes, composed with the layer's quads): logs/coord/b37/fin41-pics/20261105-145743/frameN.png - neck 711 (snap) 746 (kill); behead 1001 (snap: the cyan blade level to the right), 1041 (kill: the black fountain from the neck, the glowing blade through it, "Kill +15 / +5 Execution"), 1121 (readout); face 1236, 1276; downed 1811, 1845 (the kill frame shows the horizon only: the headless head is level and the orc lies under the view - the driver should pitch the test head, `head 0 0 0 yaw 0 pitch -45 roll 0`); stunned 2145, 2180 (the blade down through the hunched neck, black blood on the rock; "+40 Stealth Kill" - the record fallback), 2240.
 
-### 179.3 Open (in order)
-1. One boot of `FN_TYPES="back counter stunned downed"` with fin41-drive.sh: proves 52c2b39's three fixes (the back stab on an
-   unaware back from cb_orcs_r's list; the counter in the 3 s after a parry; the stunned chop's own record) and a downed
-   picture with the head pitched down (add the `head ... pitch -45` xrtest line around the downed try).
-2. For the headset: the cuts' feel (a radial blade about the shoulder, 1:1 with the blade's middle; the 1.5 s let-go after the
-   cut), whether the beheading's start (the blade level to the right, the grip ~45 cm out) and the chop's (the blade raised
-   over the head) are where a player finds them; the test's downed and stunned orcs land 3-5 m away after the set-up hit
-   (the player walks to them).
-3. Each finisher is one motion (the clearest: the killing one of the game's paired kill); the data's 2-3 motion chains
-   (finishers.txt: face's two stabs, the back kill's stab - in - cut, the downed orc's two stabs) are not built.
+Pictures: logs/coord/b37/fin41-pics/20261105-184759/ - back 665 (snap), 685 (kill); counter 1220, 1260; stunned 1650 (kill);
+downed 1968 (snap), 2003 (kill: the orc on its back, the blade down in its chest, the cyan glow at the wound, the
+controller's ghost hand over it, "Kill +15 / +5 Execution", both eyes).
+
+
+### 179.3 Open, and for the headset
+- All seven finishers are proven headless (145743 + 184759). For the headset: the cuts' feel (a radial blade about the
+  shoulder, 1:1 with the blade's middle; the 1.5 s let-go after the cut); whether the beheading's start (the blade level
+  to the right, the grip ~45 cm out) and the chop's (the blade raised over the head) are where a player finds them;
+  the test's downed and stunned orcs land 3-5 m away after the set-up hit (the player walks to them).
+- Each finisher is one motion (the clearest: the killing one of the game's paired kill); the data's 2-3 motion chains
+  (finishers.txt: face's two stabs, the back kill's stab - in - cut, the downed orc's two stabs) are not built.
+
 ## 181. Build 41: Núrn's story path in VR, mission by mission - what blocks the VR player (2026-11-05, som-b41-nurn)
 GAME-STUDY item 1.8. Each mission from its ladder rung (logs/test-save/ladder, re-xr-pipeline.md 172) in one headless
 Windows boot (scripts/ladder_boot.sh, scripts/headset-build26.env + the test hands), driven by scripts/nurn41-drive.sh:
@@ -27878,3 +27883,278 @@ SOMVR_RIDE's grip (109.2):
   visibility call (165.1 hid nav markers by a clip's vf 0x208(0)).
 - The outline drawn alone in the death's held view (a372b7b): built and checked, not yet seen in a picture.
 - Hold and InputDirection never met in the 1964 boots' logs (story moments only).
+## 182. Build 41: the beam's third take-back (the walk's context-action clip), no landing on an undrawn top, no standing on the air over a deep drop - `SOMVR_WALK_CTXCLIP`, `SOMVR_CLIMB_DRAWN`, `SOMVR_WALK_GROUND_DEEP` (2026-11-05, som-b41-climb4)
+**What the player met** (sessions win-session-20261105-092046 note 16, win-session-20261104-220933 note 15): on the
+long wall's beam the walk onto the grass patch past its end stopped dead (178's third rule: with the navmesh clip off
+the step still stood still, only the floor touching); and after a mantle he stood "on a ceiling that doesn't exist"
+6.3-6.8 m over a courtyard. The second was taken (HANDOFF-climb, build 39) for a mantle onto a collision top with nothing
+drawn on it; at the spot the landing is a ruin wall's drawn top (182.3, boot 151933) and the float came after the step
+off its far edge (182.4). Both are built: the drawn check for every mantle / A UP landing, and the fall over a deep drop.
+
+### 182.1 The third take-back: the walk's context-action clip (static RE, som-win64; `SOMVR_WALK_CTXCLIP`)
+The character controller (W `FUN_140822a90` / L `FUN_020cda10`, PlayerMovement slot 9's step; 178.2) runs, after the
+Havok integrate and the per-axis scaling, the step **`UpdateContextActionClipping`** (the string of its error check)
+when the gate byte **W `0x141801538`** (L `0x4b55ca4`; re-traversal.md 2.3) is set:
+- W `FUN_140822580(ctl, params, proxy pos, velocity, ..)`: unless the movement's vf+0x88 says so, and only while the
+  movement's vf+0xa0 (or its Combat's +0x56d) allows it, `FUN_140821ef0` gathers the authored context-action geometry
+  round the proxy (`FUN_14081dde0` + `FUN_140969980`: a query of radius = the capsule's x `DAT_14180158c`, the ledge,
+  beam and corner lines `CContextActionDB` holds - re-traversal.md 1.3) into up to N entries of 0x68 bytes: a segment's
+  two ends (+0, +0xc) and its level normal (+0x18).
+- **W `FUN_14081ef90`** clips the step's velocity against each: a move that would cross a line within the radius is
+  turned along it (the velocity = (the point on the line + along it - the start) / dt), twice if the first clip left
+  any velocity. So the walk slides along the first line and stands still where two lines meet - exactly 178's trace at
+  mark 16 (8.7 cm asked a tick north, 6 cm west in two ticks, then still, only the floor in the manifold).
+- When it clipped (returned 1), the new target is `start + dt x velocity`, and only then does the navmesh clip
+  (`FUN_1408be830`, gate W `0x14180164e`, 178.2's `SOMVR_WALK_NAVMESH`) run on it. `0x141801538`'s only reader is the
+  controller (xrefs: one READ at `FUN_140822a90+0xaea`), as `0x14180164e`'s.
+**The rule (`SOMVR_WALK_CTXCLIP`, code default off, on in the env block):** the PM9 hook (178.2) clears this gate byte
+too, for the same decided step: the player's own PlayerMovement, on foot under LOCO, not climbing, a way 30 cm ahead
+with a floor within 40 cm of the feet (a ray down: no water, no orc); a drop ahead keeps both of the game's clips (its
+edge keeping; our edge stop, 170, holds him there as ever). Each switch its own: `climb navmesh on|off` and `climb
+ctxclip on|off` (test words); `WALK navmesh` names which clips were off; `climb trace` lines carry `clips off N/M`;
+`WALK END build 41`. Selftest: the byte 0 inside a decided step with both switches, with ctxclip alone (the navmesh byte
+kept), 1 outside a decided step and with the switch off.
+
+### 182.2 No landing on an undrawn top: the eyes' depth (`SOMVR_CLIMB_DRAWN`, somvr_zprobe.h)
+**Why the rays cannot tell.** The landing's rays hit `''` (no surface record, no object) - the same as the rocks the
+user climbs; nothing in the hit says whether anything is drawn there. The eyes can: the game's own depth of each eye.
+**The tenth exported object, `somvr_zprobe`** (magic "SMZPROB1", v1, 872 bytes; the host exports `g_zpo` on Windows, the
+preload `somvr_zprobe` on Linux): while the mantle's ring (`SOMVR_CLIMB_MANTLE` / the pullover's) or A UP's ring
+(`SOMVR_CLIMB_TOP_A`) shows, ob_frame (H4, the game thread) writes the frame's request: the landing and four points 25 cm
+round it, 5 cm under the collision's top (inside a drawn top; in the air over an undrawn one), in the layer's reference
+space for that frame's rig, and a request id (a new landing = a new id). The hands layer (the owner of the eyes' depth
+copies, `SOMVR_XR_HANDS_DEPTH=world`), drawing that frame, projects each point into each eye exactly as it draws our
+hands (`somvr_zp_project` = `hd_eye_matrix`'s mapping: the eye's pose and fov), copies a 7 x 7 patch of that eye's
+depth (D32: the depth aspect) round its pixel into a small host buffer in the same submit, and after the slot's fence
+(three frames on) answers: per eye and point, in the view or not, its view distance, the nearest and farthest drawn view
+distance in the patch (`depth_k / depth`, reversed Z; 0 = the sky).
+**The verdict** (`somvr_zp_verdict`): a point read is *drawn* when the nearest drawn thing in its patch lies at most 35 cm
+past it (anything in front of it, at it, or a collision top a little over the drawn rock seen at a slant); **nothing
+drawn** = at least 3 points read in either eye and none drawn in any; otherwise unknown (out of the view, not read).
+**The rule (`SOMVR_CLIMB_DRAWN`, code default off, on in the env block):** nothing drawn at the shown landing = its ring
+red and crossed (`SOMVR_OBF_LAND_NO`, the wraith step's refused ring), and A refused within 40 cm of that landing - the
+mantle (`SOMVR_CLIMB_AM_UNDRAWN`: "mantle: A at the top, no way onto it: nothing drawn at the landing") and A UP
+(`SOMVR_CLIMB_BL_UNDRAWN`: "A UP: no blink: nothing drawn at the landing"): a soft double buzz, he stays; drawn or
+unknown (the landing out of the eyes' view, a verdict over 0.6 s old) = as ever. Logs: `CLIMB drawn: the landing ...
+(request N, read at frame F): NOTHING DRAWN | drawn | unknown - points read, drawn, the nearest drawn past a point, per
+point [its distance: the nearest drawn L/R]`; the layer's `xr: hands: the depth probe N`; `CLIMB END build 41`. Test
+words: `climb drawn on|off`, `climb drawn probe X Y Z` (the same probe at a point for 4 s, no ring), `climb drawn force
+undrawn|off` (every verdict undrawn: the refusal's way at any top). Unit: test_zprobe (the ABI's round trips, the
+projection, the verdict: the 11-04 hull top, the sky, a drawn top, a narrow top by its centre, from under a drawn lip, 30
+cm past, out of the view, two read, one eye), test_climb b41 (A UP and the mantle refused at an undrawn landing; a
+verdict 60 cm off, drawn, unknown, the switch off: as ever - both fail with the switch off).
+
+### 182.3 Proofs (headless, the Windows build under Proton, Monado 20 Hz, scripts/headset-build26.env with the som-b41-climb4 block, SOMVR_HANDS_TEST=1, SOMVR_LOCO_YAW_DPS=360, scripts/climb41-drive.sh; hands at the waist pointing ahead as a player holds them, the walk by the stick's direction - never the turn words)
+| Run (logs/boot-check-20261105-) | What | Result |
+|---|---|---|
+| **150042** `beam16` | mark 16's spot (30766.9 4810.3 -30479.0, the view -7 deg), the stick forward 3 s, the navmesh clip off in both: `climb ctxclip off` / `on` | **the game's clip: 10 cm** (6 cm west, then still - 178's trace exactly); **SOMVR_WALK_CTXCLIP: 70 cm** the way the stick asked, onto the patch, level (4811 -> 4810); both eyes after: the vista past the patch, nothing in the face. `WALK END build 41: the context-action clip off for 376 steps` |
+| 150042 `bank` | a normal top: the meadow's low bank (125 cm), the right hand resting on it = A UP's ring | every request's verdict **drawn** (5 of 5 points read, the drawn top 14-24 cm in front of the points - grass); with `climb drawn force undrawn`: **the ring red and crossed** (both eyes: the A UP label beside it), A = `A UP: no blink: nothing drawn at the landing: he stays`, the root 3628 -> 3628. (The unforced A tap not driven: the ring came 16 s after the arrival, past the driver's 4 s - fixed) |
+| 150042 `air` | the probe word at the invisible top's landing | the trip fell to the meadow at 32982 3728 (the spot 32950 is off the narrow top): the points over and behind the eyes = **unknown** (0 of 5 read: as designed - out of the view decides nothing); at the drawn ground: drawn (5 of 5) |
+| **151933** `air` | Talion on the mantle's landing itself (edge38's spot 32896 4414 -31586: the proxy on the top at 4312), both eyes down at it, `climb drawn probe` there, 25 cm in from its west edge, and east along it | **drawn** at every probe point (the nearest drawn 0-1 cm from the point, both eyes; the one point past the west edge: the courtyard 9.1 m off) - both eyes show **a ruin wall's mossy, ivy-grown top** with the courtyard's paving below. The mantle's landing was never an invisible floor (182.4) |
+| 151933 `beams` | marks 17 and 222603_18 with both clips off | 84 cm (178: 78 with the navmesh clip off alone) and 46 cm (178: 29): no regression |
+| 151933 `bank` | as 150042 | drawn verdicts again (20 of 21); the forced round's A **let through** - the ring's landing moved with the resting hand (21 requests), each new request reset the verdict to unknown until its answer: fixed (182.2: a moving ring keeps its verdict, at the landing it was taken for, until the new answer) |
+| 151933 `airmantle` | backing off the wall top's west edge, A held = the climb down | `no way down by hand at this edge (the way over is blocked)`: not reached (the stepoff plan replaces it) |
+
+### 182.4 The mark's real "standing on air": the fall refused over a deep drop (`SOMVR_WALK_GROUND_DEEP`)
+The session's log after the mantle (182457.3, on the wall top at 4310): the walk to the top's far (east) edge, the edge
+stop, five A taps there (the drop mark's ring each time, let go too soon), then `A tapped at the edge: the light step off
+- 85 cm along heading 85 at 150 cm/s ... the fall as soon as no floor is under him` (182461.6) - and no fall:
+`JUMP refused: no floor under him (the feet -1 cm over the floor -1000000000.0)` at every try, `WALK ground ... no ground
+under him for 0.9 s ... straight down: nothing within 4 m; the proxy's contacts 1 (n 0.70)` then `2.1 s ... the proxy's
+contacts 0` at 32997.9 4362.6 -31519.7: he stood in the air 6.3-6.8 m over the courtyard, walked about on it (the mark 4
+s later at 33159.5 4362.6 -31253.5), every drop mark from 4260 "no room to stand at the landing". WALK_GROUND's fall
+(build 36) is the jump module's arc from rest, and its take-off needs a floor under him from the floor rays (W/L
+`jp_floor`: 5 rays 600 cm down from the root + 20): the courtyard, 6.8 m under the feet, was out of their reach - the
+fall refused, three times, then "left as he is" (the game's own gravity did not take him either: the proxy's flag had
+been off, `0 -> 1` on try 3, and the step off is our level walk).
+**The rule (`SOMVR_WALK_GROUND_DEEP`, code default off, on in the env block):** the fall from here takes off with no
+floor in reach as a throw off a wall does (178.1's FLING): the floor taken 30 m down, found on the way by the arc's own
+per-tick rays (600 cm ahead of the fall), its braked landing; too long (3 s) or too deep (15 m past it) = the game's own
+fall, gravity back. Logs: `JUMP go: the fall from here ... no floor within 6 m (to be found on the way down)
+(SOMVR_WALK_GROUND_DEEP)`, `JUMP END build 41`. Word: `jump deep on|off`.
+
+**182.3, continued** (after 182.4 and the verdict's keep; each run 2 WARN - Windows' known startup pair - beyond the
+first's three trips to a spot off the top, the test save UNCHANGED, exit 0):
+
+| Run (logs/boot-check-20261105-) | What | Result |
+|---|---|---|
+| **161512** `air` | the mantle's landing, 25 cm in from the west edge, and east along the top (SOMVR_CLIMB_DRAWN on) | **drawn** each (5 of 5 read; 5 / 4 / 3 drawn, the rest past the top's edges: the courtyard 7.6-9.1 m off): the check lets the user's mantle be - right, it is a drawn top |
+| **161512** `bank` forced | the verdict forced undrawn, the ring jittering with the resting hand (33 requests) | **A UP refused 8 s after the verdict** (`A UP: no blink: nothing drawn at the landing ... he stays`, 3628 -> 3628): the verdict now survives the ring's moves (151933's gap fixed) |
+| 165210 `bank` | after a warm-up trip (the first round's ring now comes at once): the drawn verdict; the taps 2.4 s on met the swaying test hand's gaps in the ring (`A on foot: no edge ahead`) | driver timing (the next run presses as the ring shows) |
+| **172133** `bank` | A pressed the moment the ring shows | **drawn verdict -> A UP = the blink up onto the bank (3628 -> 3758)**; forced undrawn -> **A UP refused, he stays** (3627 -> 3627) |
+| **173819** | 376 + mark 16 with the slope at 0 | ring40, up40 FAIL (the clips off at the bank's edge: the walk into its bevel); mark 16 32 cm; hold40r's spot wrong (fell) - 182.4b |
+| **174915** | 376 + mark 16, the gated clips and slope | 376 hold40 / ring40 / up40 / hold40b PASS, hold40r PASS, mark 16 59 cm, mark 17's fall (182.4b) |
+| 180118 | + EDGE_STEEP_CM 40 | beam17 fell (along the coping, a rounded lip; the steep rule 0); ring40 / up40 / hold40b / hold40r: the walk at the west / -163 edges blocked by the lip's bevel before the probe - no "held" (no fall); mark 16 53 cm |
+| 181952 | + EDGE_CONFIRM_CM 8, 376 first | 376 hold40 / ring40 / up40 PASS; beam17 PASS (held, heading 30); mark 16 59 cm; hold40r blocked by the bevel |
+| 182641 | `lip17` (180118's route), hold40r A either way | lip17 fell 11 m (clips the game's); hold40r PASS (blocked by the bevel, A held = lowered); beam17 fell |
+| **183213** | + EDGE_SLOPE_DEG 45, 376 first | 376 hold40 / ring40 / up40 PASS, hold40r PASS, beam17 PASS; **lip17 fell, mark 16 26 cm** -> 182.4c |
+| 161512 `stepoff` | on the wall top, the walk east to its far edge, A tapped = the light step off, `jump deep off` / `on` | **not reproduced**: at 20 Hz the game's edge keeper held the step at the lip (`the step off ended: the game holds him at this edge (3 cm out of 75 asked)`); the second A went to the jump's press. The proxy's gravity flag read 0 standing there (the game's park) - the session's float started from that state; its 90 Hz step went 85 cm out. SOMVR_WALK_GROUND_DEEP is unproven in a game |
+
+### 182.4b build-win9's entry 376 on this branch: the edge stop kept (`SOMVR_WALK_CLIP_FAR_CM`, `SOMVR_WALK_SLOPE_AHEAD`)
+build-win9's suite (REVIEW 376): climb3's `SOMVR_WALK_SLOPE_DEG=55` on every foot tick broke b40-ledge's walk edge stop
+after A UP (up40), and hold40 ("no hold") failed in most sets. On this branch with the slope at 0 (boot 173819): ring40 and
+up40 FAILED too - the clips off 50 cm from the bank top's edge (the floor 30 cm ahead was still the top) let the walk run
+straight into its bevel (0 % of the asked, `UNPIN ... blocked`, no edge stop, no glow), where the game's clips slide it
+along the lip into our stop; and mark 16 walked only 32 cm with the slope at 0 (its patch's bevel is steeper than 45 deg).
+hold40's "no hold" is not a switch's: M5's crevice is spanned by the capsule (b40-ledge's own 90 Hz note) - every 376 run
+walked past it ~11 m along the coping (161217's "pass" reached the coping's far end inside the driver's 6 s, 164934's
+did not). **The rule now:** a step's clips off **and** climb3's steeper slope only when its floor goes on past the edge
+stop's own probe - a floor 30 cm **and** `SOMVR_WALK_CLIP_FAR_CM` (65) ahead within 40 cm of the feet
+(`SOMVR_WALK_SLOPE_AHEAD=on`: the 55 deg slope on such steps alone, the game's 45 deg otherwise). An edge nearer = the
+game's clips and slope, as build-win9's passing runs had them. Boot **174915** (this set; 376's driver unchanged, then
+the mark-16 plans): **376 hold40 A held = the climb down PASS** (its take-over FAIL is final.sh's known one), **ring40
+PASS** (3755 -> 3627), **up40 PASS** (the edge stop holds at once on the top, 3755.7), **hold40b PASS**; hold40 at a real
+edge (`hold40r`: the coping's far end, the ground 10.6 m down) **PASS** - held, A held 0.8 s = lowered over it; **mark 16:
+12 cm -> 59 cm**; mark 222603_18 242 cm along the coping.
+**Mark 17 - a risk for the headset:** the walk at the user's heading went on along the beam (the clips off for its first
+metre), SOMVR_WALK_LIP stepped it over an 8 cm lip, then down the sloped beam (the game's clips back on: the floor
+dropping away ahead) at 22 deg and off its lower end down a slope steeper than 45 deg: the proxy slid (-4.4, -10, -15 cm
+a tick), our edge stop never fired (a floor within 50 cm under a point 40 cm past the step = "floor" on a 45-51 deg
+slope), WALK_GROUND's deep fall took him 10.3 m down, braked. Before, the coping held the walk within ~1 m of the start.
+The edge stop's tolerance for a steep slope ahead (b40-ledge's code) is the place to fix it: a floor 40 cm past that
+lies more than ~40 cm lower is a drop.
+
+### 182.4c Mark 17's slide: the edge stop's rules tried, and the walk shipped as build 40's this round
+The coordinator: no 10 m slide-and-fall may ship (unrequested motion) - fix the edge stop for mark 17, re-prove mark 16
+and 376. Three rules in b40-ledge's edge stop (`we_guard` / `we_floor_ahead`, each its own switch, code default off):
+- `SOMVR_WALK_EDGE_STEEP_CM` (40): the forward probe takes a floor more than 40 cm under the feet for a drop (50 under him
+  and beside the walk). Boots 180118, 182641, 183213: it never fired (forward probes over a floor 40-50 cm down: 0) - the
+  beam end was not a 45 cm step as boot 174915's trace had suggested.
+- `SOMVR_WALK_EDGE_CONFIRM_CM` (8): a new drop is the stop at its second tick once the walk covered 8 cm with it in view
+  (build 39's third otherwise; 90 Hz unchanged). It fired (5 in 183213) but not at mark 17's lip.
+- `SOMVR_WALK_EDGE_SLOPE_DEG` (45): the floor from the forward probe to 25 cm past it falling steeper than 45 deg, or
+  none within 2 m there, is a drop. It fired 79 times in 183213 - and cut **mark 16's walk to 26 cm** (the patch's far
+  side), while **lip17 still slid**.
+**What mark 17 is** (traces 180118 `beam17`, 182641 / 183213 `lip17` from 31551.4 4818.7 -30574.2 at heading 64): the
+coping turns into a walkable 17-25 deg slope (-3.1 to -3.8 cm a 10 cm tick) that rounds over into an 11 m cliff near x
+31740-31790; the feet-relative forward probe finds floor within 40-50 cm at every tick (the feet go down with the slope),
+and once the capsule rolls over the lip the ray under the root finds nothing - the edge stop hands over to WALK_GROUND
+("none seen under him either"), which can only arrange the fall. **lip17 slid with the game's own clips** (its clips off
+0/0 in 182641): the hole is the edge stop's, not SOMVR_WALK_CTXCLIP's - the clip bypass only makes the coping walkable
+enough to reach it. Boot 183213 (the slope rule on): 376 hold40 (climb down) / ring40 / up40 PASS, hold40r PASS (held at
+heading 108, A held = lowered), beam17 PASS (held at another edge, the 20 Hz walk went heading 32), lip17 FAIL (11 m),
+beam16 FAIL (26 cm).
+**The coordinator's call:** the walk ships as build 40's this round - `SOMVR_WALK_CTXCLIP=off`, `SOMVR_WALK_SLOPE_DEG=0`,
+the clip-far / slope-ahead / edge rules off (commented in the block); the code stays (all off by their code defaults);
+`SOMVR_CLIMB_DRAWN` and `SOMVR_WALK_GROUND_DEEP` stay on. **Next round:** the edge stop on a walkable slope that rounds
+over into a cliff - e.g. probe the floor's own continuation further ahead along the slope (60-100 cm) relative to the
+slope's line rather than the feet, or stop when the walk's own descent rate steepens past ~35 deg with no floor 2 m under
+the next probe; prove at lip17 (above), mark 16 (must still reach the patch, 53-59 cm) and 376 + hold40r together.
+
+### 182.4d The edge stop's slope line (som-b41-lip, `SOMVR_WALK_EDGE_LINE_CM`, code default 40) - not proven yet
+The coordinator (after the 8aedda0 merge): lip17's 11 m slide happens on build 40's own switches - fix b40-ledge's edge
+stop there, two boots at most. The rule (`we_line_drop`, called in `we_guard` where the forward probe found floor):
+walking downhill - the root's own way over its last 8 cm+ falling 8.5..45 deg (the game moves him down the fall line,
+not along the stick: in boot 184529 the first version, along the stick, judged 1 tick) - the slope's line carried on 75
+and 100 cm along that way; the floor there more than 40 cm under the line, or none within 3 m, is a drop (the hold along
+that way). Level ground keeps the edge stop's own rule.
+| Run | What | Result |
+|---|---|---|
+| 184529 | 376 first; lip17, hold40r, hill (the stick's-direction version) | 376 ring40 / up40 / hold40b PASS, hold40 no hold (M5's crevice); hold40r PASS; **lip17 slid 11 m**; the rule judged **1** downhill tick; hill's PASS invalid (tee's status) |
+| **185515** | 376 first; lip17, hold40r, hill, beam17 (the motion version) | 376 ring40 / up40 PASS, hold40 / hold40b no hold (M5); hold40r PASS; **hill PASS - 8 meadow walks of 1-9 deg up and down, no hold, no fall**; lip17's 20 Hz turn sent the walk 7 m east along the level coping (no lip reached); **beam17 slid 11 m** (with `climb ctxclip on` - the plan's own word); the rule judged **4** downhill ticks, 0 drops |
+**Open (next):** the rule does not engage on mark 17's 15 deg slope - `we_guard` does not reach `we_line_drop` on those
+ticks (or `we_floor_ahead` reads no floor there). No boot is left this round: add a per-second `WALK edge guard` line
+while walking (which early exit: jp_air, ov_active, pr_settling, keep, fa, ls) and run lip17 with the stick's heading
+fixed (no faceyaw at 20 Hz: `sdir` from the measured yaw, as edge38's) - then judge. beam17 must drop its `climb ctxclip
+on` word to test build 40's switches. Not shipped as a live patch (its condition: proven on build 40's switches). The
+hill test found no 10-25 deg open hillside near the known spots - one is still needed for the "not stopped" proof.
+
+### 182.5 Switches (the som-b41-climb4 block at the end of scripts/headset-build26.env)
+| Switch | Code default | Env | What |
+|---|---|---|---|
+| `SOMVR_WALK_CTXCLIP` | off | **off** (182.4c) | the walk's context-action clip (W gate `0x141801538`) off for the PM9-decided step (a floor 30 cm ahead within 40 cm of the feet) |
+| `SOMVR_CLIMB_DRAWN` | off | **on** | the mantle's and A UP's landing: nothing drawn there in the eyes' depth = the ring red and crossed, A refused |
+| `SOMVR_WALK_GROUND_DEEP` | off | **on** | WALK_GROUND's fall takes off over a drop deeper than the floor rays' 6 m (the floor found on the way down) |
+| `SOMVR_WALK_CLIP_FAR_CM` | 0 (build 40: 30 cm alone) | off (65 proven with 376, 182.4b) | the clips off only when the floor also goes on this far ahead |
+| `SOMVR_WALK_SLOPE_AHEAD` | off (build 40: every foot tick) | off (on proven with 376) | climb3's `SOMVR_WALK_SLOPE_DEG` only on such a step; the slope itself **0** this round |
+| `SOMVR_WALK_EDGE_STEEP_CM` | 0 (= 50) | off (40 never fired) | the edge stop's forward probe's drop |
+| `SOMVR_WALK_EDGE_CONFIRM_CM` | 0 (3 ticks) | off (8 tried) | a new drop the stop at its second tick after this much walk |
+| `SOMVR_WALK_EDGE_SLOPE_DEG` | 0 | off (45 cut mark 16, lip17 still slid) | the floor 25 cm past the probe falling steeper = a drop |
+Words: `climb ctxclip on|off`, `climb drawn on|off`, `climb drawn probe X Y Z`, `climb drawn force undrawn|off`, `jump deep
+on|off`. Not in the VR menu (no setting to pin).
+
+### 182.6 Open, the headset's to judge
+- The beam's walk (mark 16) is not shipped this round (182.4c): SOMVR_WALK_CTXCLIP is proven at the spot and with 376,
+  but the edge stop lets mark 17's rounded coping slide him 11 m - its next round first.
+- SOMVR_CLIMB_DRAWN never fired on a real landing in these boots: the 11-04 mark's landing turned out drawn, and no
+  undrawn top was found; its refusal is proven only with the verdict forced (the ring red, A refused) and its detection
+  with the probe (drawn at real tops, nothing at points past their edges, unknown out of the view). A grip on an
+  invisible wall (no drawn surface at the hand) is not checked: the grab cannot wait the probe's 3 frames.
+- The float itself (SOMVR_WALK_GROUND_DEEP): the session's log shows every fall refused "no floor under him" with the
+  courtyard 6.8 m down; the fix lets that fall go and find the floor on the way, as the throw's - not reproduced
+  headless (the step off held at the lip at 20 Hz). In the headset: step off a high wall's top with A tapped - he must
+  fall to the ground below, never stand in the air.
+
+## 183. Build 42: mark 17's coping - the capsule riding an edge beside the walk (`SOMVR_WALK_EDGE_RIDE`) (2026-11-05, som-b42-edgestop)
+The problem: on build 40's own switches (build-win9: CTXCLIP off, SLOPE_DEG 0) the walk down mark 17's coping carried
+Talion over its lip into an 11 m fall; none of 182.4c-d's rules (steep 40 cm, confirm 8 cm, slope 45 deg, the slope line)
+ever engaged there.
+
+### 183.1 The diagnostic (`WALK edge guard`, somvr.c `we_diag`)
+The edge stop's path, a line per second while walking and every tick under `climb trace S`: which exit (`floor ahead`,
+`none under`, `confirm`, `along`, `drop`, `keep`, `ride`, or an early one: `step`, `climb`, `air`, `vault`, `fsm`,
+`settling`), the floor at the forward probe and under the centre (to 3 m), the probe's and the centre's verdicts at the
+edge stop's depth, the 40 cm side rays, WALK_GROUND's footprint, the proxy's tilted lower contact (n.y, height, way).
+Boot **20261105-192731** (build-win9's switches, scripts/edge42-drive.sh `lip17ab`: boot 180118's route, the stick's
+heading fixed at 64 deg from the measured head yaw - no turn words) with the new rule off:
+- ticks 1-3: `floor ahead` - the floor 52 cm ahead **none**, the left 40 cm ray **open**, but the forward probe's ±12 cm
+  side ray met the top, so `we_floor_ahead` said floor;
+- from tick 4 on, every tick: `none under` - no floor within 50 cm under the centre, while the proxy's contact tilted
+  0.97 -> 0.83 -> 0.69 (46 deg) at one height (4718: the top's own edge, not a slope). The edge stop gave him to
+  WALK_GROUND, which saw no ground under the footprint and dropped him (4820 -> 3677).
+**What mark 17 is:** a flat coping top whose edge runs at heading ~75; the walk ran ~4-8 deg off that line, the centre
+crossed the edge BESIDE the walk, and the capsule rolled over it on its rim. The "17-25 deg slope" of 182.4c was the
+capsule's own roll over a sharp edge (the root sinking as the contact climbs its hemisphere), not a hillside - so no rule
+on the floor ahead could see it.
+
+### 183.2 The rule (`SOMVR_WALK_EDGE_RIDE`, code default on; `we_ride_edge`, `we_guard1`)
+On foot, walking: the proxy's lower contact (under the capsule's middle, within 15 cm) tilted 2 deg+ off the vertical
+(n.y < 0.9995) **and** no floor within the edge stop's depth (50 cm) under the centre = riding an edge. The drop's way is
+that contact's level normal (exact, no rays). Then, at once (no 3-tick confirmation - he is at the edge already):
+- the walk is held **in full** while the stick has any part toward the drop (the part along the edge too: the first
+  version kept it and the proxy's own step along a tilted edge drifted him out ~2 cm a tick until the capsule sank 10 cm);
+- the stay is a normal edge stop: the lip's glow, A's nudge, A tapped = the light step off, A held = the climb down,
+  SOMVR_WALK_EDGE_HOLD undoes the game's slide toward it; the stick away from the drop walks free;
+- WALK_LIP is quiet while the edge stop holds (the first version's 23 cm hop: our hold's counter-move read as a walk
+  stalled at a lip).
+A floor under the centre (any hillside, stairs, a step down under 50 cm) never rides; a wall (n.y under 0.1) is no edge.
+Word: `climb edgeride on|off` (a test aid). Log: `WALK edge stop ... riding an edge`, `WALK END build 42`.
+Test aid: `climb heights STEP N` - the floor's heights on an N x N grid STEP cm apart (rays 30 m up/down), for finding
+hillsides (scripts/hill42_pick.py picks open 10-25 deg downhill lines from it).
+
+### 183.3 Proofs (headless, the Windows build under Proton, Monado 20 Hz, logs/build-win9/headset.env's switches +
+SOMVR_LOCO_YAW_DPS=360, SOMVR_HANDS_TEST=1; hands at the waist pointing ahead; the walk by the stick's direction only)
+| Run (logs/boot-check-20261105-) | What | Result |
+|---|---|---|
+| 192731 | `lip17ab` (the rule off, then the first version on), survey 100 x 25 at the two meadows, hold40r | off: **fell 11 m** (the diagnostic above); first version: no fall, but caught at n.y 0.97 and drifted along the edge, sank 10 cm, WALK_LIP hopped 23 cm; survey: no 10-25 deg line (meadows 1-5 deg, cliffs); hold40r PASS |
+| **193555** | this branch (main + the rule): 376 first in the fresh game (edge38, final.sh's plans), then lip17, hold40r, survey 400 x 41, hillwalk | **lip17 PASS** (held riding the edge: 4819 -> 4819, the contact steady at n.y 0.93, no drift, no hop); **hold40r PASS** (4811 -> 4691); **hillwalk PASS**: 4 walks down open 14-16 deg hillsides (31215 2196 -18694, 31700 2474 -17200, 31300 2336 -17600, 31300 2362 -17200, heading -90; ~410 cm level, 104-118 cm down each): no hold, no fall; 376: ring40 PASS, hold40 no hold (M5's crevice, known), up40 "no ring" (A UP's ring came 6.7 s after the trip, past the driver's 4 s - the patch tree's build ran beside it), hold40b held, then the climb's own "no way down by hand at this edge"; the rule rode once in the whole boot (lip17); 0 WARN, the save UNCHANGED |
+| **194339** | **the live patch's own tree** (logs/coord/b37/tree-306b649 + only this rule: logic bbc90260, build-win9's switches), the same order: 376 first, then lip17, hold40r, hillwalk on the three spots above | **lip17 PASS** (riding the edge: 4819 -> 4819), **hold40r PASS** (4811 -> 4696), **hillwalk PASS** (3 walks, 14-16 deg, 407-412 cm level, 104-119 cm down: no hold, no fall); 376: ring40 PASS, hold40 known, up40 / hold40b as in 193555; the rule rode once (lip17); 0 WARN, the save UNCHANGED |
+
+**376's up40 and hold40b are not this rule's:** the rule rode only at lip17 in each boot (`WALK END build 42: ... holds 1`)
+and changes nothing else on the forward rule's path. up40 is a race in its driver: A UP's ring comes ~6.7-6.9 s after
+the trip in every run - build-win9's own passing run 164934 too (6.9 s) - right at the end of the driver's wait (the
+hand placed ~3 s after the arrival, then 3 s). Failing it, up40 returns before its A UP and walk, so hold40b starts at
+another yaw (29.6 here) and its walk at M5 is held at the crevice itself (the forward rule, as before) where the climb
+says "no way down by hand: the way over is blocked"; in the passing runs it walked on ~11 m to the coping's far end and
+climbed down there (182.4b's M5 note). Driver fix for later: wait for the ring 6 s, or from the hand's placement.
+
+### 183.4 The live patch for build 40 (build-win9)
+Built from logs/coord/b37/tree-306b649 plus only this rule (`we_ride_edge`, the ride path in `we_guard`, the
+`WALK edge guard` line, WALK_LIP quiet at a held edge, the config / END lines, `climb edgeride`; no `climb heights`).
+Both build checks green (`live_patch.sh check`), logic **bbc90260**, layer / host fingerprints = build-win9's (a live
+patch, no restart). Staged with `LIVE_ROOT=/tmp/edgestop42/live live_patch.sh stage ... --next --base build-win9` into a
+test live root (kind=live; not logs/live/next); a copy of that root, the port script and the somvr.c diff against
+306b649 are in logs/coord/b37/edgestop42-patch/. The code default is on, so build-win9's env needs no new line.
+
+### 183.5 Switches
+| Key | Code default | Env (scripts/headset-build26.env, the som-b42-edgestop block) | What |
+|---|---|---|---|
+| `SOMVR_WALK_EDGE_RIDE` | on | on | the capsule riding an edge (no floor under the centre, the proxy's lower contact tilted 2 deg+) held at once, in full while the stick points toward the drop; WALK_LIP quiet while the edge stop holds |
+
+### 183.6 Open, the headset's to judge
+- At 90 Hz the rule should catch the crossing ~1 cm past the edge (20 Hz: 2.6 cm); the stop is the edge stop's usual
+  one (glow, A's nudge). The headset judges whether being held while walking ALONG an edge (the stick's part along it
+  stops too once the centre is over) feels right - the stick turned a little away from the drop walks on.
+- beam17 (mark 17's beam end with build 40's switches, no `climb ctxclip on`) was not re-run this round.
+- `WALK edge guard` lines are in every session's log now (1/s while walking): the next session's slides can be read
+  directly.

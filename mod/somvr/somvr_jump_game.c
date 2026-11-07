@@ -83,7 +83,13 @@ static struct {
 	sv_vec3 fling_v;
 	uint64_t flings, fling_refused;
 	const char *fling_why;  /* why the last throw was not taken (the climb's line) */
-} g_jp = { .req_jump = -1, .req_vault = -1, .req_stock = -1, .req_cm = -1, .req_via = -1 };
+	int fall_deep;         /* build 41 (som-b41-climb4, SOMVR_WALK_GROUND_DEEP; 0 off): the fall from here takes off over a
+				* drop deeper than the floor rays' 6 m too - the floor found on the way down, as the throw's (the
+				* 11-04 mark 222445_15: a step off a ruin wall's top 6.8 m over the courtyard, every fall refused
+				* "no floor under him", he stood on the air) */
+	_Atomic int req_deep;
+	uint64_t deep_falls;
+} g_jp = { .req_jump = -1, .req_vault = -1, .req_stock = -1, .req_cm = -1, .req_via = -1, .req_deep = -1 };
 static _Atomic int g_sv_req, g_sv_req_r, g_sv_req_step; /* build 24: `vault grid|edges` (sv_frame) */
 
 static const char *jp_why_not(double t);
@@ -149,6 +155,11 @@ static void jp_config(int *bad)
 	g_jp.via = env_word("SOMVR_JUMP_VIA", g_jp_via_w, 3, JP_VIA_SETPOS);
 	if (g_cl.cfg.foot_cm > 0)
 		g_jp.cfg.foot_cm = g_cl.cfg.foot_cm;
+	g_jp.fall_deep = env_word("SOMVR_WALK_GROUND_DEEP", (const char *const[]){ "off", "on" }, 2, 0); /* build 41 */
+	logf_("CONFIG walk ground deep=%s%s", g_jp.fall_deep ? "on" : "off", g_jp.fall_deep ? ": on foot over nothing, the "
+	      "fall from here takes off over a drop deeper than the floor rays' 6 m too (the floor found on the way down, as "
+	      "a throw off a wall's; too long or too deep = the game's own fall)" : " (a fall with no floor within 6 m is "
+	      "refused: he stays where he is, as build 40)");
 	if (g_jp.cfg.jump || g_jp.cfg.vault)
 		logf_("CONFIG jump=%s vault=%s: A on foot when nothing else claims it (the strike's mark, the dodge in a fight, a "
 		      "climb, the descent's edge standing) = the jump: %.0f cm up (%.0f cm/s at the game's gravity), the stick's "
@@ -170,6 +181,8 @@ static const char *jp_word(const char *w)
 		return atomic_store(&g_jp.req_jump, w[1] == 'n'), w[1] == 'n' ? "jump on" : "jump off";
 	if (!strcmp(w, "state"))
 		return atomic_store(&g_jp.req_state, 1), "jump state";
+	if (!strcmp(w, "deep on") || !strcmp(w, "deep off")) /* build 41: SOMVR_WALK_GROUND_DEEP (a test aid) */
+		return atomic_store(&g_jp.req_deep, w[6] == 'n'), w[6] == 'n' ? "jump deep on" : "jump deep off";
 	if (!strncmp(w, "trace ", 6)) {
 		float s = (float)atof(w + 6);
 		if (!(s > 0 && s <= 30))
@@ -408,6 +421,11 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 		g_jp.cfg.jump_cm = (float)rq, logf_("JUMP t=%.3f the jump's rise %d cm (the word)", t, rq);
 	if ((rq = atomic_exchange(&g_jp.req_trace_ms, 0)) > 0)
 		g_jp.trace_until = t + rq * 1e-3, logf_("JUMP t=%.3f trace %.1f s: the root per tick (the word)", t, rq * 1e-3);
+	if ((rq = atomic_exchange(&g_jp.req_deep, -1)) >= 0) { /* build 41: SOMVR_WALK_GROUND_DEEP (the word) */
+		g_jp.fall_deep = rq;
+		logf_("JUMP t=%.3f deep %s: the fall over a drop deeper than 6 m %s (the word, a test aid)", t, rq ? "on" : "off",
+		      rq ? "takes off (the floor found on the way)" : "refused, as build 40");
+	}
 	if ((rq = atomic_exchange(&g_jp.req_stock, -1)) >= 0 && rq != g_jp.stock) { /* the game's own A, for measuring it */
 		if (rq) /* (the climb's A on foot off too: the descent's ring would take the press at an edge) */
 			g_jp.stock_gm = g_inp.cfg.game_moves, g_jp.stock_latch = g_lo.cfg.latch, g_inp.cfg.game_moves = 1,
@@ -445,8 +463,11 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 		int fok = have_root && jp_floor(root, &fy);
 		if (!why && !o->owned)
 			why = "LOCO does not own this tick";
+		int deep = 0;
 		if (!why && !fok && kind == SOMVR_JPK_FLING) /* build 40: thrown off a high wall - the floor found on the way */
 			fy = root[1] - g_jp.cfg.foot_cm - 3000.0f, fok = 1;
+		else if (!why && !fok && g_jp.fall && g_jp.fall_deep) /* build 41: the fall over a deep drop - the same */
+			fy = root[1] - g_jp.cfg.foot_cm - 3000.0f, fok = 1, deep = 1, g_jp.deep_falls++;
 		if (!why && !fok)
 			why = "no floor under him";
 		if (!why && root[1] - g_jp.cfg.foot_cm - fy > g_jp.cfg.ground_cm && !g_jp.fall && kind != SOMVR_JPK_FLING)
@@ -498,8 +519,9 @@ static void jp_pm(uintptr_t pm, const somvr_loco_in *in, somvr_loco_out *o, cons
 				g_jp.falls++, g_jp.fall = 0;
 				if (jp_log_ok())
 					logf_("JUMP t=%.3f go: the fall from here (SOMVR_WALK_GROUND): from rest at %.0f cm/s^2, the stick's %.0f "
-					      "cm/s carried; the root %.1f,%.1f,%.1f, the feet %.1f cm over the floor %.1f", t, g, jp_speed(), r.x,
-					      r.y, r.z, r.y - g_jp.cfg.foot_cm - fy, fy);
+					      "cm/s carried; the root %.1f,%.1f,%.1f, %s %.1f%s", t, g, jp_speed(), r.x, r.y, r.z,
+					      deep ? "no floor within 6 m (to be found on the way down) -" : "the feet over the floor",
+					      deep ? fy : r.y - g_jp.cfg.foot_cm - fy, deep ? " (SOMVR_WALK_GROUND_DEEP)" : "");
 			} else if (g_jp.hop) { /* build 33: the step over a lip - no tick (not A's), its own line */
 				g_jp.hops++, g_jp.hop = 0;
 				if (jp_log_ok())
@@ -1031,6 +1053,9 @@ static void jp_end_log(void)
 	      (unsigned long long)g_jp.grav_writes, (unsigned long long)g_jp.grav_resets, g_jp_via_w[g_jp.via],
 	      (unsigned long long)g_jp.extra_taken, (unsigned long long)g_jp.extra_missed, (unsigned long long)g_jp.setpos_n,
 	      (unsigned long long)g_jp.setpos_ceil, (unsigned long long)g_jp.other_tid);
+	if (g_jp.fall_deep || g_jp.deep_falls)
+		logf_("JUMP END build 41: falls over a drop deeper than 6 m taken off %llu (SOMVR_WALK_GROUND_DEEP)",
+		      (unsigned long long)g_jp.deep_falls);
 	if (g_jp.flings || g_jp.fling_refused || s->n_fling)
 		logf_("JUMP END build 40: throws off a wall (SOMVR_CLIMB_FLING_OFF) %llu taken off, %llu refused, %llu flown",
 		      (unsigned long long)g_jp.flings, (unsigned long long)g_jp.fling_refused, (unsigned long long)s->n_fling);

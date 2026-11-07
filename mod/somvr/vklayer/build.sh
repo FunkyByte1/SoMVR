@@ -118,6 +118,7 @@ gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/comfor
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/vrmenu_obj.so" "$D/tests/vrmenu_obj.c"
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/threat_obj.so" "$D/tests/threat_obj.c"
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/vrhands_obj.so" "$D/tests/vrhands_obj.c"
+gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/zprobe_obj.so" "$D/tests/zprobe_obj.c" # build 41
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/session_obj.so" "$D/tests/session_obj.c"
 gcc "${CF[@]}" -fPIC -shared -fvisibility=hidden -Wl,-z,defs -o "$B/tests/objective_obj.so" "$D/tests/objective_obj.c"
 gcc "${CF[@]}" -rdynamic -o "$B/tests/test_layer" "$D/tests/test_layer.c" "$D/../somvr_views.c" "$D/../somvr_pose.c" \
@@ -125,6 +126,6 @@ gcc "${CF[@]}" -rdynamic -o "$B/tests/test_layer" "$D/tests/test_layer.c" "$D/..
     "$D/somvr_void.c" "$D/../somvr_objective.c" -ldl -lpthread -lm # the expected env and menu pictures, the threat cues' quads and texture, the HUD's tiles
 run -d "$LIB" -d "$B/tests/test_layer" -d "$B/tests/mock_xr.so" -d "$B/tests/input_obj.so" -d "$B/tests/hud_obj.so" \
     -d "$B/tests/comfort_obj.so" -d "$B/tests/vrmenu_obj.so" -d "$B/tests/threat_obj.so" -d "$B/tests/vrhands_obj.so" \
-    -d "$B/tests/session_obj.so" -d "$B/tests/objective_obj.so" -- "$D/build.sh" --step test_layer
+    -d "$B/tests/zprobe_obj.so" -d "$B/tests/session_obj.so" -d "$B/tests/objective_obj.so" -- "$D/build.sh" --step test_layer
 [ $VI = 1 ] && run -d "$LIB" -- "$D/build.sh" --step vulkaninfo
 plan_go

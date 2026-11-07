@@ -8,6 +8,7 @@
  * input, the timeout, from outside) and re-arming, the freeze (a menu: nothing moves, the clocks stop), the edge and the
  * top (an edge hold and its top height, a hold far below the top, release / lift / lift stalled / lift out of time /
  * cmd / cmd taken over by the game), and a whole climb of the wall at 90 Hz. */
+#include "../somvr_zprobe.h" /* build 41: SOMVR_ZP_* verdicts */
 #include "../somvr_climb.h"
 
 #include <math.h>
@@ -4420,6 +4421,61 @@ static void test_b40_foot_a(void) {
     }
     g_top_far = 0, g_wall_top = WALL_TOP, g_ground_on = 0;
 }
+/* build 41 (som-b41-climb4, SOMVR_CLIMB_DRAWN): A's mantle and A UP refuse a landing the eyes see nothing drawn at;
+ * a verdict taken elsewhere (60 cm off), drawn, unknown, or the switch off = as ever */
+static void test_b41_drawn(void) {
+    /* A UP (top A): the hand resting on a 1.2 m top - k: 0 undrawn there, 1 undrawn 60 cm off, 2 drawn, 3 off */
+    for (int k = 0; k < 4; k++) {
+        rig_t r;
+        g_wall_top = 120.0f, g_ground_on = 1, g_wet = 0, g_top_far = 0;
+        rig_init(&r);
+        r.c.foot_cm = 100, r.c.top_a = 1, r.in.can_blink = 1, r.c.drawn = k != 3;
+        r.body = (sv_vec3){ 0, 0, 0 };
+        r.in.hand[1].p = (sv_vec3){ 20, 125, 120 };
+        r.in.hand[0].p = (sv_vec3){ -25, 90, 40 };
+        for (int i = 0; i < 20; i++) rig_frame(&r);
+        sv_vec3 land = r.o.ta_land;
+        r.in.land_vis = k == 2 ? SOMVR_ZP_DRAWN : SOMVR_ZP_UNDRAWN;
+        r.in.land_vis_at = (sv_vec3){ land.x + (k == 1 ? 60.0f : 0.0f), land.y, land.z };
+        press_a(&r);
+        int refused = k == 0;
+        CHECK(refused ? !r.o.blink && r.s.ta_goes == 0 && r.s.ta_undrawns == 1 && r.s.bl_why == SOMVR_CLIMB_BL_UNDRAWN &&
+                            (r.o.events & SOMVR_CLIMB_E_BLINK_NONE) && r.s.dm_presses == 0
+                      : r.o.blink && r.s.ta_goes == 1 && r.s.ta_undrawns == 0,
+              "b41 drawn A UP %d (%s): %s (goes %llu, refused %llu, why %d)", k,
+              k == 0 ? "undrawn at the ring" : k == 1 ? "undrawn 60 cm off" : k == 2 ? "drawn" : "the switch off",
+              refused ? "he stays" : "the blink up", (unsigned long long)r.s.ta_goes, (unsigned long long)r.s.ta_undrawns,
+              r.s.bl_why);
+        r.in.land_vis = 0;
+    }
+    g_wall_top = WALL_TOP, g_ground_on = 0;
+    /* the mantle (the overhang's ring, kept as shown): 0 undrawn at it, 1 unknown, 2 off */
+    for (int k = 0; k < 3; k++) {
+        rig_t r;
+        oh_setup(&r, 1, 1);
+        r.c.am_keep = 1, r.c.drawn = k != 2;
+        int shown = r.o.am_show;
+        sv_vec3 land = r.o.am_land;
+        r.in.land_vis = k == 1 ? SOMVR_ZP_UNKNOWN : SOMVR_ZP_UNDRAWN, r.in.land_vis_at = land;
+        uint32_t ev2 = 0;
+        for (int i = 0; i < 3; i++) {
+            r.in.drop = i == 0;
+            rig_frame(&r);
+            r.in.drop = 0;
+            ev2 |= r.o.events2;
+        }
+        int refused = k == 0;
+        CHECK(shown && (refused ? (ev2 & SOMVR_CLIMB_E_AM_NO) && !(ev2 & SOMVR_CLIMB_E_AM_GO) && r.s.am_goes == 0 &&
+                                      r.s.am_undrawns == 1 && r.s.am_why == SOMVR_CLIMB_AM_UNDRAWN && r.s.active
+                                : (ev2 & SOMVR_CLIMB_E_AM_GO) && r.s.am_goes == 1 && r.s.am_undrawns == 0),
+              "b41 drawn mantle %d (%s): the ring shown %d, A: %s (goes %llu, refused %llu, why %d: %s)", k,
+              k == 0 ? "undrawn" : k == 1 ? "unknown" : "the switch off", shown, refused ? "refused, still holding" : "the glide",
+              (unsigned long long)r.s.am_goes, (unsigned long long)r.s.am_undrawns, r.s.am_why,
+              somvr_climb_am_name(r.s.am_why));
+        g_slab_y0 = g_slab_y1 = g_slab_z = 0;
+    }
+}
+
 static void test_b39_top_a(void) {
     for (int k = 0; k < 4; k++) { /* 0 on, 1 the hand in the air, 2 a low top (30 cm), 3 off */
         rig_t r;
@@ -4742,6 +4798,7 @@ static void test_b40_throw(void) {
 int main(void) {
     test_b40_throw();
     test_b39_top_a();
+    test_b41_drawn();
     test_b40_foot_a();
     test_b39_hang_free();
     test_b40_hang_bow();

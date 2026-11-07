@@ -260,7 +260,8 @@ enum { SOMVR_CLIMB_PH_NONE = 0, SOMVR_CLIMB_PH_HOLD = 1, SOMVR_CLIMB_PH_LIFT = 2
        SOMVR_CLIMB_PH_BLINK = 6 /* descent: A over a high drop: still (gravity off) until the blink's teleport */,
        SOMVR_CLIMB_PH_MANTLE = 7 /* A mantle: the glide onto the top (gravity off) */ };
 enum { SOMVR_CLIMB_AM_OK = 0, SOMVR_CLIMB_AM_LOW = 1, SOMVR_CLIMB_AM_NOFLOOR = 2, SOMVR_CLIMB_AM_NOROOM = 3,
-       SOMVR_CLIMB_AM_NOWAY = 4, SOMVR_CLIMB_AM_NOBLINK = 5, SOMVR_CLIMB_AM_HIGH = 6 }; /* A mantle: why not (am_why) */
+       SOMVR_CLIMB_AM_NOWAY = 4, SOMVR_CLIMB_AM_NOBLINK = 5, SOMVR_CLIMB_AM_HIGH = 6,
+       SOMVR_CLIMB_AM_UNDRAWN = 7 }; /* A mantle: why not (am_why); 7: build 41, drawn - nothing drawn at the landing */
 enum { SOMVR_CLIMB_AME_NONE = 0, SOMVR_CLIMB_AME_DONE = 1, SOMVR_CLIMB_AME_BLOCKED = 2, SOMVR_CLIMB_AME_HANG = 3,
        SOMVR_CLIMB_AME_GAME = 4 }; /* A mantle: how the last glide ended (am_end) */
 const char *somvr_climb_am_name(int why); /* SOMVR_CLIMB_AM_* */
@@ -281,7 +282,9 @@ enum { SOMVR_CLIMB_VIA_NONE = 0, SOMVR_CLIMB_VIA_PALM = 1, SOMVR_CLIMB_VIA_FWD =
                                                                                               * (somvr_climb_via_name) */
 enum { SOMVR_CLIMB_BL_NONE = 0, SOMVR_CLIMB_BL_SHORT = 1, SOMVR_CLIMB_BL_NOGROUND = 2, SOMVR_CLIMB_BL_WET = 3,
        SOMVR_CLIMB_BL_CANNOT = 4, SOMVR_CLIMB_BL_NOEDGE = 5,
-       SOMVR_CLIMB_BL_ENEMY = 6, SOMVR_CLIMB_BL_NOROOM = 7 }; /* descent: why A was no blink (bl_why); 6, 7: drop_mark's */
+       SOMVR_CLIMB_BL_ENEMY = 6, SOMVR_CLIMB_BL_NOROOM = 7,
+       SOMVR_CLIMB_BL_UNDRAWN = 8 }; /* descent: why A was no blink (bl_why); 6, 7: drop_mark's; 8: build 41, A UP's
+                                      * landing has nothing drawn on it (drawn) */
 enum { SOMVR_CLIMB_DM_NONE = 0, SOMVR_CLIMB_DM_BLINK = 1, SOMVR_CLIMB_DM_FALL = 2 }; /* drop_mark: what the let-go does */
 enum { SOMVR_CLIMB_DMC_NONE = 0, SOMVR_CLIMB_DMC_STICK = 1, SOMVR_CLIMB_DMC_GRAB = 2, SOMVR_CLIMB_DMC_END = 3,
        SOMVR_CLIMB_DMC_MOVED = 4, SOMVR_CLIMB_DMC_GAME = 5 }; /* drop_mark: why a choice was cancelled (dm_cancel_why) */
@@ -613,7 +616,12 @@ typedef struct {
     int liberal;             /* build 39 (SOMVR_CLIMB_LIBERAL; 0 off): a grip anywhere near rough rock holds - the grab's
                               * rays also fan LIB_DEG round the palm's and the fingers' (4 more each) and run level from
                               * the head through the hand (the face the hand is at); the reach is SOMVR_CLIMB_REACH_CM's */
+    int drawn;               /* build 41 (SOMVR_CLIMB_DRAWN; 0 off): never land on a floor nothing is drawn on - A's mantle
+                              * (am_press) and A UP (top_a) refuse a landing in.land_vis calls undrawn (the eyes' depth
+                              * round it: nothing drawn at or before it - an invisible collision top, the 11-04 mark
+                              * 222445_15) within DRAWN_NEAR_CM of where that verdict was taken; unknown or drawn = as ever */
 } somvr_climb_cfg;
+#define SOMVR_CLIMB_DRAWN_NEAR_CM 40.0f
 void somvr_climb_cfg_default(somvr_climb_cfg *c);
 
 /* one ray's answer (somvr.c: the G21 cast with the player's own body skipped, the hit surface's CanWallClimb) */
@@ -680,6 +688,9 @@ typedef struct {
                          * (somvr.c: somvr_rig_head), Talion's eyes (head_x/y/z) plus the room's offset: the head that
                          * keeps keep_cm, and with head_keep the through's and topout's head rays start there */
     sv_vec3 view;       /* ... world cm */
+    int land_vis;       /* build 41 (drawn; somvr.c: somvr_zprobe's answer for the shown landing): 0 unknown, 1 drawn,
+                         * 2 nothing drawn there (SOMVR_ZP_*) */
+    sv_vec3 land_vis_at; /* ... the landing it was taken for (world cm) */
 } somvr_climb_in;
 
 #define SOMVR_CLIMB_VH_N 16 /* fling: the ring's samples (0.18 s at 90 Hz) */
@@ -849,6 +860,7 @@ typedef struct {
     sv_vec3 ta_land, ta_top;
     double ta_t, ta_probe_t;
     uint64_t ta_shows, ta_goes, ta_probes, ta_nolands;
+    uint64_t am_undrawns, ta_undrawns; /* build 41 (drawn): A refused at an undrawn landing (the mantle, A UP) */
     float po_dbg[8];    /* pullover: the last landing search (logs): the top, floors seen, the highest floor, blocked
                          * over them, room rays hit in / out / to the sides */
     /* through */

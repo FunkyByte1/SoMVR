@@ -413,11 +413,12 @@ typedef uint64_t (*t_pm_fn)(void *, float *);
 /* build 40 (SOMVR_WALK_NAVMESH): PlayerMovement's proxy step (vf_10 on Linux) - the stand-in records the gate byte it
  * saw; the byte itself is ours (g_wk.nav_flag redirected after the start) */
 static volatile unsigned char g_st_navflag = 1, g_st_navseen = 9;
+static volatile unsigned char g_st_ctxflag = 1, g_st_ctxseen = 9; /* build 41: SOMVR_WALK_CTXCLIP's gate byte */
 static volatile int g_st_pm9_calls;
 __attribute__((noipa)) void t_pm9(void *pm, void *xf, void *mp)
 {
 	(void)pm, (void)xf, (void)mp;
-	g_st_navseen = g_st_navflag, g_st_pm9_calls++;
+	g_st_navseen = g_st_navflag, g_st_ctxseen = g_st_ctxflag, g_st_pm9_calls++;
 }
 typedef void (*t_pm9_fn)(void *, void *, void *);
 /* the player update: vf_11 through the vtable, then the collision (a wall at z = g_wall_z) puts the root down */
@@ -17749,6 +17750,29 @@ int main(int argc, char **argv)
 		       "PM9: installed %d calls %d, the gate inside %d (decided) / %d (not) / %d (another mover), after %d, off %llu",
 		       g_h[HK_PM9].installed, g_st_pm9_calls - c0, in_off, in_on, other, g_st_navflag,
 		       (unsigned long long)g_wk.nav_off);
+		/* build 41 (SOMVR_WALK_CTXCLIP): the context-action clip's gate the same way, each by its own switch */
+		int ctx0 = g_wk.ctx, nav0 = g_wk.nav;
+		g_wk.ctx = 1, g_wk.ctx_flag = (uintptr_t)&g_st_ctxflag;
+		uint64_t co0 = g_wk.ctx_off;
+		g_wk.nav_pm = (uintptr_t)&g_ppm;
+		((t_pm9_fn)g_vtpm[10])(&g_ppm, x9, NULL);
+		int c_both = g_st_ctxseen, n_both = g_st_navseen;
+		g_wk.nav = 0, g_wk.nav_pm = (uintptr_t)&g_ppm;
+		((t_pm9_fn)g_vtpm[10])(&g_ppm, x9, NULL);
+		int c_alone = g_st_ctxseen, n_alone = g_st_navseen;
+		g_wk.nav_pm = 0;
+		((t_pm9_fn)g_vtpm[10])(&g_ppm, x9, NULL);
+		int c_not = g_st_ctxseen;
+		g_wk.ctx = 0, g_wk.nav = 1, g_wk.nav_pm = (uintptr_t)&g_ppm;
+		((t_pm9_fn)g_vtpm[10])(&g_ppm, x9, NULL);
+		int c_sw = g_st_ctxseen;
+		g_wk.nav_pm = 0;
+		EXPECT(c_both == 0 && n_both == 0 && c_alone == 0 && n_alone == 1 && c_not == 1 && c_sw == 1 && g_st_ctxflag == 1 &&
+			       g_st_navflag == 1 && g_wk.ctx_off == co0 + 2,
+		       "PM9 ctxclip: the gate inside %d (both on) / %d (ctx alone; navmesh %d) / %d (not decided) / %d (ctx off), "
+		       "after %d, off %llu", c_both, c_alone, n_alone, c_not, c_sw, g_st_ctxflag,
+		       (unsigned long long)(g_wk.ctx_off - co0));
+		g_wk.ctx = ctx0, g_wk.nav = nav0, g_wk.ctx_flag = 0;
 		g_wk.nav_flag = 0, g_inp.tid = tid0; /* (the rest of the selftest: no gate) */
 	}
 	EXPECT(g_d3d_ok == 1, "the stand-in D3D sites did not match (see the D3D lines)");

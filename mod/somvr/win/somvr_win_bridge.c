@@ -18,6 +18,7 @@
 #include "../somvr_objective.h"
 #include "../somvr_session.h"
 #include "../somvr_vrhands.h"
+#include "../somvr_zprobe.h"
 #include "somvr_win.h"
 #include "somvr_win_host.h"
 
@@ -32,6 +33,7 @@ SOMVR_HOST_API somvr_threat_shared g_tht;
 SOMVR_HOST_API somvr_objective_shared g_obj;
 SOMVR_HOST_API somvr_session_shared g_ssn;
 SOMVR_HOST_API somvr_vrhands_shared g_vho;
+SOMVR_HOST_API somvr_zprobe_shared g_zpo; /* build 41 (som-b41-climb4): SOMVR_CLIMB_DRAWN */
 #define sym_shared g_sh
 #define sym_hud g_hud
 #define sym_input g_in
@@ -41,6 +43,7 @@ SOMVR_HOST_API somvr_vrhands_shared g_vho;
 #define sym_objective g_obj
 #define sym_session g_ssn
 #define sym_vrhands g_vho
+#define sym_zprobe g_zpo
 
 somvr_xrloc g_xrloc = { .magic = SOMVR_XRLOC_MAGIC, .version = SOMVR_XRLOC_VERSION,
 						      .size = sizeof(somvr_xrloc) };
@@ -155,7 +158,7 @@ int somvr_win_bridge_write(const char *exe_sha, char *why, size_t cap)
 		{ SOMVR_INPUT_SYMBOL, &sym_input },	{ SOMVR_COMFORT_SYMBOL, &sym_comfort },
 		{ SOMVR_VRMENU_SYMBOL, &sym_vrmenu },	{ SOMVR_THREAT_SYMBOL, &sym_threat },
 		{ SOMVR_OBJECTIVE_SYMBOL, &sym_objective }, { SOMVR_SESSION_SYMBOL, &sym_session },
-		{ SOMVR_VRHANDS_SYMBOL, &sym_vrhands }, { SOMVR_XRLOC_SYMBOL, &g_xrloc },
+		{ SOMVR_VRHANDS_SYMBOL, &sym_vrhands }, { SOMVR_ZPROBE_SYMBOL, &sym_zprobe }, { SOMVR_XRLOC_SYMBOL, &g_xrloc },
 		{ "locate_views", (const void *)pe_locate_views }, { "locate_space", (const void *)pe_locate_space },
 	};
 	for (size_t i = 0; i < sizeof o / sizeof o[0]; i++)
@@ -185,7 +188,7 @@ __declspec(dllexport) const void *somvr_win_bridge(const char *name)
 		{ SOMVR_INPUT_SYMBOL, &sym_input },	{ SOMVR_COMFORT_SYMBOL, &sym_comfort },
 		{ SOMVR_VRMENU_SYMBOL, &sym_vrmenu },	{ SOMVR_THREAT_SYMBOL, &sym_threat },
 		{ SOMVR_OBJECTIVE_SYMBOL, &sym_objective }, { SOMVR_SESSION_SYMBOL, &sym_session },
-		{ SOMVR_VRHANDS_SYMBOL, &sym_vrhands },
+		{ SOMVR_VRHANDS_SYMBOL, &sym_vrhands }, { SOMVR_ZPROBE_SYMBOL, &sym_zprobe },
 	};
 	for (size_t i = 0; i < sizeof o / sizeof o[0]; i++)
 		if (!strcmp(name, o[i].n))

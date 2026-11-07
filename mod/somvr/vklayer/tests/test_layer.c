@@ -56,6 +56,7 @@
 #include "../somvr_void.h"  /* never a void: linked here (the expected floor and lights) */
 #include "../../somvr_vrmenu.h" /* the VR menu's ABI; its functions (and the font's) are linked: the expected pictures */
 #include "../../somvr_menus.h" /* build 8: linked here (the expected tiles, split and watch pose) */
+#include "../../somvr_zprobe.h" /* build 41 */
 #include "../../somvr_vrhands.h" /* build 10: our VR hands' ABI (its functions are not linked here) */
 #include "../../somvr_haptics.h" /* build 34: the haptics language (the VR menu's words; header-only) */
 #include "../../somvr_session.h" /* never a void: the theatre's word (the session object: tests/session_obj.c) */
@@ -7984,6 +7985,90 @@ static int sc_vrhands_depth(void) {
     check_mock_clean();
     return 0;
 }
+/* build 41 (som-b41-climb4, SOMVR_CLIMB_DRAWN): the depth probe - frame 2's request (a point 1 m ahead of the eyes, one
+ * 3 m ahead, one behind them): each eye's patch round each point in the view copied from its own depth texture (in
+ * TRANSFER_SRC, the depth aspect) in that frame's submit, the textures back to TRANSFER_DST; the answer once that slot
+ * comes round again (its fence waited): the points' view distances, the patch's nearest drawn (a wall at 2 m), the
+ * point behind out of the view; a frame without a request copies nothing */
+static somvr_zprobe_shared *g_zpo_t;
+static int zprobe_obj(void) {
+    char p[4200];
+    const char *slash = strrchr(g_mock, '/');
+    snprintf(p, sizeof p, "%.*s/zprobe_obj.so", slash ? (int)(slash - g_mock) : 1, slash ? g_mock : ".");
+    void *h = dlopen(p, RTLD_NOW | RTLD_GLOBAL);
+    if (!h || !(g_zpo_t = (somvr_zprobe_shared *)dlsym(h, SOMVR_ZPROBE_SYMBOL)))
+        return fprintf(stderr, "    zprobe_obj.so: %s\n", dlerror()), -1;
+    somvr_zprobe_init(g_zpo_t, (int32_t)getpid());
+    return 0;
+}
+static int sc_vrhands_zprobe(void) {
+    hudrig r;
+    preload_on(SOMVR_LAYOUT_B, SOMVR_SHARED_VERSION);
+    if (input_obj(INW_ALL, 1, SOMVR_INPUT_V2_SIZE) || vrhands_obj(1) || zprobe_obj()) return 1;
+    if (hud_setup(&r, 2)) return 1;
+    hud_info(2, 1920, 1080, r.H);
+    somvr_views v;
+    const uint32_t LRH = SOMVR_VHF_L | SOMVR_VHF_R | SOMVR_VHF_HIDE;
+    g_vh_k = 0.06f;
+    vh_stereo(&r, 1, SOMVR_VHF_L | SOMVR_VHF_R, 1, &v);
+    VkImage D[2];
+    vh_depth_images(&r, D, VH_DEPTH_USAGE);
+    const float wall = 0.03f; /* the game's depth everywhere: a wall at 0.06 / 0.03 = 2 m */
+    for (int e = 0; e < 2; e++) memcpy(g_img[img_ix(D[e])].fill, &wall, 4);
+    /* the points from eye 0's pose (this frame's views: the next locate gives the same) */
+    somvr_views v0;
+    CHECK(locate(&v0), "locate");
+    const float *q = v0.pose[0].q, *p0 = v0.pose[0].p;
+    float x = q[0], y = q[1], z = q[2], w = q[3];
+    float fwd[3] = {-(2 * (x * z + y * w)), -(2 * (y * z - x * w)), -(1 - 2 * (x * x + y * y))}; /* R (0,0,-1) */
+    float pts[3][3];
+    for (int k = 0; k < 3; k++) {
+        float d = k == 0 ? 1.0f : k == 1 ? 3.0f : -1.0f;
+        for (int i = 0; i < 3; i++) pts[k][i] = p0[i] + d * fwd[i];
+    }
+    vh_depth_info(1, D[0], D[1], 2);
+    somvr_zprobe_put(g_zpo_t, 2, 7, 3, (const float(*)[3])pts);
+    int c0 = V.img2buf;
+    vh_stereo(&r, 2, LRH, 1, &v);
+    int moved = 1, back = 1;
+    for (int e = 0; e < 2; e++) {
+        moved &= barrier_seen(D[e], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) &&
+                 barrier_seen(D[e], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        back &= barrier_seen(D[e], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    }
+    int d2 = V.img2buf - c0, dn[3] = {0, 0, 0}; /* (every frame also reads the scene's brightness back: one copy) */
+    CHECK(moved && back && atomic_load(&g_zpo_t->n_read) == 1 && atomic_load(&g_zpo_t->n_ans) == 0,
+          "frame 2: the textures through TRANSFER_SRC to sampling (%d) and back (%d), read %llu, answered %llu (not yet)",
+          moved, back, (unsigned long long)atomic_load(&g_zpo_t->n_read), (unsigned long long)atomic_load(&g_zpo_t->n_ans));
+    for (uint64_t f = 3; f <= 5; f++) { /* no request: nothing more copied; frame 5 takes frame 2's slot again: the answer */
+        vh_depth_info(1, D[0], D[1], f);
+        c0 = V.img2buf;
+        vh_stereo(&r, f, LRH, 1, &v);
+        dn[f - 3] = V.img2buf - c0;
+    }
+    CHECK(d2 == dn[0] + 2 && dn[0] == dn[1] && dn[1] == dn[2], "the probe's copies: one per eye in frame 2 (%d copies; "
+          "frames 3-5 without a request %d %d %d)", d2, dn[0], dn[1], dn[2]);
+    somvr_zprobe_ans a;
+    memset(&a, 0, sizeof a);
+    int got = somvr_zprobe_read(g_zpo_t, &a), nr = 0, nd = 0;
+    float gap = 0;
+    int vd = got ? somvr_zp_verdict(&a, 0.35f, 2, &nr, &nd, &gap) : -1;
+    CHECK(got && a.id == 7 && a.frame == 2 && a.n == 3 && a.pt[0][0].state == SOMVR_ZP_READ &&
+              a.pt[1][0].state == SOMVR_ZP_READ && fabsf(a.pt[0][0].z - 1.0f) < 0.01f &&
+              fabsf(a.pt[0][0].near_z - 2.0f) < 0.01f && fabsf(a.pt[1][1].near_z - 2.0f) < 0.01f &&
+              a.pt[0][2].state == SOMVR_ZP_OUT && a.pt[1][2].state == SOMVR_ZP_OUT && vd == SOMVR_ZP_DRAWN && nr == 2 && nd == 1,
+          "the answer: id %u frame %llu n %u; 1 m ahead: %u %.3f m, the wall %.3f m; 3 m: the wall %.3f; behind: %u %u; "
+          "verdict %d (read %d, drawn %d: the 3 m point behind the 2 m wall)", a.id, (unsigned long long)a.frame, a.n,
+          a.pt[0][0].state, (double)a.pt[0][0].z, (double)a.pt[0][0].near_z, (double)a.pt[1][1].near_z, a.pt[0][2].state,
+          a.pt[1][2].state, vd, nr, nd);
+    CHECK(log_has("xr: hands: somvr_zprobe found at") && log_has("xr: hands: the depth probe 7 (frame 2): centre L read"),
+          "the probe's lines");
+    app_teardown(&r.a);
+    CHECK(MOCK(mockxr_live)() == 0 && V.gfx_live == 0, "after vkDestroyDevice: XR objects %d, drawing objects %d",
+          MOCK(mockxr_live)(), V.gfx_live);
+    check_mock_clean();
+    return 0;
+}
 /* the world wanted, the driver without descriptor sets: the hands as build 10 (drawn, the plain pipeline) */
 static int sc_vrhands_depth_nofuncs(void) {
     hudrig r;
@@ -8203,6 +8288,7 @@ static const struct {
     {"mark-layers", sc_mark_layers, "SOMVR_XR_LOADER=@MOCK", 1}, /* build 31b */
     {"mark-plain", sc_mark_plain, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MARK_LAYERS=off", 1},
     {"vrhands-depth-nofuncs", sc_vrhands_depth_nofuncs, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS_DEPTH=world", 1},
+    {"vrhands-zprobe", sc_vrhands_zprobe, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_HANDS_DEPTH=world", 1}, /* build 41 */
     {"wrist-hud", sc_wrist_hud, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_MINIMAP=wrist SOMVR_XR_WRIST_HUD=on", 1},
     {"prompts", sc_prompts, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PROMPTS=on MOCKXR_RECENTER_AT=10", 1},
     {"popups", sc_popups, "SOMVR_XR_LOADER=@MOCK SOMVR_XR_PROMPTS=on SOMVR_XR_POPUPS=gaze", 1},

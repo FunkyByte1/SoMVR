@@ -119,8 +119,9 @@ if [ $WIN = 1 ]; then   # the Windows build: the same switches and channels thro
   # b35 slots (11-03 soak: two boots in one second got one name; a driver then drove the other's game): the name is
   # claimed under a lock (/tmp/somvr-runnames/<name>), so two boots never share it
   mkdir -p /tmp/somvr-runnames
+  RSUF=$(bash "$HERE/game_slot.sh" runsuffix)   # som-laptop: on rus every name ends in -1 (never a desktop run's name)
   RUNW=$( exec 9> /tmp/somvr-runnames/.lock; flock -w 30 9 || exit 1
-          for i in $(seq 1 30); do n=boot-check-$(date +%Y%m%d-%H%M%S)
+          for i in $(seq 1 30); do n=boot-check-$(date +%Y%m%d-%H%M%S)$RSUF
             [ -e "$SOM/logs/$n" ] || [ -e "/tmp/somvr-runnames/$n" ] || { : > "/tmp/somvr-runnames/$n"; echo "$SOM/logs/$n"; exit 0; }
             sleep 1; done; exit 1 ) || { echo "STOP: no free run name (/tmp/somvr-runnames)"; exit 1; }
   echo "windows: $RUNW (headless_win.sh, slot $SLOT)"
@@ -128,6 +129,7 @@ if [ $WIN = 1 ]; then   # the Windows build: the same switches and channels thro
     bash "$HERE/headless_win.sh" "$MOD" --game "${HEADLESS_HOLD:-900}"
   rc=$?; echo "headless_win exit $rc"; exit $rc
 fi
+[ -n "$(bash "$HERE/game_slot.sh" runsuffix)" ] && { echo "STOP: Linux boots run on the desktop only (the native Linux build is retired; rus runs --win)"; exit 1; }
 TS=$(date +%Y%m%d-%H%M%S); R5=$SOM/logs/headless-$TS
 mkdir -p "$R5/mxdg/config" "$R5/mxdg/cache" "$R5/mxdg/data"
 echo "R5=$R5"

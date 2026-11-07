@@ -76,6 +76,8 @@ SLOTFREE=0; case $KIND in xinput|compat) SLOTFREE=1 ;; esac
 . "$HERE/game_slot.sh"
 SLOT=${WIN_SLOT:-1}; [[ $SLOT =~ ^[1-9]$ ]] && [ "$SLOT" -le "$GS_SLOTS" ] || { echo "STOP: WIN_SLOT=$SLOT (1..$GS_SLOTS)"; exit 1; }
 LOCKD=$(gs_lock "$SLOT"); SRT=$(gs_rtdir "$SLOT")
+# som-laptop (handoff/HANDOFF-laptop.md): on the test laptop rus, Proton is the desktop's copy (game_slot.sh GS_PROTON)
+[ -z "${WIN_PROTON:-}" ] && [ -n "$GS_PROTON" ] && PROTON=$GS_PROTON
 if [ "$SLOT" -ge 2 ]; then
   [ "${WIN_W1:-0}" = 1 ] && { echo "STOP: WIN_W1 runs in slot 1 only (its own prefix-w1)"; exit 1; }
   [ -z "${WIN_PREFIX:-}" ] && PFX=$SOM/logs/winport/prefix-slot$SLOT
@@ -99,8 +101,8 @@ for kv in ${WIN_MONADO_ENV:-}; do
   MONENV+=("$kv")
 done
 SIZE=${WIN_SIZE:-1920x1080}; W=${SIZE%x*}; H=${SIZE#*x}
-TS=$(date +%Y%m%d-%H%M%S); RUN=$SOM/logs/winport/run-$TS
-for i in 1 2 3 4 5; do [ -e "$RUN" ] || break; sleep 1; TS=$(date +%Y%m%d-%H%M%S); RUN=$SOM/logs/winport/run-$TS; done  # b35 slots
+TS=$(date +%Y%m%d-%H%M%S)$GS_RUN_SUFFIX; RUN=$SOM/logs/winport/run-$TS   # (som-laptop: rus's names end in -1)
+for i in 1 2 3 4 5; do [ -e "$RUN" ] || break; sleep 1; TS=$(date +%Y%m%d-%H%M%S)$GS_RUN_SUFFIX; RUN=$SOM/logs/winport/run-$TS; done  # b35 slots
 if [ -n "${WIN_RUN:-}" ]; then   # the drivers' place (headless_vr.sh --win): a new folder under logs/
   [ "$KIND" = game ] || { echo "STOP: WIN_RUN is for --game"; exit 1; }
   case $WIN_RUN in "$SOM"/logs/?*) ;; *) echo "STOP: WIN_RUN must be under $SOM/logs/"; exit 1 ;; esac
@@ -115,6 +117,10 @@ printf '# headless_win.sh %s (the Windows build; MOD %s%s)\n' "$TS" "$MOD" "${WR
 if [ -n "${WIN_RUN:-}" ]; then BCL=$RUN; else BCL=$SOM/logs/boot-check-$TS-win; ln -sfn "$RUN" "$BCL"; fi; : > "$RUN/cmd"
 echo "RUN=$RUN"
 say() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$RUN/summary.txt"; }
+if [ "$GS_TESTHOST" = 1 ]; then   # som-laptop: whose run this is (scripts/rus.sh copies it back to the desktop's logs/)
+  echo "$GS_HOST" > "$RUN/host.txt"
+  say "host $GS_HOST (the test laptop): ${GS_VK_ENV[*]}; Proton $PROTON ($(cat "$(dirname "$PROTON")/version" 2>/dev/null))"
+fi
 
 # ---- the guards (every mode that uses the GPU or a runtime) ----------------------------------------------------
 if [ $SLOTFREE = 1 ]; then   # two slot-free runs at once would share (and end) one wineserver: one at a time
@@ -123,7 +129,8 @@ if [ $SLOTFREE = 1 ]; then   # two slot-free runs at once would share (and end) 
 else
   [ -d "$LOCKD" ] || { echo "STOP: take the game slot first (mkdir $LOCKD; scripts/game_slot.sh)"; exit 1; }
   systemctl --user is-active -q somvr-headset && { echo "STOP: the user's headset session runs"; exit 1; }
-  grep -q '"user": false' "$RT/vr-session/status.json" 2>/dev/null || { echo "STOP: the user is in VR (status.json)"; exit 1; }
+  { [ "$GS_TESTHOST" = 1 ] && [ ! -e "$RT/vr-session/status.json" ]; } ||   # (som-laptop: rus has no VR watcher)
+    grep -q '"user": false' "$RT/vr-session/status.json" 2>/dev/null || { echo "STOP: the user is in VR (status.json)"; exit 1; }
   # build 35: the whole VR gate - also a user's launcher that is starting (its solo request user-session, game_slot.sh)
   gw=$(gs_vr_why) && { echo "STOP: $gw"; exit 1; }
   # b35 slots: no Monado on this slot's runtime folder (other slots' Monados have their own; an unreadable one counts)
@@ -168,7 +175,8 @@ if [ "$SLOT" -ge 2 ] && [ -z "${WIN_PREFIX:-}" ] && [ ! -d "$PFX/pfx/drive_c/win
 fi
 mkdir -p "$PFX"
 CLEAN=(env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY -u LD_PRELOAD -u VK_LAYER_PATH -u VK_INSTANCE_LAYERS
-       -u SteamAppId -u SteamGameId -u STEAM_COMPAT_APP_ID XDG_CONFIG_HOME="$RUN/xdg-config" WINEPREFIX="$PFX/pfx")
+       -u SteamAppId -u SteamGameId -u STEAM_COMPAT_APP_ID XDG_CONFIG_HOME="$RUN/xdg-config" WINEPREFIX="$PFX/pfx"
+       "${GS_VK_ENV[@]}")   # (som-laptop: rus's dGPU for gamescope, the game and wine's tools; none on the desktop)
 mkdir -p "$RUN/xdg-config"
 if { [ "$PFX" = "$SOM/logs/winport/prefix-w1" ] || [ "$PFX" = "$SOM/logs/winport/prefix-xinput" ]; } &&
    [ ! -d "$PFX/pfx" ] && [ -d "$SOM/logs/winport/prefix/pfx" ]; then
@@ -350,7 +358,7 @@ if [ $XR = 1 ]; then
   fi
   setsid chrt -o 0 env -i HOME="$M" PATH=/usr/bin:/bin XDG_RUNTIME_DIR=$SRT XDG_CONFIG_HOME="$M/config" \
     XDG_CACHE_HOME="$M/cache" XDG_DATA_HOME="$M/data" SIMULATED_ENABLE=1 "${MCOMP[@]}" XRT_NO_STDIN=1 \
-    XRT_LOG=info "${MONENV[@]}" VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
+    XRT_LOG=info "${MONENV[@]}" "${GS_VK_ENV[@]}" VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
     timeout -s INT -k 10 $((SECS + 300)) /usr/bin/monado-service > "$RUN/monado.log" 2>&1 < /dev/null &
   MSVC=$!
   for i in $(seq 1 50); do [ -S "$SRT/monado_comp_ipc" ] && break; sleep 0.2; done

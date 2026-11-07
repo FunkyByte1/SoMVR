@@ -21,6 +21,17 @@
 # Sourced (`. game_slot.sh`), it only defines the gs_* functions (headless_win.sh uses gs_lock, gs_vr_why, gs_gpu_why).
 GS_SLOTS=${GAME_SLOTS:-3}              # b35's measured count (docs 158.4); GAME_SLOTS=N overrides (1 = the old rule)
 GS_SOM=/home/bara/Projects/flat2vr/ShadowOfMordor
+# som-laptop (11-06, handoff/HANDOFF-laptop.md): the test laptop rus runs boots too (scripts/rus.sh from the desktop) -
+# 2 slots (14 GiB RAM); no VR on it (no vr-session watcher: a missing status.json does not close its gate; the user's
+# VR is the desktop's); every Vulkan program on its RX 6800S (the 680M iGPU enumerates first: GS_VK_ENV); Proton is
+# the desktop's copy (scripts/rus_sync.sh proton), not under rus's own Steam
+# GS_RUN_SUFFIX: every run name made there ends in it (boot-check-<ts>-1, winport/run-<ts>-1): never one of the
+# desktop's names (its suites write logs/boot-check-<ts> all evening), and still boot-check-2026* for the drivers
+GS_HOST=$(hostname -s 2>/dev/null); GS_TESTHOST=0; GS_VK_ENV=(); GS_PROTON=""; GS_RUN_SUFFIX=""
+case $GS_HOST in
+  rus) GS_TESTHOST=1; GS_RUN_SUFFIX=-1; GS_SLOTS=${GAME_SLOTS:-2}; GS_VK_ENV=('MESA_VK_DEVICE_SELECT=1002:73ef!' DRI_PRIME=1)
+       GS_PROTON=$GS_SOM/logs/rus/proton-experimental/proton ;;
+esac
 GS_RT=/run/user/$(id -u)
 GS_TMP=${GAME_SLOT_TMP:-/tmp}         # (GAME_SLOT_TMP: the self-test's own folder, scripts/game_slot_test.sh)
 GS_SOLO=$GS_TMP/somvr-slots-solo.lock
@@ -63,7 +74,7 @@ gs_vr_why() {   # the VR gate (boot_check's user_in_vr + the headset unit): the 
   if [ -f "$GS_RT/vr-session/status.json" ]; then
     j=$(tr -d ' \n' < "$GS_RT/vr-session/status.json" 2>/dev/null)
     [[ $j == *'"user":true'* ]] && { echo "status.json: \"user\": true"; return 0; }
-  else echo "no $GS_RT/vr-session/status.json (the watcher is down: cannot tell)"; return 0; fi
+  elif [ "$GS_TESTHOST" = 0 ]; then echo "no $GS_RT/vr-session/status.json (the watcher is down: cannot tell)"; return 0; fi
   ss -xH state established 2>/dev/null | grep -q '/wivrn/comp_ipc' && { echo "a VR app is connected to WiVRn"; return 0; }
   pgrep -x vr-session > /dev/null 2>&1 && { echo "vr-session runs (the user is in VR)"; return 0; }
   return 1
@@ -98,7 +109,12 @@ gs_card() {   # the GPU's sysfs folder (mem_info_*); the self-test only its GAME
   local c
   [ -n "${GAME_SLOT_CARD:-}" ] && { echo "$GAME_SLOT_CARD"; return 0; }
   [ -n "${GAME_SLOT_TMP:-}" ] && return 1
-  for c in /sys/class/drm/card*/device; do [ -r "$c/mem_info_vram_total" ] && { echo "$c"; return 0; }; done; return 1
+  local best="" bv=0 v   # (som-laptop: the card with the most VRAM - rus has an iGPU beside its dGPU)
+  for c in /sys/class/drm/card*/device; do
+    [ -r "$c/mem_info_vram_total" ] || continue; v=$(cat "$c/mem_info_vram_total" 2>/dev/null || echo 0)
+    [ "$v" -gt "$bv" ] && { best=$c; bv=$v; }
+  done
+  [ -n "$best" ] && { echo "$best"; return 0; }; return 1
 }
 gs_mib() { echo $(( $(cat "$1" 2>/dev/null || echo 0) / 1048576 )); }
 gs_render_default() { [ "$1" = 1 ] && echo vr || echo light; }
@@ -303,6 +319,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     release) gs_release "$@" ;;
     status) gs_status ;;
     lock) gs_lock "${1:?N}" ;;
+    runsuffix) echo "$GS_RUN_SUFFIX" ;;   # som-laptop: this host's run-name suffix (empty on the desktop)
     rtdir) gs_rtdir "${1:?N}" ;;
     count) echo "$GS_SLOTS" ;;
     gate) gs_gate ;;

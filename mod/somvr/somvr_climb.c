@@ -12,16 +12,18 @@ static const char *const g_phase_names[8] = { "none", "hold", "lift", "cmd", "ha
 const char *somvr_climb_end_name(int why) { return why >= 0 && why < SOMVR_CLIMB_NEND ? g_end_names[why] : "?"; }
 const char *somvr_climb_phase_name(int phase) { return phase >= 0 && phase < 8 ? g_phase_names[phase] : "?"; }
 const char *somvr_climb_am_name(int why) {
-    static const char *const n[7] = { "-", "the eyes not high enough over the top", "no floor on the top ahead",
+    static const char *const n[8] = { "-", "the eyes not high enough over the top", "no floor on the top ahead",
                                       "no room for him on the top", "the way onto it not clear", "no blink now",
-                                      "the eyes too high over the top" };
-    return why >= 0 && why < 7 ? n[why] : "?";
+                                      "the eyes too high over the top",
+                                      "nothing drawn at the landing (the eyes see through it: an invisible top)" };
+    return why >= 0 && why < 8 ? n[why] : "?";
 }
 const char *somvr_climb_bl_name(int why) {
-    static const char *const n[8] = { "-", "a short drop: the fall", "no ground under him: he stays",
+    static const char *const n[9] = { "-", "a short drop: the fall", "no ground under him: he stays",
                                       "water under him: he stays", "no blink now: the fall", "no edge ahead",
-                                      "an enemy at the landing: he stays", "no room to stand at the landing: he stays" };
-    return why >= 0 && why < 8 ? n[why] : "?";
+                                      "an enemy at the landing: he stays", "no room to stand at the landing: he stays",
+                                      "nothing drawn at the landing (an invisible top): he stays" };
+    return why >= 0 && why < 9 ? n[why] : "?";
 }
 const char *somvr_climb_fl_name(int why) {
     static const char *const n[11] = { "-", "the arc's top", "blocked above", "out of time", "a catch", "over",
@@ -2557,6 +2559,13 @@ static void am_avail(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb
     if (!was) s->am_shows++, s->am_oh_shows += s->am_oh, o->events2 |= SOMVR_CLIMB_E_AM_SHOW;
 }
 
+/* build 41 (drawn): the eyes' verdict says nothing is drawn at this landing (taken within DRAWN_NEAR_CM of it) */
+static int undrawn_at(const somvr_climb_cfg *c, const somvr_climb_in *in, sv_vec3 land) {
+    if (!c->drawn || in->land_vis != 2) return 0;
+    float dx = land.x - in->land_vis_at.x, dy = land.y - in->land_vis_at.y, dz = land.z - in->land_vis_at.z;
+    return dx * dx + dy * dy + dz * dz <= SOMVR_CLIMB_DRAWN_NEAR_CM * SOMVR_CLIMB_DRAWN_NEAR_CM;
+}
+
 /* A's press while climbing: at a top (the eyes top_cm over it) = the mantle (1: the glide or the blink started) or, no
  * way, nothing but the why (-1: E_AM_NO); not at a top = 0 (A as ever) */
 static int am_press(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in *in, somvr_climb_ray_fn ray, void *ctx,
@@ -2581,6 +2590,8 @@ static int am_press(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_
     } else
         ok = am_find(s, c, in, ray, ctx, o);
     if (ok && c->mantle == 2 && !in->can_blink) ok = 0, s->am_why = SOMVR_CLIMB_AM_NOBLINK;
+    if (ok && undrawn_at(c, in, s->am_land)) /* build 41: never onto a floor nothing is drawn on */
+        ok = 0, s->am_why = SOMVR_CLIMB_AM_UNDRAWN, s->am_undrawns++;
     if (!ok) {
         s->am_nos++;
         s->am_lows += s->am_why == SOMVR_CLIMB_AM_LOW || s->am_why == SOMVR_CLIMB_AM_HIGH;
@@ -3034,6 +3045,12 @@ static void step(somvr_climb *s, const somvr_climb_cfg *c, const somvr_climb_in 
             drop = 0; /* build 39 (foot_a): A on foot is "over this edge" */
             fa_press(s, c, in, ray, ctx, o);
         }
+    }
+    if (drop && s->ta_ok && !s->active && in->can_blink && undrawn_at(c, in, s->ta_land)) {
+        /* build 41 (drawn): nothing drawn at the top's landing - he stays (the press spent: no drop mark, no jump) */
+        s->bl_why = SOMVR_CLIMB_BL_UNDRAWN, s->ta_undrawns++;
+        o->events |= SOMVR_CLIMB_E_BLINK_NONE;
+        drop = 0;
     }
     if (drop && s->ta_ok && !s->active && in->can_blink) {
         s->bl_to = (sv_vec3){ s->ta_land.x, s->ta_land.y + c->foot_cm + 5.0f, s->ta_land.z };

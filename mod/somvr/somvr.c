@@ -486,6 +486,7 @@
 #include "somvr_practice.h" /* SOMVR_PRACTICE (somvr_practice_game.c, included after the finishers') */
 #include "somvr_session.h"  /* SOMVR_MARK / SOMVR_QUIT (somvr_session_game.c, included after the practice area's) */
 #include "somvr_shared.h"
+#include "somvr_zprobe.h" /* build 41: SOMVR_CLIMB_DRAWN - the eyes' depth at a landing (the tenth exported object) */
 #include "somvr_site.h" /* the sites, offsets and globals of both builds (win/README.md) */
 #ifdef _WIN32
 #include "win/somvr_win.h"      /* somvr_win_log, the SITE entries by name */
@@ -888,6 +889,8 @@ static inline void in_mirror_hands(somvr_hand h[2]) /* the located grips: physic
 }
 /* the HUD ABI (somvr_hud.h), the third exported object: zero unless SOMVR_HUD=quad (H11) */
 SOMVR_LAYER_OBJ(somvr_hud_shared, g_hud, SOMVR_HUD_SYMBOL);
+/* build 41 (som-b41-climb4, somvr_zprobe.h): the eyes' depth at a landing - zero unless SOMVR_CLIMB_DRAWN=on */
+SOMVR_LAYER_OBJ(somvr_zprobe_shared, g_zpo, SOMVR_ZPROBE_SYMBOL);
 
 /* config (set once in somvr_start) */
 static const char *const g_layout_names[] = { "off", "A", "B" };
@@ -9442,6 +9445,23 @@ static struct {
 	int ta_show;                /* build 39 (SOMVR_CLIMB_TOP_A): a top under a resting hand: its ring and A UP (ob_frame) */
 	sv_vec3 ta_land;
 	uint64_t ta_frames;
+	/* build 41 (som-b41-climb4, SOMVR_CLIMB_DRAWN, somvr_zprobe.h): the eyes' depth at the shown landing - ob_frame asks
+	 * the layer every frame the mantle's or A UP's ring shows and reads its answer; the climb's tick hands the verdict
+	 * to A (in.land_vis) */
+	int zp_on;                  /* g_zpo published (the switch on) */
+	uint32_t zp_id;             /* the request's id: a new landing (10 cm from the last, or a new show) = a new id */
+	sv_vec3 zp_land;            /* ... that landing (world cm) */
+	sv_vec3 zp_vis_at;          /* the landing zp_vis was read for (it stays while a moved landing's answer comes) */
+	uint64_t zp_frame;          /* ... the last frame it was asked for */
+	int zp_vis;                 /* the verdict for zp_land (SOMVR_ZP_*), read at zp_vis_t (cb_now) */
+	double zp_vis_t;
+	int zp_nread, zp_ndrawn;    /* ... its points read / drawn */
+	float zp_gap;               /* ... the nearest drawn past a point (m; 1e9 the sky) */
+	uint64_t zp_asks, zp_answers, zp_undrawn, zp_drawn, zp_unknown;
+	int zp_was;                 /* the verdict last logged (-1 none) */
+	sv_vec3 zp_test_at;         /* the word `climb drawn probe X Y Z` (a test aid): a point asked for 4 s, no ring */
+	double zp_test_until;
+	int zp_force;               /* the word `climb drawn force undrawn|off` (a test aid): every verdict undrawn */
 	int po_show;                /* SOMVR_CLIMB_PULLOVER: armed now: the landing (world cm) shown (ob_frame) */
 	sv_vec3 po_land;
 	float po_pull;
@@ -9497,6 +9517,7 @@ static const char *const g_cl_surf_n[] = { "walls", "game", "any" }; /* SOMVR_CL
 static const char *const g_cl_surf_w[] = { "not CanWallClimb, held (SOMVR_CLIMB_SURF=walls)", "not CanWallClimb",
 					   "not CanWallClimb, held (SOMVR_CLIMB_SURF=any)" };
 static struct { _Atomic uint32_t seq, up; } g_cl_probe; /* the trigger word "climb probe [up]" (writer thread) */
+static struct { _Atomic int step, n; } g_cl_hsv; /* build 42: `climb heights STEP N` (a test aid) */
 
 /* `climb writes [S]` (a test aid, re-xr-pipeline.md 50.1): which code writes Talion's root for S seconds (default 3,
  * 1..20): a hardware write watch (perf_event_open, a breakpoint on the root's x at obj+OBJ_POS, one per thread of the
@@ -9982,6 +10003,35 @@ static struct {
 static struct {
 	int on;
 	float cm, lead_cm, step_cms;
+	float steep_cm;          /* build 41 (som-b41-climb4, SOMVR_WALK_EDGE_STEEP_CM; 0 = cm): the walk's forward probe takes a
+				  * floor more than this under the feet for a drop (the 11-05 mark 17's beam end: a floor ~45 cm
+				  * down 49 cm ahead was "floor" under 50 - the walk went off it onto rock over a 10 m fall) */
+	uint64_t steep_stops;    /* ... forward probes that found a floor only between steep_cm and cm under the feet */
+	float confirm_cm;        /* build 41 (SOMVR_WALK_EDGE_CONFIRM_CM; 0 = 3 ticks): a new drop is confirmed after 2 ticks
+				  * once the walk covered this much with it in view (3 ticks otherwise) - 3 ticks are 24 cm of walk
+				  * at the headless 20 Hz: boot 180118's walk at mark 17 was confirmed only as it slid off a rounded
+				  * lip (-20, -35 cm a tick) */
+	float miss_cm;           /* ... the walk since the first tick of this drop */
+	float slope_tan;         /* build 41 (SOMVR_WALK_EDGE_SLOPE_DEG; 0 off): the floor from the forward probe to 25 cm past it
+				  * falling steeper than this (or none within 2 m there: a cliff just past) = a drop - a slope that
+				  * rounds over into a cliff fooled the feet-relative probe at every tick (boot 182641's lip17: the
+				  * coping's 20-25 deg slope, then over its rounded end, 11 m down, the clips the game's) */
+	uint64_t slope_stops;
+	float line_cm;           /* build 41 (som-b41-lip, SOMVR_WALK_EDGE_LINE_CM; code default 40, 0 off): walking downhill,
+				  * the floor 75 and 100 cm ahead judged against the slope's own line - mark 17's coping is a walkable
+				  * 17-25 deg slope that rounds over into an 11 m cliff, and the feet-relative probe found floor at
+				  * every tick until the capsule rolled over (lip17, boots 180118 / 182641 / 183213, build 40's own
+				  * switches) */
+	uint64_t line_stops, line_ticks;
+	int ride;                /* build 42 (som-b42-edgestop, SOMVR_WALK_EDGE_RIDE; code default on): the capsule riding an edge
+				  * (no floor under the centre, the proxy's lower contact tilted) = held at once, toward that
+				  * contact's level normal (we_ride_edge) */
+	uint64_t ride_ticks, ride_holds, lip_quiet;
+	int at_ride;             /* ... this stay began riding an edge (held in full while the stick is toward it) */
+	float lr[3], ls, lm[3];  /* ... the root a walk's step ago (8 cm+), the slope and level direction measured from it */
+	double lr_t, ls_t;
+	int lr_ok;
+	uint64_t confirm2;       /* ... drops confirmed at the second tick */
 	int at;                  /* held at an edge: until the root is 30 cm from where (we_frame) */
 	int miss;                /* build 39: ticks in a row a new drop was seen (3 = the stop) */
 	int facing;              /* ... the view's heading within 75 deg of the held way (cl_frame) */
@@ -10207,18 +10257,76 @@ static int we_floor_at(float x, float z, float feet, float cm)
 }
 /* ... the floor lead_cm past a step of l cm along u (level unit): 0 only when the centre and both sides (12 cm aside)
  * find no floor (a seam between two meshes is no edge) and none 45 cm past it either (a crack the capsule spans) */
+/* build 41: the floor's height at x,z (a ray down from 60 cm over the feet to cm under them): 1 = *y, 0 none, -1 no answer */
+static int we_floor_y(float x, float z, float feet, float cm, float *y)
+{
+	somvr_climb_hit hit;
+	memset(&hit, 0, sizeof hit);
+	g_we.rays++;
+	if (!cl_ray(NULL, -1, (sv_vec3){ x, feet + 60.0f, z }, (sv_vec3){ 0, -1, 0 }, 60.0f + cm, &hit))
+		return -1;
+	if (!hit.hit)
+		return 0;
+	*y = hit.point.y;
+	return 1;
+}
+/* build 41 (SOMVR_WALK_EDGE_LINE_CM): walking downhill - the root's own way over its last 8 cm+ (the game moves him down
+ * the fall line, not along the stick: lip17's stick crossed a 15 deg slope at under 8.5 deg) falling 8.5..45 deg -
+ * the slope's line carried on along that way to 75 and 100 cm ahead: the floor there more than line_cm under it, or none
+ * within 3 m of the feet (a cliff past the slope's end) = 1, a drop ahead along *m; else 0 */
+#define WE_LINE_SMIN 0.15f /* 8.5 deg: flatter = level ground, the edge stop's own rule */
+#define WE_LINE_SMAX 1.0f  /* 45 deg: steeper is no hillside the walk takes */
+static int we_line_drop(const float r[3], float feet, double t, sv_vec3 *m)
+{
+	if (!(g_we.line_cm > 0))
+		return 0;
+	float dx = r[0] - g_we.lr[0], dy = r[1] - g_we.lr[1], dz = r[2] - g_we.lr[2], dl = hypotf(dx, dz);
+	if (!g_we.lr_ok || dl > 80.0f || t - g_we.lr_t > 1.0) { /* (a new walk, a teleport, a long stand: from here) */
+		memcpy(g_we.lr, r, sizeof g_we.lr), g_we.lr_t = t, g_we.lr_ok = 1, g_we.ls_t = 0;
+		return 0;
+	}
+	if (dl >= 8.0f) { /* the way he went: its slope and level direction */
+		g_we.ls = -dy / dl, g_we.lm[0] = dx / dl, g_we.lm[1] = 0, g_we.lm[2] = dz / dl, g_we.ls_t = t;
+		memcpy(g_we.lr, r, sizeof g_we.lr), g_we.lr_t = t;
+	}
+	if (!(g_we.ls_t > 0) || t - g_we.ls_t > 0.4 || !(g_we.ls >= WE_LINE_SMIN && g_we.ls <= WE_LINE_SMAX))
+		return 0;
+	g_we.line_ticks++;
+	float yd = 0;
+	static const float ds[2] = { 75.0f, 100.0f };
+	for (int i = 0; i < 2; i++) {
+		int k = we_floor_y(r[0] + g_we.lm[0] * ds[i], r[2] + g_we.lm[2] * ds[i], feet, 300.0f, &yd);
+		if (k == 0 || (k == 1 && yd < feet - g_we.ls * ds[i] - g_we.line_cm)) {
+			*m = (sv_vec3){ g_we.lm[0], 0, g_we.lm[2] };
+			return 1;
+		}
+	}
+	return 0;
+}
 static int we_floor_ahead(const float r[3], sv_vec3 u, float l, float feet)
 {
-	float a = l + g_we.lead_cm, x = r[0] + u.x * a, z = r[2] + u.z * a;
-	int k = we_floor_at(x, z, feet, g_we.cm);
+	/* build 41 (SOMVR_WALK_EDGE_STEEP_CM): the forward probe's drop is steep_cm when set (under him and beside the walk
+	 * stay cm's) */
+	float a = l + g_we.lead_cm, x = r[0] + u.x * a, z = r[2] + u.z * a, c = g_we.steep_cm > 0 ? g_we.steep_cm : g_we.cm;
+	int k = we_floor_at(x, z, feet, c);
+	if (k == 1 && g_we.slope_tan > 0) { /* build 41 (SOMVR_WALK_EDGE_SLOPE_DEG): and the floor on past it */
+		float y1 = 0, y2 = 0;
+		int k1 = we_floor_y(x, z, feet, c, &y1), k2 = we_floor_y(x + u.x * 25.0f, z + u.z * 25.0f, feet, 200.0f, &y2);
+		if (k1 == 1 && (k2 == 0 || (k2 == 1 && (y1 - y2) / 25.0f > g_we.slope_tan))) {
+			g_we.slope_stops++;
+			return 0; /* falling away steeper than the walkable, or a cliff just past: a drop */
+		}
+	}
 	if (k != 0)
 		return k;
+	if (c < g_we.cm && we_floor_at(x, z, feet, g_we.cm) == 1)
+		g_we.steep_stops++; /* (a floor there, but deeper than steep_cm: the steep rule's own) */
 	for (int s = -1; s <= 1; s += 2) {
-		k = we_floor_at(x - u.z * 12.0f * s, z + u.x * 12.0f * s, feet, g_we.cm);
+		k = we_floor_at(x - u.z * 12.0f * s, z + u.x * 12.0f * s, feet, c);
 		if (k != 0)
 			return k;
 	}
-	return we_floor_at(x + u.x * 45.0f, z + u.z * 45.0f, feet, g_we.cm) != 0;
+	return we_floor_at(x + u.x * 45.0f, z + u.z * 45.0f, feet, c) != 0;
 }
 /* where the floor ends along u from the root (cm, 5 cm steps to max_cm; < 0: none) */
 static float we_edge_dist(const float r[3], sv_vec3 u, float feet, float max_cm)
@@ -10228,32 +10336,132 @@ static float we_edge_dist(const float r[3], sv_vec3 u, float feet, float max_cm)
 			return d;
 	return -1;
 }
-/* on foot, the walk's level step d (LOCO's delta; follow: the room-scale follow's part of it) is held where the floor
- * ahead drops more than cm: d's level part zeroed (he stops; never pushed back) */
-static int we_guard(sv_vec3 *d, sv_vec3 part, const float r[3], double t, int follow)
+/* build 42 (som-b42-edgestop, SOMVR_WALK_EDGE_RIDE): the capsule rolling over an edge beside the walk - mark 17's
+ * coping (lip17, boots 182641 / 183213): the walk ran 4 deg off the top's edge line, the centre crossed it, the proxy's
+ * contact tilted from (0,1,0) to 46 deg at one height (the edge, not a slope) while the forward probe found the top at
+ * every tick; with no floor under the centre the edge stop gave him to WALK_GROUND. Here: on foot, the proxy's contact
+ * in the capsule's lower part tilted off the vertical by 2 deg+ (an edge or a slope holding it from the side) and no
+ * floor within cm under the centre = riding an edge: the drop's way is that contact's level normal (exact, no rays).
+ * Held there in full (the walk along it too: boot 192731's walk along the edge drifted out 2 cm a tick by the proxy's
+ * own step until the capsule sank 10 cm) until the stick turns away from the drop */
+static int we_ride_edge(const float r[3], sv_vec3 *n, float *ny, float *h)
+{
+	uintptr_t pc = g_cl.pc;
+	somvr_unpin_contact c[4];
+	float pm_[4][3];
+	int k = pc && un_slots(pc) ? un_contacts(pc, c, 4, pm_) : -1, best = -1;
+	for (int i = 0; i < k; i++) { /* the most upright tilted contact under the capsule's middle */
+		float lv = hypotf(c[i].n.x, c[i].n.z), hh = pm_[i][1] * 100.0f - r[1];
+		if (c[i].n.y > 0.1f && c[i].n.y < 0.9995f && lv > 0.03f && hh < -30.0f && c[i].d < 15.0f &&
+		    (best < 0 || c[i].n.y > c[best].n.y))
+			best = i;
+	}
+	if (best < 0)
+		return 0;
+	float lv = hypotf(c[best].n.x, c[best].n.z);
+	*n = (sv_vec3){ c[best].n.x / lv, 0, c[best].n.z / lv }, *ny = c[best].n.y, *h = pm_[best][1] * 100.0f - r[1];
+	return 1;
+}
+/* build 42: the edge stop's path (the diagnostic: 1/s while walking, every tick under `climb trace`) */
+static struct {
+	const char *why;
+	int fa, under, ride, keep, miss, need;
+	float kn, rny, rh;
+	sv_vec3 rn;
+	double next_t;
+	uint64_t lines;
+} g_wed;
+static int ct_live(void);
+static void we_diag(sv_vec3 part, const float r[3], double t, int follow, int held)
 {
 	float l = hypotf(part.x, part.z);
-	if (!g_we.on || !(l > 0.01f) || g_we.step || g_cl.s.active || jp_air() || ov_active() || g_cl.fsm != CL_FSM_SUPPORTED ||
-	    pr_settling())
+	if (!(l > 0.01f) || !(ct_live() || t >= g_wed.next_t))
+		return;
+	g_wed.next_t = t + 1.0, g_wed.lines++;
+	float feet = r[1] - g_cl.cfg.foot_cm, ya = 0, yu = 0, gdy = 0, u[2] = { part.x / l, part.z / l };
+	float a = l + g_we.lead_cm;
+	int ka = we_floor_y(r[0] + u[0] * a, r[2] + u[1] * a, feet, 300.0f, &ya), ku = we_floor_y(r[0], r[2], feet, 300.0f, &yu);
+	int fl = we_floor_at(r[0] - u[1] * g_we.lead_cm, r[2] + u[0] * g_we.lead_cm, feet, g_we.cm),
+	    fr = we_floor_at(r[0] + u[1] * g_we.lead_cm, r[2] - u[0] * g_we.lead_cm, feet, g_we.cm);
+	int gu = un_ground_under(r, feet, 60.0f, &gdy);
+	sv_vec3 cn = { 0, 0, 0 };
+	float cny = 0, ch = 0;
+	int cr = we_ride_edge(r, &cn, &cny, &ch);
+	char sa[24], su[24];
+	if (ka == 1) snprintf(sa, sizeof sa, "%+.0f", ya - feet); else snprintf(sa, sizeof sa, "%s", ka ? "?" : "none");
+	if (ku == 1) snprintf(su, sizeof su, "%+.0f", yu - feet); else snprintf(su, sizeof su, "%s", ku ? "?" : "none");
+	logf_("WALK edge guard t=%.3f %s %s (%s): step %.1f cm heading %.0f; the floor %.0f cm ahead %s cm, under %s cm (to 3 m); "
+	      "the probe %d, under %d (%.0f cm), sides L %d R %d (%.0f cm); the footprint %d (%.0f); the contact %s%.2f h %.0f way %.0f; "
+	      "ride %d, keep %d, miss %d/%d, kn %.1f; at %d; the root %.1f,%.1f,%.1f (SOMVR_WALK_EDGE_RIDE %s; lines %llu)", t,
+	      follow ? "follow" : "walk", held ? "HELD" : "free", g_wed.why ? g_wed.why : "-", l, atan2f(u[0], u[1]) * 57.29578f,
+	      a, sa, su, g_wed.fa, g_wed.under, g_we.cm, fl, fr, g_we.lead_cm, gu, gdy, cr ? "tilted n.y " : "upright ", cr ? cny : 1.0f,
+	      ch, cr ? atan2f(cn.x, cn.z) * 57.29578f : 0.0f, g_wed.ride, g_wed.keep, g_wed.miss, g_wed.need, g_wed.kn, g_we.at, r[0],
+	      r[1], r[2], g_we.ride ? "on" : "off", (unsigned long long)g_wed.lines);
+}
+/* on foot, the walk's level step d (LOCO's delta; follow: the room-scale follow's part of it) is held where the floor
+ * ahead drops more than cm: d's level part zeroed (he stops; never pushed back) */
+static int we_guard1(sv_vec3 *d, sv_vec3 part, const float r[3], double t, int follow);
+static int we_guard(sv_vec3 *d, sv_vec3 part, const float r[3], double t, int follow)
+{
+	g_wed.why = NULL, g_wed.fa = g_wed.under = -2, g_wed.ride = g_wed.keep = 0, g_wed.miss = g_wed.need = 0, g_wed.kn = 0;
+	int held = we_guard1(d, part, r, t, follow);
+	if (g_we.on)
+		we_diag(part, r, t, follow, held);
+	return held;
+}
+static int we_guard1(sv_vec3 *d, sv_vec3 part, const float r[3], double t, int follow)
+{
+	float l = hypotf(part.x, part.z);
+	g_wed.why = !g_we.on ? "off" : !(l > 0.01f) ? "still" : g_we.step ? "step" : g_cl.s.active ? "climb" : jp_air() ? "air" :
+		    ov_active() ? "vault" : g_cl.fsm != CL_FSM_SUPPORTED ? "fsm" : pr_settling() ? "settling" : NULL;
+	if (g_wed.why)
 		return 0;
 	sv_vec3 u = { part.x / l, 0, part.z / l };
 	float feet = r[1] - g_cl.cfg.foot_cm;
 	float ax = r[0] - g_we.at_root.x, az = r[2] - g_we.at_root.z;
 	int keep = g_we.at && ax * ax + az * az <= 30.0f * 30.0f && u.x * g_we.at_dir.x + u.z * g_we.at_dir.z > 0.5f;
 	sv_vec3 n = keep ? g_we.at_dir : u;
+	g_wed.keep = keep;
 	if (!keep) {
-		if (we_floor_ahead(r, u, l, feet) != 0 || we_floor_at(r[0], r[2], feet, g_we.cm) != 1) {
-			g_we.miss = 0;
+		int fa = we_floor_ahead(r, u, l, feet), under = -2, ride = 0;
+		sv_vec3 lmv, rn;
+		float rny = 0, rh = 0;
+		if (g_we.ride && we_ride_edge(r, &rn, &rny, &rh)) { /* build 42: riding an edge - the centre over no floor */
+			under = we_floor_at(r[0], r[2], feet, g_we.cm);
+			ride = under == 0;
+			g_wed.rn = rn, g_wed.rny = rny, g_wed.rh = rh;
+		}
+		g_wed.fa = fa, g_wed.ride = ride;
+		if (!ride && fa == 1 && we_line_drop(r, feet, t, &lmv)) /* build 41: a downhill that rounds over into a drop */
+			fa = 0, g_we.line_stops++, u = lmv; /* - along the way he goes (the hold's part toward it, the game's slide undone) */
+		if (!ride && (fa != 0 || (under = under == -2 ? we_floor_at(r[0], r[2], feet, g_we.cm) : under) != 1)) {
+			g_we.miss = 0, g_we.miss_cm = 0, g_wed.under = under;
+			g_wed.why = fa != 0 ? "floor ahead" : "none under";
 			return 0; /* a floor ahead; or none seen under him either (not an edge the rays see: WALK_GROUND's) */
 		}
-		if (++g_we.miss < 3 && !g_we.at)
-			return 0; /* build 39: a new drop confirmed 3 ticks first (a narrow ledge's flicker is no stop) */
-		/* build 39: the drop's side - the floor 40 cm to the left and right of the walk: one side off = the drop there (a
-		 * ledge's edge beside the walk: only the part toward it stops); both on or both off = the drop ahead */
-		sv_vec3 pl = { -u.z, 0, u.x }, pr = { u.z, 0, -u.x };
-		int fl = we_floor_at(r[0] + pl.x * g_we.lead_cm, r[2] + pl.z * g_we.lead_cm, feet, g_we.cm),
-		    fr = we_floor_at(r[0] + pr.x * g_we.lead_cm, r[2] + pr.z * g_we.lead_cm, feet, g_we.cm);
-		n = fl == 0 && fr != 0 ? pl : fr == 0 && fl != 0 ? pr : u;
+		g_wed.under = under;
+		if (ride) { /* build 42: at the edge already - held at once, toward the contact's level normal (the drop's way) */
+			g_we.ride_ticks++;
+			n = rn;
+		} else {
+			g_we.miss_cm = g_we.miss ? g_we.miss_cm + l : 0;
+			/* build 39: a new drop confirmed 3 ticks first (a narrow ledge's flicker is no stop); build 41: 2 once the
+			 * walk covered confirm_cm with it in view (the headless 20 Hz: 3 ticks were 24 cm, past a rounded lip) */
+			int need = g_we.confirm_cm > 0 && g_we.miss >= 1 && g_we.miss_cm + l >= g_we.confirm_cm ? 2 : 3;
+			g_wed.miss = g_we.miss + 1, g_wed.need = need;
+			if (++g_we.miss < need && !g_we.at) {
+				g_wed.why = "confirm";
+				return 0;
+			}
+			if (need == 2 && g_we.miss == 2 && !g_we.at)
+				g_we.confirm2++;
+			/* build 39: the drop's side - the floor 40 cm to the left and right of the walk: one side off = the drop
+			 * there (a ledge's edge beside the walk: only the part toward it stops); both on or both off = ahead */
+			sv_vec3 pl = { -u.z, 0, u.x }, pr = { u.z, 0, -u.x };
+			int fl = we_floor_at(r[0] + pl.x * g_we.lead_cm, r[2] + pl.z * g_we.lead_cm, feet, g_we.cm),
+			    fr = we_floor_at(r[0] + pr.x * g_we.lead_cm, r[2] + pr.z * g_we.lead_cm, feet, g_we.cm);
+			n = fl == 0 && fr != 0 ? pl : fr == 0 && fl != 0 ? pr : u;
+		}
 	}
 	/* keep: at the edge and toward it (within 60 deg of the held way) the walk stays held without new rays - boot
 	 * 20261104-205132: the game's own push moved the capsule 7 cm aside, the ray from there met the crevice's far lip.
@@ -10265,8 +10473,14 @@ static int we_guard(sv_vec3 *d, sv_vec3 part, const float r[3], double t, int fo
 		d->x -= kn * n.x, d->z -= kn * n.z;
 	if (lt > 0.01f && we_floor_ahead(r, (sv_vec3){ tg.x / lt, 0, tg.z / lt }, lt, feet) == 0)
 		d->x -= tg.x, d->z -= tg.z, lt = 0; /* along the edge off it too (a corner, a beam's end): stopped */
-	if (!(kn > 0) && lt > 0.01f)
+	g_wed.kn = kn;
+	if (!(kn > 0) && lt > 0.01f) {
+		g_wed.why = "along";
 		return 0; /* nothing toward the drop and the way along it has floor: no stop */
+	}
+	if (kn > 0 && lt > 0.01f && (g_wed.ride || (keep && g_we.at_ride))) /* build 42: riding an edge - held in full */
+		d->x -= tg.x, d->z -= tg.z, lt = 0;
+	g_wed.why = g_wed.ride ? "ride" : keep ? "keep" : "drop";
 	u = n;
 	g_we.ticks++, g_we.follows += follow != 0;
 	float dx = r[0] - g_we.at_root.x, dz = r[2] - g_we.at_root.z;
@@ -10275,13 +10489,21 @@ static int we_guard(sv_vec3 *d, sv_vec3 part, const float r[3], double t, int fo
 	if (!fresh) {
 		if (u.x * g_we.at_dir.x + u.z * g_we.at_dir.z < 0.5f) /* pushed another way off the same edge: that way */
 			g_we.at_dir = u, g_we.need_land = 1;
+		g_we.at_ride |= g_wed.ride; /* build 42 */
 		return 1;
 	}
 	g_we.at = 1, g_we.at_root = (sv_vec3){ r[0], r[1], r[2] }, g_we.at_dir = u, g_we.at_t0 = t, g_we.need_land = 1;
-	g_we.holds++;
+	g_we.at_ride = g_wed.ride;
+	g_we.holds++, g_we.ride_holds += g_wed.ride;
 	if (t - g_we.buzz_t > 1.5) /* A's nudge: A = down (the climb's own edge cue stays quiet for it) */
 		haptic(SOMVR_HAND_R, SOMVR_HX_READY), g_we.buzz_t = t, g_we.buzzes++;
-	if (un_log_ok(t))
+	if (g_wed.ride && (g_we.holds <= 300 || un_log_ok(t)))
+		logf_("WALK edge stop t=%.3f the %s held at a drop: riding an edge - no floor within %.0f cm under the centre, the "
+		      "proxy's contact %.0f cm under the root tilted to n.y %.2f toward heading %.0f deg (the drop's way; the walk's "
+		      "part toward it %.1f cm stopped, the root %.1f,%.1f,%.1f): he stops there; A's nudge (SOMVR_WALK_EDGE_RIDE; "
+		      "holds %llu)", t, follow ? "room-scale step" : "walk", g_we.cm, -g_wed.rh, g_wed.rny, atan2f(u.x, u.z) * 57.29578f,
+		      kn, r[0], r[1], r[2], (unsigned long long)g_we.holds);
+	else if (g_we.holds <= 300 || un_log_ok(t)) /* (build 41: each hold logged - a busy shared limit must not hide one) */
 		logf_("WALK edge stop t=%.3f the %s held at a drop: no floor within %.0f cm under the feet %.0f cm ahead (heading %.0f "
 		      "deg; the root %.1f,%.1f,%.1f): he stops there; A's nudge; A tapped = a light step off, A held = the climb "
 		      "down, the stick back + A = the drop ring (SOMVR_WALK_EDGE_STOP; holds %llu)", t, follow ? "room-scale step" : "walk", g_we.cm, l + g_we.lead_cm,
@@ -10408,6 +10630,8 @@ static void un_lip_watch(uintptr_t pc, const float r[3], sv_vec3 asked, double t
 {
 	float la = sqrtf(asked.x * asked.x + asked.z * asked.z);
 	int ok = la >= 0.3f && lo_ours_now() && !jp_air() && !g_cl.s.active;
+	if (ok && g_we.on && g_we.at && t - g_we.held_t < 0.5) /* build 42: the edge stop holds him - its own counter-move */
+		ok = 0, g_we.lip_quiet++;                       /* at the lip is no stalled walk (boot 192731's 23 cm hop) */
 	if (!ok || !g_un.lip_have) {
 		g_un.lip_have = ok, g_un.lip_t0 = t, g_un.lip_asked = 0, g_un.lip_prog = 0;
 		memcpy(g_un.lip_r, r, sizeof g_un.lip_r);
@@ -10522,7 +10746,25 @@ static struct {
 	float nav_fy;        /* the last floor ahead (cm) */
 	_Atomic int req_nav;
 	double nav_log_t;
-} g_wk = { .req_deg = -1, .req_nav = -1 };
+	/* build 41 (som-b41-climb4, re-xr-pipeline.md 182): SOMVR_WALK_CTXCLIP - the third take-back on the beam (11-05 mark
+	 * 093135_16): the controller's "UpdateContextActionClipping" (W FUN_140822580 -> FUN_140821ef0 -> FUN_14081ef90 /
+	 * L FUN_020ca3c0) clips the step's velocity against the authored context-action lines near him (ledge and beam
+	 * edges: a segment, its level normal, the capsule's radius) - the walk slides along one and stops dead at the next;
+	 * its gate byte (W 0x141801538 - its only reader is FUN_140822a90 - / L 0x4b55ca4) also gates the navmesh clip,
+	 * which runs only on a step this clip changed. Off for the same decided step as the navmesh clip's (pm9_vf) */
+	int ctx;             /* the switch */
+	uintptr_t ctx_flag;  /* the gate byte's address (0: none) */
+	uint64_t ctx_off;
+	_Atomic int req_ctx;
+	/* build 41 (build-win9's entry 376): the decided step's floor must go on past the edge stop's own probe - a floor
+	 * WK_NAV_AHEAD_CM ahead and far_cm ahead too (SOMVR_WALK_CLIP_FAR_CM; 0 = build 40's one ray): at a top's edge the
+	 * game's clips slide the walk along the lip and our edge stop holds him there (boot 173819: with the clips off 50 cm
+	 * from the bank's edge the walk ran straight into its bevel - 0 cm, no stop, no cue); and the slope too only on such a
+	 * step (SOMVR_WALK_SLOPE_AHEAD): 55 deg on every foot tick let the walk over the bank's bevel after A UP (376's up40) */
+	float far_cm;
+	int slope_ahead;
+	uint64_t nav_edge;   /* decisions refused: the floor at far_cm gone (an edge within it) */
+} g_wk = { .req_deg = -1, .req_nav = -1, .req_ctx = -1 };
 /* SOMVR_WALK_NAVMESH: a walk on foot whose way 30 cm ahead has a floor within 40 cm of the feet (rays down: no water,
  * no orc) = the navmesh clip off for this tick's step; a drop or nothing there = the game's clip (its edge keeping) */
 #define WK_NAV_AHEAD_CM 30.0f
@@ -10550,6 +10792,15 @@ static void wk_nav_decide(uintptr_t pm)
 		g_wk.nav_nofloor++;
 		return;
 	}
+	if (g_wk.far_cm > WK_NAV_AHEAD_CM) { /* build 41: and on past the edge stop's probe (an edge within it: the game's) */
+		sv_vec3 f2 = { r[0] + a.x / al * g_wk.far_cm, from.y, r[2] + a.z / al * g_wk.far_cm };
+		memset(&h, 0, sizeof h);
+		if (!cl_ray(NULL, -1, f2, (sv_vec3){ 0, -1, 0 }, 2.0f * WK_NAV_STEP_CM + 20.0f, &h) || !h.hit || h.wet || h.chr ||
+		    fabsf(h.point.y - feet) > WK_NAV_STEP_CM) {
+			g_wk.nav_edge++;
+			return;
+		}
+	}
 	g_wk.nav_pm = pm;
 }
 /* PlayerMovement slot 9 (W 0x14046e180 / L vf_10 0xab59a0: the proxy step, the player's own class only): with this
@@ -10559,24 +10810,31 @@ static void pm9_vf(void *pm, void *xf, void *mp)
 {
 	struct hook *h = &g_h[HK_PM9];
 	atomic_fetch_add_explicit(&h->calls, 1, memory_order_relaxed);
-	volatile unsigned char *flag = (volatile unsigned char *)g_wk.nav_flag;
-	int off = flag && g_wk.nav_pm && (uintptr_t)pm == g_wk.nav_pm && my_tid() == g_inp.tid;
-	unsigned char was = 0;
+	/* (build 41: the context-action clip's gate too, SOMVR_WALK_CTXCLIP; each by its own switch) */
+	volatile unsigned char *flag = g_wk.nav ? (volatile unsigned char *)g_wk.nav_flag : NULL,
+			       *cflag = g_wk.ctx ? (volatile unsigned char *)g_wk.ctx_flag : NULL;
+	int off = (flag || cflag) && g_wk.nav_pm && (uintptr_t)pm == g_wk.nav_pm && my_tid() == g_inp.tid;
+	unsigned char was = 0, cwas = 0;
 	if (off) {
-		was = *flag;
-		*flag = 0;
-		g_wk.nav_off++;
+		if (flag)
+			was = *flag, *flag = 0, g_wk.nav_off++;
+		if (cflag)
+			cwas = *cflag, *cflag = 0, g_wk.ctx_off++;
 		atomic_fetch_add_explicit(&h->mods, 1, memory_order_relaxed);
 	}
 	((pm9_fn)h->orig)(pm, xf, mp);
-	if (off)
+	if (off && flag)
 		*flag = was;
+	if (off && cflag)
+		*cflag = cwas;
 	g_wk.nav_pm = 0;
 	double t = cb_now();
 	if (off && t >= g_wk.nav_log_t) {
 		g_wk.nav_log_t = t + 2.0;
-		logf_("WALK navmesh t=%.3f the walk's navmesh clip off over a real floor (ahead at %.1f; ticks off %llu, a drop ahead "
-		      "%llu, the floor too far %llu) (SOMVR_WALK_NAVMESH)", t, (double)g_wk.nav_fy, (unsigned long long)g_wk.nav_off,
+		logf_("WALK navmesh t=%.3f the walk's %s off over a real floor (ahead at %.1f; ticks off %llu / %llu, a drop ahead "
+		      "%llu, the floor too far %llu) (SOMVR_WALK_NAVMESH, SOMVR_WALK_CTXCLIP)", t,
+		      flag && cflag ? "navmesh and context-action clips" : flag ? "navmesh clip" : "context-action clip",
+		      (double)g_wk.nav_fy, (unsigned long long)g_wk.nav_off, (unsigned long long)g_wk.ctx_off,
 		      (unsigned long long)g_wk.nav_drop, (unsigned long long)g_wk.nav_nofloor);
 	}
 }
@@ -10592,11 +10850,16 @@ static void wk_slope(uintptr_t pm)
 	if ((rq = atomic_exchange(&g_wk.req_nav, -1)) >= 0)
 		g_wk.nav = rq, logf_("WALK navmesh t=%.3f the walk's navmesh clip %s (the word, a test aid)", cb_now(),
 				     rq ? "off over a real floor" : "the game's");
+	if ((rq = atomic_exchange(&g_wk.req_ctx, -1)) >= 0)
+		g_wk.ctx = rq, logf_("WALK ctxclip t=%.3f the walk's context-action clip %s (the word, a test aid)", cb_now(),
+				     rq ? "off over a real floor" : "the game's");
 	g_wk.nav_pm = 0;
 	if (vptr_of((void *)pm) != g_som.vt_pm || peek_ptr(pm + PM_OWNER) != g_inp.pl || my_tid() != g_inp.tid)
 		return; /* the player's own tick only */
-	if (g_wk.nav && g_wk.nav_flag && g_h[HK_PM9].installed && lo_ours_now() && !(g_cl.on && g_cl.s.active))
-		wk_nav_decide(pm);
+	if ((((g_wk.nav && g_wk.nav_flag) || (g_wk.ctx && g_wk.ctx_flag)) && g_h[HK_PM9].installed) ||
+	    (g_wk.slope_ahead && g_wk.deg > 0)) /* (build 41: the slope's own decision too) */
+		if (lo_ours_now() && !(g_cl.on && g_cl.s.active))
+			wk_nav_decide(pm);
 	if (!(g_wk.deg > 0) && !g_wk.set)
 		return;
 	uintptr_t pc = peek_ptr(pm + CL_PM_PROXY), px = pc ? peek_ptr(pc + UN_PROXY) : 0;
@@ -10610,7 +10873,8 @@ static void wk_slope(uintptr_t pm)
 		return;
 	}
 	float ours = cosf(g_wk.deg * 0.01745329f);
-	int foot = g_wk.deg > 0 && lo_ours_now() && !(g_cl.on && g_cl.s.active);
+	int foot = g_wk.deg > 0 && lo_ours_now() && !(g_cl.on && g_cl.s.active) &&
+		   (!g_wk.slope_ahead || g_wk.nav_pm == pm); /* build 41: only on a step over a floor that goes on */
 	g_wk.ticks++;
 	if (foot) {
 		if (!g_wk.set || px != g_wk.px) { /* (a new proxy: the game's value again from it) */
@@ -10760,6 +11024,7 @@ static struct {
 	float r0[3], post[3];
 	uint64_t lines;
 } g_ct;
+static int ct_live(void) { return atomic_load_explicit(&g_ct.until, memory_order_relaxed) > 0; } /* build 42: the edge guard's lines */
 
 static void ct_pre(uintptr_t pm)
 {
@@ -10798,9 +11063,10 @@ static void ct_pre(uintptr_t pm)
 	if (hpx)
 		peek(hpx + WK_PX_SLOPE, &slope, sizeof slope);
 	logf_("CLIMB trace t=%.3f frame=%llu: root %.1f,%.1f,%.1f moved %.1f,%.1f,%.1f asked %.1f,%.1f,%.1f; proxy %.1f,%.1f,%.1f; "
-	      "grav %u rm %u layer %u fsm %d climb %d slope %.3f; contacts %d:%s", t, (unsigned long long)g_fr.frame, r[0], r[1],
-	      r[2], mv[0], mv[1], mv[2], ak[0], ak[1], ak[2], pp[0], pp[1], pp[2], grav, rm, lay, g_cl.fsm, g_cl.s.active,
-	      (double)slope, n, cs);
+	      "grav %u rm %u layer %u fsm %d climb %d slope %.3f clips off %llu/%llu; contacts %d:%s", t,
+	      (unsigned long long)g_fr.frame, r[0], r[1], r[2], mv[0], mv[1], mv[2], ak[0], ak[1], ak[2], pp[0], pp[1], pp[2], grav,
+	      rm, lay, g_cl.fsm, g_cl.s.active, (double)slope, (unsigned long long)g_wk.nav_off, (unsigned long long)g_wk.ctx_off,
+	      n, cs);
 	memcpy(g_ct.r0, r, sizeof r), g_ct.have = 0;
 }
 
@@ -10845,6 +11111,16 @@ static const char *cl_word(const char *w)
 											     * test aid; the hook stays) */
 		atomic_store(&g_wk.req_nav, b[1] == 'n');
 		return b[1] == 'n' ? "climb navmesh on" : "climb navmesh off";
+	}
+	if (k == 2 && !strcmp(a, "edgeride") && (!strcmp(b, "on") || !strcmp(b, "off"))) { /* build 42: SOMVR_WALK_EDGE_RIDE
+											      * now (a test aid) */
+		g_we.ride = g_we.on && b[1] == 'n';
+		return g_we.ride ? "climb edgeride on" : "climb edgeride off";
+	}
+	if (k == 2 && !strcmp(a, "ctxclip") && (!strcmp(b, "on") || !strcmp(b, "off"))) { /* build 41: SOMVR_WALK_CTXCLIP (a
+											     * test aid; the hook stays) */
+		atomic_store(&g_wk.req_ctx, b[1] == 'n');
+		return b[1] == 'n' ? "climb ctxclip on" : "climb ctxclip off";
 	}
 	if (k == 2 && !strcmp(a, "slope") && atoi(b) >= 0 && atoi(b) <= 70) { /* build 40: SOMVR_WALK_SLOPE_DEG now (0 = the
 									 * game's; a test aid) */
@@ -11005,6 +11281,30 @@ static const char *cl_word(const char *w)
 		logf_("CLIMB t=%.3f through %s (the trigger word, a test aid): SOMVR_CLIMB_THROUGH now %s", cb_now(), b, b);
 		return g_cl.cfg.through ? "climb through on" : "climb through off";
 	}
+	if (k == 2 && !strcmp(a, "drawn") && !strcmp(b, "probe")) { /* build 41 (a test aid): the eyes' depth at a point, 4 s */
+		char *e3 = NULL, *e4 = NULL, *e5 = NULL;
+		const char *q = strstr(w, "probe") + 5;
+		float x = strtof(q, &e3), y = e3 ? strtof(e3, &e4) : NAN, z = e4 ? strtof(e4, &e5) : NAN;
+		if (!(isfinite(x) && isfinite(y) && isfinite(z)))
+			return "climb drawn probe X Y Z (not three numbers: ignored)";
+		g_cl.zp_test_at = (sv_vec3){ x, y, z }, g_cl.zp_test_until = cb_now() + 4.0;
+		logf_("CLIMB t=%.3f drawn probe at %.1f,%.1f,%.1f for 4 s (the trigger word, a test aid)", cb_now(), x, y, z);
+		return "climb drawn probe";
+	}
+	if (k == 2 && !strcmp(a, "drawn") && !strcmp(b, "force")) { /* build 41 (a test aid): every verdict undrawn */
+		const char *v = strstr(w, "force") + 5;
+		while (*v == ' ') v++;
+		g_cl.zp_force = !strncmp(v, "undrawn", 7);
+		logf_("CLIMB t=%.3f drawn force %s (the trigger word, a test aid)", cb_now(), g_cl.zp_force ? "undrawn" : "off");
+		return g_cl.zp_force ? "climb drawn force undrawn" : "climb drawn force off";
+	}
+	if (k == 2 && !strcmp(a, "drawn") && (!strcmp(b, "on") || !strcmp(b, "off"))) { /* build 41: the A/B (a test aid) */
+		if (b[1] == 'n' && !somvr_zprobe_ok(&g_zpo))
+			somvr_zprobe_init(&g_zpo, (int32_t)getpid());
+		g_cl.cfg.drawn = b[1] == 'n', g_cl.zp_on = g_cl.cfg.drawn;
+		logf_("CLIMB t=%.3f drawn %s (the trigger word, a test aid): SOMVR_CLIMB_DRAWN now %s", cb_now(), b, b);
+		return g_cl.cfg.drawn ? "climb drawn on" : "climb drawn off";
+	}
 	if (k == 2 && !strcmp(a, "throw") && (!strcmp(b, "on") || !strcmp(b, "off"))) { /* build 40: the A/B (a test aid) */
 		g_cl.cfg.fling_off = b[1] == 'n';
 		logf_("CLIMB t=%.3f throw %s (the trigger word, a test aid): SOMVR_CLIMB_FLING_OFF now %s", cb_now(), b, b);
@@ -11054,6 +11354,15 @@ static const char *cl_word(const char *w)
 		g_un.have = 0;
 		logf_("CLIMB t=%.3f unpin %s (the trigger word, a test aid): SOMVR_CLIMB_UNPIN now %s", cb_now(), b, b);
 		return g_un.on ? "climb unpin on" : "climb unpin off";
+	}
+	if (k >= 1 && !strcmp(a, "heights")) { /* build 42 (a test aid): `climb heights STEP N` - the floor's heights round him */
+		int st = 0, n = 0;
+		if (!g_cl.on || sscanf(strstr(w, "heights") + 7, "%d %d", &st, &n) != 2 || st < 10 || n < 2 || n > 41)
+			return "climb heights (SOMVR_CLIMB off, or not STEP >= 10 and N 2..41: nothing)";
+		atomic_store(&g_cl_hsv.step, st), atomic_store(&g_cl_hsv.n, n);
+		atomic_store(&g_cl_probe.up, 8u);
+		atomic_fetch_add_explicit(&g_cl_probe.seq, 1, memory_order_release);
+		return "climb heights";
 	}
 	if (k == 1 && !strcmp(a, "contacts")) { /* a test aid: the proxy's manifold (the next frame) */
 		if (!g_cl.on)
@@ -11218,6 +11527,33 @@ static void cl_probe_edge(void)
 	logf_("CLIMB probe edge surfaces:%s (%llu casts)", nseen ? sl : " none", (unsigned long long)(g_cl.casts - c0));
 }
 
+/* build 42 (a test aid, `climb heights STEP N`): the floor's height on an N x N grid STEP cm apart round Talion's root - a
+ * ray down from 30 m over his feet to 30 m under them at each point (unseen surfaces stepped past, as the edge stop's),
+ * a line a row: the heights over his feet (cm; - = none). To find an open hillside for the edge stop's "not stopped" walk */
+static void cl_heights(void)
+{
+	int st = atomic_load(&g_cl_hsv.step), n = atomic_load(&g_cl_hsv.n);
+	float rt[3] = { 0, 0, 0 };
+	if (!g_cl.obj || !peek(g_cl.obj + OBJ_POS, rt, sizeof rt) || !vec_ok(rt, 1e7f) || st < 10 || n < 2 || n > 41)
+		return;
+	float feet = rt[1] - g_cl.cfg.foot_cm, h0 = (float)(n - 1) * 0.5f * (float)st;
+	logf_("CLIMB heights t=%.3f grid %d x %d, %d cm apart, round the root %.1f,%.1f,%.1f (x along a row, z down the rows; cm over "
+	      "the feet %.1f)", cb_now(), n, n, st, rt[0], rt[1], rt[2], feet);
+	for (int j = 0; j < n; j++) {
+		char b[41 * 8 + 8];
+		size_t o = 0;
+		float z = rt[2] - h0 + (float)(j * st);
+		for (int i = 0; i < n && o + 8 < sizeof b; i++) {
+			somvr_climb_hit hit;
+			memset(&hit, 0, sizeof hit);
+			float x = rt[0] - h0 + (float)(i * st);
+			int ok = cl_ray(NULL, -1, (sv_vec3){ x, feet + 3000.0f, z }, (sv_vec3){ 0, -1, 0 }, 6000.0f, &hit);
+			o += (size_t)snprintf(b + o, sizeof b - o, ok && hit.hit && !hit.chr ? " %.0f" : " -", hit.point.y - feet);
+		}
+		logf_("CLIMB heights row %d z %.0f x %.0f..: %s", j, z, rt[0] - h0, b);
+	}
+}
+
 static void cl_probe(void)
 {
 	uint32_t seq = atomic_load_explicit(&g_cl_probe.seq, memory_order_acquire);
@@ -11235,6 +11571,10 @@ static void cl_probe(void)
 	}
 	if (up == 7) {
 		un_contacts_log();
+		return;
+	}
+	if (up == 8) { /* build 42: `climb heights STEP N` */
+		cl_heights();
 		return;
 	}
 	if (up >= 3) { /* climb state / watch [off] */
@@ -11807,6 +12147,9 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	in.rig_yaw = g_fr.base.yaw - g_rig.yaw0;
 	in.rig_scale = somvr_rig_scale(&g_rig); /* SOMVR_PLAYER_SIZE: a hold carries s x the hand's tracked move */
 	in.can_blink = (g_cl.cfg.descent || g_cl.cfg.pullover) && pr_down_ok(); /* the practice's trip free */
+	/* build 41 (SOMVR_CLIMB_DRAWN): the eyes' verdict on the ring shown (ob_frame's, under 0.6 s old) */
+	in.land_vis = g_cl.cfg.drawn && g_cl.zp_vis_t > 0 && t - g_cl.zp_vis_t < 0.6 ? g_cl.zp_vis : SOMVR_ZP_UNKNOWN;
+	in.land_vis_at = g_cl.zp_vis_at;
 	in.walk_blocked = g_cl.cfg.descent && lo_walk_blocked(t);
 	in.stick = g_fr.frame - g_cl.stick_frame <= 3 ? g_cl.stick_raw : 0; /* SOMVR_CLIMB_HANG_STICK_CM: as the player holds it */
 	in.stick_x = in.stick > 0 ? g_cl.stick_x : 0, in.stick_y = in.stick > 0 ? g_cl.stick_y : 0; /* build 39: SOMVR_CLIMB_SIDE */
@@ -12021,7 +12364,15 @@ static void cl_frame(const sv_vec3 p[2], const sv_vec3 pw[2], const sv_quat qw[2
 	if ((o.events & SOMVR_CLIMB_E_BLINK_NONE) && (o.events & SOMVR_CLIMB_E_EDGE) && !g_cl.s.active &&
 	    (g_cl.s.bl_why == SOMVR_CLIMB_BL_NOEDGE || g_cl.s.bl_why == SOMVR_CLIMB_BL_SHORT))
 		jp_climb_passed(t); /* build 22, SOMVR_JUMP: A on foot found no edge: the press is the jump's */
-	if (o.events & SOMVR_CLIMB_E_BLINK_NONE) {
+	if ((o.events & SOMVR_CLIMB_E_BLINK_NONE) && g_cl.s.bl_why == SOMVR_CLIMB_BL_UNDRAWN) { /* build 41 (SOMVR_CLIMB_DRAWN) */
+		if (g_cl.cfg.cue)
+			haptic(SOMVR_HAND_R, SOMVR_HX_NO), g_cl.miss_buzzes++;
+		if (cl_log_ok(t))
+			logf_("CLIMB t=%.3f frame=%llu A UP: no blink: %s (the landing %.1f,%.1f,%.1f; the eyes' depth: %d of 5 points "
+			      "read, %d drawn, the nearest drawn %.0f cm past them): a soft double buzz, he stays (SOMVR_CLIMB_DRAWN)", t,
+			      (unsigned long long)g_fr.frame, somvr_climb_bl_name(g_cl.s.bl_why), g_cl.s.ta_land.x, g_cl.s.ta_land.y,
+			      g_cl.s.ta_land.z, g_cl.zp_nread, g_cl.zp_ndrawn, g_cl.zp_gap < 1e8f ? 100.0 * g_cl.zp_gap : -1.0);
+	} else if (o.events & SOMVR_CLIMB_E_BLINK_NONE) {
 		int stay = g_cl.s.bl_why == SOMVR_CLIMB_BL_NOGROUND || g_cl.s.bl_why == SOMVR_CLIMB_BL_WET;
 		if (stay && g_cl.cfg.cue) /* A did nothing: the miss buzz on the right hand */
 			haptic(SOMVR_HAND_R, SOMVR_HX_NO), g_cl.miss_buzzes++;
@@ -12660,6 +13011,37 @@ static int cl_config(int *bad)
 		      "the edge since our last tick is undone in our delta (at most its own length, never back past the stop point)"
 		      : " (the game's slide over a sloped lip left as it is)");
 		g_we.on = g_we.cm > 0, g_we.lead_cm = 40.0f, g_we.step_cms = 150.0f; /* 40: the capsule (32) short of a lip that slopes in (boot 205614) */
+		g_we.steep_cm = env_float("SOMVR_WALK_EDGE_STEEP_CM", 0, 0, 200, bad); /* build 41 (som-b41-climb4) */
+		g_we.confirm_cm = env_float("SOMVR_WALK_EDGE_CONFIRM_CM", 0, 0, 50, bad);
+		g_we.line_cm = env_float("SOMVR_WALK_EDGE_LINE_CM", 0, 0, 200, bad); /* build 41 (som-b41-lip): code default off until proven (182.4d) */
+		g_we.ride = g_we.on && env_word("SOMVR_WALK_EDGE_RIDE", fling_w, 2, 1); /* build 42 (som-b42-edgestop): code default on */
+		if (g_we.on)
+			logf_("CONFIG walk edge ride=%s%s", fling_w[g_we.ride], g_we.ride ? ": the capsule riding an edge (no floor "
+			      "within the edge stop's depth under the centre, the proxy's lower contact tilted) is held at once - the "
+			      "walk's part toward the contact's level normal stopped, the game's slide that way undone (mark 17's coping)"
+			      : " (an edge beside the walk the capsule rolls over: WALK_GROUND's, as build 41)");
+		if (g_we.on && g_we.line_cm > 0)
+			logf_("CONFIG walk edge line=%.0f cm: walking downhill (the floor 25 -> 50 cm ahead falling 8.5..45 deg), the "
+			      "floor 75 and 100 cm ahead more than this under the slope's own line, or none within 3 m, is a drop - a "
+			      "slope that rounds over into a cliff (SOMVR_WALK_EDGE_LINE_CM)", (double)g_we.line_cm);
+		{
+			float deg = env_float("SOMVR_WALK_EDGE_SLOPE_DEG", 0, 0, 80, bad);
+			g_we.slope_tan = deg > 0 ? tanf(deg * 0.01745329f) : 0;
+			if (g_we.on && deg > 0)
+				logf_("CONFIG walk edge slope=%.0f deg: the floor from the walk's forward probe to 25 cm past it falling "
+				      "steeper than this, or none within 2 m there (a cliff just past), is a drop (SOMVR_WALK_EDGE_SLOPE_DEG)",
+				      (double)deg);
+		}
+		if (g_we.on && g_we.confirm_cm > 0)
+			logf_("CONFIG walk edge confirm=%.0f cm: a new drop ahead is a stop at its second tick once the walk covered "
+			      "this much with it in view (its third otherwise: a narrow ledge's flicker is still no stop) "
+			      "(SOMVR_WALK_EDGE_CONFIRM_CM)", (double)g_we.confirm_cm);
+		if (!(g_we.steep_cm > 0 && g_we.steep_cm < g_we.cm))
+			g_we.steep_cm = 0;
+		if (g_we.on && g_we.steep_cm > 0)
+			logf_("CONFIG walk edge steep=%.0f cm: the walk's forward probe (40 cm past its step) takes a floor more than "
+			      "this under the feet for a drop (a beam's end over rock, a slope steeper than ~40 deg ahead); under him "
+			      "and beside the walk %.0f cm as ever (SOMVR_WALK_EDGE_STEEP_CM)", (double)g_we.steep_cm, (double)g_we.cm);
 		if (g_we.on && !(c->edge_low_cm > 0)) /* A's way down at every drop over it needs EDGE_LOW's rule */
 			c->edge_low_cm = g_we.cm;
 		logf_("CONFIG walk edge stop=%s%.0f%s", g_we.on ? "on, " : "off", g_we.cm, g_we.on ? " cm: on foot the walk (the stick's "
@@ -12746,6 +13128,17 @@ static int cl_config(int *bad)
 	      "throws him off it with the hands' own velocity (away, along, up; x the fling's gain, at most its max) - the jump's "
 	      "arc and landing from there, a grip in flight the climb again" : " (a push away from the wall is dropped, as build "
 	      "39)", c->fo_min, c->fo_up_frac);
+	/* build 41 (som-b41-climb4, re-xr-pipeline.md 182.2): never land on a floor nothing is drawn on (the 11-04 mark
+	 * 222445_15) */
+	c->drawn = env_word("SOMVR_CLIMB_DRAWN", fling_w, 2, c->drawn);
+	if (c->drawn && !somvr_zprobe_ok(&g_zpo))
+		somvr_zprobe_init(&g_zpo, (int32_t)getpid());
+	g_cl.zp_on = c->drawn, g_cl.zp_was = -1;
+	logf_("CONFIG climb drawn=%s%s", fling_w[c->drawn], c->drawn ? ": while the mantle's or A UP's ring shows, the layer reads "
+	      "each eye's game depth round the landing and four points 25 cm round it (5 cm under the collision's top): nothing "
+	      "drawn at or within 35 cm past any point read (3 at least) = an invisible top - the ring red and crossed, A refused "
+	      "(a soft double buzz, he stays); drawn or out of the view = as ever" : " (a landing the rays find is taken, drawn or "
+	      "not, as build 40)");
 	c->liberal = env_word("SOMVR_CLIMB_LIBERAL", fling_w, 2, c->liberal);
 	logf_("CONFIG climb liberal=%s%s (the reach %.0f cm)", fling_w[c->liberal], c->liberal ? ": a grip whose palm and "
 	      "fingers rays find nothing within reach tries a fan 30 deg round them and the head's level ray through the hand"
@@ -12858,6 +13251,19 @@ static int cl_config(int *bad)
 	g_wk.deg = env_float("SOMVR_WALK_SLOPE_DEG", 0, 0, 70, bad); /* build 40 (som-b40-climb3) */
 	g_wk.nav = env_word("SOMVR_WALK_NAVMESH", fling_w, 2, 0);
 	g_wk.nav_flag = GADDR(WK_NAVCLIP_FLAG, 0x4b55b82);
+	g_wk.far_cm = env_float("SOMVR_WALK_CLIP_FAR_CM", 0, 0, 150, bad); /* build 41 (376): 0 = build 40's 30 cm alone */
+	g_wk.slope_ahead = env_word("SOMVR_WALK_SLOPE_AHEAD", fling_w, 2, 0);
+	logf_("CONFIG walk clip far=%.0f cm, slope ahead=%s%s", (double)g_wk.far_cm, fling_w[g_wk.slope_ahead],
+	      g_wk.far_cm > WK_NAV_AHEAD_CM || g_wk.slope_ahead ? ": the walk's clips off (and the steeper slope) only for a step "
+	      "whose floor goes on that far ahead within 40 cm of the feet - an edge nearer keeps the game's clips and slope "
+	      "(they slide the walk along the lip; our edge stop holds him there)" : " (build 40's: the floor 30 cm ahead, the "
+	      "slope on every foot tick)");
+	g_wk.ctx = env_word("SOMVR_WALK_CTXCLIP", fling_w, 2, 0); /* build 41 (som-b41-climb4) */
+	g_wk.ctx_flag = GADDR(WK_CTXCLIP_FLAG, 0x4b55ca4);
+	logf_("CONFIG walk ctxclip=%s%s (the gate %#llx)", fling_w[g_wk.ctx], g_wk.ctx ? ": on foot the walk's context-action "
+	      "clip (the authored ledge and beam lines the game slides the walk along) is off for the same step as the navmesh "
+	      "clip's - a way 30 cm ahead with a floor within 40 cm of the feet; a drop keeps the game's" : " (the game's clip)",
+	      (unsigned long long)g_wk.ctx_flag);
 	logf_("CONFIG walk navmesh=%s%s (the gate %#llx)", fling_w[g_wk.nav], g_wk.nav ? ": on foot the walk's navmesh clip is off "
 	      "for a step whose way 30 cm ahead has a floor within 40 cm of the feet (PlayerMovement slot 9's hook: the "
 	      "controller's gate byte 0 for the player's own step) - beams and copings the navmesh leaves out walk; a drop "
@@ -13389,6 +13795,25 @@ static void cl_end_log(void)
 		logf_("WALK END build 40: the navmesh clip off for %llu steps (hook %s; walking ticks %llu, a drop ahead %llu, the "
 		      "floor too far %llu)", (unsigned long long)g_wk.nav_off, g_h[HK_PM9].installed ? "in" : "not in",
 		      (unsigned long long)g_wk.nav_ticks, (unsigned long long)g_wk.nav_drop, (unsigned long long)g_wk.nav_nofloor);
+	if (g_wk.ctx || g_wk.ctx_off)
+		logf_("WALK END build 41: the context-action clip off for %llu steps (hook %s); refused for an edge within %.0f cm "
+		      "%llu; the slope only ahead %s", (unsigned long long)g_wk.ctx_off, g_h[HK_PM9].installed ? "in" : "not in",
+		      (double)g_wk.far_cm, (unsigned long long)g_wk.nav_edge, g_wk.slope_ahead ? "on" : "off");
+	if (g_we.ride || g_we.ride_ticks)
+		logf_("WALK END build 42: the edge stop riding an edge: ticks %llu, holds %llu; WALK_LIP quiet at a held edge %llu; "
+		      "the edge guard's lines %llu (SOMVR_WALK_EDGE_RIDE %s)", (unsigned long long)g_we.ride_ticks,
+		      (unsigned long long)g_we.ride_holds, (unsigned long long)g_we.lip_quiet, (unsigned long long)g_wed.lines,
+		      g_we.ride ? "on" : "off");
+	if (g_we.line_cm > 0 || g_we.line_ticks)
+		logf_("WALK END build 41: the edge stop's slope line (%.0f cm): downhill ticks judged %llu, drops by the line %llu "
+		      "(SOMVR_WALK_EDGE_LINE_CM)", (double)g_we.line_cm, (unsigned long long)g_we.line_ticks,
+		      (unsigned long long)g_we.line_stops);
+	if (g_we.steep_cm > 0 || g_we.confirm_cm > 0 || g_we.slope_tan > 0)
+		logf_("WALK END build 41: the edge stop's steep rule (%.0f cm): forward probes over a floor %.0f-%.0f cm down %llu; "
+		      "drops confirmed at the second tick %llu (SOMVR_WALK_EDGE_CONFIRM_CM %.0f); probes over a floor falling away "
+		      "steeper than the slope rule or a cliff 25 cm past %llu", (double)g_we.steep_cm,
+		      (double)g_we.steep_cm, (double)g_we.cm, (unsigned long long)g_we.steep_stops,
+		      (unsigned long long)g_we.confirm2, (double)g_we.confirm_cm, (unsigned long long)g_we.slope_stops);
 	if (g_wk.deg > 0 || g_wk.sets)
 		logf_("WALK END build 40: the walk's steepest slope %.0f deg (the game's %.1f): set %llu, the game's back %llu, ticks "
 		      "%llu, not a cosine %llu", (double)g_wk.deg, g_wk.game_cos > 0 ? acosf(g_wk.game_cos) * 57.29578f : 0.0f,
@@ -13397,6 +13822,13 @@ static void cl_end_log(void)
 	if (g_cl.cfg.fling_off)
 		logf_("CLIMB END build 40: thrown off the wall %llu (the last: %.0f cm/s away, %.0f along, %.0f up as given)",
 		      (unsigned long long)s->fo_n, s->fo_out, s->fo_side, s->fo_up_given);
+	if (g_cl.cfg.drawn || g_cl.zp_asks)
+		logf_("CLIMB END build 41: the landings' drawn check: landings asked %llu, verdicts %llu (drawn %llu, nothing drawn "
+		      "%llu, unknown %llu); A refused at an undrawn landing: the mantle %llu, A UP %llu; the layer read %llu "
+		      "requests, answered %llu", (unsigned long long)g_cl.zp_asks, (unsigned long long)g_cl.zp_answers,
+		      (unsigned long long)g_cl.zp_drawn, (unsigned long long)g_cl.zp_undrawn, (unsigned long long)g_cl.zp_unknown,
+		      (unsigned long long)s->am_undrawns, (unsigned long long)s->ta_undrawns,
+		      (unsigned long long)atomic_load(&g_zpo.n_read), (unsigned long long)atomic_load(&g_zpo.n_ans));
 	if (g_cl.cfg.head_keep || g_cl.cfg.side || g_cl.cfg.thr_keep || g_cl.cfg.liberal)
 		logf_("CLIMB END build 39: the head's keep: episodes %llu, moves toward a face cut %.0f cm (%llu frames), eased out "
 		      "%.0f cm (%llu frames); the slide: %llu (%.0f cm, %llu frames; turned 45 deg %llu times, blocked %llu, the face "
@@ -20101,7 +20533,8 @@ static int somvr_start(const struct site_spec *sites, const struct site_spec *d3
 	sz_config(&bad);                   /* SOMVR_PLAYER_SIZE: no hook (after the anchor's eye height) */
 	cr_config(&bad);                   /* SOMVR_CROUCH: no hook (the input tick's command) */
 	install_all(sites, ~HK_OPTIONAL | (g_audio ? 1u << HK_AUD : 0) | (g_follow.on || cl_hk || lo_hk ? 1u << HK_PM : 0) | in_hk |
-				   arm_hk | hb_hk | es_hk | (g_wk.nav && g_wk.nav_flag ? 1u << HK_PM9 : 0));
+				   arm_hk | hb_hk | es_hk |
+				   ((g_wk.nav && g_wk.nav_flag) || (g_wk.ctx && g_wk.ctx_flag) ? 1u << HK_PM9 : 0));
 	if (g_audio && !g_h[HK_AUD].installed) {
 		logf_("WARN SOMVR_AUDIO=head without the AUDIO hook: the listener stays the game's");
 		g_audio = 0;

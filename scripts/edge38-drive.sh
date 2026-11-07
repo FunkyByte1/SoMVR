@@ -189,4 +189,5 @@ card
 for p in ${PLAN_E38:-m5 m8}; do $p; done
 grep -E '^CONFIG walk edge stop' "$L" | head -1 | cut -c1-200
 grep -E ' (PASS|FAIL) ' "$ST" 2>/dev/null
-echo "steps done $(date +%T)"; sleep 2; w "endlogs" 2; echo quit >> "$R/cmd"; echo "quit $(date +%T)"
+echo "steps done $(date +%T)"; [ "${NOQUIT:-0}" = 1 ] && exit 0 # (build 42: NOQUIT=1 - another driver goes on in this boot)
+sleep 2; w "endlogs" 2; echo quit >> "$R/cmd"; echo "quit $(date +%T)"
